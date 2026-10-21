@@ -11,7 +11,7 @@ from urllib.parse import quote
 
 CORE = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(CORE / 'tools/ci'))
-from published_artifact import ENVIRONMENT_HOSTS, basename, digest, download
+from published_artifact import ENVIRONMENT_HOSTS, basename, digest, download, valid_branch
 sys.path.insert(0, str(CORE / 'pcie_host/scripts'))
 from pcie_delivery import stage, verify_publication_inventory
 
@@ -20,8 +20,7 @@ def prepare(cli, branch, commit, environment, output, prefix):
     environment = {'prod': 'production', 'prd': 'production', 'stg': 'staging'}.get(
         environment, environment)
     if (environment not in ENVIRONMENT_HOSTS or not re.fullmatch(r'[0-9a-f]{40}', commit)
-            or ':' in branch or subprocess.run(['git', 'check-ref-format', '--branch', branch],
-                                              capture_output=True).returncode):
+            or not valid_branch(branch)):
         raise ValueError('Invalid immutable native Core selector')
     distro = subprocess.check_output(
         ['bash', '-c', 'source "$1"; simapcie_detect_host_distro', 'host-platform',

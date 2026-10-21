@@ -21,6 +21,17 @@ ENVIRONMENT_HOSTS = {'dev': 'artifacts.neat.paconsultings.com',
 HOSTS = set(ENVIRONMENT_HOSTS.values())
 
 
+def valid_branch(branch):
+    """Validate a literal Git branch without Git or checkout-history expansion."""
+    if (not isinstance(branch, str) or not branch or branch == 'HEAD'
+            or branch.startswith('-') or branch.endswith('.')
+            or '..' in branch or '@{' in branch
+            or any(ord(char) <= 32 or ord(char) == 127 or char in '~^:?*[\\' for char in branch)):
+        return False
+    return all(part and not part.startswith('.') and not part.endswith('.lock')
+               for part in branch.split('/'))
+
+
 def digest(path):
     result = hashlib.sha256()
     with Path(path).open('rb') as stream:
@@ -62,9 +73,7 @@ def acquire(cli, component, branch, spec, environment, output, *, package_path="
     environment = {'prd': 'production', 'prod': 'production', 'stg': 'staging'}.get(environment, environment)
     if (not re.fullmatch(r'[a-z][a-z0-9-]*', component)
             or environment not in ENVIRONMENT_HOSTS
-            or ':' in branch
-            or subprocess.run(['git', 'check-ref-format', '--branch', branch],
-                              capture_output=True).returncode
+            or not valid_branch(branch)
             or not (spec == 'latest' or re.fullmatch(r'[0-9a-f]{12,40}', spec))):
         raise ValueError('Invalid publication selector')
     if package_path and not re.fullmatch(r'[a-z0-9][a-z0-9-]*(/[a-z0-9][a-z0-9-]*)*', package_path):

@@ -514,6 +514,13 @@ class CpuPackagePreparation(unittest.TestCase):
         return cpu_prepare.prepare('fixture-cli', self.branch, self.commit, 'prod',
                                    self.root / 'distribution', self.root / 'prefix')
 
+    def test_complete_native_transport_does_not_require_git(self):
+        with patch.dict(os.environ, {'PATH': str(self.root)}):
+            result = self.acquire()
+        self.assertEqual(result['status'], 'STAGED_CPU_PACKAGE')
+        self.stage.assert_called_once_with(self.root / 'distribution', self.root / 'prefix')
+        self.assertEqual(len(self.calls), 2)
+
     def test_exact_native_download_then_trusted_private_stage_without_install(self):
         def inventory(directory, selection, resources):
             self.stage.assert_not_called()

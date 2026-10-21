@@ -18,6 +18,89 @@ import published_artifact as transport
 import acquire_core_qualification as core_transport
 
 
+def test_literal_branch_grammar_matches_git_without_repository(tmp_path):
+    git = shutil.which('git')
+    assert git, 'Host differential test requires Git'
+    names = {'main', 'feature/a65', '@', 'HEAD', 'head', 'foo./bar', 'foo/-bar',
+             'éclair/東京', 'foo.locked/bar', 'foo.LOCK', 'a' * 256, '', '.', '/',
+             '-topic', '/topic', 'topic/', 'topic//other', '.topic', 'topic/.hidden',
+             'topic.lock', 'topic.lock/child', 'topic.', 'topic..child', '@{-1}',
+             'topic@{1}', 'topic:main', 'a@b', 'topic#1', 'topic;$value'}
+    for number in range(1, 128):
+        char = chr(number)
+        names.update((char + 'topic', 'top' + char + 'ic', 'topic/' + char + 'child'))
+    env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
+    for name in sorted(names):
+        checked = subprocess.run([git, 'check-ref-format', '--branch', name], cwd=tmp_path,
+                                 env=env, capture_output=True)
+        assert transport.valid_branch(name) == (checked.returncode == 0), repr(name)
+    for name in (None, 12, [], 'topic\0child'):
+        assert not transport.valid_branch(name)
+
+
+@pytest.fixture
+def git_free_archive(tmp_path):
+    # Match checkout's archive fallback: real entrypoint bytes, no .git or Git
+    # executable. Only native host discovery is a controlled fixture here.
+    archive = tmp_path / 'archive'; archive.mkdir()
+    for name in ('tools/ci/published_artifact.py', 'tools/ci/acquire_core_qualification.py',
+                 'scripts/ci/pciehost/prepare_cpu_package.py', 'pcie_host/scripts/pcie_delivery.py'):
+        target = archive / name; target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / name, target)
+    binaries = tmp_path / 'bin'; binaries.mkdir()
+    calls = tmp_path / 'cli-calls.json'
+    cli = binaries / 'fixture-cli'
+    cli.write_text(f'#!{sys.executable}\nimport json, pathlib, sys\n'
+                   f'pathlib.Path({str(calls)!r}).write_text(json.dumps(sys.argv[1:]))\n'
+                   'sys.exit(29)\n')
+    cli.chmod(0o755)
+    for name, value in (('bash', 'ubuntu24'), ('dpkg', 'amd64')):
+        path = binaries / name
+        path.write_text(f'#!{sys.executable}\nprint({value!r})\n'); path.chmod(0o755)
+    assert shutil.which('git', path=str(binaries)) is None
+    return archive, binaries, calls
+
+
+@pytest.mark.parametrize('entrypoint', ['publication', 'core', 'native'])
+@pytest.mark.parametrize('branch,valid', [
+    ('feature/core', True), ('@', True), ('éclair/東京', True), ('foo./bar', True),
+    ('HEAD', False), ('-topic', False), ('topic.lock/child', False),
+    ('topic/.hidden', False), ('topic//child', False), ('topic.', False),
+    ('@{-1}', False), ('topic:other', False), ('topic\nchild', False), ('', False),
+])
+def test_real_archive_entrypoints_without_git(git_free_archive, entrypoint, branch, valid):
+    archive, binaries, calls = git_free_archive
+    output = archive / 'out'
+    if entrypoint == 'publication':
+        program = ('import sys; sys.path.insert(0, "tools/ci"); '
+                   'from published_artifact import acquire; '
+                   'acquire("fixture-cli", "scheduler", sys.argv[1], "a" * 40, '
+                   '"production", "out")')
+        command = [sys.executable, '-c', program, branch]
+    else:
+        script = ('tools/ci/acquire_core_qualification.py' if entrypoint == 'core'
+                  else 'scripts/ci/pciehost/prepare_cpu_package.py')
+        command = [sys.executable, str(archive / script), '--cli', 'fixture-cli',
+                   '--branch=' + branch, '--commit', 'a' * 40, '--environment', 'prod',
+                   '--output', str(output)]
+        if entrypoint == 'native':
+            command += ['--prefix', str(archive / 'prefix')]
+    result = subprocess.run(command, cwd=archive, env={**os.environ, 'PATH': str(binaries)},
+                            capture_output=True, text=True)
+    assert result.returncode != 0
+    assert 'FileNotFoundError' not in result.stderr
+    if valid:
+        # A real failing CLI must be reached unchanged and its failure retained;
+        # this control performs no network access, package install or staging.
+        argv = json.loads(calls.read_text())
+        assert any('@' + branch + ':' + 'a' * 12 in value for value in argv)
+        assert '--json' in argv and 'exit status 29' in result.stderr
+    else:
+        assert not calls.exists() and not output.exists()
+        assert 'ValueError: Invalid' in result.stderr
+    assert not (archive / 'prefix').exists()
+
+
 @pytest.fixture
 def publication(tmp_path):
     source = tmp_path / 'published'; source.mkdir()
@@ -73,6 +156,12 @@ def test_resolve_once_then_download_immutable(publication):
     assert len(publication[-1]) == 2
     assert publication[-1][1][1:4] == ['neat', 'download', 'scheduler@topic:' + 'a' * 12]
     assert (publication[0] / 'out/candidate.json').is_file()
+
+
+def test_full_publication_transport_does_not_require_git(publication, monkeypatch):
+    monkeypatch.setenv('PATH', str(publication[0]))
+    assert acquire(publication)['commit'] == 'a' * 40
+    assert len(publication[-1]) == 2
 
 
 @pytest.mark.parametrize('inherited', [None, '0', '1'])
@@ -314,6 +403,12 @@ def acquire_core(fixture, **kwargs):
     root, *_ = fixture
     return core_transport.acquire_core('fixture-cli', 'feature/core', 'a' * 40,
                                        kwargs.pop('environment', 'production'), root / 'out', ROOT, **kwargs)
+
+
+def test_full_core_transport_does_not_require_git(core_publication, monkeypatch):
+    monkeypatch.setenv('PATH', str(core_publication[0]))
+    assert acquire_core(core_publication)['status'] == 'PASS'
+    assert len(core_publication[-1]) == 3  # Resolve, download, full verifier.
 
 
 @pytest.mark.parametrize('environment', ['production', 'prod', 'prd'])

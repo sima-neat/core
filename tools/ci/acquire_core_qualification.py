@@ -12,7 +12,7 @@ import re
 import subprocess
 from urllib.parse import quote, urljoin
 
-from published_artifact import ENVIRONMENT_HOSTS, basename, digest, download
+from published_artifact import ENVIRONMENT_HOSTS, basename, digest, download, valid_branch
 
 
 METADATA = ('metadata.json', 'metadata-minimal.json', 'metadata-all.json',
@@ -23,8 +23,7 @@ def acquire_core(cli, branch, commit, environment, output, core):
     environment = {'prod': 'production', 'prd': 'production', 'stg': 'staging'}.get(
         environment, environment)
     if (environment not in ENVIRONMENT_HOSTS or not re.fullmatch(r'[0-9a-f]{40}', commit)
-            or ':' in branch or subprocess.run(['git', 'check-ref-format', '--branch', branch],
-                                              capture_output=True).returncode):
+            or not valid_branch(branch)):
         raise ValueError('Invalid immutable Core publication selector')
     revision = commit[:12]
     selector = f'core@{branch}:{revision}'
