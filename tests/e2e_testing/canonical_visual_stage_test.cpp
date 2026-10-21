@@ -15,6 +15,7 @@
 #include <gstsimaaitensorbuffer_meta.h>
 #include <iostream>
 #include <mutex>
+#include <optional>
 #include <source_location>
 #include <simaai/scheduler/client/dma_memory.h>
 #include <stdexcept>
@@ -68,6 +69,8 @@ struct Fixture {
   std::vector<Bytes> data;
   bool detect = false;
   int pyramid_levels = 0;
+  // Explicit spatial selection changes both the selected feature set and order.
+  test::VisualGridSelection grid{2, 2, 3};
 };
 Fixture fixture(unsigned graph, bool detect = false) {
   // BRIEF's descriptor border excludes all candidates in a 32x32 image.
@@ -113,8 +116,11 @@ Fixture fixture(unsigned graph, bool detect = false) {
 // oracle.
 std::vector<Bytes> direct(std::string_view name, const std::vector<rt::TensorSpec>& in,
                           const std::vector<rt::TensorSpec>& out, const std::vector<Bytes>& data,
-                          test::VisualParameters parameters) {
-  auto checked = take(test::reference_visual(name, rt::Target::EV74, in, out, parameters));
+                          test::VisualParameters parameters,
+                          std::optional<test::VisualGridSelection> grid = std::nullopt) {
+  auto checked =
+      take(grid ? test::reference_visual(name, rt::Target::EV74, in, out, parameters, *grid)
+                : test::reference_visual(name, rt::Target::EV74, in, out, parameters));
   std::vector<std::size_t> output_bytes;
   for (const auto& spec : out)
     output_bytes.push_back(bytes(spec));
@@ -130,10 +136,11 @@ std::vector<Bytes> reference(const Fixture& f) {
     return expected;
   }
   if (f.graph == 236)
-    return direct("fast", f.inputs, f.outputs, f.data, test::VisualParameters{.threshold = 20});
+    return direct("fast", f.inputs, f.outputs, f.data, test::VisualParameters{.threshold = 20},
+                  f.grid);
   if (f.graph == 237)
-    return direct("fastbrief", f.inputs, f.outputs, f.data,
-                  test::VisualParameters{.threshold = 20});
+    return direct("fastbrief", f.inputs, f.outputs, f.data, test::VisualParameters{.threshold = 20},
+                  f.grid);
   auto inputs = f.inputs;
   auto data = f.data;
   inputs.push_back({std::vector<std::int64_t>{1, 1}, rt::DType::Int32});
@@ -145,7 +152,7 @@ std::vector<Bytes> reference(const Fixture& f) {
              test::VisualParameters{.win_half = 3, .max_iters = 12, .max_level = f.pyramid_levels});
   if (f.detect) {
     auto found = direct("fast", {f.inputs[1]}, {f.outputs[2]}, {f.data[1]},
-                        test::VisualParameters{.threshold = 20});
+                        test::VisualParameters{.threshold = 20}, f.grid);
     expected.push_back(std::move(found[0]));
   }
   return expected;
@@ -215,6 +222,9 @@ gs::TensorStageRequest prepared(const Fixture& f) {
   c.num_in_tensor = f.inputs.size();
   c.threshold = c.fast_threshold = 20;
   c.max_features = 16;
+  c.grid_x = f.grid.columns;
+  c.grid_y = f.grid.rows;
+  c.min_px_dist = f.grid.minimum_distance;
   c.descriptor_words = 8;
   c.num_points = 4;
   c.win_half = 3;
