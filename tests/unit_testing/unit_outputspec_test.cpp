@@ -101,16 +101,70 @@ void check_raw_image_layouts() {
     nv16_caps(http.output_caps);
     nodes::groups::RtspDecodedInputOptions rtsp;
     nv16_caps(rtsp.output_caps);
-    // Group byte-estimate invalidation is covered separately from this layout
-    // correction; these assertions exercise every apply_raw_caps caller.
     for (const auto& spec : {nodes::groups::VideoInputGroupOutputSpec(video),
                              nodes::groups::HttpMjpegDecodedInputOutputSpec(http),
                              nodes::groups::RtspDecodedInputOutputSpec(rtsp)}) {
       require(spec.format == "NV16" && spec.layout == "Planar" && spec.dtype == "UInt8" &&
-                  spec.width == 8 && spec.height == height,
-              "group output_caps must overwrite the upstream NV16 layout");
+                  spec.width == 8 && spec.height == height && spec.byte_size == 16U * height,
+              "group output_caps must replace the upstream NV16 layout and byte estimate");
     }
   }
+}
+
+void check_group_byte_estimates() {
+  using namespace simaai::neat;
+  const auto check = [](auto options, auto project) {
+    options.dec_width = 8;
+    options.dec_height = 6;
+    options.source_fps = 30;
+    const auto baseline = project(options);
+    require(baseline.byte_size == 72 && baseline.certainty == SpecCertainty::Hint,
+            "decoder hint must retain its native byte estimate");
+
+    struct Override {
+      FormatTag format;
+      int width;
+      int height;
+      std::size_t bytes;
+    };
+    for (const auto& c :
+         {Override{FormatTag::NV16, -1, -1, 96}, Override{FormatTag::Auto, 16, -1, 144},
+          Override{FormatTag::Auto, -1, 12, 144}, Override{FormatTag::RGB, 8, 6, 144},
+          Override{FormatTag::BGR, 8, 6, 144}, Override{FormatTag::GRAY8, 8, 6, 48},
+          Override{FormatTag::I420, 8, 6, 72}, Override{FormatTag::NV16, -1, 5, 80},
+          Override{FormatTag::Auto, -1, 5, 0}, Override{FormatTag::YUYV, 8, 6, 0}}) {
+      auto changed = options;
+      changed.output_caps.enable = true;
+      changed.output_caps.format = c.format;
+      changed.output_caps.width = c.width;
+      changed.output_caps.height = c.height;
+      require(project(changed).byte_size == c.bytes,
+              "changed group format/geometry retained the decoder byte estimate");
+    }
+    for (const bool explicit_spatial_caps : {false, true}) {
+      auto unchanged = options;
+      unchanged.output_caps.enable = true;
+      unchanged.output_caps.format = explicit_spatial_caps ? FormatTag::NV12 : FormatTag::Auto;
+      unchanged.output_caps.width = explicit_spatial_caps ? 8 : -1;
+      unchanged.output_caps.height = explicit_spatial_caps ? 6 : -1;
+      unchanged.output_caps.fps = 24;
+      unchanged.output_caps.memory = CapsMemory::SystemMemory;
+      const auto spec = project(unchanged);
+      require(spec.byte_size == baseline.byte_size && spec.format == baseline.format &&
+                  spec.width == baseline.width && spec.height == baseline.height &&
+                  spec.fps_num == 24 && spec.memory == "SystemMemory",
+              "no-op spatial caps or cadence/memory overrides changed the byte estimate");
+    }
+    options.out_format = FormatTag::YUYV;
+    options.decoder_raw_output = false;
+    options.output_caps.enable = true;
+    options.output_caps.format = FormatTag::Auto;
+    require(project(options).byte_size == 0,
+            "unestimated opaque format must not acquire a fabricated byte count");
+  };
+  check(nodes::groups::HttpMjpegDecodedInputOptions{},
+        nodes::groups::HttpMjpegDecodedInputOutputSpec);
+  check(nodes::groups::RtspDecodedInputOptions{}, nodes::groups::RtspDecodedInputOutputSpec);
 }
 
 } // namespace
@@ -118,6 +172,7 @@ void check_raw_image_layouts() {
 int main() {
   try {
     check_raw_image_layouts();
+    check_group_byte_estimates();
     simaai::neat::OutputSpec nv12;
     nv12.media_type = "video/x-raw";
     nv12.format = "NV12";
@@ -336,6 +391,8 @@ int main() {
         simaai::neat::nodes::groups::RtspDecodedInputOutputSpec(rtsp_tail_caps);
     require(rtsp_tail_spec.width == 640 && rtsp_tail_spec.height == 360,
             "RTSP decoded output_caps should apply explicit shape");
+    require(rtsp_tail_spec.byte_size == 640U * 360U * 3U / 2U,
+            "RTSP decoded output_caps should recompute the resized byte estimate");
     require(rtsp_tail_spec.memory == "SimaAI",
             "RTSP decoded output_caps should preserve decoder memory by default");
     rtsp_tail_caps.output_caps.memory = simaai::neat::CapsMemory::SystemMemory;
@@ -373,6 +430,8 @@ int main() {
         simaai::neat::nodes::groups::HttpMjpegDecodedInputOutputSpec(http_tail_caps);
     require(http_tail_spec.width == 640 && http_tail_spec.height == 360,
             "HTTP MJPEG output_caps should apply explicit shape");
+    require(http_tail_spec.byte_size == 640U * 360U * 3U / 2U,
+            "HTTP MJPEG output_caps should recompute the resized byte estimate");
     require(http_tail_spec.memory == "SimaAI",
             "HTTP MJPEG output_caps should preserve decoder memory by default");
     http_tail_caps.output_caps.memory = simaai::neat::CapsMemory::SystemMemory;
