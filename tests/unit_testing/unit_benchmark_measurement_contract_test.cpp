@@ -221,6 +221,33 @@ void benchmark_options_api_is_additive() {
 #pragma GCC diagnostic pop
 }
 
+void synthetic_benchmark_rejects_planar_images() {
+  using namespace simaai::neat;
+  TensorSpec spec;
+  spec.shape = {10, 18};
+  spec.dtypes = {TensorDType::UInt8};
+  for (const auto format :
+       {ImageSpec::PixelFormat::NV12, ImageSpec::PixelFormat::NV16, ImageSpec::PixelFormat::I420}) {
+    spec.image_format = format;
+    bool rejected = false;
+    try {
+      internal::validate_synthetic_benchmark_image_format(spec);
+    } catch (const std::runtime_error& error) {
+      rejected = std::string(error.what()) ==
+                 "Model::benchmark: planar image input specs are not supported by the synthetic "
+                 "benchmark";
+    }
+    require(rejected, "synthetic benchmarks must reject every unsupported planar image format");
+  }
+  for (const auto format :
+       {ImageSpec::PixelFormat::RGB, ImageSpec::PixelFormat::BGR, ImageSpec::PixelFormat::GRAY8}) {
+    spec.image_format = format;
+    internal::validate_synthetic_benchmark_image_format(spec);
+  }
+  spec.image_format.reset();
+  internal::validate_synthetic_benchmark_image_format(spec);
+}
+
 void benchmark_build_options_prefer_runtime_metadata() {
   using namespace simaai::neat;
   Model::Options model_options;
@@ -730,6 +757,8 @@ RUN_TEST("unit_benchmark_measurement_contract_test", ([] {
            run_case("measurement_boolean_flags_make_profiling_explicit",
                     measurement_boolean_flags_make_profiling_explicit);
            run_case("benchmark_options_api_is_additive", benchmark_options_api_is_additive);
+           run_case("synthetic_benchmark_rejects_planar_images",
+                    synthetic_benchmark_rejects_planar_images);
            run_case("benchmark_build_options_prefer_runtime_metadata",
                     benchmark_build_options_prefer_runtime_metadata);
            run_case("benchmark_preprocess_meta_defaults",

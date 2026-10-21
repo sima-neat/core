@@ -59,11 +59,7 @@ Tensor make_synthetic_benchmark_tensor(const TensorSpec& spec, std::size_t input
     shape.push_back(dim);
   }
 
-  if (spec.image_format == ImageSpec::PixelFormat::NV12 ||
-      spec.image_format == ImageSpec::PixelFormat::I420) {
-    throw std::runtime_error(
-        "Model::benchmark: planar image input specs are not supported by the synthetic benchmark");
-  }
+  internal::validate_synthetic_benchmark_image_format(spec);
 
   std::uint64_t element_count = 1;
   for (const int64_t dim : shape) {
@@ -327,6 +323,15 @@ void require_benchmark_output(const simaai::neat::Sample& out, const char* where
 } // namespace
 
 namespace internal {
+
+void validate_synthetic_benchmark_image_format(const TensorSpec& spec) {
+  if (spec.image_format == ImageSpec::PixelFormat::NV12 ||
+      spec.image_format == ImageSpec::PixelFormat::NV16 ||
+      spec.image_format == ImageSpec::PixelFormat::I420) {
+    throw std::runtime_error(
+        "Model::benchmark: planar image input specs are not supported by the synthetic benchmark");
+  }
+}
 
 PreprocessRuntimeMeta resolve_benchmark_preprocess_meta(const Tensor& tensor,
                                                         const ResolvedPreprocessPlan& plan,

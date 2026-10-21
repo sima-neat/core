@@ -124,6 +124,9 @@ struct ModelAccess {
 
 BenchmarkReport run_benchmark(Model& model, const BenchmarkOptions& options);
 
+// Pure admission check shared by synthetic input construction and contract tests.
+void validate_synthetic_benchmark_image_format(const TensorSpec& spec);
+
 /// Project the latency window (`latency_samples` inputs), the throughput window
 /// (`throughput_samples` inputs), and Sentinel telemetry into the public benchmark report.
 /// `num_samples` is the requested count that `energy_joules` is normalized to.
