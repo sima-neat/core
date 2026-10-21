@@ -2023,7 +2023,7 @@ install_debs_on_board() {
     exit 1
   fi
   if [[ "${repair_incomplete}" == 1 ]]; then
-    log "Incomplete package state: requiring exact split-cohort recovery admission with no removals."
+    log "Incomplete package state: requiring exact split-cohort recovery and declared retirement admission."
   fi
 
   local -a board_install_specs=()
@@ -2041,12 +2041,36 @@ install_debs_on_board() {
   # metadata. Removal simulation alone cannot detect undeclared file collisions;
   # keep dpkg's ownership rejection enabled for the real transaction.
   local -a apt_install_args=(
-    apt-get install -y --fix-broken --allow-downgrades --reinstall
+    apt-get install -y --fix-broken --allow-downgrades
   )
   local -a transaction_admission_args=()
   if [[ "${repair_incomplete}" == 1 ]]; then
-    apt_install_args+=(--no-remove)
-    transaction_admission_args+=(--repair-incomplete)
+    # APT may retain broken predecessor packages unless retirement is explicit.
+    # Scheduler proposes current, configured identities; the existing Core and
+    # Platform guards must approve them before any removal selector is added.
+    local retirement_plan
+    retirement_plan="$(mktemp /tmp/sima-neat-retirements-XXXXXX)"
+    INSTALLER_TMP_DIRS+=("${retirement_plan}")
+    python3 -B "${SCHEDULER_PLATFORM_ADMISSION_PATH}" retirements --directory "$PWD" \
+      >"${retirement_plan}" || return 1
+    verify_board_platform_plan "${retirement_plan}" || return 1
+    verify_simulated_package_removals "${retirement_plan}" "${board_install_specs[@]}" || return 1
+    local -a retirement_names=()
+    mapfile -t retirement_names < <(awk '$1 == "Remv" {print $2}' "${retirement_plan}")
+    if [[ "${#retirement_names[@]}" == 0 ]]; then
+      apt_install_args+=(--no-remove)
+    else
+      local retired
+      for retired in "${retirement_names[@]}"; do
+        board_install_specs+=("${retired}-")
+      done
+    fi
+    # APT 3 cannot fetch a forced-reinstall archive for an already-unpacked
+    # same-version package. First resume only the producer-admitted full cohort;
+    # then perform a fresh strict reinstall before declaring installation done.
+    transaction_admission_args+=(--repair-incomplete --resume-incomplete)
+  else
+    apt_install_args+=(--reinstall)
   fi
 
   local simulation_log
@@ -2067,13 +2091,38 @@ install_debs_on_board() {
   verify_scheduler_transaction "${simulation_log}" "${transaction_admission_args[@]}" || return 1
 
   if run_sudo "${apt_install_args[@]}" "${board_install_specs[@]}"; then
-    run_sudo apt-get check
+    if [[ "${repair_incomplete}" == 1 ]]; then
+      # Configuration is only preparation, not successful installation. Never
+      # reuse retirement selectors or the permissive resume admission for the
+      # final exact-byte reinstall of every selected package.
+      apt_package_database_is_healthy || return 1
+      dpkg_package_database_is_configured || return 1
+      verify_board_platform_admission || return 1
+      collect_exact_deb_install_specs board_install_specs || return 1
+      apt_install_args=(apt-get install -y --fix-broken --allow-downgrades --reinstall --no-remove)
+      log "Recovered package configuration; requiring a fresh strict full-cohort reinstall."
+      if ! run_sudo "${apt_install_args[@]}" --simulate "${board_install_specs[@]}" \
+          >"${simulation_log}" 2>&1; then
+        cat "${simulation_log}" >&2
+        echo "APT rejected the final recovery reinstall; installation is incomplete." >&2
+        return 1
+      fi
+      verify_board_platform_plan "${simulation_log}" || return 1
+      verify_simulated_package_removals "${simulation_log}" "${board_install_specs[@]}" || return 1
+      verify_scheduler_transaction "${simulation_log}" --repair-incomplete || return 1
+      if ! run_sudo "${apt_install_args[@]}" "${board_install_specs[@]}"; then
+        echo "Final recovery reinstall failed; refusing package removal or direct dpkg fallback." >&2
+        return 1
+      fi
+      dpkg_package_database_is_configured || return 1
+    fi
+    run_sudo apt-get check || return 1
     complete_board_install_after_packages "${direct_platform_before}"
     return $?
   fi
 
   if [[ "${repair_incomplete}" == 1 ]]; then
-    echo "Exact split-cohort recovery failed; refusing package removal or direct dpkg fallback." >&2
+    echo "Exact split-cohort recovery failed; refusing further package removal or direct dpkg fallback." >&2
     return 1
   fi
 

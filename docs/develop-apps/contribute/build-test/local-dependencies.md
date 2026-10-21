@@ -111,8 +111,13 @@ left by an earlier installation. A selected but mismatched helper fails installa
 If installation on the DevKit was interrupted, rerun the complete verified distribution. The
 installer can recover incomplete packages only when they belong to that incoming
 package set and match its architectures. Recovery must install the exact selected
-versions without removing packages or changing unrelated packages. An unrelated
-broken package database still requires separate repair; the installer does not
+versions without changing unrelated packages. It can remove only configured,
+unheld predecessor packages whose retirement is explicitly declared by the
+incoming cohort and approved by the existing removal checks. Recovery first
+completes the admitted transition, checks package state, then reinstalls every
+selected package with removals disabled. Installation succeeds only after this
+final reinstall. An unrelated broken package database still requires separate
+repair; the installer does not
 perform a general APT repair or guarantee rollback.
 
 Do not install the Scheduler DEB alone over an existing Core development package,

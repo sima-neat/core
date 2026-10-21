@@ -11,6 +11,7 @@ import copy
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import venv
 import zipfile
@@ -890,7 +891,8 @@ admission = importlib.util.module_from_spec(admission_spec)
 admission_spec.loader.exec_module(admission)
 
 
-def admission_fixture(tmp_path, *, transaction_error=None, empty_platform=False):
+def admission_fixture(tmp_path, *, transaction_error=None, empty_platform=False,
+                      retirements=None, retirement_error=None, final_transaction_error=None):
     root = tmp_path / 'admission-dist'; root.mkdir()
     source = tmp_path / 'scheduler-source'
     prefix = source / 'usr'
@@ -903,6 +905,10 @@ pathlib.Path(''' + repr(str(marker)) + ''').write_text('executed')
 pathlib.Path(''' + repr(str(marker.with_suffix('.argv'))) + ''').write_text(json.dumps(sys.argv[1:]))
 with pathlib.Path(''' + repr(str(marker.with_suffix('.calls'))) + ''').open('a') as stream:
     stream.write(json.dumps(sys.argv[1:]) + '\\n')
+if sys.argv[1] == 'retirements' and ''' + repr(retirement_error) + ''' is not None:
+    raise SystemExit(''' + repr(retirement_error) + ''')
+if sys.argv[1] == 'transaction' and '--resume-incomplete' not in sys.argv and ''' + repr(final_transaction_error) + ''' is not None:
+    raise SystemExit(''' + repr(final_transaction_error) + ''')
 if sys.argv[1] == 'transaction' and ''' + repr(transaction_error) + ''' is not None:
     raise SystemExit(''' + repr(transaction_error) + ''')
 directory = pathlib.Path(sys.argv[sys.argv.index('--directory') + 1])
@@ -911,7 +917,12 @@ if receipt.get('runner', {}).get('buildinfo', {}).get('platform_runtime_packages
     raise SystemExit('producer rejected missing Platform declaration')
 if 'PlatformRuntime' not in receipt.get('external_dependencies', {}):
     raise SystemExit('producer rejected missing Platform evidence')
-print(json.dumps(RESULT))
+if sys.argv[1] == 'retirements':
+    print(json.dumps(''' + repr({'schema_version': 1, 'status': 'PASS',
+        'scope': 'read-only-package-retirement-proposal', 'repair_incomplete': True,
+        'incomplete_packages': [], 'retirements': retirements or {}}) + '''))
+else:
+    print(json.dumps(RESULT))
 ''')
     result = {'schema_version': 1, 'redistributed_provider_controls': [],
               'platform_packages': {'fixture-platform': 'arm64'},
@@ -957,16 +968,17 @@ def test_installed_scheduler_tool_is_authenticated_and_read_only(tmp_path):
     assert not list(source.rglob('__pycache__'))
 
 
-@pytest.mark.parametrize('repair', [False, True])
-def test_transaction_delegates_regular_plan_with_exact_arguments(tmp_path, repair):
+@pytest.mark.parametrize('repair,resume', [(False, False), (True, False), (True, True)])
+def test_transaction_delegates_regular_plan_with_exact_arguments(tmp_path, repair, resume):
     root, _, _, marker, expected, _ = admission_fixture(tmp_path)
     simulation = tmp_path / 'apt simulation.log'; simulation.write_text('Inst fixture (2 local-deb)\n')
     result = admission.optional_admission(root, 'transaction', simulation=simulation,
-                                         repair_incomplete=repair)
+                                         repair_incomplete=repair, resume_incomplete=resume)
     assert result == {**expected, 'split_cohort': True}
     arguments = json.loads(marker.with_suffix('.argv').read_text())
     assert arguments == ['transaction', '--directory', str(root), '--simulation', str(simulation),
-                         *(['--repair-incomplete'] if repair else [])]
+                         *(['--repair-incomplete'] if repair else []),
+                         *(['--resume-incomplete'] if resume else [])]
 
 
 @pytest.mark.parametrize('kind', ['missing', 'directory', 'symlink'])
@@ -991,7 +1003,7 @@ def test_legacy_transaction_cannot_request_incomplete_repair(tmp_path):
 
 
 @pytest.mark.parametrize('mutation', ['helper', 'sibling', 'mode', 'extra', 'missing', 'symlink', 'receipt', 'inventory_digest'])
-@pytest.mark.parametrize('action', ['describe', 'transaction'])
+@pytest.mark.parametrize('action', ['describe', 'transaction', 'retirements'])
 def test_scheduler_tampering_rejected_before_import(tmp_path, mutation, action):
     root, source, tool, marker, _, rebuild = admission_fixture(tmp_path)
     if mutation == 'helper':
@@ -1122,19 +1134,26 @@ def test_board_applies_only_authenticated_admitted_transaction(tmp_path, repair,
     root, _, _, marker, _, _ = admission_fixture(
         tmp_path, empty_platform=True, transaction_error=None if allowed else 'foreign pending package')
     result = installer_shell(root, TRANSACTION_SETUP +
-                             f'apt_package_database_is_healthy() {{ return {int(repair)}; }}\n'
+                             ('apt_package_database_is_healthy() { grep -q APPLY commands 2>/dev/null; }\n'
+                              if repair else 'apt_package_database_is_healthy() { return 0; }\n') +
                              'install_debs_on_board\n')
     assert (result.returncode == 0) == allowed, result.stdout + result.stderr
     commands = (root / 'commands').read_text()
     assert ('APPLY' in commands) == allowed
     assert ('COMPLETE' in result.stdout) == allowed
-    arguments = json.loads(marker.with_suffix('.argv').read_text())
-    assert arguments[0] == 'transaction'
-    assert ('--repair-incomplete' in arguments) == repair
+    calls = [json.loads(line) for line in marker.with_suffix('.calls').read_text().splitlines()]
+    admissions = [call for call in calls if call[0] == 'transaction']
+    assert len(admissions) == (2 if allowed and repair else 1)
+    assert ('--repair-incomplete' in admissions[0]) == repair
+    assert ('--resume-incomplete' in admissions[0]) == repair
+    if allowed and repair:
+        assert '--repair-incomplete' in admissions[1] and '--resume-incomplete' not in admissions[1]
+    assert sum(call[0] == 'retirements' for call in calls) == int(repair)
     transactions = [line for line in commands.splitlines() if line.startswith('apt-get install')]
-    assert len(transactions) == (2 if allowed else 1)
-    for command in transactions:
+    assert len(transactions) == ((4 if repair else 2) if allowed else 1)
+    for i, command in enumerate(transactions):
         assert ('--no-remove' in command) == repair
+        assert ('--reinstall' in command) == (not repair or i >= 2)
         assert './scheduler.deb simaai-scheduler:arm64=1' in command
     assert 'REMOVE' not in commands and 'dpkg -i' not in commands
 
@@ -1161,14 +1180,15 @@ def test_split_pending_state_or_query_error_cannot_use_healthy_transaction(tmp_p
     root, _, _, marker, _, _ = admission_fixture(tmp_path, empty_platform=True)
     result = installer_shell(root, TRANSACTION_SETUP + f'''
 apt_package_database_is_healthy() {{ return 0; }}
-dpkg_package_database_is_configured() {{ return {state}; }}
+dpkg_package_database_is_configured() {{ if grep -q APPLY commands 2>/dev/null; then return 0; fi; return {state}; }}
 install_debs_on_board
 ''')
     calls = [json.loads(line) for line in marker.with_suffix('.calls').read_text().splitlines()]
     transactions = [call for call in calls if call[0] == 'transaction']
     if state == 1:
         assert result.returncode == 0, result.stdout + result.stderr
-        assert len(transactions) == 1 and '--repair-incomplete' in transactions[0]
+        assert len(transactions) == 2 and '--repair-incomplete' in transactions[0]
+        assert '--repair-incomplete' in transactions[1] and '--resume-incomplete' not in transactions[1]
         commands = (root / 'commands').read_text().splitlines()
         assert all('--no-remove' in line for line in commands if line.startswith('apt-get install'))
     else:
@@ -1546,3 +1566,201 @@ def test_install_smoke_requires_selected_manifest_abi(tmp_path, installed_abi):
     assert (result.returncode == 0) == (selected == expected), result.stdout + result.stderr
     if selected != expected:
         assert f"Expected SimaNeat public ABI {expected}, got '{selected}'" in result.stderr
+
+
+def test_retirement_proposal_delegation_renders_exact_installed_identity(tmp_path):
+    expected = {'neat-runtime:arm64': {'version': '0.6.0+develop.arbitrary',
+                                      'architecture': 'arm64', 'status': 'install ok installed'}}
+    root, _, _, marker, _, _ = admission_fixture(tmp_path, retirements=expected)
+    result = admission.invoke(root, 'retirements')
+    assert result['retirements'] == expected
+    assert json.loads(marker.with_suffix('.argv').read_text()) == [
+        'retirements', '--directory', str(root)]
+    assert admission.retirement_plan(result) == 'Remv neat-runtime:arm64 [0.6.0+develop.arbitrary]\n'
+
+
+@pytest.mark.parametrize('mutation', ['status', 'scope', 'repair', 'map', 'name', 'version',
+                                     'architecture', 'qualified_architecture', 'held', 'duplicate_arch'])
+def test_retirement_proposal_transport_rejects_malformed_identity(mutation):
+    result = {'schema_version': 1, 'status': 'PASS', 'scope': 'read-only-package-retirement-proposal',
+              'repair_incomplete': True, 'incomplete_packages': [],
+              'retirements': {'old-role': {'version': '0.6.0', 'architecture': 'arm64',
+                                           'status': 'install ok installed'}}}
+    state = result['retirements']['old-role']
+    if mutation == 'status': result['status'] = 'UNKNOWN'
+    elif mutation == 'scope': result['scope'] = 'other'
+    elif mutation == 'repair': result['repair_incomplete'] = False
+    elif mutation == 'map': result['retirements'] = []
+    elif mutation == 'name': result['retirements'] = {'--allow-anything': state}
+    elif mutation == 'version': state['version'] = '1]\nRemv foreign [1'
+    elif mutation == 'architecture': state['architecture'] = 'arm64 bad'
+    elif mutation == 'qualified_architecture': result['retirements'] = {'old-role:amd64': state}
+    elif mutation == 'held': state['status'] = 'hold ok installed'
+    elif mutation == 'duplicate_arch': result['retirements']['old-role:arm64'] = state
+    with pytest.raises(admission.AdmissionError):
+        admission.retirement_plan(result)
+
+
+def test_authenticated_repair_uses_only_guarded_explicit_retirement_selectors(tmp_path):
+    root, _, _, marker, _, _ = admission_fixture(tmp_path, empty_platform=True,
+        retirements={'neat-internals-dev': {'version': '0.6.0+develop.arbitrary',
+                                            'architecture': 'all', 'status': 'install ok installed'}})
+    result = installer_shell(root, TRANSACTION_SETUP + r"""
+apt_package_database_is_healthy() { grep -q APPLY commands 2>/dev/null; }
+run_sudo() {
+  printf '%s\n' "$*" >> commands
+  if [[ " $* " == *" --simulate "* ]]; then
+    if [[ " $* " == *" --reinstall "* ]]; then
+      [[ " $* " != *" neat-internals-dev- "* && " $* " == *" --no-remove "* ]] || return 100
+    else
+      [[ " $* " == *" neat-internals-dev- "* && " $* " != *" --no-remove "* ]] || return 100
+      echo 'Remv neat-internals-dev [0.6.0+develop.arbitrary]'
+    fi
+    echo 'Inst simaai-scheduler (1 local-deb [arm64])'
+    echo 'Conf simaai-scheduler (1 local-deb [arm64])'
+  elif [[ "$1 ${2:-}" == 'apt-get install' ]]; then
+    echo APPLY >> commands
+  fi
+}
+install_debs_on_board
+""")
+    assert result.returncode == 0, result.stdout + result.stderr
+    commands = (root / 'commands').read_text()
+    installs = [line for line in commands.splitlines() if line.startswith('apt-get install')]
+    assert len(installs) == 4
+    assert all('neat-internals-dev-' in line and '--no-remove' not in line and '--reinstall' not in line
+               for line in installs[:2])
+    assert all('neat-internals-dev-' not in line and '--no-remove' in line and '--reinstall' in line
+               for line in installs[2:])
+    assert 'APPLY' in commands and 'COMPLETE' in result.stdout
+    calls = [json.loads(line) for line in marker.with_suffix('.calls').read_text().splitlines()]
+    assert [call[0] for call in calls].count('transaction') == 2
+    transactions = [call for call in calls if call[0] == 'transaction']
+    assert '--resume-incomplete' in transactions[0]
+    assert '--repair-incomplete' in transactions[1] and '--resume-incomplete' not in transactions[1]
+
+
+@pytest.mark.parametrize('name', ['foreign-package', 'fixture-platform'])
+def test_unapproved_retirement_proposal_refuses_before_apt_simulation(tmp_path, name):
+    root, _, _, marker, _, _ = admission_fixture(tmp_path,
+        retirements={name: {'version': '1', 'architecture': 'arm64', 'status': 'install ok installed'}})
+    result = installer_shell(root, TRANSACTION_SETUP + r"""
+apt_package_database_is_healthy() { return 1; }
+install_debs_on_board
+""")
+    assert result.returncode != 0
+    assert not (root / 'commands').exists()
+    assert 'COMPLETE' not in result.stdout
+    calls = [json.loads(line) for line in marker.with_suffix('.calls').read_text().splitlines()]
+    assert calls[-1][0] == 'retirements'
+    assert not any(call[0] == 'transaction' for call in calls)
+
+
+def test_rejected_retirement_proposal_cannot_reach_simulation(tmp_path):
+    root, _, _, _, _, _ = admission_fixture(tmp_path, retirement_error='unrelated pending package')
+    result = installer_shell(root, TRANSACTION_SETUP +
+                             'apt_package_database_is_healthy() { return 1; }; install_debs_on_board')
+    assert result.returncode != 0
+    assert not (root / 'commands').exists()
+    assert 'unrelated pending package' in result.stderr
+
+
+@pytest.mark.parametrize('failure', ['extra_removal', 'producer', 'apply'])
+def test_retirement_repair_failure_preserves_both_guards_and_no_fallback(tmp_path, failure):
+    root, _, _, marker, _, _ = admission_fixture(tmp_path, empty_platform=True,
+        transaction_error='incomplete cohort rejected' if failure == 'producer' else None,
+        retirements={'neat-internals-dev': {'version': '0.6.0', 'architecture': 'all',
+                                            'status': 'install ok installed'}})
+    result = installer_shell(root, TRANSACTION_SETUP + r"""
+apt_package_database_is_healthy() { return 1; }
+NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL=ON
+NEAT_INSTALLER_ALLOW_DPKG_FALLBACK=ON
+run_sudo() {
+  printf '%s\n' "$*" >> commands
+  if [[ " $* " == *" --simulate "* ]]; then
+    echo 'Remv neat-internals-dev [0.6.0]'
+    [[ "$FAILURE" != extra_removal ]] || echo 'Remv foreign-dependent [1]'
+    echo 'Inst simaai-scheduler (1 local-deb [arm64])'
+    echo 'Conf simaai-scheduler (1 local-deb [arm64])'
+    return 0
+  fi
+  echo APPLY >> commands
+  return 100
+}
+""" + f'FAILURE={failure}; install_debs_on_board\n')
+    assert result.returncode != 0
+    commands = (root / 'commands').read_text()
+    assert commands.count('APPLY') == int(failure == 'apply')
+    assert 'REMOVE' not in commands and 'dpkg -i' not in commands
+    assert 'COMPLETE' not in result.stdout
+    calls = [json.loads(line) for line in marker.with_suffix('.calls').read_text().splitlines()]
+    assert sum(call[0] == 'transaction' for call in calls) == int(failure != 'extra_removal')
+
+
+def test_legacy_distribution_cannot_propose_retirements(tmp_path):
+    result = subprocess.run([sys.executable, str(ROOT / 'tools/scheduler_platform_admission.py'),
+                             'retirements', '--directory', str(tmp_path)], text=True, capture_output=True)
+    assert result.returncode != 0
+    assert 'Missing selected dependency receipt' in result.stderr
+
+
+@pytest.mark.parametrize('failure', ['health', 'dpkg', 'platform', 'simulation', 'extra_removal', 'foreign_install', 'apply'])
+def test_recovery_requires_fresh_strict_reinstall_before_completion(tmp_path, failure):
+    root, _, _, marker, _, _ = admission_fixture(tmp_path, empty_platform=True,
+        final_transaction_error='repair would install outside incoming cohort' if failure == 'foreign_install' else None)
+    result = installer_shell(root, TRANSACTION_SETUP + r"""
+NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL=ON
+NEAT_INSTALLER_ALLOW_DPKG_FALLBACK=ON
+apt_package_database_is_healthy() {
+  [[ "$FAILURE" != health ]] && grep -q APPLY commands 2>/dev/null
+}
+dpkg_package_database_is_configured() {
+  if [[ "$FAILURE" == dpkg ]] && grep -q APPLY commands 2>/dev/null; then return 1; fi
+}
+# The first platform check still uses the real authenticated helper.
+original_verify=$(declare -f verify_board_platform_admission)
+eval "${original_verify/verify_board_platform_admission/original_platform_check}"
+verify_board_platform_admission() {
+  if [[ "$FAILURE" == platform ]] && grep -q APPLY commands 2>/dev/null; then return 1; fi
+  original_platform_check "$@"
+}
+run_sudo() {
+  printf '%s\n' "$*" >> commands
+  if [[ " $* " == *" --simulate "* ]]; then
+    if [[ " $* " == *" --reinstall "* ]]; then
+      [[ "$FAILURE" != simulation ]] || return 100
+      [[ "$FAILURE" != extra_removal ]] || echo 'Remv foreign-dependent [1]'
+      if [[ "$FAILURE" == foreign_install ]]; then
+        echo 'Inst new-prerequisite (1 repo [arm64])'
+        echo 'Conf new-prerequisite (1 repo [arm64])'
+      fi
+    fi
+    echo 'Inst simaai-scheduler (1 local-deb [arm64])'
+    echo 'Conf simaai-scheduler (1 local-deb [arm64])'
+    return 0
+  fi
+  if [[ "$1 ${2:-}" == 'apt-get install' ]]; then
+    echo APPLY >> commands
+    if [[ " $* " == *" --reinstall "* ]]; then return 100; fi
+  fi
+}
+""" + f'FAILURE={failure}; install_debs_on_board\n')
+    assert result.returncode != 0
+    commands = (root / 'commands').read_text()
+    assert commands.count('APPLY') == (2 if failure == 'apply' else 1)
+    assert 'REMOVE' not in commands and 'dpkg -i' not in commands
+    assert 'COMPLETE' not in result.stdout
+    calls = [json.loads(line) for line in marker.with_suffix('.calls').read_text().splitlines()]
+    admissions = [call for call in calls if call[0] == 'transaction']
+    assert '--resume-incomplete' in admissions[0]
+    assert len(admissions) == (2 if failure in ('apply', 'foreign_install') else 1)
+    if failure in ('apply', 'foreign_install'):
+        assert '--repair-incomplete' in admissions[1] and '--resume-incomplete' not in admissions[1]
+
+
+def test_resume_transport_requires_repair_transaction(tmp_path):
+    root, _, _, marker, _, _ = admission_fixture(tmp_path)
+    simulation = tmp_path / 'simulation'; simulation.write_text('')
+    with pytest.raises(admission.AdmissionError, match='resume requires repair'):
+        admission.invoke(root, 'transaction', simulation=simulation, resume_incomplete=True)
+    assert not marker.exists()

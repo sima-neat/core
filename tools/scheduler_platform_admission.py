@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import posixpath
+import re
 import subprocess
 import sys
 import tarfile
@@ -111,8 +112,11 @@ def authenticate_tool(prefix, selected):
     return tool
 
 
-def invoke(directory, action, *, installed=False, simulation=None, repair_incomplete=False):
+def invoke(directory, action, *, installed=False, simulation=None, repair_incomplete=False,
+           resume_incomplete=False):
     require(not installed or action == 'check', 'Installed verification requires check')
+    require(not resume_incomplete or (repair_incomplete and action == 'transaction'),
+            'Incomplete resume requires repair transaction admission')
     require(not repair_incomplete or action == 'transaction',
             'Incomplete package repair requires transaction admission')
     if action == 'transaction':
@@ -146,6 +150,8 @@ def invoke(directory, action, *, installed=False, simulation=None, repair_incomp
             command.extend(['--simulation', str(simulation.resolve(strict=True))])
         if repair_incomplete:
             command.append('--repair-incomplete')
+        if resume_incomplete:
+            command.append('--resume-incomplete')
         # No inherited source PYTHONPATH may override authenticated helper imports.
         env = {key: value for key, value in os.environ.items() if key not in ('PYTHONPATH', 'PYTHONHOME')}
         env['PYTHONDONTWRITEBYTECODE'] = '1'
@@ -200,28 +206,66 @@ def verify_plan(admission, simulation):
                     'APT would replace or remove an admitted Platform provider: ' + fields[1])
 
 
+def retirement_plan(result):
+    """Render an authenticated proposal for the installer's existing guards.
+
+    This validates transport identities only. Scheduler owns installed-state,
+    relationship and file-ownership eligibility; Core retains removal policy.
+    """
+    require(result.get('status') == 'PASS'
+            and result.get('scope') == 'read-only-package-retirement-proposal'
+            and result.get('repair_incomplete') is True,
+            'Invalid Scheduler retirement proposal')
+    retirements = result.get('retirements')
+    require(isinstance(retirements, dict), 'Missing Scheduler retirement identities')
+    lines, names = [], set()
+    for qualified, state in sorted(retirements.items()):
+        require(isinstance(qualified, str) and isinstance(state, dict),
+                'Invalid retirement identity')
+        match = re.fullmatch(r'([a-z0-9][a-z0-9+.-]*)(?::([a-z0-9][a-z0-9-]*))?', qualified)
+        version, architecture = state.get('version'), state.get('architecture')
+        require(match and match[1] not in names
+                and isinstance(version, str) and re.fullmatch(r'[0-9][A-Za-z0-9.+:~\-]*', version)
+                and isinstance(architecture, str) and re.fullmatch(r'[a-z0-9][a-z0-9-]*', architecture)
+                and (not match[2] or match[2] == architecture)
+                and state.get('status') == 'install ok installed',
+                'Invalid or ambiguous retirement identity: ' + qualified)
+        names.add(match[1])
+        lines.append(f'Remv {qualified} [{version}]\n')
+    return ''.join(lines)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('describe', 'check', 'check-if-declared',
-                                          'transaction-if-declared', 'verify-plan'))
+                                          'transaction-if-declared', 'retirements', 'verify-plan'))
     parser.add_argument('--directory', type=Path, default=Path.cwd())
     parser.add_argument('--installed', action='store_true')
     parser.add_argument('--baseline', type=Path)
     parser.add_argument('--simulation', type=Path)
     parser.add_argument('--repair-incomplete', action='store_true')
+    parser.add_argument('--resume-incomplete', action='store_true')
     parser.add_argument('--output', type=Path)
     args = parser.parse_args()
+    require(not args.resume_incomplete or (args.repair_incomplete
+            and args.action == 'transaction-if-declared'),
+            'Incomplete resume requires repair transaction admission')
     require(not args.repair_incomplete or args.action == 'transaction-if-declared',
             'Incomplete package repair requires transaction admission')
     if args.action == 'verify-plan':
         require(args.baseline and args.simulation, 'Plan verification requires admission and simulation')
         verify_plan(json.loads(args.baseline.read_text()), args.simulation)
         return
-    if args.action == 'transaction-if-declared':
+    if args.action == 'retirements':
+        require(not args.simulation and not args.installed and not args.baseline,
+                'Retirement proposal does not accept a simulation or provider comparison')
+        result = invoke(args.directory, 'retirements')
+    elif args.action == 'transaction-if-declared':
         require(args.simulation and not args.installed and not args.baseline,
                 'Transaction admission requires a simulation, not installed/provider comparison')
         result = optional_admission(args.directory, 'transaction', simulation=args.simulation,
-                                    repair_incomplete=args.repair_incomplete)
+                                    repair_incomplete=args.repair_incomplete,
+                                    resume_incomplete=args.resume_incomplete)
     else:
         require(not args.simulation, 'Simulation requires plan or transaction admission')
         result = (optional_board_check(args.directory, installed=args.installed)
@@ -229,7 +273,8 @@ def main():
                   else invoke(args.directory, args.action, installed=args.installed))
     if args.baseline:
         same_providers(json.loads(args.baseline.read_text()), result)
-    data = json.dumps(result, indent=2, sort_keys=True) + '\n'
+    data = (retirement_plan(result) if args.action == 'retirements'
+            else json.dumps(result, indent=2, sort_keys=True) + '\n')
     if args.output:
         with args.output.open('x') as stream:
             stream.write(data)
