@@ -92,6 +92,19 @@ owner must be replaced in the same package set with that file removed, or be
 covered by an explicitly declared and approved retirement. Duplicate incoming
 owners and unrelated ownership conflicts are rejected.
 
+On Platform 3.0, the complete split cohort also retires the monolithic
+`neat-runtime`, `neat-gst-plugins`, and `neat-internals-dev` 0.4, 0.5, and
+0.6.0 package lines, including development builds. Retirement requires matching
+bounded `Breaks` and `Replaces` declarations from the incoming owners; versions
+at or above `0.6.1~` are not covered. This does not authorize unrelated package
+removal or claim compatibility with the retired APIs.
+
+Firmware activation uses only the unique incoming package that delivers the
+activation helper. The installed package identity, helper ownership, executable
+mode, and bytes must match that selected package. If the package set delivers no
+helper, installation leaves existing firmware alone rather than invoking a helper
+left by an earlier installation. A selected but mismatched helper fails installation.
+
 If installation on the DevKit was interrupted, rerun the complete verified distribution. The
 installer can recover incomplete packages only when they belong to that incoming
 package set and match its architectures. Recovery must install the exact selected

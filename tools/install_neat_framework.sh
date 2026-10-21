@@ -69,7 +69,7 @@ set -euo pipefail
 #   board installer refreshes APT metadata before installing local DEBs. AUTO
 #   refreshes only when /var/lib/apt/lists has no package index files.
 # - NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD: ON/OFF (default: ON) activate
-#   staged EV74 firmware after board package replacement.
+#   staged EV74 firmware from the selected package set after board replacement.
 # - NEAT_INSTALLER_SENTINEL_REQUIRED: ON/OFF (default: OFF) fail the board
 #   install when Sentinel, the telemetry daemon Model::benchmark() reads,
 #   cannot be installed. OFF warns and continues; CI sets ON.
@@ -211,8 +211,8 @@ find_verified_bundled_replacement() {
   return 1
 }
 
-# Runner replaces the retired 0.4/0.5 Neat implementation packages, not their
-# legacy API. Prove that narrow retirement without claiming fake Provides.
+# Runner/Scheduler replace the retired 0.4/0.5/0.6.0 monolithic implementation
+# packages, not their legacy API. Prove bounded retirement without fake Provides.
 find_verified_runner_retirement() {
   local removed_package="$1" installed_version="$2"
   shift 2
@@ -226,19 +226,29 @@ try:
 except (OSError, ValueError):
     raise SystemExit(1)
 PYRETIRE
-  dpkg --compare-versions "${installed_version}" lt '0.6~' || return 1
-  local deb field relations expected role runner="" scheduler=""
-  expected="${removed_package} (<< 0.6~)"
+  dpkg --compare-versions "${installed_version}" lt '0.6.1~' || return 1
+  local deb field relations expected role runner="" scheduler="" admitted
+  local legacy_expected=""
+  expected="${removed_package} (<< 0.6.1~)"
+  # Preserve previously admitted local cohorts with the older, narrower bound.
+  if dpkg --compare-versions "${installed_version}" lt '0.6~'; then
+    legacy_expected="${removed_package} (<< 0.6~)"
+  fi
   for deb in "$@"; do
     [[ -f "${deb}" ]] || continue
     role="$(dpkg-deb -f "${deb}" Package 2>/dev/null)"
     case "${role}" in simaai-runner|simaai-scheduler) ;; *) continue ;; esac
+    admitted=1
     for field in Breaks Replaces; do
       relations="$(dpkg-deb -f "${deb}" "${field}" 2>/dev/null | tr ',' '\n' |
         sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]+/ /g')"
-      grep -Fxq -- "${expected}" <<< "${relations}" || break
+      if ! grep -Fxq -- "${expected}" <<< "${relations}" &&
+         ! { [[ -n "${legacy_expected}" ]] && grep -Fxq -- "${legacy_expected}" <<< "${relations}"; }; then
+        admitted=0
+        break
+      fi
     done
-    if [[ "${field}" == Replaces ]] && grep -Fxq -- "${expected}" <<< "${relations}"; then
+    if [[ "${admitted}" == 1 ]]; then
       if [[ "${role}" == simaai-runner ]]; then
         [[ -z "${runner}" ]] || return 1
         runner="${deb}"
@@ -1258,19 +1268,68 @@ stop_board_runtime_before_install() {
 }
 
 activate_board_runtime_after_install() {
-  if [[ "${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD}" == "ON" &&
-        -x /usr/libexec/sima-neat-firmware/install.sh ]]; then
-    local force_install=0
-    if [[ "${FORCE_INSTALL:-}" == "1" ]]; then
-      force_install=1
-    fi
-    log "Activating staged EV74 firmware."
-    # Scope the normalized override to activation, after sudo environment filtering.
-    # Do not preserve unrelated caller variables or expand SKIP_PLATFORM_CHECK.
-    run_sudo env "FORCE_INSTALL=${force_install}" /usr/libexec/sima-neat-firmware/install.sh --activate
-  else
+  if [[ "${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD}" != ON ]]; then
     log "EV74 firmware activation skipped."
+    return 0
   fi
+
+  # Activate only a helper delivered by this transaction, never ambient firmware
+  # left behind by a previously installed runtime or a different cohort.
+  local helper=/usr/libexec/sima-neat-firmware/install.sh
+  local deb listing selected="" package version architecture installed expected owner staged
+  for deb in "${DEBS[@]}"; do
+    if ! listing="$(dpkg-deb --fsys-tarfile "${deb}" | tar -tf -)"; then
+      echo "Cannot inspect selected DEB firmware payload: ${deb}" >&2
+      return 1
+    fi
+    if grep -Fxq -e ".${helper}" -e "${helper#/}" \
+        -e ".${helper}/" -e "${helper#/}/" <<< "${listing}"; then
+      if [[ -n "${selected}" ]]; then
+        echo "Multiple selected DEBs own the EV74 activation helper." >&2
+        return 1
+      fi
+      selected="${deb}"
+    fi
+  done
+  if [[ -z "${selected}" ]]; then
+    log "EV74 firmware activation skipped: no selected package delivers the helper."
+    return 0
+  fi
+
+  package="$(dpkg-deb -f "${selected}" Package)" || return 1
+  version="$(dpkg-deb -f "${selected}" Version)" || return 1
+  architecture="$(dpkg-deb -f "${selected}" Architecture)" || return 1
+  [[ -n "${package}" && -n "${version}" && -n "${architecture}" ]] || return 1
+  installed="$(dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\t${db:Status-Abbrev}' "${package}")" || return 1
+  printf -v expected '%s\t%s\t%s\tii ' "${package}" "${version}" "${architecture}"
+  owner="$(dpkg-query -S "${helper}")" || return 1
+  if [[ "${installed}" != "${expected}" ||
+        ( "${owner}" != "${package}: ${helper}" &&
+          "${owner}" != "${package}:${architecture}: ${helper}" ) ]]; then
+    echo "Installed EV74 activation helper is not owned by the exact configured selected package." >&2
+    return 1
+  fi
+
+  staged="$(mktemp -d /tmp/sima-neat-firmware-admission-XXXXXX)" || return 1
+  INSTALLER_TMP_DIRS+=("${staged}")
+  dpkg-deb -x "${selected}" "${staged}" || return 1
+  local packaged_helper="${staged}${helper}"
+  if [[ ! -f "${packaged_helper}" || ! -x "${packaged_helper}" || -L "${packaged_helper}" ||
+        ! -f "${helper}" || ! -x "${helper}" || -L "${helper}" ]] ||
+     ! cmp -s "${packaged_helper}" "${helper}" ||
+     [[ "$(stat -c '%a' "${packaged_helper}")" != "$(stat -c '%a' "${helper}")" ]]; then
+    echo "Installed EV74 activation helper does not match the selected executable payload." >&2
+    return 1
+  fi
+
+  local force_install=0
+  if [[ "${FORCE_INSTALL:-}" == "1" ]]; then
+    force_install=1
+  fi
+  log "Activating staged EV74 firmware from ${package} ${version}."
+  # Scope the normalized override to activation, after sudo environment filtering.
+  # Do not preserve unrelated caller variables or expand SKIP_PLATFORM_CHECK.
+  run_sudo env "FORCE_INSTALL=${force_install}" "${helper}" --activate
 }
 
 restart_board_codec_services() {
@@ -1648,7 +1707,7 @@ complete_board_install_after_packages() {
   repair_global_sima_neat_lib_links
   verify_global_sima_neat_lib_links
   verify_canonical_palette_installation
-  activate_board_runtime_after_install
+  activate_board_runtime_after_install || return $?
   restart_board_codec_services
   verify_board_codec_services
   if [[ -n "${direct_platform_before}" ]]; then

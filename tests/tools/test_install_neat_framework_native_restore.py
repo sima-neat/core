@@ -624,9 +624,13 @@ install_ros2_sdk_tvm_runtime
 
 
 class ForceInstallTest(unittest.TestCase):
-    def run_activation_fixture(self, script: str, exit_code: int = 0) -> subprocess.CompletedProcess[str]:
+    def run_activation_fixture(
+        self, script: str, exit_code: int = 0, *, selected: bool = True,
+        invalid: str = "", package: str = "neat-ev74-firmware",
+    ) -> subprocess.CompletedProcess[str]:
         # Redirect only the fixed firmware path in a temporary installer copy;
         # never create or execute firmware under the host's /usr/libexec.
+        # The selected archive is real; only the installed dpkg database is faked.
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             firmware = root / "firmware.sh"
@@ -635,17 +639,121 @@ class ForceInstallTest(unittest.TestCase):
                 'printf "FIRMWARE_FORCE=%s ARG=%s\\n" "${FORCE_INSTALL-unset}" "$1"\n'
                 f"exit {exit_code}",
             )
+            payload = root / "package"
+            control = payload / "DEBIAN" / "control"
+            control.parent.mkdir(parents=True)
+            control.write_text(
+                f"Package: {package}\nVersion: 0.6.0+fixture\nArchitecture: all\n"
+                "Maintainer: Test <test@example.invalid>\nDescription: inert activation fixture\n"
+            )
+            packaged_helper = payload / firmware.relative_to("/")
+            packaged_helper.parent.mkdir(parents=True)
+            shutil.copy2(firmware, packaged_helper)
+            if invalid == "packaged-symlink":
+                packaged_helper.unlink()
+                packaged_helper.symlink_to(firmware)
+            elif invalid == "packaged-mode":
+                packaged_helper.chmod(0o644)
+            elif invalid == "packaged-directory":
+                packaged_helper.unlink()
+                packaged_helper.mkdir()
+            elif invalid == "unselected-payload":
+                packaged_helper.unlink()
+            archive = root / "firmware.deb"
+            subprocess.run(["dpkg-deb", "--build", "--root-owner-group", str(payload), str(archive)],
+                           check=True, capture_output=True, text=True)
+            if invalid == "archive":
+                archive.write_bytes(b"not a Debian archive")
+            if invalid == "missing":
+                firmware.unlink()
+            elif invalid == "symlink":
+                target = root / "other.sh"
+                firmware.rename(target)
+                firmware.symlink_to(target)
+            elif invalid == "content":
+                firmware.write_text(firmware.read_text() + "# not selected bytes\n")
+            elif invalid == "mode":
+                firmware.chmod(0o700)
+            version = "0.5.0" if invalid == "version" else "0.6.0+fixture"
+            architecture = "arm64" if invalid == "architecture" else "all"
+            status = "iU " if invalid == "status" else "ii "
+            owner = "unrelated-package" if invalid == "owner" else package
+            debs = f'"{archive}"' if selected else ""
+            if invalid == "duplicate":
+                debs += f' "{archive}"'
+            fixture = f"""DEBS=({debs})
+dpkg-query() {{
+  case "$1" in
+    -W) printf '%s\\t%s\\t%s\\t%s' '{package}' '{version}' '{architecture}' '{status}' ;;
+    -S) printf '%s: %s\\n' '{owner}' '{firmware}' ;;
+    *) return 99 ;;
+  esac
+}}
+"""
+            if invalid == "extraction":
+                fixture += 'dpkg-deb() { [[ "$1" != -x ]] || return 72; command dpkg-deb "$@"; }\n'
             installer = root / "installer.sh"
             source = INSTALLER.read_text()
             fixed_path = "/usr/libexec/sima-neat-firmware/install.sh"
-            self.assertEqual(source.count(fixed_path), 2)
-            installer.write_text(source.replace(fixed_path, str(firmware)))
+            self.assertIn(fixed_path, source)
+            guard = 'if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then'
+            self.assertEqual(source.count(guard), 1)
+            installer.write_text(source.replace(fixed_path, str(firmware)).replace(guard, fixture + guard))
             return subprocess.run(
                 ["bash", "-c", script, "bash", str(installer)],
                 check=False,
                 text=True,
                 capture_output=True,
             )
+
+    def test_ambient_firmware_without_selected_package_is_not_activated(self) -> None:
+        result = self.run_activation_fixture(r"""
+source "$1"
+FORCE_INSTALL=1
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON
+run_sudo() { printf 'UNEXPECTED_ACTIVATION\n'; return 99; }
+activate_board_runtime_after_install
+""", selected=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("EV74 firmware activation skipped", result.stdout)
+        self.assertNotIn("UNEXPECTED_ACTIVATION", result.stdout)
+
+    def test_selected_firmware_must_match_installed_identity_owner_and_payload(self) -> None:
+        for invalid in ("version", "architecture", "status", "owner", "missing", "symlink",
+                        "content", "mode", "packaged-symlink", "packaged-mode", "packaged-directory",
+                        "duplicate", "archive", "extraction"):
+            with self.subTest(invalid=invalid):
+                result = self.run_activation_fixture(r"""
+source "$1"
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON
+FORCE_INSTALL=1
+run_sudo() { printf 'UNEXPECTED_ACTIVATION\n'; }
+activate_board_runtime_after_install
+""", invalid=invalid)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertNotIn("UNEXPECTED_ACTIVATION", result.stdout)
+
+    def test_other_selected_package_does_not_activate_ambient_firmware(self) -> None:
+        result = self.run_activation_fixture(r"""
+source "$1"
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON
+FORCE_INSTALL=1
+run_sudo() { printf 'UNEXPECTED_ACTIVATION\n'; return 99; }
+activate_board_runtime_after_install
+""", package="other-product", invalid="unselected-payload")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("EV74 firmware activation skipped", result.stdout)
+        self.assertNotIn("UNEXPECTED_ACTIVATION", result.stdout)
+
+    def test_selected_payload_owner_can_be_renamed(self) -> None:
+        result = self.run_activation_fixture(r"""
+source "$1"
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON
+run_sudo() { env -i PATH="$PATH" "$@"; }
+activate_board_runtime_after_install
+""", package="renamed-firmware-provider")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("FIRMWARE_FORCE=0 ARG=--activate", result.stdout)
 
     def test_activation_normalizes_force_after_privilege_environment_filtering(self) -> None:
         for sanitized in (False, True):
@@ -699,6 +807,27 @@ printf 'UNEXPECTED_SUCCESS\n'
 """, exit_code=23)
         self.assertEqual(result.returncode, 23, result.stderr)
         self.assertIn("FIRMWARE_FORCE=1 ARG=--activate", result.stdout)
+        self.assertNotIn("UNEXPECTED_", result.stdout)
+
+    def test_activation_failure_stops_conditional_board_completion(self) -> None:
+        result = self.run_activation_fixture(r"""
+source "$1"
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON
+run_sudo() { env -i PATH="$PATH" "$@"; }
+board_runtime_is_legacy() { return 1; }
+repair_global_sima_neat_lib_links() { :; }
+verify_global_sima_neat_lib_links() { :; }
+verify_canonical_palette_installation() { :; }
+restart_board_codec_services() { printf 'UNEXPECTED_RESTART\n'; }
+verify_board_codec_services() { printf 'UNEXPECTED_VERIFY\n'; }
+if complete_board_install_after_packages; then
+  printf 'UNEXPECTED_SUCCESS\n'
+  exit 0
+else
+  exit "$?"
+fi
+""", exit_code=23)
+        self.assertEqual(result.returncode, 23, result.stderr)
         self.assertNotIn("UNEXPECTED_", result.stdout)
 
     def test_paired_force_reaches_activation_in_clean_remote_environment(self) -> None:
@@ -1464,19 +1593,57 @@ repair_global_sima_neat_lib_links
 
 
 class RunnerRetirementTest(unittest.TestCase):
+    def test_retirement_requires_both_bounded_relationships_from_each_owner(self):
+        for removed in ("neat-runtime", "neat-gst-plugins"):
+            for missing_owner in ("runner", "scheduler"):
+                if removed == "neat-gst-plugins" and missing_owner == "runner":
+                    continue  # Scheduler alone owns the plugin replacement.
+                for missing_field in ("Breaks", "Replaces"):
+                    with self.subTest(removed=removed, owner=missing_owner, field=missing_field):
+                        result = run_bash(rf'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+printf '%s\n' '{{"platform-version":"3.0.0"}}' > "$tmp/manifest.json"
+resolve_package_manifest_path() {{ printf '%s' "$tmp/manifest.json"; }}
+touch "$tmp/runner.deb" "$tmp/scheduler.deb"
+printf '%s\n' 'Remv {removed} [0.6.0+preview.arbitrary]' > "$tmp/simulation"
+dpkg-query() {{ printf '%s' '0.6.0+preview.arbitrary'; }}
+dpkg-deb() {{
+  [[ "$2:$3" != *'/{missing_owner}.deb:{missing_field}' ]] || return 1
+  case "$3" in
+    Package) if [[ "$2" == *scheduler.deb ]]; then printf simaai-scheduler; else printf simaai-runner; fi ;;
+    Breaks|Replaces) printf '%s' '{removed} (<< 0.6.1~)' ;;
+    *) return 1 ;;
+  esac
+}}
+verify_simulated_package_removals "$tmp/simulation" "$tmp/runner.deb" "$tmp/scheduler.deb"
+''')
+                        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_only_bounded_native_retirement_is_allowed(self):
         cases = [
-            ("neat-runtime", "0.5.0+3.0.0-prep.abc", "3.0.0", "simaai-runtime", "<< 0.6~", False),
-            ("neat-gst-plugins", "0.4.0+local.abc", "3.0.0", "simaai-runtime", "<< 0.6~", False),
-            ("neat-runtime", "0.6.0", "3.0.0", "simaai-runtime", "<< 0.6~", False),
-            ("neat-runtime", "0.5.0", "2.1.3", "simaai-runtime", "<< 0.6~", False),
-            ("neat-runtime", "0.5.0", "3.0.0", "other-runtime", "<< 0.6~", False),
+            ("neat-runtime", "0.5.0+3.0.0-prep.abc", "3.0.0", "simaai-runtime", "<< 0.6.1~", False),
+            ("neat-gst-plugins", "0.4.0+local.abc", "3.0.0", "simaai-runtime", "<< 0.6.1~", False),
+            ("neat-runtime", "0.6.0", "3.0.0", "simaai-runtime", "<< 0.6.1~", False),
+            ("neat-runtime", "0.5.0", "2.1.3", "simaai-runtime", "<< 0.6.1~", False),
+            ("neat-runtime", "0.5.0", "3.0.0", "other-runtime", "<< 0.6.1~", False),
             ("neat-runtime", "0.5.0", "3.0.0", "simaai-runtime", "<< 9.0", False),
-            ("simaai-palette-modalix", "0.5.0", "3.0.0", "simaai-runtime", "<< 0.6~", False),
+            ("simaai-palette-modalix", "0.5.0", "3.0.0", "simaai-runtime", "<< 0.6.1~", False),
         ]
         cases.extend([
-            ("neat-gst-plugins", "0.5.0", "3.0.0", "simaai-scheduler", "<< 0.6~", True),
-            ("neat-runtime", "0.5.0", "3.0.0", "simaai-runner", "<< 0.6~", False),
+            ("neat-gst-plugins", "0.4.0+local.abc", "3.0.0", "simaai-scheduler", "<< 0.6.1~", True),
+            ("neat-gst-plugins", "0.5.0", "3.0.0", "simaai-scheduler", "<< 0.6.1~", True),
+            ("neat-gst-plugins", "0.6.0", "3.0.0", "simaai-scheduler", "<< 0.6.1~", True),
+            ("neat-gst-plugins", "0.6.0+develop.ce6b01ccdc94", "3.0.0", "simaai-scheduler", "<< 0.6.1~", True),
+            ("neat-gst-plugins", "0.6.0+preview.arbitrary", "3.0.0", "simaai-scheduler", "<< 0.6.1~", True),
+            ("neat-gst-plugins", "0.6.1~rc1", "3.0.0", "simaai-scheduler", "<< 0.6.1~", False),
+            ("neat-gst-plugins", "0.6.1", "3.0.0", "simaai-scheduler", "<< 0.6.1~", False),
+            ("neat-gst-plugins", "0.6.0", "2.1.3", "simaai-scheduler", "<< 0.6.1~", False),
+            ("neat-gst-plugins", "0.4.0", "3.0.0", "simaai-scheduler", "<< 0.6~", True),
+            ("neat-gst-plugins", "0.5.0+preview.arbitrary", "3.0.0", "simaai-scheduler", "<< 0.6~", True),
+            ("neat-gst-plugins", "0.6.0", "3.0.0", "simaai-scheduler", "<< 0.6~", False),
+            ("neat-runtime", "0.5.0", "3.0.0", "simaai-runner", "<< 0.6.1~", False),
             ("neat-gst-plugins", "0.5.0", "3.0.0", "simaai-scheduler", "<< 9.0", False),
         ])
         for removed, version, platform, package, bound, accepted in cases:
@@ -1502,7 +1669,11 @@ verify_simulated_package_removals "$tmp/simulation" "$tmp/runner.deb"
                 self.assertEqual(result.returncode == 0, accepted, result.stdout + result.stderr)
 
     def test_split_support_retirement_requires_both_real_providers(self):
-        for include_scheduler in (False, True):
+        for version, include_scheduler, bound in ((version, selected, bound)
+                for version in ("0.4.0", "0.5.0", "0.6.0", "0.6.0+develop.ce6b01ccdc94",
+                                "0.6.0+preview.arbitrary", "0.6.1~rc1", "0.6.1")
+                for selected in (False, True)
+                for bound in ("0.6~", "0.6.1~")):
             extra = '\"$tmp/scheduler.deb\"' if include_scheduler else ''
             result = run_bash(r'''
 source "$1"
@@ -1516,12 +1687,15 @@ dpkg-query() { printf '%s' '0.5.0'; }
 dpkg-deb() {
   case "$3" in
     Package) if [[ "$2" == *scheduler.deb ]]; then printf simaai-scheduler; else printf simaai-runner; fi ;;
-    Breaks|Replaces) printf '%s' 'neat-runtime (<< 0.6~)' ;;
+    Breaks|Replaces) printf '%s' 'neat-runtime (<< 0.6.1~)' ;;
     *) return 1 ;;
   esac
 }
-verify_simulated_package_removals "$tmp/simulation" "$tmp/runner.deb" ''' + extra)
-            self.assertEqual(result.returncode == 0, include_scheduler, result.stdout + result.stderr)
+verify_simulated_package_removals "$tmp/simulation" "$tmp/runner.deb" '''.replace("0.5.0", version).replace("0.6.1~", bound) + extra)
+            self.assertEqual(result.returncode == 0,
+                             include_scheduler and not version.startswith("0.6.1")
+                             and (bound == "0.6.1~" or version.startswith(("0.4", "0.5"))),
+                             (version, include_scheduler, bound, result.stdout + result.stderr))
 
 
 class InstalledCoreLibraryLayoutTest(unittest.TestCase):
