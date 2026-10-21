@@ -207,7 +207,10 @@ ensure_neat_llima
 
     def test_sdk_build_uses_the_selected_cross_compiler_headers(self) -> None:
         text = build_script()
-        self.assertIn("aarch64-linux-gnu-g++ -dumpversion", text)
+        self.assertIn('${CXX:-aarch64-linux-gnu-g++}', text)
+        self.assertIn('for query in ("-dumpversion", "-dumpmachine"):', text)
+        self.assertIn('subprocess.check_output([*compiler, query]', text)
+        self.assertIn('-nostdinc++${cpp_header_flags}', text)
         self.assertIn("usr/include/c++/${cross_gcc_major}", text)
         self.assertNotIn("usr/include/c++/12", text)
 

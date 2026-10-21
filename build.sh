@@ -1675,19 +1675,49 @@ configure_cmake() {
     export PKG_CONFIG_SYSROOT_DIR="${PKG_CONFIG_SYSROOT_DIR:-${SYSROOT}}"
     export PKG_CONFIG_LIBDIR="${PKG_CONFIG_LIBDIR:-$(IFS=:; echo "${pkgconfig_dirs[*]}")}"
     export PKG_CONFIG_EXECUTABLE="${pkg_config_executable}"
-    local cross_gcc_major
-    cross_gcc_major="$(aarch64-linux-gnu-g++ -dumpversion)"
+    local compiler_identity cross_gcc_major cross_target
+    # CMake accepts CXX as a quoted command with arguments, not just a filename.
+    # Query that same argv without evaluating shell substitutions or operators.
+    compiler_identity="$(python3 - "${CXX:-aarch64-linux-gnu-g++}" <<'PY'
+import shlex
+import subprocess
+import sys
+
+compiler = shlex.split(sys.argv[1])
+if not compiler:
+    raise SystemExit("ERROR: Empty CXX compiler command.")
+for query in ("-dumpversion", "-dumpmachine"):
+    print(subprocess.check_output([*compiler, query], text=True).strip())
+PY
+)"
+    cross_gcc_major="${compiler_identity%%$'\n'*}"
     cross_gcc_major="${cross_gcc_major%%.*}"
+    cross_target="${compiler_identity#*$'\n'}"
     if [[ ! "${cross_gcc_major}" =~ ^[0-9]+$ ]]; then
       echo "ERROR: Cannot determine the cross compiler major version." >&2
       exit 1
     fi
-    if [[ -d "${SYSROOT}/usr/include/c++/${cross_gcc_major}" ]]; then
-      export CXXFLAGS="${CXXFLAGS:-} -isystem ${SYSROOT}/usr/include/c++/${cross_gcc_major}"
+    if [[ ! "${cross_target}" =~ ^[A-Za-z0-9_-]+$ ]]; then
+      echo "ERROR: Cannot determine the cross compiler target." >&2
+      exit 1
     fi
-    if [[ -d "${SYSROOT}/usr/include/aarch64-linux-gnu/c++/${cross_gcc_major}" ]]; then
-      export CXXFLAGS="${CXXFLAGS:-} -isystem ${SYSROOT}/usr/include/aarch64-linux-gnu/c++/${cross_gcc_major}"
+    local cxx_headers="${SYSROOT}/usr/include/c++/${cross_gcc_major}"
+    local target_headers="${SYSROOT}/usr/include/${cross_target}"
+    if [[ ! -f "${cxx_headers}/vector" ||
+          ! -f "${target_headers}/c++/${cross_gcc_major}/bits/c++config.h" ||
+          ! -f "${SYSROOT}/usr/include/stdlib.h" ]]; then
+      echo "ERROR: Selected SDK lacks the ${cross_target} GCC ${cross_gcc_major} C++/C header cohort." >&2
+      exit 1
     fi
+    # Select one SDK libstdc++ cohort. Otherwise #include_next in its C wrappers
+    # can reach the compiler's second wrapper (same guard) instead of target libc.
+    # Keep target libc after C++ wrappers and never borrow missing C++ headers.
+    local -a cpp_header_dirs=("${cxx_headers}" "${target_headers}/c++/${cross_gcc_major}")
+    [[ ! -d "${cxx_headers}/backward" ]] || cpp_header_dirs+=("${cxx_headers}/backward")
+    cpp_header_dirs+=("${target_headers}" "${SYSROOT}/usr/include")
+    local cpp_header_flags
+    printf -v cpp_header_flags ' -isystem %q' "${cpp_header_dirs[@]}"
+    export CXXFLAGS="${CXXFLAGS:-} -nostdinc++${cpp_header_flags}"
 
     cmake_args+=(
       -DCMAKE_SYSROOT="${SYSROOT}"
