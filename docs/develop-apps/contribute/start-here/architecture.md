@@ -201,22 +201,14 @@ DMA storage. Platform boot-time MLA initialization remains a platform dependency
 
 ### Memory ownership
 
-Runtime owns allocation identity, DMA-BUF retention and CPU/device access scopes.
-Core's Tensor/GstMemory adapters retain the current sample and producer loan until
-the mapping ends. They do not attach physical addresses from metadata, load
-`libsimaaimem`, or maintain a second allocation registry.
+Core uses Scheduler's allocation and mapping interfaces, not physical addresses
+attached from metadata, `libsimaaimem`, or a second allocation registry. See the
+[memory model](../../advanced-concepts/data-model-contracts/memory_model.md)
+for CPU access, mapping lifetimes, imported memory and parent-batch constraints.
 
-A CPU mapping acquires visibility and releases it before its producer loan. Partial
-writes preserve neighboring cache-line bytes. Failed synchronization quarantines
-the affected Runtime allocation rather than returning it to normal reuse.
+Core does not choose a cache-coherency mode from graph topology.
 `RunAdvancedOptions::prepare_output_cpu_visible` remains for options-layout
 compatibility; no redundant eager synchronization runs before the real mapping.
-
-Core does not choose a cache-coherency mode from graph topology. Scheduler
-prepares CPU/device access through Runner's shared memory authority. MLA and EV
-publish completed device writes without an eager CPU READ epoch; the actual A65
-consumer establishes required visibility when its checked access begins. Device-only
-successors perform no CPU visibility work. Independent-frame overlap is preserved.
 The source-compatible `defer_output_invalidate` option must remain true; false is
 rejected rather than restoring a producer-side slow path.
 
@@ -232,12 +224,6 @@ This overlap does not remove cache maintenance or shorten the dependency chain
 within one frame. It avoids exposing independent CPU and device work as serial
 pipeline stalls, without another synchronization worker. Graph construction sets
 budgets once; no per-frame operation-specific scheduling policy is needed.
-
-Each public DMA mapping retains its own Scheduler lease. Compatible reads share
-Runner's access authority, including overlapping views; writes remain excluded.
-Virtual addresses from separate mappings need not be identical. Releasing one
-reader cannot invalidate another, and only the final owner performs the required
-END transition. The default prepared-stage memory engine remains unchanged.
 
 ### Explicit frame-arena capacity preference
 
@@ -278,19 +264,8 @@ No environment opt-in or whole-graph Legacy downgrade remains. Core uses only
 Scheduler allocation, mapping and stage interfaces. Public tensor geometry,
 Kernels requests and numerical behavior are unchanged.
 
-Scheduler retains the current frame while Runner enforces CPU/device exclusion,
-logical-range hazards and generation-based visibility. Owned cached CMA requires
-cold platform and exporter admission; failure is actionable, not permission to
-fall back to whole-buffer synchronization. Imported DMA-BUFs and other heaps keep
-their exporter contract through the same ownership engine.
-
-CPU READ maintenance runs when the A65 worker acquires access, not on backend
-completion callbacks. Private all-A65 recipes may retain an explicit parent batch;
-children require the live parent capability, exact permissions and range coverage.
-Final parent release cleans writes after every child has retired. Mixed device
-phases do not receive implicit batch membership. No hidden staging copy is added.
-Raw-FD writers and custom callbacks must still honor the ownership contract;
-removing a graph allowlist does not prove that untracked access is safe.
+The [memory model](../../advanced-concepts/data-model-contracts/memory_model.md)
+defines the shared access-acquisition and lifetime contract.
 
 #### Mapping a logical DMA-backed tensor
 
@@ -1488,13 +1463,6 @@ partial.
 
 Copy-count and ownership contracts are not FPS guarantees. Benchmark equivalent
 output policies and validation settings when comparing throughput.
-
-Transport boundaries preserve backing allocation identity, checked offsets and
-lengths, and original pool-buffer ownership. Metadata-only envelopes share memory
-and retain the pool parent. A Tensor mapping retains both its map guard and the
-current storage/loan; CPU cache synchronization ends before those owners release.
-EV/CVU and MLA imports retain the producer until completion. Unknown completion
-must not recycle potentially active storage.
 
 DMA-BUF-preserving outputs consume deduplicated holder credits. Queue/credit
 pressure cannot activate a payload-copy fallback or silently change `Block` into

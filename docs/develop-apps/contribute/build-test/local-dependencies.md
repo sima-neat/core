@@ -237,9 +237,7 @@ Code hygiene downloads this run's `neat-core-dist`, verifies it, and invokes the
 real Core delegate and installed Scheduler coordinator in headers-only mode.
 The coordinator checks the same lower packages and authenticated platform build
 evidence used by the build. Only Scheduler's frontend prefix is exposed to Core
-analysis. LLiMa remains a direct Core dependency: analysis downloads the exact development archive named
-by the Core build receipt, not a second mutable latest. This is host tooling
-validation, not target execution.
+analysis. This is host tooling validation, not target execution.
 
 See [Hardware test ownership](./hardware-test-safety.md) for the target-side
 supervisor required by the guarded performance lane.
