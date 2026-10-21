@@ -136,6 +136,9 @@ BenchmarkReport build_benchmark_report_from_measurements(const MeasureReport& la
                                                          int throughput_samples,
                                                          Telemetry telemetry);
 
+TensorSpec resolve_benchmark_input_spec(TensorSpec spec, const ResolvedPreprocessPlan& plan,
+                                        const BenchmarkOptions& options);
+
 PreprocessRuntimeMeta resolve_benchmark_preprocess_meta(const Tensor& tensor,
                                                         const ResolvedPreprocessPlan& plan,
                                                         const PreprocessContractFlags& flags,

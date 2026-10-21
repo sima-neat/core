@@ -120,6 +120,9 @@ struct BenchmarkReport {
  * source coordinates. Set `original_width` and `original_height` together to benchmark a specific
  * source geometry. When they are omitted, the benchmark infers geometry from the resolved
  * preprocess and model ingress contracts, preserving the behavior of `benchmark(num_samples)`.
+ * Image preprocessing routes allocate the synthetic image at that source geometry. Tensor
+ * routes (including cast/quantize) retain the model input shape; the source geometry is used
+ * only for BoxDecode metadata.
  * Per-run benchmark geometry takes precedence over deprecated model-construction BoxDecode hints.
  */
 struct BenchmarkOptions {
