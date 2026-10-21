@@ -7,10 +7,12 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <sys/socket.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 #include <yaml-cpp/yaml.h>
 
 #include <chrono>
+#include <atomic>
 #include <cstdlib>
 #include <new>
 #include <cmath>
@@ -66,6 +68,20 @@ void operator delete(void* pointer, std::size_t) noexcept {
 }
 void operator delete[](void* pointer, std::size_t) noexcept {
   std::free(pointer);
+}
+
+// Executable-local observation, not a product timing hook. Each strict poll
+// brackets a real UTC read. Count those reads to detect a terminal-failure loop;
+// HTTP counts cannot see it because the failure returns before another request.
+namespace telemetry_clock_probe {
+std::atomic<bool> enabled{false};
+std::atomic<std::uint64_t> utc_reads{0};
+} // namespace telemetry_clock_probe
+extern "C" int clock_gettime(clockid_t clock, struct timespec* value) noexcept {
+  if (clock == CLOCK_REALTIME && telemetry_clock_probe::enabled.load()) {
+    ++telemetry_clock_probe::utc_reads;
+  }
+  return static_cast<int>(::syscall(SYS_clock_gettime, clock, value));
 }
 
 namespace {
@@ -828,12 +844,42 @@ void benchmark_rejects_bad_samples_without_changing_public_rollback() {
     std::this_thread::sleep_for(2ms);
     sentinel.take_sample(3.0, timestamp_of(std::chrono::system_clock::now()));
     wait_for_samples(monitor, 1);
+    const int before = sentinel.requests("/v1/samples/latest");
     sentinel.take_sample(7.0, invalid);
+    const auto deadline = Clock::now() + 2s;
+    while (sentinel.requests("/v1/samples/latest") == before && Clock::now() < deadline) {
+      std::this_thread::sleep_for(1ms);
+    }
+    require(sentinel.requests("/v1/samples/latest") > before,
+            "the worker observes the bad sample before the benchmark is sealed");
+    telemetry_clock_probe::utc_reads = 0;
+    telemetry_clock_probe::enabled = true;
+    std::this_thread::sleep_for(600ms);
+    telemetry_clock_probe::enabled = false;
+    const auto terminal_polls = telemetry_clock_probe::utc_reads.load();
+    require(monitor.running(), "a failed worker remains an active monitor until stop joins it");
     TelemetryMonitorAccess::seal_benchmark(monitor);
     const auto result = monitor.stop();
+    require(terminal_polls <= 4, "terminal attribution failure must stop polling, got " +
+                                     std::to_string(terminal_polls) +
+                                     " UTC reads in the open benchmark window");
     require(result.samples == 0 && result.power_som_watts.samples == 0 &&
                 result.status.find("timestamps") != std::string::npos,
             "invalid benchmark chronology clears all partial aggregates: " + result.status);
+    require(!monitor.running() && monitor.stop().status == result.status,
+            "stop joins the failed worker and repeated stop preserves the failure");
+
+    sentinel.take_sample(11.0, timestamp_of(std::chrono::system_clock::now()));
+    TelemetryMonitorAccess::prepare_benchmark(monitor);
+    TelemetryMonitorAccess::arm_benchmark(monitor);
+    std::this_thread::sleep_for(2ms);
+    sentinel.take_sample(13.0, timestamp_of(std::chrono::system_clock::now()));
+    wait_for_samples(monitor, 1);
+    TelemetryMonitorAccess::seal_benchmark(monitor);
+    const auto restarted = monitor.stop();
+    require(restarted.status == "ok" && restarted.samples == 1,
+            "a new benchmark resets terminal failure and starts a new worker");
+    require_near(restarted.power_som_watts.mean, 13.0, "restarted benchmark attribution");
   }
 }
 

@@ -489,6 +489,11 @@ private:
           }
         }
         next = poll();
+        if (strict_failure_) {
+          // Attribution cannot recover within this benchmark. Leave stop() to
+          // join and finalize the failed result without polling its timed window.
+          return;
+        }
       }
     } catch (...) {
       // Diagnostics may also be out of memory. Preserve failure without an
