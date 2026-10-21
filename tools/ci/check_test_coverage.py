@@ -35,6 +35,7 @@ def is_host_contract(test):
     scripts = {
         'unit_kernel_runner_default_contract': 'tests/tools/check_kernel_runner_default.py',
         'unit_python_runtime_bootstrap': 'tests/tools/test_python_runtime_bootstrap.py',
+        'test_codec_fixture_preparation': 'tests/perf/tools/test_codec_fixture_preparation.py',
         'test_perf_schema': 'tests/perf/tools/test_perf_schema.py',
         'test_perf_classifier': 'tests/perf/tools/test_perf_classifier.py',
         'test_perf_comparator': 'tests/perf/tools/test_perf_comparator.py',

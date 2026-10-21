@@ -153,7 +153,7 @@ def test_required_nonstrict_capability_registration_still_rejects_actual_skip(tm
 
 
 @pytest.mark.parametrize('name', [
-    'test_perf_schema', 'test_perf_classifier', 'test_perf_comparator',
+    'test_codec_fixture_preparation', 'test_perf_schema', 'test_perf_classifier', 'test_perf_comparator',
     'test_perf_matrix_failfast', 'test_graph_run_schema', 'test_graph_run_visualizer',
     'test_perf_encoder_matrix',
 ])

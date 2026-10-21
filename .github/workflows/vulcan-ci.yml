@@ -132,6 +132,7 @@ jobs:
             tests/tools/test_install_neat_framework_native_restore.py \
             tests/tools/test_neat_model_compiler_discovery.py \
             tests/tools/test_core_dist_contract.py \
+            tests/tools/test_package_buildinfo.py \
             tests/tools/test_build_install_sanity.py \
             tests/tools/test_core_inventory_soname.py \
             tests/tools/test_native_platform_baseline.py \
