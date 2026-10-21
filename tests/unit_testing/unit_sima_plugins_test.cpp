@@ -13,11 +13,14 @@
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/PreparedRuntimeBuild.h"
+#include "pipeline/internal/TensorBufferEnvelope.h"
+#include "pipeline/internal/TensorUtil.h"
 #include <gstsimaaitensorbuffer_meta.h>
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 
 #include "test_utils.h"
 
+#include <algorithm>
 #include <iostream>
 #include <array>
 #include <cstring>
@@ -29,6 +32,171 @@
 #include <string>
 
 namespace {
+void check_argmax_ingress_projection() {
+  using namespace simaai::neat;
+  namespace pi = pipeline_internal;
+  SimaArgMax node;
+  const auto compile = [&](const Sample& sample) {
+    ContractCompileInput input;
+    input.ingress.ingress_sample = sample;
+    CompiledNodeContract compiled;
+    std::string error;
+    const bool admitted = node.compile_node_contract(input, &compiled, &error);
+    require(admitted, "ArgMax current-storage admission: " + error);
+    auto holder = pi::sample_to_gst_envelope_holder(sample, &error);
+    pi::TensorBufferView expected;
+    require(holder && pi::tensor_buffer_descriptor_from_sample(
+                          static_cast<GstSample*>(holder.get()), &expected, &error),
+            "ArgMax ingress reference projection: " + error);
+    const auto& runtime = compiled.kernel->runtime_contract;
+    require(runtime.logical_inputs.size() == expected.tensors.size(),
+            "ArgMax lost a projected ingress tensor");
+    for (std::size_t i = 0; i < expected.tensors.size(); ++i) {
+      const auto& actual = runtime.logical_inputs[i];
+      const auto& projected = expected.tensors[i];
+      require(actual.physical_index == projected.memory_index &&
+                  actual.byte_offset == projected.byte_offset && actual.shape == projected.shape &&
+                  actual.stride_bytes == projected.stride_bytes &&
+                  compiled.kernel->recipe->members[i].inputs[0].byte_offset ==
+                      static_cast<std::size_t>(projected.byte_offset),
+              "ArgMax disagrees with the execution ingress descriptor");
+      const auto carrier = std::find_if(
+          runtime.physical_inputs.begin(), runtime.physical_inputs.end(),
+          [&](const auto& value) { return value.physical_index == projected.memory_index; });
+      require(carrier != runtime.physical_inputs.end() &&
+                  carrier->size_bytes ==
+                      gst_memory_get_sizes(
+                          gst_buffer_peek_memory(expected.buffer, projected.memory_index), nullptr,
+                          nullptr),
+              "ArgMax lost the actual ingress carrier extent");
+    }
+    return compiled;
+  };
+  Tensor source;
+  source.storage = make_cpu_owned_storage(128);
+  source.dtype = TensorDType::Float32;
+  source.shape = {2, 3};
+  source.strides_bytes = {12, 4};
+  source.byte_offset = 64;
+  source.route.logical_index = 0;
+  source.route.physical_index = 7;
+  source.route.memory_index = 0;
+  source.route.physical_byte_offset = 64;
+  source.route.name = "scores";
+  source.route.segment_name = "carrier";
+  Tensor cloned = source.clone();
+  require(cloned.byte_offset == 0 && cloned.storage->size_bytes == 24 &&
+              cloned.route.physical_byte_offset == 64,
+          "clone fixture must retain provenance but replace current storage");
+  auto current = compile(sample_from_tensors({cloned}));
+  require(current.kernel->runtime_contract.logical_inputs[0].byte_offset == 0,
+          "cloned ingress reapplied the producer's offset");
+
+  Tensor independent = cloned.clone();
+  independent.route.logical_index = 1;
+  independent.route.name = "other_scores";
+  current = compile(sample_from_tensors({cloned, independent}));
+  const auto& separate = current.kernel->runtime_contract.logical_inputs;
+  require(separate[0].physical_index != separate[1].physical_index ||
+              separate[0].byte_offset != separate[1].byte_offset,
+          "independently owned tensors with historical index collisions were aliased");
+
+  Tensor first = source;
+  first.byte_offset = first.route.physical_byte_offset = 16;
+  first.route.physical_index = 0;
+  Tensor second = first;
+  second.byte_offset = second.route.physical_byte_offset = 64;
+  second.route.logical_index = 1;
+  second.route.name = "other_scores";
+  GstBuffer* buffer = gst_buffer_new_allocate(nullptr, 128, nullptr);
+  require(buffer != nullptr, "could not allocate borrowed ArgMax carrier");
+  pi::attach_tensor_set_meta_from_tensors(buffer, {first, second});
+  std::string error;
+  require(simaai::gst::tensor_buffer_attach_physical_bindings(buffer, {{0, 0, 128}}, &error),
+          "could not describe borrowed ArgMax carrier: " + error);
+  GstCaps* caps = gst_caps_from_string("application/vnd.simaai.tensor");
+  GstSample* sample = gst_sample_new(buffer, caps, nullptr, nullptr);
+  gst_buffer_unref(buffer);
+  gst_caps_unref(caps);
+  first.storage = second.storage = pi::make_gst_sample_storage(sample);
+  gst_sample_unref(sample);
+  current = compile(sample_from_tensors({first, second}));
+  const auto& borrowed = current.kernel->runtime_contract;
+  require(borrowed.physical_inputs.size() == 1 && borrowed.physical_inputs[0].size_bytes == 128 &&
+              borrowed.logical_inputs[0].byte_offset == 16 &&
+              borrowed.logical_inputs[1].byte_offset == 64,
+          "borrowed shared carrier lost its actual offsets or extent");
+
+  // OutputMemory::Owned materializes each packed logical output independently,
+  // retaining its route provenance just as clone() does.
+  current = compile(sample_from_tensors({first.clone(), second.clone()}));
+  const auto& owned = current.kernel->runtime_contract.logical_inputs;
+  require(owned[0].byte_offset == 0 &&
+              (owned[1].physical_index != owned[0].physical_index || owned[1].byte_offset == 24),
+          "Owned packed outputs used stale parent offsets");
+  // A single contiguous CPU view remains zero-copy, but its visible GstMemory
+  // starts at the view, not the retained producer offset. The envelope, not the
+  // input Tensor wrapper, must retain that allocation.
+  for (const bool external : {false, true}) {
+    Tensor view = source;
+    view.storage = make_cpu_owned_storage(128);
+    if (external) {
+      const auto owner = view.storage->holder;
+      view.storage = make_cpu_external_storage(view.storage->data, 128, owner, false);
+    }
+    std::weak_ptr<void> owner = view.storage->holder;
+    const auto* address = static_cast<const std::uint8_t*>(view.storage->data) + 64;
+    auto envelope = pi::sample_to_gst_envelope_holder(sample_from_tensors({view}), &error);
+    require(envelope != nullptr, "could not wrap CPU view: " + error);
+    GstBuffer* visible = gst_sample_get_buffer(static_cast<GstSample*>(envelope.get()));
+    pi::TensorBufferView descriptor;
+    require(pi::tensor_buffer_descriptor_from_sample(static_cast<GstSample*>(envelope.get()),
+                                                     &descriptor, &error) &&
+                descriptor.tensors[0].byte_offset == 0 &&
+                descriptor.tensors[0].stride_bytes == std::vector<std::int64_t>({12, 4}) &&
+                gst_buffer_get_size(visible) == 24,
+            "CPU view descriptor did not describe the visible carrier");
+    GstMapInfo mapped{};
+    require(gst_buffer_map(visible, &mapped, GST_MAP_READ), "could not inspect CPU view");
+    require(mapped.data == address && mapped.size == 24, "contiguous CPU view was copied");
+    gst_buffer_unmap(visible, &mapped);
+    view.storage.reset();
+    require(!owner.expired(), "CPU envelope did not retain its allocation");
+    descriptor = {};
+    envelope.reset();
+    require(owner.expired(), "CPU envelope leaked its allocation");
+  }
+
+  source.byte_offset = 16;
+  source.strides_bytes = {16, 4};
+  auto* source_values = static_cast<float*>(source.storage->data);
+  std::fill_n(source_values, 32, -1000.f);
+  const std::array<float, 6> expected_values{1.f, 3.f, 2.f, 4.f, 6.f, 5.f};
+  std::copy_n(expected_values.data(), 3, source_values + 4);
+  std::copy_n(expected_values.data() + 3, 3, source_values + 8);
+  auto compacted = pi::sample_to_gst_envelope_holder(sample_from_tensors({source}), &error);
+  require(compacted != nullptr, "could not compact strided CPU view: " + error);
+  std::array<float, 6> actual_values{};
+  require(gst_buffer_extract(gst_sample_get_buffer(static_cast<GstSample*>(compacted.get())), 0,
+                             actual_values.data(),
+                             sizeof(actual_values)) == sizeof(actual_values) &&
+              actual_values == expected_values,
+          "singleton CPU materialization copied padding instead of logical rows");
+  current = compile(sample_from_tensors({source}));
+  require(current.kernel->runtime_contract.logical_inputs[0].stride_bytes ==
+              std::vector<std::int64_t>({12, 4}),
+          "ArgMax retained pre-materialization CPU strides");
+
+  for (const auto offset :
+       {std::int64_t{-1}, std::int64_t{120}, std::numeric_limits<std::int64_t>::max()}) {
+    source.byte_offset = offset;
+    ContractCompileInput invalid;
+    invalid.ingress.ingress_sample = sample_from_tensors({source});
+    require(!node.compile_node_contract(invalid, &current, &error),
+            "ArgMax accepted an ingress view extending beyond its current storage");
+  }
+}
+
 void execute_argmax_graph(bool scalar) {
   using namespace simaai::neat;
   const auto shape = scalar ? std::vector<std::int64_t>{6} : std::vector<std::int64_t>{2, 3};
@@ -370,8 +538,8 @@ int main() {
               "ArgMax typed ingress compile: " + error);
       require(compiled.kernel->runtime_contract.logical_outputs[0].shape.empty() &&
                   compiled.kernel->runtime_contract.logical_outputs[0].size_bytes == 4 &&
-                  compiled.kernel->recipe->members[0].inputs[0].byte_offset == 16,
-              "ArgMax scalar reduction or ingress view offset changed");
+                  compiled.kernel->recipe->members[0].inputs[0].byte_offset == 0,
+              "ArgMax scalar reduction or materialized ingress offset changed");
       simaai::neat::CompiledPipelineContracts pipeline;
       pipeline.stages = {compiled};
       pipeline.fully_renderable = true;
@@ -405,6 +573,7 @@ int main() {
       require(spec.media_type == "application/vnd.simaai.tensor",
               "argmax output media_type mismatch");
       require(spec.format == "ARGMAX", "argmax output format mismatch");
+      check_argmax_ingress_projection();
     }
 
     {

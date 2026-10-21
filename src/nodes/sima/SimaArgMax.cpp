@@ -3,6 +3,7 @@
 #include "gst/GstHelpers.h"
 #include "pipeline/internal/contract/CompiledNodeContractQuery.h"
 #include "pipeline/internal/contract/ContractFacts.h"
+#include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/sima/CanonicalKernelLowering.h"
@@ -38,55 +39,69 @@ rt::DType kernel_dtype(std::string token) {
     return rt::DType::Int32;
   throw std::invalid_argument("SimaArgMax: unsupported input dtype " + token);
 }
-// Root samples already describe their physical GstMemory slots. Preserve those
-// spans; the graph's ingress bridge supplies the actual DMA-BUF for each frame.
+// Resolve the same current-storage envelope as graph ingress. Producer route
+// offsets remain provenance after clone/Owned materialization; they cannot name
+// the new carriers. This conversion is cold admission, not a per-frame copy.
 CompiledRuntimeContract ingress_tensors(const Sample& sample) {
   CompiledRuntimeContract result;
   const auto tensors = tensors_from_sample(sample, true);
-  for (std::size_t i = 0; i < tensors.size(); ++i) {
-    const auto& tensor = tensors[i];
+  for (const auto& tensor : tensors) {
     if (!tensor.storage || !tensor.storage->size_bytes || tensor.is_composite() ||
         tensor.semantic.tess)
       throw std::invalid_argument("SimaArgMax ingress requires typed single-plane tensors; "
                                   "detessellate image/tile inputs first");
+  }
+  std::string error;
+  const auto holder = pipeline_internal::sample_to_gst_envelope_holder(sample, &error);
+  pipeline_internal::TensorBufferView ingress;
+  if (!holder || !pipeline_internal::tensor_buffer_descriptor_from_sample(
+                     static_cast<GstSample*>(holder.get()), &ingress, &error))
+    throw std::invalid_argument("SimaArgMax: cannot resolve ingress carriers: " + error);
+  if (ingress.tensors.size() != tensors.size())
+    throw std::invalid_argument("SimaArgMax ingress tensor count changed during projection");
+  for (std::size_t i = 0; i < ingress.tensors.size(); ++i) {
+    const auto& tensor = ingress.tensors[i];
     const char* dtype = nullptr;
     switch (tensor.dtype) {
-    case TensorDType::UInt8:
+    case SIMA_TENSOR_SET_DTYPE_UINT8_V1:
       dtype = "UINT8";
       break;
-    case TensorDType::Int8:
+    case SIMA_TENSOR_SET_DTYPE_INT8_V1:
       dtype = "INT8";
       break;
-    case TensorDType::BFloat16:
+    case SIMA_TENSOR_SET_DTYPE_BF16_V1:
       dtype = "BF16";
       break;
-    case TensorDType::Float32:
+    case SIMA_TENSOR_SET_DTYPE_FP32_V1:
       dtype = "FP32";
       break;
     default:
       throw std::invalid_argument("SimaArgMax ingress supports INT8/UINT8/BF16/FP32");
     }
-    const int physical = tensor.route.memory_index >= 0     ? tensor.route.memory_index
-                         : tensor.route.physical_index >= 0 ? tensor.route.physical_index
-                                                            : static_cast<int>(i);
-    const auto offset =
-        tensor.route.physical_index >= 0 ? tensor.route.physical_byte_offset : tensor.byte_offset;
-    if (offset < 0 || static_cast<std::uint64_t>(offset) >= tensor.storage->size_bytes)
+    const int physical = tensor.memory_index;
+    if (physical < 0 || static_cast<guint>(physical) >= gst_buffer_n_memory(ingress.buffer))
+      throw std::invalid_argument("SimaArgMax ingress tensor has no physical carrier");
+    const auto bytes =
+        gst_memory_get_sizes(gst_buffer_peek_memory(ingress.buffer, physical), nullptr, nullptr);
+    const auto offset = tensor.byte_offset;
+    if (offset < 0 || static_cast<std::uint64_t>(offset) >= bytes || !tensor.size_bytes ||
+        tensor.size_bytes > bytes - static_cast<std::uint64_t>(offset))
       throw std::invalid_argument("SimaArgMax ingress tensor offset exceeds its backing memory");
-    const auto name = tensor.route.name.empty() ? "input_" + std::to_string(i) : tensor.route.name;
+    const auto name =
+        tensor.logical_name.empty() ? "input_" + std::to_string(i) : tensor.logical_name;
     auto logical = specs::build_logical_output_static_spec(
         static_cast<int>(i), static_cast<int>(i), physical, static_cast<int>(i),
         static_cast<int>(i), tensor.shape, dtype, "", name, name, name, offset,
-        tensor.storage->size_bytes - offset);
-    logical.stride_bytes = tensor.strides_bytes;
+        bytes - static_cast<std::uint64_t>(offset));
+    logical.stride_bytes = tensor.stride_bytes;
     result.logical_outputs.push_back(std::move(logical));
     const auto existing =
         std::find_if(result.physical_outputs.begin(), result.physical_outputs.end(),
                      [physical](const auto& value) { return value.physical_index == physical; });
     if (existing == result.physical_outputs.end())
       result.physical_outputs.push_back(specs::build_physical_buffer_static_spec(
-          physical, physical, tensor.storage->size_bytes, si::DeviceKind::Cpu, name));
-    else if (existing->size_bytes != tensor.storage->size_bytes)
+          physical, physical, bytes, si::DeviceKind::Cpu, name));
+    else if (existing->size_bytes != bytes)
       throw std::invalid_argument("SimaArgMax ingress tensors disagree on shared carrier extent");
   }
   return result;

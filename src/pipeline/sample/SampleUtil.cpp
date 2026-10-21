@@ -3288,17 +3288,58 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
         }
         return {};
       }
-      sample_buf =
-          buffer_from_tensor_or_copy(first_field, direct_spec, &direct_err, allow_zero_copy);
-      if (!sample_buf) {
-        if (err) {
-          *err = direct_err.empty() ? "Sample single tensor buffer materialization failed"
-                                    : direct_err;
+      const Tensor& tensor = bundle.tensors.front();
+      const bool dense_cpu_tensor = direct_spec.kind == SampleMediaKind::Tensor &&
+                                    tensor.is_dense() && !tensor.semantic.tess && tensor.storage &&
+                                    (tensor.storage->kind == StorageKind::CpuOwned ||
+                                     tensor.storage->kind == StorageKind::CpuExternal);
+      if (dense_cpu_tensor && !tensor.is_contiguous()) {
+        // The generic tensor adapter copies a flat byte span. Use the existing
+        // logical materializer for strided CPU views, exactly as for a tensor list.
+        // This replaces that copy; it does not add a second payload allocation.
+        if (!build_materialized_tensor_set_backing(bundle, &sample_buf, &sample_caps,
+                                                   &direct_err)) {
+          if (err)
+            *err = direct_err;
+          return {};
         }
-        return {};
-      }
-      if (!direct_spec.caps_string.empty()) {
-        sample_caps = gst_caps_from_string(direct_spec.caps_string.c_str());
+      } else {
+        sample_buf =
+            buffer_from_tensor_or_copy(first_field, direct_spec, &direct_err, allow_zero_copy);
+        if (!sample_buf) {
+          if (err) {
+            *err = direct_err.empty() ? "Sample single tensor buffer materialization failed"
+                                      : direct_err;
+          }
+          return {};
+        }
+        if (!direct_spec.caps_string.empty()) {
+          sample_caps = gst_caps_from_string(direct_spec.caps_string.c_str());
+        }
+        if (dense_cpu_tensor) {
+          // CPU wrapping exposes the selected view at offset zero, even when its
+          // allocation starts earlier. Describe that actual carrier, not retained
+          // producer offsets. The holder keeps the original allocation alive.
+          const std::string segment = !tensor_runtime_segment_name(tensor).empty()
+                                          ? tensor_runtime_segment_name(tensor)
+                                          : "memory";
+          const std::vector<TensorSetSegmentMaterialization> carriers{
+              {segment, sample_buf, gst_buffer_get_size(sample_buf)}};
+          TensorBufferView descriptor;
+          if (gst_buffer_n_memory(sample_buf) != 1U ||
+              !tensor_buffer_descriptor_from_materialized_tensor_set(bundle.tensors, carriers,
+                                                                     &descriptor, &direct_err) ||
+              !attach_tensor_set_meta_from_descriptor_view_impl(sample_buf, descriptor,
+                                                                &direct_err)) {
+            gst_buffer_unref(sample_buf);
+            if (sample_caps)
+              gst_caps_unref(sample_caps);
+            if (err)
+              *err = direct_err.empty() ? "Sample single CPU tensor has no unique carrier"
+                                        : direct_err;
+            return {};
+          }
+        }
       }
       if (sample_debug_enabled()) {
         std::fprintf(stderr, "[SAMPLE] tensor-set direct single-tensor backing bytes=%zu\n",
