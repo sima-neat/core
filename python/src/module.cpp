@@ -3936,7 +3936,9 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("sima_allocator_type", &simaai::neat::SimaArgMaxOptions::sima_allocator_type)
       .def_rw("silent", &simaai::neat::SimaArgMaxOptions::silent)
       .def_rw("emit_signals", &simaai::neat::SimaArgMaxOptions::emit_signals)
-      .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit);
+      .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit)
+      .def_rw("axis", &simaai::neat::SimaArgMaxOptions::axis)
+      .def_rw("keepdims", &simaai::neat::SimaArgMaxOptions::keepdims);
   nb::enum_<simaai::neat::SimaEncodeType>(m, "SimaEncodeType")
       .value("H264", simaai::neat::SimaEncodeType::H264)
       .value("H265", simaai::neat::SimaEncodeType::H265)

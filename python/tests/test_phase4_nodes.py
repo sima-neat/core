@@ -154,8 +154,21 @@ def test_sima_render_and_argmax_nodes():
 
   argmax_opt = pyneat.SimaArgMaxOptions()
   argmax_opt.sima_allocator_type = 2
+  argmax_opt.axis = 0
+  argmax_opt.keepdims = True
   assert isinstance(pyneat.nodes.sima_argmax(), pyneat.Node)
   assert isinstance(pyneat.nodes.sima_argmax(argmax_opt), pyneat.Node)
+
+
+def test_sima_argmax_options_roundtrip():
+  opt = pyneat.SimaArgMaxOptions()
+  assert opt.axis == -1
+  assert opt.keepdims is False
+  for axis, keepdims in ((0, True), (-2, False), (1, True), (-1, False)):
+    opt.axis = axis
+    opt.keepdims = keepdims
+    assert opt.axis == axis
+    assert opt.keepdims is keepdims
 
 
 def test_cvu_atom_options_roundtrip():
