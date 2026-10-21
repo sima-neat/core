@@ -3,13 +3,19 @@
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/StageInputCacheIdentity.h"
+#include "pipeline/internal/StageRunCache.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "test_main.h"
 
 #include <gst/gst.h>
 
+#include <algorithm>
 #include <functional>
+#include <atomic>
+#include <barrier>
+#include <thread>
+#include <nlohmann/json.hpp>
 #include <memory>
 #include <tuple>
 #include <vector>
@@ -101,13 +107,14 @@ Sample gst_input(std::size_t capacity = 64, std::uint64_t binding_offset = 0) {
 enum class GstCarrierTopology { SharedBuffer, SeparateBuffersSharedMemory, IndependentCarriers };
 
 Sample gst_six_heads(bool shared_wrapper,
-                     GstCarrierTopology topology = GstCarrierTopology::SharedBuffer) {
-  constexpr std::size_t capacity = 64;
+                     GstCarrierTopology topology = GstCarrierTopology::SharedBuffer, int count = 6,
+                     bool distinct_caps = false) {
+  const std::size_t capacity = std::max(64, count * 8);
   require(!shared_wrapper || topology == GstCarrierTopology::SharedBuffer,
           "shared six-head wrapper requires one actual GstBuffer");
   const auto cpu_storage = make_cpu_owned_storage(capacity);
   TensorList tensors;
-  for (int i = 0; i < 6; ++i) {
+  for (int i = 0; i < count; ++i) {
     Tensor tensor = head(i, cpu_storage);
     tensor.byte_offset = tensor.route.physical_byte_offset = i * 8;
     tensor.route.physical_index = 0;
@@ -147,7 +154,9 @@ Sample gst_six_heads(bool shared_wrapper,
     }
     if (topology != GstCarrierTopology::SharedBuffer)
       attach_contract(buffer);
-    GstSample* sample = gst_sample_new(buffer, caps, nullptr, nullptr);
+    GstCaps* selected_caps = distinct_caps ? gst_caps_copy(caps) : gst_caps_ref(caps);
+    GstSample* sample = gst_sample_new(buffer, selected_caps, nullptr, nullptr);
+    gst_caps_unref(selected_caps);
     gst_buffer_unref(buffer);
     require(sample != nullptr, "could not allocate six-head GstSample fixture");
     tensor.storage = pipeline_internal::make_gst_sample_storage(sample);
@@ -162,10 +171,83 @@ Sample gst_six_heads(bool shared_wrapper,
 }
 
 void expect_different(const Sample& original, const std::function<void(Sample&)>& change,
-                      const std::string& description) {
+                      const std::string& description,
+                      pipeline_internal::StageInputCacheGeometryPolicy policy =
+                          pipeline_internal::StageInputCacheGeometryPolicy::Exact) {
   Sample changed = original;
   change(changed);
-  require(identity(original) != identity(changed), description + " must change compatibility");
+  require(identity(original, policy) != identity(changed, policy),
+          description + " must change compatibility");
+}
+
+void bounded_cache_contract() {
+  pipeline_internal::BoundedStageCache<int, int, std::hash<int>> cache(2);
+  int builds = 0;
+  int releases = 0;
+  const auto build = [&] {
+    ++builds;
+    return std::shared_ptr<int>(new int(builds), [&](int* value) {
+      // Reentering the same cache proves final destruction is outside its lock.
+      require(cache.size() <= 2, "retired stage exceeded retained cache bound");
+      ++releases;
+      delete value;
+    });
+  };
+  auto active = cache.get_or_build(1, build);
+  std::weak_ptr<int> active_weak = active;
+  std::weak_ptr<int> older = cache.get_or_build(2, build);
+  require(cache.get_or_build(1, build) == active && builds == 2,
+          "cache hit must reuse and update recency");
+  (void)cache.get_or_build(3, build);
+  require(older.expired() && !active_weak.expired() && releases == 1,
+          "cache did not retire the least-recent entry");
+  (void)cache.get_or_build(4, build);
+  require(!active_weak.expired(), "eviction closed an active caller's stage");
+  active.reset();
+  require(active_weak.expired(), "evicted stage outlived its final caller");
+  for (int key = 5; key < 40; ++key) {
+    (void)cache.get_or_build(key, build);
+    require(cache.size() == 2, "distinct inputs grew retained stage ownership");
+  }
+  const int before = releases;
+  bool threw = false;
+  try {
+    cache.get_or_build(
+        99, []() -> std::shared_ptr<int> { throw std::runtime_error("expected build failure"); });
+  } catch (const std::runtime_error&) {
+    threw = true;
+  }
+  require(threw && cache.size() == 2 && releases == before, "failed build changed retained stages");
+  // Remove custom-deleter entries before cache destruction: these callbacks
+  // deliberately inspect a live cache, not a partially destroyed object.
+  for (int key : {100, 101})
+    (void)cache.get_or_build(key, [] { return std::make_shared<int>(0); });
+
+  pipeline_internal::BoundedStageCache<int, int, std::hash<int>> concurrent(1);
+  std::barrier ready(2);
+  std::atomic<int> discarded{0};
+  std::shared_ptr<int> results[2];
+  std::thread threads[2];
+  for (int i = 0; i < 2; ++i)
+    threads[i] = std::thread([&, i] {
+      results[i] = concurrent.get_or_build(1, [&] {
+        auto value = std::shared_ptr<int>(new int(i), [&](int* item) {
+          (void)concurrent.size(); // duplicate-build loser also retires outside lock
+          ++discarded;
+          delete item;
+        });
+        ready.arrive_and_wait();
+        return value;
+      });
+    });
+  for (auto& thread : threads)
+    thread.join();
+  require(results[0] == results[1] && concurrent.size() == 1 && discarded == 1,
+          "duplicate concurrent builds did not converge on one retained stage");
+  results[0].reset();
+  results[1].reset();
+  (void)concurrent.get_or_build(2, [] { return std::make_shared<int>(0); });
+  require(discarded == 2, "concurrent cached stage retained its retired value");
 }
 
 } // namespace
@@ -173,6 +255,7 @@ void expect_different(const Sample& original, const std::function<void(Sample&)>
 RUN_TEST(
     "unit_stage_cache_identity_test", ([] {
       ensure_gst_ready();
+      bounded_cache_contract();
       const Sample original = inputs();
       const Sample fresh = inputs();
       auto six_heads = [](bool shared) {
@@ -266,6 +349,45 @@ RUN_TEST(
       require(identity(geometry, policy) != identity(changed_padding, policy),
               "padding used to derive model dimensions must remain in compatibility");
 
+      const auto frame_policy = pipeline_internal::StageInputCacheGeometryPolicy::FramePassthrough;
+      const auto frame_key = identity(geometry, frame_policy);
+      for (int x = 0; x < 64; ++x) {
+        Sample moving = geometry;
+        auto& meta = *moving.tensors[0].semantic.preprocess;
+        meta.roi_list_enabled = true;
+        meta.rois = {{0, x, 0, 320, 320}};
+        meta.affine_m02 = meta.affine_offset_x = x;
+        PreprocessAffine affine;
+        affine.m02 = x;
+        meta.roi_affines = {affine};
+        require(identity(moving, frame_policy) == frame_key,
+                "frame-only ROI coordinates must not recompile immutable inference");
+        require(identity(moving) != identity(geometry),
+                "geometry-sensitive admission must still distinguish moving ROI metadata");
+        require(moving.tensors[0].semantic.preprocess->rois[0].x == x,
+                "cache description mutated current frame metadata");
+      }
+      require(identity(original, frame_policy) == identity(geometry, frame_policy),
+              "passthrough metadata presence must not become cold inference state");
+      expect_different(
+          original, [](Sample& s) { s.tensors[1].shape = {1, 4}; }, "passthrough shape",
+          frame_policy);
+      expect_different(
+          original, [](Sample& s) { s.tensors[1].strides_bytes = {8, 1}; }, "passthrough stride",
+          frame_policy);
+      expect_different(
+          original, [](Sample& s) { s.tensors[1].dtype = TensorDType::UInt8; }, "passthrough dtype",
+          frame_policy);
+      expect_different(
+          original, [](Sample& s) { s.tensors[1].route.memory_index = 1; }, "passthrough route",
+          frame_policy);
+      expect_different(
+          quantized, [](Sample& s) { s.tensors[1].semantic.quant->scale = .5f; },
+          "passthrough quantization", frame_policy);
+      require(identity(original, frame_policy) != identity(inputs(true), frame_policy) &&
+                  identity(original, frame_policy) != identity(inputs(false, 80), frame_policy),
+              "passthrough geometry policy relaxed storage sharing or extent authority");
+
       int map_calls = 0;
       Sample guarded = inputs();
       for (auto& tensor : guarded.tensors)
@@ -275,6 +397,7 @@ RUN_TEST(
         };
       pipeline_internal::reset_tensor_io_stats();
       (void)identity(guarded);
+      (void)identity(guarded, frame_policy);
       const auto stats = pipeline_internal::snapshot_tensor_io_stats();
       require(map_calls == 0 && stats.tensor_copy_count == 0 && stats.gst_memory_map_calls == 0,
               "cache identity must not map or copy payloads");
@@ -298,13 +421,25 @@ RUN_TEST(
               "unknown representations must bypass cache rather than reuse partial keys");
       Sample invalid = original;
       invalid.tensors[1].strides_bytes = {4};
-      bool rejected = false;
-      try {
-        (void)identity(invalid);
-      } catch (const std::runtime_error& error) {
-        rejected = std::string(error.what()).find("stride rank") != std::string::npos;
+      for (const auto invalid_policy :
+           {pipeline_internal::StageInputCacheGeometryPolicy::Exact, frame_policy}) {
+        bool rejected = false;
+        try {
+          (void)identity(invalid, invalid_policy);
+        } catch (const std::runtime_error& error) {
+          rejected = std::string(error.what()).find("stride rank") != std::string::npos;
+        }
+        require(rejected, "invalid metadata must preserve an actionable diagnostic");
+        Sample bad_quant = quantized;
+        bad_quant.tensors[1].semantic.quant->scale = 0;
+        rejected = false;
+        try {
+          (void)identity(bad_quant, invalid_policy);
+        } catch (const std::runtime_error& error) {
+          rejected = std::string(error.what()).find("quantization scale") != std::string::npos;
+        }
+        require(rejected, "frame geometry policy admitted invalid quantization");
       }
-      require(rejected, "invalid metadata must preserve an actionable diagnostic");
 
       // Historical producer offsets remain conservative source facts. Independent Owned
       // heads are rebased by execution ingress; strided CPU heads are packed densely.
@@ -395,6 +530,53 @@ RUN_TEST(
               "different actual GstBuffer partitions must remain conservative cache misses");
       require(identity(gst_separate_buffers) != identity(gst_independent_carriers),
               "shared and independent actual GstMemory partitions must not alias");
+
+      for (int count : {6, 12}) {
+        const auto shared = identity(gst_six_heads(true, GstCarrierTopology::SharedBuffer, count));
+        const auto separate =
+            identity(gst_six_heads(false, GstCarrierTopology::SharedBuffer, count, true));
+        require(shared == separate, "equal distinct caps/wrappers must share envelope facts");
+        const auto facts = nlohmann::json::parse(shared.value);
+        require(facts.at("envelopes").size() == 1 &&
+                    facts.at("envelopes")[0].at("tensors").size() == std::size_t(count),
+                "shared envelope descriptors must be serialized once, not once per head");
+        for (const auto& tensor : facts.at("payload"))
+          require(tensor.at("storage").at("envelope") == 0,
+                  "tensor lost its deterministic shared envelope reference");
+      }
+      const auto separate_facts = nlohmann::json::parse(identity(gst_separate_buffers).value);
+      require(separate_facts.at("envelopes").size() == 6,
+              "distinct actual buffers with identical contracts were coalesced");
+      auto changed_caps = gst_six_heads(false);
+      auto* last_sample =
+          static_cast<GstSample*>(changed_caps.tensors.back().storage->holder.get());
+      GstCaps* different = gst_caps_from_string("application/vnd.simaai.tensor,fixture=(int)2");
+      gst_sample_set_caps(last_sample, different);
+      gst_caps_unref(different);
+      const auto caps_facts = nlohmann::json::parse(identity(changed_caps).value);
+      require(caps_facts.at("envelopes").size() == 2 &&
+                  identity(changed_caps) != identity(gst_six_heads(false)),
+              "different caps on the same carrier lost independent admission facts");
+
+      auto holder_geometry = gst_input();
+      const auto before_geometry = identity(holder_geometry);
+      const auto passthrough_geometry = identity(holder_geometry, frame_policy);
+      auto* holder_sample =
+          static_cast<GstSample*>(holder_geometry.tensors[0].storage->holder.get());
+      auto* holder_buffer = gst_sample_get_buffer(holder_sample);
+      PreprocessRuntimeMeta holder_meta;
+      holder_meta.original_width = holder_meta.original_height = 640;
+      holder_meta.affine_m02 = 17;
+      require(simaai::neat::write_simaai_preprocess_meta(holder_buffer, holder_meta),
+              "could not author holder-side frame geometry");
+      require(identity(holder_geometry) != before_geometry &&
+                  identity(holder_geometry, frame_policy) == passthrough_geometry,
+              "holder-side frame geometry did not follow the selected admission policy");
+      require(simaai::neat::read_simaai_preprocess_meta(holder_buffer)->affine_m02 == 17,
+              "identity description altered holder-side frame metadata");
+      require(identity(gst_input(80), frame_policy) != identity(gst_input(64), frame_policy) &&
+                  identity(gst_input(64, 8), frame_policy) != identity(gst_input(64), frame_policy),
+              "passthrough geometry policy relaxed actual carrier/binding authority");
 
       const Model::Options defaults;
       const auto default_key = internal::model_stage_options_cache_identity(defaults);

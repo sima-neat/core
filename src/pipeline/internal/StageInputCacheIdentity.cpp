@@ -186,7 +186,7 @@ Json semantic_json(const Semantic& semantic, StageInputCacheGeometryPolicy polic
     out["detection"] = semantic.detection->format;
   if (semantic.feature)
     out["feature"] = semantic.feature->format;
-  if (semantic.preprocess)
+  if (semantic.preprocess && policy != StageInputCacheGeometryPolicy::FramePassthrough)
     out["preprocess"] = preprocess_json(*semantic.preprocess, policy);
   // Only original image size has a known dynamic BoxDecode resolver. In particular resize
   // mode and geometry used to derive model dimensions remain checked preparation facts.
@@ -201,7 +201,11 @@ struct Description {
   Ordinals buffers;
   Ordinals memories;
   Ordinals parents;
-  std::unordered_map<const void*, Json> envelopes;
+  // Memoization is local to this description. Actual buffer/caps facts, not
+  // incidental GstSample wrappers, select one validated value-only table entry.
+  std::unordered_map<const GstCaps*, std::string> caps_texts;
+  std::unordered_map<const GstBuffer*, std::unordered_map<std::string, std::size_t>> envelopes;
+  Json envelope_values = Json::array();
   std::string reason;
 
   bool ineligible(const std::string& message) {
@@ -213,13 +217,23 @@ struct Description {
     auto* sample = static_cast<GstSample*>(storage.holder.get());
     if (!sample || !GST_IS_SAMPLE(sample))
       invalid("GstSample storage has no valid sample holder");
-    if (const auto existing = envelopes.find(sample); existing != envelopes.end()) {
-      *out = existing->second;
-      return true;
-    }
     GstBuffer* buffer = gst_sample_get_buffer(sample);
     if (!buffer || gst_buffer_n_memory(buffer) == 0)
       invalid("GstSample storage has no visible memory");
+    const GstCaps* caps = gst_sample_get_caps(sample);
+    const auto [caps_entry, new_caps] = caps_texts.try_emplace(caps);
+    if (new_caps) {
+      gchar* text = caps ? gst_caps_to_string(caps) : nullptr;
+      caps_entry->second = text ? text : "";
+      g_free(text);
+    }
+    const auto& caps_text = caps_entry->second;
+    if (const auto existing = envelopes.find(buffer); existing != envelopes.end()) {
+      if (const auto entry = existing->second.find(caps_text); entry != existing->second.end()) {
+        *out = entry->second;
+        return true;
+      }
+    }
     TensorBufferView view;
     std::string error;
     if (!tensor_buffer_descriptor_from_sample(sample, &view, &error)) {
@@ -290,22 +304,24 @@ struct Description {
         invalid("tensorbuffer descriptor extends beyond visible carrier capacity");
       tensors.push_back(descriptor_json(descriptor));
     }
-    gchar* caps_text = view.caps ? gst_caps_to_string(view.caps) : nullptr;
-    const std::string caps = caps_text ? caps_text : "";
-    g_free(caps_text);
     // Keep holder-side facts as well as semantic facts: ingress materialization preserves
     // existing producer metadata, and the frame resolver reads compact authority first.
     // This read does not materialize legacy metadata or touch tensor payloads.
-    const auto preprocess = read_simaai_preprocess_meta(buffer);
-    *out = {
+    const auto preprocess = geometry_policy == StageInputCacheGeometryPolicy::FramePassthrough
+                                ? std::optional<PreprocessRuntimeMeta>{}
+                                : read_simaai_preprocess_meta(buffer);
+    Json facts = {
         {"buffer_sharing", buffers.get(buffer)},
         {"preprocess", preprocess ? preprocess_json(*preprocess, geometry_policy) : Json(nullptr)},
-        {"caps", caps},
+        {"caps", caps_text},
         {"stage_key", view.stage_key},
         {"physical_bindings", std::move(bindings)},
         {"memories", std::move(memory_json)},
         {"tensors", std::move(tensors)}};
-    envelopes.emplace(sample, *out);
+    const auto index = envelope_values.size();
+    envelope_values.push_back(std::move(facts));
+    envelopes[buffer].emplace(caps_text, index);
+    *out = index;
     return true;
   }
 
@@ -355,7 +371,7 @@ struct Description {
       // wrapper partition describes the backing allocation. Use the inspected carrier
       // partition instead; its exact GstMemory/parent partitions and extents remain in
       // the envelope. CPU owners and direct-data sharing retain their original identity.
-      storage_sharing = envelope.at("buffer_sharing");
+      storage_sharing = envelope_values.at(envelope.get<std::size_t>()).at("buffer_sharing");
       holder_sharing = storage_sharing;
     } else {
       storage_sharing = storages.get(tensor.storage.get());
@@ -463,6 +479,7 @@ stage_input_cache_identity(const Sample& sample, std::string* ineligible_reason,
       *ineligible_reason = description.reason;
     return std::nullopt;
   }
+  values["envelopes"] = std::move(description.envelope_values);
   return StageInputCacheIdentity{values.dump()};
 }
 

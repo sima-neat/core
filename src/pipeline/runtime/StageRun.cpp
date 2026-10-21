@@ -19,6 +19,7 @@
 #include "pipeline/internal/StageSourceSegmentName.h"
 #include "pipeline/internal/StageTensorWire.h"
 #include "pipeline/internal/StageInputCacheIdentity.h"
+#include "pipeline/internal/StageRunCache.h"
 #include "pipeline/internal/SelectedStageBoundary.h"
 #include "pipeline/internal/sima/CompiledProcessCvuContractQuery.h"
 #include "pipeline/internal/sima/ContractRender.h"
@@ -1330,8 +1331,9 @@ struct StageKeyHash {
   }
 };
 
-std::mutex g_cache_mu;
-std::unordered_map<StageKey, std::shared_ptr<Run>, StageKeyHash> g_cache;
+// Bound idle retained pipelines without closing Runs still held by callers.
+constexpr std::size_t kRetainedStageRuns = 16;
+pipeline_internal::BoundedStageCache<StageKey, Run, StageKeyHash> g_cache(kRetainedStageRuns);
 
 InputOptions appsrc_for_mat(const cv::Mat& input, const std::vector<std::shared_ptr<Node>>& group) {
   InputOptions opt;
@@ -2190,22 +2192,7 @@ Sample push_and_pull_tensor_preferring_holder(Run& runner, const simaai::neat::T
 }
 
 std::shared_ptr<Run> get_or_build(const StageKey& key, const std::function<Run()>& builder) {
-  {
-    std::lock_guard<std::mutex> lock(g_cache_mu);
-    auto it = g_cache.find(key);
-    if (it != g_cache.end())
-      return it->second;
-  }
-
-  Run run = builder();
-  auto handle = std::make_shared<Run>(std::move(run));
-
-  std::lock_guard<std::mutex> lock(g_cache_mu);
-  auto it = g_cache.find(key);
-  if (it != g_cache.end())
-    return it->second;
-  g_cache.emplace(key, handle);
-  return handle;
+  return g_cache.get_or_build(key, [&] { return std::make_shared<Run>(builder()); });
 }
 
 PreprocessAffine compute_roi_affine_and_geometry(PreprocessRuntimeMeta* meta,
@@ -2699,7 +2686,11 @@ simaai::neat::Sample InferSample(const simaai::neat::Sample& input,
   key.box_opt.yolox_seg_pose = box_model_opt.yolox_seg_pose;
 
   stage_trace("StageRun::Infer: before get_or_build");
-  const auto source_identity = pipeline_internal::stage_input_cache_identity(stage_input);
+  // build_infer_nodes supplies immutable MPK child contracts: compilation does
+  // not consume ingress preprocess geometry. Preserve those values per frame,
+  // while keeping every carrier/layout/quantization admission fact in the key.
+  const auto source_identity = pipeline_internal::stage_input_cache_identity(
+      stage_input, nullptr, pipeline_internal::StageInputCacheGeometryPolicy::FramePassthrough);
   if (source_identity) {
     key.source_layout_identity = source_identity->value;
   }
@@ -2825,7 +2816,11 @@ simaai::neat::Sample MLASample(const simaai::neat::Sample& input,
   key.input = make_input_key(src_opt, &wire_input.tensor);
 
   stage_trace("StageRun::MLA: before get_or_build");
-  const auto source_identity = pipeline_internal::stage_input_cache_identity(stage_input);
+  // build_infer_nodes supplies immutable MPK child contracts: compilation does
+  // not consume ingress preprocess geometry. Preserve those values per frame,
+  // while keeping every carrier/layout/quantization admission fact in the key.
+  const auto source_identity = pipeline_internal::stage_input_cache_identity(
+      stage_input, nullptr, pipeline_internal::StageInputCacheGeometryPolicy::FramePassthrough);
   if (source_identity) {
     key.source_layout_identity = source_identity->value;
   }

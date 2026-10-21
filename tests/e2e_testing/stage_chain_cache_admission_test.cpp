@@ -63,10 +63,9 @@ private:
   int saved_ = -1;
 };
 
-std::pair<Sample, std::size_t> postprocess_with_compile_count(const Sample& input,
-                                                              const Model& model) {
+template <class Execute> std::pair<Sample, std::size_t> with_compile_count(Execute&& execute) {
   BuildLog capture;
-  Sample output = stages::Postprocess(input, model);
+  Sample output = execute();
   const auto log = capture.finish();
   std::cerr << log;
   std::size_t count = 0U;
@@ -146,7 +145,8 @@ RUN_TEST(
           first, nullptr, pi::StageInputCacheGeometryPolicy::DynamicOriginalSize);
       require(first_key.has_value(), "actual typed producer output must permit safe stage reuse");
       std::weak_ptr<TensorBuffer> first_view = first.tensors.front().storage;
-      auto [cold, cold_compiles] = postprocess_with_compile_count(first, model);
+      auto [cold, cold_compiles] =
+          with_compile_count([&] { return stages::Postprocess(first, model); });
       require(cold_compiles == 1U, "cold Postprocess must execute one seeded stage compilation");
       require(cold.kind == SampleKind::TensorSet && cold.tensors.size() == 1U,
               "Postprocess must publish one detection payload");
@@ -164,7 +164,8 @@ RUN_TEST(
         report_cache_identity_difference(*first_key, second_key, second_ineligible_reason);
       }
       require(second_key == first_key, "equivalent fresh producer views must have equal identity");
-      auto [warm, warm_compiles] = postprocess_with_compile_count(second, model);
+      auto [warm, warm_compiles] =
+          with_compile_count([&] { return stages::Postprocess(second, model); });
       require(warm_compiles == 0U, "compatible warm Postprocess must not compile another stage");
       require(first_view.expired(), "cached plan must not retain its first input Tensor view");
       require(cold.tensors.front().copy_payload_bytes() == retained,
@@ -179,6 +180,66 @@ RUN_TEST(
                     std::fabs(a.x1 - b.x1) < 1e-4F && std::fabs(a.y1 - b.y1) < 1e-4F &&
                     std::fabs(a.x2 - b.x2) < 1e-4F && std::fabs(a.y2 - b.y2) < 1e-4F,
                 "warm detection values changed for identical image input");
+      }
+      // Actual ROI preprocessing changes frame geometry, not the selected MPK
+      // inference contracts. Keep fresh affine/ROI facts on every output while
+      // reusing that immutable stage, including a repeated earlier coordinate.
+      require(image.cols >= 8 && image.rows >= 2, "ROI fixture image is too small");
+      for (const bool mla_only : {false, true}) {
+        int frame = 0;
+        std::size_t inference_compiles = 0;
+        double first_offset_x = 0;
+        std::vector<std::vector<std::uint8_t>> first_roi_outputs;
+        for (int x : {0, 1, 2, 3, 0}) {
+          const std::vector<PreprocessRoi> rois{{0, x, 0, image.cols / 2, image.rows / 2}};
+          Sample roi_input = sample_from_tensors(stages::Preproc({image}, model, rois));
+          require(roi_input.tensors.size() == 1 &&
+                      roi_input.tensors[0].semantic.preprocess.has_value(),
+                  "ROI preprocessing must publish its current transform");
+          const auto expected = *roi_input.tensors[0].semantic.preprocess;
+          require(expected.rois.size() == 1 && expected.rois[0].x == x,
+                  "ROI preprocessing did not publish the requested current coordinate");
+          if (frame == 0)
+            first_offset_x = expected.affine_m02;
+          else if (x != 0)
+            require(expected.affine_m02 != first_offset_x,
+                    "moving ROI fixture did not change its model-to-original transform");
+          auto [inferred, compiles] = with_compile_count([&] {
+            return mla_only ? stages::MLA(roi_input, model) : stages::Infer(roi_input, model);
+          });
+          inference_compiles += compiles;
+          require(compiles <= (frame == 0 ? 1U : 0U),
+                  "moving frame ROI recompiled the immutable inference stage");
+          require(inferred.tensors.size() == 6, "ROI inference lost model output heads");
+          for (std::size_t i = 0; i < inferred.tensors.size(); ++i) {
+            const auto& tensor = inferred.tensors[i];
+            require(tensor.semantic.preprocess.has_value(), "inference lost frame ROI metadata");
+            const auto& actual = *tensor.semantic.preprocess;
+            // MLA publishes scalar image/affine facts, not the input ROI-list
+            // extension. Check that supported publication against this frame.
+            require(actual.original_width == expected.original_width &&
+                        actual.original_height == expected.original_height &&
+                        actual.resized_width == expected.resized_width &&
+                        actual.resized_height == expected.resized_height &&
+                        actual.affine_m00 == expected.affine_m00 &&
+                        actual.affine_m01 == expected.affine_m01 &&
+                        actual.affine_m02 == expected.affine_m02 &&
+                        actual.affine_m10 == expected.affine_m10 &&
+                        actual.affine_m11 == expected.affine_m11 &&
+                        actual.affine_m12 == expected.affine_m12,
+                    "cached inference reused stale image or affine metadata");
+            if (frame == 0)
+              first_roi_outputs.push_back(tensor.copy_payload_bytes());
+            else if (frame == 4)
+              require(tensor.copy_payload_bytes() == first_roi_outputs[i],
+                      "repeated ROI inference changed numerical output");
+          }
+          ++frame;
+        }
+        require(inference_compiles <= 1, "moving ROI sequence retained per-coordinate stages");
+        std::cout << "[stage-cache] route=" << (mla_only ? "MLA" : "Infer")
+                  << " moving_roi_frames=" << frame
+                  << " inference_stage_compiles=" << inference_compiles << '\n';
       }
       std::cout << "[stage-cache] cold_stage_compiles=" << cold_compiles
                 << " warm_stage_compiles=" << warm_compiles

@@ -11,8 +11,10 @@
 namespace simaai::neat::pipeline_internal {
 
 // Only an already-qualified non-SuperPoint BoxDecode resolver may specialize original
-// image size at submission. All other geometry remains part of cold preparation identity.
-enum class StageInputCacheGeometryPolicy { Exact, DynamicOriginalSize };
+// image size at submission. FramePassthrough is only for immutable model fragments
+// whose child contracts do not consume ingress preprocess geometry: those values
+// remain on each frame, not in preparation identity. Exact remains the default.
+enum class StageInputCacheGeometryPolicy { Exact, DynamicOriginalSize, FramePassthrough };
 
 // Conservative source-layout identity, not canonical runtime physical authority. The cold
 // seeded compiler remains authoritative. Values contain no pointers or retained input loans.

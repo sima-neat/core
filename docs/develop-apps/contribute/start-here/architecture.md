@@ -1359,9 +1359,16 @@ bindings, visible capacities and sharing topology, but contains no allocation
 addresses, payload data or retained producer loans. Metadata inspection does not
 map or copy payloads. Equivalent fresh allocations can reuse a plan; unsupported
 representations use strict seeded compilation without cache reuse. Fixed resize
-policy and geometry used during admission stay in the key. Only original-image
-dimensions handled by the non-SuperPoint BoxDecode resolver can vary outside it;
-a new geometry variant can still require preparation inside that resolver.
+policy and geometry used during admission stay in the key. For geometry-sensitive stages, only
+original-image dimensions handled by the non-SuperPoint BoxDecode resolver can vary
+outside it; a new geometry variant can still require preparation inside that resolver.
+
+Fixed MPK inference stages (`Infer` and `MLA`) treat preprocess ROI and affine metadata as
+per-frame values, not preparation inputs; outputs carry the current frame's affine and image dimensions. Other
+stages retain geometry-sensitive admission. Shared envelope facts are described once per actual
+buffer/caps contract. The standalone-stage cache retains at most 16 entries and evicts the least
+recently used. Eviction releases only the cache's reference, outside its mutex; caller-held runs
+are not forcibly closed. This bounds retained entries, not active runs or total bytes.
 
 For RTP JPEG, a compatibility probe after `rtpjpegdepay` appends a missing JPEG
 end marker before parsing. Correctly terminated images pass unchanged; this
