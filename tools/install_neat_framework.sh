@@ -1066,8 +1066,24 @@ apt_package_database_is_healthy() {
     return 0
   fi
 
+  # Keep the authoritative diagnostic in the install/CI log, not just a generic
+  # unhealthy-state message. The temporary capture itself is still removed.
+  cat "${apt_check_log}" >&2
   rm -f "${apt_check_log}"
   return 1
+}
+
+# apt-get check validates dependencies, not completion of unpack/configure.
+# This is only a mode signal; Scheduler owns pending-cohort eligibility.
+dpkg_package_database_is_configured() {
+  local phases phase
+  phases="$(dpkg-query -W -f='${db:Status-Status}\n')" || return 2
+  while IFS= read -r phase; do
+    case "${phase}" in
+      installed|not-installed|config-files|"") ;;
+      *) return 1 ;;
+    esac
+  done <<< "${phases}"
 }
 
 apt_package_lists_are_populated() {
@@ -1156,7 +1172,7 @@ remove_installed_local_deb_packages() {
     return 0
   fi
 
-  if board_platform_admission_is_active; then
+  if board_platform_admission_is_active || board_has_scheduler_cohort; then
     local removal_simulation
     removal_simulation="$(mktemp /tmp/sima-neat-removal-simulate-XXXXXX)"
     INSTALLER_TMP_DIRS+=("${removal_simulation}")
@@ -1756,8 +1772,53 @@ install_ros2_sdk_tvm_runtime() {
   log "Installed the ROS2 SDK TVM runtime into ${target_lib}."
 }
 
+# Preserve the selected local archives and exact target versions for real reinstalls.
+collect_exact_deb_install_specs() {
+  local -n out_install_specs="$1"
+  out_install_specs=()
+  local -A seen_install_specs=()
+  local spec
+  for spec in "${DEBS[@]}"; do
+    [[ -n "${spec}" ]] || continue
+    if [[ -n "${seen_install_specs[${spec}]+x}" ]]; then
+      continue
+    fi
+    seen_install_specs["${spec}"]=1
+    out_install_specs+=("${spec}")
+  done
+
+  # APT's volatile local-file selection can ignore --reinstall when the
+  # installed version is identical. Explicit exact-version selections make
+  # reinstall apply while the accompanying DEBs supply the local archives.
+  local deb package version architecture package_key exact_spec
+  local -A selected_package_specs=()
+  for deb in "${DEBS[@]}"; do
+    package="$(dpkg-deb -f "${deb}" Package)" || return 1
+    version="$(dpkg-deb -f "${deb}" Version)" || return 1
+    architecture="$(dpkg-deb -f "${deb}" Architecture)" || return 1
+    if [[ -z "${package}" || -z "${version}" || -z "${architecture}" ]]; then
+      echo "Incomplete package identity in local DEB: ${deb}" >&2
+      return 1
+    fi
+    package_key="${package}"
+    [[ "${architecture}" == all ]] || package_key+=":${architecture}"
+    exact_spec="${package_key}=${version}"
+    if [[ -n "${selected_package_specs[${package_key}]+x}" &&
+          "${selected_package_specs[${package_key}]}" != "${exact_spec}" ]]; then
+      echo "Conflicting local DEB versions for ${package_key}." >&2
+      return 1
+    fi
+    selected_package_specs["${package_key}"]="${exact_spec}"
+    if [[ -z "${seen_install_specs[${exact_spec}]+x}" ]]; then
+      seen_install_specs["${exact_spec}"]=1
+      out_install_specs+=("${exact_spec}")
+    fi
+  done
+}
+
 install_debs_in_ros2_sdk() {
   local simulation_log
+  local -a install_specs=()
   local -a apt_install_args=(
     apt-get install -y --reinstall --no-remove --allow-downgrades
   )
@@ -1778,10 +1839,11 @@ install_debs_in_ros2_sdk() {
     exit 1
   fi
 
+  collect_exact_deb_install_specs install_specs || return 1
   simulation_log="$(mktemp /tmp/sima-neat-ros2-sdk-apt-simulation-XXXXXX)"
   INSTALLER_TMP_DIRS+=("${simulation_log}")
   log "Simulating native ROS2 SDK package installation with package removal disabled."
-  if ! run_sudo "${apt_install_args[@]}" --simulate "${DEBS[@]}" >"${simulation_log}" 2>&1; then
+  if ! run_sudo "${apt_install_args[@]}" --simulate "${install_specs[@]}" >"${simulation_log}" 2>&1; then
     cat "${simulation_log}" >&2
     echo "APT rejected the native ROS2 SDK package set; no packages were changed." >&2
     exit 1
@@ -1792,8 +1854,9 @@ install_debs_in_ros2_sdk() {
     grep '^Remv[[:space:]]' "${simulation_log}" >&2
     exit 1
   fi
+  verify_scheduler_transaction "${simulation_log}" || return 1
 
-  run_sudo "${apt_install_args[@]}" "${DEBS[@]}"
+  run_sudo "${apt_install_args[@]}" "${install_specs[@]}"
   install_ros2_sdk_tvm_runtime || exit 1
   if [[ -x /sbin/ldconfig ]]; then
     run_sudo /sbin/ldconfig
@@ -1835,6 +1898,15 @@ with open(sys.argv[1]) as stream:
 PYACTIVE
 }
 
+board_has_scheduler_cohort() {
+  [[ -n "${BOARD_PLATFORM_ADMISSION_DIR}" ]] || return 1
+  python3 - "${BOARD_PLATFORM_ADMISSION_DIR}/before.json" <<'PYSPLIT'
+import json, sys
+with open(sys.argv[1]) as stream:
+    raise SystemExit(0 if json.load(stream).get('split_cohort') is True else 1)
+PYSPLIT
+}
+
 verify_board_platform_admission() {
   [[ -n "${BOARD_PLATFORM_ADMISSION_DIR}" ]] || return 0
   python3 -B "${SCHEDULER_PLATFORM_ADMISSION_PATH}" check-if-declared --directory "$PWD" \
@@ -1845,6 +1917,13 @@ verify_board_platform_plan() {
   [[ -n "${BOARD_PLATFORM_ADMISSION_DIR}" ]] || return 0
   python3 -B "${SCHEDULER_PLATFORM_ADMISSION_PATH}" verify-plan \
     --baseline "${BOARD_PLATFORM_ADMISSION_DIR}/before.json" --simulation "$1"
+}
+
+verify_scheduler_transaction() {
+  local simulation="$1"
+  shift
+  python3 -B "${SCHEDULER_PLATFORM_ADMISSION_PATH}" transaction-if-declared \
+    --directory "$PWD" --simulation "${simulation}" "$@"
 }
 
 install_debs_on_board() {
@@ -1860,52 +1939,31 @@ install_debs_on_board() {
   refresh_apt_metadata_for_board_install
   stop_board_runtime_before_install
 
-  # Do not start a large package transaction from an unhealthy APT state.
+  # Only the authenticated split coordinator may admit continuation of its own
+  # incomplete product cohort. It must reject every unrelated pending package.
+  local repair_incomplete=0
   if ! apt_package_database_is_healthy; then
+    repair_incomplete=1
+  fi
+  if board_has_scheduler_cohort; then
+    local dpkg_state=0
+    dpkg_package_database_is_configured || dpkg_state=$?
+    case "${dpkg_state}" in
+      0) ;;
+      1) repair_incomplete=1 ;;
+      *) echo "Cannot read dpkg package states; refusing split-cohort installation." >&2; return 1 ;;
+    esac
+  elif [[ "${repair_incomplete}" == 1 ]]; then
     echo "APT package state is unhealthy; refusing to install the Neat package set." >&2
     echo "Repair the board package database first, then rerun this installer." >&2
     exit 1
   fi
+  if [[ "${repair_incomplete}" == 1 ]]; then
+    log "Incomplete package state: requiring exact split-cohort recovery admission with no removals."
+  fi
 
   local -a board_install_specs=()
-  local -A seen_install_specs=()
-  local spec
-  for spec in "${DEBS[@]}"; do
-    [[ -n "${spec}" ]] || continue
-    if [[ -n "${seen_install_specs[${spec}]+x}" ]]; then
-      continue
-    fi
-    seen_install_specs["${spec}"]=1
-    board_install_specs+=("${spec}")
-  done
-
-  # APT's volatile local-file selection can ignore --reinstall when the
-  # installed version is identical. Explicit exact-version selections make
-  # reinstall apply while the accompanying DEBs supply the local archives.
-  local deb package version architecture package_key exact_spec
-  local -A selected_package_specs=()
-  for deb in "${DEBS[@]}"; do
-    package="$(dpkg-deb -f "${deb}" Package)" || return 1
-    version="$(dpkg-deb -f "${deb}" Version)" || return 1
-    architecture="$(dpkg-deb -f "${deb}" Architecture)" || return 1
-    if [[ -z "${package}" || -z "${version}" || -z "${architecture}" ]]; then
-      echo "Incomplete package identity in local DEB: ${deb}" >&2
-      return 1
-    fi
-    package_key="${package}"
-    [[ "${architecture}" == all ]] || package_key+=":${architecture}"
-    exact_spec="${package_key}=${version}"
-    if [[ -n "${selected_package_specs[${package_key}]+x}" &&
-          "${selected_package_specs[${package_key}]}" != "${exact_spec}" ]]; then
-      echo "Conflicting local DEB versions for ${package_key}." >&2
-      return 1
-    fi
-    selected_package_specs["${package_key}"]="${exact_spec}"
-    if [[ -z "${seen_install_specs[${exact_spec}]+x}" ]]; then
-      seen_install_specs["${exact_spec}"]=1
-      board_install_specs+=("${exact_spec}")
-    fi
-  done
+  collect_exact_deb_install_specs board_install_specs || return 1
 
   local -a board_heal_specs=()
   mapfile -t board_heal_specs < <(collect_board_heal_specs)
@@ -1921,6 +1979,11 @@ install_debs_on_board() {
   local -a apt_install_args=(
     apt-get install -y --fix-broken --allow-downgrades --reinstall
   )
+  local -a transaction_admission_args=()
+  if [[ "${repair_incomplete}" == 1 ]]; then
+    apt_install_args+=(--no-remove)
+    transaction_admission_args+=(--repair-incomplete)
+  fi
 
   local simulation_log
   simulation_log="$(mktemp /tmp/sima-neat-apt-simulate-XXXXXX)"
@@ -1937,10 +2000,17 @@ install_debs_on_board() {
     exit 1
   fi
 
+  verify_scheduler_transaction "${simulation_log}" "${transaction_admission_args[@]}" || return 1
+
   if run_sudo "${apt_install_args[@]}" "${board_install_specs[@]}"; then
     run_sudo apt-get check
     complete_board_install_after_packages "${direct_platform_before}"
     return $?
+  fi
+
+  if [[ "${repair_incomplete}" == 1 ]]; then
+    echo "Exact split-cohort recovery failed; refusing package removal or direct dpkg fallback." >&2
+    return 1
   fi
 
   if [[ "${NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL}" != "ON" ]]; then
@@ -1951,7 +2021,7 @@ install_debs_on_board() {
 
   log "apt-get install failed; NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL=ON, removing installed NEAT packages represented by the local DEB set and retrying apt."
   remove_installed_local_deb_packages || return 1
-  if board_platform_admission_is_active; then
+  if board_platform_admission_is_active || board_has_scheduler_cohort; then
     verify_board_platform_admission || return 1
     # The first failed transaction/removal may have changed the package state.
     # Do not reuse an earlier solver plan for a maintenance retry.
@@ -1959,10 +2029,16 @@ install_debs_on_board() {
       >"${simulation_log}" 2>&1 || return 1
     verify_board_platform_plan "${simulation_log}" || return 1
     verify_simulated_package_removals "${simulation_log}" "${board_install_specs[@]}" || return 1
+    verify_scheduler_transaction "${simulation_log}" || return 1
   fi
   if run_sudo "${apt_install_args[@]}" "${board_install_specs[@]}"; then
     complete_board_install_after_packages "${direct_platform_before}"
     return $?
+  fi
+
+  if board_has_scheduler_cohort; then
+    echo "Split-cohort APT retry failed; refusing direct dpkg installation without a valid transaction." >&2
+    return 1
   fi
 
   if [[ "${NEAT_INSTALLER_ALLOW_DPKG_FALLBACK}" != "ON" ]]; then

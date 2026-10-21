@@ -435,6 +435,14 @@ validate_ros2_sdk_deb_architectures() { :; }
 validate_ros2_sdk_tvm_runtime() { :; }
 refresh_apt_metadata_for_board_install() { :; }
 apt_package_database_is_healthy() { return 0; }
+dpkg-deb() {
+  case "$3" in
+    Package) basename "$2" .deb ;;
+    Version) echo 1.2.3 ;;
+    Architecture) echo arm64 ;;
+    *) return 1 ;;
+  esac
+}
 run_sudo() {
   if [[ " $* " == *" --simulate "* ]]; then
     printf 'SIMULATION_OK\n'
@@ -463,6 +471,8 @@ install_debs_in_ros2_sdk
         self.assertIn("<--no-remove>", transaction)
         self.assertIn("<--allow-downgrades>", transaction)
         self.assertNotIn("--fix-broken", transaction)
+        for name in ("sima-neat", "sima-neat-dev", "neat-runtime"):
+            self.assertIn(f"<{name}:arm64=1.2.3>", transaction)
 
     def test_ros2_sdk_rejects_simulated_package_removal(self) -> None:
         result = run_bash(
@@ -475,6 +485,14 @@ validate_ros2_sdk_deb_architectures() { :; }
 validate_ros2_sdk_tvm_runtime() { :; }
 refresh_apt_metadata_for_board_install() { :; }
 apt_package_database_is_healthy() { return 0; }
+dpkg-deb() {
+  case "$3" in
+    Package) basename "$2" .deb ;;
+    Version) echo 1.2.3 ;;
+    Architecture) echo arm64 ;;
+    *) return 1 ;;
+  esac
+}
 run_sudo() {
   if [[ " $* " == *" --simulate "* ]]; then
     printf '%s\n' 'Remv simaai-palette-modalix [2.1.2]'
@@ -1812,6 +1830,35 @@ complete_board_install_after_packages "$before"
 
 
 class PlatformAdmissionBoundaryTest(unittest.TestCase):
+    def test_dpkg_completion_signal_uses_machine_phases_not_dependency_health(self) -> None:
+        for phases, expected in (("installed\nnot-installed\nconfig-files", 0),
+                                 ("installed\nunpacked", 1), ("half-installed", 1),
+                                 ("triggers-pending", 1), ("unknown-phase", 1)):
+            with self.subTest(phases=phases):
+                result = run_bash('source "$1"\ndpkg-query() { printf "%s\\n" "' + phases +
+                                  '"; }\ndpkg_package_database_is_configured\n')
+                self.assertEqual(result.returncode, expected, result.stderr)
+        failed = run_bash('source "$1"\ndpkg-query() { echo "query failed" >&2; return 17; }\n'
+                          'dpkg_package_database_is_configured\n')
+        self.assertEqual(failed.returncode, 2)
+        self.assertIn("query failed", failed.stderr)
+
+    def test_unhealthy_apt_diagnostic_is_preserved_before_temporary_log_cleanup(self) -> None:
+        for status in (0, 100):
+            with self.subTest(status=status):
+                result = run_bash(r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+mktemp() { command mktemp "${tmp}/apt-check-XXXXXX"; }
+run_sudo() { echo 'Exact APT dependency diagnostic' >&2; return ''' + str(status) + r'''; }
+if apt_package_database_is_healthy; then echo HEALTHY; else echo UNHEALTHY; fi
+[[ -z "$(find "${tmp}" -type f -print)" ]]
+''')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), "HEALTHY" if status == 0 else "UNHEALTHY")
+                self.assertEqual("Exact APT dependency diagnostic" in result.stderr, status != 0)
+
     def test_version_overrides_cannot_skip_board_provider_admission(self) -> None:
         for override in ("FORCE_INSTALL=1", "NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON"):
             with self.subTest(override=override):

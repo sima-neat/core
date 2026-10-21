@@ -84,13 +84,25 @@ The unreleased Core `0.6.0` moves ownership to Scheduler for
 no longer carries its own implementation or installs that file; consumers use
 the installed Scheduler headers and `SimaScheduler::Headers` target.
 
-Upgrade Core and Scheduler together using the matching distribution. Scheduler's
-bounded `Breaks`/`Replaces` relationships cover pre-0.6 packages and the
-explicitly audited older 0.6 development artifact. They do not reject the corrected
-0.6.0 release. Unknown overlapping development artifacts fail the ownership
-preflight rather than being silently overwritten. Do not use `--force-overwrite` or delete
-dpkg-owned files. A standalone Scheduler test image does not need Core installed;
-an existing Core installation needs the coordinated upgrade.
+Upgrade Core and Scheduler together using the complete matching distribution.
+Scheduler declares the header transfer for the unreleased 0.6.0 package lineage
+without marking corrected Core 0.6.0 packages incompatible. Before APT changes
+files, the installer uses Scheduler's authenticated ownership check: the former
+owner must be replaced in the same package set with that file removed, or be
+covered by an explicitly declared and approved retirement. Duplicate incoming
+owners and unrelated ownership conflicts are rejected.
+
+If installation on the DevKit was interrupted, rerun the complete verified distribution. The
+installer can recover incomplete packages only when they belong to that incoming
+package set and match its architectures. Recovery must install the exact selected
+versions without removing packages or changing unrelated packages. An unrelated
+broken package database still requires separate repair; the installer does not
+perform a general APT repair or guarantee rollback.
+
+Do not install the Scheduler DEB alone over an existing Core development package,
+use `--force-overwrite`, or delete dpkg-owned files. A standalone Scheduler test
+image does not need Core installed; an existing Core installation needs the
+coordinated upgrade.
 
 ### Backend providers
 

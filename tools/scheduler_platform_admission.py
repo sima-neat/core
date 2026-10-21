@@ -111,7 +111,17 @@ def authenticate_tool(prefix, selected):
     return tool
 
 
-def invoke(directory, action, *, installed=False):
+def invoke(directory, action, *, installed=False, simulation=None, repair_incomplete=False):
+    require(not installed or action == 'check', 'Installed verification requires check')
+    require(not repair_incomplete or action == 'transaction',
+            'Incomplete package repair requires transaction admission')
+    if action == 'transaction':
+        require(simulation is not None, 'Transaction admission requires an APT simulation')
+        simulation = Path(simulation)
+        require(simulation.is_file() and not simulation.is_symlink(),
+                'APT simulation must be a regular file')
+    else:
+        require(simulation is None, 'APT simulation requires transaction admission')
     root = Path(directory).resolve(strict=True)
     receipt_path = root / 'resolved-deps-manifest.json'
     require(receipt_path.is_file() and not receipt_path.is_symlink(), 'Missing selected dependency receipt')
@@ -132,6 +142,10 @@ def invoke(directory, action, *, installed=False):
         command = [sys.executable, '-B', str(tool), action, '--directory', str(root)]
         if installed:
             command.append('--installed')
+        if simulation is not None:
+            command.extend(['--simulation', str(simulation.resolve(strict=True))])
+        if repair_incomplete:
+            command.append('--repair-incomplete')
         # No inherited source PYTHONPATH may override authenticated helper imports.
         env = {key: value for key, value in os.environ.items() if key not in ('PYTHONPATH', 'PYTHONHOME')}
         env['PYTHONDONTWRITEBYTECODE'] = '1'
@@ -141,7 +155,7 @@ def invoke(directory, action, *, installed=False):
     return result
 
 
-def optional_board_check(directory, *, installed=False):
+def optional_admission(directory, action, **options):
     root = Path(directory).resolve(strict=True)
     # The actual incoming owner determines whether this is a split cohort.
     # Unverified top-level receipt flags must not disable authentication.
@@ -152,7 +166,7 @@ def optional_board_check(directory, *, installed=False):
         if role == 'simaai-scheduler':
             schedulers.append(archive)
     if schedulers:
-        return invoke(root, 'check', installed=installed)
+        return {**invoke(root, action, **options), 'split_cohort': True}
     receipt_path = root / 'resolved-deps-manifest.json'
     if receipt_path.exists():
         require(receipt_path.is_file() and not receipt_path.is_symlink(), 'Invalid dependency receipt')
@@ -160,7 +174,14 @@ def optional_board_check(directory, *, installed=False):
         require(not declared(receipt) and not receipt.get('scheduler'),
                 'Selected split distribution is missing its Scheduler archive')
     # Legacy monolithic distributions have no incoming Scheduler owner.
-    return {'schema_version': 1, 'platform_packages': {}, 'packages': {}, 'providers': {}}
+    require(not options.get('repair_incomplete'),
+            'Unhealthy APT state requires an authenticated split Scheduler cohort')
+    return {'schema_version': 1, 'platform_packages': {}, 'packages': {}, 'providers': {},
+            'split_cohort': False}
+
+
+def optional_board_check(directory, *, installed=False):
+    return optional_admission(directory, 'check', installed=installed)
 
 
 def same_providers(before, after):
@@ -181,21 +202,31 @@ def verify_plan(admission, simulation):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('describe', 'check', 'check-if-declared', 'verify-plan'))
+    parser.add_argument('action', choices=('describe', 'check', 'check-if-declared',
+                                          'transaction-if-declared', 'verify-plan'))
     parser.add_argument('--directory', type=Path, default=Path.cwd())
     parser.add_argument('--installed', action='store_true')
     parser.add_argument('--baseline', type=Path)
     parser.add_argument('--simulation', type=Path)
+    parser.add_argument('--repair-incomplete', action='store_true')
     parser.add_argument('--output', type=Path)
     args = parser.parse_args()
+    require(not args.repair_incomplete or args.action == 'transaction-if-declared',
+            'Incomplete package repair requires transaction admission')
     if args.action == 'verify-plan':
         require(args.baseline and args.simulation, 'Plan verification requires admission and simulation')
         verify_plan(json.loads(args.baseline.read_text()), args.simulation)
         return
-    require(not args.simulation, 'Simulation is only valid with verify-plan')
-    result = (optional_board_check(args.directory, installed=args.installed)
-              if args.action == 'check-if-declared'
-              else invoke(args.directory, args.action, installed=args.installed))
+    if args.action == 'transaction-if-declared':
+        require(args.simulation and not args.installed and not args.baseline,
+                'Transaction admission requires a simulation, not installed/provider comparison')
+        result = optional_admission(args.directory, 'transaction', simulation=args.simulation,
+                                    repair_incomplete=args.repair_incomplete)
+    else:
+        require(not args.simulation, 'Simulation requires plan or transaction admission')
+        result = (optional_board_check(args.directory, installed=args.installed)
+                  if args.action == 'check-if-declared'
+                  else invoke(args.directory, args.action, installed=args.installed))
     if args.baseline:
         same_providers(json.loads(args.baseline.read_text()), result)
     data = json.dumps(result, indent=2, sort_keys=True) + '\n'

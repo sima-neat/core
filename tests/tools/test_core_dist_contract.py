@@ -890,7 +890,7 @@ admission = importlib.util.module_from_spec(admission_spec)
 admission_spec.loader.exec_module(admission)
 
 
-def admission_fixture(tmp_path):
+def admission_fixture(tmp_path, *, transaction_error=None, empty_platform=False):
     root = tmp_path / 'admission-dist'; root.mkdir()
     source = tmp_path / 'scheduler-source'
     prefix = source / 'usr'
@@ -900,6 +900,11 @@ def admission_fixture(tmp_path):
     tool.write_text('''import json, pathlib, sys
 from fixture_policy import RESULT
 pathlib.Path(''' + repr(str(marker)) + ''').write_text('executed')
+pathlib.Path(''' + repr(str(marker.with_suffix('.argv'))) + ''').write_text(json.dumps(sys.argv[1:]))
+with pathlib.Path(''' + repr(str(marker.with_suffix('.calls'))) + ''').open('a') as stream:
+    stream.write(json.dumps(sys.argv[1:]) + '\\n')
+if sys.argv[1] == 'transaction' and ''' + repr(transaction_error) + ''' is not None:
+    raise SystemExit(''' + repr(transaction_error) + ''')
 directory = pathlib.Path(sys.argv[sys.argv.index('--directory') + 1])
 receipt = json.loads((directory / 'resolved-deps-manifest.json').read_text())
 if receipt.get('runner', {}).get('buildinfo', {}).get('platform_runtime_packages') != ['fixture-platform']:
@@ -914,6 +919,9 @@ print(json.dumps(RESULT))
                                                 'Architecture': 'arm64'}},
               'providers': {'libfixture.so': {'package': 'fixture-platform',
                                             'path': '/usr/lib/libfixture.so', 'sha256': 'a' * 64}}}
+    if empty_platform:
+        for key in ('platform_packages', 'packages', 'providers'):
+            result[key] = {}
     (tool_dir / 'fixture_policy.py').write_text('RESULT = ' + repr(result) + '\n')
     files = {}
     for path in tool_dir.iterdir():
@@ -949,8 +957,42 @@ def test_installed_scheduler_tool_is_authenticated_and_read_only(tmp_path):
     assert not list(source.rglob('__pycache__'))
 
 
+@pytest.mark.parametrize('repair', [False, True])
+def test_transaction_delegates_regular_plan_with_exact_arguments(tmp_path, repair):
+    root, _, _, marker, expected, _ = admission_fixture(tmp_path)
+    simulation = tmp_path / 'apt simulation.log'; simulation.write_text('Inst fixture (2 local-deb)\n')
+    result = admission.optional_admission(root, 'transaction', simulation=simulation,
+                                         repair_incomplete=repair)
+    assert result == {**expected, 'split_cohort': True}
+    arguments = json.loads(marker.with_suffix('.argv').read_text())
+    assert arguments == ['transaction', '--directory', str(root), '--simulation', str(simulation),
+                         *(['--repair-incomplete'] if repair else [])]
+
+
+@pytest.mark.parametrize('kind', ['missing', 'directory', 'symlink'])
+def test_transaction_rejects_nonregular_simulation_before_import(tmp_path, kind):
+    root, _, _, marker, _, _ = admission_fixture(tmp_path)
+    simulation = tmp_path / 'simulation'
+    if kind == 'directory':
+        simulation.mkdir()
+    elif kind == 'symlink':
+        target = tmp_path / 'target'; target.write_text('')
+        simulation.symlink_to(target)
+    with pytest.raises(admission.AdmissionError, match='regular file'):
+        admission.invoke(root, 'transaction', simulation=simulation)
+    assert not marker.exists()
+
+
+def test_legacy_transaction_cannot_request_incomplete_repair(tmp_path):
+    simulation = tmp_path / 'simulation'; simulation.write_text('')
+    assert admission.optional_admission(tmp_path, 'transaction', simulation=simulation)['split_cohort'] is False
+    with pytest.raises(admission.AdmissionError, match='authenticated split'):
+        admission.optional_admission(tmp_path, 'transaction', simulation=simulation, repair_incomplete=True)
+
+
 @pytest.mark.parametrize('mutation', ['helper', 'sibling', 'mode', 'extra', 'missing', 'symlink', 'receipt', 'inventory_digest'])
-def test_scheduler_tampering_rejected_before_import(tmp_path, mutation):
+@pytest.mark.parametrize('action', ['describe', 'transaction'])
+def test_scheduler_tampering_rejected_before_import(tmp_path, mutation, action):
     root, source, tool, marker, _, rebuild = admission_fixture(tmp_path)
     if mutation == 'helper':
         tool.write_text('raise SystemExit("untrusted helper executed")\n')
@@ -976,8 +1018,12 @@ def test_scheduler_tampering_rejected_before_import(tmp_path, mutation):
         receipt.write_text(json.dumps(data))
         change(root, 'resolved-deps-manifest.json', lambda value: value['scheduler'].update(buildinfo=data))
     rebuild()
+    options = {}
+    if action == 'transaction':
+        simulation = tmp_path / 'simulation'; simulation.write_text('')
+        options = {'simulation': simulation, 'repair_incomplete': True}
     with pytest.raises(admission.AdmissionError):
-        admission.invoke(root, 'describe')
+        admission.invoke(root, action, **options)
     assert not marker.exists()
 
 
@@ -1040,6 +1086,171 @@ def installer_shell(root, body):
     return subprocess.run(['bash', '-c', 'source "$1"; cd "$2"; ' + body,
                            'bash', str(ROOT / 'tools/install_neat_framework.sh'), str(root)],
                           text=True, capture_output=True)
+
+
+# These tests exercise the real shell/delegate/DEB authentication boundary. The
+# sealed producer double owns its yes/no decision; Scheduler's package suite
+# tests real dpkg ownership, pending states and APT action admission.
+TRANSACTION_SETUP = '''
+DEBS=(./scheduler.deb)
+refresh_apt_metadata_for_board_install() { :; }
+stop_board_runtime_before_install() { :; }
+collect_board_heal_specs() { :; }
+dpkg_package_database_is_configured() { return 0; }
+board_runtime_is_legacy() { return 0; }
+complete_board_install_after_packages() { echo COMPLETE; }
+remove_installed_local_deb_packages() { echo REMOVE >> commands; }
+run_sudo() {
+  printf '%s\\n' "$*" >> commands
+  if [[ " $* " == *" --simulate "* ]]; then
+    echo 'Inst simaai-scheduler (1 local-deb [arm64])'
+    echo 'Conf simaai-scheduler (1 local-deb [arm64])'
+    return 0
+  fi
+  if [[ "$1 ${2:-}" == 'apt-get install' ]]; then
+    echo APPLY >> commands
+    return "${APPLY_STATUS:-0}"
+  fi
+  [[ "$1 ${2:-}" == 'apt-get check' || "$1" == */ldconfig || "$1" == ldconfig ]]
+}
+'''
+
+
+@pytest.mark.parametrize('repair', [False, True])
+@pytest.mark.parametrize('allowed', [False, True])
+def test_board_applies_only_authenticated_admitted_transaction(tmp_path, repair, allowed):
+    root, _, _, marker, _, _ = admission_fixture(
+        tmp_path, empty_platform=True, transaction_error=None if allowed else 'foreign pending package')
+    result = installer_shell(root, TRANSACTION_SETUP +
+                             f'apt_package_database_is_healthy() {{ return {int(repair)}; }}\n'
+                             'install_debs_on_board\n')
+    assert (result.returncode == 0) == allowed, result.stdout + result.stderr
+    commands = (root / 'commands').read_text()
+    assert ('APPLY' in commands) == allowed
+    assert ('COMPLETE' in result.stdout) == allowed
+    arguments = json.loads(marker.with_suffix('.argv').read_text())
+    assert arguments[0] == 'transaction'
+    assert ('--repair-incomplete' in arguments) == repair
+    transactions = [line for line in commands.splitlines() if line.startswith('apt-get install')]
+    assert len(transactions) == (2 if allowed else 1)
+    for command in transactions:
+        assert ('--no-remove' in command) == repair
+        assert './scheduler.deb simaai-scheduler:arm64=1' in command
+    assert 'REMOVE' not in commands and 'dpkg -i' not in commands
+
+
+def test_failed_admitted_repair_never_enters_opted_in_maintenance(tmp_path):
+    root, _, _, _, _, _ = admission_fixture(tmp_path)
+    result = installer_shell(root, TRANSACTION_SETUP + '''
+apt_package_database_is_healthy() { return 1; }
+NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL=ON
+NEAT_INSTALLER_ALLOW_DPKG_FALLBACK=ON
+APPLY_STATUS=100
+install_debs_on_board
+''')
+    assert result.returncode != 0
+    assert 'Exact split-cohort recovery failed' in result.stderr
+    commands = (root / 'commands').read_text()
+    assert commands.count('APPLY') == 1
+    assert 'REMOVE' not in commands and 'dpkg -i' not in commands
+    assert 'COMPLETE' not in result.stdout
+
+
+@pytest.mark.parametrize('state', [1, 2])
+def test_split_pending_state_or_query_error_cannot_use_healthy_transaction(tmp_path, state):
+    root, _, _, marker, _, _ = admission_fixture(tmp_path, empty_platform=True)
+    result = installer_shell(root, TRANSACTION_SETUP + f'''
+apt_package_database_is_healthy() {{ return 0; }}
+dpkg_package_database_is_configured() {{ return {state}; }}
+install_debs_on_board
+''')
+    calls = [json.loads(line) for line in marker.with_suffix('.calls').read_text().splitlines()]
+    transactions = [call for call in calls if call[0] == 'transaction']
+    if state == 1:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert len(transactions) == 1 and '--repair-incomplete' in transactions[0]
+        commands = (root / 'commands').read_text().splitlines()
+        assert all('--no-remove' in line for line in commands if line.startswith('apt-get install'))
+    else:
+        assert result.returncode != 0
+        assert 'Cannot read dpkg package states' in result.stderr
+        assert not transactions
+        assert not (root / 'commands').exists()
+
+
+def test_split_maintenance_retry_is_readmitted_and_never_direct_dpkg(tmp_path):
+    root, _, _, marker, _, _ = admission_fixture(tmp_path, empty_platform=True)
+    result = installer_shell(root, TRANSACTION_SETUP + '''
+apt_package_database_is_healthy() { return 0; }
+NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL=ON
+NEAT_INSTALLER_ALLOW_DPKG_FALLBACK=ON
+APPLY_STATUS=100
+install_debs_on_board
+''')
+    assert result.returncode != 0
+    assert 'refusing direct dpkg' in result.stderr
+    calls = [json.loads(line) for line in marker.with_suffix('.calls').read_text().splitlines()]
+    assert len([call for call in calls if call[0] == 'transaction']) == 2
+    commands = (root / 'commands').read_text()
+    assert commands.count('APPLY') == 2
+    assert commands.count('REMOVE') == 1
+    assert commands.count('--simulate') == 2
+    assert 'dpkg -i' not in commands
+    assert 'COMPLETE' not in result.stdout
+
+
+def test_unhealthy_legacy_board_still_refuses_before_simulation(tmp_path):
+    result = installer_shell(tmp_path, TRANSACTION_SETUP + '''
+DEBS=()
+apt_package_database_is_healthy() { return 1; }
+install_debs_on_board
+''')
+    assert result.returncode != 0
+    assert 'APT package state is unhealthy' in result.stderr
+    assert not (tmp_path / 'commands').exists()
+
+
+@pytest.mark.parametrize('allowed', [False, True])
+def test_ros2_uses_same_ownership_gate_without_board_provider_admission(tmp_path, allowed):
+    root, _, _, marker, _, _ = admission_fixture(
+        tmp_path, transaction_error=None if allowed else 'undeclared file transfer')
+    result = installer_shell(root, TRANSACTION_SETUP + '''
+apt_package_database_is_healthy() { return 0; }
+validate_ros2_sdk_native_host() { :; }
+validate_single_sima_neat_package_pair() { :; }
+validate_ros2_sdk_deb_architectures() { :; }
+validate_ros2_sdk_tvm_runtime() { :; }
+install_ros2_sdk_tvm_runtime() { :; }
+verify_ros2_sdk_deb_packages_installed() { :; }
+repair_global_sima_neat_lib_links() { :; }
+verify_global_sima_neat_lib_links() { :; }
+install_debs_in_ros2_sdk
+''')
+    assert (result.returncode == 0) == allowed, result.stdout + result.stderr
+    calls = [json.loads(line) for line in marker.with_suffix('.calls').read_text().splitlines()]
+    assert [call[0] for call in calls] == ['transaction']
+    assert all('--repair-incomplete' not in call for call in calls)
+    commands = (root / 'commands').read_text()
+    assert ('APPLY' in commands) == allowed
+    for line in commands.splitlines():
+        if line.startswith('apt-get install'):
+            assert '--no-remove' in line and '--fix-broken' not in line
+
+
+def test_ros2_unhealthy_state_does_not_enter_board_repair(tmp_path):
+    root, _, _, marker, _, _ = admission_fixture(tmp_path)
+    result = installer_shell(root, TRANSACTION_SETUP + '''
+apt_package_database_is_healthy() { return 1; }
+validate_ros2_sdk_native_host() { :; }
+validate_single_sima_neat_package_pair() { :; }
+validate_ros2_sdk_deb_architectures() { :; }
+validate_ros2_sdk_tvm_runtime() { :; }
+install_debs_in_ros2_sdk
+''')
+    assert result.returncode != 0
+    assert 'Repair the container package database first' in result.stderr
+    assert not marker.exists()
+    assert not (root / 'commands').exists()
 
 
 @pytest.mark.parametrize('override', ['FORCE_INSTALL=1', 'NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON'])
@@ -1110,8 +1321,9 @@ def test_packaging_carries_shared_delegate_and_selected_receipt():
 @pytest.mark.parametrize('removed,allowed', [
     ('fixture-platform:arm64', False), ('unrelated-dependent', False), ('simaai-scheduler', True),
 ])
-def test_maintenance_removal_is_still_product_only(tmp_path, removed, allowed):
-    root, _, _, _, _, _ = admission_fixture(tmp_path)
+@pytest.mark.parametrize('empty_platform', [False, True])
+def test_maintenance_removal_is_still_product_only(tmp_path, removed, allowed, empty_platform):
+    root, _, _, _, _, _ = admission_fixture(tmp_path, empty_platform=empty_platform)
     result = installer_shell(root, f'''prepare_board_platform_admission
 DEBS=(./scheduler.deb)
 dpkg-query() {{ printf 'ii'; }}
