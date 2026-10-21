@@ -36,6 +36,22 @@ def validate_models(environment):
                 f'Missing required CPU metadata model: {name}={path}')
 
 
+def resolve_models(workspace, work, environment):
+    if not all(environment.get(name) for name in MODEL_VARIABLES):
+        # Fresh hosted runners must have an authorized Developer Portal session;
+        # diagnose its absence with the existing bounded check, not a hidden
+        # interactive login inside modelzoo. Explicit offline fixtures need none.
+        subprocess.run(['bash', str(workspace / 'scripts/ci/check_sima_cli_session.sh')],
+                       env=environment, cwd=workspace, check=True)
+        subprocess.run(['bash', str(workspace / 'scripts/ci/pciehost/resolve_assets.sh')],
+                       env=environment, cwd=workspace, check=True)
+        for line in (work / 'assets.env').read_text().splitlines():
+            name, separator, value = line.partition('=')
+            if separator and name in MODEL_VARIABLES:
+                environment[name] = value
+    validate_models(environment)
+
+
 def verify_tutorials(workspace, extras):
     relative = Path('029_run_genai_over_pcie')
     for name in ('run_llm.py', 'run_vlm.py', 'run_whisper.py'):
@@ -106,14 +122,7 @@ def main():
                        SIMAPCIE_EXTRAS_DIR=str(extras),
                        SIMAPCIE_TEST_IMAGE=str(workspace / 'tests/images/people.jpg'),
                        SIMAPCIE_BOXDECODE_IMAGE=str(workspace / 'tests/images/people.jpg'))
-    if not all(environment.get(name) for name in MODEL_VARIABLES):
-        subprocess.run(['bash', str(workspace / 'scripts/ci/pciehost/resolve_assets.sh')],
-                       env=environment, cwd=workspace, check=True)
-        for line in (work / 'assets.env').read_text().splitlines():
-            name, separator, value = line.partition('=')
-            if separator and name in MODEL_VARIABLES:
-                environment[name] = value
-    validate_models(environment)
+    resolve_models(workspace, work, environment)
     # A source test's relative imports need the source layout. Verify its
     # installed tutorial dependencies above instead of silently testing a stale
     # or incomplete extras package. Select only the two CPU cases from the

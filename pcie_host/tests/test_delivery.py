@@ -250,6 +250,41 @@ GENAI_CMAKE_ARGS=()
 
 
 class CpuPackageCoverage(unittest.TestCase):
+    def test_explicit_models_require_no_authentication_or_download(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            environment = {}
+            for name in cpu_tests.MODEL_VARIABLES:
+                path = root / name; path.write_bytes(b'fixture')
+                environment[name] = str(path)
+            with patch.object(cpu_tests.subprocess, 'run') as run:
+                cpu_tests.resolve_models(ROOT.parent, root, environment)
+                run.assert_not_called()
+
+    def test_missing_models_require_bounded_existing_auth_check_before_download(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); environment = {}
+            lines = []
+            for name in cpu_tests.MODEL_VARIABLES:
+                path = root / name; path.write_bytes(b'fixture'); lines.append(f'{name}={path}')
+            (root / 'assets.env').write_text('\n'.join(lines))
+            with patch.object(cpu_tests.subprocess, 'run') as run:
+                cpu_tests.resolve_models(ROOT.parent, root, environment)
+            self.assertEqual([call.args[0] for call in run.call_args_list], [
+                ['bash', str(ROOT.parent / 'scripts/ci/check_sima_cli_session.sh')],
+                ['bash', str(ROOT.parent / 'scripts/ci/pciehost/resolve_assets.sh')]])
+            self.assertTrue(all(call.kwargs['check'] for call in run.call_args_list))
+            self.assertEqual(set(environment), set(cpu_tests.MODEL_VARIABLES))
+
+    def test_missing_authentication_fails_before_model_download(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(cpu_tests.subprocess, 'run',
+                              side_effect=subprocess.CalledProcessError(1, ['auth-check'])) as run:
+                with self.assertRaises(subprocess.CalledProcessError):
+                    cpu_tests.resolve_models(ROOT.parent, Path(temp), {})
+            run.assert_called_once()
+            self.assertEqual(run.call_args.args[0][1], str(ROOT.parent / 'scripts/ci/check_sima_cli_session.sh'))
+
     def test_selection_preserves_cpu_modules_and_only_two_mixed_file_cases(self):
         self.assertEqual(cpu_tests.CPU_TESTS, (
             'test_api_surface.py', 'test_genai_tutorials.py', 'test_genai_values.py',
