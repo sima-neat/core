@@ -696,11 +696,18 @@ def test_installed_workflow_verifies_complete_producer_not_cli_resource_workspac
 
     workflow = yaml.safe_load((ROOT / '.github/workflows/vulcan-ci.yml').read_text())
     steps = workflow['jobs']['test-devkit']['steps']
-    acquisition = next(step for step in steps if step.get('uses', '').startswith('actions/download-artifact@'))
-    assert acquisition['with']['name'] == workflow['jobs']['build']['with']['artifact_name']
-    artifact_root = workspace / acquisition['with']['path']
+    acquisition = next(step for step in steps if step.get('name') == "Download this build's installed-qualification inputs")
+    acquisition_command = shlex.split(acquisition['run'].replace('\\\n', ' '))
+    assert acquisition_command[:2] == ['python3', 'tools/ci/acquire_core_qualification.py']
+    assert acquisition_command[acquisition_command.index('--branch') + 1] == '${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}'
+    assert acquisition_command[acquisition_command.index('--commit') + 1] == '${GITHUB_SHA}'
+    assert acquisition_command[acquisition_command.index('--environment') + 1] == '${VULCAN_ENV}'
+    artifact_root = workspace / acquisition_command[acquisition_command.index('--output') + 1]
     shutil.copytree(producer, artifact_root)
     inventory_step = next(step for step in steps if step.get('name') == 'Run Installed DevKit Package Inventory Test')
+    baseline = next(step for step in steps if step.get('name') == 'Capture native platform before NEAT installation')
+    install = next(step for step in steps if step.get('name') == 'Install test runtime from Vulcan artifact')
+    assert steps.index(acquisition) < steps.index(baseline) < steps.index(install) < steps.index(inventory_step)
     command = next(line for line in inventory_step['run'].replace('\\\n', ' ').splitlines()
                    if line.strip().startswith('bash scripts/ci/verify_core_dist.sh '))
     argv = shlex.split(command)

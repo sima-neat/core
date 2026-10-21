@@ -783,10 +783,11 @@ jobs:
           ./scripts/cleanup_devkit_storage.sh
 
       - name: Download this build's installed-qualification inputs
-        uses: actions/download-artifact@v5
-        with:
-          name: neat-core-dist
-          path: _work/installed-qualification-dist
+        run: |
+          python3 tools/ci/acquire_core_qualification.py \
+            --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" \
+            --commit "${GITHUB_SHA}" --environment "${VULCAN_ENV}" \
+            --output _work/installed-qualification-dist
 
       - name: Capture native platform before NEAT installation
         run: |

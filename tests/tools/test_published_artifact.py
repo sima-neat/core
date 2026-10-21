@@ -14,6 +14,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools/ci'))
 import published_artifact as transport
+import acquire_core_qualification as core_transport
 
 
 @pytest.fixture
@@ -207,3 +208,154 @@ def test_nested_selected_resource_rejected_before_cli_download(publication):
     with pytest.raises(ValueError, match="Unsafe published resource"):
         acquire(publication)
     assert len(calls) == 1
+
+
+@pytest.fixture
+def core_publication(tmp_path):
+    source = tmp_path / 'core-published'; source.mkdir()
+    branch, commit = 'feature/core', 'a' * 40
+    payloads = {'manifest.json': b'{"abi-version":"6"}', 'core.deb': b'Core package'}
+    for name, data in payloads.items(): (source / name).write_bytes(data)
+    metadata = {'name': 'gh:sima-neat/core', 'version': '0.6.0+feature-core.' + commit[:12],
+                'resources': list(payloads), 'resources-checksum': {
+                    name: transport.digest(source / name) for name in payloads}}
+    for name in core_transport.METADATA:
+        (source / name).write_text(json.dumps(metadata))
+    selected = {'repository': 'core', 'package_path': '', 'ref': branch,
+                'requested_spec': commit[:12], 'resolved_spec': commit[:12],
+                'environment': 'production', 'base_url': 'https://artifacts.neat.sima.ai',
+                'metadata_url': 'https://artifacts.neat.sima.ai/core/feature%252Fcore/' + commit[:12] + '/metadata-all.json'}
+    calls = []
+    def fetch(url, output, **kwargs):
+        Path(output).write_bytes((source / url.rsplit('/', 1)[-1]).read_bytes())
+    def output(argv, **kwargs):
+        calls.append(argv)
+        return 'CLI version message\n' + json.dumps(selected)
+    original_run = subprocess.run
+    def run(argv, **kwargs):
+        if argv[0] == 'git': return original_run(argv, **kwargs)
+        calls.append(argv)
+        if argv[0] == 'fixture-cli':
+            destination = Path(argv[argv.index('-d') + 1])
+            for name in json.loads((source / 'metadata-all.json').read_text())['resources']:
+                path = source / name
+                if path.exists(): shutil.copy2(path, destination / name, follow_symlinks=False)
+        return subprocess.CompletedProcess(argv, 0)
+    with mock.patch.object(core_transport, 'download', side_effect=fetch), \
+         mock.patch.object(core_transport.subprocess, 'check_output', side_effect=output), \
+         mock.patch.object(core_transport.subprocess, 'run', side_effect=run):
+        yield tmp_path, source, selected, calls
+
+
+def acquire_core(fixture, **kwargs):
+    root, *_ = fixture
+    return core_transport.acquire_core('fixture-cli', 'feature/core', 'a' * 40,
+                                       kwargs.pop('environment', 'production'), root / 'out', ROOT, **kwargs)
+
+
+@pytest.mark.parametrize('environment', ['production', 'prod', 'prd'])
+def test_core_uses_original_metadata_not_scheduler_publisher_envelope(core_publication, environment):
+    root, source, _, calls = core_publication
+    result = acquire_core(core_publication, environment=environment)
+    assert result['selector'] == 'core@feature/core:' + 'a' * 12
+    assert result['resources'] == 2
+    assert calls[0][1:] == ['neat', 'download', result['selector'], '--env', 'production', '-t', 'all', '--json']
+    assert calls[1][1:] == ['neat', 'download', result['selector'], '--env', 'production', '-t', 'all', '-d', str(root / 'out')]
+    assert calls[2] == ['bash', str(ROOT / 'scripts/ci/verify_core_dist.sh'), '--dist', str(root / 'out'),
+                        '--expected-manifest', str(ROOT / 'deps/manifest.json')]
+    for name in (*core_transport.METADATA, 'manifest.json', 'core.deb'):
+        assert (root / 'out' / name).read_bytes() == (source / name).read_bytes()
+    assert not (root / 'out/publication.json').exists()
+
+
+@pytest.mark.parametrize('field,value', [
+    ('repository', 'scheduler'), ('package_path', 'pciehost/ubuntu24/amd64'),
+    ('ref', 'develop'), ('environment', 'staging'), ('requested_spec', 'latest'),
+    ('resolved_spec', 'b' * 12), ('base_url', 'https://example.org'),
+    ('metadata_url', 'https://artifacts.neat.sima.ai/core/develop/' + 'a' * 12 + '/metadata-all.json'),
+    ('metadata_url', 'https://artifacts.stg.neat.sima.ai/core/feature%252Fcore/' + 'a' * 12 + '/metadata-all.json'),
+])
+def test_core_wrong_resolution_never_downloads_payload(core_publication, field, value):
+    core_publication[2][field] = value
+    with pytest.raises(ValueError, match='different Core publication'):
+        acquire_core(core_publication)
+    assert len(core_publication[-1]) == 1
+    assert not (core_publication[0] / 'out').exists()
+
+
+@pytest.mark.parametrize('field,value,all_variants', [
+    ('name', 'foreign', True), ('name', 'sima-neat', False),
+    ('version', '0.6.0+feature-core.' + 'b' * 12, False),
+])
+def test_core_wrong_or_mixed_metadata_identity_fails_before_payload(core_publication, field, value, all_variants):
+    source = core_publication[1]
+    for name in core_transport.METADATA if all_variants else ('metadata-extras.json',):
+        path = source / name; item = json.loads(path.read_text()); item[field] = value
+        path.write_text(json.dumps(item))
+    with pytest.raises(ValueError, match='metadata identity'):
+        acquire_core(core_publication)
+    assert len(core_publication[-1]) == 1
+
+
+@pytest.mark.parametrize('identity', [('sima-neat', '0.6.0'), ('gh:sima-neat/core', '0.6.0')])
+def test_core_release_versions_need_not_encode_commit(core_publication, identity):
+    # Production CMake uses exact tags as versions. Commit authority is the
+    # immutable CLI selector/URL; the full verifier checks actual DEB versions.
+    for name in core_transport.METADATA:
+        path = core_publication[1] / name; value = json.loads(path.read_text())
+        value['name'], value['version'] = identity
+        path.write_text(json.dumps(value))
+    assert acquire_core(core_publication)['status'] == 'PASS'
+
+
+@pytest.mark.parametrize('name', core_transport.METADATA)
+def test_core_missing_metadata_variant_fails_before_payload(core_publication, name):
+    (core_publication[1] / name).unlink()
+    with pytest.raises(FileNotFoundError): acquire_core(core_publication)
+    assert len(core_publication[-1]) == 1
+
+
+@pytest.mark.parametrize('mutation', ['hash', 'missing', 'symlink'])
+def test_core_payload_hash_missing_and_symlink_fail_before_verifier(core_publication, mutation):
+    path = core_publication[1] / 'core.deb'
+    if mutation == 'hash': path.write_bytes(b'changed')
+    elif mutation == 'missing': path.unlink()
+    else:
+        real = path.with_suffix('.target'); path.rename(real); path.symlink_to(real)
+    with pytest.raises(ValueError, match='differs from selected metadata'):
+        acquire_core(core_publication)
+    assert len(core_publication[-1]) == 2
+
+
+@pytest.mark.parametrize('name', ['../escape', 'nested/archive.deb', 'metadata.json'])
+def test_core_unsafe_payload_cannot_overwrite_authority(core_publication, name):
+    path = core_publication[1] / 'metadata-all.json'
+    data = json.loads(path.read_text()); data['resources'] = [name]; data['resources-checksum'] = {name: 'a' * 64}
+    path.write_text(json.dumps(data))
+    with pytest.raises(ValueError): acquire_core(core_publication)
+    assert len(core_publication[-1]) == 1
+
+
+def test_core_full_verifier_failure_propagates(core_publication):
+    original = core_transport.subprocess.run.side_effect
+    def run(argv, **kwargs):
+        if argv[0] == 'bash': raise subprocess.CalledProcessError(1, argv)
+        return original(argv, **kwargs)
+    core_transport.subprocess.run.side_effect = run
+    with pytest.raises(subprocess.CalledProcessError): acquire_core(core_publication)
+
+
+def test_core_existing_destination_is_not_reused(core_publication):
+    (core_publication[0] / 'out').mkdir()
+    with pytest.raises(FileExistsError): acquire_core(core_publication)
+    assert len(core_publication[-1]) == 1
+
+
+def test_core_workflow_only_qualification_transport_uses_publication():
+    source = (ROOT / '.github/workflows/vulcan-ci.yml').read_text()
+    block = source.split("      - name: Download this build's installed-qualification inputs", 1)[1]
+    block = block.split('      - name: Capture native platform', 1)[0]
+    assert 'acquire_core_qualification.py' in block
+    assert '--commit "${GITHUB_SHA}"' in block and '--environment "${VULCAN_ENV}"' in block
+    assert 'actions/download-artifact' not in block
+    assert 'cleanup_github_artifacts: false' not in source
