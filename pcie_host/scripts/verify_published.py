@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
-from pcie_delivery import sha, verify
+from pcie_delivery import sha, verify, verify_publication_inventory
 
 
 def main():
@@ -32,12 +32,7 @@ def main():
     selection, _ = verify(args.output)
     if selection['distro'] != args.distro or selection['architecture'] != args.arch or selection['branch'] != data['branch']:
         raise ValueError('native Scheduler publication does not match Core branch/tuple')
-    expected = set(selection['resources']) | {'scheduler-native-selection.json', 'pcie_delivery.py', 'install_pciehost.sh'}
-    for pattern in (f'sima-pcie-host_*_{args.arch}.deb', f'sima-pcie-host-dev_*_{args.arch}.deb', '*-extras.tar.gz', 'pyneatpcie-*.whl'):
-        paths = list(args.output.glob(pattern))
-        if len(paths) != 1: raise ValueError('expected one native Core resource: ' + pattern)
-        expected.add(paths[0].name)
-    if set(resources) != expected: raise ValueError('unexpected native publication resources')
+    verify_publication_inventory(args.output, selection, resources)
     for name, pattern in [('metadata-extras.json', '*-extras.tar.gz'), ('metadata-pyneatpcie.json', 'pyneatpcie-*.whl')]:
         subset = json.loads((args.output / name).read_text())
         resource = next(args.output.glob(pattern)).name

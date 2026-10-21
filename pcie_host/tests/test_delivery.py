@@ -24,6 +24,100 @@ cpu_tests = importlib.util.module_from_spec(spec); spec.loader.exec_module(cpu_t
 spec = importlib.util.spec_from_file_location(
     'cpu_package_preparation', ROOT.parent / 'scripts/ci/pciehost/prepare_cpu_package.py')
 cpu_prepare = importlib.util.module_from_spec(spec); spec.loader.exec_module(cpu_prepare)
+spec = importlib.util.spec_from_file_location('native_publication', ROOT / 'scripts/verify_published.py')
+publication = importlib.util.module_from_spec(spec); spec.loader.exec_module(publication)
+
+
+class PublicationInventory(unittest.TestCase):
+    def test_complete_inventory_and_each_required_role(self):
+        for arch in ('amd64', 'arm64'):
+            with tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary)
+                selection = {'architecture': arch, 'resources': {'provider.deb': {}}}
+                names = ['provider.deb', 'scheduler-native-selection.json', 'pcie_delivery.py',
+                         'install_pciehost.sh', f'sima-pcie-host_1_{arch}.deb',
+                         f'sima-pcie-host-dev_1_{arch}.deb', 'core-extras.tar.gz', 'pyneatpcie-1.whl']
+                for name in names: (directory / name).touch()
+                delivery.verify_publication_inventory(directory, selection, names)
+                for name in names:
+                    with self.subTest(arch=arch, missing=name):
+                        (directory / name).unlink()
+                        with self.assertRaises(ValueError):
+                            delivery.verify_publication_inventory(
+                                directory, selection, [item for item in names if item != name])
+                        (directory / name).touch()
+                for duplicate in (f'sima-pcie-host_2_{arch}.deb', f'sima-pcie-host-dev_2_{arch}.deb',
+                                  'other-extras.tar.gz', 'pyneatpcie-2.whl'):
+                    with self.subTest(arch=arch, duplicate=duplicate):
+                        (directory / duplicate).touch()
+                        with self.assertRaisesRegex(ValueError, 'Expected one'):
+                            delivery.verify_publication_inventory(directory, selection, names + [duplicate])
+                        (directory / duplicate).unlink()
+                for invalid in ([], names + [names[0]], names + ['foreign.deb']):
+                    with self.subTest(arch=arch, invalid=invalid), self.assertRaises(ValueError):
+                        delivery.verify_publication_inventory(directory, selection, invalid)
+                with self.assertRaises(ValueError):
+                    delivery.verify_publication_inventory(directory, {**selection, 'architecture': 'other'}, names)
+
+    def test_publisher_authentication_shared_inventory_and_variant_checks(self):
+        for mutation in ('complete', 'identity', 'hash', 'duplicate', 'missing', 'extra',
+                         'scheduler-identity', 'producer', 'variant'):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary); source = root / 'source'; source.mkdir()
+                selection = {'architecture': 'amd64', 'distro': 'ubuntu22', 'branch': 'feature/cpu',
+                             'resources': {'native_artifacts.py': {}}}
+                names = ['native_artifacts.py', 'scheduler-native-selection.json', 'pcie_delivery.py',
+                         'install_pciehost.sh', 'sima-pcie-host_1_amd64.deb',
+                         'sima-pcie-host-dev_1_amd64.deb', 'core-extras.tar.gz', 'pyneatpcie-1.whl']
+                if mutation == 'missing': names.remove('pyneatpcie-1.whl')
+                if mutation == 'extra': names.append('foreign.deb')
+                for name in names: (source / name).write_text('authenticated transport fixture')
+                hashes = {name: delivery.sha(source / name) for name in names}
+                data = {'commit': 'a' * 40, 'branch': 'feature/cpu',
+                        'artifact': {'distro': 'ubuntu22', 'arches': ['amd64']},
+                        'resources': names[:], 'resources-checksum': hashes}
+                if mutation == 'identity': data['commit'] = 'b' * 40
+                if mutation == 'hash': (source / names[0]).write_text('changed bytes')
+                if mutation == 'duplicate': data['resources'].append(names[0])
+                (source / 'metadata.json.pending').write_text(json.dumps(data))
+                for name, resource in [('metadata-extras.json', 'core-extras.tar.gz'),
+                                       ('metadata-pyneatpcie.json', 'pyneatpcie-1.whl')]:
+                    subset = {'commit': 'b' * 40 if mutation == 'variant' else 'a' * 40,
+                              'resources': [resource], 'resources-checksum': {resource: hashes.get(resource)},
+                              'installation': {'script': ':'}}
+                    (source / (name + '.pending')).write_text(json.dumps(subset))
+                if mutation == 'scheduler-identity': selection['branch'] = 'other'
+                output = root / 'download'; events = []
+                def download(argv, **kwargs):
+                    self.assertEqual(argv[:3], ['aws', 's3', 'cp'])
+                    shutil.copy2(source / argv[3].rsplit('/', 1)[1], argv[4])
+                def verify(directory):
+                    events.append('producer')
+                    for name, digest in hashes.items():
+                        self.assertEqual(delivery.sha(Path(directory) / name), digest)
+                    if mutation == 'producer': raise ValueError('producer rejected')
+                    return selection, []
+                def inventory(directory, selected, resources):
+                    events.append('inventory')
+                    return delivery.verify_publication_inventory(directory, selected, resources)
+                argv = ['verify_published.py', '--bucket', 'fixture', '--prefix', 'native',
+                        '--distro', 'ubuntu22', '--arch', 'amd64', '--commit', 'a' * 40,
+                        '--output', str(output)]
+                with patch.object(sys, 'argv', argv), patch.object(publication.subprocess, 'run', side_effect=download), \
+                     patch.object(publication, 'verify', side_effect=verify), \
+                     patch.object(publication, 'verify_publication_inventory', side_effect=inventory), \
+                     patch('sys.stdout', new_callable=io.StringIO) as report:
+                    if mutation == 'complete':
+                        publication.main()
+                        self.assertEqual(json.loads(report.getvalue())['resources'], len(names))
+                    else:
+                        with self.assertRaises(ValueError): publication.main()
+                if mutation in ('identity', 'hash', 'duplicate'):
+                    self.assertEqual(events, [], 'authentication must precede both checkers')
+                elif mutation in ('producer', 'scheduler-identity'):
+                    self.assertEqual(events, ['producer'])
+                else:
+                    self.assertEqual(events, ['producer', 'inventory'])
 
 
 class Delivery(unittest.TestCase):
@@ -398,7 +492,14 @@ class CpuPackagePreparation(unittest.TestCase):
                                    self.root / 'distribution', self.root / 'prefix')
 
     def test_exact_native_download_then_trusted_private_stage_without_install(self):
-        result = self.acquire()
+        def inventory(directory, selection, resources):
+            self.stage.assert_not_called()
+            for name, expected in self.metadata['resources-checksum'].items():
+                self.assertEqual(cpu_prepare.digest(Path(directory) / name), expected)
+            return delivery.verify_publication_inventory(directory, selection, resources)
+        with patch.object(cpu_prepare, 'verify_publication_inventory', side_effect=inventory) as shared:
+            result = self.acquire()
+        shared.assert_called_once_with(self.root / 'distribution', self.selection, self.metadata['resources'])
         self.assertFalse(result['hardware_qualified'])
         self.assertEqual(result['resources'], 8)
         self.assertEqual(self.calls, [
@@ -433,7 +534,9 @@ class CpuPackagePreparation(unittest.TestCase):
 
     def test_changed_downloaded_helper_rejected_before_import(self):
         self.mutation = lambda directory: (directory / 'native_artifacts.py').write_text('tampered')
-        with self.assertRaisesRegex(ValueError, 'differs from metadata'): self.acquire()
+        with patch.object(cpu_prepare, 'verify_publication_inventory') as shared:
+            with self.assertRaisesRegex(ValueError, 'differs from metadata'): self.acquire()
+        shared.assert_not_called()
         self.stage.assert_not_called()
 
     def test_symlink_download_rejected_before_import(self):
@@ -465,6 +568,13 @@ class CpuPackagePreparation(unittest.TestCase):
         name = 'pyneatpcie-1.whl'
         self.metadata['resources'].remove(name); del self.metadata['resources-checksum'][name]
         with self.assertRaisesRegex(ValueError, 'Expected one native Core resource'): self.acquire()
+        self.stage.assert_not_called()
+
+    def test_shared_inventory_rejection_precedes_producer_staging(self):
+        with patch.object(cpu_prepare, 'verify_publication_inventory',
+                          side_effect=ValueError('common inventory rejected')) as shared:
+            with self.assertRaisesRegex(ValueError, 'common inventory rejected'): self.acquire()
+        shared.assert_called_once()
         self.stage.assert_not_called()
 
     def test_provider_rejection_is_not_replaced_by_ambient_packages(self):

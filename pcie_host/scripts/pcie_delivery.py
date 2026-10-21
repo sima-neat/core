@@ -12,6 +12,30 @@ import subprocess
 def sha(path): return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def verify_publication_inventory(directory, selection, resources):
+    """Check the complete Core publication after its transport authenticates it.
+
+    Transport identity/hash checks and owning producer verification stay with
+    the caller; this is only the shared required-resource inventory contract.
+    """
+    directory = Path(directory)
+    if (not isinstance(resources, list) or not resources
+            or any(not isinstance(name, str) for name in resources)
+            or len(resources) != len(set(resources))):
+        raise ValueError('Invalid native publication inventory')
+    expected = set(selection['resources']) | {
+        'scheduler-native-selection.json', 'pcie_delivery.py', 'install_pciehost.sh'}
+    arch = selection['architecture']
+    for pattern in (f'sima-pcie-host_*_{arch}.deb', f'sima-pcie-host-dev_*_{arch}.deb',
+                    '*-extras.tar.gz', 'pyneatpcie-*.whl'):
+        paths = list(directory.glob(pattern))
+        if len(paths) != 1:
+            raise ValueError('Expected one native Core resource: ' + pattern)
+        expected.add(paths[0].name)
+    if set(resources) != expected:
+        raise ValueError('Incomplete or foreign native publication resources')
+
+
 def load_provider(directory):
     spec = importlib.util.spec_from_file_location('scheduler_native', Path(directory) / 'native_artifacts.py')
     module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)

@@ -13,7 +13,7 @@ CORE = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(CORE / 'tools/ci'))
 from published_artifact import ENVIRONMENT_HOSTS, basename, digest, download
 sys.path.insert(0, str(CORE / 'pcie_host/scripts'))
-from pcie_delivery import stage
+from pcie_delivery import stage, verify_publication_inventory
 
 
 def prepare(cli, branch, commit, environment, output, prefix):
@@ -75,16 +75,7 @@ def prepare(cli, branch, commit, environment, output, prefix):
     if (selection.get('distro') != distro or selection.get('architecture') != arch
             or selection.get('branch') != branch):
         raise ValueError('Selected Scheduler native tuple/branch differs')
-    expected = set(selection['resources']) | {
-        'scheduler-native-selection.json', 'pcie_delivery.py', 'install_pciehost.sh'}
-    for pattern in (f'sima-pcie-host_*_{arch}.deb', f'sima-pcie-host-dev_*_{arch}.deb',
-                    '*-extras.tar.gz', 'pyneatpcie-*.whl'):
-        paths = list(output.glob(pattern))
-        if len(paths) != 1:
-            raise ValueError('Expected one native Core resource: ' + pattern)
-        expected.add(paths[0].name)
-    if set(resources) != expected:
-        raise ValueError('Incomplete or foreign native publication resources')
+    verify_publication_inventory(output, selection, resources)
     # Trusted checkout entry point; owning producer tooling is imported only
     # after every published resource hash passes, then retains its own checks.
     stage(output, prefix)
