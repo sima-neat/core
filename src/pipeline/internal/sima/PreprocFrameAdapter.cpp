@@ -420,7 +420,7 @@ PreprocFrameAdapter::check_policy(const ProcessCvuStagePayload& prepared) {
                  "PreprocFrameAdapter has no A65 implementation"};
   if (cfg.resolved_exec_backend != "EV74" && cfg.resolved_exec_backend != "EVXX")
     return invalid("target", "Core must resolve the PreprocFrameAdapter target");
-  if (cfg.input_tensors.size() != 1 || cfg.output_tensors.empty())
+  if (cfg.input_tensors.size() != 1 || (!cfg.image_transform && cfg.output_tensors.empty()))
     return invalid("tensors",
                    "PreprocFrameAdapter requires one authored source envelope and selected output");
   // This cold builder only calls geometry/schema helpers. It never prepares a
@@ -440,58 +440,63 @@ PreprocFrameAdapter::check_policy(const ProcessCvuStagePayload& prepared) {
   policy->envelope.width = width;
   policy->envelope.height = height;
   policy->envelope.batch = cfg.batch_size;
-  std::size_t selected = 0;
-  if (cfg.output_tensors.size() > 1) {
-    const auto output = std::find(cfg.default_output_names.begin(), cfg.default_output_names.end(),
-                                  policy->prepared->primary_output_name);
-    if (output == cfg.default_output_names.end())
-      return invalid("output",
-                     "multiple PreprocFrameAdapter outputs require an explicit selected handoff");
-    selected = std::size_t(output - cfg.default_output_names.begin());
-  }
-  if (selected >= cfg.output_tensors.size())
-    return invalid("output", "selected descriptor is missing");
-  auto output = tensor_spec_from_model_descriptor(cfg.output_tensors[selected]);
-  if (auto* error = std::get_if<Error>(&output))
-    return *error;
-  policy->output = std::get<TensorSpec>(std::move(output));
-  if (cfg.normalize != 1 && policy->output.dtype == DType::Int8) {
-    // Legacy raw INT8 names byte-preserving [0,255] storage, not signed math.
-    // Native UInt8 explicitly preserves those bytes in dense or tiled storage.
-    policy->output.dtype = DType::UInt8;
-  }
-  const auto& output_descriptor = cfg.output_tensors[selected].descriptor();
-  const auto output_batch = axis(output_descriptor, SIMA_EV_AXIS_N);
-  if (output_batch != 0) {
-    // The legacy contract may describe one output member even when its public
-    // carrier holds several ROIs. Native admission derives capacity from the
-    // tensor shape, so materialize that batch here, not once per invocation.
-    // An already batched descriptor must agree with the declared capacity.
-    if (output_descriptor.shape.axis_semantics[0] != SIMA_EV_AXIS_N ||
-        (output_batch != 1 && output_batch != cfg.batch_size))
-      return invalid("output.shape",
-                     "output batch must be leading and match capacity or one member");
-    auto shape = policy->output.shape;
-    std::vector<std::int64_t> dimensions(shape.begin(), shape.end());
-    dimensions[0] = cfg.batch_size;
-    policy->output.shape = std::move(dimensions);
-  } else {
-    auto shape = policy->output.shape;
-    if (shape.size() == std::size(output_descriptor.shape.sizes))
-      return invalid("output.shape", "batch exceeds six axes");
-    std::vector<std::int64_t> dimensions{cfg.batch_size};
-    dimensions.insert(dimensions.end(), shape.begin(), shape.end());
-    policy->output.shape = std::move(dimensions);
-    if (auto* tile = std::get_if<::simaai::scheduler::client::MlaTiled>(&policy->output.layout)) {
-      for (auto& value : tile->axes)
-        if (value >= 0)
-          ++value;
-    } else if (auto* strides =
-                   std::get_if<::simaai::scheduler::client::Strided>(&policy->output.layout)) {
-      auto previous = strides->strides_bytes;
-      for (std::size_t i = shape.size(); i > 0; --i)
-        strides->strides_bytes[i] = previous[i - 1];
-      strides->strides_bytes[0] = previous[0] * shape[0];
+  // Typed image policy defines the output canvas and planes directly. Only the
+  // tensor/MPK path selects a legacy output descriptor and its batch capacity.
+  if (!cfg.image_transform) {
+    std::size_t selected = 0;
+    if (cfg.output_tensors.size() > 1) {
+      const auto output =
+          std::find(cfg.default_output_names.begin(), cfg.default_output_names.end(),
+                    policy->prepared->primary_output_name);
+      if (output == cfg.default_output_names.end())
+        return invalid("output",
+                       "multiple PreprocFrameAdapter outputs require an explicit selected handoff");
+      selected = std::size_t(output - cfg.default_output_names.begin());
+    }
+    if (selected >= cfg.output_tensors.size())
+      return invalid("output", "selected descriptor is missing");
+    auto output = tensor_spec_from_model_descriptor(cfg.output_tensors[selected]);
+    if (auto* error = std::get_if<Error>(&output))
+      return *error;
+    policy->output = std::get<TensorSpec>(std::move(output));
+    if (cfg.normalize != 1 && policy->output.dtype == DType::Int8) {
+      // Legacy raw INT8 names byte-preserving [0,255] storage, not signed math.
+      // Native UInt8 explicitly preserves those bytes in dense or tiled storage.
+      policy->output.dtype = DType::UInt8;
+    }
+    const auto& output_descriptor = cfg.output_tensors[selected].descriptor();
+    const auto output_batch = axis(output_descriptor, SIMA_EV_AXIS_N);
+    if (output_batch != 0) {
+      // The legacy contract may describe one output member even when its public
+      // carrier holds several ROIs. Native admission derives capacity from the
+      // tensor shape, so materialize that batch here, not once per invocation.
+      // An already batched descriptor must agree with the declared capacity.
+      if (output_descriptor.shape.axis_semantics[0] != SIMA_EV_AXIS_N ||
+          (output_batch != 1 && output_batch != cfg.batch_size))
+        return invalid("output.shape",
+                       "output batch must be leading and match capacity or one member");
+      auto shape = policy->output.shape;
+      std::vector<std::int64_t> dimensions(shape.begin(), shape.end());
+      dimensions[0] = cfg.batch_size;
+      policy->output.shape = std::move(dimensions);
+    } else {
+      auto shape = policy->output.shape;
+      if (shape.size() == std::size(output_descriptor.shape.sizes))
+        return invalid("output.shape", "batch exceeds six axes");
+      std::vector<std::int64_t> dimensions{cfg.batch_size};
+      dimensions.insert(dimensions.end(), shape.begin(), shape.end());
+      policy->output.shape = std::move(dimensions);
+      if (auto* tile = std::get_if<::simaai::scheduler::client::MlaTiled>(&policy->output.layout)) {
+        for (auto& value : tile->axes)
+          if (value >= 0)
+            ++value;
+      } else if (auto* strides =
+                     std::get_if<::simaai::scheduler::client::Strided>(&policy->output.layout)) {
+        auto previous = strides->strides_bytes;
+        for (std::size_t i = shape.size(); i > 0; --i)
+          strides->strides_bytes[i] = previous[i - 1];
+        strides->strides_bytes[0] = previous[0] * shape[0];
+      }
     }
   }
   if (cfg.image_transform) {

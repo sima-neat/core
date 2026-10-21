@@ -67,6 +67,37 @@ void contracts() {
                            : (format == ImageFormat::NV12 || format == ImageFormat::NV16 ? 2U : 1U);
     require(c.runtime_contract.physical_outputs.size() == 1, "image must have one physical parent");
     require(c.runtime_contract.logical_outputs.size() == count, "checked numerical planes lost");
+    require(c.payload.output_img_type == out.format && c.payload.output_dtype == "UINT8" &&
+                c.payload.output_shapes.size() == 1 && c.payload.output_shapes[0][0] == 10 &&
+                c.payload.output_shapes[0][1] == 18,
+            "raw canvas format, dtype or geometry was replaced with a tensor placeholder");
+    require(c.payload.output_tensors.size() == count &&
+                c.payload.default_output_names.size() == count &&
+                c.payload.runtime_output_logical_shapes.size() == count,
+            "raw payload retained fabricated legacy RGB/tessellated output descriptors");
+    for (std::size_t i = 0; i < count; ++i) {
+      const auto& logical = c.runtime_contract.logical_outputs[i];
+      const auto& desc = c.payload.output_tensors[i].descriptor();
+      require(desc.shape.rank == logical.shape.size() &&
+                  c.payload.output_tensors[i].scalar() == rt::DType::UInt8 &&
+                  desc.storage.addr == std::uint64_t(logical.byte_offset) &&
+                  desc.storage.nbytes == logical.size_bytes &&
+                  c.payload.default_output_names[i] == logical.logical_name &&
+                  c.exposed_view.exposed_logical_outputs[i].shape == logical.shape,
+              "typed plane, runtime and exposed publication do not share checked facts");
+      for (std::size_t axis = 0; axis < logical.shape.size(); ++axis)
+        require(desc.shape.sizes[axis] == logical.shape[axis] &&
+                    desc.layout.strided.strides_bytes[axis] == logical.stride_bytes[axis],
+                "typed plane shape/pitch differs from checked publication");
+    }
+    auto bad_batch = c.payload;
+    bad_batch.batch_size = 2;
+    require(std::holds_alternative<rt::Error>(lower::PreprocFrameAdapter::check_policy(bad_batch)),
+            "typed raw image accepted a batch other than one");
+    auto no_source = c.payload;
+    no_source.input_tensors.clear();
+    require(std::holds_alternative<rt::Error>(lower::PreprocFrameAdapter::check_policy(no_source)),
+            "typed raw image accepted missing source authority");
     auto checked = lower::PreprocFrameAdapter::check_policy(c.payload);
     require(!std::holds_alternative<rt::Error>(checked), "adapter rejected compiled image policy");
     auto policy =
@@ -134,6 +165,10 @@ void contracts() {
   CompiledNodeContract normalized;
   require(preproc(n).compile_node_contract({}, &normalized, &error),
           "normalization compilation: " + error);
+  require(normalized.processcvu->payload.output_shapes.size() == 1 &&
+              normalized.processcvu->payload.output_img_type == "BGR" &&
+              normalized.processcvu->payload.output_shapes[0] == std::vector<int>({10, 18, 3}),
+          "normalization lost its actual single image canvas");
   auto normalized_policy = lower::PreprocFrameAdapter::check_policy(normalized.processcvu->payload);
   require(!std::holds_alternative<rt::Error>(normalized_policy),
           "normalization checked policy failed");

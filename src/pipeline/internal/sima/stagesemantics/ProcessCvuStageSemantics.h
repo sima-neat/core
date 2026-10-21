@@ -111,6 +111,12 @@ build_processcvu_compile_inputs_from_options(const ::simaai::neat::PreprocOption
 CompiledProcessCvuContract
 build_processcvu_compiled_contract_from_options(const ::simaai::neat::PreprocOptions& opt);
 
+// Raw-image publication is projected directly from checked numerical planes;
+// normalization keeps the existing dense BF16 tensor contract.
+CompiledProcessCvuContract build_image_transform_compiled_contract_from_options(
+    const ::simaai::neat::PreprocOptions& opt,
+    std::shared_ptr<const ::simaai::neat::internal::ImageTransformPolicy> image_transform);
+
 CompiledProcessCvuContract
 build_processcvu_compiled_contract_from_facts(const ProcessCvuStagePayload& payload,
                                               const ProcessCvuCanonicalFacts& facts);

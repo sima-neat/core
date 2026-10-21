@@ -1,7 +1,5 @@
 #include "nodes/sima/Preproc.h"
 #include "nodes/sima/internal/ImageTransformPolicy.h"
-#include "pipeline/internal/sima/PreprocFrameAdapter.h"
-#include "pipeline/internal/sima/StaticSpecBuilders.h"
 
 #include "builder/InputContractConfigurable.h"
 #include "model/internal/ModelInternal.h"
@@ -747,79 +745,14 @@ bool Preproc::compile_node_contract(const ContractCompileInput& input, CompiledN
           compile_opt.input_shape[0] = p.max_input_height;
       }
     }
-    if (config_holder_ && config_holder_->image_transform &&
-        config_holder_->image_transform->raw_output())
-      compile_opt.output_img_type = "RGB";
-    auto compiled = compile_opt.compiled_contract
-                        ? *compile_opt.compiled_contract
-                        : pipeline_internal::sima::stagesemantics::
-                              build_processcvu_compiled_contract_from_options(compile_opt);
-    if (config_holder_ && config_holder_->image_transform) {
-      compiled.payload.image_transform = config_holder_->image_transform;
-      compiled.payload.output_img_type = opt_.output_img_type;
-      compiled.payload.output_dtype =
-          config_holder_->image_transform->raw_output() ? "UINT8" : "BF16";
-      compiled.payload.out_dtype = compiled.payload.output_dtype;
-      compiled.payload.output_shapes = {opt_.output_shape};
-      compiled.payload.resolved_exec_backend = "EV74";
-      namespace lower = pipeline_internal::sima::kernel_lowering;
-      namespace rt = ::simaai::scheduler::client;
-      auto checked = lower::PreprocFrameAdapter::check_policy(compiled.payload);
-      if (const auto* failure = std::get_if<rt::Error>(&checked))
-        throw std::invalid_argument("Image transform " + failure->field + ": " + failure->message);
-      const auto policy =
-          std::get<std::shared_ptr<const lower::PreprocFrameAdapter::CheckedPolicy>>(checked);
-      const auto image = lower::PreprocFrameAdapter::checked_image_publication(*policy);
-      compiled.runtime_contract.image_publication = image;
-      if (image) {
-        auto inspected = ::simaai::scheduler::client::inspect_kernel(
-            lower::PreprocFrameAdapter::checked_executable(*policy));
-        if (const auto* failure = std::get_if<rt::Error>(&inspected))
-          throw std::invalid_argument(failure->message);
-        const auto& kernel = std::get<rt::KernelInspection>(inspected);
-        auto& runtime = compiled.runtime_contract;
-        runtime.logical_outputs.clear();
-        runtime.physical_outputs.resize(1);
-        runtime.output_order.clear();
-        runtime.output_quant.clear();
-        auto& physical = runtime.physical_outputs.front();
-        physical.physical_index = 0;
-        physical.source_byte_offset = 0;
-        physical.segment_name = "output_image";
-        physical.required_alignment_bytes = 64;
-        physical.size_bytes = 0;
-        for (std::size_t i = 0; i < image->planes.size(); ++i) {
-          const auto& plane = image->planes[i];
-          const auto& spec = kernel.outputs()[i];
-          const auto& dims = spec.shape;
-          const auto name = "output_image_plane_" + std::to_string(i);
-          auto logical = pipeline_internal::sima::specbuilders::build_logical_output_static_spec(
-              int(i), int(i), 0, int(i), int(i), dims, "UINT8", "HWC", name, name, "output_image",
-              plane.byte_offset, kernel.output_requirements()[i].storage_bytes);
-          logical.stride_bytes.resize(dims.size());
-          if (const auto* strided =
-                  std::get_if<::simaai::scheduler::client::Strided>(&spec.layout)) {
-            std::copy_n(strided->strides_bytes.begin(), dims.size(), logical.stride_bytes.begin());
-          } else {
-            std::int64_t stride = 1;
-            for (std::size_t axis = dims.size(); axis-- > 0;) {
-              logical.stride_bytes[axis] = stride;
-              stride *= dims[axis];
-            }
-          }
-          physical.size_bytes =
-              std::max(physical.size_bytes,
-                       std::uint64_t(plane.byte_offset) +
-                           std::max(logical.size_bytes, std::uint64_t(logical.stride_bytes[0])));
-          runtime.output_order.push_back(
-              {int(i), int(i), int(i), logical.logical_name, logical.segment_name});
-          runtime.logical_outputs.push_back(std::move(logical));
-        }
-        runtime.frame_arena_size_bytes = 0; // Replanned from checked physical extents by the graph.
-        compiled.exposed_view.exposed_logical_outputs = runtime.logical_outputs;
-        compiled.exposed_view.exposed_output_order = runtime.output_order;
-      }
-    }
+    namespace semantics = pipeline_internal::sima::stagesemantics;
+    const auto compiled =
+        config_holder_ && config_holder_->image_transform
+            ? semantics::build_image_transform_compiled_contract_from_options(
+                  compile_opt, config_holder_->image_transform)
+        : compile_opt.compiled_contract
+            ? *compile_opt.compiled_contract
+            : semantics::build_processcvu_compiled_contract_from_options(compile_opt);
     return pipeline_internal::sima::stagesemantics::build_processcvu_node_contract(
         kind(), element_name, element_name, contract_definition(), compiled, out, err);
   } catch (const std::exception& ex) {

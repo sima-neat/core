@@ -264,10 +264,26 @@ void render_images() {
                   !invalid.stages[0].native_kernel,
               "inconsistent authored image authority reached recipe attachment");
     }
+    // A typed policy is not an immutable proof of the later stage. A changed
+    // canvas must be checked against the authored publication at cold admission.
+    auto changed_canvas = *manifest;
+    changed_canvas.stages[0].processcvu.output_shapes[0][1] += 2;
+    const auto changed_failure =
+        ps::prepare_kernel_stage_recipes(&changed_canvas, std::nullopt, {}, {}, {});
+    require(changed_failure && !changed_canvas.stages[0].native_kernel,
+            "changed raw image canvas reused stale numerical policy");
     auto failure = ps::prepare_kernel_stage_recipes(&*manifest, std::nullopt, {}, {}, {});
     require(!failure, failure ? failure->field + ": " + failure->message : "");
     const auto& stage = manifest->stages[0];
     const auto& recipe = *stage.native_kernel;
+    auto first = recipe.frame_adapter_factory();
+    auto second = recipe.frame_adapter_factory();
+    using Adapter = simaai::scheduler::client::TensorStageFrameAdapter;
+    require(std::holds_alternative<std::shared_ptr<Adapter>>(first) &&
+                std::holds_alternative<std::shared_ptr<Adapter>>(second) &&
+                std::get<std::shared_ptr<Adapter>>(first) !=
+                    std::get<std::shared_ptr<Adapter>>(second),
+            "independent admissions shared a mutable image adapter");
     require(recipe.image_publication && recipe.image_publication->width == 18 &&
                 recipe.image_publication->height == 10 &&
                 recipe.members[0].outputs.size() == expected_planes,

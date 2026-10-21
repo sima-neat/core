@@ -1601,7 +1601,7 @@ preproc_output_transport_kind_for_desc(const ProcessCvuStagePayload& payload, st
              : ProcessCvuOutputTransportKind::Dense;
 }
 
-void synthesize_preproc_payload_tensor_descs(ProcessCvuStagePayload* payload) {
+void synthesize_preproc_input_tensor_desc(ProcessCvuStagePayload* payload) {
   if (!payload || canonical_family_name(payload->graph_family) != "preproc") {
     return;
   }
@@ -1619,7 +1619,12 @@ void synthesize_preproc_payload_tensor_descs(ProcessCvuStagePayload* payload) {
       }
     }
   }
+}
 
+void synthesize_preproc_payload_tensor_descs(ProcessCvuStagePayload* payload) {
+  if (!payload || canonical_family_name(payload->graph_family) != "preproc")
+    return;
+  synthesize_preproc_input_tensor_desc(payload);
   if (!payload->output_tensors.empty()) {
     return;
   }
@@ -6102,7 +6107,7 @@ std::string preferred_stage_name_for_output_local(const MpkPluginIoContract& sta
 }
 
 ProcessCvuStagePayload
-build_preproc_payload_from_options_local(const ::simaai::neat::PreprocOptions& opt) {
+initialize_preproc_payload_from_options_local(const ::simaai::neat::PreprocOptions& opt) {
   require_supported_preproc_single_output_handoff(opt.single_output_handoff);
   ProcessCvuStagePayload payload;
   payload.canonical_contract = true;
@@ -6112,9 +6117,6 @@ build_preproc_payload_from_options_local(const ::simaai::neat::PreprocOptions& o
 
   payload.default_input_name =
       opt.graph_input_name.empty() ? std::string("input_image") : opt.graph_input_name;
-  payload.default_output_names = default_preproc_runtime_output_names();
-  payload.primary_output_name =
-      resolve_preproc_primary_output_name(payload.default_output_names, opt.tessellate);
   payload.preproc_single_output_handoff = opt.single_output_handoff;
   if (!opt.input_shape.empty()) {
     payload.input_shapes = {opt.input_shape};
@@ -6155,6 +6157,15 @@ build_preproc_payload_from_options_local(const ::simaai::neat::PreprocOptions& o
   if (opt.q_zp.has_value()) {
     payload.q_zp_list = {static_cast<int>(*opt.q_zp)};
   }
+  return payload;
+}
+
+ProcessCvuStagePayload
+build_preproc_payload_from_options_local(const ::simaai::neat::PreprocOptions& opt) {
+  auto payload = initialize_preproc_payload_from_options_local(opt);
+  payload.default_output_names = default_preproc_runtime_output_names();
+  payload.primary_output_name =
+      resolve_preproc_primary_output_name(payload.default_output_names, opt.tessellate);
   synthesize_runtime_output_arrays_from_payload(&payload);
   // A standalone single-image view retains HWC compatibility. A capacity for
   // multiple ROIs is a real batch axis, not padding that can be hidden in its
@@ -8108,6 +8119,122 @@ build_processcvu_compile_inputs_from_options(const ::simaai::neat::PreprocOption
 CompiledProcessCvuContract
 build_processcvu_compiled_contract_from_options(const ::simaai::neat::PreprocOptions& opt) {
   return build_processcvu_compiled_contract(build_processcvu_compile_inputs_from_options(opt));
+}
+
+CompiledProcessCvuContract build_image_transform_compiled_contract_from_options(
+    const ::simaai::neat::PreprocOptions& opt,
+    std::shared_ptr<const ::simaai::neat::internal::ImageTransformPolicy> image_transform) {
+  namespace rt = ::simaai::scheduler::client;
+  using Adapter = kernel_lowering::PreprocFrameAdapter;
+  if (!image_transform)
+    throw std::invalid_argument("Image transform requires typed image policy");
+  const bool raw = image_transform->raw_output();
+  CompiledProcessCvuContract compiled;
+  if (raw) {
+    compiled.payload = initialize_preproc_payload_from_options_local(opt);
+    synthesize_preproc_input_tensor_desc(&compiled.payload);
+    std::string error;
+    if (!initialize_canonical_stage_contract(compiled.payload, &error))
+      throw std::invalid_argument(error);
+  } else {
+    // Normalization publishes a dense BF16 tensor, not a raw image surface.
+    compiled = opt.compiled_contract ? *opt.compiled_contract
+                                     : build_processcvu_compiled_contract_from_options(opt);
+    compiled.payload.output_img_type = opt.output_img_type;
+    compiled.payload.output_shapes = {opt.output_shape};
+  }
+  auto& payload = compiled.payload;
+  payload.image_transform = std::move(image_transform);
+  payload.output_dtype = payload.out_dtype = raw ? "UINT8" : "BF16";
+  payload.resolved_exec_backend = "EV74";
+  auto checked = Adapter::check_policy(payload);
+  if (const auto* failure = std::get_if<rt::Error>(&checked))
+    throw std::invalid_argument("Image transform " + failure->field + ": " + failure->message);
+  const auto& policy = *std::get<std::shared_ptr<const Adapter::CheckedPolicy>>(checked);
+  if (!raw)
+    return compiled;
+  auto inspected = rt::inspect_kernel(Adapter::checked_executable(policy));
+  if (const auto* failure = std::get_if<rt::Error>(&inspected))
+    throw std::invalid_argument("Image transform " + failure->field + ": " + failure->message);
+  const auto& kernel = std::get<rt::KernelInspection>(inspected);
+  auto& runtime = compiled.runtime_contract;
+  runtime.plugin_kind = "processcvu";
+  runtime.image_publication = Adapter::checked_image_publication(policy);
+  const auto& image = *runtime.image_publication;
+  compiled.preproc_single_output_handoff = payload.preproc_single_output_handoff;
+
+  // Keep the existing image input carrier projection, including planar storage;
+  // its typed source descriptor remains the visible input geometry authority.
+  const auto input = synthesize_preproc_input_tensor(payload);
+  runtime.logical_inputs.push_back(logical_input_from_fact(build_dense_processcvu_input_fact(
+      0, 0, payload.default_input_name, input.shape, input.dtype, input.layout)));
+  specbuilders::finalize_logical_input_spec(&runtime.logical_inputs.front(), 0,
+                                            {payload.default_input_name});
+  ProcessCvuCanonicalBindingFact binding;
+  binding.local_logical_input_index = 0;
+  binding.required = true;
+  binding.cm_input_name = payload.default_input_name;
+  binding.source_segment_name = "parent";
+  runtime.input_bindings.push_back(input_binding_from_fact(binding));
+  runtime.physical_inputs.push_back(specbuilders::build_physical_buffer_static_spec(
+      0, 0, runtime.logical_inputs.front().size_bytes, DeviceKind::Evxx,
+      payload.default_input_name));
+  std::string error;
+  if (!pipeline_internal::packedio::normalize_shared_parent_input_views(&runtime, &error))
+    throw std::invalid_argument("Image transform input projection: " + error);
+
+  runtime.physical_outputs.push_back(
+      specbuilders::build_physical_buffer_static_spec(0, 0, 0, DeviceKind::Evxx, "output_image"));
+  auto& physical = runtime.physical_outputs.front();
+  physical.required_alignment_bytes = 64;
+  // One checked-plane projection supplies typed payload, runtime and exposed
+  // publication. The canvas in output_shapes is not a fabricated RGB tensor.
+  for (std::size_t i = 0; i < image.planes.size(); ++i) {
+    const auto& plane = image.planes[i];
+    const auto& spec = kernel.outputs()[i];
+    const auto& dims = spec.shape;
+    const auto name = "output_image_plane_" + std::to_string(i);
+    sima_ev_tensor_desc desc{};
+    const std::vector<int> shape(dims.begin(), dims.end());
+    if (!build_dense_desc_processcvu_local(shape, "UINT8", "NHWC", &desc))
+      throw std::invalid_argument("Image transform checked plane descriptor is invalid");
+    if (const auto* strided = std::get_if<rt::Strided>(&spec.layout))
+      for (std::size_t axis = 0; axis < dims.size(); ++axis)
+        desc.layout.strided.strides_bytes[axis] = strided->strides_bytes[axis];
+    desc.storage.addr = plane.byte_offset;
+    desc.storage.nbytes = kernel.output_requirements()[i].storage_bytes;
+    payload.output_tensors.emplace_back(desc, "UINT8");
+    payload.default_output_names.push_back(name);
+    payload.runtime_output_logical_index_list.push_back(int(i));
+    payload.runtime_output_output_slot_list.push_back(int(i));
+    payload.runtime_output_physical_index_list.push_back(0);
+    payload.runtime_output_dtype_list.push_back("UINT8");
+    payload.runtime_output_transport_kind_list.push_back(ProcessCvuOutputTransportKind::Dense);
+    payload.runtime_output_semantic_kind_list.push_back(ProcessCvuOutputSemanticKind::Image);
+    payload.runtime_output_logical_shapes.push_back(shape);
+    payload.runtime_output_logical_layout_list.push_back("HWC");
+    auto logical = specbuilders::build_logical_output_static_spec(
+        int(i), int(i), 0, int(i), int(i), dims, "UINT8", "HWC", name, name, "output_image",
+        plane.byte_offset, desc.storage.nbytes);
+    logical.stride_bytes.resize(dims.size());
+    for (std::size_t axis = 0; axis < dims.size(); ++axis)
+      logical.stride_bytes[axis] = desc.layout.strided.strides_bytes[axis];
+    physical.size_bytes =
+        std::max(physical.size_bytes,
+                 std::uint64_t(plane.byte_offset) +
+                     std::max(logical.size_bytes, std::uint64_t(logical.stride_bytes[0])));
+    runtime.output_order.push_back({int(i), int(i), int(i), name, "output_image"});
+    runtime.logical_outputs.push_back(std::move(logical));
+  }
+  payload.primary_output_name = payload.default_output_names.front();
+  payload.primary_output_transport_kind = ProcessCvuOutputTransportKind::Dense;
+  payload.primary_output_semantic_kind = ProcessCvuOutputSemanticKind::Image;
+  compiled.exposed_view = build_processcvu_exposed_view_from_runtime(
+      runtime, payload.default_output_names, payload.primary_output_name);
+  // Final admission rechecks the current stage after rendering/restoration and
+  // compares its image publication. That recipe, not this authoring result,
+  // retains immutable checked policy and instantiates fresh mutable adapters.
+  return compiled;
 }
 
 std::string canonical_family_name_internal(std::string graph_family) {
