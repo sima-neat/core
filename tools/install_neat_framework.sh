@@ -1085,6 +1085,26 @@ apt_package_database_is_healthy() {
   # unhealthy-state message. The temporary capture itself is still removed.
   cat "${apt_check_log}" >&2
   rm -f "${apt_check_log}"
+
+  # Observation only: admission still decides whether recovery is allowed.
+  # Preserve full pending/abnormal states and trigger fields without dumping
+  # the healthy package inventory or masking the original APT failure.
+  local dpkg_states
+  if dpkg_states="$(dpkg-query -W -f='${binary:Package}\t${Status}\t${db:Status-Abbrev}\t${Version}\t${Architecture}\t${Triggers-Pending}\t${Triggers-Awaited}\n')"; then
+    if ! printf '%s\n' "${dpkg_states}" | awk -F '\t' '
+      BEGIN { print "Package\tStatus\tStatus-Abbrev\tVersion\tArchitecture\tTriggers-Pending\tTriggers-Awaited" }
+      $2 != "" && $2 != "install ok installed" && $2 != "hold ok installed" &&
+          $2 !~ / (not-installed|config-files)$/ {
+        count++
+        if (count <= 100) print $0
+      }
+      END { printf "Incomplete dpkg records: %d; omitted: %d\n", count, (count > 100 ? count - 100 : 0) }
+    ' >&2; then
+      echo "Unable to format incomplete dpkg state; retaining the original APT failure." >&2
+    fi
+  else
+    echo "Unable to read incomplete dpkg state; retaining the original APT failure." >&2
+  fi
   return 1
 }
 

@@ -2032,12 +2032,151 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 mktemp() { command mktemp "${tmp}/apt-check-XXXXXX"; }
 run_sudo() { echo 'Exact APT dependency diagnostic' >&2; return ''' + str(status) + r'''; }
+dpkg-query() { echo 'UNEXPECTED_DPKG_DIAGNOSTIC' >&2; return 17; }
 if apt_package_database_is_healthy; then echo HEALTHY; else echo UNHEALTHY; fi
 [[ -z "$(find "${tmp}" -type f -print)" ]]
 ''')
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout.strip(), "HEALTHY" if status == 0 else "UNHEALTHY")
                 self.assertEqual("Exact APT dependency diagnostic" in result.stderr, status != 0)
+                self.assertEqual("UNEXPECTED_DPKG_DIAGNOSTIC" in result.stderr, status != 0)
+                self.assertEqual("Unable to read incomplete dpkg state" in result.stderr, status != 0)
+
+    def test_unhealthy_apt_reports_exact_incomplete_states_and_trigger_fields(self) -> None:
+        rows = [
+            "configured\tinstall ok installed\tii \t1\tarm64\t\t",
+            "held-configured\thold ok installed\thi \t1\tarm64\t\t",
+            "absent\tunknown ok not-installed\tun \t\t\t\t",
+            "removed\tdeinstall ok config-files\trc \t1\tarm64\t\t",
+            "trigger-owner:arm64\tinstall ok triggers-pending\tit \t2.3-1\tarm64\tldconfig other-trigger\t",
+            "awaiting-client\tinstall ok triggers-awaited\tiW \t4+preview\tall\t\ttrigger-owner",
+            "unpacked-client\tinstall ok unpacked\tiU \t4\tarm64\t\t",
+            "broken-client\tinstall reinstreq half-installed\tiHR\t5\tarm64\t\t",
+            "half-configured\tinstall ok half-configured\tiF \t6\tarm64\t\t",
+            "held-pending\thold ok triggers-pending\tht \t7\tarm64\tldconfig\t",
+            "abnormal-selection\tdeinstall ok installed\tri \t8\tarm64\t\t",
+            "abnormal-error\tinstall reinstreq installed\tiiR\t9\tarm64\t\t",
+        ]
+        result = run_bash(r'''
+source "$1"
+run_sudo() { [[ "$*" == 'apt-get check' ]] || exit 99; echo 'Original APT failure' >&2; return 100; }
+dpkg-query() {
+  [[ "$#" == 2 && "$1" == -W ]] || exit 98
+  [[ "$2" == '-f=${binary:Package}\t${Status}\t${db:Status-Abbrev}\t${Version}\t${Architecture}\t${Triggers-Pending}\t${Triggers-Awaited}\n' ]] || exit 97
+  cat <<'STATES'
+''' + "\n".join(rows) + r'''
+STATES
+}
+apt_package_database_is_healthy
+echo UNEXPECTED_SUCCESS
+''')
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertNotIn("UNEXPECTED_SUCCESS", result.stdout)
+        self.assertIn("Original APT failure", result.stderr)
+        for row in rows[:4]:
+            self.assertNotIn(row, result.stderr)
+        for row in rows[4:]:
+            self.assertIn(row + "\n", result.stderr)
+        self.assertIn("Incomplete dpkg records: 8; omitted: 0", result.stderr)
+        self.assertLess(result.stderr.index("Original APT failure"),
+                        result.stderr.index("trigger-owner:arm64"))
+
+    def test_unhealthy_apt_dpkg_diagnostic_is_bounded(self) -> None:
+        result = run_bash(r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+cd "${tmp}"
+run_sudo() { echo 'Original APT failure' >&2; return 100; }
+dpkg-query() {
+  for ((i=1; i<=103; ++i)); do
+    printf 'pending-%03d\tinstall ok unpacked\tiU \t1\tarm64\t\t\n' "$i"
+  done
+}
+if apt_package_database_is_healthy; then status=0; else status=$?; fi
+[[ -z "$(find . -type f -print)" ]] || { echo UNEXPECTED_DIAGNOSTIC_WRITE >&2; exit 99; }
+exit "${status}"
+''')
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(sum(line.startswith("pending-") for line in result.stderr.splitlines()), 100)
+        self.assertIn("pending-100\t", result.stderr)
+        self.assertNotIn("pending-101\t", result.stderr)
+        self.assertIn("Incomplete dpkg records: 103; omitted: 3", result.stderr)
+
+    def test_unhealthy_dependencies_need_not_have_incomplete_dpkg_records(self) -> None:
+        result = run_bash(r'''
+source "$1"
+run_sudo() { echo 'Original APT dependency failure' >&2; return 100; }
+dpkg-query() { printf 'configured\tinstall ok installed\tii \t1\tarm64\t\t\n'; }
+apt_package_database_is_healthy
+''')
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("Original APT dependency failure", result.stderr)
+        self.assertIn("Incomplete dpkg records: 0; omitted: 0", result.stderr)
+        self.assertNotIn("configured\t", result.stderr)
+
+    def test_failed_dpkg_diagnostic_preserves_original_apt_failure_status(self) -> None:
+        for failing_command in ("dpkg-query", "awk"):
+            with self.subTest(failing_command=failing_command):
+                result = run_bash(r'''
+source "$1"
+run_sudo() { echo 'Original APT failure' >&2; return 100; }
+dpkg-query() { printf 'pending\tinstall ok unpacked\tiU \t1\tarm64\t\t\n'; }
+''' + failing_command + r'''() { echo 'Read-only diagnostic failed' >&2; return 17; }
+apt_package_database_is_healthy
+echo UNEXPECTED_SUCCESS
+''')
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("Original APT failure", result.stderr)
+                self.assertIn("Read-only diagnostic failed", result.stderr)
+                self.assertNotIn("UNEXPECTED_SUCCESS", result.stdout)
+
+    def test_incomplete_state_diagnostic_does_not_admit_board_package_mutation(self) -> None:
+        for query_fails in (False, True):
+            with self.subTest(query_fails=query_fails):
+                result = run_bash(r'''
+source "$1"
+DEBS=(./candidate.deb)
+prepare_board_platform_admission() { :; }
+verify_board_platform_admission() { :; }
+board_runtime_is_legacy() { return 0; }
+refresh_apt_metadata_for_board_install() { :; }
+stop_board_runtime_before_install() { :; }
+board_has_scheduler_cohort() { return 0; }
+collect_exact_deb_install_specs() { local -n specs="$1"; specs=(./candidate.deb); }
+collect_board_heal_specs() { :; }
+complete_board_install_after_packages() { echo UNEXPECTED_LIFECYCLE; }
+run_sudo() {
+  if [[ "$*" == 'apt-get check' ]]; then
+    echo 'Original APT failure' >&2
+    return 100
+  fi
+  echo "UNEXPECTED_MUTATION $*"
+  return 99
+}
+dpkg-query() {
+  if [[ "$2" == '-f=${db:Status-Status}\n' ]]; then
+    echo triggers-pending
+    return 0
+  fi
+''' + ("  echo 'Read-only diagnostic failed' >&2; return 17\n" if query_fails else
+       "  printf 'foreign-pending\\tinstall ok triggers-pending\\tit \\t1\\tarm64\\tldconfig\\t\\n'\n") + r'''
+}
+python3() {
+  [[ "$1" == -B && "$2" == "${SCHEDULER_PLATFORM_ADMISSION_PATH}" && "$3" == retirements ]] || return 98
+  echo 'PRODUCER_REFUSED_FOREIGN_PENDING' >&2
+  return 23
+}
+install_debs_on_board
+echo UNEXPECTED_SUCCESS
+''')
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("Original APT failure", result.stderr)
+                self.assertIn("PRODUCER_REFUSED_FOREIGN_PENDING", result.stderr)
+                self.assertNotIn("UNEXPECTED_", result.stdout)
+                self.assertEqual("Read-only diagnostic failed" in result.stderr, query_fails)
+                if not query_fails:
+                    self.assertIn("foreign-pending\tinstall ok triggers-pending", result.stderr)
 
     def test_version_overrides_cannot_skip_board_provider_admission(self) -> None:
         for override in ("FORCE_INSTALL=1", "NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON"):
