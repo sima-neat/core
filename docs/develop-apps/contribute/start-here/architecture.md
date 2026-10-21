@@ -2292,7 +2292,7 @@ build-time output contract until the upstream input provides them.
 `neatencoder`. Scheduler owns GStreamer adaptation and output publication; Codecs owns the
 encoder session. Runner retains memory ownership and synchronization authority. Core adds no encoder execution thread.
 The legacy `H264EncodeSima` preserves its adapter-free input contract while sharing
-encoder property generation. The public class layout changes are included in ABI 6 and
+encoder property generation. The public class layout changes are included in ABI 7 and
 rebuilt binary consumers; existing source entry points remain available.
 
 

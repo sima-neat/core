@@ -1129,6 +1129,11 @@ def test_actual_core_install_rpath_is_relative_and_shared_only(tmp_path, libdir)
     private DSOs are direct dependencies, matching Scheduler's frontend support.
     """
     production = (ROOT / 'CMakeLists.txt').read_text()
+    manifest = json.loads((ROOT / 'deps/manifest.json').read_text())
+    abi = manifest['abi-version']
+    platform_version = manifest['platform-version']
+    # Distributed ABI 6 previews used the smaller public ArgMax options/class.
+    assert int(abi) > 6
     properties = re.search(r'set_target_properties\(sima_neat PROPERTIES.*?\n\)',
                            production, re.DOTALL).group(0)
     static_properties = re.search(r'set_target_properties\(sima_neat_static PROPERTIES.*?\n\)',
@@ -1147,8 +1152,7 @@ def test_actual_core_install_rpath_is_relative_and_shared_only(tmp_path, libdir)
     (source / 'CMakeLists.txt').write_text("""cmake_minimum_required(VERSION 3.16)
 project(CoreInstalledLoaderFixture LANGUAGES CXX)
 include(GNUInstallDirs)
-set(SIMANEAT_PLATFORM_VERSION 1.0.0)
-set(SIMANEAT_ABI_VERSION 1)
+""" + f'set(SIMANEAT_PLATFORM_VERSION {platform_version})\nset(SIMANEAT_ABI_VERSION {abi})\n' + """
 add_library(fixture_runtime SHARED runtime.cpp)
 add_library(fixture_plugin SHARED plugin.cpp)
 add_library(sima_neat SHARED core.cpp)
@@ -1183,21 +1187,65 @@ install(TARGETS shared_client static_client static_without_path DESTINATION bin)
             '-DCMAKE_INSTALL_LIBDIR=' + libdir, '-DCMAKE_INSTALL_PREFIX=' + str(installed))
     command('cmake', '--build', build, '--parallel', '4')
     command('cmake', '--install', build)
+    legacy = tmp_path / 'abi6'
+    (legacy / libdir).mkdir(parents=True)
+    (legacy / 'bin').mkdir()
+    (source / 'legacy.cpp').write_text('extern "C" int fixture_core() { return 42; }\n')
+    command('/usr/bin/c++', '-shared', '-fPIC', source / 'legacy.cpp',
+            '-Wl,-soname,libsima_neat.so.6', '-o', legacy / libdir / 'libsima_neat.so.6')
+    old_client = legacy / 'bin/legacy_client'
+    command('/usr/bin/c++', source / 'main.cpp', legacy / libdir / 'libsima_neat.so.6',
+            '-Wl,-rpath,$ORIGIN/../' + libdir, '-o', old_client)
+    assert 'x86-64' in command('file', old_client).stdout
+    command(old_client)  # The old consumer works with its actual old ABI provider.
+    shutil.copy2(old_client, installed / 'bin/legacy_client')
     relocated = tmp_path / 'relocated'
     shutil.copytree(installed, relocated, symlinks=True)
     # Remove the original directory name from lookup, proving relocation rather
     # than accidentally finding the original installation or build tree.
     installed.rename(tmp_path / 'original-install-not-at-its-old-path')
     for prefix in (tmp_path / 'original-install-not-at-its-old-path', relocated):
-        dynamic = command('readelf', '-d', prefix / libdir / 'libsima_neat.so.1.0.0').stdout
+        dynamic = command('readelf', '-d', prefix / libdir / f'libsima_neat.so.{platform_version}').stdout
+        assert f'Library soname: [libsima_neat.so.{abi}]' in dynamic
+        assert (prefix / libdir / 'libsima_neat.so').readlink().name == f'libsima_neat.so.{abi}'
+        assert not (prefix / libdir / 'libsima_neat.so.6').exists()
         assert '[$ORIGIN/neat/runtime:$ORIGIN/neat/gst-plugins]' in dynamic
         assert str(tmp_path) not in dynamic
-        for client in ('shared_client', 'static_client', 'static_without_path'):
+        needed = command('readelf', '-d', prefix / 'bin/shared_client').stdout
+        assert f'Shared library: [libsima_neat.so.{abi}]' in needed
+        assert 'Shared library: [libsima_neat.so.6]' in command(
+            'readelf', '-d', prefix / 'bin/legacy_client').stdout
+        for client in ('shared_client', 'static_client', 'static_without_path', 'legacy_client'):
             executable = prefix / 'bin' / client
             identity = command('file', executable).stdout
             assert 'ELF' in identity and 'x86-64' in identity, identity
             result = command(executable, check=False)
-            assert (result.returncode == 0) == (client != 'static_without_path'), result.stderr
+            assert (result.returncode == 0) == (client in ('shared_client', 'static_client')), result.stderr
+            if client == 'legacy_client':
+                assert 'libsima_neat.so.6' in result.stderr
         static_dynamic = command('readelf', '-d', prefix / 'bin/static_client').stdout
         assert 'Shared library: [libsima_neat' not in static_dynamic
         assert 'libfixture_plugin' in static_dynamic and 'libfixture_runtime' in static_dynamic
+
+
+@pytest.mark.parametrize('installed_abi', ['6', 'selected'])
+def test_install_smoke_requires_selected_manifest_abi(tmp_path, installed_abi):
+    manifest = json.loads((ROOT / 'deps/manifest.json').read_text())
+    expected = manifest['abi-version']
+    selected = expected if installed_abi == 'selected' else installed_abi
+    source = tmp_path / 'source/tests/install_smoke'
+    source.mkdir(parents=True)
+    (tmp_path / 'source/deps').mkdir()
+    shutil.copy2(ROOT / 'deps/manifest.json', tmp_path / 'source/deps/manifest.json')
+    # Exercise the actual consumer's admission block, not a duplicated check.
+    block = (ROOT / 'tests/install_smoke/CMakeLists.txt').read_text().split('add_executable(', 1)[0]
+    (source / 'CMakeLists.txt').write_text(block)
+    package = tmp_path / 'package'; package.mkdir()
+    (package / 'SimaNeatConfig.cmake').write_text(f'set(SimaNeat_ABI_VERSION "{selected}")\n')
+    env = {'PATH': os.environ['PATH'], 'HOME': str(tmp_path), 'LANG': 'C'}
+    result = subprocess.run(['cmake', '-S', str(source), '-B', str(tmp_path / 'build'),
+                             '-DCMAKE_CXX_COMPILER=/usr/bin/c++', f'-DSimaNeat_DIR={package}'],
+                            env=env, text=True, capture_output=True)
+    assert (result.returncode == 0) == (selected == expected), result.stdout + result.stderr
+    if selected != expected:
+        assert f"Expected SimaNeat public ABI {expected}, got '{selected}'" in result.stderr
