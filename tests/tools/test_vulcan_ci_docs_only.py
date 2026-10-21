@@ -8,6 +8,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/vulcan-ci.yml"
@@ -25,6 +27,38 @@ def job_block(name: str) -> str:
 
 
 class VulcanCiDocsOnlyTests(unittest.TestCase):
+    def test_devkit_uses_platform_resolved_scheduler_group(self) -> None:
+        resolver = yaml.safe_load(job_block("resolve-test-runner"))
+        self.assertEqual(
+            resolver["uses"],
+            "sima-neat/.github/.github/workflows/vulcan-resolve-modalix-runner.yml@main",
+        )
+        self.assertEqual(resolver["with"], {
+            "legacy_runner_group": "modalix-devkit-scheduler",
+            "versioned_runner_group_prefix": "modalix-devkit-scheduler-",
+        })
+        self.assertEqual(resolver["needs"], ["detect-changes"])
+        self.assertIn("== 'standard'", resolver["if"])
+        self.assertIn("needs.detect-changes.outputs.docs_only != 'true'", resolver["if"])
+        devkit = yaml.safe_load(job_block("test-devkit"))
+        self.assertEqual(devkit["runs-on"]["group"],
+                         "${{ needs.resolve-test-runner.outputs.modalix_runner_group }}")
+
+    def test_devkit_labels_preserve_capabilities_and_artifact_environment(self) -> None:
+        devkit = yaml.safe_load(job_block("test-devkit"))
+        env = "needs.resolve-vulcan-config.outputs.vulcan_env"
+        self.assertEqual(devkit["runs-on"]["labels"], [
+            "self-hosted", "Linux", "ARM64", "modalix", "rtsp",
+            "vulcan-${{ " + env + " == 'prod' && 'production' || " + env + " }}",
+        ])
+        # Human-readable runner labels must not change the resolved publisher
+        # environment, SDK selection, or artifact-acquisition environment.
+        self.assertEqual(devkit["env"]["VULCAN_ENV"], "${{ " + env + " }}")
+        self.assertEqual(
+            yaml.safe_load(job_block("resolve-vulcan-config"))["with"]["vulcan_env"],
+            "${{ vars.VULCAN_ENV || 'production' }}",
+        )
+
     def test_docs_only_configures_without_runtime_but_real_analysis_requires_it(self) -> None:
         # These are real source configurations, not an empty stand-in project
         # or an imported Scheduler stub. Keep host checks out of the SDK's

@@ -283,6 +283,10 @@ jobs:
     needs:
       - detect-changes
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-modalix-runner.yml@main
+    with:
+      # Keep the split Scheduler stack off the legacy Internals runner pool.
+      legacy_runner_group: modalix-devkit-scheduler
+      versioned_runner_group_prefix: modalix-devkit-scheduler-
 
   build:
     name: Build Core on Vulcan
@@ -748,7 +752,8 @@ jobs:
       - publish-vulcan-artifacts
     runs-on:
       group: ${{ needs.resolve-test-runner.outputs.modalix_runner_group }}
-      labels: [self-hosted, Linux, ARM64, modalix, rtsp, "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}"]
+      # The dedicated production DevKit uses vulcan-production, not vulcan-prod.
+      labels: [self-hosted, Linux, ARM64, modalix, rtsp, "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env == 'prod' && 'production' || needs.resolve-vulcan-config.outputs.vulcan_env }}"]
     env:
       VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
       SIMA_CLI_CHECK_FOR_UPDATE: "0"
