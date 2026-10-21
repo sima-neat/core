@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import textwrap
 import venv
 import zipfile
 from unittest.mock import patch
@@ -388,6 +389,110 @@ add_subdirectory(tutorials)
         assert str(tmp_path) not in dynamic
     assert not any(p.name in {'CMakeFiles', 'CMakeCache.txt', 'cmake_install.cmake'}
                    or p.suffix in {'.o', '.obj'} for p in installed.rglob('*'))
+
+
+@pytest.fixture
+def installed_bootstrap_contract(tmp_path):
+    """Configure/install the actual Python registration and its complete inputs."""
+    source = tmp_path / 'producer'
+    for relative in ('tests/tools/test_python_runtime_bootstrap.py',
+                     'python/pyneat/__init__.py', 'cmake/NeatGuardedTests.cmake'):
+        path = source / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / relative, path)
+    rules = (ROOT / 'tests/CMakeLists.txt').read_text()
+    registration = rules.split('foreach(host_contract', 1)[0]
+    install_rules = rules.split('install(\n  DIRECTORY ${CMAKE_BINARY_DIR}/tests/', 1)[1]
+    install_rules = 'install(\n  DIRECTORY ${CMAKE_BINARY_DIR}/tests/' + install_rules.split(
+        '\n\nforeach(_target', 1)[0]
+    (source / 'tests/CMakeLists.txt').write_text(registration + '\n' + install_rules)
+    (source / 'CMakeLists.txt').write_text('''cmake_minimum_required(VERSION 3.16)
+project(InstalledPythonContract NONE)
+enable_testing()
+add_subdirectory(tests)
+''')
+    env = os.environ.copy()
+    for name in ('CMAKE_TOOLCHAIN_FILE', 'CMAKE_PREFIX_PATH', 'DESTDIR',
+                 'PYTHONPATH', 'PYTHONHOME', 'SIMA_HARDWARE_SUPERVISOR_SOCKET'):
+        env.pop(name, None)
+    env['PYTHONDONTWRITEBYTECODE'] = '1'
+
+    def command(*args):
+        return subprocess.check_output(list(map(str, args)), env=env, text=True,
+                                       stderr=subprocess.STDOUT, cwd=tmp_path)
+
+    build = source / 'build'
+    installed = tmp_path / 'installed'
+    command('cmake', '-S', source, '-B', build, '-DPython3_EXECUTABLE=' + sys.executable)
+    command('cmake', '--install', build, '--prefix', installed, '--component', 'extras')
+    relocated = tmp_path / 'relocated'
+    installed.rename(relocated)
+    runtime = relocated / 'lib/sima-neat/tests'
+    work = tmp_path / '_work'
+    work.mkdir()
+    (work / 'extras_prefix.txt').write_text(str(relocated))
+    (work / 'extras_lib_dir.txt').write_text(str(relocated / 'lib/sima-neat'))
+    workflow = (ROOT / '.github/workflows/vulcan-ci.yml').read_text()
+    step = workflow.split('      - name: Rebase CTest paths to runner workspace\n', 1)[1]
+    step = step.split('\n      - name:', 1)[0].split('        run: |\n', 1)[1]
+    command('bash', '-euc', textwrap.dedent(step))
+    source.rename(tmp_path / 'producer-removed')
+    inventory = json.loads(command('ctest', '--test-dir', runtime, '--show-only=json-v1'))
+    assert [test['name'] for test in inventory['tests']] == ['unit_python_runtime_bootstrap']
+    test = inventory['tests'][0]
+    properties = {item['name']: item['value'] for item in test['properties']}
+    assert properties['TIMEOUT'] == 10
+    assert set(properties['LABELS']) == {'strict', 'unit', 'python', 'host'}
+    assert test['command'][2] == '--bootstrap'
+    for argument in (test['command'][1], test['command'][3]):
+        assert Path(argument).is_file() and Path(argument).is_relative_to(runtime)
+    assert Path(test['command'][1]).read_bytes() == (
+        ROOT / 'tests/tools/test_python_runtime_bootstrap.py').read_bytes()
+    assert Path(test['command'][3]).read_bytes() == (ROOT / 'python/pyneat/__init__.py').read_bytes()
+    assert not source.exists() and not build.exists() and not installed.exists()
+    return runtime, Path(test['command'][3]), env
+
+
+@pytest.mark.parametrize('subject_state', ['original', 'missing', 'regressed'])
+def test_installed_python_contract_executes_real_assertions_after_relocation(
+        installed_bootstrap_contract, tmp_path, subject_state):
+    runtime, subject, env = installed_bootstrap_contract
+    if subject_state == 'missing':
+        subject.unlink()
+    elif subject_state == 'regressed':
+        original = subject.read_text()
+        changed = original.replace('(path / "libgstneatkernelrunner.so").exists()',
+                                   '(path / "libgstneatprocesscvu.so").exists()', 1)
+        assert changed != original
+        subject.write_text(changed)
+    output = tmp_path / 'coverage'
+    gate = [sys.executable, str(ROOT / 'tools/ci/check_test_coverage.py'),
+            '--profile', 'required', '--output-dir', str(output)]
+    ctest = ['ctest', '--test-dir', str(runtime), '-R', '^unit_python_runtime_bootstrap$',
+             '-V', '--no-tests=error']
+    result = subprocess.run(gate + ['--'] + ctest, env=env, text=True, capture_output=True)
+    assert (result.returncode == 0) == (subject_state == 'original'), result.stdout + result.stderr
+    assert 'Ran 2 tests' in result.stdout
+    if subject_state == 'original':
+        assert json.loads((output / 'coverage.json').read_text()) == {
+            'status': 'PASS', 'selected': 1, 'passed': 1, 'skipped': 0}
+        guarded = subprocess.run(
+            gate[:-1] + [str(tmp_path / 'guarded-coverage'), '--require-guarded', '--'] + ctest,
+            env=env, text=True, capture_output=True)
+        assert guarded.returncode == 0, guarded.stdout + guarded.stderr
+    else:
+        assert 'Required tests did not pass' in result.stderr
+        assert ('FileNotFoundError' if subject_state == 'missing' else 'FAILED (failures=2)') in result.stdout
+        assert not (output / 'coverage.json').exists()
+
+
+def test_bootstrap_explicit_missing_subject_never_uses_available_source_default(tmp_path):
+    result = subprocess.run(
+        [sys.executable, str(ROOT / 'tests/tools/test_python_runtime_bootstrap.py'),
+         '--bootstrap', str(tmp_path / 'missing.py')], text=True, capture_output=True)
+    assert result.returncode != 0
+    assert 'FileNotFoundError' in result.stderr
+    assert 'Ran 2 tests' in result.stderr
 
 
 def test_raising_cli_validator_is_called(tmp_path):

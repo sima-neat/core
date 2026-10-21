@@ -60,6 +60,17 @@ def is_host_contract(test):
                 return False
         except OSError:
             return False
+    elif test.get('name') == 'unit_python_runtime_bootstrap' and len(command) != 2:
+        # Installed extras carry the actual bootstrap source beside the test.
+        # An explicit subject must be the reviewed bytes, never a path fallback.
+        if (len(command) != 4 or command[2] != '--bootstrap'
+                or not Path(command[3]).is_absolute()):
+            return False
+        try:
+            if Path(command[3]).read_bytes() != (source_root / 'python/pyneat/__init__.py').read_bytes():
+                return False
+        except OSError:
+            return False
     elif len(command) != 2:
         return False
     source = source_root / expected

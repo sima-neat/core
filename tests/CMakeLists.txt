@@ -11,13 +11,23 @@ find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/NeatGuardedTests.cmake")
 
-simaneat_add_test(NAME unit_kernel_runner_default_contract
-  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_kernel_runner_default.py
-    --source-root ${PROJECT_SOURCE_DIR})
-set_tests_properties(unit_kernel_runner_default_contract PROPERTIES
-  TIMEOUT 10 LABELS "strict;unit;architecture;host")
+# Package the bootstrap test with its actual Python subject, just like the CLI
+# tests below. Installed tests cannot resolve the producer's source checkout.
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tools")
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/tools/test_python_runtime_bootstrap.py"
+  "${CMAKE_CURRENT_BINARY_DIR}/tools/test_python_runtime_bootstrap.py"
+  COPYONLY
+)
+configure_file(
+  "${PROJECT_SOURCE_DIR}/python/pyneat/__init__.py"
+  "${CMAKE_CURRENT_BINARY_DIR}/tools/pyneat_init.py"
+  COPYONLY
+)
 simaneat_add_test(NAME unit_python_runtime_bootstrap
-  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_python_runtime_bootstrap.py)
+  COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_BINARY_DIR}/tools/test_python_runtime_bootstrap.py"
+    --bootstrap "${CMAKE_CURRENT_BINARY_DIR}/tools/pyneat_init.py")
 set_tests_properties(unit_python_runtime_bootstrap PROPERTIES
   TIMEOUT 10 LABELS "strict;unit;python;host")
 
@@ -153,6 +163,7 @@ string(JOIN ":" SIMA_TEST_NEAT_LD_LIBRARY_PATH ${_SIMA_TEST_NEAT_RUNTIME_DIRS})
 message(STATUS "  [tests] SIMA_TEST_NEAT_LD_LIBRARY_PATH=${SIMA_TEST_NEAT_LD_LIBRARY_PATH}")
 endif()
 
+simaneat_append_ctest_env(unit_kernel_runner_integration_test)
 set(PIPELINESESSION_TEST_TARGETS "")
 list(APPEND PIPELINESESSION_TEST_TARGETS unit_kernel_runner_integration_test)
 # ------------------------------------------------------------------------------

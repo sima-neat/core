@@ -1,4 +1,5 @@
 #include "../perf/codec_fixture_diagnostics.h"
+#include "gst/GstInit.h"
 
 #include <iostream>
 #include <unistd.h>
@@ -51,9 +52,9 @@ struct TemporaryFile {
 };
 } // namespace
 
-int main(int argc, char** argv) {
+int main() {
   try {
-    gst_init(&argc, &argv);
+    simaai::neat::gst_init_once();
     TemporaryFile fixture;
     const auto source = diagnostics::file_identity(fixture.path);
     require(source.at("size") == 3, "file size changed");

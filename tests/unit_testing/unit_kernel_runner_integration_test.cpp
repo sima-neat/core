@@ -1,3 +1,4 @@
+#include "gst/GstInit.h"
 #include "pipeline/internal/sima/KernelRunnerIntegration.h"
 #include "pipeline/internal/sima/BoxDecodeGeometry.h"
 #include "pipeline/internal/sima/BoxDecodeKernelAdmission.h"
@@ -969,8 +970,8 @@ void controls_and_admission_geometry() {
 } // namespace boxdecode_semantics
 } // namespace
 int main(int argc, char** argv) {
-  gst_init(&argc, &argv);
   try {
+    simaai::neat::gst_init_once();
     immutable_recipe_instances();
     if (argc == 2 && std::string_view(argv[1]) == "--instance-only")
       return 0;

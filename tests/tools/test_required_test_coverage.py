@@ -3,12 +3,14 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 import time
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('coverage', ROOT / 'tools/ci/check_test_coverage.py')
@@ -286,18 +288,68 @@ def kernel_runner_host_selection():
     return candidate
 
 
-def test_kernel_runner_host_contract_accepts_registered_source_root_form():
-    # Keep the positive fixture tied to the actual build-tree registration.
-    registration = (ROOT / 'tests/CMakeLists.txt').read_text().split(
-        'simaneat_add_test(NAME unit_kernel_runner_default_contract', 1)[1].split(')', 1)[0]
-    assert registration.split() == [
-        'COMMAND', '${Python3_EXECUTABLE}',
-        '${CMAKE_CURRENT_SOURCE_DIR}/tools/check_kernel_runner_default.py',
-        '--source-root', '${PROJECT_SOURCE_DIR}',
-    ]
+def test_kernel_runner_contract_has_required_source_gate_not_installed_registration():
+    workflow = yaml.safe_load((ROOT / '.github/workflows/vulcan-ci.yml').read_text())
+    steps = workflow['jobs']['resolve-compiler-cache']['steps']
+    step = next(item for item in steps if item['name'] == 'Run build-tooling tests')
+    commands = step['run'].replace('\\\n', ' ').splitlines()
+    pytest_command = next(line for line in commands if ' -m pytest ' in line)
+    assert shlex.split(pytest_command).count('tests/tools/check_kernel_runner_default.py') == 1
+    assert 'if' not in step and not step.get('continue-on-error', False)
+    for relative in ('CMakeLists.txt', 'tests/CMakeLists.txt'):
+        assert 'NAME unit_kernel_runner_default_contract' not in (ROOT / relative).read_text()
+
+
+def test_kernel_runner_host_contract_accepts_explicit_source_root_form():
     candidate = kernel_runner_host_selection()
     assert coverage.validate_selection(candidate, 'required', require_guarded=True, environment={}) == [
         'unit_kernel_runner_default_contract']
+
+
+def bootstrap_host_selection(tmp_path):
+    script = tmp_path / 'test_python_runtime_bootstrap.py'
+    script.write_bytes((ROOT / 'tests/tools/test_python_runtime_bootstrap.py').read_bytes())
+    subject = tmp_path / 'pyneat_init.py'
+    subject.write_bytes((ROOT / 'python/pyneat/__init__.py').read_bytes())
+    candidate = selection([('LABELS', ['host', 'strict', 'unit', 'python']), ('TIMEOUT', 10)])
+    candidate['tests'][0].update(
+        name='unit_python_runtime_bootstrap',
+        command=[sys.executable, str(script), '--bootstrap', str(subject)],
+    )
+    return candidate
+
+
+def test_bootstrap_host_contract_accepts_exact_installed_subject(tmp_path):
+    candidate = bootstrap_host_selection(tmp_path)
+    assert coverage.validate_selection(candidate, 'required', require_guarded=True, environment={}) == [
+        'unit_python_runtime_bootstrap']
+
+
+@pytest.mark.parametrize('change', [
+    'missing_subject', 'substituted_subject', 'relative_subject', 'wrong_flag',
+    'missing_argument', 'extra_argument', 'substituted_script', 'wrong_interpreter',
+])
+def test_bootstrap_host_contract_rejects_unreviewed_subject(tmp_path, change):
+    candidate = bootstrap_host_selection(tmp_path)
+    command = candidate['tests'][0]['command']
+    if change == 'missing_subject':
+        Path(command[3]).unlink()
+    elif change == 'substituted_subject':
+        Path(command[3]).write_text('def _configure_neat_runtime_environment(): pass\n')
+    elif change == 'relative_subject':
+        command[3] = 'pyneat_init.py'
+    elif change == 'wrong_flag':
+        command[2] = '--source-root'
+    elif change == 'missing_argument':
+        command.pop()
+    elif change == 'extra_argument':
+        command.append('--unreviewed')
+    elif change == 'substituted_script':
+        Path(command[1]).write_text('raise SystemExit(0)\n')
+    else:
+        command[0] = '/unreviewed/python'
+    with pytest.raises(coverage.CoverageError, match='not guarded'):
+        coverage.validate_selection(candidate, 'required', require_guarded=True, environment={})
 
 
 @pytest.mark.parametrize('change', [

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Exercise Python's installed Runtime discovery without importing the ARM extension."""
+import argparse
 import ast
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+import sys
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -48,4 +50,8 @@ class RuntimeBootstrapTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--bootstrap", type=Path, default=BOOTSTRAP)
+    options, unittest_args = parser.parse_known_args()
+    BOOTSTRAP = options.bootstrap
+    unittest.main(argv=[sys.argv[0], *unittest_args])
