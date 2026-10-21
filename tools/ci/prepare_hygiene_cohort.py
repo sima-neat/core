@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Use this build's exact Scheduler/LLiMa inputs for host-only Core analysis.
+"""Use this build's exact Scheduler inputs for host-only Core analysis.
 
 The caller first verifies the complete Core dist using verify_core_dist.sh.
 Only Scheduler is bootstrapped here; its installed coordinator owns all lower
@@ -13,11 +13,10 @@ import re
 import shlex
 import subprocess
 import sys
-import tarfile
 import tempfile
 
 from materialize_dependencies import extract_bundle
-from published_artifact import acquire, digest
+from published_artifact import digest
 
 
 def shell_exports(text):
@@ -31,18 +30,6 @@ def shell_exports(text):
             raise ValueError('Invalid/duplicate coordinator export')
         values[key] = value
     return values
-
-
-def archive_json(archive, relative):
-    # Inspection only: no source path from the archive is extracted or executed.
-    with tempfile.TemporaryFile() as stream:
-        subprocess.run(['dpkg-deb', '--fsys-tarfile', str(archive)], stdout=stream, check=True)
-        stream.seek(0)
-        with tarfile.open(fileobj=stream) as tar:
-            entries = [entry for entry in tar if entry.name.removeprefix('./') == relative]
-            if len(entries) != 1 or not entries[0].isfile():
-                raise ValueError('Missing/ambiguous Core build receipt')
-            return json.load(tar.extractfile(entries[0]))
 
 
 def coordinator(core, command, env):
@@ -84,32 +71,9 @@ def prepare(args):
     # Exercise the real wrapper/coordinator command, not removed Python APIs.
     coordinator(core, ['prepare', '--headers-only', '--client-test-support', '--output', str(output / 'audit')], environment)
     selected['CMAKE_PREFIX_PATH'] = str(Path(selected['NEAT_SCHEDULER_PACKAGE_DIR']) / 'usr')
-    info = archive_json(cores[0], 'usr/share/sima-neat/buildinfo.json')
-    llima = info.get('dependencies', {}).get('llima')
-    if not isinstance(llima, dict) or not re.fullmatch(r'[0-9a-f]{12,40}', llima.get('spec', '')):
-        raise ValueError('Core receipt must name its immutable LLiMa build')
-    artifact = acquire(args.cli, 'llima', llima['ref'], llima['spec'], args.environment, output / 'llima',
-                       resource_pattern=r'sima-lmm-[A-Za-z0-9._+~\-]+-Linux-dev\.deb')
-    development = list((output / 'llima').glob('sima-lmm-*-Linux-dev.deb'))
-    if len(development) != 1:
-        raise ValueError('Exact same-build LLiMa development archive unavailable')
-    fields = subprocess.check_output(['dpkg-deb', '-f', str(development[0]), 'Package', 'Architecture', 'Version'], text=True)
-    control = dict(line.split(': ', 1) for line in fields.splitlines())
-    runtimes = [path for path in dist.glob('*.deb') if subprocess.check_output(
-        ['dpkg-deb', '-f', str(path), 'Package'], text=True).strip() == 'sima-lmm-core']
-    if (len(runtimes) != 1 or control.get('Package') != 'sima-lmm-dev'
-            or control.get('Architecture') != 'arm64' or control.get('Version') != subprocess.check_output(
-                ['dpkg-deb', '-f', str(runtimes[0]), 'Version'], text=True).strip()):
-        raise ValueError('LLiMa development archive differs from the same-build runtime')
-    manifest = json.loads((core / 'deps/manifest.json').read_text())
-    manifest['llima'] = {'branch': llima['ref'], 'spec': llima['spec']}
-    manifest_path = output / 'manifest.json'
-    manifest_path.write_text(json.dumps(manifest, indent=2) + '\n')
-    selected['NEAT_DEPS_MANIFEST'] = str(manifest_path)
-    selected['NEAT_LLIMA_ARTIFACT_DIR'] = str(output / 'llima')
     (output / 'analysis-inputs.json').write_text(json.dumps({
         'schema_version': 1, 'dist_receipt_sha256': digest(dist / 'resolved-deps-manifest.json'),
-        'core_archive_sha256': digest(cores[0]), 'llima': artifact, 'environment': selected,
+        'core_archive_sha256': digest(cores[0]), 'environment': selected,
     }, indent=2) + '\n')
     return selected
 
@@ -119,8 +83,9 @@ def main():
     parser.add_argument('--core', type=Path, default=Path.cwd())
     parser.add_argument('--dist', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--environment', required=True)
-    parser.add_argument('--cli', default='sima-cli')
+    # Retain the existing caller interface; host analysis resolves no remote inputs.
+    parser.add_argument('--environment', required=True, help='Accepted for caller compatibility')
+    parser.add_argument('--cli', default='sima-cli', help='Accepted for caller compatibility')
     parser.add_argument('--github-env', type=Path, required=True)
     args = parser.parse_args()
     values = prepare(args)

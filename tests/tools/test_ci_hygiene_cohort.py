@@ -181,13 +181,106 @@ def test_invalid_coordinator_output_is_not_executed(text):
         load_preparation().shell_exports(text)
 
 
-def test_hygiene_has_no_second_mutable_llima_resolution():
+def test_hygiene_has_no_unused_llima_acquisition():
     helper = (ROOT / 'tools/ci/prepare_hygiene_cohort.py').read_text()
-    assert "info.get('dependencies', {}).get('llima')" in helper
-    assert "llima['ref'], llima['spec']" in helper
-    assert 'develop:latest' not in helper and "'latest'" not in helper
+    assert 'acquire(' not in helper and 'archive_json' not in helper
+    assert 'NEAT_LLIMA_ARTIFACT_DIR' not in helper and 'NEAT_DEPS_MANIFEST' not in helper
     assert "selected['CMAKE_PREFIX_PATH']" in helper
     assert "selected['NEAT_SCHEDULER_PACKAGE_DIR']" in helper
+
+
+def test_hygiene_retains_existing_cli_arguments(tmp_path, monkeypatch):
+    import sys
+    module = load_preparation()
+    env_file = tmp_path / 'github-env'
+    monkeypatch.setattr(sys, 'argv', ['prepare_hygiene_cohort.py', '--core', str(ROOT),
+                        '--dist', str(tmp_path / 'dist'), '--output', str(tmp_path / 'output'),
+                        '--environment', 'production', '--cli', '/must/not/execute',
+                        '--github-env', str(env_file)])
+    with mock.patch.object(module, 'prepare', return_value={'CMAKE_PREFIX_PATH': '/selected/usr'}) as prepare:
+        module.main()
+    assert prepare.call_args.args[0].environment == 'production'
+    assert prepare.call_args.args[0].cli == '/must/not/execute'
+    assert env_file.read_text() == 'CMAKE_PREFIX_PATH=/selected/usr\n'
+
+
+@pytest.mark.parametrize('with_llima', [False, True])
+@pytest.mark.parametrize('failure', [None, 'verify', 'extract', 'select', 'platform-archives', 'prepare'])
+def test_hygiene_prepares_only_verified_scheduler_inputs(tmp_path, monkeypatch, with_llima, failure):
+    """Real DEB extraction with validation/delegation doubles, not package qualification."""
+    import json
+    from types import SimpleNamespace
+    module = load_preparation()
+    dist = tmp_path / 'dist'; dist.mkdir()
+    roles = ['sima-neat', 'simaai-scheduler'] + (['sima-lmm-core'] if with_llima else [])
+    archives = {}
+    for role in roles:
+        payload = tmp_path / role
+        (payload / 'DEBIAN').mkdir(parents=True)
+        (payload / 'DEBIAN/control').write_text(
+            f'Package: {role}\nVersion: 1.0\nArchitecture: all\n'
+            'Maintainer: Test <test@example.invalid>\nDescription: transport fixture\n')
+        receipt = payload / 'usr/share' / role / 'buildinfo.json'
+        receipt.parent.mkdir(parents=True)
+        receipt.write_text(json.dumps({'dependencies': {'llima': {'ref': 'develop', 'spec': 'a' * 12}}
+                                      if with_llima else {}}))
+        archives[role] = dist / (role + '.deb')
+        subprocess.run(['dpkg-deb', '--build', str(payload), str(archives[role])],
+                       check=True, capture_output=True)
+    (dist / 'resolved-deps-manifest.json').write_text('{}\n')
+    output = tmp_path / 'analysis'
+    calls = []
+    real_run = subprocess.run
+    def run(argv, **kwargs):
+        if argv[0] == 'bash':
+            assert argv == ['bash', str(ROOT / 'scripts/ci/verify_core_dist.sh'), '--dist', str(dist)]
+            calls.append('verify')
+            if failure == 'verify': raise ValueError('fixture verify rejected')
+            return subprocess.CompletedProcess(argv, 0)
+        if argv[:2] == ['dpkg-deb', '-f']:
+            assert Path(argv[2]) in archives.values() and argv[3:] == ['Package']
+            return real_run(argv, **kwargs)
+        assert argv == ['dpkg-deb', '--fsys-tarfile', str(archives['simaai-scheduler'])]
+        calls.append('extract')
+        if failure == 'extract': raise ValueError('fixture extract rejected')
+        return real_run(argv, **kwargs)
+    def coordinator(core, command, environment):
+        assert core == ROOT
+        assert 'NEAT_LLIMA_ARTIFACT_DIR' not in environment
+        assert 'NEAT_DEPS_MANIFEST' not in environment
+        calls.append(command[0])
+        if failure == command[0]: raise ValueError('fixture ' + failure + ' rejected')
+        if command[0] == 'select':
+            assert command[1:4] == ['--require', '--cohort-dir', str(dist)]
+            assert environment['NEAT_SCHEDULER_PACKAGE_DIR'] == str(output / 'bootstrap')
+            assert (output / 'bootstrap/usr/share/simaai-scheduler/buildinfo.json').is_file()
+            return f'export NEAT_SCHEDULER_PACKAGE_DIR={output / "selected/scheduler"}\n'
+        assert environment['NEAT_SCHEDULER_PACKAGE_DIR'] == str(output / 'selected/scheduler')
+        if command[0] == 'platform-archives':
+            assert command == ['platform-archives', '--platform-package-dir', str(dist)]
+            return ''
+        assert command == ['prepare', '--headers-only', '--client-test-support', '--output', str(output / 'audit')]
+        return ''
+    monkeypatch.delenv('NEAT_LLIMA_ARTIFACT_DIR', raising=False)
+    monkeypatch.delenv('NEAT_DEPS_MANIFEST', raising=False)
+    monkeypatch.setattr(module.subprocess, 'run', run)
+    monkeypatch.setattr(module, 'coordinator', coordinator)
+    args = SimpleNamespace(core=ROOT, dist=dist, output=output,
+                           environment='unused-selector', cli='/must/not/execute')
+    if failure:
+        with pytest.raises(ValueError, match='fixture ' + failure + ' rejected'):
+            module.prepare(args)
+        assert not (output / 'analysis-inputs.json').exists()
+    else:
+        selected = module.prepare(args)
+        assert selected == {'NEAT_SCHEDULER_PACKAGE_DIR': str(output / 'selected/scheduler'),
+                            'CMAKE_PREFIX_PATH': str(output / 'selected/scheduler/usr')}
+        assert json.loads((output / 'analysis-inputs.json').read_text()) == {
+            'schema_version': 1, 'dist_receipt_sha256': module.digest(dist / 'resolved-deps-manifest.json'),
+            'core_archive_sha256': module.digest(archives['sima-neat']), 'environment': selected}
+        assert not (output / 'manifest.json').exists() and not (output / 'llima').exists()
+    order = ['verify', 'extract', 'select', 'platform-archives', 'prepare']
+    assert calls == (order[:order.index(failure) + 1] if failure else order)
 
 
 def test_full_core_build_explicitly_requires_same_producer_test_component():
