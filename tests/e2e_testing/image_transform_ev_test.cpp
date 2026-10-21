@@ -708,14 +708,23 @@ std::vector<Image> inputs(F f, int w, int h) {
 void numerical() {
   for (F f : {F::RGB, F::BGR, F::GRAY8, F::NV12, F::I420, F::NV16})
     for (I interpolation : {I::Nearest, I::Bilinear, I::Bicubic, I::BoxAverage}) {
-      // Exact factor two still exercises all interpolation arithmetic and tails.
+      // Fractional scaling distinguishes Bilinear from BoxAverage on every fixture.
+      constexpr int width = 22, height = 14;
       auto source = inputs(f, 36, 20);
       std::vector<Image> expected;
-      for (const auto& in : source)
-        expected.push_back(resize_reference(in, 18, 10, interpolation));
+      for (const auto& in : source) {
+        expected.push_back(resize_reference(in, width, height, interpolation));
+        if (interpolation == I::Bilinear) {
+          const auto wrong_mode = resize_reference(in, width, height, I::BoxAverage);
+          bool differs = false;
+          for (std::size_t p = 0; p < wrong_mode.planes.size(); ++p)
+            differs |= expected.back().planes[p].bytes != wrong_mode.planes[p].bytes;
+          require(differs, "resize fixture cannot detect a BoxAverage-for-Bilinear substitution");
+        }
+      }
       ResizeOptions o;
-      o.width = 18;
-      o.height = 10;
+      o.width = width;
+      o.height = height;
       o.interpolation = interpolation;
       run_case(
           std::string("resize-") + name(f) + "-" + std::to_string(int(interpolation)), source,
