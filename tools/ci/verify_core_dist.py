@@ -237,8 +237,14 @@ def verify(root, *, validate_metadata, expected_manifest=None, expected_receipt=
                     f'{filename}: Modalix compatibility missing')
         expected_script = ':' if filename in ('metadata-pyneat.json', 'metadata-extras.json') else './install_neat_framework.sh'
         require(metadata.get('installation', {}).get('script') == expected_script, f'{filename}: wrong installer')
-    require(identities == {('sima-neat', control(core)['Version'])},
-            'Metadata variants disagree with Core package identity')
+    # CLI metadata uses the local package name or the published GitHub identity;
+    # neither changes the Debian roles checked above. All variants must select
+    # one identity and the actual DEB version, independent of caller environment.
+    core_version = control(core)['Version']
+    expected_identities = {('sima-neat', core_version), ('gh:sima-neat/core', core_version)}
+    require(len(identities) == 1 and identities <= expected_identities,
+            f'Metadata variants disagree with Core package identity: observed {sorted(identities)!r}; '
+            f'expected one of {sorted(expected_identities)!r} shared by all variants')
     with tarfile.open(extras) as archive:
         entries = archive.getmembers()
         members = {str(PurePosixPath(m.name)): m for m in entries}

@@ -23,7 +23,7 @@ verifier = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(verifier)
 
 
-def fixture(root):
+def fixture(root, metadata_name='sima-neat'):
     debs = {
         'sima-neat-1-Linux-core.deb': 'sima-neat',
         'sima-neat-1-Linux-dev.deb': 'sima-neat-dev',
@@ -57,7 +57,7 @@ def fixture(root):
         ('metadata-all.json', base + [extras], []), ('metadata-pyneat.json', ['pyneat-1-py3-none-any.whl'], []),
         ('metadata-extras.json', [extras], []),
     ):
-        metadata = {'name': 'sima-neat', 'version': '1', 'release': '',
+        metadata = {'name': metadata_name, 'version': '1', 'release': '',
                     'platforms': [{'type': 'board', 'version': '3.0.0', 'compatible_with': ['modalix']},
                                   {'type': 'palette', 'version': '3.0.0'}],
                     'resources': resources,
@@ -86,12 +86,51 @@ def run(root, **kwargs):
         return result
 
 
-def test_golden_set_is_read_only(tmp_path):
-    controls = fixture(tmp_path)
+@pytest.mark.parametrize('metadata_name', ['sima-neat', 'gh:sima-neat/core'])
+def test_golden_set_is_read_only(tmp_path, monkeypatch, metadata_name):
+    monkeypatch.setenv('NEAT_PACKAGE_NAME', 'gh:foreign/core')
+    controls = fixture(tmp_path, metadata_name=metadata_name)
     before = {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in tmp_path.iterdir()}
     with patch.object(verifier, 'control', controls):
         assert run(tmp_path)['status'] == 'PASS'
     assert before == {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in tmp_path.iterdir()}
+
+
+@pytest.mark.parametrize('name', ['foreign', 'gh:foreign/core', 'gh:sima-neat/scheduler'])
+def test_metadata_rejects_uniform_foreign_identity_even_from_environment(tmp_path, monkeypatch, name):
+    monkeypatch.setenv('NEAT_PACKAGE_NAME', name)
+    controls = fixture(tmp_path, metadata_name=name)
+    with patch.object(verifier, 'control', controls), pytest.raises(verifier.ContractError) as error:
+        run(tmp_path)
+    assert 'Metadata variants disagree with Core package identity' in str(error.value)
+    assert repr((name, '1')) in str(error.value)
+
+
+@pytest.mark.parametrize('original,other', [
+    ('sima-neat', 'gh:sima-neat/core'), ('gh:sima-neat/core', 'sima-neat')])
+@pytest.mark.parametrize('filename', [
+    'metadata.json', 'metadata-minimal.json', 'metadata-all.json',
+    'metadata-pyneat.json', 'metadata-extras.json'])
+def test_metadata_rejects_mixed_allowed_aliases(tmp_path, original, other, filename):
+    controls = fixture(tmp_path, metadata_name=original)
+    change(tmp_path, filename, lambda value: value.update(name=other))
+    with patch.object(verifier, 'control', controls), pytest.raises(
+            verifier.ContractError, match='Metadata variants disagree with Core package identity'):
+        run(tmp_path)
+
+
+@pytest.mark.parametrize('metadata_name', ['sima-neat', 'gh:sima-neat/core'])
+@pytest.mark.parametrize('uniform', [False, True])
+def test_metadata_version_must_match_actual_deb(tmp_path, metadata_name, uniform):
+    controls = fixture(tmp_path, metadata_name=metadata_name)
+    targets = list(tmp_path.glob('metadata*.json')) if uniform else [tmp_path / 'metadata-pyneat.json']
+    for path in targets:
+        change(tmp_path, path.name, lambda value: value.update(version='2'))
+    with patch.object(verifier, 'control', controls), pytest.raises(verifier.ContractError) as error:
+        run(tmp_path)
+    assert 'Metadata variants disagree with Core package identity' in str(error.value)
+    assert repr((metadata_name, '2')) in str(error.value)
+    assert repr((metadata_name, '1')) in str(error.value)
 
 
 @pytest.mark.parametrize('mutation', [
