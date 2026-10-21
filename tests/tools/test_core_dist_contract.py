@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import platform
 import copy
 import re
 import shutil
@@ -1569,6 +1570,104 @@ def test_install_smoke_requires_selected_manifest_abi(tmp_path, installed_abi):
     assert (result.returncode == 0) == (selected == expected), result.stdout + result.stderr
     if selected != expected:
         assert f"Expected SimaNeat public ABI {expected}, got '{selected}'" in result.stderr
+
+
+@pytest.mark.parametrize(('runtime_abi', 'storage_available'), [
+    ('selected', True), ('selected', False), ('previous', True), ('next', True),
+])
+def test_install_smoke_executables_check_selected_abi_and_allocate(
+        tmp_path, runtime_abi, storage_available):
+    expected = json.loads((ROOT / 'deps/manifest.json').read_text())['abi-version']
+    runtime_abi = {'selected': expected, 'previous': str(int(expected) - 1),
+                   'next': str(int(expected) + 1)}[runtime_abi]
+    source = tmp_path / 'source/tests/install_smoke'
+    source.mkdir(parents=True)
+    (tmp_path / 'source/deps').mkdir()
+    shutil.copy2(ROOT / 'deps/manifest.json', tmp_path / 'source/deps/manifest.json')
+    for name in ('CMakeLists.txt', 'main.cpp'):
+        shutil.copy2(ROOT / 'tests/install_smoke' / name, source / name)
+    provider = tmp_path / 'provider'
+    provider.mkdir()
+    for name in ('neat/version.h', 'pipeline/TensorCore.h', 'pipeline/TensorTypes.h'):
+        target = provider / 'include' / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / 'include' / name, target)
+    # Isolate the executable's ABI/allocation oracles, using its actual public
+    # declarations. This fixture is not a replacement for installed Core tests.
+    (provider / 'provider.cpp').write_text(f'''
+#include "neat/version.h"
+#include "pipeline/TensorCore.h"
+#include <fstream>
+extern "C" const char* sima_neat_abi_version() {{ return "{runtime_abi}"; }}
+namespace simaai::neat {{
+std::shared_ptr<TensorBuffer> make_cpu_owned_storage(std::size_t size_bytes) {{
+    std::ofstream("allocation-called") << size_bytes;
+    return {"std::make_shared<TensorBuffer>()" if storage_available else "nullptr"};
+}}
+}}
+''')
+    (provider / 'CMakeLists.txt').write_text('''
+cmake_minimum_required(VERSION 3.16)
+project(SmokeOracleProvider LANGUAGES CXX)
+add_library(smoke_shared SHARED provider.cpp)
+add_library(smoke_static STATIC provider.cpp)
+foreach(target smoke_shared smoke_static)
+  target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+  target_compile_features(${target} PRIVATE cxx_std_20)
+endforeach()
+''')
+    provider_build = tmp_path / 'provider-build'
+    package = tmp_path / 'package'
+    package.mkdir()
+    (package / 'SimaNeatConfig.cmake').write_text(f'''
+set(SimaNeat_ABI_VERSION "{expected}")
+set(SimaNeat_Static_FOUND TRUE)
+if(NOT TARGET SimaNeat::sima_neat)
+  add_library(SimaNeat::sima_neat SHARED IMPORTED)
+  set_target_properties(SimaNeat::sima_neat PROPERTIES
+    IMPORTED_LOCATION "{provider_build}/libsmoke_shared.so"
+    INTERFACE_INCLUDE_DIRECTORIES "{provider}/include"
+    INTERFACE_COMPILE_FEATURES cxx_std_20)
+  add_library(SimaNeat::sima_neat_static STATIC IMPORTED)
+  set_target_properties(SimaNeat::sima_neat_static PROPERTIES
+    IMPORTED_LOCATION "{provider_build}/libsmoke_static.a"
+    INTERFACE_INCLUDE_DIRECTORIES "{provider}/include"
+    INTERFACE_COMPILE_FEATURES cxx_std_20)
+endif()
+''')
+    env = {'PATH': os.environ['PATH'], 'HOME': str(tmp_path), 'LANG': 'C'}
+    machine = platform.machine()
+    native_elf = {'x86_64': 'x86-64', 'aarch64': 'aarch64'}
+    assert machine in native_elf, f'Unsupported native test architecture: {machine}'
+    compiler = subprocess.check_output(['file', '-L', '/usr/bin/c++'], text=True)
+    assert 'ELF' in compiler and native_elf[machine] in compiler, compiler
+    build = tmp_path / 'build'
+    for command in (
+        ['cmake', '-S', str(provider), '-B', str(provider_build),
+         '-DCMAKE_CXX_COMPILER=/usr/bin/c++'],
+        ['cmake', '--build', str(provider_build)],
+        ['cmake', '-S', str(source), '-B', str(build),
+         '-DCMAKE_CXX_COMPILER=/usr/bin/c++', f'-DSimaNeat_DIR={package}',
+         '-DSIMANEAT_SMOKE_STATIC=ON'],
+        ['cmake', '--build', str(build)],
+    ):
+        result = subprocess.run(command, env=env, text=True, capture_output=True)
+        assert result.returncode == 0, result.stdout + result.stderr
+    expected_exit = 1 if runtime_abi != expected else (0 if storage_available else 2)
+    for target in ('install_smoke_app', 'install_smoke_static_app'):
+        executable = build / target
+        identity = subprocess.check_output(['file', '-L', str(executable)], text=True)
+        assert 'ELF' in identity and native_elf[machine] in identity, identity
+        working = tmp_path / target
+        working.mkdir()
+        result = subprocess.run([str(executable)], cwd=working, env=env,
+                                text=True, capture_output=True)
+        assert result.returncode == expected_exit, result.stdout + result.stderr
+        marker = working / 'allocation-called'
+        if runtime_abi == expected:
+            assert marker.read_text() == '64'
+        else:
+            assert not marker.exists()
 
 
 def test_retirement_proposal_delegation_renders_exact_installed_identity(tmp_path):

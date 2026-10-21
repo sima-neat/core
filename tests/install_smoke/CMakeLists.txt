@@ -18,9 +18,13 @@ endif()
 
 add_executable(install_smoke_app main.cpp)
 target_link_libraries(install_smoke_app PRIVATE SimaNeat::sima_neat)
+target_compile_definitions(install_smoke_app PRIVATE
+  SIMANEAT_SMOKE_EXPECTED_ABI="${SIMANEAT_SMOKE_EXPECTED_ABI}")
 option(SIMANEAT_SMOKE_STATIC "Test the optional static component" OFF)
 if (SIMANEAT_SMOKE_STATIC)
   find_package(SimaNeat CONFIG REQUIRED COMPONENTS Static)
   add_executable(install_smoke_static_app main.cpp)
   target_link_libraries(install_smoke_static_app PRIVATE SimaNeat::sima_neat_static)
+  target_compile_definitions(install_smoke_static_app PRIVATE
+    SIMANEAT_SMOKE_EXPECTED_ABI="${SIMANEAT_SMOKE_EXPECTED_ABI}")
 endif()
