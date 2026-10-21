@@ -60,9 +60,10 @@ rt::Status wire_kernel_stage_factories(const KernelStageRecipe& recipe,
   request.frame_adapter_factory = recipe.frame_adapter_factory;
   return {};
 }
-std::size_t kernel_runner_ev_device_lanes(std::span<const gs::TensorStageRequest> requests) {
+std::size_t kernel_runner_ev_device_lanes(std::span<const gs::StageAttachment> attachments) {
   bool ev_stage = false;
-  for (const auto& request : requests) {
+  for (const auto& attachment : attachments) {
+    const auto& request = attachment.request;
     if (request.target != rt::Hardware::EV74)
       continue;
     // Invalid recipes are rejected by Scheduler before hardware connection.
@@ -80,11 +81,9 @@ rt::Status prepare_and_attach_kernel_runners(GstElement* pipeline,
     return invalid("kernel-runner.graph", "a candidate graph bin is required");
   std::vector<std::shared_ptr<GstElement>> elements, sinks;
   std::vector<gs::StageAttachment> attachments;
-  std::vector<gs::TensorStageRequest> preparations;
   elements.reserve(requests.size());
   sinks.reserve(requests.size());
   attachments.reserve(requests.size());
-  preparations.reserve(requests.size());
   auto manifest = std::shared_ptr<GstContext>(
       gst_element_get_context(pipeline, SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE),
       [](GstContext* p) {
@@ -123,7 +122,6 @@ rt::Status prepare_and_attach_kernel_runners(GstElement* pipeline,
         request.compact_sink.empty()
             ? nullptr
             : gst_bin_get_by_name(GST_BIN(pipeline), std::string(request.compact_sink).c_str()));
-    preparations.push_back(prepared);
     attachments.push_back(
         {element.get(), std::move(prepared), recipe.image_publication, recipe.metrics, sink.get()});
     elements.push_back(std::move(element));
@@ -131,7 +129,7 @@ rt::Status prepare_and_attach_kernel_runners(GstElement* pipeline,
   }
   gs::TensorStageCohortOptions options;
   options.a65_workers = a65_workers;
-  options.ev74_device_lanes = kernel_runner_ev_device_lanes(preparations);
+  options.ev74_device_lanes = kernel_runner_ev_device_lanes(attachments);
   // Scheduler owns stopped-topology checks, storage/session selection, fresh
   // factory admission and all-or-nothing context/coherency publication.
   return gs::prepare_and_attach_tensor_stages(pipeline, attachments, options,

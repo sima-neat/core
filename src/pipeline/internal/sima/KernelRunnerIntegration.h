@@ -23,7 +23,7 @@ kernel_runner_output_pool_capacity(std::size_t execution_capacity,
 // Graph-owned EV service capacity: a single serial stage keeps one endpoint;
 // overlapping frames or stages use two. Runtime still validates each recipe.
 [[nodiscard]] std::size_t kernel_runner_ev_device_lanes(
-    std::span<const ::simaai::scheduler::client::TensorStageRequest> requests);
+    std::span<const ::simaai::scheduler::client::StageAttachment> attachments);
 
 // Prepare every native stage before attaching any of them. Placement, storage
 // and numerical contracts are resolved once while the graph is stopped.

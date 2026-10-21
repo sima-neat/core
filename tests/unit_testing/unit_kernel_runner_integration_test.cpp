@@ -76,13 +76,12 @@ void output_carrier_budget() {
 }
 void ev_service_capacity() {
   const auto request = [](rt::Hardware target, std::size_t capacity) {
-    gs::TensorStageRequest result;
-    result.target = target;
-    result.options.capacity = capacity;
+    gs::StageAttachment result;
+    result.request.target = target;
+    result.request.options.capacity = capacity;
     return result;
   };
-  const auto check = [](std::initializer_list<gs::TensorStageRequest> stages,
-                        std::size_t expected) {
+  const auto check = [](std::initializer_list<gs::StageAttachment> stages, std::size_t expected) {
     require(integration::kernel_runner_ev_device_lanes({stages.begin(), stages.size()}) == expected,
             "incorrect graph EV service capacity");
   };
@@ -325,6 +324,49 @@ void real_request_memory_policy_transaction(bool opaque_consumer) {
                                failure->message);
     require(prepared.member_count() == 1 && prepared.input_pads() == 1 && prepared.has_bridge(),
             "valid first request did not retain its canonical prepared stage");
+  }
+  check_policy();
+  // A complete first request must move into its attachment, not get copied into
+  // a second vector just to inspect the EV service budget. Reject the following
+  // request at Core's existing capacity boundary, before Scheduler can copy or
+  // instantiate any factory during its own transaction.
+  struct CopyWitness {
+    unsigned* copies;
+    explicit CopyWitness(unsigned& count) : copies(&count) {}
+    CopyWitness(const CopyWitness& other) : copies(other.copies) {
+      ++*copies;
+    }
+    CopyWitness(CopyWitness&&) = default;
+  };
+  unsigned factory_copies = 0, factory_calls = 0;
+  auto observed = manifest.stages[0];
+  auto observed_recipe = std::make_shared<integration::KernelStageRecipe>(*observed.native_kernel);
+  observed_recipe->resolver_factories.push_back(
+      {0, [witness = CopyWitness(factory_copies), &factory_calls] {
+         ++factory_calls;
+         return integration::KernelStageRecipe::Resolver{
+             [](const rt::VariantPreparer& preparer,
+                std::span<GstBuffer* const>) -> rt::Result<rt::PreparedSelection> {
+               return preparer.base();
+             }};
+       }});
+  observed.native_kernel = std::move(observed_recipe);
+  for (const auto invalid_capacity : {std::size_t{0}, std::size_t{65}}) {
+    const std::array copy_requests{
+        integration::KernelRunnerStageRequest{"first", "first", 1, 0, {}, &observed},
+        integration::KernelRunnerStageRequest{
+            "second", "second", invalid_capacity, 0, {}, &manifest.stages[1]}};
+    factory_copies = 0;
+    const auto failure =
+        integration::prepare_and_attach_kernel_runners(pipeline.get(), copy_requests);
+    require(failure && failure->field == "kernel-runner.graph" &&
+                failure->message == "Core execution capacity must be between 1 and 64",
+            "invalid capacity bypassed Core cold admission");
+    require(factory_copies == 1 && factory_calls == 0,
+            "Core copied complete cold requests beyond the single recipe-to-request transfer");
+    for (auto* element : {first, second})
+      require(!probe::inspect_stage(element).valid,
+              "rejected capacity attached a partial prepared stage");
   }
   check_policy();
   auto malformed = manifest.stages[1];
