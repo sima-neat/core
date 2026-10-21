@@ -8,9 +8,11 @@
  * coordinate conversion, synthetic detections, or provider drawing oracle is used.
  *
  * Usage: <test> <fixture-root> [<model.tar.gz> <people.jpg>]
- * Defaults are fixture-root/tmp/{yolo_v8s.tar.gz,yolov8s_people.jpg}. Prepare
- * fixtures before execution; missing assets are failures, never downloads/skips.
+ * Defaults reuse fixture-root/tmp/{yolo_v8s.tar.gz,yolov8s_people.jpg}, then the
+ * shared YOLO model cache and canonical people-image acquisition used by other
+ * E2E tests. Explicit fixture paths never fall back; setup failures never skip.
  */
+#include "asset_utils.h"
 #include "gst/GstInit.h"
 #include "model/Model.h"
 #include "nodes/groups/ModelGroups.h"
@@ -409,7 +411,7 @@ void check_layout(GstSample* sample, int width, int height) {
   }
 }
 
-void qualify(const fs::path& model_path, const fs::path& image_path) {
+void qualify(const fs::path& model_path, const fs::path& image_path, bool& native_scope_started) {
   require(fs::is_regular_file(model_path),
           "required local model archive missing: " + model_path.string());
   require(fs::is_regular_file(image_path), "required local image missing: " + image_path.string());
@@ -442,6 +444,9 @@ void qualify(const fs::path& model_path, const fs::path& image_path) {
   Buffer image;
   GstSampleOwner rendered;
   core_render_test::RunRetirementObservation retirement;
+  // Fixture paths, image decoding and CPU input preparation above own no native
+  // work. Only failures from this scope onward require retained native owners.
+  native_scope_started = true;
   try {
     model_owner = std::make_unique<neat::Model>(model_path.string(), options);
     auto& model = *model_owner;
@@ -573,10 +578,15 @@ int main(int argc, char** argv) {
     neat::gst_init_once();
     provider_capture_barrier();
     const fs::path root(argv[1]);
-    const auto model = argc == 4 ? fs::path(argv[2]) : root / "tmp/yolo_v8s.tar.gz";
-    const auto image = argc == 4 ? fs::path(argv[3]) : root / "tmp/yolov8s_people.jpg";
-    native_scope_started = true;
-    qualify(model, image);
+    auto model = argc == 4 ? fs::path(argv[2]) : root / "tmp/yolo_v8s.tar.gz";
+    auto image = argc == 4 ? fs::path(argv[3]) : root / "tmp/yolov8s_people.jpg";
+    if (argc == 2) {
+      if (!fs::is_regular_file(model))
+        model = sima_test::resolve_yolov8s_tar(root);
+      if (!fs::is_regular_file(image))
+        image = sima_test::ensure_coco_sample(root);
+    }
+    qualify(model, image, native_scope_started);
     require(critical_count.load(std::memory_order_relaxed) == 0,
             "GStreamer/GLib emitted critical diagnostics during qualification");
     std::cout << "CORE_RENDER_INTEGRATION PASS frames=" << frame_count

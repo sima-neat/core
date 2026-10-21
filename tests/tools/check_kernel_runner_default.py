@@ -175,8 +175,11 @@ def validate_renderer_startup(text):
     init = main.index("neat::gst_init_once();")
     if not main.index("core_render_test::require_synchronous_teardown_environment();") < init:
         raise ValueError("synchronous teardown qualification must be checked before initialization")
-    if not init < main.index("provider_capture_barrier();") < main.index("native_scope_started = true;"):
+    if not init < main.index("provider_capture_barrier();") < main.index("qualify(model, image, native_scope_started);"):
         raise ValueError("Core initialization must precede provider capture and native ownership")
+    qualification = text[text.index("void qualify("):text.index("int main(")]
+    if not qualification.index("ConfigFiles files(") < qualification.index("native_scope_started = true;") < qualification.index("model_owner = std::make_unique<neat::Model>"):
+        raise ValueError("Fixture preparation must precede native ownership containment")
 
 
 class KernelRunnerDefaultContract(unittest.TestCase):
@@ -287,6 +290,8 @@ class KernelRunnerDefaultContract(unittest.TestCase):
             text.replace('neat::gst_init_once();', '')
                 .replace('provider_capture_barrier();',
                          'provider_capture_barrier(); neat::gst_init_once();'),
+            text.replace('native_scope_started = true;', '')
+                .replace('  ConfigFiles files(', '  native_scope_started = true;\n  ConfigFiles files('),
             text.replace('#include "gst/GstInit.h"', ''),
             text.replace('core_render_test::require_synchronous_teardown_environment();', ''),
             text.replace('core_render_test::require_synchronous_teardown_environment();', '')

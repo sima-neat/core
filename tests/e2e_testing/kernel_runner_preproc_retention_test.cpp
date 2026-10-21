@@ -1,5 +1,6 @@
 // Core-owned dynamic geometry policy through Scheduler's generic carrier engine.
 // Migrated from Scheduler's legacy stage test without changing pixel/fact assertions.
+#include "gst/GstInit.h"
 #include "pipeline/internal/sima/PreparedRuntimeBuild.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include <gst/SimaPluginStaticManifestAbi.h>
@@ -464,8 +465,8 @@ void actual_preproc(bool compact = false, bool full = false, bool preflight = fa
 }
 } // namespace
 int main(int argc, char** argv) {
-  gst_init(&argc, &argv);
   try {
+    simaai::neat::gst_init_once();
     require(argc == 2, "expected --legacy, --compact, --full, or --preflight-only");
     const bool compact = std::strcmp(argv[1], "--compact") == 0;
     const bool full = std::strcmp(argv[1], "--full") == 0;
