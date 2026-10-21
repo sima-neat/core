@@ -2038,7 +2038,7 @@ prepare_board_platform_admission() {
   fi
   BOARD_PLATFORM_ADMISSION_DIR="$(mktemp -d /tmp/sima-neat-platform-admission-XXXXXX)"
   INSTALLER_TMP_DIRS+=("${BOARD_PLATFORM_ADMISSION_DIR}")
-  python3 -B "${SCHEDULER_PLATFORM_ADMISSION_PATH}" check-if-declared --directory "$PWD" \
+  python3 -B "${SCHEDULER_PLATFORM_ADMISSION_PATH}" preflight-if-declared --directory "$PWD" \
     --output "${BOARD_PLATFORM_ADMISSION_DIR}/before.json"
 }
 
@@ -2082,7 +2082,13 @@ PYFIRMWARE
 
 verify_board_platform_admission() {
   [[ -n "${BOARD_PLATFORM_ADMISSION_DIR}" ]] || return 0
-  python3 -B "${SCHEDULER_PLATFORM_ADMISSION_PATH}" check-if-declared --directory "$PWD" \
+  # APT supplies ordinary package dependencies. Scheduler admits protected
+  # providers before the transaction; full installed closure precedes activation.
+  local action=preflight-if-declared
+  if [[ "${1:-}" == --installed ]]; then
+    action=check-if-declared
+  fi
+  python3 -B "${SCHEDULER_PLATFORM_ADMISSION_PATH}" "${action}" --directory "$PWD" \
     --baseline "${BOARD_PLATFORM_ADMISSION_DIR}/before.json" "$@"
 }
 

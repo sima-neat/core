@@ -262,7 +262,7 @@ def retirement_plan(result):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('describe', 'check', 'check-if-declared',
+    parser.add_argument('action', choices=('describe', 'check', 'check-if-declared', 'preflight-if-declared',
                                           'transaction-if-declared', 'retirements', 'verify-plan'))
     parser.add_argument('--directory', type=Path, default=Path.cwd())
     parser.add_argument('--installed', action='store_true')
@@ -291,6 +291,10 @@ def main():
         result = optional_admission(args.directory, 'transaction', simulation=args.simulation,
                                     repair_incomplete=args.repair_incomplete,
                                     resume_incomplete=args.resume_incomplete)
+    elif args.action == 'preflight-if-declared':
+        require(not args.installed and not args.simulation,
+                'Preflight does not accept installed verification or a simulation')
+        result = optional_admission(args.directory, 'preflight')
     else:
         require(not args.simulation, 'Simulation requires plan or transaction admission')
         result = (optional_board_check(args.directory, installed=args.installed)

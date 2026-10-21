@@ -1078,7 +1078,8 @@ admission_spec.loader.exec_module(admission)
 
 def admission_fixture(tmp_path, *, transaction_error=None, empty_platform=False,
                       retirements=None, retirement_error=None, final_transaction_error=None,
-                      firmware=None, omit_firmware=False):
+                      firmware=None, omit_firmware=False, preflight_error=None,
+                      ordinary_dependency=None):
     root = tmp_path / 'admission-dist'; root.mkdir()
     source = tmp_path / 'scheduler-source'
     prefix = source / 'usr'
@@ -1098,6 +1099,10 @@ if sys.argv[1] == 'transaction' and '--resume-incomplete' not in sys.argv and ''
     raise SystemExit(''' + repr(final_transaction_error) + ''')
 if sys.argv[1] == 'transaction' and ''' + repr(transaction_error) + ''' is not None:
     raise SystemExit(''' + repr(transaction_error) + ''')
+if sys.argv[1] == 'preflight' and ''' + repr(preflight_error) + ''' is not None:
+    raise SystemExit(''' + repr(preflight_error) + ''')
+if sys.argv[1] == 'check' and ''' + repr(ordinary_dependency is not None) + ''' and not pathlib.Path(''' + repr(str(ordinary_dependency)) + ''').is_file():
+    raise SystemExit('producer rejected missing ordinary dependency')
 directory = pathlib.Path(sys.argv[sys.argv.index('--directory') + 1])
 receipt = json.loads((directory / 'resolved-deps-manifest.json').read_text())
 if receipt.get('runner', {}).get('buildinfo', {}).get('platform_runtime_packages') != ['fixture-platform']:
@@ -1155,6 +1160,57 @@ def test_installed_scheduler_tool_is_authenticated_and_read_only(tmp_path):
     assert marker.read_text() == 'executed'
     assert before == {p.relative_to(root): p.read_bytes() for p in root.rglob('*') if p.is_file()}
     assert not list(source.rglob('__pycache__'))
+
+
+@pytest.mark.parametrize('action,installed,expected_action', [
+    ('preflight-if-declared', False, 'preflight'),
+    ('check-if-declared', False, 'check'),
+    ('check-if-declared', True, 'check'),
+])
+def test_cli_admission_phases_delegate_exact_authenticated_action(tmp_path, action, installed, expected_action):
+    root, _, _, marker, expected, _ = admission_fixture(tmp_path)
+    result = subprocess.run([sys.executable, str(ROOT / 'tools/scheduler_platform_admission.py'),
+                             action, '--directory', str(root), *(['--installed'] if installed else [])],
+                            text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {**expected, 'split_cohort': True}
+    assert json.loads(marker.with_suffix('.argv').read_text()) == [
+        expected_action, '--directory', str(root), *(['--installed'] if installed else [])]
+
+
+@pytest.mark.parametrize('installed', [False, True])
+def test_explicit_full_check_never_falls_back_to_preflight(tmp_path, installed):
+    dependency = tmp_path / 'ordinary-provider-installed'
+    root, _, _, marker, _, _ = admission_fixture(tmp_path, ordinary_dependency=dependency)
+    result = subprocess.run([sys.executable, str(ROOT / 'tools/scheduler_platform_admission.py'),
+                             'check-if-declared', '--directory', str(root),
+                             *(['--installed'] if installed else [])], text=True, capture_output=True)
+    assert result.returncode != 0
+    assert 'producer rejected missing ordinary dependency' in result.stderr
+    calls = [json.loads(line) for line in marker.with_suffix('.calls').read_text().splitlines()]
+    assert calls == [['check', '--directory', str(root), *(['--installed'] if installed else [])]]
+
+
+@pytest.mark.parametrize('options', [
+    ['--installed'], ['--simulation', 'simulation'], ['--repair-incomplete'], ['--resume-incomplete'],
+])
+def test_preflight_cannot_accept_other_phase_options(tmp_path, options):
+    root, _, _, marker, _, _ = admission_fixture(tmp_path)
+    result = subprocess.run([sys.executable, str(ROOT / 'tools/scheduler_platform_admission.py'),
+                             'preflight-if-declared', '--directory', str(root), *options],
+                            text=True, capture_output=True)
+    assert result.returncode != 0
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize('action', ['preflight-if-declared', 'check-if-declared'])
+def test_legacy_optional_admission_does_not_invent_split_providers(tmp_path, action):
+    result = subprocess.run([sys.executable, str(ROOT / 'tools/scheduler_platform_admission.py'),
+                             action, '--directory', str(tmp_path)], text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        'schema_version': 1, 'platform_packages': {}, 'packages': {}, 'providers': {},
+        'split_cohort': False, 'firmware': {'required': False, 'debian_package': None}}
 
 
 def test_authenticated_firmware_requirement_is_forwarded_without_reclassification(tmp_path):
@@ -1232,7 +1288,7 @@ def test_legacy_transaction_cannot_request_incomplete_repair(tmp_path):
 
 
 @pytest.mark.parametrize('mutation', ['helper', 'sibling', 'mode', 'extra', 'missing', 'symlink', 'receipt', 'inventory_digest'])
-@pytest.mark.parametrize('action', ['describe', 'transaction', 'retirements'])
+@pytest.mark.parametrize('action', ['describe', 'preflight', 'check', 'transaction', 'retirements'])
 def test_scheduler_tampering_rejected_before_import(tmp_path, mutation, action):
     root, source, tool, marker, _, rebuild = admission_fixture(tmp_path)
     if mutation == 'helper':
@@ -1269,7 +1325,8 @@ def test_scheduler_tampering_rejected_before_import(tmp_path, mutation, action):
 
 
 @pytest.mark.parametrize('mutation', ['declaration', 'evidence', 'runner', 'receipt'])
-def test_actual_split_owner_cannot_skip_admission_by_stripping_receipt(tmp_path, mutation):
+@pytest.mark.parametrize('action', ['preflight', 'check'])
+def test_actual_split_owner_cannot_skip_admission_by_stripping_receipt(tmp_path, mutation, action):
     root, _, _, marker, _, _ = admission_fixture(tmp_path)
     if mutation == 'declaration':
         change(root, 'resolved-deps-manifest.json', lambda value: value['runner']['buildinfo'].clear())
@@ -1280,7 +1337,7 @@ def test_actual_split_owner_cannot_skip_admission_by_stripping_receipt(tmp_path,
     else:
         (root / 'resolved-deps-manifest.json').unlink()
     with pytest.raises((admission.AdmissionError, subprocess.CalledProcessError)):
-        admission.optional_board_check(root)
+        admission.optional_admission(root, action)
     if mutation == 'receipt':
         assert not marker.exists()
 
@@ -1556,6 +1613,74 @@ complete_board_install_after_packages
     assert result.returncode != 0
     assert 'MUTATION' not in result.stdout
     assert 'identity changed' in result.stderr
+
+
+@pytest.mark.parametrize('repair', [False, True])
+@pytest.mark.parametrize('failure', [None, 'protected', 'ordinary', 'changed_provider'])
+def test_board_stages_protected_preflight_then_full_installed_admission(tmp_path, repair, failure):
+    """Exercise shell/DEB/delegate ordering; producer ELF policy belongs to Scheduler."""
+    dependency = tmp_path / 'ordinary-provider-installed'
+    root, _, _, marker, _, _ = admission_fixture(
+        tmp_path, ordinary_dependency=dependency,
+        preflight_error='producer rejected protected provider' if failure == 'protected' else None)
+    body = '''original_complete=$(declare -f complete_board_install_after_packages)
+''' + TRANSACTION_SETUP + '''
+eval "$original_complete"
+board_runtime_is_legacy() { return 1; }
+capture_direct_platform_identity() { echo fixture-platform-identity; }
+repair_global_sima_neat_lib_links() { :; }
+verify_global_sima_neat_lib_links() { :; }
+verify_canonical_palette_installation() { :; }
+activate_board_runtime_after_install() { echo ACTIVATE >> commands; }
+restart_board_codec_services() { echo RESTART >> commands; }
+verify_board_codec_services() { :; }
+''' + ('apt_package_database_is_healthy() { grep -q APPLY commands 2>/dev/null; }\n'
+       if repair else 'apt_package_database_is_healthy() { return 0; }\n') + r'''
+run_sudo() {
+  printf '%s\n' "$*" >> commands
+  if [[ " $* " == *" --simulate "* ]]; then
+    echo 'Inst fixture-ordinary (1 repository [arm64])'
+    echo 'Inst simaai-scheduler (1 local-deb [arm64])'
+    echo 'Conf simaai-scheduler (1 local-deb [arm64])'
+  elif [[ "$1 ${2:-}" == 'apt-get install' ]]; then
+    echo APPLY >> commands
+    if [[ "$FAILURE" != ordinary ]]; then touch "$DEPENDENCY"; fi
+    if [[ "$FAILURE" == changed_provider ]]; then
+      python3 - "$BOARD_PLATFORM_ADMISSION_DIR/before.json" <<'MUTATE'
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1]); v = json.loads(p.read_text())
+v['providers']['libfixture.so']['sha256'] = 'b' * 64
+p.write_text(json.dumps(v))
+MUTATE
+    fi
+  fi
+}
+ENV_MODE=modalix-board; FORCE_INSTALL=1
+ensure_platform_compatible
+install_debs_on_board
+'''
+    result = installer_shell(root, f'FAILURE={failure}; DEPENDENCY="{dependency}";\n' + body)
+    assert (result.returncode == 0) == (failure is None), result.stdout + result.stderr
+    commands = (root / 'commands').read_text() if (root / 'commands').exists() else ''
+    assert ('APPLY' in commands) == (failure != 'protected')
+    assert ('ACTIVATE' in commands) == (failure is None)
+    assert ('RESTART' in commands) == (failure is None)
+    calls = [json.loads(line) for line in marker.with_suffix('.calls').read_text().splitlines()]
+    assert calls[0][0] == 'preflight'
+    if failure == 'protected':
+        assert len(calls) == 1
+        assert 'producer rejected protected provider' in result.stderr
+    elif failure == 'changed_provider' and repair:
+        assert calls[-1][0] == 'preflight'
+        assert 'identity changed' in result.stderr
+    else:
+        assert calls[-1] == ['check', '--directory', str(root), '--installed']
+        assert all(call[0] != 'check' for call in calls[:-1])
+        assert sum(call[0] == 'transaction' for call in calls) == (2 if repair else 1)
+        if failure == 'ordinary':
+            assert 'producer rejected missing ordinary dependency' in result.stderr
+        elif failure == 'changed_provider':
+            assert 'identity changed' in result.stderr
 
 
 def test_packaging_carries_shared_delegate_and_selected_receipt():
