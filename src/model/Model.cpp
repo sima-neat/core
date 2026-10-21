@@ -1875,9 +1875,10 @@ Tensor make_dummy_tensor(const simaai::neat::InputOptions& opt) {
   t.dtype = TensorDType::UInt8;
   t.semantic.image = ImageSpec{pix, ""};
 
-  if (pix == ImageSpec::PixelFormat::NV12) {
-    const std::size_t y_size = static_cast<std::size_t>(w * h);
-    const std::size_t uv_size = static_cast<std::size_t>(w * h / 2);
+  if (pix == ImageSpec::PixelFormat::NV12 || pix == ImageSpec::PixelFormat::NV16) {
+    const int uv_height = pix == ImageSpec::PixelFormat::NV16 ? h : h / 2;
+    const std::size_t y_size = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+    const std::size_t uv_size = static_cast<std::size_t>(w) * static_cast<std::size_t>(uv_height);
     t.storage = make_cpu_owned_storage(y_size + uv_size);
     t.shape = {h, w};
     t.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W};
@@ -1890,7 +1891,7 @@ Tensor make_dummy_tensor(const simaai::neat::InputOptions& opt) {
 
     Plane uv;
     uv.role = PlaneRole::UV;
-    uv.shape = {h / 2, w};
+    uv.shape = {uv_height, w};
     uv.strides_bytes = {w, 1};
     uv.byte_offset = static_cast<int64_t>(y_size);
 
@@ -7649,6 +7650,10 @@ TensorList materialize_joined_ingress_tensors(
     const std::vector<IngressConsumerTensorIdentity>& consumer_identities,
     const std::string& segment_name, const char* where) {
   return materialize_joined_ingress_tensors_impl(tensors, consumer_identities, segment_name, where);
+}
+
+Tensor ModelAccess::make_dummy_input(const InputOptions& options) {
+  return make_dummy_tensor(options);
 }
 
 const ModelPack& ModelAccess::pack(const Model& model) {

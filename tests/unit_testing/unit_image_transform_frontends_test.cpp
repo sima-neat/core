@@ -2,6 +2,8 @@
 #include "nodes/sima/Preproc.h"
 #include "nodes/sima/internal/ImageTransformPolicy.h"
 #include "pipeline/internal/contract/CompiledNodeContract.h"
+#include "pipeline/internal/contract/ContractCompiler.h"
+#include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/contract/ContractFacts.h"
 #include "pipeline/internal/sima/PreprocFrameAdapter.h"
 #include "pipeline/internal/GstDataAdapter.h"
@@ -50,6 +52,12 @@ void contracts() {
     const auto out = p.output_spec(input(format == ImageFormat::GRAY8 ? "GRAY8" : "RGB"));
     require(out.media_type == "video/x-raw" && out.dtype == "UInt8",
             "color output is not a raw image");
+    const bool planar =
+        format == ImageFormat::NV12 || format == ImageFormat::NV16 || format == ImageFormat::I420;
+    require(out.layout == (planar                         ? "Planar"
+                           : format == ImageFormat::GRAY8 ? "HW"
+                                                          : "HWC"),
+            "color output must project the raw-image plane layout");
     CompiledNodeContract compiled;
     std::string error;
     require(p.compile_node_contract({}, &compiled, &error), "color compilation: " + error);
@@ -106,7 +114,13 @@ void contracts() {
   for (const auto* format : {"RGB", "GRAY8", "NV12", "I420", "NV16"}) {
     auto resized = nodes::Resize(resize);
     auto& p = preproc(resized);
-    p.output_spec(input(format));
+    const auto resized_spec = p.output_spec(input(format));
+    const std::string token(format);
+    const bool planar = token == "NV12" || token == "NV16" || token == "I420";
+    require(resized_spec.layout == (planar             ? "Planar"
+                                    : token == "GRAY8" ? "HW"
+                                                       : "HWC"),
+            "resize output must retain the raw-image plane layout");
     CompiledNodeContract compiled;
     require(p.compile_node_contract({}, &compiled, &error), "resize compilation: " + error);
     auto checked = lower::PreprocFrameAdapter::check_policy(compiled.processcvu->payload);
@@ -115,7 +129,7 @@ void contracts() {
   auto n = nodes::Normalization();
   const auto out = preproc(n).output_spec(input("BGR"));
   require(out.media_type == "application/vnd.simaai.tensor" && out.dtype == "BFloat16" &&
-              out.format == "BF16",
+              out.format == "BF16" && out.layout == "HWC",
           "normalization must publish BF16 tensor caps, not fake raw video");
   CompiledNodeContract normalized;
   require(preproc(n).compile_node_contract({}, &normalized, &error),
@@ -161,6 +175,36 @@ void contracts() {
     preproc(n).output_spec(input("NV12"));
   });
 }
+void planar_image_boundary_chain() {
+  InputOptions options;
+  options.payload_type = PayloadType::Image;
+  options.format = FormatTag::NV16;
+  options.width = 18;
+  options.height = 10;
+  ResizeOptions resize;
+  resize.width = 8;
+  resize.height = 6;
+  ColorConvertOptions convert;
+  convert.output_format = ImageFormat::NV16;
+  const std::vector<std::shared_ptr<Node>> chain{
+      nodes::Input("nv16", options), nodes::Resize(resize), nodes::ColorConvert(convert)};
+  const auto boundary = derive_output_spec(chain);
+  require(boundary.format == "NV16" && boundary.layout == "Planar" &&
+              boundary.byte_size == 8U * 6U * 2U,
+          "NV16 image chain lost its planar boundary");
+  // Use the real graph contract walk and renderer. Boundary Planar labels
+  // must not reinterpret legacy internal numerical HWC port descriptors.
+  ContractCompileInput compile_input;
+  pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
+  const auto compiled = compile_node_contracts(chain, compile_input, &diagnostics);
+  require(compiled.fully_renderable && diagnostics.errors.empty(),
+          "NV16 planar boundary did not compose through contract compilation");
+  const auto manifest =
+      render_manifest_from_compiled_contracts(compiled, compile_input, &diagnostics);
+  require(manifest && manifest->stages.size() == 2 && diagnostics.errors.empty(),
+          "NV16 image chain failed canonical rendering");
+}
+
 void yuv_video_meta_envelopes() {
   for (const auto* format : {"NV12", "I420", "NV16"}) {
     const bool nv16 = std::string_view(format) == "NV16";
@@ -304,6 +348,7 @@ void nv16_sample() {
 RUN_TEST("image transform frontends", [] {
   gst_init(nullptr, nullptr);
   contracts();
+  planar_image_boundary_chain();
   nv16_sample();
   yuv_video_meta_envelopes();
 })

@@ -916,6 +916,10 @@ OutputSpec Preproc::output_spec(const OutputSpec& input) const {
   out.depth =
       (opt_.output_channels() > 0) ? opt_.output_channels() : channels_from_format(out.format, 3);
   out.layout = (opt_.output_img_type == "GRAY" || opt_.output_img_type == "GRAY8") ? "HW" : "HWC";
+  if (image_policy && image_policy->raw_output() &&
+      (out.format == "NV12" || out.format == "NV16" || out.format == "I420")) {
+    out.layout = "Planar";
+  }
   out.dtype = tensor_output ? "BFloat16" : "UInt8";
   if (image_policy) {
     out.fps_num = input.fps_num;

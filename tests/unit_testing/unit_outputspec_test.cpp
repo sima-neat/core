@@ -2,6 +2,9 @@
 #include "builder/OutputSpec.h"
 #include "nodes/common/Caps.h"
 #include "nodes/io/Input.h"
+#include "nodes/io/CameraInput.h"
+#include "nodes/sima/H264DecodeSima.h"
+#include "nodes/sima/SimaDecode.h"
 #include "nodes/groups/GroupOutputSpec.h"
 
 #include "test_utils.h"
@@ -16,8 +19,105 @@ simaai::neat::InputOptions input_opts_from_spec(const simaai::neat::OutputSpec& 
                                                 bool complete);
 }
 
+namespace {
+
+void check_raw_image_layouts() {
+  using namespace simaai::neat;
+  for (const auto* format : {"RGB", "BGR", "GRAY8", "NV12", "I420", "NV16"}) {
+    const std::string token(format);
+    const bool planar = token == "NV12" || token == "I420" || token == "NV16";
+    const std::string layout = planar ? "Planar" : token == "GRAY8" ? "HW" : "HWC";
+    const std::size_t bytes = token == "NV16" ? 96U : planar ? 72U : token == "GRAY8" ? 48U : 144U;
+    const auto check = [&](const OutputSpec& spec, const std::string& owner,
+                           const std::string& expected_layout) {
+      require(spec.format == token && spec.layout == expected_layout && spec.dtype == "UInt8" &&
+                  spec.width == 8 && spec.height == 6 && spec.byte_size == bytes,
+              owner + " raw-image boundary differs for " + token);
+    };
+    InputOptions input;
+    input.payload_type = PayloadType::Image;
+    input.format = format;
+    input.width = 8;
+    input.height = 6;
+    input.memory_policy = InputMemoryPolicy::SystemMemory;
+    check(Input(input).output_spec({}), "Input", layout);
+
+    // CapsRaw must replace an inherited packed/gray layout, not preserve it.
+    for (const auto* old_layout : {"HWC", "HW"}) {
+      OutputSpec prior;
+      prior.format = "RGB";
+      prior.layout = old_layout;
+      prior.byte_size = 144;
+      const auto caps = nodes::CapsRaw(format, 8, 6, 30, CapsMemory::SystemMemory);
+      const std::vector<std::shared_ptr<Node>> nodes{caps};
+      check(derive_output_spec(nodes, prior), "CapsRaw walk", layout);
+    }
+    CameraInputOptions camera;
+    camera.format = token;
+    camera.width = 8;
+    camera.height = 6;
+    check(CameraInput(camera).output_spec({}), "CameraInput", layout);
+
+    OutputSpec encoded;
+    encoded.width = 8;
+    encoded.height = 6;
+    SimaDecodeOptions decode;
+    decode.out_format = format;
+    decode.raw_output = false;
+    // Preserve the legacy decoder's packed-format projection while fixing
+    // planar NV16; this does not enable native NV16 decode.
+    const std::string decoded_layout = planar ? "Planar" : "HWC";
+    check(SimaDecode(decode).output_spec(encoded), "SimaDecode converted", decoded_layout);
+    check(H264Decode(2, token, {}, false).output_spec(encoded), "H264Decode converted",
+          decoded_layout);
+
+    nodes::groups::ImageInputGroupOptions image;
+    image.output_caps.enable = true;
+    image.output_caps.format = format;
+    image.output_caps.width = 8;
+    image.output_caps.height = 6;
+    check(nodes::groups::ImageInputGroupOutputSpec(image), "ImageInputGroup", layout);
+  }
+
+  for (const int height : {5, 6}) {
+    InputOptions options;
+    options.payload_type = PayloadType::Image;
+    options.format = FormatTag::NV16;
+    options.width = 8;
+    options.height = height;
+    const auto input = Input(options).output_spec({});
+    require(input.layout == "Planar" && input.byte_size == 16U * height,
+            "NV16 output metadata must permit full-height odd chroma rows");
+
+    const auto nv16_caps = [height](auto& caps) {
+      caps.enable = true;
+      caps.format = FormatTag::NV16;
+      caps.width = 8;
+      caps.height = height;
+    };
+    nodes::groups::VideoInputGroupOptions video;
+    nv16_caps(video.output_caps);
+    nodes::groups::HttpMjpegDecodedInputOptions http;
+    nv16_caps(http.output_caps);
+    nodes::groups::RtspDecodedInputOptions rtsp;
+    nv16_caps(rtsp.output_caps);
+    // Group byte-estimate invalidation is covered separately from this layout
+    // correction; these assertions exercise every apply_raw_caps caller.
+    for (const auto& spec : {nodes::groups::VideoInputGroupOutputSpec(video),
+                             nodes::groups::HttpMjpegDecodedInputOutputSpec(http),
+                             nodes::groups::RtspDecodedInputOutputSpec(rtsp)}) {
+      require(spec.format == "NV16" && spec.layout == "Planar" && spec.dtype == "UInt8" &&
+                  spec.width == 8 && spec.height == height,
+              "group output_caps must overwrite the upstream NV16 layout");
+    }
+  }
+}
+
+} // namespace
+
 int main() {
   try {
+    check_raw_image_layouts();
     simaai::neat::OutputSpec nv12;
     nv12.media_type = "video/x-raw";
     nv12.format = "NV12";
