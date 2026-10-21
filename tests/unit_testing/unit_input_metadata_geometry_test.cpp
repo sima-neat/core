@@ -57,6 +57,48 @@ template <class Fn> void rejects(Fn fn, const char* code) {
   }
   throw std::runtime_error("invalid input metadata was accepted");
 }
+void mat_conversion_contract() {
+  for (const auto format : {FormatTag::Auto, FormatTag::RGB, FormatTag::BGR, FormatTag::GRAY8,
+                            FormatTag::FP32, FormatTag::EVXX_FLOAT32}) {
+    const bool tensor = format == FormatTag::FP32 || format == FormatTag::EVXX_FLOAT32;
+    const int type = tensor ? CV_32FC3 : format == FormatTag::GRAY8 ? CV_8UC1 : CV_8UC3;
+    cv::Mat parent(5, 7, type, cv::Scalar::all(7));
+    const cv::Mat roi = parent(cv::Rect(1, 1, 4, 3));
+    InputOptions options;
+    options.format = format;
+    options.memory_policy = InputMemoryPolicy::SystemMemory;
+    const auto geometry = describe_mat_geometry_or_throw(roi, options, "Mat normalization");
+    const auto converted = tensor_from_cv_mat(roi, options, "Mat construction");
+    require(converted.dtype == geometry.dtype && converted.layout == geometry.layout &&
+                converted.shape == (roi.channels() == 1 ? std::vector<std::int64_t>{3, 4}
+                                                        : std::vector<std::int64_t>{3, 4, 3}),
+            "Mat construction disagrees with validated geometry");
+    require(converted.read_only && converted.storage &&
+                converted.storage->kind == StorageKind::CpuExternal,
+            "host Mat policy must retain borrowed storage");
+    const auto mapping = converted.map_read();
+    require(mapping.data == roi.data &&
+                converted.strides_bytes.front() == std::int64_t(roi.step[0]),
+            "host Mat normalization must preserve source storage/strides");
+  }
+  InputOptions mismatch;
+  mismatch.format = FormatTag::RGB;
+  mismatch.memory_policy = InputMemoryPolicy::SystemMemory;
+  const cv::Mat gray(3, 4, CV_8UC1);
+  std::string validation_error, conversion_error;
+  try {
+    (void)describe_mat_geometry_or_throw(gray, mismatch, "same context");
+  } catch (const std::invalid_argument& error) {
+    validation_error = error.what();
+  }
+  try {
+    (void)tensor_from_cv_mat(gray, mismatch, "same context");
+  } catch (const std::invalid_argument& error) {
+    conversion_error = error.what();
+  }
+  require(!validation_error.empty() && validation_error == conversion_error,
+          "Mat construction must preserve the geometry validator's original diagnostic");
+}
 void metadata_contract() {
   InputOptions opt;
   opt.payload_type = PayloadType::Image;
@@ -359,6 +401,7 @@ void queue_metadata_contract() {
 
 } // namespace
 RUN_TEST("unit_input_metadata_geometry_test", ([] {
+           mat_conversion_contract();
            metadata_contract();
            aggregate_metadata_contract();
            queue_metadata_contract();

@@ -2020,7 +2020,6 @@ simaai::neat::Tensor tensor_from_cv_mat(const cv::Mat& mat, const InputOptions& 
                                         const char* where) {
   const auto geometry = describe_mat_geometry_or_throw(mat, opt, where);
   const std::string tag = where ? where : "tensor_from_cv_mat";
-  const std::string_view media = geometry.media_type;
 
   // Owning cv::Mat ingress follows Tensor creators' EV74 default. Keep an
   // explicit host request (including the compatibility pool opt-out) borrowed;
@@ -2030,28 +2029,8 @@ simaai::neat::Tensor tensor_from_cv_mat(const cv::Mat& mat, const InputOptions& 
           ? (opt.use_simaai_pool ? InputMemoryPolicy::Ev74 : InputMemoryPolicy::SystemMemory)
           : opt.memory_policy;
 
-  if (media == "video/x-raw") {
-    if (mat.depth() != CV_8U) {
-      throw std::invalid_argument(tag + ": video input must be CV_8U");
-    }
-    if (mat.channels() != 1 && mat.channels() != 3) {
-      throw std::invalid_argument(tag + ": video input must be 1 or 3 channels");
-    }
-    std::string fmt = upper_copy(opt.format);
-    if (fmt.empty()) {
-      fmt = (mat.channels() == 1) ? "GRAY8" : "BGR";
-    }
-    if (fmt == "GRAY")
-      fmt = "GRAY8";
-    if (fmt != "RGB" && fmt != "BGR" && fmt != "GRAY8") {
-      throw std::invalid_argument(tag + ": unsupported video format: " + fmt);
-    }
-    if ((fmt == "RGB" || fmt == "BGR") && mat.channels() != 3) {
-      throw std::invalid_argument(tag + ": RGB/BGR requires 3 channels");
-    }
-    if (fmt == "GRAY8" && mat.channels() != 1) {
-      throw std::invalid_argument(tag + ": GRAY8 requires 1 channel");
-    }
+  if (geometry.kind == SampleMediaKind::RawVideo) {
+    const auto& fmt = geometry.format;
     simaai::neat::ImageSpec::PixelFormat pf = simaai::neat::ImageSpec::PixelFormat::BGR;
     if (fmt == "RGB")
       pf = simaai::neat::ImageSpec::PixelFormat::RGB;
@@ -2066,35 +2045,19 @@ simaai::neat::Tensor tensor_from_cv_mat(const cv::Mat& mat, const InputOptions& 
     return simaai::neat::from_cv_mat_view(mat, pf, /*read_only=*/true);
   }
 
-  if (media == "application/vnd.simaai.tensor") {
-    if (mat.channels() <= 0) {
-      throw std::invalid_argument(tag + ": tensor input must have a positive channel count");
-    }
-    std::string fmt = upper_copy(opt.format);
-    const bool want_fp32 = (fmt.empty() || fmt == "FP32" || fmt == "EVXX_FLOAT32");
-    if (!want_fp32) {
-      throw std::invalid_argument(
-          tag + ": cv::Mat tensor input supports FP32/EVXX_FLOAT32 only and must remain exact; "
-                "pass simaai::neat::Tensor for BF16 or quantized tensor ingress");
-    }
-    if (mat.depth() != CV_32F) {
-      throw std::invalid_argument(
-          tag +
-          ": cv::Mat tensor input must already be CV_32F; implicit numeric conversion is disabled");
-    }
-
+  if (geometry.kind == SampleMediaKind::Tensor) {
     auto holder = std::make_shared<cv::Mat>(mat);
     const std::size_t bytes = holder->step * static_cast<std::size_t>(holder->rows);
     simaai::neat::Tensor out;
     out.storage = simaai::neat::make_cpu_external_storage(holder->data, bytes, holder, true);
-    out.dtype = TensorDType::Float32;
+    out.dtype = geometry.dtype;
     out.device = {simaai::neat::DeviceType::CPU, 0};
     out.byte_offset = 0;
     out.read_only = true;
 
-    const int rows = holder->rows;
-    const int cols = holder->cols;
-    const int channels = holder->channels();
+    const int rows = geometry.height;
+    const int cols = geometry.width;
+    const int channels = geometry.depth;
     if (channels == 1) {
       out.layout = TensorLayout::HW;
       out.shape = {rows, cols};
@@ -2122,7 +2085,7 @@ simaai::neat::Tensor tensor_from_cv_mat(const cv::Mat& mat, const InputOptions& 
     return out;
   }
 
-  throw std::invalid_argument(tag + ": unsupported media_type: " + std::string(media));
+  throw std::invalid_argument(tag + ": unsupported media_type: " + std::string(geometry.media_type));
 }
 
 namespace {
