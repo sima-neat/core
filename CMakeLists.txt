@@ -483,6 +483,9 @@ set_target_properties(sima_neat PROPERTIES
   # independently versioned public C++ ABI that consumers record in DT_NEEDED.
   VERSION "${SIMANEAT_PLATFORM_VERSION}"
   SOVERSION "${SIMANEAT_ABI_VERSION}"
+  # Frontend support DSOs are private siblings of the installed Core library.
+  # Keep the consumer relocatable without advertising plugin paths globally.
+  INSTALL_RPATH "$ORIGIN/neat/runtime;$ORIGIN/neat/gst-plugins"
 )
 
 add_library(sima_neat_static STATIC

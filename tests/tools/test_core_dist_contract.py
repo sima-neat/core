@@ -32,7 +32,7 @@ def fixture(root):
         'scheduler.deb': 'simaai-scheduler',
         'runtime-compat.deb': 'simaai-runtime',
     }
-    for name in [*debs, 'pyneat-1-py3-none-any.whl', 'install_neat_framework.sh', 'install_sentinel.sh']:
+    for name in [*debs, 'pyneat-1-py3-none-any.whl', 'install_neat_framework.sh', 'install_sentinel.sh', 'scheduler_platform_admission.py']:
         (root / name).write_bytes(name.encode())
     with zipfile.ZipFile(root / 'pyneat-1-py3-none-any.whl', 'w') as archive:
         archive.writestr('pyneat-1.dist-info/METADATA', 'Name: pyneat\nVersion: 1\n')
@@ -51,7 +51,7 @@ def fixture(root):
             member.size = len(data)
             archive.addfile(member, io.BytesIO(data))
     base = [*debs, 'pyneat-1-py3-none-any.whl', 'manifest.json', 'resolved-deps-manifest.json',
-            'neat-install-manifest.txt', 'install_neat_framework.sh', 'install_sentinel.sh']
+            'neat-install-manifest.txt', 'install_neat_framework.sh', 'install_sentinel.sh', 'scheduler_platform_admission.py']
     for name, resources, selectables in (
         ('metadata.json', base, [extras]), ('metadata-minimal.json', base, []),
         ('metadata-all.json', base + [extras], []), ('metadata-pyneat.json', ['pyneat-1-py3-none-any.whl'], []),
@@ -76,7 +76,14 @@ def change(root, file, mutate):
 
 
 def run(root, **kwargs):
-    return verifier.verify(root, validate_metadata=lambda _: None, **kwargs)
+    # Artifact-shape fixtures inject only the producer-owned description. Real
+    # DEB extraction/authentication/delegation is exercised independently below.
+    description = getattr(verifier.control, 'fixture_description', {
+        'schema_version': 1, 'redistributed_provider_controls': [], 'platform_packages': {}})
+    with patch.object(verifier, 'scheduler_platform_description', return_value=description) as describe:
+        result = verifier.verify(root, validate_metadata=lambda _: None, **kwargs)
+        describe.assert_called_once_with(root)
+        return result
 
 
 def test_golden_set_is_read_only(tmp_path):
@@ -91,6 +98,7 @@ def test_golden_set_is_read_only(tmp_path):
     lambda r: (r / 'manifest.json').write_text('{}'),
     lambda r: (r / 'runner.deb').unlink(),
     lambda r: (r / 'install_sentinel.sh').unlink(),
+    lambda r: (r / 'scheduler_platform_admission.py').unlink(),
     lambda r: (r / 'install_sentinel.sh').write_bytes(b'changed installer'),
     lambda r: (r / 'scheduler.deb').unlink(),
     lambda r: (r / 'runtime-compat.deb').unlink(),
@@ -223,7 +231,10 @@ def test_raising_cli_validator_is_called(tmp_path):
     controls = fixture(tmp_path)
     def reject(_):
         raise RuntimeError('CLI-owned schema rejection')
-    with patch.object(verifier, 'control', controls), pytest.raises(RuntimeError, match='CLI-owned'):
+    with patch.object(verifier, 'control', controls), patch.object(
+            verifier, 'scheduler_platform_description', return_value={
+                'schema_version': 1, 'platform_packages': {}, 'redistributed_provider_controls': []}), \
+            pytest.raises(RuntimeError, match='CLI-owned'):
         verifier.verify(tmp_path, validate_metadata=reject)
 
 
@@ -294,6 +305,8 @@ def provider_fixture(tmp_path, architecture='arm64'):
 
     def controls(path):
         return actual_control(path) if Path(path).name.startswith('fixture-') else base_controls(path)
+    controls.fixture_description = {'schema_version': 1, 'platform_packages': {},
+                                    'redistributed_provider_controls': [backend, draw, draw_dev]}
     return root, controls, package
 
 
@@ -327,13 +340,7 @@ def test_consumed_provider_archives_are_admitted_read_only(tmp_path, architectur
     (lambda r, p: (r / 'fixture-backend.deb').write_bytes((r / 'fixture-backend.deb').read_bytes() + b'changed'), 'archive differs'),
     (lambda r, p: p('fixture-unrecorded'), 'Foreign DEB'),
     (lambda r, p: shutil.copy2(r / 'fixture-backend.deb', r / 'fixture-duplicate.deb'), 'Duplicate DEB package role'),
-    (lambda r, p: change(r, 'resolved-deps-manifest.json', lambda v: v['external_dependencies']['RunnerBackends'].clear()), 'backend providers differ'),
-    (lambda r, p: change(r, 'resolved-deps-manifest.json', lambda v: v['external_dependencies']['RunnerBackends']['ArbitraryBackend']['debian_provider'].update(Version='2')), 'differs from Runner'),
-    (lambda r, p: change(r, 'resolved-deps-manifest.json', lambda v: v['runner']['buildinfo']['debian_dependencies'].clear()), 'Runner provider dependency'),
-    (lambda r, p: change(r, 'resolved-deps-manifest.json', lambda v: v['external_dependencies'].pop('BoxRender')), 'renderer provider differs'),
-    (lambda r, p: change(r, 'resolved-deps-manifest.json', lambda v: v['external_dependencies']['BoxRender']['buildinfo']['packages']['development'].update(Version='2')), 'renderer provider differs'),
     (lambda r, p: (r / 'fixture-renderer.deb').write_bytes((r / 'fixture-renderer.deb').read_bytes() + b'changed'), 'archive differs'),
-    (lambda r, p: change(r, 'resolved-deps-manifest.json', lambda v: v['scheduler']['buildinfo']['debian_dependencies'].clear()), 'Scheduler renderer dependency'),
 ])
 def test_rejects_unconsumed_or_changed_provider_archives(tmp_path, mutation, diagnostic):
     root, controls, package = provider_fixture(tmp_path)
@@ -704,3 +711,332 @@ def test_client_test_support_is_exact_optional_development_input(tmp_path):
         receipt_path.write_text(json.dumps(receipt))
         with pytest.raises(verifier.ContractError, match='Foreign DEB'):
             run(tmp_path)
+
+
+# Authentication is tested with real incoming DEBs, independently of the small
+# artifact-shape doubles above. The stub is a producer entrypoint, not an ABI
+# compatibility oracle; Scheduler's own suite owns real provider/ELF semantics.
+admission_spec = importlib.util.spec_from_file_location(
+    'scheduler_platform_admission', ROOT / 'tools/scheduler_platform_admission.py')
+admission = importlib.util.module_from_spec(admission_spec)
+admission_spec.loader.exec_module(admission)
+
+
+def admission_fixture(tmp_path):
+    root = tmp_path / 'admission-dist'; root.mkdir()
+    source = tmp_path / 'scheduler-source'
+    prefix = source / 'usr'
+    tool_dir = prefix / 'share/SimaScheduler/tools'; tool_dir.mkdir(parents=True)
+    marker = tmp_path / 'executed'
+    tool = tool_dir / 'platform_admission.py'
+    tool.write_text('''import json, pathlib, sys
+from fixture_policy import RESULT
+pathlib.Path(''' + repr(str(marker)) + ''').write_text('executed')
+directory = pathlib.Path(sys.argv[sys.argv.index('--directory') + 1])
+receipt = json.loads((directory / 'resolved-deps-manifest.json').read_text())
+if receipt.get('runner', {}).get('buildinfo', {}).get('platform_runtime_packages') != ['fixture-platform']:
+    raise SystemExit('producer rejected missing Platform declaration')
+if 'PlatformRuntime' not in receipt.get('external_dependencies', {}):
+    raise SystemExit('producer rejected missing Platform evidence')
+print(json.dumps(RESULT))
+''')
+    result = {'schema_version': 1, 'redistributed_provider_controls': [],
+              'platform_packages': {'fixture-platform': 'arm64'},
+              'packages': {'fixture-platform': {'Package': 'fixture-platform', 'Version': '2',
+                                                'Architecture': 'arm64'}},
+              'providers': {'libfixture.so': {'package': 'fixture-platform',
+                                            'path': '/usr/lib/libfixture.so', 'sha256': 'a' * 64}}}
+    (tool_dir / 'fixture_policy.py').write_text('RESULT = ' + repr(result) + '\n')
+    files = {}
+    for path in tool_dir.iterdir():
+        path.chmod(0o644)
+        files[path.relative_to(prefix).as_posix()] = {
+            'kind': 'file', 'sha256': admission.sha(path), 'mode': 0o644}
+    info = {'schema_version': 1, 'component': 'scheduler', 'installed_files': files,
+            'installed_payload_sha256': admission.canonical(files)}
+    info['package_sha256'] = admission.canonical(info)
+    (prefix / 'share/SimaScheduler/buildinfo.json').write_text(json.dumps(info))
+    (source / 'DEBIAN').mkdir()
+    (source / 'DEBIAN/control').write_text(
+        'Package: simaai-scheduler\nVersion: 1\nArchitecture: arm64\n'
+        'Maintainer: Test <test@example.invalid>\nDescription: authenticated tooling fixture\n')
+    receipt = {'scheduler': {'buildinfo': info},
+               'runner': {'buildinfo': {'platform_runtime_packages': ['fixture-platform']}},
+               'external_dependencies': {'PlatformRuntime': {'schema_version': 1}}}
+    (root / 'resolved-deps-manifest.json').write_text(json.dumps(receipt))
+    archive = root / 'scheduler.deb'
+    def rebuild():
+        subprocess.run(['dpkg-deb', '--build', '--root-owner-group', str(source), str(archive)],
+                       check=True, capture_output=True)
+    rebuild()
+    return root, source, tool, marker, result, rebuild
+
+
+def test_installed_scheduler_tool_is_authenticated_and_read_only(tmp_path):
+    root, source, tool, marker, expected, _ = admission_fixture(tmp_path)
+    before = {p.relative_to(root): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    assert admission.invoke(root, 'describe') == expected
+    assert marker.read_text() == 'executed'
+    assert before == {p.relative_to(root): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    assert not list(source.rglob('__pycache__'))
+
+
+@pytest.mark.parametrize('mutation', ['helper', 'sibling', 'mode', 'extra', 'missing', 'symlink', 'receipt', 'inventory_digest'])
+def test_scheduler_tampering_rejected_before_import(tmp_path, mutation):
+    root, source, tool, marker, _, rebuild = admission_fixture(tmp_path)
+    if mutation == 'helper':
+        tool.write_text('raise SystemExit("untrusted helper executed")\n')
+    elif mutation == 'sibling':
+        tool.with_name('fixture_policy.py').write_text('raise SystemExit("untrusted sibling executed")\n')
+    elif mutation == 'mode':
+        tool.chmod(0o755)
+    elif mutation == 'extra':
+        tool.with_name('unrecorded.py').write_text('raise SystemExit("unrecorded")\n')
+    elif mutation == 'missing':
+        tool.unlink()
+    elif mutation == 'symlink':
+        sibling = tool.with_name('fixture_policy.py')
+        target = source / 'usr/share/fixture_policy.py'
+        sibling.rename(target)
+        sibling.symlink_to('../../fixture_policy.py')
+    elif mutation == 'receipt':
+        change(root, 'resolved-deps-manifest.json', lambda value: value['scheduler']['buildinfo'].update(component='other'))
+    elif mutation == 'inventory_digest':
+        receipt = source / 'usr/share/SimaScheduler/buildinfo.json'
+        data = json.loads(receipt.read_text()); data['installed_payload_sha256'] = '0' * 64
+        data['package_sha256'] = admission.canonical({k: v for k, v in data.items() if k != 'package_sha256'})
+        receipt.write_text(json.dumps(data))
+        change(root, 'resolved-deps-manifest.json', lambda value: value['scheduler'].update(buildinfo=data))
+    rebuild()
+    with pytest.raises(admission.AdmissionError):
+        admission.invoke(root, 'describe')
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize('mutation', ['declaration', 'evidence', 'runner', 'receipt'])
+def test_actual_split_owner_cannot_skip_admission_by_stripping_receipt(tmp_path, mutation):
+    root, _, _, marker, _, _ = admission_fixture(tmp_path)
+    if mutation == 'declaration':
+        change(root, 'resolved-deps-manifest.json', lambda value: value['runner']['buildinfo'].clear())
+    elif mutation == 'evidence':
+        change(root, 'resolved-deps-manifest.json', lambda value: value['external_dependencies'].clear())
+    elif mutation == 'runner':
+        change(root, 'resolved-deps-manifest.json', lambda value: value.pop('runner'))
+    else:
+        (root / 'resolved-deps-manifest.json').unlink()
+    with pytest.raises((admission.AdmissionError, subprocess.CalledProcessError)):
+        admission.optional_board_check(root)
+    if mutation == 'receipt':
+        assert not marker.exists()
+
+
+@pytest.mark.parametrize('action', ['Inst', 'Remv'])
+@pytest.mark.parametrize('package', ['fixture-platform', 'fixture-platform:arm64'])
+def test_apt_cannot_mutate_admitted_platform_provider(tmp_path, action, package):
+    path = tmp_path / 'plan'; path.write_text(action + ' ' + package + ' [2] (1 local-deb)\n')
+    with pytest.raises(admission.AdmissionError, match='replace or remove'):
+        admission.verify_plan({'platform_packages': {'fixture-platform': 'arm64'}}, path)
+
+
+def test_same_platform_identity_and_product_only_plan_pass(tmp_path):
+    _, _, _, _, result, _ = admission_fixture(tmp_path)
+    admission.same_providers(result, copy.deepcopy(result))
+    plan = tmp_path / 'plan'; plan.write_text('Inst sima-neat [1] (2 local-deb)\n')
+    admission.verify_plan(result, plan)
+    for key in ('packages', 'providers', 'platform_packages'):
+        changed = copy.deepcopy(result); changed[key] = {}
+        with pytest.raises(admission.AdmissionError, match='identity changed'):
+            admission.same_providers(result, changed)
+
+
+def test_verifier_uses_genuine_authenticated_scheduler_description(tmp_path):
+    root, _, tool, marker, expected, rebuild = admission_fixture(tmp_path)
+    assert verifier.scheduler_platform_description(root) == expected
+    marker.unlink()
+    tool.unlink(); rebuild()
+    with pytest.raises(verifier.ContractError, match='classification failed'):
+        verifier.scheduler_platform_description(root)
+    assert not marker.exists()
+
+
+def test_delegated_platform_package_cannot_be_redistributed(tmp_path):
+    controls = fixture(tmp_path)
+    controls.fixture_description = {'schema_version': 1, 'redistributed_provider_controls': [],
+                                    'platform_packages': {'simaai-runner': 'arm64'}}
+    with patch.object(verifier, 'control', controls), pytest.raises(
+            verifier.ContractError, match='Platform-owned provider DEB'):
+        run(tmp_path)
+
+
+def installer_shell(root, body):
+    return subprocess.run(['bash', '-c', 'source "$1"; cd "$2"; ' + body,
+                           'bash', str(ROOT / 'tools/install_neat_framework.sh'), str(root)],
+                          text=True, capture_output=True)
+
+
+@pytest.mark.parametrize('override', ['FORCE_INSTALL=1', 'NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON'])
+@pytest.mark.parametrize('valid', [False, True])
+def test_board_admission_precedes_even_forced_mutation(tmp_path, override, valid):
+    root, _, tool, marker, _, rebuild = admission_fixture(tmp_path)
+    if not valid:
+        tool.unlink(); rebuild()
+    result = installer_shell(root, f'''ENV_MODE=modalix-board; {override};
+run_sudo() {{ echo MUTATION; }}
+ensure_platform_compatible
+run_sudo sentinel-or-package-mutation
+''')
+    assert (result.returncode == 0) == valid, result.stderr
+    assert ('MUTATION' in result.stdout) == valid
+    assert marker.exists() == valid
+
+
+@pytest.mark.parametrize('mode', ['elxr-sdk', 'ros2-sdk'])
+def test_sdk_mode_does_not_admit_host_as_board(tmp_path, mode):
+    root, _, tool, marker, _, rebuild = admission_fixture(tmp_path)
+    tool.unlink(); rebuild()
+    result = installer_shell(root, f'ENV_MODE={mode}; FORCE_INSTALL=1; ensure_platform_compatible')
+    assert result.returncode == 0, result.stderr
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize('action', ['Inst', 'Remv'])
+def test_installer_rejects_provider_solver_mutation_before_execution(tmp_path, action):
+    root, _, _, _, _, _ = admission_fixture(tmp_path)
+    result = installer_shell(root, f'''prepare_board_platform_admission
+printf '{action} fixture-platform:arm64 [2] (1 fixture)\\n' > simulation
+verify_board_platform_plan simulation
+echo MUTATION
+''')
+    assert result.returncode != 0
+    assert 'MUTATION' not in result.stdout
+
+
+def test_installer_checks_post_install_closure_before_runtime_restart(tmp_path):
+    root, _, _, _, _, _ = admission_fixture(tmp_path)
+    result = installer_shell(root, '''prepare_board_platform_admission
+verify_board_platform_admission --installed
+python3 - "$BOARD_PLATFORM_ADMISSION_DIR/before.json" <<'MUTATE'
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1]); v = json.loads(p.read_text())
+v['providers']['libfixture.so']['sha256'] = 'b' * 64
+p.write_text(json.dumps(v))
+MUTATE
+activate_board_runtime_after_install() { echo MUTATION; }
+complete_board_install_after_packages
+''')
+    assert result.returncode != 0
+    assert 'MUTATION' not in result.stdout
+    assert 'identity changed' in result.stderr
+
+
+def test_packaging_carries_shared_delegate_and_selected_receipt():
+    build = (ROOT / 'build.sh').read_text()
+    installer = (ROOT / 'tools/install_neat_framework.sh').read_text()
+    assert 'dist/resolved-deps-manifest.json dist/neat-install-manifest.txt' in build
+    assert '"tools/scheduler_platform_admission.py" dist/' in build
+    assert '"${REPO_ROOT}/tools/scheduler_platform_admission.py"' in build
+    assert 'for admission_resource in scheduler_platform_admission.py resolved-deps-manifest.json' in installer
+    assert 'cp -f ./resolved-deps-manifest.json "${cache_dir}/"' in installer
+
+
+@pytest.mark.parametrize('removed,allowed', [
+    ('fixture-platform:arm64', False), ('unrelated-dependent', False), ('simaai-scheduler', True),
+])
+def test_maintenance_removal_is_still_product_only(tmp_path, removed, allowed):
+    root, _, _, _, _, _ = admission_fixture(tmp_path)
+    result = installer_shell(root, f'''prepare_board_platform_admission
+DEBS=(./scheduler.deb)
+dpkg-query() {{ printf 'ii'; }}
+run_sudo() {{
+  if [[ "$*" == *--simulate* ]]; then
+    printf 'Remv {removed} [1]\\n'
+  else
+    echo MUTATION
+  fi
+}}
+remove_installed_local_deb_packages
+''')
+    assert (result.returncode == 0) == allowed, result.stdout + result.stderr
+    assert ('MUTATION' in result.stdout) == allowed
+
+
+@pytest.mark.parametrize('libdir', ['lib', 'lib64', 'lib/aarch64-linux-gnu'])
+def test_actual_core_install_rpath_is_relative_and_shared_only(tmp_path, libdir):
+    """Compile the production target properties; static clients own their path.
+
+    These are explicit native host doubles, not cross-target execution. Both
+    private DSOs are direct dependencies, matching Scheduler's frontend support.
+    """
+    production = (ROOT / 'CMakeLists.txt').read_text()
+    properties = re.search(r'set_target_properties\(sima_neat PROPERTIES.*?\n\)',
+                           production, re.DOTALL).group(0)
+    static_properties = re.search(r'set_target_properties\(sima_neat_static PROPERTIES.*?\n\)',
+                                  production, re.DOTALL).group(0)
+    assert 'INSTALL_RPATH "$ORIGIN/neat/runtime;$ORIGIN/neat/gst-plugins"' in properties
+    assert 'RPATH' not in static_properties
+    assert not re.search(r'set\(CMAKE_INSTALL_RPATH', production)
+    source = tmp_path / 'source'; source.mkdir()
+    (source / 'runtime.cpp').write_text('extern "C" int fixture_runtime() { return 20; }\n')
+    (source / 'plugin.cpp').write_text('extern "C" int fixture_plugin() { return 22; }\n')
+    (source / 'core.cpp').write_text('extern "C" int fixture_runtime();\n'
+                                    'extern "C" int fixture_plugin();\n'
+                                    'extern "C" int fixture_core() { return fixture_runtime() + fixture_plugin(); }\n')
+    (source / 'main.cpp').write_text('extern "C" int fixture_core();\n'
+                                    'int main() { return fixture_core() == 42 ? 0 : 1; }\n')
+    (source / 'CMakeLists.txt').write_text("""cmake_minimum_required(VERSION 3.16)
+project(CoreInstalledLoaderFixture LANGUAGES CXX)
+include(GNUInstallDirs)
+set(SIMANEAT_PLATFORM_VERSION 1.0.0)
+set(SIMANEAT_ABI_VERSION 1)
+add_library(fixture_runtime SHARED runtime.cpp)
+add_library(fixture_plugin SHARED plugin.cpp)
+add_library(sima_neat SHARED core.cpp)
+add_library(sima_neat_static STATIC core.cpp)
+""" + properties + '\n' + static_properties + """
+target_link_libraries(sima_neat PRIVATE fixture_runtime fixture_plugin)
+target_link_libraries(sima_neat_static PRIVATE fixture_runtime fixture_plugin)
+install(TARGETS sima_neat sima_neat_static DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(TARGETS fixture_runtime DESTINATION ${CMAKE_INSTALL_LIBDIR}/neat/runtime)
+install(TARGETS fixture_plugin DESTINATION ${CMAKE_INSTALL_LIBDIR}/neat/gst-plugins)
+add_executable(shared_client main.cpp)
+target_link_libraries(shared_client PRIVATE sima_neat)
+set_target_properties(shared_client PROPERTIES INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
+add_executable(static_client main.cpp)
+target_link_libraries(static_client PRIVATE sima_neat_static)
+# This belongs to the final static consumer, not Core's archive/interface.
+set_target_properties(static_client PROPERTIES INSTALL_RPATH
+  "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}/neat/runtime;$ORIGIN/../${CMAKE_INSTALL_LIBDIR}/neat/gst-plugins")
+add_executable(static_without_path main.cpp)
+target_link_libraries(static_without_path PRIVATE sima_neat_static)
+install(TARGETS shared_client static_client static_without_path DESTINATION bin)
+""")
+    env = os.environ.copy()
+    for key in ('CC', 'CXX', 'CFLAGS', 'CXXFLAGS', 'CPPFLAGS', 'LDFLAGS', 'CPATH',
+                'CPLUS_INCLUDE_PATH', 'LIBRARY_PATH', 'LD_LIBRARY_PATH', 'LD_PRELOAD',
+                'LD_AUDIT', 'CMAKE_TOOLCHAIN_FILE', 'CMAKE_PREFIX_PATH', 'DESTDIR', 'SYSROOT'):
+        env.pop(key, None)
+    build = tmp_path / 'build'; installed = tmp_path / 'installed'
+    def command(*args, check=True):
+        return subprocess.run(list(map(str, args)), env=env, text=True, capture_output=True, check=check)
+    command('cmake', '-S', source, '-B', build, '-DCMAKE_CXX_COMPILER=/usr/bin/c++',
+            '-DCMAKE_INSTALL_LIBDIR=' + libdir, '-DCMAKE_INSTALL_PREFIX=' + str(installed))
+    command('cmake', '--build', build, '--parallel', '4')
+    command('cmake', '--install', build)
+    relocated = tmp_path / 'relocated'
+    shutil.copytree(installed, relocated, symlinks=True)
+    # Remove the original directory name from lookup, proving relocation rather
+    # than accidentally finding the original installation or build tree.
+    installed.rename(tmp_path / 'original-install-not-at-its-old-path')
+    for prefix in (tmp_path / 'original-install-not-at-its-old-path', relocated):
+        dynamic = command('readelf', '-d', prefix / libdir / 'libsima_neat.so.1.0.0').stdout
+        assert '[$ORIGIN/neat/runtime:$ORIGIN/neat/gst-plugins]' in dynamic
+        assert str(tmp_path) not in dynamic
+        for client in ('shared_client', 'static_client', 'static_without_path'):
+            executable = prefix / 'bin' / client
+            identity = command('file', executable).stdout
+            assert 'ELF' in identity and 'x86-64' in identity, identity
+            result = command(executable, check=False)
+            assert (result.returncode == 0) == (client != 'static_without_path'), result.stderr
+        static_dynamic = command('readelf', '-d', prefix / 'bin/static_client').stdout
+        assert 'Shared library: [libsima_neat' not in static_dynamic
+        assert 'libfixture_plugin' in static_dynamic and 'libfixture_runtime' in static_dynamic

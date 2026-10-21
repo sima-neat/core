@@ -95,6 +95,8 @@ NEAT_INSTALLER_SKIP_PLATFORM_CHECK="${NEAT_INSTALLER_SKIP_PLATFORM_CHECK:-OFF}"
 INSTALLER_SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")"
 # Installs the Sentinel telemetry daemon on boards; ships next to this installer.
 SENTINEL_INSTALLER_PATH="$(dirname "${INSTALLER_SCRIPT_PATH}")/install_sentinel.sh"
+SCHEDULER_PLATFORM_ADMISSION_PATH="$(dirname "${INSTALLER_SCRIPT_PATH}")/scheduler_platform_admission.py"
+BOARD_PLATFORM_ADMISSION_DIR=""
 GREEN=$'\033[0;32m'
 RESET=$'\033[0m'
 INSTALLER_TMP_DIRS=()
@@ -688,6 +690,10 @@ read_devkit_platform_version() {
 }
 
 ensure_platform_compatible() {
+  # This read-only package admission is not waived by a platform-version override.
+  if [[ "${ENV_MODE:-}" == modalix-board ]]; then
+    prepare_board_platform_admission || return 1
+  fi
   if [[ "${FORCE_INSTALL:-}" == "1" ]]; then
     log "FORCE_INSTALL=1; skipping platform compatibility check. Package may not work on this platform."
     return 0
@@ -950,7 +956,9 @@ cache_install_artifacts_in_sysroot() {
     "${cache_dir}/${NEAT_INSTALL_MANIFEST}" \
     "${cache_dir}/${NEAT_PACKAGE_MANIFEST}" \
     "${cache_dir}"/install_neat_framework.sh \
-    "${cache_dir}"/install_sentinel.sh
+    "${cache_dir}"/install_sentinel.sh \
+    "${cache_dir}"/scheduler_platform_admission.py \
+    "${cache_dir}"/resolved-deps-manifest.json
 
   local file
   for file in "${DEBS[@]}"; do
@@ -976,6 +984,10 @@ cache_install_artifacts_in_sysroot() {
   require_sentinel_installer || exit 1
   run_sudo cp -f "${SENTINEL_INSTALLER_PATH}" "${cache_dir}/install_sentinel.sh"
   run_sudo chmod 0755 "${cache_dir}/install_sentinel.sh"
+  run_sudo cp -f "${SCHEDULER_PLATFORM_ADMISSION_PATH}" "${cache_dir}/"
+  if [[ -f ./resolved-deps-manifest.json ]]; then
+    run_sudo cp -f ./resolved-deps-manifest.json "${cache_dir}/"
+  fi
 }
 
 collect_cached_devkit_deploy_files() {
@@ -1027,6 +1039,15 @@ collect_cached_devkit_deploy_files() {
   done
 
   CACHED_DEPLOY_FILES=("${CACHED_DEBS[@]}" "${CACHED_WHEELS[@]}")
+  local admission_resource
+  for admission_resource in scheduler_platform_admission.py resolved-deps-manifest.json; do
+    if [[ -f "${cache_dir}/${admission_resource}" ]]; then
+      CACHED_DEPLOY_FILES+=("${cache_dir}/${admission_resource}")
+    elif [[ "${admission_resource}" == scheduler_platform_admission.py ]]; then
+      echo "Cached Platform admission delegate is missing." >&2
+      exit 1
+    fi
+  done
   if [[ -f "${cached_manifest}" ]]; then
     CACHED_DEPLOY_FILES+=("${cached_manifest}")
   fi
@@ -1133,6 +1154,28 @@ remove_installed_local_deb_packages() {
 
   if [[ "${#packages[@]}" -eq 0 ]]; then
     return 0
+  fi
+
+  if board_platform_admission_is_active; then
+    local removal_simulation
+    removal_simulation="$(mktemp /tmp/sima-neat-removal-simulate-XXXXXX)"
+    INSTALLER_TMP_DIRS+=("${removal_simulation}")
+    run_sudo apt-get remove -y --simulate "${packages[@]}" >"${removal_simulation}" 2>&1 || return 1
+    verify_board_platform_plan "${removal_simulation}" || return 1
+    # Maintenance may remove the selected products, never unrelated dependents.
+    local removed selected
+    while read -r removed; do
+      [[ -n "${removed}" ]] || continue
+      removed="${removed%%:*}"
+      selected=0
+      for package in "${packages[@]}"; do
+        [[ "${package}" != "${removed}" ]] || selected=1
+      done
+      if [[ "${selected}" != 1 ]]; then
+        echo "Maintenance removal would remove unrelated package: ${removed}" >&2
+        return 1
+      fi
+    done < <(awk '$1 == "Remv" {print $2}' "${removal_simulation}")
   fi
 
   log "Removing installed NEAT packages before retrying apt downgrade/repair:"
@@ -1581,6 +1624,7 @@ verify_global_sima_neat_lib_links() {
 
 complete_board_install_after_packages() {
   local direct_platform_before="${1:-}" direct_platform_after
+  verify_board_platform_admission --installed || return 1
   if board_runtime_is_legacy; then
     migrate_stale_global_dispatcher_libs
     verify_private_dispatcher_runtime
@@ -1765,10 +1809,50 @@ install_debs_in_ros2_sdk() {
   fi
 }
 
+# Scheduler owns provider classification and ELF compatibility. This thin
+# delegate authenticates its incoming installed tooling before executing it.
+prepare_board_platform_admission() {
+  if [[ -n "${BOARD_PLATFORM_ADMISSION_DIR}" ]]; then
+    [[ -f "${BOARD_PLATFORM_ADMISSION_DIR}/before.json" ]]
+    return $?
+  fi
+  if [[ ! -f "${SCHEDULER_PLATFORM_ADMISSION_PATH}" || -L "${SCHEDULER_PLATFORM_ADMISSION_PATH}" ]]; then
+    echo "Missing packaged Scheduler Platform admission delegate." >&2
+    return 1
+  fi
+  BOARD_PLATFORM_ADMISSION_DIR="$(mktemp -d /tmp/sima-neat-platform-admission-XXXXXX)"
+  INSTALLER_TMP_DIRS+=("${BOARD_PLATFORM_ADMISSION_DIR}")
+  python3 -B "${SCHEDULER_PLATFORM_ADMISSION_PATH}" check-if-declared --directory "$PWD" \
+    --output "${BOARD_PLATFORM_ADMISSION_DIR}/before.json"
+}
+
+board_platform_admission_is_active() {
+  [[ -n "${BOARD_PLATFORM_ADMISSION_DIR}" ]] || return 1
+  python3 - "${BOARD_PLATFORM_ADMISSION_DIR}/before.json" <<'PYACTIVE'
+import json, sys
+with open(sys.argv[1]) as stream:
+    raise SystemExit(0 if json.load(stream)['platform_packages'] else 1)
+PYACTIVE
+}
+
+verify_board_platform_admission() {
+  [[ -n "${BOARD_PLATFORM_ADMISSION_DIR}" ]] || return 0
+  python3 -B "${SCHEDULER_PLATFORM_ADMISSION_PATH}" check-if-declared --directory "$PWD" \
+    --baseline "${BOARD_PLATFORM_ADMISSION_DIR}/before.json" "$@"
+}
+
+verify_board_platform_plan() {
+  [[ -n "${BOARD_PLATFORM_ADMISSION_DIR}" ]] || return 0
+  python3 -B "${SCHEDULER_PLATFORM_ADMISSION_PATH}" verify-plan \
+    --baseline "${BOARD_PLATFORM_ADMISSION_DIR}/before.json" --simulation "$1"
+}
+
 install_debs_on_board() {
   log "Detected Modalix board environment; installing DEBs with apt."
   printf '[install_neat_framework] DEB install set:\n'
   printf '  %s\n' "${DEBS[@]}"
+  prepare_board_platform_admission || return 1
+  verify_board_platform_admission || return 1
   local direct_platform_before=""
   if ! board_runtime_is_legacy; then
     direct_platform_before="$(capture_direct_platform_identity)" || return 1
@@ -1847,7 +1931,8 @@ install_debs_on_board() {
     echo "APT cannot satisfy the bundled Neat package transaction." >&2
     exit 1
   fi
-  if ! verify_simulated_package_removals \
+  if ! verify_board_platform_plan "${simulation_log}" ||
+     ! verify_simulated_package_removals \
       "${simulation_log}" "${board_install_specs[@]}"; then
     exit 1
   fi
@@ -1855,7 +1940,7 @@ install_debs_on_board() {
   if run_sudo "${apt_install_args[@]}" "${board_install_specs[@]}"; then
     run_sudo apt-get check
     complete_board_install_after_packages "${direct_platform_before}"
-    return 0
+    return $?
   fi
 
   if [[ "${NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL}" != "ON" ]]; then
@@ -1865,10 +1950,19 @@ install_debs_on_board() {
   fi
 
   log "apt-get install failed; NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL=ON, removing installed NEAT packages represented by the local DEB set and retrying apt."
-  remove_installed_local_deb_packages
+  remove_installed_local_deb_packages || return 1
+  if board_platform_admission_is_active; then
+    verify_board_platform_admission || return 1
+    # The first failed transaction/removal may have changed the package state.
+    # Do not reuse an earlier solver plan for a maintenance retry.
+    run_sudo "${apt_install_args[@]}" --simulate "${board_install_specs[@]}" \
+      >"${simulation_log}" 2>&1 || return 1
+    verify_board_platform_plan "${simulation_log}" || return 1
+    verify_simulated_package_removals "${simulation_log}" "${board_install_specs[@]}" || return 1
+  fi
   if run_sudo "${apt_install_args[@]}" "${board_install_specs[@]}"; then
     complete_board_install_after_packages "${direct_platform_before}"
-    return 0
+    return $?
   fi
 
   if [[ "${NEAT_INSTALLER_ALLOW_DPKG_FALLBACK}" != "ON" ]]; then

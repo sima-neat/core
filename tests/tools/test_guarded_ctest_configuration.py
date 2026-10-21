@@ -2,6 +2,7 @@
 """Configure-only native fixture: prove proxy preserves argv and properties."""
 import json
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -62,6 +63,51 @@ set_tests_properties(model script target PROPERTIES WORKING_DIRECTORY /tmp TIMEO
             self.assertEqual(len(configs[0][1]['command']), 5)
             self.assertIn(';', configs[0][1]['command'][2])
             self.assertTrue((root/'ON/tools/hardware_test_supervisor.py').is_file())
+
+    def test_actual_e2e_variant_loops_use_guard_without_changing_contract(self):
+        text = (ROOT/'tests/CMakeLists.txt').read_text()
+        loops = []
+        for variable in ('encoder_case', 'mode'):
+            pattern = r'  foreach\(' + variable + r' (?:IN ITEMS )?[^\n]+\).*?  endforeach\(\)'
+            candidates = re.findall(pattern, text, re.DOTALL)
+            expected_target = ('video_sender_adaptive_ingress_e2e_test'
+                               if variable == 'encoder_case' else 'model_seeded_input_capacity_test')
+            matches = [loop for loop in candidates if 'COMMAND ' + expected_target in loop]
+            self.assertEqual(len(matches), 1)
+            self.assertNotRegex(matches[0], r'(?m)^\s+add_test\(')
+            loops.append(matches[0])
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root/'CMakeLists.txt').write_text('''cmake_minimum_required(VERSION 3.16)
+project(ActualE2ERegistrations NONE)
+enable_testing()
+include("''' + str(ROOT/'cmake/NeatGuardedTests.cmake') + '''")
+add_executable(video_sender_adaptive_ingress_e2e_test IMPORTED)
+add_executable(model_seeded_input_capacity_test IMPORTED)
+set_target_properties(video_sender_adaptive_ingress_e2e_test model_seeded_input_capacity_test
+  PROPERTIES IMPORTED_LOCATION /usr/bin/true)
+function(simaneat_append_ctest_env name)
+  set_property(TEST ${name} APPEND PROPERTY ENVIRONMENT "ORIGINAL_ENVIRONMENT=1")
+endfunction()
+''' + '\n'.join(loops))
+            configs = []
+            for enabled in ('OFF', 'ON'):
+                build = root/'build'
+                subprocess.run(['cmake', '-S', str(root), '-B', str(build),
+                                '-DSIMANEAT_GUARDED_HARDWARE_TESTS='+enabled],
+                               check=True, capture_output=True)
+                configs.append(json.loads(subprocess.check_output(
+                    ['ctest', '--test-dir', str(build), '--show-only=json-v1']))['tests'])
+            expected = {'encoder_'+case+'_contract_test' for case in ('h264', 'h265', 'mjpeg', 'concurrent')}
+            expected |= {'model_seeded_input_capacity_'+mode+'_test' for mode in
+                         ('tensor', 'sample', 'defaults', 'unseeded', 'oversize_width', 'oversize_height')}
+            self.assertEqual({test['name'] for test in configs[1]}, expected)
+            self.assertEqual(len(configs[1]), 10)
+            for old, new in zip(*configs):
+                self.assertEqual(old['name'], new['name'])
+                self.assertEqual(old['properties'], new['properties'])
+                self.assertIn('ctest-proxy', new['command'])
+                self.assertEqual(old['command'], new['command'][new['command'].index('--')+1:])
 
     def test_tutorial_sources_install_shared_guard(self):
         text = (ROOT/'tutorials/CMakeLists.txt').read_text()

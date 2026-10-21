@@ -1426,6 +1426,11 @@ collect_install_artifact_files() {
     out_files_ref+=("${file}")
   done
 
+  for file in dist/resolved-deps-manifest.json dist/neat-install-manifest.txt; do
+    [[ -f "${file}" ]] || continue
+    out_files_ref+=("${file}")
+  done
+
   for file in dist/manifest.json "${NEAT_DEPS_MANIFEST}"; do
     [[ -e "${file}" ]] || continue
     basename_file="manifest.json"
@@ -2221,6 +2226,7 @@ stage_package_artifacts_to_dist() {
     dist/*-Linux-extras.tar.gz \
     "dist/${NEAT_PACKAGE_INSTALL_SCRIPT}" \
     dist/install_sentinel.sh \
+    dist/scheduler_platform_admission.py \
     "dist/${NEAT_INSTALL_MANIFEST}" \
     dist/metadata*.json \
     dist/manifest.json \
@@ -2255,7 +2261,8 @@ stage_package_artifacts_to_dist() {
 
   if [[ -f "tools/install_neat_framework.sh" ]]; then
     # install_neat_framework.sh runs install_sentinel.sh from its own directory.
-    cp -f "tools/install_neat_framework.sh" "tools/install_sentinel.sh" dist/
+    cp -f "tools/install_neat_framework.sh" "tools/install_sentinel.sh" \
+      "tools/scheduler_platform_admission.py" dist/
     chmod +x "dist/install_neat_framework.sh" "dist/install_sentinel.sh"
     staged_any=ON
   fi
@@ -2496,6 +2503,7 @@ generate_package_metadata_if_requested() {
     --exclude ".deb" \
     --exclude ".tar.gz" \
     --exclude ".sh" \
+    --exclude ".py" \
     --exclude ".txt" \
     --exclude ".json" \
     --download-compatible-files-only \
@@ -2510,6 +2518,7 @@ generate_package_metadata_if_requested() {
     --exclude ".deb" \
     --exclude ".whl" \
     --exclude ".sh" \
+    --exclude ".py" \
     --exclude ".txt" \
     --exclude ".json" \
     --variant extras
@@ -2703,7 +2712,8 @@ deploy_artifacts_to_devkit_if_requested() {
     echo "No deployable .deb or .whl artifacts found."
     return 0
   fi
-  deploy_files+=("${installer_path}" "${sentinel_installer_path}")
+  deploy_files+=("${installer_path}" "${sentinel_installer_path}" \
+    "${REPO_ROOT}/tools/scheduler_platform_admission.py")
 
   echo
   echo "Deploying artifacts to ${ssh_target}:${remote_dir}"

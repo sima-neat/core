@@ -203,7 +203,7 @@ configure_file(
   "${CMAKE_CURRENT_BINARY_DIR}/tools/test_install_neat_framework_native_restore.py"
   COPYONLY
 )
-foreach(_installer install_neat_framework.sh install_sentinel.sh)
+foreach(_installer install_neat_framework.sh install_sentinel.sh scheduler_platform_admission.py)
   configure_file("${CMAKE_SOURCE_DIR}/tools/${_installer}"
     "${CMAKE_CURRENT_BINARY_DIR}/tools/${_installer}" COPYONLY)
 endforeach()
@@ -979,7 +979,7 @@ if (NOT video_sender_adaptive_ingress_e2e_test IN_LIST PIPELINESESSION_TEST_BLAC
 
   foreach(encoder_case IN ITEMS h264 h265 mjpeg concurrent)
     set(encoder_test_name "encoder_${encoder_case}_contract_test")
-    add_test(NAME ${encoder_test_name}
+    simaneat_add_test(NAME ${encoder_test_name}
       COMMAND video_sender_adaptive_ingress_e2e_test --scenario encoder_${encoder_case})
     simaneat_append_ctest_env(${encoder_test_name})
     set_tests_properties(${encoder_test_name} PROPERTIES
@@ -2209,7 +2209,7 @@ if (NOT model_seeded_input_capacity_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     TIMEOUT 180)
   foreach(mode tensor sample defaults unseeded oversize_width oversize_height)
     set(test_name model_seeded_input_capacity_${mode}_test)
-    add_test(NAME ${test_name}
+    simaneat_add_test(NAME ${test_name}
       COMMAND model_seeded_input_capacity_test ${CMAKE_SOURCE_DIR} ${mode})
     simaneat_append_ctest_env(${test_name})
     set_tests_properties(${test_name} PROPERTIES

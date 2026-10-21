@@ -1811,6 +1811,27 @@ complete_board_install_after_packages "$before"
         self.assertEqual(result.returncode, 17)
 
 
+class PlatformAdmissionBoundaryTest(unittest.TestCase):
+    def test_version_overrides_cannot_skip_board_provider_admission(self) -> None:
+        for override in ("FORCE_INSTALL=1", "NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON"):
+            with self.subTest(override=override):
+                result = run_bash('source "$1"\nENV_MODE=modalix-board\n' + override +
+                                  '\nprepare_board_platform_admission() { echo ADMISSION; return 9; }'
+                                  '\nensure_platform_compatible\necho MUTATION\n')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("ADMISSION", result.stdout)
+                self.assertNotIn("MUTATION", result.stdout)
+
+    def test_sdk_modes_do_not_use_host_as_board_provider_authority(self) -> None:
+        for mode in ("elxr-sdk", "ros2-sdk"):
+            with self.subTest(mode=mode):
+                result = run_bash('source "$1"\nFORCE_INSTALL=1\nENV_MODE=' + mode +
+                                  '\nprepare_board_platform_admission() { echo ADMISSION; return 9; }'
+                                  '\nensure_platform_compatible\n')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn("ADMISSION", result.stdout)
+
+
 def _take_path_option(flag: str) -> Path | None:
     """Pop `--flag <path>` out of argv; under CTest neither script sits at __file__."""
     if flag not in sys.argv:

@@ -15,6 +15,7 @@ import shutil
 import tempfile
 from pathlib import Path, PurePosixPath
 import subprocess
+import sys
 import tarfile
 import zipfile
 from email.parser import BytesParser
@@ -60,55 +61,33 @@ def control(path):
     return dict(line.split(': ', 1) for line in fields.splitlines())
 
 
-def composed_provider_controls(receipt):
-    """Project only providers actually consumed by the selected producers.
-
-    Receipt paths are provenance, not filesystem authority. The caller matches
-    these controls and hashes against archives inside the selected dist only.
-    Backend names remain Runner-owned; no MLA/TVM package-name allowlist lives
-    here. Renderer packaging remains its separate runtime/development pair.
-    """
-    external = receipt.get('external_dependencies', {})
-    runner = receipt.get('runner', {}).get('buildinfo', {})
-    scheduler = receipt.get('scheduler', {}).get('buildinfo', {})
-    consumed = {name: value for name, value in runner.get('external_dependencies', {}).items()
-                if isinstance(value, dict) and 'debian_provider' in value and 'loader_name' in value}
-    composed = external.get('RunnerBackends', {})
-    require(isinstance(composed, dict) and set(composed) == set(consumed),
-            'Composed backend providers differ from Runner receipt')
-    result = []
-    for name, value in consumed.items():
-        expected = value['debian_provider']
-        require(isinstance(expected, dict), f'{name}: invalid Runner provider control')
-        entry = composed[name]
-        require(isinstance(entry, dict) and entry.get('kind') == 'external-platform-runtime'
-                and entry.get('debian_provider') == expected,
-                f'{name}: composed provider differs from Runner receipt')
-        require([item for item in runner.get('debian_dependencies', [])
-                 if item.get('Package') == expected.get('Package')] == [expected],
-                f'{name}: missing exact Runner provider dependency')
-        result.append(expected)
-    expected = scheduler.get('external_dependencies', {}).get('BoxRender')
-    composed = external.get('BoxRender')
-    require(bool(expected) == bool(composed),
-            'Composed renderer provider differs from Scheduler receipt')
-    if expected:
-        require(isinstance(expected, dict) and isinstance(composed, dict)
-                and composed.get('kind') == 'external-platform-package'
-                and composed.get('buildinfo') == expected,
-                'Composed renderer provider differs from Scheduler receipt')
-        packages = expected.get('packages', {})
-        require(isinstance(packages, dict) and set(packages) == {'runtime', 'development'}
-                and all(isinstance(value, dict) for value in packages.values()),
-                'Renderer requires its consumed runtime/development pair')
-        runtime = packages['runtime']
-        recorded = [item for item in scheduler.get('debian_dependencies', [])
-                    if item.get('Package') == runtime.get('Package')]
-        require(len(recorded) == 1 and all(recorded[0].get(key) == runtime.get(key)
-                for key in ('Package', 'Version', 'Architecture', 'deb_sha256')),
-                'Missing exact Scheduler renderer dependency')
-        result.extend(packages.values())
+def scheduler_platform_description(root):
+    """Use the authenticated producer's classification, never infer backend names."""
+    delegate = Path(__file__).resolve().parents[1] / 'scheduler_platform_admission.py'
+    try:
+        result = json.loads(subprocess.check_output(
+            [sys.executable, '-B', str(delegate), 'describe', '--directory', str(Path(root).resolve())],
+            text=True, env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'}))
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+        raise ContractError('Scheduler Platform classification failed') from error
+    require(isinstance(result, dict) and result.get('schema_version') == 1
+            and isinstance(result.get('redistributed_provider_controls'), list)
+            and isinstance(result.get('platform_packages'), dict),
+            'Invalid Scheduler Platform classification')
     return result
+
+
+def composed_provider_controls(receipt, root):
+    """Use the authenticated owner for both Platform and historical providers.
+
+    The actual incoming Scheduler receipt is checked before any classification;
+    stripping an untrusted declaration cannot select a weaker legacy path.
+    """
+    classification = scheduler_platform_description(root)
+    incoming = {control(path)['Package'] for path in Path(root).glob('*.deb')}
+    require(not incoming.intersection(classification['platform_packages']),
+            'Platform-owned provider DEB is present in the install set')
+    return classification['redistributed_provider_controls']
 
 
 def verify(root, *, validate_metadata, expected_manifest=None, expected_receipt=None,
@@ -179,7 +158,7 @@ def verify(root, *, validate_metadata, expected_manifest=None, expected_receipt=
                 'Client test-support archive differs from consumed receipt')
         expected_roles[role] = entry['Version']
     provider_roles = set()
-    for entry in composed_provider_controls(receipt):
+    for entry in composed_provider_controls(receipt, root):
         require(isinstance(entry, dict) and all(isinstance(entry.get(key), str) and entry[key]
                 for key in ('Package', 'Version', 'Architecture', 'deb_sha256')),
                 'Incomplete composed provider control')
@@ -216,7 +195,7 @@ def verify(root, *, validate_metadata, expected_manifest=None, expected_receipt=
     allowlist = [s.strip() for s in allowlist_path.read_text().splitlines() if s.strip() and not s.lstrip().startswith('#')]
     require(len(allowlist) == len(set(allowlist)) and set(allowlist) == installables, 'Installer allowlist differs')
     base = installables | {'manifest.json', receipt_path.name, allowlist_path.name,
-                           'install_neat_framework.sh', 'install_sentinel.sh'}
+                           'install_neat_framework.sh', 'install_sentinel.sh', 'scheduler_platform_admission.py'}
     expected_variants = {
         'metadata.json': (base, {extras.name}),
         'metadata-minimal.json': (base, set()),

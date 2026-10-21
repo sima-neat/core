@@ -189,7 +189,7 @@ The selected Scheduler package installs its exact SDK policy. In the disposable
 CI SDK container, `scripts/ci/prepare_scheduler_sdk.sh` uses the official sysroot
 setup command for that revision and retains downloaded platform archives. The
 coordinator checks the real GCC14 version/target and target SDK identities, then
-selects the exact Runner-consumed MLA/TVM archives through
+selects the exact Runner-consumed runtime provider archives through
 `NEAT_RUNNER_PLATFORM_RUNTIME_DEBS`. Native ARM64 and cross-compilers need not
 have identical executable bytes. Their target ABI and selected platform must
 match. No device installation or firmware qualification happens in this step.
@@ -202,9 +202,9 @@ not the default workflow and there is no implicit `ci/dependencies.json`.
 
 Code hygiene downloads this run's `neat-core-dist`, verifies it, and invokes the
 real Core delegate and installed Scheduler coordinator in headers-only mode.
-The coordinator checks the same lower packages and platform archives used by the
-build. Only Scheduler's frontend prefix is exposed to Core analysis. LLiMa remains
-a direct Core dependency: analysis downloads the exact development archive named
+The coordinator checks the same lower packages and authenticated platform build
+evidence used by the build. Only Scheduler's frontend prefix is exposed to Core
+analysis. LLiMa remains a direct Core dependency: analysis downloads the exact development archive named
 by the Core build receipt, not a second mutable latest. This is host tooling
 validation, not target execution.
 
@@ -245,19 +245,24 @@ renderer archive. Rebuild the cohort together for request API revision 2.
 Before running Core's source-first `build.sh`, provide:
 
 - `NEAT_RUNNER_PLATFORM_RUNTIME_DEBS`: a JSON array of absolute paths to the exact
-  optional backend runtime DEBs selected by Runner. For example, supply the
-  checked-completion MLA runtime archive and the matching TVM runtime archive
-  when both backends are enabled. Do not include development archives in this
-  array. Runner verifies actual loader names/library bytes; Core requires the
-  same archive controls and hashes, then composes those unchanged archives.
+  runtime provider DEBs selected by Runner. Include its required SimaHeap runtime
+  archive and the MLA and TVM runtime archives when those backends are enabled.
+  Do not include development archives in this array. Runner verifies actual loader
+  names and library bytes. Scheduler retains
+  exact archive identities and payload inventories as build evidence. Providers
+  declared Platform-owned by Runner stay outside Core's installable DEB set;
+  undeclared providers retain exact archive composition.
 
 These selections remain explicit even with prebuilt Runner/Scheduler package
 overrides. The immutable four-component materializer does not fetch platform
 provider archives. Acquire them from their supported producer before invoking
 Core; missing or unconsumed providers fail rather than selecting a sysroot
-fallback. Use each producer's matching development package for compilation and
-its actual runtime package for deployment. Do not rebuild a DEB merely to label
-an existing private DSO as a released provider.
+fallback. Use matching development packages for compilation. On a DevKit,
+Scheduler's authenticated admission tool checks the installed Platform providers
+against the incoming consumers before package mutation. The installer rejects
+APT plans that replace or remove those providers and verifies their identity and
+installed consumer closure afterward. `FORCE_INSTALL` does not waive these checks.
+Do not rebuild a DEB merely to label a private DSO as a released provider.
 
 Package composition checks disjoint payload ownership, exact dependency
 versions and unchanged archives. These build-time checks do not qualify numerical
