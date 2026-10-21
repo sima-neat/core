@@ -15,7 +15,7 @@ sidebar_position: 5
 
 Розділена інсталяція показує `simaai-runner` і `simaai-scheduler`. На DevKit версії беруться з бази встановлених пакетів, у SDK — з керувальних метаданих кешованих DEB. Рядки застарілих `neat-runtime` і `neat-gst-plugins` залишаються видимими, якщо ці пакети присутні або жодного розділеного компонента не виявлено. JSON додає `components.runner` і `components.scheduler`, зберігаючи старі ключі `runtime` та `gstPlugins`; відсутні версії залишаються `null`.
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat
 </ShellCommand>
 
@@ -68,7 +68,7 @@ neat update
 Щоб оновити лише середовище виконання Neat Library, не перевіряючи й не
 оновлюючи Insight або сценарії, виконайте:
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat update --core-only
 </ShellCommand>
 

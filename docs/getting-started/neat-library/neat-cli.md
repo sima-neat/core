@@ -22,7 +22,7 @@ Legacy `neat-runtime` and `neat-gst-plugins` rows remain visible when those pack
 or no split component is detected. JSON adds `components.runner` and `components.scheduler`
 while preserving the legacy `runtime` and `gstPlugins` keys; absent versions remain `null`.
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat
 </ShellCommand>
 
@@ -76,7 +76,7 @@ neat update
 To update only the Neat Library runtime, without inspecting or updating Insight
 or playbooks, run:
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat update --core-only
 </ShellCommand>
 

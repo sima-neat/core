@@ -14,7 +14,7 @@ JSON 輸出保持現有結構描述，並將無法取得的版本回報為 `null
 
 拆分安裝會顯示 `simaai-runner` 與 `simaai-scheduler`。DevKit 從已安裝套件資料庫讀取版本；SDK 從快取 DEB 的控制中繼資料讀取版本。當舊版 `neat-runtime` 與 `neat-gst-plugins` 套件存在，或未偵測到拆分元件時，仍顯示其列。JSON 新增 `components.runner` 與 `components.scheduler`，並保留舊版 `runtime`、`gstPlugins` 鍵；不存在的版本仍為 `null`。
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat
 </ShellCommand>
 
@@ -66,7 +66,7 @@ neat update
 
 若只要更新 Neat Library 執行階段，不檢查或更新 Insight 與操作手冊，請執行：
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat update --core-only
 </ShellCommand>
 

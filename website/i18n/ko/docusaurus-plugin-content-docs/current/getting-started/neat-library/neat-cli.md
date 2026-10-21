@@ -15,7 +15,7 @@ PyNeat 또는 Insight가 설치되어 있지 않아도 상태 보고는 계속�
 
 분할 설치에서는 `simaai-runner`와 `simaai-scheduler`를 표시합니다. DevKit에서는 설치된 패키지 데이터베이스, SDK에서는 캐시된 DEB 제어 메타데이터에서 버전을 읽습니다. 레거시 `neat-runtime`과 `neat-gst-plugins` 행은 해당 패키지가 있거나 분할 컴포넌트가 감지되지 않을 때 표시됩니다. JSON은 기존 `runtime`, `gstPlugins` 키를 유지하면서 `components.runner`, `components.scheduler`를 추가합니다. 없는 버전은 계속 `null`입니다.
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat
 </ShellCommand>
 
@@ -68,7 +68,7 @@ neat update
 Insight나 플레이북을 조회하거나 업데이트하지 않고 Neat Library 런타임만
 업데이트하려면 다음 명령을 실행하세요.
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="sdk|devkit">
 neat update --core-only
 </ShellCommand>
 
