@@ -7688,6 +7688,9 @@ Tensor materialize_dense_ingress_tail(Tensor tensor, const std::size_t required_
   if (logical_bytes == 0U || !tensor.storage || tensor.byte_offset < 0) {
     throw std::runtime_error("direct MLA allocation tail requires a valid dense input tensor");
   }
+  if (required_bytes > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max())) {
+    throw std::runtime_error("direct MLA allocation tail exceeds the carrier shape range");
+  }
   const auto memory_index =
       tensor.route.memory_index >= 0 ? tensor.route.memory_index : tensor.route.physical_index;
   auto available = tensor.storage->size_bytes;
@@ -7698,26 +7701,45 @@ Tensor materialize_dense_ingress_tail(Tensor tensor, const std::size_t required_
                     : 0U;
   }
   const auto offset = static_cast<std::uint64_t>(tensor.byte_offset);
-  if (tensor.is_contiguous() && offset <= available && required_bytes <= available - offset) {
-    return tensor;
+  if (!tensor.is_contiguous() || offset > available || required_bytes > available - offset) {
+    std::vector<std::uint8_t> bytes(required_bytes, 0U);
+    if (!tensor.copy_dense_bytes_tight_to(bytes.data(), logical_bytes)) {
+      throw std::runtime_error("direct MLA allocation tail could not copy its logical input");
+    }
+    const auto memory = tensor.device.type == DeviceType::SIMA_MLA   ? TensorMemory::MLA
+                        : tensor.device.type == DeviceType::SIMA_CVU ? TensorMemory::EV74
+                                                                     : TensorMemory::CPU;
+    auto carrier = Tensor::from_vector(bytes, {static_cast<std::int64_t>(required_bytes)}, memory);
+    tensor.storage = std::move(carrier.storage);
+    tensor.device = carrier.device;
+    tensor.byte_offset = 0;
+    tensor.strides_bytes.clear();
+    tensor.route.memory_index = 0;
+    tensor.route.physical_index = -1;
   }
-  if (required_bytes > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max())) {
-    throw std::runtime_error("direct MLA allocation tail exceeds the carrier shape range");
+  if (tensor.storage->kind == StorageKind::CpuOwned ||
+      tensor.storage->kind == StorageKind::CpuExternal) {
+    // Publish the proved carrier before restoring the logical view. The generic
+    // CPU wrapper intentionally exposes only dense_bytes_tight(), which would
+    // otherwise discard this input's allocation tail again.
+    Tensor carrier;
+    carrier.dtype = TensorDType::UInt8;
+    carrier.shape = {static_cast<std::int64_t>(required_bytes)};
+    carrier.storage = tensor.storage;
+    carrier.byte_offset = tensor.byte_offset;
+    carrier.read_only = tensor.read_only;
+    std::string error;
+    const auto holder = pipeline_internal::make_sample_holder_from_bundle(
+        sample_from_tensors(TensorList{carrier}), &error);
+    if (!holder) {
+      throw std::runtime_error("direct MLA allocation tail publication failed: " + error);
+    }
+    tensor.storage =
+        pipeline_internal::make_gst_sample_storage(static_cast<GstSample*>(holder.get()));
+    tensor.byte_offset = 0;
+    tensor.route.memory_index = 0;
+    tensor.route.physical_index = -1;
   }
-  std::vector<std::uint8_t> bytes(required_bytes, 0U);
-  if (!tensor.copy_dense_bytes_tight_to(bytes.data(), logical_bytes)) {
-    throw std::runtime_error("direct MLA allocation tail could not copy its logical input");
-  }
-  const auto memory = tensor.device.type == DeviceType::SIMA_MLA   ? TensorMemory::MLA
-                      : tensor.device.type == DeviceType::SIMA_CVU ? TensorMemory::EV74
-                                                                   : TensorMemory::CPU;
-  auto carrier = Tensor::from_vector(bytes, {static_cast<std::int64_t>(required_bytes)}, memory);
-  tensor.storage = std::move(carrier.storage);
-  tensor.device = carrier.device;
-  tensor.byte_offset = 0;
-  tensor.strides_bytes.clear();
-  tensor.route.memory_index = 0;
-  tensor.route.physical_index = -1;
   return tensor;
 }
 
