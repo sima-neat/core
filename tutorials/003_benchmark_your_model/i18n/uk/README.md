@@ -55,29 +55,29 @@ Python надає доступ до тих самих полів через `pyn
 
 Дані про потужність надходять від Sentinel — демона телеметрії плати, який налаштовує інсталятор Neat. `report.telemetry` також містить потужність шин живлення, температури кристала й плати, завантаження CPU та пам’ять MLA для проходу вимірювання пропускної здатності; опис кожного поля див. у розділі [Вимірювання виконання моделі](/develop-apps/development-workflow/model#power-and-board-telemetry). Якщо Sentinel не запущено, тест усе одно надає інформацію про затримку та пропускну здатність, залишає поля потужності нульовими та записує причину в `report.telemetry.status`.
 
-### Розширені можливості: статистика шарів і стадій MLA {#step-read-layer-stats}
+### Розширені можливості: статистика шарів і стадій MLA {#step-read-mla-stats}
 
-Дві необов’язкові опції запускають `mla-rt` після бенчмарку, щоб виміряти час скомпільованого коду MLA. Обидві типово вимкнені й потребують незайнятого devkit без інших навантажень MLA. Додайте `--include-layer-stats` або `--include-mla-stage-stats` до будь-якої команди прикладу або ввімкніть їх через API:
+Дві необов’язкові опції запускають `mla-rt` після бенчмарку, щоб виміряти час скомпільованого коду MLA. Обидві типово вимкнені й потребують незайнятого devkit без інших навантажень MLA. Додайте `--include-mla-layer-stats` або `--include-mla-stage-stats` до будь-якої команди прикладу або ввімкніть їх через API:
 
 ```cpp
 simaai::neat::BenchmarkOptions options;
-options.include_layer_stats = true;
+options.include_mla_layer_stats = true;
 options.include_mla_stage_stats = true;
 auto report = model.benchmark(options);
 ```
 
 ```python
 options = pyneat.BenchmarkOptions()
-options.include_layer_stats = True
+options.include_mla_layer_stats = True
 options.include_mla_stage_stats = True
 report = model.benchmark(options)
 ```
 
-У `report.layer_stats` доступні `name`, `stage_index` із нульовою нумерацією та `total_execution_time_us` для кожного скомпільованого шару MLA. Зберігаються також no-op записи з нульовим часом. Час шарів вимірюється в окремих проходах профілювання, тому його сума не дорівнює загальній затримці.
+У `report.mla_layer_stats` доступні `stage_index` із нульовою нумерацією, `name` і `latency_us` для кожного скомпільованого шару MLA: апаратний час виконання з одного проходу профілювання, який запускає лише цей шар. Зберігаються також no-op записи з нульовим часом. Сума затримок шарів не дорівнює ні затримці стадії, ні загальній затримці.
 
 У `report.mla_stage_stats` доступні `stage_index` і `latency_us` для кожної стадії MLA: середній апаратний час 200 безперервних запусків цієї стадії. Він не враховує хост, EV74 і переміщення даних, тому менший за загальну затримку.
 
-Якщо `mla-rt` відсутній або завершується з помилкою, `benchmark()` однаково повертає основні вимірювання, залишає список порожнім і записує причину в `report.layer_stats_status` або `report.mla_stage_stats_status`. В інших випадках кожен статус має значення `"not requested"` або `"ok"`.
+Якщо `mla-rt` відсутній або завершується з помилкою, `benchmark()` однаково повертає основні вимірювання, залишає список порожнім і записує причину в `report.mla_layer_stats_status` або `report.mla_stage_stats_status`. В інших випадках кожен статус має значення `"not requested"` або `"ok"`.
 
 ### Збереження звіту {#step-save-report}
 
@@ -97,7 +97,7 @@ json_path = report.save("results/model/yolo_benchmark.json")
 
 Укажіть шлях разом з іменем файлу. Відсутні батьківські каталоги створюються, наявний файл замінюється, а метод повертає шлях записаного файлу. Збереження виконується явно; `benchmark()` не створює файл звіту автоматично.
 
-До будь-якої команди прикладу додайте `--report results/model/yolo_benchmark.yaml`. Поєднайте з `--include-layer-stats` або `--include-mla-stage-stats`, щоб зберегти основні вимірювання разом із часом виконання MLA.
+До будь-якої команди прикладу додайте `--report results/model/yolo_benchmark.yaml`. Поєднайте з `--include-mla-layer-stats` або `--include-mla-stage-stats`, щоб зберегти основні вимірювання разом із часом виконання MLA.
 
 ## Run
 

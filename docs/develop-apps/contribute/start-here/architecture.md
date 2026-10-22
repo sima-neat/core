@@ -217,23 +217,24 @@ that fails, the installer warns and continues; run `sima-cli neat install sentin
 sample and reads no power monitor chips over I2C.
 
 MLA profiling is opt-in through two `BenchmarkOptions` fields that default to false:
-`include_layer_stats` and `include_mla_stage_stats`. After the latency and throughput runners
+`include_mla_layer_stats` and `include_mla_stage_stats`. After the latency and throughput runners
 close, Core runs `mla-rt` in a separate process on the extracted model's MLA executables, one
-profiling pass after the other. Layer stats also uses the compiler stats YAML; stage stats runs
-each MLA executable 200 times without interruption and reads the mean `tile.lat` from the
+profiling pass after the other. MLA layer stats also uses the compiler stats YAML; MLA stage stats
+runs each MLA executable 200 times without interruption and reads the mean `tile.lat` from the
 `mla-rt` stats file. Core validates the inputs and outputs and removes temporary files; it waits
 for `mla-rt` to finish and never stops it. MLA-RT owns hardware profiling and the handoff back to
 kernel execution. Profiling requires no overlapping MLA workloads.
 
 Profiling is best effort. When `mla-rt` is missing, fails, or writes unusable output, Core keeps
 the headline measurements, leaves that list empty, prints a warning, and sets
-`layer_stats_status` or `mla_stage_stats_status` to the reason. A status is otherwise
+`mla_layer_stats_status` or `mla_stage_stats_status` to the reason. A status is otherwise
 `"not requested"` or `"ok"`.
 
-`BenchmarkReport::layer_stats` contains compiled layer names, zero-based executable stage
-indices, and execution times in microseconds. `BenchmarkReport::mla_stage_stats` contains each
-MLA stage's index, numbered the same way, and its mean hardware latency in microseconds. These
-measurements use separate profiling passes and do not sum to headline latency.
+`BenchmarkReport::mla_layer_stats` contains each compiled MLA layer's zero-based executable
+stage index, name, and hardware latency in microseconds from one profiling pass per layer.
+`BenchmarkReport::mla_stage_stats` contains each MLA stage's index, numbered the same way, and its
+mean hardware latency in microseconds. These measurements use separate profiling passes, so layer
+latencies do not sum to the stage or headline latency.
 `BenchmarkReport::save(file_path)` explicitly writes the complete report using the public field
 names and units: `.json` selects JSON; `.yaml` and other endings select YAML. It includes
 telemetry, both statuses, and empty MLA lists when profiling is disabled. It creates missing

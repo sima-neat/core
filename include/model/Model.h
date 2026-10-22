@@ -55,17 +55,18 @@ class Graph;
 using TensorSpec = TensorConstraint;
 
 /**
- * @brief Hardware timing for one compiled MLA layer or segment.
+ * @brief Hardware latency of one compiled MLA layer or segment.
  *
- * Names describe compiler-generated MLA operations, which may fuse or split ONNX operators.
- * `total_execution_time_us` is the hardware `run_time` counter, not host wall-clock latency.
- * Zero-time no-op entries are retained. `stage_index` identifies the containing executable stage
- * in model execution order (zero-based, including A65 stages), not archive file order.
+ * `stage_index` identifies the containing executable stage in model execution order (zero-based,
+ * including A65 stages), not archive file order. `name` describes a compiler-generated MLA
+ * operation, which may fuse or split ONNX operators. `latency_us` is the hardware `run_time`
+ * counter from one profiling pass that runs the layer on its own; layer latencies do not add up
+ * to the stage latency. Zero-time no-op entries are retained.
  */
 struct MlaLayerStats {
-  std::string name;
-  double total_execution_time_us = 0.0;
   std::size_t stage_index = 0;
+  std::string name;
+  double latency_us = 0.0;
 };
 
 /**
@@ -104,13 +105,13 @@ struct BenchmarkReport {
   /// Energy to process `num_samples` inputs: `avg_power_watts` multiplied by the time the
   /// measured throughput needs for `num_samples` inputs.
   double energy_joules = 0.0;
-  double peak_power_watts = 0.0;            ///< Highest SoM power sample in the throughput window.
-  int throughput_samples = 0;               ///< Inputs measured by the throughput pass.
-  double throughput_duration_ms = 0.0;      ///< Length of the throughput window.
-  Telemetry telemetry;                      ///< Board telemetry for the throughput window.
-  std::vector<MlaLayerStats> layer_stats{}; ///< Empty unless `layer_stats_status` is "ok".
-  /// "not requested", "ok", or why layer stats were not collected.
-  std::string layer_stats_status = "not requested";
+  double peak_power_watts = 0.0;       ///< Highest SoM power sample in the throughput window.
+  int throughput_samples = 0;          ///< Inputs measured by the throughput pass.
+  double throughput_duration_ms = 0.0; ///< Length of the throughput window.
+  Telemetry telemetry;                 ///< Board telemetry for the throughput window.
+  std::vector<MlaLayerStats> mla_layer_stats{}; ///< Empty unless `mla_layer_stats_status` is "ok".
+  /// "not requested", "ok", or why MLA layer stats were not collected.
+  std::string mla_layer_stats_status = "not requested";
   std::vector<MlaStageStats> mla_stage_stats{}; ///< Empty unless `mla_stage_stats_status` is "ok".
   /// "not requested", "ok", or why MLA stage stats were not collected.
   std::string mla_stage_stats_status = "not requested";
@@ -151,11 +152,11 @@ struct BenchmarkOptions {
   /// both passes follow the same rule and the throughput pass's power and temperature readings
   /// cover several telemetry samples. Set it to 0 to stop each pass after `num_samples` inputs.
   int min_duration_ms = 10000;
-  /// Advanced: collect compiled MLA layer timings in a separate profiling pass. Default off.
-  /// Requires mla-rt with the MIP-to-kernel handoff fix in PATH and an idle devkit with no
-  /// other active MLA workloads. A failure leaves the measurements intact and names the reason
-  /// in `layer_stats_status`.
-  bool include_layer_stats = false;
+  /// Advanced: measure each compiled MLA layer's hardware latency with mla-rt after the
+  /// benchmark. Default off. Requires mla-rt with the MIP-to-kernel handoff fix in PATH and an
+  /// idle devkit with no other active MLA workloads. A failure leaves the measurements intact and
+  /// names the reason in `mla_layer_stats_status`.
+  bool include_mla_layer_stats = false;
   /// Advanced: measure each MLA stage's uninterrupted hardware latency with mla-rt after the
   /// benchmark. Default off. Requires mla-rt in PATH and an idle devkit with no other active
   /// MLA workloads. A failure leaves the measurements intact and names the reason in

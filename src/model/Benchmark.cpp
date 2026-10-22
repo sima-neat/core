@@ -412,7 +412,7 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
   static std::shared_mutex benchmark_gate;
   std::unique_lock exclusive(benchmark_gate, std::defer_lock);
   std::shared_lock shared(benchmark_gate, std::defer_lock);
-  if (options.include_layer_stats || options.include_mla_stage_stats) {
+  if (options.include_mla_layer_stats || options.include_mla_stage_stats) {
     exclusive.lock();
   } else {
     shared.lock();
@@ -582,10 +582,9 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
   BenchmarkReport report = internal::build_benchmark_report_from_measurements(
       latency_measured, throughput_measured, num_samples, latency_samples, pushed,
       std::move(telemetry));
-  if (options.include_layer_stats) {
-    report.layer_stats_status = collection_status("layer stats", [&] {
-      const auto stages = resolve_layer_profile_stages(require_mpk_contract(model));
-      report.layer_stats = collect_mla_layer_stats(stages, find_mla_rt());
+  if (options.include_mla_layer_stats) {
+    report.mla_layer_stats_status = collection_status("MLA layer stats", [&] {
+      report.mla_layer_stats = collect_mla_layer_stats(require_mpk_contract(model), find_mla_rt());
     });
   }
   if (options.include_mla_stage_stats) {

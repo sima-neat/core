@@ -45,7 +45,7 @@ OutputSnapshot snapshot(const TensorList& outputs) {
   return result;
 }
 
-void require_stage_stats(const BenchmarkReport& report) {
+void require_mla_stage_stats(const BenchmarkReport& report) {
   require(report.mla_stage_stats_status == "ok",
           "MLA stage stats not collected: " + report.mla_stage_stats_status);
   require(report.mla_stage_stats.size() == 1 && report.mla_stage_stats[0].stage_index == 0,
@@ -80,41 +80,41 @@ int main(int argc, char** argv) {
     BenchmarkOptions options;
     options.num_samples = 20;
     options.min_duration_ms = 0;
-    require(!options.include_layer_stats, "layer collection must default to false");
+    require(!options.include_mla_layer_stats, "MLA layer collection must default to false");
     require(!options.include_mla_stage_stats, "MLA stage collection must default to false");
     const auto baseline = model.benchmark(options);
     require_headlines(baseline);
-    require(baseline.layer_stats.empty() && baseline.layer_stats_status == "not requested",
-            "ordinary benchmarks must not collect layer stats");
+    require(baseline.mla_layer_stats.empty() && baseline.mla_layer_stats_status == "not requested",
+            "ordinary benchmarks must not collect MLA layer stats");
     require(baseline.mla_stage_stats.empty() && baseline.mla_stage_stats_status == "not requested",
             "ordinary benchmarks must not collect MLA stage stats");
 
     options.include_mla_stage_stats = true;
     const auto stage_only = model.benchmark(options);
     require_headlines(stage_only);
-    require_stage_stats(stage_only);
-    require(stage_only.layer_stats_status == "not requested",
-            "MLA stage stats must not imply layer stats");
+    require_mla_stage_stats(stage_only);
+    require(stage_only.mla_layer_stats_status == "not requested",
+            "MLA stage stats must not imply MLA layer stats");
     options.include_mla_stage_stats = false;
 
     std::vector<std::pair<std::size_t, std::string>> expected_layers;
     for (int round = 0; round < 3; ++round) {
-      options.include_layer_stats = true;
+      options.include_mla_layer_stats = true;
       options.include_mla_stage_stats = true;
       const auto profiled = model.benchmark(options);
       require_headlines(profiled);
-      require_stage_stats(profiled);
-      require(profiled.layer_stats_status == "ok",
-              "layer stats not collected: " + profiled.layer_stats_status);
-      require(!profiled.layer_stats.empty(), "YOLOv8s profiling returned no layer records");
-      require(std::any_of(profiled.layer_stats.begin(), profiled.layer_stats.end(),
-                          [](const auto& layer) { return layer.total_execution_time_us > 0; }),
+      require_mla_stage_stats(profiled);
+      require(profiled.mla_layer_stats_status == "ok",
+              "MLA layer stats not collected: " + profiled.mla_layer_stats_status);
+      require(!profiled.mla_layer_stats.empty(), "YOLOv8s profiling returned no layer records");
+      require(std::any_of(profiled.mla_layer_stats.begin(), profiled.mla_layer_stats.end(),
+                          [](const auto& layer) { return layer.latency_us > 0; }),
               "YOLOv8s profiling returned no hardware timings");
       std::vector<std::pair<std::size_t, std::string>> layers;
-      for (const auto& layer : profiled.layer_stats) {
+      for (const auto& layer : profiled.mla_layer_stats) {
         require(!layer.name.empty(), "profiled layer names must not be empty");
         require(layer.stage_index == 0, "the CI YOLOv8s fixture has one executable stage");
-        require(std::isfinite(layer.total_execution_time_us) && layer.total_execution_time_us >= 0,
+        require(std::isfinite(layer.latency_us) && layer.latency_us >= 0,
                 "layer timings must be finite and nonnegative, including real zero-time no-ops");
         layers.emplace_back(layer.stage_index, layer.name);
       }
@@ -133,19 +133,19 @@ int main(int argc, char** argv) {
                   "fresh inference output changed after profiling");
         runner.close();
       }
-      options.include_layer_stats = false;
+      options.include_mla_layer_stats = false;
       options.include_mla_stage_stats = false;
       const auto ordinary = model.benchmark(options);
       require_headlines(ordinary);
-      require(ordinary.layer_stats.empty() && ordinary.mla_stage_stats.empty(),
+      require(ordinary.mla_layer_stats.empty() && ordinary.mla_stage_stats.empty(),
               "profiling must not leak into later ordinary reports");
       require(ordinary.throughput_samples == options.num_samples,
               "ordinary benchmark lost inputs after profiling");
-      std::cerr << "[layer_stats] round=" << round + 1 << " layers=" << layers.size()
+      std::cerr << "[mla_stats] round=" << round + 1 << " layers=" << layers.size()
                 << " stage_latency_us=" << profiled.mla_stage_stats[0].latency_us
                 << " cached_inference=correct fresh_inference=correct normal_benchmark=ok\n";
     }
-    std::cerr << "[OK] yolov8_model_layer_stats_test passed\n";
+    std::cerr << "[OK] yolov8_model_mla_stats_test passed\n";
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "[ERR] " << error.what() << '\n';

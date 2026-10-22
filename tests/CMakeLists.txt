@@ -424,8 +424,8 @@ set(UNIT_TESTS
   unit_benchmark_measurement_contract_test
   unit_telemetry_monitor_test
   unit_benchmark_report_test
-  unit_benchmark_layer_stats_test
-  unit_benchmark_stage_stats_test
+  unit_benchmark_mla_layer_stats_test
+  unit_benchmark_mla_stage_stats_test
   unit_measurement_consistency_test
   unit_lttng_plugin_percentiles_test
   unit_model_infer_output_name_test
@@ -1783,18 +1783,17 @@ if (NOT yolov8_model_benchmark_metrics_test IN_LIST PIPELINESESSION_TEST_BLACKLI
     RESOURCE_LOCK "perf-device;accelerator-device")
 endif()
 
-# The normal E2E CI lane selects this strict test via the e2e label. MIP profiling and the
-# mla-rt stage latency pass must own an idle MLA, so also exclude every other CTest test
-# while it runs.
+# The normal E2E CI lane selects this strict test via the e2e label. The mla-rt layer and stage
+# latency passes must own an idle MLA, so also exclude every other CTest test while it runs.
 add_pipeline_test_strict(
-  yolov8_model_layer_stats_test
-  e2e_pipelines/obj_detection/yolov8_model_layer_stats_test.cpp
+  yolov8_model_mla_stats_test
+  e2e_pipelines/obj_detection/yolov8_model_mla_stats_test.cpp
   e2e_pipelines/e2e_utils.cpp
   ARGS ${CMAKE_SOURCE_DIR}
 )
-if (NOT yolov8_model_layer_stats_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(yolov8_model_layer_stats_test PROPERTIES
-    LABELS "strict;e2e;obj_detection;benchmark;layer-stats;mla-stage-stats"
+if (NOT yolov8_model_mla_stats_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_tests_properties(yolov8_model_mla_stats_test PROPERTIES
+    LABELS "strict;e2e;obj_detection;benchmark;mla-layer-stats;mla-stage-stats"
     RUN_SERIAL TRUE
     RESOURCE_LOCK "perf-device;accelerator-device"
     TIMEOUT 240)

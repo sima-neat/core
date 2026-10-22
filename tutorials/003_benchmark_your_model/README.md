@@ -57,37 +57,38 @@ The returned report starts with the headline fields most users need: average end
 
 Power comes from Sentinel, the board telemetry daemon that the Neat installer sets up. `report.telemetry` also carries rail power, die and board temperatures, CPU utilization, and MLA memory for the throughput pass; see [Measure model execution](/develop-apps/development-workflow/model#power-and-board-telemetry) for each field. If Sentinel is not running, the benchmark still reports latency and throughput, leaves the power fields at zero, and sets `report.telemetry.status` to the reason.
 
-### Advanced: MLA layer and stage stats {#step-read-layer-stats}
+### Advanced: MLA layer and stage stats {#step-read-mla-stats}
 
 Two opt-in options run `mla-rt` after the benchmark to time the compiled MLA code. Both are
 disabled by default and need an idle devkit with no other MLA workloads. Add
-`--include-layer-stats` or `--include-mla-stage-stats` to either tutorial command, or enable them
+`--include-mla-layer-stats` or `--include-mla-stage-stats` to either tutorial command, or enable them
 through the API:
 
 ```cpp
 simaai::neat::BenchmarkOptions options;
-options.include_layer_stats = true;
+options.include_mla_layer_stats = true;
 options.include_mla_stage_stats = true;
 auto report = model.benchmark(options);
 ```
 
 ```python
 options = pyneat.BenchmarkOptions()
-options.include_layer_stats = True
+options.include_mla_layer_stats = True
 options.include_mla_stage_stats = True
 report = model.benchmark(options)
 ```
 
-Read `report.layer_stats` for each compiled MLA layer's `name`, zero-based `stage_index`,
-and `total_execution_time_us`. Zero-time no-op entries are retained. Layer timings use
-separate profiling passes and do not sum to the headline latency.
+Read `report.mla_layer_stats` for each compiled MLA layer's zero-based `stage_index`, `name`,
+and `latency_us`: the hardware run time from one profiling pass that runs that layer on its own.
+Zero-time no-op entries are retained. Layer latencies do not add up to the stage latency or the
+headline latency.
 
 Read `report.mla_stage_stats` for each MLA stage's `stage_index` and `latency_us`: the mean
 hardware time of 200 uninterrupted runs of that stage. It excludes the host, EV74, and data
 movement, so it is lower than the headline latency.
 
 If `mla-rt` is missing or fails, `benchmark()` still returns the headline measurements, leaves
-the list empty, and sets `report.layer_stats_status` or `report.mla_stage_stats_status` to the
+the list empty, and sets `report.mla_layer_stats_status` or `report.mla_stage_stats_status` to the
 reason. Each status is `"not requested"` or `"ok"` otherwise.
 
 ### Save the report {#step-save-report}
@@ -112,7 +113,7 @@ file is replaced, and the written path is returned. Saving is explicit; `benchma
 not create a report file automatically.
 
 For either tutorial command, append `--report results/model/yolo_benchmark.yaml`. Combine
-it with `--include-layer-stats` or `--include-mla-stage-stats` to save the headline measurements
+it with `--include-mla-layer-stats` or `--include-mla-stage-stats` to save the headline measurements
 together with the MLA timings.
 
 ## Run

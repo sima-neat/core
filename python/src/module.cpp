@@ -4684,7 +4684,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("resize_mode", &simaai::neat::BenchmarkOptions::resize_mode)
       .def_rw("include_plugin_latency", &simaai::neat::BenchmarkOptions::include_plugin_latency)
       .def_rw("min_duration_ms", &simaai::neat::BenchmarkOptions::min_duration_ms)
-      .def_rw("include_layer_stats", &simaai::neat::BenchmarkOptions::include_layer_stats)
+      .def_rw("include_mla_layer_stats", &simaai::neat::BenchmarkOptions::include_mla_layer_stats)
       .def_rw("include_mla_stage_stats", &simaai::neat::BenchmarkOptions::include_mla_stage_stats);
 
   using simaai::neat::Telemetry;
@@ -4742,9 +4742,9 @@ NB_MODULE(_pyneat_core, m) {
 
   // Benchmark results, not user-built.
   nb::class_<simaai::neat::MlaLayerStats>(m, "MlaLayerStats")
+      .def_ro("stage_index", &simaai::neat::MlaLayerStats::stage_index)
       .def_ro("name", &simaai::neat::MlaLayerStats::name)
-      .def_ro("total_execution_time_us", &simaai::neat::MlaLayerStats::total_execution_time_us)
-      .def_ro("stage_index", &simaai::neat::MlaLayerStats::stage_index);
+      .def_ro("latency_us", &simaai::neat::MlaLayerStats::latency_us);
 
   nb::class_<simaai::neat::MlaStageStats>(m, "MlaStageStats")
       .def_ro("stage_index", &simaai::neat::MlaStageStats::stage_index)
@@ -4763,8 +4763,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("throughput_samples", &simaai::neat::BenchmarkReport::throughput_samples)
       .def_rw("throughput_duration_ms", &simaai::neat::BenchmarkReport::throughput_duration_ms)
       .def_ro("telemetry", &simaai::neat::BenchmarkReport::telemetry)
-      .def_ro("layer_stats", &simaai::neat::BenchmarkReport::layer_stats)
-      .def_ro("layer_stats_status", &simaai::neat::BenchmarkReport::layer_stats_status)
+      .def_ro("mla_layer_stats", &simaai::neat::BenchmarkReport::mla_layer_stats)
+      .def_ro("mla_layer_stats_status", &simaai::neat::BenchmarkReport::mla_layer_stats_status)
       .def_ro("mla_stage_stats", &simaai::neat::BenchmarkReport::mla_stage_stats)
       .def_ro("mla_stage_stats_status", &simaai::neat::BenchmarkReport::mla_stage_stats_status)
       .def(

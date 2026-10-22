@@ -16,7 +16,7 @@ using namespace simaai::neat::internal;
 struct Fixture {
   std::filesystem::path root;
   Fixture() {
-    gchar* directory = g_dir_make_tmp("neat-stage-stats-test-XXXXXX", nullptr);
+    gchar* directory = g_dir_make_tmp("neat-mla-stage-stats-test-XXXXXX", nullptr);
     require(directory != nullptr, "create fixture");
     root = std::filesystem::path(directory) / "model with spaces";
     g_free(directory);
@@ -67,7 +67,7 @@ pipeline_internal::sima::MpkContract contract(Fixture& fixture) {
   pipeline_internal::sima::MpkContract result;
   result.mpk_json_path = (fixture.root / "etc/demo_mpk.json").string();
   result.plugins = {plugin("mla", 4, "demo_stage2_mla.elf"), plugin("EV74", 1, "kernel"),
-                    plugin("MLA", 2, "demo_stage1_mla.elf"), plugin("A65", 3, "host.so")};
+                    plugin("MLA", 2, "demo_stage1_mla.elf"), plugin("a65", 3, "host.so")};
   return result;
 }
 // Mirrors mla-rt -vss: a microsecond header and one root entry keyed by the ELF path as given.
@@ -89,13 +89,21 @@ void exact_command_and_stage_order() {
       "case \"$7\" in --stats=*) ;; *) exit 9 ;; esac\n"
       "basename \"$8\" >> '" +
       log.string() + "'\n" + emit(stats(average)));
-  const auto records = collect_mla_stage_stats(contract(fixture), command);
-  require(records.size() == 2 && records[0].stage_index == 0 && records[1].stage_index == 2,
-          "MLA/A65 execution order must determine stage indices");
-  require(records[0].latency_us == 655 && records[1].latency_us == 655,
-          "latency must be the tile.lat average");
-  require(read(log) == "demo_stage1_mla.elf\ndemo_stage2_mla.elf\n",
-          "each MLA ELF must run once, in execution order");
+  auto model = contract(fixture);
+  for (const auto& [mla, a65] : std::vector<std::pair<std::string, std::string>>{
+           {"mla", "a65"}, {"MLA", "A65"}, {"mLa", "a65"}}) {
+    model.plugins[0].processor = mla;
+    model.plugins[2].processor = mla;
+    model.plugins[3].processor = a65;
+    std::filesystem::remove(log);
+    const auto records = collect_mla_stage_stats(model, command);
+    require(records.size() == 2 && records[0].stage_index == 0 && records[1].stage_index == 2,
+            "MLA/A65 execution order must determine stage indices in any processor case");
+    require(records[0].latency_us == 655 && records[1].latency_us == 655,
+            "latency must be the tile.lat average");
+    require(read(log) == "demo_stage1_mla.elf\ndemo_stage2_mla.elf\n",
+            "each MLA ELF must run once, in execution order");
+  }
 }
 
 void process_failures_are_reported() {
@@ -106,8 +114,9 @@ void process_failures_are_reported() {
   fails(
       [&] { collect_mla_stage_stats(model, fixture.runtime("echo 'device busy' >&2\nexit 7\n")); },
       "device busy");
-  fails([&] { collect_mla_stage_stats(model, fixture.runtime("exit 0\n")); },
-        "wrote no stats file\nMLA stage 0 (demo_stage1_mla.elf)");
+  fails(
+      [&] { collect_mla_stage_stats(model, fixture.runtime("echo 'stats skipped'\n")); },
+      "wrote no stats file\nMLA stage 0 (demo_stage1_mla.elf)\nmla-rt diagnostics:\nstats skipped");
 }
 
 void unusable_stats_are_rejected() {
@@ -126,15 +135,18 @@ void unusable_stats_are_rejected() {
 void model_problems_are_reported() {
   Fixture fixture;
   auto model = contract(fixture);
-  const auto command = fixture.runtime(emit(stats(average)));
+  const auto marker = fixture.root / "mla-rt-ran";
+  const auto command = fixture.runtime("touch '" + marker.string() + "'\n" + emit(stats(average)));
+  // Only the second stage is missing, so the first must not run either.
   std::filesystem::remove(fixture.root / "share/demo_stage2_mla.elf");
   fails([&] { collect_mla_stage_stats(model, command); }, "missing MLA ELF");
+  require(!std::filesystem::exists(marker), "every stage must be validated before mla-rt runs");
   model.plugins = {plugin("A65", 1, "host.so")};
   fails([&] { collect_mla_stage_stats(model, command); }, "no MLA stages");
 }
 } // namespace
 
-RUN_TEST("unit_benchmark_stage_stats_test", ([] {
+RUN_TEST("unit_benchmark_mla_stage_stats_test", ([] {
            exact_command_and_stage_order();
            process_failures_are_reported();
            unusable_stats_are_rejected();

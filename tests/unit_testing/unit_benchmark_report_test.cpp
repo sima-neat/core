@@ -82,10 +82,10 @@ void saves_exact_path_and_replaces_existing_report(const std::string& extension)
   const auto parsed = YAML::LoadFile(target.string());
   require(parsed["latency_ms"].as<double>() == report.latency_ms,
           "decimal scalars must be locale independent");
-  require(parsed["layer_stats"].IsSequence() && parsed["layer_stats"].size() == 0 &&
+  require(parsed["mla_layer_stats"].IsSequence() && parsed["mla_layer_stats"].size() == 0 &&
               parsed["mla_stage_stats"].IsSequence() && parsed["mla_stage_stats"].size() == 0,
           "a report without profiling must save empty sequences");
-  require(parsed["layer_stats_status"].as<std::string>() == "not requested" &&
+  require(parsed["mla_layer_stats_status"].as<std::string>() == "not requested" &&
               parsed["mla_stage_stats_status"].as<std::string>() == "not requested",
           "a report without profiling must say it was not requested");
   require(!std::filesystem::exists(target.parent_path() / "benchmark.yaml"),
@@ -94,17 +94,17 @@ void saves_exact_path_and_replaces_existing_report(const std::string& extension)
           "save must preserve latency percentiles");
   require(parsed["telemetry"]["cpu_cores_usage_pct"][0]["mean"].as<double>() == 42.25,
           "save must preserve per-core telemetry measurements");
-  report.layer_stats = {{"MLA_0/noop", 0.0, 2}};
-  report.layer_stats_status = "ok";
+  report.mla_layer_stats = {{2, "MLA_0/noop", 0.0}};
+  report.mla_layer_stats_status = "ok";
   report.mla_stage_stats = {{2, 655.0}};
   report.mla_stage_stats_status = "mla-rt failed (exit 1)\nbusy: \"MLA\"";
   report.save(target);
   if (extension == ".json") {
     const auto json = nlohmann::json::parse(read_file(target));
-    require(json["latency_ms"] == report.latency_ms && json["layer_stats"].is_array() &&
-                json["layer_stats"][0]["stage_index"] == 2 &&
-                json["layer_stats"][0]["name"] == "MLA_0/noop" &&
-                json["layer_stats_status"] == "ok" &&
+    require(json["latency_ms"] == report.latency_ms && json["mla_layer_stats"].is_array() &&
+                json["mla_layer_stats"][0]["stage_index"] == 2 &&
+                json["mla_layer_stats"][0]["name"] == "MLA_0/noop" &&
+                json["mla_layer_stats_status"] == "ok" &&
                 json["mla_stage_stats"][0]["stage_index"] == 2 &&
                 json["mla_stage_stats"][0]["latency_us"] == 655.0 &&
                 json["mla_stage_stats_status"] == report.mla_stage_stats_status &&
@@ -120,11 +120,10 @@ void saves_exact_path_and_replaces_existing_report(const std::string& extension)
           "save must preserve MLA stage latencies");
   require(saved["mla_stage_stats_status"].as<std::string>() == report.mla_stage_stats_status,
           "save must preserve a multi-line failure reason");
-  const auto layer = saved["layer_stats"][0];
+  const auto layer = saved["mla_layer_stats"][0];
   require(layer["stage_index"].as<std::size_t>() == 2,
           "stage indices must preserve execution order gaps for A65 stages");
-  require(layer["name"].as<std::string>() == "MLA_0/noop" &&
-              layer["total_execution_time_us"].as<double>() == 0,
+  require(layer["name"].as<std::string>() == "MLA_0/noop" && layer["latency_us"].as<double>() == 0,
           "replacement must retain zero-time no-op records");
 }
 
@@ -160,11 +159,11 @@ void failures_do_not_destroy_a_previous_report(const std::string& extension) {
   const auto original = read_file(target);
   for (double invalid :
        {-1.0, std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity()}) {
-    report.layer_stats = {{"bad", invalid, 0}};
+    report.mla_layer_stats = {{0, "bad", invalid}};
     require_throws([&] { report.save(target); });
     require(read_file(target) == original, "invalid layer timings must preserve the existing file");
   }
-  report.layer_stats.clear();
+  report.mla_layer_stats.clear();
   report.mla_stage_stats = {{0, -1.0}};
   require_throws([&] { report.save(target); });
   require(read_file(target) == original, "invalid stage latencies must preserve the existing file");

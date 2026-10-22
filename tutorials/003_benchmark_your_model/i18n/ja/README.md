@@ -52,29 +52,29 @@ Pythonは、`pyneat.BenchmarkOptions`を通じて、同じフィールドを公�
 
 電力は、NeatのインストーラーがセットアップするボードのテレメトリデーモンであるSentinelから取得されます。`report.telemetry`には、スループット測定パスのレール電力、ダイとボードの温度、CPU使用率、MLAメモリも含まれます。各フィールドについては、[モデルの実行を測定する](/develop-apps/development-workflow/model#power-and-board-telemetry)を参照してください。Sentinelが実行されていない場合でも、ベンチマークはレイテンシとスループットを報告し、電力フィールドをゼロのままにして、`report.telemetry.status`にその理由を設定します。
 
-### 上級: MLA レイヤー統計とステージ統計 {#step-read-layer-stats}
+### 上級: MLA レイヤー統計とステージ統計 {#step-read-mla-stats}
 
-2 つのオプトインオプションは、ベンチマークの後に `mla-rt` を実行し、コンパイル済み MLA コードの時間を測定します。どちらも既定では無効で、他の MLA ワークロードが動作していないアイドル状態の devkit が必要です。チュートリアルのコマンドに `--include-layer-stats` または `--include-mla-stage-stats` を追加するか、API で次のように有効にします。
+2 つのオプトインオプションは、ベンチマークの後に `mla-rt` を実行し、コンパイル済み MLA コードの時間を測定します。どちらも既定では無効で、他の MLA ワークロードが動作していないアイドル状態の devkit が必要です。チュートリアルのコマンドに `--include-mla-layer-stats` または `--include-mla-stage-stats` を追加するか、API で次のように有効にします。
 
 ```cpp
 simaai::neat::BenchmarkOptions options;
-options.include_layer_stats = true;
+options.include_mla_layer_stats = true;
 options.include_mla_stage_stats = true;
 auto report = model.benchmark(options);
 ```
 
 ```python
 options = pyneat.BenchmarkOptions()
-options.include_layer_stats = True
+options.include_mla_layer_stats = True
 options.include_mla_stage_stats = True
 report = model.benchmark(options)
 ```
 
-`report.layer_stats` から、コンパイル済みの各 MLA レイヤーの `name`、ゼロ始まりの `stage_index`、`total_execution_time_us` を読み取ります。実行時間がゼロの no-op エントリも保持されます。レイヤーの時間は別のプロファイリング実行で測定されるため、その合計は全体のレイテンシとは一致しません。
+`report.mla_layer_stats` から、コンパイル済みの各 MLA レイヤーのゼロ始まりの `stage_index`、`name`、`latency_us` を読み取ります。これは、そのレイヤーだけを実行する 1 回のプロファイリング実行で測定したハードウェア実行時間です。実行時間がゼロの no-op エントリも保持されます。レイヤーのレイテンシを合計しても、ステージのレイテンシや全体のレイテンシとは一致しません。
 
 `report.mla_stage_stats` から、各 MLA ステージの `stage_index` と `latency_us` を読み取ります。これはそのステージを中断なしで 200 回実行したときのハードウェア時間の平均です。ホスト、EV74、データ転送は含まれないため、全体のレイテンシより小さくなります。
 
-`mla-rt` が見つからないか失敗した場合でも、`benchmark()` は主要な測定値を返し、リストを空のままにして、`report.layer_stats_status` または `report.mla_stage_stats_status` に理由を設定します。それ以外の場合、各ステータスは `"not requested"` または `"ok"` です。
+`mla-rt` が見つからないか失敗した場合でも、`benchmark()` は主要な測定値を返し、リストを空のままにして、`report.mla_layer_stats_status` または `report.mla_stage_stats_status` に理由を設定します。それ以外の場合、各ステータスは `"not requested"` または `"ok"` です。
 
 ### レポートの保存 {#step-save-report}
 
@@ -94,7 +94,7 @@ json_path = report.save("results/model/yolo_benchmark.json")
 
 ファイル名を含むパスを指定してください。存在しない親ディレクトリは作成され、既存のファイルは置き換えられ、書き込まれたパスが返されます。保存は明示的に行います。`benchmark()` はレポートファイルを自動作成しません。
 
-どちらのチュートリアルコマンドにも `--report results/model/yolo_benchmark.yaml` を追加できます。`--include-layer-stats` または `--include-mla-stage-stats` と組み合わせると、主要な測定値と MLA の実行時間を一緒に保存できます。
+どちらのチュートリアルコマンドにも `--report results/model/yolo_benchmark.yaml` を追加できます。`--include-mla-layer-stats` または `--include-mla-stage-stats` と組み合わせると、主要な測定値と MLA の実行時間を一緒に保存できます。
 
 ## Run
 

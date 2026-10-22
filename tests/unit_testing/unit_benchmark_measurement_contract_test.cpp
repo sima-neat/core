@@ -178,7 +178,7 @@ simaai::neat::ResolvedPreprocessPlan make_benchmark_preprocess_plan() {
 
 void benchmark_options_api_is_additive() {
   using namespace simaai::neat;
-  require(!BenchmarkOptions{}.include_layer_stats, "layer profiling must be opt-in");
+  require(!BenchmarkOptions{}.include_mla_layer_stats, "MLA layer profiling must be opt-in");
   require(!BenchmarkOptions{}.include_mla_stage_stats, "MLA stage profiling must be opt-in");
   using OptionsOverload = BenchmarkReport (Model::*)(const BenchmarkOptions&);
   using SamplesOverload = BenchmarkReport (Model::*)(int);

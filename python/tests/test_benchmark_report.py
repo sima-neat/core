@@ -54,8 +54,8 @@ def test_report_round_trip(tmp_path, filename):
       "fps": report.fps,
       "avg_power_watts": report.avg_power_watts,
       "energy_joules": report.energy_joules,
-      "layer_stats": [],
-      "layer_stats_status": "not requested",
+      "mla_layer_stats": [],
+      "mla_layer_stats_status": "not requested",
       "mla_stage_stats": [],
       "mla_stage_stats_status": "not requested",
   }
@@ -82,12 +82,14 @@ def test_mla_stats_are_read_only_results():
     with pytest.raises(TypeError):
       stats()
   report = pyneat.BenchmarkReport()
-  for field, value in (("layer_stats", []), ("layer_stats_status", "ok"),
+  for field, value in (("mla_layer_stats", []), ("mla_layer_stats_status", "ok"),
                        ("mla_stage_stats", []), ("mla_stage_stats_status", "ok")):
+    # Without this, a misspelled field would also raise AttributeError.
+    assert hasattr(report, field)
     with pytest.raises(AttributeError):
       setattr(report, field, value)
-  assert report.layer_stats == [] and report.mla_stage_stats == []
-  assert report.layer_stats_status == "not requested"
+  assert report.mla_layer_stats == [] and report.mla_stage_stats == []
+  assert report.mla_layer_stats_status == "not requested"
   assert report.mla_stage_stats_status == "not requested"
 
 

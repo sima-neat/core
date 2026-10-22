@@ -31,7 +31,7 @@
 <text x="76" y="274" class="fmono fln">2</text>
 <text x="104" y="274" class="fmono fcode" xml:space="preserve">options.num_samples = args.samples</text>
 <text x="76" y="300" class="fmono fln">3</text>
-<text x="104" y="300" class="fmono fcode" xml:space="preserve">options.include_layer_stats = args.include_…</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">options.include_mla_layer_stats = args.incl…</text>
 <text x="76" y="326" class="fmono fln">4</text>
 <text x="104" y="326" class="fmono fcode" xml:space="preserve">options.include_mla_stage_stats = args.incl…</text>
 <text x="76" y="352" class="fmono fln">5</text>
@@ -51,17 +51,17 @@
 <text x="104" y="352" class="fmono fcode" xml:space="preserve">print(f&quot;report_peak_power_watts={report.pea…</text>
 </g>
 <g id="code3" class="fanim" opacity="0">
-<text x="76" y="212" class="fsans fcap">STEP 4 · Read layer stats</text>
+<text x="76" y="212" class="fsans fcap">STEP 4 · Read mla stats</text>
 <text x="76" y="248" class="fmono fln">1</text>
-<text x="104" y="248" class="fmono fcode" xml:space="preserve">if options.include_layer_stats:</text>
+<text x="104" y="248" class="fmono fcode" xml:space="preserve">if options.include_mla_layer_stats:</text>
 <text x="76" y="274" class="fmono fln">2</text>
-<text x="104" y="274" class="fmono fcode" xml:space="preserve">  print(f&quot;layer_stats_status={report.layer_…</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">  print(f&quot;mla_layer_stats_status={report.ml…</text>
 <text x="76" y="300" class="fmono fln">3</text>
-<text x="104" y="300" class="fmono fcode" xml:space="preserve">  for layer in report.layer_stats:</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">  for layer in report.mla_layer_stats:</text>
 <text x="76" y="326" class="fmono fln">4</text>
 <text x="104" y="326" class="fmono fcode" xml:space="preserve">    print(f&quot;  stage_index={layer.stage_inde…</text>
 <text x="76" y="352" class="fmono fln">5</text>
-<text x="104" y="352" class="fmono fcode" xml:space="preserve">          f&quot;total_execution_time_us={layer.…</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">if options.include_mla_stage_stats:</text>
 </g>
 <g id="code4" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 5 · Save report</text>
@@ -106,7 +106,7 @@
 <line x1="964" y1="293" x2="990" y2="293" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>
 <rect x="996" y="250" width="96" height="86" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
 <text x="1044" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 4</text>
-<text x="1044" y="299" class="fsans fnl" font-size="11.5" text-anchor="middle"><tspan x="1044" dy="0">Read layer</tspan><tspan x="1044" dy="14">stats</tspan></text>
+<text x="1044" y="299" class="fsans fnl" font-size="11.5" text-anchor="middle"><tspan x="1044" dy="0">Read mla</tspan><tspan x="1044" dy="14">stats</tspan></text>
 </g>
 <g id="ring3" class="fanim" opacity="0">
 <rect x="992" y="246" width="104" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
@@ -127,7 +127,7 @@
 </g>
 <script type="text/ecmascript"><![CDATA[
 (function(){
-  var n=5, i=0, t=null, anchors=["load-model", "run-benchmark", "read-report", "read-layer-stats", "save-report"];
+  var n=5, i=0, t=null, anchors=["load-model", "run-benchmark", "read-report", "read-mla-stats", "save-report"];
   function el(id){return document.getElementById(id);}
   function paint(a){
     for(var k=0;k<n;k++){
