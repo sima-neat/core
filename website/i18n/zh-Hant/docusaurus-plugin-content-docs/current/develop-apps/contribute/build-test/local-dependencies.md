@@ -161,8 +161,8 @@ CMake 快取、設定的編譯器、目標 Python 標頭與建置出的擴充模
 
 僅準備相依標頭時，`--install-deps-only` 需要本機套件覆寫。它複製標頭，
 不建置或執行 A65/EV 程式碼。原生 clang-tidy 分析請使用 `scripts/run_cpp_tidy.sh`，
-搭配選定的套件覆寫與 Scheduler 前綴。`TIDY_INSTALL_DEPS=1` 會安裝原生主機分析
-先決條件，並以僅標頭模式呼叫已安裝的 Scheduler 協調器；不會啟用或修改 SDK sysroot。
+搭配選定的 Scheduler 與相符測試支援套件的前綴。`TIDY_INSTALL_DEPS=1` 會安裝原生
+主機分析先決條件。指令碼直接使用各套件的公開 CMake 匯出項目，不會啟用或修改 SDK sysroot。
 使用 LLiMa 的 GenAI 實作檔案不包含在此僅主機分析設定內。指令碼不會以環境中其他
 SDK LLiMa 套件取代選定建置的相依項目。僅說明內容建置不會準備原生相依項目。
 
@@ -189,10 +189,9 @@ Codecs 封存檔。Core 不會獨立解析這些儲存庫。
 `tools/ci/materialize_dependencies.py --manifest ... --output-root ...` 命令仍是
 另行審查的不可變清單可選用的傳輸方式。它不是預設流程，也沒有隱含的 `ci/dependencies.json`。
 
-程式碼品質檢查會下載本次執行的 `neat-core-dist`、驗證它，並以僅標頭模式呼叫真正的
-Core 委派程式與已安裝的 Scheduler 協調器。協調器會檢查建置所使用的相同下層套件
-與已驗證的平台建置證據。Core 分析僅能看見 Scheduler 的前端前綴。
-這是主機工具驗證，而非目標執行。
+程式碼品質檢查使用 `tools/ci/acquire_scheduler.py`，依照相同的相依性原則獨立取得
+已發布的 Scheduler，無須等待 Core 建置完成。Scheduler 的啟動程序會驗證套件組。
+主機分析使用其前端與相符測試支援的 CMake 匯出項目，不需啟用 SDK 或在目標上執行。
 
 受保護效能測試通道所需的目標端監督程式，請參閱[硬體測試擁有權](./hardware-test-safety.md)。
 

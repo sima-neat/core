@@ -1,8 +1,10 @@
 """Host-only workflow ordering/transport fixtures; never package qualification."""
+import json
 import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import textwrap
 
 import pytest
@@ -24,14 +26,9 @@ def needs(name):
     return re.findall(r'- ([\w-]+)', block[1]) if block else []
 
 
-def load_preparation():
-    import importlib.util
-    import sys
-    sys.path.insert(0, str(ROOT / 'tools/ci'))
-    spec = importlib.util.spec_from_file_location('prepare_hygiene_cohort', ROOT / 'tools/ci/prepare_hygiene_cohort.py')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+def run_block(name):
+    step = job('code-hygiene').split(f'      - name: {name}\n', 1)[1].split('\n      - ', 1)[0]
+    return textwrap.dedent(step.split('        run: |\n', 1)[1])
 
 
 def test_dependency_dag_and_publication_gate():
@@ -42,7 +39,7 @@ def test_dependency_dag_and_publication_gate():
             visit(dependency, active + [name])
     for name in names:
         visit(name, [])
-    assert 'build' in needs('code-hygiene')
+    assert 'build' not in needs('code-hygiene')
     assert 'code-hygiene' not in needs('build')
     assert 'code-hygiene' in needs('publish-vulcan-artifacts')
     gate = job('publish-vulcan-artifacts')
@@ -51,22 +48,65 @@ def test_dependency_dag_and_publication_gate():
     assert 'publish-vulcan-artifacts' in needs('test-devkit')
 
 
-def test_same_run_artifact_preparation_precedes_analysis():
-    body = job('code-hygiene')
-    assert 'uses: actions/download-artifact@v5' in body
-    assert 'name: neat-core-dist' in body
-    assert 'run-id:' not in body and 'repository:' not in body
-    # Matched target dependencies come from the verified same-run artifact.
-    # The later installer supplies host analysis tools, not a second cohort.
-    assert body.index('python3 tools/ci/prepare_hygiene_cohort.py') < body.index('./' + HYGIENE_INSTALLER)
-    assert body.index('./' + HYGIENE_INSTALLER) < body.index('./scripts/ci/run_code_hygiene.sh')
-    assert 'test_ci_hygiene_cohort.py' in job('resolve-compiler-cache')
-    assert 'materialize_dependencies.py' not in body
-    assert './build.sh' not in body
-    helper = (ROOT / 'tools/ci/prepare_hygiene_cohort.py').read_text()
-    assert 'tools/build_dependencies.py' in helper
-    assert "['prepare', '--headers-only'" in helper
-    assert 'dependencies.prepare(' not in helper and 'dependencies.find_config(' not in helper
+@pytest.mark.parametrize(('profile', 'head_ref'), [
+    ('ready', 'topic'), ('ready', ''), ('acquisition-failure', 'topic'),
+    ('linefeed', 'topic'), ('carriage-return', 'topic'),
+])
+def test_hygiene_acquires_without_core_build_and_stops_on_failure(tmp_path, profile, head_ref):
+    """Run the workflow shell; the acquisition boundary supplies private package paths."""
+    acquisition = tmp_path / 'tools/ci/acquire_scheduler.py'
+    acquisition.parent.mkdir(parents=True)
+    acquisition.write_text(textwrap.dedent('''\
+        import argparse, json, os, shlex, sys
+        from pathlib import Path
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--branch', required=True)
+        parser.add_argument('--environment', required=True)
+        parser.add_argument('--output', required=True)
+        args = parser.parse_args()
+        Path('acquisition.json').write_text(json.dumps(vars(args)))
+        package = str(Path(args.output) / 'scheduler with spaces')
+        profile = os.environ['TEST_PROFILE']
+        if profile == 'linefeed': package += '\\ninvalid'
+        if profile == 'carriage-return': package += '\\rinvalid'
+        print('export NEAT_SCHEDULER_PACKAGE_DIR=' + shlex.quote(package))
+        if profile == 'acquisition-failure': sys.exit(23)
+        print('export NEAT_SCHEDULER_CLIENT_TEST_PACKAGE_DIR=' + shlex.quote(str(Path(args.output) / 'client-test')))
+        print('export NEAT_RUNNER_PACKAGE_DIR=/not-a-public-analysis-input')
+        '''))
+    analysis = tmp_path / 'scripts/ci/run_code_hygiene.sh'
+    analysis.parent.mkdir(parents=True)
+    analysis.write_text(f'#!{sys.executable}\n' + textwrap.dedent('''\
+        import json, os
+        from pathlib import Path
+        Path('analysis.json').write_text(json.dumps({key: os.environ[key] for key in
+            ('NEAT_SCHEDULER_PACKAGE_DIR', 'NEAT_SCHEDULER_CLIENT_TEST_PACKAGE_DIR')}))
+        '''))
+    analysis.chmod(0o755)
+    github_env = tmp_path / 'github-env'
+    github_env.write_text('EXISTING=value\n')
+    script = (run_block('Acquire published Scheduler for analysis') + '\n' +
+              run_block('Run changed-code hygiene'))
+    result = subprocess.run(['/bin/bash', '-c', script], cwd=tmp_path, text=True, capture_output=True,
+                            env={**os.environ, 'PATH': str(Path(sys.executable).parent) + ':' + os.environ['PATH'],
+                                 'TEST_PROFILE': profile, 'GITHUB_HEAD_REF': head_ref, 'GITHUB_REF_NAME': 'develop',
+                                 'NEAT_VULCAN_ENV': 'production', 'RUNNER_TEMP': str(tmp_path),
+                                 'GITHUB_ENV': str(github_env)})
+    output = tmp_path / 'core-hygiene-dependencies'
+    assert json.loads((tmp_path / 'acquisition.json').read_text()) == {
+        'branch': head_ref or 'develop', 'environment': 'production', 'output': str(output)}
+    if profile != 'ready':
+        assert result.returncode != 0
+        assert not (tmp_path / 'analysis.json').exists()
+        assert github_env.read_text() == 'EXISTING=value\n'
+        if profile != 'acquisition-failure':
+            assert 'Invalid analysis package path' in result.stderr
+        return
+    assert result.returncode == 0, result.stderr
+    expected = {'NEAT_SCHEDULER_PACKAGE_DIR': str(output / 'scheduler with spaces'),
+                'NEAT_SCHEDULER_CLIENT_TEST_PACKAGE_DIR': str(output / 'client-test')}
+    assert json.loads((tmp_path / 'analysis.json').read_text()) == expected
+    assert github_env.read_text() == 'EXISTING=value\n' + ''.join(f'{key}={value}\n' for key, value in expected.items())
 
 
 @pytest.mark.parametrize('profile', ['ready', 'broken-headers-root', 'missing-tool-unprivileged', 'missing-native-module-root', 'apt-failure'])
@@ -129,175 +169,6 @@ def test_hygiene_installer_only_prepares_host_tools(tmp_path, profile):
     assert all(':arm64' not in row and 'dpkg' not in row for row in observed)
     if profile not in ('missing-tool-unprivileged', 'missing-native-module-root'):
         assert headers.read_text() == '#include <memory>\n#include <nlohmann/json.hpp>\n'
-
-
-def installed_dispatch_fixture(tmp_path):
-    """Receipt-bound CLI transport double, not a pretend Scheduler validator.
-
-    Producer's real installed coordinator/DEB integration is separately exercised
-    by Scheduler client_cohort_ingestion_test.py and the actual hygiene command.
-    This test protects Core's actual exec delegate and its own receipt gate.
-    """
-    import hashlib
-    import json
-    import shutil
-    core = tmp_path / 'core'
-    (core / 'tools').mkdir(parents=True)
-    shutil.copy2(ROOT / 'tools/build_dependencies.py', core / 'tools/build_dependencies.py')
-    package = tmp_path / 'scheduler'
-    tool = package / 'usr/share/SimaScheduler/tools/client_dependencies.py'
-    tool.parent.mkdir(parents=True)
-    tool.write_text('import sys\nprint("CLI:" + " ".join(sys.argv[1:]))\n')
-    info = {'component': 'scheduler', 'installed_files': {
-        'share/SimaScheduler/tools/client_dependencies.py': {
-            'kind': 'file', 'sha256': hashlib.sha256(tool.read_bytes()).hexdigest(),
-            'mode': tool.stat().st_mode & 0o7777}}}
-    info['package_sha256'] = hashlib.sha256(json.dumps(info, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
-    (tool.parent.parent / 'buildinfo.json').write_text(json.dumps(info))
-    return core, package, tool
-
-
-def test_hygiene_calls_real_core_exec_delegate(tmp_path):
-    core, package, _ = installed_dispatch_fixture(tmp_path)
-    output = load_preparation().coordinator(core, ['prepare', '--headers-only', '--output', str(tmp_path / 'audit')],
-                                           {**os.environ, 'NEAT_SCHEDULER_PACKAGE_DIR': str(package)})
-    assert output == f'CLI:prepare --headers-only --output {tmp_path / "audit"} --core {core}\n'
-
-
-def test_real_delegate_rejects_changed_installed_coordinator(tmp_path):
-    core, package, tool = installed_dispatch_fixture(tmp_path)
-    tool.write_text(tool.read_text() + '# tampered\n')
-    with pytest.raises(subprocess.CalledProcessError):
-        load_preparation().coordinator(core, ['select', '--require'],
-                                       {**os.environ, 'NEAT_SCHEDULER_PACKAGE_DIR': str(package)})
-
-
-@pytest.mark.parametrize('text', ['import os', 'export OTHER=x', 'export NEAT_X=one\nexport NEAT_X=two',
-                                 'export NEAT_X="line\nline"'])
-def test_invalid_coordinator_output_is_not_executed(text):
-    with pytest.raises(ValueError):
-        load_preparation().shell_exports(text)
-
-
-def test_hygiene_has_no_unused_llima_acquisition():
-    helper = (ROOT / 'tools/ci/prepare_hygiene_cohort.py').read_text()
-    assert 'acquire(' not in helper and 'archive_json' not in helper
-    assert 'NEAT_LLIMA_ARTIFACT_DIR' not in helper and 'NEAT_DEPS_MANIFEST' not in helper
-    assert "selected['CMAKE_PREFIX_PATH']" in helper
-    assert "selected['NEAT_SCHEDULER_PACKAGE_DIR']" in helper
-
-
-def test_hygiene_cli_appends_prepared_environment(tmp_path, monkeypatch):
-    import sys
-    module = load_preparation()
-    env_file = tmp_path / 'github-env'
-    env_file.write_text('EXISTING=value\n')
-    paths = {'core': ROOT, 'dist': tmp_path / 'dist',
-             'output': tmp_path / 'output', 'github_env': env_file}
-    values = {'NEAT_SCHEDULER_PACKAGE_DIR': '/selected/scheduler',
-              'CMAKE_PREFIX_PATH': '/selected/scheduler/usr'}
-    def prepare(args):
-        assert vars(args) == paths
-        return values
-    monkeypatch.setattr(module, 'prepare', prepare)
-    monkeypatch.setattr(sys, 'argv', ['prepare_hygiene_cohort.py', '--core', str(paths['core']),
-                        '--dist', str(paths['dist']), '--output', str(paths['output']),
-                        '--github-env', str(env_file)])
-    module.main()
-    assert env_file.read_text() == (
-        'EXISTING=value\nNEAT_SCHEDULER_PACKAGE_DIR=/selected/scheduler\n'
-        'CMAKE_PREFIX_PATH=/selected/scheduler/usr\n')
-
-
-@pytest.mark.parametrize('with_llima', [False, True])
-@pytest.mark.parametrize('failure', [None, 'verify', 'extract', 'select', 'platform-archives', 'prepare'])
-def test_hygiene_prepares_only_verified_scheduler_inputs(tmp_path, monkeypatch, with_llima, failure):
-    """Real DEB extraction with validation/delegation doubles, not package qualification."""
-    import json
-    from types import SimpleNamespace
-    module = load_preparation()
-    dist = tmp_path / 'dist'; dist.mkdir()
-    roles = ['sima-neat', 'simaai-scheduler'] + (['sima-lmm-core'] if with_llima else [])
-    archives = {}
-    for role in roles:
-        payload = tmp_path / role
-        (payload / 'DEBIAN').mkdir(parents=True)
-        (payload / 'DEBIAN/control').write_text(
-            f'Package: {role}\nVersion: 1.0\nArchitecture: all\n'
-            'Maintainer: Test <test@example.invalid>\nDescription: transport fixture\n')
-        receipt = payload / 'usr/share' / role / 'buildinfo.json'
-        receipt.parent.mkdir(parents=True)
-        receipt.write_text(json.dumps({'dependencies': {'llima': {'ref': 'develop', 'spec': 'a' * 12}}
-                                      if with_llima else {}}))
-        archives[role] = dist / (role + '.deb')
-        subprocess.run(['dpkg-deb', '--build', str(payload), str(archives[role])],
-                       check=True, capture_output=True)
-    (dist / 'resolved-deps-manifest.json').write_text('{}\n')
-    output = tmp_path / 'analysis'
-    calls = []
-    real_run = subprocess.run
-    def run(argv, **kwargs):
-        if argv[0] == 'bash':
-            assert argv == ['bash', str(ROOT / 'scripts/ci/verify_core_dist.sh'), '--dist', str(dist)]
-            assert not output.exists(), 'Distribution verification must precede output creation'
-            calls.append('verify')
-            if failure == 'verify': raise ValueError('fixture verify rejected')
-            return subprocess.CompletedProcess(argv, 0)
-        if argv[:2] == ['dpkg-deb', '-f']:
-            assert Path(argv[2]) in archives.values() and argv[3:] == ['Package']
-            return real_run(argv, **kwargs)
-        assert argv == ['dpkg-deb', '--fsys-tarfile', str(archives['simaai-scheduler'])]
-        calls.append('extract')
-        if failure == 'extract': raise ValueError('fixture extract rejected')
-        return real_run(argv, **kwargs)
-    def coordinator(core, command, environment):
-        assert core == ROOT
-        assert 'NEAT_LLIMA_ARTIFACT_DIR' not in environment
-        assert 'NEAT_DEPS_MANIFEST' not in environment
-        calls.append(command[0])
-        if failure == command[0]: raise ValueError('fixture ' + failure + ' rejected')
-        if command[0] == 'select':
-            assert command[1:4] == ['--require', '--cohort-dir', str(dist)]
-            assert environment['NEAT_SCHEDULER_PACKAGE_DIR'] == str(output / 'bootstrap')
-            assert (output / 'bootstrap/usr/share/simaai-scheduler/buildinfo.json').is_file()
-            return f'export NEAT_SCHEDULER_PACKAGE_DIR={output / "selected/scheduler"}\n'
-        assert environment['NEAT_SCHEDULER_PACKAGE_DIR'] == str(output / 'selected/scheduler')
-        if command[0] == 'platform-archives':
-            assert command == ['platform-archives', '--platform-package-dir', str(dist)]
-            return ''
-        assert command == ['prepare', '--headers-only', '--client-test-support', '--output', str(output / 'audit')]
-        return ''
-    monkeypatch.delenv('NEAT_LLIMA_ARTIFACT_DIR', raising=False)
-    monkeypatch.delenv('NEAT_DEPS_MANIFEST', raising=False)
-    monkeypatch.setattr(module.subprocess, 'run', run)
-    monkeypatch.setattr(module, 'coordinator', coordinator)
-    args = SimpleNamespace(core=ROOT, dist=dist, output=output)
-    if failure:
-        with pytest.raises(ValueError, match='fixture ' + failure + ' rejected'):
-            module.prepare(args)
-        assert not (output / 'analysis-inputs.json').exists()
-    else:
-        selected = module.prepare(args)
-        assert selected == {'NEAT_SCHEDULER_PACKAGE_DIR': str(output / 'selected/scheduler'),
-                            'CMAKE_PREFIX_PATH': str(output / 'selected/scheduler/usr')}
-        assert json.loads((output / 'analysis-inputs.json').read_text()) == {
-            'schema_version': 1, 'dist_receipt_sha256': module.digest(dist / 'resolved-deps-manifest.json'),
-            'core_archive_sha256': module.digest(archives['sima-neat']), 'environment': selected}
-        assert not (output / 'manifest.json').exists() and not (output / 'llima').exists()
-    order = ['verify', 'extract', 'select', 'platform-archives', 'prepare']
-    assert calls == (order[:order.index(failure) + 1] if failure else order)
-
-
-def test_full_core_build_explicitly_requires_same_producer_test_component():
-    driver = (ROOT / 'build.sh').read_text()
-    assert '[[ "${BUILD_TESTS}" == "ON" ]] && dependency_args+=(--client-test-support)' in driver
-    helper = (ROOT / 'tools/ci/prepare_hygiene_cohort.py').read_text()
-    assert "['prepare', '--headers-only', '--client-test-support'" in helper
-    tidy = (ROOT / 'scripts/run_cpp_tidy.sh').read_text()
-    assert '--headers-only --client-test-support' in tidy
-    assert '-C "$build_dir/dependencies/dependencies.cmake"' in tidy
-    assert './build.sh --install-deps-only' not in tidy
-    assert '/opt/toolchain' not in tidy
 
 
 GATE_IDS = {

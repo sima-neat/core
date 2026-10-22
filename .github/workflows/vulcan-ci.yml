@@ -221,7 +221,6 @@ jobs:
     needs:
       - resolve-vulcan-config
       - detect-changes
-      - build
     runs-on: ubuntu-latest
 
     steps:
@@ -237,21 +236,26 @@ jobs:
           echo "${HOME}/.sima-cli/.venv/bin" >> "${GITHUB_PATH}"
           "${HOME}/.sima-cli/.venv/bin/sima-cli" --version
 
-      - name: Download this build's dependency cohort
-        uses: actions/download-artifact@v5
-        with:
-          name: neat-core-dist
-          path: _work/hygiene-dist
-
-      - name: Verify and extract matched analysis dependencies
+      - name: Acquire published Scheduler for analysis
+        env:
+          NEAT_VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
         shell: bash
         run: |
           set -euo pipefail
-          # Transport this run's verified producer bytes; no independent resolver,
-          # host installation, native execution, or retired Internals fallback.
-          python3 tools/ci/prepare_hygiene_cohort.py \
-            --dist _work/hygiene-dist --output _work/hygiene-dependencies \
-            --github-env "$GITHUB_ENV"
+          dependency_exports=$(python3 tools/ci/acquire_scheduler.py \
+            --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" \
+            --environment "$NEAT_VULCAN_ENV" \
+            --output "$RUNNER_TEMP/core-hygiene-dependencies")
+          eval "$dependency_exports"
+          python3 - "$GITHUB_ENV" <<'PY'
+          import os, sys
+          with open(sys.argv[1], 'a') as output:
+              for key in ('NEAT_SCHEDULER_PACKAGE_DIR', 'NEAT_SCHEDULER_CLIENT_TEST_PACKAGE_DIR'):
+                  value = os.environ[key]
+                  if '\n' in value or '\r' in value:
+                      raise SystemExit('Invalid analysis package path')
+                  output.write(key + '=' + value + '\n')
+          PY
 
       - name: Install code hygiene tools
         run: |

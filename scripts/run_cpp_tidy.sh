@@ -65,6 +65,14 @@ configure_tidy_build() {
   # Analysis consumes the explicitly selected Scheduler headers. It never
   # discovers or links an ARM LLiMa runtime from an ambient SDK installation.
   local cmake_prefix_path="${CMAKE_PREFIX_PATH:-}"
+  local package config
+  for package in "${NEAT_SCHEDULER_PACKAGE_DIR:-}" "${NEAT_SCHEDULER_CLIENT_TEST_PACKAGE_DIR:-}"; do
+    [[ -n "$package" ]] || continue
+    [[ -d "$package" ]] || { echo "Missing analysis package: $package" >&2; return 1; }
+    while IFS= read -r config; do
+      cmake_prefix_path="${config%/*}${cmake_prefix_path:+:$cmake_prefix_path}"
+    done < <(find "$package" -type f -name '*Config.cmake')
+  done
 
   # Keep clang-tidy analysis on the host toolchain even when SDK/cross env
   # variables are present in CI.
@@ -93,7 +101,7 @@ configure_tidy_build() {
     -u OECORE_TARGET_SYSROOT \
     -u OECORE_NATIVE_SYSROOT \
     CMAKE_PREFIX_PATH="${cmake_prefix_path}" \
-    cmake -S "$root_dir" -B "$build_dir" -C "$build_dir/dependencies/dependencies.cmake" \
+    cmake -S "$root_dir" -B "$build_dir" -U 'SimaScheduler*_DIR' -U CMAKE_PREFIX_PATH \
       -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
       -DSIMANEAT_CPP_TIDY=ON \
       -DSIMANEAT_STRICT_WARNINGS=ON \
@@ -198,9 +206,6 @@ if [[ "${TIDY_INSTALL_DEPS:-0}" == "1" ]]; then
   # Do not call the ordinary SDK-aware build driver from host analysis.
   bash "$root_dir/scripts/ci/install_code_hygiene_deps.sh"
 fi
-# Verification/header staging is required even when native prerequisites exist.
-python3 "$root_dir/tools/build_dependencies.py" prepare --core "$root_dir" \
-  --output "$build_dir/dependencies" --headers-only --client-test-support
 require_cmd cmake
 require_cmd clang-tidy
 require_cmd run-clang-tidy

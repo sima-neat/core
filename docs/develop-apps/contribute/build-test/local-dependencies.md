@@ -203,9 +203,9 @@ candidate is not identified as a clean published artifact.
 For header-only dependency preparation, `--install-deps-only` requires local
 package overrides. It copies headers without building or executing A65/EV code.
 For native clang-tidy analysis, use `scripts/run_cpp_tidy.sh` with the selected
-package overrides and Scheduler prefix. `TIDY_INSTALL_DEPS=1` installs native host
-analysis prerequisites and invokes the installed Scheduler coordinator in
-headers-only mode; it does not activate or modify an SDK sysroot. LLiMa-backed
+Scheduler and matching test-support package prefixes. `TIDY_INSTALL_DEPS=1` installs
+native host analysis prerequisites. The script uses their public CMake exports
+directly, without activating or modifying an SDK sysroot. LLiMa-backed
 GenAI implementation files remain outside this host-only analysis profile.
 The script does not substitute an ambient SDK LLiMa package for the selected
 build's dependency. Documentation-only builds do not prepare native dependencies.
@@ -238,11 +238,11 @@ a failed local source build never downloads a substitute. The existing
 remains an optional transport for a separately reviewed immutable manifest. It is
 not the default workflow and there is no implicit `ci/dependencies.json`.
 
-Code hygiene downloads this run's `neat-core-dist`, verifies it, and invokes the
-real Core delegate and installed Scheduler coordinator in headers-only mode.
-The coordinator checks the same lower packages and authenticated platform build
-evidence used by the build. Only Scheduler's frontend prefix is exposed to Core
-analysis. This is host tooling validation, not target execution.
+Code hygiene uses `tools/ci/acquire_scheduler.py` to acquire a published Scheduler
+independently under the same dependency policy, without waiting for the Core build.
+Scheduler's bootstrap validates the package cohort. Host analysis consumes its
+frontend and matching test-support CMake exports without SDK activation or target
+execution.
 
 See [Hardware test ownership](./hardware-test-safety.md) for the target-side
 supervisor required by the guarded performance lane.
