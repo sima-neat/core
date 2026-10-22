@@ -490,8 +490,11 @@ jobs:
         run: |
           set -euo pipefail
           cd pcie_host
-          ./build.sh --clean --all --scheduler-spec "${SCHEDULER_NATIVE_SPEC:-latest}" \
-            --scheduler-environment "${NEAT_VULCAN_ENV}"
+          scheduler_spec_args=()
+          if [[ -n "${SCHEDULER_NATIVE_SPEC}" ]]; then
+            scheduler_spec_args+=(--scheduler-spec "${SCHEDULER_NATIVE_SPEC}")
+          fi
+          ./build.sh --clean --all "${scheduler_spec_args[@]}" --scheduler-environment "${NEAT_VULCAN_ENV}"
         env:
           SCHEDULER_NATIVE_SPEC: ${{ vars.SCHEDULER_NATIVE_SPEC }}
           NEAT_VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}

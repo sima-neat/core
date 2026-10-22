@@ -27,7 +27,7 @@ INSTALLER_SOURCE="${SCRIPT_DIR}/scripts/install_pciehost.sh"
 INSTALLER_STAGE="${PACKAGE_DIR}/install_pciehost.sh"
 DEPS_MANIFEST="${SIMAPCIE_DEPS_MANIFEST:-${CORE_ROOT}/deps/manifest.json}"
 SIMAPCIE_PYTHON_EXECUTABLE="${SIMAPCIE_PYTHON_EXECUTABLE:-}"
-SCHEDULER_SPEC="latest"
+SCHEDULER_SPEC=""
 SCHEDULER_ENVIRONMENT="production"
 SCHEDULER_SELECTION=""
 
@@ -43,7 +43,7 @@ Options:
   --python            Build Python bindings and package a Python wheel
   --install-deps-only  Install native build prerequisites, then exit without building
   --no-deb            Skip DEB package generation
-  --scheduler-spec <sha|latest> Select same-branch native Scheduler publication
+  --scheduler-spec <sha|latest> Override the manifest's Scheduler revision
   --scheduler-environment <name> Publication environment (default: production)
   --build-dir <dir>   Build directory (default: build)
   --debug             Build type Debug (default: Release)
@@ -509,15 +509,17 @@ if [[ "${CLEAN_BUILD}" == "ON" ]]; then
   rm -rf "${BUILD_DIR}"
 fi
 
-# Core acquires one same-branch Scheduler native publication, not lower repos.
+# Core acquires Scheduler's native publication under deps/manifest.json policy.
 # An explicitly installed local component remains usable for a no-DEB build.
 GENAI_CMAKE_ARGS=()
 if [[ "$MAKE_DEB" == OFF && -n "${SimaScheduler_DIR:-}" ]]; then
   GENAI_CMAKE_ARGS+=("-DSimaScheduler_DIR=${SimaScheduler_DIR}")
 else
   native_root="$(mktemp -d "${TMPDIR:-/tmp}/core-native-scheduler.XXXXXX")"
+  scheduler_spec_args=()
+  if [[ -n "$SCHEDULER_SPEC" ]]; then scheduler_spec_args+=(--spec "$SCHEDULER_SPEC"); fi
   python3 scripts/acquire_scheduler.py --branch "$(current_core_branch)" \
-    --spec "$SCHEDULER_SPEC" --environment "$SCHEDULER_ENVIRONMENT" \
+    "${scheduler_spec_args[@]}" --environment "$SCHEDULER_ENVIRONMENT" \
     --distro "$HOST_DISTRO" --arch "$DEB_ARCH" --output "$native_root/selected"
   SCHEDULER_SELECTION="$native_root/selected/selection.json"
   # Acquisition stages the authentic Scheduler publication and its external

@@ -195,9 +195,13 @@ EV 장치 빌드는 별도의 라이선스가 필요한 워크플로입니다. �
 
 ## 공개된 CI 의존성 {#published-ci-dependencies}
 
-일반 Vulcan 빌드는 `deps/manifest.json`의 Scheduler 정책을 `sima-cli`로 한 번
-해석한 뒤 해당 불변 공개본을 다운로드합니다. snap 정책은 현재 브랜치를 선택하며,
-공개되지 않은 브랜치는 다른 브랜치로 폴백하는 대신 실패합니다.
+일반 Vulcan 빌드는 `deps/manifest.json`의 Scheduler 정책을 `sima-cli`로
+해석한 뒤 선택한 불변 공개본을 다운로드합니다. LLiMa와 마찬가지로 브랜치 `snap`은
+현재 Core 브랜치를 먼저 시도합니다. 해석에 실패하면 폴백을 알리고 `develop:latest`를
+다시 시도합니다. 태그 snap과 명시적인 브랜치/커밋 선택자는 폴백하지 않습니다.
+장치와 PCIe 호스트 획득은 이 정책을 공유하며, PCIe `--scheduler-spec <commit>`도
+엄격하게 적용됩니다. 해석 후 다운로드, 검증, 부트스트랩 또는 스테이징이 실패하면
+오류로 처리합니다. 기록에는 실제 선택한 브랜치와 불변 커밋이 보존됩니다.
 `tools/ci/acquire_scheduler.py`는 Scheduler 부트스트랩을 실행하기 전에 게시자
 해시를 검증합니다. 설치된 Scheduler 코디네이터가 번들된 Runner, Kernels 및 Codecs
 아카이브를 분리하고 검증합니다. Core는 해당 저장소들을 독립적으로 해석하지 않습니다.

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Explicit CI acquisition of Scheduler's complete published client cohort."""
 import argparse
-import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 
-from published_artifact import acquire, digest
+from published_artifact import digest
+from scheduler_dependency import acquire_scheduler
 
 
 def main():
@@ -24,22 +24,9 @@ def main():
            if name.startswith(('NEAT_KERNELS_', 'NEAT_RUNNER_', 'NEAT_SCHEDULER_', 'NEAT_CODECS_'))
            and name.endswith(('_SOURCE', '_PACKAGE_DIR'))):
         raise ValueError('Remote CI acquisition cannot override explicit local inputs')
-    policy = json.loads((core / 'deps/manifest.json').read_text())['scheduler']
-    if policy == {'policy': 'snap'} or policy == '':
-        branch, spec = args.branch, 'latest'
-    elif isinstance(policy, str) and policy:
-        branch, _, spec = policy.partition(':')
-        spec = spec or 'latest'
-    elif isinstance(policy, dict) and not policy.get('policy') and set(policy) <= {'branch', 'ref', 'spec'}:
-        branch = policy.get('branch', policy.get('ref', ''))
-        spec = policy.get('spec') or 'latest'
-        if not branch:
-            raise ValueError('Explicit Scheduler policy requires a branch')
-    else:
-        raise ValueError('Unsupported explicit Scheduler dependency policy')
     root = args.output.resolve()
     root.mkdir(parents=True, exist_ok=False)
-    receipt = acquire(args.cli, 'scheduler', branch, spec, args.environment, root / 'candidate')
+    receipt = acquire_scheduler(args.cli, core, args.branch, None, args.environment, root / 'candidate')
     bootstrap = root / 'candidate/client_bootstrap.py'
     if receipt['resources'].get(bootstrap.name) != digest(bootstrap):
         raise ValueError('Publisher did not bind Scheduler client bootstrap')

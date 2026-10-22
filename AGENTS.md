@@ -87,8 +87,10 @@ A change is ready when:
   `_PACKAGE_DIR` overrides select local package directories instead.
 - Do not silently fetch old Internals, replace failed source builds with artifacts,
   or deploy from child builds. Explicit `tools/ci/acquire_scheduler.py` acquisition
-  resolves one same-branch immutable Scheduler publication and lets its installed
-  coordinator validate the delivered cohort; `build.sh` never silently fetches it.
+  tries the snap branch, then explicitly retries `develop:latest` if resolution
+  fails. Tags and explicit selectors remain strict. The selected immutable
+  Scheduler publication's coordinator validates the delivered cohort;
+  `build.sh` never silently fetches it.
 - Preserve the selected package receipts and contract checks. Rebuild consumers
   after ABI changes; numerical source-only changes do not require Runner/Scheduler source edits, but static consumers must relink to consume new Kernels artifacts.
 - See `docs/develop-apps/contribute/build-test/local-dependencies.md`.

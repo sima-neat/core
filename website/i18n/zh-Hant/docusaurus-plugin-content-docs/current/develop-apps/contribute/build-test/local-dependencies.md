@@ -171,9 +171,13 @@ EV 裝置建置仍是需要授權的獨立流程。這些命令都不會隱含�
 
 ## 已發布的 CI 相依項目 {#published-ci-dependencies}
 
-一般 Vulcan 建置會透過 `sima-cli` 解析一次 `deps/manifest.json` 中的 Scheduler
-原則，然後下載該不可變的發布版本。snap 原則選擇目前分支；尚未發布的分支會失敗，
-而不會退回其他分支。`tools/ci/acquire_scheduler.py` 會在執行 Scheduler 啟動程式前
+一般 Vulcan 建置會透過 `sima-cli` 解析 `deps/manifest.json` 中的 Scheduler
+原則，然後下載所選的不可變發布版本。與 LLiMa 相同，分支 `snap` 會先嘗試目前的
+Core 分支。若解析失敗，會明確告知退回並重試 `develop:latest`。標籤 snap 與明確的
+分支／提交選擇器絕不退回。裝置與 PCIe 主機的取得流程共用此原則；PCIe 的
+`--scheduler-spec <commit>` 也維持嚴格選擇。解析後的下載、驗證、啟動或暫存失敗
+仍會視為錯誤。記錄會保留實際選定的分支與不可變提交。
+`tools/ci/acquire_scheduler.py` 會在執行 Scheduler 啟動程式前
 驗證發布者雜湊。已安裝的 Scheduler 協調器會分割並驗證隨附的 Runner、Kernels 和
 Codecs 封存檔。Core 不會獨立解析這些儲存庫。
 

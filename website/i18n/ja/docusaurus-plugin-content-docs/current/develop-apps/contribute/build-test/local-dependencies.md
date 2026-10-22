@@ -115,7 +115,7 @@ EV デバイスのビルドは、引き続きライセンスを必要とする�
 
 ## 公開済み CI 依存関係 {#published-ci-dependencies}
 
-通常の Vulcan ビルドは `deps/manifest.json` の Scheduler ポリシーを `sima-cli` で一度解決し、その不変の公開物をダウンロードします。snap ポリシーは現在のブランチを選択します。未公開のブランチは別ブランチにフォールバックせず失敗します。`tools/ci/acquire_scheduler.py` は公開元ハッシュを検証してから Scheduler のブートストラップを実行します。インストール済み Scheduler コーディネーターが、同梱された Runner、Kernels、Codecs のアーカイブを区分して検証します。Core がこれらのリポジトリを個別に解決することはありません。
+通常の Vulcan ビルドは `deps/manifest.json` の Scheduler ポリシーを `sima-cli` で解決し、選択した不変の公開物をダウンロードします。LLiMa と同様に、ブランチの `snap` はまず現在の Core ブランチを試します。解決に失敗すると、フォールバックを通知して `develop:latest` を再試行します。タグの snap と明示的なブランチ/コミット指定はフォールバックしません。デバイスと PCIe ホストの取得はこのポリシーを共有し、PCIe の `--scheduler-spec <commit>` も厳密に適用されます。解決後のダウンロード、検証、ブートストラップ、ステージングの失敗はエラーのままです。記録には実際に選択したブランチと不変のコミットが保持されます。`tools/ci/acquire_scheduler.py` は公開元ハッシュを検証してから Scheduler のブートストラップを実行します。インストール済み Scheduler コーディネーターが、同梱された Runner、Kernels、Codecs のアーカイブを区分して検証します。Core がこれらのリポジトリを個別に解決することはありません。
 
 選択した Scheduler パッケージは、正確な SDK ポリシーをインストールします。使い捨ての CI SDK コンテナーでは、`scripts/ci/prepare_scheduler_sdk.sh` がそのリビジョンの公式 sysroot セットアップコマンドを使い、ダウンロードしたプラットフォームアーカイブを保持します。コーディネーターは実際の GCC14 バージョン/ターゲットとターゲット SDK 識別情報を確認し、`NEAT_RUNNER_PLATFORM_RUNTIME_DEBS` を通して Runner が使用した正確なランタイムプロバイダーアーカイブを選択します。ネイティブ ARM64 コンパイラーとクロスコンパイラーの実行ファイルのバイト列は同一でなくてもかまいませんが、ターゲット ABI と選択したプラットフォームは一致する必要があります。この段階でデバイスへのインストールやファームウェアの検証は行いません。
 
