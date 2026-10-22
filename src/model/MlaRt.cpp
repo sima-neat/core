@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cstdint>
 #include <stdexcept>
@@ -19,14 +20,20 @@ namespace {
   throw std::runtime_error(message);
 }
 
+// Set once an mla-rt run is killed or crashes. MLA may then still hold unfinished work, so this
+// process starts no further mla-rt run.
+std::atomic<bool> mla_needs_recovery{false};
+
 // A started mla-rt. Destruction before it finishes kills its process group, then reaps it.
 struct MlaRtProcess {
   GPid pid = 0;
   GPid group = 0;
   int output = -1;
   ~MlaRtProcess() {
-    if (group > 0)
+    if (group > 0) {
       (void)::kill(-group, SIGKILL);
+      mla_needs_recovery = true;
+    }
     if (pid > 0) {
       while (::waitpid(pid, nullptr, 0) < 0 && errno == EINTR) {
       }
@@ -49,6 +56,10 @@ void prepare_mla_rt(gpointer) {
 std::string internal::run_mla_rt(const std::filesystem::path& mla_rt,
                                  const std::vector<std::string>& args,
                                  std::chrono::milliseconds timeout) {
+  if (timeout <= std::chrono::milliseconds::zero())
+    mla_rt_error("mla-rt timeout must be positive");
+  if (mla_needs_recovery)
+    mla_rt_error("skipped: an earlier mla-rt run was killed or crashed, so MLA needs recovery");
   std::vector<std::string> command{mla_rt.string()};
   command.insert(command.end(), args.begin(), args.end());
   std::vector<gchar*> argv;
@@ -108,6 +119,8 @@ std::string internal::run_mla_rt(const std::filesystem::path& mla_rt,
     }
   }
   process.group = 0;
+  if (WIFSIGNALED(status))
+    mla_needs_recovery = true;
   if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
     const std::string result = WIFEXITED(status) ? "exit " + std::to_string(WEXITSTATUS(status))
                                                  : "signal " + std::to_string(WTERMSIG(status));

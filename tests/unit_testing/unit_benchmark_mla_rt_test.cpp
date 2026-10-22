@@ -7,6 +7,8 @@
 #include <glib.h>
 
 #include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include <fstream>
 #include <functional>
@@ -60,6 +62,33 @@ void failures_name_the_cause() {
   fails([&] { run_mla_rt(fixture.root / "missing", {}); }, "cannot start mla-rt");
   fails([&] { run_mla_rt(fixture.runtime("echo 'device busy' >&2\nexit 7\n"), {}); },
         "mla-rt failed (exit 7)\ndevice busy");
+  fails([&] { run_mla_rt(fixture.runtime("exit 0\n"), {}, 0ms); },
+        "mla-rt timeout must be positive");
+}
+
+// After a killed or crashed run, mla-rt must not start again in this process.
+void later_runs_are_skipped(Fixture& fixture) {
+  const auto started = fixture.root / "started";
+  fails([&] { run_mla_rt(fixture.runtime("touch '" + started.string() + "'\n"), {}); },
+        "skipped: an earlier mla-rt run was killed or crashed, so MLA needs recovery");
+  require(!std::filesystem::exists(started), "a skipped run must not start mla-rt");
+}
+
+void crash_skips_later_runs() {
+  // The skip lasts for the process, so the crash runs in a child process.
+  const pid_t pid = ::fork();
+  require(pid >= 0, "fork failed for the mla-rt crash probe");
+  if (pid == 0) {
+    ::_exit(sima_test::run_test("mla-rt crash probe", [] {
+      Fixture fixture;
+      fails([&] { run_mla_rt(fixture.runtime("kill -SEGV $$\n"), {}); },
+            "mla-rt failed (signal 11)");
+      later_runs_are_skipped(fixture);
+    }));
+  }
+  int status = 0;
+  require(::waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0,
+          "a crashed mla-rt must skip later runs");
 }
 
 void timeout_kills_the_process_group() {
@@ -82,11 +111,14 @@ void timeout_kills_the_process_group() {
       std::this_thread::sleep_for(20ms);
   }
   require(gone, "the timeout must kill mla-rt's process group");
+  later_runs_are_skipped(fixture);
 }
 } // namespace
 
 RUN_TEST("unit_benchmark_mla_rt_test", ([] {
            output_is_combined_and_bounded();
            failures_name_the_cause();
+           crash_skips_later_runs();
+           // Last: the timeout skips every later run in this process.
            timeout_kills_the_process_group();
          }));
