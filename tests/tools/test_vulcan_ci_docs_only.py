@@ -27,15 +27,15 @@ def job_block(name: str) -> str:
 
 
 class VulcanCiDocsOnlyTests(unittest.TestCase):
-    def test_devkit_uses_platform_resolved_scheduler_group(self) -> None:
+    def test_devkit_uses_platform_resolved_runner_group(self) -> None:
         resolver = yaml.safe_load(job_block("resolve-test-runner"))
         self.assertEqual(
             resolver["uses"],
             "sima-neat/.github/.github/workflows/vulcan-resolve-modalix-runner.yml@main",
         )
         self.assertEqual(resolver["with"], {
-            "legacy_runner_group": "modalix-devkit-scheduler",
-            "versioned_runner_group_prefix": "modalix-devkit-scheduler-",
+            "legacy_runner_group": "modalix-devkit",
+            "versioned_runner_group_prefix": "modalix-devkit-",
         })
         self.assertEqual(resolver["needs"], ["detect-changes"])
         self.assertIn("== 'standard'", resolver["if"])

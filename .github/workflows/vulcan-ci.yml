@@ -286,9 +286,8 @@ jobs:
       - detect-changes
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-modalix-runner.yml@main
     with:
-      # Keep the split Scheduler stack off the legacy Internals runner pool.
-      legacy_runner_group: modalix-devkit-scheduler
-      versioned_runner_group_prefix: modalix-devkit-scheduler-
+      legacy_runner_group: modalix-devkit
+      versioned_runner_group_prefix: modalix-devkit-
 
   build:
     name: Build Core on Vulcan
