@@ -4,7 +4,6 @@ from pathlib import Path
 import re
 import subprocess
 import textwrap
-from unittest import mock
 
 import pytest
 
@@ -52,12 +51,11 @@ def test_dependency_dag_and_publication_gate():
     assert 'publish-vulcan-artifacts' in needs('test-devkit')
 
 
-def test_same_run_artifact_and_validator_precede_analysis():
+def test_same_run_artifact_preparation_precedes_analysis():
     body = job('code-hygiene')
     assert 'uses: actions/download-artifact@v5' in body
     assert 'name: neat-core-dist' in body
     assert 'run-id:' not in body and 'repository:' not in body
-    assert body.index('bash scripts/ci/verify_core_dist.sh') < body.index('python3 tools/ci/prepare_hygiene_cohort.py')
     # Matched target dependencies come from the verified same-run artifact.
     # The later installer supplies host analysis tools, not a second cohort.
     assert body.index('python3 tools/ci/prepare_hygiene_cohort.py') < body.index('./' + HYGIENE_INSTALLER)
@@ -189,19 +187,26 @@ def test_hygiene_has_no_unused_llima_acquisition():
     assert "selected['NEAT_SCHEDULER_PACKAGE_DIR']" in helper
 
 
-def test_hygiene_retains_existing_cli_arguments(tmp_path, monkeypatch):
+def test_hygiene_cli_appends_prepared_environment(tmp_path, monkeypatch):
     import sys
     module = load_preparation()
     env_file = tmp_path / 'github-env'
-    monkeypatch.setattr(sys, 'argv', ['prepare_hygiene_cohort.py', '--core', str(ROOT),
-                        '--dist', str(tmp_path / 'dist'), '--output', str(tmp_path / 'output'),
-                        '--environment', 'production', '--cli', '/must/not/execute',
+    env_file.write_text('EXISTING=value\n')
+    paths = {'core': ROOT, 'dist': tmp_path / 'dist',
+             'output': tmp_path / 'output', 'github_env': env_file}
+    values = {'NEAT_SCHEDULER_PACKAGE_DIR': '/selected/scheduler',
+              'CMAKE_PREFIX_PATH': '/selected/scheduler/usr'}
+    def prepare(args):
+        assert vars(args) == paths
+        return values
+    monkeypatch.setattr(module, 'prepare', prepare)
+    monkeypatch.setattr(sys, 'argv', ['prepare_hygiene_cohort.py', '--core', str(paths['core']),
+                        '--dist', str(paths['dist']), '--output', str(paths['output']),
                         '--github-env', str(env_file)])
-    with mock.patch.object(module, 'prepare', return_value={'CMAKE_PREFIX_PATH': '/selected/usr'}) as prepare:
-        module.main()
-    assert prepare.call_args.args[0].environment == 'production'
-    assert prepare.call_args.args[0].cli == '/must/not/execute'
-    assert env_file.read_text() == 'CMAKE_PREFIX_PATH=/selected/usr\n'
+    module.main()
+    assert env_file.read_text() == (
+        'EXISTING=value\nNEAT_SCHEDULER_PACKAGE_DIR=/selected/scheduler\n'
+        'CMAKE_PREFIX_PATH=/selected/scheduler/usr\n')
 
 
 @pytest.mark.parametrize('with_llima', [False, True])
@@ -234,6 +239,7 @@ def test_hygiene_prepares_only_verified_scheduler_inputs(tmp_path, monkeypatch, 
     def run(argv, **kwargs):
         if argv[0] == 'bash':
             assert argv == ['bash', str(ROOT / 'scripts/ci/verify_core_dist.sh'), '--dist', str(dist)]
+            assert not output.exists(), 'Distribution verification must precede output creation'
             calls.append('verify')
             if failure == 'verify': raise ValueError('fixture verify rejected')
             return subprocess.CompletedProcess(argv, 0)
@@ -265,8 +271,7 @@ def test_hygiene_prepares_only_verified_scheduler_inputs(tmp_path, monkeypatch, 
     monkeypatch.delenv('NEAT_DEPS_MANIFEST', raising=False)
     monkeypatch.setattr(module.subprocess, 'run', run)
     monkeypatch.setattr(module, 'coordinator', coordinator)
-    args = SimpleNamespace(core=ROOT, dist=dist, output=output,
-                           environment='unused-selector', cli='/must/not/execute')
+    args = SimpleNamespace(core=ROOT, dist=dist, output=output)
     if failure:
         with pytest.raises(ValueError, match='fixture ' + failure + ' rejected'):
             module.prepare(args)

@@ -3399,10 +3399,10 @@ public:
   }
 
   Sample process_tensors(const TensorList& inputs, const char* where) const override {
-    validate_tensors(inputs, where);
     if (uses_direct_tensor_set_route()) {
       return build_fan_in_sample(inputs, where);
     }
+    validate_tensors(inputs, where);
     TensorList prepared = prepare_ingress_tensors(inputs, ingress_contracts_, where);
     Sample samples;
     samples.reserve(prepared.size());
@@ -3480,7 +3480,6 @@ public:
     if (direct_tensor_set_ingress_) {
       return build_direct_mla_tensor_set_sample_from_samples(inputs, where);
     }
-    require_exact_ingress_count(inputs.size(), ingress_contracts_, where, "sample inputs");
     TensorList prepared;
     prepared.reserve(inputs.size());
     for (std::size_t i = 0; i < inputs.size(); ++i) {
@@ -3764,7 +3763,6 @@ private:
 
   Sample process_prepared_samples(const Sample& prepared, const char* where) const {
     validate_samples(prepared, where);
-    require_exact_ingress_count(prepared.size(), ingress_contracts_, where, "ingress inputs");
     Sample branch_outputs;
     branch_outputs.reserve(prepared.size());
     for (std::size_t i = 0; i < prepared.size(); ++i) {

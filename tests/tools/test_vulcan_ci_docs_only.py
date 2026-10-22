@@ -138,22 +138,36 @@ class VulcanCiDocsOnlyTests(unittest.TestCase):
             "needs.detect-changes.outputs.docs_only != 'true'", build_pcie
         )
 
-    def test_pcie_cpu_job_preserves_docs_condition_without_card_actions(self) -> None:
-        pcie_cpu = job_block("test-pciehost-hardware")
+    def test_pcie_hardware_job_is_disabled_with_original_reenable_conditions(self) -> None:
+        hardware = yaml.safe_load(job_block("test-pciehost-hardware"))
+        self.assertEqual(hardware["name"], "Test PCIe Host Hardware")
+        self.assertEqual(hardware["if"],
+                         "${{ false && (inputs.build_mode || 'standard') == 'standard' "
+                         "&& needs.detect-changes.outputs.docs_only != 'true' }}")
+        self.assertEqual(hardware["runs-on"], ["self-hosted", "Linux", "X64", "pcie", "3.0.0-pcie-test"])
+        self.assertEqual(hardware["env"]["SIMAPCIE_CARD_HOST"], "10.0.0.2")
+        self.assertEqual(hardware["env"]["DEVKIT_PASSWORD"], "${{ secrets.DEVKIT_PASSWORD }}")
+        self.assertEqual(hardware["env"]["SUDO_PASSWORD"], "${{ secrets.PCIEHOST_SUDO_PASSWORD }}")
 
-        self.assertIn("needs.detect-changes.outputs.docs_only != 'true'", pcie_cpu)
-        self.assertIn("runs-on: [self-hosted, Linux, X64, pcie, 3.0.0-pcie-test]", pcie_cpu)
-        self.assertIn("prepare_cpu_package.py", pcie_cpu)
-        self.assertIn("run_cpu_package_tests.py", pcie_cpu)
-        for physical_action in (
-            "Provision PCIe card SSH key", "Prepare PCIe card CI prerequisites",
-            "Check PCIe card platform compatibility", "pcie-setup.sh",
-            "prepare_card_prerequisites.sh", "install_host_package.sh",
-            "install_card_runtime.sh", "verify_card_runtime.sh", "cleanup_queue.sh",
-            "run_ctest.sh", "run_pytest.sh", "DEVKIT_PASSWORD", "SIMAPCIE_CARD_HOST",
+    def test_pcie_hardware_job_retains_complete_qualification_steps(self) -> None:
+        hardware = yaml.safe_load(job_block("test-pciehost-hardware"))
+        commands = [step.get("run", "") for step in hardware["steps"]]
+        previous = -1
+        for script in (
+            "preflight.sh", "pcie-setup.sh", "prepare_card_prerequisites.sh",
+            "check_card_compatibility.sh", "install_host_package.sh", "install_host_test_deps.sh",
+            "install_card_runtime.sh", "extract_extras.sh", "resolve_assets.sh", "verify_card_runtime.sh",
+            "prepare_pcie_genai_models.sh", "run_ctest.sh", "run_pytest.sh", "collect_artifacts.sh",
         ):
-            with self.subTest(physical_action=physical_action):
-                self.assertNotIn(physical_action, pcie_cpu)
+            with self.subTest(script=script):
+                matches = [index for index, command in enumerate(commands) if script in command]
+                self.assertEqual(len(matches), 1)
+                self.assertGreater(matches[0], previous)
+                previous = matches[0]
+        cleanup = [step for step in hardware["steps"] if "cleanup_queue.sh" in step.get("run", "")]
+        self.assertTrue(any(step.get("if") == "${{ always() }}" for step in cleanup))
+        self.assertTrue(any(step.get("uses", "").startswith("actions/upload-artifact@")
+                            and step.get("if") == "${{ always() }}" for step in hardware["steps"]))
 
 
 if __name__ == "__main__":

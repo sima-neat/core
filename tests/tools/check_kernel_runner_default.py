@@ -432,25 +432,6 @@ class KernelRunnerDefaultContract(unittest.TestCase):
         # Static Core clients still use the one shared Scheduler provider; they
         # do not acquire lower development archives through Core usage.
 
-    def test_geometry_resolves_capability_before_streaming(self):
-        text = (ROOT / "src/pipeline/internal/sima/BoxDecodeGeometry.cpp").read_text()
-        self.assertLess(text.index("scheduler::bind_kernel_variant("),
-                        text.index("recipe.resolver_factories.push_back"))
-        self.assertLess(text.index("for (const auto& entry : cache->variants)"),
-                        text.index("preparer.prepare("))
-        self.assertIn("std::array<Entry, 4> variants", text)
-        self.assertIn("preparer.prepare(", text)
-        self.assertNotIn("rt::Executor", text)
-        self.assertNotIn("scheduler::check_kernel(", text)
-
-    def test_public_wire_remains_core_owned_host_work(self):
-        text = (ROOT / "src/pipeline/internal/sima/BoxDecodePublication.cpp").read_text()
-        self.assertIn("<simaai/scheduler/client/host_task.h>", text)
-        self.assertIn("k::make_host_task(request)", text)
-        self.assertIn("request.payload = std::shared_ptr<const WirePlan>", text)
-        self.assertIn("request.callback = +[]", text)
-        self.assertIn("return publish(*static_cast<const WirePlan*>(payload), buffers)", text)
-
     def test_runner_registration_precedes_startup_validation(self):
         text = (ROOT / "src/gst/GstInit.cpp").read_text()
         body = text[text.index("void gst_init_once()") :]

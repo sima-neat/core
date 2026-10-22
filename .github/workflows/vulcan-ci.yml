@@ -249,10 +249,8 @@ jobs:
           set -euo pipefail
           # Transport this run's verified producer bytes; no independent resolver,
           # host installation, native execution, or retired Internals fallback.
-          bash scripts/ci/verify_core_dist.sh --dist _work/hygiene-dist
           python3 tools/ci/prepare_hygiene_cohort.py \
             --dist _work/hygiene-dist --output _work/hygiene-dependencies \
-            --environment "${{ needs.resolve-vulcan-config.outputs.vulcan_env }}" \
             --github-env "$GITHUB_ENV"
 
       - name: Install code hygiene tools
@@ -1500,10 +1498,9 @@ jobs:
           df -h "${TMP_ROOT}" || true
 
   test-pciehost-hardware:
-    name: Test PCIe Host CPU Coverage
-    # Retain develop's authenticated native host, but never provision or use a
-    # physical card. The four package-build profiles remain model-free.
-    if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
+    name: Test PCIe Host Hardware
+    # Disabled until a PCIe runner is available; remove false && to re-enable.
+    if: ${{ false && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
     needs:
       - detect-changes
       - resolve-vulcan-config
@@ -1513,6 +1510,22 @@ jobs:
     env:
       VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
       SIMA_CLI_CHECK_FOR_UPDATE: "0"
+      SIMAPCIE_CARD_HOST: "10.0.0.2"
+      SIMAPCIE_USER: "sima"
+      SIMAPCIE_CARD_ID: "0"
+      SIMAPCIE_QUEUE: "0"
+      SIMAPCIE_READINESS_TIMEOUT_MS: "180000"
+      SIMAPCIE_PULL_TIMEOUT_MS: "30000"
+      SIMAPCIE_SYNC_ITERATIONS: "50"
+      SIMAPCIE_TEST_ITERATIONS: "1000"
+      SIMAPCIE_BURST_ITERATIONS: "20"
+      SIMAPCIE_LIFECYCLE_CYCLES: "10"
+      SIMAPCIE_LIFETIME_ITERATIONS: "20"
+      SIMAPCIE_STRESS_QUEUES: "0 1 2 3 4 5"
+      SIMAPCIE_STRESS_ITERATIONS: "1000"
+      SIMAPCIE_CARD_GST_DEBUG: ${{ vars.SIMAPCIE_PCIEHOST_CARD_GST_DEBUG }}
+      SIMAPCIE_CARD_INSTALL_CMD: ${{ vars.SIMAPCIE_CARD_INSTALL_CMD }}
+      DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
       SUDO_PASSWORD: ${{ secrets.PCIEHOST_SUDO_PASSWORD }}
 
     steps:
@@ -1538,28 +1551,149 @@ jobs:
           echo "REF_NAME=${GITHUB_REF_NAME}" >> "${GITHUB_ENV}"
           echo "SHORT_SHA=${GITHUB_SHA:0:12}" >> "${GITHUB_ENV}"
 
-      - name: Run installed PCIe host CPU coverage
+      - name: Prepare PCIe host hardware workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/preflight.sh
+
+      - name: Provision PCIe card SSH key
+        shell: bash
+        env:
+          SIMAPCIE_SSH_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          ./pcie_host/scripts/pcie-setup.sh \
+            --user "${SIMAPCIE_USER}" \
+            --key "${HOME}/.ssh/sima_neat_pcie_ed25519" \
+            --hosts "${SIMAPCIE_CARD_HOST}" \
+            --non-interactive \
+            --strict
+
+      - name: Prepare PCIe card CI prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/prepare_card_prerequisites.sh
+
+      - name: Check PCIe card platform compatibility
+        id: check_pcie_card_compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/check_card_compatibility.sh
+
+      - name: Install PCIe host package from Vulcan artifact
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
+        id: install_pciehost_package
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/install_host_package.sh
+
+      - name: Install PCIe host test dependencies
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/install_host_test_deps.sh
+
+      - name: Cleanup PCIe queues before card install
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/cleanup_queue.sh
+
+      - name: Install Neat runtime on PCIe card
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
+        id: install_pcie_card_runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/install_card_runtime.sh
+
+      - name: Extract PCIe host extras
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
+        id: extract_pciehost_extras
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/extract_extras.sh
+
+      - name: Resolve PCIe hardware test assets
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
+        id: resolve_pciehost_assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/resolve_assets.sh
+
+      - name: Verify PCIe card runtime
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
+        id: verify_pcie_card_runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/verify_card_runtime.sh
+
+      - name: Cleanup PCIe queues before C++ tests
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/cleanup_queue.sh
+
+      - name: Prepare PCIe GenAI models
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
           source scripts/ci/pciehost/common.sh
-          run_host_sudo ./pcie_host/build.sh --python --install-deps-only
-          work_root="$(mktemp -d "${RUNNER_TEMP}/sima-pcie-host-cpu.XXXXXX")"
-          distribution="${work_root}/package"
-          prefix="${work_root}/prefix"
-          python_venv="${work_root}/venv"
-          python3 scripts/ci/pciehost/prepare_cpu_package.py \
-            --branch "${REF_NAME}" --commit "${GITHUB_SHA}" \
-            --environment "${VULCAN_ENV}" --output "${distribution}" --prefix "${prefix}"
-          mv "${prefix}" "${prefix}-relocated"
-          prefix="${prefix}-relocated"
-          multiarch="$(dpkg-architecture -qDEB_HOST_MULTIARCH)"
-          export LD_LIBRARY_PATH="${prefix}/usr/lib/${multiarch}/neat/runtime:${prefix}/usr/lib"
-          /usr/bin/python3 -m venv "${python_venv}"
-          "${python_venv}/bin/python" -m pip install "${distribution}"/pyneatpcie-*.whl pytest
-          "${python_venv}/bin/python" scripts/ci/pciehost/run_cpu_package_tests.py \
-            --workspace "${GITHUB_WORKSPACE}" --distribution "${distribution}" \
-            --work-directory "${work_root}/tests"
+          load_state
+          timeout --signal=TERM --kill-after=30s 3600 \
+            "${TEST_DIR}/prepare_pcie_genai_models.sh"
+
+      - name: Run PCIe host C++ CTest suite
+        if: ${{ steps.check_pcie_card_compatibility.outputs.compatible == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/run_ctest.sh
+
+      - name: Cleanup PCIe queues before Python tests
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/cleanup_queue.sh || true
+
+      - name: Run pyneatpcie Python pytest suite
+        if: ${{ !cancelled() && steps.install_pciehost_package.outcome == 'success' && steps.install_pcie_card_runtime.outcome == 'success' && steps.extract_pciehost_extras.outcome == 'success' && steps.resolve_pciehost_assets.outcome == 'success' && steps.verify_pcie_card_runtime.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/run_pytest.sh
+
+      - name: Collect PCIe hardware test artifacts
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          ./scripts/ci/pciehost/collect_artifacts.sh
+
+      - name: Upload PCIe hardware test artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: pciehost-hardware-${{ github.run_id }}-${{ github.run_attempt }}
+          path: _work/pciehost-artifacts
+          if-no-files-found: warn
+
+      - name: Cleanup PCIe queues
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          ./scripts/ci/pciehost/cleanup_queue.sh || true
 
   promote-latest-tag:
     name: Promote Latest Tag

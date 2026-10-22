@@ -49,10 +49,9 @@ Selection is explicit override, then valid sibling source, then sibling
 both source and package overrides for the same component is an error. A failed
 local build stops the build; it never falls back to an older package.
 
-**TODO: downloading native dependency artifacts.** Until implemented, provide local
-sources or packages for all three dependencies. Missing inputs fail before dependency
-installation. Existing LLiMa dependency handling is unchanged; use `--no-llima`
-when that optional backend is not needed.
+Local `build.sh` requires selected sources or packages and never downloads a fallback.
+For explicit artifact acquisition, see [Published CI dependencies](#published-ci-dependencies).
+Use `--no-llima` when the optional LLiMa backend is not needed.
 
 ## Platform dependencies
 
@@ -214,7 +213,7 @@ build's dependency. Documentation-only builds do not prepare native dependencies
 EV device builds remain a separate licensed workflow. None of these commands
 implicitly invokes MetaWare, replaces firmware, or qualifies a firmware change.
 
-## Published CI dependencies
+## Published CI dependencies {#published-ci-dependencies}
 
 The normal Vulcan build resolves the Scheduler policy in `deps/manifest.json`
 through `sima-cli` once, then downloads that immutable publication. A snap policy

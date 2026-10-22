@@ -46,9 +46,9 @@ NEAT_RUNNER_PACKAGE_DIR=/path/to/runner/dist/package \
 明確指定套件會優先於同層來源。對同一元件同時設定來源與套件覆寫會產生錯誤。
 本機建置失敗就會停止；絕不會退回較舊的套件。
 
-**待辦：下載原生相依成品。** 在實作完成前，請為全部三個相依元件提供本機來源或套件。
-缺少輸入會在安裝相依套件前失敗。現有 LLiMa 相依處理保持不變；不需要此選用後端時，
-請使用 `--no-llima`。
+本機的 `build.sh` 需要選定的來源或套件，且不會自動下載替代成品。
+如需明確取得成品，請參閱[已發布的 CI 相依項目](#published-ci-dependencies)。
+不需要選用的 LLiMa 後端時，請使用 `--no-llima`。
 
 ## 平台相依項目
 
@@ -169,7 +169,7 @@ SDK LLiMa 套件取代選定建置的相依項目。僅說明內容建置不會�
 EV 裝置建置仍是需要授權的獨立流程。這些命令都不會隱含呼叫 MetaWare、替換韌體，
 或完成韌體變更驗證。
 
-## 已發布的 CI 相依項目
+## 已發布的 CI 相依項目 {#published-ci-dependencies}
 
 一般 Vulcan 建置會透過 `sima-cli` 解析一次 `deps/manifest.json` 中的 Scheduler
 原則，然後下載該不可變的發布版本。snap 原則選擇目前分支；尚未發布的分支會失敗，

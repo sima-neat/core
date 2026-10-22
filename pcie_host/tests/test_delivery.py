@@ -8,6 +8,7 @@ import shutil
 import subprocess
 from pathlib import Path
 import sys
+import tarfile
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -331,9 +332,6 @@ GENAI_CMAKE_ARGS=()
         self.assertIn('mv "${prefix}" "${prefix}-relocated"', smoke)
         self.assertIn('import pyneatpcie', smoke)
         self.assertNotIn('install_pciehost.sh', smoke)
-        hardware = workflow.split('  test-pciehost-hardware:', 1)[1]
-        self.assertIn('scripts/ci/pciehost/prepare_cpu_package.py', hardware)
-        self.assertNotIn('./scripts/ci/pciehost/install_host_package.sh', hardware)
 
     def test_exact_cmake_dependency_guard(self):
         source = (ROOT / 'CMakeLists.txt').read_text()
@@ -661,35 +659,6 @@ class CpuPackageCoverage(unittest.TestCase):
         for node in cpu_tests.CPU_TESTS:
             self.assertTrue((ROOT / 'python/tests' / node.split('::')[0]).is_file())
 
-    def test_workflow_keeps_cpu_coverage_on_develop_host_without_physical_actions(self):
-        workflow = (ROOT.parent / '.github/workflows/vulcan-ci.yml').read_text()
-        smoke = workflow.split('      - name: Smoke test staged PCIe host packages and wheel\n', 1)[1]
-        smoke = smoke.split('\n      - name:', 1)[0]
-        self.assertIn('pcie_host/dist/pyneatpcie-*.whl', smoke)
-        self.assertNotIn('run_cpu_package_tests.py', smoke)
-        self.assertNotIn('pytest', smoke)
-        cpu = workflow.split('\n  test-pciehost-hardware:\n', 1)[1].split('\n  promote-latest-tag:', 1)[0]
-        self.assertIn('name: Test PCIe Host CPU Coverage', cpu)
-        self.assertIn('runs-on: [self-hosted, Linux, X64, pcie, 3.0.0-pcie-test]', cpu)
-        self.assertIn('prepare_cpu_package.py', cpu)
-        self.assertIn('--commit "${GITHUB_SHA}"', cpu)
-        self.assertIn('"${python_venv}/bin/python" scripts/ci/pciehost/run_cpu_package_tests.py', cpu)
-        self.assertIn('/usr/bin/python3 -m venv', cpu)
-        self.assertIn('source scripts/ci/pciehost/common.sh', cpu)
-        self.assertIn('run_host_sudo ./pcie_host/build.sh --python --install-deps-only', cpu)
-        self.assertIn('SUDO_PASSWORD: ${{ secrets.PCIEHOST_SUDO_PASSWORD }}', cpu)
-        self.assertEqual(cpu.count('secrets.'), 1)
-        self.assertEqual(cpu.count('run_host_sudo '), 1)
-        self.assertIn('LD_LIBRARY_PATH=', cpu)
-        for forbidden in ('preflight.sh', 'pcie-setup.sh', 'prepare_card_prerequisites.sh',
-                          'check_card_compatibility.sh', 'install_host_package.sh',
-                          'install_host_test_deps.sh', 'install_card_runtime.sh', 'cleanup_queue.sh',
-                          'verify_card_runtime.sh', 'prepare_pcie_genai_models.sh', 'run_ctest.sh',
-                          'run_pytest.sh', 'DEVKIT_PASSWORD', 'SIMAPCIE_CARD_'):
-            with self.subTest(physical_action=forbidden):
-                self.assertNotIn(forbidden, cpu)
-        self.assertEqual(workflow.count('scripts/ci/pciehost/run_cpu_package_tests.py'), 1)
-
     def test_models_are_required_even_when_original_tests_would_skip(self):
         with tempfile.TemporaryDirectory() as temporary:
             model = Path(temporary) / 'actual-model-path'
@@ -716,62 +685,99 @@ class CpuPackageCoverage(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'run_vlm.py'):
                 cpu_tests.verify_tutorials(ROOT.parent, extras)
 
-    def test_collection_matches_executed_parameterized_inventory(self):
-        collected = cpu_tests.collected_tests(
-            'pcie_host/python/tests/test_api_surface.py::test_options_surface\n'
-            'pcie_host/python/tests/test_metadata.py::test_load[BF16]\n\n2 tests collected\n')
-        self.assertEqual(len(collected), 2)
-        with tempfile.TemporaryDirectory() as temporary:
-            report = Path(temporary) / 'report.xml'
-            cases = ('<testcase classname="pcie_host.python.tests.test_api_surface" '
-                     'name="test_options_surface"/>',
-                     '<testcase classname="pcie_host.python.tests.test_metadata" '
-                     'name="test_load[BF16]"/>')
-            report.write_text('<testsuites><testsuite>' + ''.join(cases) + '</testsuite></testsuites>')
-            cpu_tests.verify_python_report(collected, report)
-            for changed in (cases[:1], (*cases, cases[0])):
-                report.write_text('<testsuites><testsuite>' + ''.join(changed) + '</testsuite></testsuites>')
-                with self.subTest(cases=len(changed)), self.assertRaisesRegex(ValueError, 'inventory'):
-                    cpu_tests.verify_python_report(collected, report)
-            for tag in ('skipped', 'failure', 'error'):
-                report.write_text('<testsuites><testsuite>' + cases[0] +
-                                 cases[1].replace('/>', f'><{tag}/></testcase>') +
-                                 '</testsuite></testsuites>')
-                with self.subTest(tag=tag), self.assertRaisesRegex(ValueError, 'skip, failure or error'):
-                    cpu_tests.verify_python_report(collected, report)
+    def test_cpu_runner_uses_shared_accounting_with_real_host_processes(self):
+        for outcome in ('pass', 'skip', 'missing', 'ctest_skip', 'ctest_failure', 'ctest_missing',
+                        'wrong_binary', 'invalid_native'):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as temporary:
+                workspace = Path(temporary)
+                (workspace / 'tools').symlink_to(ROOT.parent / 'tools', target_is_directory=True)
+                sources = workspace / 'pcie_host/python/tests'
+                sources.mkdir(parents=True)
+                record = ('from pathlib import Path\n'
+                          f'LOG = Path({str(workspace / "executed")!r})\n'
+                          'def record():\n'
+                          '    with LOG.open("a") as stream: stream.write("executed\\n")\n')
+                expected_nodes = set()
+                for node in cpu_tests.CPU_TESTS:
+                    name, _, function = node.partition('::')
+                    with (sources / name).open('a') as source:
+                        source.write(record + f'def {function or "test_cpu"}(): record()\n')
+                    expected_nodes.add(
+                        f'{(sources / name).relative_to(workspace).as_posix()}::{function or "test_cpu"}')
+                with (sources / 'test_hardware_smoke.py').open('a') as source:
+                    source.write('def test_requires_card(): assert False, "hardware case must stay unselected"\n')
+                parameters = ['/nonexistent/neat-model', 'path/file.py::value[inner]']
+                (sources / 'test_genai_values.py').write_text(
+                    record + 'import pytest\n' +
+                    f'@pytest.mark.parametrize("value", {parameters!r})\n'
+                    'def test_values(value): record()\n')
+                values_node = (sources / 'test_genai_values.py').relative_to(workspace).as_posix()
+                expected_nodes.remove(f'{values_node}::test_cpu')
+                expected_nodes.update(f'{values_node}::test_values[{value}]' for value in parameters)
+                if outcome == 'skip':
+                    (sources / 'test_api_surface.py').write_text(
+                        'import pytest\ndef test_cpu(): pytest.skip("required CPU fixture")\n')
+                elif outcome == 'missing':
+                    (sources / 'conftest.py').write_text(
+                        'def pytest_runtest_protocol(item, nextitem):\n'
+                        '    if item.path.name == "test_api_surface.py": return True\n')
 
-    def test_collection_never_accepts_empty_or_duplicate_inventory(self):
-        node = 'pcie_host/python/tests/test_metadata.py::test_load'
-        for output in ('no tests collected', node + '\n' + node):
-            with self.subTest(output=output), self.assertRaisesRegex(ValueError, 'empty or duplicated'):
-                cpu_tests.collected_tests(output)
-
-    def test_parameter_ids_preserve_path_and_node_separators(self):
-        for parameter in ('/nonexistent/neat-model', 'path/file.py::value[inner]'):
-            with self.subTest(parameter=parameter), tempfile.TemporaryDirectory() as temporary:
-                node = f'pcie_host/python/tests/test_genai_values.py::test_host_model_path_validation[{parameter}]'
-                expected = f'pcie_host.python.tests.test_genai_values.test_host_model_path_validation[{parameter}]'
-                collected = cpu_tests.collected_tests(node)
-                self.assertEqual(collected, {expected})
-                report = Path(temporary) / 'report.xml'
-                report.write_text('<testsuite><testcase classname="pcie_host.python.tests.test_genai_values" '
-                                  f'name="test_host_model_path_validation[{parameter}]"/></testsuite>')
-                cpu_tests.verify_python_report(collected, report)
-
-    def test_cpp_metadata_report_never_accepts_missing_extra_or_skipped_cases(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            report = Path(temporary) / 'metadata.xml'
-            case = '<testcase name="test_metadata"/>'
-            report.write_text('<testsuite>' + case + '</testsuite>')
-            cpu_tests.verify_metadata_report(report)
-            for changed in ('', case * 2, '<testcase name="test_tensor_run"/>'):
-                report.write_text('<testsuite>' + changed + '</testsuite>')
-                with self.subTest(cases=changed), self.assertRaisesRegex(ValueError, 'inventory'):
-                    cpu_tests.verify_metadata_report(report)
-            for tag in ('skipped', 'failure', 'error'):
-                report.write_text('<testsuite>' + case.replace('/>', f'><{tag}/></testcase>') + '</testsuite>')
-                with self.subTest(tag=tag), self.assertRaisesRegex(ValueError, 'skip, failure or error'):
-                    cpu_tests.verify_metadata_report(report)
+                payload = workspace / 'payload'
+                tutorials = Path('pcie_host/tutorials/029_run_genai_over_pcie')
+                for name in ('run_llm.py', 'run_vlm.py', 'run_whisper.py'):
+                    for directory in (workspace / tutorials,
+                                      payload / 'share/sima-pcie-host/tutorials/029_run_genai_over_pcie'):
+                        directory.mkdir(parents=True, exist_ok=True)
+                        (directory / name).write_text('# selected tutorial fixture\n')
+                installed_tests = payload / 'lib/sima-pcie-host/tests'
+                installed_tests.mkdir(parents=True)
+                binary = installed_tests / 'test_metadata'
+                shutil.copy2('/usr/bin/false' if outcome == 'ctest_failure' else '/usr/bin/true', binary)
+                if outcome == 'invalid_native':
+                    binary.write_text('not a native ELF executable\n')
+                command = ('/usr/bin/true' if outcome == 'wrong_binary' else './test_metadata')
+                name = 'other' if outcome == 'ctest_missing' else 'test_metadata'
+                registration = f'add_test({name} "{command}")\n'
+                if outcome == 'ctest_skip':
+                    registration += 'set_tests_properties(test_metadata PROPERTIES SKIP_RETURN_CODE 0)\n'
+                (installed_tests / 'CTestTestfile.cmake').write_text(registration)
+                distribution = workspace / 'distribution'
+                distribution.mkdir()
+                with tarfile.open(distribution / 'sima-pcie-host-fixture-Linux-cpu-extras.tar.gz', 'w:gz') as archive:
+                    archive.add(payload, arcname='.')
+                model = workspace / 'model'; model.write_bytes(b'explicit offline fixture')
+                environment = {name: str(model) for name in cpu_tests.MODEL_VARIABLES}
+                environment['PYTEST_DISABLE_PLUGIN_AUTOLOAD'] = '1'
+                work = workspace / 'results'
+                argv = ['run_cpu_package_tests.py', '--workspace', str(workspace),
+                        '--distribution', str(distribution), '--work-directory', str(work)]
+                # Only package imports are a seam: pytest, CTest, archive extraction,
+                # native ELF inspection and both shared accountants execute normally.
+                package = Mock(__file__=str(Path(sys.prefix) / 'lib/pyneatpcie/__init__.py'))
+                with patch.object(sys, 'argv', argv), patch.object(sys, 'base_prefix', '/fixture-base'), \
+                     patch.object(cpu_tests.importlib, 'import_module', return_value=package), \
+                     patch.dict(os.environ, environment):
+                    if outcome == 'pass':
+                        cpu_tests.main()
+                        selection = json.loads((work / 'python-cpu/selection.json').read_text())
+                        self.assertEqual(set(selection['selected']), expected_nodes)
+                        report = json.loads((work / 'metadata-cpu/coverage.json').read_text())
+                        self.assertEqual(report['passed'], 1)
+                        executed = (workspace / 'executed').read_text()
+                        with self.assertRaisesRegex(ValueError, 'fresh work directory'):
+                            cpu_tests.main()
+                        self.assertEqual((workspace / 'executed').read_text(), executed)
+                    elif outcome in ('skip', 'missing', 'ctest_skip', 'ctest_failure'):
+                        with self.assertRaises(subprocess.CalledProcessError):
+                            cpu_tests.main()
+                        if outcome in ('skip', 'missing'):
+                            self.assertFalse((work / 'metadata-cpu').exists())
+                    else:
+                        with self.assertRaisesRegex(ValueError, {
+                                'ctest_missing': 'exactly test_metadata',
+                                'wrong_binary': 'selected extras binary',
+                                'invalid_native': 'native host'}[outcome]):
+                            cpu_tests.main()
 
 
 if __name__ == '__main__': unittest.main()

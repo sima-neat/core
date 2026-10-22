@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Use this build's exact Scheduler inputs for host-only Core analysis.
+"""Verify this build's Core distribution and stage Scheduler for host analysis.
 
-The caller first verifies the complete Core dist using verify_core_dist.sh.
-Only Scheduler is bootstrapped here; its installed coordinator owns all lower
-partitioning, receipt/cohort checks and platform-runtime archive selection.
+Scheduler's installed coordinator owns lower partitioning, receipt/cohort checks
+and platform-runtime archive selection.
 """
 import argparse
 import json
@@ -40,7 +39,7 @@ def coordinator(core, command, env):
 
 def prepare(args):
     core, dist, output = args.core.resolve(), args.dist.resolve(), args.output.resolve()
-    # The CLI also verifies independently when called outside the workflow.
+    # Authenticate the distribution before extracting executable tooling.
     subprocess.run(['bash', str(core / 'scripts/ci/verify_core_dist.sh'), '--dist', str(dist)], check=True,
                    stdout=sys.stderr)
     output.mkdir(parents=True, exist_ok=False)
@@ -83,9 +82,6 @@ def main():
     parser.add_argument('--core', type=Path, default=Path.cwd())
     parser.add_argument('--dist', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
-    # Retain the existing caller interface; host analysis resolves no remote inputs.
-    parser.add_argument('--environment', required=True, help='Accepted for caller compatibility')
-    parser.add_argument('--cli', default='sima-cli', help='Accepted for caller compatibility')
     parser.add_argument('--github-env', type=Path, required=True)
     args = parser.parse_args()
     values = prepare(args)

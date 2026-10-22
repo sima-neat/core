@@ -10,7 +10,6 @@ from pathlib import Path
 import platform
 import subprocess
 import sys
-import xml.etree.ElementTree as ET
 
 
 CPU_TESTS = (
@@ -61,36 +60,6 @@ def verify_tutorials(workspace, extras):
                 f'Installed CPU tutorial differs from selected source: {name}')
 
 
-def collected_tests(output):
-    nodes = [line.strip() for line in output.splitlines() if '.py::' in line and not line.startswith(' ')]
-    require(nodes and len(nodes) == len(set(nodes)), 'CPU pytest collection is empty or duplicated')
-    # Normalize only the address. Parameter IDs can contain paths, separators
-    # and brackets which pytest preserves verbatim in the JUnit case name.
-    identities = set()
-    for node in nodes:
-        address, bracket, parameters = node.partition('[')
-        identities.add(address.replace('.py::', '::', 1).replace('/', '.').replace('::', '.')
-                       + bracket + parameters)
-    return identities
-
-
-def verify_python_report(collected, report):
-    cases = list(ET.parse(report).iter('testcase'))
-    identities = [f"{case.get('classname')}.{case.get('name')}" for case in cases]
-    require(len(identities) == len(set(identities)) and set(identities) == collected,
-            'Executed CPU pytest inventory differs from collection')
-    require(not any(case.find(tag) is not None for case in cases for tag in ('skipped', 'failure', 'error')),
-            'CPU pytest coverage contains a skip, failure or error')
-
-
-def verify_metadata_report(report):
-    cases = list(ET.parse(report).iter('testcase'))
-    require([case.get('name') for case in cases] == ['test_metadata'],
-            'Executed CPU CTest inventory is not exactly test_metadata')
-    require(not any(case.find(tag) is not None for case in cases for tag in ('skipped', 'failure', 'error')),
-            'CPU CTest coverage contains a skip, failure or error')
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--workspace', type=Path, required=True)
@@ -122,22 +91,21 @@ def main():
                        SIMAPCIE_EXTRAS_DIR=str(extras),
                        SIMAPCIE_TEST_IMAGE=str(workspace / 'tests/images/people.jpg'),
                        SIMAPCIE_BOXDECODE_IMAGE=str(workspace / 'tests/images/people.jpg'))
+    environment['PYTHONPATH'] = os.pathsep.join(filter(None, (
+        str(workspace / 'tools/ci'), environment.get('PYTHONPATH'))))
     resolve_models(workspace, work, environment)
     # A source test's relative imports need the source layout. Verify its
     # installed tutorial dependencies above instead of silently testing a stale
     # or incomplete extras package. Select only the two CPU cases from the
     # mixed hardware-smoke module, never that whole module or hardware suites.
     selected = [str(workspace / 'pcie_host/python/tests' / name) for name in CPU_TESTS]
+    python_coverage = work / 'python-cpu'
     pytest = [sys.executable, '-m', 'pytest', '-q', '--import-mode=importlib',
-              '--rootdir', str(workspace), *selected]
-    collection = subprocess.check_output([*pytest, '--collect-only'], cwd=workspace,
-                                         env=environment, text=True)
-    print(collection, end='')
-    collected = collected_tests(collection)
-    report = work / 'python-cpu.xml'
-    subprocess.run([*pytest, '--junitxml', str(report)], cwd=workspace,
-                   env=environment, check=True)
-    verify_python_report(collected, report)
+              '--rootdir', str(workspace), '-p', 'core_pytest_coverage',
+              '--core-coverage-dir', str(python_coverage),
+              '--junitxml', str(work / 'python-cpu.xml'), *selected]
+    subprocess.run(pytest, cwd=workspace, env=environment, check=True)
+    collected = json.loads((python_coverage / 'selection.json').read_text())['selected']
 
     test_dir = extras / 'lib/sima-pcie-host/tests'
     binary = test_dir / 'test_metadata'
@@ -153,10 +121,9 @@ def main():
     command = inventory['tests'][0]['command']
     require(len(command) == 1 and (test_dir / command[0]).resolve() == binary.resolve(),
             'Installed metadata CTest does not execute the selected extras binary')
-    metadata_report = work / 'metadata-cpu.xml'
-    subprocess.run([*ctest, '--output-on-failure', '--output-junit', str(metadata_report)],
-                   env=environment, check=True)
-    verify_metadata_report(metadata_report)
+    subprocess.run([sys.executable, str(workspace / 'tools/ci/check_test_coverage.py'),
+                    '--profile', 'strict', '--output-dir', str(work / 'metadata-cpu'),
+                    '--', *ctest, '--output-on-failure'], env=environment, check=True)
     print(f'PCIe installed-package CPU coverage: {len(collected)} Python cases + test_metadata PASS')
 
 

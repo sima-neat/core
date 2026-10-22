@@ -203,12 +203,12 @@ Result<std::shared_ptr<KernelStageRecipe>> check_transform_stage(const StageStat
                     logical.materialization_kind != TensorMaterializationKind::Bf16LaneSplitRepack;
            })))
     return invalid("materialization", "DetessCast requires exact input materialization policy");
-  std::vector<TensorSpec> inputs, outputs;
-  std::vector<float> scalar_values(count, 1.0f);
-  std::vector<std::int32_t> zero_points(count, 0);
-  std::vector<std::string_view> rounding(count, "nearest_even");
-  inputs.reserve(count);
-  outputs.reserve(count);
+  struct Transform {
+    TensorSpec input, output;
+    std::vector<Parameter> parameters;
+  };
+  std::vector<Transform> transforms;
+  transforms.reserve(count);
   for (std::size_t i = 0; i < count; ++i) {
     const auto& legacy_input = cfg.input_tensors[i].descriptor();
     const auto& legacy_output = cfg.output_tensors[i].descriptor();
@@ -231,8 +231,8 @@ Result<std::shared_ptr<KernelStageRecipe>> check_transform_stage(const StageStat
       return at_port(*error, "inputs");
     if (auto* error = std::get_if<Error>(&out))
       return at_port(*error, "outputs");
-    inputs.push_back(std::get<TensorSpec>(std::move(in)));
-    outputs.push_back(std::get<TensorSpec>(std::move(out)));
+    Transform transform{
+        std::get<TensorSpec>(std::move(in)), std::get<TensorSpec>(std::move(out)), {}};
     if (i < stage.logical_inputs.size() && stage.logical_inputs[i].materialization_kind ==
                                                TensorMaterializationKind::Bf16LaneSplitRepack)
       return invalid("materialization", "lane-split repack must be explicitly "
@@ -249,24 +249,26 @@ Result<std::shared_ptr<KernelStageRecipe>> check_transform_stage(const StageStat
         return invalid("scale", "legacy public scale must be finite and positive");
       // Old prepared fields retain the public multiplier; the old descriptor
       // builder applied this reciprocal exactly once for both dequant families.
-      scalar_values[i] = dequant ? 1.0f / authored : authored;
-      zero_points[i] = zeros.empty() ? cfg.q_zp : zeros[i];
-      if (!dequant) {
+      const float scalar = dequant ? 1.0f / authored : authored;
+      const std::int32_t zero_point = zeros.empty() ? cfg.q_zp : zeros[i];
+      if (dequant) {
+        transform.parameters = {{"scale", scalar}, {"zero_point", zero_point}};
+      } else {
         constexpr std::array<std::string_view, 4> modes{"toward_zero", "nearest_even",
                                                         "toward_positive", "toward_negative"};
         const int round = cfg.round_off;
         if (round < 0 || round >= static_cast<int>(modes.size()))
           return invalid("round_off", "unsupported legacy rounding mode");
-        rounding[i] = modes[round];
+        transform.parameters = {
+            {"multiplier", scalar}, {"zero_point", zero_point}, {"rounding", modes[round]}};
       }
     }
-    if (const auto* tile = std::get_if<kernels::MlaTiled>(&outputs.back().layout);
-        tile && family->scalar == Family::Tess && outputs.back().dtype == DType::Int8 &&
+    if (const auto* tile = std::get_if<kernels::MlaTiled>(&transform.output.layout);
+        tile && family->scalar == Family::Tess && transform.output.dtype == DType::Int8 &&
         tile->channels == kernels::MlaTiled::Channels::PadTo16)
       return invalid("channel_padding", "legacy Tess has no explicit native INT8 padding value");
+    transforms.push_back(std::move(transform));
   }
-  std::vector<KernelExecutable> checked;
-  checked.reserve(count);
   auto recipe = std::make_shared<KernelStageRecipe>();
   recipe->target = target;
   auto& members = recipe->members;
@@ -274,20 +276,13 @@ Result<std::shared_ptr<KernelStageRecipe>> check_transform_stage(const StageStat
   for (std::size_t i = 0; i < count; ++i) {
     // Core emits the named canonical request directly. Numerical validation and
     // operation resolution remain in the operation-owned Kernels provider.
-    const std::span<const TensorSpec> in{&inputs[i], 1}, out{&outputs[i], 1};
-    std::vector<Parameter> parameters;
-    if (family->scalar == Family::Quant) {
-      parameters = {{"multiplier", scalar_values[i]},
-                    {"zero_point", zero_points[i]},
-                    {"rounding", rounding[i]}};
-    } else if (family->scalar == Family::Dequant) {
-      parameters = {{"scale", scalar_values[i]}, {"zero_point", zero_points[i]}};
-    }
-    auto compiled = check_kernel({family->canonical, target, in, out, parameters});
+    const auto& transform = transforms[i];
+    const std::span<const TensorSpec> in{&transform.input, 1}, out{&transform.output, 1};
+    auto compiled = check_kernel({family->canonical, target, in, out, transform.parameters});
     if (const auto* error = std::get_if<Error>(&compiled))
       return *error;
-    checked.push_back(std::get<KernelExecutable>(std::move(compiled)));
-    auto inspected = inspect_kernel(checked.back());
+    auto executable = std::get<KernelExecutable>(std::move(compiled));
+    auto inspected = inspect_kernel(executable);
     if (const auto* error = std::get_if<Error>(&inspected))
       return *error;
     const auto& contract = std::get<KernelInspection>(inspected);
@@ -308,7 +303,7 @@ Result<std::shared_ptr<KernelStageRecipe>> check_transform_stage(const StageStat
       return invalid("storage", "legacy span differs from canonical physical storage");
     for (std::size_t batch = 0; batch < batches; ++batch) {
       gs::TensorStageMember member;
-      member.executable = checked.back();
+      member.executable = executable;
       member.inputs.push_back({i, batch * in_bytes, gs::TensorStagePortSource::Input});
       member.outputs.push_back({i, batch * out_bytes, gs::TensorStagePortSource::Output});
       members.push_back(std::move(member));
