@@ -155,8 +155,8 @@ internal::resolve_layer_profile_stages(const pipeline_internal::sima::MpkContrac
 
 void internal::require_owned_mla_layer_profiling() {
   if (!simaai::scheduler::client::supports_mla_layer_statistics())
-    profile_error("offline MLA layer profiling is unavailable: the worker may be missing or "
-                  "incompatible, or a diagnostic is active or requires recovery; no profiling "
+    profile_error("offline MLA layer profiling is unavailable: mla-rt may be missing from PATH or "
+                  "not executable, or a diagnostic is active or requires recovery; no profiling "
                   "command was launched. Keep MLA idle after an unresolved diagnostic");
 }
 

@@ -37,9 +37,9 @@ are instantiated by Scheduler after cohort validation. A cached dynamic
 selection retains its operation but binds the current frame's memory.
 
 GenAI calls LLiMa directly, not through Runner or a Scheduler GenAI adapter. Offline MLA layer
-profiling is a separate, default-off pass through Scheduler’s owned diagnostic provider. It
-requires an idle DevKit with no other MLA work; missing provider capability fails with an
-actionable diagnostic, not an unmanaged `mla_rt` child.
+profiling is a separate, default-off pass through Scheduler's on-demand `mla-rt` CLI integration.
+It requires an idle DevKit with no other MLA work. Core keeps CLI execution behind Scheduler's
+boundary and does not launch a profiling process itself.
 
 ---
 
@@ -478,17 +478,21 @@ sample and reads no power monitor chips over I2C.
 Layer profiling is opt-in through `BenchmarkOptions::include_layer_stats`, which defaults to
 false. It requires an idle DevKit with no overlapping MLA workloads. The benchmark gate
 serializes benchmark calls, not other inference APIs or applications. After its latency and
-throughput runners close, Core asks Scheduler's offline diagnostic service to profile the
-model's MLA stages. Core owns MPK stage selection, independent compiler-YAML/report validation,
-and customer report fields; Scheduler owns the provider session and its resources; MLA-RT
-owns hardware profiling and the handoff back to kernel execution. Runner's ordinary inference
-path is unchanged. Profiling uses separate provider inputs, not the benchmark input buffers.
+throughput runners close, Core asks Scheduler to run the installed `mla-rt` CLI on demand for
+each MLA stage. There is no persistent profiling worker. Core owns MPK stage selection,
+independent compiler-YAML/report validation, and customer report fields; Scheduler owns the
+CLI process and temporary files; MLA-RT owns hardware profiling and the handoff back to kernel
+execution. Runner's ordinary inference path is unchanged. Profiling uses separate provider
+inputs, not the benchmark input buffers.
 
-Scheduler capability admission rejects unavailable diagnostic providers before inference.
-A host timeout is not device retirement: an unknown completion retains the diagnostic owner
-and requires recovery before further device use. Core neither launches nor kills the provider,
-and does not substitute whole-job counters for per-layer measurements. A compatible provider
-must support the retained-completion diagnostic protocol; the legacy CLI alone is insufficient.
+Scheduler checks that `mla-rt` is executable in `PATH` and that this process has no active
+or recovery-required offline diagnostic before benchmark inference. This check does not validate CLI feature
+compatibility; unsupported options fail the profiling request with CLI diagnostics.
+A host timeout is not device retirement. After a timeout or unknown completion, keep MLA idle
+until recovery is verified. Scheduler does not kill a CLI that may still own device resources.
+Core neither launches nor kills the CLI, and does not substitute whole-job counters for
+per-layer measurements. Successful profiling requires a normal CLI exit and a valid report;
+the provider must finish hardware execution before releasing its resources.
 
 `BenchmarkReport::layer_stats` contains compiled layer names, zero-based executable stage
 indices, and execution times in microseconds. These measurements use separate profiling

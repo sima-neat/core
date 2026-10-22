@@ -139,8 +139,9 @@ struct BenchmarkOptions {
   /// cover several telemetry samples. Set it to 0 to stop each pass after `num_samples` inputs.
   int min_duration_ms = 10000;
   /// Advanced: collect compiled MLA layer timings in a separate offline pass. Default off.
-  /// Requires Scheduler's owned diagnostic provider and an idle DevKit with no other MLA
-  /// workloads. Unknown completion requires recovery before further device use.
+  /// Requires the installed mla-rt CLI and an idle DevKit with no other MLA workloads.
+  /// Scheduler runs the CLI on demand. Unknown completion requires recovery before further
+  /// device use.
   bool include_layer_stats = false;
 };
 
