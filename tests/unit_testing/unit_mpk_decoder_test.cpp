@@ -14,12 +14,15 @@
 #include "pipeline/internal/sima/static_contract/KernelRegistry.h"
 #include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
 
+#include "asset_utils.h"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -1675,6 +1678,45 @@ void test_reshape_is_an_exact_read_expression() {
         "reshape that changes the byte extent fails closed");
 }
 
+void test_joiner_compiler_manifest() {
+  std::ifstream file(sima_test::test_model_archive_fixture_root_path() /
+                     "strict-seeds/nemotron_joiner_argmax_mpk.json");
+  check(file.is_open(), "the real joiner MPK manifest fixture must be installed");
+  const auto manifest = nlohmann::json::parse(file);
+  auto topology = monolithic_topology(0U, 16U);
+  topology.monolithic_ifm = false;
+  topology.ifm_symbol_names = {"data.ifm.persistent.qmla_ifm_0.b0",
+                               "data.ifm.persistent.qmla_ifm_1.b0"};
+  topology.ifm_extent_bytes = {1280U, 1280U};
+  const auto& mla = manifest["plugins"][2];
+  const auto& host = manifest["plugins"][4];
+  const std::vector<MlaStageExecutableEvidence> mla_evidence{
+      {mla["name"], mla["resources"]["executable"], topology, 100U, "synthetic-mla-digest"}};
+  const std::vector<HostTvmExecutableEvidence> host_evidence{{host["name"],
+                                                              host["resources"]["executable"],
+                                                              {"arm_2_i0"},
+                                                              {{"int32", {1, 1, 1, 1}}},
+                                                              {{"int32", {1, 1, 1, 1}}},
+                                                              {0},
+                                                              100U,
+                                                              "synthetic-identity-digest"}};
+  const auto result = MpkDecoder{}.decode_json(manifest.dump(), mla_evidence, host_evidence);
+  if (!result && result.error)
+    std::cerr << result.error->detail << "\n";
+  check(static_cast<bool>(result),
+        "compiler-generated joiner manifest decodes with structural evidence");
+  const auto& output = result.plan->values().at(result.plan->model_outputs().front().value_id);
+  check(output.logical_dtype == "int32" && output.logical_shape == TensorShape({1, 1}) &&
+            output.required_bytes == 4U,
+        "real joiner manifest preserves its four-byte INT32 [1,1] output");
+  std::string error;
+  const auto physical = PhysicalExecutionLowerer::lower(*result.plan, &error);
+  check(physical.has_value() &&
+            std::none_of(physical->commands.begin(), physical->commands.end(),
+                         [](const auto& command) { return command.engine == PhysicalEngine::A65; }),
+        "real joiner identity module contributes no physical A65 command");
+}
+
 void test_terminal_integer_identity_after_scalar_crop() {
   using Json = nlohmann::json;
   auto manifest = Json::parse(valid_manifest());
@@ -3084,6 +3126,7 @@ int main(const int argc, char** argv) {
   test_dense_ifm_tail_padding();
   test_unpack_and_slice_are_read_expressions();
   test_reshape_is_an_exact_read_expression();
+  test_joiner_compiler_manifest();
   test_terminal_integer_identity_after_scalar_crop();
   test_registered_detess_layout_is_preserved_through_dequant();
   test_rank2_detess_dequant_execution_geometry();

@@ -1,0 +1,315 @@
+{
+  "name": "joiner_argmax",
+  "model_path": "joiner_argmax.onnx",
+  "model_checksum": "02e741c991157565c734987ba547cdafbab5536707e8e0eeb3cb21f51249be0f",
+  "sequence": 1,
+  "model_sdk_version": "3.0.0",
+  "input_nodes": [
+    {
+      "name": "encoder_frame",
+      "type": "buffer",
+      "size": 2560,
+      "input_range": [
+        -0.5634618997573853,
+        0.3105294704437256
+      ]
+    },
+    {
+      "name": "predictor_output",
+      "type": "buffer",
+      "size": 2560,
+      "input_range": [
+        -5.709618091583252,
+        0.30881190299987793
+      ]
+    }
+  ],
+  "plugins": [
+    {
+      "name": "cast_0",
+      "sequence": 1,
+      "processor": "EV74",
+      "config_params": {
+        "desired_batch_size": 1,
+        "actual_batch_size": 1,
+        "kernel": "cast_transform",
+        "params": {
+          "in_dtype": "float32",
+          "out_dtype": "bfloat16",
+          "input_shapes": [
+            [
+              1,
+              1,
+              640
+            ]
+          ],
+          "output_shapes": [
+            [
+              1,
+              1,
+              640
+            ]
+          ]
+        }
+      },
+      "input_nodes": [
+        {
+          "name": "encoder_frame",
+          "size": 2560
+        }
+      ],
+      "output_nodes": [
+        {
+          "name": "cast_0",
+          "type": "buffer",
+          "size": 1280
+        }
+      ],
+      "type": "sgpProcess",
+      "resources": {
+        "executable": "kernel_name_tbd"
+      }
+    },
+    {
+      "name": "cast_1",
+      "sequence": 2,
+      "processor": "EV74",
+      "config_params": {
+        "desired_batch_size": 1,
+        "actual_batch_size": 1,
+        "kernel": "cast_transform",
+        "params": {
+          "in_dtype": "float32",
+          "out_dtype": "bfloat16",
+          "input_shapes": [
+            [
+              1,
+              1,
+              640
+            ]
+          ],
+          "output_shapes": [
+            [
+              1,
+              1,
+              640
+            ]
+          ]
+        }
+      },
+      "input_nodes": [
+        {
+          "name": "predictor_output",
+          "size": 2560
+        }
+      ],
+      "output_nodes": [
+        {
+          "name": "cast_1",
+          "type": "buffer",
+          "size": 1280
+        }
+      ],
+      "type": "sgpProcess",
+      "resources": {
+        "executable": "kernel_name_tbd"
+      }
+    },
+    {
+      "name": "MLA_0",
+      "sequence": 3,
+      "processor": "MLA",
+      "config_params": {
+        "desired_batch_size": 1,
+        "actual_batch_size": 1,
+        "number_of_quads_to_user": 4
+      },
+      "input_nodes": [
+        {
+          "name": "cast_0",
+          "size": 1280
+        },
+        {
+          "name": "cast_1",
+          "size": 1280
+        }
+      ],
+      "output_nodes": [
+        {
+          "name": "MLA_0",
+          "type": "buffer",
+          "size": 16
+        }
+      ],
+      "type": "sgpProcess",
+      "resources": {
+        "executable": "joiner_argmax_stage1_mla.elf"
+      }
+    },
+    {
+      "name": "slice_MLA_0_slice_transform",
+      "sequence": 4,
+      "processor": "EV74",
+      "config_params": {
+        "desired_batch_size": 1,
+        "actual_batch_size": 1,
+        "kernel": "slice_transform",
+        "params": {
+          "begin": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "end": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "input_shape": [
+            1,
+            1,
+            1,
+            4
+          ],
+          "output_shape": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "input_shapes": [
+            [
+              1,
+              1,
+              1,
+              4
+            ]
+          ],
+          "output_shapes": [
+            [
+              1,
+              1,
+              1,
+              1
+            ]
+          ]
+        }
+      },
+      "input_nodes": [
+        {
+          "name": "MLA_0",
+          "size": 16
+        }
+      ],
+      "output_nodes": [
+        {
+          "name": "slice_MLA_0_slice_transform",
+          "type": "buffer",
+          "size": 4
+        }
+      ],
+      "type": "sgpProcess",
+      "resources": {
+        "executable": "kernel_name_tbd"
+      }
+    },
+    {
+      "name": "APU_1",
+      "sequence": 5,
+      "processor": "A65",
+      "config_params": {
+        "input_names": [
+          "arm_2_i0"
+        ],
+        "input_types": [
+          {
+            "scalar": "int32",
+            "shape": [
+              1,
+              1,
+              1,
+              1
+            ]
+          }
+        ],
+        "output_types": [
+          {
+            "scalar": "int32",
+            "shape": [
+              1,
+              1,
+              1,
+              1
+            ]
+          }
+        ]
+      },
+      "input_nodes": [
+        {
+          "name": "slice_MLA_0_slice_transform",
+          "size": 4
+        }
+      ],
+      "output_nodes": [
+        {
+          "name": "APU_1",
+          "type": "buffer",
+          "size": 4
+        }
+      ],
+      "type": "sgpProcess",
+      "resources": {
+        "executable": "joiner_argmax_stage2_a65.so"
+      }
+    },
+    {
+      "name": "EV_2/reshape_0",
+      "sequence": 6,
+      "processor": "EV74",
+      "config_params": {
+        "desired_batch_size": 1,
+        "actual_batch_size": 1,
+        "kernel": "reshape_transform",
+        "params": {
+          "newshape": [
+            1,
+            1
+          ],
+          "input_shapes": [
+            [
+              1,
+              1,
+              1,
+              1
+            ]
+          ],
+          "output_shapes": [
+            [
+              1,
+              1
+            ]
+          ]
+        }
+      },
+      "input_nodes": [
+        {
+          "name": "APU_1",
+          "size": 4
+        }
+      ],
+      "output_nodes": [
+        {
+          "name": "EV_2/reshape_0/selected_token",
+          "type": "buffer",
+          "size": 4
+        }
+      ],
+      "type": "sgpProcess",
+      "resources": {
+        "executable": "kernel_name_tbd"
+      }
+    }
+  ]
+}

@@ -2147,8 +2147,15 @@ void derive_logical_output_contracts(MpkContract* contract) {
       }
       if (!producer_is_mla && dtype_preserving_consumer && logical_source &&
           !logical_source->dtype.empty()) {
-        output.logical_dtype = normalize_dtype_local(logical_source->dtype);
-        output.logical_dtype_source = logical_source->dtype_source;
+        // Shape/byte size cannot distinguish FP32 from INT32. Preserve an
+        // authored producer type over a consumer's width-based inference.
+        const auto* type_source = logical_source;
+        if (!output.dtype.empty() && output.dtype_source != DTypeSource::InferredFromSize &&
+            logical_source->dtype_source == DTypeSource::InferredFromSize) {
+          type_source = &output;
+        }
+        output.logical_dtype = normalize_dtype_local(type_source->dtype);
+        output.logical_dtype_source = type_source->dtype_source;
       }
 
       if (output.logical_shape.empty() && physical_shape_structured) {
