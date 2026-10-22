@@ -160,35 +160,32 @@ void contract() {
     check(actual.entry == expected.entry && actual.payload == expected.payload,
           "legacy lowering changed scale/rounding/dtype/layout packet");
   }
-  // Legacy scalar and per-member rounding must select the exact same packet
-  // as the typed kernel API, for Quant and its fused tessellation variant.
+  // Core's scalar rounding must match the typed API for Quant and QuantTess.
   using Round = test::Rounding;
   constexpr std::array modes{Round::TowardZero, Round::NearestEven, Round::TowardPositive,
                              Round::TowardNegative};
   for (const auto index : {1U, 5U})
     for (std::size_t mode = 0; mode < modes.size(); ++mode) {
       const auto& recipe = recipes[index];
-      for (const bool per_member : {false, true}) {
-        auto c = config(recipe);
-        c.processcvu.round_off = static_cast<int>(mode);
-        auto actual = take(lower::check_transform_stage(c));
-        const std::array in{spec(recipe.in, recipe.tiled_in)},
-            out{spec(recipe.out, recipe.tiled_out)};
-        if (per_member) {
-          // The retired adapter's per-member override had no Core model field.
-          // Preserve its exact numerical oracle through the canonical named API.
-          constexpr std::array<const char*, 4> names{"toward_zero", "nearest_even",
-                                                     "toward_positive", "toward_negative"};
-          const std::array<rt::Parameter, 3> parameters{
-              {{"multiplier", .25F}, {"zero_point", -3}, {"rounding", names[mode]}}};
-          actual->members.front().executable =
-              take(rt::check_kernel({recipe.canonical, rt::Target::EV74, in, out, parameters}));
-        }
-        auto expected = std::get<k::KernelExecutable>(::reference(recipe, in, out, modes[mode]));
-        check(test::packet_snapshot(actual->members.front().executable).payload ==
-                  test::packet_snapshot(expected).payload,
-              "rounding scalar/per-member precedence changed the lowered packet");
-      }
+      auto c = config(recipe);
+      c.processcvu.round_off = static_cast<int>(mode);
+      const auto actual = take(lower::check_transform_stage(c));
+      const std::array in{spec(recipe.in, recipe.tiled_in)},
+          out{spec(recipe.out, recipe.tiled_out)};
+      const auto expected =
+          test::packet_snapshot(take(::reference(recipe, in, out, modes[mode]))).payload;
+      check(test::packet_snapshot(actual->members.front().executable).payload == expected,
+            "Core scalar rounding changed the lowered packet");
+
+      // Keep these distinct provider assertions until Scheduler owns their coverage.
+      constexpr std::array<const char*, 4> names{"toward_zero", "nearest_even", "toward_positive",
+                                                 "toward_negative"};
+      const std::array<rt::Parameter, 3> parameters{
+          {{"multiplier", .25F}, {"zero_point", -3}, {"rounding", names[mode]}}};
+      const auto named =
+          take(rt::check_kernel({recipe.canonical, rt::Target::EV74, in, out, parameters}));
+      check(test::packet_snapshot(named).payload == expected,
+            "Scheduler named rounding differs from the typed reference");
     }
   auto reject = [&](const core::StageStaticSpec& c) {
     const auto before = transport->admissions;

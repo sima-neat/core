@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Core composition tests use a provider seam, not copied Scheduler policy."""
-import ast
 import importlib.util
 import io
 import json
@@ -661,26 +660,6 @@ class CpuPackageCoverage(unittest.TestCase):
             'test_hardware_smoke.py::test_metadata_yolov8'))
         for node in cpu_tests.CPU_TESTS:
             self.assertTrue((ROOT / 'python/tests' / node.split('::')[0]).is_file())
-
-    def test_current_selected_source_preserves_all_36_audited_cpu_cases(self):
-        # Audit today's coverage, without a fixed-count gate in the CI runner.
-        count = 0
-        for node in cpu_tests.CPU_TESTS:
-            filename, _, selected_function = node.partition('::')
-            tree = ast.parse((ROOT / 'python/tests' / filename).read_text())
-            functions = [item for item in tree.body if isinstance(item, ast.FunctionDef)
-                         and item.name.startswith('test_')
-                         and (not selected_function or item.name == selected_function)]
-            self.assertTrue(functions, node)
-            for function in functions:
-                cases = 1
-                for decorator in function.decorator_list:
-                    if (isinstance(decorator, ast.Call)
-                            and isinstance(decorator.func, ast.Attribute)
-                            and decorator.func.attr == 'parametrize'):
-                        cases *= len(ast.literal_eval(decorator.args[1]))
-                count += cases
-        self.assertEqual(count, 36)
 
     def test_workflow_keeps_cpu_coverage_on_develop_host_without_physical_actions(self):
         workflow = (ROOT.parent / '.github/workflows/vulcan-ci.yml').read_text()

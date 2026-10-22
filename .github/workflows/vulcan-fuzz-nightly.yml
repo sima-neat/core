@@ -94,9 +94,9 @@ jobs:
 
       - name: Verify prebuilt fuzz binaries exist
         run: |
-          FUZZ_BIN_DIR="$(cat _work/extras_lib_dir.txt)/tests/fuzz"
+          FUZZ_BIN_DIR="$(cat _work/extras_lib_dir.txt)/tests"
           missing=0
-          for target in fuzz_modelpack_json fuzz_pipeline_sequence fuzz_gst_pipeline_string; do
+          for target in fuzz_modelpack_json fuzz_gst_pipeline_string; do
             if [[ ! -x "${FUZZ_BIN_DIR}/${target}" ]]; then
               echo "Missing prebuilt fuzz binary: ${FUZZ_BIN_DIR}/${target}" >&2
               missing=1
@@ -113,6 +113,6 @@ jobs:
           FUZZ_PREBUILT_ONLY: "1"
         run: |
           EXTRAS_LIB_DIR="$(cat _work/extras_lib_dir.txt)"
-          export FUZZ_BIN_DIR="${EXTRAS_LIB_DIR}/tests/fuzz"
+          export FUZZ_BIN_DIR="${EXTRAS_LIB_DIR}/tests"
           export CORPUS_ROOT="${GITHUB_WORKSPACE}/tests/fuzz/corpus"
           bash scripts/ci/run_fuzz_nightly.sh

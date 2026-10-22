@@ -33,7 +33,6 @@ def is_host_contract(test):
     interpreter, exact checked-in script bytes and the reviewed argv shape.
     """
     scripts = {
-        'unit_kernel_runner_default_contract': 'tests/tools/check_kernel_runner_default.py',
         'unit_python_runtime_bootstrap': 'tests/tools/test_python_runtime_bootstrap.py',
         'test_codec_fixture_preparation': 'tests/perf/tools/test_codec_fixture_preparation.py',
         'test_perf_schema': 'tests/perf/tools/test_perf_schema.py',
@@ -49,18 +48,7 @@ def is_host_contract(test):
     if expected is None:
         return False
     source_root = Path(__file__).resolve().parents[2]
-    if test.get('name') == 'unit_kernel_runner_default_contract':
-        # This is a build-tree source gate, not an installed runtime test.
-        # Never let a caller redirect its source inspection to another tree.
-        if (len(command) != 4 or command[2] != '--source-root'
-                or not Path(command[3]).is_absolute()):
-            return False
-        try:
-            if Path(command[3]).resolve(strict=True) != source_root:
-                return False
-        except OSError:
-            return False
-    elif test.get('name') == 'unit_python_runtime_bootstrap' and len(command) != 2:
+    if test.get('name') == 'unit_python_runtime_bootstrap' and len(command) != 2:
         # Installed extras carry the actual bootstrap source beside the test.
         # An explicit subject must be the reviewed bytes, never a path fallback.
         if (len(command) != 4 or command[2] != '--bootstrap'

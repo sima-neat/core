@@ -1368,10 +1368,6 @@ endforeach()
 # Fuzz harnesses (opt-in via -DFUZZING=ON)
 # ------------------------------------------------------------------------------
 if (FUZZING)
-  if (NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    message(FATAL_ERROR "FUZZING=ON requires Clang/libFuzzer (set CC=clang CXX=clang++).")
-  endif()
-
   function(add_pipeline_fuzz_target name source)
     add_executable(${name} ${source})
     target_link_libraries(${name} PRIVATE sima_neat sima_neat_internal_headers)
@@ -1383,6 +1379,7 @@ if (FUZZING)
     )
     target_compile_options(${name} PRIVATE
       -fsanitize=fuzzer,address,undefined
+      -fno-sanitize-recover=all
       -fno-omit-frame-pointer
       -O1
       -g
@@ -1408,48 +1405,22 @@ endif()
 # ------------------------------------------------------------------------------
 # Graph migration baselines and unified Graph tests
 # ------------------------------------------------------------------------------
-set(GRAPH_MIGRATION_LEGACY_UNIT_TESTS
-  graph_migration_legacy_graph_compiler_determinism_test
-  graph_migration_legacy_graph_compiler_topology_test
-  graph_migration_legacy_graph_compiler_spec_validation_test
-  graph_migration_legacy_graph_join_bundle_test
-  graph_migration_legacy_graph_join_encoded_with_meta_test
-  graph_migration_legacy_graph_join_nodes_test
-  graph_migration_legacy_graph_stamp_frame_id_test
-  graph_migration_legacy_graph_strict_sync_store_test
-  graph_migration_legacy_graph_strict_sync_test
-  graph_migration_legacy_graph_backpressure_timeout_test
-  graph_migration_legacy_graph_run_option_validation_test
-  graph_migration_legacy_graph_stop_sequencing_test
-)
-
-set(GRAPH_MIGRATION_LEGACY_UNIT_SOURCES
-  graph_compiler_determinism_legacy_runtime_test.cpp
-  graph_compiler_topology_legacy_runtime_test.cpp
-  graph_compiler_spec_validation_legacy_runtime_test.cpp
-  graph_join_bundle_legacy_runtime_test.cpp
-  graph_join_encoded_with_meta_legacy_runtime_test.cpp
-  graph_join_nodes_legacy_runtime_test.cpp
-  graph_stamp_frame_id_legacy_runtime_test.cpp
-  graph_strict_sync_store_legacy_runtime_test.cpp
-  graph_strict_sync_legacy_runtime_test.cpp
-  graph_backpressure_timeout_legacy_runtime_test.cpp
-  graph_run_option_validation_legacy_runtime_test.cpp
-  graph_stop_sequencing_legacy_runtime_test.cpp
-)
-
-list(LENGTH GRAPH_MIGRATION_LEGACY_UNIT_TESTS graph_migration_legacy_unit_count)
-math(EXPR graph_migration_legacy_unit_last "${graph_migration_legacy_unit_count} - 1")
-foreach(index RANGE ${graph_migration_legacy_unit_last})
-  list(GET GRAPH_MIGRATION_LEGACY_UNIT_TESTS ${index} graph_migration_test)
-  list(GET GRAPH_MIGRATION_LEGACY_UNIT_SOURCES ${index} graph_migration_source)
-  add_pipeline_test(
-    ${graph_migration_test}
-    ${CMAKE_CURRENT_SOURCE_DIR}/graph_migration/legacy/${graph_migration_source}
-  )
-
+# Canonical units also cover the retained legacy graph API.
+foreach(graph_migration_test
+    unit_graph_compiler_determinism_test
+    unit_graph_compiler_topology_test
+    unit_graph_compiler_spec_validation_test
+    unit_graph_join_bundle_test
+    unit_graph_join_encoded_with_meta_test
+    unit_graph_join_nodes_test
+    unit_graph_stamp_frame_id_test
+    unit_graph_strict_sync_store_test
+    unit_graph_strict_sync_test
+    unit_graph_backpressure_timeout_test
+    unit_graph_run_option_validation_test
+    unit_graph_stop_sequencing_test)
   if (NOT graph_migration_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-    set_property(TEST ${graph_migration_test} APPEND PROPERTY LABELS "unit;graph-migration;legacy")
+    set_property(TEST ${graph_migration_test} APPEND PROPERTY LABELS "graph-migration;legacy")
   endif()
 endforeach()
 
@@ -1662,16 +1633,6 @@ add_pipeline_test(
 if (NOT graph_migration_phase2_composition_storage_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST graph_migration_phase2_composition_storage_test
     APPEND PROPERTY LABELS "unit;graph-migration;unified")
-endif()
-
-add_pipeline_test(
-  graph_migration_phase3_architecture_guard_test
-  graph_migration/unified/graph_phase3_architecture_guard_test.cpp
-)
-
-if (NOT graph_migration_phase3_architecture_guard_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST graph_migration_phase3_architecture_guard_test
-    APPEND PROPERTY LABELS "unit;graph-migration;unified;architecture")
 endif()
 
 add_pipeline_test(

@@ -116,6 +116,122 @@ def test_pytest_actual_node_accounting(tmp_path, body, expected):
         assert len(report['deselected']) == 1
 
 
+def genai_workflow_step(name):
+    workflow = yaml.safe_load((ROOT / '.github/workflows/vulcan-ci.yml').read_text())
+    return next(step['run'] for step in workflow['jobs']['test-devkit']['steps']
+                if step['name'] == name)
+
+
+@pytest.mark.parametrize('outcome', ['pass', 'skip', 'disabled', 'empty', 'collection_failure'])
+def test_isolated_genai_ctest_workflow_requires_each_result(tmp_path, outcome):
+    tests = tmp_path / 'extras/tests'
+    tests.mkdir(parents=True)
+    work = tmp_path / '_work'
+    work.mkdir()
+    (work / 'extras_lib_dir.txt').write_text(str(tests.parent))
+    (work / 'gst_registry_dir.txt').write_text(str(tmp_path / 'registry'))
+    for directory in ('scripts', 'tools'):
+        (tmp_path / directory).symlink_to(ROOT / directory, target_is_directory=True)
+    marker = tmp_path / 'executed.txt'
+    script = tmp_path / 'fixture.py'
+    script.write_text('import os, pathlib, sys\n'
+                      f'with pathlib.Path({str(marker)!r}).open("a") as output:\n'
+                      '    output.write(str(os.getpid()) + "\\n")\n'
+                      'raise SystemExit(int(sys.argv[1]))\n')
+    label = 'other' if outcome == 'empty' else 'llima;long'
+    registration = ''
+    for index in range(2):
+        status = 77 if outcome == 'skip' and index == 1 else 0
+        registration += (f'add_test(genai_{index} "{sys.executable}" "{script}" "{status}")\n'
+                         f'set_tests_properties(genai_{index} PROPERTIES LABELS "{label}" '
+                         'SKIP_RETURN_CODE 77 TIMEOUT 17)\n')
+    if outcome == 'disabled':
+        registration += 'set_tests_properties(genai_1 PROPERTIES DISABLED TRUE)\n'
+    elif outcome == 'collection_failure':
+        registration += 'invalid_ctest_command()\n'
+    (tests / 'CTestTestfile.cmake').write_text(registration)
+    env = dict(os.environ)
+    for name in ('LLIMA_MODELS_PATH', 'SIMA_TEST_LLIMA_TEXT_MODEL', 'SIMA_TEST_LLIMA_VLM_MODEL',
+                 'SIMA_TEST_LLIMA_ASR_MODEL', 'SIMA_TEST_LLIMA_REASONING_QWEN_MODEL',
+                 'SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL'):
+        env[name] = 'host-fixture'
+    env.pop('SIMA_HARDWARE_SUPERVISOR_SOCKET', None)
+    env.pop('SIMA_TEST_IS_LONG', None)
+    command = ['bash', '-c', genai_workflow_step('Run GenAI / LLiMa E2E Tests')]
+    result = subprocess.run(command, cwd=tmp_path, env=env, text=True, capture_output=True)
+    assert (result.returncode == 0) == (outcome == 'pass'), result.stdout + result.stderr
+    executed = marker.read_text().splitlines() if marker.exists() else []
+    assert len(executed) == {'pass': 2, 'skip': 2, 'disabled': 1}.get(outcome, 0)
+    assert len(set(executed)) == len(executed)
+    if outcome == 'pass':
+        for index in range(2):
+            directory = work / 'coverage/genai-cpp' / str(index)
+            assert (directory / 'junit.xml').is_file()
+            assert json.loads((directory / 'coverage.json').read_text())['passed'] == 1
+            recorded = json.loads((directory / 'execution.json').read_text())['argv']
+            assert recorded[recorded.index('--tests-regex') + 1] == f'^genai_{index}$'
+            assert recorded[recorded.index('--timeout') + 1] == '900'
+        repeated = subprocess.run(command, cwd=tmp_path, env=env, text=True, capture_output=True)
+        assert repeated.returncode != 0
+        assert marker.read_text().splitlines() == executed
+
+
+@pytest.mark.parametrize('outcome', ['pass', 'skip', 'setup_skip', 'missing', 'empty', 'collection_failure'])
+def test_isolated_genai_pytest_workflow_requires_each_result(tmp_path, outcome):
+    (tmp_path / '_work').mkdir()
+    (tmp_path / 'pytest.ini').write_text('[pytest]\nmarkers = torch_interop: optional capability\n')
+    marker = tmp_path / 'executed.txt'
+    script = tmp_path / 'test_genai_bindings.py'
+    body = ('import os, pathlib, pytest\n'
+            f'MARKER = pathlib.Path({str(marker)!r})\n'
+            'def record():\n'
+            '    with MARKER.open("a") as output: output.write(str(os.getpid()) + "\\n")\n'
+            'def test_first():\n'
+            '    record()\n'
+            '    pathlib.Path("first-completed").touch()\n'
+            '@pytest.mark.torch_interop\n'
+            'def test_excluded(): pytest.fail("explicit capability exclusion did not apply")\n'
+            'def test_second():\n'
+            '    record()\n')
+    if outcome == 'skip':
+        body += '    pytest.skip("DispatcherMLASHM not available")\n'
+    elif outcome == 'setup_skip':
+        body += ('@pytest.fixture(autouse=True)\n'
+                 'def require_dispatcher(request):\n'
+                 '    if request.node.name == "test_second": pytest.skip("dispatcher unavailable")\n')
+    elif outcome == 'missing':
+        body += 'if pathlib.Path("first-completed").exists(): del test_second\n'
+    elif outcome == 'empty':
+        body = 'def helper(): pass\n'
+    elif outcome == 'collection_failure':
+        body += 'raise RuntimeError("collection failed")\n'
+    script.write_text(body)
+    step = genai_workflow_step('Run Python pytest from installed extras')
+    start = step.index('"${PYTHON_BIN}" -m pytest --collect-only')
+    stop = step.index('# Temporary external RTSP exclusions;', start)
+    command = ['bash', '-c', 'set -euo pipefail\nPYTHON_MARKS=(-m "not torch_interop")\n' + step[start:stop]]
+    env = {**os.environ, 'PYTHON_BIN': sys.executable, 'genai_test_file': str(script),
+           'PYTHONPATH': str(ROOT / 'tools/ci')}
+    result = subprocess.run(command, cwd=tmp_path, env=env, text=True, capture_output=True)
+    assert (result.returncode == 0) == (outcome == 'pass'), result.stdout + result.stderr
+    executed = marker.read_text().splitlines() if marker.exists() else []
+    assert len(executed) == {'pass': 2, 'skip': 2, 'setup_skip': 1, 'missing': 1}.get(outcome, 0)
+    assert len(set(executed)) == len(executed)
+    if outcome in ('pass', 'skip', 'setup_skip'):
+        for index in range(2):
+            directory = tmp_path / '_work/coverage/genai-python' / str(index)
+            assert (directory / 'junit.xml').is_file()
+            selection = json.loads((directory / 'selection.json').read_text())
+            assert len(selection['selected']) == 1
+            assert selection['markexpr'] == 'not torch_interop'
+            report = json.loads((directory / 'coverage.json').read_text())
+            assert report['status'] == ('FAIL' if index == 1 and outcome != 'pass' else 'PASS')
+    if outcome == 'pass':
+        repeated = subprocess.run(command, cwd=tmp_path, env=env, text=True, capture_output=True)
+        assert repeated.returncode != 0
+        assert marker.read_text().splitlines() == executed
+
+
 def test_manual_gate_reuses_canonical_lane_without_forcing_guarded_execution():
     manual = (ROOT / '.github/workflows/zero-skip.yml').read_text()
     wrapper = (ROOT / 'scripts/ci/run_zero_skip_gate.sh').read_text()
@@ -278,16 +394,6 @@ def test_inventory_workflow_uses_required_accounting_without_changing_selector()
     assert '--label-regex "devkit-package-inventory"' in workflow
 
 
-def kernel_runner_host_selection():
-    candidate = selection([('LABELS', ['host', 'strict', 'unit', 'architecture'])])
-    candidate['tests'][0].update(
-        name='unit_kernel_runner_default_contract',
-        command=[sys.executable, str(ROOT / 'tests/tools/check_kernel_runner_default.py'),
-                 '--source-root', str(ROOT)],
-    )
-    return candidate
-
-
 def test_kernel_runner_contract_has_required_source_gate_not_installed_registration():
     workflow = yaml.safe_load((ROOT / '.github/workflows/vulcan-ci.yml').read_text())
     steps = workflow['jobs']['resolve-compiler-cache']['steps']
@@ -298,12 +404,6 @@ def test_kernel_runner_contract_has_required_source_gate_not_installed_registrat
     assert 'if' not in step and not step.get('continue-on-error', False)
     for relative in ('CMakeLists.txt', 'tests/CMakeLists.txt'):
         assert 'NAME unit_kernel_runner_default_contract' not in (ROOT / relative).read_text()
-
-
-def test_kernel_runner_host_contract_accepts_explicit_source_root_form():
-    candidate = kernel_runner_host_selection()
-    assert coverage.validate_selection(candidate, 'required', require_guarded=True, environment={}) == [
-        'unit_kernel_runner_default_contract']
 
 
 def bootstrap_host_selection(tmp_path):
@@ -348,45 +448,6 @@ def test_bootstrap_host_contract_rejects_unreviewed_subject(tmp_path, change):
         Path(command[1]).write_text('raise SystemExit(0)\n')
     else:
         command[0] = '/unreviewed/python'
-    with pytest.raises(coverage.CoverageError, match='not guarded'):
-        coverage.validate_selection(candidate, 'required', require_guarded=True, environment={})
-
-
-@pytest.mark.parametrize('change', [
-    'wrong_root', 'missing_root', 'relative_root', 'wrong_flag', 'extra_argument',
-    'missing_source_root_arguments', 'changed_script', 'wrong_interpreter',
-])
-def test_kernel_runner_host_contract_rejects_unreviewed_authority(tmp_path, change):
-    candidate = kernel_runner_host_selection()
-    command = candidate['tests'][0]['command']
-    if change == 'wrong_root':
-        command[3] = str(tmp_path)
-    elif change == 'missing_root':
-        command[3] = str(tmp_path / 'not-present')
-    elif change == 'relative_root':
-        command[3] = os.path.relpath(ROOT)
-    elif change == 'wrong_flag':
-        command[2] = '--other-root'
-    elif change == 'extra_argument':
-        command.append('--unreviewed')
-    elif change == 'missing_source_root_arguments':
-        del command[2:]
-    elif change == 'changed_script':
-        script = tmp_path / 'check_kernel_runner_default.py'
-        script.write_bytes(Path(command[1]).read_bytes() + b'\n# unreviewed change\n')
-        command[1] = str(script)
-    else:
-        interpreter = tmp_path / 'not-python'
-        interpreter.write_text('not the approved Python interpreter\n')
-        command[0] = str(interpreter)
-    with pytest.raises(coverage.CoverageError, match='not guarded'):
-        coverage.validate_selection(candidate, 'required', require_guarded=True, environment={})
-
-
-def test_source_root_arguments_do_not_authorize_other_host_scripts():
-    candidate = kernel_runner_host_selection()
-    candidate['tests'][0].update(name='unit_python_runtime_bootstrap')
-    candidate['tests'][0]['command'][1] = str(ROOT / 'tests/tools/test_python_runtime_bootstrap.py')
     with pytest.raises(coverage.CoverageError, match='not guarded'):
         coverage.validate_selection(candidate, 'required', require_guarded=True, environment={})
 

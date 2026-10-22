@@ -1222,16 +1222,18 @@ jobs:
           echo "Using SIMA_TEST_LLIMA_ASR_MODEL=${SIMA_TEST_LLIMA_ASR_MODEL}"
           echo "Using SIMA_TEST_LLIMA_REASONING_QWEN_MODEL=${SIMA_TEST_LLIMA_REASONING_QWEN_MODEL}"
           echo "Using SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL=${SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL}"
+          ctest --test-dir "${TEST_DIR}" --show-only -L llima > _work/genai-ctest-selection.txt
           mapfile -t genai_tests < <(
-            ctest --test-dir "${TEST_DIR}" --show-only -L llima |
-              sed -n -E '/\(Disabled\)$/! s/^[[:space:]]*Test +#[0-9]+: ([^ ]+).*$/\1/p'
+            sed -n -E 's/^[[:space:]]*Test +#[0-9]+: ([^ ]+).*$/\1/p' _work/genai-ctest-selection.txt
           )
           if [[ "${#genai_tests[@]}" -eq 0 ]]; then
             echo "No C++ GenAI / LLiMa tests were discovered." >&2
             exit 1
           fi
-          for test_name in "${genai_tests[@]}"; do
-            ctest --test-dir "${TEST_DIR}" \
+          for index in "${!genai_tests[@]}"; do
+            test_name="${genai_tests[index]}"
+            COVERAGE_DIR="_work/coverage/genai-cpp/${index}" COVERAGE_PROFILE=required \
+              bash scripts/ci/run_zero_skip_gate.sh ctest --test-dir "${TEST_DIR}" \
               --tests-regex "^${test_name}$" \
               --timeout 900 \
               --output-on-failure \
@@ -1406,16 +1408,19 @@ jobs:
             --junitxml _work/coverage/python-bindings.xml \
             "${PYTHON_MARKS[@]}" --ignore="${genai_test_file}" "${PYTEST_DIR}"
 
-          mapfile -t genai_pytests < <(
-            "${PYTHON_BIN}" -m pytest --collect-only -q "${genai_test_file}" |
-              sed -n '/::/p'
-          )
+          "${PYTHON_BIN}" -m pytest --collect-only -q "${PYTHON_MARKS[@]}" \
+            "${genai_test_file}" > _work/genai-pytest-selection.txt
+          mapfile -t genai_pytests < <(sed -n '/::/p' _work/genai-pytest-selection.txt)
           if [[ "${#genai_pytests[@]}" -eq 0 ]]; then
             echo "No Python GenAI tests were discovered." >&2
             exit 1
           fi
-          for test_case in "${genai_pytests[@]}"; do
-            "${PYTHON_BIN}" -m pytest -q "${test_case}"
+          for index in "${!genai_pytests[@]}"; do
+            test_case="${genai_pytests[index]}"
+            coverage_dir="_work/coverage/genai-python/${index}"
+            "${PYTHON_BIN}" -m pytest -q -p core_pytest_coverage \
+              --core-coverage-dir "${coverage_dir}" --junitxml "${coverage_dir}/junit.xml" \
+              "${PYTHON_MARKS[@]}" "${test_case}"
           done
           # Temporary external RTSP exclusions; retain the FPS probe unit tests (core#890).
           "${PYTHON_BIN}" -m pytest -q -p core_pytest_coverage \

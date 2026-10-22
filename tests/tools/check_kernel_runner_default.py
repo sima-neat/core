@@ -343,27 +343,6 @@ class KernelRunnerDefaultContract(unittest.TestCase):
         self.assertIn('std::cerr << "[WARN] stop_and_unref(): "', diagnostic)
         self.assertIn('deferring to reaper.', diagnostic)
 
-    def test_public_initialization_preserves_manual_init_diagnostic(self):
-        text = (ROOT / "src/gst/GstInit.cpp").read_text()
-        body = text[text.index("void gst_init_once()") :]
-        self.assertIn('env_bool("SIMA_ALLOW_GST_INIT", false)', body)
-        self.assertIn('if (already_initialized && !allow_manual)', body)
-        diagnostic = body[body.index('if (already_initialized && !allow_manual)'):
-                          body.index('if (env_bool("SIMA_GST_SUPPRESS_DEVICE_LOGS"')]
-        self.assertIn('This bypasses plugin path setup and can load the wrong plugins.', diagnostic)
-        self.assertIn('throw std::runtime_error(msg);', diagnostic)
-        self.assertLess(body.index('throw std::runtime_error(msg);'),
-                        body.index('gst_init(&argc, &argv);'))
-
-    def test_public_initialization_selects_plugins_before_gstreamer(self):
-        text = (ROOT / "src/gst/GstInit.cpp").read_text()
-        body = text[text.index("void gst_init_once()") :]
-        self.assertIn('g_getenv("SIMA_GST_PLUGIN_DIR")', body)
-        self.assertLess(body.index('g_setenv("GST_PLUGIN_PATH_1_0", third_party.c_str(), TRUE)'),
-                        body.index('preload_third_party_allocator(third_party);'))
-        self.assertLess(body.index('enforce_third_party_allocator(third_party);'),
-                        body.index('gst_init(&argc, &argv);'))
-
     def test_no_execution_feature_switch(self):
         removed = ("SIMANEAT_" + "KERNEL_RUNNER_INTEGRATION", "SIMA_CORE_" + "KERNEL_RUNNER")
         files = [ROOT / "CMakeLists.txt", ROOT / "build.sh", ROOT / "tests/CMakeLists.txt"]

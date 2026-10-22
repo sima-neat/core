@@ -561,6 +561,8 @@ std::array<std::int32_t, kBriefWords> cpu_brief_descriptor(const std::vector<std
   return descriptor;
 }
 
+// This mirrors the kernel for integration parity, including its search/status
+// limitations. Tracking quality and border behavior need independent accuracy cases.
 struct CpuKltReference {
   std::vector<float> points;
   std::vector<std::int32_t> status;
@@ -1125,8 +1127,8 @@ void validate_cpu_descriptor_golden(const BenchCase& c, const simaai::neat::Tens
   }
 }
 
-void prepare_cpu_klt_golden(BenchCase* c) {
-  require(c != nullptr, "prepare_cpu_klt_golden requires a case");
+void prepare_cpu_klt_parity(BenchCase* c) {
+  require(c != nullptr, "prepare_cpu_klt_parity requires a case");
   c->cpu_klt_golden = env_flag("SIMA_VISUAL_TPUT_CPU_GOLDEN", true) &&
                       env_flag("SIMA_VISUAL_TPUT_CPU_KLT_GOLDEN", true);
   c->cpu_klt_refs.clear();
@@ -1146,7 +1148,7 @@ void prepare_cpu_klt_golden(BenchCase* c) {
   }
 }
 
-void validate_cpu_klt_golden(const BenchCase& c, const simaai::neat::Tensor& points_tensor,
+void validate_cpu_klt_parity(const BenchCase& c, const simaai::neat::Tensor& points_tensor,
                              const simaai::neat::Tensor& status_tensor, const std::string& label) {
   if (!c.cpu_klt_golden) {
     return;
@@ -1195,7 +1197,7 @@ void validate_cpu_klt_golden(const BenchCase& c, const simaai::neat::Tensor& poi
     }
   }
   if (env_flag("SIMA_VISUAL_TPUT_KLT_REQUIRE_TRACKED", true)) {
-    require(tracked_total > 0, label + ": CPU KLT golden did not track any points");
+    require(tracked_total > 0, label + ": KLT parity reference did not track any points");
   }
 }
 
@@ -1271,7 +1273,7 @@ void validate_semantic_payload(const BenchCase& c, const simaai::neat::TensorLis
         require(value >= 0, c.name + ": status must be non-negative, got " + std::to_string(value));
       }
     }
-    validate_cpu_klt_golden(c, outputs.at(0), outputs.at(1), c.name + ": KLT CPU golden");
+    validate_cpu_klt_parity(c, outputs.at(0), outputs.at(1), c.name + ": KLT algorithm parity");
     if (c.klt_detect_new_features != 0) {
       require(outputs.size() == 3U,
               c.name + ": detect_new_features=1 should publish output_features");
@@ -1589,7 +1591,7 @@ BenchCase make_track_klt_case(int width, int height, int batch_size, int num_poi
     prepare_cpu_fast_golden(&c, /*input_index=*/1, kFastRadius, /*validate_descriptors=*/false);
   }
   c.klt_detect_new_features = detect_new_features;
-  prepare_cpu_klt_golden(&c);
+  prepare_cpu_klt_parity(&c);
   return c;
 }
 

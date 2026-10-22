@@ -1,1 +1,33 @@
-{"pipelines":[{"sequence":[{"sequence_id":1,"name":"preproc_0","pluginId":"processcvu","configPath":"0_preproc.json","processor":"CVU","kernel":"preproc","input":"decoder"}]}]}
+{
+  "name": "fuzz_cast",
+  "input_nodes": [{"name": "input", "size": 16}],
+  "plugins": [
+    {
+      "name": "cast0", "sequence": 1, "processor": "EV74",
+      "config_params": {
+        "desired_batch_size": 1, "actual_batch_size": 1,
+        "kernel": "cast_transform",
+        "params": {"out_dtype": "bfloat16", "input_shapes": [[1, 4]], "output_shapes": [[1, 4]]}
+      },
+      "input_nodes": [{"name": "input", "size": 16}],
+      "output_nodes": [{"name": "cast0", "size": 8}]
+    },
+    {
+      "name": "MLA_0", "sequence": 2, "processor": "MLA",
+      "config_params": {"desired_batch_size": 1, "actual_batch_size": 1, "number_of_quads_to_user": 4},
+      "resources": {"executable": "fuzz_mla.elf"},
+      "input_nodes": [{"name": "cast0", "size": 8}],
+      "output_nodes": [{"name": "mla0", "size": 8}]
+    },
+    {
+      "name": "cast1", "sequence": 3, "processor": "EV74",
+      "config_params": {
+        "desired_batch_size": 1, "actual_batch_size": 1,
+        "kernel": "cast_transform",
+        "params": {"out_dtype": "float32", "input_shapes": [[1, 4]], "output_shapes": [[1, 4]]}
+      },
+      "input_nodes": [{"name": "mla0", "size": 8}],
+      "output_nodes": [{"name": "output", "size": 16}]
+    }
+  ]
+}
