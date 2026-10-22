@@ -365,54 +365,67 @@ model.close();
 
 ## Build
 
-PCIe host builds always include the GenAI APIs. The matching Internals host artifact
-supplies the required platform service headers; the host driver supplies the runtime library.
+Build on an Ubuntu 22.04 or Ubuntu 24.04 host, outside the Palette SDK.
+`build.sh` installs `build-essential`, uses the host's default C++20 compiler and
+acquires Scheduler's native PCIe host profile through sima-cli. It does not add a
+compiler repository or use the SDK's device toolchain. This profile supplies the
+plugin and verifies the Platform-owned
+service headers. Its distribution carries the unchanged, checksum-pinned Platform
+source package for private userspace builds. Scheduler does not own the PCIe
+driver or runtime implementation.
 
-The host PCIe plugin is consumed as a prebuilt artifact from the internals repo.
-By default `build.sh` uses `../deps/manifest.json`, resolves the `internals`
-dependency with snap semantics, and downloads the matching Vulcan-hosted PCIe
-host tarball from the `internals` artifact tree when the local artifact is
-missing. For snap branch builds it tries the current core branch first, then
-falls back to `develop`; tag builds require the matching tag artifact. Automatic
-download reads `latest.tag`, verifies `pcie-host-artifact-<multiarch>.tar.gz`
-with its `.sha256`, and extracts it locally.
+PCIe host builds always include the GenAI APIs. They do not acquire the device
+Scheduler profile, Runner, Kernels or Codecs.
 
-Host artifacts are built separately for Ubuntu 22.04 and Ubuntu 24.04.
-`build.sh` reads `/etc/os-release` and selects the matching distro-qualified
-Vulcan package:
+By default, `build.sh` selects `latest` from the Scheduler branch with the same
+name as the current Core branch, in the `production` publication environment.
+The acquisition resolves that selector once, downloads the immutable revision
+and verifies its publisher manifest and resource hashes before running the
+Scheduler staging helper. There is no fallback to `develop`, Internals or a
+different host profile.
+
+`build.sh` reads `/etc/os-release` and the Debian architecture to select one of
+these distro-qualified packages:
 
 ```text
-internals/pcie-host/ubuntu22/x86_64-linux-gnu
-internals/pcie-host/ubuntu22/aarch64-linux-gnu
-internals/pcie-host/ubuntu24/x86_64-linux-gnu
-internals/pcie-host/ubuntu24/aarch64-linux-gnu
+scheduler/pcie-host-ubuntu22-amd64
+scheduler/pcie-host-ubuntu22-arm64
+scheduler/pcie-host-ubuntu24-amd64
+scheduler/pcie-host-ubuntu24-arm64
 ```
 
 Other host distributions are rejected because the prebuilt plugin may depend
 on distribution-specific glibc, GLib, and GStreamer versions.
 
-The extracted/local layout is:
+The selected Scheduler helper validates and stages its native packages into a
+private prefix. It builds only the official Platform userspace library there,
+without running package maintainer scripts, installing a driver or starting
+daemons. Core configures against that prefix's installed `SimaScheduler` package;
+it does not include headers from a sibling lower-layer checkout. To use a particular
+published revision, pass `--scheduler-spec <commit>`. Use
+`--scheduler-environment <name>` to select another publication environment.
 
-```text
-artifacts/x86_64-linux-gnu/libgstneatpciehost.so
-artifacts/x86_64-linux-gnu/include/gst/SimaTensorSetMetaAbi.h
-artifacts/aarch64-linux-gnu/libgstneatpciehost.so
-artifacts/aarch64-linux-gnu/include/gst/SimaTensorSetMetaAbi.h
-```
-
-`build.sh` detects the host multiarch with `dpkg-architecture`, copies the
-plugin and header into `build/artifacts/neatpciehost/<multiarch>/`, and passes
-those staged paths to CMake. CMake does not include headers from a sibling
-`internals` checkout.
+Run the following command from this checkout's `pcie_host` directory on the host
+to build tests and DEB packages:
 
 ```bash
-./build.sh --with-tests --no-deb
 ./build.sh --with-tests
 ```
+
+For a no-DEB build, use `./build.sh --with-tests --no-deb`. With that option,
+an explicit `SimaScheduler_DIR` can select an already installed native Scheduler
+profile instead of downloading a publication.
 
 `build.sh` installs its host build dependencies, including
 `nlohmann-json3-dev`, which provides `nlohmann/json.hpp`. Use
 the same build command on a fresh host and for subsequent rebuilds.
+
+Before installing the resulting packages on a PCIe host, provision the matching
+Platform host package through its official installer. The Neat installer verifies
+the installed Platform version, driver dependency, headers and userspace ABI.
+It installs only the Scheduler/Core package set and ordinary missing dependencies;
+it rejects transactions that would change Platform or the driver. A private
+build does not qualify PCIe hardware execution.
 
 `build.sh` writes the locally built packages and a copy of the installer into
 `dist/`:

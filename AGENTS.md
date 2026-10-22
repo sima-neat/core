@@ -28,16 +28,34 @@ For official documentation:
 - Update translations required by `sima-i18n*.json` in the same change; refresh source hashes after verifying content alignment.
 - Pass localization checks and the relevant docs build, and report any validation still pending.
 
-## Internals install contract
+## Runtime install contract
 
-When changing or rebuilding anything under `internals/` that produces NEAT runtime/plugin `.so` files:
+When rebuilding Runner or Scheduler libraries/plugins consumed by Core:
 
-- Treat `/usr/lib/aarch64-linux-gnu/neat/gst-plugins` and `/usr/lib/aarch64-linux-gnu/neat/runtime` as the canonical runtime roots.
-- Configure the `internals/` build for the canonical Debian multiarch install layout:
-  `cmake -S internals -B <internals-build-dir> -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib/aarch64-linux-gnu`.
-- After `cmake --build <internals-build-dir>`, always run `cmake --install <internals-build-dir>` before rebuilding or testing `core/`.
-- Do not rely on `internals/build/artifacts/gst-plugins` as the default runtime source for `core`; build-tree plugin use should be an explicit override for debugging only.
-- For `aarch64` test binaries, use `dk` or the repo devkit wrappers instead of local execution.
+- Keep `/usr/lib/aarch64-linux-gnu/neat/gst-plugins` and
+  `/usr/lib/aarch64-linux-gnu/neat/runtime` as the canonical runtime roots.
+- Prefer Core's source-first `build.sh` workflow; it stages dependency installs
+  before configuring Core and deploys the completed package set once.
+- For manual builds, build Runner then Scheduler with `CMAKE_INSTALL_PREFIX=/usr` and
+  `CMAKE_INSTALL_LIBDIR=lib/aarch64-linux-gnu`, install into a clean staging root,
+  then select that installed package when configuring Core.
+- Never consume the retired Internals umbrella or its build-tree plugins as a
+  fallback. Runner owns execution; Scheduler owns GStreamer and its installed contracts.
+- For AArch64 test binaries, use `dk` or repository DevKit wrappers rather than
+  executing them locally.
+
+## Runtime transport ownership
+
+- `SimaScheduler::elements` owns `neatcamerabridge`, `neatmultipartjpegdemux` and
+  `neatlatestbystreammux`; Core's `src/gst/` files only preserve forwarding APIs.
+- Keep graph policy, public Sample/Tensor objects and credit projection in Core.
+  Do not add Core-private includes to Runner/Scheduler or recreate the Scheduler mux loan registry.
+- Consume the installed Scheduler allocator/camera ABI headers. Do not mirror ABI
+  structs in Core; preserve one allocation and metadata authority across DSOs.
+- Keep implementation-only transport tests in Scheduler and public/graph/device
+  integration tests in Core. Run both suites for cross-boundary changes.
+- Install matching Runner and Scheduler packages before rebuilding Core. Preserve existing factories, properties,
+  library names, zero-copy ownership and flushing behavior.
 
 ## Preproc and MPK contract invariants
 
@@ -61,3 +79,36 @@ A change is ready when:
 - Relevant tests were added/updated and pass.
 - Docs are updated for user-visible changes.
 - API compatibility impact was assessed and documented.
+
+## Source-first local builds
+
+- `build.sh` delegates dependency preparation and closure validation to Scheduler, then builds Core against the installed frontend. Scheduler coordinates Kernels, Runner and Codecs; retain exact receipts for the complete runtime stack.
+- `NEAT_KERNELS_SOURCE` / `NEAT_RUNNER_SOURCE` / `NEAT_SCHEDULER_SOURCE` select source roots; the corresponding
+  `_PACKAGE_DIR` overrides select local package directories instead.
+- Do not silently fetch old Internals, replace failed source builds with artifacts,
+  or deploy from child builds. Explicit `tools/ci/acquire_scheduler.py` acquisition
+  resolves one same-branch immutable Scheduler publication and lets its installed
+  coordinator validate the delivered cohort; `build.sh` never silently fetches it.
+- Preserve the selected package receipts and contract checks. Rebuild consumers
+  after ABI changes; numerical source-only changes do not require Runner/Scheduler source edits, but static consumers must relink to consume new Kernels artifacts.
+- See `docs/develop-apps/contribute/build-test/local-dependencies.md`.
+
+## Canonical numerical preparation
+
+- Core owns numerical request construction, MPK/publication policy and dynamic image geometry.
+- Use the installed `SimaScheduler::frontend` and `simaai::scheduler::client` APIs. Scheduler owns the compiled boundary; Runner delegates numerical admission to Kernels. Do not use the advanced lower-type alias facade from canonical Core code.
+- Do not restore the removed ProcessCVU prepared ABI, adapter or per-operation Scheduler dispatch.
+- Use generic `TensorStageRequest` publication/placement, immutable constants and the application-owned frame adapter. Constants are copied once at preparation, not uploaded per frame.
+- Reusable Core recipes retain immutable checked policy and executable descriptors only. Instantiate their resolver caches and Preproc adapters once per cold preparation, after topology validation and before Scheduler admission; never reset or share an active geometry/session cache between independent preparations. Preserve current frame loans and bounded immutable geometry caching.
+- Manifest contexts own metadata backing, not numerical recipes or sessions. Normalize canonical payloads to `NONE` before dropping recipe references; retain contexts while borrowing ABI pointers. Keep cold pipeline/context ownership under RAII until successful handoff.
+- The retained shared prepared context is for MLA/other nonnumerical compatibility, not numerical kernel requests.
+
+## Scheduler client boundary
+
+- Canonical Core must not include, find, link or invoke Runner, Kernels or Codecs development APIs. Scheduler-owned historical `runtime::gstreamer` ABI names remain valid; ownership is determined by the defining target, not namespace spelling.
+- Keep customer APIs, MPK interpretation, graph budgets, target/fusion policy and image geometry in Core. Forward generic checked numerical requests, not operation-specific Scheduler dispatch.
+- Treat checked executable, prepared selection, allocation identity and frame loan as different identities. Copy immutable authoring recipes; instantiate mutable adapters/resolvers only during whole-cohort cold admission.
+- Use Scheduler selected-memory access for the original authority and scope. Do not substitute broad Gst mapping, COW, raw FD reimport, copies or destruction-as-retirement. Borrowed access cookies must finish while their owner remains alive.
+- Keep host publication callbacks allocation-free on warmed success. Buffer views are call-scoped; error views must refer to immutable payload-owned strings or literals.
+- Core tests retain policy, numerical and publication assertions. Explicit `SimaScheduler::client_test_support` is test-only; it hides provider mechanics, not expected outputs or independent references.
+- Verify installed frontend consumers with lower development discovery/headers denied, plus actual shared/static consumers. Preserve existing workflows and GCC14. Separate host, board correctness and matched performance evidence.

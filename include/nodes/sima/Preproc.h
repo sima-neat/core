@@ -32,6 +32,9 @@
 namespace simaai::neat {
 class Model;
 struct CompiledProcessCvuContract;
+namespace internal {
+struct ImageTransformAccess;
+}
 
 /**
  * @brief Construction options for a `Preproc` Node.
@@ -243,6 +246,7 @@ public:
   const nlohmann::json* config_json() const;
 
 private:
+  friend struct internal::ImageTransformAccess;
   struct PreprocConfigHolder;
 
   void materialize_config_from_input_contract(const InputContract& contract);

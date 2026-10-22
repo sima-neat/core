@@ -25,9 +25,10 @@ Run the installer from the environment where you build or run Neat applications:
 
 The minimal installation includes the runtime and `sima-neat-dev`. The default
 installation offers tutorials and tests as optional extras; `all` includes them.
-Shared-library applications need Core's public headers and GStreamer, OpenCV,
-and JSON development files. They do not need Internals, memory-library, heap,
-or LLiMa development packages. Their runtime libraries remain required.
+Shared-library applications need Core's public headers, the matching Scheduler
+frontend, and GStreamer, OpenCV, and JSON development files. They do not need the
+retired Internals umbrella or Runner, Kernels, Codecs, memory-library, heap, or
+LLiMa development APIs. The selected packages supply the required runtime dependencies.
 
 Use the installed shared target:
 
@@ -36,10 +37,11 @@ find_package(SimaNeat CONFIG REQUIRED)
 target_link_libraries(my_app PRIVATE SimaNeat::sima_neat)
 ```
 
-The static archive remains in `sima-neat-dev`. Existing static consumers must add
-`COMPONENTS Static` and provision compatible `neat-internals-dev`,
-`simaai-memory-lib-dev`, `zlib1g-dev`, `libcpp-httplib-dev`, and, for LLiMa-enabled
-builds, `sima-lmm-dev`, with their dependencies:
+The static archive remains in `sima-neat-dev`. Use `COMPONENTS Static` and keep the
+matching `simaai-scheduler` package installed. Provision `zlib1g-dev`,
+`libcpp-httplib-dev`, and, for LLiMa-enabled builds, `sima-lmm-dev`, with their
+dependencies. Core uses Scheduler's installed frontend; do not add Internals or
+lower-library development targets to your application:
 
 ```cmake
 find_package(SimaNeat CONFIG REQUIRED COMPONENTS Static)
@@ -47,7 +49,8 @@ target_link_libraries(my_app PRIVATE SimaNeat::sima_neat_static)
 ```
 
 Static Core still uses shared implementation libraries. Building Core from source
-also requires implementation development packages.
+uses the same Scheduler frontend boundary and requires development files for its
+other dependencies, including LLiMa when enabled.
 
 ## Prerequisites
 
@@ -82,7 +85,7 @@ the machine cannot reach SiMa.ai services directly.
 
 :::note Package compatibility
 The installer uses every Debian package listed by the selected Core artifact
-and does not select different Internals or LLiMa versions. The installed
+and does not select different Scheduler or LLiMa versions. The installed
 platform must satisfy dependencies that are not delivered by that artifact. If
 APT would remove platform packages to complete the installation, the installer
 stops; update the platform instead of substituting packages in Core or LLiMa.

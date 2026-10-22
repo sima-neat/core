@@ -1,5 +1,6 @@
 #include "encoder_perf_common.h"
 #include "codec_perf_common.h"
+#include "codec_fixture_diagnostics.h"
 #include "nodes/common/Output.h"
 #include "nodes/groups/VideoSender.h"
 #include "nodes/sima/H264EncodeSima.h"
@@ -120,9 +121,24 @@ std::vector<neat::Sample> inputs(const Config& c) {
     config.fps = ep::kInputFps;
     // Keep the whole prepared one-second sequence. It starts at an IDR and
     // cycles only at the fixture boundary; never repeat a random dependent AU.
-    const auto frames = c.codec == "mjpeg"  ? sima_codec_perf::make_mjpeg_frames(config)
-                        : c.codec == "h264" ? sima_codec_perf::extract_h264_access_units(30)
-                                            : sima_codec_perf::extract_h265_access_units(30);
+    const auto observe = [&](const neat::Run& run, const std::filesystem::path& fixture,
+                             const std::vector<sima_codec_perf::EncodedFrame>& frames,
+                             const std::vector<std::string>& emitted_caps) {
+      namespace diagnostics = sima_codec_diagnostics;
+      std::unique_ptr<GstElement, decltype(&gst_object_unref)> parser(
+          ep::find_factory(run, c.codec + "parse"), gst_object_unref);
+      const json record = {{"schema", 1},
+                           {"source", diagnostics::file_identity(fixture)},
+                           {"parser", diagnostics::parser_identity(parser.get())},
+                           {"au_count", frames.size()},
+                           {"access_units", diagnostics::access_units(frames, emitted_caps)}};
+      std::cerr << "encoder_input_diagnostics=" << record.dump() << '\n';
+    };
+    const auto frames = c.codec == "mjpeg" ? sima_codec_perf::make_mjpeg_frames(config)
+                                           : sima_codec_perf::extract_video_access_units(
+                                                 c.codec == "h264" ? neat::SimaDecodeType::H264
+                                                                   : neat::SimaDecodeType::H265,
+                                                 30, observe);
     require(c.codec == "mjpeg" || frames.size() == 30,
             "prepared codec fixture must contain 30 AUs");
     return sima_codec_perf::make_sample_sequence(frames, config, static_cast<int>(frames.size()));

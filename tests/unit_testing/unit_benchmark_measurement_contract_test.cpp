@@ -12,6 +12,7 @@
 #include "pipeline/Graph.h"
 #include "pipeline/Run.h"
 #include "test_main.h"
+#include "perf/process_cpu_metrics.h"
 #include "test_utils.h"
 
 #include <algorithm>
@@ -176,6 +177,28 @@ simaai::neat::ResolvedPreprocessPlan make_benchmark_preprocess_plan() {
   return plan;
 }
 
+void process_cpu_window_reports_cost_separately_from_utilization() {
+  // Two and a half CPU cores busy for half a second is 1.25 CPU seconds,
+  // not 0.5 seconds and not "250% of the whole board".
+  const sima_perf::ProcessCpuMetrics metrics{100, 0.5, 1.0, 0.25};
+  require_near(metrics.fps(), 200.0, "matching-window FPS");
+  require_near(metrics.user_us_per_frame(), 10000.0, "user CPU/frame");
+  require_near(metrics.system_us_per_frame(), 2500.0, "system CPU/frame");
+  require_near(metrics.cpu_us_per_frame(), 12500.0, "total CPU/frame");
+  require_near(metrics.average_busy_cores(), 2.5, "average busy cores");
+
+  const sima_perf::ProcessCpuMetrics empty;
+  require_near(empty.fps(), 0.0, "empty FPS");
+  require_near(empty.cpu_us_per_frame(), 0.0, "empty CPU/frame");
+  require_near(empty.average_busy_cores(), 0.0, "empty busy cores");
+
+  const sima_perf::ProcessCpuWindow window;
+  const auto sampled = window.finish(0);
+  require(sampled.frames == 0 && sampled.wall_seconds > 0.0 && sampled.user_seconds >= 0.0 &&
+              sampled.system_seconds >= 0.0,
+          "live process snapshots should produce monotonic CPU and wall deltas");
+}
+
 void benchmark_options_api_is_additive() {
   using namespace simaai::neat;
   require(!BenchmarkOptions{}.include_mla_layer_stats, "MLA layer profiling must be opt-in");
@@ -197,6 +220,33 @@ void benchmark_options_api_is_additive() {
   require(static_cast<BooleanOverload>(&Model::benchmark) != nullptr,
           "legacy benchmark(bool) overload should remain available");
 #pragma GCC diagnostic pop
+}
+
+void synthetic_benchmark_rejects_planar_images() {
+  using namespace simaai::neat;
+  TensorSpec spec;
+  spec.shape = {10, 18};
+  spec.dtypes = {TensorDType::UInt8};
+  for (const auto format :
+       {ImageSpec::PixelFormat::NV12, ImageSpec::PixelFormat::NV16, ImageSpec::PixelFormat::I420}) {
+    spec.image_format = format;
+    bool rejected = false;
+    try {
+      internal::validate_synthetic_benchmark_image_format(spec);
+    } catch (const std::runtime_error& error) {
+      rejected = std::string(error.what()) ==
+                 "Model::benchmark: planar image input specs are not supported by the synthetic "
+                 "benchmark";
+    }
+    require(rejected, "synthetic benchmarks must reject every unsupported planar image format");
+  }
+  for (const auto format :
+       {ImageSpec::PixelFormat::RGB, ImageSpec::PixelFormat::BGR, ImageSpec::PixelFormat::GRAY8}) {
+    spec.image_format = format;
+    internal::validate_synthetic_benchmark_image_format(spec);
+  }
+  spec.image_format.reset();
+  internal::validate_synthetic_benchmark_image_format(spec);
 }
 
 void benchmark_build_options_prefer_runtime_metadata() {
@@ -745,6 +795,8 @@ RUN_TEST("unit_benchmark_measurement_contract_test", ([] {
              }
            };
 
+           run_case("process_cpu_window",
+                    process_cpu_window_reports_cost_separately_from_utilization);
            run_case("benchmark_style_tensorlist_latency",
                     benchmark_style_tensorlist_push_must_collect_latency_for_every_output);
            run_case("keyed_sample_latency_control",
@@ -769,6 +821,8 @@ RUN_TEST("unit_benchmark_measurement_contract_test", ([] {
            run_case("measurement_boolean_flags_make_profiling_explicit",
                     measurement_boolean_flags_make_profiling_explicit);
            run_case("benchmark_options_api_is_additive", benchmark_options_api_is_additive);
+           run_case("synthetic_benchmark_rejects_planar_images",
+                    synthetic_benchmark_rejects_planar_images);
            run_case("benchmark_build_options_prefer_runtime_metadata",
                     benchmark_build_options_prefer_runtime_metadata);
            run_case("benchmark_preprocess_meta_defaults",

@@ -10,6 +10,26 @@ sidebar_position: 6
 
 For normal model-pack usage, prefer the `Model`-aware constructor. The model archive supplies the tensor order, layout, quantization, class count, resize metadata, and score-domain hints needed by the decoder. Your application usually only chooses the decode family and filtering thresholds.
 
+## Runtime backend
+
+BoxDecode and SuperPoint use `neatkernelrunner` with checked Kernels executables.
+The public detection and feature output formats are unchanged. For direct tensor
+ingress, use shared-CMA tensors (`TensorMemory::EV74`), even when decode executes
+on A65: this memory choice supplies DMA-BUF transport, not the execution target.
+
+RCNN stage 1 uses the kernel-owned per-level top-K contract: global NMS,
+then up to `top_k` survivors per model-area level. Its output is a proposal wire,
+not the ordinary BBOX format: four groups, each containing an INT32 count and
+`top_k` six-FP16 records (`score, 0, x1, y1, x2, y2`). Coordinate conversion
+preserves fractional geometry until final serialization. Use it as stage-two
+proposal input, not with `decode_bbox_tensor()`. No legacy plugin is loaded.
+
+Padded, interleaved INT8, BF16 and FP32 SuperPoint heads use the native dense
+reader with explicit pixel strides. Padding is excluded from detector reductions
+and descriptor sampling without a Cast stage or materialization. INT8 ports
+retain their own authored quantization. Native MLA-tiled heads retain their
+declared physical layout; dense scalars are never relabeled as MLA byte planes.
+
 ## Quick start
 
 ```cpp
@@ -41,7 +61,7 @@ opt.top_k = 100;
 | `decode_type` | Model family/head format, such as `BoxDecodeType::YoloV8` or `BoxDecodeType::YoloX`. Required. |
 | `detection_threshold` | Minimum score required to keep a detection. Use a model-appropriate value such as `0.25`. |
 | `nms_iou_threshold` | IoU threshold used by non-maximum suppression. `0` keeps the model's packaged value; when none is packaged, YOLO26 skips NMS and other decoders suppress every overlapping box. Set a model-appropriate value such as `0.45`. |
-| `top_k` | Maximum number of detections to keep. `0` uses the backend/model default. |
+| `top_k` | Maximum output count. Raw bounding-box decoding needs an explicit positive cap. On a model-bound node, `0` inherits the resolved Model cap. SuperPoint uses its profile default for `0`. |
 | `original_width`, `original_height` | Source image size for coordinate mapping when using the raw-geometry constructor. |
 | `model_width`, `model_height` | Model input size override. With the `Model` constructor this changes spatial decode knobs, not the packaged tensor contract. |
 | `resize_mode_override` | Use only when no upstream `Preproc` stage writes resize metadata and you need to specify stretch/letterbox/crop behavior explicitly. |
@@ -192,6 +212,11 @@ strided by the same slot count, `top_k`:
 
 Use `decode_segmentation_pose(...)` to get boxes, masks and keypoints. Row `i` in each tensor describes the same detection. Use `decode_bbox(...)` or `BoxDecodeResults(...)` if you only need boxes.
 
+The combined decoder also accepts the legacy `BBOX` tag. Simultaneous mask-and-pose
+rendering is not supported. Do not pass the combined buffer to `poseyolo`: that
+renderer expects keypoints directly after the boxes, whereas the combined payload
+stores masks there.
+
 There are 17 keypoint slots per detection. The backend zeros unused slots and keypoints for classes excluded by `pose_classes`. The helper copies those values unchanged.
 
 Core derives `num_classes` from the class-head depth minus one, because channel 0 holds objectness. For example, 30 channels means 29 classes. An explicit `num_classes` must match.
@@ -229,9 +254,11 @@ model family and model archive contract.
 
 ## Override contract
 
-The model archive can provide defaults for decode type, thresholds, `top_k`, and
-source geometry. Runtime arguments override those defaults only when you pass a
-non-empty or positive value.
+The MPK supplies tensor contracts and decode-family facts. Set filtering controls
+in `ModelOptions`. For a `SimaBoxDecode(Model, ...)` node, positive filtering
+arguments override the resolved Model controls; zero arguments inherit them.
+`ModelOptions.score_threshold = 0.0` is a real zero score gate, not a request to
+recover a packaged threshold.
 
 | Runtime argument | Value passed | Behavior |
 | --- | --- | --- |
@@ -239,12 +266,22 @@ non-empty or positive value.
 | `decode_type` | concrete type | Override the decode family for this run. |
 | `original_width` / `original_height` | `0` | Preserve packaged geometry or upstream preprocess metadata. |
 | `original_width` / `original_height` | positive integer | Override source dimensions for coordinate mapping. |
-| `detection_threshold` / `score_threshold` | `0.0` | Preserve packaged threshold. |
-| `detection_threshold` / `score_threshold` | `> 0.0` | Override the score gate. |
-| `nms_iou_threshold` | `0.0` | Preserve packaged NMS IoU. |
-| `nms_iou_threshold` | `> 0.0` | Override NMS IoU. |
-| `top_k` | `0` | Preserve packaged top-K. |
-| `top_k` | `> 0` | Override the maximum kept detections. |
+| Model-bound node `detection_threshold` | `0.0` | Inherit the resolved Model score gate. |
+| Model-bound node `detection_threshold` | `> 0.0` | Override the score gate. |
+| Model-bound node `nms_iou_threshold` | `0.0` | Inherit the resolved Model NMS IoU. |
+| Model-bound node `nms_iou_threshold` | `> 0.0` | Override NMS IoU. |
+| Model-bound node `top_k` | `0` | Inherit the resolved Model output cap. |
+| Model-bound node `top_k` | `> 0` | Override the maximum kept detections. |
+
+Bounding-box decoding requires a positive resolved `top_k`; zero does not request
+unbounded output storage. For raw heads without a bound `Model`, set `top_k` before
+building the graph. A model-bound node can inherit a positive Model cap by leaving
+its own `top_k` at zero. These controls do not change the separate result-reader
+helpers: their `top_k=0` means no additional cap on an already bounded output.
+A zero score gate permits zero-valued scores, but does
+not bypass geometry validation, background exclusion, NMS or the output cap.
+At NMS IoU zero, YOLO26 skips NMS. Other NMS-enabled YOLO and SSD profiles still
+apply their quantized-IoU suppression. Positive YOLO26 thresholds enable NMS.
 
 `num_classes` compares the value configured by the caller with the class count
 derived from the MPK tensor contract:
@@ -287,7 +324,7 @@ feeds the same control.
 | `BoxDecodeType::SuperPoint` | `superpoint` | SuperPoint detector and descriptor postprocessing |
 | `BoxDecodeType::Detr` | `detr` | DETR-style transformer detection |
 | `BoxDecodeType::EffDet` | `effdet` | EfficientDet detection |
-| `BoxDecodeType::RcnnStage1` | `rcnn-stage1` | R-CNN proposal stage |
+| `BoxDecodeType::RcnnStage1` | `rcnn-stage1` | Five ordered RPN heads; global NMS then top-K per area level |
 | `BoxDecodeType::Centernet` | `centernet` | CenterNet detection |
 
 `BoxDecodeType::Unspecified` is an unset sentinel and fails before runtime. SSD recipe identity is
@@ -374,7 +411,7 @@ Advanced tensor-contract rules:
   default.
 - `Detr` infers class channels from the maximum head depth and requires a valid
   class dimension.
-- `EffDet`, `RcnnStage1`, and `Centernet` use their model-family contracts; do
+- `EffDet` and `Centernet` use their model-family contracts; do
   not route them through a YOLO decode type.
 - `*-seg` decode types produce box-leading output plus task-specific mask data.
 
@@ -409,3 +446,25 @@ masks = seg.masks.to_numpy()
 ## Upgrading
 
 The new options change C++ object layouts. Core uses ABI 6, `libsima_neat.so.6`. Rebuild C++ applications, plugins and Python bindings with matching headers and libraries. Do not link ABI 5 binaries to ABI 6 through a compatibility symlink.
+
+
+### Combined YOLOX input admission
+
+`YoloXSegPose` accepts BF16 and INT8 heads, or native FP32 heads in contiguous
+or positive, non-overlapping strided storage (including planar CHW views).
+FP32 addresses and strides must be four-byte aligned; channel-blocked FP32 and
+UINT8 are rejected. No implicit lossy FP32 conversion is added. The prototype
+has its own dtype and per-tensor INT8 quantization; the roles of each detection
+head must still agree on dtype. Core preserves these per-port facts for Kernels
+admission rather than applying the first head's dtype or quantization to every port.
+The three detection levels have strides 8, 16 and 32 in both axes. The model
+width and height must be multiples of 32; they need not be equal. The prototype
+remains 160×160×32 and does not resize silently with model dimensions.
+
+Use preprocess metadata for off-center padding or crop coordinates. The affine
+maps **model to original** coordinates; shear, rotation and ROI lists are not
+supported by this combined profile. Crop needs authoritative affine metadata at
+preparation. This is a decoder contract for externally preprocessed tensors,
+not new support for crop production in `Model` preprocessing. A model with
+fewer than 17 keypoints still publishes the fixed
+17-slot public wire format, with unused slots set to zero.

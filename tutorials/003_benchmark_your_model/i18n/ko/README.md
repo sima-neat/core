@@ -72,9 +72,9 @@ report = model.benchmark(options)
 
 `report.mla_layer_stats.layers`에서 컴파일된 각 MLA 레이어의 0부터 시작하는 `stage_index`, `name`, `latency_us`를 읽습니다. 이는 해당 레이어만 실행하는 한 번의 프로파일링 실행에서 측정한 하드웨어 실행 시간입니다. 실행 시간이 0인 no-op 항목도 유지됩니다. 레이어 지연 시간을 합해도 스테이지 지연 시간이나 전체 지연 시간과 일치하지 않습니다.
 
-`report.mla_stage_stats.stages`에서 각 MLA 스테이지의 `stage_index`와 `latency_us`를 읽습니다. 이는 해당 스테이지를 중단 없이 200회 실행한 하드웨어 시간의 평균입니다. 호스트, EV74, 데이터 이동은 포함되지 않으므로 전체 지연 시간보다 짧습니다.
+`report.mla_stage_stats.stages`에서 각 MLA 스테이지의 `stage_index`와 `latency_us`를 읽습니다. 이는 해당 스테이지를 중단 없이 200회 실행한 하드웨어 시간의 평균입니다. 스테이지 지연 시간에는 MLA 연산과 프로그램의 DRAM 읽기 및 쓰기가 포함됩니다. 모델 로딩, 호스트 및 EV74 처리, 파이프라인 오버헤드는 포함되지 않습니다.
 
-`mla-rt`가 없거나 실패하거나 시간 초과되어도 `benchmark()`는 주요 측정값을 반환하고, 목록을 비워 두며, `report.mla_layer_stats.status` 또는 `report.mla_stage_stats.status`에 그 이유를 설정합니다. 그 밖의 경우 각 상태는 `"not requested"` 또는 `"ok"`입니다.
+`mla-rt`가 없거나 실패하거나 시간 초과되어도 `benchmark()`는 주요 측정값을 반환하고, 목록을 비워 두며, `report.mla_layer_stats.status` 또는 `report.mla_stage_stats.status`에 그 이유를 설정합니다. 그 밖의 경우 각 상태는 `"not requested"` 또는 `"ok"`입니다. `mla-rt` 실행이 시간 초과되거나 비정상 종료된 후에는 MLA에 끝나지 않은 작업이 남아 있을 수 있으므로, 같은 프로세스의 이후 프로파일링은 그 이유와 함께 건너뜁니다. MLA 복구가 확인될 때까지 DevKit을 유휴 상태로 두십시오.
 
 ### 보고서 저장 {#step-save-report}
 
@@ -161,5 +161,6 @@ report_telemetry_status=ok
 `Model::benchmark()`는 구체적인 `input_specs()` 차원을 필요로 합니다. 입력 모양이 동적이거나 구체적이지 않은 경우, 벤치마크는 추측하는 대신 명확하게 실패합니다.
 
 ## 소스 파일
+
 - C++: `tutorials/003_benchmark_your_model/benchmark_your_model.cpp`
 - Python: `tutorials/003_benchmark_your_model/benchmark_your_model.py`

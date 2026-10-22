@@ -37,6 +37,27 @@ def test_tensor_from_dlpack_generic():
   np.testing.assert_array_equal(out, arr)
 
 
+@pytest.mark.parametrize("dtype", [np.int32, np.float32, np.float64])
+@pytest.mark.parametrize("copy", [False, True])
+def test_rank_zero_dlpack_copy_and_lifetime(dtype, copy):
+  source = np.array(37, dtype=dtype)
+  tensor = pn.Tensor.from_dlpack(source, copy=copy, memory=pn.TensorMemory.CPU)
+  cloned = tensor.clone()
+  expected = source.tobytes()
+  assert bytes(tensor.copy_dense_bytes_tight()) == expected
+  assert bytes(tensor.copy_payload_bytes()) == expected
+  assert bytes(cloned.copy_dense_bytes_tight()) == expected
+  source[...] = 91
+  assert tensor.to_numpy(copy=False).shape == ()
+  assert tensor.to_numpy(copy=False).item() == (37 if copy else 91)
+  exported = cloned.to_numpy(copy=False)
+  del tensor, cloned, source
+  gc.collect()
+  assert exported.shape == ()
+  assert exported.dtype == dtype
+  assert exported.item() == 37
+
+
 @pytest.mark.parametrize("memory", [pn.TensorMemory.CPU, pn.TensorMemory.A65,
                                    pn.TensorMemory.EV74, pn.TensorMemory.MLA])
 def test_tensor_copy_placement_isolates_strided_source(memory):

@@ -1,6 +1,7 @@
 #include "pipeline/internal/TerminalOutputContractQuery.h"
 
 #include "pipeline/internal/TensorMath.h"
+#include "pipeline/internal/sima/KernelStageRecipe.h"
 
 #include <algorithm>
 #include <cctype>
@@ -817,6 +818,15 @@ std::optional<OutputTensorOverride> build_output_override_from_manifest(
     }
     return std::nullopt;
   }
+  // Image planes are checked numerical routes within one semantic image, not
+  // independent public tensors. The admitted raw caps and GstVideoMeta retain
+  // their complete layout authority; a tensor override would discard it and
+  // split multi-plane images. This is an intentional absence, not a failed
+  // terminal lookup that may fall back to an upstream producer.
+  if (terminal->image_publication) {
+    return std::nullopt;
+  }
+
   std::string validation_error;
   if (!validate_publication_stage_strict(publication, &validation_error)) {
     if (failure_reason) {

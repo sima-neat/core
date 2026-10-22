@@ -5,6 +5,7 @@
 #include "model/internal/ModelFormat.h"
 #include "model/internal/ModelInternal.h"
 #include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/internal/TelemetryMonitorInternal.h"
 #include "pipeline/internal/TensorMath.h"
 
 #include <glib.h>
@@ -88,11 +89,7 @@ Tensor make_synthetic_benchmark_tensor(const TensorSpec& spec, std::size_t input
     shape.push_back(dim);
   }
 
-  if (spec.image_format == ImageSpec::PixelFormat::NV12 ||
-      spec.image_format == ImageSpec::PixelFormat::I420) {
-    throw std::runtime_error(
-        "Model::benchmark: planar image input specs are not supported by the synthetic benchmark");
-  }
+  internal::validate_synthetic_benchmark_image_format(spec);
 
   std::uint64_t element_count = 1;
   for (const int64_t dim : shape) {
@@ -374,6 +371,15 @@ void require_benchmark_output(const simaai::neat::Sample& out, const char* where
 
 namespace internal {
 
+void validate_synthetic_benchmark_image_format(const TensorSpec& spec) {
+  if (spec.image_format == ImageSpec::PixelFormat::NV12 ||
+      spec.image_format == ImageSpec::PixelFormat::NV16 ||
+      spec.image_format == ImageSpec::PixelFormat::I420) {
+    throw std::runtime_error(
+        "Model::benchmark: planar image input specs are not supported by the synthetic benchmark");
+  }
+}
+
 TensorSpec resolve_benchmark_input_spec(TensorSpec spec, const ResolvedPreprocessPlan& plan,
                                         const BenchmarkOptions& options) {
   if (!benchmark_takes_source_image(plan, spec.image_format.has_value(), spec.shape.size())) {
@@ -486,9 +492,10 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
     }
 
     TelemetryMonitor telemetry_monitor;
-    telemetry_monitor.start();
+    internal::TelemetryMonitorAccess::prepare_benchmark(telemetry_monitor);
     MeasureScope measure = runner.start_measurement(make_benchmark_measure_options(
         kTimeoutMs, logical_batch_size, include_plugin_latency, "NEAT Benchmark throughput"));
+    internal::TelemetryMonitorAccess::arm_benchmark(telemetry_monitor);
     const auto min_end =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(options.min_duration_ms);
 
@@ -573,7 +580,9 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
       throw std::runtime_error("Model::benchmark: async measured output count mismatch");
     }
 
-    // Stop timing before the monitor's final Sentinel request.
+    // Seal without joining or contacting Sentinel while the model timer runs.
+    // The final poll and worker teardown belong after the throughput window.
+    internal::TelemetryMonitorAccess::seal_benchmark(telemetry_monitor);
     throughput_measured = measure.stop();
     telemetry = telemetry_monitor.stop();
     runner.close();

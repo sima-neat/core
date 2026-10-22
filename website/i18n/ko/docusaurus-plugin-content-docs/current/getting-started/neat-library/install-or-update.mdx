@@ -22,7 +22,12 @@ Neat 애플리케이션을 빌드하거나 실행하는 환경에서 설치 프�
 
 ## C++ 개발 패키지
 
-최소 설치에는 런타임과 `sima-neat-dev`가 포함됩니다. 기본 설치에서는 튜토리얼과 테스트를 선택적 추가 항목으로 제공하며 `all`은 이를 포함합니다. 공유 라이브러리 앱에는 Core 공개 헤더와 GStreamer, OpenCV, JSON 개발 파일이 필요합니다. Internals, memory-library, heap, LLiMa 개발 패키지는 필요하지 않지만 런타임 라이브러리는 계속 필요합니다.
+최소 설치에는 런타임과 `sima-neat-dev`가 포함됩니다. 기본 설치에서는 튜토리얼과
+테스트를 선택적 추가 항목으로 제공하며, `all`은 이를 포함합니다. 공유 라이브러리
+애플리케이션에는 Core 공개 헤더, 일치하는 Scheduler 프런트엔드 및 GStreamer,
+OpenCV, JSON 개발 파일이 필요합니다. 폐기된 Internals 통합 패키지나 Runner,
+Kernels, Codecs, memory-library, heap 또는 LLiMa 개발 API는 필요하지 않습니다.
+선택된 패키지가 필수 런타임 종속성을 제공합니다.
 
 설치된 공유 타깃을 사용합니다.
 
@@ -31,14 +36,20 @@ find_package(SimaNeat CONFIG REQUIRED)
 target_link_libraries(my_app PRIVATE SimaNeat::sima_neat)
 ```
 
-정적 아카이브는 `sima-neat-dev`에 계속 포함됩니다. 기존 정적 소비자는 `COMPONENTS Static`을 추가하고 호환되는 `neat-internals-dev`, `simaai-memory-lib-dev`, `zlib1g-dev`, `libcpp-httplib-dev`를 준비해야 합니다. LLiMa를 활성화한 빌드에는 `sima-lmm-dev`와 해당 종속성도 필요합니다.
+정적 아카이브는 `sima-neat-dev`에 계속 포함됩니다. `COMPONENTS Static`을 사용하고
+일치하는 `simaai-scheduler` 패키지를 설치된 상태로 유지하세요. `zlib1g-dev`,
+`libcpp-httplib-dev` 및 해당 종속성을 준비하세요. LLiMa를 활성화한 빌드에는
+`sima-lmm-dev`와 해당 종속성도 필요합니다. Core는 Scheduler의 설치된 프런트엔드를
+사용하므로 애플리케이션에 Internals 또는 하위 라이브러리의 개발 타깃을 추가하지 마세요:
 
 ```cmake
 find_package(SimaNeat CONFIG REQUIRED COMPONENTS Static)
 target_link_libraries(my_app PRIVATE SimaNeat::sima_neat_static)
 ```
 
-정적 Core도 공유 구현 라이브러리를 사용합니다. 소스에서 Core를 빌드할 때도 구현 개발 패키지가 필요합니다.
+정적 Core도 공유 구현 라이브러리를 사용합니다. 소스에서 Core를 빌드할 때도 같은
+Scheduler 프런트엔드 경계를 사용하며, 활성화된 LLiMa를 비롯한 다른 종속성의
+개발 파일이 필요합니다.
 
 ## 필수 조건
 
@@ -64,7 +75,7 @@ curl -fsS https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh -o /dev/null && e
 ## Neat Library 설치
 
 :::note 패키지 호환성
-설치 프로그램은 선택한 핵심 아티팩트에 나열된 모든 Debian 패키지를 사용하며, 다른 내부 구성 요소나 LLiMa 버전을 선택하지 않습니다. 설치된 플랫폼은 해당 아티팩트에 포함되지 않은 종속성을 충족해야 합니다. APT가 설치를 완료하기 위해 플랫폼 패키지를 제거하는 경우, 설치 프로그램은 중단됩니다. 핵심 또는 LLiMa에서 패키지를 대체하는 대신 플랫폼을 업데이트하십시오.
+설치 프로그램은 선택한 핵심 아티팩트에 나열된 모든 Debian 패키지를 사용하며, 다른 Scheduler나 LLiMa 버전을 선택하지 않습니다. 설치된 플랫폼은 해당 아티팩트에 포함되지 않은 종속성을 충족해야 합니다. APT가 설치를 완료하기 위해 플랫폼 패키지를 제거하는 경우, 설치 프로그램은 중단됩니다. 핵심 또는 LLiMa에서 패키지를 대체하는 대신 플랫폼을 업데이트하십시오.
 :::
 
 설치 프로그램을 실행하기 전에 작업 디렉터리를 선택합니다. DevKit에서 설치할 때는 루트 파일 시스템이 가득 차지 않도록 `/media/nvme` 아래에 설치합니다. SDK 컨테이너 내에서는 `$HOME/neat`와 같이 컨테이너 내의 경로를 사용합니다.

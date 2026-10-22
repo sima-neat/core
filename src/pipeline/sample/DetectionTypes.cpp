@@ -96,8 +96,10 @@ ParsedBoxRecords parse_bbox_records(const std::vector<uint8_t>& bytes, int img_w
 
     float x1 = static_cast<float>(r.x);
     float y1 = static_cast<float>(r.y);
-    float x2 = static_cast<float>(r.x + r.w);
-    float y2 = static_cast<float>(r.y + r.h);
+    // Add in a wider integer type before converting: public wire records may
+    // contain any int32 coordinate/extent, including sums outside int32.
+    float x2 = static_cast<float>(static_cast<int64_t>(r.x) + r.w);
+    float y2 = static_cast<float>(static_cast<int64_t>(r.y) + r.h);
 
     if (img_w > 0 && img_h > 0) {
       x1 = std::max(0.0f, std::min(x1, static_cast<float>(img_w)));

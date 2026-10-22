@@ -1,3 +1,4 @@
+#include <simaai/runtime/gstreamer/elements.h>
 #include "InputStreamUtil.h"
 
 #include "pipeline/GraphOptions.h"
@@ -6,12 +7,14 @@
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/TensorTransfer.h"
 #include "pipeline/internal/InputPolicy.h"
+#include "pipeline/internal/ErrorUtil.h"
+#include "pipeline/ErrorCodes.h"
 #include "pipeline/TensorOpenCV.h"
 #include "pipeline/TessellatedTensor.h"
 #include "nodes/io/Input.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/SampleTimingGstUtil.h"
-#include "simaai/neat/internal/dmabuf/DmaBufPool.h"
+#include <simaai/scheduler/client/dma_memory.h>
 
 #include <gst/allocators/gstdmabuf.h>
 #include <gst/gst.h>
@@ -34,6 +37,7 @@
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace simaai::neat {
@@ -82,7 +86,7 @@ int shape_dim(const std::vector<int64_t>& shape, size_t idx) {
   if (shape.size() <= idx)
     return -1;
   const int64_t v = shape[idx];
-  return (v > 0) ? static_cast<int>(v) : -1;
+  return (v > 0 && v <= std::numeric_limits<int>::max()) ? static_cast<int>(v) : -1;
 }
 
 std::string tensor_shape_csv_local(const std::vector<int64_t>& shape) {
@@ -108,7 +112,7 @@ std::vector<int64_t> tensor_shape_from_compat_dims_local(int width, int height, 
   return {height, width, depth};
 }
 
-TensorCompatDims tensor_compat_dims_from_shape_local(const std::vector<int64_t>& shape,
+TensorCompatDims tensor_compat_dims_from_shape_local(std::span<const int64_t> shape,
                                                      TensorLayout layout) {
   TensorCompatDims out;
   if (shape.empty())
@@ -118,7 +122,7 @@ TensorCompatDims tensor_compat_dims_from_shape_local(const std::vector<int64_t>&
     if (shape.size() < from_end)
       return -1;
     const int64_t v = shape[shape.size() - from_end];
-    return v > 0 ? static_cast<int>(v) : -1;
+    return v > 0 && v <= std::numeric_limits<int>::max() ? static_cast<int>(v) : -1;
   };
 
   if (layout == TensorLayout::HW) {
@@ -516,6 +520,23 @@ bool ensure_custom_meta_structure_mutable(GstBuffer* buffer, const char* meta_na
   if (!buffer || !meta_name || !meta_out || !structure_out) {
     return false;
   }
+  // A legacy writer is an explicit representation boundary. Never add a
+  // second current-frame authority alongside the compact immutable header.
+  if (std::strcmp(meta_name, "GstSimaMeta") == 0) {
+    std::string error;
+    const auto* frame = simaai::gst::tensor_buffer_frame_metadata(buffer, &error);
+    if (!error.empty()) {
+      throw std::runtime_error(error);
+    }
+    if (frame) {
+      if (!gst_buffer_is_writable(buffer)) {
+        return false;
+      }
+      if (!simaai::gst::tensor_buffer_materialize_frame_metadata(buffer, &error)) {
+        throw std::runtime_error(error);
+      }
+    }
+  }
   GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, meta_name);
   bool added_meta = false;
   if (!meta) {
@@ -830,9 +851,9 @@ void validate_dim_with_effective_max(const std::string& tag, int value,
       ". Fix: " + pipeline_internal::shape_limit_fix_hint(dimension, value));
 }
 
-std::string fmt_from_tensor_image(const simaai::neat::Tensor& input) {
+const char* fmt_from_tensor_image(const simaai::neat::Tensor& input) {
   if (!input.semantic.image.has_value())
-    return {};
+    return "";
   switch (input.semantic.image->format) {
   case simaai::neat::ImageSpec::PixelFormat::RGB:
     return "RGB";
@@ -842,15 +863,17 @@ std::string fmt_from_tensor_image(const simaai::neat::Tensor& input) {
     return "GRAY8";
   case simaai::neat::ImageSpec::PixelFormat::NV12:
     return "NV12";
+  case simaai::neat::ImageSpec::PixelFormat::NV16:
+    return "NV16";
   case simaai::neat::ImageSpec::PixelFormat::I420:
     return "I420";
   case simaai::neat::ImageSpec::PixelFormat::UNKNOWN:
-    return {};
+    return "";
   }
-  return {};
+  return "";
 }
 
-std::string fmt_from_dtype(TensorDType dtype) {
+const char* fmt_from_dtype(TensorDType dtype) {
   switch (dtype) {
   case TensorDType::UInt8:
     return "UINT8";
@@ -869,7 +892,7 @@ std::string fmt_from_dtype(TensorDType dtype) {
   case TensorDType::Float64:
     return "FP64";
   }
-  return {};
+  return "";
 }
 
 std::string layout_caps_value(TensorLayout layout) {
@@ -945,7 +968,10 @@ size_t tensor_plane_bytes_tight(const simaai::neat::Plane& plane, TensorDType dt
   const int64_t stride = !plane.strides_bytes.empty() ? plane.strides_bytes[0] : min_stride;
   if (stride < min_stride)
     return 0;
-  return static_cast<size_t>(stride) * static_cast<size_t>(h);
+  size_t bytes = 0;
+  return pipeline_internal::safe_mul(static_cast<size_t>(stride), static_cast<size_t>(h), &bytes)
+             ? bytes
+             : 0;
 }
 
 size_t tensor_dense_bytes_tight(const simaai::neat::Tensor& input) {
@@ -955,7 +981,8 @@ size_t tensor_dense_bytes_tight(const simaai::neat::Tensor& input) {
   for (const auto dim : input.shape) {
     if (dim <= 0)
       return 0;
-    total *= static_cast<size_t>(dim);
+    if (!pipeline_internal::safe_mul(total, static_cast<size_t>(dim), &total))
+      return 0;
   }
   return total;
 }
@@ -964,7 +991,7 @@ int plane_dim(const simaai::neat::Plane& plane, size_t idx) {
   if (plane.shape.size() <= idx)
     return -1;
   const int64_t v = plane.shape[idx];
-  return (v > 0) ? static_cast<int>(v) : -1;
+  return (v > 0 && v <= std::numeric_limits<int>::max()) ? static_cast<int>(v) : -1;
 }
 
 PlaneInfo plane_info_from_tight(const simaai::neat::Plane& plane, TensorDType dtype) {
@@ -1125,7 +1152,7 @@ std::vector<int64_t> tensor_shape_from_compat_dims(int width, int height, int de
   return tensor_shape_from_compat_dims_local(width, height, depth, layout);
 }
 
-TensorCompatDims tensor_compat_dims_from_shape(const std::vector<int64_t>& shape,
+TensorCompatDims tensor_compat_dims_from_shape(std::span<const int64_t> shape,
                                                TensorLayout layout) {
   return tensor_compat_dims_from_shape_local(shape, layout);
 }
@@ -1257,6 +1284,7 @@ bool contains_launch_factory_token(std::string_view pipeline, std::string_view f
 pipeline_internal::InputStreamTeardownPolicy
 inputstream_pipeline_teardown_policy(std::string_view pipeline) {
   if (contains_launch_factory_token(pipeline, "neatprocessmla") ||
+      contains_launch_factory_token(pipeline, "neatkernelrunner") ||
       contains_launch_factory_token(pipeline, "neatprocesscvu") ||
       contains_launch_factory_token(pipeline, "neatdecoder") ||
       contains_launch_factory_token(pipeline, "neatencoder")) {
@@ -1393,26 +1421,87 @@ std::size_t CapKeyHash::operator()(const CapKey& key) const {
   return seed;
 }
 
-SampleSpec describe_tensor_spec_or_throw(const simaai::neat::Tensor& input, const InputOptions& opt,
-                                         const char* where) {
-  const std::string tag = where ? where : "derive_tensor_spec";
-  if (!input.storage) {
-    throw std::invalid_argument(tag + ": simaai::neat::Tensor missing storage");
+namespace {
+// Check metadata-only access bounds, including non-contiguous views. The later
+// custom mapping/provider check remains authoritative for its actual extent.
+void validate_declared_tensor_storage(const Tensor& input, const char* where) {
+  const auto fail = [&](const char* detail) {
+    throw std::invalid_argument(std::string(where) + ": " + detail);
+  };
+  if (!input.storage)
+    fail("tensor missing storage");
+  if (input.byte_offset < 0)
+    fail("negative tensor byte offset");
+  const auto check_extent = [&](std::size_t offset, std::size_t bytes) {
+    std::size_t end = 0;
+    if (!bytes || !pipeline_internal::safe_add(offset, bytes, &end))
+      fail("tensor extent is empty or overflows");
+    if (input.storage->size_bytes && end > input.storage->size_bytes)
+      fail("storage too small for tensor input");
+  };
+  if (input.planes.empty()) {
+    const auto dense = tensor_dense_bytes_tight(input);
+    if (!dense)
+      fail("tensor shape is empty, nonpositive or overflows");
+    std::size_t span = dtype_bytes(input.dtype);
+    if (input.strides_bytes.empty()) {
+      span = dense;
+    } else {
+      if (input.strides_bytes.size() != input.shape.size())
+        fail("tensor stride rank mismatch");
+      for (std::size_t axis = 0; axis < input.shape.size(); ++axis) {
+        if (input.strides_bytes[axis] <= 0)
+          fail("tensor strides must be positive");
+        std::size_t term = 0;
+        if (!pipeline_internal::safe_mul(std::size_t(input.shape[axis] - 1),
+                                         std::size_t(input.strides_bytes[axis]), &term) ||
+            !pipeline_internal::safe_add(span, term, &span))
+          fail("strided tensor extent overflows");
+      }
+    }
+    check_extent(std::size_t(input.byte_offset), span);
+  } else {
+    if (input.byte_offset != 0)
+      fail("composite tensor must have byte_offset == 0");
+    for (const auto& plane : input.planes) {
+      if (plane.byte_offset < 0)
+        fail("negative plane byte offset");
+      check_extent(std::size_t(plane.byte_offset),
+                   pipeline_internal::plane_span_bytes_checked(plane.shape, plane.strides_bytes,
+                                                               dtype_bytes(input.dtype)));
+    }
   }
+}
+} // namespace
+
+InputGeometry describe_tensor_geometry_or_throw(const simaai::neat::Tensor& input,
+                                                const InputOptions& opt, const char* where) {
+  const char* tag = where ? where : "derive_tensor_spec";
+  if (!input.storage) {
+    throw std::invalid_argument(std::string(tag) + ": simaai::neat::Tensor missing storage");
+  }
+  validate_declared_tensor_storage(input, tag);
   if (input.device.type != simaai::neat::DeviceType::CPU &&
       input.storage->kind != simaai::neat::StorageKind::GstSample) {
-    throw std::invalid_argument(tag + ": non-CPU tensors must be backed by GstSample storage");
+    throw std::invalid_argument(std::string(tag) +
+                                ": non-CPU tensors must be backed by GstSample storage");
   }
   if (input.semantic.encoded.has_value()) {
-    throw std::invalid_argument(tag + ": encoded tensors require Sample caps_string");
+    throw std::invalid_argument(std::string(tag) + ": encoded tensors require Sample caps_string");
   }
 
-  SampleSpec spec;
+  if (input.byte_offset < 0)
+    throw std::invalid_argument(std::string(tag) + ": negative tensor byte offset");
+  InputGeometry spec;
   spec.dtype = input.dtype;
   spec.layout = input.layout;
   spec.shape = input.shape;
 
-  std::string media = resolve_input_media_type(opt);
+  std::string_view media = opt.payload_type == PayloadType::Image ? "video/x-raw"
+                           : opt.payload_type == PayloadType::Tensor
+                               ? "application/vnd.simaai.tensor"
+                           : opt.payload_type == PayloadType::Encoded ? "encoded"
+                                                                      : "";
   if (media.empty()) {
     media = input.semantic.image.has_value() ? "video/x-raw" : "application/vnd.simaai.tensor";
   }
@@ -1421,29 +1510,34 @@ SampleSpec describe_tensor_spec_or_throw(const simaai::neat::Tensor& input, cons
   if (spec.media_type == "video/x-raw") {
     spec.kind = SampleMediaKind::RawVideo;
 
-    std::string fmt = upper_copy(opt.format);
-    std::string semantic_fmt = upper_copy(fmt_from_tensor_image(input));
+    std::string_view fmt = format_tag_name(opt.format.tag);
+    std::string_view semantic_fmt = fmt_from_tensor_image(input);
     if (fmt.empty())
       fmt = semantic_fmt;
     if (fmt == "GRAY")
       fmt = "GRAY8";
     if (fmt.empty()) {
-      throw std::invalid_argument(tag + ": simaai::neat::Tensor video input missing format");
+      throw std::invalid_argument(std::string(tag) +
+                                  ": simaai::neat::Tensor video input missing format");
     }
-    if (fmt != "RGB" && fmt != "BGR" && fmt != "GRAY8" && fmt != "NV12" && fmt != "I420") {
-      throw std::invalid_argument(tag + ": unsupported video format: " + fmt);
+    if (fmt != "RGB" && fmt != "BGR" && fmt != "GRAY8" && fmt != "NV12" && fmt != "NV16" &&
+        fmt != "I420") {
+      throw std::invalid_argument(std::string(tag) +
+                                  ": unsupported video format: " + std::string(fmt));
     }
     if (input.dtype != TensorDType::UInt8) {
-      throw std::invalid_argument(tag + ": simaai::neat::Tensor video input must be UInt8");
+      throw std::invalid_argument(std::string(tag) +
+                                  ": simaai::neat::Tensor video input must be UInt8");
     }
     if (!input.semantic.image.has_value()) {
-      if (upper_copy(opt.format).empty()) {
-        throw std::invalid_argument(tag +
+      if (opt.format.empty()) {
+        throw std::invalid_argument(std::string(tag) +
                                     ": simaai::neat::Tensor video input missing ImageSpec and "
                                     "InputOptions.format");
       }
     } else if (!semantic_fmt.empty() && semantic_fmt != fmt) {
-      throw std::invalid_argument(tag + ": simaai::neat::Tensor image format mismatch");
+      throw std::invalid_argument(std::string(tag) +
+                                  ": simaai::neat::Tensor image format mismatch");
     }
 
     int packed_batch = 1;
@@ -1451,14 +1545,14 @@ SampleSpec describe_tensor_spec_or_throw(const simaai::neat::Tensor& input, cons
     int packed_w_index = 1;
     int packed_c_index = 2;
     const bool packed_video_has_batch = input.shape.size() == 4U;
-    if (packed_video_has_batch && fmt != "NV12" && fmt != "I420") {
+    if (packed_video_has_batch && fmt != "NV12" && fmt != "NV16" && fmt != "I420") {
       const bool has_nhwc_axis_semantics = input.axis_semantics.size() == 4U &&
                                            input.axis_semantics[0] == TensorAxisSemantic::N &&
                                            input.axis_semantics[1] == TensorAxisSemantic::H &&
                                            input.axis_semantics[2] == TensorAxisSemantic::W &&
                                            input.axis_semantics[3] == TensorAxisSemantic::C;
       if (input.layout != TensorLayout::HWC && !has_nhwc_axis_semantics) {
-        throw std::invalid_argument(tag +
+        throw std::invalid_argument(std::string(tag) +
                                     ": batched packed video must use HWC layout or N/H/W/C axis "
                                     "semantics");
       }
@@ -1467,86 +1561,94 @@ SampleSpec describe_tensor_spec_or_throw(const simaai::neat::Tensor& input, cons
       packed_w_index = 2;
       packed_c_index = 3;
       if (packed_batch <= 0) {
-        throw std::invalid_argument(tag + ": batched packed video has invalid batch dimension");
+        throw std::invalid_argument(std::string(tag) +
+                                    ": batched packed video has invalid batch dimension");
       }
     }
 
     int h = shape_dim(input.shape, static_cast<size_t>(packed_h_index));
     int w = shape_dim(input.shape, static_cast<size_t>(packed_w_index));
 
-    if (fmt == "NV12" || fmt == "I420") {
+    if (fmt == "NV12" || fmt == "NV16" || fmt == "I420") {
       if (input.byte_offset != 0) {
-        throw std::invalid_argument(tag + ": composite tensor must have byte_offset == 0");
+        throw std::invalid_argument(std::string(tag) +
+                                    ": composite tensor must have byte_offset == 0");
       }
-      if ((fmt == "NV12" && input.planes.size() != 2) ||
+      if (((fmt == "NV12" || fmt == "NV16") && input.planes.size() != 2) ||
           (fmt == "I420" && input.planes.size() != 3)) {
-        throw std::invalid_argument(tag + ": invalid plane count for format");
+        throw std::invalid_argument(std::string(tag) + ": invalid plane count for format");
       }
       const simaai::neat::Plane* y = input.try_plane(simaai::neat::PlaneRole::Y);
       if (!y) {
-        throw std::invalid_argument(tag + ": missing Y plane");
+        throw std::invalid_argument(std::string(tag) + ": missing Y plane");
       }
       if (!tensor_plane_is_tight(*y, input.dtype)) {
-        throw std::invalid_argument(tag + ": Y plane is not tightly packed");
+        throw std::invalid_argument(std::string(tag) + ": Y plane is not tightly packed");
       }
       const int y_h = plane_dim(*y, 0);
       const int y_w = plane_dim(*y, 1);
       if (y_h <= 0 || y_w <= 0) {
-        throw std::invalid_argument(tag + ": Y plane missing width/height");
+        throw std::invalid_argument(std::string(tag) + ": Y plane missing width/height");
       }
       if (h > 0 && h != y_h) {
-        throw std::invalid_argument(tag + ": height does not match Y plane");
+        throw std::invalid_argument(std::string(tag) + ": height does not match Y plane");
       }
       if (w > 0 && w != y_w) {
-        throw std::invalid_argument(tag + ": width does not match Y plane");
+        throw std::invalid_argument(std::string(tag) + ": width does not match Y plane");
       }
       h = y_h;
       w = y_w;
-      if ((w % 2) != 0 || (h % 2) != 0) {
-        throw std::invalid_argument(tag + ": NV12/I420 requires even width/height");
+      if ((w % 2) != 0 || (fmt != "NV16" && (h % 2) != 0)) {
+        throw std::invalid_argument(
+            std::string(tag) + ": NV12/I420 require even width/height; NV16 requires even width");
       }
 
       spec.planes.clear();
       size_t max_end = 0;
       auto add_plane = [&](const simaai::neat::Plane& plane, const char* label) {
         if (!tensor_plane_is_tight(plane, input.dtype)) {
-          throw std::invalid_argument(tag + ": " + std::string(label) + " plane stride is invalid");
+          throw std::invalid_argument(std::string(tag) + ": " + std::string(label) +
+                                      " plane stride is invalid");
         }
         PlaneInfo info = plane_info_from_tight(plane, input.dtype);
         if (info.size_bytes == 0) {
-          throw std::invalid_argument(tag + ": " + std::string(label) + " plane has invalid size");
+          throw std::invalid_argument(std::string(tag) + ": " + std::string(label) +
+                                      " plane has invalid size");
         }
         spec.planes.push_back(info);
-        const size_t end = static_cast<size_t>(info.offset_bytes) + info.size_bytes;
+        size_t end = 0;
+        if (!pipeline_internal::safe_add(static_cast<size_t>(info.offset_bytes), info.size_bytes,
+                                         &end))
+          throw std::invalid_argument(std::string(tag) + ": plane extent overflows");
         if (end > max_end)
           max_end = end;
       };
 
       add_plane(*y, "Y");
 
-      if (fmt == "NV12") {
+      if (fmt == "NV12" || fmt == "NV16") {
         const simaai::neat::Plane* uv = input.try_plane(simaai::neat::PlaneRole::UV);
         if (!uv) {
-          throw std::invalid_argument(tag + ": missing UV plane");
+          throw std::invalid_argument(std::string(tag) + ": missing UV plane");
         }
         const int uv_h = plane_dim(*uv, 0);
         const int uv_w = plane_dim(*uv, 1);
-        if (uv_h != h / 2 || uv_w != w) {
-          throw std::invalid_argument(tag + ": UV plane shape mismatch");
+        if (uv_h != (fmt == "NV16" ? h : h / 2) || uv_w != w) {
+          throw std::invalid_argument(std::string(tag) + ": UV plane shape mismatch");
         }
         add_plane(*uv, "UV");
       } else {
         const simaai::neat::Plane* u = input.try_plane(simaai::neat::PlaneRole::U);
         const simaai::neat::Plane* v = input.try_plane(simaai::neat::PlaneRole::V);
         if (!u || !v) {
-          throw std::invalid_argument(tag + ": missing U/V planes");
+          throw std::invalid_argument(std::string(tag) + ": missing U/V planes");
         }
         const int u_h = plane_dim(*u, 0);
         const int u_w = plane_dim(*u, 1);
         const int v_h = plane_dim(*v, 0);
         const int v_w = plane_dim(*v, 1);
         if (u_h != h / 2 || v_h != h / 2 || u_w != w / 2 || v_w != w / 2) {
-          throw std::invalid_argument(tag + ": U/V plane shape mismatch");
+          throw std::invalid_argument(std::string(tag) + ": U/V plane shape mismatch");
         }
         add_plane(*u, "U");
         add_plane(*v, "V");
@@ -1569,21 +1671,21 @@ SampleSpec describe_tensor_spec_or_throw(const simaai::neat::Tensor& input, cons
       }
     } else {
       if (input.is_composite()) {
-        throw std::invalid_argument(tag + ": packed video must not use planes");
+        throw std::invalid_argument(std::string(tag) + ": packed video must not use planes");
       }
       if (input.byte_offset != 0) {
-        throw std::invalid_argument(tag + ": packed video must have byte_offset == 0");
+        throw std::invalid_argument(std::string(tag) + ": packed video must have byte_offset == 0");
       }
       if (h <= 0 || w <= 0) {
-        throw std::invalid_argument(tag + ": video input missing width/height");
+        throw std::invalid_argument(std::string(tag) + ": video input missing width/height");
       }
       const int expected_depth = (fmt == "GRAY8") ? 1 : 3;
       const int shape_d = shape_dim(input.shape, static_cast<size_t>(packed_c_index));
       if ((fmt == "RGB" || fmt == "BGR") && shape_d <= 0) {
-        throw std::invalid_argument(tag + ": video depth is required for RGB/BGR");
+        throw std::invalid_argument(std::string(tag) + ": video depth is required for RGB/BGR");
       }
       if (shape_d > 0 && shape_d != expected_depth) {
-        throw std::invalid_argument(tag + ": video depth does not match format");
+        throw std::invalid_argument(std::string(tag) + ": video depth does not match format");
       }
       spec.width = w;
       spec.height = h;
@@ -1599,11 +1701,11 @@ SampleSpec describe_tensor_spec_or_throw(const simaai::neat::Tensor& input, cons
                                  ? input.strides_bytes[static_cast<size_t>(packed_h_index)]
                                  : expected_stride;
       if (stride < expected_stride) {
-        throw std::invalid_argument(tag + ": packed video stride too small");
+        throw std::invalid_argument(std::string(tag) + ": packed video stride too small");
       }
       if (input.strides_bytes.size() > 1 &&
           input.strides_bytes.back() != static_cast<int64_t>(dtype_bytes(input.dtype))) {
-        throw std::invalid_argument(tag + ": packed video element stride mismatch");
+        throw std::invalid_argument(std::string(tag) + ": packed video element stride mismatch");
       }
       if (packed_video_has_batch) {
         const int64_t expected_frame_stride = expected_stride * static_cast<int64_t>(h);
@@ -1614,46 +1716,43 @@ SampleSpec describe_tensor_spec_or_throw(const simaai::neat::Tensor& input, cons
                    input.strides_bytes[1] != expected_stride ||
                    input.strides_bytes[2] != static_cast<int64_t>(expected_depth) ||
                    input.strides_bytes[3] != static_cast<int64_t>(dtype_bytes(input.dtype))) {
-          throw std::invalid_argument(tag +
+          throw std::invalid_argument(std::string(tag) +
                                       ": batched packed video must be tightly contiguous NHWC");
         }
       }
       plane.stride_bytes = stride;
       plane.offset_bytes = input.byte_offset;
-      const size_t frame_bytes = static_cast<size_t>(stride) * static_cast<size_t>(h);
+      size_t frame_bytes = 0;
+      if (!pipeline_internal::safe_mul(static_cast<size_t>(stride), static_cast<size_t>(h),
+                                       &frame_bytes))
+        throw std::invalid_argument(std::string(tag) + ": video extent overflows");
       if (packed_batch > 0 &&
           frame_bytes > std::numeric_limits<size_t>::max() / static_cast<size_t>(packed_batch)) {
-        throw std::invalid_argument(tag + ": batched packed video byte size overflow");
+        throw std::invalid_argument(std::string(tag) + ": batched packed video byte size overflow");
       }
       const size_t bytes = frame_bytes * static_cast<size_t>(packed_batch);
       if (frame_bytes == 0 || bytes == 0) {
-        throw std::invalid_argument(tag + ": video input has invalid byte size");
+        throw std::invalid_argument(std::string(tag) + ": video input has invalid byte size");
       }
       plane.size_bytes = frame_bytes;
       spec.planes.push_back(plane);
       spec.required_bytes_actual = bytes;
     }
 
-    const auto limits = pipeline_internal::resolve_shape_limits(
-        pipeline_internal::normalize_shape_bounds(opt), spec);
-    validate_dim_with_effective_max(tag, spec.width, limits, 'w');
-    validate_dim_with_effective_max(tag, spec.height, limits, 'h');
-    if (spec.depth > 0) {
-      validate_dim_with_effective_max(tag, spec.depth, limits, 'd');
-    }
     if (input.storage && input.storage->size_bytes > 0) {
-      const size_t end = static_cast<size_t>(input.byte_offset) + spec.required_bytes_actual;
-      if (end > input.storage->size_bytes) {
-        throw std::invalid_argument(tag + ": storage too small for video input");
+      if (static_cast<size_t>(input.byte_offset) > input.storage->size_bytes ||
+          spec.required_bytes_actual >
+              input.storage->size_bytes - static_cast<size_t>(input.byte_offset)) {
+        throw std::invalid_argument(std::string(tag) + ": storage too small for video input");
       }
     }
     spec.format = fmt;
   } else if (spec.media_type == "application/vnd.simaai.tensor") {
     spec.kind = SampleMediaKind::Tensor;
     if (!input.is_dense()) {
-      throw std::invalid_argument(tag + ": tensor input must be dense");
+      throw std::invalid_argument(std::string(tag) + ": tensor input must be dense");
     }
-    std::vector<int64_t> normalized_shape = input.shape;
+    std::span<const int64_t> normalized_shape = input.shape;
     const bool layout_is_explicit = input.layout != TensorLayout::Unknown;
     const size_t expected_rank = (input.layout == TensorLayout::HW) ? 2u : 3u;
     const bool has_explicit_leading_batch_axis =
@@ -1663,92 +1762,91 @@ SampleSpec describe_tensor_spec_or_throw(const simaai::neat::Tensor& input, cons
         !has_explicit_leading_batch_axis) {
       const int64_t batch = normalized_shape.front();
       if (batch <= 0) {
-        throw std::invalid_argument(tag + ": invalid leading batch dimension");
+        throw std::invalid_argument(std::string(tag) + ": invalid leading batch dimension");
       }
       if (batch == 1) {
-        normalized_shape.erase(normalized_shape.begin());
+        normalized_shape = normalized_shape.subspan(1);
       }
     }
 
     const TensorCompatDims compat = tensor_compat_dims_from_shape(normalized_shape, input.layout);
     if (input.layout == TensorLayout::HWC) {
       if (normalized_shape.size() != 3 && normalized_shape.size() != 4) {
-        throw std::invalid_argument(tag + ": HWC tensor must have shape [H,W,C] or [N,H,W,C]");
+        throw std::invalid_argument(std::string(tag) +
+                                    ": HWC tensor must have shape [H,W,C] or [N,H,W,C]");
       }
     } else if (input.layout == TensorLayout::CHW) {
       if (normalized_shape.size() != 3 && normalized_shape.size() != 4) {
-        throw std::invalid_argument(tag + ": CHW tensor must have shape [C,H,W] or [N,C,H,W]");
+        throw std::invalid_argument(std::string(tag) +
+                                    ": CHW tensor must have shape [C,H,W] or [N,C,H,W]");
       }
     } else if (input.layout == TensorLayout::HW) {
       if (normalized_shape.size() != 1 && normalized_shape.size() != 2 &&
           normalized_shape.size() != 3) {
-        throw std::invalid_argument(tag + ": HW tensor must have shape [N], [H,W], or [B,H,W]");
+        throw std::invalid_argument(std::string(tag) +
+                                    ": HW tensor must have shape [N], [H,W], or [B,H,W]");
       }
     }
 
     if (compat.width <= 0 || compat.height <= 0 || compat.depth <= 0) {
-      throw std::invalid_argument(tag + ": tensor input missing canonical shape");
+      throw std::invalid_argument(std::string(tag) + ": tensor input missing canonical shape");
     }
-    SampleSpec shape_seed = spec;
-    shape_seed.layout = input.layout;
-    shape_seed.shape = normalized_shape;
-    const auto limits = pipeline_internal::resolve_shape_limits(
-        pipeline_internal::normalize_shape_bounds(opt), shape_seed);
-    validate_dim_with_effective_max(tag, compat.width, limits, 'w');
-    validate_dim_with_effective_max(tag, compat.height, limits, 'h');
-    validate_dim_with_effective_max(tag, compat.depth, limits, 'd');
-
-    std::string fmt = upper_copy(opt.format);
-    const std::string dtype_fmt = upper_copy(fmt_from_dtype(input.dtype));
+    std::string_view fmt = format_tag_name(opt.format.tag);
+    const std::string_view dtype_fmt = fmt_from_dtype(input.dtype);
     if (fmt.empty() && input.semantic.byte_stream.has_value()) {
       fmt = "BYTESTREAM";
     }
     if (fmt.empty())
       fmt = dtype_fmt;
     if (fmt.empty()) {
-      throw std::invalid_argument(tag + ": tensor input missing format");
+      throw std::invalid_argument(std::string(tag) + ": tensor input missing format");
     }
     if (!opt.format.empty() && !dtype_fmt.empty()) {
       const bool fmt_is_dtype = fmt == "UINT8" || fmt == "INT8" || fmt == "UINT16" ||
                                 fmt == "INT16" || fmt == "INT32" || fmt == "BF16" ||
                                 fmt == "FP32" || fmt == "FP64";
       const bool fmt_is_mla = fmt == "MLA";
-      const bool fmt_is_tess_i8 = is_tessellated_int8_format(fmt);
-      const bool fmt_is_tess_bf16 = is_tessellated_bf16_format(fmt);
+      const bool fmt_is_tess_i8 =
+          opt.format.tag == FormatTag::INT8 || opt.format.tag == FormatTag::EVXX_INT8;
+      const bool fmt_is_tess_bf16 =
+          opt.format.tag == FormatTag::BF16 || opt.format.tag == FormatTag::EVXX_BFLOAT16;
       if (fmt_is_dtype && fmt != dtype_fmt) {
-        throw std::invalid_argument(tag + ": tensor format does not match dtype");
+        throw std::invalid_argument(std::string(tag) + ": tensor format does not match dtype");
       }
       if (fmt_is_mla && input.dtype != TensorDType::Int8 && input.dtype != TensorDType::UInt8 &&
           input.dtype != TensorDType::BFloat16) {
-        throw std::invalid_argument(tag + ": tensor format does not match dtype");
+        throw std::invalid_argument(std::string(tag) + ": tensor format does not match dtype");
       }
       if (fmt_is_tess_i8 && input.dtype != TensorDType::Int8 && input.dtype != TensorDType::UInt8) {
-        throw std::invalid_argument(tag + ": tensor format does not match dtype");
+        throw std::invalid_argument(std::string(tag) + ": tensor format does not match dtype");
       }
       if (fmt_is_tess_bf16 && input.dtype != TensorDType::BFloat16) {
-        throw std::invalid_argument(tag + ": tensor format does not match dtype");
+        throw std::invalid_argument(std::string(tag) + ": tensor format does not match dtype");
       }
     }
     if (input.semantic.byte_stream.has_value()) {
       if (input.dtype != TensorDType::UInt8 && input.dtype != TensorDType::Int8) {
-        throw std::invalid_argument(tag + ": byte_stream tensor must be UInt8 or Int8");
+        throw std::invalid_argument(std::string(tag) +
+                                    ": byte_stream tensor must be UInt8 or Int8");
       }
       if (input.layout != TensorLayout::Unknown) {
-        throw std::invalid_argument(tag + ": byte_stream tensor layout must be Unknown");
+        throw std::invalid_argument(std::string(tag) +
+                                    ": byte_stream tensor layout must be Unknown");
       }
       if (input.shape.size() != 1U || input.shape[0] <= 0) {
-        throw std::invalid_argument(tag + ": byte_stream tensor must have shape [num_bytes]");
+        throw std::invalid_argument(std::string(tag) +
+                                    ": byte_stream tensor must have shape [num_bytes]");
       }
     }
 
     const size_t bytes = tensor_dense_bytes_tight(input);
     if (bytes == 0) {
-      throw std::invalid_argument(tag + ": tensor input has invalid byte size");
+      throw std::invalid_argument(std::string(tag) + ": tensor input has invalid byte size");
     }
     if (input.storage && input.storage->size_bytes > 0) {
-      const size_t end = static_cast<size_t>(input.byte_offset) + bytes;
-      if (end > input.storage->size_bytes) {
-        throw std::invalid_argument(tag + ": storage too small for tensor input");
+      if (static_cast<size_t>(input.byte_offset) > input.storage->size_bytes ||
+          bytes > input.storage->size_bytes - static_cast<size_t>(input.byte_offset)) {
+        throw std::invalid_argument(std::string(tag) + ": storage too small for tensor input");
       }
     }
     spec.shape = std::move(normalized_shape);
@@ -1756,9 +1854,36 @@ SampleSpec describe_tensor_spec_or_throw(const simaai::neat::Tensor& input, cons
     spec.tensor_view_bytes_actual = bytes;
     spec.required_bytes_actual = bytes;
   } else {
-    throw std::invalid_argument(tag + ": unsupported media_type: " + spec.media_type);
+    throw std::invalid_argument(std::string(tag) +
+                                ": unsupported media_type: " + std::string(spec.media_type));
   }
 
+  return spec;
+}
+
+SampleSpec describe_tensor_spec_or_throw(const Tensor& input, const InputOptions& opt,
+                                         const char* where) {
+  const auto geometry = describe_tensor_geometry_or_throw(input, opt, where);
+  const auto limits = pipeline_internal::resolve_shape_limits(opt, SampleSpec{});
+  const auto dims = geometry.kind == SampleMediaKind::Tensor && !geometry.shape.empty()
+                        ? tensor_compat_dims_from_shape(geometry.shape, geometry.layout)
+                        : TensorCompatDims{geometry.width, geometry.height, geometry.depth};
+  validate_dim_with_effective_max(where ? where : "describe_tensor_spec", dims.width, limits, 'w');
+  validate_dim_with_effective_max(where ? where : "describe_tensor_spec", dims.height, limits, 'h');
+  validate_dim_with_effective_max(where ? where : "describe_tensor_spec", dims.depth, limits, 'd');
+  SampleSpec spec;
+  spec.kind = geometry.kind;
+  spec.media_type = geometry.media_type;
+  spec.format = geometry.format;
+  spec.dtype = geometry.dtype;
+  spec.layout = geometry.layout;
+  spec.shape.assign(geometry.shape.begin(), geometry.shape.end());
+  spec.width = geometry.width;
+  spec.height = geometry.height;
+  spec.depth = geometry.depth;
+  spec.planes.assign(geometry.planes.begin(), geometry.planes.end());
+  spec.tensor_view_bytes_actual = geometry.tensor_view_bytes_actual;
+  spec.required_bytes_actual = geometry.required_bytes_actual;
   spec.fps_n = opt.fps_n;
   spec.fps_d = opt.fps_d;
   spec.caps_key = capkey_from_spec(spec);
@@ -1776,90 +1901,163 @@ SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const 
   return spec;
 }
 
+bool input_geometry_matches_logical_shape(const InputGeometry& geometry,
+                                          std::span<const std::int64_t> expected,
+                                          TensorLayout expected_layout) noexcept {
+  std::array<std::int64_t, 4> mat_shape{geometry.height, geometry.width, geometry.depth, 0};
+  auto actual = geometry.shape;
+  if (actual.empty())
+    actual = std::span<const std::int64_t>(mat_shape.data(),
+                                           geometry.layout == TensorLayout::HW ? 2U : 3U);
+  std::array<std::int64_t, 4> projected_actual{}, projected_expected{};
+  const auto remove_unit_channel = [](std::span<const std::int64_t> shape, TensorLayout layout,
+                                      std::array<std::int64_t, 4>& storage) {
+    if ((layout != TensorLayout::HWC && layout != TensorLayout::CHW) || shape.size() < 3 ||
+        shape.size() > 4)
+      return shape;
+    const auto channel = layout == TensorLayout::HWC ? shape.size() - 1 : shape.size() - 3;
+    if (shape[channel] != 1)
+      return shape;
+    std::size_t count = 0;
+    for (std::size_t i = 0; i < shape.size(); ++i)
+      if (i != channel)
+        storage[count++] = shape[i];
+    return std::span<const std::int64_t>(storage.data(), count);
+  };
+  if (geometry.layout == TensorLayout::HW)
+    expected = remove_unit_channel(expected, expected_layout, projected_expected);
+  if (expected_layout == TensorLayout::HW)
+    actual = remove_unit_channel(actual, geometry.layout, projected_actual);
+  while (actual.size() > expected.size() && actual.front() == 1)
+    actual = actual.subspan(1);
+  while (expected.size() > actual.size() && expected.front() == 1)
+    expected = expected.subspan(1);
+  return !actual.empty() &&
+         std::equal(actual.begin(), actual.end(), expected.begin(), expected.end());
+}
+
+InputGeometry describe_mat_geometry_or_throw(const cv::Mat& input, const InputOptions& opt,
+                                             const char* where) {
+  const auto fail = [&](const char* detail) {
+    throw std::invalid_argument(std::string(where ? where : "Mat input") + ": " + detail);
+  };
+  if (input.empty() || !input.data || input.dims != 2)
+    fail("input must be a nonempty 2D matrix");
+  InputGeometry geometry;
+  geometry.width = input.cols;
+  geometry.height = input.rows;
+  geometry.depth = input.channels();
+  geometry.layout = input.channels() == 1 ? TensorLayout::HW : TensorLayout::HWC;
+  const bool tensor = opt.payload_type == PayloadType::Tensor ||
+                      (opt.payload_type == PayloadType::Auto && input.depth() == CV_32F);
+  if (opt.payload_type == PayloadType::Encoded)
+    fail("encoded input requires a Sample");
+  if (tensor) {
+    if (input.depth() != CV_32F || input.channels() <= 0)
+      fail("tensor input must already be CV_32F; implicit numeric conversion is disabled");
+    if (opt.format.tag != FormatTag::Auto && opt.format.tag != FormatTag::FP32 &&
+        opt.format.tag != FormatTag::EVXX_FLOAT32)
+      fail("cv::Mat tensor input supports FP32/EVXX_FLOAT32 only; use Tensor for other types");
+    geometry.kind = SampleMediaKind::Tensor;
+    geometry.media_type = "application/vnd.simaai.tensor";
+    geometry.format = opt.format.empty() ? "FP32" : format_tag_name(opt.format.tag);
+    geometry.dtype = TensorDType::Float32;
+  } else {
+    if (input.depth() != CV_8U || (input.channels() != 1 && input.channels() != 3))
+      fail("video input must be CV_8UC1 or CV_8UC3");
+    auto format = opt.format.tag;
+    if (format == FormatTag::Auto)
+      format = input.channels() == 1 ? FormatTag::GRAY8 : FormatTag::BGR;
+    if ((format != FormatTag::RGB && format != FormatTag::BGR && format != FormatTag::GRAY8) ||
+        (format == FormatTag::GRAY8 ? input.channels() != 1 : input.channels() != 3))
+      fail("video format does not match matrix channels; planar input requires Tensor planes");
+    geometry.kind = SampleMediaKind::RawVideo;
+    geometry.media_type = "video/x-raw";
+    geometry.format = format_tag_name(format);
+    geometry.dtype = TensorDType::UInt8;
+  }
+  std::size_t row_bytes = 0, span = 0;
+  if (!pipeline_internal::safe_mul(std::size_t(input.cols), input.elemSize(), &row_bytes) ||
+      input.step[0] < row_bytes ||
+      !pipeline_internal::safe_mul(input.step[0], std::size_t(input.rows - 1), &span) ||
+      !pipeline_internal::safe_add(span, row_bytes, &span) ||
+      !pipeline_internal::safe_mul(row_bytes, std::size_t(input.rows),
+                                   &geometry.required_bytes_actual))
+    fail("matrix byte extent/stride is invalid or overflows");
+  if (input.dataend &&
+      (input.dataend < input.data || std::size_t(input.dataend - input.data) < span))
+    fail("matrix backing is shorter than its declared geometry");
+  if (!tensor)
+    geometry.planes.push_back({PlaneRole::Unknown, input.cols, input.rows, std::int64_t(row_bytes),
+                               0, geometry.required_bytes_actual});
+  return geometry;
+}
+
+SampleSpec derive_mat_spec_or_throw(const cv::Mat& input, const InputOptions& opt) {
+  const auto geometry = describe_mat_geometry_or_throw(input, opt, "InputStream::try_push(mat)");
+  SampleSpec spec;
+  spec.kind = geometry.kind;
+  spec.media_type = geometry.media_type;
+  spec.format = geometry.format;
+  spec.dtype = geometry.dtype;
+  spec.width = geometry.width;
+  spec.height = geometry.height;
+  spec.depth = geometry.depth;
+  spec.required_bytes_actual = geometry.required_bytes_actual;
+  spec.planes.assign(geometry.planes.begin(), geometry.planes.end());
+  if (spec.kind == SampleMediaKind::Tensor) {
+    spec.shape = spec.depth > 1 ? std::vector<int64_t>{spec.height, spec.width, spec.depth}
+                                : std::vector<int64_t>{spec.height, spec.width};
+  }
+  spec.fps_n = opt.fps_n;
+  spec.fps_d = opt.fps_d;
+  spec.caps_key = capkey_from_spec(spec);
+  spec.caps_string = caps_string_from_spec(spec);
+  return spec;
+}
+
 simaai::neat::Tensor tensor_from_cv_mat(const cv::Mat& mat, const InputOptions& opt,
                                         const char* where) {
+  const auto geometry = describe_mat_geometry_or_throw(mat, opt, where);
   const std::string tag = where ? where : "tensor_from_cv_mat";
-  if (mat.empty() || mat.data == nullptr) {
-    throw std::invalid_argument(tag + ": input frame is empty");
-  }
 
-  std::string media = resolve_input_media_type(opt);
-  if (media.empty()) {
-    media = (mat.depth() == CV_32F) ? "application/vnd.simaai.tensor" : "video/x-raw";
-  }
+  // Owning cv::Mat ingress follows Tensor creators' EV74 default. Keep an
+  // explicit host request (including the compatibility pool opt-out) borrowed;
+  // it must not be silently promoted to device storage.
+  const auto memory_policy =
+      opt.memory_policy == InputMemoryPolicy::Auto
+          ? (opt.use_simaai_pool ? InputMemoryPolicy::Ev74 : InputMemoryPolicy::SystemMemory)
+          : opt.memory_policy;
 
-  if (media == "video/x-raw") {
-    if (mat.depth() != CV_8U) {
-      throw std::invalid_argument(tag + ": video input must be CV_8U");
-    }
-    if (mat.channels() != 1 && mat.channels() != 3) {
-      throw std::invalid_argument(tag + ": video input must be 1 or 3 channels");
-    }
-    std::string fmt = upper_copy(opt.format);
-    if (fmt.empty()) {
-      fmt = (mat.channels() == 1) ? "GRAY8" : "BGR";
-    }
-    if (fmt == "GRAY")
-      fmt = "GRAY8";
-    if (fmt != "RGB" && fmt != "BGR" && fmt != "GRAY8") {
-      throw std::invalid_argument(tag + ": unsupported video format: " + fmt);
-    }
-    if ((fmt == "RGB" || fmt == "BGR") && mat.channels() != 3) {
-      throw std::invalid_argument(tag + ": RGB/BGR requires 3 channels");
-    }
-    if (fmt == "GRAY8" && mat.channels() != 1) {
-      throw std::invalid_argument(tag + ": GRAY8 requires 1 channel");
-    }
+  if (geometry.kind == SampleMediaKind::RawVideo) {
+    const auto& fmt = geometry.format;
     simaai::neat::ImageSpec::PixelFormat pf = simaai::neat::ImageSpec::PixelFormat::BGR;
     if (fmt == "RGB")
       pf = simaai::neat::ImageSpec::PixelFormat::RGB;
     if (fmt == "GRAY8")
       pf = simaai::neat::ImageSpec::PixelFormat::GRAY8;
-    if (opt.memory_policy == InputMemoryPolicy::Ev74) {
+    if (memory_policy == InputMemoryPolicy::Ev74) {
       return simaai::neat::from_cv_mat(mat, pf, simaai::neat::TensorMemory::EV74);
     }
-    if (opt.memory_policy == InputMemoryPolicy::Dms0) {
+    if (memory_policy == InputMemoryPolicy::Dms0) {
       return simaai::neat::from_cv_mat(mat, pf, simaai::neat::TensorMemory::MLA);
     }
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-#endif
-    return simaai::neat::from_cv_mat(mat, pf, true);
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
+    return simaai::neat::from_cv_mat_view(mat, pf, /*read_only=*/true);
   }
 
-  if (media == "application/vnd.simaai.tensor") {
-    if (mat.channels() <= 0) {
-      throw std::invalid_argument(tag + ": tensor input must have a positive channel count");
-    }
-    std::string fmt = upper_copy(opt.format);
-    const bool want_fp32 = (fmt.empty() || fmt == "FP32" || fmt == "EVXX_FLOAT32");
-    if (!want_fp32) {
-      throw std::invalid_argument(
-          tag + ": cv::Mat tensor input supports FP32/EVXX_FLOAT32 only and must remain exact; "
-                "pass simaai::neat::Tensor for BF16 or quantized tensor ingress");
-    }
-    if (mat.depth() != CV_32F) {
-      throw std::invalid_argument(
-          tag +
-          ": cv::Mat tensor input must already be CV_32F; implicit numeric conversion is disabled");
-    }
-
+  if (geometry.kind == SampleMediaKind::Tensor) {
     auto holder = std::make_shared<cv::Mat>(mat);
     const std::size_t bytes = holder->step * static_cast<std::size_t>(holder->rows);
     simaai::neat::Tensor out;
     out.storage = simaai::neat::make_cpu_external_storage(holder->data, bytes, holder, true);
-    out.dtype = TensorDType::Float32;
+    out.dtype = geometry.dtype;
     out.device = {simaai::neat::DeviceType::CPU, 0};
     out.byte_offset = 0;
     out.read_only = true;
 
-    const int rows = holder->rows;
-    const int cols = holder->cols;
-    const int channels = holder->channels();
+    const int rows = geometry.height;
+    const int cols = geometry.width;
+    const int channels = geometry.depth;
     if (channels == 1) {
       out.layout = TensorLayout::HW;
       out.shape = {rows, cols};
@@ -1872,9 +2070,8 @@ simaai::neat::Tensor tensor_from_cv_mat(const cv::Mat& mat, const InputOptions& 
                            static_cast<int64_t>(holder->elemSize()),
                            static_cast<int64_t>(holder->elemSize1())};
     }
-    if (opt.memory_policy == InputMemoryPolicy::Ev74 ||
-        opt.memory_policy == InputMemoryPolicy::Dms0) {
-      const Device target = opt.memory_policy == InputMemoryPolicy::Ev74
+    if (memory_policy == InputMemoryPolicy::Ev74 || memory_policy == InputMemoryPolicy::Dms0) {
+      const Device target = memory_policy == InputMemoryPolicy::Ev74
                                 ? Device{DeviceType::SIMA_CVU, 0}
                                 : Device{DeviceType::SIMA_MLA, 0};
       const std::size_t device_bytes = out.dense_bytes_tight();
@@ -1888,7 +2085,119 @@ simaai::neat::Tensor tensor_from_cv_mat(const cv::Mat& mat, const InputOptions& 
     return out;
   }
 
-  throw std::invalid_argument(tag + ": unsupported media_type: " + media);
+  throw std::invalid_argument(tag +
+                              ": unsupported media_type: " + std::string(geometry.media_type));
+}
+
+namespace {
+void validate_public_geometry(const InputGeometry& geometry, const InputOptions& opt,
+                              const InputStreamOptions& stream, const char* where,
+                              bool envelope = false) {
+  const auto explicit_limits = pipeline_internal::resolve_shape_limits(opt, SampleSpec{});
+  const auto& limits = stream.shape_limits;
+  const auto dims = geometry.kind == SampleMediaKind::Tensor && !geometry.shape.empty()
+                        ? tensor_compat_dims_from_shape(geometry.shape, geometry.layout)
+                        : TensorCompatDims{geometry.width, geometry.height, geometry.depth};
+  const auto limit = [](int resolved, int declared) { return resolved > 0 ? resolved : declared; };
+  const auto check = [&](const char* axis, int actual, int bound) {
+    if (actual <= 0 || bound <= 0 || actual <= bound)
+      return;
+    pipeline_internal::error_util::throw_session_error(
+        error_codes::kInputCapacity,
+        pipeline_internal::shape_limit_exceeded_message(where, axis, actual, bound), {},
+        pipeline_internal::shape_limit_fix_hint(axis, actual));
+  };
+  if (!envelope && geometry.kind != SampleMediaKind::Encoded) {
+    check("width", dims.width, limit(limits.max_width, explicit_limits.max_width));
+    check("height", dims.height, limit(limits.max_height, explicit_limits.max_height));
+    check("depth", dims.depth, limit(limits.max_depth, explicit_limits.max_depth));
+  }
+  if (stream.max_input_bytes && geometry.required_bytes_actual > stream.max_input_bytes)
+    pipeline_internal::error_util::throw_session_error(
+        error_codes::kInputCapacity,
+        std::string(where) + ": input exceeds max_input_bytes (required=" +
+            std::to_string(geometry.required_bytes_actual) +
+            ", max_input_bytes=" + std::to_string(stream.max_input_bytes) + ")",
+        {}, "Increase the declared input byte capacity.");
+}
+template <class Describe>
+void validate_public_metadata(Describe describe, const InputOptions& opt,
+                              const InputStreamOptions& stream, const char* where) {
+  try {
+    validate_public_geometry(describe(), opt, stream, where);
+  } catch (const NeatError&) {
+    throw;
+  } catch (const std::invalid_argument& error) {
+    pipeline_internal::error_util::throw_session_error(error_codes::kInputShape, error.what());
+  }
+}
+} // namespace
+
+void validate_public_input(const cv::Mat& input, const InputOptions& opt,
+                           const InputStreamOptions& stream, const char* where) {
+  validate_public_metadata([&] { return describe_mat_geometry_or_throw(input, opt, where); }, opt,
+                           stream, where);
+}
+void validate_public_input(const Tensor& input, const InputOptions& opt,
+                           const InputStreamOptions& stream, const char* where) {
+  validate_public_metadata([&] { return describe_tensor_geometry_or_throw(input, opt, where); },
+                           opt, stream, where);
+}
+void validate_public_input(const Sample& input, const InputOptions& opt,
+                           const InputStreamOptions& stream, const char* where) {
+  // Match tensors_from_sample's representative order without copying its list:
+  // tensor list, single Tensor, then Bundle fields. The declaration describes
+  // one envelope, not every independently typed/strided member inside it.
+  bool representative = true;
+  const auto validate_tensor = [&](const Tensor& tensor, const Sample& owner) {
+    const bool first = std::exchange(representative, false);
+    const bool opaque =
+        tensor.semantic.encoded || tensor.semantic.byte_stream || tensor.semantic.tess;
+    if (!first || opaque) {
+      try {
+        validate_declared_tensor_storage(tensor, where);
+      } catch (const std::invalid_argument& error) {
+        pipeline_internal::error_util::throw_session_error(error_codes::kInputShape, error.what());
+      }
+      if (tensor.semantic.encoded &&
+          (owner.caps_string.empty() || tensor.dtype != TensorDType::UInt8 || !tensor.is_dense() ||
+           tensor.shape.size() != 1)) {
+        pipeline_internal::error_util::throw_session_error(
+            error_codes::kInputShape,
+            std::string(where) + ": encoded sample requires UInt8 vector storage and caps");
+      }
+      if (first) {
+        InputGeometry geometry;
+        // Check the representative view only. Actual carrier byte capacity
+        // remains with transport binding; logical views may alias storage.
+        geometry.required_bytes_actual = tensor_dense_bytes_tight(tensor);
+        validate_public_geometry(geometry, opt, stream, where, true);
+      }
+      return;
+    }
+    validate_public_input(tensor, opt, stream, where);
+  };
+  const auto visit = [&](auto&& self, const Sample& sample) -> void {
+    if (sample_has_tensor_list(sample) && !sample.tensors.empty()) {
+      for (const auto& tensor : sample.tensors) {
+        validate_tensor(tensor, sample);
+      }
+      return;
+    }
+    if (sample.kind == SampleKind::Tensor && sample.tensor) {
+      validate_tensor(*sample.tensor, sample);
+      return;
+    }
+    if (sample.kind == SampleKind::Bundle && !sample.fields.empty()) {
+      for (const auto& field : sample.fields) {
+        self(self, field);
+      }
+      return;
+    }
+    pipeline_internal::error_util::throw_session_error(
+        error_codes::kInputShape, std::string(where) + ": sample has no tensor metadata");
+  };
+  visit(visit, input);
 }
 
 SampleSpec derive_sample_spec_or_throw(const Sample& sample) {
@@ -2198,11 +2507,11 @@ GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
     GstBufferPool* pool = guard.pool.get();
     if (!pool) {
       const auto t_create_start = std::chrono::steady_clock::now();
-      internal::dmabuf::Error error;
+      ::simaai::scheduler::client::dma::Error error;
       const auto heap = target_flag == GST_SIMAAI_MEMORY_TARGET_DMS0
-                            ? internal::dmabuf::HeapKind::MlaDms
-                            : internal::dmabuf::HeapKind::Cma;
-      GstBufferPool* new_pool = internal::dmabuf::createDmaBufPool(
+                            ? ::simaai::scheduler::client::dma::HeapKind::MlaDms
+                            : ::simaai::scheduler::client::dma::HeapKind::Cma;
+      GstBufferPool* new_pool = ::simaai::scheduler::client::dma::createDmaBufPool(
           heap, bytes, static_cast<unsigned int>(opt.pool_min_buffers),
           static_cast<unsigned int>(opt.pool_max_buffers), {}, &error);
       if (new_pool) {
@@ -2248,8 +2557,7 @@ GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
 }
 
 int64_t next_input_frame_id() {
-  static std::atomic<int64_t> next_id{0};
-  return next_id.fetch_add(1);
+  return simaai::runtime::gstreamer::next_input_frame_id();
 }
 
 bool maybe_add_simaai_meta(GstBuffer* buffer, int64_t frame_id, const InputOptions& opt) {
@@ -2289,16 +2597,17 @@ bool maybe_add_simaai_meta(GstBuffer* buffer, int64_t frame_id, const InputOptio
     return false;
   }
   const std::string name = opt.buffer_name;
-  gint64 phys_addr = gst_simaai_segment_memory_get_phys_addr(gst_buffer_peek_memory(buffer, 0));
-  gst_structure_set(s, "buffer-id", G_TYPE_INT64, phys_addr, "buffer-name", G_TYPE_STRING,
-                    name.c_str(), "buffer-offset", G_TYPE_INT64, static_cast<gint64>(0), "frame-id",
-                    G_TYPE_INT64, static_cast<gint64>(frame_id), "orig-input-seq", G_TYPE_INT64,
-                    static_cast<gint64>(frame_id), "stream-id", G_TYPE_STRING, "0",
-                    "origin_stage_id", G_TYPE_STRING, name.c_str(), "origin_output_slot",
-                    G_TYPE_INT, 0, "timestamp", G_TYPE_UINT64, static_cast<guint64>(0), nullptr);
+  // DMA-BUF ownership travels with GstMemory; buffer-id is not a physical address.
+  gst_structure_set(s, "buffer-id", G_TYPE_INT64, static_cast<gint64>(0), "buffer-name",
+                    G_TYPE_STRING, name.c_str(), "buffer-offset", G_TYPE_INT64,
+                    static_cast<gint64>(0), "frame-id", G_TYPE_INT64, static_cast<gint64>(frame_id),
+                    "orig-input-seq", G_TYPE_INT64, static_cast<gint64>(frame_id), "stream-id",
+                    G_TYPE_STRING, "0", "origin_stage_id", G_TYPE_STRING, name.c_str(),
+                    "origin_output_slot", G_TYPE_INT, 0, "timestamp", G_TYPE_UINT64,
+                    static_cast<guint64>(0), nullptr);
   if (pipeline_internal::env_bool("SIMA_INPUTSTREAM_META_DEBUG", false)) {
-    std::fprintf(stderr, "[DBG] GstSimaMeta set name=%s phys=%lld frame=%lld\n", name.c_str(),
-                 static_cast<long long>(phys_addr), static_cast<long long>(frame_id));
+    std::fprintf(stderr, "[DBG] GstSimaMeta set name=%s frame=%lld\n", name.c_str(),
+                 static_cast<long long>(frame_id));
   }
   dump_sima_meta(buffer, "maybe_add_simaai_meta(after)");
   return true;
@@ -2654,62 +2963,33 @@ void restore_sample_timing_from_gst_buffer(GstBuffer* buffer, Sample* out) {
   int64_t restored_dur = out->duration_ns;
 
 #if SIMA_HAS_SIMAAI_POOL
-  GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
-  GstStructure* s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
-  if (!s) {
-    if (debug_timing) {
-      std::fprintf(stderr,
-                   "[SAMPLE_TIMING] restore buffer=%p meta=0 gst_pts=%llu sample_pts=%lld "
-                   "gst_dts=%llu sample_dts=%lld gst_dur=%llu sample_dur=%lld\n",
-                   static_cast<void*>(buffer), static_cast<unsigned long long>(pts),
-                   static_cast<long long>(out->pts_ns), static_cast<unsigned long long>(dts),
-                   static_cast<long long>(out->dts_ns), static_cast<unsigned long long>(dur),
-                   static_cast<long long>(out->duration_ns));
-    }
-    return;
+  simaai::gst::TensorBufferSourceValues source;
+  std::string source_error;
+  if (!simaai::gst::tensor_buffer_read_source_values(buffer, &source, &source_error))
+    throw std::runtime_error("Sample source metadata: " + source_error);
+  using Values = simaai::gst::TensorBufferSourceValues;
+  if (source.has(Values::FrameIdValid)) {
+    // Match the existing public frame-ID policy; timing validity alone does
+    // not replace stage sequence/correlation.
+    out->frame_id =
+        source.is_valid(Values::FrameIdValid) && source.has(Values::FrameId) && source.frame_id >= 0
+            ? source.frame_id
+            : -1;
   }
+  const auto restore_time = [&](Values::Field validity, Values::Field field, std::uint64_t value,
+                                std::int64_t& destination) {
+    if (!source.has(validity))
+      return;
+    if (!source.is_valid(validity))
+      destination = -1;
+    else if (source.has(field) && value <= std::uint64_t(std::numeric_limits<int64_t>::max()))
+      destination = static_cast<std::int64_t>(value);
+    // Existing malformed valid timestamps retain their transport fallback.
+  };
+  restore_time(Values::PtsValid, Values::Pts, source.pts_ns, out->pts_ns);
+  restore_time(Values::DtsValid, Values::Dts, source.dts_ns, out->dts_ns);
+  restore_time(Values::DurationValid, Values::Duration, source.duration_ns, out->duration_ns);
 
-  gboolean valid = FALSE;
-  gint64 frame_value = -1;
-  if (gst_structure_get_boolean(s, "sample-frame-id-valid", &valid) == TRUE) {
-    if (valid == TRUE && gst_structure_get_int64(s, "sample-frame-id", &frame_value) == TRUE &&
-        frame_value >= 0) {
-      out->frame_id = static_cast<int64_t>(frame_value);
-    } else if (valid == FALSE) {
-      out->frame_id = -1;
-    }
-  }
-
-  valid = FALSE;
-  guint64 value = 0;
-  if (gst_structure_get_boolean(s, "sample-pts-valid", &valid) == TRUE) {
-    if (valid == TRUE && gst_structure_get_uint64(s, "sample-pts-ns", &value) == TRUE &&
-        value <= static_cast<guint64>(std::numeric_limits<int64_t>::max())) {
-      out->pts_ns = static_cast<int64_t>(value);
-    } else if (valid == FALSE) {
-      out->pts_ns = -1;
-    }
-  }
-  valid = FALSE;
-  value = 0;
-  if (gst_structure_get_boolean(s, "sample-dts-valid", &valid) == TRUE) {
-    if (valid == TRUE && gst_structure_get_uint64(s, "sample-dts-ns", &value) == TRUE &&
-        value <= static_cast<guint64>(std::numeric_limits<int64_t>::max())) {
-      out->dts_ns = static_cast<int64_t>(value);
-    } else if (valid == FALSE) {
-      out->dts_ns = -1;
-    }
-  }
-  valid = FALSE;
-  value = 0;
-  if (gst_structure_get_boolean(s, "sample-duration-valid", &valid) == TRUE) {
-    if (valid == TRUE && gst_structure_get_uint64(s, "sample-duration-ns", &value) == TRUE &&
-        value <= static_cast<guint64>(std::numeric_limits<int64_t>::max())) {
-      out->duration_ns = static_cast<int64_t>(value);
-    } else if (valid == FALSE) {
-      out->duration_ns = -1;
-    }
-  }
 #endif
   if (debug_timing) {
     std::fprintf(stderr,
@@ -2814,10 +3094,96 @@ bool merge_simaai_preprocess_axis_perm(GstBuffer* buffer, const std::vector<int>
 #endif
 }
 
+namespace {
+PreprocessRuntimeMeta
+preprocess_from_compact_facts(const simaai::gst::TensorBufferPreprocessFacts& facts) {
+  auto integer = [](std::int64_t value) {
+    if (value < std::numeric_limits<int>::min() || value > std::numeric_limits<int>::max())
+      throw std::runtime_error("compact preprocess fact exceeds Core integer range");
+    return static_cast<int>(value);
+  };
+  auto count = [&](std::uint64_t value) {
+    if (value > static_cast<std::uint64_t>(std::numeric_limits<int>::max()))
+      throw std::runtime_error("compact preprocess count exceeds Core integer range");
+    return static_cast<int>(value);
+  };
+  PreprocessRuntimeMeta meta;
+  meta.original_width = integer(facts.original_width);
+  meta.original_height = integer(facts.original_height);
+  meta.resized_width = integer(facts.resized_width);
+  meta.resized_height = integer(facts.resized_height);
+  meta.scaled_width = integer(facts.placed[2]);
+  meta.scaled_height = integer(facts.placed[3]);
+  meta.pad_left = integer(facts.placed[0]);
+  meta.pad_top = integer(facts.placed[1]);
+  meta.pad_right = integer(facts.resized_width - facts.placed[0] - facts.placed[2]);
+  meta.pad_bottom = integer(facts.resized_height - facts.placed[1] - facts.placed[3]);
+  meta.resize_mode = facts.resize_mode;
+  meta.color_in = facts.color_in;
+  meta.color_out = facts.color_out;
+  meta.normalize = facts.normalize;
+  meta.quantize = facts.quantize;
+  meta.tessellate = facts.tessellate;
+  meta.affine_m00 = meta.affine_scale_x = facts.affine[0];
+  meta.affine_m01 = facts.affine[1];
+  meta.affine_m02 = meta.affine_offset_x = facts.affine[2];
+  meta.affine_m10 = facts.affine[3];
+  meta.affine_m11 = meta.affine_scale_y = facts.affine[4];
+  meta.affine_m12 = meta.affine_offset_y = facts.affine[5];
+  if (facts.roi_list) {
+    meta.roi_list_enabled = true;
+    meta.roi_input_batch_size = integer(facts.input_batch);
+    meta.roi_capacity = integer(facts.capacity);
+    meta.roi_valid_count = count(facts.counts[1]);
+    meta.roi_input_count = count(facts.counts[0]);
+    meta.roi_dropped_invalid = count(facts.counts[2]);
+    meta.roi_dropped_overflow = count(facts.counts[3]);
+    meta.roi_source_stride_bytes = integer(facts.source_stride);
+    meta.roi_pad_value = facts.pad;
+    const auto n = facts.roi_batch_indices.size();
+    if (facts.roi_rects.size() != n * 4 || facts.roi_affines.size() != n * 6)
+      throw std::runtime_error("compact preprocess ROI list has inconsistent extents");
+    meta.rois.reserve(n);
+    meta.roi_affines.reserve(n);
+    for (std::size_t i = 0; i < n; ++i) {
+      meta.rois.push_back({integer(facts.roi_batch_indices[i]), integer(facts.roi_rects[i * 4]),
+                           integer(facts.roi_rects[i * 4 + 1]), integer(facts.roi_rects[i * 4 + 2]),
+                           integer(facts.roi_rects[i * 4 + 3])});
+      meta.roi_affines.push_back({facts.roi_affines[i * 6], facts.roi_affines[i * 6 + 1],
+                                  facts.roi_affines[i * 6 + 2], facts.roi_affines[i * 6 + 3],
+                                  facts.roi_affines[i * 6 + 4], facts.roi_affines[i * 6 + 5]});
+    }
+  } else if (facts.has_roi) {
+    meta.roi_list_enabled = true;
+    meta.rois.push_back({integer(facts.source_index), integer(facts.primary[0]),
+                         integer(facts.primary[1]), integer(facts.primary[2]),
+                         integer(facts.primary[3])});
+    meta.roi_capacity = meta.roi_valid_count = meta.roi_input_count = 1;
+    meta.roi_input_batch_size = integer(facts.source_index + 1);
+  }
+  if (facts.roi_list || facts.has_roi) {
+    meta.roi_source_width = meta.original_width;
+    meta.roi_source_height = meta.original_height;
+    if (auto error = validate_preprocess_roi_list_local(meta))
+      throw std::runtime_error("compact preprocess ROI facts: " + *error);
+  }
+  return meta;
+}
+} // namespace
+
 std::optional<PreprocessRuntimeMeta> read_simaai_preprocess_meta(GstBuffer* buffer) {
 #if SIMA_HAS_SIMAAI_POOL
   if (!buffer)
     return std::nullopt;
+  std::string compact_error;
+  const auto* frame = simaai::gst::tensor_buffer_frame_metadata(buffer, &compact_error);
+  if (!compact_error.empty())
+    throw std::runtime_error("compact frame metadata: " + compact_error);
+  if (frame) {
+    const auto* facts = simaai::gst::tensor_buffer_preprocess_facts(frame->preprocess);
+    return facts ? std::optional<PreprocessRuntimeMeta>(preprocess_from_compact_facts(*facts))
+                 : std::nullopt;
+  }
   GstCustomMeta* custom = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
   GstStructure* s = custom ? gst_custom_meta_get_structure(custom) : nullptr;
   if (!s)
@@ -3211,47 +3577,25 @@ GstBuffer* attach_simaai_meta_inplace(GstBuffer* buffer, const InputOptions& opt
 
   GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
   GstStructure* s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
-  GstStructure* old_s = s ? gst_structure_copy(s) : nullptr;
-  if (meta) {
-    // Recycled/pool buffers can carry a previous custom meta whose structure is
-    // immutable.  Replacing the meta avoids gst_structure_set mutability
-    // assertions while preserving any existing preprocess fields below.
-    gst_buffer_remove_meta(buffer, &meta->meta);
-    meta = nullptr;
-    s = nullptr;
+  // GstCustomMeta ties structure writability to its containing GstBuffer.
+  // make_writable above already copies a shared envelope; retain its metadata
+  // here instead of snapshotting and copying every field a second time.
+  if (!meta) {
+    meta = gst_buffer_add_custom_meta(buffer, "GstSimaMeta");
+    s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
   }
-  meta = gst_buffer_add_custom_meta(buffer, "GstSimaMeta");
-  s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
-  if (old_s && s) {
-    gst_structure_foreach(
-        old_s,
-        +[](GQuark field_id, const GValue* value, gpointer user_data) -> gboolean {
-          auto* dst = static_cast<GstStructure*>(user_data);
-          gst_structure_set_value(dst, g_quark_to_string(field_id), value);
-          return TRUE;
-        },
-        s);
-  }
-  if (old_s)
-    gst_structure_free(old_s);
   if (!s) {
     std::fprintf(stderr, "[DBG] %s GstSimaMeta add failed\n", label ? label : "buffer");
     return buffer;
   }
-  gint64 phys_addr = 0;
-  if (gst_buffer_n_memory(buffer) > 0) {
-    GstMemory* memory = gst_buffer_peek_memory(buffer, 0);
-    if (memory && !gst_is_dmabuf_memory(memory)) {
-      phys_addr = gst_simaai_segment_memory_get_phys_addr(memory);
-    }
-  }
   const gint64 frame_id = frame_id_override.has_value()
                               ? static_cast<gint64>(*frame_id_override)
                               : static_cast<gint64>(next_input_frame_id());
-  gst_structure_set(s, "buffer-id", G_TYPE_INT64, phys_addr, "buffer-name", G_TYPE_STRING,
-                    name.c_str(), "buffer-offset", G_TYPE_INT64, static_cast<gint64>(0), "frame-id",
-                    G_TYPE_INT64, frame_id, "orig-input-seq", G_TYPE_INT64, frame_id, "timestamp",
-                    G_TYPE_UINT64, static_cast<guint64>(0), nullptr);
+  gst_structure_set(s, "buffer-id", G_TYPE_INT64, static_cast<gint64>(0), "buffer-name",
+                    G_TYPE_STRING, name.c_str(), "buffer-offset", G_TYPE_INT64,
+                    static_cast<gint64>(0), "frame-id", G_TYPE_INT64, frame_id, "orig-input-seq",
+                    G_TYPE_INT64, frame_id, "timestamp", G_TYPE_UINT64, static_cast<guint64>(0),
+                    nullptr);
   if (stream_id_override.value.has_value()) {
     if (!stream_id_override.value->empty()) {
       gst_structure_set(s, "stream-id", G_TYPE_STRING, stream_id_override.value->c_str(),

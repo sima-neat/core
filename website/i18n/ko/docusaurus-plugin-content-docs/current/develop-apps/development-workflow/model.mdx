@@ -580,8 +580,12 @@ postprocess = model.fragment(pyneat.ModelStage.Postprocess)
 | MLA 추론을 비동기적으로 실행하도록 허용 | `advanced_execution.inference_async` | 작업을 계속 진행하는 스트리밍 워크로드에 유용합니다. |
 | 추론 출력 버퍼링 조정 | `advanced_execution.inference_output_buffers` | 측정 결과 출력 버퍼링이 병목 현상인 경우에만 늘립니다. |
 | 출력 캐시 동기화를 연기 | `advanced_execution.defer_output_cache_sync` | 고급 기능입니다. 소비자 및 메모리 수명이 이해될 때만 사용하십시오. |
-| 준비된 러너 사용 | `advanced_execution.prepared_runner` | 고급 경로 러너 실험입니다. 초기 실행 코드에서는 사용하지 마십시오. |
-| 내부적으로 삽입된 큐 깊이 조정 | `advanced_execution.internal_queue_depth` | 고급 기능입니다. 큐 깊이는 지터를 흡수하지만, 가속기 용량을 생성하지는 않습니다. |
+| 내부 동시 실행 조정 | `advanced_execution.internal_queue_depth` | 내부에 삽입되는 큐와 수치 연산 Runner 실행 용량을 제한하며, MLA 출력 버퍼링을 재정의하지 않습니다. |
+
+제한된 범위의 작업 중첩, 입력 수명 및 프레임당 CPU 측정은
+[큐를 무한히 늘리지 않고 프레임 처리 중첩하기](/develop-apps/development-workflow/graph#overlap-frames-without-growing-queues-indefinitely)를 참조하세요.
+유지된 `prepared_runner` 필드는 소스 호환성을 위한 것이며, 선택 가능한
+실행 백엔드가 아닙니다. 기본값을 유지하세요. 폐기된 모드는 그래프 구성 시 실패합니다.
 
 실험과 일치하는 가장 좁은 범위에서 고급 실행 필드를 설정하십시오.
 
@@ -796,7 +800,12 @@ report = model.benchmark(options)
 
 ### 전력 및 보드 텔레메트리 {#power-and-board-telemetry}
 
-전력 및 보드 텔레메트리는 Neat 설치 프로그램이 보드에 설정하는 DevKit 텔레메트리 데몬인 [Sentinel](/tools/sentinel/)에서 제공됩니다. 벤치마크는 처리량 패스 동안 [`TelemetryMonitor`](#record-board-telemetry)로 이를 기록하며, `report.telemetry`는 그 결과를 요약합니다.
+전력 및 보드 텔레메트리는 Neat 설치 프로그램이 보드에 설정하는 DevKit 텔레메트리 데몬인 [Sentinel](/tools/sentinel/)에서 제공됩니다.
+벤치마크는 처리량 패스 전후로 [`TelemetryMonitor`](#record-board-telemetry)를 사용하여 이를 기록합니다.
+모든 필수 출력이 완료된 후 측정을 종료하며, 측정 시작 이후부터 종료 이전까지의 샘플을 선택합니다.
+준비, 모니터 작업자 조인 및 마지막 Sentinel 읽기는 측정되는 작업 시간을 늘리지 않습니다.
+샘플 타임스탬프가 잘못되었거나 시계의 불연속이 감지되면 무관한 구간을 선택하지 않고
+벤치마크 텔레메트리를 사용할 수 없는 것으로 처리합니다. `report.telemetry`는 결과를 요약합니다:
 
 | 필드 | 의미 |
 | --- | --- |
@@ -891,6 +900,8 @@ telemetry.save("telemetry.json") # .json writes JSON; other names write YAML
 
 </CodeTab>
 </CodeTabs>
+
+모니터는 기본적으로 `/run/simaai-sentinel/api.sock`을 읽습니다. 다른 경로에 마운트된 Sentinel Unix 소켓을 사용하려면 C++에서는 `TelemetryMonitor(socket_path)`, Python에서는 `pyneat.TelemetryMonitor(socket_path="...")`에 해당 경로를 전달하십시오. 이 설정은 해당 모니터의 엔드포인트만 선택하며 `Model::benchmark()`를 변경하거나 Sentinel을 시작하지 않습니다. 생성 시에는 소켓에 연결하지 않습니다.
 
 - `start()`는 새 구간을 시작합니다. 그 이후에 Sentinel이 수집한 샘플만 집계되며, Sentinel은 2초마다 샘플링하므로 이보다 짧은 구간에는 샘플이 없을 수 있습니다. 이 경우 `status`가 이를 알려 줍니다.
 - `read()`는 중지하지 않고 지금까지의 요약을 반환합니다. 각 측정값의 `last`는 가장 최근 값이며, `mean`, `minimum`, `maximum`은 지금까지의 구간을 대상으로 합니다.

@@ -33,6 +33,7 @@ local::GenerationRequest request_from_json(const wire::Json& j, wire::PcieFilePr
     out.system_prompt = j.at("system_prompt").get<std::string>();
   out.max_new_tokens = j.at("max_new_tokens");
   out.enable_thinking = j.at("enable_thinking");
+  wire::decode_reasoning_effort(j, out.reasoning_effort);
   out.language = j.at("language");
   const auto task = j.at("asr_task").get<std::string>();
   if (task != "transcribe" && task != "translate")

@@ -6,6 +6,8 @@
 #include "model/internal/RoutePlanner.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
+#include "pipeline/internal/RenderedMlaContractQuery.h"
+#include "pipeline/internal/SelectedStageBoundary.h"
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
 #include "test_main.h"
@@ -630,6 +632,103 @@ RUN_TEST(
                   facts[1].mla_compiled->payload.model_path.ends_with("/share/decoder.elf"),
               "an MLA .so/ELF must stay bound to its exact MPK stage identity");
 
+      // Metadata belongs to the selected invocation, not the whole pack. In
+      // particular infer_block truncates at the authored terminal before the
+      // contextual arena is projected; the unused second MLA must not reappear.
+      simaai::neat::internal::InferenceTerminalPolicy selected_terminal;
+      selected_terminal.last_stage_name = "MLA_encoder";
+      ModelPack truncated_model(root.string(), "application/vnd.simaai.tensor", "INT8", 1, 64, 1, 1,
+                                false, {}, {}, {}, PipelineType::Preproc, "decoder", 4, 4, 0, -1,
+                                {}, {}, selected_terminal,
+                                /*cleanup_extracted_model_data=*/false);
+      auto selected_nodes = truncated_model.infer_block();
+      std::string selected_error;
+      const auto selected_facts = simaai::neat::internal::selected_model_fragment_stage_facts(
+          selected_nodes, &selected_error);
+      require(selected_facts.has_value() && selected_error.empty() &&
+                  selected_facts->stage_facts.size() == selected_nodes.size() &&
+                  selected_facts->stage_facts.front().size() == 1U &&
+                  selected_facts->stage_facts.front().front().stage_name == "MLA_encoder" &&
+                  selected_facts->stage_facts.front().front().mla_compiled.has_value(),
+              "readonly selected facts must retain terminal truncation and exact MLA identity");
+      const auto selected_input = simaai::neat::pipeline_internal::rendered_stage_query::
+          mla_input_tensor_info_from_compiled_contract(
+              *selected_facts->stage_facts.front().front().mla_compiled);
+      require(selected_input.span_size_bytes == 64 && selected_input.logical_dtype == "INT8",
+              "selected ingress metadata must use the exact contextual MLA boundary");
+      const auto direct_input =
+          simaai::neat::pipeline_internal::direct_model_mla_input_info(selected_nodes);
+      require(direct_input.has_value() && direct_input->span_size_bytes == 64 &&
+                  direct_input->logical_dtype == "INT8",
+              "the true selected first MLA must constrain the application ingress");
+      // The owning view is safe even after its caller releases the source list.
+      selected_nodes.clear();
+      require(
+          selected_facts->stage_facts.front().front().mla_compiled->payload.model_path.ends_with(
+              "/share/encoder.so"),
+          "selected metadata view lost its backing model-node/context ownership");
+
+      // A native Cast before MLA consumes 128 FP32 bytes, whereas the internal
+      // MLA consumes 64 BF16 bytes. Read-only ingress inspection must preserve
+      // the true first consumer instead of imposing that later MLA's IFM.
+      const fs::path transform_package = root.parent_path() / "neat-modelpack-cast-before-mla-unit";
+      fs::remove_all(transform_package, ec);
+      fs::create_directories(transform_package / "etc", ec);
+      fs::create_directories(transform_package / "lib", ec);
+      fs::create_directories(transform_package / "share", ec);
+      require(!ec, "failed to create transform-before-MLA package layout");
+      write_boxdecode_cast_tail_manifest(transform_package / "etc" / "model_mpk.json", "bfloat16",
+                                         "float32", 32U, 32U);
+      write_monolithic_topology_elf(transform_package / "share" / "model.elf");
+      // Exercise the standard MPK archive loader with a complete package layout,
+      // rather than relying on the already-extracted directory shortcut.
+      const fs::path transform_archive =
+          root.parent_path() / "neat-modelpack-cast-before-mla-unit.tar.gz";
+      const std::string transform_archive_command =
+          "tar -czf " + shell_quote(transform_archive.string()) + " -C " +
+          shell_quote(transform_package.string()) + " .";
+      require(std::system(transform_archive_command.c_str()) == 0,
+              "failed to create transform-before-MLA ModelPack archive");
+      {
+        ModelPack transform_model(transform_archive.string());
+        require(transform_model.execution_admission().eligible(),
+                "transform-before-MLA package must pass strict admission");
+        const auto transform_nodes = transform_model.to_nodes(ModelStage::Full);
+        const auto transform_facts = simaai::neat::internal::selected_model_fragment_stage_facts(
+            transform_nodes, &selected_error);
+        require(
+            transform_facts.has_value() && selected_error.empty() &&
+                !transform_facts->stage_facts.empty() &&
+                !transform_facts->stage_facts.front().empty() &&
+                transform_facts->stage_facts.front().front().processcvu_contract.has_value() &&
+                !transform_facts->stage_facts.front().front().mla_compiled.has_value() &&
+                std::any_of(transform_facts->stage_facts.front().begin(),
+                            transform_facts->stage_facts.front().end(),
+                            [](const auto& fact) { return fact.mla_compiled.has_value(); }) &&
+                !simaai::neat::pipeline_internal::direct_model_mla_input_info(transform_nodes),
+            "a native transform before MLA must not expose its internal IFM as source authority");
+        const auto transform_stages = transform_facts->stage_facts.front();
+        const auto& ingress_cast = *transform_stages.front().processcvu_contract;
+        require(ingress_cast.payload.input_dtype == "FP32" &&
+                    ingress_cast.payload.output_dtype == "BF16" &&
+                    ingress_cast.payload.input_tensors.size() == 1U &&
+                    ingress_cast.payload.input_tensors.front().descriptor().storage.nbytes ==
+                        128U &&
+                    ingress_cast.payload.output_tensors.size() == 1U &&
+                    ingress_cast.payload.output_tensors.front().descriptor().storage.nbytes == 64U,
+                "the true first Cast must retain its exact FP32 ingress and BF16 output spans");
+        const auto internal_mla =
+            std::find_if(transform_stages.begin(), transform_stages.end(),
+                         [](const auto& fact) { return fact.mla_compiled.has_value(); });
+        const auto internal_input = simaai::neat::pipeline_internal::rendered_stage_query::
+            mla_input_tensor_info_from_compiled_contract(*internal_mla->mla_compiled);
+        require(internal_input.logical_dtype == "BF16" && internal_input.span_size_bytes == 64,
+                "the internal MLA must retain its distinct BF16 ingress without claiming source "
+                "authority");
+      }
+      fs::remove(transform_archive, ec);
+      fs::remove_all(transform_package, ec);
+
       const auto make_mla_a65_package = [&](const std::string& label, const std::uint64_t rows) {
         const fs::path package = root.parent_path() / label;
         fs::remove_all(package, ec);
@@ -720,7 +819,7 @@ RUN_TEST(
         const auto selected_plan = candidate.semantic_execution_plan();
         require(selected_plan.post.size() == 1U &&
                     selected_plan.post.front().kind == ExecutionStageKind::BoxDecode &&
-                    selected_plan.post.front().factory_name == "neatobjectdecode",
+                    selected_plan.post.front().factory_name == "neatkernelrunner",
                 "selected BoxDecode stage must use the canonical decoder factory");
         return std::tuple{std::move(candidate), full_proof, full_digest};
       };
@@ -1203,10 +1302,10 @@ RUN_TEST(
           return count;
         };
         require(occurrences("neatprocessmla ") == mla_indices.size() &&
-                    occurrences("neatprocesscvu ") == cast_indices.size() &&
+                    occurrences("neatkernelrunner ") == cast_indices.size() &&
                     occurrences("neatprocesstvm ") == host_indices.size() &&
                     occurrences("direct-contract-b64=") == host_indices.size() &&
-                    occurrences("stage-id=") == mla_indices.size() + cast_indices.size(),
+                    occurrences("stage-id=") == mla_indices.size(),
                 "RF-DETR fragment did not render its exact MLA/CVU stages and three "
                 "self-contained direct A65 commands");
         require(occurrences("model-path=") == 0U && occurrences("batch-size=") == 0U &&
@@ -1244,15 +1343,16 @@ RUN_TEST(
                 "RF-DETR fragment lost one prepared direct A65 contract");
         for (std::size_t index = 0; index < a65_contracts.size(); ++index) {
           const auto& contract = a65_contracts[index];
-          require(contract.at("schema") == "sima.neat.direct-tvm-lane" &&
-                      contract.at("version") == 2 && contract.at("storage_domain") == "cma" &&
-                      contract.at("allocation_provenance") == "core_allocated" &&
-                      (contract.at("required_device_access").get<std::uint32_t>() & 1U) != 0U &&
-                      contract.at("cpu_epoch_start").get<bool>() == (index == 0U) &&
-                      contract.at("cpu_epoch_end").get<bool>() ==
-                          (index + 1U == a65_contracts.size()),
-                  "RF-DETR direct A65 commands lost one maximal shared CPU epoch or its "
-                  "Core-authored arena placement");
+          require(
+              contract.at("schema") == "sima.neat.direct-tvm-lane" && contract.at("version") == 3 &&
+                  contract.at("allocation_policy") == "required_domain" &&
+                  contract.at("storage_domain") == "cma" &&
+                  contract.at("allocation_provenance") == "core_allocated" &&
+                  (contract.at("required_device_access").get<std::uint32_t>() & 1U) != 0U &&
+                  contract.at("cpu_epoch_start").get<bool>() == (index == 0U) &&
+                  contract.at("cpu_epoch_end").get<bool>() == (index + 1U == a65_contracts.size()),
+              "RF-DETR direct A65 commands lost one maximal shared CPU epoch or its "
+              "Core-authored arena placement");
         }
       }
 

@@ -293,7 +293,8 @@ std::optional<Sample> sample_from_input_spec(const OutputSpec& spec, std::string
         *err = "prebuild skipped: missing video width/height";
       return std::nullopt;
     }
-    if (fmt != "RGB" && fmt != "BGR" && fmt != "GRAY8" && fmt != "NV12" && fmt != "I420") {
+    if (fmt != "RGB" && fmt != "BGR" && fmt != "GRAY8" && fmt != "NV12" && fmt != "NV16" &&
+        fmt != "I420") {
       if (err)
         *err = "prebuild skipped: unsupported video format";
       return std::nullopt;
@@ -301,8 +302,9 @@ std::optional<Sample> sample_from_input_spec(const OutputSpec& spec, std::string
 
     size_t bytes = expected_byte_size(spec);
     if (bytes == 0) {
-      if (fmt == "NV12" || fmt == "I420") {
-        bytes = static_cast<size_t>(spec.width) * static_cast<size_t>(spec.height) * 3 / 2;
+      if (fmt == "NV12" || fmt == "NV16" || fmt == "I420") {
+        bytes = static_cast<size_t>(spec.width) * static_cast<size_t>(spec.height) *
+                (fmt == "NV16" ? 4 : 3) / 2;
       } else if (fmt == "GRAY8") {
         bytes = static_cast<size_t>(spec.width) * static_cast<size_t>(spec.height);
       } else {
@@ -328,14 +330,16 @@ std::optional<Sample> sample_from_input_spec(const OutputSpec& spec, std::string
       pixel = simaai::neat::ImageSpec::PixelFormat::BGR;
     else if (fmt == "GRAY8")
       pixel = simaai::neat::ImageSpec::PixelFormat::GRAY8;
+    else if (fmt == "NV16")
+      pixel = simaai::neat::ImageSpec::PixelFormat::NV16;
     else if (fmt == "NV12")
       pixel = simaai::neat::ImageSpec::PixelFormat::NV12;
     else if (fmt == "I420")
       pixel = simaai::neat::ImageSpec::PixelFormat::I420;
     t.semantic.image = simaai::neat::ImageSpec{pixel, {}};
 
-    if (fmt == "NV12" || fmt == "I420") {
-      if ((spec.width % 2) != 0 || (spec.height % 2) != 0) {
+    if (fmt == "NV12" || fmt == "NV16" || fmt == "I420") {
+      if ((spec.width % 2) != 0 || (fmt != "NV16" && (spec.height % 2) != 0)) {
         if (err)
           *err = "prebuild skipped: NV12/I420 requires even width/height";
         return std::nullopt;
@@ -352,10 +356,10 @@ std::optional<Sample> sample_from_input_spec(const OutputSpec& spec, std::string
       y.byte_offset = 0;
       t.planes.push_back(y);
 
-      if (fmt == "NV12") {
+      if (fmt == "NV12" || fmt == "NV16") {
         simaai::neat::Plane uv;
         uv.role = simaai::neat::PlaneRole::UV;
-        uv.shape = {h / 2, w};
+        uv.shape = {fmt == "NV16" ? h : h / 2, w};
         uv.strides_bytes = {w, 1};
         uv.byte_offset = w * h;
         t.planes.push_back(uv);

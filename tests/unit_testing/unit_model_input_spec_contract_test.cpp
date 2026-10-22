@@ -1,5 +1,6 @@
 #include "model/Model.h"
 #include "model/internal/ModelInternal.h"
+#include "pipeline/internal/InputStreamUtil.h"
 #include "model_archive_fixture_utils.h"
 #include "test_main.h"
 #include "test_utils.h"
@@ -15,11 +16,11 @@ namespace {
 using namespace simaai::neat;
 
 std::string require_yolov9_tar() {
-  const std::string tar =
-      sima_test::resolve_modelzoo_tar("yolo_v9c_seg", sima_test::repo_root_for_modelzoo());
-  require(!tar.empty(), "missing yolo_v9c_seg tar; run sima-cli modelzoo get yolo_v9c_seg");
-  require(std::filesystem::exists(tar), "resolved yolo_v9c_seg tar does not exist: " + tar);
-  return tar;
+  // Metadata-only unit coverage: reuse the checked exact modelzoo manifest
+  // and existing topology fixture builder; no inference binary is executed.
+  static const auto fixture = sima_test::make_strict_model_archive_fixture(
+      "unit_model_input_spec_contract_test", {}, true, "yolo_v9c_seg", true);
+  return fixture.tar_path;
 }
 
 sima_test::ModelArchiveFixture make_evo_style_multi_ingress_fixture(const std::string& tag) {
@@ -267,11 +268,83 @@ Tensor make_route_tensor(int logical_index, int physical_index, int route_slot, 
   return tensor;
 }
 
+void check_synthetic_image_inputs() {
+  // This exercises the production seed builder directly. NV16 is not added to
+  // the public Model preprocessing enum by this defensive construction fix.
+  for (const auto* format : {"NV12", "NV16", "I420", "RGB", "BGR", "GRAY8"}) {
+    InputOptions options;
+    options.payload_type = PayloadType::Image;
+    options.format = format;
+    options.width = 8;
+    options.height = 6;
+    const auto tensor = internal::ModelAccess::make_dummy_input(options);
+    const bool nv16 = std::string(format) == "NV16";
+    const bool nv12 = std::string(format) == "NV12";
+    const bool i420 = std::string(format) == "I420";
+    const bool planar = nv16 || nv12 || i420;
+    const bool gray = std::string(format) == "GRAY8";
+    const std::size_t bytes = nv16 ? 96U : (nv12 || i420) ? 72U : gray ? 48U : 144U;
+    require(tensor.storage && tensor.storage->size_bytes == bytes,
+            std::string(format) + " synthetic input byte count");
+    require(tensor.device.type == DeviceType::CPU && tensor.read_only &&
+                tensor.dtype == TensorDType::UInt8,
+            "synthetic image ownership/type changed");
+    require(tensor.shape ==
+                (planar || gray ? std::vector<int64_t>{6, 8} : std::vector<int64_t>{6, 8, 3}),
+            std::string(format) + " synthetic image shape");
+    std::string error;
+    require(tensor.validate(&error), std::string(format) + " synthetic input: " + error);
+    if (nv12 || nv16) {
+      require(tensor.planes.size() == 2 && tensor.planes[0].role == PlaneRole::Y &&
+                  tensor.planes[1].role == PlaneRole::UV &&
+                  tensor.planes[0].shape == std::vector<int64_t>{6, 8} &&
+                  tensor.planes[1].shape == std::vector<int64_t>{nv16 ? 6 : 3, 8} &&
+                  tensor.planes[0].strides_bytes == std::vector<int64_t>{8, 1} &&
+                  tensor.planes[1].strides_bytes == std::vector<int64_t>{8, 1} &&
+                  tensor.planes[0].byte_offset == 0 && tensor.planes[1].byte_offset == 48,
+              std::string(format) + " synthetic Y/UV geometry");
+    }
+  }
+  InputOptions options;
+  options.payload_type = PayloadType::Image;
+  options.format = FormatTag::NV16;
+  options.max_width = 8;
+  options.max_height = 5;
+  const auto odd_height = internal::ModelAccess::make_dummy_input(options);
+  std::string error;
+  require(odd_height.validate(&error), "odd-height NV16 synthetic input: " + error);
+  require(odd_height.storage->size_bytes == 80 &&
+              odd_height.axis_semantics ==
+                  std::vector<TensorAxisSemantic>{TensorAxisSemantic::H, TensorAxisSemantic::W} &&
+              odd_height.semantic.image &&
+              odd_height.semantic.image->format == ImageSpec::PixelFormat::NV16,
+          "NV16 synthetic semantics or fallback capacity changed");
+  const auto spec = describe_tensor_spec_or_throw(odd_height, options, "NV16 synthetic input");
+  require(spec.format == "NV16" && spec.width == 8 && spec.height == 5 && spec.planes.size() == 2 &&
+              spec.planes[0].height == 5 && spec.planes[1].height == 5 &&
+              spec.planes[1].offset_bytes == 40,
+          "NV16 synthetic ingress description lost full-height UV");
+  options.max_width = 7;
+  const auto odd_width = internal::ModelAccess::make_dummy_input(options);
+  require(!odd_width.validate(&error), "odd-width NV16 synthetic input must remain invalid");
+
+  options.payload_type = PayloadType::Tensor;
+  options.format = FormatTag::FP32;
+  options.max_width = 8;
+  options.max_depth = 3;
+  const auto dense = internal::ModelAccess::make_dummy_input(options);
+  require(dense.dtype == TensorDType::Float32 && dense.planes.empty() &&
+              dense.shape == std::vector<int64_t>{5, 8, 3} &&
+              dense.storage->size_bytes == 5U * 8U * 3U * sizeof(float),
+          "tensor-mode synthetic input changed");
+}
+
 } // namespace
 
 RUN_TEST(
     "unit_model_input_spec_contract_test", ([] {
       using namespace simaai::neat;
+      check_synthetic_image_inputs();
 
       {
         const std::string tar = require_yolov9_tar();

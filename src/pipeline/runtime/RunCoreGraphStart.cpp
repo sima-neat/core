@@ -1,4 +1,5 @@
 #include "RunCore.h"
+#include "GraphTransportLifecycle.h"
 
 #include "ExecutionGraphPlan.h"
 #include "builder/OutputSpec.h"
@@ -225,7 +226,8 @@ GraphReport make_graph_start_report(const ExecutionGraphPlan& plan, const std::s
 [[noreturn]] void throw_graph_start_error(const ExecutionGraphPlan& plan,
                                           const std::string& detail) {
   GraphReport rep = make_graph_start_report(plan, detail.empty() ? "unknown failure" : detail);
-  throw NeatError("[" + rep.error_code + "] " + rep.repro_note, std::move(rep));
+  const std::string message = "[" + rep.error_code + "] " + rep.repro_note;
+  throw NeatError(message, std::move(rep));
 }
 
 PortId intern_runtime_port(ExecutionGraphRuntime& execution, const std::string& name) {
@@ -939,7 +941,10 @@ void start_realtime_links(const std::shared_ptr<RunCore>& core) {
 void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
                                      PipelineSegmentRuntime& rt) {
   if (rt.seg.boundary.direct_graph_source) {
-    rt.transport.built.store(true, std::memory_order_release);
+    {
+      std::lock_guard<std::mutex> lock(rt.transport.mu);
+      rt.transport.built.store(true, std::memory_order_release);
+    }
     rt.transport.cv.notify_all();
     return;
   }
@@ -949,7 +954,6 @@ void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
   }
 
   {
-    std::lock_guard<std::mutex> lock(rt.transport.mu);
     RunCoreStartOptions start_opt;
     start_opt.run_options = rt.run_options;
     start_opt.mode = RunMode::Async;
@@ -1000,10 +1004,9 @@ void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
           locked->graph_request_stop(reason);
           return FusedEncodedOutputDispatchResult::Failed;
         };
-    rt.run_core = RunCore::start_pipeline_segment(rt.seg, std::move(start_opt));
-    rt.transport.built.store(true, std::memory_order_release);
+    construct_graph_source_pipeline(
+        rt, [&] { return RunCore::start_pipeline_segment(rt.seg, std::move(start_opt)); });
   }
-  rt.transport.cv.notify_all();
 }
 
 void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_t i) {

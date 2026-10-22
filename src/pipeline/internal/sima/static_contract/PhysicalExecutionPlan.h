@@ -59,12 +59,11 @@ struct PhysicalCommand {
   std::uint64_t topological_rank = 0;
   PhysicalEngine engine = PhysicalEngine::Cvu;
   PhysicalCommandRole role = PhysicalCommandRole::NonCvu;
+  // Engine-scoped semantic implementation key; CVU uses the exact Kernels name.
   std::string implementation_id;
-  // Generated CVU graph identity. Zero is reserved for non-CVU commands.
-  std::uint32_t graph_id = 0U;
   // Uniform model batch contract for every member in this invocation.
   std::uint32_t batch_size = 1U;
-  // Generated implementation ABI capacity. Zero for non-CVU commands.
+  // Core horizontal grouping policy. Zero for non-CVU commands.
   std::uint32_t maximum_members = 0U;
   std::vector<PhysicalCommandMember> members;
   // Canonical flattened outer bindings. These are retained because the arena

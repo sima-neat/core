@@ -84,12 +84,15 @@ Zero-time no-op entries are retained. Layer latencies do not add up to the stage
 headline latency.
 
 Read `report.mla_stage_stats.stages` for each MLA stage's `stage_index` and `latency_us`: the mean
-hardware time of 200 uninterrupted runs of that stage. It excludes the host, EV74, and data
-movement, so it is lower than the headline latency.
+hardware time of 200 uninterrupted runs of that stage. Stage latency includes MLA computation
+and the program's DRAM reads and writes. It excludes model loading, host and EV74 processing,
+and pipeline overhead.
 
 If `mla-rt` is missing, fails, or times out, `benchmark()` still returns the headline measurements,
 leaves the list empty, and sets `report.mla_layer_stats.status` or `report.mla_stage_stats.status`
-to the reason. Each status is `"not requested"` or `"ok"` otherwise.
+to the reason. Each status is `"not requested"` or `"ok"` otherwise. After a timed-out or crashed
+`mla-rt` run, MLA may still hold unfinished work, so later profiling in the same process is skipped
+with that reason. Keep the devkit idle until MLA recovery is verified.
 
 ### Save the report {#step-save-report}
 

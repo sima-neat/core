@@ -4,7 +4,6 @@
 #include "pipeline/Run.h"
 #include "pipeline/NeatError.h"
 #ifdef SIMA_NEAT_INTERNAL
-#include "pipeline/internal/DispatcherRecovery.h"
 #include "pipeline/runtime/RunInternal.h"
 #endif
 
@@ -47,13 +46,10 @@ inline int skip_test(const std::string& msg) {
   return fail_test("[SKIP_USED] " + msg);
 }
 
+// Recognize an old provider's diagnostic without depending on, starting or
+// recovering that provider. Current direct-driver tests treat it as a failure.
 inline bool is_dispatcher_unavailable(const std::string& msg) {
-#ifdef SIMA_NEAT_INTERNAL
-  return simaai::neat::pipeline_internal::match_dispatcher_unavailable(msg);
-#else
-  (void)msg;
-  return false;
-#endif
+  return msg.find("Unable to connect to the server from dispatcher") != std::string::npos;
 }
 
 inline void skip_test_exception(const std::string& msg) {

@@ -15,10 +15,12 @@ The format is based on Keep a Changelog and follows semantic versioning.
 ### Changed
 - Canonical naming contract docs and migration guidance.
 - Build/config naming consistency updates.
-- BREAKING: The public C++ ABI is now 6 (`libsima_neat.so.6`) because tensors now carry
-  feature-extractor semantic metadata, the existing GenAI and graph-link public structures
-  changed, and `BenchmarkOptions` and `BenchmarkReport` gained fields. Rebuild downstream C++
-  consumers.
+- BREAKING: The unreleased 0.6.0 line uses public C++ ABI 6 (`libsima_neat.so.6`).
+  In addition to the tensor, GenAI, graph-link and benchmark layout changes,
+  `SimaArgMaxOptions` gained `axis` and `keepdims`, and the `SimaArgMax` class layout
+  changed. Rebuild downstream C++ consumers and Python extensions against matching
+  headers and libraries, including when updating between ABI 6 previews. Do not
+  redirect released ABI 5 binaries to ABI 6 with compatibility symlinks.
 - `Model::benchmark()` reads power, temperature, CPU, and memory from the Sentinel daemon and
   reports them in `BenchmarkReport::telemetry`, including per-core CPU usage, with
   `latency_p50_ms`, `latency_p95_ms`, `latency_p99_ms`, `peak_power_watts`, `throughput_samples`,

@@ -87,6 +87,7 @@
 #include "pipeline/FeatureTypes.h"
 #include "pipeline/Tensor.h"
 #include "pipeline/TensorCore.h"
+#include "pipeline/internal/TensorUtil.h"
 #include "pipeline/FormatSpec.h"
 #include "pipeline/EncodedSampleUtil.h"
 #include "neat/version.h"
@@ -395,6 +396,8 @@ const char* pixel_format_name(ImageSpec::PixelFormat fmt) {
     return "GRAY8";
   case ImageSpec::PixelFormat::NV12:
     return "NV12";
+  case ImageSpec::PixelFormat::NV16:
+    return "NV16";
   case ImageSpec::PixelFormat::I420:
     return "I420";
   case ImageSpec::PixelFormat::UNKNOWN:
@@ -1170,7 +1173,7 @@ python_preproc_images_to_cv_mats(const nb::object& images,
       throw std::runtime_error(
           "pyneat.stages.preproc: images must be packed HW or packed HWC after conversion");
     }
-    simaai::neat::Mapping mapping = tensor.map_read();
+    simaai::neat::Mapping mapping = simaai::neat::pipeline_internal::map_dense_tensor_read(tensor);
     if (!mapping.data) {
       throw std::runtime_error("pyneat.stages.preproc: failed to map image tensor");
     }
@@ -1538,6 +1541,7 @@ NB_MODULE(_pyneat_core, m) {
       .value("GRAY8", ImageSpec::PixelFormat::GRAY8)
       .value("NV12", ImageSpec::PixelFormat::NV12)
       .value("I420", ImageSpec::PixelFormat::I420)
+      .value("NV16", ImageSpec::PixelFormat::NV16)
       .value("UNKNOWN", ImageSpec::PixelFormat::UNKNOWN);
   m.attr("Memory") = m.attr("TensorMemory");
   m.attr("ImageType") = m.attr("PixelFormat");
@@ -2460,6 +2464,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("element_name_prefix", &GraphOptions::element_name_prefix)
       .def_rw("element_name_suffix", &GraphOptions::element_name_suffix)
       .def_rw("verbose", &GraphOptions::verbose)
+      .def_rw("kernel_runner_a65_workers", &GraphOptions::kernel_runner_a65_workers)
       .def_rw("advanced_execution", &GraphOptions::advanced_execution);
 
   nb::class_<simaai::neat::OutputTensorOptions>(m, "OutputTensorOptions")
@@ -3931,7 +3936,9 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("sima_allocator_type", &simaai::neat::SimaArgMaxOptions::sima_allocator_type)
       .def_rw("silent", &simaai::neat::SimaArgMaxOptions::silent)
       .def_rw("emit_signals", &simaai::neat::SimaArgMaxOptions::emit_signals)
-      .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit);
+      .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit)
+      .def_rw("axis", &simaai::neat::SimaArgMaxOptions::axis)
+      .def_rw("keepdims", &simaai::neat::SimaArgMaxOptions::keepdims);
   nb::enum_<simaai::neat::SimaEncodeType>(m, "SimaEncodeType")
       .value("H264", simaai::neat::SimaEncodeType::H264)
       .value("H265", simaai::neat::SimaEncodeType::H265)
@@ -4735,6 +4742,7 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::class_<TelemetryMonitor>(m, "TelemetryMonitor")
       .def(nb::init<>())
+      .def(nb::init<std::string>(), "socket_path"_a)
       .def("start", &TelemetryMonitor::start, nb::call_guard<nb::gil_scoped_release>())
       .def("read", &TelemetryMonitor::read, nb::call_guard<nb::gil_scoped_release>())
       .def("stop", &TelemetryMonitor::stop, nb::call_guard<nb::gil_scoped_release>())
@@ -4803,6 +4811,7 @@ NB_MODULE(_pyneat_core, m) {
       .value("GRAY8", simaai::neat::FormatTag::GRAY8)
       .value("NV12", simaai::neat::FormatTag::NV12)
       .value("I420", simaai::neat::FormatTag::I420)
+      .value("NV16", simaai::neat::FormatTag::NV16)
       .value("YUYV", simaai::neat::FormatTag::YUYV)
       .value("ENCODED", simaai::neat::FormatTag::ENCODED)
       .value("H264", simaai::neat::FormatTag::H264)
@@ -5179,6 +5188,64 @@ NB_MODULE(_pyneat_core, m) {
   detess_opts_cls.def(nb::init<const simaai::neat::Model&>(), "model"_a);
   detess_cast_opts_cls.def(nb::init<const simaai::neat::Model&>(), "model"_a);
 
+  nb::enum_<simaai::neat::ImageFormat>(m, "ImageFormat")
+      .value("RGB", simaai::neat::ImageFormat::RGB)
+      .value("BGR", simaai::neat::ImageFormat::BGR)
+      .value("GRAY8", simaai::neat::ImageFormat::GRAY8)
+      .value("NV12", simaai::neat::ImageFormat::NV12)
+      .value("I420", simaai::neat::ImageFormat::I420)
+      .value("NV16", simaai::neat::ImageFormat::NV16);
+  nb::enum_<simaai::neat::ResizeInterpolation>(m, "ResizeInterpolation")
+      .value("Nearest", simaai::neat::ResizeInterpolation::Nearest)
+      .value("Bilinear", simaai::neat::ResizeInterpolation::Bilinear)
+      .value("Bicubic", simaai::neat::ResizeInterpolation::Bicubic)
+      .value("BoxAverage", simaai::neat::ResizeInterpolation::BoxAverage);
+  nb::enum_<simaai::neat::ResizeFit>(m, "ResizeFit")
+      .value("Stretch", simaai::neat::ResizeFit::Stretch)
+      .value("Contain", simaai::neat::ResizeFit::Contain);
+  nb::enum_<simaai::neat::ImageColorMatrix>(m, "ImageColorMatrix")
+      .value("Bt601", simaai::neat::ImageColorMatrix::Bt601)
+      .value("Bt709", simaai::neat::ImageColorMatrix::Bt709);
+  nb::enum_<simaai::neat::ImageYuvRange>(m, "ImageYuvRange")
+      .value("Full", simaai::neat::ImageYuvRange::Full)
+      .value("Limited", simaai::neat::ImageYuvRange::Limited);
+  nb::enum_<simaai::neat::ImageChromaSiting>(m, "ImageChromaSiting")
+      .value("Centered", simaai::neat::ImageChromaSiting::Centered)
+      .value("Cosited", simaai::neat::ImageChromaSiting::Cosited);
+  nb::enum_<simaai::neat::ImageSurfaceLayout>(m, "ImageSurfaceLayout")
+      .value("Native", simaai::neat::ImageSurfaceLayout::Native)
+      .value("EncoderNv12", simaai::neat::ImageSurfaceLayout::EncoderNv12);
+  nb::class_<simaai::neat::ImageColorOptions>(m, "ImageColorOptions")
+      .def(nb::init<>())
+      .def_rw("matrix", &simaai::neat::ImageColorOptions::matrix)
+      .def_rw("range", &simaai::neat::ImageColorOptions::range)
+      .def_rw("input_siting", &simaai::neat::ImageColorOptions::input_siting)
+      .def_rw("output_siting", &simaai::neat::ImageColorOptions::output_siting);
+  nb::class_<simaai::neat::ResizeOptions>(m, "ResizeOptions")
+      .def(nb::init<>())
+      .def_rw("width", &simaai::neat::ResizeOptions::width)
+      .def_rw("height", &simaai::neat::ResizeOptions::height)
+      .def_rw("interpolation", &simaai::neat::ResizeOptions::interpolation)
+      .def_rw("fit", &simaai::neat::ResizeOptions::fit)
+      .def_rw("max_input_width", &simaai::neat::ResizeOptions::max_input_width)
+      .def_rw("max_input_height", &simaai::neat::ResizeOptions::max_input_height)
+      .def_rw("pad_value", &simaai::neat::ResizeOptions::pad_value)
+      .def_rw("yuv_padding", &simaai::neat::ResizeOptions::yuv_padding)
+      .def_rw("color", &simaai::neat::ResizeOptions::color)
+      .def_rw("surface", &simaai::neat::ResizeOptions::surface)
+      .def_rw("element_name", &simaai::neat::ResizeOptions::element_name);
+  nb::class_<simaai::neat::ColorConvertOptions>(m, "ColorConvertOptions")
+      .def(nb::init<>())
+      .def_rw("output_format", &simaai::neat::ColorConvertOptions::output_format)
+      .def_rw("color", &simaai::neat::ColorConvertOptions::color)
+      .def_rw("surface", &simaai::neat::ColorConvertOptions::surface)
+      .def_rw("element_name", &simaai::neat::ColorConvertOptions::element_name);
+  nb::class_<simaai::neat::NormalizationOptions>(m, "NormalizationOptions")
+      .def(nb::init<>())
+      .def_rw("mean", &simaai::neat::NormalizationOptions::mean)
+      .def_rw("stddev", &simaai::neat::NormalizationOptions::stddev)
+      .def_rw("element_name", &simaai::neat::NormalizationOptions::element_name);
+
   nb::class_<simaai::neat::PreprocOptions>(m, "PreprocOptions")
       .def(nb::init<>())
       .def(nb::init<const simaai::neat::Model&>(), "model"_a)
@@ -5266,6 +5333,11 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("num_buffers_model", &simaai::neat::DetessDequantOptions::num_buffers_model)
       .def_rw("num_buffers_locked", &simaai::neat::DetessDequantOptions::num_buffers_locked);
 
+  nodes_mod.def("resize", &simaai::neat::nodes::Resize, "options"_a);
+  nodes_mod.def("color_convert", &simaai::neat::nodes::ColorConvert,
+                "options"_a = simaai::neat::ColorConvertOptions{});
+  nodes_mod.def("normalization", &simaai::neat::nodes::Normalization,
+                "options"_a = simaai::neat::NormalizationOptions{});
   nodes_mod.def("preproc", &simaai::neat::nodes::Preproc,
                 "options"_a = simaai::neat::PreprocOptions{});
   nodes_mod.def("quant_tess", &simaai::neat::nodes::QuantTess,

@@ -12,8 +12,10 @@ SiMa.ai Neat Library のリリースノート。
 ### 互換性のない変更
 
 - モデル出力は、デバイス側の中間形状ではなく、MPK に記述された最終的な論理形状とレイアウトを公開します。たとえば、ResNet-50 のバッチ平坦化出力は、4 次元 HWC 形状ではなく、形状 `[1, 1000]` で論理レイアウトは不明です。Float32 テンソルの形式は `FP32` ではなく `EVXX_FLOAT32` の場合があります。値の解釈にはテンソルのデータ型と形状を使用し、バックエンドの形式タグから論理軸を推定しないでください。
-- Neat Library の C++ ABI は 6、共有ライブラリの SONAME は `libsima_neat.so.6` です。Tensor は特徴抽出器の意味メタデータを保持し、公開 GenAI リクエスト／結果型は ASR タスク、言語、プローブのメタデータを保持します。`GraphLinkOptions` にはリアルタイム受け入れの制限が含まれ、`BenchmarkOptions` と `BenchmarkReport` にはフィールドが追加されました。C++ アプリケーションとプラグインを再ビルドし、対応する Core のランタイムと開発パッケージをインストールしてください。
+- Neat Library の C++ ABI は 6、共有ライブラリの SONAME は `libsima_neat.so.6` です。Tensor は特徴抽出器の意味メタデータを保持し、公開 GenAI リクエスト／結果型は ASR タスク、言語、プローブのメタデータを保持します。`GraphLinkOptions` にはリアルタイム受け入れの制限が含まれ、`BenchmarkOptions` と `BenchmarkReport` にはフィールドが追加されました。C++ アプリケーションとプラグインを再ビルドし、対応する Core のランタイムと開発パッケージをインストールしてください。 `SimaArgMaxOptions` に `axis` と `keepdims` が追加され、`SimaArgMax` のクラスレイアウトも変更されました。
 - リアルタイムのグラフ合成では、`GraphLinkOptions`、`Graph::connect()`、および`Graph::build()`が使用されます。プレビュー用の`RealtimeGraphLinkOptions`、`connect_realtime()`、`build_fused_realtime_sources()`/ `build_fused_realtime_source()`、および`RealtimeEveryFrameByStream` APIは削除されました。`realtime_every_frame_by_stream`を含む保存されたグラフは、サポートされているポリシーを使用して再作成する必要があります。詳細は[ライブフラグメントを接続する](/develop-apps/development-workflow/graph/#connect-live-fragments)を参照してください。
+
+- 未リリースのパッケージバージョンは引き続き **0.6.0** です。`Model::Options` と `BoxDecodeOptions` に `yolox_seg_pose.pose_classes` が追加されました。この公開レイアウトの追加には ABI 6 のコンシューマーが必要です。ABI 互換性のためのシンボリックリンクは使わないでください。プレビューリリースでは、`kernel_runner_a65_workers` が加わった `GraphOptions` のような公開型も変更されることがあります。0.6.0 プレビューを更新する際は、対応するランタイムおよび開発パッケージに対して、アプリケーション、プラグイン、Python 拡張を再ビルドしてください。どちらも ABI 6 を使っているという理由だけで、異なるプレビューのバイナリを混在させないでください。
 
 ### ランタイムの変更
 

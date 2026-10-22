@@ -478,8 +478,7 @@ void test_grouped_physical_command_keeps_every_input_and_output_disjoint() {
   post.cohort_id = 1;
   post.topological_rank = 1;
   post.engine = sc::PhysicalEngine::Cvu;
-  post.implementation_id = "cvu.graph223.dequantize.v1";
-  post.graph_id = 223U;
+  post.implementation_id = "dequant";
   post.maximum_members = 32U;
   post.members = {{0U, {2U}, {3U}, {4U}}, {1U, {4U}, {5U}, {6U}}};
   post.inputs = {3, 5};
@@ -526,7 +525,18 @@ void test_grouped_physical_command_keeps_every_input_and_output_disjoint() {
     CHECK(dms->placement().requires_access(sc::ArenaDeviceAccess::Mla));
     CHECK(dms->placement().requires_access(sc::ArenaDeviceAccess::CpuA65));
     CHECK(!dms->placement().requires_access(sc::ArenaDeviceAccess::Ev74));
+    CHECK(dms->placement().allocation_policy == sc::ArenaAllocationPolicy::RequiredDomain);
   }
+  const auto preferred = sc::FrameSlotArenaPlan::compile(
+      execution, a65_physical, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096, &error,
+      sc::ArenaDmsPolicy::PreferDmsThenCma);
+  CHECK(preferred && preferred->placement().domain == sc::ArenaStorageDomain::Dms);
+  CHECK(preferred &&
+        preferred->placement().allocation_policy == sc::ArenaAllocationPolicy::PreferDmsThenCma);
+  const auto forbidden = sc::FrameSlotArenaPlan::compile(
+      execution, physical, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096, &error,
+      sc::ArenaDmsPolicy::PreferDmsThenCma);
+  CHECK(!forbidden && error.find("EV74") != std::string::npos);
 }
 
 void test_resolved_a65_mla_a65_route_selects_one_dms_arena() {
@@ -748,7 +758,7 @@ void test_producer_direct_pack_preserves_every_lane_and_parent_offset() {
     }
     std::vector<const sc::PhysicalCommand*> fused;
     for (const auto& command : physical->commands) {
-      if (command.graph_id == 226U) {
+      if (command.implementation_id == "quanttess") {
         fused.push_back(&command);
       }
     }

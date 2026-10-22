@@ -35,6 +35,7 @@
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/ExecutionPlanAssembly.h"
 #include "pipeline/runtime/RunCore.h"
+#include "pipeline/runtime/RunInternal.h"
 #include "pipeline/internal/contract/PluginCompiledContracts.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
@@ -1109,6 +1110,8 @@ ImageSpec::PixelFormat pixel_format_from_string(const std::string& fmt) {
     return ImageSpec::PixelFormat::GRAY8;
   if (up == "NV12")
     return ImageSpec::PixelFormat::NV12;
+  if (up == "NV16")
+    return ImageSpec::PixelFormat::NV16;
   if (up == "I420")
     return ImageSpec::PixelFormat::I420;
   return ImageSpec::PixelFormat::UNKNOWN;
@@ -1872,9 +1875,10 @@ Tensor make_dummy_tensor(const simaai::neat::InputOptions& opt) {
   t.dtype = TensorDType::UInt8;
   t.semantic.image = ImageSpec{pix, ""};
 
-  if (pix == ImageSpec::PixelFormat::NV12) {
-    const std::size_t y_size = static_cast<std::size_t>(w * h);
-    const std::size_t uv_size = static_cast<std::size_t>(w * h / 2);
+  if (pix == ImageSpec::PixelFormat::NV12 || pix == ImageSpec::PixelFormat::NV16) {
+    const int uv_height = pix == ImageSpec::PixelFormat::NV16 ? h : h / 2;
+    const std::size_t y_size = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+    const std::size_t uv_size = static_cast<std::size_t>(w) * static_cast<std::size_t>(uv_height);
     t.storage = make_cpu_owned_storage(y_size + uv_size);
     t.shape = {h, w};
     t.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W};
@@ -1887,7 +1891,7 @@ Tensor make_dummy_tensor(const simaai::neat::InputOptions& opt) {
 
     Plane uv;
     uv.role = PlaneRole::UV;
-    uv.shape = {h / 2, w};
+    uv.shape = {uv_height, w};
     uv.strides_bytes = {w, 1};
     uv.byte_offset = static_cast<int64_t>(y_size);
 
@@ -3285,6 +3289,7 @@ public:
                              Model::RouteOptions route_opt)
       : model_(std::move(model)), plan_(std::move(plan)), route_opt_(std::move(route_opt)),
         ingress_contracts_(normalized_ingress_contracts(plan_.session_route_plan)),
+        source_options_(model_.input_appsrc_options_list(false)),
         joined_consumer_identities_(main_route_joined_input_identities(model_)),
         joined_packed_segment_name_(main_route_joined_input_segment_name(model_)),
         consumer_keeps_distinct_physical_inputs_(
@@ -3306,6 +3311,48 @@ public:
         branch_graphs_.push_back(build_ingress_branch_graph(model_, plan_, ingress, route_opt_));
       }
       branch_runners_.resize(ingress_contracts_.size());
+    }
+  }
+
+  void validate_images(const std::vector<cv::Mat>& inputs, const char* where) const override {
+    require_exact_ingress_count(inputs.size(), ingress_contracts_, where, "image inputs");
+    // The user-facing Preproc source contract, not the MLA resize output, owns
+    // these limits. Check every member before the caller converts even the first.
+    for (std::size_t i = 0; i < inputs.size(); ++i) {
+      validate_public_input(inputs[i], source_options_.at(i), InputStreamOptions{}, where);
+      validate_branch_geometry(describe_mat_geometry_or_throw(inputs[i], source_options_[i], where),
+                               i, where);
+    }
+  }
+
+  void validate_tensors(const TensorList& inputs, const char* where) const {
+    require_exact_ingress_count(inputs.size(), ingress_contracts_, where, "tensor inputs");
+    for (std::size_t i = 0; i < inputs.size(); ++i) {
+      validate_public_input(inputs[i], source_options_.at(i), InputStreamOptions{}, where);
+      validate_branch_geometry(
+          describe_tensor_geometry_or_throw(inputs[i], source_options_[i], where), i, where);
+    }
+  }
+
+  void validate_samples(const Sample& inputs, const char* where) const {
+    require_exact_ingress_count(inputs.size(), ingress_contracts_, where, "sample inputs");
+    for (std::size_t i = 0; i < inputs.size(); ++i) {
+      validate_public_input(inputs[i], source_options_.at(i), InputStreamOptions{}, where);
+      // Branch ingress is one logical tensor per input; inspect the retained
+      // value directly rather than copying or mapping tensors_from_sample().
+      const auto& sample = inputs[i];
+      const Tensor* tensor = sample.kind == SampleKind::Tensor && sample.tensor ? &*sample.tensor
+                             : sample_has_tensor_list(sample) && sample.tensors.size() == 1
+                                 ? &sample.tensors.front()
+                                 : nullptr;
+      if (!uses_direct_tensor_set_route() && !tensor)
+        throw_model_error(error_codes::kInputShape,
+                          std::string(where) +
+                              ": branch ingress requires one tensor per logical input",
+                          "Pass inputs in declared order.");
+      if (tensor)
+        validate_branch_geometry(
+            describe_tensor_geometry_or_throw(*tensor, source_options_[i], where), i, where);
     }
   }
 
@@ -3355,6 +3402,7 @@ public:
     if (uses_direct_tensor_set_route()) {
       return build_fan_in_sample(inputs, where);
     }
+    validate_tensors(inputs, where);
     TensorList prepared = prepare_ingress_tensors(inputs, ingress_contracts_, where);
     Sample samples;
     samples.reserve(prepared.size());
@@ -3407,6 +3455,7 @@ public:
   // the bundled multi-IO pre element can route per-binding via the
   // SIMA_TENSOR_SET_META descriptors. No branch processing, no join.
   Sample build_fan_in_sample(const TensorList& inputs, const char* where) const {
+    validate_tensors(inputs, where);
     if (direct_tensor_set_ingress_) {
       return build_direct_mla_tensor_set_sample(inputs, where);
     }
@@ -3427,10 +3476,10 @@ public:
   }
 
   Sample build_fan_in_sample_from_samples(const Sample& inputs, const char* where) const {
+    validate_samples(inputs, where);
     if (direct_tensor_set_ingress_) {
       return build_direct_mla_tensor_set_sample_from_samples(inputs, where);
     }
-    require_exact_ingress_count(inputs.size(), ingress_contracts_, where, "sample inputs");
     TensorList prepared;
     prepared.reserve(inputs.size());
     for (std::size_t i = 0; i < inputs.size(); ++i) {
@@ -3452,6 +3501,42 @@ public:
   }
 
 private:
+  void validate_branch_geometry(const InputGeometry& geometry, std::size_t i,
+                                const char* where) const {
+    // Image/Preproc source dimensions are dynamic and constrained by the
+    // original source options, never by MLA's eventual resize output. Tensor
+    // route ingress, in contrast, already has an exact logical shape contract.
+    if (i >= ingress_contracts_.size() || source_options_[i].payload_type != PayloadType::Tensor)
+      return;
+    const auto& expected = ingress_contracts_[i];
+    if (!expected.logical_shape.empty()) {
+      // Layout is only needed to preserve the public one-channel HW convenience
+      // alias; never reconstruct the canonical shape from W/H/D projections.
+      const auto layout = expected.layout == "HWC" || expected.layout == "NHWC" ? TensorLayout::HWC
+                          : expected.layout == "CHW" || expected.layout == "NCHW"
+                              ? TensorLayout::CHW
+                          : expected.layout == "HW" ? TensorLayout::HW
+                                                    : TensorLayout::Unknown;
+      if (!input_geometry_matches_logical_shape(geometry, expected.logical_shape, layout))
+        throw_model_error(
+            error_codes::kInputShape,
+            std::string(where) + ": ingress[" + std::to_string(i) +
+                "] does not match canonical logical_shape",
+            "Pass every logical axis, including non-unit batch, as declared by the model.");
+      return;
+    }
+    const auto dims = geometry.shape.empty()
+                          ? TensorCompatDims{geometry.width, geometry.height, geometry.depth}
+                          : tensor_compat_dims_from_shape(geometry.shape, geometry.layout);
+    if ((expected.width > 0 && dims.width != expected.width) ||
+        (expected.height > 0 && dims.height != expected.height) ||
+        (expected.depth > 0 && dims.depth != expected.depth))
+      throw_model_error(error_codes::kInputShape,
+                        std::string(where) + ": ingress[" + std::to_string(i) +
+                            "] shape does not match the declared logical input",
+                        "Pass inputs with their declared shapes before branch preprocessing.");
+  }
+
   bool uses_direct_tensor_set_route() const {
     return is_fan_in_route_ || direct_tensor_set_ingress_;
   }
@@ -3677,7 +3762,7 @@ private:
   }
 
   Sample process_prepared_samples(const Sample& prepared, const char* where) const {
-    require_exact_ingress_count(prepared.size(), ingress_contracts_, where, "ingress inputs");
+    validate_samples(prepared, where);
     Sample branch_outputs;
     branch_outputs.reserve(prepared.size());
     for (std::size_t i = 0; i < prepared.size(); ++i) {
@@ -3798,6 +3883,7 @@ private:
   internal::PreprocessPlannerResult plan_;
   Model::RouteOptions route_opt_;
   std::vector<internal::IngressTensorContract> ingress_contracts_;
+  const std::vector<InputOptions> source_options_;
   std::vector<internal::IngressConsumerTensorIdentity> joined_consumer_identities_;
   std::string joined_packed_segment_name_;
   // True when the MLA .elf is a multi-IFM compilation (no upstream pack stage).
@@ -4247,6 +4333,7 @@ struct Model::Impl {
   internal::ModelPack pack;
   mutable std::optional<internal::ModelPack> sync_pack;
   std::string model_id;
+  std::string stage_cache_identity;
 
   mutable std::mutex sync_mu;
   mutable bool sync_ready = false;
@@ -4431,6 +4518,13 @@ struct Model::Impl {
     if (!options.name_suffix.empty()) {
       model_id += "::" + options.name_suffix;
     }
+    // Keep full values for equality: neither delimiter ambiguity nor hash collisions can
+    // alias different stage preparations. This is never serialized on the warm path.
+    stage_cache_identity =
+        nlohmann::ordered_json(
+            {{"model_id", model_id},
+             {"effective_options", internal::model_stage_options_cache_identity(options)}})
+            .dump();
   }
 
   const internal::ModelPack& pack_for_sync() const {
@@ -6486,6 +6580,13 @@ std::string model_options_json_for_graph_provenance(const Model::Options& opt) {
   nlohmann::ordered_json out;
   out["preprocess"] = preprocess_options_json(opt.preprocess);
   out["decode_type"] = model_options_enum_int(opt.decode_type);
+  out["decode_type_option"] = model_options_enum_int(opt.decode_type_option);
+  out["superpoint"] = {
+      {"profile", model_options_enum_int(opt.superpoint.profile)},
+      {"nms_radius", opt.superpoint.nms_radius},
+      {"border_margin", opt.superpoint.border_margin},
+      {"descriptor_output_dtype", model_options_enum_int(opt.superpoint.descriptor_output_dtype)},
+      {"output_format", model_options_enum_int(opt.superpoint.output_format)}};
   out["score_threshold"] = opt.score_threshold;
   out["nms_iou_threshold"] = opt.nms_iou_threshold;
   out["top_k"] = opt.top_k;
@@ -6505,6 +6606,25 @@ std::string model_options_json_for_graph_provenance(const Model::Options& opt) {
   out["processmla"] = processmla_options_json(opt.processmla);
   out["prepared_runner"] = prepared_runner_options_json(opt.prepared_runner);
   out["async_queue_depth"] = opt.async_queue_depth;
+  nlohmann::ordered_json advanced = nlohmann::ordered_json::object();
+  const auto& execution = opt.advanced_execution;
+  if (execution.preprocess_target)
+    advanced["preprocess_target"] = *execution.preprocess_target;
+  if (execution.postprocess_target)
+    advanced["postprocess_target"] = *execution.postprocess_target;
+  if (execution.preprocess_async)
+    advanced["preprocess_async"] = *execution.preprocess_async;
+  if (execution.inference_async)
+    advanced["inference_async"] = *execution.inference_async;
+  if (execution.inference_output_buffers)
+    advanced["inference_output_buffers"] = *execution.inference_output_buffers;
+  if (execution.defer_output_cache_sync)
+    advanced["defer_output_cache_sync"] = *execution.defer_output_cache_sync;
+  if (execution.prepared_runner)
+    advanced["prepared_runner"] = prepared_runner_options_json(*execution.prepared_runner);
+  if (execution.internal_queue_depth)
+    advanced["internal_queue_depth"] = *execution.internal_queue_depth;
+  out["advanced_execution"] = std::move(advanced);
   return out.dump();
 }
 
@@ -7003,16 +7123,22 @@ bool Model::Runner::push(const std::vector<cv::Mat>& inputs) {
     throw std::runtime_error("Model::Runner::push: empty image list");
   }
   if (tensor_input_opt_for_cv_.has_value()) {
-    std::vector<internal::IngressTensorContract> ingress_contracts;
-    ingress_contracts.reserve(ingress_names_.size());
-    for (std::size_t i = 0; i < ingress_names_.size(); ++i) {
-      internal::IngressTensorContract ingress;
-      ingress.ingress_index = static_cast<int>(i);
-      ingress.source_tensor_name = ingress_names_[i];
-      ingress_contracts.push_back(std::move(ingress));
+    if (inputs.size() != ingress_names_.size()) {
+      std::vector<internal::IngressTensorContract> ingress_contracts;
+      ingress_contracts.reserve(ingress_names_.size());
+      for (std::size_t i = 0; i < ingress_names_.size(); ++i) {
+        internal::IngressTensorContract ingress;
+        ingress.ingress_index = static_cast<int>(i);
+        ingress.source_tensor_name = ingress_names_[i];
+        ingress_contracts.push_back(std::move(ingress));
+      }
+      require_exact_ingress_count(inputs.size(), ingress_contracts, "Model::Runner::push",
+                                  "image inputs");
     }
-    require_exact_ingress_count(inputs.size(), ingress_contracts, "Model::Runner::push",
-                                "image inputs");
+    run_internal::validate_original_images(run_, inputs, "Model::Runner::push");
+    for (const auto& input : inputs)
+      validate_public_input(input, *tensor_input_opt_for_cv_, InputStreamOptions{},
+                            "Model::Runner::push");
     TensorList tensors;
     tensors.reserve(inputs.size());
     for (std::size_t i = 0; i < inputs.size(); ++i) {
@@ -7065,16 +7191,22 @@ simaai::neat::TensorList Model::Runner::run(const std::vector<cv::Mat>& inputs, 
     throw std::runtime_error("Model::Runner::run: empty image list");
   }
   if (tensor_input_opt_for_cv_.has_value()) {
-    std::vector<internal::IngressTensorContract> ingress_contracts;
-    ingress_contracts.reserve(ingress_names_.size());
-    for (std::size_t i = 0; i < ingress_names_.size(); ++i) {
-      internal::IngressTensorContract ingress;
-      ingress.ingress_index = static_cast<int>(i);
-      ingress.source_tensor_name = ingress_names_[i];
-      ingress_contracts.push_back(std::move(ingress));
+    if (inputs.size() != ingress_names_.size()) {
+      std::vector<internal::IngressTensorContract> ingress_contracts;
+      ingress_contracts.reserve(ingress_names_.size());
+      for (std::size_t i = 0; i < ingress_names_.size(); ++i) {
+        internal::IngressTensorContract ingress;
+        ingress.ingress_index = static_cast<int>(i);
+        ingress.source_tensor_name = ingress_names_[i];
+        ingress_contracts.push_back(std::move(ingress));
+      }
+      require_exact_ingress_count(inputs.size(), ingress_contracts, "Model::Runner::run",
+                                  "image inputs");
     }
-    require_exact_ingress_count(inputs.size(), ingress_contracts, "Model::Runner::run",
-                                "image inputs");
+    run_internal::validate_original_images(run_, inputs, "Model::Runner::run");
+    for (const auto& input : inputs)
+      validate_public_input(input, *tensor_input_opt_for_cv_, InputStreamOptions{},
+                            "Model::Runner::run");
     TensorList tensors;
     tensors.reserve(inputs.size());
     for (std::size_t i = 0; i < inputs.size(); ++i) {
@@ -7312,6 +7444,9 @@ Model::Runner Model::build(const std::vector<cv::Mat>& inputs, const Model::Rout
       pack = pack.clone_with_overrides(std::string{}, build_opt.name_suffix);
     }
     const InputOptions src_opt = pack.input_appsrc_options(true);
+    require_exact_ingress_count(inputs.size(), ingress_contracts, "Model::build", "image inputs");
+    for (const auto& input : inputs)
+      validate_public_input(input, src_opt, InputStreamOptions{}, "Model::build");
     TensorList tensors;
     tensors.reserve(inputs.size());
     for (const auto& input : inputs) {
@@ -7515,6 +7650,10 @@ TensorList materialize_joined_ingress_tensors(
   return materialize_joined_ingress_tensors_impl(tensors, consumer_identities, segment_name, where);
 }
 
+Tensor ModelAccess::make_dummy_input(const InputOptions& options) {
+  return make_dummy_tensor(options);
+}
+
 const ModelPack& ModelAccess::pack(const Model& model) {
   return model.impl_->pack;
 }
@@ -7530,6 +7669,34 @@ void ModelAccess::prepare_for_execution(const Model& model, bool sync) {
 
 std::string ModelAccess::model_id(const Model& model) {
   return model.impl_->model_id;
+}
+
+const std::string& ModelAccess::stage_cache_identity(const Model& model) {
+  return model.impl_->stage_cache_identity;
+}
+
+bool ModelAccess::stage_cache_has_dynamic_boxdecode_geometry(const Model& model) {
+  const auto& impl = *model.impl_;
+  return impl.preprocess_plan.session_route_plan.boxdecode_selected &&
+         impl.options.decode_type != BoxDecodeType::Unspecified &&
+         impl.options.decode_type != BoxDecodeType::SuperPoint;
+}
+
+std::string model_stage_options_cache_identity(const Model::Options& options) {
+  Model::Options effective = options;
+  GraphOptions execution;
+  execution.processcvu = options.processcvu;
+  execution.processmla = options.processmla;
+  execution.prepared_runner = options.prepared_runner;
+  execution.async_queue_depth = options.async_queue_depth;
+  execution.advanced_execution = options.advanced_execution;
+  execution.resolve_advanced_execution();
+  effective.processcvu = execution.processcvu;
+  effective.processmla = execution.processmla;
+  effective.prepared_runner = execution.prepared_runner;
+  effective.async_queue_depth = execution.async_queue_depth;
+  effective.advanced_execution = {};
+  return model_options_json_for_graph_provenance(effective);
 }
 
 std::string ModelAccess::source_path(const Model& model) {

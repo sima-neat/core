@@ -580,8 +580,12 @@ postprocess = model.fragment(pyneat.ModelStage.Postprocess)
 | 允許 MLA 推論以非同步方式執行 | `advanced_execution.inference_async` | 對於保持工作進度的串流工作負載很有用。 |
 | 調整推論輸出緩衝 | `advanced_execution.inference_output_buffers` | 僅在測量結果顯示輸出緩衝是瓶頸時才增加。 |
 | 延遲輸出快取同步 | `advanced_execution.defer_output_cache_sync` | 進階。僅在理解消費者和記憶體生命週期時使用。 |
-| 使用已準備好的執行器 | `advanced_execution.prepared_runner` | 進階路由執行器實驗。請勿將其用於首次執行程式碼中。 |
-| 調整內部插入的佇列深度 | `advanced_execution.internal_queue_depth` | 進階。佇列深度可以吸收抖動；它不會產生加速器容量。 |
+| 調整內部並行度 | `advanced_execution.internal_queue_depth` | 限制內部插入的佇列與數值 Runner 執行容量；不會覆寫 MLA 輸出緩衝設定。 |
+
+有關有界重疊、輸入生命週期與每影格 CPU 量測，請參閱
+[讓影格重疊執行，而不使佇列無限增長](/develop-apps/development-workflow/graph#overlap-frames-without-growing-queues-indefinitely)。
+保留的 `prepared_runner` 欄位用於來源相容性，不是可選的執行後端。
+請保留預設值；已淘汰的模式會在圖建構時失敗。
 
 在最符合實驗需求的最小範圍內設定進階執行欄位：
 
@@ -796,7 +800,13 @@ report = model.benchmark(options)
 
 ### 功耗與板子遙測 {#power-and-board-telemetry}
 
-功耗與板子遙測資料來自 [Sentinel](/tools/sentinel/)，也就是 Neat 安裝程式在板子上設定的 DevKit 遙測常駐程式。基準測試會在吞吐量階段前後使用 [`TelemetryMonitor`](#record-board-telemetry) 記錄這些資料，並由 `report.telemetry` 加以彙整：
+功耗與板卡遙測來自 [Sentinel](/tools/sentinel/)，也就是 Neat 安裝程式在 DevKit 上
+設定的遙測常駐程式。基準測試透過涵蓋吞吐量測試的
+[`TelemetryMonitor`](#record-board-telemetry) 記錄這些資料。它選取量測開始之後、
+所有必要輸出完成且量測停止之前的樣本。準備、等待監視執行緒結束，以及最後一次
+Sentinel 讀取都不會延長計時工作負載。無效樣本時間戳記或偵測到時鐘不連續時，
+基準測試遙測會變成無法取得，而不會選取不相關的時間視窗。
+`report.telemetry` 會彙整如下：
 
 | 欄位 | 意義 |
 | --- | --- |
@@ -891,6 +901,8 @@ telemetry.save("telemetry.json") # .json writes JSON; other names write YAML
 
 </CodeTab>
 </CodeTabs>
+
+監控器預設讀取 `/run/simaai-sentinel/api.sock`。若要使用掛載於其他路徑的 Sentinel Unix 通訊端，請在 C++ 中將路徑傳入 `TelemetryMonitor(socket_path)`，或在 Python 中使用 `pyneat.TelemetryMonitor(socket_path="...")`。這只會選擇該監控器的端點，不會變更 `Model::benchmark()` 或啟動 Sentinel。建構時不會連線至通訊端。
 
 - `start()` 會開始一個新的視窗。只有 Sentinel 在此之後取得的樣本才會計入，而 Sentinel 每 2 秒取樣一次，因此短於此長度的視窗可能沒有任何樣本；此時 `status` 會指出這一點。
 - `read()` 會傳回目前為止的摘要，而不會停止監控。每項測量的 `last` 是其最新的數值，而 `mean`、`minimum` 與 `maximum` 涵蓋目前為止的視窗。

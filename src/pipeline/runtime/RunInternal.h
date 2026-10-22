@@ -7,6 +7,9 @@ namespace simaai::neat {
 
 namespace run_internal {
 
+void validate_original_images(const Run& run, const std::vector<cv::Mat>& inputs,
+                              const char* where);
+
 RunStats stats(const Run& run);
 InputStreamStats input_stats(const Run& run);
 RunDiagSnapshot diag_snapshot(const Run& run);

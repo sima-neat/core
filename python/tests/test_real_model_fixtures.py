@@ -328,6 +328,154 @@ def _parse_bbox_payload(payload: bytes, img_w: int, img_h: int, min_score: float
   return boxes
 
 
+def _validate_bbox_payload(
+    payload: bytes,
+    img_w: int,
+    img_h: int,
+    *,
+    top_k: int,
+    detection_threshold: float,
+    num_classes: int = 80,
+) -> list[dict]:
+  """Validate the raw plain-BBOX ABI before any display clipping/filtering."""
+  context = f"BBOX payload_bytes={len(payload)} capacity={top_k} geometry={img_w}x{img_h}"
+  assert len(payload) == 4 + top_k * 24, f"fixed-capacity extent changed: {context}"
+  count = struct.unpack_from("<I", payload)[0]
+  assert count <= top_k, f"count={count} exceeds capacity: {context}"
+  assert not any(payload[4 + count * 24 :]), f"unused BBOX tail is not zero: {context}"
+  cutoff = float(np.float32(detection_threshold))
+  records = []
+  previous_score = float("inf")
+  for index in range(count):
+    x, y, w, h, score, cls_id = struct.unpack_from("<iiiifi", payload, 4 + index * 24)
+    record_context = f"record={index} xywh={(x, y, w, h)} score={score} cutoff={cutoff}: {context}"
+    assert np.isfinite(score) and 0.0 <= score <= 1.0, f"invalid score: {record_context}"
+    assert score <= previous_score, f"scores are not confidence-descending: {record_context}"
+    assert score >= cutoff, f"emitted score is below threshold: {record_context}"
+    assert 0 <= cls_id < num_classes, f"class={cls_id} outside model contract: {record_context}"
+    assert w >= 0 and h >= 0, f"negative extent: {record_context}"
+    assert 0 <= x <= img_w and 0 <= y <= img_h, f"origin outside image: {record_context}"
+    # Independent rounding of x and w can put their sum one pixel over the edge.
+    assert x + w <= img_w + 1 and y + h <= img_h + 1, f"end outside image: {record_context}"
+    records.append(
+        {"x1": x, "y1": y, "x2": x + w, "y2": y + h, "score": score, "class_id": cls_id}
+    )
+    previous_score = score
+  return records
+
+
+def _validated_bbox_output(
+    sample: pyneat.Sample, img_w: int, img_h: int, threshold: float, top_k: int = 120
+) -> tuple[bytes, list[dict]]:
+  tensor = _sample_tensor(sample)
+  context = f"BBOX dtype={tensor.dtype} shape={list(tensor.shape)} geometry={img_w}x{img_h}"
+  assert tensor.dtype == pyneat.TensorDType.UInt8, context
+  assert list(tensor.shape) == [4 + top_k * 24], context
+  # A plain-BBOX route may return an untagged SingleTensor. Any advertised
+  # Sample or Tensor format must still agree; precedence must not hide conflict.
+  for owner, advertised in (
+      ("Sample.payload_tag", sample.payload_tag),
+      ("Sample.format", sample.format),
+      ("Tensor.detection", pyneat.detections.read_detection_format(tensor)),
+  ):
+    assert not advertised or advertised.upper() == "BBOX", (
+        f"conflicting {owner}={advertised!r}: {context}"
+    )
+  payload = _extract_bbox_payload(sample)
+  records = _validate_bbox_payload(
+      payload, img_w, img_h, top_k=top_k, detection_threshold=threshold
+  )
+  # Passing zero image dimensions disables the public parser's display clipping.
+  decoded = pyneat.detections.decode_bbox_tensor(
+      tensor, img_w=0, img_h=0, expected_topk=top_k, strict=True
+  )
+  assert decoded.raw == payload
+  assert len(decoded.boxes) == len(records)
+  for box, record in zip(decoded.boxes, records):
+    assert [box.x1, box.y1, box.x2, box.y2, box.score, box.class_id] == [
+        record[key] for key in ("x1", "y1", "x2", "y2", "score", "class_id")
+    ]
+  return payload, records
+
+
+@pytest.mark.parametrize(
+    "payload_tag,sample_format,tensor_format,valid",
+    (
+        ("", "", "", True),
+        ("BBOX", "", "", True),
+        ("", "BBOX", "", True),
+        ("", "", "BBOX", True),
+        ("BBOX_POSE", "", "", False),
+        ("", "BBOX_POSE", "", False),
+        ("", "", "BBOX_POSE", False),
+        ("BBOX", "BBOX_POSE", "", False),
+        ("BBOX", "", "BBOX_POSE", False),
+    ),
+)
+def test_raw_bbox_output_accepts_untagged_tensor_and_rejects_conflicting_formats(
+    payload_tag, sample_format, tensor_format, valid
+):
+  tensor = pyneat.Tensor.from_numpy(np.zeros(2884, dtype=np.uint8), copy=True)
+  if tensor_format:
+    detection = pyneat.DetectionSpec()
+    detection.format = tensor_format
+    semantic = tensor.semantic
+    semantic.detection = detection
+    tensor.semantic = semantic
+  sample = _sample_from_tensor(tensor)
+  sample.payload_tag = payload_tag
+  sample.format = sample_format
+  if valid:
+    assert _validated_bbox_output(sample, 640, 360, 0.5) == (bytes(2884), [])
+  else:
+    with pytest.raises(AssertionError, match="conflicting"):
+      _validated_bbox_output(sample, 640, 360, 0.5)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "short_header", "short_record", "extra_byte", "count_overflow", "nan_score",
+        "score_over_one", "below_threshold", "descending", "invalid_class", "negative_extent",
+        "negative_origin", "end_outside", "tail_nonzero", "nextafter_below_threshold",
+    ),
+)
+def test_raw_bbox_validator_rejects_malformed_payload(mutation):
+  records = [(10, 20, 30, 40, 0.75, 0), (15, 25, 30, 40, 0.60, 1)]
+  payload = struct.pack("<I", 2) + b"".join(struct.pack("<iiiifi", *row) for row in records)
+  if mutation == "short_header":
+    payload = payload[:3]
+  elif mutation == "short_record":
+    payload = payload[:-1]
+  elif mutation == "extra_byte":
+    payload += b"\x00"
+  elif mutation == "count_overflow":
+    payload = struct.pack("<I", 3) + payload[4:]
+  elif mutation == "tail_nonzero":
+    payload = struct.pack("<I", 1) + payload[4:]
+  else:
+    first = list(records[0])
+    replacements = {
+        "nan_score": (4, float("nan")), "score_over_one": (4, 1.1),
+        "below_threshold": (4, 0.4), "descending": (4, 0.55),
+        "invalid_class": (5, 80), "negative_extent": (2, -1),
+        "negative_origin": (0, -1), "end_outside": (2, 1000),
+        "nextafter_below_threshold": (4, float(np.nextafter(np.float32(0.5), np.float32(0.0)))),
+    }
+    field, value = replacements[mutation]
+    first[field] = value
+    payload = struct.pack("<I", 2) + struct.pack("<iiiifi", *first) + payload[28:]
+  with pytest.raises(AssertionError):
+    _validate_bbox_payload(payload, 640, 360, top_k=2, detection_threshold=0.5)
+
+
+def test_raw_bbox_validator_preserves_count_and_unclipped_geometry():
+  payload = struct.pack("<Iiiiifi", 1, 10, 20, 30, 40, 0.75, 2) + bytes(24)
+  records = _validate_bbox_payload(payload, 640, 360, top_k=2, detection_threshold=0.5)
+  assert records == [{"x1": 10, "y1": 20, "x2": 40, "y2": 60, "score": 0.75, "class_id": 2}]
+  assert _validate_bbox_payload(bytes(52), 640, 360, top_k=2, detection_threshold=0.5) == []
+
+
 def _bbox_payload_extent(payload: bytes) -> tuple[int, int]:
   if len(payload) < 4:
     return (0, 0)
@@ -350,7 +498,7 @@ def _threshold_suffix(threshold: float) -> str:
 def _write_overlay_artifact(
     path: Path, image: np.ndarray, boxes: list[dict], highlight_top_k: int = TOP_SCORE_HIGHLIGHT_COUNT
 ) -> Path:
-  SANDBOX_API_TESTS.mkdir(parents=True, exist_ok=True)
+  path.parent.mkdir(parents=True, exist_ok=True)
 
   overlay = image.copy()
   highlighted_ids = {
@@ -382,6 +530,12 @@ def _assert_image_dims(path: Path, width: int, height: int) -> None:
     raise AssertionError(f"failed to read image artifact: {path}")
   assert image.shape[1] == width
   assert image.shape[0] == height
+
+
+def _assert_overlay_changed(path: Path, image: np.ndarray) -> None:
+  overlay = cv2.imread(str(path), cv2.IMREAD_COLOR)
+  assert overlay is not None
+  assert np.any(cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB) != image), "overlay drew no boxes"
 
 
 def test_resnet_real_fixture_run_preserves_stable_classification_contract():
@@ -583,7 +737,7 @@ def test_tensor_input_model_uses_quanttess_frontend_contract():
     assert list(info.pre_kernels) == ["quantize", "tessellate"]
     assert info.needs.pre_quantization and info.needs.pre_tessellation
     assert info.capabilities.has_pre_quantization and info.capabilities.has_pre_tessellation
-    assert "neatprocesscvu" in model.backend_fragment(pyneat.ModelStage.Preprocess).lower()
+    assert "neatkernelrunner" in model.backend_fragment(pyneat.ModelStage.Preprocess).lower()
 
 
 def test_cpu_quanttess_input_matches_letterboxed_fp32_tensor_contract():
@@ -608,7 +762,9 @@ def _run_quanttess_boxdecode_on_real_input(
     quant_input: np.ndarray,
     preprocess_part,
     detection_threshold: float,
+    original_size: tuple[int, int] | None = None,
 ) -> tuple[str, pyneat.Sample]:
+  original_width, original_height = original_size or (image.shape[1], image.shape[0])
   graph = pyneat.Graph()
   graph.add(pyneat.nodes.input(model.input_appsrc_options(True)))
   graph.add(preprocess_part)
@@ -617,8 +773,8 @@ def _run_quanttess_boxdecode_on_real_input(
       pyneat.nodes.sima_box_decode(
           model,
           decode_type=pyneat.BoxDecodeType.YoloV8,
-          original_width=image.shape[1],
-          original_height=image.shape[0],
+          original_width=original_width,
+          original_height=original_height,
           model_width=quant_input.shape[1],
           model_height=quant_input.shape[0],
           detection_threshold=detection_threshold,
@@ -637,12 +793,15 @@ def _run_quanttess_boxdecode_on_real_input(
   graph.add(pyneat.nodes.output())
 
   backend = graph.describe_backend().lower()
+  assert "simaboxdecode" in graph.describe().lower()
   input_tensor = pyneat.Tensor.from_numpy(quant_input, copy=True)
   runner = graph.build([input_tensor])
   try:
     box_output = _run_one_sample(runner, input_tensor, timeout_ms=30000)
+    retained_payload = _extract_bbox_payload(box_output)
   finally:
     runner.close()
+  assert _extract_bbox_payload(box_output) == retained_payload, "runner close invalidated BBOX output"
   return backend, box_output
 
 
@@ -665,19 +824,18 @@ def test_tensor_model_quanttess_mla_boxdecode_writes_model_overlay(tmp_path):
     assert "quanttess" in backend
     assert "preproc" not in backend
     assert "neatprocessmla" in backend
-    assert "neatobjectdecode" in backend
-
-    payload = _extract_bbox_payload(box_output)
+    payload, raw_records = _validated_bbox_output(box_output, image.shape[1], image.shape[0], threshold)
     max_x2, max_y2 = _bbox_payload_extent(payload)
     boxes = _parse_bbox_payload(payload, image.shape[1], image.shape[0], min_score=threshold)
-    counts.append(len(boxes))
-    out_path = SANDBOX_API_TESTS / f"people_model_overlay_{_threshold_suffix(threshold)}.png"
+    counts.append(len(raw_records))
+    out_path = tmp_path / f"people_model_overlay_{_threshold_suffix(threshold)}.png"
 
     assert list(quant_input.shape) == [640, 640, 3]
     _sample_tensor(box_output)
     assert box_output.payload_tag in ("", "BBOX")
     assert boxes
     assert _write_overlay_artifact(out_path, image, boxes).is_file()
+    _assert_overlay_changed(out_path, image)
     assert max_x2 <= int(image.shape[1] * 1.1)
     assert max_y2 <= int(image.shape[0] * 1.1)
     _assert_image_dims(out_path, image.shape[1], image.shape[0])
@@ -704,13 +862,11 @@ def test_custom_graph_quanttess_mla_boxdecode_writes_explicit_overlay(tmp_path):
     assert "quanttess" in backend
     assert "preproc" not in backend
     assert "neatprocessmla" in backend
-    assert "neatobjectdecode" in backend
-
-    payload = _extract_bbox_payload(box_output)
+    payload, raw_records = _validated_bbox_output(box_output, image.shape[1], image.shape[0], threshold)
     max_x2, max_y2 = _bbox_payload_extent(payload)
     boxes = _parse_bbox_payload(payload, image.shape[1], image.shape[0], min_score=threshold)
-    counts.append(len(boxes))
-    out_path = SANDBOX_API_TESTS / (
+    counts.append(len(raw_records))
+    out_path = tmp_path / (
         f"people_quanttess_mla_boxdecode_overlay_{_threshold_suffix(threshold)}.png"
     )
 
@@ -719,11 +875,78 @@ def test_custom_graph_quanttess_mla_boxdecode_writes_explicit_overlay(tmp_path):
     assert box_output.payload_tag in ("", "BBOX")
     assert boxes
     assert _write_overlay_artifact(out_path, image, boxes).is_file()
+    _assert_overlay_changed(out_path, image)
     assert max_x2 <= int(image.shape[1] * 1.1)
     assert max_y2 <= int(image.shape[0] * 1.1)
     _assert_image_dims(out_path, image.shape[1], image.shape[0])
 
   assert counts == sorted(counts, reverse=True)
+
+
+def _assert_letterbox_geometry(
+    baseline: list[dict], actual: list[dict], model_size: tuple[int, int], image_size: tuple[int, int]
+) -> None:
+  """Independent image-coordinate oracle, starting from model-space rectangles."""
+  model_w, model_h = model_size
+  image_w, image_h = image_size
+  scale = max(image_w / model_w, image_h / model_h)
+  margin_x = (model_w * scale - image_w) / 2
+  margin_y = (model_h * scale - image_h) / 2
+  assert len(actual) == len(baseline), "image geometry changed candidate count"
+  for source, result in zip(baseline, actual):
+    assert result["class_id"] == source["class_id"]
+    assert result["score"] == source["score"]
+    expected = [
+        min(limit, max(0, source[key] * scale - margin))
+        for key, margin, limit in (
+            ("x1", margin_x, image_w), ("y1", margin_y, image_h),
+            ("x2", margin_x, image_w), ("y2", margin_y, image_h),
+        )
+    ]
+    # Baseline origins/extents were rounded separately; allow only their two
+    # pixel rounding error, not an image-size percentage or display clipping.
+    assert all(
+        abs(result[key] - coordinate) <= 2
+        for key, coordinate in zip(("x1", "y1", "x2", "y2"), expected)
+    ), "explicit image dimensions did not reach numerical BoxDecode"
+
+
+def test_letterbox_geometry_oracle_rejects_ignored_image_override():
+  source = [{"x1": 100, "y1": 200, "x2": 150, "y2": 280, "score": 0.75, "class_id": 0}]
+  expected = [{**source[0], "y1": 60, "y2": 140}]
+  _assert_letterbox_geometry(source, expected, (640, 640), (640, 360))
+  with pytest.raises(AssertionError, match="dimensions did not reach"):
+    _assert_letterbox_geometry(source, source, (640, 640), (640, 360))
+
+
+def test_boxdecode_explicit_original_geometry_reaches_numerical_output():
+  image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
+  model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8)
+  preproc_model = _image_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8)
+  quant_input = _cpu_quanttess_input(preproc_model, image)
+  assert list(quant_input.shape) == [640, 640, 3]
+  threshold = 0.25
+
+  def decode(size):
+    _, output = _run_quanttess_boxdecode_on_real_input(
+        model, image, quant_input, pyneat.nodes.quant_tess(pyneat.QuantTessOptions(model)),
+        threshold, original_size=size,
+    )
+    payload, records = _validated_bbox_output(output, *size, threshold)
+    return output, payload, records
+
+  baseline, retained_payload, baseline_records = decode((640, 640))
+  assert baseline_records
+  changed, _, changed_records = decode((640, 360))
+  # The exact same tensor bytes and MLA heads are decoded in two image spaces.
+  # No margins in the baseline; the override independently subtracts140 in Y.
+  _assert_letterbox_geometry(baseline_records, changed_records, (640, 640), (640, 360))
+  assert _extract_bbox_payload(baseline) == retained_payload, "new run mutated retained output"
+  del changed
+  _, restored_payload, restored_records = decode((640, 640))
+  assert restored_payload == retained_payload
+  assert restored_records == baseline_records
+  assert _extract_bbox_payload(baseline) == retained_payload
 
 
 def test_boxdecode_runtime_output_produces_overlay_artifact(tmp_path):

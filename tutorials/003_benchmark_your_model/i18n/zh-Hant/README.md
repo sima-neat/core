@@ -72,9 +72,9 @@ report = model.benchmark(options)
 
 從 `report.mla_layer_stats.layers` 讀取每個已編譯 MLA 層從零開始的 `stage_index`、`name` 與 `latency_us`：在只執行該層的一次剖析執行中測得的硬體執行時間。執行時間為零的 no-op 項目也會保留。各層延遲的總和不等於階段延遲，也不等於整體延遲。
 
-從 `report.mla_stage_stats.stages` 讀取每個 MLA 階段的 `stage_index` 與 `latency_us`：該階段連續不中斷執行 200 次的平均硬體時間。此時間不含主機、EV74 與資料搬移，因此低於整體延遲。
+從 `report.mla_stage_stats.stages` 讀取每個 MLA 階段的 `stage_index` 與 `latency_us`：該階段連續不中斷執行 200 次的平均硬體時間。階段延遲包含 MLA 運算，以及程式對 DRAM 的讀取與寫入；不含模型載入、主機與 EV74 處理，以及管線額外負擔。
 
-若找不到 `mla-rt`、其執行失敗或逾時，`benchmark()` 仍會傳回主要測量值，清單保持為空，並將原因寫入 `report.mla_layer_stats.status` 或 `report.mla_stage_stats.status`。其他情況下，各狀態為 `"not requested"` 或 `"ok"`。
+若找不到 `mla-rt`、其執行失敗或逾時，`benchmark()` 仍會傳回主要測量值，清單保持為空，並將原因寫入 `report.mla_layer_stats.status` 或 `report.mla_stage_stats.status`。其他情況下，各狀態為 `"not requested"` 或 `"ok"`。`mla-rt` 執行逾時或當機後，MLA 可能仍有未完成的工作，因此同一行程中之後的剖析會略過並記錄此原因。在確認 MLA 已復原之前，請讓 DevKit 保持閒置。
 
 ### 儲存報告 {#step-save-report}
 
@@ -161,5 +161,6 @@ report_telemetry_status=ok
 `Model::benchmark()` 需要具體的 `input_specs()` 尺寸。如果輸入形狀是動態或非具體的，基準測試將明確失敗，而不是猜測一個形狀。
 
 ## 原始程式碼檔案
+
 - C++：`tutorials/003_benchmark_your_model/benchmark_your_model.cpp`
 - Python：`tutorials/003_benchmark_your_model/benchmark_your_model.py`

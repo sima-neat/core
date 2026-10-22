@@ -112,14 +112,11 @@ void DetessDequant::apply_compiled_contract(const CompiledNodeContract&, std::st
 
 std::string DetessDequant::backend_fragment(int node_index) const {
   std::ostringstream ss;
-  require_element("neatprocesscvu", "DetessDequant::backend_fragment");
+  require_element("neatkernelrunner", "DetessDequant::backend_fragment");
   const std::string name = opt_.element_name.empty()
                                ? ("n" + std::to_string(node_index) + "_detessdequant")
                                : opt_.element_name;
-  ss << "neatprocesscvu name=" << name << " stage-id=" << name;
-  if (opt_.num_buffers > 0) {
-    ss << " num-buffers=" << opt_.num_buffers;
-  }
+  ss << "neatkernelrunner name=" << name;
   return ss.str();
 }
 
@@ -136,7 +133,7 @@ OutputSpec DetessDequant::output_spec(const OutputSpec& input) const {
   if (out.depth <= 0)
     out.depth = input.depth;
   out.certainty = SpecCertainty::Hint;
-  out.note = "neatprocesscvu";
+  out.note = "neatkernelrunner";
   return out;
 }
 

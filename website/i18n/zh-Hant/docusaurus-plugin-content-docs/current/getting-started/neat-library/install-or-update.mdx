@@ -22,7 +22,11 @@ sidebar_position: 2
 
 ## C++ 開發套件
 
-最小安裝包含執行階段與 `sima-neat-dev`。預設安裝將教學與測試列為可選附加項目；`all` 則全部包含。使用共用函式庫的應用程式需要 Core 的公開標頭，以及 GStreamer、OpenCV 和 JSON 開發檔案。它們不需要 Internals、記憶體函式庫、heap 或 LLiMa 開發套件；這些元件的執行階段函式庫仍然必要。
+最小安裝包含執行階段與 `sima-neat-dev`。預設安裝將教學與測試列為選用附加項目；
+`all` 則全部包含。共用程式庫應用程式需要 Core 公開標頭、相符的 Scheduler 前端，
+以及 GStreamer、OpenCV 與 JSON 開發檔案。它們不需要已淘汰的 Internals 整合套件，
+也不需要 Runner、Kernels、Codecs、記憶體程式庫、heap 或 LLiMa 開發 API。
+選定的套件會提供所需的執行階段相依項目。
 
 請使用已安裝的共用目標：
 
@@ -31,16 +35,18 @@ find_package(SimaNeat CONFIG REQUIRED)
 target_link_libraries(my_app PRIVATE SimaNeat::sima_neat)
 ```
 
-靜態封存仍包含在 `sima-neat-dev` 中。既有的靜態連結使用端必須新增 `COMPONENTS Static`，並安裝相容的 `neat-internals-dev`、
-`simaai-memory-lib-dev`、`zlib1g-dev`、`libcpp-httplib-dev`；若建置啟用 LLiMa，還須安裝
-`sima-lmm-dev`，以及上述套件的相依套件：
+靜態封存仍包含在 `sima-neat-dev` 中。請使用 `COMPONENTS Static`，並維持安裝
+相符的 `simaai-scheduler` 套件。安裝 `zlib1g-dev`、`libcpp-httplib-dev`，
+以及啟用 LLiMa 的建置所需的 `sima-lmm-dev`，連同它們的相依項目。
+Core 使用 Scheduler 已安裝的前端；不要在應用程式中加入 Internals 或下層程式庫的開發目標：
 
 ```cmake
 find_package(SimaNeat CONFIG REQUIRED COMPONENTS Static)
 target_link_libraries(my_app PRIVATE SimaNeat::sima_neat_static)
 ```
 
-靜態 Core 仍使用共用的實作函式庫。從原始碼建置 Core 也需要實作開發套件。
+靜態 Core 仍使用共用實作程式庫。從來源建置 Core 時，也使用相同的 Scheduler 前端
+邊界，並需要其他相依項目的開發檔案，包括啟用時所需的 LLiMa。
 
 ## 先決條件
 
@@ -67,7 +73,10 @@ curl -fsS https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh -o /dev/null && e
 ## 安裝 Neat Library
 
 :::note 套件相容性
-安裝程式會使用選取的「核心」成品中列出的所有 Debian 套件，且不會選擇不同的「內部元件」或 LLiMa 版本。已安裝的平台必須滿足該成品未提供的相依性。如果 APT 會移除平台套件以完成安裝，安裝程式將停止；請更新平台，而不是在「核心」或 LLiMa 中替換套件。
+安裝程式使用選定 Core 成品中列出的每個 Debian 套件，不會選擇不同的 Scheduler
+或 LLiMa 版本。已安裝的平台必須滿足該成品未提供的相依項目。
+若 APT 為完成安裝而要移除平台套件，安裝程式會停止；
+請更新平台，而不是在 Core 或 LLiMa 中替換套件。
 :::
 
 在執行安裝程式之前，請選擇一個工作目錄。在 DevKit 上，將安裝程式安裝在 `/media/nvme` 目錄下，以避免填滿根檔案系統。在 SDK 容器中，請使用容器內的本地路徑，例如 `$HOME/neat`。

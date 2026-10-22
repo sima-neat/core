@@ -25,6 +25,7 @@
 #include <iosfwd>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -126,6 +127,27 @@ struct ModelFragment {
   };
   std::vector<StageFacts> stage_facts;
 };
+
+// Owning read-only view of the exact selected fragments. Entries remain aligned
+// with the queried nodes; a non-fragment node has an empty entry. This preserves
+// the distinction between an ingress MLA and a transform before an internal MLA.
+struct SelectedModelFragmentStageFacts {
+  std::vector<std::span<const ModelFragment::StageFacts>> stage_facts;
+
+private:
+  std::shared_ptr<const ModelFragmentCompileContext> context_;
+  std::vector<std::shared_ptr<Node>> nodes_;
+  friend std::optional<SelectedModelFragmentStageFacts>
+  selected_model_fragment_stage_facts(const std::vector<std::shared_ptr<Node>>& nodes,
+                                      std::string* error);
+};
+
+// Reuses only the immutable selected-route/arena projection. It never invokes
+// NodeContractProvider, applies contracts, or prepares a native executable.
+// A successful result can contain no fragments; nullopt denotes a projection error.
+std::optional<SelectedModelFragmentStageFacts>
+selected_model_fragment_stage_facts(const std::vector<std::shared_ptr<Node>>& nodes,
+                                    std::string* error = nullptr);
 
 /**
  * @brief Load model packs and expose stage fragments as reusable node lists.

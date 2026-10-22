@@ -240,7 +240,7 @@ OutputSpec CameraInput::output_spec(const OutputSpec& /*input*/) const {
   } else if (out.format == "GRAY" || out.format == "GRAY8") {
     out.layout = "HW";
     out.depth = 1;
-  } else if (out.format == "NV12" || out.format == "I420") {
+  } else if (out.format == "NV12" || out.format == "NV16" || out.format == "I420") {
     out.layout = "Planar";
     out.depth = 3;
   }

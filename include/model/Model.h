@@ -106,8 +106,12 @@ struct MlaStageStats {
  * least `num_samples` inputs and `min_duration_ms` has elapsed.
  *
  * Power and board telemetry come from the Sentinel daemon, recorded by a `TelemetryMonitor`
- * around the throughput pass. When Sentinel is unavailable, the power fields are zero and
- * `telemetry.status` names the reason.
+ * around the throughput pass. Its sample window is armed after measurement starts
+ * and sealed after the last required output, before measurement stops. Preparation,
+ * worker teardown and final reads are outside the timer. Invalid UTC timestamps or
+ * detected clock discontinuities make benchmark telemetry unavailable, without
+ * changing standalone monitor cache-order recovery. When Sentinel is unavailable,
+ * the power fields are zero and `telemetry.status` names the reason.
  */
 struct BenchmarkReport {
   double latency_ms = 0.0;
@@ -350,11 +354,13 @@ public:
      */
     BoxDecodeType decode_type = BoxDecodeType::Unspecified;
     BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto;
-    float score_threshold = 0.0f; ///< BoxDecode score threshold; 0 keeps all candidates.
-    /// BoxDecode IoU threshold for non-max suppression. `0` keeps the model's packaged value;
-    /// when none is packaged, YOLO26 skips NMS and other decoders suppress every overlapping box.
+    /// BoxDecode score threshold. Zero permits zero-valued scores; NMS and top-K still apply.
+    float score_threshold = 0.0f;
+    /// BoxDecode NMS IoU threshold. Zero skips YOLO26 NMS; other NMS profiles still suppress.
     float nms_iou_threshold = 0.0f;
-    int top_k = 0; ///< BoxDecode top-K cap; 0 means no cap.
+    /// BoxDecode output cap. Bounding-box routes require a positive resolved value;
+    /// SuperPoint resolves zero to its profile default. Unused by other model routes.
+    int top_k = 0;
     SuperPointOptions
         superpoint; ///< SuperPoint profile/output options when decode_type is SuperPoint.
     /// Number of classes produced by detection heads. Set this for detection MPKs whose raw

@@ -26,7 +26,6 @@ namespace stagesemantics = pipeline_internal::sima::stagesemantics;
 
 struct NativeVisualSpec {
   std::string graph_name;
-  int graph_id = -1;
   std::vector<std::string> input_names;
   // Public/Neat logical tensor shapes.  Native EV74 visual kernels still receive
   // packed storage (for example B grayscale images as [B*H,W]), but users and
@@ -344,7 +343,6 @@ RuntimeConfig make_runtime_base(const NativeVisualSpec& spec) {
   RuntimeConfig runtime;
   runtime.graph_family = spec.graph_name;
   runtime.graph_name = spec.graph_name;
-  runtime.graph_id = spec.graph_id;
   runtime.default_input_name = spec.input_names.front();
   runtime.runtime_input_names = spec.input_names;
   runtime.physical_input_names = spec.input_names;
@@ -383,15 +381,17 @@ RuntimeConfig make_runtime_base(const NativeVisualSpec& spec) {
 
   runtime.input_tensors.reserve(spec.input_names.size());
   for (std::size_t i = 0; i < spec.input_names.size(); ++i) {
-    runtime.input_tensors.push_back(
+    runtime.input_tensors.emplace_back(
         build_contract_tensor_desc(transport_input_shapes[i], spec.input_dtypes[i],
-                                   spec.input_layouts[i], spec.graph_name.c_str()));
+                                   spec.input_layouts[i], spec.graph_name.c_str()),
+        spec.input_dtypes[i]);
   }
   runtime.output_tensors.reserve(spec.runtime_output_names.size());
   for (std::size_t i = 0; i < spec.runtime_output_names.size(); ++i) {
-    runtime.output_tensors.push_back(
+    runtime.output_tensors.emplace_back(
         build_contract_tensor_desc(transport_output_shapes[i], spec.output_dtypes[i],
-                                   spec.output_layouts[i], spec.graph_name.c_str()));
+                                   spec.output_layouts[i], spec.graph_name.c_str()),
+        spec.output_dtypes[i]);
   }
   return runtime;
 }
@@ -424,8 +424,22 @@ bool compile_runtime_contract(const std::string& node_kind, const std::string& e
                               const RuntimeConfig& runtime, CompiledNodeContract* out,
                               std::string* err) {
   try {
-    const auto compiled =
-        stagesemantics::build_processcvu_compiled_contract_from_runtime_config(runtime);
+    auto compiled = stagesemantics::build_processcvu_compiled_contract_from_runtime_config(runtime);
+    if (runtime.graph_name == "track_klt") {
+      // The public status tensor retains [B,N,1]; the canonical tracker writes
+      // [B,N] into the very same dense storage. Author that view at the public
+      // semantic boundary, not by accepting a later inspection mismatch.
+      const auto authorize_status = [](auto& outputs) {
+        for (auto& logical : outputs) {
+          if (logical.backend_output_index == 1) {
+            logical.publication_relation =
+                pipeline_internal::sima::PublicationViewRelation::SingletonAxes;
+          }
+        }
+      };
+      authorize_status(compiled.runtime_contract.logical_outputs);
+      authorize_status(compiled.exposed_view.exposed_logical_outputs);
+    }
     return stagesemantics::build_processcvu_node_contract(node_kind, element_name, element_name,
                                                           definition, compiled, out, err);
   } catch (const std::exception& ex) {
@@ -436,13 +450,10 @@ bool compile_runtime_contract(const std::string& node_kind, const std::string& e
   }
 }
 
-std::string processcvu_backend_fragment(const std::string& element_name, int num_buffers) {
-  require_element("neatprocesscvu", "VisualFrontend::backend_fragment");
+std::string processcvu_backend_fragment(const std::string& element_name) {
+  require_element("neatkernelrunner", "VisualFrontend::backend_fragment");
   std::ostringstream ss;
-  ss << "neatprocesscvu name=" << element_name << " stage-id=" << element_name;
-  if (num_buffers > 0) {
-    ss << " num-buffers=" << num_buffers;
-  }
+  ss << "neatkernelrunner name=" << element_name;
   return ss.str();
 }
 
@@ -458,7 +469,7 @@ OutputSpec tensor_output_spec(const std::string& format, const std::vector<int>&
                    : (shape.size() == 2U ? "HW" : (shape.size() >= 3U ? "HWC" : std::string{}));
   out.memory = input.memory.empty() ? "SimaAI" : input.memory;
   out.certainty = SpecCertainty::Derived;
-  out.note = "neatprocesscvu";
+  out.note = "neatkernelrunner";
   out.byte_size = shape_bytes(shape, dtype);
   std::string layout_upper = out.layout;
   std::transform(layout_upper.begin(), layout_upper.end(), layout_upper.begin(),
@@ -500,7 +511,7 @@ NativeVisualSpec spec_from_options(const FeatureHistogramOptions& opt) {
                                static_cast<std::uint64_t>(opt.batch_size));
   NativeVisualSpec spec;
   spec.graph_name = "feature_histogram";
-  spec.graph_id = 235;
+
   spec.input_names = {opt.input_name};
   spec.input_shapes = {{opt.batch_size, opt.height, opt.width}};
   spec.transport_input_shapes = {
@@ -533,7 +544,7 @@ NativeVisualSpec spec_from_options(const GriderFastOptions& opt) {
                                                feature_list_ints("GriderFast", opt.max_features));
   NativeVisualSpec spec;
   spec.graph_name = "grider_fast";
-  spec.graph_id = 236;
+
   spec.input_names = {opt.input_name};
   spec.input_shapes = {{opt.batch_size, opt.height, opt.width}};
   spec.transport_input_shapes = {
@@ -578,7 +589,7 @@ NativeVisualSpec spec_from_options(const TrackDescriptorOptions& opt) {
                                         static_cast<std::uint64_t>(opt.max_features)));
   NativeVisualSpec spec;
   spec.graph_name = "track_descriptor";
-  spec.graph_id = 237;
+
   spec.input_names = {opt.input_name};
   spec.input_shapes = {{opt.batch_size, opt.height, opt.width}};
   spec.transport_input_shapes = {
@@ -617,7 +628,7 @@ NativeVisualSpec spec_from_options(const TrackKLTOptions& opt) {
                       static_cast<std::uint64_t>(opt.num_points)));
   NativeVisualSpec spec;
   spec.graph_name = "track_klt";
-  spec.graph_id = 238;
+
   spec.input_names = {opt.prev_image_name, opt.cur_image_name, opt.input_points_name};
   spec.input_shapes = {{opt.batch_size, opt.height, opt.width},
                        {opt.batch_size, opt.height, opt.width},
@@ -712,7 +723,7 @@ TrackKLT::TrackKLT(TrackKLTOptions opt) : opt_(std::move(opt)) {}
 
 std::string FeatureHistogramOptions::summary() const {
   std::ostringstream ss;
-  ss << "FeatureHistogramOptions(graph=feature_histogram,graph_id=235,";
+  ss << "FeatureHistogramOptions(graph=feature_histogram,";
   append_common_summary(ss, *this);
   ss << ",input=" << quoted_or_auto(input_name) << ",output=" << quoted_or_auto(output_name)
      << ",input_shape=[" << batch_size << "," << height << "," << width << "]" << ",output_shape=["
@@ -722,7 +733,7 @@ std::string FeatureHistogramOptions::summary() const {
 
 std::string GriderFastOptions::summary() const {
   std::ostringstream ss;
-  ss << "GriderFastOptions(graph=grider_fast,graph_id=236,";
+  ss << "GriderFastOptions(graph=grider_fast,";
   append_common_summary(ss, *this);
   append_fast_summary(ss, threshold, max_features, grid_x, grid_y, min_px_dist);
   ss << ",input=" << quoted_or_auto(input_name) << ",output=" << quoted_or_auto(output_name)
@@ -733,7 +744,7 @@ std::string GriderFastOptions::summary() const {
 
 std::string TrackDescriptorOptions::summary() const {
   std::ostringstream ss;
-  ss << "TrackDescriptorOptions(graph=track_descriptor,graph_id=237,";
+  ss << "TrackDescriptorOptions(graph=track_descriptor,";
   append_common_summary(ss, *this);
   append_fast_summary(ss, threshold, max_features, grid_x, grid_y, min_px_dist);
   ss << ",descriptor_words=" << descriptor_words << ",input=" << quoted_or_auto(input_name)
@@ -747,7 +758,7 @@ std::string TrackDescriptorOptions::summary() const {
 
 std::string TrackKLTOptions::summary() const {
   std::ostringstream ss;
-  ss << "TrackKLTOptions(graph=track_klt,graph_id=238,width=" << width << ",height=" << height
+  ss << "TrackKLTOptions(graph=track_klt,width=" << width << ",height=" << height
      << ",batch_size=" << batch_size << ",num_points=" << num_points << ",win_half=" << win_half
      << ",max_iters=" << max_iters << ",max_level=" << max_level
      << ",detect_new_features=" << detect_new_features;
@@ -840,19 +851,19 @@ void TrackKLT::apply_compiled_contract(const CompiledNodeContract&, std::string*
 
 std::string FeatureHistogram::backend_fragment(int node_index) const {
   const auto names = element_names(node_index);
-  return processcvu_backend_fragment(names.front(), opt_.num_buffers);
+  return processcvu_backend_fragment(names.front());
 }
 std::string GriderFast::backend_fragment(int node_index) const {
   const auto names = element_names(node_index);
-  return processcvu_backend_fragment(names.front(), opt_.num_buffers);
+  return processcvu_backend_fragment(names.front());
 }
 std::string TrackDescriptor::backend_fragment(int node_index) const {
   const auto names = element_names(node_index);
-  return processcvu_backend_fragment(names.front(), opt_.num_buffers);
+  return processcvu_backend_fragment(names.front());
 }
 std::string TrackKLT::backend_fragment(int node_index) const {
   const auto names = element_names(node_index);
-  return processcvu_backend_fragment(names.front(), opt_.num_buffers);
+  return processcvu_backend_fragment(names.front());
 }
 
 std::vector<std::string> FeatureHistogram::element_names(int node_index) const {

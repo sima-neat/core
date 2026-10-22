@@ -33,11 +33,54 @@ Examples:
 
 A `Tensor` carries its segment alongside the triple, so the framework knows whether a peek/poke from CPU code is valid.
 
+With bound storage, a dense numeric `Tensor` with shape `{}` is a rank-zero
+scalar: its dense size is one `dtype` element. It differs from a zero-extent shape
+such as `{0,256}`, whose dense size is zero. Tight byte copies and `clone()`
+preserve the scalar value while checking the view offset and storage bounds. A
+default, unbound Tensor reports zero from `dense_bytes_tight()`; tight copying
+and cloning reject it. Explicit encoded, byte-stream, tessellated and text
+carriers retain their carrier-byte semantics. This does not change the byte
+extent returned by public `map()`.
+
 ## Cache coherence
 
-The MLA, EV74, and CPU all have their own caches. When a buffer is written by one and read by another, the framework inserts cache flush / invalidate calls at the boundary. Application code never has to think about this — it's handled at the segment level when buffers cross stages.
+Scheduler prepares CPU/device access through Runner's shared memory authority,
+which owns allocation identity, DMA-BUF retention, CPU/device exclusion, checked
+ranges and generation-based visibility. MLA and EV publish completed device
+writes without an eager CPU READ epoch. Required READ cache maintenance runs
+when a CPU mapping or the A65 worker acquires checked access, **before reading**,
+not at unmap or in backend completion callbacks. Device-only successors do no
+CPU visibility work; independent frames can still overlap.
 
-The one place application code does have to think about it: when **mapping** a `TensorBuffer` for direct CPU read or write via `Mapping`. The framework inserts the right invalidate (read map) or flush (write map) at unmap time. See [`MapMode`](/reference/cppapi/namespaces/simaai-neat) and [`TensorBuffer::map()`](/reference/cppapi/structs/simaai-neat-tensorbuffer).
+Use `Mapping` with the appropriate [`MapMode`](/reference/cppapi/namespaces/simaai-neat)
+when calling [`TensorBuffer::map()`](/reference/cppapi/structs/simaai-neat-tensorbuffer).
+A Tensor mapping retains its map guard and current storage/producer loan until
+CPU access ends. Required END synchronization, including write cleanup, completes
+before those owners release. Partial writes preserve neighboring cache-line bytes.
+Failed synchronization quarantines the affected allocation instead of returning
+it to normal reuse.
+
+Each public DMA mapping retains its own Scheduler lease. Compatible reads share
+Runner's access authority, including overlapping views; writes remain excluded.
+Virtual addresses from separate mappings need not be identical. Releasing one
+reader cannot invalidate another, and only the final owner performs the required
+END transition.
+
+Owned cached CMA requires cold platform and exporter admission; failure is
+actionable, not permission to fall back to whole-buffer synchronization. Imported DMA-BUFs and other heaps keep
+their exporter contract through the same ownership engine.
+
+Private all-A65 recipes may retain an explicit parent batch; children require the
+live parent capability, exact permissions and range coverage.
+Final parent release cleans writes after every child has retired. Mixed device
+phases do not receive implicit batch membership. No hidden staging copy is added.
+Raw-FD writers and custom callbacks must still honor the ownership contract;
+removing a graph allowlist does not prove that untracked access is safe.
+
+Transport boundaries preserve backing allocation identity, checked offsets and
+lengths, and original pool-buffer ownership. Metadata-only envelopes share memory
+and retain the pool parent. EV/CVU and MLA imports retain the producer until
+completion. Unknown completion must not recycle potentially active storage.
 
 ## Zero-copy in practice
 

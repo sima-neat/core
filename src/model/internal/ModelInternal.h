@@ -66,10 +66,15 @@ enum class StageNodeKind {
 };
 
 struct ModelAccess {
+  // Exercise the same synthetic input construction used by seedless builds.
+  static Tensor make_dummy_input(const InputOptions& options);
   static const class ModelPack& pack(const Model& model);
   static const class ModelPack& pack_for_sync(const Model& model);
   static void prepare_for_execution(const Model& model, bool sync);
   static std::string model_id(const Model& model);
+  // Complete value identity for stage reuse; computed once when the Model is constructed.
+  static const std::string& stage_cache_identity(const Model& model);
+  static bool stage_cache_has_dynamic_boxdecode_geometry(const Model& model);
   static std::string source_path(const Model& model);
   static Run& run(Model::Runner& runner);
   static const Run& run(const Model::Runner& runner);
@@ -119,6 +124,9 @@ struct ModelAccess {
 
 BenchmarkReport run_benchmark(Model& model, const BenchmarkOptions& options);
 
+// Pure admission check shared by synthetic input construction and contract tests.
+void validate_synthetic_benchmark_image_format(const TensorSpec& spec);
+
 /// Project the latency window (`latency_samples` inputs), the throughput window
 /// (`throughput_samples` inputs), and Sentinel telemetry into the public benchmark report.
 /// `num_samples` is the requested count that `energy_joules` is normalized to.
@@ -135,6 +143,10 @@ PreprocessRuntimeMeta resolve_benchmark_preprocess_meta(const Tensor& tensor,
                                                         const ResolvedPreprocessPlan& plan,
                                                         const PreprocessContractFlags& flags,
                                                         const BenchmarkOptions& options);
+
+// Internal serializer shared with cache-compatibility regression tests. Advanced execution
+// overlays are resolved before serialization; diagnostic verbosity is intentionally excluded.
+std::string model_stage_options_cache_identity(const Model::Options& options);
 
 Model::Options benchmark_build_model_options(const Model::Options& model_options);
 

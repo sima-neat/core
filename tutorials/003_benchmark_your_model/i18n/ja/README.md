@@ -72,9 +72,9 @@ report = model.benchmark(options)
 
 `report.mla_layer_stats.layers` から、コンパイル済みの各 MLA レイヤーのゼロ始まりの `stage_index`、`name`、`latency_us` を読み取ります。これは、そのレイヤーだけを実行する 1 回のプロファイリング実行で測定したハードウェア実行時間です。実行時間がゼロの no-op エントリも保持されます。レイヤーのレイテンシを合計しても、ステージのレイテンシや全体のレイテンシとは一致しません。
 
-`report.mla_stage_stats.stages` から、各 MLA ステージの `stage_index` と `latency_us` を読み取ります。これはそのステージを中断なしで 200 回実行したときのハードウェア時間の平均です。ホスト、EV74、データ転送は含まれないため、全体のレイテンシより小さくなります。
+`report.mla_stage_stats.stages` から、各 MLA ステージの `stage_index` と `latency_us` を読み取ります。これはそのステージを中断なしで 200 回実行したときのハードウェア時間の平均です。ステージのレイテンシには、MLA の演算と、プログラムによる DRAM の読み書きが含まれます。モデルの読み込み、ホストと EV74 の処理、パイプラインのオーバーヘッドは含まれません。
 
-`mla-rt` が見つからない、失敗する、またはタイムアウトした場合でも、`benchmark()` は主要な測定値を返し、リストを空のままにして、`report.mla_layer_stats.status` または `report.mla_stage_stats.status` に理由を設定します。それ以外の場合、各ステータスは `"not requested"` または `"ok"` です。
+`mla-rt` が見つからない、失敗する、またはタイムアウトした場合でも、`benchmark()` は主要な測定値を返し、リストを空のままにして、`report.mla_layer_stats.status` または `report.mla_stage_stats.status` に理由を設定します。それ以外の場合、各ステータスは `"not requested"` または `"ok"` です。`mla-rt` の実行がタイムアウトまたはクラッシュした後は、MLA に未完了の処理が残っている可能性があるため、同じプロセスでのそれ以降のプロファイリングはその理由とともにスキップされます。MLA の回復を確認するまで、DevKit をアイドル状態に保ってください。
 
 ### レポートの保存 {#step-save-report}
 
@@ -161,5 +161,6 @@ report_telemetry_status=ok
 `Model::benchmark()`には、具体的な`input_specs()`の次元が必要です。入力の形状が動的であるか、または具体的なものでない場合、ベンチマークは形状を推測するのではなく、明確に失敗します。
 
 ## ソースファイル
+
 - C++: `tutorials/003_benchmark_your_model/benchmark_your_model.cpp`
 - Python: `tutorials/003_benchmark_your_model/benchmark_your_model.py`

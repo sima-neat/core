@@ -227,6 +227,25 @@ RUN_TEST(
       const std::string superpoint_options_path = tmp_json_path("graph_io_superpoint_options.json");
       write_text(superpoint_options_path, superpoint_options_json);
 
+      // Serialized class IDs cannot be silently dropped or truncated into another gate.
+      for (const std::string bad_gate :
+           {"[0,0.5]", "[0,\"five\"]", "[0,-1]", "[0,2147483648]", "5"}) {
+        std::string malformed = superpoint_options_json;
+        const auto gate = malformed.find("\"pose_classes\":[0,5]");
+        require(gate != std::string::npos, "pose class fixture is missing");
+        malformed.replace(gate, std::string("\"pose_classes\":[0,5]").size(),
+                          "\"pose_classes\":" + bad_gate);
+        const auto malformed_path = tmp_json_path("graph_io_bad_pose_classes.json");
+        write_text(malformed_path, malformed);
+        bool refused = false;
+        try {
+          (void)Graph::load(malformed_path);
+        } catch (const std::exception& error) {
+          refused = std::string(error.what()).find("pose_classes") != std::string::npos;
+        }
+        require(refused, "invalid serialized pose class IDs must fail with a field diagnostic");
+      }
+
       const Graph loaded_superpoint_model_graph = Graph::load(superpoint_options_path);
       const std::string superpoint_options_roundtrip_path =
           tmp_json_path("graph_io_superpoint_options_roundtrip.json");

@@ -64,8 +64,8 @@ struct CompiledProcessCvuRuntimeConfig {
   bool has_q_zp = false;
   std::int64_t q_zp = 0;
 
-  std::vector<sima_ev_tensor_desc> input_tensors;
-  std::vector<sima_ev_tensor_desc> output_tensors;
+  std::vector<AuthoredTensorDescriptor> input_tensors;
+  std::vector<AuthoredTensorDescriptor> output_tensors;
   std::vector<double> q_scale_list;
   std::vector<std::int64_t> q_zp_list;
   std::vector<double> dq_scale_list;

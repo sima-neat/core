@@ -42,10 +42,14 @@ CORE_CHANNEL=""
 CORE_TAG=""
 CORE_CHANNEL_ASSUMED=0
 PYNEAT_VERSION=""
+PYNEAT_VERSION_STATE="missing"
 RUNTIME_VERSION=""
 GST_PLUGINS_VERSION=""
+RUNNER_VERSION=""
+SCHEDULER_VERSION=""
 LLIMA_VERSION=""
 INSIGHT_VERSION=""
+INSIGHT_VERSION_STATE="missing"
 INSIGHT_CHANNEL=""
 INSIGHT_TAG=""
 INSIGHT_CHANNEL_ASSUMED=0
@@ -345,13 +349,75 @@ version_from_wheel() {
   python3 -c 'import re,sys; m=re.match(r"^[A-Za-z0-9_.]+-(.+?)-(?:py\d|cp\d)", sys.argv[1]); print(m.group(1) if m else "")' "${filename}" 2>/dev/null || true
 }
 
-version_from_pip_show() {
-  local pip_bin="$1"
+discover_distribution_version() {
+  local venv_dir="$1"
   local package="$2"
-  if [[ ! -x "${pip_bin}" ]]; then
+  local version_var="$3"
+  local state_var="$4"
+  local probe_bin=""
+  local probe_output=""
+  local probe_version=""
+  local probe_rc=0
+  local probe_reason=""
+
+  printf -v "${version_var}" '%s' ""
+  printf -v "${state_var}" '%s' "missing"
+  if [[ -x "${venv_dir}/bin/python" ]]; then
+    probe_bin="${venv_dir}/bin/python"
+  elif [[ -x "${venv_dir}/bin/python3" ]]; then
+    probe_bin="${venv_dir}/bin/python3"
+  fi
+
+  if [[ -n "${probe_bin}" ]]; then
+    # Query the selected environment, not pip's possibly stale interpreter;
+    # isolated mode excludes ambient PYTHONPATH and user-site distributions.
+    if probe_output="$("${probe_bin}" -I - "${package}" 2>&1 <<'PY'
+import importlib.metadata as metadata
+import sys
+
+try:
+    version = metadata.version(sys.argv[1])
+except metadata.PackageNotFoundError:
+    print("missing")
+else:
+    print("installed\t" + version)
+PY
+)"; then
+      case "${probe_output}" in
+        missing) return 0 ;;
+        installed$'\t'*) probe_version="${probe_output#*$'\t'}" ;;
+        *) probe_reason="malformed metadata response" ;;
+      esac
+    else
+      probe_rc=$?
+      probe_reason="metadata query failed (exit ${probe_rc})"
+    fi
+  elif [[ -x "${venv_dir}/bin/pip3" ]]; then
+    probe_bin="${venv_dir}/bin/pip3"
+    if probe_output="$("${probe_bin}" show "${package}" 2>&1)"; then
+      if ! probe_version="$(printf '%s\n' "${probe_output}" | awk -F': ' '
+        $1 == "Version" { count++; version = $2 }
+        END { if (count == 1 && version != "") print version; else exit 1 }
+      ')"; then
+        probe_reason="malformed pip show response"
+      fi
+    else
+      probe_rc=$?
+      # pip exit codes do not distinguish absence from a broken provider.
+      probe_reason="pip show failed (exit ${probe_rc})"
+    fi
+  else
     return 0
   fi
-  "${pip_bin}" show "${package}" 2>/dev/null | awk -F': ' '$1 == "Version" { print $2 }'
+
+  if [[ -z "${probe_reason}" && -n "${probe_version}" && "${probe_version}" != *[$'\t\r\n ']* ]]; then
+    printf -v "${version_var}" '%s' "${probe_version}"
+    printf -v "${state_var}" '%s' "installed"
+    return 0
+  fi
+  printf -v "${state_var}" '%s' "unknown"
+  printf 'neat: cannot determine %s version using %s: %s%s\n' \
+    "${package}" "${probe_bin}" "${probe_reason:-invalid version}" "${probe_output:+: ${probe_output}}" >&2
 }
 
 setup_color() {
@@ -376,7 +442,7 @@ setup_color() {
 status_color() {
   case "$1" in
     ok|current|installed) printf '%s' "${GREEN}" ;;
-    update|missing|warning|assumed) printf '%s' "${YELLOW}" ;;
+    update|missing|unknown|warning|assumed) printf '%s' "${YELLOW}" ;;
     error) printf '%s' "${RED}" ;;
     *) printf '%s' "${BLUE}" ;;
   esac
@@ -403,7 +469,11 @@ print_component() {
   local color
   color="$(status_color "${state}")"
   if [[ -z "${version}" ]]; then
-    version="not installed"
+    if [[ "${state}" == "unknown" ]]; then
+      version="unknown"
+    else
+      version="not installed"
+    fi
   fi
   printf '  %s%-22s%s %s%-18s%s %s\n' "${BOLD}" "${name}" "${RESET}" "${color}" "${version}" "${RESET}" "${detail}"
 }
@@ -505,6 +575,27 @@ infer_channel_and_tag() {
   printf -v "${tag_var}" '%s' "${tag}"
 }
 
+sdk_deb_version() {
+  local cache_dir="$1"
+  local package="$2"
+  local file metadata name version
+  local result=""
+  have_cmd dpkg-deb || return 0
+  # Split artifacts have stable filenames without versions. Read their actual
+  # control identity; filenames are not authoritative package metadata.
+  while IFS= read -r -d '' file; do
+    metadata="$(dpkg-deb --show --showformat='${Package}\t${Version}' "${file}" 2>/dev/null)" || continue
+    IFS=$'\t' read -r name version <<< "${metadata}"
+    [[ "${name}" == "${package}" && -n "${version}" ]] || continue
+    if [[ -n "${result}" && "${result}" != "${version}" ]]; then
+      printf 'neat: conflicting cached versions of %s\n' "${package}" >&2
+      return 0
+    fi
+    result="${version}"
+  done < <(find "${cache_dir}" -maxdepth 1 -type f -name '*.deb' -print0 | sort -z)
+  printf '%s' "${result}"
+}
+
 discover_sdk_components() {
   local cache_dir="${SYSROOT_PATH}/neat-install-packages"
   local core_file=""
@@ -514,6 +605,8 @@ discover_sdk_components() {
   local file
 
   if [[ -d "${cache_dir}" ]]; then
+    RUNNER_VERSION="$(sdk_deb_version "${cache_dir}" simaai-runner)"
+    SCHEDULER_VERSION="$(sdk_deb_version "${cache_dir}" simaai-scheduler)"
     core_file="$(find "${cache_dir}" -maxdepth 1 -type f -name 'sima-neat-*-Linux-core.deb' | sort | tail -n1 || true)"
     dev_file="$(find "${cache_dir}" -maxdepth 1 -type f -name 'sima-neat-*-Linux-dev.deb' | sort | tail -n1 || true)"
     if [[ -n "${core_file}" ]]; then
@@ -582,12 +675,10 @@ discover_devkit_components() {
   fi
   RUNTIME_VERSION="$(dpkg_version neat-runtime)"
   GST_PLUGINS_VERSION="$(dpkg_version neat-gst-plugins)"
+  RUNNER_VERSION="$(dpkg_version simaai-runner)"
+  SCHEDULER_VERSION="$(dpkg_version simaai-scheduler)"
   LLIMA_VERSION="$(dpkg_version sima-lmm-core)"
-  if [[ -x "${HOME}/pyneat/bin/pip3" ]]; then
-    PYNEAT_VERSION="$(version_from_pip_show "${HOME}/pyneat/bin/pip3" pyneat)"
-  elif [[ -x "${HOME}/pyneat/bin/python" ]]; then
-    PYNEAT_VERSION="$("${HOME}/pyneat/bin/python" -m pip show pyneat 2>/dev/null | awk -F': ' '$1 == "Version" { print $2 }')"
-  fi
+  discover_distribution_version "${HOME}/pyneat" pyneat PYNEAT_VERSION PYNEAT_VERSION_STATE
 }
 
 discover_core_package_buildinfo() {
@@ -631,11 +722,7 @@ discover_insight() {
     INSIGHT_VENV_DIR="${HOME}/.simaai/neat-insight/venv"
   fi
 
-  if [[ -x "${INSIGHT_VENV_DIR}/bin/pip3" ]]; then
-    INSIGHT_VERSION="$(version_from_pip_show "${INSIGHT_VENV_DIR}/bin/pip3" neat-insight)"
-  elif [[ -x "${INSIGHT_VENV_DIR}/bin/python" ]]; then
-    INSIGHT_VERSION="$("${INSIGHT_VENV_DIR}/bin/python" -m pip show neat-insight 2>/dev/null | awk -F': ' '$1 == "Version" { print $2 }')"
-  fi
+  discover_distribution_version "${INSIGHT_VENV_DIR}" neat-insight INSIGHT_VERSION INSIGHT_VERSION_STATE
 
   if have_cmd insight-admin; then
     status_output="$(insight-admin status 2>/dev/null || true)"
@@ -740,6 +827,7 @@ discover_model_compiler() {
 }
 
 discover_all() {
+  local include_insight="${1:-1}"
   detect_env_mode
   if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
     discover_sdk_version
@@ -748,13 +836,17 @@ discover_all() {
     discover_devkit_build_version
     discover_devkit_components
   fi
-  discover_insight
+  if [[ "${include_insight}" -eq 1 ]]; then
+    discover_insight
+  fi
   discover_model_compiler
   discover_core_package_buildinfo
   if [[ -z "${CORE_CHANNEL}" || -z "${CORE_TAG}" ]]; then
     infer_channel_and_tag "${CORE_VERSION}" "main" CORE_CHANNEL CORE_TAG CORE_CHANNEL_ASSUMED
   fi
-  infer_channel_and_tag "${INSIGHT_VERSION}" "main" INSIGHT_CHANNEL INSIGHT_TAG INSIGHT_CHANNEL_ASSUMED
+  if [[ "${include_insight}" -eq 1 ]]; then
+    infer_channel_and_tag "${INSIGHT_VERSION}" "main" INSIGHT_CHANNEL INSIGHT_TAG INSIGHT_CHANNEL_ASSUMED
+  fi
 }
 
 resolve_core_latest() {
@@ -1053,6 +1145,8 @@ print_status_json() {
     NEAT_JSON_PYNEAT_VERSION="${PYNEAT_VERSION}" \
     NEAT_JSON_RUNTIME_VERSION="${RUNTIME_VERSION}" \
     NEAT_JSON_GST_PLUGINS_VERSION="${GST_PLUGINS_VERSION}" \
+    NEAT_JSON_RUNNER_VERSION="${RUNNER_VERSION}" \
+    NEAT_JSON_SCHEDULER_VERSION="${SCHEDULER_VERSION}" \
     NEAT_JSON_LLIMA_VERSION="${LLIMA_VERSION}" \
     NEAT_JSON_INSIGHT_VERSION="${INSIGHT_VERSION}" \
     NEAT_JSON_INSIGHT_CHANNEL="${INSIGHT_CHANNEL}" \
@@ -1223,6 +1317,14 @@ payload = {
             "name": "neat-gst-plugins",
             "version": optional(env("NEAT_JSON_GST_PLUGINS_VERSION")),
         },
+        "runner": {
+            "name": "simaai-runner",
+            "version": optional(env("NEAT_JSON_RUNNER_VERSION")),
+        },
+        "scheduler": {
+            "name": "simaai-scheduler",
+            "version": optional(env("NEAT_JSON_SCHEDULER_VERSION")),
+        },
         "llima": {
             "name": "neat-llima",
             "version": optional(env("NEAT_JSON_LLIMA_VERSION")),
@@ -1269,6 +1371,8 @@ print_status() {
   local insight_detail=""
   local core_state="installed"
   local insight_state="installed"
+  local pyneat_state="$([[ -n "${PYNEAT_VERSION}" ]] && echo installed || echo "${PYNEAT_VERSION_STATE}")"
+  local pyneat_detail=""
   local model_detail=""
 
   printf '%sNeat Environment%s\n' "${BOLD}" "${RESET}"
@@ -1313,14 +1417,31 @@ print_status() {
   fi
   insight_detail="${insight_detail} $(format_insight_service_state)"
   [[ -n "${INSIGHT_VENV_DIR}" ]] && insight_detail="${insight_detail} venv=${INSIGHT_VENV_DIR}"
+  if [[ "${PYNEAT_VERSION_STATE}" == "unknown" ]]; then
+    pyneat_detail="version unavailable"
+  fi
+  if [[ -z "${INSIGHT_VERSION}" ]]; then
+    insight_state="${INSIGHT_VERSION_STATE}"
+    [[ "${insight_state}" == "unknown" ]] && insight_detail="${insight_detail} version unavailable"
+  fi
 
   printf '%sComponents%s\n' "${BOLD}" "${RESET}"
   print_component "Neat core" "${CORE_VERSION}" "${core_detail:-${CORE_DETAIL}}" "$([[ -n "${CORE_VERSION}" ]] && echo "${core_state}" || echo missing)"
-  print_component "PyNeat" "${PYNEAT_VERSION}" "" "$([[ -n "${PYNEAT_VERSION}" ]] && echo installed || echo missing)"
-  print_component "neat-runtime" "${RUNTIME_VERSION}" "" "$([[ -n "${RUNTIME_VERSION}" ]] && echo installed || echo missing)"
-  print_component "neat-gst-plugins" "${GST_PLUGINS_VERSION}" "" "$([[ -n "${GST_PLUGINS_VERSION}" ]] && echo installed || echo missing)"
+  print_component "PyNeat" "${PYNEAT_VERSION}" "${pyneat_detail}" "${pyneat_state}"
+  if [[ -n "${RUNNER_VERSION}" || -n "${SCHEDULER_VERSION}" ]]; then
+    print_component "simaai-runner" "${RUNNER_VERSION}" "" "$([[ -n "${RUNNER_VERSION}" ]] && echo installed || echo missing)"
+    print_component "simaai-scheduler" "${SCHEDULER_VERSION}" "" "$([[ -n "${SCHEDULER_VERSION}" ]] && echo installed || echo missing)"
+  fi
+  # A split installation does not require retired roles. Still report legacy
+  # packages when present, including during a mixed/coexisting installation.
+  if [[ -n "${RUNTIME_VERSION}" || ( -z "${RUNNER_VERSION}" && -z "${SCHEDULER_VERSION}" ) ]]; then
+    print_component "neat-runtime" "${RUNTIME_VERSION}" "" "$([[ -n "${RUNTIME_VERSION}" ]] && echo installed || echo missing)"
+  fi
+  if [[ -n "${GST_PLUGINS_VERSION}" || ( -z "${RUNNER_VERSION}" && -z "${SCHEDULER_VERSION}" ) ]]; then
+    print_component "neat-gst-plugins" "${GST_PLUGINS_VERSION}" "" "$([[ -n "${GST_PLUGINS_VERSION}" ]] && echo installed || echo missing)"
+  fi
   print_component "neat-llima" "${LLIMA_VERSION}" "" "$([[ -n "${LLIMA_VERSION}" ]] && echo installed || echo missing)"
-  print_component "neat-insight" "${INSIGHT_VERSION}" "${insight_detail}" "$([[ -n "${INSIGHT_VERSION}" ]] && echo "${insight_state}" || echo missing)"
+  print_component "neat-insight" "${INSIGHT_VERSION}" "${insight_detail}" "${insight_state}"
 
   if [[ "${MODEL_COMPILER_AVAILABLE}" -eq 1 ]]; then
     model_detail="${MODEL_COMPILER_DETAIL}"
@@ -1483,7 +1604,7 @@ print_update_plan() {
 
 run_update() {
   STATUS_OFFLINE=0
-  discover_all
+  discover_all "${UPDATE_INSIGHT}"
   reset_update_failures
   if [[ "${UPDATE_CORE}" -eq 1 ]] && ! resolve_core_latest; then
     die "unable to resolve latest Neat core artifact$(update_failure_suffix)"

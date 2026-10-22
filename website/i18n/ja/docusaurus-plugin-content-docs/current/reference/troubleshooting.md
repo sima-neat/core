@@ -232,7 +232,7 @@ python3 share/sima-neat/tutorials/023_run_mipi_camera_model/run_mipi_camera_mode
   --pull-timeout-ms 15000 --print-backend
 </ShellCommand>
 
-フォールバックが有効になっている場合、プロセスのパスには、`libcamerasrc`、`neatcamerabridge`、`neatprocesscvu`、`neatprocessmla`、および`appsink`を含める必要があります。BoxDecodeルートの場合、`--decode`トークンと閾値がモデルアーカイブと一致することを確認してください。
+フォールバックが有効になっている場合、プロセスのパスには、`libcamerasrc`、`neatcamerabridge`、`neatkernelrunner`、`neatprocessmla`、および`appsink`を含める必要があります。BoxDecodeルートの場合、`--decode`トークンと閾値がモデルアーカイブと一致することを確認してください。
 :::
 
 ### 16. グラフの処理速度が遅い、またはライブフレームが途中で失われる。

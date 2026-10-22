@@ -1,4 +1,7 @@
 #include "pipeline/internal/PipelineBuild.h"
+#include "pipeline/Graph.h"
+#include "nodes/common/Output.h"
+#include "nodes/io/Input.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -44,4 +47,28 @@ RUN_TEST("unit_pipeline_internal_build_test", ([] {
            require(expected2[2] == "aa_bridge_zz", "PipelineBuildContext expected[2] mismatch");
            require(expected2[3] == "bridge",
                    "PipelineBuildContext expected[3] legacy alias mismatch");
+
+           // Preserve the cold renderer wiring contract after Session/JSON hook retirement.
+           Graph graph(opt);
+           InputOptions input;
+           input.payload_type = PayloadType::Image;
+           input.format = FormatTag::RGB;
+           input.memory_policy = InputMemoryPolicy::SystemMemory;
+           input.max_width = 96;
+           input.max_height = 96;
+           input.max_depth = 3;
+           graph.add(nodes::Input(input));
+           graph.add(nodes::Output(OutputOptions::Latest()));
+           const std::string plain = graph.describe_backend(false);
+           require(plain == graph.describe_backend(false),
+                   "cold graph rendering should be deterministic");
+           require_contains(plain, "aa_mysrc_zz", "transformed source name missing");
+           require_contains(plain, "aa_mysink_zz", "transformed sink name missing");
+           require(plain.find("aa_sima_b0_zz") == std::string::npos,
+                   "boundary-disabled rendering should omit the boundary identity");
+           const std::string bounded = graph.describe_backend(true);
+           require_contains(bounded, "identity name=aa_sima_b0_zz",
+                            "boundary-enabled rendering should preserve the name transform");
+           require(plain == graph.describe_backend(false),
+                   "boundary rendering must not mutate subsequent plain rendering");
          }));

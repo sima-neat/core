@@ -8,11 +8,18 @@ sidebar_position: 5
 
 У SDK вивід статусу також містить відображення хост-портів Insight з файлу `$HOME/.insight-config/neat-port-map.json`.
 
+Відсутність установлених PyNeat або Insight не заважає звітуванню про стан.
+Якщо перевірка версії завершується помилкою, компонент показує `unknown`, а `neat`
+записує діагностику постачальника у стандартний потік помилок. Вивід JSON
+зберігає наявну схему й повідомляє недоступні версії як `null`.
+
+Розділена інсталяція показує `simaai-runner` і `simaai-scheduler`. На DevKit версії беруться з бази встановлених пакетів, у SDK — з керувальних метаданих кешованих DEB. Рядки застарілих `neat-runtime` і `neat-gst-plugins` залишаються видимими, якщо ці пакети присутні або жодного розділеного компонента не виявлено. JSON додає `components.runner` і `components.scheduler`, зберігаючи старі ключі `runtime` та `gstPlugins`; відсутні версії залишаються `null`.
+
 <ShellCommand prompt="sdk|devkit">
 neat
 </ShellCommand>
 
-Приклад виводу:
+Приклад виводу застарілої інсталяції:
 
 ```text
 Neat Environment
@@ -56,6 +63,13 @@ neat --json
 
 <ShellCommand prompt="sdk|devkit">
 neat update
+</ShellCommand>
+
+Щоб оновити лише середовище виконання Neat Library, не перевіряючи й не
+оновлюючи Insight або сценарії, виконайте:
+
+<ShellCommand prompt="sdk|devkit">
+neat update --core-only
 </ShellCommand>
 
 ## Наступний крок

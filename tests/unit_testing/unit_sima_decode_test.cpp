@@ -215,14 +215,17 @@ void check_invalid_options() {
       "unsupported decode type", "invalid SimaDecode type");
 
   simaai::neat::SimaDecodeOptions unsupported_raw_format;
-  unsupported_raw_format.out_format = simaai::neat::FormatTag::RGB;
-  require_throws_with(
-      [&] {
-        simaai::neat::SimaDecode decode(unsupported_raw_format);
-        (void)decode.backend_fragment(2);
-      },
-      "raw_output supports only NV12 or I420", "unsupported raw SimaDecode format");
+  for (const auto format : {simaai::neat::FormatTag::RGB, simaai::neat::FormatTag::NV16}) {
+    unsupported_raw_format.out_format = format;
+    require_throws_with(
+        [&] {
+          simaai::neat::SimaDecode decode(unsupported_raw_format);
+          (void)decode.backend_fragment(2);
+        },
+        "raw_output supports only NV12 or I420", "unsupported raw SimaDecode format");
+  }
 
+  unsupported_raw_format.out_format = simaai::neat::FormatTag::RGB;
   unsupported_raw_format.raw_output = false;
   simaai::neat::SimaDecode converted(unsupported_raw_format);
   const std::string fragment = converted.backend_fragment(2);
@@ -230,6 +233,18 @@ void check_invalid_options() {
                    "raw_output=false should allow RGB through videoconvert");
   require(converted.output_spec({}).memory == "SystemMemory",
           "converted RGB output should advertise SystemMemory");
+
+  unsupported_raw_format.out_format = simaai::neat::FormatTag::NV16;
+  const simaai::neat::SimaDecode converted_nv16(unsupported_raw_format);
+  const auto nv16_fragment = converted_nv16.backend_fragment(3);
+  require_contains(nv16_fragment, "videoconvert", "NV16 requires explicit conversion");
+  require_contains(nv16_fragment, "video/x-raw(memory:SystemMemory),format=NV16",
+                   "converted NV16 output caps missing");
+  require_not_contains(nv16_fragment, "dec-fmt=NV16", "native decoder must not claim NV16");
+  const auto nv16_spec = converted_nv16.output_spec(encoded_h264_spec());
+  require(nv16_spec.layout == "Planar" && nv16_spec.memory == "SystemMemory" &&
+              nv16_spec.byte_size == 1280U * 720U * 2U,
+          "converted NV16 output must advertise its planar 4:2:2 boundary");
 }
 
 void check_h264_decode_wrapper_compatibility() {

@@ -53,16 +53,17 @@ simaai::neat::TensorList run_lazy_connected_model(simaai::neat::Model& model,
           label + ": Run input_names() should expose only image");
   require(run_outputs.size() == 1U && run_outputs.front() == "classes",
           label + ": Run output_names() should expose only classes");
-  require(
+  const bool first_pushed =
       run.push("image", simaai::neat::TensorList{simaai::neat::from_cv_mat(
-                            seedless_first_input, input_format, simaai::neat::TensorMemory::EV74)}),
-      label + ": first lazy push failed");
+                            seedless_first_input, input_format, simaai::neat::TensorMemory::EV74)});
+  require(first_pushed, label + ": first lazy push failed: " + run.last_error());
   simaai::neat::TensorList first = run.pull_tensors("classes", 20000);
   graph_phase3_test::require_nonempty_tensor_output(first, label + ": first lazy output");
 
-  require(run.push("image", simaai::neat::TensorList{simaai::neat::from_cv_mat(
-                                second_input, input_format, simaai::neat::TensorMemory::EV74)}),
-          label + ": second lazy push failed");
+  const bool second_pushed =
+      run.push("image", simaai::neat::TensorList{simaai::neat::from_cv_mat(
+                            second_input, input_format, simaai::neat::TensorMemory::EV74)});
+  require(second_pushed, label + ": second lazy push failed: " + run.last_error());
   simaai::neat::TensorList second = run.pull_tensors("classes", 20000);
   graph_phase3_test::require_nonempty_tensor_output(second, label + ": second lazy output");
   const std::string last_error = run.last_error();

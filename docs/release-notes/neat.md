@@ -17,8 +17,17 @@ Release notes for the SiMa.ai Neat Library.
   four-dimensional HWC shape. Its Float32 tensor format may be `EVXX_FLOAT32`
   instead of `FP32`. Use the tensor's dtype and shape to interpret values; do not
   infer logical axes from a backend format tag.
-- The Neat Library C++ ABI is now 6 and the shared-library SONAME is `libsima_neat.so.6`. Tensors now carry feature-extractor semantic metadata, public GenAI request/result types carry ASR task, language, and probe metadata, `GraphLinkOptions` contains realtime admission limits, and `BenchmarkOptions` and `BenchmarkReport` gained fields. Rebuild C++ applications and plugins and install matching Core runtime and development packages.
+- The Neat Library C++ ABI is now 6 and the shared-library SONAME is `libsima_neat.so.6`. Tensors now carry feature-extractor semantic metadata, public GenAI request/result types carry ASR task, language, and probe metadata, `GraphLinkOptions` contains realtime admission limits, and `BenchmarkOptions` and `BenchmarkReport` gained fields. Rebuild C++ applications and plugins and install matching Core runtime and development packages. `SimaArgMaxOptions` gained `axis` and `keepdims`, and the `SimaArgMax` class layout also changed.
 - Realtime graph composition now uses `GraphLinkOptions`, `Graph::connect()`, and `Graph::build()`. The preview `RealtimeGraphLinkOptions`, `connect_realtime()`, `build_fused_realtime_sources()` / `build_fused_realtime_source()`, and `RealtimeEveryFrameByStream` APIs were removed. Saved graphs containing `realtime_every_frame_by_stream` must be recreated with a supported policy; see [Connect live fragments](/develop-apps/development-workflow/graph/#connect-live-fragments).
+
+- The unreleased package version remains **0.6.0**. `Model::Options` and
+  `BoxDecodeOptions` now carry `yolox_seg_pose.pose_classes`; these public layout
+  additions require ABI 6 consumers. Do not use ABI compatibility symlinks.
+  Preview releases can also change public types such as `GraphOptions`, which
+  now includes `kernel_runner_a65_workers`. Rebuild applications, plugins and
+  Python extensions against the matching runtime and development packages when
+  updating a 0.6.0 preview. Do not mix binaries from different previews merely
+  because both use ABI 6.
 
 ### Runtime changes
 

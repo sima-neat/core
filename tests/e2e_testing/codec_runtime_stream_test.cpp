@@ -75,6 +75,7 @@ struct Args {
   int timeout_ms = kDefaultTimeoutMs;
   int repeat = 1;
   bool determinism = false;
+  bool sync = false;
 };
 
 std::string trim_copy(const std::string& value) {
@@ -299,16 +300,17 @@ CaseKind parse_case_kind(const std::string& value) {
 }
 
 void print_help(const char* exe) {
-  std::cout << "Usage: " << exe
-            << " [--case NAME] [--frames N] [--timeout-ms N] [--repeat N] [--determinism]\n"
-            << "Cases:\n"
-            << "  rtsp-h264-decoded\n"
-            << "  rtsp-h265-encoded-boundary\n"
-            << "  rtsp-h265-decoded\n"
-            << "  rtsp-mjpeg-encoded-boundary\n"
-            << "  rtsp-mjpeg-decoded\n"
-            << "  rtsp-mjpeg-decoded-videorate\n"
-            << "  http-mjpeg-decoded\n";
+  std::cout
+      << "Usage: " << exe
+      << " [--case NAME] [--frames N] [--timeout-ms N] [--repeat N] [--determinism] [--sync]\n"
+      << "Cases:\n"
+      << "  rtsp-h264-decoded\n"
+      << "  rtsp-h265-encoded-boundary\n"
+      << "  rtsp-h265-decoded\n"
+      << "  rtsp-mjpeg-encoded-boundary\n"
+      << "  rtsp-mjpeg-decoded\n"
+      << "  rtsp-mjpeg-decoded-videorate\n"
+      << "  http-mjpeg-decoded\n";
   std::cout << "  http-mjpeg-decoded-videorate\n"
             << "  bad-url-diagnostics\n";
 }
@@ -339,6 +341,8 @@ Args parse_args(int argc, char** argv) {
       args.repeat = std::stoi(require_value("--repeat"));
     } else if (arg == "--determinism") {
       args.determinism = true;
+    } else if (arg == "--sync") {
+      args.sync = true;
     } else {
       throw std::runtime_error("unknown argument: " + arg);
     }
@@ -352,6 +356,10 @@ Args parse_args(int argc, char** argv) {
   }
   if (args.repeat <= 0) {
     throw std::runtime_error("--repeat must be positive");
+  }
+  if (args.sync && (!args.has_case || (args.kind != CaseKind::RtspH264Decoded &&
+                                       args.kind != CaseKind::HttpMjpegDecoded))) {
+    throw std::runtime_error("--sync requires the rtsp-h264-decoded or http-mjpeg-decoded case");
   }
   return args;
 }
@@ -801,6 +809,9 @@ int main(int argc, char** argv) {
         throw std::runtime_error(test_case.name + ": selected case requires source FPS");
       }
       run_test_case(test_case, url, source_fps, args);
+      if (args.sync) {
+        run_decoded_source_sync(test_case, url, args.frames, args.timeout_ms, source_fps);
+      }
       return 0;
     }
 

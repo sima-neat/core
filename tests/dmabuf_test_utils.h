@@ -1,6 +1,6 @@
 #pragma once
 
-#include "simaai/neat/internal/dmabuf/DmaBufPool.h"
+#include <simaai/scheduler/client/dma_memory.h>
 
 #include <gst/allocators/gstdmabuf.h>
 #include <gst/gst.h>
@@ -63,7 +63,7 @@ inline DmaBufSpan dmabuf_span(GstBuffer* buffer) {
 // Real exporter required for CPU synchronization and accelerator tests. Never
 // silently replace a missing heap with a memfd or a CPU allocation.
 inline GstBuffer* allocate_cma_dmabuf(std::size_t size) {
-  namespace dma = simaai::neat::internal::dmabuf;
+  namespace dma = simaai::scheduler::client::dma;
   dma::Error error;
   GstBuffer* buffer = dma::allocateDmaBufBuffer(dma::HeapKind::Cma, size, {}, &error);
   if (!buffer) {

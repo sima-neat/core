@@ -62,6 +62,10 @@ RUN_TEST("unit_inputstream_batched_raw_video_spec_test", ([] {
 
            bool threw = false;
            tensor.strides_bytes[0] += 1;
+           // Isolate the non-tight batch-stride contract: the declared backing
+           // must cover that stride, or extent admission correctly rejects first.
+           tensor.storage = simaai::neat::make_cpu_owned_storage(
+               static_cast<std::size_t>(n * h * w * 3 + n - 1));
            try {
              (void)simaai::neat::derive_tensor_spec_or_throw(
                  tensor, opt, "unit_inputstream_batched_raw_video_spec_test_bad_stride");

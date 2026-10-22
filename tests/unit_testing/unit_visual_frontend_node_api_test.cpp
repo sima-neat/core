@@ -28,7 +28,8 @@ void test_feature_histogram_public_api() {
   const std::string summary = opt.summary();
   require_contains(summary, "FeatureHistogramOptions", "summary should name the options type");
   require_contains(summary, "graph=feature_histogram", "summary should name graph");
-  require_contains(summary, "graph_id=235", "summary should expose graph id for diagnostics");
+  require(summary.find("graph_id=") == std::string::npos,
+          "semantic diagnostics must not expose a Core-owned numerical kernel identity");
   require_contains(summary, "input_shape=[2,240,320]", "summary should expose logical input shape");
   require_contains(summary, "output_shape=[2,256]", "summary should expose logical output shape");
 
@@ -55,7 +56,8 @@ void test_grider_fast_public_api() {
   const std::string summary = opt.summary();
   require_contains(summary, "GriderFastOptions", "summary should name the options type");
   require_contains(summary, "graph=grider_fast", "summary should name graph");
-  require_contains(summary, "graph_id=236", "summary should expose graph id for diagnostics");
+  require(summary.find("graph_id=") == std::string::npos,
+          "semantic diagnostics must not expose a Core-owned numerical kernel identity");
   require_contains(summary, "feature_shape=[2,193]", "summary should expose feature shape");
 
   simaai::neat::GriderFast node(opt);
@@ -80,7 +82,8 @@ void test_track_descriptor_public_api() {
   const std::string summary = opt.summary();
   require_contains(summary, "TrackDescriptorOptions", "summary should name the options type");
   require_contains(summary, "graph=track_descriptor", "summary should name graph");
-  require_contains(summary, "graph_id=237", "summary should expose graph id for diagnostics");
+  require(summary.find("graph_id=") == std::string::npos,
+          "semantic diagnostics must not expose a Core-owned numerical kernel identity");
   require_contains(summary, "feature_shape=[2,193]", "summary should expose feature shape");
   require_contains(summary, "descriptor_shape=[2,64,8]", "summary should expose descriptor shape");
 
@@ -108,7 +111,8 @@ void test_track_klt_public_api() {
   const std::string no_detect_summary = opt.summary();
   require_contains(no_detect_summary, "TrackKLTOptions", "summary should name the options type");
   require_contains(no_detect_summary, "graph=track_klt", "summary should name graph");
-  require_contains(no_detect_summary, "graph_id=238", "summary should expose graph id");
+  require(no_detect_summary.find("graph_id=") == std::string::npos,
+          "semantic diagnostics must not expose a Core-owned numerical kernel identity");
   require_contains(no_detect_summary, "input_points_shape=[2,32,2]",
                    "summary should expose input point shape");
   require_contains(no_detect_summary, "published_feature_shape=<disabled>",

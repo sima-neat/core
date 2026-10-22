@@ -183,6 +183,7 @@ build_mla_compiled_contract_from_subset(const plugin_contracts::ProcessMlaContra
   compiled.runtime_contract.frame_arena_role = contract.frame_arena_role;
   compiled.runtime_contract.frame_arena_storage_domain = contract.frame_arena_storage_domain;
   compiled.runtime_contract.frame_arena_provenance = contract.frame_arena_provenance;
+  compiled.runtime_contract.frame_arena_allocation_policy = contract.frame_arena_allocation_policy;
   compiled.runtime_contract.frame_arena_required_device_access =
       contract.frame_arena_required_device_access;
   compiled.runtime_contract.frame_arena_escape_policy = contract.frame_arena_escape_policy;

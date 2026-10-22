@@ -74,8 +74,8 @@ MeasureScope start_measurement_on_core(std::shared_ptr<runtime::RunCore> core,
  * @ingroup pipeline
  */
 enum class RunPreset {
-  Realtime, ///< Low-latency; small queues; KeepLatest overflow; single-input CVU stages
-            ///< queue at most 20 ms of live-source input.
+  Realtime, ///< Low-latency; small queues; KeepLatest overflow. Existing Gst queues
+            ///< default to a 20 ms media-time limit unless explicitly configured.
   Balanced, ///< Default; moderate queues; Block overflow.
   Reliable, ///< Lossless; deeper queues; Block overflow.
 };
@@ -88,7 +88,9 @@ enum class RunPreset {
  * producer storage. Neither path copies DMA payloads to relieve queue pressure.
  * Retained tensors and their mappings hold producer-buffer loans; release them
  * to allow the pool to progress. `Owned` explicitly copies into independent
- * framework-owned storage. An explicit owned environment override also applies
+ * framework-owned DMA-BUF storage, without retaining the producer pool loan.
+ * Explicit CPU conversion remains available through Tensor::cpu().
+ * An explicit owned environment override also applies
  * to `Auto`, but never overrides an explicit per-run choice.
  * @ingroup pipeline
  */
@@ -106,16 +108,11 @@ struct RunAdvancedOptions {
   int sync_num_buffers_override =
       -1; ///< Override the appsrc `num-buffers` for sync-mode runs (-1 = auto).
   /**
-   * @brief Prepare zero-copy Gst/SiMa outputs for CPU reads on the InputStream worker.
+   * @brief Reserved compatibility hint for output CPU visibility.
    *
-   * When enabled for a zero-copy output Run, cached SiMa-backed tensors are made
-   * CPU-visible before they are placed in the Run output queue. This does not
-   * clone or copy tensor payloads; it only performs cache visibility maintenance
-   * when producer metadata says a CPU reader could observe stale data.
-   *
-   * Keep this disabled for Graph-internal forwarding paths where an appsink is
-   * used only as transport to another device-facing Graph. Tensor::map(Read)
-   * remains the correctness fallback for all outputs.
+   * Runtime now acquires CPU visibility as part of each retained Tensor/GstMemory
+   * mapping. No separate eager synchronization is performed, regardless of this
+   * field. Keeping the field preserves the Run options layout for existing callers.
    */
   bool prepare_output_cpu_visible = false;
 };

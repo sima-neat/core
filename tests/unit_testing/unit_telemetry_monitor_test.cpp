@@ -7,10 +7,14 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <sys/socket.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 #include <yaml-cpp/yaml.h>
 
 #include <chrono>
+#include <atomic>
+#include <cstdlib>
+#include <new>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -29,6 +33,56 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+// Executable-local cold/allocation faults, never a product hook. Worker/server
+// threads retain their normal allocator; the calling benchmark boundary may not
+// allocate, and unwinding a monitor must not build a result or a diagnostic.
+namespace telemetry_allocation_fault {
+thread_local int fail_after = -1;
+thread_local bool deny = false;
+} // namespace telemetry_allocation_fault
+void* operator new(std::size_t bytes) {
+  if (telemetry_allocation_fault::deny) {
+    throw std::bad_alloc{};
+  }
+  if (telemetry_allocation_fault::fail_after >= 0 &&
+      telemetry_allocation_fault::fail_after-- == 0) {
+    throw std::bad_alloc{};
+  }
+  if (void* pointer = std::malloc(bytes ? bytes : 1)) {
+    return pointer;
+  }
+  throw std::bad_alloc{};
+}
+void* operator new[](std::size_t bytes) {
+  return ::operator new(bytes);
+}
+void operator delete(void* pointer) noexcept {
+  std::free(pointer);
+}
+void operator delete[](void* pointer) noexcept {
+  std::free(pointer);
+}
+void operator delete(void* pointer, std::size_t) noexcept {
+  std::free(pointer);
+}
+void operator delete[](void* pointer, std::size_t) noexcept {
+  std::free(pointer);
+}
+
+// Executable-local observation, not a product timing hook. Each strict poll
+// brackets a real UTC read. Count those reads to detect a terminal-failure loop;
+// HTTP counts cannot see it because the failure returns before another request.
+namespace telemetry_clock_probe {
+std::atomic<bool> enabled{false};
+std::atomic<std::uint64_t> utc_reads{0};
+} // namespace telemetry_clock_probe
+extern "C" int clock_gettime(clockid_t clock, struct timespec* value) noexcept {
+  if (clock == CLOCK_REALTIME && telemetry_clock_probe::enabled.load()) {
+    ++telemetry_clock_probe::utc_reads;
+  }
+  return static_cast<int>(::syscall(SYS_clock_gettime, clock, value));
+}
 
 namespace {
 
@@ -369,7 +423,7 @@ public:
   }
 
   TelemetryMonitor monitor() const {
-    return TelemetryMonitorAccess::make(path_);
+    return TelemetryMonitor(path_);
   }
 
 private:
@@ -461,6 +515,29 @@ void take_samples_over_time(FakeSentinel& sentinel, const std::vector<double>& p
     std::this_thread::sleep_for(std::chrono::milliseconds(kIntervalMs));
     sentinel.take_sample(power);
   }
+}
+
+void explicit_monitor_endpoints_are_independent() {
+  TelemetryMonitor default_monitor;
+  require(!default_monitor.running() && default_monitor.read().status == "not started",
+          "the default constructor remains stopped and contacts nothing");
+  RunningSentinel first;
+  RunningSentinel second;
+  auto first_monitor = first.monitor();
+  auto second_monitor = second.monitor();
+  require(first.requests("/v1/cache") == 0 && second.requests("/v1/cache") == 0,
+          "explicit endpoint constructors contact nothing");
+  first_monitor.start();
+  require(first.requests("/v1/cache") == 1 && second.requests("/v1/cache") == 0,
+          "a monitor contacts only its selected endpoint");
+  second_monitor.start();
+  take_samples_over_time(first, {3.0});
+  take_samples_over_time(second, {11.0});
+  wait_for_samples(first_monitor, 1);
+  wait_for_samples(second_monitor, 1);
+  require(first_monitor.stop().power_som_watts.mean == 3.0 &&
+              second_monitor.stop().power_som_watts.mean == 11.0,
+          "separate endpoints keep their own telemetry values");
 }
 
 void monitor_counts_each_new_sample_once() {
@@ -710,6 +787,179 @@ void interval_falls_back_until_the_cache_shows_it() {
           "the interval comes from the cache once it holds three gaps");
 }
 
+void benchmark_timestamp_and_clock_validation() {
+  using simaai::neat::internal::benchmark_sample_timestamp;
+  using simaai::neat::internal::BenchmarkTelemetryBoundary;
+  using simaai::neat::internal::valid_benchmark_telemetry_window;
+  for (const json& timestamp : json::array({nullptr, 1234, "2026-10-14T10:00:02",
+                                            "2026-02-30T10:00:02Z", "2026-10-14T10:00:02+05:00",
+                                            "2026-10-14T10:00:02.xyzZ", "9999-10-14T10:00:02Z"})) {
+    require(!benchmark_sample_timestamp(json{{"timestamp", timestamp}}),
+            "benchmark attribution rejects malformed or unrepresentable timestamps");
+  }
+  require(!benchmark_sample_timestamp(json::object()), "no guessed timestamp for missing field");
+  const auto a = benchmark_sample_timestamp(json{{"timestamp", "2026-10-14T10:00:02.000000001Z"}});
+  const auto b =
+      benchmark_sample_timestamp(json{{"timestamp", "2026-10-14T10:00:02.000000002+00:00"}});
+  require(a && b && *b - *a == 1ns, "nanosecond cutoff and equivalent UTC spelling retained");
+  auto begin = BenchmarkTelemetryBoundary::now();
+  auto end = begin;
+  end.utc += 1s;
+  end.before += 1s;
+  end.after += 1s;
+  require(valid_benchmark_telemetry_window(begin, end), "matched monotonic and UTC window");
+  for (const auto step : {-1s, 1s}) {
+    auto changed = end;
+    changed.utc += step;
+    require(!valid_benchmark_telemetry_window(begin, changed),
+            "clock step invalidates attribution");
+  }
+  require(!valid_benchmark_telemetry_window(end, begin), "reversed window is invalid");
+  for (int i = 0; i < 64; ++i) {
+    begin = BenchmarkTelemetryBoundary::now();
+    if (i == 0)
+      std::this_thread::sleep_for(10ms);
+    end = BenchmarkTelemetryBoundary::now();
+    require(valid_benchmark_telemetry_window(begin, end), "real paired local clock reads");
+  }
+}
+
+void benchmark_window_excludes_prepare_and_drain() {
+  RunningSentinel sentinel;
+  auto monitor = sentinel.monitor();
+  TelemetryMonitorAccess::prepare_benchmark(monitor);
+  sentinel.take_sample(1000.0, timestamp_of(std::chrono::system_clock::now() - 1ms));
+  telemetry_allocation_fault::deny = true;
+  TelemetryMonitorAccess::arm_benchmark(monitor);
+  telemetry_allocation_fault::deny = false;
+  std::this_thread::sleep_for(2ms);
+  sentinel.take_sample(3.0, timestamp_of(std::chrono::system_clock::now()));
+  wait_for_samples(monitor, 1);
+  sentinel.delay_answers(250ms);
+  const auto deadline = Clock::now() + 2s;
+  const int before = sentinel.requests("/v1/samples/latest");
+  while (sentinel.requests("/v1/samples/latest") == before && Clock::now() < deadline) {
+    std::this_thread::sleep_for(1ms);
+  }
+  const auto seal_started = Clock::now();
+  telemetry_allocation_fault::deny = true;
+  TelemetryMonitorAccess::seal_benchmark(monitor);
+  telemetry_allocation_fault::deny = false;
+  require(Clock::now() - seal_started < 100ms, "seal does not join delayed Sentinel polling");
+  std::this_thread::sleep_for(2ms);
+  sentinel.take_sample(2000.0, timestamp_of(std::chrono::system_clock::now()));
+  const auto frozen_duration = monitor.read().duration_ms;
+  const auto result = monitor.stop();
+  require(result.status == "ok" && result.samples == 1,
+          "only the armed, sealed sample is selected: " + result.status);
+  require_near(result.power_som_watts.mean, 3.0, "prepare/final-read tails cannot skew power");
+  require(result.duration_ms == frozen_duration, "join/final read does not extend window duration");
+  sentinel.delay_answers(0ms);
+}
+
+void benchmark_rejects_bad_samples_without_changing_public_rollback() {
+  for (const auto& invalid :
+       {std::string("invalid"), timestamp_of(std::chrono::system_clock::now() - 1h)}) {
+    RunningSentinel sentinel;
+    auto monitor = sentinel.monitor();
+    TelemetryMonitorAccess::prepare_benchmark(monitor);
+    TelemetryMonitorAccess::arm_benchmark(monitor);
+    std::this_thread::sleep_for(2ms);
+    sentinel.take_sample(3.0, timestamp_of(std::chrono::system_clock::now()));
+    wait_for_samples(monitor, 1);
+    const int before = sentinel.requests("/v1/samples/latest");
+    sentinel.take_sample(7.0, invalid);
+    const auto deadline = Clock::now() + 2s;
+    while (sentinel.requests("/v1/samples/latest") == before && Clock::now() < deadline) {
+      std::this_thread::sleep_for(1ms);
+    }
+    require(sentinel.requests("/v1/samples/latest") > before,
+            "the worker observes the bad sample before the benchmark is sealed");
+    telemetry_clock_probe::utc_reads = 0;
+    telemetry_clock_probe::enabled = true;
+    std::this_thread::sleep_for(600ms);
+    telemetry_clock_probe::enabled = false;
+    const auto terminal_polls = telemetry_clock_probe::utc_reads.load();
+    require(monitor.running(), "a failed worker remains an active monitor until stop joins it");
+    TelemetryMonitorAccess::seal_benchmark(monitor);
+    const auto result = monitor.stop();
+    require(terminal_polls <= 4, "terminal attribution failure must stop polling, got " +
+                                     std::to_string(terminal_polls) +
+                                     " UTC reads in the open benchmark window");
+    require(result.samples == 0 && result.power_som_watts.samples == 0 &&
+                result.status.find("timestamps") != std::string::npos,
+            "invalid benchmark chronology clears all partial aggregates: " + result.status);
+    require(!monitor.running() && monitor.stop().status == result.status,
+            "stop joins the failed worker and repeated stop preserves the failure");
+
+    sentinel.take_sample(11.0, timestamp_of(std::chrono::system_clock::now()));
+    TelemetryMonitorAccess::prepare_benchmark(monitor);
+    TelemetryMonitorAccess::arm_benchmark(monitor);
+    std::this_thread::sleep_for(2ms);
+    sentinel.take_sample(13.0, timestamp_of(std::chrono::system_clock::now()));
+    wait_for_samples(monitor, 1);
+    TelemetryMonitorAccess::seal_benchmark(monitor);
+    const auto restarted = monitor.stop();
+    require(restarted.status == "ok" && restarted.samples == 1,
+            "a new benchmark resets terminal failure and starts a new worker");
+    require_near(restarted.power_som_watts.mean, 13.0, "restarted benchmark attribution");
+  }
+}
+
+void monitors_are_independent_and_unwinding_is_allocation_free() {
+  RunningSentinel sentinel;
+  auto first = sentinel.monitor();
+  auto second = sentinel.monitor();
+  first.start();
+  second.start();
+  take_samples_over_time(sentinel, {1.0});
+  wait_for_samples(first, 1);
+  wait_for_samples(second, 1);
+  first.stop();
+  first.start();
+  take_samples_over_time(sentinel, {3.0});
+  wait_for_samples(first, 1);
+  wait_for_samples(second, 2);
+  require(first.stop().power_som_watts.mean == 3.0 && second.stop().power_som_watts.mean == 2.0,
+          "concurrent monitors and restart have independent summaries");
+  {
+    auto prepared = sentinel.monitor();
+    TelemetryMonitorAccess::prepare_benchmark(prepared);
+    // No arm: the waiting worker must also wake and join on destruction.
+    telemetry_allocation_fault::deny = true;
+  }
+  telemetry_allocation_fault::deny = false;
+  try {
+    auto active = sentinel.monitor();
+    TelemetryMonitorAccess::prepare_benchmark(active);
+    TelemetryMonitorAccess::arm_benchmark(active);
+    telemetry_allocation_fault::deny = true;
+    throw 17;
+  } catch (int) {
+    telemetry_allocation_fault::deny = false;
+  }
+}
+
+void cold_start_allocation_failures_leave_a_reusable_monitor() {
+  // Exercise cold layout, connection and thread-state allocation failures. A
+  // one-shot fault may become an unavailable Sentinel status, never an orphaned
+  // running flag, joinable-thread destruction or a new product fault switch.
+  for (int failure = 0; failure < 80; ++failure) {
+    auto monitor = TelemetryMonitorAccess::make("/tmp/neat-no-such-sentinel.sock");
+    telemetry_allocation_fault::fail_after = failure;
+    try {
+      TelemetryMonitorAccess::prepare_benchmark(monitor);
+    } catch (const std::bad_alloc&) {
+    }
+    telemetry_allocation_fault::fail_after = -1;
+    if (monitor.running())
+      monitor.stop();
+    monitor.start();
+    require(monitor.running(), "cold resource failure leaves a reusable monitor");
+    monitor.stop();
+  }
+}
+
 } // namespace
 
 RUN_TEST("unit_telemetry_monitor_test", ([] {
@@ -722,11 +972,20 @@ RUN_TEST("unit_telemetry_monitor_test", ([] {
              }
            };
 
+           run_case("benchmark_timestamps_and_clocks", benchmark_timestamp_and_clock_validation);
+           run_case("benchmark_bounded_window", benchmark_window_excludes_prepare_and_drain);
+           run_case("benchmark_invalid_samples",
+                    benchmark_rejects_bad_samples_without_changing_public_rollback);
+           run_case("independent_and_exception_lifecycle",
+                    monitors_are_independent_and_unwinding_is_allocation_free);
+           run_case("cold_allocation_failures",
+                    cold_start_allocation_failures_leave_a_reusable_monitor);
            run_case("summary_maps_sentinel_metrics", summary_maps_sentinel_metrics);
            run_case("summary_skips_unreadable_values", summary_skips_unreadable_values);
            run_case("summary_without_mla_rail", summary_without_mla_rail);
            run_case("summary_size", summary_size_does_not_grow_with_the_window);
            run_case("save_and_print", telemetry_saves_and_prints_the_same_yaml);
+           run_case("explicit_endpoints", explicit_monitor_endpoints_are_independent);
            run_case("counts_each_sample_once", monitor_counts_each_new_sample_once);
            run_case("burst_from_cache", monitor_counts_a_burst_of_samples_from_the_cache);
            run_case("catches_up_after_errors", monitor_catches_up_after_sentinel_errors);

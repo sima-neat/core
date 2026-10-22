@@ -585,8 +585,12 @@ Most models should run with default execution settings first. Once you have a co
 | Allow MLA inference to run asynchronously | `advanced_execution.inference_async` | Useful for streaming workloads that keep work in flight. |
 | Adjust inference output buffering | `advanced_execution.inference_output_buffers` | Increase only when measurement shows output buffering is the bottleneck. |
 | Defer output cache synchronization | `advanced_execution.defer_output_cache_sync` | Advanced. Use only when the consumer and memory lifetime are understood. |
-| Use a prepared runner | `advanced_execution.prepared_runner` | Advanced route-runner experiment. Keep it out of first-run code. |
-| Adjust internally inserted queue depth | `advanced_execution.internal_queue_depth` | Advanced. Queue depth absorbs jitter; it does not create accelerator capacity. |
+| Adjust internal concurrency | `advanced_execution.internal_queue_depth` | Bounds internally inserted queues and numerical Runner execution capacity; does not override MLA output buffering. |
+
+For bounded overlap, input lifetime, and CPU-per-frame measurement, see
+[Overlap frames without growing queues indefinitely](/develop-apps/development-workflow/graph#overlap-frames-without-growing-queues-indefinitely).
+The retained `prepared_runner` field is for source compatibility, not a selectable
+execution backend. Leave it at its default; retired modes fail at graph construction.
 
 Set advanced execution fields at the narrowest scope that matches the experiment:
 
@@ -820,7 +824,11 @@ report = model.benchmark(options)
 
 Power and board telemetry come from [Sentinel](/tools/sentinel/), the DevKit telemetry daemon that
 the Neat installer sets up on the board. The benchmark records them with a
-[`TelemetryMonitor`](#record-board-telemetry) around the throughput pass, and `report.telemetry`
+[`TelemetryMonitor`](#record-board-telemetry) around the throughput pass. It selects samples
+after measurement starts and before measurement stops, after all required outputs complete.
+Preparation, joining the monitor worker, and the final Sentinel read do not extend the timed
+workload. Invalid sample timestamps or detected clock discontinuities make benchmark telemetry
+unavailable rather than selecting an unrelated window. `report.telemetry`
 summarizes them:
 
 | Field | Meaning |
@@ -922,6 +930,12 @@ telemetry.save("telemetry.json") # .json writes JSON; other names write YAML
 
 </CodeTab>
 </CodeTabs>
+
+By default, the monitor reads `/run/simaai-sentinel/api.sock`. To use a Sentinel Unix socket
+mounted at another path, pass its path to `TelemetryMonitor(socket_path)` in C++ or
+`pyneat.TelemetryMonitor(socket_path="...")` in Python. This selects the endpoint for that monitor
+only; it does not change `Model::benchmark()` or start Sentinel. Construction does not contact
+the socket.
 
 - `start()` begins a new window. Only samples Sentinel takes after it count, and Sentinel samples
   every 2 s, so a window shorter than that can have none; `status` then says so.

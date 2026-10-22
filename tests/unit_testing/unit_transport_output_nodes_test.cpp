@@ -53,6 +53,7 @@ RUN_TEST(
         require_contains(fragment, "port=5500", "UdpOutput port mismatch");
         require_contains(fragment, "sync=true", "UdpOutput sync mismatch");
         require_contains(fragment, "async=false", "UdpOutput async mismatch");
+        require(node->element_names(7).empty(), "UdpOutput element_names contract should be empty");
       }
 
       // H264CapsFixup snapshot.
@@ -159,10 +160,11 @@ RUN_TEST(
 
         require(quant.kind() == "QuantTess", "QuantTess kind mismatch");
         const std::string fragment = quant.backend_fragment(6);
-        require_contains(fragment, "neatprocesscvu name=quant_test",
+        require_contains(fragment, "neatkernelrunner name=quant_test",
                          "QuantTess fragment name mismatch");
-        require_contains(fragment, "stage-id=quant_test", "QuantTess stage-id mismatch");
-        require_contains(fragment, "num-buffers=4", "QuantTess num-buffers mismatch");
+        require(fragment.find("stage-id=") == std::string::npos &&
+                    fragment.find("num-buffers=") == std::string::npos,
+                "QuantTess must keep placement and depth in its prepared stage");
         require(fragment.find("config=\"") == std::string::npos,
                 "QuantTess should not emit legacy config path in fragment");
 

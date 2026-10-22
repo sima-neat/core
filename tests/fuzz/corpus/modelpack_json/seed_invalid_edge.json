@@ -1,0 +1,19 @@
+{
+  "name": "fuzz_missing_producer",
+  "input_nodes": [{"name": "input", "size": 16}],
+  "plugins": [{
+    "name": "source", "sequence": 1, "processor": "A65",
+    "config_params": {"kernel": "pass_through", "params": {}},
+    "input_nodes": [{"name": "input", "size": 16}],
+    "output_nodes": [{"name": "source", "size": 16}]
+  }, {
+    "name": "cast", "sequence": 2, "processor": "EV74",
+    "config_params": {
+      "desired_batch_size": 1, "actual_batch_size": 1,
+      "kernel": "cast_transform",
+      "params": {"out_dtype": "bfloat16", "input_shapes": [[1, 4]], "output_shapes": [[1, 4]]}
+    },
+    "input_nodes": [{"name": "missing_producer", "size": 16}],
+    "output_nodes": [{"name": "output", "size": 8}]
+  }]
+}

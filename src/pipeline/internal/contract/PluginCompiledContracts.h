@@ -18,6 +18,8 @@ struct ModelFragmentPlanSource;
 
 struct CompiledRuntimeContract {
   std::string plugin_kind;
+  // Checked image semantics are independent of later executable preparation.
+  std::shared_ptr<const ::simaai::scheduler::client::TensorStageImagePublication> image_publication;
   std::vector<pipeline_internal::sima::LogicalInputStaticSpec> logical_inputs;
   std::vector<pipeline_internal::sima::InputBindingStaticSpec> input_bindings;
   std::vector<pipeline_internal::sima::PhysicalBufferStaticSpec> physical_inputs;
@@ -33,6 +35,8 @@ struct CompiledRuntimeContract {
       pipeline_internal::sima::static_contract::ArenaStorageDomain::Unknown;
   pipeline_internal::sima::static_contract::ArenaAllocationProvenance frame_arena_provenance =
       pipeline_internal::sima::static_contract::ArenaAllocationProvenance::Unknown;
+  pipeline_internal::sima::static_contract::ArenaAllocationPolicy frame_arena_allocation_policy =
+      pipeline_internal::sima::static_contract::ArenaAllocationPolicy::RequiredDomain;
   std::uint32_t frame_arena_required_device_access = 0U;
   pipeline_internal::sima::static_contract::ArenaEscapePolicy frame_arena_escape_policy =
       pipeline_internal::sima::static_contract::ArenaEscapePolicy::InternalOnly;
@@ -76,6 +80,11 @@ struct CompiledMlaContract {
 struct CompiledBoxDecodeContract {
   pipeline_internal::sima::BoxDecodeStagePayload payload;
   CompiledRuntimeContract runtime_contract;
+};
+
+struct CompiledKernelContract {
+  CompiledRuntimeContract runtime_contract;
+  std::shared_ptr<const pipeline_internal::sima::KernelStageRecipe> recipe;
 };
 
 struct CompiledDequantContract {

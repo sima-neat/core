@@ -3,8 +3,6 @@
 #error "Internal header. Not part of the public API."
 #endif
 
-#include "pipeline/internal/sima/SimaPluginStaticManifest.h"
-
 #include <gst/gst.h>
 
 #include <cstddef>
@@ -39,6 +37,9 @@ enum class CompositionFailurePoint {
   PipelineVertexAppended,
   EndpointEdgesReplaced,
   BeforeConnectionEdgeAppend,
+  PipelineBeforeManifest,
+  PipelineStaticManifestAcquired,
+  PipelinePrepared,
 };
 
 // Deterministic exception injection for strong-guarantee composition tests. The hook is internal,
@@ -48,9 +49,6 @@ void arm_composition_failure_for_test(CompositionFailurePoint point,
 void clear_composition_failure_for_test() noexcept;
 void maybe_throw_composition_failure_for_test(CompositionFailurePoint point);
 
-void reset_rendered_manifests();
-std::vector<pipeline_internal::sima::SimaPluginStaticManifest> get_rendered_manifests();
-void record_rendered_manifest(const pipeline_internal::sima::SimaPluginStaticManifest& manifest);
 std::vector<std::string> sync_cache_rebuild_events_for_test(bool fail_build);
 pipeline_internal::InputMemoryResolution
 resolve_input_memory_for_test(const InputOptions& options,
