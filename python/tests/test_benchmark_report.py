@@ -54,10 +54,8 @@ def test_report_round_trip(tmp_path, filename):
       "fps": report.fps,
       "avg_power_watts": report.avg_power_watts,
       "energy_joules": report.energy_joules,
-      "mla_layer_stats": [],
-      "mla_layer_stats_status": "not requested",
-      "mla_stage_stats": [],
-      "mla_stage_stats_status": "not requested",
+      "mla_layer_stats": {"status": "not requested", "layers": []},
+      "mla_stage_stats": {"status": "not requested", "stages": []},
   }
   assert Path(report.save(str(path))) == path
 
@@ -78,19 +76,21 @@ def test_invalid_headline_preserves_existing_file(tmp_path, value, field, extens
 
 
 def test_mla_stats_are_read_only_results():
-  for stats in (pyneat.MlaLayerStats, pyneat.MlaStageStats):
+  for stats in (pyneat.MlaLayer, pyneat.MlaLayerStats, pyneat.MlaStage, pyneat.MlaStageStats):
     with pytest.raises(TypeError):
       stats()
   report = pyneat.BenchmarkReport()
-  for field, value in (("mla_layer_stats", []), ("mla_layer_stats_status", "ok"),
-                       ("mla_stage_stats", []), ("mla_stage_stats_status", "ok")):
+  for owner, field, value in ((report, "mla_layer_stats", None), (report, "mla_stage_stats", None),
+                              (report.mla_layer_stats, "status", "ok"),
+                              (report.mla_layer_stats, "layers", []),
+                              (report.mla_stage_stats, "status", "ok"),
+                              (report.mla_stage_stats, "stages", [])):
     # Without this, a misspelled field would also raise AttributeError.
-    assert hasattr(report, field)
+    assert hasattr(owner, field)
     with pytest.raises(AttributeError):
-      setattr(report, field, value)
-  assert report.mla_layer_stats == [] and report.mla_stage_stats == []
-  assert report.mla_layer_stats_status == "not requested"
-  assert report.mla_stage_stats_status == "not requested"
+      setattr(owner, field, value)
+  assert report.mla_layer_stats.status == "not requested" and report.mla_layer_stats.layers == []
+  assert report.mla_stage_stats.status == "not requested" and report.mla_stage_stats.stages == []
 
 
 def test_invalid_destination(tmp_path):

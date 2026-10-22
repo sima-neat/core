@@ -70,11 +70,11 @@ options.include_mla_stage_stats = True
 report = model.benchmark(options)
 ```
 
-從 `report.mla_layer_stats` 讀取每個已編譯 MLA 層從零開始的 `stage_index`、`name` 與 `latency_us`：在只執行該層的一次剖析執行中測得的硬體執行時間。執行時間為零的 no-op 項目也會保留。各層延遲的總和不等於階段延遲，也不等於整體延遲。
+從 `report.mla_layer_stats.layers` 讀取每個已編譯 MLA 層從零開始的 `stage_index`、`name` 與 `latency_us`：在只執行該層的一次剖析執行中測得的硬體執行時間。執行時間為零的 no-op 項目也會保留。各層延遲的總和不等於階段延遲，也不等於整體延遲。
 
-從 `report.mla_stage_stats` 讀取每個 MLA 階段的 `stage_index` 與 `latency_us`：該階段連續不中斷執行 200 次的平均硬體時間。此時間不含主機、EV74 與資料搬移，因此低於整體延遲。
+從 `report.mla_stage_stats.stages` 讀取每個 MLA 階段的 `stage_index` 與 `latency_us`：該階段連續不中斷執行 200 次的平均硬體時間。此時間不含主機、EV74 與資料搬移，因此低於整體延遲。
 
-若找不到 `mla-rt` 或其執行失敗，`benchmark()` 仍會傳回主要測量值，清單保持為空，並將原因寫入 `report.mla_layer_stats_status` 或 `report.mla_stage_stats_status`。其他情況下，各狀態為 `"not requested"` 或 `"ok"`。
+若找不到 `mla-rt`、其執行失敗或逾時，`benchmark()` 仍會傳回主要測量值，清單保持為空，並將原因寫入 `report.mla_layer_stats.status` 或 `report.mla_stage_stats.status`。其他情況下，各狀態為 `"not requested"` 或 `"ok"`。
 
 ### 儲存報告 {#step-save-report}
 

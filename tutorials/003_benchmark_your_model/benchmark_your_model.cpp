@@ -76,15 +76,15 @@ int main(int argc, char** argv) {
     // END STEP
     // STEP read-mla-stats
     if (options.include_mla_layer_stats) {
-      std::cout << "mla_layer_stats_status=" << report.mla_layer_stats_status << "\n";
-      for (const auto& layer : report.mla_layer_stats) {
+      std::cout << "mla_layer_stats.status=" << report.mla_layer_stats.status << "\n";
+      for (const auto& layer : report.mla_layer_stats.layers) {
         std::cout << "  stage_index=" << layer.stage_index << " name=" << layer.name
                   << " latency_us=" << layer.latency_us << "\n";
       }
     }
     if (options.include_mla_stage_stats) {
-      std::cout << "mla_stage_stats_status=" << report.mla_stage_stats_status << "\n";
-      for (const auto& stage : report.mla_stage_stats) {
+      std::cout << "mla_stage_stats.status=" << report.mla_stage_stats.status << "\n";
+      for (const auto& stage : report.mla_stage_stats.stages) {
         std::cout << "  stage_index=" << stage.stage_index << " latency_us=" << stage.latency_us
                   << "\n";
       }

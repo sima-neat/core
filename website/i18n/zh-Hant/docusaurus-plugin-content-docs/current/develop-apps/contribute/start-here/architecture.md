@@ -144,9 +144,9 @@ input Sample/Tensor
 
 `Model::benchmark()` 會在吞吐量階段前後執行一個 `TelemetryMonitor`。Sentinel 約每 2 秒取樣一次，因此吞吐量階段至少會執行 `BenchmarkOptions::min_duration_ms`（預設為 10 秒）。延遲階段也遵循相同的下限，因此兩個階段依相同規則停止。當 Sentinel 未執行或量測期間沒有樣本時，基準測試仍會傳回延遲與 FPS；功耗欄位為零，並由 `telemetry.status` 說明原因。`tools/install_neat_framework.sh` 的板子模式會安裝 Sentinel，或將其升級至最新的正式版建置。若安裝失敗，安裝程式會發出警告並繼續；之後可執行 `sima-cli neat install sentinel`，或像 CI 一樣設定 `NEAT_INSTALLER_SENTINEL_REQUIRED=ON`，讓失敗中止安裝。已棄用的 `Run` 電源監控器（`RunOptions::power_monitor`）的資料同樣來自 Sentinel：Core 會輪詢其最新樣本，不會透過 I2C 讀取電源監控晶片。
 
-MLA 剖析透過兩個預設為 false 的 `BenchmarkOptions` 欄位明確啟用：`include_mla_layer_stats` 與 `include_mla_stage_stats`。延遲與吞吐量執行器關閉後，Core 會在獨立程序中對已解壓縮模型的 MLA 執行檔執行 `mla-rt`，並依序逐一進行剖析。MLA 層統計還會使用編譯器統計 YAML；MLA 階段統計會將每個 MLA 執行檔連續不中斷執行 200 次，並從 `mla-rt` 統計檔讀取 `tile.lat` 平均值。Core 負責驗證輸入與輸出並清理暫存檔；它會等待 `mla-rt` 結束，絕不中途停止它。MLA-RT 負責硬體剖析，以及將控制權交回核心執行路徑。剖析不得與其他 MLA 工作負載重疊。
+MLA 剖析透過兩個預設為 false 的 `BenchmarkOptions` 欄位明確啟用：`include_mla_layer_stats` 與 `include_mla_stage_stats`。延遲與吞吐量執行器關閉後，Core 會在獨立程序中對已解壓縮模型的 MLA 執行檔執行 `mla-rt`，並依序逐一進行剖析。MLA 層統計還會使用編譯器統計 YAML；MLA 階段統計會將每個 MLA 執行檔連續不中斷執行 200 次，並從 `mla-rt` 統計檔讀取 `tile.lat` 平均值。Core 負責驗證輸入與輸出並清理暫存檔；若單次執行超過 120 秒，它會停止 `mla-rt`。MLA-RT 負責硬體剖析，以及將控制權交回核心執行路徑。剖析不得與其他 MLA 工作負載重疊。
 
-剖析採盡力而為（best effort）方式。若找不到 `mla-rt`、其執行失敗或寫出無法使用的輸出，Core 會保留主要測量值，讓對應清單保持為空，印出警告，並將原因寫入 `mla_layer_stats_status` 或 `mla_stage_stats_status`。其他情況下，狀態為 `"not requested"` 或 `"ok"`。
+剖析採盡力而為（best effort）方式。若找不到 `mla-rt`、其執行失敗、逾時或寫出無法使用的輸出，Core 會保留主要測量值，讓對應清單保持為空，印出警告，並將原因寫入 `mla_layer_stats.status` 或 `mla_stage_stats.status`。其他情況下，狀態為 `"not requested"` 或 `"ok"`。
 
 `BenchmarkReport::mla_layer_stats` 包含每個已編譯 MLA 層從零開始的執行階段索引、名稱，以及每層以一次剖析階段測得、以微秒表示的硬體延遲。`BenchmarkReport::mla_stage_stats` 包含以相同方式編號的各 MLA 階段索引，以及以微秒表示的平均硬體延遲。這些測量使用獨立的剖析階段，因此各層延遲的總和不等於階段延遲，也不等於整體延遲。`BenchmarkReport::save(file_path)` 會使用公開欄位名稱與單位，明確寫入完整報告：`.json` 選擇 JSON；`.yaml` 與其他結尾選擇 YAML。報告包含遙測資料與兩個狀態；停用剖析時，MLA 清單為空。此方法會建立不存在的父目錄，並以原子方式取代既有的目標檔案。
 

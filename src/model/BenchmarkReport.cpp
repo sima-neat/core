@@ -37,20 +37,20 @@ std::filesystem::path BenchmarkReport::save(const std::filesystem::path& file_pa
     throw std::invalid_argument(std::string(kContext) + ": throughput_samples must be nonnegative");
   document["throughput_samples"] = throughput_samples;
   document["telemetry"] = pipeline_internal::telemetry_document(telemetry, kContext);
-  auto& layers = document["mla_layer_stats"] = pipeline_internal::ReportDocument::array();
-  for (const auto& layer : mla_layer_stats) {
+  document["mla_layer_stats"]["status"] = mla_layer_stats.status;
+  auto& layers = document["mla_layer_stats"]["layers"] = pipeline_internal::ReportDocument::array();
+  for (const auto& layer : mla_layer_stats.layers) {
     require_nonnegative(layer.latency_us, "latency_us");
     layers.push_back({{"stage_index", layer.stage_index},
                       {"name", layer.name},
                       {"latency_us", layer.latency_us}});
   }
-  document["mla_layer_stats_status"] = mla_layer_stats_status;
-  auto& stages = document["mla_stage_stats"] = pipeline_internal::ReportDocument::array();
-  for (const auto& stage : mla_stage_stats) {
+  document["mla_stage_stats"]["status"] = mla_stage_stats.status;
+  auto& stages = document["mla_stage_stats"]["stages"] = pipeline_internal::ReportDocument::array();
+  for (const auto& stage : mla_stage_stats.stages) {
     require_nonnegative(stage.latency_us, "latency_us");
     stages.push_back({{"stage_index", stage.stage_index}, {"latency_us", stage.latency_us}});
   }
-  document["mla_stage_stats_status"] = mla_stage_stats_status;
   pipeline_internal::save_report(
       file_path, document,
       "# NEAT benchmark report. Latency: ms; throughput: inferences/s; power: W; energy: J.\n"

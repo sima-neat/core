@@ -221,13 +221,13 @@ MLA profiling is opt-in through two `BenchmarkOptions` fields that default to fa
 close, Core runs `mla-rt` in a separate process on the extracted model's MLA executables, one
 profiling pass after the other. MLA layer stats also uses the compiler stats YAML; MLA stage stats
 runs each MLA executable 200 times without interruption and reads the mean `tile.lat` from the
-`mla-rt` stats file. Core validates the inputs and outputs and removes temporary files; it waits
-for `mla-rt` to finish and never stops it. MLA-RT owns hardware profiling and the handoff back to
+`mla-rt` stats file. Core validates the inputs and outputs and removes temporary files; it stops
+`mla-rt` if one run takes longer than 120 s. MLA-RT owns hardware profiling and the handoff back to
 kernel execution. Profiling requires no overlapping MLA workloads.
 
-Profiling is best effort. When `mla-rt` is missing, fails, or writes unusable output, Core keeps
-the headline measurements, leaves that list empty, prints a warning, and sets
-`mla_layer_stats_status` or `mla_stage_stats_status` to the reason. A status is otherwise
+Profiling is best effort. When `mla-rt` is missing, fails, times out, or writes unusable output,
+Core keeps the headline measurements, leaves that list empty, prints a warning, and sets
+`mla_layer_stats.status` or `mla_stage_stats.status` to the reason. A status is otherwise
 `"not requested"` or `"ok"`.
 
 `BenchmarkReport::mla_layer_stats` contains each compiled MLA layer's zero-based executable

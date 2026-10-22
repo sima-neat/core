@@ -63,10 +63,17 @@ using TensorSpec = TensorConstraint;
  * counter from one profiling pass that runs the layer on its own; layer latencies do not add up
  * to the stage latency. Zero-time no-op entries are retained.
  */
-struct MlaLayerStats {
+struct MlaLayer {
   std::size_t stage_index = 0;
   std::string name;
   double latency_us = 0.0;
+};
+
+/// @brief MLA layer latencies from `BenchmarkOptions::include_mla_layer_stats`.
+struct MlaLayerStats {
+  /// "not requested", "ok", or why MLA layer stats were not collected.
+  std::string status = "not requested";
+  std::vector<MlaLayer> layers{}; ///< Empty unless `status` is "ok".
 };
 
 /**
@@ -74,11 +81,18 @@ struct MlaLayerStats {
  *
  * `latency_us` is the mean MLA execution time of 200 back-to-back runs of the stage's ELF,
  * measured by mla-rt with 1 us resolution. `stage_index` uses the same numbering as
- * `MlaLayerStats::stage_index`.
+ * `MlaLayer::stage_index`.
  */
-struct MlaStageStats {
+struct MlaStage {
   std::size_t stage_index = 0;
   double latency_us = 0.0;
+};
+
+/// @brief MLA stage latencies from `BenchmarkOptions::include_mla_stage_stats`.
+struct MlaStageStats {
+  /// "not requested", "ok", or why MLA stage stats were not collected.
+  std::string status = "not requested";
+  std::vector<MlaStage> stages{}; ///< Empty unless `status` is "ok".
 };
 
 /**
@@ -109,12 +123,8 @@ struct BenchmarkReport {
   int throughput_samples = 0;          ///< Inputs measured by the throughput pass.
   double throughput_duration_ms = 0.0; ///< Length of the throughput window.
   Telemetry telemetry;                 ///< Board telemetry for the throughput window.
-  std::vector<MlaLayerStats> mla_layer_stats{}; ///< Empty unless `mla_layer_stats_status` is "ok".
-  /// "not requested", "ok", or why MLA layer stats were not collected.
-  std::string mla_layer_stats_status = "not requested";
-  std::vector<MlaStageStats> mla_stage_stats{}; ///< Empty unless `mla_stage_stats_status` is "ok".
-  /// "not requested", "ok", or why MLA stage stats were not collected.
-  std::string mla_stage_stats_status = "not requested";
+  MlaLayerStats mla_layer_stats;       ///< Per-layer MLA latency, when requested.
+  MlaStageStats mla_stage_stats;       ///< Per-stage MLA latency, when requested.
 
   /**
    * @brief Write the complete report as YAML or JSON to the exact destination filename.
@@ -155,12 +165,12 @@ struct BenchmarkOptions {
   /// Advanced: measure each compiled MLA layer's hardware latency with mla-rt after the
   /// benchmark. Default off. Requires mla-rt with the MIP-to-kernel handoff fix in PATH and an
   /// idle devkit with no other active MLA workloads. A failure leaves the measurements intact and
-  /// names the reason in `mla_layer_stats_status`.
+  /// names the reason in `BenchmarkReport::mla_layer_stats.status`.
   bool include_mla_layer_stats = false;
   /// Advanced: measure each MLA stage's uninterrupted hardware latency with mla-rt after the
   /// benchmark. Default off. Requires mla-rt in PATH and an idle devkit with no other active
   /// MLA workloads. A failure leaves the measurements intact and names the reason in
-  /// `mla_stage_stats_status`.
+  /// `BenchmarkReport::mla_stage_stats.status`.
   bool include_mla_stage_stats = false;
 };
 

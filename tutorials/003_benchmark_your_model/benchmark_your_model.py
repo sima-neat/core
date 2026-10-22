@@ -58,12 +58,12 @@ def main(argv: list[str]) -> int:
   # END STEP
   # STEP read-mla-stats
   if options.include_mla_layer_stats:
-    print(f"mla_layer_stats_status={report.mla_layer_stats_status}")
-    for layer in report.mla_layer_stats:
+    print(f"mla_layer_stats.status={report.mla_layer_stats.status}")
+    for layer in report.mla_layer_stats.layers:
       print(f"  stage_index={layer.stage_index} name={layer.name} latency_us={layer.latency_us}")
   if options.include_mla_stage_stats:
-    print(f"mla_stage_stats_status={report.mla_stage_stats_status}")
-    for stage in report.mla_stage_stats:
+    print(f"mla_stage_stats.status={report.mla_stage_stats.status}")
+    for stage in report.mla_stage_stats.stages:
       print(f"  stage_index={stage.stage_index} latency_us={stage.latency_us}")
   # END STEP
 

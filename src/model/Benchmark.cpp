@@ -583,13 +583,15 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
       latency_measured, throughput_measured, num_samples, latency_samples, pushed,
       std::move(telemetry));
   if (options.include_mla_layer_stats) {
-    report.mla_layer_stats_status = collection_status("MLA layer stats", [&] {
-      report.mla_layer_stats = collect_mla_layer_stats(require_mpk_contract(model), find_mla_rt());
+    report.mla_layer_stats.status = collection_status("MLA layer stats", [&] {
+      report.mla_layer_stats.layers =
+          collect_mla_layer_stats(require_mpk_contract(model), find_mla_rt());
     });
   }
   if (options.include_mla_stage_stats) {
-    report.mla_stage_stats_status = collection_status("MLA stage stats", [&] {
-      report.mla_stage_stats = collect_mla_stage_stats(require_mpk_contract(model), find_mla_rt());
+    report.mla_stage_stats.status = collection_status("MLA stage stats", [&] {
+      report.mla_stage_stats.stages =
+          collect_mla_stage_stats(require_mpk_contract(model), find_mla_rt());
     });
   }
   const double batch_throughput = throughput_measured.throughput_batches_per_s;

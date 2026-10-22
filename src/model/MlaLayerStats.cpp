@@ -1,10 +1,9 @@
 #include "model/internal/MlaLayerStats.h"
+#include "model/internal/MlaRt.h"
 #include "pipeline/internal/sima/static_contract/MpkDecoder.h"
 
 #include <glib.h>
 #include <yaml-cpp/yaml.h>
-
-#include <sys/wait.h>
 
 #include <charconv>
 #include <cmath>
@@ -187,48 +186,12 @@ struct StatsDirectory {
   }
 };
 
-// Runs `mla-rt --connect mip,ma -vs -N --per-layer-stats <input_yaml> <elf>` to completion and
-// returns its output; Core consumes its results and never stops it.
-std::string run_mla_layer_stats(const std::filesystem::path& mla_rt,
-                                const std::filesystem::path& input_yaml,
-                                const std::filesystem::path& executable) {
-  std::vector<std::string> args{
-      mla_rt.string(),     "--connect",         "mip,ma",           "-vs", "-N",
-      "--per-layer-stats", input_yaml.string(), executable.string()};
-  std::vector<gchar*> argv;
-  for (auto& arg : args)
-    argv.push_back(arg.data());
-  argv.push_back(nullptr);
-  gchar* output = nullptr;
-  gchar* errors = nullptr;
-  gint status = 0;
-  GError* error = nullptr;
-  if (!g_spawn_sync(nullptr, argv.data(), nullptr, G_SPAWN_DEFAULT, nullptr, nullptr, &output,
-                    &errors, &status, &error)) {
-    const std::string detail = error ? error->message : "unknown error";
-    g_clear_error(&error);
-    layer_stats_error("cannot start mla-rt: " + detail);
-  }
-  std::string diagnostics = std::string(output ? output : "") + (errors ? errors : "");
-  g_free(output);
-  g_free(errors);
-  constexpr std::size_t max_diagnostics = 4U * 1024U;
-  if (diagnostics.size() > max_diagnostics)
-    diagnostics.erase(0, diagnostics.size() - max_diagnostics);
-  if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-    const std::string result = WIFEXITED(status) ? "exit " + std::to_string(WEXITSTATUS(status))
-                                                 : "signal " + std::to_string(WTERMSIG(status));
-    layer_stats_error("mla-rt failed (" + result + ")\n" + diagnostics);
-  }
-  return diagnostics;
-}
-
 } // namespace
 
-std::vector<MlaLayerStats>
+std::vector<MlaLayer>
 internal::collect_mla_layer_stats(const pipeline_internal::sima::MpkContract& contract,
                                   const std::filesystem::path& mla_rt) {
-  std::vector<MlaLayerStats> result;
+  std::vector<MlaLayer> result;
   for (const auto& stage : resolve_mla_layer_stats_stages(contract)) {
     const auto& expected = stage.expected_layers;
     std::string diagnostics;
@@ -236,7 +199,9 @@ internal::collect_mla_layer_stats(const pipeline_internal::sima::MpkContract& co
       StatsDirectory temporary;
       const auto input_yaml = temporary.path / stage.stats_yaml.filename();
       std::filesystem::copy_file(stage.stats_yaml, input_yaml);
-      diagnostics = run_mla_layer_stats(mla_rt, input_yaml, stage.executable);
+      // mla-rt writes <input>_output.yaml next to the input YAML.
+      diagnostics = run_mla_rt(mla_rt, {"--connect", "mip,ma", "-vs", "-N", "--per-layer-stats",
+                                        input_yaml.string(), stage.executable.string()});
       const auto output_yaml = temporary.path / (input_yaml.stem().string() + "_output.yaml");
       const auto actual = parse_stats_rows(output_yaml, true);
       std::size_t timed = 0;

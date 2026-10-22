@@ -4741,14 +4741,22 @@ NB_MODULE(_pyneat_core, m) {
       .def("running", &TelemetryMonitor::running);
 
   // Benchmark results, not user-built.
+  nb::class_<simaai::neat::MlaLayer>(m, "MlaLayer")
+      .def_ro("stage_index", &simaai::neat::MlaLayer::stage_index)
+      .def_ro("name", &simaai::neat::MlaLayer::name)
+      .def_ro("latency_us", &simaai::neat::MlaLayer::latency_us);
+
   nb::class_<simaai::neat::MlaLayerStats>(m, "MlaLayerStats")
-      .def_ro("stage_index", &simaai::neat::MlaLayerStats::stage_index)
-      .def_ro("name", &simaai::neat::MlaLayerStats::name)
-      .def_ro("latency_us", &simaai::neat::MlaLayerStats::latency_us);
+      .def_ro("status", &simaai::neat::MlaLayerStats::status)
+      .def_ro("layers", &simaai::neat::MlaLayerStats::layers);
+
+  nb::class_<simaai::neat::MlaStage>(m, "MlaStage")
+      .def_ro("stage_index", &simaai::neat::MlaStage::stage_index)
+      .def_ro("latency_us", &simaai::neat::MlaStage::latency_us);
 
   nb::class_<simaai::neat::MlaStageStats>(m, "MlaStageStats")
-      .def_ro("stage_index", &simaai::neat::MlaStageStats::stage_index)
-      .def_ro("latency_us", &simaai::neat::MlaStageStats::latency_us);
+      .def_ro("status", &simaai::neat::MlaStageStats::status)
+      .def_ro("stages", &simaai::neat::MlaStageStats::stages);
 
   nb::class_<simaai::neat::BenchmarkReport>(m, "BenchmarkReport")
       .def(nb::init<>())
@@ -4764,9 +4772,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("throughput_duration_ms", &simaai::neat::BenchmarkReport::throughput_duration_ms)
       .def_ro("telemetry", &simaai::neat::BenchmarkReport::telemetry)
       .def_ro("mla_layer_stats", &simaai::neat::BenchmarkReport::mla_layer_stats)
-      .def_ro("mla_layer_stats_status", &simaai::neat::BenchmarkReport::mla_layer_stats_status)
       .def_ro("mla_stage_stats", &simaai::neat::BenchmarkReport::mla_stage_stats)
-      .def_ro("mla_stage_stats_status", &simaai::neat::BenchmarkReport::mla_stage_stats_status)
       .def(
           "save",
           [](const simaai::neat::BenchmarkReport& report, const std::filesystem::path& file_path) {

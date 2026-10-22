@@ -70,11 +70,11 @@ options.include_mla_stage_stats = True
 report = model.benchmark(options)
 ```
 
-`report.mla_layer_stats`에서 컴파일된 각 MLA 레이어의 0부터 시작하는 `stage_index`, `name`, `latency_us`를 읽습니다. 이는 해당 레이어만 실행하는 한 번의 프로파일링 실행에서 측정한 하드웨어 실행 시간입니다. 실행 시간이 0인 no-op 항목도 유지됩니다. 레이어 지연 시간을 합해도 스테이지 지연 시간이나 전체 지연 시간과 일치하지 않습니다.
+`report.mla_layer_stats.layers`에서 컴파일된 각 MLA 레이어의 0부터 시작하는 `stage_index`, `name`, `latency_us`를 읽습니다. 이는 해당 레이어만 실행하는 한 번의 프로파일링 실행에서 측정한 하드웨어 실행 시간입니다. 실행 시간이 0인 no-op 항목도 유지됩니다. 레이어 지연 시간을 합해도 스테이지 지연 시간이나 전체 지연 시간과 일치하지 않습니다.
 
-`report.mla_stage_stats`에서 각 MLA 스테이지의 `stage_index`와 `latency_us`를 읽습니다. 이는 해당 스테이지를 중단 없이 200회 실행한 하드웨어 시간의 평균입니다. 호스트, EV74, 데이터 이동은 포함되지 않으므로 전체 지연 시간보다 짧습니다.
+`report.mla_stage_stats.stages`에서 각 MLA 스테이지의 `stage_index`와 `latency_us`를 읽습니다. 이는 해당 스테이지를 중단 없이 200회 실행한 하드웨어 시간의 평균입니다. 호스트, EV74, 데이터 이동은 포함되지 않으므로 전체 지연 시간보다 짧습니다.
 
-`mla-rt`가 없거나 실패해도 `benchmark()`는 주요 측정값을 반환하고, 목록을 비워 두며, `report.mla_layer_stats_status` 또는 `report.mla_stage_stats_status`에 그 이유를 설정합니다. 그 밖의 경우 각 상태는 `"not requested"` 또는 `"ok"`입니다.
+`mla-rt`가 없거나 실패하거나 시간 초과되어도 `benchmark()`는 주요 측정값을 반환하고, 목록을 비워 두며, `report.mla_layer_stats.status` 또는 `report.mla_stage_stats.status`에 그 이유를 설정합니다. 그 밖의 경우 각 상태는 `"not requested"` 또는 `"ok"`입니다.
 
 ### 보고서 저장 {#step-save-report}
 
