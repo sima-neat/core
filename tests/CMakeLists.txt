@@ -163,9 +163,14 @@ string(JOIN ":" SIMA_TEST_NEAT_LD_LIBRARY_PATH ${_SIMA_TEST_NEAT_RUNTIME_DIRS})
 message(STATUS "  [tests] SIMA_TEST_NEAT_LD_LIBRARY_PATH=${SIMA_TEST_NEAT_LD_LIBRARY_PATH}")
 endif()
 
-simaneat_append_ctest_env(unit_kernel_runner_integration_test)
-set(PIPELINESESSION_TEST_TARGETS "")
-list(APPEND PIPELINESESSION_TEST_TARGETS unit_kernel_runner_integration_test)
+set(PIPELINESESSION_TEST_TARGETS
+  unit_boxdecode_publication_test
+  unit_boxdecode_kernel_recipe_test
+  unit_boxdecode_geometry_test
+  unit_kernel_runner_integration_test)
+foreach(_target IN LISTS PIPELINESESSION_TEST_TARGETS)
+  simaneat_append_ctest_env(${_target})
+endforeach()
 # ------------------------------------------------------------------------------
 # Test blacklist (by executable name)
 # ------------------------------------------------------------------------------
