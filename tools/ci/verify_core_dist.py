@@ -416,7 +416,8 @@ def installed_owners(paths):
 
 def verify_installed(inventory):
     """Read actual root filesystem + dpkg; deliberately no private-root override."""
-    require(inventory.get('scope') == 'expected-installed-packages' and inventory.get('schema_version') == 1,
+    require(isinstance(inventory, dict) and inventory.get('scope') == 'expected-installed-packages'
+            and inventory.get('schema_version') == 1,
             'Invalid expected package inventory')
     profile = inventory.get('profile')
     require(profile in PACKAGE_PROFILES, 'Unknown package profile')
@@ -428,6 +429,7 @@ def verify_installed(inventory):
                 and all(actual[name][key] == expected[key] for key in ('Package', 'Version', 'Architecture')),
                 f'Installed package identity differs: {name}')
     payload = inventory['payload']
+    require(isinstance(payload, dict) and payload, 'Missing expected package payload')
     owners = installed_owners(payload)
     for filename, expected in payload.items():
         path = Path(filename)
@@ -542,14 +544,17 @@ def verify_platform(before, selected_packages):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--dist', type=Path, default=Path('dist'))
+    parser.add_argument('--dist', type=Path)
     parser.add_argument('--expected-manifest', type=Path)
     parser.add_argument('--expected-receipt', type=Path)
     parser.add_argument('--expected-deb-dir', type=Path, action='append', default=[])
     parser.add_argument('--package-profile', choices=tuple(PACKAGE_PROFILES),
                         help='Required component roles for installed-package qualification')
-    parser.add_argument('--write-package-inventory', type=Path,
-                        help='Write expected controls/payload from verified archives, not a PASS report')
+    inventory_mode = parser.add_mutually_exclusive_group()
+    inventory_mode.add_argument('--write-package-inventory', type=Path,
+                                help='Write expected controls/payload from verified archives, not a PASS report')
+    inventory_mode.add_argument('--read-package-inventory', type=Path,
+                                help='Compare actual installation against previously verified expected data')
     parser.add_argument('--verify-installed', action='store_true',
                         help='Additionally compare actual root/dpkg state, never a private prefix')
     parser.add_argument('--capture-platform-baseline', type=Path,
@@ -558,7 +563,7 @@ def main():
                         help='Compare actual native/OTA state after --verify-installed')
     args = parser.parse_args()
     if args.capture_platform_baseline:
-        if args.verify_installed or args.write_package_inventory or args.platform_baseline:
+        if args.verify_installed or args.write_package_inventory or args.read_package_inventory or args.platform_baseline:
             parser.error('Platform baseline capture is a separate pre-install action')
         baseline = platform_inventory()
         with args.capture_platform_baseline.open('x') as stream:
@@ -567,16 +572,29 @@ def main():
         return
     if args.platform_baseline and not args.verify_installed:
         parser.error('--platform-baseline requires --verify-installed')
+    if args.read_package_inventory:
+        if (not args.verify_installed or args.dist or args.package_profile or args.expected_manifest
+                or args.expected_receipt or args.expected_deb_dir):
+            parser.error('--read-package-inventory requires --verify-installed without archive inputs')
+        require(args.read_package_inventory.is_file() and not args.read_package_inventory.is_symlink(),
+                'Missing/nonregular expected package inventory')
+        inventory = json.loads(args.read_package_inventory.read_text())
+        result = {'installed': verify_installed(inventory)}
+        if args.platform_baseline:
+            result['platform'] = verify_platform(json.loads(args.platform_baseline.read_text()), inventory['packages'])
+        print(json.dumps(result, sort_keys=True))
+        return
     from sima_cli.install.metadata_validator import validate_metadata
     if (args.write_package_inventory or args.verify_installed) and not args.package_profile:
         parser.error('Installed qualification requires explicit --package-profile')
-    result = verify(args.dist, validate_metadata=validate_metadata,
+    dist = args.dist or Path('dist')
+    result = verify(dist, validate_metadata=validate_metadata,
                     expected_manifest=args.expected_manifest,
                     expected_receipt=args.expected_receipt,
                     expected_deb_dirs=args.expected_deb_dir)
     result['scope'] = 'artifact-set'
     if args.write_package_inventory or args.verify_installed:
-        inventory = package_inventory(args.dist, profile=args.package_profile)
+        inventory = package_inventory(dist, profile=args.package_profile)
         if args.write_package_inventory:
             with args.write_package_inventory.open('x') as stream:
                 json.dump(inventory, stream, indent=2, sort_keys=True)

@@ -19,7 +19,10 @@ METADATA = ('metadata.json', 'metadata-minimal.json', 'metadata-all.json',
             'metadata-pyneat.json', 'metadata-extras.json')
 
 
-def acquire_core(cli, branch, commit, environment, output, core):
+def acquire_core(cli, branch, commit, environment, output, core, *,
+                 package_profile=None, write_package_inventory=None):
+    if bool(package_profile) != bool(write_package_inventory):
+        raise ValueError('Package inventory output requires an explicit package profile')
     environment = {'prod': 'production', 'prd': 'production', 'stg': 'staging'}.get(
         environment, environment)
     if (environment not in ENVIRONMENT_HOSTS or not re.fullmatch(r'[0-9a-f]{40}', commit)
@@ -72,8 +75,12 @@ def acquire_core(cli, branch, commit, environment, output, core):
             raise ValueError('Core download differs from selected metadata: ' + name)
     # The selected CLI schema, all five variant contracts, actual DEB identities,
     # and authenticated provider receipts remain mandatory and unchanged.
-    subprocess.run(['bash', str(Path(core) / 'scripts/ci/verify_core_dist.sh'),
-                    '--dist', str(output), '--expected-manifest', str(Path(core) / 'deps/manifest.json')],
+    command = ['bash', str(Path(core) / 'scripts/ci/verify_core_dist.sh'),
+               '--dist', str(output), '--expected-manifest', str(Path(core) / 'deps/manifest.json')]
+    if write_package_inventory:
+        command.extend(['--package-profile', package_profile,
+                        '--write-package-inventory', str(write_package_inventory)])
+    subprocess.run(command,
                    check=True, env={**os.environ, 'SIMA_CLI_BIN': str(cli)})
     return {'status': 'PASS', 'selector': selector, 'environment': environment,
             'resources': len(resources), 'directory': str(output)}
@@ -86,9 +93,14 @@ def main():
     parser.add_argument('--commit', required=True)
     parser.add_argument('--environment', required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--package-profile')
+    parser.add_argument('--write-package-inventory', type=Path,
+                        help='Write expected installed-package data during artifact verification')
     args = parser.parse_args()
     print(json.dumps(acquire_core(args.cli, args.branch, args.commit, args.environment,
-                                 args.output, Path(__file__).resolve().parents[2])))
+                                 args.output, Path(__file__).resolve().parents[2],
+                                 package_profile=args.package_profile,
+                                 write_package_inventory=args.write_package_inventory)))
 
 
 if __name__ == '__main__':

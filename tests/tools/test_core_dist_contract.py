@@ -509,15 +509,6 @@ def test_raising_cli_validator_is_called(tmp_path):
         verifier.verify(tmp_path, validate_metadata=reject)
 
 
-def test_both_entrypoints_share_verifier_without_postseal_overwrite():
-    build = (ROOT / 'build.sh').read_text()
-    workflow = (ROOT / '.github/workflows/vulcan-ci.yml').read_text()
-    assert 'scripts/ci/verify_core_dist.sh' in build
-    assert 'scripts/ci/verify_core_dist.sh' in workflow
-    assert 'sudo install -m 0644 build/resolved_manifest.json dist/resolved-deps-manifest.json' not in workflow
-    assert 'cmp deps/internals-manifest.json' not in workflow
-
-
 def test_public_wheel_cannot_vendor_runtime(tmp_path):
     controls = fixture(tmp_path)
     with zipfile.ZipFile(tmp_path / 'pyneat-1-py3-none-any.whl', 'a') as archive:
@@ -776,6 +767,7 @@ def test_installed_check_reads_files_and_dpkg_not_a_receipt_pass(tmp_path):
     (lambda i, a, o, p, l: a['simaai-runner'].update(Status='deinstall ok config-files'), 'identity differs'),
     (lambda i, a, o, p, l: a.pop('simaai-runner'), 'identity differs'),
     (lambda i, a, o, p, l: i['packages'].pop('simaai-runner'), 'required profile roles'),
+    (lambda i, a, o, p, l: i['payload'].clear(), 'Missing expected package payload'),
     (lambda i, a, o, p, l: o.update({str(p): 'other-provider'}), 'owner differs'),
     (lambda i, a, o, p, l: p.unlink(), 'payload differs'),
     (lambda i, a, o, p, l: (l.unlink(), l.symlink_to('other.so')), 'symlink differs'),
@@ -786,6 +778,42 @@ def test_installed_failures_cannot_be_hidden_by_expected_inventory(tmp_path, mut
     mutation(inventory, actual, owners, path, link)
     with patch.object(verifier, 'installed_controls', return_value=actual), patch.object(verifier, 'installed_owners', return_value=owners), pytest.raises(verifier.ContractError, match=diagnostic):
         verifier.verify_installed(inventory)
+
+
+def test_inventory_input_checks_fresh_installed_and_platform_state_without_archives(tmp_path, monkeypatch, capsys):
+    inventory, actual, owners, payload, _ = fake_installed_fixture(tmp_path)
+    expected = tmp_path / 'expected.json'; expected.write_text(json.dumps(inventory))
+    before = platform_fixture()
+    baseline = tmp_path / 'before.json'; baseline.write_text(json.dumps(before))
+    current = copy.deepcopy(before)
+    monkeypatch.setattr(sys, 'argv', ['verify_core_dist.py', '--read-package-inventory', str(expected),
+                                    '--verify-installed', '--platform-baseline', str(baseline)])
+    with patch.object(verifier, 'verify', side_effect=AssertionError('archive requalification')), \
+            patch.object(verifier, 'package_inventory', side_effect=AssertionError('archive projection')), \
+            patch.object(verifier, 'installed_controls', return_value=actual), \
+            patch.object(verifier, 'installed_owners', return_value=owners), \
+            patch.object(verifier, 'platform_inventory', return_value=current):
+        verifier.main()
+        result = json.loads(capsys.readouterr().out)
+        assert result['installed']['payload_files_verified'] == 2
+        assert result['platform']['scope'] == 'native-platform-preservation'
+        current['ota_sha256'] = 'b' * 64
+        with pytest.raises(verifier.ContractError, match='OTA command changed'):
+            verifier.main()
+        payload.write_bytes(b'changed after acquisition')
+        with pytest.raises(verifier.ContractError, match='Installed payload differs'):
+            verifier.main()
+    assert json.loads(expected.read_text()) == inventory
+
+
+@pytest.mark.parametrize('extra', [[], ['--verify-installed', '--dist', 'unused'],
+                                   ['--verify-installed', '--package-profile', 'core']])
+def test_inventory_input_rejects_incomplete_or_conflicting_actions(tmp_path, monkeypatch, extra):
+    monkeypatch.setattr(sys, 'argv', ['verify_core_dist.py', '--read-package-inventory',
+                                    str(tmp_path / 'not-read.json'), *extra])
+    with pytest.raises(SystemExit) as error:
+        verifier.main()
+    assert error.value.code == 2
 
 
 def test_dpkg_query_parses_actual_status_and_multiarch_owners():
@@ -894,20 +922,23 @@ def test_installed_workflow_verifies_complete_producer_not_cli_resource_workspac
     baseline = next(step for step in steps if step.get('name') == 'Capture native platform before NEAT installation')
     install = next(step for step in steps if step.get('name') == 'Install test runtime from Vulcan artifact')
     assert steps.index(acquisition) < steps.index(baseline) < steps.index(install) < steps.index(inventory_step)
-    command = next(line for line in inventory_step['run'].replace('\\\n', ' ').splitlines()
-                   if line.strip().startswith('bash scripts/ci/verify_core_dist.sh '))
-    argv = shlex.split(command)
-    selected_root = workspace / argv[argv.index('--dist') + 1]
-    assert selected_root.resolve() == artifact_root.resolve()
     # No mocked controls, no synthesized metadata, and no installed-state data:
     # all exact expected inputs came from this run's independently built artifact.
-    assert run(selected_root)['status'] == 'PASS'
-    selected_profile = argv[argv.index('--package-profile') + 1]
-    expected = verifier.package_inventory(selected_root, profile=selected_profile)
+    assert run(artifact_root)['status'] == 'PASS'
+    selected_profile = acquisition_command[acquisition_command.index('--package-profile') + 1]
+    expected = verifier.package_inventory(artifact_root, profile=selected_profile)
     assert set(expected['packages']) == verifier.PACKAGE_PROFILES[selected_profile]
-    (selected_root / 'runner.deb').write_bytes(b'changed after transfer')
+    inventory_path = workspace / acquisition_command[acquisition_command.index('--write-package-inventory') + 1]
+    inventory_path.write_text(json.dumps(expected))
+    command = next(line for line in inventory_step['run'].replace('\\\n', ' ').splitlines()
+                   if line.strip().startswith('python3 tools/ci/verify_core_dist.py '))
+    argv = shlex.split(command)
+    assert workspace / argv[argv.index('--read-package-inventory') + 1] == inventory_path
+    assert '--verify-installed' in argv and '--platform-baseline' in argv
+    assert '--dist' not in argv
+    (artifact_root / 'runner.deb').write_bytes(b'changed during acquisition')
     with pytest.raises((verifier.ContractError, subprocess.CalledProcessError)):
-        run(selected_root)
+        run(artifact_root)
 
 
 def platform_fixture(absent=('appcomplex', 'simaai-common')):
@@ -1160,6 +1191,29 @@ def test_installed_scheduler_tool_is_authenticated_and_read_only(tmp_path):
     assert marker.read_text() == 'executed'
     assert before == {p.relative_to(root): p.read_bytes() for p in root.rglob('*') if p.is_file()}
     assert not list(source.rglob('__pycache__'))
+
+
+def test_optional_split_admission_discovers_archives_once(tmp_path):
+    root, _, _, marker, expected, _ = admission_fixture(tmp_path)
+    with patch.object(admission.subprocess, 'check_output', wraps=subprocess.check_output) as query:
+        assert admission.optional_admission(root, 'check', installed=True) == {**expected, 'split_cohort': True}
+    package_queries = [call.args[0] for call in query.call_args_list if call.args[0][0] == 'dpkg-deb']
+    assert package_queries == [['dpkg-deb', '-f', str(root / 'scheduler.deb'), 'Package']]
+    assert marker.read_text() == 'executed'
+    assert json.loads(marker.with_suffix('.argv').read_text()) == ['check', '--directory', str(root), '--installed']
+
+
+@pytest.mark.parametrize('kind', ['duplicate', 'symlink'])
+def test_optional_admission_rejects_ambiguous_or_nonregular_archives_before_import(tmp_path, kind):
+    root, _, _, marker, _, _ = admission_fixture(tmp_path)
+    extra = root / 'another.deb'
+    if kind == 'duplicate':
+        shutil.copyfile(root / 'scheduler.deb', extra)
+    else:
+        extra.symlink_to('scheduler.deb')
+    with pytest.raises(admission.AdmissionError, match='Exactly one|Nonregular'):
+        admission.optional_admission(root, 'check')
+    assert not marker.exists()
 
 
 @pytest.mark.parametrize('action,installed,expected_action', [

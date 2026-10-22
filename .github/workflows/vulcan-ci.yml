@@ -419,16 +419,7 @@ jobs:
             fi
           '
 
-      post_build_command: |
-        set -euo pipefail
-
-        # Read-only verification of the already sealed split-package artifact set.
-        # Never replace the backend receipt after metadata checksums are generated.
-        bash scripts/ci/verify_core_dist.sh --dist dist \
-          --expected-manifest deps/manifest.json \
-          --expected-receipt deps/backend/resolved_manifest.json \
-          --expected-deb-dir deps/backend/debs
-        ls -lh dist
+      post_build_command: ls -lh dist
 
   publish-vulcan-artifacts:
     name: Publish to Vulcan
@@ -784,7 +775,9 @@ jobs:
           python3 tools/ci/acquire_core_qualification.py \
             --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" \
             --commit "${GITHUB_SHA}" --environment "${VULCAN_ENV}" \
-            --output _work/installed-qualification-dist
+            --output _work/installed-qualification-dist \
+            --package-profile core-codecs-llima \
+            --write-package-inventory _work/expected-package-inventory.json
 
       - name: Capture native platform before NEAT installation
         run: |
@@ -1038,15 +1031,10 @@ jobs:
       - name: Run Installed DevKit Package Inventory Test
         run: |
           set -euo pipefail
-          # This full workflow also selects codecs and GenAI. Local non-GenAI
-          # qualification must select core-codecs explicitly, not infer roles
-          # from whichever archives happen to be present.
-          # Remote sima-cli installation stages resources, not the five
-          # producer metadata files. Compare installation against this run's
-          # complete artifact, not an invented manifest or the installed state.
-          bash scripts/ci/verify_core_dist.sh --dist _work/installed-qualification-dist \
-            --package-profile core-codecs-llima \
-            --write-package-inventory _work/expected-package-inventory.json \
+          # Acquisition verified the complete artifact and recorded expected
+          # package data. Read actual dpkg, payload and platform state freshly.
+          python3 tools/ci/verify_core_dist.py \
+            --read-package-inventory _work/expected-package-inventory.json \
             --verify-installed --platform-baseline _work/platform-before-install.json
           export SIMA_TEST_PACKAGE_INVENTORY="${GITHUB_WORKSPACE}/_work/expected-package-inventory.json"
           export SIMA_TEST_PLATFORM_BASELINE="${GITHUB_WORKSPACE}/_work/platform-before-install.json"

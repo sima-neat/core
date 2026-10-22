@@ -1358,19 +1358,28 @@ activate_board_runtime_after_install() {
   local deb listing selected="" package version architecture installed expected owner staged
   local required_control=""
   required_control="$(required_board_firmware_control)" || return 1
+  if board_has_scheduler_cohort && [[ -z "${required_control}" ]]; then
+    log "EV74 firmware activation skipped: not required by the selected Scheduler cohort."
+    return 0
+  fi
+  local required_package="${required_control%%$'\t'*}"
   for deb in "${DEBS[@]}"; do
-    if ! listing="$(dpkg-deb --fsys-tarfile "${deb}" | tar -tf -)"; then
-      echo "Cannot inspect selected DEB firmware payload: ${deb}" >&2
-      return 1
-    fi
-    if grep -Fxq -e ".${helper}" -e "${helper#/}" \
-        -e ".${helper}/" -e "${helper#/}/" <<< "${listing}"; then
-      if [[ -n "${selected}" ]]; then
-        echo "Multiple selected DEBs own the EV74 activation helper." >&2
+    if [[ -n "${required_control}" ]]; then
+      package="$(dpkg-deb -f "${deb}" Package)" || return 1
+      [[ "${package}" == "${required_package}" ]] || continue
+    else
+      if ! listing="$(dpkg-deb --fsys-tarfile "${deb}" | tar -tf -)"; then
+        echo "Cannot inspect selected DEB firmware payload: ${deb}" >&2
         return 1
       fi
-      selected="${deb}"
+      grep -Fxq -e ".${helper}" -e "${helper#/}" \
+        -e ".${helper}/" -e "${helper#/}/" <<< "${listing}" || continue
     fi
+    if [[ -n "${selected}" ]]; then
+      echo "Multiple selected DEBs own the EV74 activation helper." >&2
+      return 1
+    fi
+    selected="${deb}"
   done
   if [[ -z "${selected}" ]]; then
     if [[ -n "${required_control}" ]]; then

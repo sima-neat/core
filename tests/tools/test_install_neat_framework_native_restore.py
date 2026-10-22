@@ -628,7 +628,8 @@ install_ros2_sdk_tvm_runtime
 class ForceInstallTest(unittest.TestCase):
     def run_activation_fixture(
         self, script: str, exit_code: int = 0, *, selected: bool = True,
-        invalid: str = "", package: str = "neat-ev74-firmware", required: bool = False,
+        invalid: str = "", package: str = "neat-ev74-firmware", required: bool | None = None,
+        unrelated: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         # Redirect only the fixed firmware path in a temporary installer copy;
         # never create or execute firmware under the host's /usr/libexec.
@@ -696,6 +697,19 @@ class ForceInstallTest(unittest.TestCase):
             debs = f'"{archive}"' if selected else ""
             if invalid == "duplicate":
                 debs += f' "{archive}"'
+            if unrelated:
+                other_payload = root / "other-package"
+                other_control = other_payload / "DEBIAN" / "control"
+                other_control.parent.mkdir(parents=True)
+                other_control.write_text(
+                    "Package: unrelated-product\nVersion: 1\nArchitecture: all\n"
+                    "Maintainer: Test <test@example.invalid>\nDescription: unrelated fixture\n"
+                )
+                (other_payload / "unrelated-payload").write_text("not firmware")
+                other_archive = root / "other.deb"
+                subprocess.run(["dpkg-deb", "--build", "--root-owner-group", str(other_payload), str(other_archive)],
+                               check=True, capture_output=True, text=True)
+                debs += f' "{other_archive}"'
             fixture = f"""DEBS=({debs})
 dpkg-query() {{
   case "$1" in
@@ -705,14 +719,23 @@ dpkg-query() {{
   esac
 }}
 """
-            if required:
+            if required is not None:
                 admission_dir = root / "admission"
                 admission_dir.mkdir()
                 (admission_dir / "before.json").write_text(json.dumps({
                     "split_cohort": True,
-                    "firmware": {"required": True, "debian_package": required_identity},
+                    "firmware": {"required": required, "debian_package": required_identity if required else None},
                 }))
                 fixture += f'BOARD_PLATFORM_ADMISSION_DIR="{admission_dir}"\n'
+            if unrelated:
+                fixture += f'''dpkg-deb() {{
+  if [[ "$2" == "{other_archive}" && ( "$1" == --fsys-tarfile || "$1" == -x ) ]]; then
+    echo UNEXPECTED_UNRELATED_PAYLOAD >&2
+    return 73
+  fi
+  command dpkg-deb "$@"
+}}
+'''
             if invalid == "extraction":
                 fixture += 'dpkg-deb() { [[ "$1" != -x ]] || return 72; command dpkg-deb "$@"; }\n'
             installer = root / "installer.sh"
@@ -769,18 +792,45 @@ activate_board_runtime_after_install
         self.assertNotIn("UNEXPECTED_ACTIVATION", result.stdout)
 
     def test_required_native_firmware_activates_only_the_admitted_package(self) -> None:
-        result = self.run_activation_fixture(r"""
+        for package in ("simaai-kernels-firmware", "renamed-firmware-provider"):
+            with self.subTest(package=package):
+                result = self.run_activation_fixture(r"""
 source "$1"
 NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON
 run_sudo() { env -i PATH="$PATH" "$@"; }
 activate_board_runtime_after_install
-""", package="simaai-kernels-firmware", required=True)
+""", package=package, required=True, unrelated=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("FIRMWARE_FORCE=0 ARG=--activate", result.stdout)
+                self.assertNotIn("UNEXPECTED_UNRELATED_PAYLOAD", result.stderr)
+
+    def test_non_ev_split_cohort_skips_firmware_discovery(self) -> None:
+        result = self.run_activation_fixture(r"""
+source "$1"
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON
+dpkg-deb() { echo UNEXPECTED_DEB_INSPECTION >&2; return 99; }
+run_sudo() { printf 'UNEXPECTED_ACTIVATION\n'; }
+activate_board_runtime_after_install
+""", required=False)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("FIRMWARE_FORCE=0 ARG=--activate", result.stdout)
+        self.assertIn("not required by the selected Scheduler cohort", result.stdout)
+        self.assertNotIn("UNEXPECTED_", result.stdout + result.stderr)
+
+    def test_legacy_firmware_discovery_still_inspects_selected_payloads(self) -> None:
+        result = self.run_activation_fixture(r"""
+source "$1"
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON
+run_sudo() { printf 'UNEXPECTED_ACTIVATION\n'; }
+activate_board_runtime_after_install
+""", unrelated=True)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("UNEXPECTED_UNRELATED_PAYLOAD", result.stderr)
+        self.assertIn("Cannot inspect selected DEB firmware payload", result.stderr)
+        self.assertNotIn("UNEXPECTED_ACTIVATION", result.stdout)
 
     def test_required_native_firmware_cannot_be_missing_or_substituted(self) -> None:
         for invalid in ("unselected-payload", "required-Package", "required-Version",
-                        "required-Architecture", "required-deb_sha256", "required-archive"):
+                        "required-Architecture", "required-deb_sha256", "required-archive", "duplicate"):
             with self.subTest(invalid=invalid):
                 result = self.run_activation_fixture(r"""
 source "$1"

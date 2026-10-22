@@ -133,8 +133,18 @@ def firmware_control(result):
     return control
 
 
+def _scheduler_archives(root):
+    archives = []
+    for archive in sorted(root.glob('*.deb')):
+        require(archive.is_file() and not archive.is_symlink(), 'Nonregular incoming DEB')
+        role = subprocess.check_output(['dpkg-deb', '-f', str(archive), 'Package'], text=True).strip()
+        if role == 'simaai-scheduler':
+            archives.append(archive)
+    return archives
+
+
 def invoke(directory, action, *, installed=False, simulation=None, repair_incomplete=False,
-           resume_incomplete=False):
+           resume_incomplete=False, _archives=None):
     require(not installed or action == 'check', 'Installed verification requires check')
     require(not resume_incomplete or (repair_incomplete and action == 'transaction'),
             'Incomplete resume requires repair transaction admission')
@@ -153,12 +163,7 @@ def invoke(directory, action, *, installed=False, simulation=None, repair_incomp
     receipt = json.loads(receipt_path.read_text())
     selected = receipt.get('scheduler', {}).get('buildinfo')
     require(isinstance(selected, dict), 'Missing selected Scheduler build receipt')
-    archives = []
-    for archive in sorted(root.glob('*.deb')):
-        require(archive.is_file() and not archive.is_symlink(), 'Nonregular incoming DEB')
-        role = subprocess.check_output(['dpkg-deb', '-f', str(archive), 'Package'], text=True).strip()
-        if role == 'simaai-scheduler':
-            archives.append(archive)
+    archives = _scheduler_archives(root) if _archives is None else _archives
     require(len(archives) == 1, 'Exactly one incoming Scheduler DEB is required')
     with tempfile.TemporaryDirectory(prefix='core-scheduler-admission-') as scratch:
         prefix = Path(scratch) / 'package'
@@ -187,14 +192,9 @@ def optional_admission(directory, action, **options):
     root = Path(directory).resolve(strict=True)
     # The actual incoming owner determines whether this is a split cohort.
     # Unverified top-level receipt flags must not disable authentication.
-    schedulers = []
-    for archive in root.glob('*.deb'):
-        require(archive.is_file() and not archive.is_symlink(), 'Nonregular incoming DEB')
-        role = subprocess.check_output(['dpkg-deb', '-f', str(archive), 'Package'], text=True).strip()
-        if role == 'simaai-scheduler':
-            schedulers.append(archive)
+    schedulers = _scheduler_archives(root)
     if schedulers:
-        return {**invoke(root, action, **options), 'split_cohort': True}
+        return {**invoke(root, action, _archives=schedulers, **options), 'split_cohort': True}
     receipt_path = root / 'resolved-deps-manifest.json'
     if receipt_path.exists():
         require(receipt_path.is_file() and not receipt_path.is_symlink(), 'Invalid dependency receipt')

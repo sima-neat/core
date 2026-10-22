@@ -477,6 +477,37 @@ def test_core_payload_hash_missing_and_symlink_fail_before_verifier(core_publica
     assert len(core_publication[-1]) == 2
 
 
+@pytest.mark.parametrize('name', core_transport.METADATA)
+def test_core_cli_cannot_replace_selected_metadata_before_owner_execution(core_publication, name):
+    original = core_transport.subprocess.run.side_effect
+    def overwrite(argv, **kwargs):
+        result = original(argv, **kwargs)
+        if argv[0] == 'fixture-cli':
+            selected = Path(argv[argv.index('-d') + 1]) / name
+            value = json.loads(selected.read_text())
+            value['version'] = 'changed-by-cli'
+            selected.write_text(json.dumps(value))
+        return result
+    core_transport.subprocess.run.side_effect = overwrite
+    with pytest.raises(ValueError, match='differs from selected metadata: ' + name):
+        acquire_core(core_publication)
+    assert len(core_publication[-1]) == 2
+
+
+def test_core_expected_inventory_is_generated_by_full_verifier_after_authentication(core_publication):
+    output = core_publication[0] / 'expected.json'
+    acquire_core(core_publication, package_profile='core-codecs-llima', write_package_inventory=output)
+    assert core_publication[-1][-1][-4:] == ['--package-profile', 'core-codecs-llima',
+                                           '--write-package-inventory', str(output)]
+
+
+@pytest.mark.parametrize('options', [{'package_profile': 'core'}, {'write_package_inventory': Path('expected.json')}])
+def test_core_expected_inventory_requires_profile_and_output_before_download(core_publication, options):
+    with pytest.raises(ValueError, match='explicit package profile'):
+        acquire_core(core_publication, **options)
+    assert not core_publication[-1]
+
+
 @pytest.mark.parametrize('name', ['../escape', 'nested/archive.deb', 'metadata.json'])
 def test_core_unsafe_payload_cannot_overwrite_authority(core_publication, name):
     path = core_publication[1] / 'metadata-all.json'
