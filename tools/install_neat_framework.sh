@@ -755,10 +755,6 @@ read_devkit_platform_version() {
 }
 
 ensure_platform_compatible() {
-  # This read-only package admission is not waived by a platform-version override.
-  if [[ "${ENV_MODE:-}" == modalix-board ]]; then
-    prepare_board_platform_admission || return 1
-  fi
   if [[ "${FORCE_INSTALL:-}" == "1" ]]; then
     log "FORCE_INSTALL=1; skipping platform compatibility check. Package may not work on this platform."
     return 0
@@ -2038,7 +2034,7 @@ install_debs_in_ros2_sdk() {
 # delegate authenticates its incoming installed tooling before executing it.
 prepare_board_platform_admission() {
   if [[ -n "${BOARD_PLATFORM_ADMISSION_DIR}" ]]; then
-    [[ -f "${BOARD_PLATFORM_ADMISSION_DIR}/before.json" ]]
+    verify_board_platform_admission
     return $?
   fi
   if [[ ! -f "${SCHEDULER_PLATFORM_ADMISSION_PATH}" || -L "${SCHEDULER_PLATFORM_ADMISSION_PATH}" ]]; then
@@ -2048,6 +2044,7 @@ prepare_board_platform_admission() {
   BOARD_PLATFORM_ADMISSION_DIR="$(mktemp -d /tmp/sima-neat-platform-admission-XXXXXX)"
   INSTALLER_TMP_DIRS+=("${BOARD_PLATFORM_ADMISSION_DIR}")
   python3 -B "${SCHEDULER_PLATFORM_ADMISSION_PATH}" preflight-if-declared --directory "$PWD" \
+    --prepare "${BOARD_PLATFORM_ADMISSION_DIR}/prepared" \
     --output "${BOARD_PLATFORM_ADMISSION_DIR}/before.json"
 }
 
@@ -2110,8 +2107,12 @@ verify_board_platform_plan() {
 verify_scheduler_transaction() {
   local simulation="$1"
   shift
+  local -a prepared_args=()
+  if [[ -n "${BOARD_PLATFORM_ADMISSION_DIR}" ]]; then
+    prepared_args=(--prepared-from "${BOARD_PLATFORM_ADMISSION_DIR}/before.json")
+  fi
   python3 -B "${SCHEDULER_PLATFORM_ADMISSION_PATH}" transaction-if-declared \
-    --directory "$PWD" --simulation "${simulation}" "$@"
+    --directory "$PWD" --simulation "${simulation}" "${prepared_args[@]}" "$@"
 }
 
 install_debs_on_board() {
@@ -2119,7 +2120,6 @@ install_debs_on_board() {
   printf '[install_neat_framework] DEB install set:\n'
   printf '  %s\n' "${DEBS[@]}"
   prepare_board_platform_admission || return 1
-  verify_board_platform_admission || return 1
   local direct_platform_before=""
   if ! board_runtime_is_legacy; then
     direct_platform_before="$(capture_direct_platform_identity)" || return 1
@@ -2177,6 +2177,7 @@ install_debs_on_board() {
     retirement_plan="$(mktemp /tmp/sima-neat-retirements-XXXXXX)"
     INSTALLER_TMP_DIRS+=("${retirement_plan}")
     python3 -B "${SCHEDULER_PLATFORM_ADMISSION_PATH}" retirements --directory "$PWD" \
+      --prepared-from "${BOARD_PLATFORM_ADMISSION_DIR}/before.json" \
       >"${retirement_plan}" || return 1
     verify_board_platform_plan "${retirement_plan}" || return 1
     verify_simulated_package_removals "${retirement_plan}" "${board_install_specs[@]}" || return 1

@@ -2234,7 +2234,7 @@ trap 'rm -rf "${tmp}"' EXIT
 cd "${tmp}"
 DEBS=(./candidate.deb)
 APPLIES=0
-prepare_board_platform_admission() { :; }
+prepare_board_platform_admission() { echo PLATFORM; }
 verify_board_platform_admission() { echo PLATFORM; }
 verify_board_platform_plan() { :; }
 verify_simulated_package_removals() { :; }
@@ -2304,6 +2304,10 @@ exit "${result}"
                 self.assertIn("ADMISSION --repair-incomplete --resume-incomplete\n", result.stdout)
                 self.assertIn("ADMISSION --repair-incomplete\n", result.stdout)
                 self.assertIn("COMPLETE\n", result.stdout)
+                phases = [line for line in result.stdout.splitlines()
+                          if line == "PLATFORM" or line.startswith(("ADMISSION ", "APPLY "))]
+                self.assertEqual(phases, ["PLATFORM", "ADMISSION --repair-incomplete --resume-incomplete",
+                                          "APPLY 1", "PLATFORM", "ADMISSION --repair-incomplete", "APPLY 2"])
                 commands = [s for s in result.stdout.splitlines() if s.startswith("apt-get install")]
                 self.assertEqual(len(commands), 4)
                 for index, command in enumerate(commands):
@@ -2490,15 +2494,19 @@ echo UNEXPECTED_SUCCESS
                 if not query_fails:
                     self.assertIn("foreign-pending\tinstall ok triggers-pending", result.stderr)
 
-    def test_version_overrides_cannot_skip_board_provider_admission(self) -> None:
+    def test_version_overrides_still_require_provider_admission_before_neat_apt(self) -> None:
         for override in ("FORCE_INSTALL=1", "NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON"):
             with self.subTest(override=override):
                 result = run_bash('source "$1"\nENV_MODE=modalix-board\n' + override +
+                                  '\nDEBS=(./candidate.deb)'
                                   '\nprepare_board_platform_admission() { echo ADMISSION; return 9; }'
-                                  '\nensure_platform_compatible\necho MUTATION\n')
+                                  '\nrun_sudo() { echo UNEXPECTED_APT; }'
+                                  '\nensure_platform_compatible\necho VERSION_CHECK_FINISHED'
+                                  '\ninstall_debs_on_board\necho UNEXPECTED_SUCCESS\n')
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("ADMISSION", result.stdout)
-                self.assertNotIn("MUTATION", result.stdout)
+                self.assertLess(result.stdout.index("VERSION_CHECK_FINISHED"), result.stdout.index("ADMISSION"))
+                self.assertNotIn("UNEXPECTED_", result.stdout)
 
     def test_sdk_modes_do_not_use_host_as_board_provider_authority(self) -> None:
         for mode in ("elxr-sdk", "ros2-sdk"):

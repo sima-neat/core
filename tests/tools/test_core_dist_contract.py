@@ -1110,7 +1110,7 @@ admission_spec.loader.exec_module(admission)
 def admission_fixture(tmp_path, *, transaction_error=None, empty_platform=False,
                       retirements=None, retirement_error=None, final_transaction_error=None,
                       firmware=None, omit_firmware=False, preflight_error=None,
-                      ordinary_dependency=None):
+                      ordinary_dependency=None, prepared=False):
     root = tmp_path / 'admission-dist'; root.mkdir()
     source = tmp_path / 'scheduler-source'
     prefix = source / 'usr'
@@ -1118,7 +1118,7 @@ def admission_fixture(tmp_path, *, transaction_error=None, empty_platform=False,
     marker = tmp_path / 'executed'
     firmware = firmware if firmware is not None else {'required': False, 'debian_package': None}
     tool = tool_dir / 'platform_admission.py'
-    tool.write_text('''import json, pathlib, sys
+    tool.write_text('''import hashlib, json, pathlib, sys
 from fixture_policy import RESULT
 pathlib.Path(''' + repr(str(marker)) + ''').write_text('executed')
 pathlib.Path(''' + repr(str(marker.with_suffix('.argv'))) + ''').write_text(json.dumps(sys.argv[1:]))
@@ -1140,12 +1140,28 @@ if receipt.get('runner', {}).get('buildinfo', {}).get('platform_runtime_packages
     raise SystemExit('producer rejected missing Platform declaration')
 if 'PlatformRuntime' not in receipt.get('external_dependencies', {}):
     raise SystemExit('producer rejected missing Platform evidence')
+preparation = None
+if ''' + repr(prepared) + ''' and '--prepare' in sys.argv:
+    context = pathlib.Path(sys.argv[sys.argv.index('--prepare') + 1])
+    context.mkdir(mode=0o700)
+    context = context / 'context.json'
+    context.write_text('{"fixture": "prepared candidate"}')
+    preparation = {'path': str(context), 'sha256': hashlib.sha256(context.read_bytes()).hexdigest()}
+elif '--prepared' in sys.argv:
+    context = pathlib.Path(sys.argv[sys.argv.index('--prepared') + 1])
+    digest = sys.argv[sys.argv.index('--prepared-sha256') + 1]
+    if hashlib.sha256(context.read_bytes()).hexdigest() != digest:
+        raise SystemExit('producer rejected changed preparation')
+    preparation = {'path': str(context), 'sha256': digest}
 if sys.argv[1] == 'retirements':
-    print(json.dumps(''' + repr({'schema_version': 1, 'status': 'PASS',
+    result = ''' + repr({'schema_version': 1, 'status': 'PASS',
         'scope': 'read-only-package-retirement-proposal', 'repair_incomplete': True,
-        'incomplete_packages': [], 'retirements': retirements or {}, 'firmware': firmware}) + '''))
+        'incomplete_packages': [], 'retirements': retirements or {}, 'firmware': firmware}) + '''
 else:
-    print(json.dumps(RESULT))
+    result = dict(RESULT)
+if preparation is not None:
+    result['preparation'] = preparation
+print(json.dumps(result))
 ''')
     result = {'schema_version': 1, 'redistributed_provider_controls': [],
               'platform_packages': {'fixture-platform': 'arm64'},
@@ -1230,6 +1246,92 @@ def test_cli_admission_phases_delegate_exact_authenticated_action(tmp_path, acti
     assert json.loads(result.stdout) == {**expected, 'split_cohort': True}
     assert json.loads(marker.with_suffix('.argv').read_text()) == [
         expected_action, '--directory', str(root), *(['--installed'] if installed else [])]
+
+
+@pytest.mark.parametrize('action', ['preflight-if-declared', 'check-if-declared',
+                                  'transaction-if-declared', 'retirements'])
+def test_preparation_token_is_forwarded_only_to_authenticated_owner(tmp_path, action):
+    root, _, _, marker, expected, _ = admission_fixture(tmp_path, prepared=True)
+    context_dir, baseline = tmp_path / 'prepared', tmp_path / 'before.json'
+    command = [sys.executable, str(ROOT / 'tools/scheduler_platform_admission.py')]
+    initial = subprocess.run([*command, 'preflight-if-declared', '--directory', str(root),
+                              '--prepare', str(context_dir), '--output', str(baseline)],
+                             text=True, capture_output=True)
+    assert initial.returncode == 0, initial.stderr
+    report = json.loads(baseline.read_text())
+    token = report['preparation']
+    assert token['path'] == str(context_dir / 'context.json')
+    assert token['sha256'] == admission.sha(context_dir / 'context.json')
+    if action in ('transaction-if-declared', 'retirements'):
+        # These commands reuse preparation without comparing provider policy.
+        report['providers'] = {'unrelated': {}}
+        baseline.write_text(json.dumps(report))
+        options = ['--prepared-from', str(baseline)]
+    else:
+        options = ['--baseline', str(baseline)]
+    if action == 'transaction-if-declared':
+        simulation = tmp_path / 'simulation'; simulation.write_text('')
+        options += ['--simulation', str(simulation)]
+    elif action == 'check-if-declared':
+        options += ['--installed']
+    result = subprocess.run([*command, action, '--directory', str(root), *options],
+                            text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    calls = [json.loads(line) for line in marker.with_suffix('.calls').read_text().splitlines()]
+    assert len(calls) == 2
+    assert calls[0] == ['preflight', '--directory', str(root), '--prepare', str(context_dir)]
+    assert calls[1][-4:] == ['--prepared', token['path'], '--prepared-sha256', token['sha256']]
+    if action != 'retirements':
+        assert json.loads(result.stdout) == {**expected, 'preparation': token, 'split_cohort': True}
+
+
+@pytest.mark.parametrize('mutation', ['null', 'missing', 'relative', 'digest', 'symlink'])
+def test_malformed_preparation_token_is_rejected_before_owner_import(tmp_path, mutation):
+    root, _, _, marker, expected, _ = admission_fixture(tmp_path)
+    context = tmp_path / 'context.json'; context.write_text('{}')
+    token = {'path': str(context), 'sha256': admission.sha(context)}
+    if mutation == 'null': token = None
+    elif mutation == 'missing': token = {}
+    elif mutation == 'relative': token['path'] = 'context.json'
+    elif mutation == 'digest': token['sha256'] = 'not-a-digest'
+    else:
+        link = tmp_path / 'linked-context'; link.symlink_to(context)
+        token['path'] = str(link)
+    baseline = tmp_path / 'before.json'
+    baseline.write_text(json.dumps({**expected, 'preparation': token}))
+    result = subprocess.run([sys.executable, str(ROOT / 'tools/scheduler_platform_admission.py'),
+                             'preflight-if-declared', '--directory', str(root), '--baseline', str(baseline)],
+                            text=True, capture_output=True)
+    assert result.returncode != 0
+    assert 'preparation' in result.stderr.lower()
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize('mutation', ['context', 'digest'])
+def test_changed_preparation_is_rejected_by_owner_without_retry_or_execution(tmp_path, mutation):
+    root, _, _, marker, _, _ = admission_fixture(tmp_path, prepared=True)
+    report = admission.invoke(root, 'preflight', prepare=tmp_path / 'prepared')
+    token = dict(report['preparation'])
+    untrusted = tmp_path / 'untrusted-executed'
+    if mutation == 'context':
+        Path(token['path']).write_text(f'from pathlib import Path; Path({str(untrusted)!r}).touch()\n')
+    else:
+        token['sha256'] = '0' * 64
+    with pytest.raises(subprocess.CalledProcessError):
+        admission.invoke(root, 'check', installed=True, prepared=token)
+    calls = [json.loads(line) for line in marker.with_suffix('.calls').read_text().splitlines()]
+    assert [call[0] for call in calls] == ['preflight', 'check']
+    assert not untrusted.exists()
+
+
+def test_absent_preparation_token_keeps_fresh_admission_path(tmp_path):
+    root, _, _, marker, expected, _ = admission_fixture(tmp_path)
+    baseline = tmp_path / 'before.json'; baseline.write_text(json.dumps(expected))
+    result = subprocess.run([sys.executable, str(ROOT / 'tools/scheduler_platform_admission.py'),
+                             'preflight-if-declared', '--directory', str(root), '--baseline', str(baseline)],
+                            text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(marker.with_suffix('.argv').read_text()) == ['preflight', '--directory', str(root)]
 
 
 @pytest.mark.parametrize('installed', [False, True])
@@ -1616,18 +1718,37 @@ install_debs_in_ros2_sdk
 
 @pytest.mark.parametrize('override', ['FORCE_INSTALL=1', 'NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON'])
 @pytest.mark.parametrize('valid', [False, True])
-def test_board_admission_precedes_even_forced_mutation(tmp_path, override, valid):
+def test_board_overrides_allow_prerequisites_but_cannot_skip_package_admission(tmp_path, override, valid):
     root, _, tool, marker, _, rebuild = admission_fixture(tmp_path)
     if not valid:
         tool.unlink(); rebuild()
     result = installer_shell(root, f'''ENV_MODE=modalix-board; {override};
-run_sudo() {{ echo MUTATION; }}
+run_sudo() {{ echo "$1"; }}
 ensure_platform_compatible
-run_sudo sentinel-or-package-mutation
+[[ ! -e ../executed ]]
+run_sudo PREREQUISITE
+prepare_board_platform_admission
+run_sudo NEAT-PACKAGES
 ''')
     assert (result.returncode == 0) == valid, result.stderr
-    assert ('MUTATION' in result.stdout) == valid
+    assert 'PREREQUISITE' in result.stdout
+    assert ('NEAT-PACKAGES' in result.stdout) == valid
     assert marker.exists() == valid
+
+
+def test_cheap_platform_mismatch_still_precedes_prerequisites(tmp_path):
+    root, _, _, marker, _, _ = admission_fixture(tmp_path)
+    (root / 'manifest.json').write_text(json.dumps({'platform-version': '3.0.0'}))
+    (root / 'buildinfo').write_text('MACHINE=modalix\nDISTRO_VERSION=2.1.3\n')
+    result = installer_shell(root, '''ENV_MODE=modalix-board; FORCE_INSTALL=0
+NEAT_INSTALLER_SKIP_PLATFORM_CHECK=OFF; NEAT_BUILDINFO_FILE="$PWD/buildinfo"
+ensure_platform_compatible
+echo PREREQUISITE
+''')
+    assert result.returncode != 0
+    assert 'Incompatible platform version' in result.stderr
+    assert 'PREREQUISITE' not in result.stdout
+    assert not marker.exists()
 
 
 @pytest.mark.parametrize('mode', ['elxr-sdk', 'ros2-sdk'])
@@ -1651,7 +1772,9 @@ echo MUTATION
     assert 'MUTATION' not in result.stdout
 
 
-def test_installer_checks_post_install_closure_before_runtime_restart(tmp_path):
+@pytest.mark.parametrize('recheck', ['prepare_board_platform_admission',
+                                   'complete_board_install_after_packages'])
+def test_installer_rechecks_providers_before_context_reuse_or_runtime_restart(tmp_path, recheck):
     root, _, _, _, _, _ = admission_fixture(tmp_path)
     result = installer_shell(root, '''prepare_board_platform_admission
 verify_board_platform_admission --installed
@@ -1662,8 +1785,7 @@ v['providers']['libfixture.so']['sha256'] = 'b' * 64
 p.write_text(json.dumps(v))
 MUTATE
 activate_board_runtime_after_install() { echo MUTATION; }
-complete_board_install_after_packages
-''')
+''' + recheck + '\n')
     assert result.returncode != 0
     assert 'MUTATION' not in result.stdout
     assert 'identity changed' in result.stderr
@@ -1676,10 +1798,15 @@ def test_board_stages_protected_preflight_then_full_installed_admission(tmp_path
     dependency = tmp_path / 'ordinary-provider-installed'
     root, _, _, marker, _, _ = admission_fixture(
         tmp_path, ordinary_dependency=dependency,
-        preflight_error='producer rejected protected provider' if failure == 'protected' else None)
+        preflight_error='producer rejected protected provider' if failure == 'protected' else None,
+        prepared=True)
     body = '''original_complete=$(declare -f complete_board_install_after_packages)
 ''' + TRANSACTION_SETUP + '''
 eval "$original_complete"
+EVENTS="${PWD%/*}/executed.calls"
+install_board_sentinel() { printf '%s\\n' '["sentinel"]' >> "$EVENTS"; }
+install_python_environment() { printf '%s\\n' '["python"]' >> "$EVENTS"; }
+install_agent_skills_for_current_user() { :; }
 board_runtime_is_legacy() { return 1; }
 capture_direct_platform_identity() { echo fixture-platform-identity; }
 repair_global_sima_neat_lib_links() { :; }
@@ -1711,7 +1838,7 @@ MUTATE
 }
 ENV_MODE=modalix-board; FORCE_INSTALL=1
 ensure_platform_compatible
-install_debs_on_board
+install_for_environment
 '''
     result = installer_shell(root, f'FAILURE={failure}; DEPENDENCY="{dependency}";\n' + body)
     assert (result.returncode == 0) == (failure is None), result.stdout + result.stderr
@@ -1719,8 +1846,17 @@ install_debs_on_board
     assert ('APPLY' in commands) == (failure != 'protected')
     assert ('ACTIVATE' in commands) == (failure is None)
     assert ('RESTART' in commands) == (failure is None)
-    calls = [json.loads(line) for line in marker.with_suffix('.calls').read_text().splitlines()]
+    events = [json.loads(line) for line in marker.with_suffix('.calls').read_text().splitlines()]
+    assert events[:2] == [['sentinel'], ['python']]
+    calls = events[2:]
     assert calls[0][0] == 'preflight'
+    assert '--prepare' in calls[0]
+    assert sum(call[0] == 'preflight' for call in calls) == (2 if repair and failure != 'protected' else 1)
+    if failure != 'protected':
+        context = str(Path(calls[0][calls[0].index('--prepare') + 1]) / 'context.json')
+        token_args = ['--prepared', context, '--prepared-sha256',
+                      hashlib.sha256(b'{"fixture": "prepared candidate"}').hexdigest()]
+        assert all(call[-4:] == token_args and '--prepare' not in call for call in calls[1:])
     if failure == 'protected':
         assert len(calls) == 1
         assert 'producer rejected protected provider' in result.stderr
@@ -1728,7 +1864,7 @@ install_debs_on_board
         assert calls[-1][0] == 'preflight'
         assert 'identity changed' in result.stderr
     else:
-        assert calls[-1] == ['check', '--directory', str(root), '--installed']
+        assert calls[-1] == ['check', '--directory', str(root), '--installed', *token_args]
         assert all(call[0] != 'check' for call in calls[:-1])
         assert sum(call[0] == 'transaction' for call in calls) == (2 if repair else 1)
         if failure == 'ordinary':

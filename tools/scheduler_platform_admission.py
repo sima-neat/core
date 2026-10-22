@@ -133,6 +133,17 @@ def firmware_control(result):
     return control
 
 
+def preparation_token(value):
+    require(isinstance(value, dict) and isinstance(value.get('path'), str)
+            and '\0' not in value['path'] and Path(value['path']).is_absolute()
+            and isinstance(value.get('sha256'), str)
+            and re.fullmatch(r'[0-9a-f]{64}', value['sha256']),
+            'Invalid Scheduler preparation token')
+    path = Path(value['path'])
+    require(path.is_file() and not path.is_symlink(), 'Nonregular Scheduler preparation context')
+    return {'path': str(path), 'sha256': value['sha256']}
+
+
 def _scheduler_archives(root):
     archives = []
     for archive in sorted(root.glob('*.deb')):
@@ -144,12 +155,16 @@ def _scheduler_archives(root):
 
 
 def invoke(directory, action, *, installed=False, simulation=None, repair_incomplete=False,
-           resume_incomplete=False, _archives=None):
+           resume_incomplete=False, prepare=None, prepared=None, _archives=None):
     require(not installed or action == 'check', 'Installed verification requires check')
     require(not resume_incomplete or (repair_incomplete and action == 'transaction'),
             'Incomplete resume requires repair transaction admission')
     require(not repair_incomplete or action == 'transaction',
             'Incomplete package repair requires transaction admission')
+    require(prepare is None or (action == 'preflight' and prepared is None),
+            'Preparation requires an initial preflight')
+    if prepared is not None:
+        prepared = preparation_token(prepared)
     if action == 'transaction':
         require(simulation is not None, 'Transaction admission requires an APT simulation')
         simulation = Path(simulation)
@@ -178,6 +193,10 @@ def invoke(directory, action, *, installed=False, simulation=None, repair_incomp
             command.append('--repair-incomplete')
         if resume_incomplete:
             command.append('--resume-incomplete')
+        if prepare is not None:
+            command.extend(['--prepare', str(Path(prepare).absolute())])
+        if prepared is not None:
+            command.extend(['--prepared', prepared['path'], '--prepared-sha256', prepared['sha256']])
         # No inherited source PYTHONPATH may override authenticated helper imports.
         env = {key: value for key, value in os.environ.items() if key not in ('PYTHONPATH', 'PYTHONHOME')}
         env['PYTHONDONTWRITEBYTECODE'] = '1'
@@ -185,6 +204,8 @@ def invoke(directory, action, *, installed=False, simulation=None, repair_incomp
     require(isinstance(result, dict) and result.get('schema_version') == 1,
             'Invalid Scheduler Platform admission response')
     firmware_control(result)
+    if 'preparation' in result:
+        preparation_token(result['preparation'])
     return result
 
 
@@ -202,14 +223,16 @@ def optional_admission(directory, action, **options):
         require(not declared(receipt) and not receipt.get('scheduler'),
                 'Selected split distribution is missing its Scheduler archive')
     # Legacy monolithic distributions have no incoming Scheduler owner.
+    require(options.get('prepared') is None,
+            'Prepared context requires an incoming Scheduler')
     require(not options.get('repair_incomplete'),
             'Unhealthy APT state requires an authenticated split Scheduler cohort')
     return {'schema_version': 1, 'platform_packages': {}, 'packages': {}, 'providers': {},
             'split_cohort': False, 'firmware': {'required': False, 'debian_package': None}}
 
 
-def optional_board_check(directory, *, installed=False):
-    return optional_admission(directory, 'check', installed=installed)
+def optional_board_check(directory, *, installed=False, prepared=None):
+    return optional_admission(directory, 'check', installed=installed, prepared=prepared)
 
 
 def same_providers(before, after):
@@ -267,6 +290,8 @@ def main():
     parser.add_argument('--directory', type=Path, default=Path.cwd())
     parser.add_argument('--installed', action='store_true')
     parser.add_argument('--baseline', type=Path)
+    parser.add_argument('--prepare', type=Path)
+    parser.add_argument('--prepared-from', type=Path)
     parser.add_argument('--simulation', type=Path)
     parser.add_argument('--repair-incomplete', action='store_true')
     parser.add_argument('--resume-incomplete', action='store_true')
@@ -277,31 +302,41 @@ def main():
             'Incomplete resume requires repair transaction admission')
     require(not args.repair_incomplete or args.action == 'transaction-if-declared',
             'Incomplete package repair requires transaction admission')
+    require(args.prepare is None or (args.action == 'preflight-if-declared'
+            and not args.baseline and not args.prepared_from),
+            'Preparation requires an initial preflight')
+    require(args.prepared_from is None or (args.action in ('transaction-if-declared', 'retirements')
+            and not args.baseline), 'Prepared context report requires transaction or retirements')
     if args.action == 'verify-plan':
         require(args.baseline and args.simulation, 'Plan verification requires admission and simulation')
         verify_plan(json.loads(args.baseline.read_text()), args.simulation)
         return
+    baseline = json.loads(args.baseline.read_text()) if args.baseline else None
+    context = baseline if args.baseline else (
+        json.loads(args.prepared_from.read_text()) if args.prepared_from else {})
+    require(isinstance(context, dict), 'Invalid Scheduler admission report')
+    prepared = preparation_token(context['preparation']) if 'preparation' in context else None
     if args.action == 'retirements':
         require(not args.simulation and not args.installed and not args.baseline,
                 'Retirement proposal does not accept a simulation or provider comparison')
-        result = invoke(args.directory, 'retirements')
+        result = invoke(args.directory, 'retirements', prepared=prepared)
     elif args.action == 'transaction-if-declared':
         require(args.simulation and not args.installed and not args.baseline,
                 'Transaction admission requires a simulation, not installed/provider comparison')
         result = optional_admission(args.directory, 'transaction', simulation=args.simulation,
                                     repair_incomplete=args.repair_incomplete,
-                                    resume_incomplete=args.resume_incomplete)
+                                    resume_incomplete=args.resume_incomplete, prepared=prepared)
     elif args.action == 'preflight-if-declared':
         require(not args.installed and not args.simulation,
                 'Preflight does not accept installed verification or a simulation')
-        result = optional_admission(args.directory, 'preflight')
+        result = optional_admission(args.directory, 'preflight', prepare=args.prepare, prepared=prepared)
     else:
         require(not args.simulation, 'Simulation requires plan or transaction admission')
-        result = (optional_board_check(args.directory, installed=args.installed)
+        result = (optional_board_check(args.directory, installed=args.installed, prepared=prepared)
                   if args.action == 'check-if-declared'
-                  else invoke(args.directory, args.action, installed=args.installed))
+                  else invoke(args.directory, args.action, installed=args.installed, prepared=prepared))
     if args.baseline:
-        same_providers(json.loads(args.baseline.read_text()), result)
+        same_providers(baseline, result)
     data = (retirement_plan(result) if args.action == 'retirements'
             else json.dumps(result, indent=2, sort_keys=True) + '\n')
     if args.output:
