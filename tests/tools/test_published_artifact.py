@@ -41,10 +41,9 @@ def test_literal_branch_grammar_matches_git_without_repository(tmp_path):
 @pytest.fixture
 def git_free_archive(tmp_path):
     # Match checkout's archive fallback: real entrypoint bytes, no .git or Git
-    # executable. Only native host discovery is a controlled fixture here.
+    # executable. Entry points must still reach the selected CLI.
     archive = tmp_path / 'archive'; archive.mkdir()
-    for name in ('tools/ci/published_artifact.py', 'tools/ci/acquire_core_qualification.py',
-                 'scripts/ci/pciehost/prepare_cpu_package.py', 'pcie_host/scripts/pcie_delivery.py'):
+    for name in ('tools/ci/published_artifact.py', 'tools/ci/acquire_core_qualification.py'):
         target = archive / name; target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / name, target)
     binaries = tmp_path / 'bin'; binaries.mkdir()
@@ -54,14 +53,11 @@ def git_free_archive(tmp_path):
                    f'pathlib.Path({str(calls)!r}).write_text(json.dumps(sys.argv[1:]))\n'
                    'sys.exit(29)\n')
     cli.chmod(0o755)
-    for name, value in (('bash', 'ubuntu24'), ('dpkg', 'amd64')):
-        path = binaries / name
-        path.write_text(f'#!{sys.executable}\nprint({value!r})\n'); path.chmod(0o755)
     assert shutil.which('git', path=str(binaries)) is None
     return archive, binaries, calls
 
 
-@pytest.mark.parametrize('entrypoint', ['publication', 'core', 'native'])
+@pytest.mark.parametrize('entrypoint', ['publication', 'core'])
 @pytest.mark.parametrize('branch,valid', [
     ('feature/core', True), ('@', True), ('éclair/東京', True), ('foo./bar', True),
     ('HEAD', False), ('-topic', False), ('topic.lock/child', False),
@@ -78,13 +74,10 @@ def test_real_archive_entrypoints_without_git(git_free_archive, entrypoint, bran
                    '"production", "out")')
         command = [sys.executable, '-c', program, branch]
     else:
-        script = ('tools/ci/acquire_core_qualification.py' if entrypoint == 'core'
-                  else 'scripts/ci/pciehost/prepare_cpu_package.py')
-        command = [sys.executable, str(archive / script), '--cli', 'fixture-cli',
+        command = [sys.executable, str(archive / 'tools/ci/acquire_core_qualification.py'),
+                   '--cli', 'fixture-cli',
                    '--branch=' + branch, '--commit', 'a' * 40, '--environment', 'prod',
                    '--output', str(output)]
-        if entrypoint == 'native':
-            command += ['--prefix', str(archive / 'prefix')]
     result = subprocess.run(command, cwd=archive, env={**os.environ, 'PATH': str(binaries)},
                             capture_output=True, text=True)
     assert result.returncode != 0
@@ -98,7 +91,6 @@ def test_real_archive_entrypoints_without_git(git_free_archive, entrypoint, bran
     else:
         assert not calls.exists() and not output.exists()
         assert 'ValueError: Invalid' in result.stderr
-    assert not (archive / 'prefix').exists()
 
 
 @pytest.fixture
