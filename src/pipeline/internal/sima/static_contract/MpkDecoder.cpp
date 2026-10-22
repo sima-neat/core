@@ -337,6 +337,20 @@ contiguous_stride_bytes(const TensorShape& value_shape, const std::uint64_t elem
   return result;
 }
 
+bool matches_contiguous_strides(const TensorShape& shape, const std::vector<std::int64_t>& actual,
+                                const std::vector<std::int64_t>& dense) {
+  if (actual.size() != shape.size() || dense.size() != shape.size()) {
+    return false;
+  }
+  for (std::size_t axis = 0; axis < shape.size(); ++axis) {
+    // A singleton axis never advances the address, even in a padded MLA crop.
+    if (shape[axis] > 1 && actual[axis] != dense[axis]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 std::optional<std::uint64_t> exact_element_width(const std::uint64_t bytes,
                                                  const TensorShape& value_shape) {
   std::uint64_t elements = 1U;
@@ -1305,7 +1319,9 @@ void lower_read_expressions(ModelExecutionPlanData& data, std::vector<MpkProofFa
         const auto input_dense = input_width
                                      ? contiguous_stride_bytes(*input.logical_shape, *input_width)
                                      : std::nullopt;
-        if (!input_dense || input.read_expression->stride_bytes != *input_dense) {
+        if (!input_dense ||
+            !matches_contiguous_strides(*input.logical_shape, input.read_expression->stride_bytes,
+                                        *input_dense)) {
           reject(MpkDecodeErrorCode::ConfigurationMismatch, "$.ops[" + std::to_string(op.id) + "]",
                  "reshape cannot reinterpret a non-contiguous input view");
         }
@@ -1337,14 +1353,14 @@ void lower_read_expressions(ModelExecutionPlanData& data, std::vector<MpkProofFa
                   : std::nullopt;
         if (!strides || input.required_bytes != output.required_bytes) {
           reject(MpkDecodeErrorCode::ValueSizeMismatch, "$.ops[" + std::to_string(op.id) + "]",
-                 "TVM __nop output does not preserve an exact dense byte extent");
+                 "TVM alias output does not preserve an exact dense byte extent");
         }
         const auto root = input.read_expression ? input.read_expression->source_value_id : input.id;
         const auto offset = input.read_expression ? input.read_expression->byte_offset : 0U;
         output.read_expression = ReadExpression{root, offset, *strides};
         if (proof) {
           proof->push_back({"read[" + std::to_string(output.id) + "]",
-                            "embedded TVM GraphExecutor __nop + shared storage_id lowers to an "
+                            "structurally verified TVM GraphExecutor alias lowers to an "
                             "exact address view"});
         }
       }
@@ -1394,7 +1410,8 @@ void validate_view_consumers(const ModelExecutionPlanData& data) {
     if (shape) {
       const auto width = exact_element_width(value.required_bytes, *shape);
       const auto dense = width ? contiguous_stride_bytes(*shape, *width) : std::nullopt;
-      contiguous = dense && value.read_expression->stride_bytes == *dense;
+      contiguous =
+          dense && matches_contiguous_strides(*shape, value.read_expression->stride_bytes, *dense);
       const auto& strides = value.read_expression->stride_bytes;
       sample_contiguous = dense && !shape->empty() && shape->front() > 1 &&
                           strides.size() == dense->size() && strides.front() >= dense->front() &&

@@ -289,6 +289,18 @@ std::optional<TvmHostModuleGraph> read_tvm_host_module_graph(const std::filesyst
       result.output_alias_input.push_back(-1);
     }
 
+    // An argument-only graph returns the very same tensor entry. This is the
+    // compiler's terminal identity form after an MLA-native integer result.
+    if (nodes.size() == 1U && input_entries.size() == 1U && heads.size() == 1U) {
+      const auto head_entry = entry_id(row_ptr, heads[0], error);
+      if (!head_entry) {
+        return std::nullopt;
+      }
+      if (*head_entry == input_entries[0]) {
+        result.output_alias_input[0] = 0;
+      }
+    }
+
     // Accept an address view only for the exact GraphExecutor shape-noop form
     // authored by TVM: one null argument, one __nop node consuming it, one head,
     // and a shared storage id. Anything else remains a real direct host job.

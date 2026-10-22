@@ -5,6 +5,7 @@
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/TensorUtil.h"
 
+#include "dmabuf_test_utils.h"
 #include "test_utils.h"
 
 #include <gst/gst.h>
@@ -176,6 +177,154 @@ void check_bundle_output_override_preserves_bundle_kind() {
           "second field tensor shape override mismatch");
 }
 
+void check_many_shared_views_use_unique_memory_slots() {
+  using namespace simaai::neat;
+  GstBufferPool* pool = gst_buffer_pool_new();
+  GstStructure* config = gst_buffer_pool_get_config(pool);
+  gst_buffer_pool_config_set_params(config, nullptr, 1024U, 2U, 2U);
+  require(gst_buffer_pool_set_config(pool, config), "failed to configure source pool");
+  require(gst_buffer_pool_set_active(pool, TRUE), "failed to activate source pool");
+
+  std::vector<std::shared_ptr<Storage>> sources;
+  std::vector<GstMemory*> memories;
+  for (int source_index = 0; source_index < 2; ++source_index) {
+    GstBuffer* buffer = nullptr;
+    require(gst_buffer_pool_acquire_buffer(pool, &buffer, nullptr) == GST_FLOW_OK,
+            "failed to acquire source buffer");
+    memories.push_back(gst_buffer_peek_memory(buffer, 0));
+    GstMapInfo map{};
+    require(gst_buffer_map(buffer, &map, GST_MAP_WRITE), "failed to map source buffer");
+    std::memset(map.data, source_index + 1, map.size);
+    gst_buffer_unmap(buffer, &map);
+    GstSample* sample = gst_sample_new(buffer, nullptr, nullptr, nullptr);
+    sources.push_back(pipeline_internal::make_gst_sample_storage(sample));
+    gst_sample_unref(sample);
+    gst_buffer_unref(buffer);
+  }
+  TensorList fields;
+  for (int view_index = 0; view_index < 84; ++view_index) {
+    Tensor tensor;
+    tensor.storage = sources[view_index % 2];
+    tensor.dtype = TensorDType::UInt8;
+    tensor.shape = {8};
+    tensor.byte_offset = (view_index / 2) * 8;
+    tensor.route.memory_index = 0;
+    fields.push_back(std::move(tensor));
+  }
+  sources.clear();
+  std::string err;
+  auto holder = pipeline_internal::tensor_list_to_gst_envelope_holder(fields, Sample{}, &err);
+  require(holder != nullptr, "shared views failed: " + err);
+  GstBuffer* envelope = pipeline_internal::buffer_from_tensor_holder(holder);
+  require(envelope != nullptr, "shared views have no envelope");
+  require(gst_buffer_n_memory(envelope) == 2U, "84 views must reuse two memory slots");
+  require(gst_buffer_peek_memory(envelope, 0) == memories[0] &&
+              gst_buffer_peek_memory(envelope, 1) == memories[1],
+          "shared views must retain original memory without payload copies");
+  pipeline_internal::TensorBufferView descriptor;
+  require(pipeline_internal::tensor_buffer_descriptor_from_sample(
+              static_cast<GstSample*>(holder.get()), &descriptor, &err),
+          "shared view descriptors failed: " + err);
+  require(descriptor.tensors.size() == 84U, "shared view descriptor count mismatch");
+  for (std::size_t i = 0; i < descriptor.tensors.size(); ++i) {
+    require(descriptor.tensors[i].memory_index == static_cast<int>(i % 2),
+            "shared view memory slot mismatch");
+    require(descriptor.tensors[i].byte_offset == static_cast<int64_t>((i / 2) * 8),
+            "shared view byte offset mismatch");
+  }
+  fields.clear();
+  GstMapInfo map{};
+  require(gst_memory_map(gst_buffer_peek_memory(envelope, 1), &map, GST_MAP_READ),
+          "source lifetime not retained");
+  require(map.data[0] == 2, "source payload changed after releasing tensors");
+  gst_memory_unmap(gst_buffer_peek_memory(envelope, 1), &map);
+
+  // Holding GstMemory alone is insufficient: pooled buffers could be recycled
+  // and overwritten. The envelope must keep both producer leases until release.
+  GstBufferPoolAcquireParams params{};
+  params.flags = GST_BUFFER_POOL_ACQUIRE_FLAG_DONTWAIT;
+  GstBuffer* spare = nullptr;
+  require(gst_buffer_pool_acquire_buffer(pool, &spare, &params) == GST_FLOW_EOS && !spare,
+          "the envelope must retain both producer buffer pool leases");
+  descriptor = {};
+  holder.reset();
+  gst_buffer_unref(envelope);
+  require(gst_buffer_pool_acquire_buffer(pool, &spare, &params) == GST_FLOW_OK,
+          "producer pool leases must return after the envelope is released");
+  gst_buffer_unref(spare);
+  require(gst_buffer_pool_set_active(pool, FALSE), "failed to deactivate source pool");
+  gst_object_unref(pool);
+
+  TensorList distinct;
+  for (guint i = 0; i <= gst_buffer_get_max_memory(); ++i) {
+    GstBuffer* buffer = i == 0U ? sima_test::make_bookkeeping_dmabuf(8U)
+                                : gst_buffer_new_allocate(nullptr, 8U, nullptr);
+    GstSample* sample = gst_sample_new(buffer, nullptr, nullptr, nullptr);
+    Tensor tensor;
+    tensor.storage = pipeline_internal::make_gst_sample_storage(sample);
+    tensor.dtype = TensorDType::UInt8;
+    tensor.shape = {8};
+    tensor.route.memory_index = 0;
+    distinct.push_back(std::move(tensor));
+    gst_sample_unref(sample);
+    gst_buffer_unref(buffer);
+  }
+  err.clear();
+  pipeline_internal::reset_tensor_io_stats();
+  auto rejected = pipeline_internal::tensor_list_to_gst_envelope_holder(distinct, Sample{}, &err);
+  const auto stats = pipeline_internal::snapshot_tensor_io_stats();
+  require(!rejected, "distinct memories beyond GStreamer's slot limit must fail");
+  require(err.find("memory-slot limit") != std::string::npos,
+          "distinct memory rejection should explain the slot limit");
+  require(stats.tensor_copy_count == 0U && stats.gst_memory_map_calls == 0U,
+          "rejecting excess distinct memories must not map or copy DMA payloads");
+}
+
+void check_mixed_holders_are_rejected_before_metadata_import() {
+  using namespace simaai::neat;
+  GstSample* first = make_tensor_sample_with_contract_meta();
+  Tensor cached;
+  cached.storage = pipeline_internal::make_gst_sample_storage(first);
+  cached.dtype = TensorDType::Int8;
+  cached.shape = {4, 4};
+  cached.route.memory_index = 0;
+  std::string err;
+  pipeline_internal::TensorBufferView same_view;
+  require(pipeline_internal::tensor_buffer_view_from_tensors({cached, cached}, &same_view, &err),
+          "same-holder descriptors must still import: " + err);
+  require(same_view.tensors.size() == 2U, "same-holder descriptor table is incomplete");
+  same_view = {};
+
+  // A malformed first descriptor table must not be opened on the mixed-holder
+  // path. Rejection depends only on ownership, independent of producer metadata.
+  GstCustomMeta* meta =
+      gst_buffer_get_custom_meta(gst_sample_get_buffer(first), SIMA_TENSOR_SET_META_NAME);
+  gst_structure_set(gst_custom_meta_get_structure(meta), SIMA_TENSOR_SET_META_FIELD_VERSION,
+                    G_TYPE_UINT, 0U, nullptr);
+  gst_sample_unref(first);
+  GstSample* second = make_tensor_sample_with_contract_meta();
+  Tensor fresh = cached;
+  fresh.storage = pipeline_internal::make_gst_sample_storage(second);
+  gst_sample_unref(second);
+  pipeline_internal::TensorBufferView mixed_view;
+  require(!pipeline_internal::tensor_buffer_view_from_tensors({cached, fresh}, &mixed_view, &err),
+          "mixed cache/input holders cannot reuse one producer's descriptor table");
+  require(err.find("same backing sample") != std::string::npos,
+          "mixed holders must fail before parsing the invalid first descriptor table");
+  require(!mixed_view.holder && mixed_view.tensors.empty(),
+          "mixed-holder rejection must leave the output view empty");
+
+  fresh.storage = make_cpu_owned_storage(16U);
+  require(!pipeline_internal::tensor_buffer_view_from_tensors({cached, fresh}, &mixed_view, &err),
+          "mixed CPU/GstSample input cannot use the shared-holder path");
+  require(err.find("not GstSample-backed") != std::string::npos && !mixed_view.holder &&
+              mixed_view.tensors.empty(),
+          "storage-kind rejection must precede descriptor import and leave no partial view");
+
+  require(!pipeline_internal::tensor_buffer_view_from_tensors({cached}, &same_view, &err),
+          "same-holder metadata must still be validated");
+}
+
 } // namespace
 
 int main() {
@@ -183,6 +332,8 @@ int main() {
     simaai::neat::gst_init_once();
 
     check_bundle_output_override_preserves_bundle_kind();
+    check_many_shared_views_use_unique_memory_slots();
+    check_mixed_holders_are_rejected_before_metadata_import();
 
     GstSample* source = make_tensor_sample_with_contract_meta();
     require(source != nullptr, "source sample creation failed");

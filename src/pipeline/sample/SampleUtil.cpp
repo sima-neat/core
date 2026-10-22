@@ -941,8 +941,10 @@ bool tensor_buffer_view_from_tensors_impl(const TensorList& tensors, TensorBuffe
     return false;
   }
 
-  for (std::size_t i = 0; i < tensors.size(); ++i) {
-    const Tensor& tensor = tensors[i];
+  // Reject mixed holders before importing any producer's descriptor table.
+  // Cache rebinding commonly combines many views with a fresh input sample.
+  const auto& storage = tensors.front().storage;
+  for (const auto& tensor : tensors) {
     if (!tensor.storage || tensor.storage->kind != simaai::neat::StorageKind::GstSample ||
         !tensor.storage->holder) {
       if (err) {
@@ -950,35 +952,7 @@ bool tensor_buffer_view_from_tensors_impl(const TensorList& tensors, TensorBuffe
       }
       return false;
     }
-
-    auto* sample = static_cast<GstSample*>(tensor.storage->holder.get());
-    if (!sample || !GST_IS_SAMPLE(sample)) {
-      if (err) {
-        *err = "tensor buffer view: invalid GstSample holder";
-      }
-      return false;
-    }
-    GstBuffer* buffer = gst_sample_get_buffer(sample);
-    if (!buffer) {
-      if (err) {
-        *err = "tensor buffer view: missing GstBuffer";
-      }
-      return false;
-    }
-    GstCaps* caps = gst_sample_get_caps(sample);
-
-    if (!out->holder) {
-      out->holder = tensor.storage->holder;
-      out->sample = sample;
-      out->buffer = buffer;
-      out->caps = caps;
-      simaai::scheduler::client::TensorBufferView view;
-      if (!simaai::scheduler::client::tensor_buffer_create_view(sample, &view, err) ||
-          !tensor_buffer_view_from_runtime_view(std::move(view), out, err)) {
-        return false;
-      }
-    } else if (tensor.storage->holder != out->holder || sample != out->sample ||
-               buffer != out->buffer) {
+    if (tensor.storage->holder != storage->holder) {
       if (err) {
         *err = "tensor buffer view: tensors do not share the same backing sample";
       }
@@ -986,7 +960,27 @@ bool tensor_buffer_view_from_tensors_impl(const TensorList& tensors, TensorBuffe
     }
   }
 
-  return true;
+  auto* sample = static_cast<GstSample*>(storage->holder.get());
+  if (!GST_IS_SAMPLE(sample)) {
+    if (err) {
+      *err = "tensor buffer view: invalid GstSample holder";
+    }
+    return false;
+  }
+  GstBuffer* buffer = gst_sample_get_buffer(sample);
+  if (!buffer) {
+    if (err) {
+      *err = "tensor buffer view: missing GstBuffer";
+    }
+    return false;
+  }
+  out->holder = storage->holder;
+  out->sample = sample;
+  out->buffer = buffer;
+  out->caps = gst_sample_get_caps(sample);
+  simaai::scheduler::client::TensorBufferView view;
+  return simaai::scheduler::client::tensor_buffer_create_view(sample, &view, err) &&
+         tensor_buffer_view_from_runtime_view(std::move(view), out, err);
 }
 
 bool tensor_buffer_view_from_sample_impl(const Sample& sample, TensorBufferView* out,
@@ -1548,14 +1542,6 @@ bool try_build_multi_source_tensor_set_backing(const Sample& bundle, GstBuffer**
   if (!sample_has_tensor_list(bundle) || bundle.tensors.empty()) {
     return false;
   }
-  // Appending past GStreamer's memory-slot limit merges payloads. A tensor
-  // envelope must never turn a DMA view into a copy to fit the carrier.
-  if (bundle.tensors.size() > gst_buffer_get_max_memory()) {
-    if (err) {
-      *err = "tensor-set envelope exceeds GStreamer's memory-slot limit";
-    }
-    return false;
-  }
   if (!build_tensor_set_envelope_caps(bundle, out_caps, err)) {
     return false;
   }
@@ -1581,6 +1567,7 @@ bool try_build_multi_source_tensor_set_backing(const Sample& bundle, GstBuffer**
   TensorList descriptor_tensors = bundle.tensors;
   std::vector<int> memory_indices;
   memory_indices.reserve(bundle.tensors.size());
+  std::unordered_map<GstMemory*, int> memory_slots;
   for (std::size_t tensor_index = 0; tensor_index < bundle.tensors.size(); ++tensor_index) {
     const Tensor& tensor = bundle.tensors[tensor_index];
     if (!tensor.storage) {
@@ -1649,13 +1636,26 @@ bool try_build_multi_source_tensor_set_backing(const Sample& bundle, GstBuffer**
         return fail("tensor-set multi-source timing copy failed");
       }
     }
-    gst_buffer_append_memory(assembled, gst_memory_ref(memory));
+    const auto found = memory_slots.find(memory);
+    int destination_memory_index = 0;
+    if (found == memory_slots.end()) {
+      // The limit applies to unique backing memories, not logical tensor views.
+      // Appending beyond it silently merges payloads and would copy DMA inputs.
+      if (memory_slots.size() >= gst_buffer_get_max_memory()) {
+        return fail("tensor-set envelope exceeds GStreamer's memory-slot limit");
+      }
+      destination_memory_index = static_cast<int>(memory_slots.size());
+      memory_slots.emplace(memory, destination_memory_index);
+      gst_buffer_append_memory(assembled, gst_memory_ref(memory));
+    } else {
+      destination_memory_index = found->second;
+    }
     // GstMemory retains the allocation, not the producer's GstBuffer pool lease.
     if (!gst_buffer_add_parent_buffer_meta(assembled, source)) {
       return fail("tensor-set multi-source failed to retain source buffer");
     }
     descriptor_tensor.route.memory_index = source_memory_index;
-    memory_indices.push_back(static_cast<int>(tensor_index));
+    memory_indices.push_back(destination_memory_index);
   }
 
   std::string detail;

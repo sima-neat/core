@@ -44,6 +44,12 @@ bool is_relation(const OpSpec& op) {
       op.kind == OpKind::PassThrough) {
     return true;
   }
+  if (op.kind == OpKind::HostTvm) {
+    const auto& host = std::get<HostTvmOpConfig>(op.config);
+    return !host.output_alias_input.empty() &&
+           std::all_of(host.output_alias_input.begin(), host.output_alias_input.end(),
+                       [](std::int32_t input) { return input >= 0; });
+  }
   const auto* pack = std::get_if<PackOpConfig>(&op.config);
   return op.kind == OpKind::Pack && pack && !pack->materializes;
 }
