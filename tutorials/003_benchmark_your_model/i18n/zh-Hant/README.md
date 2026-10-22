@@ -52,27 +52,33 @@ Python 會透過 `pyneat.BenchmarkOptions` 公開相同的欄位。設定原始�
 
 功耗資料來自 Sentinel，也就是 Neat 安裝程式所設定的板子遙測常駐程式。`report.telemetry` 還包含吞吐量階段的電源軌功耗、晶粒與板子溫度、CPU 使用率以及 MLA 記憶體；各欄位說明請參閱[測量模型執行效能](/develop-apps/development-workflow/model#power-and-board-telemetry)。如果 Sentinel 未執行，基準測試仍會報告延遲和吞吐量，將功耗欄位保持為零，並將 `report.telemetry.status` 設定為原因。
 
-### 進階：層統計資料 {#step-read-layer-stats}
+### 進階：MLA 層與階段統計資料 {#step-read-layer-stats}
 
-在任一教學命令中加入 `--include-layer-stats`，即可在基準測試報告中包含各層執行時間。此選項預設停用。透過 API 啟用的方式如下：
+兩個選用選項會在基準測試後執行 `mla-rt`，測量已編譯 MLA 程式碼的時間。兩者預設皆停用，且需要沒有其他 MLA 工作負載的閒置 devkit。在任一教學命令中加入 `--include-layer-stats` 或 `--include-mla-stage-stats`，或透過 API 啟用：
 
 ```cpp
 simaai::neat::BenchmarkOptions options;
 options.include_layer_stats = true;
+options.include_mla_stage_stats = true;
 auto report = model.benchmark(options);
 ```
 
 ```python
 options = pyneat.BenchmarkOptions()
 options.include_layer_stats = True
+options.include_mla_stage_stats = True
 report = model.benchmark(options)
 ```
 
 從 `report.layer_stats` 讀取每個已編譯 MLA 層的 `name`、從零開始的 `stage_index` 與 `total_execution_time_us`。執行時間為零的 no-op 項目也會保留。各層時間是在獨立的剖析執行中測量，因此總和不等於整體延遲。
 
+從 `report.mla_stage_stats` 讀取每個 MLA 階段的 `stage_index` 與 `latency_us`：該階段連續不中斷執行 200 次的平均硬體時間。此時間不含主機、EV74 與資料搬移，因此低於整體延遲。
+
+若找不到 `mla-rt` 或其執行失敗，`benchmark()` 仍會傳回主要測量值，清單保持為空，並將原因寫入 `report.layer_stats_status` 或 `report.mla_stage_stats_status`。其他情況下，各狀態為 `"not requested"` 或 `"ok"`。
+
 ### 儲存報告 {#step-save-report}
 
-呼叫 `report.save(path)` 即可將完整報告寫入 YAML 或 JSON，包含已要求的各層統計資料：
+呼叫 `report.save(path)` 即可將完整報告寫入 YAML 或 JSON，包含已要求的 MLA 層與階段統計資料：
 
 ```cpp
 auto path = report.save("results/model/yolo_benchmark.yaml");
@@ -88,7 +94,7 @@ json_path = report.save("results/model/yolo_benchmark.json")
 
 請指定包含檔名的路徑。不存在的父目錄會自動建立，既有檔案會被取代，並傳回寫入的路徑。儲存需要明確呼叫；`benchmark()` 不會自動建立報告檔案。
 
-在任一教學命令後加入 `--report results/model/yolo_benchmark.yaml`。搭配 `--include-layer-stats`，即可同時儲存主要測量值與各層執行時間。
+在任一教學命令後加入 `--report results/model/yolo_benchmark.yaml`。搭配 `--include-layer-stats` 或 `--include-mla-stage-stats`，即可同時儲存主要測量值與 MLA 執行時間。
 
 ## Run
 

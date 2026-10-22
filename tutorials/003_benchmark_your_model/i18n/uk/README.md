@@ -55,27 +55,33 @@ Python надає доступ до тих самих полів через `pyn
 
 Дані про потужність надходять від Sentinel — демона телеметрії плати, який налаштовує інсталятор Neat. `report.telemetry` також містить потужність шин живлення, температури кристала й плати, завантаження CPU та пам’ять MLA для проходу вимірювання пропускної здатності; опис кожного поля див. у розділі [Вимірювання виконання моделі](/develop-apps/development-workflow/model#power-and-board-telemetry). Якщо Sentinel не запущено, тест усе одно надає інформацію про затримку та пропускну здатність, залишає поля потужності нульовими та записує причину в `report.telemetry.status`.
 
-### Розширені можливості: статистика шарів {#step-read-layer-stats}
+### Розширені можливості: статистика шарів і стадій MLA {#step-read-layer-stats}
 
-Додайте `--include-layer-stats` до будь-якої команди прикладу, щоб включити час виконання шарів до звіту бенчмарку. Типово цю опцію вимкнено. Через API її можна ввімкнути так:
+Дві необов’язкові опції запускають `mla-rt` після бенчмарку, щоб виміряти час скомпільованого коду MLA. Обидві типово вимкнені й потребують незайнятого devkit без інших навантажень MLA. Додайте `--include-layer-stats` або `--include-mla-stage-stats` до будь-якої команди прикладу або ввімкніть їх через API:
 
 ```cpp
 simaai::neat::BenchmarkOptions options;
 options.include_layer_stats = true;
+options.include_mla_stage_stats = true;
 auto report = model.benchmark(options);
 ```
 
 ```python
 options = pyneat.BenchmarkOptions()
 options.include_layer_stats = True
+options.include_mla_stage_stats = True
 report = model.benchmark(options)
 ```
 
 У `report.layer_stats` доступні `name`, `stage_index` із нульовою нумерацією та `total_execution_time_us` для кожного скомпільованого шару MLA. Зберігаються також no-op записи з нульовим часом. Час шарів вимірюється в окремих проходах профілювання, тому його сума не дорівнює загальній затримці.
 
+У `report.mla_stage_stats` доступні `stage_index` і `latency_us` для кожної стадії MLA: середній апаратний час 200 безперервних запусків цієї стадії. Він не враховує хост, EV74 і переміщення даних, тому менший за загальну затримку.
+
+Якщо `mla-rt` відсутній або завершується з помилкою, `benchmark()` однаково повертає основні вимірювання, залишає список порожнім і записує причину в `report.layer_stats_status` або `report.mla_stage_stats_status`. В інших випадках кожен статус має значення `"not requested"` або `"ok"`.
+
 ### Збереження звіту {#step-save-report}
 
-Викличте `report.save(path)`, щоб записати повний звіт у YAML або JSON, включно зі статистикою шарів, якщо її запитано:
+Викличте `report.save(path)`, щоб записати повний звіт у YAML або JSON, включно зі статистикою шарів і стадій MLA, якщо її запитано:
 
 ```cpp
 auto path = report.save("results/model/yolo_benchmark.yaml");
@@ -91,7 +97,7 @@ json_path = report.save("results/model/yolo_benchmark.json")
 
 Укажіть шлях разом з іменем файлу. Відсутні батьківські каталоги створюються, наявний файл замінюється, а метод повертає шлях записаного файлу. Збереження виконується явно; `benchmark()` не створює файл звіту автоматично.
 
-До будь-якої команди прикладу додайте `--report results/model/yolo_benchmark.yaml`. Поєднайте з `--include-layer-stats`, щоб зберегти основні вимірювання та час виконання шарів.
+До будь-якої команди прикладу додайте `--report results/model/yolo_benchmark.yaml`. Поєднайте з `--include-layer-stats` або `--include-mla-stage-stats`, щоб зберегти основні вимірювання разом із часом виконання MLA.
 
 ## Run
 

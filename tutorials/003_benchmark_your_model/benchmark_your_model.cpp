@@ -3,6 +3,7 @@
 // Usage:
 //   tutorial_003_benchmark_your_model --model /path/to/model.tar.gz [--samples 100]
 //   [--report results/model/yolo_benchmark.yaml] [--include-layer-stats]
+//   [--include-mla-stage-stats]
 
 #include "neat.h"
 
@@ -44,7 +45,7 @@ int main(int argc, char** argv) {
     std::string model_path;
     if (!get_arg(argc, argv, "--model", model_path)) {
       std::cerr << "Usage: tutorial_003_benchmark_your_model --model <path> [--samples <n>] "
-                   "[--report <file>] [--include-layer-stats]\n";
+                   "[--report <file>] [--include-layer-stats] [--include-mla-stage-stats]\n";
       return 1;
     }
     const int samples = parse_int_arg(argc, argv, "--samples", 100);
@@ -58,6 +59,7 @@ int main(int argc, char** argv) {
     simaai::neat::BenchmarkOptions options;
     options.num_samples = samples;
     options.include_layer_stats = has_flag(argc, argv, "--include-layer-stats");
+    options.include_mla_stage_stats = has_flag(argc, argv, "--include-mla-stage-stats");
     simaai::neat::BenchmarkReport report = model.benchmark(options);
     if (report.latency_ms <= 0.0 || report.fps <= 0.0)
       throw std::runtime_error("benchmark produced no measured latency/fps");
@@ -74,10 +76,17 @@ int main(int argc, char** argv) {
     // END STEP
     // STEP read-layer-stats
     if (options.include_layer_stats) {
-      std::cout << "Layer stats (execution time in microseconds):\n";
+      std::cout << "layer_stats_status=" << report.layer_stats_status << "\n";
       for (const auto& layer : report.layer_stats) {
         std::cout << "  stage_index=" << layer.stage_index << " name=" << layer.name
                   << " total_execution_time_us=" << layer.total_execution_time_us << "\n";
+      }
+    }
+    if (options.include_mla_stage_stats) {
+      std::cout << "mla_stage_stats_status=" << report.mla_stage_stats_status << "\n";
+      for (const auto& stage : report.mla_stage_stats) {
+        std::cout << "  stage_index=" << stage.stage_index << " latency_us=" << stage.latency_us
+                  << "\n";
       }
     }
     // END STEP

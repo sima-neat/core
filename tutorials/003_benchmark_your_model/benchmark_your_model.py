@@ -27,6 +27,8 @@ def main(argv: list[str]) -> int:
   ap.add_argument("--report", type=Path, help="destination report file (.json selects JSON; otherwise YAML)")
   ap.add_argument("--include-layer-stats", action="store_true",
                   help="advanced: request separate MLA layer profiling (requires an idle devkit)")
+  ap.add_argument("--include-mla-stage-stats", action="store_true",
+                  help="advanced: measure each MLA stage's latency with mla-rt (requires an idle devkit)")
   args = ap.parse_args(argv[1:])
 
   # CORE LOGIC
@@ -38,6 +40,7 @@ def main(argv: list[str]) -> int:
   options = pyneat.BenchmarkOptions()
   options.num_samples = args.samples
   options.include_layer_stats = args.include_layer_stats
+  options.include_mla_stage_stats = args.include_mla_stage_stats
   report = model.benchmark(options)
   if report.latency_ms <= 0 or report.fps <= 0:
     raise RuntimeError("benchmark produced no measured latency/fps")
@@ -54,10 +57,14 @@ def main(argv: list[str]) -> int:
   # END STEP
   # STEP read-layer-stats
   if options.include_layer_stats:
-    print("Layer stats (execution time in microseconds):")
+    print(f"layer_stats_status={report.layer_stats_status}")
     for layer in report.layer_stats:
       print(f"  stage_index={layer.stage_index} name={layer.name} "
             f"total_execution_time_us={layer.total_execution_time_us}")
+  if options.include_mla_stage_stats:
+    print(f"mla_stage_stats_status={report.mla_stage_stats_status}")
+    for stage in report.mla_stage_stats:
+      print(f"  stage_index={stage.stage_index} latency_us={stage.latency_us}")
   # END STEP
 
   # STEP save-report

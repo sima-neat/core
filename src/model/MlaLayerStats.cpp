@@ -4,13 +4,8 @@
 #include <glib.h>
 #include <yaml-cpp/yaml.h>
 
-#include <fcntl.h>
-#include <poll.h>
-#include <signal.h>
 #include <sys/wait.h>
-#include <unistd.h>
 
-#include <cerrno>
 #include <charconv>
 #include <cmath>
 #include <fstream>
@@ -21,7 +16,7 @@ namespace simaai::neat {
 namespace {
 
 [[noreturn]] void profile_error(const std::string& message) {
-  throw std::runtime_error("Model::benchmark layer stats: " + message);
+  throw std::runtime_error(message);
 }
 
 std::string read_stats_file(const std::filesystem::path& path) {
@@ -145,38 +140,10 @@ struct ProfileDirectory {
   }
 };
 
-struct ProfileChild {
-  GPid pid = 0;
-  GPid group = 0;
-  int output = -1;
-  int errors = -1;
-  ~ProfileChild() {
-    if (group > 0)
-      (void)::kill(-group, SIGKILL);
-    if (pid > 0) {
-      while (::waitpid(pid, nullptr, 0) < 0 && errno == EINTR) {
-      }
-      g_spawn_close_pid(pid);
-    }
-    if (output >= 0)
-      ::close(output);
-    if (errors >= 0)
-      ::close(errors);
-  }
-};
-
-void profile_child_group(gpointer) {
-  // GStreamer may have other threads; child setup must be async-signal-safe.
-  if (::setpgid(0, 0) != 0)
-    _exit(127);
-}
-
+// Runs mla-rt to completion; Core consumes its results and never stops it.
 std::string run_profile_process(const std::filesystem::path& mla_rt,
                                 const std::filesystem::path& input_yaml,
-                                const std::filesystem::path& executable,
-                                std::chrono::milliseconds timeout) {
-  if (timeout <= std::chrono::milliseconds::zero())
-    profile_error("timeout must be positive");
+                                const std::filesystem::path& executable) {
   std::vector<std::string> args{
       mla_rt.string(),     "--connect",         "mip,ma",           "-vs", "-N",
       "--per-layer-stats", input_yaml.string(), executable.string()};
@@ -184,71 +151,22 @@ std::string run_profile_process(const std::filesystem::path& mla_rt,
   for (auto& arg : args)
     argv.push_back(arg.data());
   argv.push_back(nullptr);
-  ProfileChild child;
+  gchar* output = nullptr;
+  gchar* errors = nullptr;
+  gint status = 0;
   GError* error = nullptr;
-  if (!g_spawn_async_with_pipes(nullptr, argv.data(), nullptr, G_SPAWN_DO_NOT_REAP_CHILD,
-                                profile_child_group, nullptr, &child.pid, nullptr, &child.output,
-                                &child.errors, &error)) {
+  if (!g_spawn_sync(nullptr, argv.data(), nullptr, G_SPAWN_DEFAULT, nullptr, nullptr, &output,
+                    &errors, &status, &error)) {
     const std::string detail = error ? error->message : "unknown error";
     g_clear_error(&error);
     profile_error("cannot start mla-rt: " + detail);
   }
-  child.group = child.pid;
-  for (int fd : {child.output, child.errors}) {
-    const int flags = ::fcntl(fd, F_GETFL);
-    if (flags < 0 || ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
-      profile_error("cannot configure mla-rt output capture");
-  }
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  std::string diagnostics = std::string(output ? output : "") + (errors ? errors : "");
+  g_free(output);
+  g_free(errors);
   constexpr std::size_t max_diagnostics = 64U * 1024U;
-  std::string diagnostics;
-  bool exited = false;
-  int status = 0;
-  while (!exited || child.output >= 0 || child.errors >= 0) {
-    if (std::chrono::steady_clock::now() >= deadline)
-      profile_error("mla-rt timed out after " + std::to_string(timeout.count()) + " ms\n" +
-                    diagnostics);
-    pollfd descriptors[]{{child.output, POLLIN, 0}, {child.errors, POLLIN, 0}};
-    const int polled = ::poll(descriptors, 2, 20);
-    if (polled < 0 && errno != EINTR)
-      profile_error("cannot poll mla-rt output");
-    for (std::size_t i = 0; i < 2; ++i) {
-      int& fd = i == 0 ? child.output : child.errors;
-      if (fd < 0 || descriptors[i].revents == 0)
-        continue;
-      char buffer[4096];
-      // Bound reads so noisy output cannot starve the timeout.
-      for (int reads = 0; reads < 16; ++reads) {
-        const auto bytes = ::read(fd, buffer, sizeof(buffer));
-        if (bytes > 0) {
-          diagnostics.append(buffer, static_cast<std::size_t>(bytes));
-          if (diagnostics.size() > max_diagnostics)
-            diagnostics.erase(0, diagnostics.size() - max_diagnostics);
-        } else if (bytes == 0) {
-          ::close(fd);
-          fd = -1;
-          break;
-        } else if (errno == EINTR) {
-          continue;
-        } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-          break;
-        } else {
-          profile_error("cannot read mla-rt diagnostics");
-        }
-      }
-    }
-    if (!exited) {
-      const auto waited = ::waitpid(child.pid, &status, WNOHANG);
-      if (waited == child.pid) {
-        exited = true;
-        g_spawn_close_pid(child.pid);
-        child.pid = 0;
-      } else if (waited < 0 && errno != EINTR) {
-        profile_error("cannot reap mla-rt");
-      }
-    }
-  }
-  child.group = 0;
+  if (diagnostics.size() > max_diagnostics)
+    diagnostics.erase(0, diagnostics.size() - max_diagnostics);
   if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
     const std::string result = WIFEXITED(status) ? "exit " + std::to_string(WEXITSTATUS(status))
                                                  : "signal " + std::to_string(WTERMSIG(status));
@@ -286,13 +204,12 @@ internal::resolve_layer_profile_stages(const pipeline_internal::sima::MpkContrac
   return stages;
 }
 
-std::vector<LayerStats>
+std::vector<MlaLayerStats>
 internal::collect_mla_layer_stats(const std::vector<LayerProfileStage>& stages,
-                                  const std::filesystem::path& mla_rt,
-                                  std::chrono::milliseconds timeout) {
+                                  const std::filesystem::path& mla_rt) {
   if (stages.empty())
     profile_error("model has no MLA stages to profile");
-  std::vector<LayerStats> result;
+  std::vector<MlaLayerStats> result;
   for (const auto& stage : stages) {
     const auto& expected = stage.expected_layers;
     std::string diagnostics;
@@ -300,7 +217,7 @@ internal::collect_mla_layer_stats(const std::vector<LayerProfileStage>& stages,
       ProfileDirectory temporary;
       const auto input_yaml = temporary.path / stage.stats_yaml.filename();
       std::filesystem::copy_file(stage.stats_yaml, input_yaml);
-      diagnostics = run_profile_process(mla_rt, input_yaml, stage.executable, timeout);
+      diagnostics = run_profile_process(mla_rt, input_yaml, stage.executable);
       const auto output_yaml = temporary.path / (input_yaml.stem().string() + "_output.yaml");
       const auto actual = parse_stats_rows(output_yaml, true);
       std::size_t profiled = 0;

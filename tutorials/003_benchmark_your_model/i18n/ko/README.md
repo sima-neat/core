@@ -52,27 +52,33 @@ Python은 `pyneat.BenchmarkOptions`를 통해 동일한 필드를 노출합니�
 
 전력 값은 Neat 설치 프로그램이 설정하는 보드 텔레메트리 데몬인 Sentinel에서 제공됩니다. `report.telemetry`에는 처리량 패스 동안의 레일 전력, 다이 및 보드 온도, CPU 사용률, MLA 메모리도 포함됩니다. 각 필드에 대해서는 [모델 실행 측정](/develop-apps/development-workflow/model#power-and-board-telemetry)을 참조하십시오. Sentinel이 실행 중이 아닌 경우에도 벤치마크는 지연 시간과 처리량을 보고하고, 전력 필드를 0으로 두며, `report.telemetry.status`에 그 이유를 설정합니다.
 
-### 고급: 레이어 통계 {#step-read-layer-stats}
+### 고급: MLA 레이어 및 스테이지 통계 {#step-read-layer-stats}
 
-튜토리얼 명령에 `--include-layer-stats`를 추가하면 벤치마크 보고서에 레이어 실행 시간이 포함됩니다. 기본값은 비활성화입니다. API에서는 다음과 같이 활성화합니다.
+두 가지 선택 옵션은 벤치마크 후 `mla-rt`를 실행해 컴파일된 MLA 코드의 시간을 측정합니다. 둘 다 기본값은 비활성화이며, 다른 MLA 워크로드가 없는 유휴 상태의 devkit이 필요합니다. 튜토리얼 명령에 `--include-layer-stats` 또는 `--include-mla-stage-stats`를 추가하거나 API에서 다음과 같이 활성화합니다.
 
 ```cpp
 simaai::neat::BenchmarkOptions options;
 options.include_layer_stats = true;
+options.include_mla_stage_stats = true;
 auto report = model.benchmark(options);
 ```
 
 ```python
 options = pyneat.BenchmarkOptions()
 options.include_layer_stats = True
+options.include_mla_stage_stats = True
 report = model.benchmark(options)
 ```
 
 `report.layer_stats`에서 컴파일된 각 MLA 레이어의 `name`, 0부터 시작하는 `stage_index`, `total_execution_time_us`를 읽습니다. 실행 시간이 0인 no-op 항목도 유지됩니다. 레이어 시간은 별도의 프로파일링 실행에서 측정하므로 합계가 전체 지연 시간과 일치하지 않습니다.
 
+`report.mla_stage_stats`에서 각 MLA 스테이지의 `stage_index`와 `latency_us`를 읽습니다. 이는 해당 스테이지를 중단 없이 200회 실행한 하드웨어 시간의 평균입니다. 호스트, EV74, 데이터 이동은 포함되지 않으므로 전체 지연 시간보다 짧습니다.
+
+`mla-rt`가 없거나 실패해도 `benchmark()`는 주요 측정값을 반환하고, 목록을 비워 두며, `report.layer_stats_status` 또는 `report.mla_stage_stats_status`에 그 이유를 설정합니다. 그 밖의 경우 각 상태는 `"not requested"` 또는 `"ok"`입니다.
+
 ### 보고서 저장 {#step-save-report}
 
-`report.save(path)`를 호출하면 요청한 레이어 통계를 포함한 전체 보고서를 YAML 또는 JSON으로 저장합니다.
+`report.save(path)`를 호출하면 요청한 MLA 레이어 및 스테이지 통계를 포함한 전체 보고서를 YAML 또는 JSON으로 저장합니다.
 
 ```cpp
 auto path = report.save("results/model/yolo_benchmark.yaml");
@@ -88,7 +94,7 @@ json_path = report.save("results/model/yolo_benchmark.json")
 
 파일 이름을 포함한 경로를 지정하세요. 없는 상위 디렉터리는 생성되고 기존 파일은 교체되며, 저장한 경로가 반환됩니다. 저장은 명시적으로 수행합니다. `benchmark()`는 보고서 파일을 자동으로 생성하지 않습니다.
 
-두 튜토리얼 명령 모두에 `--report results/model/yolo_benchmark.yaml`을 추가할 수 있습니다. `--include-layer-stats`와 함께 사용하면 주요 측정값과 레이어 실행 시간을 모두 저장합니다.
+두 튜토리얼 명령 모두에 `--report results/model/yolo_benchmark.yaml`을 추가할 수 있습니다. `--include-layer-stats` 또는 `--include-mla-stage-stats`와 함께 사용하면 주요 측정값과 MLA 실행 시간을 함께 저장합니다.
 
 ## Run
 

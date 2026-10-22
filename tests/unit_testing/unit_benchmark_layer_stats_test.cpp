@@ -6,7 +6,6 @@
 
 #include <glib.h>
 
-#include <chrono>
 #include <fstream>
 #include <functional>
 #include <sstream>
@@ -156,18 +155,12 @@ void invalid_inputs_are_rejected_before_profiling() {
     fails([&] { stage(fixture, text); }, error);
 }
 
-void process_failures_and_timeout_clean_up() {
+void process_failures_clean_up() {
   Fixture fixture;
   const auto selected = stage(fixture);
   auto command = fixture.runtime(capture(fixture) + "echo 'runtime diagnostic' >&2\nexit 7\n");
   fails([&] { collect_mla_layer_stats({selected}, command); }, "runtime diagnostic");
   require(!std::filesystem::exists(read(fixture.root / "copied-path")), "failed run cleaned");
-  command = fixture.runtime(capture(fixture) + "sleep 30 &\nexit 0\n");
-  const auto begin = std::chrono::steady_clock::now();
-  fails([&] { collect_mla_layer_stats({selected}, command, std::chrono::milliseconds(80)); },
-        "timed out");
-  require(std::chrono::steady_clock::now() - begin < std::chrono::seconds(3), "timeout is bounded");
-  require(!std::filesystem::exists(read(fixture.root / "copied-path")), "timeout cleaned");
   fails([&] { collect_mla_layer_stats({selected}, fixture.root / "missing-runtime"); },
         "cannot start mla-rt");
   command = fixture.runtime(capture(fixture) + "echo 'no stats generated' >&2\n");
@@ -210,6 +203,6 @@ RUN_TEST("unit_benchmark_layer_stats_test", ([] {
            successful_profile_preserves_original_and_cleans_files();
            unrelated_metadata_is_ignored();
            invalid_inputs_are_rejected_before_profiling();
-           process_failures_and_timeout_clean_up();
+           process_failures_clean_up();
            invalid_outputs_are_rejected();
          }));

@@ -72,7 +72,7 @@ void saves_exact_path_and_replaces_existing_report(const std::string& extension)
   report.fps = 800;
   report.latency_p95_ms = 2.5;
   report.telemetry.cpu_cores_usage_pct = {{"cpu0", "Core 0", "%", 2, 42.25, 40, 44.5}};
-  require(simaai::neat::LayerStats{}.stage_index == 0,
+  require(simaai::neat::MlaLayerStats{}.stage_index == 0,
           "single-stage records default to stage zero");
   const auto target = dir.path / "model with spaces" / ("yolo_benchmark" + extension);
   {
@@ -82,8 +82,12 @@ void saves_exact_path_and_replaces_existing_report(const std::string& extension)
   const auto parsed = YAML::LoadFile(target.string());
   require(parsed["latency_ms"].as<double>() == report.latency_ms,
           "decimal scalars must be locale independent");
-  require(parsed["layer_stats"].IsSequence() && parsed["layer_stats"].size() == 0,
-          "a report without profiling must save an empty sequence");
+  require(parsed["layer_stats"].IsSequence() && parsed["layer_stats"].size() == 0 &&
+              parsed["mla_stage_stats"].IsSequence() && parsed["mla_stage_stats"].size() == 0,
+          "a report without profiling must save empty sequences");
+  require(parsed["layer_stats_status"].as<std::string>() == "not requested" &&
+              parsed["mla_stage_stats_status"].as<std::string>() == "not requested",
+          "a report without profiling must say it was not requested");
   require(!std::filesystem::exists(target.parent_path() / "benchmark.yaml"),
           "save must not append an invented filename");
   require(parsed["latency_p95_ms"].as<double>() == report.latency_p95_ms,
@@ -91,19 +95,32 @@ void saves_exact_path_and_replaces_existing_report(const std::string& extension)
   require(parsed["telemetry"]["cpu_cores_usage_pct"][0]["mean"].as<double>() == 42.25,
           "save must preserve per-core telemetry measurements");
   report.layer_stats = {{"MLA_0/noop", 0.0, 2}};
+  report.layer_stats_status = "ok";
+  report.mla_stage_stats = {{2, 655.0}};
+  report.mla_stage_stats_status = "mla-rt failed (exit 1)\nbusy: \"MLA\"";
   report.save(target);
   if (extension == ".json") {
     const auto json = nlohmann::json::parse(read_file(target));
     require(json["latency_ms"] == report.latency_ms && json["layer_stats"].is_array() &&
                 json["layer_stats"][0]["stage_index"] == 2 &&
                 json["layer_stats"][0]["name"] == "MLA_0/noop" &&
+                json["layer_stats_status"] == "ok" &&
+                json["mla_stage_stats"][0]["stage_index"] == 2 &&
+                json["mla_stage_stats"][0]["latency_us"] == 655.0 &&
+                json["mla_stage_stats_status"] == report.mla_stage_stats_status &&
                 json["telemetry"]["cpu_cores_usage_pct"][0]["mean"] == 42.25,
-            "JSON output must preserve headline values, layers, and telemetry");
+            "JSON output must preserve headline values, MLA stats, statuses, and telemetry");
   } else {
     require(read_file(target).starts_with("# NEAT benchmark report."),
             "non-JSON endings must retain YAML output");
   }
-  const auto layer = YAML::LoadFile(target.string())["layer_stats"][0];
+  const auto saved = YAML::LoadFile(target.string());
+  require(saved["mla_stage_stats"][0]["stage_index"].as<std::size_t>() == 2 &&
+              saved["mla_stage_stats"][0]["latency_us"].as<double>() == 655.0,
+          "save must preserve MLA stage latencies");
+  require(saved["mla_stage_stats_status"].as<std::string>() == report.mla_stage_stats_status,
+          "save must preserve a multi-line failure reason");
+  const auto layer = saved["layer_stats"][0];
   require(layer["stage_index"].as<std::size_t>() == 2,
           "stage indices must preserve execution order gaps for A65 stages");
   require(layer["name"].as<std::string>() == "MLA_0/noop" &&
@@ -148,6 +165,10 @@ void failures_do_not_destroy_a_previous_report(const std::string& extension) {
     require(read_file(target) == original, "invalid layer timings must preserve the existing file");
   }
   report.layer_stats.clear();
+  report.mla_stage_stats = {{0, -1.0}};
+  require_throws([&] { report.save(target); });
+  require(read_file(target) == original, "invalid stage latencies must preserve the existing file");
+  report.mla_stage_stats.clear();
   report.fps = std::numeric_limits<double>::infinity();
   require_throws([&] { report.save(target); });
   require(read_file(target) == original, "invalid headline values must preserve the existing file");
