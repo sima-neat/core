@@ -4,8 +4,9 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from urllib.request import Request, urlopen
 
-from published_artifact import PublicationResolutionError, acquire
+from published_artifact import ENVIRONMENT_HOSTS, PublicationResolutionError, acquire, valid_branch
 
 
 def current_core_tag(core):
@@ -18,6 +19,24 @@ def current_core_tag(core):
         return result.stdout.strip() if result.returncode == 0 else ''
     except FileNotFoundError:
         return ''
+
+
+def branch_is_unpublished(branch, environment):
+    """CLI failures are ambiguous; require a valid index confirming absence."""
+    environment = {'prd': 'production', 'prod': 'production', 'stg': 'staging'}.get(environment, environment)
+    url = f'https://{ENVIRONMENT_HOSTS[environment]}/scheduler/branches.json'
+    try:
+        with urlopen(Request(url, headers={'Cache-Control': 'no-cache'}), timeout=30) as response:
+            if response.url != url:
+                return False
+            index = json.loads(response.read(1024 * 1024))
+        branches = index['branches']
+        return (index.get('repository') == 'sima-neat/scheduler'
+                and isinstance(branches, list)
+                and all(isinstance(item, dict) and valid_branch(item.get('name')) for item in branches)
+                and all(item['name'] != branch for item in branches))
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
 
 
 def acquire_scheduler(cli, core, branch, spec, environment, output, *, package_path=''):
@@ -47,8 +66,8 @@ def acquire_scheduler(cli, core, branch, spec, environment, output, *, package_p
     try:
         return acquire(cli, 'scheduler', branch, selected_spec, environment, output, package_path=package_path)
     except PublicationResolutionError:
-        if not fallback:
+        if not fallback or not branch_is_unpublished(branch, environment):
             raise
         repository = 'scheduler' + ('/' + package_path if package_path else '')
-        print(f'Could not resolve {repository}@{branch}:{selected_spec}; retrying develop:latest.', file=sys.stderr)
+        print(f'No published branch for {repository}@{branch}:{selected_spec}; retrying develop:latest.', file=sys.stderr)
     return acquire(cli, 'scheduler', 'develop', 'latest', environment, output, package_path=package_path)

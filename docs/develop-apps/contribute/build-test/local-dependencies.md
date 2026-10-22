@@ -217,8 +217,10 @@ implicitly invokes MetaWare, replaces firmware, or qualifies a firmware change.
 
 The normal Vulcan build resolves the Scheduler policy in `deps/manifest.json`
 through `sima-cli`, then downloads the selected immutable publication. As with
-LLiMa, branch `snap` first tries the current Core branch. If resolution fails,
-it reports the fallback and retries `develop:latest`. Tag snaps and explicit
+LLiMa, branch `snap` first tries the current Core branch. If resolution fails and
+Scheduler's published branch index confirms that branch is absent, it reports
+the fallback and retries `develop:latest`. Other lookup failures remain errors,
+including an unavailable or invalid branch index. Tag snaps and explicit
 branch/commit selectors never fall back. Device and PCIe-host acquisition share
 this policy; PCIe `--scheduler-spec <commit>` also remains strict. Downloads,
 verification, bootstrap and staging failures after resolution remain errors.

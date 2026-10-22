@@ -173,7 +173,9 @@ EV 裝置建置仍是需要授權的獨立流程。這些命令都不會隱含�
 
 一般 Vulcan 建置會透過 `sima-cli` 解析 `deps/manifest.json` 中的 Scheduler
 原則，然後下載所選的不可變發布版本。與 LLiMa 相同，分支 `snap` 會先嘗試目前的
-Core 分支。若解析失敗，會明確告知退回並重試 `develop:latest`。標籤 snap 與明確的
+Core 分支。只有在解析失敗，且 Scheduler 的已發布分支索引確認該分支不存在時，
+才會明確告知退回並重試 `develop:latest`。其他查詢失敗仍會視為錯誤，包括索引無法
+取得或無效的情況。標籤 snap 與明確的
 分支／提交選擇器絕不退回。裝置與 PCIe 主機的取得流程共用此原則；PCIe 的
 `--scheduler-spec <commit>` 也維持嚴格選擇。解析後的下載、驗證、啟動或暫存失敗
 仍會視為錯誤。記錄會保留實際選定的分支與不可變提交。

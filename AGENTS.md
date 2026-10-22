@@ -87,8 +87,9 @@ A change is ready when:
   `_PACKAGE_DIR` overrides select local package directories instead.
 - Do not silently fetch old Internals, replace failed source builds with artifacts,
   or deploy from child builds. Explicit `tools/ci/acquire_scheduler.py` acquisition
-  tries the snap branch, then explicitly retries `develop:latest` if resolution
-  fails. Tags and explicit selectors remain strict. The selected immutable
+  tries the snap branch, then explicitly retries `develop:latest` only if resolution
+  fails and the published branch index confirms absence. Other lookup failures,
+  tags and explicit selectors remain strict. The selected immutable
   Scheduler publication's coordinator validates the delivered cohort;
   `build.sh` never silently fetches it.
 - Preserve the selected package receipts and contract checks. Rebuild consumers

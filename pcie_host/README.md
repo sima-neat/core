@@ -380,7 +380,8 @@ Scheduler profile, Runner, Kernels or Codecs.
 `build.sh` follows the Scheduler policy in Core's `deps/manifest.json`, in the
 `production` publication environment by default. Branch `snap` first tries
 `latest` from the current Core branch, then reports and retries `develop:latest`
-if resolution fails, matching Core's LLiMa policy. Tag snaps and explicit
+only if resolution fails and Scheduler's published branch index confirms absence.
+Other lookup failures remain errors. Tag snaps and explicit
 branch/commit selectors remain strict. Acquisition downloads the selected
 immutable revision and verifies its publisher manifest and resource hashes
 before running the Scheduler staging helper. Download, verification and staging
