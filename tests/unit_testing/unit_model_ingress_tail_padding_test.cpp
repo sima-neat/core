@@ -44,108 +44,141 @@ void require_published_spans(const TensorList& tensors,
   }
 }
 
+Tensor cpu_mask(std::size_t storage_bytes = 8U, std::int64_t offset = 0) {
+  Tensor tensor;
+  tensor.dtype = TensorDType::Int8;
+  tensor.shape = {1, 8};
+  tensor.storage = make_cpu_owned_storage(storage_bytes);
+  tensor.byte_offset = offset;
+  std::memset(tensor.storage->map(MapMode::Write).data, 0x5A, storage_bytes);
+  return tensor;
+}
+
+void test_owned_cpu_inputs() {
+  struct Case {
+    TensorDType dtype;
+    std::int64_t elements;
+    std::size_t payload;
+    std::size_t reservation;
+  };
+  TensorList padded_inputs;
+  for (const auto test :
+       {Case{TensorDType::Int8, 8, 8U, 16U}, Case{TensorDType::BFloat16, 77, 154U, 160U}}) {
+    Tensor input;
+    input.dtype = test.dtype;
+    input.shape = {1, test.elements};
+    input.storage = make_cpu_owned_storage(test.payload);
+    std::memset(input.storage->map(MapMode::Write).data, 0x5A, test.payload);
+    const auto storage = input.storage;
+    const auto padded = internal::materialize_dense_ingress_tail(input, test.reservation);
+    require(padded.shape == input.shape && padded.dtype == input.dtype,
+            "allocation tails must preserve logical shape and dtype");
+    require(padded.storage != storage && padded.storage->size_bytes == test.reservation &&
+                storage->size_bytes == test.payload,
+            "missing tail storage must be materialized without resizing the caller buffer");
+    const auto mapping = padded.map(MapMode::Read);
+    const auto* bytes = static_cast<const std::uint8_t*>(mapping.data);
+    for (std::size_t index = 0; index < test.reservation; ++index) {
+      require(bytes[index] == (index < test.payload ? 0x5A : 0),
+              "materialization must copy the payload and zero its tail");
+    }
+    require(internal::materialize_dense_ingress_tail(padded, test.reservation).storage ==
+                padded.storage,
+            "an already published complete carrier must be reused");
+    require(internal::materialize_dense_ingress_tail(input, test.payload).storage == storage,
+            "an input without an allocation tail must keep its storage");
+    require_published_spans({padded}, {test.reservation});
+    padded_inputs.push_back(padded);
+  }
+  require_published_spans(padded_inputs, {16U, 160U});
+  require_published_spans({cpu_mask(32U)}, {8U});
+}
+
+void test_external_cpu_input() {
+  auto bytes = std::make_shared<std::vector<std::uint8_t>>(8U, 0x44);
+  Tensor input = cpu_mask();
+  input.read_only = true;
+  input.storage = make_cpu_external_storage(bytes->data(), bytes->size(), bytes);
+  const auto padded = internal::materialize_dense_ingress_tail(input, 16U);
+  require_published_spans({padded}, {16U});
+  require(*bytes == std::vector<std::uint8_t>(8U, 0x44),
+          "padding external CPU memory must preserve caller-owned bytes");
+}
+
+void test_sliced_cpu_inputs() {
+  for (const std::size_t allocation : {12U, 20U}) {
+    const Tensor input = cpu_mask(allocation, 4);
+    const auto padded = internal::materialize_dense_ingress_tail(input, 16U);
+    require(padded.byte_offset == 0 && padded.storage->size_bytes == 16U &&
+                input.byte_offset == 4 && input.storage->size_bytes == allocation,
+            "publication must apply the slice once and preserve the caller view");
+    const auto mapping = padded.map(MapMode::Read);
+    const auto* bytes = static_cast<const std::uint8_t*>(mapping.data);
+    require(bytes[0] == 0x5A && bytes[7] == 0x5A,
+            "a sliced carrier must retain the selected logical payload");
+    if (allocation == 20U) {
+      require(bytes == static_cast<const std::uint8_t*>(input.storage->data) + 4U,
+              "sufficient sliced CPU storage must be wrapped without copying");
+    }
+    require_published_spans({padded}, {16U});
+  }
+}
+
+void test_existing_gst_carrier() {
+  GstBuffer* buffer = gst_buffer_new_allocate(nullptr, 16U, nullptr);
+  GstSample* sample = gst_sample_new(buffer, nullptr, nullptr, nullptr);
+  gst_buffer_unref(buffer);
+  Tensor tensor;
+  tensor.dtype = TensorDType::Int8;
+  tensor.shape = {1, 8};
+  tensor.storage = pipeline_internal::make_gst_sample_storage(sample);
+  gst_sample_unref(sample);
+  tensor.route.name = tensor.route.segment_name = "mask";
+  tensor.route.logical_index = tensor.route.physical_index = tensor.route.memory_index = 0;
+  require_published_spans({tensor}, {16U});
+}
+
+void test_padded_batches_are_rejected() {
+  for (const int batch : {2, 4}) {
+    const auto payload = static_cast<std::size_t>(batch * 14);
+    const auto reservation = static_cast<std::size_t>((batch - 1) * 16 + 14);
+    for (const auto allocation : {payload, reservation}) {
+      for (const bool strided : {false, true}) {
+        Tensor input;
+        input.dtype = TensorDType::BFloat16;
+        input.shape = {batch, 7};
+        input.storage = make_cpu_owned_storage(allocation);
+        if (strided)
+          input.strides_bytes = {16, 2};
+        bool rejected = false;
+        try {
+          (void)internal::materialize_dense_ingress_tail(input, reservation, batch);
+        } catch (const std::runtime_error& error) {
+          rejected =
+              std::string(error.what()).find("per-sample storage strides") != std::string::npos;
+        }
+        require(rejected,
+                "padded batches must be rejected before tight copying or oversized storage reuse");
+      }
+    }
+    Tensor dense;
+    dense.dtype = TensorDType::BFloat16;
+    dense.shape = {batch, 8};
+    dense.storage = make_cpu_owned_storage(batch * 16U);
+    const auto unchanged = internal::materialize_dense_ingress_tail(dense, batch * 16U, batch);
+    require(unchanged.storage == dense.storage,
+            "dense batches with no padding must retain their existing carrier");
+    require_published_spans({unchanged}, {batch * 16U});
+  }
+}
+
 } // namespace
 
-RUN_TEST(
-    "unit_model_ingress_tail_padding_test", ([] {
-      gst_init_once();
-      {
-        Tensor input;
-        input.dtype = TensorDType::Int8;
-        input.shape = {1, 8};
-        input.storage = make_cpu_owned_storage(8U);
-        std::memset(input.storage->map(MapMode::Write).data, 0x5A, 8U);
-        const auto original_storage = input.storage;
-        const Tensor padded = internal::materialize_dense_ingress_tail(input, 16U);
-        require(padded.shape == input.shape && padded.dtype == input.dtype,
-                "allocation tail must preserve the logical input shape and dtype");
-        require(padded.storage != original_storage && padded.storage->size_bytes == 16U &&
-                    original_storage->size_bytes == 8U,
-                "allocation tail must provide real storage without resizing the caller buffer");
-        const auto mapping = padded.map(MapMode::Read);
-        const auto* bytes = static_cast<const std::uint8_t*>(mapping.data);
-        for (std::size_t index = 0U; index < 16U; ++index) {
-          require(bytes[index] == (index < 8U ? 0x5A : 0),
-                  "allocation tail must copy the payload and zero the remaining bytes");
-        }
-        require(internal::materialize_dense_ingress_tail(padded, 16U).storage == padded.storage,
-                "an existing complete input carrier must be reused");
-        require(internal::materialize_dense_ingress_tail(input, 8U).storage == original_storage,
-                "an input without an allocation tail must keep its existing storage");
-        require_published_spans(TensorList{padded}, {16U});
-
-        Tensor selector;
-        selector.dtype = TensorDType::BFloat16;
-        selector.shape = {1, 77};
-        selector.storage = make_cpu_owned_storage(154U);
-        const auto padded_selector = internal::materialize_dense_ingress_tail(selector, 160U);
-        require_published_spans(TensorList{padded_selector}, {160U});
-        require_published_spans(TensorList{padded, padded_selector}, {16U, 160U});
-
-        Tensor ordinary = input;
-        ordinary.storage = make_cpu_owned_storage(32U);
-        require_published_spans(TensorList{ordinary}, {8U});
-
-        auto external_bytes = std::make_shared<std::vector<std::uint8_t>>(8U, 0x44);
-        Tensor external = input;
-        external.read_only = true;
-        external.storage = make_cpu_external_storage(external_bytes->data(), 8U, external_bytes);
-        const auto padded_external = internal::materialize_dense_ingress_tail(external, 16U);
-        require_published_spans(TensorList{padded_external}, {16U});
-        require(*external_bytes == std::vector<std::uint8_t>(8U, 0x44),
-                "padding external CPU memory must not modify caller-owned bytes");
-
-        input.storage = make_cpu_owned_storage(12U);
-        input.byte_offset = 4;
-        std::memset(input.storage->map(MapMode::Write).data, 0x33, 12U);
-        const Tensor sliced = internal::materialize_dense_ingress_tail(input, 16U);
-        require(sliced.byte_offset == 0 && sliced.storage->size_bytes == 16U &&
-                    static_cast<const std::uint8_t*>(sliced.map(MapMode::Read).data)[0] == 0x33,
-                "a sliced input must materialize its selected payload into a complete carrier");
-        require_published_spans(TensorList{sliced}, {16U});
-
-        input.storage = make_cpu_owned_storage(20U);
-        std::memset(input.storage->map(MapMode::Write).data, 0x77, 20U);
-        const auto storage = input.storage;
-        const auto reused = internal::materialize_dense_ingress_tail(input, 16U);
-        const auto reused_mapping = reused.map(MapMode::Read);
-        require(reused_mapping.data == static_cast<const std::uint8_t*>(storage->data) + 4U,
-                "a sufficient sliced CPU allocation must be wrapped without copying");
-        require(reused.storage->size_bytes == 16U && input.storage == storage &&
-                    input.byte_offset == 4,
-                "the published carrier must apply the slice once and preserve the caller view");
-        require_published_spans(TensorList{reused}, {16U});
-      }
-      {
-        gst_init_once();
-        GstBuffer* buffer = gst_buffer_new_allocate(nullptr, 16U, nullptr);
-        GstSample* sample = gst_sample_new(buffer, nullptr, nullptr, nullptr);
-        gst_buffer_unref(buffer);
-        Tensor tensor;
-        tensor.dtype = TensorDType::Int8;
-        tensor.shape = {1, 8};
-        tensor.storage = pipeline_internal::make_gst_sample_storage(sample);
-        gst_sample_unref(sample);
-        tensor.route.logical_index = 0;
-        tensor.route.physical_index = 0;
-        tensor.route.memory_index = 0;
-        tensor.route.name = "mask";
-        tensor.route.segment_name = "mask";
-        const Sample bundle = sample_from_tensors(TensorList{tensor});
-        std::string error;
-        const auto holder = pipeline_internal::make_sample_holder_from_bundle(bundle, &error);
-        require(holder != nullptr, "padded public input holder: " + error);
-        auto* published = gst_sample_get_buffer(static_cast<GstSample*>(holder.get()));
-        simaai::gst::TensorBufferPhysicalBinding binding;
-        require(simaai::gst::tensor_buffer_physical_binding_at(published, 0U, &binding, &error),
-                "padded public input physical binding: " + error);
-        require(binding.size_bytes == 16U, "physical binding must cover the actual input carrier");
-        pipeline_internal::TensorBufferView view;
-        require(pipeline_internal::tensor_buffer_descriptor_from_sample(
-                    static_cast<GstSample*>(holder.get()), &view, &error),
-                "padded public input descriptor: " + error);
-        require(view.tensors.size() == 1U && view.tensors.front().size_bytes == 8U &&
-                    view.tensors.front().shape == std::vector<std::int64_t>({1, 8}),
-                "physical binding must not enlarge the logical tensor descriptor");
-      }
-    }));
+RUN_TEST("unit_model_ingress_tail_padding_test", ([] {
+           gst_init_once();
+           test_owned_cpu_inputs();
+           test_external_cpu_input();
+           test_sliced_cpu_inputs();
+           test_existing_gst_carrier();
+           test_padded_batches_are_rejected();
+         }));
