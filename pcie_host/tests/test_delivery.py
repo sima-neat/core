@@ -379,13 +379,13 @@ GENAI_CMAKE_ARGS=()
                             '    prefix.mkdir()\n'
                             '    (prefix / "arguments.json").write_text(json.dumps([distro, arch, commit]))\n'
                             '    return {"packages": {"runtime": {"payload": {"control": {"Version": "0.1.0"}}}}}\n')
-                        return {'commit': commit}
+                        return {'commit': commit, 'branch': 'feature/native'}
 
                     argv = ['acquire_scheduler.py', '--cli', 'test-cli', '--branch', 'feature/native',
                             '--spec', 'latest', '--environment', 'production', '--distro', distro,
                             '--arch', arch, '--output', str(root)]
                     with patch.object(sys, 'argv', argv), patch.object(sys, 'stdout', io.StringIO()), \
-                         patch.object(acquisition, 'acquire', side_effect=acquire) as transport:
+                         patch('scheduler_dependency.acquire', side_effect=acquire) as transport:
                         acquisition.main()
                     transport.assert_called_once_with(
                         'test-cli', 'scheduler', 'feature/native', 'latest', 'production', candidate,
