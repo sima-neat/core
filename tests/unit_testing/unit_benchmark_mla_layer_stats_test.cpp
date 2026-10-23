@@ -122,13 +122,17 @@ void stages_run_in_execution_order() {
   }
 }
 
+// Runner starts no mla-rt in this process after a failed run, so this case runs last.
 void failures_name_the_stage() {
   Fixture fixture;
   fixture.runtime("echo 'runtime diagnostic' >&2\nexit 7\n");
-  fails([&] { collect(contract(fixture)); },
-        "MLA stage 0 (demo_stage1_mla.elf): mla-rt failed (exit 7)\nruntime diagnostic");
   fails([&] { collect(contract(fixture, "0: {name: placeholder}\n")); },
         "MLA stage 0 (demo_stage1_mla.elf): input stats YAML has no layers mla-rt can time");
+  fails([&] { collect(contract(fixture)); },
+        "MLA stage 0 (demo_stage1_mla.elf): mla-rt failed (exit 7)\nruntime diagnostic");
+  fixture.runtime(emit(output));
+  fails([&] { collect(contract(fixture)); },
+        "MLA stage 0 (demo_stage1_mla.elf): skipped: an earlier mla-rt run failed");
 }
 
 // The selection holds MPK plugin indices; reported stage indices still count the full model.
@@ -209,8 +213,8 @@ void model_problems_are_reported() {
 
 RUN_TEST("unit_benchmark_mla_layer_stats_test", ([] {
            stages_run_in_execution_order();
-           failures_name_the_stage();
            selected_route_keeps_stage_indices();
            terminal_route_preserves_mpk_identity();
            model_problems_are_reported();
+           failures_name_the_stage();
          }));
