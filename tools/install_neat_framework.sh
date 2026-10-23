@@ -2496,6 +2496,17 @@ repair_sysroot_sima_neat_libs() {
   log "Verified SDK sysroot ${soname_basename} and libsima_neat.so resolve to ${versioned_lib}"
 }
 
+# dpkg-deb -x copies each archive's directory metadata onto existing
+# directories, so a package whose "./" entry is 0700 makes the sysroot
+# root-only. Keep the owner and mode of directories that already exist.
+extract_deb_into_sysroot() {
+  local deb="$1"
+  local sysroot="$2"
+  # run_sudo may feed the sudo password on stdin, so the pipe stays inside sudo.
+  run_sudo bash -c 'set -o pipefail; dpkg-deb --fsys-tarfile "$1" | tar -x --no-overwrite-dir -C "$2"' \
+    bash "${deb}" "${sysroot}"
+}
+
 install_debs_into_sysroot() {
   local sysroot
   sysroot="$(sysroot_path)"
@@ -2514,7 +2525,7 @@ install_debs_into_sysroot() {
   local deb
   for deb in "${DEBS[@]}"; do
     log "Extracting $(basename "${deb}") into ${sysroot}"
-    run_sudo dpkg-deb -x "${deb}" "${sysroot}"
+    extract_deb_into_sysroot "${deb}" "${sysroot}"
   done
 
   repair_sysroot_sima_neat_libs "${sysroot}"

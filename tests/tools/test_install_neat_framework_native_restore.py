@@ -65,6 +65,30 @@ ensure_sima_lmm_sysroot_deps "${tmp}/sysroot"
         self.assertIn("libbrotli1:arm64", requested)
         self.assertNotIn("libfmt10:arm64", requested)
 
+
+@unittest.skipUnless(shutil.which("dpkg-deb"), "requires dpkg-deb and GNU tar")
+class SysrootExtractionTest(unittest.TestCase):
+    def test_restrictive_archive_root_keeps_sysroot_mode(self) -> None:
+        result = run_bash(r"""
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+run_sudo() { "$@"; }
+mkdir -p "${tmp}/package/DEBIAN" "${tmp}/package/usr/lib" "${tmp}/sysroot/usr/lib"
+printf 'Package: example\nVersion: 1\nArchitecture: all\nMaintainer: SiMa.ai\nDescription: example\n' \
+  >"${tmp}/package/DEBIAN/control"
+touch "${tmp}/package/usr/lib/libexample.so"
+chmod 0700 "${tmp}/package"
+chmod 0755 "${tmp}/sysroot"
+dpkg-deb --root-owner-group --build "${tmp}/package" "${tmp}/example.deb" >/dev/null
+extract_deb_into_sysroot "${tmp}/example.deb" "${tmp}/sysroot"
+test -f "${tmp}/sysroot/usr/lib/libexample.so"
+stat -c '%a' "${tmp}/sysroot"
+""")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "755")
+
+
 class ModalixBoardRouteTest(unittest.TestCase):
     def test_board_route_preserves_later_install_failures(self) -> None:
         result = run_bash(
