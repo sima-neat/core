@@ -1,20 +1,16 @@
-#include "model/internal/MlaRt.h"
 #include "model/internal/MlaStageStats.h"
 #include "pipeline/internal/sima/static_contract/MpkDecoder.h"
 
-#include <glib.h>
-#include <yaml-cpp/yaml.h>
+#include <simaai/scheduler/client/mla_profile.h>
 
-#include <cmath>
-#include <fstream>
-#include <iterator>
+#include <glib.h>
+
 #include <stdexcept>
 #include <string>
+#include <variant>
 
 namespace simaai::neat {
 namespace {
-
-constexpr int kRuns = 200;
 
 [[noreturn]] void stage_stats_error(const std::string& message) {
   throw std::runtime_error(message);
@@ -50,74 +46,17 @@ resolve_mla_stage_stats_stages(const pipeline_internal::sima::MpkContract& contr
   return stages;
 }
 
-struct StatsDirectory {
-  std::filesystem::path path;
-  StatsDirectory() {
-    GError* error = nullptr;
-    gchar* directory = g_dir_make_tmp("neat-mla-stage-stats-XXXXXX", &error);
-    if (!directory) {
-      const std::string detail = error ? error->message : "unknown error";
-      g_clear_error(&error);
-      stage_stats_error("cannot create temporary directory: " + detail);
-    }
-    path = std::filesystem::absolute(directory);
-    g_free(directory);
-  }
-  ~StatsDirectory() {
-    std::error_code ignored;
-    std::filesystem::remove_all(path, ignored);
-  }
-};
-
-// mla-rt writes one root entry per ELF; its units appear only in the header comment.
-double mean_tile_latency_us(const std::filesystem::path& stats_file) {
-  std::ifstream file(stats_file);
-  if (!file)
-    stage_stats_error("mla-rt wrote no stats file");
-  const std::string text{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
-  if (text.find("dt:usec") == std::string::npos)
-    stage_stats_error("stats file is not in microseconds");
-  try {
-    const auto root = YAML::Load(text);
-    if (!root.IsMap() || root.size() != 1)
-      stage_stats_error("stats file must describe exactly one ELF");
-    const auto tile = root.begin()->second["tile.lat"];
-    if (!tile || !tile["avg"] || !tile["runcount"])
-      stage_stats_error("stats file has no tile.lat average and run count");
-    const auto runs = tile["runcount"].as<int>();
-    if (runs != kRuns)
-      stage_stats_error("mla-rt measured " + std::to_string(runs) + " runs, expected " +
-                        std::to_string(kRuns));
-    const auto latency = tile["avg"].as<double>();
-    if (!std::isfinite(latency) || latency <= 0)
-      stage_stats_error("tile.lat average must be positive");
-    return latency;
-  } catch (const YAML::Exception& error) {
-    stage_stats_error(std::string("invalid stats file: ") + error.what());
-  }
-}
-
 } // namespace
 
 std::vector<MlaStage>
-internal::collect_mla_stage_stats(const pipeline_internal::sima::MpkContract& contract,
-                                  const std::filesystem::path& mla_rt) {
+internal::collect_mla_stage_stats(const pipeline_internal::sima::MpkContract& contract) {
   std::vector<MlaStage> result;
   for (const auto& stage : resolve_mla_stage_stats_stages(contract)) {
-    std::string diagnostics;
-    try {
-      StatsDirectory temporary;
-      const auto stats_file = temporary.path / "stats.yaml";
-      diagnostics =
-          run_mla_rt(mla_rt, {"--connect", "kernel", "-N", "-m", std::to_string(kRuns), "-vss",
-                              "--stats=" + stats_file.string(), stage.executable.string()});
-      result.push_back({stage.stage_index, mean_tile_latency_us(stats_file)});
-    } catch (const std::exception& error) {
-      throw std::runtime_error(
-          std::string(error.what()) + "\nMLA stage " + std::to_string(stage.stage_index) + " (" +
-          stage.executable.filename().string() + ")" +
-          (diagnostics.empty() ? "" : "\nmla-rt diagnostics:\n" + diagnostics));
-    }
+    const auto latency = simaai::scheduler::client::measure_mla_stage_stats(stage.executable);
+    if (const auto* error = std::get_if<simaai::scheduler::client::Error>(&latency))
+      stage_stats_error("MLA stage " + std::to_string(stage.stage_index) + " (" +
+                        stage.executable.filename().string() + "): " + error->message);
+    result.push_back({stage.stage_index, std::get<double>(latency)});
   }
   return result;
 }

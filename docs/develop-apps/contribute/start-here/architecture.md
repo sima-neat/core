@@ -37,8 +37,8 @@ are instantiated by Scheduler after cohort validation. A cached dynamic
 selection retains its operation but binds the current frame's memory.
 
 GenAI calls LLiMa directly, not through Runner or a Scheduler GenAI adapter. MLA profiling is
-a separate, default-off pass: Core runs the installed `mla-rt` command-line tool itself, outside
-Scheduler and Runner. It requires an idle DevKit with no other MLA work.
+a separate, default-off pass: Core calls Scheduler's client, and Runner runs the installed `mla-rt`
+command-line tool. It requires an idle DevKit with no other MLA work.
 
 ---
 
@@ -476,15 +476,16 @@ sample and reads no power monitor chips over I2C.
 
 MLA profiling is opt-in through two `BenchmarkOptions` fields that default to false:
 `include_mla_layer_stats` and `include_mla_stage_stats`. After the latency and throughput runners
-close, Core runs `mla-rt` in a separate process on the extracted model's MLA executables, one
-profiling pass after the other. MLA layer stats also uses the compiler stats YAML; MLA stage stats
-runs each MLA executable 200 times without interruption and reads the mean `tile.lat` from the
-`mla-rt` stats file. Core validates the inputs and outputs and removes temporary files; it stops
-`mla-rt` if one run takes longer than 120 s. MLA-RT owns hardware profiling and the handoff back to
+close, Core measures the extracted model's MLA executables through Scheduler's client, one
+profiling pass after the other. Runner runs `mla-rt` in a separate process for each executable.
+MLA layer stats also uses the compiler stats YAML; MLA stage stats runs each MLA executable 200
+times without interruption and reads the mean `tile.lat` from the `mla-rt` stats file. Runner
+validates the inputs and outputs and removes temporary files; it stops `mla-rt` if one run takes
+longer than 120 s. MLA-RT owns hardware profiling and the handoff back to
 kernel execution. Profiling requires no overlapping MLA workloads. The benchmark gate serializes
 benchmark calls, not other inference APIs or applications.
 
-A stopped or crashed `mla-rt` run may leave MLA work unfinished, so Core starts no further `mla-rt`
+A stopped or crashed `mla-rt` run may leave MLA work unfinished, so Runner starts no further `mla-rt`
 run in that process. Later profiling passes report that MLA needs recovery. Keep the DevKit idle
 until MLA recovery is verified.
 

@@ -32,10 +32,12 @@ struct Fixture {
     std::ofstream(path) << value;
     return path;
   }
-  std::filesystem::path runtime(const std::string& body) {
-    const auto file = write("fake mla-rt", "#!/bin/sh\nset -eu\n" + body);
+  // Places a fake mla-rt running `body` alone in PATH, where Scheduler's client finds it.
+  void runtime(const std::string& body) {
+    std::filesystem::create_directories(root / "bin");
+    const auto file = write("bin/mla-rt", "#!/bin/sh\nPATH=/usr/bin:/bin\nset -eu\n" + body);
     std::filesystem::permissions(file, std::filesystem::perms::owner_all);
-    return file;
+    require(g_setenv("PATH", (root / "bin").c_str(), TRUE), "set PATH");
   }
 };
 std::string read(const std::filesystem::path& path) {
@@ -79,22 +81,16 @@ pipeline_internal::sima::MpkContract contract(Fixture& fixture, const std::strin
                     plugin("MLA", 2, "demo_stage1_mla.elf"), plugin("a65", 3, "host.so")};
   return result;
 }
-std::string capture(const Fixture& fixture) {
-  // Quote fixture paths containing spaces.
-  return "printf '%s' \"$6\" > '" + (fixture.root / "copied-path").string() + "'\n";
-}
 std::string emit(const std::string& text) {
   return "cat > \"${6%.yaml}_output.yaml\" <<'YAML'\n" + text + "YAML\n";
 }
 
-void exact_command_and_stage_order() {
+// Scheduler and Runner own the mla-rt command and stats parsing; these tests cover Core's stages.
+void stages_run_in_execution_order() {
   Fixture fixture;
   const auto log = fixture.root / "commands";
-  const auto command = fixture.runtime(
-      "[ $# -eq 7 ] && [ \"$1\" = --connect ] && [ \"$2\" = mip,ma ] && [ \"$3\" = -vs ] && "
-      "[ \"$4\" = -N ] && [ \"$5\" = --per-layer-stats ]\n"
-      "echo \"$(basename \"$6\") $(basename \"$7\")\" >> '" +
-      log.string() + "'\n" + emit(output));
+  fixture.runtime("echo \"$(basename \"$6\") $(basename \"$7\")\" >> '" + log.string() + "'\n" +
+                  emit(output));
   auto model = contract(fixture);
   for (const auto& [mla, a65] : std::vector<std::pair<std::string, std::string>>{
            {"mla", "a65"}, {"MLA", "A65"}, {"mLa", "a65"}}) {
@@ -102,119 +98,45 @@ void exact_command_and_stage_order() {
     model.plugins[2].processor = mla;
     model.plugins[3].processor = a65;
     std::filesystem::remove(log);
-    const auto records = collect_mla_layer_stats(model, command);
+    const auto records = collect_mla_layer_stats(model);
     require(records.size() == 4 && records[0].stage_index == 0 && records[2].stage_index == 2,
             "MLA/A65 execution order must determine stage indices in any processor case");
+    require(records[0].name == "MLA_0/noop" && records[0].latency_us == 0 &&
+                records[1].name == "MLA_0/conv: quoted" && records[1].latency_us == 161.95,
+            "retain no-ops, compiler names, and hardware times");
     require(read(log) == "demo_stage1_mla_stats.yaml demo_stage1_mla.elf\n"
                          "demo_stage2_mla_stats.yaml demo_stage2_mla.elf\n",
             "each MLA ELF must run once with its matching stats YAML, in execution order");
   }
 }
 
-void successful_profile_preserves_original_and_cleans_files() {
+void failures_name_the_stage() {
   Fixture fixture;
-  const auto command = fixture.runtime(capture(fixture) + emit(output));
-  const auto records = collect_mla_layer_stats(contract(fixture), command);
-  require(records.size() == 4 && records[0].name == "MLA_0/noop" && records[0].latency_us == 0 &&
-              records[1].name == "MLA_0/conv: quoted" && records[1].latency_us == 161.95,
-          "retain no-ops, compiler names, and hardware times");
-  require(read(fixture.root / "etc/demo_stage1_mla_stats.yaml") == input,
-          "compiler YAML must remain unchanged");
-  require(!std::filesystem::exists(read(fixture.root / "copied-path")), "temporary YAML cleaned");
-}
-
-void unrelated_metadata_is_ignored() {
-  Fixture fixture;
-  const auto source = input + "  compiler_metadata:\n    tags: [conv, quantized]\n";
-  const auto command = fixture.runtime(emit(output + "  debug_metadata: {version: 1}\n"));
-  const auto records = collect_mla_layer_stats(contract(fixture, source, source), command);
-  require(records.size() == 4 && records[1].latency_us == 161.95,
-          "unrelated nested metadata must not change layer timing collection");
-  require(read(fixture.root / "etc/demo_stage1_mla_stats.yaml") == source,
-          "compiler metadata must be preserved unchanged");
-}
-
-void invalid_inputs_are_rejected_before_profiling() {
-  Fixture fixture;
-  const auto marker = fixture.root / "mla-rt-ran";
-  const auto command = fixture.runtime("touch '" + marker.string() + "'\n" + emit(output));
-  for (const auto& [text, error] : std::vector<std::pair<std::string, std::string>>{
-           {input + input, "duplicate layer ID"},
-           {input + "  name: duplicate\n", "duplicate layer field"},
-           {input + "---\n{}\n", "exactly one document"},
-           {"0: {name: placeholder}\n2: {name: conv, start_cycle: 0, end_cycle: 20}\n",
-            "contiguous from zero"},
-           {"0: {name: placeholder}\n", "no layers mla-rt can time"}}) {
-    // Only the second stage is invalid, so the first must not run either.
-    fails([&] { collect_mla_layer_stats(contract(fixture, input, text), command); }, error);
-    require(!std::filesystem::exists(marker), "every stage must be validated before mla-rt runs");
-  }
+  fixture.runtime("echo 'runtime diagnostic' >&2\nexit 7\n");
+  fails([&] { collect_mla_layer_stats(contract(fixture)); },
+        "MLA stage 0 (demo_stage1_mla.elf): mla-rt failed (exit 7)\nruntime diagnostic");
+  fails([&] { collect_mla_layer_stats(contract(fixture, "0: {name: placeholder}\n")); },
+        "MLA stage 0 (demo_stage1_mla.elf): input stats YAML has no layers mla-rt can time");
 }
 
 void model_problems_are_reported() {
   Fixture fixture;
   auto model = contract(fixture);
-  const auto command = fixture.runtime(emit(output));
+  const auto marker = fixture.root / "mla-rt-ran";
+  fixture.runtime("touch '" + marker.string() + "'\n" + emit(output));
+  // Only the second stage is missing files, so the first must not run either.
   std::filesystem::remove(fixture.root / "etc/demo_stage2_mla_stats.yaml");
-  fails([&] { collect_mla_layer_stats(model, command); }, "missing matching stats YAML");
+  fails([&] { collect_mla_layer_stats(model); }, "missing matching stats YAML");
   std::filesystem::remove(fixture.root / "share/demo_stage2_mla.elf");
-  fails([&] { collect_mla_layer_stats(model, command); }, "missing MLA ELF");
+  fails([&] { collect_mla_layer_stats(model); }, "missing MLA ELF");
+  require(!std::filesystem::exists(marker), "every stage must be checked before mla-rt runs");
   model.plugins = {plugin("A65", 1, "host.so")};
-  fails([&] { collect_mla_layer_stats(model, command); }, "no MLA stages");
-}
-
-void process_failures_clean_up() {
-  Fixture fixture;
-  const auto model = contract(fixture);
-  auto command = fixture.runtime(capture(fixture) + "echo 'runtime diagnostic' >&2\nexit 7\n");
-  fails([&] { collect_mla_layer_stats(model, command); }, "runtime diagnostic");
-  require(!std::filesystem::exists(read(fixture.root / "copied-path")), "failed run cleaned");
-  fails([&] { collect_mla_layer_stats(model, fixture.root / "missing-runtime"); },
-        "cannot start mla-rt");
-  command = fixture.runtime(capture(fixture) + "echo 'no stats generated' >&2\n");
-  fails([&] { collect_mla_layer_stats(model, command); },
-        "MLA stage 0 (demo_stage1_mla.elf)\nmla-rt diagnostics:\nno stats generated");
-  require(!std::filesystem::exists(read(fixture.root / "copied-path")), "missing output cleaned");
-}
-
-void invalid_outputs_are_rejected() {
-  Fixture fixture;
-  const auto model = contract(fixture);
-  for (const auto& [text, error] : std::vector<std::pair<std::string, std::string>>{
-           {"", "must be a mapping"},
-           {"[invalid", "invalid YAML"},
-           {"2:\n  name: wrong\n  start_cycle: 5\n  end_cycle: 20\n  run_time: 1us\n",
-            "does not match"},
-           {output + output, "duplicate layer ID"}}) {
-    const auto command = fixture.runtime(capture(fixture) + emit(text));
-    fails([&] { collect_mla_layer_stats(model, command); }, error);
-    require(!std::filesystem::exists(read(fixture.root / "copied-path")), "parse failure cleaned");
-  }
-  for (const auto& [time, error] :
-       std::vector<std::pair<std::string, std::string>>{{"nanus", "invalid run_time"},
-                                                        {"-1us", "invalid run_time"},
-                                                        {"1ms", "microsecond units"},
-                                                        {"0us", "no hardware timings"}}) {
-    auto text = output;
-    text.replace(text.find("161.95us"), 8, time);
-    const auto command = fixture.runtime(emit(text));
-    fails([&] { collect_mla_layer_stats(model, command); }, error);
-  }
-  auto text = output;
-  text.replace(text.find("0.00us"), 6, "100us");
-  const auto command = fixture.runtime(emit(text));
-  fails([&] { collect_mla_layer_stats(model, command); }, "zero-cycle layer");
-  require(read(fixture.root / "etc/demo_stage1_mla_stats.yaml") == input,
-          "invalid output must not modify source YAML");
+  fails([&] { collect_mla_layer_stats(model); }, "no MLA stages");
 }
 } // namespace
 
 RUN_TEST("unit_benchmark_mla_layer_stats_test", ([] {
-           exact_command_and_stage_order();
-           successful_profile_preserves_original_and_cleans_files();
-           unrelated_metadata_is_ignored();
-           invalid_inputs_are_rejected_before_profiling();
+           stages_run_in_execution_order();
+           failures_name_the_stage();
            model_problems_are_reported();
-           process_failures_clean_up();
-           invalid_outputs_are_rejected();
          }));

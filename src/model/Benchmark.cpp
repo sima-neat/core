@@ -40,15 +40,6 @@ const pipeline_internal::sima::MpkContract& require_mpk_contract(const Model& mo
   return *contract;
 }
 
-std::filesystem::path find_mla_rt() {
-  gchar* executable = g_find_program_in_path("mla-rt");
-  if (!executable)
-    throw std::runtime_error("mla-rt was not found in PATH");
-  std::filesystem::path path = executable;
-  g_free(executable);
-  return path;
-}
-
 // MLA profiling is best effort: a failure keeps the measurements and names the reason.
 std::string collection_status(const char* stats_name, const std::function<void()>& collect) {
   try {
@@ -593,14 +584,12 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
       std::move(telemetry));
   if (options.include_mla_layer_stats) {
     report.mla_layer_stats.status = collection_status("MLA layer stats", [&] {
-      report.mla_layer_stats.layers =
-          collect_mla_layer_stats(require_mpk_contract(model), find_mla_rt());
+      report.mla_layer_stats.layers = collect_mla_layer_stats(require_mpk_contract(model));
     });
   }
   if (options.include_mla_stage_stats) {
     report.mla_stage_stats.status = collection_status("MLA stage stats", [&] {
-      report.mla_stage_stats.stages =
-          collect_mla_stage_stats(require_mpk_contract(model), find_mla_rt());
+      report.mla_stage_stats.stages = collect_mla_stage_stats(require_mpk_contract(model));
     });
   }
   const double batch_throughput = throughput_measured.throughput_batches_per_s;

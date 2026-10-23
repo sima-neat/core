@@ -32,10 +32,12 @@ struct Fixture {
     std::ofstream(path) << value;
     return path;
   }
-  std::filesystem::path runtime(const std::string& body) {
-    const auto file = write("fake mla-rt", "#!/bin/sh\nset -eu\n" + body);
+  // Places a fake mla-rt running `body` alone in PATH, where Scheduler's client finds it.
+  void runtime(const std::string& body) {
+    std::filesystem::create_directories(root / "bin");
+    const auto file = write("bin/mla-rt", "#!/bin/sh\nPATH=/usr/bin:/bin\nset -eu\n" + body);
     std::filesystem::permissions(file, std::filesystem::perms::owner_all);
-    return file;
+    require(g_setenv("PATH", (root / "bin").c_str(), TRUE), "set PATH");
   }
 };
 std::string read(const std::filesystem::path& path) {
@@ -80,15 +82,11 @@ std::string emit(const std::string& text) {
 const std::string average =
     "    avg: 655\n    runcount: 200\n    min: 650\n    max: 700\n    std: 3\n";
 
-void exact_command_and_stage_order() {
+// Scheduler and Runner own the mla-rt command and stats parsing; these tests cover Core's stages.
+void stages_run_in_execution_order() {
   Fixture fixture;
   const auto log = fixture.root / "commands";
-  const auto command = fixture.runtime(
-      "[ $# -eq 8 ] && [ \"$1\" = --connect ] && [ \"$2\" = kernel ] && [ \"$3\" = -N ] && "
-      "[ \"$4\" = -m ] && [ \"$5\" = 200 ] && [ \"$6\" = -vss ]\n"
-      "case \"$7\" in --stats=*) ;; *) exit 9 ;; esac\n"
-      "basename \"$8\" >> '" +
-      log.string() + "'\n" + emit(stats(average)));
+  fixture.runtime("basename \"$8\" >> '" + log.string() + "'\n" + emit(stats(average)));
   auto model = contract(fixture);
   for (const auto& [mla, a65] : std::vector<std::pair<std::string, std::string>>{
            {"mla", "a65"}, {"MLA", "A65"}, {"mLa", "a65"}}) {
@@ -96,7 +94,7 @@ void exact_command_and_stage_order() {
     model.plugins[2].processor = mla;
     model.plugins[3].processor = a65;
     std::filesystem::remove(log);
-    const auto records = collect_mla_stage_stats(model, command);
+    const auto records = collect_mla_stage_stats(model);
     require(records.size() == 2 && records[0].stage_index == 0 && records[1].stage_index == 2,
             "MLA/A65 execution order must determine stage indices in any processor case");
     require(records[0].latency_us == 655 && records[1].latency_us == 655,
@@ -106,49 +104,34 @@ void exact_command_and_stage_order() {
   }
 }
 
-void process_failures_are_reported() {
+void failures_name_the_stage() {
   Fixture fixture;
   const auto model = contract(fixture);
-  fails([&] { collect_mla_stage_stats(model, fixture.root / "missing-runtime"); },
-        "cannot start mla-rt");
-  fails(
-      [&] { collect_mla_stage_stats(model, fixture.runtime("echo 'device busy' >&2\nexit 7\n")); },
-      "device busy");
-  fails(
-      [&] { collect_mla_stage_stats(model, fixture.runtime("echo 'stats skipped'\n")); },
-      "wrote no stats file\nMLA stage 0 (demo_stage1_mla.elf)\nmla-rt diagnostics:\nstats skipped");
-}
-
-void unusable_stats_are_rejected() {
-  Fixture fixture;
-  const auto model = contract(fixture);
-  for (const auto& [text, error] : std::vector<std::pair<std::string, std::string>>{
-           {"\"$8\":\n  tile.lat:\n" + average, "not in microseconds"},
-           {stats(average) + "other.elf:\n  filesize: 1\n", "exactly one ELF"},
-           {"# precision:dt:usec precision:0\n\"$8\":\n  filesize: 11\n", "no tile.lat average"},
-           {stats("    avg: 655\n    runcount: 199\n"), "measured 199 runs, expected 200"},
-           {stats("    avg: 0\n    runcount: 200\n"), "must be positive"},
-           {stats("    avg: [1\n"), "invalid stats file"}})
-    fails([&] { collect_mla_stage_stats(model, fixture.runtime(emit(text))); }, error);
+  fixture.runtime("echo 'device busy' >&2\nexit 7\n");
+  fails([&] { collect_mla_stage_stats(model); },
+        "MLA stage 0 (demo_stage1_mla.elf): mla-rt failed (exit 7)\ndevice busy");
+  fixture.runtime("echo 'stats skipped'\n");
+  fails([&] { collect_mla_stage_stats(model); },
+        "MLA stage 0 (demo_stage1_mla.elf): mla-rt wrote no stats file\nmla-rt diagnostics:\n"
+        "stats skipped");
 }
 
 void model_problems_are_reported() {
   Fixture fixture;
   auto model = contract(fixture);
   const auto marker = fixture.root / "mla-rt-ran";
-  const auto command = fixture.runtime("touch '" + marker.string() + "'\n" + emit(stats(average)));
+  fixture.runtime("touch '" + marker.string() + "'\n" + emit(stats(average)));
   // Only the second stage is missing, so the first must not run either.
   std::filesystem::remove(fixture.root / "share/demo_stage2_mla.elf");
-  fails([&] { collect_mla_stage_stats(model, command); }, "missing MLA ELF");
-  require(!std::filesystem::exists(marker), "every stage must be validated before mla-rt runs");
+  fails([&] { collect_mla_stage_stats(model); }, "missing MLA ELF");
+  require(!std::filesystem::exists(marker), "every stage must be checked before mla-rt runs");
   model.plugins = {plugin("A65", 1, "host.so")};
-  fails([&] { collect_mla_stage_stats(model, command); }, "no MLA stages");
+  fails([&] { collect_mla_stage_stats(model); }, "no MLA stages");
 }
 } // namespace
 
 RUN_TEST("unit_benchmark_mla_stage_stats_test", ([] {
-           exact_command_and_stage_order();
-           process_failures_are_reported();
-           unusable_stats_are_rejected();
+           stages_run_in_execution_order();
+           failures_name_the_stage();
            model_problems_are_reported();
          }));

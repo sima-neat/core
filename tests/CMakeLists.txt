@@ -527,7 +527,6 @@ set(UNIT_TESTS
   unit_benchmark_measurement_contract_test
   unit_telemetry_monitor_test
   unit_benchmark_report_test
-  unit_benchmark_mla_rt_test
   unit_benchmark_mla_layer_stats_test
   unit_benchmark_mla_stage_stats_test
   unit_measurement_consistency_test

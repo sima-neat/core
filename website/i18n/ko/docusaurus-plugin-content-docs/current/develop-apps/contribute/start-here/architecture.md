@@ -32,7 +32,7 @@ Scheduler는 Runner를 통해 범용 요청을 전달하며, Scheduler와 Core �
 와이어 형식을 담당합니다. Scheduler는 코호트 검증 후 새로운 어댑터/리졸버 팩터리를
 인스턴스화합니다. 캐시된 동적 선택은 연산을 유지하되 현재 프레임의 메모리를 바인딩합니다.
 
-GenAI는 Runner나 Scheduler GenAI 어댑터를 거치지 않고 LLiMa를 직접 호출합니다. MLA 프로파일링은 기본적으로 비활성화된 별도의 패스입니다. Core는 Scheduler와 Runner를 거치지 않고 설치된 `mla-rt` 명령줄 도구를 직접 실행합니다. 다른 MLA 작업이 없는 유휴 DevKit이 필요합니다.
+GenAI는 Runner나 Scheduler GenAI 어댑터를 거치지 않고 LLiMa를 직접 호출합니다. MLA 프로파일링은 기본적으로 비활성화된 별도의 패스입니다. Core는 Scheduler 클라이언트를 호출하고, Runner가 설치된 `mla-rt` 명령줄 도구를 실행합니다. 다른 MLA 작업이 없는 유휴 DevKit이 필요합니다.
 
 ---
 
@@ -365,9 +365,9 @@ input Sample/Tensor
 
 Sentinel은 약 2초마다 샘플링하므로 처리량 패스는 최소 `BenchmarkOptions::min_duration_ms`(기본값 10초) 동안 실행됩니다. 지연 시간 패스도 같은 최솟값을 따르므로 두 패스는 같은 규칙으로 멈춥니다. Sentinel이 실행 중이 아니거나 측정 구간에 샘플이 없어도 벤치마크는 지연 시간과 FPS를 반환합니다. 이때 전력 필드는 0이며 `telemetry.status`가 이유를 알려 줍니다. `tools/install_neat_framework.sh`의 보드 모드는 Sentinel을 설치하거나 최신 프로덕션 빌드로 업그레이드합니다. 설치에 실패하면 설치 프로그램은 경고를 출력하고 계속 진행합니다. 나중에 `sima-cli neat install sentinel`을 실행하거나, CI처럼 `NEAT_INSTALLER_SENTINEL_REQUIRED=ON`을 설정해 실패를 오류로 처리하십시오. 더 이상 사용되지 않는 `Run` 전력 모니터(`RunOptions::power_monitor`)도 Sentinel에서 가져옵니다. Core는 Sentinel의 최신 샘플을 폴링하며 I2C로 전력 모니터 칩을 읽지 않습니다.
 
-MLA 프로파일링은 기본값이 false인 두 `BenchmarkOptions` 필드 `include_mla_layer_stats`와 `include_mla_stage_stats`로 명시적으로 활성화합니다. 지연 시간 및 처리량 러너가 종료된 후 Core는 추출된 모델의 MLA 실행 파일에 대해 별도 프로세스에서 `mla-rt`를 실행하며, 프로파일링 패스를 하나씩 차례로 수행합니다. MLA 레이어 통계는 컴파일러 통계 YAML도 사용합니다. MLA 스테이지 통계는 각 MLA 실행 파일을 중단 없이 200회 실행하고 `mla-rt` 통계 파일에서 `tile.lat` 평균을 읽습니다. Core는 입력과 출력을 검증하고 임시 파일을 정리합니다. 한 번의 실행이 120초를 넘으면 `mla-rt`를 중지합니다. MLA-RT는 하드웨어 프로파일링과 커널 실행으로의 제어권 반환을 담당합니다. 프로파일링은 다른 MLA 작업과 겹치지 않아야 합니다. 벤치마크 게이트는 벤치마크 호출만 직렬화하며, 다른 추론 API나 애플리케이션은 직렬화하지 않습니다.
+MLA 프로파일링은 기본값이 false인 두 `BenchmarkOptions` 필드 `include_mla_layer_stats`와 `include_mla_stage_stats`로 명시적으로 활성화합니다. 지연 시간 및 처리량 러너가 종료된 후 Core는 Scheduler 클라이언트를 통해 추출된 모델의 MLA 실행 파일을 측정하며, 프로파일링 패스를 하나씩 차례로 수행합니다. Runner는 실행 파일마다 별도 프로세스에서 `mla-rt`를 실행합니다. MLA 레이어 통계는 컴파일러 통계 YAML도 사용합니다. MLA 스테이지 통계는 각 MLA 실행 파일을 중단 없이 200회 실행하고 `mla-rt` 통계 파일에서 `tile.lat` 평균을 읽습니다. Runner는 입력과 출력을 검증하고 임시 파일을 정리합니다. 한 번의 실행이 120초를 넘으면 `mla-rt`를 중지합니다. MLA-RT는 하드웨어 프로파일링과 커널 실행으로의 제어권 반환을 담당합니다. 프로파일링은 다른 MLA 작업과 겹치지 않아야 합니다. 벤치마크 게이트는 벤치마크 호출만 직렬화하며, 다른 추론 API나 애플리케이션은 직렬화하지 않습니다.
 
-중지되었거나 비정상 종료된 `mla-rt` 실행은 MLA 작업을 끝내지 못한 채 남길 수 있으므로, Core는 해당 프로세스에서 더 이상 `mla-rt`를 시작하지 않습니다. 이후 프로파일링 패스는 MLA 복구가 필요하다고 보고합니다. MLA 복구가 확인될 때까지 DevKit을 유휴 상태로 두십시오.
+중지되었거나 비정상 종료된 `mla-rt` 실행은 MLA 작업을 끝내지 못한 채 남길 수 있으므로, Runner는 해당 프로세스에서 더 이상 `mla-rt`를 시작하지 않습니다. 이후 프로파일링 패스는 MLA 복구가 필요하다고 보고합니다. MLA 복구가 확인될 때까지 DevKit을 유휴 상태로 두십시오.
 
 프로파일링은 최선형(best effort)으로 수행됩니다. `mla-rt`가 없거나 실패하거나 시간 초과되거나 사용할 수 없는 출력을 쓰면 Core는 주요 측정값을 유지하고, 해당 목록을 비워 두며, 경고를 출력하고, `mla_layer_stats.status` 또는 `mla_stage_stats.status`에 그 이유를 설정합니다. 그 밖의 경우 상태는 `"not requested"` 또는 `"ok"`입니다.
 
