@@ -288,7 +288,7 @@ struct ProcessMlaOptions {
  * Numerical stages now always use Runtime's kernel runner. Leave these fields
  * at their defaults; empty/"passthrough"/"off" modes select no legacy behavior.
  * Requests for retired modes or tuning fail during graph construction rather
- * than silently falling back. Use `processcvu.async` and `async_queue_depth` for
+ * than silently falling back. Use `processcvu.async` and `GraphOptions::async_queue_depth` for
  * execution concurrency; legacy dequant flags and profiling have no equivalent option.
  */
 struct PreparedRunnerOptions {

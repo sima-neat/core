@@ -481,7 +481,7 @@ Scheduler checks for `mla-rt`, then the packaged `modalix-mla-rt`, in `PATH` and
 
 `BenchmarkReport::layer_stats` contains compiled layer names, original zero-based executable-stage indices and execution times in microseconds. Profiling failures throw; partial rows are never returned. These separate passes do not sum to headline latency. `save(file_path)` writes telemetry and layer rows as JSON (`.json`) or YAML (other endings), creating missing parent directories and atomically replacing the destination.
 
-Retired PreparedRunner options must remain at their defaults. Use `processcvu.async` and `processcvu.async_queue_depth` for concurrency; the legacy dequantization and profiling flags have no direct replacement. Leave `advanced_execution.defer_output_cache_sync=true` and use Tensor/GstMemory CPU mapping when accessing outputs. `RunOptions::advanced.prepare_output_cpu_visible` remains a compatibility no-op; it does not request eager cache synchronization.
+Retired PreparedRunner options must remain at their defaults. Use `processcvu.async` and `GraphOptions::async_queue_depth` for concurrency; the legacy dequantization and profiling flags have no direct replacement. Leave `advanced_execution.defer_output_cache_sync=true` and use Tensor/GstMemory CPU mapping when accessing outputs. `RunOptions::advanced.prepare_output_cpu_visible` remains a compatibility no-op; it does not request eager cache synchronization.
 
 ### Compiled model execution contract
 

@@ -371,7 +371,7 @@ Scheduler는 `PATH`에서 `mla-rt`, 이어서 패키지의 `modalix-mla-rt`를 �
 
 `BenchmarkReport::layer_stats`에는 컴파일된 레이어 이름, 원래의 0부터 시작하는 실행 단계 인덱스와 마이크로초 단위 실행 시간이 들어갑니다. 프로파일링에 실패하면 예외가 발생하며 부분 결과는 반환하지 않습니다. 별도 측정이므로 합계는 주요 지연 시간과 다릅니다. `save(file_path)`는 원격 측정과 레이어 행을 JSON(`.json`) 또는 YAML(나머지)로 저장하고, 상위 디렉터리를 만들며 대상을 원자적으로 교체합니다.
 
-폐기된 PreparedRunner 옵션은 기본값으로 유지하세요. 동시성에는 `processcvu.async`와 `processcvu.async_queue_depth`를 사용합니다. 기존 역양자화와 프로파일링 플래그에는 직접 대체 기능이 없습니다. `advanced_execution.defer_output_cache_sync=true`를 유지하고 출력 CPU 접근에는 Tensor/GstMemory 매핑을 사용하세요. `RunOptions::advanced.prepare_output_cpu_visible`은 호환성용 무동작 필드이며 선제적 캐시 동기화를 요청하지 않습니다.
+폐기된 PreparedRunner 옵션은 기본값으로 유지하세요. 동시성에는 `processcvu.async`와 `GraphOptions::async_queue_depth`를 사용합니다. 기존 역양자화와 프로파일링 플래그에는 직접 대체 기능이 없습니다. `advanced_execution.defer_output_cache_sync=true`를 유지하고 출력 CPU 접근에는 Tensor/GstMemory 매핑을 사용하세요. `RunOptions::advanced.prepare_output_cpu_visible`은 호환성용 무동작 필드이며 선제적 캐시 동기화를 요청하지 않습니다.
 
 ### 컴파일된 모델 실행 계약
 

@@ -263,7 +263,7 @@ Scheduler は `PATH` で `mla-rt`、次にパッケージの `modalix-mla-rt` �
 
 `BenchmarkReport::layer_stats` には、コンパイル済みレイヤー名、元のゼロ始まりの実行ステージ番号、マイクロ秒単位の実行時間が入ります。プロファイリングに失敗すると例外を送出し、部分的な結果は返しません。別の測定パスなので合計は主要レイテンシと一致しません。`save(file_path)` はテレメトリと各行を JSON（`.json`）または YAML（その他）で保存し、親ディレクトリを作成して保存先をアトミックに置き換えます。
 
-廃止済み PreparedRunner オプションは既定値のままにします。並行実行には `processcvu.async` と `processcvu.async_queue_depth` を使います。旧逆量子化・プロファイリングフラグに直接の代替はありません。`advanced_execution.defer_output_cache_sync=true` を維持し、出力への CPU アクセスには Tensor/GstMemory マッピングを使います。`RunOptions::advanced.prepare_output_cpu_visible` は互換用の無操作フィールドであり、事前のキャッシュ同期を要求しません。
+廃止済み PreparedRunner オプションは既定値のままにします。並行実行には `processcvu.async` と `GraphOptions::async_queue_depth` を使います。旧逆量子化・プロファイリングフラグに直接の代替はありません。`advanced_execution.defer_output_cache_sync=true` を維持し、出力への CPU アクセスには Tensor/GstMemory マッピングを使います。`RunOptions::advanced.prepare_output_cpu_visible` は互換用の無操作フィールドであり、事前のキャッシュ同期を要求しません。
 
 ### コンパイル済みモデルの実行コントラクト
 

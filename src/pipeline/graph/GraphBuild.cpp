@@ -2054,7 +2054,7 @@ std::string session_build_apply_fast_path_options_to_fragment(std::string fragme
     throw_session_error_simple(
         error_codes::kPipelineShape,
         "PreparedRunnerOptions is retired; leave its fields at defaults. Use "
-        "processcvu.async and processcvu.async_queue_depth for execution concurrency; legacy "
+        "processcvu.async and GraphOptions::async_queue_depth for execution concurrency; legacy "
         "dequant-flags and profiling have no equivalent option");
   }
   const bool processcvu_async = sess_opt->processcvu.async &&
