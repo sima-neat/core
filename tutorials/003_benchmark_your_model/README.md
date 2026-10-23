@@ -90,9 +90,9 @@ and pipeline overhead.
 
 If `mla-rt` is missing, fails, or times out, `benchmark()` still returns the headline measurements,
 leaves the list empty, and sets `report.mla_layer_stats.status` or `report.mla_stage_stats.status`
-to the reason. Each status is `"not requested"` or `"ok"` otherwise. After a timed-out or crashed
-`mla-rt` run, MLA may still hold unfinished work, so later profiling in the same process is skipped
-with that reason. Keep the devkit idle until MLA recovery is verified.
+to the reason. Each status is `"not requested"` or `"ok"` otherwise. After an `mla-rt` run fails,
+times out, or crashes, MLA may still hold unfinished work, so later profiling in the same process
+is skipped with that reason. Keep the devkit idle until MLA recovery is verified.
 
 MLA layer stats follows the selected terminal policy: it measures only the MLA stages in the selected
 inference route, and each keeps its `stage_index` in the full model.

@@ -104,16 +104,20 @@ void stages_run_in_execution_order() {
   }
 }
 
+// Runner starts no mla-rt in this process after a failed run, so this case runs last.
 void failures_name_the_stage() {
   Fixture fixture;
   const auto model = contract(fixture);
-  fixture.runtime("echo 'device busy' >&2\nexit 7\n");
-  fails([&] { collect_mla_stage_stats(model); },
-        "MLA stage 0 (demo_stage1_mla.elf): mla-rt failed (exit 7)\ndevice busy");
   fixture.runtime("echo 'stats skipped'\n");
   fails([&] { collect_mla_stage_stats(model); },
         "MLA stage 0 (demo_stage1_mla.elf): mla-rt wrote no stats file\nmla-rt diagnostics:\n"
         "stats skipped");
+  fixture.runtime("echo 'device busy' >&2\nexit 7\n");
+  fails([&] { collect_mla_stage_stats(model); },
+        "MLA stage 0 (demo_stage1_mla.elf): mla-rt failed (exit 7)\ndevice busy");
+  fixture.runtime(emit(stats(average)));
+  fails([&] { collect_mla_stage_stats(model); },
+        "MLA stage 0 (demo_stage1_mla.elf): skipped: an earlier mla-rt run failed");
 }
 
 void model_problems_are_reported() {
@@ -132,6 +136,6 @@ void model_problems_are_reported() {
 
 RUN_TEST("unit_benchmark_mla_stage_stats_test", ([] {
            stages_run_in_execution_order();
-           failures_name_the_stage();
            model_problems_are_reported();
+           failures_name_the_stage();
          }));
