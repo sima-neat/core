@@ -354,9 +354,7 @@ Sentinel 約每 2 秒取樣一次，因此吞吐量階段至少會執行 `Benchm
 
 Scheduler 先在 `PATH` 尋找 `mla-rt`，再尋找套件提供的 `modalix-mla-rt`，並檢查程序內的診斷狀態。它同步等待 CLI 結束，沒有父程序期限或強制終止。請求的 `timeout` 只設定提供者的 `--model-timeout`，不保證裝置已完成。診斷忙碌或完成狀態不明仍是錯誤；請保持 MLA 閒置直到確認復原。找到執行檔不代表已驗證 CLI 功能相容性。
 
-`BenchmarkReport::layer_stats_status` 為 `not requested`、`ok`，或無法剖析的原因。安全的啟動前失敗會保留已完成的主要測量，並清空 `layer_stats`。忙碌或完成不明仍擲出例外；狀態不是復原授權。程序結束本身無法證明硬體完成，因此啟動後的無效報告仍是致命錯誤。即使後續階段安全地失敗，層資料仍採全部或空清單。每列包含編譯後的名稱、原始從零開始的執行階段索引，以及微秒執行時間。獨立剖析結果的總和不等於主要延遲。`save(file_path)` 將狀態、遙測和各列寫為 JSON（`.json`）或 YAML（其他副檔名），建立父目錄並以原子方式取代目的檔。
-
-未發行的 0.6.0 在 `BenchmarkReport` 加入 `layer_stats_status`。請使用相符的 Core/Scheduler 標頭與程式庫重新建置 C++ 使用端和 Python 繫結，不要將舊物件與新配置混用。
+`BenchmarkReport::layer_stats` 包含編譯後的層名稱、原始從零開始的執行階段索引，以及微秒執行時間。剖析失敗會擲出例外，不會傳回部分結果。獨立剖析結果的總和不等於主要延遲。`save(file_path)` 將遙測和各層資料寫為 JSON（`.json`）或 YAML（其他副檔名），建立父目錄並以原子方式取代目的檔。
 
 已淘汰的 PreparedRunner 選項必須維持預設值。並行處理使用 `processcvu.async` 和 `processcvu.async_queue_depth`；舊反量化與剖析旗標沒有直接替代。請維持 `advanced_execution.defer_output_cache_sync=true`，並透過 Tensor/GstMemory 映射存取 CPU 輸出。`RunOptions::advanced.prepare_output_cpu_visible` 是相容性用的無作用欄位，不要求預先快取同步。
 

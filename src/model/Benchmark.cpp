@@ -389,15 +389,15 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
   std::unique_lock exclusive(benchmark_gate, std::defer_lock);
   std::shared_lock shared(benchmark_gate, std::defer_lock);
   std::vector<LayerProfileStage> profile_stages;
-  std::string profile_status = "not requested";
   if (options.include_layer_stats) {
     exclusive.lock();
+    require_owned_mla_layer_profiling();
     const auto& contract = ModelAccess::pack(model).mpk_contract();
     if (!contract) {
       throw std::runtime_error("Model::benchmark: layer profiling requires an MPK manifest");
     }
     const auto selected = ModelAccess::pack(model).mla_profile_plugin_indices();
-    profile_status = prepare_mla_layer_stats(*contract, selected, profile_stages);
+    profile_stages = resolve_layer_profile_stages(*contract, selected);
   } else {
     shared.lock();
   }
@@ -569,9 +569,8 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
   BenchmarkReport report = internal::build_benchmark_report_from_measurements(
       latency_measured, throughput_measured, num_samples, latency_samples, pushed,
       std::move(telemetry));
-  report.layer_stats_status = std::move(profile_status);
-  if (options.include_layer_stats && !profile_stages.empty()) {
-    collect_mla_layer_stats_for_report(report, profile_stages);
+  if (options.include_layer_stats) {
+    report.layer_stats = collect_mla_layer_stats(profile_stages);
   }
   const double batch_throughput = throughput_measured.throughput_batches_per_s;
   const Telemetry& board = report.telemetry;

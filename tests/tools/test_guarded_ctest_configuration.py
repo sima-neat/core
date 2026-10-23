@@ -124,8 +124,6 @@ endfunction()
         production = (ROOT / 'CMakeLists.txt').read_text()
         registrations = tests[tests.index('add_executable(unit_boxdecode_publication_test'):
                               tests.index('simaneat_add_test(\n  NAME unit_afe_publication_ledger_generated')]
-        registrations = tests[tests.index('add_executable(unit_benchmark_profile_boundary_test'):
-                              tests.index('add_executable(unit_missing_fused_operation_test')] + registrations
         profile = tests[tests.index('option(SIMANEAT_CTEST_FOR_DEVKIT'):
                         tests.index('# Test blacklist (by executable name)')]
         helper = re.search(r'function\(simaneat_append_ctest_env test_name\).*?endfunction\(\)',
@@ -139,8 +137,7 @@ endfunction()
         manifest_install = re.search(
             r'install\(\n  FILES \$\{CMAKE_BINARY_DIR\}/tests/CTestTestfile.cmake\n.*?\n\)',
             tests, re.DOTALL).group(0)
-        names = {'unit_benchmark_profile_boundary_test',
-                 'unit_boxdecode_publication_test', 'unit_boxdecode_kernel_recipe_test',
+        names = {'unit_boxdecode_publication_test', 'unit_boxdecode_kernel_recipe_test',
                  'unit_boxdecode_geometry_test', 'unit_kernel_runner_integration_test'}
         env = os.environ.copy()
         for key in ('CC', 'CXX', 'CFLAGS', 'CXXFLAGS', 'CPPFLAGS', 'LDFLAGS', 'CPATH',
@@ -266,8 +263,7 @@ include("{ROOT}/cmake/NeatGuardedTests.cmake")
                     result = command('ctest', '--test-dir', installed_tests,
                                      '--output-on-failure', check=False)
                     self.assertNotEqual(result.returncode, 0)
-                    self.assertIn(f'0% tests passed, {len(names)} tests failed out of {len(names)}',
-                                  result.stdout)
+                    self.assertIn('0% tests passed, 4 tests failed out of 4', result.stdout)
                     self.assertIn('error while loading shared libraries: libfixture_plugin.so',
                                   result.stdout)
 

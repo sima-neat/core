@@ -90,14 +90,10 @@ void saves_exact_path_and_replaces_existing_report(const std::string& extension)
           "save must preserve latency percentiles");
   require(parsed["telemetry"]["cpu_cores_usage_pct"][0]["mean"].as<double>() == 42.25,
           "save must preserve per-core telemetry measurements");
-  require(report.layer_stats_status == "not requested", "profile status defaults to not requested");
-  report.layer_stats_status = "profiling executable is unavailable";
   report.layer_stats = {{"MLA_0/noop", 0.0, 2}};
   report.save(target);
   if (extension == ".json") {
     const auto json = nlohmann::json::parse(read_file(target));
-    require(json["layer_stats_status"] == report.layer_stats_status,
-            "JSON preserves safe profiling failure status");
     require(json["latency_ms"] == report.latency_ms && json["layer_stats"].is_array() &&
                 json["layer_stats"][0]["stage_index"] == 2 &&
                 json["layer_stats"][0]["name"] == "MLA_0/noop" &&
@@ -107,9 +103,6 @@ void saves_exact_path_and_replaces_existing_report(const std::string& extension)
     require(read_file(target).starts_with("# NEAT benchmark report."),
             "non-JSON endings must retain YAML output");
   }
-  require(YAML::LoadFile(target.string())["layer_stats_status"].as<std::string>() ==
-              report.layer_stats_status,
-          "YAML/JSON preserves profiling status");
   const auto layer = YAML::LoadFile(target.string())["layer_stats"][0];
   require(layer["stage_index"].as<std::size_t>() == 2,
           "stage indices must preserve execution order gaps for A65 stages");

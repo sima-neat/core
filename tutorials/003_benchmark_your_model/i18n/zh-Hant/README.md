@@ -72,7 +72,7 @@ report = model.benchmark(options)
 
 從 `report.layer_stats` 讀取每個已編譯 MLA 層的 `name`、從零開始的 `stage_index` 與 `total_execution_time_us`。執行時間為零的 no-op 項目也會保留。各層時間是在獨立的剖析執行中測量，因此總和不等於整體延遲。
 
-請查看 `report.layer_stats_status`：`not requested`、`ok` 或無法使用的原因。安全的啟動前失敗會保留主要測量並清空層清單；忙碌或完成不明仍擲出例外。剖析遵循終端策略並保留原始 MPK 階段索引。請針對未發行 0.6.0 的報告配置變更，重新建置 C++ 使用端與 Python 繫結。
+剖析遵循選定的終端策略並保留原始 MPK 階段索引。失敗會擲出例外，不會傳回部分結果。
 
 ### 儲存報告 {#step-save-report}
 

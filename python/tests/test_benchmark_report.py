@@ -38,8 +38,6 @@ def test_report_round_trip(tmp_path, filename):
     layer.stage_index = stage_index
     layers.append(layer)
   report.layer_stats = layers
-  assert report.layer_stats_status == "not requested"
-  report.layer_stats_status = "ok"
   path = tmp_path / "model with spaces" / filename
   written = report.save(path)
   assert Path(written) == path
@@ -71,7 +69,6 @@ def test_report_round_trip(tmp_path, filename):
       "fps": report.fps,
       "avg_power_watts": report.avg_power_watts,
       "energy_joules": report.energy_joules,
-      "layer_stats_status": "ok",
       "layer_stats": [
           {"name": layer.name, "total_execution_time_us": layer.total_execution_time_us,
            "stage_index": layer.stage_index}

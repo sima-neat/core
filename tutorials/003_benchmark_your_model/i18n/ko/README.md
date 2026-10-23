@@ -72,7 +72,7 @@ report = model.benchmark(options)
 
 `report.layer_stats`에서 컴파일된 각 MLA 레이어의 `name`, 0부터 시작하는 `stage_index`, `total_execution_time_us`를 읽습니다. 실행 시간이 0인 no-op 항목도 유지됩니다. 레이어 시간은 별도의 프로파일링 실행에서 측정하므로 합계가 전체 지연 시간과 일치하지 않습니다.
 
-`report.layer_stats_status`는 `not requested`, `ok` 또는 사용 불가 사유입니다. 안전한 실행 전 실패는 주요 측정을 보존하고 레이어 목록을 비웁니다. 실행 중 또는 완료 불명 오류는 계속 예외를 발생시킵니다. 프로파일링은 종료 정책을 따르고 원래 MPK 단계 인덱스를 유지합니다. 미출시 0.6.0 보고서 레이아웃 변경에 맞춰 C++ 소비자와 Python 바인딩을 다시 빌드하세요.
+프로파일링은 선택한 종료 정책을 따르며 원래 MPK 단계 인덱스를 유지합니다. 실패하면 예외가 발생하며 부분 결과는 반환하지 않습니다.
 
 ### 보고서 저장 {#step-save-report}
 

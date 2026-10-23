@@ -79,7 +79,7 @@ Read `report.layer_stats` for each compiled MLA layer's `name`, zero-based `stag
 and `total_execution_time_us`. Zero-time no-op entries are retained. Layer timings use
 separate profiling passes and do not sum to the headline latency.
 
-Check `report.layer_stats_status`: `not requested`, `ok`, or an unavailable reason. Safe pre-launch failures preserve headline measurements with an empty layer list; busy or uncertain-completion errors still throw. Profiling follows the selected terminal policy and preserves original MPK stage indices. Rebuild C++ consumers and Python bindings for the unreleased 0.6.0 report-layout change.
+Profiling follows the selected terminal policy and preserves original MPK stage indices. Profiling failures throw; partial results are not returned.
 
 ### Save the report {#step-save-report}
 

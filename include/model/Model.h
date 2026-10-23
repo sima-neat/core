@@ -101,10 +101,6 @@ struct BenchmarkReport {
   double throughput_duration_ms = 0.0;   ///< Length of the throughput window.
   Telemetry telemetry;                   ///< Board telemetry for the throughput window.
   std::vector<LayerStats> layer_stats{}; ///< Empty when layer profiling was not collected.
-  /// "not requested", "ok", or why safe pre-launch failure prevented profiling.
-  /// Busy or uncertain device completion still throws; a status is not recovery evidence.
-  /// Added in unreleased 0.6.0: rebuild consumers and bindings for this report layout.
-  std::string layer_stats_status = "not requested";
 
   /**
    * @brief Write the complete report as YAML or JSON to the exact destination filename.
@@ -145,8 +141,7 @@ struct BenchmarkOptions {
   /// Advanced: collect compiled MLA layer timings in a separate offline pass. Default off.
   /// Requires a compatible mla-rt (or modalix-mla-rt) CLI and an idle DevKit.
   /// Scheduler waits for the CLI to finish; there is no parent-side deadline or termination.
-  /// Missing profiling prerequisites preserve ordinary measurements in layer_stats_status.
-  /// Busy or unknown completion remains fatal and requires an idle device or recovery.
+  /// Profiling failures throw; unknown completion requires recovery before further device use.
   /// Only MLA stages in the selected inference route are profiled.
   bool include_layer_stats = false;
 };
