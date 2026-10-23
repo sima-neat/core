@@ -36,10 +36,9 @@ node APIs, geometry policy and wire formatting. Fresh adapter/resolver factories
 are instantiated by Scheduler after cohort validation. A cached dynamic
 selection retains its operation but binds the current frame's memory.
 
-GenAI calls LLiMa directly, not through Runner or a Scheduler GenAI adapter. Offline MLA layer
-profiling is a separate, default-off pass through Scheduler's on-demand `mla-rt` CLI integration.
-It requires an idle DevKit with no other MLA work. Core keeps CLI execution behind Scheduler's
-boundary and does not launch a profiling process itself.
+GenAI calls LLiMa directly, not through Runner or a Scheduler GenAI adapter. MLA profiling is
+a separate, default-off pass: Core calls Scheduler's client, and Runner runs the installed `mla-rt`
+command-line tool. It requires an idle DevKit with no other MLA work.
 
 ---
 
@@ -475,32 +474,38 @@ that fails, the installer warns and continues; run `sima-cli neat install sentin
 `Run` power monitor (`RunOptions::power_monitor`) also comes from Sentinel: Core polls its latest
 sample and reads no power monitor chips over I2C.
 
-Layer profiling is opt-in through `BenchmarkOptions::include_layer_stats`, which defaults to
-false. It requires an idle DevKit with no overlapping MLA workloads. The benchmark gate
-serializes benchmark calls, not other inference APIs or applications. After its latency and
-throughput runners close, Core asks Scheduler to run the installed `mla-rt` CLI on demand for
-each MLA stage. There is no persistent profiling worker. Core owns MPK stage selection,
-independent compiler-YAML/report validation, and customer report fields; Scheduler owns the
-CLI process and temporary files; MLA-RT owns hardware profiling and the handoff back to kernel
-execution. Runner's ordinary inference path is unchanged. Profiling uses separate provider
-inputs, not the benchmark input buffers.
+MLA profiling is opt-in through two `BenchmarkOptions` fields that default to false:
+`include_mla_layer_stats` and `include_mla_stage_stats`. After the latency and throughput runners
+close, Core measures the extracted model's MLA executables through Scheduler's client, one
+profiling pass after the other. MLA layer stats covers only the MLA stages in the resolved
+inference route, including its terminal policy. Runner runs `mla-rt` in a separate process for
+each executable. MLA layer stats also uses the compiler stats YAML; MLA stage stats runs each MLA
+executable 200 times without interruption and reads the mean `tile.lat` from the `mla-rt` stats file. Runner
+validates the inputs and outputs and removes temporary files; it stops `mla-rt` if one run takes
+longer than 120 s. MLA-RT owns hardware profiling and the handoff back to
+kernel execution. Profiling requires no overlapping MLA workloads. The benchmark gate serializes
+benchmark calls, not other inference APIs or applications.
 
-Scheduler checks that `mla-rt` is executable in `PATH` and that this process has no active
-or recovery-required offline diagnostic before benchmark inference. This check does not validate CLI feature
-compatibility; unsupported options fail the profiling request with CLI diagnostics.
-A host timeout is not device retirement. After a timeout or unknown completion, keep MLA idle
-until recovery is verified. Scheduler does not kill a CLI that may still own device resources.
-Core neither launches nor kills the CLI, and does not substitute whole-job counters for
-per-layer measurements. Successful profiling requires a normal CLI exit and a valid report;
-the provider must finish hardware execution before releasing its resources.
+An `mla-rt` run that fails, crashes, or is stopped may leave MLA work unfinished, so Runner starts
+no further `mla-rt` run in that process. Later profiling passes report that MLA needs recovery.
+Keep the DevKit idle until MLA recovery is verified.
 
-`BenchmarkReport::layer_stats` contains compiled layer names, zero-based executable stage
-indices, and execution times in microseconds. These measurements use separate profiling
-passes and do not sum to headline latency. `BenchmarkReport::save(file_path)` explicitly
-writes the complete report using the public field names and units: `.json` selects JSON;
-`.yaml` and other endings select YAML. It includes telemetry and an empty layer list when
-profiling is disabled. It creates missing parent directories and atomically replaces an
-existing destination.
+Profiling is best effort. When `mla-rt` is missing, fails, times out, or writes unusable output,
+Core keeps the headline measurements, leaves that list empty, prints a warning, and sets
+`mla_layer_stats.status` or `mla_stage_stats.status` to the reason. A status is otherwise
+`"not requested"` or `"ok"`.
+
+`BenchmarkReport::mla_layer_stats` contains each compiled MLA layer's zero-based executable
+stage index, name, and hardware latency in microseconds from one profiling pass per layer.
+`BenchmarkReport::mla_stage_stats` contains each MLA stage's index, numbered the same way, and its
+mean hardware latency in microseconds. These measurements use separate profiling passes, so layer
+latencies do not sum to the stage or headline latency.
+`BenchmarkReport::save(file_path)` explicitly writes the complete report using the public field
+names and units: `.json` selects JSON; `.yaml` and other endings select YAML. It includes
+telemetry, both statuses, and empty MLA lists when profiling is disabled. It creates missing
+parent directories and atomically replaces an existing destination.
+
+Retired PreparedRunner options must remain at their defaults. Use `processcvu.async` and `GraphOptions::async_queue_depth` for concurrency; the legacy dequantization and profiling flags have no direct replacement. Leave `advanced_execution.defer_output_cache_sync=true` and use Tensor/GstMemory CPU mapping when accessing outputs. `RunOptions::advanced.prepare_output_cpu_visible` remains a compatibility no-op; it does not request eager cache synchronization.
 
 ### Compiled model execution contract
 
@@ -1670,21 +1675,22 @@ diagnostics you can reproduce (`describe_backend()` + report).
 ### Camera allocation ownership
 
 `CameraInput` places `neatcamerabridge` immediately after its camera caps and
-before any live queue. During negotiation the bridge answers the upstream
-`GST_QUERY_ALLOCATION` with a standard pool and requests `GstVideoMeta`. The
-pool allocates the validated planes from one packed SiMaAI allocation and
-exports one DMA-BUF per plane. A compatible `libcamerasrc` imports those
-DMA-BUFs into the ISP capture queue. The bridge then unwraps the same packed
-allocation for downstream processing. Strict mode rejects any buffer that does
-not satisfy that contract; CPU copying remains an explicit compatibility
-fallback.
+before any live queue. Neat never owns camera memory: any physically contiguous
+DMA-BUF is a valid EV74 input, and Neat's EV74 admission check accepts it when it comes from a CMA heap or the camera's contiguous capture allocator (`videobuf2_dma_contig`). During
+negotiation the bridge only requests `GstVideoMeta` through the upstream
+`GST_QUERY_ALLOCATION`; `libcamerasrc` keeps its own capture buffers. The
+bridge forwards each frame whose planes sit back to back in one DMA-BUF as a
+single memory, retaining the producer's buffer until every consumer releases
+it. Strict mode rejects any frame that cannot be forwarded this way; CPU
+copying into a CMA DMA-BUF remains an explicit compatibility fallback.
 
 The application-facing capture depth is independent of both the kernel's
 private CSI-to-ISP RAW transit ring and the later GStreamer queue. The optional
 `capture_buffer_count` argument to `CameraInputWithCaptureBuffers` controls buffers retained across
-ISP output, libcamera, and the application. `queue_depth` and `leaky_queue`
+ISP output, libcamera, and the application (on Platform 3.0 `libcamerasrc` has no
+`buffer-count`, so it must stay `0`). `queue_depth` and `leaky_queue`
 separately control downstream latency and frame-drop policy. The optional
-compatibility-copy pool grows on demand and is not capped by that queue depth,
+compatibility-copy pool grows on demand up to 128 buffers and is not capped by that queue depth,
 so a leaky queue can apply its drop policy without the upstream bridge
 stalling first.
 

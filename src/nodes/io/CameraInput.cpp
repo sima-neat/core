@@ -96,10 +96,6 @@ std::string camera_backend_fragment(const CameraInputOptions& opt, int node_inde
 
   std::ostringstream ss;
   ss << "libcamerasrc name=" << src_name;
-  const bool has_external_buffer_mode = libcamerasrc_property_exists("external-buffer-mode");
-  if (has_external_buffer_mode) {
-    ss << " external-buffer-mode=" << (opt.allow_cpu_fallback ? "preferred" : "required");
-  }
   if (capture_buffer_count > 0) {
     if (!libcamerasrc_property_exists("buffer-count")) {
       throw std::runtime_error(
@@ -108,26 +104,17 @@ std::string camera_backend_fragment(const CameraInputOptions& opt, int node_inde
     }
     ss << " buffer-count=" << capture_buffer_count;
   }
-  if (!opt.allow_cpu_fallback && !has_external_buffer_mode) {
-    throw std::runtime_error(
-        "CameraInput strict zero-copy requires a libcamerasrc with the "
-        "external-buffer-mode property; set allow_cpu_fallback=true to permit Neat's private "
-        "EV74 camera memory bridge to copy when direct capture is unavailable.");
-  }
   if (opt.camera_name.has_value() && !opt.camera_name->empty()) {
     ss << " camera-name=" << gst_quote(*opt.camera_name);
   }
   ss << " ! capsfilter name=" << caps_name << " caps=" << gst_quote(camera_caps_string(opt));
 
-  // Keep the memory-policy element adjacent to libcamerasrc. In addition to
-  // validating (or adapting) buffers, the bridge answers the source's
-  // downstream ALLOCATION query with a standard DMA-BUF pool backed privately
-  // by Neat's SiMaAI allocator. A queue must not sit between the producer and
-  // the element that owns this negotiation.
+  // libcamerasrc captures into its own DMA-BUFs. The bridge, kept adjacent to the
+  // source so it owns the ALLOCATION negotiation, forwards each frame's DMA-BUF
+  // downstream as one memory; in strict mode it rejects any frame it would have
+  // to copy. Scheduler's EV74 memory admission decides which exporters may reach the EV74.
   ss << " ! neatcamerabridge name=" << camera_bridge_name(node_index);
   ss << " buffer-name=" << gst_quote(opt.buffer_name);
-  if (capture_buffer_count > 0)
-    ss << " capture-min-buffers=" << capture_buffer_count;
   // Let the private bridge derive any fallback copy span from each
   // GstBuffer/GstVideoMeta. libcamera buffers may have padded strides or plane
   // offsets, so a tight width*height estimate would truncate later planes.

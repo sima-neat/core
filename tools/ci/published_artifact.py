@@ -21,6 +21,10 @@ ENVIRONMENT_HOSTS = {'dev': 'artifacts.neat.paconsultings.com',
 HOSTS = set(ENVIRONMENT_HOSTS.values())
 
 
+class PublicationResolutionError(subprocess.CalledProcessError):
+    """The CLI could not resolve a selector; no publication was downloaded."""
+
+
 def valid_branch(branch):
     """Validate a literal Git branch without Git or checkout-history expansion."""
     if (not isinstance(branch, str) or not branch or branch == 'HEAD'
@@ -80,7 +84,8 @@ def acquire(cli, component, branch, spec, environment, output, *, package_path="
         raise ValueError('Unsafe publication package path')
     repository = component + ('/' + package_path if package_path else '')
     output = Path(output).resolve()
-    output.mkdir(parents=True, exist_ok=False)
+    if output.exists():
+        raise FileExistsError(output)
     # Vulcan stores immutable publications under twelve-character commit IDs.
     # Shorten only the lookup key; retain the caller's complete selector below
     # when checking the publisher's full commit, including collision tails.
@@ -88,8 +93,11 @@ def acquire(cli, component, branch, spec, environment, output, *, package_path="
     # Keep the selected CLI stable across resolution and download. Its updater
     # must not replace that tool or prompt in an unattended acquisition child.
     cli_env = {**os.environ, 'SIMA_CLI_CHECK_FOR_UPDATE': '0'}
-    text = subprocess.check_output([str(cli), 'neat', 'install', '--env', environment,
-                                    f'{repository}@{branch}:{lookup_spec}', '--json'], text=True, env=cli_env)
+    try:
+        text = subprocess.check_output([str(cli), 'neat', 'install', '--env', environment,
+                                       f'{repository}@{branch}:{lookup_spec}', '--json'], text=True, env=cli_env)
+    except subprocess.CalledProcessError as error:
+        raise PublicationResolutionError(error.returncode, error.cmd, error.output, error.stderr) from error
     selected = json.loads(text[text.index('{'):])
     revision = selected.get('resolved_spec', '')
     if (selected.get('repository') != component or selected.get('package_path', '') != package_path
@@ -101,6 +109,7 @@ def acquire(cli, component, branch, spec, environment, output, *, package_path="
     url = selected['metadata_url']
     if urlparse(url).hostname != ENVIRONMENT_HOSTS[environment]:
         raise ValueError('Publication URL differs from selected environment')
+    output.mkdir(parents=True, exist_ok=False)
     download(urljoin(url, 'manifest.json'), output / 'publication.json')
     publication = json.loads((output / 'publication.json').read_text())
     commit = publication.get('commit', '')

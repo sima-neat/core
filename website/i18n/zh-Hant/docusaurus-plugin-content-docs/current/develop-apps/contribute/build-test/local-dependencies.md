@@ -1,58 +1,48 @@
-# 使用本機 Kernels、Runner 與 Scheduler 建置 Core
+# 使用 Scheduler 與 LLiMa 相依項目建置 Core
 
-在 Neat 開發環境中，從 Core 原始碼目錄執行一般命令：
-
-```bash
-./build.sh --all --no-doc --install
-```
-
-建置會依序準備 **Kernels → Runner → Scheduler → Core**，接著執行現有的最終
-安裝／部署。子建置絕不會安裝至 SDK、部署到 DevKit、執行目標測試、編譯 EV 韌體，
-或啟用韌體。
-
-將原始碼目錄並排放置，即可自動尋找來源：
-
-```text
-development/
-├── core/
-├── kernels/
-├── runner/
-└── scheduler/
-```
-
-Runner 包含不依賴框架的執行、準備、記憶體與原生傳輸。Scheduler 包含 GStreamer
-整合／外掛程式與相容性轉接器。兩者各有獨立的來源根目錄與安裝套件。
-原始碼目錄不必包含 `.git` 目錄；支援工作樹與來源快照。
-
-## 選擇來源或現有本機套件
-
-若原始碼位於其他位置，請設定 `NEAT_KERNELS_SOURCE`、`NEAT_RUNNER_SOURCE` 或 `NEAT_SCHEDULER_SOURCE`：
+Core 會針對兩個相依項目建置：Scheduler 與 LLiMa。在 Neat SDK 中，從 Core 原始碼目錄執行
+`build.sh`：
 
 ```bash
-NEAT_RUNNER_SOURCE=/path/to/simaai-runtime ./build.sh --all --no-doc
+./build.sh --all --no-doc
 ```
 
-若要重用本機建置的套件，請改設 `NEAT_KERNELS_PACKAGE_DIR`、`NEAT_RUNNER_PACKAGE_DIR`
-或 `NEAT_SCHEDULER_PACKAGE_DIR`。每個套件目錄必須包含其已安裝的 `usr/` 樹、建置憑證，
-以及由該元件標準套件流程產生的對應 Debian 套件。Kernels 使用標準 CMake
-設定／建置／安裝及其套件產生器；Runner 與 Scheduler 則使用各自根目錄的 `build.sh` 入口：
+依預設，`build.sh` 會：
+
+1. 從 Vulcan 下載已發布的 Scheduler 套件組與 LLiMa 套件。
+2. 將兩者安裝至 SDK sysroot。
+3. 建置 Core。
+
+## 使用本機 Scheduler 或 LLiMa 套件
+
+若要針對自行建置的 Scheduler 或 LLiMa 建置 Core，請傳入其 DEB 資料夾：
 
 ```bash
-NEAT_RUNNER_PACKAGE_DIR=/path/to/runner/dist/package \
-  ./build.sh --all --no-doc
+./build.sh --scheduler ../scheduler-debs --llima ../llima/dist/debs
 ```
 
-選擇順序為明確覆寫、有效的同層來源，再到同層的 `dist/package`。
-明確指定套件會優先於同層來源。對同一元件同時設定來源與套件覆寫會產生錯誤。
-本機建置失敗就會停止；絕不會退回較舊的套件。
+每個選項都可單獨使用；`build.sh` 仍會下載另一個相依項目。指定的套件會取代 sysroot 中
+已發布的套件。
 
-本機的 `build.sh` 需要選定的來源或套件，且不會自動下載替代成品。
-如需明確取得成品，請參閱[已發布的 CI 相依項目](#published-ci-dependencies)。
-不需要選用的 LLiMa 後端時，請使用 `--no-llima`。
+Scheduler 資料夾須包含 Scheduler 建置時使用的完整套件組：
+
+- `simaai-scheduler`
+- 它所依據建置的 `simaai-runner` 與 `simaai-kernels-dev` 套件
+- 啟用 EV 的建置所需、相符的 `simaai-kernels-firmware` 套件
+- Scheduler 使用 Codecs 時的 `neat-codecs` 與 `neat-codecs-dev` 套件對
+- 選用的 `simaai-runtime`；測試建置另需 `simaai-scheduler-client-test-dev`
+
+Core 不會選擇 Kernels、Runner 或 Codecs。若要測試其中某一項的變更，請依 Scheduler 的
+建置指南，針對該變更建置 Scheduler，將產生的套件放在同一個資料夾，並以 `--scheduler`
+傳入該資料夾。Scheduler 的協調器會檢查這些套件是否屬於同一組，若不是便會停止建置。
+
+若設定了任何 `NEAT_KERNELS_*`、`NEAT_RUNNER_*`、`NEAT_SCHEDULER_*` 或 `NEAT_CODECS_*`
+來源或套件變數，`build.sh` 會報錯並停止。若要在不含 LLiMa 的情況下建置，請使用
+`--no-llima`。
 
 ## 平台相依項目
 
-全部四個儲存庫都應使用相同的 Platform 3.0 SDK／工具鏈。選擇非預設工具鏈時，
+請以相同的 Platform 3.0 SDK／工具鏈建置 Kernels、Runner、Scheduler 與 Core。選擇非預設工具鏈時，
 請設定 `CMAKE_TOOLCHAIN_FILE`。Kernels 與 Runner 憑證必須在目標／編譯器、
 核心契約及使用的建置設定上一致。標準套件流程也要求確切使用的 Kernels 負載身分。
 Kernels 套件變更後，即使 Runner 來源未變更，也必須針對選定的 SDK 重新建置 Runner
@@ -60,9 +50,7 @@ Kernels 套件變更後，即使 Runner 來源未變更，也必須針對選定�
 Core 的來源優先 DEB 會固定選定的 Scheduler 與數值 SDK 版本。
 Runner 固定 Kernels；Scheduler 固定 Runner、Kernels 及已啟用的編解碼後端。
 啟用測試的 Core 建置還需要同一產生來源的獨立
-`simaai-scheduler-client-test-dev` 套件。來源建置透過 `--client-test-support` 要求它；
-套件建置則選擇相鄰的 `client-test-support/` 目錄或
-`NEAT_SCHEDULER_CLIENT_TEST_PACKAGE_DIR`。協調器會在提供僅供測試的 CMake 元件前，
+`simaai-scheduler-client-test-dev` 套件，並放在同一個 Scheduler 資料夾中。協調器會在提供僅供測試的 CMake 元件前，
 檢查其正式套件憑證、來源、負載與封存檔。僅執行階段的建置不需要此套件。
 建置會組合僅含中繼資料的 `simaai-runtime` 相容性套件，並使用確切的 Runner 與
 Scheduler 相依關係。標準套件各自只擁有一次其檔案；僅 Runner 擁有現有的載入器設定。
@@ -105,27 +93,10 @@ APT 變更檔案前，安裝程式會使用經過驗證的 Scheduler 擁有權�
 請勿在已有 Core 開發套件的環境中單獨安裝 Scheduler DEB、使用 `--force-overwrite`，或刪除 dpkg 擁有的檔案。
 獨立的 Scheduler 測試映像不需要安裝 Core；既有 Core 安裝則需要協同升級。
 
-### 後端提供者
-
-Scheduler 需要另外安裝的平台後端。此流程不會將它們複製進 Scheduler，也不會下載它們：
-
-- 將 `NEAT_CODECS_PACKAGE_DIR` 設為另外建置的 Codecs 套件目錄。Scheduler 啟用
-  編解碼器時，此目錄必須包含它所使用的確切已安裝 `usr/` 前綴，以及相符的
-  `neat-codecs` 和 `neat-codecs-dev` Debian 套件。Scheduler 的相依協調器會驗證
-  其負載、擁有權與相依控制資料；Core 保留已驗證的完整相依集合，並將兩個封存檔
-  納入最終發行套件組。它不會建置 Codecs 或替換成其他版本。
-- 使用 SDK 對應的 MLA Runtime、繪製與追蹤／記錄程式庫。
-- 若需要明確選擇 SDK 路徑，請透過 `NEAT_SCHEDULER_CMAKE_ARGS` 傳入 CMake 定義，
-  例如 `-DSIMA_RUNTIME_MLART_LIBRARY=/path/to/libmlart.so` 及其對應的標頭目錄。
-  請使用 Scheduler 建置指南中記載的選項名稱。
-
-`NEAT_RUNNER_CMAKE_ARGS` 與 `NEAT_SCHEDULER_CMAKE_ARGS` 內的引數會解析為 shell
-樣式的詞彙，不會當作 shell 程式碼執行。它們無法覆寫選定的相依套件或安裝佈局。
-
 ## 增量建置與安裝
 
-由 Core 管理的相依建置與套件位於 `deps/backend/`，與各儲存庫的獨立建置目錄分開。
-CMake 採增量建置；`--clean` 會清理選定的本機相依建置與 Core 建置。
+每次建置都會在 `deps/scheduler/` 中重新取得選定的 Scheduler 套件組，並將其套件暫存於
+`deps/backend/`。CMake 以增量方式建置 Core；`--clean` 也會移除 Core 的建置。
 
 連結前，Scheduler 的相依協調器會根據憑證驗證已安裝的核心標頭，並檢查 Runner
 使用的契約及 Scheduler 的確切 Runner 輸入。在準備部署套件前，它會驗證每個
@@ -159,7 +130,7 @@ CMake 快取、設定的編譯器、目標 Python 標頭與建置出的擴充模
 中繼資料輸出本身會排除於未追蹤內容摘要之外，以避免自我參照。
 具有本機未提交變更的候選版本不會被標示為乾淨的已發布成品。
 
-僅準備相依標頭時，`--install-deps-only` 需要本機套件覆寫。它複製標頭，
+僅準備相依標頭時，`--install-deps-only` 使用 `--scheduler` 資料夾，或下載已發布的套件組。它複製標頭，
 不建置或執行 A65/EV 程式碼。原生 clang-tidy 分析請使用 `scripts/run_cpp_tidy.sh`，
 搭配選定的 Scheduler 與相符測試支援套件的前綴。`TIDY_INSTALL_DEPS=1` 會安裝原生
 主機分析先決條件。指令碼直接使用各套件的公開 CMake 匯出項目，不會啟用或修改 SDK sysroot。
@@ -171,21 +142,26 @@ EV 裝置建置仍是需要授權的獨立流程。這些命令都不會隱含�
 
 ## 已發布的 CI 相依項目 {#published-ci-dependencies}
 
-一般 Vulcan 建置會透過 `sima-cli` 解析一次 `deps/manifest.json` 中的 Scheduler
-原則，然後下載該不可變的發布版本。snap 原則選擇目前分支；尚未發布的分支會失敗，
-而不會退回其他分支。`tools/ci/acquire_scheduler.py` 會在執行 Scheduler 啟動程式前
+一般 Vulcan 建置會透過 `sima-cli` 解析 `deps/manifest.json` 中的 Scheduler
+原則，然後下載所選的不可變發布版本。與 LLiMa 相同，分支 `snap` 會先嘗試目前的
+Core 分支。只有在解析失敗，且 Scheduler 的已發布分支索引確認該分支不存在時，
+才會明確告知退回並重試 `develop:latest`。其他查詢失敗仍會視為錯誤，包括索引無法
+取得或無效的情況。標籤 snap 與明確的
+分支／提交選擇器絕不退回。裝置與 PCIe 主機的取得流程共用此原則；PCIe 的
+`--scheduler-spec <commit>` 也維持嚴格選擇。解析後的下載、驗證、啟動或暫存失敗
+仍會視為錯誤。記錄會保留實際選定的分支與不可變提交。
+`tools/ci/acquire_scheduler.py` 會在執行 Scheduler 啟動程式前
 驗證發布者雜湊。已安裝的 Scheduler 協調器會分割並驗證隨附的 Runner、Kernels 和
 Codecs 封存檔。Core 不會獨立解析這些儲存庫。
 
-選定的 Scheduler 套件會安裝其確切 SDK 原則。在可拋棄式 CI SDK 容器中，
-`scripts/ci/prepare_scheduler_sdk.sh` 會使用該版本的官方 sysroot 設定命令，
+選定的 Scheduler 套件會安裝其確切 SDK 原則。在 SDK 中，`build.sh` 會執行
+`scripts/ci/prepare_scheduler_sdk.sh`，該指令碼使用該版本的官方 sysroot 設定命令，
 並保留下載的平台封存檔。協調器會檢查實際的 GCC14 版本／目標與目標 SDK 身分，
 再透過 `NEAT_RUNNER_PLATFORM_RUNTIME_DEBS` 選擇 Runner 所使用的確切執行階段
 提供者封存檔。原生 ARM64 與交叉編譯器的執行檔位元組不必完全相同，
 但目標 ABI 與所選平台必須一致。此步驟不會安裝裝置套件或驗證韌體。
 
-本機來源／套件覆寫仍具權威性。CI 取得相依項目是明確的操作；本機來源建置失敗
-絕不會下載替代品。現有的
+`--scheduler` 資料夾絕不會與下載的套件混用，也不會被下載的套件取代。現有的
 `tools/ci/materialize_dependencies.py --manifest ... --output-root ...` 命令仍是
 另行審查的不可變清單可選用的傳輸方式。它不是預設流程，也沒有隱含的 `ci/dependencies.json`。
 
@@ -223,7 +199,8 @@ Runner 執行 API 建置的 Scheduler。`SIMANEAT_REQUIRE_INT32_RENDERER` 預設
 繪製使用選定的 Kernels/Runner 套件，而非獨立的平台繪製器封存檔。
 請為要求 API 修訂版 2 一併重新建置整個套件組。
 
-執行 Core 的來源優先 `build.sh` 前，請提供：
+在 SDK 中，`build.sh` 會透過 `scripts/ci/prepare_scheduler_sdk.sh` 設定下列項目。
+在 SDK 之外，請提供：
 
 - `NEAT_RUNNER_PLATFORM_RUNTIME_DEBS`：JSON 陣列，內含 Runner 選定的確切執行階段
   提供者 DEB 的絕對路徑。必須包含其所需的 SimaHeap 執行階段封存檔；若啟用 MLA 與
@@ -232,7 +209,7 @@ Runner 執行 API 建置的 Scheduler。`SIMANEAT_REQUIRE_INT32_RENDERER` 預設
   清單，作為建置證據。由 Runner 宣告為 Platform 擁有的提供者不會包含在 Core 的
   可安裝 DEB 集合內；未宣告的提供者仍維持確切封存檔組合。
 
-即使覆寫為預先建置的 Runner/Scheduler 套件，也必須明確指定這些選擇。
+使用 `--scheduler` 資料夾時，這項選擇同樣必須明確指定。
 不可變的四元件具體化工具不會下載平台提供者封存檔。請在呼叫 Core 前向受支援的
 產生者取得它們；缺少或未被使用的提供者會導致失敗，而不會退回 sysroot。
 編譯時請使用相符的開發套件。在 DevKit 上，Scheduler 經驗證的准入工具會在套件變更前，

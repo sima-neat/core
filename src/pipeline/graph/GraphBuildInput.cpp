@@ -467,24 +467,12 @@ bool is_default_run_options(const RunOptions& opt) {
   return run_options_equal_for_cache_local(opt, d) && !opt.on_input_drop;
 }
 
-bool resolve_prepare_output_cpu_visible(const RunOptions& opt, bool zero_copy) {
-  if (!zero_copy) {
-    return false;
-  }
-  const char* env = std::getenv("SIMA_PREPARE_OUTPUT_CPU_VISIBLE");
-  if (env && *env) {
-    return env_bool("SIMA_PREPARE_OUTPUT_CPU_VISIBLE", false);
-  }
-  return opt.advanced.prepare_output_cpu_visible;
-}
-
 // Resolved public-output memory policy. Single authority consulted by the
 // public-boundary stream-option builder so every entry point (Model::build,
 // Graph::build/source) agrees on output storage kind.
 struct OutputMemoryResolution {
-  bool zero_copy;           ///< non-DMA outputs share backing GstSample
-  bool preserve_dmabuf;     ///< Auto retains actual standard DMA-BUF storage
-  bool prepare_cpu_visible; ///< issue cache-visibility maintenance for CPU readers
+  bool zero_copy;       ///< non-DMA outputs share backing GstSample
+  bool preserve_dmabuf; ///< Auto retains actual standard DMA-BUF storage
 };
 
 // THE definition of what Auto/ZeroCopy/Owned mean for a public output.
@@ -524,8 +512,7 @@ OutputMemoryResolution resolve_output_memory(const RunOptions& opt, RunMode mode
     }
     break;
   }
-  return {zero_copy, preserve_dmabuf,
-          resolve_prepare_output_cpu_visible(opt, zero_copy || preserve_dmabuf)};
+  return {zero_copy, preserve_dmabuf};
 }
 
 int resolved_input_timeout_ms(const RunOptions& opt) {
@@ -1038,7 +1025,6 @@ InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
   stream_opt.max_input_bytes = opt.advanced.max_input_bytes;
   stream_opt.copy_output = !output_mem.zero_copy;
   stream_opt.preserve_dmabuf_output = output_mem.preserve_dmabuf;
-  stream_opt.prepare_output_cpu_visible = output_mem.prepare_cpu_visible;
   if (output_mem.zero_copy || output_mem.preserve_dmabuf) {
     stream_opt.holder_loan_sample_window = std::max(3, queue_depth + 2);
     stream_opt.holder_loan_credits = stream_opt.holder_loan_sample_window;
@@ -1405,9 +1391,6 @@ RunOptions resolve_build_opt(RunMode mode, const RunOptions& opt) {
     }
     if (out.advanced.sync_num_buffers_override == defaults.advanced.sync_num_buffers_override) {
       out.advanced.sync_num_buffers_override = sync_defaults.advanced.sync_num_buffers_override;
-    }
-    if (out.advanced.prepare_output_cpu_visible == defaults.advanced.prepare_output_cpu_visible) {
-      out.advanced.prepare_output_cpu_visible = sync_defaults.advanced.prepare_output_cpu_visible;
     }
   }
   if (out.queue_depth == defaults.queue_depth) {
@@ -2330,7 +2313,6 @@ bool run_options_equal_for_cache_local(const RunOptions& a, const RunOptions& b)
          a.advanced.copy_input == b.advanced.copy_input &&
          a.advanced.max_input_bytes == b.advanced.max_input_bytes &&
          a.advanced.sync_num_buffers_override == b.advanced.sync_num_buffers_override &&
-         a.advanced.prepare_output_cpu_visible == b.advanced.prepare_output_cpu_visible &&
          rail_options_equal(a.power_monitor, b.power_monitor);
 }
 

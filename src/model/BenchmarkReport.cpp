@@ -37,18 +37,26 @@ std::filesystem::path BenchmarkReport::save(const std::filesystem::path& file_pa
     throw std::invalid_argument(std::string(kContext) + ": throughput_samples must be nonnegative");
   document["throughput_samples"] = throughput_samples;
   document["telemetry"] = pipeline_internal::telemetry_document(telemetry, kContext);
-  auto& layers = document["layer_stats"] = pipeline_internal::ReportDocument::array();
-  for (const auto& layer : layer_stats) {
-    require_nonnegative(layer.total_execution_time_us, "total_execution_time_us");
+  document["mla_layer_stats"]["status"] = mla_layer_stats.status;
+  auto& layers = document["mla_layer_stats"]["layers"] = pipeline_internal::ReportDocument::array();
+  for (const auto& layer : mla_layer_stats.layers) {
+    require_nonnegative(layer.latency_us, "latency_us");
     layers.push_back({{"stage_index", layer.stage_index},
                       {"name", layer.name},
-                      {"total_execution_time_us", layer.total_execution_time_us}});
+                      {"latency_us", layer.latency_us}});
+  }
+  document["mla_stage_stats"]["status"] = mla_stage_stats.status;
+  auto& stages = document["mla_stage_stats"]["stages"] = pipeline_internal::ReportDocument::array();
+  for (const auto& stage : mla_stage_stats.stages) {
+    require_nonnegative(stage.latency_us, "latency_us");
+    stages.push_back({{"stage_index", stage.stage_index}, {"latency_us", stage.latency_us}});
   }
   pipeline_internal::save_report(
       file_path, document,
       "# NEAT benchmark report. Latency: ms; throughput: inferences/s; power: W; energy: J.\n"
-      "# Layer times: hardware run_time in us from separate profiling passes, not headline "
-      "latency.\n",
+      "# MLA layer latency: hardware run_time in us of one profiling pass per layer, not "
+      "headline latency.\n"
+      "# MLA stage latency: mean us of 200 uninterrupted mla-rt runs per stage.\n",
       kContext);
   return file_path;
 }

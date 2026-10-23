@@ -153,14 +153,14 @@ RTSPプルのタイムアウトが発生しました。URLが間違っている�
 RTSP URLにアクセス可能であり、ストリームが正常に再生されていることを確認してください。また、使用されているトランスポートプロトコル（TCPまたはUDP）も確認してください。[RTSPストリームを再生する](/tutorials/consume-rtsp-stream)を参照してください。
 :::
 
-### 12. `CameraInput strict zero-copy requires external-buffer-mode`
+### 12. `Camera buffer is not one forwardable DMA-BUF and copying is disabled`
 
 :::info 原因
-`CameraInputOptions::allow_cpu_fallback` はデフォルトで false に設定されているため、Neat は、最初から最後まで SiMaAI/デバイスのゼロコピーサポートを必要とします。`libcamerasrc` が汎用的な `external-buffer-mode` プロパティを公開していないか、インストールされているメモリライブラリが、その割り当てを DMA-BUF としてエクスポートできない可能性があります。
+`CameraInputOptions::allow_cpu_fallback` はデフォルトで false に設定されているため、Neat はカメラ自身の DMA-BUF をそのまま転送し、コピーは一切行いません。カメラスタックが、各プレーンが連続して並んだ 1 つの DMA-BUF ではないフレーム（たとえば fd ごとに 1 つのプレーン、または DMA-BUF ではないメモリ）を渡しました。
 :::
 
 :::tip 修正
-一貫性のあるカメラとメモリパッケージがインストールされている場合は、厳密なゼロコピーを維持してください。DMA-BUFエクスポートのないカメラスタックで実行する必要がある場合は、互換ブリッジを明示的に選択してください。
+プラットフォームの `libcamera` パッケージを使用し、厳密なゼロコピーを維持してください。各フレームを 1 つの DMA-BUF として渡さないカメラスタックで実行する必要がある場合は、互換コピーを明示的に選択してください。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -181,7 +181,7 @@ camera.allow_cpu_fallback = True
 </CodeTab>
 </CodeTabs>
 
-アダプティブモードでは、下流のCVU/MLAステージにSiMaAIメモリが引き続き割り当てられます。データは、アップストリームカメラバッファがEV74によってまだ使用されていない場合にのみ、カメラブリッジでコピーされます。
+アダプティブモードでも、下流のCVU/MLAステージには引き続きDMA-BUFが渡されます。コピーは、カメラフレームが、各プレーンが連続して並んだ1つのDMA-BUFではない場合にのみ、CMA DMA-BUFに対して行われます。
 :::
 
 ### 13. `misconfig.media_caps … libcamerasrc … not-negotiated (-4)`

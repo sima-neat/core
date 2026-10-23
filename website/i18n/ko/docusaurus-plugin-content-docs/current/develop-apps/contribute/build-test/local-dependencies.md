@@ -1,63 +1,50 @@
-# 로컬 Kernels, Runner 및 Scheduler로 Core 빌드
+# Scheduler 및 LLiMa 의존성으로 Core 빌드
 
-Neat 개발 환경의 Core 체크아웃에서 평소 사용하는 명령을 실행합니다.
-
-```bash
-./build.sh --all --no-doc --install
-```
-
-빌드는 **Kernels → Runner → Scheduler → Core** 순서로 준비한 다음 기존 최종
-설치/배포를 수행합니다. 하위 빌드는 SDK에 설치하거나 DevKit에 배포하지 않으며,
-타깃 테스트 실행, EV 펌웨어 컴파일, 펌웨어 활성화도 수행하지 않습니다.
-
-소스를 자동으로 찾을 수 있도록 체크아웃을 나란히 배치합니다.
-
-```text
-development/
-├── core/
-├── kernels/
-├── runner/
-└── scheduler/
-```
-
-Runner는 프레임워크에 독립적인 실행, 준비, 메모리 및 네이티브 전송을 담당합니다.
-Scheduler는 GStreamer 통합/플러그인과 호환성 어댑터를 담당합니다. 각각 별도의
-소스 루트와 설치 패키지를 갖습니다. 체크아웃에 `.git` 디렉터리가 없어도 됩니다.
-워크트리와 소스 스냅샷도 지원합니다.
-
-## 소스 또는 기존 로컬 패키지 선택
-
-체크아웃이 다른 위치에 있으면 `NEAT_KERNELS_SOURCE`, `NEAT_RUNNER_SOURCE` 또는 `NEAT_SCHEDULER_SOURCE`를 설정합니다.
+Core는 Scheduler와 LLiMa라는 두 가지 의존성을 기반으로 빌드합니다. Neat SDK의 Core
+체크아웃에서 `build.sh`를 실행합니다.
 
 ```bash
-NEAT_RUNNER_SOURCE=/path/to/simaai-runtime ./build.sh --all --no-doc
+./build.sh --all --no-doc
 ```
 
-이미 로컬에서 빌드한 패키지를 재사용하려면 `NEAT_KERNELS_PACKAGE_DIR`,
-`NEAT_RUNNER_PACKAGE_DIR` 또는 `NEAT_SCHEDULER_PACKAGE_DIR`를 설정합니다. 각 패키지
-디렉터리에는 설치된 `usr/` 트리, 빌드 영수증, 해당 구성 요소의 정식 패키지
-워크플로가 생성한 일치하는 Debian 패키지가 있어야 합니다.
-Kernels는 표준 CMake 구성/빌드/설치와 자체 패키지 생성기를 사용합니다.
-Runner와 Scheduler는 각각 루트의 `build.sh` 진입점을 사용합니다.
+기본적으로 `build.sh`는 다음을 수행합니다.
+
+1. Vulcan에서 공개된 Scheduler 집합과 LLiMa 패키지를 다운로드합니다.
+2. 둘 다 SDK sysroot에 설치합니다.
+3. Core를 빌드합니다.
+
+## 로컬 Scheduler 또는 LLiMa 패키지 사용
+
+직접 빌드한 Scheduler 또는 LLiMa로 Core를 빌드하려면 해당 DEB 폴더를 전달합니다.
 
 ```bash
-NEAT_RUNNER_PACKAGE_DIR=/path/to/runner/dist/package \
-  ./build.sh --all --no-doc
+./build.sh --scheduler ../scheduler-debs --llima ../llima/dist/debs
 ```
 
-선택 우선순위는 명시적 재정의, 유효한 형제 소스, 형제 `dist/package` 순입니다.
-명시적으로 패키지를 선택하면 형제 소스보다 우선합니다. 같은 구성 요소에 대해
-소스와 패키지 재정의를 모두 설정하면 오류입니다. 로컬 빌드가 실패하면 전체
-빌드가 중단되며, 이전 패키지로 폴백하지 않습니다.
+각 옵션은 단독으로 사용할 수 있으며, 다른 의존성은 `build.sh`가 계속 다운로드합니다.
+지정한 패키지는 sysroot의 공개된 패키지를 대체합니다.
 
-로컬 `build.sh`에는 선택한 소스 또는 패키지가 필요하며, 대체 아티팩트를 자동으로 다운로드하지 않습니다.
-명시적인 아티팩트 가져오기는 [공개된 CI 의존성](#published-ci-dependencies)을 참고하세요.
-선택적 LLiMa 백엔드가 필요하지 않으면 `--no-llima`를 사용합니다.
+Scheduler 폴더에는 Scheduler가 빌드될 때 사용한 전체 집합이 있어야 합니다.
+
+- `simaai-scheduler`
+- Scheduler가 빌드될 때 사용한 `simaai-runner` 및 `simaai-kernels-dev` 패키지
+- EV가 활성화된 빌드를 위한 일치하는 `simaai-kernels-firmware` 패키지
+- Scheduler가 Codecs를 사용하는 경우 `neat-codecs` 및 `neat-codecs-dev` 쌍
+- 선택적으로 `simaai-runtime`, 그리고 테스트 빌드에는 `simaai-scheduler-client-test-dev`
+
+Core는 Kernels, Runner 또는 Codecs를 선택하지 않습니다. 이 중 하나의 변경 사항을
+테스트하려면 Scheduler의 빌드 가이드에 따라 해당 구성 요소로 Scheduler를 빌드하고,
+생성된 패키지를 한 폴더에 모아 `--scheduler`로 전달합니다. Scheduler의 코디네이터는
+패키지가 서로 일치하는지 확인하며, 일치하지 않으면 빌드를 중단합니다.
+
+`NEAT_KERNELS_*`, `NEAT_RUNNER_*`, `NEAT_SCHEDULER_*` 또는 `NEAT_CODECS_*` 소스 또는
+패키지 변수가 설정되어 있으면 `build.sh`는 오류와 함께 중단됩니다. LLiMa 없이 빌드하려면
+`--no-llima`를 사용합니다.
 
 ## 플랫폼 의존성
 
-네 저장소 모두 동일한 Platform 3.0 SDK/툴체인을 사용합니다. 기본값이 아닌 툴체인을
-선택할 때는 `CMAKE_TOOLCHAIN_FILE`을 설정합니다. Kernels와 Runner 영수증의
+Kernels, Runner, Scheduler 및 Core를 동일한 Platform 3.0 SDK/툴체인으로 빌드합니다.
+기본값이 아닌 툴체인을 선택할 때는 `CMAKE_TOOLCHAIN_FILE`을 설정합니다. Kernels와 Runner 영수증의
 타깃/컴파일러, 커널 계약 및 소비한 빌드 구성이 일치해야 합니다. 정식 패키지
 워크플로는 소비한 Kernels 페이로드의 정확한 식별 정보도 요구합니다. Kernels
 패키지가 바뀌면 Runner 소스가 바뀌지 않았더라도 선택한 SDK로 Runner 패키지를
@@ -66,10 +53,8 @@ Scheduler는 하위 수치 연산 패키지를 소비합니다.
 Core의 소스 우선 DEB는 선택된 Scheduler 및 수치 연산 SDK 버전을 고정합니다.
 Runner는 Kernels를 고정하고, Scheduler는 Runner, Kernels 및 활성화된 코덱 백엔드를
 고정합니다. 테스트가 활성화된 Core 빌드는 동일한 생성기의 별도
-`simaai-scheduler-client-test-dev` 패키지도 필요합니다. 소스 빌드는
-`--client-test-support`로 이를 요청하고, 패키지 빌드는 인접한
-`client-test-support/` 디렉터리 또는 `NEAT_SCHEDULER_CLIENT_TEST_PACKAGE_DIR`를
-선택합니다. 코디네이터는 테스트 전용 CMake 구성 요소를 노출하기 전에 해당
+`simaai-scheduler-client-test-dev` 패키지도 같은 Scheduler 폴더에 필요합니다.
+코디네이터는 테스트 전용 CMake 구성 요소를 노출하기 전에 해당
 프로덕션 영수증, 소스, 페이로드 및 아카이브를 확인합니다. 런타임 전용 빌드에는
 이 패키지가 필요하지 않습니다.
 빌드는 정확한 Runner 및 Scheduler 의존성을 가진 메타데이터 전용 `simaai-runtime`
@@ -116,31 +101,11 @@ DevKit에서 설치가 중단되었다면 검증된 전체 배포본을 다시 �
 기존 Core 개발 패키지가 있는 환경에 Scheduler DEB만 설치하거나, `--force-overwrite`를 사용하거나, dpkg 소유 파일을 삭제하지 마세요.
 독립형 Scheduler 테스트 이미지에는 Core 설치가 필요하지 않지만, 기존 Core 설치가 있다면 함께 업그레이드해야 합니다.
 
-### 백엔드 제공자
-
-Scheduler에는 별도로 설치된 플랫폼 백엔드가 필요합니다. 이 워크플로는 이를
-Scheduler 안에 복사하거나 가져오지 않습니다.
-
-- 별도로 빌드한 Codecs 패키지 디렉터리로 `NEAT_CODECS_PACKAGE_DIR`를 설정합니다.
-  Scheduler가 코덱을 활성화하면 이 디렉터리에는 소비한 정확한 설치 `usr/` 접두사와
-  일치하는 `neat-codecs` 및 `neat-codecs-dev` Debian 패키지가 있어야 합니다.
-  Scheduler 의존성 코디네이터가 페이로드, 소유권 및 의존성 제어 정보를 검증합니다.
-  Core는 검증된 의존성 집합을 유지하고 두 아카이브를 최종 배포본에 포함합니다.
-  Codecs를 빌드하거나 다른 버전으로 대체하지는 않습니다.
-- SDK의 일치하는 MLA Runtime, 렌더링 및 추적/로깅 라이브러리를 사용합니다.
-- SDK 경로를 명시적으로 선택해야 하면 `NEAT_SCHEDULER_CMAKE_ARGS`로 CMake 정의를
-  전달합니다. 예를 들어 `-DSIMA_RUNTIME_MLART_LIBRARY=/path/to/libmlart.so`와 일치하는
-  포함 디렉터리를 전달합니다. Scheduler 빌드 가이드에 문서화된 옵션 이름을 사용합니다.
-
-`NEAT_RUNNER_CMAKE_ARGS`와 `NEAT_SCHEDULER_CMAKE_ARGS`의 인수는 셸 방식의 단어로
-구문 분석되며 셸 코드로 실행되지 않습니다. 선택한 의존성 패키지나 설치 레이아웃을
-재정의할 수 없습니다.
-
 ## 증분 빌드 및 설치
 
-Core가 소유한 의존성 빌드와 패키지는 각 저장소의 독립형 빌드 디렉터리와 분리된
-`deps/backend/` 아래에 있습니다. CMake는 증분 빌드를 수행합니다. `--clean`은
-선택된 로컬 의존성 빌드와 Core 빌드를 정리합니다.
+빌드할 때마다 선택된 Scheduler 집합을 `deps/scheduler/`에서 새로 가져오고 해당
+패키지를 `deps/backend/`에 스테이징합니다. CMake는 Core를 증분 빌드합니다.
+`--clean`은 Core 빌드도 제거합니다.
 
 링크 전에 Scheduler 의존성 코디네이터는 설치된 커널 헤더를 영수증과 대조하고,
 Runner가 소비한 계약과 Scheduler의 정확한 Runner 입력을 확인합니다. 배포 패키지를
@@ -180,8 +145,8 @@ Core는 형제 소스의 포함 경로나 하위 개발 인터페이스가 아�
 자체는 미추적 콘텐츠 다이제스트에서 제외합니다. 변경된 로컬 후보를 깨끗한 공개
 아티팩트로 식별하지 않습니다.
 
-헤더 전용 의존성 준비의 경우 `--install-deps-only`에는 로컬 패키지 재정의가
-필요합니다. A65/EV 코드를 빌드하거나 실행하지 않고 헤더만 복사합니다.
+헤더 전용 의존성 준비의 경우 `--install-deps-only`는 `--scheduler` 폴더를 사용하거나
+공개된 집합을 다운로드합니다. A65/EV 코드를 빌드하거나 실행하지 않고 헤더만 복사합니다.
 네이티브 clang-tidy 분석에는 선택한 Scheduler와 일치하는 테스트 지원 패키지의
 접두사로 `scripts/run_cpp_tidy.sh`를 실행합니다. `TIDY_INSTALL_DEPS=1`은 네이티브
 호스트 분석 전제 조건을 설치합니다. 스크립트는 각 패키지의 공개 CMake 내보내기를
@@ -195,23 +160,28 @@ EV 장치 빌드는 별도의 라이선스가 필요한 워크플로입니다. �
 
 ## 공개된 CI 의존성 {#published-ci-dependencies}
 
-일반 Vulcan 빌드는 `deps/manifest.json`의 Scheduler 정책을 `sima-cli`로 한 번
-해석한 뒤 해당 불변 공개본을 다운로드합니다. snap 정책은 현재 브랜치를 선택하며,
-공개되지 않은 브랜치는 다른 브랜치로 폴백하는 대신 실패합니다.
+일반 Vulcan 빌드는 `deps/manifest.json`의 Scheduler 정책을 `sima-cli`로
+해석한 뒤 선택한 불변 공개본을 다운로드합니다. LLiMa와 마찬가지로 브랜치 `snap`은
+현재 Core 브랜치를 먼저 시도합니다. 해석에 실패하고 Scheduler의 공개 브랜치 목록에서
+해당 브랜치가 없음을 확인한 경우에만 폴백을 알리고 `develop:latest`를 다시 시도합니다.
+목록을 가져올 수 없거나 목록이 유효하지 않은 경우를 포함한 다른 조회 실패는 오류로
+처리합니다. 태그 snap과 명시적인 브랜치/커밋 선택자는 폴백하지 않습니다.
+장치와 PCIe 호스트 획득은 이 정책을 공유하며, PCIe `--scheduler-spec <commit>`도
+엄격하게 적용됩니다. 해석 후 다운로드, 검증, 부트스트랩 또는 스테이징이 실패하면
+오류로 처리합니다. 기록에는 실제 선택한 브랜치와 불변 커밋이 보존됩니다.
 `tools/ci/acquire_scheduler.py`는 Scheduler 부트스트랩을 실행하기 전에 게시자
 해시를 검증합니다. 설치된 Scheduler 코디네이터가 번들된 Runner, Kernels 및 Codecs
 아카이브를 분리하고 검증합니다. Core는 해당 저장소들을 독립적으로 해석하지 않습니다.
 
-선택한 Scheduler 패키지는 정확한 SDK 정책을 설치합니다. 일회용 CI SDK 컨테이너에서
-`scripts/ci/prepare_scheduler_sdk.sh`는 해당 리비전의 공식 sysroot 설정 명령을 사용하고
-다운로드한 플랫폼 아카이브를 보존합니다. 코디네이터는 실제 GCC14 버전/타깃과
+선택한 Scheduler 패키지는 정확한 SDK 정책을 설치합니다. SDK에서 `build.sh`는
+`scripts/ci/prepare_scheduler_sdk.sh`를 실행하며, 이 스크립트는 해당 리비전의 공식
+sysroot 설정 명령을 사용하고 다운로드한 플랫폼 아카이브를 보존합니다. 코디네이터는 실제 GCC14 버전/타깃과
 타깃 SDK 식별 정보를 확인한 다음 `NEAT_RUNNER_PLATFORM_RUNTIME_DEBS`를 통해
 Runner가 소비한 정확한 런타임 제공자 아카이브를 선택합니다. 네이티브 ARM64와
 크로스 컴파일러의 실행 파일 바이트가 같을 필요는 없습니다. 타깃 ABI와 선택한
 플랫폼은 일치해야 합니다. 이 단계에서는 장치 설치나 펌웨어 검증을 수행하지 않습니다.
 
-로컬 소스/패키지 재정의는 계속 우선합니다. CI 획득은 명시적으로 수행되며,
-실패한 로컬 소스 빌드가 대체물을 다운로드하지 않습니다. 기존
+`--scheduler` 폴더는 다운로드한 집합과 섞이거나 그것으로 대체되지 않습니다. 기존
 `tools/ci/materialize_dependencies.py --manifest ... --output-root ...` 명령은 별도로
 검토된 불변 매니페스트를 위한 선택적 전송 수단으로 남습니다. 기본 워크플로가
 아니며 암묵적인 `ci/dependencies.json`도 없습니다.
@@ -253,7 +223,8 @@ Core의 프로덕션 박스/마스크 게시는 int32 좌표를 사용합니다.
 렌더링은 별도의 플랫폼 렌더러 아카이브가 아니라 선택한 Kernels/Runner 패키지를
 사용합니다. 요청 API 리비전 2에 맞춰 구성 요소 집합을 함께 다시 빌드합니다.
 
-Core의 소스 우선 `build.sh`를 실행하기 전에 다음을 제공합니다.
+SDK에서는 `build.sh`가 `scripts/ci/prepare_scheduler_sdk.sh`를 통해 다음을
+설정합니다. SDK 밖에서는 직접 제공합니다.
 
 - `NEAT_RUNNER_PLATFORM_RUNTIME_DEBS`: Runner가 선택한 정확한 런타임 제공자 DEB의
   절대 경로를 담은 JSON 배열입니다. 필수 SimaHeap 런타임 아카이브를 포함하고,
@@ -263,8 +234,7 @@ Core의 소스 우선 `build.sh`를 실행하기 전에 다음을 제공합니�
   유지합니다. Runner가 Platform 소유로 선언한 제공자는 Core의 설치 가능한 DEB
   집합에서 제외되며, 선언되지 않은 제공자는 정확한 아카이브 구성을 유지합니다.
 
-미리 빌드된 Runner/Scheduler 패키지 재정의를 사용해도 이 선택은 명시적으로
-유지됩니다. 불변 네 구성 요소 구체화 도구는 플랫폼 제공자 아카이브를 가져오지
+`--scheduler` 폴더를 사용해도 이 선택은 명시적으로 유지됩니다. 불변 네 구성 요소 구체화 도구는 플랫폼 제공자 아카이브를 가져오지
 않습니다. Core를 호출하기 전에 지원되는 생성기에서 획득하세요. 제공자가 없거나
 소비되지 않으면 sysroot로 폴백하지 않고 실패합니다. 컴파일에는 일치하는 개발
 패키지를 사용합니다. DevKit에서는 Scheduler의 인증된 허용 검사 도구가 패키지

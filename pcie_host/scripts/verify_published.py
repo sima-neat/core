@@ -30,8 +30,10 @@ def main():
         subprocess.run(['aws', 's3', 'cp', base + name, str(args.output / name)], check=True)
         if sha(args.output / name) != hashes[name]: raise ValueError('uploaded resource differs: ' + name)
     selection, _ = verify(args.output)
-    if selection['distro'] != args.distro or selection['architecture'] != args.arch or selection['branch'] != data['branch']:
-        raise ValueError('native Scheduler publication does not match Core branch/tuple')
+    # Fallback or an explicit selector may choose a different Scheduler branch.
+    # verify() authenticates that selection; only the host tuple must match Core.
+    if selection['distro'] != args.distro or selection['architecture'] != args.arch:
+        raise ValueError('native Scheduler publication does not match Core tuple')
     verify_publication_inventory(args.output, selection, resources)
     for name, pattern in [('metadata-extras.json', '*-extras.tar.gz'), ('metadata-pyneatpcie.json', 'pyneatpcie-*.whl')]:
         subset = json.loads((args.output / name).read_text())

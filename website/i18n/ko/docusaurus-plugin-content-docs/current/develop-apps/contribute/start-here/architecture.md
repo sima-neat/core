@@ -32,7 +32,7 @@ Scheduler는 Runner를 통해 범용 요청을 전달하며, Scheduler와 Core �
 와이어 형식을 담당합니다. Scheduler는 코호트 검증 후 새로운 어댑터/리졸버 팩터리를
 인스턴스화합니다. 캐시된 동적 선택은 연산을 유지하되 현재 프레임의 메모리를 바인딩합니다.
 
-GenAI는 Runner나 Scheduler GenAI 어댑터를 거치지 않고 LLiMa를 직접 호출합니다. 오프라인 MLA 계층 프로파일링은 Scheduler가 필요할 때 실행하는 `mla-rt` CLI 통합을 사용하는 별도의 기본 비활성화 패스입니다. 다른 MLA 작업이 없는 유휴 DevKit이 필요합니다. Core는 CLI 실행을 Scheduler 경계 뒤에 두며 프로파일링 프로세스를 직접 시작하지 않습니다.
+GenAI는 Runner나 Scheduler GenAI 어댑터를 거치지 않고 LLiMa를 직접 호출합니다. MLA 프로파일링은 기본적으로 비활성화된 별도의 패스입니다. Core는 Scheduler 클라이언트를 호출하고, Runner가 설치된 `mla-rt` 명령줄 도구를 실행합니다. 다른 MLA 작업이 없는 유휴 DevKit이 필요합니다.
 
 ---
 
@@ -365,27 +365,15 @@ input Sample/Tensor
 
 Sentinel은 약 2초마다 샘플링하므로 처리량 패스는 최소 `BenchmarkOptions::min_duration_ms`(기본값 10초) 동안 실행됩니다. 지연 시간 패스도 같은 최솟값을 따르므로 두 패스는 같은 규칙으로 멈춥니다. Sentinel이 실행 중이 아니거나 측정 구간에 샘플이 없어도 벤치마크는 지연 시간과 FPS를 반환합니다. 이때 전력 필드는 0이며 `telemetry.status`가 이유를 알려 줍니다. `tools/install_neat_framework.sh`의 보드 모드는 Sentinel을 설치하거나 최신 프로덕션 빌드로 업그레이드합니다. 설치에 실패하면 설치 프로그램은 경고를 출력하고 계속 진행합니다. 나중에 `sima-cli neat install sentinel`을 실행하거나, CI처럼 `NEAT_INSTALLER_SENTINEL_REQUIRED=ON`을 설정해 실패를 오류로 처리하십시오. 더 이상 사용되지 않는 `Run` 전력 모니터(`RunOptions::power_monitor`)도 Sentinel에서 가져옵니다. Core는 Sentinel의 최신 샘플을 폴링하며 I2C로 전력 모니터 칩을 읽지 않습니다.
 
-레이어 프로파일링은 기본값 false인 `BenchmarkOptions::include_layer_stats`로 활성화합니다.
-겹치는 MLA 작업이 없는 유휴 DevKit이 필요합니다. 벤치마크 게이트는 벤치마크 호출만
-직렬화하며 다른 추론 API나 애플리케이션은 직렬화하지 않습니다. 지연 시간 및 처리량
-러너가 닫힌 뒤 Core는 Scheduler에 각 MLA 단계마다 설치된 `mla-rt` CLI를 필요할 때
-실행하도록 요청합니다. 상시 실행되는 프로파일링 워커는 없습니다. Core는 MPK 단계 선택,
-독립적인 컴파일러 YAML/보고서 검증과 고객 보고서 필드를, Scheduler는 CLI 프로세스와
-임시 파일을, MLA-RT는 하드웨어 프로파일링과 커널 실행으로의 복귀를 소유합니다.
-Runner의 일반 추론 경로는 그대로입니다. 프로파일링은 벤치마크 입력 버퍼가 아닌
-별도 제공자 입력을 사용합니다.
+MLA 프로파일링은 기본값이 false인 두 `BenchmarkOptions` 필드 `include_mla_layer_stats`와 `include_mla_stage_stats`로 명시적으로 활성화합니다. 지연 시간 및 처리량 러너가 종료된 후 Core는 Scheduler 클라이언트를 통해 추출된 모델의 MLA 실행 파일을 측정하며, 프로파일링 패스를 하나씩 차례로 수행합니다. MLA 레이어 통계는 종료 정책이 적용된 추론 경로의 MLA 스테이지만 측정합니다. Runner는 실행 파일마다 별도 프로세스에서 `mla-rt`를 실행합니다. MLA 레이어 통계는 컴파일러 통계 YAML도 사용합니다. MLA 스테이지 통계는 각 MLA 실행 파일을 중단 없이 200회 실행하고 `mla-rt` 통계 파일에서 `tile.lat` 평균을 읽습니다. Runner는 입력과 출력을 검증하고 임시 파일을 정리합니다. 한 번의 실행이 120초를 넘으면 `mla-rt`를 중지합니다. MLA-RT는 하드웨어 프로파일링과 커널 실행으로의 제어권 반환을 담당합니다. 프로파일링은 다른 MLA 작업과 겹치지 않아야 합니다. 벤치마크 게이트는 벤치마크 호출만 직렬화하며, 다른 추론 API나 애플리케이션은 직렬화하지 않습니다.
 
-Scheduler는 벤치마크 추론 전에 `PATH`에서 `mla-rt`를 실행할 수 있고, 현재 프로세스에
-활성 상태이거나 복구를 기다리는 오프라인 진단이 없는지 확인합니다. 이 검사는 CLI 기능 호환성을 검증하지
-않습니다. 지원하지 않는 옵션은 CLI 진단과 함께 프로파일링 요청을 실패시킵니다.
-호스트 시간 초과는 장치의 안전한 종료가 아닙니다. 시간 초과가 발생하거나 완료 여부를
-알 수 없으면 복구가 검증될 때까지 MLA를 유휴 상태로 유지하십시오. Scheduler는 장치
-자원을 아직 소유할 수 있는 CLI를 강제 종료하지 않습니다. Core는 CLI를 시작하거나
-강제 종료하지 않으며, 레이어별 측정을 전체 작업 카운터로 대체하지 않습니다.
-프로파일링이 성공하려면 CLI가 정상 종료하고 유효한 보고서가 있어야 합니다.
-제공자는 자원을 해제하기 전에 하드웨어 실행을 완료해야 합니다.
+실패했거나 비정상 종료되었거나 중지된 `mla-rt` 실행은 MLA 작업을 끝내지 못한 채 남길 수 있으므로, Runner는 해당 프로세스에서 더 이상 `mla-rt`를 시작하지 않습니다. 이후 프로파일링 패스는 MLA 복구가 필요하다고 보고합니다. MLA 복구가 확인될 때까지 DevKit을 유휴 상태로 두십시오.
 
-`BenchmarkReport::layer_stats`에는 컴파일된 레이어 이름, 0부터 시작하는 실행 단계 인덱스 및 마이크로초 단위 실행 시간이 포함됩니다. 이 측정은 별도의 프로파일링 패스를 사용하므로 합계가 전체 지연 시간과 일치하지 않습니다. `BenchmarkReport::save(file_path)`는 공개 필드 이름과 단위를 사용하여 전체 보고서를 명시적으로 저장합니다. `.json`은 JSON을, `.yaml` 및 기타 끝부분은 YAML을 선택합니다. 텔레메트리를 포함하며 프로파일링이 비활성화된 경우 레이어 목록은 비어 있습니다. 없는 상위 디렉터리를 생성하고 기존 대상 파일을 원자적으로 교체합니다.
+프로파일링은 최선형(best effort)으로 수행됩니다. `mla-rt`가 없거나 실패하거나 시간 초과되거나 사용할 수 없는 출력을 쓰면 Core는 주요 측정값을 유지하고, 해당 목록을 비워 두며, 경고를 출력하고, `mla_layer_stats.status` 또는 `mla_stage_stats.status`에 그 이유를 설정합니다. 그 밖의 경우 상태는 `"not requested"` 또는 `"ok"`입니다.
+
+`BenchmarkReport::mla_layer_stats`에는 컴파일된 각 MLA 레이어의 0부터 시작하는 실행 단계 인덱스, 이름, 레이어마다 한 번의 프로파일링 패스로 측정한 마이크로초 단위 하드웨어 지연 시간이 포함됩니다. `BenchmarkReport::mla_stage_stats`에는 같은 방식으로 번호를 매긴 각 MLA 스테이지의 인덱스와 마이크로초 단위 평균 하드웨어 지연 시간이 포함됩니다. 이 측정은 별도의 프로파일링 패스를 사용하므로 레이어 지연 시간의 합계는 스테이지 지연 시간이나 전체 지연 시간과 일치하지 않습니다. `BenchmarkReport::save(file_path)`는 공개 필드 이름과 단위를 사용하여 전체 보고서를 명시적으로 저장합니다. `.json`은 JSON을, `.yaml` 및 기타 끝부분은 YAML을 선택합니다. 텔레메트리와 두 상태를 포함하며 프로파일링이 비활성화된 경우 MLA 목록은 비어 있습니다. 없는 상위 디렉터리를 생성하고 기존 대상 파일을 원자적으로 교체합니다.
+
+폐기된 PreparedRunner 옵션은 기본값으로 유지하세요. 동시성에는 `processcvu.async`와 `GraphOptions::async_queue_depth`를 사용합니다. 기존 역양자화와 프로파일링 플래그에는 직접 대체 기능이 없습니다. `advanced_execution.defer_output_cache_sync=true`를 유지하고 출력 CPU 접근에는 Tensor/GstMemory 매핑을 사용하세요. `RunOptions::advanced.prepare_output_cpu_visible`은 호환성용 무동작 필드이며 선제적 캐시 동기화를 요청하지 않습니다.
 
 ### 컴파일된 모델 실행 계약
 
@@ -1191,9 +1179,9 @@ BF16과 INT16은 레거시 와이어 코드를 공유하므로 바이트 캐리�
 
 ### 카메라 할당 소유권
 
-`CameraInput`은 카메라 캡 바로 뒤에 `neatcamerabridge`를 배치하고, 라이브 큐 앞에 배치합니다. 협상 중에 브리지는 표준 풀을 사용하여 상위 `GST_QUERY_ALLOCATION`에 응답하고 `GstVideoMeta`를 요청합니다. 풀은 검증된 평면을 하나의 패킹된 SiMaAI 할당에서 할당하고, 평면당 하나의 DMA-BUF를 내보냅니다. 호환되는 `libcamerasrc`는 해당 DMA-BUF를 ISP 캡처 큐로 가져옵니다. 그런 다음 브리지는 동일한 패킹된 할당을 풀링하여 다운스트림 처리에 사용합니다. 엄격 모드에서는 해당 계약을 충족하지 않는 모든 버퍼를 거부합니다. CPU 복사는 명시적인 호환성 폴백으로 남습니다.
+`CameraInput`은 카메라 캡 바로 뒤에 `neatcamerabridge`를 배치하고, 라이브 큐 앞에 배치합니다. Neat는 카메라 메모리를 소유하지 않습니다. 물리적으로 연속된 DMA-BUF는 모두 유효한 EV74 입력이며, Neat의 EV74 허용 검사는 해당 DMA-BUF가 CMA 힙 또는 카메라의 연속 캡처 할당자(`videobuf2_dma_contig`)에서 온 경우 이를 받아들입니다. 협상 중에 브리지는 상위 `GST_QUERY_ALLOCATION`을 통해 `GstVideoMeta`만 요청하며, `libcamerasrc`는 자체 캡처 버퍼를 유지합니다. 브리지는 평면들이 하나의 DMA-BUF 안에 연속으로 배치된 각 프레임을 단일 메모리로 전달하며, 모든 소비자가 해제할 때까지 생산자의 버퍼를 유지합니다. 엄격 모드에서는 이 방식으로 전달할 수 없는 모든 프레임을 거부합니다. CMA DMA-BUF로의 CPU 복사는 명시적인 호환성 폴백으로 남습니다.
 
-애플리케이션에서 사용하는 캡처 깊이는 커널의 개인 CSI-to-ISP RAW 전송 링과 후속 GStreamer 큐 모두와 독립적입니다. `CameraInputWithCaptureBuffers`에 대한 선택적 `capture_buffer_count` 인수는 ISP 출력, libcamera 및 애플리케이션을 통해 유지되는 버퍼를 제어합니다. `queue_depth` 및 `leaky_queue`는 다운스트림 지연 시간과 프레임 삭제 정책를 별도로 제어합니다. 선택적 호환성 복사 풀은 필요에 따라 증가하며 해당 큐 깊이에 의해 제한되지 않으므로 누수 큐는 상위 브리지가 먼저 중단되지 않도록 삭제 정책을 적용할 수 있습니다.
+애플리케이션에서 사용하는 캡처 깊이는 커널의 개인 CSI-to-ISP RAW 전송 링과 후속 GStreamer 큐 모두와 독립적입니다. `CameraInputWithCaptureBuffers`에 대한 선택적 `capture_buffer_count` 인수는 ISP 출력, libcamera 및 애플리케이션을 통해 유지되는 버퍼를 제어합니다(Platform 3.0에서는 `libcamerasrc`에 `buffer-count`가 없으므로 `0`으로 유지해야 합니다). `queue_depth` 및 `leaky_queue`는 다운스트림 지연 시간과 프레임 삭제 정책를 별도로 제어합니다. 선택적 호환성 복사 풀은 필요에 따라 최대 128개 버퍼까지 증가하며 해당 큐 깊이에 의해 제한되지 않으므로 누수 큐는 상위 브리지가 먼저 중단되지 않도록 삭제 정책을 적용할 수 있습니다.
 
 ### 종료
 

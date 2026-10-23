@@ -2037,6 +2037,20 @@ RUN_TEST(
         eager_rejected = std::string(error.what()).find("retired") != std::string::npos;
       }
       require(eager_rejected, "retired eager invalidation request must fail explicitly");
+      simaai::neat::GraphOptions advanced_eager;
+      advanced_eager.advanced_execution.defer_output_cache_sync = false;
+      advanced_eager.resolve_advanced_execution();
+      bool advanced_rejected = false;
+      try {
+        (void)simaai::neat::session_build_apply_fast_path_options_to_fragment("identity",
+                                                                              &advanced_eager);
+      } catch (const std::invalid_argument& error) {
+        const std::string message = error.what();
+        advanced_rejected =
+            message.find("advanced_execution.defer_output_cache_sync=false") != std::string::npos &&
+            message.find("Tensor/GstMemory mapping") != std::string::npos;
+      }
+      require(advanced_rejected, "advanced facade must name the safe CPU mapping replacement");
 
       const std::string clamped_sync_pipeline = simaai::neat::session_build_clamp_sync_pipeline(
           "neatprocessmla name=sync_mla num-buffers=8 ! "

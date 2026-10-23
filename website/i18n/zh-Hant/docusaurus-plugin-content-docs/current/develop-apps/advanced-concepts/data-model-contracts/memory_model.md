@@ -70,9 +70,9 @@ file → demux → H.264 decode → resize → preproc → MLA → postproc → 
 
 ## 相機來源與自適應記憶體
 
-即時相機畫面透過平台相機堆疊進入，因此其記憶體類型取決於已安裝的內核、驅動程式和 `libcamerasrc` 路徑。`CameraInput` 首先請求裝置/SiMaAI 的零拷貝記憶體。其私有橋接器透過 `GST_QUERY_ALLOCATION` 提出一個標準池；該池會分配來自單一封裝 SiMaAI 分配的已驗證平面，並將其匯出為 DMA-BUFs。`libcamerasrc` 將這些 DMA-BUFs 導入 ISP，橋接器會解開相同的封裝分配，以供後續的 CVU/MLA 階段使用。
+即時相機畫面透過平台相機堆疊進入。`libcamerasrc` 會將每個畫面擷取到其自身的 DMA-BUF 中，而 Neat 從不擁有該記憶體：任何實體連續的 DMA-BUF 都是有效的 EV74 輸入，且當其來自 CMA 堆積或相機的連續擷取分配器（`videobuf2_dma_contig`）時，Neat 的 EV74 准入檢查會予以接受。`CameraInput` 的私有橋接器透過 `GST_QUERY_ALLOCATION` 向來源請求 `GstVideoMeta`，並將每個畫面的 DMA-BUF 作為單一記憶體轉送給下游的 CVU/MLA 階段，同時保留相機的緩衝區，直到這些階段將其釋放。
 
-當相機堆疊僅提供 OS/libcamera 緩衝區，且 `allow_cpu_fallback` 已啟用時，Neat 會插入一個私有相機記憶體橋接器。橋接器會將每個畫面複製到池化的 SiMaAI 緩衝區中，標記預期的中繼資料，然後將該緩衝區傳遞給模型管理的 CVU 預處理。此複製操作是相容性橋接器；調整大小、色彩轉換、正規化、量化和鑲嵌等操作仍應在 CVU/EV74 上執行。
+當畫面並非各平面緊密相連的單一 DMA-BUF，且 `allow_cpu_fallback` 已啟用時，橋接器會將其複製到 CMA DMA-BUF 中，標記預期的中繼資料，然後將該緩衝區傳遞給模型管理的 CVU 預處理。此複製操作是相容性橋接器；調整大小、色彩轉換、正規化、量化和鑲嵌等操作仍應在 CVU/EV74 上執行。
 
 不要僅僅為了使 MIPI 相機輸入正常運作而新增一個公用的 `OsToSima`、`videoconvert` 或 `videoscale` 階段。使用 [`CameraInput`](/reference/nodes/camera-input)，並讓來源路徑負責記憶體調整。
 

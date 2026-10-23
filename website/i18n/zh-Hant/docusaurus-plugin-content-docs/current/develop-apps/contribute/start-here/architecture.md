@@ -30,7 +30,7 @@ Scheduler 與 Core 都不維護韌體 ID 或逐操作派送表。Core 保留公�
 與線路格式處理。Scheduler 在套件組驗證後具體化新的轉接器／解析器工廠。
 快取的動態選擇保留其操作，但會綁定目前影格的記憶體。
 
-GenAI 直接呼叫 LLiMa，不經過 Runner 或 Scheduler GenAI 配接器。離線 MLA 各層剖析是獨立且預設停用的流程，透過 Scheduler 視需要執行的 `mla-rt` CLI 整合進行。它需要沒有其他 MLA 工作的閒置 DevKit。Core 將 CLI 執行留在 Scheduler 邊界內，不會自行啟動剖析程序。
+GenAI 直接呼叫 LLiMa，不經過 Runner 或 Scheduler GenAI 配接器。MLA 剖析是獨立且預設停用的流程：Core 呼叫 Scheduler 的用戶端，由 Runner 執行已安裝的 `mla-rt` 命令列工具。它需要沒有其他 MLA 工作的閒置 DevKit。
 
 ---
 
@@ -350,22 +350,15 @@ input Sample/Tensor
 
 Sentinel 約每 2 秒取樣一次，因此吞吐量階段至少會執行 `BenchmarkOptions::min_duration_ms`（預設為 10 秒）。延遲階段也遵循相同的下限，因此兩個階段依相同規則停止。當 Sentinel 未執行或量測期間沒有樣本時，基準測試仍會傳回延遲與 FPS；功耗欄位為零，並由 `telemetry.status` 說明原因。`tools/install_neat_framework.sh` 的板子模式會安裝 Sentinel，或將其升級至最新的正式版建置。若安裝失敗，安裝程式會發出警告並繼續；之後可執行 `sima-cli neat install sentinel`，或像 CI 一樣設定 `NEAT_INSTALLER_SENTINEL_REQUIRED=ON`，讓失敗中止安裝。已棄用的 `Run` 電源監控器（`RunOptions::power_monitor`）的資料同樣來自 Sentinel：Core 會輪詢其最新樣本，不會透過 I2C 讀取電源監控晶片。
 
-各層剖析透過 `BenchmarkOptions::include_layer_stats` 明確啟用，預設為 false。
-它需要沒有重疊 MLA 工作負載的閒置 DevKit。基準測試閘門只序列化基準測試呼叫，
-不限制其他推論 API 或應用程式。在延遲與吞吐量執行器關閉後，Core 要求 Scheduler
-視需要為每個 MLA 階段執行已安裝的 `mla-rt` CLI。不會有常駐的剖析工作程序。
-Core 擁有 MPK 階段選擇、獨立的編譯器 YAML／報告驗證與客戶報告欄位；Scheduler
-擁有 CLI 程序與暫存檔；MLA-RT 擁有硬體剖析及交回核心執行的流程。
-Runner 一般推論路徑保持不變。剖析使用獨立的提供者輸入，而不是基準測試輸入緩衝區。
+MLA 剖析透過兩個預設為 false 的 `BenchmarkOptions` 欄位明確啟用：`include_mla_layer_stats` 與 `include_mla_stage_stats`。延遲與吞吐量執行器關閉後，Core 會透過 Scheduler 的用戶端測量已解壓縮模型的 MLA 執行檔，並依序逐一進行剖析。MLA 層統計只涵蓋所選推論路徑（含其終端政策）中的 MLA 階段。Runner 會為每個執行檔在獨立程序中執行 `mla-rt`。MLA 層統計還會使用編譯器統計 YAML；MLA 階段統計會將每個 MLA 執行檔連續不中斷執行 200 次，並從 `mla-rt` 統計檔讀取 `tile.lat` 平均值。Runner 負責驗證輸入與輸出並清理暫存檔；若單次執行超過 120 秒，它會停止 `mla-rt`。MLA-RT 負責硬體剖析，以及將控制權交回核心執行路徑。剖析不得與其他 MLA 工作負載重疊。基準測試閘門只會序列化基準測試呼叫，不涵蓋其他推論 API 或應用程式。
 
-Scheduler 會在基準測試推論前檢查 `PATH` 中的 `mla-rt` 是否可執行，以及目前程序中
-是否沒有正在執行或等待復原的離線診斷。此檢查不會驗證 CLI 功能相容性；不支援的選項會讓
-剖析請求失敗，並附上 CLI 診斷資訊。主機逾時不是裝置安全釋放。逾時或無法確認完成時，
-請保持 MLA 閒置，直到確認復原完成。Scheduler 不會強制終止可能仍擁有裝置資源的 CLI。
-Core 不會啟動或終止 CLI，也不會以整個工作的計數器取代逐層量測。剖析成功需要 CLI
-正常結束及有效的報告；提供者必須先完成硬體執行，才能釋放其資源。
+失敗、當機或已停止的 `mla-rt` 執行可能讓 MLA 工作未完成，因此 Runner 不會在該程序中再啟動 `mla-rt`。之後的剖析流程會回報 MLA 需要復原。在確認 MLA 已復原之前，請讓 DevKit 保持閒置。
 
-`BenchmarkReport::layer_stats` 包含已編譯的層名稱、從零開始的執行階段索引，以及以微秒表示的執行時間。這些測量使用獨立的剖析階段，因此總和不等於整體延遲。`BenchmarkReport::save(file_path)` 會使用公開欄位名稱與單位，明確寫入完整報告：`.json` 選擇 JSON；`.yaml` 與其他結尾選擇 YAML。報告包含遙測資料；停用剖析時，層清單為空。此方法會建立不存在的父目錄，並以原子方式取代既有的目標檔案。
+剖析採盡力而為（best effort）方式。若找不到 `mla-rt`、其執行失敗、逾時或寫出無法使用的輸出，Core 會保留主要測量值，讓對應清單保持為空，印出警告，並將原因寫入 `mla_layer_stats.status` 或 `mla_stage_stats.status`。其他情況下，狀態為 `"not requested"` 或 `"ok"`。
+
+`BenchmarkReport::mla_layer_stats` 包含每個已編譯 MLA 層從零開始的執行階段索引、名稱，以及每層以一次剖析階段測得、以微秒表示的硬體延遲。`BenchmarkReport::mla_stage_stats` 包含以相同方式編號的各 MLA 階段索引，以及以微秒表示的平均硬體延遲。這些測量使用獨立的剖析階段，因此各層延遲的總和不等於階段延遲，也不等於整體延遲。`BenchmarkReport::save(file_path)` 會使用公開欄位名稱與單位，明確寫入完整報告：`.json` 選擇 JSON；`.yaml` 與其他結尾選擇 YAML。報告包含遙測資料與兩個狀態；停用剖析時，MLA 清單為空。此方法會建立不存在的父目錄，並以原子方式取代既有的目標檔案。
+
+已淘汰的 PreparedRunner 選項必須維持預設值。並行處理使用 `processcvu.async` 和 `GraphOptions::async_queue_depth`；舊反量化與剖析旗標沒有直接替代。請維持 `advanced_execution.defer_output_cache_sync=true`，並透過 Tensor/GstMemory 映射存取 CPU 輸出。`RunOptions::advanced.prepare_output_cpu_visible` 是相容性用的無作用欄位，不要求預先快取同步。
 
 ### 已編譯模型執行合約
 
@@ -1292,9 +1285,9 @@ Caps 協商是自動的；失敗會在早期（驗證/預滾動）或在執行�
 
 ### 相機設定的所有權
 
-`CameraInput` 會在其相機 caps 之後，並在任何即時佇列之前，立即放置 `neatcamerabridge`。 在協商期間，橋接器會使用標準池來回應上游的 `GST_QUERY_ALLOCATION`，並請求 `GstVideoMeta`。 該池會分配來自一個打包的 SiMaAI 設定的已驗證平面，並為每個平面匯出一個 DMA-BUF。 一個相容的 `libcamerasrc` 會將這些 DMA-BUF 匯入到 ISP 捕獲佇列中。 然後，橋接器會解包相同的打包設定，以進行下游處理。 嚴格模式會拒絕任何不滿足該合約的緩衝區；CPU 複製仍然是一種明確的相容性後備方案。
+`CameraInput` 會在其相機 caps 之後，並在任何即時佇列之前，立即放置 `neatcamerabridge`。 Neat 從不擁有相機記憶體：任何實體連續的 DMA-BUF 都是有效的 EV74 輸入，且當其來自 CMA 堆積或相機的連續捕獲分配器（`videobuf2_dma_contig`）時，Neat 的 EV74 准入檢查會予以接受。 在協商期間，橋接器只會透過上游的 `GST_QUERY_ALLOCATION` 請求 `GstVideoMeta`；`libcamerasrc` 會保留其自身的捕獲緩衝區。 橋接器會將各平面在單一 DMA-BUF 中緊密相連的每個幀作為單一記憶體轉送，並保留生產端的緩衝區，直到每個消費端將其釋放。 嚴格模式會拒絕任何無法以此方式轉送的幀；以 CPU 複製到 CMA DMA-BUF 仍然是一種明確的相容性後備方案。
 
-面向應用程式的捕獲深度與核心的私有 CSI 到 ISP RAW 傳輸環以及後續的 GStreamer 佇列都是獨立的。 可選的 `capture_buffer_count` 參數，用於 `CameraInputWithCaptureBuffers`，用於控制在 ISP 輸出、libcamera 和應用程式之間保留的緩衝區。 `queue_depth` 和 `leaky_queue` 分別控制下游延遲和幀丟棄策略。 可選的相容性複製池會按需增長，並且不受該佇列深度的限制，因此，漏洩佇列可以應用其丟棄策略，而無需首先使上游橋接器停頓。
+面向應用程式的捕獲深度與核心的私有 CSI 到 ISP RAW 傳輸環以及後續的 GStreamer 佇列都是獨立的。 可選的 `capture_buffer_count` 參數，用於 `CameraInputWithCaptureBuffers`，用於控制在 ISP 輸出、libcamera 和應用程式之間保留的緩衝區（在 Platform 3.0 上，`libcamerasrc` 沒有 `buffer-count`，因此它必須保持為 `0`）。 `queue_depth` 和 `leaky_queue` 分別控制下游延遲和幀丟棄策略。 可選的相容性複製池會按需增長至最多 128 個緩衝區，並且不受該佇列深度的限制，因此，漏洩佇列可以應用其丟棄策略，而無需首先使上游橋接器停頓。
 
 ### 拆解
 

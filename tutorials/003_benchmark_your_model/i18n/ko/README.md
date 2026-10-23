@@ -52,34 +52,35 @@ Python은 `pyneat.BenchmarkOptions`를 통해 동일한 필드를 노출합니�
 
 전력 값은 Neat 설치 프로그램이 설정하는 보드 텔레메트리 데몬인 Sentinel에서 제공됩니다. `report.telemetry`에는 처리량 패스 동안의 레일 전력, 다이 및 보드 온도, CPU 사용률, MLA 메모리도 포함됩니다. 각 필드에 대해서는 [모델 실행 측정](/develop-apps/development-workflow/model#power-and-board-telemetry)을 참조하십시오. Sentinel이 실행 중이 아닌 경우에도 벤치마크는 지연 시간과 처리량을 보고하고, 전력 필드를 0으로 두며, `report.telemetry.status`에 그 이유를 설정합니다.
 
-### 고급: 레이어 통계 {#step-read-layer-stats}
+### 고급: MLA 레이어 및 스테이지 통계 {#step-read-mla-stats}
 
-튜토리얼 명령에 `--include-layer-stats`를 추가하면 벤치마크 보고서에 레이어 실행 시간이
-포함됩니다. 기본값은 비활성화입니다. 다른 MLA 작업이 겹치지 않는 유휴 DevKit과,
-소유권을 관리하는 오프라인 프로파일링 프로토콜을 지원하는 Scheduler/공급자 조합을 사용하세요.
-기존 `mla-rt` 명령만 설치하는 것으로는 충분하지 않습니다. 프로파일링이 완료 여부를
-알 수 없는 상태로 보고하면 다른 작업을 실행하기 전에 디바이스를 복구하세요.
-시간 초과는 하드웨어가 멈췄다는 뜻이 아닙니다.
-
-API에서는 다음과 같이 활성화합니다:
+두 가지 선택 옵션은 벤치마크 후 `mla-rt`를 실행해 컴파일된 MLA 코드의 시간을 측정합니다. 둘 다 기본값은 비활성화이며, 다른 MLA 워크로드가 없는 유휴 상태의 devkit이 필요합니다. 튜토리얼 명령에 `--include-mla-layer-stats` 또는 `--include-mla-stage-stats`를 추가하거나 API에서 다음과 같이 활성화합니다.
 
 ```cpp
 simaai::neat::BenchmarkOptions options;
-options.include_layer_stats = true;
+options.include_mla_layer_stats = true;
+options.include_mla_stage_stats = true;
 auto report = model.benchmark(options);
 ```
 
 ```python
 options = pyneat.BenchmarkOptions()
-options.include_layer_stats = True
+options.include_mla_layer_stats = True
+options.include_mla_stage_stats = True
 report = model.benchmark(options)
 ```
 
-`report.layer_stats`에서 컴파일된 각 MLA 레이어의 `name`, 0부터 시작하는 `stage_index`, `total_execution_time_us`를 읽습니다. 실행 시간이 0인 no-op 항목도 유지됩니다. 레이어 시간은 별도의 프로파일링 실행에서 측정하므로 합계가 전체 지연 시간과 일치하지 않습니다.
+`report.mla_layer_stats.layers`에서 컴파일된 각 MLA 레이어의 0부터 시작하는 `stage_index`, `name`, `latency_us`를 읽습니다. 이는 해당 레이어만 실행하는 한 번의 프로파일링 실행에서 측정한 하드웨어 실행 시간입니다. 실행 시간이 0인 no-op 항목도 유지됩니다. 레이어 지연 시간을 합해도 스테이지 지연 시간이나 전체 지연 시간과 일치하지 않습니다.
+
+`report.mla_stage_stats.stages`에서 각 MLA 스테이지의 `stage_index`와 `latency_us`를 읽습니다. 이는 해당 스테이지를 중단 없이 200회 실행한 하드웨어 시간의 평균입니다. 스테이지 지연 시간에는 MLA 연산과 프로그램의 DRAM 읽기 및 쓰기가 포함됩니다. 모델 로딩, 호스트 및 EV74 처리, 파이프라인 오버헤드는 포함되지 않습니다.
+
+`mla-rt`가 없거나 실패하거나 시간 초과되어도 `benchmark()`는 주요 측정값을 반환하고, 목록을 비워 두며, `report.mla_layer_stats.status` 또는 `report.mla_stage_stats.status`에 그 이유를 설정합니다. 그 밖의 경우 각 상태는 `"not requested"` 또는 `"ok"`입니다. `mla-rt` 실행이 실패하거나 시간 초과되거나 비정상 종료된 후에는 MLA에 끝나지 않은 작업이 남아 있을 수 있으므로, 같은 프로세스의 이후 프로파일링은 그 이유와 함께 건너뜁니다. MLA 복구가 확인될 때까지 DevKit을 유휴 상태로 두십시오.
+
+MLA 레이어 통계는 선택한 종료 정책을 따르며, 선택한 추론 경로의 MLA 스테이지만 측정합니다. 각 스테이지의 `stage_index`는 전체 모델 기준 번호를 유지합니다.
 
 ### 보고서 저장 {#step-save-report}
 
-`report.save(path)`를 호출하면 요청한 레이어 통계를 포함한 전체 보고서를 YAML 또는 JSON으로 저장합니다.
+`report.save(path)`를 호출하면 요청한 MLA 레이어 및 스테이지 통계를 포함한 전체 보고서를 YAML 또는 JSON으로 저장합니다.
 
 ```cpp
 auto path = report.save("results/model/yolo_benchmark.yaml");
@@ -95,7 +96,7 @@ json_path = report.save("results/model/yolo_benchmark.json")
 
 파일 이름을 포함한 경로를 지정하세요. 없는 상위 디렉터리는 생성되고 기존 파일은 교체되며, 저장한 경로가 반환됩니다. 저장은 명시적으로 수행합니다. `benchmark()`는 보고서 파일을 자동으로 생성하지 않습니다.
 
-두 튜토리얼 명령 모두에 `--report results/model/yolo_benchmark.yaml`을 추가할 수 있습니다. `--include-layer-stats`와 함께 사용하면 주요 측정값과 레이어 실행 시간을 모두 저장합니다.
+두 튜토리얼 명령 모두에 `--report results/model/yolo_benchmark.yaml`을 추가할 수 있습니다. `--include-mla-layer-stats` 또는 `--include-mla-stage-stats`와 함께 사용하면 주요 측정값과 MLA 실행 시간을 함께 저장합니다.
 
 ## Run
 

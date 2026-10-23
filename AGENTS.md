@@ -82,13 +82,17 @@ A change is ready when:
 
 ## Source-first local builds
 
-- `build.sh` delegates dependency preparation and closure validation to Scheduler, then builds Core against the installed frontend. Scheduler coordinates Kernels, Runner and Codecs; retain exact receipts for the complete runtime stack.
-- `NEAT_KERNELS_SOURCE` / `NEAT_RUNNER_SOURCE` / `NEAT_SCHEDULER_SOURCE` select source roots; the corresponding
-  `_PACKAGE_DIR` overrides select local package directories instead.
-- Do not silently fetch old Internals, replace failed source builds with artifacts,
-  or deploy from child builds. Explicit `tools/ci/acquire_scheduler.py` acquisition
-  resolves one same-branch immutable Scheduler publication and lets its installed
-  coordinator validate the delivered cohort; `build.sh` never silently fetches it.
+- Core builds against two dependencies: Scheduler and LLiMa. By default `build.sh`
+  acquires one published Scheduler set through `tools/ci/acquire_scheduler.py` and
+  the LLiMa packages from Vulcan, installs both into the SDK sysroot, then builds Core.
+  Scheduler acquisition tries the snap branch, then explicitly retries
+  `develop:latest` only if resolution fails and the published branch index confirms
+  absence. Other lookup failures, tags and explicit selectors remain strict.
+- `--scheduler PATH` and `--llima PATH` use local DEB folders instead. The Scheduler
+  folder holds the complete set Scheduler was built with (Scheduler, Runner,
+  Kernels, firmware, Codecs); Scheduler's coordinator validates it. Core never
+  selects Kernels, Runner or Codecs itself, and `build.sh` rejects
+  `NEAT_{KERNELS,RUNNER,SCHEDULER,CODECS}_{SOURCE,PACKAGE_DIR}`.
 - Preserve the selected package receipts and contract checks. Rebuild consumers
   after ABI changes; numerical source-only changes do not require Runner/Scheduler source edits, but static consumers must relink to consume new Kernels artifacts.
 - See `docs/develop-apps/contribute/build-test/local-dependencies.md`.

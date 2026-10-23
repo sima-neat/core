@@ -4691,7 +4691,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("resize_mode", &simaai::neat::BenchmarkOptions::resize_mode)
       .def_rw("include_plugin_latency", &simaai::neat::BenchmarkOptions::include_plugin_latency)
       .def_rw("min_duration_ms", &simaai::neat::BenchmarkOptions::min_duration_ms)
-      .def_rw("include_layer_stats", &simaai::neat::BenchmarkOptions::include_layer_stats);
+      .def_rw("include_mla_layer_stats", &simaai::neat::BenchmarkOptions::include_mla_layer_stats)
+      .def_rw("include_mla_stage_stats", &simaai::neat::BenchmarkOptions::include_mla_stage_stats);
 
   using simaai::neat::Telemetry;
   using simaai::neat::TelemetryMonitor;
@@ -4747,11 +4748,23 @@ NB_MODULE(_pyneat_core, m) {
       .def("stop", &TelemetryMonitor::stop, nb::call_guard<nb::gil_scoped_release>())
       .def("running", &TelemetryMonitor::running);
 
-  nb::class_<simaai::neat::LayerStats>(m, "LayerStats")
-      .def(nb::init<>())
-      .def_rw("name", &simaai::neat::LayerStats::name)
-      .def_rw("total_execution_time_us", &simaai::neat::LayerStats::total_execution_time_us)
-      .def_rw("stage_index", &simaai::neat::LayerStats::stage_index);
+  // Benchmark results, not user-built.
+  nb::class_<simaai::neat::MlaLayer>(m, "MlaLayer")
+      .def_ro("stage_index", &simaai::neat::MlaLayer::stage_index)
+      .def_ro("name", &simaai::neat::MlaLayer::name)
+      .def_ro("latency_us", &simaai::neat::MlaLayer::latency_us);
+
+  nb::class_<simaai::neat::MlaLayerStats>(m, "MlaLayerStats")
+      .def_ro("status", &simaai::neat::MlaLayerStats::status)
+      .def_ro("layers", &simaai::neat::MlaLayerStats::layers);
+
+  nb::class_<simaai::neat::MlaStage>(m, "MlaStage")
+      .def_ro("stage_index", &simaai::neat::MlaStage::stage_index)
+      .def_ro("latency_us", &simaai::neat::MlaStage::latency_us);
+
+  nb::class_<simaai::neat::MlaStageStats>(m, "MlaStageStats")
+      .def_ro("status", &simaai::neat::MlaStageStats::status)
+      .def_ro("stages", &simaai::neat::MlaStageStats::stages);
 
   nb::class_<simaai::neat::BenchmarkReport>(m, "BenchmarkReport")
       .def(nb::init<>())
@@ -4766,7 +4779,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("throughput_samples", &simaai::neat::BenchmarkReport::throughput_samples)
       .def_rw("throughput_duration_ms", &simaai::neat::BenchmarkReport::throughput_duration_ms)
       .def_ro("telemetry", &simaai::neat::BenchmarkReport::telemetry)
-      .def_rw("layer_stats", &simaai::neat::BenchmarkReport::layer_stats)
+      .def_ro("mla_layer_stats", &simaai::neat::BenchmarkReport::mla_layer_stats)
+      .def_ro("mla_stage_stats", &simaai::neat::BenchmarkReport::mla_stage_stats)
       .def(
           "save",
           [](const simaai::neat::BenchmarkReport& report, const std::filesystem::path& file_path) {

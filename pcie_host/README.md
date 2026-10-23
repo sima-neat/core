@@ -377,12 +377,16 @@ driver or runtime implementation.
 PCIe host builds always include the GenAI APIs. They do not acquire the device
 Scheduler profile, Runner, Kernels or Codecs.
 
-By default, `build.sh` selects `latest` from the Scheduler branch with the same
-name as the current Core branch, in the `production` publication environment.
-The acquisition resolves that selector once, downloads the immutable revision
-and verifies its publisher manifest and resource hashes before running the
-Scheduler staging helper. There is no fallback to `develop`, Internals or a
-different host profile.
+`build.sh` follows the Scheduler policy in Core's `deps/manifest.json`, in the
+`production` publication environment by default. Branch `snap` first tries
+`latest` from the current Core branch, then reports and retries `develop:latest`
+only if resolution fails and Scheduler's published branch index confirms absence.
+Other lookup failures remain errors. Tag snaps and explicit
+branch/commit selectors remain strict. Acquisition downloads the selected
+immutable revision and verifies its publisher manifest and resource hashes
+before running the Scheduler staging helper. Download, verification and staging
+failures remain errors. Receipts record the branch actually selected; fallback
+never changes the distro or architecture profile.
 
 `build.sh` reads `/etc/os-release` and the Debian architecture to select one of
 these distro-qualified packages:

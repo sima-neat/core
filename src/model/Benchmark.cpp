@@ -1,5 +1,6 @@
 #include "model/Model.h"
 #include "model/internal/MlaLayerStats.h"
+#include "model/internal/MlaStageStats.h"
 #include "model/internal/ModelPack.h"
 #include "model/internal/ModelFormat.h"
 #include "model/internal/ModelInternal.h"
@@ -15,6 +16,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <exception>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -30,6 +32,25 @@ namespace {
 
 using internal::image_format_name;
 using internal::preprocess_color_format_name;
+
+const pipeline_internal::sima::MpkContract& require_mpk_contract(const Model& model) {
+  const auto& contract = internal::ModelAccess::pack(model).mpk_contract();
+  if (!contract)
+    throw std::runtime_error("MLA profiling requires an MPK manifest");
+  return *contract;
+}
+
+// MLA profiling is best effort: a failure keeps the measurements and names the reason.
+std::string collection_status(const char* stats_name, const std::function<void()>& collect) {
+  try {
+    collect();
+    return "ok";
+  } catch (const std::exception& error) {
+    std::cerr << "[WARN] Model::benchmark " << stats_name << " not collected: " << error.what()
+              << "\n";
+    return error.what();
+  }
+}
 
 Tensor make_synthetic_benchmark_tensor(const TensorSpec& spec, std::size_t input_index) {
   if (spec.shape.empty()) {
@@ -384,19 +405,12 @@ Model::Options benchmark_build_model_options(const Model::Options& model_options
 
 BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& options) {
   validate_benchmark_options(options);
-  // This gate covers benchmark calls only; offline profiling requires an idle DevKit.
+  // This gate covers benchmark calls only; MLA profiling requires an idle devkit.
   static std::shared_mutex benchmark_gate;
   std::unique_lock exclusive(benchmark_gate, std::defer_lock);
   std::shared_lock shared(benchmark_gate, std::defer_lock);
-  std::vector<LayerProfileStage> profile_stages;
-  if (options.include_layer_stats) {
+  if (options.include_mla_layer_stats || options.include_mla_stage_stats) {
     exclusive.lock();
-    require_owned_mla_layer_profiling();
-    const auto& contract = ModelAccess::pack(model).mpk_contract();
-    if (!contract) {
-      throw std::runtime_error("Model::benchmark: layer profiling requires an MPK manifest");
-    }
-    profile_stages = resolve_layer_profile_stages(*contract);
   } else {
     shared.lock();
   }
@@ -568,8 +582,16 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
   BenchmarkReport report = internal::build_benchmark_report_from_measurements(
       latency_measured, throughput_measured, num_samples, latency_samples, pushed,
       std::move(telemetry));
-  if (options.include_layer_stats) {
-    report.layer_stats = collect_mla_layer_stats(profile_stages);
+  if (options.include_mla_layer_stats) {
+    report.mla_layer_stats.status = collection_status("MLA layer stats", [&] {
+      report.mla_layer_stats.layers = collect_mla_layer_stats(
+          require_mpk_contract(model), ModelAccess::pack(model).mla_profile_plugin_indices());
+    });
+  }
+  if (options.include_mla_stage_stats) {
+    report.mla_stage_stats.status = collection_status("MLA stage stats", [&] {
+      report.mla_stage_stats.stages = collect_mla_stage_stats(require_mpk_contract(model));
+    });
   }
   const double batch_throughput = throughput_measured.throughput_batches_per_s;
   const Telemetry& board = report.telemetry;
