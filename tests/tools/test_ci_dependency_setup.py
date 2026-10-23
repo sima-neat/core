@@ -1,30 +1,11 @@
-"""Execute the real workflow's setup shell: nonzero helpers must stop the build."""
-import os
+"""Check the workflow's SDK build setup and the Scheduler SDK preparation shell."""
 from pathlib import Path
 import subprocess
-import textwrap
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = (ROOT / '.github/workflows/vulcan-ci.yml').read_text()
-
-
-@pytest.mark.parametrize('fail', ['acquire', 'sdk'])
-def test_setup_failure_never_reaches_build(tmp_path, fail):
-    start = WORKFLOW.index('            dependency_root=')
-    stop = WORKFLOW.index('            ./build.sh ${CORE_BUILD_ARGS}', start)
-    script = 'set -euo pipefail\n' + textwrap.dedent(WORKFLOW[start:stop]) + '\nprintf reached > "$MARKER"\n'
-    tools = tmp_path / 'bin'; tools.mkdir()
-    for name in ('python3', 'bash'):
-        path = tools / name
-        body = 'exit 47' if (name == 'python3' and fail == 'acquire') or (name == 'bash' and fail == 'sdk') else 'printf "export NEAT_SCHEDULER_PACKAGE_DIR=/fixture\\n"'
-        path.write_text('#!/bin/sh\n' + body + '\n'); path.chmod(0o755)
-    result = subprocess.run(['/bin/bash', '-c', script], text=True, capture_output=True,
-        env={**os.environ, 'PATH': str(tools), 'GITHUB_SHA': 'a' * 40, 'GITHUB_HEAD_REF': 'topic',
-             'GITHUB_REF_NAME': 'topic', 'NEAT_VULCAN_ENV': 'production', 'MARKER': str(tmp_path / 'marker')})
-    assert result.returncode == 47, result.stderr
-    assert not (tmp_path / 'marker').exists()
 
 
 def test_no_absent_manifest_or_fake_sysroot_control():

@@ -423,44 +423,53 @@ class BuildDependenciesTest(unittest.TestCase):
         self.assertIn('tools/ci/acquire_scheduler.py', str(error.exception))
 
     def test_build_dependency_selection_and_failures(self):
-        self.producer()  # A partial sibling stack still needs a complete publication.
         script = 'set -euo pipefail\n' + '\n'.join(shell_function(name) for name in (
-            'parse_args', 'has_local_backend_inputs', 'select_and_normalize_local_artifact_paths')) + '''
+            'absolute_input_dir', 'parse_args', 'select_scheduler_set',
+            'select_and_normalize_local_artifact_paths')) + '''
 require_sima_cli_neat_install() { :; }
 current_core_branch() { echo feature/test; }
+dpkg-deb() { echo "dpkg-deb $1" >> "$CALLS"; [[ "$1" != -f ]] || echo "${2##*/}" | sed 's/[._].*//'; }
 python3() {
-  echo "$1" >&2
+  echo "$1" >> "$CALLS"
   case "$1" in
     tools/ci/acquire_scheduler.py) return "${TEST_ACQUIRE_EXIT:-0}" ;;
-    *) return "${TEST_SELECT_EXIT:-0}" ;;
+    *) return 0 ;;
   esac
 }
 parse_args "$@"
 select_and_normalize_local_artifact_paths
 '''
+        local = self.root / 'scheduler-debs'
+        local.mkdir()
+        (local / 'simaai-runner.deb').touch()
+        (local / 'simaai-scheduler.deb').touch()
+        staging = self.core / 'deps/scheduler'
+        calls = self.root / 'calls'
         env = {key: value for key, value in os.environ.items() if key in ('PATH', 'HOME', 'LANG')}
-        env.update(REPO_ROOT=str(self.core), WORKSPACE_ROOT=str(self.root), DOCS_ONLY='OFF',
-                   INSTALL_DEPS_ONLY='OFF', NEAT_LLIMA_ARTIFACT_DIR='',
-                   SIMA_CLI_BIN='sima-cli', NEAT_VULCAN_ENV='production')
+        env.update(REPO_ROOT=str(self.core), CALLER_DIR=str(self.root), DOCS_ONLY='OFF',
+                   INSTALL_DEPS_ONLY='OFF', NEAT_LLIMA_ARTIFACT_DIR='', NEAT_SCHEDULER_ARTIFACT_DIR='',
+                   NEAT_SCHEDULER_DEPS_DIR=str(staging), SIMA_CLI_BIN='sima-cli',
+                   NEAT_VULCAN_ENV='production', CALLS=str(calls))
         acquire, select = 'tools/ci/acquire_scheduler.py', 'tools/build_dependencies.py'
-        for arguments, overrides, code, calls in (
-            (['--doc', '--clean'], {}, 0, []),
+        for arguments, overrides, code, expected in (
+            (['--doc'], {}, 0, []),
             ([], {}, 0, [acquire, select]),
-            ([], {'NEAT_SCHEDULER_PACKAGE_DIR': '/ci/package'}, 0, [select]),
+            (['--scheduler', 'scheduler-debs'], {}, 0,
+             ['dpkg-deb -f', 'dpkg-deb -f', 'dpkg-deb -x', select, select]),
+            (['--scheduler', 'missing'], {}, 1, []),
             ([], {'TEST_ACQUIRE_EXIT': '29'}, 29, [acquire]),
-            ([], {'NEAT_RUNNER_SOURCE': '/local', 'TEST_SELECT_EXIT': '37'}, 37, [select]),
+            ([], {'NEAT_RUNNER_SOURCE': '/local'}, 1, []),
         ):
             with self.subTest(arguments=arguments, overrides=overrides):
-                staging = self.core / 'deps/published/scheduler'
                 staging.mkdir(parents=True, exist_ok=True)
-                stale = staging / 'previous-publication'
-                stale.touch()
+                (staging / 'previous-set').touch()
+                calls.write_text('')
                 result = subprocess.run(['bash', '-c', script, 'selection-test', *arguments],
                                         cwd=self.core, env={**env, **overrides}, text=True, capture_output=True)
                 self.assertEqual(result.returncode, code, result.stderr)
-                self.assertEqual(result.stderr.splitlines(), calls)
-                self.assertEqual(stale.exists(), acquire not in calls)
-                self.assertEqual(list(staging.parent.iterdir()), [staging])
+                self.assertEqual(calls.read_text().splitlines(), expected)
+                # Every selection starts from an empty folder.
+                self.assertEqual((staging / 'previous-set').exists(), not expected)
 
     def test_cmake_always_receives_the_selected_docs_only_mode(self):
         values = {name: 'OFF' for name in (
@@ -495,30 +504,15 @@ select_and_normalize_local_artifact_paths
         result=subprocess.run([sys.executable,str(ROOT/'tools/build_dependencies.py'),*args],env=env,text=True,capture_output=True)
         self.assertEqual(result.returncode,23,result.stderr)
         self.assertEqual(result.stdout.strip(),'delegated '+' '.join(args))
-    def test_shadow_copies_only_selected_sources_and_rewrites_paths(self):
-        source(self.root / "external runner", "runner")
-        (self.core / "build.sh").touch()
-        (self.root / "external runner/build").mkdir()
-        (self.root / "external runner/build/stale").touch()
-        shadow = self.root / "shadow"
-        script = "set -euo pipefail\n" + shell_function("copy_shadow_source") + "\n" + shell_function("prepare_shadow_workspace")
-        script += f'\nREPO_ROOT={shlex.quote(str(self.core))}\nNEAT_RUNNER_SOURCE={shlex.quote(str(self.root / "external runner"))}\n'
-        script += f'prepare_shadow_workspace {shlex.quote(str(shadow))}\nprintf "%s" "$NEAT_RUNNER_SOURCE"\n'
-        result = subprocess.run(["bash", "-c", script], text=True, capture_output=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, str(shadow / "runner"))
-        self.assertTrue((shadow / "runner/CMakeLists.txt").is_file())
-        self.assertFalse((shadow / "runner/build").exists())
-        self.assertFalse((shadow / "internals").exists())
-
     def test_main_keeps_one_final_install_and_deploy(self):
         main = shell_function("main")
         self.assertEqual(main.count("install_artifacts_into_current_environment_if_requested"), 1)
         self.assertEqual(main.count("deploy_artifacts_to_devkit_if_requested"), 1)
         self.assertNotIn("ensure_neat_internals", main)
-        self.assertLess(main.index("activate_elxr_build_env_if_needed"), main.index("prepare_published_scheduler_sdk"))
-        self.assertLess(main.index("prepare_published_scheduler_sdk"), main.index("build_dependencies.py prepare"))
-        self.assertLess(main.index("build_dependencies.py prepare"), main.index("configure_cmake"))
+        order = ("maybe_reexec_from_shadow", "select_and_normalize_local_artifact_paths",
+                 "activate_elxr_build_env_if_needed", "prepare_scheduler_sdk", "build_dependencies.py prepare",
+                 "install_scheduler_set_into_sysroot", "ensure_neat_llima", "configure_cmake")
+        self.assertEqual([main.index(step) for step in order], sorted(main.index(step) for step in order))
 
 
 if __name__ == "__main__":

@@ -1,65 +1,50 @@
-# Build Core with local Kernels, Runner and Scheduler
+# Build Core with its Scheduler and LLiMa dependencies
 
-Run the usual command from your Core checkout in the Neat development environment:
-
-```bash
-./build.sh --all --no-doc --install
-```
-
-The build prepares **Kernels → Runner → Scheduler → Core**, then performs the existing final
-installation/deployment. Child builds never install into the SDK, deploy to a
-DevKit, execute target tests, compile EV firmware, or activate firmware.
-
-Place the checkouts beside each other for automatic source discovery:
-
-```text
-development/
-├── core/
-├── kernels/
-├── runner/
-└── scheduler/
-```
-
-Runner contains framework-neutral execution, preparation, memory and native
-transport. Scheduler contains the GStreamer integration/plugins and compatibility
-adapters. Each has its own source root and installed package. Checkouts need not
-contain a `.git` directory; worktrees and source snapshots are supported.
-
-## Select sources or existing local packages
-
-For a checkout elsewhere, set `NEAT_KERNELS_SOURCE`, `NEAT_RUNNER_SOURCE` or `NEAT_SCHEDULER_SOURCE`:
+Core builds against two dependencies: Scheduler and LLiMa. Run `build.sh` from
+your Core checkout in the Neat SDK:
 
 ```bash
-NEAT_RUNNER_SOURCE=/path/to/simaai-runtime ./build.sh --all --no-doc
+./build.sh --all --no-doc
 ```
 
-To reuse a locally built package instead, set `NEAT_KERNELS_PACKAGE_DIR` or
-`NEAT_RUNNER_PACKAGE_DIR` or `NEAT_SCHEDULER_PACKAGE_DIR`. Each package directory must contain its installed
-`usr/` tree, build receipt, and matching Debian package produced by the component's canonical package workflow.
-Kernels uses standard CMake configure/build/install and its package producer;
-Runner and Scheduler use their respective root `build.sh` entry points:
+By default, `build.sh`:
+
+1. Downloads the published Scheduler set and the LLiMa packages from Vulcan.
+2. Installs both into the SDK sysroot.
+3. Builds Core.
+
+## Use local Scheduler or LLiMa packages
+
+To build Core against your own Scheduler or LLiMa build, pass its DEB folder:
 
 ```bash
-NEAT_RUNNER_PACKAGE_DIR=/path/to/runner/dist/package \
-  ./build.sh --all --no-doc
+./build.sh --scheduler ../scheduler-debs --llima ../llima/dist/debs
 ```
 
-Selection is explicit override, then valid sibling source, then sibling
-`dist/package`. Explicit package selection overrides sibling source. Setting
-both source and package overrides for the same component is an error. A failed
-local build stops the build; it never falls back to an older package.
+Each option works alone; `build.sh` still downloads the other dependency. The
+given packages replace the published ones in the sysroot.
 
-Without local overrides or a complete sibling stack, `build.sh` acquires one published
-Scheduler dependency set, including matching Runner, Kernels and Codecs, using the manifest policy.
-Explicit local selections remain authoritative; failed local builds never trigger downloads.
-The published set stays in `deps/published/scheduler`, refreshed for each automatic
-build and retained for CMake. These dependencies are not installed into the SDK sysroot.
-See [Published CI dependencies](#published-ci-dependencies) for acquisition details.
-Use `--no-llima` when the optional LLiMa backend is not needed.
+The Scheduler folder holds the complete set that Scheduler was built with:
+
+- `simaai-scheduler`
+- the `simaai-runner` and `simaai-kernels-dev` packages it was built against
+- the matching `simaai-kernels-firmware` package for EV-enabled builds
+- the `neat-codecs` and `neat-codecs-dev` pair when Scheduler uses Codecs
+- optionally `simaai-runtime` and, for test builds, `simaai-scheduler-client-test-dev`
+
+Core does not select Kernels, Runner or Codecs. To test a change in one of them,
+build Scheduler against it using Scheduler's build guide, put the resulting
+packages in one folder, and pass that folder with `--scheduler`. Scheduler's
+coordinator checks that the packages belong together and stops the build if they
+do not.
+
+`build.sh` stops with an error when a `NEAT_KERNELS_*`, `NEAT_RUNNER_*`,
+`NEAT_SCHEDULER_*` or `NEAT_CODECS_*` source or package variable is set. Use
+`--no-llima` to build without LLiMa.
 
 ## Platform dependencies
 
-Use the same Platform 3.0 SDK/toolchain for all four repositories. Set
+Build Kernels, Runner, Scheduler and Core with the same Platform 3.0 SDK/toolchain. Set
 `CMAKE_TOOLCHAIN_FILE` when selecting a nondefault toolchain. Kernels and Runner
 receipts must agree on target/compiler, kernel contracts and consumed build
 configuration. The canonical package workflow also requires the exact consumed
@@ -70,10 +55,8 @@ consumes the lower numerical packages.
 Core's source-first DEBs pin the selected Scheduler and numerical SDK versions.
 Runner pins Kernels; Scheduler pins Runner, Kernels and its enabled codec backend.
 Test-enabled Core builds also require Scheduler's separate
-`simaai-scheduler-client-test-dev` package from that exact producer. Source builds
-request it with `--client-test-support`; package builds select the adjacent
-`client-test-support/` directory or `NEAT_SCHEDULER_CLIENT_TEST_PACKAGE_DIR`.
-The coordinator checks its production receipt, source, payload and archive before
+`simaai-scheduler-client-test-dev` package from that exact producer, in the
+same Scheduler folder. The coordinator checks its production receipt, source, payload and archive before
 exposing the test-only CMake component. Runtime-only builds do not require it.
 The build composes metadata-only `simaai-runtime` compatibility with exact Runner
 and Scheduler dependencies. Canonical packages own their files once; Runner alone
@@ -134,33 +117,11 @@ use `--force-overwrite`, or delete dpkg-owned files. A standalone Scheduler test
 image does not need Core installed; an existing Core installation needs the
 coordinated upgrade.
 
-### Backend providers
-
-For local source builds, Scheduler requires separately installed platform backends.
-These are not copied into Scheduler or fetched by the local source build:
-
-- Set `NEAT_CODECS_PACKAGE_DIR` to the separately built Codecs package directory.
-  When Scheduler enables codecs, this directory must contain the exact installed
-  `usr/` prefix it consumed and the matching `neat-codecs` and `neat-codecs-dev`
-  Debian packages. Scheduler's dependency coordinator verifies their payloads,
-  ownership and dependency controls; Core retains the validated closure and
-  includes both archives in the final distribution. It does not build Codecs
-  or substitute another version.
-- Use the SDK's matching MLA Runtime, rendering and tracing/logging libraries.
-- When SDK paths need explicit selection, pass CMake definitions through
-  `NEAT_SCHEDULER_CMAKE_ARGS`, for example
-  `-DSIMA_RUNTIME_MLART_LIBRARY=/path/to/libmlart.so` and its matching include
-  directory. Use the option names documented in Scheduler's build guide.
-
-Arguments in `NEAT_RUNNER_CMAKE_ARGS` and `NEAT_SCHEDULER_CMAKE_ARGS` are parsed as shell-style words, not
-executed as shell code. They cannot override the selected dependency packages
-or install layout.
-
 ## Incremental builds and installation
 
-Core-owned dependency builds and packages live under `deps/backend/`, separate
-from each repository's standalone build directory. CMake builds incrementally;
-`--clean` cleans the selected local dependency builds and Core's build.
+Each build refreshes the selected Scheduler set in `deps/scheduler/` and stages
+its packages in `deps/backend/`. CMake builds Core incrementally; `--clean` also
+removes Core's build.
 
 Before linking, Scheduler's dependency coordinator verifies installed kernel
 headers against their receipt and checks Runner's consumed contract and
@@ -204,8 +165,8 @@ ignored build products are not a source snapshot. The metadata output itself is
 excluded from the untracked-content digest to avoid self-reference. A dirty local
 candidate is not identified as a clean published artifact.
 
-For header-only dependency preparation, `--install-deps-only` uses the selected
-packages, acquiring them when no local inputs are selected. It copies headers
+For header-only dependency preparation, `--install-deps-only` uses the
+`--scheduler` folder or downloads the published set. It copies headers
 without building or executing A65/EV code.
 For native clang-tidy analysis, use `scripts/run_cpp_tidy.sh` with the selected
 Scheduler and matching test-support package prefixes. `TIDY_INSTALL_DEPS=1` installs
@@ -235,17 +196,16 @@ running Scheduler's bootstrap. The installed Scheduler coordinator partitions an
 validates the bundled Runner, Kernels and Codecs archives. Core does not resolve
 those repositories independently.
 
-The selected Scheduler package installs its exact SDK policy. In the disposable
-CI SDK container, `scripts/ci/prepare_scheduler_sdk.sh` uses the official sysroot
-setup command for that revision and retains downloaded platform archives. The
+The selected Scheduler package installs its exact SDK policy. In the SDK,
+`build.sh` runs `scripts/ci/prepare_scheduler_sdk.sh`, which uses the official
+sysroot setup command for that revision and retains downloaded platform archives. The
 coordinator checks the real GCC14 version/target and target SDK identities, then
 selects the exact Runner-consumed runtime provider archives through
 `NEAT_RUNNER_PLATFORM_RUNTIME_DEBS`. Native ARM64 and cross-compilers need not
 have identical executable bytes. Their target ABI and selected platform must
 match. No device installation or firmware qualification happens in this step.
 
-Local source/package overrides remain authoritative. CI acquisition is explicit;
-a failed local source build never downloads a substitute. The existing
+A `--scheduler` folder is never mixed with or replaced by a download. The existing
 `tools/ci/materialize_dependencies.py --manifest ... --output-root ...` command
 remains an optional transport for a separately reviewed immutable manifest. It is
 not the default workflow and there is no implicit `ci/dependencies.json`.
@@ -290,7 +250,8 @@ fails configuration if the installed Scheduler lacks this capability. Set it to
 Rendering uses the selected Kernels/Runner packages, not a separate platform
 renderer archive. Rebuild the cohort together for request API revision 2.
 
-Before running Core's source-first `build.sh`, provide:
+In the SDK, `build.sh` sets the following through
+`scripts/ci/prepare_scheduler_sdk.sh`. Outside the SDK, provide:
 
 - `NEAT_RUNNER_PLATFORM_RUNTIME_DEBS`: a JSON array of absolute paths to the exact
   runtime provider DEBs selected by Runner. Include its required SimaHeap runtime
@@ -301,8 +262,7 @@ Before running Core's source-first `build.sh`, provide:
   declared Platform-owned by Runner stay outside Core's installable DEB set;
   undeclared providers retain exact archive composition.
 
-These selections remain explicit even with prebuilt Runner/Scheduler package
-overrides. The immutable four-component materializer does not fetch platform
+This selection stays explicit with a `--scheduler` folder too. The immutable four-component materializer does not fetch platform
 provider archives. Acquire them from their supported producer before invoking
 Core; missing or unconsumed providers fail rather than selecting a sysroot
 fallback. Use matching development packages for compilation. On a DevKit,

@@ -15,6 +15,8 @@ ORIGINAL_WORKSPACE_ROOT="${SIMANEAT_ORIGINAL_WORKSPACE_ROOT:-${WORKSPACE_ROOT}}"
 SHADOW_BUILD_MODE="${SIMANEAT_SHADOW_BUILD:-auto}"
 SHADOW_BUILD_ACTIVE="${SIMANEAT_SHADOW_BUILD_ACTIVE:-OFF}"
 SOURCE_FS_TYPE=""
+# Relative --scheduler/--llima paths name folders from where build.sh was called.
+CALLER_DIR="${SIMANEAT_CALLER_DIR:-${PWD}}"
 cd "${REPO_ROOT}"
 
 # Defaults
@@ -51,8 +53,8 @@ NEAT_DEPS_DIR="${NEAT_DEPS_DIR:-deps}"
 NEAT_DEP_HEADERS_DIR="${REPO_ROOT}/deps/headers"
 NEAT_BACKEND_DIR="${REPO_ROOT}/deps/backend"
 NEAT_BACKEND_DEB_DIR="${NEAT_BACKEND_DIR}/debs"
-# Preserve automatic acquisition across a shadow-workspace re-exec.
-export NEAT_PUBLISHED_SCHEDULER_ROOT="${NEAT_PUBLISHED_SCHEDULER_ROOT:-}"
+NEAT_SCHEDULER_DEPS_DIR="${REPO_ROOT}/deps/scheduler"
+NEAT_SCHEDULER_ARTIFACT_DIR="${NEAT_SCHEDULER_ARTIFACT_DIR:-}"
 NEAT_LLIMA_DEB_DIR="${NEAT_LLIMA_DEB_DIR:-${NEAT_DEPS_DIR}/llima-debs}"
 NEAT_LLIMA_RESOLVED_REF=""
 NEAT_LLIMA_REQUESTED_REF=""
@@ -185,7 +187,7 @@ copy_shadow_source() {
   mkdir -p "${destination}"
   tar -C "${source}" --exclude='./.git' --exclude='./build' \
     --exclude='./build-*' --exclude='./dist' --exclude='./tmp' \
-    --exclude='./deps/backend' --exclude='./website/node_modules' \
+    --exclude='./deps/backend' --exclude='./deps/scheduler' --exclude='./website/node_modules' \
     --exclude='__pycache__' --exclude='.pytest_cache' -cf - . | tar -C "${destination}" -xf -
 }
 
@@ -196,23 +198,6 @@ prepare_shadow_workspace() {
   mkdir -p "${shadow_root}"
 
   copy_shadow_source "${REPO_ROOT}" "${shadow_root}/core"
-  local component variable source_path package_variable package_path
-  for component in KERNELS RUNNER SCHEDULER; do
-    variable="NEAT_${component}_SOURCE"
-    source_path="${!variable:-}"
-    package_variable="NEAT_${component}_PACKAGE_DIR"
-    package_path="${!package_variable:-}"
-    if [[ -n "${source_path}" ]]; then
-      copy_shadow_source "${source_path}" "${shadow_root}/${component,,}"
-      printf -v "${variable}" '%s' "${shadow_root}/${component,,}"
-      export "${variable}"
-    elif [[ -n "${package_path}" ]]; then
-      mkdir -p "${shadow_root}/packages/${component,,}"
-      cp -a "${package_path}/." "${shadow_root}/packages/${component,,}/"
-      printf -v "${package_variable}" '%s' "${shadow_root}/packages/${component,,}"
-      export "${package_variable}"
-    fi
-  done
 }
 
 maybe_reexec_from_shadow() {
@@ -253,6 +238,7 @@ maybe_reexec_from_shadow() {
     SIMANEAT_SHADOW_BUILD_ACTIVE=ON \
     SIMANEAT_ORIGINAL_SOURCE_DIR="${ORIGINAL_SOURCE_DIR}" \
     SIMANEAT_ORIGINAL_WORKSPACE_ROOT="${ORIGINAL_WORKSPACE_ROOT}" \
+    SIMANEAT_CALLER_DIR="${CALLER_DIR}" \
     bash "${shadow_root}/core/build.sh" "$@"
   )
   local rc=$?
@@ -279,6 +265,9 @@ Options:
   --fuzz         Build fuzz-enabled package artifacts (core + dev + extras + wheel)
   --asan-ubsan   Enable ASan+UBSan instrumentation for this build
   --tsan         Enable TSan instrumentation for this build
+  --scheduler PATH
+                 Use the Scheduler DEB folder at PATH instead of downloading it from Vulcan
+  --llima PATH   Use the LLiMa DEB folder at PATH instead of downloading it from Vulcan
   --install-neat-internals, --install-deps
                  Prepare Scheduler dependencies and existing LLiMa dependencies
   --no-llima     Build LLiMa-independent Core targets using the unavailable stubs
@@ -302,21 +291,12 @@ Environment:
                  Manifest used to resolve Vulcan dependency artifacts.
   NEAT_VULCAN_ENV=production
                  Vulcan environment used for dependency artifact installs.
-  NEAT_KERNELS_SOURCE=/path/to/kernels
-  NEAT_RUNNER_SOURCE=/path/to/runner
-  NEAT_SCHEDULER_SOURCE=/path/to/scheduler
-                 Select local sources; otherwise use a complete sibling dependency stack.
-  NEAT_KERNELS_PACKAGE_DIR=/path/to/kernels/dist/package
-  NEAT_RUNNER_PACKAGE_DIR=/path/to/runner/dist/package
-  NEAT_SCHEDULER_PACKAGE_DIR=/path/to/scheduler/dist/package
-                 Use locally built packages instead of source. Without explicit local
-                 selections or a complete sibling stack, acquire Scheduler's published
-                 dependency set using the manifest policy. Failed local builds never
-                 fall back to published packages.
-
+  NEAT_SCHEDULER_ARTIFACT_DIR=/path/to/scheduler-debs
+                 Same as --scheduler. The folder holds the complete Scheduler set:
+                 simaai-scheduler, the simaai-runner and simaai-kernels-dev it was
+                 built with, and the firmware and Codecs packages it consumed.
   NEAT_LLIMA_ARTIFACT_DIR=/path/to/llima/dist/debs
-                 Use a local LLiMa package directory instead of downloading the
-                 LLiMa artifact from Vulcan.
+                 Same as --llima.
   SIMA_CLI_BIN=sima-cli
                  sima-cli executable used for Vulcan installs and metadata generation.
   SIMANEAT_SCCACHE=auto|on|off
@@ -334,21 +314,59 @@ Examples:
   ./build.sh --fuzz
   ./build.sh --doc
   ./build.sh --all --clean
+  ./build.sh --scheduler ../scheduler-debs --llima ../llima/dist/debs
 USAGE
 }
 
-has_local_backend_inputs() {
-  local component variable
-  for variable in NEAT_KERNELS_SOURCE NEAT_KERNELS_PACKAGE_DIR \
-    NEAT_RUNNER_SOURCE NEAT_RUNNER_PACKAGE_DIR NEAT_SCHEDULER_SOURCE \
-    NEAT_SCHEDULER_PACKAGE_DIR NEAT_CODECS_SOURCE NEAT_CODECS_PACKAGE_DIR \
-    NEAT_RUNTIME_COMPAT_PACKAGE_DIR NEAT_SCHEDULER_CLIENT_TEST_PACKAGE_DIR; do
-    [[ -z "${!variable:-}" ]] || return 0
+absolute_input_dir() {
+  local option="$1" path="$2" resolved
+  if [[ -z "${path}" ]] || ! resolved="$(cd "${CALLER_DIR}" && cd "${path}" 2>/dev/null && pwd -P)"; then
+    echo "ERROR: ${option} needs an existing directory: ${path}" >&2
+    return 1
+  fi
+  printf '%s\n' "${resolved}"
+}
+
+select_scheduler_set() {
+  # Core consumes one complete Scheduler set; Scheduler checks its lower packages.
+  local variable selected
+  for variable in "${!NEAT_KERNELS_@}" "${!NEAT_RUNNER_@}" "${!NEAT_SCHEDULER_@}" "${!NEAT_CODECS_@}"; do
+    if [[ "${variable}" == *_SOURCE || "${variable}" == *_PACKAGE_DIR ]] && [[ -n "${!variable}" ]]; then
+      echo "ERROR: ${variable} is not read by build.sh; pass a Scheduler DEB folder with --scheduler PATH." >&2
+      exit 1
+    fi
   done
-  for component in kernels runner scheduler; do
-    [[ -f "${WORKSPACE_ROOT}/${component}/CMakeLists.txt" ||
-       -d "${WORKSPACE_ROOT}/${component}/dist/package/usr" ]] || return 1
-  done
+
+  rm -rf -- "${NEAT_SCHEDULER_DEPS_DIR}"
+  mkdir -p "${NEAT_SCHEDULER_DEPS_DIR}"
+  if [[ -n "${NEAT_SCHEDULER_ARTIFACT_DIR}" ]]; then
+    local deb scheduler_deb=""
+    for deb in "${NEAT_SCHEDULER_ARTIFACT_DIR}"/*.deb; do
+      [[ -f "${deb}" && "$(dpkg-deb -f "${deb}" Package)" == simaai-scheduler ]] || continue
+      if [[ -n "${scheduler_deb}" ]]; then
+        echo "ERROR: More than one simaai-scheduler package in ${NEAT_SCHEDULER_ARTIFACT_DIR}" >&2
+        exit 1
+      fi
+      scheduler_deb="${deb}"
+    done
+    if [[ -z "${scheduler_deb}" ]]; then
+      echo "ERROR: No simaai-scheduler package in ${NEAT_SCHEDULER_ARTIFACT_DIR}" >&2
+      exit 1
+    fi
+    echo "Using local Scheduler packages: ${NEAT_SCHEDULER_ARTIFACT_DIR}"
+    # The coordinator shipped in this Scheduler package checks the whole folder.
+    dpkg-deb -x "${scheduler_deb}" "${NEAT_SCHEDULER_DEPS_DIR}/bootstrap"
+    selected="$(NEAT_SCHEDULER_PACKAGE_DIR="${NEAT_SCHEDULER_DEPS_DIR}/bootstrap" \
+      python3 tools/build_dependencies.py select --core "${REPO_ROOT}" --require \
+      --cohort-dir "${NEAT_SCHEDULER_ARTIFACT_DIR}" --output "${NEAT_SCHEDULER_DEPS_DIR}/local")"
+  else
+    require_sima_cli_neat_install
+    echo "Acquiring Scheduler packages from Vulcan."
+    selected="$(python3 tools/ci/acquire_scheduler.py --core "${REPO_ROOT}" \
+      --branch "$(current_core_branch)" --environment "${NEAT_VULCAN_ENV}" \
+      --cli "${SIMA_CLI_BIN}" --output "${NEAT_SCHEDULER_DEPS_DIR}/vulcan")"
+  fi
+  eval "${selected}"
 }
 
 select_and_normalize_local_artifact_paths() {
@@ -356,19 +374,7 @@ select_and_normalize_local_artifact_paths() {
   local selected
   # Source documentation does not compile or package the runtime closure.
   if [[ "${DOCS_ONLY}" != "ON" ]]; then
-    if ! has_local_backend_inputs; then
-      require_sima_cli_neat_install
-      mkdir -p "${REPO_ROOT}/deps/published"
-      # Refresh one checkout-local set; CMake needs its prefixes after the build.
-      NEAT_PUBLISHED_SCHEDULER_ROOT="${REPO_ROOT}/deps/published/scheduler"
-      rm -rf -- "${NEAT_PUBLISHED_SCHEDULER_ROOT}"
-      mkdir -p "${NEAT_PUBLISHED_SCHEDULER_ROOT}"
-      echo "Acquiring the complete published Scheduler dependency set (no complete local stack selected)."
-      selected="$(python3 tools/ci/acquire_scheduler.py --core "${REPO_ROOT}" \
-        --branch "$(current_core_branch)" --environment "${NEAT_VULCAN_ENV}" \
-        --cli "${SIMA_CLI_BIN}" --output "${NEAT_PUBLISHED_SCHEDULER_ROOT}/cohort")"
-      eval "${selected}"
-    fi
+    select_scheduler_set
     local -a selection_args=(--require)
     [[ "${INSTALL_DEPS_ONLY}" == "ON" ]] && selection_args+=(--headers-only)
     selected="$(python3 tools/build_dependencies.py select --core "${REPO_ROOT}" "${selection_args[@]}")"
@@ -389,14 +395,28 @@ select_and_normalize_local_artifact_paths() {
   done
 }
 
-prepare_published_scheduler_sdk() {
-  if [[ -n "${NEAT_PUBLISHED_SCHEDULER_ROOT}" && "${ELXR_SDK}" == "ON" &&
+prepare_scheduler_sdk() {
+  if [[ "${DOCS_ONLY}" != "ON" && "${ELXR_SDK}" == "ON" &&
         "${INSTALL_DEPS_ONLY}" != "ON" && -z "${NEAT_RUNNER_PLATFORM_RUNTIME_DEBS:-}" ]]; then
     local sdk_exports
     sdk_exports="$(SDK_PKG_LIST="${SDK_PKG_LIST:+${SDK_PKG_LIST},}nlohmann-json3-dev,libyaml-cpp-dev" \
-      bash scripts/ci/prepare_scheduler_sdk.sh "${NEAT_PUBLISHED_SCHEDULER_ROOT}/platform-debs")"
+      bash scripts/ci/prepare_scheduler_sdk.sh "${NEAT_SCHEDULER_DEPS_DIR}/platform-debs")"
     eval "${sdk_exports}"
   fi
+}
+
+install_scheduler_set_into_sysroot() {
+  # The SDK compiler searches the sysroot first, so it must hold the selected set.
+  [[ "${ELXR_SDK}" == "ON" ]] || return 0
+  : "${SYSROOT:?eLxr SDK mode requires SYSROOT to install Scheduler packages}"
+  local deb
+  echo "Installing Scheduler packages into eLxr sysroot: ${SYSROOT}"
+  for deb in "${NEAT_BACKEND_DEB_DIR}"/*.deb; do
+    # Firmware runs on the device; nothing in the sysroot links against it.
+    [[ "$(dpkg-deb -f "${deb}" Package)" != simaai-kernels-firmware ]] || continue
+    echo "  $(basename "${deb}")"
+    dpkg-deb -x "${deb}" "${SYSROOT}" 2>/dev/null || run_privileged dpkg-deb -x "${deb}" "${SYSROOT}"
+  done
 }
 
 parse_args() {
@@ -469,6 +489,14 @@ parse_args() {
         SIMA_ENABLE_TSAN=ON
         BUILD_TUTORIALS=OFF
         shift
+        ;;
+      --scheduler)
+        NEAT_SCHEDULER_ARTIFACT_DIR="$(absolute_input_dir --scheduler "${2:-}")"
+        shift 2
+        ;;
+      --llima)
+        NEAT_LLIMA_ARTIFACT_DIR="$(absolute_input_dir --llima "${2:-}")"
+        shift 2
         ;;
       --install-neat-internals|--install-deps)
         INSTALL_NEAT_LLIMA=ON
@@ -1326,7 +1354,12 @@ ensure_neat_llima() {
     exit 1
   fi
 
-  printf '%s\n' "${llima_ref}" > "${marker_file}"
+  if [[ -n "${NEAT_LLIMA_ARTIFACT_DIR}" ]]; then
+    # Local packages are not the Vulcan ref; the next default build must download.
+    rm -f "${marker_file}"
+  else
+    printf '%s\n' "${llima_ref}" > "${marker_file}"
+  fi
   rm -rf "${tmp_dir}"
 }
 
@@ -2903,16 +2936,21 @@ main() {
   # High-level pipeline:
   # Resolve local dependencies once: Kernels -> Runner -> Core -> one install.
   parse_args "$@"
-  select_and_normalize_local_artifact_paths
   maybe_reexec_from_shadow "$@"
+  select_and_normalize_local_artifact_paths
   validate_build_mode_combinations
   apply_sanitizer_build_profile
   detect_elxr_sdk
+  # SDK builds install LLiMa into the sysroot by default; --no-llima opts out.
+  if [[ "${ELXR_SDK}" == "ON" && "${DOCS_ONLY}" != "ON" &&
+        "${INSTALL_DEPS_ONLY}" != "ON" && "${SKIP_NEAT_LLIMA}" != "ON" ]]; then
+    INSTALL_NEAT_LLIMA=ON
+  fi
   select_system_deps
   install_system_deps
   ensure_node22_for_docs
   activate_elxr_build_env_if_needed
-  prepare_published_scheduler_sdk
+  prepare_scheduler_sdk
   ensure_core_yaml_sdk_deps
   detect_elxr_host_python
 
@@ -2927,6 +2965,7 @@ main() {
     [[ "${BUILD_TESTS}" == "ON" ]] && dependency_args+=(--client-test-support)
     python3 tools/build_dependencies.py prepare --core "${REPO_ROOT}" \
       --output "${NEAT_BACKEND_DIR}" --jobs "${BUILD_JOBS}" "${dependency_args[@]}"
+    install_scheduler_set_into_sysroot
   fi
   if [[ "${OS_NAME}" != "Darwin" && "${INSTALL_NEAT_LLIMA}" == "ON" ]]; then
     ensure_neat_llima
