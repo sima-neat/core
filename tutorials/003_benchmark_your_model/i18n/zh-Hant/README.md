@@ -54,10 +54,7 @@ Python 會透過 `pyneat.BenchmarkOptions` 公開相同的欄位。設定原始�
 
 ### 進階：層統計資料 {#step-read-layer-stats}
 
-在任一教學命令中加入 `--include-layer-stats`，即可在基準測試報告中包含各層執行時間。
-此選項預設停用。請使用沒有重疊 MLA 工作負載的閒置 DevKit，以及支援具擁有權的
-離線剖析通訊協定的 Scheduler／提供者組合。僅安裝舊版 `mla-rt` 命令並不足夠。
-若剖析回報無法確認完成，請先復原裝置再執行其他工作負載；逾時不代表硬體已停止。
+加入 `--include-layer-stats` 可取得各層時間（預設停用）。請使用相容的 MLA-RT 提供者，以及沒有其他 MLA 工作的閒置 DevKit。Scheduler 同步等待 CLI 結束，沒有父程序期限或強制終止。提供者逾時不代表硬體已完成；若完成狀態不明，請保持 MLA 閒置直到確認復原。
 
 透過 API 啟用的方式如下：
 
@@ -74,6 +71,8 @@ report = model.benchmark(options)
 ```
 
 從 `report.layer_stats` 讀取每個已編譯 MLA 層的 `name`、從零開始的 `stage_index` 與 `total_execution_time_us`。執行時間為零的 no-op 項目也會保留。各層時間是在獨立的剖析執行中測量，因此總和不等於整體延遲。
+
+請查看 `report.layer_stats_status`：`not requested`、`ok` 或無法使用的原因。安全的啟動前失敗會保留主要測量並清空層清單；忙碌或完成不明仍擲出例外。剖析遵循終端策略並保留原始 MPK 階段索引。請針對未發行 0.6.0 的報告配置變更，重新建置 C++ 使用端與 Python 繫結。
 
 ### 儲存報告 {#step-save-report}
 

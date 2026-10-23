@@ -4767,6 +4767,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("throughput_duration_ms", &simaai::neat::BenchmarkReport::throughput_duration_ms)
       .def_ro("telemetry", &simaai::neat::BenchmarkReport::telemetry)
       .def_rw("layer_stats", &simaai::neat::BenchmarkReport::layer_stats)
+      .def_rw("layer_stats_status", &simaai::neat::BenchmarkReport::layer_stats_status)
       .def(
           "save",
           [](const simaai::neat::BenchmarkReport& report, const std::filesystem::path& file_path) {

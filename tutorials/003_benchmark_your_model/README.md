@@ -59,12 +59,7 @@ Power comes from Sentinel, the board telemetry daemon that the Neat installer se
 
 ### Advanced: per-layer stats {#step-read-layer-stats}
 
-Add `--include-layer-stats` to either tutorial command to include layer timings in the
-benchmark report. This option is disabled by default. Use an idle DevKit with no overlapping
-MLA workloads and a Scheduler/provider pair that supports the owned offline profiling protocol.
-Installing the legacy `mla-rt` command alone is insufficient. If profiling reports unknown
-completion, recover the device before running another workload; a timeout does not mean the
-hardware has stopped.
+Add `--include-layer-stats` to include layer timings (disabled by default). Use an idle DevKit with no overlapping MLA workloads and a compatible MLA-RT provider. Scheduler waits synchronously for the CLI; it has no parent deadline or forced termination. A provider timeout does not prove hardware completion. If completion is uncertain, keep MLA idle until recovery is verified.
 
 To enable it through the API:
 
@@ -83,6 +78,8 @@ report = model.benchmark(options)
 Read `report.layer_stats` for each compiled MLA layer's `name`, zero-based `stage_index`,
 and `total_execution_time_us`. Zero-time no-op entries are retained. Layer timings use
 separate profiling passes and do not sum to the headline latency.
+
+Check `report.layer_stats_status`: `not requested`, `ok`, or an unavailable reason. Safe pre-launch failures preserve headline measurements with an empty layer list; busy or uncertain-completion errors still throw. Profiling follows the selected terminal policy and preserves original MPK stage indices. Rebuild C++ consumers and Python bindings for the unreleased 0.6.0 report-layout change.
 
 ### Save the report {#step-save-report}
 

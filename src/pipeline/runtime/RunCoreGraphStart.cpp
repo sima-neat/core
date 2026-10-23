@@ -378,10 +378,6 @@ void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
     runtime->run_options = core->graph_options.pipeline;
     if (seg.boundary.graph_internal_output) {
       runtime->run_options.output_memory = simaai::neat::OutputMemory::ZeroCopy;
-      // Graph-internal appsinks are transport edges to downstream stages or
-      // pipeline inputs, not user CPU-read boundaries. Preserve zero-copy
-      // forwarding and leave CPU visibility to the true consumer boundary.
-      runtime->run_options.advanced.prepare_output_cpu_visible = false;
     }
     runtime->seg.nodes = runtime->nodes;
     runtime->seg.route_options = runtime->route_options;

@@ -128,6 +128,23 @@ ProfileRows load_profile_input(const std::filesystem::path& path) {
 
 std::vector<internal::LayerProfileStage>
 internal::resolve_layer_profile_stages(const pipeline_internal::sima::MpkContract& contract) {
+  std::vector<std::size_t> selected;
+  for (std::size_t i = 0; i < contract.plugins.size(); ++i)
+    if (g_ascii_strcasecmp(contract.plugins[i].processor.c_str(), "MLA") == 0)
+      selected.push_back(i);
+  return resolve_layer_profile_stages(contract, selected);
+}
+
+std::vector<internal::LayerProfileStage>
+internal::resolve_layer_profile_stages(const pipeline_internal::sima::MpkContract& contract,
+                                       std::span<const std::size_t> selected_plugins) {
+  std::set<std::size_t> selected(selected_plugins.begin(), selected_plugins.end());
+  if (selected.size() != selected_plugins.size())
+    profile_error("duplicate selected MLA stage identity");
+  for (const auto index : selected)
+    if (index >= contract.plugins.size() ||
+        g_ascii_strcasecmp(contract.plugins[index].processor.c_str(), "MLA") != 0)
+      profile_error("invalid selected MLA stage identity");
   std::vector<LayerProfileStage> stages;
   std::size_t stage_index = 0;
   for (const auto plugin_index : pipeline_internal::sima::plugins_in_execution_order(contract)) {
@@ -136,7 +153,7 @@ internal::resolve_layer_profile_stages(const pipeline_internal::sima::MpkContrac
     if (!is_mla && g_ascii_strcasecmp(plugin.processor.c_str(), "A65") != 0)
       continue;
     const auto current_index = stage_index++;
-    if (!is_mla)
+    if (!is_mla || !selected.erase(plugin_index))
       continue;
     const auto executable = pipeline_internal::sima::static_contract::resolve_mla_executable(
         contract.mpk_json_path, plugin.executable);
@@ -148,16 +165,96 @@ internal::resolve_layer_profile_stages(const pipeline_internal::sima::MpkContrac
       profile_error("missing matching stats YAML: " + stats_yaml.string());
     stages.push_back({current_index, executable, stats_yaml, load_profile_input(stats_yaml)});
   }
+  if (!selected.empty())
+    profile_error("selected MLA stage is absent from execution order");
   if (stages.empty())
-    profile_error("model has no MLA stages to profile");
+    profile_error("selected inference route has no MLA stages to profile");
   return stages;
 }
 
+namespace {
+namespace scheduler = simaai::scheduler::client;
+
+bool safe_profile_failure(const scheduler::OfflineMlaProfileError& error) {
+  using Code = scheduler::OfflineMlaProfileErrorCode;
+  switch (error.code()) {
+  case Code::Unavailable:
+  case Code::InvalidInput:
+  case Code::ProcessFailure:
+  case Code::DataInvalid:
+    break;
+  case Code::Busy:
+  case Code::RecoveryRequired:
+  default:
+    return false;
+  }
+  using Completion = scheduler::OfflineMlaProfileCompletion;
+  switch (error.completion()) {
+  case Completion::NotLaunched:
+  case Completion::Completed:
+    return true;
+  case Completion::Unknown:
+  default:
+    return false;
+  }
+}
+
+} // namespace
+
 void internal::require_owned_mla_layer_profiling() {
-  if (!simaai::scheduler::client::supports_mla_layer_statistics())
-    profile_error("offline MLA layer profiling is unavailable: mla-rt may be missing from PATH or "
-                  "not executable, or a diagnostic is active or requires recovery; no profiling "
-                  "command was launched. Keep MLA idle after an unresolved diagnostic");
+  const auto capability = scheduler::mla_layer_statistics_capability();
+  using Availability = scheduler::OfflineMlaProfileAvailability;
+  using Code = scheduler::OfflineMlaProfileErrorCode;
+  using Completion = scheduler::OfflineMlaProfileCompletion;
+  switch (capability.availability) {
+  case Availability::Available:
+    return;
+  case Availability::Unavailable:
+    throw scheduler::OfflineMlaProfileError(Completion::NotLaunched, Code::Unavailable,
+                                            capability.reason);
+  case Availability::Busy:
+    throw scheduler::OfflineMlaProfileError(Completion::NotLaunched, Code::Busy, capability.reason);
+  case Availability::RecoveryRequired:
+    throw scheduler::OfflineMlaProfileError(Completion::Unknown, Code::RecoveryRequired,
+                                            capability.reason);
+  default:
+    throw scheduler::OfflineMlaProfileError(Completion::Unknown, Code::RecoveryRequired,
+                                            "unrecognized MLA profiling capability; keep MLA idle");
+  }
+}
+
+std::string internal::prepare_mla_layer_stats(const pipeline_internal::sima::MpkContract& contract,
+                                              std::span<const std::size_t> selected_plugins,
+                                              std::vector<LayerProfileStage>& stages) {
+  stages.clear();
+  try {
+    require_owned_mla_layer_profiling();
+  } catch (const scheduler::OfflineMlaProfileError& error) {
+    if (!safe_profile_failure(error))
+      throw;
+    return error.what();
+  }
+  try {
+    stages = resolve_layer_profile_stages(contract, selected_plugins);
+    return {};
+  } catch (const std::runtime_error& error) {
+    // Only local metadata/file validation has run: no diagnostic was launched.
+    return error.what();
+  }
+}
+
+void internal::collect_mla_layer_stats_for_report(BenchmarkReport& report,
+                                                  const std::vector<LayerProfileStage>& stages) {
+  try {
+    auto rows = collect_mla_layer_stats(stages);
+    report.layer_stats = std::move(rows);
+    report.layer_stats_status = "ok";
+  } catch (const scheduler::OfflineMlaProfileError& error) {
+    if (!safe_profile_failure(error))
+      throw;
+    report.layer_stats.clear();
+    report.layer_stats_status = error.what();
+  }
 }
 
 std::vector<LayerStats>
@@ -212,11 +309,18 @@ internal::collect_mla_layer_stats(const std::vector<LayerProfileStage>& stages,
       auto records = parse_mla_layer_statistics(stage, measured.output_yaml);
       result.insert(result.end(), std::make_move_iterator(records.begin()),
                     std::make_move_iterator(records.end()));
+    } catch (const scheduler::OfflineMlaProfileError& error) {
+      throw scheduler::OfflineMlaProfileError(error.completion(), error.code(),
+                                              std::string(error.what()) + "\nMLA stage " +
+                                                  std::to_string(stage.stage_index) + " (" +
+                                                  stage.executable.filename().string() + ")");
     } catch (const std::exception& error) {
+      // A provider return is not a new hardware completion proof. Keep parser failures fatal.
       throw std::runtime_error(
           std::string(error.what()) + "\nMLA stage " + std::to_string(stage.stage_index) + " (" +
           stage.executable.filename().string() + ")" +
-          (diagnostics.empty() ? "" : "\nMLA profiling diagnostics:\n" + diagnostics));
+          (diagnostics.empty() ? "" : "\nMLA profiling diagnostics:\n" + diagnostics) +
+          "\nHardware completion is not proven; keep MLA idle until recovery is verified.");
     }
   }
   return result;

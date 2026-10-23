@@ -37,6 +37,7 @@ std::filesystem::path BenchmarkReport::save(const std::filesystem::path& file_pa
     throw std::invalid_argument(std::string(kContext) + ": throughput_samples must be nonnegative");
   document["throughput_samples"] = throughput_samples;
   document["telemetry"] = pipeline_internal::telemetry_document(telemetry, kContext);
+  document["layer_stats_status"] = layer_stats_status;
   auto& layers = document["layer_stats"] = pipeline_internal::ReportDocument::array();
   for (const auto& layer : layer_stats) {
     require_nonnegative(layer.total_execution_time_us, "total_execution_time_us");

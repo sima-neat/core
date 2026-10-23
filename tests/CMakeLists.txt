@@ -40,6 +40,20 @@ endforeach()
 if (NOT TARGET SimaScheduler::frontend)
   message(FATAL_ERROR "Kernel integration tests require SimaScheduler::frontend")
 endif()
+# Compile the real collector against an executable-local Scheduler client double.
+# Provider process mechanics remain in Scheduler tests, not in Core.
+add_executable(unit_benchmark_profile_boundary_test
+  unit_testing/unit_benchmark_profile_boundary_test.cpp
+  ${PROJECT_SOURCE_DIR}/src/model/MlaLayerStats.cpp)
+target_link_libraries(unit_benchmark_profile_boundary_test PRIVATE
+  sima_neat sima_neat_internal_headers)
+target_include_directories(unit_benchmark_profile_boundary_test PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR})
+simaneat_add_test(NAME unit_benchmark_profile_boundary_test
+  COMMAND unit_benchmark_profile_boundary_test)
+set_tests_properties(unit_benchmark_profile_boundary_test PROPERTIES
+  TIMEOUT 30 LABELS "strict;unit;contracts")
+
 # A separate executable owns an immutable reduced catalogue provider. It must not
 # link sima_neat: the test checks production planning/policy sources against that
 # provider without mutating the installed SDK or adding a runtime test hook.
@@ -164,6 +178,7 @@ message(STATUS "  [tests] SIMA_TEST_NEAT_LD_LIBRARY_PATH=${SIMA_TEST_NEAT_LD_LIB
 endif()
 
 set(PIPELINESESSION_TEST_TARGETS
+  unit_benchmark_profile_boundary_test
   unit_boxdecode_publication_test
   unit_boxdecode_kernel_recipe_test
   unit_boxdecode_geometry_test

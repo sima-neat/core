@@ -350,22 +350,15 @@ input Sample/Tensor
 
 Sentinel 約每 2 秒取樣一次，因此吞吐量階段至少會執行 `BenchmarkOptions::min_duration_ms`（預設為 10 秒）。延遲階段也遵循相同的下限，因此兩個階段依相同規則停止。當 Sentinel 未執行或量測期間沒有樣本時，基準測試仍會傳回延遲與 FPS；功耗欄位為零，並由 `telemetry.status` 說明原因。`tools/install_neat_framework.sh` 的板子模式會安裝 Sentinel，或將其升級至最新的正式版建置。若安裝失敗，安裝程式會發出警告並繼續；之後可執行 `sima-cli neat install sentinel`，或像 CI 一樣設定 `NEAT_INSTALLER_SENTINEL_REQUIRED=ON`，讓失敗中止安裝。已棄用的 `Run` 電源監控器（`RunOptions::power_monitor`）的資料同樣來自 Sentinel：Core 會輪詢其最新樣本，不會透過 I2C 讀取電源監控晶片。
 
-各層剖析透過 `BenchmarkOptions::include_layer_stats` 明確啟用，預設為 false。
-它需要沒有重疊 MLA 工作負載的閒置 DevKit。基準測試閘門只序列化基準測試呼叫，
-不限制其他推論 API 或應用程式。在延遲與吞吐量執行器關閉後，Core 要求 Scheduler
-視需要為每個 MLA 階段執行已安裝的 `mla-rt` CLI。不會有常駐的剖析工作程序。
-Core 擁有 MPK 階段選擇、獨立的編譯器 YAML／報告驗證與客戶報告欄位；Scheduler
-擁有 CLI 程序與暫存檔；MLA-RT 擁有硬體剖析及交回核心執行的流程。
-Runner 一般推論路徑保持不變。剖析使用獨立的提供者輸入，而不是基準測試輸入緩衝區。
+各層剖析透過 `BenchmarkOptions::include_layer_stats`（預設 false）啟用。請使用沒有其他 MLA 工作的閒置 DevKit；基準測試閘門不會序列化其他推論 API 或應用程式。延遲與吞吐量 Runner 關閉後，Core 只剖析套用終端策略後推論路徑中的 MLA 階段，並保留原始 MPK 執行階段索引。Core 驗證編譯器 YAML 和報告；Scheduler 管理按需啟動的 CLI 與暫存檔；MLA-RT 管理硬體執行與清理。一般 Runner 推論不變，剖析輸入也不同於基準測試輸入。
 
-Scheduler 會在基準測試推論前檢查 `PATH` 中的 `mla-rt` 是否可執行，以及目前程序中
-是否沒有正在執行或等待復原的離線診斷。此檢查不會驗證 CLI 功能相容性；不支援的選項會讓
-剖析請求失敗，並附上 CLI 診斷資訊。主機逾時不是裝置安全釋放。逾時或無法確認完成時，
-請保持 MLA 閒置，直到確認復原完成。Scheduler 不會強制終止可能仍擁有裝置資源的 CLI。
-Core 不會啟動或終止 CLI，也不會以整個工作的計數器取代逐層量測。剖析成功需要 CLI
-正常結束及有效的報告；提供者必須先完成硬體執行，才能釋放其資源。
+Scheduler 先在 `PATH` 尋找 `mla-rt`，再尋找套件提供的 `modalix-mla-rt`，並檢查程序內的診斷狀態。它同步等待 CLI 結束，沒有父程序期限或強制終止。請求的 `timeout` 只設定提供者的 `--model-timeout`，不保證裝置已完成。診斷忙碌或完成狀態不明仍是錯誤；請保持 MLA 閒置直到確認復原。找到執行檔不代表已驗證 CLI 功能相容性。
 
-`BenchmarkReport::layer_stats` 包含已編譯的層名稱、從零開始的執行階段索引，以及以微秒表示的執行時間。這些測量使用獨立的剖析階段，因此總和不等於整體延遲。`BenchmarkReport::save(file_path)` 會使用公開欄位名稱與單位，明確寫入完整報告：`.json` 選擇 JSON；`.yaml` 與其他結尾選擇 YAML。報告包含遙測資料；停用剖析時，層清單為空。此方法會建立不存在的父目錄，並以原子方式取代既有的目標檔案。
+`BenchmarkReport::layer_stats_status` 為 `not requested`、`ok`，或無法剖析的原因。安全的啟動前失敗會保留已完成的主要測量，並清空 `layer_stats`。忙碌或完成不明仍擲出例外；狀態不是復原授權。程序結束本身無法證明硬體完成，因此啟動後的無效報告仍是致命錯誤。即使後續階段安全地失敗，層資料仍採全部或空清單。每列包含編譯後的名稱、原始從零開始的執行階段索引，以及微秒執行時間。獨立剖析結果的總和不等於主要延遲。`save(file_path)` 將狀態、遙測和各列寫為 JSON（`.json`）或 YAML（其他副檔名），建立父目錄並以原子方式取代目的檔。
+
+未發行的 0.6.0 在 `BenchmarkReport` 加入 `layer_stats_status`。請使用相符的 Core/Scheduler 標頭與程式庫重新建置 C++ 使用端和 Python 繫結，不要將舊物件與新配置混用。
+
+已淘汰的 PreparedRunner 選項必須維持預設值。並行處理使用 `processcvu.async` 和 `processcvu.async_queue_depth`；舊反量化與剖析旗標沒有直接替代。請維持 `advanced_execution.defer_output_cache_sync=true`，並透過 Tensor/GstMemory 映射存取 CPU 輸出。`RunOptions::advanced.prepare_output_cpu_visible` 是相容性用的無作用欄位，不要求預先快取同步。
 
 ### 已編譯模型執行合約
 

@@ -2,6 +2,7 @@
 #define SIMA_NEAT_INTERNAL 1
 #endif
 #include "model/internal/MlaLayerStats.h"
+#include "model/internal/ModelPack.h"
 #include "test_main.h"
 
 #include <glib.h>
@@ -101,6 +102,21 @@ void pairing_and_stage_order() {
               "processor case must not change stage indices or ELF/YAML pairing");
     }
   }
+  // Terminal selection keeps full MPK stage ordinals and never opens excluded files.
+  const std::vector<std::size_t> last_only{0};
+  std::filesystem::remove(stages[0].stats_yaml);
+  const auto selected = resolve_layer_profile_stages(contract, last_only);
+  require(selected.size() == 1 && selected.front().stage_index == 2,
+          "selected later MLA keeps its full execution-order index");
+  const std::vector<std::size_t> first_only{2};
+  fixture.write("etc/demo_stage1_mla_stats.yaml", input);
+  std::filesystem::remove(stages[1].stats_yaml);
+  std::filesystem::remove(stages[1].executable);
+  const auto prefix = resolve_layer_profile_stages(contract, first_only);
+  require(prefix.size() == 1 && prefix.front().stage_index == 0,
+          "terminal prefix does not require an excluded ELF or YAML");
+  for (const auto& invalid : std::vector<std::vector<std::size_t>>{{0, 0}, {1}, {99}})
+    fails([&] { resolve_layer_profile_stages(contract, invalid); }, "stage identity");
   std::filesystem::remove(stages[0].stats_yaml);
   fails([&] { resolve_layer_profile_stages(contract); }, "missing matching stats YAML");
 }
@@ -201,9 +217,51 @@ void invalid_outputs_are_rejected() {
   fails([&] { read_mla_layer_statistics(selected, report); }, "zero-cycle layer");
   require(read(selected.stats_yaml) == input, "invalid output must not modify source YAML");
 }
+void resolved_terminal_route_preserves_mpk_identity() {
+  std::vector<ExecutionStage> stages(4);
+  stages[0].kind = ExecutionStageKind::Mla;
+  stages[0].mpk_plugin_index = 8;
+  stages[0].stage_name = "first";
+  stages[0].processor = "MLA";
+  stages[1].kind = ExecutionStageKind::Unknown;
+  stages[1].stage_name = "physical-cvu-cohort";
+  stages[1].processor = "A65";
+  stages[1].plugin_id = "processcvu";
+  stages[2].kind = ExecutionStageKind::Mla;
+  stages[2].mpk_plugin_index = 2;
+  stages[2].stage_name = "last";
+  stages[2].processor = "MLA";
+  stages[3].stage_name = "tail";
+  const std::vector<std::size_t> first{8}, both{8, 2};
+  require(select_mla_profile_plugins(stages, {}) == both, "default route includes both MLA stages");
+  for (int selector = 0; selector < 4; ++selector) {
+    InferenceTerminalPolicy policy;
+    if (selector == 0)
+      policy.last_stage_index = 1;
+    if (selector == 1)
+      policy.last_stage_name = "physical-cvu-cohort";
+    if (selector == 2)
+      policy.last_plugin_id = "PROCESSCVU";
+    if (selector == 3)
+      policy.last_processor = "a65";
+    require(select_mla_profile_plugins(stages, policy) == first,
+            "same physical terminal selector excludes later MLA and preserves MPK index");
+  }
+  InferenceTerminalPolicy policy;
+  policy.mla_only = true;
+  require(select_mla_profile_plugins(stages, policy) == both, "mla_only ends at last MLA");
+  policy.last_stage_index = 9;
+  fails([&] { select_mla_profile_plugins(stages, policy); }, "index out of range");
+  stages[2].mpk_plugin_index.reset();
+  fails([&] { select_mla_profile_plugins(stages, {}); }, "exact MPK stage identity");
+  policy.last_stage_index = 0;
+  require(select_mla_profile_plugins(stages, policy) == first,
+          "unselected later stage does not require a profiling identity");
+}
 } // namespace
 
 RUN_TEST("unit_benchmark_layer_stats_test", ([] {
+           resolved_terminal_route_preserves_mpk_identity();
            pairing_and_stage_order();
            completed_report_preserves_original();
            unrelated_metadata_is_ignored();

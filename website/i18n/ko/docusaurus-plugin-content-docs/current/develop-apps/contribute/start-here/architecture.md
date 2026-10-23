@@ -365,27 +365,15 @@ input Sample/Tensor
 
 Sentinel은 약 2초마다 샘플링하므로 처리량 패스는 최소 `BenchmarkOptions::min_duration_ms`(기본값 10초) 동안 실행됩니다. 지연 시간 패스도 같은 최솟값을 따르므로 두 패스는 같은 규칙으로 멈춥니다. Sentinel이 실행 중이 아니거나 측정 구간에 샘플이 없어도 벤치마크는 지연 시간과 FPS를 반환합니다. 이때 전력 필드는 0이며 `telemetry.status`가 이유를 알려 줍니다. `tools/install_neat_framework.sh`의 보드 모드는 Sentinel을 설치하거나 최신 프로덕션 빌드로 업그레이드합니다. 설치에 실패하면 설치 프로그램은 경고를 출력하고 계속 진행합니다. 나중에 `sima-cli neat install sentinel`을 실행하거나, CI처럼 `NEAT_INSTALLER_SENTINEL_REQUIRED=ON`을 설정해 실패를 오류로 처리하십시오. 더 이상 사용되지 않는 `Run` 전력 모니터(`RunOptions::power_monitor`)도 Sentinel에서 가져옵니다. Core는 Sentinel의 최신 샘플을 폴링하며 I2C로 전력 모니터 칩을 읽지 않습니다.
 
-레이어 프로파일링은 기본값 false인 `BenchmarkOptions::include_layer_stats`로 활성화합니다.
-겹치는 MLA 작업이 없는 유휴 DevKit이 필요합니다. 벤치마크 게이트는 벤치마크 호출만
-직렬화하며 다른 추론 API나 애플리케이션은 직렬화하지 않습니다. 지연 시간 및 처리량
-러너가 닫힌 뒤 Core는 Scheduler에 각 MLA 단계마다 설치된 `mla-rt` CLI를 필요할 때
-실행하도록 요청합니다. 상시 실행되는 프로파일링 워커는 없습니다. Core는 MPK 단계 선택,
-독립적인 컴파일러 YAML/보고서 검증과 고객 보고서 필드를, Scheduler는 CLI 프로세스와
-임시 파일을, MLA-RT는 하드웨어 프로파일링과 커널 실행으로의 복귀를 소유합니다.
-Runner의 일반 추론 경로는 그대로입니다. 프로파일링은 벤치마크 입력 버퍼가 아닌
-별도 제공자 입력을 사용합니다.
+레이어 프로파일링은 `BenchmarkOptions::include_layer_stats`(기본 false)로 켭니다. 다른 MLA 작업이 없는 유휴 DevKit을 사용하세요. 벤치마크 게이트는 다른 추론 API나 애플리케이션을 직렬화하지 않습니다. 지연 시간과 처리량 Runner가 닫힌 뒤 Core는 종료 정책이 적용된 추론 경로의 MLA 단계만 프로파일링하며 원래 MPK 실행 단계 인덱스를 유지합니다. Core는 컴파일러 YAML과 보고서를 검증하고, Scheduler는 필요할 때 시작하는 CLI와 임시 파일을, MLA-RT는 하드웨어 실행과 정리를 담당합니다. 일반 Runner 추론은 바뀌지 않으며 프로파일링 입력은 벤치마크 입력과 별개입니다.
 
-Scheduler는 벤치마크 추론 전에 `PATH`에서 `mla-rt`를 실행할 수 있고, 현재 프로세스에
-활성 상태이거나 복구를 기다리는 오프라인 진단이 없는지 확인합니다. 이 검사는 CLI 기능 호환성을 검증하지
-않습니다. 지원하지 않는 옵션은 CLI 진단과 함께 프로파일링 요청을 실패시킵니다.
-호스트 시간 초과는 장치의 안전한 종료가 아닙니다. 시간 초과가 발생하거나 완료 여부를
-알 수 없으면 복구가 검증될 때까지 MLA를 유휴 상태로 유지하십시오. Scheduler는 장치
-자원을 아직 소유할 수 있는 CLI를 강제 종료하지 않습니다. Core는 CLI를 시작하거나
-강제 종료하지 않으며, 레이어별 측정을 전체 작업 카운터로 대체하지 않습니다.
-프로파일링이 성공하려면 CLI가 정상 종료하고 유효한 보고서가 있어야 합니다.
-제공자는 자원을 해제하기 전에 하드웨어 실행을 완료해야 합니다.
+Scheduler는 `PATH`에서 `mla-rt`, 이어서 패키지의 `modalix-mla-rt`를 찾고 프로세스 내부 진단 상태를 확인합니다. CLI가 끝날 때까지 동기적으로 기다리며 부모 측 기한이나 강제 종료는 없습니다. 요청의 `timeout`은 제공자의 `--model-timeout`만 설정하며 장치 완료를 보장하지 않습니다. 진단이 실행 중이거나 완료 여부가 불확실하면 오류입니다. 복구가 검증될 때까지 MLA를 유휴 상태로 유지하세요. 실행 파일 탐색은 CLI 기능 호환성을 검증하지 않습니다.
 
-`BenchmarkReport::layer_stats`에는 컴파일된 레이어 이름, 0부터 시작하는 실행 단계 인덱스 및 마이크로초 단위 실행 시간이 포함됩니다. 이 측정은 별도의 프로파일링 패스를 사용하므로 합계가 전체 지연 시간과 일치하지 않습니다. `BenchmarkReport::save(file_path)`는 공개 필드 이름과 단위를 사용하여 전체 보고서를 명시적으로 저장합니다. `.json`은 JSON을, `.yaml` 및 기타 끝부분은 YAML을 선택합니다. 텔레메트리를 포함하며 프로파일링이 비활성화된 경우 레이어 목록은 비어 있습니다. 없는 상위 디렉터리를 생성하고 기존 대상 파일을 원자적으로 교체합니다.
+`BenchmarkReport::layer_stats_status`는 `not requested`, `ok` 또는 프로파일링 불가 사유입니다. 안전한 실행 전 실패는 측정된 주요 지표를 보존하고 `layer_stats`를 비웁니다. 실행 중 또는 완료 불명 오류는 계속 예외를 발생시키며 상태는 복구 허가가 아닙니다. 프로세스 종료만으로 하드웨어 완료를 입증할 수 없으므로 실행 후 잘못된 보고서도 치명적 오류입니다. 뒤 단계에서 안전하게 실패해도 레이어 행은 전체 또는 빈 목록입니다. 각 행은 컴파일된 이름, 원래의 0부터 시작하는 실행 단계 인덱스, 마이크로초 실행 시간을 담습니다. 별도 측정이므로 합계는 주요 지연 시간과 다릅니다. `save(file_path)`는 상태, 원격 측정, 행을 JSON(`.json`) 또는 YAML(나머지)로 저장하고 상위 디렉터리를 만들며 대상을 원자적으로 교체합니다.
+
+미출시 0.6.0의 `BenchmarkReport`에 `layer_stats_status`가 추가됩니다. 일치하는 Core/Scheduler 헤더와 라이브러리로 C++ 소비자와 Python 바인딩을 다시 빌드하고 이전 객체를 새 레이아웃과 섞지 마세요.
+
+폐기된 PreparedRunner 옵션은 기본값으로 유지하세요. 동시성에는 `processcvu.async`와 `processcvu.async_queue_depth`를 사용합니다. 기존 역양자화와 프로파일링 플래그에는 직접 대체 기능이 없습니다. `advanced_execution.defer_output_cache_sync=true`를 유지하고 출력 CPU 접근에는 Tensor/GstMemory 매핑을 사용하세요. `RunOptions::advanced.prepare_output_cpu_visible`은 호환성용 무동작 필드이며 선제적 캐시 동기화를 요청하지 않습니다.
 
 ### 컴파일된 모델 실행 계약
 

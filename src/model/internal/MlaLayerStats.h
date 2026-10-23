@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <cstdint>
 #include <map>
+#include <span>
 #include <vector>
 
 namespace simaai::neat::internal {
@@ -31,6 +32,18 @@ struct LayerProfileStage {
 
 std::vector<LayerProfileStage>
 resolve_layer_profile_stages(const pipeline_internal::sima::MpkContract& contract);
+// Select exact MPK plugin identities before opening any executable or stats file.
+std::vector<LayerProfileStage>
+resolve_layer_profile_stages(const pipeline_internal::sima::MpkContract& contract,
+                             std::span<const std::size_t> selected_plugins);
+
+// Safe preparation failure leaves stages empty and returns its reason. Busy/recovery throws.
+std::string prepare_mla_layer_stats(const pipeline_internal::sima::MpkContract& contract,
+                                    std::span<const std::size_t> selected_plugins,
+                                    std::vector<LayerProfileStage>& stages);
+// Preserve headline measurements only for safe diagnostic failures; unknown work still throws.
+void collect_mla_layer_stats_for_report(BenchmarkReport& report,
+                                        const std::vector<LayerProfileStage>& stages);
 
 // Check Scheduler's offline diagnostic capability before benchmark inference.
 // Profiling requires an idle DevKit; this does not arbitrate unrelated workloads.
