@@ -46,6 +46,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cctype>
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -2919,6 +2920,24 @@ InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunM
 
 void session_build_finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt) {
   finalize_public_zero_copy_holder_loan_credits(stream_opt);
+}
+
+void session_build_tune_internal_zero_copy_holder_window(InputStreamOptions& stream_opt,
+                                                         std::size_t edge_queue,
+                                                         bool graph_internal_output) {
+  if (!graph_internal_output || !stream_opt.holder_loan_credits_auto ||
+      (stream_opt.copy_output && !stream_opt.preserve_dmabuf_output)) {
+    return;
+  }
+  if (edge_queue == 0) {
+    edge_queue = 256;
+  }
+  const int edge_window =
+      static_cast<int>(std::min<std::size_t>(edge_queue, static_cast<std::size_t>(INT_MAX)));
+  stream_opt.holder_loan_sample_window =
+      std::max(stream_opt.holder_loan_sample_window, std::max(1, edge_window));
+  stream_opt.holder_loan_credits =
+      stream_opt.holder_loan_sample_window * std::max(1, stream_opt.holder_loan_per_sample_arity);
 }
 
 void session_build_reserve_kernel_runner_outputs(BuildResult& build,
