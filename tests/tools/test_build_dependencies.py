@@ -471,6 +471,53 @@ select_and_normalize_local_artifact_paths
                 # Every selection starts from an empty folder.
                 self.assertEqual((staging / 'previous-set').exists(), not expected)
 
+    @unittest.skipUnless(shutil.which('dpkg-deb'), 'needs dpkg-deb')
+    def test_sysroot_holds_only_the_selected_scheduler_set(self):
+        def scheduler_set(name, files):
+            folder = self.root / name
+            for package, paths in files.items():
+                root = self.root / 'packages' / name / package
+                (root / 'DEBIAN').mkdir(parents=True)
+                (root / 'DEBIAN/control').write_text(
+                    f'Package: {package}\nVersion: 1\nArchitecture: all\nMaintainer: test\nDescription: test\n')
+                for path in paths:
+                    (root / path).parent.mkdir(parents=True, exist_ok=True)
+                    (root / path).write_text(name)
+                folder.mkdir(exist_ok=True)
+                subprocess.run(['dpkg-deb', '--build', '--root-owner-group', str(root), str(folder / f'{package}.deb')],
+                               check=True, capture_output=True)
+            return folder
+        first = scheduler_set('first', {'simaai-scheduler': ['usr/include/old.h', 'usr/include/shared.h'],
+                                        'simaai-kernels-firmware': ['usr/share/firmware.bin']})
+        second = scheduler_set('second', {'simaai-scheduler': ['usr/include/new.h']})
+        # The SDK setup re-extracts the platform packages, one of which also ships shared.h.
+        sdk_setup = self.core / 'scripts/ci/prepare_scheduler_sdk.sh'
+        sdk_setup.parent.mkdir(parents=True)
+        sdk_setup.write_text('mkdir -p "$SYSROOT/usr/include"; echo platform > "$SYSROOT/usr/include/shared.h"\n')
+        script = 'set -euo pipefail\n' + '\n'.join(shell_function(name) for name in (
+            'modify_sysroot', 'prepare_scheduler_sdk', 'install_scheduler_set_into_sysroot')) + '''
+run_privileged() { return 1; }
+for folder in "$@"; do
+  rm -rf "$NEAT_BACKEND_DEB_DIR"; mkdir -p "$NEAT_BACKEND_DEB_DIR"; cp "$folder"/*.deb "$NEAT_BACKEND_DEB_DIR"
+  prepare_scheduler_sdk
+  install_scheduler_set_into_sysroot
+done
+'''
+        sysroot = self.root / 'sysroot'
+        staging = self.core / 'deps/scheduler'
+        staging.mkdir(parents=True)
+        env = {key: value for key, value in os.environ.items() if key in ('PATH', 'HOME', 'LANG')}
+        env.update(SYSROOT=str(sysroot), ELXR_SDK='ON', DOCS_ONLY='OFF', INSTALL_DEPS_ONLY='OFF',
+                   NEAT_BACKEND_DEB_DIR=str(self.core / 'deps/backend/debs'), NEAT_SCHEDULER_DEPS_DIR=str(staging),
+                   NEAT_SYSROOT_SCHEDULER_FILES='var/lib/sima-neat/scheduler-set.files')
+        result = subprocess.run(['bash', '-c', script, 'sysroot-test', str(first), str(second)],
+                                cwd=self.core, env=env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        include = sysroot / 'usr/include'
+        self.assertEqual(sorted(path.name for path in include.iterdir()), ['new.h', 'shared.h'])
+        self.assertEqual((include / 'shared.h').read_text(), 'platform\n')
+        self.assertFalse((sysroot / 'usr/share/firmware.bin').exists())
+
     def test_cmake_always_receives_the_selected_docs_only_mode(self):
         values = {name: 'OFF' for name in (
             'BUILD_TESTS', 'BUILD_TUTORIALS', 'BUILD_PYTHON', 'STRICT_WARNINGS',

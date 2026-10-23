@@ -55,6 +55,8 @@ NEAT_BACKEND_DIR="${REPO_ROOT}/deps/backend"
 NEAT_BACKEND_DEB_DIR="${NEAT_BACKEND_DIR}/debs"
 NEAT_SCHEDULER_DEPS_DIR="${REPO_ROOT}/deps/scheduler"
 NEAT_SCHEDULER_ARTIFACT_DIR="${NEAT_SCHEDULER_ARTIFACT_DIR:-}"
+# Files the last Scheduler set put into the SDK sysroot, relative to SYSROOT.
+NEAT_SYSROOT_SCHEDULER_FILES="var/lib/sima-neat/scheduler-set.files"
 NEAT_LLIMA_DEB_DIR="${NEAT_LLIMA_DEB_DIR:-${NEAT_DEPS_DIR}/llima-debs}"
 NEAT_LLIMA_RESOLVED_REF=""
 NEAT_LLIMA_REQUESTED_REF=""
@@ -395,10 +397,19 @@ select_and_normalize_local_artifact_paths() {
   done
 }
 
+modify_sysroot() {
+  "$@" 2>/dev/null || run_privileged "$@"
+}
+
 prepare_scheduler_sdk() {
   if [[ "${DOCS_ONLY}" != "ON" && "${ELXR_SDK}" == "ON" &&
         "${INSTALL_DEPS_ONLY}" != "ON" && -z "${NEAT_RUNNER_PLATFORM_RUNTIME_DEBS:-}" ]]; then
-    local sdk_exports
+    local sdk_exports installed="${SYSROOT:?eLxr SDK mode requires SYSROOT}/${NEAT_SYSROOT_SCHEDULER_FILES}"
+    # dpkg-deb -x only adds files, so remove the previous set's files first. The
+    # SDK setup below then restores any platform file that set also shipped.
+    if [[ -f "${installed}" ]]; then
+      modify_sysroot xargs -a "${installed}" -d '\n' rm -f --
+    fi
     sdk_exports="$(SDK_PKG_LIST="${SDK_PKG_LIST:+${SDK_PKG_LIST},}nlohmann-json3-dev,libyaml-cpp-dev" \
       bash scripts/ci/prepare_scheduler_sdk.sh "${NEAT_SCHEDULER_DEPS_DIR}/platform-debs")"
     eval "${sdk_exports}"
@@ -409,13 +420,21 @@ install_scheduler_set_into_sysroot() {
   # The SDK compiler searches the sysroot first, so it must hold the selected set.
   [[ "${ELXR_SDK}" == "ON" ]] || return 0
   : "${SYSROOT:?eLxr SDK mode requires SYSROOT to install Scheduler packages}"
-  local deb
-  echo "Installing Scheduler packages into eLxr sysroot: ${SYSROOT}"
+  local deb file_list="${NEAT_SCHEDULER_DEPS_DIR}/sysroot.files"
+  local -a debs=()
+  : > "${file_list}"
   for deb in "${NEAT_BACKEND_DEB_DIR}"/*.deb; do
     # Firmware runs on the device; nothing in the sysroot links against it.
     [[ "$(dpkg-deb -f "${deb}" Package)" != simaai-kernels-firmware ]] || continue
+    debs+=("${deb}")
+    dpkg-deb --fsys-tarfile "${deb}" | tar -t | sed -n "/\/\$/!s|^\./|${SYSROOT}/|p" >> "${file_list}"
+  done
+  # Record the files before extracting, so a failed extraction is still removed next time.
+  modify_sysroot install -D -m 644 "${file_list}" "${SYSROOT}/${NEAT_SYSROOT_SCHEDULER_FILES}"
+  echo "Installing Scheduler packages into eLxr sysroot: ${SYSROOT}"
+  for deb in "${debs[@]}"; do
     echo "  $(basename "${deb}")"
-    dpkg-deb -x "${deb}" "${SYSROOT}" 2>/dev/null || run_privileged dpkg-deb -x "${deb}" "${SYSROOT}"
+    modify_sysroot dpkg-deb -x "${deb}" "${SYSROOT}"
   done
 }
 
