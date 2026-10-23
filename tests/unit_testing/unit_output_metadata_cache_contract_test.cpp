@@ -71,14 +71,23 @@ void producer_wire_publication_survives_conversion() {
         neat::InputStream::State cache;
         for (const std::int32_t count : {1, 0}) {
           auto source = frame(*publication.contract, {false}, 0, compact, 64, "wire", &frozen);
+          // Discard the fixture's generic sample before filling its fresh backing;
+          // the typed sample below is the first published payload owner.
+          source.sample.reset();
+          require(gst_buffer_is_writable(source.buffer.get()), "fresh wire buffer is shared");
           // Exact legacy BBOX wire: count followed by x,y,w,h,score,class.
           const std::array<std::int32_t, 4> box{2, 3, 4, 5};
           const float score = .75F;
           const std::int32_t category = 6;
-          gst_buffer_fill(source.buffer.get(), 16, &count, sizeof(count));
-          gst_buffer_fill(source.buffer.get(), 20, box.data(), sizeof(box));
-          gst_buffer_fill(source.buffer.get(), 36, &score, sizeof(score));
-          gst_buffer_fill(source.buffer.get(), 40, &category, sizeof(category));
+          require(gst_buffer_fill(source.buffer.get(), 16, &count, sizeof(count)) ==
+                          sizeof(count) &&
+                      gst_buffer_fill(source.buffer.get(), 20, box.data(), sizeof(box)) ==
+                          sizeof(box) &&
+                      gst_buffer_fill(source.buffer.get(), 36, &score, sizeof(score)) ==
+                          sizeof(score) &&
+                      gst_buffer_fill(source.buffer.get(), 40, &category, sizeof(category)) ==
+                          sizeof(category),
+                  "failed to fill the fresh detection wire");
           auto sample = typed_tensor_sample(source.buffer.get(), publication.output_caps.get(),
                                             "producer wire output");
           auto output = neat::output_from_sample_stream(sample.get(), "producer wire output", owned,

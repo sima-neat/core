@@ -700,6 +700,8 @@ void superpoint() {
     require(r.compiled.recipe->members[r.decode_member].inputs[0].tensor == 1,
             "SuperPoint explicit role ignored");
     s.payload.superpoint.output_format = SuperPointOutputFormat::LegacyA65InterleavedV0;
+    // The legacy wire requires 256 INT8 output descriptors, independent of input dtype.
+    s.payload.superpoint.descriptor_output_dtype = TensorDType::Int8;
     check(s);
   }
   // MLA BF16 pixel-major storage is byte-planar, not dense padded BF16.
