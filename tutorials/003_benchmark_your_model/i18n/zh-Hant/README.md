@@ -74,7 +74,7 @@ report = model.benchmark(options)
 
 從 `report.mla_stage_stats.stages` 讀取每個 MLA 階段的 `stage_index` 與 `latency_us`：該階段連續不中斷執行 200 次的平均硬體時間。階段延遲包含 MLA 運算，以及程式對 DRAM 的讀取與寫入；不含模型載入、主機與 EV74 處理，以及管線額外負擔。
 
-若找不到 `mla-rt`、其執行失敗或逾時，`benchmark()` 仍會傳回主要測量值，清單保持為空，並將原因寫入 `report.mla_layer_stats.status` 或 `report.mla_stage_stats.status`。其他情況下，各狀態為 `"not requested"` 或 `"ok"`。`mla-rt` 執行逾時或當機後，MLA 可能仍有未完成的工作，因此同一行程中之後的剖析會略過並記錄此原因。在確認 MLA 已復原之前，請讓 DevKit 保持閒置。
+若找不到 `mla-rt`、其執行失敗或逾時，`benchmark()` 仍會傳回主要測量值，清單保持為空，並將原因寫入 `report.mla_layer_stats.status` 或 `report.mla_stage_stats.status`。其他情況下，各狀態為 `"not requested"` 或 `"ok"`。`mla-rt` 執行失敗、逾時或當機後，MLA 可能仍有未完成的工作，因此同一行程中之後的剖析會略過並記錄此原因。在確認 MLA 已復原之前，請讓 DevKit 保持閒置。
 
 MLA 層統計會遵循所選的終端政策：只測量所選推論路徑中的 MLA 階段，且每個階段保留其在完整模型中的 `stage_index`。
 

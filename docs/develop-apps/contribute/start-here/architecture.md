@@ -486,9 +486,9 @@ longer than 120 s. MLA-RT owns hardware profiling and the handoff back to
 kernel execution. Profiling requires no overlapping MLA workloads. The benchmark gate serializes
 benchmark calls, not other inference APIs or applications.
 
-A stopped or crashed `mla-rt` run may leave MLA work unfinished, so Runner starts no further `mla-rt`
-run in that process. Later profiling passes report that MLA needs recovery. Keep the DevKit idle
-until MLA recovery is verified.
+An `mla-rt` run that fails, crashes, or is stopped may leave MLA work unfinished, so Runner starts
+no further `mla-rt` run in that process. Later profiling passes report that MLA needs recovery.
+Keep the DevKit idle until MLA recovery is verified.
 
 Profiling is best effort. When `mla-rt` is missing, fails, times out, or writes unusable output,
 Core keeps the headline measurements, leaves that list empty, prints a warning, and sets
