@@ -451,10 +451,16 @@ select_and_normalize_local_artifact_paths
             ([], {'NEAT_RUNNER_SOURCE': '/local', 'TEST_SELECT_EXIT': '37'}, 37, [select]),
         ):
             with self.subTest(arguments=arguments, overrides=overrides):
+                staging = self.core / 'deps/published/scheduler'
+                staging.mkdir(parents=True, exist_ok=True)
+                stale = staging / 'previous-publication'
+                stale.touch()
                 result = subprocess.run(['bash', '-c', script, 'selection-test', *arguments],
                                         cwd=self.core, env={**env, **overrides}, text=True, capture_output=True)
                 self.assertEqual(result.returncode, code, result.stderr)
                 self.assertEqual(result.stderr.splitlines(), calls)
+                self.assertEqual(stale.exists(), acquire not in calls)
+                self.assertEqual(list(staging.parent.iterdir()), [staging])
 
     def test_cmake_always_receives_the_selected_docs_only_mode(self):
         values = {name: 'OFF' for name in (

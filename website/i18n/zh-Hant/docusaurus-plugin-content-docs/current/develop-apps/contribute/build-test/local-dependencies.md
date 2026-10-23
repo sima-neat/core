@@ -48,6 +48,7 @@ NEAT_RUNNER_PACKAGE_DIR=/path/to/runner/dist/package \
 
 若未指定本機覆寫，且沒有完整的同層儲存庫集合，`build.sh` 會依據資訊清單政策取得已發布的 Scheduler 相依套件組，包含相符的 Runner、Kernels 與 Codecs。
 明確指定的本機選擇仍具優先權；本機建置失敗不會觸發下載。
+已發布的套件組保留在 `deps/published/scheduler`，每次自動建置時重新取得，並在建置後保留供 CMake 使用。這些相依項目不會安裝至 SDK sysroot。
 如需取得成品的詳細資訊，請參閱[已發布的 CI 相依項目](#published-ci-dependencies)。
 不需要選用的 LLiMa 後端時，請使用 `--no-llima`。
 

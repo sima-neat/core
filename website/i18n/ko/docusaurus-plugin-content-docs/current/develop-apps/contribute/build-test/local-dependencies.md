@@ -52,6 +52,7 @@ NEAT_RUNNER_PACKAGE_DIR=/path/to/runner/dist/package \
 
 로컬 재정의나 완전한 형제 저장소 집합이 없으면 `build.sh`는 매니페스트 정책에 따라 일치하는 Runner, Kernels, Codecs가 포함된 공개 Scheduler 의존성 집합을 가져옵니다.
 명시적인 로컬 선택이 우선하며, 로컬 빌드 실패로 다운로드를 시작하지 않습니다.
+공개된 집합은 `deps/published/scheduler`에 보관되며 자동 빌드마다 새로 가져옵니다. CMake가 참조할 수 있도록 빌드 후에도 유지하고, 이 의존성은 SDK sysroot에 설치하지 않습니다.
 가져오기 세부 사항은 [공개된 CI 의존성](#published-ci-dependencies)을 참고하세요.
 선택적 LLiMa 백엔드가 필요하지 않으면 `--no-llima`를 사용합니다.
 

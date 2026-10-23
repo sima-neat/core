@@ -39,6 +39,7 @@ NEAT_RUNNER_PACKAGE_DIR=/path/to/runner/dist/package \
 
 ローカルの上書き指定も完全な隣接リポジトリ一式もない場合、`build.sh` はマニフェストのポリシーに従い、対応する Runner、Kernels、Codecs を含む公開済み Scheduler 依存関係セットを取得します。
 明示的なローカル指定は引き続き優先され、ローカルビルドの失敗によってダウンロードが実行されることはありません。
+公開済みセットは `deps/published/scheduler` に保持され、自動ビルドのたびに更新されます。CMake が参照するためビルド後も保持され、これらの依存関係は SDK の sysroot にはインストールされません。
 取得の詳細は、[公開済み CI 依存関係](#published-ci-dependencies) を参照してください。
 オプションの LLiMa バックエンドが不要な場合は `--no-llima` を使用します。
 

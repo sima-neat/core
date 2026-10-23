@@ -52,6 +52,8 @@ local build stops the build; it never falls back to an older package.
 Without local overrides or a complete sibling stack, `build.sh` acquires one published
 Scheduler dependency set, including matching Runner, Kernels and Codecs, using the manifest policy.
 Explicit local selections remain authoritative; failed local builds never trigger downloads.
+The published set stays in `deps/published/scheduler`, refreshed for each automatic
+build and retained for CMake. These dependencies are not installed into the SDK sysroot.
 See [Published CI dependencies](#published-ci-dependencies) for acquisition details.
 Use `--no-llima` when the optional LLiMa backend is not needed.
 

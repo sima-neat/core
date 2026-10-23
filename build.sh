@@ -359,7 +359,10 @@ select_and_normalize_local_artifact_paths() {
     if ! has_local_backend_inputs; then
       require_sima_cli_neat_install
       mkdir -p "${REPO_ROOT}/deps/published"
-      NEAT_PUBLISHED_SCHEDULER_ROOT="$(mktemp -d "${REPO_ROOT}/deps/published/scheduler.XXXXXX")"
+      # Refresh one checkout-local set; CMake needs its prefixes after the build.
+      NEAT_PUBLISHED_SCHEDULER_ROOT="${REPO_ROOT}/deps/published/scheduler"
+      rm -rf -- "${NEAT_PUBLISHED_SCHEDULER_ROOT}"
+      mkdir -p "${NEAT_PUBLISHED_SCHEDULER_ROOT}"
       echo "Acquiring the complete published Scheduler dependency set (no complete local stack selected)."
       selected="$(python3 tools/ci/acquire_scheduler.py --core "${REPO_ROOT}" \
         --branch "$(current_core_branch)" --environment "${NEAT_VULCAN_ENV}" \
