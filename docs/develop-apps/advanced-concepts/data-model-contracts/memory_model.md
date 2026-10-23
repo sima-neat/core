@@ -96,9 +96,9 @@ The framework's planner is responsible for picking segments such that consecutiv
 
 ## Camera sources and adaptive memory
 
-Live camera frames enter through the platform camera stack, so their memory type depends on the installed kernel, driver, and `libcamerasrc` path. `CameraInput` asks for device/SiMaAI zero-copy memory first. Its private bridge proposes a standard pool through `GST_QUERY_ALLOCATION`; the pool allocates the validated planes from one packed SiMaAI allocation and exports them as DMA-BUFs. `libcamerasrc` imports those DMA-BUFs into the ISP, and the bridge unwraps the same packed allocation for downstream CVU/MLA stages.
+Live camera frames enter through the platform camera stack. `libcamerasrc` captures each frame into its own DMA-BUF, and Neat never owns that memory: any physically contiguous DMA-BUF is a valid EV74 input, and Neat's EV74 admission check accepts it when it comes from a CMA heap or the camera's contiguous capture allocator (`videobuf2_dma_contig`). `CameraInput`'s private bridge asks the source for `GstVideoMeta` through `GST_QUERY_ALLOCATION` and forwards each frame's DMA-BUF as one memory to the downstream CVU/MLA stages, retaining the camera's buffer until they release it.
 
-When the camera stack only provides OS/libcamera buffers and `allow_cpu_fallback` is enabled, Neat inserts a private camera memory bridge. The bridge copies each frame into a pooled SiMaAI buffer, stamps the expected metadata, and hands that buffer to model-managed CVU preprocessing. That copy is the compatibility bridge; resize, color conversion, normalization, quantization, and tessellation should still run on CVU/EV74.
+When a frame is not one DMA-BUF with its planes back to back and `allow_cpu_fallback` is enabled, the bridge copies it into a CMA DMA-BUF, stamps the expected metadata, and hands that buffer to model-managed CVU preprocessing. That copy is the compatibility bridge; resize, color conversion, normalization, quantization, and tessellation should still run on CVU/EV74.
 
 Do not add a public `OsToSima`, `videoconvert`, or `videoscale` stage just to make MIPI camera input work. Use [`CameraInput`](/reference/nodes/camera-input) and let the source path own the memory adaptation.
 

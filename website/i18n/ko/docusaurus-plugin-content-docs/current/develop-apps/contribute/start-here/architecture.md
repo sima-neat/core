@@ -1179,9 +1179,9 @@ BF16과 INT16은 레거시 와이어 코드를 공유하므로 바이트 캐리�
 
 ### 카메라 할당 소유권
 
-`CameraInput`은 카메라 캡 바로 뒤에 `neatcamerabridge`를 배치하고, 라이브 큐 앞에 배치합니다. 협상 중에 브리지는 표준 풀을 사용하여 상위 `GST_QUERY_ALLOCATION`에 응답하고 `GstVideoMeta`를 요청합니다. 풀은 검증된 평면을 하나의 패킹된 SiMaAI 할당에서 할당하고, 평면당 하나의 DMA-BUF를 내보냅니다. 호환되는 `libcamerasrc`는 해당 DMA-BUF를 ISP 캡처 큐로 가져옵니다. 그런 다음 브리지는 동일한 패킹된 할당을 풀링하여 다운스트림 처리에 사용합니다. 엄격 모드에서는 해당 계약을 충족하지 않는 모든 버퍼를 거부합니다. CPU 복사는 명시적인 호환성 폴백으로 남습니다.
+`CameraInput`은 카메라 캡 바로 뒤에 `neatcamerabridge`를 배치하고, 라이브 큐 앞에 배치합니다. Neat는 카메라 메모리를 소유하지 않습니다. 물리적으로 연속된 DMA-BUF는 모두 유효한 EV74 입력이며, Neat의 EV74 허용 검사는 해당 DMA-BUF가 CMA 힙 또는 카메라의 연속 캡처 할당자(`videobuf2_dma_contig`)에서 온 경우 이를 받아들입니다. 협상 중에 브리지는 상위 `GST_QUERY_ALLOCATION`을 통해 `GstVideoMeta`만 요청하며, `libcamerasrc`는 자체 캡처 버퍼를 유지합니다. 브리지는 평면들이 하나의 DMA-BUF 안에 연속으로 배치된 각 프레임을 단일 메모리로 전달하며, 모든 소비자가 해제할 때까지 생산자의 버퍼를 유지합니다. 엄격 모드에서는 이 방식으로 전달할 수 없는 모든 프레임을 거부합니다. CMA DMA-BUF로의 CPU 복사는 명시적인 호환성 폴백으로 남습니다.
 
-애플리케이션에서 사용하는 캡처 깊이는 커널의 개인 CSI-to-ISP RAW 전송 링과 후속 GStreamer 큐 모두와 독립적입니다. `CameraInputWithCaptureBuffers`에 대한 선택적 `capture_buffer_count` 인수는 ISP 출력, libcamera 및 애플리케이션을 통해 유지되는 버퍼를 제어합니다. `queue_depth` 및 `leaky_queue`는 다운스트림 지연 시간과 프레임 삭제 정책를 별도로 제어합니다. 선택적 호환성 복사 풀은 필요에 따라 증가하며 해당 큐 깊이에 의해 제한되지 않으므로 누수 큐는 상위 브리지가 먼저 중단되지 않도록 삭제 정책을 적용할 수 있습니다.
+애플리케이션에서 사용하는 캡처 깊이는 커널의 개인 CSI-to-ISP RAW 전송 링과 후속 GStreamer 큐 모두와 독립적입니다. `CameraInputWithCaptureBuffers`에 대한 선택적 `capture_buffer_count` 인수는 ISP 출력, libcamera 및 애플리케이션을 통해 유지되는 버퍼를 제어합니다(Platform 3.0에서는 `libcamerasrc`에 `buffer-count`가 없으므로 `0`으로 유지해야 합니다). `queue_depth` 및 `leaky_queue`는 다운스트림 지연 시간과 프레임 삭제 정책를 별도로 제어합니다. 선택적 호환성 복사 풀은 필요에 따라 최대 128개 버퍼까지 증가하며 해당 큐 깊이에 의해 제한되지 않으므로 누수 큐는 상위 브리지가 먼저 중단되지 않도록 삭제 정책을 적용할 수 있습니다.
 
 ### 종료
 

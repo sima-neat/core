@@ -115,7 +115,7 @@ node = pyneat.nodes.camera_input(opt, capture_buffer_count=32)
 | `insert_queue` | `true` | 할당자 협상 및 제로 복사 검증 후에 작은 실시간 소스 큐를 삽입합니다. |
 | `leaky_queue` | `true` | 큐를 하류에서 누수되도록 만들어 실시간 그래프가 오래된 백로그보다 최신 프레임을 선호하도록 합니다. |
 | `queue_depth` | `2` | `insert_queue`가 참일 때, 대기열에 쌓을 수 있는 최대 버퍼 수입니다. |
-| `allow_cpu_fallback` | `false` | `false`인 경우 카메라/장치의 제로 복사 지원을 필수로 설정합니다. `true`로 설정하는 것은 SiMaAI 메모리에 대한 Neat의 비공개 적응형 브리지를 사용하도록 선택하는 것입니다. |
+| `allow_cpu_fallback` | `false` | `false`인 경우 카메라의 DMA-BUF를 전달하고, 복사가 필요한 프레임이 있으면 실패합니다. Neat의 비공개 브리지가 이러한 프레임을 CMA DMA-BUF로 복사하도록 허용하려는 경우에만 `true`로 설정합니다. |
 
 `capture_buffer_count`는 `CameraInputOptions` 필드가 아닌, `CameraInputWithCaptureBuffers`에 전달되는 인자입니다. 기본값은 `0`이며, 이는 카메라 파이프라인 자체의 기본값을 유지합니다. 카메라 파이프라인은 자체 제한을 검증하며, Neat의 공급자는 최대 `128`까지 지원합니다.
 
@@ -126,18 +126,20 @@ node = pyneat.nodes.camera_input(opt, capture_buffer_count=32)
 | 입력 역할: | 소스 노드. 이 그래프는 카메라에서 프레임을 가져옵니다. 앱에서 샘플을 이 노드로 보내지는 않습니다. |
 | 출력 미디어 유형: | `video/x-raw`. |
 | 출력 형식 | 요청된 형식은 일반적으로 `format`, 보통 `NV12`입니다. |
-| 메모리 계약 | 장치/SiMaAI 제로 복사 방식을 선호합니다. 폴백 기능이 활성화되면 OS/libcamera 버퍼가 후속 CVU/MLA 단계를 위해 SiMaAI 메모리로 조정됩니다. |
+| 메모리 계약 | 카메라 자체의 DMA-BUF가 복사 없이 다운스트림으로 전달됩니다. 폴백 기능이 활성화되면 하나의 DMA-BUF가 아닌 프레임은 후속 CVU/MLA 단계를 위해 CMA DMA-BUF로 복사됩니다. |
 | 요청된 옵션을 기반으로 정지된 힌트를 통해 기능 제한을 확정합니다. 런타임 기능 제한 협상은 여전히 카메라 스택에 따라 달라집니다. | |
 
 ## 제로 복사 및 대체
 
-`allow_cpu_fallback = false`는 기본값이며 엄격한 카메라/장치 제로 복사 방식을 요청합니다. 설치된 `libcamerasrc`가 일반적인 `external-buffer-mode` 속성을 노출하고 메모리 라이브러리가 카메라 할당을 DMA-BUF로 내보낼 수 없는 경우 빌드가 실행 가능한 오류와 함께 실패합니다.
+`allow_cpu_fallback = false`는 기본값이며 엄격한 제로 복사 방식을 요청합니다. 카메라는 각 프레임을 자체 DMA-BUF에 기록하고, 모든 다운스트림 단계는 그 동일한 메모리를 읽습니다. Neat는 카메라의 메모리를 소유하지 않으므로 `libcamerasrc` 속성이 필요하지 않습니다. 물리적으로 연속된 DMA-BUF는 모두 유효한 EV74 입력이며, Neat의 EV74 허용 검사는 해당 DMA-BUF가 CMA 힙 또는 카메라의 연속 캡처 할당자(`videobuf2_dma_contig`)에서 온 경우 이를 받아들입니다.
 
-Neat는 항상 자체 카메라 브리지를 capsfilter 바로 뒤, 라이브 큐 앞에 배치합니다. 브리지는 GStreamer의 다운스트림 `GST_QUERY_ALLOCATION`를 통해 표준 풀을 제안합니다. 풀은 유효성이 검사된 caps에서 평면 크기와 스트라이드를 파생시키고, 하나의 패킹된 SiMaAI 할당에서 할당하고, 평면당 하나의 DMA-BUF를 내보냅니다. `libcamerasrc`는 이러한 DMA-BUF를 ISP 캡처 큐로 가져옵니다. 브리지는 결과를 확인하고 엄격한 모드에서 복사 없이 동일한 패킹된 할당을 언래핑합니다.
+Neat는 항상 자체 카메라 브리지를 capsfilter 바로 뒤, 라이브 큐 앞에 배치합니다. 브리지는 `GST_QUERY_ALLOCATION`을 통해 소스에 `GstVideoMeta`를 첨부하도록 요청한 다음, 평면들이 하나의 DMA-BUF 안에 연속으로 배치된 각 프레임을 단일 메모리로 전달하며, 모든 소비자가 해제할 때까지 카메라의 버퍼를 유지합니다. 엄격한 모드에서는 이 방식으로 전달할 수 없는 프레임이 파이프라인을 실패시키고, 폴백이 활성화된 경우에는 대신 CMA DMA-BUF로 복사됩니다.
 
-다운스트림 소유자를 기반으로 `capture_buffer_count`를 카메라 팩토리에 전달합니다. 임시 인코더 또는 딥 비동기 ML 그래프는 32개의 버퍼가 필요할 수 있습니다. 낮은 대기 시간의 CV 그래프는 더 적은 버퍼를 사용하고 오래된 프레임을 삭제할 수 있습니다. 이 설정은 ISP 출력/애플리케이션 주기를 제어합니다. 커널의 개인 CSI-to-ISP RAW 전송 링을 확장하지 않으며 GStreamer의 `queue_depth` 삭제 정책과 독립적입니다.
+다운스트림 소유자를 기반으로 `capture_buffer_count`를 카메라 팩토리에 전달합니다. 임시 인코더 또는 딥 비동기 ML 그래프는 32개의 버퍼가 필요할 수 있습니다. 낮은 대기 시간의 CV 그래프는 더 적은 버퍼를 사용하고 오래된 프레임을 삭제할 수 있습니다. 이 설정은 ISP 출력/애플리케이션 주기를 제어합니다. 커널의 개인 CSI-to-ISP RAW 전송 링을 확장하지 않으며 GStreamer의 `queue_depth` 삭제 정책과 독립적입니다. Platform 3.0에서는 `libcamerasrc`에 `buffer-count` 속성이 없으므로 해당 플랫폼에서는 `capture_buffer_count`를 `0`으로 두십시오.
 
-카메라 스택이 제안된 할당자를 준수할 수 없는 경우 이미 존재하는 브리지가 복사할 수 있도록 `allow_cpu_fallback = true`를 명시적으로 설정합니다. 브리지는 업스트림에서 제공하는 경우 SiMaAI/EV74 버퍼를 통과시킵니다. 그렇지 않으면 카메라 프레임을 풀링된 SiMaAI 버퍼로 복사하고 다운스트림 단계에서 예상하는 메타데이터를 연결합니다. 이 개인 복사 풀은 `queue_depth`에 의해 제한되는 대신 필요에 따라 증가하므로 다운스트림의 누수 큐가 브리지가 먼저 중단되지 않고 오래된 프레임을 삭제할 수 있습니다.
+브리지는 카메라 자체의 버퍼를 전달하므로, 다운스트림 단계가 아직 보유하고 있는 각 프레임은 libcamera 캡처 링의 버퍼 하나를 묶어 둡니다(Platform 3.0에서 IMX477로 1080p NV12를 캡처할 때 8개 버퍼). 그만큼 많은 프레임을 보유하는 그래프는 프레임을 삭제하는 대신 캡처를 정지시키므로, 가져온 프레임은 즉시 해제하십시오.
+
+프레임이 평면들이 연속으로 배치된 하나의 DMA-BUF가 아닐 때 이미 존재하는 브리지가 복사할 수 있도록 `allow_cpu_fallback = true`를 명시적으로 설정합니다. 브리지는 그러한 DMA-BUF인 프레임은 계속 그대로 전달합니다. 그렇지 않으면 카메라 프레임을 비공개 풀의 CMA DMA-BUF로 복사하고 다운스트림 단계에서 예상하는 메타데이터를 연결합니다. 이 풀은 `queue_depth`에 의해 제한되는 대신 필요에 따라 최대 128개 버퍼까지 증가하므로 다운스트림의 누수 큐가 브리지가 먼저 중단되지 않고 오래된 프레임을 삭제할 수 있습니다.
 
 폴백 이름은 브리지가 OS/libcamera 버퍼를 허용할 수 있음을 의미합니다. 크기 조정, 색상 변환 또는 정규화를 CPU로 이동해야 한다는 의미는 아닙니다. 해당 경로를 지원하는 경우 모델에서 관리하는 CVU 전처리에서 이러한 작업을 수행하십시오.
 
@@ -166,7 +168,7 @@ CameraInput -> model.graph({include_input=false, include_output=true})
 | `build.plugin_missing` | 런타임 플러그인 세트에서 `libcamerasrc` 또는 `neatcamerabridge`가 누락되었습니다. |
 | `misconfig.media_caps` / `not-negotiated` | 카메라가 요청된 형식, 해상도 또는 프레임 속도를 지원하지 않습니다. |
 | `misconfig.media_caps` / `gstreamer.camera_configuration_unsupported` | 카메라가 요청된 해상도 또는 픽셀 형식을 제공하지 않아 `libcamerasrc`의 협상이 실패했습니다. 지원되는 크기로 캡처하세요. 모델 그래프에서는 모델 전처리가 크기를 조정하도록 하고, 그 밖의 그래프에서는 `VideoScale` 다음에 `CapsRaw`를 사용하세요. |
-| 엄격한 제로 복사 오류, | `allow_cpu_fallback`은 false이고 카메라 소스에서 SiMaAI 제로 복사 속성을 제공하지 않습니다. |
+| 엄격한 제로 복사 오류, | `allow_cpu_fallback`은 false이고 카메라가 평면들이 연속으로 배치된 하나의 DMA-BUF가 아닌 프레임을 전달했습니다. |
 | 풀 타임아웃 | 카메라가 프레임을 전송하지 못했거나, 그래프에 역압력이 발생했거나, 카메라 스택이 스트리밍을 중단했습니다. |
 <<번역>>
 | 녹색, 보라색 또는 색조가 강한 프레임 | 프레임 형식 또는 모델의 색상 변환 전처리 과정에 오류가 있거나, 카메라 ISP/libcamera 출력에 이미 색조가 적용되어 있습니다. 먼저 `NV12` 캡처를 Neat에서 확인하십시오. |

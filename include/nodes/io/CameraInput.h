@@ -19,11 +19,12 @@ namespace simaai::neat {
 /**
  * @brief Options for CameraInput, a live libcamera/MIPI source.
  *
- * The public contract is deliberately camera/frame oriented. Neat's private
- * camera memory bridge negotiates its allocator with libcamerasrc and passes
- * EV74 SiMaAI buffers through. When fallback is enabled, OS/libcamera buffers
- * may instead be copied into pooled EV74 SiMaAI memory and stamped with
- * GstSimaMeta. Users do not expose an OsToSima node.
+ * The public contract is deliberately camera/frame oriented. libcamerasrc keeps
+ * its own capture buffers; Neat's private camera bridge forwards each frame's
+ * DMA-BUF downstream without copying; Neat's EV74 admission check accepts CMA
+ * and the camera's contiguous capture buffers. When fallback is enabled, a
+ * frame the bridge cannot forward as one DMA-BUF is copied into a CMA DMA-BUF
+ * instead. Users do not expose an OsToSima node.
  */
 struct CameraInputOptions {
   // Optional libcamera camera-name, e.g. "imx477 5-001a" from `cam -l`.
@@ -44,10 +45,11 @@ struct CameraInputOptions {
   bool leaky_queue = true;
   std::uint32_t queue_depth = 2;
 
-  // False (default): require strict camera/device zero-copy and fail if unavailable.
-  // True: permit Neat's private adaptive bridge to copy non-SiMaAI buffers into
-  // EV74 SiMaAI memory. This is an explicit compatibility escape hatch for
-  // camera stacks without DMA-BUF export support.
+  // False (default): strict zero-copy. The bridge forwards the camera's DMA-BUF
+  // and fails on any frame it would have to copy.
+  // True: permit Neat's private bridge to copy such frames into a CMA DMA-BUF.
+  // This is an explicit compatibility escape hatch for camera stacks that do
+  // not deliver each frame as one DMA-BUF.
   bool allow_cpu_fallback = false;
 };
 
