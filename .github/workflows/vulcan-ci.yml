@@ -396,13 +396,7 @@ jobs:
             sima-cli neat install --help >/dev/null
             sima-cli packages build --help >/dev/null
             cd /workspace
-            dependency_root="${RUNNER_TEMP:-/tmp}/core-dependencies-${GITHUB_SHA}"
-            dependency_exports=$(python3 tools/ci/acquire_scheduler.py \
-              --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" \
-              --environment "${NEAT_VULCAN_ENV}" --output "$dependency_root")
-            eval "$dependency_exports"
-            sdk_exports=$(bash scripts/ci/prepare_scheduler_sdk.sh "$dependency_root/platform-debs")
-            eval "$sdk_exports"
+            # build.sh acquires the Scheduler and LLiMa sets and installs them into the sysroot.
             source /opt/bin/simaai-init-build-env modalix >/dev/null
             ./build.sh ${CORE_BUILD_ARGS}
             if [[ "${CORE_BUILD_ARGS}" == *"--all"* ]]; then

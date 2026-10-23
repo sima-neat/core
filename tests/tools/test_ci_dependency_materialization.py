@@ -69,8 +69,7 @@ class MaterializationTests(unittest.TestCase):
     def test_workflow_passes_portable_inputs_without_external_supervisor(self):
         workflow=(ROOT/'.github/workflows/vulcan-ci.yml').read_text()
         self.assertNotIn('NEAT_CI_DEPENDENCY_MANIFEST',workflow)
-        self.assertIn('tools/ci/acquire_scheduler.py',workflow)
-        self.assertIn('scripts/ci/prepare_scheduler_sdk.sh',workflow)
+        self.assertIn('./build.sh ${CORE_BUILD_ARGS}',workflow)
         self.assertNotIn('NEAT_GUARDED_HARDWARE_TESTS',workflow)
         self.assertNotIn('SIMA_HARDWARE_SUPERVISOR_SOCKET',workflow)
         self.assertNotIn('kernel-device-qualification-',workflow)

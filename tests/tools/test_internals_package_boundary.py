@@ -156,6 +156,7 @@ resolve_neat_llima_ref() {{
   NEAT_LLIMA_REQUESTED_REF=local:latest
 }}
 ensure_llima_sdk_sysroot_deps() {{ :; }}
+record_sysroot_files() {{ :; }}
 dpkg-deb() {{
   mkdir -p "$3/usr/lib/aarch64-linux-gnu/cmake/SimaLMM"
   touch "$3/usr/lib/aarch64-linux-gnu/cmake/SimaLMM/SimaLMMConfig.cmake"
