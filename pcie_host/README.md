@@ -369,10 +369,10 @@ Build on an Ubuntu 22.04 or Ubuntu 24.04 host, outside the Palette SDK.
 `build.sh` installs `build-essential`, uses the host's default C++20 compiler and
 acquires Scheduler's native PCIe host profile through sima-cli. It does not add a
 compiler repository or use the SDK's device toolchain. This profile supplies the
-plugin and verifies the Platform-owned
-service headers. Its distribution carries the unchanged, checksum-pinned Platform
-source package for private userspace builds. Scheduler does not own the PCIe
-driver or runtime implementation.
+prebuilt transport library, plugin and reviewed service headers. Platform
+implementation sources are build-only inputs to Scheduler CI and are not included
+in the delivered artifacts. The PCIe driver and Platform userspace library remain
+separately provisioned.
 
 PCIe host builds always include the GenAI APIs. They do not acquire the device
 Scheduler profile, Runner, Kernels or Codecs.
@@ -401,10 +401,10 @@ scheduler/pcie-host-ubuntu24-arm64
 Other host distributions are rejected because the prebuilt plugin may depend
 on distribution-specific glibc, GLib, and GStreamer versions.
 
-The selected Scheduler helper validates and stages its native packages into a
-private prefix. It builds only the official Platform userspace library there,
-without running package maintainer scripts, installing a driver or starting
-daemons. Core configures against that prefix's installed `SimaScheduler` package;
+The selected Scheduler helper validates and extracts its prebuilt packages and
+service headers into a private prefix. It does not build the Platform library,
+run package maintainer scripts, install a driver or start daemons.
+Core configures against that prefix's installed `SimaScheduler` package;
 it does not include headers from a sibling lower-layer checkout. To use a particular
 published revision, pass `--scheduler-spec <commit>`. Use
 `--scheduler-environment <name>` to select another publication environment.
