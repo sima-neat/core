@@ -51,6 +51,8 @@ NEAT_DEPS_DIR="${NEAT_DEPS_DIR:-deps}"
 NEAT_DEP_HEADERS_DIR="${REPO_ROOT}/deps/headers"
 NEAT_BACKEND_DIR="${REPO_ROOT}/deps/backend"
 NEAT_BACKEND_DEB_DIR="${NEAT_BACKEND_DIR}/debs"
+# Preserve automatic acquisition across a shadow-workspace re-exec.
+export NEAT_PUBLISHED_SCHEDULER_ROOT="${NEAT_PUBLISHED_SCHEDULER_ROOT:-}"
 NEAT_LLIMA_DEB_DIR="${NEAT_LLIMA_DEB_DIR:-${NEAT_DEPS_DIR}/llima-debs}"
 NEAT_LLIMA_RESOLVED_REF=""
 NEAT_LLIMA_REQUESTED_REF=""
@@ -278,7 +280,7 @@ Options:
   --asan-ubsan   Enable ASan+UBSan instrumentation for this build
   --tsan         Enable TSan instrumentation for this build
   --install-neat-internals, --install-deps
-                 Prepare local Kernels/Runner dependencies and existing LLiMa dependencies
+                 Prepare Scheduler dependencies and existing LLiMa dependencies
   --no-llima     Build LLiMa-independent Core targets using the unavailable stubs
   --doc          Build only docs
   --install      After build/package, install artifacts into the current environment.
@@ -303,12 +305,14 @@ Environment:
   NEAT_KERNELS_SOURCE=/path/to/kernels
   NEAT_RUNNER_SOURCE=/path/to/runner
   NEAT_SCHEDULER_SOURCE=/path/to/scheduler
-                 Prefer these source roots; otherwise discover sibling repositories.
+                 Select local sources; otherwise use a complete sibling dependency stack.
   NEAT_KERNELS_PACKAGE_DIR=/path/to/kernels/dist/package
   NEAT_RUNNER_PACKAGE_DIR=/path/to/runner/dist/package
   NEAT_SCHEDULER_PACKAGE_DIR=/path/to/scheduler/dist/package
-                 Use locally built packages instead of source. Remote artifact
-                 pulling is TODO; missing inputs fail without fallback.
+                 Use locally built packages instead of source. Without explicit local
+                 selections or a complete sibling stack, acquire Scheduler's published
+                 dependency set using the manifest policy. Failed local builds never
+                 fall back to published packages.
 
   NEAT_LLIMA_ARTIFACT_DIR=/path/to/llima/dist/debs
                  Use a local LLiMa package directory instead of downloading the
@@ -333,11 +337,35 @@ Examples:
 USAGE
 }
 
+has_local_backend_inputs() {
+  local component variable
+  for variable in NEAT_KERNELS_SOURCE NEAT_KERNELS_PACKAGE_DIR \
+    NEAT_RUNNER_SOURCE NEAT_RUNNER_PACKAGE_DIR NEAT_SCHEDULER_SOURCE \
+    NEAT_SCHEDULER_PACKAGE_DIR NEAT_CODECS_SOURCE NEAT_CODECS_PACKAGE_DIR \
+    NEAT_RUNTIME_COMPAT_PACKAGE_DIR NEAT_SCHEDULER_CLIENT_TEST_PACKAGE_DIR; do
+    [[ -z "${!variable:-}" ]] || return 0
+  done
+  for component in kernels runner scheduler; do
+    [[ -f "${WORKSPACE_ROOT}/${component}/CMakeLists.txt" ||
+       -d "${WORKSPACE_ROOT}/${component}/dist/package/usr" ]] || return 1
+  done
+}
+
 select_and_normalize_local_artifact_paths() {
   local variable_name artifact_dir
   local selected
   # Source documentation does not compile or package the runtime closure.
   if [[ "${DOCS_ONLY}" != "ON" ]]; then
+    if ! has_local_backend_inputs; then
+      require_sima_cli_neat_install
+      mkdir -p "${REPO_ROOT}/deps/published"
+      NEAT_PUBLISHED_SCHEDULER_ROOT="$(mktemp -d "${REPO_ROOT}/deps/published/scheduler.XXXXXX")"
+      echo "Acquiring the complete published Scheduler dependency set (no complete local stack selected)."
+      selected="$(python3 tools/ci/acquire_scheduler.py --core "${REPO_ROOT}" \
+        --branch "$(current_core_branch)" --environment "${NEAT_VULCAN_ENV}" \
+        --cli "${SIMA_CLI_BIN}" --output "${NEAT_PUBLISHED_SCHEDULER_ROOT}/cohort")"
+      eval "${selected}"
+    fi
     local -a selection_args=(--require)
     [[ "${INSTALL_DEPS_ONLY}" == "ON" ]] && selection_args+=(--headers-only)
     selected="$(python3 tools/build_dependencies.py select --core "${REPO_ROOT}" "${selection_args[@]}")"
@@ -356,6 +384,16 @@ select_and_normalize_local_artifact_paths() {
     printf -v "${variable_name}" '%s' "$(cd "${artifact_dir}" && pwd -P)"
     export "${variable_name}"
   done
+}
+
+prepare_published_scheduler_sdk() {
+  if [[ -n "${NEAT_PUBLISHED_SCHEDULER_ROOT}" && "${ELXR_SDK}" == "ON" &&
+        "${INSTALL_DEPS_ONLY}" != "ON" && -z "${NEAT_RUNNER_PLATFORM_RUNTIME_DEBS:-}" ]]; then
+    local sdk_exports
+    sdk_exports="$(SDK_PKG_LIST="${SDK_PKG_LIST:+${SDK_PKG_LIST},}nlohmann-json3-dev,libyaml-cpp-dev" \
+      bash scripts/ci/prepare_scheduler_sdk.sh "${NEAT_PUBLISHED_SCHEDULER_ROOT}/platform-debs")"
+    eval "${sdk_exports}"
+  fi
 }
 
 parse_args() {
@@ -2871,6 +2909,7 @@ main() {
   install_system_deps
   ensure_node22_for_docs
   activate_elxr_build_env_if_needed
+  prepare_published_scheduler_sdk
   ensure_core_yaml_sdk_deps
   detect_elxr_host_python
 

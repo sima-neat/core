@@ -85,13 +85,15 @@ A change is ready when:
 - `build.sh` delegates dependency preparation and closure validation to Scheduler, then builds Core against the installed frontend. Scheduler coordinates Kernels, Runner and Codecs; retain exact receipts for the complete runtime stack.
 - `NEAT_KERNELS_SOURCE` / `NEAT_RUNNER_SOURCE` / `NEAT_SCHEDULER_SOURCE` select source roots; the corresponding
   `_PACKAGE_DIR` overrides select local package directories instead.
-- Do not silently fetch old Internals, replace failed source builds with artifacts,
-  or deploy from child builds. Explicit `tools/ci/acquire_scheduler.py` acquisition
+- Without explicit local inputs or a complete sibling stack, `build.sh` acquires
+  one published Scheduler cohort through `tools/ci/acquire_scheduler.py`. Do not
+  independently select lower packages, fetch old Internals, replace failed local
+  builds with artifacts, or deploy from child builds. Scheduler acquisition
   tries the snap branch, then explicitly retries `develop:latest` only if resolution
   fails and the published branch index confirms absence. Other lookup failures,
   tags and explicit selectors remain strict. The selected immutable
-  Scheduler publication's coordinator validates the delivered cohort;
-  `build.sh` never silently fetches it.
+  Scheduler publication's coordinator validates the delivered cohort. CI-prepared
+  package selections remain authoritative and do not trigger another acquisition.
 - Preserve the selected package receipts and contract checks. Rebuild consumers
   after ABI changes; numerical source-only changes do not require Runner/Scheduler source edits, but static consumers must relink to consume new Kernels artifacts.
 - See `docs/develop-apps/contribute/build-test/local-dependencies.md`.

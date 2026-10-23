@@ -49,8 +49,10 @@ Selection is explicit override, then valid sibling source, then sibling
 both source and package overrides for the same component is an error. A failed
 local build stops the build; it never falls back to an older package.
 
-Local `build.sh` requires selected sources or packages and never downloads a fallback.
-For explicit artifact acquisition, see [Published CI dependencies](#published-ci-dependencies).
+Without local overrides or a complete sibling stack, `build.sh` acquires one published
+Scheduler dependency set, including matching Runner, Kernels and Codecs, using the manifest policy.
+Explicit local selections remain authoritative; failed local builds never trigger downloads.
+See [Published CI dependencies](#published-ci-dependencies) for acquisition details.
 Use `--no-llima` when the optional LLiMa backend is not needed.
 
 ## Platform dependencies
@@ -132,8 +134,8 @@ coordinated upgrade.
 
 ### Backend providers
 
-Scheduler requires separately installed platform backends. These are not
-copied into Scheduler or fetched by this workflow:
+For local source builds, Scheduler requires separately installed platform backends.
+These are not copied into Scheduler or fetched by the local source build:
 
 - Set `NEAT_CODECS_PACKAGE_DIR` to the separately built Codecs package directory.
   When Scheduler enables codecs, this directory must contain the exact installed
@@ -200,8 +202,9 @@ ignored build products are not a source snapshot. The metadata output itself is
 excluded from the untracked-content digest to avoid self-reference. A dirty local
 candidate is not identified as a clean published artifact.
 
-For header-only dependency preparation, `--install-deps-only` requires local
-package overrides. It copies headers without building or executing A65/EV code.
+For header-only dependency preparation, `--install-deps-only` uses the selected
+packages, acquiring them when no local inputs are selected. It copies headers
+without building or executing A65/EV code.
 For native clang-tidy analysis, use `scripts/run_cpp_tidy.sh` with the selected
 Scheduler and matching test-support package prefixes. `TIDY_INSTALL_DEPS=1` installs
 native host analysis prerequisites. The script uses their public CMake exports

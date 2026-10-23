@@ -46,8 +46,9 @@ NEAT_RUNNER_PACKAGE_DIR=/path/to/runner/dist/package \
 明確指定套件會優先於同層來源。對同一元件同時設定來源與套件覆寫會產生錯誤。
 本機建置失敗就會停止；絕不會退回較舊的套件。
 
-本機的 `build.sh` 需要選定的來源或套件，且不會自動下載替代成品。
-如需明確取得成品，請參閱[已發布的 CI 相依項目](#published-ci-dependencies)。
+若未指定本機覆寫，且沒有完整的同層儲存庫集合，`build.sh` 會依據資訊清單政策取得已發布的 Scheduler 相依套件組，包含相符的 Runner、Kernels 與 Codecs。
+明確指定的本機選擇仍具優先權；本機建置失敗不會觸發下載。
+如需取得成品的詳細資訊，請參閱[已發布的 CI 相依項目](#published-ci-dependencies)。
 不需要選用的 LLiMa 後端時，請使用 `--no-llima`。
 
 ## 平台相依項目
@@ -107,7 +108,7 @@ APT 變更檔案前，安裝程式會使用經過驗證的 Scheduler 擁有權�
 
 ### 後端提供者
 
-Scheduler 需要另外安裝的平台後端。此流程不會將它們複製進 Scheduler，也不會下載它們：
+本機來源建置需要另外安裝 Scheduler 使用的平台後端。本機來源建置不會將它們複製進 Scheduler，也不會下載它們：
 
 - 將 `NEAT_CODECS_PACKAGE_DIR` 設為另外建置的 Codecs 套件目錄。Scheduler 啟用
   編解碼器時，此目錄必須包含它所使用的確切已安裝 `usr/` 前綴，以及相符的
@@ -159,7 +160,7 @@ CMake 快取、設定的編譯器、目標 Python 標頭與建置出的擴充模
 中繼資料輸出本身會排除於未追蹤內容摘要之外，以避免自我參照。
 具有本機未提交變更的候選版本不會被標示為乾淨的已發布成品。
 
-僅準備相依標頭時，`--install-deps-only` 需要本機套件覆寫。它複製標頭，
+僅準備相依標頭時，`--install-deps-only` 使用選定的套件；若未選擇本機輸入，便會取得套件。它複製標頭，
 不建置或執行 A65/EV 程式碼。原生 clang-tidy 分析請使用 `scripts/run_cpp_tidy.sh`，
 搭配選定的 Scheduler 與相符測試支援套件的前綴。`TIDY_INSTALL_DEPS=1` 會安裝原生
 主機分析先決條件。指令碼直接使用各套件的公開 CMake 匯出項目，不會啟用或修改 SDK sysroot。

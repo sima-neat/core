@@ -422,33 +422,39 @@ class BuildDependenciesTest(unittest.TestCase):
         self.assertIn('NEAT_SCHEDULER_PACKAGE_DIR', str(error.exception))
         self.assertIn('tools/ci/acquire_scheduler.py', str(error.exception))
 
-    def test_docs_only_skips_runtime_selection_but_normal_build_requires_it(self):
-        # Exercise the real CLI parsing and pre-bootstrap shell selection, with
-        # no sibling Scheduler, package override, or fake coordinator.
-        tools = self.core / 'tools'
-        tools.mkdir()
-        (tools / 'build_dependencies.py').write_text(
-            (ROOT / 'tools/build_dependencies.py').read_text())
-        functions = shell_function('parse_args') + '\n' + shell_function(
-            'select_and_normalize_local_artifact_paths')
-        script = 'set -euo pipefail\n' + functions + '\n'
-        script += f'REPO_ROOT={shlex.quote(str(self.core))}\n'
-        script += 'DOCS_ONLY=OFF\nINSTALL_DEPS_ONLY=OFF\nNEAT_LLIMA_ARTIFACT_DIR=\n'
-        script += 'parse_args "$@"\nselect_and_normalize_local_artifact_paths\n'
-        script += 'printf "selected:%s" "$DOCS_ONLY"\n'
-        env = {key: value for key, value in os.environ.items()
-               if not key.startswith('NEAT_')}
-        for arguments, expected_success in [(['--doc', '--clean'], True), ([], False)]:
-            with self.subTest(arguments=arguments):
-                result = subprocess.run(
-                    ['bash', '-c', script, 'selection-test', *arguments],
-                    cwd=self.core, env=env, text=True, capture_output=True)
-                if expected_success:
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertEqual(result.stdout, 'selected:ON')
-                else:
-                    self.assertNotEqual(result.returncode, 0)
-                    self.assertIn('No local Scheduler source/package', result.stderr)
+    def test_build_dependency_selection_and_failures(self):
+        self.producer()  # A partial sibling stack still needs a complete publication.
+        script = 'set -euo pipefail\n' + '\n'.join(shell_function(name) for name in (
+            'parse_args', 'has_local_backend_inputs', 'select_and_normalize_local_artifact_paths')) + '''
+require_sima_cli_neat_install() { :; }
+current_core_branch() { echo feature/test; }
+python3() {
+  echo "$1" >&2
+  case "$1" in
+    tools/ci/acquire_scheduler.py) return "${TEST_ACQUIRE_EXIT:-0}" ;;
+    *) return "${TEST_SELECT_EXIT:-0}" ;;
+  esac
+}
+parse_args "$@"
+select_and_normalize_local_artifact_paths
+'''
+        env = {key: value for key, value in os.environ.items() if key in ('PATH', 'HOME', 'LANG')}
+        env.update(REPO_ROOT=str(self.core), WORKSPACE_ROOT=str(self.root), DOCS_ONLY='OFF',
+                   INSTALL_DEPS_ONLY='OFF', NEAT_LLIMA_ARTIFACT_DIR='',
+                   SIMA_CLI_BIN='sima-cli', NEAT_VULCAN_ENV='production')
+        acquire, select = 'tools/ci/acquire_scheduler.py', 'tools/build_dependencies.py'
+        for arguments, overrides, code, calls in (
+            (['--doc', '--clean'], {}, 0, []),
+            ([], {}, 0, [acquire, select]),
+            ([], {'NEAT_SCHEDULER_PACKAGE_DIR': '/ci/package'}, 0, [select]),
+            ([], {'TEST_ACQUIRE_EXIT': '29'}, 29, [acquire]),
+            ([], {'NEAT_RUNNER_SOURCE': '/local', 'TEST_SELECT_EXIT': '37'}, 37, [select]),
+        ):
+            with self.subTest(arguments=arguments, overrides=overrides):
+                result = subprocess.run(['bash', '-c', script, 'selection-test', *arguments],
+                                        cwd=self.core, env={**env, **overrides}, text=True, capture_output=True)
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertEqual(result.stderr.splitlines(), calls)
 
     def test_cmake_always_receives_the_selected_docs_only_mode(self):
         values = {name: 'OFF' for name in (
@@ -504,6 +510,8 @@ class BuildDependenciesTest(unittest.TestCase):
         self.assertEqual(main.count("install_artifacts_into_current_environment_if_requested"), 1)
         self.assertEqual(main.count("deploy_artifacts_to_devkit_if_requested"), 1)
         self.assertNotIn("ensure_neat_internals", main)
+        self.assertLess(main.index("activate_elxr_build_env_if_needed"), main.index("prepare_published_scheduler_sdk"))
+        self.assertLess(main.index("prepare_published_scheduler_sdk"), main.index("build_dependencies.py prepare"))
         self.assertLess(main.index("build_dependencies.py prepare"), main.index("configure_cmake"))
 
 
