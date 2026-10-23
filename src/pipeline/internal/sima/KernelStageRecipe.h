@@ -27,6 +27,9 @@ struct KernelStageRecipe {
       frame_adapter_factory;
   std::vector<std::byte> constant_data;
   std::optional<::simaai::scheduler::client::TensorStagePublication> publication;
+  // Producer-owned wire identity, applied after final arena layout is known.
+  // Empty for ordinary numerical tensors; never inferred from their bytes.
+  std::string output_format;
   std::shared_ptr<const ::simaai::scheduler::client::TensorStageImagePublication> image_publication;
   // Internal tensor regions share the stage arena but are not graph outputs.
   // Cold preparation makes these available to dependent members, then removes

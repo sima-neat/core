@@ -482,7 +482,16 @@ bool push_message_to_core(runtime::RunCore& core, const Sample& msg, bool block)
     throw std::runtime_error(decorate_with_error_code(
         error_codes::kRuntimePull, "Run::push: pipeline has no Input (push not supported)"));
   }
-  validate_public_input(msg, declared_linear_input(core), core.pipeline.stream_opt, "Run::push");
+  // The route already validates each original input. Its output is a different,
+  // possibly heterogeneous carrier, not another instance of the source geometry.
+  // Keep intrinsic span checks and the actual handoff storage limit.
+  if (core.pipeline.input_route_processor) {
+    InputStreamOptions handoff;
+    handoff.max_input_bytes = core.pipeline.stream_opt.max_input_bytes;
+    validate_public_input(msg, InputOptions{}, handoff, "Run::push");
+  } else {
+    validate_public_input(msg, declared_linear_input(core), core.pipeline.stream_opt, "Run::push");
+  }
   const bool timing = run_push_timing_enabled();
   const auto t0 =
       timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};

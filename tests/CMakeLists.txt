@@ -701,7 +701,7 @@ simaneat_add_test(NAME unit_output_metadata_cache_contract_bounds_test
 simaneat_append_ctest_env(unit_output_metadata_cache_contract_bounds_test)
 set_tests_properties(unit_output_metadata_cache_contract_bounds_test PROPERTIES
   LABELS "strict;unit;contracts" TIMEOUT 30)
-foreach(metadata table named-children shared-span nested-negative)
+foreach(metadata table named-children shared-span nested-negative publication)
   set(case_name "unit_output_metadata_cache_contract_${metadata}_test")
   simaneat_add_test(NAME ${case_name} COMMAND unit_output_metadata_cache_contract_test ${metadata})
   simaneat_append_ctest_env(${case_name})
