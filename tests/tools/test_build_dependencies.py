@@ -489,18 +489,25 @@ select_and_normalize_local_artifact_paths
             return folder
         first = scheduler_set('first', {'simaai-scheduler': ['usr/include/old.h', 'usr/include/shared.h'],
                                         'simaai-kernels-firmware': ['usr/share/firmware.bin']})
+        scheduler_set('first/llima', {'sima-lmm-core': ['usr/include/old_llima.h']})
         second = scheduler_set('second', {'simaai-scheduler': ['usr/include/new.h']})
         # The SDK setup re-extracts the platform packages, one of which also ships shared.h.
         sdk_setup = self.core / 'scripts/ci/prepare_scheduler_sdk.sh'
         sdk_setup.parent.mkdir(parents=True)
         sdk_setup.write_text('mkdir -p "$SYSROOT/usr/include"; echo platform > "$SYSROOT/usr/include/shared.h"\n')
         script = 'set -euo pipefail\n' + '\n'.join(shell_function(name) for name in (
-            'modify_sysroot', 'prepare_scheduler_sdk', 'install_scheduler_set_into_sysroot')) + '''
+            'modify_sysroot', 'record_sysroot_files', 'prepare_scheduler_sdk',
+            'install_scheduler_set_into_sysroot')) + '''
 run_privileged() { return 1; }
 for folder in "$@"; do
   rm -rf "$NEAT_BACKEND_DEB_DIR"; mkdir -p "$NEAT_BACKEND_DEB_DIR"; cp "$folder"/*.deb "$NEAT_BACKEND_DEB_DIR"
   prepare_scheduler_sdk
   install_scheduler_set_into_sysroot
+  # The LLiMa step of ensure_neat_llima.
+  if [[ -d "$folder/llima" ]]; then
+    record_sysroot_files "$folder"/llima/*.deb
+    for deb in "$folder"/llima/*.deb; do modify_sysroot dpkg-deb -x "$deb" "$SYSROOT"; done
+  fi
 done
 '''
         sysroot = self.root / 'sysroot'
@@ -509,7 +516,8 @@ done
         env = {key: value for key, value in os.environ.items() if key in ('PATH', 'HOME', 'LANG')}
         env.update(SYSROOT=str(sysroot), ELXR_SDK='ON', DOCS_ONLY='OFF', INSTALL_DEPS_ONLY='OFF',
                    NEAT_BACKEND_DEB_DIR=str(self.core / 'deps/backend/debs'), NEAT_SCHEDULER_DEPS_DIR=str(staging),
-                   NEAT_SYSROOT_SCHEDULER_FILES='var/lib/sima-neat/scheduler-set.files')
+                   NEAT_SYSROOT_DEPENDENCY_FILES='var/lib/sima-neat/dependency.files',
+                   NEAT_SYSROOT_FILE_RECORD=str(staging / 'sysroot.files'))
         result = subprocess.run(['bash', '-c', script, 'sysroot-test', str(first), str(second)],
                                 cwd=self.core, env=env, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -517,6 +525,8 @@ done
         self.assertEqual(sorted(path.name for path in include.iterdir()), ['new.h', 'shared.h'])
         self.assertEqual((include / 'shared.h').read_text(), 'platform\n')
         self.assertFalse((sysroot / 'usr/share/firmware.bin').exists())
+        llima = shell_function('ensure_neat_llima')
+        self.assertLess(llima.index('record_sysroot_files'), llima.index('dpkg-deb -x'))
 
     def test_cmake_always_receives_the_selected_docs_only_mode(self):
         values = {name: 'OFF' for name in (

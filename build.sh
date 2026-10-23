@@ -55,8 +55,9 @@ NEAT_BACKEND_DIR="${REPO_ROOT}/deps/backend"
 NEAT_BACKEND_DEB_DIR="${NEAT_BACKEND_DIR}/debs"
 NEAT_SCHEDULER_DEPS_DIR="${REPO_ROOT}/deps/scheduler"
 NEAT_SCHEDULER_ARTIFACT_DIR="${NEAT_SCHEDULER_ARTIFACT_DIR:-}"
-# Files the last Scheduler set put into the SDK sysroot, relative to SYSROOT.
-NEAT_SYSROOT_SCHEDULER_FILES="var/lib/sima-neat/scheduler-set.files"
+# Files the last build put into the SDK sysroot from Scheduler and LLiMa packages.
+NEAT_SYSROOT_DEPENDENCY_FILES="var/lib/sima-neat/dependency.files"
+NEAT_SYSROOT_FILE_RECORD="${NEAT_SCHEDULER_DEPS_DIR}/sysroot.files"
 NEAT_LLIMA_DEB_DIR="${NEAT_LLIMA_DEB_DIR:-${NEAT_DEPS_DIR}/llima-debs}"
 NEAT_LLIMA_RESOLVED_REF=""
 NEAT_LLIMA_REQUESTED_REF=""
@@ -401,12 +402,22 @@ modify_sysroot() {
   "$@" 2>/dev/null || run_privileged "$@"
 }
 
+record_sysroot_files() {
+  # Record the files before extracting, so a failed extraction is still removed next time.
+  local deb installed="${SYSROOT}/${NEAT_SYSROOT_DEPENDENCY_FILES}"
+  mkdir -p "$(dirname "${NEAT_SYSROOT_FILE_RECORD}")"
+  for deb in "$@"; do
+    dpkg-deb --fsys-tarfile "${deb}" | tar -t | sed -n "/\/\$/!s|^\./|${SYSROOT}/|p" >> "${NEAT_SYSROOT_FILE_RECORD}"
+  done
+  modify_sysroot install -D -m 644 "${NEAT_SYSROOT_FILE_RECORD}" "${installed}"
+}
+
 prepare_scheduler_sdk() {
   if [[ "${DOCS_ONLY}" != "ON" && "${ELXR_SDK}" == "ON" &&
         "${INSTALL_DEPS_ONLY}" != "ON" && -z "${NEAT_RUNNER_PLATFORM_RUNTIME_DEBS:-}" ]]; then
-    local sdk_exports installed="${SYSROOT:?eLxr SDK mode requires SYSROOT}/${NEAT_SYSROOT_SCHEDULER_FILES}"
-    # dpkg-deb -x only adds files, so remove the previous set's files first. The
-    # SDK setup below then restores any platform file that set also shipped.
+    local sdk_exports installed="${SYSROOT:?eLxr SDK mode requires SYSROOT}/${NEAT_SYSROOT_DEPENDENCY_FILES}"
+    # dpkg-deb -x only adds files, so remove the previous build's dependency files
+    # first. The SDK setup below then restores any platform file they shadowed.
     if [[ -f "${installed}" ]]; then
       modify_sysroot xargs -a "${installed}" -d '\n' rm -f --
     fi
@@ -420,17 +431,15 @@ install_scheduler_set_into_sysroot() {
   # The SDK compiler searches the sysroot first, so it must hold the selected set.
   [[ "${ELXR_SDK}" == "ON" ]] || return 0
   : "${SYSROOT:?eLxr SDK mode requires SYSROOT to install Scheduler packages}"
-  local deb file_list="${NEAT_SCHEDULER_DEPS_DIR}/sysroot.files"
+  local deb
   local -a debs=()
-  : > "${file_list}"
   for deb in "${NEAT_BACKEND_DEB_DIR}"/*.deb; do
     # Firmware runs on the device; nothing in the sysroot links against it.
     [[ "$(dpkg-deb -f "${deb}" Package)" != simaai-kernels-firmware ]] || continue
     debs+=("${deb}")
-    dpkg-deb --fsys-tarfile "${deb}" | tar -t | sed -n "/\/\$/!s|^\./|${SYSROOT}/|p" >> "${file_list}"
   done
-  # Record the files before extracting, so a failed extraction is still removed next time.
-  modify_sysroot install -D -m 644 "${file_list}" "${SYSROOT}/${NEAT_SYSROOT_SCHEDULER_FILES}"
+  : > "${NEAT_SYSROOT_FILE_RECORD}"
+  record_sysroot_files "${debs[@]}"
   echo "Installing Scheduler packages into eLxr sysroot: ${SYSROOT}"
   for deb in "${debs[@]}"; do
     echo "  $(basename "${deb}")"
@@ -1319,6 +1328,7 @@ ensure_neat_llima() {
     fi
     echo "Installing LLiMa .deb payloads into eLxr sysroot: ${install_root}"
     ensure_llima_sdk_sysroot_deps
+    record_sysroot_files "${llima_debs[@]}"
     local deb_path
     for deb_path in "${llima_debs[@]}"; do
       echo "  $(basename "${deb_path}")"
