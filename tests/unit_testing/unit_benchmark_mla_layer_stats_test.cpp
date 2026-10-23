@@ -2,6 +2,7 @@
 #define SIMA_NEAT_INTERNAL 1
 #endif
 #include "model/internal/MlaLayerStats.h"
+#include "model/internal/ModelPack.h"
 #include "test_main.h"
 
 #include <glib.h>
@@ -81,6 +82,17 @@ pipeline_internal::sima::MpkContract contract(Fixture& fixture, const std::strin
                     plugin("MLA", 2, "demo_stage1_mla.elf"), plugin("a65", 3, "host.so")};
   return result;
 }
+// Every MLA plugin index, the selection of a route with no terminal policy.
+std::vector<std::size_t> all_mla(const pipeline_internal::sima::MpkContract& model) {
+  std::vector<std::size_t> selected;
+  for (std::size_t i = 0; i < model.plugins.size(); ++i)
+    if (g_ascii_strcasecmp(model.plugins[i].processor.c_str(), "MLA") == 0)
+      selected.push_back(i);
+  return selected;
+}
+std::vector<MlaLayer> collect(const pipeline_internal::sima::MpkContract& model) {
+  return collect_mla_layer_stats(model, all_mla(model));
+}
 std::string emit(const std::string& text) {
   return "cat > \"${6%.yaml}_output.yaml\" <<'YAML'\n" + text + "YAML\n";
 }
@@ -98,7 +110,7 @@ void stages_run_in_execution_order() {
     model.plugins[2].processor = mla;
     model.plugins[3].processor = a65;
     std::filesystem::remove(log);
-    const auto records = collect_mla_layer_stats(model);
+    const auto records = collect(model);
     require(records.size() == 4 && records[0].stage_index == 0 && records[2].stage_index == 2,
             "MLA/A65 execution order must determine stage indices in any processor case");
     require(records[0].name == "MLA_0/noop" && records[0].latency_us == 0 &&
@@ -113,10 +125,70 @@ void stages_run_in_execution_order() {
 void failures_name_the_stage() {
   Fixture fixture;
   fixture.runtime("echo 'runtime diagnostic' >&2\nexit 7\n");
-  fails([&] { collect_mla_layer_stats(contract(fixture)); },
+  fails([&] { collect(contract(fixture)); },
         "MLA stage 0 (demo_stage1_mla.elf): mla-rt failed (exit 7)\nruntime diagnostic");
-  fails([&] { collect_mla_layer_stats(contract(fixture, "0: {name: placeholder}\n")); },
+  fails([&] { collect(contract(fixture, "0: {name: placeholder}\n")); },
         "MLA stage 0 (demo_stage1_mla.elf): input stats YAML has no layers mla-rt can time");
+}
+
+// The selection holds MPK plugin indices; reported stage indices still count the full model.
+void selected_route_keeps_stage_indices() {
+  Fixture fixture;
+  const auto log = fixture.root / "commands";
+  fixture.runtime("echo \"$(basename \"$7\")\" >> '" + log.string() + "'\n" + emit(output));
+  auto model = contract(fixture);
+  const std::vector<std::size_t> later{0};
+  // An excluded stage's files are never opened.
+  std::filesystem::remove(fixture.root / "etc/demo_stage1_mla_stats.yaml");
+  const auto records = collect_mla_layer_stats(model, later);
+  require(records.size() == 2 && records[0].stage_index == 2 &&
+              read(log) == "demo_stage2_mla.elf\n",
+          "selected later MLA keeps its full execution-order index");
+  for (const auto& invalid : std::vector<std::vector<std::size_t>>{{0, 0}, {1}, {99}})
+    fails([&] { collect_mla_layer_stats(model, invalid); }, "stage identity");
+  fails([&] { collect_mla_layer_stats(model, {}); }, "selected inference route has no MLA stages");
+}
+
+void terminal_route_preserves_mpk_identity() {
+  std::vector<ExecutionStage> stages(4);
+  stages[0].kind = ExecutionStageKind::Mla;
+  stages[0].mpk_plugin_index = 8;
+  stages[0].stage_name = "first";
+  stages[0].processor = "MLA";
+  stages[1].kind = ExecutionStageKind::Unknown;
+  stages[1].stage_name = "physical-cvu-cohort";
+  stages[1].processor = "A65";
+  stages[1].plugin_id = "processcvu";
+  stages[2].kind = ExecutionStageKind::Mla;
+  stages[2].mpk_plugin_index = 2;
+  stages[2].stage_name = "last";
+  stages[2].processor = "MLA";
+  stages[3].stage_name = "tail";
+  const std::vector<std::size_t> first{8}, both{8, 2};
+  require(select_mla_profile_plugins(stages, {}) == both, "default route includes both MLA stages");
+  for (int selector = 0; selector < 4; ++selector) {
+    InferenceTerminalPolicy policy;
+    if (selector == 0)
+      policy.last_stage_index = 1;
+    if (selector == 1)
+      policy.last_stage_name = "physical-cvu-cohort";
+    if (selector == 2)
+      policy.last_plugin_id = "PROCESSCVU";
+    if (selector == 3)
+      policy.last_processor = "a65";
+    require(select_mla_profile_plugins(stages, policy) == first,
+            "same physical terminal selector excludes later MLA and preserves MPK index");
+  }
+  InferenceTerminalPolicy policy;
+  policy.mla_only = true;
+  require(select_mla_profile_plugins(stages, policy) == both, "mla_only ends at last MLA");
+  policy.last_stage_index = 9;
+  fails([&] { select_mla_profile_plugins(stages, policy); }, "index out of range");
+  stages[2].mpk_plugin_index.reset();
+  fails([&] { select_mla_profile_plugins(stages, {}); }, "exact MPK stage identity");
+  policy.last_stage_index = 0;
+  require(select_mla_profile_plugins(stages, policy) == first,
+          "unselected later stage does not require a profiling identity");
 }
 
 void model_problems_are_reported() {
@@ -126,17 +198,19 @@ void model_problems_are_reported() {
   fixture.runtime("touch '" + marker.string() + "'\n" + emit(output));
   // Only the second stage is missing files, so the first must not run either.
   std::filesystem::remove(fixture.root / "etc/demo_stage2_mla_stats.yaml");
-  fails([&] { collect_mla_layer_stats(model); }, "missing matching stats YAML");
+  fails([&] { collect(model); }, "missing matching stats YAML");
   std::filesystem::remove(fixture.root / "share/demo_stage2_mla.elf");
-  fails([&] { collect_mla_layer_stats(model); }, "missing MLA ELF");
+  fails([&] { collect(model); }, "missing MLA ELF");
   require(!std::filesystem::exists(marker), "every stage must be checked before mla-rt runs");
   model.plugins = {plugin("A65", 1, "host.so")};
-  fails([&] { collect_mla_layer_stats(model); }, "no MLA stages");
+  fails([&] { collect(model); }, "no MLA stages");
 }
 } // namespace
 
 RUN_TEST("unit_benchmark_mla_layer_stats_test", ([] {
            stages_run_in_execution_order();
            failures_name_the_stage();
+           selected_route_keeps_stage_indices();
+           terminal_route_preserves_mpk_identity();
            model_problems_are_reported();
          }));

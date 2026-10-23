@@ -584,7 +584,8 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
       std::move(telemetry));
   if (options.include_mla_layer_stats) {
     report.mla_layer_stats.status = collection_status("MLA layer stats", [&] {
-      report.mla_layer_stats.layers = collect_mla_layer_stats(require_mpk_contract(model));
+      report.mla_layer_stats.layers = collect_mla_layer_stats(
+          require_mpk_contract(model), ModelAccess::pack(model).mla_profile_plugin_indices());
     });
   }
   if (options.include_mla_stage_stats) {

@@ -3995,6 +3995,28 @@ ExecutionPlan ModelPack::execution_plan() const {
                                               *dmabuf_frame_arena_plan_, *mpk_contract_);
 }
 
+std::vector<std::size_t> select_mla_profile_plugins(const std::vector<ExecutionStage>& stages,
+                                                    const InferenceTerminalPolicy& policy) {
+  const auto count = has_terminal_policy(policy)
+                         ? resolve_terminal_index_or_throw(stages, policy) + 1
+                         : stages.size();
+  std::vector<std::size_t> selected;
+  for (std::size_t index = 0; index < count; ++index) {
+    const auto& stage = stages[index];
+    if (stage.kind != ExecutionStageKind::Mla)
+      continue;
+    if (!stage.mpk_plugin_index)
+      throw std::runtime_error("MLA profiling requires an exact MPK stage identity: " +
+                               stage.stage_name);
+    selected.push_back(*stage.mpk_plugin_index);
+  }
+  return selected;
+}
+
+std::vector<std::size_t> ModelPack::mla_profile_plugin_indices() const {
+  return select_mla_profile_plugins(execution_plan().infer, options_.terminal_policy);
+}
+
 std::string ModelPack::infer_output_name() const {
   if (internal::has_terminal_policy(options_.terminal_policy)) {
     // Explicit selectors address executable stages, including physical CVU

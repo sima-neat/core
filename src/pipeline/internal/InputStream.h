@@ -93,7 +93,6 @@ struct InputStreamOptions {
   // for other storage. Explicit Owned disables this intent.
   bool preserve_dmabuf_output = false;
   bool copy_input = false;
-  bool prepare_output_cpu_visible = false;
   int holder_loan_credits = 0;
   bool holder_loan_credits_auto = false;
   int holder_loan_sample_window = 1;

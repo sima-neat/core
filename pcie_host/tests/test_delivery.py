@@ -53,8 +53,9 @@ class PublicationInventory(unittest.TestCase):
                     delivery.verify_publication_inventory(directory, {**selection, 'architecture': 'other'}, names)
 
     def test_publisher_authentication_shared_inventory_and_variant_checks(self):
-        for mutation in ('complete', 'identity', 'hash', 'duplicate', 'missing', 'extra',
-                         'scheduler-identity', 'producer', 'variant'):
+        for mutation in ('complete', 'fallback', 'explicit-provider-branch', 'identity',
+                         'hash', 'duplicate', 'missing', 'extra', 'scheduler-distro',
+                         'scheduler-architecture', 'producer', 'variant'):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary); source = root / 'source'; source.mkdir()
                 selection = {'architecture': 'amd64', 'distro': 'ubuntu22', 'branch': 'feature/cpu',
@@ -79,7 +80,10 @@ class PublicationInventory(unittest.TestCase):
                               'resources': [resource], 'resources-checksum': {resource: hashes.get(resource)},
                               'installation': {'script': ':'}}
                     (source / (name + '.pending')).write_text(json.dumps(subset))
-                if mutation == 'scheduler-identity': selection['branch'] = 'other'
+                if mutation == 'fallback': selection['branch'] = 'develop'
+                if mutation == 'explicit-provider-branch': selection['branch'] = 'release/runtime'
+                if mutation == 'scheduler-distro': selection['distro'] = 'ubuntu24'
+                if mutation == 'scheduler-architecture': selection['architecture'] = 'arm64'
                 output = root / 'download'; events = []
                 def download(argv, **kwargs):
                     self.assertEqual(argv[:3], ['aws', 's3', 'cp'])
@@ -100,14 +104,14 @@ class PublicationInventory(unittest.TestCase):
                      patch.object(publication, 'verify', side_effect=verify), \
                      patch.object(publication, 'verify_publication_inventory', side_effect=inventory), \
                      patch('sys.stdout', new_callable=io.StringIO) as report:
-                    if mutation == 'complete':
+                    if mutation in ('complete', 'fallback', 'explicit-provider-branch'):
                         publication.main()
                         self.assertEqual(json.loads(report.getvalue())['resources'], len(names))
                     else:
                         with self.assertRaises(ValueError): publication.main()
                 if mutation in ('identity', 'hash', 'duplicate'):
                     self.assertEqual(events, [], 'authentication must precede both checkers')
-                elif mutation in ('producer', 'scheduler-identity'):
+                elif mutation in ('producer', 'scheduler-distro', 'scheduler-architecture'):
                     self.assertEqual(events, ['producer'])
                 else:
                     self.assertEqual(events, ['producer', 'inventory'])

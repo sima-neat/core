@@ -5,6 +5,7 @@
 
 #include <glib.h>
 
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -23,10 +24,19 @@ struct MlaLayerStatsStage {
   std::filesystem::path stats_yaml;
 };
 
-// Stage indices count MLA and A65 plugins in execution order, as MLA stage stats does.
-// Every stage's files are checked before mla-rt runs.
+// Stage indices count MLA and A65 plugins in execution order, as MLA stage stats does, so a
+// selected stage keeps its full-model index. Only selected stages' files are opened, and they
+// are all checked before mla-rt runs.
 std::vector<MlaLayerStatsStage>
-resolve_mla_layer_stats_stages(const pipeline_internal::sima::MpkContract& contract) {
+resolve_mla_layer_stats_stages(const pipeline_internal::sima::MpkContract& contract,
+                               std::span<const std::size_t> selected_plugins) {
+  std::set<std::size_t> selected(selected_plugins.begin(), selected_plugins.end());
+  if (selected.size() != selected_plugins.size())
+    layer_stats_error("duplicate selected MLA stage identity");
+  for (const auto index : selected)
+    if (index >= contract.plugins.size() ||
+        g_ascii_strcasecmp(contract.plugins[index].processor.c_str(), "MLA") != 0)
+      layer_stats_error("invalid selected MLA stage identity");
   std::vector<MlaLayerStatsStage> stages;
   std::size_t stage_index = 0;
   for (const auto plugin_index : pipeline_internal::sima::plugins_in_execution_order(contract)) {
@@ -35,7 +45,7 @@ resolve_mla_layer_stats_stages(const pipeline_internal::sima::MpkContract& contr
     if (!is_mla && g_ascii_strcasecmp(plugin.processor.c_str(), "A65") != 0)
       continue;
     const auto current_index = stage_index++;
-    if (!is_mla)
+    if (!is_mla || !selected.erase(plugin_index))
       continue;
     const auto executable = pipeline_internal::sima::static_contract::resolve_mla_executable(
         contract.mpk_json_path, plugin.executable);
@@ -47,17 +57,20 @@ resolve_mla_layer_stats_stages(const pipeline_internal::sima::MpkContract& contr
       layer_stats_error("missing matching stats YAML: " + stats_yaml.string());
     stages.push_back({current_index, executable, stats_yaml});
   }
+  if (!selected.empty())
+    layer_stats_error("selected MLA stage is absent from execution order");
   if (stages.empty())
-    layer_stats_error("model has no MLA stages");
+    layer_stats_error("selected inference route has no MLA stages");
   return stages;
 }
 
 } // namespace
 
 std::vector<MlaLayer>
-internal::collect_mla_layer_stats(const pipeline_internal::sima::MpkContract& contract) {
+internal::collect_mla_layer_stats(const pipeline_internal::sima::MpkContract& contract,
+                                  std::span<const std::size_t> selected_plugins) {
   std::vector<MlaLayer> result;
-  for (const auto& stage : resolve_mla_layer_stats_stages(contract)) {
+  for (const auto& stage : resolve_mla_layer_stats_stages(contract, selected_plugins)) {
     auto layers =
         simaai::scheduler::client::measure_mla_layer_stats(stage.executable, stage.stats_yaml);
     if (const auto* error = std::get_if<simaai::scheduler::client::Error>(&layers))

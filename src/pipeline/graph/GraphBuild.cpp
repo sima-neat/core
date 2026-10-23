@@ -2053,8 +2053,9 @@ std::string session_build_apply_fast_path_options_to_fragment(std::string fragme
       retired.ring_depth != 0 || retired.profile || !retired.dequant_flags.empty()) {
     throw_session_error_simple(
         error_codes::kPipelineShape,
-        "PreparedRunnerOptions is retired; use the default Runtime kernel runner and "
-        "AdvancedExecutionOptions instead of legacy mode/ring-depth/dequant tuning");
+        "PreparedRunnerOptions is retired; leave its fields at defaults. Use "
+        "processcvu.async and GraphOptions::async_queue_depth for execution concurrency; legacy "
+        "dequant-flags and profiling have no equivalent option");
   }
   const bool processcvu_async = sess_opt->processcvu.async &&
                                 !env_explicit_false_session_build_local("SIMA_PROCESSCVU_ASYNC");
@@ -2071,8 +2072,9 @@ std::string session_build_apply_fast_path_options_to_fragment(std::string fragme
                                                  "num-buffers", route_depth);
   }
   if (!sess_opt->processmla.defer_output_invalidate) {
-    throw std::invalid_argument("processmla.defer_output_invalidate=false is retired; CPU "
-                                "visibility is managed by Scheduler access tickets");
+    throw std::invalid_argument("processmla.defer_output_invalidate=false is retired (including "
+                                "advanced_execution.defer_output_cache_sync=false). Leave it true "
+                                "and use Tensor/GstMemory mapping for CPU access");
   }
   return fragment;
 }

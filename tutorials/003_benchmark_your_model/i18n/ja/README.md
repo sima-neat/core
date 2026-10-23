@@ -76,6 +76,8 @@ report = model.benchmark(options)
 
 `mla-rt` が見つからない、失敗する、またはタイムアウトした場合でも、`benchmark()` は主要な測定値を返し、リストを空のままにして、`report.mla_layer_stats.status` または `report.mla_stage_stats.status` に理由を設定します。それ以外の場合、各ステータスは `"not requested"` または `"ok"` です。`mla-rt` の実行がタイムアウトまたはクラッシュした後は、MLA に未完了の処理が残っている可能性があるため、同じプロセスでのそれ以降のプロファイリングはその理由とともにスキップされます。MLA の回復を確認するまで、DevKit をアイドル状態に保ってください。
 
+MLA レイヤー統計は選択した終端ポリシーに従い、選択した推論ルート内の MLA ステージだけを測定します。各ステージの `stage_index` はモデル全体での番号のままです。
+
 ### レポートの保存 {#step-save-report}
 
 `report.save(path)` を呼び出すと、要求した場合は MLA レイヤー統計とステージ統計も含め、完全なレポートを YAML または JSON で保存できます。

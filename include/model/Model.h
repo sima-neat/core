@@ -168,8 +168,9 @@ struct BenchmarkOptions {
   int min_duration_ms = 10000;
   /// Advanced: measure each compiled MLA layer's hardware latency with mla-rt after the
   /// benchmark. Default off. Requires mla-rt with the MIP-to-kernel handoff fix in PATH and an
-  /// idle devkit with no other active MLA workloads. A failure leaves the measurements intact and
-  /// names the reason in `BenchmarkReport::mla_layer_stats.status`.
+  /// idle devkit with no other active MLA workloads. Only MLA stages in the selected inference
+  /// route are measured. A failure leaves the measurements intact and names the reason in
+  /// `BenchmarkReport::mla_layer_stats.status`.
   bool include_mla_layer_stats = false;
   /// Advanced: measure each MLA stage's uninterrupted hardware latency with mla-rt after the
   /// benchmark. Default off. Requires mla-rt in PATH and an idle devkit with no other active

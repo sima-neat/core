@@ -76,6 +76,8 @@ report = model.benchmark(options)
 
 `mla-rt`가 없거나 실패하거나 시간 초과되어도 `benchmark()`는 주요 측정값을 반환하고, 목록을 비워 두며, `report.mla_layer_stats.status` 또는 `report.mla_stage_stats.status`에 그 이유를 설정합니다. 그 밖의 경우 각 상태는 `"not requested"` 또는 `"ok"`입니다. `mla-rt` 실행이 시간 초과되거나 비정상 종료된 후에는 MLA에 끝나지 않은 작업이 남아 있을 수 있으므로, 같은 프로세스의 이후 프로파일링은 그 이유와 함께 건너뜁니다. MLA 복구가 확인될 때까지 DevKit을 유휴 상태로 두십시오.
 
+MLA 레이어 통계는 선택한 종료 정책을 따르며, 선택한 추론 경로의 MLA 스테이지만 측정합니다. 각 스테이지의 `stage_index`는 전체 모델 기준 번호를 유지합니다.
+
 ### 보고서 저장 {#step-save-report}
 
 `report.save(path)`를 호출하면 요청한 MLA 레이어 및 스테이지 통계를 포함한 전체 보고서를 YAML 또는 JSON으로 저장합니다.

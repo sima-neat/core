@@ -477,9 +477,10 @@ sample and reads no power monitor chips over I2C.
 MLA profiling is opt-in through two `BenchmarkOptions` fields that default to false:
 `include_mla_layer_stats` and `include_mla_stage_stats`. After the latency and throughput runners
 close, Core measures the extracted model's MLA executables through Scheduler's client, one
-profiling pass after the other. Runner runs `mla-rt` in a separate process for each executable.
-MLA layer stats also uses the compiler stats YAML; MLA stage stats runs each MLA executable 200
-times without interruption and reads the mean `tile.lat` from the `mla-rt` stats file. Runner
+profiling pass after the other. MLA layer stats covers only the MLA stages in the resolved
+inference route, including its terminal policy. Runner runs `mla-rt` in a separate process for
+each executable. MLA layer stats also uses the compiler stats YAML; MLA stage stats runs each MLA
+executable 200 times without interruption and reads the mean `tile.lat` from the `mla-rt` stats file. Runner
 validates the inputs and outputs and removes temporary files; it stops `mla-rt` if one run takes
 longer than 120 s. MLA-RT owns hardware profiling and the handoff back to
 kernel execution. Profiling requires no overlapping MLA workloads. The benchmark gate serializes
@@ -503,6 +504,8 @@ latencies do not sum to the stage or headline latency.
 names and units: `.json` selects JSON; `.yaml` and other endings select YAML. It includes
 telemetry, both statuses, and empty MLA lists when profiling is disabled. It creates missing
 parent directories and atomically replaces an existing destination.
+
+Retired PreparedRunner options must remain at their defaults. Use `processcvu.async` and `GraphOptions::async_queue_depth` for concurrency; the legacy dequantization and profiling flags have no direct replacement. Leave `advanced_execution.defer_output_cache_sync=true` and use Tensor/GstMemory CPU mapping when accessing outputs. `RunOptions::advanced.prepare_output_cpu_visible` remains a compatibility no-op; it does not request eager cache synchronization.
 
 ### Compiled model execution contract
 

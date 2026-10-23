@@ -111,6 +111,10 @@ struct ExecutionPlan {
   std::vector<ExecutionStage> post;
 };
 
+// Select the same terminal route as inference, retaining exact MPK identities.
+std::vector<std::size_t> select_mla_profile_plugins(const std::vector<ExecutionStage>& stages,
+                                                    const InferenceTerminalPolicy& policy);
+
 struct ModelFragment {
   std::string gst;
   std::vector<std::string> elements;
@@ -197,6 +201,8 @@ public:
   ExecutionPlan semantic_execution_plan() const;
   // Executable projection; always backed by the admitted physical and arena plans.
   ExecutionPlan execution_plan() const;
+  // Exact MPK identities in the resolved inference prefix, for offline diagnostics.
+  std::vector<std::size_t> mla_profile_plugin_indices() const;
   // Default naming is descriptive; explicit terminal selectors admit the executable plan.
   std::string infer_output_name() const;
   std::vector<ModelFragment::StageFacts> stage_facts_for_model_stage(ModelStage stage) const;

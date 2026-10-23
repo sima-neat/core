@@ -76,6 +76,8 @@ report = model.benchmark(options)
 
 若找不到 `mla-rt`、其執行失敗或逾時，`benchmark()` 仍會傳回主要測量值，清單保持為空，並將原因寫入 `report.mla_layer_stats.status` 或 `report.mla_stage_stats.status`。其他情況下，各狀態為 `"not requested"` 或 `"ok"`。`mla-rt` 執行逾時或當機後，MLA 可能仍有未完成的工作，因此同一行程中之後的剖析會略過並記錄此原因。在確認 MLA 已復原之前，請讓 DevKit 保持閒置。
 
+MLA 層統計會遵循所選的終端政策：只測量所選推論路徑中的 MLA 階段，且每個階段保留其在完整模型中的 `stage_index`。
+
 ### 儲存報告 {#step-save-report}
 
 呼叫 `report.save(path)` 即可將完整報告寫入 YAML 或 JSON，包含已要求的 MLA 層與階段統計資料：

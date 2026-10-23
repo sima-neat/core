@@ -94,6 +94,9 @@ to the reason. Each status is `"not requested"` or `"ok"` otherwise. After a tim
 `mla-rt` run, MLA may still hold unfinished work, so later profiling in the same process is skipped
 with that reason. Keep the devkit idle until MLA recovery is verified.
 
+MLA layer stats follows the selected terminal policy: it measures only the MLA stages in the selected
+inference route, and each keeps its `stage_index` in the full model.
+
 ### Save the report {#step-save-report}
 
 Call `report.save(path)` to write the complete report as YAML or JSON, including MLA layer and
