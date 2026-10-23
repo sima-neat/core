@@ -35,6 +35,25 @@ rt::Result<std::size_t> kernel_runner_output_pool_capacity(std::size_t execution
   return execution_capacity + retained_sample_window + 1;
 }
 
+rt::Result<KernelRunnerBudget>
+kernel_runner_stage_budget(std::optional<std::size_t> authored_capacity, std::size_t graph_capacity,
+                           std::size_t graph_output_pool_capacity) {
+  auto minimum = kernel_runner_output_pool_capacity(graph_capacity, 0);
+  if (const auto* failure = std::get_if<rt::Error>(&minimum))
+    return *failure;
+  const auto graph_pool =
+      graph_output_pool_capacity ? graph_output_pool_capacity : std::get<std::size_t>(minimum);
+  if (graph_pool < std::get<std::size_t>(minimum) || graph_pool > 4097)
+    return invalid("kernel-runner.output-pool", "invalid graph output carrier budget");
+  const auto execution = authored_capacity.value_or(graph_capacity);
+  // Validation above makes this subtraction safe. The surplus may include a
+  // downstream pool floor, so preserve it conservatively rather than shrink it.
+  auto expanded = kernel_runner_output_pool_capacity(execution, graph_pool - graph_capacity - 1);
+  if (const auto* failure = std::get_if<rt::Error>(&expanded))
+    return *failure;
+  return KernelRunnerBudget{execution, std::max(graph_pool, std::get<std::size_t>(expanded))};
+}
+
 rt::Status wire_kernel_stage_factories(const KernelStageRecipe& recipe,
                                        gs::TensorStageRequest& request) {
   if (request.frame_adapter_factory || request.members.size() != recipe.members.size())

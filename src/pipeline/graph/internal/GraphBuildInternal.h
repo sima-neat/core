@@ -112,6 +112,7 @@ std::string session_build_clamp_detess_num_buffers(std::string pipeline, int num
 // execution depth at a downstream ReuseInput stage. Untyped routes keep legacy clamps.
 void session_build_initialize_kernel_runner_budget(BuildResult* build, const GraphOptions* options);
 std::string session_build_clamp_sync_build_result(BuildResult& build, int num_buffers_override);
+void session_build_clamp_sync_kernel_runner_capacity(BuildResult& build);
 std::uint64_t session_build_estimate_frame_bytes_limit(const InputOptions& opt,
                                                        const SampleSpec& spec);
 std::vector<std::shared_ptr<Node>>

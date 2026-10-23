@@ -460,6 +460,8 @@ struct KernelStageRecipe;
 
 struct StageStaticSpec {
   std::shared_ptr<const KernelStageRecipe> native_kernel;
+  // Private per-build policy; never serialized into the plugin manifest ABI.
+  std::optional<std::size_t> native_execution_capacity;
   // Checked semantic output authority, available before recipe preparation.
   // Plane offsets remain relative to their physical output; preparation makes
   // a separate arena-rebased descriptor without mutating this metadata.

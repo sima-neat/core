@@ -851,6 +851,9 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
     }
   }
   session_build_finalize_public_zero_copy_holder_loan_credits(stream_opt);
+  if (mode == RunMode::Sync) {
+    session_build_clamp_sync_kernel_runner_capacity(br);
+  }
   session_build_tune_internal_zero_copy_holder_window(stream_opt, internal_edge_queue,
                                                       !public_output_contract);
   session_build_reserve_kernel_runner_outputs(br, stream_opt);
@@ -3456,6 +3459,9 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
     }
   }
   session_build_finalize_public_zero_copy_holder_loan_credits(stream_opt);
+  if (mode == RunMode::Sync) {
+    session_build_clamp_sync_kernel_runner_capacity(br);
+  }
   session_build_tune_internal_zero_copy_holder_window(stream_opt, internal_edge_queue,
                                                       !public_output_contract);
   session_build_reserve_kernel_runner_outputs(br, stream_opt);

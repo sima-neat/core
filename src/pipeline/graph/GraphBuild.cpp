@@ -2911,10 +2911,23 @@ std::string clamp_detess_num_buffers(std::string pipeline, int num_buffers_overr
   return clamp_detess_num_buffers_impl(std::move(pipeline), num_buffers_override, {});
 }
 
+void session_build_clamp_sync_kernel_runner_capacity(BuildResult& build) {
+  build.kernel_runner_capacity = 1U;
+  if (build.rendered_manifest) {
+    for (auto& stage : build.rendered_manifest->stages) {
+      if (stage.native_execution_capacity) {
+        stage.native_execution_capacity = 1U;
+      }
+    }
+  }
+}
+
 std::string session_build_clamp_sync_build_result(BuildResult& build, int num_buffers_override) {
   namespace sima = pipeline_internal::sima;
   using sima::FrameArenaRole;
   using sima::static_contract::ArenaAllocationProvenance;
+  // Clamp even when a non-native terminal takes the legacy retention path.
+  session_build_clamp_sync_kernel_runner_capacity(build);
   const auto legacy = [&] {
     return clamp_detess_num_buffers(
         clamp_sync_pipeline(build.pipeline_string, num_buffers_override), num_buffers_override);

@@ -6,6 +6,7 @@
 #include <simaai/scheduler/client/stage.h>
 
 #include <memory>
+#include <optional>
 #include <span>
 #include <string_view>
 
@@ -19,6 +20,17 @@ struct StageStaticSpec;
 [[nodiscard]] ::simaai::scheduler::client::Result<std::size_t>
 kernel_runner_output_pool_capacity(std::size_t execution_capacity,
                                    std::size_t retained_sample_window);
+
+struct KernelRunnerBudget {
+  std::size_t execution_capacity;
+  std::size_t output_pool_capacity;
+};
+
+// Preserve graph retention/spare capacity when a node authors a deeper window.
+// A shallower authored window never reduces an independent output-pool floor.
+[[nodiscard]] ::simaai::scheduler::client::Result<KernelRunnerBudget>
+kernel_runner_stage_budget(std::optional<std::size_t> authored_capacity, std::size_t graph_capacity,
+                           std::size_t graph_output_pool_capacity);
 
 // Graph-owned EV service capacity: a single serial stage keeps one endpoint;
 // overlapping frames or stages use two. Runtime still validates each recipe.
