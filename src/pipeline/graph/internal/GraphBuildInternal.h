@@ -88,6 +88,8 @@ session_build_apply_run_preset_to_pipeline(std::string pipeline, const RunOption
 std::string session_build_propagate_terminal_consumer_lane_window(std::string pipeline);
 InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunMode mode);
 void session_build_finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt);
+void session_build_reserve_kernel_runner_outputs(BuildResult& build,
+                                                 const InputStreamOptions& stream_opt);
 void session_build_maybe_enable_rtsp_appsink_drop(InputStreamOptions& stream_opt,
                                                   const std::vector<std::shared_ptr<Node>>& nodes);
 void session_build_maybe_enable_rtsp_appsink_drop(

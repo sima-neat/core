@@ -1865,16 +1865,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   // remain retained by the application after its execution slot is reusable.
   br.kernel_runner_capacity =
       sync_mode ? 1U : static_cast<std::size_t>(std::clamp(sess_opt.async_queue_depth, 1, 64));
-  const auto retained_samples =
-      stream_opt.copy_output && !stream_opt.preserve_dmabuf_output
-          ? 0U
-          : static_cast<std::size_t>(std::max(1, stream_opt.holder_loan_sample_window));
-  auto output_budget = pipeline_internal::sima::kernel_runner_output_pool_capacity(
-      br.kernel_runner_capacity, retained_samples);
-  if (const auto* error = std::get_if<simaai::scheduler::client::Error>(&output_budget))
-    throw std::runtime_error("Graph::build: " + error->field + ": " + error->message);
-  br.kernel_runner_output_pool_capacity =
-      std::max(br.kernel_runner_output_pool_capacity, std::get<std::size_t>(output_budget));
+  session_build_reserve_kernel_runner_outputs(br, stream_opt);
   const bool legacy_observer = env_bool("SIMA_GST_FLOW_DEBUG", false) ||
                                env_bool("SIMA_GST_BOUNDARY_PROBES", false) ||
                                env_bool("SIMA_GST_DETESS_INPUT_DEBUG", false) ||
@@ -2928,6 +2919,22 @@ InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunM
 
 void session_build_finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt) {
   finalize_public_zero_copy_holder_loan_credits(stream_opt);
+}
+
+void session_build_reserve_kernel_runner_outputs(BuildResult& build,
+                                                 const InputStreamOptions& stream_opt) {
+  // Source-driven graphs also retain arenas downstream, even without an appsink.
+  // Reserve the same bounded frame window without increasing execution slots.
+  const auto retained_samples =
+      stream_opt.copy_output && !stream_opt.preserve_dmabuf_output
+          ? 0U
+          : static_cast<std::size_t>(std::max(1, stream_opt.holder_loan_sample_window));
+  auto output_budget = pipeline_internal::sima::kernel_runner_output_pool_capacity(
+      build.kernel_runner_capacity, retained_samples);
+  if (const auto* error = std::get_if<simaai::scheduler::client::Error>(&output_budget))
+    throw std::runtime_error("Graph::build: " + error->field + ": " + error->message);
+  build.kernel_runner_output_pool_capacity =
+      std::max(build.kernel_runner_output_pool_capacity, std::get<std::size_t>(output_budget));
 }
 
 void session_build_maybe_enable_rtsp_appsink_drop(InputStreamOptions& stream_opt,

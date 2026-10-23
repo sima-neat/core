@@ -851,6 +851,7 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
     }
   }
   session_build_finalize_public_zero_copy_holder_loan_credits(stream_opt);
+  session_build_reserve_kernel_runner_outputs(br, stream_opt);
   br.pipeline_string = session_build_apply_run_preset_to_pipeline(
       std::move(br.pipeline_string), merged_opt, br.framework_name_origins);
   if (br.diag) {
@@ -3450,6 +3451,7 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
     }
   }
   session_build_finalize_public_zero_copy_holder_loan_credits(stream_opt);
+  session_build_reserve_kernel_runner_outputs(br, stream_opt);
   br.pipeline_string = session_build_apply_run_preset_to_pipeline(
       std::move(br.pipeline_string), merged_opt, br.framework_name_origins);
   if (br.diag) {

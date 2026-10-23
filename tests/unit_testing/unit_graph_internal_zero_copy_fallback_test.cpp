@@ -411,6 +411,33 @@ void require_native_retention_pool_policy() {
           "missing typed ownership must not invent a Runtime retention budget");
 }
 
+void require_shared_arena_budget() {
+  using namespace simaai::neat;
+  ScopedEnv output_default("SIMA_OUTPUT_MEMORY_DEFAULT", nullptr);
+  for (const int depth : {1, 4, 8}) {
+    RunOptions options;
+    options.queue_depth = depth;
+    BuildResult build;
+    session_build_initialize_kernel_runner_budget(&build, nullptr);
+    auto stream = session_build_make_stream_options(options, RunMode::Async);
+    session_build_reserve_kernel_runner_outputs(build, stream);
+    require(build.kernel_runner_capacity == 1,
+            "retained arenas must not increase execution concurrency");
+    require(build.kernel_runner_output_pool_capacity == static_cast<std::size_t>(depth + 4),
+            "source and input graphs must reserve the same retained arena window");
+    build.kernel_runner_output_pool_capacity += 2;
+    session_build_reserve_kernel_runner_outputs(build, stream);
+    require(build.kernel_runner_output_pool_capacity == static_cast<std::size_t>(depth + 6),
+            "retention budgeting must preserve a larger explicit pool");
+    build.kernel_runner_output_pool_capacity = 2;
+    options.output_memory = OutputMemory::Owned;
+    stream = session_build_make_stream_options(options, RunMode::Async);
+    session_build_reserve_kernel_runner_outputs(build, stream);
+    require(build.kernel_runner_output_pool_capacity == 2,
+            "owned output must not reserve zero-copy retention slots");
+  }
+}
+
 void require_output_policy_matrix() {
   using namespace simaai::neat;
   ScopedEnv detess("SIMA_DETESS_ZERO_COPY", nullptr);
@@ -693,6 +720,7 @@ simaai::neat::Sample make_device_gst_sample_with_external_ref(GstSample** extern
 RUN_TEST(
     "unit_graph_internal_zero_copy_fallback_test", ([] {
       require_native_retention_pool_policy();
+      require_shared_arena_budget();
       require_output_policy_matrix();
       require_dmabuf_loans_and_pressure_preserve_storage();
       require_device_preferred_input_ownership();

@@ -1487,8 +1487,7 @@ jobs:
 
   test-pciehost-hardware:
     name: Test PCIe Host Hardware
-    # Disabled until a PCIe runner is available; remove false && to re-enable.
-    if: ${{ false && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
+    if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
     needs:
       - detect-changes
       - resolve-vulcan-config
