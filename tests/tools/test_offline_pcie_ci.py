@@ -239,3 +239,12 @@ def test_manual_publication_is_opt_in_and_reuses_the_validated_matrix():
     assert worker['jobs']['publish']['if'] == '${{ !inputs.validation_only }}'
     matrix = worker['jobs']['build']['strategy']['matrix']['include']
     assert {(r['distro'], r['arch']) for r in matrix} == set(ci.TUPLES)
+
+
+
+def test_cloudfront_invalidation_encodes_s3_branch_keys(tmp_path):
+    args = SimpleNamespace(work=tmp_path/'publish', ref='codex/offline', sha=SHA,
+                           bucket='bucket', kms='', distribution='distribution')
+    with patch.object(ci, 'source_metadata', return_value=({}, {}, INPUTS)),          patch.object(ci, 'existing', return_value=tmp_path/'existing.json'),          patch.object(ci, 'run') as run:
+        ci.publish(args)
+        assert '/core/codex%252Foffline/aaaaaaaaaaaa/pciehost/ubuntu24/amd64/metadata-offline.json' in run.call_args.args

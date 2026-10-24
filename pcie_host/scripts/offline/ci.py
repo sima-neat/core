@@ -209,7 +209,7 @@ def publish(args):
         put(args.bucket, base+'/'+assemble.METADATA_NAME, path, args.kms, immutable=True)
     if args.distribution:
         run('aws', 'cloudfront', 'create-invalidation', '--distribution-id', args.distribution,
-            '--paths', *['/'+base+'/'+assemble.METADATA_NAME for base, _ in ready])
+            '--paths', *['/'+quote(base, safe='/')+'/'+assemble.METADATA_NAME for base, _ in ready])
     print('Published all four offline variants.')
 
 
