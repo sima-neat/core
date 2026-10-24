@@ -145,7 +145,8 @@ def test_remote_package_commands_are_locked_and_network_isolated(monkeypatch, tm
     commands = []
     ops = installer.Operations(tmp_path, 'sima', tmp_path/'key', tmp_path/'known')
     ops.staged['0000:01:00.0'] = '/var/tmp/neat-offline-abcdefgh'
-    monkeypatch.setattr(ops, 'ssh', lambda card, command: commands.append(command))
+    ops.card_passwords['0000:01:00.0'] = None
+    monkeypatch.setattr(ops, 'ssh', lambda card, command, **kwargs: commands.append(command))
     ops.card({'bdf': '0000:01:00.0'}, 'install')
     assert commands[0].startswith('sudo -n timeout --kill-after=30 1500 flock -n /run/neat-offline-install.lock unshare --net python3 -B')
 
@@ -196,7 +197,8 @@ def test_card_sudo_password_uses_stdin_not_command(monkeypatch, tmp_path):
     captured = []
     ops = installer.Operations(tmp_path, 'sima', tmp_path/'key', tmp_path/'known', 'test-secret')
     monkeypatch.setattr(ops, 'ssh', lambda card, command, **kwargs: captured.append((command, kwargs)))
-    ops.privileged({}, ['true'])
+    ops.card_passwords['test'] = 'test-secret'
+    ops.privileged({'bdf': 'test'}, ['true'])
     command, kwargs = captured[0]
     assert 'test-secret' not in command
     assert 'sudo -S' in command
@@ -214,3 +216,223 @@ def test_transport_loss_stops_instead_of_overlapping_remote_installs():
     assert report['cards'][0]['status'] == 'outcome_unknown'
     assert (CARDS[0]['bdf'], 'cleanup') not in ops.events
     assert (CARDS[1]['bdf'], 'install') not in ops.events
+
+
+@pytest.mark.parametrize('results, expected', [([True], [None]), ([False, True], [None, 'edgeai'])])
+def test_sudo_fallback_order_and_cache(tmp_path, monkeypatch, results, expected):
+    ops = installer.Operations(tmp_path, 'sima', tmp_path/'key', tmp_path/'known')
+    attempts = []
+    def probe(card, password):
+        attempts.append(password)
+        return results[len(attempts)-1]
+    monkeypatch.setattr(ops, 'sudo_probe', probe)
+    ops.authenticate(CARDS[0])
+    ops.authenticate(CARDS[0])
+    assert attempts == expected
+
+
+def test_sudo_prompts_only_after_default_rejected(tmp_path, monkeypatch):
+    import io
+    import builtins
+    ops = installer.Operations(tmp_path, 'sima', tmp_path/'key', tmp_path/'known')
+    attempts = []
+    def probe(card, password):
+        attempts.append(password)
+        return password == 'custom-secret'
+    monkeypatch.setattr(ops, 'sudo_probe', probe)
+    monkeypatch.setattr(builtins, 'open', lambda *args: io.StringIO())
+    monkeypatch.setattr(installer.getpass, 'getpass', lambda *args, **kwargs: 'custom-secret')
+    ops.authenticate(CARDS[0])
+    assert attempts == [None, 'edgeai', 'custom-secret']
+    assert ops.card_passwords[CARDS[0]['bdf']] == 'custom-secret'
+    assert CARDS[1]['bdf'] not in ops.card_passwords
+
+
+@pytest.mark.parametrize('message, retry', [('sudo: a password is required', True),
+    ('sudo: 1 incorrect password attempt', True), ('user is not in the sudoers file', False),
+    ('sudo: command not found', False)])
+def test_sudo_probe_only_retries_authentication(tmp_path, monkeypatch, message, retry):
+    ops = installer.Operations(tmp_path, 'sima', tmp_path/'key', tmp_path/'known')
+    def fail(card, command, **kwargs):
+        assert 'edgeai' not in command
+        assert kwargs['input'] == 'edgeai\n'
+        raise subprocess.CalledProcessError(1, command, stderr=message)
+    monkeypatch.setattr(ops, 'ssh', fail)
+    if retry:
+        assert not ops.sudo_probe(CARDS[0], 'edgeai')
+    else:
+        with pytest.raises(ValueError, match='sudo access check failed'):
+            ops.sudo_probe(CARDS[0], 'edgeai')
+
+
+def test_sudo_transport_failure_does_not_prompt(tmp_path, monkeypatch):
+    ops = installer.Operations(tmp_path, 'sima', tmp_path/'key', tmp_path/'known')
+    def fail(*args, **kwargs):
+        raise ConnectionError('transport lost')
+    monkeypatch.setattr(ops, 'ssh', fail)
+    with pytest.raises(ConnectionError):
+        ops.authenticate(CARDS[0])
+
+
+def test_sudo_no_terminal_fails_without_echoing(tmp_path, monkeypatch):
+    import builtins
+    ops = installer.Operations(tmp_path, 'sima', tmp_path/'key', tmp_path/'known')
+    monkeypatch.setattr(ops, 'sudo_probe', lambda *args: False)
+    def absent(*args):
+        raise OSError('no terminal')
+    monkeypatch.setattr(builtins, 'open', absent)
+    with pytest.raises(ValueError, match='interactive terminal'):
+        ops.authenticate(CARDS[0])
+
+
+def test_human_summary_preflight_is_not_an_update():
+    import io
+    stream = io.StringIO()
+    report = {'host': 'preflight_passed', 'errors': [], 'cards': [
+        dict(CARDS[0], status='preflight_passed', ethernet_ports=[
+            {'interface': 'end3', 'mac': '00:11:22:33:44:55'}])]}
+    installer.Progress(stream).summary(report, True)
+    text = stream.getvalue()
+    assert '1/1 cards passed. No packages were installed.' in text
+    assert 'virtual IP 10.0.1.2' in text
+    assert 'Primary Ethernet: end3 | MAC 00:11:22:33:44:55' in text
+    assert '\033' not in text
+
+
+def test_summary_counts_only_verified_updates_and_displays_failures():
+    import io
+    stream = io.StringIO()
+    report = {'host': 'installed_verified', 'errors': ['card failed'], 'cards': [
+        dict(CARDS[0], status='installed_verified'), dict(CARDS[1], status='outcome_unknown')]}
+    installer.Progress(stream).summary(report)
+    assert '1/2 cards installed and verified' in stream.getvalue()
+    assert 'outcome unknown' in stream.getvalue()
+    assert 'ERROR: card failed' in stream.getvalue()
+
+
+def test_color_respects_terminal_and_no_color(monkeypatch):
+    import io
+    stream = io.StringIO()
+    stream.isatty = lambda: True
+    monkeypatch.delenv('NO_COLOR', raising=False)
+    monkeypatch.setenv('TERM', 'xterm')
+    installer.Progress(stream).show('Passed', 'ok')
+    assert '\033[32mPassed\033[0m' in stream.getvalue()
+    monkeypatch.setenv('NO_COLOR', '')
+    assert not installer.Progress(stream).color
+    assert installer.safe_text('remote\033[2J\nmessage') == 'remote [2J message'
+
+
+def test_ethernet_identity_rejects_terminal_injection():
+    import json
+    with pytest.raises(ValueError, match='inventory'):
+        installer.ethernet_ports(json.dumps([{'interface': 'end3\033', 'mac': '00:11:22:33:44:55'}]))
+
+
+@pytest.mark.parametrize('fails', [False, True])
+def test_live_progress_preserves_result_and_failure_and_stops(monkeypatch, fails):
+    import io
+    import time
+    import threading
+    stream = io.StringIO()
+    stream.isatty = lambda: True
+    monkeypatch.setenv('TERM', 'xterm')
+    threads = set(threading.enumerate())
+    def operation():
+        time.sleep(1.1)
+        if fails:
+            raise ValueError('test failure')
+        return 42
+    if fails:
+        with pytest.raises(ValueError, match='test failure'):
+            installer.Progress(stream).run('Installing card...', operation)
+    else:
+        assert installer.Progress(stream).run('Installing card...', operation) == 42
+    assert '00:01 elapsed' in stream.getvalue()
+    assert stream.getvalue().endswith('\n')
+    assert set(threading.enumerate()) == threads
+
+
+def test_install_output_tail_is_bounded_and_scoped_to_phase(tmp_path):
+    import io
+    log = tmp_path/'output.log'
+    log.write_text('previous phase\n')
+    start = log.stat().st_size
+    with log.open('a') as stream:
+        stream.write('x'*70000+'\n')
+        stream.write('\n'.join(f'Installing package {n}' for n in range(20))+'\n')
+        stream.write('dpkg-query: no path found matching pattern /lib/libc.so\n')
+        stream.write('Err:3 file:/bundle/repo ./ Packages\n  Method gave a blank filename\n')
+        stream.write('\033[31mERROR: real install failure\033[0m\n')
+    progress = installer.Progress(io.StringIO())
+    progress.log_path = log
+    lines = progress.tail(start)
+    assert len(lines) == 10
+    assert lines[0] == 'Installing package 11'
+    assert lines[-1] == 'ERROR: real install failure'
+    assert not any('previous' in line or '\033' in line for line in lines)
+
+
+def test_install_panel_finishes_with_last_ten_lines(tmp_path, monkeypatch):
+    import io
+    log = tmp_path/'output.log'
+    log.write_text('previous phase\n')
+    stream = io.StringIO()
+    stream.isatty = lambda: True
+    monkeypatch.setenv('TERM', 'xterm')
+    monkeypatch.setattr(installer.shutil, 'get_terminal_size', lambda fallback: installer.os.terminal_size((80, 24)))
+    progress = installer.Progress(stream)
+    progress.log_path = log
+    def install(phase):
+        assert phase == 'install'
+        with log.open('a') as output:
+            output.write('\n'.join(f'Package {n} installed' for n in range(20))+'\n')
+    progress.run('Installing card...', install, 'install')
+    output = stream.getvalue()
+    assert 'Package 9 installed' not in output
+    assert all(f'Package {n} installed' in output for n in range(10, 20))
+    assert 'previous phase' not in output
+    assert 'elapsed | Installing card' in output
+    assert installer.Progress.clip('ab界cd', 5) == 'ab界c'
+
+
+@pytest.mark.parametrize('fails', [False, True])
+def test_verbose_streams_all_output_and_drains_on_failure(tmp_path, fails):
+    import io
+    log = tmp_path/'output.log'
+    log.write_bytes(b'')
+    stream = io.StringIO()
+    progress = installer.Progress(stream, verbose=True)
+    progress.log_path = log
+    content = ''.join(f'line {n}\n' for n in range(30)) + 'dpkg-query: diagnostic\nlast partial line'
+    def operation():
+        log.write_text(content)
+        if fails:
+            raise ValueError('test failure')
+        return 42
+    def execute():
+        with progress.stream_log():
+            return progress.run('Installing...', operation)
+    if fails:
+        with pytest.raises(ValueError, match='test failure'):
+            execute()
+    else:
+        assert execute() == 42
+    assert stream.getvalue() == 'Installing...\n'+content
+    assert log.read_text() == content
+
+
+def test_verbose_output_arrives_before_operation_finishes(tmp_path):
+    import io
+    import time
+    log = tmp_path/'live.log'
+    log.write_text('')
+    stream = io.StringIO()
+    progress = installer.Progress(stream, verbose=True)
+    progress.log_path = log
+    with progress.stream_log():
+        log.write_text('live package output\n')
+        deadline = time.monotonic() + 2
+        while 'live package output' not in stream.getvalue() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert 'live package output' in stream.getvalue()

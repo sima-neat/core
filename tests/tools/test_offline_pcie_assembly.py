@@ -87,9 +87,9 @@ def test_archive_bytes_are_reproducible(tmp_path):
     root.mkdir()
     bundle(root)
     assembly.archive_bundle(root)
-    first = (tmp_path/'bundle.tar.gz').read_bytes()
+    first = (tmp_path/assembly.ARCHIVE_NAME).read_bytes()
     assembly.archive_bundle(root)
-    assert first == (tmp_path/'bundle.tar.gz').read_bytes()
+    assert first == (tmp_path/assembly.ARCHIVE_NAME).read_bytes()
 
 
 def test_validation_always_disables_network_for_both_targets(tmp_path):
@@ -152,7 +152,7 @@ def test_archive_deduplicates_and_preserves_card_transfer(tmp_path):
     (root/'bundle.json').write_text(json.dumps({'files': {
         name: assembly.sha(root/name) for name in paths}}))
     assembly.archive_bundle(root)
-    archive_path = Path(str(root)+'.tar.gz')
+    archive_path = root.parent/assembly.ARCHIVE_NAME
     original = archive_path.read_bytes()
     with tarfile.open(archive_path) as archive:
         members = archive.getmembers()
@@ -176,4 +176,27 @@ def test_archive_deduplicates_and_preserves_card_transfer(tmp_path):
         archive.extractall(tmp_path/'card-only', filter='data')
     assembly.verify_bundle(tmp_path/'card-only', 'card')
     assembly.archive_bundle(extracted)
-    assert Path(str(extracted)+'.tar.gz').read_bytes() == original
+    assert (extracted.parent/assembly.ARCHIVE_NAME).read_bytes() == original
+
+
+@pytest.mark.parametrize('arch', ['amd64', 'arm64'])
+@pytest.mark.parametrize('version', ['22.04', '24.04'])
+def test_download_only_metadata_matches_archive_and_architecture(tmp_path, arch, version):
+    root = tmp_path/'neat-offline'
+    (root/'host/payload').mkdir(parents=True)
+    (root/'host/target.json').write_text(json.dumps({'architecture': arch, 'os_id': 'ubuntu', 'os_version': version}))
+    (root/'host/payload/metadata.json').write_text(json.dumps({'commit': 'a'*40, 'version': 'a'*12, 'branch': 'develop'}))
+    (root/'bundle.json').write_text(json.dumps({'core_revision': 'a'*12, 'files': {
+        str(p.relative_to(root)): assembly.sha(p) for p in root.rglob('*') if p.is_file()}}))
+    archive = assembly.archive_bundle(root)
+    assert archive.name == 'neat-pcie-offline-installer.tar.gz'
+    metadata_path = assembly.write_metadata(root, archive)
+    assert metadata_path.name == 'metadata-offline.json'
+    metadata = json.loads(metadata_path.read_text())
+    assert metadata['resources'] == [archive.name]
+    assert metadata['resources-checksum'] == {archive.name: assembly.sha(archive)}
+    assert metadata['installation']['script'] == ''
+    assert metadata['artifact']['type'] == 'offline'
+    assert metadata['artifact']['package_path'] == 'pciehost/ubuntu'+version[:2]+'/'+arch
+    assert metadata['platforms'][0]['arch'] == [arch]
+    assert metadata['commit'] == 'a'*40

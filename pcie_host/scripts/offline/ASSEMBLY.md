@@ -131,7 +131,7 @@ remains self-contained.
 
 ## Offline validation
 
-Both targets must pass before `<output>.tar.gz` is created:
+Both targets must pass before `neat-pcie-offline-installer.tar.gz` is created:
 
 1. Verify the complete bundle file inventory and hashes.
 2. Start a fresh container of the same baseline with `--network=none` and a
@@ -266,3 +266,29 @@ verification passed on the physical host, followed by another automatic
 host/card offline installation with exit zero and both targets
 `installed_verified`. Card-only staging is independently regression-tested,
 including duplicates shared between the host and card trees.
+
+## Offline publication layout
+
+Publish `neat-pcie-offline-installer.tar.gz` and `metadata-offline.json` beside
+the online `metadata.json` under the matching immutable
+`core/{ref}/{revision}/pciehost/{distro}/{architecture}/` folder. Each bundle targets
+one Ubuntu release (22.04 or 24.04) and one host architecture (amd64 or arm64),
+and includes the ARM64 card payload. The offline metadata references the archive
+with its SHA-256 and an empty `installation.script`, so downloading does not
+start installation.
+
+For example:
+
+```sh
+sima-cli neat install core/pciehost/ubuntu22/amd64@v0.4.0 -t offline
+```
+
+Replace `ubuntu22` with `ubuntu24`, `amd64` with `arm64`, and the ref with a
+release or branch that publishes the offline variant. After downloading, transfer
+the bundle to the prepared PCIe host, extract it, and run the bundled installer.
+
+The isolated deployment and generated bootstrap APT configurations prefer the
+uncompressed `Packages` index supplied by the flat bundle repository. This avoids
+compressed-index retry errors without changing system APT configuration or
+suppressing APT failures. Missing optional `InRelease`/`Release` metadata may
+still produce `Ign` lines; bundle file checksums are verified before deployment.

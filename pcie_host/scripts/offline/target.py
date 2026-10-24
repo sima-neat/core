@@ -46,7 +46,7 @@ def collect(root):
         if arch not in (row['architecture'], 'all'):
             raise ValueError('foreign-architecture payload: ' + path.name)
         package = output(['dpkg-deb', '-f', str(path), 'Package'])
-        if row['architecture'] == 'amd64' and (package == 'simaai-pcie-host' or 'dkms' in package):
+        if (root / 'payload/pcie_delivery.py').is_file() and (package == 'simaai-pcie-host' or 'dkms' in package):
             raise ValueError('Platform/driver package belongs to step-1 provisioning: ' + package)
         shutil.copyfile(path, repo / path.name)
     helper = root / 'payload/pcie_delivery.py'
@@ -65,7 +65,7 @@ def collect(root):
          *map(str, native), *BOOTSTRAP])
     for path in cache.glob('*.deb'):
         package = output(['dpkg-deb', '-f', str(path), 'Package'])
-        if row['architecture'] == 'amd64' and (package == 'simaai-pcie-host' or 'dkms' in package):
+        if (root / 'payload/pcie_delivery.py').is_file() and (package == 'simaai-pcie-host' or 'dkms' in package):
             raise ValueError('Dependency resolution would install a Platform/driver package: ' + package)
         dest = repo / path.name
         if dest.exists() and sha(dest) != sha(path):
@@ -90,6 +90,10 @@ def collect(root):
         'apt_index_hashes': {p.name: sha(p) for p in sorted(Path('/var/lib/apt/lists').iterdir())
                              if p.is_file() and p.name != 'lock'},
     }, indent=2)+'\n')
+    write_bootstrap(root)
+
+
+def write_bootstrap(root):
     # The configuration is private to this command: installed OS sources and
     # apt.conf.d hooks are not read. Only file: repository indexes are available.
     (root / 'bootstrap.sh').write_text('''#!/bin/sh
@@ -106,6 +110,7 @@ Dir::Etc::preferences "/dev/null";
 Dir::Etc::preferencesparts "$root/apt/empty";
 Dir::State::lists "$root/apt/lists";
 Dir::Cache::archives "$root/apt/cache";
+Acquire::IndexTargets::deb::Packages::CompressionTypes "uncompressed";
 Acquire::Languages "none";
 APT::Get::List-Cleanup "0";
 EOF

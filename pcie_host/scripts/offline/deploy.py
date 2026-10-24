@@ -32,6 +32,8 @@ def configure(repo, state):
         'Dir::Etc::sourceparts': str(state/'empty'),
         'Dir::Etc::preferences': '/dev/null', 'Dir::Etc::preferencesparts': str(state/'empty'),
         'Dir::State::lists': str(state/'lists'), 'Dir::Cache::archives': str(state/'cache'),
+        # The flat bundle repository supplies Packages, not compressed variants.
+        'Acquire::IndexTargets::deb::Packages::CompressionTypes': 'uncompressed',
         'Acquire::Languages': 'none', 'APT::Get::List-Cleanup': '0',
         'APT::Get::AllowUnauthenticated': 'false', 'APT::Sandbox::User': 'root',
     }

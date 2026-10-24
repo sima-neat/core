@@ -11,11 +11,16 @@ import subprocess
 import tarfile
 
 HERE = Path(__file__).resolve().parent
+ARCHIVE_NAME = 'neat-pcie-offline-installer.tar.gz'
+METADATA_NAME = 'metadata-offline.json'
 
 
 def sha(path):
     with Path(path).open('rb') as stream:
-        return hashlib.file_digest(stream, 'sha256').hexdigest()
+        digest = hashlib.sha256()
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(chunk)
+        return digest.hexdigest()
 
 
 def run(*args):
@@ -51,17 +56,17 @@ def image(value):
 def assemble(spec, output):
     if set(spec['targets']) != {'host', 'card'}:
         raise ValueError('both host and card targets are required')
-    if output.exists() or Path(str(output)+'.tar.gz').exists():
+    if output.exists() or (output.parent/ARCHIVE_NAME).exists():
         raise ValueError('output must not exist; incomplete builds must not be reused')
     # Validate both inputs before starting any container or creating the bundle.
     publications = {}
     for target, row in spec['targets'].items():
         image(row['image'])
-        expected = 'amd64' if target == 'host' else 'arm64'
-        if row['architecture'] != expected:
+        expected = ('amd64', 'arm64') if target == 'host' else ('arm64',)
+        if row['architecture'] not in expected:
             raise ValueError('incorrect target architecture')
-        if target == 'host' and (row['os_id'], row['os_version']) != ('ubuntu', '24.04'):
-            raise ValueError('initial host support is Ubuntu 24.04 amd64')
+        if target == 'host' and (row['os_id'] != 'ubuntu' or row['os_version'] not in ('22.04', '24.04')):
+            raise ValueError('host support requires Ubuntu 22.04 or 24.04 amd64 or arm64')
         publications[target] = verify_publication(Path(row['publication']), row['metadata_sha256'])
     # Both publications must describe the same Core revision, not merely version 0.6.0.
     revisions = [row['core_revision'] for row in spec['targets'].values()]
@@ -82,8 +87,8 @@ def assemble(spec, output):
             shutil.copyfile(Path(row['publication']) / name, payload / name)
         shutil.copyfile(HERE / 'target.py', dest / 'target.py')
         # No host paths or credentials are saved in the distributable manifest.
-        (dest / 'target.json').write_text(json.dumps({k: row[k] for k in (
-            'image', 'architecture', 'os_id', 'os_version', 'core_revision', 'metadata_sha256')}, indent=2)+'\n')
+        (dest / 'target.json').write_text(json.dumps(dict(role=target, **{k: row[k] for k in (
+            'image', 'architecture', 'os_id', 'os_version', 'core_revision', 'metadata_sha256')}), indent=2)+'\n')
         run('docker', 'run', '--rm', '--user', '0:0', '--env', 'DEBIAN_FRONTEND=noninteractive', '--env', 'PYTHONDONTWRITEBYTECODE=1', '--platform', 'linux/' + row['architecture'],
             '--mount', f'type=bind,src={dest.resolve()},dst=/bundle',
             '--entrypoint', '/bin/sh', row['image'], '-ec',
@@ -99,13 +104,15 @@ def assemble(spec, output):
     }, indent=2)+'\n')
     # No success archive is emitted until both network-isolated installs pass.
     validate(output)
-    archive_bundle(output)
+    archive = archive_bundle(output)
+    write_metadata(output, archive)
 
 
 def archive_bundle(root):
     """Stable archive bytes; identical files share an earlier tar member."""
     contents = {}
-    with open(str(root)+'.tar.gz', 'wb') as raw:
+    destination = root.parent/ARCHIVE_NAME
+    with destination.open('wb') as raw:
         with gzip.GzipFile(filename='', mode='wb', fileobj=raw, mtime=0) as compressed:
             with tarfile.open(fileobj=compressed, mode='w') as archive:
                 for path in sorted(root.rglob('*')):
@@ -130,6 +137,43 @@ def archive_bundle(root):
                                 archive.addfile(info, stream)
                     else:
                         archive.addfile(info)
+
+    return destination
+
+
+def write_metadata(root, archive):
+    """Publish a download-only variant beside the architecture-specific archive."""
+    manifest = verify_bundle(root)
+    row = json.loads((root/'host/target.json').read_text())
+    source = json.loads((root/'host/payload/metadata.json').read_text())
+    arch = row['architecture']
+    if arch not in ('amd64', 'arm64') or (row['os_id'] != 'ubuntu' or row['os_version'] not in ('22.04', '24.04')):
+        raise ValueError('unsupported offline host tuple')
+    if archive.name != ARCHIVE_NAME:
+        raise ValueError('incorrect offline archive filename')
+    distro = 'ubuntu' + row['os_version'].split('.')[0]
+    package_path = f'pciehost/{distro}/{arch}'
+    size = archive.stat().st_size
+    metadata = {key: source[key] for key in (
+        'repository', 'branch', 'commit', 'commit_folder', 'published_at_utc') if key in source}
+    metadata.update({
+        'name': f'gh:sima-neat/core/{package_path}',
+        'version': source.get('version', manifest['core_revision']), 'release': source.get('release', ''),
+        'description': f"Offline Neat installer for Ubuntu {row['os_version']} {arch} hosts and Platform 3.0 cards",
+        'platforms': [{'type': 'host', 'os': ['linux'], 'arch': [arch]}],
+        'resources': [ARCHIVE_NAME], 'resources-checksum': {ARCHIVE_NAME: sha(archive)},
+        'selectable-resources': [],
+        'installation': {'script': '', 'post-message':
+            'Offline installer downloaded. On the prepared PCIe host, run: '
+            'cd neat-offline && sudo python3 -B install.py'},
+        'artifact': {'type': 'offline', 'repository': 'core',
+                     'package_path': package_path, 'distro': distro, 'arches': [arch]},
+        'size': {'download': f'{(size + 2**20 - 1)//2**20}MB',
+                 'install': f'{(sum(p.stat().st_size for p in root.rglob("*") if p.is_file()) + 2**20 - 1)//2**20}MB'},
+    })
+    path = archive.parent/METADATA_NAME
+    path.write_text(json.dumps(metadata, indent=2)+'\n')
+    return path
 
 
 def verify_bundle(root, target=None):

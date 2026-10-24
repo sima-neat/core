@@ -63,7 +63,33 @@ application inference acceptance test.
 
 ## Results and retries
 
-The final JSON reports the host and every card by PCI address. A card failure
+During host and card installation, terminals show an updating panel with the last
+10 lines of command output and elapsed time. The panel shrinks on short terminals
+and truncates long lines to avoid wrapping. Preflight retains its quieter activity
+indicator. Redirected output uses a status line every 15 seconds without terminal
+control sequences. Full output remains in the diagnostic log. Elapsed time is not
+a completion percentage or estimated finish time.
+
+The default output shows progress and a summary with the number of cards
+installed and verified, each card's PCI address, virtual IP, and physical Ethernet
+interface/MAC read over authenticated SSH. If multiple physical ports exist,
+the installer lists them without guessing which is primary. An unavailable MAC
+is reported explicitly; the virtual discovery MAC is never substituted.
+`--preflight-only` reports checks passed and explicitly says no packages were
+installed. Colors are enabled only on a capable terminal; set `NO_COLOR=1` to
+disable them. Use `--json` for the final machine-readable report (progress goes
+to stderr).
+
+Detailed package output is retained in a root-only `/var/tmp/neat-offline-*.log`
+file whose path is printed. Successful APT index retries and expected package
+ownership alias probes stay in that log. A failed command retains its nonzero
+status, prints recent diagnostics, and is reflected in the summary.
+
+Card sudo authentication tries passwordless sudo, then the default `edgeai`
+password, then prompts securely if needed. `--ask-card-sudo` lets you supply a
+shared password explicitly. Passwords are not saved or passed as command arguments.
+
+The final report identifies the host and every card by PCI address. A card failure
 returns a nonzero exit status but remaining cards are attempted if host checks
 and topology remain valid. Host failure or changed topology stops installation.
 SSH transport loss or a local timeout during installation reports an unknown
@@ -78,3 +104,11 @@ up; a cleanup failure reports its card so it can be addressed.
 If discovery, SSH, firmware compatibility, or driver checks fail, repair the
 system setup first. This installer does not change firmware, drivers, discovery
 services, SSH provisioning, or PCIe addressing.
+
+## Debugging and support logs
+
+Use `sudo python3 -B install.py --verbose` (or `-v`) to stream all command output
+instead of the rolling panel, including diagnostic warnings normally kept in the
+log. The complete output is still saved to the printed log path. This also works
+with `--preflight-only`. With `--json --verbose`, logs and progress go to stderr
+and the final JSON report goes to stdout. Authentication passwords are not logged.

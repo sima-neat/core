@@ -21,6 +21,7 @@ def test_private_apt_sources_and_hooks(tmp_path, monkeypatch):
     assert 'Dir::Etc::main "/dev/null"' in config
     assert str(tmp_path/'state/empty') in config
     assert (tmp_path/'state/sources.list').read_text() == f'deb [trusted=yes] file:{tmp_path}/repo ./\n'
+    assert 'Acquire::IndexTargets::deb::Packages::CompressionTypes "uncompressed";' in config
     assert 'https:' not in config
 
 
@@ -158,3 +159,14 @@ def test_install_refreshes_plan_after_prerequisites(tmp_path, monkeypatch):
     assert 'python3-venv' in calls[simulations[0]]
     assert 'python3-venv' not in calls[simulations[1]]
     assert '--reinstall' in calls[simulations[1]]
+
+
+def test_generated_bootstrap_reads_only_uncompressed_package_index(tmp_path):
+    spec = importlib.util.spec_from_file_location('offline_target', HERE/'target.py')
+    target = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(target)
+    target.write_bootstrap(tmp_path)
+    script = (tmp_path/'bootstrap.sh').read_text()
+    assert 'Acquire::IndexTargets::deb::Packages::CompressionTypes "uncompressed";' in script
+    assert 'apt-get update' in script
+    assert 'Dir::Etc::parts "$root/apt/empty"' in script
