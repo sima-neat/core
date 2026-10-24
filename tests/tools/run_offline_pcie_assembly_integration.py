@@ -54,6 +54,12 @@ def main():
     (work/'spec.json').write_text(json.dumps(spec, indent=2))
     subprocess.run(['python3', str(ROOT/'pcie_host/scripts/offline/assemble.py'), 'assemble',
                     '--spec', str(work/'spec.json'), '--output', str(work/'bundle')], check=True)
+    # APT may create these beside the alternate dpkg status file. On Linux they
+    # are root-owned/unreadable to the assembler; they are never release inputs.
+    for target in IMAGES:
+        for name in ('lock', 'lock-frontend'):
+            if (work/'bundle'/target/name).exists():
+                raise AssertionError('APT collection lock leaked into bundle: ' + target+'/'+name)
 
 
 if __name__ == '__main__':

@@ -56,7 +56,10 @@ def collect(root):
     # Empty download cache prevents successful collection from depending on a CI cache.
     cache = root / 'download-cache'
     (cache / 'partial').mkdir(parents=True)
-    run(['apt-get', '-o', f'Dir::State::status={root}/baseline.status',
+    # This download-only transaction uses a private status snapshot/cache in a
+    # disposable container. Do not leave root-owned APT lock files in the bundle.
+    # Actual installation retains normal package-manager locking.
+    run(['apt-get', '-o', 'Debug::NoLocking=1', '-o', f'Dir::State::status={root}/baseline.status',
          '-o', f'Dir::Cache::archives={cache}', '--download-only', '--reinstall',
          '--no-remove', '--no-install-recommends', '-y', 'install',
          *map(str, native), *BOOTSTRAP])
