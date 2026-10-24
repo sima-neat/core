@@ -85,6 +85,17 @@ checks the native composition before dependency collection.
 
 ## Build
 
+For local qualification before a corrected Scheduler publication is available,
+build its native producer on Ubuntu 24.04 amd64, then select that trusted local
+output with `./build.sh --all --scheduler-candidate /absolute/path/to/scheduler-native-dist`
+(run from `pcie_host`). The input must be the complete producer output, including
+`metadata.json`. Every declared resource is checksum-verified before loading the
+producer helper; its verifier checks the distro, architecture, revision, package
+ownership, and dependencies. Local metadata checks integrity, not publisher
+authentication: use this option only for your own trusted producer build. Normal
+builds continue to use authenticated publications. Do not edit published DEBs or
+receipts to remove a dependency.
+
 ```sh
 python3 pcie_host/scripts/offline/assemble.py assemble \
   --spec /absolute/path/to/spec.json \
@@ -217,3 +228,11 @@ Use a qualified full eLxr firmware/rootfs image as the clean baseline source;
 an in-place package update does not establish that Neat is absent. A PCIe-capable
 image and its host driver compatibility still need verification before flashing.
 No firmware update or card reconfiguration was performed for these checks.
+
+The producer correction in Scheduler PR #18 (revision `85b05060c221`) removes the
+hard Platform DEB dependency and checks installed header hashes and ELF
+architecture/exports. Read-only admission of the supplied shell-provisioned host
+passes with that revision. The offline release requires this corrected producer;
+older native publications remain incompatible. Its nine native CTests, 65 Python
+tests, installed/relocated consumer checks, and plugin-load check passed on the
+Ubuntu 24.04 local builder. Hardware installation qualification remains separate.

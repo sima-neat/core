@@ -6,6 +6,11 @@ Platform 3.0 card. It does not convert firmware or install the host driver.
 ## Prepare the system
 
 Complete Platform 3.0 conversion and install its compatible host driver first.
+The corrected Scheduler producer supports both the official `sima-cli` host
+installer and Debian provisioning. It checks installed Platform header hashes
+and library architecture/exports without requiring Platform DEB registration.
+Older Scheduler publications with hard Platform DEB dependencies must be rebuilt
+with that producer correction, not modified after publication.
 Every card needs a working discovery responder on its PCIe interface, a unique
 PCIe IPv4 address, Python 3, and SSH access. The host needs Python 3.11 or later,
 `ip`, OpenSSH, `sudo`, `timeout`, and `unshare`; cards need `sudo`, `flock`,
