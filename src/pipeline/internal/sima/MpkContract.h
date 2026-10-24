@@ -309,6 +309,7 @@ detess_runtime_frame_shape(const MpkPluginIoContract& stage) noexcept;
  */
 struct MpkContract {
   std::string mpk_json_path;                      ///< Source `mpk.json` path.
+  std::string manifest_sha256;                    ///< Digest of the exact manifest bytes.
   std::string model_name;                         ///< Model name from the manifest.
   std::string model_path;                         ///< Model artifact path.
   std::vector<MpkTensorContract> ingress_tensors; ///< External input tensors.
@@ -382,6 +383,11 @@ std::vector<MpkTensorContract> get_mla_published_outputs_contract(const MpkContr
 
 /// Returns the logical-output contracts at the MLA boundary.
 std::vector<MpkTensorContract> get_mla_logical_outputs_contract(const MpkContract& contract);
+
+/// Resolve terminal reshape publications in declared order, preserving the source stage's dtype.
+std::vector<MpkTensorContract>
+get_terminal_reshape_outputs_contract(const MpkContract& contract,
+                                      const MpkPluginIoContract& terminal);
 
 /// Find a plugin's index by name or id.
 std::optional<std::size_t> find_plugin_index_by_name_or_id(const MpkContract& contract,

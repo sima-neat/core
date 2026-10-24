@@ -1,6 +1,8 @@
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/sima/static_contract/AfePublicationLedger.h"
 
+#include <glib.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -16,6 +18,7 @@
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 namespace simaai::neat::pipeline_internal::sima {
 namespace fs = std::filesystem;
@@ -5600,6 +5603,16 @@ std::optional<MpkContract> load_mpk_contract_from_json(std::string_view mpk_json
 
   MpkContract contract;
   contract.mpk_json_path = mpk_json_path;
+  gchar* digest = g_compute_checksum_for_data(
+      G_CHECKSUM_SHA256, reinterpret_cast<const guchar*>(mpk_json.data()), mpk_json.size());
+  if (!digest) {
+    if (error_message) {
+      *error_message = "failed to hash MPK manifest";
+    }
+    return std::nullopt;
+  }
+  contract.manifest_sha256 = digest;
+  g_free(digest);
   if (root_json.contains("name") && root_json["name"].is_string()) {
     contract.model_name = root_json["name"].get<std::string>();
   }
@@ -6703,6 +6716,98 @@ get_mla_boundary_physical_outputs_contract(const MpkContract& contract) {
     return mla->output_tensors;
   }
   return {};
+}
+
+std::vector<MpkTensorContract>
+get_terminal_reshape_outputs_contract(const MpkContract& contract,
+                                      const MpkPluginIoContract& terminal) {
+  std::vector<std::string> output_names;
+  const auto ordered = plugins_in_execution_order(contract);
+  if (!ordered.empty()) {
+    const auto& publication = contract.plugins[ordered.back()];
+    if (canonical_mpk_graph_op_local(publication.kernel, publication.name, publication.processor) ==
+        "pass_through") {
+      for (const auto& input : publication.input_tensors) {
+        output_names.push_back(input.name);
+      }
+    }
+  }
+  if (output_names.empty()) {
+    std::unordered_set<std::string> consumed;
+    for (const auto& stage : contract.plugins) {
+      for (const auto& input : stage.input_tensors) {
+        consumed.emplace(input.name);
+      }
+    }
+    for (const auto& stage : contract.plugins) {
+      for (const auto& output : stage.output_tensors) {
+        if (!consumed.contains(output.name)) {
+          output_names.push_back(output.name);
+        }
+      }
+    }
+    if (output_names.size() != 1U) {
+      const auto publication =
+          static_contract::lookup_afe_publication_contract(contract.manifest_sha256);
+      const std::unordered_set<std::string> terminals(output_names.begin(), output_names.end());
+      std::unordered_set<std::string> selected;
+      if (!publication || publication->ordered_value_names.size() != terminals.size()) {
+        throw std::runtime_error(
+            "terminal output views require an exact ordered publication contract");
+      }
+      output_names.clear();
+      for (const auto name : publication->ordered_value_names) {
+        const std::string output_name(name);
+        if (!terminals.contains(output_name) || !selected.emplace(output_name).second) {
+          throw std::runtime_error("terminal output publication contains an invalid tensor name");
+        }
+        output_names.push_back(output_name);
+      }
+    }
+  }
+
+  struct Producer {
+    const MpkPluginIoContract* stage;
+    const MpkTensorContract* tensor;
+  };
+  std::unordered_map<std::string, Producer> producers;
+  for (const auto& stage : contract.plugins) {
+    for (const auto& output : stage.output_tensors) {
+      if (!producers.emplace(output.name, Producer{&stage, &output}).second) {
+        throw std::runtime_error("terminal output publication has an ambiguous tensor producer");
+      }
+    }
+  }
+  std::vector<MpkTensorContract> outputs;
+  outputs.reserve(output_names.size());
+  for (const auto& name : output_names) {
+    auto producer = producers.find(name);
+    if (producer == producers.end()) {
+      throw std::runtime_error("terminal output publication has no tensor producer");
+    }
+    auto output = *producer->second.tensor;
+    std::size_t remaining = contract.plugins.size();
+    while (producer->second.stage != &terminal) {
+      const auto& stage = *producer->second.stage;
+      if (remaining-- == 0U || stage.kernel != "reshape_transform" ||
+          stage.input_tensors.size() != 1U || stage.output_tensors.size() != 1U ||
+          stage.input_tensors.front().size_bytes != output.size_bytes ||
+          stage.output_tensors.front().size_bytes != output.size_bytes) {
+        return terminal.output_tensors;
+      }
+      producer = producers.find(stage.input_tensors.front().name);
+      if (producer == producers.end()) {
+        throw std::runtime_error("terminal reshape has no tensor producer");
+      }
+    }
+    const auto& source = *producer->second.tensor;
+    output.dtype = source.dtype;
+    output.dtype_source = source.dtype_source;
+    output.logical_dtype = source.logical_dtype;
+    output.logical_dtype_source = source.logical_dtype_source;
+    outputs.push_back(std::move(output));
+  }
+  return outputs;
 }
 
 std::vector<MpkTensorContract> get_mla_published_outputs_contract(const MpkContract& contract) {
