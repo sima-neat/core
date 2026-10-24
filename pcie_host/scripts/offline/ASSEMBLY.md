@@ -43,8 +43,9 @@ customer deliverable or a reason to implement firmware provisioning here.
 **Current status:** the assembler includes `install.py`, the discovery-driven
 all-card coordinator, and `deploy.py`/`lifecycle.sh` adapters for the published
 installers. See [customer installation instructions](INSTALL.md). Physical
-all-card qualification with actual Neat payloads remains pending; fixture results
-are not a substitute for that acceptance test.
+installation with actual Neat payloads passed on a one-card system. Multi-card
+hardware qualification remains pending; fixture results cover sequential ordering
+and failure handling.
 
 `assemble.py` builds **two separate dependency repositories**, Ubuntu 24.04 amd64
 for the host and ARM64 for the card. It accepts already authenticated Core
@@ -178,61 +179,77 @@ not extension globs. This includes producer-owned `platform-source.tar.gz` and
 prevents marking an incomplete native publication ready. Metadata still uses the
 existing `.pending` staging and aggregate verification process.
 
-## Initial validation evidence and remaining prerequisites
+## Qualification inputs and producer prerequisite
 
-- The fixture integration built both repositories and passed native and Python
-  installation on Ubuntu 24.04 amd64 and Debian 13 arm64 with Docker networking
-  disabled. This validates repository/closure mechanics only.
-- Published Core `faf932e09bb8` could not resolve its host dependency on
-  `simaai-mla-drv-dkms=2026.10.12.00413+6e585a3` on plain Ubuntu. The older
-  publication still contains the Platform host package. Runtime assembly must
-  not absorb driver provisioning; the collector now rejects such host payloads.
-- Candidate Core `e1c667f05dea` passed the owning native closure verifier after
-  recovering `platform-source.tar.gz` from Scheduler `26c265e6c9f0` and checking
-  the exact declared hash. Core's own publication lacked that object; the
-  publication-list regression fix above addresses this omission for future runs.
-- That newer candidate requires preinstalled Platform host package
-  `simaai-pcie-host=2026.10.12.00413+6e585a3`; plain Ubuntu is not a valid
-  post-provisioning baseline and resolution correctly failed.
-- Actual `e1c667f05dea` ARM64 packages failed resolution on plain Debian 13 for
-  Platform dependencies `simaai-log`, `simaai-trace`, `simaai-mlart-modalix`,
-  `simaai-heap`, and `tvm`. These must come from a qualified clean Platform
-  baseline/repository, not copied from an already modified card.
+A host prepared with `sima-cli -i update` may have Platform files and DKMS
+installed directly, without corresponding Platform DEB registrations. Scheduler
+PR #18 (`85b05060c221`) supports this layout by checking installed header hashes,
+ELF architecture, and required exports. The offline release requires that corrected
+producer; older publications with a hard Platform DEB dependency remain
+incompatible. Do not fake dpkg registrations or alter producer receipts.
 
-No actual Neat release archive or full hardware-offline qualification is claimed.
-The installed sima-cli on the qualification host now supports signed eLxr 3.0
-SWUpdate bundles and a separate Linux host update path. `sima-cli -i update` on
-a Linux host selects a checksum-verified `sima_pcie_host_pkg.sh` from the public
-daily-build catalog. Do not run it as part of Neat installation: it applies
-Platform drivers/libraries and may require a reboot.
+Local qualification used paired Core publications at `0c4b8df5ef48`, with the
+corrected Scheduler host producer built from its source revision. The builder was
+Ubuntu 24.04 with SDK image
+`ghcr.io/sima-neat/sdk-develop@sha256:da219fe71f98982d08d8addc5deb3c7f74dc98f607c8c5843c270a8ab3600b63`.
+Host CTests passed 14/14; the Scheduler producer passed nine native CTests,
+65 Python tests, and installed/relocated consumer and plugin-load checks. Card
+publication verification passed for all 20 artifacts.
 
-The host installer downloaded for SDK build `3.0.0_daily_develop_B2308` was
-verified against the catalog and inspected without running its payload. It
-installs files and DKMS directly; it does not install the corresponding Platform
-DEBs. This does not satisfy the current Scheduler producer's exact Debian
-package dependency/admission contract. A host prepared with that script alone
-must not be assumed compatible with this Neat bundle. Platform provisioning and
-the Scheduler producer need an agreed, verifiable package contract; do not fake
-dpkg registrations or weaken the dependency checks in the offline installer.
+Both real payloads passed native package installation, package audits, Python
+installation, dependency checks, and import checks with Docker `--network=none`:
 
-The locally built host payload at Core `e8d2ba7cd23f` still requires
-`simaai-pcie-host=2026.10.12.00413+6e585a3`. The inspected public catalog had no
-matching host package; B2308 supplies `2026.10.21.00415+a1e551a` instead. The
-required older package is not interchangeable with a newer daily build merely
-because both are Platform 3.0. Actual host preflight with networking disabled
-failed on the missing Platform package before mutation. PCI-scoped discovery
-also received no reply from the supplied card; its responder configuration names
-an absent interface.
+- Host: clean Ubuntu 24.04, with only the producer-built pinned Platform userspace
+  library and public headers added. No driver package or invented dpkg registration.
+- Card: the supplied Platform 3.0 B2121 card's read-only factory lower root,
+  mounted at `/oldroot`, verified to contain no Neat packages or runtime tree.
+  This excludes the mutable overlay containing the existing Neat installation.
+  Archive SHA-256:
+  `da453001abbb8cafe77ba06438022221e732fb7f38196497c2c7fba7cf4addc7`.
+  The container omits host keys and user data, disables service startup, and removes
+  the unavailable internal Platform repository. Signed Debian/eLxr repositories
+  supply ordinary dependencies; Platform stays in the baseline.
 
-Use a qualified full eLxr firmware/rootfs image as the clean baseline source;
-an in-place package update does not establish that Neat is absent. A PCIe-capable
-image and its host driver compatibility still need verification before flashing.
-No firmware update or card reconfiguration was performed for these checks.
+The immutable baseline digests, original dpkg status, repository index hashes,
+and selected package/wheel hashes are recorded in the bundle. Baselines and SDK
+images are qualification/build inputs and are not part of the customer archive.
 
-The producer correction in Scheduler PR #18 (revision `85b05060c221`) removes the
-hard Platform DEB dependency and checks installed header hashes and ELF
-architecture/exports. Read-only admission of the supplied shell-provisioned host
-passes with that revision. The offline release requires this corrected producer;
-older native publications remain incompatible. Its nine native CTests, 65 Python
-tests, installed/relocated consumer checks, and plugin-load check passed on the
-Ubuntu 24.04 local builder. Hardware installation qualification remains separate.
+On an already installed card, preflight delegates legacy Neat replacement and
+Scheduler transaction checks to the published installer. Installed system
+prerequisites are retained; only missing prerequisites are requested. The host
+still disallows package removal. Unsupported replacements fail before any target
+is changed. After prerequisites are installed, the adapter regenerates its APT
+plan before final admission, excluding prerequisites already installed. Card
+reruns plan the complete native cohort with `--reinstall`, matching the published
+installer. It retains the isolated Python environment built
+from the wheelhouse instead of exposing unrelated system Python packages.
+
+Physical multi-card and application-inference qualification remain separate from
+container package/import checks. Firmware conversion and driver provisioning must
+be completed before running the Neat installer.
+
+## Physical offline installation result
+
+The qualification archive `neat-offline-0c4b8df5ef48-v8.tar.gz` contains the paired
+Core binaries above and installer tooling through `e53665e3`. Its SHA-256 is
+`9a16edb2a3e0d26b08655e08aea89b3e235bf545d3c8032863a5a2f2022d8169`.
+The native repositories, wheelhouses, baseline inputs, and container validator
+remain byte-identical to the successful clean-container validation; subsequent
+changes fix the physical deployment adapters.
+
+On the prepared Ubuntu 24.04 host and one Platform 3.0 B2121 card, the bundled
+installer exited zero with `installed_verified` for the host and card and an
+empty error list. It discovered the card through its PCI-owned interface without
+an IP argument. Package operations ran inside host/card network namespaces with
+only loopback; SSH remained outside them. Exact installed versions, package
+audits, Python dependency checks/imports, the host plugin, producer library
+admission, and Neat-owned EV74 runtime activation passed. The run also exercised
+reinstallation after the legacy Neat package migration.
+
+Before testing, the separately provisioned card responder was repaired to use its
+actual PCIe interface instead of an absent interface, with its original config
+backed up. This repair is not part of the Neat installer. The host Platform
+library hash and loaded driver version were unchanged; no Platform system image
+was flashed. This is one-card installation acceptance, not multi-card hardware,
+DMA/inference, or numerical model qualification. Release publication still needs
+the corrected Scheduler producer from PR #18.
