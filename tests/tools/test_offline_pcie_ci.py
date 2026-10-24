@@ -212,9 +212,10 @@ def test_validation_build_does_not_reuse_or_publish(tmp_path):
     assert (args.work/ci.assemble.ARCHIVE_NAME).is_file()
 
 
-def test_validation_can_use_ready_publications_while_other_tests_run():
+@pytest.mark.parametrize('status', ['queued', 'in_progress', 'waiting', 'pending'])
+def test_validation_can_use_ready_publications_while_other_tests_run(status):
     run = source('codex/offline-pcie-discovery')
-    run.update(status='in_progress', conclusion=None)
+    run.update(status=status, conclusion=None)
     assert resolver.eligible(run, jobs()) is None
     assert resolver.eligible(run, jobs(), validation_ref=run['head_branch'])
     assert resolver.eligible(run, [], validation_ref=run['head_branch']) is None

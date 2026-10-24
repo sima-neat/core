@@ -27,7 +27,7 @@ def eligible(run, jobs, tag_sha=None, validation_ref=None):
         return None
     complete = run.get('status') == 'completed' and run.get('conclusion') == 'success'
     validating_published = (validation_ref and run.get('head_branch') == validation_ref
-                            and run.get('status') == 'in_progress')
+                            and run.get('status') in ('queued', 'in_progress', 'waiting', 'pending'))
     if not complete and not validating_published:
         return None
     sha, ref = run.get('head_sha', ''), run.get('head_branch', '')
