@@ -76,7 +76,6 @@ jobs:
       validation_only: true
 
   documentation-localization:
-    if: ${{ !inputs.offline_source_run_id }}
     name: Validate Documentation Localization
     runs-on: ubuntu-latest
     steps:
