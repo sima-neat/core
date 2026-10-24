@@ -158,7 +158,7 @@ TensorList materialize_joined_ingress_tensors(
     const TensorList& tensors,
     const std::vector<IngressConsumerTensorIdentity>& consumer_identities,
     const std::string& segment_name, const char* where);
-Tensor materialize_dense_ingress_tail(Tensor tensor, std::size_t required_bytes,
+Tensor materialize_dense_ingress_tail(Tensor tensor, std::size_t required_storage_bytes,
                                       int batch_size = 1);
 
 } // namespace simaai::neat::internal

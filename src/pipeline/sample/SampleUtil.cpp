@@ -1410,7 +1410,7 @@ bool attach_public_tensor_views(GstBuffer* buffer, const TensorList& tensors,
   }
   std::vector<simaai::gst::TensorBufferPhysicalBinding> bindings;
   bindings.reserve(descriptor.tensors.size());
-  bool extended_carrier = false;
+  bool needs_physical_binding_override = false;
   for (std::size_t i = 0; i < descriptor.tensors.size(); ++i) {
     auto& view = descriptor.tensors[i];
     view.logical_index = static_cast<int>(i);
@@ -1426,18 +1426,18 @@ bool attach_public_tensor_views(GstBuffer* buffer, const TensorList& tensors,
     auto* memory = gst_buffer_peek_memory(buffer, view.memory_index);
     const auto memory_bytes = memory ? gst_memory_get_sizes(memory, nullptr, nullptr) : 0U;
     const auto carrier_bytes = std::min(memory_bytes, tensor_runtime_segment_size(tensors[i]));
-    if (view.byte_offset < 0 || static_cast<std::uint64_t>(view.byte_offset) >= carrier_bytes) {
+    const auto byte_offset = static_cast<std::uint64_t>(view.byte_offset);
+    if (byte_offset >= carrier_bytes) {
       if (err) {
         *err = "public input view has no readable physical carrier";
       }
       return false;
     }
-    bindings.push_back({view.memory_index, static_cast<std::uint64_t>(view.byte_offset),
-                        carrier_bytes - static_cast<std::uint64_t>(view.byte_offset)});
-    extended_carrier |= bindings.back().size_bytes != view.size_bytes;
+    bindings.push_back({view.memory_index, byte_offset, carrier_bytes - byte_offset});
+    needs_physical_binding_override |= bindings.back().size_bytes != view.size_bytes;
   }
   return attach_tensor_set_meta_from_descriptor_view_impl(buffer, descriptor, err) &&
-         (!extended_carrier ||
+         (!needs_physical_binding_override ||
           simaai::gst::tensor_buffer_attach_physical_bindings(buffer, bindings, err));
 }
 

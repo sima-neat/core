@@ -3308,21 +3308,21 @@ public:
       if (!selected) {
         throw std::runtime_error("ModelIngressRouteProcessor: " + error);
       }
-      const CompiledMlaContract* stage = nullptr;
+      const CompiledMlaContract* mla_contract = nullptr;
       for (const auto& facts : selected->stage_facts) {
         const auto mla = std::find_if(facts.begin(), facts.end(), [](const auto& fact) {
           return fact.mla_compiled.has_value();
         });
         if (mla != facts.end()) {
-          stage = &*mla->mla_compiled;
+          mla_contract = &*mla->mla_compiled;
           break;
         }
       }
       direct_input_storage_bytes_.resize(ingress_contracts_.size(), 0U);
-      if (stage) {
+      if (mla_contract) {
         // Rank-two ingress convenience dimensions do not retain the MLA batch count.
-        direct_mla_batch_size_ = stage->payload.batch_size;
-        for (const auto& input : stage->runtime_contract.physical_inputs) {
+        direct_mla_batch_size_ = mla_contract->payload.batch_size;
+        for (const auto& input : mla_contract->runtime_contract.physical_inputs) {
           if (input.source_physical_index < 0 || input.source_byte_offset < 0 ||
               static_cast<std::size_t>(input.source_physical_index) >=
                   direct_input_storage_bytes_.size()) {
@@ -7696,10 +7696,10 @@ Tensor ModelAccess::make_dummy_input(const InputOptions& options) {
   return make_dummy_tensor(options);
 }
 
-Tensor materialize_dense_ingress_tail(Tensor tensor, const std::size_t required_bytes,
+Tensor materialize_dense_ingress_tail(Tensor tensor, const std::size_t required_storage_bytes,
                                       const int batch_size) {
   const auto logical_bytes = tensor.dense_bytes_tight();
-  if (required_bytes <= logical_bytes) {
+  if (required_storage_bytes <= logical_bytes) {
     return tensor;
   }
   if (batch_size != 1) {
@@ -7710,7 +7710,7 @@ Tensor materialize_dense_ingress_tail(Tensor tensor, const std::size_t required_
   if (logical_bytes == 0U || !tensor.storage || tensor.byte_offset < 0) {
     throw std::runtime_error("direct MLA allocation tail requires a valid dense input tensor");
   }
-  if (required_bytes > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max())) {
+  if (required_storage_bytes > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max())) {
     throw std::runtime_error("direct MLA allocation tail exceeds the carrier shape range");
   }
   const auto memory_index =
@@ -7724,20 +7724,20 @@ Tensor materialize_dense_ingress_tail(Tensor tensor, const std::size_t required_
   }
   const auto offset = static_cast<std::uint64_t>(tensor.byte_offset);
   const bool reusable =
-      tensor.is_contiguous() && offset <= available && required_bytes <= available - offset;
+      tensor.is_contiguous() && offset <= available && required_storage_bytes <= available - offset;
   if (reusable && tensor.storage->kind != StorageKind::CpuOwned &&
       tensor.storage->kind != StorageKind::CpuExternal) {
     return tensor;
   }
   Tensor carrier;
   carrier.dtype = TensorDType::UInt8;
-  carrier.shape = {static_cast<std::int64_t>(required_bytes)};
+  carrier.shape = {static_cast<std::int64_t>(required_storage_bytes)};
   if (reusable) {
     carrier.storage = tensor.storage;
     carrier.device = tensor.device;
     carrier.byte_offset = tensor.byte_offset;
   } else {
-    carrier.storage = make_cpu_owned_storage(required_bytes);
+    carrier.storage = make_cpu_owned_storage(required_storage_bytes);
     carrier.device = {DeviceType::CPU, 0};
     {
       const auto mapping = carrier.storage->map(MapMode::Write);
@@ -7745,11 +7745,10 @@ Tensor materialize_dense_ingress_tail(Tensor tensor, const std::size_t required_
       if (!tensor.copy_dense_bytes_tight_to(bytes, logical_bytes)) {
         throw std::runtime_error("direct MLA allocation tail could not copy its logical input");
       }
-      std::memset(bytes + logical_bytes, 0, required_bytes - logical_bytes);
+      std::memset(bytes + logical_bytes, 0, required_storage_bytes - logical_bytes);
     }
     if (tensor.device.type == DeviceType::SIMA_MLA || tensor.device.type == DeviceType::SIMA_CVU) {
-      const std::vector<Segment> segments{{"ifm0", required_bytes}};
-      carrier = pipeline_internal::transfer_to_device(carrier, tensor.device, &segments, nullptr);
+      carrier = pipeline_internal::transfer_to_device(carrier, tensor.device, nullptr, nullptr);
     }
   }
   carrier.read_only = tensor.read_only;
