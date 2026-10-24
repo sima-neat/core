@@ -317,8 +317,9 @@ must receive the same checksum-verified object before enabling this workflow.
 No baseline image is shipped in the customer bundle. To update a baseline, qualify
 and upload a new content-addressed object and change the manifest in review; do
 not replace an existing input. The host baseline adds only the Platform userspace
-library/headers built by the published producer's verified `platform-source.tar.gz`
-and helper. It does not install the driver. Older producers requiring Platform
+library/headers built from the separate pinned Platform source archive using
+the published producer's helper and policy. Every source file is verified against
+that policy; a new source policy requires a reviewed matching build input. It does not install the driver. Older producers requiring Platform
 DEBs are rejected, preserving the separate system-provisioning contract.
 
 Each job validates both targets in fresh containers with `--network=none` before

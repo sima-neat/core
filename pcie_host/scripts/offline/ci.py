@@ -140,8 +140,12 @@ def build(args):
     baselines = json.loads((HERE/'baselines.json').read_text())
     context = args.work/'host-baseline'
     context.mkdir()
-    for name in ('platform_provider.py', 'platform-source.json', 'platform-source.tar.gz'):
+    for name in ('platform_provider.py', 'platform-source.json'):
         shutil.copyfile(host/name, context/name)
+    source = baselines['platform_source']
+    download(args.bucket, source['key'], context/'platform-source.tar.gz')
+    if assemble.sha(context/'platform-source.tar.gz') != source['sha256']:
+        raise ValueError('Platform source baseline checksum differs')
     shutil.copyfile(HERE/'HostBaseline.Dockerfile', context/'Dockerfile')
     iid = args.work/'host-image-id'
     run('docker', 'build', '--platform', 'linux/'+args.arch, '--iidfile', iid,

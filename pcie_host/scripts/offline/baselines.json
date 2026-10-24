@@ -15,5 +15,10 @@
       "source": "read-only factory lower root; no Neat installation; user data and SSH host keys excluded",
       "factory_archive_sha256": "da453001abbb8cafe77ba06438022221e732fb7f38196497c2c7fba7cf4addc7"
     }
+  },
+  "platform_source": {
+    "key": "core/_offline-build-inputs/sha256/fd50c300873e7dded850910fcdf64fc4e0599477d053cea8974d1d4f6c21611b/platform-source.tar.gz",
+    "sha256": "fd50c300873e7dded850910fcdf64fc4e0599477d053cea8974d1d4f6c21611b",
+    "provenance": "Packed with Scheduler platform_provider.py at 85b05060c221; source contents are reverified against the selected producer policy during every baseline build."
   }
 }

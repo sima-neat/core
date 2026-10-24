@@ -176,9 +176,10 @@ def test_validation_build_does_not_reuse_or_publish(tmp_path):
     card = tmp_path/'card'
     host.mkdir()
     card.mkdir()
-    for name in ('platform_provider.py', 'platform-source.json', 'platform-source.tar.gz'):
+    for name in ('platform_provider.py', 'platform-source.json'):
         (host/name).write_text('fixture')
-    baseline = json.loads((HERE/'baselines.json').read_text())['card']
+    baselines = json.loads((HERE/'baselines.json').read_text())
+    baseline = baselines['card']
     args = SimpleNamespace(work=tmp_path/'work', ref='develop', sha=SHA,
                            bucket='bucket', distro='ubuntu24', arch='amd64',
                            installer_revision=SHA, run_id=123, validation_only=True)
@@ -202,7 +203,7 @@ def test_validation_build_does_not_reuse_or_publish(tmp_path):
          patch.object(ci, 'existing') as existing, patch.object(ci, 'put') as put, \
          patch.object(ci, 'download', side_effect=download), \
          patch.object(ci, 'run', side_effect=command), \
-         patch.object(ci.assemble, 'sha', return_value=baseline['sha256']), \
+         patch.object(ci.assemble, 'sha', side_effect=lambda p: baselines['platform_source']['sha256'] if p.name == 'platform-source.tar.gz' else baseline['sha256']), \
          patch.object(ci.assemble, 'verify_publication'), \
          patch.object(ci.assemble, 'assemble', side_effect=assemble) as build:
         ci.build(args)
