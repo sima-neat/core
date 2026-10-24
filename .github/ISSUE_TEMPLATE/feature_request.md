@@ -19,7 +19,7 @@ models, stream counts, or latency/throughput needs where useful.
 ## Proposed Behavior
 
 Describe the desired behavior and affected surface: C++/Python API,
-Model/Session/Run, Graph, nodes, diagnostics, tooling, or documentation.
+Model/Graph/Run, nodes, diagnostics, tooling, or documentation.
 Include a small example of the desired API usage or command where useful.
 
 ## Compatibility and Scope
