@@ -113,9 +113,9 @@ simaai::neat::BuildResult make_retention_build() {
   namespace sima = pipeline_internal::sima;
   BuildResult build;
   build.appsink_name = "mysink";
-  build.pipeline_string = "appsrc name=input ! neatprocesscvu name=actual_preproc num-buffers=1 ! "
+  build.pipeline_string = "appsrc name=input ! neatkernelrunner name=actual_preproc ! "
                           "neatprocessmla name=actual_mla num-buffers=1 multi-pipeline=false ! "
-                          "neatprocesscvu name=actual_detess num-buffers=1 ! "
+                          "neatkernelrunner name=actual_detess ! "
                           "identity name=adapter ! queue max-size-buffers=1 ! appsink name=mysink";
   build.rendered_manifest.emplace();
   for (int i = 0; i < 3; ++i) {
@@ -202,11 +202,18 @@ simaai::neat::BuildResult make_value_bound_retention_build() {
 void require_native_retention_pool_policy() {
   using namespace simaai::neat;
   namespace sima = pipeline_internal::sima;
-  const auto check = [](const std::string& pipeline, const std::string& owner, int depth = 1,
-                        int floor = 2) {
+  const auto check = [](const BuildResult& build, const std::string& pipeline,
+                        const std::string& owner, int depth = 1, int floor = 2) {
     std::size_t floors = 0U;
+    bool runtime_owner = false;
     for (const auto& element : sima::parse_pipeline_elements(pipeline)) {
-      if (element.plugin == "neatprocesscvu" || element.plugin == "neatprocessmla") {
+      if (element.plugin == "neatkernelrunner") {
+        require(element.fragment.find("num-buffers=") == std::string::npos &&
+                    element.fragment.find("output-pool-min-buffers=") == std::string::npos,
+                "Runtime pool budgets must not become unsupported element properties");
+        runtime_owner = runtime_owner || element.element_name == owner;
+      }
+      if (element.plugin == "neatprocessmla") {
         require(element.fragment.find("num-buffers=" + std::to_string(depth)) != std::string::npos,
                 "retention storage must not change execution depth or trigger sync prefill");
       }
@@ -218,11 +225,16 @@ void require_native_retention_pool_policy() {
                 "only the exact typed Allocate owner should receive a pool-only floor");
       }
     }
-    require(floors == (owner.empty() ? 0U : 1U), "one cached carrier must be budgeted only once");
+    require(floors == (owner.empty() || runtime_owner ? 0U : 1U),
+            "one cached carrier must be budgeted only once");
+    if (runtime_owner) {
+      require(build.kernel_runner_output_pool_capacity == static_cast<std::size_t>(floor),
+              "exact Runtime Allocate owner must retain its typed pool floor");
+    }
     require(pipeline.find("max-size-buffers=1") != std::string::npos,
             "retention policy must preserve the serial queue limit");
   };
-  const auto reject = [](const BuildResult& build, const std::string& reason) {
+  const auto reject = [](BuildResult& build, const std::string& reason) {
     bool failed = false;
     try {
       (void)session_build_clamp_sync_build_result(build, 1);
@@ -233,7 +245,7 @@ void require_native_retention_pool_policy() {
   };
 
   auto value_bound = make_value_bound_retention_build();
-  check(session_build_clamp_sync_build_result(value_bound, -1), "actual_preproc");
+  check(value_bound, session_build_clamp_sync_build_result(value_bound, -1), "actual_preproc");
   auto mixed = make_value_bound_retention_build();
   auto& mixed_stage = mixed.rendered_manifest->stages.back();
   auto external_physical = mixed_stage.physical_inputs.front();
@@ -250,11 +262,11 @@ void require_native_retention_pool_policy() {
   external_binding.cm_input_name = "external_tensor";
   external_binding.source_segment_name = "external_tensor";
   mixed_stage.input_bindings.push_back(external_binding);
-  check(session_build_clamp_sync_build_result(mixed, -1), "actual_preproc");
+  check(mixed, session_build_clamp_sync_build_result(mixed, -1), "actual_preproc");
   auto caps_bound = make_value_bound_retention_build();
   caps_bound.pipeline_string.insert(caps_bound.pipeline_string.find("identity name=adapter"),
                                     "video/x-raw(memory:DMABuf),format=(string)BGR ! ");
-  check(session_build_clamp_sync_build_result(caps_bound, -1), "actual_preproc");
+  check(caps_bound, session_build_clamp_sync_build_result(caps_bound, -1), "actual_preproc");
   std::string edge_error;
   const auto edges = sima::edgecontract::resolve_consumer_edge_contracts_exact(
       *value_bound.rendered_manifest, 2U, &edge_error);
@@ -269,7 +281,7 @@ void require_native_retention_pool_policy() {
         "exact producer resolution must preserve each logical head, backing parent and binding");
   }
   std::swap(value_bound.rendered_manifest->stages[0], value_bound.rendered_manifest->stages[2]);
-  check(session_build_clamp_sync_build_result(value_bound, -1), "actual_preproc");
+  check(value_bound, session_build_clamp_sync_build_result(value_bound, -1), "actual_preproc");
   value_bound = make_value_bound_retention_build();
   value_bound.rendered_manifest->stages[0].logical_outputs[0].logical_name =
       "MLA_0_ofm_unpack_transform_0";
@@ -280,55 +292,52 @@ void require_native_retention_pool_policy() {
 
   auto build = make_retention_build();
   const auto clamped = session_build_clamp_sync_build_result(build, 1);
-  check(clamped, "actual_preproc");
+  check(build, clamped, "actual_preproc");
   build.pipeline_string = clamped;
   require(session_build_clamp_sync_build_result(build, 1) == clamped,
           "retention floor and both legacy clamp exclusions must be idempotent");
-  build.pipeline_string.replace(build.pipeline_string.find("output-pool-min-buffers=2"),
-                                std::string("output-pool-min-buffers=2").size(),
-                                "output-pool-min-buffers=7");
-  check(session_build_clamp_sync_build_result(build, 1), "actual_preproc", 1, 7);
+  build.kernel_runner_output_pool_capacity = 7;
+  check(build, session_build_clamp_sync_build_result(build, 1), "actual_preproc", 1, 7);
   build = make_retention_build();
-  check(session_build_clamp_sync_build_result(build, 4), "", 4);
+  check(build, session_build_clamp_sync_build_result(build, 4), "", 4);
   build.rendered_manifest->stages[2].input_bindings[0].src_stage_index = 0;
   build.rendered_manifest->stages[2].input_bindings[0].src_stage_id = "logical_0";
-  check(session_build_clamp_sync_build_result(build, 1), "actual_preproc");
+  check(build, session_build_clamp_sync_build_result(build, 1), "actual_preproc");
 
   build = make_retention_build();
   build.name_transform.prefix = "branch_";
   build.appsink_name = "branch_mysink";
   build.pipeline_string =
-      "appsrc name=branch_input ! neatprocesscvu name=branch_actual_preproc num-buffers=1 ! "
+      "appsrc name=branch_input ! neatkernelrunner name=branch_actual_preproc ! "
       "neatprocessmla name=branch_actual_mla num-buffers=1 ! "
-      "neatprocesscvu name=branch_actual_detess num-buffers=1 ! "
+      "neatkernelrunner name=branch_actual_detess ! "
       "identity name=adapter ! queue max-size-buffers=1 ! appsink name=branch_mysink";
-  check(session_build_clamp_sync_build_result(build, 1), "branch_actual_preproc");
+  check(build, session_build_clamp_sync_build_result(build, 1), "branch_actual_preproc");
 
   build = make_retention_build();
   build.rendered_manifest->stages[1].frame_arena_role = sima::FrameArenaRole::Allocate;
-  check(session_build_clamp_sync_build_result(build, 1), "actual_mla");
+  check(build, session_build_clamp_sync_build_result(build, 1), "actual_mla");
   build.rendered_manifest->stages[2].frame_arena_role = sima::FrameArenaRole::Allocate;
-  check(session_build_clamp_sync_build_result(build, 1), "actual_detess");
-  build.pipeline_string = "appsrc name=input ! neatprocesscvu name=actual_preproc num-buffers=1 ! "
+  check(build, session_build_clamp_sync_build_result(build, 1), "actual_detess");
+  build.pipeline_string = "appsrc name=input ! neatkernelrunner name=actual_preproc ! "
                           "neatprocessmla name=actual_mla num-buffers=1 ! "
                           "queue max-size-buffers=1 ! appsink name=mysink";
   build.rendered_manifest->stages.pop_back();
-  check(session_build_clamp_sync_build_result(build, 1), "actual_mla");
+  check(build, session_build_clamp_sync_build_result(build, 1), "actual_mla");
 
   build = make_retention_build();
   build.rendered_manifest->stages[0].frame_arena_role = sima::FrameArenaRole::ReuseInput;
   build.rendered_manifest->stages[0].frame_arena_provenance =
       sima::static_contract::ArenaAllocationProvenance::ExternalAdopted;
-  check(session_build_clamp_sync_build_result(build, 1), "");
+  check(build, session_build_clamp_sync_build_result(build, 1), "");
   build.rendered_manifest->stages[0].input_bindings.push_back(
       sima::InputBindingStaticSpec{.cm_input_name = "external_value"});
-  check(session_build_clamp_sync_build_result(build, 1), "");
+  check(build, session_build_clamp_sync_build_result(build, 1), "");
 
   build = make_retention_build();
-  build.pipeline_string =
-      "appsrc name=input ! neatprocessmla name=actual_mla num-buffers=1 ! "
-      "neatprocesscvu name=actual_detess num-buffers=1 ! queue max-size-buffers=1 ! "
-      "appsink name=mysink";
+  build.pipeline_string = "appsrc name=input ! neatprocessmla name=actual_mla num-buffers=1 ! "
+                          "neatkernelrunner name=actual_detess ! queue max-size-buffers=1 ! "
+                          "appsink name=mysink";
   build.rendered_manifest->stages.erase(build.rendered_manifest->stages.begin());
   build.rendered_manifest->stages[0].frame_arena_role = sima::FrameArenaRole::ReuseInput;
   build.rendered_manifest->stages[0].input_bindings[0].src_stage_index = -1;
@@ -337,7 +346,7 @@ void require_native_retention_pool_policy() {
     binding.src_stage_index = 0;
     binding.src_stage_id = "logical_1";
   }
-  check(session_build_clamp_sync_build_result(build, 1), "");
+  check(build, session_build_clamp_sync_build_result(build, 1), "");
 
   build = make_retention_build();
   build.rendered_manifest->stages[2].input_bindings[0].src_stage_index = -1;
@@ -390,10 +399,43 @@ void require_native_retention_pool_policy() {
           "unrelated native topology must not reject a non-native terminal materializer");
   build = make_retention_build();
   build.rendered_manifest.reset();
-  const auto legacy = session_build_clamp_sync_build_result(build, 1);
-  require(legacy.find("actual_detess num-buffers=2") != std::string::npos &&
-              legacy.find("output-pool-min-buffers=") == std::string::npos,
-          "untyped routes must retain the existing legacy terminal behavior");
+  const auto untyped = session_build_clamp_sync_build_result(build, 1);
+  for (const auto& element : sima::parse_pipeline_elements(untyped)) {
+    if (element.plugin == "neatkernelrunner") {
+      require(element.fragment.find("num-buffers=") == std::string::npos &&
+                  element.fragment.find("output-pool-min-buffers=") == std::string::npos,
+              "untyped runner must not acquire legacy execution properties");
+    }
+  }
+  require(build.kernel_runner_output_pool_capacity == 0,
+          "missing typed ownership must not invent a Runtime retention budget");
+}
+
+void require_shared_arena_budget() {
+  using namespace simaai::neat;
+  ScopedEnv output_default("SIMA_OUTPUT_MEMORY_DEFAULT", nullptr);
+  for (const int depth : {1, 4, 8}) {
+    RunOptions options;
+    options.queue_depth = depth;
+    BuildResult build;
+    session_build_initialize_kernel_runner_budget(&build, nullptr);
+    auto stream = session_build_make_stream_options(options, RunMode::Async);
+    session_build_reserve_kernel_runner_outputs(build, stream);
+    require(build.kernel_runner_capacity == 1,
+            "retained arenas must not increase execution concurrency");
+    require(build.kernel_runner_output_pool_capacity == static_cast<std::size_t>(depth + 4),
+            "source and input graphs must reserve the same retained arena window");
+    build.kernel_runner_output_pool_capacity += 2;
+    session_build_reserve_kernel_runner_outputs(build, stream);
+    require(build.kernel_runner_output_pool_capacity == static_cast<std::size_t>(depth + 6),
+            "retention budgeting must preserve a larger explicit pool");
+    build.kernel_runner_output_pool_capacity = 2;
+    options.output_memory = OutputMemory::Owned;
+    stream = session_build_make_stream_options(options, RunMode::Async);
+    session_build_reserve_kernel_runner_outputs(build, stream);
+    require(build.kernel_runner_output_pool_capacity == 2,
+            "owned output must not reserve zero-copy retention slots");
+  }
 }
 
 void require_output_policy_matrix() {
@@ -678,6 +720,7 @@ simaai::neat::Sample make_device_gst_sample_with_external_ref(GstSample** extern
 RUN_TEST(
     "unit_graph_internal_zero_copy_fallback_test", ([] {
       require_native_retention_pool_policy();
+      require_shared_arena_budget();
       require_output_policy_matrix();
       require_dmabuf_loans_and_pressure_preserve_storage();
       require_device_preferred_input_ownership();

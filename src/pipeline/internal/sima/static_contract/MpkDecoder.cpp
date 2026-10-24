@@ -813,7 +813,8 @@ OpConfig parse_typed_config(const OpKind kind, const std::string_view kernel, co
                                       path + ".params.frame_shape"),
                                 required_bool(params, "align_c16", path + ".params"),
                                 required_bool(params, "cblock", path + ".params"),
-                                required_string(params, "frame_type", path + ".params")};
+                                required_string(params, "frame_type", path + ".params"),
+                                DetessFrameShapeSemantics::LegacyMpk};
     if (result.frame_type != "int8" && result.frame_type != "bfloat16") {
       reject(MpkDecodeErrorCode::ConfigurationMismatch, path + ".config_params.params.frame_type",
              "legacy detessellation frame type is not registered");

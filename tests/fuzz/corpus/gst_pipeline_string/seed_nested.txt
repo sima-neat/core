@@ -1,0 +1,1 @@
+bin.( fakesrc name=source num-buffers=1 ! identity name=identity ) ! fakesink name=sink sync=false

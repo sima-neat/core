@@ -2260,7 +2260,7 @@ int main(int argc, char** argv) {
     if (args.insight_video)
       require_element_or_skip("udpsink");
     require_element_or_skip("neatdecoder");
-    require_element_or_skip("neatprocesscvu");
+    require_element_or_skip("neatkernelrunner");
     require_element_or_skip("neatprocessmla");
     if (args.yolo_lanes > 0)
       require_element_or_skip("neatobjectdecode");

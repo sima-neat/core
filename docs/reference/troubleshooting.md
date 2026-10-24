@@ -156,14 +156,14 @@ An RTSP pull timed out — the URL is wrong or the stream isn't delivering frame
 Verify the RTSP URL is reachable and actively streaming; check transport (TCP vs UDP). See [Consume an RTSP Stream](/tutorials/consume-rtsp-stream).
 :::
 
-### 12. `CameraInput strict zero-copy requires external-buffer-mode`
+### 12. `Camera buffer is not one forwardable DMA-BUF and copying is disabled`
 
 :::info Cause
-`CameraInputOptions::allow_cpu_fallback` defaults to false, so Neat requires end-to-end SiMaAI/device zero-copy support. Either `libcamerasrc` does not advertise the generic `external-buffer-mode` property or the installed memory library cannot export its allocation as DMA-BUFs.
+`CameraInputOptions::allow_cpu_fallback` defaults to false, so Neat forwards the camera's own DMA-BUF and never copies. The camera stack delivered a frame that is not one DMA-BUF with its planes back to back (for example a plane per fd, or non-DMA-BUF memory).
 :::
 
 :::tip Fix
-Keep strict zero-copy when the coherent camera and memory packages are installed. If you must run against a camera stack without DMA-BUF export, opt into the compatibility bridge explicitly:
+Keep strict zero-copy with the platform `libcamera` package. If you must run against a camera stack that does not deliver each frame as one DMA-BUF, opt into the compatibility copy explicitly:
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -184,7 +184,7 @@ camera.allow_cpu_fallback = True
 </CodeTab>
 </CodeTabs>
 
-Adaptive mode still hands downstream CVU/MLA stages SiMaAI memory. It only copies at the camera bridge when the upstream camera buffer is not already usable by EV74.
+Adaptive mode still hands downstream CVU/MLA stages a DMA-BUF. It only copies, into a CMA DMA-BUF, when the camera frame is not one DMA-BUF with its planes back to back.
 :::
 
 ### 13. `misconfig.media_caps … libcamerasrc … not-negotiated (-4)`
@@ -235,7 +235,7 @@ python3 share/sima-neat/tutorials/023_run_mipi_camera_model/run_mipi_camera_mode
   --pull-timeout-ms 15000 --print-backend
 </ShellCommand>
 
-The production path should include `libcamerasrc`, `neatcamerabridge` when fallback is enabled, `neatprocesscvu`, `neatprocessmla`, and `appsink`. For BoxDecode routes, also confirm the `--decode` token and thresholds match the model archive.
+The production path should include `libcamerasrc`, `neatcamerabridge` when fallback is enabled, `neatkernelrunner`, `neatprocessmla`, and `appsink`. For BoxDecode routes, also confirm the `--decode` token and thresholds match the model archive.
 :::
 
 ### 16. Graph throughput is low, or live frames get dropped

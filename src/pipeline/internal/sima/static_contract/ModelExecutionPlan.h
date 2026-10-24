@@ -192,12 +192,17 @@ struct ReshapeOpConfig {
   TensorShape new_shape;
 };
 
+// Typed recipes author tensor axes directly. Frozen MPK Detess rank-two
+// frames instead require the legacy NC/HW transport-byte proof at projection.
+enum class DetessFrameShapeSemantics { Tensor, LegacyMpk };
+
 struct DetessellateOpConfig {
   TensorShape slice_shape;
   TensorShape frame_shape;
   bool align_c16 = false;
   bool cblock = false;
   std::string frame_type;
+  DetessFrameShapeSemantics frame_shape_semantics = DetessFrameShapeSemantics::Tensor;
 };
 
 struct DequantizeOpConfig {

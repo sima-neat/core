@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -41,7 +42,9 @@ sc::ValueSpec value(sc::ValueId id, std::string name, std::uint64_t bytes) {
   return result;
 }
 
-sc::ModelExecutionPlan make_plan(std::string contract_version) {
+sc::ModelExecutionPlan
+make_plan(std::string contract_version,
+          std::optional<sc::DetessFrameShapeSemantics> detess_semantics = std::nullopt) {
   sc::ModelExecutionPlanData data;
   data.contract_version = std::move(contract_version);
   data.values = {value(0, "input", 64), value(1, "mla-output", 64)};
@@ -65,6 +68,22 @@ sc::ModelExecutionPlan make_plan(std::string contract_version) {
        sc::BackendPortAlignmentAuthority::LegacyPolicy, sc::BackendPortAccess::WriteOnly},
   };
   data.model_outputs = {{0, "public-output", 1}};
+
+  if (detess_semantics) {
+    data.values.push_back(value(2, "detess-output", 64));
+    sc::OpSpec detess;
+    detess.id = 1;
+    detess.sequence = 2;
+    detess.name = "detess";
+    detess.kind = sc::OpKind::Detessellate;
+    detess.processor = "EV74";
+    detess.inputs = {1};
+    detess.outputs = {2};
+    detess.config =
+        sc::DetessellateOpConfig{{1, 64}, {1, 64}, false, false, "int8", *detess_semantics};
+    data.ops.push_back(std::move(detess));
+    data.model_outputs.front().value_id = 2;
+  }
 
   std::string error;
   auto plan = sc::ModelExecutionPlan::create(std::move(data), &error);
@@ -240,6 +259,29 @@ void test_canonical_digest() {
         simaai::neat::pipeline_internal::dmabuf_execution_digest(plan, *physical, *arena).size() ==
         64U);
   }
+}
+
+void test_detess_semantics_digest() {
+  using namespace simaai::neat::pipeline_internal;
+  const auto tensor = make_plan("detess-digest-v1", sc::DetessFrameShapeSemantics::Tensor);
+  const auto legacy = make_plan("detess-digest-v1", sc::DetessFrameShapeSemantics::LegacyMpk);
+  // The same dimensions and bytes can have different execution geometry. The
+  // explicit authority must participate in both plan and execution identity.
+  CHECK(dmabuf_plan_digest(tensor) != dmabuf_plan_digest(legacy));
+  auto tensor_json = nlohmann::json::parse(canonical_dmabuf_plan_json(tensor));
+  auto legacy_json = nlohmann::json::parse(canonical_dmabuf_plan_json(legacy));
+  auto& tensor_config = tensor_json.at("ops").at(1).at("config");
+  auto& legacy_config = legacy_json.at("ops").at(1).at("config");
+  constexpr auto key = "frame_shape_semantics";
+  CHECK(tensor_config.contains(key));
+  CHECK(legacy_config.contains(key));
+  if (tensor_config.contains(key) && legacy_config.contains(key)) {
+    CHECK(tensor_config.at(key) == static_cast<int>(sc::DetessFrameShapeSemantics::Tensor));
+    CHECK(legacy_config.at(key) == static_cast<int>(sc::DetessFrameShapeSemantics::LegacyMpk));
+  }
+  tensor_config.erase(key);
+  legacy_config.erase(key);
+  CHECK(tensor_json == legacy_json);
 }
 
 void test_structured_rejections_and_sanitized_json() {
@@ -501,6 +543,7 @@ int main(int argc, char** argv) {
     return 2;
   }
   test_canonical_digest();
+  test_detess_semantics_digest();
   test_structured_rejections_and_sanitized_json();
   test_exact_multi_stage_artifact_admission();
   test_mpk_decoder_entry_admits_the_bytes_it_loaded();

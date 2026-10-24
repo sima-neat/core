@@ -253,7 +253,7 @@ public:
       out.layout = "HW";
       out.depth = 1;
     }
-    if (out.format == "NV12" || out.format == "I420") {
+    if (out.format == "NV12" || out.format == "NV16" || out.format == "I420") {
       out.layout = "Planar";
     }
     out.certainty = simaai::neat::SpecCertainty::Derived;

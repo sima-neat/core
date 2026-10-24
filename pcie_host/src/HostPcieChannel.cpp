@@ -3,8 +3,7 @@
 #include "HostPcieTensorPayload.h"
 #include "HostPcieTensorSetMeta.h"
 
-#include <gst/app/gstappsink.h>
-#include <gst/app/gstappsrc.h>
+#include <simaai/scheduler/pcie/channel.h>
 
 #include <algorithm>
 #include <bit>
@@ -21,22 +20,6 @@
 
 namespace simaai::neat::pcie::internal {
 namespace {
-
-constexpr std::size_t kMinimumTransportBufferSize = 512U * 1024U;
-constexpr std::size_t kMaximumTransportBufferSize = 128U * 1024U * 1024U;
-
-void ensure_gstreamer_initialized() {
-  static std::once_flag once;
-  std::call_once(once, []() {
-    int argc = 0;
-    char** argv = nullptr;
-    gst_init(&argc, &argv);
-    static const gchar* tags[] = {nullptr};
-    if (!gst_meta_get_info("GstSimaHostMeta")) {
-      gst_meta_register_custom("GstSimaHostMeta", tags, nullptr, nullptr, nullptr);
-    }
-  });
-}
 
 std::string upper_copy(std::string value) {
   std::transform(value.begin(), value.end(), value.begin(),
@@ -332,38 +315,37 @@ TensorList tensors_from_output_sample(const std::shared_ptr<MappedSample>& owner
 
 } // namespace
 
-HostPcieChannel::HostPcieChannel() {
-  ensure_gstreamer_initialized();
-}
-
-HostPcieChannel::~HostPcieChannel() {
-  stop();
-}
-
-void HostPcieChannel::configure(const PcieModelFacts& facts, const int queue, const int card_id,
-                                const int max_inflight, const bool expects_bbox_output,
-                                const std::size_t output_buffer_bytes) {
-  std::lock_guard<std::mutex> lock(send_mutex_);
-  if (running_.load()) {
-    throw std::runtime_error("cannot configure HostPcieChannel while running");
-  }
-  if (max_inflight < 0) {
-    throw std::invalid_argument("max_inflight must be non-negative");
-  }
+HostPcieChannel::HostPcieChannel()
+    : transport_(std::make_unique<simaai::scheduler::pcie::Channel>()) {}
+HostPcieChannel::~HostPcieChannel() = default;
+void HostPcieChannel::configure(const PcieModelFacts& facts, int queue, int card, int inflight,
+                                bool bbox, std::size_t output_bytes) {
+  transport_->configure(queue, card, inflight,
+                        required_transport_buffer_size(facts.packed_input_bytes,
+                                                       facts.packed_output_bytes, 0, output_bytes));
   facts_ = facts;
-  pcie_queue_ = queue;
-  card_id_ = card_id;
-  max_inflight_ = max_inflight;
-  expects_bbox_output_ = expects_bbox_output;
-  output_buffer_bytes_ = output_buffer_bytes;
-  stop_requested_.store(false);
-  configured_ = true;
-  {
-    std::lock_guard<std::mutex> inflight_lock(inflight_mutex_);
-    inflight_ = 0;
-  }
+  expects_bbox_output_ = bbox;
+  output_layout_.reset();
 }
-
+void HostPcieChannel::request_stop() {
+  transport_->request_stop();
+}
+void HostPcieChannel::stop() {
+  transport_->stop();
+}
+bool HostPcieChannel::is_running() const {
+  return transport_->is_running();
+}
+std::size_t HostPcieChannel::required_transport_buffer_size(std::size_t a, std::size_t b,
+                                                            std::size_t c, std::size_t d) {
+  return simaai::scheduler::pcie::Channel::required_buffer_size(a, b, c, d);
+}
+void HostPcieChannel::attach_request_id(GstBuffer* buffer, std::int32_t id) {
+  simaai::scheduler::pcie::Channel::attach_request_id(buffer, id);
+}
+std::optional<std::int32_t> HostPcieChannel::request_id_from_buffer(GstBuffer* buffer) {
+  return simaai::scheduler::pcie::Channel::request_id_from_buffer(buffer);
+}
 std::string HostPcieChannel::tensor_set_caps() {
   return "application/vnd.simaai.tensor, representation=(string)tensor-set, "
          "storage=(string)tensorbuffer";
@@ -376,19 +358,6 @@ void HostPcieChannel::validate_output_payload_size(const std::size_t received_by
                              std::to_string(received_bytes) + " bytes received, " +
                              std::to_string(expected_bytes) + " bytes expected");
   }
-}
-
-std::size_t HostPcieChannel::required_transport_buffer_size(
-    const std::size_t packed_input_bytes, const std::size_t packed_output_bytes,
-    const std::size_t submitted_payload_bytes, const std::size_t output_buffer_bytes) {
-  const std::size_t required =
-      std::max({kMinimumTransportBufferSize, packed_input_bytes, packed_output_bytes,
-                submitted_payload_bytes, output_buffer_bytes});
-  if (required > kMaximumTransportBufferSize) {
-    throw std::runtime_error("PCIe transport payload exceeds the 128 MiB buffer limit: " +
-                             std::to_string(required) + " bytes required");
-  }
-  return required;
 }
 
 std::string HostPcieChannel::caps_for_tensors(const TensorList& tensors) {
@@ -417,524 +386,74 @@ std::string HostPcieChannel::caps_for_tensors(const TensorList& tensors) {
   return image_caps_for_tensor(tensors.front(), *image);
 }
 
-void HostPcieChannel::start_with_caps(const std::string& caps_string,
-                                      const std::size_t submitted_payload_bytes) {
-  throw_if_stopped();
-  if (!configured_) {
-    throw std::runtime_error("host PCIe channel is not configured");
-  }
-  if (running_.load()) {
-    if (submitted_payload_bytes > transport_buffer_size_) {
-      throw std::runtime_error(
-          "PCIe input payload exceeds the transport buffer selected by the first submission: " +
-          std::to_string(submitted_payload_bytes) + " bytes submitted, " +
-          std::to_string(transport_buffer_size_) +
-          " bytes available; close and rebuild the model for the new input geometry");
-    }
-    if (caps_string != caps_) {
-      GstCaps* caps = gst_caps_from_string(caps_string.c_str());
-      if (!caps) {
-        throw std::runtime_error("failed to parse caps: " + caps_string);
-      }
-      g_object_set(G_OBJECT(appsrc_), "caps", caps, nullptr);
-      gst_caps_unref(caps);
-      caps_ = caps_string;
-    }
-    return;
-  }
-
-  transport_buffer_size_ =
-      required_transport_buffer_size(facts_.packed_input_bytes, facts_.packed_output_bytes,
-                                     submitted_payload_bytes, output_buffer_bytes_);
-  caps_ = caps_string;
-  pipeline_ = gst_pipeline_new("sima_neat_pcie_host");
-  appsrc_ = gst_element_factory_make("appsrc", "src");
-  queue_element_ = gst_element_factory_make("queue", "q");
-  pciehost_ = gst_element_factory_make("neatpciehost", "pcie");
-  appsink_ = gst_element_factory_make("appsink", "sink");
-
-  if (!pipeline_ || !appsrc_ || !queue_element_ || !pciehost_ || !appsink_) {
-    stop_locked();
-    throw std::runtime_error("failed to create appsrc/queue/neatpciehost/appsink elements");
-  }
-
-  GstCaps* caps = gst_caps_from_string(caps_.c_str());
-  if (!caps) {
-    stop_locked();
-    throw std::runtime_error("failed to parse caps: " + caps_);
-  }
-
-  const guint queue_depth = static_cast<guint>(max_inflight_);
-  // Bound transport storage for the default logical in-flight window.
-  // Keep the existing ring size for larger or plugin-managed in-flight windows.
-  const guint queue_size = queue_depth > 0 && queue_depth <= 10 ? 16u : 256u;
-  g_object_set(G_OBJECT(appsrc_), "caps", caps, "is-live", TRUE, "do-timestamp", TRUE, "block",
-               FALSE, "format", GST_FORMAT_TIME, "max-buffers", queue_depth, "max-bytes",
-               static_cast<guint64>(0), "max-time", static_cast<guint64>(0), nullptr);
-  gst_caps_unref(caps);
-
-  g_object_set(G_OBJECT(pciehost_), "buffersize", static_cast<guint64>(transport_buffer_size_),
-               "card-number", card_id_, "queue", pcie_queue_, "queuesize", queue_size, "queuedepth",
-               queue_depth, nullptr);
-
-  g_object_set(G_OBJECT(appsink_), "emit-signals", TRUE, "sync", FALSE, "max-buffers", 256, "drop",
-               FALSE, nullptr);
-  g_object_set(G_OBJECT(queue_element_), "max-size-buffers", queue_depth, "max-size-bytes", 0,
-               "max-size-time", static_cast<guint64>(0), "leaky", 0, nullptr);
-
-  g_signal_connect(appsink_, "new-sample", G_CALLBACK(on_new_sample_static), this);
-
-  gst_bin_add_many(GST_BIN(pipeline_), appsrc_, queue_element_, pciehost_, appsink_, nullptr);
-  if (!gst_element_link(appsrc_, queue_element_)) {
-    stop_locked();
-    throw std::runtime_error("failed to link host PCIe pipeline");
-  }
-
-  GstPad* queue_src = gst_element_get_static_pad(queue_element_, "src");
-  GstPad* appsink_sink = gst_element_get_static_pad(appsink_, "sink");
-  pciehost_sink_pad_ = gst_element_request_pad_simple(pciehost_, "sink_0");
-  pciehost_src_pad_ = gst_element_request_pad_simple(pciehost_, "src_0");
-  const bool pads_linked = queue_src && appsink_sink && pciehost_sink_pad_ && pciehost_src_pad_ &&
-                           gst_pad_link(queue_src, pciehost_sink_pad_) == GST_PAD_LINK_OK &&
-                           gst_pad_link(pciehost_src_pad_, appsink_sink) == GST_PAD_LINK_OK;
-  if (queue_src) {
-    gst_object_unref(queue_src);
-  }
-  if (appsink_sink) {
-    gst_object_unref(appsink_sink);
-  }
-  if (!pads_linked) {
-    stop_locked();
-    throw std::runtime_error("failed to link explicit neatpciehost sink_0/src_0 pads");
-  }
-
-  if (gst_element_set_state(pipeline_, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
-    stop_locked();
-    throw std::runtime_error("failed to set host PCIe pipeline to PLAYING");
-  }
-  running_.store(true);
-  GstBus* bus = gst_element_get_bus(pipeline_);
-  if (!bus) {
-    stop_locked();
-    throw std::runtime_error("failed to get host PCIe pipeline bus");
-  }
-  try {
-    bus_thread_ = std::thread(&HostPcieChannel::monitor_bus, this, bus);
-  } catch (...) {
-    gst_object_unref(bus);
-    stop_locked();
-    throw;
-  }
-}
-
-void HostPcieChannel::request_stop() {
-  stop_requested_.store(true);
-  running_.store(false);
-  inflight_cv_.notify_all();
-  receive_cv_.notify_all();
-}
-
-void HostPcieChannel::stop() {
-  request_stop();
-  std::lock_guard<std::mutex> lock(send_mutex_);
-  stop_locked();
-}
-
-void HostPcieChannel::stop_locked() {
-  request_stop();
-  configured_ = false;
-  if (bus_thread_.joinable()) {
-    bus_thread_.join();
-  }
-  if (appsrc_) {
-    GstFlowReturn ret = GST_FLOW_OK;
-    g_signal_emit_by_name(appsrc_, "end-of-stream", &ret);
-    if (pipeline_ && ret == GST_FLOW_OK) {
-      GstBus* bus = gst_element_get_bus(pipeline_);
-      if (bus) {
-        GstMessage* message = gst_bus_timed_pop_filtered(
-            bus, 10 * GST_SECOND, static_cast<GstMessageType>(GST_MESSAGE_EOS | GST_MESSAGE_ERROR));
-        if (message) {
-          gst_message_unref(message);
-        }
-        gst_object_unref(bus);
-      }
-    }
-  }
-  if (pipeline_) {
-    const GstStateChangeReturn state_change = gst_element_set_state(pipeline_, GST_STATE_NULL);
-    if (state_change == GST_STATE_CHANGE_ASYNC) {
-      (void)gst_element_get_state(pipeline_, nullptr, nullptr, 5 * GST_SECOND);
-    }
-    if (pciehost_ && pciehost_sink_pad_) {
-      gst_element_release_request_pad(pciehost_, pciehost_sink_pad_);
-      gst_object_unref(pciehost_sink_pad_);
-    }
-    if (pciehost_ && pciehost_src_pad_) {
-      gst_element_release_request_pad(pciehost_, pciehost_src_pad_);
-      gst_object_unref(pciehost_src_pad_);
-    }
-    pciehost_sink_pad_ = nullptr;
-    pciehost_src_pad_ = nullptr;
-    gst_object_unref(pipeline_);
-  }
-  pipeline_ = nullptr;
-  appsrc_ = nullptr;
-  queue_element_ = nullptr;
-  pciehost_ = nullptr;
-  appsink_ = nullptr;
-  pciehost_sink_pad_ = nullptr;
-  pciehost_src_pad_ = nullptr;
-  caps_.clear();
-  transport_buffer_size_ = 0;
-  {
-    std::lock_guard<std::mutex> inflight_lock(inflight_mutex_);
-    inflight_ = 0;
-  }
-  inflight_cv_.notify_all();
-  {
-    std::lock_guard<std::mutex> lock(receive_mutex_);
-    received_results_.clear();
-    receive_error_.reset();
-    output_layout_.reset();
-  }
-  receive_cv_.notify_all();
-}
-
-bool HostPcieChannel::is_running() const {
-  return running_.load();
-}
-
-void HostPcieChannel::monitor_bus(GstBus* bus) {
-  while (!stop_requested_.load()) {
-    GstMessage* message = gst_bus_timed_pop_filtered(
-        bus, 100 * GST_MSECOND, static_cast<GstMessageType>(GST_MESSAGE_ERROR | GST_MESSAGE_EOS));
-    if (!message) {
-      continue;
-    }
-
-    if (GST_MESSAGE_TYPE(message) == GST_MESSAGE_ERROR) {
-      GError* error = nullptr;
-      gchar* detail = nullptr;
-      gst_message_parse_error(message, &error, &detail);
-      std::ostringstream text;
-      text << "PCIe pipeline error";
-      if (GST_MESSAGE_SRC(message)) {
-        text << " from " << GST_OBJECT_NAME(GST_MESSAGE_SRC(message));
-      }
-      if (error && error->message) {
-        text << ": " << error->message;
-      }
-      if (detail && *detail) {
-        text << " (" << detail << ")";
-      }
-      {
-        std::lock_guard<std::mutex> lock(receive_mutex_);
-        if (!receive_error_) {
-          receive_error_ = text.str();
-        }
-      }
-      g_clear_error(&error);
-      g_free(detail);
-      gst_message_unref(message);
-      request_stop();
-      break;
-    }
-
-    gst_message_unref(message);
-    request_stop();
-    break;
-  }
-  gst_object_unref(bus);
-}
-
 bool HostPcieChannel::push(const TensorList& tensors) {
-  if (tensors.empty()) {
-    throw std::runtime_error("PCIe payload requires at least one tensor");
-  }
-  throw_if_stopped();
-  PreparedPayload payload = prepare_tensor_payload(tensors);
-  if (!wait_and_reserve_inflight()) {
-    throw_if_stopped();
-    throw std::runtime_error("host PCIe channel could not reserve transport capacity");
-  }
-  std::lock_guard<std::mutex> lock(send_mutex_);
-  try {
-    throw_if_stopped();
-    start_with_caps(caps_for_tensors(tensors), payload.size_bytes);
-    return push_prepared_payload(next_request_id_.fetch_add(1), std::move(payload));
-  } catch (...) {
-    release_inflight();
-    throw;
-  }
+  return push_payload(next_request_id_.fetch_add(1), tensors, true);
 }
-
-bool HostPcieChannel::try_push(const std::int32_t request_id, const TensorList& tensors) {
-  if (tensors.empty()) {
-    throw std::runtime_error("PCIe payload requires at least one tensor");
-  }
-  throw_if_stopped();
-  if (!reserve_inflight()) {
-    throw_if_stopped();
-    return false;
-  }
-  try {
-    PreparedPayload payload = prepare_tensor_payload(tensors);
-    std::lock_guard<std::mutex> lock(send_mutex_);
-    throw_if_stopped();
-    start_with_caps(caps_for_tensors(tensors), payload.size_bytes);
-    return push_prepared_payload(request_id, std::move(payload));
-  } catch (...) {
-    release_inflight();
-    throw;
-  }
+bool HostPcieChannel::try_push(std::int32_t id, const TensorList& tensors) {
+  return push_payload(id, tensors, false);
 }
-
-void HostPcieChannel::throw_if_stopped() {
-  if (!stop_requested_.load()) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(receive_mutex_);
-  if (receive_error_) {
-    throw std::runtime_error(*receive_error_);
-  }
-  throw std::runtime_error("host PCIe channel has stopped");
+bool HostPcieChannel::push_payload(std::int32_t id, const TensorList& tensors, bool wait) {
+  struct Context {
+    HostPcieChannel& channel;
+    const TensorList& tensors;
+  } context{*this, tensors};
+  return transport_->push_prepared(
+      id,
+      [](void* opaque) {
+        auto& context = *static_cast<Context*>(opaque);
+        simaai::scheduler::pcie::PreparedInput input;
+        input.caps = caps_for_tensors(context.tensors);
+        auto payload = prepare_tensor_payload(context.tensors);
+        if (!payload.owner || !payload.data || !payload.size_bytes)
+          throw std::runtime_error("prepared PCIe payload is invalid");
+        auto* holder = new std::shared_ptr<void>(std::move(payload.owner));
+        input.buffer =
+            gst_buffer_new_wrapped_full(payload.flags, payload.data, payload.size_bytes, 0,
+                                        payload.size_bytes, holder, free_wrapped_payload);
+        if (!input.buffer) {
+          delete holder;
+          throw std::runtime_error("failed to allocate GstBuffer");
+        }
+        try {
+          if (input.caps.find("representation=(string)tensor-set") != std::string::npos)
+            attach_tensor_set_meta(input.buffer, payload.spans, context.channel.facts_.inputs,
+                                   context.channel.facts_.packed_input
+                                       ? &*context.channel.facts_.packed_input
+                                       : nullptr);
+        } catch (...) {
+          gst_buffer_unref(input.buffer);
+          throw;
+        }
+        return input;
+      },
+      &context, wait);
 }
-
-bool HostPcieChannel::reserve_inflight() {
-  if (stop_requested_.load()) {
-    return false;
-  }
-  if (max_inflight_ == 0) {
-    return true;
-  }
-  std::lock_guard<std::mutex> lock(inflight_mutex_);
-  if (stop_requested_.load() || inflight_ >= max_inflight_) {
-    return false;
-  }
-  ++inflight_;
-  return true;
-}
-
-bool HostPcieChannel::wait_and_reserve_inflight() {
-  if (max_inflight_ == 0) {
-    return !stop_requested_.load();
-  }
-  std::unique_lock<std::mutex> lock(inflight_mutex_);
-  inflight_cv_.wait(lock, [&] { return inflight_ < max_inflight_ || stop_requested_.load(); });
-  if (stop_requested_.load()) {
-    return false;
-  }
-  ++inflight_;
-  return true;
-}
-
-void HostPcieChannel::release_inflight() {
-  if (max_inflight_ == 0) {
-    return;
-  }
-  {
-    std::lock_guard<std::mutex> lock(inflight_mutex_);
-    if (inflight_ > 0) {
-      --inflight_;
-    }
-  }
-  inflight_cv_.notify_one();
-}
-
-void HostPcieChannel::attach_request_id(GstBuffer* buffer, const std::int32_t request_id) {
-  ensure_gstreamer_initialized();
-  if (!buffer) {
-    throw std::invalid_argument("cannot attach a request ID to a null GstBuffer");
-  }
-  GstCustomMeta* meta = gst_buffer_add_custom_meta(buffer, "GstSimaHostMeta");
-  if (!meta) {
-    throw std::runtime_error("failed to attach GstSimaHostMeta to PCIe input");
-  }
-  GstStructure* structure = gst_custom_meta_get_structure(meta);
-  if (!structure) {
-    throw std::runtime_error("GstSimaHostMeta has no writable structure");
-  }
-  const auto request_bits = std::bit_cast<std::uint32_t>(request_id);
-  gst_structure_set(structure, "frame-identifier", G_TYPE_UINT64,
-                    static_cast<guint64>(request_bits), "stream-id", G_TYPE_UINT,
-                    static_cast<guint>(0), "frame-id", G_TYPE_UINT,
-                    static_cast<guint>(request_bits), nullptr);
-}
-
-std::optional<std::int32_t> HostPcieChannel::request_id_from_buffer(GstBuffer* buffer) {
-  if (!buffer) {
-    return std::nullopt;
-  }
-  GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, "GstSimaHostMeta");
-  if (!meta) {
-    return std::nullopt;
-  }
-  const GstStructure* structure = gst_custom_meta_get_structure(meta);
-  guint frame_id = 0;
-  if (structure && gst_structure_get_uint(structure, "frame-id", &frame_id)) {
-    return std::bit_cast<std::int32_t>(static_cast<std::uint32_t>(frame_id));
-  }
-
-  guint64 request_id = 0;
-  if (!structure || !gst_structure_get_uint64(structure, "frame-identifier", &request_id)) {
-    return std::nullopt;
-  }
-  if (request_id > std::numeric_limits<std::uint32_t>::max()) {
-    throw std::runtime_error("PCIe frame-identifier exceeds the PCIe request ID width");
-  }
-  return std::bit_cast<std::int32_t>(static_cast<std::uint32_t>(request_id));
-}
-
-bool HostPcieChannel::push_prepared_payload(const std::int32_t request_id,
-                                            PreparedPayload&& payload) {
-  if (!running_.load()) {
-    throw std::runtime_error("host PCIe channel is not running");
-  }
-  if (!payload.owner || !payload.data || payload.size_bytes == 0) {
-    throw std::runtime_error("prepared PCIe payload is invalid");
-  }
-
-  auto* holder = new std::shared_ptr<void>(std::move(payload.owner));
-  GstBuffer* buffer =
-      gst_buffer_new_wrapped_full(payload.flags, payload.data, payload.size_bytes, 0,
-                                  payload.size_bytes, holder, free_wrapped_payload);
-  if (!buffer) {
-    delete holder;
-    throw std::runtime_error("failed to allocate GstBuffer");
-  }
-  try {
-    attach_request_id(buffer, request_id);
-  } catch (...) {
-    gst_buffer_unref(buffer);
-    throw;
-  }
-  if (caps_.find("representation=(string)tensor-set") != std::string::npos) {
-    try {
-      attach_tensor_set_meta(buffer, payload.spans, facts_.inputs,
-                             facts_.packed_input ? &*facts_.packed_input : nullptr);
-    } catch (...) {
-      gst_buffer_unref(buffer);
-      throw;
-    }
-  }
-  GstFlowReturn ret = GST_FLOW_OK;
-  g_signal_emit_by_name(appsrc_, "push-buffer", buffer, &ret);
-  gst_buffer_unref(buffer);
-  if (ret != GST_FLOW_OK) {
-    throw std::runtime_error("push-buffer failed: " + std::to_string(static_cast<int>(ret)));
-  }
-  return true;
-}
-
-std::optional<TensorList> HostPcieChannel::pull(const int timeout_ms) {
+std::optional<TensorList> HostPcieChannel::pull(int timeout_ms) {
   auto result = pull_result(timeout_ms);
-  if (!result) {
+  if (!result)
     return std::nullopt;
-  }
   return std::move(result->outputs);
 }
-
-std::optional<RuntimeInferenceResult> HostPcieChannel::pull_result(const int timeout_ms) {
-  std::unique_lock<std::mutex> lock(receive_mutex_);
-  if (timeout_ms < 0) {
-    receive_cv_.wait(lock, [&] {
-      return !received_results_.empty() || receive_error_.has_value() || stop_requested_.load();
-    });
-  } else {
-    const bool ready = receive_cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms), [&] {
-      return !received_results_.empty() || receive_error_.has_value() || stop_requested_.load();
-    });
-    if (!ready) {
-      return std::nullopt;
-    }
-  }
-  if (receive_error_) {
-    throw std::runtime_error(*receive_error_);
-  }
-  if (received_results_.empty()) {
+std::optional<RuntimeInferenceResult> HostPcieChannel::pull_result(int timeout_ms) {
+  std::lock_guard lock(receive_mutex_);
+  auto received = transport_->pull(timeout_ms);
+  if (!received)
     return std::nullopt;
+  auto owner = std::make_shared<MappedSample>();
+  owner->sample = gst_sample_ref(received->sample.get());
+  owner->buffer = gst_sample_get_buffer(owner->sample);
+  if (!owner->buffer || !gst_buffer_map(owner->buffer, &owner->map, GST_MAP_READ))
+    throw std::runtime_error("PCIe output cannot be mapped for public tensor access");
+  owner->mapped = true;
+  if (!expects_bbox_output_ && !sample_has_bbox_caps(owner->sample)) {
+    if (!output_layout_)
+      output_layout_ = resolve_output_layout(facts_, gst_sample_get_caps(owner->sample));
+    if (output_layout_->raw_bytes && owner->map.size != output_layout_->raw_bytes)
+      throw std::runtime_error("PCIe raw output extent differs from the negotiated layout");
   }
-  RuntimeInferenceResult result = std::move(received_results_.front());
-  received_results_.pop_front();
-  return result;
+  return RuntimeInferenceResult{
+      received->request_id,
+      tensors_from_output_sample(owner, output_layout_ ? output_layout_->facts : facts_,
+                                 expects_bbox_output_)};
 }
-
-GstFlowReturn HostPcieChannel::on_new_sample_static(GstElement* sink, gpointer user_data) {
-  return static_cast<HostPcieChannel*>(user_data)->on_new_sample(sink);
-}
-
-GstFlowReturn HostPcieChannel::on_new_sample(GstElement* sink) {
-  try {
-    GstSample* sample = gst_app_sink_pull_sample(GST_APP_SINK(sink));
-    if (!sample) {
-      release_inflight();
-      return GST_FLOW_ERROR;
-    }
-    GstBuffer* buffer = gst_sample_get_buffer(sample);
-    if (!buffer) {
-      gst_sample_unref(sample);
-      release_inflight();
-      return GST_FLOW_ERROR;
-    }
-    const auto request_id = request_id_from_buffer(buffer);
-    if (!request_id) {
-      gst_sample_unref(sample);
-      throw std::runtime_error("PCIe output is missing GstSimaHostMeta frame-identifier");
-    }
-
-    GstMapInfo map{};
-    if (!gst_buffer_map(buffer, &map, GST_MAP_READ)) {
-      gst_sample_unref(sample);
-      release_inflight();
-      return GST_FLOW_ERROR;
-    }
-
-    auto owner = std::make_shared<MappedSample>();
-    owner->sample = sample;
-    owner->buffer = buffer;
-    owner->map = map;
-    owner->mapped = true;
-
-    if (!expects_bbox_output_ && !sample_has_bbox_caps(sample)) {
-      if (!output_layout_) {
-        output_layout_ = resolve_output_layout(facts_, gst_sample_get_caps(sample));
-      }
-      if (output_layout_->raw_bytes && owner->map.size != output_layout_->raw_bytes) {
-        throw std::runtime_error("PCIe raw output extent differs from the negotiated layout");
-      }
-    }
-    RuntimeInferenceResult result{
-        .request_id = *request_id,
-        .outputs = tensors_from_output_sample(
-            owner, output_layout_ ? output_layout_->facts : facts_, expects_bbox_output_),
-    };
-
-    {
-      std::lock_guard<std::mutex> lock(receive_mutex_);
-      received_results_.push_back(std::move(result));
-    }
-    release_inflight();
-    receive_cv_.notify_one();
-
-    return GST_FLOW_OK;
-  } catch (const std::exception& e) {
-    release_inflight();
-    {
-      std::lock_guard<std::mutex> lock(receive_mutex_);
-      receive_error_ = std::string("PCIe appsink callback failed: ") + e.what();
-    }
-    receive_cv_.notify_all();
-    return GST_FLOW_ERROR;
-  } catch (...) {
-    release_inflight();
-    {
-      std::lock_guard<std::mutex> lock(receive_mutex_);
-      receive_error_ = "PCIe appsink callback failed with an unknown exception";
-    }
-    receive_cv_.notify_all();
-    return GST_FLOW_ERROR;
-  }
-}
-
 } // namespace simaai::neat::pcie::internal

@@ -19,6 +19,8 @@
  * @see ContractRender.h (the renderer that builds these manifests)
  */
 #pragma once
+
+#include "nodes/sima/internal/ImageTransformPolicy.h"
 #ifndef SIMA_NEAT_INTERNAL
 #error "Internal header. Not part of the public API."
 #endif
@@ -28,6 +30,7 @@
 
 #include "pipeline/BoxDecodeType.h"
 #include "pipeline/internal/sima/DTypeSource.h"
+#include "pipeline/internal/sima/AuthoredTensorDescriptor.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
 #include "pipeline/internal/sima/stagesemantics/SsdRecipeId.h"
 #include "pipeline/internal/sima/SuperPointContract.h"
@@ -35,9 +38,14 @@
 #include <ev/ev_tensor_abi.h>
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
+
+namespace simaai::scheduler::client {
+struct TensorStageImagePublication;
+}
 
 namespace simaai::neat::pipeline_internal::sima {
 
@@ -137,6 +145,12 @@ struct PhysicalBufferStaticSpec {
   PhysicalAddressSource address_source = PhysicalAddressSource::DirectCarrierSpan;
 };
 
+// In-process authority for a byte-preserving publication view of a checked
+// kernel output. Authored by the semantic/compiler contract, never inferred
+// from a shape mismatch during kernel inspection. The stable plugin transport
+// ABI does not carry numerical preparation or this cold-only authority.
+enum class PublicationViewRelation : std::uint8_t { Identity, SingletonAxes, PackedStorage };
+
 /// Static spec for one logical (publishable) output tensor on a stage.
 struct LogicalTensorStaticSpec {
   int logical_index = -1;                          ///< Stage-local logical-output index.
@@ -158,6 +172,7 @@ struct LogicalTensorStaticSpec {
   int segment_name_id = -1;                        ///< Name-table index for `segment_name`.
   std::string segment_name;                        ///< Backing segment name.
   std::optional<QuantStaticSpec> quant;            ///< Quant params, if quantized.
+  PublicationViewRelation publication_relation = PublicationViewRelation::Identity;
 };
 
 /// Static spec for one logical input tensor on a stage (the consumer-side counterpart).
@@ -255,6 +270,10 @@ enum class ProcessCvuOutputSemanticKind : std::uint8_t {
  * parallel arrays indexed by output number.
  */
 struct ProcessCvuStagePayload {
+  std::shared_ptr<const ::simaai::neat::internal::ImageTransformPolicy> image_transform;
+  // Cold stage-local temporal authority; zero means unknown, never a default rate.
+  int image_fps_num = 0;
+  int image_fps_den = 1;
   bool canonical_contract = false;
   bool dmabuf_plan_contract = false;
   std::uint32_t descriptor_abi_id = 0U;
@@ -336,8 +355,8 @@ struct ProcessCvuStagePayload {
   std::vector<double> q_scale_list;
   std::vector<int> q_zp_list;
   int num_in_tensor = 0;
-  std::vector<sima_ev_tensor_desc> input_tensors;
-  std::vector<sima_ev_tensor_desc> output_tensors;
+  std::vector<AuthoredTensorDescriptor> input_tensors;
+  std::vector<AuthoredTensorDescriptor> output_tensors;
   std::vector<std::vector<int>> input_shapes;
   std::vector<std::vector<int>> slice_shapes;
   std::vector<std::vector<int>> output_shapes;
@@ -437,7 +456,16 @@ struct QuantLikeStagePayload {
  * the active payload variant (selected by `payload_kind`), and a resolution trace recording
  * how each non-trivial field was decided.
  */
+struct KernelStageRecipe;
+
 struct StageStaticSpec {
+  std::shared_ptr<const KernelStageRecipe> native_kernel;
+  // Private per-build policy; never serialized into the plugin manifest ABI.
+  std::optional<std::size_t> native_execution_capacity;
+  // Checked semantic output authority, available before recipe preparation.
+  // Plane offsets remain relative to their physical output; preparation makes
+  // a separate arena-rebased descriptor without mutating this metadata.
+  std::shared_ptr<const ::simaai::scheduler::client::TensorStageImagePublication> image_publication;
   std::string element_name;
   std::string logical_stage_id;
   bool model_managed_stage = false;
@@ -461,6 +489,8 @@ struct StageStaticSpec {
       static_contract::ArenaStorageDomain::Unknown;
   static_contract::ArenaAllocationProvenance frame_arena_provenance =
       static_contract::ArenaAllocationProvenance::Unknown;
+  static_contract::ArenaAllocationPolicy frame_arena_allocation_policy =
+      static_contract::ArenaAllocationPolicy::RequiredDomain;
   std::uint32_t frame_arena_required_device_access = 0U;
   static_contract::ArenaEscapePolicy frame_arena_escape_policy =
       static_contract::ArenaEscapePolicy::InternalOnly;

@@ -1,5 +1,6 @@
 #include "pipeline/internal/TerminalOutputContractQuery.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
+#include "pipeline/internal/sima/KernelStageRecipe.h"
 
 #include <cassert>
 #include <cstdint>
@@ -464,6 +465,127 @@ void output_override_route_slot_is_authoritative() {
   assert(out.tensors[0].route.segment_name == "public_segment");
 }
 
+void explicit_image_publication_preserves_one_semantic_image() {
+  namespace client = simaai::scheduler::client;
+  for (const auto format : {GST_VIDEO_FORMAT_RGB, GST_VIDEO_FORMAT_BGR, GST_VIDEO_FORMAT_GRAY8,
+                            GST_VIDEO_FORMAT_NV12, GST_VIDEO_FORMAT_I420, GST_VIDEO_FORMAT_NV16}) {
+    const unsigned planes = format == GST_VIDEO_FORMAT_I420 ? 3U
+                            : format == GST_VIDEO_FORMAT_NV12 || format == GST_VIDEO_FORMAT_NV16
+                                ? 2U
+                                : 1U;
+    sima::StageStaticSpec stage;
+    // No numerical operation name or payload discriminator grants this policy.
+    stage.logical_stage_id = "generic_image_publication";
+    stage.physical_outputs.push_back(physical(0, 2048, "image_arena"));
+    auto image = std::make_shared<client::TensorStageImagePublication>();
+    image->format = format;
+    image->width = 18;
+    image->height = 10;
+    for (unsigned i = 0; i < planes; ++i) {
+      const int rows = i && format != GST_VIDEO_FORMAT_NV16 ? 5 : 10;
+      const int channels = format == GST_VIDEO_FORMAT_RGB || format == GST_VIDEO_FORMAT_BGR ? 3
+                           : i && format != GST_VIDEO_FORMAT_I420                           ? 2
+                                                                                            : 1;
+      const int columns = i ? 9 : 18;
+      const int bytes = columns * channels;
+      const auto name = "plane_" + std::to_string(i);
+      auto plane = logical(i, 0, {1, rows, columns, channels}, {rows * 64, 64, channels, 1},
+                           "UINT8", name.c_str(), "image_arena", (rows - 1) * 64 + bytes);
+      plane.byte_offset = i * 640;
+      stage.logical_outputs.push_back(std::move(plane));
+      image->planes.push_back({int(i), i * 640, 64, guint(rows), guint(bytes)});
+    }
+    stage.image_publication = image;
+    assert(!stage.native_kernel);
+    sima::SimaPluginStaticManifest manifest;
+    sima::StageStaticSpec upstream;
+    upstream.logical_stage_id = "upstream_tensor";
+    upstream.physical_outputs.push_back(physical(0, 16, "scores"));
+    upstream.logical_outputs.push_back(logical(0, 0, {4}, {4}, "FP32", "scores", "scores", 16));
+    manifest.stages.push_back(std::move(upstream));
+    manifest.stages.push_back(stage);
+    for (const int selection : {0, 1, 2}) {
+      PublicOutputEndpointSelector endpoint;
+      if (selection) {
+        endpoint.terminal_stage_key = stage.logical_stage_id;
+        endpoint.terminal_stage_key_required = true;
+        endpoint.allow_unresolved_terminal_stage_fallback = true;
+      }
+      if (selection == 2)
+        endpoint.output_segment_name = stage.logical_outputs.back().logical_name;
+      std::string error = "stale error";
+      auto reason = OutputOverrideFailureReason::InvalidPublicationContract;
+      const auto override =
+          build_output_override_from_manifest(manifest, endpoint, &error, &reason);
+      assert(!override && error.empty() && reason == OutputOverrideFailureReason::None);
+      assert(manifest.stages.back().logical_outputs.size() == planes);
+      assert(manifest.stages.back().logical_outputs.front().dtype_source ==
+             sima::DTypeSource::InternalContract);
+    }
+    PublicOutputEndpointSelector invalid_endpoint;
+    invalid_endpoint.terminal_stage_key = stage.logical_stage_id;
+    invalid_endpoint.terminal_stage_key_required = true;
+    invalid_endpoint.output_segment_name = "missing_plane";
+    auto reason = OutputOverrideFailureReason::None;
+    std::string error;
+    assert(!build_output_override_from_manifest(manifest, invalid_endpoint, &error, &reason));
+    assert(reason == OutputOverrideFailureReason::EndpointSelectorNoMatch && !error.empty());
+
+    const auto json = sima::to_json(manifest);
+    const auto roundtrip = sima::parse_manifest_json(json.dump(), &error);
+    assert(roundtrip && error.empty() && !roundtrip->stages.back().native_kernel);
+    assert(sima::to_json(roundtrip->stages.back())["image_publication"] ==
+           json["stages"].back()["image_publication"]);
+    assert(!build_output_override_from_manifest(*roundtrip, {}, &error) && error.empty());
+    for (int invalid = 0; invalid != 7; ++invalid) {
+      auto malformed = json;
+      auto& descriptor = malformed["stages"].back()["image_publication"];
+      switch (invalid) {
+      case 0:
+        descriptor["width"] = -1;
+        break;
+      case 1:
+        descriptor["height"] = 0;
+        break;
+      case 2:
+        descriptor["planes"] = nlohmann::json::array();
+        break;
+      case 3:
+        descriptor["planes"][0]["byte_offset"] = -1;
+        break;
+      case 4:
+        descriptor["planes"][0]["stride"] = 1;
+        break;
+      case 5:
+        descriptor["planes"][0]["visible_rows"] = 1.5;
+        break;
+      case 6:
+        descriptor["planes"].push_back(descriptor["planes"][0]);
+        break;
+      }
+      assert(!sima::parse_manifest_json(malformed.dump(), &error) && !error.empty());
+    }
+    // A downstream tensor producer still controls the implicit endpoint; the
+    // upstream semantic image remains selectable without leaking its planes.
+    manifest.stages.push_back(manifest.stages.front());
+    manifest.stages.back().logical_stage_id = "downstream_tensor";
+    const auto downstream = build_output_override_from_manifest(manifest);
+    assert(downstream && downstream->outputs.size() == 1 &&
+           downstream->outputs.front().dtype == TensorDType::Float32);
+    PublicOutputEndpointSelector image_endpoint;
+    image_endpoint.terminal_stage_key = stage.logical_stage_id;
+    image_endpoint.terminal_stage_key_required = true;
+    assert(!build_output_override_from_manifest(manifest, image_endpoint, &error) && error.empty());
+    manifest.stages.pop_back();
+
+    // The same numerical descriptor set without semantic image authority is
+    // still a valid tensor publication; do not suppress unrelated producers.
+    manifest.stages.back().image_publication.reset();
+    const auto tensor_override = build_output_override_from_manifest(manifest);
+    assert(tensor_override && tensor_override->outputs.size() == planes);
+  }
+}
+
 } // namespace
 
 int main() {
@@ -483,5 +605,6 @@ int main() {
   inferred_dtype_terminal_falls_back_to_raw_bytes();
   unknown_dtype_source_terminal_falls_back_to_raw_bytes();
   output_override_route_slot_is_authoritative();
+  explicit_image_publication_preserves_one_semantic_image();
   return 0;
 }

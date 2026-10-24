@@ -37,7 +37,9 @@ bool contract_looks_like_grouped_yolov26(const BoxDecodeStaticContract& contract
         bbox.slice_shape.size() >= 3U ? bbox.slice_shape[2] : bbox.input_shape[2];
     const int score_depth =
         scores.slice_shape.size() >= 3U ? scores.slice_shape[2] : scores.input_shape[2];
-    if (bbox_depth != 4 || bbox.input_shape[2] < bbox_depth || score_depth <= 4) {
+    // The explicit YOLO26 family fixes the first role as raw LTRB. A valid
+    // detector may have one to four classes; class depth is not a role tag.
+    if (bbox_depth != 4 || bbox.input_shape[2] < bbox_depth || score_depth <= 0) {
       return false;
     }
   }
@@ -626,6 +628,8 @@ bool decode_type_is_packed_yolo(BoxDecodeType type) {
 int infer_raw_yolo_class_depth(const BoxDecodeStaticContract& contract);
 
 int infer_boxdecode_num_classes_from_contract(const BoxDecodeStaticContract& contract) {
+  if (contract.decode_type == BoxDecodeType::RcnnStage1)
+    return 1; // Three anchors, each with one class-agnostic objectness logit.
   if (box_decode_type_is_ssd_family(contract.decode_type)) {
     // SSD class count is derived from the loc/conf head geometry, not head names:
     // confidence heads pack num_classes * priors-per-cell channels, so a name-based
@@ -1013,6 +1017,14 @@ void apply_yolox_seg_pose_static_contract_overrides(BoxDecodeStaticContract* con
         box_decode_type_option_token(contract->decode_type_option) +
         "'. Use BoxDecodeTypeOption::Auto, GroupedByRole or GroupedByRoleLogit.");
   }
+  for (const auto& tensor : contract->tensors) {
+    // Keep unavailable input types out of the public positive contract. Numerical
+    // layout/geometry admission remains authoritative in Kernels.
+    if (tensor.data_type == "UINT8") {
+      throw std::invalid_argument("yolox-seg-pose BoxDecode does not support UINT8 input; "
+                                  "use BF16, INT8 or native linear/strided FP32 heads");
+    }
+  }
   // Unconditional, and deliberately not the YOLOv5 rule of rejecting a declared
   // probability domain: head naming is not trustworthy for this family. The shipped
   // yolox_s_seg_pose_dock_v9 MPK names its raw-logit class heads class_prob_0..2, which
@@ -1073,7 +1085,7 @@ std::string resolve_boxdecode_input_dtype(const plugin_contracts::BoxDecodeContr
       dtype = logical.dtype;
       continue;
     }
-    if (dtype != logical.dtype && subset.decode_type == BoxDecodeType::SuperPoint) {
+    if (dtype != logical.dtype && box_decode_type_uses_per_port_dtype(subset.decode_type)) {
       dtype = "MIXED";
       continue;
     }

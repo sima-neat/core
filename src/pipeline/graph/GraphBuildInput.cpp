@@ -1,9 +1,11 @@
+#include "nodes/sima/internal/ImageTransformPolicy.h"
 /**
  * @file SessionBuildInput.cpp
  * @brief Graph input-mode build/run methods.
  */
 
 #include "GraphDetail.h"
+#include "pipeline/internal/sima/KernelRunnerIntegration.h"
 #include "internal/GraphBuildInternal.h"
 #include "pipeline/internal/RtpJpegEndMarker.h"
 #include "pipeline/internal/UxLogging.h"
@@ -29,7 +31,7 @@
 #include "pipeline/internal/InputSpecCapabilities.h"
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/PublicInputContract.h"
-#include "pipeline/internal/RenderedMlaContractQuery.h"
+#include "pipeline/internal/SelectedStageBoundary.h"
 #include "pipeline/internal/InputRouteProcessor.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/sima/ContractRender.h"
@@ -44,6 +46,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cctype>
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -65,7 +68,6 @@ InputOptions input_opts_from_spec(const OutputSpec& spec, bool complete);
 namespace simaai::neat {
 
 namespace {
-namespace rendered_stage_query = pipeline_internal::rendered_stage_query;
 
 bool run_options_equal_for_cache_local(const RunOptions& a, const RunOptions& b);
 std::string dtype_token_from_tensor(const Tensor& tensor);
@@ -179,6 +181,8 @@ TensorList tensor_list_from_mats(const std::vector<cv::Mat>& inputs, const Input
   TensorList out;
   out.reserve(inputs.size());
   const InputOptions normalized = pipeline_internal::normalize_shape_bounds(opt);
+  for (const auto& input : inputs)
+    validate_public_input(input, normalized, InputStreamOptions{}, where);
   for (const auto& input : inputs) {
     out.emplace_back(tensor_from_cv_mat(input, normalized, where));
   }
@@ -222,6 +226,13 @@ TensorList tensor_list_from_mats_for_connected_default(const std::vector<cv::Mat
   if (inputs.empty()) {
     throw std::runtime_error(std::string(where ? where : "Graph::build(inputs)") +
                              ": empty image list");
+  }
+  if (segment.boundary_hints && segment.boundary_hints->input_route_processor) {
+    segment.boundary_hints->input_route_processor->validate_images(inputs, where);
+  } else {
+    for (std::size_t i = 0; i < inputs.size(); ++i)
+      validate_public_input(inputs[i], runtime::pipeline_segment_declared_ingress(segment, i),
+                            segment.stream_options, where);
   }
   TensorList out;
   out.reserve(inputs.size());
@@ -457,24 +468,12 @@ bool is_default_run_options(const RunOptions& opt) {
   return run_options_equal_for_cache_local(opt, d) && !opt.on_input_drop;
 }
 
-bool resolve_prepare_output_cpu_visible(const RunOptions& opt, bool zero_copy) {
-  if (!zero_copy) {
-    return false;
-  }
-  const char* env = std::getenv("SIMA_PREPARE_OUTPUT_CPU_VISIBLE");
-  if (env && *env) {
-    return env_bool("SIMA_PREPARE_OUTPUT_CPU_VISIBLE", false);
-  }
-  return opt.advanced.prepare_output_cpu_visible;
-}
-
 // Resolved public-output memory policy. Single authority consulted by the
 // public-boundary stream-option builder so every entry point (Model::build,
 // Graph::build/source) agrees on output storage kind.
 struct OutputMemoryResolution {
-  bool zero_copy;           ///< non-DMA outputs share backing GstSample
-  bool preserve_dmabuf;     ///< Auto retains actual standard DMA-BUF storage
-  bool prepare_cpu_visible; ///< issue cache-visibility maintenance for CPU readers
+  bool zero_copy;       ///< non-DMA outputs share backing GstSample
+  bool preserve_dmabuf; ///< Auto retains actual standard DMA-BUF storage
 };
 
 // THE definition of what Auto/ZeroCopy/Owned mean for a public output.
@@ -514,8 +513,7 @@ OutputMemoryResolution resolve_output_memory(const RunOptions& opt, RunMode mode
     }
     break;
   }
-  return {zero_copy, preserve_dmabuf,
-          resolve_prepare_output_cpu_visible(opt, zero_copy || preserve_dmabuf)};
+  return {zero_copy, preserve_dmabuf};
 }
 
 int resolved_input_timeout_ms(const RunOptions& opt) {
@@ -672,6 +670,8 @@ std::string format_token_from_tensor(const Tensor& tensor) {
       return "GRAY8";
     case ImageSpec::PixelFormat::NV12:
       return "NV12";
+    case ImageSpec::PixelFormat::NV16:
+      return "NV16";
     case ImageSpec::PixelFormat::I420:
       return "I420";
     case ImageSpec::PixelFormat::UNKNOWN:
@@ -843,6 +843,8 @@ void maybe_compile_build_result_contracts(BuildResult* build_result,
   spec.width = ingress_spec.width;
   spec.height = ingress_spec.height;
   spec.depth = ingress_spec.depth;
+  spec.fps_num = ingress_spec.fps_n;
+  spec.fps_den = ingress_spec.fps_d;
   compile_input.ingress.ingress_spec = spec;
   compile_input.ingress.ingress_sample = ingress_sample;
   session_build_compile_contracts(build_result, *nodes, compile_input, where, nodes);
@@ -907,26 +909,13 @@ void validate_inference_only_ingress_or_throw(const std::vector<std::shared_ptr<
   if (!immediate_next || immediate_next->kind() != "ModelFragment") {
     return;
   }
-  // Resolve the rendered MLA-input contract from the actual ModelFragment.
-  const auto& first = first_effective_downstream_node(nodes);
-  if (!first || first->kind() != "ModelFragment") {
+  const auto direct_mla_input = pipeline_internal::direct_model_mla_input_info(nodes);
+  if (!direct_mla_input) {
+    // The selected fragment starts with a transform, not MLA. Its actual
+    // application ingress is admitted by the seeded compiler below.
     return;
   }
-
-  const std::vector<std::shared_ptr<Node>> first_nodes{first};
-  const auto first_manifest = rendered_stage_query::rendered_manifest_from_nodes(
-      first_nodes, "GraphBuildInput.ingress_guard");
-  if (!first_manifest.has_value() || first_manifest->stages.empty() ||
-      first_manifest->stages.front().payload_kind !=
-          pipeline_internal::sima::StagePayloadKind::ProcessMla) {
-    // ModelFragment is a container, not an assertion that its first command is
-    // MLA.  A strict compiler-authored schedule may begin with Quant, Cast,
-    // Tess, or A65 and legitimately consume an application-boundary tensor
-    // whose size differs from the later MLA IFM.  The child-stage manifest is
-    // the exact authority for that distinction.
-    return;
-  }
-  const auto mla_input = rendered_stage_query::mla_input_tensor_info_from_nodes(first_nodes);
+  const auto& mla_input = *direct_mla_input;
   if (mla_input.span_size_bytes <= 0) {
     return;
   }
@@ -1037,7 +1026,6 @@ InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
   stream_opt.max_input_bytes = opt.advanced.max_input_bytes;
   stream_opt.copy_output = !output_mem.zero_copy;
   stream_opt.preserve_dmabuf_output = output_mem.preserve_dmabuf;
-  stream_opt.prepare_output_cpu_visible = output_mem.prepare_cpu_visible;
   if (output_mem.zero_copy || output_mem.preserve_dmabuf) {
     stream_opt.holder_loan_sample_window = std::max(3, queue_depth + 2);
     stream_opt.holder_loan_credits = stream_opt.holder_loan_sample_window;
@@ -1215,7 +1203,8 @@ bool is_supported_raw_ingress_format(std::string fmt) {
     fmt = "GRAY8";
   if (fmt == "IYUV")
     fmt = "I420";
-  return fmt == "RGB" || fmt == "BGR" || fmt == "GRAY8" || fmt == "NV12" || fmt == "I420";
+  return fmt == "RGB" || fmt == "BGR" || fmt == "GRAY8" || fmt == "NV12" || fmt == "NV16" ||
+         fmt == "I420";
 }
 
 int raw_depth_for_format(std::string fmt) {
@@ -1307,6 +1296,8 @@ bool detect_allow_ingress_format_renegotiation(const std::vector<std::shared_ptr
   }
   if (!dynamic_preproc)
     return false;
+  if (internal::ImageTransformAccess::policy(*dynamic_preproc))
+    return false; // Typed image frontends fix the input format for the run.
 
   const auto& pre_opt = dynamic_preproc->options();
   if (pre_opt.output_width() <= 0 || pre_opt.output_height() <= 0 ||
@@ -1401,9 +1392,6 @@ RunOptions resolve_build_opt(RunMode mode, const RunOptions& opt) {
     }
     if (out.advanced.sync_num_buffers_override == defaults.advanced.sync_num_buffers_override) {
       out.advanced.sync_num_buffers_override = sync_defaults.advanced.sync_num_buffers_override;
-    }
-    if (out.advanced.prepare_output_cpu_visible == defaults.advanced.prepare_output_cpu_visible) {
-      out.advanced.prepare_output_cpu_visible = sync_defaults.advanced.prepare_output_cpu_visible;
     }
   }
   if (out.queue_depth == defaults.queue_depth) {
@@ -1586,7 +1574,7 @@ std::string parse_named_element_for_error(const std::string& pipeline, const std
 }
 
 std::string infer_error_node_name(const std::string& pipeline) {
-  for (const char* element : {"neatdecoder", "neatencoder", "neatprocesscvu", "neatprocessmla",
+  for (const char* element : {"neatdecoder", "neatencoder", "neatkernelrunner", "neatprocessmla",
                               "neatobjectdecode", "neatdequant", "neatdetess"}) {
     const std::string name = parse_named_element_for_error(pipeline, element);
     if (!name.empty())
@@ -1598,7 +1586,7 @@ std::string infer_error_node_name(const std::string& pipeline) {
 std::string summarize_pipeline_stage_chain(const std::string& pipeline) {
   // List neat stage instance names in pipeline order. A preflight *timeout*
   // posts no per-element bus error, so infer_error_node_name() can only return
-  // the first stage *type* present (e.g. neatprocesscvu -> "cast_1") and never
+  // the first stage *type* present (e.g. neatkernelrunner -> "cast_1") and never
   // the stage that actually stalled. Emitting the whole chain shows every
   // candidate stage instead of mis-blaming the first one.
   std::string chain;
@@ -1664,8 +1652,9 @@ std::string summarize_pipeline_stage_chain(const std::string& pipeline) {
     note << "\nHint: inspect node configuration/caps and upstream bus diagnostics.";
   }
   rep.repro_note = note.str();
-  throw NeatError(session_build_decorate_with_error_code(rep.error_code, rep.repro_note),
-                  std::move(rep));
+  const std::string message =
+      session_build_decorate_with_error_code(rep.error_code, rep.repro_note);
+  throw NeatError(message, std::move(rep));
 }
 
 std::string single_sample_preflight_unsupported_reason(const std::string& pipeline,
@@ -1676,7 +1665,7 @@ std::string single_sample_preflight_unsupported_reason(const std::string& pipeli
   }
 
   const bool has_async_hardware_stage = (lower.find("neatprocessmla") != std::string::npos ||
-                                         lower.find("neatprocesscvu") != std::string::npos) &&
+                                         lower.find("neatkernelrunner") != std::string::npos) &&
                                         lower.find("async=true") != std::string::npos;
   // A hidden build-time preflight frame must not be sent through a zero-copy
   // async hardware stage that owns only one output pool slot.  Even if the
@@ -1873,6 +1862,22 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
     maybe_apply_public_terminal_output_override(br, build_nodes, stream_opt, "Graph::build(input)");
   }
   finalize_public_zero_copy_holder_loan_credits(stream_opt);
+  // Execution and output ownership are independent: a completed frame may
+  // remain retained by the application after its execution slot is reusable.
+  br.kernel_runner_capacity =
+      sync_mode ? 1U : static_cast<std::size_t>(std::clamp(sess_opt.async_queue_depth, 1, 64));
+  session_build_reserve_kernel_runner_outputs(br, stream_opt);
+  const bool legacy_observer = env_bool("SIMA_GST_FLOW_DEBUG", false) ||
+                               env_bool("SIMA_GST_BOUNDARY_PROBES", false) ||
+                               env_bool("SIMA_GST_DETESS_INPUT_DEBUG", false) ||
+                               env_bool("SIMA_GST_DETESS_OUTPUT_DEBUG", false) ||
+                               env_bool("SIMA_GST_APPSINK_BUFFER_DEBUG", false) ||
+                               env_bool("SIMA_GST_ALL_BUFFER_DEBUG", false) ||
+                               env_bool("SIMA_GST_BOXDECODE_BUFFER_DEBUG", false) ||
+                               !env_str("SIMA_GST_ELEMENT_BUFFER_DEBUG", "").empty();
+  br.kernel_runner_compact =
+      !insert_boundaries && !legacy_observer && env_bool("SIMA_CORE_COMPACT_METADATA", false);
+
   if (sync_mode) {
     br.pipeline_string = session_build_clamp_sync_build_result(br, sync_num_buffers_override);
     br.diag->pipeline_string = br.pipeline_string;
@@ -2300,7 +2305,6 @@ bool run_options_equal_for_cache_local(const RunOptions& a, const RunOptions& b)
          a.advanced.copy_input == b.advanced.copy_input &&
          a.advanced.max_input_bytes == b.advanced.max_input_bytes &&
          a.advanced.sync_num_buffers_override == b.advanced.sync_num_buffers_override &&
-         a.advanced.prepare_output_cpu_visible == b.advanced.prepare_output_cpu_visible &&
          rail_options_equal(a.power_monitor, b.power_monitor);
 }
 
@@ -2916,6 +2920,40 @@ InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunM
 
 void session_build_finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt) {
   finalize_public_zero_copy_holder_loan_credits(stream_opt);
+}
+
+void session_build_tune_internal_zero_copy_holder_window(InputStreamOptions& stream_opt,
+                                                         std::size_t edge_queue,
+                                                         bool graph_internal_output) {
+  if (!graph_internal_output || !stream_opt.holder_loan_credits_auto ||
+      (stream_opt.copy_output && !stream_opt.preserve_dmabuf_output)) {
+    return;
+  }
+  if (edge_queue == 0) {
+    edge_queue = 256;
+  }
+  const int edge_window =
+      static_cast<int>(std::min<std::size_t>(edge_queue, static_cast<std::size_t>(INT_MAX)));
+  stream_opt.holder_loan_sample_window =
+      std::max(stream_opt.holder_loan_sample_window, std::max(1, edge_window));
+  stream_opt.holder_loan_credits =
+      stream_opt.holder_loan_sample_window * std::max(1, stream_opt.holder_loan_per_sample_arity);
+}
+
+void session_build_reserve_kernel_runner_outputs(BuildResult& build,
+                                                 const InputStreamOptions& stream_opt) {
+  // Source-driven graphs also retain arenas downstream, even without an appsink.
+  // Reserve the same bounded frame window without increasing execution slots.
+  const auto retained_samples =
+      stream_opt.copy_output && !stream_opt.preserve_dmabuf_output
+          ? 0U
+          : static_cast<std::size_t>(std::max(1, stream_opt.holder_loan_sample_window));
+  auto output_budget = pipeline_internal::sima::kernel_runner_output_pool_capacity(
+      build.kernel_runner_capacity, retained_samples);
+  if (const auto* error = std::get_if<simaai::scheduler::client::Error>(&output_budget))
+    throw std::runtime_error("Graph::build: " + error->field + ": " + error->message);
+  build.kernel_runner_output_pool_capacity =
+      std::max(build.kernel_runner_output_pool_capacity, std::get<std::size_t>(output_budget));
 }
 
 void session_build_maybe_enable_rtsp_appsink_drop(InputStreamOptions& stream_opt,

@@ -87,6 +87,12 @@ Their compiled configurations identify the target and draft roles. Both models
 load in the same card session; no extra request option is needed. Allow card
 memory for both models.
 
+For text generation, set `request.reasoning_effort` to `"low"` (the default),
+`"medium"`, or `"high"`. This is independent of `request.enable_thinking`, which
+controls whether reasoning is returned. Use matching host and card packages:
+GenAI protocol revision 3 rejects older peers rather than silently ignoring the
+requested effort. Rebuild C++ host applications after updating the packages.
+
 ## Streaming, media, and multiple models
 
 - Use `model.stream(request)` and iterate over `TokenSample` values to stream

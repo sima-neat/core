@@ -1,5 +1,5 @@
 {
-  "internals": {
+  "scheduler": {
     "policy": "snap"
   },
   "llima": {

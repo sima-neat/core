@@ -227,14 +227,14 @@ route.advanced_execution.postprocess_target = "EV74"
 
 | 모드 | 사용 시: | 행동 |
 | --- | --- | --- |
-| 엄격한 제로 복사 | 귀하의 `libcamerasrc`는 `external-buffer-mode`를 노출하며, 메모리 라이브러리는 DMA-BUF 내보내기를 지원합니다. | Neat은 데이터를 직접 캡처하여 하위 DMA-BUF 풀에 저장해야 하며, 소스에서 해당 데이터를 제공할 수 없는 경우 오류가 발생합니다. |
-| 적응형 대체 방식(명시적 선택) | 장치 버퍼를 내보낼 수 없는 카메라 스택과 호환되어야 합니다. | Neat는 OS/libcamera 버퍼를 받아들여, 이를 CVU/MLA 핸드오프를 위해 풀링된 SiMaAI 메모리에 복사하고, 소스에서 이미 해당 버퍼를 제공하는 경우 SiMaAI 버퍼를 그대로 전달합니다. |
+| 엄격한 제로 복사 | `libcamerasrc`가 각 프레임을 하나의 DMA-BUF로 전달합니다(일반적인 경우). | Neat는 카메라의 DMA-BUF를 가속기 단계로 전달하며, 프레임에 복사가 필요한 경우 실패합니다. |
+| 적응형 대체 방식(명시적 선택) | 프레임이 각각 하나의 DMA-BUF가 아닌 카메라 스택과 호환되어야 합니다. | Neat는 이러한 프레임을 CVU/MLA 핸드오프를 위해 CMA DMA-BUF로 복사하며, 하나의 DMA-BUF인 프레임은 계속 그대로 전달합니다. |
 
-엄격한 제로 복사 방식이 프레임워크의 기본 설정입니다. 이는 일반적인 `external-buffer-mode` 속성을 노출하는 `libcamerasrc`와 DMA-BUF 내보내기를 지원하는 메모리 라이브러리를 모두 필요로 합니다. `camera.allow_cpu_fallback = true`는 명시적인 호환성 옵션으로만 설정하십시오. 폴백 복사는 가속 파이프라인으로 연결되는 다리 역할을 하며, CPU 색상 변환 또는 스케일링을 주요 경로에 추가할 수 있는 권한이 아닙니다.
+엄격한 제로 복사 방식이 프레임워크의 기본 설정입니다. Neat는 카메라의 메모리를 소유하지 않습니다. 물리적으로 연속된 DMA-BUF는 모두 유효한 EV74 입력이며 Neat의 EV74 허용 검사는 해당 DMA-BUF가 CMA 힙 또는 카메라의 연속 캡처 할당자(`videobuf2_dma_contig`)에서 온 경우 이를 받아들이므로, `libcamerasrc` 속성이 필요하지 않습니다. `camera.allow_cpu_fallback = true`는 명시적인 호환성 옵션으로만 설정하십시오. 폴백 복사는 가속 파이프라인으로 연결되는 다리 역할을 하며, CPU 색상 변환 또는 스케일링을 주요 경로에 추가할 수 있는 권한이 아닙니다.
 
-두 가지 모드 모두에서 Neat는 카메라 캡처 후 즉시, 그리고 모든 큐 이전에 자체 개인 메모리 브리지를 배치합니다. 이 브리지는 `GST_QUERY_ALLOCATION`을 통해 표준 버퍼 풀을 제안합니다. 해당 풀은 검증된 평면 레이아웃을 하나의 패킹된 SiMaAI 할당에서 할당하고 각 평면에 대해 하나의 DMA-BUF를 내보냅니다. `libcamerasrc`는 이러한 DMA-BUF를 ISP 캡처 큐로 가져옵니다. 캡처 후 브리지는 동일한 패킹된 할당을 풀어서 다운스트림 처리를 위해 사용합니다. 이것은 일반적인 경로이며, 폴백 복사 경로는 아닙니다.
+두 가지 모드 모두에서 Neat는 카메라 캡처 후 즉시, 그리고 모든 큐 이전에 자체 개인 메모리 브리지를 배치합니다. 이 브리지는 `GST_QUERY_ALLOCATION`을 통해 소스에 `GstVideoMeta`를 첨부하도록 요청하고, 평면들이 하나의 DMA-BUF 안에 연속으로 배치된 각 프레임을 단일 메모리로 전달하며, 모든 소비자가 해제할 때까지 카메라의 버퍼를 유지합니다. 이것은 일반적인 경로이며, 폴백 복사 경로는 아닙니다.
 
-애플리케이션은 ISP 출력 보존 정책을 소유합니다. `nodes::CameraInputWithCaptureBuffers()` 또는 `pyneat.nodes.camera_input()`의 `capture_buffer_count` 인수를 `0`으로 설정하여 카메라 기본값을 사용하거나, 시간적 인코더 또는 비동기 ML 그래프가 프레임을 더 오래 유지할 때 더 큰 최소값을 요청합니다. 활성 카메라 파이프라인은 자체 제한을 검증합니다. Neat의 공급자는 최대 128까지 지원합니다. 이 수는 개인 CSI-to-ISP RAW 전송 링 및 Neat의 활성 GStreamer 큐만 제어하는 `queue_depth`와는 별개입니다. 현재 프레임이 완전성보다 더 중요할 때는 누수 큐를 사용하고, 모든 프레임을 보존해야 할 때는 다운스트림 역압을 사용합니다. 호환성 복사 모드에서는 브리지의 개인 풀이 필요에 따라 증가하므로 누수 큐가 오래된 프레임을 삭제하기 전에 차단되지 않습니다.
+애플리케이션은 ISP 출력 보존 정책을 소유합니다. `nodes::CameraInputWithCaptureBuffers()` 또는 `pyneat.nodes.camera_input()`의 `capture_buffer_count` 인수를 `0`으로 설정하여 카메라 기본값을 사용하거나, 시간적 인코더 또는 비동기 ML 그래프가 프레임을 더 오래 유지할 때 더 큰 최소값을 요청합니다. Platform 3.0에서는 `libcamerasrc`에 `buffer-count`가 없으므로 해당 플랫폼에서는 `0`으로 두십시오([CameraInput 레퍼런스](/reference/nodes/camera-input) 참조). 활성 카메라 파이프라인은 자체 제한을 검증합니다. Neat의 공급자는 최대 128까지 지원합니다. 이 수는 개인 CSI-to-ISP RAW 전송 링 및 Neat의 활성 GStreamer 큐만 제어하는 `queue_depth`와는 별개입니다. 현재 프레임이 완전성보다 더 중요할 때는 누수 큐를 사용하고, 모든 프레임을 보존해야 할 때는 다운스트림 역압을 사용합니다. 호환성 복사 모드에서는 브리지의 개인 풀이 필요에 따라 최대 128개 버퍼까지 증가하므로 누수 큐가 오래된 프레임을 삭제하기 전에 차단되지 않습니다.
 
 ## CVU/EV74에 대한 전처리 작업을 계속 진행하세요.
 
@@ -253,7 +253,7 @@ route.advanced_execution.postprocess_target = "EV74"
 | 카메라가 감지되지 않습니다. | 선택한 `.dtbo`, 케이블 방향, 전원 재부팅, 그리고 커널/libcamera 로그를 확인하십시오. |
 | `libcamerasrc`가 없습니다. | DevKit 빌드에 맞는 Neat/런타임 카메라 이미지 또는 카메라 패키지를 설치합니다. |
 | `misconfig.media_caps` 또는 `not-negotiated` | 정확한 `format,width,height,framerate`를 `gst-launch-1.0`를 사용하여 확인합니다. `NV12 1920x1080@30`과 같이 지원되는 것으로 알려진 모드를 사용해 보세요. |
-| 엄격한 제로 복사 실패 | `allow_cpu_fallback = true`를 설정하거나, SiMaAI의 제로 복사 속성을 활용하는 카메라 스택을 사용하세요. |
+| 엄격한 제로 복사 실패 | `allow_cpu_fallback = true`를 설정하거나, 각 프레임을 하나의 DMA-BUF로 전달하는 카메라 스택을 사용하세요. |
 | 출력되는 색상이 올바르지 않음 | 프레임이 RGB/BGR이 아닌 `NV12` 형식으로 해석되는지 확인합니다. `libcamerasrc`에서 직접 생성된 JPEG 이미지에도 문제가 있다면, Neat를 디버깅하기 전에 카메라 ISP/튜닝을 먼저 디버깅하십시오. |
 | 처리량이 낮습니다. | CPU를 사용한 비디오 변환/확대 기능을 제거하고, 지속적으로 데이터를 가져오며, 최신 데이터를 우선적으로 사용하는 실시간 소스 큐 정책을 적용합니다. |
 

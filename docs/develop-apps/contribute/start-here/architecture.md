@@ -11,7 +11,44 @@ This page is for contributors who need to understand how the library is
 structured, where responsibilities live, and how to extend the framework
 without breaking its module and runtime contracts.
 
+## Compiled Scheduler boundary
+
+Core consumes `SimaScheduler::frontend` and the independently owned
+`simaai::scheduler::client` types. Numerical authoring, inspection, dynamic
+selection, stopped-graph attachment, selected memory access and video layout
+queries cross this compiled boundary. Core does not open Runner sessions or
+include Kernels or Codecs implementation interfaces.
+
+```mermaid
+flowchart LR
+    Core[Core graph and application policy] --> Scheduler[Scheduler client and GStreamer]
+    Scheduler --> Runner[Runner execution and memory authority]
+    Runner --> Kernels[Kernels numerical providers]
+    Scheduler --> Codecs[Codecs providers]
+    GenAI[Core GenAI API] --> LLiMa[LLiMa generation runtime]
+    Benchmark[Core benchmark reports] --> Sentinel[Optional Sentinel telemetry]
+```
+
+Kernels remains the operation catalogue and numerical-admission authority.
+Scheduler forwards generic requests through Runner; neither Scheduler nor Core
+maintains firmware IDs or a per-operation dispatch table. Core retains public
+node APIs, geometry policy and wire formatting. Fresh adapter/resolver factories
+are instantiated by Scheduler after cohort validation. A cached dynamic
+selection retains its operation but binds the current frame's memory.
+
+GenAI calls LLiMa directly, not through Runner or a Scheduler GenAI adapter. MLA profiling is
+a separate, default-off pass: Core calls Scheduler's client, and Runner runs the installed `mla-rt`
+command-line tool. It requires an idle DevKit with no other MLA work.
+
 ---
+
+## GStreamer interface ownership
+
+Scheduler owns the GStreamer transport and structured error interfaces, including
+the installed `gst/SimaaiGstErrors.h` header. Core consumes those interfaces; it
+does not keep a second implementation. The unreleased Core `0.6.0` includes this
+file-ownership transition. Upgrade the matching Core/Scheduler package set
+together; this package version does not change a platform or numerical contract.
 
 ## Framework vs environment
 
@@ -32,6 +69,7 @@ stable public contracts.
 ## What this library is for
 
 ### Primary users
+
 Developers who want to:
 - Assemble pipelines from reusable building blocks (without writing raw GStreamer boilerplate)
 - Validate pipelines early (CI-friendly) and understand failures quickly
@@ -41,25 +79,246 @@ Developers who want to:
 
 ## Package ownership
 
-The selected Core artifact is the source of truth for the Neat, LLiMa, and
-Internals Debian packages installed together. Core consumes and forwards that
-artifact closure without choosing or rewriting dependency versions. Packages
-outside the artifact remain platform-owned; an incompatible platform must be
-updated rather than repaired by Core or LLiMa.
+The selected Core artifact is the source of truth for the Core, LLiMa and matched Scheduler
+dependency packages installed together. Core forwards that artifact closure without choosing or
+rewriting dependency versions. Packages outside the artifact remain platform-owned; update an
+incompatible platform rather than repairing it through Core or LLiMa.
+
+Core consumes the installed `SimaScheduler` client component, not lower CMake
+development interfaces. Scheduler's dependency coordinator validates the selected
+Kernels/Runner/Codecs closure and retains its exact provenance. Metadata-only
+`SimaRuntime` compatibility aliases do not own another implementation. The build
+entry point still prepares sibling sources or reuses explicitly selected packages
+in Kernels → Runner → Scheduler → Core order. This coordinates builds, not runtime
+execution or firmware activation. See [local dependency builds](../build-test/local-dependencies.md).
+
+### Renderer and optional backend providers
+
+Core owns box/mask publication policy and emits int32 coordinates. Scheduler owns
+caps, lifecycle and cold provider admission. Production composition requires the
+renderer’s typed int32 capability; it does not reinterpret those values as float
+or add per-frame conversion. Kernels owns the canonical A65 `render` operation;
+Runner owns execution and ReadWrite image retirement. Scheduler records the
+checked operation and consumed Kernels/Runner identities. Core verifies this
+cohort and composes the normal dependencies, without an `a65apps` archive.
+
+Runner records platform-owned providers separately from redistributable dependencies. Core
+preserves that receipt and checks the installed platform; it does not infer compatibility from a
+platform build number or bundle platform DSOs into a consumer package. See [Local
+dependencies](../build-test/local-dependencies.md) for provider admission and composition.
+
+### Runtime transport ownership
+
+Core consumes the installed `SimaScheduler` package. `SimaScheduler::elements` owns
+`neatcamerabridge`, `neatmultipartjpegdemux` and `neatlatestbystreammux`, including
+their GObject types and process-local registration. Core's `src/gst/` entry points
+are compatibility forwarders, not second implementations. These elements do not
+use the numerical executor or require Kernels.
+
+Core retains public C++/Python APIs, Node options, graph lowering, Sample/Tensor
+objects and graph-private credits. `src/pipeline/gst/RealtimeMuxCredits.cpp`
+projects those credits through Scheduler's value-only loan interface. The mux loan
+registry and shared input-frame counter have one Scheduler owner. Camera ABI layouts
+come from the matched allocator header, not Core-private copies.
+
+Implementation tests for mux fairness/backpressure, multipart parsing and capture
+parent lifetime live with Scheduler. Core retains public API, graph-credit and
+end-to-end device tests. Install the matched Runner and Scheduler packages before building Core;
+Core internal tests link its transport target directly. Do not qualify hardware
+capture or compact TensorBuffer metadata with provider-free host tests.
+
+### Adding numerical kernels
+
+For an operation expressible through the existing tensor and execution
+contracts, development belongs in **Kernels and Core only**:
+
+1. In Kernels, add the operation-local typed request, checked plan, numerical
+   implementation, executable factory and named-request decoder. Register the
+   operation once in the Kernels-owned catalogue and add correctness tests.
+2. In Core, add the Node and translate its options into the canonical request:
+   operation, explicit target, input/output specifications and typed parameters.
+   Call Scheduler's generic preparation API; do not call an operation factory
+   or add an operation switch to Runner or Scheduler.
+3. Rebuild/install **Kernels → Runner → Scheduler → Core**. An EV catalogue
+   change requires explicitly composed matching firmware even when Runner
+   source is unchanged. Qualify it using the exclusive device procedure.
+
+Preparation follows **Core → Scheduler → Runner → Kernels**. Kernels performs
+numerical validation; Runner is the generic gateway. Cold checking does not open
+hardware or provision execution resources. Retain the returned checked executable
+and inspect its canonical requirements before admitting the complete stage.
+Streaming uses that same executable without decoding operation names again.
+
+Dynamic variants use an optional kernel-owned capability bound during setup.
+Core retains graph/metadata policy and existing bounded caches. A cache miss can
+refine immutable parameters; the provider proves whether the exact tensor
+contract/resources are shared or full rechecking is required. Cache hits do not
+create another operation or retain camera/codec frame loans.
+
+Runner owns execution, resources, coherency and retirement; Scheduler owns Gst
+carriers, plugins and transport integration. Their canonical installed packages
+are `SimaRunner` and `SimaScheduler`. The metadata-only `SimaRuntime` compatibility
+package forwards historical targets to those same implementations. Header aliases
+reuse canonical Kernels types; static link dependencies may remain transitive.
+There is no second tensor schema, allocator, execution queue or numerical registry.
+
+Numerical stages render `neatkernelrunner`; there is no opt-in or fallback to the retired
+ProcessCVU plugin. Core-owned public output packing remains a dependent host operation with its
+original metrics boundary. Codecs remains a separate encode/decode backend; its Gst wrappers
+belong to Scheduler, not Runner or numerical Kernels.
+
+Build receipts bind exact installed bytes and consumed dependency identities.
+They are not hardware or performance qualification. Do not mix headers,
+archives, firmware or Codecs from unmatched packages.
+
+A new transport, tensor representation or execution capability is a framework
+extension and may require Runner changes. The Kernels/Core-only guarantee does
+not cover those changes. Timeout or cancellation never proves DMA retirement;
+the existing allocation owner must survive until definitive completion or
+verified platform recovery.
+
+Core selects operations by semantic name, not firmware graph ID. Kernels exposes
+an immutable catalogue of operation names and their compiled targets; Runner and
+Scheduler forward that catalogue without maintaining another operation registry.
+Core owns typed graph-rewrite rules, including mandatory `DetessCast` and
+`DetessDequant` fusion. If a required fused implementation is unavailable,
+preparation fails rather than splitting the operation into separate kernels.
+A Core stage need not correspond to one operation: TrackKLT still prepares its
+existing composite request.
 
 ### Direct-driver recovery
 
-For the direct-driver platform, `deps/manifest.json` selects the Internals and
-LLiMa artifacts packaged with Core. The package set is the compatibility unit;
-Core does not duplicate Internals runtime, kernel, or sysroot version checks.
+`deps/manifest.json` selects Scheduler and LLiMa. Scheduler’s installed coordinator validates
+the matched Kernels, Runner and Codecs closure; Core consumes the validated cohort rather than
+duplicating lower-level platform checks.
 
 Recovery belongs to the selected platform, not to dispatcher error matching.
-Core reports dispatcher errors without starting services, initializing MLA
-memory, or resetting remote processors. The legacy recovery code and script
-have been removed. Unknown DMA completion requires preserving buffer loans
-and using the platform-approved recovery procedure.
+Core does not start AppComplex, restart dispatcher services, or reset remote
+processors after an inference failure. Runtime reports completion and retirement
+through the driver contract; an unknown completion is not permission to recycle
+DMA storage. Platform boot-time MLA initialization remains a platform dependency.
+
+### Memory ownership
+
+Core uses Scheduler's allocation and mapping interfaces, not physical addresses
+attached from metadata, `libsimaaimem`, or a second allocation registry. See the
+[memory model](../../advanced-concepts/data-model-contracts/memory_model.md)
+for CPU access, mapping lifetimes, imported memory and parent-batch constraints.
+
+Core does not choose a cache-coherency mode from graph topology.
+`RunAdvancedOptions::prepare_output_cpu_visible` remains for options-layout
+compatibility; no redundant eager synchronization runs before the real mapping.
+The source-compatible `defer_output_invalidate` option must remain true; false is
+rejected rather than restoring a producer-side slow path.
+
+Async MLA submission and ordered output emission use separate existing paths.
+The completion callback records terminal state; the emitter publishes the result
+without performing CPU cache maintenance. The submit path can admit a
+later frame while that emission is active, subject to bounded lane capacity and
+independent allocation ownership. Completion alone does not return admission
+credit: a completed slot remains owned until emission releases it. Output-pool
+loans can outlive that release and continue to prevent storage reuse.
+
+This overlap does not remove cache maintenance or shorten the dependency chain
+within one frame. It avoids exposing independent CPU and device work as serial
+pipeline stalls, without another synchronization worker. Graph construction sets
+budgets once; no per-frame operation-specific scheduling policy is needed.
+
+### Explicit frame-arena capacity preference
+
+Storage placement and allocation fallback are separate contracts. The existing
+`ArenaDmsPolicy::PreferDmsForEligible` selects **required DMS** for eligible closed
+MLA/A65 lifetimes; it does not permit fallback when DMS allocation fails. Existing
+production callers keep that behavior.
+
+The internal planner can explicitly select `ArenaDmsPolicy::PreferDmsThenCma`.
+This produces `ArenaAllocationPolicy::PreferDmsThenCma` only for Core-owned DMS
+arenas whose complete consumer access set excludes EV74. Any EV74 consumer makes
+that opt-in compilation fail; it must not become a hidden staging copy or an
+assumption that every CMA range is reachable. External-adopted, unknown, custom,
+and uncached/control storage cannot acquire this preference.
+
+This is an internal planning capability, not a new public ModelPack option or an
+environment switch. Default public workflows remain strict. The policy travels
+through existing MLA/numerical contract projection into Scheduler's installed
+static-manifest ABI **31**, or the direct-TVM lane schema **3**. New JSON readers
+accept historical strict manifest JSON and TVM schema 2 as `RequiredDomain`; a
+preference field in an old schema is rejected. Old static ABI consumers reject
+31, and old TVM consumers reject schema 3. Historical Core JSON readers may ignore
+unknown fields and reconstruct strict placement; that is not support for transporting
+a new preference through an old Core. Rebuild Core and Scheduler together;
+Runner's public library ABI and canonical Kernels request semantics are unchanged.
+
+Scheduler allocates the ordered canonical DMS/CMA alternatives once at pool setup,
+records the actual selected heap, and performs CMA initialization when CMA was
+actually selected. Reuse validates actual provenance against the authored policy:
+strict DMS cannot admit CMA, while a validated preference can admit either. No
+policy JSON is parsed during warmed execution, and no payload migration is added.
+
+### Default device-to-CPU coherency
+
+There is one prepared memory engine. `SIMA_CORE_DEMAND_COHERENCY_V1` and Runner's
+experimental build option are removed; configure fresh builds without them.
+No environment opt-in or whole-graph Legacy downgrade remains. Core uses only
+Scheduler allocation, mapping and stage interfaces. Public tensor geometry,
+Kernels requests and numerical behavior are unchanged.
+
+The [memory model](../../advanced-concepts/data-model-contracts/memory_model.md)
+defines the shared access-acquisition and lifetime contract.
+
+#### Mapping a logical DMA-backed tensor
+
+Public `Tensor::map()` and its `view()` alias preserve their existing storage
+mapping contract: they apply `byte_offset` once and may expose trailing backing
+bytes. Named-segment bounds and application mapping callbacks remain
+authoritative. `TensorBuffer::map()` still maps the storage directly.
+
+Shape-bounded internal consumers use `map_dense_tensor_read()` instead. It
+checks positive strides and overflow against the current geometry, then exposes
+only the physical tensor span, including stride gaps. Core-owned DMA storage can
+authorize that exact range. Wrapped or custom callbacks keep their existing
+mapping and cleanup behavior; the helper validates their returned extent before
+narrowing the logical view. No geometry is cached across mutable tensor views.
+Composite images and encoded or unresolved geometry keep the existing mapping
+path; a dense logical span does not authorize access to their other planes.
+
+Scheduler can reuse Runner's already-qualified, current-generation visibility
+for the exact view. A first read after a device write, an uncovered range or an
+unqualified import retains exporter synchronization. Active writers, pending
+device work and quarantine remain errors. The mapping retains both the original
+Gst sample and the current public storage/producer loan until CPU access ends.
+No ownership mode, payload copy, WRITE-END cleaning or public object layout changes.
+
+A kernel-stage `resource_busy` error does not necessarily mean submission
+capacity is exhausted. Its sanitized, bounded `Reason` retains the original
+access, enrollment, ownership or capacity diagnostic. Inspect that cause before
+changing concurrency; do not reuse buffers while ownership or device completion
+is unresolved.
+
+### Codec ownership
+
+Scheduler owns `neatdecoder`, `neatencoder` and their GStreamer adaptation. Codecs owns
+decoder/encoder sessions and numerical implementations. Consume the matched installed headers
+and libraries; do not copy backend code into Runner or combine wrappers with a different backend
+ABI.
+
+### Hardware encoder configuration
+
+`SimaEncode` and raw `VideoSender` derive resolution from negotiated input caps.
+Resolution stays fixed within a run; changing it requires a new run.
+Their encoder options contain no width or height, and the input adapter preserves
+visible geometry without resizing. Unknown input dimensions remain unknown in the
+build-time output contract until the upstream input provides them.
+
+`SimaEncode` prepares raw input once and maps codec-specific options to
+`neatencoder`. Scheduler owns GStreamer adaptation and output publication; Codecs owns the
+encoder session. Runner retains memory ownership and synchronization authority. Core adds no encoder execution thread.
+The legacy `H264EncodeSima` preserves its adapter-free input contract while sharing
+encoder property generation. The public class layout changes are included in ABI 6 and
+rebuilt binary consumers; existing source entry points remain available.
 
 ### Common workflows
+
 - **Decode / ingest:** file or RTSP -> depay/demux/parse -> decode -> convert/caps -> appsink -> C++ consumer
 - **Validate:** build + parse + preroll (PAUSED) to catch negotiation issues early
 - **Serve RTSP:** push synthetic frames into an RTSP server pipeline using `appsrc`
@@ -67,6 +326,7 @@ and using the platform-approved recovery procedure.
 - **Tutorials:** start at [Tutorials](/tutorials) for a runnable, ordered learning path
 
 ### Canonical production pipeline (source of truth)
+
 The canonical "production path" for this repo is:
 **input -> preprocess -> MLA -> postprocess**. The source of truth lives in:
 `tests/e2e_pipelines/obj_detection/sync_yolov8_test.cpp`.
@@ -74,6 +334,7 @@ The canonical "production path" for this repo is:
 When this test changes, update README + Architecture to keep docs aligned.
 
 ### Mental model (business logic &lt;-&gt; pipeline glue)
+
 Your app keeps the business logic; the framework owns the pipeline glue.
 
 ```text
@@ -137,25 +398,8 @@ between implementation options.
 - **The MPK contract is the model source of truth.** Core routing, dtype, shape, quantization, and
   stage decisions must come from `mpk.json` / `*_mpk.json`. Per-stage JSON files are
   plugin-private.
-- **Detess logical rank and runtime geometry are separate.** Core preserves the MPK-authored
-  `frame_shape` as the logical output contract and derives explicit MLA geometry when needed. A
-  rank-2 shape is accepted as NC or HW only when declared byte spans identify one unique
-  interpretation; ambiguous or inconsistent contracts fail during model loading. Fused
-  DetessDequant additionally projects both kernel descriptors through one per-frame descriptor
-  contract: tile rank determines kernel rank, leading batch dimensions remain separate, and
-  semantic axes, byte spans, byte strides, and explicit tiled-storage encoding remain
-  authoritative. Route compilation must not reinterpret those descriptors after projection. The
-  prepared-runtime bridge carries the explicit encoding through an additive, version-negotiated
-  ProcessCVU V2 request whenever it must synthesize those descriptors across the DSO boundary.
-  Its fixed-width prefix and ABI probe are validated before either DSO reads the rich C++ request;
-  the legacy request and builder remain unchanged for binary compatibility rather than acquiring
-  another ambiguous tail field. The explicit V2 CBlock16 encoding is currently valid only for
-  fused DetessDequant; V2 requests using it for other ProcessCVU families fail instead of being
-  silently treated as padded HWC until those kernels implement CBlock addressing.
-- **ProcessCVU backend policy has one authority.** A stage's capability result owns backend
-  availability and the AUTO preference used by resolution and diagnostics. Explicit stage or
-  session targets either run on the requested supported backend or fail; later role-based
-  overrides must not silently contradict the advertised AUTO decision.
+- **Detess logical rank and runtime geometry are separate.** Preserve the MPK-authored `frame_shape`; accept rank-2 NC/HW interpretations only when byte spans identify one unambiguous geometry. Fused DetessDequant carries both descriptors through one per-frame contract: tile rank determines kernel rank, leading batch dimensions stay separate, and semantic axes, byte spans, strides and explicit tiled-storage encoding remain authoritative. Core forwards these canonical typed contracts through Scheduler; Kernels validates the selected operation and encoding. Do not reconstruct a ProcessCVU prepared request across the DSO boundary.
+- **Numerical backend policy has one authority.** The checked capability owns supported targets and AUTO preference. Explicit stage or session targets either run on the requested supported backend or fail; later role-based overrides must not contradict that decision.
 - **Public APIs stay stable.** Public headers under `include/*` are installed and supported.
   Prefer additive changes and deprecation paths over breaking signatures.
 - **Concurrency must be bounded and observable.** Streaming-thread work should be lightweight;
@@ -205,7 +449,21 @@ the last counted one, the worker counts the missed samples from the cache, which
 latest 240 samples. The monitor creates nothing in Sentinel, so any number of monitors can run at
 once and a killed process leaves nothing behind.
 
-`Model::benchmark()` runs a `TelemetryMonitor` around the throughput pass. Sentinel samples about
+The default monitor uses the socket above. An explicit `TelemetryMonitor(socket_path)` selects
+another Sentinel Unix socket for that instance only; `Model::benchmark()` retains the default
+endpoint.
+
+`Model::benchmark()` uses this same monitor, not a second trace engine. It cold-prepares the
+connection and waiting worker before the throughput timer, arms the window after measurement
+starts, and seals it after all required outputs complete but before stopping measurement.
+Arming and sealing allocate nothing, take no mutex, and do not join or contact Sentinel. Only
+then does the benchmark join the worker and final-read the cache. In-flight polls are bounded
+by a UTC read preceding their stop check, so sealing cannot admit a later sample. Benchmark
+attribution validates UTC sample timestamps and paired UTC/steady boundaries; detected
+clock discontinuities invalidate telemetry instead of changing the measured throughput.
+Standalone monitors keep their cache-order recovery after clock rollback.
+
+Sentinel samples about
 every 2 s, so the throughput pass runs for at least `BenchmarkOptions::min_duration_ms` (10 s by
 default). The latency pass follows the same minimum so both passes stop by the same rule. When
 Sentinel is not running or the window has no samples, the benchmark still returns latency and FPS;
@@ -216,19 +474,38 @@ that fails, the installer warns and continues; run `sima-cli neat install sentin
 `Run` power monitor (`RunOptions::power_monitor`) also comes from Sentinel: Core polls its latest
 sample and reads no power monitor chips over I2C.
 
-Layer profiling is opt-in through `BenchmarkOptions::include_layer_stats`, which defaults to
-false. After the latency and throughput runners close, Core invokes `mla-rt` in a separate
-process using the extracted model's MLA executables and compiler stats YAML. Core owns
-validation, subprocess timeout, and temporary-file cleanup; MLA-RT owns hardware profiling
-and the handoff back to kernel execution. Profiling requires no overlapping MLA workloads.
+MLA profiling is opt-in through two `BenchmarkOptions` fields that default to false:
+`include_mla_layer_stats` and `include_mla_stage_stats`. After the latency and throughput runners
+close, Core measures the extracted model's MLA executables through Scheduler's client, one
+profiling pass after the other. MLA layer stats covers only the MLA stages in the resolved
+inference route, including its terminal policy. Runner runs `mla-rt` in a separate process for
+each executable. MLA layer stats also uses the compiler stats YAML; MLA stage stats runs each MLA
+executable 200 times without interruption and reads the mean `tile.lat` from the `mla-rt` stats file. Runner
+validates the inputs and outputs and removes temporary files; it stops `mla-rt` if one run takes
+longer than 120 s. MLA-RT owns hardware profiling and the handoff back to
+kernel execution. Profiling requires no overlapping MLA workloads. The benchmark gate serializes
+benchmark calls, not other inference APIs or applications.
 
-`BenchmarkReport::layer_stats` contains compiled layer names, zero-based executable stage
-indices, and execution times in microseconds. These measurements use separate profiling
-passes and do not sum to headline latency. `BenchmarkReport::save(file_path)` explicitly
-writes the complete report using the public field names and units: `.json` selects JSON;
-`.yaml` and other endings select YAML. It includes telemetry and an empty layer list when
-profiling is disabled. It creates missing parent directories and atomically replaces an
-existing destination.
+An `mla-rt` run that fails, crashes, or is stopped may leave MLA work unfinished, so Runner starts
+no further `mla-rt` run in that process. Later profiling passes report that MLA needs recovery.
+Keep the DevKit idle until MLA recovery is verified.
+
+Profiling is best effort. When `mla-rt` is missing, fails, times out, or writes unusable output,
+Core keeps the headline measurements, leaves that list empty, prints a warning, and sets
+`mla_layer_stats.status` or `mla_stage_stats.status` to the reason. A status is otherwise
+`"not requested"` or `"ok"`.
+
+`BenchmarkReport::mla_layer_stats` contains each compiled MLA layer's zero-based executable
+stage index, name, and hardware latency in microseconds from one profiling pass per layer.
+`BenchmarkReport::mla_stage_stats` contains each MLA stage's index, numbered the same way, and its
+mean hardware latency in microseconds. These measurements use separate profiling passes, so layer
+latencies do not sum to the stage or headline latency.
+`BenchmarkReport::save(file_path)` explicitly writes the complete report using the public field
+names and units: `.json` selects JSON; `.yaml` and other endings select YAML. It includes
+telemetry, both statuses, and empty MLA lists when profiling is disabled. It creates missing
+parent directories and atomically replaces an existing destination.
+
+Retired PreparedRunner options must remain at their defaults. Use `processcvu.async` and `GraphOptions::async_queue_depth` for concurrency; the legacy dequantization and profiling flags have no direct replacement. Leave `advanced_execution.defer_output_cache_sync=true` and use Tensor/GstMemory CPU mapping when accessing outputs. `RunOptions::advanced.prepare_output_cpu_visible` remains a compatibility no-op; it does not request eager cache synchronization.
 
 ### Compiled model execution contract
 
@@ -297,11 +574,101 @@ later MLA stages use `ReuseInput` and submit exact root-relative IFM/OFM views
 over that same DMA-BUF. Stage-less projection helpers remain available only
 for an unambiguous one-MLA graph and fail closed for multi-stage plans.
 
+Core's immutable MPK package is the inference-contract authority. Logical public
+shapes remain distinct from native MLA sample spans, whole-batch CVU execution
+views and backing capacity. Rank-two Detess views are normalized only when actual
+input/output byte geometry identifies an unambiguous execution shape. Fusion is
+selected through semantic operation discovery, never a Core-owned graph-ID table.
+
+#### Canonical identity and selected publication
+
+Core finalizes numerical stage identity when it constructs a compiled contract.
+It normalizes supported model spellings and rejects disagreement between the
+operation, family and family enum. Legacy graph and descriptor IDs are not
+execution authority. Identity normalization does not mark an incomplete semantic
+contract as complete; Kernels still owns operation discovery and numerical admission.
+
+For a model-managed Preproc handoff, image geometry and storage extent are separate
+facts. Tile padding can make the required storage larger than the dense scalar
+count. Core validates the absorbed transform chain against the typed model plan,
+finishes carrier placement and the selected output route, then constructs the
+exposed output view. The runtime descriptor, route and public view must refer to
+the same finalized storage. A larger parent allocation does not authorize an
+undersized logical view, and equal byte counts do not prove matching geometry.
+
+Standalone packed Preproc queries the canonical checked executable for its storage
+requirement before publishing facts or allocating an arena. It does not derive
+packed capacity by multiplying logical dimensions. A multi-ROI capacity retains
+its batch axis in the public shape; single-image standalone views retain their
+existing HWC shape.
+
+Typed model descriptors cover the full tensor, including its batch dimension.
+Their execution repetition count is one: semantic batch size does not request
+repeated execution of the whole tensor. Fused DetessCast and DetessDequant retain
+an explicitly proved private singleton-axis view when their published rank differs
+from their execution geometry.
+
+This singleton handoff rule does not replace deliberately filtered output views,
+such as KLT status publication. Changes happen during preparation, not frame
+execution. Preserve fused operations, explicit offsets and quantization metadata;
+do not repair a contract mismatch with a staging copy or a numerical fallback.
+
+#### Typed transform preparation
+
+Core resolves external dtype names and MPK tensor descriptors once during graph
+preparation. The handoff contains checked executables with canonical `TensorSpec`
+and `DType` contracts, including per-input precision. Runner and Scheduler do not
+reparse operation-specific dtype strings. Core's publication and carrier metadata
+remain explicit, separate from numerical type authority.
+
+Execution shape and published shape need not be identical. Core explicitly
+authorizes singleton-axis views from the semantic output contract and packed
+physical-storage views from the compiled model's transport contract. Scheduler
+checks each output binding against that relation during preparation, including
+dtype, layout, strides and storage bounds. Equal byte counts alone do not authorize
+a reshape. These views preserve the backing allocation; they do not add a tensor
+copy or numerical conversion. Changes to the output contract require fresh
+validation, including for dynamically prepared variants.
+
+Equivalent dtype spellings are accepted case-insensitively. Unknown names and
+contradictory descriptors fail before execution. The shared legacy BF16/INT16
+encoding requires an explicit semantic type. Request errors expose the reason
+without enabling verbose GStreamer diagnostics.
+
+#### Checked numerical stages
+
+At graph preparation, Core projects producer output regions into consumer input
+bindings. For a declared frame arena, each region addresses the same DMA-BUF at
+its authored arena offset; a region ID is not a `GstMemory` index. The shared
+projection used by BoxDecode and ArgMax validates region bounds and preserves
+the separate head-relative offset. Direct-carrier and runtime-binding inputs
+without a declared producer arena retain their original addressing mode.
+
+Core lowers Preproc, transforms and vision stages, including ArgMax, BoxDecode
+and SuperPoint, to canonical requests and explicit tensor-port mappings.
+Scheduler's generic tensor-stage engine owns GStreamer binding and publication;
+Runner owns dependencies, asynchronous execution and execution-time buffer lifetime. Core imports carrier
+capacities from the upstream allocation contract or ingress storage, never from
+logical shapes alone. BoxDecode and SuperPoint numerical outputs stay private; a
+dependent Core wire-serialization executable preserves the public BBOX and feature
+payloads without duplicating decode math.
+
+Image-size changes select immutable, resource-compatible prepared BoxDecode variants
+before binding. They do not mutate an operation used by an in-flight frame. RCNN
+stage 1 preserves per-level top-K count-plus-FP16 proposal groups. Core must not
+load the retired objectdecode plugin as a fallback.
+
+A65 is an execution target, not a GStreamer memory domain. The plugin still imports
+DMA-BUF carriers. Direct tensor ingress uses shared-CMA allocations, for example
+`Tensor::from_vector(values, shape, TensorMemory::EV74)`; the selected executable
+continues to run on A65.
+
 ---
 
 ## Repository layout
 
 ### High-level structure
+
 - `include/` -- public headers (the supported API surface)
 - `src/` -- implementations
 - `docs/` -- documentation (this file)
@@ -311,6 +678,7 @@ for an unambiguous one-MLA graph and fail closed for multi-stage plans.
 - `old_*` -- legacy monolithic implementation snapshots kept for reference/migration
 
 ### Public header tree (`include/`)
+
 Public headers live under `include/<module>/...`.
 Examples: `include/pipeline/Graph.h`, `include/model/Model.h`.
 
@@ -332,21 +700,22 @@ Public headers under `include/` are installed and treated as stable API.
 Internal headers under `src/**/internal` are not installed; examples/tutorials
 should use only public API.
 
-The shared Core CMake target exports C++20 and its public GStreamer, OpenCV,
-and JSON requirements. Internals, memory-library, and LLiMa development files
-belong to Core's build, while their shared libraries remain runtime dependencies.
-Static consumers explicitly request the Static component and provision its
-implementation link dependencies.
+The shared Core CMake target exports C++20 and its public GStreamer, OpenCV and JSON
+requirements. Core builds against the installed Scheduler frontend and LLiMa; lower runtime
+libraries remain deployment dependencies, not direct Core development interfaces. Static
+consumers explicitly request the Static component and provision its implementation link
+dependencies.
 
 Runtime environment notes:
 
-- If using bundled GStreamer plugins in `deps/gst-plugins`, set
-  `GST_PLUGIN_PATH` and/or `GST_PLUGIN_PATH_1_0` to include that directory.
-- If installed with `cmake --install`, plugins are placed under
-  `${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/sima-neat/gst-plugins`.
-  Add that path to `GST_PLUGIN_PATH` and/or `GST_PLUGIN_PATH_1_0`.
-- Use `scripts/use_neatdecoder.sh` to set plugin paths for the current shell.
-- If installing plugins system-wide, rebuild the system GStreamer cache.
+- Installed Scheduler plugins reside under `${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/neat/gst-plugins`. For a non-system prefix, include that directory in `GST_PLUGIN_PATH` or `GST_PLUGIN_PATH_1_0`.
+- Runner runtime libraries reside under `${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/neat/runtime`; consume the installed CMake targets rather than build-tree libraries.
+- After a system-wide plugin update, rebuild the system GStreamer cache.
+
+Build Core and its installed consumers with a JSON header version ABI-compatible
+with the selected LLiMa package. LLiMa exports JSON-bearing C++ methods; compatible
+source syntax alone does not prove link compatibility. SDK/library receipts and
+real link checks take precedence over a package's broad minimum-version label.
 
 ---
 
@@ -366,6 +735,7 @@ Runtime environment notes:
 ## Modules and responsibilities
 
 ### `builder/` -- node contracts and private linear composition support (no GStreamer)
+
 **Purpose:** Define how pipelines are assembled from logical parts.
 
 Key types:
@@ -377,6 +747,7 @@ Key types:
 ---
 
 ### `nodes/` -- typed pipeline building blocks
+
 **Purpose:** Provide ready-to-use Node implementations that emit deterministic GStreamer fragments.
 
 `VideoRate()` always emits `videorate drop-only=true`, including when inserted
@@ -396,9 +767,61 @@ Each Node must produce:
 - `backend_fragment(index)` -- the GStreamer fragment for this node at a given index
 - `element_names(index)` -- deterministic element names owned by this node (for diagnostics and enforcement)
 
+Standalone `Cast` compiles its typed transport views into a canonical `cast`
+request checked by Kernels for the selected backend. Source logical identities, per-axis
+strides and byte offsets remain explicit; allocation extents include the addressed
+strided span. The renderer applies normal target resolution and direct arena
+projection. Cast uses the same typed execution and output-pool budgets as other
+runner stages: graph construction selects the bounded execution capacity (one for
+synchronous Input graphs) and reserves output carriers for retention. These budgets
+are passed to Runtime preparation, not rendered as legacy plugin properties.
+Rebinding compact output tensors into a public subset or reordered TensorSet first
+materializes metadata on an owned, parent-retaining envelope. The original held
+publication and payload storage are not modified.
+
+#### Typed image frontends and multi-plane publication
+
+`Resize`, `ColorConvert`, and `Normalization` are thin factories over the existing
+final `Preproc` node. An immutable implementation-private policy in its existing
+holder separates frontend semantics without changing the public Preproc or
+PreprocOptions layouts. Model-specific ROI/source-template behavior remains gated
+to the legacy fused mode. Resize admits bounded dynamic input geometry with fixed
+output dimensions; color conversion and normalization fix geometry per run.
+
+Raw image compilation retains exact checked numerical descriptors for each plane
+and one physical image allocation. The additive Scheduler image publication API
+validates plane backend identities, absolute arena offsets, strides and bounds,
+then publishes one `GstVideoMeta` image with dynamic `GstSimaMeta`. It does not
+publish a tensor-set descriptor or fabricate an aggregate numerical tensor.
+Core retains checked image-publication metadata in the compiled runtime contract
+and rendered stage before preparing any numerical recipe. The terminal output
+query runs at this earlier phase: numerical plane descriptors must not become
+public tensor overrides. Named selectors are still validated. The checked raw
+caps and `GstVideoMeta` remain the image-layout authority. The internal metadata
+JSON roundtrip retains the ordered image descriptor but does not restore an
+executable. Recipe preparation compares every descriptor field with its checked
+output contract, then makes a separate arena-rebased view; the authored relative
+plane offsets remain immutable. Normalization instead publishes a BF16 tensor. Public raw-video import preserves
+NV16's full-height UV plane and the same image owner.
+
+New image stages preserve known upstream temporal caps in a cold, stage-local
+OutputSpec projection. A boundary without an OutputSpecProvider invalidates only
+the inherited rate for this strict projection; a later explicit caps provider
+can restore it. The private payload carries the resulting fraction to raw image
+publication. Unknown rates remain omitted, and no warmed frame work or rate
+inference is added. Legacy best-effort OutputSpec projection is unchanged.
+
+Native image layouts preserve holes; encoder-compatible NV12 uses Runner's
+installed video-layout authority and an explicit InitializeStorage kernel policy.
+The EV writer initializes declared pitch tails and storage rows each invocation;
+allocation/page slack is not implicit writable padding. Core never initializes
+payload padding or repacks output on A65. Existing fused Preproc dispatch,
+metadata compatibility and BF16 arithmetic remain unchanged.
+
 ---
 
 ### `gst/` -- thin GStreamer utilities
+
 **Purpose:** Small wrappers/helpers around common GStreamer patterns.
 
 Examples:
@@ -413,6 +836,7 @@ Examples:
 ---
 
 ### `pipeline/` -- runtime orchestration and public API
+
 **Purpose:** Own the runtime lifecycle: build -> parse -> run -> consume -> teardown, with diagnostics.
 
 Key types:
@@ -475,7 +899,24 @@ Support triage order is:
 3. inspect first terminal `bus` errors
 4. replay with `repro_gst_launch`
 
+Error wrappers format their diagnostic before transferring the diagnostic report.
+Formatting a report and moving it in separate constructor arguments is unsafe
+because argument evaluation order can discard the original message. Cleanup must
+preserve both the exception message and structured report.
+
+##### Numerical Runner diagnostics
+
+The default `neatkernelrunner` path preserves Runtime's canonical error category,
+phase, field and optional kernel rule/cause through the versioned GStreamer error
+details. Graph preparation uses the same diagnostic mapping. Core presents these
+failures; it does not duplicate kernel validation or infer support from error prose.
+Request, unsupported-implementation, binding and dependency failures have distinct
+`misconfig.kernel_request`, `misconfig.kernel_unsupported`, `runtime.kernel_binding`
+and `runtime.kernel_dependency` codes. Missing rule or phase information remains
+unavailable. A timeout is not device retirement and does not permit buffer reuse.
+
 #### Internal pipeline diagnostics
+
 Under `src/pipeline/internal/` (internal-only):
 - `Diagnostics.h` -- shared diagnostics types used by runtime:
   - `DiagCtx` (bus log + node reports + boundary/element counters)
@@ -485,6 +926,7 @@ Under `src/pipeline/internal/` (internal-only):
 - `GstDiagnosticsUtil.h` -- helpers for formatting and collecting GStreamer diagnostics
 
 #### SIMA static manifest context contract {#sima-static-manifest-context-contract}
+
 For model pipelines, static stage/tensor contract data is built in framework and injected as a
 pipeline-level `GstContext`:
 
@@ -494,8 +936,9 @@ pipeline-level `GstContext`:
   - `manifest_json` (legacy compatibility payload)
   - `manifest_accessor_v1` (ABI-safe accessor table pointer)
   - optional `session_id`, `model_id`
-- Manifest ownership/lifetime is tied to pipeline lifetime; plugins borrow pointers and copy what
-  they need.
+- The context owns immutable metadata backing for its accessor pointers. Retaining
+  the context keeps that metadata readable, not numerical sessions or execution
+  caches. Plugins must retain the context while borrowing its pointers.
 - Repository boundary: this repo must not add build-time dependencies on plugin/dispatcher repos.
   Integration is interface-only (runtime `GstContext`, properties, caps/meta, and C-ABI contracts).
 
@@ -548,14 +991,19 @@ filesystem paths. Execution preparation records the same canonical plan digest a
 fails rather than constructing or retrying a legacy executor after rejection.
 
 Only after admission does Core set `processmla.dmabuf_plan_contract` in static
-manifest ABI version 30. Core also projects each backend port's `required_alignment_bytes`
+manifest ABI version 31. Core also projects each backend port's `required_alignment_bytes`
 and the immutable frame-arena placement plan into its physical buffer record;
 ProcessMLA consumes that value rather than duplicating the legacy
 page-alignment policy. It consumes these Core-owned facts; it must not infer missing ports
 or fall back to a legacy transport. Core and every plugin that consumes the static-manifest
-header must therefore be built and released together at ABI version 30.
+header must therefore be built and released together at ABI version 31.
 
-##### Tensor ownership and physical placement
+When `cv::Mat` input is materialized as a Tensor, unresolved `Auto` placement
+uses the owning Tensor default: copy directly into EV74-visible DMA-BUF-backed
+DDR. Connected graph construction and named/default pushes share this conversion.
+Explicit `SystemMemory` (or `use_simaai_pool=false` with `Auto`) retains a borrowed
+host view; explicit DMS placement remains unchanged. This does not change the
+public `from_cv_mat_view()` API or make borrowed host storage device-compatible.
 
 Public Tensor device transfers allocate standard CMA or DMS DMA-BUF memory,
 perform the required cache-synchronized host copy, and record device placement
@@ -565,7 +1013,7 @@ pack independently; packing a CPU field never copies its DMA-backed siblings.
 Public input positions identify logical views, not concatenated allocations.
 Each frame's compact physical-binding table identifies the memory slot, offset
 and extent of each requested view, including reordered or subset views of one
-shared sample. ProcessCVU resolves application bindings separately from direct
+shared sample. Scheduler resolves application bindings separately from direct
 memory inputs and compiler-owned frame-arena spans. Only a frame-arena input
 can establish ownership of a reused output arena.
 
@@ -600,7 +1048,7 @@ intermediate copy.
 Multiple direct MLA OFMs can be logical views of one physical arena. In that
 case every descriptor with the same memory index publishes the same parent
 physical segment name, while logical/backend names preserve OFM identity and
-exact arena offsets preserve each view. Direct ProcessCVU output publication
+exact arena offsets preserve each view. Direct Scheduler output publication
 likewise uses its exact strict arena layout rather than the legacy packed
 output reconstruction heuristic.
 
@@ -610,15 +1058,11 @@ batch routing, and public APIs remain unchanged.
 
 ##### Direct runtime execution
 
-For the strict graphs currently admitted by `dmabuf-plan`, ProcessCVU submits
-the same Core-projected tensor routes and frame arena through one of two
-executors. EV74 placement submits descriptors through `/dev/cvu`. A65
-placement maps each unique standard DMA-BUF parent once with the matching
-read/write `DMA_BUF_IOCTL_SYNC` boundary, patches a frame-owned typed EV ABI
-configuration with host virtual addresses, and executes the in-process A65
-kernel. A `ReuseInput` post stage maps its shared MLA arena once as read/write;
-it does not copy or reconstruct individual outputs. Both executors keep
-ConfigManager and dispatcher execution disabled.
+Strict numerical stages pass Core-projected tensor routes and frame-arena bindings through
+Scheduler to Runner. Kernels owns the checked numerical executable; Runner owns backend
+execution, memory access, completion and retirement. A `ReuseInput` post stage retains its
+shared MLA arena rather than copying or reconstructing individual outputs. No failed preparation
+or execution may fall back to ConfigManager or dispatcher execution.
 
 ProcessMLA submits through kernel-driver MLArt on `/dev/mla` without the MLA
 dispatcher, MLASHM, segmented allocation, or M4. Legacy libraries may still
@@ -644,18 +1088,21 @@ context/property-driven resolution:
 2. runtime knobs come from properties/context defaults
 3. unresolved required fields fail explicitly (no stage-JSON fallback in framework)
 
-For `simaaiprocesscvu`, CM-derived wiring is infer-first and context `sink_pad_tensor_index_map`
-is used for deterministic multi-input mapping; legacy input-buffer names remain fallback-only.
+Compiled numerical routes carry explicit source bindings and tensor-port mappings through the
+Scheduler frontend. Legacy input-buffer names are not execution authority; consumers must use
+the checked current-frame bindings.
 
 `logical_stage_id` is resolved from `stage-id`/`stage_id` pipeline properties when provided,
 otherwise it falls back to element name.
-SIMA model-path fragment builders set `stage-id` on `simaaiprocesscvu`, `simaaiprocessmla`, and
-`neatobjectdecode` elements by default.
+Numerical model fragments use `neatkernelrunner` and match their typed Runtime
+context by element name; they do not set a `stage-id` property on that element.
 
-Generic BoxDecode uses `neatobjectdecode` for startup validation, model fragments,
-and public `SimaBoxDecode` nodes. Deploy matching runtime packages and rebuild
-Core when upgrading the decoder backend; C++ and Python application APIs are
-unchanged.
+Both authored MPK BoxDecode terminals and public `SimaBoxDecode` nodes use
+`neatkernelrunner`. They share graph-build admission for carrier capacities,
+numerical requests, output publication and dynamic image geometry. Model dimensions
+come from the MLA input contract or explicit ingress metadata, not detection-head
+shapes. Deploy matching Kernels and Runtime packages and rebuild Core when upgrading
+the backend; C++ and Python application APIs are unchanged.
 
 ##### YOLOv5 and YOLO26 BoxDecode class-count contracts
 
@@ -703,19 +1150,39 @@ families, with these additional invariants:
 - Model-managed and standalone routes resolve the same layout, activation and class count.
 - Output contains boxes, masks and keypoints, each with `top_k` slots. `decode_segmentation_pose(...)` returns all three; `decode_bbox(...)` and `BoxDecodeResults(...)` read the leading boxes.
 
-The output has a 4-byte count header. Each slot uses 24 bytes for a box, `160*160` bytes for a mask and 204 bytes for 17 keypoints. The helper derives capacity from:
+The output has a 4-byte count header. Each slot uses 24 bytes for a box, `160*160` bytes for a
+mask and 204 bytes for 17 keypoints. The helper derives capacity from:
 
 ```text
 capacity = (buffer_bytes - 4) / (24 + 160*160 + 204)
 ```
 
-It rejects incompatible format tags and partial records, accepts untagged buffers only as rank-1 `UInt8`, and clamps the detection count to capacity. All three regions must use that same capacity. The legacy a65 `boxrender` assumes 20 box slots and cannot read other capacities correctly.
+It rejects incompatible format tags and partial records, accepts untagged buffers only as rank-1
+`UInt8`, and clamps the detection count to capacity. All three regions must use that same
+capacity. The legacy a65 `boxrender` assumes 20 box slots and cannot read other capacities
+correctly.
 
-`Model::Options::yolox_seg_pose.pose_classes` reaches the backend through the typed payload or JSON `pose_classes` field. Core validates class IDs and decoder support. The backend zeros excluded classes' keypoints, including visibility; Core copies the results unchanged. With no list configured, every class gets keypoints.
+`Model::Options::yolox_seg_pose.pose_classes` reaches the backend through the typed payload or
+JSON `pose_classes` field. Core validates class IDs and decoder support. The backend zeros
+excluded classes' keypoints, including visibility; Core copies the results unchanged. With no
+list configured, every class gets keypoints.
+
+YOLOX segmentation/pose uses one canonical numerical request with six outputs:
+count, boxes, scores, classes, masks and keypoints. Core retains the producer's
+model-to-original axis-aligned affine and its original image extent in each
+immutable geometry variant. Explicit image dimensions do not discard crop/pad
+offsets. Crop admission requires authoritative preprocess affine metadata.
+The kernel emits 1–17 keypoints; Core's compatibility publication always has
+17 slots per detection, with unused slots zeroed. The optional pose-class gate
+is checked and sorted during preparation, included in graph serialization and
+stage cache identity, and forwarded generically without Scheduler dispatch.
+`decode_bbox()` bounds reads by the box region even when masks and keypoints
+follow it. The combined helper returns aligned boxes, masks and keypoints.
 
 ---
 
 ### `contracts/` -- validation rules
+
 **Purpose:** Encode "what a valid pipeline looks like" beyond "gst_parse_launch succeeded".
 
 Examples:
@@ -727,6 +1194,7 @@ This layer can be used for CI and for catching issues before runtime.
 ---
 
 ### `policy/` -- user-tunable behavior
+
 **Purpose:** Centralize tunables (defaults, memory constraints, encoder/decoder/RTSP policy choices).
 
 The goal is to make "knobs" explicit and discoverable rather than hidden in scattered code.
@@ -734,6 +1202,7 @@ The goal is to make "knobs" explicit and discoverable rather than hidden in scat
 ---
 
 ### Model archive integration
+
 **Purpose:** Load `.tar.gz` model archives through `Model` and adapt the parsed MPK
 inference contract into routeable graph fragments.
 
@@ -751,6 +1220,7 @@ graph.add(model.graph());
 ---
 
 ### Model stage fragments
+
 **Purpose:** Compose the preprocess, inference, postprocess, or full route exposed by
 `Model` without exposing the internal archive loader.
 
@@ -773,6 +1243,7 @@ and does not copy tensor payloads or change asynchronous execution.
 ---
 
 ### Where work runs (CPU / CVU / MLA)
+
 Processor routing is determined by the MPK contract (the CVU/MLA stages defined
 in the model archive) plus optional runtime overrides:
 
@@ -789,6 +1260,7 @@ caps mismatches or undersized buffers will fail fast during negotiation.
 ## Runtime model (how execution works)
 
 ### Initialization
+
 All runtime entry points call a single safe initialization routine:
 - `gst_init_once()` (thread-safe, `std::call_once`)
 
@@ -796,6 +1268,7 @@ Additionally, runtime paths may verify required plugins are present:
 - `require_element("appsink", ...)`, etc.
 
 ### Building pipelines
+
 A `Graph` is built by adding `Node` objects and reusable Graph fragments. Use a
 codec-aware fragment for RTSP so the source is depacketized and parsed before
 decode:
@@ -827,6 +1300,21 @@ Internally:
    * `node_reports` for reproducibility
    * `boundaries` as `BoundaryFlowCounters` (atomics)
 
+Normal graph construction lowers numerical requests before serializing placement
+and publication. Numerical manifest payloads are `NONE`; immutable recipes remain
+in-process. The shared prepared context remains for MLA and other nonnumerical
+compatibility, not ProcessCVU requests. `prepare_and_attach_tensor_stages()` in Scheduler validates
+the complete stopped candidate bin, request pads, member ordering, metrics and
+resource budgets before preparing and attaching contexts. Failures propagate with their original diagnostic, without
+fallback or fabricated input authority.
+
+Preproc's Core-owned frame adapter preserves dynamic image/ROI geometry and
+metadata. Its bounded two-entry cache holds immutable operations and publication
+facts, never current buffers or producer loans. Independent preparations receive
+fresh adapters. Scheduler retains its generic binding, allocation, completion and
+publication paths; immutable constants are copied once during preparation, not
+uploaded per frame.
+
 ### Push/pull runtime model
 
 `Run` owns input/output queues and an input thread:
@@ -838,12 +1326,37 @@ Internally:
 This supports fully async pipelines (producer/consumer split) as well as
 one-shot flows (`Graph::run(...)`).
 
-With `RunPreset::Realtime`, live-source pipelines also bound queueing inside the
-graph: Core sets `max-input-queue-time` to 20 ms on each `neatprocesscvu` that
-does not set it already. ProcessCVU is a GStreamer aggregator, which otherwise
-queues input up to the source latency after the `KeepLatest` queue, so frames
-hold decoder buffers instead of being dropped. Internals applies the limit only
-to single-input elements and reports the unchanged latency downstream.
+### Standalone stage admission and reuse
+
+Standalone stages construct ingress caps and optional source labels from the
+actual input metadata. A source label is not a consumer input name: several
+logical heads can share one physical carrier without losing their individual
+identities. The cold stage build receives the complete input `Sample`, including
+head offsets, routing and storage ownership, for executable admission.
+
+Runtime metadata inspection does not prepare numerical kernels. MLA ingress
+facts come from the exact selected model-fragment schedule; when a transform
+precedes MLA, the seeded compiler validates that first consumer instead of
+comparing application input bytes against an internal MLA tensor. Preprocessing
+and ROI projections use the existing compiled preprocessing contract. Compilation
+failures retain the provider diagnostic and are rejected before plugin parsing.
+
+Cached tensor-stage plans require equal effective model options and a complete
+value-only input-layout signature. The signature covers all heads, physical
+bindings, visible capacities and sharing topology, but contains no allocation
+addresses, payload data or retained producer loans. Metadata inspection does not
+map or copy payloads. Equivalent fresh allocations can reuse a plan; unsupported
+representations use strict seeded compilation without cache reuse. Fixed resize
+policy and geometry used during admission stay in the key. For geometry-sensitive stages, only
+original-image dimensions handled by the non-SuperPoint BoxDecode resolver can vary
+outside it; a new geometry variant can still require preparation inside that resolver.
+
+Fixed MPK inference stages (`Infer` and `MLA`) treat preprocess ROI and affine metadata as
+per-frame values, not preparation inputs; outputs carry the current frame's affine and image dimensions. Other
+stages retain geometry-sensitive admission. Shared envelope facts are described once per actual
+buffer/caps contract. The standalone-stage cache retains at most 16 entries and evicts the least
+recently used. Eviction releases only the cache's reference, outside its mutex; caller-held runs
+are not forcibly closed. This bounds retained entries, not active runs or total bytes.
 
 For RTP JPEG, a compatibility probe after `rtpjpegdepay` appends a missing JPEG
 end marker before parsing. Correctly terminated images pass unchanged; this
@@ -862,6 +1375,34 @@ On CPU-admissible ingress, `advanced.copy_input=true` takes its protective copy 
 queue admission, even when new allocations prefer device memory. A strict
 device-visible ingress requirement is distinct from this allocation preference.
 
+#### Checked recipes and execution instances
+
+Keep reusable Core recipes separate from mutable execution state. A recipe owns
+checked executables, bound geometry capabilities, tensor routes, constants and
+publication policy. It must not capture an admitted session, prepared-operation
+cache, current frame or producer loan, including inside a factory callback.
+
+Core transfers immutable factories into each fresh request without invoking them.
+After cohort preflight, Scheduler invokes those factories once for that preparation.
+Internal copies retain its state; a separate preparation or retry creates fresh
+mutable adapters and resolvers. Preproc
+reuses its immutable checked policy without resetting an active adapter or
+rechecking unchanged numerical semantics. BoxDecode instances have independent
+bounded geometry caches, so preparing another stage cannot evict a sibling's
+warmed variants. New geometry still follows checked variant preparation.
+
+The static manifest context receives a private metadata projection: canonical
+stages keep payload `NONE`, legacy value payloads remain intact, and numerical
+recipe references are removed before building the ABI accessor. The original
+Core semantic manifest is unchanged. Do not retain whole execution-capable
+manifests in diagnostic history.
+
+Construction owns its pipeline and contexts through RAII until successful
+handoff. A failed build releases uncommitted owners; it does not reset consumed
+adapters or stop an unrelated shared Runtime domain. An intentionally retained
+execution context may keep its stage alive. Static metadata may not. Host object
+destruction alone does not prove DMA retirement.
+
 ### DMA-BUF output ownership
 
 Hardware decode allocates decoded frames directly in a fixed standard DMA-BUF
@@ -876,12 +1417,65 @@ Mixed output envelopes resolve this policy per selected payload, not from anothe
 field's memory type. Recognition uses `GstDmaBufMemory`, without inventing legacy
 device flags or changing tensor placement metadata.
 
-Transport boundaries preserve backing allocation identity, checked offsets and
-lengths, and original pool-buffer ownership. Metadata-only envelopes share memory
-and retain the pool parent. A Tensor mapping retains both its map guard and the
-current storage/loan; CPU cache synchronization ends before those owners release.
-EV/CVU and MLA imports retain the producer until completion. Unknown completion
-must not recycle potentially active storage.
+`OutputMemory::Owned` materializes public outputs into independent CMA DMA-BUF
+storage after logical output projection. Each physical carrier is copied once
+per pull, preserving head offsets, padded strides, planes and numerical metadata.
+Only carriers needed by the selected outputs are materialized. In mixed Auto
+output, copying a CPU-backed head does not copy its retained DMA-backed siblings.
+Copy planning and alias deduplication are local to that output operation; allocation
+identity and the checked view span must both match before sharing a copy.
+Copied envelopes contain only selected carriers. Their `memory_index` selectors
+and segment tables are remapped together; `physical_index` and physical offsets
+continue to identify the producing stage's contract, not destination slot order.
+The new carrier retains no producer pool loan or parent-buffer metadata. Its
+`StorageKind::GstSample` identifies a GStreamer carrier, not a borrowed pool loan;
+`Sample::owned` distinguishes independent output from retained producer output. Runtime
+owns allocation and CPU cache synchronization; Core owns Sample/Tensor projection.
+Reentry to another graph retains these carriers without another staging copy.
+`Auto`/`ZeroCopy` retain compatible DMA-BUF outputs; explicit `.cpu()` and `.clone()`
+continue to create host-memory copies. Allocation errors do not select a hidden
+CPU-memory fallback.
+
+Output decoding caches metadata, not frame payload ownership or final copy policy.
+Logical output projection precedes ownership materialization on both cold and warm
+frames. Compact immutable publications retain their identity-based fast path.
+Mutable legacy descriptors require complete descriptor, quantization, name, segment
+and caps compatibility before template reuse. Current-frame physical bindings and
+spans remain authoritative even when metadata matches a cached template.
+
+Output decoding preserves both Runtime's admitted logical descriptors and its
+physical segment table. Producer `physical_index`, the current carrier selector
+and a GstMemory parent ordinal are distinct identities. An exact logical or route
+match in a public output override keeps the admitted current binding and producer
+provenance; historical override names or indexes cannot redirect it. Unmatched
+generic transport keeps actual-name-first resolution. A logical handoff alias
+may differ from its physical allocator name.
+
+The cache stores compatible immutable descriptor plans and required spans, not
+borrowed Runtime handles or first-frame capacity. Each frame rebinds current
+storage and visible carrier extents once per carrier. Adding or removing an unused
+carrier makes an old plan incompatible; cold decoding rebuilds the current table
+instead of rejecting an otherwise valid frame. Compact warm decoding does not
+repeat Runtime admission per logical head. Binding refresh and projection add no
+payload maps or copies: retained `Auto`/`ZeroCopy` carriers stay retained, and
+`Owned` copies only the selected carriers, with operation-local alias deduplication.
+
+Core supports ordinary multiple GstMemory carriers and one Runtime named-child
+parent. A single-child shared view preserves its additional GstMemory offset and
+visible bounds, including a truncated view at offset zero or an empty window.
+CPU access uses the view's checked storage mapper; a direct allocator-root
+shortcut cannot replace that binding. Logical offsets remain relative to the
+visible window, so the shared-memory offset is composed exactly once. Extracting
+or rebinding a view remains lazy and does not itself map or copy payloads.
+Multiple Runtime child parents, and partial views over multiple
+named children (nonzero offset or truncated visible window), fail before payload
+mapping or copying rather than guessing a flat child selector's parent or
+composing an ambiguous offset. Complete Runtime child-subset roots retain their
+own checked visible span; retaining fewer children does not itself make a view
+partial.
+
+Copy-count and ownership contracts are not FPS guarantees. Benchmark equivalent
+output policies and validation settings when comparing throughput.
 
 DMA-BUF-preserving outputs consume deduplicated holder credits. Queue/credit
 pressure cannot activate a payload-copy fallback or silently change `Block` into
@@ -903,6 +1497,34 @@ source-image count and ROI-output capacity separately. The model's contract
 remains immutable. Each returned ROI is a one-member view at its exact slot
 offset; allocation padding is not part of the slot stride. Logical tensor names
 identify outputs, while segment names identify physical backing storage.
+
+Native output pools are budgeted separately from execution slots: active frames
+plus the existing retained-sample window plus one carrier for appsink's cached
+current sample. Copy-only outputs do not reserve public retained-sample credits.
+Logical tensor views sharing one output arena do not multiply this carrier count.
+The budget is checked once at graph creation; it does not increase EV concurrency
+or scratch capacity. Queues continue to apply bounded backpressure, and callers
+must release zero-copy samples within the existing public loan limit.
+
+`SIMA_CORE_COMPACT_METADATA=1` additionally permits compact TensorSet and typed
+current-frame metadata on the graph-owned direct runner-to-appsink edge. The
+appsink advertises version 2 through an ALLOCATION query; it also accepts version
+1 (compact TensorSet plus legacy dynamic metadata) when an extension cannot be
+represented. Without capability agreement, the provider publishes legacy metadata.
+Unknown consumers, tees and other topologies do not inherit this opt-in.
+
+Core retains the immutable publication owner in its bounded decode cache, but
+checks each current buffer's storage extents before reuse. Current correlation
+and checked Preproc facts are read directly from the frame, never from cached
+static tensor layout. Re-entering a public appsrc boundary materializes both
+metadata forms on a writable, payload-sharing envelope before legacy writers run.
+
+Selection occurs while the graph is stopped. Compact publication is disabled
+when inserted boundaries or existing debug/flow probes need the legacy metadata
+contract. Standard owned stage/element timing probes remain enabled and read
+current correlation from either metadata representation. Attaching arbitrary
+legacy-only observers after the
+owned edge is activated is outside this opt-in contract.
 
 ### Direct decoder lifecycle
 
@@ -932,7 +1554,9 @@ decoded device buffers do not cross an appsink/appsrc boundary. Ineligible
 latest-by-stream topology remains segmented. Nested already-fused source
 segments remain ineligible until their branches can be preserved recursively.
 
-The compiler also lowers an RTSP source split between a Default-linked `SimaDecode` and an encoded passthrough `VideoSender` with `async=false` into one source pipeline with a `tee`, whatever link follows the decoder; `async=true` senders keep the segmented `FanOut`.
+The compiler also lowers an RTSP source split between a Default-linked `SimaDecode` and an
+encoded passthrough `VideoSender` with `async=false` into one source pipeline with a `tee`,
+whatever link follows the decoder; `async=true` senders keep the segmented `FanOut`.
 
 ### Internal boundary timing
 
@@ -988,6 +1612,35 @@ compatible DMA-BUF views and retains them until completion; it does not perform
 a hidden upload or repack. Visible geometry and the public graph API remain
 independent of device-specific storage alignment.
 
+### Public input admission and numerical descriptor authority
+
+Core validates metadata-provable source limits, type/geometry and declared backing
+spans before public input acceptance, KeepLatest replacement or image-to-device
+conversion. A multi-input inference item is checked as a whole before any ingress
+branch runs. Independent items in a Sample list remain sequential admissions.
+Invalid caller metadata raises a report-bearing `NeatError` synchronously; that
+item was not accepted, produces no output and does not poison the Run. `try_push`
+still returns false for unavailable capacity or a closed input.
+
+The pure geometry normalizer also feeds the full transport-spec builder. It does
+not map payloads, acquire device ownership, clone frames or build GStreamer caps.
+Image/Preproc limits come from the original source declaration, never the model's
+resized MLA input. Tensor routes use their canonical logical shape, preserving
+non-unit batch dimensions and the existing unit-batch/single-channel convenience
+views. Original values remain borrowed under the public lifetime contract.
+
+Pre-admission is not a transaction over device execution. Provider mapping extent,
+opaque carrier/envelope bytes, caps-state transitions and execution errors still
+require ordered runtime checks. Such failures remain terminal; Core does not
+recover by parsing their diagnostic text or clearing the Run's error state.
+
+Core's private authored tensor descriptor retains numerical scalar meaning beside
+its wire geometry. BF16 and INT16 share a legacy wire code, so byte carriers and
+publication dtypes cannot be used to infer arithmetic. Copying, grouping and
+geometry-only projection preserve the typed record; only serialization projects
+its raw ABI descriptor. Fused kernel selection and the public descriptor ABI are
+unchanged.
+
 ### Parsing & launch
 
 The library primarily uses:
@@ -1009,6 +1662,7 @@ Typical flow (`Graph::build()` / `Run`):
 7. Return a `Run` handle for push/pull control
 
 ### Life of a frame (plain language)
+
 1. **Build:** Nodes become a deterministic gst-launch string.
 2. **Negotiate:** GStreamer negotiates caps between elements (format, size, memory).
 3. **Run:** Inputs are pushed (or pulled from sources) into the pipeline.
@@ -1021,21 +1675,22 @@ diagnostics you can reproduce (`describe_backend()` + report).
 ### Camera allocation ownership
 
 `CameraInput` places `neatcamerabridge` immediately after its camera caps and
-before any live queue. During negotiation the bridge answers the upstream
-`GST_QUERY_ALLOCATION` with a standard pool and requests `GstVideoMeta`. The
-pool allocates the validated planes from one packed SiMaAI allocation and
-exports one DMA-BUF per plane. A compatible `libcamerasrc` imports those
-DMA-BUFs into the ISP capture queue. The bridge then unwraps the same packed
-allocation for downstream processing. Strict mode rejects any buffer that does
-not satisfy that contract; CPU copying remains an explicit compatibility
-fallback.
+before any live queue. Neat never owns camera memory: any physically contiguous
+DMA-BUF is a valid EV74 input, and Neat's EV74 admission check accepts it when it comes from a CMA heap or the camera's contiguous capture allocator (`videobuf2_dma_contig`). During
+negotiation the bridge only requests `GstVideoMeta` through the upstream
+`GST_QUERY_ALLOCATION`; `libcamerasrc` keeps its own capture buffers. The
+bridge forwards each frame whose planes sit back to back in one DMA-BUF as a
+single memory, retaining the producer's buffer until every consumer releases
+it. Strict mode rejects any frame that cannot be forwarded this way; CPU
+copying into a CMA DMA-BUF remains an explicit compatibility fallback.
 
 The application-facing capture depth is independent of both the kernel's
 private CSI-to-ISP RAW transit ring and the later GStreamer queue. The optional
 `capture_buffer_count` argument to `CameraInputWithCaptureBuffers` controls buffers retained across
-ISP output, libcamera, and the application. `queue_depth` and `leaky_queue`
+ISP output, libcamera, and the application (on Platform 3.0 `libcamerasrc` has no
+`buffer-count`, so it must stay `0`). `queue_depth` and `leaky_queue`
 separately control downstream latency and frame-drop policy. The optional
-compatibility-copy pool grows on demand and is not capped by that queue depth,
+compatibility-copy pool grows on demand up to 128 buffers and is not capped by that queue depth,
 so a leaky queue can apply its drop policy without the upstream bridge
 stalling first.
 
@@ -1054,6 +1709,22 @@ The common pattern is:
 Push/appsrc pipelines normally use deferred teardown. Pipelines containing
 driver-backed CVU or MLA stages use the bounded synchronous `NULL` transition
 so accepted asynchronous submissions are reaped before `Run::close()` returns.
+
+### Graph transport lifecycle synchronization
+
+Graph transport waiters share a mutex and condition variable. Publish build-ready
+and forwarded-completion state under that mutex, then notify. Atomic state alone
+does not prevent a notification from falling between a predicate check and sleep.
+For graph-wide stop or public-input close, publish the existing global state,
+release its lock, then acquire and release each transport mutex before notifying.
+Never hold the public-ingress mutex while acquiring a transport mutex.
+
+Keep downstream completion propagation, pipeline construction and teardown outside
+the transport lock: they can invoke callbacks that request stop. Publish a newly
+constructed child into graph ownership even if stop arrived during construction,
+so normal teardown can close it. A failed speculative prebuild must still permit
+the existing later attempt with a real input sample. These are lifecycle and cold
+build operations; they add no payload copies to frame execution.
 
 ---
 
@@ -1111,6 +1782,23 @@ The supported user-facing paths and limits are documented in
 * **User thread**: `appsink` polling + periodic bus draining
 * **RTSP server thread**: GLib main loop for `gst-rtsp-server` mode
 
+Core checks every stage's numerical recipe, placement, routing and publication
+contract before opening a new device connection.
+Stages in one graph share a graph-owned execution domain per hardware backend;
+A65 work never runs on the EV service lane. EV admission uses the union of the
+stages' required firmware capabilities and bounded aggregate job reservations.
+Each stage still owns its retained-output budget and any output pool required by
+its placement.
+
+`GraphOptions::kernel_runner_a65_workers` selects the graph's A65 worker count
+(default **2**, valid range **1–64**; the Python property has the same name).
+Graphs without A65 stages create no A65 workers. The bounded pool is created at
+graph preparation, reused across invocations and flushes, and released with its
+graph-owned context. Idle workers sleep on a condition variable without polling;
+they do not reserve CPU cores. More workers only enable independent, resource-ready
+work to overlap. They do not parallelize a kernel's math or override dependency,
+execution-slot or output-retention limits.
+
 ### Ownership rules (GStreamer objects)
 
 * GStreamer objects are reference counted.
@@ -1132,6 +1820,50 @@ This avoids data races while keeping probes cheap.
 ---
 
 ## Diagnostics & observability
+
+### Numerical stage measurements
+
+Core recipes can attach an immutable `StageMetrics` sidecar alongside a prepared
+Runtime stage. Kernels own numerical execution; Core names semantic timing
+boundaries; Runtime validates dependency-ordered endpoints and observes execution.
+Adding timing for another numerical recipe does not require an operation-specific
+Runner branch. The sidecar does not change tensor publication or executable ABI.
+
+BoxDecode exposes two versioned A65 wall-time components:
+
+| Phase/component | Boundary |
+| --- | --- |
+| `Run/boxdecode_backend_wall_v2` | Actual decode invocation begins through dependent wire publication completion. Includes scheduling gaps between these endpoints; excludes earlier conversion helpers. |
+| `Exec/boxdecode_stage_wall_v2` | Complete-frame admission, before output acquisition, through retirement, finish and input release. Excludes that frame's own downstream push. |
+
+The outer interval includes pool waits, binding and output-ordering residence. An
+earlier frame's downstream backpressure can extend that residence. Neither metric
+is CPU busy time or device-only execution time. They are not aliases for the legacy
+synchronous plugin components, so compare matching component versions.
+
+The SSD performance profile requires backend p99 at most
+0.7 ms, stage p99 at most 0.93 ms, at least 1,000 samples per component and at least
+99 FPS. Each measured frame must contribute exactly one complete span per required
+component. Missing, duplicate, ambiguous or incomplete observations do not qualify.
+
+Measurement starts the collector before committing an enabled identity snapshot.
+Each frame retains that snapshot until its observation ends. On stop, Core disarms
+new trace admissions before stopping collection; it does not drain or cancel native
+work. A separate measurement epoch distinguishes repeated windows without changing
+the logical graph or run identity.
+
+Offline parsing admits only the configured session instances and recorded measured
+graph-entry identities. The existing trace provider projects original input sequence,
+input sequence or frame ID into `message_id`, paired with the stream. Cross-kind
+numeric collisions are ambiguous, not guessed aliases. Warmup frames and prior-session
+ends are removed before pairing. Selected spans crossing an early stop remain
+incomplete evidence. This uses existing graph timing records, not another hot-path
+history or tensor copy.
+
+The disabled execution path does not add clocks, sink calls, per-frame allocation or
+tensor-memory operations. Enabled observation uses retained sessions and bounded
+preallocated slots. Qualify overhead and throughput on the target; source inspection
+alone does not prove unchanged performance.
 
 ### `DiagCtx` captures:
 
@@ -1180,6 +1912,7 @@ On an error message (`GST_MESSAGE_ERROR`), it throws `NeatError` including a `Gr
 If enabled, the runtime can emit DOT graphs via `gst_debug_bin_to_dot_file_with_ts(...)` to a configured directory.
 
 ### Debugging playbook (production)
+
 1. **Reproduce the pipeline**: `Graph::describe_backend()` or `last_pipeline()`.
 2. **Capture a report**: `MeasureReport::to_text()` or `NeatError::report()`.
 3. **Enable targeted probes**:
@@ -1414,6 +2147,12 @@ The standardized OAAX `runtime_*` C symbols are an adapter boundary above this
 native API. OAAX ownership rules, status codes, and last-error storage belong
 in that adapter instead of the C++ API.
 
+PCIe uses the host-capable `SimaScheduler::pcie_host` target. Core retains logical
+payload/capacity policy; Scheduler owns Gst channels, immutable stream descriptions,
+versioned caps and actual return-storage layout. Core does not install a second
+copy of the host plugin or ABI headers. The separate GenAI service/RPC path still
+terminates in a Core worker using LLiMa.
+
 ### PCIe GenAI transport contract
 
 Core owns `pcie::genai::GenAIModel`, its Python bindings, the shared
@@ -1515,6 +2254,11 @@ When adding features, prefer adding tests that:
 * validate caps negotiation assumptions
 * ensure failures produce useful `GraphReport` diagnostics
 
+Contract tests use the production semantic-plan, physical-plan and arena lowering
+path with independently authored fixture expectations. Source architecture checks
+run on the host. Installed-consumer startup tests run separately with isolated
+plugin discovery, so a source audit cannot stand in for runtime admission.
+
 ---
 
 ## Docs drift guard
@@ -1527,40 +2271,3 @@ Keep docs and code aligned:
 * If you add new env knobs, add them to the "Environment / configuration knobs" section.
 
 ---
-
-## Design principles
-
-1. **Determinism wins**
-
-   * stable element names, stable pipeline strings, stable reports
-
-2. **Debuggability is first-class**
-
-   * bus logs, DOT dumps, boundary probes, clear reproduction steps
-
-3. **Safe concurrency**
-
-   * streaming-thread probes only touch atomics (snapshots produce plain reports)
-
-4. **Never hang the process**
-
-   * teardown is defensive; avoid blocking forever on broken plugin stacks
-
-5. **Keep the public API stable**
-
-   * internal refactors should not break user code unless intentionally versioned
-
-### Hardware encoder configuration
-
-`SimaEncode` and raw `VideoSender` derive resolution from negotiated input caps.
-Resolution stays fixed within a run; changing it requires a new run.
-Their encoder options contain no width or height, and the input adapter preserves
-visible geometry without resizing. Unknown input dimensions remain unknown in the
-build-time output contract until the upstream input provides them.
-
-`SimaEncode` prepares raw input once and maps codec-specific options to
-`neatencoder`. Internals owns asynchronous submission, output-buffer ownership,
-cache synchronization and teardown. Core adds no encoder execution thread.
-The legacy `H264EncodeSima` preserves its adapter-free input contract while sharing
-encoder property generation. The public class layout changes require ABI 5 and
-rebuilt binary consumers; existing source entry points remain available.

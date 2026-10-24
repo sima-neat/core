@@ -154,14 +154,14 @@ RTSP 스트림 요청 시간이 초과되었습니다. URL이 잘못되었거나
 RTSP URL에 접속하여 스트리밍이 제대로 이루어지는지 확인하고, 전송 방식(TCP 또는 UDP)을 확인합니다. [RTSP 스트림을 사용합니다.](/tutorials/consume-rtsp-stream)을 참조하십시오.
 :::
 
-### 12. `CameraInput strict zero-copy requires external-buffer-mode`
+### 12. `Camera buffer is not one forwardable DMA-BUF and copying is disabled`
 
 :::info 원인
-`CameraInputOptions::allow_cpu_fallback`의 기본값은 false이므로, Neat는 시작부터 끝까지 SiMaAI/장치 제로 복사 지원을 필요로 합니다. `libcamerasrc`가 일반적인 `external-buffer-mode` 속성을 광고하지 않거나, 설치된 메모리 라이브러리가 메모리 할당을 DMA-BUF로 내보낼 수 없는 경우입니다.
+`CameraInputOptions::allow_cpu_fallback`의 기본값은 false이므로, Neat는 카메라 자체의 DMA-BUF를 그대로 전달하며 복사하지 않습니다. 카메라 스택이 평면들이 연속으로 배치된 하나의 DMA-BUF가 아닌 프레임(예: fd마다 평면이 하나씩 있는 경우 또는 DMA-BUF가 아닌 메모리)을 전달했습니다.
 :::
 
 :::tip 수정
-일관성 있는 카메라 및 메모리 패키지가 설치된 경우 엄격한 제로 복사 방식을 유지합니다. DMA-BUF 내보내기가 없는 카메라 스택에서 실행해야 하는 경우 호환성 브리지에 명시적으로 참여합니다.
+플랫폼 `libcamera` 패키지와 함께 엄격한 제로 복사 방식을 유지합니다. 각 프레임을 하나의 DMA-BUF로 전달하지 않는 카메라 스택에서 실행해야 하는 경우 호환성 복사를 명시적으로 선택합니다.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -182,7 +182,7 @@ camera.allow_cpu_fallback = True
 </CodeTab>
 </CodeTabs>
 
-적응형 모드에서는 다운스트림 CVU/MLA 단계에 SiMaAI 메모리가 계속 전달됩니다. 업스트림 카메라 버퍼가 EV74에서 아직 사용 가능하지 않은 경우에만 카메라 브리지에서 복사가 이루어집니다.
+적응형 모드에서도 다운스트림 CVU/MLA 단계에는 계속 DMA-BUF가 전달됩니다. 카메라 프레임이 평면들이 연속으로 배치된 하나의 DMA-BUF가 아닌 경우에만 CMA DMA-BUF로 복사가 이루어집니다.
 :::
 
 ### 13. `misconfig.media_caps … libcamerasrc … not-negotiated (-4)`
@@ -233,7 +233,7 @@ python3 share/sima-neat/tutorials/023_run_mipi_camera_model/run_mipi_camera_mode
   --pull-timeout-ms 15000 --print-backend
 </ShellCommand>
 
-프로덕션 경로는 폴백이 활성화된 경우 `libcamerasrc`, `neatcamerabridge`, `neatprocesscvu`, `neatprocessmla` 및 `appsink`를 포함해야 합니다. BoxDecode 경로의 경우, `--decode` 토큰과 임계값이 모델 아카이브와 일치하는지 확인하십시오.
+프로덕션 경로는 폴백이 활성화된 경우 `libcamerasrc`, `neatcamerabridge`, `neatkernelrunner`, `neatprocessmla` 및 `appsink`를 포함해야 합니다. BoxDecode 경로의 경우, `--decode` 토큰과 임계값이 모델 아카이브와 일치하는지 확인하십시오.
 :::
 
 ### 16. 그래프 처리량이 낮거나 실시간 프레임이 누락됩니다.

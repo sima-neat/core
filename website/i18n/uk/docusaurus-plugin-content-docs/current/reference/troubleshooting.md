@@ -153,14 +153,14 @@ opt.preprocess.preset = pyneat.NormalizePreset.COCO_YOLO
 Перевірте, чи доступна URL-адреса RTSP і чи відбувається активна передача потоку; перевірте тип транспортування (TCP або UDP). Див. [Відтворюйте RTSP-потік.](/tutorials/consume-rtsp-stream).
 :::
 
-### 12. `CameraInput strict zero-copy requires external-buffer-mode`
+### 12. `Camera buffer is not one forwardable DMA-BUF and copying is disabled`
 
 :::info Причина
-`CameraInputOptions::allow_cpu_fallback` за замовчуванням має значення «false», тому Neat вимагає повної підтримки SiMaAI/device zero-copy. Або `libcamerasrc` не оголошує загальну властивість `external-buffer-mode`, або встановлена бібліотека пам’яті не може експортувати свої виділення як DMA-буфери.
+`CameraInputOptions::allow_cpu_fallback` за замовчуванням має значення «false», тому Neat передає власний DMA-BUF камери й ніколи не копіює. Стек камери надав кадр, який не є одним DMA-BUF із площинами, розташованими впритул одна за одною (наприклад, окрема площина на кожен fd або пам’ять, що не є DMA-BUF).
 :::
 
 :::tip Виправити.
-Забезпечте суворе дотримання принципу нульового копіювання, коли встановлено узгоджені пакети камери та пам’яті. Якщо вам необхідно працювати з пакетом камери, який не підтримує експорт DMA-BUF, явно увімкніть сумісний міст:
+Зберігайте суворе нульове копіювання з пакетом платформи `libcamera`. Якщо вам необхідно працювати зі стеком камери, який не надає кожен кадр як один DMA-BUF, явно увімкніть сумісне копіювання:
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -181,7 +181,7 @@ camera.allow_cpu_fallback = True
 </CodeTab>
 </CodeTabs>
 
-В адаптивному режимі керування пам’яттю SiMaAI все ще здійснюється для наступних етапів обробки CVU/MLA. Копіювання даних відбувається лише на рівні інтерфейсу камери, якщо вхідний буфер камери ще не використовується EV74.
+В адаптивному режимі наступні етапи обробки CVU/MLA все одно отримують DMA-BUF. Копіювання в CMA DMA-BUF відбувається лише тоді, коли кадр камери не є одним DMA-BUF із площинами, розташованими впритул одна за одною.
 :::
 
 ### 13. `misconfig.media_caps … libcamerasrc … not-negotiated (-4)`
@@ -232,7 +232,7 @@ python3 share/sima-neat/tutorials/023_run_mipi_camera_model/run_mipi_camera_mode
   --pull-timeout-ms 15000 --print-backend
 </ShellCommand>
 
-У виробничому ланцюгу слід використовувати `libcamerasrc`, `neatcamerabridge`, коли ввімкнено резервний режим, `neatprocesscvu`, `neatprocessmla` та `appsink`. Для маршрутів BoxDecode також перевірте, чи токен `--decode` і порогові значення відповідають архіву моделі.
+У виробничому ланцюгу слід використовувати `libcamerasrc`, `neatcamerabridge`, коли ввімкнено резервний режим, `neatkernelrunner`, `neatprocessmla` та `appsink`. Для маршрутів BoxDecode також перевірте, чи токен `--decode` і порогові значення відповідають архіву моделі.
 :::
 
 ### 16. Пропускна здатність графа низька, або втрачаються поточні кадри.

@@ -39,9 +39,17 @@ enum class ArenaEscapePolicy : std::uint8_t {
   CpuMappablePublic = 1,
 };
 
+// Allocation mechanism preference is distinct from placement. Existing DMS
+// placement remains required unless a caller explicitly opts into capacity fallback.
+enum class ArenaAllocationPolicy : std::uint8_t {
+  RequiredDomain = 0,
+  PreferDmsThenCma = 1,
+};
+
 enum class ArenaDmsPolicy : std::uint8_t {
   CmaOnly = 0,
   PreferDmsForEligible = 1,
+  PreferDmsThenCma = 2,
 };
 
 // Modalix production placement.  DMS is CPU/A65+MLA visible; any EV74
@@ -56,6 +64,7 @@ struct ArenaPlacement {
   ArenaAllocationProvenance provenance = ArenaAllocationProvenance::Unknown;
   std::uint32_t required_device_access = 0U;
   ArenaEscapePolicy escape = ArenaEscapePolicy::InternalOnly;
+  ArenaAllocationPolicy allocation_policy = ArenaAllocationPolicy::RequiredDomain;
 
   [[nodiscard]] bool requires_access(ArenaDeviceAccess access) const noexcept {
     return (required_device_access & static_cast<std::uint32_t>(access)) != 0U;

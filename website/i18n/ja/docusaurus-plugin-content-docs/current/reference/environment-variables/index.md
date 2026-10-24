@@ -155,3 +155,19 @@ Neat SDK 3.0 以降では、`sima-cli sdk setup` がコンテナー環境に `CO
 ## テスト / 内部フック
 
 - `SIMA_TENSOR_MAPFAIL_DEBUG=1` — テンソルのマッピング失敗をログに記録します。
+
+## カーネルメタデータの検証
+
+ProcessCVU ステージはデフォルトで Runtime の `neatkernelrunner` を通じて実行されます。古い ProcessCVU プラグインを選択するビルドオプションや環境変数はありません。
+
+- `SIMA_CORE_COMPACT_METADATA=1` — 機能の合意後、所有権管理された runner から appsink への直接エッジで、コンパクトな TensorSet と型付きの現在フレームのメタデータを許可します。互換性のない境界、デバッグ、フローのオブザーバーがないことが条件です。標準の所有権管理されたステージ／要素のタイミング記録は有効のままで、両方の表現をサポートします。表現できない拡張には従来の動的メタデータを維持します。
+
+コンパクトなエッジに従来形式専用のプローブを接続しないでください。機能の合意がない場合、Runtime は未知のコンシューマーとオブザーバーに対して従来のメタデータを保持します。実行には引き続き `neatkernelrunner` を使います。このメタデータオプションは、レイテンシやスループットを保証するものではありません。
+
+## パッケージと週次検証（テスト専用）
+
+- `SIMA_TEST_PACKAGE_INVENTORY=<absolute-path>` — 選択して検証した配布アーカイブから `tools/ci/verify_core_dist.py --write-package-inventory` で生成する、期待するパッケージ制御情報とペイロード識別情報です。インストール済み DevKit のパッケージインベントリテストで必要です。`dpkg` をプライベートプレフィックスへ向けるものでも、インストール結果レポートでもありません。
+- `SIMA_TEST_PLATFORM_BASELINE=<absolute-path>` — `tools/ci/verify_core_dist.py --capture-platform-baseline` で**インストール前**に取得した、ネイティブプラットフォームの存在・不在、パッケージ識別情報、OTA の利用可否と識別情報です。インストール済み DevKit のパッケージインベントリテストでは、選択したパッケージインベントリとともに必要です。インストール後の状態からこのベースラインを再生成しないでください。
+- `SIMA_RUN_MNIST_PREPROC_CHANNELS1=1` — 長時間の MNIST 前処理精度テストを有効にします。単にスキップを抑制するために設定せず、フィクスチャの検証後に `tools/ci/prepare_weekly_fixtures.py` から値を取得してください。ローカルランチャーは `--environment-json` を使い、CI は同じマッピングを `--github-env` で受け取ります。
+
+フィクスチャグループの選択とインストール済みパッケージのプロファイルについては、[テスト要件](../../develop-apps/contribute/build-test/test_requirements.md)を参照してください。

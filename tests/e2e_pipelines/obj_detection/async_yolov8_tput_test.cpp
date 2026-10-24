@@ -11,6 +11,7 @@
 #include "e2e_pipelines/obj_detection/yolov8_test_utils.h"
 #include "gst/GstInit.h"
 #include "test_utils.h"
+#include "perf/process_cpu_metrics.h"
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
@@ -73,6 +74,7 @@ struct RunSummary {
   bool ok = false;
   int outputs = 0;
   double avg_fps = 0.0;
+  std::optional<sima_perf::ProcessCpuMetrics> process_cpu;
   std::string note;
   std::string diagnostics;
 };
@@ -478,6 +480,9 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
   auto measure_scope = async.start_measurement(measure_opt);
 
   const int seed = std::min(inflight, cfg.iters);
+  // CPU/frame and its separately reported FPS include all seed submissions.
+  // Preserve the existing throughput gate window for baseline comparability.
+  const sima_perf::ProcessCpuWindow process_window;
   for (; pushed_count < seed; ++pushed_count) {
     const auto push_start = std::chrono::steady_clock::now();
     const bool pushed =
@@ -502,7 +507,6 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
   const auto start = std::chrono::steady_clock::now();
   const auto push_loop_start = start;
   auto push_loop_end = start;
-  auto end = start;
 
   try {
     while (consumer_error.empty() && measured_count < cfg.iters) {
@@ -565,13 +569,16 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
     consumer_error = e.what();
   }
 
+  // Every successful output has been released above. Keep EOS/reporting and
+  // verification outside this window; no per-frame CPU sampling is needed.
+  const auto process_cpu = process_window.finish(static_cast<std::uint64_t>(measured_count));
   push_loop_end = std::chrono::steady_clock::now();
   if (profile.enabled) {
     profile.push_loop_ms = ns_to_ms(duration_ns(push_loop_start, push_loop_end));
   }
 
   async.close_input();
-  end = std::chrono::steady_clock::now();
+  const auto end = std::chrono::steady_clock::now();
   if (profile.enabled) {
     profile.drain_wait_ms = ns_to_ms(duration_ns(push_loop_end, end));
   }
@@ -632,6 +639,12 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
     append_note(res.note, "skip_boxdecode=1");
   } else {
     append_note(res.note, "profile_skip_extract=1");
+  }
+
+  // Do not publish a CPU/frame result for incomplete or numerically failed work.
+  // A later FPS-gate failure still retains these valid measured-frame statistics.
+  if (res.ok && process_cpu.wall_seconds > 0.0) {
+    res.process_cpu = process_cpu;
   }
 
   if (!res.ok) {
@@ -737,7 +750,21 @@ int main(int argc, char** argv) {
       res.ok = false;
     }
 
-    std::cout << "ASYNC_TPUT outputs=" << res.outputs << " avg_fps=" << res.avg_fps
+    std::cout << "ASYNC_TPUT outputs=" << res.outputs << " avg_fps=" << res.avg_fps;
+    if (res.process_cpu) {
+      const auto& cpu = *res.process_cpu;
+      std::cout << " cpu_window_fps=" << cpu.fps() << " cpu_window_wall_s=" << cpu.wall_seconds
+                << " process_user_us_per_frame=" << cpu.user_us_per_frame()
+                << " process_system_us_per_frame=" << cpu.system_us_per_frame()
+                << " process_cpu_us_per_frame=" << cpu.cpu_us_per_frame()
+                << " average_busy_cores=" << cpu.average_busy_cores();
+    }
+    std::cout << " cpu_window_complete=" << (res.process_cpu ? "1" : "0")
+              << " output_extraction_included="
+              << (!cfg.skip_boxdecode && !cfg.profile_skip_extract) << " output_validation="
+              << ((!cfg.skip_boxdecode && !cfg.profile_skip_extract && !cfg.profile_skip_validate)
+                      ? "post_window"
+                      : "disabled")
               << " decode_type=" << simaai::neat::box_decode_type_token(cfg.decode_type)
               << " ok=" << (res.ok ? "1" : "0") << " note=" << res.note << "\n";
     if (!res.diagnostics.empty()) {

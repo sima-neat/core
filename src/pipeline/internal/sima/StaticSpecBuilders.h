@@ -23,6 +23,10 @@
 #include <string>
 #include <vector>
 
+namespace simaai::neat {
+struct CompiledRuntimeContract;
+}
+
 namespace simaai::neat::pipeline_internal::sima::specbuilders {
 
 /// Bytes per element for a dtype token (e.g., `"FP32"` -> 4); 0 for unknown tokens.
@@ -69,6 +73,11 @@ PhysicalBufferStaticSpec build_physical_buffer_static_spec(
     int physical_index, int allocator_index, std::uint64_t size_bytes, DeviceKind device_kind,
     const std::string& segment_name, int source_physical_index = -1,
     std::int64_t source_byte_offset = 0, std::uint64_t required_alignment_bytes = 0);
+
+/// Project an upstream output region into a consumer input, preserving its extent.
+/// A declared producer frame arena uses one GstMemory, not one per region ID.
+PhysicalBufferStaticSpec build_physical_input_from_output(const PhysicalBufferStaticSpec& output,
+                                                          const CompiledRuntimeContract& producer);
 
 /// Build an `InputBindingStaticSpec` connecting one of this stage's inputs to an upstream output.
 InputBindingStaticSpec build_input_binding_static_spec(

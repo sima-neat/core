@@ -10,6 +10,23 @@
 
 namespace {
 
+// Each runner is configured through its typed context; legacy manifest/pool
+// properties must not leak from mixed model fragments onto the new factory.
+void require_runner_property_boundary(const std::string& pipeline) {
+  std::size_t pos = 0;
+  while ((pos = pipeline.find("neatkernelrunner ", pos)) != std::string::npos) {
+    const std::size_t end = pipeline.find('!', pos);
+    const std::string fragment = pipeline.substr(pos, end - pos);
+    for (const char* property : {"stage-id=", "num-buffers=", "config=", "q-scale=", "q-zp="}) {
+      require(fragment.find(property) == std::string::npos,
+              "model runner fragment contains an unsupported property: " + std::string(property));
+    }
+    pos += fragment.size();
+  }
+  require(pipeline.find("neatprocesscvu") == std::string::npos,
+          "model fragments must not fall back to the legacy execution factory");
+}
+
 sima_test::ModelArchiveFixture make_stage_fixture(const std::string& tag) {
   return sima_test::make_strict_model_archive_fixture(tag,
                                                       {
@@ -202,11 +219,11 @@ RUN_TEST(
       Graph direct_model_graph;
       direct_model_graph.add(model);
 
-      require_contains(pre.describe_backend(false), "neatprocesscvu",
+      require_contains(pre.describe_backend(false), "neatkernelrunner",
                        "Model::preprocess should produce a non-empty Graph fragment");
       require_contains(infer.describe_backend(false), "neatprocessmla",
                        "Model::inference should produce a non-empty Graph fragment");
-      require_contains(post.describe_backend(false), "neatprocesscvu",
+      require_contains(post.describe_backend(false), "neatkernelrunner",
                        "Model::postprocess should expose Model boundary post stage");
       const std::string route_backend = sess.describe_backend(false);
       require_contains(route_backend, "appsrc",
@@ -235,7 +252,8 @@ RUN_TEST(
                        "Model::backend_fragment(inference) should include stage metadata");
 
       const std::string full_fragment = model.backend_fragment(Model::Stage::Full);
-      require_contains(full_fragment, "neatprocesscvu",
+      require_runner_property_boundary(full_fragment);
+      require_contains(full_fragment, "neatkernelrunner",
                        "Model::backend_fragment(full) should include CVU preproc plugin");
       require_contains(full_fragment, "neatprocessmla",
                        "Model::backend_fragment(full) should include MLA plugin");

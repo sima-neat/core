@@ -11,11 +11,22 @@ playbooks, and whether newer artifacts are available.
 In the SDK, the status output also includes Insight host-port mappings from
 `$HOME/.insight-config/neat-port-map.json`.
 
+Missing PyNeat or Insight installations do not prevent status reporting. If a
+version probe fails, the component shows `unknown` and `neat`
+writes the provider diagnostic to standard error. JSON output keeps the existing
+schema and reports unavailable versions as `null`.
+
+Split installations report `simaai-runner` and `simaai-scheduler`. On the DevKit, versions come
+from the installed package database; in the SDK, they come from the cached DEB control metadata.
+Legacy `neat-runtime` and `neat-gst-plugins` rows remain visible when those packages are present
+or no split component is detected. JSON adds `components.runner` and `components.scheduler`
+while preserving the legacy `runtime` and `gstPlugins` keys; absent versions remain `null`.
+
 <ShellCommand prompt="sdk|devkit">
 neat
 </ShellCommand>
 
-Example output:
+Example output from a legacy installation:
 
 ```text
 Neat Environment
@@ -60,6 +71,13 @@ playbooks from the detected channel, run:
 
 <ShellCommand prompt="sdk|devkit">
 neat update
+</ShellCommand>
+
+To update only the Neat Library runtime, without inspecting or updating Insight
+or playbooks, run:
+
+<ShellCommand prompt="sdk|devkit">
+neat update --core-only
 </ShellCommand>
 
 ## Next Step

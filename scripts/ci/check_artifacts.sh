@@ -41,7 +41,7 @@ from pathlib import Path
 manifest_path = Path(sys.argv[1])
 data = json.loads(manifest_path.read_text(encoding="utf-8"))
 
-value = data.get("internals")
+value = data.get("scheduler")
 if isinstance(value, str) and value.strip():
     raise SystemExit(0)
 if isinstance(value, dict):
@@ -56,7 +56,7 @@ if isinstance(value, dict):
 raise SystemExit(1)
 PY
   then
-    echo "ERROR: deps/manifest.json must define internals as a non-empty string, {'policy':'snap'}, or {'branch':'...', 'spec':'...'}." >&2
+    echo "ERROR: deps/manifest.json must define scheduler as a non-empty string, {'policy':'snap'}, or {'branch':'...', 'spec':'...'}." >&2
     fail=1
   fi
   platform_version="$(sed -n 's/.*"platform-version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' deps/manifest.json | head -n1)"

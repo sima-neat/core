@@ -2,7 +2,6 @@
 
 import json
 from pathlib import Path
-from threading import Event, Thread
 
 import pytest
 import yaml
@@ -24,20 +23,6 @@ def test_report_round_trip(tmp_path, filename):
   report.fps = 100.5
   report.avg_power_watts = 7.25
   report.energy_joules = 0.00125
-  layers = []
-  for name, duration, stage_index in [
-      ('MLA_0/conv: "quoted"\nline\\end\tα🚀\u007f\u0080\u0085\u2028\u2029', 161.95, 0),
-      ("null", 0.0, 0),
-      ("null", 1e-9, 2),
-      ("42", 1e20, 2),
-      ("true", 1e-20, 2),
-  ]:
-    layer = pyneat.LayerStats()
-    layer.name = name
-    layer.total_execution_time_us = duration
-    layer.stage_index = stage_index
-    layers.append(layer)
-  report.layer_stats = layers
   path = tmp_path / "model with spaces" / filename
   written = report.save(path)
   assert Path(written) == path
@@ -69,15 +54,10 @@ def test_report_round_trip(tmp_path, filename):
       "fps": report.fps,
       "avg_power_watts": report.avg_power_watts,
       "energy_joules": report.energy_joules,
-      "layer_stats": [
-          {"name": layer.name, "total_execution_time_us": layer.total_execution_time_us,
-           "stage_index": layer.stage_index}
-          for layer in layers
-      ],
+      "mla_layer_stats": {"status": "not requested", "layers": []},
+      "mla_stage_stats": {"status": "not requested", "stages": []},
   }
-  report.layer_stats = []
   assert Path(report.save(str(path))) == path
-  assert load(path.read_text())["layer_stats"] == []
 
 
 @pytest.mark.parametrize("extension", ["yaml", "json"])
@@ -95,17 +75,22 @@ def test_invalid_headline_preserves_existing_file(tmp_path, value, field, extens
   assert path.read_text() == "previous report\n"
 
 
-@pytest.mark.parametrize("extension", ["yaml", "json"])
-def test_invalid_layer_preserves_existing_file(tmp_path, extension):
-  path = tmp_path / f"existing.{extension}"
-  path.write_text("previous report\n")
+def test_mla_stats_are_read_only_results():
+  for stats in (pyneat.MlaLayer, pyneat.MlaLayerStats, pyneat.MlaStage, pyneat.MlaStageStats):
+    with pytest.raises(TypeError):
+      stats()
   report = pyneat.BenchmarkReport()
-  layer = pyneat.LayerStats()
-  layer.total_execution_time_us = float("nan")
-  report.layer_stats = [layer]
-  with pytest.raises(ValueError, match="total_execution_time_us"):
-    report.save(path)
-  assert path.read_text() == "previous report\n"
+  for owner, field, value in ((report, "mla_layer_stats", None), (report, "mla_stage_stats", None),
+                              (report.mla_layer_stats, "status", "ok"),
+                              (report.mla_layer_stats, "layers", []),
+                              (report.mla_stage_stats, "status", "ok"),
+                              (report.mla_stage_stats, "stages", [])):
+    # Without this, a misspelled field would also raise AttributeError.
+    assert hasattr(owner, field)
+    with pytest.raises(AttributeError):
+      setattr(owner, field, value)
+  assert report.mla_layer_stats.status == "not requested" and report.mla_layer_stats.layers == []
+  assert report.mla_stage_stats.status == "not requested" and report.mla_stage_stats.stages == []
 
 
 def test_invalid_destination(tmp_path):
@@ -117,33 +102,3 @@ def test_invalid_destination(tmp_path):
   with pytest.raises(RuntimeError):
     report.save(parent / "child.yaml")
   assert parent.read_text() == "keep"
-
-
-def test_save_snapshots_layers_before_releasing_gil(tmp_path):
-  report = pyneat.BenchmarkReport()
-  layer = pyneat.LayerStats()
-  assert layer.stage_index == 0
-  layer.name = "MLA_0/conv"
-  layer.stage_index = 2
-  layer.total_execution_time_us = 161.95
-  layers = [layer] * 1024
-  stop = Event()
-
-  def mutate():
-    while not stop.is_set():
-      report.layer_stats = layers
-      report.layer_stats = []
-
-  thread = Thread(target=mutate)
-  thread.start()
-  try:
-    for i in range(10):
-      path = report.save(tmp_path / f"snapshot_{i}.yaml")
-      rows = yaml.safe_load(Path(path).read_text())["layer_stats"]
-      assert len(rows) in (0, len(layers))
-      assert all(row["name"] == layer.name and
-                 row["total_execution_time_us"] == layer.total_execution_time_us and
-                 row["stage_index"] == layer.stage_index for row in rows)
-  finally:
-    stop.set()
-    thread.join()

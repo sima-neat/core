@@ -10,6 +10,24 @@ sidebar_position: 6
 
 對於一般的模型套件使用，建議使用 `Model` 感知的建構函式。模型封存檔提供了解碼器所需的張量順序、佈局、量化、類別數量、調整大小的中繼資料和分數域提示。您的應用程式通常只需要選擇解碼系列和過濾閾值。
 
+## 執行階段後端
+
+BoxDecode 與 SuperPoint 透過 `neatkernelrunner` 使用已檢查的 Kernels 執行物件。
+公開的偵測與特徵輸出格式保持不變。直接張量輸入請使用共用 CMA 張量
+（`TensorMemory::EV74`），即使解碼在 A65 執行也一樣：此記憶體選擇提供的是
+DMA-BUF 傳輸，而非執行目標。
+
+RCNN 第 1 階段使用核心擁有的逐層 top-K 契約：先全域 NMS，再於每個模型面積層級
+保留最多 `top_k` 個候選項。輸出是提案線路格式，而非一般 BBOX 格式：共四組，
+每組包含一個 INT32 計數與 `top_k` 筆六 FP16 記錄（`score, 0, x1, y1, x2, y2`）。
+座標轉換保留小數幾何資訊，直到最終序列化。請將其用作第二階段提案輸入，
+不要搭配 `decode_bbox_tensor()` 使用。不會載入舊版外掛程式。
+
+具有填補、交錯排列的 INT8、BF16 與 FP32 SuperPoint 輸出頭使用原生密集讀取器及
+明確像素步幅。填補區不參與偵測器歸約與描述子取樣，不需要 Cast 階段或具體化。
+INT8 埠保留各自設定的量化資訊。原生 MLA 平鋪輸出頭保留其宣告的實體佈局；
+絕不將密集純量重新標成 MLA 位元組平面。
+
 ## 快速入門
 
 ```cpp
@@ -41,7 +59,7 @@ opt.top_k = 100;
 | `decode_type` | 模型系列/標頭格式，例如 `BoxDecodeType::YoloV8` 或 `BoxDecodeType::YoloX`。必填。|
 | `detection_threshold` | 為了保留檢測結果，所需的最低分數。請使用適合模型的數值，例如 `0.25`。|
 | `nms_iou_threshold` | 非最大值抑制中使用的 IoU 閾值。設為 `0` 時會保留模型封裝的值；若未封裝任何值，YOLO26 會略過 NMS，其他解碼器會抑制所有重疊的方框。請設定適合模型的值，例如 `0.45`。|
-| `top_k` | 保留的最多檢測數量。`0` 使用後端/模型的預設值。|
+| `top_k` | 最大輸出數量。原始邊界框解碼需要明確的正值上限。綁定模型的節點中，`0` 繼承已解析的 Model 上限。SuperPoint 在 `0` 時使用其設定組合預設值。 |
 | `original_width`, `original_height` | 使用原始幾何建構函時，用於座標映射的原始影像大小。|
 | `model_width`、`model_height` | 用於覆寫模型輸入大小。在使用 `Model` 建構函式時，這會更改空間解碼參數，而非已封裝的張量合約。|
 | `resize_mode_override` | 僅在沒有上游 `Preproc` 階段寫入調整大小的元資料，且您需要明確指定拉伸/信箱/裁剪行為時使用。|
@@ -169,6 +187,10 @@ offset  size  content
 
 使用 `decode_segmentation_pose(...)` 取得邊界框、遮罩及關鍵點。各張量的第 `i` 列代表同一次偵測。若只需邊界框，請使用 `decode_bbox(...)` 或 `BoxDecodeResults(...)`。
 
+組合解碼器也接受舊式 `BBOX` 標籤。不支援同時繪製遮罩與姿態。
+不要將組合緩衝區傳給 `poseyolo`：該繪製器預期方框後緊接關鍵點，
+但組合負載在該位置儲存的是遮罩。
+
 每次偵測有 17 個關鍵點槽位。後端會將未使用的槽位及被 `pose_classes` 排除之類別的關鍵點設為零。輔助函式會原樣複製這些值。
 
 由於通道 0 儲存物件性，Core 以類別頭深度減一推算 `num_classes`。例如，30 個通道表示 29 個類別。明確指定的 `num_classes` 必須一致。
@@ -203,7 +225,10 @@ options.yolox_seg_pose.pose_classes = [0, 5]
 
 ## 覆寫合約
 
-模型封存檔可以提供解碼類型、閾值、`top_k` 以及來源幾何體的預設值。只有在您傳遞非空或正值時，執行階段參數才會覆寫這些預設值。
+MPK 提供張量契約與解碼系列資訊。請在 `ModelOptions` 中設定篩選控制項。
+對於 `SimaBoxDecode(Model, ...)` 節點，正值篩選引數會覆寫已解析的 Model 控制項；
+零值引數則繼承它們。`ModelOptions.score_threshold = 0.0` 是真正的零分數門檻，
+不是要求還原封裝內的閾值。
 
 | 執行階段參數 | 傳遞的值 | 行為 |
 | --- | --- | --- |
@@ -211,12 +236,20 @@ options.yolox_seg_pose.pose_classes = [0, 5]
 | `decode_type` | 具體類型 | 覆寫本次運行的解碼規則。|
 | `original_width` / `original_height` | `0` | 保留封裝後的幾何資訊或上游預處理的元資料。|
 | `original_width` / `original_height` | 必須是正整數 | 用於覆寫原始尺寸，以便進行座標映射。|
-| `detection_threshold` / `score_threshold` | `0.0` | 保留封裝後的閾值。|
-| `detection_threshold` / `score_threshold` | `> 0.0` | 覆蓋分數門檻。|
-| `nms_iou_threshold` | `0.0` | 保留封裝後的 NMS IoU。|
-| `nms_iou_threshold` | `> 0.0` | 覆寫非最大值抑制（NMS）的交集比率（IoU）。|
-| `top_k` | `0` | 保留已封裝的 Top-K 結果。|
-| `top_k` | `> 0` | 覆寫保留的最大檢測數量。|
+| 綁定模型的節點 `detection_threshold` | `0.0` | 繼承已解析的 Model 分數門檻。 |
+| 綁定模型的節點 `detection_threshold` | `> 0.0` | 覆寫分數門檻。 |
+| 綁定模型的節點 `nms_iou_threshold` | `0.0` | 繼承已解析的 Model NMS IoU。 |
+| 綁定模型的節點 `nms_iou_threshold` | `> 0.0` | 覆寫 NMS IoU。 |
+| 綁定模型的節點 `top_k` | `0` | 繼承已解析的 Model 輸出上限。 |
+| 綁定模型的節點 `top_k` | `> 0` | 覆寫保留的最大偵測數量。 |
+
+邊界框解碼需要解析出正值 `top_k`；零不代表要求無界的輸出儲存空間。
+對於未綁定 `Model` 的原始輸出頭，請在建置圖前設定 `top_k`。
+綁定模型的節點可將自身 `top_k` 保持為零，以繼承正值 Model 上限。
+這些控制項不會改變獨立的結果讀取輔助函式：它們的 `top_k=0` 表示對已受限制的
+輸出不再加設上限。零分數門檻允許零分數，但不會略過幾何驗證、背景排除、NMS 或輸出上限。
+NMS IoU 為零時，YOLO26 略過 NMS。其他啟用 NMS 的 YOLO 與 SSD 設定組合仍會
+套用量化 IoU 抑制。正值 YOLO26 閾值會啟用 NMS。
 
 `num_classes` 會比較呼叫端設定的值與從 MPK 張量契約推導出的類別數量：
 
@@ -256,7 +289,7 @@ options.yolox_seg_pose.pose_classes = [0, 5]
 | `BoxDecodeType::SuperPoint` | `superpoint` | SuperPoint 檢測器和描述符後處理 |
 | `BoxDecodeType::Detr` | `detr` | DETR 樣式的變壓器檢測 |
 | `BoxDecodeType::EffDet` | `effdet` | EfficientDet 偵測 |
-| `BoxDecodeType::RcnnStage1` | `rcnn-stage1` R-CNN 提案階段 | |
+| `BoxDecodeType::RcnnStage1` | `rcnn-stage1` | 五個有序 RPN 輸出頭；全域 NMS 後按面積層級套用 top-K |
 | `BoxDecodeType::Centernet` | `centernet` | CenterNet 偵測 |
 
 `BoxDecodeType::Unspecified` 是一個未設定的標記，會在執行階段之前就發生錯誤。SSD 處方識別碼是一個內部核心合約（`ssd300-v1`、`ssd-mobile-300-v1`、`ssd-mobile-320-v1` 或 `ssdlite-mobile-320-v1`），而不是另一個公開的解碼類型或後端標記。核心會在降低之前解析它，而已安裝的物件解碼器會繼續接收其支援的 `ssd` 系列標記，並從已經驗證的磁碟頭幾何形狀中選擇對應的固定實作。
@@ -306,8 +339,7 @@ options.yolox_seg_pose.pose_classes = [0, 5]
 **`num_classes` 協議。**編碼的類別數量始終從置信度頭的深度（`conf_depth / priors-per-cell`，包括索引 0 處的背景）推導得出。SSD300-v1 允許使用連續的前綴選擇，例如準備好的 81 到 8 的路徑；其他三個設定檔需要準確的編碼計數。如果選擇無效，則會在建置時被拒絕。如果要使用設定檔的預設值，請將其設置為未設定。
 - `Detr` 會根據最大頭部深度推斷出類別通道，並且需要一個有效的。
   類別：維度。
-- `EffDet`、`RcnnStage1` 和 `Centernet` 都使用它們的模型系列合約；請執行。
-  不要將它們路由到 YOLO 解碼類型。
+- `EffDet` 與 `Centernet` 使用各自模型系列的契約；不要將它們路由至 YOLO 解碼類型。
 - `*-seg` 解碼類型會產生帶有框線的輸出，以及特定任務的遮罩資料。
 
 如果自訂模型套件與任何完整的排序簽章都不相符，請準備一個新的、明確支援的設定檔，而不是降低比對器的準確度。
@@ -340,3 +372,20 @@ masks = seg.masks.to_numpy()
 ## 升級
 
 新選項會改變 C++ 物件佈局。Core 使用 ABI 6、`libsima_neat.so.6`。請使用相符的標頭與函式庫，重新建置 C++ 應用程式、外掛程式及 Python 繫結。請勿透過相容性符號連結將 ABI 5 二進位檔連接至 ABI 6。
+
+
+### 組合 YOLOX 輸入准入
+
+`YoloXSegPose` 接受 BF16 與 INT8 輸出頭，或儲存在連續或正值、不重疊步幅空間中的
+原生 FP32 輸出頭（包括平面式 CHW 檢視）。FP32 位址與步幅必須四位元組對齊；
+不接受通道分塊 FP32 與 UINT8。不會加入隱含、有損的 FP32 轉換。
+原型具有自己的 dtype 與逐張量 INT8 量化；每個偵測輸出頭的角色仍須採用一致 dtype。
+Core 保留這些逐埠資訊供 Kernels 准入使用，而不會將第一個輸出頭的 dtype 或量化
+套用到所有埠。三個偵測層級在兩軸的步幅分別為 8、16 與 32。
+模型寬度與高度必須是 32 的倍數，但不必相等。原型維持 160×160×32，
+不會隨模型尺寸暗中調整大小。
+
+偏心填補或裁切座標請使用前處理中繼資料。仿射轉換將**模型映射到原始**座標；
+此組合設定不支援剪切、旋轉與 ROI 清單。裁切在準備階段需要權威性的仿射中繼資料。
+這是針對外部已前處理張量的解碼器契約，不是替 `Model` 前處理新增裁切產生功能。
+少於 17 個關鍵點的模型仍發布固定的 17 槽位公開線路格式，未使用槽位設為零。

@@ -8,7 +8,6 @@
 #include "test_utils.h"
 
 #include <gst/gst.h>
-#include <gstsimaaiallocator.h>
 
 #include <cstring>
 #include <iostream>
@@ -69,7 +68,7 @@ GstSample* make_tensor_sample_with_contract_meta() {
   descriptors[1].memory_index = 0;
   descriptors[1].logical_name_id = 3;
   descriptors[1].backend_name_id = 4;
-  descriptors[1].segment_name_id = 5;
+  descriptors[1].segment_name_id = 2; // One physical carrier, two distinct logical views.
   descriptors[1].byte_offset = 16;
   descriptors[1].size_bytes = 16;
   descriptors[1].dtype = SIMA_TENSOR_SET_DTYPE_INT8_V1;
@@ -84,7 +83,7 @@ GstSample* make_tensor_sample_with_contract_meta() {
       g_bytes_new(descriptors.data(), descriptors.size() * sizeof(SimaTensorDescriptorV2));
   require(descriptor_bytes != nullptr, "failed to allocate descriptor bytes");
 
-  const char* raw_names[] = {"boxes", "ofm0", "boxes_seg", "scores", "ofm1", "scores_seg", nullptr};
+  const char* raw_names[] = {"boxes", "ofm0", "shared_arena", "scores", "ofm1", nullptr};
   gchar** name_table = g_strdupv(const_cast<gchar**>(raw_names));
   require(name_table != nullptr, "failed to duplicate tensor-set name table");
 
@@ -194,7 +193,16 @@ int main() {
     // The tensor-set meta no longer surfaces as a SampleKind::TensorSet at
     // this conversion point; downstream packed-bundle plumbing has been
     // reshaped. Coverage remains in the GST/runtime path.
-    (void)tensor_set;
+    const auto views = simaai::neat::tensors_from_sample(tensor_set);
+    require(views.size() == 2, "shared carrier must retain two logical tensor views");
+    require(views[0].route.name == "boxes" && views[1].route.name == "scores",
+            "shared carrier lost distinct logical names");
+    require(views[0].route.segment_name == "shared_arena" &&
+                views[1].route.segment_name == "shared_arena",
+            "shared carrier has inconsistent physical identity");
+    require(views[0].byte_offset == 0 && views[1].byte_offset == 16,
+            "shared carrier lost logical offsets");
+    gst_sample_unref(source);
     return 0;
 
     std::string err;

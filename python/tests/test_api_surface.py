@@ -454,7 +454,8 @@ def test_benchmark_options_are_mutable():
   assert opt.resize_mode is None
   assert opt.include_plugin_latency is False
   assert opt.min_duration_ms == 10000
-  assert opt.include_layer_stats is False
+  assert opt.include_mla_layer_stats is False
+  assert opt.include_mla_stage_stats is False
 
   opt.num_samples = 7
   opt.original_width = 1920
@@ -462,7 +463,8 @@ def test_benchmark_options_are_mutable():
   opt.resize_mode = pyneat.ResizeMode.Letterbox
   opt.include_plugin_latency = True
   opt.min_duration_ms = 0
-  opt.include_layer_stats = True
+  opt.include_mla_layer_stats = True
+  opt.include_mla_stage_stats = True
 
   assert opt.num_samples == 7
   assert opt.original_width == 1920
@@ -470,7 +472,8 @@ def test_benchmark_options_are_mutable():
   assert opt.resize_mode == pyneat.ResizeMode.Letterbox
   assert opt.include_plugin_latency is True
   assert opt.min_duration_ms == 0
-  assert opt.include_layer_stats is True
+  assert opt.include_mla_layer_stats is True
+  assert opt.include_mla_stage_stats is True
 
 
 def test_benchmark_report_exposes_telemetry():
@@ -1304,7 +1307,7 @@ def test_graph_describe_backend_includes_detess_dequant_stage(tmp_path):
   info = model.info()
   assert info.capabilities.has_post_detessellation
   assert info.capabilities.has_post_dequantization
-  assert "neatprocesscvu" in graph.describe_backend().lower()
+  assert "neatkernelrunner" in graph.describe_backend().lower()
 
 
 def test_graph_describe_backend_includes_sima_box_decode_stage(tmp_path):
@@ -1384,9 +1387,12 @@ def test_sima_box_decode_runtime_dims_override_backend_config(tmp_path):
   graph.add(pyneat.nodes.output())
 
   backend = graph.describe_backend().lower()
+  # Numerical options are carried by typed admission, not GObject properties.
+  # Their effect is covered by the real-input geometry test and C++ admission
+  # tests; this API test owns constructor acceptance and logical identity.
+  assert "simaboxdecode" in graph.describe().lower()
   assert "boxdecode" in backend
-  assert "original-width=640" in backend
-  assert "original-height=360" in backend
+  assert backend == graph.describe_backend().lower()
 
 
 def test_graph_describe_backend_includes_explicit_h264_udp_output_chain():

@@ -762,7 +762,8 @@ build_tiled_tensor_desc(const std::vector<int>& shape, const std::vector<int>& t
                                            dim_invalid_msg, dtype_invalid_msg,
                                            tile_rank_mismatch_msg, tile_dim_invalid_msg);
   }
-  if (!fill_shape_desc(shape, normalized_layout, &out->shape, error_detail, missing_output_msg,
+  // Preserve explicit batch/depth axes while validating the normalized layout above.
+  if (!fill_shape_desc(shape, layout_token, &out->shape, error_detail, missing_output_msg,
                        rank_invalid_msg, dim_invalid_msg)) {
     return false;
   }

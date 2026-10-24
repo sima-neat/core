@@ -43,7 +43,7 @@ struct CastOptions {
   bool silent = true;       ///< If true, suppresses element-level diagnostic logging.
   std::shared_ptr<const CompiledProcessCvuContract>
       compiled_contract; ///< Optional processcvu contract for model-managed cast.
-  int num_buffers = 0;   ///< processcvu buffer pool size when compiled_contract is set.
+  int num_buffers = 0;   ///< Output pool size; 0 selects the graph default (4 asynchronous).
 #ifdef SIMA_NEAT_INTERNAL
   std::shared_ptr<const simaai::neat::internal::ModelLineageBinding> model_lineage;
 #endif

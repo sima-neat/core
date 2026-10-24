@@ -189,3 +189,40 @@ bytes written and the path it was using.
 ## Test / internal hooks
 
 - `SIMA_TENSOR_MAPFAIL_DEBUG=1` — log Tensor map failures.
+
+## Kernel metadata qualification
+
+ProcessCVU stages execute through Runtime's `neatkernelrunner` by default. No
+build option or environment variable selects the old ProcessCVU plugin.
+
+- `SIMA_CORE_COMPACT_METADATA=1` — permit compact TensorSet and typed current-frame
+  metadata on the owned direct runner-to-appsink edge after capability agreement.
+  Requires no incompatible boundary, debug, or flow observer. Standard owned
+  stage/element timings remain enabled and support both representations.
+  Unrepresented extensions retain legacy dynamic metadata.
+
+Do not attach legacy-only probes to a compact edge. Without capability agreement,
+Runtime preserves legacy metadata for unknown consumers and observers; execution
+still uses `neatkernelrunner`. This metadata option makes no latency or throughput
+guarantee.
+
+## Package and weekly qualification (test-only)
+
+- `SIMA_TEST_PACKAGE_INVENTORY=<absolute-path>` — expected package controls and
+  payload identity generated from selected, verified distribution archives by
+  `tools/ci/verify_core_dist.py --write-package-inventory`. Required by the
+  installed DevKit package-inventory test. It does not redirect `dpkg` to a
+  private prefix and is not an installation-result report.
+- `SIMA_TEST_PLATFORM_BASELINE=<absolute-path>` — native platform presence,
+  absence, package identities and OTA availability/identity captured **before installation**
+  with `tools/ci/verify_core_dist.py --capture-platform-baseline`. Required by
+  the installed DevKit package-inventory test alongside the selected package
+  inventory. Do not regenerate this baseline from the post-install state.
+- `SIMA_RUN_MNIST_PREPROC_CHANNELS1=1` — opt in to the long MNIST preproc accuracy
+  test. Obtain this value from `tools/ci/prepare_weekly_fixtures.py` after fixture
+  validation instead of setting it merely to suppress a skip. Local launchers
+  consume `--environment-json`; CI consumes the same mapping through
+  `--github-env`.
+
+See [Test Requirements](../../develop-apps/contribute/build-test/test_requirements.md)
+for fixture-group selection and installed-package profiles.

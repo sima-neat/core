@@ -84,6 +84,9 @@ int main(int argc, char** argv) {
     invalid["v"] = wire::version + 1;
     rejects([&] { wire::parse(invalid.dump(), session); });
     invalid = e;
+    invalid["v"] = 2;
+    rejects([&] { wire::parse(invalid.dump(), session); });
+    invalid = e;
     invalid["request"] = -1;
     rejects([&] { wire::parse(invalid.dump(), session); });
     rejects([&] { wire::parse(std::string(wire::max_message_bytes + 1, ' '), session); });
@@ -372,7 +375,50 @@ int main(int argc, char** argv) {
     request.prompt = "hello";
     {
       g::internal::MediaStage stage(options, session, 1);
-      require(stage.encode(request).at("prompt") == "hello", "Text-only staging");
+      const auto defaults = stage.encode(request);
+      require(defaults.at("prompt") == "hello", "Text-only staging");
+      require(request.reasoning_effort == "low" && defaults.at("reasoning_effort") == "low",
+              "Default reasoning effort reaches the wire");
+      for (const auto* effort : {"low", "medium", "high"}) {
+        for (const bool thinking : {false, true}) {
+          request.reasoning_effort = effort;
+          request.enable_thinking = thinking;
+          const auto encoded = stage.encode(request);
+          std::string decoded = "low";
+          wire::decode_reasoning_effort(encoded, decoded);
+          require(decoded == effort && encoded.at("enable_thinking") == thinking,
+                  "Worker decoder preserves effort independently of thinking");
+          auto unchanged = encoded;
+          unchanged["reasoning_effort"] = "low";
+          unchanged["enable_thinking"] = false;
+          require(unchanged == defaults, "Reasoning effort preserves every other wire field");
+        }
+      }
+      auto omitted = defaults;
+      omitted.erase("reasoning_effort");
+      std::string decoded = "low";
+      wire::decode_reasoning_effort(omitted, decoded);
+      require(decoded == "low", "Missing effort preserves direct request default");
+      for (const auto& invalid_effort :
+           {g::Json(nullptr), g::Json(3), g::Json(true), g::Json::array(), g::Json::object()}) {
+        auto malformed = defaults;
+        malformed["reasoning_effort"] = invalid_effort;
+        rejects([&] { wire::decode_reasoning_effort(malformed, decoded); });
+      }
+      request.reasoning_effort = "extreme";
+      wire::decode_reasoning_effort(stage.encode(request), decoded);
+      require(decoded == "extreme", "Wire decoder leaves semantic validation to direct model");
+      // Existing positional aggregate initialization retains its original meaning.
+      const g::GenerationRequest aggregate{"hello",      "system",     {},
+                                           {},           std::nullopt, 16000,
+                                           std::nullopt, "en",         g::ASRTask::Translate,
+                                           17,           true,         g::Json::array(),
+                                           "none"};
+      require(aggregate.reasoning_effort == "low" && aggregate.max_new_tokens == 17 &&
+                  aggregate.tool_choice == "none",
+              "Appended effort preserves old aggregate member positions");
+      request.reasoning_effort = "low";
+      request.enable_thinking = false;
       require(!std::filesystem::exists(options.media_directory),
               "Text must not need a serve directory");
     }

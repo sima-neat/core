@@ -7,6 +7,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import hashlib
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -435,6 +437,14 @@ validate_ros2_sdk_deb_architectures() { :; }
 validate_ros2_sdk_tvm_runtime() { :; }
 refresh_apt_metadata_for_board_install() { :; }
 apt_package_database_is_healthy() { return 0; }
+dpkg-deb() {
+  case "$3" in
+    Package) basename "$2" .deb ;;
+    Version) echo 1.2.3 ;;
+    Architecture) echo arm64 ;;
+    *) return 1 ;;
+  esac
+}
 run_sudo() {
   if [[ " $* " == *" --simulate "* ]]; then
     printf 'SIMULATION_OK\n'
@@ -463,6 +473,8 @@ install_debs_in_ros2_sdk
         self.assertIn("<--no-remove>", transaction)
         self.assertIn("<--allow-downgrades>", transaction)
         self.assertNotIn("--fix-broken", transaction)
+        for name in ("sima-neat", "sima-neat-dev", "neat-runtime"):
+            self.assertIn(f"<{name}:arm64=1.2.3>", transaction)
 
     def test_ros2_sdk_rejects_simulated_package_removal(self) -> None:
         result = run_bash(
@@ -475,6 +487,14 @@ validate_ros2_sdk_deb_architectures() { :; }
 validate_ros2_sdk_tvm_runtime() { :; }
 refresh_apt_metadata_for_board_install() { :; }
 apt_package_database_is_healthy() { return 0; }
+dpkg-deb() {
+  case "$3" in
+    Package) basename "$2" .deb ;;
+    Version) echo 1.2.3 ;;
+    Architecture) echo arm64 ;;
+    *) return 1 ;;
+  esac
+}
 run_sudo() {
   if [[ " $* " == *" --simulate "* ]]; then
     printf '%s\n' 'Remv simaai-palette-modalix [2.1.2]'
@@ -606,9 +626,14 @@ install_ros2_sdk_tvm_runtime
 
 
 class ForceInstallTest(unittest.TestCase):
-    def run_activation_fixture(self, script: str, exit_code: int = 0) -> subprocess.CompletedProcess[str]:
+    def run_activation_fixture(
+        self, script: str, exit_code: int = 0, *, selected: bool = True,
+        invalid: str = "", package: str = "neat-ev74-firmware", required: bool | None = None,
+        unrelated: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
         # Redirect only the fixed firmware path in a temporary installer copy;
         # never create or execute firmware under the host's /usr/libexec.
+        # The selected archive is real; only the installed dpkg database is faked.
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             firmware = root / "firmware.sh"
@@ -617,17 +642,225 @@ class ForceInstallTest(unittest.TestCase):
                 'printf "FIRMWARE_FORCE=%s ARG=%s\\n" "${FORCE_INSTALL-unset}" "$1"\n'
                 f"exit {exit_code}",
             )
+            payload = root / "package"
+            control = payload / "DEBIAN" / "control"
+            control.parent.mkdir(parents=True)
+            package_architecture = "arm64" if required else "all"
+            control.write_text(
+                f"Package: {package}\nVersion: 0.6.0+fixture\nArchitecture: {package_architecture}\n"
+                "Maintainer: Test <test@example.invalid>\nDescription: inert activation fixture\n"
+            )
+            packaged_helper = payload / firmware.relative_to("/")
+            packaged_helper.parent.mkdir(parents=True)
+            shutil.copy2(firmware, packaged_helper)
+            if invalid == "packaged-symlink":
+                packaged_helper.unlink()
+                packaged_helper.symlink_to(firmware)
+            elif invalid == "packaged-mode":
+                packaged_helper.chmod(0o644)
+            elif invalid == "packaged-directory":
+                packaged_helper.unlink()
+                packaged_helper.mkdir()
+            elif invalid == "unselected-payload":
+                packaged_helper.unlink()
+            archive = root / "firmware.deb"
+            subprocess.run(["dpkg-deb", "--build", "--root-owner-group", str(payload), str(archive)],
+                           check=True, capture_output=True, text=True)
+            required_identity = {
+                "Package": package, "Version": "0.6.0+fixture",
+                "Architecture": package_architecture,
+                "deb_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+            }
+            if invalid == "required-archive":
+                (payload / "changed-payload").write_text("changed after admission")
+                subprocess.run(["dpkg-deb", "--build", "--root-owner-group", str(payload), str(archive)],
+                               check=True, capture_output=True, text=True)
+            for field in ("Package", "Version", "Architecture", "deb_sha256"):
+                if invalid == "required-" + field:
+                    required_identity[field] = "different"
+            if invalid == "archive":
+                archive.write_bytes(b"not a Debian archive")
+            if invalid == "missing":
+                firmware.unlink()
+            elif invalid == "symlink":
+                target = root / "other.sh"
+                firmware.rename(target)
+                firmware.symlink_to(target)
+            elif invalid == "content":
+                firmware.write_text(firmware.read_text() + "# not selected bytes\n")
+            elif invalid == "mode":
+                firmware.chmod(0o700)
+            version = "0.5.0" if invalid == "version" else "0.6.0+fixture"
+            architecture = ("all" if required else "arm64") if invalid == "architecture" else package_architecture
+            status = "iU " if invalid == "status" else "ii "
+            owner = "unrelated-package" if invalid == "owner" else package
+            debs = f'"{archive}"' if selected else ""
+            if invalid == "duplicate":
+                debs += f' "{archive}"'
+            if unrelated:
+                other_payload = root / "other-package"
+                other_control = other_payload / "DEBIAN" / "control"
+                other_control.parent.mkdir(parents=True)
+                other_control.write_text(
+                    "Package: unrelated-product\nVersion: 1\nArchitecture: all\n"
+                    "Maintainer: Test <test@example.invalid>\nDescription: unrelated fixture\n"
+                )
+                (other_payload / "unrelated-payload").write_text("not firmware")
+                other_archive = root / "other.deb"
+                subprocess.run(["dpkg-deb", "--build", "--root-owner-group", str(other_payload), str(other_archive)],
+                               check=True, capture_output=True, text=True)
+                debs += f' "{other_archive}"'
+            fixture = f"""DEBS=({debs})
+dpkg-query() {{
+  case "$1" in
+    -W) printf '%s\\t%s\\t%s\\t%s' '{package}' '{version}' '{architecture}' '{status}' ;;
+    -S) printf '%s: %s\\n' '{owner}' '{firmware}' ;;
+    *) return 99 ;;
+  esac
+}}
+"""
+            if required is not None:
+                admission_dir = root / "admission"
+                admission_dir.mkdir()
+                (admission_dir / "before.json").write_text(json.dumps({
+                    "split_cohort": True,
+                    "firmware": {"required": required, "debian_package": required_identity if required else None},
+                }))
+                fixture += f'BOARD_PLATFORM_ADMISSION_DIR="{admission_dir}"\n'
+            if unrelated:
+                fixture += f'''dpkg-deb() {{
+  if [[ "$2" == "{other_archive}" && ( "$1" == --fsys-tarfile || "$1" == -x ) ]]; then
+    echo UNEXPECTED_UNRELATED_PAYLOAD >&2
+    return 73
+  fi
+  command dpkg-deb "$@"
+}}
+'''
+            if invalid == "extraction":
+                fixture += 'dpkg-deb() { [[ "$1" != -x ]] || return 72; command dpkg-deb "$@"; }\n'
             installer = root / "installer.sh"
             source = INSTALLER.read_text()
             fixed_path = "/usr/libexec/sima-neat-firmware/install.sh"
-            self.assertEqual(source.count(fixed_path), 2)
-            installer.write_text(source.replace(fixed_path, str(firmware)))
+            self.assertIn(fixed_path, source)
+            guard = 'if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then'
+            self.assertEqual(source.count(guard), 1)
+            installer.write_text(source.replace(fixed_path, str(firmware)).replace(guard, fixture + guard))
             return subprocess.run(
                 ["bash", "-c", script, "bash", str(installer)],
                 check=False,
                 text=True,
                 capture_output=True,
             )
+
+    def test_ambient_firmware_without_selected_package_is_not_activated(self) -> None:
+        result = self.run_activation_fixture(r"""
+source "$1"
+FORCE_INSTALL=1
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON
+run_sudo() { printf 'UNEXPECTED_ACTIVATION\n'; return 99; }
+activate_board_runtime_after_install
+""", selected=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("EV74 firmware activation skipped", result.stdout)
+        self.assertNotIn("UNEXPECTED_ACTIVATION", result.stdout)
+
+    def test_selected_firmware_must_match_installed_identity_owner_and_payload(self) -> None:
+        for invalid in ("version", "architecture", "status", "owner", "missing", "symlink",
+                        "content", "mode", "packaged-symlink", "packaged-mode", "packaged-directory",
+                        "duplicate", "archive", "extraction"):
+            with self.subTest(invalid=invalid):
+                result = self.run_activation_fixture(r"""
+source "$1"
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON
+FORCE_INSTALL=1
+run_sudo() { printf 'UNEXPECTED_ACTIVATION\n'; }
+activate_board_runtime_after_install
+""", invalid=invalid)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertNotIn("UNEXPECTED_ACTIVATION", result.stdout)
+
+    def test_other_selected_package_does_not_activate_ambient_firmware(self) -> None:
+        result = self.run_activation_fixture(r"""
+source "$1"
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON
+FORCE_INSTALL=1
+run_sudo() { printf 'UNEXPECTED_ACTIVATION\n'; return 99; }
+activate_board_runtime_after_install
+""", package="other-product", invalid="unselected-payload")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("EV74 firmware activation skipped", result.stdout)
+        self.assertNotIn("UNEXPECTED_ACTIVATION", result.stdout)
+
+    def test_required_native_firmware_activates_only_the_admitted_package(self) -> None:
+        for package in ("simaai-kernels-firmware", "renamed-firmware-provider"):
+            with self.subTest(package=package):
+                result = self.run_activation_fixture(r"""
+source "$1"
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON
+run_sudo() { env -i PATH="$PATH" "$@"; }
+activate_board_runtime_after_install
+""", package=package, required=True, unrelated=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("FIRMWARE_FORCE=0 ARG=--activate", result.stdout)
+                self.assertNotIn("UNEXPECTED_UNRELATED_PAYLOAD", result.stderr)
+
+    def test_non_ev_split_cohort_skips_firmware_discovery(self) -> None:
+        result = self.run_activation_fixture(r"""
+source "$1"
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON
+dpkg-deb() { echo UNEXPECTED_DEB_INSPECTION >&2; return 99; }
+run_sudo() { printf 'UNEXPECTED_ACTIVATION\n'; }
+activate_board_runtime_after_install
+""", required=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("not required by the selected Scheduler cohort", result.stdout)
+        self.assertNotIn("UNEXPECTED_", result.stdout + result.stderr)
+
+    def test_legacy_firmware_discovery_still_inspects_selected_payloads(self) -> None:
+        result = self.run_activation_fixture(r"""
+source "$1"
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON
+run_sudo() { printf 'UNEXPECTED_ACTIVATION\n'; }
+activate_board_runtime_after_install
+""", unrelated=True)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("UNEXPECTED_UNRELATED_PAYLOAD", result.stderr)
+        self.assertIn("Cannot inspect selected DEB firmware payload", result.stderr)
+        self.assertNotIn("UNEXPECTED_ACTIVATION", result.stdout)
+
+    def test_required_native_firmware_cannot_be_missing_or_substituted(self) -> None:
+        for invalid in ("unselected-payload", "required-Package", "required-Version",
+                        "required-Architecture", "required-deb_sha256", "required-archive", "duplicate"):
+            with self.subTest(invalid=invalid):
+                result = self.run_activation_fixture(r"""
+source "$1"
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON
+FORCE_INSTALL=1
+NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON
+run_sudo() { printf 'UNEXPECTED_ACTIVATION\n'; }
+activate_board_runtime_after_install
+""", package="simaai-kernels-firmware", required=True, invalid=invalid)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertNotIn("UNEXPECTED_ACTIVATION", result.stdout)
+        result = self.run_activation_fixture(r"""
+source "$1"
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON
+run_sudo() { printf 'UNEXPECTED_ACTIVATION\n'; }
+activate_board_runtime_after_install
+""", required=True, selected=False)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Required native EV74 firmware", result.stderr)
+        self.assertNotIn("UNEXPECTED_ACTIVATION", result.stdout)
+
+    def test_selected_payload_owner_can_be_renamed(self) -> None:
+        result = self.run_activation_fixture(r"""
+source "$1"
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON
+run_sudo() { env -i PATH="$PATH" "$@"; }
+activate_board_runtime_after_install
+""", package="renamed-firmware-provider")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("FIRMWARE_FORCE=0 ARG=--activate", result.stdout)
 
     def test_activation_normalizes_force_after_privilege_environment_filtering(self) -> None:
         for sanitized in (False, True):
@@ -681,6 +914,27 @@ printf 'UNEXPECTED_SUCCESS\n'
 """, exit_code=23)
         self.assertEqual(result.returncode, 23, result.stderr)
         self.assertIn("FIRMWARE_FORCE=1 ARG=--activate", result.stdout)
+        self.assertNotIn("UNEXPECTED_", result.stdout)
+
+    def test_activation_failure_stops_conditional_board_completion(self) -> None:
+        result = self.run_activation_fixture(r"""
+source "$1"
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON
+run_sudo() { env -i PATH="$PATH" "$@"; }
+board_runtime_is_legacy() { return 1; }
+repair_global_sima_neat_lib_links() { :; }
+verify_global_sima_neat_lib_links() { :; }
+verify_canonical_palette_installation() { :; }
+restart_board_codec_services() { printf 'UNEXPECTED_RESTART\n'; }
+verify_board_codec_services() { printf 'UNEXPECTED_VERIFY\n'; }
+if complete_board_install_after_packages; then
+  printf 'UNEXPECTED_SUCCESS\n'
+  exit 0
+else
+  exit "$?"
+fi
+""", exit_code=23)
+        self.assertEqual(result.returncode, 23, result.stderr)
         self.assertNotIn("UNEXPECTED_", result.stdout)
 
     def test_paired_force_reaches_activation_in_clean_remote_environment(self) -> None:
@@ -1443,6 +1697,825 @@ repair_global_sima_neat_lib_links
             "Packaged libsima_neat SONAME does not match its package manifest",
             result.stderr,
         )
+
+
+class FirmwareRetirementTest(unittest.TestCase):
+    def test_retirement_requires_admitted_archive_and_matching_versioned_relations(self):
+        cases = (
+            ("conflicts", True), ("breaks", True), ("narrower-bound", True),
+            ("missing-replaces", False), ("missing-conflict", False),
+            ("unbounded-replaces", False), ("unbounded-conflict", False),
+            ("future-version", False), ("mismatched-bound", False),
+            ("unrelated-removal", False), ("non-ev", False),
+            ("missing-admission", False), ("wrong-identity", False),
+            ("changed-archive", False), ("unselected-archive", False),
+        )
+        for case, accepted in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                payload = root / "payload"
+                (payload / "DEBIAN").mkdir(parents=True)
+                bound = "0.6.1~" if case == "narrower-bound" else "0.7.0"
+                if case == "mismatched-bound":
+                    bound = "0.6.0"
+                relation = f"neat-ev74-firmware (<< {bound})"
+                fields = {
+                    "Package": "simaai-kernels-firmware", "Version": "0.1.0+fixture",
+                    "Architecture": "arm64", "Maintainer": "Test <test@example.invalid>",
+                    "Description": "inert firmware retirement fixture",
+                    "Replaces": relation, "Breaks" if case == "breaks" else "Conflicts": relation,
+                }
+                if case == "missing-replaces":
+                    del fields["Replaces"]
+                elif case == "missing-conflict":
+                    del fields["Conflicts"]
+                elif case == "unbounded-replaces":
+                    fields["Replaces"] = "neat-ev74-firmware"
+                elif case == "unbounded-conflict":
+                    fields["Conflicts"] = "neat-ev74-firmware"
+                (payload / "DEBIAN/control").write_text(
+                    "".join(f"{key}: {value}\n" for key, value in fields.items()))
+                archive = root / "firmware.deb"
+                subprocess.run(["dpkg-deb", "--build", "--root-owner-group", str(payload), str(archive)],
+                               check=True, capture_output=True)
+                control = {key: fields[key] for key in ("Package", "Version", "Architecture")}
+                control["deb_sha256"] = hashlib.sha256(archive.read_bytes()).hexdigest()
+                if case == "wrong-identity":
+                    control["Package"] = "other-firmware"
+                if case == "changed-archive":
+                    (payload / "changed").write_text("different selected bytes")
+                    subprocess.run(["dpkg-deb", "--build", "--root-owner-group", str(payload), str(archive)],
+                                   check=True, capture_output=True)
+                (root / "before.json").write_text(json.dumps({
+                    "split_cohort": True,
+                    "firmware": {"required": case != "non-ev",
+                                 "debian_package": None if case == "non-ev" else control},
+                }))
+                removed = "unrelated-package" if case == "unrelated-removal" else "neat-ev74-firmware"
+                version = "0.7.0" if case == "future-version" else "0.6.0+develop.ce6b01ccdc94"
+                (root / "simulation").write_text(f"Remv {removed} [{version}]\n")
+                admission = "" if case == "missing-admission" else str(root)
+                selected = "" if case == "unselected-archive" else str(archive)
+                result = run_bash(f'''
+source "$1"
+BOARD_PLATFORM_ADMISSION_DIR="{admission}"
+FORCE_INSTALL=1
+SKIP_PLATFORM_CHECK=ON
+dpkg-query() {{ printf '%s' '{version}'; }}
+verify_simulated_package_removals "{root / 'simulation'}" "{selected}"
+''')
+                self.assertEqual(result.returncode == 0, accepted, result.stdout + result.stderr)
+                if accepted:
+                    self.assertIn("neat-ev74-firmware=" + version, result.stdout)
+                else:
+                    self.assertIn("Refusing to install", result.stderr)
+
+
+class RunnerRetirementTest(unittest.TestCase):
+    def test_retirement_requires_relationships_from_file_owner_not_execution_provider(self):
+        for removed in ("neat-runtime", "neat-gst-plugins"):
+            for missing_owner in ("runner", "scheduler"):
+                if removed == "neat-gst-plugins" and missing_owner == "runner":
+                    continue  # Scheduler alone owns the plugin replacement.
+                for missing_field in ("Breaks", "Replaces"):
+                    with self.subTest(removed=removed, owner=missing_owner, field=missing_field):
+                        result = run_bash(rf'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+printf '%s\n' '{{"platform-version":"3.0.0"}}' > "$tmp/manifest.json"
+resolve_package_manifest_path() {{ printf '%s' "$tmp/manifest.json"; }}
+touch "$tmp/runner.deb" "$tmp/scheduler.deb"
+printf '%s\n' 'Remv {removed} [0.6.0+preview.arbitrary]' > "$tmp/simulation"
+dpkg-query() {{ printf '%s' '0.6.0+preview.arbitrary'; }}
+dpkg-deb() {{
+  [[ "$2:$3" != *'/{missing_owner}.deb:{missing_field}' ]] || return 1
+  case "$3" in
+    Package) if [[ "$2" == *scheduler.deb ]]; then printf simaai-scheduler; else printf simaai-runner; fi ;;
+    Breaks|Replaces) printf '%s' '{removed} (<< 0.6.1~)' ;;
+    *) return 1 ;;
+  esac
+}}
+verify_simulated_package_removals "$tmp/simulation" "$tmp/runner.deb" "$tmp/scheduler.deb"
+''')
+                        self.assertEqual(result.returncode == 0, missing_owner == "runner",
+                                         result.stdout + result.stderr)
+
+    def test_only_bounded_native_retirement_is_allowed(self):
+        cases = [
+            ("neat-runtime", "0.5.0+3.0.0-prep.abc", "3.0.0", "simaai-runtime", "<< 0.6.1~", False),
+            ("neat-gst-plugins", "0.4.0+local.abc", "3.0.0", "simaai-runtime", "<< 0.6.1~", False),
+            ("neat-runtime", "0.6.0", "3.0.0", "simaai-runtime", "<< 0.6.1~", False),
+            ("neat-runtime", "0.5.0", "2.1.3", "simaai-runtime", "<< 0.6.1~", False),
+            ("neat-runtime", "0.5.0", "3.0.0", "other-runtime", "<< 0.6.1~", False),
+            ("neat-runtime", "0.5.0", "3.0.0", "simaai-runtime", "<< 9.0", False),
+            ("simaai-palette-modalix", "0.5.0", "3.0.0", "simaai-runtime", "<< 0.6.1~", False),
+        ]
+        cases.extend([
+            ("neat-gst-plugins", "0.4.0+local.abc", "3.0.0", "simaai-scheduler", "<< 0.6.1~", True),
+            ("neat-gst-plugins", "0.5.0", "3.0.0", "simaai-scheduler", "<< 0.6.1~", True),
+            ("neat-gst-plugins", "0.6.0", "3.0.0", "simaai-scheduler", "<< 0.6.1~", True),
+            ("neat-gst-plugins", "0.6.0+develop.ce6b01ccdc94", "3.0.0", "simaai-scheduler", "<< 0.6.1~", True),
+            ("neat-gst-plugins", "0.6.0+preview.arbitrary", "3.0.0", "simaai-scheduler", "<< 0.6.1~", True),
+            ("neat-gst-plugins", "0.6.1~rc1", "3.0.0", "simaai-scheduler", "<< 0.6.1~", False),
+            ("neat-gst-plugins", "0.6.1", "3.0.0", "simaai-scheduler", "<< 0.6.1~", False),
+            ("neat-gst-plugins", "0.6.0", "2.1.3", "simaai-scheduler", "<< 0.6.1~", False),
+            ("neat-gst-plugins", "0.4.0", "3.0.0", "simaai-scheduler", "<< 0.6~", True),
+            ("neat-gst-plugins", "0.5.0+preview.arbitrary", "3.0.0", "simaai-scheduler", "<< 0.6~", True),
+            ("neat-gst-plugins", "0.6.0", "3.0.0", "simaai-scheduler", "<< 0.6~", False),
+            ("neat-runtime", "0.5.0", "3.0.0", "simaai-runner", "<< 0.6.1~", False),
+            ("neat-runtime", "0.6.0", "3.0.0", "simaai-scheduler", "<< 0.6.1~", False),
+            ("neat-gst-plugins", "0.5.0", "3.0.0", "simaai-scheduler", "<< 9.0", False),
+        ])
+        for removed, version, platform, package, bound, accepted in cases:
+            with self.subTest(removed=removed, version=version, platform=platform, package=package, bound=bound):
+                result = run_bash(rf'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+printf '%s\n' '{{"platform-version":"{platform}"}}' > "$tmp/manifest.json"
+resolve_package_manifest_path() {{ printf '%s' "$tmp/manifest.json"; }}
+touch "$tmp/runner.deb"
+printf '%s\n' 'Remv {removed} [{version}]' > "$tmp/simulation"
+dpkg-query() {{ printf '%s' '{version}'; }}
+dpkg-deb() {{
+  case "$3" in
+    Package) printf '%s' '{package}' ;;
+    Breaks|Replaces) printf '%s' '{removed} ({bound})' ;;
+    *) return 1 ;;
+  esac
+}}
+verify_simulated_package_removals "$tmp/simulation" "$tmp/runner.deb"
+''')
+                self.assertEqual(result.returncode == 0, accepted, result.stdout + result.stderr)
+
+    def test_split_support_retirement_requires_both_real_providers(self):
+        for version, include_scheduler, bound in ((version, selected, bound)
+                for version in ("0.4.0", "0.5.0", "0.6.0", "0.6.0+develop.ce6b01ccdc94",
+                                "0.6.0+preview.arbitrary", "0.6.1~rc1", "0.6.1")
+                for selected in (False, True)
+                for bound in ("0.6~", "0.6.1~")):
+            extra = '\"$tmp/scheduler.deb\"' if include_scheduler else ''
+            result = run_bash(r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+printf '%s\n' '{"platform-version":"3.0.0"}' > "$tmp/manifest.json"
+resolve_package_manifest_path() { printf '%s' "$tmp/manifest.json"; }
+touch "$tmp/runner.deb" "$tmp/scheduler.deb"
+printf '%s\n' 'Remv neat-runtime [0.5.0]' > "$tmp/simulation"
+dpkg-query() { printf '%s' '0.5.0'; }
+dpkg-deb() {
+  case "$3" in
+    Package) if [[ "$2" == *scheduler.deb ]]; then printf simaai-scheduler; else printf simaai-runner; fi ;;
+    Breaks|Replaces)
+      # Runner supplies execution, not the old Scheduler-owned files. Its
+      # presence must suffice even without a legacy retirement declaration.
+      [[ "$2" == *scheduler.deb ]] || return 1
+      printf '%s' 'neat-runtime (<< 0.6.1~)' ;;
+    *) return 1 ;;
+  esac
+}
+verify_simulated_package_removals "$tmp/simulation" "$tmp/runner.deb" '''.replace("0.5.0", version).replace("0.6.1~", bound) + extra)
+            self.assertEqual(result.returncode == 0,
+                             include_scheduler and not version.startswith("0.6.1")
+                             and (bound == "0.6.1~" or version.startswith(("0.4", "0.5"))),
+                             (version, include_scheduler, bound, result.stdout + result.stderr))
+
+
+class InstalledCoreLibraryLayoutTest(unittest.TestCase):
+    def test_package_manifest_selects_library_directory(self) -> None:
+        for layout in ("lib", "lib64", "lib/aarch64-linux-gnu"):
+            with self.subTest(layout=layout):
+                result = run_bash(r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+fixture_dir="${tmp}/usr/''' + layout + r'''"
+mkdir -p "${fixture_dir}"
+touch "${fixture_dir}/libsima_neat.so.3.0.0"
+# Exercise the real discovery and repair functions, not a libdir override.
+dpkg-query() {
+  [[ "$1" == '-L' && "$2" == 'sima-neat' ]] || return 1
+  printf '%s\n' "${fixture_dir}/libsima_neat.so.3.0.0" \
+    "${fixture_dir}/libsima_neat.so.4" "${fixture_dir}/libsima_neat.so"
+}
+read_sima_neat_elf_soname() { printf '%s\n' 'libsima_neat.so.4'; }
+run_sudo() { "$@"; }
+[[ "$(sima_neat_global_lib_dir)" == "${fixture_dir}" ]]
+repair_global_sima_neat_lib_links
+verify_global_sima_neat_lib_links
+[[ "$(readlink "${fixture_dir}/libsima_neat.so.4")" == 'libsima_neat.so.3.0.0' ]]
+[[ "$(readlink "${fixture_dir}/libsima_neat.so")" == 'libsima_neat.so.4' ]]
+printf 'LAYOUT_OK\n'
+''')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("LAYOUT_OK", result.stdout)
+
+    def test_multiple_versioned_paths_are_rejected_before_repair(self) -> None:
+        result = run_bash(r'''
+source "$1"
+dpkg-query() {
+  [[ "$1" == '-L' && "$2" == 'sima-neat' ]] || return 1
+  printf '%s\n' /usr/lib/libsima_neat.so.3.0.0 \
+    /usr/lib/aarch64-linux-gnu/libsima_neat.so.3.0.0
+}
+run_sudo() { printf 'UNEXPECTED_MUTATION\n'; return 1; }
+repair_global_sima_neat_lib_links
+''')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exactly one packaged versioned", result.stderr)
+        self.assertNotIn("UNEXPECTED_MUTATION", result.stdout)
+
+    def test_soname_must_belong_to_selected_directory(self) -> None:
+        result = run_bash(r'''
+source "$1"
+dpkg-query() {
+  [[ "$1" == '-L' && "$2" == 'sima-neat' ]] || return 1
+  printf '%s\n' /usr/lib/aarch64-linux-gnu/libsima_neat.so.3.0.0 \
+    /usr/lib/libsima_neat.so.4
+}
+run_sudo() { printf 'UNEXPECTED_MUTATION\n'; return 1; }
+repair_global_sima_neat_lib_links
+''')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exactly one packaged libsima_neat SONAME", result.stderr)
+        self.assertNotIn("UNEXPECTED_MUTATION", result.stdout)
+
+
+class BoardExactReinstallTest(unittest.TestCase):
+    SETUP = r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+refresh_apt_metadata_for_board_install() { :; }
+stop_board_runtime_before_install() { :; }
+apt_package_database_is_healthy() { return 0; }
+collect_board_heal_specs() { :; }
+complete_board_install_after_packages() { :; }
+board_runtime_is_legacy() { return 0; }
+'''
+
+    def test_exact_architecture_version_specs_are_deduplicated(self) -> None:
+        result = run_bash(self.SETUP + r'''
+DEBS=(./runtime.deb ./headers.deb ./runtime.deb)
+dpkg-deb() {
+  case "$2:$3" in
+    ./runtime.deb:Package) echo example-runtime ;;
+    ./headers.deb:Package) echo example-headers ;;
+    *:Version) echo 1.2.3 ;;
+    ./runtime.deb:Architecture) echo arm64 ;;
+    ./headers.deb:Architecture) echo all ;;
+    *) return 1 ;;
+  esac
+}
+run_sudo() { printf '%s\n' "$*" >> "${tmp}/commands"; }
+install_debs_on_board
+cat "${tmp}/commands"
+''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        commands = [line for line in result.stdout.splitlines() if line.startswith("apt-get install")]
+        self.assertEqual(len(commands), 2)
+        for command in commands:
+            for spec in ("./runtime.deb", "./headers.deb", "example-runtime:arm64=1.2.3", "example-headers=1.2.3"):
+                self.assertEqual(command.split().count(spec), 1)
+        self.assertIn("--simulate", commands[0])
+        self.assertNotIn("--simulate", commands[1])
+        for command in commands:
+            self.assertNotIn("--force-overwrite", command)
+
+    OWNERSHIP_SETUP = SETUP + r'''
+NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL=OFF
+NEAT_INSTALLER_ALLOW_DPKG_FALLBACK=OFF
+DEBS=(./runtime.deb)
+dpkg-deb() {
+  case "$3" in
+    Package) echo example-runtime ;;
+    Version) echo 1.2.3 ;;
+    Architecture) echo arm64 ;;
+    *) return 1 ;;
+  esac
+}
+printf 'original-owner-bytes\n' > "${tmp}/owned-file"
+: > "${tmp}/commands"
+trap 'cat "${tmp}/commands"; printf "OWNER_CONTENT="; cat "${tmp}/owned-file"; rm -rf "${tmp}"' EXIT
+remove_installed_local_deb_packages() { printf 'REMOVE_LOCAL_PACKAGES\n' >> "${tmp}/commands"; }
+complete_board_install_after_packages() { printf 'COMPLETE_INSTALL\n' >> "${tmp}/commands"; }
+'''
+
+    def test_undeclared_file_collision_fails_without_default_removal(self) -> None:
+        # The removal simulation is clean: the colliding owner is not removed.
+        # The shell double models dpkg's later file-ownership rejection, and
+        # deliberately accepts the unsafe overwrite option as a mutation control.
+        result = run_bash(self.OWNERSHIP_SETUP + r'''
+run_sudo() {
+  printf '%s\n' "$*" >> "${tmp}/commands"
+  if [[ " $* " == *" --simulate "* ]]; then
+    return 0
+  fi
+  if [[ "$1 $2" == 'apt-get install' ]]; then
+    if [[ "$*" == *--force-overwrite* ]]; then
+      printf 'overwritten-by-new-owner\n' > "${tmp}/owned-file"
+      return 0
+    fi
+    echo 'dpkg: trying to overwrite a file owned by unrelated-package' >&2
+    return 100
+  fi
+  [[ "$1 $2" == 'apt-get check' ]] && return 0
+  echo 'UNEXPECTED_PACKAGE_COMMAND' >&2
+  return 91
+}
+install_debs_on_board
+''')
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("trying to overwrite", result.stderr)
+        self.assertIn("refusing to remove the installed runtime", result.stderr)
+        self.assertIn("OWNER_CONTENT=original-owner-bytes", result.stdout)
+        self.assertNotIn("--force-overwrite", result.stdout)
+        self.assertNotIn("REMOVE_LOCAL_PACKAGES", result.stdout)
+        self.assertNotIn("COMPLETE_INSTALL", result.stdout)
+        self.assertNotIn("dpkg -i", result.stdout)
+        self.assertNotIn("UNEXPECTED_PACKAGE_COMMAND", result.stderr)
+
+    def test_explicit_direct_fallback_still_rejects_file_collision(self) -> None:
+        # Explicit maintenance permits only the existing bundled-package removal
+        # path. It must not disable ownership checks in the direct dpkg fallback.
+        result = run_bash(self.OWNERSHIP_SETUP + r'''
+NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL=ON
+NEAT_INSTALLER_ALLOW_DPKG_FALLBACK=ON
+run_sudo() {
+  printf '%s\n' "$*" >> "${tmp}/commands"
+  if [[ " $* " == *" --simulate "* ]]; then
+    return 0
+  fi
+  if [[ "$1 $2" == 'apt-get install' ]]; then
+    echo 'APT transaction failure' >&2
+    return 100
+  fi
+  if [[ "$1 $2" == 'dpkg -i' ]]; then
+    if [[ "$*" == *--force-overwrite* ]]; then
+      printf 'overwritten-by-new-owner\n' > "${tmp}/owned-file"
+      return 0
+    fi
+    echo 'dpkg: trying to overwrite a file owned by unrelated-package' >&2
+    return 73
+  fi
+  [[ "$1 $2" == 'apt-get check' ]] && return 0
+  echo 'UNEXPECTED_PACKAGE_COMMAND' >&2
+  return 91
+}
+install_debs_on_board
+''')
+        self.assertEqual(result.returncode, 73, result.stdout + result.stderr)
+        self.assertIn("trying to overwrite", result.stderr)
+        self.assertIn("OWNER_CONTENT=original-owner-bytes", result.stdout)
+        self.assertIn("dpkg -i ./runtime.deb", result.stdout)
+        self.assertEqual(result.stdout.count("REMOVE_LOCAL_PACKAGES"), 1)
+        self.assertNotIn("--force-overwrite", result.stdout)
+        self.assertNotIn("COMPLETE_INSTALL", result.stdout)
+        self.assertNotIn("UNEXPECTED_PACKAGE_COMMAND", result.stderr)
+
+    def test_conflicting_local_versions_fail_before_apt(self) -> None:
+        result = run_bash(self.SETUP + r'''
+DEBS=(./one.deb ./two.deb)
+dpkg-deb() {
+  case "$3" in
+    Package) echo example-runtime ;;
+    Architecture) echo arm64 ;;
+    Version) [[ "$2" == ./one.deb ]] && echo 1 || echo 2 ;;
+    *) return 1 ;;
+  esac
+}
+run_sudo() { printf 'UNEXPECTED_APT\n'; }
+install_debs_on_board
+''')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Conflicting local DEB versions", result.stderr)
+        self.assertNotIn("UNEXPECTED_APT", result.stdout)
+
+    def test_real_apt_simulation_reinstalls_same_version_local_deb(self) -> None:
+        # A private dpkg status and empty source lists keep this behavioral
+        # probe read-only. No package is installed, and no target code runs.
+        result = run_bash(self.SETUP + r'''
+command -v apt-get >/dev/null
+command -v dpkg-deb >/dev/null
+mkdir -p "${tmp}/package/DEBIAN" "${tmp}/lists/partial" "${tmp}/cache/archives/partial" "${tmp}/sources"
+cat > "${tmp}/package/DEBIAN/control" <<'CONTROL'
+Package: neat-reinstall-probe
+Version: 1.0
+Architecture: all
+Maintainer: Test <test@example.invalid>
+Description: local reinstall simulation fixture
+CONTROL
+{ cat "${tmp}/package/DEBIAN/control"; printf 'Status: install ok installed\n'; } > "${tmp}/status"
+dpkg-deb --build --root-owner-group "${tmp}/package" "${tmp}/probe.deb" >/dev/null
+DEBS=("${tmp}/probe.deb")
+run_sudo() {
+  if [[ " $* " == *" --simulate "* ]]; then
+    shift
+    command apt-get -o "Dir::State::status=${tmp}/status" \
+      -o "Dir::State::lists=${tmp}/lists" -o "Dir::Cache=${tmp}/cache" \
+      -o Dir::Etc::sourcelist=/dev/null -o "Dir::Etc::sourceparts=${tmp}/sources" \
+      -o APT::Get::Download=false -o APT::Get::Remove=false "$@" > "${tmp}/simulation"
+    cat "${tmp}/simulation"
+  fi
+  # Deliberately do not execute the non-simulated transaction or apt check.
+}
+install_debs_on_board
+cat "${tmp}/simulation"
+''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Inst neat-reinstall-probe [1.0] (1.0 local-deb", result.stdout)
+        self.assertIn("1 reinstalled", result.stdout)
+
+
+class DirectPlatformPreservationTest(unittest.TestCase):
+    """Palette 3 identity is its native package, not the removed OTA command."""
+
+    def probe(self, script: str) -> subprocess.CompletedProcess[str]:
+        return run_bash(r'''
+source "$1"
+version=1
+architecture=arm64
+status="install ok installed"
+board_runtime_is_legacy() { return 1; }
+deb_package_is_installed() { [[ "$status" == "install ok installed" ]]; }
+dpkg-query() {
+  [[ "$1" == -W ]] || { echo UNEXPECTED_FILE_DISCOVERY >&2; return 91; }
+  printf 'simaai-palette-modalix\t%s\t%s\t%s\n' "$version" "$architecture" "$status"
+}
+repair_global_sima_neat_lib_links() { :; }
+verify_global_sima_neat_lib_links() { :; }
+activate_board_runtime_after_install() { :; }
+restart_board_codec_services() { :; }
+verify_board_codec_services() { :; }
+''' + script)
+
+    def test_installed_palette_needs_no_ota_executable(self) -> None:
+        result = self.probe(r'''
+before="$(capture_direct_platform_identity)"
+complete_board_install_after_packages "$before"
+printf '%s\n' "$before"
+''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("simaai-palette-modalix\t1\tarm64\tinstall ok installed", result.stdout)
+        self.assertNotIn("UNEXPECTED_FILE_DISCOVERY", result.stderr)
+
+    def test_missing_palette_is_rejected(self) -> None:
+        result = self.probe('status="deinstall ok config-files"\nverify_canonical_palette_installation\n')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not installed", result.stderr)
+
+    def test_post_install_package_identity_changes_are_rejected(self) -> None:
+        for change in ("version=2", "architecture=amd64"):
+            with self.subTest(change=change):
+                result = self.probe('before="$(capture_direct_platform_identity)"\n' + change +
+                                    '\ncomplete_board_install_after_packages "$before"\n')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Native platform identity changed", result.stderr)
+
+    def test_lost_package_ownership_is_rejected(self) -> None:
+        result = self.probe(r'''
+before="$(capture_direct_platform_identity)"
+status="deinstall ok config-files"
+complete_board_install_after_packages "$before"
+''')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not installed", result.stderr)
+
+    def test_package_query_failure_is_not_empty_success(self) -> None:
+        result = self.probe('dpkg-query() { return 17; }\ncapture_direct_platform_identity\n')
+        self.assertEqual(result.returncode, 17)
+
+
+class PlatformAdmissionBoundaryTest(unittest.TestCase):
+    def test_dpkg_completion_signal_uses_machine_phases_not_dependency_health(self) -> None:
+        for states, expected in (("install ok installed\nunknown ok not-installed\ndeinstall ok config-files", 0),
+                                 ("hold ok installed", 0), ("install ok installed\ninstall ok unpacked", 1),
+                                 ("install reinstreq half-installed", 1), ("install ok triggers-pending", 1),
+                                 ("install reinstreq installed", 1), ("deinstall ok installed", 1),
+                                 ("install ok unknown-phase", 1)):
+            with self.subTest(states=states):
+                result = run_bash('source "$1"\ndpkg-query() { printf "%s\\n" "' + states +
+                                  '"; }\ndpkg_package_database_is_configured\n')
+                self.assertEqual(result.returncode, expected, result.stderr)
+        failed = run_bash('source "$1"\ndpkg-query() { echo "query failed" >&2; return 17; }\n'
+                          'dpkg_package_database_is_configured\n')
+        self.assertEqual(failed.returncode, 2)
+        self.assertIn("query failed", failed.stderr)
+
+    def test_only_interim_completion_allows_normal_pending_triggers(self) -> None:
+        for state in ("install ok triggers-pending", "install ok triggers-awaited",
+                      "hold ok triggers-pending", "deinstall ok triggers-awaited",
+                      "install reinstreq triggers-pending", "install ok unpacked",
+                      "install ok half-configured", "install reinstreq installed"):
+            for mode in ("", "before-reinstall"):
+                with self.subTest(state=state, mode=mode):
+                    result = run_bash('source "$1"\ndpkg-query() { '
+                        '[[ "$*" == \'-W -f=${Status}\\n\' ]] || return 17; '
+                        'printf "%s\\n" "' + state + '"; }\n'
+                        'dpkg_package_database_is_configured ' + mode + '\n')
+                    allowed = mode == "before-reinstall" and state in (
+                        "install ok triggers-pending", "install ok triggers-awaited")
+                    self.assertEqual(result.returncode, 0 if allowed else 1, result.stderr)
+        failed = run_bash('source "$1"\ndpkg-query() { return 17; }\n'
+                          'dpkg_package_database_is_configured before-reinstall\n')
+        self.assertEqual(failed.returncode, 2)
+
+    @staticmethod
+    def trigger_resume_probe(interim: str, final: str = "install ok installed", *,
+                             handler_fails: bool = False) -> subprocess.CompletedProcess[str]:
+        # Real shell flow/classifier; external APT and producer decisions are
+        # controlled doubles. Scheduler tests own real trigger/plan admission.
+        return run_bash(r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+cd "${tmp}"
+DEBS=(./candidate.deb)
+APPLIES=0
+prepare_board_platform_admission() { echo PLATFORM; }
+verify_board_platform_admission() { echo PLATFORM; }
+verify_board_platform_plan() { :; }
+verify_simulated_package_removals() { :; }
+verify_scheduler_transaction() { shift; echo "ADMISSION $*"; }
+board_runtime_is_legacy() { return 0; }
+refresh_apt_metadata_for_board_install() { :; }
+stop_board_runtime_before_install() { :; }
+board_has_scheduler_cohort() { return 0; }
+apt_package_database_is_healthy() { return 0; }
+collect_exact_deb_install_specs() { local -n specs="$1"; specs=(./candidate.deb candidate:arm64=1); }
+collect_board_heal_specs() { :; }
+complete_board_install_after_packages() { echo COMPLETE; }
+remove_installed_local_deb_packages() { echo UNEXPECTED_REMOVAL; }
+NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL=ON
+NEAT_INSTALLER_ALLOW_DPKG_FALLBACK=ON
+dpkg-query() {
+  [[ "$*" == '-W -f=${Status}\n' || "$*" == '-W -f=${db:Status-Status}\n' ]] || return 17
+  local phase_only=0
+  [[ "$*" != '-W -f=${db:Status-Status}\n' ]] || phase_only=1
+  local state
+  case "${APPLIES}" in
+    0) state='install ok triggers-pending' ;;
+    1) [[ "${INTERIM}" != QUERY_FAILED ]] || return 17; state="${INTERIM}" ;;
+    *) [[ "${FINAL}" != QUERY_FAILED ]] || return 17; state="${FINAL}" ;;
+  esac
+  [[ "${phase_only}" != 1 ]] || state="${state##* }"
+  printf '%s\n' "${state}"
+}
+python3() {
+  [[ "$1" == -B && "$2" == "${SCHEDULER_PLATFORM_ADMISSION_PATH}" && "$3" == retirements ]]
+}
+run_sudo() {
+  printf '%s\n' "$*" >> commands
+  if [[ " $* " == *' --simulate '* ]]; then
+    # The first resume is a no-op with queued triggers; only the mandatory
+    # strict reinstall must plan all selected package Inst/Conf actions.
+    if [[ " $* " == *' --reinstall '* ]]; then
+      echo 'Inst candidate (1 local-deb [arm64])'
+      echo 'Conf candidate (1 local-deb [arm64])'
+    fi
+    return 0
+  fi
+  if [[ "$1 $2" == 'apt-get install' ]]; then
+    APPLIES=$((APPLIES + 1))
+    echo "APPLY ${APPLIES}"
+    if [[ "${APPLIES}" == 2 && "${HANDLER_FAILS}" == 1 ]]; then
+      echo 'dpkg trigger handler failed' >&2
+      return 100
+    fi
+    return 0
+  fi
+  [[ "$*" == 'apt-get check' ]]
+}
+''' + f"INTERIM='{interim}'; FINAL='{final}'; HANDLER_FAILS={int(handler_fails)}\n" + r'''
+if install_debs_on_board; then result=0; else result=$?; fi
+cat commands
+exit "${result}"
+''')
+
+    def test_trigger_only_resume_still_requires_strict_reinstall(self) -> None:
+        for state in ("install ok triggers-pending", "install ok triggers-awaited"):
+            with self.subTest(state=state):
+                result = self.trigger_resume_probe(state)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("APPLY 1\n", result.stdout)
+                self.assertIn("APPLY 2\n", result.stdout)
+                self.assertIn("ADMISSION --repair-incomplete --resume-incomplete\n", result.stdout)
+                self.assertIn("ADMISSION --repair-incomplete\n", result.stdout)
+                self.assertIn("COMPLETE\n", result.stdout)
+                phases = [line for line in result.stdout.splitlines()
+                          if line == "PLATFORM" or line.startswith(("ADMISSION ", "APPLY "))]
+                self.assertEqual(phases, ["PLATFORM", "ADMISSION --repair-incomplete --resume-incomplete",
+                                          "APPLY 1", "PLATFORM", "ADMISSION --repair-incomplete", "APPLY 2"])
+                commands = [s for s in result.stdout.splitlines() if s.startswith("apt-get install")]
+                self.assertEqual(len(commands), 4)
+                for index, command in enumerate(commands):
+                    self.assertIn("--no-remove", command)
+                    self.assertEqual("--reinstall" in command, index >= 2)
+                    self.assertIn("./candidate.deb candidate:arm64=1", command)
+
+    def test_nontrigger_interim_states_cannot_reach_strict_reinstall(self) -> None:
+        for state in ("install ok unpacked", "install ok half-configured", "hold ok triggers-pending",
+                      "install reinstreq triggers-pending", "install reinstreq installed", "QUERY_FAILED"):
+            with self.subTest(state=state):
+                result = self.trigger_resume_probe(state)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("APPLY 1\n", result.stdout)
+                for forbidden in ("APPLY 2", "COMPLETE", "UNEXPECTED_REMOVAL", "dpkg -i", "--reinstall"):
+                    self.assertNotIn(forbidden, result.stdout)
+
+    def test_final_pending_state_or_trigger_handler_failure_prevents_completion(self) -> None:
+        for state, fails in (("install ok triggers-pending", False), ("install ok triggers-awaited", False),
+                             ("install ok half-configured", False), ("install reinstreq installed", False),
+                             ("QUERY_FAILED", False), ("install ok installed", True)):
+            with self.subTest(state=state, handler_fails=fails):
+                result = self.trigger_resume_probe("install ok triggers-pending", state, handler_fails=fails)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("APPLY 2\n", result.stdout)
+                for forbidden in ("COMPLETE", "UNEXPECTED_REMOVAL", "dpkg -i"):
+                    self.assertNotIn(forbidden, result.stdout)
+                if fails:
+                    self.assertIn("dpkg trigger handler failed", result.stderr)
+                    self.assertIn("Final recovery reinstall failed", result.stderr)
+
+    def test_unhealthy_apt_diagnostic_is_preserved_before_temporary_log_cleanup(self) -> None:
+        for status in (0, 100):
+            with self.subTest(status=status):
+                result = run_bash(r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+mktemp() { command mktemp "${tmp}/apt-check-XXXXXX"; }
+run_sudo() { echo 'Exact APT dependency diagnostic' >&2; return ''' + str(status) + r'''; }
+dpkg-query() { echo 'UNEXPECTED_DPKG_DIAGNOSTIC' >&2; return 17; }
+if apt_package_database_is_healthy; then echo HEALTHY; else echo UNHEALTHY; fi
+[[ -z "$(find "${tmp}" -type f -print)" ]]
+''')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), "HEALTHY" if status == 0 else "UNHEALTHY")
+                self.assertEqual("Exact APT dependency diagnostic" in result.stderr, status != 0)
+                self.assertEqual("UNEXPECTED_DPKG_DIAGNOSTIC" in result.stderr, status != 0)
+                self.assertEqual("Unable to read incomplete dpkg state" in result.stderr, status != 0)
+
+    def test_unhealthy_apt_reports_exact_incomplete_states_and_trigger_fields(self) -> None:
+        rows = [
+            "configured\tinstall ok installed\tii \t1\tarm64\t\t",
+            "held-configured\thold ok installed\thi \t1\tarm64\t\t",
+            "absent\tunknown ok not-installed\tun \t\t\t\t",
+            "removed\tdeinstall ok config-files\trc \t1\tarm64\t\t",
+            "trigger-owner:arm64\tinstall ok triggers-pending\tit \t2.3-1\tarm64\tldconfig other-trigger\t",
+            "awaiting-client\tinstall ok triggers-awaited\tiW \t4+preview\tall\t\ttrigger-owner",
+            "unpacked-client\tinstall ok unpacked\tiU \t4\tarm64\t\t",
+            "broken-client\tinstall reinstreq half-installed\tiHR\t5\tarm64\t\t",
+            "half-configured\tinstall ok half-configured\tiF \t6\tarm64\t\t",
+            "held-pending\thold ok triggers-pending\tht \t7\tarm64\tldconfig\t",
+            "abnormal-selection\tdeinstall ok installed\tri \t8\tarm64\t\t",
+            "abnormal-error\tinstall reinstreq installed\tiiR\t9\tarm64\t\t",
+        ]
+        result = run_bash(r'''
+source "$1"
+run_sudo() { [[ "$*" == 'apt-get check' ]] || exit 99; echo 'Original APT failure' >&2; return 100; }
+dpkg-query() {
+  [[ "$#" == 2 && "$1" == -W ]] || exit 98
+  [[ "$2" == '-f=${binary:Package}\t${Status}\t${db:Status-Abbrev}\t${Version}\t${Architecture}\t${Triggers-Pending}\t${Triggers-Awaited}\n' ]] || exit 97
+  cat <<'STATES'
+''' + "\n".join(rows) + r'''
+STATES
+}
+apt_package_database_is_healthy
+echo UNEXPECTED_SUCCESS
+''')
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertNotIn("UNEXPECTED_SUCCESS", result.stdout)
+        self.assertIn("Original APT failure", result.stderr)
+        for row in rows[:4]:
+            self.assertNotIn(row, result.stderr)
+        for row in rows[4:]:
+            self.assertIn(row + "\n", result.stderr)
+        self.assertIn("Incomplete dpkg records: 8; omitted: 0", result.stderr)
+        self.assertLess(result.stderr.index("Original APT failure"),
+                        result.stderr.index("trigger-owner:arm64"))
+
+    def test_unhealthy_apt_dpkg_diagnostic_is_bounded(self) -> None:
+        result = run_bash(r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+cd "${tmp}"
+run_sudo() { echo 'Original APT failure' >&2; return 100; }
+dpkg-query() {
+  for ((i=1; i<=103; ++i)); do
+    printf 'pending-%03d\tinstall ok unpacked\tiU \t1\tarm64\t\t\n' "$i"
+  done
+}
+if apt_package_database_is_healthy; then status=0; else status=$?; fi
+[[ -z "$(find . -type f -print)" ]] || { echo UNEXPECTED_DIAGNOSTIC_WRITE >&2; exit 99; }
+exit "${status}"
+''')
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(sum(line.startswith("pending-") for line in result.stderr.splitlines()), 100)
+        self.assertIn("pending-100\t", result.stderr)
+        self.assertNotIn("pending-101\t", result.stderr)
+        self.assertIn("Incomplete dpkg records: 103; omitted: 3", result.stderr)
+
+    def test_unhealthy_dependencies_need_not_have_incomplete_dpkg_records(self) -> None:
+        result = run_bash(r'''
+source "$1"
+run_sudo() { echo 'Original APT dependency failure' >&2; return 100; }
+dpkg-query() { printf 'configured\tinstall ok installed\tii \t1\tarm64\t\t\n'; }
+apt_package_database_is_healthy
+''')
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("Original APT dependency failure", result.stderr)
+        self.assertIn("Incomplete dpkg records: 0; omitted: 0", result.stderr)
+        self.assertNotIn("configured\t", result.stderr)
+
+    def test_failed_dpkg_diagnostic_preserves_original_apt_failure_status(self) -> None:
+        for failing_command in ("dpkg-query", "awk"):
+            with self.subTest(failing_command=failing_command):
+                result = run_bash(r'''
+source "$1"
+run_sudo() { echo 'Original APT failure' >&2; return 100; }
+dpkg-query() { printf 'pending\tinstall ok unpacked\tiU \t1\tarm64\t\t\n'; }
+''' + failing_command + r'''() { echo 'Read-only diagnostic failed' >&2; return 17; }
+apt_package_database_is_healthy
+echo UNEXPECTED_SUCCESS
+''')
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("Original APT failure", result.stderr)
+                self.assertIn("Read-only diagnostic failed", result.stderr)
+                self.assertNotIn("UNEXPECTED_SUCCESS", result.stdout)
+
+    def test_incomplete_state_diagnostic_does_not_admit_board_package_mutation(self) -> None:
+        for query_fails in (False, True):
+            with self.subTest(query_fails=query_fails):
+                result = run_bash(r'''
+source "$1"
+DEBS=(./candidate.deb)
+prepare_board_platform_admission() { :; }
+verify_board_platform_admission() { :; }
+board_runtime_is_legacy() { return 0; }
+refresh_apt_metadata_for_board_install() { :; }
+stop_board_runtime_before_install() { :; }
+board_has_scheduler_cohort() { return 0; }
+collect_exact_deb_install_specs() { local -n specs="$1"; specs=(./candidate.deb); }
+collect_board_heal_specs() { :; }
+complete_board_install_after_packages() { echo UNEXPECTED_LIFECYCLE; }
+run_sudo() {
+  if [[ "$*" == 'apt-get check' ]]; then
+    echo 'Original APT failure' >&2
+    return 100
+  fi
+  echo "UNEXPECTED_MUTATION $*"
+  return 99
+}
+dpkg-query() {
+  if [[ "$2" == '-f=${Status}\n' ]]; then
+    echo 'install ok triggers-pending'
+    return 0
+  fi
+''' + ("  echo 'Read-only diagnostic failed' >&2; return 17\n" if query_fails else
+       "  printf 'foreign-pending\\tinstall ok triggers-pending\\tit \\t1\\tarm64\\tldconfig\\t\\n'\n") + r'''
+}
+python3() {
+  [[ "$1" == -B && "$2" == "${SCHEDULER_PLATFORM_ADMISSION_PATH}" && "$3" == retirements ]] || return 98
+  echo 'PRODUCER_REFUSED_FOREIGN_PENDING' >&2
+  return 23
+}
+install_debs_on_board
+echo UNEXPECTED_SUCCESS
+''')
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("Original APT failure", result.stderr)
+                self.assertIn("PRODUCER_REFUSED_FOREIGN_PENDING", result.stderr)
+                self.assertNotIn("UNEXPECTED_", result.stdout)
+                self.assertEqual("Read-only diagnostic failed" in result.stderr, query_fails)
+                if not query_fails:
+                    self.assertIn("foreign-pending\tinstall ok triggers-pending", result.stderr)
+
+    def test_version_overrides_still_require_provider_admission_before_neat_apt(self) -> None:
+        for override in ("FORCE_INSTALL=1", "NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON"):
+            with self.subTest(override=override):
+                result = run_bash('source "$1"\nENV_MODE=modalix-board\n' + override +
+                                  '\nDEBS=(./candidate.deb)'
+                                  '\nprepare_board_platform_admission() { echo ADMISSION; return 9; }'
+                                  '\nrun_sudo() { echo UNEXPECTED_APT; }'
+                                  '\nensure_platform_compatible\necho VERSION_CHECK_FINISHED'
+                                  '\ninstall_debs_on_board\necho UNEXPECTED_SUCCESS\n')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("ADMISSION", result.stdout)
+                self.assertLess(result.stdout.index("VERSION_CHECK_FINISHED"), result.stdout.index("ADMISSION"))
+                self.assertNotIn("UNEXPECTED_", result.stdout)
+
+    def test_sdk_modes_do_not_use_host_as_board_provider_authority(self) -> None:
+        for mode in ("elxr-sdk", "ros2-sdk"):
+            with self.subTest(mode=mode):
+                result = run_bash('source "$1"\nFORCE_INSTALL=1\nENV_MODE=' + mode +
+                                  '\nprepare_board_platform_admission() { echo ADMISSION; return 9; }'
+                                  '\nensure_platform_compatible\n')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn("ADMISSION", result.stdout)
 
 
 def _take_path_option(flag: str) -> Path | None:

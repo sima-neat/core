@@ -116,6 +116,9 @@ class TelemetryMonitor {
 public:
   /// Create a stopped monitor; contacts nothing until `start()`.
   TelemetryMonitor();
+  /// Use an explicit Sentinel Unix socket instead of `/run/simaai-sentinel/api.sock`.
+  /// Creates a stopped monitor; contacts nothing until `start()`.
+  explicit TelemetryMonitor(std::string socket_path);
   ~TelemetryMonitor();
 
   TelemetryMonitor(const TelemetryMonitor&) = delete;

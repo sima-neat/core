@@ -153,14 +153,14 @@ RTSP 拉取逾時——URL 錯誤或串流未傳輸影格。
 驗證 RTSP URL 是否可連線且正在積極地進行串流；檢查傳輸方式（TCP 或 UDP）。請參閱 [播放 RTSP 串流。](/tutorials/consume-rtsp-stream)。
 :::
 
-### 12. `CameraInput strict zero-copy requires external-buffer-mode`
+### 12. `Camera buffer is not one forwardable DMA-BUF and copying is disabled`
 
 :::info 原因
-`CameraInputOptions::allow_cpu_fallback` 預設為 false，因此 Neat 需要端到端 SiMaAI/裝置零拷貝支援。或者 `libcamerasrc` 沒有宣告通用的 `external-buffer-mode` 屬性，或者已安裝的記憶體函式庫無法將其設定匯出為 DMA-BUFs。
+`CameraInputOptions::allow_cpu_fallback` 預設為 false，因此 Neat 會直接轉送相機自身的 DMA-BUF，且從不複製。相機堆疊傳遞的影格並非各平面緊密相連的單一 DMA-BUF（例如每個 fd 一個平面，或非 DMA-BUF 記憶體）。
 :::
 
 :::tip 修復
-在安裝相容的相機和記憶體套件時，請務必維持嚴格的零複製。如果您必須在沒有 DMA-BUF 匯出的情況下使用相機堆疊，請明確選擇相容性橋接：
+請搭配平台的 `libcamera` 套件維持嚴格的零複製。如果您必須在無法將每個影格以單一 DMA-BUF 傳遞的相機堆疊上執行，請明確選擇相容性複製：
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -181,7 +181,7 @@ camera.allow_cpu_fallback = True
 </CodeTab>
 </CodeTabs>
 
-自適應模式仍然將下游的 CVU/MLA 階段的資料傳輸到 SiMaAI 記憶體。只有在上游相機緩衝區尚未被 EV74 使用時，才會在相機橋接器處進行複製。
+自適應模式仍然會將 DMA-BUF 交給下游的 CVU/MLA 階段。只有在相機影格並非各平面緊密相連的單一 DMA-BUF 時，才會複製到 CMA DMA-BUF 中。
 :::
 
 ### 13. `misconfig.media_caps … libcamerasrc … not-negotiated (-4)`
@@ -232,7 +232,7 @@ python3 share/sima-neat/tutorials/023_run_mipi_camera_model/run_mipi_camera_mode
   --pull-timeout-ms 15000 --print-backend
 </ShellCommand>
 
-生產流程應包含 `libcamerasrc`、`neatcamerabridge`（當啟用回退機制時）、`neatprocesscvu`、`neatprocessmla` 和 `appsink`。對於 BoxDecode 路由，還請確認 `--decode` 標記和閾值與模型封存檔相符。
+生產流程應包含 `libcamerasrc`、`neatcamerabridge`（當啟用回退機制時）、`neatkernelrunner`、`neatprocessmla` 和 `appsink`。對於 BoxDecode 路由，還請確認 `--decode` 標記和閾值與模型封存檔相符。
 :::
 
 ### 16. 圖的處理速度慢，或者即時影格會遺失。

@@ -123,6 +123,10 @@ inline simaai::neat::Tensor
 apply_output_tensor_override_entry(const simaai::neat::Tensor& base,
                                    const OutputTensorOverrideEntry& entry, bool materialize_output,
                                    bool preserve_dmabuf_output = false);
+inline simaai::neat::Tensor
+apply_admitted_output_tensor_override_entry(const simaai::neat::Tensor& base,
+                                            const OutputTensorOverrideEntry& entry,
+                                            bool materialize_output, bool preserve_dmabuf_output);
 
 inline void apply_output_tensor_override_route(simaai::neat::Tensor& tensor,
                                                const OutputTensorOverrideEntry& entry,
@@ -158,6 +162,13 @@ inline void apply_output_tensor_override_route(simaai::neat::Tensor& tensor,
   }
 }
 
+inline bool output_tensor_override_matches_identity(const simaai::neat::Tensor& tensor,
+                                                    const OutputTensorOverrideEntry& entry) {
+  return (entry.logical_output_index >= 0 &&
+          tensor.route.logical_index == entry.logical_output_index) ||
+         (entry.route_slot >= 0 && tensor.route.route_slot == entry.route_slot);
+}
+
 inline const simaai::neat::Tensor* select_output_tensor_override_base(
     const TensorList& tensors, const OutputTensorOverrideEntry& entry, std::size_t fallback_index) {
   if (tensors.empty()) {
@@ -166,6 +177,13 @@ inline const simaai::neat::Tensor* select_output_tensor_override_base(
   if (entry.logical_output_index >= 0) {
     for (const auto& tensor : tensors) {
       if (tensor.route.logical_index == entry.logical_output_index) {
+        return &tensor;
+      }
+    }
+  }
+  if (entry.route_slot >= 0) {
+    for (const auto& tensor : tensors) {
+      if (tensor.route.route_slot == entry.route_slot) {
         return &tensor;
       }
     }
@@ -188,12 +206,7 @@ inline simaai::neat::Tensor
 prepare_output_tensor_override_base(const simaai::neat::Tensor& selected,
                                     const OutputTensorOverrideEntry& entry) {
   simaai::neat::Tensor base = selected;
-  const bool same_logical_output =
-      entry.logical_output_index >= 0 && selected.route.logical_index == entry.logical_output_index;
-  const bool same_route_slot =
-      entry.route_slot >= 0 && selected.route.route_slot == entry.route_slot;
-
-  if (same_logical_output || same_route_slot) {
+  if (output_tensor_override_matches_identity(selected, entry)) {
     // TensorSet metadata is the runtime authority for the physical address.
     // Its byte_offset is already fully composed against the live parent
     // carrier (frame-arena offset plus any logical view offset).  The public
@@ -212,6 +225,18 @@ prepare_output_tensor_override_base(const simaai::neat::Tensor& selected,
   // selected physical root.
   base.byte_offset = 0;
   return base;
+}
+
+inline simaai::neat::Tensor
+project_output_tensor_override_entry(const simaai::neat::Tensor& selected,
+                                     const OutputTensorOverrideEntry& entry,
+                                     bool materialize_output, bool preserve_dmabuf_output) {
+  Tensor base = prepare_output_tensor_override_base(selected, entry);
+  return output_tensor_override_matches_identity(selected, entry)
+             ? apply_admitted_output_tensor_override_entry(base, entry, materialize_output,
+                                                           preserve_dmabuf_output)
+             : apply_output_tensor_override_entry(base, entry, materialize_output,
+                                                  preserve_dmabuf_output);
 }
 
 inline Sample build_output_tensor_override_bundle(const Sample& canonical,
@@ -255,10 +280,8 @@ inline Sample build_output_tensor_override_bundle(const Sample& canonical,
   bundle.tensors.reserve(override.outputs.size());
   for (size_t i = 0; i < override.outputs.size(); ++i) {
     const OutputTensorOverrideEntry& entry = override.outputs[i];
-    Tensor base = base_tensor;
-    base.byte_offset = 0;
-    Tensor tensor =
-        apply_output_tensor_override_entry(base, entry, materialize_output, preserve_dmabuf_output);
+    Tensor tensor = project_output_tensor_override_entry(base_tensor, entry, materialize_output,
+                                                         preserve_dmabuf_output);
     apply_output_tensor_override_route(tensor, entry, i);
     if (tensor.route.segment_name.empty()) {
       tensor.route.segment_name = "output" + std::to_string(i);
@@ -273,22 +296,9 @@ inline Sample build_output_tensor_override_bundle(const Sample& canonical,
 }
 
 inline simaai::neat::Tensor
-apply_output_tensor_override_entry(const simaai::neat::Tensor& base,
-                                   const OutputTensorOverrideEntry& entry, bool materialize_output,
-                                   bool preserve_dmabuf_output) {
-  simaai::neat::Tensor out_source = base;
-  if ((entry.memory_index >= 0 || !entry.segment_name.empty()) && base.storage &&
-      base.storage->kind == simaai::neat::StorageKind::GstSample) {
-    // Build the authoritative output segment view first, then apply shape/dtype/stride below.
-    // For SimaaiSegmentMemory buffers the GstBuffer usually has one parent memory and multiple
-    // named runtime segments.  The public output contract's segment_name is more specific than
-    // memory_index (which may be a physical-output id, route id, or historical segment index), so
-    // resolve by name first and use memory_index only as a fallback for legacy multi-GstMemory
-    // buffers.
-    out_source = pipeline_internal::tensor_view_from_sample_segment(
-        base, entry.segment_name, entry.memory_index, /*keep_holder=*/true);
-  }
-  simaai::neat::Tensor out = std::move(out_source);
+finish_output_tensor_override_entry(simaai::neat::Tensor out,
+                                    const OutputTensorOverrideEntry& entry, bool materialize_output,
+                                    bool preserve_dmabuf_output) {
   out.shape = entry.shape;
   out.byte_offset = out.byte_offset + entry.byte_offset;
   out.dtype = entry.dtype;
@@ -357,6 +367,51 @@ apply_output_tensor_override_entry(const simaai::neat::Tensor& base,
   return out;
 }
 
+inline simaai::neat::Tensor
+apply_output_tensor_override_entry(const simaai::neat::Tensor& base,
+                                   const OutputTensorOverrideEntry& entry, bool materialize_output,
+                                   bool preserve_dmabuf_output) {
+  simaai::neat::Tensor out_source = base;
+  if ((entry.memory_index >= 0 || !entry.segment_name.empty()) && base.storage &&
+      base.storage->kind == simaai::neat::StorageKind::GstSample) {
+    // Unmatched generic/stale transport uses the public contract's actual segment name first;
+    // its memory_index may be a producer id or a historical transport selector.
+    out_source = pipeline_internal::tensor_view_from_sample_segment(
+        base, entry.segment_name, entry.memory_index, /*keep_holder=*/true);
+  }
+  return finish_output_tensor_override_entry(std::move(out_source), entry, materialize_output,
+                                             preserve_dmabuf_output);
+}
+
+inline simaai::neat::Tensor
+apply_admitted_output_tensor_override_entry(const simaai::neat::Tensor& base,
+                                            const OutputTensorOverrideEntry& entry,
+                                            bool materialize_output, bool preserve_dmabuf_output) {
+  simaai::neat::Tensor out_source = base;
+  if (base.storage && base.storage->kind == simaai::neat::StorageKind::GstSample) {
+    const int memory_index = base.route.memory_index;
+    if (memory_index < 0 ||
+        (!base.storage->sima_segments.empty() &&
+         static_cast<std::size_t>(memory_index) >= base.storage->sima_segments.size())) {
+      throw std::runtime_error("output override: matching output has no valid admitted carrier "
+                               "selector");
+    }
+    // Exact logical/slot identity keeps the admitted binding. Rebind the current child view
+    // even for a warm parent holder, without using historical override selectors or a logical
+    // alias as an allocator name. This is a metadata-only view; it does not map or copy bytes.
+    out_source = pipeline_internal::tensor_view_from_sample_memory(base, memory_index,
+                                                                   /*keep_holder=*/true);
+    if (out_source.route.memory_index != memory_index) {
+      throw std::runtime_error("output override: admitted carrier selector did not resolve");
+    }
+    // A transport selector is not a producer physical id. Restore publication provenance and
+    // route aliases before the existing public name/index/slot overlay below.
+    out_source.route = base.route;
+  }
+  return finish_output_tensor_override_entry(std::move(out_source), entry, materialize_output,
+                                             preserve_dmabuf_output);
+}
+
 inline void overlay_output_tensor_override_entry(simaai::neat::Tensor& out,
                                                  const OutputTensorOverrideEntry& entry) {
   out.shape = entry.shape;
@@ -407,9 +462,8 @@ inline Sample apply_output_tensor_override(const Sample& base, const OutputTenso
       if (!selected_base) {
         continue;
       }
-      Tensor base_tensor = prepare_output_tensor_override_base(*selected_base, entry);
-      Tensor tensor = apply_output_tensor_override_entry(base_tensor, entry, materialize_output,
-                                                         preserve_dmabuf_output);
+      Tensor tensor = project_output_tensor_override_entry(
+          *selected_base, entry, materialize_output, preserve_dmabuf_output);
       apply_output_tensor_override_route(tensor, entry, i);
       out.owned = out.owned && tensor.storage && tensor.storage->kind == StorageKind::CpuOwned;
       out.tensors.emplace_back(std::move(tensor));

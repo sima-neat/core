@@ -6,6 +6,8 @@
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
 
+#include <simaai/scheduler/client/stage.h>
+
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -16,6 +18,7 @@
 #include <memory>
 #include <limits>
 #include <sstream>
+#include <stdexcept>
 #include <unordered_map>
 
 namespace simaai::neat::pipeline_internal::sima {
@@ -49,6 +52,7 @@ bool manifest_context_debug_relevant_element(GstElement* element) {
   }
   const std::string factory = lower_copy(element_factory_name(element));
   return factory.find("neatprocessmla") != std::string::npos ||
+         factory.find("neatkernelrunner") != std::string::npos ||
          factory.find("neatprocesscvu") != std::string::npos ||
          factory.find("neatdetess") != std::string::npos ||
          factory.find("neatobjectdecode") != std::string::npos;
@@ -495,11 +499,26 @@ nlohmann::json to_json(const StageStaticSpec& spec) {
   j["plugin_kind"] = spec.plugin_kind;
   j["kernel_kind"] = spec.kernel_kind;
   j["name_table"] = spec.name_table;
+  if (spec.image_publication) {
+    const auto& image = *spec.image_publication;
+    auto planes = nlohmann::json::array();
+    for (const auto& plane : image.planes)
+      planes.push_back({{"backend_output_index", plane.backend_output_index},
+                        {"byte_offset", plane.byte_offset},
+                        {"stride", plane.stride},
+                        {"visible_rows", plane.visible_rows},
+                        {"visible_row_bytes", plane.visible_row_bytes}});
+    j["image_publication"] = {{"format", gst_video_format_to_string(image.format)},
+                              {"width", image.width},
+                              {"height", image.height},
+                              {"planes", std::move(planes)}};
+  }
   if (spec.frame_arena_size_bytes != 0U) {
     j["frame_arena_size_bytes"] = spec.frame_arena_size_bytes;
     j["frame_arena_role"] = static_cast<int>(spec.frame_arena_role);
     j["frame_arena_storage_domain"] = static_cast<int>(spec.frame_arena_storage_domain);
     j["frame_arena_provenance"] = static_cast<int>(spec.frame_arena_provenance);
+    j["frame_arena_allocation_policy"] = static_cast<int>(spec.frame_arena_allocation_policy);
     j["frame_arena_required_device_access"] = spec.frame_arena_required_device_access;
     j["frame_arena_escape_policy"] = static_cast<int>(spec.frame_arena_escape_policy);
   }
@@ -596,6 +615,7 @@ nlohmann::json to_json(const StageStaticSpec& spec) {
 
 nlohmann::json to_json(const SimaPluginStaticManifest& manifest) {
   nlohmann::json j = nlohmann::json::object();
+  j["abi_version"] = SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION;
   j["session_id"] = manifest.session_id;
   j["model_id"] = manifest.model_id;
   j["stages"] = nlohmann::json::array();
@@ -630,6 +650,28 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
     return std::nullopt;
   }
 
+  int abi_version = 30; // Unversioned historical JSON has strict placement only.
+  if (root.contains("abi_version")) {
+    if (!root["abi_version"].is_number_integer() ||
+        (root["abi_version"] != 30 &&
+         root["abi_version"] != SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION)) {
+      if (error_message)
+        *error_message = "manifest abi_version must be an integer";
+      return std::nullopt;
+    }
+    try {
+      abi_version = root["abi_version"].get<int>();
+    } catch (const std::exception&) {
+      if (error_message)
+        *error_message = "manifest abi_version is out of range";
+      return std::nullopt;
+    }
+  }
+  if (abi_version != 30 && abi_version != SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION) {
+    if (error_message)
+      *error_message = "unsupported manifest ABI version";
+    return std::nullopt;
+  }
   SimaPluginStaticManifest manifest;
   read_string_key(root, "session_id", manifest.session_id);
   read_string_key(root, "model_id", manifest.model_id);
@@ -648,6 +690,57 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
     read_string_key(stage_j, "logical_stage_id", stage.logical_stage_id);
     read_string_key(stage_j, "plugin_kind", stage.plugin_kind);
     read_string_key(stage_j, "kernel_kind", stage.kernel_kind);
+    if (stage_j.contains("image_publication")) {
+      try {
+        // This is metadata only: no executable or numerical policy is restored.
+        // Preserve the ordered physical-relative descriptor exactly. Admission
+        // rechecks it against the independently checked numerical contract.
+        const auto& value = stage_j.at("image_publication");
+        const auto integer = [](const nlohmann::json& object, const char* key,
+                                std::uint64_t maximum, bool positive) {
+          const auto& number = object.at(key);
+          if (!number.is_number_integer() ||
+              (!number.is_number_unsigned() && number.get<std::int64_t>() < 0))
+            throw std::invalid_argument("image publication integer is negative or non-integral");
+          const auto result = number.get<std::uint64_t>();
+          if (result > maximum || (positive && result == 0))
+            throw std::invalid_argument("image publication integer is out of range");
+          return result;
+        };
+        auto image = std::make_shared<::simaai::scheduler::client::TensorStageImagePublication>();
+        image->format = gst_video_format_from_string(value.at("format").get<std::string>().c_str());
+        if (image->format == GST_VIDEO_FORMAT_UNKNOWN || image->format == GST_VIDEO_FORMAT_ENCODED)
+          throw std::invalid_argument("image publication requires a raw video format");
+        image->width = integer(value, "width", std::numeric_limits<guint>::max(), true);
+        image->height = integer(value, "height", std::numeric_limits<guint>::max(), true);
+        const auto& planes = value.at("planes");
+        if (!planes.is_array() || planes.empty() || planes.size() > GST_VIDEO_MAX_PLANES)
+          throw std::invalid_argument("image publication requires bounded nonempty planes");
+        for (const auto& entry : planes) {
+          ::simaai::scheduler::client::TensorStageImagePlane plane;
+          plane.backend_output_index =
+              integer(entry, "backend_output_index", std::numeric_limits<int>::max(), false);
+          plane.byte_offset =
+              integer(entry, "byte_offset", std::numeric_limits<gsize>::max(), false);
+          plane.stride = integer(entry, "stride", std::numeric_limits<gint>::max(), true);
+          plane.visible_rows =
+              integer(entry, "visible_rows", std::numeric_limits<guint>::max(), true);
+          plane.visible_row_bytes =
+              integer(entry, "visible_row_bytes", std::numeric_limits<guint>::max(), true);
+          if (plane.visible_row_bytes > static_cast<guint>(plane.stride) ||
+              std::any_of(image->planes.begin(), image->planes.end(), [&](const auto& prior) {
+                return prior.backend_output_index == plane.backend_output_index;
+              }))
+            throw std::invalid_argument("image publication has an invalid or duplicate plane");
+          image->planes.push_back(plane);
+        }
+        stage.image_publication = std::move(image);
+      } catch (const std::exception& ex) {
+        if (error_message)
+          *error_message = std::string("manifest image_publication: ") + ex.what();
+        return std::nullopt;
+      }
+    }
     if (stage_j.contains("frame_arena_size_bytes") &&
         stage_j["frame_arena_size_bytes"].is_number_unsigned()) {
       stage.frame_arena_size_bytes = stage_j["frame_arena_size_bytes"].get<std::uint64_t>();
@@ -665,6 +758,36 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
     int frame_arena_storage_domain = static_cast<int>(static_contract::ArenaStorageDomain::Unknown);
     int frame_arena_provenance =
         static_cast<int>(static_contract::ArenaAllocationProvenance::Unknown);
+    int frame_arena_allocation_policy =
+        static_cast<int>(static_contract::ArenaAllocationPolicy::RequiredDomain);
+    if (stage_j.contains("frame_arena_allocation_policy")) {
+      if (abi_version != SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION ||
+          !stage_j["frame_arena_allocation_policy"].is_number_integer() ||
+          (stage_j["frame_arena_allocation_policy"] != 0 &&
+           stage_j["frame_arena_allocation_policy"] != 1)) {
+        if (error_message)
+          *error_message = "allocation policy requires current manifest ABI";
+        return std::nullopt;
+      }
+      try {
+        frame_arena_allocation_policy = stage_j["frame_arena_allocation_policy"].get<int>();
+      } catch (const std::exception&) {
+        if (error_message)
+          *error_message = "manifest allocation policy is out of range";
+        return std::nullopt;
+      }
+    } else if (abi_version == SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION &&
+               stage.frame_arena_size_bytes != 0U) {
+      if (error_message)
+        *error_message = "manifest frame arena is missing allocation policy";
+      return std::nullopt;
+    }
+    const bool required_domain =
+        frame_arena_allocation_policy ==
+        static_cast<int>(static_contract::ArenaAllocationPolicy::RequiredDomain);
+    const bool preferred_dms =
+        frame_arena_allocation_policy ==
+        static_cast<int>(static_contract::ArenaAllocationPolicy::PreferDmsThenCma);
     int frame_arena_required_device_access = 0;
     int frame_arena_escape_policy =
         static_cast<int>(static_contract::ArenaEscapePolicy::InternalOnly);
@@ -692,27 +815,39 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
         (frame_arena_provenance ==
              static_cast<int>(static_contract::ArenaAllocationProvenance::ExternalAdopted) &&
          frame_arena_role == static_cast<int>(FrameArenaRole::ReuseInput));
-    const bool arena_placement_valid =
-        stage.frame_arena_size_bytes == 0U ||
-        (frame_arena_role >= static_cast<int>(FrameArenaRole::Allocate) &&
-         frame_arena_role <= static_cast<int>(FrameArenaRole::ReuseInput) &&
-         (known_domain || external_unknown_domain) && provenance_role_valid &&
+    const bool allocation_policy_valid =
+        required_domain ||
+        (preferred_dms && stage.frame_arena_size_bytes != 0U && known_domain &&
+         frame_arena_storage_domain == static_cast<int>(static_contract::ArenaStorageDomain::Dms) &&
+         frame_arena_provenance ==
+             static_cast<int>(static_contract::ArenaAllocationProvenance::CoreAllocated) &&
          frame_arena_required_device_access > 0 &&
-         (frame_arena_required_device_access & ~kKnownDeviceAccess) == 0 &&
-         frame_arena_escape_policy >=
-             static_cast<int>(static_contract::ArenaEscapePolicy::InternalOnly) &&
-         frame_arena_escape_policy <=
-             static_cast<int>(static_contract::ArenaEscapePolicy::CpuMappablePublic) &&
-         !(frame_arena_storage_domain ==
-               static_cast<int>(static_contract::ArenaStorageDomain::Dms) &&
-           (frame_arena_required_device_access &
-            static_cast<int>(static_contract::ArenaDeviceAccess::Ev74)) != 0));
+         !(frame_arena_required_device_access &
+           static_cast<int>(static_contract::ArenaDeviceAccess::Ev74)));
+    const bool arena_placement_valid =
+        allocation_policy_valid &&
+        (stage.frame_arena_size_bytes == 0U ||
+         (frame_arena_role >= static_cast<int>(FrameArenaRole::Allocate) &&
+          frame_arena_role <= static_cast<int>(FrameArenaRole::ReuseInput) &&
+          (known_domain || external_unknown_domain) && provenance_role_valid &&
+          frame_arena_required_device_access > 0 &&
+          (frame_arena_required_device_access & ~kKnownDeviceAccess) == 0 &&
+          frame_arena_escape_policy >=
+              static_cast<int>(static_contract::ArenaEscapePolicy::InternalOnly) &&
+          frame_arena_escape_policy <=
+              static_cast<int>(static_contract::ArenaEscapePolicy::CpuMappablePublic) &&
+          !(frame_arena_storage_domain ==
+                static_cast<int>(static_contract::ArenaStorageDomain::Dms) &&
+            (frame_arena_required_device_access &
+             static_cast<int>(static_contract::ArenaDeviceAccess::Ev74)) != 0)));
     if (!arena_placement_valid) {
       if (error_message) {
         *error_message = "manifest stage has invalid frame-arena placement";
       }
       return std::nullopt;
     }
+    stage.frame_arena_allocation_policy =
+        static_cast<static_contract::ArenaAllocationPolicy>(frame_arena_allocation_policy);
     stage.frame_arena_storage_domain =
         static_cast<static_contract::ArenaStorageDomain>(frame_arena_storage_domain);
     stage.frame_arena_provenance =
@@ -1065,10 +1200,23 @@ bool manifest_stage_debug_enabled() {
   return pipeline_internal::env_bool("SIMA_STAGE_DEBUG", false);
 }
 
+SimaPluginStaticManifest metadata_snapshot(SimaPluginStaticManifest manifest) {
+  // Normalize the transport discriminator before releasing execution owners.
+  // The caller retains the original semantic payload and canonical recipe;
+  // this private snapshot owns only the value storage borrowed by the ABI.
+  for (auto& stage : manifest.stages) {
+    if (stage.native_kernel) {
+      stage.payload_kind = StagePayloadKind::None;
+      stage.native_kernel.reset();
+    }
+  }
+  return manifest;
+}
+
 class ManifestAccessorRegistry {
 public:
   explicit ManifestAccessorRegistry(SimaPluginStaticManifest manifest)
-      : manifest_(std::move(manifest)), session_id_(manifest_.session_id),
+      : manifest_(metadata_snapshot(std::move(manifest))), session_id_(manifest_.session_id),
         model_id_(manifest_.model_id) {
     accessor_.abi_version = SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION;
     accessor_.user_data = this;
@@ -1106,6 +1254,12 @@ public:
       }
     }
   }
+
+  // Accessor user_data and nested ABI pointers refer to this exact registry.
+  ManifestAccessorRegistry(const ManifestAccessorRegistry&) = delete;
+  ManifestAccessorRegistry& operator=(const ManifestAccessorRegistry&) = delete;
+  ManifestAccessorRegistry(ManifestAccessorRegistry&&) = delete;
+  ManifestAccessorRegistry& operator=(ManifestAccessorRegistry&&) = delete;
 
   const SimaPluginStaticManifestAccessor* accessor() const {
     return &accessor_;
@@ -1168,7 +1322,6 @@ private:
     std::vector<gdouble> processcvu_channel_stddev;
     std::vector<sima_ev_shape_desc> boxdecode_slice_shapes;
     std::vector<gint> boxdecode_tensor_storage_kind;
-    std::vector<gint> boxdecode_pose_classes;
     std::vector<gint> boxdecode_tensor_roles;
     SimaPluginSuperPointStagePayloadV1 boxdecode_superpoint{};
     SimaPluginStageSpec spec{};
@@ -1623,13 +1776,18 @@ private:
         static_cast<SimaPluginFrameArenaStorageDomain>(stage.frame_arena_storage_domain);
     out.spec.frame_arena_provenance =
         static_cast<SimaPluginFrameArenaProvenance>(stage.frame_arena_provenance);
+    out.spec.frame_arena_allocation_policy =
+        static_cast<SimaPluginFrameArenaAllocationPolicy>(stage.frame_arena_allocation_policy);
     out.spec.frame_arena_required_device_access =
         static_cast<guint>(stage.frame_arena_required_device_access);
     out.spec.frame_arena_escape_policy =
         static_cast<SimaPluginFrameArenaEscapePolicy>(stage.frame_arena_escape_policy);
-    out.spec.payload_kind = payload_kind_to_abi(stage.payload_kind);
+    // The frozen metadata snapshot already carries the transport discriminator;
+    // canonical numerical stages expose no legacy numerical payload.
+    const auto transport_payload = stage.payload_kind;
+    out.spec.payload_kind = payload_kind_to_abi(transport_payload);
 
-    switch (stage.payload_kind) {
+    switch (transport_payload) {
     case StagePayloadKind::ProcessCvu: {
       out.spec.payload.processcvu.graph_family =
           stage.processcvu.graph_family.empty() ? nullptr : stage.processcvu.graph_family.c_str();
@@ -1764,12 +1922,14 @@ private:
           static_cast<guint>(out.processcvu_q_zp_array.size());
 
       out.spec.payload.processcvu.num_in_tensor = stage.processcvu.num_in_tensor;
-      out.processcvu_input_tensors = stage.processcvu.input_tensors;
+      out.processcvu_input_tensors.assign(stage.processcvu.input_tensors.begin(),
+                                          stage.processcvu.input_tensors.end());
       out.spec.payload.processcvu.input_tensors =
           out.processcvu_input_tensors.empty() ? nullptr : out.processcvu_input_tensors.data();
       out.spec.payload.processcvu.input_tensors_len =
           static_cast<guint>(out.processcvu_input_tensors.size());
-      out.processcvu_output_tensors = stage.processcvu.output_tensors;
+      out.processcvu_output_tensors.assign(stage.processcvu.output_tensors.begin(),
+                                           stage.processcvu.output_tensors.end());
       out.spec.payload.processcvu.output_tensors =
           out.processcvu_output_tensors.empty() ? nullptr : out.processcvu_output_tensors.data();
       out.spec.payload.processcvu.output_tensors_len =
@@ -1992,15 +2152,6 @@ private:
       out.spec.payload.boxdecode.tensor_storage_kind_len =
           static_cast<guint>(out.boxdecode_tensor_storage_kind.size());
 
-      out.boxdecode_pose_classes.clear();
-      out.boxdecode_pose_classes.reserve(stage.boxdecode.pose_classes.size());
-      for (const int value : stage.boxdecode.pose_classes) {
-        out.boxdecode_pose_classes.push_back(static_cast<gint>(value));
-      }
-      out.spec.payload.boxdecode.pose_classes =
-          out.boxdecode_pose_classes.empty() ? nullptr : out.boxdecode_pose_classes.data();
-      out.spec.payload.boxdecode.pose_classes_len =
-          static_cast<guint>(out.boxdecode_pose_classes.size());
       out.spec.payload.boxdecode.superpoint = nullptr;
       if (stage.boxdecode.decode_type == BoxDecodeType::SuperPoint) {
         const auto& sp = stage.boxdecode.superpoint;
@@ -2189,7 +2340,7 @@ private:
     return &self->stage_storage_[it->second].spec;
   }
 
-  SimaPluginStaticManifest manifest_;
+  const SimaPluginStaticManifest manifest_;
   std::string session_id_;
   std::string model_id_;
   SimaPluginStaticManifestAccessor accessor_{};
@@ -2329,17 +2480,24 @@ void apply_manifest_context_recursive(GstElement* element, GstContext* context) 
     return;
   }
 
-  GstIterator* it = gst_bin_iterate_recurse(GST_BIN(element));
+  const std::unique_ptr<GstIterator, decltype(&gst_iterator_free)> it(
+      gst_bin_iterate_recurse(GST_BIN(element)), &gst_iterator_free);
   if (!it) {
     return;
   }
 
-  GValue item = G_VALUE_INIT;
+  struct IteratorValue {
+    GValue value = G_VALUE_INIT;
+    ~IteratorValue() {
+      if (G_IS_VALUE(&value))
+        g_value_unset(&value);
+    }
+  } item;
   gboolean done = FALSE;
   while (!done) {
-    switch (gst_iterator_next(it, &item)) {
+    switch (gst_iterator_next(it.get(), &item.value)) {
     case GST_ITERATOR_OK: {
-      GstElement* child = GST_ELEMENT(g_value_get_object(&item));
+      GstElement* child = GST_ELEMENT(g_value_get_object(&item.value));
       if (child && child != element) {
         if (element_has_equivalent_manifest_context(child, context)) {
           manifest_context_debug_log("set_context_recursive_child_skip_existing", child, context);
@@ -2348,11 +2506,11 @@ void apply_manifest_context_recursive(GstElement* element, GstContext* context) 
           gst_element_set_context(child, context);
         }
       }
-      g_value_reset(&item);
+      g_value_reset(&item.value);
       break;
     }
     case GST_ITERATOR_RESYNC:
-      gst_iterator_resync(it);
+      gst_iterator_resync(it.get());
       break;
     case GST_ITERATOR_DONE:
       done = TRUE;
@@ -2363,8 +2521,6 @@ void apply_manifest_context_recursive(GstElement* element, GstContext* context) 
       break;
     }
   }
-  g_value_unset(&item);
-  gst_iterator_free(it);
 }
 
 void pipeline_deep_element_added_cb(GstBin* pipeline_bin, GstBin*, GstElement* element, gpointer) {
@@ -2395,27 +2551,29 @@ bool attach_manifest_context(GstElement* pipeline, const SimaPluginStaticManifes
     return false;
   }
 
-  GstContext* context = gst_context_new(SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE, TRUE);
+  const std::unique_ptr<GstContext, decltype(&gst_context_unref)> context(
+      gst_context_new(SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE, TRUE), &gst_context_unref);
   if (!context) {
     if (error_message)
       *error_message = "attach manifest context failed: gst_context_new returned null";
     return false;
   }
 
-  auto* owner = new (std::nothrow) ManifestContextOwner(manifest);
+  auto owner =
+      std::unique_ptr<ManifestContextOwner>(new (std::nothrow) ManifestContextOwner(manifest));
   if (!owner) {
     if (error_message) {
       *error_message = "attach manifest context failed: unable to create manifest owner";
     }
-    gst_context_unref(context);
     return false;
   }
 
-  GstStructure* structure = gst_context_writable_structure(context);
+  GstStructure* structure = gst_context_writable_structure(context.get());
 
   GValue handle_value = G_VALUE_INIT;
   g_value_init(&handle_value, sima_plugin_static_manifest_handle_get_type());
   g_value_take_boxed(&handle_value, const_cast<SimaPluginStaticManifestHandle*>(owner->handle()));
+  owner.release(); // The boxed handle now owns the registry's initial reference.
   gst_structure_take_value(structure, SIMA_PLUGIN_STATIC_MANIFEST_KEY_HANDLE, &handle_value);
   if (!manifest.session_id.empty()) {
     gst_structure_set(structure, SIMA_PLUGIN_STATIC_MANIFEST_KEY_SESSION_ID, G_TYPE_STRING,
@@ -2426,29 +2584,29 @@ bool attach_manifest_context(GstElement* pipeline, const SimaPluginStaticManifes
                       manifest.model_id.c_str(), nullptr);
   }
 
-  auto* registration = new (std::nothrow) ManifestContextRegistration();
+  std::unique_ptr<ManifestContextRegistration, decltype(&manifest_context_registration_destroy)>
+      registration(new (std::nothrow) ManifestContextRegistration(),
+                   &manifest_context_registration_destroy);
   if (!registration) {
     if (error_message) {
       *error_message = "attach manifest context failed: unable to create manifest registration";
     }
-    gst_context_unref(context);
     return false;
   }
   registration->pipeline = pipeline;
-  registration->context = gst_context_ref(context);
+  registration->context = gst_context_ref(context.get());
   if (GST_IS_BIN(pipeline)) {
     registration->deep_element_added_handler = g_signal_connect(
         pipeline, "deep-element-added", G_CALLBACK(pipeline_deep_element_added_cb), nullptr);
   }
-  g_object_set_qdata_full(G_OBJECT(pipeline), manifest_context_registration_quark(), registration,
-                          manifest_context_registration_destroy);
+  g_object_set_qdata_full(G_OBJECT(pipeline), manifest_context_registration_quark(),
+                          registration.release(), manifest_context_registration_destroy);
   if (manifest_context_debug_enabled()) {
-    std::fprintf(stderr,
-                 "[manifest-context-debug] action=attach pipeline=%s context=%p stages=%zu\n",
-                 GST_ELEMENT_NAME(pipeline), static_cast<void*>(context), manifest.stages.size());
+    std::fprintf(
+        stderr, "[manifest-context-debug] action=attach pipeline=%s context=%p stages=%zu\n",
+        GST_ELEMENT_NAME(pipeline), static_cast<void*>(context.get()), manifest.stages.size());
   }
-  apply_manifest_context_recursive(pipeline, context);
-  gst_context_unref(context);
+  apply_manifest_context_recursive(pipeline, context.get());
   return true;
 }
 

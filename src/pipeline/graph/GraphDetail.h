@@ -46,6 +46,11 @@ namespace simaai::neat {
 
 using simaai::neat::pipeline_internal::DiagCtx;
 
+// Read-only correlation for graph-owned timing observers. Missing/malformed
+// metadata has no key; never throw through a GStreamer pad-probe callback.
+bool extract_element_timing_key(GstBuffer* buffer,
+                                pipeline_internal::ElementTimingKey& out) noexcept;
+
 // =====================================================================================
 // RAII handles for owning GStreamer resources held inside BuiltState.
 //
@@ -365,6 +370,11 @@ std::string boundary_summary_local(const std::shared_ptr<DiagCtx>& diag);
 struct BuildResult {
   std::string pipeline_string;
   std::shared_ptr<DiagCtx> diag;
+  // Cold execution and output-retention budgets for native numerical stages.
+  bool kernel_runner_compact = false;
+  std::size_t kernel_runner_capacity = 1;
+  std::size_t kernel_runner_a65_workers = 2;
+  std::size_t kernel_runner_output_pool_capacity = 0;
   std::string appsink_name; // mysink or tap_* (after session name transform)
   int tap_node_index = -1;
   NameTransform name_transform{};

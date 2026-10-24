@@ -21,24 +21,40 @@
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
 
 #include <neat/PreparedRuntimeBridge.h>
+#include <simaai/scheduler/client/kernel.h>
+
+namespace simaai::scheduler::client {
+struct TensorStagePublication;
+}
 
 #include <optional>
 #include <string>
 
 namespace simaai::neat::pipeline_internal::sima {
 
-/** Validate the additive ProcessCVU V2 bridge before any rich request crosses the DSO boundary. */
-std::string validate_graph_processcvu_prepared_bridge_v2();
+// Reuse the canonical manifest-to-TensorBuffer projection for named kernels.
+// This prepares only caps/metadata, never device resources or tensor storage.
+bool build_kernel_stage_publication(const StageStaticSpec&,
+                                    ::simaai::scheduler::client::TensorStagePublication*,
+                                    std::string* error_message);
 
-/** Pure layout validator exposed for mixed-version regression coverage. */
-std::string validate_graph_processcvu_prepared_bridge_v2_abi(
-    const simaai::neat::GraphProcessCvuPreparedBridgeAbiV2* bridge_abi,
-    bool builder_symbol_available);
+enum class GraphTiledChannelEncoding { CompactPixelMajor, PaddedHwcC16, CBlock16 };
+bool resolve_graph_processcvu_tiled_channel_encoding(const std::string&, bool c16_packed,
+                                                     bool cblock, GraphTiledChannelEncoding*,
+                                                     std::string* error_message = nullptr);
 
-/** Resolve the explicit tiled encoding, rejecting CBlock for unsupported graph families. */
-bool resolve_graph_processcvu_tiled_channel_encoding(
-    const std::string& canonical_graph_name, bool c16_packed, bool cblock,
-    simaai::neat::GraphProcessCvuTiledChannelEncoding* out, std::string* error_message = nullptr);
+// Complete only missing upstream route fields using the existing Core edge
+// resolver. Explicit coordinates, including a complete zero offset, remain
+// authoritative. This is metadata normalization, not numerical admission.
+::simaai::scheduler::client::Status complete_kernel_input_routes(SimaPluginStaticManifest*,
+                                                                 std::size_t stage_index);
+
+// Cold metadata-only lowering. Completes MPK-owned contracts, checks canonical
+// requests once, and retains their owned executables for graph-wide admission.
+::simaai::scheduler::client::Status prepare_kernel_stage_recipes(
+    SimaPluginStaticManifest*, const std::optional<SimaPluginStaticManifest>& original_manifest,
+    const std::vector<PipelineElementSpec>&, const std::vector<std::string>& model_source_paths,
+    const NameTransform&);
 
 /**
  * @brief Build the prepared-runtime descriptor for a SiMa pipeline.

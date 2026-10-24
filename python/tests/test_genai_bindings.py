@@ -638,6 +638,14 @@ def test_genai_language_graph_node_generation_and_errors():
       invalid.tensor = pyneat.Tensor()
       invalid.port_name = "prompt"
       invalid.stream_label = "prompt"
+      with pytest.raises(pyneat.NeatError, match="missing storage") as excinfo:
+        streaming_run.push("prompt", [invalid])
+      assert excinfo.value.error_code == "misconfig.input_shape"
+
+      # Reach the node's text validation with valid storage, as in the C++ test.
+      invalid.tensor = pyneat.Tensor.from_numpy(
+          np.array([ord("x")], dtype=np.uint8), copy=True, memory=pyneat.TensorMemory.CPU
+      )
       assert streaming_run.push("prompt", [invalid])
       _, _, error, _ = _pull_public_language_outputs(streaming_run, stop_on_error=True)
       assert error

@@ -200,6 +200,7 @@ Json op_config_json(const sc::OpConfig& config) {
           [](const sc::DetessellateOpConfig& value) {
             return Json{{"slice_shape", value.slice_shape},
                         {"frame_shape", value.frame_shape},
+                        {"frame_shape_semantics", static_cast<int>(value.frame_shape_semantics)},
                         {"align_c16", value.align_c16},
                         {"cblock", value.cblock},
                         {"frame_type", value.frame_type}};

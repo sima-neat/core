@@ -55,17 +55,44 @@ class Graph;
 using TensorSpec = TensorConstraint;
 
 /**
- * @brief Hardware timing for one compiled MLA layer or segment.
+ * @brief Hardware latency of one compiled MLA layer or segment.
  *
- * Names describe compiler-generated MLA operations, which may fuse or split ONNX operators.
- * `total_execution_time_us` is the hardware `run_time` counter, not host wall-clock latency.
- * Zero-time no-op entries are retained. `stage_index` identifies the containing executable stage
- * in model execution order (zero-based, including A65 stages), not archive file order.
+ * `stage_index` identifies the containing executable stage in model execution order (zero-based,
+ * including A65 stages), not archive file order. `name` describes a compiler-generated MLA
+ * operation, which may fuse or split ONNX operators. `latency_us` is the hardware `run_time`
+ * counter from one profiling pass that runs the layer on its own; layer latencies do not add up
+ * to the stage latency. Zero-time no-op entries are retained.
  */
-struct LayerStats {
-  std::string name;
-  double total_execution_time_us = 0.0;
+struct MlaLayer {
   std::size_t stage_index = 0;
+  std::string name;
+  double latency_us = 0.0;
+};
+
+/// @brief MLA layer latencies from `BenchmarkOptions::include_mla_layer_stats`.
+struct MlaLayerStats {
+  /// "not requested", "ok", or why MLA layer stats were not collected.
+  std::string status = "not requested";
+  std::vector<MlaLayer> layers{}; ///< Empty unless `status` is "ok".
+};
+
+/**
+ * @brief Hardware latency of one compiled MLA stage, run uninterrupted.
+ *
+ * `latency_us` is the mean MLA execution time of 200 back-to-back runs of the stage's ELF,
+ * measured by mla-rt with 1 us resolution. `stage_index` uses the same numbering as
+ * `MlaLayer::stage_index`.
+ */
+struct MlaStage {
+  std::size_t stage_index = 0;
+  double latency_us = 0.0;
+};
+
+/// @brief MLA stage latencies from `BenchmarkOptions::include_mla_stage_stats`.
+struct MlaStageStats {
+  /// "not requested", "ok", or why MLA stage stats were not collected.
+  std::string status = "not requested";
+  std::vector<MlaStage> stages{}; ///< Empty unless `status` is "ok".
 };
 
 /**
@@ -79,8 +106,12 @@ struct LayerStats {
  * least `num_samples` inputs and `min_duration_ms` has elapsed.
  *
  * Power and board telemetry come from the Sentinel daemon, recorded by a `TelemetryMonitor`
- * around the throughput pass. When Sentinel is unavailable, the power fields are zero and
- * `telemetry.status` names the reason.
+ * around the throughput pass. Its sample window is armed after measurement starts
+ * and sealed after the last required output, before measurement stops. Preparation,
+ * worker teardown and final reads are outside the timer. Invalid UTC timestamps or
+ * detected clock discontinuities make benchmark telemetry unavailable, without
+ * changing standalone monitor cache-order recovery. When Sentinel is unavailable,
+ * the power fields are zero and `telemetry.status` names the reason.
  */
 struct BenchmarkReport {
   double latency_ms = 0.0;
@@ -92,11 +123,12 @@ struct BenchmarkReport {
   /// Energy to process `num_samples` inputs: `avg_power_watts` multiplied by the time the
   /// measured throughput needs for `num_samples` inputs.
   double energy_joules = 0.0;
-  double peak_power_watts = 0.0;         ///< Highest SoM power sample in the throughput window.
-  int throughput_samples = 0;            ///< Inputs measured by the throughput pass.
-  double throughput_duration_ms = 0.0;   ///< Length of the throughput window.
-  Telemetry telemetry;                   ///< Board telemetry for the throughput window.
-  std::vector<LayerStats> layer_stats{}; ///< Empty when layer profiling was not collected.
+  double peak_power_watts = 0.0;       ///< Highest SoM power sample in the throughput window.
+  int throughput_samples = 0;          ///< Inputs measured by the throughput pass.
+  double throughput_duration_ms = 0.0; ///< Length of the throughput window.
+  Telemetry telemetry;                 ///< Board telemetry for the throughput window.
+  MlaLayerStats mla_layer_stats;       ///< Per-layer MLA latency, when requested.
+  MlaStageStats mla_stage_stats;       ///< Per-stage MLA latency, when requested.
 
   /**
    * @brief Write the complete report as YAML or JSON to the exact destination filename.
@@ -116,6 +148,9 @@ struct BenchmarkReport {
  * source coordinates. Set `original_width` and `original_height` together to benchmark a specific
  * source geometry. When they are omitted, the benchmark infers geometry from the resolved
  * preprocess and model ingress contracts, preserving the behavior of `benchmark(num_samples)`.
+ * Image preprocessing routes allocate the synthetic image at that source geometry. Tensor
+ * routes (including cast/quantize) retain the model input shape; the source geometry is used
+ * only for BoxDecode metadata.
  * Per-run benchmark geometry takes precedence over deprecated model-construction BoxDecode hints.
  */
 struct BenchmarkOptions {
@@ -131,10 +166,17 @@ struct BenchmarkOptions {
   /// both passes follow the same rule and the throughput pass's power and temperature readings
   /// cover several telemetry samples. Set it to 0 to stop each pass after `num_samples` inputs.
   int min_duration_ms = 10000;
-  /// Advanced: collect compiled MLA layer timings in a separate profiling pass. Default off.
-  /// Requires mla-rt with the MIP-to-kernel handoff fix in PATH and an idle devkit with no
-  /// other active MLA workloads. See tutorial 003 for the verified runtime build.
-  bool include_layer_stats = false;
+  /// Advanced: measure each compiled MLA layer's hardware latency with mla-rt after the
+  /// benchmark. Default off. Requires mla-rt with the MIP-to-kernel handoff fix in PATH and an
+  /// idle devkit with no other active MLA workloads. Only MLA stages in the selected inference
+  /// route are measured. A failure leaves the measurements intact and names the reason in
+  /// `BenchmarkReport::mla_layer_stats.status`.
+  bool include_mla_layer_stats = false;
+  /// Advanced: measure each MLA stage's uninterrupted hardware latency with mla-rt after the
+  /// benchmark. Default off. Requires mla-rt in PATH and an idle devkit with no other active
+  /// MLA workloads. A failure leaves the measurements intact and names the reason in
+  /// `BenchmarkReport::mla_stage_stats.status`.
+  bool include_mla_stage_stats = false;
 };
 
 /**
@@ -313,11 +355,13 @@ public:
      */
     BoxDecodeType decode_type = BoxDecodeType::Unspecified;
     BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto;
-    float score_threshold = 0.0f; ///< BoxDecode score threshold; 0 keeps all candidates.
-    /// BoxDecode IoU threshold for non-max suppression. `0` keeps the model's packaged value;
-    /// when none is packaged, YOLO26 skips NMS and other decoders suppress every overlapping box.
+    /// BoxDecode score threshold. Zero permits zero-valued scores; NMS and top-K still apply.
+    float score_threshold = 0.0f;
+    /// BoxDecode NMS IoU threshold. Zero skips YOLO26 NMS; other NMS profiles still suppress.
     float nms_iou_threshold = 0.0f;
-    int top_k = 0; ///< BoxDecode top-K cap; 0 means no cap.
+    /// BoxDecode output cap. Bounding-box routes require a positive resolved value;
+    /// SuperPoint resolves zero to its profile default. Unused by other model routes.
+    int top_k = 0;
     SuperPointOptions
         superpoint; ///< SuperPoint profile/output options when decode_type is SuperPoint.
     /// Number of classes produced by detection heads. Set this for detection MPKs whose raw

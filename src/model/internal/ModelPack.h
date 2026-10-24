@@ -25,6 +25,7 @@
 #include <iosfwd>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -110,6 +111,10 @@ struct ExecutionPlan {
   std::vector<ExecutionStage> post;
 };
 
+// Select the same terminal route as inference, retaining exact MPK identities.
+std::vector<std::size_t> select_mla_profile_plugins(const std::vector<ExecutionStage>& stages,
+                                                    const InferenceTerminalPolicy& policy);
+
 struct ModelFragment {
   std::string gst;
   std::vector<std::string> elements;
@@ -126,6 +131,27 @@ struct ModelFragment {
   };
   std::vector<StageFacts> stage_facts;
 };
+
+// Owning read-only view of the exact selected fragments. Entries remain aligned
+// with the queried nodes; a non-fragment node has an empty entry. This preserves
+// the distinction between an ingress MLA and a transform before an internal MLA.
+struct SelectedModelFragmentStageFacts {
+  std::vector<std::span<const ModelFragment::StageFacts>> stage_facts;
+
+private:
+  std::shared_ptr<const ModelFragmentCompileContext> context_;
+  std::vector<std::shared_ptr<Node>> nodes_;
+  friend std::optional<SelectedModelFragmentStageFacts>
+  selected_model_fragment_stage_facts(const std::vector<std::shared_ptr<Node>>& nodes,
+                                      std::string* error);
+};
+
+// Reuses only the immutable selected-route/arena projection. It never invokes
+// NodeContractProvider, applies contracts, or prepares a native executable.
+// A successful result can contain no fragments; nullopt denotes a projection error.
+std::optional<SelectedModelFragmentStageFacts>
+selected_model_fragment_stage_facts(const std::vector<std::shared_ptr<Node>>& nodes,
+                                    std::string* error = nullptr);
 
 /**
  * @brief Load model packs and expose stage fragments as reusable node lists.
@@ -175,6 +201,8 @@ public:
   ExecutionPlan semantic_execution_plan() const;
   // Executable projection; always backed by the admitted physical and arena plans.
   ExecutionPlan execution_plan() const;
+  // Exact MPK identities in the resolved inference prefix, for offline diagnostics.
+  std::vector<std::size_t> mla_profile_plugin_indices() const;
   // Default naming is descriptive; explicit terminal selectors admit the executable plan.
   std::string infer_output_name() const;
   std::vector<ModelFragment::StageFacts> stage_facts_for_model_stage(ModelStage stage) const;

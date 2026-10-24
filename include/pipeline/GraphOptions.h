@@ -276,36 +276,26 @@ struct ProcessMlaOptions {
   /// downstream stages still hold previous tensor-set outputs.
   int output_pool_buffers = 0;
 
-  /// For prepared MLASHM outputs, skip the immediate producer-side CPU
-  /// invalidate and stamp the output metadata as device-produced/cpu-dirty.
-  /// The framework runtime default is enabled so MLA->CVU/postprocess routes
-  /// pay the invalidate only at the actual CPU consumer boundary. Manual
-  /// low-level pipelines that expose raw MLA outputs to legacy CPU readers can
-  /// still override the element property to false.
+  /// Compatibility field: must remain true. Scheduler always defers CPU
+  /// visibility to the actual consumer through Runner prepared access. False
+  /// is rejected; graph topology no longer selects producer-side READ epochs.
   bool defer_output_invalidate = true;
 };
 
 /**
- * @brief Experimental prepared-route runner options.
+ * @brief Retained source-compatible options for the retired prepared-route experiment.
  *
- * Default mode is empty/"passthrough" and leaves the normal per-plugin
- * pipeline untouched. `mode="dequant"` replaces eligible model-managed
- * graph223 postprocess CVU stages with `neatpreparedrunner mode=dequant`;
- * `mode="route"` is reserved for the full quant->MLA->dequant fused
- * runner once all executor bodies are enabled.
+ * Numerical stages now always use Runtime's kernel runner. Leave these fields
+ * at their defaults; empty/"passthrough"/"off" modes select no legacy behavior.
+ * Requests for retired modes or tuning fail during graph construction rather
+ * than silently falling back. Use `processcvu.async` and `GraphOptions::async_queue_depth` for
+ * execution concurrency; legacy dequant flags and profiling have no equivalent option.
  */
 struct PreparedRunnerOptions {
   std::string mode;
   int ring_depth = 0;
   bool profile = false;
-  /**
-   * @brief Optional prepared-runner graph223/dequant optimization flags.
-   *
-   * These are graph dequantize metadata tokens such as
-   * `"fused,half,zpfold,bitmagic"`. Empty keeps model/runtime defaults.
-   * This is the model/graph option equivalent of the old diagnostic env
-   * controls and is only consumed by the opt-in prepared runner.
-   */
+  /// Retired optimization tokens; nonempty values are rejected at graph build.
   std::string dequant_flags;
 };
 
@@ -389,7 +379,7 @@ struct GraphOptions {
   /// MLA stage execution options.
   ProcessMlaOptions processmla;
 
-  /// Experimental prepared-route runner. Defaults off.
+  /// Retired options retained for source compatibility; leave at defaults.
   PreparedRunnerOptions prepared_runner;
 
   /// Depth for internally inserted async queue2 elements. 0 keeps the legacy
@@ -397,8 +387,15 @@ struct GraphOptions {
   /// and are the preferred production control. For fused realtime source fan-in,
   /// 0 preserves the single-chain consumer path and a positive value inserts
   /// bounded, non-leaky queues before CVU, MLA, and decode stages (never before
-  /// the terminal Output).
+  /// the terminal Output). The numerical Runner also derives its bounded
+  /// execution capacity from this value (1..64, with 0 selecting one slot).
+  /// This does not override the MLA output pool or RunOptions::queue_depth.
   int async_queue_depth = 0;
+
+  /// Graph-owned A65 numerical workers (1..64), independent of EV74 progress.
+  /// Created only for graphs with A65 kernels and parked without CPU use while
+  /// idle. The bounded pool is retained across frame submission and flushes.
+  int kernel_runner_a65_workers = 2;
 
   /// Preferred jargon-free execution surface. Folded into the legacy fields above by
   /// `resolve_advanced_execution()` (called from the Graph constructor). Default is all-unset,
@@ -736,6 +733,8 @@ struct Sample {
       return "GRAY8";
     case ImageSpec::PixelFormat::NV12:
       return "NV12";
+    case ImageSpec::PixelFormat::NV16:
+      return "NV16";
     case ImageSpec::PixelFormat::I420:
       return "I420";
     case ImageSpec::PixelFormat::UNKNOWN:

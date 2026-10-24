@@ -36,7 +36,7 @@
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/TensorMath.h"
 #include "gst/GstInit.h"
-#include "simaai/neat/internal/dmabuf/DmaBufPool.h"
+#include <simaai/scheduler/client/dma_memory.h>
 
 #include <gst/gst.h>
 
@@ -476,15 +476,16 @@ std::shared_ptr<Storage> make_driver_dmabuf_storage(GstSample* sample, const Dev
 
 Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
                                  std::uint64_t target_flags, const std::vector<Segment>& segments) {
-  using internal::dmabuf::CpuAccess;
-  using internal::dmabuf::DmaBufView;
-  using internal::dmabuf::Error;
-  using internal::dmabuf::HeapKind;
+  using ::simaai::scheduler::client::dma::CpuAccess;
+  using ::simaai::scheduler::client::dma::DmaBufView;
+  using ::simaai::scheduler::client::dma::Error;
+  using ::simaai::scheduler::client::dma::HeapKind;
 
   const std::size_t allocation_bytes = segment_total_bytes(segments);
   const HeapKind heap = target.type == DeviceType::SIMA_MLA ? HeapKind::MlaDms : HeapKind::Cma;
   Error error;
-  GstBuffer* dst = internal::dmabuf::allocateDmaBufBuffer(heap, allocation_bytes, {}, &error);
+  GstBuffer* dst =
+      ::simaai::scheduler::client::dma::allocateDmaBufBuffer(heap, allocation_bytes, {}, &error);
   if (!dst) {
     throw std::runtime_error("transfer: standard DMA-BUF allocation failed: " + error.message());
   }

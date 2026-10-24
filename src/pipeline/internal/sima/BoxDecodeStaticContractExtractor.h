@@ -69,7 +69,23 @@ struct BoxDecodeTensorStaticContract {
   BoxDecodeSourceStorageKind source_storage_kind =
       BoxDecodeSourceStorageKind::Unknown; ///< Source byte layout for kernel access.
   BoxDecodeTensorRole role = BoxDecodeTensorRole::Unknown; ///< Semantic SuperPoint tensor role.
+  /// Explicit linear byte strides in input_shape axis order; empty for packed storage.
+  std::vector<std::int64_t> stride_bytes;
 };
+
+/// Canonical linear HWC storage facts. Computes addressed span, not allocation capacity.
+struct BoxDecodeLinearStorage {
+  std::vector<std::int64_t> stride_bytes;
+  std::uint64_t span_bytes = 0;
+};
+
+/// Normalize declared logical axes/strides without touching or copying the payload.
+/// Empty strides mean compact row-major in the supplied shape, as for public Tensor.
+/// Numerical layout support and nonoverlap remain Kernels admission responsibilities.
+std::optional<BoxDecodeLinearStorage>
+boxdecode_linear_storage(const std::vector<std::int64_t>& shape,
+                         const std::vector<std::int64_t>& stride_bytes, const std::string& layout,
+                         std::size_t scalar_bytes);
 
 /// Description of one physical input buffer feeding the box-decode stage.
 struct BoxDecodePhysicalInputStaticContract {

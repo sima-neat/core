@@ -368,7 +368,7 @@ RUN_TEST(
         const auto admitted = opt.compiled_contract;
         const auto original_source = admitted->runtime_contract.physical_inputs.front().size_bytes;
         const auto original_arena = admitted->runtime_contract.frame_arena_size_bytes;
-        const auto original_output = admitted->payload.output_tensors.front();
+        const auto original_output = admitted->payload.output_tensors.front().descriptor();
         const auto original_logical = admitted->runtime_contract.logical_outputs.front();
         const auto slot_bytes = admitted->runtime_contract.physical_outputs.front().size_bytes;
         bool source_count_threw = false;
@@ -381,21 +381,25 @@ RUN_TEST(
         require(source_count_threw, "ROI source batch must respect the firmware's 50-image limit");
         gst_init_once();
         for (const int capacity : {1, 2, 3}) {
+          auto inherited = *admitted;
+          inherited.runtime_contract.frame_arena_allocation_policy =
+              pipeline_internal::sima::static_contract::ArenaAllocationPolicy::PreferDmsThenCma;
           auto invocation = pipeline_internal::sima::specialize_preproc_roi_contract(
-              *admitted, 2, 48, 64, 3, capacity);
-          require(invocation.payload.batch_size == capacity &&
-                      invocation.payload.input_shapes.front() == std::vector<int>({48, 64, 3}) &&
-                      invocation.payload.input_tensors.front().shape.sizes[0] == 2 &&
-                      invocation.payload.input_tensors.front().shape.axis_semantics[0] ==
-                          SIMA_EV_AXIS_N,
-                  "ROI source N must be independent of output R and public HWC options");
+              inherited, 2, 48, 64, 3, capacity);
+          require(
+              invocation.payload.batch_size == capacity &&
+                  invocation.payload.input_shapes.front() == std::vector<int>({48, 64, 3}) &&
+                  invocation.payload.input_tensors.front().descriptor().shape.sizes[0] == 2 &&
+                  invocation.payload.input_tensors.front().descriptor().shape.axis_semantics[0] ==
+                      SIMA_EV_AXIS_N,
+              "ROI source N must be independent of output R and public HWC options");
           require(invocation.runtime_contract.physical_inputs.front().size_bytes == 18432U &&
                       invocation.runtime_contract.logical_inputs.front().size_bytes == 18432U &&
                       invocation.runtime_contract.input_bindings.front().src_physical_size_bytes ==
                           18432U,
                   "ROI source descriptor and binding must cover both source frames");
-          require(std::memcmp(&invocation.payload.output_tensors.front(), &original_output,
-                              sizeof(original_output)) == 0,
+          require(std::memcmp(&invocation.payload.output_tensors.front().descriptor(),
+                              &original_output, sizeof(original_output)) == 0,
                   "ROI specialization must preserve every one-member output descriptor byte");
           require(invocation.runtime_contract.physical_outputs.front().size_bytes ==
                           slot_bytes * capacity &&
@@ -409,7 +413,10 @@ RUN_TEST(
                       invocation.payload.q_zp == admitted->payload.q_zp,
                   "ROI carrier batching must preserve exact slot span, identities and qparams");
           require(!invocation.physical_command_role && !invocation.payload.dmabuf_plan_contract &&
-                      invocation.runtime_contract.frame_arena_size_bytes == 0U,
+                      invocation.runtime_contract.frame_arena_size_bytes == 0U &&
+                      invocation.runtime_contract.frame_arena_allocation_policy ==
+                          pipeline_internal::sima::static_contract::ArenaAllocationPolicy::
+                              RequiredDomain,
                   "ROI invocation must discard only stale model arena placement facts");
           auto roi_opt = opt;
           roi_opt.batch_size = capacity;
@@ -431,6 +438,9 @@ RUN_TEST(
                   rendered.physical_outputs.front().source_byte_offset == 0 &&
                   rendered.frame_arena_storage_domain ==
                       pipeline_internal::sima::static_contract::ArenaStorageDomain::Cma &&
+                  rendered.frame_arena_allocation_policy ==
+                      pipeline_internal::sima::static_contract::ArenaAllocationPolicy::
+                          RequiredDomain &&
                   rendered.frame_arena_escape_policy == pipeline_internal::sima::static_contract::
                                                             ArenaEscapePolicy::CpuMappablePublic,
               "ROI standalone arena must reuse aligned Allocate/CMA/public authoring policy");
@@ -462,8 +472,8 @@ RUN_TEST(
                     admitted->runtime_contract.frame_arena_size_bytes == original_arena &&
                     admitted->runtime_contract.logical_outputs.front().shape ==
                         original_logical.shape &&
-                    std::memcmp(&admitted->payload.output_tensors.front(), &original_output,
-                                sizeof(original_output)) == 0,
+                    std::memcmp(&admitted->payload.output_tensors.front().descriptor(),
+                                &original_output, sizeof(original_output)) == 0,
                 "ROI invocation must not mutate the shared model contract");
 
         // Explicit batch layouts do not reinterpret unqualified volume descriptors.
@@ -574,8 +584,8 @@ RUN_TEST(
                         std::vector<int>({1080, 1920, 3}),
                 "rendered Preproc static contract must expose the full dynamic input capacity");
         require(rendered_stage.processcvu.dmabuf_plan_contract &&
-                    rendered_stage.processcvu.graph_id == 200 &&
-                    rendered_stage.processcvu.descriptor_abi_id != 0U &&
+                    rendered_stage.processcvu.graph_name == "preproc" &&
+                    rendered_stage.processcvu.descriptor_abi_id == 0U &&
                     rendered_stage.frame_arena_role ==
                         pipeline_internal::sima::FrameArenaRole::Allocate &&
                     rendered_stage.frame_arena_storage_domain ==
@@ -830,8 +840,11 @@ RUN_TEST(
                 "standalone Preproc must derive input width/height from actual upstream input");
         require(node.options().input_img_type == "BGR",
                 "standalone Preproc must derive input format from actual upstream input");
+        require_contains(frag, "neatkernelrunner name=", "Preproc must use Runtime by default");
+        require_not_contains(frag,
+                             "num-buffers=", "runner does not accept legacy buffer properties");
         require_not_contains(
-            frag, "stage-id=", "standalone Preproc fragment must not opt into manifest routing");
+            frag, "stage-id=", "Preproc identity travels through the typed Runtime context");
         require_not_contains(
             frag, "config=", "standalone Preproc fragment must not emit a legacy config path");
       }

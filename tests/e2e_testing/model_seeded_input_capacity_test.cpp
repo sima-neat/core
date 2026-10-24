@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace {
@@ -22,8 +23,9 @@ Tensor image(int width, int height) {
 
 template <typename Inputs>
 void check_runner(Model::Runner& runner, const Inputs& seed, const Inputs& larger,
-                  const Inputs& limit, const Inputs& oversized, const char* axis) {
-  for (const auto* inputs : {&seed, &larger, &limit}) {
+                  const Inputs& smaller, const Inputs& limit, const Inputs& oversized,
+                  const char* axis) {
+  for (const auto* inputs : {&seed, &larger, &smaller, &limit, &seed}) {
     require(!runner.run(*inputs, 30000).empty(), "in-capacity input must produce model output");
   }
   bool rejected = false;
@@ -36,6 +38,26 @@ void check_runner(Model::Runner& runner, const Inputs& seed, const Inputs& large
                      "oversize input must fail the capacity guard");
   }
   require(rejected, "input above the declared capacity must be rejected");
+  require(!runner.run(smaller, 30000).empty(),
+          "a valid smaller frame must recover after capacity rejection");
+  if constexpr (std::is_same_v<Inputs, TensorList>) {
+    // Real undersized backing, not an invented smaller extent on a large allocation.
+    // Keep the valid image shape/semantic metadata so the failure names backing,
+    // not a seed-derived capacity limit. The public ingress guard must reject it.
+    auto short_input = seed;
+    short_input.front().storage = make_cpu_owned_storage(1);
+    bool short_rejected = false;
+    try {
+      (void)runner.push(short_input);
+    } catch (const std::exception& error) {
+      short_rejected = true;
+      require_contains(error.what(), "storage too small",
+                       "undersized backing must fail the physical storage guard");
+    }
+    require(short_rejected, "undersized image backing must be rejected before submission");
+    require(!runner.run(seed, 30000).empty(),
+            "valid input must recover after physical backing rejection");
+  }
   runner.close();
 }
 
@@ -91,7 +113,7 @@ int main(int argc, char** argv) {
       };
       const auto seed = mats(640, 640);
       auto runner = model.build(seed, Model::RouteOptions{}, run_options);
-      check_runner(runner, seed, mats(800, 800), mats(max_width, max_height),
+      check_runner(runner, seed, mats(800, 800), mats(320, 240), mats(max_width, max_height),
                    mats(max_width + 2, 640), "width");
     } else if (mode == "sample") {
       const auto samples = [](int width, int height) {
@@ -99,15 +121,15 @@ int main(int argc, char** argv) {
       };
       const auto seed = samples(640, 640);
       auto runner = model.build(seed, Model::RouteOptions{}, run_options);
-      check_runner(runner, seed, samples(1280, 720), samples(max_width, max_height),
-                   samples(640, max_height + 2), "height");
+      check_runner(runner, seed, samples(1280, 720), samples(320, 240),
+                   samples(max_width, max_height), samples(640, max_height + 2), "height");
     } else {
       require(mode == "tensor" || mode == "defaults" || mode == "unseeded",
               "unknown test mode: " + mode);
       const TensorList seed{image(640, 640)};
       auto runner = mode == "unseeded" ? model.build(Model::RouteOptions{}, run_options)
                                        : model.build(seed, Model::RouteOptions{}, run_options);
-      check_runner(runner, seed, TensorList{image(1280, 720)},
+      check_runner(runner, seed, TensorList{image(1280, 720)}, TensorList{image(320, 240)},
                    TensorList{image(max_width, max_height)}, TensorList{image(640, max_height + 2)},
                    "height");
     }

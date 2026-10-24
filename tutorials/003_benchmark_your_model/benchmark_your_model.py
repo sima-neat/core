@@ -3,7 +3,8 @@
 
 Usage:
   python3 benchmark_your_model.py --model /path/to/model.tar.gz [--samples 100]
-    [--report results/model/yolo_benchmark.yaml] [--include-layer-stats]
+    [--report results/model/yolo_benchmark.yaml] [--include-mla-layer-stats]
+    [--include-mla-stage-stats]
 """
 from __future__ import annotations
 
@@ -25,8 +26,10 @@ def main(argv: list[str]) -> int:
   ap.add_argument("--model", type=Path, required=True)
   ap.add_argument("--samples", type=int, default=100, help="number of measured synthetic samples")
   ap.add_argument("--report", type=Path, help="destination report file (.json selects JSON; otherwise YAML)")
-  ap.add_argument("--include-layer-stats", action="store_true",
-                  help="advanced: request separate MLA layer profiling (requires an idle devkit)")
+  ap.add_argument("--include-mla-layer-stats", action="store_true",
+                  help="advanced: measure each MLA layer's latency with mla-rt (requires an idle devkit)")
+  ap.add_argument("--include-mla-stage-stats", action="store_true",
+                  help="advanced: measure each MLA stage's latency with mla-rt (requires an idle devkit)")
   args = ap.parse_args(argv[1:])
 
   # CORE LOGIC
@@ -37,7 +40,8 @@ def main(argv: list[str]) -> int:
   # STEP run-benchmark
   options = pyneat.BenchmarkOptions()
   options.num_samples = args.samples
-  options.include_layer_stats = args.include_layer_stats
+  options.include_mla_layer_stats = args.include_mla_layer_stats
+  options.include_mla_stage_stats = args.include_mla_stage_stats
   report = model.benchmark(options)
   if report.latency_ms <= 0 or report.fps <= 0:
     raise RuntimeError("benchmark produced no measured latency/fps")
@@ -52,12 +56,15 @@ def main(argv: list[str]) -> int:
   print(f"report_throughput_duration_ms={report.throughput_duration_ms}")
   print(f"report_telemetry_status={report.telemetry.status}")
   # END STEP
-  # STEP read-layer-stats
-  if options.include_layer_stats:
-    print("Layer stats (execution time in microseconds):")
-    for layer in report.layer_stats:
-      print(f"  stage_index={layer.stage_index} name={layer.name} "
-            f"total_execution_time_us={layer.total_execution_time_us}")
+  # STEP read-mla-stats
+  if options.include_mla_layer_stats:
+    print(f"mla_layer_stats.status={report.mla_layer_stats.status}")
+    for layer in report.mla_layer_stats.layers:
+      print(f"  stage_index={layer.stage_index} name={layer.name} latency_us={layer.latency_us}")
+  if options.include_mla_stage_stats:
+    print(f"mla_stage_stats.status={report.mla_stage_stats.status}")
+    for stage in report.mla_stage_stats.stages:
+      print(f"  stage_index={stage.stage_index} latency_us={stage.latency_us}")
   # END STEP
 
   # STEP save-report

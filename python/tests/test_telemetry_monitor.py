@@ -20,7 +20,6 @@ import pyneat
 
 SENTINEL_SOCKET = Path("/run/simaai-sentinel/api.sock")
 needs_sentinel = pytest.mark.skipif(not SENTINEL_SOCKET.exists(), reason="needs Sentinel")
-no_sentinel = pytest.mark.skipif(SENTINEL_SOCKET.exists(), reason="needs a host without Sentinel")
 
 STATS_FIELDS = ("key", "label", "unit", "samples", "mean", "minimum", "maximum", "last")
 ONE_MEASUREMENT = ("power_som_watts", "power_mla_watts", "die_temperature_max_c", "cpu_usage_pct",
@@ -89,9 +88,11 @@ def test_telemetry_is_read_only():
     telemetry.power_som_watts.mean = 1.0
 
 
-@no_sentinel
-def test_without_sentinel_the_status_says_how_to_install_it(capfd):
-  monitor = pyneat.TelemetryMonitor()
+def test_without_sentinel_the_status_says_how_to_install_it(capfd, tmp_path):
+  # Exercise absence independently of the board's live daemon, without stopping it.
+  socket_path = tmp_path / "missing-sentinel.sock"
+  assert not socket_path.exists()
+  monitor = pyneat.TelemetryMonitor(socket_path=str(socket_path))
   monitor.start()
   assert monitor.running() is True
   telemetry = monitor.stop()

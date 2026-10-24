@@ -12,6 +12,7 @@
 #include "pipeline/Graph.h"
 #include "pipeline/Run.h"
 #include "test_main.h"
+#include "perf/process_cpu_metrics.h"
 #include "test_utils.h"
 
 #include <algorithm>
@@ -176,9 +177,32 @@ simaai::neat::ResolvedPreprocessPlan make_benchmark_preprocess_plan() {
   return plan;
 }
 
+void process_cpu_window_reports_cost_separately_from_utilization() {
+  // Two and a half CPU cores busy for half a second is 1.25 CPU seconds,
+  // not 0.5 seconds and not "250% of the whole board".
+  const sima_perf::ProcessCpuMetrics metrics{100, 0.5, 1.0, 0.25};
+  require_near(metrics.fps(), 200.0, "matching-window FPS");
+  require_near(metrics.user_us_per_frame(), 10000.0, "user CPU/frame");
+  require_near(metrics.system_us_per_frame(), 2500.0, "system CPU/frame");
+  require_near(metrics.cpu_us_per_frame(), 12500.0, "total CPU/frame");
+  require_near(metrics.average_busy_cores(), 2.5, "average busy cores");
+
+  const sima_perf::ProcessCpuMetrics empty;
+  require_near(empty.fps(), 0.0, "empty FPS");
+  require_near(empty.cpu_us_per_frame(), 0.0, "empty CPU/frame");
+  require_near(empty.average_busy_cores(), 0.0, "empty busy cores");
+
+  const sima_perf::ProcessCpuWindow window;
+  const auto sampled = window.finish(0);
+  require(sampled.frames == 0 && sampled.wall_seconds > 0.0 && sampled.user_seconds >= 0.0 &&
+              sampled.system_seconds >= 0.0,
+          "live process snapshots should produce monotonic CPU and wall deltas");
+}
+
 void benchmark_options_api_is_additive() {
   using namespace simaai::neat;
-  require(!BenchmarkOptions{}.include_layer_stats, "layer profiling must be opt-in");
+  require(!BenchmarkOptions{}.include_mla_layer_stats, "MLA layer profiling must be opt-in");
+  require(!BenchmarkOptions{}.include_mla_stage_stats, "MLA stage profiling must be opt-in");
   using OptionsOverload = BenchmarkReport (Model::*)(const BenchmarkOptions&);
   using SamplesOverload = BenchmarkReport (Model::*)(int);
   using LegacyOverload = BenchmarkReport (Model::*)(int, bool);
@@ -198,6 +222,33 @@ void benchmark_options_api_is_additive() {
 #pragma GCC diagnostic pop
 }
 
+void synthetic_benchmark_rejects_planar_images() {
+  using namespace simaai::neat;
+  TensorSpec spec;
+  spec.shape = {10, 18};
+  spec.dtypes = {TensorDType::UInt8};
+  for (const auto format :
+       {ImageSpec::PixelFormat::NV12, ImageSpec::PixelFormat::NV16, ImageSpec::PixelFormat::I420}) {
+    spec.image_format = format;
+    bool rejected = false;
+    try {
+      internal::validate_synthetic_benchmark_image_format(spec);
+    } catch (const std::runtime_error& error) {
+      rejected = std::string(error.what()) ==
+                 "Model::benchmark: planar image input specs are not supported by the synthetic "
+                 "benchmark";
+    }
+    require(rejected, "synthetic benchmarks must reject every unsupported planar image format");
+  }
+  for (const auto format :
+       {ImageSpec::PixelFormat::RGB, ImageSpec::PixelFormat::BGR, ImageSpec::PixelFormat::GRAY8}) {
+    spec.image_format = format;
+    internal::validate_synthetic_benchmark_image_format(spec);
+  }
+  spec.image_format.reset();
+  internal::validate_synthetic_benchmark_image_format(spec);
+}
+
 void benchmark_build_options_prefer_runtime_metadata() {
   using namespace simaai::neat;
   Model::Options model_options;
@@ -214,6 +265,69 @@ void benchmark_build_options_prefer_runtime_metadata() {
           "benchmark builds should use per-buffer resize metadata");
   require(benchmark_options.score_threshold == model_options.score_threshold,
           "benchmark builds should preserve unrelated model options");
+}
+
+simaai::neat::TensorSpec make_benchmark_image_spec(std::vector<int64_t> shape) {
+  using namespace simaai::neat;
+  TensorSpec spec;
+  spec.shape = std::move(shape);
+  spec.dtypes = {TensorDType::UInt8};
+  spec.image_format = ImageSpec::PixelFormat::RGB;
+  return spec;
+}
+
+simaai::neat::BenchmarkOptions make_benchmark_source_options(int width, int height) {
+  simaai::neat::BenchmarkOptions options;
+  options.original_width = width;
+  options.original_height = height;
+  return options;
+}
+
+void benchmark_image_input_uses_requested_source_size() {
+  using namespace simaai::neat;
+  const ResolvedPreprocessPlan plan = make_benchmark_preprocess_plan();
+  const TensorSpec spec = make_benchmark_image_spec({-1, -1, 3});
+  const TensorSpec resolved =
+      internal::resolve_benchmark_input_spec(spec, plan, make_benchmark_source_options(1280, 720));
+  require(resolved.shape == std::vector<int64_t>({720, 1280, 3}),
+          "image preprocessing benchmark should allocate the requested source image");
+}
+
+void benchmark_image_input_defaults_to_model_size() {
+  using namespace simaai::neat;
+  const ResolvedPreprocessPlan plan = make_benchmark_preprocess_plan();
+  const TensorSpec spec = make_benchmark_image_spec({-1, -1, 3});
+  require(internal::resolve_benchmark_input_spec(spec, plan, {}).shape ==
+              std::vector<int64_t>({640, 640, 3}),
+          "image preprocessing benchmark should default to the resolved model geometry");
+}
+
+void benchmark_tensor_input_keeps_model_shape() {
+  using namespace simaai::neat;
+  ResolvedPreprocessPlan plan = make_benchmark_preprocess_plan();
+  plan.resolved_kind = InputKind::Tensor;
+  TensorSpec spec;
+  spec.shape = {1, 640, 640, 3};
+  spec.dtypes = {TensorDType::Float32};
+  const TensorSpec resolved =
+      internal::resolve_benchmark_input_spec(spec, plan, make_benchmark_source_options(1280, 720));
+  require(resolved.shape == spec.shape && resolved.dtypes == spec.dtypes,
+          "source geometry must not resize or change the dtype of a quant/tensor input");
+}
+
+void benchmark_preprocess_meta_matches_allocated_image_size() {
+  using namespace simaai::neat;
+  const ResolvedPreprocessPlan plan = make_benchmark_preprocess_plan();
+  const TensorSpec spec = make_benchmark_image_spec({480, 640, 3});
+  require(internal::resolve_benchmark_input_spec(spec, plan, {}).shape == spec.shape,
+          "a concrete image spec should keep its own size");
+
+  const Tensor image = make_color_tensor(640, 480, ImageSpec::PixelFormat::RGB);
+  const PreprocessRuntimeMeta meta =
+      internal::resolve_benchmark_preprocess_meta(image, plan, {}, BenchmarkOptions{});
+  require(meta.original_width == 640 && meta.original_height == 480,
+          "BoxDecode metadata should describe the allocated 640x480 image, got " +
+              std::to_string(meta.original_width) + "x" + std::to_string(meta.original_height));
 }
 
 void benchmark_preprocess_meta_defaults_to_model_geometry() {
@@ -681,6 +795,8 @@ RUN_TEST("unit_benchmark_measurement_contract_test", ([] {
              }
            };
 
+           run_case("process_cpu_window",
+                    process_cpu_window_reports_cost_separately_from_utilization);
            run_case("benchmark_style_tensorlist_latency",
                     benchmark_style_tensorlist_push_must_collect_latency_for_every_output);
            run_case("keyed_sample_latency_control",
@@ -705,10 +821,20 @@ RUN_TEST("unit_benchmark_measurement_contract_test", ([] {
            run_case("measurement_boolean_flags_make_profiling_explicit",
                     measurement_boolean_flags_make_profiling_explicit);
            run_case("benchmark_options_api_is_additive", benchmark_options_api_is_additive);
+           run_case("synthetic_benchmark_rejects_planar_images",
+                    synthetic_benchmark_rejects_planar_images);
            run_case("benchmark_build_options_prefer_runtime_metadata",
                     benchmark_build_options_prefer_runtime_metadata);
            run_case("benchmark_preprocess_meta_defaults",
                     benchmark_preprocess_meta_defaults_to_model_geometry);
+           run_case("benchmark_image_input_uses_requested_source_size",
+                    benchmark_image_input_uses_requested_source_size);
+           run_case("benchmark_image_input_defaults_to_model_size",
+                    benchmark_image_input_defaults_to_model_size);
+           run_case("benchmark_tensor_input_keeps_model_shape",
+                    benchmark_tensor_input_keeps_model_shape);
+           run_case("benchmark_preprocess_meta_matches_allocated_image_size",
+                    benchmark_preprocess_meta_matches_allocated_image_size);
            run_case("benchmark_preprocess_meta_explicit_geometry",
                     benchmark_preprocess_meta_supports_explicit_geometry);
            run_case("benchmark_preprocess_meta_invalid_options",

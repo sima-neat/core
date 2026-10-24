@@ -14,6 +14,62 @@ void ensure_sima_meta_registered() {
   }
 }
 
+#if SIMA_HAS_SIMAAI_POOL
+void check_input_metadata_reuse() {
+  using namespace simaai::neat;
+  InputOptions options;
+  options.buffer_name = "camera";
+  InputBufferPoolGuard guard;
+  GstBuffer* buffer = gst_buffer_new();
+  auto* meta = gst_buffer_add_custom_meta(buffer, "GstSimaMeta");
+  require(meta != nullptr, "input metadata: initial metadata missing");
+  auto* structure = gst_custom_meta_get_structure(meta);
+  gst_structure_set(structure, "preproc_original_width", G_TYPE_INT, 1920, "stream-id",
+                    G_TYPE_STRING, "camera-1", "custom-field", G_TYPE_STRING, "preserved", nullptr);
+  auto* original_buffer = buffer;
+  buffer = attach_simaai_meta_inplace(buffer, options, guard, "metadata-test", 41);
+  require(buffer == original_buffer, "input metadata: exclusive buffer was replaced");
+  require(gst_buffer_get_custom_meta(buffer, "GstSimaMeta") == meta,
+          "input metadata: exclusive metadata was unnecessarily rebuilt");
+  require(gst_custom_meta_get_structure(meta) == structure,
+          "input metadata: exclusive structure was unnecessarily copied");
+  gint64 frame = 0;
+  require(gst_structure_get_int64(structure, "frame-id", &frame) && frame == 41,
+          "input metadata: frame id was not updated");
+  require(g_strcmp0(gst_structure_get_string(structure, "orig-stream-id"), "camera-1") == 0,
+          "input metadata: original stream id was not retained");
+
+  // The shared source must not change when make_writable copies the envelope.
+  GstBuffer* retained = gst_buffer_ref(buffer);
+  buffer = attach_simaai_meta_inplace(buffer, options, guard, "metadata-test", 42);
+  require(buffer && buffer != retained, "input metadata: shared envelope was not copied");
+  auto* copied = gst_custom_meta_get_structure(gst_buffer_get_custom_meta(buffer, "GstSimaMeta"));
+  require(gst_structure_get_int64(structure, "frame-id", &frame) && frame == 41,
+          "input metadata: shared source was mutated");
+  require(gst_structure_get_int64(copied, "frame-id", &frame) && frame == 42,
+          "input metadata: copied frame id was not updated");
+  require(g_strcmp0(gst_structure_get_string(copied, "custom-field"), "preserved") == 0,
+          "input metadata: custom fields were lost");
+  gint width = 0;
+  require(gst_structure_get_int(copied, "preproc_original_width", &width) && width == 1920,
+          "input metadata: preprocessing geometry was lost");
+  gst_structure_set(copied, "preproc_original_width", G_TYPE_INT, 1280, nullptr);
+  buffer = attach_simaai_meta_inplace(buffer, options, guard, "metadata-test", 43);
+  require(gst_structure_get_int(copied, "preproc_original_width", &width) && width == 1280,
+          "input metadata: current dynamic geometry was overwritten");
+  require(gst_structure_get_int(structure, "preproc_original_width", &width) && width == 1920,
+          "input metadata: geometry changes leaked into the retained source");
+  gst_buffer_unref(retained);
+  gst_buffer_unref(buffer);
+
+  GstBuffer* fresh =
+      attach_simaai_meta_inplace(gst_buffer_new(), options, guard, "metadata-test", 44);
+  require(fresh && gst_buffer_get_custom_meta(fresh, "GstSimaMeta"),
+          "input metadata: fresh envelope was not initialized");
+  gst_buffer_unref(fresh);
+}
+#endif
+
 } // namespace
 
 RUN_TEST("unit_preprocess_meta_template_dynamic_test", ([] {
@@ -24,6 +80,7 @@ RUN_TEST("unit_preprocess_meta_template_dynamic_test", ([] {
            using namespace simaai::neat;
            gst_init(nullptr, nullptr);
            ensure_sima_meta_registered();
+           check_input_metadata_reuse();
 
            InputOptions opt;
            PreprocessMetaTemplate tmpl;

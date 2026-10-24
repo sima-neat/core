@@ -2,6 +2,8 @@
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <nlohmann/json.hpp>
+
 #include <string>
 #include <utility>
 #include <vector>
@@ -86,6 +88,50 @@ RUN_TEST("unit_sima_plugin_static_manifest_parse_test", ([] {
                        parsed->stages[0].frame_arena_escape_policy ==
                            static_contract::ArenaEscapePolicy::CpuMappablePublic,
                    "frame-arena placement must survive JSON round-trip");
+
+           require(parsed->stages[0].frame_arena_allocation_policy ==
+                       static_contract::ArenaAllocationPolicy::RequiredDomain,
+                   "existing placement must remain strict");
+           auto preferred_manifest = alignment_manifest;
+           preferred_manifest.stages[0].frame_arena_allocation_policy =
+               static_contract::ArenaAllocationPolicy::PreferDmsThenCma;
+           auto preferred_json = nlohmann::json::parse(serialize_manifest_json(preferred_manifest));
+           const auto preferred = parse_manifest_json(preferred_json.dump(), &parse_error);
+           require(preferred && preferred->stages[0].frame_arena_allocation_policy ==
+                                    static_contract::ArenaAllocationPolicy::PreferDmsThenCma,
+                   "explicit preferred placement must survive roundtrip: " + parse_error);
+           auto reject = [&](const nlohmann::json& bad) {
+             require(!parse_manifest_json(bad.dump(), &parse_error),
+                     "invalid allocation policy unexpectedly accepted");
+           };
+           auto bad = preferred_json;
+           bad["stages"][0]["frame_arena_required_device_access"] = 7;
+           reject(bad);
+           bad = preferred_json;
+           bad["stages"][0]["frame_arena_provenance"] = 2;
+           reject(bad);
+           bad = preferred_json;
+           bad["stages"][0]["frame_arena_storage_domain"] = 1;
+           reject(bad);
+           bad = preferred_json;
+           bad["stages"][0]["frame_arena_allocation_policy"] = 4294967297ULL;
+           reject(bad);
+           bad = preferred_json;
+           bad["abi_version"] = 30;
+           reject(bad);
+           bad = preferred_json;
+           bad["abi_version"] = 32;
+           reject(bad);
+           bad = preferred_json;
+           bad["stages"][0].erase("frame_arena_allocation_policy");
+           reject(bad);
+           auto legacy_json = preferred_json;
+           legacy_json["abi_version"] = 30;
+           legacy_json["stages"][0].erase("frame_arena_allocation_policy");
+           auto legacy = parse_manifest_json(legacy_json.dump(), &parse_error);
+           require(legacy && legacy->stages[0].frame_arena_allocation_policy ==
+                                 static_contract::ArenaAllocationPolicy::RequiredDomain,
+                   "legacy strict JSON must remain strict");
 
            auto adopted_manifest = alignment_manifest;
            adopted_manifest.stages[0].frame_arena_storage_domain =

@@ -7,7 +7,7 @@
 #   simaneat_configure_sanitizers()
 
 function(simaneat_configure_sanitizers)
-  if (NOT (SIMA_ENABLE_ASAN OR SIMA_ENABLE_UBSAN OR SIMA_ENABLE_TSAN))
+  if (NOT (SIMA_ENABLE_ASAN OR SIMA_ENABLE_UBSAN OR SIMA_ENABLE_TSAN OR FUZZING))
     return()
   endif()
 
@@ -17,6 +17,10 @@ function(simaneat_configure_sanitizers)
 
   if (SIMA_ENABLE_TSAN AND SIMA_ENABLE_ASAN)
     message(FATAL_ERROR "SIMA_ENABLE_TSAN cannot be combined with SIMA_ENABLE_ASAN.")
+  endif()
+
+  if (FUZZING AND (NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR SIMA_ENABLE_TSAN))
+    message(FATAL_ERROR "FUZZING requires Clang/libFuzzer without SIMA_ENABLE_TSAN.")
   endif()
 
   if (SIMA_ENABLE_TSAN AND SIMA_ENABLE_UBSAN)
@@ -30,13 +34,20 @@ function(simaneat_configure_sanitizers)
 
   set(SIMANEAT_SANITIZER_FLAGS "")
 
-  if (SIMA_ENABLE_ASAN)
+  if (FUZZING)
+    # Instrument Core itself, including its shared/static object code. Only
+    # harnesses link libFuzzer's main; ordinary consumers retain their own main.
+    list(APPEND SIMANEAT_SANITIZER_FLAGS
+      -fsanitize=fuzzer-no-link,address,undefined
+      -fno-sanitize-recover=all
+      -fno-omit-frame-pointer)
+  elseif (SIMA_ENABLE_ASAN)
     list(APPEND SIMANEAT_SANITIZER_FLAGS
       -fsanitize=address
       -fno-omit-frame-pointer)
   endif()
 
-  if (SIMA_ENABLE_UBSAN)
+  if (SIMA_ENABLE_UBSAN AND NOT FUZZING)
     list(APPEND SIMANEAT_SANITIZER_FLAGS
       -fsanitize=undefined
       -fno-sanitize-recover=all)

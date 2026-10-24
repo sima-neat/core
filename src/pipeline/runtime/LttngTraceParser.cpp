@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <deque>
 #include <map>
+#include <limits>
 #include <optional>
 #include <regex>
 #include <sstream>
@@ -43,7 +45,11 @@ std::uint64_t parse_u64(const std::map<std::string, std::string>& fields, const 
     return fallback;
   }
   try {
-    return static_cast<std::uint64_t>(std::stoull(it->second, nullptr, 0));
+    if (it->second.front() == '-')
+      return fallback;
+    std::size_t consumed = 0;
+    const auto value = std::stoull(it->second, &consumed, 0);
+    return consumed == it->second.size() ? static_cast<std::uint64_t>(value) : fallback;
   } catch (...) {
     return fallback;
   }
@@ -56,7 +62,12 @@ std::int32_t parse_i32(const std::map<std::string, std::string>& fields, const s
     return fallback;
   }
   try {
-    return static_cast<std::int32_t>(std::stoll(it->second, nullptr, 0));
+    std::size_t consumed = 0;
+    const auto value = std::stoll(it->second, &consumed, 0);
+    if (consumed != it->second.size() || value < std::numeric_limits<std::int32_t>::min() ||
+        value > std::numeric_limits<std::int32_t>::max())
+      return fallback;
+    return static_cast<std::int32_t>(value);
   } catch (...) {
     return fallback;
   }
@@ -69,7 +80,9 @@ std::int64_t parse_i64(const std::map<std::string, std::string>& fields, const s
     return fallback;
   }
   try {
-    return static_cast<std::int64_t>(std::stoll(it->second, nullptr, 0));
+    std::size_t consumed = 0;
+    const auto value = std::stoll(it->second, &consumed, 0);
+    return consumed == it->second.size() ? static_cast<std::int64_t>(value) : fallback;
   } catch (...) {
     return fallback;
   }
@@ -104,7 +117,7 @@ std::optional<RawEvent> parse_line(const std::string& line) {
   ev.event_name = match[2].str();
 
   static const std::regex field_re(
-      R"(([A-Za-z_][A-Za-z0-9_]*)\s*=\s*("(?:[^"\\]|\\.)*"|0x[0-9A-Fa-f]+|-?[0-9]+|[^,}\s]+))");
+      R"(([A-Za-z_][A-Za-z0-9_]*)\s*=\s*("(?:[^"\\]|\\.)*"|[^,}\s]+))");
   for (auto it = std::sregex_iterator(line.begin(), line.end(), field_re);
        it != std::sregex_iterator(); ++it) {
     ev.fields[(*it)[1].str()] = (*it)[2].str();
@@ -193,6 +206,80 @@ std::string message_identity_key(const RawEvent& ev) {
   return {};
 }
 
+std::optional<PluginSampleIdentity> sample_identity(const RawEvent& ev) {
+  std::string stream = field_string(ev.fields, "stream_id");
+  if (stream.empty())
+    stream = "default";
+  for (const auto& [name, kind] : {std::pair{"orig_input_seq", PluginSampleKeyKind::OrigInputSeq},
+                                   std::pair{"input_seq", PluginSampleKeyKind::InputSeq},
+                                   std::pair{"message_id", PluginSampleKeyKind::MessageId},
+                                   std::pair{"frame_id", PluginSampleKeyKind::FrameId}}) {
+    const auto field = ev.fields.find(name);
+    if (field == ev.fields.end())
+      continue;
+    std::int64_t value = -1;
+    const auto& text = field->second;
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() || value < -1)
+      return std::nullopt; // Malformed authority is not permission to use a weaker key.
+    if (value >= 0)
+      return PluginSampleIdentity{std::move(stream), kind, value};
+  }
+  return std::nullopt;
+}
+
+bool selected_plugin_event(const RawEvent& ev, const PluginTraceSelection& selection,
+                           std::vector<std::string>* warnings) {
+  if (selection.require_session_identity) {
+    // Legacy fallback events cannot establish the current measurement epoch.
+    if (ev.provider != "sima_neat_plugin")
+      return false;
+    const auto instance = field_string(ev.fields, "plugin_instance_id");
+    if (instance.empty()) {
+      warnings->push_back("MISSING_PLUGIN_SESSION_IDENTITY");
+      return false;
+    }
+    if (!selection.plugin_instance_ids.contains(instance)) {
+      const auto separator = instance.rfind(".m");
+      if (separator == std::string::npos) {
+        warnings->push_back("MISSING_PLUGIN_SESSION_EPOCH: " + instance);
+        return false;
+      }
+      const auto* begin = instance.data() + separator + 2;
+      const auto* end = instance.data() + instance.size();
+      std::uint64_t epoch = 0;
+      const auto parsed = std::from_chars(begin, end, epoch);
+      if (parsed.ec != std::errc{} || parsed.ptr != end || epoch == 0) {
+        warnings->push_back("INVALID_PLUGIN_SESSION_EPOCH: " + instance);
+        return false;
+      }
+      if (epoch == selection.measurement_epoch)
+        warnings->push_back("UNKNOWN_PLUGIN_SESSION_IDENTITY: " + instance);
+      // An old session's late end must not create an unmatched-current-end warning.
+      return false;
+    }
+    if (parse_u64(ev.fields, "run_id_hash", 0) == 0 ||
+        parse_u64(ev.fields, "graph_id_hash", 0) == 0) {
+      warnings->push_back("MISSING_PLUGIN_RUN_IDENTITY: " + instance);
+      return false;
+    }
+  }
+  if (selection.require_sample_identity) {
+    const auto sample = sample_identity(ev);
+    if (!sample) {
+      warnings->push_back("MISSING_PLUGIN_SAMPLE_IDENTITY");
+      return false;
+    }
+    if (selection.ambiguous_samples.contains(*sample)) {
+      warnings->push_back("AMBIGUOUS_PLUGIN_SAMPLE_IDENTITY");
+      return false;
+    }
+    if (!selection.samples.contains(*sample))
+      return false; // Includes warmup work queued upstream of the measured stage.
+  }
+  return true;
+}
+
 std::string plugin_pair_key(const RawEvent& ev) {
   if (ev.provider == "sima_neat_plugin") {
     return join_key(
@@ -202,7 +289,8 @@ std::string plugin_pair_key(const RawEvent& ev) {
          field_string(ev.fields, "backend"), field_string(ev.fields, "phase"),
          field_string(ev.fields, "kernel_name"), field_string(ev.fields, "stream_id"),
          field_string(ev.fields, "frame_id"), field_string(ev.fields, "request_id"),
-         field_string(ev.fields, "message_id")});
+         field_string(ev.fields, "message_id"), field_string(ev.fields, "orig_input_seq"),
+         field_string(ev.fields, "input_seq")});
   }
   return join_key({field_string(ev.fields, "vpid"), ev.provider, ev.event_name,
                    field_string(ev.fields, "plugin_id"), field_string(ev.fields, "stream_id"),
@@ -422,11 +510,48 @@ void add_edge_metric(std::map<std::string, EdgeAgg>* aggs, MeasureEdgeLatency me
 LttngParseResult parse_lttng_trace_text(const std::string& text, std::uint64_t expected_run_id_hash,
                                         std::uint64_t expected_graph_id_hash,
                                         bool allow_pipeline_fallback) {
+  return parse_lttng_trace_text(text, expected_run_id_hash, expected_graph_id_hash,
+                                allow_pipeline_fallback, PluginTraceSelection{});
+}
+
+void add_measured_plugin_sample(PluginTraceSelection* selection, PluginSampleIdentity sample) {
+  if (!selection)
+    return;
+  if (sample.stream_id.empty())
+    sample.stream_id = "default";
+  if (sample.value < 0)
+    return;
+  const auto insert = [&](const PluginSampleIdentity& key) {
+    if (selection->ambiguous_samples.contains(key))
+      return;
+    if (!selection->samples.insert(key).second) {
+      selection->samples.erase(key);
+      selection->ambiguous_samples.insert(key);
+    }
+  };
+  insert(sample);
+  // Project exactly the same priority already chosen at graph entry onto the
+  // installed provider's numeric message_id. Equal values from different kinds
+  // are NOT aliases: lacking a wire kind, the projection is explicitly ambiguous.
+  if (sample.kind != PluginSampleKeyKind::MessageId) {
+    sample.kind = PluginSampleKeyKind::MessageId;
+    insert(sample);
+  }
+}
+
+LttngParseResult parse_lttng_trace_text(const std::string& text, std::uint64_t expected_run_id_hash,
+                                        std::uint64_t expected_graph_id_hash,
+                                        bool allow_pipeline_fallback,
+                                        const PluginTraceSelection& selection) {
   LttngParseResult result;
   result.parsed = true;
 
   std::map<std::string, std::deque<SpanStart>> plugin_starts;
   std::map<std::string, SpanAgg> plugin_aggs;
+  std::set<std::string> completed_plugin_keys;
+  bool incomplete_plugin_selection = !selection.ambiguous_samples.empty();
+  if (!selection.ambiguous_samples.empty())
+    result.warnings.push_back("AMBIGUOUS_MEASURED_PLUGIN_SAMPLE_IDENTITY");
   std::map<std::string, std::deque<EdgeStart>> edge_starts;
   std::map<std::string, EdgeAgg> edge_aggs;
 
@@ -449,12 +574,24 @@ LttngParseResult parse_lttng_trace_text(const std::string& text, std::uint64_t e
       if (expected_hash_mismatch(ev, expected_run_id_hash, expected_graph_id_hash)) {
         continue;
       }
+      const auto warnings_before_selection = result.warnings.size();
+      if (!selected_plugin_event(ev, selection, &result.warnings)) {
+        incomplete_plugin_selection |= result.warnings.size() != warnings_before_selection;
+        continue;
+      }
       const std::string key = plugin_pair_key(ev);
       if (is_start(ev)) {
+        if (selection.require_session_identity &&
+            (completed_plugin_keys.contains(key) || !plugin_starts[key].empty())) {
+          incomplete_plugin_selection = true;
+          result.warnings.push_back("DUPLICATE_PLUGIN_START: " + key);
+          continue;
+        }
         plugin_starts[key].push_back({std::move(ev)});
       } else {
         auto it = plugin_starts.find(key);
         if (it == plugin_starts.end() || it->second.empty()) {
+          incomplete_plugin_selection = true;
           result.warnings.push_back("UNMATCHED_PLUGIN_END: " + key);
           continue;
         }
@@ -462,6 +599,7 @@ LttngParseResult parse_lttng_trace_text(const std::string& text, std::uint64_t e
         it->second.pop_front();
         const double duration_ms = (ev.timestamp_s - start.timestamp_s) * 1000.0;
         if (duration_ms < 0.0 || !std::isfinite(duration_ms)) {
+          incomplete_plugin_selection = true;
           result.warnings.push_back("NEGATIVE_PLUGIN_LATENCY: " + key);
           continue;
         }
@@ -484,6 +622,7 @@ LttngParseResult parse_lttng_trace_text(const std::string& text, std::uint64_t e
         raw.frame_id = parse_i64(start.fields, "frame_id", -1);
         raw.input_seq = parse_i64(start.fields, "input_seq", -1);
         raw.orig_input_seq = parse_i64(start.fields, "orig_input_seq", -1);
+        completed_plugin_keys.insert(key);
         result.raw_plugin_spans.push_back(raw);
         add_plugin_metric(&plugin_aggs, std::move(metric));
       }
@@ -553,6 +692,7 @@ LttngParseResult parse_lttng_trace_text(const std::string& text, std::uint64_t e
 
   for (const auto& [key, starts] : plugin_starts) {
     if (!starts.empty()) {
+      incomplete_plugin_selection = true;
       result.warnings.push_back("UNMATCHED_PLUGIN_START: " + key);
     }
   }
@@ -585,7 +725,8 @@ LttngParseResult parse_lttng_trace_text(const std::string& text, std::uint64_t e
       continue;
     }
     finalize_plugin_agg(agg);
-    if (result.trace_loss_detected) {
+    if (result.trace_loss_detected ||
+        (selection.require_session_identity && incomplete_plugin_selection)) {
       agg.metric.reliable = false;
     }
     result.plugin_metrics.push_back(std::move(agg.metric));

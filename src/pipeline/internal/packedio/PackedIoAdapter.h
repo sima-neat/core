@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "gst/SimaPluginStaticManifestAbi.h"
-#include <gstsimaaitensorbuffer.h>
+#include <simaai/scheduler/client/tensor_buffer.h>
 
 namespace simaai::neat::pipeline_internal::packedio {
 
@@ -21,10 +21,10 @@ std::vector<simaai::gst::TensorBufferSelector>
 selectors_for_logical_inputs(const CompiledRuntimeContract& contract);
 
 bool prepare_physical_inputs(const CompiledRuntimeContract& contract,
-                             const simaai::gst::TensorBufferView& upstream_view,
+                             const simaai::scheduler::client::TensorBufferView& upstream_view,
                              std::vector<std::uint8_t>* out_bytes, std::string* err);
 
 bool publish_logical_outputs(const CompiledRuntimeContract& contract, const std::string& stage_key,
-                             simaai::gst::TensorBufferView* out, std::string* err);
+                             simaai::scheduler::client::TensorBufferView* out, std::string* err);
 
 } // namespace simaai::neat::pipeline_internal::packedio

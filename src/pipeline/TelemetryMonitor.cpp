@@ -15,11 +15,13 @@
 #include <cstdio>
 #include <ctime>
 #include <iostream>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <ostream>
 #include <set>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -191,6 +193,92 @@ std::int64_t wall_clock_ms() {
 
 } // namespace
 
+std::optional<std::chrono::system_clock::time_point>
+internal::benchmark_sample_timestamp(const json& sample) {
+  const auto it = sample.is_object() ? sample.find("timestamp") : sample.end();
+  if (it == sample.end() || !it->is_string()) {
+    return std::nullopt;
+  }
+  std::string_view value = it->get_ref<const std::string&>();
+  if (value.ends_with("Z")) {
+    value.remove_suffix(1);
+  } else if (value.ends_with("+00:00")) {
+    value.remove_suffix(6);
+  } else {
+    return std::nullopt;
+  }
+  if (value.size() < 19 || value[4] != '-' || value[7] != '-' || value[10] != 'T' ||
+      value[13] != ':' || value[16] != ':') {
+    return std::nullopt;
+  }
+  const auto number = [&](std::size_t offset, std::size_t length) -> int {
+    int out = 0;
+    for (const char digit : value.substr(offset, length)) {
+      if (digit < '0' || digit > '9') {
+        return -1;
+      }
+      out = out * 10 + digit - '0';
+    }
+    return out;
+  };
+  const int year = number(0, 4);
+  const int month = number(5, 2);
+  const int day = number(8, 2);
+  const int hour = number(11, 2);
+  const int minute = number(14, 2);
+  const int second = number(17, 2);
+  const std::chrono::year_month_day date{std::chrono::year{year},
+                                         std::chrono::month{static_cast<unsigned>(month)},
+                                         std::chrono::day{static_cast<unsigned>(day)}};
+  if (year < 0 || !date.ok() || hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 ||
+      second > 59) {
+    return std::nullopt;
+  }
+  std::int64_t fraction = 0;
+  if (value.size() != 19) {
+    if (value[19] != '.' || value.size() < 21 || value.size() > 29) {
+      return std::nullopt;
+    }
+    fraction = number(20, value.size() - 20);
+    if (fraction < 0) {
+      return std::nullopt;
+    }
+    for (std::size_t i = value.size() - 20; i < 9; ++i) {
+      fraction *= 10;
+    }
+  }
+  const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(
+                           std::chrono::sys_days{date}.time_since_epoch())
+                           .count() +
+                       hour * 3600 + minute * 60 + second;
+  constexpr std::int64_t kNanosecondsPerSecond = 1000000000;
+  if (seconds < std::numeric_limits<std::int64_t>::min() / kNanosecondsPerSecond ||
+      seconds > (std::numeric_limits<std::int64_t>::max() - fraction) / kNanosecondsPerSecond) {
+    return std::nullopt;
+  }
+  return std::chrono::system_clock::time_point{
+      std::chrono::duration_cast<std::chrono::system_clock::duration>(
+          std::chrono::nanoseconds{seconds * kNanosecondsPerSecond + fraction})};
+}
+
+internal::BenchmarkTelemetryBoundary internal::BenchmarkTelemetryBoundary::now() noexcept {
+  BenchmarkTelemetryBoundary boundary;
+  boundary.before = std::chrono::steady_clock::now();
+  boundary.utc = std::chrono::system_clock::now();
+  boundary.after = std::chrono::steady_clock::now();
+  return boundary;
+}
+
+bool internal::valid_benchmark_telemetry_window(const BenchmarkTelemetryBoundary& begin,
+                                                const BenchmarkTelemetryBoundary& end) noexcept {
+  if (begin.before > begin.after || end.before > end.after || end.before < begin.after ||
+      end.utc < begin.utc) {
+    return false;
+  }
+  const auto elapsed = end.utc - begin.utc;
+  return elapsed >= end.before - begin.after && elapsed <= end.after - begin.before;
+}
+
 Telemetry internal::telemetry_layout(const json& metrics) {
   std::vector<std::string> die_sensors;
   for (int i = 0; i < kDieSensorCount; ++i) {
@@ -267,10 +355,17 @@ public:
   }
 
   ~Impl() {
-    stop();
+    // Unwinding must not allocate a result or perform another Sentinel request.
+    stop_requested_ = true;
+    gate_ = 2;
+    gate_.notify_all();
+    wake_.notify_all();
+    if (worker_.joinable()) {
+      worker_.join();
+    }
   }
 
-  void start() {
+  void start(bool benchmark = false) {
     std::lock_guard<std::mutex> control(control_mu_);
     if (running_) {
       return;
@@ -283,21 +378,54 @@ public:
       end_time_ = {};
       stop_ms_.reset();
       stop_requested_ = false;
+      strict_ = benchmark;
+      armed_ = !benchmark;
+      gate_ = benchmark ? 0 : 1;
+      sealed_ = false;
+      strict_failure_ = nullptr;
+      worker_failed_ = false;
     }
     connected_ = false;
     last_timestamp_.clear();
+    strict_cursor_.reset();
     interval_ = kDefaultInterval;
     interval_known_ = false;
     warned_.clear();
     const Clock::time_point first_poll = connect() ? next_due() : Clock::now() + interval_;
-    running_ = true;
+    // Publish running only after thread creation succeeds. A failed cold start
+    // leaves no joinable worker and can be retried or destroyed safely.
     worker_ = std::thread([this, first_poll] { run(first_poll); });
+    running_ = true;
+  }
+
+  void arm_benchmark() noexcept {
+    begin_ = internal::BenchmarkTelemetryBoundary::now();
+    armed_.store(true, std::memory_order_release);
+    gate_ = 1;
+    gate_.notify_all();
+  }
+
+  void seal_benchmark() noexcept {
+    // Publish stop before reading the cutoff. A worker's poll bound is read
+    // before it checks this flag, so an already admitted poll cannot count a
+    // sample later than this cutoff. No lock/join/request is on the timed path.
+    stop_requested_ = true;
+    end_ = internal::BenchmarkTelemetryBoundary::now();
+    sealed_.store(true, std::memory_order_release);
+    gate_ = 2;
+    gate_.notify_all();
+    wake_.notify_all();
   }
 
   Telemetry read() const {
     std::lock_guard<std::mutex> lock(mu_);
     Telemetry out = summary_;
-    if (start_time_ != Clock::time_point{}) {
+    if (strict_) {
+      if (armed_.load(std::memory_order_acquire)) {
+        const auto end = sealed_.load(std::memory_order_acquire) ? end_.after : Clock::now();
+        out.duration_ms = std::chrono::duration<double, std::milli>(end - begin_.after).count();
+      }
+    } else if (start_time_ != Clock::time_point{}) {
       const Clock::time_point end = end_time_ == Clock::time_point{} ? Clock::now() : end_time_;
       out.duration_ms = std::chrono::duration<double, std::milli>(end - start_time_).count();
     }
@@ -307,7 +435,11 @@ public:
   Telemetry stop() {
     std::lock_guard<std::mutex> control(control_mu_);
     if (running_) {
-      {
+      if (strict_) {
+        if (!sealed_.load(std::memory_order_acquire)) {
+          seal_benchmark();
+        }
+      } else {
         std::lock_guard<std::mutex> lock(mu_);
         end_time_ = Clock::now();
         stop_ms_ = wall_clock_ms();
@@ -315,10 +447,24 @@ public:
       }
       wake_.notify_all();
       worker_.join();
-      poll();
       running_ = false;
+      if (strict_ && (!armed_ || !internal::valid_benchmark_telemetry_window(begin_, end_))) {
+        strict_failure_ = "Sentinel throughput window has invalid or discontinuous clocks";
+      }
+      poll(true);
       std::lock_guard<std::mutex> lock(mu_);
-      if (summary_.status == kWaiting) {
+      if (strict_failure_ || worker_failed_) {
+        // Never publish partial power/energy after attribution or worker failure.
+        for_each_metric(summary_, [](TelemetryStats& stats) {
+          stats.samples = 0;
+          stats.mean = stats.minimum = stats.maximum = stats.last = 0.0;
+        });
+        auto& die = summary_.die_temperature_max_c;
+        die.samples = 0;
+        die.mean = die.minimum = die.maximum = die.last = 0.0;
+        summary_.samples = 0;
+        summary_.status = strict_failure_ ? strict_failure_ : "Sentinel telemetry worker failed";
+      } else if (summary_.status == kWaiting) {
         summary_.status = kNoSample;
       }
     }
@@ -330,20 +476,44 @@ public:
   }
 
 private:
-  void run(Clock::time_point next) {
-    for (;;) {
-      {
-        std::unique_lock<std::mutex> lock(mu_);
-        if (wake_.wait_until(lock, next, [this] { return stop_requested_; })) {
+  void run(Clock::time_point next) noexcept {
+    try {
+      // Atomic wait avoids the lost-wakeup race of notifying a condition
+      // variable without taking its mutex on the timed arm path.
+      gate_.wait(0);
+      for (;;) {
+        {
+          std::unique_lock<std::mutex> lock(mu_);
+          if (wake_.wait_until(lock, next, [this] { return stop_requested_.load(); })) {
+            return;
+          }
+        }
+        next = poll();
+        if (strict_failure_) {
+          // Attribution cannot recover within this benchmark. Leave stop() to
+          // join and finalize the failed result without polling its timed window.
           return;
         }
       }
-      next = poll();
+    } catch (...) {
+      // Diagnostics may also be out of memory. Preserve failure without an
+      // allocation; stop() joins before constructing the caller's result.
+      worker_failed_ = true;
     }
   }
 
   /// Read Sentinel's latest sample and count it when it is new. Returns when to ask again.
-  Clock::time_point poll() {
+  Clock::time_point poll(bool final = false) {
+    if (strict_) {
+      poll_bound_ = final ? end_ : internal::BenchmarkTelemetryBoundary::now();
+      if ((!final && stop_requested_) || strict_failure_) {
+        return Clock::now();
+      }
+      if (!internal::valid_benchmark_telemetry_window(begin_, poll_bound_)) {
+        strict_failure_ = "Sentinel throughput window has invalid or discontinuous clocks";
+        return Clock::now();
+      }
+    }
     try {
       if (!connected_) {
         return connect() ? next_due() : Clock::now() + interval_;
@@ -390,6 +560,9 @@ private:
     const json& samples = cache.at("samples");
     if (!samples.empty()) {
       last_timestamp_ = text(samples.back(), "timestamp");
+      if (strict_) {
+        strict_cursor_ = internal::benchmark_sample_timestamp(samples.back());
+      }
     }
     learn_interval(samples);
     last_seen_ = Clock::now();
@@ -446,6 +619,21 @@ private:
   void count(const json& sample) {
     const std::string timestamp = text(sample, "timestamp");
     std::lock_guard<std::mutex> lock(mu_);
+    if (strict_) {
+      const auto taken = internal::benchmark_sample_timestamp(sample);
+      if (!taken || (!last_timestamp_.empty() && (!strict_cursor_ || *taken <= *strict_cursor_))) {
+        strict_failure_ = "Sentinel sample timestamps are invalid or not strictly increasing";
+        return;
+      }
+      if (*taken > poll_bound_.utc) {
+        return; // A future sample may become eligible on a later poll; do not advance the cursor.
+      }
+      last_timestamp_ = timestamp;
+      strict_cursor_ = taken;
+      if (*taken < begin_.utc) {
+        return;
+      }
+    }
     const auto taken_ms = timestamp_ms(timestamp);
     if (stop_ms_ && taken_ms && *taken_ms > *stop_ms_) {
       return; // Sentinel took it after stop().
@@ -481,7 +669,16 @@ private:
   // Shared with read() and stop().
   mutable std::mutex mu_;
   std::condition_variable wake_;
-  bool stop_requested_ = false;
+  std::atomic<bool> stop_requested_{false};
+  std::atomic<int> gate_{1}; // 0: cold prepared, 1: armed, 2: stop requested.
+  std::atomic<bool> armed_{true};
+  std::atomic<bool> sealed_{false};
+  std::atomic<bool> worker_failed_{false};
+  bool strict_ = false;
+  internal::BenchmarkTelemetryBoundary begin_{};      // Published by armed_.
+  internal::BenchmarkTelemetryBoundary end_{};        // Published by sealed_.
+  internal::BenchmarkTelemetryBoundary poll_bound_{}; // Worker/final poll only.
+  const char* strict_failure_ = nullptr;              // Worker, then stop() after join.
   Telemetry summary_;
   Clock::time_point start_time_{};
   Clock::time_point end_time_{};
@@ -490,15 +687,18 @@ private:
   // Owned by whichever of start(), the worker, and stop() runs; they never overlap.
   bool connected_ = false;
   std::string last_timestamp_;
+  std::optional<std::chrono::system_clock::time_point> strict_cursor_;
   Clock::time_point last_seen_{};
   milliseconds interval_ = kDefaultInterval;
   bool interval_known_ = false;
   std::set<std::string> warned_;
 };
 
-TelemetryMonitor::TelemetryMonitor()
-    : impl_(std::make_unique<Impl>(pipeline_internal::SentinelClient(
-          pipeline_internal::kSentinelSocketPath, kRequestTimeout))) {}
+TelemetryMonitor::TelemetryMonitor() : TelemetryMonitor(pipeline_internal::kSentinelSocketPath) {}
+
+TelemetryMonitor::TelemetryMonitor(std::string socket_path)
+    : impl_(std::make_unique<Impl>(
+          pipeline_internal::SentinelClient(std::move(socket_path), kRequestTimeout))) {}
 
 TelemetryMonitor::~TelemetryMonitor() = default;
 TelemetryMonitor::TelemetryMonitor(TelemetryMonitor&&) noexcept = default;
@@ -520,11 +720,20 @@ bool TelemetryMonitor::running() const {
   return impl_->running();
 }
 
+void internal::TelemetryMonitorAccess::prepare_benchmark(TelemetryMonitor& monitor) {
+  monitor.impl_->start(true);
+}
+
+void internal::TelemetryMonitorAccess::arm_benchmark(TelemetryMonitor& monitor) noexcept {
+  monitor.impl_->arm_benchmark();
+}
+
+void internal::TelemetryMonitorAccess::seal_benchmark(TelemetryMonitor& monitor) noexcept {
+  monitor.impl_->seal_benchmark();
+}
+
 TelemetryMonitor internal::TelemetryMonitorAccess::make(std::string sentinel_socket_path) {
-  TelemetryMonitor monitor;
-  monitor.impl_ = std::make_unique<TelemetryMonitor::Impl>(
-      pipeline_internal::SentinelClient(std::move(sentinel_socket_path), kRequestTimeout));
-  return monitor;
+  return TelemetryMonitor(std::move(sentinel_socket_path));
 }
 
 } // namespace simaai::neat

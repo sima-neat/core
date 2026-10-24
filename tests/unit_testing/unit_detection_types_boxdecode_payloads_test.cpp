@@ -3,9 +3,11 @@
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -178,6 +180,37 @@ RUN_TEST(
               "segmentation predicate failed");
       require(detection_format_is_bbox_family(kDetectionFormatBboxPose),
               "pose should be BBOX-family");
+
+      // Coordinate + extent is a public wire boundary, not a signed-int32
+      // arithmetic contract. Positive overflow must remain a valid wide box;
+      // negative overflow keeps strict decoding's existing degenerate-box policy.
+      const std::array<RawBox, 2> extreme_boxes{{{.x = std::numeric_limits<int32_t>::max(),
+                                                  .y = std::numeric_limits<int32_t>::max(),
+                                                  .w = std::numeric_limits<int32_t>::max(),
+                                                  .h = std::numeric_limits<int32_t>::max(),
+                                                  .score = .75f,
+                                                  .cls = 1},
+                                                 {.x = std::numeric_limits<int32_t>::min(),
+                                                  .y = std::numeric_limits<int32_t>::min(),
+                                                  .w = std::numeric_limits<int32_t>::min(),
+                                                  .h = std::numeric_limits<int32_t>::min(),
+                                                  .score = .5f,
+                                                  .cls = 2}}};
+      std::vector<uint8_t> extreme_bytes(sizeof(uint32_t) + sizeof(extreme_boxes));
+      const uint32_t extreme_count = extreme_boxes.size();
+      std::memcpy(extreme_bytes.data(), &extreme_count, sizeof(extreme_count));
+      std::memcpy(extreme_bytes.data() + sizeof(extreme_count), extreme_boxes.data(),
+                  sizeof(extreme_boxes));
+      for (bool strict : {false, true}) {
+        const auto boxes = parse_bbox_bytes(extreme_bytes, 0, 0, 0, strict);
+        require(boxes.size() == (strict ? 2U : 1U),
+                "wide coordinate arithmetic changed degenerate-box policy");
+        require(boxes[0].x2 == 4294967296.0f && boxes[0].y2 == 4294967296.0f,
+                "positive coordinate sum overflowed int32");
+        if (strict)
+          require(boxes[1].x2 == -4294967296.0f && boxes[1].y2 == -4294967296.0f,
+                  "negative coordinate sum overflowed int32");
+      }
 
       const Tensor pose_tensor =
           make_wire_tensor(make_pose_payload(2, 2), kDetectionFormatBboxPose);

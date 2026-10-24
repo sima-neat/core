@@ -8,6 +8,7 @@
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/TensorMath.h"
+#include "pipeline/internal/TensorUtil.h"
 
 #include <algorithm>
 #include <atomic>
@@ -31,7 +32,6 @@ namespace simaai::neat {
 using pipeline_internal::env_bool;
 
 namespace {
-using run_internal::force_copy_sample_if_zero_copy;
 using run_internal::queue_full;
 using run_internal::sample_has_zero_copy_tensor;
 
@@ -405,7 +405,11 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
       const bool copy_output = st->pipeline.copy_output_latched.load(std::memory_order_relaxed) &&
                                !preserve_dmabuf && !strict_zero_copy;
       if (copy_output && has_zero_copy_output) {
-        force_copy_sample_if_zero_copy(out);
+        // InputStream may already have materialized Owned into independent
+        // DMA-BUF storage. A GstSample holder alone does not imply a pool loan.
+        if (!out.owned) {
+          pipeline_internal::materialize_owned_output(out);
+        }
         release_incoming_realtime_credits("async-output-copy");
       }
       if (max > 0) {
