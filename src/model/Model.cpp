@@ -28,6 +28,7 @@
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/RenderedMlaContractQuery.h"
+#include "pipeline/internal/SelectedStageBoundary.h"
 #include "pipeline/internal/InputRouteProcessor.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorTransfer.h"
@@ -3308,16 +3309,7 @@ public:
       if (!selected) {
         throw std::runtime_error("ModelIngressRouteProcessor: " + error);
       }
-      const CompiledMlaContract* mla_contract = nullptr;
-      for (const auto& facts : selected->stage_facts) {
-        const auto mla = std::find_if(facts.begin(), facts.end(), [](const auto& fact) {
-          return fact.mla_compiled.has_value();
-        });
-        if (mla != facts.end()) {
-          mla_contract = &*mla->mla_compiled;
-          break;
-        }
-      }
+      const auto* mla_contract = pipeline_internal::direct_model_mla_contract(infer, *selected);
       direct_input_storage_bytes_.resize(ingress_contracts_.size(), 0U);
       if (mla_contract) {
         // Rank-two ingress convenience dimensions do not retain the MLA batch count.

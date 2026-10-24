@@ -658,6 +658,10 @@ RUN_TEST(
               "selected ingress metadata must use the exact contextual MLA boundary");
       const auto direct_input =
           simaai::neat::pipeline_internal::direct_model_mla_input_info(selected_nodes);
+      const auto* direct_contract = simaai::neat::pipeline_internal::direct_model_mla_contract(
+          selected_nodes, *selected_facts);
+      require(direct_contract == &*selected_facts->stage_facts.front().front().mla_compiled,
+              "tail handling must select the exact first MLA contract from the owning facts");
       require(direct_input.has_value() && direct_input->span_size_bytes == 64 &&
                   direct_input->logical_dtype == "INT8",
               "the true selected first MLA must constrain the application ingress");
@@ -705,6 +709,8 @@ RUN_TEST(
                 std::any_of(transform_facts->stage_facts.front().begin(),
                             transform_facts->stage_facts.front().end(),
                             [](const auto& fact) { return fact.mla_compiled.has_value(); }) &&
+                !simaai::neat::pipeline_internal::direct_model_mla_contract(transform_nodes,
+                                                                            *transform_facts) &&
                 !simaai::neat::pipeline_internal::direct_model_mla_input_info(transform_nodes),
             "a native transform before MLA must not expose its internal IFM as source authority");
         const auto transform_stages = transform_facts->stage_facts.front();
