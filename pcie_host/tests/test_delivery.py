@@ -262,7 +262,7 @@ esac
             script = r'''
 set -euo pipefail
 MAKE_DEB=ON; HOST_DISTRO=ubuntu24; DEB_ARCH=amd64
-SCHEDULER_SPEC=latest; SCHEDULER_ENVIRONMENT=production
+SCHEDULER_SPEC=latest; SCHEDULER_ENVIRONMENT=production; SCHEDULER_CANDIDATE=''
 current_core_branch() { printf 'feature/native'; }
 run_privileged() { echo 'unexpected privileged installation' >&2; exit 99; }
 python3() {
