@@ -137,8 +137,9 @@ endfunction()
         manifest_install = re.search(
             r'install\(\n  FILES \$\{CMAKE_BINARY_DIR\}/tests/CTestTestfile.cmake\n.*?\n\)',
             tests, re.DOTALL).group(0)
-        names = {'unit_boxdecode_publication_test', 'unit_boxdecode_kernel_recipe_test',
-                 'unit_boxdecode_geometry_test', 'unit_kernel_runner_integration_test'}
+        executables = {'unit_boxdecode_publication_test', 'unit_boxdecode_kernel_recipe_test',
+                       'unit_boxdecode_geometry_test', 'unit_kernel_runner_integration_test'}
+        names = executables | {'unit_kernel_runner_capacity_policy_test'}
         env = os.environ.copy()
         for key in ('CC', 'CXX', 'CFLAGS', 'CXXFLAGS', 'CPPFLAGS', 'LDFLAGS', 'CPATH',
                     'CPLUS_INCLUDE_PATH', 'LIBRARY_PATH', 'LD_LIBRARY_PATH', 'LD_PRELOAD',
@@ -246,7 +247,7 @@ include("{ROOT}/cmake/NeatGuardedTests.cmake")
                     manifest.write_text(manifest.read_text().replace(str(build / 'tests'),
                                                                     str(installed_tests)))
                     shutil.rmtree(build)
-                    for name in names:
+                    for name in executables:
                         executable = installed_tests / name
                         self.assertIn('ELF', command('file', executable).stdout)
                         machine = re.search(machine_pattern,
@@ -256,6 +257,14 @@ include("{ROOT}/cmake/NeatGuardedTests.cmake")
                         dynamic = command('readelf', '-d', executable).stdout
                         self.assertIn('[$ORIGIN/../..]', dynamic)
                         self.assertNotIn(str(root), dynamic)
+                    installed_cases = json.loads(command(
+                        'ctest', '--test-dir', installed_tests, '--show-only=json-v1').stdout)['tests']
+                    self.assertEqual({test['name'] for test in installed_cases}, names)
+                    capacity_case = next(test for test in installed_cases
+                                         if test['name'] == 'unit_kernel_runner_capacity_policy_test')
+                    self.assertEqual(capacity_case['command'], [
+                        str(installed_tests / 'unit_kernel_runner_integration_test'),
+                        '--capacity-policy-only'])
                     result = command('ctest', '--test-dir', installed_tests, '--output-on-failure')
                     self.assertIn('100% tests passed', result.stdout)
                     plugin = plugins / 'libfixture_plugin.so'
@@ -263,7 +272,7 @@ include("{ROOT}/cmake/NeatGuardedTests.cmake")
                     result = command('ctest', '--test-dir', installed_tests,
                                      '--output-on-failure', check=False)
                     self.assertNotEqual(result.returncode, 0)
-                    self.assertIn('0% tests passed, 4 tests failed out of 4', result.stdout)
+                    self.assertIn('0% tests passed, 5 tests failed out of 5', result.stdout)
                     self.assertIn('error while loading shared libraries: libfixture_plugin.so',
                                   result.stdout)
 
