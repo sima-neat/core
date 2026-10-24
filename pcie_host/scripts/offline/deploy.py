@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """One-target offline deployment, called by install.py inside a network namespace."""
 import argparse
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -39,6 +40,23 @@ def configure(repo, state):
     }
     (state/'config').write_text(''.join(f'{key} {json.dumps(value)};\n' for key, value in settings.items()))
     os.environ['APT_CONFIG'] = str(state/'config')
+
+
+@contextmanager
+def private_apt(repo):
+    previous = os.environ.get('APT_CONFIG')
+    with tempfile.TemporaryDirectory(prefix='neat-offline-apt-') as tmp:
+        try:
+            state = Path(tmp)
+            configure(repo, state)
+            yield state
+        finally:
+            # Error-reporting hooks can import python-apt after this scope exits.
+            # Never leave APT_CONFIG pointing at a deleted temporary directory.
+            if previous is None:
+                os.environ.pop('APT_CONFIG', None)
+            else:
+                os.environ['APT_CONFIG'] = previous
 
 
 def missing_prerequisites():
@@ -91,15 +109,15 @@ def execute(root, role, phase):
         'NEAT_INSTALLER_INSTALL_CODEX_SKILL': 'OFF', 'NEAT_INSTALLER_INSTALL_CLAUDE_SKILL': 'OFF',
         'SIMAPCIE_INSTALL_CODEX_SKILL': 'OFF', 'SIMAPCIE_INSTALL_CLAUDE_SKILL': 'OFF',
     })
-    with tempfile.TemporaryDirectory(prefix='neat-offline-apt-') as tmp:
-        state = Path(tmp)
-        configure(target/'repo', state)
+    with private_apt(target/'repo') as state:
         run(['apt-get', 'update'])
         native = sorted((target/'payload').glob('*.deb'))
         prerequisites = missing_prerequisites()
         # Card upgrades may retire legacy Neat packages. The published lifecycle
         # validates every removal and the complete Scheduler transaction below.
-        policy = ['--no-remove'] if role == 'host' else ['--allow-downgrades', '--reinstall']
+        # Both published lifecycles install the explicitly selected bundle versions,
+        # even when Debian orders them below an installed development build.
+        policy = ['--allow-downgrades', '--no-remove' if role == 'host' else '--reinstall']
         args = ['apt-get', *policy, '--no-install-recommends', '-y', 'install',
                 *map(str, native)]
         if phase == 'verify':

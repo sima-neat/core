@@ -46,7 +46,7 @@ def test_preflight_runs_admission_without_package_install(tmp_path, monkeypatch,
     assert calls[-1][2:4] == [role, 'preflight']
     plan = next(c for c in calls if '--simulate' in c)
     assert ('--no-remove' in plan) == (role == 'host')
-    assert ('--allow-downgrades' in plan) == (role == 'card')
+    assert '--allow-downgrades' in plan
     assert ('--reinstall' in plan) == (role == 'card')
 
 
@@ -170,3 +170,23 @@ def test_generated_bootstrap_reads_only_uncompressed_package_index(tmp_path):
     assert 'Acquire::IndexTargets::deb::Packages::CompressionTypes "uncompressed";' in script
     assert 'apt-get update' in script
     assert 'Dir::Etc::parts "$root/apt/empty"' in script
+
+
+@pytest.mark.parametrize('fails', [False, True])
+@pytest.mark.parametrize('previous', [None, '/etc/apt/custom.conf'])
+def test_private_apt_restores_environment_before_cleanup(tmp_path, monkeypatch, fails, previous):
+    if previous is None:
+        monkeypatch.delenv('APT_CONFIG', raising=False)
+    else:
+        monkeypatch.setenv('APT_CONFIG', previous)
+    config = None
+    try:
+        with deploy.private_apt(tmp_path/'repo'):
+            config = Path(os.environ['APT_CONFIG'])
+            assert config.is_file()
+            if fails:
+                raise RuntimeError('simulated APT failure')
+    except RuntimeError:
+        assert fails
+    assert os.environ.get('APT_CONFIG') == previous
+    assert not config.exists()

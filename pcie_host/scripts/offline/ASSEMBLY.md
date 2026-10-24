@@ -221,7 +221,10 @@ images are qualification/build inputs and are not part of the customer archive.
 On an already installed card, preflight delegates legacy Neat replacement and
 Scheduler transaction checks to the published installer. Installed system
 prerequisites are retained; only missing prerequisites are requested. The host
-still disallows package removal. Unsupported replacements fail before any target
+still disallows package removal. Host and card preflight allow installation of
+the exact bundle versions even when Debian considers them downgrades, matching
+the published installer lifecycles; producer Platform admission remains active.
+Unsupported replacements fail before any target
 is changed. After prerequisites are installed, the adapter regenerates its APT
 plan before final admission, excluding prerequisites already installed. Card
 reruns plan the complete native cohort with `--reinstall`, matching the published
