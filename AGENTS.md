@@ -8,11 +8,20 @@ This file defines baseline quality expectations for automated and human contribu
 - Follow the testing rules in `docs/develop-apps/contribute/build-test/test_requirements.md`.
 - Treat public headers under `include/*` as stable API.
 
+## Issues and pull requests
+
+- Use the [bug report template](.github/ISSUE_TEMPLATE/bug_report.md) for defects
+  and the [feature request template](.github/ISSUE_TEMPLATE/feature_request.md)
+  for proposed improvements. Complete relevant sections, mark others as not
+  applicable, and redact secrets and customer data from examples and logs.
+- Use the [pull request template](.github/PULL_REQUEST_TEMPLATE.md), target
+  `develop`, and link completed issues with `Fixes #<issue>`.
+
 ## API compatibility
 
 - Prefer non-breaking API changes.
 - Any breaking public API signature change must follow the documented process in `docs/develop-apps/contribute/start-here/coding_standard.md`.
-- PRs with breaking API changes must complete the `Breaking API Change` section in `.github/pull_request_template.md`.
+- PRs with breaking API changes must complete the `Breaking API Change` section in `.github/PULL_REQUEST_TEMPLATE.md`.
 
 ## Documentation updates
 
