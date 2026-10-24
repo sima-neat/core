@@ -118,6 +118,51 @@ class PublicationInventory(unittest.TestCase):
 
 
 class Delivery(unittest.TestCase):
+    def test_card_runtime_verification_uses_installed_plugins_without_legacy_wrapper(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            commands = root / 'bin'; commands.mkdir()
+            remote = root / 'card-bin'; remote.mkdir()
+            log = root / 'inspect.log'
+            (commands / 'ssh').write_text('''#!/bin/bash
+[[ "$SSH_FAILURE" == 0 ]] || exit "$SSH_FAILURE"
+export PATH="$CARD_BIN"
+exec /bin/bash -c "${!#}"
+''')
+            builder = remote / 'pcie-pipeline-builder'
+            builder.write_text('#!/bin/bash\nexit 0\n')
+            (remote / 'gst-inspect-1.0').write_text('''#!/bin/bash
+[[ "$GST_PLUGIN_PATH_1_0" == /usr/lib/aarch64-linux-gnu/neat/gst-plugins ]] || exit 90
+[[ ! ${GST_PLUGIN_PATH+x} ]] || exit 91
+printf '%s\\n' "$*" >> "$INSPECT_LOG"
+[[ "$1" != "$MISSING_PLUGIN" ]] || exit 42
+''')
+            for path in (*commands.iterdir(), *remote.iterdir()):
+                path.chmod(0o755)
+            for case in ('success', 'missing-source', 'missing-sink', 'missing-builder', 'ssh-failure'):
+                with self.subTest(case=case):
+                    log.unlink(missing_ok=True)
+                    if case == 'missing-builder':
+                        builder.rename(remote / 'builder-disabled')
+                    elif not builder.exists():
+                        (remote / 'builder-disabled').rename(builder)
+                    missing = {'missing-source': 'neatpciesrc', 'missing-sink': 'neatpciesink'}
+                    env = {'PATH': str(commands) + ':/usr/bin:/bin', 'HOME': str(root),
+                           'GITHUB_WORKSPACE': str(ROOT.parent), 'CARD_BIN': str(remote),
+                           'INSPECT_LOG': str(log), 'MISSING_PLUGIN': missing.get(case, ''),
+                           'SSH_FAILURE': '255' if case == 'ssh-failure' else '0',
+                           'GST_PLUGIN_PATH': '/stale/plugins',
+                           'GST_PLUGIN_PATH_1_0': '/stale/versioned-plugins'}
+                    result = subprocess.run(
+                        ['bash', str(ROOT.parent / 'scripts/ci/pciehost/verify_card_runtime.sh')],
+                        env=env, text=True, capture_output=True)
+                    self.assertEqual(result.returncode == 0, case == 'success',
+                                     result.stdout + result.stderr)
+                    expected = ([] if case in ('missing-builder', 'ssh-failure') else
+                                ['neatpciesrc'] if case == 'missing-source' else
+                                ['neatpciesrc', 'neatpciesink'])
+                    self.assertEqual(log.read_text().splitlines() if log.exists() else [], expected)
+
     def test_dependency_bootstrap_reuses_existing_host_privilege_helper(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp); commands = root / 'bin'; commands.mkdir()
