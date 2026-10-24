@@ -234,9 +234,9 @@ be completed before running the Neat installer.
 
 ## Physical offline installation result
 
-The qualification archive `neat-offline-0c4b8df5ef48-v8.tar.gz` contains the paired
-Core binaries above and installer tooling through `e53665e3`. Its SHA-256 is
-`9a16edb2a3e0d26b08655e08aea89b3e235bf545d3c8032863a5a2f2022d8169`.
+The qualification archive `neat-offline-0c4b8df5ef48-v9.tar.gz` contains the paired
+Core binaries above and installer tooling through `dffa5a65`. Its SHA-256 is
+`17f01106c97825cb71a6f766d731b59ae032d112f495ae228a37919ecfa5a8d2`.
 The native repositories, wheelhouses, baseline inputs, and container validator
 remain byte-identical to the successful clean-container validation; subsequent
 changes fix the physical deployment adapters.
@@ -257,3 +257,12 @@ library hash and loaded driver version were unchanged; no Platform system image
 was flashed. This is one-card installation acceptance, not multi-card hardware,
 DMA/inference, or numerical model qualification. Release publication still needs
 the corrected Scheduler producer from PR #18.
+
+The deduplicated v9 archive is 523,275,601 bytes (499.03 MiB), compared with
+609,225,029 bytes for v8: 85,949,428 bytes smaller (14.11%). Its 21 tar hard-link
+entries preserve all file paths. All payload and deployment files are unchanged;
+only `assemble.py` and its manifest hash differ. Extraction and full bundle
+verification passed on the physical host, followed by another automatic
+host/card offline installation with exit zero and both targets
+`installed_verified`. Card-only staging is independently regression-tested,
+including duplicates shared between the host and card trees.
