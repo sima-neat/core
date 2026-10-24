@@ -189,17 +189,31 @@ existing `.pending` staging and aggregate verification process.
   baseline/repository, not copied from an already modified card.
 
 No actual Neat release archive or full hardware-offline qualification is claimed.
-Inspection of sima-cli at `6d17551f8ff74a4db7f16f32733c6e0586fd6400`
-confirms that its SWUpdate path is for Yocto. For eLxr, `update_firmware`
-dispatches to local `simaai-ota`, rejects remote updates, and requires Internet
-connectivity before refreshing APT metadata. The supplied Platform 3.0 card is
-eLxr, so invoking that command is not an offline SWU provisioning solution.
+The installed sima-cli on the qualification host now supports signed eLxr 3.0
+SWUpdate bundles and a separate Linux host update path. `sima-cli -i update` on
+a Linux host selects a checksum-verified `sima_pcie_host_pkg.sh` from the public
+daily-build catalog. Do not run it as part of Neat installation: it applies
+Platform drivers/libraries and may require a reboot.
+
+The host installer downloaded for SDK build `3.0.0_daily_develop_B2308` was
+verified against the catalog and inspected without running its payload. It
+installs files and DKMS directly; it does not install the corresponding Platform
+DEBs. This does not satisfy the current Scheduler producer's exact Debian
+package dependency/admission contract. A host prepared with that script alone
+must not be assumed compatible with this Neat bundle. Platform provisioning and
+the Scheduler producer need an agreed, verifiable package contract; do not fake
+dpkg registrations or weaken the dependency checks in the offline installer.
+
+The locally built host payload at Core `e8d2ba7cd23f` still requires
+`simaai-pcie-host=2026.10.12.00413+6e585a3`. The inspected public catalog had no
+matching host package; B2308 supplies `2026.10.21.00415+a1e551a` instead. The
+required older package is not interchangeable with a newer daily build merely
+because both are Platform 3.0. Actual host preflight with networking disabled
+failed on the missing Platform package before mutation. PCI-scoped discovery
+also received no reply from the supplied card; its responder configuration names
+an absent interface.
+
 Use a qualified full eLxr firmware/rootfs image as the clean baseline source;
 an in-place package update does not establish that Neat is absent. A PCIe-capable
 image and its host driver compatibility still need verification before flashing.
 No firmware update or card reconfiguration was performed for these checks.
-
-Next, provide digest-pinned clean images representing the completed offline
-Platform provisioning step, then rerun assembly with complete matching Core
-publications. Do not add dummy packages, disable dependency checks, or weaken
-producer admission to make these tests pass.
