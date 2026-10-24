@@ -4,7 +4,7 @@
     "ubuntu24": "ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac"
   },
   "card": {
-    "key": "core/_offline-build-inputs/sha256/ae1ac342f8d02045ecb5fc28e6ce40aae6fdb2a89ed3365a93e588e8c5066901/card-baseline.docker.tar.gz",
+    "key": "core/offline-build-input-ae1ac342f8d02045ecb5fc28e6ce40aae6fdb2a89ed3365a93e588e8c5066901-card-baseline.docker.tar.gz",
     "sha256": "ae1ac342f8d02045ecb5fc28e6ce40aae6fdb2a89ed3365a93e588e8c5066901",
     "image_id": "sha256:b58bac151bb1f93a9a497163ad9f6cb80d01956fcf6619079d7352f62a62abc6",
     "os_id": "elxr",
@@ -17,7 +17,7 @@
     }
   },
   "platform_source": {
-    "key": "core/_offline-build-inputs/sha256/fd50c300873e7dded850910fcdf64fc4e0599477d053cea8974d1d4f6c21611b/platform-source.tar.gz",
+    "key": "core/offline-build-input-fd50c300873e7dded850910fcdf64fc4e0599477d053cea8974d1d4f6c21611b-platform-source.tar.gz",
     "sha256": "fd50c300873e7dded850910fcdf64fc4e0599477d053cea8974d1d4f6c21611b",
     "provenance": "Packed with Scheduler platform_provider.py at 85b05060c221; source contents are reverified against the selected producer policy during every baseline build."
   }

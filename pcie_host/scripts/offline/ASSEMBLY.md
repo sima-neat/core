@@ -311,8 +311,10 @@ but would serialize the work and add emulation to host dependency validation.
 
 `baselines.json` pins the Ubuntu multiarchitecture image manifests and the clean
 Platform card image archive, including provenance and checksums. The card archive
-is a build-only object under `core/_offline-build-inputs/sha256/` in the configured
-artifact bucket. Production is seeded with this input; another Vulcan environment
+and Platform source archive are build-only, content-addressed files directly under
+`core/` in the configured artifact bucket. These are not branch directories: Vulcan
+branch cleanup treats nested `core/<ref>/...` paths as Git refs and removes missing
+branches. Keep baseline objects outside that branch layout. Production is seeded with this input; another Vulcan environment
 must receive the same checksum-verified object before enabling this workflow.
 No baseline image is shipped in the customer bundle. To update a baseline, qualify
 and upload a new content-addressed object and change the manifest in review; do
