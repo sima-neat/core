@@ -28,6 +28,68 @@ host and card installers are unchanged.
 - Core's existing `pcie-setup.sh` infers endpoints from `10.0.N.1` addresses.
   That heuristic cannot prove complete attached-card discovery.
 
+## Single-card hardware inspection: 2026-10-23 (Pacific)
+
+Read-only inspection of a user-provided host established:
+
+| Component | Observed value |
+| --- | --- |
+| Host | Ubuntu 24.04.4 amd64, kernel `7.0.0-38-generic` |
+| Loaded driver | `simaai_mla_drv`, version `develop_B114` |
+| Card | PCI `0000:01:00.0`, vendor/device `1f06:2123`, revision 02 |
+| Host PCIe netdev | `veth-simaai0`, `10.0.0.1/24` |
+| Card PCIe netdev | `veth-simaai`, `10.0.0.2/24` |
+| Card firmware | eLxr/agate Modalix `3.0.0_develop_B2121`, build date `20261014` |
+| Responder package | `simaai-discovery`, `3.0.0~git202610140145.4df44d0-2121` |
+
+The collector ran from stdin without installing files or modifying services.
+It inventoried the card correctly and exited 1 with zero multicast responses.
+SSH inspection used the host's existing authorized card key.
+
+### Confirmed responder implementation and configuration blocker
+
+`/usr/libexec/simaai/simaai-discoveryd` has SHA-256
+`0af5d37badadb168217369d366c8daaedac779f44d062c6f9aed1c5eb3a78f6a`.
+The installed source confirms group `239.255.42.1`, UDP port `50000`, a
+case-insensitive `DISCOVER` request, and a unicast JSON reply to the request's
+source address/port. Response keys are `ip`, `mac`, `hostname`, `device`, and
+`version`. The MAC is the configured interface's MAC; no persistent board serial
+is returned. Source port 60000 is a client convention, not a responder requirement.
+
+The service is enabled and active, but `/etc/default/simaai-discovery` sets
+`DISCOVERY_IFACE=end0`. This card has `end3` and `veth-simaai`, **no `end0`**.
+The daemon waits for a valid configured interface address before opening its
+socket. `ss -ulnp` showed no UDP 50000 listener and `/proc/net/igmp` showed no
+discovery-group membership. Thus service-active status alone is not readiness.
+
+Step-1 provisioning must establish discovery on the PCIe interface. Merely
+pointing this single-interface service at Ethernet would still not satisfy the
+PCIe discovery requirement. Decide whether Platform will provide a PCIe-specific
+instance or another supported multi-interface configuration; do not silently
+replace an existing Ethernet discovery role. No configuration was changed and
+no service was restarted during this inspection. A successful PCIe exchange is
+still pending.
+
+### Confirmed attachment and runtime device-index mapping
+
+- `/sys/class/net/veth-simaai0/device` resolves to PCI `0000:01:00.0`.
+- `/sys/class/sima_mla_c0/sima_mla_c0/dev_info` reports
+  `PCIe Slot: 0000:01:00.0`, explicitly linking runtime device index 0 to the
+  same PCI function without assuming sort order or deriving it from an IP.
+- Installed `simaai_mla_drv_common.c` assigns `card_num` from a free driver slot
+  and creates `sima_mla_c%d`. Installed `simaai_mla_net_drv.c` uses
+  `SET_NETDEV_DEV` and derives the host MAC from `card_num` plus `SIMA0`.
+  The host MAC was `00:53:49:4d:41:30`; the card PCIe MAC was
+  `00:53:49:4d:41:31`. Neither is evidence of persistent physical identity.
+- Installed source hashes: `simaai_mla_net_drv.c`:
+  `7c14be9895f777d6580ce757f9692283d3bbcfdf7f659aa237b3a33df5f8ae94`;
+  `simaai_mla_drv_common.c`:
+  `72888dc91c2fec33369d10b038dc342e0cdc2a9dc5fed52c44270616251867b9`.
+
+This verifies one live attachment/runtime-device mapping and the installed
+responder implementation. It does not establish a persistent serial identity,
+successful discovery, scheduler inference routing, or multi-card qualification.
+
 ## Collect evidence on a provisioned Linux PCIe host
 
 Prerequisites: Python 3, iproute2, driver-loaded PCIe network interfaces with
@@ -68,8 +130,9 @@ collected device/network identifiers before sharing the report.
    topology changes. Confirm that incomplete discovery cannot yield success.
 5. Record the evidence and select the initial supported host/firmware combination.
 
-No physical qualification or complete stable identity mapping has been performed
-for this draft. Until those gates pass, this collector must not feed package or
+Single-card inspection found the configuration blocker above. Successful PCIe
+discovery, multi-card qualification, and complete stable identity mapping remain
+pending. Until those gates pass, this collector must not feed package or
 SSH installation commands.
 
 ## Subsequent implementation
