@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -48,6 +49,11 @@ def collect(root):
         package = output(['dpkg-deb', '-f', str(path), 'Package'])
         if (root / 'payload/pcie_delivery.py').is_file() and (package == 'simaai-pcie-host' or 'dkms' in package):
             raise ValueError('Platform/driver package belongs to step-1 provisioning: ' + package)
+        if (root / 'payload/pcie_delivery.py').is_file():
+            dependencies = output(['dpkg-deb', '-f', str(path), 'Depends', 'Pre-Depends'])
+            if re.search(r'(?<![a-z0-9+.-])(?:simaai-pcie-host|[a-z0-9+.-]*dkms)(?=[\s,|(:]|$)', dependencies):
+                raise ValueError('Rebuild with the corrected Scheduler producer: ' + package
+                                 + ' requires a Platform/driver DEB; provisioning must stay separate')
         shutil.copyfile(path, repo / path.name)
     helper = root / 'payload/pcie_delivery.py'
     if helper.is_file():

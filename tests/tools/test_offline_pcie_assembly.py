@@ -200,3 +200,22 @@ def test_download_only_metadata_matches_archive_and_architecture(tmp_path, arch,
     assert metadata['artifact']['package_path'] == 'pciehost/ubuntu'+version[:2]+'/'+arch
     assert metadata['platforms'][0]['arch'] == [arch]
     assert metadata['commit'] == 'a'*40
+
+
+@pytest.mark.parametrize('dependency', ['simaai-pcie-host (= 1)', 'other, simaai-mla-drv-dkms'])
+def test_host_collection_rejects_driver_dependency_before_apt(tmp_path, dependency):
+    spec = importlib.util.spec_from_file_location('offline_target',
+        Path(__file__).resolve().parents[2]/'pcie_host/scripts/offline/target.py')
+    target = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(target)
+    payload = tmp_path/'payload'
+    payload.mkdir()
+    (payload/'pcie_delivery.py').write_text('fixture')
+    (payload/'scheduler.deb').write_text('fixture')
+    def inspect(argv):
+        return {'Architecture': 'amd64', 'Package': 'simaai-scheduler-pcie-host',
+                'Depends': dependency}[argv[3]]
+    with patch.object(target, 'environment', return_value={'architecture': 'amd64'}),          patch.object(target, 'output', side_effect=inspect), patch.object(target, 'run') as run:
+        with pytest.raises(ValueError, match='corrected Scheduler producer'):
+            target.collect(tmp_path)
+        run.assert_not_called()

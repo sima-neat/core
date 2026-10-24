@@ -333,7 +333,7 @@ retained and missing final metadata is created conditionally.
 
 The bundle records the binary `core_revision` separately from `installer_revision`
 (the trusted workflow checkout), plus source run and metadata hashes in publication
-metadata. CI retains assembly logs, spec, manifest, and metadata for 14 days.
+metadata. CI retains assembly logs, spec, manifest, and metadata for three days.
 Container installation/import checks do not replace physical multi-card testing.
 
 ### Pre-merge matrix validation
@@ -350,5 +350,5 @@ continues to require the entire source CI run to succeed.
 Validation mode always rebuilds and validates all four bundles, never reuses an
 existing offline release, never uploads release objects, and skips final metadata
 publication. Download the resulting `offline-bundle-*` Actions artifacts within
-seven days; evidence logs are retained for 14 days. This tests the actual matrix
+seven days; evidence logs are retained for three days. This tests the actual matrix
 before merging without exposing an unqualified release through sima-cli.

@@ -129,7 +129,7 @@ jobs:
             ${{ runner.temp }}/offline/neat-pcie-offline-installer.tar.gz
             ${{ runner.temp }}/offline/metadata-offline.json
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 3
       - name: Retain assembly evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
@@ -141,7 +141,7 @@ jobs:
             ${{ runner.temp }}/offline/metadata-offline.json
             ${{ runner.temp }}/offline/neat-offline/bundle.json
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 3
 
   publish:
     if: ${{ !inputs.validation_only }}
