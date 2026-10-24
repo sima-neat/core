@@ -39,6 +39,17 @@ def configure(repo, state):
     os.environ['APT_CONFIG'] = str(state/'config')
 
 
+def missing_prerequisites():
+    required = ('python3-venv', 'python3-pip', 'gstreamer1.0-tools', 'ca-certificates')
+    missing = []
+    for package in required:
+        result = subprocess.run(['dpkg-query', '-W', '-f=${db:Status-Status}', package],
+                                capture_output=True, text=True, timeout=30)
+        if result.returncode or result.stdout.strip() != 'installed':
+            missing.append(package)
+    return missing
+
+
 def environment(target, role):
     row = json.loads((target/'target.json').read_text())
     release = dict(line.split('=', 1) for line in Path('/etc/os-release').read_text().splitlines() if '=' in line)
@@ -83,7 +94,7 @@ def execute(root, role, phase):
         configure(target/'repo', state)
         run(['apt-get', 'update'])
         native = sorted((target/'payload').glob('*.deb'))
-        prerequisites = ['python3-venv', 'python3-pip', 'gstreamer1.0-tools', 'ca-certificates']
+        prerequisites = missing_prerequisites()
         # Card upgrades may retire legacy Neat packages. The published lifecycle
         # validates every removal and the complete Scheduler transaction below.
         policy = ['--no-remove'] if role == 'host' else ['--allow-downgrades']
@@ -100,7 +111,8 @@ def execute(root, role, phase):
         run(lifecycle)
         if phase == 'preflight':
             return
-        run(['apt-get', '--no-remove', '--no-install-recommends', '-y', 'install', *prerequisites])
+        if prerequisites:
+            run(['apt-get', '--no-remove', '--no-install-recommends', '-y', 'install', *prerequisites])
         run(['python3', '-m', 'venv', venv])
         wheels = sorted((target/'payload').glob('*.whl'))
         run([venv+'/bin/python', '-m', 'pip', 'install', '--force-reinstall',

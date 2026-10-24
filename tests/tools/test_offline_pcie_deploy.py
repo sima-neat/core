@@ -31,6 +31,7 @@ def test_preflight_runs_admission_without_package_install(tmp_path, monkeypatch,
     (tmp_path/role/'payload/test.deb').touch()
     monkeypatch.setattr(deploy, 'verify_bundle', lambda *args: None)
     monkeypatch.setattr(deploy, 'environment', lambda *args: None)
+    monkeypatch.setattr(deploy, 'missing_prerequisites', lambda: ['python3-venv'])
     monkeypatch.setattr(deploy, 'run', lambda args, **kwargs: calls.append(args))
     monkeypatch.setenv('PIP_EXTRA_INDEX_URL', 'https://untrusted.invalid')
     monkeypatch.setenv('NEAT_INSTALLER_SKIP_PLATFORM_CHECK', 'ON')
@@ -119,3 +120,14 @@ install_for_environment() { echo MUTATED; }
     assert result.returncode == 43
     assert 'MUTATED' not in result.stdout
     assert 'TRANSACTION' not in result.stdout
+
+
+def test_prerequisites_preserve_installed_system_packages(monkeypatch):
+    import subprocess
+    states = {'python3-venv': (0, ''), 'python3-pip': (1, ''),
+              'gstreamer1.0-tools': (0, 'installed'), 'ca-certificates': (0, 'installed')}
+    def query(args, **kwargs):
+        status, stdout = states[args[-1]]
+        return subprocess.CompletedProcess(args, status, stdout=stdout)
+    monkeypatch.setattr(deploy.subprocess, 'run', query)
+    assert deploy.missing_prerequisites() == ['python3-venv', 'python3-pip']
