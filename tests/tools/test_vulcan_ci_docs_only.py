@@ -138,11 +138,11 @@ class VulcanCiDocsOnlyTests(unittest.TestCase):
             "needs.detect-changes.outputs.docs_only != 'true'", build_pcie
         )
 
-    def test_pcie_hardware_job_is_disabled_with_original_reenable_conditions(self) -> None:
+    def test_pcie_hardware_job_runs_for_standard_code_changes(self) -> None:
         hardware = yaml.safe_load(job_block("test-pciehost-hardware"))
         self.assertEqual(hardware["name"], "Test PCIe Host Hardware")
         self.assertEqual(hardware["if"],
-                         "${{ false && (inputs.build_mode || 'standard') == 'standard' "
+                         "${{ (inputs.build_mode || 'standard') == 'standard' "
                          "&& needs.detect-changes.outputs.docs_only != 'true' }}")
         self.assertEqual(hardware["runs-on"], ["self-hosted", "Linux", "X64", "pcie", "3.0.0-pcie-test"])
         self.assertEqual(hardware["env"]["SIMAPCIE_CARD_HOST"], "10.0.0.2")

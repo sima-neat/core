@@ -72,9 +72,9 @@ file → demux → H.264 decode → resize → preproc → MLA → postproc → 
 
 ## 카메라 소스 및 적응형 메모리
 
-실시간 카메라 프레임은 플랫폼 카메라 스택을 통해 입력되므로 메모리 유형은 설치된 커널, 드라이버 및 `libcamerasrc` 경로에 따라 달라집니다. `CameraInput`은 먼저 장치/SiMaAI 제로 복사 메모리를 요청합니다. 내부 브리지는 `GST_QUERY_ALLOCATION`을 통해 표준 풀을 제안합니다. 풀은 검증된 평면을 하나의 패키지된 SiMaAI 할당에서 할당하고 DMA-BUF로 내보냅니다. `libcamerasrc`는 해당 DMA-BUF를 ISP로 가져오고, 브리지는 다운스트림 CVU/MLA 단계에 대해 동일한 패키지된 할당을 해제합니다.
+실시간 카메라 프레임은 플랫폼 카메라 스택을 통해 입력됩니다. `libcamerasrc`는 각 프레임을 자체 DMA-BUF에 캡처하며, Neat는 해당 메모리를 소유하지 않습니다. 물리적으로 연속된 DMA-BUF는 모두 유효한 EV74 입력이며, Neat의 EV74 허용 검사는 해당 DMA-BUF가 CMA 힙 또는 카메라의 연속 캡처 할당자(`videobuf2_dma_contig`)에서 온 경우 이를 받아들입니다. `CameraInput`의 내부 브리지는 `GST_QUERY_ALLOCATION`을 통해 소스에 `GstVideoMeta`를 요청하고, 각 프레임의 DMA-BUF를 하나의 메모리로 다운스트림 CVU/MLA 단계에 전달하며, 해당 단계들이 해제할 때까지 카메라의 버퍼를 유지합니다.
 
-카메라 스택이 OS/libcamera 버퍼만 제공하고 `allow_cpu_fallback`가 활성화된 경우, Neat은 내부 카메라 메모리 브리지를 삽입합니다. 브리지는 각 프레임을 풀링된 SiMaAI 버퍼에 복사하고, 예상되는 메타데이터를 추가한 다음 해당 버퍼를 모델에서 관리하는 CVU 전처리 단계로 전달합니다. 이 복사는 호환성 브리지입니다. 크기 조정, 색상 변환, 정규화, 양자화 및 테셀레이션은 여전히 CVU/EV74에서 실행되어야 합니다.
+프레임이 평면들이 연속으로 배치된 하나의 DMA-BUF가 아니고 `allow_cpu_fallback`가 활성화된 경우, 브리지는 해당 프레임을 CMA DMA-BUF로 복사하고, 예상되는 메타데이터를 추가한 다음 해당 버퍼를 모델에서 관리하는 CVU 전처리 단계로 전달합니다. 이 복사는 호환성 브리지입니다. 크기 조정, 색상 변환, 정규화, 양자화 및 테셀레이션은 여전히 CVU/EV74에서 실행되어야 합니다.
 
 MIPI 카메라 입력을 작동시키기 위해 공개 `OsToSima`, `videoconvert` 또는 `videoscale` 단계를 추가하지 마십시오. [`CameraInput`](/reference/nodes/camera-input)을 사용하고 소스 경로가 메모리 적응을 담당하도록 합니다.
 

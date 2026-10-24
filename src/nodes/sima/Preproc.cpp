@@ -753,8 +753,17 @@ bool Preproc::compile_node_contract(const ContractCompileInput& input, CompiledN
         : compile_opt.compiled_contract
             ? *compile_opt.compiled_contract
             : semantics::build_processcvu_compiled_contract_from_options(compile_opt);
-    return pipeline_internal::sima::stagesemantics::build_processcvu_node_contract(
-        kind(), element_name, element_name, contract_definition(), compiled, out, err);
+    if (!pipeline_internal::sima::stagesemantics::build_processcvu_node_contract(
+            kind(), element_name, element_name, contract_definition(), compiled, out, err)) {
+      return false;
+    }
+    // A model already owns its async/sync window. Preserve that current node
+    // policy separately from the reusable numerical contract and graph queues.
+    out->native_execution_capacity.reset();
+    if (opt_.model_managed_contract && opt_.num_buffers_locked) {
+      out->native_execution_capacity = static_cast<std::size_t>(opt_.num_buffers);
+    }
+    return true;
   } catch (const std::exception& ex) {
     if (err) {
       *err = ex.what();

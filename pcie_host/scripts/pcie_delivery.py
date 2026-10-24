@@ -106,8 +106,8 @@ def verify(directory, runtime=None, development=None, runtime_only=False):
     if not runtime_only and payloads["core_runtime"]["control"]["Version"] != payloads["core_development"]["control"]["Version"]:
         raise ValueError("Core runtime/development versions differ")
     provider.check_ownership(payloads)
-    # Platform source is a provenance/build resource, not a Core-owned binary
-    # package or an implicit driver-installation request.
+    # Platform library/driver provisioning stays separate; this transaction
+    # contains only the owning Scheduler and Core packages.
     roles = ('runtime',) if runtime_only else ('runtime', 'development')
     packages = [str((directory / data['packages'][role]['resource']).resolve()) for role in roles]
     packages += [str(rt.resolve())] + ([] if runtime_only else [str(dev.resolve())])
@@ -123,8 +123,8 @@ def stage(directory, destination):
     provider = load_provider(directory)
     provider.stage(Path(directory), destination, selection['distro'],
                    selection['architecture'], selection['commit'])
-    # verify() returns the owning Core pair last. Scheduler stages its own
-    # packages and external userspace provider; Core adds only its own payload.
+    # verify() returns the owning Core pair last. Scheduler extracts its prebuilt
+    # packages and service headers; Core adds only its own payload.
     for package in packages[-2:]:
         subprocess.run(['dpkg-deb', '-x', package, str(destination)], check=True)
     return selection

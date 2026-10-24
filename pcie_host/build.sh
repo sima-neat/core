@@ -522,9 +522,8 @@ else
     "${scheduler_spec_args[@]}" --environment "$SCHEDULER_ENVIRONMENT" \
     --distro "$HOST_DISTRO" --arch "$DEB_ARCH" --output "$native_root/selected"
   SCHEDULER_SELECTION="$native_root/selected/selection.json"
-  # Acquisition stages the authentic Scheduler publication and its external
-  # userspace provider privately. Building Core must not install a PCIe driver
-  # or execute the Platform package's maintainer scripts on the build host.
+  # Acquisition privately extracts prebuilt Scheduler packages and service
+  # headers. Core does not build the Platform library or install a PCIe driver.
   scheduler_dir="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["scheduler_dir"])' "$SCHEDULER_SELECTION")"
   native_version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["package_version"])' "$SCHEDULER_SELECTION")"
   GENAI_CMAKE_ARGS+=("-DSimaScheduler_DIR=${scheduler_dir}"

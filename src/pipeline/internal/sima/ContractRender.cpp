@@ -1072,6 +1072,7 @@ render_stages_from_compiled_contract(const CompiledNodeContract& stage,
     try {
       rendered =
           render_processcvu_stage(*stage.processcvu, stage.element_name, stage.logical_stage_id);
+      rendered.native_execution_capacity = stage.native_execution_capacity;
     } catch (const std::exception& ex) {
       if (diagnostics) {
         diagnostics->errors.push_back("contract render: processcvu stage '" + stage.node_kind +

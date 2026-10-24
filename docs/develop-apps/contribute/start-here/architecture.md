@@ -486,9 +486,9 @@ longer than 120 s. MLA-RT owns hardware profiling and the handoff back to
 kernel execution. Profiling requires no overlapping MLA workloads. The benchmark gate serializes
 benchmark calls, not other inference APIs or applications.
 
-A stopped or crashed `mla-rt` run may leave MLA work unfinished, so Runner starts no further `mla-rt`
-run in that process. Later profiling passes report that MLA needs recovery. Keep the DevKit idle
-until MLA recovery is verified.
+An `mla-rt` run that fails, crashes, or is stopped may leave MLA work unfinished, so Runner starts
+no further `mla-rt` run in that process. Later profiling passes report that MLA needs recovery.
+Keep the DevKit idle until MLA recovery is verified.
 
 Profiling is best effort. When `mla-rt` is missing, fails, times out, or writes unusable output,
 Core keeps the headline measurements, leaves that list empty, prints a warning, and sets
@@ -1675,21 +1675,22 @@ diagnostics you can reproduce (`describe_backend()` + report).
 ### Camera allocation ownership
 
 `CameraInput` places `neatcamerabridge` immediately after its camera caps and
-before any live queue. During negotiation the bridge answers the upstream
-`GST_QUERY_ALLOCATION` with a standard pool and requests `GstVideoMeta`. The
-pool allocates the validated planes from one packed SiMaAI allocation and
-exports one DMA-BUF per plane. A compatible `libcamerasrc` imports those
-DMA-BUFs into the ISP capture queue. The bridge then unwraps the same packed
-allocation for downstream processing. Strict mode rejects any buffer that does
-not satisfy that contract; CPU copying remains an explicit compatibility
-fallback.
+before any live queue. Neat never owns camera memory: any physically contiguous
+DMA-BUF is a valid EV74 input, and Neat's EV74 admission check accepts it when it comes from a CMA heap or the camera's contiguous capture allocator (`videobuf2_dma_contig`). During
+negotiation the bridge only requests `GstVideoMeta` through the upstream
+`GST_QUERY_ALLOCATION`; `libcamerasrc` keeps its own capture buffers. The
+bridge forwards each frame whose planes sit back to back in one DMA-BUF as a
+single memory, retaining the producer's buffer until every consumer releases
+it. Strict mode rejects any frame that cannot be forwarded this way; CPU
+copying into a CMA DMA-BUF remains an explicit compatibility fallback.
 
 The application-facing capture depth is independent of both the kernel's
 private CSI-to-ISP RAW transit ring and the later GStreamer queue. The optional
 `capture_buffer_count` argument to `CameraInputWithCaptureBuffers` controls buffers retained across
-ISP output, libcamera, and the application. `queue_depth` and `leaky_queue`
+ISP output, libcamera, and the application (on Platform 3.0 `libcamerasrc` has no
+`buffer-count`, so it must stay `0`). `queue_depth` and `leaky_queue`
 separately control downstream latency and frame-drop policy. The optional
-compatibility-copy pool grows on demand and is not capped by that queue depth,
+compatibility-copy pool grows on demand up to 128 buffers and is not capped by that queue depth,
 so a leaky queue can apply its drop policy without the upstream bridge
 stalling first.
 

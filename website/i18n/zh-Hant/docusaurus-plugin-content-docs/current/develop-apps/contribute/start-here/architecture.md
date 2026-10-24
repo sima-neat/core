@@ -352,7 +352,7 @@ Sentinel 約每 2 秒取樣一次，因此吞吐量階段至少會執行 `Benchm
 
 MLA 剖析透過兩個預設為 false 的 `BenchmarkOptions` 欄位明確啟用：`include_mla_layer_stats` 與 `include_mla_stage_stats`。延遲與吞吐量執行器關閉後，Core 會透過 Scheduler 的用戶端測量已解壓縮模型的 MLA 執行檔，並依序逐一進行剖析。MLA 層統計只涵蓋所選推論路徑（含其終端政策）中的 MLA 階段。Runner 會為每個執行檔在獨立程序中執行 `mla-rt`。MLA 層統計還會使用編譯器統計 YAML；MLA 階段統計會將每個 MLA 執行檔連續不中斷執行 200 次，並從 `mla-rt` 統計檔讀取 `tile.lat` 平均值。Runner 負責驗證輸入與輸出並清理暫存檔；若單次執行超過 120 秒，它會停止 `mla-rt`。MLA-RT 負責硬體剖析，以及將控制權交回核心執行路徑。剖析不得與其他 MLA 工作負載重疊。基準測試閘門只會序列化基準測試呼叫，不涵蓋其他推論 API 或應用程式。
 
-已停止或當機的 `mla-rt` 執行可能讓 MLA 工作未完成，因此 Runner 不會在該程序中再啟動 `mla-rt`。之後的剖析流程會回報 MLA 需要復原。在確認 MLA 已復原之前，請讓 DevKit 保持閒置。
+失敗、當機或已停止的 `mla-rt` 執行可能讓 MLA 工作未完成，因此 Runner 不會在該程序中再啟動 `mla-rt`。之後的剖析流程會回報 MLA 需要復原。在確認 MLA 已復原之前，請讓 DevKit 保持閒置。
 
 剖析採盡力而為（best effort）方式。若找不到 `mla-rt`、其執行失敗、逾時或寫出無法使用的輸出，Core 會保留主要測量值，讓對應清單保持為空，印出警告，並將原因寫入 `mla_layer_stats.status` 或 `mla_stage_stats.status`。其他情況下，狀態為 `"not requested"` 或 `"ok"`。
 
@@ -1285,9 +1285,9 @@ Caps 協商是自動的；失敗會在早期（驗證/預滾動）或在執行�
 
 ### 相機設定的所有權
 
-`CameraInput` 會在其相機 caps 之後，並在任何即時佇列之前，立即放置 `neatcamerabridge`。 在協商期間，橋接器會使用標準池來回應上游的 `GST_QUERY_ALLOCATION`，並請求 `GstVideoMeta`。 該池會分配來自一個打包的 SiMaAI 設定的已驗證平面，並為每個平面匯出一個 DMA-BUF。 一個相容的 `libcamerasrc` 會將這些 DMA-BUF 匯入到 ISP 捕獲佇列中。 然後，橋接器會解包相同的打包設定，以進行下游處理。 嚴格模式會拒絕任何不滿足該合約的緩衝區；CPU 複製仍然是一種明確的相容性後備方案。
+`CameraInput` 會在其相機 caps 之後，並在任何即時佇列之前，立即放置 `neatcamerabridge`。 Neat 從不擁有相機記憶體：任何實體連續的 DMA-BUF 都是有效的 EV74 輸入，且當其來自 CMA 堆積或相機的連續捕獲分配器（`videobuf2_dma_contig`）時，Neat 的 EV74 准入檢查會予以接受。 在協商期間，橋接器只會透過上游的 `GST_QUERY_ALLOCATION` 請求 `GstVideoMeta`；`libcamerasrc` 會保留其自身的捕獲緩衝區。 橋接器會將各平面在單一 DMA-BUF 中緊密相連的每個幀作為單一記憶體轉送，並保留生產端的緩衝區，直到每個消費端將其釋放。 嚴格模式會拒絕任何無法以此方式轉送的幀；以 CPU 複製到 CMA DMA-BUF 仍然是一種明確的相容性後備方案。
 
-面向應用程式的捕獲深度與核心的私有 CSI 到 ISP RAW 傳輸環以及後續的 GStreamer 佇列都是獨立的。 可選的 `capture_buffer_count` 參數，用於 `CameraInputWithCaptureBuffers`，用於控制在 ISP 輸出、libcamera 和應用程式之間保留的緩衝區。 `queue_depth` 和 `leaky_queue` 分別控制下游延遲和幀丟棄策略。 可選的相容性複製池會按需增長，並且不受該佇列深度的限制，因此，漏洩佇列可以應用其丟棄策略，而無需首先使上游橋接器停頓。
+面向應用程式的捕獲深度與核心的私有 CSI 到 ISP RAW 傳輸環以及後續的 GStreamer 佇列都是獨立的。 可選的 `capture_buffer_count` 參數，用於 `CameraInputWithCaptureBuffers`，用於控制在 ISP 輸出、libcamera 和應用程式之間保留的緩衝區（在 Platform 3.0 上，`libcamerasrc` 沒有 `buffer-count`，因此它必須保持為 `0`）。 `queue_depth` 和 `leaky_queue` 分別控制下游延遲和幀丟棄策略。 可選的相容性複製池會按需增長至最多 128 個緩衝區，並且不受該佇列深度的限制，因此，漏洩佇列可以應用其丟棄策略，而無需首先使上游橋接器停頓。
 
 ### 拆解
 

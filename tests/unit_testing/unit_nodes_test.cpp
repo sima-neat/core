@@ -129,21 +129,18 @@ int main() {
             "CameraInput bridge must negotiate allocation before the queue");
     require_contains(cam->backend_fragment(0), "copy-allowed=true",
                      "CameraInput fallback bridge should allow copies");
-    require(cam->backend_fragment(0).find("capture-min-buffers=") == std::string::npos,
-            "CameraInput default must not impose an application capture minimum");
     require(cam->backend_fragment(0).find("num-buffers=") == std::string::npos,
             "CameraInput queue depth must not cap the fallback copy pool");
-    if (simaai::neat::element_property_exists("libcamerasrc", "external-buffer-mode")) {
-      require_contains(cam->backend_fragment(0), "external-buffer-mode=preferred",
-                       "CameraInput fallback should prefer direct downstream capture");
-    }
+    // Neat never lends memory to the camera: no capture-pool negotiation knobs.
+    require(cam->backend_fragment(0).find("external-buffer-mode") == std::string::npos,
+            "CameraInput must not ask libcamerasrc to import Neat buffers");
+    require(cam->backend_fragment(0).find("capture-min-buffers=") == std::string::npos,
+            "CameraInput must not propose a capture pool");
 
     if (simaai::neat::element_property_exists("libcamerasrc", "buffer-count")) {
       auto deep_cam = simaai::neat::nodes::CameraInputWithCaptureBuffers(fallback_cam_opt, 32);
       require_contains(deep_cam->backend_fragment(2), "buffer-count=32",
                        "CameraInput capture queue depth was not applied to libcamerasrc");
-      require_contains(deep_cam->backend_fragment(2), "capture-min-buffers=32",
-                       "CameraInput bridge pool depth must follow application capture ownership");
       require(deep_cam->backend_fragment(2).find("num-buffers=") == std::string::npos,
               "CameraInput capture depth must not cap the fallback copy pool");
     }
@@ -155,15 +152,13 @@ int main() {
     require(deep_queue_cam->backend_fragment(3).find("num-buffers=") == std::string::npos,
             "CameraInput queue depth must remain independent of bridge preallocation");
 
-    if (simaai::neat::element_property_exists("libcamerasrc", "external-buffer-mode")) {
-      auto strict_cam = simaai::neat::nodes::CameraInput(cam_opt);
-      require_contains(strict_cam->backend_fragment(1), "external-buffer-mode=required",
-                       "CameraInput strict mode must require external DMA-BUF capture");
-      require_contains(strict_cam->backend_fragment(1), "neatcamerabridge name=n1_camera_bridge",
-                       "CameraInput strict bridge missing");
-      require_contains(strict_cam->backend_fragment(1), "copy-allowed=false",
-                       "CameraInput strict bridge must reject copies");
-    }
+    auto strict_cam = simaai::neat::nodes::CameraInput(cam_opt);
+    require(strict_cam->backend_fragment(1).find("external-buffer-mode") == std::string::npos,
+            "CameraInput strict mode must not depend on libcamerasrc importing Neat buffers");
+    require_contains(strict_cam->backend_fragment(1), "neatcamerabridge name=n1_camera_bridge",
+                     "CameraInput strict bridge missing");
+    require_contains(strict_cam->backend_fragment(1), "copy-allowed=false",
+                     "CameraInput strict bridge must reject copies");
     if (!simaai::neat::element_exists("neatcamerabridge")) {
       throw std::runtime_error("private neatcamerabridge factory not registered");
     }
