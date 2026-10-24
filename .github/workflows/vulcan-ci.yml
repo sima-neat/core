@@ -27,7 +27,7 @@ on:
   workflow_dispatch:
     inputs:
       offline_source_run_id:
-        description: "Validate all offline tuples from a successful same-branch CI run; skip normal CI"
+        description: "Validate all offline tuples from ready same-branch CI publications; skip normal CI"
         required: false
         default: ""
         type: string

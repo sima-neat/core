@@ -340,9 +340,12 @@ Container installation/import checks do not replace physical multi-card testing.
 
 Before the new workflow reaches the default branch, dispatch the existing
 **Vulcan CI** workflow on the PR branch with `offline_source_run_id` set to a
-successful same-branch Vulcan CI push run. That entry point skips normal CI and
+same-branch Vulcan CI push run with successful host/card publication jobs. That
+entry point skips normal CI and
 calls the same four-job offline workflow in validation-only mode. The source must
-still belong to this repository and have successful host/card publication jobs.
+still belong to this repository. Validation may start while other source CI tests
+are running, but a failed or cancelled source run is rejected. Release publication
+continues to require the entire source CI run to succeed.
 
 Validation mode always rebuilds and validates all four bundles, never reuses an
 existing offline release, never uploads release objects, and skips final metadata

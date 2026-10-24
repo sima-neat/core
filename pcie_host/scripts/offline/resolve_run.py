@@ -23,8 +23,12 @@ def eligible(run, jobs, tag_sha=None, validation_ref=None):
     if (run.get('repository', {}).get('full_name') != REPOSITORY
             or run.get('head_repository', {}).get('full_name') != REPOSITORY
             or run.get('path') != '.github/workflows/vulcan-ci.yml'
-            or run.get('event') != 'push' or run.get('status') != 'completed'
-            or run.get('conclusion') != 'success'):
+            or run.get('event') != 'push'):
+        return None
+    complete = run.get('status') == 'completed' and run.get('conclusion') == 'success'
+    validating_published = (validation_ref and run.get('head_branch') == validation_ref
+                            and run.get('status') == 'in_progress')
+    if not complete and not validating_published:
         return None
     sha, ref = run.get('head_sha', ''), run.get('head_branch', '')
     if not re.fullmatch(r'[0-9a-f]{40}', sha) or not ref or any(c.isspace() for c in ref):
@@ -69,6 +73,8 @@ def main():
             if exc.code != 404:
                 raise
     source = eligible(run, jobs, tag_sha, args.validation_ref)
+    if args.validation_ref and source is None:
+        raise ValueError('Validation requires successful host/card publications from an eligible same-repository run')
     with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
         output.write('enabled='+str(source is not None).lower()+'\n')
         if source:
