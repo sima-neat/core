@@ -24,10 +24,11 @@ def test_private_apt_sources_and_hooks(tmp_path, monkeypatch):
     assert 'https:' not in config
 
 
-def test_preflight_runs_admission_without_package_install(tmp_path, monkeypatch):
+@pytest.mark.parametrize('role', ['host', 'card'])
+def test_preflight_runs_admission_without_package_install(tmp_path, monkeypatch, role):
     calls = []
-    (tmp_path/'host/payload').mkdir(parents=True)
-    (tmp_path/'host/payload/test.deb').touch()
+    (tmp_path/role/'payload').mkdir(parents=True)
+    (tmp_path/role/'payload/test.deb').touch()
     monkeypatch.setattr(deploy, 'verify_bundle', lambda *args: None)
     monkeypatch.setattr(deploy, 'environment', lambda *args: None)
     monkeypatch.setattr(deploy, 'run', lambda args, **kwargs: calls.append(args))
@@ -35,12 +36,15 @@ def test_preflight_runs_admission_without_package_install(tmp_path, monkeypatch)
     monkeypatch.setenv('NEAT_INSTALLER_SKIP_PLATFORM_CHECK', 'ON')
     with monkeypatch.context() as context:
         context.setattr(deploy.os, 'environ', os.environ.copy())
-        deploy.execute(tmp_path, 'host', 'preflight')
+        deploy.execute(tmp_path, role, 'preflight')
         assert 'PIP_EXTRA_INDEX_URL' not in deploy.os.environ
         assert 'NEAT_INSTALLER_SKIP_PLATFORM_CHECK' not in deploy.os.environ
         assert deploy.os.environ['PIP_NO_INDEX'] == '1'
     assert not any('install' in c and '--simulate' not in c for c in calls)
-    assert calls[-1][2:4] == ['host', 'preflight']
+    assert calls[-1][2:4] == [role, 'preflight']
+    plan = next(c for c in calls if '--simulate' in c)
+    assert ('--no-remove' in plan) == (role == 'host')
+    assert ('--allow-downgrades' in plan) == (role == 'card')
 
 
 def test_integrity_failure_precedes_environment_or_commands(tmp_path, monkeypatch):
@@ -58,11 +62,13 @@ def test_card_adapter_retains_admission_and_lifecycle_without_online_sentinel(tm
     payload.mkdir()
     (payload/'install_neat_framework.sh').write_text('''
 parse_args() { echo parse; }
-collect_debs_in_install_order() { echo collect; }
+collect_debs_in_install_order() { DEBS=(test.deb); echo collect; }
 detect_env_mode() { echo modalix-board; }
 ensure_platform_compatible() { echo platform; }
 prepare_board_platform_admission() { echo admission; }
 verify_board_platform_plan() { echo plan; }
+verify_simulated_package_removals() { echo replacements; }
+verify_scheduler_transaction() { echo transaction; }
 log() { echo "$*"; }
 install_board_sentinel() { echo ONLINE_SENTINEL; exit 77; }
 install_for_environment() { install_board_sentinel; echo runtime_lifecycle; }
@@ -71,7 +77,7 @@ install_for_environment() { install_board_sentinel; echo runtime_lifecycle; }
                             text=True, capture_output=True, check=True)
     assert 'ONLINE_SENTINEL' not in result.stdout
     assert result.stdout.splitlines()[:4] == ['parse', 'collect', 'platform', 'admission']
-    assert 'plan' in result.stdout
+    assert 'plan\nreplacements\ntransaction\n' in result.stdout
     assert result.stdout.endswith('runtime_lifecycle\n')
 
 
@@ -81,7 +87,7 @@ def test_card_admission_failure_never_reaches_runtime_install(tmp_path):
     payload.mkdir()
     (payload/'install_neat_framework.sh').write_text('''
 parse_args() { :; }
-collect_debs_in_install_order() { :; }
+collect_debs_in_install_order() { DEBS=(test.deb); }
 detect_env_mode() { echo modalix-board; }
 ensure_platform_compatible() { return 42; }
 prepare_board_platform_admission() { echo admission; }
@@ -91,3 +97,25 @@ install_for_environment() { echo MUTATED; }
                             text=True, capture_output=True)
     assert result.returncode == 42
     assert 'MUTATED' not in result.stdout
+
+
+def test_card_replacement_rejection_precedes_install(tmp_path):
+    import subprocess
+    payload = tmp_path/'payload'
+    payload.mkdir()
+    (payload/'install_neat_framework.sh').write_text("""
+parse_args() { :; }
+collect_debs_in_install_order() { DEBS=(test.deb); }
+detect_env_mode() { echo modalix-board; }
+ensure_platform_compatible() { :; }
+prepare_board_platform_admission() { :; }
+verify_board_platform_plan() { :; }
+verify_simulated_package_removals() { return 43; }
+verify_scheduler_transaction() { echo TRANSACTION; }
+install_for_environment() { echo MUTATED; }
+""")
+    result = subprocess.run(['bash', str(HERE/'lifecycle.sh'), 'card', 'install', str(payload), '/tmp/plan'],
+                            text=True, capture_output=True)
+    assert result.returncode == 43
+    assert 'MUTATED' not in result.stdout
+    assert 'TRANSACTION' not in result.stdout

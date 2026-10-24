@@ -21,6 +21,8 @@ else
   ensure_platform_compatible
   prepare_board_platform_admission
   verify_board_platform_plan "$plan"
+  verify_simulated_package_removals "$plan" "${DEBS[@]}"
+  verify_scheduler_transaction "$plan"
   if [[ "$phase" == install ]]; then
     # Sentinel is optional telemetry, not a Neat runtime dependency. Never invoke
     # its online updater. Existing Sentinel remains available to the runtime.

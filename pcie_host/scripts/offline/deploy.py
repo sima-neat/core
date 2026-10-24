@@ -84,7 +84,10 @@ def execute(root, role, phase):
         run(['apt-get', 'update'])
         native = sorted((target/'payload').glob('*.deb'))
         prerequisites = ['python3-venv', 'python3-pip', 'gstreamer1.0-tools', 'ca-certificates']
-        args = ['apt-get', '--no-remove', '--no-install-recommends', '-y', 'install',
+        # Card upgrades may retire legacy Neat packages. The published lifecycle
+        # validates every removal and the complete Scheduler transaction below.
+        policy = ['--no-remove'] if role == 'host' else ['--allow-downgrades']
+        args = ['apt-get', *policy, '--no-install-recommends', '-y', 'install',
                 *map(str, native), *prerequisites]
         if phase == 'verify':
             verify(target, role, venv)
