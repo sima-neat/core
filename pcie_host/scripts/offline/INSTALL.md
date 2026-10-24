@@ -113,3 +113,9 @@ instead of the rolling panel, including diagnostic warnings normally kept in the
 log. The complete output is still saved to the printed log path. This also works
 with `--preflight-only`. With `--json --verbose`, logs and progress go to stderr
 and the final JSON report goes to stdout. Authentication passwords are not logged.
+
+If Ctrl-C interrupts host deployment, the installer stops the complete host
+command group before releasing its lock. It allows up to 30 seconds for graceful
+termination, then kills and reaps remaining children. Further Ctrl-C presses
+cannot bypass cleanup. An interrupted package transaction may still require
+repair; check `sudo dpkg --audit` and the diagnostic log before retrying.

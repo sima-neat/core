@@ -136,10 +136,10 @@ def test_ssh_binds_interface_and_requires_trusted_keys(monkeypatch, tmp_path):
 
 def test_host_package_commands_run_without_network_or_terminal_input(monkeypatch, tmp_path):
     calls = []
-    monkeypatch.setattr(installer, 'run', lambda args, **kw: calls.append((args, kw)))
+    monkeypatch.setattr(installer, 'run_host', lambda args, **kw: calls.append((args, kw)))
     installer.Operations(tmp_path, 'sima', tmp_path/'key', tmp_path/'known').host('install')
     args, options = calls[0]
-    assert args[:5] == ['timeout', '--kill-after=30', '1500', 'unshare', '--net']
+    assert args[:6] == ['timeout', '--foreground', '--kill-after=30', '1500', 'unshare', '--net']
     assert options['stdin'] == subprocess.DEVNULL
 
 
