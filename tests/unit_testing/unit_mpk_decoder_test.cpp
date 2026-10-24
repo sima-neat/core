@@ -1678,7 +1678,7 @@ void test_reshape_is_an_exact_read_expression() {
         "reshape that changes the byte extent fails closed");
 }
 
-void test_joiner_integer_outputs() {
+void test_host_alias_publication() {
   std::ifstream file(sima_test::test_model_archive_fixture_root_path() /
                      "strict-seeds/nemotron_joiner_argmax_mpk.json");
   check(file.is_open(), "the real joiner MPK manifest fixture must be installed");
@@ -3140,7 +3140,7 @@ int main(const int argc, char** argv) {
   test_dense_ifm_tail_padding();
   test_unpack_and_slice_are_read_expressions();
   test_reshape_is_an_exact_read_expression();
-  test_joiner_integer_outputs();
+  test_host_alias_publication();
   test_registered_detess_layout_is_preserved_through_dequant();
   test_rank2_detess_dequant_execution_geometry();
   test_resnet_batch_flatten_is_transparent_to_fused_graph227();

@@ -1568,7 +1568,6 @@ bool try_build_multi_source_tensor_set_backing(const Sample& bundle, GstBuffer**
   TensorList descriptor_tensors = bundle.tensors;
   std::vector<int> memory_indices;
   memory_indices.reserve(bundle.tensors.size());
-  std::unordered_map<GstMemory*, int> memory_slots;
   std::unordered_set<GstBuffer*> retained_sources;
   for (std::size_t tensor_index = 0; tensor_index < bundle.tensors.size(); ++tensor_index) {
     const Tensor& tensor = bundle.tensors[tensor_index];
@@ -1638,19 +1637,19 @@ bool try_build_multi_source_tensor_set_backing(const Sample& bundle, GstBuffer**
         return fail("tensor-set multi-source timing copy failed");
       }
     }
-    const auto found = memory_slots.find(memory);
-    int destination_memory_index = 0;
-    if (found == memory_slots.end()) {
+    const guint memory_count = gst_buffer_n_memory(assembled);
+    guint destination_memory_index = 0U;
+    while (destination_memory_index < memory_count &&
+           gst_buffer_peek_memory(assembled, destination_memory_index) != memory) {
+      ++destination_memory_index;
+    }
+    if (destination_memory_index == memory_count) {
       // The limit applies to unique backing memories, not logical tensor views.
       // Appending beyond it silently merges payloads and would copy DMA inputs.
-      if (memory_slots.size() >= gst_buffer_get_max_memory()) {
+      if (memory_count >= gst_buffer_get_max_memory()) {
         return fail("tensor-set envelope exceeds GStreamer's memory-slot limit");
       }
-      destination_memory_index = static_cast<int>(memory_slots.size());
-      memory_slots.emplace(memory, destination_memory_index);
       gst_buffer_append_memory(assembled, gst_memory_ref(memory));
-    } else {
-      destination_memory_index = found->second;
     }
     // GstMemory retains the allocation, not the producer's GstBuffer pool lease.
     if (retained_sources.emplace(source).second &&
@@ -1658,7 +1657,7 @@ bool try_build_multi_source_tensor_set_backing(const Sample& bundle, GstBuffer**
       return fail("tensor-set multi-source failed to retain source buffer");
     }
     descriptor_tensor.route.memory_index = source_memory_index;
-    memory_indices.push_back(destination_memory_index);
+    memory_indices.push_back(static_cast<int>(destination_memory_index));
   }
 
   std::string detail;

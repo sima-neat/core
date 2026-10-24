@@ -3,6 +3,7 @@
 #error "Internal header. Not part of the public API."
 #endif
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -219,7 +220,7 @@ struct HostTvmOpConfig {
   std::vector<HostTensorTypeSpec> input_types;
   std::vector<HostTensorTypeSpec> output_types;
   // -1 means a materialized graph-executor output.  Otherwise the output is
-  // the exact compiler-authored __nop view of this input port.
+  // a proven argument-only identity or __nop view of this input port.
   std::vector<std::int32_t> output_alias_input;
   // TVM GraphExecutor lists linked constants alongside external inputs as
   // null/arg nodes. The compiler authors this disjoint set explicitly; these
@@ -255,6 +256,13 @@ struct OpSpec {
   OpConfig config = PassThroughOpConfig{};
   std::uint32_t batch_count = 1U;
 };
+
+inline bool is_alias_only_host_op(const OpSpec& op) noexcept {
+  const auto* host = std::get_if<HostTvmOpConfig>(&op.config);
+  return op.kind == OpKind::HostTvm && host && !host->output_alias_input.empty() &&
+         std::all_of(host->output_alias_input.begin(), host->output_alias_input.end(),
+                     [](std::int32_t input) { return input >= 0; });
+}
 
 enum class BackendPortDirection { Input, Output };
 enum class BackendPortAccess { ReadOnly, WriteOnly };

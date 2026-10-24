@@ -1348,22 +1348,22 @@ void lower_read_expressions(ModelExecutionPlanData& data, std::vector<MpkProofFa
         auto& output = data.values[op.outputs[output_index]];
         const auto width =
             exact_element_width(output.required_bytes, host.output_types[output_index].shape);
-        const auto strides =
+        const auto output_dense_strides =
             width ? contiguous_stride_bytes(host.output_types[output_index].shape, *width)
                   : std::nullopt;
-        if (!strides || input.required_bytes != output.required_bytes) {
+        if (!output_dense_strides || input.required_bytes != output.required_bytes) {
           reject(MpkDecodeErrorCode::ValueSizeMismatch, "$.ops[" + std::to_string(op.id) + "]",
                  "TVM alias output does not preserve an exact dense byte extent");
         }
         const auto& input_shape = host.input_types[static_cast<std::size_t>(input_index)].shape;
         const auto input_width = exact_element_width(input.required_bytes, input_shape);
-        const auto input_dense =
+        const auto input_dense_strides =
             input_width ? contiguous_stride_bytes(input_shape, *input_width) : std::nullopt;
-        if (!input_dense) {
+        if (!input_dense_strides) {
           reject(MpkDecodeErrorCode::ValueSizeMismatch, "$.ops[" + std::to_string(op.id) + "]",
                  "TVM alias input has no exact byte equation");
         }
-        ReadExpression expression{input.id, 0U, *input_dense};
+        ReadExpression expression{input.id, 0U, *input_dense_strides};
         if (input.read_expression) {
           expression = *input.read_expression;
         } else if (input.storage_binding && !input.storage_binding->stride_bytes.empty()) {
@@ -1374,12 +1374,13 @@ void lower_read_expressions(ModelExecutionPlanData& data, std::vector<MpkProofFa
         // nop may use dense output strides only when its input is truly dense.
         if (input_shape != host.output_types[output_index].shape) {
           if (!expression.storage_shape.empty() ||
-              !matches_contiguous_strides(input_shape, expression.stride_bytes, *input_dense)) {
+              !matches_contiguous_strides(input_shape, expression.stride_bytes,
+                                          *input_dense_strides)) {
             reject(MpkDecodeErrorCode::ConfigurationMismatch,
                    "$.ops[" + std::to_string(op.id) + "]",
                    "TVM alias cannot reshape a non-contiguous input view");
           }
-          expression.stride_bytes = *strides;
+          expression.stride_bytes = *output_dense_strides;
         }
         output.read_expression = std::move(expression);
         if (proof) {
@@ -1464,13 +1465,9 @@ void validate_view_consumers(const ModelExecutionPlanData& data) {
       }
       // Strided kernel ABIs and address-only consumers can forward this view.
       // Materializing GraphExecutor jobs and MLA inputs remain dense-only.
-      const auto* host = std::get_if<HostTvmOpConfig>(&consumer.config);
-      const bool host_alias =
-          consumer.kind == OpKind::HostTvm && host && !host->output_alias_input.empty() &&
-          std::all_of(host->output_alias_input.begin(), host->output_alias_input.end(),
-                      [](std::int32_t input) { return input >= 0; });
       if (consumer.kind == OpKind::Cast || consumer.kind == OpKind::Dequantize ||
-          consumer.kind == OpKind::Slice || consumer.kind == OpKind::PassThrough || host_alias) {
+          consumer.kind == OpKind::Slice || consumer.kind == OpKind::PassThrough ||
+          is_alias_only_host_op(consumer)) {
         continue;
       }
       reject(MpkDecodeErrorCode::ConfigurationMismatch,
