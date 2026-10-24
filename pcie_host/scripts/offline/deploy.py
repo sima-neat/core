@@ -117,6 +117,10 @@ def execute(root, role, phase):
         wheels = sorted((target/'payload').glob('*.whl'))
         run([venv+'/bin/python', '-m', 'pip', 'install', '--force-reinstall',
              '--only-binary=:all:', *map(str, wheels)])
+        # Prerequisite installation changed dpkg state; admission must inspect
+        # a fresh plan rather than treating already-installed prerequisites as new.
+        with plan.open('w') as stream:
+            run([*args, '--simulate'], stdout=stream)
         lifecycle[3] = 'install'
         run(lifecycle)
         verify(target, role, venv)

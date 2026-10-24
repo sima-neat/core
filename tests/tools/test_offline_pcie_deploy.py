@@ -131,3 +131,23 @@ def test_prerequisites_preserve_installed_system_packages(monkeypatch):
         return subprocess.CompletedProcess(args, status, stdout=stdout)
     monkeypatch.setattr(deploy.subprocess, 'run', query)
     assert deploy.missing_prerequisites() == ['python3-venv', 'python3-pip']
+
+
+def test_install_refreshes_plan_after_prerequisites(tmp_path, monkeypatch):
+    calls = []
+    (tmp_path/'card/payload').mkdir(parents=True)
+    (tmp_path/'card/payload/test.deb').touch()
+    monkeypatch.setattr(deploy, 'verify_bundle', lambda *args: None)
+    monkeypatch.setattr(deploy, 'environment', lambda *args: None)
+    monkeypatch.setattr(deploy, 'missing_prerequisites', lambda: ['python3-venv'])
+    monkeypatch.setattr(deploy, 'verify', lambda *args: None)
+    monkeypatch.setattr(deploy, 'run', lambda args, **kwargs: calls.append(list(args)))
+    with monkeypatch.context() as context:
+        context.setattr(deploy.os, 'environ', os.environ.copy())
+        deploy.execute(tmp_path, 'card', 'install')
+    simulations = [i for i, c in enumerate(calls) if '--simulate' in c]
+    prerequisite = next(i for i, c in enumerate(calls)
+                        if c[0] == 'apt-get' and 'install' in c and '--simulate' not in c)
+    assert len(simulations) == 2
+    assert simulations[0] < prerequisite < simulations[1]
+    assert calls[simulations[1]+1][2:4] == ['card', 'install']
