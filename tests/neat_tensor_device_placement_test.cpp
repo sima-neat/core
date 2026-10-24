@@ -248,18 +248,54 @@ int main() {
     gst_buffer_unref(ingress_buffer);
 
     {
-      simaai::neat::TensorList too_many;
+      simaai::neat::TensorList repeated;
       for (guint i = 0U; i <= gst_buffer_get_max_memory(); ++i) {
-        too_many.push_back(i % 2U == 0U ? direct : direct_1);
+        repeated.push_back(i % 2U == 0U ? direct : direct_1);
       }
-      auto rejected_input = simaai::neat::sample_from_tensors(too_many);
+      auto repeated_input = simaai::neat::sample_from_tensors(repeated);
+      repeated_input.payload_type = simaai::neat::PayloadType::Tensor;
+      repeated_input.media_type = "application/vnd.simaai.tensor";
+      std::string detail;
+      simaai::neat::pipeline_internal::reset_tensor_io_stats();
+      auto admitted = simaai::neat::pipeline_internal::sample_to_gst_envelope_holder(
+          repeated_input, &detail, /*allow_zero_copy=*/true);
+      const auto stats = simaai::neat::pipeline_internal::snapshot_tensor_io_stats();
+      require(admitted != nullptr, "repeated DMA buffers must be admitted: " + detail);
+      GstBuffer* buffer = simaai::neat::pipeline_internal::buffer_from_tensor_holder(admitted);
+      require(buffer && gst_buffer_n_memory(buffer) == 2U,
+              "repeated logical tensors must reuse two memory slots");
+      for (guint i = 0U; i < 2U; ++i) {
+        const auto& tensor = i == 0U ? direct : direct_1;
+        auto* source = static_cast<GstSample*>(tensor.storage->holder.get());
+        require(gst_buffer_peek_memory(buffer, i) ==
+                    gst_buffer_peek_memory(gst_sample_get_buffer(source), 0U),
+                "repeated tensors must retain the original DMA memory");
+      }
+      require(stats.tensor_copy_count == 0U && stats.tensor_copy_bytes == 0U &&
+                  stats.gst_memory_map_calls == 0U,
+              "repeated-buffer admission must not copy or map DMA payloads");
+      gst_buffer_unref(buffer);
+    }
+
+    {
+      simaai::neat::TensorList distinct;
+      for (guint i = 0U; i <= gst_buffer_get_max_memory(); ++i) {
+        distinct.push_back(simaai::neat::pipeline_internal::transfer_to_device(
+            direct_cpu, {simaai::neat::DeviceType::SIMA_CVU, 0}, &direct_segments, nullptr));
+      }
+      auto rejected_input = simaai::neat::sample_from_tensors(distinct);
       rejected_input.payload_type = simaai::neat::PayloadType::Tensor;
       rejected_input.media_type = "application/vnd.simaai.tensor";
       std::string detail;
+      simaai::neat::pipeline_internal::reset_tensor_io_stats();
       require(!simaai::neat::pipeline_internal::sample_to_gst_envelope_holder(
                   rejected_input, &detail, /*allow_zero_copy=*/true) &&
                   detail.find("memory-slot limit") != std::string::npos,
-              "failed zero-copy admission must not retry by copying DMA inputs");
+              "excess distinct DMA buffers must reject without a copying fallback");
+      const auto stats = simaai::neat::pipeline_internal::snapshot_tensor_io_stats();
+      require(stats.tensor_copy_count == 0U && stats.tensor_copy_bytes == 0U &&
+                  stats.gst_memory_map_calls == 0U,
+              "distinct-buffer rejection must not copy or map DMA payloads");
     }
 
     ingress = {};
