@@ -2,7 +2,8 @@
 
 Related: [Core #1132](https://github.com/sima-neat/core/issues/1132).
 
-This directory starts the offline bundle work with a **read-only evidence collector**.
+This directory contains a **read-only evidence collector** and the draft
+[offline package assembler](ASSEMBLY.md).
 It does not install packages, change networking, provision SSH keys, authenticate
 card identity, or establish that a host/card combination is supported. Existing
 host and card installers are unchanged.
@@ -142,8 +143,10 @@ small orchestrator will preflight host and every card before mutation, install
 host software once, then install **and verify each card sequentially**. Individual
 card failures will not skip remaining cards while host/inventory remain valid.
 Reruns will inspect actual installed state and always repeat inference verification.
-Dependency closure, bundle publication, package recovery, and offline hardware
-qualification remain tracked in #1132; this draft does not close that issue.
+The package assembler collects dependencies and validates package transactions in
+network-disabled containers. Integration with the existing installers, bundle
+publication, package recovery, and offline hardware qualification remain tracked
+in #1132; this draft does not close that issue.
 
 ## Tests
 

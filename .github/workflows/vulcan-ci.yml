@@ -137,6 +137,8 @@ jobs:
             tests/tools/test_build_install_sanity.py \
             tests/tools/test_core_inventory_soname.py \
             tests/tools/test_native_platform_baseline.py \
+            tests/tools/test_offline_pcie_discovery.py \
+            tests/tools/test_offline_pcie_assembly.py \
             tests/tools/test_required_test_coverage.py \
             tests/tools/test_ci_weekly_preparation.py \
             tests/tools/test_docs_native_prerequisites.py \
@@ -627,16 +629,9 @@ jobs:
             s3_args+=(--sse-kms-key-id "${SSE_KMS_KEY_ID}")
           fi
 
-          for path in \
-            pcie_host/dist/*.deb \
-            pcie_host/dist/*.deb.sha256 \
-            pcie_host/dist/*-extras.tar.gz \
-            pcie_host/dist/*-extras.tar.gz.sha256 \
-            pcie_host/dist/pyneatpcie-*.whl \
-            pcie_host/dist/pyneatpcie-*.whl.sha256 \
-            pcie_host/dist/*.json \
-            pcie_host/dist/*.py \
-            pcie_host/dist/*.sh; do
+          publication_paths="$(python3 pcie_host/scripts/pcie_delivery.py publication-list --directory pcie_host/dist)"
+          mapfile -t paths <<< "$publication_paths"
+          for path in "${paths[@]}"; do
             name="$(basename "${path}")"
             # Metadata becomes visible only after the aggregate closure audit.
             case "$name" in metadata*.json) name="${name}.pending" ;; esac
