@@ -88,7 +88,7 @@ def test_unsafe_resource_rejected(name):
     data['resources'] = [name]
     data['resources-checksum'] = {name: 'd' * 64}
     with pytest.raises(ValueError):
-        ci.metadata_identity(data, SHA, 'develop')
+        ci.metadata_identity(data, SHA, 'develop', 'ubuntu22', 'amd64')
 
 
 def test_tuple_and_ref_paths():
@@ -148,3 +148,13 @@ def test_final_metadata_write_is_conditional(tmp_path):
         command = run.call_args.args
         assert command[command.index('--if-none-match') + 1] == '*'
         assert '--checksum-sha256' in command
+
+
+def test_shared_card_publication_version_identity():
+    data = metadata()
+    del data['commit'], data['branch']
+    data['version'] = '0.6.0+develop.' + SHA[:12]
+    ci.metadata_identity(data, SHA, 'develop')
+    data['version'] = '0.6.0+develop.' + 'b' * 12
+    with pytest.raises(ValueError, match='selected CI'):
+        ci.metadata_identity(data, SHA, 'develop')

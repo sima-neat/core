@@ -42,7 +42,14 @@ def download(bucket, key, path, optional=False):
 
 
 def metadata_identity(data, sha, ref, distro=None, arch=None):
-    if data.get('commit') != sha or data.get('branch') != ref:
+    # Native host metadata carries the full identity. Shared card metadata uses
+    # a version suffix; its authenticated S3 key binds the source ref/commit.
+    if distro:
+        matches = data.get('commit') == sha and data.get('branch') == ref
+    else:
+        matches = (str(data.get('version', '')).endswith('.' + sha[:12])
+                   and data.get('commit', sha) == sha and data.get('branch', ref) == ref)
+    if not matches:
         raise ValueError('publication is not from the selected CI commit/ref')
     if distro and (data.get('artifact', {}).get('distro') != distro
                    or data.get('artifact', {}).get('arches') != [arch]):
@@ -153,7 +160,7 @@ def build(args):
     for role, (_, directory) in paths.items():
         spec['targets'][role] = {
             'publication': str(directory.resolve()), 'metadata_sha256': inputs[role],
-            'core_revision': args.sha,
+            'core_revision': args.sha[:12],
             'image': host_image if role == 'host' else card['image_id'],
             'architecture': args.arch if role == 'host' else 'arm64',
             'os_id': 'ubuntu' if role == 'host' else card['os_id'],
