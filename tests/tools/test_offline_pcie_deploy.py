@@ -72,11 +72,14 @@ verify_simulated_package_removals() { echo replacements; }
 verify_scheduler_transaction() { echo transaction; }
 log() { echo "$*"; }
 install_board_sentinel() { echo ONLINE_SENTINEL; exit 77; }
-install_for_environment() { install_board_sentinel; echo runtime_lifecycle; }
+install_python_environment() { echo SYSTEM_PYTHON; exit 78; }
+install_for_environment() { install_board_sentinel; install_python_environment; echo runtime_lifecycle; }
 ''')
     result = subprocess.run(['bash', str(HERE/'lifecycle.sh'), 'card', 'install', str(payload), '/tmp/plan'],
                             text=True, capture_output=True, check=True)
     assert 'ONLINE_SENTINEL' not in result.stdout
+    assert 'SYSTEM_PYTHON' not in result.stdout
+    assert 'retaining prepared isolated Python environment' in result.stdout
     assert result.stdout.splitlines()[:4] == ['parse', 'collect', 'platform', 'admission']
     assert 'plan\nreplacements\ntransaction\n' in result.stdout
     assert result.stdout.endswith('runtime_lifecycle\n')

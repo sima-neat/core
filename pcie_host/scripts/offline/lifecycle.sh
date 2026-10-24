@@ -27,6 +27,9 @@ else
     # Sentinel is optional telemetry, not a Neat runtime dependency. Never invoke
     # its online updater. Existing Sentinel remains available to the runtime.
     install_board_sentinel() { log 'Offline install: retaining existing optional Sentinel telemetry'; }
+    # deploy.py already installs the complete wheelhouse into an isolated venv.
+    # The online installer would reopen it with unrelated system Python packages.
+    install_python_environment() { log 'Offline install: retaining prepared isolated Python environment'; }
     install_for_environment
   fi
 fi
