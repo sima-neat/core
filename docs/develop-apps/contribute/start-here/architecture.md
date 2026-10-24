@@ -2272,12 +2272,6 @@ Keep docs and code aligned:
 
 ---
 
-## Shared tensor views
-Multiple logical tensor views of the same `GstMemory` reuse one carrier memory slot, even when the views come from different source samples. GStreamer’s memory-slot limit applies to distinct backing memories; Core rejects excess distinct memories before appending can merge or copy them. Each source buffer remains retained to preserve its producer pool lease.
+## Native MLA tensor views
 
-Before reading a producer’s tensor descriptor table for shared-envelope reuse, Core checks that every input tensor has the same backing sample. Mixed cache feedback and fresh inputs use their public tensor views directly, avoiding redundant producer-table imports on every invocation.
-
-
-## Identity host modules
-
-Core treats an A65 GraphExecutor module that returns its only argument directly, or through a proven `__nop`, as an address alias. It schedules no A65 command and preserves the declared output dtype and shape, including terminal `INT32` ArgMax indices. Padding strides on size-one axes do not make a scalar view non-contiguous; real gaps between elements remain invalid for dense consumers. Terminal publication follows the model’s declared output count and order across alias chains. Cold `Model::output_specs()` metadata preserves authored integer dtypes and terminal reshape dimensions.
+Core reuses shared backing memory slots while retaining producer leases and skips shared descriptor imports for mixed-owner inputs. Proven identity host modules preserve native output types and shapes without A65 execution, including INT32 ArgMax results and cold `Model::output_specs()` metadata.

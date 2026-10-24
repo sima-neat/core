@@ -127,7 +127,3 @@ Public error messages must include the taxonomy key so tests can assert determin
 ## Test Mapping Requirement
 
 Every negative model-archive/MPK-contract test must assert one of the taxonomy keys above.
-
-## Identity host modules
-
-Core treats an A65 GraphExecutor module that returns its only argument directly, or through a proven `__nop`, as an address alias. It schedules no A65 command and preserves the declared output dtype and shape, including terminal `INT32` ArgMax indices. Padding strides on size-one axes do not make a scalar view non-contiguous; real gaps between elements remain invalid for dense consumers. Terminal publication follows the model’s declared output count and order across alias chains. Cold `Model::output_specs()` metadata preserves authored integer dtypes and terminal reshape dimensions.
