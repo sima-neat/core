@@ -158,3 +158,55 @@ def test_shared_card_publication_version_identity():
     data['version'] = '0.6.0+develop.' + 'b' * 12
     with pytest.raises(ValueError, match='selected CI'):
         ci.metadata_identity(data, SHA, 'develop')
+
+
+def test_validation_branch_opt_in_does_not_admit_other_branches_or_forks():
+    ref = 'codex/offline-pcie-discovery'
+    assert resolver.eligible(source(ref), jobs()) is None
+    assert resolver.eligible(source(ref), jobs(), validation_ref=ref)
+    assert resolver.eligible(source('other'), jobs(), validation_ref=ref) is None
+    run = source(ref)
+    run['head_repository'] = {'full_name': 'fork/core'}
+    assert resolver.eligible(run, jobs(), validation_ref=ref) is None
+
+
+def test_validation_build_does_not_reuse_or_publish(tmp_path):
+    import json
+    host = tmp_path/'host'
+    card = tmp_path/'card'
+    host.mkdir()
+    card.mkdir()
+    for name in ('platform_provider.py', 'platform-source.json', 'platform-source.tar.gz'):
+        (host/name).write_text('fixture')
+    baseline = json.loads((HERE/'baselines.json').read_text())['card']
+    args = SimpleNamespace(work=tmp_path/'work', ref='develop', sha=SHA,
+                           bucket='bucket', distro='ubuntu24', arch='amd64',
+                           installer_revision=SHA, run_id=123, validation_only=True)
+
+    def command(*argv):
+        if argv[:2] == ('docker', 'build'):
+            Path(argv[argv.index('--iidfile') + 1]).write_text('sha256:' + 'a' * 64)
+        return baseline['image_id'] if argv[:3] == ('docker', 'image', 'inspect') else ''
+
+    def download(bucket, key, path):
+        path.write_text('fixture')
+
+    def assemble(spec, root):
+        assert set(spec['targets']) == {'host', 'card'}
+        (root.parent/ci.assemble.METADATA_NAME).write_text('{}')
+        (root.parent/ci.assemble.ARCHIVE_NAME).write_text('validated bundle')
+
+    records = {role: {'resources-checksum': {}} for role in ('host', 'card')}
+    paths = {'host': ('host-key', host), 'card': ('card-key', card)}
+    with patch.object(ci, 'source_metadata', return_value=(records, paths, INPUTS)), \
+         patch.object(ci, 'existing') as existing, patch.object(ci, 'put') as put, \
+         patch.object(ci, 'download', side_effect=download), \
+         patch.object(ci, 'run', side_effect=command), \
+         patch.object(ci.assemble, 'sha', return_value=baseline['sha256']), \
+         patch.object(ci.assemble, 'verify_publication'), \
+         patch.object(ci.assemble, 'assemble', side_effect=assemble) as build:
+        ci.build(args)
+        existing.assert_not_called()
+        put.assert_not_called()
+        build.assert_called_once()
+    assert (args.work/ci.assemble.ARCHIVE_NAME).is_file()

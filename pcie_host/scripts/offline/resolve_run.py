@@ -19,7 +19,7 @@ def api(path):
         return json.load(response)
 
 
-def eligible(run, jobs, tag_sha=None):
+def eligible(run, jobs, tag_sha=None, validation_ref=None):
     if (run.get('repository', {}).get('full_name') != REPOSITORY
             or run.get('head_repository', {}).get('full_name') != REPOSITORY
             or run.get('path') != '.github/workflows/vulcan-ci.yml'
@@ -30,7 +30,7 @@ def eligible(run, jobs, tag_sha=None):
     if not re.fullmatch(r'[0-9a-f]{40}', sha) or not ref or any(c.isspace() for c in ref):
         return None
     branch = ref in ('develop', 'main') or ref.startswith('release-')
-    if not branch and tag_sha != sha:
+    if not branch and tag_sha != sha and ref != validation_ref:
         return None
     # A successful docs-only run has no new native publication to assemble.
     required = ('Publish PCIe Host Package Metadata', 'Publish to Vulcan / Publish Vulcan artifacts')
@@ -42,6 +42,7 @@ def eligible(run, jobs, tag_sha=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run-id', required=True, type=int)
+    parser.add_argument('--validation-ref', help='allow this same-repository branch for non-publishing validation')
     args = parser.parse_args()
     run = api(f'actions/runs/{args.run_id}')
     jobs = []
@@ -67,7 +68,7 @@ def main():
         except HTTPError as exc:
             if exc.code != 404:
                 raise
-    source = eligible(run, jobs, tag_sha)
+    source = eligible(run, jobs, tag_sha, args.validation_ref)
     with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
         output.write('enabled='+str(source is not None).lower()+'\n')
         if source:

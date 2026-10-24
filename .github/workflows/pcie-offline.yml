@@ -1,6 +1,15 @@
 name: PCIe Offline Bundles
 
 on:
+  workflow_call:
+    inputs:
+      source_run_id:
+        required: true
+        type: string
+      validation_only:
+        required: false
+        default: false
+        type: boolean
   workflow_run:
     workflows: [Vulcan CI]
     types: [completed]
@@ -23,7 +32,7 @@ concurrency:
 jobs:
   source:
     name: Admit successful source publication
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ inputs.validation_only || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-24.04
     outputs:
       enabled: ${{ steps.source.outputs.enabled }}
@@ -38,7 +47,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN: ${{ github.event.workflow_run.id || inputs.source_run_id }}
-        run: python3 -B pcie_host/scripts/offline/resolve_run.py --run-id "$SOURCE_RUN"
+          VALIDATION_ONLY: ${{ inputs.validation_only || false }}
+        run: |
+          options=()
+          if [[ "$VALIDATION_ONLY" == true ]]; then
+            options+=(--validation-ref "$GITHUB_REF_NAME")
+          fi
+          python3 -B pcie_host/scripts/offline/resolve_run.py --run-id "$SOURCE_RUN" "${options[@]}"
 
   config:
     needs: source
@@ -92,14 +107,29 @@ jobs:
           ARCH: ${{ matrix.arch }}
           ARTIFACT_BUCKET: ${{ needs.config.outputs.artifact_bucket }}
           KMS_KEY: ${{ needs.config.outputs.artifact_kms_key_id }}
+          VALIDATION_ONLY: ${{ inputs.validation_only || false }}
         shell: bash
         run: |
           set -euo pipefail
-          python3 -B pcie_host/scripts/offline/ci.py build \
+          options=()
+          if [[ "$VALIDATION_ONLY" == true ]]; then
+            options+=(--validation-only)
+          fi
+          python3 -B pcie_host/scripts/offline/ci.py build "${options[@]}" \
             --bucket "$ARTIFACT_BUCKET" --kms "$KMS_KEY" \
             --ref "$SOURCE_REF" --sha "$SOURCE_SHA" --run-id "$SOURCE_RUN" \
             --installer-revision "$GITHUB_SHA" --distro "$DISTRO" --arch "$ARCH" \
             --work "$RUNNER_TEMP/offline" 2>&1 | tee "$RUNNER_TEMP/offline-build.log"
+      - name: Retain validated pre-merge bundle
+        if: ${{ inputs.validation_only }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-bundle-${{ matrix.distro }}-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/offline/neat-pcie-offline-installer.tar.gz
+            ${{ runner.temp }}/offline/metadata-offline.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Retain assembly evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
@@ -114,6 +144,7 @@ jobs:
           retention-days: 14
 
   publish:
+    if: ${{ !inputs.validation_only }}
     name: Publish all offline metadata
     needs: [source, config, build]
     environment: ${{ needs.config.outputs.vulcan_env }}

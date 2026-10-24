@@ -126,7 +126,7 @@ def existing(args, work, inputs, pending=True):
 def build(args):
     args.work.mkdir(parents=True, exist_ok=False)
     records, paths, inputs = source_metadata(args, args.work)
-    if existing(args, args.work, inputs):
+    if not args.validation_only and existing(args, args.work, inputs):
         return
     for role, (key, directory) in paths.items():
         for name, digest in records[role]['resources-checksum'].items():
@@ -174,6 +174,9 @@ def build(args):
     metadata.update(source_metadata_sha256=inputs, installer_revision=args.installer_revision,
                     source_run_id=args.run_id)
     path.write_text(json.dumps(metadata, indent=2)+'\n')
+    if args.validation_only:
+        print('Offline validation passed; bundle retained locally without publication.')
+        return
     base = prefix(args.ref, args.sha, args.distro, args.arch)
     # Metadata is staged only after clean-container network-disabled validation.
     # The final metadata is exposed by the aggregate publish job, after all four
@@ -209,6 +212,7 @@ def publish(args):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('command', choices=['build', 'publish'])
+    p.add_argument('--validation-only', action='store_true', help='build and validate without reusing or publishing release objects')
     p.add_argument('--bucket', required=True)
     p.add_argument('--ref', required=True)
     p.add_argument('--sha', required=True)
@@ -226,6 +230,8 @@ def main():
             p.error('build requires a host tuple and immutable installer revision')
         build(args)
     else:
+        if args.validation_only:
+            p.error('validation-only cannot publish')
         publish(args)
 
 

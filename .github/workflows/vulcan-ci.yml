@@ -26,6 +26,11 @@ on:
         type: string
   workflow_dispatch:
     inputs:
+      offline_source_run_id:
+        description: "Validate all offline tuples from a successful same-branch CI run; skip normal CI"
+        required: false
+        default: ""
+        type: string
       build_mode:
         description: "Build mode: standard or fuzz"
         required: false
@@ -56,14 +61,22 @@ permissions:
   packages: read
 
 concurrency:
-  group: ${{ github.repository }}-${{ github.workflow }}-${{ github.ref }}-${{ inputs.build_mode || 'standard' }}
+  group: ${{ github.repository }}-${{ github.workflow }}-${{ github.ref }}-${{ inputs.offline_source_run_id || inputs.build_mode || 'standard' }}
   cancel-in-progress: ${{ github.ref_type == 'branch' }}
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  validate-offline:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.offline_source_run_id != '' }}
+    uses: ./.github/workflows/pcie-offline.yml
+    with:
+      source_run_id: ${{ inputs.offline_source_run_id }}
+      validation_only: true
+
   documentation-localization:
+    if: ${{ !inputs.offline_source_run_id }}
     name: Validate Documentation Localization
     runs-on: ubuntu-latest
     steps:
@@ -89,6 +102,7 @@ jobs:
         run: bash scripts/ci/check_documentation_localization.sh
 
   resolve-vulcan-config:
+    if: ${{ !inputs.offline_source_run_id }}
     name: Resolve Vulcan Config
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
     with:
@@ -169,6 +183,7 @@ jobs:
             --github-output "${GITHUB_OUTPUT}"
 
   detect-changes:
+    if: ${{ !inputs.offline_source_run_id }}
     name: Detect Changes
     runs-on: ubuntu-latest
     outputs:
@@ -296,7 +311,7 @@ jobs:
 
   build:
     name: Build Core on Vulcan
-    if: ${{ always() && !failure() && !cancelled() && needs.detect-changes.outputs.docs_only != 'true' }}
+    if: ${{ !inputs.offline_source_run_id && always() && !failure() && !cancelled() && needs.detect-changes.outputs.docs_only != 'true' }}
     needs:
       - resolve-vulcan-config
       - resolve-compiler-cache

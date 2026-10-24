@@ -335,3 +335,17 @@ The bundle records the binary `core_revision` separately from `installer_revisio
 (the trusted workflow checkout), plus source run and metadata hashes in publication
 metadata. CI retains assembly logs, spec, manifest, and metadata for 14 days.
 Container installation/import checks do not replace physical multi-card testing.
+
+### Pre-merge matrix validation
+
+Before the new workflow reaches the default branch, dispatch the existing
+**Vulcan CI** workflow on the PR branch with `offline_source_run_id` set to a
+successful same-branch Vulcan CI push run. That entry point skips normal CI and
+calls the same four-job offline workflow in validation-only mode. The source must
+still belong to this repository and have successful host/card publication jobs.
+
+Validation mode always rebuilds and validates all four bundles, never reuses an
+existing offline release, never uploads release objects, and skips final metadata
+publication. Download the resulting `offline-bundle-*` Actions artifacts within
+seven days; evidence logs are retained for 14 days. This tests the actual matrix
+before merging without exposing an unqualified release through sima-cli.
