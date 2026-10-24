@@ -816,9 +816,9 @@ report = model.benchmark(options)
 | `telemetry.board_temperatures_c` | SoM 상단 및 하단 센서입니다. |
 | `telemetry.cpu_usage_pct` | CPU 사용률입니다. 각 샘플은 직전 구간의 평균이므로 `maximum`은 가장 바쁜 구간입니다. |
 | `telemetry.cpu_cores_usage_pct` | 코어 순서대로 나열한 각 CPU 코어의 사용률입니다. 전체 코어 평균인 `cpu_usage_pct`가 낮게 유지되어도 바쁜 코어 하나가 여기에 표시됩니다. |
-| `telemetry.mla_memory_mib` | MLA에 할당된 메모리(MiB)입니다. 모델은 로드될 때 이 메모리를 할당하므로, 다른 작업이 실행 중이지 않다면 이 값이 모델의 MLA 메모리입니다. |
-| `telemetry.cma_memory_mib` | 사용 중인 연속 메모리(CMA, MiB)입니다. MLA 메모리 풀을 포함하므로 `mla_memory_mib`에 더하지 마십시오. 유휴 상태에서는 Linux가 CMA에서 빌려 쓰는 페이지 캐시도 포함합니다. |
-| `telemetry.linux_memory_used_mib` | 페이지 캐시를 제외한 Linux 사용 메모리(MiB)입니다. |
+| `telemetry.mla_memory_mib` | MLA가 보유한 메모리(MiB)입니다. MLA 메모리 풀의 버퍼와 MLA만 사용하는 공유 버퍼를 포함합니다. 모델은 로드될 때 이 메모리를 할당하므로, 다른 작업이 실행 중이지 않다면 이 값이 모델의 MLA 메모리입니다. |
+| `telemetry.ev74_memory_mib` | EV74가 보유한 메모리(MiB)입니다. 예를 들어 EV74가 MLA를 위해 전처리하는 입력 프레임이 여기에 해당합니다. EV74와 MLA가 함께 사용하는 공유 버퍼는 `mla_memory_mib`가 아니라 여기에 집계되므로, 두 값을 더하면 모델의 가속기 메모리가 됩니다. 비디오 디코더나 카메라 ISP가 만든 프레임은 어느 쪽에도 포함되지 않습니다. |
+| `telemetry.linux_memory_used_mib` | 보드 전체가 사용하는 메모리(Linux `MemTotal - MemAvailable`, MiB)입니다. 모든 프로세스와 EV74의 버퍼를 포함하므로 위의 두 값에 더하지 마십시오. |
 
 각 지표는 `samples`, `mean`, `minimum`, `maximum`, `last`를 보고하며, `samples == 0`은 보드가 해당 지표를 보고하지 않았음을 의미합니다. Sentinel은 2초마다 샘플링하므로 10초 패스에서는 약 5개의 샘플이 수집됩니다. 모든 값은 보드 전체 기준이며 실행 중인 다른 프로세스도 포함합니다.
 

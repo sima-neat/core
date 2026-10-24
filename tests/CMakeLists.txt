@@ -95,6 +95,10 @@ target_link_libraries(unit_kernel_runner_integration_test PRIVATE
 simaneat_add_test(NAME unit_kernel_runner_integration_test COMMAND unit_kernel_runner_integration_test)
 set_tests_properties(unit_kernel_runner_integration_test PROPERTIES
   TIMEOUT 30 LABELS "strict;unit;runtime;gstreamer")
+simaneat_add_test(NAME unit_kernel_runner_capacity_policy_test
+  COMMAND unit_kernel_runner_integration_test --capacity-policy-only)
+set_tests_properties(unit_kernel_runner_capacity_policy_test PROPERTIES
+  TIMEOUT 30 LABELS "strict;unit;contracts")
 
 
 simaneat_add_test(
@@ -171,6 +175,7 @@ set(PIPELINESESSION_TEST_TARGETS
 foreach(_target IN LISTS PIPELINESESSION_TEST_TARGETS)
   simaneat_append_ctest_env(${_target})
 endforeach()
+simaneat_append_ctest_env(unit_kernel_runner_capacity_policy_test)
 # ------------------------------------------------------------------------------
 # Test blacklist (by executable name)
 # ------------------------------------------------------------------------------

@@ -23,7 +23,7 @@ needs_sentinel = pytest.mark.skipif(not SENTINEL_SOCKET.exists(), reason="needs 
 
 STATS_FIELDS = ("key", "label", "unit", "samples", "mean", "minimum", "maximum", "last")
 ONE_MEASUREMENT = ("power_som_watts", "power_mla_watts", "die_temperature_max_c", "cpu_usage_pct",
-                   "mla_memory_mib", "cma_memory_mib", "linux_memory_used_mib")
+                   "mla_memory_mib", "ev74_memory_mib", "linux_memory_used_mib")
 MEASUREMENT_LISTS = ("power_rails_watts", "die_temperatures_c", "board_temperatures_c",
                      "cpu_cores_usage_pct")
 

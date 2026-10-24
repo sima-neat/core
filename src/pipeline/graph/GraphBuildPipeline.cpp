@@ -1146,9 +1146,15 @@ static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char*
         continue;
       const auto& key =
           stage.logical_stage_id.empty() ? stage.element_name : stage.logical_stage_id;
+      auto resolved_budget = pipeline_internal::sima::kernel_runner_stage_budget(
+          stage.native_execution_capacity, build.kernel_runner_capacity,
+          build.kernel_runner_output_pool_capacity);
+      if (const auto* failure = std::get_if<::simaai::scheduler::client::Error>(&resolved_budget)) {
+        throw_kernel_preparation_error(*failure);
+      }
+      const auto budget = std::get<pipeline_internal::sima::KernelRunnerBudget>(resolved_budget);
       requests.push_back(
-          {stage.element_name, key, build.kernel_runner_capacity,
-           build.kernel_runner_output_pool_capacity,
+          {stage.element_name, key, budget.execution_capacity, budget.output_pool_capacity,
            build.kernel_runner_compact ? std::string_view(build.appsink_name) : std::string_view{},
            &stage});
     }

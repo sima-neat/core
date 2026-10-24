@@ -649,7 +649,7 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
     print_metric("Die temp:      ", board.die_temperature_max_c, "°C");
     print_metric("CPU usage:     ", board.cpu_usage_pct, "%");
     print_metric("MLA memory:    ", board.mla_memory_mib, "MiB");
-    print_metric("CMA used:      ", board.cma_memory_mib, "MiB");
+    print_metric("EV74 memory:   ", board.ev74_memory_mib, "MiB");
     print_metric("Linux memory:  ", board.linux_memory_used_mib, "MiB");
     std::cout << "Telemetry:     Sentinel " << board.sentinel_version << ", " << board.samples
               << " samples\n";

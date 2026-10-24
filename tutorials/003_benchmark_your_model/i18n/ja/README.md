@@ -139,7 +139,6 @@ Energy:        0.91 J for 100 inputs
 Die temp:      46.34 °C avg, 47.56 °C max
 CPU usage:     12.38 % avg, 13.22 % max
 MLA memory:    29.65 MiB
-CMA used:      6035.02 MiB avg, 6044.38 MiB max
 Linux memory:  682.88 MiB avg, 697.41 MiB max
 Telemetry:     Sentinel main:766066b74f49, 15 samples
 report_latency_ms=1.96852

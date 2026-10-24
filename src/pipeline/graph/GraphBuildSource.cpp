@@ -790,7 +790,7 @@ void attach_source_sima_meta_probes(GstElement* pipeline,
 PreparedSourcePipeline prepare_source_pipeline_from_nodes(
     const std::vector<std::shared_ptr<Node>>& nodes, const GraphOptions& sess_opt, RunMode mode,
     const RunOptions& opt, bool require_sink, bool public_output_contract,
-    std::string& last_pipeline, const char* where) {
+    std::string& last_pipeline, const char* where, std::size_t internal_edge_queue = 0) {
   const pipeline_internal::ScopedBuildTiming timing(
       "prepare_source_pipeline_from_nodes",
       std::string("where=") + (where ? where : "Graph::build(source)") + " nodes=" +
@@ -851,6 +851,12 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
     }
   }
   session_build_finalize_public_zero_copy_holder_loan_credits(stream_opt);
+  if (mode == RunMode::Sync) {
+    session_build_clamp_sync_kernel_runner_capacity(br);
+  }
+  session_build_tune_internal_zero_copy_holder_window(stream_opt, internal_edge_queue,
+                                                      !public_output_contract);
+  session_build_reserve_kernel_runner_outputs(br, stream_opt);
   br.pipeline_string = session_build_apply_run_preset_to_pipeline(
       std::move(br.pipeline_string), merged_opt, br.framework_name_origins);
   if (br.diag) {
@@ -951,14 +957,17 @@ Graph::PreparedSource Graph::prepare_source_(RunMode mode, const RunOptions& opt
   };
 }
 
-SourceStreamBuildContext session_build_source_stream_internal(
-    const std::vector<std::shared_ptr<Node>>& nodes, const std::shared_ptr<void>& guard,
-    std::string& last_pipeline, const GraphOptions& sess_opt, const RunOptions& opt, RunMode mode,
-    bool require_sink, bool public_output_contract, const char* where) {
+SourceStreamBuildContext
+session_build_source_stream_internal(const std::vector<std::shared_ptr<Node>>& nodes,
+                                     const std::shared_ptr<void>& guard, std::string& last_pipeline,
+                                     const GraphOptions& sess_opt, const RunOptions& opt,
+                                     RunMode mode, bool require_sink, bool public_output_contract,
+                                     std::size_t internal_edge_queue, const char* where) {
   gst_init_once();
 
   PreparedSourcePipeline src = prepare_source_pipeline_from_nodes(
-      nodes, sess_opt, mode, opt, require_sink, public_output_contract, last_pipeline, where);
+      nodes, sess_opt, mode, opt, require_sink, public_output_contract, last_pipeline, where,
+      internal_edge_queue);
 
   const int snapshot_wait_override_ms = public_output_contract ? -1 : 0;
   set_state_or_throw(src.pipeline.get(), GST_STATE_PLAYING, where, src.diag,
@@ -3360,8 +3369,8 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
     const runtime::FusedRealtimeIngress& ingress,
     const std::vector<std::shared_ptr<Node>>& consumer_nodes, const std::shared_ptr<void>& guard,
     std::string& last_pipeline, const GraphOptions& sess_opt, const RunOptions& opt, RunMode mode,
-    bool require_sink, bool public_output_contract, const char* where,
-    const runtime::FusedEncodedOutputDispatch& encoded_output_dispatch) {
+    bool require_sink, bool public_output_contract, std::size_t internal_edge_queue,
+    const char* where, const runtime::FusedEncodedOutputDispatch& encoded_output_dispatch) {
   gst_init_once();
   const pipeline_internal::ScopedBuildTiming timing(
       "prepare_fused_realtime_source_pipeline",
@@ -3450,6 +3459,12 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
     }
   }
   session_build_finalize_public_zero_copy_holder_loan_credits(stream_opt);
+  if (mode == RunMode::Sync) {
+    session_build_clamp_sync_kernel_runner_capacity(br);
+  }
+  session_build_tune_internal_zero_copy_holder_window(stream_opt, internal_edge_queue,
+                                                      !public_output_contract);
+  session_build_reserve_kernel_runner_outputs(br, stream_opt);
   br.pipeline_string = session_build_apply_run_preset_to_pipeline(
       std::move(br.pipeline_string), merged_opt, br.framework_name_origins);
   if (br.diag) {

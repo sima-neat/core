@@ -5,6 +5,9 @@
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
+#include "pipeline/internal/sima/ContractRender.h"
+#include "pipeline/graph/internal/GraphBuildInternal.h"
+#include "nodes/sima/Preproc.h"
 #include <simaai/scheduler/testing/probe.h>
 #include <gstsimaaitensorbuffer_meta.h>
 #include <simaai/scheduler/testing/route_probe.h>
@@ -75,6 +78,160 @@ void output_carrier_budget() {
             "invalid or overflowing output budget accepted");
   }
 }
+void authored_stage_budget() {
+  const auto check = [](std::optional<std::size_t> authored, std::size_t graph_execution,
+                        std::size_t graph_pool, std::size_t execution, std::size_t pool) {
+    const auto result =
+        integration::kernel_runner_stage_budget(authored, graph_execution, graph_pool);
+    const auto* budget = std::get_if<integration::KernelRunnerBudget>(&result);
+    require(budget && budget->execution_capacity == execution &&
+                budget->output_pool_capacity == pool,
+            "authored stage must preserve graph retention and output-pool floors");
+  };
+  check(std::nullopt, 1, 20, 1, 20); // Unauthored BoxDecode does not acquire Preproc's window.
+  check(4, 1, 20, 4, 23);            // PR1130 retention plus the model's async window.
+  check(4, 1, 2, 4, 5);
+  check(4, 1, 0, 4, 5);   // Automatic output budget preserves the spare.
+  check(1, 4, 23, 1, 23); // A shallower window cannot shrink an independent floor.
+  check(4, 1, 4094, 4, 4097);
+  check(1, 64, 4097, 1, 4097);
+  check(std::nullopt, 64, 0, 64, 65);
+  for (const auto authored : {0U, 65U}) {
+    require(
+        std::holds_alternative<rt::Error>(integration::kernel_runner_stage_budget(authored, 1, 20)),
+        "invalid authored execution capacity accepted");
+  }
+  for (const auto [execution, pool] : std::array<std::pair<std::size_t, std::size_t>, 6>{
+           {{0, 2},
+            {65, 66},
+            {4, 4},
+            {1, 4095},
+            {1, 4098},
+            {1, std::numeric_limits<std::size_t>::max()}}}) {
+    require(std::holds_alternative<rt::Error>(
+                integration::kernel_runner_stage_budget(4, execution, pool)),
+            "invalid or overflowing graph/stage carrier budget accepted");
+  }
+}
+
+void authored_preproc_contract_policy() {
+  using namespace simaai::neat;
+  const auto options = [] {
+    PreprocOptions opt;
+    opt.model_managed_contract = true;
+    opt.num_buffers = opt.num_buffers_model = 4;
+    opt.num_buffers_locked = true;
+    opt.set_input_shape({720, 1280, 3});
+    opt.input_img_type = "RGB";
+    opt.set_output_shape({640, 640, 3});
+    opt.scaled_width = opt.scaled_height = 640;
+    opt.output_img_type = "RGB";
+    opt.output_dtype = "EVXX_INT8";
+    opt.tessellate = false;
+    opt.single_output_handoff = true;
+    opt.q_scale = 0.25;
+    opt.q_zp = 7;
+    return opt;
+  };
+  const auto compile = [](PreprocOptions opt) {
+    CompiledNodeContract result;
+    std::string error;
+    require_fixture(Preproc(std::move(opt)).compile_node_contract({}, &result, &error),
+                    "compile authored Preproc", error);
+    return result;
+  };
+  const auto original = compile(options());
+  require(original.native_execution_capacity == 4U, "model async capacity was discarded");
+  auto cached = std::make_shared<const CompiledProcessCvuContract>(*original.processcvu);
+  // Numerical contracts may be cached across async/sync/async builds. The
+  // execution window must always come from the current node, never the cache.
+  for (const auto count : {1, 4, 1, 4}) {
+    auto opt = options();
+    opt.num_buffers = opt.num_buffers_model = count;
+    opt.compiled_contract = cached;
+    require(compile(opt).native_execution_capacity == static_cast<std::size_t>(count),
+            "cached numerical contract overrode the current async/sync author");
+  }
+  auto unlocked = options();
+  unlocked.num_buffers_locked = false;
+  unlocked.num_buffers = 0;
+  require(!compile(unlocked).native_execution_capacity,
+          "unlocked Preproc pool hints must not become execution authority");
+  auto reused = original;
+  std::string reuse_error;
+  require_fixture(Preproc(unlocked).compile_node_contract({}, &reused, &reuse_error),
+                  "recompile unlocked Preproc", reuse_error);
+  require(!reused.native_execution_capacity,
+          "reused contract output retained a previous node's authored capacity");
+  auto standalone = options();
+  standalone.model_managed_contract = false;
+  standalone.num_buffers_locked = false;
+  standalone.num_buffers = 0;
+  require(!compile(standalone).native_execution_capacity,
+          "standalone defaults must not acquire a model execution window");
+
+  CompiledNodeContract child = original;
+  child.element_name = "fused_branch_preproc_7";
+  child.logical_stage_id = "model_preproc_7";
+  CompiledNodeContract inner, outer;
+  inner.child_stages.push_back(child);
+  outer.child_stages.push_back(inner);
+  CompiledPipelineContracts contracts;
+  contracts.stages.push_back(outer);
+  const auto render = [&] {
+    integration::ManifestBuildDiagnostics diagnostics;
+    auto manifest = render_manifest_from_compiled_contracts(contracts, {}, &diagnostics);
+    require(manifest && diagnostics.errors.empty() && manifest->stages.size() == 1,
+            "nested model child must render without changing the authored policy");
+    return *manifest;
+  };
+  const auto manifest = render();
+  require(manifest.stages.front().native_execution_capacity == 4U &&
+              manifest.stages.front().element_name == child.element_name &&
+              manifest.stages.front().logical_stage_id == child.logical_stage_id,
+          "nested/renamed child lost its execution author");
+  require(integration::serialize_manifest_json(manifest).find("native_execution_capacity") ==
+              std::string::npos,
+          "private capacity must not extend the serialized plugin manifest ABI");
+
+  BuildResult build;
+  build.kernel_runner_capacity = 1;
+  build.kernel_runner_output_pool_capacity = 20;
+  build.rendered_manifest = manifest;
+  build.compiled_contracts = std::make_shared<CompiledPipelineContracts>(contracts);
+  build.pipeline_string = "identity name=producer ! appsink name=mysink";
+  build.appsink_name = "mysink";
+  const BuildResult async_build = build;
+  // Exercise the existing sync entry, including its early legacy return, and
+  // the same serial helper used by ordinary/fused source construction.
+  (void)session_build_clamp_sync_build_result(build, -1);
+  require(build.kernel_runner_capacity == 1 &&
+              build.rendered_manifest->stages.front().native_execution_capacity == 1U &&
+              build.kernel_runner_output_pool_capacity == 20,
+          "sync build must clamp authored execution without shrinking retention");
+  require(async_build.rendered_manifest->stages.front().native_execution_capacity == 4U &&
+              build.compiled_contracts == async_build.compiled_contracts &&
+              async_build.compiled_contracts->stages.front()
+                      .child_stages.front()
+                      .child_stages.front()
+                      .native_execution_capacity == 4U,
+          "sync copy must not mutate the async manifest or shared compiled child");
+  auto rebuilt = render();
+  require(rebuilt.stages.front().native_execution_capacity == 4U,
+          "sync clamp mutated cached child/numerical contract state");
+  build.rendered_manifest = rebuilt;
+  build.kernel_runner_capacity = 8;
+  session_build_clamp_sync_kernel_runner_capacity(build);
+  require(build.kernel_runner_capacity == 1 &&
+              build.rendered_manifest->stages.front().native_execution_capacity == 1U,
+          "source-mode sync clamp must cover graph and authored execution");
+  integration::StageStaticSpec unauthored;
+  build.rendered_manifest->stages.push_back(unauthored);
+  session_build_clamp_sync_kernel_runner_capacity(build);
+  require(!build.rendered_manifest->stages.back().native_execution_capacity,
+          "sync clamping must not invent an authored policy for other stages");
+}
+
 void ev_service_capacity() {
   const auto request = [](rt::Hardware target, std::size_t capacity) {
     gs::StageAttachment result;
@@ -948,13 +1105,23 @@ void controls_and_admission_geometry() {
 } // namespace
 int main(int argc, char** argv) {
   try {
+    const auto capacity_policy = [] {
+      output_carrier_budget();
+      authored_stage_budget();
+      authored_preproc_contract_policy();
+      ev_service_capacity();
+    };
+    if (argc == 2 && std::string_view(argv[1]) == "--capacity-policy-only") {
+      capacity_policy();
+      std::cout << "PASS: authored capacity, retained carriers, nested contracts and sync policy\n";
+      return 0;
+    }
     simaai::neat::gst_init_once();
     immutable_recipe_instances();
     if (argc == 2 && std::string_view(argv[1]) == "--instance-only")
       return 0;
     require(probe::register_element(), "register native candidate plugin");
-    output_carrier_budget();
-    ev_service_capacity();
+    capacity_policy();
     memory_coherency_candidate_policy();
     real_request_memory_policy_transaction(false);
     real_request_memory_policy_transaction(true);

@@ -840,9 +840,9 @@ summarizes them:
 | `telemetry.board_temperatures_c` | SoM top-side and bottom-side sensors. |
 | `telemetry.cpu_usage_pct` | CPU utilization. Each sample averages the preceding interval, so `maximum` is the busiest interval. |
 | `telemetry.cpu_cores_usage_pct` | Utilization of each CPU core, in core order. A single busy core shows here even when `cpu_usage_pct`, the average over all cores, stays low. |
-| `telemetry.mla_memory_mib` | Memory allocated for the MLA, in MiB. The model allocates it when it loads, so with nothing else running this is the model's MLA memory. |
-| `telemetry.cma_memory_mib` | Used contiguous memory (CMA), in MiB. It includes the MLA memory pool, so do not add it to `mla_memory_mib`. At idle it also includes page cache that Linux borrows from CMA. |
-| `telemetry.linux_memory_used_mib` | Linux used memory, excluding page cache, in MiB. |
+| `telemetry.mla_memory_mib` | Memory the MLA holds, in MiB: buffers from the MLA memory pool, plus shared buffers only the MLA uses. The model allocates it when it loads, so with nothing else running this is the model's MLA memory. |
+| `telemetry.ev74_memory_mib` | Memory EV74 holds, in MiB, such as the input frames it preprocesses for the MLA. A shared buffer EV74 and the MLA both use counts here, not in `mla_memory_mib`, so the two add up to the model's accelerator memory. Frames a video decoder or camera ISP produced count in neither. |
+| `telemetry.linux_memory_used_mib` | Memory the whole board uses (Linux `MemTotal - MemAvailable`), in MiB. It includes every process and EV74's buffers, so do not add it to the two above. |
 
 Each metric reports `samples`, `mean`, `minimum`, `maximum`, and `last`, and `samples == 0` means
 the board did not report it. Sentinel samples every 2 s, so a 10 s pass yields about 5 samples.

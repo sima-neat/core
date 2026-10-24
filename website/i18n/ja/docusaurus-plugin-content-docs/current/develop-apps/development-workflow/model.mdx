@@ -809,9 +809,9 @@ report = model.benchmark(options)
 | `telemetry.board_temperatures_c` | SoM の表面側と裏面側のセンサーの温度です。 |
 | `telemetry.cpu_usage_pct` | CPU 使用率です。各サンプルは直前の区間の平均であるため、`maximum` は最も負荷の高い区間を示します。 |
 | `telemetry.cpu_cores_usage_pct` | 各 CPU コアの使用率です（コア順）。全コアの平均である `cpu_usage_pct` が低いままでも、1 つのコアの高負荷がここに表れます。 |
-| `telemetry.mla_memory_mib` | MLA に割り当てられたメモリ（MiB 単位）です。モデルはロード時にこれを割り当てるため、他に何も実行していなければ、この値がモデルの MLA メモリです。 |
-| `telemetry.cma_memory_mib` | 使用中の連続メモリ（CMA、MiB 単位）です。MLA のメモリプールを含むため、`mla_memory_mib` に加算しないでください。アイドル時には、Linux が CMA から借りているページキャッシュも含まれます。 |
-| `telemetry.linux_memory_used_mib` | ページキャッシュを除いた Linux の使用メモリ（MiB 単位）です。 |
+| `telemetry.mla_memory_mib` | MLA が保持するメモリ（MiB 単位）です。MLA のメモリプールのバッファと、MLA だけが使う共有バッファを含みます。モデルはロード時にこれを割り当てるため、他に何も実行していなければ、この値がモデルの MLA メモリです。 |
+| `telemetry.ev74_memory_mib` | EV74 が保持するメモリ（MiB 単位）です。たとえば、EV74 が MLA 向けに前処理する入力フレームが該当します。EV74 と MLA の両方が使う共有バッファは `mla_memory_mib` ではなくこちらに数えるため、2 つを足すとモデルのアクセラレーターメモリになります。ビデオデコーダーやカメラ ISP が生成したフレームはどちらにも含まれません。 |
+| `telemetry.linux_memory_used_mib` | ボード全体が使用しているメモリ（Linux の `MemTotal - MemAvailable`、MiB 単位）です。すべてのプロセスと EV74 のバッファを含むため、上の 2 つに加算しないでください。 |
 
 各メトリクスは `samples`、`mean`、`minimum`、`maximum`、`last` を報告し、`samples == 0` はボードがそのメトリクスを報告しなかったことを意味します。Sentinel は 2 秒ごとにサンプリングするため、10 秒のパスでは約 5 個のサンプルが得られます。すべての値はボード全体のもので、実行中の他のプロセスも含みます。
 
