@@ -26,6 +26,16 @@ on:
         type: string
   workflow_dispatch:
     inputs:
+      offline_publish:
+        description: "Publish offline bundles beside the selected same-branch online packages"
+        required: false
+        default: false
+        type: boolean
+      offline_source_run_id:
+        description: "Build offline tuples from ready same-branch CI publications; skip normal CI"
+        required: false
+        default: ""
+        type: string
       build_mode:
         description: "Build mode: standard or fuzz"
         required: false
@@ -56,13 +66,21 @@ permissions:
   packages: read
 
 concurrency:
-  group: ${{ github.repository }}-${{ github.workflow }}-${{ github.ref }}-${{ inputs.build_mode || 'standard' }}
+  group: ${{ github.repository }}-${{ github.workflow }}-${{ github.ref }}-${{ inputs.offline_source_run_id || inputs.build_mode || 'standard' }}
   cancel-in-progress: ${{ github.ref_type == 'branch' }}
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  validate-offline:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.offline_source_run_id != '' }}
+    uses: ./.github/workflows/pcie-offline.yml
+    with:
+      source_run_id: ${{ inputs.offline_source_run_id }}
+      validation_only: ${{ !inputs.offline_publish }}
+      publish_branch: ${{ inputs.offline_publish || false }}
+
   documentation-localization:
     name: Validate Documentation Localization
     runs-on: ubuntu-latest
@@ -89,6 +107,7 @@ jobs:
         run: bash scripts/ci/check_documentation_localization.sh
 
   resolve-vulcan-config:
+    if: ${{ !inputs.offline_source_run_id }}
     name: Resolve Vulcan Config
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
     with:
@@ -137,6 +156,13 @@ jobs:
             tests/tools/test_build_install_sanity.py \
             tests/tools/test_core_inventory_soname.py \
             tests/tools/test_native_platform_baseline.py \
+            tests/tools/test_offline_pcie_discovery.py \
+            tests/tools/test_offline_pcie_assembly.py \
+            tests/tools/test_offline_pcie_ci.py \
+            tests/tools/test_offline_pcie_install.py \
+            tests/tools/test_offline_pcie_host_process.py \
+            tests/tools/test_offline_pcie_deploy.py \
+            tests/tools/test_pcie_local_candidate.py \
             tests/tools/test_required_test_coverage.py \
             tests/tools/test_ci_weekly_preparation.py \
             tests/tools/test_docs_native_prerequisites.py \
@@ -164,6 +190,7 @@ jobs:
             --github-output "${GITHUB_OUTPUT}"
 
   detect-changes:
+    if: ${{ !inputs.offline_source_run_id }}
     name: Detect Changes
     runs-on: ubuntu-latest
     outputs:
@@ -291,7 +318,7 @@ jobs:
 
   build:
     name: Build Core on Vulcan
-    if: ${{ always() && !failure() && !cancelled() && needs.detect-changes.outputs.docs_only != 'true' }}
+    if: ${{ !inputs.offline_source_run_id && always() && !failure() && !cancelled() && needs.detect-changes.outputs.docs_only != 'true' }}
     needs:
       - resolve-vulcan-config
       - resolve-compiler-cache
@@ -627,16 +654,9 @@ jobs:
             s3_args+=(--sse-kms-key-id "${SSE_KMS_KEY_ID}")
           fi
 
-          for path in \
-            pcie_host/dist/*.deb \
-            pcie_host/dist/*.deb.sha256 \
-            pcie_host/dist/*-extras.tar.gz \
-            pcie_host/dist/*-extras.tar.gz.sha256 \
-            pcie_host/dist/pyneatpcie-*.whl \
-            pcie_host/dist/pyneatpcie-*.whl.sha256 \
-            pcie_host/dist/*.json \
-            pcie_host/dist/*.py \
-            pcie_host/dist/*.sh; do
+          publication_paths="$(python3 pcie_host/scripts/pcie_delivery.py publication-list --directory pcie_host/dist)"
+          mapfile -t paths <<< "$publication_paths"
+          for path in "${paths[@]}"; do
             name="$(basename "${path}")"
             # Metadata becomes visible only after the aggregate closure audit.
             case "$name" in metadata*.json) name="${name}.pending" ;; esac
