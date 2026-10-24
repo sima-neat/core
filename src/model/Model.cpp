@@ -3309,7 +3309,7 @@ public:
         throw std::runtime_error("ModelIngressRouteProcessor: " + error);
       }
       const CompiledMlaContract* stage = nullptr;
-      for (const auto facts : selected->stage_facts) {
+      for (const auto& facts : selected->stage_facts) {
         const auto mla = std::find_if(facts.begin(), facts.end(), [](const auto& fact) {
           return fact.mla_compiled.has_value();
         });
