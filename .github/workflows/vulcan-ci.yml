@@ -630,8 +630,8 @@ jobs:
           for path in \
             pcie_host/dist/*.deb \
             pcie_host/dist/*.deb.sha256 \
-            pcie_host/dist/*-extras.tar.gz \
-            pcie_host/dist/*-extras.tar.gz.sha256 \
+            pcie_host/dist/*.tar.gz \
+            pcie_host/dist/*.tar.gz.sha256 \
             pcie_host/dist/pyneatpcie-*.whl \
             pcie_host/dist/pyneatpcie-*.whl.sha256 \
             pcie_host/dist/*.json \
