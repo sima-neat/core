@@ -46,6 +46,7 @@ def test_preflight_runs_admission_without_package_install(tmp_path, monkeypatch,
     plan = next(c for c in calls if '--simulate' in c)
     assert ('--no-remove' in plan) == (role == 'host')
     assert ('--allow-downgrades' in plan) == (role == 'card')
+    assert ('--reinstall' in plan) == (role == 'card')
 
 
 def test_integrity_failure_precedes_environment_or_commands(tmp_path, monkeypatch):
@@ -154,3 +155,6 @@ def test_install_refreshes_plan_after_prerequisites(tmp_path, monkeypatch):
     assert len(simulations) == 2
     assert simulations[0] < prerequisite < simulations[1]
     assert calls[simulations[1]+1][2:4] == ['card', 'install']
+    assert 'python3-venv' in calls[simulations[0]]
+    assert 'python3-venv' not in calls[simulations[1]]
+    assert '--reinstall' in calls[simulations[1]]

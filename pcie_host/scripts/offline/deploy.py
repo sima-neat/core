@@ -97,15 +97,15 @@ def execute(root, role, phase):
         prerequisites = missing_prerequisites()
         # Card upgrades may retire legacy Neat packages. The published lifecycle
         # validates every removal and the complete Scheduler transaction below.
-        policy = ['--no-remove'] if role == 'host' else ['--allow-downgrades']
+        policy = ['--no-remove'] if role == 'host' else ['--allow-downgrades', '--reinstall']
         args = ['apt-get', *policy, '--no-install-recommends', '-y', 'install',
-                *map(str, native), *prerequisites]
+                *map(str, native)]
         if phase == 'verify':
             verify(target, role, venv)
             return
         plan = state/'plan.txt'
         with plan.open('w') as stream:
-            run([*args, '--simulate'], stdout=stream)
+            run([*args, *prerequisites, '--simulate'], stdout=stream)
         # Producer admission checks the whole local transaction before mutations.
         lifecycle = ['bash', str(root/'lifecycle.sh'), role, 'preflight', str(target/'payload'), str(plan)]
         run(lifecycle)
