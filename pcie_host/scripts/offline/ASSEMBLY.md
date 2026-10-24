@@ -1,4 +1,4 @@
-# Offline package assembly (draft)
+# Offline package assembly
 
 ## Delivery scope
 
@@ -47,10 +47,10 @@ installation with actual Neat payloads passed on a one-card system. Multi-card
 hardware qualification remains pending; fixture results cover sequential ordering
 and failure handling.
 
-`assemble.py` builds **two separate dependency repositories**, Ubuntu 24.04 amd64
-for the host and ARM64 for the card. It accepts already authenticated Core
+`assemble.py` builds **two separate dependency repositories**, Ubuntu 22.04 or
+24.04 on AMD64 or ARM64 for the host, and ARM64 for the card. It accepts already authenticated Core
 publication directories and immutable clean OCI baseline images. No sima-cli is
-needed during collection or validation. Docker and Python 3.11+ are build tools.
+needed during collection or validation. Docker and Python 3.10+ are build tools.
 
 The bundled installer deploys Neat through the existing host/card installer
 lifecycles. It does not configure discovery, flash system firmware, install host
@@ -66,11 +66,11 @@ Prepare a JSON spec with exactly `host` and `card` targets. Each target requires
 | `publication` | Local directory containing `metadata.json` and every declared resource |
 | `metadata_sha256` | SHA-256 of the metadata from an authenticated publication transport |
 | `core_revision` | Exact Core revision, 12–40 hex characters; must match both publications |
-| `image` | Clean baseline OCI reference pinned as `repository@sha256:...` |
-| `architecture` | `amd64` for host, `arm64` for card |
+| `image` | Clean baseline pinned as `repository@sha256:...` or an immutable local Docker image ID `sha256:...` |
+| `architecture` | `amd64` or `arm64` for host, `arm64` for card |
 | `os_id`, `os_version` | Expected `/etc/os-release` ID and VERSION_ID |
 
-Initial host support is exactly `ubuntu`, `24.04`, `amd64`. Choose a clean,
+Host support is Ubuntu 22.04/24.04 on AMD64/ARM64. Choose a clean,
 provisioned Platform 3.0 baseline image for the actual card; record its firmware
 provenance separately. Plain Debian ARM64 is useful for tooling integration tests
 but is **not** a substitute for Platform 3.0 qualification. Baselines must include
@@ -292,3 +292,46 @@ uncompressed `Packages` index supplied by the flat bundle repository. This avoid
 compressed-index retry errors without changing system APT configuration or
 suppressing APT failures. Missing optional `InRelease`/`Release` metadata may
 still produce `Ign` lines; bundle file checksums are verified before deployment.
+
+## CI assembly and publication
+
+`.github/workflows/pcie-offline.yml` runs after successful **Vulcan CI** push runs
+on `develop`, `main`, `release-*`, and tags whose commit matches the run. Both
+host and card publication jobs must have succeeded in that run attempt. Fork,
+PR, failed, and docs-only runs cannot publish offline packages. Manual dispatch
+accepts a source run ID and applies the same checks. The workflow must be present
+on the default branch before GitHub delivers `workflow_run` events.
+
+Four native GitHub runner jobs cover Ubuntu 22.04/24.04 × AMD64/ARM64. They reuse
+the authenticated Vulcan publications at the exact successful source SHA; they
+do not rebuild Neat. Each job resolves dependencies in clean containers rather
+than relying on packages preinstalled on the runner. AMD64 runners use QEMU only
+for the ARM64 card container. A single emulated runner could assemble all four,
+but would serialize the work and add emulation to host dependency validation.
+
+`baselines.json` pins the Ubuntu multiarchitecture image manifests and the clean
+Platform card image archive, including provenance and checksums. The card archive
+is a build-only object under `core/_offline-build-inputs/sha256/` in the configured
+artifact bucket. Production is seeded with this input; another Vulcan environment
+must receive the same checksum-verified object before enabling this workflow.
+No baseline image is shipped in the customer bundle. To update a baseline, qualify
+and upload a new content-addressed object and change the manifest in review; do
+not replace an existing input. The host baseline adds only the Platform userspace
+library/headers built by the published producer's verified `platform-source.tar.gz`
+and helper. It does not install the driver. Older producers requiring Platform
+DEBs are rejected, preserving the separate system-provisioning contract.
+
+Each job validates both targets in fresh containers with `--network=none` before
+uploading its archive and `metadata-offline.json.pending`. An aggregate job checks
+all four source metadata digests and uploaded archive checksums before exposing
+`metadata-offline.json` in each matching online package directory and invalidating
+the metadata cache. Metadata has an empty install script. Failed validation never
+publishes ready metadata. Existing completed publications are verified and reused;
+changed source metadata or archive bytes fail instead of silently replacing a
+release. Partial final publication can be retried safely; completed tuples are
+retained and missing final metadata is created conditionally.
+
+The bundle records the binary `core_revision` separately from `installer_revision`
+(the trusted workflow checkout), plus source run and metadata hashes in publication
+metadata. CI retains assembly logs, spec, manifest, and metadata for 14 days.
+Container installation/import checks do not replace physical multi-card testing.

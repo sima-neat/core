@@ -48,7 +48,7 @@ def verify_publication(directory, expected_hash):
 
 
 def image(value):
-    if not re.fullmatch(r'[A-Za-z0-9./:_-]+@sha256:[0-9a-f]{64}', value):
+    if not re.fullmatch(r'(?:[A-Za-z0-9./:_-]+@)?sha256:[0-9a-f]{64}', value):
         raise ValueError('baseline image must be pinned by sha256 digest')
     return value
 
@@ -100,6 +100,7 @@ def assemble(spec, output):
     files = {str(p.relative_to(output)): sha(p) for p in sorted(output.rglob('*')) if p.is_file()}
     (output / 'bundle.json').write_text(json.dumps({
         'schema_version': 1, 'core_revision': revisions[0], 'files': files,
+        'installer_revision': spec.get('installer_revision', revisions[0]),
         'scope': 'Neat host/card deployment; Platform system package required',
     }, indent=2)+'\n')
     # No success archive is emitted until both network-isolated installs pass.

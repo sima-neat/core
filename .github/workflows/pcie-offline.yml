@@ -1,0 +1,150 @@
+name: PCIe Offline Bundles
+
+on:
+  workflow_run:
+    workflows: [Vulcan CI]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Successful Vulcan CI push run to assemble (develop/main/release-* or tag)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+concurrency:
+  group: pcie-offline-run-${{ github.event.workflow_run.id || inputs.source_run_id }}
+  cancel-in-progress: false
+
+jobs:
+  source:
+    name: Admit successful source publication
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-24.04
+    outputs:
+      enabled: ${{ steps.source.outputs.enabled }}
+      sha: ${{ steps.source.outputs.sha }}
+      ref: ${{ steps.source.outputs.ref }}
+      run_id: ${{ steps.source.outputs.run_id }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ github.event.workflow_run.id || inputs.source_run_id }}
+        run: python3 -B pcie_host/scripts/offline/resolve_run.py --run-id "$SOURCE_RUN"
+
+  config:
+    needs: source
+    if: ${{ needs.source.outputs.enabled == 'true' }}
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
+    with:
+      vulcan_env: ${{ vars.VULCAN_ENV || 'production' }}
+
+  build:
+    name: Assemble offline ${{ matrix.distro }} ${{ matrix.arch }}
+    needs: [source, config]
+    environment: ${{ needs.config.outputs.vulcan_env }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    concurrency:
+      group: pcie-offline-build-${{ needs.source.outputs.ref }}-${{ needs.source.outputs.sha }}-${{ matrix.distro }}-${{ matrix.arch }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {distro: ubuntu22, arch: amd64, runner: ubuntu-22.04}
+          - {distro: ubuntu24, arch: amd64, runner: ubuntu-24.04}
+          - {distro: ubuntu22, arch: arm64, runner: ubuntu-22.04-arm}
+          - {distro: ubuntu24, arch: arm64, runner: ubuntu-24.04-arm}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - name: Enable ARM64 card-container validation on AMD64
+        if: ${{ matrix.arch == 'amd64' }}
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - name: Install publication client with conditional-write support
+        run: |
+          python3 -m venv "$RUNNER_TEMP/offline-aws"
+          "$RUNNER_TEMP/offline-aws/bin/pip" install awscli==1.42.49
+          echo "$RUNNER_TEMP/offline-aws/bin" >> "$GITHUB_PATH"
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ needs.config.outputs.aws_region }}
+          role-to-assume: ${{ needs.config.outputs.artifact_publisher_role_arn }}
+          role-session-name: offline-${{ matrix.distro }}-${{ matrix.arch }}-${{ github.run_id }}
+      - name: Acquire published assets, assemble, validate offline, and stage
+        env:
+          SOURCE_REF: ${{ needs.source.outputs.ref }}
+          SOURCE_SHA: ${{ needs.source.outputs.sha }}
+          SOURCE_RUN: ${{ needs.source.outputs.run_id }}
+          DISTRO: ${{ matrix.distro }}
+          ARCH: ${{ matrix.arch }}
+          ARTIFACT_BUCKET: ${{ needs.config.outputs.artifact_bucket }}
+          KMS_KEY: ${{ needs.config.outputs.artifact_kms_key_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B pcie_host/scripts/offline/ci.py build \
+            --bucket "$ARTIFACT_BUCKET" --kms "$KMS_KEY" \
+            --ref "$SOURCE_REF" --sha "$SOURCE_SHA" --run-id "$SOURCE_RUN" \
+            --installer-revision "$GITHUB_SHA" --distro "$DISTRO" --arch "$ARCH" \
+            --work "$RUNNER_TEMP/offline" 2>&1 | tee "$RUNNER_TEMP/offline-build.log"
+      - name: Retain assembly evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-evidence-${{ matrix.distro }}-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/offline-build.log
+            ${{ runner.temp }}/offline/spec.json
+            ${{ runner.temp }}/offline/metadata-offline.json
+            ${{ runner.temp }}/offline/neat-offline/bundle.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  publish:
+    name: Publish all offline metadata
+    needs: [source, config, build]
+    environment: ${{ needs.config.outputs.vulcan_env }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: pcie-offline-publish-${{ needs.source.outputs.ref }}-${{ needs.source.outputs.sha }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - name: Install publication client with conditional-write support
+        run: |
+          python3 -m venv "$RUNNER_TEMP/offline-aws"
+          "$RUNNER_TEMP/offline-aws/bin/pip" install awscli==1.42.49
+          echo "$RUNNER_TEMP/offline-aws/bin" >> "$GITHUB_PATH"
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ needs.config.outputs.aws_region }}
+          role-to-assume: ${{ needs.config.outputs.artifact_publisher_role_arn }}
+          role-session-name: offline-publish-${{ github.run_id }}
+      - name: Verify all staged tuples and expose download-only metadata
+        env:
+          SOURCE_REF: ${{ needs.source.outputs.ref }}
+          SOURCE_SHA: ${{ needs.source.outputs.sha }}
+          ARTIFACT_BUCKET: ${{ needs.config.outputs.artifact_bucket }}
+          KMS_KEY: ${{ needs.config.outputs.artifact_kms_key_id }}
+          DISTRIBUTION: ${{ needs.config.outputs.artifact_cloudfront_distribution_id }}
+        run: |
+          python3 -B pcie_host/scripts/offline/ci.py publish \
+            --bucket "$ARTIFACT_BUCKET" --kms "$KMS_KEY" \
+            --ref "$SOURCE_REF" --sha "$SOURCE_SHA" \
+            --distribution "$DISTRIBUTION" --work "$RUNNER_TEMP/offline-publish"
