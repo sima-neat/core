@@ -31,7 +31,7 @@ Docker and Internet access are not needed on the customer system.
 Run on the host, using the SSH key provisioned during system setup:
 
 ```sh
-tar -xzf neat-offline.tar.gz
+tar -xzf neat-pcie-offline-installer.tar.gz
 cd neat-offline
 sudo python3 -B install.py --preflight-only
 sudo python3 -B install.py
