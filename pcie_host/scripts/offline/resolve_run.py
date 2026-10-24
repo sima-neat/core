@@ -46,7 +46,7 @@ def eligible(run, jobs, tag_sha=None, validation_ref=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run-id', required=True, type=int)
-    parser.add_argument('--validation-ref', help='allow this same-repository branch for non-publishing validation')
+    parser.add_argument('--validation-ref', help='allow this same-repository branch for an explicitly requested pre-merge build/publication')
     args = parser.parse_args()
     run = api(f'actions/runs/{args.run_id}')
     jobs = []

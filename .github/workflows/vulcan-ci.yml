@@ -26,8 +26,13 @@ on:
         type: string
   workflow_dispatch:
     inputs:
+      offline_publish:
+        description: "Publish offline bundles beside the selected same-branch online packages"
+        required: false
+        default: false
+        type: boolean
       offline_source_run_id:
-        description: "Validate all offline tuples from ready same-branch CI publications; skip normal CI"
+        description: "Build offline tuples from ready same-branch CI publications; skip normal CI"
         required: false
         default: ""
         type: string
@@ -73,7 +78,8 @@ jobs:
     uses: ./.github/workflows/pcie-offline.yml
     with:
       source_run_id: ${{ inputs.offline_source_run_id }}
-      validation_only: true
+      validation_only: ${{ !inputs.offline_publish }}
+      publish_branch: ${{ inputs.offline_publish || false }}
 
   documentation-localization:
     name: Validate Documentation Localization

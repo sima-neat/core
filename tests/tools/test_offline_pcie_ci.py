@@ -222,3 +222,20 @@ def test_validation_can_use_ready_publications_while_other_tests_run(status):
     assert resolver.eligible(run, [], validation_ref=run['head_branch']) is None
     run.update(status='completed', conclusion='failure')
     assert resolver.eligible(run, jobs(), validation_ref=run['head_branch']) is None
+
+
+
+def test_manual_publication_is_opt_in_and_reuses_the_validated_matrix():
+    import yaml
+    workflows = HERE.parents[2]/'.github/workflows'
+    caller = yaml.safe_load((workflows/'vulcan-ci.yml').read_text())
+    inputs = caller[True]['workflow_dispatch']['inputs']
+    assert inputs['offline_publish']['default'] is False
+    call = caller['jobs']['validate-offline']
+    assert call['with']['validation_only'] == '${{ !inputs.offline_publish }}'
+    assert call['with']['publish_branch'] == '${{ inputs.offline_publish || false }}'
+    worker = yaml.safe_load((workflows/'pcie-offline.yml').read_text())
+    assert worker['jobs']['publish']['needs'] == ['source', 'config', 'build']
+    assert worker['jobs']['publish']['if'] == '${{ !inputs.validation_only }}'
+    matrix = worker['jobs']['build']['strategy']['matrix']['include']
+    assert {(r['distro'], r['arch']) for r in matrix} == set(ci.TUPLES)

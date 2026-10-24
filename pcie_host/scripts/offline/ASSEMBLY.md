@@ -355,3 +355,25 @@ existing offline release, never uploads release objects, and skips final metadat
 publication. Download the resulting `offline-bundle-*` Actions artifacts within
 seven days; evidence logs are retained for three days. This tests the actual matrix
 before merging without exposing an unqualified release through sima-cli.
+
+
+### Publish a pre-merge branch for end-to-end testing
+
+Dispatch **Vulcan CI** on the PR branch with `offline_source_run_id` and explicitly
+set `offline_publish=true`. This uses the same four native assembly jobs and clean
+network-disabled validation, then uploads each archive and pending metadata beside
+the source run's online packages. Only after all four jobs succeed does the final
+job expose `metadata-offline.json` and invalidate its CloudFront cache. Online
+`metadata.json` and branch `latest.tag` are not changed by offline publication.
+
+```sh
+gh workflow run vulcan-ci.yml --ref codex/offline-pcie-discovery \
+  -f offline_source_run_id=40079421237 -f offline_publish=true
+```
+
+This explicit pre-merge mode requires successful host/card publications from the
+same repository and branch. Other source CI jobs may still be queued/running;
+a failed or cancelled source run is rejected. Automatic release-branch publication
+continues to require complete successful CI. Without `offline_publish=true`, the
+manual entry point remains validation-only. Completed offline publications are
+verified and reused on rerun rather than replaced.
