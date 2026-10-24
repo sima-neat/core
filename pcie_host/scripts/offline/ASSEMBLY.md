@@ -1,5 +1,49 @@
 # Offline package assembly (draft)
 
+## Delivery scope
+
+There are two independent offline deliverables:
+
+| Deliverable | Contents and responsibility |
+| --- | --- |
+| System package | Host Linux driver and compatible card firmware/update payload, with installation of both sides. Owned by Platform provisioning. |
+| Neat package | Host Neat libraries, card Neat libraries, their native/Python runtime dependencies, and one discovery-driven installer. This is the scope of PR #1135. |
+
+Do not combine the deliverables. Firmware payload format and the system-package
+installer are outside this PR. A compatible system package must already be
+installed, with PCIe networking, discovery responders, and SSH access provisioned.
+The Neat installer checks those prerequisites and reports actionable errors; it
+does not flash firmware, install drivers, or repair Platform networking.
+
+The intended customer workflow is download, transfer if needed, extract, and run
+one installer on the host. Customers do not need Docker or Internet access. The
+distributable archive contains both architectures, local dependency repositories,
+checksums, compatibility metadata, and the installer; no package downloads occur
+during installation.
+
+The installer must perform these steps:
+
+1. Verify bundle integrity and host/system compatibility.
+2. Inventory every attached SiMa PCI card and discover endpoints only through
+   their sysfs-associated interfaces. No IP arguments or card-selection flags.
+3. Preflight every card, including unambiguous endpoint mapping, SSH access,
+   compatible system packages, disk space, and offline dependency resolution,
+   before changing the host or any card.
+4. Install and verify host Neat once using the existing install lifecycle.
+5. Transfer the card payload, install, and verify each card sequentially. Continue
+   after an individual card failure while host/topology remain valid; report every
+   card's result and return nonzero if any card failed.
+
+Keep reruns state-based; no persistent workflow engine, parallel updates, or
+cross-package coordinator. Installation evidence must include the real paired
+Neat payload with Internet access unavailable while local PCIe SSH remains usable.
+A clean Platform baseline is a build/qualification input, not an additional
+customer deliverable or a reason to implement firmware provisioning here.
+
+**Current status:** dependency assembly and container validation exist. The
+customer installation entry point and physical all-card validation are not yet
+implemented. The remaining sections describe the available assembler.
+
 `assemble.py` builds **two separate dependency repositories**, Ubuntu 24.04 amd64
 for the host and ARM64 for the card. It accepts already authenticated Core
 publication directories and immutable clean OCI baseline images. No sima-cli is
