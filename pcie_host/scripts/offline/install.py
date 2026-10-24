@@ -323,7 +323,10 @@ print(json.dumps(ports))
             self.ssh(card, 'tar --no-same-owner -xf - -C '+shlex.quote(path), stdin=stream)
 
     def host(self, phase):
-        run(['timeout', '--kill-after=30', '1500', 'unshare', '--net', 'python3', '-B', str(self.root/'deploy.py'), 'host', phase], **self.output_options())
+        # APT restores terminal settings after dpkg. GNU timeout creates a
+        # background process group; inherited terminal stdin would stop it
+        # with SIGTTOU. Host deployment is noninteractive.
+        run(['timeout', '--kill-after=30', '1500', 'unshare', '--net', 'python3', '-B', str(self.root/'deploy.py'), 'host', phase], stdin=subprocess.DEVNULL, **self.output_options())
 
     def output_options(self):
         return {'stdout': self.log, 'stderr': subprocess.STDOUT} if self.log is not None else {}

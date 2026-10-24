@@ -134,11 +134,13 @@ def test_ssh_binds_interface_and_requires_trusted_keys(monkeypatch, tmp_path):
     assert calls[0][-2] == 'sima@10.0.0.2'
 
 
-def test_host_package_commands_run_without_network(monkeypatch, tmp_path):
+def test_host_package_commands_run_without_network_or_terminal_input(monkeypatch, tmp_path):
     calls = []
-    monkeypatch.setattr(installer, 'run', lambda args, **kw: calls.append(args))
+    monkeypatch.setattr(installer, 'run', lambda args, **kw: calls.append((args, kw)))
     installer.Operations(tmp_path, 'sima', tmp_path/'key', tmp_path/'known').host('install')
-    assert calls[0][:5] == ['timeout', '--kill-after=30', '1500', 'unshare', '--net']
+    args, options = calls[0]
+    assert args[:5] == ['timeout', '--kill-after=30', '1500', 'unshare', '--net']
+    assert options['stdin'] == subprocess.DEVNULL
 
 
 def test_remote_package_commands_are_locked_and_network_isolated(monkeypatch, tmp_path):

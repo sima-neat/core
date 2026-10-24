@@ -221,7 +221,9 @@ images are qualification/build inputs and are not part of the customer archive.
 On an already installed card, preflight delegates legacy Neat replacement and
 Scheduler transaction checks to the published installer. Installed system
 prerequisites are retained; only missing prerequisites are requested. The host
-still disallows package removal. Host and card preflight allow installation of
+still disallows package removal. Noninteractive host commands use `/dev/null`
+for standard input so APT terminal restoration cannot stop the timeout process
+group during an interactive installation. Host and card preflight allow installation of
 the exact bundle versions even when Debian considers them downgrades, matching
 the published installer lifecycles; producer Platform admission remains active.
 Unsupported replacements fail before any target
