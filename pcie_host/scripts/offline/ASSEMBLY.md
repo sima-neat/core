@@ -123,7 +123,11 @@ resolved wheel hashes, DEB versions/hashes, Python ABI, APT index hashes, baseli
 image digest, and baseline dpkg status are recorded. Each target gets its own local
 APT repository and wheelhouse. Resolution is frozen in these outputs; collection
 against mutable upstream repositories on another day can select newer versions.
-The archive itself is reproducible from identical locked output bytes.
+The archive itself is reproducible from identical locked output bytes. Identical
+files use tar hard links to an earlier member, storing their contents once while
+preserving all publication, repository, and wheelhouse paths and checksums.
+Extraction with `tar -xzf` needs no additional preparation; card-only staging
+remains self-contained.
 
 ## Offline validation
 

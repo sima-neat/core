@@ -138,3 +138,42 @@ def test_publication_preserves_existing_path_prefixed_sidecars(tmp_path):
     sidecar.write_text('0'*64+'  pcie_host/dist/runtime.deb\n')
     with pytest.raises(ValueError, match='sidecar differs'):
         delivery.publication_paths(tmp_path)
+
+
+def test_archive_deduplicates_and_preserves_card_transfer(tmp_path):
+    import tarfile
+    root = tmp_path/'bundle'
+    paths = ('card/payload/runtime.deb', 'card/repo/runtime.deb',
+             'card/wheels/pip.whl', 'host/wheels/pip.whl')
+    for name in paths:
+        path = root/name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'native' if name.endswith('.deb') else b'wheel')
+    (root/'bundle.json').write_text(json.dumps({'files': {
+        name: assembly.sha(root/name) for name in paths}}))
+    assembly.archive_bundle(root)
+    archive_path = Path(str(root)+'.tar.gz')
+    original = archive_path.read_bytes()
+    with tarfile.open(archive_path) as archive:
+        members = archive.getmembers()
+        links = [m for m in members if m.islnk()]
+        assert len(links) == 2
+        earlier = set()
+        for member in members:
+            if member.islnk():
+                assert member.linkname in earlier
+            earlier.add(member.name)
+        archive.extractall(tmp_path/'unpacked', filter='data')
+    extracted = tmp_path/'unpacked/neat-offline'
+    assembly.verify_bundle(extracted)
+    assert (extracted/paths[0]).stat().st_ino == (extracted/paths[1]).stat().st_ino
+    # Production staging sends only card/ and common files. Cross-target links
+    # must not leave a card transfer referring to omitted host files.
+    with tarfile.open(tmp_path/'card.tar', 'w') as archive:
+        archive.add(extracted/'bundle.json', arcname='bundle.json')
+        archive.add(extracted/'card', arcname='card')
+    with tarfile.open(tmp_path/'card.tar') as archive:
+        archive.extractall(tmp_path/'card-only', filter='data')
+    assembly.verify_bundle(tmp_path/'card-only', 'card')
+    assembly.archive_bundle(extracted)
+    assert Path(str(extracted)+'.tar.gz').read_bytes() == original

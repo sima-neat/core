@@ -103,7 +103,8 @@ def assemble(spec, output):
 
 
 def archive_bundle(root):
-    """Stable archive bytes for an identical locked bundle."""
+    """Stable archive bytes; identical files share an earlier tar member."""
+    contents = {}
     with open(str(root)+'.tar.gz', 'wb') as raw:
         with gzip.GzipFile(filename='', mode='wb', fileobj=raw, mtime=0) as compressed:
             with tarfile.open(fileobj=compressed, mode='w') as archive:
@@ -113,8 +114,20 @@ def archive_bundle(root):
                     info.uname = info.gname = ''
                     info.mode = 0o755 if path.is_dir() else 0o644
                     if path.is_file():
-                        with path.open('rb') as stream:
-                            archive.addfile(info, stream)
+                        # Preserve all publication/repository paths without storing
+                        # duplicate bytes. Reset inode-based tarfile detection so
+                        # copied and already-hardlinked inputs produce identical tar.
+                        info.type, info.linkname = tarfile.REGTYPE, ''
+                        info.size = path.stat().st_size
+                        key = (info.size, sha(path))
+                        if key in contents:
+                            info.type, info.linkname = tarfile.LNKTYPE, contents[key]
+                            info.size = 0
+                            archive.addfile(info)
+                        else:
+                            contents[key] = info.name
+                            with path.open('rb') as stream:
+                                archive.addfile(info, stream)
                     else:
                         archive.addfile(info)
 
