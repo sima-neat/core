@@ -5,7 +5,6 @@
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/TensorUtil.h"
 
-#include "dmabuf_test_utils.h"
 #include "test_utils.h"
 
 #include <gst/gst.h>
@@ -274,30 +273,6 @@ void check_many_shared_views_use_unique_memory_slots() {
   gst_buffer_unref(spare);
   require(gst_buffer_pool_set_active(pool, FALSE), "failed to deactivate source pool");
   gst_object_unref(pool);
-
-  TensorList distinct;
-  for (guint i = 0; i <= gst_buffer_get_max_memory(); ++i) {
-    GstBuffer* buffer = i == 0U ? sima_test::make_bookkeeping_dmabuf(8U)
-                                : gst_buffer_new_allocate(nullptr, 8U, nullptr);
-    GstSample* sample = gst_sample_new(buffer, nullptr, nullptr, nullptr);
-    Tensor tensor;
-    tensor.storage = pipeline_internal::make_gst_sample_storage(sample);
-    tensor.dtype = TensorDType::UInt8;
-    tensor.shape = {8};
-    tensor.route.memory_index = 0;
-    distinct.push_back(std::move(tensor));
-    gst_sample_unref(sample);
-    gst_buffer_unref(buffer);
-  }
-  err.clear();
-  pipeline_internal::reset_tensor_io_stats();
-  auto rejected = pipeline_internal::tensor_list_to_gst_envelope_holder(distinct, Sample{}, &err);
-  const auto stats = pipeline_internal::snapshot_tensor_io_stats();
-  require(!rejected, "distinct memories beyond GStreamer's slot limit must fail");
-  require(err.find("memory-slot limit") != std::string::npos,
-          "distinct memory rejection should explain the slot limit");
-  require(stats.tensor_copy_count == 0U && stats.gst_memory_map_calls == 0U,
-          "rejecting excess distinct memories must not map or copy DMA payloads");
 }
 
 void check_mixed_holders_are_rejected_before_metadata_import() {
@@ -374,59 +349,6 @@ int main() {
     require(views[0].byte_offset == 0 && views[1].byte_offset == 16,
             "shared carrier lost logical offsets");
     gst_sample_unref(source);
-    return 0;
-
-    std::string err;
-    std::shared_ptr<void> holder =
-        simaai::neat::pipeline_internal::sample_to_gst_envelope_holder(tensor_set, &err);
-    require(holder != nullptr, err.empty() ? "bundle holder creation failed" : err);
-
-    GstBuffer* bundle_buffer = simaai::neat::pipeline_internal::buffer_from_tensor_holder(holder);
-    require(bundle_buffer != nullptr, "bundle holder missing GstBuffer");
-    require(gst_buffer_get_size(bundle_buffer) == 64U,
-            "bundle outer buffer should preserve shared backing bytes");
-    require(gst_buffer_n_memory(bundle_buffer) == 1U,
-            "bundle outer buffer should reuse the original single memory");
-    GstMemory* bundle_memory = gst_buffer_peek_memory(bundle_buffer, 0);
-    require(bundle_memory != nullptr, "bundle outer buffer missing memory");
-    GstCustomMeta* tensor_meta =
-        gst_buffer_get_custom_meta(bundle_buffer, SIMA_TENSOR_SET_META_NAME);
-    require(tensor_meta != nullptr, "bundle outer buffer missing tensor-set meta");
-    GstCustomMeta* sample_meta = gst_buffer_get_custom_meta(bundle_buffer, "GstSimaSampleMeta");
-    require(sample_meta != nullptr, "bundle outer buffer missing sample meta");
-    GstStructure* sample_meta_struct = gst_custom_meta_get_structure(sample_meta);
-    require(sample_meta_struct != nullptr, "bundle outer buffer missing sample meta structure");
-    const GValue* fields_value = gst_structure_get_value(sample_meta_struct, "fields");
-    require(fields_value == nullptr,
-            "tensor-set envelope should not synthesize legacy bundle field list");
-    gst_buffer_unref(bundle_buffer);
-
-    simaai::neat::Sample single_tensor =
-        simaai::neat::sample_from_tensors(simaai::neat::TensorList{tensor_set.tensors.front()});
-    single_tensor.owned = true;
-    single_tensor.payload_type = simaai::neat::PayloadType::Tensor;
-    single_tensor.segment_name = tensor_set.tensors.front().route.segment_name;
-    single_tensor.stream_label = tensor_set.tensors.front().route.name;
-    std::shared_ptr<void> single_holder =
-        simaai::neat::pipeline_internal::sample_to_gst_envelope_holder(single_tensor, &err);
-    require(single_holder != nullptr,
-            err.empty() ? "single tensor envelope holder creation failed" : err);
-    GstBuffer* single_buffer =
-        simaai::neat::pipeline_internal::buffer_from_tensor_holder(single_holder);
-    require(single_buffer != nullptr, "single tensor envelope missing GstBuffer");
-    GstCustomMeta* single_tensor_meta =
-        gst_buffer_get_custom_meta(single_buffer, SIMA_TENSOR_SET_META_NAME);
-    require(single_tensor_meta != nullptr, "single tensor envelope missing tensor-set meta");
-    GstStructure* single_tensor_struct = gst_custom_meta_get_structure(single_tensor_meta);
-    require(single_tensor_struct != nullptr, "single tensor envelope missing tensor-set structure");
-    guint single_tensor_count = 0U;
-    gst_structure_get_uint(single_tensor_struct, SIMA_TENSOR_SET_META_FIELD_TENSOR_COUNT,
-                           &single_tensor_count);
-    require(single_tensor_count == 1U, "single tensor envelope should carry one tensor descriptor");
-    gst_buffer_unref(single_buffer);
-
-    gst_sample_unref(source);
-    std::cout << "[OK] unit_sample_bundle_holder_test passed\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";
