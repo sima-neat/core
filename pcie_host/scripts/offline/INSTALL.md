@@ -92,10 +92,11 @@ shared password explicitly. Passwords are not saved or passed as command argumen
 The final report identifies the host and every card by PCI address. A card failure
 returns a nonzero exit status but remaining cards are attempted if host checks
 and topology remain valid. Host failure or changed topology stops installation.
-SSH transport loss or a local timeout during installation reports an unknown
-remote outcome and stops further installs; check that card before retrying.
+SSH transport loss, a local timeout, or Ctrl-C during card installation reports
+an unknown remote outcome and stops further installs; check that card before retrying.
 Its staging directory is retained and reported so a potentially running installer
-does not lose its input files.
+does not lose its input files. Confirm that the remote transaction has stopped
+before removing retained staging or retrying.
 Each installation command has a 25-minute deadline and a 30-second kill grace.
 No automatic rollback is attempted. Fix the reported cause and rerun the same
 command; there is no persistent resume state. Temporary transfers are cleaned

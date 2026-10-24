@@ -436,3 +436,33 @@ def test_verbose_output_arrives_before_operation_finishes(tmp_path):
         while 'live package output' not in stream.getvalue() and time.monotonic() < deadline:
             time.sleep(0.01)
         assert 'live package output' in stream.getvalue()
+
+
+@pytest.mark.parametrize('interrupted_index', [0, 1])
+def test_interrupted_card_retains_staging_and_stops_remaining_installs(interrupted_index):
+    class Interrupted(Fake):
+        def __init__(self):
+            super().__init__()
+            self.staged = {c['bdf']: '/var/tmp/staged-' + str(i) for i, c in enumerate(CARDS)}
+
+        def card(self, card, phase):
+            super().card(card, phase)
+            if phase == 'install' and card == CARDS[interrupted_index]:
+                raise KeyboardInterrupt()
+
+    ops = Interrupted()
+    report = installer.orchestrate(CARDS, ['original'], ops)
+    assert report['host'] == 'installed_verified'
+    assert report['errors'] and 'interrupted' in report['errors'][0]
+    for i, (card, row) in enumerate(zip(CARDS, report['cards'])):
+        if i == interrupted_index:
+            assert row['status'] == 'outcome_unknown'
+            assert 'remote outcome unknown' in row['error']
+            assert row['retained_staging'] == ops.staged[card['bdf']]
+            assert (card['bdf'], 'cleanup') not in ops.events
+        else:
+            assert (card['bdf'], 'cleanup') in ops.events
+            assert row['status'] == ('installed_verified' if i < interrupted_index else 'preflight_passed')
+        if i > interrupted_index:
+            assert (card['bdf'], 'install') not in ops.events
+    assert ('host', 'verify') not in ops.events

@@ -423,12 +423,15 @@ def orchestrate(cards, snapshot, operations, preflight_only=False, progress=None
         for card, row in zip(cards, report['cards']):
             stable()
             try:
+                # Until SSH confirms completion, even a local interruption cannot
+                # establish that the privileged remote transaction has stopped.
+                row['status'] = 'outcome_unknown'
                 perform(f"Installing and verifying card {card['bdf']} ({card['ip']})...", operations.card, card, 'install')
                 notify(f"Card {card['bdf']} installed and verified.", 'ok')
                 row['status'] = 'installed_verified'
-            except (ConnectionError, subprocess.TimeoutExpired) as exc:
+            except (ConnectionError, subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
                 row['status'] = 'outcome_unknown'
-                row['error'] = str(exc)
+                row['error'] = str(exc) or 'Installation interrupted; remote outcome unknown'
                 raise
             except (OSError, ValueError, subprocess.SubprocessError) as exc:
                 row['status'] = 'failed'
@@ -437,8 +440,8 @@ def orchestrate(cards, snapshot, operations, preflight_only=False, progress=None
                 report['host'] = 'verification_failed'
                 perform('Rechecking host health...', operations.host, 'verify')
                 report['host'] = 'installed_verified'
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        report['errors'].append(str(exc))
+    except (OSError, ValueError, subprocess.SubprocessError, KeyboardInterrupt) as exc:
+        report['errors'].append(str(exc) or 'Installation interrupted; check card outcomes before retrying')
     finally:
         for card, row in zip(cards, report['cards']):
             if row['status'] == 'outcome_unknown':
