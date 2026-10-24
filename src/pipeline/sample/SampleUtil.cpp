@@ -1410,6 +1410,7 @@ bool attach_public_tensor_views(GstBuffer* buffer, const TensorList& tensors,
   }
   std::vector<simaai::gst::TensorBufferPhysicalBinding> bindings;
   bindings.reserve(descriptor.tensors.size());
+  bool extended_carrier = false;
   for (std::size_t i = 0; i < descriptor.tensors.size(); ++i) {
     auto& view = descriptor.tensors[i];
     view.logical_index = static_cast<int>(i);
@@ -1433,9 +1434,11 @@ bool attach_public_tensor_views(GstBuffer* buffer, const TensorList& tensors,
     }
     bindings.push_back({view.memory_index, static_cast<std::uint64_t>(view.byte_offset),
                         carrier_bytes - static_cast<std::uint64_t>(view.byte_offset)});
+    extended_carrier |= bindings.back().size_bytes != view.size_bytes;
   }
   return attach_tensor_set_meta_from_descriptor_view_impl(buffer, descriptor, err) &&
-         simaai::gst::tensor_buffer_attach_physical_bindings(buffer, bindings, err);
+         (!extended_carrier ||
+          simaai::gst::tensor_buffer_attach_physical_bindings(buffer, bindings, err));
 }
 
 bool try_collect_shared_bundle_backing(const Sample& bundle, GstBuffer** out_buffer,

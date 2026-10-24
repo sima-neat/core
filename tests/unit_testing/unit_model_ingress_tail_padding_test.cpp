@@ -29,12 +29,12 @@ void require_published_spans(const TensorList& tensors,
   for (std::size_t i = 0; i < tensors.size(); ++i) {
     const auto& logical = view.tensors[i];
     simaai::gst::TensorBufferPhysicalBinding binding;
-    if (physical_bytes[i] > logical.size_bytes) {
-      require(simaai::gst::tensor_buffer_physical_binding_at(buffer, i, &binding, &error),
-              "public input physical binding: " + error);
-      require(binding.size_bytes == physical_bytes[i],
-              "public input binding must preserve the complete selected carrier");
-    }
+    require(simaai::gst::tensor_buffer_physical_binding_at(buffer, i, &binding, &error),
+            "public input physical binding: " + error);
+    require(binding.memory_index == logical.memory_index &&
+                binding.byte_offset == static_cast<std::uint64_t>(logical.byte_offset) &&
+                binding.size_bytes == physical_bytes[i],
+            "public input binding must preserve the complete selected carrier");
     require(logical.shape == tensors[i].shape &&
                 logical.size_bytes == tensors[i].dense_bytes_tight(),
             "physical padding must not enlarge the public logical descriptor");
@@ -91,6 +91,7 @@ void test_owned_cpu_inputs() {
     padded_inputs.push_back(padded);
   }
   require_published_spans(padded_inputs, {16U, 160U});
+  require_published_spans({padded_inputs.front(), cpu_mask(32U)}, {16U, 8U});
   require_published_spans({cpu_mask(32U)}, {8U});
 }
 
@@ -108,14 +109,23 @@ void test_external_cpu_input() {
 void test_sliced_cpu_inputs() {
   for (const std::size_t allocation : {12U, 20U}) {
     const Tensor input = cpu_mask(allocation, 4);
+    {
+      const auto mapping = input.storage->map(MapMode::Write);
+      auto* bytes = static_cast<std::uint8_t*>(mapping.data);
+      for (std::size_t index = 0; index < allocation; ++index) {
+        bytes[index] = static_cast<std::uint8_t>(0x20U + index);
+      }
+    }
     const auto padded = internal::materialize_dense_ingress_tail(input, 16U);
     require(padded.byte_offset == 0 && padded.storage->size_bytes == 16U &&
                 input.byte_offset == 4 && input.storage->size_bytes == allocation,
             "publication must apply the slice once and preserve the caller view");
     const auto mapping = padded.map(MapMode::Read);
     const auto* bytes = static_cast<const std::uint8_t*>(mapping.data);
-    require(bytes[0] == 0x5A && bytes[7] == 0x5A,
-            "a sliced carrier must retain the selected logical payload");
+    for (std::size_t index = 0; index < 8U; ++index) {
+      require(bytes[index] == 0x24U + index,
+              "a sliced carrier must retain the selected logical payload");
+    }
     if (allocation == 20U) {
       require(bytes == static_cast<const std::uint8_t*>(input.storage->data) + 4U,
               "sufficient sliced CPU storage must be wrapped without copying");

@@ -30,6 +30,7 @@
 #include "pipeline/internal/RenderedMlaContractQuery.h"
 #include "pipeline/internal/InputRouteProcessor.h"
 #include "pipeline/internal/SampleUtil.h"
+#include "pipeline/internal/TensorTransfer.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/UxLogging.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
@@ -3302,14 +3303,26 @@ public:
     }
     if (direct_tensor_set_ingress_) {
       const auto infer = internal::ModelAccess::build_infer_nodes(model_, false);
-      const auto manifest =
-          rendered_stage_query::rendered_manifest_from_nodes(infer, "ModelIngressRouteProcessor");
-      const auto* stage = manifest ? rendered_stage_query::find_mla_stage(*manifest) : nullptr;
+      std::string error;
+      const auto selected = internal::selected_model_fragment_stage_facts(infer, &error);
+      if (!selected) {
+        throw std::runtime_error("ModelIngressRouteProcessor: " + error);
+      }
+      const CompiledMlaContract* stage = nullptr;
+      for (const auto facts : selected->stage_facts) {
+        const auto mla = std::find_if(facts.begin(), facts.end(), [](const auto& fact) {
+          return fact.mla_compiled.has_value();
+        });
+        if (mla != facts.end()) {
+          stage = &*mla->mla_compiled;
+          break;
+        }
+      }
       direct_input_storage_bytes_.resize(ingress_contracts_.size(), 0U);
       if (stage) {
         // Rank-two ingress convenience dimensions do not retain the MLA batch count.
-        direct_mla_batch_size_ = stage->processmla.batch_size;
-        for (const auto& input : stage->physical_inputs) {
+        direct_mla_batch_size_ = stage->payload.batch_size;
+        for (const auto& input : stage->runtime_contract.physical_inputs) {
           if (input.source_physical_index < 0 || input.source_byte_offset < 0 ||
               static_cast<std::size_t>(input.source_physical_index) >=
                   direct_input_storage_bytes_.size()) {
@@ -7712,26 +7725,32 @@ Tensor materialize_dense_ingress_tail(Tensor tensor, const std::size_t required_
   const auto offset = static_cast<std::uint64_t>(tensor.byte_offset);
   const bool reusable =
       tensor.is_contiguous() && offset <= available && required_bytes <= available - offset;
+  if (reusable && tensor.storage->kind != StorageKind::CpuOwned &&
+      tensor.storage->kind != StorageKind::CpuExternal) {
+    return tensor;
+  }
   Tensor carrier;
+  carrier.dtype = TensorDType::UInt8;
+  carrier.shape = {static_cast<std::int64_t>(required_bytes)};
   if (reusable) {
-    if (tensor.storage->kind != StorageKind::CpuOwned &&
-        tensor.storage->kind != StorageKind::CpuExternal) {
-      return tensor;
-    }
-    carrier.dtype = TensorDType::UInt8;
-    carrier.shape = {static_cast<std::int64_t>(required_bytes)};
     carrier.storage = tensor.storage;
     carrier.device = tensor.device;
     carrier.byte_offset = tensor.byte_offset;
   } else {
-    std::vector<std::uint8_t> bytes(required_bytes, 0U);
-    if (!tensor.copy_dense_bytes_tight_to(bytes.data(), logical_bytes)) {
-      throw std::runtime_error("direct MLA allocation tail could not copy its logical input");
+    carrier.storage = make_cpu_owned_storage(required_bytes);
+    carrier.device = {DeviceType::CPU, 0};
+    {
+      const auto mapping = carrier.storage->map(MapMode::Write);
+      auto* bytes = static_cast<std::uint8_t*>(mapping.data);
+      if (!tensor.copy_dense_bytes_tight_to(bytes, logical_bytes)) {
+        throw std::runtime_error("direct MLA allocation tail could not copy its logical input");
+      }
+      std::memset(bytes + logical_bytes, 0, required_bytes - logical_bytes);
     }
-    const auto memory = tensor.device.type == DeviceType::SIMA_MLA   ? TensorMemory::MLA
-                        : tensor.device.type == DeviceType::SIMA_CVU ? TensorMemory::EV74
-                                                                     : TensorMemory::CPU;
-    carrier = Tensor::from_vector(bytes, {static_cast<std::int64_t>(required_bytes)}, memory);
+    if (tensor.device.type == DeviceType::SIMA_MLA || tensor.device.type == DeviceType::SIMA_CVU) {
+      const std::vector<Segment> segments{{"ifm0", required_bytes}};
+      carrier = pipeline_internal::transfer_to_device(carrier, tensor.device, &segments, nullptr);
+    }
   }
   carrier.read_only = tensor.read_only;
   if (carrier.storage->kind == StorageKind::CpuOwned ||
