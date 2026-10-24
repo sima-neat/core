@@ -4724,7 +4724,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_ro("cpu_usage_pct", &Telemetry::cpu_usage_pct)
       .def_ro("cpu_cores_usage_pct", &Telemetry::cpu_cores_usage_pct)
       .def_ro("mla_memory_mib", &Telemetry::mla_memory_mib)
-      .def_ro("cma_memory_mib", &Telemetry::cma_memory_mib)
+      .def_ro("ev74_memory_mib", &Telemetry::ev74_memory_mib)
       .def_ro("linux_memory_used_mib", &Telemetry::linux_memory_used_mib)
       .def("save", &Telemetry::save, "file_path"_a, nb::call_guard<nb::gil_scoped_release>())
       .def("__str__",

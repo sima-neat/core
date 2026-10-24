@@ -490,7 +490,7 @@ def test_benchmark_report_exposes_telemetry():
   assert telemetry.samples == 0
   assert telemetry.duration_ms == 0.0
   for field in ("power_som_watts", "power_mla_watts", "die_temperature_max_c", "cpu_usage_pct",
-                "mla_memory_mib", "cma_memory_mib", "linux_memory_used_mib"):
+                "mla_memory_mib", "ev74_memory_mib", "linux_memory_used_mib"):
     metric = getattr(telemetry, field)
     assert isinstance(metric, pyneat.TelemetryStats), field
     assert (metric.samples, metric.mean, metric.minimum, metric.maximum, metric.last) == (

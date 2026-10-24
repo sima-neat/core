@@ -68,14 +68,18 @@ struct Telemetry {
   /// Utilization of each CPU core, in core order, summarized like `cpu_usage_pct`. A single busy
   /// core shows here even when the all-core average stays low.
   std::vector<TelemetryStats> cpu_cores_usage_pct;
-  /// DMA buffers allocated for the MLA. A model allocates them when it loads, so with nothing
-  /// else running this is the model's MLA memory. In MiB.
+  /// DMA buffers the MLA holds, in MiB: buffers from the MLA memory pool, plus shared buffers
+  /// only the MLA uses. A shared buffer EV74 also uses counts in `ev74_memory_mib`, so the two
+  /// add up. With nothing else running this is the model's MLA memory.
   TelemetryStats mla_memory_mib;
-  /// Used contiguous memory (CMA), in MiB. This includes the MLA memory pool, so never add it to
-  /// `mla_memory_mib`. At idle it also includes movable pages, such as page cache, that Linux
-  /// borrows from CMA.
-  TelemetryStats cma_memory_mib;
-  TelemetryStats linux_memory_used_mib; ///< Linux used memory, excluding page cache, in MiB.
+  /// DMA buffers EV74 holds, in MiB, excluding buffers from the MLA memory pool and frames a
+  /// video decoder or camera ISP produced. With nothing else running this is the model's EV74
+  /// memory, such as the input frames EV74 preprocesses and hands to the MLA.
+  TelemetryStats ev74_memory_mib;
+  /// Memory the whole board uses (Linux `MemTotal - MemAvailable`), in MiB. It covers every
+  /// process and the buffers allocated from Linux contiguous memory (CMA), such as EV74's, so do
+  /// not add it to the memory above.
+  TelemetryStats linux_memory_used_mib;
 
   /**
    * @brief Write the telemetry as YAML or JSON to the exact destination filename.

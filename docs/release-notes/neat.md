@@ -39,8 +39,8 @@ Release notes for the SiMa.ai Neat Library.
   for the previous count-based timing. `BenchmarkReport` adds `latency_p50_ms`, `latency_p95_ms`,
   `latency_p99_ms`, `peak_power_watts`, `throughput_samples`,
   `throughput_duration_ms`, and `telemetry` with rail power, die and board
-  temperatures, CPU utilization overall and per core, and MLA, CMA, and Linux
-  memory.
+  temperatures, CPU utilization overall and per core, and MLA, EV74, and
+  board-wide Linux memory.
   `avg_power_watts` and `energy_joules` keep their meaning; `energy_joules` is
   the energy for `num_samples` inputs. When Sentinel is unavailable, latency and
   FPS are still reported and `telemetry.status` names the reason. The DevKit
