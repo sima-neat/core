@@ -87,7 +87,7 @@ ReportDocument telemetry_document(const Telemetry& telemetry, const std::string&
           {"cpu_usage_pct", stats(telemetry.cpu_usage_pct)},
           {"cpu_cores_usage_pct", stats_list(telemetry.cpu_cores_usage_pct)},
           {"mla_memory_mib", stats(telemetry.mla_memory_mib)},
-          {"cma_memory_mib", stats(telemetry.cma_memory_mib)},
+          {"ev74_memory_mib", stats(telemetry.ev74_memory_mib)},
           {"linux_memory_used_mib", stats(telemetry.linux_memory_used_mib)}};
 }
 

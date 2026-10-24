@@ -38,7 +38,7 @@ def test_report_round_trip(tmp_path, filename):
                         for field in ("status", "sentinel_version", "sample_interval_ms",
                                       "samples", "duration_ms")}
   for field in ("power_som_watts", "power_mla_watts", "die_temperature_max_c", "cpu_usage_pct",
-                "mla_memory_mib", "cma_memory_mib", "linux_memory_used_mib"):
+                "mla_memory_mib", "ev74_memory_mib", "linux_memory_used_mib"):
     expected_telemetry[field] = metric(getattr(report.telemetry, field))
   for field in ("power_rails_watts", "die_temperatures_c", "board_temperatures_c", "cpu_cores_usage_pct"):
     expected_telemetry[field] = [metric(value) for value in getattr(report.telemetry, field)]

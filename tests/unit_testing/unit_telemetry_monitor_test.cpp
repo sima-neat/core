@@ -121,6 +121,7 @@ json modalix_metrics() {
       metric_definition("lm96163_temp1", "SoM top", "C"),
       metric_definition("lm96163_temp2", "SoM bottom", "C"),
       metric_definition("mla_mem_allocated_mb", "MLA memory", "MB"),
+      metric_definition("ev74_mem_allocated_mb", "EV74 memory allocated", "MB"),
       metric_definition("ev74_cma_used_mb", "CMA used", "MB"),
       metric_definition("linux_mem_used_mb", "Linux used", "MB"),
   });
@@ -142,6 +143,7 @@ json modalix_sample(double power, double mla, double hot_site, json cpu, double 
                  {"lm96163_temp1", 40.0},
                  {"lm96163_temp2", 42.0},
                  {"mla_mem_allocated_mb", mla_mem},
+                 {"ev74_mem_allocated_mb", mla_mem / 4.0},
                  {"ev74_cma_used_mb", 300.0 + mla_mem},
                  {"linux_mem_used_mb", 900.0}};
   for (int i = 0; i < 7; ++i) {
@@ -201,7 +203,11 @@ void summary_maps_sentinel_metrics() {
   const TelemetryStats& mla = t.mla_memory_mib;
   require(mla.key == "mla_mem_allocated_mb" && mla.unit == "MiB" && mla.samples == 3,
           "memory is relabelled MiB");
-  require_near(t.cma_memory_mib.maximum, 480.0, "CMA maximum");
+  const TelemetryStats& ev74 = t.ev74_memory_mib;
+  require(ev74.key == "ev74_mem_allocated_mb" && ev74.label == "EV74 memory allocated" &&
+              ev74.unit == "MiB",
+          "EV74 memory is Sentinel's EV74 DMA-BUF total, not CMA used");
+  require_near(ev74.maximum, 45.0, "EV74 memory maximum");
   require_near(t.linux_memory_used_mib.mean, 900.0, "Linux memory mean");
 }
 
