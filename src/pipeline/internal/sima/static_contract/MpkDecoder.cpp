@@ -1355,9 +1355,33 @@ void lower_read_expressions(ModelExecutionPlanData& data, std::vector<MpkProofFa
           reject(MpkDecodeErrorCode::ValueSizeMismatch, "$.ops[" + std::to_string(op.id) + "]",
                  "TVM alias output does not preserve an exact dense byte extent");
         }
-        const auto root = input.read_expression ? input.read_expression->source_value_id : input.id;
-        const auto offset = input.read_expression ? input.read_expression->byte_offset : 0U;
-        output.read_expression = ReadExpression{root, offset, *strides};
+        const auto& input_shape = host.input_types[static_cast<std::size_t>(input_index)].shape;
+        const auto input_width = exact_element_width(input.required_bytes, input_shape);
+        const auto input_dense =
+            input_width ? contiguous_stride_bytes(input_shape, *input_width) : std::nullopt;
+        if (!input_dense) {
+          reject(MpkDecodeErrorCode::ValueSizeMismatch, "$.ops[" + std::to_string(op.id) + "]",
+                 "TVM alias input has no exact byte equation");
+        }
+        ReadExpression expression{input.id, 0U, *input_dense};
+        if (input.read_expression) {
+          expression = *input.read_expression;
+        } else if (input.storage_binding && !input.storage_binding->stride_bytes.empty()) {
+          expression.stride_bytes = input.storage_binding->stride_bytes;
+          expression.storage_shape = input.storage_binding->storage_shape;
+        }
+        // An identity preserves row pitch and slice offsets. A shape-changing
+        // nop may use dense output strides only when its input is truly dense.
+        if (input_shape != host.output_types[output_index].shape) {
+          if (!expression.storage_shape.empty() ||
+              !matches_contiguous_strides(input_shape, expression.stride_bytes, *input_dense)) {
+            reject(MpkDecodeErrorCode::ConfigurationMismatch,
+                   "$.ops[" + std::to_string(op.id) + "]",
+                   "TVM alias cannot reshape a non-contiguous input view");
+          }
+          expression.stride_bytes = *strides;
+        }
+        output.read_expression = std::move(expression);
         if (proof) {
           proof->push_back({"read[" + std::to_string(output.id) + "]",
                             "structurally verified TVM GraphExecutor alias lowers to an "
@@ -1438,11 +1462,15 @@ void validate_view_consumers(const ModelExecutionPlanData& data) {
             MpkDecodeErrorCode::ConfigurationMismatch, "$.values[" + std::to_string(value.id) + "]",
             "storage view '" + value.name + "' has incompatible consumer '" + consumer.name + "'");
       }
-      // These two retained graph ABIs have exact positive-stride descriptor
-      // domains. Dense-only graph 222/2, MLA ports, and GraphExecutor inputs do
-      // not acquire a strided contract from a stock MPK or ELF filename.
+      // Strided kernel ABIs and address-only consumers can forward this view.
+      // Materializing GraphExecutor jobs and MLA inputs remain dense-only.
+      const auto* host = std::get_if<HostTvmOpConfig>(&consumer.config);
+      const bool host_alias =
+          consumer.kind == OpKind::HostTvm && host && !host->output_alias_input.empty() &&
+          std::all_of(host->output_alias_input.begin(), host->output_alias_input.end(),
+                      [](std::int32_t input) { return input >= 0; });
       if (consumer.kind == OpKind::Cast || consumer.kind == OpKind::Dequantize ||
-          consumer.kind == OpKind::Slice) {
+          consumer.kind == OpKind::Slice || consumer.kind == OpKind::PassThrough || host_alias) {
         continue;
       }
       reject(MpkDecodeErrorCode::ConfigurationMismatch,

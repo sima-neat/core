@@ -1807,6 +1807,78 @@ void test_joiner_integer_outputs() {
   check(!rejected && rejected.error &&
             rejected.error->detail.find("non-contiguous view") != std::string::npos,
         "a genuinely strided index array cannot feed a dense materializing host job");
+
+  // An identity must preserve multi-element MLA row padding, not make it tight.
+  auto padded = manifest;
+  padded["plugins"].erase(5); // Final reshape.
+  padded["plugins"].erase(3); // Scalar crop.
+  const auto type = nlohmann::json{{"scalar", "float32"}, {"shape", {1, 2, 3}}};
+  const auto input_type = nlohmann::json{{"scalar", "bfloat16"}, {"shape", {1, 1, 640}}};
+  padded["plugins"][2]["config_params"]["input_types"] = {input_type, input_type};
+  padded["plugins"][2]["config_params"]["output_types"] = {type};
+  padded["plugins"][2]["output_nodes"][0]["size"] = 24;
+  auto& identity = padded["plugins"][3];
+  identity["sequence"] = 4;
+  identity["config_params"]["input_types"] = {type};
+  identity["config_params"]["output_types"] = {type};
+  identity["input_nodes"][0] = {{"name", "MLA_0"}, {"size", 24}};
+  identity["output_nodes"][0]["size"] = 24;
+  auto padded_mla = mla_evidence;
+  padded_mla[0].topology.monolithic_ofm = false;
+  padded_mla[0].topology.ofm_symbol_names = {"data.ofm.persistent.afe_mla_output_0.b0"};
+  padded_mla[0].topology.ofm_extent_bytes = {32U};
+  auto padded_host = host_evidence;
+  padded_host[0].input_types = {{"float32", {1, 2, 3}}};
+  padded_host[0].output_types = padded_host[0].input_types;
+  const auto decoded = MpkDecoder{}.decode_json(padded.dump(), padded_mla, padded_host);
+  if (!decoded && decoded.error)
+    std::cerr << decoded.error->json_path << ": " << decoded.error->detail << "\n";
+  check(static_cast<bool>(decoded), "padded multi-element identity decodes");
+  const auto commands = PhysicalExecutionLowerer::lower(*decoded.plan, &error);
+  check(commands && std::none_of(commands->commands.begin(), commands->commands.end(),
+                                 [](const auto& cmd) { return cmd.engine == PhysicalEngine::A65; }),
+        "padded identity remains an address alias without an A65 command");
+  const auto publication = project_shared_arena(*decoded.plan, *commands);
+  const auto& view = publication.logical_outputs.front();
+  check(publication.logical_outputs.size() == 1U && view.dtype == "float32" &&
+            view.shape == TensorShape({1, 2, 3}) && view.stride_bytes == TensorShape({32, 16, 4}),
+        "identity publication preserves the padded MLA row pitch");
+  const std::array<float, 8> storage{1, 2, 3, -999, 4, 5, 6, -999};
+  std::vector<float> actual;
+  for (int row = 0; row < 2; ++row) {
+    for (int column = 0; column < 3; ++column) {
+      const auto offset =
+          view.byte_offset + row * view.stride_bytes[1] + column * view.stride_bytes[2];
+      check(offset >= 0 && offset % sizeof(float) == 0 && offset / sizeof(float) < storage.size(),
+            "published padded identity stays inside its allocation");
+      actual.push_back(storage[offset / sizeof(float)]);
+    }
+  }
+  check(actual == std::vector<float>({1, 2, 3, 4, 5, 6}),
+        "published identity values exclude padding from both rows");
+
+  auto chained = padded;
+  chained["plugins"].push_back(identity);
+  auto& tail = chained["plugins"].back();
+  tail["name"] = "alias_2";
+  tail["sequence"] = 5;
+  tail["input_nodes"][0]["name"] = "APU_1";
+  tail["output_nodes"][0]["name"] = "alias_2";
+  auto chain_host = padded_host;
+  chain_host.push_back(padded_host.front());
+  chain_host.back().logical_stage_id = "alias_2";
+  const auto chain = MpkDecoder{}.decode_json(chained.dump(), padded_mla, chain_host);
+  check(chain && chain.plan->value(chain.plan->model_outputs().front().value_id)
+                         ->storage_binding->stride_bytes == view.stride_bytes,
+        "an identity chain preserves an existing padded read expression");
+
+  identity["config_params"]["output_types"][0]["shape"] = {1, 6};
+  padded_host[0].output_types[0].shape = {1, 6};
+  const auto reshaped = MpkDecoder{}.decode_json(padded.dump(), padded_mla, padded_host);
+  check(!reshaped && reshaped.error &&
+            reshaped.error->code == MpkDecodeErrorCode::ConfigurationMismatch &&
+            reshaped.error->detail.find("non-contiguous") != std::string::npos,
+        "an alias cannot reshape padded rows into a tight tensor");
 }
 
 void test_registered_detess_layout_is_preserved_through_dequant() {

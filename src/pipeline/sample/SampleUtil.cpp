@@ -30,6 +30,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -1568,6 +1569,7 @@ bool try_build_multi_source_tensor_set_backing(const Sample& bundle, GstBuffer**
   std::vector<int> memory_indices;
   memory_indices.reserve(bundle.tensors.size());
   std::unordered_map<GstMemory*, int> memory_slots;
+  std::unordered_set<GstBuffer*> retained_sources;
   for (std::size_t tensor_index = 0; tensor_index < bundle.tensors.size(); ++tensor_index) {
     const Tensor& tensor = bundle.tensors[tensor_index];
     if (!tensor.storage) {
@@ -1651,7 +1653,8 @@ bool try_build_multi_source_tensor_set_backing(const Sample& bundle, GstBuffer**
       destination_memory_index = found->second;
     }
     // GstMemory retains the allocation, not the producer's GstBuffer pool lease.
-    if (!gst_buffer_add_parent_buffer_meta(assembled, source)) {
+    if (retained_sources.emplace(source).second &&
+        !gst_buffer_add_parent_buffer_meta(assembled, source)) {
       return fail("tensor-set multi-source failed to retain source buffer");
     }
     descriptor_tensor.route.memory_index = source_memory_index;

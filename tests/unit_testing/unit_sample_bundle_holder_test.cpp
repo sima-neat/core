@@ -218,6 +218,8 @@ void check_many_shared_views_use_unique_memory_slots() {
   GstBuffer* envelope = pipeline_internal::buffer_from_tensor_holder(holder);
   require(envelope != nullptr, "shared views have no envelope");
   require(gst_buffer_n_memory(envelope) == 2U, "84 views must reuse two memory slots");
+  require(gst_buffer_get_n_meta(envelope, GST_PARENT_BUFFER_META_API_TYPE) == 2U,
+          "84 views must retain each of the two producer buffers exactly once");
   require(gst_buffer_peek_memory(envelope, 0) == memories[0] &&
               gst_buffer_peek_memory(envelope, 1) == memories[1],
           "shared views must retain original memory without payload copies");
@@ -231,6 +233,24 @@ void check_many_shared_views_use_unique_memory_slots() {
             "shared view memory slot mismatch");
     require(descriptor.tensors[i].byte_offset == static_cast<int64_t>((i / 2) * 8),
             "shared view byte offset mismatch");
+  }
+  {
+    // Different producers sharing an allocation still need separate leases.
+    GstBuffer* shared = gst_buffer_new();
+    gst_buffer_append_memory(shared, gst_memory_ref(memories.front()));
+    GstSample* shared_sample = gst_sample_new(shared, nullptr, nullptr, nullptr);
+    Tensor shared_tensor = fields.front();
+    shared_tensor.storage = pipeline_internal::make_gst_sample_storage(shared_sample);
+    gst_sample_unref(shared_sample);
+    gst_buffer_unref(shared);
+    auto shared_holder = pipeline_internal::tensor_list_to_gst_envelope_holder(
+        {fields.front(), shared_tensor}, Sample{}, &err);
+    require(shared_holder != nullptr, "shared-allocation producer envelope failed: " + err);
+    GstBuffer* shared_envelope = pipeline_internal::buffer_from_tensor_holder(shared_holder);
+    require(gst_buffer_n_memory(shared_envelope) == 1U &&
+                gst_buffer_get_n_meta(shared_envelope, GST_PARENT_BUFFER_META_API_TYPE) == 2U,
+            "producer retention must be independent of allocation deduplication");
+    gst_buffer_unref(shared_envelope);
   }
   fields.clear();
   GstMapInfo map{};
