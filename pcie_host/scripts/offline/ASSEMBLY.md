@@ -40,19 +40,21 @@ Neat payload with Internet access unavailable while local PCIe SSH remains usabl
 A clean Platform baseline is a build/qualification input, not an additional
 customer deliverable or a reason to implement firmware provisioning here.
 
-**Current status:** dependency assembly and container validation exist. The
-customer installation entry point and physical all-card validation are not yet
-implemented. The remaining sections describe the available assembler.
+**Current status:** the assembler includes `install.py`, the discovery-driven
+all-card coordinator, and `deploy.py`/`lifecycle.sh` adapters for the published
+installers. See [customer installation instructions](INSTALL.md). Physical
+all-card qualification with actual Neat payloads remains pending; fixture results
+are not a substitute for that acceptance test.
 
 `assemble.py` builds **two separate dependency repositories**, Ubuntu 24.04 amd64
 for the host and ARM64 for the card. It accepts already authenticated Core
 publication directories and immutable clean OCI baseline images. No sima-cli is
 needed during collection or validation. Docker and Python 3.11+ are build tools.
 
-This is the package-assembly portion of #1132, not the automatic all-card installer.
-It does not change hardware, configure discovery, or bypass the existing installers'
-Platform admission and runtime lifecycle rules. Use the existing installers for
-runtime deployment until their strict offline integration is complete.
+The bundled installer deploys Neat through the existing host/card installer
+lifecycles. It does not configure discovery, flash system firmware, install host
+drivers, or bypass producer Platform admission. Installation subprocesses run
+inside isolated network namespaces; PCIe discovery and SSH run outside them.
 
 ## Inputs
 
@@ -125,7 +127,9 @@ Both targets must pass before `<output>.tar.gz` is created:
    run `apt-get check` and `dpkg --audit`.
 5. Create a fresh venv, install the target wheel and dependencies using
    `--no-index`, the bundled wheelhouse, and no download cache; run `pip check`.
-   Real `pyneatpcie`/`pyneat` payloads also require an import smoke test.
+   Real `pyneatpcie`/`pyneat` payloads also require an import smoke test. Full
+   runtime lifecycle verification runs on the prepared physical system through
+   `install.py`; containers do not provide its hardware or running services.
 
 Package maintainer scripts run inside the network-disabled container too, so
 implicit downloads cannot succeed. No host network/firewall changes are required.
@@ -141,13 +145,16 @@ Recheck an existing bundle with the repository's tool:
 python3 pcie_host/scripts/offline/assemble.py validate /absolute/path/to/bundle
 ```
 
-All-card discovery and sequential install/verify orchestration remain a subsequent
-integration step; there is deliberately no user-facing `install.sh` in this draft.
+The customer entry point is `sudo python3 -B install.py`, with optional
+`--preflight-only`. It authenticates SSH against provisioned host keys and probes
+only PCI-owned interfaces. Complete preflight precedes package changes, and card
+failures are collected while remaining cards proceed if host/topology remain valid.
+Unknown SSH keys and duplicate card IPs require correction in system provisioning.
 
 ## Tests and publication prerequisite
 
 ```sh
-python3 -m pytest -q tests/tools/test_offline_pcie_assembly.py tests/tools/test_offline_pcie_discovery.py
+python3 -m pytest -q tests/tools/test_offline_pcie_*.py
 python3 tests/tools/run_offline_pcie_assembly_integration.py /absolute/path/to/new-test-work
 ```
 

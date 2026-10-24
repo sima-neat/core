@@ -139,6 +139,8 @@ jobs:
             tests/tools/test_native_platform_baseline.py \
             tests/tools/test_offline_pcie_discovery.py \
             tests/tools/test_offline_pcie_assembly.py \
+            tests/tools/test_offline_pcie_install.py \
+            tests/tools/test_offline_pcie_deploy.py \
             tests/tools/test_required_test_coverage.py \
             tests/tools/test_ci_weekly_preparation.py \
             tests/tools/test_docs_native_prerequisites.py \

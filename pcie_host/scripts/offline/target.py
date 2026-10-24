@@ -73,7 +73,7 @@ def collect(root):
         run(['dpkg-scanpackages', '--multiversion', '.', '/dev/null'], cwd=repo, stdout=stream)
     run(['python3', '-m', 'pip', 'download', '--disable-pip-version-check',
          '--no-cache-dir', '--only-binary=:all:', '--dest', str(wheels),
-         *map(str, sorted((root / 'payload').glob('*.whl')))])
+         *map(str, sorted((root / 'payload').glob('*.whl'))), 'pip'])
     packages = []
     for path in sorted(repo.glob('*.deb')):
         fields = output(['dpkg-deb', '-f', str(path), 'Package', 'Version', 'Architecture'])

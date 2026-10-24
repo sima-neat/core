@@ -90,10 +90,12 @@ def assemble(spec, output):
             'cp /var/lib/dpkg/status /bundle/baseline.status; '
             'apt-get update; apt-get install -y --no-install-recommends python3 python3-venv python3-pip dpkg-dev; '
             'python3 /bundle/target.py collect')
+    for name in ('assemble.py', 'install.py', 'deploy.py', 'discover.py', 'lifecycle.sh', 'INSTALL.md'):
+        shutil.copyfile(HERE / name, output / name)
     files = {str(p.relative_to(output)): sha(p) for p in sorted(output.rglob('*')) if p.is_file()}
     (output / 'bundle.json').write_text(json.dumps({
         'schema_version': 1, 'core_revision': revisions[0], 'files': files,
-        'scope': 'offline package repositories; hardware orchestration not included',
+        'scope': 'Neat host/card deployment; Platform system package required',
     }, indent=2)+'\n')
     # No success archive is emitted until both network-isolated installs pass.
     validate(output)
@@ -117,14 +119,20 @@ def archive_bundle(root):
                         archive.addfile(info)
 
 
-def verify_bundle(root):
+def verify_bundle(root, target=None):
     data = json.loads((root / 'bundle.json').read_text())
     if any(p.is_symlink() for p in root.rglob('*')):
         raise ValueError('bundle symlinks are forbidden')
     actual = {str(p.relative_to(root)) for p in root.rglob('*') if p.is_file()} - {'bundle.json'}
-    if actual != set(data['files']):
+    expected = {name: digest for name, digest in data['files'].items()
+                if target is None or name.startswith(target + '/') or '/' not in name}
+    # A card transfer omits host files and the host-only discovery/coordinator.
+    if target == 'card':
+        expected = {name: digest for name, digest in expected.items()
+                    if name not in ('install.py', 'discover.py')}
+    if actual != set(expected):
         raise ValueError('bundle file inventory differs')
-    for name, digest in data['files'].items():
+    for name, digest in expected.items():
         if Path(name).is_absolute() or '..' in Path(name).parts:
             raise ValueError('unsafe bundle path')
         path = root / name

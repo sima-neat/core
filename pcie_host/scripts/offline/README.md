@@ -4,9 +4,12 @@ Related: [Core #1132](https://github.com/sima-neat/core/issues/1132).
 
 This directory contains a **read-only evidence collector** and the draft
 [offline package assembler](ASSEMBLY.md).
-It does not install packages, change networking, provision SSH keys, authenticate
-card identity, or establish that a host/card combination is supported. Existing
-host and card installers are unchanged.
+The collector itself never installs or authorizes changes. The assembler bundles
+a separate [installation entry point](INSTALL.md) that preflights the prepared
+system, authenticates SSH, and deploys Neat to the host and all cards sequentially.
+Existing host/card install lifecycles are reused; firmware, driver, networking and
+SSH provisioning remain separate system prerequisites. Physical qualification is
+still pending.
 
 ## Source findings
 
