@@ -6845,7 +6845,38 @@ std::vector<TensorSpec> Model::output_specs() const {
         }
       }
       if (upper_copy(terminal->processor) == "A65") {
-        outputs = pipeline_internal::sima::get_terminal_reshape_outputs_contract(mpk, *terminal);
+        // An address-only reshape after the inference stage is part of the
+        // public model egress even though it schedules no postprocess command.
+        for (std::size_t oi = 0; oi < outputs.size(); ++oi) {
+          auto stage_index = static_cast<std::size_t>(terminal - mpk.plugins.begin());
+          auto output_index = static_cast<int>(oi);
+          for (std::size_t remaining = mpk.plugins.size(); remaining > 0U; --remaining) {
+            const pipeline_internal::sima::MpkContractEdge* next = nullptr;
+            bool branched = false;
+            for (const auto& edge : mpk.edges) {
+              if (edge.src_plugin_index == stage_index && edge.src_output_index == output_index) {
+                branched = next != nullptr;
+                if (branched)
+                  break;
+                next = &edge;
+              }
+            }
+            if (!next || branched || next->dst_plugin_index >= mpk.plugins.size())
+              break;
+            const auto& consumer = mpk.plugins[next->dst_plugin_index];
+            if (consumer.kernel != "reshape_transform" || consumer.input_tensors.size() != 1U ||
+                consumer.output_tensors.size() != 1U ||
+                consumer.input_tensors.front().size_bytes != outputs[oi].size_bytes ||
+                consumer.output_tensors.front().size_bytes != outputs[oi].size_bytes)
+              break;
+            auto reshaped = consumer.output_tensors.front();
+            reshaped.dtype = outputs[oi].dtype;
+            reshaped.logical_dtype = outputs[oi].logical_dtype;
+            outputs[oi] = std::move(reshaped);
+            stage_index = next->dst_plugin_index;
+            output_index = 0;
+          }
+        }
       }
       for (const auto& output : outputs) {
         TensorSpec spec;

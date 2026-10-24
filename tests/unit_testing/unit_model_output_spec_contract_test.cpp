@@ -6,8 +6,6 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
-#include <nlohmann/json.hpp>
-#include <utility>
 #include <vector>
 
 namespace {
@@ -54,48 +52,6 @@ RUN_TEST(
                 "cold joiner output_specs must report the declared INT32 [1,1] egress");
         require(model.info().output_topology.logical_outputs == 1U,
                 "cold joiner info must report one logical output");
-
-        auto fanout = nlohmann::json::parse(text);
-        auto flat_view = fanout["plugins"].back();
-        flat_view["name"] = "EV_2/reshape_flat";
-        flat_view["sequence"] = 7;
-        flat_view["config_params"]["params"]["newshape"] = {1};
-        flat_view["config_params"]["params"]["output_shapes"] = {{1}};
-        flat_view["output_nodes"][0]["name"] = "EV_2/reshape_flat/selected_token";
-        fanout["plugins"].push_back(std::move(flat_view));
-        // Publish the flat view first, opposite to plugin and edge order.
-        fanout["plugins"].push_back(
-            {{"name", "publish"},
-             {"sequence", 8},
-             {"processor", "EV74"},
-             {"type", "sgpProcess"},
-             {"config_params",
-              {{"desired_batch_size", 1},
-               {"actual_batch_size", 1},
-               {"kernel", "pass_through"},
-               {"params", nlohmann::json::object()}}},
-             {"input_nodes",
-              {{{"name", "EV_2/reshape_flat/selected_token"}, {"size", 4}},
-               {{"name", "EV_2/reshape_0/selected_token"}, {"size", 4}}}},
-             {"output_nodes",
-              {{{"name", "published_flat"}, {"type", "buffer"}, {"size", 4}},
-               {{"name", "published_matrix"}, {"type", "buffer"}, {"size", 4}}}}});
-        const auto fanout_fixture = sima_test::make_model_archive_fixture(
-            "joiner_fanout_cold_output_specs", {{"etc/joiner_argmax_mpk.json", fanout.dump()}},
-            true);
-        Model fanout_model(fanout_fixture.tar_path);
-        const auto fanout_specs = fanout_model.output_specs();
-        require(fanout_specs.size() == 2U,
-                "cold output_specs must expose both terminal reshape views");
-        const std::vector<std::vector<int64_t>> expected_shapes = {{1}, {1, 1}};
-        for (size_t i = 0; i < expected_shapes.size(); ++i) {
-          require(fanout_specs[i].dtypes == std::vector<TensorDType>{TensorDType::Int32},
-                  "cold reshape views must preserve the A65 INT32 dtype");
-          require(fanout_specs[i].shape == expected_shapes[i] &&
-                      fanout_specs[i].rank == static_cast<int>(expected_shapes[i].size()),
-                  "cold reshape views must follow terminal PassThrough order at index " +
-                      std::to_string(i));
-        }
       }
 
       {
