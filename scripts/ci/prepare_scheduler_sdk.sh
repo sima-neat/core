@@ -26,10 +26,11 @@ cat "$package_dir/sdk-verification.json" >&2
 archive_exports=$(python3 tools/build_dependencies.py platform-archives --core "$PWD" \
   --platform-package-dir "$package_dir/downloads")
 eval "$archive_exports"
-python3 - "$package_dir" <<'PY_COPY'
+python3 - "$package_dir/retained" <<'PY_COPY'
 import hashlib, json, os, shutil, sys
 from pathlib import Path
 out = Path(sys.argv[1])
+out.mkdir()
 for value in json.loads(os.environ['NEAT_RUNNER_PLATFORM_RUNTIME_DEBS']):
     source = Path(value)
     if source.is_symlink() or not source.is_file():
@@ -44,4 +45,4 @@ for value in json.loads(os.environ['NEAT_RUNNER_PLATFORM_RUNTIME_DEBS']):
 PY_COPY
 # Recheck controls and receipt hashes after copying; only retained paths escape.
 python3 tools/build_dependencies.py platform-archives --core "$PWD" \
-  --platform-package-dir "$package_dir"
+  --platform-package-dir "$package_dir/retained"

@@ -41,16 +41,22 @@ if command == 'sdk-policy': print(json.dumps({'elxr_version':'3.0.0_master_B2372
 elif command == 'verify-sdk': print(json.dumps({'status':'verified'}))
 else:
     root = pathlib.Path(sys.argv[sys.argv.index('--platform-package-dir')+1])
-    p = root / 'consumed.deb'
-    if not p.is_file(): raise SystemExit(31)
+    matches = list(root.rglob('consumed.deb'))
+    if len(matches) != 1: raise SystemExit(31)
+    p = matches[0]
     print('export NEAT_RUNNER_PLATFORM_RUNTIME_DEBS=' + shlex.quote(json.dumps([str(p)])))
 ''')
-    official = tmp_path / 'official.sh'; official.write_text('#!/bin/sh\n[ "$SDK_PKG_LIST" = fixture-dev ]\n'); official.chmod(0o755)
+    official = tmp_path / 'official.sh'
+    official.write_text('#!/bin/sh\nset -eu\n[ "$SDK_PKG_LIST" = fixture-dev ]\n'
+                        'if [ "$1" = update ]; then\n'
+                        '  mkdir -p "$SYSROOT_UPDATE_DOWNLOAD_DIR"\n'
+                        f'  cp {shlex.quote(str(cache))}/*.deb "$SYSROOT_UPDATE_DOWNLOAD_DIR/"\n'
+                        'fi\n')
+    official.chmod(0o755)
     env = tmp_path / 'env.sh'; env.write_text('export CXX=cross-g++-14\n')
     script = script.replace('sysroot update', str(official) + ' update').replace('sysroot status', str(official) + ' status')
     script = script.replace('/opt/bin/simaai-init-build-env', str(env))
     script = script.replace('tools/ci/scheduler_sdk_policy.py', str(ROOT / 'tools/ci/scheduler_sdk_policy.py'))
-    script = script.replace('$package_dir/downloads', str(cache))
     (tmp_path / 'deps').mkdir()
     (tmp_path / 'deps/manifest.json').write_text(json.dumps({'platform-version': '3.0.0', 'sdk': {'channel': 'develop'}}))
     # Never grant fixture privileges; source production root/sudo branches are unchanged.
@@ -64,9 +70,12 @@ else:
         assert not list(retained.glob('*.deb'))
     else:
         assert result.returncode == 0, result.stderr
-        assert [p.name for p in retained.glob('*.deb')] == ['consumed.deb']
-        assert (retained / 'consumed.deb').read_bytes() == provider.read_bytes()
-        assert str(retained / 'consumed.deb') in result.stdout
+        selected = retained / 'retained'
+        assert [p.name for p in selected.glob('*.deb')] == ['consumed.deb']
+        assert (selected / 'consumed.deb').read_bytes() == provider.read_bytes()
+        assert str(selected / 'consumed.deb') in result.stdout
+        assert (retained / 'downloads/consumed.deb').read_bytes() == provider.read_bytes()
+        assert str(retained / 'downloads') not in result.stdout
         assert str(cache) not in result.stdout
 
 
