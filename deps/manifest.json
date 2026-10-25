@@ -1,6 +1,7 @@
 {
   "scheduler": {
-    "policy": "snap"
+    "ref": "codex/apps-runtime-repairs-20261025",
+    "spec": "1b83b0498d83"
   },
   "llima": {
     "policy": "snap"

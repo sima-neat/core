@@ -7,6 +7,7 @@
 #include "GraphDetail.h"
 #include "internal/GraphBuildInternal.h"
 #include "pipeline/internal/RtpJpegEndMarker.h"
+#include "pipeline/internal/RtpSequenceObservation.h"
 #include "pipeline/internal/TensorUtil.h"
 
 #include "gst/GstHelpers.h"
@@ -2311,6 +2312,8 @@ std::size_t attach_fused_decoder_timing_probes(GstElement* pipeline,
 
 enum class FusedBranchCounterStage {
   RtpCaps,
+  Depay,
+  Parser,
   H264Caps,
   Decoder,
   RawCaps,
@@ -2325,6 +2328,10 @@ const char* fused_branch_counter_stage_name(FusedBranchCounterStage stage) {
   switch (stage) {
   case FusedBranchCounterStage::RtpCaps:
     return "rtp";
+  case FusedBranchCounterStage::Depay:
+    return "depay";
+  case FusedBranchCounterStage::Parser:
+    return "parser";
   case FusedBranchCounterStage::H264Caps:
     return "h264";
   case FusedBranchCounterStage::Decoder:
@@ -2347,6 +2354,18 @@ const char* fused_branch_counter_stage_name(FusedBranchCounterStage stage) {
 
 struct FusedBranchCounters {
   std::atomic<std::uint64_t> rtp_caps{0};
+  std::atomic<std::uint64_t> depay{0};
+  std::atomic<std::uint64_t> parser{0};
+  std::atomic<std::uint64_t> rtp_markers{0};
+  std::atomic<std::uint64_t> rtp_discont{0};
+  std::atomic<std::uint64_t> rtp_forward_gap{0};
+  std::atomic<std::uint64_t> rtp_reordered_or_duplicate{0};
+  std::atomic<std::uint64_t> rtp_ssrc_changed{0};
+  std::atomic<std::uint64_t> rtp_invalid_header{0};
+  std::atomic<std::uint64_t> buffer_lists{0};
+  std::atomic<std::uint64_t> queue_pre_sink_list_buffers{0};
+  std::atomic<std::uint64_t> queue_post_sink_list_buffers{0};
+  std::atomic<std::uint64_t> mux_sink_list_buffers{0};
   std::atomic<std::uint64_t> h264_caps{0};
   std::atomic<std::uint64_t> decoder{0};
   std::atomic<std::uint64_t> raw_caps{0};
@@ -2368,6 +2387,7 @@ struct FusedBranchCounterProbeCtx {
   std::shared_ptr<FusedBranchCounterState> state;
   std::size_t branch = 0;
   FusedBranchCounterStage stage = FusedBranchCounterStage::RtpCaps;
+  pipeline_internal::RtpSequenceObservation rtp_sequence;
 };
 
 std::optional<std::size_t> parse_unsigned_suffix_after(const std::string& text, std::size_t pos) {
@@ -2422,6 +2442,10 @@ std::atomic<std::uint64_t>* fused_branch_counter_for_stage(FusedBranchCounters* 
   switch (stage) {
   case FusedBranchCounterStage::RtpCaps:
     return &counters->rtp_caps;
+  case FusedBranchCounterStage::Depay:
+    return &counters->depay;
+  case FusedBranchCounterStage::Parser:
+    return &counters->parser;
   case FusedBranchCounterStage::H264Caps:
     return &counters->h264_caps;
   case FusedBranchCounterStage::Decoder:
@@ -2449,9 +2473,10 @@ void print_fused_branch_counter_snapshot(const std::shared_ptr<FusedBranchCounte
   }
   std::lock_guard<std::mutex> guard(state->print_mu);
   const std::uint64_t total = state->total.load(std::memory_order_relaxed);
-  std::fprintf(stderr, "[fused-branch-counters] reason=%s branches=%zu total=%llu\n",
-               reason ? reason : "unknown", state->branches.size(),
-               static_cast<unsigned long long>(total));
+  std::fprintf(
+      stderr, "[fused-branch-counters] reason=%s branches=%zu total=%llu monotonic_us=%lld\n",
+      reason ? reason : "unknown", state->branches.size(), static_cast<unsigned long long>(total),
+      static_cast<long long>(g_get_monotonic_time()));
   for (std::size_t i = 0; i < state->branches.size(); ++i) {
     const auto* c = state->branches[i].get();
     if (!c) {
@@ -2461,7 +2486,10 @@ void print_fused_branch_counter_snapshot(const std::shared_ptr<FusedBranchCounte
         stderr,
         "[fused-branch-counters] branch=%zu rtp=%llu h264=%llu decoder=%llu raw=%llu "
         "queue_pre_sink=%llu queue_pre=%llu queue_post_sink=%llu queue_post=%llu "
-        "mux=%llu\n",
+        "mux=%llu depay=%llu parser=%llu rtp_markers=%llu rtp_discont=%llu "
+        "rtp_forward_gap=%llu rtp_reordered_or_duplicate=%llu rtp_ssrc_changed=%llu "
+        "rtp_invalid_header=%llu buffer_lists=%llu queue_pre_sink_list_buffers=%llu "
+        "queue_post_sink_list_buffers=%llu mux_sink_list_buffers=%llu\n",
         i, static_cast<unsigned long long>(c->rtp_caps.load(std::memory_order_relaxed)),
         static_cast<unsigned long long>(c->h264_caps.load(std::memory_order_relaxed)),
         static_cast<unsigned long long>(c->decoder.load(std::memory_order_relaxed)),
@@ -2470,28 +2498,83 @@ void print_fused_branch_counter_snapshot(const std::shared_ptr<FusedBranchCounte
         static_cast<unsigned long long>(c->queue_pre.load(std::memory_order_relaxed)),
         static_cast<unsigned long long>(c->queue_post_sink.load(std::memory_order_relaxed)),
         static_cast<unsigned long long>(c->queue_post.load(std::memory_order_relaxed)),
-        static_cast<unsigned long long>(c->mux_sink.load(std::memory_order_relaxed)));
+        static_cast<unsigned long long>(c->mux_sink.load(std::memory_order_relaxed)),
+        static_cast<unsigned long long>(c->depay.load(std::memory_order_relaxed)),
+        static_cast<unsigned long long>(c->parser.load(std::memory_order_relaxed)),
+        static_cast<unsigned long long>(c->rtp_markers.load(std::memory_order_relaxed)),
+        static_cast<unsigned long long>(c->rtp_discont.load(std::memory_order_relaxed)),
+        static_cast<unsigned long long>(c->rtp_forward_gap.load(std::memory_order_relaxed)),
+        static_cast<unsigned long long>(
+            c->rtp_reordered_or_duplicate.load(std::memory_order_relaxed)),
+        static_cast<unsigned long long>(c->rtp_ssrc_changed.load(std::memory_order_relaxed)),
+        static_cast<unsigned long long>(c->rtp_invalid_header.load(std::memory_order_relaxed)),
+        static_cast<unsigned long long>(c->buffer_lists.load(std::memory_order_relaxed)),
+        static_cast<unsigned long long>(
+            c->queue_pre_sink_list_buffers.load(std::memory_order_relaxed)),
+        static_cast<unsigned long long>(
+            c->queue_post_sink_list_buffers.load(std::memory_order_relaxed)),
+        static_cast<unsigned long long>(c->mux_sink_list_buffers.load(std::memory_order_relaxed)));
   }
   std::fflush(stderr);
 }
 
-GstPadProbeReturn fused_branch_counter_probe_cb(GstPad*, GstPadProbeInfo* info,
+void observe_fused_branch_buffer(FusedBranchCounterProbeCtx& ctx, GstBuffer* buffer) {
+  auto* counters = ctx.state->branches[ctx.branch].get();
+  if (auto* count = fused_branch_counter_for_stage(counters, ctx.stage)) {
+    count->fetch_add(1, std::memory_order_relaxed);
+  }
+  if (ctx.stage == FusedBranchCounterStage::RtpCaps) {
+    std::array<guint8, 12> header{};
+    if (!buffer || gst_buffer_extract(buffer, 0, header.data(), header.size()) != header.size() ||
+        (header[0] >> 6) != 2) {
+      counters->rtp_invalid_header.fetch_add(1, std::memory_order_relaxed);
+    } else {
+      const auto delta = ctx.rtp_sequence.observe(GST_READ_UINT32_BE(header.data() + 8),
+                                                  GST_READ_UINT16_BE(header.data() + 2));
+      counters->rtp_forward_gap.fetch_add(delta.forward_gap, std::memory_order_relaxed);
+      counters->rtp_reordered_or_duplicate.fetch_add(delta.reordered_or_duplicate,
+                                                     std::memory_order_relaxed);
+      counters->rtp_ssrc_changed.fetch_add(delta.ssrc_changed, std::memory_order_relaxed);
+      counters->rtp_markers.fetch_add((header[1] & 0x80) != 0, std::memory_order_relaxed);
+      counters->rtp_discont.fetch_add(GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DISCONT),
+                                      std::memory_order_relaxed);
+    }
+  }
+  const auto total = ctx.state->total.fetch_add(1, std::memory_order_relaxed) + 1U;
+  if (ctx.state->interval > 0 && total % ctx.state->interval == 0) {
+    print_fused_branch_counter_snapshot(ctx.state, "periodic");
+  }
+}
+
+GstPadProbeReturn fused_branch_counter_probe_cb(GstPad* pad, GstPadProbeInfo* info,
                                                 gpointer user_data) {
   auto* ctx = reinterpret_cast<FusedBranchCounterProbeCtx*>(user_data);
-  if (!ctx || !ctx->state || (GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER) == 0) {
+  if (!ctx || !ctx->state || ctx->branch >= ctx->state->branches.size()) {
     return GST_PAD_PROBE_OK;
   }
-  if (ctx->branch >= ctx->state->branches.size()) {
-    return GST_PAD_PROBE_OK;
-  }
-  auto* counter =
-      fused_branch_counter_for_stage(ctx->state->branches[ctx->branch].get(), ctx->stage);
-  if (counter) {
-    counter->fetch_add(1, std::memory_order_relaxed);
-  }
-  const std::uint64_t total = ctx->state->total.fetch_add(1, std::memory_order_relaxed) + 1U;
-  if (ctx->state->interval > 0 && total % ctx->state->interval == 0) {
-    print_fused_branch_counter_snapshot(ctx->state, "periodic");
+  if ((GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER) != 0) {
+    observe_fused_branch_buffer(*ctx, GST_PAD_PROBE_INFO_BUFFER(info));
+  } else if ((GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER_LIST) != 0) {
+    GstBufferList* list = GST_PAD_PROBE_INFO_BUFFER_LIST(info);
+    ctx->state->branches[ctx->branch]->buffer_lists.fetch_add(1, std::memory_order_relaxed);
+    // Sink fallback can re-enter this probe for each BUFFER in a BUFFER_LIST.
+    // Report list members separately; adding them to BUFFER counts would double
+    // count on fallback sinks. Source pads do not have this fallback recursion.
+    if (pad && GST_PAD_IS_SINK(pad)) {
+      auto* counters = ctx->state->branches[ctx->branch].get();
+      const auto length = list ? gst_buffer_list_length(list) : 0;
+      if (ctx->stage == FusedBranchCounterStage::QueuePreSink) {
+        counters->queue_pre_sink_list_buffers.fetch_add(length, std::memory_order_relaxed);
+      } else if (ctx->stage == FusedBranchCounterStage::QueuePostSink) {
+        counters->queue_post_sink_list_buffers.fetch_add(length, std::memory_order_relaxed);
+      } else if (ctx->stage == FusedBranchCounterStage::MuxSink) {
+        counters->mux_sink_list_buffers.fetch_add(length, std::memory_order_relaxed);
+      }
+      return GST_PAD_PROBE_OK;
+    }
+    for (guint i = 0; list && i < gst_buffer_list_length(list); ++i) {
+      observe_fused_branch_buffer(*ctx, gst_buffer_list_get(list, i));
+    }
   }
   return GST_PAD_PROBE_OK;
 }
@@ -2499,6 +2582,12 @@ GstPadProbeReturn fused_branch_counter_probe_cb(GstPad*, GstPadProbeInfo* info,
 std::optional<FusedBranchCounterStage>
 classify_fused_branch_counter_element(const std::string& elem_name,
                                       const std::string& factory_name) {
+  if (factory_name == "rtph264depay" || factory_name == "rtph265depay") {
+    return FusedBranchCounterStage::Depay;
+  }
+  if (factory_name == "h264parse" || factory_name == "h265parse") {
+    return FusedBranchCounterStage::Parser;
+  }
   if (elem_name.find("_rtp_caps_b") != std::string::npos) {
     return FusedBranchCounterStage::RtpCaps;
   }
@@ -2527,7 +2616,8 @@ void attach_fused_branch_counter_probe(GstPad* pad,
   ctx->branch = branch;
   ctx->stage = stage;
   gst_pad_add_probe(
-      pad, GST_PAD_PROBE_TYPE_BUFFER, fused_branch_counter_probe_cb, ctx,
+      pad, static_cast<GstPadProbeType>(GST_PAD_PROBE_TYPE_BUFFER | GST_PAD_PROBE_TYPE_BUFFER_LIST),
+      fused_branch_counter_probe_cb, ctx,
       +[](gpointer p) { delete reinterpret_cast<FusedBranchCounterProbeCtx*>(p); });
   if (env_bool("SIMA_FUSED_BRANCH_COUNTERS_DEBUG", false)) {
     std::fprintf(stderr, "[fused-branch-counters] armed branch=%zu stage=%s element=%s pad=%s\n",

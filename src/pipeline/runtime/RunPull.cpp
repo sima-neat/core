@@ -39,6 +39,29 @@ using pipeline_internal::trim_copy;
 
 namespace {
 
+// Diagnostic branch: preserve the status hidden by the public Optional overload.
+// Successful pulls and nonblocking probes produce no log or additional sample owner.
+void diagnose_optional_pull(runtime::RunCore* core, std::string_view output, int timeout_ms,
+                            PullStatus status, const PullError& error) {
+  static const bool enabled = pipeline_internal::env_int("SIMA_GRAPH_PIPELINE_DIAG_MS", 0) > 0;
+  if (!enabled || !core || status == PullStatus::Ok || timeout_ms == 0) {
+    return;
+  }
+  const char* name = status == PullStatus::Closed    ? "Closed"
+                     : status == PullStatus::Timeout ? "Timeout"
+                                                     : "Error";
+  const auto gate = core->holder_loan_gate;
+  std::fprintf(
+      stderr,
+      "[pull-diag] monotonic_us=%lld run=%p output=%.*s status=%s timeout_ms=%d "
+      "ready=%llu pulled=%llu holder_limit=%d holder_inflight=%d reason=%s\n",
+      static_cast<long long>(g_get_monotonic_time()), static_cast<void*>(core),
+      static_cast<int>(output.size()), output.data(), name, timeout_ms,
+      static_cast<unsigned long long>(core->outputs_ready.load(std::memory_order_relaxed)),
+      static_cast<unsigned long long>(core->outputs_pulled.load(std::memory_order_relaxed)),
+      gate ? gate->credit_limit() : 0, gate ? gate->inflight() : 0, error.message.c_str());
+}
+
 bool attach_public_holder_loan_or_error(runtime::RunCore& core, Sample& sample,
                                         std::string* message) {
   auto gate = core.holder_loan_gate;
@@ -818,6 +841,7 @@ std::optional<Sample> runtime::RunCore::pull_optional(int timeout_ms) {
   Sample out;
   PullError err;
   const PullStatus status = pull(timeout_ms, out, &err);
+  diagnose_optional_pull(this, "default", timeout_ms, status, err);
   if (status == PullStatus::Ok) {
     return out;
   }
@@ -872,6 +896,7 @@ std::optional<Sample> Run::pull(std::string_view output_name, int timeout_ms) {
   Sample out;
   PullError err;
   const PullStatus status = pull(output_name, timeout_ms, out, &err);
+  diagnose_optional_pull(core_.get(), output_name, timeout_ms, status, err);
   if (status == PullStatus::Ok) {
     return out;
   }
