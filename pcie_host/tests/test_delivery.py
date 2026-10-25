@@ -449,6 +449,10 @@ GENAI_CMAKE_ARGS=()
                 with self.subTest(distro=distro, arch=arch), tempfile.TemporaryDirectory() as temp:
                     root = Path(temp) / 'selected'
                     candidate = root / 'candidate'
+                    core = Path(temp) / 'core'
+                    (core / 'deps').mkdir(parents=True)
+                    (core / 'deps/manifest.json').write_text(
+                        json.dumps({'scheduler': {'policy': 'snap'}}))
 
                     def acquire(*args, **kwargs):
                         # The transport seam represents an already hash-verified
@@ -468,7 +472,8 @@ GENAI_CMAKE_ARGS=()
                     argv = ['acquire_scheduler.py', '--cli', 'test-cli', '--branch', 'feature/native',
                             '--spec', 'latest', '--environment', 'production', '--distro', distro,
                             '--arch', arch, '--output', str(root)]
-                    with patch.object(sys, 'argv', argv), patch.object(sys, 'stdout', io.StringIO()), \
+                    with patch.object(acquisition, 'CORE', core), \
+                         patch.object(sys, 'argv', argv), patch.object(sys, 'stdout', io.StringIO()), \
                          patch('scheduler_dependency.acquire', side_effect=acquire) as transport:
                         acquisition.main()
                     transport.assert_called_once_with(
