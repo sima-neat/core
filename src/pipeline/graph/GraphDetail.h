@@ -27,6 +27,7 @@
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
 #include "pipeline/internal/TensorMath.h"
+#include "pipeline/internal/TerminalOutputContractQuery.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 
 #include <gst/gst.h>
@@ -373,7 +374,8 @@ struct BuildResult {
   // Cold execution and output-retention budgets for native numerical stages.
   bool kernel_runner_compact = false;
   // Typed public endpoint authority, never populated for internal segment sinks.
-  std::string terminal_host_stage_key;
+  std::optional<pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector>
+      terminal_host_endpoint;
   std::size_t kernel_runner_capacity = 1;
   std::size_t kernel_runner_a65_workers = 2;
   std::size_t kernel_runner_output_pool_capacity = 0;

@@ -1,5 +1,6 @@
 #include "pipeline/internal/sima/StageMemoryPolicy.h"
 #include "model/internal/ModelPack.h"
+#include "pipeline/internal/TerminalOutputContractQuery.h"
 #include "pipeline/internal/contract/CompiledNodeContract.h"
 #include "pipeline/internal/sima/static_contract/CarrierArenaPacking.h"
 #include <simaai/scheduler/client/frame_layout.h>
@@ -242,6 +243,47 @@ resolve_memory_placement(SimaPluginStaticManifest& manifest) {
 namespace {
 namespace client = ::simaai::scheduler::client;
 
+const StageStaticSpec*
+terminal_host_candidate(const SimaPluginStaticManifest& manifest,
+                        const terminal_output_contract::PublicOutputEndpointSelector* endpoint,
+                        std::span<const StageCarrierAccess> access) {
+  namespace query = terminal_output_contract;
+  if (!endpoint)
+    return nullptr;
+  const StageStaticSpec* candidate = nullptr;
+  if (endpoint->terminal_stage_key_required && !endpoint->terminal_stage_key.empty()) {
+    for (const auto& stage : manifest.stages)
+      if (stage.element_name == endpoint->terminal_stage_key ||
+          stage.logical_stage_id == endpoint->terminal_stage_key) {
+        if (candidate)
+          return nullptr;
+        candidate = &stage;
+      }
+  } else if (endpoint->terminal_node_kind == "ModelFragment" &&
+             endpoint->allow_unresolved_terminal_stage_fallback) {
+    const StageStaticSpec* named_stage = nullptr;
+    for (std::size_t i = 0; i < manifest.stages.size(); ++i) {
+      const auto& stage = manifest.stages[i];
+      if (!endpoint->terminal_stage_key.empty() &&
+          (stage.element_name == endpoint->terminal_stage_key ||
+           stage.logical_stage_id == endpoint->terminal_stage_key))
+        named_stage = &stage;
+      const auto role = query::classify_stage_for_publication(stage);
+      if (!access[i].has_consumers &&
+          (role == query::StagePublicationRole::RealProducer ||
+           role == query::StagePublicationRole::MaterializedTransform)) {
+        if (candidate)
+          return nullptr;
+        candidate = &stage;
+      }
+    }
+    if (!candidate || (named_stage && named_stage != candidate) ||
+        !query::stage_public_outputs_match_endpoint(*candidate, *endpoint))
+      return nullptr;
+  }
+  return candidate;
+}
+
 client::AllocationPolicy allocation_policy(const sc::ArenaPlacement& placement) {
   if (placement.provenance == sc::ArenaAllocationProvenance::ExternalAdopted)
     return client::AllocationPolicy::PreserveImported;
@@ -451,8 +493,9 @@ void pack_stage_outputs(StageStaticSpec& stage, const StageCarrierAccess& consum
 }
 } // namespace
 
-void finalize_pipeline_storage(SimaPluginStaticManifest& manifest,
-                               std::string_view terminal_host_stage) {
+void finalize_pipeline_storage(
+    SimaPluginStaticManifest& manifest,
+    const terminal_output_contract::PublicOutputEndpointSelector* terminal_host) {
   internal::project_model_fragment_storage(manifest);
   std::vector<bool> unplaced(manifest.stages.size());
   for (std::size_t index = 0; index < manifest.stages.size(); ++index) {
@@ -467,13 +510,11 @@ void finalize_pipeline_storage(SimaPluginStaticManifest& manifest,
     }
   }
   const auto carrier_access = resolve_memory_placement(manifest);
+  const auto* terminal = terminal_host_candidate(manifest, terminal_host, carrier_access);
   for (std::size_t index = 0; index < manifest.stages.size(); ++index) {
     auto& stage = manifest.stages[index];
     if (unplaced[index])
-      pack_stage_outputs(stage, carrier_access[index],
-                         !terminal_host_stage.empty() &&
-                             (stage.element_name == terminal_host_stage ||
-                              stage.logical_stage_id == terminal_host_stage));
+      pack_stage_outputs(stage, carrier_access[index], &stage == terminal);
     if (!stage.frame_arena_size_bytes)
       continue;
     auto layout = std::make_shared<client::FrameLayout>();

@@ -455,18 +455,8 @@ bool physical_matches_endpoint(const PhysicalBufferStaticSpec& physical,
 
 bool stage_outputs_match_endpoint(const StageStaticSpec& stage,
                                   const PublicOutputEndpointSelector& endpoint) {
-  if (!endpoint_has_output_selector(endpoint)) {
+  if (stage_public_outputs_match_endpoint(stage, endpoint)) {
     return true;
-  }
-  for (const auto& route : stage.output_order) {
-    if (route_matches_endpoint(route, endpoint)) {
-      return true;
-    }
-  }
-  for (const auto& logical : stage.logical_outputs) {
-    if (logical_matches_endpoint(logical, endpoint)) {
-      return true;
-    }
   }
   for (const auto& physical : stage.physical_outputs) {
     if (physical_matches_endpoint(physical, endpoint)) {
@@ -544,6 +534,24 @@ bool filter_publication_stage_for_endpoint(StageStaticSpec* publication,
 }
 
 } // namespace
+
+bool stage_public_outputs_match_endpoint(const sima::StageStaticSpec& stage,
+                                         const PublicOutputEndpointSelector& endpoint) {
+  if (!endpoint_has_output_selector(endpoint)) {
+    return true;
+  }
+  for (const auto& route : stage.output_order) {
+    if (route_matches_endpoint(route, endpoint)) {
+      return true;
+    }
+  }
+  for (const auto& logical : stage.logical_outputs) {
+    if (logical_matches_endpoint(logical, endpoint)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 StagePublicationRole classify_stage_for_publication(const sima::StageStaticSpec& stage) {
   if (!stage_has_publishable_outputs(stage)) {

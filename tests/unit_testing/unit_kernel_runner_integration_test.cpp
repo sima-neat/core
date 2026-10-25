@@ -5,6 +5,7 @@
 #include "pipeline/internal/sima/BoxDecodeKernelAdmission.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StageMemoryPolicy.h"
+#include "pipeline/internal/TerminalOutputContractQuery.h"
 #include "pipeline/internal/sima/StageRecipePreparation.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
@@ -128,10 +129,12 @@ void terminal_host_placement_proof() {
             "terminal host origin renderer failed");
     return value->stages.front();
   };
-  const auto place = [&](integration::StageStaticSpec value, std::string_view terminal) {
+  using Endpoint =
+      simaai::neat::pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector;
+  const auto place = [&](integration::StageStaticSpec value, const Endpoint* endpoint = nullptr) {
     integration::SimaPluginStaticManifest manifest;
     manifest.stages.push_back(std::move(value));
-    integration::finalize_pipeline_storage(manifest, terminal);
+    integration::finalize_pipeline_storage(manifest, endpoint);
     return manifest;
   };
   const auto policy = [](const integration::SimaPluginStaticManifest& manifest) {
@@ -141,10 +144,56 @@ void terminal_host_placement_proof() {
   };
   const auto fresh = render(compiled);
   require(fresh.core_fresh_default_arena, "fresh Cast origin was lost");
-  auto host = place(fresh, fresh.element_name);
+  Endpoint direct;
+  direct.terminal_stage_key = fresh.element_name;
+  direct.terminal_stage_key_required = true;
+  simaai::neat::CompiledNodeContract fragment;
+  fragment.node_kind = "ModelFragment";
+  fragment.element_name = fragment.logical_stage_id = "infer";
+  fragment.child_stages.push_back(compiled);
+  const auto nested = render(fragment);
+  Endpoint endpoint;
+  endpoint.terminal_stage_key = "infer";
+  endpoint.terminal_node_kind = "ModelFragment";
+  endpoint.allow_unresolved_terminal_stage_fallback = true;
+  require(policy(place(nested, &endpoint)) == gs::AllocationPolicy::RequireHostCpu,
+          "a unique checked ModelFragment child did not select HostCpu");
+  auto explicit_child = endpoint;
+  explicit_child.terminal_stage_key = nested.element_name;
+  require(policy(place(nested, &explicit_child)) == gs::AllocationPolicy::RequireHostCpu,
+          "an exact ModelFragment child identity did not select HostCpu");
+  const auto reject_endpoint = [&](auto change) {
+    auto invalid = endpoint;
+    change(invalid);
+    require(policy(place(nested, &invalid)) != gs::AllocationPolicy::RequireHostCpu,
+            "unauthorized container endpoint selected HostCpu");
+  };
+  reject_endpoint([](auto& value) { value.terminal_node_kind = "SimaArgMax"; });
+  reject_endpoint([](auto& value) { value.terminal_stage_key_required = true; });
+  reject_endpoint([](auto& value) { value.allow_unresolved_terminal_stage_fallback = false; });
+  reject_endpoint([](auto& value) { value.output_segment_name = "missing-output"; });
+  auto private_output = nested;
+  private_output.physical_outputs.front().segment_name = "private-only";
+  auto private_selector = endpoint;
+  private_selector.output_segment_name = "private-only";
+  require(policy(place(private_output, &private_selector)) != gs::AllocationPolicy::RequireHostCpu,
+          "a private carrier matched the public terminal selector");
+  auto disconnected = nested;
+  disconnected.element_name = disconnected.logical_stage_id = "disconnected-child";
+  integration::SimaPluginStaticManifest ambiguous;
+  ambiguous.stages = {nested, disconnected};
+  integration::finalize_pipeline_storage(ambiguous, &endpoint);
+  require(std::none_of(ambiguous.stages.begin(), ambiguous.stages.end(),
+                       [](const auto& value) {
+                         return value.frame_layout &&
+                                value.frame_layout->allocations.front().policy ==
+                                    gs::AllocationPolicy::RequireHostCpu;
+                       }),
+          "ambiguous disconnected container leaves selected HostCpu");
+  auto host = place(fresh, &direct);
   require(policy(host) == gs::AllocationPolicy::RequireHostCpu,
           "fresh explicit A65 terminal did not select HostCpu");
-  require(policy(place(fresh, {})) == gs::AllocationPolicy::RequireDms,
+  require(policy(place(fresh)) == gs::AllocationPolicy::RequireDms,
           "ordinary A65 output implicitly selected HostCpu");
   require(!integration::finalize_stage_publications(&host), "host final publication failed");
   std::string error;
@@ -160,8 +209,8 @@ void terminal_host_placement_proof() {
     auto node = compiled;
     set(node.kernel->runtime_contract);
     const auto rendered = render(node);
-    require(!rendered.core_fresh_default_arena && policy(place(rendered, rendered.element_name)) !=
-                                                      gs::AllocationPolicy::RequireHostCpu,
+    require(!rendered.core_fresh_default_arena &&
+                policy(place(rendered, &direct)) != gs::AllocationPolicy::RequireHostCpu,
             "authored placement acquired fresh HostCpu authority");
   };
   authored([](auto& r) { r.frame_arena_storage_domain = domain::ArenaStorageDomain::Cma; });
@@ -175,7 +224,7 @@ void terminal_host_placement_proof() {
   const auto ineligible = [&](auto change) {
     auto value = fresh;
     change(value);
-    require(policy(place(value, value.element_name)) != gs::AllocationPolicy::RequireHostCpu,
+    require(policy(place(value, &direct)) != gs::AllocationPolicy::RequireHostCpu,
             "ineligible native carrier acquired HostCpu authority");
   };
   ineligible([](auto& v) { v.core_fresh_default_arena = false; });
@@ -201,7 +250,7 @@ void terminal_host_placement_proof() {
   consumer.input_bindings[0].src_logical_output_index = 0;
   consumer.input_bindings[0].src_physical_output_index = 0;
   consumer.input_bindings[0].src_output_slot = 0;
-  integration::finalize_pipeline_storage(consumed, fresh.element_name);
+  integration::finalize_pipeline_storage(consumed, &direct);
   require(policy(consumed) == gs::AllocationPolicy::RequireDms,
           "intermediate allocation acquired HostCpu authority");
   std::shared_ptr<GstElement> pipeline(gst_pipeline_new("host-proof"), gst_object_unref);
@@ -1187,6 +1236,31 @@ void controls_and_admission_geometry() {
           "complete explicit geometry added conversion or per-frame resolution");
   require(admitted.runtime_contract.logical_outputs.front().size_bytes == 4 + 120 * 24,
           "explicit topK120 did not determine the public BBOX capacity");
+  CompiledNodeContract child;
+  child.node_kind = "ModelFragment";
+  child.element_name = child.logical_stage_id = "internal-boxdecode";
+  child.renderable = true;
+  child.kernel = admitted;
+  CompiledNodeContract fragment;
+  fragment.node_kind = "ModelFragment";
+  fragment.element_name = fragment.logical_stage_id = "infer";
+  fragment.child_stages.push_back(std::move(child));
+  CompiledPipelineContracts contracts;
+  contracts.fully_renderable = true;
+  contracts.stages.push_back(std::move(fragment));
+  ManifestBuildDiagnostics diagnostics;
+  auto manifest = render_manifest_from_compiled_contracts(contracts, {}, &diagnostics);
+  require(manifest && diagnostics.errors.empty() && manifest->stages.size() == 1,
+          "checked internal BoxDecode child failed rendering");
+  pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector endpoint;
+  endpoint.terminal_stage_key = "infer";
+  endpoint.terminal_node_kind = "ModelFragment";
+  endpoint.allow_unresolved_terminal_stage_fallback = true;
+  finalize_pipeline_storage(*manifest, &endpoint);
+  require(manifest->stages.front().frame_layout &&
+              manifest->stages.front().frame_layout->allocations.front().policy ==
+                  gs::AllocationPolicy::RequireHostCpu,
+          "checked native BoxDecode child lost terminal HostCpu placement");
   const auto result = invoke(admitted);
   // Model640: center(320,320), extent(320,320). Independent letterbox to
   // 640x360 subtracts140 in Y, giving [160,20,320,320] after clipping/rounding.
@@ -1232,6 +1306,7 @@ int main(int argc, char** argv) {
     if (host_cpu_only) {
       sima_test::initialize_cold_contract_gstreamer();
       require(probe::register_element(), "register native candidate plugin");
+      terminal_host_placement_proof();
       terminal_host_output_lifetime(true);
       return 0;
     }
@@ -1245,8 +1320,10 @@ int main(int argc, char** argv) {
     terminal_host_placement_proof();
     if (!cold_admission_only)
       terminal_host_output_lifetime(false);
-    if (argc == 2 && std::string_view(argv[1]) == "--terminal-host-only")
+    if (argc == 2 && std::string_view(argv[1]) == "--terminal-host-only") {
+      boxdecode_semantics::controls_and_admission_geometry();
       return 0;
+    }
     capacity_policy();
     ev_service_capacity();
     native_stage_admission_transaction();

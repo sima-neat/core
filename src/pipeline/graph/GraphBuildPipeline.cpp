@@ -988,11 +988,14 @@ static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char*
                                    !env_str("SIMA_GST_ELEMENT_BUFFER_DEBUG", "").empty();
     // This candidate comes from the typed public endpoint. Scheduler proves
     // the actual stopped stage-to-appsink edge during cohort admission.
-    const auto terminal_host =
-        (terminal_observer || build.terminal_host_stage_key.empty())
-            ? std::string{}
-            : apply_name_transform(build.name_transform, build.terminal_host_stage_key);
-    pipeline_internal::sima::finalize_pipeline_storage(*transformed_manifest, terminal_host);
+    auto terminal_host = build.terminal_host_endpoint;
+    if (terminal_observer)
+      terminal_host.reset();
+    else if (terminal_host && !terminal_host->terminal_stage_key.empty())
+      terminal_host->terminal_stage_key =
+          apply_name_transform(build.name_transform, terminal_host->terminal_stage_key);
+    pipeline_internal::sima::finalize_pipeline_storage(*transformed_manifest,
+                                                       terminal_host ? &*terminal_host : nullptr);
     if (auto failure = pipeline_internal::sima::finalize_stage_publications(&*transformed_manifest))
       throw_kernel_preparation_error(*failure);
     const SimaPluginStaticManifest& manifest = *transformed_manifest;

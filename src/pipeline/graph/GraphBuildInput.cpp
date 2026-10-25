@@ -1855,9 +1855,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   BuildResult br = build_pipeline_full(build_nodes, insert_boundaries, "mysink", insert_queue2,
                                        name_transform, &sess_opt);
   if (graph_build_internal::explicit_public_terminal_output(opt, build_nodes)) {
-    const auto endpoint = public_output_endpoint_selector_local(build_nodes);
-    if (endpoint.terminal_stage_key_required && !endpoint.terminal_stage_key.empty())
-      br.terminal_host_stage_key = endpoint.terminal_stage_key;
+    br.terminal_host_endpoint = public_output_endpoint_selector_local(build_nodes);
   }
   maybe_compile_build_result_contracts(
       &br, &build_nodes, sess_opt, input_contract_from_input(sample), seed_spec,

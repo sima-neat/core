@@ -232,7 +232,9 @@ Core resolves executors before packing carriers:
 
 - Any EV74 writer or reader requires CMA.
 - Carriers used only by MLA/A65 require DMS by default.
-- Eligible fresh A65 outputs at an explicit public appsink use certified HostCpu storage.
+- Eligible fresh A65 outputs at an explicit public appsink use certified HostCpu storage,
+  including a unique native `ModelFragment` child. Shared or explicitly placed model
+  arenas retain their heap.
 
 Fan-out includes every consumer; views share their carrier's placement. Compatible
 imported camera/application DMA-BUFs retain their backing, offsets, strides and
