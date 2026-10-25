@@ -38,7 +38,9 @@ class VulcanCiDocsOnlyTests(unittest.TestCase):
             "legacy_runner_group": "modalix-devkit",
             "versioned_runner_group_prefix": "modalix-devkit-",
         })
-        self.assertEqual(resolver["needs"], ["detect-changes", "resolve-vulcan-config"])
+        self.assertEqual(resolver["needs"], ["detect-changes", "resolve-vulcan-config", "build"])
+        self.assertEqual(resolver["with"]["manifest_artifact"], "neat-core-dist")
+        self.assertEqual(resolver["with"]["manifest_path"], "scheduler-sdk-policy.json")
         self.assertEqual(resolver["with"]["shared_workflow_ref"], "main")
         self.assertIs(resolver["with"]["allow-version-fallback"], False)
         self.assertEqual(resolver["secrets"]["app_id"], "${{ secrets.NEAT_RELEASES_APP_ID }}")

@@ -7,21 +7,7 @@ package_dir=$(realpath -m "$1")
 [[ ! -e "$package_dir" ]] || { echo 'SDK archive cache must be fresh' >&2; exit 1; }
 mkdir -p "$package_dir"
 policy=$(python3 tools/build_dependencies.py sdk-policy --core "$PWD")
-sysroot_version=$(python3 - "$policy" <<'PY_POLICY'
-import json, re, sys
-from pathlib import Path
-policy = json.loads(sys.argv[1])
-expected = json.loads(Path('deps/manifest.json').read_text())['elxr_version']
-version = policy.get('sysroot-version', '')
-if policy.get('elxr_version') != expected:
-    raise SystemExit('Selected Scheduler firmware differs from Core; rebuild/publish the matching Scheduler first')
-base, channel, build = re.fullmatch(r'(.+)_(master|develop)_B([1-9][0-9]*)', expected).groups()
-suffix = '~pre' + build if channel == 'master' else r'~git[0-9]{12}\.[0-9a-f]{7,40}-' + build
-if not re.fullmatch(re.escape(base) + suffix, version):
-    raise SystemExit('Selected Scheduler exact sysroot receipt differs from Core firmware')
-print(version)
-PY_POLICY
-)
+sysroot_version=$(python3 tools/ci/scheduler_sdk_policy.py --policy-json "$policy" --field sysroot-version)
 setup_env=("SDK_PKG_LIST=${SDK_PKG_LIST:-}" "SYSROOT=/opt/toolchain/aarch64/modalix"
   "SYSROOT_UPDATE_DOWNLOAD_DIR=$package_dir/downloads")
 if [[ $(id -u) == 0 ]]; then

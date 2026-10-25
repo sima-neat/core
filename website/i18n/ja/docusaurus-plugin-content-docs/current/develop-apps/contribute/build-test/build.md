@@ -187,4 +187,4 @@ cmake -LA -B build      # include advanced
 
 最上位の `CMakeLists.txt` は、オプション名の定義元となります。
 
-Core の `develop` はファームウェア `3.0.0_master_B2372` を選択します。SDK ビルドは、選択した Scheduler パッケージに記録された正確な sysroot バージョンを使用し、ファームウェアが異なる場合は SDK 更新前に停止します。Core を再ビルドする前に、Kernels → Runner → Scheduler の順に、また LLiMa を再ビルドして公開してください。CI には選択したファームウェアと完全に一致する DevKit が必要で、別のバージョンにはフォールバックしません。
+Core は選択した Scheduler パッケージのレシートからファームウェアと正確な sysroot を継承し、ファームウェアを別途宣言しません。レシートのプラットフォームと SDK チャネルは Core と一致する必要があります。CI はこのポリシーをビルド成果物に保存し、フォールバックせずに完全一致する DevKit を選択します。LLiMa のインストール前に、公開されたファームウェア、プラットフォーム、SDK チャネルを Scheduler と比較し、選択した DEB が同じ公開成果物に属することを検証します。LLiMa は正確な sysroot レシートを公開しないため、この確認は宣言されたファームウェアの互換性を示し、sysroot インベントリの同一性は証明しません。ローカルの `--llima PATH` には、core/dev/cli DEB、`llima-package-manifest.json`、`metadata.json` を含む LLiMa 配布物のルートを指定してください。証拠が不足または不一致の場合、ビルドは停止します。Core の再ビルド前に Kernels → Runner → Scheduler と、一致する LLiMa を再ビルドして公開してください。

@@ -187,4 +187,4 @@ cmake -LA -B build      # include advanced
 
 최상위 수준의 `CMakeLists.txt` 파일은 옵션 이름에 대한 정확한 정보를 담고 있습니다.
 
-Core `develop`은 펌웨어 `3.0.0_master_B2372`를 선택합니다. SDK 빌드는 선택한 Scheduler 패키지에 기록된 정확한 sysroot 버전을 사용하며, 펌웨어가 다르면 SDK를 업데이트하기 전에 중단합니다. Core를 다시 빌드하기 전에 Kernels → Runner → Scheduler 순서로, 그리고 LLiMa를 다시 빌드하고 게시하세요. CI에는 선택한 펌웨어와 정확히 일치하는 DevKit이 필요하며 다른 펌웨어 버전으로 대체하지 않습니다.
+Core는 선택한 Scheduler 패키지 영수증에서 펌웨어와 정확한 sysroot를 상속하며 펌웨어를 별도로 선언하지 않습니다. 영수증의 플랫폼과 SDK 채널은 Core와 일치해야 합니다. CI는 이 정책을 빌드 산출물에 보관하고 대체 버전 없이 정확히 일치하는 DevKit을 선택합니다. LLiMa 설치 전에 게시된 펌웨어, 플랫폼, SDK 채널을 Scheduler와 비교하고 선택한 DEB가 같은 게시 산출물에 속하는지 검증합니다. LLiMa는 정확한 sysroot 영수증을 게시하지 않으므로 이 검사는 선언된 펌웨어 호환성을 확인하며 sysroot 목록의 동일성을 증명하지 않습니다. 로컬 `--llima PATH` 빌드에는 core/dev/cli DEB, `llima-package-manifest.json`, `metadata.json`이 포함된 LLiMa 배포 루트를 제공하세요. 증거가 없거나 일치하지 않으면 빌드가 중단됩니다. Core를 다시 빌드하기 전에 Kernels → Runner → Scheduler와 일치하는 LLiMa를 다시 빌드하고 게시하세요.

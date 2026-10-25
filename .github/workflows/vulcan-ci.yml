@@ -143,6 +143,7 @@ jobs:
             tests/tools/test_ci_hygiene_cohort.py \
             tests/tools/test_published_artifact.py \
             tests/tools/test_ci_dependency_setup.py \
+            tests/tools/test_scheduler_sdk_policy.py \
             tests/tools/test_guarded_ctest_configuration.py \
             tests/tools/test_codec_stream_registration.py \
             tests/tools/test_vulcan_ci_docs_only.py \
@@ -285,8 +286,11 @@ jobs:
     needs:
       - detect-changes
       - resolve-vulcan-config
+      - build
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-modalix-runner.yml@main
     with:
+      manifest_artifact: neat-core-dist
+      manifest_path: scheduler-sdk-policy.json
       legacy_runner_group: modalix-devkit
       versioned_runner_group_prefix: modalix-devkit-
       shared_workflow_ref: main

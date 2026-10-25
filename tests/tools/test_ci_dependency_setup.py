@@ -37,7 +37,7 @@ def test_sdk_shell_retains_only_actual_official_cache_exports(tmp_path, missing_
     tools = tmp_path / 'tools'; tools.mkdir()
     (tools / 'build_dependencies.py').write_text('''import json, pathlib, shlex, sys
 command = sys.argv[1]
-if command == 'sdk-policy': print(json.dumps({'elxr_version':'3.0.0_master_B2372', 'sysroot-version':'3.0.0~pre2372'}))
+if command == 'sdk-policy': print(json.dumps({'elxr_version':'3.0.0_master_B2372', 'sysroot-version':'3.0.0~pre2372', 'platform-version':'3.0.0', 'sdk':{'channel':'develop'}}))
 elif command == 'verify-sdk': print(json.dumps({'status':'verified'}))
 else:
     root = pathlib.Path(sys.argv[sys.argv.index('--platform-package-dir')+1])
@@ -49,9 +49,10 @@ else:
     env = tmp_path / 'env.sh'; env.write_text('export CXX=cross-g++-14\n')
     script = script.replace('sysroot update', str(official) + ' update').replace('sysroot status', str(official) + ' status')
     script = script.replace('/opt/bin/simaai-init-build-env', str(env))
+    script = script.replace('tools/ci/scheduler_sdk_policy.py', str(ROOT / 'tools/ci/scheduler_sdk_policy.py'))
     script = script.replace('$package_dir/downloads', str(cache))
     (tmp_path / 'deps').mkdir()
-    (tmp_path / 'deps/manifest.json').write_text(json.dumps({'elxr_version': '3.0.0_master_B2372'}))
+    (tmp_path / 'deps/manifest.json').write_text(json.dumps({'platform-version': '3.0.0', 'sdk': {'channel': 'develop'}}))
     # Never grant fixture privileges; source production root/sudo branches are unchanged.
     script = script.replace('[[ $(id -u) == 0 ]]', '[[ 0 == 0 ]]')
     if missing_archive: provider.unlink()
@@ -69,20 +70,20 @@ else:
         assert str(cache) not in result.stdout
 
 
-@pytest.mark.parametrize('firmware,version', [
-    ('3.0.0_develop_B2121', '3.0.0~git202610140145.e5ece50-2121'),
-    ('3.0.0_master_B2372', '3.0.0~pre2371'),
-    ('3.0.0_master_B2372', '3.0.0~git202610140145.e5ece50-2372'),
-])
-def test_scheduler_policy_mismatch_fails_before_sdk_update(tmp_path, firmware, version):
+@pytest.mark.parametrize('version', ['', '3.0.0~pre2371'])
+def test_invalid_scheduler_receipt_stops_before_sdk_mutation(tmp_path, version):
     import json
-    import sys
+    tools = tmp_path / 'tools'
+    tools.mkdir()
+    policy = {'platform-version': '3.0.0', 'sdk': {'channel': 'develop'},
+              'elxr_version': '3.0.0_master_B2372', 'sysroot-version': version}
+    (tools / 'build_dependencies.py').write_text('print(' + repr(json.dumps(policy)) + ')\n')
     script = (ROOT / 'scripts/ci/prepare_scheduler_sdk.sh').read_text()
-    code = script.split("<<'PY_POLICY'\n", 1)[1].split('\nPY_POLICY', 1)[0]
-    (tmp_path / 'deps').mkdir()
-    (tmp_path / 'deps/manifest.json').write_text(json.dumps({'elxr_version': '3.0.0_master_B2372'}))
-    result = subprocess.run([sys.executable, '-c', code,
-                             json.dumps({'elxr_version': firmware, 'sysroot-version': version})],
-                            cwd=tmp_path, text=True, capture_output=True)
+    script = script.replace('tools/ci/scheduler_sdk_policy.py', str(ROOT / 'tools/ci/scheduler_sdk_policy.py'))
+    marker = tmp_path / 'mutation'
+    script = script.replace('sysroot update', f'touch {marker}; false')
+    result = subprocess.run(['/bin/bash', '-c', script, 'policy-test', str(tmp_path / 'cache')],
+                            cwd=tmp_path, capture_output=True, text=True)
     assert result.returncode != 0
-    assert 'differs from Core' in result.stderr
+    assert 'Scheduler exact sysroot receipt differs' in result.stderr
+    assert not marker.exists()
