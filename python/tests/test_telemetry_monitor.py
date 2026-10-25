@@ -98,6 +98,7 @@ def test_without_sentinel_the_status_says_how_to_install_it(capfd, tmp_path):
   telemetry = monitor.stop()
   assert monitor.running() is False
   assert telemetry.samples == 0
+  assert str(socket_path) in telemetry.status
   assert "sima-cli neat install sentinel" in telemetry.status
   assert capfd.readouterr().err.count("[WARN] TelemetryMonitor:") == 1
 

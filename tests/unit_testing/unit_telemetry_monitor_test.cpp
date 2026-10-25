@@ -742,10 +742,11 @@ void missing_sentinel_warns_once_and_never_throws() {
   std::this_thread::sleep_for(50ms);
   const Telemetry t = monitor.stop();
   require(t.samples == 0, "no telemetry without Sentinel");
-  require(t.status.find("Sentinel is not running on this board") != std::string::npos &&
+  require(t.status.find("Could not connect to Sentinel at '/tmp/neat-no-such-sentinel.sock'") !=
+                  std::string::npos &&
               t.status.find("sima-cli neat install sentinel") != std::string::npos &&
               t.status.find("sudo systemctl start simaai-sentinel") != std::string::npos,
-          "status says how to install or start Sentinel; got " + t.status);
+          "status names the socket and says how to install or start Sentinel; got " + t.status);
   require(stderr_text.warnings() == 1, "one warning for the whole window:\n" + stderr_text.text());
 }
 
