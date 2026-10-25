@@ -771,6 +771,8 @@ report = model.benchmark(options)
 
 `original_width`と`original_height`を組み合わせて設定します。ベンチマークは引き続き、モデルの形状を持つ合成テンソルを生成します。これらのフィールドは、BoxDecodeメタデータに必要なソースジオメトリとリサイズ変換を提供します。これらを省略すると、ベンチマークは解決された前処理とモデル入力コントラクトからジオメトリを推測します。これらの実行ごとの値は、`ModelOptions`内の非推奨のBoxDecodeジオメトリヒントよりも優先されます。既存の`benchmark(num_samples)`の呼び出しは、同じ動作を維持します。
 
+MLA のレイヤーごと、またはステージごとの時間も計測するには、`include_mla_layer_stats` または `include_mla_stage_stats` を設定します。結果を残すには、`report.save(path)` でレポートを YAML として書き出します。パスが `.json` で終わる場合は JSON として書き出します。両方の例は[モデルをベンチマークする](/tutorials/benchmark-your-model)を参照してください。
+
 ### 実行時間
 
 ベンチマークは、入力を 1 つずつ実行してレイテンシーを測定し、その後、別のスループット測定パスを実行します。各パスは、少なくとも `num_samples` 個の入力を測定し、かつ `min_duration_ms`（デフォルトは 10 秒）が経過するまで続きます。そのため、両方のパスは同じ規則で停止し、スループット測定パスの電力と温度の値は短時間のバーストではなく、複数のテレメトリサンプルにわたって取得されます。`latency_ms` はレイテンシー測定パスの平均レイテンシーで、`latency_p50_ms`、`latency_p95_ms`、`latency_p99_ms` はそのパーセンタイルです。`throughput_samples` と `throughput_duration_ms` は、スループット測定パスで測定した内容を示します。簡単なスモークテストでは、`min_duration_ms` を 0 に設定すると、各パスが `num_samples` 個の入力の後で停止します。
@@ -813,7 +815,7 @@ report = model.benchmark(options)
 | `telemetry.ev74_memory_mib` | EV74 が保持するメモリ（MiB 単位）です。たとえば、EV74 が MLA 向けに前処理する入力フレームが該当します。EV74 と MLA の両方が使う共有バッファは `mla_memory_mib` ではなくこちらに数えるため、2 つを足すとモデルのアクセラレーターメモリになります。ビデオデコーダーやカメラ ISP が生成したフレームはどちらにも含まれません。 |
 | `telemetry.linux_memory_used_mib` | ボード全体が使用しているメモリ（Linux の `MemTotal - MemAvailable`、MiB 単位）です。すべてのプロセスと EV74 のバッファを含むため、上の 2 つに加算しないでください。 |
 
-各メトリクスは `samples`、`mean`、`minimum`、`maximum`、`last` を報告し、`samples == 0` はボードがそのメトリクスを報告しなかったことを意味します。Sentinel は 2 秒ごとにサンプリングするため、10 秒のパスでは約 5 個のサンプルが得られます。すべての値はボード全体のもので、実行中の他のプロセスも含みます。
+各メトリクスは `samples`、`mean`、`minimum`、`maximum`、`last` を報告し、`samples == 0` はボードがそのメトリクスを報告しなかったことを意味します。報告された 0 もサンプルとして数えられます。モデルが読み込まれていない場合、`mla_memory_mib` と `ev74_memory_mib` は `samples > 0` のまま 0 MiB を示します。Sentinel は 2 秒ごとにサンプリングするため、10 秒のパスでは約 5 個のサンプルが得られます。すべての値はボード全体のもので、実行中の他のプロセスも含みます。
 
 Sentinel が実行されていない場合、またはパスが短すぎてサンプルを収集できない場合でも、ベンチマークはレイテンシーと FPS を返します。電力フィールドはゼロのままになり、`telemetry.status` にその理由が示され（それ以外の場合は `"ok"`）、出力される概要には `Power: unavailable (<reason>)` と表示されます。
 

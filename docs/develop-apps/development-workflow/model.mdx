@@ -788,6 +788,10 @@ BoxDecode metadata. If you omit them, the benchmark infers geometry from the res
 and model input contracts. These per-run values take precedence over deprecated BoxDecode geometry
 hints in `ModelOptions`. Existing `benchmark(num_samples)` calls keep the same behavior.
 
+To also time each MLA layer or stage, set `include_mla_layer_stats` or `include_mla_stage_stats`.
+To keep the results, `report.save(path)` writes the report as YAML, or as JSON for a `.json`
+path. [Benchmark Your Model](/tutorials/benchmark-your-model) shows both.
+
 ### Run length
 
 The benchmark measures single-flight latency, then runs a separate throughput pass. Each pass
@@ -845,8 +849,10 @@ summarizes them:
 | `telemetry.linux_memory_used_mib` | Memory the whole board uses (Linux `MemTotal - MemAvailable`), in MiB. It includes every process and EV74's buffers, so do not add it to the two above. |
 
 Each metric reports `samples`, `mean`, `minimum`, `maximum`, and `last`, and `samples == 0` means
-the board did not report it. Sentinel samples every 2 s, so a 10 s pass yields about 5 samples.
-Every value covers the whole board, including other running processes.
+the board did not report it. A reported zero still counts as a sample: with no model loaded,
+`mla_memory_mib` and `ev74_memory_mib` read 0 MiB with `samples > 0`. Sentinel samples every 2 s,
+so a 10 s pass yields about 5 samples. Every value covers the whole board, including other running
+processes.
 
 When Sentinel is not running or the pass is too short to collect a sample, the benchmark still
 returns latency and FPS. The power fields stay zero, `telemetry.status` names the reason (it is
