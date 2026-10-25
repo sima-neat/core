@@ -22,7 +22,7 @@ if not re.fullmatch(re.escape(base) + suffix, version):
 print(version)
 PY_POLICY
 )
-setup_env=("SYSROOT=/opt/toolchain/aarch64/modalix"
+setup_env=("SDK_PKG_LIST=${SDK_PKG_LIST:-}" "SYSROOT=/opt/toolchain/aarch64/modalix"
   "SYSROOT_UPDATE_DOWNLOAD_DIR=$package_dir/downloads")
 if [[ $(id -u) == 0 ]]; then
   env "${setup_env[@]}" sysroot update "$sysroot_version" >&2

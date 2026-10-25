@@ -25,6 +25,7 @@ def test_native_tooling_prerequisites_precede_compilation():
 def test_sdk_shell_retains_only_actual_official_cache_exports(tmp_path, missing_archive):
     """Exercise the actual shell below its SDK/coordinator command boundaries."""
     import json
+    import os
     import shlex
     import sys
     script = (ROOT / 'scripts/ci/prepare_scheduler_sdk.sh').read_text()
@@ -44,7 +45,7 @@ else:
     if not p.is_file(): raise SystemExit(31)
     print('export NEAT_RUNNER_PLATFORM_RUNTIME_DEBS=' + shlex.quote(json.dumps([str(p)])))
 ''')
-    official = tmp_path / 'official.sh'; official.write_text('#!/bin/sh\nexit 0\n'); official.chmod(0o755)
+    official = tmp_path / 'official.sh'; official.write_text('#!/bin/sh\n[ "$SDK_PKG_LIST" = fixture-dev ]\n'); official.chmod(0o755)
     env = tmp_path / 'env.sh'; env.write_text('export CXX=cross-g++-14\n')
     script = script.replace('sysroot update', str(official) + ' update').replace('sysroot status', str(official) + ' status')
     script = script.replace('/opt/bin/simaai-init-build-env', str(env))
@@ -56,7 +57,7 @@ else:
     if missing_archive: provider.unlink()
     retained = tmp_path / 'retained'
     result = subprocess.run(['/bin/bash', '-c', script, 'sdk-test', str(retained)], cwd=tmp_path,
-                            text=True, capture_output=True)
+                            text=True, capture_output=True, env={**os.environ, 'SDK_PKG_LIST': 'fixture-dev'})
     if missing_archive:
         assert result.returncode == 31, result.stderr
         assert not list(retained.glob('*.deb'))
