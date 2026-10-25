@@ -137,9 +137,12 @@ def verify(root, *, validate_metadata, expected_manifest=None, expected_receipt=
         require(len(buildinfo) == 1, 'Missing or duplicate Core source receipt')
         provenance = buildinfo[0].get('build', {})
         if provenance.get('git_sha'):
-            matches = provenance['git_sha'] == expected_commit
+            matches = (provenance['git_sha'] == expected_commit
+                       and provenance.get('source_status') == 'clean'
+                       and provenance.get('git_dirty') is False)
         else:
             matches = (provenance.get('source_status') == 'unavailable'
+                       and provenance.get('git_dirty') is None
                        and provenance.get('ci_requested_git_sha') == expected_commit
                        and expected_commit[:12] in control(core)['Version'])
         require(matches, 'Core CI provenance differs from expected source commit')

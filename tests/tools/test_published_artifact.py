@@ -536,7 +536,14 @@ def test_core_workflow_only_qualification_transport_uses_publication():
     source = (ROOT / '.github/workflows/vulcan-ci.yml').read_text()
     block = source.split("      - name: Download this build's installed-qualification inputs", 1)[1]
     block = block.split('      - name: Capture native platform', 1)[0]
-    assert 'acquire_core_qualification.py' in block
-    assert '--commit "${GITHUB_SHA}"' in block and '--environment "${VULCAN_ENV}"' in block
-    assert 'actions/download-artifact' not in block
+    published, candidate = block.split("      - name: Download this run's Core validation candidate", 1)
+    assert 'if: ${{ !inputs.validation_only }}' in published
+    assert 'acquire_core_qualification.py' in published
+    assert '--commit "${GITHUB_SHA}"' in published and '--environment "${VULCAN_ENV}"' in published
+    assert 'actions/download-artifact' not in published
+    assert candidate.count('if: ${{ inputs.validation_only }}') == 2
+    assert 'actions/download-artifact@v4' in candidate and 'name: neat-core-dist' in candidate
+    assert 'scripts/ci/verify_core_dist.sh --dist .' in candidate
+    assert '--expected-manifest deps/manifest.json --expected-commit "$GITHUB_SHA"' in candidate
+    assert '--write-package-inventory _work/expected-package-inventory.json' in candidate
     assert 'cleanup_github_artifacts: false' not in source
