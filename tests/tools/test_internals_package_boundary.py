@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import shlex
 import subprocess
 import tempfile
@@ -150,8 +151,22 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
                 (artifact / f"sima-lmm-0.4.0+local-Linux-{component}.deb").touch()
                 (cache / f"sima-lmm-0.4.0+stale-Linux-{component}.deb").touch()
 
+            policy = {'platform-version': '3.0.0', 'sdk': {'channel': 'develop'},
+                      'elxr_version': '3.0.0_master_B2372', 'sysroot-version': '3.0.0~pre2372'}
+            (artifact / 'llima-package-manifest.json').write_text(json.dumps(policy))
+            (artifact / 'metadata.json').write_text(json.dumps({'resources-checksum': {
+                path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in artifact.iterdir()}}))
+
             script = f"""
 set -euo pipefail
+REPO_ROOT={shlex.quote(str(ROOT))}
+python3() {{
+  if [[ "$1" == tools/build_dependencies.py && "$2" == sdk-policy ]]; then
+    printf '%s\\n' {shlex.quote(json.dumps(policy))}
+  else
+    command python3 "$@"
+  fi
+}}
 resolve_neat_llima_ref() {{
   NEAT_LLIMA_REQUESTED_REF=local:latest
 }}
