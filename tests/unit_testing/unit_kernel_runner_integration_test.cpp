@@ -14,6 +14,7 @@
 #include <simaai/scheduler/testing/route_probe.h>
 
 #include "tensor_output_contract_fixtures.h"
+#include "support/cold_contract_gst_init.h"
 #include "pipeline/internal/HolderLoanGate.h"
 #include "pipeline/internal/OutputQueueMemory.h"
 #include "pipeline/internal/Diagnostics.h"
@@ -23,6 +24,7 @@
 #include <simaai/scheduler/client/memory_access.h>
 #include <gst/app/gstappsrc.h>
 #include <gst/app/gstappsink.h>
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstring>
@@ -1242,7 +1244,7 @@ int main(int argc, char** argv) {
     // This explicit CPU-only profile requires the real factories used below,
     // not unrelated optional MLA/EV factories from Core's full installation.
     if (host_cpu_only) {
-      gst_init(nullptr, nullptr);
+      sima_test::initialize_cold_contract_gstreamer();
       require(probe::register_element(), "register native candidate plugin");
       terminal_host_output_lifetime(true);
       return 0;

@@ -34,7 +34,12 @@ void terminal_host_output_lifetime(bool dma_denied = false) {
   require(gst_element_link(stage, sink), "terminal host sink link");
   g_object_set(sink, "sync", FALSE, "async", FALSE, "max-buffers", 1U, "drop", FALSE, nullptr);
   auto request = cast_request(1, true);
-  request.options.output_pool_capacity = 6;
+  // Exercise Core's canonical raw tensor bridge, not the encoded-media fallback.
+  request.publication.input_caps = {gst_caps_from_string("application/vnd.simaai.tensor"),
+                                    gst_caps_unref};
+  request.publication.output_caps = {gst_caps_from_string("application/vnd.simaai.tensor"),
+                                     gst_caps_unref};
+  request.options.output_pool_capacity = std::max<std::size_t>(6, request.options.capacity + 1);
   gst_app_src_set_caps(GST_APP_SRC(source), request.publication.input_caps.get());
   std::array<gs::StageAttachment, 1> attachments{{{stage, std::move(request)}}};
   auto failure = gs::prepare_and_attach_tensor_stages(
@@ -71,14 +76,76 @@ void terminal_host_output_lifetime(bool dma_denied = false) {
       "terminal host input contract", error);
   require_fixture(simaai::gst::tensor_buffer_attach_prepared_meta(input, prepared, &error),
                   "terminal host input publication", error);
+  const gchar* correlation_tags[] = {nullptr};
+  if (!gst_meta_get_info("GstSimaMeta"))
+    require(gst_meta_register_custom("GstSimaMeta", correlation_tags, nullptr, nullptr, nullptr),
+            "terminal host correlation metadata registration");
+  const auto stamp_frame = [](GstBuffer* buffer, std::uint64_t sequence) {
+    auto* meta = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
+    if (!meta)
+      meta = gst_buffer_add_custom_meta(buffer, "GstSimaMeta");
+    require(meta, "terminal host input correlation metadata");
+    const guint64 timestamp = sequence * GST_MSECOND;
+    gst_structure_set(gst_custom_meta_get_structure(meta), "frame-id", G_TYPE_INT64,
+                      static_cast<gint64>(sequence), "input-seq", G_TYPE_INT64,
+                      static_cast<gint64>(sequence), "stream-id", G_TYPE_STRING,
+                      "terminal-host-test", "timestamp", G_TYPE_UINT64, timestamp, nullptr);
+    GST_BUFFER_PTS(buffer) = timestamp;
+  };
+  stamp_frame(input, 0);
   std::shared_ptr<GstBuffer> input_template(gst_buffer_ref(input), gst_buffer_unref);
   require(gst_app_src_push_buffer(GST_APP_SRC(source), input) == GST_FLOW_OK,
           "terminal host input push");
   std::shared_ptr<GstSample> raw(gst_app_sink_try_pull_sample(GST_APP_SINK(sink), 5 * GST_SECOND),
-                                 gst_sample_unref);
-  require(bool(raw), "terminal host output timeout");
+                                 [](GstSample* sample) {
+                                   if (sample)
+                                     gst_sample_unref(sample);
+                                 });
+  if (!raw) {
+    std::string diagnostic = "terminal host output timeout";
+    auto* bus = gst_element_get_bus(pipeline.get());
+    auto* message = bus ? gst_bus_pop_filtered(bus, GST_MESSAGE_ERROR) : nullptr;
+    if (message) {
+      GError* failure = nullptr;
+      gchar* debug = nullptr;
+      gst_message_parse_error(message, &failure, &debug);
+      if (failure)
+        diagnostic += std::string(": ") + failure->message;
+      if (debug)
+        diagnostic += std::string(" [") + debug + "]";
+      g_clear_error(&failure);
+      g_free(debug);
+      gst_message_unref(message);
+    }
+    if (bus)
+      gst_object_unref(bus);
+    throw std::runtime_error(diagnostic);
+  }
   neat::InputStream::State state;
   state.opt.preserve_framework_output = true;
+  {
+    auto view =
+        neat::output_from_sample_stream(raw.get(), "terminal host view", false, nullptr, &state);
+    auto* carrier = gst_sample_get_buffer(raw.get());
+    auto* memory =
+        carrier && gst_buffer_n_memory(carrier) ? gst_buffer_peek_memory(carrier, 0) : nullptr;
+    const bool raw_certified = gs::is_certified_terminal_host_span(carrier, memory, 0, 4);
+    const bool view_certified =
+        view.tensors.size() == 1 &&
+        internal::tensor_has_certified_terminal_host_memory(view.tensors.front());
+    if (!raw_certified || !view_certified) {
+      std::string diagnostic =
+          "terminal host selected-span projection: raw=" + std::to_string(raw_certified) +
+          " view=" + std::to_string(view_certified) +
+          " tensors=" + std::to_string(view.tensors.size()) +
+          " carrier_bytes=" + std::to_string(carrier ? gst_buffer_get_size(carrier) : 0);
+      for (const auto& value : view.tensors)
+        diagnostic += " [" + value.debug_string() +
+                      " memory=" + std::to_string(value.route.memory_index) +
+                      " offset=" + std::to_string(value.byte_offset) + "]";
+      throw std::runtime_error(diagnostic);
+    }
+  }
   internal::reset_tensor_io_stats();
   auto output =
       neat::output_from_sample_stream(raw.get(), "terminal host Auto", true, nullptr, &state);
@@ -89,16 +156,25 @@ void terminal_host_output_lifetime(bool dma_denied = false) {
   require(!internal::tensor_has_dmabuf_memory(tensor) &&
               internal::tensor_has_certified_terminal_host_memory(tensor),
           "terminal host was relabeled DMA or lost its generation");
-  const auto oracle = [](const neat::Tensor& t) {
-    const auto mapping = t.storage->map(neat::MapMode::Read);
+  const auto mapped_oracle = [](const neat::Tensor& t, const neat::Mapping& mapping,
+                                const char* phase) {
     const std::array<std::uint16_t, 2> expected{0x3fa0, 0xc020};
-    require(mapping.data && t.byte_offset >= 0 &&
-                static_cast<std::size_t>(t.byte_offset) + 4 <= mapping.size_bytes &&
-                std::memcmp(static_cast<const std::byte*>(mapping.data) + t.byte_offset,
-                            expected.data(), 4) == 0,
-            "terminal host Cast independent BF16 oracle");
+    const bool in_bounds = mapping.data && t.byte_offset >= 0 &&
+                           static_cast<std::size_t>(t.byte_offset) + 4 <= mapping.size_bytes;
+    std::array<std::uint16_t, 2> actual{};
+    if (in_bounds)
+      std::memcpy(actual.data(), static_cast<const std::byte*>(mapping.data) + t.byte_offset, 4);
+    require_fixture(in_bounds && actual == expected, "terminal host Cast independent BF16 oracle",
+                    std::string(phase) + " offset=" + std::to_string(t.byte_offset) +
+                        " mapped_bytes=" + std::to_string(mapping.size_bytes) +
+                        " actual_u16=" + std::to_string(actual[0]) + "," +
+                        std::to_string(actual[1]) + " tensor=" + t.debug_string());
   };
-  oracle(tensor);
+  const auto oracle = [&](const neat::Tensor& t, const char* phase) {
+    const auto mapping = t.storage->map(neat::MapMode::Read);
+    mapped_oracle(t, mapping, phase);
+  };
+  oracle(tensor, "initial Auto");
   {
     // A numerical rank-zero view is one element, not an unbound/opaque carrier.
     // Use the actual framework allocation above: no forged certificate or allocator tag.
@@ -231,7 +307,7 @@ void terminal_host_output_lifetime(bool dma_denied = false) {
     require(owned.owned && internal::tensor_has_dmabuf_memory(owned.tensors.front()) &&
                 !internal::tensor_has_certified_terminal_host_memory(owned.tensors.front()),
             "Owned did not allocate independent DMA storage");
-    oracle(owned.tensors.front());
+    oracle(owned.tensors.front(), "explicit Owned");
   }
   // Exercise the actual asynchronous Run callback with real host output. A
   // queue of one requests Block. Exact decision branches are tested above; the
@@ -244,9 +320,13 @@ void terminal_host_output_lifetime(bool dma_denied = false) {
   stream_options.enable_timings = true;
   neat::SampleSpec sample_spec;
   sample_spec.kind = neat::SampleMediaKind::Tensor;
-  sample_spec.media_type = "application/x-sima-tensor";
+  sample_spec.media_type = "application/vnd.simaai.tensor";
   sample_spec.dtype = neat::TensorDType::BFloat16;
   sample_spec.shape = {2};
+  sample_spec.format = "BF16";
+  sample_spec.required_bytes_actual = 4;
+  sample_spec.caps_string = neat::caps_string_from_spec(sample_spec);
+  sample_spec.caps_key = neat::capkey_from_spec(sample_spec);
   auto stream = neat::InputStream::create(
       GST_ELEMENT(gst_object_ref(pipeline.get())), nullptr, GST_ELEMENT(gst_object_ref(sink)),
       sample_spec, {}, stream_options, std::make_shared<internal::DiagCtx>(), {});
@@ -264,8 +344,10 @@ void terminal_host_output_lifetime(bool dma_denied = false) {
     require(predicate(), message);
   };
   for (unsigned sequence = 0; sequence < 2; ++sequence) {
-    require(gst_app_src_push_buffer(GST_APP_SRC(source), gst_buffer_copy(input_template.get())) ==
-                GST_FLOW_OK,
+    auto* frame = gst_buffer_copy(input_template.get());
+    require(frame, "host async frame copy");
+    stamp_frame(frame, sequence + 1);
+    require(gst_app_src_push_buffer(GST_APP_SRC(source), frame) == GST_FLOW_OK,
             "host async input push");
     if (!sequence)
       wait_until([&] { return core->outputs_ready.load() == 1; }, "host async first queue");
@@ -283,15 +365,17 @@ void terminal_host_output_lifetime(bool dma_denied = false) {
               internal::sample_has_zero_copy_loans(first),
           "host async selected holder/loan");
   core->close();
-  oracle(first.tensors.front());
-  oracle(second.tensors.front());
+  oracle(first.tensors.front(), "async first after close");
+  oracle(second.tensors.front(), "async second after close");
   // Public tensor plus an open mapping keep the exact generation alive after close.
   auto mapping = tensor.storage->map(neat::MapMode::Read);
   require(gst_element_set_state(pipeline.get(), GST_STATE_NULL) != GST_STATE_CHANGE_FAILURE,
           "terminal host pipeline close");
   raw.reset();
   require(internal::tensor_has_certified_terminal_host_memory(tensor), "close revoked live holder");
-  oracle(tensor);
+  // Verify the already-open mapping itself survives close; do not request a
+  // second map from the single-map GstSample storage while it is held.
+  mapped_oracle(tensor, mapping, "retained initial mapping after close");
   mixed = {};
   require(gate->inflight() > 0, "held aliases must retain the host loan");
   mapping = {};

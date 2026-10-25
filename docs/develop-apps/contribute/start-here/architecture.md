@@ -1897,7 +1897,7 @@ BoxDecode exposes two versioned A65 wall-time components:
 
 | Phase/component | Boundary |
 | --- | --- |
-| `Run/boxdecode_backend_wall_v2` | Actual decode invocation begins through dependent wire publication completion. Includes scheduling gaps between these endpoints; excludes earlier conversion helpers. |
+| `Run/boxdecode_backend_wall_v2.execution_envelope_wall` | Actual decode invocation begins through dependent wire publication completion. Includes scheduling gaps between these endpoints; excludes earlier conversion helpers. |
 | `Exec/boxdecode_stage_wall_v2` | Complete-frame admission, before output acquisition, through retirement, finish and input release. Excludes that frame's own downstream push. |
 
 The outer interval includes pool waits, binding and output-ordering residence. An
