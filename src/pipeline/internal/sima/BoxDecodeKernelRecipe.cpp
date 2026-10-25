@@ -1,7 +1,6 @@
 #include "pipeline/internal/sima/BoxDecodeKernelRecipe.h"
 #include "pipeline/DetectionTypes.h"
 #include "pipeline/internal/sima/BoxDecodePublication.h"
-#include "pipeline/DetectionTypes.h"
 #include "pipeline/FeatureTypes.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"

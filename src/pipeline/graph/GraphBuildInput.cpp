@@ -472,8 +472,8 @@ bool is_default_run_options(const RunOptions& opt) {
 // public-boundary stream-option builder so every entry point (Model::build,
 // Graph::build/source) agrees on output storage kind.
 struct OutputMemoryResolution {
-  bool zero_copy;           ///< non-DMA outputs share backing GstSample
-  bool preserve_framework;  ///< Auto retains actual standard DMA-BUF storage
+  bool zero_copy;          ///< non-DMA outputs share backing GstSample
+  bool preserve_framework; ///< Auto retains actual standard DMA-BUF storage
 };
 
 // THE definition of what Auto/ZeroCopy/Owned mean for a public output.

@@ -4710,15 +4710,15 @@ bool resolve_graph_processcvu_tiled_channel_encoding(const std::string& canonica
 // Wire semantics belong to the typed producer, not to an opaque byte shape.
 // Preserve the immutable logical descriptor (including rank) and only author
 // the format consumed by the public Sample-to-Tensor semantic bridge.
-static void apply_kernel_publication_format(
-    const StageStaticSpec& stage,
-    ::simaai::scheduler::client::TensorStagePublication& publication) {
+static void
+apply_kernel_publication_format(const StageStaticSpec& stage,
+                                ::simaai::scheduler::client::TensorStagePublication& publication) {
   if (!stage.native_kernel || stage.native_kernel->output_format.empty())
     return;
   GstCaps* caps = publication.output_caps ? gst_caps_copy(publication.output_caps.get())
-                                         : make_generic_tensor_set_caps_local();
-  gst_caps_set_simple(caps, "format", G_TYPE_STRING,
-                      stage.native_kernel->output_format.c_str(), nullptr);
+                                          : make_generic_tensor_set_caps_local();
+  gst_caps_set_simple(caps, "format", G_TYPE_STRING, stage.native_kernel->output_format.c_str(),
+                      nullptr);
   publication.output_caps = std::shared_ptr<GstCaps>(caps, gst_caps_unref);
 }
 

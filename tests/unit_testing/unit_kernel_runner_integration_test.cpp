@@ -7,7 +7,6 @@
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
-#include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "nodes/sima/Preproc.h"
 #include <simaai/scheduler/testing/probe.h>
