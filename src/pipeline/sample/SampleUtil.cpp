@@ -2711,7 +2711,7 @@ bool tensor_has_dmabuf_memory(const Tensor& tensor) {
 bool tensor_has_certified_terminal_host_memory(const Tensor& tensor) {
   if (!tensor.storage || tensor.storage->kind != StorageKind::GstSample ||
       !tensor.storage->holder || !tensor.is_dense() || tensor.byte_offset < 0 ||
-      tensor.shape.empty() || tensor.route.memory_index < -1)
+      (tensor.shape.empty() && !is_bound_dense_scalar(tensor)) || tensor.route.memory_index < -1)
     return false;
   auto* sample = static_cast<GstSample*>(tensor.storage->holder.get());
   auto* buffer = sample && GST_IS_SAMPLE(sample) ? gst_sample_get_buffer(sample) : nullptr;

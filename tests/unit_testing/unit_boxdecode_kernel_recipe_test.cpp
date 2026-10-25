@@ -958,6 +958,8 @@ void oriented_source_geometry() {
   std::string error;
   const bool preproc_compiled = Preproc(options).compile_node_contract({}, &preproc, &error);
   require(preproc_compiled, error.c_str());
+  require(preproc.processcvu && preproc.processcvu->payload.resolved_exec_backend.empty(),
+          "public Preproc must exercise canonical unresolved-backend admission");
   CompiledNodeContract fragment;
   fragment.child_stages.push_back(preproc);
   fragment.child_stages.emplace_back(); // MLA/shape-preserving tail is not geometry authority.
@@ -1012,7 +1014,7 @@ void oriented_source_geometry() {
     require(std::holds_alternative<c::Error>(resolve(executor.preparer(), carriers)) == (sy != 2.),
             "source OBB failed valid retry or admitted nonuniform/nonfinite frame affine");
   }
-  for (int fault : {0, 1, 2}) {
+  for (int fault : {0, 1, 2, 3}) {
     auto bad = context;
     auto bad_geometry = geometry;
     auto policy = *context.upstream_preprocess;
@@ -1024,13 +1026,17 @@ void oriented_source_geometry() {
     }
     if (fault == 2)
       bad_geometry.model_width = 32;
+    if (fault == 3) {
+      policy.payload.resolved_exec_backend = "A65";
+      bad.upstream_preprocess = &policy;
+    }
     bool rejected = false;
     try {
       (void)compile_boxdecode_kernel(heads, bad, bad_geometry);
     } catch (const std::invalid_argument&) {
       rejected = true;
     }
-    require(rejected, "missing, anisotropic or wrong-canvas upstream policy admitted");
+    require(rejected, "missing, anisotropic, wrong-canvas or unsupported upstream policy admitted");
   }
 }
 

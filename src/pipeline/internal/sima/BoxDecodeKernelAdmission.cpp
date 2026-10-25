@@ -164,7 +164,11 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
     // never from tensor shapes or a fabricated identity transform.
     namespace rt = ::simaai::scheduler::client;
     using Adapter = kernel_lowering::PreprocFrameAdapter;
-    auto checked = Adapter::check_policy(input.upstream_preprocess->payload);
+    auto policy = input.upstream_preprocess->payload;
+    // Match the canonical Preproc lowering default without mutating its typed snapshot.
+    if (policy.resolved_exec_backend.empty())
+      policy.resolved_exec_backend = "EVXX";
+    auto checked = Adapter::check_policy(policy);
     if (const auto* error = std::get_if<rt::Error>(&checked))
       throw std::invalid_argument("SimaBoxDecode: upstream preprocessing: " + error->message);
     auto frozen = Adapter::checked_initial_preprocess_facts(
