@@ -1,5 +1,6 @@
 #define SIMA_NEAT_INTERNAL 1
 #include "pipeline/internal/DmabufEligibility.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
 
 #include "pipeline/internal/sima/MlaElfIoTopology.h"
 #include "pipeline/internal/sima/static_contract/DmabufPlanContractProjection.h"
@@ -502,12 +503,14 @@ std::string canonical_dmabuf_execution_json(const sc::ModelExecutionPlan& plan,
       engine = "cvu";
       break;
     }
-    commands.push_back({{"id", command.id},
-                        {"engine", engine},
-                        {"inputs", command.inputs},
-                        {"outputs", command.outputs},
-                        {"predecessors", command.predecessors},
-                        {"successors", command.successors}});
+    commands.push_back(
+        {{"id", command.id},
+         {"engine", engine},
+         {"execution_engine", static_cast<int>(command.resolved_executor.value_or(command.engine))},
+         {"inputs", command.inputs},
+         {"outputs", command.outputs},
+         {"predecessors", command.predecessors},
+         {"successors", command.successors}});
   }
   root["physical_commands"] = std::move(commands);
   root["physical_digest_material"] = physical.deterministic_digest_material;
@@ -515,7 +518,7 @@ std::string canonical_dmabuf_execution_json(const sc::ModelExecutionPlan& plan,
   const auto& placement = arena.placement();
   const char* domain = placement.domain == sc::ArenaStorageDomain::Cma
                            ? "cma"
-                           : (placement.domain == sc::ArenaStorageDomain::Dms ? "dms" : "unknown");
+                           : (placement.domain == sc::ArenaStorageDomain::Dms ? "dms" : "mixed");
   const char* provenance =
       placement.provenance == sc::ArenaAllocationProvenance::CoreAllocated
           ? "core-allocated"
@@ -539,6 +542,12 @@ std::string canonical_dmabuf_execution_json(const sc::ModelExecutionPlan& plan,
   for (const auto root_id : arena.detached_roots()) {
     detached_roots.push_back(root_id);
   }
+  Json allocations = Json::array();
+  for (const auto& part : arena.allocations())
+    allocations.push_back({{"byte_offset", part.byte_offset},
+                           {"size_bytes", part.size_bytes},
+                           {"storage_domain", static_cast<int>(part.placement.domain)},
+                           {"required_device_access", part.placement.required_device_access}});
   root["frame_arena"] = {{"allocation_bytes", arena.allocation_bytes()},
                          {"allocation_alignment_bytes", arena.allocation_alignment_bytes()},
                          {"storage_domain", domain},
@@ -546,7 +555,8 @@ std::string canonical_dmabuf_execution_json(const sc::ModelExecutionPlan& plan,
                          {"required_device_access", placement.required_device_access},
                          {"escape_policy", escape},
                          {"detached_roots", std::move(detached_roots)},
-                         {"regions", std::move(regions)}};
+                         {"regions", std::move(regions)},
+                         {"allocations", std::move(allocations)}};
   return root.dump();
 }
 
@@ -614,6 +624,8 @@ try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
       result.report.artifact_digest = sha256_text("mpk=" + *mpk_digest + ";elf=" + *elf_digest);
       return result;
     }
+
+    sima::resolve_physical_execution_targets(*physical, ContractCompileInput{});
 
     std::string arena_error;
     const auto detached_roots = sc::detached_mla_output_roots(*decoded.plan, *physical);
@@ -763,6 +775,8 @@ DmabufPlanCompileResult try_compile_dmabuf_plan(const sc::MpkPackage& package) n
       result.report.artifact_digest = artifact_digest;
       return result;
     }
+
+    sima::resolve_physical_execution_targets(*physical, ContractCompileInput{});
 
     std::string arena_error;
     const auto detached_roots = sc::detached_mla_output_roots(*decoded.plan, *physical);

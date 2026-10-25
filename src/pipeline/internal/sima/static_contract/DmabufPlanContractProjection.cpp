@@ -2147,6 +2147,7 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
       return fail(error, "separate MLA output carrier allocation is invalid");
     }
     contract->frame_arena_size_bytes = *allocation;
+    contract->frame_arena_allocations.clear();
     contract->frame_arena_storage_domain = ArenaStorageDomain::Dms;
     contract->frame_arena_provenance = ArenaAllocationProvenance::CoreAllocated;
     // This detached carrier has its own required-domain authority. Never
@@ -2159,6 +2160,9 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
     contract->frame_arena_role = FrameArenaRole::Allocate;
   } else {
     contract->frame_arena_size_bytes = arena.allocation_bytes();
+    contract->frame_arena_allocations = arena.allocations().size() > 1
+                                            ? arena.allocations()
+                                            : std::vector<FrameSlotArenaAllocation>{};
     contract->frame_arena_storage_domain = arena.placement().domain;
     contract->frame_arena_provenance = arena.placement().provenance;
     contract->frame_arena_allocation_policy = arena.placement().allocation_policy;
@@ -2320,6 +2324,9 @@ bool apply_dmabuf_plan_processcvu_contract_projection(
   }
 
   runtime->frame_arena_size_bytes = arena.allocation_bytes();
+  runtime->frame_arena_allocations = arena.allocations().size() > 1
+                                         ? arena.allocations()
+                                         : std::vector<FrameSlotArenaAllocation>{};
   runtime->frame_arena_storage_domain = arena.placement().domain;
   runtime->frame_arena_provenance = arena.placement().provenance;
   runtime->frame_arena_allocation_policy = arena.placement().allocation_policy;
@@ -2647,6 +2654,9 @@ bool apply_dmabuf_plan_processcvu_command_projection(
         return region && first && region->lifetime.first_sequence < first->sequence;
       });
   runtime->frame_arena_size_bytes = arena.allocation_bytes();
+  runtime->frame_arena_allocations = arena.allocations().size() > 1
+                                         ? arena.allocations()
+                                         : std::vector<FrameSlotArenaAllocation>{};
   runtime->frame_arena_storage_domain = arena.placement().domain;
   runtime->frame_arena_provenance = arena.placement().provenance;
   runtime->frame_arena_allocation_policy = arena.placement().allocation_policy;

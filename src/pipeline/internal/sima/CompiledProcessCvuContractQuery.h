@@ -165,6 +165,7 @@ specialize_preproc_roi_contract(const CompiledProcessCvuContract& admitted, int 
   result.physical_command_role.reset();
   payload.dmabuf_plan_contract = false;
   runtime.frame_arena_size_bytes = 0;
+  runtime.frame_arena_allocations.clear();
   runtime.frame_arena_role = FrameArenaRole::None;
   runtime.frame_arena_storage_domain = static_contract::ArenaStorageDomain::Unknown;
   runtime.frame_arena_provenance = static_contract::ArenaAllocationProvenance::Unknown;

@@ -573,6 +573,7 @@ set(UNIT_TESTS
   unit_tvm_host_module_graph_test
   unit_modelpack_multi_mla_plan_test
   unit_frame_slot_arena_plan_test
+  unit_stage_memory_policy_test
   unit_frame_arena_allocation_policy_test
   unit_dmabuf_plan_contract_projection_test
   unit_model_archive_loader_test
@@ -2326,7 +2327,8 @@ if (NOT resnet50_modelpack_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     e2e_pipelines/img_classification/resnet50_modelpack_test.cpp
   )
   add_dependencies(resnet50_modelpack_test prepare_test_fixtures)
-  target_link_libraries(resnet50_modelpack_test PRIVATE sima_neat sima_neat_internal_headers)
+  target_link_libraries(resnet50_modelpack_test PRIVATE
+    sima_neat sima_neat_internal_headers SimaScheduler::frontend)
   target_include_directories(resnet50_modelpack_test
     PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}
@@ -2337,7 +2339,7 @@ if (NOT resnet50_modelpack_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
 
   simaneat_add_test(
     NAME resnet50_modelpack_direct
-    COMMAND resnet50_modelpack_test --goldfish --only-direct
+    COMMAND resnet50_modelpack_test --goldfish --only-direct --memory-policy
   )
   simaneat_add_test(
     NAME resnet50_modelpack_jpeg

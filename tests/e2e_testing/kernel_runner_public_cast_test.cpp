@@ -6,6 +6,7 @@
 #include <gstsimaaitensorbuffer_meta.h>
 #include <simaai/scheduler/testing/probe.h>
 #include <simaai/scheduler/client/tensor_buffer.h>
+#include <simaai/scheduler/client/dma_memory.h>
 #include <gst/gst.h>
 
 #include <algorithm>
@@ -79,6 +80,11 @@ void require_publication(const Tensor& tensor, bool compact) {
   require(storage && storage->kind == StorageKind::GstSample && storage->holder,
           "output lost zero-copy GstSample owner");
   auto* buffer = gst_sample_get_buffer(static_cast<GstSample*>(storage->holder.get()));
+  namespace dma = simaai::scheduler::client::dma;
+  require(gst_buffer_n_memory(buffer) == 1, "A65 Cast output lost its single carrier");
+  const auto backing = dma::DmaBufMemory::retain(gst_buffer_peek_memory(buffer, 0));
+  require(backing && backing->knownHeapKind() == dma::HeapKind::MlaDms,
+          "A65-only Cast output must use required DMS");
   std::string error;
   const auto publication = simaai::gst::tensor_buffer_publication(buffer, &error);
   require(error.empty() && bool(publication) == compact, "output publication mode mismatch");

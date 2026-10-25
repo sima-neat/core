@@ -226,36 +226,26 @@ within one frame. It avoids exposing independent CPU and device work as serial
 pipeline stalls, without another synchronization worker. Graph construction sets
 budgets once; no per-frame operation-specific scheduling policy is needed.
 
-### Explicit frame-arena capacity preference
+### Frame-arena placement
 
-Storage placement and allocation fallback are separate contracts. The existing
-`ArenaDmsPolicy::PreferDmsForEligible` selects **required DMS** for eligible closed
-MLA/A65 lifetimes; it does not permit fallback when DMS allocation fails. Existing
-production callers keep that behavior.
+Core resolves executors before packing carriers:
 
-The internal planner can explicitly select `ArenaDmsPolicy::PreferDmsThenCma`.
-This produces `ArenaAllocationPolicy::PreferDmsThenCma` only for Core-owned DMS
-arenas whose complete consumer access set excludes EV74. Any EV74 consumer makes
-that opt-in compilation fail; it must not become a hidden staging copy or an
-assumption that every CMA range is reachable. External-adopted, unknown, custom,
-and uncached/control storage cannot acquire this preference.
+- Any EV74 writer or reader requires CMA.
+- Carriers used only by MLA/A65 require DMS.
 
-This is an internal planning capability, not a new public ModelPack option or an
-environment switch. Default public workflows remain strict. The policy travels
-through existing MLA/numerical contract projection into Scheduler's installed
-static-manifest ABI **31**, or the direct-TVM lane schema **3**. New JSON readers
-accept historical strict manifest JSON and TVM schema 2 as `RequiredDomain`; a
-preference field in an old schema is rejected. Old static ABI consumers reject
-31, and old TVM consumers reject schema 3. Historical Core JSON readers may ignore
-unknown fields and reconstruct strict placement; that is not support for transporting
-a new preference through an old Core. Rebuild Core and Scheduler together;
-Runner's public library ABI and canonical Kernels request semantics are unchanged.
+Fan-out includes every consumer; views share their carrier's placement. Compatible
+imported camera/application DMA-BUFs retain their backing, offsets, strides and
+parent loans.
 
-Scheduler allocates the ordered canonical DMS/CMA alternatives once at pool setup,
-records the actual selected heap, and performs CMA initialization when CMA was
-actually selected. Reuse validates actual provenance against the authored policy:
-strict DMS cannot admit CMA, while a validated preference can admit either. No
-policy JSON is parsed during warmed execution, and no payload migration is added.
+The existing lifetime proof packs each heap separately. Scheduler allocates the
+parts through Runner and resolves each span within one allocation, without copies.
+
+Defaults require the selected heap. The internal `ArenaDmsPolicy::PreferDmsThenCma`
+opt-in remains limited to Core-owned DMS allocations with no EV74 access.
+
+Layouts use static-manifest ABI **32** and direct-TVM schema **4**; historical
+single-allocation JSON (manifest 30/31, TVM 2/3) remains readable. Rebuild Core and
+Scheduler together; Runner's public ABI is unchanged.
 
 ### Default device-to-CPU coherency
 
@@ -571,10 +561,10 @@ fusion. This prevents storage placement from silently changing MLA port arity
 or model behavior.
 
 All MLA stages in one accepted graph project through the same retained
-`FrameSlotArenaPlan`. The first materializing strict stage allocates the arena;
-later MLA stages use `ReuseInput` and submit exact root-relative IFM/OFM views
-over that same DMA-BUF. Stage-less projection helpers remain available only
-for an unambiguous one-MLA graph and fail closed for multi-stage plans.
+`FrameSlotArenaPlan`. The first materializing stage allocates its heap partitions;
+later stages retain them with `ReuseInput` and submit exact IFM/OFM spans within
+the containing DMA-BUF. Stage-less projection helpers require an unambiguous
+one-MLA graph.
 
 Core's immutable MPK package is the inference-contract authority. Logical public
 shapes remain distinct from native MLA sample spans, whole-batch CVU execution
@@ -640,11 +630,10 @@ without enabling verbose GStreamer diagnostics.
 #### Checked numerical stages
 
 At graph preparation, Core projects producer output regions into consumer input
-bindings. For a declared frame arena, each region addresses the same DMA-BUF at
-its authored arena offset; a region ID is not a `GstMemory` index. The shared
-projection used by BoxDecode and ArgMax validates region bounds and preserves
-the separate head-relative offset. Direct-carrier and runtime-binding inputs
-without a declared producer arena retain their original addressing mode.
+bindings. An authored arena span resolves to its containing DMA-BUF and local
+offset; a region ID is not a `GstMemory` index. The shared BoxDecode/ArgMax
+projection checks bounds and preserves the separate head-relative offset.
+Direct-carrier and runtime-binding inputs keep their original addressing mode.
 
 Core lowers Preproc, transforms and vision stages, including ArgMax, BoxDecode
 and SuperPoint, to canonical requests and explicit tensor-port mappings.
@@ -965,8 +954,8 @@ the same frame-arena planner. Application inputs retain their physical bindings
 and DMA-BUF storage; they are not treated as a full-model arena. Participating
 model fragments and typed model-owned CVU stages share one build-local placement
 plan, preserving command and value identities. The cached full-model plan stays
-immutable. A real model-owned preprocessing producer retains its admitted shared
-arena for downstream stages.
+immutable. Model-owned preprocessing participates in that build-local
+plan and retains its allocations for downstream stages.
 
 Device transfers and InputStream allocation use standard DMA-BUF memory and
 resolved CMA/DMS placement. Shared TensorSet envelopes retain each source
@@ -999,12 +988,12 @@ filesystem paths. Execution preparation records the same canonical plan digest a
 fails rather than constructing or retrying a legacy executor after rejection.
 
 Only after admission does Core set `processmla.dmabuf_plan_contract` in static
-manifest ABI version 31. Core also projects each backend port's `required_alignment_bytes`
+manifest ABI version 32. Core also projects each backend port's `required_alignment_bytes`
 and the immutable frame-arena placement plan into its physical buffer record;
 ProcessMLA consumes that value rather than duplicating the legacy
 page-alignment policy. It consumes these Core-owned facts; it must not infer missing ports
 or fall back to a legacy transport. Core and every plugin that consumes the static-manifest
-header must therefore be built and released together at ABI version 31.
+header must therefore be built and released together at ABI version 32.
 
 When `cv::Mat` input is materialized as a Tensor, unresolved `Auto` placement
 uses the owning Tensor default: copy directly into EV74-visible DMA-BUF-backed

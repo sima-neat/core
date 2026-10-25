@@ -4,7 +4,10 @@
 #include "model/internal/ModelPack.h"
 #include "model/internal/InputPlanner.h"
 #include "model/internal/RoutePlanner.h"
+#include "nodes/common/Queue.h"
+#include "nodes/sima/Cast.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
+#include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/RenderedMlaContractQuery.h"
 #include "pipeline/internal/SelectedStageBoundary.h"
@@ -731,6 +734,38 @@ RUN_TEST(
         require(internal_input.logical_dtype == "BF16" && internal_input.span_size_bytes == 64,
                 "the internal MLA must retain its distinct BF16 ingress without claiming source "
                 "authority");
+
+        for (const bool queued : {false, true}) {
+          auto nodes = transform_model.to_nodes(ModelStage::Full);
+          if (queued)
+            nodes.push_back(simaai::neat::nodes::Queue());
+          simaai::neat::CastOptions cast;
+          cast.direction = simaai::neat::CastDirection::Fp32ToBf16;
+          nodes.push_back(simaai::neat::nodes::Cast(cast));
+          simaai::neat::ContractCompileInput input;
+          input.processcvu_requested_run_target = "EV74";
+          input.processcvu.post_run_target = "A65";
+          simaai::neat::pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
+          const auto compiled = simaai::neat::compile_node_contracts(nodes, input, &diagnostics);
+          const auto manifest =
+              simaai::neat::render_manifest_from_compiled_contracts(compiled, input, &diagnostics);
+          require(manifest && diagnostics.errors.empty() && manifest->stages.size() == 4U,
+                  "model-to-EV Cast must compile with or without a transport Queue");
+          const auto& producer = manifest->stages[2];
+          const auto offset = producer.physical_outputs.front().source_byte_offset;
+          const auto allocation = std::find_if(
+              producer.frame_arena_allocations.begin(), producer.frame_arena_allocations.end(),
+              [&](const auto& part) {
+                return offset >= 0 && static_cast<std::uint64_t>(offset) >= part.byte_offset &&
+                       static_cast<std::uint64_t>(offset) - part.byte_offset < part.size_bytes;
+              });
+          require(allocation != producer.frame_arena_allocations.end() &&
+                      allocation->placement.domain == sc::ArenaStorageDomain::Cma &&
+                      (allocation->placement.required_device_access &
+                       static_cast<std::uint32_t>(sc::ArenaDeviceAccess::Ev74)),
+                  queued ? "Queue must preserve the external EV74 consumer's CMA requirement"
+                         : "external EV74 consumer must require CMA on its producer's output");
+        }
       }
       fs::remove(transform_archive, ec);
       fs::remove_all(transform_package, ec);
@@ -941,12 +976,8 @@ RUN_TEST(
       require(multirow_rejected,
               "[2,1225] QMLA row pitch must fail closed before A65 drops its strides");
 
-      // A CPU epoch follows the deterministic rendered schedule, not the
-      // physical DAG's degree. APU_2 joins the retained MLA root with the
-      // immediately preceding APU_1 output, so it has two physical
-      // predecessors but remains in the same Core-owned CMA CPU interval.
-      // The following EV74 Cast is a real device interruption and must
-      // force the second A65 command to end that interval.
+      // APU_2 joins the MLA root with APU_1. Its EV74 successor requires a
+      // separate allocation, so the mixed arena cannot retain one CPU epoch.
       const fs::path join_package =
           root.parent_path() / "neat-modelpack-a65-join-device-boundary-unit";
       fs::remove_all(join_package, ec);
@@ -986,21 +1017,37 @@ RUN_TEST(
               "interstitial CVU work must not reappear as terminal graph postprocessing");
       const auto join_contracts =
           direct_tvm_contracts(join_model.backend_fragment(ModelStage::MlaOnly));
-      require(join_contracts.size() == 2U && join_contracts[0].at("storage_domain") == "cma" &&
-                  join_contracts[1].at("storage_domain") == "cma" &&
+      require(join_contracts.size() == 2U && join_contracts[0].at("storage_domain") == "mixed" &&
+                  join_contracts[1].at("storage_domain") == "mixed" &&
                   join_contracts[0].at("allocation_provenance") == "core_allocated" &&
                   join_contracts[1].at("allocation_provenance") == "core_allocated" &&
                   join_contracts[0].at("cpu_epoch_start").get<bool>() &&
-                  !join_contracts[0].at("cpu_epoch_end").get<bool>() &&
-                  !join_contracts[1].at("cpu_epoch_start").get<bool>() &&
+                  join_contracts[0].at("cpu_epoch_end").get<bool>() &&
+                  join_contracts[1].at("cpu_epoch_start").get<bool>() &&
                   join_contracts[1].at("cpu_epoch_end").get<bool>() &&
                   join_contracts[0].at("command_id").get<std::size_t>() ==
                       join_plan.infer[1].physical_command_ids.front() &&
                   join_contracts[1].at("command_id").get<std::size_t>() ==
                       join_plan.infer[2].physical_command_ids.front() &&
                   join_contracts[1].at("inputs").size() == 2U,
-              "A65 DAG join split one rendered CMA CPU epoch or crossed an EV74 "
-              "device interruption");
+              "A65 DAG join lost partitioned placement or independent CPU epochs");
+      const auto cpu_package = root.parent_path() / "neat-modelpack-a65-join-dms-unit";
+      fs::remove_all(cpu_package, ec);
+      fs::copy(join_package, cpu_package, fs::copy_options::recursive);
+      auto cpu_manifest = nlohmann::json::parse(read_text(cpu_package / "etc" / "model_mpk.json"));
+      auto& cpu_plugins = cpu_manifest["plugins"];
+      cpu_plugins.erase(cpu_plugins.begin() + 3, cpu_plugins.end());
+      write_text(cpu_package / "etc" / "model_mpk.json", cpu_manifest.dump());
+      ModelPack cpu_model(cpu_package.string());
+      const auto cpu_contracts = direct_tvm_contracts(cpu_model.backend_fragment(ModelStage::Full));
+      require(cpu_contracts.size() == 2U && cpu_contracts[0].at("storage_domain") == "dms" &&
+                  cpu_contracts[1].at("storage_domain") == "dms" &&
+                  cpu_contracts[0].at("cpu_epoch_start").get<bool>() &&
+                  !cpu_contracts[0].at("cpu_epoch_end").get<bool>() &&
+                  !cpu_contracts[1].at("cpu_epoch_start").get<bool>() &&
+                  cpu_contracts[1].at("cpu_epoch_end").get<bool>(),
+              "adjacent A65 commands in one DMS allocation must share their CPU epoch");
+      fs::remove_all(cpu_package, ec);
       fs::remove_all(join_package, ec);
       fs::remove_all(singleton_package, ec);
       fs::remove_all(multirow_package, ec);
@@ -1349,16 +1396,16 @@ RUN_TEST(
                 "RF-DETR fragment lost one prepared direct A65 contract");
         for (std::size_t index = 0; index < a65_contracts.size(); ++index) {
           const auto& contract = a65_contracts[index];
-          require(
-              contract.at("schema") == "sima.neat.direct-tvm-lane" && contract.at("version") == 3 &&
-                  contract.at("allocation_policy") == "required_domain" &&
-                  contract.at("storage_domain") == "cma" &&
-                  contract.at("allocation_provenance") == "core_allocated" &&
-                  (contract.at("required_device_access").get<std::uint32_t>() & 1U) != 0U &&
-                  contract.at("cpu_epoch_start").get<bool>() == (index == 0U) &&
-                  contract.at("cpu_epoch_end").get<bool>() == (index + 1U == a65_contracts.size()),
-              "RF-DETR direct A65 commands lost one maximal shared CPU epoch or its "
-              "Core-authored arena placement");
+          require(contract.at("schema") == "sima.neat.direct-tvm-lane" &&
+                      contract.at("version") == 4 &&
+                      contract.at("allocation_policy") == "required_domain" &&
+                      contract.at("storage_domain") == "mixed" &&
+                      contract.at("allocation_provenance") == "core_allocated" &&
+                      (contract.at("required_device_access").get<std::uint32_t>() & 1U) != 0U &&
+                      contract.at("cpu_epoch_start").get<bool>() &&
+                      contract.at("cpu_epoch_end").get<bool>(),
+                  "RF-DETR direct A65 commands lost partitioned CPU epoch boundaries or their "
+                  "Core-authored arena placement");
         }
       }
 

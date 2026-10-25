@@ -127,7 +127,7 @@ bool place_group_first_fit(const std::vector<std::size_t>& group_indices,
         return fail(error, "frame-slot arena group placement overflows");
       }
       for (const auto& other : placed) {
-        if (!lifetimes_conflict(member, other) ||
+        if (member.storage_domain != other.storage_domain || !lifetimes_conflict(member, other) ||
             !byte_ranges_overlap(member_offset, member.size_bytes, other.byte_offset,
                                  other.size_bytes)) {
           continue;
@@ -435,6 +435,48 @@ std::optional<FrameSlotArenaPlan> FrameSlotArenaPlan::compile_impl(
     }
   }
 
+  if (dms_policy != ArenaDmsPolicy::CmaOnly &&
+      dms_policy != ArenaDmsPolicy::RequireDmsForEligible &&
+      dms_policy != ArenaDmsPolicy::PreferDmsThenCma) {
+    fail(error, "frame-slot arena has unknown allocation policy");
+    return std::nullopt;
+  }
+  std::unordered_map<CarrierId, std::uint32_t> carrier_access;
+  const auto add_access = [&](ValueId value, ArenaDeviceAccess access) {
+    carrier_access[carrier_id(execution_plan, value)] |= static_cast<std::uint32_t>(access);
+  };
+  if (physical_plan) {
+    for (const auto& command : physical_plan->commands) {
+      if (!selected[command.id])
+        continue;
+      const auto engine = command.resolved_executor.value_or(command.engine);
+      const auto access = engine == PhysicalEngine::Mla   ? ArenaDeviceAccess::Mla
+                          : engine == PhysicalEngine::A65 ? ArenaDeviceAccess::CpuA65
+                                                          : ArenaDeviceAccess::Ev74;
+      for (const auto value : command.inputs)
+        add_access(value, access);
+      for (const auto value : command.outputs)
+        add_access(value, access);
+    }
+  } else {
+    for (const auto& op : ops) {
+      if (is_address_relation_op(op))
+        continue;
+      const auto access = op.kind == OpKind::Mla       ? ArenaDeviceAccess::Mla
+                          : op.kind == OpKind::HostTvm ? ArenaDeviceAccess::CpuA65
+                                                       : ArenaDeviceAccess::Ev74;
+      for (const auto value : op.inputs)
+        add_access(value, access);
+      for (const auto value : op.outputs)
+        add_access(value, access);
+    }
+  }
+  for (const auto value : published_outputs) {
+    add_access(value, ArenaDeviceAccess::CpuA65);
+    if (route)
+      carrier_access[carrier_id(execution_plan, value)] |= route->output_device_access;
+  }
+
   FrameSlotArenaPlan result;
   result.reuse_policy_ = reuse;
   result.imported_inputs_.assign(imported_inputs.begin(), imported_inputs.end());
@@ -478,6 +520,18 @@ std::optional<FrameSlotArenaPlan> FrameSlotArenaPlan::compile_impl(
     region.required_alignment_bytes = alignment[carrier.id];
     region.lifetime.first_sequence = producer->second;
     region.lifetime.last_sequence = std::max(producer->second, last_sequence[carrier.id]);
+    const auto access = carrier_access[carrier.id];
+    if (access == 0U) {
+      fail(error, "frame-slot carrier has no proved device or CPU consumer");
+      return std::nullopt;
+    }
+    const bool ev74 = (access & static_cast<std::uint32_t>(ArenaDeviceAccess::Ev74)) != 0U;
+    if (ev74 && dms_policy == ArenaDmsPolicy::PreferDmsThenCma) {
+      fail(error, "DMS-to-CMA capacity fallback cannot authorize an EV74 consumer");
+      return std::nullopt;
+    }
+    region.storage_domain = dms_policy == ArenaDmsPolicy::CmaOnly || ev74 ? ArenaStorageDomain::Cma
+                                                                          : ArenaStorageDomain::Dms;
     result.regions_.push_back(std::move(region));
   }
   if (result.regions_.empty()) {
@@ -502,20 +556,22 @@ std::optional<FrameSlotArenaPlan> FrameSlotArenaPlan::compile_impl(
               return lifetimes_overlap(lhs.lifetime, rhs.lifetime);
             }};
 
-  std::uint64_t cursor = 0U;
   if (reuse == FrameSlotArenaReuse::Disabled) {
+    std::uint64_t cma_cursor = 0U;
+    std::uint64_t dms_cursor = 0U;
     for (auto& region : result.regions_) {
+      auto& cursor = region.storage_domain == ArenaStorageDomain::Cma ? cma_cursor : dms_cursor;
       const auto offset = align_up(cursor, region.required_alignment_bytes);
       if (!offset || !checked_add(*offset, region.size_bytes, &cursor)) {
         fail(error, "frame-slot no-reuse oracle overflows");
         return std::nullopt;
       }
       region.byte_offset = *offset;
-      result.used_bytes_ = cursor;
     }
   } else {
     struct LifetimeGroup {
       ValueLifetime lifetime;
+      ArenaStorageDomain domain;
       std::vector<std::size_t> region_indices;
       std::uint64_t used_bytes = 0U;
       std::uint64_t alignment = 0U;
@@ -524,11 +580,12 @@ std::optional<FrameSlotArenaPlan> FrameSlotArenaPlan::compile_impl(
     for (std::size_t index = 0; index < result.regions_.size(); ++index) {
       const auto lifetime = result.regions_[index].lifetime;
       auto group = std::find_if(groups.begin(), groups.end(), [&](const auto& item) {
-        return item.lifetime.first_sequence == lifetime.first_sequence &&
+        return item.domain == result.regions_[index].storage_domain &&
+               item.lifetime.first_sequence == lifetime.first_sequence &&
                item.lifetime.last_sequence == lifetime.last_sequence;
       });
       if (group == groups.end()) {
-        groups.push_back({lifetime, {}, 0U, 0U});
+        groups.push_back({lifetime, result.regions_[index].storage_domain, {}, 0U, 0U});
         group = std::prev(groups.end());
       }
       group->region_indices.push_back(index);
@@ -591,18 +648,72 @@ std::optional<FrameSlotArenaPlan> FrameSlotArenaPlan::compile_impl(
           fail(error, "frame-slot arena region end overflows");
           return std::nullopt;
         }
-        result.used_bytes_ = std::max(result.used_bytes_, end);
         placed.push_back(region);
       }
     }
   }
 
+  result.used_bytes_ = 0U;
+  for (const auto& region : result.regions_)
+    result.allocation_alignment_bytes_ =
+        std::max(result.allocation_alignment_bytes_, region.required_alignment_bytes);
+  for (const auto domain : {ArenaStorageDomain::Cma, ArenaStorageDomain::Dms}) {
+    std::uint64_t bytes = 0U;
+    ArenaPlacement placement;
+    placement.domain = domain;
+    placement.provenance = ArenaAllocationProvenance::CoreAllocated;
+    placement.allocation_policy = dms_policy == ArenaDmsPolicy::PreferDmsThenCma
+                                      ? ArenaAllocationPolicy::PreferDmsThenCma
+                                      : ArenaAllocationPolicy::RequiredDomain;
+    for (const auto& region : result.regions_) {
+      if (region.storage_domain != domain)
+        continue;
+      std::uint64_t end = 0U;
+      if (!checked_add(region.byte_offset, region.size_bytes, &end)) {
+        fail(error, "frame-slot allocation extent overflows");
+        return std::nullopt;
+      }
+      bytes = std::max(bytes, end);
+      placement.required_device_access |= carrier_access[region.carrier_id];
+      const bool published =
+          std::any_of(published_outputs.begin(), published_outputs.end(), [&](ValueId value) {
+            return carrier_id(execution_plan, value) == region.carrier_id;
+          });
+      if (published)
+        placement.escape = ArenaEscapePolicy::CpuMappablePublic;
+    }
+    if (!bytes)
+      continue;
+    const auto size = align_up(bytes, result.allocation_alignment_bytes_);
+    const auto base = result.allocation_bytes_;
+    if (!size || !checked_add(base, *size, &result.allocation_bytes_)) {
+      fail(error, "frame-slot allocation rounding overflows");
+      return std::nullopt;
+    }
+    result.allocations_.push_back({base, *size, placement});
+    for (auto& region : result.regions_) {
+      if (region.storage_domain != domain)
+        continue;
+      if (!checked_add(base, region.byte_offset, &region.byte_offset)) {
+        fail(error, "frame-slot allocation base overflows");
+        return std::nullopt;
+      }
+    }
+    result.used_bytes_ += bytes;
+    result.placement_.required_device_access |= placement.required_device_access;
+    if (placement.escape == ArenaEscapePolicy::CpuMappablePublic)
+      result.placement_.escape = placement.escape;
+  }
+  result.placement_.domain = result.allocations_.size() == 1U
+                                 ? result.allocations_.front().placement.domain
+                                 : ArenaStorageDomain::Mixed;
+  result.placement_.provenance = ArenaAllocationProvenance::CoreAllocated;
+  result.placement_.allocation_policy = result.allocations_.front().placement.allocation_policy;
+
   std::unordered_map<CarrierId, std::size_t> carrier_to_region;
   for (std::size_t index = 0; index < result.regions_.size(); ++index) {
     const auto& region = result.regions_[index];
     carrier_to_region.emplace(region.carrier_id, index);
-    result.allocation_alignment_bytes_ =
-        std::max(result.allocation_alignment_bytes_, region.required_alignment_bytes);
     if (region.byte_offset % region.required_alignment_bytes != 0U) {
       fail(error, "frame-slot arena produced an unaligned region");
       return std::nullopt;
@@ -667,102 +778,6 @@ std::optional<FrameSlotArenaPlan> FrameSlotArenaPlan::compile_impl(
       }
     }
   }
-  const auto allocation = align_up(result.used_bytes_, result.allocation_alignment_bytes_);
-  if (!allocation || *allocation == 0U) {
-    fail(error, "frame-slot arena allocation rounding overflows");
-    return std::nullopt;
-  }
-  result.allocation_bytes_ = *allocation;
-
-  std::uint32_t required_access = 0U;
-  const auto add_access = [&](const ArenaDeviceAccess access) {
-    required_access |= static_cast<std::uint32_t>(access);
-  };
-  if (physical_plan) {
-    for (const auto& command : physical_plan->commands) {
-      if (!selected[command.id]) {
-        continue;
-      }
-      const bool touches_arena =
-          std::any_of(command.inputs.begin(), command.inputs.end(),
-                      [&](const ValueId id) { return result.region(id) != nullptr; }) ||
-          std::any_of(command.outputs.begin(), command.outputs.end(),
-                      [&](const ValueId id) { return result.region(id) != nullptr; });
-      if (!touches_arena) {
-        continue;
-      }
-      switch (command.engine) {
-      case PhysicalEngine::Mla:
-        add_access(ArenaDeviceAccess::Mla);
-        break;
-      case PhysicalEngine::A65:
-        add_access(ArenaDeviceAccess::CpuA65);
-        break;
-      case PhysicalEngine::Cvu:
-        // Physical CVU commands are placement-polymorphic until Core resolves
-        // their requested target while rendering.  The arena is compiled
-        // earlier, so conservatively require EV74 visibility.  This preserves
-        // correctness and CMA placement; an A65-resolved CVU command may only
-        // relax this bit in a future single-authority compile pass.
-        add_access(ArenaDeviceAccess::Ev74);
-        break;
-      }
-    }
-  } else {
-    for (const auto& op : execution_plan.ops()) {
-      const bool touches_arena =
-          std::any_of(op.inputs.begin(), op.inputs.end(),
-                      [&](const ValueId id) { return result.region(id) != nullptr; }) ||
-          std::any_of(op.outputs.begin(), op.outputs.end(),
-                      [&](const ValueId id) { return result.region(id) != nullptr; });
-      if (!touches_arena) {
-        continue;
-      }
-      if (op.kind == OpKind::Mla) {
-        add_access(ArenaDeviceAccess::Mla);
-      } else if (op.kind == OpKind::HostTvm) {
-        add_access(ArenaDeviceAccess::CpuA65);
-      } else if (op.kind != OpKind::PassThrough && op.kind != OpKind::Slice &&
-                 op.kind != OpKind::Reshape && op.kind != OpKind::Unpack) {
-        add_access(ArenaDeviceAccess::Ev74);
-      }
-    }
-  }
-
-  ArenaEscapePolicy escape = ArenaEscapePolicy::InternalOnly;
-  for (const auto output : published_outputs) {
-    if (result.region(output) != nullptr) {
-      escape = ArenaEscapePolicy::CpuMappablePublic;
-      add_access(ArenaDeviceAccess::CpuA65);
-    }
-  }
-  if (route) {
-    required_access |= route->output_device_access;
-  }
-  if (required_access == 0U) {
-    fail(error, "frame-slot arena has no proved device or CPU consumer");
-    return std::nullopt;
-  }
-  const bool ev74_required =
-      (required_access & static_cast<std::uint32_t>(ArenaDeviceAccess::Ev74)) != 0U;
-  if (dms_policy != ArenaDmsPolicy::CmaOnly && dms_policy != ArenaDmsPolicy::PreferDmsForEligible &&
-      dms_policy != ArenaDmsPolicy::PreferDmsThenCma) {
-    fail(error, "frame-slot arena has unknown allocation policy");
-    return std::nullopt;
-  }
-  if (dms_policy == ArenaDmsPolicy::PreferDmsThenCma && ev74_required) {
-    fail(error, "DMS-to-CMA capacity fallback cannot authorize an EV74 consumer");
-    return std::nullopt;
-  }
-  result.placement_.domain = dms_policy != ArenaDmsPolicy::CmaOnly && !ev74_required
-                                 ? ArenaStorageDomain::Dms
-                                 : ArenaStorageDomain::Cma;
-  result.placement_.allocation_policy = dms_policy == ArenaDmsPolicy::PreferDmsThenCma
-                                            ? ArenaAllocationPolicy::PreferDmsThenCma
-                                            : ArenaAllocationPolicy::RequiredDomain;
-  result.placement_.provenance = ArenaAllocationProvenance::CoreAllocated;
-  result.placement_.required_device_access = required_access;
-  result.placement_.escape = escape;
   if (error) {
     error->clear();
   }
@@ -829,6 +844,10 @@ FrameSlotArenaReuse FrameSlotArenaPlan::reuse_policy() const noexcept {
 
 const ArenaPlacement& FrameSlotArenaPlan::placement() const noexcept {
   return placement_;
+}
+
+const std::vector<FrameSlotArenaAllocation>& FrameSlotArenaPlan::allocations() const noexcept {
+  return allocations_;
 }
 
 } // namespace simaai::neat::pipeline_internal::sima::static_contract

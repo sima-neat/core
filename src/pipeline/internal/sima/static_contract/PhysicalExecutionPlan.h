@@ -58,6 +58,9 @@ struct PhysicalCommand {
   PhysicalCohortId cohort_id = 0;
   std::uint64_t topological_rank = 0;
   PhysicalEngine engine = PhysicalEngine::Cvu;
+  // CVU commands retain their lowering kind while placement records the
+  // resolved executor. An unresolved CVU command conservatively requires EV74.
+  std::optional<PhysicalEngine> resolved_executor;
   PhysicalCommandRole role = PhysicalCommandRole::NonCvu;
   // Engine-scoped semantic implementation key; CVU uses the exact Kernels name.
   std::string implementation_id;

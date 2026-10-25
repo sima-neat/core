@@ -42,6 +42,11 @@ and cloning reject it. Explicit encoded, byte-stream, tessellated and text
 carriers retain their carrier-byte semantics. This does not change the byte
 extent returned by public `map()`.
 
+Backend-created carriers use CMA whenever EV74 writes or reads them; MLA/A65-only
+carriers use DMS. Fan-out includes all consumers, and views share their carrier.
+Compatible imported camera/application DMA-BUFs keep their backing, offsets,
+strides and parent loans.
+
 ## Cache coherence
 
 Scheduler prepares CPU/device access through Runner's shared memory authority,
@@ -66,7 +71,7 @@ Virtual addresses from separate mappings need not be identical. Releasing one
 reader cannot invalidate another, and only the final owner performs the required
 END transition.
 
-Owned cached CMA requires cold platform and exporter admission; failure is
+Owned cached CMA and DMS require cold platform and exporter admission; failure is
 actionable, not permission to fall back to whole-buffer synchronization. Imported DMA-BUFs and other heaps keep
 their exporter contract through the same ownership engine.
 

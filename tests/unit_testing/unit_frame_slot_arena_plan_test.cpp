@@ -510,7 +510,7 @@ void test_grouped_physical_command_keeps_every_input_and_output_disjoint() {
 
   const auto cma_with_ev = sc::FrameSlotArenaPlan::compile(
       execution, physical, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096, &error,
-      sc::ArenaDmsPolicy::PreferDmsForEligible);
+      sc::ArenaDmsPolicy::RequireDmsForEligible);
   CHECK(cma_with_ev.has_value());
   CHECK(cma_with_ev && cma_with_ev->placement().domain == sc::ArenaStorageDomain::Cma);
 
@@ -518,7 +518,7 @@ void test_grouped_physical_command_keeps_every_input_and_output_disjoint() {
   a65_physical.commands[1].engine = sc::PhysicalEngine::A65;
   const auto dms = sc::FrameSlotArenaPlan::compile(
       execution, a65_physical, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096, &error,
-      sc::ArenaDmsPolicy::PreferDmsForEligible);
+      sc::ArenaDmsPolicy::RequireDmsForEligible);
   CHECK(dms.has_value());
   if (dms) {
     CHECK(dms->placement().domain == sc::ArenaStorageDomain::Dms);
@@ -539,7 +539,7 @@ void test_grouped_physical_command_keeps_every_input_and_output_disjoint() {
   CHECK(!forbidden && error.find("EV74") != std::string::npos);
 }
 
-void test_resolved_a65_mla_a65_route_selects_one_dms_arena() {
+void test_resolved_executors_select_required_heap_partitions() {
   sc::ModelExecutionPlanData data;
   data.contract_version = "arena-a65-mla-a65-dms-v1";
   data.values = {
@@ -633,7 +633,7 @@ void test_resolved_a65_mla_a65_route_selects_one_dms_arena() {
 
   const auto arena =
       sc::FrameSlotArenaPlan::compile(*execution, physical, sc::FrameSlotArenaReuse::Disabled,
-                                      4096U, &error, sc::ArenaDmsPolicy::PreferDmsForEligible);
+                                      4096U, &error, sc::ArenaDmsPolicy::RequireDmsForEligible);
   CHECK(arena.has_value());
   CHECK(error.empty());
   if (!arena) {
@@ -647,6 +647,44 @@ void test_resolved_a65_mla_a65_route_selects_one_dms_arena() {
   CHECK(arena->region(1) != nullptr);
   CHECK(arena->region(2) != nullptr);
   CHECK(arena->region(3) != nullptr);
+
+  for (const auto pre_engine : {sc::PhysicalEngine::Cvu, sc::PhysicalEngine::A65}) {
+    for (const auto post_engine : {sc::PhysicalEngine::Cvu, sc::PhysicalEngine::A65}) {
+      auto resolved = physical;
+      resolved.commands[0].engine = sc::PhysicalEngine::Cvu;
+      resolved.commands[0].resolved_executor = pre_engine;
+      resolved.commands[2].engine = sc::PhysicalEngine::Cvu;
+      resolved.commands[2].resolved_executor = post_engine;
+      const auto placed = sc::FrameSlotArenaPlan::compile(
+          *execution, resolved, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096U, &error,
+          sc::ArenaDmsPolicy::RequireDmsForEligible);
+      CHECK(placed.has_value());
+      if (!placed)
+        continue;
+      CHECK(placed->region(0U) == nullptr);
+      CHECK(placed->region(1U)->storage_domain == (pre_engine == sc::PhysicalEngine::Cvu
+                                                       ? sc::ArenaStorageDomain::Cma
+                                                       : sc::ArenaStorageDomain::Dms));
+      for (const auto id : {2U, 3U})
+        CHECK(placed->region(id)->storage_domain == (post_engine == sc::PhysicalEngine::Cvu
+                                                         ? sc::ArenaStorageDomain::Cma
+                                                         : sc::ArenaStorageDomain::Dms));
+      CHECK(placed->allocations().size() == (pre_engine == post_engine ? 1U : 2U));
+      std::uint64_t end = 0U;
+      for (std::size_t index = 0; index < placed->allocations().size(); ++index) {
+        const auto& allocation = placed->allocations()[index];
+        CHECK(allocation.byte_offset == end);
+        end += allocation.size_bytes;
+        for (const auto& region : placed->regions()) {
+          if (region.storage_domain != allocation.placement.domain)
+            continue;
+          CHECK(region.byte_offset >= allocation.byte_offset);
+          CHECK(region.byte_offset + region.size_bytes <= end);
+        }
+      }
+      CHECK(end == placed->allocation_bytes());
+    }
+  }
 }
 
 void test_multiple_values_share_one_authored_carrier() {
@@ -799,7 +837,7 @@ int main() {
   test_invalid_alignment_fails_closed();
   test_read_expressions_do_not_replace_real_producers();
   test_grouped_physical_command_keeps_every_input_and_output_disjoint();
-  test_resolved_a65_mla_a65_route_selects_one_dms_arena();
+  test_resolved_executors_select_required_heap_partitions();
   test_multiple_values_share_one_authored_carrier();
   test_fused_intermediates_are_not_materialized_at_capacity_boundaries();
   test_producer_direct_pack_preserves_every_lane_and_parent_offset();

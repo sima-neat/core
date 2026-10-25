@@ -50,6 +50,7 @@ struct MlaStaticContract {
   std::vector<LogicalTensorStaticSpec> logical_outputs;   ///< Logical output specs.
   std::vector<QuantStaticSpec> output_quant;              ///< Per-output quant params, if any.
   std::uint64_t frame_arena_size_bytes = 0;
+  std::vector<static_contract::FrameSlotArenaAllocation> frame_arena_allocations;
   FrameArenaRole frame_arena_role = FrameArenaRole::None;
   static_contract::ArenaStorageDomain frame_arena_storage_domain =
       static_contract::ArenaStorageDomain::Unknown;

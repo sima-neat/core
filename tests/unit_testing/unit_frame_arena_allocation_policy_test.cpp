@@ -58,7 +58,7 @@ RUN_TEST(
       const auto sources = sc::resolve_mla_input_physical_sources(*plan, 0U, {}, &error);
       require(sources.has_value(), error);
       for (const auto policy :
-           {sc::ArenaDmsPolicy::PreferDmsForEligible, sc::ArenaDmsPolicy::PreferDmsThenCma}) {
+           {sc::ArenaDmsPolicy::RequireDmsForEligible, sc::ArenaDmsPolicy::PreferDmsThenCma}) {
         const auto arena = sc::FrameSlotArenaPlan::compile(
             *plan, *physical, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096, &error, policy);
         require(arena.has_value(), error);

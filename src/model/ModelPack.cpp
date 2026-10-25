@@ -2,6 +2,9 @@
 #include "pipeline/internal/sima/static_contract/TransformOperation.h"
 #include "model/internal/ModelManagedPreprocEnvelope.h"
 #include "pipeline/internal/sima/ProcessCvuFamily.h"
+#include "pipeline/internal/sima/ProcessCvuRunTargetPolicy.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
+#include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "model/internal/ModelArchiveLoader.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/internal/ErrorUtil.h"
@@ -1958,7 +1961,7 @@ static ExecutionPlan build_execution_plan_from_model_plan(
 // already-complete device predecessor to the later A65 command while the
 // immediately preceding A65 element still owns the active mapping of the same
 // Core arena. Keep that mapping only across adjacent HostTVM elements which
-// provably use this one Core-owned CMA arena; the right-hand element must reuse
+// provably use one Core-owned allocation; the right-hand element must reuse
 // an arena input, otherwise it introduces a new allocation boundary.
 static bool can_continue_direct_tvm_cpu_epoch(
     const ExecutionStage& left, const ExecutionStage& right,
@@ -1967,7 +1970,7 @@ static bool can_continue_direct_tvm_cpu_epoch(
   namespace sc = pipeline_internal::sima::static_contract;
   const auto& placement = arena.placement();
   if (left.kind != ExecutionStageKind::HostTvm || right.kind != ExecutionStageKind::HostTvm ||
-      placement.domain != sc::ArenaStorageDomain::Cma ||
+      arena.allocations().size() != 1U ||
       placement.provenance != sc::ArenaAllocationProvenance::CoreAllocated ||
       !placement.requires_access(sc::ArenaDeviceAccess::CpuA65) ||
       !left.execution_op_id.has_value() || !right.execution_op_id.has_value() ||
@@ -2032,6 +2035,8 @@ static std::string encode_direct_tvm_contract(
       return "cma";
     case Domain::Dms:
       return "dms";
+    case Domain::Mixed:
+      return "mixed";
     case Domain::Unknown:
       break;
     }
@@ -2057,7 +2062,7 @@ static std::string encode_direct_tvm_contract(
 
   nlohmann::json encoded{
       {"schema", "sima.neat.direct-tvm-lane"},
-      {"version", 3},
+      {"version", 4},
       {"command_id", command_id},
       {"command_name", op.name},
       {"executable", resolved.string()},
@@ -2077,6 +2082,15 @@ static std::string encode_direct_tvm_contract(
       {"cpu_epoch_end", cpu_epoch_end},
       {"inputs", nlohmann::json::array()},
       {"outputs", nlohmann::json::array()}};
+  encoded["allocations"] = nlohmann::json::array();
+  if (arena.allocations().size() > 1)
+    for (const auto& part : arena.allocations()) {
+      encoded["allocations"].push_back(
+          {{"byte_offset", part.byte_offset},
+           {"size_bytes", part.size_bytes},
+           {"storage_domain", static_cast<int>(part.placement.domain)},
+           {"required_device_access", part.placement.required_device_access}});
+    }
   bool reuses_arena = false;
   for (std::size_t index = 0; index < op.inputs.size(); ++index) {
     const auto* value = plan.value(op.inputs[index]);
@@ -2177,6 +2191,10 @@ static CompiledRuntimeContract build_target_tvm_runtime_contract(
   CompiledRuntimeContract runtime;
   runtime.plugin_kind = "neatprocesstvm";
   runtime.frame_arena_size_bytes = arena.allocation_bytes();
+  runtime.frame_arena_allocations =
+      arena.allocations().size() > 1
+          ? arena.allocations()
+          : std::vector<pipeline_internal::sima::static_contract::FrameSlotArenaAllocation>{};
   runtime.frame_arena_storage_domain = arena.placement().domain;
   runtime.frame_arena_provenance = arena.placement().provenance;
   runtime.frame_arena_allocation_policy = arena.placement().allocation_policy;
@@ -3328,11 +3346,67 @@ static ModelFragment build_fragment_linear(const std::vector<ExecutionStage>& st
   return frag;
 }
 
+std::optional<std::uint32_t>
+resolve_external_consumer_access(const std::vector<std::shared_ptr<Node>>& nodes,
+                                 std::size_t fragment_end,
+                                 const ContractCompileInput& compile_input) {
+  namespace sc = pipeline_internal::sima::static_contract;
+  auto consumer_index = fragment_end;
+  while (consumer_index < nodes.size() && nodes[consumer_index] &&
+         nodes[consumer_index]->kind() != "Output" &&
+         !dynamic_cast<const NodeContractProvider*>(nodes[consumer_index].get()))
+    ++consumer_index;
+  const auto* consumer_provider =
+      consumer_index < nodes.size()
+          ? dynamic_cast<const NodeContractProvider*>(nodes[consumer_index].get())
+          : nullptr;
+  if (!consumer_provider)
+    return std::nullopt;
+
+  CompiledNodeContract producer_contract, consumer_contract;
+  auto consumer_compile_input = compile_input;
+  auto boundary_context = std::make_shared<ModelFragmentCompileContext>();
+  boundary_context->admitted_original.emplace(nodes[fragment_end - 1U].get());
+  boundary_context->admitted_original.emplace(nodes[consumer_index].get());
+  consumer_compile_input.model_fragments = std::move(boundary_context);
+  std::string compilation_error;
+  if (const auto* producer_provider =
+          dynamic_cast<const NodeContractProvider*>(nodes[fragment_end - 1U].get());
+      producer_provider && producer_provider->compile_node_contract(
+                               consumer_compile_input, &producer_contract, &compilation_error))
+    consumer_compile_input.immediate_upstream = last_effective_child_stage(&producer_contract);
+  // The normal compiler owns child-stage fallback and diagnostics. An unsuccessful
+  // probe leaves placement unchanged until that compiler accepts or rejects the node.
+  if (!consumer_provider->compile_node_contract(consumer_compile_input, &consumer_contract,
+                                                &compilation_error))
+    return std::nullopt;
+
+  const auto* consumer_stage = first_effective_child_stage(&consumer_contract);
+  bool ev74 = consumer_stage->kernel && consumer_stage->kernel->recipe &&
+              consumer_stage->kernel->recipe->target == ::simaai::scheduler::client::Hardware::EV74;
+  const auto* cvu_payload =
+      consumer_stage->processcvu ? &consumer_stage->processcvu->payload
+      : consumer_stage->transport && consumer_stage->transport->processcvu_payload
+          ? &*consumer_stage->transport->processcvu_payload
+          : nullptr;
+  if (cvu_payload) {
+    const auto decision = pipeline_internal::sima::resolve_processcvu_backend_decision(
+        *cvu_payload, compile_input, consumer_stage->logical_stage_id,
+        consumer_stage->processcvu ? consumer_stage->processcvu->physical_command_role
+                                   : std::nullopt);
+    ev74 = decision.resolved_exec_backend ==
+           pipeline_internal::sima::ProcessCvuResolvedExecBackend::Evxx;
+  }
+  return static_cast<std::uint32_t>(ev74                         ? sc::ArenaDeviceAccess::Ev74
+                                    : consumer_stage->processmla ? sc::ArenaDeviceAccess::Mla
+                                                                 : sc::ArenaDeviceAccess::CpuA65);
+}
+
 } // namespace
 
 std::shared_ptr<const ModelFragmentCompileContext>
 prepare_model_fragment_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
-                                 std::string* error) {
+                                 std::string* error, const ContractCompileInput* compile_input) {
   namespace sc = pipeline_internal::sima::static_contract;
   auto context = std::make_shared<ModelFragmentCompileContext>();
   try {
@@ -3343,6 +3417,10 @@ prepare_model_fragment_contracts(const std::vector<std::shared_ptr<Node>>& nodes
         continue;
       }
       const auto& source = entry->plan_source();
+      auto resolved_physical_plan = source.physical;
+      if (compile_input)
+        pipeline_internal::sima::resolve_physical_execution_targets(resolved_physical_plan,
+                                                                    *compile_input);
       const auto* lineage = entry->model_lineage_binding();
       std::size_t end = first + 1U;
       auto last_stage = entry->stage_context();
@@ -3419,12 +3497,13 @@ prepare_model_fragment_contracts(const std::vector<std::shared_ptr<Node>>& nodes
           }
         }
       }
-      if (lineage && upstream_lineage && !lineage->lineage_key.empty() &&
+      const bool includes_ingress =
+          lineage && upstream_lineage && !lineage->lineage_key.empty() &&
           upstream_lineage->lineage_key == lineage->lineage_key &&
           upstream_lineage->stage_role == ModelLineageStageRole::Preprocess && upstream_cvu &&
           upstream_cvu->model_execution_source.get() == &source &&
-          upstream_cvu->runtime_contract.frame_arena_size_bytes ==
-              source.arena.allocation_bytes()) {
+          upstream_cvu->runtime_contract.frame_arena_size_bytes == source.arena.allocation_bytes();
+      if (includes_ingress && !compile_input) {
         // The real model-owned ingress already allocated the admitted arena.
         // Its immutable offsets remain the authority for all following stages.
         preserve_admitted();
@@ -3432,11 +3511,28 @@ prepare_model_fragment_contracts(const std::vector<std::shared_ptr<Node>>& nodes
         continue;
       }
 
+      if (includes_ingress)
+        add_commands(upstream_cvu->physical_command_ids, first - 1U);
+      if (compile_input) {
+        for (std::size_t i = includes_ingress ? first - 1U : first; i < end; ++i) {
+          const auto* cvu = node_model_processcvu_contract(nodes[i]);
+          if (!cvu)
+            continue;
+          const auto decision = pipeline_internal::sima::resolve_processcvu_backend_decision(
+              cvu->payload, *compile_input, nodes[i]->kind(), cvu->physical_command_role);
+          for (const auto id : cvu->physical_command_ids)
+            resolved_physical_plan.commands.at(id).resolved_executor =
+                decision.resolved_exec_backend ==
+                        pipeline_internal::sima::ProcessCvuResolvedExecBackend::A65
+                    ? sc::PhysicalEngine::A65
+                    : sc::PhysicalEngine::Cvu;
+        }
+      }
       if (route.commands.empty()) {
         throw std::runtime_error("ModelFragment: selected route has no physical commands");
       }
       std::sort(route.commands.begin(), route.commands.end());
-      if (route.commands.size() == source.physical.commands.size()) {
+      if (!compile_input && route.commands.size() == source.physical.commands.size()) {
         preserve_admitted();
         first = end; // Complete route: preserve the existing admitted placement.
         continue;
@@ -3516,12 +3612,9 @@ prepare_model_fragment_contracts(const std::vector<std::shared_ptr<Node>>& nodes
           route.published_outputs.push_back(output.value_id);
         }
       }
-      // An external consumer is outside this model's placement authority.
-      // Keep the shared interoperable heap when a further processing node is
-      // selected; an application-only terminal needs only CPU/MLA visibility.
-      if (end < nodes.size() && nodes[end] && nodes[end]->kind() != "Output") {
-        route.output_device_access = static_cast<std::uint32_t>(sc::ArenaDeviceAccess::Ev74);
-      }
+      if (compile_input)
+        if (const auto access = resolve_external_consumer_access(nodes, end, *compile_input))
+          route.output_device_access = *access;
       std::string plan_error;
       // Preserve an explicitly authored allocation preference when narrowing a
       // route. The planner rechecks every new consumer, so an external EV
@@ -3530,11 +3623,53 @@ prepare_model_fragment_contracts(const std::vector<std::shared_ptr<Node>>& nodes
           source.arena.placement().allocation_policy == sc::ArenaAllocationPolicy::PreferDmsThenCma
               ? sc::ArenaDmsPolicy::PreferDmsThenCma
               : sc::kModalixProductionArenaDmsPolicy;
+      // Preserve proved terminal detachment so a public output does not keep
+      // the ingress arena loan alive after MLA completion.
+      std::vector<sc::ValueId> detached;
+      for (const auto root : source.arena.detached_roots())
+        if (published.contains(carrier(root)))
+          detached.push_back(root);
       auto arena = sc::FrameSlotArenaPlan::compile(
-          source.execution, source.physical, source.arena.reuse_policy(),
-          sc::kLegacyEvoCmaRegionAlignmentBytes, &plan_error, allocation_policy, {}, &route);
+          source.execution, resolved_physical_plan, source.arena.reuse_policy(),
+          sc::kLegacyEvoCmaRegionAlignmentBytes, &plan_error, allocation_policy, detached, &route);
       if (!arena) {
         throw std::runtime_error("ModelFragment: selected route arena: " + plan_error);
+      }
+      if (includes_ingress) {
+        auto ingress = *upstream_cvu;
+        auto& runtime = ingress.runtime_contract;
+        std::unordered_set<sc::CarrierId> ingress_carriers;
+        for (const auto id : upstream_cvu->physical_command_ids)
+          for (const auto value : source.physical.commands.at(id).outputs)
+            ingress_carriers.insert(source.execution.value(value)->storage_binding->carrier_id);
+        for (auto& output : runtime.physical_outputs) {
+          if (output.source_byte_offset < 0)
+            throw std::runtime_error("ModelFragment: negative ingress output offset");
+          const auto offset = static_cast<std::uint64_t>(output.source_byte_offset);
+          const sc::FrameSlotArenaRegion* old_region = nullptr;
+          for (const auto& region : source.arena.regions())
+            if (ingress_carriers.contains(region.carrier_id) && offset >= region.byte_offset &&
+                offset - region.byte_offset <= region.size_bytes &&
+                output.size_bytes <= region.size_bytes - (offset - region.byte_offset)) {
+              if (old_region)
+                throw std::runtime_error("ModelFragment: ambiguous ingress carrier");
+              old_region = &region;
+            }
+          const auto* region = old_region ? arena->region(old_region->value_id) : nullptr;
+          if (!region)
+            throw std::runtime_error("ModelFragment: missing ingress carrier");
+          output.source_byte_offset = region->byte_offset + offset - old_region->byte_offset;
+        }
+        runtime.frame_arena_size_bytes = arena->allocation_bytes();
+        runtime.frame_arena_allocations = arena->allocations().size() > 1
+                                              ? arena->allocations()
+                                              : std::vector<sc::FrameSlotArenaAllocation>{};
+        runtime.frame_arena_storage_domain = arena->placement().domain;
+        runtime.frame_arena_provenance = arena->placement().provenance;
+        runtime.frame_arena_allocation_policy = arena->placement().allocation_policy;
+        runtime.frame_arena_required_device_access = arena->placement().required_device_access;
+        runtime.frame_arena_escape_policy = arena->placement().escape;
+        context->processcvu.emplace(nodes[first - 1U].get(), std::move(ingress));
       }
       for (std::size_t i = first; i < end; ++i) {
         if (const auto* fragment = dynamic_cast<const ModelFragmentNode*>(nodes[i].get())) {
@@ -3542,11 +3677,11 @@ prepare_model_fragment_contracts(const std::vector<std::shared_ptr<Node>>& nodes
                                                      fragment->execution_stages(), source.mpk,
                                                      fragment->route_flags(), std::nullopt,
                                                      fragment->stage_context(), source.execution,
-                                                     *arena, source.physical));
+                                                     *arena, resolved_physical_plan));
         } else {
           const auto* original = node_model_processcvu_contract(nodes[i]);
           auto cvu = sc::build_dmabuf_plan_processcvu_command_contract(
-              source.execution, source.physical, original->physical_command_ids, *arena,
+              source.execution, resolved_physical_plan, original->physical_command_ids, *arena,
               &plan_error);
           if (!cvu) {
             throw std::runtime_error("ModelFragment: selected CVU continuation: " + plan_error);

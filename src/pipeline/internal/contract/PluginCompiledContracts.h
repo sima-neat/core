@@ -29,6 +29,8 @@ struct CompiledRuntimeContract {
   std::vector<pipeline_internal::sima::QuantStaticSpec> output_quant;
   std::vector<std::string> required_preprocess_meta_fields;
   std::uint64_t frame_arena_size_bytes = 0;
+  std::vector<pipeline_internal::sima::static_contract::FrameSlotArenaAllocation>
+      frame_arena_allocations;
   pipeline_internal::sima::FrameArenaRole frame_arena_role =
       pipeline_internal::sima::FrameArenaRole::None;
   pipeline_internal::sima::static_contract::ArenaStorageDomain frame_arena_storage_domain =

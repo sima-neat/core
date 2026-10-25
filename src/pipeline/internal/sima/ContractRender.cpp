@@ -3,6 +3,7 @@
 #include "pipeline/internal/sima/CompiledProcessCvuContractQuery.h"
 #include "pipeline/internal/sima/ProcessCvuRunTargetPolicy.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuRuntimeConfigAdapterInternal.h"
 #include "pipeline/internal/EnvUtil.h"
@@ -742,6 +743,7 @@ StageStaticSpec render_processcvu_stage(const CompiledProcessCvuContract& compil
   stage.output_quant = compiled.runtime_contract.output_quant;
   stage.required_preprocess_meta_fields = compiled.runtime_contract.required_preprocess_meta_fields;
   stage.frame_arena_size_bytes = compiled.runtime_contract.frame_arena_size_bytes;
+  stage.frame_arena_allocations = compiled.runtime_contract.frame_arena_allocations;
   stage.frame_arena_role = compiled.runtime_contract.frame_arena_role;
   stage.frame_arena_storage_domain = compiled.runtime_contract.frame_arena_storage_domain;
   stage.frame_arena_provenance = compiled.runtime_contract.frame_arena_provenance;
@@ -777,6 +779,7 @@ StageStaticSpec render_processmla_stage(const CompiledMlaContract& compiled,
   stage.output_quant = compiled.runtime_contract.output_quant;
   stage.required_preprocess_meta_fields = compiled.runtime_contract.required_preprocess_meta_fields;
   stage.frame_arena_size_bytes = compiled.runtime_contract.frame_arena_size_bytes;
+  stage.frame_arena_allocations = compiled.runtime_contract.frame_arena_allocations;
   stage.frame_arena_role = compiled.runtime_contract.frame_arena_role;
   stage.frame_arena_storage_domain = compiled.runtime_contract.frame_arena_storage_domain;
   stage.frame_arena_provenance = compiled.runtime_contract.frame_arena_provenance;
@@ -813,6 +816,17 @@ StageStaticSpec render_kernel_stage(const CompiledNodeContract& compiled_stage) 
   stage.logical_outputs = runtime.logical_outputs;
   stage.output_order = runtime.output_order;
   stage.required_preprocess_meta_fields = runtime.required_preprocess_meta_fields;
+  if (runtime.frame_arena_size_bytes && compiled.recipe->private_buffers.empty()) {
+    stage.frame_arena_size_bytes = runtime.frame_arena_size_bytes;
+    stage.frame_arena_allocations = runtime.frame_arena_allocations;
+    stage.frame_arena_role = runtime.frame_arena_role;
+    stage.frame_arena_storage_domain = runtime.frame_arena_storage_domain;
+    stage.frame_arena_provenance = runtime.frame_arena_provenance;
+    stage.frame_arena_allocation_policy = runtime.frame_arena_allocation_policy;
+    stage.frame_arena_required_device_access = runtime.frame_arena_required_device_access;
+    stage.frame_arena_escape_policy = runtime.frame_arena_escape_policy;
+    return stage;
+  }
   std::uint64_t cursor = 0;
   for (auto& output : stage.physical_outputs) {
     std::uint64_t offset = 0;
@@ -1015,6 +1029,7 @@ StageStaticSpec render_transport_stage(const CompiledNodeContract& compiled_stag
   stage.output_order = compiled.runtime_contract.output_order;
   stage.required_preprocess_meta_fields = compiled.runtime_contract.required_preprocess_meta_fields;
   stage.frame_arena_size_bytes = compiled.runtime_contract.frame_arena_size_bytes;
+  stage.frame_arena_allocations = compiled.runtime_contract.frame_arena_allocations;
   stage.frame_arena_role = compiled.runtime_contract.frame_arena_role;
   stage.frame_arena_storage_domain = compiled.runtime_contract.frame_arena_storage_domain;
   stage.frame_arena_provenance = compiled.runtime_contract.frame_arena_provenance;
@@ -1191,6 +1206,13 @@ render_manifest_from_compiled_contracts(
   }
 
   normalize_manifest_boundaries(&manifest);
+  try {
+    pipeline_internal::sima::resolve_stage_memory_placement(manifest);
+  } catch (const std::exception& error) {
+    if (diagnostics)
+      diagnostics->errors.push_back(std::string("contract render: ") + error.what());
+    return std::nullopt;
+  }
 
   if (diagnostics && !diagnostics->errors.empty()) {
     return std::nullopt;

@@ -180,6 +180,7 @@ build_mla_compiled_contract_from_subset(const plugin_contracts::ProcessMlaContra
   }
   compiled.runtime_contract.plugin_kind = "processmla";
   compiled.runtime_contract.frame_arena_size_bytes = contract.frame_arena_size_bytes;
+  compiled.runtime_contract.frame_arena_allocations = contract.frame_arena_allocations;
   compiled.runtime_contract.frame_arena_role = contract.frame_arena_role;
   compiled.runtime_contract.frame_arena_storage_domain = contract.frame_arena_storage_domain;
   compiled.runtime_contract.frame_arena_provenance = contract.frame_arena_provenance;

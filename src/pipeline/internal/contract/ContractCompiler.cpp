@@ -120,7 +120,8 @@ compile_node_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
   }
 
   std::string route_error;
-  const auto model_fragments = internal::prepare_model_fragment_contracts(nodes, &route_error);
+  const auto model_fragments =
+      internal::prepare_model_fragment_contracts(nodes, &route_error, &input);
   if (!model_fragments) {
     compiled.fully_renderable = false;
     if (diagnostics) {

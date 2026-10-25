@@ -50,9 +50,11 @@ std::string modelpack_storage_label(const std::string& path);
 
 struct ModelFragmentCompileContext;
 struct ModelFragmentPlanSource;
+// Null compile_input projects original stage metadata without resolving execution placement.
 std::shared_ptr<const ModelFragmentCompileContext>
 prepare_model_fragment_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
-                                 std::string* error);
+                                 std::string* error,
+                                 const ContractCompileInput* compile_input = nullptr);
 
 bool apply_model_fragment_contract_context(const Node& node, const ContractCompileInput& input,
                                            CompiledNodeContract* compiled, std::string* error);
