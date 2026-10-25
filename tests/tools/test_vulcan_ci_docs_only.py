@@ -155,8 +155,13 @@ class VulcanCiDocsOnlyTests(unittest.TestCase):
         hardware = yaml.safe_load(job_block("test-pciehost-hardware"))
         self.assertEqual(hardware["name"], "Test PCIe Host Hardware")
         self.assertEqual(hardware["if"],
-                         "${{ (inputs.build_mode || 'standard') == 'standard' "
-                         "&& needs.detect-changes.outputs.docs_only != 'true' }}")
+                         "${{ !cancelled() && (inputs.build_mode || 'standard') == 'standard' "
+                         "&& needs.detect-changes.outputs.docs_only != 'true' "
+                         "&& needs.build.result == 'success' && needs.build-pciehost-packages.result == 'success' "
+                         "&& ((inputs.validation_only && needs.publish-vulcan-artifacts.result == 'skipped' "
+                         "&& needs.publish-pciehost-package.result == 'skipped') "
+                         "|| (!inputs.validation_only && needs.publish-vulcan-artifacts.result == 'success' "
+                         "&& needs.publish-pciehost-package.result == 'success')) }}")
         self.assertEqual(hardware["runs-on"], ["self-hosted", "Linux", "X64", "pcie", "3.0.0-pcie-test"])
         self.assertEqual(hardware["env"]["SIMAPCIE_CARD_HOST"], "10.0.0.2")
         self.assertEqual(hardware["env"]["DEVKIT_PASSWORD"], "${{ secrets.DEVKIT_PASSWORD }}")

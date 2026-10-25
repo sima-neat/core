@@ -19,6 +19,11 @@ on:
         required: false
         default: false
         type: boolean
+      validation_only:
+        description: "Validate a standard build without publishing or promoting its artifacts"
+        required: false
+        default: false
+        type: boolean
       cache_base_branch:
         description: "Compiler-cache baseline: auto, develop, or main"
         required: false
@@ -36,6 +41,11 @@ on:
           - fuzz
       run_long_tests:
         description: "Run weekly-only long tests on the Modalix runner"
+        required: false
+        default: false
+        type: boolean
+      validation_only:
+        description: "Validate a standard build without publishing or promoting its artifacts"
         required: false
         default: false
         type: boolean
@@ -437,7 +447,7 @@ jobs:
 
   publish-vulcan-artifacts:
     name: Publish to Vulcan
-    if: ${{ always() && needs.build.result == 'success' && ((inputs.build_mode || 'standard') == 'fuzz' || needs.code-hygiene.result == 'success') }}
+    if: ${{ always() && !inputs.validation_only && needs.build.result == 'success' && ((inputs.build_mode || 'standard') == 'fuzz' || needs.code-hygiene.result == 'success') }}
     needs:
       - resolve-vulcan-config
       - build
@@ -618,7 +628,17 @@ jobs:
           assert pyneatpcie.Tensor
           PY
 
+      - name: Retain this run's PCIe host candidate
+        if: ${{ inputs.validation_only }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: core-pciehost-${{ matrix.distro }}-${{ matrix.deb_arch }}
+          path: pcie_host/dist/*
+          if-no-files-found: error
+          retention-days: 3
+
       - name: Configure AWS credentials
+        if: ${{ !inputs.validation_only }}
         uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
@@ -626,6 +646,7 @@ jobs:
           role-session-name: pciehost-${{ matrix.distro }}-${{ matrix.deb_arch }}-${{ github.run_id }}
 
       - name: Publish PCIe host Debian packages
+        if: ${{ !inputs.validation_only }}
         shell: bash
         run: |
           set -euo pipefail
@@ -688,7 +709,7 @@ jobs:
 
   publish-pciehost-package:
     name: Publish PCIe Host Package Metadata
-    if: ${{ (inputs.build_mode || 'standard') == 'standard' && (github.ref_type == 'branch' || github.ref_type == 'tag') }}
+    if: ${{ !inputs.validation_only && (inputs.build_mode || 'standard') == 'standard' && (github.ref_type == 'branch' || github.ref_type == 'tag') }}
     needs:
       - resolve-vulcan-config
       - build-pciehost-packages
@@ -750,11 +771,13 @@ jobs:
 
   test-devkit:
     name: Test Core on DevKit
-    if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
+    if: ${{ !cancelled() && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' && needs.code-hygiene.result == 'success' && needs.resolve-test-runner.result == 'success' && ((inputs.validation_only && needs.publish-vulcan-artifacts.result == 'skipped') || (!inputs.validation_only && needs.publish-vulcan-artifacts.result == 'success')) }}
     needs:
       - detect-changes
       - resolve-vulcan-config
       - resolve-test-runner
+      - build
+      - code-hygiene
       - publish-vulcan-artifacts
     runs-on:
       group: ${{ needs.resolve-test-runner.outputs.modalix_runner_group }}
@@ -811,11 +834,27 @@ jobs:
           ./scripts/cleanup_devkit_storage.sh
 
       - name: Download this build's installed-qualification inputs
+        if: ${{ !inputs.validation_only }}
         run: |
           python3 tools/ci/acquire_core_qualification.py \
             --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" \
             --commit "${GITHUB_SHA}" --environment "${VULCAN_ENV}" \
             --output _work/installed-qualification-dist \
+            --package-profile core-codecs-llima \
+            --write-package-inventory _work/expected-package-inventory.json
+
+      - name: Download this run's Core validation candidate
+        if: ${{ inputs.validation_only }}
+        uses: actions/download-artifact@v4
+        with:
+          name: neat-core-dist
+          path: .
+
+      - name: Verify this run's Core validation candidate
+        if: ${{ inputs.validation_only }}
+        run: |
+          bash scripts/ci/verify_core_dist.sh --dist . \
+            --expected-manifest deps/manifest.json --expected-commit "$GITHUB_SHA" \
             --package-profile core-codecs-llima \
             --write-package-inventory _work/expected-package-inventory.json
 
@@ -825,6 +864,7 @@ jobs:
             --capture-platform-baseline _work/platform-before-install.json
 
       - name: Install test runtime from Vulcan artifact
+        if: ${{ !inputs.validation_only }}
         env:
           DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
           # Benchmark telemetry is part of CI; fail when Sentinel cannot be installed.
@@ -850,6 +890,13 @@ jobs:
             echo "Artifact installation attempt ${attempt} failed; retrying in ${delay}s." >&2
             sleep "${delay}"
           done
+
+      - name: Install this run's verified Core validation candidate
+        if: ${{ inputs.validation_only }}
+        env:
+          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+          NEAT_INSTALLER_SENTINEL_REQUIRED: "ON"
+        run: bash ./install_neat_framework.sh --local
 
       - name: Locate installed extras content
         run: |
@@ -1527,10 +1574,12 @@ jobs:
 
   test-pciehost-hardware:
     name: Test PCIe Host Hardware
-    if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
+    if: ${{ !cancelled() && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' && needs.build-pciehost-packages.result == 'success' && ((inputs.validation_only && needs.publish-vulcan-artifacts.result == 'skipped' && needs.publish-pciehost-package.result == 'skipped') || (!inputs.validation_only && needs.publish-vulcan-artifacts.result == 'success' && needs.publish-pciehost-package.result == 'success')) }}
     needs:
       - detect-changes
       - resolve-vulcan-config
+      - build
+      - build-pciehost-packages
       - publish-vulcan-artifacts
       - publish-pciehost-package
     runs-on: [self-hosted, Linux, X64, pcie, 3.0.0-pcie-test]
@@ -1577,6 +1626,37 @@ jobs:
           set -euo pipefail
           echo "REF_NAME=${GITHUB_REF_NAME}" >> "${GITHUB_ENV}"
           echo "SHORT_SHA=${GITHUB_SHA:0:12}" >> "${GITHUB_ENV}"
+
+      - name: Download this run's Core candidate for PCIe validation
+        if: ${{ inputs.validation_only }}
+        uses: actions/download-artifact@v4
+        with:
+          name: neat-core-dist
+          path: _work/validation-core-dist
+
+      - name: Download this run's PCIe host validation candidates
+        if: ${{ inputs.validation_only }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: core-pciehost-*-amd64
+          path: _work/validation-pciehost
+
+      - name: Select and verify this run's local PCIe validation candidates
+        if: ${{ inputs.validation_only }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          source pcie_host/scripts/host-platform.sh
+          host_distro="$(simapcie_detect_host_distro)"
+          host_dist="${GITHUB_WORKSPACE}/_work/validation-pciehost/core-pciehost-${host_distro}-amd64"
+          core_dist="${GITHUB_WORKSPACE}/_work/validation-core-dist"
+          test -d "${host_dist}"
+          bash scripts/ci/verify_core_dist.sh --dist "${core_dist}" \
+            --expected-manifest deps/manifest.json --expected-commit "$GITHUB_SHA"
+          {
+            printf 'SIMAPCIE_LOCAL_HOST_DIST=%s\n' "${host_dist}"
+            printf 'SIMAPCIE_LOCAL_CORE_DIST=%s\n' "${core_dist}"
+          } >> "$GITHUB_ENV"
 
       - name: Prepare PCIe host hardware workspace
         shell: bash
@@ -1724,7 +1804,7 @@ jobs:
 
   promote-latest-tag:
     name: Promote Latest Tag
-    if: ${{ always() && (github.ref_type == 'branch' || github.ref_type == 'tag') && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.test-devkit.result == 'success' && needs.publish-pciehost-package.result == 'success' && (needs.test-pciehost-hardware.result == 'success' || needs.test-pciehost-hardware.result == 'skipped') }}
+    if: ${{ always() && !inputs.validation_only && (github.ref_type == 'branch' || github.ref_type == 'tag') && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.test-devkit.result == 'success' && needs.publish-pciehost-package.result == 'success' && (needs.test-pciehost-hardware.result == 'success' || needs.test-pciehost-hardware.result == 'skipped') }}
     needs:
       - detect-changes
       - resolve-vulcan-config
@@ -1739,3 +1819,40 @@ jobs:
       role_to_assume: ${{ needs.resolve-vulcan-config.outputs.artifact_publisher_role_arn }}
       sse_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
       artifact_folder: "."
+
+  validation-complete:
+    name: Verify validation-only Core run
+    if: ${{ always() && inputs.validation_only }}
+    needs:
+      - documentation-localization
+      - resolve-vulcan-config
+      - resolve-compiler-cache
+      - detect-changes
+      - code-hygiene
+      - resolve-test-runner
+      - build
+      - build-pciehost-packages
+      - publish-vulcan-artifacts
+      - publish-pciehost-package
+      - test-devkit
+      - test-pciehost-hardware
+      - promote-latest-tag
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require complete validation and skipped delivery
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          BUILD_MODE: ${{ inputs.build_mode || 'standard' }}
+        run: |
+          python3 - <<'PYGATE'
+          import json, os
+          if os.environ['BUILD_MODE'] != 'standard':
+              raise SystemExit('Validation-only Core runs require standard build mode')
+          results = json.loads(os.environ['RESULTS'])
+          skipped = {'publish-vulcan-artifacts', 'publish-pciehost-package', 'promote-latest-tag'}
+          bad = {name: value['result'] for name, value in results.items()
+                 if value['result'] != ('skipped' if name in skipped else 'success')}
+          if bad:
+              raise SystemExit('Core validation incomplete or delivery was not skipped: ' + str(bad))
+          print('This run\'s Core and PCIe candidates passed validation without publication or promotion')
+          PYGATE
