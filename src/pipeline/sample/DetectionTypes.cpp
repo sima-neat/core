@@ -332,7 +332,8 @@ BoxDecodeResult decode_bbox_tensor(const simaai::neat::Tensor& tensor, int img_w
 OrientedDecodeTensors decode_obb_tensor(const Tensor& tensor) {
   if (!tensor.semantic.detection ||
       tensor.semantic.detection->format != kDetectionFormatBboxObbV1 ||
-      tensor.dtype != TensorDType::UInt8 || tensor.shape.size() != 1 || !tensor.is_dense())
+      tensor.dtype != TensorDType::UInt8 || tensor.shape.size() != 1 || tensor.shape[0] <= 0 ||
+      !tensor.is_dense())
     throw std::invalid_argument("decode_obb requires a dense rank-one UInt8 BBOX_OBB_V1 tensor");
   const auto bytes = copy_detection_payload(tensor, "oriented boxes");
   OrientedBoxesHeaderV1 header;
@@ -342,7 +343,8 @@ OrientedDecodeTensors decode_obb_tensor(const Tensor& tensor) {
   if (header.magic != 0x3156424f || header.version != 1 || header.header_bytes != 32 ||
       header.flags != 0 || header.capacity < 1 || header.capacity > 65536 ||
       header.count > header.capacity || header.records_offset != 32 || header.record_stride != 32 ||
-      header.total_bytes != 32u + 32u * header.capacity || header.total_bytes != bytes.size())
+      header.total_bytes != 32u + 32u * header.capacity || header.total_bytes != bytes.size() ||
+      header.total_bytes != static_cast<std::uint64_t>(tensor.shape[0]))
     throw std::invalid_argument("invalid oriented V1 header or extent");
   // Complete validation before allocation/publication; signed finite extents are intentional.
   for (std::uint32_t i = 0; i < header.capacity; ++i) {

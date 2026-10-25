@@ -206,6 +206,11 @@ RUN_TEST(
           require(fails(make_wire_tensor(corrupt, kDetectionFormatBboxObbV1)),
                   "OBB corrupt header/reserved/tail accepted");
         }
+        for (std::int64_t length : {0, -1, 95, 97}) {
+          auto invalid_view = tensor;
+          invalid_view.shape = {length};
+          require(fails(invalid_view), "OBB decoded backing bytes beyond its declared extent");
+        }
         auto trailing = bytes;
         trailing.push_back(0);
         require(fails(make_wire_tensor(trailing, kDetectionFormatBboxObbV1)),
