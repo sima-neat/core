@@ -757,7 +757,7 @@ void sentinel_that_starts_later_is_counted() {
   CapturedStderr stderr_text;
   TelemetryMonitor monitor = sentinel.monitor();
   monitor.start(); // Sentinel is not answering yet.
-  require(monitor.read().status.find("not running") != std::string::npos,
+  require(monitor.read().status.find("Could not connect to Sentinel") != std::string::npos,
           "the status names the missing Sentinel");
   sentinel.start();
   // The monitor retries after its 2 s default interval, then counts the samples after that.
