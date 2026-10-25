@@ -727,7 +727,7 @@ rejected. Omitting the limits keeps the same resolved capacity as an unseeded bu
 
 ## Measure model execution
 
-Use `model.benchmark(...)` for a quick synthetic model benchmark. It generates inputs from `input_specs()` and returns headline latency, throughput, power, and board telemetry. Use it to compare model/runtime changes, not to claim production application throughput.
+Use `model.benchmark(...)` for a quick model benchmark. By default it generates synthetic inputs from `input_specs()`; it returns headline latency, throughput, power, and board telemetry. Use it to compare model/runtime changes, not to claim production application throughput.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -749,6 +749,53 @@ print("latency_ms=", report.latency_ms, "fps=", report.fps)
 
 </CodeTab>
 </CodeTabs>
+
+### Measure with your own inputs
+
+Synthetic inputs do not look like real data. When a model's cost depends on its input, such as a
+detection or segmentation decoder that processes every box it finds, measure with real inputs
+instead. Create one tensor per model input, in `input_specs()` order, exactly as you would pass
+them to `run()`, and set them on `inputs`. The benchmark pushes the same inputs for every sample.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+cv::Mat image = cv::imread("bus.jpg");  // BGR
+
+simaai::neat::BenchmarkOptions options;
+options.inputs = simaai::neat::TensorList{
+    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::BGR,
+                                      simaai::neat::TensorMemory::EV74)};
+
+simaai::neat::BenchmarkReport report = model.benchmark(options);
+std::cout << "input=" << report.input << " fps=" << report.fps << "\n";  // input=provided
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+image = cv2.imread("bus.jpg")  # BGR
+
+options = pyneat.BenchmarkOptions()
+options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.BGR)]
+
+report = model.benchmark(options)
+print("input=", report.input, "fps=", report.fps)  # input= provided
+```
+
+</CodeTab>
+</CodeTabs>
+
+The benchmark checks the inputs before it starts. If the number of tensors, a shape, a dtype, or
+the image format metadata does not match the model, it throws `NeatError` with error code
+`misconfig.input_shape` and a message that names the input, the expected value, and the actual
+value. An image input may have any size and color format, because preprocessing resizes and
+converts it. A BoxDecode route maps detections back to the provided image's own size, so leave
+`original_width` and `original_height` unset, or set them to that size.
+
+### Describe the source geometry
 
 For a BoxDecode route, describe the synthetic input's source-image geometry so the benchmark can
 map detections back from model coordinates:
