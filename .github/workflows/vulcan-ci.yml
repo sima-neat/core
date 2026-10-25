@@ -156,6 +156,7 @@ jobs:
             tests/tools/test_build_install_sanity.py \
             tests/tools/test_core_inventory_soname.py \
             tests/tools/test_native_platform_baseline.py \
+            tests/tools/test_offline_core.py \
             tests/tools/test_offline_pcie_discovery.py \
             tests/tools/test_offline_pcie_assembly.py \
             tests/tools/test_offline_pcie_ci.py \

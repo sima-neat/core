@@ -149,10 +149,76 @@ jobs:
           if-no-files-found: ignore
           retention-days: 3
 
+  build-core:
+    name: Assemble standalone Core offline
+    needs: [source, config]
+    environment: ${{ needs.config.outputs.vulcan_env }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    concurrency:
+      group: pcie-offline-build-${{ needs.source.outputs.ref }}-${{ needs.source.outputs.sha }}-core
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - name: Install publication client with conditional-write support
+        run: |
+          python3 -m venv "$RUNNER_TEMP/offline-aws"
+          "$RUNNER_TEMP/offline-aws/bin/pip" install awscli==1.42.49
+          echo "$RUNNER_TEMP/offline-aws/bin" >> "$GITHUB_PATH"
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ needs.config.outputs.aws_region }}
+          role-to-assume: ${{ needs.config.outputs.artifact_publisher_role_arn }}
+          role-session-name: offline-core-${{ github.run_id }}
+      - name: Acquire published assets, assemble, validate offline, and stage
+        env:
+          SOURCE_REF: ${{ needs.source.outputs.ref }}
+          SOURCE_SHA: ${{ needs.source.outputs.sha }}
+          SOURCE_RUN: ${{ needs.source.outputs.run_id }}
+          ARTIFACT_BUCKET: ${{ needs.config.outputs.artifact_bucket }}
+          KMS_KEY: ${{ needs.config.outputs.artifact_kms_key_id }}
+          VALIDATION_ONLY: ${{ inputs.validation_only || false }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          options=()
+          if [[ "$VALIDATION_ONLY" == true ]]; then
+            options+=(--validation-only)
+          fi
+          python3 -B pcie_host/scripts/offline/ci.py build --core "${options[@]}" \
+            --bucket "$ARTIFACT_BUCKET" --kms "$KMS_KEY" \
+            --ref "$SOURCE_REF" --sha "$SOURCE_SHA" --run-id "$SOURCE_RUN" \
+            --installer-revision "$GITHUB_SHA" \
+            --work "$RUNNER_TEMP/offline" 2>&1 | tee "$RUNNER_TEMP/offline-build.log"
+      - name: Retain validated pre-merge bundle
+        if: ${{ inputs.validation_only }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-bundle-core
+          path: |
+            ${{ runner.temp }}/offline/neat-core-offline-installer.tar.gz
+            ${{ runner.temp }}/offline/metadata-offline.json
+          if-no-files-found: error
+          retention-days: 3
+      - name: Retain assembly evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-evidence-core
+          path: |
+            ${{ runner.temp }}/offline-build.log
+            ${{ runner.temp }}/offline/spec.json
+            ${{ runner.temp }}/offline/metadata-offline.json
+            ${{ runner.temp }}/offline/neat-core-offline/bundle.json
+          if-no-files-found: ignore
+          retention-days: 3
+
   publish:
     if: ${{ !inputs.validation_only }}
     name: Publish all offline metadata
-    needs: [source, config, build]
+    needs: [source, config, build, build-core]
     environment: ${{ needs.config.outputs.vulcan_env }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15

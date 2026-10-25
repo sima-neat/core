@@ -161,3 +161,17 @@ SDK 설정 및 DevKit Sync 온보딩에 대한 자세한 내용은 [Neat SDK](/g
 ## 다음 단계
 
 사용자 지정 Python 환경을 위해 [PyNeat을 설치하세요.](/getting-started/neat-library/pyneat/)를 계속 진행하거나, 설치된 환경을 확인하려면 [Neat 명령줄 인터페이스](/getting-started/neat-library/neat-cli/)를 사용하십시오.
+
+## 독립 실행형 오프라인 설치
+
+Platform 3.0과 eLxr 26.04를 실행하는 Modalix DevKit에는 독립 실행형 `neat-core-offline-installer.tar.gz` 아카이브를 사용합니다. 인터넷에 연결된 컴퓨터에서 Core의 `offline` 변형을 다운로드하고 `metadata-offline.json`의 체크섬과 비교한 다음 DevKit에 복사합니다. Neat 애플리케이션을 중지하고 아카이브를 추출한 후 다음을 실행합니다.
+
+```bash
+tar -xzf neat-core-offline-installer.tar.gz
+cd neat-core-offline
+sudo ./install.sh --check
+sudo ./install.sh
+sudo ./install.sh --verify
+```
+
+아카이브에는 Core, 호환되는 Scheduler 패키지, APT 의존성, Python wheel 및 설치 스크립트가 포함됩니다. 설치는 네트워크 연결 없이 실행됩니다. Platform 펌웨어와 OS는 미리 설치해야 합니다. 이 설치 프로그램은 `/opt/sima/neat/pyneat`를 사용합니다. `source /opt/sima/neat/pyneat/bin/activate`로 활성화하세요.

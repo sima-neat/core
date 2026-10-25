@@ -164,3 +164,17 @@ source ~/pyneat/bin/activate
 ## 下一步
 
 繼續進行 [安裝 PyNeat](/getting-started/neat-library/pyneat/)，以設定自訂的 Python 環境，或使用 [Neat 指令列介面](/getting-started/neat-library/neat-cli/) 來檢查已安裝的環境。
+
+## 獨立離線安裝
+
+對於執行 Platform 3.0 與 eLxr 26.04 的 Modalix DevKit，請使用獨立的 `neat-core-offline-installer.tar.gz` 封存檔。在可連線的電腦上下載 Core 的 `offline` 版本，對照 `metadata-offline.json` 驗證校驗碼，然後複製到 DevKit。停止 Neat 應用程式，解壓縮封存檔並執行：
+
+```bash
+tar -xzf neat-core-offline-installer.tar.gz
+cd neat-core-offline
+sudo ./install.sh --check
+sudo ./install.sh
+sudo ./install.sh --verify
+```
+
+封存檔包含 Core、相符的 Scheduler 套件、APT 相依套件、Python wheel 與安裝指令碼。安裝過程不需要網路連線。您仍須事先完成 Platform 韌體與 OS 的佈建。此安裝程式使用 `/opt/sima/neat/pyneat`；請以 `source /opt/sima/neat/pyneat/bin/activate` 啟用。

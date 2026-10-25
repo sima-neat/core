@@ -163,3 +163,17 @@ source ~/pyneat/bin/activate
 ## Наступний крок
 
 Продовжуйте встановлення [Встановіть PyNeat.](/getting-started/neat-library/pyneat/), щоб налаштувати власне середовище Python, або використовуйте [Neat CLI](/getting-started/neat-library/neat-cli/) для перевірки встановленого середовища.
+
+## Автономне встановлення без мережі
+
+Для Modalix DevKit із Platform 3.0 та eLxr 26.04 використовуйте автономний архів `neat-core-offline-installer.tar.gz`. Завантажте варіант Core `offline` на комп’ютері з доступом до мережі, перевірте контрольну суму за `metadata-offline.json` і скопіюйте архів на DevKit. Зупиніть застосунки Neat, розпакуйте архів і виконайте:
+
+```bash
+tar -xzf neat-core-offline-installer.tar.gz
+cd neat-core-offline
+sudo ./install.sh --check
+sudo ./install.sh
+sudo ./install.sh --verify
+```
+
+Архів містить Core, відповідні пакети Scheduler, залежності APT, Python wheel та сценарії встановлення. Встановлення виконується без доступу до мережі. Прошивку Platform та ОС необхідно підготувати заздалегідь. Цей інсталятор використовує `/opt/sima/neat/pyneat`; активуйте середовище командою `source /opt/sima/neat/pyneat/bin/activate`.

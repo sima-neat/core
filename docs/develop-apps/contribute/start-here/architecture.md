@@ -2271,3 +2271,7 @@ Keep docs and code aligned:
 * If you add new env knobs, add them to the "Environment / configuration knobs" section.
 
 ---
+
+## Offline Core delivery
+
+Standalone Core and PCIe offline bundles use the same immutable Core publication, dependency collector, checksum verification, and platform admission lifecycle. Standalone installation runs locally in an isolated network namespace with a shared installation lock. CI validates packages and Python imports against a pristine provisioned baseline with networking disabled, then exposes offline metadata only after the standalone bundle and all four PCIe variants pass.

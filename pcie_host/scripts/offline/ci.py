@@ -95,9 +95,21 @@ def put(bucket, key, path, kms, immutable=False):
     verify_uploaded(bucket, key, digest)
 
 
+def is_core(args):
+    return getattr(args, 'core', False)
+
+
+def artifact_prefix(args):
+    return prefix(args.ref, args.sha) if is_core(args) else prefix(args.ref, args.sha, args.distro, args.arch)
+
+
+def archive_name(args):
+    return assemble.CORE_ARCHIVE_NAME if is_core(args) else assemble.ARCHIVE_NAME
+
+
 def source_metadata(args, work):
     records, paths, inputs = {}, {}, {}
-    for role in ('host', 'card'):
+    for role in (('card',) if is_core(args) else ('host', 'card')):
         directory = work/(role+'-publication')
         directory.mkdir()
         key = prefix(args.ref, args.sha, args.distro, args.arch) if role == 'host' else prefix(args.ref, args.sha)
@@ -110,14 +122,23 @@ def source_metadata(args, work):
 
 
 def existing(args, work, inputs, pending=True):
-    base = prefix(args.ref, args.sha, args.distro, args.arch)
+    base = artifact_prefix(args)
     for suffix in ('', '.pending') if pending else ('',):
         path = work/('existing'+suffix+'.json')
         if download(args.bucket, base+'/'+assemble.METADATA_NAME+suffix, path, optional=True):
             data = json.loads(path.read_text())
-            offline_identity(data, args.sha, args.ref, args.distro, args.arch, inputs)
-            verify_uploaded(args.bucket, base+'/'+assemble.ARCHIVE_NAME,
-                            data['resources-checksum'][assemble.ARCHIVE_NAME])
+            if is_core(args):
+                metadata_identity(data, args.sha, args.ref)
+                if (data['resources'] != [assemble.CORE_ARCHIVE_NAME]
+                        or data.get('installation', {}).get('script') != ''
+                        or data.get('artifact') != {'type': 'offline', 'repository': 'core',
+                                                  'package_path': '', 'distro': 'elxr26', 'arches': ['arm64']}
+                        or data.get('source_metadata_sha256') != inputs):
+                    raise ValueError('existing standalone Core publication differs')
+            else:
+                offline_identity(data, args.sha, args.ref, args.distro, args.arch, inputs)
+            verify_uploaded(args.bucket, base+'/'+archive_name(args),
+                            data['resources-checksum'][archive_name(args)])
             print('Already validated offline publication: '+base+suffix)
             return path
     return None
@@ -134,23 +155,24 @@ def build(args):
             if assemble.sha(directory/name) != digest:
                 raise ValueError('publication resource checksum differs: '+name)
         assemble.verify_publication(directory, inputs[role])
-    host = paths['host'][1]
-    if not (host/'platform_provider.py').is_file() or any(host.glob('simaai-pcie-host*.deb')):
-        raise ValueError('Rebuild Core with the corrected Scheduler native producer; Platform provisioning must remain separate.')
     baselines = json.loads((HERE/'baselines.json').read_text())
-    context = args.work/'host-baseline'
-    context.mkdir()
-    for name in ('platform_provider.py', 'platform-source.json'):
-        shutil.copyfile(host/name, context/name)
-    source = baselines['platform_source']
-    download(args.bucket, source['key'], context/'platform-source.tar.gz')
-    if assemble.sha(context/'platform-source.tar.gz') != source['sha256']:
-        raise ValueError('Platform source baseline checksum differs')
-    shutil.copyfile(HERE/'HostBaseline.Dockerfile', context/'Dockerfile')
-    iid = args.work/'host-image-id'
-    run('docker', 'build', '--platform', 'linux/'+args.arch, '--iidfile', iid,
-        '--build-arg', 'UBUNTU_IMAGE='+baselines['ubuntu'][args.distro], context)
-    host_image = assemble.image(iid.read_text().strip())
+    if not is_core(args):
+        host = paths['host'][1]
+        if not (host/'platform_provider.py').is_file() or any(host.glob('simaai-pcie-host*.deb')):
+            raise ValueError('Rebuild Core with the corrected Scheduler native producer; Platform provisioning must remain separate.')
+        context = args.work/'host-baseline'
+        context.mkdir()
+        for name in ('platform_provider.py', 'platform-source.json'):
+            shutil.copyfile(host/name, context/name)
+        source = baselines['platform_source']
+        download(args.bucket, source['key'], context/'platform-source.tar.gz')
+        if assemble.sha(context/'platform-source.tar.gz') != source['sha256']:
+            raise ValueError('Platform source baseline checksum differs')
+        shutil.copyfile(HERE/'HostBaseline.Dockerfile', context/'Dockerfile')
+        iid = args.work/'host-image-id'
+        run('docker', 'build', '--platform', 'linux/'+args.arch, '--iidfile', iid,
+            '--build-arg', 'UBUNTU_IMAGE='+baselines['ubuntu'][args.distro], context)
+        host_image = assemble.image(iid.read_text().strip())
     card = baselines['card']
     image_archive = args.work/'card-baseline.docker.tar.gz'
     download(args.bucket, card['key'], image_archive)
@@ -161,6 +183,8 @@ def build(args):
         raise ValueError('card baseline image identity differs')
     image_archive.unlink()
     spec = {'installer_revision': args.installer_revision, 'targets': {}}
+    if is_core(args):
+        spec['scope'] = 'core'
     for role, (_, directory) in paths.items():
         spec['targets'][role] = {
             'publication': str(directory.resolve()), 'metadata_sha256': inputs[role],
@@ -171,7 +195,7 @@ def build(args):
             'os_version': {'ubuntu22': '22.04', 'ubuntu24': '24.04'}[args.distro] if role == 'host' else card['os_version'],
         }
     (args.work/'spec.json').write_text(json.dumps(spec, indent=2)+'\n')
-    root = args.work/'neat-offline'
+    root = args.work/('neat-core-offline' if is_core(args) else 'neat-offline')
     assemble.assemble(spec, root)
     path = args.work/assemble.METADATA_NAME
     metadata = json.loads(path.read_text())
@@ -181,18 +205,19 @@ def build(args):
     if args.validation_only:
         print('Offline validation passed; bundle retained locally without publication.')
         return
-    base = prefix(args.ref, args.sha, args.distro, args.arch)
+    base = artifact_prefix(args)
     # Metadata is staged only after clean-container network-disabled validation.
-    # The final metadata is exposed by the aggregate publish job, after all four
-    # tuples pass. A failed pre-metadata upload can be safely retried under the
+    # The final metadata is exposed by the aggregate publish job, after all five
+    # bundles pass. A failed pre-metadata upload can be safely retried under the
     # workflow's per-source concurrency group; completed publications are immutable.
-    put(args.bucket, base+'/'+assemble.ARCHIVE_NAME, args.work/assemble.ARCHIVE_NAME, args.kms)
+    put(args.bucket, base+'/'+archive_name(args), args.work/archive_name(args), args.kms)
     put(args.bucket, base+'/'+assemble.METADATA_NAME+'.pending', path, args.kms)
 
 
 def publish(args):
     args.work.mkdir(parents=True, exist_ok=False)
     ready = []
+    args.core = False
     for distro, arch in TUPLES:
         args.distro, args.arch = distro, arch
         work = args.work/(distro+'-'+arch)
@@ -202,6 +227,14 @@ def publish(args):
         if path is None:
             raise ValueError('missing validated offline tuple: '+distro+'/'+arch)
         ready.append((prefix(args.ref, args.sha, distro, arch), path))
+    args.core = True
+    work = args.work/'core'
+    work.mkdir()
+    _, _, inputs = source_metadata(args, work)
+    path = existing(args, work, inputs)
+    if path is None:
+        raise ValueError('missing validated standalone Core bundle')
+    ready.append((artifact_prefix(args), path))
     # Complete every read/check before publishing any new metadata.
     for base, path in ready:
         if path.name == 'existing.json':
@@ -210,12 +243,13 @@ def publish(args):
     if args.distribution:
         run('aws', 'cloudfront', 'create-invalidation', '--distribution-id', args.distribution,
             '--paths', *['/'+quote(base, safe='/')+'/'+assemble.METADATA_NAME for base, _ in ready])
-    print('Published all four offline variants.')
+    print('Published standalone Core and all four PCIe offline variants.')
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('command', choices=['build', 'publish'])
+    p.add_argument('--core', action='store_true', help='build standalone Core without PCIe host packages')
     p.add_argument('--validation-only', action='store_true', help='build and validate without reusing or publishing release objects')
     p.add_argument('--bucket', required=True)
     p.add_argument('--ref', required=True)
@@ -230,7 +264,7 @@ def main():
     args = p.parse_args()
     prefix(args.ref, args.sha)
     if args.command == 'build':
-        if (args.distro, args.arch) not in TUPLES or not re.fullmatch(r'[0-9a-f]{40}', args.installer_revision):
+        if (not args.core and (args.distro, args.arch) not in TUPLES) or not re.fullmatch(r'[0-9a-f]{40}', args.installer_revision):
             p.error('build requires a host tuple and immutable installer revision')
         build(args)
     else:

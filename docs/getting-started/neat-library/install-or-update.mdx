@@ -202,3 +202,17 @@ For SDK setup and DevKit Sync onboarding, see
 Continue to [Install PyNeat](/getting-started/neat-library/pyneat/) for custom
 Python environments, or [Neat CLI](/getting-started/neat-library/neat-cli/) to
 inspect the installed environment.
+
+## Offline standalone installation
+
+For a Modalix DevKit running Platform 3.0 and eLxr 26.04, use the standalone `neat-core-offline-installer.tar.gz` archive. Download the Core `offline` variant on a connected computer, verify its checksum against `metadata-offline.json`, and copy it to the DevKit. Stop Neat applications, extract the archive, and run:
+
+```bash
+tar -xzf neat-core-offline-installer.tar.gz
+cd neat-core-offline
+sudo ./install.sh --check
+sudo ./install.sh
+sudo ./install.sh --verify
+```
+
+The archive includes Core, matching Scheduler packages, APT dependencies, Python wheels, and installation scripts. Installation runs without network access. Platform firmware and OS provisioning remain prerequisites. This installer uses `/opt/sima/neat/pyneat`; activate it with `source /opt/sima/neat/pyneat/bin/activate`.
