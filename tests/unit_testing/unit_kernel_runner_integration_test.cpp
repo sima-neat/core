@@ -219,9 +219,17 @@ void terminal_host_placement_proof() {
           "wrong terminal peer acquired host authority");
   request.terminal_host_sink = "terminal";
   const auto admitted = integration::prepare_and_attach_stages(pipeline.get(), {&request, 1});
-  require_fixture(!admitted && probe::inspect_stage(element).valid &&
-                      gs::stage_frame_layout(element) == host.stages.front().frame_layout,
-                  "Core finalized Host endpoint attachment", admitted ? admitted->message : "");
+  const auto attached_layout = gs::stage_frame_layout(element);
+  const auto& expected_span = host.stages.front().frame_layout->outputs.front().span;
+  require_fixture(
+      !admitted && probe::inspect_stage(element).valid && attached_layout &&
+          attached_layout != host.stages.front().frame_layout &&
+          attached_layout->allocations.size() == 1 &&
+          attached_layout->allocations.front().policy == gs::AllocationPolicy::RequireHostCpu &&
+          attached_layout->outputs.size() == 1 &&
+          attached_layout->outputs.front().span.byte_offset == expected_span.byte_offset &&
+          attached_layout->outputs.front().span.size_bytes == expected_span.size_bytes,
+      "Core finalized Host endpoint attachment", admitted ? admitted->message : "");
 }
 
 void output_carrier_budget() {
