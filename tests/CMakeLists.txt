@@ -607,6 +607,7 @@ set(UNIT_TESTS
   unit_stage_cache_identity_test
   unit_simaai_guard_test
   unit_static_spec_builders_dtype_token_test
+  unit_boxdecode_obb_per_port_contract_test
   unit_sima_boxdecode_static_contract_extractor_test
   unit_boxdecode_uses_upstream_cast_contract_test
   unit_sima_boxdecode_node_fragment_test
