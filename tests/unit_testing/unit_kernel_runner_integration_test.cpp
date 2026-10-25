@@ -1238,13 +1238,18 @@ int main(int argc, char** argv) {
       std::cout << "PASS: authored capacity, retained carriers, nested contracts and sync policy\n";
       return 0;
     }
-    simaai::neat::gst_init_once();
+    const bool host_cpu_only = argc == 2 && std::string_view(argv[1]) == "--terminal-host-cpu-only";
+    // This explicit CPU-only profile requires the real factories used below,
+    // not unrelated optional MLA/EV factories from Core's full installation.
+    if (host_cpu_only)
+      gst_init(nullptr, nullptr);
+    else
+      simaai::neat::gst_init_once();
     immutable_recipe_instances();
     if (argc == 2 && std::string_view(argv[1]) == "--instance-only")
       return 0;
     require(probe::register_element(), "register native candidate plugin");
     terminal_host_placement_proof();
-    const bool host_cpu_only = argc == 2 && std::string_view(argv[1]) == "--terminal-host-cpu-only";
     terminal_host_output_lifetime(host_cpu_only);
     if (host_cpu_only || (argc == 2 && std::string_view(argv[1]) == "--terminal-host-only"))
       return 0;
