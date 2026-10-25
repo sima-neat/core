@@ -441,10 +441,12 @@ resolve_consumer_edge_contracts(const SimaPluginStaticManifest& manifest,
   return out;
 }
 
-std::optional<std::size_t> resolve_producer_stage_exact(const SimaPluginStaticManifest& manifest,
-                                                        std::size_t consumer_stage_index,
-                                                        const InputBindingStaticSpec& binding,
-                                                        std::string* error_message) {
+namespace {
+std::optional<std::size_t> resolve_producer_stage(const SimaPluginStaticManifest& manifest,
+                                                  std::size_t consumer_stage_index,
+                                                  const InputBindingStaticSpec& binding,
+                                                  std::size_t search_end,
+                                                  std::string* error_message) {
   set_error(error_message, {});
   const auto fail = [&](std::string detail) -> std::optional<std::size_t> {
     set_error(error_message, std::move(detail));
@@ -488,9 +490,9 @@ std::optional<std::size_t> resolve_producer_stage_exact(const SimaPluginStaticMa
     };
     if (binding.cm_input_name.empty() && binding.source_segment_name.empty())
       return std::nullopt;
-    // Implicit value identities can name only an earlier producer. A public
-    // input may share a generic name with a later stage's output.
-    for (std::size_t i = 0; i < consumer_stage_index; ++i) {
+    for (std::size_t i = 0; i < search_end; ++i) {
+      if (i == consumer_stage_index)
+        continue;
       const auto& candidate = manifest.stages[i];
       const bool matches =
           std::any_of(candidate.logical_outputs.begin(), candidate.logical_outputs.end(),
@@ -516,6 +518,16 @@ std::optional<std::size_t> resolve_producer_stage_exact(const SimaPluginStaticMa
     }
   }
   return producer_index;
+}
+} // namespace
+
+std::optional<std::size_t> resolve_producer_stage_exact(const SimaPluginStaticManifest& manifest,
+                                                        std::size_t consumer_stage_index,
+                                                        const InputBindingStaticSpec& binding,
+                                                        std::string* error_message) {
+  // Planning is topological. A public input can share a later output's name.
+  return resolve_producer_stage(manifest, consumer_stage_index, binding, consumer_stage_index,
+                                error_message);
 }
 
 std::vector<ResolvedEdgeContract>
@@ -543,13 +555,17 @@ resolve_consumer_edge_contracts_exact(const SimaPluginStaticManifest& manifest,
       return std::vector<ResolvedEdgeContract>{};
     };
     std::string producer_error;
-    const auto producer_index =
-        resolve_producer_stage_exact(manifest, consumer_stage_index, binding, &producer_error);
+    // Ownership follows authored identities independently of manifest order.
+    const auto producer_index = resolve_producer_stage(manifest, consumer_stage_index, binding,
+                                                       manifest.stages.size(), &producer_error);
     if (!producer_error.empty())
       return fail(std::move(producer_error));
-    if (!producer_index)
+    if (!producer_index) {
+      if (binding.cm_input_name.empty() && binding.source_segment_name.empty())
+        return fail("binding omits an explicit producer and an authored value identity");
       return fail("no producer for authored value '" + binding.cm_input_name + "'/'" +
                   binding.source_segment_name + "'");
+    }
     // Pin the proven producer for descriptor resolution, bypassing the general
     // resolver's legacy neighbor fallback. Preserve original binding pointers
     // in the result; this local selector is not new persisted contract metadata.
