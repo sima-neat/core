@@ -99,29 +99,31 @@ void terminal_host_output_lifetime(bool dma_denied = false) {
             "terminal host Cast independent BF16 oracle");
   };
   oracle(tensor);
-  // A numerical rank-zero view is one element, not an unbound/opaque carrier.
-  // Use the actual framework allocation above: no forged certificate or allocator tag.
-  auto scalar = tensor;
-  scalar.shape.clear();
-  scalar.strides_bytes.clear();
-  scalar.byte_offset = 2;
-  require(internal::tensor_has_certified_terminal_host_memory(scalar),
-          "certified scalar lost its one-element host span");
-  auto scalar_output = neat::sample_from_tensors(neat::TensorList{scalar});
-  internal::reset_tensor_io_stats();
-  internal::materialize_owned_output(scalar_output, true);
-  require(scalar_output.tensors.front().storage == scalar.storage &&
-              internal::snapshot_tensor_io_stats().tensor_copy_count == 0,
-          "Auto copied a certified scalar instead of retaining it");
-  auto scalar_outside = scalar;
-  scalar_outside.byte_offset = 4;
-  require(!internal::tensor_has_certified_terminal_host_memory(scalar_outside),
-          "scalar span outside the selected framework allocation was accepted");
-  auto opaque_scalar = scalar;
-  opaque_scalar.semantic.byte_stream = neat::ByteStreamSpec{};
-  require(!internal::tensor_has_certified_terminal_host_memory(opaque_scalar) &&
-              !internal::tensor_has_certified_terminal_host_memory(neat::Tensor{}),
-          "opaque or unbound empty shape was certified as a scalar");
+  {
+    // A numerical rank-zero view is one element, not an unbound/opaque carrier.
+    // Use the actual framework allocation above: no forged certificate or allocator tag.
+    auto scalar = tensor;
+    scalar.shape.clear();
+    scalar.strides_bytes.clear();
+    scalar.byte_offset = 2;
+    require(internal::tensor_has_certified_terminal_host_memory(scalar),
+            "certified scalar lost its one-element host span");
+    auto scalar_output = neat::sample_from_tensors(neat::TensorList{scalar});
+    internal::reset_tensor_io_stats();
+    internal::materialize_owned_output(scalar_output, true);
+    require(scalar_output.tensors.front().storage == scalar.storage &&
+                internal::snapshot_tensor_io_stats().tensor_copy_count == 0,
+            "Auto copied a certified scalar instead of retaining it");
+    auto scalar_outside = scalar;
+    scalar_outside.byte_offset = 4;
+    require(!internal::tensor_has_certified_terminal_host_memory(scalar_outside),
+            "scalar span outside the selected framework allocation was accepted");
+    auto opaque_scalar = scalar;
+    opaque_scalar.semantic.byte_stream = neat::ByteStreamSpec{};
+    require(!internal::tensor_has_certified_terminal_host_memory(opaque_scalar) &&
+                !internal::tensor_has_certified_terminal_host_memory(neat::Tensor{}),
+            "opaque or unbound empty shape was certified as a scalar");
+  }
   // The query is selected-span authority, never sibling, wrapper, or allocator-name authority.
   auto outside = tensor;
   outside.byte_offset = std::numeric_limits<std::int64_t>::max();
