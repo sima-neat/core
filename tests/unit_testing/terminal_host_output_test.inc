@@ -215,6 +215,31 @@ void terminal_host_output_lifetime(bool dma_denied = false) {
                                                         nullptr, &foreign_state);
   require(!internal::sample_has_certified_terminal_host_memory(foreign_output),
           "foreign CPU certified");
+  // Auto must keep the historical CPU clone for ordinary SystemMemory samples,
+  // even when the caller permits preserving framework-owned output.
+  for (std::size_t queued : {0U, 1U}) {
+    auto ordinary = foreign_output;
+    ordinary.tensors.resize(1);
+    const auto original_storage = ordinary.tensors.front().storage;
+    require(!ordinary.owned && original_storage &&
+                original_storage->kind == neat::StorageKind::GstSample,
+            "ordinary pressure regression requires a genuine zero-copy host view");
+    neat::graph::maybe_force_copy_for_backpressure(ordinary, queued, "ordinary-host-test", 0, true);
+    require(!internal::sample_has_dmabuf_memory(ordinary) &&
+                !internal::sample_has_certified_terminal_host_memory(ordinary) &&
+                (ordinary.tensors.front().storage == original_storage) == (queued == 0) &&
+                ordinary.owned == (queued == 1),
+            "ordinary Auto pressure changed CPU clone or queue threshold");
+    const auto& value = ordinary.tensors.front();
+    const auto mapped = value.storage->map(neat::MapMode::Read);
+    require(mapped.data && value.byte_offset >= 0 &&
+                static_cast<std::size_t>(value.byte_offset) + 16 <= mapped.size_bytes,
+            "ordinary Auto pressure result bounds");
+    const auto* bytes = static_cast<const std::uint8_t*>(mapped.data) + value.byte_offset;
+    for (std::size_t i = 0; i < 16; ++i)
+      require(bytes[i] == static_cast<std::uint8_t>(51 + i),
+              "ordinary Auto pressure independent byte oracle");
+  }
   auto mixed = neat::sample_from_tensors(neat::TensorList{tensor, foreign_output.tensors.front()});
   for (bool requested_copy : {false, true}) {
     const auto decision =
@@ -262,6 +287,21 @@ void terminal_host_output_lifetime(bool dma_denied = false) {
                   internal::snapshot_tensor_io_stats().tensor_copy_count == 0,
               "host-only pressure must not allocate DMA");
     }
+    auto mixed_negative = mixed;
+    bool mixed_rejected = false;
+    try {
+      neat::graph::maybe_force_copy_for_backpressure(mixed_negative, 1, "mixed-host-test", 0, true);
+    } catch (const std::runtime_error& failure) {
+      mixed_rejected =
+          std::string_view(failure.what()).starts_with("Owned output allocation failed:");
+    }
+    require(
+        mixed_rejected && mixed_negative.owned == mixed.owned &&
+            mixed_negative.tensors.front().storage == tensor.storage &&
+            mixed_negative.tensors.back().storage == foreign_output.tensors.front().storage &&
+            internal::tensor_has_certified_terminal_host_memory(mixed_negative.tensors.front()) &&
+            gate->inflight() == acquired && lane->gate->inflight() == 1,
+        "denied mixed pressure copy changed selected host/foreign storage or credits");
     auto owned_negative = output;
     bool rejected = false;
     try {

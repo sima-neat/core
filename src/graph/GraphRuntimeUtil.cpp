@@ -135,7 +135,7 @@ void maybe_force_copy_for_backpressure(Sample& sample, std::size_t qsize, const 
   const int cap = zero_copy_backpressure_cap();
   if (cap <= 0 || qsize < static_cast<std::size_t>(cap))
     return;
-  if (preserve_framework)
+  if (preserve_framework && pipeline_internal::sample_has_certified_terminal_host_memory(sample))
     pipeline_internal::materialize_owned_output(sample, true);
   else
     force_copy_sample_if_zero_copy(sample);
