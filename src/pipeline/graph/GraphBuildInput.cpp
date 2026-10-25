@@ -474,7 +474,6 @@ bool is_default_run_options(const RunOptions& opt) {
 struct OutputMemoryResolution {
   bool zero_copy;           ///< non-DMA outputs share backing GstSample
   bool preserve_framework;  ///< Auto retains actual standard DMA-BUF storage
-  bool prepare_cpu_visible; ///< issue cache-visibility maintenance for CPU readers
 };
 
 // THE definition of what Auto/ZeroCopy/Owned mean for a public output.
@@ -514,8 +513,7 @@ OutputMemoryResolution resolve_output_memory(const RunOptions& opt, RunMode mode
     }
     break;
   }
-  return {zero_copy, preserve_framework,
-          resolve_prepare_output_cpu_visible(opt, zero_copy || preserve_framework)};
+  return {zero_copy, preserve_framework};
 }
 
 int resolved_input_timeout_ms(const RunOptions& opt) {
@@ -1028,7 +1026,6 @@ InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
   stream_opt.max_input_bytes = opt.advanced.max_input_bytes;
   stream_opt.copy_output = !output_mem.zero_copy;
   stream_opt.preserve_framework_output = output_mem.preserve_framework;
-  stream_opt.prepare_output_cpu_visible = output_mem.prepare_cpu_visible;
   if (output_mem.zero_copy || output_mem.preserve_framework) {
     stream_opt.holder_loan_sample_window = std::max(3, queue_depth + 2);
     stream_opt.holder_loan_credits = stream_opt.holder_loan_sample_window;

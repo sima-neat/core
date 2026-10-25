@@ -84,11 +84,15 @@ opt.top_k = 100;
 
 ## YOLO26 旋轉框 {#yolo26-oriented-boxes}
 
-明確選取 `BoxDecodeType::YoloV26Obb`（Python：`pyneat.BoxDecodeType.YoloV26Obb`，代碼 `yolo26-obb`）。此設定檔接收九個 FP32 頭，依角色分組為三個四通道距離頭、三個類別 logit 頭，以及三個單通道原始角度頭，各組步幅為 8、16、32。所有頭的完整類別數（1–256）必須一致。`Auto`、`GroupedByRole` 與 `GroupedByRoleLogit` 會選用此分組佈局；機率值類別頭與交錯佈局會遭到拒絕。
+明確選取 `BoxDecodeType::YoloV26Obb`（Python：`pyneat.BoxDecodeType.YoloV26Obb`，代碼 `yolo26-obb`）。此設定檔接收九個 FP32、BF16 或 INT8 頭，依角色分組為三個四通道距離頭、三個類別 logit 頭，以及三個單通道原始角度頭，各組步幅為 8、16、32。所有頭的完整類別數（1–256）必須一致。`Auto`、`GroupedByRole` 與 `GroupedByRoleLogit` 會選用此分組佈局；機率值類別頭與交錯佈局會遭到拒絕。
+
+INT8 頭需要正且有限的逐張量量化中繼資料與 INT8 零點。BF16 和 FP32 頭不使用整數量化中繼資料。
 
 使用正值 `top_k` 與 `nms_iou_threshold = 0`。此設定檔對類別 logit 套用 sigmoid，以最高啟用分數選出錨點，再選出錨點/類別配對。分數相同時保留第一階段排名與類別順序。分數門檻採嚴格不等式（`score > detection_threshold`）。原始角度已是弧度，解碼器不會再套用 sigmoid 或正規化其範圍。
 
 前處理中繼資料必須提供明確且有限的模型座標到原圖座標轉換，X/Y 縮放係數須為正且相等，並且不得包含剪切。即使圖塊與模型尺寸相同，也必須明確提供恆等轉換。若缺少轉換或轉換為非等向性，此設定檔會拒絕，而不會近似旋轉矩形。它保留帶正負號的有限寬度/高度，不會裁切至影像邊界。進行分塊 DOTA 評估時，每個圖塊使用恆等轉換，再由應用程式還原圖塊偏移並執行跨圖塊多邊形抑制。
+
+在來源驅動的圖中，Core 會從已驗證的上游 Preproc 契約推導初始準備用的幾何資訊。這只是準備用的初始值：每個影格仍須提供有限、正值且等比例的仿射轉換，以及與模型相符的畫布尺寸。缺少影格轉換時會回報錯誤，不會退回恆等轉換。
 
 輸出標記為 `BBOX_OBB_V1`：32 位元組版本化標頭後接 `top_k` 筆 32 位元組記錄。未使用的記錄為零。`decode_obb_tensor(tensor)` 驗證單一載體；`decode_obb(tensors)` 為每個載體傳回一個具型別的結果。兩者都會複製到具有自身儲存空間的 CPU 張量；類別 ID 維持 INT32。例如：
 

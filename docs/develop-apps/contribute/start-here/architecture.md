@@ -657,6 +657,10 @@ payloads without duplicating decode math. Oriented boxes use a separate versione
 `BBOX_OBB_V1` serializer with the same numerical-completion dependency; failed
 numerical work must not publish stale results.
 
+The immutable kernel recipe retains the producer-authored tensor wire format after the typed node contract is lowered. Cold publication applies that format to both fresh and cached caps; it never infers semantics from a kernel name or byte shape. The public OBB tensor remains dense, rank-one UInt8 with `BBOX_OBB_V1` semantics.
+
+InputStream projects the authored format onto each returned tensor before publishing a Sample, including owned-copy and cached-metadata paths. Raw `Sample.tensors` and the `TensorList` convenience API therefore carry the same detection semantics.
+
 Image-size changes select immutable, resource-compatible prepared BoxDecode variants
 before binding. They do not mutate an operation used by an in-flight frame. RCNN
 stage 1 preserves per-level top-K count-plus-FP16 proposal groups. Core must not
@@ -1129,18 +1133,22 @@ family-specific rules.
 ##### YOLO26 oriented-box contract
 
 `BoxDecodeType::YoloV26Obb` lowers to the named `yolo26_obb_v1` numerical profile.
-It requires nine grouped FP32 heads: three four-channel distance heads, three
+It requires nine grouped heads in FP32, BF16, or INT8: three four-channel distance heads, three
 class-logit heads with the same complete class count (1–256), and three one-channel
 raw-radian angle heads, at strides 8, 16, and 32. Core rejects contradictory roles,
 probability score domains, class-count mismatches, and nonzero per-frame NMS.
 Kernels owns sigmoid, two-stage anchor/class selection, rotated geometry and
 strict score filtering; Core does not duplicate those numerical operations.
 
+INT8 heads require positive finite per-tensor quantization metadata and an INT8 zero point. BF16 and FP32 heads do not use integer quantization metadata. Core preserves the checked native dtype and byte strides. For INT8 it forwards the FP32 reciprocal `1.0F / float(divisor)` and zero point to Kernels. It does not materialize complete FP32 head tensors; required MLA detessellation remains explicit and dtype-preserving.
+
 Geometry requires an explicit finite model-to-original transform with positive
 equal X/Y scales and no shear, including explicit identity for model-sized tiles.
 Core checks authoritative scale equality before narrowing metadata to FP32.
 Per-frame changes select immutable, resource-compatible `image_geometry` variants;
 missing or anisotropic transforms fail rather than approximate a rotated rectangle.
+
+In source-driven graphs, Core derives cold admission geometry from a checked upstream Preproc contract. This is only a preparation seed: every frame must still carry a finite, positive uniform affine and a matching model canvas. A missing frame transform is an error, not an identity fallback.
 
 The numerical outputs are private FP32 `[K,5]` geometry, FP32 `[K]` scores,
 INT32 `[K]` class IDs, and INT32 `[1]` count. The dependent serializer publishes

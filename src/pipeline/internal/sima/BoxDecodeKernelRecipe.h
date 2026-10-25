@@ -18,6 +18,8 @@ struct BoxDecodeGeometryOptions {
   std::optional<std::array<float, 4>> model_to_original;
   bool complete_geometry = false;
   bool uniform_transform_required = false;
+  // A source-driven cold seed must never substitute for per-frame authority.
+  bool require_frame_transform = false;
 };
 struct BoxDecodeKernelRecipeResult {
   CompiledKernelContract compiled;

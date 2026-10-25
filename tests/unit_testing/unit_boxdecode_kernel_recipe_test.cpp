@@ -14,7 +14,8 @@
 #include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
 #include "pipeline/internal/contract/ContractFacts.h"
 #include "gst/GstInit.h"
-#include "pipeline/DetectionTypes.h"
+#include "nodes/sima/Preproc.h"
+#include "pipeline/internal/contract/CompiledNodeContractQuery.h"
 #include "pipeline/FeatureTypes.h"
 #include <simaai/scheduler/testing/probe.h>
 #include <simaai/scheduler/testing/route_probe.h>
@@ -81,7 +82,8 @@ BoxDecodeKernelRecipeResult check(const CompiledBoxDecodeContract& s,
   auto r = prepare_boxdecode_kernel(s, geometry);
   const auto& recipe = *r.compiled.recipe;
   const auto expected_format =
-      s.payload.decode_type != BoxDecodeType::SuperPoint ? kDetectionFormatBbox
+      s.payload.decode_type == BoxDecodeType::YoloV26Obb   ? kDetectionFormatBboxObbV1
+      : s.payload.decode_type != BoxDecodeType::SuperPoint ? kDetectionFormatBbox
       : s.payload.superpoint.output_format == SuperPointOutputFormat::LegacyA65InterleavedV0
           ? kFeatureFormatLegacyA65V0
           : kFeatureFormatPointsV1;
@@ -940,6 +942,97 @@ void combined_execution(bool planar, int ingress_route = 0, bool gaps = false) {
   }
 }
 
+void oriented_source_geometry() {
+  // Public Preproc compilation supplies a typed cold policy; no sample, image
+  // allocation, MLA session or EV execution is involved in this admission test.
+  PreprocOptions options;
+  options.set_input_shape({64, 128, 3});
+  options.input_img_type = options.output_img_type = "RGB";
+  options.set_output_shape({64, 64, 3});
+  options.scaled_width = options.scaled_height = 64;
+  options.output_dtype = "BF16";
+  options.tessellate = false;
+  options.single_output_handoff = true;
+  options.aspect_ratio = true;
+  CompiledNodeContract preproc;
+  std::string error;
+  require(Preproc(options).compile_node_contract({}, &preproc, &error), error.c_str());
+  CompiledNodeContract fragment;
+  fragment.child_stages.push_back(preproc);
+  fragment.child_stages.emplace_back(); // MLA/shape-preserving tail is not geometry authority.
+  std::vector<CompiledNodeContract> preceding{fragment};
+  ContractCompileInput context;
+  context.upstream_preprocess = last_preprocess_contract(preceding);
+  require(context.upstream_preprocess == &preceding[0].child_stages[0].processcvu.value(),
+          "nested source Preproc policy was lost behind the MLA child");
+  auto heads = source(BoxDecodeType::YoloV26Obb, 2);
+  heads.payload.decode_type_option = BoxDecodeTypeOption::GroupedByRoleLogit;
+  heads.payload.nms_iou_threshold = 0;
+  for (int channels : {4, 2, 1})
+    for (int side : {8, 4, 2})
+      input(heads, side, side, channels, "FP32");
+  for (auto& logical : heads.runtime_contract.logical_inputs) {
+    const auto bytes = logical.shape[0] * logical.shape[1] * logical.shape[2] * 4;
+    heads.runtime_contract.physical_inputs.push_back(
+        specbuilders::build_physical_buffer_static_spec(logical.physical_index,
+                                                        logical.physical_index, bytes,
+                                                        DeviceKind::Cpu, logical.segment_name));
+    InputBindingStaticSpec binding;
+    binding.local_logical_input_index = logical.logical_index;
+    heads.runtime_contract.input_bindings.push_back(std::move(binding));
+  }
+  const BoxDecodeGeometryOptions geometry{64, 64, 0, 0, ResizeMode::Letterbox};
+  const auto admitted = compile_boxdecode_kernel(heads, context, geometry);
+  require(admitted.recipe->resolver_factories.size() == 1,
+          "source OBB needs mandatory per-frame geometry selection");
+  test::OperationProbe executor;
+  require(!executor.prepare(admitted.recipe->members[0].executable), "source OBB preparation");
+  auto resolve = admitted.recipe->resolver_factories.front().instantiate();
+  const gchar* tags[] = {nullptr};
+  if (!gst_meta_get_info("GstSimaMeta"))
+    require(gst_meta_register_custom("GstSimaMeta", tags, nullptr, nullptr, nullptr),
+            "source OBB metadata registration");
+  test::GstBufferOwner carrier(gst_buffer_new());
+  auto* meta =
+      gst_custom_meta_get_structure(gst_buffer_add_custom_meta(carrier.get(), "GstSimaMeta"));
+  const std::array<GstBuffer*, 1> carriers{carrier.get()};
+  require(std::holds_alternative<c::Error>(resolve(executor.preparer(), carriers)),
+          "cold seed incorrectly substituted for missing frame geometry");
+  gst_structure_set(meta, "preproc_original_width", G_TYPE_INT, 128, "preproc_original_height",
+                    G_TYPE_INT, 64, "preproc_resized_width", G_TYPE_INT, 64,
+                    "preproc_resized_height", G_TYPE_INT, 64, "preproc_resize_mode", G_TYPE_STRING,
+                    "letterbox", nullptr);
+  require(std::holds_alternative<c::Error>(resolve(executor.preparer(), carriers)),
+          "source dimensions without an actual affine were accepted");
+  for (double sy : {2., 3., std::numeric_limits<double>::infinity(), 2.}) {
+    gst_structure_set(meta, "preproc_affine_scale_x", G_TYPE_DOUBLE, 2., "preproc_affine_scale_y",
+                      G_TYPE_DOUBLE, sy, "preproc_affine_offset_x", G_TYPE_DOUBLE, 0.,
+                      "preproc_affine_offset_y", G_TYPE_DOUBLE, -32., nullptr);
+    require(std::holds_alternative<c::Error>(resolve(executor.preparer(), carriers)) == (sy != 2.),
+            "source OBB failed valid retry or admitted nonuniform/nonfinite frame affine");
+  }
+  for (int fault : {0, 1, 2}) {
+    auto bad = context;
+    auto bad_geometry = geometry;
+    auto policy = *context.upstream_preprocess;
+    if (fault == 0)
+      bad.upstream_preprocess = nullptr;
+    if (fault == 1) {
+      policy.payload.aspect_ratio = 0;
+      bad.upstream_preprocess = &policy;
+    }
+    if (fault == 2)
+      bad_geometry.model_width = 32;
+    bool rejected = false;
+    try {
+      (void)compile_boxdecode_kernel(heads, bad, bad_geometry);
+    } catch (const std::invalid_argument&) {
+      rejected = true;
+    }
+    require(rejected, "missing, anisotropic or wrong-canvas upstream policy admitted");
+  }
+}
+
 void oriented_contract_and_execution() {
   auto s = source(BoxDecodeType::YoloV26Obb, 2);
   s.payload.decode_type_option = BoxDecodeTypeOption::GroupedByRoleLogit;
@@ -1380,7 +1473,14 @@ int main(int argc, char** argv) {
       std::cout << "YOLO26_OBB_PUBLICATION_SAMPLE_BRIDGE_PASS\n";
       return 0;
     }
+    if (argc == 2 && std::string(argv[1]) == "--yolo26-obb-source-geometry") {
+      gst_init(nullptr, nullptr);
+      oriented_source_geometry();
+      std::cout << "YOLO26_OBB_SOURCE_GEOMETRY_PASS\n";
+      return 0;
+    }
     simaai::neat::gst_init_once();
+    oriented_source_geometry();
     oriented_publication_sample_bridge();
     linear_metadata_contracts();
     families();

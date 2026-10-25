@@ -226,6 +226,9 @@ void attach_boxdecode_geometry_resolver(KernelStageRecipe& recipe, std::size_t m
            if (!options.complete_geometry && !original_size_from_metadata)
              return base;
            if (options.complete_geometry) {
+             if (options.require_frame_transform &&
+                 (!found_transform_authority || !selected.transform))
+               return invalid("source-driven oriented boxes require per-frame preprocess affine");
              if (!found_transform_authority)
                selected.transform = options.model_to_original;
              if (options.uniform_transform_required &&

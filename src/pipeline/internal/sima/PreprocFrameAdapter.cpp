@@ -32,6 +32,13 @@ PreprocFrameAdapter::checked_image_publication(const CheckedPolicy& policy) {
   return policy.image_publication;
 }
 
+Result<simaai::gst::TensorBufferPreprocessFactsOwner>
+PreprocFrameAdapter::checked_initial_preprocess_facts(std::shared_ptr<const CheckedPolicy> policy) {
+  PreprocFrameAdapter adapter(std::move(policy));
+  return adapter.prepare_publication(adapter.policy_->initial_geometry,
+                                     adapter.policy_->initial_executable, nullptr);
+}
+
 using namespace ::simaai::scheduler::client;
 namespace {
 

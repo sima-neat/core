@@ -87,11 +87,13 @@ Axis-aligned detection-display graphs can feed the result to `SimaRender`. Use `
 ## YOLO26 oriented boxes {#yolo26-oriented-boxes}
 
 Select `BoxDecodeType::YoloV26Obb` (Python: `pyneat.BoxDecodeType.YoloV26Obb`,
-token `yolo26-obb`) explicitly. This profile consumes nine FP32 heads grouped as
+token `yolo26-obb`) explicitly. This profile consumes nine heads in FP32, BF16, or INT8, grouped as
 three four-channel distance heads, three class-logit heads, and three one-channel
 raw-angle heads, at strides 8, 16, and 32. All heads must agree on the complete
 class count (1–256). `Auto`, `GroupedByRole`, and `GroupedByRoleLogit` select this
 grouped layout; probability-valued class heads and interleaved layouts are rejected.
+
+INT8 heads require positive finite per-tensor quantization metadata and an INT8 zero point. BF16 and FP32 heads do not use integer quantization metadata.
 
 Use a positive `top_k` and `nms_iou_threshold = 0`. The profile applies sigmoid to
 class logits, selects anchors by their highest activated score, then selects
@@ -106,6 +108,8 @@ transforms rather than approximating a rotated rectangle. It preserves signed
 finite widths/heights and does not clip to image bounds. For tiled DOTA evaluation,
 use an identity transform for each tile, then perform tile-offset recovery and
 cross-tile polygon suppression in the application.
+
+In source-driven graphs, Core derives cold admission geometry from a checked upstream Preproc contract. This is only a preparation seed: every frame must still carry a finite, positive uniform affine and a matching model canvas. A missing frame transform is an error, not an identity fallback.
 
 The output is tagged `BBOX_OBB_V1`: a 32-byte versioned header followed by `top_k`
 32-byte records. Unused records are zero. `decode_obb_tensor(tensor)` validates a

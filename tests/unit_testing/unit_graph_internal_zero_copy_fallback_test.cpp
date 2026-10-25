@@ -456,6 +456,15 @@ void require_output_policy_matrix() {
           require(resolved.output_memory == memory,
                   "build resolution must preserve caller output-memory intent");
           auto stream = session_build_make_stream_options(resolved, mode);
+          for (const bool reserved : {false, true}) {
+            auto no_op = resolved;
+            no_op.advanced.prepare_output_cpu_visible = reserved;
+            const auto unchanged = session_build_make_stream_options(no_op, mode);
+            require(unchanged.copy_output == stream.copy_output &&
+                        unchanged.preserve_framework_output == stream.preserve_framework_output &&
+                        unchanged.holder_loan_credits == stream.holder_loan_credits,
+                    "reserved CPU-visibility option must not change output memory policy");
+          }
           const bool auto_owned = override && std::string(override) == "owned";
           const bool auto_zero_copy = override && std::string(override) == "zerocopy";
           const bool preserve_dma = memory == OutputMemory::Auto && !auto_owned;
