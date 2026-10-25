@@ -1,6 +1,7 @@
 """Receipt selection and LLiMa compatibility without network or SDK mutation."""
 import json
 from pathlib import Path
+import subprocess
 import sys
 
 import pytest
@@ -132,6 +133,80 @@ def test_llima_checked_before_installation_and_policy_retained_after_packaging()
     assert ensure.index('scheduler_sdk_policy.py') < ensure.index('record_sysroot_files')
     main = source.split('main() {', 1)[1]
     assert main.index('generate_package_metadata_if_requested') < main.index('--output dist/scheduler-sdk-policy.json')
+
+
+@pytest.mark.parametrize('role', ['core', 'dev', 'cli'])
+@pytest.mark.parametrize('root_state', ['valid', 'missing', 'tampered', 'duplicate'])
+def test_llima_installs_and_caches_only_validated_root_packages(tmp_path, role, root_state):
+    publication = tmp_path / 'local publication'
+    publication.mkdir()
+    fixture(publication)
+    package = publication / f'sima-lmm-0.6.0-Linux-{role}.deb'
+    nested = publication / 'build' / package.name
+    nested.parent.mkdir()
+    nested.write_bytes(b'stale nested package')
+    assert str(nested) < str(package)
+    if root_state == 'missing':
+        package.unlink()
+    elif root_state == 'tampered':
+        package.write_bytes(b'unpublished root bytes')
+    elif root_state == 'duplicate':
+        (publication / f'sima-lmm-0.5.0-Linux-{role}.deb').write_bytes(b'duplicate')
+
+    cache = tmp_path / 'cache'
+    sysroot = tmp_path / 'sysroot'
+    for name in ('cmake/SimaLMM/SimaLMMConfig.cmake', 'libsima_lmm_runtime.so'):
+        path = sysroot / 'usr/lib/aarch64-linux-gnu' / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    source = (ROOT / 'build.sh').read_text()
+    start = source.index('ensure_neat_llima() {')
+    function = source[start:source.index('\n}\n', start) + 2]
+    # Run the real selection, validation and cache copy, mocking installation.
+    script = '''set -euo pipefail
+resolve_neat_llima_ref() { NEAT_LLIMA_REQUESTED_REF=develop:fixture; }
+fetch_neat_llima_vulcan_artifacts() { echo 'unexpected download' >&2; return 99; }
+ensure_llima_sdk_sysroot_deps() { :; }
+run_privileged() { echo 'unexpected privileged operation' >&2; return 99; }
+record_sysroot_files() { printf '%s\\n' "$@" > "$TEST_TMP/recorded"; }
+dpkg-deb() {
+  [[ "$1" == -x && "$3" == "$SYSROOT" ]] || return 99
+  printf '%s\\n' "$2" >> "$TEST_TMP/extracted"
+}
+mktemp() { command mktemp -d "$TEST_TMP/work.XXXXXX"; }
+python3() {
+  if [[ "$1" == tools/build_dependencies.py ]]; then
+    printf '%s\\n' "$SCHEDULER_POLICY"
+  else
+    command python3 "$@"
+  fi
+}
+'''
+    result = subprocess.run(['/bin/bash', '-c', script + function + '\nensure_neat_llima\n'],
+                            cwd=ROOT, text=True, capture_output=True,
+                            env={'PATH': '/usr/bin:/bin', 'TEST_TMP': str(tmp_path),
+                                 'PYTHONDONTWRITEBYTECODE': '1',
+                                 'NEAT_LLIMA_ARTIFACT_DIR': str(publication),
+                                 'NEAT_DEPS_DIR': str(tmp_path), 'NEAT_LLIMA_DEB_DIR': str(cache),
+                                 'REPO_ROOT': str(ROOT), 'ELXR_SDK': 'ON', 'SYSROOT': str(sysroot),
+                                 'SCHEDULER_POLICY': json.dumps(receipt())})
+    if root_state != 'valid':
+        assert result.returncode != 0, result.stdout
+        if root_state == 'missing':
+            assert 'debs were not found' in result.stderr
+        else:
+            assert 'differs from the firmware publication' in result.stderr
+        assert not cache.exists()
+        assert not (tmp_path / 'recorded').exists()
+        assert not (tmp_path / 'extracted').exists()
+        return
+    assert result.returncode == 0, result.stderr
+    expected = [str(publication / f'sima-lmm-0.6.0-Linux-{r}.deb') for r in ('core', 'dev')]
+    assert (tmp_path / 'recorded').read_text().splitlines() == expected
+    assert (tmp_path / 'extracted').read_text().splitlines() == expected
+    for root_package in publication.glob('*.deb'):
+        assert (cache / root_package.name).read_bytes() == root_package.read_bytes()
+    policy.check_llima(receipt(), cache)
 
 
 def test_remote_policy_uses_selected_immutable_llima_commit(tmp_path, monkeypatch):

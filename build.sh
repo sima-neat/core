@@ -1291,13 +1291,14 @@ ensure_neat_llima() {
     llima_ref="${NEAT_LLIMA_RESOLVED_REF:-${llima_ref}}"
   fi
 
+  # Match check_llima's root-only publication inventory, not build-tree DEBs.
   local core_deb dev_deb cli_deb
-  core_deb="$(find "${artifact_dir}" -maxdepth 3 -type f -name 'sima-lmm-*-Linux-core.deb' | sort | head -n 1)"
-  dev_deb="$(find "${artifact_dir}" -maxdepth 3 -type f -name 'sima-lmm-*-Linux-dev.deb' | sort | head -n 1)"
-  cli_deb="$(find "${artifact_dir}" -maxdepth 3 -type f -name 'sima-lmm-*-Linux-cli.deb' | sort | head -n 1)"
+  core_deb="$(find "${artifact_dir}" -maxdepth 1 -type f -name 'sima-lmm-*-Linux-core.deb' | sort | head -n 1)"
+  dev_deb="$(find "${artifact_dir}" -maxdepth 1 -type f -name 'sima-lmm-*-Linux-dev.deb' | sort | head -n 1)"
+  cli_deb="$(find "${artifact_dir}" -maxdepth 1 -type f -name 'sima-lmm-*-Linux-cli.deb' | sort | head -n 1)"
   if [[ -z "${core_deb}" || -z "${dev_deb}" || -z "${cli_deb}" ]]; then
     echo "ERROR: Expected sima-lmm core/dev/cli debs were not found in Vulcan LLiMa artifact." >&2
-    find "${artifact_dir}" -maxdepth 3 -type f -name '*.deb' -printf '  %f\n' | sort >&2
+    find "${artifact_dir}" -maxdepth 1 -type f -name '*.deb' -printf '  %f\n' | sort >&2
     rm -rf "${tmp_dir}"
     exit 1
   fi
