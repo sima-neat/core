@@ -2056,7 +2056,6 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
         logical.output_slot = slot;
         logical.tensor_index = slot;
         logical.byte_offset = 0;
-        logical.size_bytes = value->required_bytes;
         logical.logical_name = value->name;
         logical.backend_name = value->name;
         logical.model_carrier_id = value->storage_binding->carrier_id;
@@ -2074,6 +2073,7 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
                           ", logical_span=" + std::to_string(logical_span) +
                           ", physical_extent=" + std::to_string(port.physical_extent_bytes) + ")");
         }
+        logical.size_bytes = logical_span;
         logical.dtype = *value->logical_dtype;
         logical.dtype_source = DTypeSource::InternalContract;
         logical.shape = *value->logical_shape;

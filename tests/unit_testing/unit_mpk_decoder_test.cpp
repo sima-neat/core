@@ -2160,6 +2160,25 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
   check(!grammar_rejected && grammar_rejected.error->code == MpkDecodeErrorCode::InvalidField,
         "batch flatten accepts only its exact two-shape-list grammar");
   const auto& plan = *result.plan;
+  auto mla_contract = project_single_mla(plan);
+  check(mla_contract.logical_outputs.front().size_bytes == 1000U &&
+            mla_contract.logical_outputs.front().shape == TensorShape({1, 1, 1, 1000}) &&
+            mla_contract.physical_outputs.front().size_bytes == 1008U &&
+            mla_contract.dispatcher_physical_outputs.front().size_bytes == 1008U,
+        "MLA publishes logical bytes while retaining its padded hardware transfer extent");
+  mla_contract.stage_id = mla_contract.node_name = "MLA_0";
+  mla_contract.model_path = "resnet.elf";
+  mla_contract.batch_size = mla_contract.batch_sz_model = 1;
+  SimaPluginStaticManifest mla_manifest;
+  mla_manifest.stages.push_back(simaai::neat::project_mla_stage_contract(
+      stagesemantics::build_mla_compiled_contract(mla_contract)));
+  finalize_pipeline_storage(mla_manifest);
+  check(!finalize_stage_publications(&mla_manifest), "padded MLA publication finalizes");
+  const auto& mla_stage = mla_manifest.stages.front();
+  check(mla_stage.frame_layout && mla_stage.tensor_publication &&
+            mla_stage.frame_layout->outputs.front().span.size_bytes == 1008U &&
+            mla_stage.tensor_publication->contract->logical_outputs.front().size_bytes == 1000U,
+        "Scheduler reserved storage remains separate from logical tensor publication");
   check(plan.ops().size() == 4U && plan.ops()[1].kind == OpKind::Detessellate &&
             plan.ops()[2].kind == OpKind::Reshape &&
             plan.ops()[2].kernel == "batch_flatten_transform" &&
