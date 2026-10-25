@@ -1241,17 +1241,20 @@ int main(int argc, char** argv) {
     const bool host_cpu_only = argc == 2 && std::string_view(argv[1]) == "--terminal-host-cpu-only";
     // This explicit CPU-only profile requires the real factories used below,
     // not unrelated optional MLA/EV factories from Core's full installation.
-    if (host_cpu_only)
+    if (host_cpu_only) {
       gst_init(nullptr, nullptr);
-    else
-      simaai::neat::gst_init_once();
+      require(probe::register_element(), "register native candidate plugin");
+      terminal_host_output_lifetime(true);
+      return 0;
+    }
+    simaai::neat::gst_init_once();
     immutable_recipe_instances();
     if (argc == 2 && std::string_view(argv[1]) == "--instance-only")
       return 0;
     require(probe::register_element(), "register native candidate plugin");
     terminal_host_placement_proof();
-    terminal_host_output_lifetime(host_cpu_only);
-    if (host_cpu_only || (argc == 2 && std::string_view(argv[1]) == "--terminal-host-only"))
+    terminal_host_output_lifetime(false);
+    if (argc == 2 && std::string_view(argv[1]) == "--terminal-host-only")
       return 0;
     capacity_policy();
     ev_service_capacity();
