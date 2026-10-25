@@ -11,13 +11,6 @@ find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/NeatGuardedTests.cmake")
 
-add_executable(unit_rtp_sequence_observation_test
-  unit_testing/unit_rtp_sequence_observation_test.cpp)
-target_include_directories(unit_rtp_sequence_observation_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-simaneat_add_test(NAME unit_rtp_sequence_observation_test COMMAND unit_rtp_sequence_observation_test)
-set_tests_properties(unit_rtp_sequence_observation_test PROPERTIES
-  TIMEOUT 10 LABELS "strict;unit;host")
-
 # Package the bootstrap test with its actual Python subject, just like the CLI
 # tests below. Installed tests cannot resolve the producer's source checkout.
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tools")
@@ -43,6 +36,13 @@ foreach(host_contract test_hardware_test_supervisor test_ci_dependency_materiali
     COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tools/${host_contract}.py")
   set_tests_properties(${host_contract} PROPERTIES LABELS "unit;host;qualification-safety")
 endforeach()
+
+add_executable(unit_rtp_sequence_observation_test
+  unit_testing/unit_rtp_sequence_observation_test.cpp)
+target_include_directories(unit_rtp_sequence_observation_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+simaneat_add_test(NAME unit_rtp_sequence_observation_test COMMAND unit_rtp_sequence_observation_test)
+set_tests_properties(unit_rtp_sequence_observation_test PROPERTIES
+  TIMEOUT 10 LABELS "strict;unit;host")
 
 if (NOT TARGET SimaScheduler::frontend)
   message(FATAL_ERROR "Kernel integration tests require SimaScheduler::frontend")
