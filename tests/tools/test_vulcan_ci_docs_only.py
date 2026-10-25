@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import re
 import shutil
 import subprocess
@@ -33,11 +34,14 @@ class VulcanCiDocsOnlyTests(unittest.TestCase):
             resolver["uses"],
             "sima-neat/.github/.github/workflows/vulcan-resolve-modalix-runner.yml@main",
         )
-        self.assertEqual(resolver["with"], {
+        self.assertEqual({key: resolver["with"][key] for key in ("legacy_runner_group", "versioned_runner_group_prefix")}, {
             "legacy_runner_group": "modalix-devkit",
             "versioned_runner_group_prefix": "modalix-devkit-",
         })
-        self.assertEqual(resolver["needs"], ["detect-changes"])
+        self.assertEqual(resolver["needs"], ["detect-changes", "resolve-vulcan-config"])
+        self.assertEqual(resolver["with"]["shared_workflow_ref"], "main")
+        self.assertIs(resolver["with"]["allow-version-fallback"], False)
+        self.assertEqual(resolver["secrets"]["app_id"], "${{ secrets.NEAT_RELEASES_APP_ID }}")
         self.assertIn("== 'standard'", resolver["if"])
         self.assertIn("needs.detect-changes.outputs.docs_only != 'true'", resolver["if"])
         devkit = yaml.safe_load(job_block("test-devkit"))
@@ -47,10 +51,17 @@ class VulcanCiDocsOnlyTests(unittest.TestCase):
     def test_devkit_labels_preserve_capabilities_and_artifact_environment(self) -> None:
         devkit = yaml.safe_load(job_block("test-devkit"))
         env = "needs.resolve-vulcan-config.outputs.vulcan_env"
-        self.assertEqual(devkit["runs-on"]["labels"], [
+        self.assertEqual(devkit["runs-on"]["labels"],
+                         "${{ fromJSON(needs.resolve-test-runner.outputs.runner_labels) }}")
+        resolver = yaml.safe_load(job_block("resolve-test-runner"))
+        self.assertEqual(json.loads(resolver["with"]["runner-labels"]), [
             "self-hosted", "Linux", "ARM64", "modalix", "rtsp",
             "vulcan-${{ " + env + " == 'prod' && 'production' || " + env + " }}",
         ])
+        guard = devkit["steps"][0]
+        self.assertEqual(guard["name"], "Verify selected DevKit firmware")
+        self.assertEqual(guard["env"]["EXPECTED_ELXR_VERSION"],
+                         "${{ needs.resolve-test-runner.outputs.elxr_version }}")
         # Human-readable runner labels must not change the resolved publisher
         # environment, SDK selection, or artifact-acquisition environment.
         self.assertEqual(devkit["env"]["VULCAN_ENV"], "${{ " + env + " }}")
