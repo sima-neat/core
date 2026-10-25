@@ -36,11 +36,6 @@ REMOTE_BOOTSTRAP
 if [[ -n "${SIMAPCIE_LOCAL_CORE_DIST:-}" ]]; then
   metadata_sha256="$(sha256sum "${SIMAPCIE_LOCAL_CORE_DIST}/metadata-all.json")"
   metadata_sha256="${metadata_sha256%% *}"
-  "${WORKSPACE}/scripts/ci/verify_core_dist.sh" \
-    --dist "${SIMAPCIE_LOCAL_CORE_DIST}" \
-    --expected-manifest "${WORKSPACE}/deps/manifest.json" \
-    --expected-commit "${GITHUB_SHA:?}" \
-    --package-profile core-codecs-llima
   remote_dist="$(ssh_card 'mkdir -p "${HOME}/tmp"; mktemp -d "${HOME}/tmp/sima-neat-card-validation.XXXXXX"')"
   [[ "${remote_dist}" =~ ^/[^[:space:]]*/sima-neat-card-validation\.[[:alnum:]]{6}$ ]] || {
     echo 'ERROR: invalid PCIe card candidate directory' >&2

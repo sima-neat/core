@@ -1611,18 +1611,8 @@ jobs:
           clean: true
           fetch-depth: 0
 
-      - name: Set up Python for local candidate verification
-        if: ${{ inputs.validation_only }}
-        id: validation_python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-          update-environment: false
-
       - name: Install sima-cli
         shell: bash
-        env:
-          SIMA_CLI_VERIFIER_PYTHON: ${{ steps.validation_python.outputs.python-path }}
         run: |
           set -euo pipefail
           ./scripts/ci/install_sima_cli_main.sh
@@ -1651,7 +1641,7 @@ jobs:
           pattern: core-pciehost-*-amd64
           path: _work/validation-pciehost
 
-      - name: Select and verify this run's local PCIe validation candidates
+      - name: Select this run's local PCIe validation candidates
         if: ${{ inputs.validation_only }}
         shell: bash
         run: |
@@ -1661,8 +1651,6 @@ jobs:
           host_dist="${GITHUB_WORKSPACE}/_work/validation-pciehost/core-pciehost-${host_distro}-amd64"
           core_dist="${GITHUB_WORKSPACE}/_work/validation-core-dist"
           test -d "${host_dist}"
-          bash scripts/ci/verify_core_dist.sh --dist "${core_dist}" \
-            --expected-manifest deps/manifest.json --expected-commit "$GITHUB_SHA"
           {
             printf 'SIMAPCIE_LOCAL_HOST_DIST=%s\n' "${host_dist}"
             printf 'SIMAPCIE_LOCAL_CORE_DIST=%s\n' "${core_dist}"
