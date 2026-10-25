@@ -717,7 +717,7 @@ runner = model.build([tensor], route_options=route)
 
 ## 모델 실행 측정
 
-빠른 합성 모델 벤치마크를 위해 `model.benchmark(...)`를 사용하십시오. `input_specs()`에서 입력을 생성하고 주요 지연 시간, 처리량, 전력 및 보드 텔레메트리를 반환합니다. 이를 사용하여 모델/런타임 변경 사항을 비교하되, 프로덕션 애플리케이션의 처리량을 주장하는 데 사용하지 마십시오.
+빠른 모델 벤치마크를 위해 `model.benchmark(...)`를 사용하십시오. 기본적으로 `input_specs()`에서 합성 입력을 생성하고 주요 지연 시간, 처리량, 전력 및 보드 텔레메트리를 반환합니다. 이를 사용하여 모델/런타임 변경 사항을 비교하되, 프로덕션 애플리케이션의 처리량을 주장하는 데 사용하지 마십시오.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -739,6 +739,45 @@ print("latency_ms=", report.latency_ms, "fps=", report.fps)
 
 </CodeTab>
 </CodeTabs>
+
+### 직접 준비한 입력으로 측정 {#measure-with-your-own-inputs}
+
+합성 입력은 실제 데이터와 다릅니다. 찾은 모든 박스를 처리하는 검출 또는 분할 디코더처럼 모델의 비용이 입력에 따라 달라진다면 실제 입력으로 측정하십시오. 모델 입력마다 텐서를 하나씩 `input_specs()` 순서대로 만들고, `run()`에 전달할 때와 똑같이 `inputs`에 설정합니다. 벤치마크는 모든 샘플에 같은 입력을 푸시합니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+cv::Mat image = cv::imread("bus.jpg");  // BGR
+
+simaai::neat::BenchmarkOptions options;
+options.inputs = simaai::neat::TensorList{
+    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::BGR,
+                                      simaai::neat::TensorMemory::EV74)};
+
+simaai::neat::BenchmarkReport report = model.benchmark(options);
+std::cout << "input=" << report.input << " fps=" << report.fps << "\n";  // input=provided
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+image = cv2.imread("bus.jpg")  # BGR
+
+options = pyneat.BenchmarkOptions()
+options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.BGR)]
+
+report = model.benchmark(options)
+print("input=", report.input, "fps=", report.fps)  # input= provided
+```
+
+</CodeTab>
+</CodeTabs>
+
+벤치마크는 시작하기 전에 입력을 검사합니다. 텐서 개수, 형상, dtype 또는 이미지 형식 메타데이터가 모델과 맞지 않으면 오류 코드 `misconfig.input_shape`와 함께 `NeatError`를 던지며, 메시지에 해당 입력, 기대값, 실제 값을 표시합니다. 전처리가 크기 조정과 색 변환을 수행하므로 이미지 입력은 어떤 크기와 색 형식이든 사용할 수 있습니다. BoxDecode 경로는 검출 결과를 제공된 이미지 자체의 크기로 매핑하므로 `original_width`와 `original_height`는 설정하지 않거나 그 크기로 설정하십시오.
+
+### 원본 이미지 기하 정보 설명
 
 BoxDecode 경로의 경우, 합성 입력 이미지의 원본 이미지 기하학적 정보를 설명하여 벤치마크가 모델 좌표에서 감지 결과를 역으로 매핑할 수 있도록 합니다.
 

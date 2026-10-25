@@ -715,7 +715,7 @@ runner = model.build([tensor], route_options=route)
 
 ## モデルの実行を測定する
 
-`model.benchmark(...)` を使用して、迅速な合成モデルのベンチマークを実施してください。これにより、`input_specs()` から入力が生成され、主要なレイテンシー、スループット、電力、およびボードのテレメトリが返されます。モデルやランタイムの変更を比較するために使用し、実際の運用環境におけるスループットを主張するためには使用しないでください。
+`model.benchmark(...)` を使用して、迅速なモデルのベンチマークを実施してください。既定では `input_specs()` から合成入力を生成し、主要なレイテンシー、スループット、電力、およびボードのテレメトリを返します。モデルやランタイムの変更を比較するために使用し、実際の運用環境におけるスループットを主張するためには使用しないでください。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -737,6 +737,45 @@ print("latency_ms=", report.latency_ms, "fps=", report.fps)
 
 </CodeTab>
 </CodeTabs>
+
+### 独自の入力で測定する {#measure-with-your-own-inputs}
+
+合成入力は実際のデータとは異なります。検出したすべてのボックスを処理する検出やセグメンテーションのデコーダーのように、モデルのコストが入力に依存する場合は、実際の入力で測定してください。モデルの入力ごとに 1 つのテンソルを `input_specs()` の順序で作成し、`run()` に渡すときとまったく同じ形で `inputs` に設定します。ベンチマークは、すべてのサンプルで同じ入力をプッシュします。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+cv::Mat image = cv::imread("bus.jpg");  // BGR
+
+simaai::neat::BenchmarkOptions options;
+options.inputs = simaai::neat::TensorList{
+    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::BGR,
+                                      simaai::neat::TensorMemory::EV74)};
+
+simaai::neat::BenchmarkReport report = model.benchmark(options);
+std::cout << "input=" << report.input << " fps=" << report.fps << "\n";  // input=provided
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+image = cv2.imread("bus.jpg")  # BGR
+
+options = pyneat.BenchmarkOptions()
+options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.BGR)]
+
+report = model.benchmark(options)
+print("input=", report.input, "fps=", report.fps)  # input= provided
+```
+
+</CodeTab>
+</CodeTabs>
+
+ベンチマークは開始前に入力を検査します。テンソルの数、形状、dtype、または画像フォーマットのメタデータがモデルと一致しない場合は、エラーコード `misconfig.input_shape` の `NeatError` をスローし、対象の入力、期待値、実際の値をメッセージで示します。前処理でサイズ変更と色変換が行われるため、画像入力のサイズと色フォーマットは任意です。BoxDecode ルートは検出結果を提供された画像自体のサイズにマッピングするため、`original_width` と `original_height` は設定しないか、そのサイズに設定してください。
+
+### ソース画像のジオメトリを記述する
 
 BoxDecodeルートの場合、合成入力のソース画像のジオメトリを記述してください。これにより、ベンチマークは、モデルの座標から検出結果を元の画像にマッピングできるようになります。
 

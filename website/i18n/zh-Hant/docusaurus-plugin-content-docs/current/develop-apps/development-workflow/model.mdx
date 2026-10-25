@@ -717,7 +717,7 @@ runner = model.build([tensor], route_options=route)
 
 ## 測量模型執行效能
 
-使用 `model.benchmark(...)` 進行快速的合成模型基準測試。它會從 `input_specs()` 產生輸入，並回傳延遲、吞吐量、功耗以及板子遙測等主要指標。請使用它來比較模型/執行階段的變更，而不是用來宣稱生產應用程式的吞吐量。
+使用 `model.benchmark(...)` 進行快速的模型基準測試。預設會從 `input_specs()` 產生合成輸入，並回傳延遲、吞吐量、功耗以及板子遙測等主要指標。請使用它來比較模型/執行階段的變更，而不是用來宣稱生產應用程式的吞吐量。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -739,6 +739,45 @@ print("latency_ms=", report.latency_ms, "fps=", report.fps)
 
 </CodeTab>
 </CodeTabs>
+
+### 使用自己的輸入進行測量 {#measure-with-your-own-inputs}
+
+合成輸入與真實資料不同。當模型的成本取決於輸入時，例如會處理每個找到的方框的偵測或分割解碼器，請改用真實輸入測量。依 `input_specs()` 的順序為每個模型輸入建立一個張量，就像傳給 `run()` 時一樣，並設定到 `inputs`。基準測試會在每個樣本推送相同的輸入。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+cv::Mat image = cv::imread("bus.jpg");  // BGR
+
+simaai::neat::BenchmarkOptions options;
+options.inputs = simaai::neat::TensorList{
+    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::BGR,
+                                      simaai::neat::TensorMemory::EV74)};
+
+simaai::neat::BenchmarkReport report = model.benchmark(options);
+std::cout << "input=" << report.input << " fps=" << report.fps << "\n";  // input=provided
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+image = cv2.imread("bus.jpg")  # BGR
+
+options = pyneat.BenchmarkOptions()
+options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.BGR)]
+
+report = model.benchmark(options)
+print("input=", report.input, "fps=", report.fps)  # input= provided
+```
+
+</CodeTab>
+</CodeTabs>
+
+基準測試會在開始前檢查輸入。如果張量數量、形狀、dtype 或影像格式中繼資料與模型不符，會擲回錯誤代碼為 `misconfig.input_shape` 的 `NeatError`，訊息中會指出該輸入、預期值與實際值。由於預處理會調整大小並轉換色彩，影像輸入可以是任何大小與色彩格式。BoxDecode 路由會將偵測結果映射回所提供影像本身的大小，因此請不要設定 `original_width` 與 `original_height`，或將其設為該大小。
+
+### 描述來源影像幾何資訊
 
 對於 BoxDecode 路由，請描述合成輸入的來源影像幾何資訊，以便基準測試可以將檢測結果映射回模型座標：
 

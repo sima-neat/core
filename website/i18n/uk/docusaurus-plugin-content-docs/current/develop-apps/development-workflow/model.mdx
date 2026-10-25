@@ -719,7 +719,7 @@ runner = model.build([tensor], route_options=route)
 
 ## Вимірюйте час виконання моделі.
 
-Використовуйте `model.benchmark(...)` для швидкого синтетичного тестування моделі. Він генерує вхідні дані на основі `input_specs()` і повертає показники затримки, пропускної здатності, потужності та телеметрії плати. Використовуйте його для порівняння змін у моделі/середовищі виконання, а не для підтвердження показників пропускної здатності у виробничому середовищі.
+Використовуйте `model.benchmark(...)` для швидкого тестування моделі. За замовчуванням він генерує синтетичні вхідні дані на основі `input_specs()` і повертає показники затримки, пропускної здатності, потужності та телеметрії плати. Використовуйте його для порівняння змін у моделі/середовищі виконання, а не для підтвердження показників пропускної здатності у виробничому середовищі.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -741,6 +741,45 @@ print("latency_ms=", report.latency_ms, "fps=", report.fps)
 
 </CodeTab>
 </CodeTabs>
+
+### Вимірювання з власними вхідними даними {#measure-with-your-own-inputs}
+
+Синтетичні вхідні дані не схожі на реальні. Якщо вартість моделі залежить від вхідних даних, як у декодера виявлення чи сегментації, що обробляє кожну знайдену рамку, вимірюйте на реальних даних. Створіть по одному тензору на кожен вхід моделі в порядку `input_specs()`, точно так, як ви передали б їх у `run()`, і задайте їх у `inputs`. Тест надсилає ті самі вхідні дані для кожного зразка.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+cv::Mat image = cv::imread("bus.jpg");  // BGR
+
+simaai::neat::BenchmarkOptions options;
+options.inputs = simaai::neat::TensorList{
+    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::BGR,
+                                      simaai::neat::TensorMemory::EV74)};
+
+simaai::neat::BenchmarkReport report = model.benchmark(options);
+std::cout << "input=" << report.input << " fps=" << report.fps << "\n";  // input=provided
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+image = cv2.imread("bus.jpg")  # BGR
+
+options = pyneat.BenchmarkOptions()
+options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.BGR)]
+
+report = model.benchmark(options)
+print("input=", report.input, "fps=", report.fps)  # input= provided
+```
+
+</CodeTab>
+</CodeTabs>
+
+Перед початком тест перевіряє вхідні дані. Якщо кількість тензорів, форма, dtype або метадані формату зображення не відповідають моделі, він викидає `NeatError` з кодом помилки `misconfig.input_shape` і повідомленням, що називає вхід, очікуване та фактичне значення. Вхідне зображення може мати будь-який розмір і колірний формат, бо попередня обробка змінює розмір і перетворює кольори. Маршрут BoxDecode відображає виявлені об’єкти на власний розмір наданого зображення, тому не задавайте `original_width` і `original_height` або задайте їм цей розмір.
+
+### Опишіть геометрію вихідного зображення
 
 Для маршруту BoxDecode опишіть геометрію вихідного зображення синтетичних даних, щоб еталонний тест міг зіставити виявлені об’єкти з координатами моделі:
 

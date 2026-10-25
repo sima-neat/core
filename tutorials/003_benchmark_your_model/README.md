@@ -17,7 +17,7 @@ Run a compiled model with deterministic synthetic tensors and print the headline
 
 Chapters 001 and 002 showed how to run a model once and then how to drive it asynchronously. This chapter answers the next practical question: "How fast does this model run on the device?" The benchmark API is intentionally small. You load the model, choose how many samples to measure, call `benchmark(...)`, and read the returned `BenchmarkReport`.
 
-The benchmark uses the model's `input_specs()` to create deterministic synthetic inputs. That makes it useful for a quick model smoke benchmark and for comparing compiled model variants, but it is not a camera benchmark. It does not include camera decode, real preprocessing variability, dynamic input sizes, or data-dependent postprocessing behavior.
+The benchmark uses the model's `input_specs()` to create deterministic synthetic inputs. That makes it useful for a quick model smoke benchmark and for comparing compiled model variants, but it is not a camera benchmark. It does not include camera decode, real preprocessing variability, dynamic input sizes, or data-dependent postprocessing behavior. To include data-dependent postprocessing, set `BenchmarkOptions::inputs` to your own tensors, such as an image read with OpenCV; see [Measure with your own inputs](/develop-apps/development-workflow/model#measure-with-your-own-inputs).
 
 ### Load the model {#step-load-model}
 
