@@ -186,3 +186,5 @@ cmake -LA -B build      # include advanced
 ```
 
 最上層的 `CMakeLists.txt` 檔案是選項名稱的權威來源。
+
+Core `develop` 選擇韌體 `3.0.0_master_B2372`。SDK 建置使用所選 Scheduler 套件中記錄的確切 sysroot 版本，若韌體不符，會在更新 SDK 前停止。重新建置 Core 前，請依 Kernels → Runner → Scheduler 的順序重新建置並發佈，並重新建置及發佈 LLiMa。CI 需要具有完全相符韌體的 DevKit，不會退回其他韌體版本。

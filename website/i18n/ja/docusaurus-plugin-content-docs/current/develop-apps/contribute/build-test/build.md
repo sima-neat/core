@@ -186,3 +186,5 @@ cmake -LA -B build      # include advanced
 ```
 
 最上位の `CMakeLists.txt` は、オプション名の定義元となります。
+
+Core の `develop` はファームウェア `3.0.0_master_B2372` を選択します。SDK ビルドは、選択した Scheduler パッケージに記録された正確な sysroot バージョンを使用し、ファームウェアが異なる場合は SDK 更新前に停止します。Core を再ビルドする前に、Kernels → Runner → Scheduler の順に、また LLiMa を再ビルドして公開してください。CI には選択したファームウェアと完全に一致する DevKit が必要で、別のバージョンにはフォールバックしません。

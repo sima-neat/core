@@ -201,3 +201,5 @@ cmake -LA -B build      # include advanced
 ```
 
 The top-level `CMakeLists.txt` is the source of truth for option names.
+
+Core `develop` selects firmware `3.0.0_master_B2372`. SDK builds use the exact sysroot receipt published in the selected Scheduler package and reject a different firmware cohort before updating the SDK. Rebuild and publish Kernels → Runner → Scheduler, and LLiMa, before rebuilding Core. CI requires a DevKit with the exact selected firmware; it does not fall back to another firmware version.

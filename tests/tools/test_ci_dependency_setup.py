@@ -28,15 +28,15 @@ def test_sdk_shell_retains_only_actual_official_cache_exports(tmp_path, missing_
     import shlex
     import sys
     script = (ROOT / 'scripts/ci/prepare_scheduler_sdk.sh').read_text()
-    assert 'SYSROOT_UPDATE_DOWNLOAD_DIR' not in script
-    assert '--platform-package-dir /tmp/modalix' in script
+    assert 'SYSROOT_UPDATE_DOWNLOAD_DIR=$package_dir/downloads' in script
+    assert 'sysroot update' in script
     cache = tmp_path / 'official-cache'; cache.mkdir()
     provider = cache / 'consumed.deb'; provider.write_bytes(b'exact provider')
     (cache / 'unrelated.deb').write_bytes(b'unrelated SDK package')
     tools = tmp_path / 'tools'; tools.mkdir()
     (tools / 'build_dependencies.py').write_text('''import json, pathlib, shlex, sys
 command = sys.argv[1]
-if command == 'sdk-policy': print(json.dumps({'sysroot-version':'3.0.0~git202610140145.e5ece50-2121'}))
+if command == 'sdk-policy': print(json.dumps({'elxr_version':'3.0.0_master_B2372', 'sysroot-version':'3.0.0~pre2372'}))
 elif command == 'verify-sdk': print(json.dumps({'status':'verified'}))
 else:
     root = pathlib.Path(sys.argv[sys.argv.index('--platform-package-dir')+1])
@@ -46,9 +46,11 @@ else:
 ''')
     official = tmp_path / 'official.sh'; official.write_text('#!/bin/sh\nexit 0\n'); official.chmod(0o755)
     env = tmp_path / 'env.sh'; env.write_text('export CXX=cross-g++-14\n')
-    script = script.replace('/usr/local/bin/setup-sdk-sysroot.sh', str(official))
+    script = script.replace('sysroot update', str(official) + ' update').replace('sysroot status', str(official) + ' status')
     script = script.replace('/opt/bin/simaai-init-build-env', str(env))
-    script = script.replace('/tmp/modalix', str(cache))
+    script = script.replace('$package_dir/downloads', str(cache))
+    (tmp_path / 'deps').mkdir()
+    (tmp_path / 'deps/manifest.json').write_text(json.dumps({'elxr_version': '3.0.0_master_B2372'}))
     # Never grant fixture privileges; source production root/sudo branches are unchanged.
     script = script.replace('[[ $(id -u) == 0 ]]', '[[ 0 == 0 ]]')
     if missing_archive: provider.unlink()
@@ -64,3 +66,22 @@ else:
         assert (retained / 'consumed.deb').read_bytes() == provider.read_bytes()
         assert str(retained / 'consumed.deb') in result.stdout
         assert str(cache) not in result.stdout
+
+
+@pytest.mark.parametrize('firmware,version', [
+    ('3.0.0_develop_B2121', '3.0.0~git202610140145.e5ece50-2121'),
+    ('3.0.0_master_B2372', '3.0.0~pre2371'),
+    ('3.0.0_master_B2372', '3.0.0~git202610140145.e5ece50-2372'),
+])
+def test_scheduler_policy_mismatch_fails_before_sdk_update(tmp_path, firmware, version):
+    import json
+    import sys
+    script = (ROOT / 'scripts/ci/prepare_scheduler_sdk.sh').read_text()
+    code = script.split("<<'PY_POLICY'\n", 1)[1].split('\nPY_POLICY', 1)[0]
+    (tmp_path / 'deps').mkdir()
+    (tmp_path / 'deps/manifest.json').write_text(json.dumps({'elxr_version': '3.0.0_master_B2372'}))
+    result = subprocess.run([sys.executable, '-c', code,
+                             json.dumps({'elxr_version': firmware, 'sysroot-version': version})],
+                            cwd=tmp_path, text=True, capture_output=True)
+    assert result.returncode != 0
+    assert 'differs from Core' in result.stderr

@@ -186,3 +186,5 @@ cmake -LA -B build      # include advanced
 ```
 
 최상위 수준의 `CMakeLists.txt` 파일은 옵션 이름에 대한 정확한 정보를 담고 있습니다.
+
+Core `develop`은 펌웨어 `3.0.0_master_B2372`를 선택합니다. SDK 빌드는 선택한 Scheduler 패키지에 기록된 정확한 sysroot 버전을 사용하며, 펌웨어가 다르면 SDK를 업데이트하기 전에 중단합니다. Core를 다시 빌드하기 전에 Kernels → Runner → Scheduler 순서로, 그리고 LLiMa를 다시 빌드하고 게시하세요. CI에는 선택한 펌웨어와 정확히 일치하는 DevKit이 필요하며 다른 펌웨어 버전으로 대체하지 않습니다.
