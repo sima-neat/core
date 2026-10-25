@@ -36,6 +36,7 @@ std::filesystem::path BenchmarkReport::save(const std::filesystem::path& file_pa
   if (throughput_samples < 0)
     throw std::invalid_argument(std::string(kContext) + ": throughput_samples must be nonnegative");
   document["throughput_samples"] = throughput_samples;
+  document["input"] = input;
   document["telemetry"] = pipeline_internal::telemetry_document(telemetry, kContext);
   document["mla_layer_stats"]["status"] = mla_layer_stats.status;
   auto& layers = document["mla_layer_stats"]["layers"] = pipeline_internal::ReportDocument::array();

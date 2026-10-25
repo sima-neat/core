@@ -98,7 +98,8 @@ struct MlaStageStats {
 /**
  * @brief Headline result returned by `Model::benchmark()`.
  *
- * The benchmark uses deterministic synthetic inputs generated from `Model::input_specs()`.
+ * The benchmark pushes `BenchmarkOptions::inputs` for every sample, or deterministic synthetic
+ * inputs generated from `Model::input_specs()` when none are given; `input` names which.
  * `latency_ms` is measured with a warmed-up single-flight push/pull loop; `latency_p50_ms`,
  * `latency_p95_ms`, and `latency_p99_ms` are percentiles of the same loop. `fps` means logical
  * inferences per second from a separate async throughput pass (for batched models this is
@@ -129,6 +130,7 @@ struct BenchmarkReport {
   Telemetry telemetry;                 ///< Board telemetry for the throughput window.
   MlaLayerStats mla_layer_stats;       ///< Per-layer MLA latency, when requested.
   MlaStageStats mla_stage_stats;       ///< Per-stage MLA latency, when requested.
+  std::string input; ///< Measured inputs: "provided" (`BenchmarkOptions::inputs`) or "synthetic".
 
   /**
    * @brief Write the complete report as YAML or JSON to the exact destination filename.
@@ -142,21 +144,25 @@ struct BenchmarkReport {
 };
 
 /**
- * @brief Options for `Model::benchmark()` synthetic inputs and measurement.
+ * @brief Options for `Model::benchmark()` inputs and measurement.
+ *
+ * Set `inputs` to measure with real data, such as an image read with OpenCV. Without it, the
+ * benchmark generates deterministic synthetic inputs from `Model::input_specs()`.
  *
  * BoxDecode routes need source-image geometry to map detections from model coordinates back to
  * source coordinates. Set `original_width` and `original_height` together to benchmark a specific
  * source geometry. When they are omitted, the benchmark infers geometry from the resolved
  * preprocess and model ingress contracts, preserving the behavior of `benchmark(num_samples)`.
- * Image preprocessing routes allocate the synthetic image at that source geometry. Tensor
+ * Image preprocessing routes allocate the synthetic image at that source geometry; a provided
+ * image supplies its own geometry, so the original size must be omitted or match it. Tensor
  * routes (including cast/quantize) retain the model input shape; the source geometry is used
  * only for BoxDecode metadata.
  * Per-run benchmark geometry takes precedence over deprecated model-construction BoxDecode hints.
  */
 struct BenchmarkOptions {
-  int num_samples = 100; ///< Number of measured synthetic inputs; must be greater than zero.
-  std::optional<int> original_width;  ///< Synthetic source-image width, in pixels.
-  std::optional<int> original_height; ///< Synthetic source-image height, in pixels.
+  int num_samples = 100;              ///< Number of measured inputs; must be greater than zero.
+  std::optional<int> original_width;  ///< Source-image width, in pixels.
+  std::optional<int> original_height; ///< Source-image height, in pixels.
   /// Resize policy used to map the source geometry to the model input. When omitted, use the
   /// resolved preprocess policy, or stretch when the model route has no resize stage.
   std::optional<ResizeMode> resize_mode;
@@ -177,6 +183,10 @@ struct BenchmarkOptions {
   /// MLA workloads. A failure leaves the measurements intact and names the reason in
   /// `BenchmarkReport::mla_stage_stats.status`.
   bool include_mla_stage_stats = false;
+  /// Inputs pushed for every sample: one tensor per model input, in `input_specs()` order, as
+  /// `run()` takes them. Empty selects synthetic inputs. Inputs that do not match the model throw
+  /// `NeatError` with error code `misconfig.input_shape` before the benchmark starts.
+  TensorList inputs;
 };
 
 /**
@@ -765,9 +775,10 @@ public:
 #endif
 
   /**
-   * @brief Run a small synthetic benchmark for simple model execution.
+   * @brief Run a small benchmark for simple model execution.
    *
-   * Generates deterministic synthetic input tensors from `input_specs()`, runs a fixed warmup,
+   * Uses `BenchmarkOptions::inputs`, or generates deterministic synthetic input tensors from
+   * `input_specs()` when none are given, runs a fixed warmup,
    * measures single-flight latency and async logical-inference throughput separately, records
    * board telemetry through Sentinel during the throughput pass, prints a compact summary, and
    * returns headline metrics. Each pass lasts at least `BenchmarkOptions::min_duration_ms`

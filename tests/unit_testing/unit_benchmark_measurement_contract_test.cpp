@@ -11,6 +11,7 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "pipeline/Graph.h"
+#include "pipeline/NeatError.h"
 #include "pipeline/Run.h"
 #include "test_main.h"
 #include "perf/process_cpu_metrics.h"
@@ -204,6 +205,7 @@ void benchmark_options_api_is_additive() {
   using namespace simaai::neat;
   require(!BenchmarkOptions{}.include_mla_layer_stats, "MLA layer profiling must be opt-in");
   require(!BenchmarkOptions{}.include_mla_stage_stats, "MLA stage profiling must be opt-in");
+  require(BenchmarkOptions{}.inputs.empty(), "benchmark inputs must default to synthetic");
   using OptionsOverload = BenchmarkReport (Model::*)(const BenchmarkOptions&);
   using SamplesOverload = BenchmarkReport (Model::*)(int);
   using LegacyOverload = BenchmarkReport (Model::*)(int, bool);
@@ -248,6 +250,119 @@ void synthetic_benchmark_rejects_planar_images() {
   }
   spec.image_format.reset();
   internal::validate_synthetic_benchmark_image_format(spec);
+}
+
+simaai::neat::Tensor make_provided_tensor(
+    simaai::neat::TensorDType dtype, std::vector<int64_t> shape,
+    std::optional<simaai::neat::ImageSpec::PixelFormat> image_format = std::nullopt) {
+  using namespace simaai::neat;
+  Tensor tensor;
+  tensor.dtype = dtype;
+  tensor.shape = std::move(shape);
+  if (image_format.has_value()) {
+    tensor.semantic.image = ImageSpec{*image_format, ""};
+    tensor.layout = TensorLayout::HWC;
+  }
+  return tensor;
+}
+
+// Returns the error message when `check` throws NeatError with misconfig.input_shape.
+std::string input_shape_error(const std::function<void()>& check) {
+  try {
+    check();
+  } catch (const simaai::neat::NeatError& error) {
+    require(error.report().error_code == "misconfig.input_shape",
+            std::string("input mismatch must use misconfig.input_shape, got ") +
+                error.report().error_code);
+    return error.what();
+  }
+  return {};
+}
+
+bool contains(const std::string& text, const std::string& needle) {
+  return text.find(needle) != std::string::npos;
+}
+
+void provided_image_inputs_need_one_tensor_with_image_format() {
+  using namespace simaai::neat;
+  const auto image =
+      make_provided_tensor(TensorDType::UInt8, {720, 1280, 3}, ImageSpec::PixelFormat::BGR);
+  const auto check = [](const TensorList& inputs) {
+    return input_shape_error([&] { internal::check_model_image_inputs(inputs, {}, "bench"); });
+  };
+
+  require(check({image}).empty(),
+          "an image route must accept any source size and color format, as preprocessing does");
+  require(contains(check({make_provided_tensor(TensorDType::UInt8, {720, 1280, 3})}),
+                   "explicit image format"),
+          "an image tensor without image format metadata must be rejected by name");
+  require(contains(check({image, image}), "exactly one image tensor, got 2"),
+          "an image route must reject more than one tensor");
+}
+
+void provided_tensor_inputs_match_ingress_contracts() {
+  using namespace simaai::neat;
+  internal::IngressTensorContract ingress;
+  ingress.valid = true;
+  ingress.ingress_index = 0;
+  ingress.media_type = "application/vnd.simaai.tensor";
+  ingress.dtype = "FP32";
+  ingress.width = 640;
+  ingress.height = 640;
+  ingress.depth = 3;
+  ingress.source_tensor_name = "images";
+  const auto check = [&](const TensorList& inputs) {
+    return input_shape_error(
+        [&] { internal::check_model_tensor_inputs(inputs, {ingress}, "bench"); });
+  };
+
+  require(check({make_provided_tensor(TensorDType::Float32, {1, 640, 640, 3})}).empty(),
+          "a tensor matching the ingress contract must be accepted");
+  const std::string shape = check({make_provided_tensor(TensorDType::Float32, {1, 320, 320, 3})});
+  require(contains(shape, "ingress[0] (images)") && contains(shape, "shape=640x640x3") &&
+              contains(shape, "shape=320x320x3"),
+          "a shape mismatch must name the input, the expected shape, and the actual shape: " +
+              shape);
+  require(
+      contains(check({make_provided_tensor(TensorDType::UInt8, {1, 640, 640, 3})}), "format=FP32"),
+      "a dtype mismatch must name the expected format");
+  const auto tensor = make_provided_tensor(TensorDType::Float32, {1, 640, 640, 3});
+  require(contains(check({tensor, tensor}), "expected exactly 1 ingress tensor inputs"),
+          "a tensor route must reject the wrong number of inputs");
+}
+
+void provided_image_geometry_rejects_conflicting_original_size() {
+  using namespace simaai::neat;
+  ResolvedPreprocessPlan plan = make_benchmark_preprocess_plan();
+  const auto image =
+      make_provided_tensor(TensorDType::UInt8, {720, 1280, 3}, ImageSpec::PixelFormat::RGB);
+
+  internal::require_provided_source_geometry(image, plan, {});
+  internal::require_provided_source_geometry(image, plan, make_benchmark_source_options(1280, 720));
+  bool rejected = false;
+  try {
+    internal::require_provided_source_geometry(image, plan,
+                                               make_benchmark_source_options(640, 640));
+  } catch (const std::runtime_error& error) {
+    rejected = contains(error.what(), "(640x640) must match the provided image (1280x720)");
+  }
+  require(rejected, "an original size that disagrees with the provided image must be rejected");
+
+  plan.resolved_kind = InputKind::Tensor;
+  internal::require_provided_source_geometry(image, plan, make_benchmark_source_options(640, 640));
+}
+
+void provided_image_supplies_boxdecode_source_geometry() {
+  using namespace simaai::neat;
+  const ResolvedPreprocessPlan plan = make_benchmark_preprocess_plan();
+  const auto image =
+      make_provided_tensor(TensorDType::UInt8, {720, 1280, 3}, ImageSpec::PixelFormat::RGB);
+  BenchmarkOptions options;
+  options.inputs = {image};
+  const PreprocessRuntimeMeta meta =
+      internal::resolve_benchmark_preprocess_meta(image, plan, {}, options);
+  require(meta.original_width == 1280 && meta.original_height == 720,
+          "BoxDecode must map detections back to the provided image's own size");
 }
 
 void benchmark_build_options_prefer_runtime_metadata() {
@@ -849,6 +964,14 @@ RUN_TEST("unit_benchmark_measurement_contract_test", ([] {
            run_case("benchmark_options_api_is_additive", benchmark_options_api_is_additive);
            run_case("synthetic_benchmark_rejects_planar_images",
                     synthetic_benchmark_rejects_planar_images);
+           run_case("provided_image_inputs_need_one_tensor_with_image_format",
+                    provided_image_inputs_need_one_tensor_with_image_format);
+           run_case("provided_tensor_inputs_match_ingress_contracts",
+                    provided_tensor_inputs_match_ingress_contracts);
+           run_case("provided_image_geometry_rejects_conflicting_original_size",
+                    provided_image_geometry_rejects_conflicting_original_size);
+           run_case("provided_image_supplies_boxdecode_source_geometry",
+                    provided_image_supplies_boxdecode_source_geometry);
            run_case("benchmark_build_options_prefer_runtime_metadata",
                     benchmark_build_options_prefer_runtime_metadata);
            run_case("benchmark_preprocess_meta_defaults",
