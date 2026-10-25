@@ -1,3 +1,4 @@
+#include <simaai/scheduler/client/frame_layout.h>
 #include "model/Model.h"
 #ifdef SIMA_NEAT_INTERNAL
 #include "model/internal/ModelInternal.h"
@@ -8,6 +9,8 @@
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/sima/CompiledProcessCvuContractQuery.h"
 #include "pipeline/internal/sima/ContractRender.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
 #include "gst/GstInit.h"
 #include "gst/SimaPluginStaticManifestAbi.h"
 #include "test_main.h"
@@ -426,45 +429,26 @@ RUN_TEST(
           const auto roi_compiled =
               compile_node_contracts(std::vector<std::shared_ptr<Node>>{nodes::Preproc(roi_opt)},
                                      ContractCompileInput{}, &roi_diagnostics);
-          const auto roi_manifest = render_manifest_from_compiled_contracts(
+          auto roi_manifest = render_manifest_from_compiled_contracts(
               roi_compiled, ContractCompileInput{}, &roi_diagnostics);
           require(
               roi_diagnostics.errors.empty() && roi_manifest && roi_manifest->stages.size() == 1U,
               "specialized immutable preproc must compile/render without options reconstruction");
-          const auto& rendered = roi_manifest->stages.front();
-          require(
-              rendered.frame_arena_role == pipeline_internal::sima::FrameArenaRole::Allocate &&
-                  rendered.frame_arena_size_bytes == ((slot_bytes * capacity + 4095U) & ~4095ULL) &&
-                  rendered.physical_outputs.front().source_byte_offset == 0 &&
-                  rendered.frame_arena_storage_domain ==
-                      pipeline_internal::sima::static_contract::ArenaStorageDomain::Cma &&
-                  rendered.frame_arena_allocation_policy ==
-                      pipeline_internal::sima::static_contract::ArenaAllocationPolicy::
-                          RequiredDomain &&
-                  rendered.frame_arena_escape_policy == pipeline_internal::sima::static_contract::
-                                                            ArenaEscapePolicy::CpuMappablePublic,
-              "ROI standalone arena must reuse aligned Allocate/CMA/public authoring policy");
-          std::unique_ptr<GstElement, decltype(&gst_object_unref)> pipeline(
-              gst_pipeline_new("roi_contract"), &gst_object_unref);
-          std::string attach_error;
-          require(pipeline && pipeline_internal::sima::attach_manifest_context(
-                                  pipeline.get(), *roi_manifest, &attach_error),
-                  "ROI ABI projection failed: " + attach_error);
-          std::unique_ptr<GstContext, decltype(&gst_context_unref)> context(
-              gst_element_get_context(pipeline.get(), SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE),
-              &gst_context_unref);
-          require(context != nullptr, "ROI manifest context must be retained");
-          const auto* accessor = sima_plugin_manifest_context_accessor(context.get());
-          const auto* abi = accessor ? sima_plugin_manifest_stage_by_element_name(
-                                           accessor, rendered.element_name.c_str())
-                                     : nullptr;
-          require(abi && abi->logical_inputs_len == 1U && abi->logical_outputs_len == 1U &&
-                      abi->logical_inputs[0].axis_semantics[0] == SIMA_EV_AXIS_N &&
-                      abi->logical_outputs[0].axis_semantics[0] == SIMA_EV_AXIS_N &&
-                      abi->payload.processcvu.input_tensors[0].shape.sizes[0] == 2 &&
-                      abi->payload.processcvu.output_tensors[0].storage.nbytes ==
-                          original_output.storage.nbytes,
-                  "ROI ABI projection must preserve source/batch axes and one-member output span");
+          namespace ps = pipeline_internal::sima;
+          const auto prepared = ps::prepare_kernel_stage_recipes(&*roi_manifest, {}, {}, {}, {});
+          require(!prepared, prepared ? prepared->message : "");
+          ps::finalize_pipeline_storage(*roi_manifest);
+          require(!ps::finalize_stage_publications(&*roi_manifest), "ROI publication finalization");
+          const auto& layout = roi_manifest->stages.front().frame_layout;
+          namespace c = simaai::scheduler::client;
+          require(layout && layout->ownership == c::FrameOwnership::Allocate &&
+                      layout->allocations.size() == 1 &&
+                      layout->allocations.front().policy == c::AllocationPolicy::RequireCma &&
+                      layout->allocations.front().size_bytes >= slot_bytes * capacity &&
+                      layout->outputs.size() == 1 &&
+                      layout->outputs.front().span.byte_offset == 0 &&
+                      layout->outputs.front().span.size_bytes == slot_bytes * capacity,
+                  "ROI final layout must own CMA and preserve exact batched output capacity");
         }
         require(admitted == opt.compiled_contract &&
                     admitted->runtime_contract.physical_inputs.front().size_bytes ==
@@ -571,7 +555,7 @@ RUN_TEST(
                     std::vector<std::int64_t>({1080, 1920, 3}),
             "compiled Preproc logical input must retain capacity after a smaller seed is bound");
 
-        const auto manifest =
+        auto manifest =
             render_manifest_from_compiled_contracts(compiled, ContractCompileInput{}, &diagnostics);
         require(diagnostics.errors.empty() && manifest.has_value() && manifest->stages.size() == 1U,
                 "model-managed Preproc capacity contract must render without diagnostics");
@@ -583,21 +567,16 @@ RUN_TEST(
                     rendered_stage.processcvu.input_shapes.front() ==
                         std::vector<int>({1080, 1920, 3}),
                 "rendered Preproc static contract must expose the full dynamic input capacity");
-        require(rendered_stage.processcvu.dmabuf_plan_contract &&
-                    rendered_stage.processcvu.graph_name == "preproc" &&
-                    rendered_stage.processcvu.descriptor_abi_id == 0U &&
+        require(rendered_stage.processcvu.dmabuf_plan_contract ==
+                        processcvu.payload.dmabuf_plan_contract &&
+                    !rendered_stage.frame_layout &&
+                    rendered_stage.frame_arena_size_bytes ==
+                        processcvu.runtime_contract.frame_arena_size_bytes &&
                     rendered_stage.frame_arena_role ==
-                        pipeline_internal::sima::FrameArenaRole::Allocate &&
-                    rendered_stage.frame_arena_storage_domain ==
-                        pipeline_internal::sima::static_contract::ArenaStorageDomain::Cma &&
-                    rendered_stage.frame_arena_provenance ==
-                        pipeline_internal::sima::static_contract::ArenaAllocationProvenance::
-                            CoreAllocated &&
-                    (rendered_stage.frame_arena_required_device_access &
-                     static_cast<std::uint32_t>(
-                         pipeline_internal::sima::static_contract::ArenaDeviceAccess::Ev74)) !=
-                        0U &&
-                    rendered_stage.frame_arena_size_bytes > 0U &&
+                        processcvu.runtime_contract.frame_arena_role &&
+                    rendered_stage.frame_arena_required_device_access ==
+                        processcvu.runtime_contract.frame_arena_required_device_access &&
+                    rendered_stage.processcvu.graph_name == "preproc" &&
                     rendered_stage.input_bindings.size() == 1U &&
                     rendered_stage.physical_inputs.size() == 1U &&
                     rendered_stage.physical_inputs.front().size_bytes > 0U &&
@@ -606,7 +585,7 @@ RUN_TEST(
                     rendered_stage.logical_outputs.front().backend_output_index >= 0 &&
                     rendered_stage.logical_outputs.front().physical_index ==
                         rendered_stage.physical_outputs.front().physical_index,
-                "model-managed Preproc must carry one compiler-proved direct CVU arena contract");
+                "rendering must preserve inherited Preproc facts without creating final storage");
         const auto& input_binding = rendered_stage.input_bindings.front();
         const auto& physical_input = rendered_stage.physical_inputs.front();
         const auto& logical_input = rendered_stage.logical_inputs.front();
@@ -626,16 +605,31 @@ RUN_TEST(
                 logical_input.backend_input_index == 0 && logical_input.physical_index == 0 &&
                 logical_input.byte_offset == 0,
             "model-managed Preproc must bind the sole external DMA-BUF without a producer stage");
-        for (const auto& output : rendered_stage.physical_outputs) {
-          require(output.size_bytes > 0U && output.required_alignment_bytes > 0U &&
-                      output.source_byte_offset >= 0 &&
+        namespace ps = pipeline_internal::sima;
+        const auto prepared = ps::prepare_kernel_stage_recipes(&*manifest, {}, {}, {}, {});
+        require(!prepared, prepared ? prepared->field + ": " + prepared->message : "");
+        ps::finalize_pipeline_storage(*manifest);
+        require(!ps::finalize_stage_publications(&*manifest), "Preproc publication finalization");
+        const auto& finalized_stage = manifest->stages.front();
+        const auto& layout = finalized_stage.frame_layout;
+        namespace c = simaai::scheduler::client;
+        require(layout && layout->ownership == c::FrameOwnership::Allocate &&
+                    layout->allocations.size() == 1U &&
+                    layout->allocations.front().policy == c::AllocationPolicy::RequireCma &&
+                    (layout->allocations.front().required_device_access & c::kAccessEv74) != 0U &&
+                    layout->outputs.size() == 1U,
+                "checked Preproc must receive one CMA allocation for its selected output");
+        const auto& span = layout->outputs.front().span;
+        require(span.allocation_index == 0U && span.size_bytes > 0U &&
+                    span.byte_offset <= layout->allocations.front().size_bytes &&
+                    span.size_bytes <= layout->allocations.front().size_bytes - span.byte_offset,
+                "final Preproc carrier must fit its allocation");
+        for (const auto& output : finalized_stage.physical_outputs)
+          require(output.required_alignment_bytes > 0U && output.source_byte_offset >= 0 &&
                       static_cast<std::uint64_t>(output.source_byte_offset) %
                               output.required_alignment_bytes ==
-                          0U &&
-                      static_cast<std::uint64_t>(output.source_byte_offset) + output.size_bytes <=
-                          rendered_stage.frame_arena_size_bytes,
-                  "standalone Preproc output must be bounded and aligned inside its arena");
-        }
+                          0U,
+                  "final Preproc carrier must satisfy its checked alignment");
 
         InputContract capacity_contract = seed_contract;
         capacity_contract.width = 1920;

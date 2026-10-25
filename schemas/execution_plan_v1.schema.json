@@ -18,12 +18,12 @@
         "batch": {"type": "integer", "minimum": 1, "description": "Frames per MLA invocation."},
         "memory": {
           "type": "object",
-          "description": "Device memory the Model allocates for each frame in flight.",
+          "description": "Planned owned memory per frame in flight; DMS includes explicitly authored DMS-then-CMA fallback.",
           "required": ["per_frame_bytes", "type"],
           "additionalProperties": false,
           "properties": {
             "per_frame_bytes": {"type": "integer", "minimum": 1},
-            "type": {"enum": ["CMA", "DMS"]}
+            "type": {"enum": ["CMA", "DMS", "HostCpu", "Mixed"]}
           }
         }
       }

@@ -14,6 +14,9 @@
 #include <vector>
 
 namespace simaai::neat {
+namespace internal {
+struct ModelFragmentStoragePlan;
+}
 
 struct CompiledNodeContract {
   std::string node_kind;
@@ -23,6 +26,7 @@ struct CompiledNodeContract {
   // Current node authoring policy, independent of cached numerical contracts.
   std::optional<std::size_t> native_execution_capacity;
   NodeContractDefinition definition;
+  std::optional<pipeline_internal::sima::static_contract::PhysicalEngine> resolved_executor;
   std::optional<CompiledProcessCvuContract> processcvu;
   std::optional<CompiledMlaContract> processmla;
   std::optional<CompiledBoxDecodeContract> boxdecode;
@@ -30,12 +34,14 @@ struct CompiledNodeContract {
   std::optional<CompiledKernelContract> kernel;
   std::optional<CompiledTransportContract> transport;
   std::vector<CompiledNodeContract> child_stages;
+  bool model_storage_planned = false;
   bool renderable = false;
 };
 
 struct CompiledPipelineContracts {
   std::vector<CompiledNodeContract> stages;
   bool fully_renderable = false;
+  std::shared_ptr<const internal::ModelFragmentStoragePlan> model_storage_plan;
 };
 
 } // namespace simaai::neat

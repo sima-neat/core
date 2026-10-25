@@ -166,7 +166,7 @@ struct Builder {
       invalid("negative head byte offset");
     logical.backend_input_index = static_cast<int>(index);
     Input in{{std::vector<std::int64_t>(shape.begin(), shape.end()), dtype(logical.dtype)},
-             {index, static_cast<std::size_t>(logical.byte_offset)},
+             {index, 0},
              {}};
     const auto kind = source.payload.tensor_storage_kind.at(index);
     if (kind == 0)

@@ -50,13 +50,24 @@ std::string modelpack_storage_label(const std::string& path);
 
 struct ModelFragmentCompileContext;
 struct ModelFragmentPlanSource;
-// Null compile_input projects original stage metadata without resolving execution placement.
+struct ModelFragmentStoragePlan;
 std::shared_ptr<const ModelFragmentCompileContext>
-prepare_model_fragment_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
-                                 std::string* error,
-                                 const ContractCompileInput* compile_input = nullptr);
+make_model_fragment_semantic_context(const std::vector<std::shared_ptr<Node>>& nodes);
 
-bool apply_model_fragment_contract_context(const Node& node, const ContractCompileInput& input,
+std::shared_ptr<const ModelFragmentCompileContext>
+finalize_model_fragment_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
+                                  std::span<const CompiledNodeContract* const> compiled_nodes,
+                                  std::span<const std::size_t> node_contract_indices,
+                                  const pipeline_internal::sima::SimaPluginStaticManifest& manifest,
+                                  std::string* error);
+
+std::shared_ptr<const ModelFragmentStoragePlan>
+make_model_fragment_storage_plan(const std::vector<std::shared_ptr<Node>>& nodes,
+                                 const std::vector<CompiledNodeContract>& stages,
+                                 std::span<const std::size_t> node_contract_indices);
+void project_model_fragment_storage(pipeline_internal::sima::SimaPluginStaticManifest&);
+
+bool apply_model_fragment_contract_context(const ContractCompileInput& input,
                                            CompiledNodeContract* compiled, std::string* error);
 
 enum class PipelineType : std::uint8_t { Preproc, Quant, Tess, QuantTess, CastTess, Cast };
@@ -148,7 +159,7 @@ private:
                                       std::string* error);
 };
 
-// Reuses only the immutable selected-route/arena projection. It never invokes
+// Reuses immutable selected-route metadata. It never invokes
 // NodeContractProvider, applies contracts, or prepares a native executable.
 // A successful result can contain no fragments; nullopt denotes a projection error.
 std::optional<SelectedModelFragmentStageFacts>

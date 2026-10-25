@@ -1,3 +1,5 @@
+#include <simaai/scheduler/client/stage.h>
+#include "builder/NodeContractProvider.h"
 #include "nodes/sima/Preproc.h"
 #include "pipeline/internal/contract/CompiledNodeContract.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
@@ -136,9 +138,7 @@ void verify_runtime_output_order_rendering() {
   stage_contract.logical_stage_id = "n0_preproc";
   stage_contract.renderable = true;
 
-  // Output routing is synthetic, but direct rendering must still carry genuine
-  // input authority. Reuse the production Preproc compiler rather than inventing
-  // an input allocation or bypassing the standalone projection boundary.
+  // Reuse production input metadata for the synthetic output-routing fixture.
   ManifestBuildDiagnostics input_diagnostics;
   const auto input_contract = compile_node_contracts(
       {nodes::Preproc(make_render_preproc_options())}, ContractCompileInput{}, &input_diagnostics);
@@ -298,6 +298,7 @@ void verify_projected_cast_mla_boundary_preserves_storage() {
     physical.segment_name = name;
     cast.runtime_contract.physical_outputs.push_back(physical);
     mla.runtime_contract.physical_inputs.push_back(physical);
+    mla.runtime_contract.elf_ifm_symbol_names.push_back("ifm_" + std::to_string(index));
 
     LogicalTensorStaticSpec logical;
     logical.logical_index = index;
@@ -351,6 +352,12 @@ void verify_projected_cast_mla_boundary_preserves_storage() {
   require(manifest->stages.size() == 2U, "both projected stages must survive rendering");
   const auto& producer = manifest->stages[0];
   const auto& consumer = manifest->stages[1];
+  require(consumer.mla_program && consumer.mla_program->inputs.size() == 2U &&
+              consumer.mla_program->inputs[0].name == "ifm_0" &&
+              consumer.mla_program->inputs[1].name == "ifm_1" &&
+              consumer.mla_program->inputs[0].required_alignment_bytes == 128U &&
+              consumer.mla_program->inputs[1].required_alignment_bytes == 256U,
+          "rendering must retain ordered MLA input symbols and exact port alignment");
   require(producer.frame_arena_role == FrameArenaRole::Allocate &&
               consumer.frame_arena_role == FrameArenaRole::ReuseInput &&
               producer.frame_arena_size_bytes == 16384U &&
@@ -434,6 +441,30 @@ void verify_nested_processcvu_role_placement_rendering() {
   using namespace simaai::neat::pipeline_internal::sima;
   namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
 
+  struct NestedStages final : Node, NodeContractProvider {
+    CompiledNodeContract contract;
+    std::string kind() const override {
+      return "NestedStages";
+    }
+    std::string backend_fragment(int) const override {
+      return {};
+    }
+    std::vector<std::string> element_names(int) const override {
+      return {"nested_stages"};
+    }
+    NodeCapsBehavior caps_behavior() const override {
+      return NodeCapsBehavior::Static;
+    }
+    NodeContractDefinition contract_definition() const override {
+      return {};
+    }
+    bool compile_node_contract(const ContractCompileInput&, CompiledNodeContract* out,
+                               std::string*) const override {
+      *out = contract;
+      return true;
+    }
+  };
+
   struct Case {
     ProcessCvuGraphFamily family;
     const char* operation;
@@ -455,8 +486,6 @@ void verify_nested_processcvu_role_placement_rendering() {
   input.processcvu.pre_run_target = "EV74";
   input.processcvu.post_run_target = "A65";
 
-  CompiledPipelineContracts compiled;
-  compiled.fully_renderable = true;
   CompiledNodeContract parent;
   parent.node_kind = "ModelFragment";
   parent.plugin_kind = "ModelFragment";
@@ -510,10 +539,33 @@ void verify_nested_processcvu_role_placement_rendering() {
     child.processcvu->exposed_view.primary_output_name = output_name;
     parent.child_stages.push_back(std::move(child));
   }
-  compiled.stages.push_back(std::move(parent));
-
+  auto node = std::make_shared<NestedStages>();
+  node->contract = std::move(parent);
   ManifestBuildDiagnostics diagnostics;
-  const auto manifest = render_manifest_from_compiled_contracts(compiled, input, &diagnostics);
+  const auto compiled = compile_node_contracts({node}, input, &diagnostics);
+  require(diagnostics.errors.empty() && compiled.fully_renderable && compiled.stages.size() == 1U &&
+              compiled.stages.front().child_stages.size() == cases.size(),
+          "nested ProcessCVU contracts must compile: " + join_errors(diagnostics));
+  for (std::size_t index = 0; index < cases.size(); ++index) {
+    const auto& expected = cases[index];
+    const auto& child = compiled.stages.front().child_stages[index];
+    const auto& payload = child.processcvu->payload;
+    require(payload.requested_run_target == expected.expected_target &&
+                payload.run_target == expected.expected_target &&
+                payload.resolved_exec_backend ==
+                    (std::string(expected.expected_target) == "A65" ? "A65" : "EVXX") &&
+                child.resolved_executor == (std::string(expected.expected_target) == "A65"
+                                                ? sc::PhysicalEngine::A65
+                                                : sc::PhysicalEngine::Cvu) &&
+                payload.run_target_resolution_reason.find(expected.expected_source) !=
+                    std::string::npos,
+            "compiler must resolve nested ProcessCVU targets from exact physical roles");
+  }
+  auto render_input = input;
+  render_input.processcvu.pre_run_target = "A65";
+  render_input.processcvu.post_run_target = "EV74";
+  const auto manifest =
+      render_manifest_from_compiled_contracts(compiled, render_input, &diagnostics);
   require(manifest.has_value() && diagnostics.errors.empty(),
           "nested ProcessCVU children should render with their exact physical roles: " +
               join_errors(diagnostics));
@@ -522,15 +574,16 @@ void verify_nested_processcvu_role_placement_rendering() {
   for (std::size_t index = 0; index < cases.size(); ++index) {
     const auto& expected = cases[index];
     const auto& payload = manifest->stages[index].processcvu;
-    require(payload.graph_name == expected.operation &&
-                payload.requested_run_target == expected.expected_target &&
-                payload.run_target == expected.expected_target &&
-                payload.resolved_exec_backend ==
-                    (std::string(expected.expected_target) == "A65" ? "A65" : "EVXX"),
-            "nested ProcessCVU child must resolve the target from its exact physical role");
+    require(
+        payload.graph_name == expected.operation &&
+            payload.requested_run_target == expected.expected_target &&
+            payload.run_target == expected.expected_target &&
+            payload.resolved_exec_backend ==
+                (std::string(expected.expected_target) == "A65" ? "A65" : "EVXX"),
+        "rendering must preserve the nested ProcessCVU target already resolved by the compiler");
     require(payload.run_target_resolution_reason.find(expected.expected_source) !=
                 std::string::npos,
-            "nested ProcessCVU child must record the role-specific resolution source");
+            "rendering must preserve the compiler's role-specific resolution source");
   }
 }
 

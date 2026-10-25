@@ -1,4 +1,6 @@
 #include "pipeline/internal/sima/CanonicalGraphStageContract.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
 
 #include <gst/SimaPluginStaticManifestAbi.h>
 #include <simaai/scheduler/client/dma_memory.h>
@@ -93,69 +95,25 @@ ps::StageStaticSpec complete(std::int64_t logical_offset, bool retained_physical
   return stage;
 }
 
-// Use Core's actual ABI owner/serialization, not a second test implementation
-// of route projection. The alias keeps every serialized string/vector alive.
-std::shared_ptr<const SimaPluginStageSpec> placement(const ps::StageStaticSpec& stage) {
-  std::shared_ptr<GstElement> pipeline(gst_pipeline_new(nullptr),
-                                       [](GstElement* value) { gst_object_unref(value); });
-  require(bool(pipeline), "pipeline allocation failed");
-  ps::SimaPluginStaticManifest manifest;
-  manifest.stages.push_back(stage);
-  std::string error;
-  const bool attached = ps::attach_manifest_context(pipeline.get(), manifest, &error);
-  require(attached, error.c_str());
-  std::shared_ptr<GstContext> context(
-      gst_element_get_context(pipeline.get(), SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE),
-      gst_context_unref);
-  const auto* accessor = sima_plugin_manifest_context_accessor(context.get());
-  require(accessor && accessor->stage_by_index, "serialized manifest accessor missing");
-  const auto* projected = accessor->stage_by_index(accessor->user_data, 0);
-  require(projected, "serialized stage missing");
-  return {std::move(context), projected};
-}
-
 // Scheduler's test-only probe observes the actual carrier provider; Core owns
 // only the graph facts and public request, not Storage/Frame implementation.
-c::TensorStageRequest request(const ps::StageStaticSpec& stage) {
-  c::TensorStageRequest result;
-  result.target = c::Hardware::A65;
-  result.placement = placement(stage);
+c::StageRequest request(const ps::StageStaticSpec& stage) {
+  ps::SimaPluginStaticManifest manifest;
+  manifest.stages = {stage};
+  ps::finalize_pipeline_storage(manifest);
+  c::StageRequest result;
+  result.layout = manifest.stages.front().frame_layout;
   result.options.capacity = 1;
   const std::array input{c::TensorSpec{{2, 3, 4}, c::DType::Float32}};
   const std::array output{c::TensorSpec{{2, 3, 4}, c::DType::BFloat16}};
-  auto executable = take(c::check_kernel({"cast", result.target, input, output, {}}));
-  result.members.push_back({std::move(executable), {{0, 0}}, {{0, 0}}, {}});
-  auto publication = std::make_shared<tr::TensorBufferPublishContract>();
-  publication->stage_key = stage.logical_stage_id;
-  const auto& physical = stage.physical_outputs.at(0);
-  publication->physical_outputs.push_back(
-      {physical.physical_index, physical.size_bytes, physical.segment_name});
-  const auto& model = stage.logical_outputs.at(0);
-  tr::TensorBufferPublishLogicalOutput logical;
-  logical.logical_index = model.logical_index;
-  logical.backend_output_index = model.backend_output_index;
-  logical.physical_index = model.physical_index;
-  logical.memory_index = 0;
-  logical.route_slot = model.output_slot;
-  logical.logical_name = model.logical_name;
-  logical.backend_name = model.backend_name;
-  logical.segment_name = model.segment_name;
-  logical.byte_offset = model.byte_offset;
-  logical.size_bytes = model.size_bytes;
-  logical.dtype = SIMA_TENSOR_SET_DTYPE_BF16_V1;
-  logical.layout = SIMA_TENSOR_SET_LAYOUT_HWC_V1;
-  logical.shape = model.shape;
-  logical.stride_bytes = model.stride_bytes;
-  logical.axis_semantics = {SIMA_EV_AXIS_H, SIMA_EV_AXIS_W, SIMA_EV_AXIS_C};
-  publication->logical_outputs.push_back(logical);
-  publication->output_order.push_back(
-      {logical.route_slot, logical.logical_index, logical.logical_name, logical.segment_name});
-  result.publication.contract = std::move(publication);
-  result.publication.output_name = logical.logical_name;
-  result.publication.input_caps = {
-      gst_caps_from_string("application/vnd.simaai.tensor,format=FP32"), gst_caps_unref};
-  result.publication.output_caps = {
-      gst_caps_from_string("application/vnd.simaai.tensor,format=BF16"), gst_caps_unref};
+  c::KernelProgram program;
+  program.target = c::Hardware::A65;
+  auto executable = take(c::check_kernel({"cast", program.target, input, output, {}}));
+  program.members.push_back({std::move(executable), {{0, 0}}, {{0, 0}}, {}});
+  result.program = std::move(program);
+  std::string error;
+  require(ps::build_kernel_stage_publication(manifest.stages.front(), &result.publication, &error),
+          error.c_str());
   return result;
 }
 
@@ -217,10 +175,13 @@ void admitted_coordinates(std::int64_t logical_offset, bool retained_physical) {
 void rejects_double_base() {
   auto model = complete(64, false);
   model.input_bindings[0].src_physical_byte_offset = model.physical_inputs[0].source_byte_offset;
-  test::RouteProbe probe;
-  const auto error = probe.prepare(request(model));
-  require(error && error->field == "input.routing", "old doubled-base route was not rejected cold");
-  require(probe.read_offsets().empty(), "invalid route acquired a current producer loan");
+  bool rejected = false;
+  try {
+    (void)request(model);
+  } catch (const std::invalid_argument&) {
+    rejected = true;
+  }
+  require(rejected, "doubled-base route was not rejected during cold Core layout finalization");
 }
 } // namespace
 

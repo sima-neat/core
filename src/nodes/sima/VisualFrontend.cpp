@@ -639,20 +639,21 @@ NativeVisualSpec spec_from_options(const TrackKLTOptions& opt) {
       {point_rows, 2}};
   spec.input_dtypes = {"UINT8", "UINT8", "INT32"};
   spec.input_layouts = {"HW", "HW", "HW"};
-  spec.runtime_output_names = {opt.output_points_name, opt.output_status_name,
-                               opt.output_features_name};
-  spec.published_output_names =
-      opt.detect_new_features != 0
-          ? spec.runtime_output_names
-          : std::vector<std::string>{opt.output_points_name, opt.output_status_name};
-  spec.output_shapes = {{opt.batch_size, opt.num_points, 2},
-                        {opt.batch_size, opt.num_points, 1},
-                        {opt.batch_size, feature_width}};
-  spec.transport_output_shapes = {
-      {point_rows, 2}, {point_rows, 1}, {opt.batch_size, feature_width}};
-  spec.output_dtypes = {"FP32", "INT32", "INT32"};
-  spec.output_layouts = {"HW", "HW", "HW"};
-  spec.logical_output_layouts = {"HW", "HW", "HW"};
+  spec.runtime_output_names = {opt.output_points_name, opt.output_status_name};
+  spec.output_shapes = {{opt.batch_size, opt.num_points, 2}, {opt.batch_size, opt.num_points, 1}};
+  spec.transport_output_shapes = {{point_rows, 2}, {point_rows, 1}};
+  spec.output_dtypes = {"FP32", "INT32"};
+  spec.output_layouts = {"HW", "HW"};
+  spec.logical_output_layouts = {"HW", "HW"};
+  if (opt.detect_new_features != 0) {
+    spec.runtime_output_names.push_back(opt.output_features_name);
+    spec.output_shapes.push_back({opt.batch_size, feature_width});
+    spec.transport_output_shapes.push_back({opt.batch_size, feature_width});
+    spec.output_dtypes.push_back("INT32");
+    spec.output_layouts.push_back("HW");
+    spec.logical_output_layouts.push_back("HW");
+  }
+  spec.published_output_names = spec.runtime_output_names;
   spec.primary_output_name = opt.output_points_name;
   return spec;
 }

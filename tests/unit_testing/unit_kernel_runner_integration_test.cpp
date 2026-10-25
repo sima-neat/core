@@ -1,10 +1,11 @@
-#include "pipeline/internal/sima/TerminalHostPlacement.h"
 #include "pipeline/internal/sima/ContractRender.h"
 #include "gst/GstInit.h"
-#include "pipeline/internal/sima/KernelRunnerIntegration.h"
+#include "pipeline/internal/sima/SchedulerStageIntegration.h"
 #include "pipeline/internal/sima/BoxDecodeGeometry.h"
 #include "pipeline/internal/sima/BoxDecodeKernelAdmission.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
@@ -41,6 +42,12 @@ namespace integration = simaai::neat::pipeline_internal::sima;
 namespace rt = simaai::scheduler::client;
 namespace probe = simaai::scheduler::testing;
 namespace gs = simaai::scheduler::client;
+gs::KernelProgram& kernel(gs::StageRequest& request) {
+  return std::get<gs::KernelProgram>(request.program);
+}
+const gs::KernelProgram& kernel(const gs::StageRequest& request) {
+  return std::get<gs::KernelProgram>(request.program);
+}
 void require(bool condition, const char* message) {
   if (!condition)
     throw std::runtime_error(message);
@@ -84,31 +91,33 @@ void terminal_host_placement_proof() {
   recipe->members.push_back({std::get<rt::KernelExecutable>(checked), {{0, 0}}, {{0, 0}}, {}});
   integration::StageStaticSpec stage;
   stage.element_name = stage.logical_stage_id = "unrelated-cast";
+  stage.plugin_kind = "kernel";
   stage.native_kernel = recipe;
   stage.core_fresh_default_arena = true;
-  stage.frame_arena_role = integration::FrameArenaRole::Allocate;
-  stage.frame_arena_size_bytes = 4096;
-  stage.frame_arena_storage_domain = domain::ArenaStorageDomain::Cma;
-  stage.frame_arena_provenance = domain::ArenaAllocationProvenance::CoreAllocated;
-  stage.frame_arena_required_device_access =
-      static_cast<std::uint32_t>(domain::ArenaDeviceAccess::CpuA65);
   stage.frame_arena_escape_policy = domain::ArenaEscapePolicy::CpuMappablePublic;
+  stage.logical_inputs.push_back(
+      specs::build_logical_input_static_spec(0, 0, 0, {2}, "FP32", "C", "input", "input", "input"));
+  stage.input_bindings.push_back(specs::build_input_binding_static_spec(0, 0, "input", "input"));
+  stage.physical_inputs.push_back(specs::build_physical_buffer_static_spec(
+      0, 0, 8, integration::DeviceKind::Cpu, "input", -1, 0, 64));
   stage.physical_outputs.push_back(specs::build_physical_buffer_static_spec(
       0, 0, 4, integration::DeviceKind::Cpu, "output", -1, 0, 64));
   stage.logical_outputs.push_back(specs::build_logical_output_static_spec(
-      0, 0, 0, 0, 0, {2}, "BF16", "", "output", "output", "output", 0, 4));
+      0, 0, 0, 0, 0, {2}, "BF16", "C", "output", "output", "output", 0, 4));
   stage.output_order.push_back(specs::build_output_route_static_spec(0, 0, 0, "output", "output"));
-  // Exercise the real renderer: identical rendered CMA fields do not erase
-  // whether the caller authored a placement requirement before rendering.
   simaai::neat::CompiledNodeContract compiled;
   compiled.node_kind = "Cast";
   compiled.element_name = compiled.logical_stage_id = stage.element_name;
   compiled.renderable = true;
   compiled.kernel.emplace();
   compiled.kernel->recipe = recipe;
-  compiled.kernel->runtime_contract.physical_outputs = stage.physical_outputs;
-  compiled.kernel->runtime_contract.logical_outputs = stage.logical_outputs;
-  compiled.kernel->runtime_contract.output_order = stage.output_order;
+  auto& contract = compiled.kernel->runtime_contract;
+  contract.physical_inputs = stage.physical_inputs;
+  contract.logical_inputs = stage.logical_inputs;
+  contract.input_bindings = stage.input_bindings;
+  contract.physical_outputs = stage.physical_outputs;
+  contract.logical_outputs = stage.logical_outputs;
+  contract.output_order = stage.output_order;
   const auto render = [&](const simaai::neat::CompiledNodeContract& node) {
     simaai::neat::CompiledPipelineContracts contracts;
     contracts.fully_renderable = true;
@@ -119,11 +128,41 @@ void terminal_host_placement_proof() {
             "terminal host origin renderer failed");
     return value->stages.front();
   };
-  require(render(compiled).core_fresh_default_arena, "fresh Cast origin was lost");
+  const auto place = [&](integration::StageStaticSpec value, std::string_view terminal) {
+    integration::SimaPluginStaticManifest manifest;
+    manifest.stages.push_back(std::move(value));
+    integration::finalize_pipeline_storage(manifest, terminal);
+    return manifest;
+  };
+  const auto policy = [](const integration::SimaPluginStaticManifest& manifest) {
+    const auto& layout = manifest.stages.front().frame_layout;
+    require(layout && layout->allocations.size() == 1, "host proof final allocation absent");
+    return layout->allocations.front().policy;
+  };
+  const auto fresh = render(compiled);
+  require(fresh.core_fresh_default_arena, "fresh Cast origin was lost");
+  auto host = place(fresh, fresh.element_name);
+  require(policy(host) == gs::AllocationPolicy::RequireHostCpu,
+          "fresh explicit A65 terminal did not select HostCpu");
+  require(policy(place(fresh, {})) == gs::AllocationPolicy::RequireDms,
+          "ordinary A65 output implicitly selected HostCpu");
+  require(!integration::finalize_stage_publications(&host), "host final publication failed");
+  std::string error;
+  const auto roundtrip =
+      integration::parse_manifest_json(integration::serialize_manifest_json(host), &error);
+  require_fixture(roundtrip && roundtrip->stages.front().frame_arena_allocations.size() == 1 &&
+                      roundtrip->stages.front().frame_arena_allocations.front().placement.domain ==
+                          domain::ArenaStorageDomain::HostCpu &&
+                      roundtrip->stages.front().frame_arena_escape_policy ==
+                          domain::ArenaEscapePolicy::CpuOnlyPublic,
+                  "final Host allocation JSON roundtrip", error);
   const auto authored = [&](auto set) {
     auto node = compiled;
     set(node.kernel->runtime_contract);
-    require(!render(node).core_fresh_default_arena, "authored placement acquired fresh origin");
+    const auto rendered = render(node);
+    require(!rendered.core_fresh_default_arena && policy(place(rendered, rendered.element_name)) !=
+                                                      gs::AllocationPolicy::RequireHostCpu,
+            "authored placement acquired fresh HostCpu authority");
   };
   authored([](auto& r) { r.frame_arena_storage_domain = domain::ArenaStorageDomain::Cma; });
   authored([](auto& r) { r.frame_arena_storage_domain = domain::ArenaStorageDomain::Dms; });
@@ -133,48 +172,56 @@ void terminal_host_placement_proof() {
   authored([](auto& r) {
     r.frame_arena_allocation_policy = domain::ArenaAllocationPolicy::PreferDmsThenCma;
   });
-  integration::SimaPluginStaticManifest manifest;
-  manifest.stages.push_back(stage);
-  require(integration::terminal_host_arena_eligible(stage, manifest),
-          "generic Cast host eligibility");
-  const auto reject = [&](auto change) {
-    auto invalid = stage;
-    change(invalid);
-    require(!integration::terminal_host_arena_eligible(invalid, manifest),
-            "unsafe host placement accepted");
+  const auto ineligible = [&](auto change) {
+    auto value = fresh;
+    change(value);
+    require(policy(place(value, value.element_name)) != gs::AllocationPolicy::RequireHostCpu,
+            "ineligible native carrier acquired HostCpu authority");
   };
-  reject([](auto& v) { v.core_fresh_default_arena = false; });
-  reject([](auto& v) { v.frame_arena_required_device_access |= 2U; });
-  reject([](auto& v) { v.frame_arena_storage_domain = domain::ArenaStorageDomain::Dms; });
-  reject([](auto& v) {
+  ineligible([](auto& v) { v.core_fresh_default_arena = false; });
+  ineligible([](auto& v) {
     v.frame_arena_allocation_policy = domain::ArenaAllocationPolicy::PreferDmsThenCma;
   });
-  reject([](auto& v) { v.frame_arena_role = integration::FrameArenaRole::ReuseInput; });
-  reject([](auto& v) { v.physical_outputs[0].memory_flags = 1; });
-  reject([](auto& v) { v.physical_outputs[0].source_physical_index = 0; });
-  reject([](auto& v) { v.physical_outputs[0].size_bytes = 4097; });
-  reject([](auto& v) { v.physical_outputs[0].device_kind = integration::DeviceKind::Mla; });
-  reject([](auto& v) { v.physical_outputs.push_back(v.physical_outputs[0]); });
-  reject([](auto& v) { v.logical_outputs.clear(); });
-  auto consumer = stage;
+  ineligible([](auto& v) { v.physical_outputs[0].memory_flags = 1; });
+  ineligible([](auto& v) { v.physical_outputs[0].source_physical_index = 0; });
+  ineligible([](auto& v) { v.physical_outputs[0].required_alignment_bytes = 128; });
+  ineligible([](auto& v) { v.physical_outputs[0].device_kind = integration::DeviceKind::Mla; });
+  ineligible([](auto& v) { v.logical_outputs[0].stride_bytes = {4}; });
+  ineligible([](auto& v) { v.logical_outputs.clear(); });
+  integration::SimaPluginStaticManifest consumed;
+  consumed.stages = {fresh, fresh};
+  auto& consumer = consumed.stages.back();
   consumer.element_name = consumer.logical_stage_id = "later-consumer";
-  integration::InputBindingStaticSpec binding;
-  binding.src_stage_id = stage.logical_stage_id;
-  consumer.input_bindings.push_back(binding);
-  manifest.stages.push_back(consumer);
-  require(!integration::terminal_host_arena_eligible(stage, manifest),
-          "intermediate arena accepted");
-  std::shared_ptr<GstElement> pipeline(gst_pipeline_new(nullptr), gst_object_unref);
-  auto* source = gst_element_factory_make("identity", nullptr);
-  auto* sink = gst_element_factory_make("appsink", nullptr);
-  require(source && sink, "host proof topology factories");
-  gst_bin_add_many(GST_BIN(pipeline.get()), source, sink, nullptr);
-  require(gst_element_link(source, sink), "host proof direct edge");
-  require(integration::terminal_host_direct_peer(pipeline.get(), source, sink),
-          "direct stopped proof");
-  gst_element_unlink(source, sink);
-  require(!integration::terminal_host_direct_peer(pipeline.get(), source, sink),
-          "missing peer accepted");
+  // A consumer only needs the original result's BF16 contract for this cold edge proof.
+  consumer.native_kernel.reset();
+  consumer.frame_arena_required_device_access = gs::kAccessCpuA65;
+  consumer.logical_inputs[0].dtype = "BF16";
+  consumer.physical_inputs[0].size_bytes = 4;
+  consumer.input_bindings[0].src_stage_id = fresh.logical_stage_id;
+  consumer.input_bindings[0].src_logical_output_index = 0;
+  consumer.input_bindings[0].src_physical_output_index = 0;
+  consumer.input_bindings[0].src_output_slot = 0;
+  integration::finalize_pipeline_storage(consumed, fresh.element_name);
+  require(policy(consumed) == gs::AllocationPolicy::RequireDms,
+          "intermediate allocation acquired HostCpu authority");
+  std::shared_ptr<GstElement> pipeline(gst_pipeline_new("host-proof"), gst_object_unref);
+  auto* element = gst_element_factory_make("neatkernelrunner", fresh.element_name.c_str());
+  auto* sink = gst_element_factory_make("appsink", "terminal");
+  require(element && sink, "host proof topology factories");
+  gst_bin_add_many(GST_BIN(pipeline.get()), element, sink, nullptr);
+  auto* pad = gst_element_request_pad_simple(element, "sink_0");
+  require(pad && gst_element_link(element, sink), "host proof direct terminal edge");
+  gst_object_unref(pad);
+  integration::SchedulerStageRequest request{fresh.element_name, 1, 2, {}, &host.stages.front(),
+                                             fresh.element_name};
+  require(bool(integration::prepare_and_attach_stages(pipeline.get(), {&request, 1})) &&
+              !probe::inspect_stage(element).valid,
+          "wrong terminal peer acquired host authority");
+  request.terminal_host_sink = "terminal";
+  const auto admitted = integration::prepare_and_attach_stages(pipeline.get(), {&request, 1});
+  require_fixture(!admitted && probe::inspect_stage(element).valid &&
+                      gs::stage_frame_layout(element) == host.stages.front().frame_layout,
+                  "Core finalized Host endpoint attachment", admitted ? admitted->message : "");
 }
 
 void output_carrier_budget() {
@@ -352,7 +399,7 @@ void authored_preproc_contract_policy() {
 void ev_service_capacity() {
   const auto request = [](rt::Hardware target, std::size_t capacity) {
     gs::StageAttachment result;
-    result.request.target = target;
+    kernel(result.request).target = target;
     result.request.options.capacity = capacity;
     return result;
   };
@@ -372,7 +419,7 @@ void ev_service_capacity() {
         2);
 }
 
-gs::TensorStageRequest cast_request(std::size_t input_pads = 1, bool terminal_host = false) {
+gs::StageRequest cast_request(std::size_t input_pads = 1, bool terminal_host = false) {
   namespace specs = integration::specbuilders;
   const std::array inputs{rt::TensorSpec{{2}, rt::DType::Float32}};
   const std::array outputs{rt::TensorSpec{{2}, rt::DType::BFloat16}};
@@ -384,42 +431,25 @@ gs::TensorStageRequest cast_request(std::size_t input_pads = 1, bool terminal_ho
   const auto& inspection = std::get<rt::KernelInspection>(inspected);
   const auto in = inspection.input_requirements().front();
   const auto out = inspection.output_requirements().front();
-  integration::StageStaticSpec stage;
-  stage.element_name = stage.logical_stage_id = "cast-fixture";
-  stage.plugin_kind = "kernel";
-  stage.frame_arena_size_bytes = 4096;
-  stage.frame_arena_role = integration::FrameArenaRole::Allocate;
-  stage.frame_arena_storage_domain = integration::static_contract::ArenaStorageDomain::Cma;
-  stage.frame_arena_provenance =
-      integration::static_contract::ArenaAllocationProvenance::CoreAllocated;
-  stage.frame_arena_required_device_access =
-      static_cast<std::uint32_t>(integration::static_contract::ArenaDeviceAccess::CpuA65);
-  if (terminal_host) {
-    stage.frame_arena_storage_domain = integration::static_contract::ArenaStorageDomain::HostCpu;
-    stage.frame_arena_escape_policy =
-        integration::static_contract::ArenaEscapePolicy::CpuOnlyPublic;
-  }
-  gs::TensorStageRequest request;
-  request.target = rt::Hardware::A65;
+  gs::StageRequest request;
+  auto layout = std::make_shared<gs::FrameLayout>();
+  layout->allocations.push_back(
+      {4096, gs::kAccessCpuA65,
+       terminal_host ? gs::AllocationPolicy::RequireHostCpu : gs::AllocationPolicy::RequireCma});
   auto publication = std::make_shared<simaai::gst::TensorBufferPublishContract>();
-  publication->stage_key = stage.logical_stage_id;
+  publication->stage_key = "cast-fixture";
   for (std::size_t pad = 0; pad < input_pads; ++pad) {
     const auto index = static_cast<int>(pad);
     const auto input = "input" + std::to_string(pad), output = "output" + std::to_string(pad);
-    stage.logical_inputs.push_back(specs::build_logical_input_static_spec(
-        index, index, index, {2}, "FP32", "C", input, input, input));
-    stage.input_bindings.push_back(
-        specs::build_input_binding_static_spec(index, index, input, input));
-    stage.physical_inputs.push_back(specs::build_physical_buffer_static_spec(
-        index, index, in.storage_bytes, integration::DeviceKind::Cpu, input, -1, 0,
-        in.alignment_bytes));
-    stage.physical_outputs.push_back(specs::build_physical_buffer_static_spec(
-        index, index, out.storage_bytes, integration::DeviceKind::Cpu, output, -1,
-        static_cast<std::int64_t>(pad * 64), out.alignment_bytes));
-    request.members.push_back({executable, {{pad, 0}}, {{pad, 0}}, {}});
-    publication->physical_outputs.push_back({index, out.storage_bytes, output});
+    layout->inputs.push_back({gs::DirectMemory{pad, 0, 0, in.storage_bytes}, 0});
+    layout->outputs.push_back({pad, {0, pad * 64, out.storage_bytes}});
+    kernel(request).members.push_back({executable, {{pad, 0}}, {{pad, 0}}, {}});
+    if (pad == 0)
+      publication->physical_outputs.push_back({0, 4096, "arena"});
     simaai::gst::TensorBufferPublishLogicalOutput tensor;
-    tensor.logical_index = tensor.physical_index = tensor.memory_index = index;
+    tensor.logical_index = index;
+    tensor.physical_index = tensor.memory_index = 0;
+    tensor.byte_offset = pad * 64;
     tensor.backend_output_index = tensor.route_slot = index;
     tensor.logical_name = tensor.backend_name = tensor.segment_name = output;
     tensor.size_bytes = out.storage_bytes;
@@ -428,20 +458,7 @@ gs::TensorStageRequest cast_request(std::size_t input_pads = 1, bool terminal_ho
     tensor.stride_bytes = {2};
     publication->logical_outputs.push_back(std::move(tensor));
   }
-  std::shared_ptr<GstElement> owner(gst_pipeline_new(nullptr), gst_object_unref);
-  integration::SimaPluginStaticManifest manifest;
-  manifest.stages.push_back(std::move(stage));
-  std::string error;
-  require_fixture(integration::attach_manifest_context(owner.get(), manifest, &error),
-                  "serialize Cast placement", error);
-  auto context = std::shared_ptr<GstContext>(
-      gst_element_get_context(owner.get(), SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE),
-      gst_context_unref);
-  const auto* accessor = sima_plugin_manifest_context_accessor(context.get());
-  require(accessor && accessor->stage_by_index, "Cast placement accessor unavailable");
-  const auto* placement = accessor->stage_by_index(accessor->user_data, 0);
-  require(placement, "Cast placement missing");
-  request.placement = {std::move(context), placement};
+  request.layout = std::move(layout);
   request.publication.contract = std::move(publication);
   request.publication.output_name = "output0";
   request.publication.input_caps = {gst_caps_from_string("application/x-sima-tensor"),
@@ -452,63 +469,22 @@ gs::TensorStageRequest cast_request(std::size_t input_pads = 1, bool terminal_ho
 }
 #include "terminal_host_output_test.inc"
 
-void memory_coherency_candidate_policy() {
-  for (const char* launch :
-       {"appsrc ! queue ! appsink", "appsrc ! tee name=t t. ! queue ! appsink t. ! queue ! appsink",
-        "appsrc ! identity signal-handoffs=false ! appsink",
-        "appsrc ! identity signal-handoffs=true ! appsink", "appsrc ! fakesink"}) {
-    GError* error = nullptr;
-    auto* pipeline = gst_parse_launch(launch, &error);
-    require(pipeline && !error, "coherency transport fixture could not be parsed");
-    require(!integration::prepare_and_attach_kernel_runners(pipeline, {}),
-            "transport-only cohort rejected");
-    require(!g_object_get_qdata(G_OBJECT(pipeline), g_quark_from_static_string(
-                                                        "sima-core-admitted-memory-coherency-v1")),
-            "Core must not install graph-wide coherency selection");
-    GstState state = GST_STATE_VOID_PENDING;
-    gst_element_get_state(pipeline, &state, nullptr, 0);
-    require(state == GST_STATE_NULL, "cold admission started pipeline execution");
-    gst_object_unref(pipeline);
-  }
-}
-// Exercise Core's real request -> installed Scheduler/Runner path, not an
-// empty request vector or the name of a helper in a source file. The MLA
-// producer remains stopped: this tests policy commit, not accelerator jobs.
-void real_request_memory_policy_transaction(bool opaque_consumer) {
+void native_stage_admission_transaction() {
   namespace specs = integration::specbuilders;
   using integration::DeviceKind;
-  std::shared_ptr<GstElement> pipeline(gst_pipeline_new("coherency-transaction"),
+  std::shared_ptr<GstElement> pipeline(gst_pipeline_new("stage-admission"),
                                        [](auto* value) { gst_object_unref(value); });
-  auto* mla = gst_element_factory_make("neatprocessmla", "producer");
   auto* first = gst_element_factory_make("neatkernelrunner", "first");
   auto* second = gst_element_factory_make("neatkernelrunner", "second");
-  require(pipeline && mla && first && second,
-          "installed MLA and kernel-runner providers are required for policy integration");
-  gst_bin_add_many(GST_BIN(pipeline.get()), mla, first, second, nullptr);
-  if (opaque_consumer) {
-    auto* opaque = gst_element_factory_make("fakesink", "opaque");
-    require(opaque && gst_bin_add(GST_BIN(pipeline.get()), opaque),
-            "opaque policy fixture unavailable");
-  }
+  require(pipeline && first && second, "installed kernel-runner provider is required");
+  gst_bin_add_many(GST_BIN(pipeline.get()), first, second, nullptr);
   for (auto* element : {first, second}) {
     auto* pad = gst_element_request_pad_simple(element, "sink_0");
     require(pad, "request fixture input pad unavailable");
     gst_object_unref(pad);
   }
-  const auto check_policy = [&]() {
-    gchar* mode = nullptr;
-    gboolean deferred = FALSE, handoff = TRUE;
-    g_object_get(mla, "memory-coherency-mode", &mode, "defer-output-invalidate", &deferred,
-                 "output-read-handoff", &handoff, nullptr);
-    const bool matches = g_strcmp0(mode, "demand-local-v1") == 0 && deferred && !handoff;
-    g_free(mode);
-    require(matches, "MLA default prepared-access contract changed");
-    for (const char* name :
-         {"memory-coherency-mode", "defer-output-invalidate", "output-read-handoff"}) {
-      auto* prop = g_object_class_find_property(G_OBJECT_GET_CLASS(mla), name);
-      require(prop && !(prop->flags & G_PARAM_WRITABLE), "obsolete coherency selector is writable");
-    }
-    for (auto* element : {pipeline.get(), mla, first, second}) {
+  const auto check_stopped = [&]() {
+    for (auto* element : {pipeline.get(), first, second}) {
       GstState state = GST_STATE_VOID_PENDING;
       gst_element_get_state(element, &state, nullptr, 0);
       require(state == GST_STATE_NULL, "cold policy integration started execution");
@@ -554,60 +530,63 @@ void real_request_memory_policy_transaction(bool opaque_consumer) {
         0, 0, output_requirement.storage_bytes, DeviceKind::Cpu, "output", -1, 0,
         output_requirement.alignment_bytes));
     recipe->members.push_back({std::move(checked), {{0, 0}}, {{0, 0}}, {}});
-    auto contract = std::make_shared<simaai::gst::TensorBufferPublishContract>();
-    contract->stage_key = name;
-    contract->physical_outputs.push_back({0, output_requirement.storage_bytes, "output"});
-    simaai::gst::TensorBufferPublishLogicalOutput output;
-    output.logical_index = output.physical_index = output.memory_index = 0;
-    output.backend_output_index = output.route_slot = 0;
-    output.logical_name = output.backend_name = output.segment_name = "output";
-    output.size_bytes = output_requirement.storage_bytes;
-    output.dtype = SIMA_TENSOR_SET_DTYPE_BF16_V1;
-    output.shape = {2};
-    output.stride_bytes = {2};
-    contract->logical_outputs.push_back(std::move(output));
+    stage.logical_outputs.push_back(specs::build_logical_output_static_spec(
+        0, 0, 0, 0, 0, {2}, "BF16", "C", "logical_alias", "backend_alias", "source_segment", 0,
+        output_requirement.storage_bytes));
+    stage.output_order.push_back(
+        specs::build_output_route_static_spec(0, 0, 0, "public_alias", "source_segment"));
+    stage.native_kernel = std::move(recipe);
+    integration::SimaPluginStaticManifest planned;
+    planned.stages.push_back(std::move(stage));
+    integration::finalize_pipeline_storage(planned);
+    stage = std::move(planned.stages.front());
     gs::TensorStagePublication publication;
+    std::string error;
+    require_fixture(integration::build_kernel_stage_publication(stage, &publication, &error),
+                    "finalize native publication", error);
     publication.input_caps = {gst_caps_from_string("application/vnd.simaai.tensor,format=FP32"),
                               gst_caps_unref};
     publication.output_caps = {gst_caps_from_string("application/vnd.simaai.tensor,format=BF16"),
                                gst_caps_unref};
-    publication.contract = std::move(contract);
-    publication.output_name = "output";
-    recipe->publication = std::move(publication);
-    stage.native_kernel = std::move(recipe);
+    stage.tensor_publication =
+        std::make_shared<const gs::TensorStagePublication>(std::move(publication));
     return stage;
   };
   integration::SimaPluginStaticManifest manifest;
   manifest.stages = {make_spec("first"), make_spec("second")};
-  std::string error;
-  require_fixture(integration::attach_manifest_context(pipeline.get(), manifest, &error),
-                  "attach real policy manifest", error);
-  // Prove the first request is fully admissible on the installed stack before
-  // using an invalid second request to test all-or-nothing Core attachment.
-  // Prepare a separate cold stage: no element context or MLA policy is changed.
+  // Admission uses the exact finalized descriptor, without a manifest lookup.
   {
-    auto context = std::shared_ptr<GstContext>(
-        gst_element_get_context(pipeline.get(), SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE),
-        gst_context_unref);
-    SimaPluginManifestLookupStatus status{};
-    const auto* placement = sima_plugin_manifest_context_stage_lookup_typed_checked(
-        context.get(), "first", "first", SIMA_PLUGIN_STAGE_PAYLOAD_NONE, &status);
-    require(placement, "first request placement is absent from the attached manifest");
-    const auto& native = *manifest.stages[0].native_kernel;
-    gs::TensorStageRequest request;
-    request.target = native.target;
-    request.members = native.members;
-    request.publication = *native.publication;
-    request.placement = {context, placement};
+    const auto& contract = *manifest.stages.front().tensor_publication->contract;
+    const auto& logical = contract.logical_outputs.front();
+    const auto& physical = contract.physical_outputs.at(logical.memory_index);
+    require(logical.segment_name == physical.segment_name &&
+                contract.output_order.front().segment_name == physical.segment_name &&
+                logical.logical_name == "logical_alias" &&
+                logical.backend_name == "backend_alias" &&
+                contract.output_order.front().cm_output_name == "public_alias",
+            "final publication must retain aliases on the exact allocation segment");
+    simaai::gst::TensorBufferPreparedMetaTemplate metadata;
+    std::string error;
+    require_fixture(
+        simaai::gst::tensor_buffer_prepare_meta_template_from_contract(contract, &metadata, &error),
+        "prepare final canonical publication", error);
+    const auto compact = simaai::gst::tensor_buffer_freeze_publication(metadata, &error);
+    require_fixture(bool(compact), "freeze final canonical publication", error);
+    const auto& stage = manifest.stages[0];
+    const auto& native = *stage.native_kernel;
+    gs::StageRequest request;
+    kernel(request).target = native.target;
+    kernel(request).members = native.members;
+    request.publication = *stage.tensor_publication;
+    request.layout = stage.frame_layout;
     probe::RouteProbe prepared;
     const auto failure = prepared.prepare(request);
     if (failure)
-      throw std::runtime_error("valid first request rejected: " + failure->field + ": " +
-                               failure->message);
+      throw std::runtime_error("valid first request rejected: " + failure->message);
     require(prepared.member_count() == 1 && prepared.input_pads() == 1 && prepared.has_bridge(),
             "valid first request did not retain its canonical prepared stage");
   }
-  check_policy();
+  check_stopped();
   // A complete first request must move into its attachment, not get copied into
   // a second vector just to inspect the EV service budget. Reject the following
   // request at Core's existing capacity boundary, before Scheduler can copy or
@@ -635,12 +614,10 @@ void real_request_memory_policy_transaction(bool opaque_consumer) {
   observed.native_kernel = std::move(observed_recipe);
   for (const auto invalid_capacity : {std::size_t{0}, std::size_t{65}}) {
     const std::array copy_requests{
-        integration::KernelRunnerStageRequest{"first", "first", 1, 0, {}, &observed},
-        integration::KernelRunnerStageRequest{
-            "second", "second", invalid_capacity, 0, {}, &manifest.stages[1]}};
+        integration::SchedulerStageRequest{"first", 1, 0, {}, &observed},
+        integration::SchedulerStageRequest{"second", invalid_capacity, 0, {}, &manifest.stages[1]}};
     factory_copies = 0;
-    const auto failure =
-        integration::prepare_and_attach_kernel_runners(pipeline.get(), copy_requests);
+    const auto failure = integration::prepare_and_attach_stages(pipeline.get(), copy_requests);
     require(failure && failure->field == "kernel-runner.graph" &&
                 failure->message == "Core execution capacity must be between 1 and 64",
             "invalid capacity bypassed Core cold admission");
@@ -650,31 +627,30 @@ void real_request_memory_policy_transaction(bool opaque_consumer) {
       require(!probe::inspect_stage(element).valid,
               "rejected capacity attached a partial prepared stage");
   }
-  check_policy();
+  check_stopped();
   auto malformed = manifest.stages[1];
-  auto malformed_recipe =
-      std::make_shared<integration::KernelStageRecipe>(*malformed.native_kernel);
-  auto malformed_publication = std::make_shared<simaai::gst::TensorBufferPublishContract>(
-      *malformed_recipe->publication->contract);
+  auto malformed_metadata =
+      std::make_shared<gs::TensorStagePublication>(*malformed.tensor_publication);
+  auto malformed_publication =
+      std::make_shared<simaai::gst::TensorBufferPublishContract>(*malformed_metadata->contract);
   require(malformed_publication->logical_outputs[0].size_bytes > 0,
           "canonical output fixture must have a nonempty logical extent");
   --malformed_publication->logical_outputs[0].size_bytes;
-  malformed_recipe->publication->contract = std::move(malformed_publication);
-  malformed.native_kernel = std::move(malformed_recipe);
-  std::array requests{
-      integration::KernelRunnerStageRequest{"first", "first", 1, 0, {}, &manifest.stages[0]},
-      integration::KernelRunnerStageRequest{"second", "second", 1, 0, {}, &malformed}};
-  const auto rejected = integration::prepare_and_attach_kernel_runners(pipeline.get(), requests);
-  require(rejected && rejected->field == "output.span" &&
-              rejected->message == "kernel output exceeds its logical execution descriptor",
+  malformed_metadata->contract = std::move(malformed_publication);
+  malformed.tensor_publication = std::move(malformed_metadata);
+  std::array requests{integration::SchedulerStageRequest{"first", 1, 0, {}, &manifest.stages[0]},
+                      integration::SchedulerStageRequest{"second", 1, 0, {}, &malformed}};
+  const auto rejected = integration::prepare_and_attach_stages(pipeline.get(), requests);
+  require(rejected && rejected->code == rt::ErrorCode::InvalidBinding &&
+              rejected->field == "output.span",
           "malformed second request did not reach its checked logical output extent");
   for (auto* element : {first, second}) {
     require(!probe::inspect_stage(element).valid,
             "a rejected cohort partially attached a prepared stage");
   }
-  check_policy();
-  requests[1].native_stage = &manifest.stages[1];
-  const auto accepted = integration::prepare_and_attach_kernel_runners(pipeline.get(), requests);
+  check_stopped();
+  requests[1].stage = &manifest.stages[1];
+  const auto accepted = integration::prepare_and_attach_stages(pipeline.get(), requests);
   if (accepted)
     throw std::runtime_error("real cohort rejected: " + accepted->field + ": " + accepted->message);
   for (auto* element : {first, second}) {
@@ -682,20 +658,20 @@ void real_request_memory_policy_transaction(bool opaque_consumer) {
     require(stage.valid && stage.members.size() == 1 && stage.input_pads == 1 && stage.bridge,
             "real canonical request was not prepared and retained by its element");
   }
-  check_policy();
+  check_stopped();
 }
 
 void empty_candidate_bindings() {
   auto* pipeline = gst_pipeline_new("empty-candidate");
   require(pipeline, "candidate pipeline is unavailable");
-  require(!integration::prepare_and_attach_kernel_runners(pipeline, {}),
+  require(!integration::prepare_and_attach_stages(pipeline, {}),
           "plain candidate bin required numerical preparation");
 
   auto* runner = gst_element_factory_make("neatkernelrunner", "unbound");
   require(runner && gst_bin_add(GST_BIN(pipeline), runner), "candidate runner is unavailable");
   require(g_object_class_find_property(G_OBJECT_GET_CLASS(runner), "config") == nullptr,
           "kernel runner must not expose a legacy standalone JSON config property");
-  require(bool(integration::prepare_and_attach_kernel_runners(pipeline, {})),
+  require(bool(integration::prepare_and_attach_stages(pipeline, {})),
           "empty preparation requests bypassed unbound runner validation");
   require(!probe::inspect_stage(runner).valid,
           "rejected unbound runner received a prepared context");
@@ -714,18 +690,18 @@ void multi_input_candidate_pads() {
   // even when sink_1 is created first.
   auto* second = gst_element_request_pad_simple(runner, "sink_1");
   require(second, "second input pad request failed");
-  require(bool(gs::prepare_and_attach_tensor_stages(pipeline, bindings)),
+  require(bool(gs::prepare_and_attach_stages(pipeline, bindings)),
           "multi-input candidate accepted a missing first pad");
   require(!probe::inspect_stage(runner).valid, "missing input partly attached a context");
   auto* first = gst_element_request_pad_simple(runner, "sink_0");
   auto* extra = gst_element_request_pad_simple(runner, "sink_2");
   require(first && extra, "input pad requests failed");
-  require(bool(gs::prepare_and_attach_tensor_stages(pipeline, bindings)),
+  require(bool(gs::prepare_and_attach_stages(pipeline, bindings)),
           "multi-input candidate accepted an undeclared input pad");
   require(!probe::inspect_stage(runner).valid, "undeclared input partly attached a context");
   gst_element_release_request_pad(runner, extra);
   gst_object_unref(extra);
-  require(!gs::prepare_and_attach_tensor_stages(pipeline, bindings),
+  require(!gs::prepare_and_attach_stages(pipeline, bindings),
           "complete multi-input candidate rejected out-of-order pad creation");
   const auto admitted = probe::inspect_stage(runner);
   require(admitted.valid && admitted.bridge && admitted.input_pads == 2 &&
@@ -746,15 +722,14 @@ void candidate_bin_pad_coverage() {
   auto* second_pad = gst_element_request_pad_simple(second, "sink_%u");
   std::array bindings{gs::StageAttachment{first, cast_request()},
                       gs::StageAttachment{second, cast_request()}};
-  require(bool(gs::prepare_and_attach_tensor_stages(pipeline, std::span{bindings}.first(1))),
+  require(bool(gs::prepare_and_attach_stages(pipeline, std::span{bindings}.first(1))),
           "unbound candidate element accepted");
   require(!probe::inspect_stage(first).valid, "whole-bin preflight was not atomic");
   gst_element_release_request_pad(second, second_pad);
   gst_object_unref(second_pad);
-  require(bool(gs::prepare_and_attach_tensor_stages(pipeline, bindings)),
-          "missing required pad accepted");
+  require(bool(gs::prepare_and_attach_stages(pipeline, bindings)), "missing required pad accepted");
   second_pad = gst_element_request_pad_simple(second, "sink_%u");
-  require(!gs::prepare_and_attach_tensor_stages(pipeline, bindings), "candidate attachment failed");
+  require(!gs::prepare_and_attach_stages(pipeline, bindings), "candidate attachment failed");
   gst_object_unref(first_pad);
   gst_object_unref(second_pad);
   gst_object_unref(pipeline);
@@ -764,7 +739,7 @@ void immutable_recipe_instances() {
   // belongs to Scheduler's whole-cohort transaction, after complete checking.
   integration::KernelStageRecipe recipe;
   auto request = cast_request(2);
-  recipe.members = request.members;
+  recipe.members = kernel(request).members;
   unsigned constructions = 0;
   bool fail = true;
   std::vector<std::weak_ptr<std::byte>> instances;
@@ -788,7 +763,7 @@ void immutable_recipe_instances() {
            return preparer.base();
          };
        }});
-  require(!integration::wire_kernel_stage_factories(recipe, request) && constructions == 0,
+  require(!integration::wire_kernel_stage_factories(recipe, kernel(request)) && constructions == 0,
           "cold wiring instantiated live mutable state");
   const auto rejected = probe::StageProbe::create(request);
   const auto* failure = std::get_if<rt::Error>(&rejected);
@@ -808,7 +783,8 @@ void immutable_recipe_instances() {
   require(std::holds_alternative<probe::StageProbe>(prepared) && constructions == 2,
           "fresh retry failed to instantiate exactly once");
   auto copy = request;
-  require(bool(integration::wire_kernel_stage_factories(recipe, copy)) && constructions == 2,
+  require(bool(integration::wire_kernel_stage_factories(recipe, kernel(copy))) &&
+              constructions == 2,
           "already-wired request was silently rewritten or instantiated twice");
   // Copying immutable authoring starts a new cold admission, never shares a cache.
   auto independent = probe::StageProbe::create(copy);
@@ -827,12 +803,14 @@ void immutable_recipe_instances() {
   auto invalid = recipe;
   invalid.resolver_factories.push_back(invalid.resolver_factories.front());
   auto malformed = cast_request(2);
-  require(bool(integration::wire_kernel_stage_factories(invalid, malformed)) && constructions == 3,
+  require(bool(integration::wire_kernel_stage_factories(invalid, kernel(malformed))) &&
+              constructions == 3,
           "invalid factory list constructed state before validation");
 
   auto image = cast_request();
-  image.members.front().inputs.clear();
-  image.frame_adapter_factory = []() -> rt::Result<std::shared_ptr<gs::TensorStageFrameAdapter>> {
+  kernel(image).members.front().inputs.clear();
+  kernel(image).frame_adapter_factory =
+      []() -> rt::Result<std::shared_ptr<gs::TensorStageFrameAdapter>> {
     return rt::Error{rt::ErrorCode::ResourceBusy,
                      "test.factory",
                      "declared construction failure",
@@ -889,7 +867,7 @@ void boxdecode_geometry_variants() {
       rt::KernelExecutable executable;
       rt::VariantResolver resolve;
     };
-    rt::TensorStageRequest request;
+    rt::KernelProgram request;
     std::vector<Member> members;
   };
   const auto instantiate = [&] {
@@ -1040,7 +1018,7 @@ void boxdecode_geometry_variants() {
   explicit_recipe.members = recipe.members;
   integration::attach_boxdecode_geometry_resolver(
       explicit_recipe, 0, {8, 8, 8, 8, simaai::neat::ResizeMode::Letterbox}, false, true);
-  gs::TensorStageRequest explicit_request;
+  gs::KernelProgram explicit_request;
   explicit_request.members = explicit_recipe.members;
   require(!integration::wire_kernel_stage_factories(explicit_recipe, explicit_request),
           "explicit-size instance failed");
@@ -1254,22 +1232,22 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::string_view(argv[1]) == "--instance-only")
       return 0;
     require(probe::register_element(), "register native candidate plugin");
+    const bool cold_admission_only =
+        argc == 2 && std::string_view(argv[1]) == "--cold-admission-only";
     terminal_host_placement_proof();
-    terminal_host_output_lifetime(false);
+    if (!cold_admission_only)
+      terminal_host_output_lifetime(false);
     if (argc == 2 && std::string_view(argv[1]) == "--terminal-host-only")
       return 0;
     capacity_policy();
     ev_service_capacity();
-    memory_coherency_candidate_policy();
-    real_request_memory_policy_transaction(false);
-    real_request_memory_policy_transaction(true);
+    native_stage_admission_transaction();
     empty_candidate_bindings();
     multi_input_candidate_pads();
     candidate_bin_pad_coverage();
     boxdecode_geometry_variants();
     boxdecode_semantics::controls_and_admission_geometry();
-    std::cout
-        << "PASS: retained ABI4 source, cold whole-bin preflight, multi-input stage attachment\n";
+    std::cout << "PASS: cold whole-bin preflight, immutable recipes and typed stage attachment\n";
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "FAIL: " << error.what() << '\n';

@@ -122,8 +122,6 @@ session_build_materialize_model_bound_nodes(const std::vector<std::shared_ptr<No
 bool session_build_has_output_appsink(const std::vector<std::shared_ptr<Node>>& nodes);
 
 GstElement* session_build_parse_pipeline_or_throw(const BuildResult& build, const char* where);
-// Keep the pre-parse plan on the build's DiagCtx for Model::execution_plan().
-void session_build_record_segment_plan(const BuildResult& build);
 void session_build_validate_explicit_launch_names_or_throw(
     std::string_view pipeline, const char* where, std::span<const LaunchNameOrigin> origins = {});
 void session_build_dump_pipeline_element_properties(GstElement* pipeline);

@@ -525,18 +525,24 @@ void test_grouped_physical_command_keeps_every_input_and_output_disjoint() {
     CHECK(dms->placement().requires_access(sc::ArenaDeviceAccess::Mla));
     CHECK(dms->placement().requires_access(sc::ArenaDeviceAccess::CpuA65));
     CHECK(!dms->placement().requires_access(sc::ArenaDeviceAccess::Ev74));
-    CHECK(dms->placement().allocation_policy == sc::ArenaAllocationPolicy::RequiredDomain);
+    CHECK(dms->allocations().front().placement.allocation_policy ==
+          sc::ArenaAllocationPolicy::RequiredDomain);
   }
   const auto preferred = sc::FrameSlotArenaPlan::compile(
       execution, a65_physical, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096, &error,
       sc::ArenaDmsPolicy::PreferDmsThenCma);
   CHECK(preferred && preferred->placement().domain == sc::ArenaStorageDomain::Dms);
-  CHECK(preferred &&
-        preferred->placement().allocation_policy == sc::ArenaAllocationPolicy::PreferDmsThenCma);
-  const auto forbidden = sc::FrameSlotArenaPlan::compile(
+  CHECK(preferred && preferred->allocations().front().placement.allocation_policy ==
+                         sc::ArenaAllocationPolicy::PreferDmsThenCma);
+  const auto ev_preferred = sc::FrameSlotArenaPlan::compile(
       execution, physical, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096, &error,
       sc::ArenaDmsPolicy::PreferDmsThenCma);
-  CHECK(!forbidden && error.find("EV74") != std::string::npos);
+  CHECK(ev_preferred && ev_preferred->dms_policy() == sc::ArenaDmsPolicy::PreferDmsThenCma);
+  CHECK(ev_preferred && ev_preferred->allocations().size() == 1);
+  CHECK(ev_preferred &&
+        ev_preferred->allocations().front().placement.domain == sc::ArenaStorageDomain::Cma);
+  CHECK(ev_preferred && ev_preferred->allocations().front().placement.allocation_policy ==
+                            sc::ArenaAllocationPolicy::RequiredDomain);
 }
 
 void test_resolved_executors_select_required_heap_partitions() {
@@ -684,6 +690,35 @@ void test_resolved_executors_select_required_heap_partitions() {
       }
       CHECK(end == placed->allocation_bytes());
     }
+  }
+
+  auto mixed_physical = physical;
+  mixed_physical.commands[0].resolved_executor = sc::PhysicalEngine::Cvu;
+  const auto mixed =
+      sc::FrameSlotArenaPlan::compile(*execution, mixed_physical, sc::FrameSlotArenaReuse::Disabled,
+                                      4096, &error, sc::ArenaDmsPolicy::PreferDmsThenCma);
+  CHECK(mixed && mixed->allocations().size() == 2);
+  if (mixed) {
+    for (const auto& part : mixed->allocations()) {
+      const bool cma = part.placement.domain == sc::ArenaStorageDomain::Cma;
+      CHECK(part.placement.allocation_policy ==
+            (cma ? sc::ArenaAllocationPolicy::RequiredDomain
+                 : sc::ArenaAllocationPolicy::PreferDmsThenCma));
+      CHECK(part.placement.requires_access(sc::ArenaDeviceAccess::Ev74) == cma);
+    }
+    sc::FrameSlotArenaRoute route;
+    route.commands = {1, 2};
+    route.imported_inputs = {1};
+    route.published_outputs = {3};
+    const auto narrowed =
+        sc::FrameSlotArenaPlan::compile(*execution, mixed_physical, mixed->reuse_policy(), 4096,
+                                        &error, mixed->dms_policy(), {}, &route);
+    CHECK(narrowed && narrowed->dms_policy() == sc::ArenaDmsPolicy::PreferDmsThenCma);
+    CHECK(narrowed && narrowed->allocations().size() == 1);
+    CHECK(narrowed &&
+          narrowed->allocations().front().placement.domain == sc::ArenaStorageDomain::Dms);
+    CHECK(narrowed && narrowed->allocations().front().placement.allocation_policy ==
+                          sc::ArenaAllocationPolicy::PreferDmsThenCma);
   }
 }
 

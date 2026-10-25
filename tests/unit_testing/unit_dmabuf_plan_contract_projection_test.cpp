@@ -1,3 +1,4 @@
+#include <simaai/scheduler/client/tensor_buffer.h>
 #include <simaai/scheduler/client/capabilities.h>
 #include "pipeline/internal/sima/static_contract/DmabufPlanContractProjection.h"
 #include "pipeline/internal/sima/static_contract/MpkDecoder.h"
@@ -6,9 +7,9 @@
 #include "pipeline/internal/sima/stagesemantics/ProcessMlaStageSemantics.h"
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
-#include "pipeline/internal/sima/PreparedRuntimeBuild.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
 #include "nodes/sima/Preproc.h"
-#include "gst/SimaPreparedRuntimeAbi.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemanticsInternal.h"
 
 #include "test_main.h"
@@ -2096,6 +2097,7 @@ void test_cast_preproc_absorption_uses_explicit_image_layout() {
 
 RUN_TEST(
     "unit_dmabuf_plan_contract_projection_test", ([] {
+      gst_init(nullptr, nullptr);
       test_cvu_whole_batch_projection();
       test_cvu_whole_batch_projection(true);
       test_single_child_batch_pack();
@@ -2568,7 +2570,8 @@ RUN_TEST(
                   imported_mla.physical_outputs[0].source_byte_offset ==
                       static_cast<std::int64_t>(mla_route_arena->region(4U)->byte_offset),
               "IFM bindings and OFM ownership must agree without transport materialization");
-      mla_route.output_device_access = static_cast<std::uint32_t>(sc::ArenaDeviceAccess::Ev74);
+      mla_route.external_device_access[frontend_plan.value(4U)->storage_binding->carrier_id] =
+          static_cast<std::uint32_t>(sc::ArenaDeviceAccess::Ev74);
       auto ev_continuation_arena = sc::FrameSlotArenaPlan::compile(
           frontend_plan, *frontend_physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
           sc::kLegacyEvoCmaRegionAlignmentBytes, &error, sc::kModalixProductionArenaDmsPolicy, {},
@@ -3219,7 +3222,7 @@ RUN_TEST(
               "an exact A65 successor must keep the MLA output in the shared DMS arena; only "
               "a public terminal boundary may detach it");
 
-      require(mla_a65_arena->placement().allocation_policy ==
+      require(mla_a65_arena->allocations().front().placement.allocation_policy ==
                   sc::ArenaAllocationPolicy::RequiredDomain,
               "production DMS placement must not silently enable fallback");
       auto preferred_arena = sc::FrameSlotArenaPlan::compile(
@@ -3234,7 +3237,8 @@ RUN_TEST(
                                                         &preferred_contract, *preferred_sources,
                                                         &error),
               "preferred projection must compile: " + error);
-      require(preferred_contract.frame_arena_allocation_policy ==
+      require(preferred_contract.frame_arena_allocations.size() == 1 &&
+                  preferred_contract.frame_arena_allocations.front().placement.allocation_policy ==
                       sc::ArenaAllocationPolicy::PreferDmsThenCma &&
                   preferred_contract.frame_arena_storage_domain == sc::ArenaStorageDomain::Dms,
               "MLA projection lost opt-in allocation policy");
@@ -3672,11 +3676,19 @@ RUN_TEST(
             sima::prepare_kernel_stage_recipes(&packed_manifest, {}, {}, {}, {});
         require(!packed_failure, "packed ingress canonical lowering must pass: " +
                                      (packed_failure ? packed_failure->message : std::string{}));
+        sima::finalize_pipeline_storage(packed_manifest);
+        require(!sima::finalize_stage_publications(&packed_manifest),
+                "packed publication finalization");
         const auto& packed_recipe = packed_manifest.stages.front().native_kernel;
-        require(packed_recipe && packed_recipe->publication &&
-                    packed_recipe->publication->physical_views.size() == 1U &&
-                    packed_recipe->publication->physical_views.front().backend_output_index == 0 &&
-                    packed_recipe->publication->physical_views.front().relation ==
+        require(packed_recipe && packed_manifest.stages.front().tensor_publication &&
+                    packed_manifest.stages.front().tensor_publication->physical_views.size() ==
+                        1U &&
+                    packed_manifest.stages.front()
+                            .tensor_publication->physical_views.front()
+                            .backend_output_index == 0 &&
+                    packed_manifest.stages.front()
+                            .tensor_publication->physical_views.front()
+                            .relation ==
                         ::simaai::scheduler::client::TensorStagePublicationRelation::PackedStorage,
                 "canonical request must carry only compiler-authored packed view authority");
 
@@ -3748,26 +3760,30 @@ RUN_TEST(
             const auto failure = sima::prepare_kernel_stage_recipes(&manifest, {}, {}, {}, {});
             require(!failure,
                     "padded canonical recipe: " + (failure ? failure->message : std::string{}));
+            sima::finalize_pipeline_storage(manifest);
+            require(!sima::finalize_stage_publications(&manifest), "final preproc publication");
             const auto& recipe = manifest.stages.front().native_kernel;
-            require(recipe && recipe->members.size() == 1U && recipe->publication &&
-                        recipe->publication->contract->logical_outputs.size() == 1U,
-                    "padded Preproc must publish one canonical member without an intermediate");
+            require(
+                recipe && recipe->members.size() == 1U &&
+                    manifest.stages.front().tensor_publication &&
+                    manifest.stages.front().tensor_publication->contract->logical_outputs.size() ==
+                        1U,
+                "padded Preproc must publish one canonical member without an intermediate");
             const auto inspection =
                 ::simaai::scheduler::client::inspect_kernel(recipe->members.front().executable);
             const auto* checked =
                 std::get_if<::simaai::scheduler::client::KernelInspection>(&inspection);
             require(checked && checked->output_requirements().size() == 1U &&
                         checked->output_requirements().front().storage_bytes == 64U &&
-                        recipe->publication->contract->logical_outputs.front().size_bytes ==
-                            checked->output_requirements().front().storage_bytes,
+                        manifest.stages.front()
+                                .tensor_publication->contract->logical_outputs.front()
+                                .size_bytes == checked->output_requirements().front().storage_bytes,
                     "independent canonical storage must equal the published padded extent");
           }
         }
 
-        // An explicit compiler carrier remains authoritative even if its size
-        // is inconsistent with the kernel. Never repair it by enlarging storage:
-        // the unchanged Scheduler cold validator must reject both a short span
-        // and an extra unwritten packed byte, before any device is opened.
+        // Keep compiler extents unchanged: Core rejects a short carrier before
+        // packing; Scheduler rejects an extra unwritten publication byte.
         for (const std::int64_t delta : {-1, 1}) {
           const auto malformed =
               make_model_managed_tess_preproc_absorption_plan(true, true, 0, delta);
@@ -3804,16 +3820,36 @@ RUN_TEST(
           const auto lowered = sima::prepare_kernel_stage_recipes(&manifest, {}, {}, {}, {});
           require(!lowered, "malformed publication fixture canonical executable: " +
                                 (lowered ? lowered->message : std::string{}));
-          const auto& recipe = *manifest.stages.front().native_kernel;
-          ::simaai::scheduler::client::TensorStageRequest request;
-          request.target = recipe.target;
-          request.members = recipe.members;
-          request.publication = *recipe.publication;
-          request.placement = std::make_shared<SimaPluginStageSpec>();
-          const auto state = sima::wire_kernel_stage_factories(recipe, request);
+          if (delta < 0) {
+            bool rejected = false;
+            try {
+              sima::finalize_pipeline_storage(manifest);
+            } catch (const std::invalid_argument& ex) {
+              rejected = std::string(ex.what()).find("checked output exceeds its carrier") !=
+                         std::string::npos;
+            }
+            require(rejected &&
+                        manifest.stages.front().physical_outputs.front().size_bytes == declared &&
+                        !manifest.stages.front().frame_layout,
+                    "storage finalization must reject a short carrier without enlarging it");
+            continue;
+          }
+          sima::finalize_pipeline_storage(manifest);
+          const auto publication_status = sima::finalize_stage_publications(&manifest);
+          require(!publication_status,
+                  "malformed fixture storage remains independently representable");
+          const auto& authored = manifest.stages.front();
+          const auto& recipe = *authored.native_kernel;
+          ::simaai::scheduler::client::StageRequest request;
+          ::simaai::scheduler::client::KernelProgram program;
+          program.target = recipe.target;
+          program.members = recipe.members;
+          request.publication = *authored.tensor_publication;
+          request.layout = authored.frame_layout;
+          const auto state = sima::wire_kernel_stage_factories(recipe, program);
+          request.program = std::move(program);
           require(!state,
                   "cold frame-adapter instantiation: " + (state ? state->message : std::string{}));
-          gst_init(nullptr, nullptr);
           require(::simaai::scheduler::client::register_kernel_runner(),
                   "Scheduler kernel runner registration required");
           auto pipeline = std::shared_ptr<GstElement>(gst_pipeline_new(nullptr), gst_object_unref);
@@ -3825,13 +3861,13 @@ RUN_TEST(
           gst_object_unref(pad);
           const ::simaai::scheduler::client::StageAttachment attachment{element,
                                                                         std::move(request)};
-          const auto admitted = ::simaai::scheduler::client::prepare_and_attach_tensor_stages(
+          const auto admitted = ::simaai::scheduler::client::prepare_and_attach_stages(
               pipeline.get(), {&attachment, 1});
           const auto* rejected = admitted ? &*admitted : nullptr;
           require(rejected && rejected->field == "output.span" &&
-                      rejected->message.find(delta < 0 ? "exceeds" : "unwritten") !=
-                          std::string::npos,
-                  "independent cold admission must reject contradictory typed storage");
+                      rejected->message.find("unwritten") != std::string::npos,
+                  "independent cold admission must reject contradictory typed storage: " +
+                      (rejected ? rejected->field + ": " + rejected->message : "accepted"));
         }
 
         // Standalone storage and ROI capacity must be final at first facts,
@@ -3874,11 +3910,17 @@ RUN_TEST(
                           " must publish canonical storage and capacity at first construction");
               auto stage = simaai::neat::project_processcvu_stage_contract(compiled);
               stage.element_name = stage.logical_stage_id = "standalone_preproc";
+              require(stage.physical_outputs.size() == 1U &&
+                          stage.physical_outputs.front().physical_index == exposed.physical_index &&
+                          stage.physical_outputs.front().size_bytes == required_bytes,
+                      "standalone Preproc must materialize only its selected batched carrier");
               sima::SimaPluginStaticManifest manifest;
               manifest.stages.push_back(std::move(stage));
               const auto failure = sima::prepare_kernel_stage_recipes(&manifest, {}, {}, {}, {});
               require(!failure, "standalone " + dtype + " canonical recipe: " +
                                     (failure ? failure->message : std::string{}));
+              sima::finalize_pipeline_storage(manifest);
+              require(!sima::finalize_stage_publications(&manifest), "final preproc publication");
               const auto& recipe = manifest.stages.front().native_kernel;
               const auto inspection =
                   ::simaai::scheduler::client::inspect_kernel(recipe->members.front().executable);
@@ -3886,8 +3928,9 @@ RUN_TEST(
                   std::get_if<::simaai::scheduler::client::KernelInspection>(&inspection);
               require(checked && checked->output_requirements().size() == 1U &&
                           checked->output_requirements().front().storage_bytes == required_bytes &&
-                          recipe->publication->contract->logical_outputs.front().size_bytes ==
-                              required_bytes,
+                          manifest.stages.front()
+                                  .tensor_publication->contract->logical_outputs.front()
+                                  .size_bytes == required_bytes,
                       "standalone storage must survive render/recipe unchanged and match Kernels");
               if (tiled) {
                 auto unsupported = compiled.payload;

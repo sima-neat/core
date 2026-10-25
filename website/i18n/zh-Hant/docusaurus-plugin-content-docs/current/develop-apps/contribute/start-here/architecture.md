@@ -170,7 +170,8 @@ Core 不會依圖拓撲選擇快取一致性模式。`RunAdvancedOptions::prepar
 Core 先決定執行器，再配置載體：
 
 - 任何由 EV74 寫入或讀取的載體都必須使用 CMA。
-- 僅供 MLA/A65 使用的載體必須使用 DMS。
+- 僅供 MLA/A65 使用的載體預設必須使用 DMS。
+- 直接連接明確公開 appsink 且符合條件的新建 A65 輸出，會使用經驗證的 HostCpu 記憶體。
 
 分流會納入所有使用端；檢視沿用所屬載體的配置。相容的外部攝影機／應用程式 DMA-BUF 保留原有儲存空間、位移、步長與父緩衝區借用。
 
@@ -178,7 +179,7 @@ Core 先決定執行器，再配置載體：
 
 預設必須使用選定的記憶體堆積。內部的 `ArenaDmsPolicy::PreferDmsThenCma` 仍可明確選用，但僅限 Core 擁有且沒有 EV74 存取的 DMS 配置。
 
-配置使用靜態資訊清單 ABI **32** 與直接 TVM 結構 **4**；先前的單一配置 JSON（資訊清單 30/31、TVM 2/3）仍可讀取。請一併重新建置 Core 與 Scheduler；Runner 的公開 ABI 不變。
+Core 為每個階段發布擁有資料的 `FrameLayout`，其中範圍相對於個別配置。核心、MLA 與 TVM 程式共用相同的具型別 Scheduler 附接介面。請一併重新建置 Core 與 Scheduler；Runner 的公開 ABI 不變。
 
 ### 預設裝置到 CPU 一致性
 
@@ -320,7 +321,7 @@ input Sample/Tensor
 
 ### 公開執行計畫
 
-`Model::execution_plan(...)` 會傳回以相同引數呼叫 `build(...)` 時將執行的內容：依管線順序列出模型的圖節點、每個節點的執行位置（`A65`、`EV74` 或 `MLA`），以及節點之間邊上的張量。它會在關閉啟動預檢的情況下呼叫 `build(...)`，讀取建置在 GStreamer 剖析之前記錄於 `DiagCtx` 的計畫，然後關閉管線，因此需要與 `build(...)` 相同的裝置。這是公開的診斷檢視，與下文所述的內部 `ModelExecutionPlan` 不同。其 JSON 合約為 `schemas/execution_plan_v1.schema.json`；`schema_version` 只會在變更破壞現有讀取端時才會改變。
+`Model::execution_plan(...)` 會傳回以相同引數呼叫 `build(...)` 時將執行的內容：依管線順序列出模型的圖節點、每個節點的執行位置（`A65`、`EV74` 或 `MLA`），以及節點之間邊上的張量。它會在關閉啟動預檢的情況下呼叫 `build(...)`，讀取建置在配置與發布中繼資料規劃後記錄於 `DiagCtx` 的計畫，然後關閉管線，因此需要與 `build(...)` 相同的裝置。這是公開的診斷檢視，與下文所述的內部 `ModelExecutionPlan` 不同。其 JSON 合約為 `schemas/execution_plan_v1.schema.json`；`schema_version` 只會在變更破壞現有讀取端時才會改變。 記憶體摘要只計算每個自有配置一次，並標示為 `CMA`、`DMS`、`HostCpu` 或 `Mixed`；明確的 DMS 回退政策會以首選堆積表示。
 
 ### 板子遙測
 
@@ -376,15 +377,7 @@ MPK 資訊清單使用 `MpkDecoder`。`MpkDecoder::load` 是唯一的資訊清�
 具有一般空間儲存配置的單輸入、批次一模型，可以使用自動輸入通道填補。
 應用程式保留模型的邏輯張量形狀；自訂空間儲存填補不在支援範圍內。
 
-因此，以 `.so` 結尾的 AFE 成品依 MPK 階段分類，而不是依後綴。
-對 `processor="MLA"`，Core 將檔案讀為 ELF 容器，不載入主機處理序，
-證明其區段拓撲，並將精確成品傳給 MLArt。
-對具有編譯器定義的 `input_names`、`input_types` 與 `output_types` 合約的
-`processor="A65"`，該成品是主機 TVM 模組，而不是 MLA 可執行檔。
-在有具型別的直接主機模組 ABI 之前，嚴格 DMA-BUF 路徑會拒絕該階段；
-它不會呼叫 `dlopen`、暗中跳過階段，或改走使用分派器的 ProcessTVM 相容元件。
-舊版 EVO 對齊是明確的 4096 位元組遷移原則，具有 `LegacyPolicy` 來源資訊，
-不是從 MPK 或 ELF 推斷的事實。新的具型別合約必須宣告自己的對齊。
+副檔名為 `.so` 的 AFE 成品依 MPK 階段分類。對於 `processor="MLA"`，Core 不載入主機程序，而是驗證 ELF 拓撲，再將成品交給 MLArt。具有編譯器 `input_names`、`input_types` 與 `output_types` 的 A65 主機模組會成為具型別 TVM 程式。舊有 EVO 對齊仍為明確的 4096 位元組 `LegacyPolicy`；新的具型別契約需宣告自己的對齊。
 
 執行階段影格不複製靜態計畫。直接路徑攜帶標準 DMA-BUF 所有權、
 經檢查的絕對 `{fd, offset, length}` 檢視，以及有界的影格槽位生命週期。
@@ -697,20 +690,9 @@ Core 呈現失敗，不重複核心驗證，也不從錯誤文字推斷支援能
   - `ElementFlowCounters`（原子每元件流量統計資訊）
 - `GstDiagnosticsUtil.h` -- 用於格式化和收集 GStreamer 診斷資訊的輔助程式
 
-#### SIMA 靜態資訊清單上下文合約 {#sima-static-manifest-context-contract}
+#### 具型別 Scheduler 階段契約 {#sima-static-manifest-context-contract}
 
-對於模型管線，框架會建置靜態階段/張量合約資料，並將其注入為
-管線層級的 `GstContext`：
-
-- 環境類型：`sima.model.manifest.v1`
-- 環境欄位：
-  - `manifest_version`
-  - `manifest_json`（舊版相容性負載）
-  - `manifest_accessor_v1`（ABI 安全的存取器表格指標）
-  - 可選的 `session_id`、`model_id`
-- 上下文擁有其存取器指標所需的不可變中繼資料儲存。保留上下文可維持中繼資料可讀，
-  不會保留數值工作階段或執行快取。外掛程式借用指標期間必須保留上下文。
-- 儲存庫邊界：此儲存庫不得新增建置時對外掛程式/分派器儲存庫的依賴。整合僅透過介面進行（執行階段 `GstContext`、屬性、caps/meta，以及 C-ABI 合約）。
+Core 透過已安裝的 Scheduler 用戶端傳遞不可變的 `StageRequest`。每個要求擁有影格配置、輸出發布資訊與已驗證的核心、MLA 或 TVM 程式。Scheduler 在附接前驗證停止中的整組階段，並在執行期間保留這些擁有者。
 
 ##### 模型執行與接納
 
@@ -751,12 +733,7 @@ Core 呈現失敗，不重複核心驗證，也不從錯誤文字推斷支援能
 它不配置加速器記憶體、不開啟裝置，也不公開客戶檔案系統路徑。
 執行準備記錄相同的標準計畫摘要；拒絕後會失敗，而不建構或重試舊版執行器。
 
-Core 只在接納後才會於靜態資訊清單 ABI 版本 32 設定
-`processmla.dmabuf_plan_contract`。
-Core 也會將每個後端連接埠的 `required_alignment_bytes` 與不可變的影格 arena 配置計畫，
-投影至其實體緩衝區記錄；ProcessMLA 使用該值，而不重複舊版頁面對齊原則。
-它使用 Core 擁有的這些事實，不得推斷缺少的連接埠或退回舊版傳輸。
-因此，Core 與所有使用靜態資訊清單標頭的外掛程式，都必須以 ABI 版本 32 一起建置與發布。
+已驗證配方就緒後，Core 解析所有產生端與消費端，再透過共用且考慮生命週期的配置器一次配置載體。接著依據配置確定相對於個別配置的範圍與輸出發布資訊。Scheduler 驗證並執行這些資訊，不重建 Core 的儲存計畫。
 
 當 `cv::Mat` 輸入具體化為 Tensor 時，尚未解析的 `Auto` 放置會使用擁有型 Tensor
 預設值：直接複製到 EV74 可見、以 DMA-BUF 支援的 DDR。
@@ -818,24 +795,9 @@ ProcessMLA 透過 `/dev/mla` 上的核心驅動程式 MLArt 提交，
 
 ##### 設定解析
 
-已遷移欄位的解析器優先順序是確定性的：
-
-1. 從合約/執行階段訊號推斷（形狀/meta/caps）
-2. 環境/預設/屬性路徑
-3. 嚴格的匯流排錯誤（永遠不會中止/SIGSEGV）
-
 `StageTransformRuleRegistry`（內部）是單一的映射表格，它告訴解析器哪些非 MLA 階段繼承來自 MLA 輸入與 MLA 輸出的張量合約，以及何時傳播輸出量化。這使得預/後推導過程明確且可測試。
 
-對於使用聚合器範本的已遷移 SIMA 外掛程式，執行階段設定現在遵循環境/屬性驅動的解析：
-1. 階段靜態欄位來自模型資訊環境
-2. 執行階段旋鈕來自屬性/環境預設值
-3. 未解析的必要欄位會明確失敗（框架中沒有階段 JSON 備援）
-
 已編譯數值路由透過 Scheduler frontend 傳送明確的來源綁定與張量連接埠對應。舊版輸入緩衝區名稱不是執行權威；消費端必須使用已檢查的目前影格綁定。
-
-如果提供 `logical_stage_id`，則會從 `stage-id`/`stage_id` 管線屬性中解析，否則它會回退到元素名稱。
-數值模型片段使用 `neatkernelrunner`，並依元件名稱比對其具型別 Runtime 上下文；
-它們不會在該元件設定 `stage-id` 屬性。
 
 MPK 建構的 BoxDecode 終端與公開 `SimaBoxDecode` 節點都使用 `neatkernelrunner`。
 它們共用圖建置准入，檢查載體容量、數值要求、輸出發布與動態影像幾何尺寸。
@@ -863,16 +825,16 @@ INT8 頭需要正且有限的逐張量量化中繼資料與 INT8 零點。BF16 �
 
 ##### SuperPoint BoxDecode 合約
 
-SuperPoint 使用與其他模型管理的 BoxDecode 系列相同的 MPK 到靜態模型資訊邊界，並具有以下其他不變性：
+SuperPoint 使用與其他模型管理的 BoxDecode 系列相同的 MPK 到已驗證核心的邊界，並具有以下其他不變性：
 
 - MPK 記錄擁有檢測器-logits 和描述符-grid 張量識別碼、儲存表示法、dtype/shape 資訊、數值設定檔來源，以及可選的明確 NMS 和邊界控制。核心永遠不會從張量值中識別這些角色。
 - 核心將精確地將一個張量繫結到每個角色，驗證設定檔指紋和支援的表示法，應用明確的 `Model::Options::superpoint` 覆寫，並且僅解決省略的設定檔預設值。更改設定檔會重新計算其衍生的預設值，同時保留 MPK 或 API 明確設定的控制項。
-- 版本化的靜態資訊清單 ABI 攜帶已解決的合約到 `neatobjectdecode`。外掛程式僅在設定期間借用資訊清單指標，並且必須複製執行階段所需的任何狀態；核心在管線的整個生命週期內保留資訊清單的所有權。
+- Core 透過附接到 `neatkernelrunner` 的已驗證核心程式傳遞解析後的契約；已準備階段保留不可變的描述資料。
 - 實際輸出使用 `FEATURE_POINTS_V1` 線格式和特徵語義中繼資料。`FEATURE_POINTS_LEGACY_A65_V0` 僅在明確選擇以用於相容性時才可用；使用者不應從緩衝區大小推斷任何一種格式。
 
 ##### YOLOX 分割 + 姿態的 BoxDecode 契約
 
-`yolox-seg-pose` 與其他 BoxDecode 系列使用相同的 MPK 至靜態資訊清單路徑。
+`yolox-seg-pose` 與其他 BoxDecode 系列使用相同的 MPK 至已驗證核心的路徑。
 
 - 輸入共 13 個張量：3 個邊界框、3 個類別頭、3 個遮罩係數頭、3 個關鍵點頭，最後是 1 個遮罩原型。各組依步幅 8/16/32 排序。
 - `Auto` 選擇 `GroupedByRoleLogit`。僅接受 `GroupedByRole` 和 `GroupedByRoleLogit`；分數使用 sigmoid。
@@ -1008,12 +970,7 @@ graph.add(simaai::neat::nodes::Output());
    * `node_reports`，用於可重現性
    * `boundaries` 作為 `BoundaryFlowCounters`（原子變數）
 
-一般圖建構會先降階數值要求，再序列化放置與發布資料。
-數值清單負載為 `NONE`；不可變配方保留於程序內。共用已準備上下文仍用於 MLA
-及其他非數值相容性，而非 ProcessCVU 要求。Scheduler 的
-`prepare_and_attach_tensor_stages()` 會先驗證完整且停止中的候選 bin、要求 pad、
-成員順序、量測與資源預算，再準備並附接上下文。
-失敗會連同原始診斷向上傳遞，不使用備援或虛構輸入權威資料。
+一般圖建構依序準備已驗證配方、確定儲存配置，再確定輸出發布。`prepare_and_attach_stages()` 在附接前驗證完整且停止中的候選 bin、pad、成員順序與資源預算。失敗保留原始診斷。
 
 對於 YOLO26 分割，數值運算成員會將遮罩直接寫入公開輸出緩衝區尾端的遮罩區域。相依的序列化器只寫入前端的數量與邊界框記錄。Core 宣告明確的封裝儲存檢視；Scheduler 仍會驗證每個寫入者、所有位元組的寫入涵蓋範圍、邊界與快取行相依性，並保留由配置擁有的單一存取 epoch。
 
@@ -1079,14 +1036,7 @@ Core 將不可變工廠移交給每個新要求，但不呼叫它們。
 BoxDecode 執行個體各有獨立有界幾何快取，因此準備另一個階段不會驅逐兄弟階段已暖機的
 變體。新幾何仍遵循已檢查變體準備流程。
 
-靜態清單上下文取得私用中繼資料投影：標準階段保留負載 `NONE`，舊式值負載保持完整，
-並在建立 ABI 存取器前移除數值配方參照。原始 Core 語意清單不變。
-不要在診斷歷史中保留完整且可執行的清單。
-
-建構透過 RAII 擁有管線與上下文，直到成功交接。建置失敗會釋放未提交擁有者，
-不重設已被使用的轉接器，也不停止無關的共用 Runtime 域。
-有意保留的執行上下文可以讓階段存活；靜態中繼資料不可以。
-僅主機物件解構不能證明 DMA 已安全釋放。
+建構過程以 RAII 擁有管線與階段要求，直到成功交接。建構失敗會釋放尚未交接的擁有者，不會重設使用中的介面卡或停止無關的共用 Runtime 域。僅銷毀主機物件無法證明 DMA 已完成使用。
 
 ### DMA-BUF 輸出所有權
 
@@ -1541,21 +1491,7 @@ SSD 效能設定組合要求後端 p99 不超過 0.7 ms、階段 p99 不超過 0
 
 ## 階段命名和連接
 
-框架現在將外掛程式 JSON 視為外掛程式擁有的資料，並且在管線建置期間不會重新編寫或驗證每個階段的 JSON 欄位。
-
-連接的真相來源：
-
-1. 來自節點片段的確定性 GStreamer 元素名稱。
-2. SIMA 模型路徑元素上的 `stage-id`。
-3. 用於靜態階段/張量合約查找的 `sima.model.manifest.v1` 上下文。
-
-影響：
-
-* 建置不再修改 `node_name` / `input_buffers[*].name` / `buffers.input[*].name`。
-* 建置不再執行基於 JSON 的連接檢查。
-* 名稱轉換僅適用於元素名稱。
-
-對於模型管理的圖執行，階段解析由 `stage-id` + 清單上下文驅動。對於非模型圖執行，明確的外掛程式屬性是執行階段控制平面。
+Core 依確定的 GStreamer 元件名稱綁定每個已完成的 `StageRequest`。名稱轉換在 Scheduler 接納前完成。每個要求擁有程式、`FrameLayout` 與輸出發布資訊。
 
 ---
 

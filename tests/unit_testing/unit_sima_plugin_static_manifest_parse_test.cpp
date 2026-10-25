@@ -1,4 +1,5 @@
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
+#include "gst/SimaPluginStaticManifestAbi.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -92,6 +93,33 @@ RUN_TEST("unit_sima_plugin_static_manifest_parse_test", ([] {
            require(parsed->stages[0].frame_arena_allocation_policy ==
                        static_contract::ArenaAllocationPolicy::RequiredDomain,
                    "existing placement must remain strict");
+           auto mixed_manifest = alignment_manifest;
+           auto& mixed_stage = mixed_manifest.stages.front();
+           mixed_stage.frame_arena_storage_domain = static_contract::ArenaStorageDomain::Mixed;
+           mixed_stage.frame_arena_required_device_access = 7U;
+           const auto half = mixed_stage.frame_arena_size_bytes / 2U;
+           auto cma = static_contract::ArenaPlacement{
+               static_contract::ArenaStorageDomain::Cma,
+               static_contract::ArenaAllocationProvenance::CoreAllocated, 5U,
+               static_contract::ArenaEscapePolicy::CpuMappablePublic};
+           auto dms = cma;
+           dms.domain = static_contract::ArenaStorageDomain::Dms;
+           dms.required_device_access = 3U;
+           mixed_stage.frame_arena_allocations = {{0U, half, cma}, {half, half, dms}};
+           const auto mixed_json = nlohmann::json::parse(serialize_manifest_json(mixed_manifest));
+           require(mixed_json["stages"][0]["frame_arena_storage_domain"].get<int>() ==
+                       SIMA_PLUGIN_FRAME_ARENA_STORAGE_MIXED,
+                   "mixed summary must use Scheduler's wire value");
+           const auto mixed = parse_manifest_json(mixed_json.dump(), &parse_error);
+           require(mixed &&
+                       mixed->stages[0].frame_arena_storage_domain ==
+                           static_contract::ArenaStorageDomain::Mixed &&
+                       mixed->stages[0].frame_arena_allocations.size() == 2U &&
+                       mixed->stages[0].frame_arena_allocations[0].placement.domain ==
+                           static_contract::ArenaStorageDomain::Cma &&
+                       mixed->stages[0].frame_arena_allocations[1].placement.domain ==
+                           static_contract::ArenaStorageDomain::Dms,
+                   "mixed CMA/DMS allocations must round-trip: " + parse_error);
            auto preferred_manifest = alignment_manifest;
            preferred_manifest.stages[0].frame_arena_allocation_policy =
                static_contract::ArenaAllocationPolicy::PreferDmsThenCma;
@@ -104,7 +132,12 @@ RUN_TEST("unit_sima_plugin_static_manifest_parse_test", ([] {
              require(!parse_manifest_json(bad.dump(), &parse_error),
                      "invalid allocation policy unexpectedly accepted");
            };
-           auto bad = preferred_json;
+           auto bad = nlohmann::json::parse(serialize_manifest_json(alignment_manifest));
+           bad["stages"][0]["frame_arena_storage_domain"] =
+               SIMA_PLUGIN_FRAME_ARENA_STORAGE_HOST_CPU;
+           bad["stages"][0]["frame_arena_required_device_access"] = 1U;
+           reject(bad);
+           bad = preferred_json;
            bad["stages"][0]["frame_arena_required_device_access"] = 7;
            reject(bad);
            bad = preferred_json;
@@ -124,3 +157,53 @@ RUN_TEST("unit_sima_plugin_static_manifest_parse_test", ([] {
            reject(bad);
            bad = preferred_json;
            bad["abi_version"] = preferred_json.at("abi_version").get<int>() + 1;
+           reject(bad);
+           bad = preferred_json;
+           bad["stages"][0].erase("frame_arena_allocation_policy");
+           reject(bad);
+           auto legacy_json = preferred_json;
+           legacy_json["abi_version"] = 30;
+           legacy_json["stages"][0].erase("frame_arena_allocation_policy");
+           auto legacy = parse_manifest_json(legacy_json.dump(), &parse_error);
+           require(legacy && legacy->stages[0].frame_arena_allocation_policy ==
+                                 static_contract::ArenaAllocationPolicy::RequiredDomain,
+                   "legacy strict JSON must remain strict");
+
+           auto host_json = preferred_json;
+           host_json["stages"][0]["frame_arena_role"] = static_cast<int>(FrameArenaRole::Allocate);
+           host_json["stages"][0]["frame_arena_storage_domain"] = 3;
+           host_json["stages"][0]["frame_arena_escape_policy"] = 2;
+           host_json["stages"][0]["frame_arena_allocation_policy"] = 0;
+           host_json["stages"][0]["frame_arena_required_device_access"] = 1;
+           const auto host = parse_manifest_json(host_json.dump(), &parse_error);
+           require(host && host->stages.front().frame_arena_storage_domain ==
+                               static_contract::ArenaStorageDomain::HostCpu,
+                   "strict host placement JSON must round-trip: " + parse_error);
+           for (int old_version : {30, 31, 33}) {
+             auto incompatible = host_json;
+             incompatible["abi_version"] = old_version;
+             reject(incompatible);
+           }
+           for (const auto& field : {"frame_arena_storage_domain", "frame_arena_escape_policy"}) {
+             auto incompatible = host_json;
+             incompatible["stages"][0][field] = 0;
+             reject(incompatible);
+           }
+           auto incompatible = host_json;
+           incompatible["stages"][0]["frame_arena_required_device_access"] = 3;
+           reject(incompatible);
+
+           auto adopted_manifest = alignment_manifest;
+           adopted_manifest.stages[0].frame_arena_storage_domain =
+               static_contract::ArenaStorageDomain::Unknown;
+           adopted_manifest.stages[0].frame_arena_provenance =
+               static_contract::ArenaAllocationProvenance::ExternalAdopted;
+           const auto adopted =
+               parse_manifest_json(serialize_manifest_json(adopted_manifest), &parse_error);
+           require(adopted.has_value() &&
+                       adopted->stages[0].frame_arena_storage_domain ==
+                           static_contract::ArenaStorageDomain::Unknown &&
+                       adopted->stages[0].frame_arena_provenance ==
+                           static_contract::ArenaAllocationProvenance::ExternalAdopted,
+                   "an adopted reuse arena must remain unknown until dynamic driver admission");
+         }));

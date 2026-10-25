@@ -231,7 +231,8 @@ budgets once; no per-frame operation-specific scheduling policy is needed.
 Core resolves executors before packing carriers:
 
 - Any EV74 writer or reader requires CMA.
-- Carriers used only by MLA/A65 require DMS.
+- Carriers used only by MLA/A65 require DMS by default.
+- Eligible fresh A65 outputs at an explicit public appsink use certified HostCpu storage.
 
 Fan-out includes every consumer; views share their carrier's placement. Compatible
 imported camera/application DMA-BUFs retain their backing, offsets, strides and
@@ -243,9 +244,9 @@ parts through Runner and resolves each span within one allocation, without copie
 Defaults require the selected heap. The internal `ArenaDmsPolicy::PreferDmsThenCma`
 opt-in remains limited to Core-owned DMS allocations with no EV74 access.
 
-Layouts use static-manifest ABI **32** and direct-TVM schema **4**; historical
-single-allocation JSON (manifest 30/31, TVM 2/3) remains readable. Rebuild Core and
-Scheduler together; Runner's public ABI is unchanged.
+Core publishes one owning `FrameLayout` per stage, with allocation-local spans.
+Kernel, MLA and TVM programs use the same typed Scheduler attachment. Rebuild Core
+and Scheduler together; Runner's public ABI is unchanged.
 
 ### Default device-to-CPU coherency
 
@@ -424,10 +425,11 @@ failure should surface as an actionable structured error rather than a hidden ru
 `Model::execution_plan(...)` returns what `build(...)` with the same arguments runs: the Model's
 graph nodes in pipeline order, where each node runs (`A65`, `EV74`, or `MLA`), and the tensors on
 the edges between them. It calls `build(...)` with startup preflight off, reads the plan that the
-build recorded on its `DiagCtx` before GStreamer parse, and closes the pipeline, so it needs the
+build recorded on its `DiagCtx` after placement and publication planning, and closes the pipeline, so it needs the
 same device as `build(...)`. It is a public diagnostic view, separate from the internal `ModelExecutionPlan` described below. Its JSON
 contract is `schemas/execution_plan_v1.schema.json`; `schema_version` changes only when a change
-breaks existing readers.
+breaks existing readers. The memory summary counts owned allocations once and reports `CMA`,
+`DMS`, `HostCpu`, or `Mixed`; explicit DMS fallback is reported by its preferred heap.
 
 ### Board telemetry
 
@@ -514,7 +516,7 @@ storage. Core compiles model-load facts into one immutable internal
 - public outputs contain only publication order and the value they expose.
 
 MPK manifests use `MpkDecoder`. `MpkDecoder::load` is the single manifest
-entry point: model loading, prepared-runtime builds, and the PCIe host read
+entry point: model loading, stage preparation, and the PCIe host read
 `mpk.json` through it once, and it builds the semantic `MpkContract` from the
 same bytes that admission decodes. The optional `model_sdk_version`
 string is retained as provenance and does not restrict admission. The decoder
@@ -537,18 +539,12 @@ Single-input, batch-one models with normal spatial storage can use automatic
 input channel padding. Applications keep the model's logical tensor shape;
 custom spatial storage padding is outside this support scope.
 
-An AFE artifact ending in `.so` is therefore classified by its MPK stage, not
-by its suffix. For `processor="MLA"`, Core reads the file as an ELF container
-without loading it into the host process, proves its section topology, and
-passes the exact artifact to MLArt. For `processor="A65"` with the
-compiler-authored `input_names`, `input_types`, and `output_types` contract, it
-is a host TVM module and is not an MLA executable.
-The strict DMA-BUF route rejects that stage until a typed direct host-module
-ABI is available; it never calls `dlopen`, silently skips the stage, or routes
-through the dispatcher-based ProcessTVM compatibility element.
-The legacy EVO alignment is an explicit 4096-byte migration policy with
-`LegacyPolicy` provenance, not a fact inferred from its MPK or ELF. New typed
-contracts must declare their own alignment.
+An AFE artifact ending in `.so` is classified by its MPK stage. For
+`processor="MLA"`, Core validates its ELF topology without loading it into the host
+process and passes the artifact to MLArt. An A65 host module with the compiler's
+`input_names`, `input_types` and `output_types` becomes a typed TVM program. The
+legacy EVO alignment remains an explicit 4096-byte `LegacyPolicy`; new typed
+contracts declare their own alignment.
 
 Runtime frames do not copy the static plan. The direct path carries standard
 DMA-BUF ownership plus checked absolute `{fd, offset, length}` views and a
@@ -922,22 +918,12 @@ Under `src/pipeline/internal/` (internal-only):
   - `ElementFlowCounters` (atomic per-element flow stats)
 - `GstDiagnosticsUtil.h` -- helpers for formatting and collecting GStreamer diagnostics
 
-#### SIMA static manifest context contract {#sima-static-manifest-context-contract}
+#### Typed Scheduler stage contract {#sima-static-manifest-context-contract}
 
-For model pipelines, static stage/tensor contract data is built in framework and injected as a
-pipeline-level `GstContext`:
-
-- Context type: `sima.model.manifest.v1`
-- Context fields:
-  - `manifest_version`
-  - `manifest_json` (legacy compatibility payload)
-  - `manifest_accessor_v1` (ABI-safe accessor table pointer)
-  - optional `session_id`, `model_id`
-- The context owns immutable metadata backing for its accessor pointers. Retaining
-  the context keeps that metadata readable, not numerical sessions or execution
-  caches. Plugins must retain the context while borrowing its pointers.
-- Repository boundary: this repo must not add build-time dependencies on plugin/dispatcher repos.
-  Integration is interface-only (runtime `GstContext`, properties, caps/meta, and C-ABI contracts).
+Core passes immutable `StageRequest` objects through Scheduler's installed client.
+Each owns its frame layout, output publication and checked kernel, MLA or TVM program.
+Scheduler validates the stopped cohort before attachment and retains those owners
+through execution.
 
 ##### Model execution and admission
 
@@ -987,13 +973,10 @@ it does not allocate accelerator memory, open a device, or expose customer
 filesystem paths. Execution preparation records the same canonical plan digest and
 fails rather than constructing or retrying a legacy executor after rejection.
 
-Only after admission does Core set `processmla.dmabuf_plan_contract` in static
-manifest ABI version 32. Core also projects each backend port's `required_alignment_bytes`
-and the immutable frame-arena placement plan into its physical buffer record;
-ProcessMLA consumes that value rather than duplicating the legacy
-page-alignment policy. It consumes these Core-owned facts; it must not infer missing ports
-or fall back to a legacy transport. Core and every plugin that consumes the static-manifest
-header must therefore be built and released together at ABI version 32.
+After checked recipes are available, Core resolves every producer and consumer,
+then packs carriers once through the shared lifetime-aware packer. It finalizes
+allocation-local spans and output publication from that placement. Scheduler
+validates and executes these facts without rebuilding Core's storage plan.
 
 When `cv::Mat` input is materialized as a Tensor, unresolved `Auto` placement
 uses the owning Tensor default: copy directly into EV74-visible DMA-BUF-backed
@@ -1069,30 +1052,13 @@ or synchronization error is terminal.
 
 ##### Configuration resolution
 
-Resolver precedence for migrated fields is deterministic:
-
-1. infer from contract/runtime signal (shape/meta/caps)
-2. context/default/property path
-3. hard bus error (never abort/SIGSEGV)
-
 `StageTransformRuleRegistry` (internal) is the single mapping table that tells the resolver which
 non-MLA stages inherit tensor contracts from MLA inputs vs MLA outputs, and when output quant is
 propagated. This keeps pre/post derivation explicit and testable.
 
-For migrated SIMA plugins using the aggregator template, runtime config now follows
-context/property-driven resolution:
-1. stage static fields come from manifest context
-2. runtime knobs come from properties/context defaults
-3. unresolved required fields fail explicitly (no stage-JSON fallback in framework)
-
 Compiled numerical routes carry explicit source bindings and tensor-port mappings through the
 Scheduler frontend. Legacy input-buffer names are not execution authority; consumers must use
 the checked current-frame bindings.
-
-`logical_stage_id` is resolved from `stage-id`/`stage_id` pipeline properties when provided,
-otherwise it falls back to element name.
-Numerical model fragments use `neatkernelrunner` and match their typed Runtime
-context by element name; they do not set a `stage-id` property on that element.
 
 Both authored MPK BoxDecode terminals and public `SimaBoxDecode` nodes use
 `neatkernelrunner`. They share graph-build admission for carrier capacities,
@@ -1152,7 +1118,7 @@ for configuration and Python usage.
 
 ##### SuperPoint BoxDecode contract
 
-SuperPoint uses the same MPK-to-static-manifest boundary as other model-managed BoxDecode
+SuperPoint uses the same MPK-to-checked-kernel boundary as other model-managed BoxDecode
 families, with these additional invariants:
 
 - The MPK record owns the detector-logits and descriptor-grid tensor identities, storage
@@ -1162,16 +1128,15 @@ families, with these additional invariants:
   representations, applies explicit `Model::Options::superpoint` overrides, and resolves only
   omitted profile defaults. Changing a profile recomputes its derived defaults while preserving
   controls explicitly authored by the MPK or API.
-- The versioned static-manifest ABI carries the resolved contract to `neatobjectdecode`. Plugins
-  borrow manifest pointers only during configuration and must copy any state needed at runtime;
-  Core retains manifest ownership for the pipeline lifetime.
+- Core forwards the resolved contract in the checked kernel program attached to
+  `neatkernelrunner`; the prepared stage retains its immutable authoring data.
 - Production output uses the `FEATURE_POINTS_V1` wire format and feature semantic metadata.
   `FEATURE_POINTS_LEGACY_A65_V0` is available only when explicitly selected for compatibility;
   consumers must not infer either format from buffer size.
 
 ##### YOLOX segmentation + pose BoxDecode contract
 
-`yolox-seg-pose` uses the same MPK-to-static-manifest path as other BoxDecode families.
+`yolox-seg-pose` uses the same MPK-to-checked-kernel path as other BoxDecode families.
 
 - Inputs are 13 tensors: three boxes, three class heads, three mask-coefficient heads, three keypoint heads, then one mask prototype. Each group uses stride-8/16/32 order.
 - `Auto` selects `GroupedByRoleLogit`. Only `GroupedByRole` and `GroupedByRoleLogit` are accepted; scores use sigmoid.
@@ -1329,13 +1294,10 @@ Internally:
    * `node_reports` for reproducibility
    * `boundaries` as `BoundaryFlowCounters` (atomics)
 
-Normal graph construction lowers numerical requests before serializing placement
-and publication. Numerical manifest payloads are `NONE`; immutable recipes remain
-in-process. The shared prepared context remains for MLA and other nonnumerical
-compatibility, not ProcessCVU requests. `prepare_and_attach_tensor_stages()` in Scheduler validates
-the complete stopped candidate bin, request pads, member ordering, metrics and
-resource budgets before preparing and attaching contexts. Failures propagate with their original diagnostic, without
-fallback or fabricated input authority.
+Normal graph construction prepares checked recipes, finalizes storage, then
+output publication. `prepare_and_attach_stages()` validates the complete stopped
+candidate bin, pads, member ordering and resource budgets before attachment.
+Failures retain their original diagnostic.
 
 For YOLO26 segmentation, the numerical member writes masks directly into the mask
 suffix of the public output buffer. A dependent serializer writes only the count
@@ -1430,17 +1392,10 @@ rechecking unchanged numerical semantics. BoxDecode instances have independent
 bounded geometry caches, so preparing another stage cannot evict a sibling's
 warmed variants. New geometry still follows checked variant preparation.
 
-The static manifest context receives a private metadata projection: canonical
-stages keep payload `NONE`, legacy value payloads remain intact, and numerical
-recipe references are removed before building the ABI accessor. The original
-Core semantic manifest is unchanged. Do not retain whole execution-capable
-manifests in diagnostic history.
-
-Construction owns its pipeline and contexts through RAII until successful
-handoff. A failed build releases uncommitted owners; it does not reset consumed
-adapters or stop an unrelated shared Runtime domain. An intentionally retained
-execution context may keep its stage alive. Static metadata may not. Host object
-destruction alone does not prove DMA retirement.
+Construction owns its pipeline and stage requests through RAII until successful
+handoff. A failed build releases uncommitted owners without resetting consumed
+adapters or stopping an unrelated shared Runtime domain. Host object destruction
+alone does not prove DMA retirement.
 
 ### DMA-BUF output ownership
 
@@ -2034,23 +1989,9 @@ therefore reported on the first `push()` or `pull()`, with the original `GraphRe
 
 ## Stage naming and wiring
 
-The framework now treats plugin JSON as plugin-owned data and does **not** rewrite or validate
-per-stage JSON fields during pipeline build.
-
-Wiring source of truth:
-
-1. Deterministic GStreamer element names from node fragments.
-2. `stage-id` on SIMA model-path elements.
-3. `sima.model.manifest.v1` context for static stage/tensor contract lookup.
-
-Implications:
-
-* Build no longer mutates `node_name` / `input_buffers[*].name` / `buffers.input[*].name`.
-* Build no longer performs JSON-based wiring checks.
-* Name transform still applies to element names only.
-
-For model-managed graph runs, stage resolution is driven by `stage-id` + manifest context.
-For non-model graph runs, explicit plugin properties are the runtime control plane.
+Core matches each finalized `StageRequest` to its deterministic GStreamer element
+name. Name transforms finish before Scheduler admission. Each request owns its
+program, `FrameLayout` and output publication.
 
 ---
 

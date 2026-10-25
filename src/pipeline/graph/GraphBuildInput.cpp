@@ -5,7 +5,7 @@
  */
 
 #include "GraphDetail.h"
-#include "pipeline/internal/sima/KernelRunnerIntegration.h"
+#include "pipeline/internal/sima/SchedulerStageIntegration.h"
 #include "internal/GraphBuildInternal.h"
 #include "pipeline/internal/RtpJpegEndMarker.h"
 #include "pipeline/internal/UxLogging.h"
@@ -1901,7 +1901,6 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   enforce_mla_pipeline_guard("Graph::build(input)", last_pipeline, owner);
   validate_caps_override_or_throw(src_node->options(), "Graph::build(input)", last_pipeline);
 
-  session_build_record_segment_plan(br);
   GstElement* pipeline = session_build_parse_pipeline_or_throw(br, "Graph::build(input)");
   session_build_dump_pipeline_element_properties(pipeline);
   trace_step(Traits::trace_parsed());

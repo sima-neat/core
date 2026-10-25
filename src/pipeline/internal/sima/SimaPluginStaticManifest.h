@@ -45,6 +45,14 @@
 
 namespace simaai::scheduler::client {
 struct TensorStageImagePublication;
+struct TensorStagePublication;
+struct FrameLayout;
+struct TvmProgram;
+struct MlaProgram;
+} // namespace simaai::scheduler::client
+
+namespace simaai::neat::internal {
+struct ModelFragmentStoragePlan;
 }
 
 namespace simaai::neat::pipeline_internal::sima {
@@ -153,6 +161,7 @@ enum class PublicationViewRelation : std::uint8_t { Identity, SingletonAxes, Pac
 
 /// Static spec for one logical (publishable) output tensor on a stage.
 struct LogicalTensorStaticSpec {
+  std::optional<std::uint32_t> model_carrier_id;   // Build-local identity; not serialized.
   int logical_index = -1;                          ///< Stage-local logical-output index.
   int backend_output_index = -1;                   ///< Backend (compiled) output index.
   int physical_index = -1;                         ///< Backing physical-output index.
@@ -459,12 +468,19 @@ struct QuantLikeStagePayload {
 struct KernelStageRecipe;
 
 struct StageStaticSpec {
+  std::optional<std::size_t> compile_stage_index;
+  std::optional<std::size_t> compile_node_index;
+  bool model_storage_planned = false;
   std::shared_ptr<const KernelStageRecipe> native_kernel;
+  std::shared_ptr<const ::simaai::scheduler::client::TvmProgram> tvm_program;
+  std::shared_ptr<const ::simaai::scheduler::client::MlaProgram> mla_program;
+  std::shared_ptr<const ::simaai::scheduler::client::FrameLayout> frame_layout;
+  std::shared_ptr<const ::simaai::scheduler::client::TensorStagePublication> tensor_publication;
   // Private per-build policy; never serialized into the plugin manifest ABI.
   std::optional<std::size_t> native_execution_capacity;
-  // Checked semantic output authority, available before recipe preparation.
-  // Plane offsets remain relative to their physical output; preparation makes
-  // a separate arena-rebased descriptor without mutating this metadata.
+  // Image output authority is relative before storage finalization. Final
+  // publication replaces this stage-local pointer with allocation-local plane
+  // offsets; the immutable semantic source and checked recipe stay unchanged.
   std::shared_ptr<const ::simaai::scheduler::client::TensorStageImagePublication> image_publication;
   std::string element_name;
   std::string logical_stage_id;
@@ -487,3 +503,102 @@ struct StageStaticSpec {
   // In-process construction authority only: never accepted from serialized manifests.
   bool core_fresh_default_arena = false;
   std::vector<static_contract::FrameSlotArenaAllocation> frame_arena_allocations;
+  FrameArenaRole frame_arena_role = FrameArenaRole::None;
+  static_contract::ArenaStorageDomain frame_arena_storage_domain =
+      static_contract::ArenaStorageDomain::Unknown;
+  static_contract::ArenaAllocationProvenance frame_arena_provenance =
+      static_contract::ArenaAllocationProvenance::Unknown;
+  static_contract::ArenaAllocationPolicy frame_arena_allocation_policy =
+      static_contract::ArenaAllocationPolicy::RequiredDomain;
+  std::uint32_t frame_arena_required_device_access = 0U;
+  static_contract::ArenaEscapePolicy frame_arena_escape_policy =
+      static_contract::ArenaEscapePolicy::InternalOnly;
+  // Mirrors CompiledRuntimeContract::consumer_keeps_distinct_physical_inputs.
+  // Plumbed from the upstream MLA contract through ContractRender so that
+  // publish-contract construction can stamp TensorBufferPublishContract::
+  // preserve_physical_segments when this stage's outputs feed a multi-IFM MLA.
+  bool consumer_keeps_distinct_physical_inputs = false;
+  // Optional .elf-derived I/O symbol names. See MlaStaticContractExtractor.h.
+  // When populated, downstream binding/dispatch can use the actual placeholder
+  // symbol names instead of synthesized "ifmN" / "ofmN" strings.
+  std::vector<std::string> elf_ifm_symbol_names;
+  std::vector<std::string> elf_ofm_symbol_names;
+  StagePayloadKind payload_kind = StagePayloadKind::None;
+  ProcessCvuStagePayload processcvu;
+  ProcessMlaStagePayload processmla;
+  BoxDecodeStagePayload boxdecode;
+  QuantLikeStagePayload detessdequant;
+  QuantLikeStagePayload quant;
+  QuantLikeStagePayload tess;
+  QuantLikeStagePayload dequant;
+  QuantLikeStagePayload quanttess;
+  std::vector<ResolutionTrace> resolution_trace;
+};
+
+/**
+ * @brief Top-level static manifest passed to the SiMa GStreamer plugins.
+ *
+ * Carries the session identity, the model id, and the ordered list of stage specs.
+ */
+struct SimaPluginStaticManifest {
+  std::shared_ptr<const ::simaai::neat::internal::ModelFragmentStoragePlan> model_storage_plan;
+  std::string session_id;              ///< Per-run session identifier.
+  std::string model_id;                ///< Model identity (typically derived from MPK).
+  std::vector<StageStaticSpec> stages; ///< Stages in execution order.
+};
+
+/// One element parsed from a GStreamer launch-string fragment, with optional property overrides.
+struct PipelineElementSpec {
+  std::size_t element_index = 0; ///< Position in the pipeline element list.
+  std::string plugin;            ///< Plugin (factory) name.
+  std::string element_name;      ///< Element instance name.
+  std::string stage_id;          ///< Stage identifier this element corresponds to.
+  std::string config_path;       ///< Optional config-JSON path attached to the element.
+  std::optional<BoxDecodeType> decode_type_property;  ///< Optional `decode-type` property override.
+  std::optional<double> detection_threshold_property; ///< Optional `detection-threshold` override.
+  std::optional<double> nms_iou_threshold_property;   ///< Optional `nms-iou-threshold` override.
+  std::optional<int> topk_property;                   ///< Optional `topk` override.
+  std::optional<std::string> model_path_property;     ///< Optional `model-path` override.
+  std::optional<int> batch_size_property;             ///< Optional `batch-size` override.
+  std::optional<int> batch_sz_model_property;         ///< Optional `batch-sz-model` override.
+  std::string fragment; ///< Original launch-string fragment for this element.
+};
+
+/// Diagnostics captured during manifest assembly.
+struct ManifestBuildDiagnostics {
+  std::vector<std::string> warnings;
+  std::vector<std::string> errors;
+};
+
+/// Parse a GStreamer launch string into a list of `PipelineElementSpec`s.
+std::vector<PipelineElementSpec> parse_pipeline_elements(const std::string& pipeline_string);
+
+/// JSON serialization for a `QuantStaticSpec`.
+nlohmann::json to_json(const QuantStaticSpec& spec);
+/// JSON serialization for a `TensorStaticSpec`.
+nlohmann::json to_json(const TensorStaticSpec& spec);
+/// JSON serialization for a `ResolutionTrace`.
+nlohmann::json to_json(const ResolutionTrace& trace);
+/// JSON serialization for a `StageOutputRoute`.
+nlohmann::json to_json(const StageOutputRoute& route);
+/// JSON serialization for a `PhysicalBufferStaticSpec`.
+nlohmann::json to_json(const PhysicalBufferStaticSpec& spec);
+/// JSON serialization for a `LogicalTensorStaticSpec`.
+nlohmann::json to_json(const LogicalTensorStaticSpec& spec);
+/// JSON serialization for a `LogicalInputStaticSpec`.
+nlohmann::json to_json(const LogicalInputStaticSpec& spec);
+/// JSON serialization for an `InputBindingStaticSpec`.
+nlohmann::json to_json(const InputBindingStaticSpec& spec);
+/// JSON serialization for a `StageStaticSpec`.
+nlohmann::json to_json(const StageStaticSpec& spec);
+/// JSON serialization for a full `SimaPluginStaticManifest`.
+nlohmann::json to_json(const SimaPluginStaticManifest& manifest);
+
+/// Serialize a manifest to a JSON string.
+std::string serialize_manifest_json(const SimaPluginStaticManifest& manifest);
+
+/// Parse a manifest from a JSON string; returns nullopt on failure (see `error_message`).
+std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& manifest_json,
+                                                            std::string* error_message = nullptr);
+
+} // namespace simaai::neat::pipeline_internal::sima

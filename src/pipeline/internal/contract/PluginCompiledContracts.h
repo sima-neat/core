@@ -101,9 +101,7 @@ struct CompiledTransportContract {
       pipeline_internal::sima::StagePayloadKind::None;
   std::optional<pipeline_internal::sima::ProcessCvuStagePayload> processcvu_payload;
   bool model_managed_stage = false;
-  // A65's self-contained property is the serialized form of this same typed
-  // contract; apply it to the per-build element before its READY transition.
-  std::string direct_contract_b64;
+  std::shared_ptr<const ::simaai::scheduler::client::TvmProgram> tvm_program;
 };
 
 } // namespace simaai::neat

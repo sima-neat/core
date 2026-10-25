@@ -3,11 +3,12 @@
 #include "model/internal/ModelPack.h"
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
-#include "pipeline/internal/sima/KernelRunnerIntegration.h"
+#include "pipeline/internal/sima/SchedulerStageIntegration.h"
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/static_contract/MpkDecoder.h"
 #include "pipeline/internal/sima/PluginContractSubsets.h"
-#include "pipeline/internal/sima/PreparedRuntimeBuild.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
 #include "pipeline/internal/sima/static_contract/DmabufPlanContractProjection.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuRuntimeConfigAdapterInternal.h"
 #include "test_main.h"
@@ -163,6 +164,9 @@ void lower_recipes(ps::SimaPluginStaticManifest& manifest,
   const auto failure = ps::prepare_kernel_stage_recipes(&manifest, std::nullopt, elements, {},
                                                         simaai::neat::NameTransform{});
   require(!failure, failure ? failure->field + ": " + failure->message : "");
+  ps::finalize_pipeline_storage(manifest);
+  const auto publication_status = ps::finalize_stage_publications(&manifest);
+  require(!publication_status, publication_status ? publication_status->message : "");
   for (const auto& stage : manifest.stages)
     require(stage.native_kernel && !stage.native_kernel->members.empty(),
             "Core did not emit a canonical numerical recipe");
@@ -233,9 +237,21 @@ void execute_compiler_contract(const ps::SimaPluginStaticManifest& manifest, boo
               << " phase=" << name << std::endl;
   };
   phase("construct pipeline");
-  require(authored.processcvu.requested_run_target == "EV74" &&
-              recipe.target == simaai::scheduler::client::Hardware::EV74,
-          "fixture must explicitly request the EV backend through Core policy");
+  require(recipe.target == gs::Hardware::EV74,
+          "fixture must retain the EV backend selected by Core policy");
+  for (const auto& member : recipe.members) {
+    const auto checked = gs::inspect_kernel(member.executable);
+    const auto* inspection = std::get_if<gs::KernelInspection>(&checked);
+    require(inspection && inspection->target() == gs::Target::EV74,
+            "every checked fixture member must retain the selected EV backend");
+  }
+  require(bool(authored.frame_layout), "fixture output layout is absent");
+  for (const auto& output : authored.frame_layout->outputs) {
+    const auto& allocation = authored.frame_layout->allocations.at(output.span.allocation_index);
+    require(allocation.policy == gs::AllocationPolicy::RequireCma &&
+                (allocation.required_device_access & gs::kAccessEv74),
+            "EV fixture output allocation must require EV74-visible CMA");
+  }
   auto pipeline = std::shared_ptr<GstElement>(gst_pipeline_new("core-blocked-contract"),
                                               [](GstElement* element) {
                                                 if (element) {
@@ -253,8 +269,6 @@ void execute_compiler_contract(const ps::SimaPluginStaticManifest& manifest, boo
   require(gst_element_link(source, runner) && gst_element_link(runner, sink),
           "fixture links failed");
   std::string issue;
-  phase("attach manifest");
-  require(ps::attach_manifest_context(pipeline.get(), manifest, &issue), issue);
 
   // Independent HWC oracle for two spatial rows, three columns and 33 channels:
   // three C16 blocks, each containing six pixel records. BF16 stores separate
@@ -354,7 +368,7 @@ void execute_compiler_contract(const ps::SimaPluginStaticManifest& manifest, boo
     test::GstBufferOwner host(gst_buffer_new_allocate(nullptr, allocation_bytes, nullptr));
     require(bool(host), "cold fixture carrier allocation failed");
     attach_input_publication(host.get());
-    const auto rejected = gs::prepare_and_attach_tensor_stages(pipeline.get(), {});
+    const auto rejected = gs::prepare_and_attach_stages(pipeline.get(), {});
     require(rejected && rejected->field == "kernel-runner.element" &&
                 rejected->message.find("no prepared stage") != std::string::npos,
             "Core candidate preflight must reject an unbound numerical element");
@@ -362,9 +376,8 @@ void execute_compiler_contract(const ps::SimaPluginStaticManifest& manifest, boo
     return;
   }
   phase("prepare execution");
-  const std::array requests{ps::KernelRunnerStageRequest{
-      authored.element_name, authored.logical_stage_id, 1, 2, {}, &authored}};
-  const auto attach = ps::prepare_and_attach_kernel_runners(pipeline.get(), requests);
+  const std::array requests{ps::SchedulerStageRequest{authored.element_name, 1, 2, {}, &authored}};
+  const auto attach = ps::prepare_and_attach_stages(pipeline.get(), requests);
   require(!attach, attach ? attach->field + ": " + attach->message : "");
   const auto execution = test::inspect_stage(runner);
   require(execution.valid && !execution.members.empty(),
@@ -571,6 +584,9 @@ ps::SimaPluginStaticManifest make_detessdequant_cblock_manifest(unsigned batches
   ps::ManifestBuildDiagnostics diagnostics;
   simaai::neat::ContractCompileInput compile_input;
   compile_input.processcvu_requested_run_target = "EV74";
+  ps::resolve_compiled_execution_targets(pipeline.stages.front(), compile_input);
+  require(pipeline.stages.front().resolved_executor == sc::PhysicalEngine::Cvu,
+          "explicit Core EV74 policy must select the physical EV executor");
   auto manifest =
       simaai::neat::render_manifest_from_compiled_contracts(pipeline, compile_input, &diagnostics);
   require(manifest.has_value(), "CBlock production manifest rendering must succeed");
@@ -804,6 +820,9 @@ void authoritative_bf16_contract(ExecutionMode mode = ExecutionMode::None, bool 
   ps::ManifestBuildDiagnostics diagnostics;
   simaai::neat::ContractCompileInput compile_input;
   compile_input.processcvu_requested_run_target = "EV74";
+  ps::resolve_compiled_execution_targets(pipeline.stages.front(), compile_input);
+  require(pipeline.stages.front().resolved_executor == sc::PhysicalEngine::Cvu,
+          "explicit Core EV74 policy must select the physical EV executor");
   auto rendered =
       simaai::neat::render_manifest_from_compiled_contracts(pipeline, compile_input, &diagnostics);
   require(rendered.has_value(), "BF16 production manifest rendering must succeed");
@@ -816,6 +835,23 @@ void authoritative_bf16_contract(ExecutionMode mode = ExecutionMode::None, bool 
   const auto inspection = inspect_first(manifest);
   simaai::scheduler::client::TensorStagePublication publication;
   require(ps::build_kernel_stage_publication(authored, &publication, &error), error);
+  require(authored.frame_layout && authored.frame_layout->outputs.size() == 1 &&
+              authored.frame_layout->outputs.front().tensor == 0,
+          "canonical BF16 output must retain one allocation-local execution binding");
+  const auto& layout = *authored.frame_layout;
+  const auto& span = layout.outputs.front().span;
+  require(span.size_bytes == batches * 792U && publication.contract->logical_outputs.size() == 1 &&
+              publication.contract->logical_outputs.front().size_bytes == batches * 792U &&
+              publication.contract->logical_outputs.front().shape == logical &&
+              publication.contract->logical_outputs.front().memory_index ==
+                  static_cast<int>(span.allocation_index) &&
+              publication.contract->logical_outputs.front().byte_offset ==
+                  static_cast<std::int64_t>(span.byte_offset),
+          "BF16 execution and logical publication must retain every dense FP32 byte");
+  require(publication.contract->physical_outputs.size() == layout.allocations.size() &&
+              publication.contract->physical_outputs.at(span.allocation_index).size_bytes ==
+                  layout.allocations.at(span.allocation_index).size_bytes,
+          "physical publication must describe its complete final backing allocation");
   if (!blocked) {
     // The typed cohort records N=2. The canonical executable must still cover
     // that complete tensor once, not multiply N into a second repetition.
@@ -857,9 +893,6 @@ void authoritative_bf16_contract(ExecutionMode mode = ExecutionMode::None, bool 
     const std::vector<std::int64_t> output_strides{792, 396, 132, 4};
     require(outputs.front().stride_bytes.empty() || outputs.front().stride_bytes == output_strides,
             "Core Cast publication must not stride across or omit an image");
-    require(publication.contract->physical_outputs.size() == 1U &&
-                publication.contract->physical_outputs.front().size_bytes == batches * 792U,
-            "Core Cast physical publication must reserve the complete output span");
     if (mode != ExecutionMode::None)
       execute_compiler_contract(manifest, true, batches, mode, false);
     return;
@@ -886,9 +919,6 @@ void authoritative_bf16_contract(ExecutionMode mode = ExecutionMode::None, bool 
                 (!strides || strides->strides_bytes[axis] == dense_strides[axis]),
             "canonical BF16 output must retain exact dense FP32 shape and strides");
   }
-  require(publication.contract->physical_outputs.size() == 1U &&
-              publication.contract->physical_outputs.front().size_bytes == batches * 792U,
-          "BF16 publication must reserve exactly 792 dense FP32 bytes per batch");
   require(recipe.members.size() == 1U, "BF16 must create exactly one checked native transform");
   if (mode != ExecutionMode::None)
     execute_compiler_contract(manifest, true, batches, mode);

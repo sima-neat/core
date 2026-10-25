@@ -5,7 +5,8 @@
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/sima/CanonicalKernelLowering.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
-#include "pipeline/internal/sima/PreparedRuntimeBuild.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
 #include <gstsimaaitensorbuffer_meta.h>
 #include "pipeline/internal/sima/static_contract/MpkDecoder.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessMlaStageSemantics.h"
@@ -2078,6 +2079,9 @@ void check_resnet_canonical_publication(const simaai::neat::CompiledProcessCvuCo
   if (failure)
     std::cerr << failure->field << ": " << failure->message << '\n';
   check(!failure, "ResNet MPK-derived fused contract prepares canonically");
+  finalize_pipeline_storage(manifest);
+  check(!finalize_stage_publications(&manifest),
+        "ResNet publication finalizes against its owned layout");
   const auto& authored = manifest.stages.front();
   const auto& recipe = *authored.native_kernel;
   check(recipe.members.size() == 1U && recipe.members.front().inputs.size() == 1U &&
@@ -2103,24 +2107,13 @@ void check_resnet_canonical_publication(const simaai::neat::CompiledProcessCvuCo
                 gs::TensorStagePublicationRelation::SingletonAxes,
         "Core preserves MPK public geometry and proven singleton authority");
 
-  const auto pipeline = std::shared_ptr<GstElement>(gst_pipeline_new("cold-resnet-admission"),
-                                                    [](auto* value) { gst_object_unref(value); });
-  check(attach_manifest_context(pipeline.get(), manifest, &error), "production placement attaches");
-  const auto context = std::shared_ptr<GstContext>(
-      gst_element_get_context(pipeline.get(), SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE),
-      [](auto* value) {
-        if (value)
-          gst_context_unref(value);
-      });
-  const auto* placement = sima_plugin_manifest_context_stage_lookup_typed(
-      context.get(), authored.logical_stage_id.c_str(), authored.element_name.c_str(),
-      SIMA_PLUGIN_STAGE_PAYLOAD_NONE);
-  check(placement != nullptr, "production placement is retrievable");
-  gs::TensorStageRequest request;
-  request.target = recipe.target;
-  request.members = recipe.members;
+  gs::StageRequest request;
+  gs::KernelProgram program;
+  program.target = recipe.target;
+  program.members = recipe.members;
+  request.program = std::move(program);
   request.publication = publication;
-  request.placement = std::shared_ptr<const SimaPluginStageSpec>(context, placement);
+  request.layout = authored.frame_layout;
   test::AdmissionCapture transport;
   const auto result = test::reject_device_after_validation(request, transport);
   const auto* admission = result ? &*result : nullptr;

@@ -6,7 +6,8 @@
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
-#include "pipeline/internal/sima/PreparedRuntimeBuild.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
 #include "pipeline/internal/sima/PluginContractSubsets.h"
 #include "pipeline/internal/sima/ProcessCvuRunTargetPolicy.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
@@ -672,14 +673,14 @@ RUN_TEST(
                 "TrackKLT node contract should carry a processcvu payload");
         require(compiled.processcvu->payload.graph_name == "track_klt",
                 "TrackKLT payload should retain its composite semantic identity");
-        require(compiled.processcvu->payload.default_output_names.size() == 3U,
-                "TrackKLT runtime should still allocate output_features for the EV ABI");
+        require(compiled.processcvu->payload.default_output_names.size() == 2U,
+                "TrackKLT without detection must author only the checked points/status outputs");
         require(compiled.processcvu->exposed_view.exposed_output_order.size() == 2U,
                 "TrackKLT should publish only points/status when detect_new_features is disabled");
         require(compiled.processcvu->runtime_contract.physical_inputs.size() == 3U,
                 "TrackKLT should preserve its three physical inputs");
-        require(compiled.processcvu->runtime_contract.physical_outputs.size() == 3U,
-                "TrackKLT should preserve its three physical runtime outputs");
+        require(compiled.processcvu->runtime_contract.physical_outputs.size() == 2U,
+                "TrackKLT without detection must not allocate an unwritten feature carrier");
 
         namespace si = pipeline_internal::sima;
         const auto& public_outputs = compiled.processcvu->exposed_view.exposed_logical_outputs;
@@ -710,10 +711,12 @@ RUN_TEST(
         require(!failure, ("public TrackKLT canonical lowering failed: " +
                            (failure ? failure->message : std::string{}))
                               .c_str());
+        si::finalize_pipeline_storage(*manifest);
+        require(!si::finalize_stage_publications(&*manifest), "TrackKLT final publication failed");
         require(manifest->stages.size() == 1U && manifest->stages.front().native_kernel &&
-                    manifest->stages.front().native_kernel->publication,
+                    manifest->stages.front().tensor_publication,
                 "public TrackKLT must retain its canonical publication recipe");
-        const auto& publication = *manifest->stages.front().native_kernel->publication;
+        const auto& publication = *manifest->stages.front().tensor_publication;
         const auto view =
             std::find_if(publication.physical_views.begin(), publication.physical_views.end(),
                          [](const auto& value) { return value.backend_output_index == 1; });
@@ -730,12 +733,14 @@ RUN_TEST(
 
         auto unauthorised = *manifest;
         unauthorised.stages.front().native_kernel.reset();
+        unauthorised.stages.front().tensor_publication.reset();
         for (auto& logical : unauthorised.stages.front().logical_outputs)
           logical.publication_relation = si::PublicationViewRelation::Identity;
         require(!si::prepare_kernel_stage_recipes(&unauthorised, {}, {}, {}, {}),
                 "identity-only recipe construction must preserve its default relation");
-        for (const auto& value :
-             unauthorised.stages.front().native_kernel->publication->physical_views)
+        require(!si::finalize_stage_publications(&unauthorised),
+                "identity-only publication finalization failed");
+        for (const auto& value : unauthorised.stages.front().tensor_publication->physical_views)
           require(value.relation ==
                       ::simaai::scheduler::client::TensorStagePublicationRelation::Identity,
                   "kernel inspection must not manufacture shape-view permission");

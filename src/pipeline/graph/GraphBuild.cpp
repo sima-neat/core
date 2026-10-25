@@ -2717,13 +2717,6 @@ static std::string clamp_sync_pipeline_impl(std::string pipeline, int num_buffer
       --end;
     s = s.substr(start, end - start);
   };
-  // The old code carried two duplicated value-token scanners here as lambdas
-  // (force_bool_prop / force_num_buffers); both replaced by gst_props::set_prop
-  // which uses one canonical value-token grammar. Bug #4 (force_bool_prop
-  // corrupting "key=1" into "key=false1") goes away by construction.
-  auto force_bool_prop = [&](std::string& seg, std::string_view key, bool value) {
-    gst_props::set_prop(seg, key, value ? "true" : "false");
-  };
   auto force_num_buffers = [&](std::string& seg) {
     gst_props::set_prop(seg, "num-buffers=", std::to_string(forced));
   };
@@ -2762,37 +2755,6 @@ static std::string clamp_sync_pipeline_impl(std::string pipeline, int num_buffer
     return seg.find("neatprocesscvu") != std::string::npos ||
            seg.find("neatprocessmla") != std::string::npos;
   });
-
-  if (forced <= 1) {
-    std::vector<std::string> parts;
-    size_t start = 0;
-    while (start < pipeline.size()) {
-      size_t bang = pipeline.find('!', start);
-      if (bang == std::string::npos) {
-        parts.push_back(pipeline.substr(start));
-        break;
-      }
-      parts.push_back(pipeline.substr(start, bang - start));
-      start = bang + 1;
-    }
-    for (auto& part : parts) {
-      std::string seg = part;
-      trim(seg);
-      if (seg.find("neatprocessmla") == std::string::npos)
-        continue;
-      force_bool_prop(seg, "multi-pipeline=", false);
-      part = " " + seg + " ";
-    }
-    std::ostringstream out;
-    for (size_t i = 0; i < parts.size(); ++i) {
-      if (i)
-        out << " ! ";
-      std::string seg = parts[i];
-      trim(seg);
-      out << seg;
-    }
-    pipeline = out.str();
-  }
 
   bool force_boxdecode = (num_buffers_override > 0);
   if (!force_boxdecode) {

@@ -425,9 +425,10 @@ struct DirectMeasurement {
   int depth = 4;
 };
 
-static simaai::neat::Tensor measure_direct_infer(
-    const simaai::neat::Model& model, const cv::Mat& rgb, const DirectMeasurement& options,
-    const simaai::neat::GraphOptions& graph_options) {
+static simaai::neat::Tensor measure_direct_infer(const simaai::neat::Model& model,
+                                                 const cv::Mat& rgb,
+                                                 const DirectMeasurement& options,
+                                                 const simaai::neat::GraphOptions& graph_options) {
   using namespace simaai::neat;
   using Clock = std::chrono::steady_clock;
   const auto microseconds = [](auto duration) {
@@ -559,9 +560,8 @@ static simaai::neat::Tensor measure_direct_infer(
   return last;
 }
 
-static simaai::neat::Tensor run_direct_infer(
-    const simaai::neat::Model& model, const cv::Mat& rgb,
-    const simaai::neat::GraphOptions& options = {}) {
+static simaai::neat::Tensor run_direct_infer(const simaai::neat::Model& model, const cv::Mat& rgb,
+                                             const simaai::neat::GraphOptions& options = {}) {
   simaai::neat::Model::RouteOptions route_opt;
   route_opt.include_input = true;
   route_opt.include_output = true;
@@ -596,9 +596,9 @@ static void require_output_heap(const simaai::neat::Tensor& tensor,
               static_cast<guint>(memory_index) < gst_buffer_n_memory(buffer),
           "output has no selected backing allocation");
   const auto backing = dma::DmaBufMemory::retain(gst_buffer_peek_memory(buffer, memory_index));
-  require(backing && backing->knownHeapKind() == expected,
-          expected == dma::HeapKind::MlaDms ? "A65 model output must use DMS"
-                                           : "EV74 model output must use CMA");
+  require(backing && backing->knownHeapKind() == expected, expected == dma::HeapKind::MlaDms
+                                                               ? "A65 model output must use DMS"
+                                                               : "EV74 model output must use CMA");
 }
 
 static void compare_scores(const std::vector<float>& a, const std::vector<float>& b,

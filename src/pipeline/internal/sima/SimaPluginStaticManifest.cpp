@@ -2,14 +2,12 @@
 
 #include "gst/SimaPluginStaticManifestAbi.h"
 #include "pipeline/internal/TensorMath.h"
-#include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
 
 #include <simaai/scheduler/client/stage.h>
 
 #include <algorithm>
-#include <atomic>
 #include <cctype>
 #include <cerrno>
 #include <cstdio>
@@ -23,6 +21,14 @@
 
 namespace simaai::neat::pipeline_internal::sima {
 namespace {
+static_assert(static_cast<int>(static_contract::ArenaStorageDomain::Cma) ==
+              SIMA_PLUGIN_FRAME_ARENA_STORAGE_CMA);
+static_assert(static_cast<int>(static_contract::ArenaStorageDomain::Dms) ==
+              SIMA_PLUGIN_FRAME_ARENA_STORAGE_DMS);
+static_assert(static_cast<int>(static_contract::ArenaStorageDomain::HostCpu) ==
+              SIMA_PLUGIN_FRAME_ARENA_STORAGE_HOST_CPU);
+static_assert(static_cast<int>(static_contract::ArenaStorageDomain::Mixed) ==
+              SIMA_PLUGIN_FRAME_ARENA_STORAGE_MIXED);
 
 std::string lower_copy(std::string s) {
   std::transform(s.begin(), s.end(), s.begin(),
@@ -30,56 +36,8 @@ std::string lower_copy(std::string s) {
   return s;
 }
 
-bool manifest_context_debug_enabled() {
-  return pipeline_internal::env_bool("SIMA_MANIFEST_CONTEXT_DEBUG", false);
-}
-
-const char* element_factory_name(GstElement* element) {
-  if (!element) {
-    return "<null>";
-  }
-  GstElementFactory* factory = gst_element_get_factory(element);
-  if (!factory) {
-    return "<no-factory>";
-  }
-  const gchar* name = gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory));
-  return (name && *name) ? name : "<unnamed-factory>";
-}
-
-bool manifest_context_debug_relevant_element(GstElement* element) {
-  if (!element) {
-    return false;
-  }
-  const std::string factory = lower_copy(element_factory_name(element));
-  return factory.find("neatprocessmla") != std::string::npos ||
-         factory.find("neatkernelrunner") != std::string::npos ||
-         factory.find("neatprocesscvu") != std::string::npos ||
-         factory.find("neatdetess") != std::string::npos ||
-         factory.find("neatobjectdecode") != std::string::npos;
-}
-
-void manifest_context_debug_log(const char* action, GstElement* element, GstContext* context,
-                                const char* extra = nullptr) {
-  if (!manifest_context_debug_enabled() || !manifest_context_debug_relevant_element(element)) {
-    return;
-  }
-  std::fprintf(stderr,
-               "[manifest-context-debug] action=%s element=%s factory=%s context=%p extra=%s\n",
-               action ? action : "<unset>", element ? GST_ELEMENT_NAME(element) : "<null>",
-               element_factory_name(element), static_cast<void*>(context), extra ? extra : "");
-}
-
 std::string trim_copy_local(const std::string& s) {
   return trim_copy(s);
-}
-
-void set_boxdecode_decode_type_token_abi_safe(SimaPluginBoxDecodeStagePayload& payload,
-                                              const gchar* decode_token) {
-  payload.decode_type = decode_token;
-  // Defensive ABI compatibility write:
-  // Some mixed builds may still interpret the first boxdecode payload bytes as
-  // a legacy enum slot; always stamp the first bytes as a pointer token.
-  std::memcpy(&payload, &decode_token, sizeof(decode_token));
 }
 
 std::vector<std::string> split_pipeline_segments(const std::string& pipeline_string) {
@@ -517,10 +475,12 @@ nlohmann::json to_json(const StageStaticSpec& spec) {
     if (!spec.frame_arena_allocations.empty()) {
       auto parts = nlohmann::json::array();
       for (const auto& part : spec.frame_arena_allocations)
-        parts.push_back({{"byte_offset", part.byte_offset},
-                         {"size_bytes", part.size_bytes},
-                         {"storage_domain", static_cast<int>(part.placement.domain)},
-                         {"required_device_access", part.placement.required_device_access}});
+        parts.push_back(
+            {{"byte_offset", part.byte_offset},
+             {"size_bytes", part.size_bytes},
+             {"storage_domain", static_cast<int>(part.placement.domain)},
+             {"required_device_access", part.placement.required_device_access},
+             {"allocation_policy", static_cast<int>(part.placement.allocation_policy)}});
       j["frame_arena_allocations"] = std::move(parts);
     }
     j["frame_arena_size_bytes"] = spec.frame_arena_size_bytes;
@@ -667,7 +627,7 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
         *error_message = "manifest abi_version must be an integer";
       return std::nullopt;
     }
-    if (version != 30 && version != 31 && version != SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION) {
+    if (version != 30 && version != SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION) {
       if (error_message)
         *error_message = "unsupported manifest ABI version";
       return std::nullopt;
@@ -800,6 +760,487 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
         static_cast<int>(static_contract::ArenaDeviceAccess::Mla) |
         static_cast<int>(static_contract::ArenaDeviceAccess::Ev74);
     const bool known_domain =
-        frame_arena_storage_domain >= static_cast<int>(static_contract::ArenaStorageDomain::Cma) &&
-        frame_arena_storage_domain <=
-            static_cast<int>(static_contract::ArenaStorageDomain::Mixed);
+        frame_arena_storage_domain == static_cast<int>(static_contract::ArenaStorageDomain::Cma) ||
+        frame_arena_storage_domain == static_cast<int>(static_contract::ArenaStorageDomain::Dms) ||
+        (abi_version == SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION &&
+         (frame_arena_storage_domain ==
+              static_cast<int>(static_contract::ArenaStorageDomain::HostCpu) ||
+          frame_arena_storage_domain ==
+              static_cast<int>(static_contract::ArenaStorageDomain::Mixed)));
+    const bool external_unknown_domain =
+        frame_arena_role == static_cast<int>(FrameArenaRole::ReuseInput) &&
+        frame_arena_provenance ==
+            static_cast<int>(static_contract::ArenaAllocationProvenance::ExternalAdopted) &&
+        frame_arena_storage_domain ==
+            static_cast<int>(static_contract::ArenaStorageDomain::Unknown);
+    const bool provenance_role_valid =
+        (frame_arena_provenance ==
+             static_cast<int>(static_contract::ArenaAllocationProvenance::CoreAllocated) &&
+         known_domain) ||
+        (frame_arena_provenance ==
+             static_cast<int>(static_contract::ArenaAllocationProvenance::ExternalAdopted) &&
+         frame_arena_role == static_cast<int>(FrameArenaRole::ReuseInput));
+    const bool allocation_policy_valid =
+        required_domain ||
+        (preferred_dms && stage.frame_arena_size_bytes != 0U && known_domain &&
+         frame_arena_storage_domain == static_cast<int>(static_contract::ArenaStorageDomain::Dms) &&
+         frame_arena_provenance ==
+             static_cast<int>(static_contract::ArenaAllocationProvenance::CoreAllocated) &&
+         frame_arena_required_device_access > 0 &&
+         !(frame_arena_required_device_access &
+           static_cast<int>(static_contract::ArenaDeviceAccess::Ev74)));
+    const bool host_domain = frame_arena_storage_domain ==
+                             static_cast<int>(static_contract::ArenaStorageDomain::HostCpu);
+    const bool host_escape = frame_arena_escape_policy ==
+                             static_cast<int>(static_contract::ArenaEscapePolicy::CpuOnlyPublic);
+    const bool host_valid =
+        (!host_domain && !host_escape) ||
+        (host_domain && host_escape && abi_version == SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION &&
+         required_domain && frame_arena_role == static_cast<int>(FrameArenaRole::Allocate) &&
+         frame_arena_provenance ==
+             static_cast<int>(static_contract::ArenaAllocationProvenance::CoreAllocated) &&
+         frame_arena_required_device_access ==
+             static_cast<int>(static_contract::ArenaDeviceAccess::CpuA65));
+    const bool arena_placement_valid =
+        host_valid && allocation_policy_valid &&
+        (stage.frame_arena_size_bytes == 0U ||
+         (frame_arena_role >= static_cast<int>(FrameArenaRole::Allocate) &&
+          frame_arena_role <= static_cast<int>(FrameArenaRole::ReuseInput) &&
+          (known_domain || external_unknown_domain) && provenance_role_valid &&
+          frame_arena_required_device_access > 0 &&
+          (frame_arena_required_device_access & ~kKnownDeviceAccess) == 0 &&
+          frame_arena_escape_policy >=
+              static_cast<int>(static_contract::ArenaEscapePolicy::InternalOnly) &&
+          frame_arena_escape_policy <=
+              static_cast<int>(static_contract::ArenaEscapePolicy::CpuOnlyPublic) &&
+          !(frame_arena_storage_domain ==
+                static_cast<int>(static_contract::ArenaStorageDomain::Dms) &&
+            (frame_arena_required_device_access &
+             static_cast<int>(static_contract::ArenaDeviceAccess::Ev74)) != 0)));
+    if (!arena_placement_valid) {
+      if (error_message) {
+        *error_message = "manifest stage has invalid frame-arena placement";
+      }
+      return std::nullopt;
+    }
+    stage.frame_arena_allocation_policy =
+        static_cast<static_contract::ArenaAllocationPolicy>(frame_arena_allocation_policy);
+    stage.frame_arena_storage_domain =
+        static_cast<static_contract::ArenaStorageDomain>(frame_arena_storage_domain);
+    stage.frame_arena_provenance =
+        static_cast<static_contract::ArenaAllocationProvenance>(frame_arena_provenance);
+    stage.frame_arena_required_device_access =
+        static_cast<std::uint32_t>(frame_arena_required_device_access);
+    stage.frame_arena_escape_policy =
+        static_cast<static_contract::ArenaEscapePolicy>(frame_arena_escape_policy);
+    if (stage_j.contains("frame_arena_allocations")) {
+      try {
+        const auto& parts = stage_j.at("frame_arena_allocations");
+        if (abi_version < 32 || !parts.is_array() || parts.empty())
+          throw std::invalid_argument("partitioned arenas require ABI 32");
+        std::vector<SimaPluginFrameArenaAllocation> abi_parts;
+        for (const auto& part : parts) {
+          const auto unsigned_value = [&](const char* key) {
+            const auto& value = part.at(key);
+            if (!value.is_number_integer() ||
+                (!value.is_number_unsigned() && value.get<std::int64_t>() < 0))
+              throw std::invalid_argument("arena allocation fields must be nonnegative integers");
+            return value.get<std::uint64_t>();
+          };
+          const auto offset = unsigned_value("byte_offset");
+          const auto bytes = unsigned_value("size_bytes");
+          const auto domain = unsigned_value("storage_domain");
+          const auto access = unsigned_value("required_device_access");
+          const auto policy = unsigned_value("allocation_policy");
+          constexpr std::uint64_t known_access = SIMA_PLUGIN_FRAME_ARENA_ACCESS_CPU_A65 |
+                                                 SIMA_PLUGIN_FRAME_ARENA_ACCESS_MLA |
+                                                 SIMA_PLUGIN_FRAME_ARENA_ACCESS_EV74;
+          if ((domain != SIMA_PLUGIN_FRAME_ARENA_STORAGE_CMA &&
+               domain != SIMA_PLUGIN_FRAME_ARENA_STORAGE_DMS &&
+               !(host_domain && domain == SIMA_PLUGIN_FRAME_ARENA_STORAGE_HOST_CPU)) ||
+              access == 0 || (access & ~known_access) || policy > 1 ||
+              (policy == static_cast<unsigned>(
+                             static_contract::ArenaAllocationPolicy::PreferDmsThenCma) &&
+               (domain != SIMA_PLUGIN_FRAME_ARENA_STORAGE_DMS ||
+                (access & SIMA_PLUGIN_FRAME_ARENA_ACCESS_EV74))))
+            throw std::invalid_argument("invalid allocation domain, access mask or policy");
+          abi_parts.push_back({offset, bytes,
+                               static_cast<SimaPluginFrameArenaStorageDomain>(domain),
+                               static_cast<guint>(access)});
+          static_contract::ArenaPlacement placement;
+          placement.domain = static_cast<static_contract::ArenaStorageDomain>(domain);
+          placement.provenance = stage.frame_arena_provenance;
+          placement.required_device_access = static_cast<std::uint32_t>(access);
+          placement.allocation_policy = static_cast<static_contract::ArenaAllocationPolicy>(policy);
+          placement.escape = stage.frame_arena_escape_policy;
+          stage.frame_arena_allocations.push_back({offset, bytes, placement});
+        }
+        SimaPluginStageSpec probe{};
+        probe.frame_arena_size_bytes = stage.frame_arena_size_bytes;
+        probe.frame_arena_storage_domain =
+            static_cast<SimaPluginFrameArenaStorageDomain>(stage.frame_arena_storage_domain);
+        probe.frame_arena_provenance =
+            static_cast<SimaPluginFrameArenaProvenance>(stage.frame_arena_provenance);
+        probe.frame_arena_allocation_policy =
+            static_cast<SimaPluginFrameArenaAllocationPolicy>(stage.frame_arena_allocation_policy);
+        probe.frame_arena_required_device_access = stage.frame_arena_required_device_access;
+        probe.frame_arena_allocations = abi_parts.data();
+        probe.frame_arena_allocations_len = abi_parts.size();
+        const bool host_parts_valid =
+            host_domain && abi_parts.size() == 1 && abi_parts[0].byte_offset == 0 &&
+            abi_parts[0].size_bytes == stage.frame_arena_size_bytes &&
+            abi_parts[0].storage_domain == SIMA_PLUGIN_FRAME_ARENA_STORAGE_HOST_CPU &&
+            abi_parts[0].required_device_access == SIMA_PLUGIN_FRAME_ARENA_ACCESS_CPU_A65 &&
+            stage.frame_arena_allocations[0].placement.allocation_policy ==
+                static_contract::ArenaAllocationPolicy::RequiredDomain;
+        if (host_domain ? !host_parts_valid : !sima_plugin_frame_arena_allocations_valid(&probe))
+          throw std::invalid_argument("invalid allocation coverage or reachability");
+      } catch (const std::exception& ex) {
+        if (error_message)
+          *error_message = std::string("manifest frame-arena allocations: ") + ex.what();
+        return std::nullopt;
+      }
+    } else if (stage.frame_arena_storage_domain == static_contract::ArenaStorageDomain::Mixed) {
+      if (error_message)
+        *error_message = "partitioned arena is missing allocations";
+      return std::nullopt;
+    }
+    if (stage_j.contains("name_table") && stage_j["name_table"].is_array()) {
+      for (const auto& name_j : stage_j["name_table"]) {
+        if (name_j.is_string()) {
+          stage.name_table.push_back(name_j.get<std::string>());
+        }
+      }
+    }
+
+    if (stage_j.contains("logical_inputs") && stage_j["logical_inputs"].is_array()) {
+      for (const auto& in_j : stage_j["logical_inputs"]) {
+        if (!in_j.is_object())
+          continue;
+        LogicalInputStaticSpec input;
+        read_int_key(in_j, "logical_index", input.logical_index);
+        read_int_key(in_j, "backend_input_index", input.backend_input_index);
+        read_int_key(in_j, "physical_index", input.physical_index);
+        read_number_vector_key<std::int64_t>(in_j, "shape", input.shape);
+        read_number_vector_key<std::int64_t>(in_j, "stride_bytes", input.stride_bytes);
+        if (in_j.contains("byte_offset") && in_j["byte_offset"].is_number_integer()) {
+          input.byte_offset = in_j["byte_offset"].get<std::int64_t>();
+        } else if (in_j.contains("byte_offset") && in_j["byte_offset"].is_number()) {
+          input.byte_offset = static_cast<std::int64_t>(in_j["byte_offset"].get<double>());
+        }
+        if (in_j.contains("size_bytes") && in_j["size_bytes"].is_number_unsigned()) {
+          input.size_bytes = in_j["size_bytes"].get<std::uint64_t>();
+        } else if (in_j.contains("size_bytes") && in_j["size_bytes"].is_number_integer()) {
+          const auto raw = in_j["size_bytes"].get<std::int64_t>();
+          input.size_bytes = raw > 0 ? static_cast<std::uint64_t>(raw) : 0U;
+        } else if (in_j.contains("size_bytes") && in_j["size_bytes"].is_number()) {
+          const auto raw = in_j["size_bytes"].get<double>();
+          input.size_bytes = raw > 0.0 ? static_cast<std::uint64_t>(raw) : 0U;
+        }
+        read_string_key(in_j, "dtype", input.dtype);
+        if (in_j.contains("dtype_source") && in_j["dtype_source"].is_string()) {
+          input.dtype_source = dtype_source_from_name(in_j["dtype_source"].get<std::string>());
+        }
+        read_string_key(in_j, "layout", input.layout);
+        read_int_key(in_j, "logical_name_id", input.logical_name_id);
+        read_string_key(in_j, "logical_name", input.logical_name);
+        read_int_key(in_j, "backend_name_id", input.backend_name_id);
+        read_string_key(in_j, "backend_name", input.backend_name);
+        read_int_key(in_j, "segment_name_id", input.segment_name_id);
+        read_string_key(in_j, "segment_name", input.segment_name);
+        {
+          int materialization_kind = static_cast<int>(TensorMaterializationKind::Direct);
+          read_int_key(in_j, "materialization_kind", materialization_kind);
+          input.materialization_kind = static_cast<TensorMaterializationKind>(materialization_kind);
+        }
+        if (in_j.contains("quant") && in_j["quant"].is_object()) {
+          QuantStaticSpec quant;
+          const auto& quant_j = in_j["quant"];
+          if (quant_j.contains("granularity")) {
+            if (const auto g = quant_granularity_from_json(quant_j["granularity"]); g.has_value()) {
+              quant.granularity = *g;
+            }
+          }
+          read_int_key(quant_j, "axis", quant.axis);
+          read_number_vector_key<double>(quant_j, "scales", quant.scales);
+          read_number_vector_key<std::int64_t>(quant_j, "zero_points", quant.zero_points);
+          input.quant = std::move(quant);
+        }
+        stage.logical_inputs.push_back(std::move(input));
+      }
+    }
+
+    if (stage_j.contains("input_bindings") && stage_j["input_bindings"].is_array()) {
+      for (const auto& in_j : stage_j["input_bindings"]) {
+        if (!in_j.is_object())
+          continue;
+        InputBindingStaticSpec binding;
+        read_int_key(in_j, "sink_pad_index", binding.sink_pad_index);
+        read_int_key(in_j, "local_logical_input_index", binding.local_logical_input_index);
+        read_int_key(in_j, "src_stage_index", binding.src_stage_index);
+        read_string_key(in_j, "src_stage_id", binding.src_stage_id);
+        read_int_key(in_j, "src_logical_output_index", binding.src_logical_output_index);
+        read_int_key(in_j, "src_output_slot", binding.src_output_slot);
+        read_int_key(in_j, "src_physical_output_index", binding.src_physical_output_index);
+        read_bool_key(in_j, "required", binding.required);
+        read_int_key(in_j, "cm_input_name_id", binding.cm_input_name_id);
+        read_string_key(in_j, "cm_input_name", binding.cm_input_name);
+        read_int_key(in_j, "source_segment_name_id", binding.source_segment_name_id);
+        read_string_key(in_j, "source_segment_name", binding.source_segment_name);
+        stage.input_bindings.push_back(std::move(binding));
+      }
+    }
+
+    if (stage_j.contains("physical_inputs") && stage_j["physical_inputs"].is_array()) {
+      for (const auto& in_j : stage_j["physical_inputs"]) {
+        if (!in_j.is_object())
+          continue;
+        PhysicalBufferStaticSpec physical;
+        read_int_key(in_j, "physical_index", physical.physical_index);
+        read_int_key(in_j, "allocator_index", physical.allocator_index);
+        read_int_key(in_j, "source_physical_index", physical.source_physical_index);
+        int address_source = 0;
+        read_int_key(in_j, "address_source", address_source);
+        physical.address_source = static_cast<PhysicalAddressSource>(address_source);
+        if (in_j.contains("size_bytes") && in_j["size_bytes"].is_number_unsigned()) {
+          physical.size_bytes = in_j["size_bytes"].get<std::uint64_t>();
+        } else if (in_j.contains("size_bytes") && in_j["size_bytes"].is_number_integer()) {
+          physical.size_bytes = static_cast<std::uint64_t>(in_j["size_bytes"].get<std::int64_t>());
+        }
+        if (in_j.contains("source_byte_offset") && in_j["source_byte_offset"].is_number_integer()) {
+          physical.source_byte_offset = in_j["source_byte_offset"].get<std::int64_t>();
+        } else if (in_j.contains("source_byte_offset") && in_j["source_byte_offset"].is_number()) {
+          physical.source_byte_offset =
+              static_cast<std::int64_t>(in_j["source_byte_offset"].get<double>());
+        }
+        int device_kind = static_cast<int>(DeviceKind::Unknown);
+        read_int_key(in_j, "device_kind", device_kind);
+        physical.device_kind = static_cast<DeviceKind>(device_kind);
+        if (in_j.contains("memory_flags") && in_j["memory_flags"].is_number_unsigned()) {
+          physical.memory_flags = in_j["memory_flags"].get<std::uint64_t>();
+        } else if (in_j.contains("memory_flags") && in_j["memory_flags"].is_number_integer()) {
+          physical.memory_flags =
+              static_cast<std::uint64_t>(in_j["memory_flags"].get<std::int64_t>());
+        }
+        read_int_key(in_j, "segment_name_id", physical.segment_name_id);
+        read_string_key(in_j, "segment_name", physical.segment_name);
+        if (in_j.contains("required_alignment_bytes") &&
+            in_j["required_alignment_bytes"].is_number_unsigned()) {
+          physical.required_alignment_bytes = in_j["required_alignment_bytes"].get<std::uint64_t>();
+        } else if (in_j.contains("required_alignment_bytes") &&
+                   in_j["required_alignment_bytes"].is_number_integer()) {
+          const auto raw = in_j["required_alignment_bytes"].get<std::int64_t>();
+          physical.required_alignment_bytes = raw > 0 ? static_cast<std::uint64_t>(raw) : 0U;
+        }
+        stage.physical_inputs.push_back(std::move(physical));
+      }
+    }
+
+    if (stage_j.contains("physical_outputs") && stage_j["physical_outputs"].is_array()) {
+      for (const auto& out_j : stage_j["physical_outputs"]) {
+        if (!out_j.is_object())
+          continue;
+        PhysicalBufferStaticSpec physical;
+        read_int_key(out_j, "physical_index", physical.physical_index);
+        read_int_key(out_j, "allocator_index", physical.allocator_index);
+        read_int_key(out_j, "source_physical_index", physical.source_physical_index);
+        int address_source = 0;
+        read_int_key(out_j, "address_source", address_source);
+        physical.address_source = static_cast<PhysicalAddressSource>(address_source);
+        if (out_j.contains("size_bytes") && out_j["size_bytes"].is_number_unsigned()) {
+          physical.size_bytes = out_j["size_bytes"].get<std::uint64_t>();
+        } else if (out_j.contains("size_bytes") && out_j["size_bytes"].is_number_integer()) {
+          physical.size_bytes = static_cast<std::uint64_t>(out_j["size_bytes"].get<std::int64_t>());
+        }
+        if (out_j.contains("source_byte_offset") &&
+            out_j["source_byte_offset"].is_number_integer()) {
+          physical.source_byte_offset = out_j["source_byte_offset"].get<std::int64_t>();
+        } else if (out_j.contains("source_byte_offset") &&
+                   out_j["source_byte_offset"].is_number()) {
+          physical.source_byte_offset =
+              static_cast<std::int64_t>(out_j["source_byte_offset"].get<double>());
+        }
+        int device_kind = static_cast<int>(DeviceKind::Unknown);
+        read_int_key(out_j, "device_kind", device_kind);
+        physical.device_kind = static_cast<DeviceKind>(device_kind);
+        if (out_j.contains("memory_flags") && out_j["memory_flags"].is_number_unsigned()) {
+          physical.memory_flags = out_j["memory_flags"].get<std::uint64_t>();
+        } else if (out_j.contains("memory_flags") && out_j["memory_flags"].is_number_integer()) {
+          physical.memory_flags =
+              static_cast<std::uint64_t>(out_j["memory_flags"].get<std::int64_t>());
+        }
+        read_int_key(out_j, "segment_name_id", physical.segment_name_id);
+        read_string_key(out_j, "segment_name", physical.segment_name);
+        if (out_j.contains("required_alignment_bytes") &&
+            out_j["required_alignment_bytes"].is_number_unsigned()) {
+          physical.required_alignment_bytes =
+              out_j["required_alignment_bytes"].get<std::uint64_t>();
+        } else if (out_j.contains("required_alignment_bytes") &&
+                   out_j["required_alignment_bytes"].is_number_integer()) {
+          const auto raw = out_j["required_alignment_bytes"].get<std::int64_t>();
+          physical.required_alignment_bytes = raw > 0 ? static_cast<std::uint64_t>(raw) : 0U;
+        }
+        stage.physical_outputs.push_back(std::move(physical));
+      }
+    }
+
+    if (stage_j.contains("logical_outputs") && stage_j["logical_outputs"].is_array()) {
+      for (const auto& out_j : stage_j["logical_outputs"]) {
+        if (!out_j.is_object())
+          continue;
+        LogicalTensorStaticSpec tensor;
+        read_int_key(out_j, "logical_index", tensor.logical_index);
+        read_int_key(out_j, "backend_output_index", tensor.backend_output_index);
+        read_int_key(out_j, "physical_index", tensor.physical_index);
+        read_int_key(out_j, "output_slot", tensor.output_slot);
+        read_int_key(out_j, "tensor_index", tensor.tensor_index);
+        if (out_j.contains("byte_offset") && out_j["byte_offset"].is_number_integer()) {
+          tensor.byte_offset = out_j["byte_offset"].get<std::int64_t>();
+        }
+        if (out_j.contains("size_bytes") && out_j["size_bytes"].is_number_unsigned()) {
+          tensor.size_bytes = out_j["size_bytes"].get<std::uint64_t>();
+        } else if (out_j.contains("size_bytes") && out_j["size_bytes"].is_number_integer()) {
+          tensor.size_bytes = static_cast<std::uint64_t>(out_j["size_bytes"].get<std::int64_t>());
+        }
+        read_number_vector_key<std::int64_t>(out_j, "shape", tensor.shape);
+        read_number_vector_key<std::int64_t>(out_j, "stride_bytes", tensor.stride_bytes);
+        read_string_key(out_j, "dtype", tensor.dtype);
+        if (out_j.contains("dtype_source") && out_j["dtype_source"].is_string()) {
+          tensor.dtype_source = dtype_source_from_name(out_j["dtype_source"].get<std::string>());
+        }
+        read_string_key(out_j, "layout", tensor.layout);
+        read_int_key(out_j, "logical_name_id", tensor.logical_name_id);
+        read_string_key(out_j, "logical_name", tensor.logical_name);
+        read_int_key(out_j, "backend_name_id", tensor.backend_name_id);
+        read_string_key(out_j, "backend_name", tensor.backend_name);
+        read_int_key(out_j, "segment_name_id", tensor.segment_name_id);
+        read_string_key(out_j, "segment_name", tensor.segment_name);
+        if (out_j.contains("quant") && out_j["quant"].is_object()) {
+          QuantStaticSpec quant;
+          const auto& quant_j = out_j["quant"];
+          if (quant_j.contains("granularity")) {
+            if (const auto g = quant_granularity_from_json(quant_j["granularity"]); g.has_value()) {
+              quant.granularity = *g;
+            }
+          }
+          read_int_key(quant_j, "axis", quant.axis);
+          read_number_vector_key<double>(quant_j, "scales", quant.scales);
+          read_number_vector_key<std::int64_t>(quant_j, "zero_points", quant.zero_points);
+          tensor.quant = std::move(quant);
+        }
+        stage.logical_outputs.push_back(std::move(tensor));
+      }
+    }
+
+    if (stage_j.contains("output_order") && stage_j["output_order"].is_array()) {
+      for (const auto& route_j : stage_j["output_order"]) {
+        if (!route_j.is_object())
+          continue;
+        StageOutputRoute route;
+        read_int_key(route_j, "output_slot", route.output_slot);
+        read_int_key(route_j, "logical_output_index", route.logical_output_index);
+        read_string_key(route_j, "cm_output_name", route.cm_output_name);
+        read_string_key(route_j, "segment_name", route.segment_name);
+        stage.output_order.push_back(std::move(route));
+      }
+    }
+
+    if (stage_j.contains("output_quant") && stage_j["output_quant"].is_array()) {
+      for (const auto& q_j : stage_j["output_quant"]) {
+        if (!q_j.is_object())
+          continue;
+        QuantStaticSpec quant;
+        if (q_j.contains("granularity")) {
+          if (const auto g = quant_granularity_from_json(q_j["granularity"]); g.has_value()) {
+            quant.granularity = *g;
+          }
+        }
+        read_int_key(q_j, "axis", quant.axis);
+        read_number_vector_key<double>(q_j, "scales", quant.scales);
+        read_number_vector_key<std::int64_t>(q_j, "zero_points", quant.zero_points);
+        stage.output_quant.push_back(std::move(quant));
+      }
+    }
+
+    if (stage_j.contains("resolution_trace") && stage_j["resolution_trace"].is_array()) {
+      for (const auto& t_j : stage_j["resolution_trace"]) {
+        if (!t_j.is_object())
+          continue;
+        ResolutionTrace trace;
+        read_string_key(t_j, "field", trace.field);
+        read_string_key(t_j, "source_used", trace.source_used);
+        if (t_j.contains("fallback_chain") && t_j["fallback_chain"].is_array()) {
+          for (const auto& f : t_j["fallback_chain"]) {
+            if (f.is_string()) {
+              trace.fallback_chain.push_back(f.get<std::string>());
+            }
+          }
+        }
+        read_bool_key(t_j, "conflict", trace.conflict);
+        stage.resolution_trace.push_back(std::move(trace));
+      }
+    }
+
+    read_bool_key(stage_j, "consumer_keeps_distinct_physical_inputs",
+                  stage.consumer_keeps_distinct_physical_inputs);
+    read_bool_key(stage_j, "processmla_dmabuf_plan_contract",
+                  stage.processmla.dmabuf_plan_contract);
+    if (stage_j.contains("processmla_executable_bytes") &&
+        stage_j["processmla_executable_bytes"].is_number_unsigned()) {
+      stage.processmla.executable_bytes =
+          stage_j["processmla_executable_bytes"].get<std::uint64_t>();
+    }
+    read_string_key(stage_j, "processmla_executable_sha256", stage.processmla.executable_sha256);
+    read_bool_key(stage_j, "processcvu_dmabuf_plan_contract",
+                  stage.processcvu.dmabuf_plan_contract);
+    read_u32_key(stage_j, "processcvu_descriptor_abi_id", stage.processcvu.descriptor_abi_id);
+    read_u32_key(stage_j, "processcvu_descriptor_contract_version",
+                 stage.processcvu.descriptor_contract_version);
+    read_u32_key(stage_j, "processcvu_binding_schema_version",
+                 stage.processcvu.binding_schema_version);
+    read_u32_key(stage_j, "processcvu_supported_placement_mask",
+                 stage.processcvu.supported_placement_mask);
+    read_u32_key(stage_j, "processcvu_allowed_frame_patch_mask",
+                 stage.processcvu.allowed_frame_patch_mask);
+    read_u32_key(stage_j, "processcvu_maximum_members", stage.processcvu.maximum_members);
+    if (stage_j.contains("elf_ifm_symbol_names") && stage_j["elf_ifm_symbol_names"].is_array()) {
+      stage.elf_ifm_symbol_names.clear();
+      for (const auto& s : stage_j["elf_ifm_symbol_names"]) {
+        if (s.is_string()) {
+          stage.elf_ifm_symbol_names.push_back(s.get<std::string>());
+        }
+      }
+    }
+    if (stage_j.contains("elf_ofm_symbol_names") && stage_j["elf_ofm_symbol_names"].is_array()) {
+      stage.elf_ofm_symbol_names.clear();
+      for (const auto& s : stage_j["elf_ofm_symbol_names"]) {
+        if (s.is_string()) {
+          stage.elf_ofm_symbol_names.push_back(s.get<std::string>());
+        }
+      }
+    }
+
+    if (stage.payload_kind == StagePayloadKind::ProcessCvu) {
+      read_string_key(stage_j, "processcvu_run_target", stage.processcvu.run_target);
+      read_string_key(stage_j, "processcvu_requested_run_target",
+                      stage.processcvu.requested_run_target);
+      read_string_key(stage_j, "processcvu_resolved_exec_backend",
+                      stage.processcvu.resolved_exec_backend);
+      read_string_key(stage_j, "processcvu_run_target_resolution_reason",
+                      stage.processcvu.run_target_resolution_reason);
+      read_string_key(stage_j, "processcvu_exact_stage_name_or_id",
+                      stage.processcvu.exact_stage_name_or_id);
+      int processcvu_opt_flags = 0;
+      if (read_int_key(stage_j, "processcvu_opt_flags", processcvu_opt_flags) &&
+          processcvu_opt_flags >= 0) {
+        stage.processcvu.opt_flags = static_cast<std::uint32_t>(processcvu_opt_flags);
+      }
+    }
+
+    manifest.stages.push_back(std::move(stage));
+  }
+
+  return manifest;
+}
+
+} // namespace simaai::neat::pipeline_internal::sima

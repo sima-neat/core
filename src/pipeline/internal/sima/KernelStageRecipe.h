@@ -27,7 +27,6 @@ struct KernelStageRecipe {
       std::shared_ptr<::simaai::scheduler::client::TensorStageFrameAdapter>>()>
       frame_adapter_factory;
   std::vector<std::byte> constant_data;
-  std::optional<::simaai::scheduler::client::TensorStagePublication> publication;
   // Producer-owned wire identity, applied after final arena layout is known.
   // Empty for ordinary numerical tensors; never inferred from their bytes.
   std::string output_format;
@@ -43,6 +42,5 @@ struct KernelStageRecipe {
 // Transfer immutable factories into a fresh request. Scheduler instantiates them
 // only after validating the entire stopped cohort and resource budgets.
 [[nodiscard]] ::simaai::scheduler::client::Status
-wire_kernel_stage_factories(const KernelStageRecipe&,
-                            ::simaai::scheduler::client::TensorStageRequest&);
+wire_kernel_stage_factories(const KernelStageRecipe&, ::simaai::scheduler::client::KernelProgram&);
 } // namespace simaai::neat::pipeline_internal::sima

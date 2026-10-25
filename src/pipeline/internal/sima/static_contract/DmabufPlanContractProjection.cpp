@@ -653,6 +653,7 @@ bool project_terminal_mla_publications(const ModelExecutionPlan& plan,
     logical.dtype_source = DTypeSource::InternalContract;
     logical.logical_name = publication.name.empty() ? value->name : publication.name;
     logical.backend_name = value->name;
+    logical.model_carrier_id = value->storage_binding->carrier_id;
     logical.segment_name = root_value->name;
     if (transport->carrier_layout.has_value()) {
       logical.layout = *transport->carrier_layout;
@@ -1893,8 +1894,7 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
   contract->physical_outputs.clear();
   contract->logical_outputs.clear();
   contract->physical_outputs.reserve(outputs.size());
-  std::uint64_t separate_output_cursor = 0U;
-  std::uint64_t separate_output_alignment = 0U;
+  const auto* detached_group = arena.detached_output_group(mla_stage_index);
   for (std::size_t index = 0; index < outputs.size(); ++index) {
     const auto& port = outputs[index];
     const auto* value = plan.value(port.value_id);
@@ -1914,15 +1914,21 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
     physical.segment_name = value->name;
     physical.required_alignment_bytes = port.required_alignment_bytes;
     if (output_carrier_policy == MlaOutputCarrierPolicy::SeparateCpuVisible) {
-      const auto offset = checked_align_up(separate_output_cursor, port.required_alignment_bytes);
-      if (!offset ||
-          *offset > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
-          !checked_add(*offset, port.physical_extent_bytes, &separate_output_cursor)) {
-        return fail(error, "separate MLA output carrier layout overflows");
-      }
-      physical.source_byte_offset = static_cast<std::int64_t>(*offset);
-      separate_output_alignment = std::max(
-          separate_output_alignment, static_cast<std::uint64_t>(port.required_alignment_bytes));
+      if (!detached_group || !value->storage_binding)
+        return fail(error, "separate MLA output has no planned ownership group");
+      const auto region =
+          std::find_if(detached_group->regions.begin(), detached_group->regions.end(),
+                       [&](const auto& candidate) {
+                         return candidate.carrier_id == value->storage_binding->carrier_id;
+                       });
+      std::uint64_t local = 0U, offset = 0U;
+      if (region == detached_group->regions.end() ||
+          !checked_add(value->storage_binding->byte_offset, port.value_byte_offset, &local) ||
+          local > region->size_bytes || port.physical_extent_bytes > region->size_bytes - local ||
+          !checked_add(region->byte_offset, local, &offset) ||
+          offset > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+        return fail(error, "separate MLA output exceeds its planned carrier");
+      physical.source_byte_offset = static_cast<std::int64_t>(offset);
     } else if (batch_count > 1U) {
       const auto* region = arena.region(root_value_id(plan, value->id));
       std::uint64_t local_offset = 0U;
@@ -1979,6 +1985,7 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
       logical.layout = value->logical_layout.value_or("");
       logical.logical_name = value->name;
       logical.backend_name = value->name;
+      logical.model_carrier_id = value->storage_binding->carrier_id;
       logical.segment_name = value->name;
       contract->logical_outputs.push_back(std::move(logical));
     }
@@ -2028,6 +2035,7 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
         logical.dtype_source = DTypeSource::InternalContract;
         logical.logical_name = value.name;
         logical.backend_name = value.name;
+        logical.model_carrier_id = value.storage_binding->carrier_id;
         logical.segment_name = plan.value(outputs.front().value_id)->name;
         if (transport->carrier_layout) {
           logical.layout = *transport->carrier_layout;
@@ -2051,6 +2059,7 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
         logical.size_bytes = value->required_bytes;
         logical.logical_name = value->name;
         logical.backend_name = value->name;
+        logical.model_carrier_id = value->storage_binding->carrier_id;
         logical.segment_name = value->name;
         std::uint64_t logical_span = 0U;
         if (!value->logical_dtype || !value->logical_shape ||
@@ -2142,30 +2151,22 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
   contract->elf_ofm_symbol_names = std::move(ofm_symbols);
   contract->consumer_keeps_distinct_physical_inputs = inputs.size() > 1U;
   if (output_carrier_policy == MlaOutputCarrierPolicy::SeparateCpuVisible) {
-    const auto allocation = checked_align_up(separate_output_cursor, separate_output_alignment);
-    if (!allocation || *allocation == 0U) {
-      return fail(error, "separate MLA output carrier allocation is invalid");
-    }
-    contract->frame_arena_size_bytes = *allocation;
-    contract->frame_arena_allocations.clear();
-    contract->frame_arena_storage_domain = ArenaStorageDomain::Dms;
-    contract->frame_arena_provenance = ArenaAllocationProvenance::CoreAllocated;
-    // This detached carrier has its own required-domain authority. Never
-    // retain preference from a previously projected shared arena.
+    if (!detached_group)
+      return fail(error, "separate MLA output has no planned ownership group");
+    contract->frame_arena_size_bytes = detached_group->allocation_bytes;
+    contract->frame_arena_allocations = detached_group->allocations;
+    contract->frame_arena_storage_domain = detached_group->placement.domain;
+    contract->frame_arena_provenance = detached_group->placement.provenance;
     contract->frame_arena_allocation_policy = ArenaAllocationPolicy::RequiredDomain;
-    contract->frame_arena_required_device_access =
-        static_cast<std::uint32_t>(ArenaDeviceAccess::Mla) |
-        static_cast<std::uint32_t>(ArenaDeviceAccess::CpuA65);
-    contract->frame_arena_escape_policy = ArenaEscapePolicy::CpuMappablePublic;
+    contract->frame_arena_required_device_access = detached_group->placement.required_device_access;
+    contract->frame_arena_escape_policy = detached_group->placement.escape;
     contract->frame_arena_role = FrameArenaRole::Allocate;
   } else {
     contract->frame_arena_size_bytes = arena.allocation_bytes();
-    contract->frame_arena_allocations = arena.allocations().size() > 1
-                                            ? arena.allocations()
-                                            : std::vector<FrameSlotArenaAllocation>{};
+    contract->frame_arena_allocations = arena.allocations();
     contract->frame_arena_storage_domain = arena.placement().domain;
     contract->frame_arena_provenance = arena.placement().provenance;
-    contract->frame_arena_allocation_policy = arena.placement().allocation_policy;
+    contract->frame_arena_allocation_policy = ArenaAllocationPolicy::RequiredDomain;
     contract->frame_arena_required_device_access = arena.placement().required_device_access;
     contract->frame_arena_escape_policy = arena.placement().escape;
     const bool has_internal_input =
@@ -2324,12 +2325,10 @@ bool apply_dmabuf_plan_processcvu_contract_projection(
   }
 
   runtime->frame_arena_size_bytes = arena.allocation_bytes();
-  runtime->frame_arena_allocations = arena.allocations().size() > 1
-                                         ? arena.allocations()
-                                         : std::vector<FrameSlotArenaAllocation>{};
+  runtime->frame_arena_allocations = arena.allocations();
   runtime->frame_arena_storage_domain = arena.placement().domain;
   runtime->frame_arena_provenance = arena.placement().provenance;
-  runtime->frame_arena_allocation_policy = arena.placement().allocation_policy;
+  runtime->frame_arena_allocation_policy = ArenaAllocationPolicy::RequiredDomain;
   runtime->frame_arena_required_device_access = arena.placement().required_device_access;
   runtime->frame_arena_escape_policy = arena.placement().escape;
   if (boundary == ProcessCvuMlaBoundary::Outputs) {
@@ -2610,6 +2609,7 @@ bool apply_dmabuf_plan_processcvu_command_projection(
     logical.stride_bytes = binding->stride_bytes;
     logical.logical_name = value->name;
     logical.backend_name = value->name;
+    logical.model_carrier_id = binding->carrier_id;
     logical.segment_name = physical_outputs[static_cast<std::size_t>(physical_index)].segment_name;
     if (value->logical_dtype) {
       logical.dtype = *value->logical_dtype;
@@ -2654,12 +2654,10 @@ bool apply_dmabuf_plan_processcvu_command_projection(
         return region && first && region->lifetime.first_sequence < first->sequence;
       });
   runtime->frame_arena_size_bytes = arena.allocation_bytes();
-  runtime->frame_arena_allocations = arena.allocations().size() > 1
-                                         ? arena.allocations()
-                                         : std::vector<FrameSlotArenaAllocation>{};
+  runtime->frame_arena_allocations = arena.allocations();
   runtime->frame_arena_storage_domain = arena.placement().domain;
   runtime->frame_arena_provenance = arena.placement().provenance;
-  runtime->frame_arena_allocation_policy = arena.placement().allocation_policy;
+  runtime->frame_arena_allocation_policy = ArenaAllocationPolicy::RequiredDomain;
   runtime->frame_arena_required_device_access = arena.placement().required_device_access;
   runtime->frame_arena_escape_policy = arena.placement().escape;
   runtime->frame_arena_role = (consumes_internal_carrier || continues_existing_output_carrier)

@@ -2,6 +2,7 @@
 
 #include "builder/CompiledChildStageProvider.h"
 #include "model/internal/ModelPack.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
 #include "builder/NodeContractProvider.h"
 #include "builder/OutputSpec.h"
 
@@ -119,16 +120,9 @@ compile_node_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
     return compiled;
   }
 
-  std::string route_error;
-  const auto model_fragments =
-      internal::prepare_model_fragment_contracts(nodes, &route_error, &input);
-  if (!model_fragments) {
-    compiled.fully_renderable = false;
-    if (diagnostics) {
-      diagnostics->errors.push_back("contract compiler: " + route_error);
-    }
-    return compiled;
-  }
+  const auto model_fragments = internal::make_model_fragment_semantic_context(nodes);
+  std::vector<std::size_t> compiled_node_indices(nodes.size(), nodes.size());
+  compiled.stages.reserve(nodes.size());
 
   for (std::size_t node_index = 0; node_index < nodes.size(); ++node_index) {
     const auto& node = nodes[node_index];
@@ -148,6 +142,7 @@ compile_node_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
     stage.node_kind = node->kind();
     ContractCompileInput stage_input = input;
     stage_input.model_fragments = model_fragments;
+    stage_input.node_occurrence_index = node_index;
     stage_input.node_index =
         use_node_indices ? input.node_indices[node_index] : static_cast<int>(node_index);
     stage_input.immediate_upstream = immediate_upstream;
@@ -179,18 +174,18 @@ compile_node_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
     if (provider->compile_node_contract(stage_input, &stage, &provider_err)) {
       if (!project_image_temporal_contract(
               std::span<const std::shared_ptr<Node>>(nodes.data(), node_index), input, &stage,
-              &provider_err) ||
-          !internal::apply_model_fragment_contract_context(*node, stage_input, &stage,
-                                                           &provider_err)) {
+              &provider_err)) {
         stage.renderable = false;
         compiled.fully_renderable = false;
         if (diagnostics) {
           diagnostics->errors.push_back("contract compiler: " + provider_err);
         }
+        compiled_node_indices[node_index] = compiled.stages.size();
         compiled.stages.push_back(std::move(stage));
         continue;
       }
       compiled.fully_renderable = compiled.fully_renderable && stage.renderable;
+      compiled_node_indices[node_index] = compiled.stages.size();
       compiled.stages.push_back(std::move(stage));
       immediate_upstream = last_effective_child_stage(&compiled.stages.back());
       continue;
@@ -225,13 +220,26 @@ compile_node_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
         diagnostics->errors.push_back("contract compiler: node kind '" + node->kind() +
                                       "' failed: " + err);
       }
+      compiled_node_indices[node_index] = compiled.stages.size();
       compiled.stages.push_back(std::move(stage));
       continue;
     }
 
     compiled.fully_renderable = compiled.fully_renderable && stage.renderable;
+    compiled_node_indices[node_index] = compiled.stages.size();
     compiled.stages.push_back(std::move(stage));
     immediate_upstream = last_effective_child_stage(&compiled.stages.back());
+  }
+
+  try {
+    for (auto& stage : compiled.stages)
+      pipeline_internal::sima::resolve_compiled_execution_targets(stage, input);
+    compiled.model_storage_plan =
+        internal::make_model_fragment_storage_plan(nodes, compiled.stages, compiled_node_indices);
+  } catch (const std::exception& error) {
+    compiled.fully_renderable = false;
+    if (diagnostics)
+      diagnostics->errors.push_back(std::string("contract compiler: ") + error.what());
   }
 
   return compiled;

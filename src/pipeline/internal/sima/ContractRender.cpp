@@ -3,12 +3,9 @@
 #include "pipeline/internal/sima/CompiledProcessCvuContractQuery.h"
 #include "pipeline/internal/sima/ProcessCvuRunTargetPolicy.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
-#include "pipeline/internal/sima/StageMemoryPolicy.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuRuntimeConfigAdapterInternal.h"
 #include "pipeline/internal/EnvUtil.h"
-
-#include "pipeline/internal/sima/CanonicalStageIdentity.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -34,116 +31,6 @@ using pipeline_internal::sima::StageOutputRoute;
 using pipeline_internal::sima::StagePayloadKind;
 using pipeline_internal::sima::StageStaticSpec;
 using pipeline_internal::sima::TensorStaticSpec;
-
-bool checked_align_up(std::uint64_t value, std::uint64_t alignment, std::uint64_t* result) {
-  if (!result || alignment == 0U || (alignment & (alignment - 1U)) != 0U ||
-      value > std::numeric_limits<std::uint64_t>::max() - (alignment - 1U)) {
-    return false;
-  }
-  *result = (value + alignment - 1U) & ~(alignment - 1U);
-  return true;
-}
-
-bool project_standalone_processcvu_direct_contract(StageStaticSpec* stage, std::string* error) {
-  using pipeline_internal::sima::FrameArenaRole;
-  using pipeline_internal::sima::static_contract::ArenaAllocationProvenance;
-  using pipeline_internal::sima::static_contract::ArenaDeviceAccess;
-  using pipeline_internal::sima::static_contract::ArenaEscapePolicy;
-  using pipeline_internal::sima::static_contract::ArenaStorageDomain;
-  using pipeline_internal::sima::static_contract::kLegacyEvoCmaRegionAlignmentBytes;
-
-  if (!stage || stage->payload_kind != StagePayloadKind::ProcessCvu) {
-    if (error) {
-      *error = "standalone ProcessCVU projection requires a ProcessCVU stage";
-    }
-    return false;
-  }
-  auto& payload = stage->processcvu;
-  if (payload.dmabuf_plan_contract) {
-    if (error) {
-      error->clear();
-    }
-    return true;
-  }
-  if (!pipeline_internal::sima::initialize_canonical_stage_contract(payload, error)) {
-    return false;
-  }
-  if (stage->physical_inputs.empty() || stage->physical_outputs.empty() ||
-      stage->logical_inputs.empty() || stage->input_bindings.empty()) {
-    if (error)
-      *error = "standalone ProcessCVU direct contract is incomplete";
-    return false;
-  }
-
-  if (payload.graph_name == "preproc" && payload.preproc_single_output_handoff &&
-      !payload.image_transform) {
-    if (stage->logical_outputs.size() != 1U || stage->output_order.size() != 1U) {
-      if (error) {
-        *error = "standalone Preproc direct route must expose exactly one output";
-      }
-      return false;
-    }
-    const int selected_physical_index = stage->logical_outputs.front().physical_index;
-    const auto selected =
-        std::find_if(stage->physical_outputs.begin(), stage->physical_outputs.end(),
-                     [selected_physical_index](const auto& output) {
-                       return output.physical_index == selected_physical_index;
-                     });
-    if (selected_physical_index < 0 || selected == stage->physical_outputs.end()) {
-      if (error) {
-        *error = "standalone Preproc output has no physical carrier";
-      }
-      return false;
-    }
-    // The firmware descriptor describes both possible Preproc outputs, while
-    // the compiled route chooses one.  Publish and allocate only that carrier;
-    // the backend_output_index on the logical output still identifies the
-    // corresponding descriptor field without a name-based convention.
-    stage->physical_outputs = {*selected};
-  }
-
-  constexpr std::uint64_t kOutputAlignment =
-      static_cast<std::uint64_t>(kLegacyEvoCmaRegionAlignmentBytes);
-  std::uint64_t cursor = 0U;
-  for (auto& output : stage->physical_outputs) {
-    std::uint64_t offset = 0U;
-    if (output.size_bytes == 0U || !checked_align_up(cursor, kOutputAlignment, &offset) ||
-        offset > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
-        output.size_bytes > std::numeric_limits<std::uint64_t>::max() - offset) {
-      if (error) {
-        *error = "standalone ProcessCVU output arena overflows or has an empty carrier";
-      }
-      return false;
-    }
-    output.source_byte_offset = static_cast<std::int64_t>(offset);
-    output.required_alignment_bytes = kOutputAlignment;
-    cursor = offset + output.size_bytes;
-  }
-  if (!checked_align_up(cursor, kOutputAlignment, &stage->frame_arena_size_bytes) ||
-      stage->frame_arena_size_bytes == 0U) {
-    if (error) {
-      *error = "standalone ProcessCVU output arena size is invalid";
-    }
-    return false;
-  }
-
-  stage->frame_arena_role = FrameArenaRole::Allocate;
-  stage->frame_arena_storage_domain = ArenaStorageDomain::Cma;
-  stage->frame_arena_provenance = ArenaAllocationProvenance::CoreAllocated;
-  stage->frame_arena_allocation_policy =
-      pipeline_internal::sima::static_contract::ArenaAllocationPolicy::RequiredDomain;
-  stage->frame_arena_required_device_access = static_cast<std::uint32_t>(ArenaDeviceAccess::CpuA65);
-  if (payload.resolved_exec_backend == "EVXX" || payload.resolved_exec_backend == "EV74") {
-    stage->frame_arena_required_device_access |=
-        static_cast<std::uint32_t>(ArenaDeviceAccess::Ev74);
-  }
-  stage->frame_arena_escape_policy = ArenaEscapePolicy::CpuMappablePublic;
-  payload.dmabuf_plan_contract = true;
-  if (error) {
-    error->clear();
-  }
-  return true;
-}
 
 std::string upper_copy_local(std::string value) {
   std::transform(value.begin(), value.end(), value.begin(),
@@ -735,10 +622,15 @@ StageStaticSpec render_processcvu_stage(const CompiledProcessCvuContract& compil
   stage.input_bindings = compiled.runtime_contract.input_bindings;
   stage.physical_inputs = compiled.runtime_contract.physical_inputs;
   stage.physical_outputs = compiled.runtime_contract.physical_outputs;
-  // Render only the exposed outputs into the manifest stage. Runtime outputs
-  // still live in processcvu payload/default_output_names + physical_outputs,
-  // but downstream tensor publication must honor single-output handoff.
   stage.logical_outputs = compiled.exposed_view.exposed_logical_outputs;
+  // Checked Preproc produces the selected carrier; an unselected RGB descriptor
+  // is a semantic alternative, not another materialized output.
+  if (stage.processcvu.graph_family_enum == ProcessCvuGraphFamily::Preproc)
+    std::erase_if(stage.physical_outputs, [&](const auto& physical) {
+      return std::none_of(
+          stage.logical_outputs.begin(), stage.logical_outputs.end(),
+          [&](const auto& logical) { return logical.physical_index == physical.physical_index; });
+    });
   stage.output_order = compiled.exposed_view.exposed_output_order;
   stage.output_quant = compiled.runtime_contract.output_quant;
   stage.required_preprocess_meta_fields = compiled.runtime_contract.required_preprocess_meta_fields;
@@ -791,6 +683,29 @@ StageStaticSpec render_processmla_stage(const CompiledMlaContract& compiled,
       compiled.runtime_contract.consumer_keeps_distinct_physical_inputs;
   stage.elf_ifm_symbol_names = compiled.runtime_contract.elf_ifm_symbol_names;
   stage.elf_ofm_symbol_names = compiled.runtime_contract.elf_ofm_symbol_names;
+  auto program = std::make_shared<::simaai::scheduler::client::MlaProgram>();
+  program->model = {compiled.payload.model_path, compiled.payload.executable_bytes,
+                    compiled.payload.executable_sha256};
+  program->batch_size = compiled.payload.batch_size;
+  program->model_batch_size = compiled.payload.batch_sz_model;
+  const auto ports = [](const auto& names, const auto& physical) {
+    if (physical.size() != names.size())
+      throw std::invalid_argument("MLA port names and physical alignment table differ");
+    std::vector<::simaai::scheduler::client::MlaPort> result(names.size());
+    for (const auto& port : physical) {
+      if (port.physical_index < 0 ||
+          static_cast<std::size_t>(port.physical_index) >= names.size() ||
+          !port.required_alignment_bytes)
+        throw std::invalid_argument("MLA port has no exact ordered alignment contract");
+      const auto index = static_cast<std::size_t>(port.physical_index);
+      result[index] = {names[index], static_cast<std::size_t>(port.required_alignment_bytes)};
+    }
+    return result;
+  };
+  program->inputs = ports(compiled.runtime_contract.elf_ifm_symbol_names, stage.physical_inputs);
+  program->outputs = ports(compiled.runtime_contract.elf_ofm_symbol_names, stage.physical_outputs);
+  stage.mla_program = std::move(program);
+
   return stage;
 }
 
@@ -800,6 +715,7 @@ StageStaticSpec render_kernel_stage(const CompiledNodeContract& compiled_stage) 
     throw std::invalid_argument("native kernel stage requires checked executable members");
   const auto& runtime = compiled.runtime_contract;
   StageStaticSpec stage;
+  stage.model_storage_planned = compiled_stage.model_storage_planned;
   stage.native_kernel = compiled.recipe;
   stage.element_name = compiled_stage.element_name;
   stage.logical_stage_id = compiled_stage.logical_stage_id;
@@ -827,19 +743,6 @@ StageStaticSpec render_kernel_stage(const CompiledNodeContract& compiled_stage) 
     stage.frame_arena_escape_policy = runtime.frame_arena_escape_policy;
     return stage;
   }
-  std::uint64_t cursor = 0;
-  for (auto& output : stage.physical_outputs) {
-    std::uint64_t offset = 0;
-    if (!output.size_bytes || !checked_align_up(cursor, 64, &offset) ||
-        output.size_bytes > std::numeric_limits<std::uint64_t>::max() - offset)
-      throw std::invalid_argument("native kernel output arena size overflows");
-    output.source_byte_offset = static_cast<std::int64_t>(offset);
-    output.required_alignment_bytes = 64;
-    cursor = offset + output.size_bytes;
-  }
-  if (!checked_align_up(cursor, 4096, &stage.frame_arena_size_bytes) ||
-      !stage.frame_arena_size_bytes)
-    throw std::invalid_argument("native kernel requires nonempty output storage");
   using namespace pipeline_internal::sima;
   stage.core_fresh_default_arena =
       runtime.frame_arena_role == FrameArenaRole::None && !runtime.frame_arena_size_bytes &&
@@ -849,15 +752,11 @@ StageStaticSpec render_kernel_stage(const CompiledNodeContract& compiled_stage) 
           static_contract::ArenaAllocationPolicy::RequiredDomain &&
       runtime.frame_arena_required_device_access == 0 &&
       runtime.frame_arena_escape_policy == static_contract::ArenaEscapePolicy::InternalOnly;
-  stage.frame_arena_role = FrameArenaRole::Allocate;
-  stage.frame_arena_storage_domain = static_contract::ArenaStorageDomain::Cma;
-  stage.frame_arena_provenance = static_contract::ArenaAllocationProvenance::CoreAllocated;
-  stage.frame_arena_required_device_access =
-      static_cast<std::uint32_t>(static_contract::ArenaDeviceAccess::CpuA65);
-  if (compiled.recipe->target == ::simaai::scheduler::client::Hardware::EV74)
-    stage.frame_arena_required_device_access |=
-        static_cast<std::uint32_t>(static_contract::ArenaDeviceAccess::Ev74);
-  stage.frame_arena_escape_policy = static_contract::ArenaEscapePolicy::CpuMappablePublic;
+  stage.frame_arena_role = pipeline_internal::sima::FrameArenaRole::Allocate;
+  stage.frame_arena_provenance =
+      pipeline_internal::sima::static_contract::ArenaAllocationProvenance::CoreAllocated;
+  stage.frame_arena_escape_policy =
+      pipeline_internal::sima::static_contract::ArenaEscapePolicy::CpuMappablePublic;
   return stage;
 }
 
@@ -895,7 +794,7 @@ ProcessCvuStagePayload dequant_execution_payload(StageStaticSpec& stage) {
         "Dequant requires matching typed input/output tensors and carriers");
   }
   semantics::CompiledProcessCvuRuntimeConfig config;
-  config.graph_family = config.graph_name = "dequantize";
+  config.graph_family = config.graph_name = "dequant";
 
   config.input_dtype = "INT8";
   config.output_dtype = config.out_dtype = "FP32";
@@ -1005,15 +904,13 @@ StageStaticSpec render_dequant_stage(const CompiledNodeContract& compiled_stage)
   stage.output_order = compiled.runtime_contract.output_order;
   stage.required_preprocess_meta_fields = compiled.runtime_contract.required_preprocess_meta_fields;
   stage.processcvu = dequant_execution_payload(stage);
-  std::string error;
-  if (!project_standalone_processcvu_direct_contract(&stage, &error))
-    throw std::invalid_argument(error);
   return stage;
 }
 
 StageStaticSpec render_transport_stage(const CompiledNodeContract& compiled_stage) {
   const auto& compiled = *compiled_stage.transport;
   StageStaticSpec stage;
+  stage.model_storage_planned = compiled_stage.model_storage_planned;
   stage.element_name = compiled_stage.element_name;
   stage.logical_stage_id = compiled_stage.logical_stage_id;
   stage.model_managed_stage = compiled.model_managed_stage;
@@ -1028,6 +925,7 @@ StageStaticSpec render_transport_stage(const CompiledNodeContract& compiled_stag
   stage.physical_outputs = compiled.runtime_contract.physical_outputs;
   stage.output_order = compiled.runtime_contract.output_order;
   stage.required_preprocess_meta_fields = compiled.runtime_contract.required_preprocess_meta_fields;
+  stage.tvm_program = compiled.tvm_program;
   stage.frame_arena_size_bytes = compiled.runtime_contract.frame_arena_size_bytes;
   stage.frame_arena_allocations = compiled.runtime_contract.frame_arena_allocations;
   stage.frame_arena_role = compiled.runtime_contract.frame_arena_role;
@@ -1103,26 +1001,15 @@ render_stages_from_compiled_contract(const CompiledNodeContract& stage,
       }
       return {};
     }
-    const std::string stage_identity =
-        !rendered.logical_stage_id.empty() ? rendered.logical_stage_id : rendered.element_name;
-    resolve_processcvu_run_target(&rendered.processcvu, compile_input, stage_identity,
-                                  stage.processcvu->physical_command_role);
-    if (!stage.processcvu->physical_command_role.has_value()) {
-      std::string projection_error;
-      if (!project_standalone_processcvu_direct_contract(&rendered, &projection_error)) {
-        if (diagnostics)
-          diagnostics->errors.push_back("contract render: standalone processcvu stage '" +
-                                        stage.node_kind +
-                                        "' failed direct projection: " + projection_error);
-        return {};
-      }
-    }
+    rendered.model_storage_planned = stage.model_storage_planned;
     return {std::move(rendered)};
   }
   if (stage.processmla.has_value()) {
     try {
-      return {
-          render_processmla_stage(*stage.processmla, stage.element_name, stage.logical_stage_id)};
+      auto rendered =
+          render_processmla_stage(*stage.processmla, stage.element_name, stage.logical_stage_id);
+      rendered.model_storage_planned = stage.model_storage_planned;
+      return {std::move(rendered)};
     } catch (const std::exception& ex) {
       if (diagnostics) {
         diagnostics->errors.push_back("contract render: processmla stage '" + stage.node_kind +
@@ -1156,15 +1043,7 @@ render_stages_from_compiled_contract(const CompiledNodeContract& stage,
   if (stage.transport.has_value()) {
     try {
       auto rendered = render_transport_stage(stage);
-      if (rendered.payload_kind == StagePayloadKind::ProcessCvu) {
-        const auto identity =
-            rendered.logical_stage_id.empty() ? rendered.element_name : rendered.logical_stage_id;
-        resolve_processcvu_run_target(&rendered.processcvu, compile_input, identity, std::nullopt);
-        std::string error;
-        if (!project_standalone_processcvu_direct_contract(&rendered, &error)) {
-          throw std::invalid_argument(error);
-        }
-      }
+      rendered.model_storage_planned = stage.model_storage_planned;
       return {std::move(rendered)};
     } catch (const std::exception& ex) {
       if (diagnostics) {
@@ -1198,21 +1077,21 @@ render_manifest_from_compiled_contracts(
     const CompiledPipelineContracts& compiled, const ContractCompileInput& compile_input,
     pipeline_internal::sima::ManifestBuildDiagnostics* diagnostics) {
   SimaPluginStaticManifest manifest;
+  manifest.model_storage_plan = compiled.model_storage_plan;
 
-  for (const auto& stage : compiled.stages) {
+  for (std::size_t node_index = 0; node_index < compiled.stages.size(); ++node_index) {
+    const auto& stage = compiled.stages[node_index];
     for (auto& rendered : render_stages_from_compiled_contract(stage, compile_input, diagnostics)) {
+      rendered.compile_stage_index = manifest.stages.size();
+      rendered.compile_node_index = node_index;
+      // Child renderers carry their own marker; top-level numerical stages are leaves.
+      if (stage.child_stages.empty())
+        rendered.model_storage_planned = stage.model_storage_planned;
       manifest.stages.push_back(std::move(rendered));
     }
   }
 
   normalize_manifest_boundaries(&manifest);
-  try {
-    pipeline_internal::sima::resolve_stage_memory_placement(manifest);
-  } catch (const std::exception& error) {
-    if (diagnostics)
-      diagnostics->errors.push_back(std::string("contract render: ") + error.what());
-    return std::nullopt;
-  }
 
   if (diagnostics && !diagnostics->errors.empty()) {
     return std::nullopt;

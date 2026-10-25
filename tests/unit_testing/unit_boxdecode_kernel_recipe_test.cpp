@@ -5,9 +5,10 @@
 #include "pipeline/internal/sima/BoxDecodeKernelRecipe.h"
 #include "pipeline/internal/sima/BoxDecodeGeometry.h"
 #include "pipeline/internal/sima/BoxDecodePublication.h"
-#include "pipeline/internal/sima/PreparedRuntimeBuild.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/ContractRender.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/sima/BoxDecodeKernelAdmission.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
@@ -88,7 +89,6 @@ BoxDecodeKernelRecipeResult check(const CompiledBoxDecodeContract& s,
           ? kFeatureFormatLegacyA65V0
           : kFeatureFormatPointsV1;
   require(recipe.output_format == expected_format, "producer wire identity was lost");
-  require(!recipe.publication, "wire identity must not bypass the final arena publication builder");
   require(recipe.members.size() >= 2, "decode/publication members missing");
   require(recipe.members.back().dependencies == std::vector<std::size_t>{r.decode_member},
           "publication must depend on decode");
@@ -471,15 +471,18 @@ void yolo26_direct_mask_projection() {
           "packed public output without a checked producer accepted");
 
   require(build_kernel_stage_publication(stage, &publication, &error), error.c_str());
-  c::TensorStageRequest cold;
-  cold.target = c::Hardware::A65;
-  cold.members = members;
+  c::StageRequest cold;
+  const auto program = [](c::StageRequest& value) -> c::KernelProgram& {
+    return std::get<c::KernelProgram>(value.program);
+  };
+  program(cold).target = c::Hardware::A65;
+  program(cold).members = members;
   cold.publication = publication;
-  cold.placement = std::make_shared<const SimaPluginStageSpec>();
+  cold.layout = std::make_shared<const c::FrameLayout>();
   // Deliberately stop after the real recipe checks, before layout admission,
   // worker creation or DMA allocation. This is NOT a prepared stage execution.
   cold.publication.input_caps.reset();
-  const auto rejected = [](const c::TensorStageRequest& request, const char* field) {
+  const auto rejected = [](const c::StageRequest& request, const char* field) {
     test::RouteProbe probe;
     const auto failure = probe.prepare(request);
     require(failure && failure->field == field, "unexpected packed recipe admission result");
@@ -493,16 +496,16 @@ void yolo26_direct_mask_projection() {
   bad.publication.physical_views.push_back(bad.publication.physical_views.front());
   rejected(bad, "output.layout");
   bad = cold;
-  ++bad.members[0].outputs[4].byte_offset;
+  ++program(bad).members[0].outputs[4].byte_offset;
   rejected(bad, "output.span");
   bad = cold;
-  --bad.members[0].outputs[4].byte_offset;
+  --program(bad).members[0].outputs[4].byte_offset;
   rejected(bad, "output.span"); // Overlap leaves the final suffix byte unwritten.
   bad = cold;
-  bad.members.pop_back();
+  program(bad).members.pop_back();
   rejected(bad, "output.span"); // Missing prefix writer.
   bad = cold;
-  bad.members[1].inputs.pop_back();
+  program(bad).members[1].inputs.pop_back();
   rejected(bad, "stage.members");
   bad = cold;
   auto gap_contract =
@@ -510,7 +513,7 @@ void yolo26_direct_mask_projection() {
   ++gap_contract->logical_outputs[0].size_bytes;
   ++gap_contract->logical_outputs[0].shape.back();
   bad.publication.contract = gap_contract;
-  ++bad.members[0].outputs[4].byte_offset;
+  ++program(bad).members[0].outputs[4].byte_offset;
   rejected(bad, "output.span"); // Both writes fit, but leave an internal byte gap.
   const auto incompatible_writer = [](c::DType dtype, c::Layout layout) {
     const c::TensorSpec descriptor{{100}, dtype, std::move(layout)};
@@ -527,12 +530,12 @@ void yolo26_direct_mask_projection() {
     return std::get<c::KernelExecutable>(std::move(task));
   };
   bad = cold;
-  bad.members[1].executable = incompatible_writer(c::DType::Int8, c::Contiguous{});
-  bad.members[1].inputs.clear();
+  program(bad).members[1].executable = incompatible_writer(c::DType::Int8, c::Contiguous{});
+  program(bad).members[1].inputs.clear();
   rejected(bad, "output.layout");
   bad = cold;
-  bad.members[1].executable = incompatible_writer(c::DType::UInt8, c::Strided{{1}});
-  bad.members[1].inputs.clear();
+  program(bad).members[1].executable = incompatible_writer(c::DType::UInt8, c::Strided{{1}});
+  program(bad).members[1].inputs.clear();
   rejected(bad, "output.layout");
   auto production_capacity = s;
   production_capacity.payload.topk = 100;
@@ -1257,8 +1260,42 @@ void normalization() {
     input(s, 8, 8, 4, dtype, 1, 64);
     input(s, 8, 8, 2, dtype);
     const auto r = check(s);
-    require(r.compiled.recipe->members.front().inputs.front().byte_offset == 64,
-            "source offset lost");
+    require(r.compiled.recipe->members.front().inputs.front().byte_offset == 0 &&
+                r.compiled.runtime_contract.logical_inputs.front().byte_offset == 64,
+            "source view offset must be separate from tensor-relative member ports");
+    auto compiled = r.compiled;
+    const auto inspection = inspect(compiled.recipe->members.front().executable);
+    const auto requirements = inspection.input_requirements();
+    for (std::size_t i = 0; i < compiled.runtime_contract.logical_inputs.size(); ++i) {
+      const auto& logical = compiled.runtime_contract.logical_inputs[i];
+      compiled.runtime_contract.physical_inputs.push_back(
+          specbuilders::build_physical_buffer_static_spec(static_cast<int>(i), static_cast<int>(i),
+                                                          logical.byte_offset +
+                                                              requirements[i].storage_bytes,
+                                                          DeviceKind::Cpu, logical.segment_name));
+      InputBindingStaticSpec binding;
+      binding.sink_pad_index = 0;
+      binding.local_logical_input_index = logical.logical_index;
+      compiled.runtime_contract.input_bindings.push_back(std::move(binding));
+    }
+    CompiledNodeContract node;
+    node.element_name = node.logical_stage_id = "decode";
+    node.kernel = std::move(compiled);
+    node.renderable = true;
+    CompiledPipelineContracts pipeline;
+    pipeline.fully_renderable = true;
+    pipeline.stages.push_back(std::move(node));
+    ManifestBuildDiagnostics diagnostics;
+    auto manifest = render_manifest_from_compiled_contracts(pipeline, {}, &diagnostics);
+    require(manifest && diagnostics.errors.empty(), "normalization carrier rendering failed");
+    finalize_pipeline_storage(*manifest);
+    const auto& layout = *manifest->stages.front().frame_layout;
+    require(layout.inputs.size() == 2, "normalization lost an input carrier");
+    const auto* carrier = std::get_if<gs::DirectMemory>(&layout.inputs.front().source);
+    require(layout.inputs.front().view_offset == 64 && carrier && carrier->byte_offset == 0 &&
+                carrier->memory_index == 0 &&
+                carrier->size_bytes == 64 + requirements.front().storage_bytes,
+            "final frame layout lost or doubled the source view offset");
     require(r.decode_member == 0, "dense heads acquired a hidden conversion");
     if (std::string(dtype) == "FP32")
       require(inspect(r.compiled.recipe->members.front().executable).inputs()[0].dtype ==

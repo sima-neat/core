@@ -8,6 +8,9 @@
 #include "nodes/sima/Cast.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/ContractRender.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
+#include <simaai/scheduler/client/stage.h>
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/RenderedMlaContractQuery.h"
 #include "pipeline/internal/SelectedStageBoundary.h"
@@ -541,27 +544,37 @@ std::string shell_quote(const std::string& text) {
   return result;
 }
 
-std::vector<nlohmann::json> direct_tvm_contracts(const std::string& fragment) {
-  constexpr std::string_view prefix = "direct-contract-b64=";
-  std::vector<nlohmann::json> result;
-  for (std::size_t cursor = 0U;;) {
-    const auto begin = fragment.find(prefix, cursor);
-    if (begin == std::string::npos) {
-      break;
-    }
-    const auto value_begin = begin + prefix.size();
-    const auto value_end = fragment.find_first_of(" \t\r\n", value_begin);
-    const auto encoded = fragment.substr(
-        value_begin, value_end == std::string::npos ? std::string::npos : value_end - value_begin);
-    gsize decoded_size = 0U;
-    guchar* decoded = g_base64_decode(encoded.c_str(), &decoded_size);
-    require(decoded != nullptr && decoded_size != 0U, "failed to decode direct TVM lane contract");
-    result.push_back(nlohmann::json::parse(reinterpret_cast<const char*>(decoded),
-                                           reinterpret_cast<const char*>(decoded) + decoded_size));
-    g_free(decoded);
-    cursor = value_end == std::string::npos ? fragment.size() : value_end;
-  }
+simaai::neat::pipeline_internal::sima::SimaPluginStaticManifest
+plan_stages(const std::vector<std::shared_ptr<simaai::neat::Node>>& nodes,
+            const simaai::neat::ContractCompileInput& input = {}) {
+  namespace si = simaai::neat::pipeline_internal::sima;
+  si::ManifestBuildDiagnostics diagnostics;
+  const auto compiled = simaai::neat::compile_node_contracts(nodes, input, &diagnostics);
+  auto manifest =
+      simaai::neat::render_manifest_from_compiled_contracts(compiled, input, &diagnostics);
+  require(manifest && diagnostics.errors.empty(), "model stage compilation failed");
+  if (auto error = si::prepare_kernel_stage_recipes(&*manifest, manifest, {}, {}, {}))
+    require(false, "model numerical preparation failed: " + error->message);
+  si::finalize_pipeline_storage(*manifest);
+  if (auto error = si::finalize_stage_publications(&*manifest))
+    require(false, "model publication finalization failed: " + error->message);
+  return std::move(*manifest);
+}
+
+std::vector<const simaai::neat::pipeline_internal::sima::StageStaticSpec*>
+tvm_stages(const simaai::neat::pipeline_internal::sima::SimaPluginStaticManifest& manifest) {
+  std::vector<const simaai::neat::pipeline_internal::sima::StageStaticSpec*> result;
+  for (const auto& stage : manifest.stages)
+    if (stage.tvm_program)
+      result.push_back(&stage);
   return result;
+}
+
+bool has_policy(const simaai::neat::pipeline_internal::sima::StageStaticSpec& stage,
+                simaai::scheduler::client::AllocationPolicy policy) {
+  return stage.frame_layout &&
+         std::any_of(stage.frame_layout->allocations.begin(), stage.frame_layout->allocations.end(),
+                     [&](const auto& allocation) { return allocation.policy == policy; });
 }
 
 } // namespace
@@ -668,6 +681,24 @@ RUN_TEST(
       require(direct_input.has_value() && direct_input->span_size_bytes == 64 &&
                   direct_input->logical_dtype == "INT8",
               "the true selected first MLA must constrain the application ingress");
+      auto repeated_nodes = selected_nodes;
+      repeated_nodes.push_back(repeated_nodes.front());
+      const auto repeated_facts = simaai::neat::internal::selected_model_fragment_stage_facts(
+          repeated_nodes, &selected_error);
+      require(repeated_facts && repeated_facts->stage_facts.size() == 2U &&
+                  repeated_facts->stage_facts[0].size() == 1U &&
+                  repeated_facts->stage_facts[1].size() == 1U &&
+                  repeated_facts->stage_facts[0].data() != repeated_facts->stage_facts[1].data(),
+              "reusing a cached fragment must retain separate occurrence-owned metadata");
+      simaai::neat::pipeline_internal::sima::ManifestBuildDiagnostics repeated_diagnostics;
+      const auto repeated_contracts =
+          simaai::neat::compile_node_contracts(repeated_nodes, {}, &repeated_diagnostics);
+      require(repeated_diagnostics.errors.empty() && repeated_contracts.stages.size() == 2U &&
+                  repeated_contracts.stages[0].child_stages.size() == 1U &&
+                  repeated_contracts.stages[1].child_stages.size() == 1U &&
+                  repeated_contracts.stages[0].child_stages[0].processmla &&
+                  repeated_contracts.stages[1].child_stages[0].processmla,
+              "reused cached fragments must compile by occurrence without changing their source");
       // The owning view is safe even after its caller releases the source list.
       selected_nodes.clear();
       require(
@@ -686,6 +717,38 @@ RUN_TEST(
       require(!ec, "failed to create transform-before-MLA package layout");
       write_boxdecode_cast_tail_manifest(transform_package / "etc" / "model_mpk.json", "bfloat16",
                                          "float32", 32U, 32U);
+      // An address-only relation shares the MLA carrier, leaving the later
+      // Cast root's CarrierId above the number of distinct backing carriers.
+      {
+        const auto path = transform_package / "etc" / "model_mpk.json";
+        auto authored = nlohmann::ordered_json::parse(read_text(path));
+        auto& plugins = authored["plugins"];
+        const auto mla_output = plugins[1]["output_nodes"][0];
+        auto alias_output = mla_output;
+        alias_output["name"] = "mla_view";
+        plugins[2]["sequence"] = 4;
+        plugins[2]["input_nodes"][0]["name"] = "mla_view";
+        plugins.insert(plugins.begin() + 2,
+                       nlohmann::ordered_json{
+                           {"name", "mla_view"},
+                           {"sequence", 3},
+                           {"processor", "EV74"},
+                           {"type", "sgpProcess"},
+                           {"config_params",
+                            {{"desired_batch_size", 1},
+                             {"actual_batch_size", 1},
+                             {"kernel", "slice_transform"},
+                             {"params",
+                              {{"begin", {0, 0}},
+                               {"end", {1, 32}},
+                               {"input_shape", {1, 32}},
+                               {"output_shape", {1, 32}},
+                               {"input_shapes", {{1, 32}}},
+                               {"output_shapes", {{1, 32}}}}}}},
+                           {"input_nodes", nlohmann::ordered_json::array({mla_output})},
+                           {"output_nodes", nlohmann::ordered_json::array({alias_output})}});
+        write_text(path, authored.dump());
+      }
       write_monolithic_topology_elf(transform_package / "share" / "model.elf");
       // Exercise the standard MPK archive loader with a complete package layout,
       // rather than relying on the already-extracted directory shortcut.
@@ -745,13 +808,10 @@ RUN_TEST(
           simaai::neat::ContractCompileInput input;
           input.processcvu_requested_run_target = "EV74";
           input.processcvu.post_run_target = "A65";
-          simaai::neat::pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
-          const auto compiled = simaai::neat::compile_node_contracts(nodes, input, &diagnostics);
-          const auto manifest =
-              simaai::neat::render_manifest_from_compiled_contracts(compiled, input, &diagnostics);
-          require(manifest && diagnostics.errors.empty() && manifest->stages.size() == 4U,
+          const auto manifest = plan_stages(nodes, input);
+          require(manifest.stages.size() == 4U,
                   "model-to-EV Cast must compile with or without a transport Queue");
-          const auto& producer = manifest->stages[2];
+          const auto& producer = manifest.stages[2];
           const auto offset = producer.physical_outputs.front().source_byte_offset;
           const auto allocation = std::find_if(
               producer.frame_arena_allocations.begin(), producer.frame_arena_allocations.end(),
@@ -1015,22 +1075,51 @@ RUN_TEST(
                                      "session-route: graph_post_chain_raw=");
                                }),
               "interstitial CVU work must not reappear as terminal graph postprocessing");
-      const auto join_contracts =
-          direct_tvm_contracts(join_model.backend_fragment(ModelStage::MlaOnly));
-      require(join_contracts.size() == 2U && join_contracts[0].at("storage_domain") == "mixed" &&
-                  join_contracts[1].at("storage_domain") == "mixed" &&
-                  join_contracts[0].at("allocation_provenance") == "core_allocated" &&
-                  join_contracts[1].at("allocation_provenance") == "core_allocated" &&
-                  join_contracts[0].at("cpu_epoch_start").get<bool>() &&
-                  join_contracts[0].at("cpu_epoch_end").get<bool>() &&
-                  join_contracts[1].at("cpu_epoch_start").get<bool>() &&
-                  join_contracts[1].at("cpu_epoch_end").get<bool>() &&
-                  join_contracts[0].at("command_id").get<std::size_t>() ==
+      const auto join_manifest = plan_stages(join_model.to_nodes(ModelStage::MlaOnly));
+      const auto join_contracts = tvm_stages(join_manifest);
+      const auto& terminal_stage = join_manifest.stages.back();
+      const auto& ifm_producer = join_manifest.stages[join_manifest.stages.size() - 2U];
+      require(terminal_stage.mla_program && terminal_stage.frame_layout &&
+                  terminal_stage.frame_layout->ownership ==
+                      simaai::scheduler::client::FrameOwnership::Allocate &&
+                  terminal_stage.physical_inputs.size() == 1U &&
+                  terminal_stage.physical_inputs[0].source_byte_offset > 0,
+              "synthetic terminal MLA must detach outputs while importing a nonzero IFM span");
+      const auto& ifm = terminal_stage.physical_inputs[0];
+      const auto* source = std::get_if<simaai::scheduler::client::KnownArena>(
+          &terminal_stage.frame_layout->inputs[0].source);
+      require(source != nullptr, "terminal MLA IFM lost its known producer allocation");
+      const auto allocation_index = source->span.allocation_index;
+      const auto base = ifm_producer.frame_arena_allocations.empty()
+                            ? 0U
+                            : ifm_producer.frame_arena_allocations.at(allocation_index).byte_offset;
+      const auto extent =
+          ifm_producer.frame_arena_allocations.empty()
+              ? ifm_producer.frame_arena_size_bytes
+              : ifm_producer.frame_arena_allocations.at(allocation_index).size_bytes;
+      require(
+          source->span.byte_offset <= extent &&
+              source->span.size_bytes <= extent - source->span.byte_offset &&
+              base + source->span.byte_offset ==
+                  static_cast<std::uint64_t>(ifm.source_byte_offset) &&
+              source->span.size_bytes == ifm.size_bytes,
+          "nonzero MLA IFM must preserve its physical-DAG span once in the producer allocation");
+      using Policy = simaai::scheduler::client::AllocationPolicy;
+      require(join_contracts.size() == 2U && has_policy(*join_contracts[0], Policy::RequireCma) &&
+                  has_policy(*join_contracts[0], Policy::RequireDms) &&
+                  has_policy(*join_contracts[1], Policy::RequireCma) &&
+                  has_policy(*join_contracts[1], Policy::RequireDms) &&
+                  join_contracts[0]->tvm_program->cpu_epoch_start &&
+                  join_contracts[0]->tvm_program->cpu_epoch_end &&
+                  join_contracts[1]->tvm_program->cpu_epoch_start &&
+                  join_contracts[1]->tvm_program->cpu_epoch_end &&
+                  join_contracts[0]->tvm_program->command_id ==
                       join_plan.infer[1].physical_command_ids.front() &&
-                  join_contracts[1].at("command_id").get<std::size_t>() ==
+                  join_contracts[1]->tvm_program->command_id ==
                       join_plan.infer[2].physical_command_ids.front() &&
-                  join_contracts[1].at("inputs").size() == 2U,
-              "A65 DAG join lost partitioned placement or independent CPU epochs");
+                  join_contracts[1]->tvm_program->inputs.size() == 2U &&
+                  join_contracts[1]->frame_layout->inputs.size() == 2U,
+              "A65 DAG join lost partitioned placement, exact ports or independent CPU epochs");
       const auto cpu_package = root.parent_path() / "neat-modelpack-a65-join-dms-unit";
       fs::remove_all(cpu_package, ec);
       fs::copy(join_package, cpu_package, fs::copy_options::recursive);
@@ -1039,13 +1128,16 @@ RUN_TEST(
       cpu_plugins.erase(cpu_plugins.begin() + 3, cpu_plugins.end());
       write_text(cpu_package / "etc" / "model_mpk.json", cpu_manifest.dump());
       ModelPack cpu_model(cpu_package.string());
-      const auto cpu_contracts = direct_tvm_contracts(cpu_model.backend_fragment(ModelStage::Full));
-      require(cpu_contracts.size() == 2U && cpu_contracts[0].at("storage_domain") == "dms" &&
-                  cpu_contracts[1].at("storage_domain") == "dms" &&
-                  cpu_contracts[0].at("cpu_epoch_start").get<bool>() &&
-                  !cpu_contracts[0].at("cpu_epoch_end").get<bool>() &&
-                  !cpu_contracts[1].at("cpu_epoch_start").get<bool>() &&
-                  cpu_contracts[1].at("cpu_epoch_end").get<bool>(),
+      const auto cpu_stages = plan_stages(cpu_model.to_nodes(ModelStage::Full));
+      const auto cpu_contracts = tvm_stages(cpu_stages);
+      require(cpu_contracts.size() == 2U && has_policy(*cpu_contracts[0], Policy::RequireDms) &&
+                  !has_policy(*cpu_contracts[0], Policy::RequireCma) &&
+                  has_policy(*cpu_contracts[1], Policy::RequireDms) &&
+                  !has_policy(*cpu_contracts[1], Policy::RequireCma) &&
+                  cpu_contracts[0]->tvm_program->cpu_epoch_start &&
+                  !cpu_contracts[0]->tvm_program->cpu_epoch_end &&
+                  !cpu_contracts[1]->tvm_program->cpu_epoch_start &&
+                  cpu_contracts[1]->tvm_program->cpu_epoch_end,
               "adjacent A65 commands in one DMS allocation must share their CPU epoch");
       fs::remove_all(cpu_package, ec);
       fs::remove_all(join_package, ec);
@@ -1357,55 +1449,29 @@ RUN_TEST(
         require(occurrences("neatprocessmla ") == mla_indices.size() &&
                     occurrences("neatkernelrunner ") == cast_indices.size() &&
                     occurrences("neatprocesstvm ") == host_indices.size() &&
-                    occurrences("direct-contract-b64=") == host_indices.size() &&
                     occurrences("stage-id=") == mla_indices.size(),
                 "RF-DETR fragment did not render its exact MLA/CVU stages and three "
-                "self-contained direct A65 commands");
+                "typed A65 commands");
         require(occurrences("model-path=") == 0U && occurrences("batch-size=") == 0U &&
                     occurrences("batch-sz-model=") == 0U,
                 "strict DMA-BUF MLA fragment leaked deprecated property-owned runtime "
                 "configuration instead of using its typed manifest");
-        simaai::neat::ContractCompileInput compile_input;
-        simaai::neat::pipeline_internal::sima::ManifestBuildDiagnostics compile_diagnostics;
-        const auto contextual = simaai::neat::compile_node_contracts(
-            real_model.to_nodes(ModelStage::MlaOnly), compile_input, &compile_diagnostics);
-        require(contextual.fully_renderable && compile_diagnostics.errors.empty(),
-                "partial A65 route must retain a complete per-build contract");
-        std::size_t contextual_a65 = 0U;
-        const auto check_a65 = [&](const auto& self,
-                                   const simaai::neat::CompiledNodeContract& stage) -> void {
-          for (const auto& child : stage.child_stages)
-            self(self, child);
-          if (!stage.transport || stage.transport->plugin_kind != "neatprocesstvm")
-            return;
-          const auto encoded =
-              direct_tvm_contracts("direct-contract-b64=" + stage.transport->direct_contract_b64);
-          require(encoded.size() == 1U &&
-                      encoded.front().at("arena_bytes").get<std::uint64_t>() ==
-                          stage.transport->runtime_contract.frame_arena_size_bytes,
-                  "per-build A65 property and typed carrier contract must use the same arena");
-          ++contextual_a65;
-        };
-        for (const auto& stage : contextual.stages)
-          check_a65(check_a65, stage);
-        require(contextual_a65 == host_indices.size(),
-                "every selected A65 stage must carry its contextual runtime property");
-
-        const auto a65_contracts = direct_tvm_contracts(fragment);
-        require(a65_contracts.size() == 3U,
-                "RF-DETR fragment lost one prepared direct A65 contract");
-        for (std::size_t index = 0; index < a65_contracts.size(); ++index) {
-          const auto& contract = a65_contracts[index];
-          require(contract.at("schema") == "sima.neat.direct-tvm-lane" &&
-                      contract.at("version") == 4 &&
-                      contract.at("allocation_policy") == "required_domain" &&
-                      contract.at("storage_domain") == "mixed" &&
-                      contract.at("allocation_provenance") == "core_allocated" &&
-                      (contract.at("required_device_access").get<std::uint32_t>() & 1U) != 0U &&
-                      contract.at("cpu_epoch_start").get<bool>() &&
-                      contract.at("cpu_epoch_end").get<bool>(),
-                  "RF-DETR direct A65 commands lost partitioned CPU epoch boundaries or their "
-                  "Core-authored arena placement");
+        const auto contextual = plan_stages(real_model.to_nodes(ModelStage::MlaOnly));
+        const auto a65_contracts = tvm_stages(contextual);
+        require(a65_contracts.size() == host_indices.size(),
+                "every selected A65 stage must own one typed program and layout");
+        for (const auto* stage : a65_contracts) {
+          const auto& program = *stage->tvm_program;
+          require(stage->frame_layout && stage->tensor_publication &&
+                      has_policy(*stage, Policy::RequireCma) &&
+                      has_policy(*stage, Policy::RequireDms) && program.executable.bytes != 0U &&
+                      !program.executable.sha256.empty() && !program.inputs.empty() &&
+                      !program.outputs.empty() &&
+                      stage->frame_layout->inputs.size() == program.inputs.size() &&
+                      stage->frame_layout->outputs.size() == program.outputs.size() &&
+                      program.cpu_epoch_start && program.cpu_epoch_end,
+                  "RF-DETR A65 commands lost typed artifact/ports, allocation layout or "
+                  "partitioned CPU epoch boundaries");
         }
       }
 

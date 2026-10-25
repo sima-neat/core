@@ -88,7 +88,7 @@ set_tests_properties(unit_boxdecode_geometry_test PROPERTIES
 
 add_executable(unit_kernel_runner_integration_test
   unit_testing/unit_kernel_runner_integration_test.cpp
-  ${PROJECT_SOURCE_DIR}/src/pipeline/internal/sima/KernelRunnerIntegration.cpp)
+  ${PROJECT_SOURCE_DIR}/src/pipeline/internal/sima/SchedulerStageIntegration.cpp)
 target_link_libraries(unit_kernel_runner_integration_test PRIVATE
   sima_neat sima_neat_internal_headers SimaScheduler::frontend
   SimaScheduler::ClientTestSupport)
@@ -620,16 +620,7 @@ set(UNIT_TESTS
   unit_processcvu_preproc_runtime_vs_exposed_outputs_test
   unit_stage_transform_rule_registry_test
   unit_sima_plugin_static_manifest_parse_test
-  unit_sima_plugin_static_manifest_contract_test
-  unit_sima_plugin_static_manifest_lifetime_test
-  unit_manifest_context_exception_test
   unit_graph_build_ownership_test
-  unit_sima_plugin_context_injection_test
-  unit_sima_plugin_context_late_child_injection_test
-  unit_sima_plugin_context_copy_test
-  unit_sima_plugin_context_attach_lifetime_test
-  unit_sima_plugin_context_replacement_test
-  unit_sima_plugin_context_destroyed_pipeline_test
   unit_sima_plugins_test
   unit_internal_edge_contract_resolver_test
   unit_terminal_output_contract_query_test
@@ -687,7 +678,6 @@ simaneat_append_ctest_env(unit_kernel_runner_instances_test)
 set_tests_properties(unit_kernel_runner_instances_test PROPERTIES
   TIMEOUT 30 LABELS "strict;unit;contracts")
 target_link_libraries(unit_graph_build_ownership_test PRIVATE SimaScheduler::frontend)
-target_link_libraries(unit_manifest_context_exception_test PRIVATE ${CMAKE_DL_LIBS})
 target_link_libraries(unit_model_archive_loader_test PRIVATE ${CMAKE_DL_LIBS})
 
 # The MPK-derived publication regression directly invokes Scheduler's public

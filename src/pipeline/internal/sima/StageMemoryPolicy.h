@@ -5,6 +5,7 @@
 
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
 #include "pipeline/internal/contract/ContractFacts.h"
+#include <string_view>
 
 namespace simaai::neat::pipeline_internal::sima {
 
@@ -13,8 +14,12 @@ namespace simaai::neat::pipeline_internal::sima {
 void resolve_physical_execution_targets(static_contract::PhysicalExecutionPlan& plan,
                                         const ContractCompileInput& input);
 
-// Resolve owned domains after targets and producer edges are known. Imported
-// allocations and aliased ownership retain their original authority.
-void resolve_stage_memory_placement(SimaPluginStaticManifest& manifest);
+// Resolve checked executors before assigning carrier access.
+void resolve_compiled_execution_targets(CompiledNodeContract&, const ContractCompileInput&);
+std::uint32_t resolved_stage_device_access(const StageStaticSpec&);
+
+// Final owning allocation-local bindings, after checked private requirements exist.
+void finalize_pipeline_storage(SimaPluginStaticManifest& manifest,
+                               std::string_view terminal_host_stage = {});
 
 } // namespace simaai::neat::pipeline_internal::sima

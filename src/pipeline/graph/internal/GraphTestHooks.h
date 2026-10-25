@@ -38,7 +38,6 @@ enum class CompositionFailurePoint {
   EndpointEdgesReplaced,
   BeforeConnectionEdgeAppend,
   PipelineBeforeManifest,
-  PipelineStaticManifestAcquired,
   PipelinePrepared,
 };
 

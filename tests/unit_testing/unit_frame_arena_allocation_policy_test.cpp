@@ -3,11 +3,16 @@
 #include "pipeline/internal/sima/CompiledProcessCvuContractQuery.h"
 #include "pipeline/internal/sima/static_contract/DmabufPlanContractProjection.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessMlaStageSemantics.h"
+#include "pipeline/runtime/ExecutionPlanAssembly.h"
+#include <simaai/scheduler/client/frame_layout.h>
 #include "gst/SimaPluginStaticManifestAbi.h"
 
 #include "test_main.h"
 
+#include <nlohmann/json.hpp>
+
 #include <array>
+#include <memory>
 
 namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
 namespace sima = simaai::neat::pipeline_internal::sima;
@@ -89,21 +94,78 @@ RUN_TEST(
         const auto expected = policy == sc::ArenaDmsPolicy::PreferDmsThenCma
                                   ? sc::ArenaAllocationPolicy::PreferDmsThenCma
                                   : sc::ArenaAllocationPolicy::RequiredDomain;
-        require(stage.frame_arena_allocation_policy == expected,
-                "projection lost allocation policy");
+        require(stage.frame_arena_allocations.size() == 1 &&
+                    stage.frame_arena_allocations.front().placement.allocation_policy == expected,
+                "projection lost its actual allocation policy");
         require(stage.frame_arena_storage_domain == sc::ArenaStorageDomain::Dms,
                 "policy changed placement instead of allocation preference");
         sima::SimaPluginStaticManifest manifest;
         manifest.stages.push_back(stage);
         const auto encoded = sima::serialize_manifest_json(manifest);
         const auto decoded = sima::parse_manifest_json(encoded, &error);
-        require(decoded && decoded->stages[0].frame_arena_allocation_policy == expected, error);
+        require(
+            decoded && decoded->stages[0].frame_arena_allocations.size() == 1 &&
+                decoded->stages[0].frame_arena_allocations.front().placement.allocation_policy ==
+                    expected,
+            "metadata roundtrip lost actual allocation policy: " + error);
         require(decoded->stages[0].physical_outputs[0].size_bytes ==
                         stage.physical_outputs[0].size_bytes &&
                     decoded->stages[0].physical_outputs[0].source_byte_offset ==
                         stage.physical_outputs[0].source_byte_offset,
                 "allocation policy changed physical geometry");
       }
+      // Public diagnostics describe final owned pools once, including detached outputs.
+      namespace client = ::simaai::scheduler::client;
+      const auto layout = [](client::FrameOwnership ownership,
+                             std::vector<client::FrameAllocation> allocations) {
+        auto result = std::make_shared<client::FrameLayout>();
+        result->ownership = ownership;
+        result->allocations = std::move(allocations);
+        return result;
+      };
+      const auto memory_report = [](const auto& layouts) {
+        simaai::neat::pipeline_internal::SegmentBuildPlan build;
+        build.rendered_manifest.emplace();
+        for (const auto& frame : layouts) {
+          sima::StageStaticSpec stage;
+          stage.element_name = "stage_" + std::to_string(build.node_reports.size());
+          stage.payload_kind = sima::StagePayloadKind::ProcessMla;
+          stage.frame_layout = frame;
+          simaai::neat::NodeReport node;
+          node.index = static_cast<int>(build.node_reports.size());
+          node.kind = "ModelFragment";
+          node.elements = {stage.element_name};
+          build.node_reports.push_back(std::move(node));
+          build.rendered_manifest->stages.push_back(std::move(stage));
+        }
+        return nlohmann::json::parse(
+                   simaai::neat::internal::ExecutionPlanAccess::make(build, "memory-report")
+                       .to_json())
+            .at("model")
+            .at("memory");
+      };
+      const std::vector<client::FrameAllocation> parts{
+          {4096U, 0U, client::AllocationPolicy::RequireCma},
+          {8192U, 0U, client::AllocationPolicy::RequireDms}};
+      const std::vector mixed_layouts{layout(client::FrameOwnership::Allocate, parts),
+                                      layout(client::FrameOwnership::ReuseInput, parts),
+                                      layout(client::FrameOwnership::Allocate,
+                                             {{2048U, 0U, client::AllocationPolicy::RequireDms}})};
+      const auto mixed_memory = memory_report(mixed_layouts);
+      require(mixed_memory.at("type") == "Mixed" && mixed_memory.at("per_frame_bytes") == 14336U,
+              "public plan must sum owned mixed and detached pools without counting reusers");
+      for (const auto policy :
+           {client::AllocationPolicy::RequireCma, client::AllocationPolicy::RequireDms,
+            client::AllocationPolicy::PreferDmsThenCma}) {
+        const std::vector single_layout{
+            layout(client::FrameOwnership::Allocate, {{4096U, 0U, policy}})};
+        const auto memory = memory_report(single_layout);
+        require(memory.size() == 2 && memory.at("per_frame_bytes") == 4096U &&
+                    memory.at("type") ==
+                        (policy == client::AllocationPolicy::RequireCma ? "CMA" : "DMS"),
+                "homogeneous public memory shape must retain its planned heap");
+      }
+
       // A detached terminal carrier owns a separate strict placement. Reusing
       // a projection object must not retain the previous shared preference.
       two_mla_data.ops[1].kind = sc::OpKind::Mla;
@@ -144,8 +206,10 @@ RUN_TEST(
       require(sc::apply_dmabuf_plan_contract_projection(*two_mla, 1U, *two_arena, &stale,
                                                         detached_sources, &error),
               error);
-      require(stale.frame_arena_allocation_policy == sc::ArenaAllocationPolicy::RequiredDomain,
-              "detached projection retained stale shared fallback preference");
+      require(stale.frame_arena_allocations.size() == 1 &&
+                  stale.frame_arena_allocations.front().placement.allocation_policy ==
+                      sc::ArenaAllocationPolicy::RequiredDomain,
+              "detached allocation inherited a shared arena's fallback preference");
 
       // Standalone ROI specialization owns new placement authority; a copied
       // model preference must not survive when its model-wide arena is cleared.
@@ -187,32 +251,4 @@ RUN_TEST(
                   standalone.runtime_contract.logical_outputs[0].shape ==
                       std::vector<std::int64_t>({3, 2, 2, 3}),
               "standalone authority reset changed dynamic geometry");
-
-      SimaPluginStageSpec stage{};
-      stage.frame_arena_size_bytes = 4096;
-      stage.frame_arena_role = SIMA_PLUGIN_FRAME_ARENA_ALLOCATE;
-      stage.frame_arena_storage_domain = SIMA_PLUGIN_FRAME_ARENA_STORAGE_DMS;
-      stage.frame_arena_provenance = SIMA_PLUGIN_FRAME_ARENA_PROVENANCE_CORE_ALLOCATED;
-      stage.frame_arena_required_device_access = SIMA_PLUGIN_FRAME_ARENA_ACCESS_MLA;
-      stage.frame_arena_allocation_policy = SIMA_PLUGIN_FRAME_ARENA_PREFER_DMS_THEN_CMA;
-      require(sima_plugin_frame_arena_allocation_policy_valid(&stage), "eligible policy rejected");
-      stage.frame_arena_required_device_access |= SIMA_PLUGIN_FRAME_ARENA_ACCESS_EV74;
-      require(!sima_plugin_frame_arena_allocation_policy_valid(&stage), "EV policy accepted");
-      stage.frame_arena_required_device_access = SIMA_PLUGIN_FRAME_ARENA_ACCESS_MLA;
-      stage.frame_arena_provenance = SIMA_PLUGIN_FRAME_ARENA_PROVENANCE_EXTERNAL_ADOPTED;
-      require(!sima_plugin_frame_arena_allocation_policy_valid(&stage), "external policy accepted");
-      gst_init(nullptr, nullptr);
-      SimaPluginStaticManifestHandle legacy{};
-      legacy.abi_version = 30;
-      legacy.ref = +[](gpointer) {};
-      legacy.unref = +[](gpointer) {};
-      auto* context = gst_context_new(SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE, TRUE);
-      gst_structure_set(gst_context_writable_structure(context),
-                        SIMA_PLUGIN_STATIC_MANIFEST_KEY_HANDLE,
-                        sima_plugin_static_manifest_handle_get_type(), &legacy, nullptr);
-      SimaPluginManifestLookupStatus status = SIMA_PLUGIN_MANIFEST_LOOKUP_STATUS_OK;
-      require(!sima_plugin_manifest_context_accessor_checked(context, &status) &&
-                  status == SIMA_PLUGIN_MANIFEST_LOOKUP_STATUS_HANDLE_ABI_MISMATCH,
-              "old accessor ABI accepted");
-      gst_context_unref(context);
     }));

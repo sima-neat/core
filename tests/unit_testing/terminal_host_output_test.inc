@@ -42,8 +42,7 @@ void terminal_host_output_lifetime(bool dma_denied = false) {
   request.options.output_pool_capacity = std::max<std::size_t>(6, request.options.capacity + 1);
   gst_app_src_set_caps(GST_APP_SRC(source), request.publication.input_caps.get());
   std::array<gs::StageAttachment, 1> attachments{{{stage, std::move(request)}}};
-  auto failure = gs::prepare_and_attach_tensor_stages(
-      pipeline.get(), attachments, {}, gs::CompactFrameReaderContract::StageFrameV2, {stage, sink});
+  auto failure = gs::prepare_and_attach_stages(pipeline.get(), attachments, {}, {stage, sink});
   require_fixture(!failure, "terminal host frontend admission", failure ? failure->message : "");
   struct Stop {
     GstElement* pipeline;

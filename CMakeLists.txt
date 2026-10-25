@@ -897,14 +897,11 @@ install(
   PATTERN "genai/nodes/*" EXCLUDE
   PATTERN "pipeline/internal" EXCLUDE
   PATTERN "pipeline/internal/*" EXCLUDE
-  PATTERN "ProcessMlaRuntimeConfig.h" EXCLUDE
   PATTERN "SimaPluginStaticManifestAbi.h" EXCLUDE
-  PATTERN "SimaPreparedRuntimeAbi.h" EXCLUDE
   PATTERN "SimaTensorSetMetaAbi.h" EXCLUDE
   # Scheduler owns this installed path; never restore a Core implementation.
   PATTERN "SimaaiGstErrors.h" EXCLUDE
   PATTERN "ev_tensor_abi.h" EXCLUDE
-  PATTERN "PreparedRuntimeBridge.h" EXCLUDE
 )
 
 install(

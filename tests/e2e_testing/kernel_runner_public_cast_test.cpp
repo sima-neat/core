@@ -72,7 +72,7 @@ void require_prepared_runners(Run& run, unsigned expected) {
     g_value_unset(&element);
   gst_iterator_free(iterator);
   require(native == expected && prepared == expected && legacy == 0,
-          "every Cast stage must have a prepared Runtime context, without a legacy executor");
+          "every Cast stage must retain its prepared Scheduler stage");
 }
 
 void require_publication(const Tensor& tensor, bool compact) {

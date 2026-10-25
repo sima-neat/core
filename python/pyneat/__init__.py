@@ -71,7 +71,6 @@ def _configure_neat_runtime_environment():
       if (path / "libsimaai_runtime_gstreamer.so").exists()
       or (path / "libneatdmabufmemory.so").exists()
       or (path / "libneattensorbufferfast.so").exists()
-      or (path / "libneatpreparedruntimebridge.so").exists()
       or (path / "libsimaaimem.so").exists()
   ]
   plugin_candidates = [
@@ -107,8 +106,6 @@ def _preload_neat_runtime_libraries():
       "libgstneatallocator.so",
       "libgstneatbufferpool.so",
       "libgstneattensorbuffer.so",
-      "libneatpreparedruntimebridge.so",
-      "libneatprocessmlaruntime.so",
   )
   directories = _existing_library_dirs()
   for name in names:

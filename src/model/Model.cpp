@@ -6321,13 +6321,8 @@ build_pipeline_nodes(const Model& model, const internal::ModelPack& pack, const 
       } else if (ingress_contracts.size() == 1U && !ingress_join && overlay_from_ingress_contract) {
         src_opt = overlay_input_options_from_ingress_contract(src_opt, ingress_contracts.front());
       }
-      // Multi-IO pre-MLA fan-in: the rendered multi-IO processcvu element
-      // advertises tensor-set envelope caps on its sink (built by
-      // PreparedRuntimeBridge::build_processcvu_sink_caps_local for routes
-      // whose input bindings count > 1). The framework-side appsrc must
-      // emit the matching envelope form so caps negotiation succeeds and
-      // the bundled multi-memory GstBuffer flows through. Single-ingress
-      // and non-fan-in routes are unaffected.
+      // Bundled pre-MLA inputs use a TensorBuffer envelope; appsrc must
+      // match the prepared fan-in stage's caps.
       if (plan_uses_bundled_fan_in(plan)) {
         src_opt.caps_override = "application/vnd.simaai.tensor, representation=(string)tensor-set, "
                                 "storage=(string)tensorbuffer";

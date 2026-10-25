@@ -8,7 +8,7 @@
 #include "pipeline/DetectionTypes.h"
 #include "pipeline/FeatureTypes.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
-#include "pipeline/internal/sima/PreparedRuntimeBuild.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 
 namespace {

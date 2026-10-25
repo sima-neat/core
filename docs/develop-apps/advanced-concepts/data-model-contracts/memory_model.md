@@ -43,7 +43,8 @@ carriers retain their carrier-byte semantics. This does not change the byte
 extent returned by public `map()`.
 
 Backend-created carriers use CMA whenever EV74 writes or reads them; MLA/A65-only
-carriers use DMS. Fan-out includes all consumers, and views share their carrier.
+carriers use DMS by default. Eligible fresh A65 public terminals use certified
+HostCpu storage. Fan-out includes all consumers, and views share their carrier.
 Compatible imported camera/application DMA-BUFs keep their backing, offsets,
 strides and parent loans.
 
