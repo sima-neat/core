@@ -16,6 +16,7 @@ namespace simaai::neat::pipeline_internal::sima::static_contract {
 
 struct PhysicalExecutionPlan;
 
+// Keep wire values aligned with Scheduler's metadata storage domains.
 enum class ArenaStorageDomain : std::uint8_t {
   Unknown = 0,
   Cma = 1,
