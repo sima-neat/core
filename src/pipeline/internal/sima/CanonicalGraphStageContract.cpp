@@ -177,10 +177,6 @@ bool complete_graph_kernel_contract(StageStaticSpec* stage,
     binding.sink_pad_index = binding.local_logical_input_index = static_cast<int>(index);
     binding.src_logical_output_index = binding.src_output_slot = static_cast<int>(index);
     binding.src_physical_output_index = tensor.source_physical_index;
-    // Scheduler adds the physical carrier base to this logical-view offset.
-    // The upstream base belongs to physical.source_byte_offset exactly once.
-    binding.src_physical_byte_offset = tensor.byte_offset;
-    binding.src_physical_size_bytes = facts.bytes;
     binding.cm_input_name =
         inputs.size() == 1 && !input_slot.empty() ? std::string(input_slot) : facts.name;
     binding.source_segment_name = tensor.segment_name;
@@ -256,8 +252,9 @@ bool complete_graph_kernel_contract(StageStaticSpec* stage,
         return fail(error, "canonical graph logical input exceeds its authored physical carrier");
       auto& binding = bindings[index];
       binding.local_logical_input_index = logical->logical_index;
-      binding.src_physical_byte_offset = logical->byte_offset;
-      binding.src_physical_size_bytes = logical->size_bytes;
+      // Bind the carrier; the logical input retains its tensor-relative view.
+      binding.src_physical_byte_offset = 0;
+      binding.src_physical_size_bytes = physical->size_bytes;
       if (physical->source_physical_index >= 0)
         binding.src_physical_output_index = physical->source_physical_index;
       if (!physical->segment_name.empty())

@@ -122,11 +122,20 @@ void admitted_coordinates(std::int64_t logical_offset, bool retained_physical) {
   const auto& physical = model.physical_inputs.at(0);
   const auto& route = model.input_bindings.at(0);
   require(route.src_physical_output_index == (retained_physical ? 7 : 0) &&
-              route.src_physical_byte_offset == logical_offset &&
-              route.src_physical_size_bytes == 96 &&
+              route.src_physical_byte_offset == 0 &&
+              route.src_physical_size_bytes == physical.size_bytes &&
               route.source_segment_name == physical.segment_name,
           "inferred binding contradicts authoritative carrier or relative logical offset");
   const auto recipe = request(model);
+  const auto& input_route = recipe.layout->inputs.at(0);
+  const auto matches_carrier = [&](const auto& source) {
+    return source.byte_offset == std::size_t(physical.source_byte_offset) &&
+           source.size_bytes == physical.size_bytes;
+  };
+  require((retained_physical ? matches_carrier(std::get<c::PhysicalBinding>(input_route.source))
+                             : matches_carrier(std::get<c::DirectMemory>(input_route.source))) &&
+              input_route.view_offset == std::size_t(logical_offset),
+          "final input layout must retain the carrier base and logical view exactly once");
   test::RouteProbe probe;
   okay(probe.prepare(recipe));
   require(probe.member_count() == 1, "cold Cast admission failed");
