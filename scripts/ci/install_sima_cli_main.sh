@@ -57,3 +57,30 @@ PY
   cd "${tmp_dir}"
   python3 install_vulcan_package.py
 )
+
+if [[ -n "${SIMA_CLI_VERIFIER_PYTHON:-}" ]]; then
+  # Keep the host ABI interpreter while verifying firmware with fixed tar filters.
+  verifier_venv="${RUNNER_TEMP:?}/core-validation-cli"
+  "${SIMA_CLI_VERIFIER_PYTHON}" -m venv "${verifier_venv}"
+  "${verifier_venv}/bin/python" - "${tmp_dir}" <<'PY'
+from pathlib import Path
+import subprocess
+import sys
+import zipfile
+
+root = Path(sys.argv[1])
+packages = list(root.glob('sima-cli-package-*.zip'))
+if len(packages) != 1:
+    raise SystemExit('Expected one downloaded sima-cli package')
+with zipfile.ZipFile(packages[0]) as archive:
+    wheels = [name for name in archive.namelist()
+              if name.endswith('.whl') and Path(name).name == name]
+    if len(wheels) != 1:
+        raise SystemExit('Expected one published sima-cli wheel')
+    wheel = root / wheels[0]
+    wheel.write_bytes(archive.read(wheels[0]))
+subprocess.run([sys.executable, '-m', 'pip', 'install', '--disable-pip-version-check',
+                '--no-cache-dir', str(wheel)], check=True)
+PY
+  printf 'SIMA_CLI_PYTHON=%s\n' "${verifier_venv}/bin/python" >> "${GITHUB_ENV:?}"
+fi

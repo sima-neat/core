@@ -1611,8 +1611,18 @@ jobs:
           clean: true
           fetch-depth: 0
 
+      - name: Set up Python for local candidate verification
+        if: ${{ inputs.validation_only }}
+        id: validation_python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          update-environment: false
+
       - name: Install sima-cli
         shell: bash
+        env:
+          SIMA_CLI_VERIFIER_PYTHON: ${{ steps.validation_python.outputs.python-path }}
         run: |
           set -euo pipefail
           ./scripts/ci/install_sima_cli_main.sh
