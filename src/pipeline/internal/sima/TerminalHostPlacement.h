@@ -4,6 +4,7 @@
 #endif
 
 #include "pipeline/internal/sima/KernelStageRecipe.h"
+#include "pipeline/internal/TerminalOutputContractQuery.h"
 #include <algorithm>
 #include <limits>
 #include <string_view>
@@ -116,6 +117,56 @@ inline bool terminal_host_arena_eligible(const StageStaticSpec& stage,
     }
   }
   return std::all_of(written.begin(), written.end(), [](bool value) { return value; });
+}
+
+// Container metadata queries allow a label to fall back to a rendered child.
+// That query alone is not allocation authority: require a unique publishable
+// leaf, exact concrete identity and the same fresh-arena proof as direct nodes.
+// The caller must still prove the stopped direct appsink edge and no observers.
+inline const StageStaticSpec* terminal_host_fragment_candidate(
+    const SimaPluginStaticManifest& manifest,
+    const terminal_output_contract::PublicOutputEndpointSelector& endpoint) {
+  namespace query = terminal_output_contract;
+  if (endpoint.terminal_node_kind != "ModelFragment" || endpoint.terminal_stage_key_required ||
+      !endpoint.allow_unresolved_terminal_stage_fallback)
+    return nullptr;
+  auto resolved_endpoint = endpoint;
+  auto reason = query::OutputOverrideFailureReason::None;
+  const auto* candidate =
+      query::find_terminal_real_producer_for_endpoint(manifest, resolved_endpoint, &reason);
+  if (!candidate && reason == query::OutputOverrideFailureReason::UnresolvedTerminalStageKey) {
+    resolved_endpoint.terminal_stage_key.clear();
+    resolved_endpoint.allow_unresolved_terminal_stage_fallback = false;
+    candidate = query::find_terminal_real_producer_for_endpoint(manifest, resolved_endpoint);
+  }
+  if (!candidate || candidate->element_name.empty() ||
+      !query::build_output_override_from_manifest(manifest, resolved_endpoint) ||
+      !terminal_host_arena_eligible(*candidate, manifest))
+    return nullptr;
+  for (const auto& stage : manifest.stages) {
+    if (&stage == candidate)
+      continue;
+    // Never let the query's kind/case-insensitive matching disambiguate an
+    // executable name or a binding identity used by the allocation proof.
+    if (stage.element_name == candidate->element_name ||
+        stage.logical_stage_id == candidate->element_name ||
+        (!candidate->logical_stage_id.empty() &&
+         (stage.element_name == candidate->logical_stage_id ||
+          stage.logical_stage_id == candidate->logical_stage_id)))
+      return nullptr;
+    const auto role = query::classify_stage_for_publication(stage);
+    if (role != query::StagePublicationRole::RealProducer &&
+        role != query::StagePublicationRole::MaterializedTransform)
+      continue;
+    bool consumed = false;
+    for (const auto& other : manifest.stages)
+      for (const auto& input : other.input_bindings)
+        consumed |= !input.src_stage_id.empty() && (input.src_stage_id == stage.element_name ||
+                                                    input.src_stage_id == stage.logical_stage_id);
+    if (!consumed)
+      return nullptr;
+  }
+  return candidate;
 }
 
 inline bool terminal_host_direct_peer(GstElement* pipeline, GstElement* stage, GstElement* sink) {

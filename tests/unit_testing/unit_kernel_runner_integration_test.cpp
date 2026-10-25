@@ -120,6 +120,67 @@ void terminal_host_placement_proof() {
     return value->stages.front();
   };
   require(render(compiled).core_fresh_default_arena, "fresh Cast origin was lost");
+  simaai::neat::CompiledNodeContract fragment;
+  fragment.node_kind = "ModelFragment";
+  fragment.element_name = fragment.logical_stage_id = "infer";
+  fragment.child_stages.push_back(compiled);
+  integration::SimaPluginStaticManifest fragment_manifest;
+  fragment_manifest.stages.push_back(render(fragment));
+  using simaai::neat::pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector;
+  PublicOutputEndpointSelector endpoint;
+  endpoint.terminal_stage_key = "infer";
+  endpoint.terminal_node_kind = "ModelFragment";
+  endpoint.allow_unresolved_terminal_stage_fallback = true;
+  require(integration::terminal_host_fragment_candidate(fragment_manifest, endpoint) ==
+              &fragment_manifest.stages.front(),
+          "rendered native child did not resolve a container endpoint");
+  auto explicit_child = endpoint;
+  explicit_child.terminal_stage_key = compiled.element_name;
+  require(integration::terminal_host_fragment_candidate(fragment_manifest, explicit_child) ==
+              &fragment_manifest.stages.front(),
+          "exact rendered child endpoint did not resolve");
+  const auto reject_endpoint = [&](auto change) {
+    auto invalid = endpoint;
+    change(invalid);
+    require(!integration::terminal_host_fragment_candidate(fragment_manifest, invalid),
+            "unauthorized or mismatched container endpoint accepted");
+  };
+  reject_endpoint([](auto& value) { value.terminal_node_kind = "SimaArgMax"; });
+  reject_endpoint([](auto& value) { value.terminal_stage_key_required = true; });
+  reject_endpoint([](auto& value) { value.allow_unresolved_terminal_stage_fallback = false; });
+  reject_endpoint([](auto& value) { value.output_segment_name = "missing-output"; });
+  const auto reject_fragment = [&](auto change) {
+    auto invalid = fragment_manifest;
+    change(invalid);
+    require(!integration::terminal_host_fragment_candidate(invalid, endpoint),
+            "ambiguous or ineligible container terminal accepted");
+  };
+  reject_fragment([](auto& value) { value.stages.clear(); });
+  reject_fragment([](auto& value) { value.stages.front().core_fresh_default_arena = false; });
+  reject_fragment([](auto& value) {
+    value.stages.front().frame_arena_storage_domain = domain::ArenaStorageDomain::Dms;
+  });
+  reject_fragment([](auto& value) {
+    auto other = value.stages.front();
+    other.element_name = other.logical_stage_id = "disconnected-native-child";
+    value.stages.push_back(std::move(other));
+  });
+  reject_fragment([](auto& value) { value.stages.push_back(value.stages.front()); });
+  reject_fragment([](auto& value) {
+    integration::StageStaticSpec device;
+    device.element_name = device.logical_stage_id = "terminal-mla";
+    device.payload_kind = integration::StagePayloadKind::ProcessMla;
+    device.processmla.dispatcher_output_sizes = {4U};
+    value.stages.push_back(std::move(device));
+  });
+  reject_fragment([](auto& value) {
+    integration::StageStaticSpec view;
+    view.element_name = view.logical_stage_id = "terminal-offset_view";
+    integration::InputBindingStaticSpec binding;
+    binding.src_stage_id = value.stages.front().logical_stage_id;
+    view.input_bindings.push_back(binding);
+    value.stages.push_back(std::move(view));
+  });
   const auto authored = [&](auto set) {
     auto node = compiled;
     set(node.kernel->runtime_contract);
@@ -1201,6 +1262,31 @@ void controls_and_admission_geometry() {
           "complete explicit geometry added conversion or per-frame resolution");
   require(admitted.runtime_contract.logical_outputs.front().size_bytes == 4 + 120 * 24,
           "explicit topK120 did not determine the public BBOX capacity");
+  // Use Core's real checked numerical + wire-publication recipe as the
+  // native child, not a forged eligibility flag. Authored internal BoxDecode
+  // children use this same compiler before ModelFragment rendering.
+  CompiledNodeContract child;
+  child.node_kind = "ModelFragment";
+  child.element_name = child.logical_stage_id = "internal-boxdecode";
+  child.renderable = true;
+  child.kernel = admitted;
+  CompiledNodeContract fragment;
+  fragment.node_kind = "ModelFragment";
+  fragment.element_name = fragment.logical_stage_id = "infer";
+  fragment.child_stages.push_back(std::move(child));
+  CompiledPipelineContracts contracts;
+  contracts.fully_renderable = true;
+  contracts.stages.push_back(std::move(fragment));
+  ManifestBuildDiagnostics diagnostics;
+  const auto manifest = render_manifest_from_compiled_contracts(contracts, {}, &diagnostics);
+  require(manifest && diagnostics.errors.empty() && manifest->stages.size() == 1,
+          "checked internal BoxDecode child failed rendering");
+  pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector endpoint;
+  endpoint.terminal_stage_key = "infer";
+  endpoint.terminal_node_kind = "ModelFragment";
+  endpoint.allow_unresolved_terminal_stage_fallback = true;
+  require(terminal_host_fragment_candidate(*manifest, endpoint) == &manifest->stages.front(),
+          "checked native BoxDecode child lost terminal host eligibility");
   const auto result = invoke(admitted);
   // Model640: center(320,320), extent(320,320). Independent letterbox to
   // 640x360 subtracts140 in Y, giving [160,20,320,320] after clipping/rounding.
@@ -1246,6 +1332,7 @@ int main(int argc, char** argv) {
     if (host_cpu_only) {
       sima_test::initialize_cold_contract_gstreamer();
       require(probe::register_element(), "register native candidate plugin");
+      terminal_host_placement_proof();
       terminal_host_output_lifetime(true);
       return 0;
     }
@@ -1256,8 +1343,10 @@ int main(int argc, char** argv) {
     require(probe::register_element(), "register native candidate plugin");
     terminal_host_placement_proof();
     terminal_host_output_lifetime(false);
-    if (argc == 2 && std::string_view(argv[1]) == "--terminal-host-only")
+    if (argc == 2 && std::string_view(argv[1]) == "--terminal-host-only") {
+      boxdecode_semantics::controls_and_admission_geometry();
       return 0;
+    }
     capacity_policy();
     ev_service_capacity();
     memory_coherency_candidate_policy();

@@ -1858,6 +1858,9 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
     const auto endpoint = public_output_endpoint_selector_local(build_nodes);
     if (endpoint.terminal_stage_key_required && !endpoint.terminal_stage_key.empty())
       br.terminal_host_stage_key = endpoint.terminal_stage_key;
+    else if (endpoint.terminal_node_kind == "ModelFragment" &&
+             endpoint.allow_unresolved_terminal_stage_fallback)
+      br.terminal_host_fragment_endpoint = endpoint;
   }
   maybe_compile_build_result_contracts(
       &br, &build_nodes, sess_opt, input_contract_from_input(sample), seed_spec,

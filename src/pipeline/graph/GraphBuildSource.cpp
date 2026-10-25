@@ -841,6 +841,9 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
     const auto endpoint = session_build_public_output_endpoint_selector(build_nodes);
     if (endpoint.terminal_stage_key_required && !endpoint.terminal_stage_key.empty())
       br.terminal_host_stage_key = endpoint.terminal_stage_key;
+    else if (endpoint.terminal_node_kind == "ModelFragment" &&
+             endpoint.allow_unresolved_terminal_stage_fallback)
+      br.terminal_host_fragment_endpoint = endpoint;
   }
   maybe_compile_source_contracts(&br, build_nodes, sess_opt, where);
   if (has_sink && stream_opt.public_output_contract && br.rendered_manifest.has_value()) {

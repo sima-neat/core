@@ -1099,9 +1099,21 @@ static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char*
                                    env_bool("SIMA_GST_ALL_BUFFER_DEBUG", false) ||
                                    env_bool("SIMA_GST_BOXDECODE_BUFFER_DEBUG", false) ||
                                    !env_str("SIMA_GST_ELEMENT_BUFFER_DEBUG", "").empty();
-    if (!build.terminal_host_stage_key.empty() && !terminal_observer) {
-      const auto key = apply_name_transform(build.name_transform, build.terminal_host_stage_key);
+    if (!terminal_observer) {
+      std::string key;
+      if (!build.terminal_host_stage_key.empty()) {
+        key = apply_name_transform(build.name_transform, build.terminal_host_stage_key);
+      } else if (build.terminal_host_fragment_endpoint) {
+        auto endpoint = *build.terminal_host_fragment_endpoint;
+        endpoint.terminal_stage_key =
+            apply_name_transform(build.name_transform, endpoint.terminal_stage_key);
+        if (const auto* candidate = pipeline_internal::sima::terminal_host_fragment_candidate(
+                *transformed_manifest, endpoint))
+          key = candidate->element_name;
+      }
       for (auto& stage : transformed_manifest->stages) {
+        if (key.empty())
+          break;
         if (stage.element_name != key && stage.logical_stage_id != key)
           continue;
         auto* element = gst_bin_get_by_name(GST_BIN(pipeline), stage.element_name.c_str());

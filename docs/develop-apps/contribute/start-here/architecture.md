@@ -1500,6 +1500,12 @@ and open mappings keep their pool generation alive after the Run closes; produce
 credits remain held until the last public loan is released. Existing DMA access
 completion and cache synchronization are unchanged for DMA allocations.
 
+A public `ModelFragment` endpoint may use the same pool when its rendered manifest
+identifies one unambiguous terminal native child and that child directly connects
+to the stopped public sink. Container labels alone do not prove eligibility.
+Shared or explicitly placed model arenas, device terminals and ambiguous terminals
+retain their existing allocation policy.
+
 Output decoding caches metadata, not frame payload ownership or final copy policy.
 Logical output projection precedes ownership materialization on both cold and warm
 frames. Compact immutable publications retain their identity-based fast path.
