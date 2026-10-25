@@ -438,7 +438,7 @@ void verify_late_credit_wake_outlives_link() {
         [&](const runtime::DownstreamTarget&, Sample&& sample, std::size_t) {
           {
             std::lock_guard lock(mu);
-            held = credits::realtime_frame_credits_for_sample(sample);
+            held = credits::attached_realtime_frame_credits_from_sample(sample);
           }
           cv.notify_all();
           return true;
@@ -452,9 +452,13 @@ void verify_late_credit_wake_outlives_link() {
               "late wake: dispatch did not retain a frame credit");
     }
     require(held.size() == 1, "late wake: expected one registered frame identity");
+    require(held.front().graph_private && held.front().namespace_id != 0 &&
+                held.front().stream_id == "stream0" && held.front().frame_id == 1,
+            "late wake: expected the exact attached graph credit");
     const auto before = link->stats();
-    require(before.credit_registered == 2 && before.credit_inflight == 2,
-            "late wake: both stream and global lane must hold the frame");
+    // One primary registry entry retains both stream and global lane gates.
+    require(before.credit_registered == 1 && before.credit_inflight == 2,
+            "late wake: one registered identity must hold both lane gates");
 
     auto& probe = probes[wake_ordinal - 1];
     probe.pause_on = wake_ordinal;
