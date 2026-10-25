@@ -55,6 +55,49 @@ def test_llima_matching_publication_and_cached_evidence(tmp_path):
     policy.check_llima(receipt(), tmp_path)
 
 
+def test_llima_rebuilt_in_place_refreshes_cached_metadata(tmp_path):
+    fixture(tmp_path)
+    policy.check_llima(receipt(), tmp_path)
+    cached = tmp_path / 'llima-policy-metadata.json'
+    previous = cached.read_bytes()
+    root = tmp_path / 'metadata.json'
+    metadata = json.loads(root.read_text())
+    for package in tmp_path.glob('*.deb'):
+        package.write_bytes(package.read_bytes() + b' rebuilt')
+        metadata['resources-checksum'][package.name] = policy.digest(package)
+    root.write_text(json.dumps(metadata))
+    current = root.read_bytes()
+    assert cached.read_bytes() == previous != current
+
+    policy.check_llima(receipt(), tmp_path)
+
+    assert root.read_bytes() == cached.read_bytes() == current
+    root.unlink()
+    policy.check_llima(receipt(), tmp_path)
+
+
+@pytest.mark.parametrize('resource', [None, 'llima-package-manifest.json',
+                                    'sima-lmm-0.6.0-Linux-core.deb',
+                                    'sima-lmm-0.6.0-Linux-dev.deb',
+                                    'sima-lmm-0.6.0-Linux-cli.deb'])
+def test_invalid_current_metadata_does_not_fall_back_to_cache(tmp_path, resource):
+    fixture(tmp_path)
+    policy.check_llima(receipt(), tmp_path)
+    cached = tmp_path / 'llima-policy-metadata.json'
+    previous = cached.read_bytes()
+    root = tmp_path / 'metadata.json'
+    metadata = json.loads(root.read_text())
+    if resource is None:
+        root.write_text('not JSON')
+    else:
+        metadata['resources-checksum'][resource] = '0' * 64
+        root.write_text(json.dumps(metadata))
+
+    with pytest.raises(ValueError):
+        policy.check_llima(receipt(), tmp_path)
+    assert cached.read_bytes() == previous
+
+
 @pytest.mark.parametrize('update', [
     {'elxr_version': '3.0.0_master_B2371'}, {'elxr_version': None},
     {'platform-version': '2.0.0'}, {'sdk': {'channel': 'official'}},
@@ -67,8 +110,12 @@ def test_reject_llima_incompatible_firmware_or_sdk(tmp_path, update):
 
 @pytest.mark.parametrize('name', ['llima-package-manifest.json', 'sima-lmm-0.6.0-Linux-core.deb',
                                   'sima-lmm-0.6.0-Linux-dev.deb', 'sima-lmm-0.6.0-Linux-cli.deb'])
-def test_reject_swapped_or_missing_publication_bytes(tmp_path, name):
+@pytest.mark.parametrize('cached_only', [False, True])
+def test_reject_swapped_or_missing_publication_bytes(tmp_path, name, cached_only):
     fixture(tmp_path)
+    policy.check_llima(receipt(), tmp_path)
+    if cached_only:
+        (tmp_path / 'metadata.json').unlink()
     target = tmp_path / name
     original = target.read_bytes()
     target.write_bytes(original + b' ')

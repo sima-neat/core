@@ -33,9 +33,10 @@ def validate(policy, core):
 def check_llima(policy, directory):
     directory = Path(directory)
     manifest_path = directory / 'llima-package-manifest.json'
-    metadata_path = directory / 'llima-policy-metadata.json'
+    # A local publication may be rebuilt in place; its metadata takes precedence.
+    metadata_path = directory / 'metadata.json'
     if not metadata_path.exists():
-        metadata_path = directory / 'metadata.json'
+        metadata_path = directory / 'llima-policy-metadata.json'
     manifest = json.loads(manifest_path.read_text())
     metadata = json.loads(metadata_path.read_text())
     checksums = metadata.get('resources-checksum', {})
