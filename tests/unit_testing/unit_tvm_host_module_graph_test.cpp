@@ -1,6 +1,8 @@
 #define SIMA_NEAT_INTERNAL 1
 #include "pipeline/internal/sima/static_contract/TvmHostModuleGraph.h"
 
+#include <nlohmann/json.hpp>
+
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -86,6 +88,41 @@ int main() {
   check(materialized->output_alias_input == std::vector<std::int32_t>{-1},
         "a real host graph is never mislabeled as an address alias");
 
+  auto identity_graph = nlohmann::ordered_json::parse(graph("__nop", 0));
+  identity_graph["nodes"].erase(1);
+  identity_graph["heads"] = {{0, 0, 0}};
+  identity_graph["node_row_ptr"] = {0, 1};
+  identity_graph["attrs"]["shape"][1] = {{1, 1, 1, 1}};
+  identity_graph["attrs"]["dltype"][1] = {"int32"};
+  identity_graph["attrs"]["storage_id"][1] = {0};
+  const auto identity_path = write_fixture("integer-identity", identity_graph.dump(2));
+  const auto identity = read_tvm_host_module_graph(identity_path, &error);
+  check(identity.has_value() && identity->input_types.front().scalar == "int32" &&
+            identity->output_types.front().scalar == "int32" &&
+            identity->output_alias_input == std::vector<std::int32_t>{0},
+        "an argument returned directly is an INT32 address alias without an A65 job");
+
+  auto cast_graph = nlohmann::ordered_json::parse(graph("fused_cast_int32_to_int64", 0));
+  cast_graph["attrs"]["shape"][1] = {{1, 1, 1, 1}, {1, 1, 1, 1}};
+  cast_graph["attrs"]["dltype"][1] = {"int32", "int64"};
+  const auto cast_path = write_fixture("integer-cast", cast_graph.dump(2));
+  const auto cast = read_tvm_host_module_graph(cast_path, &error);
+  check(cast.has_value() && cast->input_types.front().scalar == "int32" &&
+            cast->output_types.front().scalar == "int64" &&
+            cast->output_alias_input == std::vector<std::int32_t>{-1},
+        "a real INT32-to-INT64 cast remains a host job even with a shared storage id");
+
+  // A second entry in the same node is not the argument's tensor entry.
+  identity_graph["heads"] = {{0, 1, 0}};
+  identity_graph["node_row_ptr"] = {0, 2};
+  identity_graph["attrs"]["shape"][1].push_back({1, 1, 1, 1});
+  identity_graph["attrs"]["dltype"][1].push_back("int32");
+  identity_graph["attrs"]["storage_id"][1].push_back(0);
+  const auto other_entry_path = write_fixture("different-entry", identity_graph.dump(2));
+  const auto other_entry = read_tvm_host_module_graph(other_entry_path, &error);
+  check(other_entry.has_value() && other_entry->output_alias_input == std::vector<std::int32_t>{-1},
+        "sharing a node or storage id alone does not prove an argument alias");
+
   const auto malformed_path = write_fixture("malformed", "not-json");
   const auto malformed = read_tvm_host_module_graph(malformed_path, &error);
   check(!malformed.has_value() && !error.empty(),
@@ -103,6 +140,9 @@ int main() {
 
   std::filesystem::remove(alias_path);
   std::filesystem::remove(materialized_path);
+  std::filesystem::remove(identity_path);
+  std::filesystem::remove(cast_path);
+  std::filesystem::remove(other_entry_path);
   std::filesystem::remove(malformed_path);
   std::filesystem::remove(wrong_arch_path);
   std::cout << "unit_tvm_host_module_graph_test: PASS\n";

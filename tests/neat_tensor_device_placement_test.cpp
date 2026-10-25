@@ -201,23 +201,35 @@ int main() {
     direct_1.route.memory_index = 1;
 
     auto ingress = simaai::neat::sample_from_tensors({direct, direct_1});
+    for (guint i = 2U; i <= gst_buffer_get_max_memory(); ++i) {
+      ingress.tensors.push_back(i % 2U == 0U ? direct : direct_1);
+    }
     ingress.payload_type = simaai::neat::PayloadType::Tensor;
     ingress.media_type = "application/vnd.simaai.tensor";
     ingress.segment_name = "input_tensor";
     std::string ingress_error;
+    simaai::neat::pipeline_internal::reset_tensor_io_stats();
     auto ingress_holder = simaai::neat::pipeline_internal::sample_to_gst_envelope_holder(
         ingress, &ingress_error, /*allow_zero_copy=*/true);
+    const auto ingress_stats = simaai::neat::pipeline_internal::snapshot_tensor_io_stats();
     require(ingress_holder != nullptr,
             ingress_error.empty() ? "direct tensor-set envelope failed" : ingress_error);
     GstBuffer* ingress_buffer =
         simaai::neat::pipeline_internal::buffer_from_tensor_holder(ingress_holder);
     require(ingress_buffer != nullptr, "missing direct tensor-set GstBuffer");
     require(gst_buffer_n_memory(ingress_buffer) == 2U,
-            "direct tensor-set must preserve one memory per public input");
+            "repeated logical tensors must reuse two memory slots");
     for (guint i = 0U; i < gst_buffer_n_memory(ingress_buffer); ++i) {
       require(gst_is_dmabuf_memory(gst_buffer_peek_memory(ingress_buffer, i)),
               "direct tensor-set contains non-DMA-BUF memory");
+      auto* source = static_cast<GstSample*>(ingress.tensors[i].storage->holder.get());
+      require(gst_buffer_peek_memory(ingress_buffer, i) ==
+                  gst_buffer_peek_memory(gst_sample_get_buffer(source), 0U),
+              "repeated tensors must retain the original DMA memory");
     }
+    require(ingress_stats.tensor_copy_count == 0U && ingress_stats.tensor_copy_bytes == 0U &&
+                ingress_stats.gst_memory_map_calls == 0U,
+            "repeated-buffer admission must not copy or map DMA payloads");
     GstCustomMeta* tensor_set_meta =
         gst_buffer_get_custom_meta(ingress_buffer, SIMA_TENSOR_SET_META_NAME);
     require(tensor_set_meta != nullptr, "direct tensor-set is missing canonical route metadata");
@@ -226,8 +238,8 @@ int main() {
     guint physical_binding_count = 0U;
     require(gst_structure_get_uint(tensor_set_structure, "physical-binding-count",
                                    &physical_binding_count) &&
-                physical_binding_count == 2U,
-            "direct tensor-set must publish two dense physical carriers");
+                physical_binding_count == ingress.tensors.size(),
+            "direct tensor-set must publish a physical binding for each input view");
     const GValue* descriptor_value =
         gst_structure_get_value(tensor_set_structure, SIMA_TENSOR_SET_META_FIELD_DESCRIPTORS);
     auto* descriptor_blob = descriptor_value && G_VALUE_HOLDS(descriptor_value, G_TYPE_BYTES)
@@ -239,27 +251,34 @@ int main() {
                               g_bytes_get_data(descriptor_blob, &descriptor_bytes))
                         : nullptr;
     require(ingress_descriptors != nullptr &&
-                descriptor_bytes == 2U * sizeof(SimaTensorDescriptorV2),
+                descriptor_bytes == ingress.tensors.size() * sizeof(SimaTensorDescriptorV2),
             "direct tensor-set descriptor table is malformed");
-    require(
-        ingress_descriptors[0].physical_index == 0 && ingress_descriptors[0].memory_index == 0 &&
-            ingress_descriptors[1].physical_index == 1 && ingress_descriptors[1].memory_index == 1,
-        "direct tensor-set descriptor identities must mirror its carriers");
+    for (std::size_t i = 0U; i < ingress.tensors.size(); ++i) {
+      require(ingress_descriptors[i].physical_index == static_cast<int>(i) &&
+                  ingress_descriptors[i].memory_index == static_cast<int>(i % 2U),
+              "direct tensor-set descriptors must preserve every view and its backing memory");
+    }
     gst_buffer_unref(ingress_buffer);
 
     {
-      simaai::neat::TensorList too_many;
+      simaai::neat::TensorList distinct;
       for (guint i = 0U; i <= gst_buffer_get_max_memory(); ++i) {
-        too_many.push_back(i % 2U == 0U ? direct : direct_1);
+        distinct.push_back(simaai::neat::pipeline_internal::transfer_to_device(
+            direct_cpu, {simaai::neat::DeviceType::SIMA_CVU, 0}, &direct_segments, nullptr));
       }
-      auto rejected_input = simaai::neat::sample_from_tensors(too_many);
+      auto rejected_input = simaai::neat::sample_from_tensors(distinct);
       rejected_input.payload_type = simaai::neat::PayloadType::Tensor;
       rejected_input.media_type = "application/vnd.simaai.tensor";
       std::string detail;
+      simaai::neat::pipeline_internal::reset_tensor_io_stats();
       require(!simaai::neat::pipeline_internal::sample_to_gst_envelope_holder(
                   rejected_input, &detail, /*allow_zero_copy=*/true) &&
                   detail.find("memory-slot limit") != std::string::npos,
-              "failed zero-copy admission must not retry by copying DMA inputs");
+              "excess distinct DMA buffers must reject without a copying fallback");
+      const auto stats = simaai::neat::pipeline_internal::snapshot_tensor_io_stats();
+      require(stats.tensor_copy_count == 0U && stats.tensor_copy_bytes == 0U &&
+                  stats.gst_memory_map_calls == 0U,
+              "distinct-buffer rejection must not copy or map DMA payloads");
     }
 
     ingress = {};

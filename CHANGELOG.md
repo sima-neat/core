@@ -11,6 +11,9 @@ The format is based on Keep a Changelog and follows semantic versioning.
 - `TelemetryMonitor` records board power, temperatures, CPU usage, and memory from Sentinel over
   a window the caller chooses, in C++ and Python. `Telemetry::save()` writes YAML or JSON, and a
   `Telemetry` prints as YAML. `Model::benchmark()` uses it for `BenchmarkReport::telemetry`.
+  Memory is reported as MLA memory and EV74 memory, which add up, and board-wide Linux memory.
+  EV74 memory needs a Sentinel that reports `ev74_mem_allocated_mb`; older daemons leave it at
+  `samples == 0`.
 
 ### Changed
 - Canonical naming contract docs and migration guidance.

@@ -100,7 +100,7 @@ def composed_provider_controls(receipt, root):
 
 
 def verify(root, *, validate_metadata, expected_manifest=None, expected_receipt=None,
-           expected_deb_dirs=()):
+           expected_deb_dirs=(), expected_commit=None):
     root = Path(root)
     manifest = json.loads(resource(root, 'manifest.json').read_text())
     for key in ('platform-version', 'modelzoo-version', 'abi-version'):
@@ -117,6 +117,35 @@ def verify(root, *, validate_metadata, expected_manifest=None, expected_receipt=
     if expected_receipt:
         require(receipt_path.read_bytes() == Path(expected_receipt).read_bytes(), 'Backend receipt differs')
     core = single(root, 'sima-neat-*-Linux-core.deb')
+    if expected_commit is not None:
+        require(re.fullmatch(r'[0-9a-f]{40}', expected_commit), 'Invalid expected Core source commit')
+        buildinfo = []
+        process = subprocess.Popen(['dpkg-deb', '--fsys-tarfile', str(core)], stdout=subprocess.PIPE)
+        try:
+            with tarfile.open(fileobj=process.stdout, mode='r|') as archive:
+                for member in archive:
+                    if str(PurePosixPath(member.name)) == 'usr/share/sima-neat/buildinfo.json':
+                        require(member.isfile(), 'Core source receipt is not a regular file')
+                        with archive.extractfile(member) as stream:
+                            buildinfo.append(json.load(stream))
+            require(process.wait() == 0, 'Cannot inspect Core source receipt')
+        finally:
+            process.stdout.close()
+            if process.poll() is None:
+                process.terminate()
+                process.wait()
+        require(len(buildinfo) == 1, 'Missing or duplicate Core source receipt')
+        provenance = buildinfo[0].get('build', {})
+        if provenance.get('git_sha'):
+            matches = (provenance['git_sha'] == expected_commit
+                       and provenance.get('source_status') == 'clean'
+                       and provenance.get('git_dirty') is False)
+        else:
+            matches = (provenance.get('source_status') == 'unavailable'
+                       and provenance.get('git_dirty') is None
+                       and provenance.get('ci_requested_git_sha') == expected_commit
+                       and expected_commit[:12] in control(core)['Version'])
+        require(matches, 'Core CI provenance differs from expected source commit')
     dev = single(root, 'sima-neat-*-Linux-dev.deb')
     extras = single(root, '*-Linux-extras.tar.gz')
     wheel = single(root, '*.whl')
@@ -547,6 +576,7 @@ def main():
     parser.add_argument('--dist', type=Path)
     parser.add_argument('--expected-manifest', type=Path)
     parser.add_argument('--expected-receipt', type=Path)
+    parser.add_argument('--expected-commit', help='Require the packaged Core source commit')
     parser.add_argument('--expected-deb-dir', type=Path, action='append', default=[])
     parser.add_argument('--package-profile', choices=tuple(PACKAGE_PROFILES),
                         help='Required component roles for installed-package qualification')
@@ -563,7 +593,7 @@ def main():
                         help='Compare actual native/OTA state after --verify-installed')
     args = parser.parse_args()
     if args.capture_platform_baseline:
-        if args.verify_installed or args.write_package_inventory or args.read_package_inventory or args.platform_baseline:
+        if args.verify_installed or args.write_package_inventory or args.read_package_inventory or args.platform_baseline or args.expected_commit:
             parser.error('Platform baseline capture is a separate pre-install action')
         baseline = platform_inventory()
         with args.capture_platform_baseline.open('x') as stream:
@@ -574,7 +604,7 @@ def main():
         parser.error('--platform-baseline requires --verify-installed')
     if args.read_package_inventory:
         if (not args.verify_installed or args.dist or args.package_profile or args.expected_manifest
-                or args.expected_receipt or args.expected_deb_dir):
+                or args.expected_receipt or args.expected_deb_dir or args.expected_commit):
             parser.error('--read-package-inventory requires --verify-installed without archive inputs')
         require(args.read_package_inventory.is_file() and not args.read_package_inventory.is_symlink(),
                 'Missing/nonregular expected package inventory')
@@ -591,7 +621,8 @@ def main():
     result = verify(dist, validate_metadata=validate_metadata,
                     expected_manifest=args.expected_manifest,
                     expected_receipt=args.expected_receipt,
-                    expected_deb_dirs=args.expected_deb_dir)
+                    expected_deb_dirs=args.expected_deb_dir,
+                    expected_commit=args.expected_commit)
     result['scope'] = 'artifact-set'
     if args.write_package_inventory or args.verify_installed:
         inventory = package_inventory(dist, profile=args.package_profile)

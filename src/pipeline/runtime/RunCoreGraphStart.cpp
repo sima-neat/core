@@ -952,6 +952,7 @@ void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
   {
     RunCoreStartOptions start_opt;
     start_opt.run_options = rt.run_options;
+    start_opt.graph_options = core->graph_options;
     start_opt.mode = RunMode::Async;
     start_opt.last_pipeline = &rt.last_pipeline;
     start_opt.push_sample_policy = PushSamplePolicy::PreserveSample;

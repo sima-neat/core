@@ -1291,16 +1291,27 @@ ensure_neat_llima() {
     llima_ref="${NEAT_LLIMA_RESOLVED_REF:-${llima_ref}}"
   fi
 
+  # Match check_llima's root-only publication inventory, not build-tree DEBs.
   local core_deb dev_deb cli_deb
-  core_deb="$(find "${artifact_dir}" -maxdepth 3 -type f -name 'sima-lmm-*-Linux-core.deb' | sort | head -n 1)"
-  dev_deb="$(find "${artifact_dir}" -maxdepth 3 -type f -name 'sima-lmm-*-Linux-dev.deb' | sort | head -n 1)"
-  cli_deb="$(find "${artifact_dir}" -maxdepth 3 -type f -name 'sima-lmm-*-Linux-cli.deb' | sort | head -n 1)"
+  core_deb="$(find "${artifact_dir}" -maxdepth 1 -type f -name 'sima-lmm-*-Linux-core.deb' | sort | head -n 1)"
+  dev_deb="$(find "${artifact_dir}" -maxdepth 1 -type f -name 'sima-lmm-*-Linux-dev.deb' | sort | head -n 1)"
+  cli_deb="$(find "${artifact_dir}" -maxdepth 1 -type f -name 'sima-lmm-*-Linux-cli.deb' | sort | head -n 1)"
   if [[ -z "${core_deb}" || -z "${dev_deb}" || -z "${cli_deb}" ]]; then
     echo "ERROR: Expected sima-lmm core/dev/cli debs were not found in Vulcan LLiMa artifact." >&2
-    find "${artifact_dir}" -maxdepth 3 -type f -name '*.deb' -printf '  %f\n' | sort >&2
+    find "${artifact_dir}" -maxdepth 1 -type f -name '*.deb' -printf '  %f\n' | sort >&2
     rm -rf "${tmp_dir}"
     exit 1
   fi
+
+  # Compare the exact selected LLiMa publication with Scheduler before installation.
+  local scheduler_policy
+  scheduler_policy="$(python3 tools/build_dependencies.py sdk-policy --core "${REPO_ROOT}")"
+  local -a compatibility_args=(--policy-json "${scheduler_policy}" --llima-dir "${artifact_dir}")
+  if [[ -z "${NEAT_LLIMA_ARTIFACT_DIR}" && "${using_deb_cache}" != "1" ]]; then
+    compatibility_args+=(--llima-selector "${NEAT_LLIMA_RESOLVED_REF}"
+      --environment "${NEAT_VULCAN_ENV}" --cli "${SIMA_CLI_BIN}")
+  fi
+  python3 tools/ci/scheduler_sdk_policy.py "${compatibility_args[@]}"
 
   if [[ "${using_deb_cache}" != "1" ]]; then
     mkdir -p "${deb_cache_dir}"
@@ -1308,6 +1319,7 @@ ensure_neat_llima() {
     cp -f "${core_deb}" "${deb_cache_dir}/$(basename "${core_deb}")"
     cp -f "${dev_deb}" "${deb_cache_dir}/$(basename "${dev_deb}")"
     cp -f "${cli_deb}" "${deb_cache_dir}/$(basename "${cli_deb}")"
+    cp -f "${artifact_dir}/llima-package-manifest.json" "${artifact_dir}/llima-policy-metadata.json" "${deb_cache_dir}/"
   fi
 
   local -a llima_debs=("${core_deb}" "${dev_deb}")
@@ -3041,6 +3053,12 @@ main() {
   write_dist_package_contract_manifest_fields
   write_install_manifest
   generate_package_metadata_if_requested
+  if [[ "${SKIP_DIST}" != "ON" && "${BUILD_ALL}" == "ON" ]]; then
+    local scheduler_policy
+    scheduler_policy="$(python3 tools/build_dependencies.py sdk-policy --core "${REPO_ROOT}")"
+    python3 tools/ci/scheduler_sdk_policy.py --policy-json "${scheduler_policy}" \
+      --output dist/scheduler-sdk-policy.json
+  fi
   print_artifact_summary
   install_artifacts_into_current_environment_if_requested
   deploy_artifacts_to_devkit_if_requested

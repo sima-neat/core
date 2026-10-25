@@ -44,6 +44,9 @@ bool is_relation(const OpSpec& op) {
       op.kind == OpKind::PassThrough) {
     return true;
   }
+  if (is_alias_only_host_op(op)) {
+    return true;
+  }
   const auto* pack = std::get_if<PackOpConfig>(&op.config);
   return op.kind == OpKind::Pack && pack && !pack->materializes;
 }

@@ -4765,6 +4765,10 @@ bool build_kernel_stage_publication(const StageStaticSpec& stage,
       gst_caps_new_empty_simple("application/vnd.simaai.tensor"), gst_caps_unref);
   output->output_caps =
       std::shared_ptr<GstCaps>(make_generic_tensor_set_caps_local(), gst_caps_unref);
+  if (stage.native_kernel && !stage.native_kernel->output_format.empty()) {
+    gst_caps_set_simple(output->output_caps.get(), "format", G_TYPE_STRING,
+                        stage.native_kernel->output_format.c_str(), nullptr);
+  }
   output->output_name = stage.logical_outputs.front().logical_name;
   output->contract = std::move(contract);
   return true;

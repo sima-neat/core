@@ -21,46 +21,148 @@ def test_native_tooling_prerequisites_precede_compilation():
     assert 'build-essential file nlohmann-json3-dev python3-venv' in WORKFLOW
 
 
+@pytest.mark.parametrize('mode', ['standard', 'fuzz'])
+@pytest.mark.parametrize(('image_matches', 'configure_status', 'build_status'), [
+    (True, 0, 0), (True, 23, 0), (True, 0, 37), (False, 0, 0),
+])
+def test_sdk_configuration_precedes_build_and_preserves_failures(
+        tmp_path, mode, image_matches, configure_status, build_status):
+    """Execute the workflow shell with Docker mocked; never run dpkg or APT."""
+    import json
+    import re
+    import sys
+    import textwrap
+
+    script = textwrap.dedent(WORKFLOW.split('      build_command: |\n', 1)[1]
+                            .split('\n      post_build_command:', 1)[0])
+    values = {"inputs.build_mode || 'standard'": mode,
+              'needs.resolve-vulcan-config.outputs.vulcan_env': 'production',
+              'github.head_ref': 'feature/sdk', 'github.ref_name': 'feature/sdk',
+              'github.ref_type': 'branch', 'github.sha': 'a' * 40}
+    script = re.sub(r'\$\{\{\s*(.*?)\s*\}\}', lambda m: values[m[1]], script)
+    commands = tmp_path / 'commands.jsonl'
+    docker = tmp_path / 'docker'
+    docker.write_text(f'#!{sys.executable}\n' + '''import json, os, sys
+from pathlib import Path
+args = sys.argv[1:]
+log = Path(os.environ['COMMANDS'])
+with log.open('a') as output:
+    output.write(json.dumps(args) + '\\n')
+if args == ['ps', '--format', '{{.ID}}']:
+    print('selected-sdk')
+elif args == ['exec', 'selected-sdk', 'test', '-f', '/etc/sdk-release']:
+    pass
+elif args == ['images', '--format', '{{.Repository}}:{{.Tag}}']:
+    print('ghcr.io/sima-neat/sdk-develop:latest')
+elif args[:2] == ['image', 'inspect']:
+    print('sha256:' + 'a' * 64)
+elif args[0] == 'inspect':
+    print('sha256:' + ('a' if os.environ['IMAGE_MATCHES'] == '1' else 'b') * 64)
+elif args == ['exec', '--user', 'root', '-e', 'DEBIAN_FRONTEND=noninteractive',
+              'selected-sdk', 'dpkg', '--configure', '-a']:
+    if int(os.environ['CONFIGURE_STATUS']):
+        print('fixture package configuration failed', file=sys.stderr)
+    sys.exit(int(os.environ['CONFIGURE_STATUS']))
+elif args[0] == 'exec' and args[-3:-1] == ['bash', '-lc']:
+    assert args[-4] == 'selected-sdk'
+    assert './build.sh ${CORE_BUILD_ARGS}' in args[-1]
+    sys.exit(int(os.environ['BUILD_STATUS']))
+else:
+    raise AssertionError(args)
+''')
+    docker.chmod(0o755)
+    result = subprocess.run(['/bin/bash', '-c', script], cwd=tmp_path,
+                            text=True, capture_output=True,
+                            env={'PATH': f'{tmp_path}:/usr/bin:/bin', 'HOME': str(tmp_path),
+                                 'COMMANDS': str(commands), 'IMAGE_MATCHES': str(int(image_matches)),
+                                 'CONFIGURE_STATUS': str(configure_status),
+                                 'BUILD_STATUS': str(build_status)})
+    calls = [json.loads(line) for line in commands.read_text().splitlines()]
+    configuration = [i for i, args in enumerate(calls) if args[-3:] == ['dpkg', '--configure', '-a']]
+    build = [i for i, args in enumerate(calls) if args[-3:-1] == ['bash', '-lc']]
+    expected_status = (configure_status or build_status) if image_matches else 1
+    assert result.returncode == expected_status, result.stderr
+    assert len(configuration) == int(image_matches)
+    if not image_matches or configure_status:
+        assert not build
+    else:
+        assert len(build) == 1 and configuration[0] < build[0]
+    if configure_status and image_matches:
+        assert 'fixture package configuration failed' in result.stderr
+
+
 @pytest.mark.parametrize('missing_archive', [False, True])
 def test_sdk_shell_retains_only_actual_official_cache_exports(tmp_path, missing_archive):
     """Exercise the actual shell below its SDK/coordinator command boundaries."""
     import json
+    import os
     import shlex
     import sys
     script = (ROOT / 'scripts/ci/prepare_scheduler_sdk.sh').read_text()
-    assert 'SYSROOT_UPDATE_DOWNLOAD_DIR' not in script
-    assert '--platform-package-dir /tmp/modalix' in script
+    assert 'SYSROOT_UPDATE_DOWNLOAD_DIR=$package_dir/downloads' in script
+    assert 'sysroot update' in script
     cache = tmp_path / 'official-cache'; cache.mkdir()
     provider = cache / 'consumed.deb'; provider.write_bytes(b'exact provider')
     (cache / 'unrelated.deb').write_bytes(b'unrelated SDK package')
     tools = tmp_path / 'tools'; tools.mkdir()
     (tools / 'build_dependencies.py').write_text('''import json, pathlib, shlex, sys
 command = sys.argv[1]
-if command == 'sdk-policy': print(json.dumps({'sysroot-version':'3.0.0~git202610140145.e5ece50-2121'}))
+if command == 'sdk-policy': print(json.dumps({'elxr_version':'3.0.0_master_B2372', 'sysroot-version':'3.0.0~pre2372', 'platform-version':'3.0.0', 'sdk':{'channel':'develop'}}))
 elif command == 'verify-sdk': print(json.dumps({'status':'verified'}))
 else:
     root = pathlib.Path(sys.argv[sys.argv.index('--platform-package-dir')+1])
-    p = root / 'consumed.deb'
-    if not p.is_file(): raise SystemExit(31)
+    matches = list(root.rglob('consumed.deb'))
+    if len(matches) != 1: raise SystemExit(31)
+    p = matches[0]
     print('export NEAT_RUNNER_PLATFORM_RUNTIME_DEBS=' + shlex.quote(json.dumps([str(p)])))
 ''')
-    official = tmp_path / 'official.sh'; official.write_text('#!/bin/sh\nexit 0\n'); official.chmod(0o755)
+    official = tmp_path / 'official.sh'
+    official.write_text('#!/bin/sh\nset -eu\n[ "$SDK_PKG_LIST" = fixture-dev ]\n'
+                        'if [ "$1" = update ]; then\n'
+                        '  mkdir -p "$SYSROOT_UPDATE_DOWNLOAD_DIR"\n'
+                        f'  cp {shlex.quote(str(cache))}/*.deb "$SYSROOT_UPDATE_DOWNLOAD_DIR/"\n'
+                        'fi\n')
+    official.chmod(0o755)
     env = tmp_path / 'env.sh'; env.write_text('export CXX=cross-g++-14\n')
-    script = script.replace('/usr/local/bin/setup-sdk-sysroot.sh', str(official))
+    script = script.replace('sysroot update', str(official) + ' update').replace('sysroot status', str(official) + ' status')
     script = script.replace('/opt/bin/simaai-init-build-env', str(env))
-    script = script.replace('/tmp/modalix', str(cache))
+    script = script.replace('tools/ci/scheduler_sdk_policy.py', str(ROOT / 'tools/ci/scheduler_sdk_policy.py'))
+    (tmp_path / 'deps').mkdir()
+    (tmp_path / 'deps/manifest.json').write_text(json.dumps({'platform-version': '3.0.0', 'sdk': {'channel': 'develop'}}))
     # Never grant fixture privileges; source production root/sudo branches are unchanged.
     script = script.replace('[[ $(id -u) == 0 ]]', '[[ 0 == 0 ]]')
     if missing_archive: provider.unlink()
     retained = tmp_path / 'retained'
     result = subprocess.run(['/bin/bash', '-c', script, 'sdk-test', str(retained)], cwd=tmp_path,
-                            text=True, capture_output=True)
+                            text=True, capture_output=True, env={**os.environ, 'SDK_PKG_LIST': 'fixture-dev'})
     if missing_archive:
         assert result.returncode == 31, result.stderr
         assert not list(retained.glob('*.deb'))
     else:
         assert result.returncode == 0, result.stderr
-        assert [p.name for p in retained.glob('*.deb')] == ['consumed.deb']
-        assert (retained / 'consumed.deb').read_bytes() == provider.read_bytes()
-        assert str(retained / 'consumed.deb') in result.stdout
+        selected = retained / 'retained'
+        assert [p.name for p in selected.glob('*.deb')] == ['consumed.deb']
+        assert (selected / 'consumed.deb').read_bytes() == provider.read_bytes()
+        assert str(selected / 'consumed.deb') in result.stdout
+        assert (retained / 'downloads/consumed.deb').read_bytes() == provider.read_bytes()
+        assert str(retained / 'downloads') not in result.stdout
         assert str(cache) not in result.stdout
+
+
+@pytest.mark.parametrize('version', ['', '3.0.0~pre2371'])
+def test_invalid_scheduler_receipt_stops_before_sdk_mutation(tmp_path, version):
+    import json
+    tools = tmp_path / 'tools'
+    tools.mkdir()
+    policy = {'platform-version': '3.0.0', 'sdk': {'channel': 'develop'},
+              'elxr_version': '3.0.0_master_B2372', 'sysroot-version': version}
+    (tools / 'build_dependencies.py').write_text('print(' + repr(json.dumps(policy)) + ')\n')
+    script = (ROOT / 'scripts/ci/prepare_scheduler_sdk.sh').read_text()
+    script = script.replace('tools/ci/scheduler_sdk_policy.py', str(ROOT / 'tools/ci/scheduler_sdk_policy.py'))
+    marker = tmp_path / 'mutation'
+    script = script.replace('sysroot update', f'touch {marker}; false')
+    result = subprocess.run(['/bin/bash', '-c', script, 'policy-test', str(tmp_path / 'cache')],
+                            cwd=tmp_path, capture_output=True, text=True)
+    assert result.returncode != 0
+    assert 'Scheduler exact sysroot receipt differs' in result.stderr
+    assert not marker.exists()

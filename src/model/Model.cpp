@@ -28,8 +28,10 @@
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/RenderedMlaContractQuery.h"
+#include "pipeline/internal/SelectedStageBoundary.h"
 #include "pipeline/internal/InputRouteProcessor.h"
 #include "pipeline/internal/SampleUtil.h"
+#include "pipeline/internal/TensorTransfer.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/UxLogging.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
@@ -3300,6 +3302,34 @@ public:
       ingress_contracts_.push_back(
           make_direct_mla_fallback_ingress_contract(plan_, joined_packed_segment_name_));
     }
+    if (direct_tensor_set_ingress_) {
+      const auto infer = internal::ModelAccess::build_infer_nodes(model_, false);
+      std::string error;
+      const auto selected = internal::selected_model_fragment_stage_facts(infer, &error);
+      if (!selected) {
+        throw std::runtime_error("ModelIngressRouteProcessor: " + error);
+      }
+      const auto* mla_contract = pipeline_internal::direct_model_mla_contract(infer, *selected);
+      direct_input_storage_bytes_.resize(ingress_contracts_.size(), 0U);
+      if (mla_contract) {
+        // Rank-two ingress convenience dimensions do not retain the MLA batch count.
+        direct_mla_batch_size_ = mla_contract->payload.batch_size;
+        for (const auto& input : mla_contract->runtime_contract.physical_inputs) {
+          if (input.source_physical_index < 0 || input.source_byte_offset < 0 ||
+              static_cast<std::size_t>(input.source_physical_index) >=
+                  direct_input_storage_bytes_.size()) {
+            throw std::runtime_error("direct MLA input has no exact public storage source");
+          }
+          const auto offset = static_cast<std::uint64_t>(input.source_byte_offset);
+          if (offset > std::numeric_limits<std::size_t>::max() ||
+              input.size_bytes > std::numeric_limits<std::size_t>::max() - offset) {
+            throw std::runtime_error("direct MLA input storage extent overflows");
+          }
+          auto& bytes = direct_input_storage_bytes_[input.source_physical_index];
+          bytes = std::max(bytes, static_cast<std::size_t>(offset + input.size_bytes));
+        }
+      }
+    }
     if (!uses_direct_tensor_set_route()) {
       // Legacy multi-ingress: spin up per-ingress branch sessions. The
       // bundled-appsrc fan-in path skips branch_sessions entirely; the
@@ -3614,6 +3644,8 @@ private:
       Tensor tensor = inputs[public_index];
       validate_single_tensor_ingress_expectation(ingress, input_info_from_tensor(tensor, false),
                                                  where);
+      tensor = internal::materialize_dense_ingress_tail(
+          std::move(tensor), direct_input_storage_bytes_.at(public_index), direct_mla_batch_size_);
       prepared.push_back(stamp_direct_mla_ingress_tensor(std::move(tensor), ingress, public_index));
     }
     return prepared;
@@ -3891,6 +3923,8 @@ private:
   // memory_index/physical_index/segment_name instead of coalescing them into
   // a packed parent (the firmware addresses each placeholder independently).
   bool consumer_keeps_distinct_physical_inputs_ = false;
+  std::vector<std::size_t> direct_input_storage_bytes_;
+  int direct_mla_batch_size_ = 1;
   // Whether this route is a multi-IO pre-MLA fan-in handled via the bundled
   // appsrc path (set by ctor, immutable thereafter). When true, ctor skips
   // branch_graphs_ construction and the four virtual overrides emit a
@@ -6844,6 +6878,40 @@ std::vector<TensorSpec> Model::output_specs() const {
           outputs = std::move(published);
         }
       }
+      if (upper_copy(terminal->processor) == "A65") {
+        // An address-only reshape after the inference stage is part of the
+        // public model egress even though it schedules no postprocess command.
+        for (std::size_t oi = 0; oi < outputs.size(); ++oi) {
+          auto stage_index = static_cast<std::size_t>(terminal - mpk.plugins.begin());
+          auto output_index = static_cast<int>(oi);
+          for (std::size_t remaining = mpk.plugins.size(); remaining > 0U; --remaining) {
+            const pipeline_internal::sima::MpkContractEdge* next = nullptr;
+            bool branched = false;
+            for (const auto& edge : mpk.edges) {
+              if (edge.src_plugin_index == stage_index && edge.src_output_index == output_index) {
+                branched = next != nullptr;
+                if (branched)
+                  break;
+                next = &edge;
+              }
+            }
+            if (!next || branched || next->dst_plugin_index >= mpk.plugins.size())
+              break;
+            const auto& consumer = mpk.plugins[next->dst_plugin_index];
+            if (consumer.kernel != "reshape_transform" || consumer.input_tensors.size() != 1U ||
+                consumer.output_tensors.size() != 1U ||
+                consumer.input_tensors.front().size_bytes != outputs[oi].size_bytes ||
+                consumer.output_tensors.front().size_bytes != outputs[oi].size_bytes)
+              break;
+            auto reshaped = consumer.output_tensors.front();
+            reshaped.dtype = outputs[oi].dtype;
+            reshaped.logical_dtype = outputs[oi].logical_dtype;
+            outputs[oi] = std::move(reshaped);
+            stage_index = next->dst_plugin_index;
+            output_index = 0;
+          }
+        }
+      }
       for (const auto& output : outputs) {
         TensorSpec spec;
         spec.dtypes = {
@@ -7652,6 +7720,86 @@ TensorList materialize_joined_ingress_tensors(
 
 Tensor ModelAccess::make_dummy_input(const InputOptions& options) {
   return make_dummy_tensor(options);
+}
+
+Tensor materialize_dense_ingress_tail(Tensor tensor, const std::size_t required_storage_bytes,
+                                      const int batch_size) {
+  const auto logical_bytes = tensor.dense_bytes_tight();
+  if (required_storage_bytes <= logical_bytes) {
+    return tensor;
+  }
+  if (batch_size != 1) {
+    throw std::runtime_error(
+        "direct MLA allocation tail requires batch one; padded batched inputs need explicit "
+        "per-sample storage strides");
+  }
+  if (logical_bytes == 0U || !tensor.storage || tensor.byte_offset < 0) {
+    throw std::runtime_error("direct MLA allocation tail requires a valid dense input tensor");
+  }
+  if (required_storage_bytes > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max())) {
+    throw std::runtime_error("direct MLA allocation tail exceeds the carrier shape range");
+  }
+  const auto memory_index =
+      tensor.route.memory_index >= 0 ? tensor.route.memory_index : tensor.route.physical_index;
+  auto available = tensor.storage->size_bytes;
+  if (!tensor.storage->sima_segments.empty()) {
+    const auto index = memory_index >= 0 ? static_cast<std::size_t>(memory_index) : 0U;
+    available = index < tensor.storage->sima_segments.size()
+                    ? tensor.storage->sima_segments[index].size_bytes
+                    : 0U;
+  }
+  const auto offset = static_cast<std::uint64_t>(tensor.byte_offset);
+  const bool reusable =
+      tensor.is_contiguous() && offset <= available && required_storage_bytes <= available - offset;
+  if (reusable && tensor.storage->kind != StorageKind::CpuOwned &&
+      tensor.storage->kind != StorageKind::CpuExternal) {
+    return tensor;
+  }
+  Tensor carrier;
+  carrier.dtype = TensorDType::UInt8;
+  carrier.shape = {static_cast<std::int64_t>(required_storage_bytes)};
+  if (reusable) {
+    carrier.storage = tensor.storage;
+    carrier.device = tensor.device;
+    carrier.byte_offset = tensor.byte_offset;
+  } else {
+    carrier.storage = make_cpu_owned_storage(required_storage_bytes);
+    carrier.device = {DeviceType::CPU, 0};
+    {
+      const auto mapping = carrier.storage->map(MapMode::Write);
+      auto* bytes = static_cast<std::uint8_t*>(mapping.data);
+      if (!tensor.copy_dense_bytes_tight_to(bytes, logical_bytes)) {
+        throw std::runtime_error("direct MLA allocation tail could not copy its logical input");
+      }
+      std::memset(bytes + logical_bytes, 0, required_storage_bytes - logical_bytes);
+    }
+    if (tensor.device.type == DeviceType::SIMA_MLA || tensor.device.type == DeviceType::SIMA_CVU) {
+      carrier = pipeline_internal::transfer_to_device(carrier, tensor.device, nullptr, nullptr);
+    }
+  }
+  carrier.read_only = tensor.read_only;
+  if (carrier.storage->kind == StorageKind::CpuOwned ||
+      carrier.storage->kind == StorageKind::CpuExternal) {
+    // Publish the proved carrier before restoring the logical view. The generic
+    // CPU wrapper intentionally exposes only dense_bytes_tight(), which would
+    // otherwise discard this input's allocation tail again.
+    std::string error;
+    const auto holder = pipeline_internal::make_sample_holder_from_bundle(
+        sample_from_tensors(TensorList{carrier}), &error);
+    if (!holder) {
+      throw std::runtime_error("direct MLA allocation tail publication failed: " + error);
+    }
+    carrier.storage =
+        pipeline_internal::make_gst_sample_storage(static_cast<GstSample*>(holder.get()));
+    carrier.byte_offset = 0;
+  }
+  tensor.storage = std::move(carrier.storage);
+  tensor.device = carrier.device;
+  tensor.byte_offset = carrier.byte_offset;
+  tensor.strides_bytes.clear();
+  tensor.route.memory_index = 0;
+  tensor.route.physical_index = -1;
+  return tensor;
 }
 
 const ModelPack& ModelAccess::pack(const Model& model) {

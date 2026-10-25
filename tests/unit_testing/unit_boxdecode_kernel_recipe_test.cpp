@@ -7,6 +7,8 @@
 #include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
 #include "pipeline/internal/contract/ContractFacts.h"
 #include "gst/GstInit.h"
+#include "pipeline/DetectionTypes.h"
+#include "pipeline/FeatureTypes.h"
 #include <simaai/scheduler/testing/probe.h>
 #include <iostream>
 #include <simaai/scheduler/client/kernel.h>
@@ -67,6 +69,13 @@ BoxDecodeKernelRecipeResult check(const CompiledBoxDecodeContract& s,
                                                                        ResizeMode::Letterbox}) {
   auto r = prepare_boxdecode_kernel(s, geometry);
   const auto& recipe = *r.compiled.recipe;
+  const auto expected_format =
+      s.payload.decode_type != BoxDecodeType::SuperPoint ? kDetectionFormatBbox
+      : s.payload.superpoint.output_format == SuperPointOutputFormat::LegacyA65InterleavedV0
+          ? kFeatureFormatLegacyA65V0
+          : kFeatureFormatPointsV1;
+  require(recipe.output_format == expected_format, "producer wire identity was lost");
+  require(!recipe.publication, "wire identity must not bypass the final arena publication builder");
   require(recipe.members.size() >= 2, "decode/publication members missing");
   require(recipe.members.back().dependencies == std::vector<std::size_t>{r.decode_member},
           "publication must depend on decode");
@@ -690,6 +699,10 @@ void superpoint() {
     const auto r = check(s);
     require(r.compiled.recipe->members[r.decode_member].inputs[0].tensor == 1,
             "SuperPoint explicit role ignored");
+    s.payload.superpoint.output_format = SuperPointOutputFormat::LegacyA65InterleavedV0;
+    // The legacy wire requires 256 INT8 output descriptors, independent of input dtype.
+    s.payload.superpoint.descriptor_output_dtype = TensorDType::Int8;
+    check(s);
   }
   // MLA BF16 pixel-major storage is byte-planar, not dense padded BF16.
   // Keep the explicit native layout and avoid an unnecessary detess member.

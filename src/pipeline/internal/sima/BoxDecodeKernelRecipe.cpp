@@ -1,5 +1,7 @@
 #include "pipeline/internal/sima/BoxDecodeKernelRecipe.h"
 #include "pipeline/internal/sima/BoxDecodePublication.h"
+#include "pipeline/DetectionTypes.h"
+#include "pipeline/FeatureTypes.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/sima/stagesemantics/SsdDecodeContract.h"
@@ -661,6 +663,10 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
     decode.outputs.push_back(
         build.scratch(inspection.outputs()[i], inspection.output_requirements()[i]));
   const auto publication = prepare_boxdecode_publication(wire, outputs);
+  build.recipe->output_format =
+      wire == BoxDecodeWireFormat::FeaturePointsV1         ? kFeatureFormatPointsV1
+      : wire == BoxDecodeWireFormat::LegacyFeaturePointsV0 ? kFeatureFormatLegacyA65V0
+                                                           : kDetectionFormatBbox;
   const auto decode_member = build.recipe->members.size();
   auto publication_inputs = decode.outputs;
   build.recipe->members.push_back(std::move(decode));

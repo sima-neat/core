@@ -773,6 +773,8 @@ report = model.benchmark(options)
 
 將 `original_width` 和 `original_height` 組合在一起。基準測試仍然會產生一個模型形狀的合成張量；這些欄位提供 BoxDecode 中繼資料所需的來源幾何形狀和調整大小的轉換。如果您省略它們，基準測試將從解析後的預處理和模型輸入合約中推斷幾何形狀。這些每次執行的值優先於 `ModelOptions` 中已棄用的 BoxDecode 幾何形狀提示。現有的 `benchmark(num_samples)` 呼叫會保持相同的行為。
 
+若也要量測每個 MLA 層或每個階段的時間，請設定 `include_mla_layer_stats` 或 `include_mla_stage_stats`。若要保留結果，`report.save(path)` 會將報告寫成 YAML；路徑以 `.json` 結尾時則寫成 JSON。兩者的範例請參閱[為您的模型進行基準測試](/tutorials/benchmark-your-model)。
+
 ### 執行長度
 
 基準測試會測量單次執行（single-flight）延遲，然後執行另一個獨立的吞吐量階段。每個階段都會持續執行，直到至少測量了 `num_samples` 個輸入且已經過 `min_duration_ms`（預設為 10 秒），因此兩個階段依相同規則停止，吞吐量階段的功耗和溫度讀數也會涵蓋多個遙測樣本，而不只是短暫的爆發。`latency_ms` 是延遲階段的平均延遲，`latency_p50_ms`、`latency_p95_ms` 和 `latency_p99_ms` 則是其百分位數。`throughput_samples` 和 `throughput_duration_ms` 會回報吞吐量階段實際測量的內容。若要進行快速的初步檢查，請將 `min_duration_ms` 設為 0，讓每個階段在測量 `num_samples` 個輸入後即停止：
@@ -817,11 +819,11 @@ Sentinel 讀取都不會延長計時工作負載。無效樣本時間戳記或�
 | `telemetry.board_temperatures_c` | SoM 頂面與底面感測器。 |
 | `telemetry.cpu_usage_pct` | CPU 使用率。每個樣本為前一個區間的平均值，因此 `maximum` 代表最忙碌的區間。 |
 | `telemetry.cpu_cores_usage_pct` | 依核心順序列出的各 CPU 核心使用率。即使所有核心平均值 `cpu_usage_pct` 維持偏低，單一忙碌的核心也會顯示在這裡。 |
-| `telemetry.mla_memory_mib` | 為 MLA 分配的記憶體（MiB）。模型在載入時分配這些記憶體，因此若沒有其他程式在執行，這就是模型的 MLA 記憶體。 |
-| `telemetry.cma_memory_mib` | 已使用的連續記憶體（CMA，MiB）。它包含 MLA 記憶體池，因此請勿將其與 `mla_memory_mib` 相加。閒置時，它也包含 Linux 從 CMA 借用的頁面快取。 |
-| `telemetry.linux_memory_used_mib` | Linux 已使用的記憶體（不含頁面快取，MiB）。 |
+| `telemetry.mla_memory_mib` | MLA 持有的記憶體（MiB），包括 MLA 記憶體池中的緩衝區，以及只有 MLA 使用的共用緩衝區。模型在載入時分配這些記憶體，因此若沒有其他程式在執行，這就是模型的 MLA 記憶體。 |
+| `telemetry.ev74_memory_mib` | EV74 持有的記憶體（MiB），例如 EV74 為 MLA 預處理的輸入影格。EV74 與 MLA 都使用的共用緩衝區計入此處，而非 `mla_memory_mib`，因此兩者相加即為模型的加速器記憶體。視訊解碼器或相機 ISP 產生的影格不計入任何一項。 |
+| `telemetry.linux_memory_used_mib` | 整塊板子使用的記憶體（Linux `MemTotal - MemAvailable`，MiB）。它包含所有行程與 EV74 的緩衝區，因此請勿將其與上述兩項相加。 |
 
-每項指標都會回報 `samples`、`mean`、`minimum`、`maximum` 與 `last`，而 `samples == 0` 表示板子未回報該項指標。Sentinel 每 2 秒取樣一次，因此 10 秒的階段約可取得 5 個樣本。所有數值都涵蓋整個板子，包括其他正在執行的程序。
+每項指標都會回報 `samples`、`mean`、`minimum`、`maximum` 與 `last`，而 `samples == 0` 表示板子未回報該項指標。回報的 0 仍算作一個樣本：未載入模型時，`mla_memory_mib` 與 `ev74_memory_mib` 會在 `samples > 0` 的情況下顯示 0 MiB。Sentinel 每 2 秒取樣一次，因此 10 秒的階段約可取得 5 個樣本。所有數值都涵蓋整個板子，包括其他正在執行的程序。
 
 當 Sentinel 未執行或階段太短而無法收集到樣本時，基準測試仍會傳回延遲與 FPS。功耗欄位會保持為零，`telemetry.status` 會指出原因（否則為 `"ok"`），而列印的摘要會顯示 `Power: unavailable (<reason>)`。
 

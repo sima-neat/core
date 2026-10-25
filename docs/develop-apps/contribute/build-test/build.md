@@ -201,3 +201,5 @@ cmake -LA -B build      # include advanced
 ```
 
 The top-level `CMakeLists.txt` is the source of truth for option names.
+
+Core inherits firmware and the exact sysroot from the selected Scheduler package receipt; it does not declare firmware separately. The receipt must match Core’s platform and SDK channel. CI retains that policy with the build artifacts and uses it to select the exact DevKit without fallback. Before installing LLiMa, Core checks its published firmware, platform and SDK channel against Scheduler and verifies the selected DEBs against the same publication. LLiMa does not publish an exact sysroot receipt, so this check establishes declared firmware compatibility, not identical sysroot inventories. For local `--llima PATH` builds, provide the root LLiMa distribution containing the core/dev/cli DEBs, `llima-package-manifest.json` and `metadata.json`. Missing or conflicting evidence stops the build. Rebuild and publish Kernels → Runner → Scheduler, and matching LLiMa, before rebuilding Core.

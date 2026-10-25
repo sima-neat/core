@@ -18,6 +18,7 @@
 #include "test_main.h"
 #include "test_utils.h"
 #include "nodes/common/Output.h"
+#include "nodes/common/Caps.h"
 #include "graphs/Fragments.h"
 #include "nodes/io/CameraInput.h"
 #include "nodes/io/HttpSource.h"
@@ -25,6 +26,7 @@
 
 #include <gst/gst.h>
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
@@ -715,11 +717,65 @@ simaai::neat::Sample make_device_gst_sample_with_external_ref(GstSample** extern
   return out;
 }
 
+void require_child_holder_window_uses_parent_policy() {
+  using namespace simaai::neat;
+  ScopedEnv synchronous_teardown("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", "0");
+  ScopedEnv no_async_teardown("SIMA_GST_TEARDOWN_ASYNC", "0");
+  for (const bool source : {false, true}) {
+    for (const std::size_t edge_queue : {1U, 3U, 12U}) {
+      Graph graph;
+      if (source) {
+        graph.add(nodes::Custom("videotestsrc num-buffers=1 pattern=black ! "
+                                "video/x-raw,format=RGB,width=32,height=24,framerate=30/1",
+                                InputRole::Source));
+      } else {
+        graph.add(nodes::Input("image"));
+      }
+      graph.add(nodes::Output("output", OutputOptions::EveryFrame(3)));
+      RunOptions options;
+      options.queue_depth = 3;
+      const auto seed =
+          sample_from_tensors({make_color_tensor(32, 24, ImageSpec::PixelFormat::RGB, 0x29)});
+      auto plan = runtime::compile_public_graph(graph, options,
+                                                source ? std::nullopt : std::optional{seed});
+      require(plan.pipeline_segments.size() == 1, "holder policy fixture requires one segment");
+      // Exercise the actual graph-owned source and seeded child startup paths,
+      // not start_pipeline_segment called with hand-authored child options.
+      plan.linear_compat = false;
+      plan.pipeline_segments.front().boundary.graph_internal_output = true;
+      runtime::RunCoreStartOptions start;
+      start.run_options = options;
+      start.graph_options = runtime::graph_runtime_options_from_run_options(options);
+      start.graph_options.edge_queue = edge_queue;
+      start.mode = RunMode::Async;
+      start.allow_startup_preflight = false;
+      if (!source)
+        start.seed = seed;
+      auto parent = runtime::RunCore::start(std::move(plan), std::move(start));
+      require(parent->graph_execution_ && parent->graph_execution().pipelines.size() == 1,
+              "holder policy fixture bypassed graph startup");
+      const auto child = parent->graph_execution().pipelines.front()->run_core;
+      require(child != nullptr, "graph did not publish its constructed child");
+      const auto& stream = child->pipeline.stream_opt;
+      require(stream.holder_loan_credits_auto && !stream.copy_output,
+              "internal fixture did not select retained transport");
+      const auto expected = static_cast<int>(std::max(std::size_t{5}, edge_queue));
+      require(stream.holder_loan_sample_window == expected &&
+                  stream.holder_loan_credits ==
+                      expected * std::max(1, stream.holder_loan_per_sample_arity),
+              "child used the default edge queue instead of its parent's retention policy");
+      parent->close();
+      require(child->closed.load(), "parent did not normally close its child");
+    }
+  }
+}
+
 } // namespace
 
 RUN_TEST(
     "unit_graph_internal_zero_copy_fallback_test", ([] {
       require_native_retention_pool_policy();
+      require_child_holder_window_uses_parent_policy();
       require_shared_arena_budget();
       require_output_policy_matrix();
       require_dmabuf_loans_and_pressure_preserve_storage();

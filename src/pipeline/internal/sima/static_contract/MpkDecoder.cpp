@@ -337,6 +337,20 @@ contiguous_stride_bytes(const TensorShape& value_shape, const std::uint64_t elem
   return result;
 }
 
+bool matches_contiguous_strides(const TensorShape& shape, const std::vector<std::int64_t>& actual,
+                                const std::vector<std::int64_t>& dense) {
+  if (actual.size() != shape.size() || dense.size() != shape.size()) {
+    return false;
+  }
+  for (std::size_t axis = 0; axis < shape.size(); ++axis) {
+    // A singleton axis never advances the address, even in a padded MLA crop.
+    if (shape[axis] > 1 && actual[axis] != dense[axis]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 std::optional<std::uint64_t> exact_element_width(const std::uint64_t bytes,
                                                  const TensorShape& value_shape) {
   std::uint64_t elements = 1U;
@@ -456,7 +470,7 @@ bool mla_input_extent_matches(const ValueSpec& value, const std::uint64_t physic
                                  ? dense_bytes(*value.logical_shape, *value.logical_dtype)
                                  : std::nullopt;
   const auto aligned_bytes = align_up_16(value.required_bytes);
-  // Allocation tail padding does not enlarge the logical input transfer.
+  // Allocation tail padding does not enlarge the logical tensor payload.
   return transfer_bytes == value.required_bytes &&
          value.representation == ValueRepresentation::Dense && !value.read_expression &&
          value.logical_shape && !value.logical_shape->empty() &&
@@ -1305,7 +1319,9 @@ void lower_read_expressions(ModelExecutionPlanData& data, std::vector<MpkProofFa
         const auto input_dense = input_width
                                      ? contiguous_stride_bytes(*input.logical_shape, *input_width)
                                      : std::nullopt;
-        if (!input_dense || input.read_expression->stride_bytes != *input_dense) {
+        if (!input_dense ||
+            !matches_contiguous_strides(*input.logical_shape, input.read_expression->stride_bytes,
+                                        *input_dense)) {
           reject(MpkDecodeErrorCode::ConfigurationMismatch, "$.ops[" + std::to_string(op.id) + "]",
                  "reshape cannot reinterpret a non-contiguous input view");
         }
@@ -1332,19 +1348,44 @@ void lower_read_expressions(ModelExecutionPlanData& data, std::vector<MpkProofFa
         auto& output = data.values[op.outputs[output_index]];
         const auto width =
             exact_element_width(output.required_bytes, host.output_types[output_index].shape);
-        const auto strides =
+        const auto output_dense_strides =
             width ? contiguous_stride_bytes(host.output_types[output_index].shape, *width)
                   : std::nullopt;
-        if (!strides || input.required_bytes != output.required_bytes) {
+        if (!output_dense_strides || input.required_bytes != output.required_bytes) {
           reject(MpkDecodeErrorCode::ValueSizeMismatch, "$.ops[" + std::to_string(op.id) + "]",
-                 "TVM __nop output does not preserve an exact dense byte extent");
+                 "TVM alias output does not preserve an exact dense byte extent");
         }
-        const auto root = input.read_expression ? input.read_expression->source_value_id : input.id;
-        const auto offset = input.read_expression ? input.read_expression->byte_offset : 0U;
-        output.read_expression = ReadExpression{root, offset, *strides};
+        const auto& input_shape = host.input_types[static_cast<std::size_t>(input_index)].shape;
+        const auto input_width = exact_element_width(input.required_bytes, input_shape);
+        const auto input_dense_strides =
+            input_width ? contiguous_stride_bytes(input_shape, *input_width) : std::nullopt;
+        if (!input_dense_strides) {
+          reject(MpkDecodeErrorCode::ValueSizeMismatch, "$.ops[" + std::to_string(op.id) + "]",
+                 "TVM alias input has no exact byte equation");
+        }
+        ReadExpression expression{input.id, 0U, *input_dense_strides};
+        if (input.read_expression) {
+          expression = *input.read_expression;
+        } else if (input.storage_binding && !input.storage_binding->stride_bytes.empty()) {
+          expression.stride_bytes = input.storage_binding->stride_bytes;
+          expression.storage_shape = input.storage_binding->storage_shape;
+        }
+        // An identity preserves row pitch and slice offsets. A shape-changing
+        // nop may use dense output strides only when its input is truly dense.
+        if (input_shape != host.output_types[output_index].shape) {
+          if (!expression.storage_shape.empty() ||
+              !matches_contiguous_strides(input_shape, expression.stride_bytes,
+                                          *input_dense_strides)) {
+            reject(MpkDecodeErrorCode::ConfigurationMismatch,
+                   "$.ops[" + std::to_string(op.id) + "]",
+                   "TVM alias cannot reshape a non-contiguous input view");
+          }
+          expression.stride_bytes = *output_dense_strides;
+        }
+        output.read_expression = std::move(expression);
         if (proof) {
           proof->push_back({"read[" + std::to_string(output.id) + "]",
-                            "embedded TVM GraphExecutor __nop + shared storage_id lowers to an "
+                            "structurally verified TVM GraphExecutor alias lowers to an "
                             "exact address view"});
         }
       }
@@ -1394,7 +1435,8 @@ void validate_view_consumers(const ModelExecutionPlanData& data) {
     if (shape) {
       const auto width = exact_element_width(value.required_bytes, *shape);
       const auto dense = width ? contiguous_stride_bytes(*shape, *width) : std::nullopt;
-      contiguous = dense && value.read_expression->stride_bytes == *dense;
+      contiguous =
+          dense && matches_contiguous_strides(*shape, value.read_expression->stride_bytes, *dense);
       const auto& strides = value.read_expression->stride_bytes;
       sample_contiguous = dense && !shape->empty() && shape->front() > 1 &&
                           strides.size() == dense->size() && strides.front() >= dense->front() &&
@@ -1421,11 +1463,11 @@ void validate_view_consumers(const ModelExecutionPlanData& data) {
             MpkDecodeErrorCode::ConfigurationMismatch, "$.values[" + std::to_string(value.id) + "]",
             "storage view '" + value.name + "' has incompatible consumer '" + consumer.name + "'");
       }
-      // These two retained graph ABIs have exact positive-stride descriptor
-      // domains. Dense-only graph 222/2, MLA ports, and GraphExecutor inputs do
-      // not acquire a strided contract from a stock MPK or ELF filename.
+      // Strided kernel ABIs and address-only consumers can forward this view.
+      // Materializing GraphExecutor jobs and MLA inputs remain dense-only.
       if (consumer.kind == OpKind::Cast || consumer.kind == OpKind::Dequantize ||
-          consumer.kind == OpKind::Slice) {
+          consumer.kind == OpKind::Slice || consumer.kind == OpKind::PassThrough ||
+          is_alias_only_host_op(consumer)) {
         continue;
       }
       reject(MpkDecodeErrorCode::ConfigurationMismatch,
@@ -2216,7 +2258,7 @@ MpkDecodeResult decode_impl(const std::string_view text,
       for (std::size_t index = 0; index < mla.inputs.size(); ++index) {
         const std::string symbol =
             topology.monolithic_ifm ? "data.ifm.b0" : topology.ifm_symbol_names.at(index);
-        const auto& value = data.values[mla.inputs[input_order[index]]];
+        auto& value = data.values[mla.inputs[input_order[index]]];
         const auto physical_extent = mla_elf_ifm_extent_bytes(topology, index);
         const auto transfer_bytes =
             value.storage_binding && value.storage_binding->channel_alignment > 1U
@@ -2233,9 +2275,22 @@ MpkDecodeResult decode_impl(const std::string_view text,
           result.proof.push_back({"MLA.IFM[" + std::to_string(index) + "].layout",
                                   "typed dense logical bytes and ELF extent prove exact 16-byte "
                                   "allocation tail padding"});
+          if (!value.storage_binding &&
+              std::find(data.model_inputs.begin(), data.model_inputs.end(), value.id) !=
+                  data.model_inputs.end()) {
+            StorageBinding binding;
+            binding.kind = StorageBindingKind::External;
+            binding.carrier_id = value.id;
+            binding.physical_span = physical_extent;
+            binding.access = StorageAccess::ReadOnly;
+            value.storage_binding = std::move(binding);
+          }
         }
+        // MLA-RT can access the full ELF reservation, including a proved dense
+        // allocation tail. Keep the MPK value logical, but reserve and project
+        // that complete readable range through the producer's frame carrier.
         data.backend_ports.push_back({stage_index, BackendPortDirection::Input, index, symbol,
-                                      value.id, transfer_bytes, kLegacyEvoCmaRegionAlignmentBytes,
+                                      value.id, physical_extent, kLegacyEvoCmaRegionAlignmentBytes,
                                       BackendPortAlignmentAuthority::LegacyPolicy,
                                       BackendPortAccess::ReadOnly});
         data.backend_ports.back().logical_port_index = input_order[index];

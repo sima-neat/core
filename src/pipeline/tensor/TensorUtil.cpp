@@ -585,6 +585,8 @@ Mapping DmaBufStorageMapper::map_range(MapMode mode, std::size_t offset, std::si
   auto view = length != 0U ? dma_client::DmaBufView::fromGstMemory(memory, offset, length, &error)
                            : dma_client::DmaBufView::fromGstMemory(memory, &error);
   if (!view) {
+    g_warning("Tensor DMA-BUF view failed: %s (errno=%d offset=%zu bytes=%zu)",
+              error.message().c_str(), error.code, offset, length);
     return {};
   }
   // Each public Mapping owns its lower lease. Scheduler/Runner already share
@@ -605,8 +607,11 @@ Mapping DmaBufStorageMapper::map_range(MapMode mode, std::size_t offset, std::si
     scope->reset();
   };
   auto mapped = view->map(dmabuf_cpu_access(mode), &error);
-  if (!mapped)
+  if (!mapped) {
+    g_warning("Tensor DMA-BUF CPU mapping failed: %s (errno=%d offset=%zu bytes=%zu)",
+              error.message().c_str(), error.code, view->offset(), view->length());
     return {};
+  }
   scope->emplace(std::move(*mapped));
 
   Mapping result;

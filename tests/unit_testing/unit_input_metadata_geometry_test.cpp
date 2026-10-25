@@ -359,6 +359,95 @@ void aggregate_queue_contract() {
   core->close();
 }
 
+// Only the producer is a test double. Admission, validation and replacement use
+// the real RunCore path with no worker/device owner and deterministic occupancy.
+struct RoutedCarrier final : pipeline_internal::InputRouteProcessor {
+  Sample output;
+  void validate_images(const std::vector<cv::Mat>&, const char*) const override {}
+  Sample process_tensors(const TensorList&, const char*) const override {
+    return output;
+  }
+  Sample process_samples(const Sample&, const char*) const override {
+    return output;
+  }
+};
+
+void routed_queue_contract() {
+  for (const bool block : {false, true}) {
+    auto core = runtime::RunCore::create_graph_compat();
+    core->graph_execution_.reset();
+    core->mode = RunMode::Async;
+    core->pipeline.supports_push = true;
+    core->opt.queue_depth = 1;
+    core->opt.overflow_policy = OverflowPolicy::KeepLatest;
+    core->push_sample_policy = runtime::PushSamplePolicy::PreserveSample;
+    InputOptions collapsed;
+    collapsed.payload_type = PayloadType::Tensor;
+    collapsed.format = FormatTag::FP32;
+    collapsed.max_width = 2;
+    collapsed.max_height = 1;
+    collapsed.max_depth = 4;
+    core->pipeline.tensor_input_opt_for_cv = collapsed;
+    core->pipeline.stream_opt.max_input_bytes = 2 * 256 * sizeof(float);
+    auto route = std::make_shared<RoutedCarrier>();
+    core->pipeline.input_route_processor = route;
+    Tensor feature =
+        Tensor::from_vector(std::vector<float>(2 * 256, 1), {1, 2, 256}, TensorMemory::CPU);
+    feature.layout = TensorLayout::HWC;
+    Tensor proposal =
+        Tensor::from_vector(std::vector<float>(2 * 4, 2), {1, 2, 4}, TensorMemory::CPU);
+    proposal.layout = TensorLayout::HWC;
+    auto valid = sample_from_tensors({feature, proposal});
+    valid.frame_id = 17;
+    route->output = valid;
+    require(core->push_samples(valid, block), "heterogeneous routed carrier refused");
+    require(core->pipeline.in_queue.front().msg.tensors.front().storage == feature.storage,
+            "routed admission copied the carrier");
+    const auto submitted = core->inputs_enqueued.load();
+    const auto rejected = [&](Sample invalid, const char* code = error_codes::kInputShape) {
+      route->output = std::move(invalid);
+      rejects([&] { core->push_samples(valid, block); }, code);
+      require(core->pipeline.in_queue.size() == 1 &&
+                  core->pipeline.in_queue.front().msg.frame_id == 17 &&
+                  core->inputs_enqueued.load() == submitted && core->inputs_dropped.load() == 0 &&
+                  !core->stop_requested.load(),
+              "invalid routed output changed pending work or poisoned the run");
+    };
+    for (std::size_t member : {0U, 1U}) {
+      auto invalid = valid;
+      invalid.tensors[member].storage = make_cpu_owned_storage(1);
+      rejected(invalid);
+      invalid = valid;
+      invalid.tensors[member].byte_offset = -1;
+      rejected(invalid);
+      invalid = valid;
+      invalid.tensors[member].strides_bytes = {4};
+      rejected(invalid);
+    }
+    core->pipeline.stream_opt.max_input_bytes = 2 * 256 * sizeof(float) - 1;
+    rejected(valid, error_codes::kInputCapacity);
+    core->pipeline.stream_opt.max_input_bytes = 2 * 256 * sizeof(float);
+    route->output = valid;
+    std::swap(route->output.tensors[0], route->output.tensors[1]);
+    route->output.frame_id = 18;
+    if (block) {
+      // Blocking push intentionally waits for capacity even with KeepLatest.
+      // This no-worker fixture must consume the retained item before recovery.
+      std::lock_guard lock(core->pipeline.in_mu);
+      core->pipeline.in_queue.pop_front();
+    }
+    require(core->push_samples(valid, block), "valid routed input failed after rejection");
+    require(core->pipeline.in_queue.front().msg.frame_id == 18 &&
+                core->pipeline.in_queue.front().msg.tensors.back().storage == feature.storage &&
+                core->inputs_dropped.load() == (block ? 0U : 1U),
+            "routed replacement lost member identity or queue accounting");
+    // The source geometry is still authoritative when there is no router.
+    core->pipeline.input_route_processor.reset();
+    rejects([&] { core->push_samples(valid, block); }, error_codes::kInputCapacity);
+    core->close();
+  }
+}
+
 void queue_metadata_contract() {
   // Exercise the real RunCore queue admission with no worker/device owner.
   // Occupancy is deterministic; this is not a fake replacement queue algorithm.
@@ -406,4 +495,5 @@ RUN_TEST("unit_input_metadata_geometry_test", ([] {
            aggregate_metadata_contract();
            queue_metadata_contract();
            aggregate_queue_contract();
+           routed_queue_contract();
          }));

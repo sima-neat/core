@@ -925,6 +925,7 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
 
     RunCoreStartOptions start_opt;
     start_opt.run_options = pipe.run_options;
+    start_opt.graph_options = graph_options;
     start_opt.mode = RunMode::Async;
     start_opt.seed = std::move(build_sample);
     start_opt.last_pipeline = &pipe.last_pipeline;
