@@ -8,15 +8,45 @@
 
 #include <gst/gst.h>
 
+#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <mutex>
+#include <new>
 #include <stdexcept>
 #include <string>
+#include <system_error>
+#include <thread>
 #include <vector>
+
+namespace {
+// Executable-local fault: std::thread allocates its state after start() has
+// installed all four callbacks. No production hook or device operation.
+thread_local bool fail_next_allocation = false;
+} // namespace
+
+void* operator new(std::size_t bytes) {
+  if (fail_next_allocation) {
+    fail_next_allocation = false;
+    throw std::bad_alloc();
+  }
+  if (void* memory = std::malloc(bytes == 0 ? 1 : bytes)) {
+    return memory;
+  }
+  throw std::bad_alloc();
+}
+
+void operator delete(void* memory) noexcept {
+  std::free(memory);
+}
+
+void operator delete(void* memory, std::size_t) noexcept {
+  std::free(memory);
+}
 
 namespace {
 
@@ -237,12 +267,133 @@ void verify_asymmetric_fan_in_uses_strictest_caps() {
                                     /*use_explicit_link_stream_ids=*/true, {second_options});
 }
 
+void verify_callbacks_retained_until_join() {
+  using namespace simaai::neat;
+  runtime::DownstreamTarget target{runtime::DownstreamTarget::Kind::PipelineInput, 0U,
+                                   graph::kInvalidPort, 0U};
+  GraphLinkOptions options;
+  options.policy = GraphLinkPolicy::RealtimeLatestByStream;
+  runtime::RealtimeLatestLink link(target, options, "stream0");
+  std::array<std::shared_ptr<int>, 4> owners;
+  std::array<std::weak_ptr<int>, 4> observed;
+  for (std::size_t i = 0; i < owners.size(); ++i) {
+    owners[i] = std::make_shared<int>(static_cast<int>(i));
+    observed[i] = owners[i];
+  }
+  std::mutex mu;
+  std::condition_variable cv;
+  bool entered = false;
+  bool released = false;
+  bool timed_out = false;
+  bool joining = false;
+  bool joined = false;
+  bool self_join_rejected = false;
+  link.start(
+      [owner = owners[0], &link, &mu, &cv, &entered, &released, &timed_out,
+       &self_join_rejected](const runtime::DownstreamTarget&, Sample&&, std::size_t) {
+        try {
+          link.join();
+        } catch (const std::system_error&) {
+          self_join_rejected = true;
+        }
+        std::unique_lock lock(mu);
+        entered = true;
+        cv.notify_all();
+        timed_out = !cv.wait_for(lock, std::chrono::seconds(2), [&] { return released; });
+        return true;
+      },
+      [owner = owners[1]] { return false; }, [owner = owners[2]](const std::string&) {},
+      [owner = owners[3]] {});
+  owners = {};
+  require(link.offer(make_raw_holder_sample("stream0", 1), runtime::invalid_edge_index()),
+          "callback retirement: sample offer failed");
+  bool dispatched = false;
+  {
+    std::unique_lock lock(mu);
+    dispatched = cv.wait_for(lock, std::chrono::seconds(2), [&] { return entered; });
+  }
+  link.close();
+  std::thread joiner([&] {
+    {
+      std::lock_guard lock(mu);
+      joining = true;
+    }
+    cv.notify_all();
+    link.join();
+    {
+      std::lock_guard lock(mu);
+      joined = true;
+    }
+    cv.notify_all();
+  });
+  bool retained = false;
+  {
+    std::unique_lock lock(mu);
+    const bool join_started = cv.wait_for(lock, std::chrono::seconds(2), [&] { return joining; });
+    retained = join_started && !joined;
+    for (const auto& owner : observed) {
+      retained = retained && !owner.expired();
+    }
+    released = true;
+  }
+  cv.notify_all();
+  joiner.join();
+  require(dispatched && self_join_rejected && retained && !timed_out,
+          "callbacks must retain every owner after failed join and while dispatch is active");
+  for (const auto& owner : observed) {
+    require(owner.expired(), "joined realtime link retained a callback owner");
+  }
+  link.join();
+  link.close();
+  link.join();
+}
+
+void verify_failed_thread_start_releases_callbacks() {
+  using namespace simaai::neat;
+  runtime::DownstreamTarget target{runtime::DownstreamTarget::Kind::PipelineInput, 0U,
+                                   graph::kInvalidPort, 0U};
+  runtime::RealtimeLatestLink link(target, GraphLinkOptions{}, "stream0");
+  auto owner = std::make_shared<int>(0);
+  const std::weak_ptr<int> observed = owner;
+  runtime::RealtimeLatestLink::DispatchFn dispatch =
+      [owner](const runtime::DownstreamTarget&, Sample&&, std::size_t) { return true; };
+  runtime::RealtimeLatestLink::StopFn stop = [owner] { return false; };
+  runtime::RealtimeLatestLink::ErrorFn error = [owner](const std::string&) {};
+  runtime::RealtimeLatestLink::CompleteFn complete = [owner] {};
+  owner.reset();
+  bool failed = false;
+  // All potentially allocating callback conversions are complete. Moving them
+  // into start() is noexcept; the next allocation belongs to std::thread.
+  fail_next_allocation = true;
+  try {
+    link.start(std::move(dispatch), std::move(stop), std::move(error), std::move(complete));
+  } catch (const std::bad_alloc&) {
+    failed = true;
+  }
+  const bool injected = !fail_next_allocation;
+  fail_next_allocation = false;
+  // Do not depend on the unspecified state of moved-from std::function objects.
+  dispatch = {};
+  stop = {};
+  error = {};
+  complete = {};
+  const bool retained_before_rollback = !observed.expired();
+  link.close();
+  link.join();
+  require(failed && injected && retained_before_rollback,
+          "thread-start failure must leave installed callbacks for terminal rollback");
+  require(observed.expired(), "no-thread rollback retained installed callback owners");
+  link.join();
+}
+
 } // namespace
 
 int main() {
   try {
     simaai::neat::gst_init_once();
     ::unsetenv("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_GLOBAL");
+    verify_callbacks_retained_until_join();
+    verify_failed_thread_start_releases_callbacks();
 
     simaai::neat::GraphLinkOptions default_options;
     default_options.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;

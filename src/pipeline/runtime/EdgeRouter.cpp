@@ -539,6 +539,12 @@ void RealtimeLatestLink::join() {
   if (worker_.joinable()) {
     worker_.join();
   }
+  // These callbacks retain RunCore, which owns this link. Release them only
+  // after its worker has finished; a failed join must retain the active owner.
+  dispatch_ = {};
+  stop_ = {};
+  error_ = {};
+  complete_ = {};
 }
 
 RealtimeLatestLink::Stats RealtimeLatestLink::stats() const {

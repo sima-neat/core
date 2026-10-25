@@ -202,7 +202,7 @@ bool wait_until(Predicate&& predicate, std::chrono::milliseconds timeout) {
   return predicate();
 }
 
-void failed_start_releases_runtime_guard(bool connected) {
+void failed_start_releases_runtime_guard(bool connected, bool realtime = false) {
   using namespace simaai::neat;
 
   Graph graph;
@@ -211,7 +211,11 @@ void failed_start_releases_runtime_guard(bool connected) {
     source.add(nodes::Input("image"));
     Graph sink("output");
     sink.add(nodes::Output("output", OutputOptions::EveryFrame(4)));
-    graph.connect(source, sink);
+    GraphLinkOptions link;
+    if (realtime) {
+      link.policy = GraphLinkPolicy::RealtimeLatestByStream;
+    }
+    graph.connect(source, sink, link);
   } else {
     graph.add(nodes::Input("image"));
     graph.add(nodes::Output("output", OutputOptions::EveryFrame(4)));
@@ -254,6 +258,40 @@ void failed_start_releases_runtime_guard(bool connected) {
   require(threw, "startup failure injection did not throw");
   require(wait_until([&] { return resource.expired(); }, std::chrono::seconds(3)),
           "failed startup did not release its runtime resource guard after teardown");
+}
+
+void realtime_graph_close_releases_runtime() {
+  using namespace simaai::neat;
+  EnvVarGuard synchronous("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", "0");
+  EnvVarGuard no_async("SIMA_GST_TEARDOWN_ASYNC", "0");
+  const Tensor seed = make_color_tensor(32, 24, ImageSpec::PixelFormat::RGB, 0x37);
+  Graph source("image");
+  InputOptions input;
+  input.payload_type = PayloadType::Image;
+  input.format = FormatTag::RGB;
+  input.memory_policy = InputMemoryPolicy::SystemMemory;
+  source.add(nodes::Input("image", input));
+  Graph output("output");
+  output.add(nodes::Output("output", OutputOptions::EveryFrame(2)));
+  GraphLinkOptions link;
+  link.policy = GraphLinkPolicy::RealtimeLatestByStream;
+  Graph graph;
+  graph.connect(source, output, link);
+  Run run = graph.build();
+  const std::weak_ptr<const runtime::RunCore> observed = run_internal::core(run);
+  {
+    auto core = observed.lock();
+    require(core && !core->graph_execution_->realtime_links.empty(),
+            "lifetime regression must exercise the production realtime-link callbacks");
+  }
+  require(run.push("image", TensorList{seed}), "realtime lifetime: input was not accepted");
+  auto sample = run.pull("output", 2000);
+  require(sample.has_value(), "realtime lifetime: output was not delivered");
+  run.close();
+  run.close();
+  require(observed.expired(), "closed realtime graph retained its RunCore through callbacks");
+  require(!sample->tensors.empty() && sample->tensors.front().shape == seed.shape,
+          "closing the graph must preserve an already published sample");
 }
 
 // CPU-only lifecycle proof. This does not qualify accelerator retirement;
@@ -749,8 +787,10 @@ RUN_TEST("unit_run_lifecycle_teardown_test", ([] {
            input_thread_timeout_hands_off_stream_close();
            concurrent_stop_has_one_thread_owner();
            composite_child_handoff_preserves_measurement_node_metrics();
+           realtime_graph_close_releases_runtime();
            failed_start_releases_runtime_guard(false);
            failed_start_releases_runtime_guard(true);
+           failed_start_releases_runtime_guard(true, true);
            graph_completion_propagates_before_locked_publication();
            stopped_source_construction_publishes_child_for_normal_teardown();
            lazy_failure_after_completed_run_closes_on_assertion(false);
