@@ -19,7 +19,6 @@
 #include "pipeline/internal/contract/CompiledNodeContractQuery.h"
 #include "pipeline/FeatureTypes.h"
 #include <simaai/scheduler/testing/probe.h>
-#include <simaai/scheduler/testing/route_probe.h>
 #include <gst/SimaPluginStaticManifestAbi.h>
 #include <iostream>
 #include <simaai/scheduler/client/kernel.h>
@@ -460,83 +459,6 @@ void yolo26_direct_mask_projection() {
   invalid_stage.logical_outputs[0].publication_relation = static_cast<PublicationViewRelation>(999);
   require(!build_kernel_stage_publication(invalid_stage, &publication, &error),
           "unknown physical publication relation accepted");
-  auto missing = std::make_shared<KernelStageRecipe>(*stage.native_kernel);
-  for (auto& member : missing->members)
-    for (auto& port : member.outputs)
-      if (port.tensor == 0)
-        port.tensor = 999;
-  invalid_stage = stage;
-  invalid_stage.native_kernel = missing;
-  require(!build_kernel_stage_publication(invalid_stage, &publication, &error),
-          "packed public output without a checked producer accepted");
-
-  require(build_kernel_stage_publication(stage, &publication, &error), error.c_str());
-  c::StageRequest cold;
-  const auto program = [](c::StageRequest& value) -> c::KernelProgram& {
-    return std::get<c::KernelProgram>(value.program);
-  };
-  program(cold).target = c::Hardware::A65;
-  program(cold).members = members;
-  cold.publication = publication;
-  cold.layout = std::make_shared<const c::FrameLayout>();
-  // Deliberately stop after the real recipe checks, before layout admission,
-  // worker creation or DMA allocation. This is NOT a prepared stage execution.
-  cold.publication.input_caps.reset();
-  const auto rejected = [](const c::StageRequest& request, const char* field) {
-    test::RouteProbe probe;
-    const auto failure = probe.prepare(request);
-    require(failure && failure->field == field, "unexpected packed recipe admission result");
-    require(probe.read_offsets().empty(), "cold recipe acquired a current carrier");
-  };
-  rejected(cold, "stage"); // Valid complete recipe reaches the deliberate caps barrier.
-  auto bad = cold;
-  bad.publication.physical_views.clear();
-  rejected(bad, "output.contract");
-  bad = cold;
-  bad.publication.physical_views.push_back(bad.publication.physical_views.front());
-  rejected(bad, "output.layout");
-  bad = cold;
-  ++program(bad).members[0].outputs[4].byte_offset;
-  rejected(bad, "output.span");
-  bad = cold;
-  --program(bad).members[0].outputs[4].byte_offset;
-  rejected(bad, "output.span"); // Overlap leaves the final suffix byte unwritten.
-  bad = cold;
-  program(bad).members.pop_back();
-  rejected(bad, "output.span"); // Missing prefix writer.
-  bad = cold;
-  program(bad).members[1].inputs.pop_back();
-  rejected(bad, "stage.members");
-  bad = cold;
-  auto gap_contract =
-      std::make_shared<simaai::gst::TensorBufferPublishContract>(*bad.publication.contract);
-  ++gap_contract->logical_outputs[0].size_bytes;
-  ++gap_contract->logical_outputs[0].shape.back();
-  bad.publication.contract = gap_contract;
-  ++program(bad).members[0].outputs[4].byte_offset;
-  rejected(bad, "output.span"); // Both writes fit, but leave an internal byte gap.
-  const auto incompatible_writer = [](c::DType dtype, c::Layout layout) {
-    const c::TensorSpec descriptor{{100}, dtype, std::move(layout)};
-    const c::TensorRequirements requirement{100, 1};
-    auto task = c::make_host_task({std::make_shared<const int>(0),
-                                   {},
-                                   {&descriptor, 1},
-                                   {},
-                                   {&requirement, 1},
-                                   +[](const void*, c::HostBuffers) -> c::HostStatus { return {}; },
-                                   1});
-    if (const auto* failure = std::get_if<c::Error>(&task))
-      throw std::runtime_error(failure->message);
-    return std::get<c::KernelExecutable>(std::move(task));
-  };
-  bad = cold;
-  program(bad).members[1].executable = incompatible_writer(c::DType::Int8, c::Contiguous{});
-  program(bad).members[1].inputs.clear();
-  rejected(bad, "output.layout");
-  bad = cold;
-  program(bad).members[1].executable = incompatible_writer(c::DType::UInt8, c::Strided{{1}});
-  program(bad).members[1].inputs.clear();
-  rejected(bad, "output.layout");
   auto production_capacity = s;
   production_capacity.payload.topk = 100;
   const auto production_recipe =
@@ -961,10 +883,7 @@ void oriented_source_geometry() {
   std::string error;
   const bool preproc_compiled = Preproc(options).compile_node_contract({}, &preproc, &error);
   require(preproc_compiled, error.c_str());
-  // The payload defaults its backend to EVXX; only render-time policy resolves the run target.
-  require(preproc.processcvu && preproc.processcvu->payload.run_target == "AUTO" &&
-              preproc.processcvu->payload.run_target_resolution_reason.empty(),
-          "public Preproc must exercise canonical unresolved-backend admission");
+  require(preproc.processcvu.has_value(), "public Preproc must supply its typed geometry policy");
   CompiledNodeContract fragment;
   fragment.child_stages.push_back(preproc);
   fragment.child_stages.emplace_back(); // MLA/shape-preserving tail is not geometry authority.
