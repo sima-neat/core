@@ -120,7 +120,10 @@ RUN_TEST("unit_sima_plugin_static_manifest_parse_test", ([] {
            bad["abi_version"] = 30;
            reject(bad);
            bad = preferred_json;
-           bad["abi_version"] = 32;
+           bad["abi_version"] = 31;
+           reject(bad);
+           bad = preferred_json;
+           bad["abi_version"] = 33;
            reject(bad);
            bad = preferred_json;
            bad["stages"][0].erase("frame_arena_allocation_policy");
@@ -132,6 +135,30 @@ RUN_TEST("unit_sima_plugin_static_manifest_parse_test", ([] {
            require(legacy && legacy->stages[0].frame_arena_allocation_policy ==
                                  static_contract::ArenaAllocationPolicy::RequiredDomain,
                    "legacy strict JSON must remain strict");
+
+           auto host_json = preferred_json;
+           host_json["stages"][0]["frame_arena_role"] = static_cast<int>(FrameArenaRole::Allocate);
+           host_json["stages"][0]["frame_arena_storage_domain"] = 3;
+           host_json["stages"][0]["frame_arena_escape_policy"] = 2;
+           host_json["stages"][0]["frame_arena_allocation_policy"] = 0;
+           host_json["stages"][0]["frame_arena_required_device_access"] = 1;
+           const auto host = parse_manifest_json(host_json.dump(), &parse_error);
+           require(host && host->stages.front().frame_arena_storage_domain ==
+                               static_contract::ArenaStorageDomain::HostCpu,
+                   "strict host placement JSON must round-trip: " + parse_error);
+           for (int old_version : {30, 31, 33}) {
+             auto incompatible = host_json;
+             incompatible["abi_version"] = old_version;
+             reject(incompatible);
+           }
+           for (const auto& field : {"frame_arena_storage_domain", "frame_arena_escape_policy"}) {
+             auto incompatible = host_json;
+             incompatible["stages"][0][field] = 0;
+             reject(incompatible);
+           }
+           auto incompatible = host_json;
+           incompatible["stages"][0]["frame_arena_required_device_access"] = 3;
+           reject(incompatible);
 
            auto adopted_manifest = alignment_manifest;
            adopted_manifest.stages[0].frame_arena_storage_domain =

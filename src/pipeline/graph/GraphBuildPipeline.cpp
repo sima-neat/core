@@ -1,3 +1,4 @@
+#include "pipeline/internal/sima/TerminalHostPlacement.h"
 /**
  * @file SessionBuildPipeline.cpp
  * @brief Shared pipeline state-change helpers for Graph build paths.
@@ -1084,6 +1085,40 @@ static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char*
             build.model_source_paths, build.name_transform)) {
       throw_kernel_preparation_error(*failure);
     }
+    // Only the typed public endpoint can refine Core's fresh default arena.
+    // Prove the actual stopped direct edge before authoring a required domain.
+    // This pipeline is still owned by Core construction. Later Core timing
+    // probes inspect scalar metadata only; they retain no payload and perform
+    // no device/export access. Payload/debug observers below keep DMA placement.
+    // Scheduler independently rejects pre-existing unknown pad probes.
+    const bool terminal_observer = env_bool("SIMA_GST_FLOW_DEBUG", false) ||
+                                   env_bool("SIMA_GST_BOUNDARY_PROBES", false) ||
+                                   env_bool("SIMA_GST_DETESS_INPUT_DEBUG", false) ||
+                                   env_bool("SIMA_GST_DETESS_OUTPUT_DEBUG", false) ||
+                                   env_bool("SIMA_GST_APPSINK_BUFFER_DEBUG", false) ||
+                                   env_bool("SIMA_GST_ALL_BUFFER_DEBUG", false) ||
+                                   env_bool("SIMA_GST_BOXDECODE_BUFFER_DEBUG", false) ||
+                                   !env_str("SIMA_GST_ELEMENT_BUFFER_DEBUG", "").empty();
+    if (!build.terminal_host_stage_key.empty() && !terminal_observer) {
+      const auto key = apply_name_transform(build.name_transform, build.terminal_host_stage_key);
+      for (auto& stage : transformed_manifest->stages) {
+        if (stage.element_name != key && stage.logical_stage_id != key)
+          continue;
+        auto* element = gst_bin_get_by_name(GST_BIN(pipeline), stage.element_name.c_str());
+        auto* sink = gst_bin_get_by_name(GST_BIN(pipeline), build.appsink_name.c_str());
+        if (pipeline_internal::sima::terminal_host_arena_eligible(stage, *transformed_manifest) &&
+            pipeline_internal::sima::terminal_host_direct_peer(pipeline, element, sink)) {
+          stage.frame_arena_storage_domain =
+              pipeline_internal::sima::static_contract::ArenaStorageDomain::HostCpu;
+          stage.frame_arena_escape_policy =
+              pipeline_internal::sima::static_contract::ArenaEscapePolicy::CpuOnlyPublic;
+        }
+        if (element)
+          gst_object_unref(element);
+        if (sink)
+          gst_object_unref(sink);
+      }
+    }
     const SimaPluginStaticManifest& manifest = *transformed_manifest;
     // Validate the C++ bridge boundary before constructing any object across
     // it.  A late check cannot protect move-assignment/destruction when the two
@@ -1156,7 +1191,11 @@ static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char*
       requests.push_back(
           {stage.element_name, key, budget.execution_capacity, budget.output_pool_capacity,
            build.kernel_runner_compact ? std::string_view(build.appsink_name) : std::string_view{},
-           &stage});
+           &stage,
+           stage.frame_arena_storage_domain ==
+                   pipeline_internal::sima::static_contract::ArenaStorageDomain::HostCpu
+               ? std::string_view(build.appsink_name)
+               : std::string_view{}});
     }
   }
   // Even an empty cohort is checked: a custom rendered runner without a

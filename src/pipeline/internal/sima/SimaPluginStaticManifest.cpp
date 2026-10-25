@@ -801,7 +801,8 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
         static_cast<int>(static_contract::ArenaDeviceAccess::Ev74);
     const bool known_domain =
         frame_arena_storage_domain >= static_cast<int>(static_contract::ArenaStorageDomain::Cma) &&
-        frame_arena_storage_domain <= static_cast<int>(static_contract::ArenaStorageDomain::Dms);
+        frame_arena_storage_domain <=
+            static_cast<int>(static_contract::ArenaStorageDomain::HostCpu);
     const bool external_unknown_domain =
         frame_arena_role == static_cast<int>(FrameArenaRole::ReuseInput) &&
         frame_arena_provenance ==
@@ -824,8 +825,20 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
          frame_arena_required_device_access > 0 &&
          !(frame_arena_required_device_access &
            static_cast<int>(static_contract::ArenaDeviceAccess::Ev74)));
+    const bool host_domain = frame_arena_storage_domain ==
+                             static_cast<int>(static_contract::ArenaStorageDomain::HostCpu);
+    const bool host_escape = frame_arena_escape_policy ==
+                             static_cast<int>(static_contract::ArenaEscapePolicy::CpuOnlyPublic);
+    const bool host_valid =
+        (!host_domain && !host_escape) ||
+        (host_domain && host_escape && abi_version == SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION &&
+         required_domain && frame_arena_role == static_cast<int>(FrameArenaRole::Allocate) &&
+         frame_arena_provenance ==
+             static_cast<int>(static_contract::ArenaAllocationProvenance::CoreAllocated) &&
+         frame_arena_required_device_access ==
+             static_cast<int>(static_contract::ArenaDeviceAccess::CpuA65));
     const bool arena_placement_valid =
-        allocation_policy_valid &&
+        host_valid && allocation_policy_valid &&
         (stage.frame_arena_size_bytes == 0U ||
          (frame_arena_role >= static_cast<int>(FrameArenaRole::Allocate) &&
           frame_arena_role <= static_cast<int>(FrameArenaRole::ReuseInput) &&
@@ -835,7 +848,7 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
           frame_arena_escape_policy >=
               static_cast<int>(static_contract::ArenaEscapePolicy::InternalOnly) &&
           frame_arena_escape_policy <=
-              static_cast<int>(static_contract::ArenaEscapePolicy::CpuMappablePublic) &&
+              static_cast<int>(static_contract::ArenaEscapePolicy::CpuOnlyPublic) &&
           !(frame_arena_storage_domain ==
                 static_cast<int>(static_contract::ArenaStorageDomain::Dms) &&
             (frame_arena_required_device_access &

@@ -83,9 +83,10 @@ enum class RunPreset {
 /**
  * @brief How output `Tensor`s relate to the underlying GStreamer buffers.
  *
- * `Auto` retains standard DMA-BUF output storage in both sync and async runs;
- * other storage follows the preset/mode policy. `ZeroCopy` explicitly shares
- * producer storage. Neither path copies DMA payloads to relieve queue pressure.
+ * `Auto` retains standard DMA-BUF output storage and certified framework CPU-only
+ * terminal output pools in both sync and async runs. Other storage follows the
+ * preset/mode policy. `ZeroCopy` explicitly shares producer storage. Retained
+ * framework payloads are not copied to relieve queue pressure.
  * Retained tensors and their mappings hold producer-buffer loans; release them
  * to allow the pool to progress. `Owned` explicitly copies into independent
  * framework-owned DMA-BUF storage, without retaining the producer pool loan.

@@ -122,11 +122,10 @@ output_override_entry_physical_span_bytes(const OutputTensorOverrideEntry& entry
 inline simaai::neat::Tensor
 apply_output_tensor_override_entry(const simaai::neat::Tensor& base,
                                    const OutputTensorOverrideEntry& entry, bool materialize_output,
-                                   bool preserve_dmabuf_output = false);
-inline simaai::neat::Tensor
-apply_admitted_output_tensor_override_entry(const simaai::neat::Tensor& base,
-                                            const OutputTensorOverrideEntry& entry,
-                                            bool materialize_output, bool preserve_dmabuf_output);
+                                   bool preserve_framework_output = false);
+inline simaai::neat::Tensor apply_admitted_output_tensor_override_entry(
+    const simaai::neat::Tensor& base, const OutputTensorOverrideEntry& entry,
+    bool materialize_output, bool preserve_framework_output);
 
 inline void apply_output_tensor_override_route(simaai::neat::Tensor& tensor,
                                                const OutputTensorOverrideEntry& entry,
@@ -230,20 +229,20 @@ prepare_output_tensor_override_base(const simaai::neat::Tensor& selected,
 inline simaai::neat::Tensor
 project_output_tensor_override_entry(const simaai::neat::Tensor& selected,
                                      const OutputTensorOverrideEntry& entry,
-                                     bool materialize_output, bool preserve_dmabuf_output) {
+                                     bool materialize_output, bool preserve_framework_output) {
   Tensor base = prepare_output_tensor_override_base(selected, entry);
   return output_tensor_override_matches_identity(selected, entry)
              ? apply_admitted_output_tensor_override_entry(base, entry, materialize_output,
-                                                           preserve_dmabuf_output)
+                                                           preserve_framework_output)
              : apply_output_tensor_override_entry(base, entry, materialize_output,
-                                                  preserve_dmabuf_output);
+                                                  preserve_framework_output);
 }
 
 inline Sample build_output_tensor_override_bundle(const Sample& canonical,
                                                   const Tensor& base_tensor,
                                                   const OutputTensorOverride& override,
                                                   bool materialize_output,
-                                                  bool preserve_dmabuf_output = false) {
+                                                  bool preserve_framework_output = false) {
   std::unordered_set<int> unique_memory_indices;
   for (const auto& entry : override.outputs) {
     if (entry.memory_index >= 0) {
@@ -281,7 +280,7 @@ inline Sample build_output_tensor_override_bundle(const Sample& canonical,
   for (size_t i = 0; i < override.outputs.size(); ++i) {
     const OutputTensorOverrideEntry& entry = override.outputs[i];
     Tensor tensor = project_output_tensor_override_entry(base_tensor, entry, materialize_output,
-                                                         preserve_dmabuf_output);
+                                                         preserve_framework_output);
     apply_output_tensor_override_route(tensor, entry, i);
     if (tensor.route.segment_name.empty()) {
       tensor.route.segment_name = "output" + std::to_string(i);
@@ -298,7 +297,7 @@ inline Sample build_output_tensor_override_bundle(const Sample& canonical,
 inline simaai::neat::Tensor
 finish_output_tensor_override_entry(simaai::neat::Tensor out,
                                     const OutputTensorOverrideEntry& entry, bool materialize_output,
-                                    bool preserve_dmabuf_output) {
+                                    bool preserve_framework_output) {
   out.shape = entry.shape;
   out.byte_offset = out.byte_offset + entry.byte_offset;
   out.dtype = entry.dtype;
@@ -323,8 +322,9 @@ finish_output_tensor_override_entry(simaai::neat::Tensor out,
       out.semantic.tess->format = entry.format;
     }
   }
-  materialize_output = materialize_output && !(preserve_dmabuf_output &&
-                                               pipeline_internal::tensor_has_dmabuf_memory(out));
+  materialize_output =
+      materialize_output &&
+      !(preserve_framework_output && pipeline_internal::tensor_has_framework_output_memory(out));
   if (materialize_output) {
     if (out.storage && out.storage->kind == simaai::neat::StorageKind::GstSample) {
       if (out.byte_offset < 0) {
@@ -370,7 +370,7 @@ finish_output_tensor_override_entry(simaai::neat::Tensor out,
 inline simaai::neat::Tensor
 apply_output_tensor_override_entry(const simaai::neat::Tensor& base,
                                    const OutputTensorOverrideEntry& entry, bool materialize_output,
-                                   bool preserve_dmabuf_output) {
+                                   bool preserve_framework_output) {
   simaai::neat::Tensor out_source = base;
   if ((entry.memory_index >= 0 || !entry.segment_name.empty()) && base.storage &&
       base.storage->kind == simaai::neat::StorageKind::GstSample) {
@@ -380,13 +380,12 @@ apply_output_tensor_override_entry(const simaai::neat::Tensor& base,
         base, entry.segment_name, entry.memory_index, /*keep_holder=*/true);
   }
   return finish_output_tensor_override_entry(std::move(out_source), entry, materialize_output,
-                                             preserve_dmabuf_output);
+                                             preserve_framework_output);
 }
 
-inline simaai::neat::Tensor
-apply_admitted_output_tensor_override_entry(const simaai::neat::Tensor& base,
-                                            const OutputTensorOverrideEntry& entry,
-                                            bool materialize_output, bool preserve_dmabuf_output) {
+inline simaai::neat::Tensor apply_admitted_output_tensor_override_entry(
+    const simaai::neat::Tensor& base, const OutputTensorOverrideEntry& entry,
+    bool materialize_output, bool preserve_framework_output) {
   simaai::neat::Tensor out_source = base;
   if (base.storage && base.storage->kind == simaai::neat::StorageKind::GstSample) {
     const int memory_index = base.route.memory_index;
@@ -409,7 +408,7 @@ apply_admitted_output_tensor_override_entry(const simaai::neat::Tensor& base,
     out_source.route = base.route;
   }
   return finish_output_tensor_override_entry(std::move(out_source), entry, materialize_output,
-                                             preserve_dmabuf_output);
+                                             preserve_framework_output);
 }
 
 inline void overlay_output_tensor_override_entry(simaai::neat::Tensor& out,
@@ -442,7 +441,7 @@ inline void overlay_output_tensor_override_entry(simaai::neat::Tensor& out,
 
 inline Sample apply_output_tensor_override(const Sample& base, const OutputTensorOverride& override,
                                            bool materialize_output,
-                                           bool preserve_dmabuf_output = false) {
+                                           bool preserve_framework_output = false) {
   if (override.outputs.empty())
     return base;
   const Sample canonical = pipeline_internal::canonicalize_tensor_transport_sample(base);
@@ -450,7 +449,7 @@ inline Sample apply_output_tensor_override(const Sample& base, const OutputTenso
     if (canonical.tensors.size() == 1U && override.outputs.size() > 1U &&
         !canonical.tensors.front().is_composite()) {
       return build_output_tensor_override_bundle(canonical, canonical.tensors.front(), override,
-                                                 materialize_output, preserve_dmabuf_output);
+                                                 materialize_output, preserve_framework_output);
     }
     Sample out = canonical;
     out.owned = materialize_output;
@@ -463,7 +462,7 @@ inline Sample apply_output_tensor_override(const Sample& base, const OutputTenso
         continue;
       }
       Tensor tensor = project_output_tensor_override_entry(
-          *selected_base, entry, materialize_output, preserve_dmabuf_output);
+          *selected_base, entry, materialize_output, preserve_framework_output);
       apply_output_tensor_override_route(tensor, entry, i);
       out.owned = out.owned && tensor.storage && tensor.storage->kind == StorageKind::CpuOwned;
       out.tensors.emplace_back(std::move(tensor));
@@ -503,7 +502,7 @@ inline Sample apply_output_tensor_override(const Sample& base, const OutputTenso
     Sample out = canonical;
     const auto& entry = override.outputs[0];
     out.tensors.front() = apply_output_tensor_override_entry(
-        canonical.tensors.front(), entry, materialize_output, preserve_dmabuf_output);
+        canonical.tensors.front(), entry, materialize_output, preserve_framework_output);
     apply_output_tensor_override_route(out.tensors.front(), entry, 0U);
     if (entry.logical_output_index >= 0) {
       out.output_index = entry.logical_output_index;
@@ -523,7 +522,7 @@ inline Sample apply_output_tensor_override(const Sample& base, const OutputTenso
   }
 
   return build_output_tensor_override_bundle(canonical, canonical.tensors.front(), override,
-                                             materialize_output, preserve_dmabuf_output);
+                                             materialize_output, preserve_framework_output);
 }
 
 } // namespace simaai::neat

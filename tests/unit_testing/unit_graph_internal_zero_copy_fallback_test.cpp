@@ -463,7 +463,7 @@ void require_output_policy_matrix() {
                                  (memory == OutputMemory::Auto && !auto_owned &&
                                   (auto_zero_copy || (mode != RunMode::Sync &&
                                                       resolved.preset != RunPreset::Reliable)));
-          require(stream.preserve_dmabuf_output == preserve_dma,
+          require(stream.preserve_framework_output == preserve_dma,
                   "Auto must retain DMA unless the caller deliberately selects owned output");
           require(stream.copy_output == !zero_copy,
                   "ordinary CPU and legacy output must keep their preset/mode copy policy");
@@ -485,7 +485,7 @@ void require_output_policy_matrix() {
     start.graph_options = runtime::graph_runtime_options_from_run_options(options);
     auto core = runtime::RunCore::start(runtime::ExecutionGraphPlan{}, std::move(start));
     require(core->pipeline.stream_opt.copy_output &&
-                core->pipeline.stream_opt.preserve_dmabuf_output && core->holder_loan_gate &&
+                core->pipeline.stream_opt.preserve_framework_output && core->holder_loan_gate &&
                 core->holder_loan_gate->enabled(),
             "graph Auto must retain a loan gate even when ordinary output defaults to owned");
     core->stop();

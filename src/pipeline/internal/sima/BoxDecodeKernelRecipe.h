@@ -17,6 +17,7 @@ struct BoxDecodeGeometryOptions {
   // Complete-geometry profiles retain this together with the original extent.
   std::optional<std::array<float, 4>> model_to_original;
   bool complete_geometry = false;
+  bool uniform_transform_required = false;
 };
 struct BoxDecodeKernelRecipeResult {
   CompiledKernelContract compiled;

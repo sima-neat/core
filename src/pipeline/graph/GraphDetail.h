@@ -372,6 +372,8 @@ struct BuildResult {
   std::shared_ptr<DiagCtx> diag;
   // Cold execution and output-retention budgets for native numerical stages.
   bool kernel_runner_compact = false;
+  // Typed public endpoint authority, never populated for internal segment sinks.
+  std::string terminal_host_stage_key;
   std::size_t kernel_runner_capacity = 1;
   std::size_t kernel_runner_a65_workers = 2;
   std::size_t kernel_runner_output_pool_capacity = 0;

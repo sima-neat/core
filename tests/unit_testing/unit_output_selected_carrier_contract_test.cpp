@@ -128,7 +128,7 @@ void admitted_binding_survives_projection(bool route_identity_only, bool compact
       const bool retained = !copy || (preserve && target_dma);
       neat::InputStream::State state;
       state.opt.copy_output = copy;
-      state.opt.preserve_dmabuf_output = preserve;
+      state.opt.preserve_framework_output = preserve;
       std::vector<Frame> inputs;
       std::vector<neat::Sample> outputs;
       for (int current = 0; current != 2; ++current) {
@@ -256,7 +256,7 @@ void single_head_expansion_keeps_matching_authority_and_copy_dedup() {
   for (const bool copy : {false, true}) {
     neat::InputStream::State state;
     state.opt.copy_output = copy;
-    state.opt.preserve_dmabuf_output = false;
+    state.opt.preserve_framework_output = false;
     std::vector<Frame> inputs;
     std::vector<neat::Sample> outputs;
     for (int current = 0; current != 2; ++current) {

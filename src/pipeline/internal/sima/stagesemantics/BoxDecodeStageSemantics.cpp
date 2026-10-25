@@ -12,6 +12,7 @@
 #include <initializer_list>
 #include <optional>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -169,6 +170,72 @@ int storage_aware_channel_depth(const BoxDecodeTensorStaticContract& tensor) {
     return tensor.input_shape.size() >= 3U ? tensor.input_shape.back() : 0;
   }
   return logical_channel_depth(tensor);
+}
+
+int infer_yolov26_obb_classes(const BoxDecodeStaticContract& contract) {
+  if (contract.tensors.size() != 9)
+    return 0;
+  int classes = 0;
+  for (std::size_t h = 0; h < 3; ++h) {
+    const auto& box = contract.tensors[h];
+    const auto& score = contract.tensors[h + 3];
+    const auto& angle = contract.tensors[h + 6];
+    if (box.input_shape.size() != 3 || score.input_shape.size() != 3 ||
+        angle.input_shape.size() != 3 || storage_aware_channel_depth(box) != 4 ||
+        storage_aware_channel_depth(angle) != 1 || box.input_shape[0] <= 0 ||
+        box.input_shape[1] <= 0 || box.input_shape[0] != score.input_shape[0] ||
+        box.input_shape[1] != score.input_shape[1] || box.input_shape[0] != angle.input_shape[0] ||
+        box.input_shape[1] != angle.input_shape[1])
+      return 0;
+    const auto conflicts = [](const auto& tensor, std::string_view expected) {
+      for (const auto* name :
+           {&tensor.logical_name, &tensor.backend_name, &tensor.source_segment_name}) {
+        std::string lower = *name;
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (lower.find("class_prob") != std::string::npos)
+          return true; // A declared probability domain cannot be relabeled as logits.
+        for (const auto role : {std::string_view("bbox_"), std::string_view("class_logit"),
+                                std::string_view("angle_")})
+          if (lower.find(role) != std::string::npos && !expected.starts_with(role))
+            return true;
+        if (lower.find("reg_") != std::string::npos && expected != "bbox_")
+          return true;
+      }
+      return false;
+    };
+    if (conflicts(box, "bbox_") || conflicts(score, "class_logit_") || conflicts(angle, "angle_"))
+      return 0;
+    const int c = storage_aware_channel_depth(score);
+    if (c < 1 || c > 256 || (h && c != classes))
+      return 0;
+    if (h && (contract.tensors[h - 1].input_shape[0] != 2 * box.input_shape[0] ||
+              contract.tensors[h - 1].input_shape[1] != 2 * box.input_shape[1]))
+      return 0;
+    classes = c;
+  }
+  return classes;
+}
+
+void apply_yolov26_obb_contract(BoxDecodeStaticContract* contract) {
+  if (!contract || contract->decode_type != BoxDecodeType::YoloV26Obb)
+    return;
+  if (contract->decode_type_option != BoxDecodeTypeOption::Auto &&
+      contract->decode_type_option != BoxDecodeTypeOption::GroupedByRole &&
+      contract->decode_type_option != BoxDecodeTypeOption::GroupedByRoleLogit)
+    throw std::invalid_argument("YOLO26-OBB accepts only grouped raw-logit heads");
+  if (contract->score_activation != BoxDecodeScoreActivation::Unknown &&
+      contract->score_activation != BoxDecodeScoreActivation::Sigmoid)
+    throw std::invalid_argument("YOLO26-OBB class heads must contain logits");
+  const int classes = infer_yolov26_obb_classes(*contract);
+  if (!classes || (contract->num_classes > 0 && contract->num_classes != classes))
+    throw std::invalid_argument(
+        "YOLO26-OBB requires nine ordered bbox(4), class(C), angle(1) heads");
+  if (contract->nms_iou_threshold != 0)
+    throw std::invalid_argument("YOLO26-OBB does not support per-tile NMS");
+  contract->num_classes = classes;
+  contract->decode_type_option = BoxDecodeTypeOption::GroupedByRoleLogit;
+  contract->score_activation = BoxDecodeScoreActivation::Sigmoid;
 }
 
 bool tensor_name_looks_objectness_logit(std::string raw) {
@@ -616,7 +683,7 @@ bool decode_type_is_pose_yolo(BoxDecodeType type) {
 
 bool decode_type_is_yolov26_family(BoxDecodeType type) {
   return type == BoxDecodeType::YoloV26 || type == BoxDecodeType::YoloV26Pose ||
-         type == BoxDecodeType::YoloV26Seg;
+         type == BoxDecodeType::YoloV26Seg || type == BoxDecodeType::YoloV26Obb;
 }
 
 bool decode_type_is_packed_yolo(BoxDecodeType type) {
@@ -628,6 +695,8 @@ bool decode_type_is_packed_yolo(BoxDecodeType type) {
 int infer_raw_yolo_class_depth(const BoxDecodeStaticContract& contract);
 
 int infer_boxdecode_num_classes_from_contract(const BoxDecodeStaticContract& contract) {
+  if (contract.decode_type == BoxDecodeType::YoloV26Obb)
+    return infer_yolov26_obb_classes(contract);
   if (contract.decode_type == BoxDecodeType::RcnnStage1)
     return 1; // Three anchors, each with one class-agnostic objectness logit.
   if (box_decode_type_is_ssd_family(contract.decode_type)) {
@@ -696,6 +765,12 @@ int infer_boxdecode_num_classes_from_contract(const BoxDecodeStaticContract& con
 
 int resolve_boxdecode_num_classes(const BoxDecodeStaticContract& contract, int user_num_classes,
                                   const char* context) {
+  if (contract.decode_type == BoxDecodeType::YoloV26Obb) {
+    const int classes = infer_yolov26_obb_classes(contract);
+    if (!classes || (user_num_classes > 0 && user_num_classes != classes))
+      throw std::invalid_argument("YOLO26-OBB requires the complete encoded class count");
+    return classes;
+  }
   if (decode_type_is_pose_yolo(contract.decode_type)) {
     if (user_num_classes > 0 && user_num_classes != 1) {
       throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
@@ -1260,6 +1335,7 @@ void apply_yolov5_model_managed_contract_defaults(BoxDecodeStaticContract* contr
 
 void apply_yolox_seg_pose_model_managed_contract_defaults(BoxDecodeStaticContract* contract) {
   apply_yolox_seg_pose_static_contract_overrides(contract);
+  apply_yolov26_obb_contract(contract);
   if (contract && contract->decode_type == BoxDecodeType::YoloXSegPose) {
     // Without this the MPK route lowers a subset whose num_classes is still 0, and the
     // subset compiler then rejects the model at construction. resolve_ derives the count
@@ -1282,8 +1358,8 @@ void validate_model_managed_boxdecode_option_override(BoxDecodeType decode_type,
   // apply_yolox_seg_pose_static_contract_overrides() enforces on the static-contract path
   // is bypassed. Without this an unsupported layout reaches the backend, which cannot
   // decode the packed export as anything else.
-  if (decode_type == BoxDecodeType::YoloXSegPose && requested != BoxDecodeTypeOption::Auto &&
-      requested != BoxDecodeTypeOption::GroupedByRole &&
+  if ((decode_type == BoxDecodeType::YoloXSegPose || decode_type == BoxDecodeType::YoloV26Obb) &&
+      requested != BoxDecodeTypeOption::Auto && requested != BoxDecodeTypeOption::GroupedByRole &&
       requested != BoxDecodeTypeOption::GroupedByRoleLogit) {
     throw std::invalid_argument("SimaBoxDecode(Model): yolox-seg-pose supports only Auto, "
                                 "GroupedByRole or GroupedByRoleLogit layout overrides");
@@ -1332,6 +1408,7 @@ BoxDecodeStaticContract finalize_boxdecode_static_contract(
   finalized.required_preprocess_meta_fields = required_preprocess_meta_fields;
   apply_yolov5_static_contract_overrides(&finalized);
   apply_yolov26_static_contract_overrides(&finalized);
+  apply_yolov26_obb_contract(&finalized);
   apply_raw_yolov6_yolox_static_contract_overrides(&finalized);
   apply_yolox_seg_pose_static_contract_overrides(&finalized);
   apply_ssd_static_contract_overrides(&finalized);
@@ -1411,7 +1488,8 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
           box_decode_type_option_token(*compiled.payload.decode_type_option) + "'.");
     }
   }
-  if (compiled.payload.decode_type == BoxDecodeType::YoloXSegPose) {
+  if (compiled.payload.decode_type == BoxDecodeType::YoloXSegPose ||
+      compiled.payload.decode_type == BoxDecodeType::YoloV26Obb) {
     // Both routes arrive normalized - MPK through
     // apply_yolox_seg_pose_model_managed_contract_defaults, static contract through
     // finalize_boxdecode_static_contract - but options.decode_type_option replaces that
@@ -1422,11 +1500,15 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
     } else if (*compiled.payload.decode_type_option != BoxDecodeTypeOption::GroupedByRoleLogit &&
                *compiled.payload.decode_type_option != BoxDecodeTypeOption::GroupedByRole) {
       throw std::invalid_argument(
-          std::string("yolox-seg-pose BoxDecode supports only the grouped-by-role head layout, "
-                      "but got '") +
+          std::string(box_decode_type_token(compiled.payload.decode_type)) +
+          " BoxDecode supports only the grouped-by-role head layout, but got '" +
           box_decode_type_option_token(*compiled.payload.decode_type_option) +
           "'. Use BoxDecodeTypeOption::Auto, GroupedByRole or GroupedByRoleLogit.");
     }
+    if (compiled.payload.decode_type == BoxDecodeType::YoloV26Obb &&
+        compiled.payload.score_activation != BoxDecodeScoreActivation::Unknown &&
+        compiled.payload.score_activation != BoxDecodeScoreActivation::Sigmoid)
+      throw std::invalid_argument("YOLO26-OBB class heads must contain logits");
     compiled.payload.score_activation = BoxDecodeScoreActivation::Sigmoid;
   }
   compiled.payload.input_dtype = resolve_boxdecode_input_dtype(subset);
@@ -1445,6 +1527,44 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
                                : subset.num_classes,
                            "BoxDecode");
   compiled.payload.num_classes = options.num_classes > 0 ? options.num_classes : subset.num_classes;
+  if (compiled.payload.decode_type == BoxDecodeType::YoloV26Obb) {
+    // A route override may select OBB after the MPK subset was extracted. Resolve
+    // the complete grouped signature again, including the one-class case where
+    // class and angle channel depths alone are indistinguishable.
+    BoxDecodeStaticContract signature;
+    signature.decode_type = BoxDecodeType::YoloV26Obb;
+    signature.num_classes = compiled.payload.num_classes;
+    signature.nms_iou_threshold = compiled.payload.nms_iou_threshold;
+    signature.score_activation = compiled.payload.score_activation;
+    for (std::size_t i = 0; i < subset.logical_inputs.size(); ++i) {
+      const auto& logical = subset.logical_inputs[i];
+      BoxDecodeTensorStaticContract tensor;
+      const auto append = [](auto& target, auto values) {
+        for (auto value : values) {
+          if (value <= 0 || value > 1048576)
+            throw std::invalid_argument("YOLO26-OBB tensor dimensions must be 1..1048576");
+          target.push_back(static_cast<int>(value));
+        }
+      };
+      append(tensor.input_shape, logical.shape);
+      if (i < subset.slice_shapes.size()) {
+        const auto& slice = subset.slice_shapes[i];
+        if (slice.rank > SIMA_EV_MAX_RANK)
+          throw std::invalid_argument("YOLO26-OBB slice rank is invalid");
+        for (std::size_t axis = 0; axis < slice.rank; ++axis)
+          append(tensor.slice_shape, std::array<std::int64_t, 1>{slice.sizes[axis]});
+      }
+      if (i < subset.tensor_storage_kind.size())
+        tensor.source_storage_kind =
+            static_cast<BoxDecodeSourceStorageKind>(subset.tensor_storage_kind[i]);
+      tensor.logical_name = logical.logical_name;
+      tensor.backend_name = logical.backend_name;
+      tensor.source_segment_name = logical.segment_name;
+      signature.tensors.push_back(std::move(tensor));
+    }
+    apply_yolov26_obb_contract(&signature);
+    compiled.payload.num_classes = signature.num_classes;
+  }
   if (compiled.payload.decode_type == BoxDecodeType::YoloXSegPose &&
       compiled.payload.num_classes <= 0) {
     // Both routes resolve a count before lowering, so reaching zero here means a subset
@@ -1570,6 +1690,7 @@ build_boxdecode_compiled_contract(const BoxDecodeStaticContract& contract) {
   BoxDecodeStaticContract normalized = contract;
   apply_yolov5_static_contract_overrides(&normalized);
   apply_yolov26_static_contract_overrides(&normalized);
+  apply_yolov26_obb_contract(&normalized);
   apply_raw_yolov6_yolox_static_contract_overrides(&normalized);
   apply_yolox_seg_pose_static_contract_overrides(&normalized);
   apply_ssd_static_contract_overrides(&normalized);

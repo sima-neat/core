@@ -174,6 +174,61 @@ RUN_TEST(
     "unit_detection_types_boxdecode_payloads_test", ([] {
       using namespace simaai::neat;
 
+      {
+        // Independent byte golden: signed extents and raw angle must survive unchanged.
+        const std::array<std::uint32_t, 8> header{0x3156424f, 0x00200001, 96, 1, 2, 32, 32, 0};
+        const std::array<float, 6> values{-4.f, 12.f, -32.f, 48.f, .4f, .5f};
+        std::vector<std::uint8_t> bytes(96, 0);
+        std::memcpy(bytes.data(), header.data(), 32);
+        std::memcpy(bytes.data() + 32, values.data(), 24);
+        const std::int32_t cls = 9;
+        std::memcpy(bytes.data() + 56, &cls, 4);
+        const auto tensor = make_wire_tensor(bytes, kDetectionFormatBboxObbV1);
+        const auto decoded = decode_obb({tensor});
+        require(decoded.size() == 1 && decoded[0].geometry.shape == std::vector<int64_t>{1, 5} &&
+                    decoded[0].class_ids.dtype == TensorDType::Int32,
+                "OBB typed shape/dtype contract");
+        const auto geometry = tensor_float_values(decoded[0].geometry);
+        require(geometry == std::vector<float>({-4.f, 12.f, -32.f, 48.f, .4f}),
+                "OBB parser performed forbidden geometry mapping");
+        const auto fails = [](const Tensor& value) {
+          try {
+            (void)decode_obb_tensor(value);
+          } catch (const std::exception&) {
+            return true;
+          }
+          return false;
+        };
+        require(fails(make_wire_tensor(bytes, kDetectionFormatBbox)), "OBB accepted BBOX tag");
+        for (std::size_t offset : {0U, 4U, 6U, 8U, 12U, 16U, 20U, 24U, 28U, 60U, 64U}) {
+          auto corrupt = bytes;
+          corrupt[offset] ^= 0xff;
+          require(fails(make_wire_tensor(corrupt, kDetectionFormatBboxObbV1)),
+                  "OBB corrupt header/reserved/tail accepted");
+        }
+        auto trailing = bytes;
+        trailing.push_back(0);
+        require(fails(make_wire_tensor(trailing, kDetectionFormatBboxObbV1)),
+                "OBB appended logical bytes accepted");
+        bool raw_rejected = false;
+        try {
+          (void)parse_bbox_bytes(bytes, 64, 64, 4, false);
+        } catch (const std::exception&) {
+          raw_rejected = true;
+        }
+        require(raw_rejected, "legacy permissive parser accepted OBB magic");
+        bytes.resize(95);
+        require(fails(make_wire_tensor(bytes, kDetectionFormatBboxObbV1)),
+                "OBB truncation accepted");
+        bool rejected = false;
+        try {
+          (void)decode_bbox({tensor});
+        } catch (const std::exception&) {
+          rejected = true;
+        }
+        require(rejected, "legacy BBOX parser accepted oriented carrier");
+      }
+
       require(detection_format_is_bbox(kDetectionFormatBbox), "BBOX predicate failed");
       require(detection_format_is_pose(kDetectionFormatBboxPose), "pose predicate failed");
       require(detection_format_is_segmentation(kDetectionFormatBboxSegmentation),

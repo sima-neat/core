@@ -1,4 +1,5 @@
 #include <simaai/scheduler/client/tensor_buffer.h>
+#include <simaai/scheduler/client/memory_access.h>
 // src/pipeline/internal/SampleUtil.cpp
 #include "pipeline/internal/SampleUtil.h"
 #include "gst/GstSampleAttributes.h"
@@ -206,6 +207,7 @@ bool tensor_has_device_gstsample_holder_local(const Tensor& tensor) {
   return tensor.device.type != simaai::neat::DeviceType::CPU ||
          tensor.storage->device.type != simaai::neat::DeviceType::CPU ||
          tensor.storage->sima_mem_target_flags != 0 || tensor_has_dmabuf_memory(tensor) ||
+         tensor_has_certified_terminal_host_memory(tensor) ||
          holder_uses_simaai_segment_memory(tensor.storage->holder);
 }
 
@@ -2704,6 +2706,87 @@ bool tensor_has_dmabuf_memory(const Tensor& tensor) {
     return gst_is_dmabuf_memory(gst_buffer_peek_memory(buffer, tensor.route.memory_index));
   }
   return buffer_has_dmabuf_memory(buffer);
+}
+
+bool tensor_has_certified_terminal_host_memory(const Tensor& tensor) {
+  if (!tensor.storage || tensor.storage->kind != StorageKind::GstSample ||
+      !tensor.storage->holder || !tensor.is_dense() || tensor.byte_offset < 0 ||
+      tensor.shape.empty() || tensor.route.memory_index < -1)
+    return false;
+  auto* sample = static_cast<GstSample*>(tensor.storage->holder.get());
+  auto* buffer = sample && GST_IS_SAMPLE(sample) ? gst_sample_get_buffer(sample) : nullptr;
+  const guint count = buffer ? gst_buffer_n_memory(buffer) : 0U;
+  int index = tensor.route.memory_index;
+  if (index < 0 && count == 1U)
+    index = 0;
+  if (index < 0 || static_cast<guint>(index) >= count)
+    return false;
+  if (!tensor.strides_bytes.empty() && tensor.strides_bytes.size() != tensor.shape.size())
+    return false;
+  std::size_t span = dtype_bytes(tensor.dtype);
+  if (!span)
+    return false;
+  for (std::size_t i = 0; i < tensor.shape.size(); ++i) {
+    if (tensor.shape[i] <= 0)
+      return false;
+    const auto extent = static_cast<std::size_t>(tensor.shape[i]);
+    if (tensor.strides_bytes.empty()) {
+      if (!safe_mul(span, extent, &span))
+        return false;
+    } else {
+      if (tensor.strides_bytes[i] < 0)
+        return false;
+      std::size_t tail = 0;
+      if (!safe_mul(extent - 1U, static_cast<std::size_t>(tensor.strides_bytes[i]), &tail) ||
+          !safe_add(span, tail, &span))
+        return false;
+    }
+  }
+  return ::simaai::scheduler::client::is_certified_terminal_host_span(
+      buffer, gst_buffer_peek_memory(buffer, static_cast<guint>(index)),
+      static_cast<std::size_t>(tensor.byte_offset), span);
+}
+
+bool tensor_has_framework_output_memory(const Tensor& tensor) {
+  return tensor_has_dmabuf_memory(tensor) || tensor_has_certified_terminal_host_memory(tensor);
+}
+
+bool sample_has_certified_terminal_host_memory(const Sample& sample) {
+  if (sample_has_tensor_list(sample))
+    for (const auto& tensor : sample.tensors)
+      if (tensor_has_certified_terminal_host_memory(tensor))
+        return true;
+  if (sample.tensor && tensor_has_certified_terminal_host_memory(*sample.tensor))
+    return true;
+  if (sample.kind == SampleKind::Bundle)
+    for (const auto& field : sample.fields)
+      if (sample_has_certified_terminal_host_memory(field))
+        return true;
+  return false;
+}
+
+bool sample_has_only_framework_output_memory(const Sample& sample) {
+  bool found = false;
+  if (sample_has_tensor_list(sample)) {
+    for (const auto& tensor : sample.tensors) {
+      found = true;
+      if (!tensor_has_framework_output_memory(tensor))
+        return false;
+    }
+  }
+  if (sample.tensor.has_value()) {
+    found = true;
+    if (!tensor_has_framework_output_memory(*sample.tensor))
+      return false;
+  }
+  if (sample.kind == SampleKind::Bundle) {
+    for (const auto& field : sample.fields) {
+      found = true;
+      if (!sample_has_only_framework_output_memory(field))
+        return false;
+    }
+  }
+  return found;
 }
 
 bool sample_has_dmabuf_memory(const Sample& sample) {

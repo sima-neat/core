@@ -9,6 +9,7 @@
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/PipelineBuild.h"
 #include "pipeline/internal/SampleUtil.h"
+#include "pipeline/internal/TensorUtil.h"
 #include "pipeline/TensorCore.h"
 
 #include <algorithm>
@@ -127,13 +128,17 @@ bool sample_has_zero_copy_tensor(const Sample& sample) {
 }
 
 void maybe_force_copy_for_backpressure(Sample& sample, std::size_t qsize, const char* where,
-                                       std::size_t seg_id) {
-  if (!sample_has_zero_copy_tensor(sample) || pipeline_internal::sample_has_dmabuf_memory(sample))
+                                       std::size_t seg_id, bool preserve_framework) {
+  if (!sample_has_zero_copy_tensor(sample) || pipeline_internal::sample_has_dmabuf_memory(sample) ||
+      (preserve_framework && pipeline_internal::sample_has_only_framework_output_memory(sample)))
     return;
   const int cap = zero_copy_backpressure_cap();
   if (cap <= 0 || qsize < static_cast<std::size_t>(cap))
     return;
-  force_copy_sample_if_zero_copy(sample);
+  if (preserve_framework)
+    pipeline_internal::materialize_owned_output(sample, true);
+  else
+    force_copy_sample_if_zero_copy(sample);
   if (env_bool("SIMA_GRAPH_ZERO_COPY_DEBUG", false)) {
     std::fprintf(stderr,
                  "[GRAPH] zero_copy_backpressure seg=%zu where=%s qsize=%zu cap=%d stream_id=%s\n",

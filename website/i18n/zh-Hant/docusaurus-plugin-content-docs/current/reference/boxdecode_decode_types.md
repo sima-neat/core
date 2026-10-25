@@ -6,14 +6,14 @@ sidebar_position: 6
 
 # BoxDecode 解碼類型
 
-`nodes::SimaBoxDecode` 將原始的檢測頭張量轉換為檢測結果。它在模型推論之後執行，應用所選模型系列的解碼數學公式，過濾掉低信度框，執行非最大值抑制 (NMS)，並輸出一個張量有效載荷，該有效載荷以解碼後的框開始。檢測模型可以將該有效載荷解析為框；姿勢和分割模型也可以解析在框之後的關鍵點或遮罩。
+`nodes::SimaBoxDecode` 將原始偵測頭張量轉換為偵測結果。它在模型推論後執行，套用所選模型系列的解碼運算並篩選偵測結果。NMS 與輸出編碼取決於所選系列。偵測模型可將酬載解析為方框；姿勢與分割模型也可解析方框之後的關鍵點或遮罩。
 
 對於一般的模型套件使用，建議使用 `Model` 感知的建構函式。模型封存檔提供了解碼器所需的張量順序、佈局、量化、類別數量、調整大小的中繼資料和分數域提示。您的應用程式通常只需要選擇解碼系列和過濾閾值。
 
 ## 執行階段後端
 
 BoxDecode 與 SuperPoint 透過 `neatkernelrunner` 使用已檢查的 Kernels 執行物件。
-公開的偵測與特徵輸出格式保持不變。直接張量輸入請使用共用 CMA 張量
+既有的偵測與特徵輸出格式保持不變。YOLO26 旋轉框解碼使用獨立的版本化格式。直接張量輸入請使用共用 CMA 張量
 （`TensorMemory::EV74`），即使解碼在 A65 執行也一樣：此記憶體選擇提供的是
 DMA-BUF 傳輸，而非執行目標。
 
@@ -74,12 +74,32 @@ opt.top_k = 100;
 | 模型任務 | C++ 輔助程式 | Python 輔助程式 | 解碼後的張量 |
 | --- | --- | --- | --- |
 | 偵測 | `decode_bbox(...)` | `pyneat.decode_bbox(...)` | `[N, 6]` float32 框：`x1, y1, x2, y2, score, class_id` |
+| 旋轉物件偵測 | `decode_obb(...)` | `pyneat.decode_obb(...)` | 具有自身儲存空間的幾何資料 `[N, 5]` float32（`cx, cy, width, height, angle_radians`）、分數 `[N]` float32、類別 ID `[N]` int32 |
 | 姿勢 | `decode_pose(...)` | `pyneat.decode_pose(...)` | 方框 `[N, 6]` 和關鍵點 `[N, 17, 3]` float32：`x, y, visibility` |
 | 分割 | `decode_segmentation(...)` | `pyneat.decode_segmentation(...)` | 方塊 `[N, 6]` float32，以及遮罩 `[N, 160, 160]` uint8 |
 | 分割 + 姿態 | `decode_segmentation_pose(...)` | `pyneat.decode_segmentation_pose(...)` | 邊界框 `[N, 6]` float32、遮罩 `[N, 160, 160]` uint8、關鍵點 `[N, 17, 3]` float32 |
 | SuperPoint | `decode_superpoint(...)` | `pyneat.decode_superpoint(...)` | 關鍵點 `[N,2]`，分數 `[N]`，描述子 `[N,D]` |
 
-偵測顯示圖可以將結果傳送到 `SimaRender`。如果應用程式碼只需要框選結果，則可以繼續使用 `decode_bbox(...)` 處理 BoxDecode 的輸出。
+軸對齊偵測結果的顯示圖可將結果傳給 `SimaRender`。`decode_bbox(...)` 僅適用於既有的方框前置格式；此函式與 `SimaRender` 都不接受旋轉框。
+
+## YOLO26 旋轉框 {#yolo26-oriented-boxes}
+
+明確選取 `BoxDecodeType::YoloV26Obb`（Python：`pyneat.BoxDecodeType.YoloV26Obb`，代碼 `yolo26-obb`）。此設定檔接收九個 FP32 頭，依角色分組為三個四通道距離頭、三個類別 logit 頭，以及三個單通道原始角度頭，各組步幅為 8、16、32。所有頭的完整類別數（1–256）必須一致。`Auto`、`GroupedByRole` 與 `GroupedByRoleLogit` 會選用此分組佈局；機率值類別頭與交錯佈局會遭到拒絕。
+
+使用正值 `top_k` 與 `nms_iou_threshold = 0`。此設定檔對類別 logit 套用 sigmoid，以最高啟用分數選出錨點，再選出錨點/類別配對。分數相同時保留第一階段排名與類別順序。分數門檻採嚴格不等式（`score > detection_threshold`）。原始角度已是弧度，解碼器不會再套用 sigmoid 或正規化其範圍。
+
+前處理中繼資料必須提供明確且有限的模型座標到原圖座標轉換，X/Y 縮放係數須為正且相等，並且不得包含剪切。即使圖塊與模型尺寸相同，也必須明確提供恆等轉換。若缺少轉換或轉換為非等向性，此設定檔會拒絕，而不會近似旋轉矩形。它保留帶正負號的有限寬度/高度，不會裁切至影像邊界。進行分塊 DOTA 評估時，每個圖塊使用恆等轉換，再由應用程式還原圖塊偏移並執行跨圖塊多邊形抑制。
+
+輸出標記為 `BBOX_OBB_V1`：32 位元組版本化標頭後接 `top_k` 筆 32 位元組記錄。未使用的記錄為零。`decode_obb_tensor(tensor)` 驗證單一載體；`decode_obb(tensors)` 為每個載體傳回一個具型別的結果。兩者都會複製到具有自身儲存空間的 CPU 張量；類別 ID 維持 INT32。例如：
+
+```python
+result = pyneat.decode_obb(outputs)[0]
+geometry = result.geometry.to_numpy()  # cx, cy, width, height, angle_radians
+scores = result.scores.to_numpy()
+class_ids = result.class_ids.to_numpy()
+```
+
+此格式刻意不作為前置 BBOX 的擴充。請使用具型別的輔助函式，而非 `decode_bbox`、分割/姿勢解析器或軸對齊方框的繪製器。
 
 ## 超級點
 
@@ -282,6 +302,7 @@ NMS IoU 為零時，YOLO26 略過 NMS。其他啟用 NMS 的 YOLO 與 SSD 設定
 | `BoxDecodeType::YoloV26` | `yolo26` | YOLO26 偵測 |
 | `BoxDecodeType::YoloV26Pose` | `yolo26-pose` | YOLO26 姿勢 |
 | `BoxDecodeType::YoloV26Seg` | `yolo26-seg` | YOLO26 分割 |
+| `BoxDecodeType::YoloV26Obb` | `yolo26-obb` | YOLO26 旋轉物件偵測 (`BBOX_OBB_V1`) |
 | `BoxDecodeType::YoloV6` | `yolov6` | YOLOv6 偵測 |
 | `BoxDecodeType::YoloX` | `yolox` | YOLOX 偵測 |
 | `BoxDecodeType::YoloXSegPose` | `yolox-seg-pose` | 同時包含邊界框、遮罩及關鍵點頭的 YOLOX 封裝匯出 |

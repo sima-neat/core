@@ -472,8 +472,9 @@ bool is_default_run_options(const RunOptions& opt) {
 // public-boundary stream-option builder so every entry point (Model::build,
 // Graph::build/source) agrees on output storage kind.
 struct OutputMemoryResolution {
-  bool zero_copy;       ///< non-DMA outputs share backing GstSample
-  bool preserve_dmabuf; ///< Auto retains actual standard DMA-BUF storage
+  bool zero_copy;           ///< non-DMA outputs share backing GstSample
+  bool preserve_framework;  ///< Auto retains actual standard DMA-BUF storage
+  bool prepare_cpu_visible; ///< issue cache-visibility maintenance for CPU readers
 };
 
 // THE definition of what Auto/ZeroCopy/Owned mean for a public output.
@@ -491,7 +492,7 @@ struct OutputMemoryResolution {
 // stay ZeroCopy to preserve packed tensor topology and must NOT be routed here.
 OutputMemoryResolution resolve_output_memory(const RunOptions& opt, RunMode mode) {
   bool zero_copy;
-  bool preserve_dmabuf = false;
+  bool preserve_framework = false;
   switch (opt.output_memory) {
   case OutputMemory::ZeroCopy:
     zero_copy = true;
@@ -500,20 +501,21 @@ OutputMemoryResolution resolve_output_memory(const RunOptions& opt, RunMode mode
     zero_copy = false;
     break;
   case OutputMemory::Auto:
-    preserve_dmabuf = true;
+    preserve_framework = true;
     zero_copy = preset_default_zero_copy(opt.preset) && (mode != RunMode::Sync);
     if (const char* raw = std::getenv("SIMA_OUTPUT_MEMORY_DEFAULT"); raw && *raw) {
       const std::string value(raw);
       if (value == "owned") {
         zero_copy = false;
-        preserve_dmabuf = false;
+        preserve_framework = false;
       } else if (value == "zerocopy") {
         zero_copy = true;
       }
     }
     break;
   }
-  return {zero_copy, preserve_dmabuf};
+  return {zero_copy, preserve_framework,
+          resolve_prepare_output_cpu_visible(opt, zero_copy || preserve_framework)};
 }
 
 int resolved_input_timeout_ms(const RunOptions& opt) {
@@ -1025,8 +1027,9 @@ InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
   stream_opt.stability_frames = preset_default_stability_frames(opt.preset);
   stream_opt.max_input_bytes = opt.advanced.max_input_bytes;
   stream_opt.copy_output = !output_mem.zero_copy;
-  stream_opt.preserve_dmabuf_output = output_mem.preserve_dmabuf;
-  if (output_mem.zero_copy || output_mem.preserve_dmabuf) {
+  stream_opt.preserve_framework_output = output_mem.preserve_framework;
+  stream_opt.prepare_output_cpu_visible = output_mem.prepare_cpu_visible;
+  if (output_mem.zero_copy || output_mem.preserve_framework) {
     stream_opt.holder_loan_sample_window = std::max(3, queue_depth + 2);
     stream_opt.holder_loan_credits = stream_opt.holder_loan_sample_window;
     stream_opt.holder_loan_credits_auto = true;
@@ -1058,7 +1061,7 @@ InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
 
 void finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt) {
   if (!stream_opt.holder_loan_credits_auto ||
-      (stream_opt.copy_output && !stream_opt.preserve_dmabuf_output) ||
+      (stream_opt.copy_output && !stream_opt.preserve_framework_output) ||
       !stream_opt.public_output_contract) {
     return;
   }
@@ -1672,7 +1675,7 @@ std::string single_sample_preflight_unsupported_reason(const std::string& pipeli
   // appsink sample is pulled and unref'd, there is no generic GStreamer
   // barrier proving the plugin-side buffer pool slot has been returned before
   // the public first frame is pushed.
-  if ((!opt.copy_output || opt.preserve_dmabuf_output) && has_async_hardware_stage &&
+  if ((!opt.copy_output || opt.preserve_framework_output) && has_async_hardware_stage &&
       max_num_buffers_in_pipeline_local(lower) == 1) {
     return "hardware zero-copy pipeline uses an async stage with a single output buffer";
   }
@@ -1854,6 +1857,11 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
 
   BuildResult br = build_pipeline_full(build_nodes, insert_boundaries, "mysink", insert_queue2,
                                        name_transform, &sess_opt);
+  if (graph_build_internal::explicit_public_terminal_output(opt, build_nodes)) {
+    const auto endpoint = public_output_endpoint_selector_local(build_nodes);
+    if (endpoint.terminal_stage_key_required && !endpoint.terminal_stage_key.empty())
+      br.terminal_host_stage_key = endpoint.terminal_stage_key;
+  }
   maybe_compile_build_result_contracts(
       &br, &build_nodes, sess_opt, input_contract_from_input(sample), seed_spec,
       contract_compile_sample_from_input(sample), "Graph::build(input)");
@@ -2926,7 +2934,7 @@ void session_build_tune_internal_zero_copy_holder_window(InputStreamOptions& str
                                                          std::size_t edge_queue,
                                                          bool graph_internal_output) {
   if (!graph_internal_output || !stream_opt.holder_loan_credits_auto ||
-      (stream_opt.copy_output && !stream_opt.preserve_dmabuf_output)) {
+      (stream_opt.copy_output && !stream_opt.preserve_framework_output)) {
     return;
   }
   if (edge_queue == 0) {
@@ -2945,7 +2953,7 @@ void session_build_reserve_kernel_runner_outputs(BuildResult& build,
   // Source-driven graphs also retain arenas downstream, even without an appsink.
   // Reserve the same bounded frame window without increasing execution slots.
   const auto retained_samples =
-      stream_opt.copy_output && !stream_opt.preserve_dmabuf_output
+      stream_opt.copy_output && !stream_opt.preserve_framework_output
           ? 0U
           : static_cast<std::size_t>(std::max(1, stream_opt.holder_loan_sample_window));
   auto output_budget = pipeline_internal::sima::kernel_runner_output_pool_capacity(

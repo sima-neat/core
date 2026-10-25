@@ -133,7 +133,9 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
              existing->address_source != physical.address_source)
       throw std::invalid_argument("SimaBoxDecode: shared head carrier contracts disagree");
   }
-  geometry.complete_geometry = compiled.payload.decode_type == BoxDecodeType::YoloXSegPose;
+  geometry.uniform_transform_required = compiled.payload.decode_type == BoxDecodeType::YoloV26Obb;
+  geometry.complete_geometry = compiled.payload.decode_type == BoxDecodeType::YoloXSegPose ||
+                               geometry.uniform_transform_required;
   const auto affine = [](const PreprocessRuntimeMeta& meta) {
     return std::array<double, 6>{meta.affine_m00, meta.affine_m01, meta.affine_m02,
                                  meta.affine_m10, meta.affine_m11, meta.affine_m12};
@@ -190,10 +192,7 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
   geometry.original_height = dynamic_image
                                  ? (observed ? observed->original_height : geometry.model_height)
                                  : geometry.original_height;
-  geometry.resize = (compiled.payload.decode_type == BoxDecodeType::Ssd ||
-                     compiled.payload.decode_type == BoxDecodeType::Detr)
-                        ? ResizeMode::Stretch
-                        : ResizeMode::Letterbox;
+  geometry.resize = default_boxdecode_resize_mode(compiled.payload.decode_type);
   if (resize_mode)
     geometry.resize = *resize_mode;
   else if (observed && !observed->resize_mode.empty()) {
@@ -213,7 +212,7 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
     // model-to-original coefficients. Do not invert them a second time.
     const auto values = affine(*observed);
     if (observed->roi_list_enabled || observed->has_roi_list())
-      throw std::invalid_argument("SimaBoxDecode: combined segmentation/pose requires one image "
+      throw std::invalid_argument("SimaBoxDecode: complete geometry requires one image "
                                   "transform, not ROI-list metadata");
     if (std::any_of(values.begin(), values.end(),
                     [](double v) {
@@ -222,6 +221,9 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
         values[1] != 0 || values[3] != 0 || values[0] <= 0 || values[4] <= 0)
       throw std::invalid_argument("SimaBoxDecode: model-to-original affine must be finite, "
                                   "axis-aligned and have positive scales");
+    if (geometry.uniform_transform_required && values[0] != values[4])
+      throw std::invalid_argument(
+          "SimaBoxDecode: oriented boxes require equal authoritative affine scales");
     geometry.model_to_original =
         std::array<float, 4>{static_cast<float>(values[0]), static_cast<float>(values[4]),
                              static_cast<float>(values[2]), static_cast<float>(values[5])};
@@ -230,6 +232,9 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
       !geometry.model_to_original)
     throw std::invalid_argument("SimaBoxDecode: crop geometry requires authoritative ingress "
                                 "preprocess model-to-original affine metadata");
+  if (geometry.uniform_transform_required && !geometry.model_to_original)
+    throw std::invalid_argument("SimaBoxDecode: oriented boxes require authoritative ingress "
+                                "preprocess affine metadata (explicit identity for model pixels)");
   auto native = si::prepare_boxdecode_kernel(admitted, geometry);
   if (compiled.payload.decode_type != BoxDecodeType::SuperPoint) {
     auto recipe = std::make_shared<si::KernelStageRecipe>(*native.compiled.recipe);

@@ -70,6 +70,8 @@ ParsedBoxRecords parse_bbox_records(const std::vector<uint8_t>& bytes, int img_w
 
   uint32_t header = 0;
   std::memcpy(&header, bytes.data(), sizeof(header));
+  if (header == 0x3156424f)
+    throw std::invalid_argument("BBOX_OBB_V1 requires decode_obb, not an axis-aligned parser");
   const size_t max_boxes = payload / sizeof(RawBox);
   if (header > max_boxes) {
     if (strict)
@@ -327,6 +329,74 @@ BoxDecodeResult decode_bbox_tensor(const simaai::neat::Tensor& tensor, int img_w
   return out;
 }
 
+OrientedDecodeTensors decode_obb_tensor(const Tensor& tensor) {
+  if (!tensor.semantic.detection ||
+      tensor.semantic.detection->format != kDetectionFormatBboxObbV1 ||
+      tensor.dtype != TensorDType::UInt8 || tensor.shape.size() != 1 || !tensor.is_dense())
+    throw std::invalid_argument("decode_obb requires a dense rank-one UInt8 BBOX_OBB_V1 tensor");
+  const auto bytes = copy_detection_payload(tensor, "oriented boxes");
+  OrientedBoxesHeaderV1 header;
+  if (bytes.size() < sizeof(header))
+    throw std::invalid_argument("oriented header is truncated");
+  std::memcpy(&header, bytes.data(), sizeof(header));
+  if (header.magic != 0x3156424f || header.version != 1 || header.header_bytes != 32 ||
+      header.flags != 0 || header.capacity < 1 || header.capacity > 65536 ||
+      header.count > header.capacity || header.records_offset != 32 || header.record_stride != 32 ||
+      header.total_bytes != 32u + 32u * header.capacity || header.total_bytes != bytes.size())
+    throw std::invalid_argument("invalid oriented V1 header or extent");
+  // Complete validation before allocation/publication; signed finite extents are intentional.
+  for (std::uint32_t i = 0; i < header.capacity; ++i) {
+    OrientedBoxRecordV1 record;
+    const auto* row = bytes.data() + 32 + std::size_t(i) * 32;
+    std::memcpy(&record, row, sizeof(record));
+    if (i >= header.count) {
+      if (std::any_of(row, row + 32, [](auto b) { return b != 0; }))
+        throw std::invalid_argument("oriented unused capacity must be zero");
+    } else if (!std::isfinite(record.center_x) || !std::isfinite(record.center_y) ||
+               !std::isfinite(record.width) || !std::isfinite(record.height) ||
+               !std::isfinite(record.angle_radians) || !std::isfinite(record.score) ||
+               record.score < 0 || record.score > 1 || record.class_id < 0 ||
+               record.reserved != 0) {
+      throw std::invalid_argument("invalid oriented V1 record");
+    }
+  }
+  const auto make = [count = std::int64_t(header.count)](TensorDType dtype, int columns) {
+    Tensor result;
+    result.storage = make_cpu_owned_storage(std::size_t(count) * columns * 4);
+    result.device = {DeviceType::CPU, 0};
+    result.dtype = dtype;
+    result.layout = TensorLayout::Unknown;
+    result.read_only = false;
+    result.shape =
+        columns == 1 ? std::vector<std::int64_t>{count} : std::vector<std::int64_t>{count, columns};
+    result.strides_bytes =
+        columns == 1 ? std::vector<std::int64_t>{4} : std::vector<std::int64_t>{columns * 4, 4};
+    return result;
+  };
+  OrientedDecodeTensors result{make(TensorDType::Float32, 5), make(TensorDType::Float32, 1),
+                               make(TensorDType::Int32, 1)};
+  if (header.count) {
+    auto geometry = result.geometry.storage->map(MapMode::Write);
+    auto scores = result.scores.storage->map(MapMode::Write);
+    auto classes = result.class_ids.storage->map(MapMode::Write);
+    for (std::size_t i = 0; i < header.count; ++i) {
+      const auto* row = bytes.data() + 32 + i * 32;
+      std::memcpy(static_cast<std::byte*>(geometry.data) + i * 20, row, 20);
+      std::memcpy(static_cast<std::byte*>(scores.data) + i * 4, row + 20, 4);
+      std::memcpy(static_cast<std::byte*>(classes.data) + i * 4, row + 24, 4);
+    }
+  }
+  return result;
+}
+
+OrientedDecodeTensorList decode_obb(const TensorList& tensors) {
+  OrientedDecodeTensorList result;
+  result.reserve(tensors.size());
+  for (const auto& tensor : tensors)
+    result.push_back(decode_obb_tensor(tensor));
+  return result;
+}
+
 simaai::neat::Tensor boxes_to_tensor(const std::vector<Box>& boxes) {
   const int64_t n = static_cast<int64_t>(boxes.size());
   const std::size_t bytes =
@@ -546,7 +616,9 @@ void tag_detection_format_in_sample(simaai::neat::Sample& sample) {
     }
     // Checked first: the combined token must not be swallowed by a future
     // substring-matching pose or segmentation predicate.
-    if (detection_format_is_segmentation_pose(fmt)) {
+    if (fmt == kDetectionFormatBboxObbV1) {
+      tag_detection_format(tensor, kDetectionFormatBboxObbV1);
+    } else if (detection_format_is_segmentation_pose(fmt)) {
       tag_detection_format(tensor, kDetectionFormatBboxSegmentationPose);
     } else if (detection_format_is_bbox(fmt)) {
       tag_detection_format(tensor, kDetectionFormatBbox);

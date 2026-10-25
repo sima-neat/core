@@ -46,6 +46,7 @@ struct KernelRunnerStageRequest {
   std::size_t output_pool_capacity = 0;
   std::string_view compact_sink;
   const StageStaticSpec* native_stage = nullptr; // Borrowed for cold preparation only.
+  std::string_view terminal_host_sink;
 };
 [[nodiscard]] ::simaai::scheduler::client::Status
 prepare_and_attach_kernel_runners(GstElement* pipeline,

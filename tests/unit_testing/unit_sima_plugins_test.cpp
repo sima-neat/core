@@ -607,6 +607,15 @@ int main() {
       require(provider != nullptr, "render OutputSpecProvider missing");
       simaai::neat::OutputSpec spec = provider->output_spec({});
       require(spec.note == "neatrender", "render output note mismatch");
+      simaai::neat::OutputSpec oriented;
+      oriented.format = "BBOX_OBB_V1";
+      bool rejected = false;
+      try {
+        (void)provider->output_spec(oriented);
+      } catch (const std::invalid_argument&) {
+        rejected = true;
+      }
+      require(rejected, "axis-aligned renderer accepted oriented output");
     }
 
     execute_argmax_graph(false);

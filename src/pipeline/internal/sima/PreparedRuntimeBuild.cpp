@@ -4707,6 +4707,21 @@ bool resolve_graph_processcvu_tiled_channel_encoding(const std::string& canonica
   return true;
 }
 
+// Wire semantics belong to the typed producer, not to an opaque byte shape.
+// Preserve the immutable logical descriptor (including rank) and only author
+// the format consumed by the public Sample-to-Tensor semantic bridge.
+static void apply_kernel_publication_format(
+    const StageStaticSpec& stage,
+    ::simaai::scheduler::client::TensorStagePublication& publication) {
+  if (!stage.native_kernel || stage.native_kernel->output_format.empty())
+    return;
+  GstCaps* caps = publication.output_caps ? gst_caps_copy(publication.output_caps.get())
+                                         : make_generic_tensor_set_caps_local();
+  gst_caps_set_simple(caps, "format", G_TYPE_STRING,
+                      stage.native_kernel->output_format.c_str(), nullptr);
+  publication.output_caps = std::shared_ptr<GstCaps>(caps, gst_caps_unref);
+}
+
 bool build_kernel_stage_publication(const StageStaticSpec& stage,
                                     ::simaai::scheduler::client::TensorStagePublication* output,
                                     std::string* error) {
@@ -4721,6 +4736,7 @@ bool build_kernel_stage_publication(const StageStaticSpec& stage,
       contract->stage_key = key;
       output->contract = std::move(contract);
     }
+    apply_kernel_publication_format(stage, *output);
     return true;
   }
 
@@ -4771,6 +4787,54 @@ bool build_kernel_stage_publication(const StageStaticSpec& stage,
   }
   output->output_name = stage.logical_outputs.front().logical_name;
   output->contract = std::move(contract);
+  output->physical_views.clear();
+  // The compiler must explicitly authorize packed/singleton publication.
+  // Inspection supplies the physical dtype/layout only. Scheduler still checks
+  // every member's bounds, write coverage and cache-line dependencies.
+  if (stage.native_kernel) {
+    namespace gs = ::simaai::scheduler::client;
+    for (const auto& logical : stage.logical_outputs) {
+      if (logical.publication_relation == PublicationViewRelation::Identity)
+        continue;
+      gs::TensorStagePublicationRelation relation;
+      if (logical.publication_relation == PublicationViewRelation::PackedStorage)
+        relation = gs::TensorStagePublicationRelation::PackedStorage;
+      else if (logical.publication_relation == PublicationViewRelation::SingletonAxes)
+        relation = gs::TensorStagePublicationRelation::SingletonAxes;
+      else {
+        if (error)
+          *error = "native kernel publication relation is invalid";
+        return false;
+      }
+      bool found = false;
+      for (const auto& member : stage.native_kernel->members) {
+        for (std::size_t i = 0; i < member.outputs.size(); ++i) {
+          if (member.outputs[i].tensor != static_cast<std::size_t>(logical.backend_output_index))
+            continue;
+          auto inspected = gs::inspect_kernel(member.executable);
+          const auto* checked = std::get_if<gs::KernelInspection>(&inspected);
+          if (!checked || i >= checked->outputs().size()) {
+            if (error)
+              *error = "native kernel publication has no checked producer output";
+            return false;
+          }
+          const auto& spec = checked->outputs()[i];
+          output->physical_views.push_back(
+              {logical.backend_output_index, spec.dtype, spec.layout, relation});
+          found = true;
+          break;
+        }
+        if (found)
+          break;
+      }
+      if (!found) {
+        if (error)
+          *error = "native kernel publication relation has no producing member";
+        return false;
+      }
+    }
+  }
+  apply_kernel_publication_format(stage, *output);
   return true;
 }
 

@@ -6,14 +6,14 @@ sidebar_position: 6
 
 # BoxDecode Decode Types
 
-`nodes::SimaBoxDecode` converts raw detection-head tensors into detection results. It runs after model inference, applies the decode math for the selected model family, filters low-confidence boxes, runs NMS, and emits a tensor payload that starts with decoded boxes. Detection models can parse that payload as boxes; pose and segmentation models can also parse the keypoints or masks that follow the boxes.
+`nodes::SimaBoxDecode` converts raw detection-head tensors into detection results. It runs after model inference, applies the decode math for the selected model family and filters detections. NMS and output encoding depend on the selected family. Detection models can parse that payload as boxes; pose and segmentation models can also parse the keypoints or masks that follow the boxes.
 
 For normal model-pack usage, prefer the `Model`-aware constructor. The model archive supplies the tensor order, layout, quantization, class count, resize metadata, and score-domain hints needed by the decoder. Your application usually only chooses the decode family and filtering thresholds.
 
 ## Runtime backend
 
 BoxDecode and SuperPoint use `neatkernelrunner` with checked Kernels executables.
-The public detection and feature output formats are unchanged. For direct tensor
+Existing detection and feature output formats are unchanged. YOLO26 oriented-box decoding uses a separate versioned format. For direct tensor
 ingress, use shared-CMA tensors (`TensorMemory::EV74`), even when decode executes
 on A65: this memory choice supplies DMA-BUF transport, not the execution target.
 
@@ -76,12 +76,51 @@ opt.top_k = 100;
 | Model task | C++ helper | Python helper | Decoded tensors |
 | --- | --- | --- | --- |
 | Detection | `decode_bbox(...)` | `pyneat.decode_bbox(...)` | `[N, 6]` float32 boxes: `x1, y1, x2, y2, score, class_id` |
+| Oriented detection | `decode_obb(...)` | `pyneat.decode_obb(...)` | Owned geometry `[N, 5]` float32 (`cx, cy, width, height, angle_radians`), scores `[N]` float32, class IDs `[N]` int32 |
 | Pose | `decode_pose(...)` | `pyneat.decode_pose(...)` | boxes `[N, 6]` and keypoints `[N, 17, 3]` float32: `x, y, visibility` |
 | Segmentation | `decode_segmentation(...)` | `pyneat.decode_segmentation(...)` | boxes `[N, 6]` float32 and masks `[N, 160, 160]` uint8 |
 | Segmentation + pose | `decode_segmentation_pose(...)` | `pyneat.decode_segmentation_pose(...)` | boxes `[N, 6]` float32, masks `[N, 160, 160]` uint8, keypoints `[N, 17, 3]` float32 |
 | SuperPoint | `decode_superpoint(...)` | `pyneat.decode_superpoint(...)` | keypoints `[N,2]`, scores `[N]`, descriptors `[N,D]` |
 
-Detection-display graphs can feed the result to `SimaRender`. Application code that only needs boxes can continue to use `decode_bbox(...)` on BoxDecode outputs.
+Axis-aligned detection-display graphs can feed the result to `SimaRender`. Use `decode_bbox(...)` only for the existing box-leading formats; neither it nor `SimaRender` accepts oriented boxes.
+
+## YOLO26 oriented boxes {#yolo26-oriented-boxes}
+
+Select `BoxDecodeType::YoloV26Obb` (Python: `pyneat.BoxDecodeType.YoloV26Obb`,
+token `yolo26-obb`) explicitly. This profile consumes nine FP32 heads grouped as
+three four-channel distance heads, three class-logit heads, and three one-channel
+raw-angle heads, at strides 8, 16, and 32. All heads must agree on the complete
+class count (1–256). `Auto`, `GroupedByRole`, and `GroupedByRoleLogit` select this
+grouped layout; probability-valued class heads and interleaved layouts are rejected.
+
+Use a positive `top_k` and `nms_iou_threshold = 0`. The profile applies sigmoid to
+class logits, selects anchors by their highest activated score, then selects
+anchor/class pairs. Equal scores preserve stage-one rank and class order. The
+score cutoff is strict (`score > detection_threshold`). The raw angle is already
+in radians; the decoder does not apply sigmoid or normalize its range.
+
+Preprocess metadata must supply an explicit, finite model-to-original transform
+with positive equal X/Y scales and no shear. An explicit identity transform is
+required even for model-sized tiles. The profile rejects missing or anisotropic
+transforms rather than approximating a rotated rectangle. It preserves signed
+finite widths/heights and does not clip to image bounds. For tiled DOTA evaluation,
+use an identity transform for each tile, then perform tile-offset recovery and
+cross-tile polygon suppression in the application.
+
+The output is tagged `BBOX_OBB_V1`: a 32-byte versioned header followed by `top_k`
+32-byte records. Unused records are zero. `decode_obb_tensor(tensor)` validates a
+single carrier; `decode_obb(tensors)` returns one typed result for each carrier.
+Both copy into owned CPU tensors; class IDs remain INT32. For example:
+
+```python
+result = pyneat.decode_obb(outputs)[0]
+geometry = result.geometry.to_numpy()  # cx, cy, width, height, angle_radians
+scores = result.scores.to_numpy()
+class_ids = result.class_ids.to_numpy()
+```
+
+This format is intentionally not a leading-BBOX extension. Use the typed helpers,
+not `decode_bbox`, segmentation/pose parsers, or the axis-aligned renderer.
 
 ## SuperPoint
 
@@ -317,6 +356,7 @@ feeds the same control.
 | `BoxDecodeType::YoloV26` | `yolo26` | YOLO26 detection |
 | `BoxDecodeType::YoloV26Pose` | `yolo26-pose` | YOLO26 pose |
 | `BoxDecodeType::YoloV26Seg` | `yolo26-seg` | YOLO26 segmentation |
+| `BoxDecodeType::YoloV26Obb` | `yolo26-obb` | YOLO26 oriented detection (`BBOX_OBB_V1`) |
 | `BoxDecodeType::YoloV6` | `yolov6` | YOLOv6 detection |
 | `BoxDecodeType::YoloX` | `yolox` | YOLOX detection |
 | `BoxDecodeType::YoloXSegPose` | `yolox-seg-pose` | YOLOX packed export carrying box, mask and keypoint heads together |

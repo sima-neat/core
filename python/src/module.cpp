@@ -2021,6 +2021,16 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("boxes", &simaai::neat::PoseDecodeTensors::boxes)
       .def_rw("keypoints", &simaai::neat::PoseDecodeTensors::keypoints);
 
+  nb::class_<simaai::neat::OrientedDecodeTensors>(m, "OrientedDecodeTensors")
+      .def(nb::init<>())
+      .def_rw("geometry", &simaai::neat::OrientedDecodeTensors::geometry)
+      .def_rw("scores", &simaai::neat::OrientedDecodeTensors::scores)
+      .def_rw("class_ids", &simaai::neat::OrientedDecodeTensors::class_ids);
+  m.def("decode_obb_tensor", &simaai::neat::decode_obb_tensor, "tensor"_a,
+        "Strict BBOX_OBB_V1 parser. Geometry columns: cx,cy,w,h,raw radians; no clamp or remap.");
+  m.def("decode_obb", &simaai::neat::decode_obb, "tensors"_a,
+        "Parse oriented carriers into owned geometry, score and integer class tensors.");
+
   nb::class_<simaai::neat::SegmentationDecodeTensors>(m, "SegmentationDecodeTensors")
       .def(nb::init<>())
       .def_rw("boxes", &simaai::neat::SegmentationDecodeTensors::boxes)
@@ -4393,6 +4403,7 @@ NB_MODULE(_pyneat_core, m) {
       .value("YoloV26", simaai::neat::BoxDecodeType::YoloV26)
       .value("YoloV26Pose", simaai::neat::BoxDecodeType::YoloV26Pose)
       .value("YoloV26Seg", simaai::neat::BoxDecodeType::YoloV26Seg)
+      .value("YoloV26Obb", simaai::neat::BoxDecodeType::YoloV26Obb)
       .value("YoloV6", simaai::neat::BoxDecodeType::YoloV6)
       .value("YoloX", simaai::neat::BoxDecodeType::YoloX)
       .value("Ssd", simaai::neat::BoxDecodeType::Ssd)

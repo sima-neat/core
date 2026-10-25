@@ -1,6 +1,13 @@
+#include "pipeline/DetectionTypes.h"
+#include "pipeline/gst/InputStreamInternal.h"
+#include "pipeline/internal/TensorBufferEnvelope.h"
+#include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/sima/BoxDecodeKernelRecipe.h"
 #include "pipeline/internal/sima/BoxDecodeGeometry.h"
+#include "pipeline/internal/sima/BoxDecodePublication.h"
+#include "pipeline/internal/sima/PreparedRuntimeBuild.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
+#include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/sima/BoxDecodeKernelAdmission.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
@@ -10,12 +17,16 @@
 #include "pipeline/DetectionTypes.h"
 #include "pipeline/FeatureTypes.h"
 #include <simaai/scheduler/testing/probe.h>
+#include <simaai/scheduler/testing/route_probe.h>
+#include <gst/SimaPluginStaticManifestAbi.h>
 #include <iostream>
 #include <simaai/scheduler/client/kernel.h>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstring>
 #include <new>
+#include <limits>
 #include <stdexcept>
 
 namespace test = simaai::scheduler::testing;
@@ -242,6 +253,32 @@ void auxiliary_tasks() {
   }
 }
 
+// Identity scale does not make nominal resize modes interchangeable: YOLO26
+// declares centered letterbox even when original and model extents coincide.
+void yolo26_seg_identity_resize_contract() {
+  auto s = source(BoxDecodeType::YoloV26Seg, 80);
+  s.payload.topk = 100;
+  s.payload.nms_iou_threshold = 0.;
+  for (int side : {80, 40, 20}) {
+    input(s, side, side, 4, "FP32");
+    input(s, side, side, 80, "FP32");
+    input(s, side, side, 32, "FP32");
+  }
+  input(s, 160, 160, 32, "FP32");
+  BoxDecodeGeometryOptions geometry{640, 640, 640, 640, ResizeMode::Letterbox};
+  check(s, geometry);
+  geometry.resize = ResizeMode::Stretch;
+  bool rejected = false;
+  try {
+    (void)prepare_boxdecode_kernel(s, geometry);
+  } catch (const std::invalid_argument& error) {
+    rejected =
+        std::string(error.what()).find("resize: explicit resize does not match profile geometry") !=
+        std::string::npos;
+  }
+  require(rejected, "YOLO26 segmentation must reject identity stretch geometry");
+}
+
 void combined_task() {
   namespace k = simaai::scheduler::client;
   for (const auto* dtype : {"BF16", "INT8", "FP32"}) {
@@ -367,6 +404,268 @@ struct HostStorage final {
     std::memcpy(static_cast<std::byte*>(memory.get()) + element * 4, &value, 4);
   }
 };
+void yolo26_direct_mask_projection() {
+  auto s = source(BoxDecodeType::YoloV26Seg, 1);
+  s.payload.nms_iou_threshold = 0.;
+  for (int side : {80, 40, 20}) {
+    input(s, side, side, 4, "FP32");
+    input(s, side, side, 1, "FP32");
+    input(s, side, side, 32, "FP32");
+  }
+  input(s, 160, 160, 32, "FP32");
+  const auto recipe = check(s, {640, 640, 640, 640, ResizeMode::Letterbox});
+  const auto& runtime = recipe.compiled.runtime_contract;
+  const auto& members = recipe.compiled.recipe->members;
+  const auto numerical = inspect(members[0].executable);
+  const auto prefix = inspect(members[1].executable);
+  constexpr std::size_t capacity = 4, mask_bytes = capacity * 160 * 160;
+  constexpr std::size_t prefix_bytes = 4 + capacity * 24;
+  constexpr std::size_t wire_bytes = prefix_bytes + mask_bytes;
+  require(members.size() == 2 && members[0].outputs[4].tensor == 0 &&
+              members[0].outputs[4].byte_offset == prefix_bytes &&
+              members[1].outputs[0].tensor == 0 && members[1].outputs[0].byte_offset == 0,
+          "direct masks lost their disjoint public prefix/suffix routes");
+  require(prefix.inputs().size() == 4 &&
+              prefix.output_requirements()[0].storage_bytes == prefix_bytes &&
+              numerical.output_requirements()[4].storage_bytes == mask_bytes &&
+              runtime.logical_outputs[0].size_bytes == wire_bytes &&
+              runtime.logical_outputs[0].publication_relation ==
+                  PublicationViewRelation::PackedStorage,
+          "direct mask publication extent or explicit authority changed");
+  require(recipe.compiled.recipe->private_outputs.size() == 4 &&
+              recipe.compiled.recipe->private_buffers.size() == 4,
+          "direct mask projection retained its duplicate private mask allocation");
+
+  StageStaticSpec stage;
+  stage.element_name = stage.logical_stage_id = "direct_mask_test";
+  stage.native_kernel = recipe.compiled.recipe;
+  stage.logical_outputs = runtime.logical_outputs;
+  stage.physical_outputs = runtime.physical_outputs;
+  stage.physical_outputs.insert(stage.physical_outputs.end(),
+                                recipe.compiled.recipe->private_buffers.begin(),
+                                recipe.compiled.recipe->private_buffers.end());
+  stage.output_order = runtime.output_order;
+  c::TensorStagePublication publication;
+  std::string error;
+  require(build_kernel_stage_publication(stage, &publication, &error), error.c_str());
+  require(publication.physical_views.size() == 1 &&
+              publication.physical_views[0].backend_output_index == 0 &&
+              publication.physical_views[0].dtype == c::DType::UInt8 &&
+              publication.physical_views[0].relation ==
+                  c::TensorStagePublicationRelation::PackedStorage,
+          "Core dropped the checked packed mask authority");
+  auto invalid_stage = stage;
+  invalid_stage.logical_outputs[0].publication_relation = static_cast<PublicationViewRelation>(999);
+  require(!build_kernel_stage_publication(invalid_stage, &publication, &error),
+          "unknown physical publication relation accepted");
+  auto missing = std::make_shared<KernelStageRecipe>(*stage.native_kernel);
+  for (auto& member : missing->members)
+    for (auto& port : member.outputs)
+      if (port.tensor == 0)
+        port.tensor = 999;
+  invalid_stage = stage;
+  invalid_stage.native_kernel = missing;
+  require(!build_kernel_stage_publication(invalid_stage, &publication, &error),
+          "packed public output without a checked producer accepted");
+
+  require(build_kernel_stage_publication(stage, &publication, &error), error.c_str());
+  c::TensorStageRequest cold;
+  cold.target = c::Hardware::A65;
+  cold.members = members;
+  cold.publication = publication;
+  cold.placement = std::make_shared<const SimaPluginStageSpec>();
+  // Deliberately stop after the real recipe checks, before layout admission,
+  // worker creation or DMA allocation. This is NOT a prepared stage execution.
+  cold.publication.input_caps.reset();
+  const auto rejected = [](const c::TensorStageRequest& request, const char* field) {
+    test::RouteProbe probe;
+    const auto failure = probe.prepare(request);
+    require(failure && failure->field == field, "unexpected packed recipe admission result");
+    require(probe.read_offsets().empty(), "cold recipe acquired a current carrier");
+  };
+  rejected(cold, "stage"); // Valid complete recipe reaches the deliberate caps barrier.
+  auto bad = cold;
+  bad.publication.physical_views.clear();
+  rejected(bad, "output.contract");
+  bad = cold;
+  bad.publication.physical_views.push_back(bad.publication.physical_views.front());
+  rejected(bad, "output.layout");
+  bad = cold;
+  ++bad.members[0].outputs[4].byte_offset;
+  rejected(bad, "output.span");
+  bad = cold;
+  --bad.members[0].outputs[4].byte_offset;
+  rejected(bad, "output.span"); // Overlap leaves the final suffix byte unwritten.
+  bad = cold;
+  bad.members.pop_back();
+  rejected(bad, "output.span"); // Missing prefix writer.
+  bad = cold;
+  bad.members[1].inputs.pop_back();
+  rejected(bad, "stage.members");
+  bad = cold;
+  auto gap_contract =
+      std::make_shared<simaai::gst::TensorBufferPublishContract>(*bad.publication.contract);
+  ++gap_contract->logical_outputs[0].size_bytes;
+  ++gap_contract->logical_outputs[0].shape.back();
+  bad.publication.contract = gap_contract;
+  ++bad.members[0].outputs[4].byte_offset;
+  rejected(bad, "output.span"); // Both writes fit, but leave an internal byte gap.
+  const auto incompatible_writer = [](c::DType dtype, c::Layout layout) {
+    const c::TensorSpec descriptor{{100}, dtype, std::move(layout)};
+    const c::TensorRequirements requirement{100, 1};
+    auto task = c::make_host_task({std::make_shared<const int>(0),
+                                   {},
+                                   {&descriptor, 1},
+                                   {},
+                                   {&requirement, 1},
+                                   +[](const void*, c::HostBuffers) -> c::HostStatus { return {}; },
+                                   1});
+    if (const auto* failure = std::get_if<c::Error>(&task))
+      throw std::runtime_error(failure->message);
+    return std::get<c::KernelExecutable>(std::move(task));
+  };
+  bad = cold;
+  bad.members[1].executable = incompatible_writer(c::DType::Int8, c::Contiguous{});
+  bad.members[1].inputs.clear();
+  rejected(bad, "output.layout");
+  bad = cold;
+  bad.members[1].executable = incompatible_writer(c::DType::UInt8, c::Strided{{1}});
+  bad.members[1].inputs.clear();
+  rejected(bad, "output.layout");
+  auto production_capacity = s;
+  production_capacity.payload.topk = 100;
+  const auto production_recipe =
+      check(production_capacity, {640, 640, 640, 640, ResizeMode::Letterbox});
+  require(production_recipe.compiled.recipe->members[0].outputs[4].byte_offset == 2404 &&
+              2404 % 64 == prefix_bytes % 64,
+          "production K100 mask boundary changed cache-line position");
+
+  test::OperationProbe decoder, publisher;
+  require(!decoder.prepare(members[0].executable) && !publisher.prepare(members[1].executable),
+          "direct mask operations did not prepare");
+  const auto take = []<class T>(c::Result<T> result) -> T {
+    if (const auto* failure = std::get_if<c::Error>(&result))
+      throw std::runtime_error(failure->message);
+    return std::get<T>(std::move(result));
+  };
+  std::vector<std::shared_ptr<HostStorage>> inputs, small_outputs;
+  std::vector<c::ConstBytes> in, prefix_inputs;
+  std::vector<c::MutableBytes> out;
+  for (auto req : numerical.input_requirements()) {
+    inputs.push_back(std::make_shared<HostStorage>(req.storage_bytes));
+    in.push_back({static_cast<const std::byte*>(inputs.back()->memory.get()), req.storage_bytes});
+  }
+  HostStorage wire(wire_bytes + 32), legacy_wire(wire_bytes);
+  auto* bytes = static_cast<std::byte*>(wire.memory.get());
+  for (std::size_t i = 0; i < 4; ++i) {
+    const auto req = numerical.output_requirements()[i];
+    small_outputs.push_back(std::make_shared<HostStorage>(req.storage_bytes));
+    out.push_back({static_cast<std::byte*>(small_outputs.back()->memory.get()), req.storage_bytes});
+    prefix_inputs.push_back({out.back().data, out.back().size_bytes});
+  }
+  out.push_back({bytes + prefix_bytes, mask_bytes});
+  const std::array<c::MutableBytes, 1> prefix_output{{{bytes, prefix_bytes}}};
+  auto decoding = take(decoder.bind_host(decoder.operation(), in, out));
+  auto publishing = take(publisher.bind_host(publisher.operation(), prefix_inputs, prefix_output));
+  const auto legacy =
+      prepare_boxdecode_publication(BoxDecodeWireFormat::Masks, numerical.outputs());
+  auto legacy_inputs = prefix_inputs;
+  legacy_inputs.push_back({bytes + prefix_bytes, mask_bytes});
+  const std::array<c::MutableBytes, 1> legacy_output{
+      {{static_cast<std::byte*>(legacy_wire.memory.get()), wire_bytes}}};
+  for (int port : {1, 4, 7})
+    for (std::size_t i = 0; i < inputs[port]->size / 4; ++i)
+      inputs[port]->set_float(i, -80.f);
+  for (std::size_t i = 0; i < 4; ++i) {
+    for (int coordinate = 0; coordinate < 4; ++coordinate)
+      inputs[0]->set_float(i * 4 + coordinate, 1.f);
+    inputs[2]->set_float(i * 32, 1.f);
+  }
+  for (std::size_t pixel = 0; pixel < 160 * 160; ++pixel)
+    inputs[9]->set_float(pixel * 32, 1.f);
+  // Reuse the same bound output while count shrinks. No preclear may hide
+  // stale selected masks, complement bytes or unused capacity.
+  std::memset(bytes, 0xa5, wire.size);
+  for (int count : {4, 1, 0, 4}) {
+    for (int i = 0; i < 4; ++i)
+      inputs[1]->set_float(i, i < count ? 2.f : -80.f);
+    std::memset(bytes, 0x7c, prefix_bytes);
+    auto decoded = decoder.submit(decoding);
+    require(!decoded.wait(), "direct numerical mask execution failed");
+    for (std::size_t i = 0; i < prefix_bytes; ++i)
+      require(wire.read<std::uint8_t>(i) == 0x7c, "mask writer escaped into the public prefix");
+    require(!publisher.submit(publishing, {&decoded, 1}).wait(),
+            "direct mask dependent execution failed");
+    require(wire.read<std::int32_t>(0) == count, "direct mask count mismatch");
+    for (std::size_t slot = 0; slot < capacity; ++slot)
+      for (int y = 0; y < 160; ++y)
+        for (int x = 0; x < 160; ++x) {
+          const bool live = slot < static_cast<std::size_t>(count) && y < 3 &&
+                            x >= std::max(0, int(2 * slot) - 1) && x < int(2 * slot) + 3;
+          require(wire.read<std::uint8_t>(prefix_bytes + slot * 25600 + y * 160 + x) ==
+                      (live ? 186 : 0),
+                  "direct mask pixel/complement/unused tail mismatch");
+        }
+    require(!test::execute_host(legacy.executable, legacy_inputs, legacy_output),
+            "legacy mask oracle publication failed");
+    require(!std::memcmp(bytes, legacy_wire.memory.get(), wire_bytes),
+            "direct projection changed legacy wire bytes");
+    for (std::size_t i = wire_bytes; i < wire.size; ++i)
+      require(wire.read<std::uint8_t>(i) == 0xa5, "direct mask write escaped wire capacity");
+  }
+  // A failed numerical dependency cannot stamp a new public header, even if
+  // private result buffers or a pooled wire contain an earlier valid frame.
+  auto short_input = in;
+  --short_input[0].size_bytes;
+  require(
+      std::holds_alternative<c::Error>(decoder.bind_host(decoder.operation(), short_input, out)),
+      "undersized numerical input admitted for direct masks");
+  std::memset(bytes, 0x6b, prefix_bytes);
+  const auto invalid_prefix = prefix_inputs;
+  const std::int32_t invalid_count = 5;
+  std::memcpy(out[3].data, &invalid_count, 4);
+  require(bool(test::execute_host(members[1].executable, invalid_prefix, prefix_output)),
+          "invalid result count accepted by prefix serializer");
+  for (std::size_t i = 0; i < prefix_bytes; ++i)
+    require(wire.read<std::uint8_t>(i) == 0x6b, "failed prefix serializer changed public header");
+
+  const c::TensorSpec token{{1}, c::DType::UInt8};
+  const c::TensorRequirements token_requirement{1, 1};
+  const auto failure_task =
+      take(c::make_host_task({std::make_shared<const int>(0),
+                              {&token, 1},
+                              {&token, 1},
+                              {&token_requirement, 1},
+                              {&token_requirement, 1},
+                              +[](const void*, c::HostBuffers) -> c::HostStatus {
+                                return c::HostError{c::ProviderErrorCode::InvalidParameter,
+                                                    "fixture", "deliberate predecessor failure"};
+                              },
+                              1}));
+  test::OperationProbe failing;
+  require(!failing.prepare(failure_task), "failure predecessor preparation failed");
+  std::byte token_in{}, token_out{};
+  const std::array<c::ConstBytes, 1> failure_in{{{&token_in, 1}}};
+  const std::array<c::MutableBytes, 1> failure_out{{{&token_out, 1}}};
+  const auto failure_binding =
+      take(failing.bind_host(failing.operation(), failure_in, failure_out));
+  const std::int32_t valid_count = 4;
+  std::memcpy(out[3].data, &valid_count, 4);
+  const auto failed = failing.submit(failure_binding);
+  require(bool(publisher.submit(publishing, {&failed, 1}).wait()),
+          "failed predecessor did not suppress the prefix serializer");
+  for (std::size_t i = 0; i < prefix_bytes; ++i)
+    require(wire.read<std::uint8_t>(i) == 0x6b, "failed predecessor published a fresh header");
+
+  auto aliased_prefix_inputs = prefix_inputs;
+  aliased_prefix_inputs[0] = {bytes, numerical.output_requirements()[0].storage_bytes};
+  require(bool(test::execute_host(members[1].executable, aliased_prefix_inputs, prefix_output)),
+          "direct masks weakened serializer input/output alias rejection");
+  require(bool(test::execute_host(members[1].executable,
+                                  std::span<const c::ConstBytes>(prefix_inputs).first(3),
+                                  prefix_output)),
+          "direct masks weakened serializer input arity");
+}
 void combined_execution(bool planar, int ingress_route = 0, bool gaps = false) {
   namespace rt = simaai::scheduler::client;
   const auto sigmoid = [](float x) { return 1.f / (1.f + std::exp(-x)); };
@@ -641,6 +940,215 @@ void combined_execution(bool planar, int ingress_route = 0, bool gaps = false) {
   }
 }
 
+void oriented_contract_and_execution() {
+  auto s = source(BoxDecodeType::YoloV26Obb, 2);
+  s.payload.decode_type_option = BoxDecodeTypeOption::GroupedByRoleLogit;
+  s.payload.detection_threshold = .001;
+  s.payload.nms_iou_threshold = 0;
+  for (int channels : {4, 2, 1})
+    for (int side : {8, 4, 2})
+      input(s, side, side, channels, "FP32");
+  // Exercise the actual static/subset frontend, including ambiguous one-class heads.
+  for (int classes : {1, 2}) {
+    BoxDecodeStaticContract authored;
+    authored.decode_type = BoxDecodeType::YoloV26Obb;
+    authored.topk = 4;
+    authored.detection_threshold = .001;
+    for (std::size_t i = 0; i < s.runtime_contract.logical_inputs.size(); ++i) {
+      const auto& logical = s.runtime_contract.logical_inputs[i];
+      BoxDecodeTensorStaticContract tensor;
+      tensor.input_shape.assign(logical.shape.begin(), logical.shape.end());
+      if (i >= 3 && i < 6)
+        tensor.input_shape[2] = classes;
+      tensor.slice_shape = tensor.input_shape;
+      tensor.data_type = "FP32";
+      tensor.layout = "HWC";
+      tensor.logical_name = std::string(i < 3   ? "bbox_"
+                                        : i < 6 ? "class_logit_"
+                                                : "angle_") +
+                            std::to_string(i % 3);
+      tensor.backend_name = tensor.logical_name;
+      tensor.source_storage_kind = BoxDecodeSourceStorageKind::DenseHwcPhysical;
+      authored.tensors.push_back(std::move(tensor));
+    }
+    const auto compiled = stagesemantics::build_boxdecode_compiled_contract(authored);
+    require(compiled.payload.num_classes == classes &&
+                compiled.payload.score_activation == BoxDecodeScoreActivation::Sigmoid,
+            "OBB static full-class resolution or sigmoid default failed");
+    for (int fault = 0; fault < 8; ++fault) {
+      auto bad = authored;
+      if (fault == 0)
+        bad.num_classes = classes + 1;
+      if (fault == 1)
+        bad.score_activation = BoxDecodeScoreActivation::Identity;
+      if (fault == 2)
+        std::swap(bad.tensors[3], bad.tensors[6]);
+      if (fault == 3)
+        bad.nms_iou_threshold = .5;
+      if (fault == 4)
+        bad.tensors[3].logical_name = "class_prob_0";
+      if (fault == 5)
+        bad.tensors[3].backend_name = "class_probability_0";
+      if (fault == 6)
+        bad.tensors[3].source_segment_name = "cast_0/class_prob_0";
+      if (fault == 7)
+        bad.tensors[6].backend_name = "class_logits_0";
+      bool rejected = false;
+      try {
+        (void)stagesemantics::build_boxdecode_compiled_contract(bad);
+      } catch (const std::invalid_argument&) {
+        rejected = true;
+      }
+      require(rejected, "OBB static invalid class/domain/role/NMS admitted");
+    }
+  }
+  BoxDecodeGeometryOptions geometry{64, 64, 64, 64, ResizeMode::Letterbox};
+  geometry.model_to_original = std::array<float, 4>{1, 1, 0, 0};
+  geometry.complete_geometry = geometry.uniform_transform_required = true;
+  for (int failure = 0; failure < 7; ++failure) {
+    auto bad = s;
+    auto bad_geometry = geometry;
+    if (failure == 0)
+      bad_geometry.model_to_original.reset();
+    if (failure == 1)
+      (*bad_geometry.model_to_original)[1] = 2;
+    if (failure == 2)
+      bad.payload.nms_iou_threshold = .5;
+    if (failure == 3)
+      bad.payload.decode_type_option = BoxDecodeTypeOption::InterleavedByHead;
+    if (failure == 4)
+      bad.payload.slice_shapes[6].sizes[2] = 2;
+    if (failure == 5)
+      bad.runtime_contract.logical_inputs[0].dtype = "UINT8";
+    if (failure == 6)
+      bad.payload.num_classes = 1;
+    bool rejected = false;
+    try {
+      (void)check(bad, bad_geometry);
+    } catch (const std::invalid_argument&) {
+      rejected = true;
+    }
+    require(rejected, "unsupported OBB source/options/geometry accepted");
+  }
+  const auto recipe = check(s, geometry);
+  const auto& members = recipe.compiled.recipe->members;
+  require(members.size() == 2, "OBB introduced an unexpected adapter");
+  const auto contract = inspect(members[0].executable);
+  require(contract.outputs()[0].dtype == c::DType::Float32 &&
+              contract.outputs()[0].shape == std::vector<std::int64_t>{4, 5},
+          "OBB canonical geometry contract changed");
+  test::OperationProbe executor, publisher;
+  require(!executor.prepare(members[0].executable), "OBB numerical preparation failed");
+  require(!publisher.prepare(members[1].executable), "OBB publication preparation failed");
+  const auto take = []<class T>(c::Result<T> result) -> T {
+    if (const auto* error = std::get_if<c::Error>(&result))
+      throw std::runtime_error(error->message);
+    return std::get<T>(std::move(result));
+  };
+  auto dynamic_recipe = *recipe.compiled.recipe;
+  attach_boxdecode_geometry_resolver(dynamic_recipe, 0, geometry, true, true);
+  auto resolve = dynamic_recipe.resolver_factories.front().instantiate();
+  const gchar* tags[] = {nullptr};
+  if (!gst_meta_get_info("GstSimaMeta"))
+    require(gst_meta_register_custom("GstSimaMeta", tags, nullptr, nullptr, nullptr),
+            "OBB metadata registration failed");
+  test::GstBufferOwner carrier(gst_buffer_new());
+  auto* metadata =
+      gst_custom_meta_get_structure(gst_buffer_add_custom_meta(carrier.get(), "GstSimaMeta"));
+  const std::array<GstBuffer*, 1> carriers{carrier.get()};
+  c::PreparedSelection transformed;
+  for (double sy : {2., 3., std::nextafter(2., 3.), std::numeric_limits<double>::infinity(), 2.}) {
+    gst_structure_set(
+        metadata, "preproc_original_width", G_TYPE_INT, 128, "preproc_original_height", G_TYPE_INT,
+        128, "preproc_resized_width", G_TYPE_INT, 64, "preproc_resized_height", G_TYPE_INT, 64,
+        "preproc_resize_mode", G_TYPE_STRING, "letterbox", "preproc_affine_scale_x", G_TYPE_DOUBLE,
+        2., "preproc_affine_scale_y", G_TYPE_DOUBLE, sy, "preproc_affine_offset_x", G_TYPE_DOUBLE,
+        10., "preproc_affine_offset_y", G_TYPE_DOUBLE, -10., nullptr);
+    const auto selected = resolve(executor.preparer(), carriers);
+    require(std::holds_alternative<c::Error>(selected) == (sy != 2.),
+            "OBB geometry resolver accepted anisotropic/nonfinite transform or failed retry");
+    if (sy == 2.) {
+      const auto variant = take(selected);
+      transformed = variant;
+      require(variant != executor.operation() &&
+                  c::same_kernel_contract_resources(variant.executable(),
+                                                    executor.operation().executable()),
+              "OBB geometry variant lost immutable contract/resources");
+    }
+  }
+  std::vector<std::shared_ptr<HostStorage>> inputs, results;
+  std::vector<c::ConstBytes> in, publication_inputs;
+  std::vector<c::MutableBytes> out;
+  for (auto requirement : contract.input_requirements()) {
+    inputs.push_back(std::make_shared<HostStorage>(requirement.storage_bytes));
+    in.push_back(
+        {static_cast<const std::byte*>(inputs.back()->memory.get()), requirement.storage_bytes});
+  }
+  for (auto requirement : contract.output_requirements()) {
+    results.push_back(std::make_shared<HostStorage>(requirement.storage_bytes));
+    out.push_back(
+        {static_cast<std::byte*>(results.back()->memory.get()), requirement.storage_bytes});
+    publication_inputs.push_back({out.back().data, out.back().size_bytes});
+  }
+  for (int port : {3, 4, 5})
+    for (std::size_t index = 0; index < inputs[port]->size / 4; ++index)
+      inputs[port]->set_float(index, -80.f);
+  for (int axis = 0; axis < 4; ++axis)
+    inputs[0]->set_float(axis, float(axis + 1));
+  inputs[3]->set_float(0, 0.f);
+  inputs[3]->set_float(1, 0.f);
+  const auto bytes = recipe.compiled.runtime_contract.logical_outputs.front().size_bytes;
+  auto wire = std::make_shared<HostStorage>(bytes);
+  const std::array<c::MutableBytes, 1> published{
+      {{static_cast<std::byte*>(wire->memory.get()), bytes}}};
+  auto numerical_binding = take(executor.bind_host(executor.operation(), in, out));
+  auto publication_binding =
+      take(publisher.bind_host(publisher.operation(), publication_inputs, published));
+  for (bool malformed : {false, true, false}) {
+    // Even an unselected angle invalidates the complete frame. A failed member
+    // must prevent the dependent serializer from publishing stale canonical results.
+    inputs[8]->set_float(0, malformed ? std::numeric_limits<float>::quiet_NaN() : 0.f);
+    std::memset(wire->memory.get(), 0xa5, bytes);
+    auto decoded = executor.submit(numerical_binding);
+    const std::span<const test::Completion> dependency{&decoded, 1};
+    auto finished = publisher.submit(publication_binding, dependency);
+    const auto status = finished.wait();
+    require(bool(status) == malformed, "OBB failure dependency propagation mismatch");
+    if (malformed) {
+      for (std::size_t i = 0; i < bytes; ++i)
+        require(wire->read<std::uint8_t>(i) == 0xa5, "failed OBB frame published stale data");
+    } else {
+      require(wire->read<std::uint32_t>(0) == 0x3156424f && wire->read<std::uint32_t>(12) == 2,
+              "OBB header/count or multi-class selection mismatch");
+      for (int i = 0; i < 2; ++i) {
+        const auto offset = 32 + i * 32;
+        require(wire->read<float>(offset) == 12 && wire->read<float>(offset + 4) == 12 &&
+                    wire->read<float>(offset + 8) == 32 && wire->read<float>(offset + 12) == 48 &&
+                    wire->read<float>(offset + 16) == 0 && wire->read<float>(offset + 20) == .5 &&
+                    wire->read<std::int32_t>(offset + 24) == i,
+                "OBB hand-derived first-cell geometry or pair order mismatch");
+      }
+      for (std::size_t i = 96; i < bytes; ++i)
+        require(wire->read<std::uint8_t>(i) == 0, "OBB unused wire capacity stale");
+    }
+  }
+  // Execute the immutable geometry variant, not merely its cold preparation.
+  auto transformed_binding = take(executor.bind_host(transformed, in, out));
+  for (float angle : {0.f, 1.5707963267948966f}) {
+    inputs[6]->set_float(0, angle);
+    auto decoded = executor.submit(transformed_binding);
+    const std::span<const test::Completion> dependency{&decoded, 1};
+    require(!publisher.submit(publication_binding, dependency).wait(),
+            "OBB transformed numerical/publication execution failed");
+    // Base zero-angle center (12,12), quarter-turn center (-4,12).
+    // Uniform scale 2 then offset (10,-10) gives (34,14) or (2,14).
+    require(std::abs(wire->read<float>(32) - (angle == 0 ? 34.f : 2.f)) < 1e-4f &&
+                std::abs(wire->read<float>(36) - 14.f) < 1e-4f && wire->read<float>(40) == 64.f &&
+                wire->read<float>(44) == 96.f && wire->read<float>(48) == angle,
+            "OBB uniform mapping or raw quarter-turn angle changed");
+  }
+}
+
 void normalization() {
   for (auto dtype : {"BF16", "INT8", "FP32"}) {
     auto s = source(BoxDecodeType::YoloV26);
@@ -802,6 +1310,8 @@ void rejects() {
   } catch (const std::invalid_argument&) {
   }
 }
+#include "boxdecode_obb_conversion_cases.inc"
+#include "boxdecode_obb_publication_cases.inc"
 void linear_metadata_contracts() {
   require(boxdecode_linear_storage({1, 4, 8, 6}, {}, "NCHW", 4)->stride_bytes ==
               std::vector<std::int64_t>{24, 4, 192},
@@ -844,10 +1354,41 @@ void linear_metadata_contracts() {
 } // namespace
 int main(int argc, char** argv) {
   try {
+    // Pure cold numerical recipe admission: no plugin init, Tensor allocation,
+    // executable invocation, Graph/Model build, or accelerator/device access.
+    if (argc == 2 && std::string(argv[1]) == "--yolo26-seg-identity-resize-contract") {
+      yolo26_seg_identity_resize_contract();
+      std::cout << "YOLO26_SEG_IDENTITY_RESIZE_CONTRACT_PASS_NO_EXECUTION\n";
+      return 0;
+    }
+    if (argc == 2 && std::string(argv[1]) == "--yolo26-direct-mask-projection") {
+      // Basic GStreamer types/caps only; skip Core plugin/Graph/device setup.
+      gst_init(nullptr, nullptr);
+      yolo26_direct_mask_projection();
+      std::cout << "YOLO26_DIRECT_MASK_PROJECTION_HOST_OPERATIONS_PASS\n";
+      return 0;
+    }
+    if (argc == 2 && std::string(argv[1]) == "--yolo26-obb-carrier-conversions") {
+      gst_init(nullptr, nullptr);
+      oriented_carrier_conversions();
+      std::cout << "YOLO26_OBB_CARRIER_CONVERSIONS_PASS\n";
+      return 0;
+    }
+    if (argc == 2 && std::string(argv[1]) == "--yolo26-obb-publication-sample") {
+      gst_init(nullptr, nullptr);
+      oriented_publication_sample_bridge();
+      std::cout << "YOLO26_OBB_PUBLICATION_SAMPLE_BRIDGE_PASS\n";
+      return 0;
+    }
     simaai::neat::gst_init_once();
+    oriented_publication_sample_bridge();
     linear_metadata_contracts();
     families();
+    oriented_contract_and_execution();
+    oriented_carrier_conversions();
     auxiliary_tasks();
+    yolo26_seg_identity_resize_contract();
+    yolo26_direct_mask_projection();
     combined_task();
     combined_execution(false);
     combined_execution(true);
