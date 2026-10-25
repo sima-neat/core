@@ -956,7 +956,8 @@ void oriented_source_geometry() {
   options.aspect_ratio = true;
   CompiledNodeContract preproc;
   std::string error;
-  require(Preproc(options).compile_node_contract({}, &preproc, &error), error.c_str());
+  const bool preproc_compiled = Preproc(options).compile_node_contract({}, &preproc, &error);
+  require(preproc_compiled, error.c_str());
   CompiledNodeContract fragment;
   fragment.child_stages.push_back(preproc);
   fragment.child_stages.emplace_back(); // MLA/shape-preserving tail is not geometry authority.
