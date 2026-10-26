@@ -10,6 +10,12 @@
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <simaai/scheduler/client/frame_layout.h>
+
+#include <algorithm>
+#include <array>
+#include <variant>
+
 namespace {
 
 // Each runner is configured through its typed context; legacy manifest/pool
@@ -128,6 +134,57 @@ RUN_TEST(
                     stage.frame_arena_role == pipeline_internal::sima::FrameArenaRole::ReuseInput,
                 "cold public route must retain one placement authority across all stages");
       }
+
+      // Custom preprocessing owns its own output group. A named inference
+      // fragment must import that IFM and allocate its selected outputs rather
+      // than keeping the original full-model ReuseInput plan.
+      Model::Options custom_options;
+      custom_options.name_suffix = "_chapter";
+      custom_options.preprocess.kind = InputKind::Image;
+      custom_options.preprocess.color_convert.input_format = PreprocessColorFormat::BGR;
+      custom_options.preprocess.input_max_width = 640;
+      custom_options.preprocess.input_max_height = 640;
+      custom_options.preprocess.input_max_depth = 3;
+      custom_options.preprocess.normalize.enable = AutoFlag::On;
+      custom_options.preprocess.normalize.mean = std::array<float, 3>{0.485f, 0.456f, 0.406f};
+      custom_options.preprocess.normalize.stddev = std::array<float, 3>{0.229f, 0.224f, 0.225f};
+      Model custom_model(fixture.tar_path, custom_options);
+      auto preprocess_options = custom_options;
+      preprocess_options.name_suffix = "_custom_preproc";
+      Model preprocess_model(fixture.tar_path, preprocess_options);
+      auto custom_nodes = internal::ModelAccess::build_public_preprocess_nodes(preprocess_model);
+      const auto custom_inference =
+          internal::ModelAccess::build_public_inference_nodes(custom_model);
+      const auto custom_post = internal::ModelAccess::build_public_postprocess_nodes(custom_model);
+      custom_nodes.insert(custom_nodes.end(), custom_inference.begin(), custom_inference.end());
+      custom_nodes.insert(custom_nodes.end(), custom_post.begin(), custom_post.end());
+      pipeline_internal::sima::ManifestBuildDiagnostics custom_diagnostics;
+      const auto custom_contracts = compile_node_contracts(custom_nodes, {}, &custom_diagnostics);
+      auto custom_manifest =
+          render_manifest_from_compiled_contracts(custom_contracts, {}, &custom_diagnostics);
+      require(custom_manifest && custom_diagnostics.errors.empty(),
+              "custom named model route must compile");
+      const auto custom_preparation = pipeline_internal::sima::prepare_kernel_stage_recipes(
+          &*custom_manifest, std::nullopt, {}, {}, {});
+      require(!custom_preparation,
+              custom_preparation ? custom_preparation->field + ": " + custom_preparation->message
+                                 : "");
+      pipeline_internal::sima::finalize_pipeline_storage(*custom_manifest);
+      const auto custom_mla = std::find_if(
+          custom_manifest->stages.begin(), custom_manifest->stages.end(), [](const auto& stage) {
+            return stage.payload_kind == pipeline_internal::sima::StagePayloadKind::ProcessMla;
+          });
+      require(custom_mla != custom_manifest->stages.end() && custom_mla->model_storage_planned &&
+                  custom_mla->frame_layout &&
+                  custom_mla->frame_layout->ownership ==
+                      simaai::scheduler::client::FrameOwnership::Allocate &&
+                  !custom_mla->physical_inputs.empty() &&
+                  custom_mla->physical_inputs.front().address_source ==
+                      pipeline_internal::sima::PhysicalAddressSource::RuntimePhysicalBinding &&
+                  !custom_mla->frame_layout->inputs.empty() &&
+                  std::holds_alternative<simaai::scheduler::client::PhysicalBinding>(
+                      custom_mla->frame_layout->inputs.front().source),
+              "custom named preproc must retain an imported IFM and fresh MLA output ownership");
 
       // Naming overrides create distinct graph vertices, not distinct model
       // sources. Contract planning must preserve each invocation's own arena.

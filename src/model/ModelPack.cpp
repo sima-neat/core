@@ -2592,6 +2592,14 @@ public:
   std::span<const ModelFragment::StageFacts> stage_facts() const {
     return stage_facts_;
   }
+  std::vector<ModelFragment::StageFacts>
+  stage_facts_for_elements(std::vector<ModelFragment::StageFacts> facts) const {
+    // Both lists are emitted in execution-stage order. Bind this invocation's
+    // declared names without changing the immutable model's source identity.
+    for (std::size_t index = 0; index < facts.size(); ++index)
+      facts[index].stage_name = elements_.at(index);
+    return facts;
+  }
   ModelStage stage_context() const {
     return stage_context_;
   }
@@ -3274,7 +3282,8 @@ make_model_fragment_semantic_context(const std::vector<std::shared_ptr<Node>>& n
     if (const auto* fragment = dynamic_cast<const ModelFragmentNode*>(nodes[index].get())) {
       const auto facts = fragment->stage_facts();
       context->stage_facts.emplace(
-          index, std::vector<ModelFragment::StageFacts>(facts.begin(), facts.end()));
+          index, fragment->stage_facts_for_elements(
+                     std::vector<ModelFragment::StageFacts>(facts.begin(), facts.end())));
     }
   }
   return context;
@@ -3577,10 +3586,10 @@ finalize_model_fragment_contracts(const std::vector<std::shared_ptr<Node>>& node
       for (std::size_t i = first; i < end; ++i) {
         if (const auto* fragment = dynamic_cast<const ModelFragmentNode*>(nodes[i].get())) {
           context->stage_facts.emplace(
-              i, build_stage_facts_from_execution_plan(fragment->execution_stages(), source.mpk,
-                                                       fragment->route_flags(), std::nullopt,
-                                                       fragment->stage_context(), source.execution,
-                                                       *arena, resolved_physical_plan));
+              i,
+              fragment->stage_facts_for_elements(build_stage_facts_from_execution_plan(
+                  fragment->execution_stages(), source.mpk, fragment->route_flags(), std::nullopt,
+                  fragment->stage_context(), source.execution, *arena, resolved_physical_plan)));
         } else {
           const auto* original = node_model_processcvu_contract(nodes[i]);
           auto cvu = sc::build_dmabuf_plan_processcvu_command_contract(
