@@ -1,4 +1,5 @@
 """Receipt selection and LLiMa compatibility without network or SDK mutation."""
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -130,7 +131,7 @@ def test_reject_swapped_or_missing_publication_bytes(tmp_path, name, cached_only
 def test_llima_checked_before_installation_and_policy_retained_after_packaging():
     source = (ROOT / 'build.sh').read_text()
     ensure = source.split('ensure_neat_llima() {', 1)[1].split('ensure_neat_llima_headers()', 1)[0]
-    assert ensure.index('scheduler_sdk_policy.py') < ensure.index('record_sysroot_files')
+    assert ensure.index('scheduler_sdk_policy.py') < ensure.index('dpkg-deb -x')
     main = source.split('main() {', 1)[1]
     assert main.index('generate_package_metadata_if_requested') < main.index('--output dist/scheduler-sdk-policy.json')
 
@@ -168,7 +169,7 @@ resolve_neat_llima_ref() { NEAT_LLIMA_REQUESTED_REF=develop:fixture; }
 fetch_neat_llima_vulcan_artifacts() { echo 'unexpected download' >&2; return 99; }
 ensure_llima_sdk_sysroot_deps() { :; }
 run_privileged() { echo 'unexpected privileged operation' >&2; return 99; }
-record_sysroot_files() { printf '%s\\n' "$@" > "$TEST_TMP/recorded"; }
+modify_sysroot() { "$@"; }
 dpkg-deb() {
   [[ "$1" == -x && "$3" == "$SYSROOT" ]] || return 99
   printf '%s\\n' "$2" >> "$TEST_TMP/extracted"
@@ -182,14 +183,16 @@ python3() {
   fi
 }
 '''
-    result = subprocess.run(['/bin/bash', '-c', script + function + '\nensure_neat_llima\n'],
+    run = lambda: subprocess.run(['/bin/bash', '-c', script + function + '\nensure_neat_llima\n'],
                             cwd=ROOT, text=True, capture_output=True,
                             env={'PATH': '/usr/bin:/bin', 'TEST_TMP': str(tmp_path),
                                  'PYTHONDONTWRITEBYTECODE': '1',
                                  'NEAT_LLIMA_ARTIFACT_DIR': str(publication),
                                  'NEAT_DEPS_DIR': str(tmp_path), 'NEAT_LLIMA_DEB_DIR': str(cache),
                                  'REPO_ROOT': str(ROOT), 'ELXR_SDK': 'ON', 'SYSROOT': str(sysroot),
+                                 'NEAT_SYSROOT_LLIMA_RECORD': 'var/lib/sima-neat/llima.sha256',
                                  'SCHEDULER_POLICY': json.dumps(receipt())})
+    result = run()
     if root_state != 'valid':
         assert result.returncode != 0, result.stdout
         if root_state == 'missing':
@@ -197,12 +200,18 @@ python3() {
         else:
             assert 'differs from the firmware publication' in result.stderr
         assert not cache.exists()
-        assert not (tmp_path / 'recorded').exists()
+        assert not (sysroot / 'var/lib/sima-neat/llima.sha256').exists()
         assert not (tmp_path / 'extracted').exists()
         return
     assert result.returncode == 0, result.stderr
     expected = [str(publication / f'sima-lmm-0.6.0-Linux-{r}.deb') for r in ('core', 'dev')]
-    assert (tmp_path / 'recorded').read_text().splitlines() == expected
+    assert (tmp_path / 'extracted').read_text().splitlines() == expected
+    assert (sysroot / 'var/lib/sima-neat/llima.sha256').read_text().splitlines() == [
+        hashlib.sha256(Path(deb).read_bytes()).hexdigest() for deb in expected]
+    # A rebuild with the same packages skips the unpack.
+    result = run()
+    assert result.returncode == 0, result.stderr
+    assert 'already in eLxr sysroot' in result.stdout
     assert (tmp_path / 'extracted').read_text().splitlines() == expected
     for root_package in publication.glob('*.deb'):
         assert (cache / root_package.name).read_bytes() == root_package.read_bytes()

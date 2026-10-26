@@ -15,7 +15,7 @@ sidebar_position: 2
 
 ## WSL에서 시작하세요.
 
-WSL Linux 배포판 내에서 Neat SDK 명령을 실행하세요. PowerShell 또는 명령 프롬프트에서 실행하지 마세요. 여기에는 `sima-cli neat install sdk@release-2.1`이 포함됩니다.
+WSL Linux 배포판 내에서 Neat SDK 명령을 실행하세요. PowerShell 또는 명령 프롬프트에서 실행하지 마세요. 여기에는 `sima-cli neat install sdk@%%release.sdk_channel%%`이 포함됩니다.
 
 ## WSL 네트워크 모드
 

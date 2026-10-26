@@ -171,7 +171,7 @@ resolve_neat_llima_ref() {{
   NEAT_LLIMA_REQUESTED_REF=local:latest
 }}
 ensure_llima_sdk_sysroot_deps() {{ :; }}
-record_sysroot_files() {{ :; }}
+modify_sysroot() {{ "$@"; }}
 dpkg-deb() {{
   mkdir -p "$3/usr/lib/aarch64-linux-gnu/cmake/SimaLMM"
   touch "$3/usr/lib/aarch64-linux-gnu/cmake/SimaLMM/SimaLMMConfig.cmake"
@@ -182,6 +182,7 @@ NEAT_LLIMA_ARTIFACT_DIR={shlex.quote(str(artifact))}
 NEAT_LLIMA_DEB_DIR={shlex.quote(str(cache))}
 NEAT_DEPS_DIR={shlex.quote(str(deps))}
 SYSROOT={shlex.quote(str(sysroot))}
+NEAT_SYSROOT_LLIMA_RECORD=var/lib/sima-neat/llima.sha256
 ELXR_SDK=ON
 ensure_neat_llima
 """

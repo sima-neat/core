@@ -27,12 +27,12 @@ Neat Environment
   Update check       online
 
 Components
-  Neat core              0.4.0 channel=release latest=0.4.0
-  PyNeat                 0.4.0
-  neat-runtime           0.4.0
-  neat-gst-plugins       0.4.0
-  neat-insight           0.0.6 channel=release status=Running venv=/opt/neat-insight/venv
-  Model Compiler         2.1.3 run activate-model-compiler to activate
+  Neat core              %%release.core%% channel=release latest=%%release.core%%
+  PyNeat                 %%release.core%%
+  neat-runtime           %%release.core%%
+  neat-gst-plugins       %%release.core%%
+  neat-insight           %%release.insight%% channel=release status=Running venv=/opt/neat-insight/venv
+  Model Compiler         %%release.model_compiler%% run activate-model-compiler to activate
 
 Exposed Ports
   Insight Web UI     https://10.0.0.22:9900

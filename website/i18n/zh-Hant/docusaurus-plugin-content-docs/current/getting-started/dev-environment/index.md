@@ -80,7 +80,7 @@ Model Compiler 會在 SDK 設定期間提供。若要稍後安裝，請指定特
 :::
 
 :::note 安裝特定版本
-標準安裝會採用目前支援的預設設定。在「[安裝環境](/getting-started/dev-environment/install-the-environment/)」頁面上使用的 `release-2.1` 通道，會隨時追蹤最新的 2.1 版本更新。若要指定確切的 SDK、Neat Library 或 Model Compiler 版本，請參閱「[相容性指南](/getting-started/compatibility/)」。
+標準安裝會採用目前支援的預設設定。在「[安裝環境](/getting-started/dev-environment/install-the-environment/)」頁面上使用的 `%%release.sdk_channel%%` 通道，會隨時追蹤最新的 %%release.sdk_series%% 版本更新。若要指定確切的 SDK、Neat Library 或 Model Compiler 版本，請參閱「[相容性指南](/getting-started/compatibility/)」。
 :::
 
 ## SDK 中的工具

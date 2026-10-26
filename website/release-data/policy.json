@@ -1,0 +1,414 @@
+{
+  "rollingPaths": [
+    "docs/getting-started/neat-library/neat-cli.md",
+    "docs/getting-started/neat-library/pcie-host.mdx",
+    "docs/getting-started/neat-library/pyneat.md",
+    "docs/getting-started/neat-library/install-or-update.mdx",
+    "docs/getting-started/dev-environment/install-the-environment.md",
+    "docs/getting-started/dev-environment/install-model-compiler.md",
+    "docs/getting-started/dev-environment/offline-installation.md",
+    "docs/getting-started/dev-environment/index.md",
+    "docs/reference/elxr-sdk-host-setup/windows.md"
+  ],
+  "literalExceptions": [
+    {
+      "path": "docs/getting-started/neat-library/neat-cli.md",
+      "line": "  Insight Web UI     https://10.0.0.22:9900",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/neat-cli.md",
+      "line": "  Insight Web UI     https://10.0.0.22:9900",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/neat-cli.md",
+      "line": "  Insight Web UI     https://10.0.0.22:9900",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/neat-cli.md",
+      "line": "  Insight Web UI     https://10.0.0.22:9900",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/neat-cli.md",
+      "line": "  Insight Web UI     https://10.0.0.22:9900",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "  reachable from the host. The default address for card 0 is `10.0.0.2`.",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "ping -c 1 10.0.0.2",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "pcie-setup.sh --hosts \"10.0.0.2\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "  호스트에서 접근할 수 있습니다. 카드 0의 기본 주소는 `10.0.0.2`입니다.",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ping -c 1 10.0.0.2",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "pcie-setup.sh --hosts \"10.0.0.2\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "  ホストからアクセス可能な状態。カード0のデフォルトアドレスは`10.0.0.2`です。",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ping -c 1 10.0.0.2",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "pcie-setup.sh --hosts \"10.0.0.2\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "  可以從主機存取。預設的卡片 0 位址為 `10.0.0.2`。",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ping -c 1 10.0.0.2",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "pcie-setup.sh --hosts \"10.0.0.2\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "  доступний з хоста. Адреса за замовчуванням для карти 0: `10.0.0.2`.",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ping -c 1 10.0.0.2",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "pcie-setup.sh --hosts \"10.0.0.2\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "docs/getting-started/dev-environment/install-the-environment.md",
+      "line": "from another machine. Prefer the local `127.0.0.1` URL when the browser and SDK",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "docs/getting-started/dev-environment/install-the-environment.md",
+      "line": "codeUI      | https://192.168.76.4:10000/?tkn=gA5CS...&folder=/workspace",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/dev-environment/install-the-environment.md",
+      "line": "명령 출력의 **Web Access** 섹션에는 Insight 및 브라우저 기반 VS Code의 로컬·원격 URL이 표시됩니다. 로컬 접속은 SDK를 실행하는 동일한 시스템의 브라우저에서 URL을 여는 것이고, 원격 접속은 다른 시스템에서 여는 것입니다. 브라우저와 SDK가 같은 호스트에 있다면 호스트 네트워크 IP가 바뀌어도 동작하는 로컬 `127.0.0.1` URL을 권장합니다. 원격 접속에는 `NFS_SERVER_HOST_IP`에서 파생된 URL을 사용합니다. VS Code URL에는 설정된 액세스 토큰이 포함되며 구성된 작업 공간을 엽니다. 자세한 내용은 [Insight](/tools/insight/)를 참조하십시오.",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/dev-environment/install-the-environment.md",
+      "line": "codeUI      | https://192.168.76.4:10000/?tkn=gA5CS...&folder=/workspace",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/dev-environment/install-the-environment.md",
+      "line": "コマンド出力の**Web Access**セクションには、Insightとブラウザ版VS CodeのローカルURLおよびリモートURLが表示されます。ローカルアクセスとはSDKを実行しているマシンと同じマシンのブラウザで開くことで、リモートアクセスとは別のマシンから開くことです。ブラウザとSDKが同じホストにある場合は、ホストのネットワークIPが変わっても利用できるローカル`127.0.0.1` URLを推奨します。リモートアクセスには`NFS_SERVER_HOST_IP`から生成されたURLを使用します。VS CodeのURLには設定済みアクセストークンが含まれ、構成済みワークスペースが開きます。詳しくは[Insight](/tools/insight/)を参照してください。",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/dev-environment/install-the-environment.md",
+      "line": "codeUI      | https://192.168.76.4:10000/?tkn=gA5CS...&folder=/workspace",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/dev-environment/install-the-environment.md",
+      "line": "命令輸出的 **Web Access** 區段包含 Insight 與瀏覽器版 VS Code 的本機及遠端 URL。本機存取是從執行 SDK 的同一部電腦開啟 URL；遠端存取則是從另一部電腦開啟。若瀏覽器與 SDK 位於同一主機，建議使用本機 `127.0.0.1` URL，因為即使主機的網路 IP 改變仍可運作。遠端存取請使用由 `NFS_SERVER_HOST_IP` 衍生的 URL。VS Code URL 包含已設定的存取權杖，並會開啟設定的工作區。詳情請參閱 [Insight](/tools/insight/)。",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/dev-environment/install-the-environment.md",
+      "line": "codeUI      | https://192.168.76.4:10000/?tkn=gA5CS...&folder=/workspace",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/dev-environment/install-the-environment.md",
+      "line": "Вивід команди містить розділ «**Вебдоступ**» із локальними та віддаленими URL-адресами для Insight і VS Code, що працює в браузері. Локальний доступ означає відкриття URL-адреси в браузері на тому самому комп’ютері, на якому запущено SDK; віддалений доступ означає відкриття URL-адреси з іншого комп’ютера. Рекомендується використовувати локальну URL-адресу `127.0.0.1`, коли браузер і SDK розміщено на одному й тому самому хості, оскільки це забезпечує безперебійну роботу, навіть якщо IP-адреса мережі хоста зміниться. Для віддаленого доступу використовуйте URL-адресу, отриману з `NFS_SERVER_HOST_IP`. URL-адреса VS Code містить налаштований токен доступу та відкриває налаштований робочий простір. Додаткову інформацію див. у [Insight](/tools/insight/).",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/dev-environment/install-the-environment.md",
+      "line": "codeUI      | https://192.168.76.4:10000/?tkn=gA5CS...&folder=/workspace",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "docs/getting-started/dev-environment/install-model-compiler.md",
+      "line": "For Model Compiler 2.0.0 on `amd64` hosts:",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "docs/getting-started/dev-environment/install-model-compiler.md",
+      "line": "sima-cli install -v 2.0.0 tools/model-compiler/amd64",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/dev-environment/install-model-compiler.md",
+      "line": "`amd64` 호스트에서 Model Compiler 2.0.0을 사용하는 경우:",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/dev-environment/install-model-compiler.md",
+      "line": "sima-cli install -v 2.0.0 tools/model-compiler/amd64",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/dev-environment/install-model-compiler.md",
+      "line": "`amd64` のホスト上で動作する Model Compiler 2.0.0 について：",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/dev-environment/install-model-compiler.md",
+      "line": "sima-cli install -v 2.0.0 tools/model-compiler/amd64",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/dev-environment/install-model-compiler.md",
+      "line": "針對在 `amd64` 主機上執行的 Model Compiler 2.0.0：",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/dev-environment/install-model-compiler.md",
+      "line": "sima-cli install -v 2.0.0 tools/model-compiler/amd64",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/dev-environment/install-model-compiler.md",
+      "line": "Для Model Compiler 2.0.0 на хостах `amd64`:",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/dev-environment/install-model-compiler.md",
+      "line": "sima-cli install -v 2.0.0 tools/model-compiler/amd64",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "docs/getting-started/dev-environment/offline-installation.md",
+      "line": "SDK offline packages are supported for SDK 2.1.3.0 or later.",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "docs/getting-started/dev-environment/offline-installation.md",
+      "line": "Model Compiler offline packages are supported for Model Compiler 2.1.3 or later.",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/dev-environment/offline-installation.md",
+      "line": "SDK 버전 2.1.3.0 이상에서는 SDK 오프라인 패키지를 지원합니다.",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/dev-environment/offline-installation.md",
+      "line": "Model Compiler의 오프라인 패키지는 Model Compiler 2.1.3 버전 이상에서 지원됩니다.",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/dev-environment/offline-installation.md",
+      "line": "SDK 2.1.3.0 以降のバージョンでは、SDKオフラインパッケージがサポートされます。",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/dev-environment/offline-installation.md",
+      "line": "Model Compilerのオフラインパッケージは、Model Compiler 2.1.3以降のバージョンでサポートされています。",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/dev-environment/offline-installation.md",
+      "line": "SDK 2.1.3.0 或更高版本的離線套件受到支援。",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/dev-environment/offline-installation.md",
+      "line": "針對 Model Compiler 2.1.3 或更新版本，我們支援使用 Model Compiler 的離線套件。",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/dev-environment/offline-installation.md",
+      "line": "Офлайн-пакети SDK підтримуються для SDK версії 2.1.3.0 або новішої.",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/dev-environment/offline-installation.md",
+      "line": "Офлайн-пакети підтримуються для Model Compiler, версії 2.1.3 або новішої, для Model Compiler.",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "docs/getting-started/dev-environment/index.md",
+      "line": "| Ubuntu 22.04 and 24.04 through Docker Engine | `arm64` | Yes | Model Compiler 2.1.2 and later |",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "docs/getting-started/dev-environment/index.md",
+      "line": "| macOS 15.5 or above through Colima | `arm64` | Yes | Model Compiler 2.1.2 and later; install it inside the Neat SDK |",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/dev-environment/index.md",
+      "line": "| Docker Engine을 통해 Ubuntu 22.04 및 24.04 | `arm64` | 예 | Model Compiler 2.1.2 이상 |",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/dev-environment/index.md",
+      "line": "| Colima를 통해 macOS 15.5 이상 | `arm64` | 예 | Model Compiler 2.1.2 이상; Neat SDK 내부에 설치 |",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/dev-environment/index.md",
+      "line": "| Docker Engine を介した Ubuntu 22.04 および 24.04 | `arm64` | はい | Model Compiler 2.1.2 以降 |",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/dev-environment/index.md",
+      "line": "| Colima を介した macOS 15.5 以降 | `arm64` | はい | Model Compiler 2.1.2 以降。Neat SDK の中にインストールしてください。 |",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/dev-environment/index.md",
+      "line": "| 透過 Docker Engine 的 Ubuntu 22.04 和 24.04 | `arm64` | 是 | Model Compiler 2.1.2 或更高版本 |",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/dev-environment/index.md",
+      "line": "| 透過 Colima 的 macOS 15.5 或更高版本 | `arm64` | 是 | Model Compiler 2.1.2 或更高版本；請在 Neat SDK 內安裝。 |",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/dev-environment/index.md",
+      "line": "| Ubuntu 22.04 і 24.04 за допомогою Docker Engine. | `arm64` | Так | Model Compiler версії 2.1.2 і новіші. |",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/dev-environment/index.md",
+      "line": "| macOS 15.5 або новішої версії за допомогою Colima. | `arm64` | Так | Model Compiler версії 2.1.2 і новішої; встановіть його в межах Neat SDK. |",
+      "count": 1,
+      "reason": "Historical compatibility or version-specific example/minimum requirement"
+    },
+    {
+      "path": "docs/reference/elxr-sdk-host-setup/windows.md",
+      "line": "After ICS is enabled, Windows usually assigns the shared adapter an address on `192.168.137.0/24`.",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/reference/elxr-sdk-host-setup/windows.md",
+      "line": "ICS가 활성화되면 Windows는 일반적으로 공유 어댑터에 `192.168.137.0/24`의 주소를 할당합니다.",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/reference/elxr-sdk-host-setup/windows.md",
+      "line": "ICSを有効にすると、Windowsは通常、共有アダプターに`192.168.137.0/24`の範囲内のアドレスを割り当てます。",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/reference/elxr-sdk-host-setup/windows.md",
+      "line": "啟用 ICS 後，Windows 通常會將一個位址指派給已共享的網路介面卡，該位址為 `192.168.137.0/24`。",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/reference/elxr-sdk-host-setup/windows.md",
+      "line": "Після ввімкнення ICS, Windows зазвичай призначає спільному адаптеру адресу в мережі `192.168.137.0/24`.",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    }
+  ],
+  "readmes": [
+    {
+      "path": "pcie_host/README.md",
+      "template": "sima-cli neat install core/pciehost/ubuntu24/amd64@v%%release.core%% -t extras"
+    }
+  ],
+  "manualPaths": [
+    "docs/getting-started/compatibility.mdx"
+  ]
+}

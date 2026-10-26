@@ -27,10 +27,10 @@ To use DevKit Sync later, you also need:
 
 ## Install
 
-Install the current Neat SDK 2.1 release channel:
+Install the current Neat SDK %%release.sdk_series%% release channel:
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@release-2.1
+sima-cli neat install sdk@%%release.sdk_channel%%
 </ShellCommand>
 
 The first install can take several minutes because it downloads the Neat SDK
@@ -43,9 +43,9 @@ The setup flow configures the SDK workspace, starts the SDK container, and
 configures DevKit Sync. If you skip pairing, the SDK workspace is still created
 and you can pair later.
 
-The `release-2.1` package tracks the latest Neat SDK patch release in the 2.1
-series. The current release is Neat SDK 2.1.3.0, which is compatible with
-DevKit software 2.1.3.
+The `%%release.sdk_channel%%` package tracks the latest Neat SDK patch release in the %%release.sdk_series%%
+series. The current release is Neat SDK %%release.sdk%%, which is compatible with
+DevKit software %%release.platform%%.
 
 During setup, `sima-cli` also offers to install the matching Model Compiler
 inside the SDK — accept the prompt if you compile or quantize models
@@ -121,7 +121,7 @@ To reinstall or upgrade to the current SDK package, rerun the install command
 above from the host:
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@release-2.1
+sima-cli neat install sdk@%%release.sdk_channel%%
 </ShellCommand>
 
 To update the Neat Library inside an existing Neat SDK container, run the Neat

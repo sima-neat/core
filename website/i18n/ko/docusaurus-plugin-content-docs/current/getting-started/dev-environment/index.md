@@ -78,7 +78,7 @@ LLiMa를 사용하여 GenAI 모델을 컴파일하는 작업은 기본 SDK보다
 `arm64`와 `aarch64`는 동일한 64비트 Arm 아키텍처입니다. macOS에서는 `arm64`로, Linux에서는 `aarch64`로 보고됩니다. 마찬가지로 `x86_64`와 `amd64`는 동일한 아키텍처입니다. 호스트(또는 SDK 내부)에서 `uname -m`을 실행하여 어떤 아키텍처를 사용하는지 확인하십시오. Model Compiler 설치 명령어는 `arm64`와 `amd64`를 사용합니다. 자세한 내용은 [Model Compiler를 설치합니다.](/getting-started/dev-environment/install-model-compiler/)를 참조하십시오.
 
 :::note 특정 버전 설치
-기본 설치는 현재 지원되는 기본값을 사용합니다. `release-2.1` 채널은 [환경을 설치하세요.](/getting-started/dev-environment/install-the-environment/) 페이지에서 항상 최신 2.1 패치 릴리스를 추적합니다. 정확한 SDK, Neat Library 또는 Model Compiler 버전을 지정하려면 [호환성 안내서](/getting-started/compatibility/)을 참조하십시오.
+기본 설치는 현재 지원되는 기본값을 사용합니다. `%%release.sdk_channel%%` 채널은 [환경을 설치하세요.](/getting-started/dev-environment/install-the-environment/) 페이지에서 항상 최신 %%release.sdk_series%% 패치 릴리스를 추적합니다. 정확한 SDK, Neat Library 또는 Model Compiler 버전을 지정하려면 [호환성 안내서](/getting-started/compatibility/)을 참조하십시오.
 :::
 
 ## SDK에 포함된 도구

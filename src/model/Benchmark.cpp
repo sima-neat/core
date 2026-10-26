@@ -195,6 +195,13 @@ bool benchmark_takes_source_image(const ResolvedPreprocessPlan& plan, bool has_i
          (rank == 2U || rank == 3U);
 }
 
+// A batch-1 NHWC image is the same source image as its HWC form.
+bool benchmark_takes_source_image(const ResolvedPreprocessPlan& plan, const Tensor& tensor) {
+  const bool batch_of_one = tensor.shape.size() == 4U && tensor.shape[0] == 1;
+  return benchmark_takes_source_image(plan, tensor.semantic.image.has_value(),
+                                      batch_of_one ? 3U : tensor.shape.size());
+}
+
 // Source image size: the requested original size, then the source image's own size, then the
 // model input size, then the input tensor's size.
 BenchmarkInputGeometry benchmark_source_geometry(BenchmarkInputGeometry input, bool source_image,
@@ -260,9 +267,7 @@ resolve_benchmark_preprocess_meta_impl(const Tensor& tensor, const ResolvedPrepr
 
   const BenchmarkInputGeometry tensor_geometry = benchmark_tensor_geometry(tensor);
   const BenchmarkInputGeometry source_geometry = benchmark_source_geometry(
-      tensor_geometry,
-      benchmark_takes_source_image(plan, tensor.semantic.image.has_value(), tensor.shape.size()),
-      plan, options);
+      tensor_geometry, benchmark_takes_source_image(plan, tensor), plan, options);
   if (!source_geometry) {
     throw std::runtime_error(
         "Model::benchmark: unable to infer synthetic source geometry required by BoxDecode");
@@ -350,8 +355,24 @@ TensorList make_synthetic_benchmark_inputs(const Model& model, const BenchmarkOp
   return inputs;
 }
 
+// Provided inputs are checked against the model, then placed like synthetic inputs so the
+// measurement excludes a per-sample host import.
+TensorList prepare_provided_benchmark_inputs(const Model& model, const BenchmarkOptions& options) {
+  internal::ModelAccess::check_inputs(model, options.inputs, "Model::benchmark");
+  const ResolvedPreprocessPlan plan = model.resolved_preprocess_plan();
+  TensorList inputs;
+  inputs.reserve(options.inputs.size());
+  for (const Tensor& tensor : options.inputs) {
+    internal::require_provided_source_geometry(tensor, plan, options);
+    inputs.push_back(tensor.cvu());
+  }
+  attach_benchmark_preprocess_meta_for_boxdecode(model, plan, inputs, options);
+  return inputs;
+}
+
 MeasureOptions make_benchmark_measure_options(int timeout_ms, int logical_batch_size,
                                               bool include_plugin_latency,
+                                              const std::string& input_source,
                                               std::string title = "NEAT Benchmark") {
   MeasureOptions opt;
   opt.duration_ms = timeout_ms;
@@ -362,7 +383,7 @@ MeasureOptions make_benchmark_measure_options(int timeout_ms, int logical_batch_
   opt.include_message_latency = false;
   opt.logical_batch_size = logical_batch_size > 0 ? logical_batch_size : 1;
   opt.title = std::move(title);
-  opt.input = "synthetic";
+  opt.input = input_source;
   return opt;
 }
 
@@ -386,6 +407,20 @@ void validate_synthetic_benchmark_image_format(const TensorSpec& spec) {
   }
 }
 
+void require_provided_source_geometry(const Tensor& tensor, const ResolvedPreprocessPlan& plan,
+                                      const BenchmarkOptions& options) {
+  if (!options.original_width.has_value() || !benchmark_takes_source_image(plan, tensor))
+    return;
+  const BenchmarkInputGeometry image = benchmark_tensor_geometry(tensor);
+  if (image.width == *options.original_width && image.height == *options.original_height)
+    return;
+  throw std::runtime_error("Model::benchmark: original_width x original_height (" +
+                           std::to_string(*options.original_width) + "x" +
+                           std::to_string(*options.original_height) +
+                           ") must match the provided image (" + std::to_string(image.width) + "x" +
+                           std::to_string(image.height) + "); omit them for provided images");
+}
+
 TensorSpec resolve_benchmark_input_spec(TensorSpec spec, const ResolvedPreprocessPlan& plan,
                                         const BenchmarkOptions& options) {
   if (!benchmark_takes_source_image(plan, spec.image_format.has_value(), spec.shape.size())) {
@@ -404,6 +439,9 @@ PreprocessRuntimeMeta resolve_benchmark_preprocess_meta(const Tensor& tensor,
                                                         const ResolvedPreprocessPlan& plan,
                                                         const PreprocessContractFlags& flags,
                                                         const BenchmarkOptions& options) {
+  // run() decodes with the metadata a provided tensor already carries, so keep it.
+  if (tensor.semantic.preprocess.has_value())
+    return *tensor.semantic.preprocess;
   return resolve_benchmark_preprocess_meta_impl(tensor, plan, flags, options);
 }
 
@@ -434,7 +472,10 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
 
   constexpr int kWarmupSamples = 100;
   constexpr int kTimeoutMs = 120000;
-  const TensorList inputs = make_synthetic_benchmark_inputs(model, options);
+  const std::string input_source = options.inputs.empty() ? "synthetic" : "provided";
+  const TensorList inputs = options.inputs.empty()
+                                ? make_synthetic_benchmark_inputs(model, options)
+                                : prepare_provided_benchmark_inputs(model, options);
   const int logical_batch_size = model.compiled_batch_size();
   const Model::Options benchmark_model_options =
       internal::ModelAccess::resolved_post_kind(model) == internal::PostRouteStageKind::BoxDecode
@@ -459,8 +500,9 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
       require_benchmark_output(out, "latency warmup");
     }
 
-    MeasureScope measure = latency_runner.start_measurement(make_benchmark_measure_options(
-        kTimeoutMs, logical_batch_size, include_plugin_latency, "NEAT Benchmark latency"));
+    MeasureScope measure = latency_runner.start_measurement(
+        make_benchmark_measure_options(kTimeoutMs, logical_batch_size, include_plugin_latency,
+                                       input_source, "NEAT Benchmark latency"));
     const auto min_end =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(options.min_duration_ms);
     while (latency_samples < num_samples || std::chrono::steady_clock::now() < min_end) {
@@ -499,8 +541,9 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
 
     TelemetryMonitor telemetry_monitor;
     internal::TelemetryMonitorAccess::prepare_benchmark(telemetry_monitor);
-    MeasureScope measure = runner.start_measurement(make_benchmark_measure_options(
-        kTimeoutMs, logical_batch_size, include_plugin_latency, "NEAT Benchmark throughput"));
+    MeasureScope measure = runner.start_measurement(
+        make_benchmark_measure_options(kTimeoutMs, logical_batch_size, include_plugin_latency,
+                                       input_source, "NEAT Benchmark throughput"));
     internal::TelemetryMonitorAccess::arm_benchmark(telemetry_monitor);
     const auto min_end =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(options.min_duration_ms);
@@ -597,6 +640,7 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
   BenchmarkReport report = internal::build_benchmark_report_from_measurements(
       latency_measured, throughput_measured, num_samples, latency_samples, pushed,
       std::move(telemetry));
+  report.input = input_source;
   if (options.include_mla_layer_stats) {
     report.mla_layer_stats.status = collection_status("MLA layer stats", [&] {
       report.mla_layer_stats.layers = collect_mla_layer_stats(
@@ -615,7 +659,7 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
   const auto old_precision = std::cout.precision();
   std::cout << std::fixed << std::setprecision(2);
   std::cout << "NEAT Benchmark\n";
-  std::cout << "Input: synthetic\n";
+  std::cout << "Input: " << input_source << "\n";
   std::cout << "Samples: " << num_samples << "\n";
   std::cout << "Compiled batch: " << logical_batch_size << "\n";
   std::cout << "Measurement detail: "

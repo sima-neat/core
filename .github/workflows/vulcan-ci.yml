@@ -367,10 +367,10 @@ jobs:
         echo "Resolved build mode: ${core_build_mode}"
 
         if [[ "${core_build_mode}" == "fuzz" ]]; then
-          CORE_BUILD_ARGS="--fuzz --clean --no-doc"
+          CORE_BUILD_ARGS="--fuzz --clean --no-doc --update-sysroot"
           ALLOW_FUZZ_IN_NEAT_SDK=ON
         else
-          CORE_BUILD_ARGS="--all --clean --no-doc"
+          CORE_BUILD_ARGS="--all --clean --no-doc --update-sysroot"
           ALLOW_FUZZ_IN_NEAT_SDK=OFF
         fi
 
@@ -425,7 +425,8 @@ jobs:
             sima-cli neat install --help >/dev/null
             sima-cli packages build --help >/dev/null
             cd /workspace
-            # build.sh acquires the Scheduler and LLiMa sets and installs them into the sysroot.
+            # build.sh acquires the Scheduler set into deps/, installs LLiMa into the
+            # disposable SDK sysroot, and updates it to the version the Scheduler set pins.
             source /opt/bin/simaai-init-build-env modalix >/dev/null
             ./build.sh ${CORE_BUILD_ARGS}
             if [[ "${CORE_BUILD_ARGS}" == *"--all"* ]]; then

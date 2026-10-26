@@ -83,7 +83,7 @@ cd $HOME && mkdir -p neat && cd neat
 `sima-cli` で選択されたデフォルトの Neat Library パッケージをインストールします。必要に応じて、事前に作成されたチュートリアル、ソースコードのチュートリアル、およびテストなど、追加のパッケージをインストールすることもできます。
 
 <ShellCommand prompt="sdk">
-sima-cli neat install core@v0.4.0
+sima-cli neat install core@v%%release.core%%
 </ShellCommand>
 
 </CodeTab>
@@ -100,7 +100,7 @@ grep -E '^(SDK Type|Platform Base|Platform Version) =' /etc/sdk-release
 
 <ShellCommand prompt="sdk">
 cd $HOME &amp;&amp; mkdir -p neat &amp;&amp; cd neat
-sima-cli neat install core@release-0.3
+sima-cli neat install core@v%%release.core%%
 </ShellCommand>
 
 </CodeTab>
@@ -120,7 +120,7 @@ cd /media/nvme && mkdir -p neat && cd neat
 `sima-cli` で選択されたデフォルトの Neat Library パッケージをインストールします。必要に応じて、事前に作成されたチュートリアル、ソースコードのチュートリアル、テストなど、追加のパッケージをインストールすることもできます。
 
 <ShellCommand prompt="devkit">
-sima-cli neat install core@v0.2.2
+sima-cli neat install core@v%%release.core%%
 </ShellCommand>
 
 </CodeTab>
