@@ -1842,6 +1842,31 @@ jobs:
       sse_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
       artifact_folder: "."
 
+  publish-offline-develop:
+    name: Publish develop offline bundles
+    # Call from this branch: workflow_run requires a listener on the default branch.
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/develop' && !inputs.validation_only && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && needs.documentation-localization.result == 'success' && needs.code-hygiene.result == 'success' && needs.promote-latest-tag.result == 'success' }}
+    needs:
+      - documentation-localization
+      - resolve-vulcan-config
+      - resolve-compiler-cache
+      - detect-changes
+      - code-hygiene
+      - resolve-test-runner
+      - build
+      - build-pciehost-packages
+      - publish-vulcan-artifacts
+      - publish-pciehost-package
+      - test-devkit
+      - test-pciehost-hardware
+      - promote-latest-tag
+    uses: ./.github/workflows/pcie-offline.yml
+    with:
+      source_run_id: ${{ format('{0}', github.run_id) }}
+      # The parent run is still in progress; all standard CI gates above have passed.
+      publish_branch: true
+      validation_only: false
+
   validation-complete:
     name: Verify validation-only Core run
     if: ${{ always() && inputs.validation_only }}
