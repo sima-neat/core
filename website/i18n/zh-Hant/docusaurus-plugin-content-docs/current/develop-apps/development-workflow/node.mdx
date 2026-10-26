@@ -85,6 +85,7 @@ graph.add(pyneat.groups.video_input(vopt))
 | 從檔案中讀取影格。 | `nodes::FileInput(...)`，再加上解碼節點，或者使用 `nodes::groups::VideoInputGroup(...)`。 | `pyneat.nodes.file_input(...)`，再加上解碼節點，或者使用 `pyneat.groups.video_input(...)`。 |
 | 將一張圖片讀取為來源。 | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
 | 讀取 MIPI/libcamera 相機 | `nodes::CameraInput(...)` | `pyneat.nodes.camera_input(...)` |
+| 讀取 USB（UVC）MJPEG 攝影機 | `nodes::groups::UsbCameraInput(...)` | `pyneat.groups.usb_camera_input(...)` |
 | 讀取 RTSP 串流。 | `nodes::RTSPInput(...)`、`nodes::groups::RtspEncodedInput(...)` 或 `nodes::groups::RtspDecodedInput(...)`。 | `pyneat.nodes.rtsp_input(...)`、`pyneat.groups.rtsp_encoded_input(...)` 或 `pyneat.groups.rtsp_decoded_input(...)` |
 | 讀取 HTTP 多部分 MJPEG 格式。 | `nodes::groups::HttpMjpegDecodedInput(...)`，或用於手動設定畫面的 `nodes::HttpSource(...)`、`MultipartJpegDemux()`、`JpegParse()`。 | `pyneat.groups.http_mjpeg_decoded_input(...)`，或 `pyneat.nodes.http_source(...)`、`pyneat.nodes.multipart_jpeg_demux()`、`pyneat.nodes.jpeg_parse()`。 |
 | 解碼圖片 | `nodes::ImageDecode()` 或 `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` 或 `pyneat.nodes.jpeg_decode()` |

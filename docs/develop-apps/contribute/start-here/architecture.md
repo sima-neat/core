@@ -1758,6 +1758,12 @@ compatibility-copy pool grows on demand up to 128 buffers and is not capped by t
 so a leaky queue can apply its drop policy without the upstream bridge
 stalling first.
 
+`groups::UsbCameraInput` keeps V4L2 capture and MJPEG decode in one node and
+one GStreamer segment. `v4l2src io-mode=dmabuf-import` takes its capture
+buffers from the CMA pool that `neatdecoder` offers through
+`input-pool-buffers`, so the camera writes each JPEG where the decoder reads it,
+and `copy-allowed=false` makes any frame outside that pool a stream error.
+
 ### Teardown
 
 Teardown is intentionally defensive.

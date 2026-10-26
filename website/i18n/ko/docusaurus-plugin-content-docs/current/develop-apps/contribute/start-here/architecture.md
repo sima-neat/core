@@ -1204,6 +1204,8 @@ BF16과 INT16은 레거시 와이어 코드를 공유하므로 바이트 캐리�
 
 애플리케이션에서 사용하는 캡처 깊이는 커널의 개인 CSI-to-ISP RAW 전송 링과 후속 GStreamer 큐 모두와 독립적입니다. `CameraInputWithCaptureBuffers`에 대한 선택적 `capture_buffer_count` 인수는 ISP 출력, libcamera 및 애플리케이션을 통해 유지되는 버퍼를 제어합니다(Platform 3.0에서는 `libcamerasrc`에 `buffer-count`가 없으므로 `0`으로 유지해야 합니다). `queue_depth` 및 `leaky_queue`는 다운스트림 지연 시간과 프레임 삭제 정책를 별도로 제어합니다. 선택적 호환성 복사 풀은 필요에 따라 최대 128개 버퍼까지 증가하며 해당 큐 깊이에 의해 제한되지 않으므로 누수 큐는 상위 브리지가 먼저 중단되지 않도록 삭제 정책을 적용할 수 있습니다.
 
+`groups::UsbCameraInput`은 V4L2 캡처와 MJPEG 디코딩을 하나의 노드와 하나의 GStreamer 세그먼트로 유지합니다. `v4l2src io-mode=dmabuf-import`는 `neatdecoder`가 `input-pool-buffers`로 제공하는 CMA 풀에서 캡처 버퍼를 가져오므로, 카메라는 각 JPEG를 디코더가 읽는 곳에 바로 기록하며, `copy-allowed=false`는 그 풀 밖의 프레임을 스트림 오류로 만듭니다.
+
 ### 종료
 
 종료는 의도적으로 방어적입니다.

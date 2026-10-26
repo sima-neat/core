@@ -7,7 +7,7 @@ slug: /develop-apps/advanced-concepts/usb-camera-input
 
 # Use a USB Camera
 
-`groups::UsbCameraInput` reads USB (UVC) webcams that send MJPEG. Pass the camera's stable ID; the Graph receives NV12 frames in SiMaAI memory, like a [MIPI camera](./mipi-camera-input.md). `UsbCameraInputOptions` has the same fields as `CameraInputOptions`, except `format`: the output is always NV12.
+`groups::UsbCameraInput` reads USB (UVC) webcams that send MJPEG. Pass the camera's stable ID; the Graph receives NV12 frames in SiMaAI memory, like a [MIPI camera](./mipi-camera-input.md). `UsbCameraInputOptions` uses the field names and defaults of `CameraInputOptions`, except that `camera_name` is required and there is no `format`: the output is always NV12.
 
 ```text
 USB camera -> UsbCameraInput -> model-managed CVU preproc -> MLA -> Output
@@ -112,16 +112,17 @@ frame = run.pull(timeout_ms=5000)
 </CodeTab>
 </CodeTabs>
 
-Add a model the same way as for a MIPI camera; see [Use a MIPI Camera](./mipi-camera-input.md#build-a-raw-mla-smoke-graph).
+Add a model the same way as for a MIPI camera; see its "Build a raw MLA smoke graph" section in [Use a MIPI Camera](./mipi-camera-input.md).
 
 `UsbCameraInput` opens the camera once while it creates the Graph, to check the mode and read the first frame's chroma sampling. Close other programs that use the camera first.
+
+After a camera is unplugged or moved to another port, call `UsbCameraInput` again. Building a Graph created earlier fails, so it never opens a different camera that took the old device number.
 
 ## Memory and dropped frames
 
 | Option | Effect |
 | --- | --- |
-| `allow_cpu_fallback = false` (default) | A frame that cannot be decoded in place stops the stream with an error instead of being copied. |
-| `allow_cpu_fallback = true` | Such a frame is copied into the decoder instead. |
+| `allow_cpu_fallback` | No effect for USB cameras: capture always lands in the decoder's own buffers, so no frame is copied. It is kept so the options match `CameraInputOptions`. |
 | `queue_depth`, `leaky_queue` | A small leaky queue before the decoder drops stale frames when the graph falls behind. |
 | `capture_buffer_count` (second argument) | CMA buffers shared by the camera and the decoder. 0 uses the queue depth plus the decoder's two input slots. |
 
@@ -138,3 +139,5 @@ Webcams often pad frames past the JPEG end marker, and some frames arrive incomp
 | `has no MJPEG mode 1920x1080 at 30/1 fps; its MJPEG modes are: ...` | Pick a listed mode. Some cameras offer high resolutions only at lower frame rates. |
 | `is in use by another process` | Stop the other program that has the camera open. |
 | `sent no usable MJPEG frame` | The camera sends JPEGs Neat cannot decode, such as 4:4:4 sampling, or no frames at all. |
+| `is no longer /dev/videoN` | The camera was unplugged, moved or renumbered after the Graph was created. Call `UsbCameraInput` again. |
+| `requires a neatdecoder with the input-pool-buffers property` | The installed decoder is too old. Update the `simaai-scheduler` package. |
