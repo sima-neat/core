@@ -118,7 +118,7 @@ def assemble(spec, output):
             'cp /var/lib/dpkg/status /bundle/baseline.status; '
             'apt-get update; apt-get install -y --no-install-recommends python3 python3-venv python3-pip dpkg-dev; '
             'python3 /bundle/target.py collect')
-    for name in ('assemble.py', 'deploy.py', 'process.py', 'lifecycle.sh'):
+    for name in ('assemble.py', 'deploy.py', 'process.py', 'log_progress.py', 'lifecycle.sh'):
         shutil.copyfile(HERE / name, output / name)
     if core:
         shutil.copyfile(HERE / 'core_install.py', output / 'install.py')

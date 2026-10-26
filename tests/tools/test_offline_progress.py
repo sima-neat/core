@@ -44,7 +44,8 @@ def test_progress_color_obeys_terminal_and_no_color(monkeypatch, tty, no_color, 
             pass
     finally:
         progress.close()
-    assert ('\033[' in console.getvalue()) == expected
+    import re
+    assert bool(re.search(r'\x1b\[[0-9;]*m', console.getvalue())) == expected
     assert 'Checking compatibility' in console.getvalue()
     assert '[OK]' in console.getvalue()
 
@@ -72,7 +73,7 @@ def test_long_running_step_prints_heartbeat_and_stops_before_completion():
     finally:
         progress.close()
     lines = console.getvalue().splitlines()
-    assert any('[WAIT]' in line and 'still working' in line for line in lines)
+    assert any('[WAIT]' in line and 'still running' in line for line in lines)
     assert lines[-1].startswith('[OK]')
 
 
@@ -126,7 +127,7 @@ def test_cli_reports_one_result_and_log_location(monkeypatch, fails):
     import core_install
     console = Console()
     progress = Progress(console)
-    monkeypatch.setattr(core_install, 'Progress', lambda: progress)
+    monkeypatch.setattr(core_install, 'Progress', lambda **kwargs: progress)
     monkeypatch.setattr(sys, 'argv', ['install.py', '--check'])
     def install(root, phase, devkit_only, reporter):
         assert phase == 'preflight'
@@ -176,3 +177,82 @@ def test_dumb_terminal_and_untrusted_text_cannot_inject_controls(monkeypatch):
         progress.close()
     assert '\033' not in console.getvalue()
     assert '\r' not in console.getvalue()
+
+
+def test_standalone_panel_shows_last_ten_lines_from_current_step(monkeypatch):
+    import log_progress
+    monkeypatch.setenv('TERM', 'xterm')
+    monkeypatch.setattr(log_progress.shutil, 'get_terminal_size', lambda fallback: os.terminal_size((80, 24)))
+    console = Console(True)
+    progress = Progress(console)
+    try:
+        progress.log.write('previous phase\n')
+        with progress.step('Installing Core on paired DevKit'):
+            progress.log.write(''.join(f'Package {n} installed\n' for n in range(25)))
+    finally:
+        progress.close()
+    output = console.getvalue()
+    assert 'previous phase' not in output
+    assert 'Package 14 installed' not in output
+    assert all(f'Package {n} installed' in output for n in range(15, 25))
+    assert 'elapsed | 1. Installing Core on paired DevKit' in output
+    assert output.splitlines()[-1].startswith('\033[32m[OK]') or '[OK]' in output.splitlines()[-1]
+
+
+def test_standalone_panel_updates_before_command_finishes(monkeypatch):
+    import log_progress
+    monkeypatch.setenv('TERM', 'xterm')
+    monkeypatch.setattr(log_progress.shutil, 'get_terminal_size', lambda fallback: os.terminal_size((80, 24)))
+    arrived = threading.Event()
+    class LiveConsole(Console):
+        def write(self, text):
+            result = super().write(text)
+            if 'Live package output' in text:
+                arrived.set()
+            return result
+    console = LiveConsole(True)
+    progress = Progress(console, interval=0.01)
+    threads = set(threading.enumerate())
+    try:
+        with progress.step('Checking compatibility'):
+            progress.log.write('Live package output\n')
+            assert arrived.wait(timeout=2)
+    finally:
+        progress.close()
+    assert set(threading.enumerate()) == threads
+
+
+def test_standalone_panel_clips_to_small_terminal(monkeypatch):
+    import log_progress
+    monkeypatch.setenv('TERM', 'xterm')
+    monkeypatch.setattr(log_progress.shutil, 'get_terminal_size', lambda fallback: os.terminal_size((22, 8)))
+    console = Console(True)
+    progress = Progress(console)
+    try:
+        with progress.step('Installing Core'):
+            for n in range(8):
+                progress.log.write(f'Row {n} '+('界'*30)+'\n')
+    finally:
+        progress.close()
+    output = console.getvalue()
+    assert 'Row 4 ' not in output
+    assert all(f'Row {n} ' in output for n in range(5, 8))
+    assert '界'*8 not in output
+
+
+def test_standalone_verbose_streams_log_and_retains_failure():
+    console = Console()
+    progress = Progress(console, verbose=True)
+    text = ''.join(f'detail {n}\n' for n in range(30))+'last partial line'
+    try:
+        with pytest.raises(ValueError, match='failed'):
+            with progress.stream_log():
+                with progress.step('Installing Core'):
+                    progress.log.write(text)
+                    progress.log.flush()
+                    raise ValueError('failed')
+    finally:
+        progress.close()
+    assert text in console.getvalue()
+    assert '[FAIL]' in console.getvalue()
+    assert text in progress.path.read_text()

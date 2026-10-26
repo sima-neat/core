@@ -2,20 +2,21 @@
 from contextlib import contextmanager
 import os
 from pathlib import Path
-import sys
 import tempfile
 import threading
 import time
 import traceback
 
+from log_progress import LogProgress, safe_text
 
-class Progress:
-    def __init__(self, console=None, interval=15):
-        self.console = console if console is not None else sys.stdout
-        self.color = self.console.isatty() and 'NO_COLOR' not in os.environ and os.environ.get('TERM') != 'dumb'
-        self.interval = interval
+
+class Progress(LogProgress):
+    def __init__(self, console=None, interval=None, verbose=False):
+        super().__init__(console, verbose=verbose, interval=interval)
+        self.console = self.stream
         fd, path = tempfile.mkstemp(prefix='neat-core-offline-', suffix='.log')
         self.path = Path(path)
+        self.log_path = self.path
         self.log = os.fdopen(fd, 'w', buffering=1)
         self.lock = threading.Lock()
         self.number = 0
@@ -26,38 +27,34 @@ class Progress:
         prefix = '['+state+']'
         if self.color:
             prefix = '\033['+colors[state]+'m'+prefix+'\033[0m'
-        text = ''.join(char if char.isprintable() else ' ' for char in str(text))
+        text = safe_text(text)
         with self.lock:
             print(prefix+' '+text, file=self.console, flush=True)
+
+    def show(self, message, status='info'):
+        self.message('WAIT' if status == 'info' else {'ok': 'OK', 'error': 'FAIL'}[status], message)
 
     @contextmanager
     def step(self, label):
         self.number += 1
         label = str(self.number)+'. '+label
         start = time.monotonic()
-        stopped = threading.Event()
-        def heartbeat():
-            while not stopped.wait(self.interval):
-                self.message('WAIT', label+f' — still working ({int(time.monotonic()-start)}s)')
         self.message('RUN', label)
         self.log.write('\n=== '+label+' ===\n')
-        worker = threading.Thread(target=heartbeat, daemon=True)
-        worker.start()
         try:
-            yield
+            with self.activity(label, panel=True, announce=False):
+                try:
+                    yield
+                except BaseException:
+                    traceback.print_exc(file=self.log)
+                    self.log.flush()
+                    raise
         except BaseException:
-            traceback.print_exc(file=self.log)
-            stopped.set()
-            worker.join()
             self.message('FAIL', label+f' ({int(time.monotonic()-start)}s)')
             raise
         else:
-            stopped.set()
-            worker.join()
             self.message('OK', label+f' ({int(time.monotonic()-start)}s)')
         finally:
-            stopped.set()
-            worker.join()
             self.log.flush()
 
     def close(self):

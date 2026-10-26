@@ -167,7 +167,7 @@ def test_staged_card_manifest_verification(tmp_path):
     import json
     assembly = sys.modules['assemble']
     files = {}
-    for name in ('assemble.py', 'install.py', 'discover.py', 'deploy.py', 'lifecycle.sh', 'INSTALL.md',
+    for name in ('assemble.py', 'log_progress.py', 'install.py', 'discover.py', 'deploy.py', 'lifecycle.sh', 'INSTALL.md',
                  'card/target.json', 'card/payload/test.deb', 'host/target.json'):
         path = tmp_path/name
         path.parent.mkdir(parents=True, exist_ok=True)

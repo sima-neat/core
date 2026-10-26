@@ -103,14 +103,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check', action='store_true', help='verify compatibility and simulate without installing')
     parser.add_argument('--verify', action='store_true', help='verify SDK sysroot contents or DevKit packages and Python imports')
+    parser.add_argument('--verbose', action='store_true', help='stream the complete detailed command log')
     parser.add_argument('--devkit-only', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.check and args.verify:
         parser.error('choose only one of --check and --verify')
-    progress = None if args.devkit_only else Progress()
+    progress = None if args.devkit_only else Progress(verbose=args.verbose)
     try:
-        install(Path(__file__).resolve().parent,
-                'preflight' if args.check else 'verify' if args.verify else 'install', args.devkit_only, progress)
+        with progress.stream_log() if progress else nullcontext():
+            install(Path(__file__).resolve().parent,
+                    'preflight' if args.check else 'verify' if args.verify else 'install', args.devkit_only, progress)
     except (ValueError, OSError, subprocess.SubprocessError) as exc:
         if progress:
             progress.message('FAIL', 'Offline Core operation failed: '+str(exc))

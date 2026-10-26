@@ -106,4 +106,4 @@ sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
 
 請以一般 SDK 或 DevKit 使用者執行 `./install.sh`。啟動腳本會自動要求 `sudo` 權限，並僅明確保留配對、DevKit 驗證、同步偏好及 SSH 代理設定。部署至配對裝置時仍使用啟動腳本的 SDK 使用者之 SSH 身分。
 
-安裝程式會以編號顯示傳輸、相容性檢查、SDK 安裝、配對 DevKit 安裝及清理步驟。終端輸出使用色彩，耗時步驟每 15 秒會顯示仍在執行的訊息。詳細的 APT、套件及相容性報告會儲存在私有的 `/tmp/neat-core-offline-*.log` 檔案中；安裝程式會顯示完整路徑，失敗時也會保留。使用 `NO_COLOR=1 ./install.sh` 可停用色彩。重複的相容性檢查用於保護套件交易，與安裝作業是不同的步驟。
+獨立 Core 與 PCIe 安裝使用相同的即時終端顯示程式。獨立安裝的各步驟會保留編號階段與經過時間，每秒更新最多 10 行最近的命令輸出，並依終端大小裁切。重新導向輸出時，會以純文字每 15 秒顯示執行狀態。詳細報告會保留在私有的 `/tmp/neat-core-offline-*.log` 檔案中，失敗時也不刪除。使用 `NO_COLOR=1 ./install.sh` 可停用色彩，使用 `./install.sh --verbose` 可顯示完整日誌。重複的相容性檢查用於保護套件交易，與安裝作業是不同的步驟。

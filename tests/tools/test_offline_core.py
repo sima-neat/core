@@ -55,6 +55,7 @@ def test_core_archive_is_self_contained_and_validated_offline(tmp_path):
         assert tar.getmember('neat-core-offline/sdk_install.py').isfile()
         assert tar.getmember('neat-core-offline/paired_devkit.py').isfile()
         assert tar.getmember('neat-core-offline/progress.py').isfile()
+        assert tar.getmember('neat-core-offline/log_progress.py').isfile()
     meta = json.loads((tmp_path/'metadata.json').read_text())
     assert meta['resources'] == [assemble.CORE_ARCHIVE_NAME, 'sima-neat-1-Linux-extras.tar.gz']
     minimal = json.loads((tmp_path/'metadata-minimal.json').read_text())
