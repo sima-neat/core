@@ -58,8 +58,12 @@ sima-cli neat install sdk@v2.1.3.0 -t offline-arm64
 
 ### 2. Install the package
 
-First, [download the Model Compiler offline package](#download-model-compiler-package).
-To install Model Compiler with the SDK, put the Model Compiler offline package file in the same directory as the SDK offline package.
+Model Compiler installation is optional.
+If you do not need to compile models, skip the Model Compiler download and follow the SDK installation steps below.
+When the SDK installer asks whether to install Model Compiler, choose to skip it.
+
+To install Model Compiler with the SDK, [download the Model Compiler offline package](#download-model-compiler-package).
+Put the Model Compiler offline package file in the same directory as the SDK offline package.
 The SDK installer finds the file automatically.
 When prompted, select installation from the local package.
 
