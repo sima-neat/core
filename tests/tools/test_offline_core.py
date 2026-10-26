@@ -263,7 +263,7 @@ def test_paired_deployment_sends_password_only_on_stdin(monkeypatch):
          patch.object(paired_devkit.shutil, 'which', return_value='/usr/bin/ssh'), \
          patch.object(paired_devkit, 'run') as run:
         device = paired_devkit.PairedDevKit('192.0.2.2', 'sima')
-        device.directory = '/var/tmp/neat-core-offline-ABCDEFGH'
+        device.directory = '/tmp/neat-core-offline-ABCDEFGH'
         device.phase('install')
     assert '--devkit-only' in run.call_args.args[0][-1]
     assert 'test-secret' not in str(run.call_args.args)
@@ -279,7 +279,8 @@ def test_paired_transfer_uses_same_bundle_and_retains_unknown_installation(tmp_p
     def ssh(device, command, **kwargs):
         commands.append(command)
         if 'mktemp' in command:
-            return SimpleNamespace(stdout='/var/tmp/neat-core-offline-ABCDEFGH\n')
+            assert command == 'umask 077; mktemp -d /tmp/neat-core-offline-XXXXXXXX'
+            return SimpleNamespace(stdout='/tmp/neat-core-offline-ABCDEFGH\n')
         if 'tar --no-same-owner' in command:
             with tarfile.open(fileobj=kwargs['stdin']) as archive:
                 assert archive.extractfile('neat-core-offline/install.py').read() == b'offline entry point'
@@ -494,3 +495,49 @@ def test_extras_checksum_failure_prevents_collection(tmp_path):
         with pytest.raises(ValueError, match='extras archive checksum'):
             assemble.assemble(config, tmp_path/'bundle')
         run.assert_not_called()
+
+
+@pytest.mark.parametrize('phase,status,retain', [
+    ('preflight', 1, False), ('verify', 1, False),
+    ('install', 1, False), ('install', 255, True), ('install', 'timeout', True),
+])
+def test_paired_staging_cleanup_after_reported_remote_failure(tmp_path, monkeypatch, phase, status, retain):
+    import subprocess
+    monkeypatch.setenv('DEVKIT_SYNC_DEVKIT_IP', '192.0.2.2')
+    monkeypatch.delenv('NEAT_INSTALLER_SKIP_DEVKIT_SYNC', raising=False)
+    commands = []
+    def run(args, **kwargs):
+        command = args[-1]
+        commands.append(command)
+        if 'mktemp' in command:
+            return SimpleNamespace(stdout='/tmp/neat-core-offline-ABCDEFGH\n')
+        if command.startswith('sudo '):
+            if status == 'timeout':
+                raise subprocess.TimeoutExpired(args, 1800)
+            raise subprocess.CalledProcessError(status, args)
+    with patch.object(paired_devkit.shutil, 'which', return_value='/usr/bin/ssh'), \
+         patch.object(paired_devkit, 'run', run):
+        with pytest.raises((subprocess.CalledProcessError, subprocess.TimeoutExpired)):
+            with paired_devkit.paired_devkit(tmp_path) as device:
+                device.phase(phase)
+    assert ('rm -rf -- /tmp/neat-core-offline-ABCDEFGH' in commands) == (not retain)
+
+
+def test_paired_staging_cleans_incomplete_transfer(tmp_path, monkeypatch):
+    import subprocess
+    monkeypatch.setenv('DEVKIT_SYNC_DEVKIT_IP', '192.0.2.2')
+    monkeypatch.delenv('NEAT_INSTALLER_SKIP_DEVKIT_SYNC', raising=False)
+    commands = []
+    def run(args, **kwargs):
+        command = args[-1]
+        commands.append(command)
+        if 'mktemp' in command:
+            return SimpleNamespace(stdout='/tmp/neat-core-offline-ABCDEFGH\n')
+        if command.startswith('tar '):
+            raise subprocess.CalledProcessError(1, args)
+    with patch.object(paired_devkit.shutil, 'which', return_value='/usr/bin/ssh'), \
+         patch.object(paired_devkit, 'run', run):
+        with pytest.raises(subprocess.CalledProcessError):
+            with paired_devkit.paired_devkit(tmp_path):
+                pytest.fail('incomplete transfer must not start installation')
+    assert commands[-1] == 'rm -rf -- /tmp/neat-core-offline-ABCDEFGH'

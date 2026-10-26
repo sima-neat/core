@@ -108,3 +108,5 @@ installation budget. Packages without an `Installed-Size` field are measured fro
 archive contents. Already-staged bundle files are not counted again, including
 when they are stored on NVMe or tmpfs. A space failure reports available,
 required, and additional root space in MiB.
+
+Paired DevKit transfers use a private directory under `/tmp`, which is RAM-backed on the standard DevKit. The staging directory is removed after the operation finishes, including reported installation failures and incomplete transfers. If SSH disconnects or times out during installation, the directory is retained and its path is printed because the remote installer may still be running.

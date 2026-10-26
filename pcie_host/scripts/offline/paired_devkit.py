@@ -41,8 +41,16 @@ class PairedDevKit:
         password = os.environ.get('SUDO_PASSWORD') or os.environ.get('DEVKIT_PASSWORD') or 'edgeai'
         # Never put the sudo password in argv, artifacts, or diagnostic messages.
         self.uncertain = phase == 'install'
-        self.ssh(shlex.join(command), input=password+'\n', text=True)
-        self.uncertain = False
+        try:
+            self.ssh(shlex.join(command), input=password+'\n', text=True)
+        except subprocess.CalledProcessError as exc:
+            # A reported remote failure has finished; SSH status 255 can mean
+            # the connection disappeared while the installer is still running.
+            if exc.returncode != 255:
+                self.uncertain = False
+            raise
+        else:
+            self.uncertain = False
 
 
 @contextmanager
@@ -53,10 +61,10 @@ def paired_devkit(root):
         return
     device = PairedDevKit(address, os.environ.get('DEVKIT_DEPLOY_USER', 'sima'))
     try:
-        result = device.ssh('umask 077; mktemp -d /var/tmp/neat-core-offline-XXXXXXXX',
+        result = device.ssh('umask 077; mktemp -d /tmp/neat-core-offline-XXXXXXXX',
                             capture_output=True, text=True)
         device.directory = result.stdout.strip()
-        if not re.fullmatch(r'/var/tmp/neat-core-offline-[A-Za-z0-9]{8}', device.directory):
+        if not re.fullmatch(r'/tmp/neat-core-offline-[A-Za-z0-9]{8}', device.directory):
             device.directory = None
             raise ValueError('Unexpected paired DevKit staging directory')
         with tempfile.TemporaryFile() as stream:
