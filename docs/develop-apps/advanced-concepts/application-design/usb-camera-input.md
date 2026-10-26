@@ -1,0 +1,140 @@
+---
+title: Use a USB Camera
+description: Read MJPEG frames from a USB (UVC) webcam with UsbCameraInput, decoded in place on the hardware decoder to NV12, with no device numbers or pipeline strings.
+sidebar_position: 5
+slug: /develop-apps/advanced-concepts/usb-camera-input
+---
+
+# Use a USB Camera
+
+`groups::UsbCameraInput` reads USB (UVC) webcams that send MJPEG. Pass the camera's stable ID; the Graph receives NV12 frames in SiMaAI memory, like a [MIPI camera](./mipi-camera-input.md). `UsbCameraInputOptions` has the same fields as `CameraInputOptions`, except `format`: the output is always NV12.
+
+```text
+USB camera -> UsbCameraInput -> model-managed CVU preproc -> MLA -> Output
+```
+
+Under the hood, the camera writes each compressed frame into CMA buffers that the hardware MJPEG decoder reads in place, so no CPU copy happens between capture and decode. A camera that sends 4:2:2 JPEGs, as most webcams do, gets one EV74 conversion from NV16 to NV12 after the decoder.
+
+## What Neat supports
+
+- UVC cameras connected to a Modalix DevKit USB port, on Platform 3.0.
+- MJPEG capture with 4:2:0 or 4:2:2 chroma sampling.
+- The exact width, height and frame rate the camera lists for MJPEG. Neat does not scale or pick a nearby mode.
+
+H.264-only cameras, raw YUYV/NV12 capture, depth or IR streams (for example RealSense depth), and camera controls such as exposure are not part of this path.
+
+## Find the camera ID
+
+Each USB camera has a stable ID built from its USB port and its vendor and product IDs, in the same format libcamera uses:
+
+```text
+/base/pci@7000000000-3.1:1.0-046d:08e5
+```
+
+The ID stays the same across reboots and plug order. It changes when the camera moves to another USB port, so two identical cameras on different ports have different IDs. List the connected cameras:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+for (const std::string& id : simaai::neat::usb_camera_ids()) {
+  std::cout << id << "\n";
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+print(pyneat.usb_camera_ids())
+```
+
+</CodeTab>
+</CodeTabs>
+
+To see which MJPEG modes a camera offers, list its formats on the DevKit. The device number is only for this check; Neat finds the device from the ID.
+
+<ShellCommand prompt="devkit">
+v4l2-ctl --list-devices
+v4l2-ctl -d /dev/video1 --list-formats-ext
+</ShellCommand>
+
+## Build the graph
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <neat.h>
+
+namespace neat = simaai::neat;
+
+neat::UsbCameraInputOptions camera;
+camera.camera_name = "/base/pci@7000000000-3.1:1.0-046d:08e5";
+camera.width = 1920;
+camera.height = 1080;
+camera.framerate_num = 30;
+camera.framerate_den = 1;
+camera.buffer_name = "camera0";
+
+neat::Graph graph("usb_camera");
+graph.add(neat::nodes::groups::UsbCameraInput(camera));
+graph.add(neat::nodes::Output());
+
+neat::Run run = graph.build();
+std::optional<neat::Sample> frame = run.pull(/*timeout_ms=*/5000);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+camera = pyneat.UsbCameraInputOptions()
+camera.camera_name = "/base/pci@7000000000-3.1:1.0-046d:08e5"
+camera.width = 1920
+camera.height = 1080
+camera.framerate_num = 30
+camera.framerate_den = 1
+camera.buffer_name = "camera0"
+
+graph = pyneat.Graph("usb_camera")
+graph.add(pyneat.groups.usb_camera_input(camera))
+graph.add(pyneat.nodes.output())
+
+run = graph.build()
+frame = run.pull(timeout_ms=5000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Add a model the same way as for a MIPI camera; see [Use a MIPI Camera](./mipi-camera-input.md#build-a-raw-mla-smoke-graph).
+
+`UsbCameraInput` opens the camera once while it creates the Graph, to check the mode and read the first frame's chroma sampling. Close other programs that use the camera first.
+
+## Memory and dropped frames
+
+| Option | Effect |
+| --- | --- |
+| `allow_cpu_fallback = false` (default) | A frame that cannot be decoded in place stops the stream with an error instead of being copied. |
+| `allow_cpu_fallback = true` | Such a frame is copied into the decoder instead. |
+| `queue_depth`, `leaky_queue` | A small leaky queue before the decoder drops stale frames when the graph falls behind. |
+| `capture_buffer_count` (second argument) | CMA buffers shared by the camera and the decoder. 0 uses the queue depth plus the decoder's two input slots. |
+
+Zero-copy here means the compressed frame is not copied between capture and decode. The decoded NV12 frame is a separate buffer, and the 4:2:2 EV74 conversion writes another.
+
+Webcams often pad frames past the JPEG end marker, and some frames arrive incomplete or flagged as corrupt by the USB driver. The decoder decodes each frame up to its end marker and drops incomplete or corrupt frames instead of stopping. The decoder element counts them in its `dropped-count` property.
+
+## Troubleshooting
+
+| Message | What to do |
+| --- | --- |
+| `no USB camera with ID ...; connected USB camera IDs: ...` | Use one of the listed IDs. The ID changes when the camera moves to another port. |
+| `no USB cameras are connected` | Check the cable and `lsusb`. |
+| `has no MJPEG mode 1920x1080 at 30/1 fps; its MJPEG modes are: ...` | Pick a listed mode. Some cameras offer high resolutions only at lower frame rates. |
+| `is in use by another process` | Stop the other program that has the camera open. |
+| `sent no usable MJPEG frame` | The camera sends JPEGs Neat cannot decode, such as 4:4:4 sampling, or no frames at all. |

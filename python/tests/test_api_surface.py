@@ -647,6 +647,21 @@ def test_camera_input_surface_is_exposed():
     pyneat.nodes.camera_input(opt, capture_buffer_count=129)
 
 
+def test_usb_camera_input_surface_is_exposed():
+  assert isinstance(pyneat.usb_camera_ids(), list)
+
+  opt = pyneat.UsbCameraInputOptions()
+  assert opt.camera_name == ""
+  assert (opt.width, opt.height, opt.framerate_num, opt.framerate_den) == (1920, 1080, 30, 1)
+  assert opt.buffer_name == "camera" and opt.allow_cpu_fallback is False
+  # Options are validated before any camera is touched.
+  with pytest.raises(ValueError, match="requires camera_name"):
+    pyneat.groups.usb_camera_input(opt)
+  opt.camera_name = "/base/pci@7000000000-3.1:1.0-046d:08e5"
+  with pytest.raises(ValueError, match="exceeds 64"):
+    pyneat.groups.usb_camera_input(opt, capture_buffer_count=65)
+
+
 def test_input_stage_option_struct_constructors_accept_expected_args():
   model_path = _strict_resnet50_model_path()
   assert model_path.exists(), f"missing fixture: {model_path}"

@@ -44,6 +44,7 @@
 #include "nodes/groups/ModelGroups.h"
 #include "nodes/groups/RtspDecodedInput.h"
 #include "nodes/groups/RtspEncodedInput.h"
+#include "nodes/groups/UsbCameraInput.h"
 #include "nodes/groups/VideoInputGroup.h"
 #include "nodes/io/CameraInput.h"
 #include "nodes/io/Input.h"
@@ -3408,6 +3409,20 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("queue_depth", &simaai::neat::CameraInputOptions::queue_depth)
       .def_rw("allow_cpu_fallback", &simaai::neat::CameraInputOptions::allow_cpu_fallback);
 
+  nb::class_<simaai::neat::UsbCameraInputOptions>(m, "UsbCameraInputOptions")
+      .def(nb::init<>())
+      .def_rw("camera_name", &simaai::neat::UsbCameraInputOptions::camera_name)
+      .def_rw("width", &simaai::neat::UsbCameraInputOptions::width)
+      .def_rw("height", &simaai::neat::UsbCameraInputOptions::height)
+      .def_rw("framerate_num", &simaai::neat::UsbCameraInputOptions::framerate_num)
+      .def_rw("framerate_den", &simaai::neat::UsbCameraInputOptions::framerate_den)
+      .def_rw("buffer_name", &simaai::neat::UsbCameraInputOptions::buffer_name)
+      .def_rw("insert_queue", &simaai::neat::UsbCameraInputOptions::insert_queue)
+      .def_rw("leaky_queue", &simaai::neat::UsbCameraInputOptions::leaky_queue)
+      .def_rw("queue_depth", &simaai::neat::UsbCameraInputOptions::queue_depth)
+      .def_rw("allow_cpu_fallback", &simaai::neat::UsbCameraInputOptions::allow_cpu_fallback);
+  m.def("usb_camera_ids", &simaai::neat::usb_camera_ids);
+
   nb::module_ graphs_mod = m.def_submodule("graphs", "Reusable public Graph fragment helpers");
   graphs_mod.def("branch", &simaai::neat::graphs::Branch, "input"_a, "outputs"_a);
   graphs_mod.def("combine", &simaai::neat::graphs::Combine, "inputs"_a, "output"_a,
@@ -4222,6 +4237,8 @@ NB_MODULE(_pyneat_core, m) {
                  "options"_a);
   groups_mod.def("rtsp_encoded_input", &simaai::neat::nodes::groups::RtspEncodedInput, "options"_a);
   groups_mod.def("rtsp_decoded_input", &simaai::neat::nodes::groups::RtspDecodedInput, "options"_a);
+  groups_mod.def("usb_camera_input", &simaai::neat::nodes::groups::UsbCameraInput, "options"_a,
+                 "capture_buffer_count"_a = 0U);
   groups_mod.def("udp_h264_output_group", &simaai::neat::nodes::groups::UdpH264OutputGroup,
                  "options"_a);
   groups_mod.def("video_sender", &simaai::neat::nodes::groups::VideoSender, "options"_a);
