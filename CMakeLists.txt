@@ -837,6 +837,10 @@ install(TARGETS pcie-pipeline-builder
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   COMPONENT core
 )
+install(FILES cmake/packaging/sima-neat-pcie.conf
+  DESTINATION lib/tmpfiles.d
+  COMPONENT core
+)
 
 # ------------------------------------------------------------------------------
 # Tutorials
@@ -1011,6 +1015,9 @@ set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "arm64")
 
 set(CPACK_DEBIAN_CORE_PACKAGE_NAME "sima-neat")
 set(CPACK_DEBIAN_DEV_PACKAGE_NAME "sima-neat-dev")
+set(CPACK_DEBIAN_CORE_PACKAGE_CONTROL_EXTRA
+  "${CMAKE_CURRENT_SOURCE_DIR}/cmake/packaging/postinst")
+set(CPACK_DEBIAN_CORE_PACKAGE_CONTROL_STRICT_PERMISSION TRUE)
 
 # Source-first preparation verifies the complete selected DEBs and supplies
 # their actual control versions. Never derive dependency pins from Git hashes.
