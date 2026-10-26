@@ -11,6 +11,7 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "pipeline/Graph.h"
+#include "pipeline/NeatError.h"
 #include "pipeline/Run.h"
 #include "test_main.h"
 #include "perf/process_cpu_metrics.h"
@@ -204,6 +205,7 @@ void benchmark_options_api_is_additive() {
   using namespace simaai::neat;
   require(!BenchmarkOptions{}.include_mla_layer_stats, "MLA layer profiling must be opt-in");
   require(!BenchmarkOptions{}.include_mla_stage_stats, "MLA stage profiling must be opt-in");
+  require(BenchmarkOptions{}.inputs.empty(), "benchmark inputs must default to synthetic");
   using OptionsOverload = BenchmarkReport (Model::*)(const BenchmarkOptions&);
   using SamplesOverload = BenchmarkReport (Model::*)(int);
   using LegacyOverload = BenchmarkReport (Model::*)(int, bool);
@@ -250,6 +252,241 @@ void synthetic_benchmark_rejects_planar_images() {
   internal::validate_synthetic_benchmark_image_format(spec);
 }
 
+simaai::neat::BenchmarkOptions make_benchmark_source_options(int width, int height) {
+  simaai::neat::BenchmarkOptions options;
+  options.original_width = width;
+  options.original_height = height;
+  return options;
+}
+
+simaai::neat::Tensor make_provided_tensor(
+    simaai::neat::TensorDType dtype, std::vector<int64_t> shape,
+    std::optional<simaai::neat::ImageSpec::PixelFormat> image_format = std::nullopt) {
+  using namespace simaai::neat;
+  const std::size_t element_bytes =
+      dtype == TensorDType::UInt8 ? 1U : (dtype == TensorDType::BFloat16 ? 2U : 4U);
+  std::size_t bytes = element_bytes;
+  for (const int64_t dim : shape) {
+    bytes *= static_cast<std::size_t>(dim);
+  }
+  Tensor tensor;
+  tensor.storage = make_cpu_owned_storage(bytes);
+  tensor.device = {DeviceType::CPU, 0};
+  tensor.dtype = dtype;
+  tensor.shape = std::move(shape);
+  if (image_format.has_value()) {
+    tensor.semantic.image = ImageSpec{*image_format, ""};
+    tensor.layout = TensorLayout::HWC;
+  }
+  return tensor;
+}
+
+// Returns the error message when `check` throws NeatError with misconfig.input_shape.
+std::string input_shape_error(const std::function<void()>& check) {
+  try {
+    check();
+  } catch (const simaai::neat::NeatError& error) {
+    require(error.report().error_code == "misconfig.input_shape",
+            std::string("input mismatch must use misconfig.input_shape, got ") +
+                error.report().error_code);
+    return error.what();
+  }
+  return {};
+}
+
+bool contains(const std::string& text, const std::string& needle) {
+  return text.find(needle) != std::string::npos;
+}
+
+void provided_image_inputs_need_one_tensor_with_image_format() {
+  using namespace simaai::neat;
+  const auto image =
+      make_provided_tensor(TensorDType::UInt8, {720, 1280, 3}, ImageSpec::PixelFormat::BGR);
+  const auto check = [](const TensorList& inputs) {
+    return input_shape_error([&] { internal::check_model_image_inputs(inputs, {}, "bench"); });
+  };
+
+  require(check({image}).empty(),
+          "an image route must accept any source size and color format, as preprocessing does");
+  require(contains(check({make_provided_tensor(TensorDType::UInt8, {720, 1280, 3})}),
+                   "explicit image format"),
+          "an image tensor without image format metadata must be rejected by name");
+  require(contains(check({image, image}), "exactly one image tensor, got 2"),
+          "an image route must reject more than one tensor");
+  require(contains(check({}), "exactly one image tensor, got 0"),
+          "an image route must reject an empty input list passed to the check");
+
+  require(
+      check({make_provided_tensor(TensorDType::UInt8, {217, 333, 3}, ImageSpec::PixelFormat::RGB)})
+          .empty(),
+      "an image route must accept an image of any size");
+  require(check({make_provided_tensor(TensorDType::UInt8, {217, 333, 1},
+                                      ImageSpec::PixelFormat::GRAY8)})
+              .empty(),
+          "an image route must accept any color format the tensor declares");
+  require(check({make_provided_tensor(TensorDType::UInt8, {1, 720, 1280, 3},
+                                      ImageSpec::PixelFormat::BGR)})
+              .empty(),
+          "an image route must accept a batch-1 NHWC image, as run() does");
+  auto unknown_layout =
+      make_provided_tensor(TensorDType::UInt8, {1, 720, 1280, 3}, ImageSpec::PixelFormat::BGR);
+  unknown_layout.layout = TensorLayout::Unknown;
+  require(contains(check({unknown_layout}), "batched packed video must use HWC layout"),
+          "an image route must reject a batched image without NHWC layout, as run() does");
+
+  internal::IngressTensorContract ingress;
+  ingress.valid = true;
+  const std::string multi = input_shape_error(
+      [&] { internal::check_model_image_inputs({image}, {ingress, ingress}, "bench"); });
+  require(contains(multi, "multi-ingress image input is unsupported; the model has 2"),
+          "an image route must reject a model with more than one ingress: " + multi);
+}
+
+void provided_tensor_inputs_match_ingress_contracts() {
+  using namespace simaai::neat;
+  internal::IngressTensorContract ingress;
+  ingress.valid = true;
+  ingress.ingress_index = 0;
+  ingress.media_type = "application/vnd.simaai.tensor";
+  ingress.dtype = "FP32";
+  ingress.width = 640;
+  ingress.height = 640;
+  ingress.depth = 3;
+  ingress.source_tensor_name = "images";
+  const auto check = [&](const TensorList& inputs) {
+    return input_shape_error(
+        [&] { internal::check_model_tensor_inputs(inputs, {ingress}, "bench"); });
+  };
+
+  require(check({make_provided_tensor(TensorDType::Float32, {1, 640, 640, 3})}).empty(),
+          "a tensor matching the ingress contract must be accepted");
+  const std::string shape = check({make_provided_tensor(TensorDType::Float32, {1, 320, 320, 3})});
+  require(contains(shape, "ingress[0] (images)") && contains(shape, "shape=640x640x3") &&
+              contains(shape, "shape=320x320x3"),
+          "a shape mismatch must name the input, the expected shape, and the actual shape: " +
+              shape);
+  require(
+      contains(check({make_provided_tensor(TensorDType::UInt8, {1, 640, 640, 3})}), "format=FP32"),
+      "a dtype mismatch must name the expected format");
+  const auto tensor = make_provided_tensor(TensorDType::Float32, {1, 640, 640, 3});
+  require(contains(check({tensor, tensor}), "expected exactly 1 ingress tensor inputs"),
+          "a tensor route must reject the wrong number of inputs");
+  require(contains(check({}), "got 0"), "a tensor route must reject an empty input list");
+  auto no_storage = make_provided_tensor(TensorDType::Float32, {1, 640, 640, 3});
+  no_storage.storage.reset();
+  require(contains(check({no_storage}), "missing storage"),
+          "a tensor route must reject a tensor without storage, as run() does");
+  require(contains(check({make_provided_tensor(TensorDType::UInt8, {640, 640, 3},
+                                               ImageSpec::PixelFormat::RGB)}),
+                   "format=FP32"),
+          "a tensor route must reject an image where it expects a float tensor");
+}
+
+void provided_tensor_inputs_follow_multi_ingress_order() {
+  using namespace simaai::neat;
+  const auto make_ingress = [](int index, std::string name, std::string dtype, int width,
+                               int depth) {
+    internal::IngressTensorContract ingress;
+    ingress.valid = true;
+    ingress.ingress_index = index;
+    ingress.media_type = "application/vnd.simaai.tensor";
+    ingress.dtype = std::move(dtype);
+    ingress.width = width;
+    ingress.height = 1;
+    ingress.depth = depth;
+    ingress.source_tensor_name = std::move(name);
+    return ingress;
+  };
+  const std::vector<internal::IngressTensorContract> contracts = {
+      make_ingress(0, "tokens", "FP32", 1024, 2), make_ingress(1, "mask", "BF16", 64, 1)};
+  const auto tokens = make_provided_tensor(TensorDType::Float32, {1, 1024, 2});
+  const auto mask = make_provided_tensor(TensorDType::BFloat16, {1, 64, 1});
+  const auto check = [&](const TensorList& inputs) {
+    return input_shape_error(
+        [&] { internal::check_model_tensor_inputs(inputs, contracts, "bench"); });
+  };
+
+  require(check({tokens, mask}).empty(),
+          "one tensor per ingress, in input_specs() order, must be accepted");
+  require(contains(check({mask, tokens}), "ingress[0] (tokens)"),
+          "inputs in the wrong order must be rejected at the first mismatching ingress");
+  const std::string count = check({tokens});
+  require(contains(count, "expected exactly 2 ingress tensor inputs (tokens,mask), got 1"),
+          "a missing input must name every expected ingress: " + count);
+}
+
+void provided_image_geometry_rejects_conflicting_original_size() {
+  using namespace simaai::neat;
+  ResolvedPreprocessPlan plan = make_benchmark_preprocess_plan();
+  const auto image =
+      make_provided_tensor(TensorDType::UInt8, {720, 1280, 3}, ImageSpec::PixelFormat::RGB);
+
+  internal::require_provided_source_geometry(image, plan, {});
+  internal::require_provided_source_geometry(image, plan, make_benchmark_source_options(1280, 720));
+  bool rejected = false;
+  try {
+    internal::require_provided_source_geometry(image, plan,
+                                               make_benchmark_source_options(640, 640));
+  } catch (const std::runtime_error& error) {
+    rejected = contains(error.what(), "(640x640) must match the provided image (1280x720)");
+  }
+  require(rejected, "an original size that disagrees with the provided image must be rejected");
+
+  const auto batched =
+      make_provided_tensor(TensorDType::UInt8, {1, 720, 1280, 3}, ImageSpec::PixelFormat::RGB);
+  internal::require_provided_source_geometry(batched, plan,
+                                             make_benchmark_source_options(1280, 720));
+  rejected = false;
+  try {
+    internal::require_provided_source_geometry(batched, plan,
+                                               make_benchmark_source_options(640, 640));
+  } catch (const std::runtime_error& error) {
+    rejected = contains(error.what(), "(640x640) must match the provided image (1280x720)");
+  }
+  require(rejected, "a batch-1 image must reject a disagreeing original size, as HWC does");
+
+  plan.resolved_kind = InputKind::Tensor;
+  internal::require_provided_source_geometry(image, plan, make_benchmark_source_options(640, 640));
+}
+
+void provided_image_supplies_boxdecode_source_geometry() {
+  using namespace simaai::neat;
+  const ResolvedPreprocessPlan plan = make_benchmark_preprocess_plan();
+  const auto image =
+      make_provided_tensor(TensorDType::UInt8, {720, 1280, 3}, ImageSpec::PixelFormat::RGB);
+  BenchmarkOptions options;
+  options.inputs = {image};
+  const PreprocessRuntimeMeta meta =
+      internal::resolve_benchmark_preprocess_meta(image, plan, {}, options);
+  require(meta.original_width == 1280 && meta.original_height == 720,
+          "BoxDecode must map detections back to the provided image's own size");
+
+  const auto batched =
+      make_provided_tensor(TensorDType::UInt8, {1, 720, 1280, 3}, ImageSpec::PixelFormat::RGB);
+  const PreprocessRuntimeMeta batched_meta =
+      internal::resolve_benchmark_preprocess_meta(batched, plan, {}, BenchmarkOptions{});
+  require(batched_meta.original_width == 1280 && batched_meta.original_height == 720,
+          "a batch-1 image must supply its own size, as its HWC form does");
+}
+
+void provided_tensor_keeps_its_preprocess_metadata() {
+  using namespace simaai::neat;
+  ResolvedPreprocessPlan plan = make_benchmark_preprocess_plan();
+  plan.resolved_kind = InputKind::Tensor;
+  auto tensor = make_provided_tensor(TensorDType::Float32, {1, 640, 640, 3});
+  PreprocessRuntimeMeta carried;
+  carried.original_width = 1280;
+  carried.original_height = 720;
+  carried.resize_mode = "letterbox";
+  tensor.semantic.preprocess = carried;
+
+  const PreprocessRuntimeMeta meta = internal::resolve_benchmark_preprocess_meta(
+      tensor, plan, {}, make_benchmark_source_options(320, 240));
+  require(meta.original_width == 1280 && meta.original_height == 720 &&
+              meta.resize_mode == "letterbox",
+          "a provided tensor's own preprocess metadata must reach BoxDecode, as in run()");
+}
+
 void benchmark_build_options_prefer_runtime_metadata() {
   using namespace simaai::neat;
   Model::Options model_options;
@@ -275,13 +512,6 @@ simaai::neat::TensorSpec make_benchmark_image_spec(std::vector<int64_t> shape) {
   spec.dtypes = {TensorDType::UInt8};
   spec.image_format = ImageSpec::PixelFormat::RGB;
   return spec;
-}
-
-simaai::neat::BenchmarkOptions make_benchmark_source_options(int width, int height) {
-  simaai::neat::BenchmarkOptions options;
-  options.original_width = width;
-  options.original_height = height;
-  return options;
 }
 
 void benchmark_image_input_uses_requested_source_size() {
@@ -849,6 +1079,18 @@ RUN_TEST("unit_benchmark_measurement_contract_test", ([] {
            run_case("benchmark_options_api_is_additive", benchmark_options_api_is_additive);
            run_case("synthetic_benchmark_rejects_planar_images",
                     synthetic_benchmark_rejects_planar_images);
+           run_case("provided_image_inputs_need_one_tensor_with_image_format",
+                    provided_image_inputs_need_one_tensor_with_image_format);
+           run_case("provided_tensor_inputs_match_ingress_contracts",
+                    provided_tensor_inputs_match_ingress_contracts);
+           run_case("provided_tensor_inputs_follow_multi_ingress_order",
+                    provided_tensor_inputs_follow_multi_ingress_order);
+           run_case("provided_image_geometry_rejects_conflicting_original_size",
+                    provided_image_geometry_rejects_conflicting_original_size);
+           run_case("provided_image_supplies_boxdecode_source_geometry",
+                    provided_image_supplies_boxdecode_source_geometry);
+           run_case("provided_tensor_keeps_its_preprocess_metadata",
+                    provided_tensor_keeps_its_preprocess_metadata);
            run_case("benchmark_build_options_prefer_runtime_metadata",
                     benchmark_build_options_prefer_runtime_metadata);
            run_case("benchmark_preprocess_meta_defaults",

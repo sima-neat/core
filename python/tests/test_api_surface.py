@@ -456,6 +456,7 @@ def test_benchmark_options_are_mutable():
   assert opt.min_duration_ms == 10000
   assert opt.include_mla_layer_stats is False
   assert opt.include_mla_stage_stats is False
+  assert opt.inputs == []
 
   opt.num_samples = 7
   opt.original_width = 1920
@@ -476,6 +477,26 @@ def test_benchmark_options_are_mutable():
   assert opt.include_mla_stage_stats is True
 
 
+def test_benchmark_options_hold_provided_inputs():
+  opt = pyneat.BenchmarkOptions()
+  image = pyneat.Tensor.from_numpy(np.zeros((720, 1280, 3), dtype=np.uint8), copy=True,
+                                   image_format=pyneat.PixelFormat.BGR,
+                                   memory=pyneat.TensorMemory.CPU)
+  features = pyneat.Tensor.from_numpy(np.ones((1, 256), dtype=np.float32), copy=True,
+                                      memory=pyneat.TensorMemory.CPU)
+
+  opt.inputs = [image, features]
+
+  assert [list(t.shape) for t in opt.inputs] == [[720, 1280, 3], [1, 256]]
+  # The getter returns a copy; assign a new list to change the inputs.
+  opt.inputs.append(image)
+  assert len(opt.inputs) == 2
+  opt.inputs = []
+  assert opt.inputs == []
+  with pytest.raises(TypeError):
+    opt.inputs = [np.zeros((4, 4, 3), dtype=np.uint8)]
+
+
 def test_benchmark_report_exposes_telemetry():
   report = pyneat.BenchmarkReport()
 
@@ -483,6 +504,7 @@ def test_benchmark_report_exposes_telemetry():
                 "avg_power_watts", "energy_joules", "peak_power_watts", "throughput_duration_ms"):
     assert getattr(report, field) == 0.0, field
   assert report.throughput_samples == 0
+  assert report.input == ""
 
   telemetry = report.telemetry
   assert isinstance(telemetry, pyneat.Telemetry)

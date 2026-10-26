@@ -775,6 +775,44 @@ report = model.benchmark(options)
 
 MLA 레이어별 또는 스테이지별 시간도 측정하려면 `include_mla_layer_stats` 또는 `include_mla_stage_stats`를 설정합니다. 결과를 보관하려면 `report.save(path)`로 보고서를 YAML로 저장하며, 경로가 `.json`으로 끝나면 JSON으로 저장합니다. 두 가지 예는 [모델의 성능을 평가해 보세요.](/tutorials/benchmark-your-model)에서 확인하세요.
 
+### 직접 준비한 입력으로 측정 {#measure-with-your-own-inputs}
+
+감지 또는 세그멘테이션 디코더처럼 비용이 데이터에 따라 달라지는 모델은 합성 입력으로 정확히 측정되지 않을 수 있습니다. 실제 데이터로 측정하려면 `run()`에 전달할 텐서를 모델 입력마다 하나씩 `inputs`에 설정하십시오. 벤치마크는 이 텐서를 지연 시간과 처리량 측정 모두에 사용합니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+cv::Mat image;
+cv::cvtColor(cv::imread("bus.jpg"), image, cv::COLOR_BGR2RGB);  // the format input_specs() reports
+
+simaai::neat::BenchmarkOptions options;
+options.inputs = simaai::neat::TensorList{
+    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::RGB,
+                                      simaai::neat::TensorMemory::EV74)};
+
+simaai::neat::BenchmarkReport report = model.benchmark(options);
+std::cout << "input=" << report.input << " fps=" << report.fps << "\n";  // input=provided
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+image = cv2.cvtColor(cv2.imread("bus.jpg"), cv2.COLOR_BGR2RGB)  # the format input_specs() reports
+
+options = pyneat.BenchmarkOptions()
+options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.RGB)]
+
+report = model.benchmark(options)
+print("input=", report.input, "fps=", report.fps)  # input= provided
+```
+
+</CodeTab>
+</CodeTabs>
+
+입력의 개수, 형태 또는 데이터 형식이 모델과 맞지 않으면 `benchmark()`는 시작하기 전에 오류 코드 `misconfig.input_shape`와 함께 `NeatError`를 던집니다. 경로가 변환할 수 없는 색상 형식은 `run()`과 마찬가지로 파이프라인을 만들 때 실패합니다. 이미지를 전처리하는 경로에서는 이미지가 어떤 크기든 사용할 수 있습니다. 색상 형식은 `input_specs()`가 보고하는 형식을 사용하십시오.
+
 ### 실행 길이
 
 벤치마크는 단일 실행(single-flight) 지연 시간을 측정한 다음, 별도의 처리량 패스를 실행합니다. 각 패스는 최소 `num_samples`개의 입력을 측정하고 `min_duration_ms`(기본값 10초)가 경과할 때까지 계속되므로, 두 패스는 같은 규칙으로 멈추고 처리량 패스의 전력 및 온도 측정값은 짧은 버스트가 아니라 여러 텔레메트리 샘플에 걸쳐 수집됩니다. `latency_ms`는 지연 시간 패스의 평균 지연 시간이며, `latency_p50_ms`, `latency_p95_ms`, `latency_p99_ms`는 그 백분위수입니다. `throughput_samples`와 `throughput_duration_ms`는 처리량 패스에서 측정한 내용을 보고합니다. 빠른 스모크 테스트를 하려면 `min_duration_ms`를 0으로 설정하여 각 패스가 `num_samples`개의 입력 후에 중지하도록 하십시오.

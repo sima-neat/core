@@ -42,7 +42,18 @@ class PublicationInventory(unittest.TestCase):
                          'platform-source.json', 'native_artifacts.py', 'install_pciehost.sh']
                 names += [name + '.sha256' for name in names if name.endswith(('.deb', '.tar.gz', '.whl'))]
                 if not sidecar: names.remove(provider + '.sha256')
+                scripts = root / 'pcie_host/scripts'; scripts.mkdir()
+                shutil.copy2(ROOT / 'scripts/pcie_delivery.py', scripts / 'pcie_delivery.py')
                 for name in names + ['not-a-resource.txt']: (dist / name).touch()
+                resources = [name for name in names
+                             if not name.startswith('metadata') and not name.endswith('.sha256')]
+                hashes = {name: delivery.sha(dist / name) for name in resources}
+                (dist / 'metadata.json').write_text(json.dumps({
+                    'resources': resources, 'resources-checksum': hashes}))
+                for name in names:
+                    if name.endswith('.sha256'):
+                        resource = name.removesuffix('.sha256')
+                        (dist / name).write_text(hashes[resource] + '  pcie_host/dist/' + resource + '\n')
                 log = root / 'uploads.tsv'
                 result = subprocess.run(['bash', '-c', aws + script], cwd=root, text=True,
                                         capture_output=True, env={
@@ -297,7 +308,7 @@ esac
             script = r'''
 set -euo pipefail
 MAKE_DEB=ON; HOST_DISTRO=ubuntu24; DEB_ARCH=amd64
-SCHEDULER_SPEC=latest; SCHEDULER_ENVIRONMENT=production
+SCHEDULER_SPEC=latest; SCHEDULER_ENVIRONMENT=production; SCHEDULER_CANDIDATE=''
 current_core_branch() { printf 'feature/native'; }
 run_privileged() { echo 'unexpected privileged installation' >&2; exit 99; }
 python3() {

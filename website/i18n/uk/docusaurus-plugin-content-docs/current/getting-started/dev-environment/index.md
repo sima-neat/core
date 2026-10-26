@@ -34,7 +34,7 @@ SDK. Налаштуйте SDK, виконайте DevKit Sync, встанові�
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/getting-started/dev-environment/install-the-environment/"><strong>Встановіть необхідне програмне забезпечення.</strong><span>Встановіть і налаштуйте пакет SDK, який відповідає версії вашого програмного забезпечення DevKit.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/dev-environment/devkit-sync/"><strong>DevKit Sync</strong><span>Зрозумійте принципи спільного використання робочого простору, оновлення парних з’єднань, резервне копіювання rsync та інші аспекти. <code>дк</code> виконання команди.</span></a></li>
-      <li><a class="overview-link-card" href="/getting-started/dev-environment/offline-installation/"><strong>Встановлення в автономному режимі</strong><span>Завантажте пакети SDK та Model Compiler для використання в мережевих середовищах з обмеженим доступом.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/offline-installation/"><strong>Встановлення в автономному режимі</strong><span>Завантажте пакети SDK та Model Compiler для автономного встановлення.</span></a></li>
     </ul>
   </section>
 </div>
@@ -92,7 +92,7 @@ Model Compiler пропонується під час налаштування S
 :::
 
 :::note Встановлення певної версії
-Під час стандартної інсталяції використовуються поточні значення за замовчуванням. Канал `release-2.1`, який використовується на сторінці [Встановіть необхідне програмне забезпечення.](/getting-started/dev-environment/install-the-environment/), завжди містить інформацію про останню версію патчу 2.1. Щоб встановити конкретну версію SDK, Neat Library або Model Compiler, зверніться до [Посібник зі сумісності](/getting-started/compatibility/).
+Під час стандартної інсталяції використовуються поточні значення за замовчуванням. Канал `%%release.sdk_channel%%`, який використовується на сторінці [Встановіть необхідне програмне забезпечення.](/getting-started/dev-environment/install-the-environment/), завжди містить інформацію про останню версію патчу %%release.sdk_series%%. Щоб встановити конкретну версію SDK, Neat Library або Model Compiler, зверніться до [Посібник зі сумісності](/getting-started/compatibility/).
 :::
 
 ## Інструменти в SDK.

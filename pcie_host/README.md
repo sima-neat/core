@@ -480,9 +480,13 @@ The normal PCIe host package metadata includes the extras archive. To download
 and auto-extract only the tutorial bundle later without reinstalling the host
 packages, use the `extras` metadata variant:
 
+<!-- release-command:start -->
+
 ```bash
-sima-cli neat install core/pciehost/ubuntu24/amd64@v0.4.0 -t extras
+sima-cli neat install core/pciehost/ubuntu24/amd64@v0.6.0 -t extras
 ```
+
+<!-- release-command:end -->
 
 Install the locally built packages on the host with:
 

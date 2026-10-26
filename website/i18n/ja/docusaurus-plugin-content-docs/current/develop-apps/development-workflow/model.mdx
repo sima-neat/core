@@ -773,6 +773,44 @@ report = model.benchmark(options)
 
 MLA のレイヤーごと、またはステージごとの時間も計測するには、`include_mla_layer_stats` または `include_mla_stage_stats` を設定します。結果を残すには、`report.save(path)` でレポートを YAML として書き出します。パスが `.json` で終わる場合は JSON として書き出します。両方の例は[モデルをベンチマークする](/tutorials/benchmark-your-model)を参照してください。
 
+### 独自の入力で測定する {#measure-with-your-own-inputs}
+
+検出やセグメンテーションのデコーダーのように、コストがデータに依存するモデルでは、合成入力では正しく測定できないことがあります。実際のデータで測定するには、`run()` に渡すテンソルをモデルの入力ごとに 1 つずつ `inputs` に設定します。ベンチマークは、これらをレイテンシーとスループットの両方の測定に使用します。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+cv::Mat image;
+cv::cvtColor(cv::imread("bus.jpg"), image, cv::COLOR_BGR2RGB);  // the format input_specs() reports
+
+simaai::neat::BenchmarkOptions options;
+options.inputs = simaai::neat::TensorList{
+    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::RGB,
+                                      simaai::neat::TensorMemory::EV74)};
+
+simaai::neat::BenchmarkReport report = model.benchmark(options);
+std::cout << "input=" << report.input << " fps=" << report.fps << "\n";  // input=provided
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+image = cv2.cvtColor(cv2.imread("bus.jpg"), cv2.COLOR_BGR2RGB)  # the format input_specs() reports
+
+options = pyneat.BenchmarkOptions()
+options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.RGB)]
+
+report = model.benchmark(options)
+print("input=", report.input, "fps=", report.fps)  # input= provided
+```
+
+</CodeTab>
+</CodeTabs>
+
+入力の数、形状、データ型がモデルと一致しない場合、`benchmark()` は開始前にエラーコード `misconfig.input_shape` の `NeatError` をスローします。ルートが変換できない色フォーマットは、`run()` と同様にパイプラインの構築時にエラーになります。画像を前処理するルートでは、画像のサイズは任意です。色フォーマットは `input_specs()` が示すものを使用してください。
+
 ### 実行時間
 
 ベンチマークは、入力を 1 つずつ実行してレイテンシーを測定し、その後、別のスループット測定パスを実行します。各パスは、少なくとも `num_samples` 個の入力を測定し、かつ `min_duration_ms`（デフォルトは 10 秒）が経過するまで続きます。そのため、両方のパスは同じ規則で停止し、スループット測定パスの電力と温度の値は短時間のバーストではなく、複数のテレメトリサンプルにわたって取得されます。`latency_ms` はレイテンシー測定パスの平均レイテンシーで、`latency_p50_ms`、`latency_p95_ms`、`latency_p99_ms` はそのパーセンタイルです。`throughput_samples` と `throughput_duration_ms` は、スループット測定パスで測定した内容を示します。簡単なスモークテストでは、`min_duration_ms` を 0 に設定すると、各パスが `num_samples` 個の入力の後で停止します。

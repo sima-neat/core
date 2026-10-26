@@ -36,6 +36,8 @@ ENV_LABEL=""
 SYSROOT_PATH=""
 SDK_VERSION=""
 DEVKIT_BUILD_VERSION=""
+PCIE_STATUS_FILE=""
+PCIE_STATUS_HELPER=""
 CORE_VERSION=""
 CORE_DETAIL=""
 CORE_CHANNEL=""
@@ -100,6 +102,8 @@ Environment:
   NEAT_MODEL_COMPILER_DIR  Model Compiler extension directory (default: /sdk-extensions/model-compiler)
   SIMA_CLI_BIN             sima-cli executable path/name override
   SYSROOT                  SDK sysroot path (default: /opt/toolchain/aarch64/modalix)
+  NEAT_PCIE_SSH_USER       PCIe card SSH user (default: sima)
+  NEAT_PCIE_SSH_KEY        PCIe card SSH key (default: ~/.ssh/sima_neat_pcie_ed25519)
   NO_COLOR                 Disable color when set
 EOF
 }
@@ -526,14 +530,19 @@ detect_env_mode() {
     ENV_LABEL="Neat SDK"
     return 0
   fi
-  if [[ -n "${SYSROOT:-}" && -d "${SYSROOT}" ]]; then
-    ENV_MODE="elxr-sdk"
-    ENV_LABEL="Neat SDK"
-    return 0
-  fi
   if [[ -f "${BUILDINFO_FILE}" ]] && grep -qE '^MACHINE[[:space:]]*=[[:space:]]*modalix' "${BUILDINFO_FILE}"; then
     ENV_MODE="modalix-board"
     ENV_LABEL="Modalix DevKit"
+    return 0
+  fi
+  if have_cmd dpkg-query && [[ "$(dpkg-query -W -f='${db:Status-Status}' sima-pcie-host 2>/dev/null || true)" == "installed" ]]; then
+    ENV_MODE="pcie-host"
+    ENV_LABEL="Ubuntu PCIe host"
+    return 0
+  fi
+  if [[ -n "${SYSROOT:-}" && -d "${SYSROOT}" ]]; then
+    ENV_MODE="elxr-sdk"
+    ENV_LABEL="Neat SDK"
     return 0
   fi
   ENV_MODE="modalix-board"
@@ -829,6 +838,9 @@ discover_model_compiler() {
 discover_all() {
   local include_insight="${1:-1}"
   detect_env_mode
+  if [[ "${ENV_MODE}" == "pcie-host" ]]; then
+    return 0
+  fi
   if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
     discover_sdk_version
     discover_sdk_components
@@ -1150,7 +1162,7 @@ print_status_json() {
   if ! have_cmd python3; then
     die "--json requires python3"
   fi
-  if [[ "${STATUS_OFFLINE}" -eq 0 ]]; then
+  if [[ "${STATUS_OFFLINE}" -eq 0 && "${ENV_MODE}" != "pcie-host" ]]; then
     if resolve_updates; then
       if [[ -n "${UPDATE_FAILURES}" ]]; then
         update_check_status="partial"
@@ -1164,6 +1176,7 @@ print_status_json() {
 
   resolve_code_ui_access
   env \
+    NEAT_JSON_PCIE_STATUS_FILE="${PCIE_STATUS_FILE}" \
     NEAT_JSON_CODE_UI_BACKEND="${CODE_UI_BACKEND}" \
     NEAT_JSON_CODE_UI_AUTH="${CODE_UI_AUTH}" \
     NEAT_JSON_CODE_UI_PASSWORD="${CODE_UI_PASSWORD}" \
@@ -1411,6 +1424,14 @@ payload = {
     } if env("NEAT_JSON_CODE_UI_LOCAL_URL") else None,
     "exposedPorts": ports,
 }
+
+pcie_file = env("NEAT_JSON_PCIE_STATUS_FILE")
+if pcie_file:
+    payload["pcie"] = json.loads(Path(pcie_file).read_text())
+    for key, name in (("pcieHost", "sima-pcie-host"), ("pcieScheduler", "simaai-scheduler-pcie-host")):
+        package = payload["pcie"]["host"]["packages"].get(name, {})
+        payload["components"][key] = {"name": name, "version": package.get("version")}
+    payload["components"]["pyneatpcie"] = {"name": "PyNeatPCIe", **payload["pcie"]["host"]["python"].get("pyneatpcie", {"version": None})}
 update_failures = [
     line for line in env("NEAT_JSON_UPDATE_FAILURES").splitlines() if line.strip()
 ]
@@ -1779,13 +1800,27 @@ main() {
   case "${command}" in
     status)
       discover_all
+      if [[ "${ENV_MODE}" == "pcie-host" ]]; then
+        local script_dir
+        script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        PCIE_STATUS_HELPER="${script_dir}/neat_pcie_status.py"
+        [[ -f "${PCIE_STATUS_HELPER}" ]] || PCIE_STATUS_HELPER="${script_dir}/../share/sima-pcie-host/neat_pcie_status.py"
+        [[ -f "${PCIE_STATUS_HELPER}" ]] || die "PCIe status helper is missing; reinstall sima-pcie-host"
+        PCIE_STATUS_FILE="$(mktemp)"
+        trap 'rm -f "${PCIE_STATUS_FILE}"' EXIT
+        python3 -B "${PCIE_STATUS_HELPER}" > "${PCIE_STATUS_FILE}"
+      fi
       if [[ "${OUTPUT_JSON}" -eq 1 ]]; then
         print_status_json
+      elif [[ "${ENV_MODE}" == "pcie-host" ]]; then
+        python3 -B "${PCIE_STATUS_HELPER}" --render < "${PCIE_STATUS_FILE}"
       else
         print_status
       fi
       ;;
     update)
+      detect_env_mode
+      [[ "${ENV_MODE}" != "pcie-host" ]] || die "PCIe host updates use sima-cli neat install core/pciehost/<distro>/<arch>@<ref>; neat update does not update cards"
       run_update
       ;;
   esac

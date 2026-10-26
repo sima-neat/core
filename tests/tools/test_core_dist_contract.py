@@ -2410,3 +2410,65 @@ def test_resume_transport_requires_repair_transaction(tmp_path):
     with pytest.raises(admission.AdmissionError, match='resume requires repair'):
         admission.invoke(root, 'transaction', simulation=simulation, resume_incomplete=True)
     assert not marker.exists()
+
+
+def test_installed_python_extras_include_pcie_status_test_dependencies(tmp_path):
+    source = tmp_path/'producer'
+    tests = source/'python/tests'
+    tests.mkdir(parents=True)
+    (source/'python/tests_long').mkdir()
+    (source/'scripts').mkdir()
+    shutil.copy2(ROOT/'python/tests/test_neat_pcie_status.py', tests)
+    for name in ('neat', 'neat_pcie_status.py'):
+        shutil.copy2(ROOT/'scripts'/name, source/'scripts'/name)
+    # Execute the producer's real extras install rules without building bindings.
+    rules = (ROOT/'python/CMakeLists.txt').read_text()
+    install_rules = rules[rules.index('install(\n  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests/'):]
+    (source/'python/CMakeLists.txt').write_text(install_rules)
+    (source/'CMakeLists.txt').write_text('''cmake_minimum_required(VERSION 3.16)
+project(PythonExtrasDependencies NONE)
+add_subdirectory(python)
+''')
+    env = os.environ.copy()
+    for name in ('CMAKE_TOOLCHAIN_FILE', 'CMAKE_PREFIX_PATH', 'DESTDIR', 'PYTHONPATH', 'PYTHONHOME'):
+        env.pop(name, None)
+    env['PYTHONDONTWRITEBYTECODE'] = '1'
+    build, installed = tmp_path/'build', tmp_path/'installed'
+    def command(*args):
+        return subprocess.check_output(list(map(str, args)), env=env, text=True,
+                                       stderr=subprocess.STDOUT, cwd=tmp_path)
+    command('cmake', '-S', source, '-B', build, '-DCMAKE_INSTALL_PREFIX='+str(installed))
+    command('cmake', '--install', build, '--component', 'extras')
+    relocated = tmp_path/'relocated'
+    installed.rename(relocated)
+    source.rename(tmp_path/'producer-removed')
+    test_file = relocated/'share/sima-neat/python/tests/test_neat_pcie_status.py'
+    # Collection reproduces the CI failure; execution also verifies that the
+    # packaged CLI and helper work without the producer checkout.
+    command(sys.executable, '-B', '-m', 'pytest', '-p', 'no:cacheprovider', '--collect-only', '-q', test_file)
+    # Reproduce an occupied DevKit without changing its real installations.
+    # These distributions live outside every nested test's tmp_path.
+    sites = []
+    for python, version in [('python3.11', '0.5.0'), ('python3.13', '0.6.0+ci')]:
+        site = tmp_path/'ambient'/'pyneat'/'lib'/python/'site-packages'
+        metadata = site/f'pyneat-{version}.dist-info'
+        metadata.mkdir(parents=True)
+        (metadata/'METADATA').write_text(f'Name: pyneat\nVersion: {version}\n')
+        sites.append(str(site))
+    (tmp_path/'ambient/pyneat/pyvenv.cfg').write_text('include-system-site-packages = false\n')
+    (tmp_path/'ambient_pyneat.py').write_text(f'''import pytest
+from pathlib import Path
+
+@pytest.fixture(autouse=True)
+def ambient_pyneat(monkeypatch):
+    original = Path.glob
+    def glob(path, pattern):
+        if str(path) == '/media/nvme/pyneat' and pattern == 'lib/python*/site-packages':
+            return iter(Path(site) for site in {sites!r})
+        return original(path, pattern)
+    monkeypatch.setattr(Path, 'glob', glob)
+''')
+    result = command(sys.executable, '-B', '-m', 'pytest', '-p', 'no:cacheprovider',
+                     '-p', 'ambient_pyneat', '-q', test_file)
+    assert re.search(r'\b[1-9][0-9]* passed', result)
+    assert 'skipped' not in result

@@ -9,6 +9,10 @@ slug: /develop-apps/contribute/release-checklist
 
 本文檔是正式的發布閘道策略。
 
+## 最新文件版本
+
+更新 `deps/manifest.json` 後，針對此版本更新一次 `website/release-data/current.json`。執行 `npm --prefix website run sync:release-readmes`，並提交產生的含具體版本號碼的 README 命令。執行 `npm --prefix website run check:releases` 和 `./build.sh --doc`，以驗證權杖、歷史版本例外、在地化及轉譯後的命令。相容性頁面使用具體版本號碼，並以手動方式維護。歷史版本資訊中的版本必須保持固定。僅變更版本資料時，不需要更新翻譯或來源雜湊。欄位管理責任和權杖規則記載於 `website/release-data/README.md`。
+
 ## 阻止發布的條件
 
 除非滿足以下所有條件，否則將阻止發布：

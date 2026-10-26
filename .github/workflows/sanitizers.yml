@@ -25,7 +25,7 @@ jobs:
           CXX: clang++
           SIMANEAT_STRICT_WARNINGS: "OFF"
         run: |
-          ./build.sh --all --clean --no-doc --${{ matrix.mode }}
+          ./build.sh --all --clean --no-doc --update-sysroot --${{ matrix.mode }}
 
       - name: Verify build artifacts
         run: |

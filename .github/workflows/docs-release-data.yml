@@ -1,0 +1,35 @@
+name: Documentation release data
+
+on:
+  pull_request:
+    paths:
+      - 'deps/manifest.json'
+      - 'docs/**'
+      - 'pcie_host/README.md'
+      - 'website/**'
+      - 'sima-i18n*.json'
+      - 'tools/autodoc*'
+      - 'tests/test_autodoc.py'
+      - 'scripts/ci/sync_algolia_developer_center_index.py'
+      - 'tests/test_algolia_developer_center_index.py'
+      - '.github/workflows/docs-release-data.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-data:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - run: npm --prefix website ci --no-audit --no-fund
+      - run: npm --prefix website run check:releases
+      - run: npm --prefix website test
+      - run: python3 -m unittest discover -s tests -p test_autodoc.py
+      - run: python3 -m unittest discover -s tests -p test_algolia_developer_center_index.py

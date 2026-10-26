@@ -792,6 +792,51 @@ To also time each MLA layer or stage, set `include_mla_layer_stats` or `include_
 To keep the results, `report.save(path)` writes the report as YAML, or as JSON for a `.json`
 path. [Benchmark Your Model](/tutorials/benchmark-your-model) shows both.
 
+### Measure with your own inputs {#measure-with-your-own-inputs}
+
+Synthetic inputs can misrepresent a model whose cost depends on its data, such as a detection or
+segmentation decoder. To measure with real data, set `inputs` to the tensors you would pass to
+`run()`, one per model input. The benchmark uses them for both the latency and throughput
+measurements.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+cv::Mat image;
+cv::cvtColor(cv::imread("bus.jpg"), image, cv::COLOR_BGR2RGB);  // the format input_specs() reports
+
+simaai::neat::BenchmarkOptions options;
+options.inputs = simaai::neat::TensorList{
+    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::RGB,
+                                      simaai::neat::TensorMemory::EV74)};
+
+simaai::neat::BenchmarkReport report = model.benchmark(options);
+std::cout << "input=" << report.input << " fps=" << report.fps << "\n";  // input=provided
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+image = cv2.cvtColor(cv2.imread("bus.jpg"), cv2.COLOR_BGR2RGB)  # the format input_specs() reports
+
+options = pyneat.BenchmarkOptions()
+options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.RGB)]
+
+report = model.benchmark(options)
+print("input=", report.input, "fps=", report.fps)  # input= provided
+```
+
+</CodeTab>
+</CodeTabs>
+
+If the count, shape or data type of the inputs does not match the model, `benchmark()` throws
+`NeatError` with error code `misconfig.input_shape` before it starts. A color format the route
+cannot convert fails when the pipeline is built, as it does in `run()`. On a route that
+preprocesses images, the image can have any size. Pass it in the color format that `input_specs()`
+reports.
+
 ### Run length
 
 The benchmark measures single-flight latency, then runs a separate throughput pass. Each pass
