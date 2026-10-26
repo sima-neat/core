@@ -100,6 +100,10 @@ FormatTag jpeg_output_format(std::span<const std::uint8_t> jpeg) {
   }
   // Walk marker segments to the frame header (SOF0-3, SOF9-11) and read its sampling factors.
   for (std::size_t pos = 2; pos + 4 <= jpeg.size() && jpeg[pos] == 0xff;) {
+    if (jpeg[pos + 1] == 0xff) { // fill byte before a marker
+      ++pos;
+      continue;
+    }
     const std::uint8_t marker = jpeg[pos + 1];
     const std::size_t length = (std::size_t{jpeg[pos + 2]} << 8) | jpeg[pos + 3];
     const bool sof = (marker >= 0xc0 && marker <= 0xc3) || (marker >= 0xc9 && marker <= 0xcb);

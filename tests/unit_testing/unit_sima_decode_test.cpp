@@ -273,6 +273,10 @@ void check_mjpeg_native_nv16() {
   using simaai::neat::jpeg_output_format;
   require(jpeg_output_format(jpeg_header(0x22)) == simaai::neat::FormatTag::NV12, "4:2:0 -> NV12");
   require(jpeg_output_format(jpeg_header(0x21)) == simaai::neat::FormatTag::NV16, "4:2:2 -> NV16");
+  auto padded = jpeg_header(0x21); // 0xff fill bytes before APP0 and SOF0 are valid JPEG
+  padded.insert(padded.begin() + 8, 0xff);
+  padded.insert(padded.begin() + 2, {0xff, 0xff});
+  require(jpeg_output_format(padded) == simaai::neat::FormatTag::NV16, "fill bytes before markers");
   require_throws_with([] { (void)jpeg_output_format(jpeg_header(0x11)); }, "only 4:2:0 and 4:2:2",
                       "4:4:4 JPEG");
   require_throws_with([] { (void)jpeg_output_format(std::vector<std::uint8_t>{0x00, 0x01}); },
