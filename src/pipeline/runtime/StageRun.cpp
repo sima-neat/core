@@ -717,8 +717,6 @@ simaai::neat::FormatSpec preprocess_color_format_to_format_spec(PreprocessColorF
     return FormatSpec{FormatTag::NV12};
   case PreprocessColorFormat::I420:
     return FormatSpec{FormatTag::I420};
-  case PreprocessColorFormat::NV16:
-    return FormatSpec{FormatTag::NV16};
   case PreprocessColorFormat::Auto:
   default:
     return FormatSpec{};

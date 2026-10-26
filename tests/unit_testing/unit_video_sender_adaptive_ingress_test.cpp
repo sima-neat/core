@@ -305,31 +305,6 @@ RUN_TEST(
             raw_spec(std::string(format), "SystemMemory", SpecCertainty::Authoritative), true,
             kConvertKind);
       }
-      {
-        // NV16 (4:2:2 webcams) is converted to the encoder's NV12 surface on the EV74.
-        const std::vector<std::shared_ptr<simaai::neat::Node>> nodes = {
-            simaai::neat::nodes::groups::internal::VideoSenderRawIngress(kWidth, kHeight, kFps)};
-        const auto nv16 = simaai::neat::internal::specialize_nodes_for_input(
-            nodes, raw_spec("NV16", "SimaAI", SpecCertainty::Derived), {});
-        require(nv16.nodes.size() == 1U && nv16.nodes.front()->kind() == "Preproc",
-                "NV16 sender input must specialize to the EV74 ColorConvert");
-        require(nv16.output_spec.format == "NV12" && nv16.output_spec.memory == "SimaAI" &&
-                    nv16.output_spec.width == kWidth && nv16.output_spec.height == kHeight,
-                "NV16 sender input must still hand NV12 to the encoder");
-
-        // A standalone SimaEncode cannot host that stage; it must fail clearly, not at build.
-        const std::vector<std::shared_ptr<simaai::neat::Node>> encoder = {
-            simaai::neat::nodes::SimaEncode(simaai::neat::SimaEncodeOptions{})};
-        bool rejected = false;
-        try {
-          (void)simaai::neat::pipeline_internal::specialize_pipeline_nodes_for_input(
-              encoder, raw_spec("NV16", "SimaAI", SpecCertainty::Derived), {});
-        } catch (const std::invalid_argument& error) {
-          rejected = std::string(error.what()).find("NV16 input is not supported directly") !=
-                     std::string::npos;
-        }
-        require(rejected, "standalone SimaEncode must reject NV16 with guidance");
-      }
 
       // Missing factories/properties are represented explicitly, then collapsed
       // to "unsupported" by the sender policy. This is the compatibility path

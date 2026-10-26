@@ -29,14 +29,11 @@ Insight의 RTP/WebRTC 뷰어는 H.264와 H.265를 지원합니다. MJPEG 출력�
 NV12 in a compatible DMA-BUF:
 SimaEncode -> codec parser -> RTP payloader -> UdpOutput
 
-NV16 (4:2:2) in a DMA-BUF, for example from a 4:2:2 MJPEG decode:
-EV74 ColorConvert into the encoder NV12 surface -> SimaEncode -> codec parser -> RTP payloader -> UdpOutput
-
 CPU input or raw frames requiring conversion:
 Convert/upload into encoder DMA-BUF -> SimaEncode -> codec parser -> RTP payloader -> UdpOutput
 ```
 
-코덱은 인코더, 파서, RTP 페이로드 생성기를 함께 선택합니다. 사용 중단 예정인 `H264RtpUdpFromRaw(...)` 팩토리도 계속 사용할 수 있으며 H.264 기본값을 유지합니다. 호환되는 NV12 DMA-BUF 입력은 기존 할당을 유지합니다. CPU 메모리의 NV12는 업로드가 필요하며 RGB, BGR, 회색조, I420은 변환이 필요합니다. Neat는 인코더 입력 경계에서 최종 DMA 메모리에 직접 기록하므로 인코더 내부에서 두 번째 복사를 준비하지 않습니다. 앱에서 메모리 백엔드를 선택할 필요가 없습니다. 4:2:2 웹캠을 네이티브로 디코딩한 경우와 같은 NV16 입력은 EV74의 `ColorConvert`가 NV12로 변환하여 인코더 메모리에 직접 기록합니다.
+코덱은 인코더, 파서, RTP 페이로드 생성기를 함께 선택합니다. 사용 중단 예정인 `H264RtpUdpFromRaw(...)` 팩토리도 계속 사용할 수 있으며 H.264 기본값을 유지합니다. 호환되는 NV12 DMA-BUF 입력은 기존 할당을 유지합니다. CPU 메모리의 NV12는 업로드가 필요하며 RGB, BGR, 회색조, I420은 변환이 필요합니다. Neat는 인코더 입력 경계에서 최종 DMA 메모리에 직접 기록하므로 인코더 내부에서 두 번째 복사를 준비하지 않습니다. 앱에서 메모리 백엔드를 선택할 필요가 없습니다.
 
 ### 원시 프레임의 기하학적 구조 및 레이아웃
 

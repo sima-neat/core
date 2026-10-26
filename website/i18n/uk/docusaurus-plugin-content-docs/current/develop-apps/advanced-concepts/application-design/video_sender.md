@@ -30,9 +30,6 @@ Neat автоматично вибирає безпечний вхід енко�
 NV12 in a compatible DMA-BUF:
 SimaEncode -> codec parser -> RTP payloader -> UdpOutput
 
-NV16 (4:2:2) in a DMA-BUF, for example from a 4:2:2 MJPEG decode:
-EV74 ColorConvert into the encoder NV12 surface -> SimaEncode -> codec parser -> RTP payloader -> UdpOutput
-
 CPU input or raw frames requiring conversion:
 Convert/upload into encoder DMA-BUF -> SimaEncode -> codec parser -> RTP payloader -> UdpOutput
 ```
@@ -40,7 +37,7 @@ Convert/upload into encoder DMA-BUF -> SimaEncode -> codec parser -> RTP payload
 Кодек разом визначає енкодер, парсер і пакувальник RTP. Застаріла фабрика
 `H264RtpUdpFromRaw(...)` залишається доступною та зберігає типові параметри H.264.
 Сумісний NV12 DMA-BUF вхід утримує базову виділену пам’ять. NV12 у CPU-пам’яті потребує завантаження; RGB, BGR, відтінки сірого та I420 потребують перетворення.
-Neat виконує цю роботу на межі входу енкодера, записуючи в кінцеву DMA-поверхню, а не створюючи другу проміжну копію всередині енкодера. Застосункам не потрібно вибирати бекенд пам’яті. Вхід NV16, наприклад нативно декодований кадр 4:2:2-вебкамери, перетворюється на NV12 на EV74 вузлом `ColorConvert`, також безпосередньо в поверхню енкодера.
+Neat виконує цю роботу на межі входу енкодера, записуючи в кінцеву DMA-поверхню, а не створюючи другу проміжну копію всередині енкодера. Застосункам не потрібно вибирати бекенд пам’яті.
 
 ### Геометрія та розміщення сирих кадрів
 

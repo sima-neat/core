@@ -30,15 +30,12 @@ Neat 會自動選擇安全的編碼器輸入：
 NV12 in a compatible DMA-BUF:
 SimaEncode -> codec parser -> RTP payloader -> UdpOutput
 
-NV16 (4:2:2) in a DMA-BUF, for example from a 4:2:2 MJPEG decode:
-EV74 ColorConvert into the encoder NV12 surface -> SimaEncode -> codec parser -> RTP payloader -> UdpOutput
-
 CPU input or raw frames requiring conversion:
 Convert/upload into encoder DMA-BUF -> SimaEncode -> codec parser -> RTP payloader -> UdpOutput
 ```
 
 編解碼器會一併選擇編碼器、解析器與 RTP 負載封裝器。已棄用的
-`H264RtpUdpFromRaw(...)` 工廠仍可使用，並保留 H.264 預設值。相容的 NV12 DMA-BUF 輸入會保留其底層配置。CPU 儲存的 NV12 需要上傳；RGB、BGR、灰階與 I420 需要轉換。Neat 會在編碼器輸入邊界完成此工作，直接寫入最終 DMA 表面，而不在編碼器內另外暫存一份複本。應用程式不需要選擇記憶體後端。NV16 輸入（例如以原生方式解碼的 4:2:2 網路攝影機影格）會由 EV74 上的 `ColorConvert` 轉換為 NV12，同樣直接寫入編碼器表面。
+`H264RtpUdpFromRaw(...)` 工廠仍可使用，並保留 H.264 預設值。相容的 NV12 DMA-BUF 輸入會保留其底層配置。CPU 儲存的 NV12 需要上傳；RGB、BGR、灰階與 I420 需要轉換。Neat 會在編碼器輸入邊界完成此工作，直接寫入最終 DMA 表面，而不在編碼器內另外暫存一份複本。應用程式不需要選擇記憶體後端。
 
 ### 原始影格幾何與佈局
 

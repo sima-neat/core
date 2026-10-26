@@ -60,7 +60,6 @@ enum class PreprocessColorFormat {
   GRAY8 = 3, ///< 8-bit single-channel grayscale.
   NV12 = 4,  ///< Y plane + interleaved UV plane (semi-planar 4:2:0).
   I420 = 5,  ///< Y, U, V planes (planar 4:2:0).
-  NV16 = 6,  ///< Y plane + interleaved UV plane (semi-planar 4:2:2).
 };
 
 /// Common normalize presets — convenient shorthand for famous mean/stddev pairs.

@@ -1,3 +1,4 @@
+#include "nodes/groups/MjpegDecode.h"
 #include "nodes/sima/H264DecodeSima.h"
 #include "nodes/sima/SimaDecode.h"
 
@@ -286,6 +287,25 @@ void check_mjpeg_native_nv16() {
                       "JPEG without frame header");
 }
 
+void check_mjpeg_decode_group() {
+  using simaai::neat::FormatTag;
+  using simaai::neat::nodes::groups::MjpegDecode;
+  simaai::neat::SimaDecodeOptions options;
+  options.type = simaai::neat::SimaDecodeType::MJPEG;
+  options.raw_output = true;
+  // 4:2:0 decodes straight to NV12; 4:2:2 decodes to NV16 and adds one EV74 conversion.
+  const std::string direct = MjpegDecode(options, FormatTag::NV12).describe();
+  require_not_contains(direct, "Preproc", "4:2:0 MJPEG must not add a conversion stage");
+  // The ColorConvert stage renders only inside a built pipeline, which supplies its input.
+  require_throws_with([&] { (void)MjpegDecode(options, FormatTag::NV16).describe(); },
+                      "standalone preproc", "4:2:2 MJPEG must add the EV74 ColorConvert");
+  require_throws_with([&] { (void)MjpegDecode(options, FormatTag::I420); },
+                      "source_format must be NV12", "unsupported source format");
+  options.type = simaai::neat::SimaDecodeType::H264;
+  require_throws_with([&] { (void)MjpegDecode(options, FormatTag::NV12); },
+                      "decode.type must be JPEG or MJPEG", "non-JPEG decode");
+}
+
 void check_h264_decode_wrapper_compatibility() {
   simaai::neat::H264Decode decode(2, "NV12", "legacy_decoder", true, "CVU", 1280, 720, 30, 6);
   const std::string fragment = decode.backend_fragment(6);
@@ -322,6 +342,7 @@ int main() {
     check_decoder_controls();
     check_invalid_options();
     check_mjpeg_native_nv16();
+    check_mjpeg_decode_group();
     check_h264_decode_wrapper_compatibility();
 
     std::cout << "[OK] unit_sima_decode_test passed\n";

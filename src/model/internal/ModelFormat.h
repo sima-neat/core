@@ -42,8 +42,6 @@ inline std::string preprocess_color_format_name(PreprocessColorFormat fmt) {
     return "NV12";
   case PreprocessColorFormat::I420:
     return "I420";
-  case PreprocessColorFormat::NV16:
-    return "NV16";
   case PreprocessColorFormat::Auto:
     break;
   }

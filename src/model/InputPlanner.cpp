@@ -86,8 +86,6 @@ std::string color_format_to_string(PreprocessColorFormat fmt) {
     return "NV12";
   case PreprocessColorFormat::I420:
     return "I420";
-  case PreprocessColorFormat::NV16:
-    return "NV16";
   case PreprocessColorFormat::Auto:
     return "";
   }
