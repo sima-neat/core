@@ -382,15 +382,3 @@ a failed or cancelled source run is rejected. Automatic release-branch publicati
 continues to require complete successful CI. Without `offline_publish=true`, the
 manual entry point remains validation-only. Completed offline publications are
 verified and reused on rerun rather than replaced.
-
-### Existing Python environments
-
-Installation creates a fresh Python environment from the bundled wheel closure,
-matching clean-container validation. Existing host `pyneatpcie` and card `pyneat`
-environments are moved to a uniquely named `<name>-before-offline-*` backup
-beside the installation path. The installer prints the backup location and keeps
-user packages there. Existing symlink targets are preserved. If installation fails
-inside the Python environment transaction, the previous environment is restored;
-this does not roll back native Debian package changes. Preflight and verify-only
-operations do not replace environments. Reinstall any additional user packages
-separately after successful offline installation.
