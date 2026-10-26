@@ -1068,9 +1068,13 @@ def test_benchmark_rejects_image_inputs_that_do_not_fit_the_image_route():
 
 def test_benchmark_boxdecode_image_route_uses_provided_image_geometry(tmp_path):
   model = _image_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8, top_k=100)
-  bgr = _people_bgr()
-  height, width = bgr.shape[:2]
-  image = pyneat.Tensor.from_numpy(bgr, copy=True, image_format=pyneat.PixelFormat.BGR)
+  rgb = cv2.cvtColor(_people_bgr(), cv2.COLOR_BGR2RGB)
+  height, width = rgb.shape[:2]
+  # BoxDecode image routes do not convert color, so pass the format input_specs() reports.
+  image = _rgb_tensor(rgb)
+  # The benchmark takes the same inputs as run().
+  model.run([image], timeout_ms=30000)
+  _release_accelerator_outputs()
 
   report = model.benchmark(_benchmark_options([image]))
   _assert_measured(report, "provided")
