@@ -10,8 +10,27 @@ Core는 Scheduler와 LLiMa라는 두 가지 의존성을 기반으로 빌드합�
 기본적으로 `build.sh`는 다음을 수행합니다.
 
 1. Vulcan에서 공개된 Scheduler 집합과 LLiMa 패키지를 다운로드합니다.
-2. 둘 다 SDK sysroot에 설치합니다.
+2. Scheduler 집합을 체크아웃의 `deps/` 폴더에 압축 해제하고, LLiMa를 SDK sysroot에
+   설치합니다.
 3. Core를 빌드합니다.
+
+`build.sh`는 Scheduler 집합을 SDK sysroot에 설치하지 않으므로, 여러 Core 체크아웃이 하나의
+SDK 컨테이너에서 서로 다른 Scheduler 집합으로 동시에 빌드할 수 있습니다. 이 체크아웃들은
+sysroot의 LLiMa를 공유합니다. sysroot에 이미 같은 패키지가 있으면 `build.sh`는 LLiMa
+설치를 건너뜁니다.
+
+## SDK sysroot를 Scheduler 집합에 맞추기
+
+각 Scheduler 집합에는 해당 집합이 빌드된 sysroot 버전이 기록되어 있습니다. `build.sh`는
+이를 `sysroot status`와 비교하고, 서로 다르면 정확한 `sysroot update` 명령이 포함된
+경고를 출력합니다. 빌드 과정에서 sysroot를 업데이트하려면 `--update-sysroot`를 전달합니다.
+
+```bash
+./build.sh --all --no-doc --update-sysroot
+```
+
+이 옵션은 Core가 컴파일 대상으로 삼는 플랫폼 패키지와 함께
+`sudo sysroot update <version>`을 실행합니다. CI는 항상 이 옵션을 전달합니다.
 
 ## 로컬 Scheduler 또는 LLiMa 패키지 사용
 
@@ -22,7 +41,8 @@ Core는 Scheduler와 LLiMa라는 두 가지 의존성을 기반으로 빌드합�
 ```
 
 각 옵션은 단독으로 사용할 수 있으며, 다른 의존성은 `build.sh`가 계속 다운로드합니다.
-지정한 패키지는 sysroot의 공개된 패키지를 대체합니다.
+지정한 Scheduler 집합은 이 체크아웃의 `deps/` 폴더에 있는 공개된 집합을 대체하고,
+지정한 LLiMa 패키지는 SDK sysroot의 LLiMa를 대체합니다.
 
 Scheduler 폴더에는 Scheduler가 빌드될 때 사용한 전체 집합이 있어야 합니다.
 
@@ -174,8 +194,9 @@ EV 장치 빌드는 별도의 라이선스가 필요한 워크플로입니다. �
 아카이브를 분리하고 검증합니다. Core는 해당 저장소들을 독립적으로 해석하지 않습니다.
 
 선택한 Scheduler 패키지는 정확한 SDK 정책을 설치합니다. SDK에서 `build.sh`는
-`scripts/ci/prepare_scheduler_sdk.sh`를 실행하며, 이 스크립트는 해당 리비전의 공식
-sysroot 설정 명령을 사용하고 다운로드한 플랫폼 아카이브를 보존합니다. 코디네이터는 실제 GCC14 버전/타깃과
+`scripts/ci/prepare_scheduler_sdk.sh`를 실행하며, 이 스크립트는 sysroot 버전을 확인하고, 전용 APT 구성을 사용해
+Runner의 정확한 플랫폼 아카이브를 `deps/`에 다운로드합니다. `sysroot update`는
+`--update-sysroot`를 지정한 경우에만 실행합니다. 코디네이터는 실제 GCC14 버전/타깃과
 타깃 SDK 식별 정보를 확인한 다음 `NEAT_RUNNER_PLATFORM_RUNTIME_DEBS`를 통해
 Runner가 소비한 정확한 런타임 제공자 아카이브를 선택합니다. 네이티브 ARM64와
 크로스 컴파일러의 실행 파일 바이트가 같을 필요는 없습니다. 타깃 ABI와 선택한

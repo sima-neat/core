@@ -9,8 +9,20 @@ Core は Scheduler と LLiMa の 2 つの依存関係に対してビルドされ
 既定では、`build.sh` は次を行います。
 
 1. 公開済みの Scheduler セットと LLiMa パッケージを Vulcan からダウンロードします。
-2. 両方を SDK の sysroot にインストールします。
+2. Scheduler セットをチェックアウトの `deps/` フォルダーに展開し、LLiMa を SDK の sysroot にインストールします。
 3. Core をビルドします。
+
+`build.sh` は Scheduler セットを SDK の sysroot にインストールしないため、1 つの SDK コンテナー内で、複数の Core チェックアウトを異なる Scheduler セットに対して同時にビルドできます。これらのチェックアウトは sysroot の LLiMa を共有します。sysroot に同じパッケージがすでにある場合、`build.sh` は LLiMa のインストールを省略します。
+
+## SDK の sysroot を Scheduler セットに合わせる
+
+各 Scheduler セットには、ビルド対象の sysroot バージョンが記録されています。`build.sh` はそれを `sysroot status` と比較し、一致しない場合は正確な `sysroot update` コマンドを示す警告を表示します。ビルドの一部として sysroot を更新するには、`--update-sysroot` を指定します。
+
+```bash
+./build.sh --all --no-doc --update-sysroot
+```
+
+このオプションは、Core のコンパイル対象となるプラットフォームパッケージを指定して `sudo sysroot update <version>` を実行します。CI では常にこのオプションを指定します。
 
 ## ローカルの Scheduler または LLiMa パッケージを使用する
 
@@ -20,7 +32,7 @@ Core は Scheduler と LLiMa の 2 つの依存関係に対してビルドされ
 ./build.sh --scheduler ../scheduler-debs --llima ../llima/dist/debs
 ```
 
-各オプションは単独で使用できます。もう一方の依存関係は、`build.sh` が引き続きダウンロードします。指定したパッケージは、sysroot 内の公開済みパッケージを置き換えます。
+各オプションは単独で使用できます。もう一方の依存関係は、`build.sh` が引き続きダウンロードします。指定した Scheduler セットは、このチェックアウトの `deps/` フォルダー内の公開済みセットを置き換えます。指定した LLiMa パッケージは、SDK の sysroot 内の LLiMa を置き換えます。
 
 Scheduler フォルダーには、Scheduler のビルドに使用した完全なセットを入れます。
 
@@ -100,7 +112,7 @@ EV デバイスのビルドは、引き続きライセンスを必要とする�
 
 通常の Vulcan ビルドは `deps/manifest.json` の Scheduler ポリシーを `sima-cli` で解決し、選択した不変の公開物をダウンロードします。LLiMa と同様に、ブランチの `snap` はまず現在の Core ブランチを試します。解決に失敗し、Scheduler の公開ブランチ一覧でそのブランチが存在しないと確認できた場合に限り、フォールバックを通知して `develop:latest` を再試行します。一覧を取得できない場合や一覧が無効な場合を含め、その他の検索失敗はエラーのままです。タグの snap と明示的なブランチ/コミット指定はフォールバックしません。デバイスと PCIe ホストの取得はこのポリシーを共有し、PCIe の `--scheduler-spec <commit>` も厳密に適用されます。解決後のダウンロード、検証、ブートストラップ、ステージングの失敗はエラーのままです。記録には実際に選択したブランチと不変のコミットが保持されます。`tools/ci/acquire_scheduler.py` は公開元ハッシュを検証してから Scheduler のブートストラップを実行します。インストール済み Scheduler コーディネーターが、同梱された Runner、Kernels、Codecs のアーカイブを区分して検証します。Core がこれらのリポジトリを個別に解決することはありません。
 
-選択した Scheduler パッケージは、正確な SDK ポリシーをインストールします。SDK 内では、`build.sh` が `scripts/ci/prepare_scheduler_sdk.sh` を実行します。このスクリプトがそのリビジョンの公式 sysroot セットアップコマンドを使い、ダウンロードしたプラットフォームアーカイブを保持します。コーディネーターは実際の GCC14 バージョン/ターゲットとターゲット SDK 識別情報を確認し、`NEAT_RUNNER_PLATFORM_RUNTIME_DEBS` を通して Runner が使用した正確なランタイムプロバイダーアーカイブを選択します。ネイティブ ARM64 コンパイラーとクロスコンパイラーの実行ファイルのバイト列は同一でなくてもかまいませんが、ターゲット ABI と選択したプラットフォームは一致する必要があります。この段階でデバイスへのインストールやファームウェアの検証は行いません。
+選択した Scheduler パッケージは、正確な SDK ポリシーをインストールします。SDK 内では、`build.sh` が `scripts/ci/prepare_scheduler_sdk.sh` を実行します。このスクリプトが sysroot のバージョンを確認し、Runner が使用する正確なプラットフォームアーカイブを専用の APT 設定で `deps/` にダウンロードします。`sysroot update` は `--update-sysroot` を指定した場合にのみ実行します。コーディネーターは実際の GCC14 バージョン/ターゲットとターゲット SDK 識別情報を確認し、`NEAT_RUNNER_PLATFORM_RUNTIME_DEBS` を通して Runner が使用した正確なランタイムプロバイダーアーカイブを選択します。ネイティブ ARM64 コンパイラーとクロスコンパイラーの実行ファイルのバイト列は同一でなくてもかまいませんが、ターゲット ABI と選択したプラットフォームは一致する必要があります。この段階でデバイスへのインストールやファームウェアの検証は行いません。
 
 `--scheduler` フォルダーがダウンロードと混在したり、ダウンロードに置き換えられたりすることはありません。既存の `tools/ci/materialize_dependencies.py --manifest ... --output-root ...` コマンドは、別途レビュー済みの不変マニフェストを転送するための任意の手段として残ります。既定のワークフローではなく、暗黙の `ci/dependencies.json` もありません。
 
