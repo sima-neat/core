@@ -484,6 +484,8 @@ struct StageStaticSpec {
   // the same parent size; Allocate creates the first per-frame slot and each
   // ReuseInput stage retains that standard GstBuffer/GstMemory ownership.
   std::uint64_t frame_arena_size_bytes = 0;
+  // In-process construction authority only: never accepted from serialized manifests.
+  bool core_fresh_default_arena = false;
   FrameArenaRole frame_arena_role = FrameArenaRole::None;
   static_contract::ArenaStorageDomain frame_arena_storage_domain =
       static_contract::ArenaStorageDomain::Unknown;

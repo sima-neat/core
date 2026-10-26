@@ -48,7 +48,7 @@ bool has_input_appsrc(std::span<const std::shared_ptr<simaai::neat::Node>> nodes
 bool has_output_appsink(std::span<const std::shared_ptr<simaai::neat::Node>> nodes);
 bool has_internal_source(std::span<const std::shared_ptr<simaai::neat::Node>> nodes);
 void maybe_force_copy_for_backpressure(Sample& sample, std::size_t qsize, const char* where,
-                                       std::size_t seg_id);
+                                       std::size_t seg_id, bool preserve_framework = false);
 bool is_encoded_sample(const Sample& sample);
 std::optional<Sample> sample_from_input_spec(const OutputSpec& spec, std::string* err);
 
@@ -273,7 +273,10 @@ EdgeRouterCallbacks make_edge_router_callbacks(const std::shared_ptr<RunCore>& c
   callbacks.prepare_sink_sample = [core](NodeId, Sample& sample, std::size_t qsize,
                                          std::size_t diag_id) {
     if (core->opt.output_memory != OutputMemory::ZeroCopy) {
-      simaai::neat::graph::maybe_force_copy_for_backpressure(sample, qsize, "sink_queue", diag_id);
+      simaai::neat::graph::maybe_force_copy_for_backpressure(
+          sample, qsize, "sink_queue", diag_id,
+          core->opt.output_memory == OutputMemory::Auto &&
+              pipeline_internal::env_str("SIMA_OUTPUT_MEMORY_DEFAULT", "") != "owned");
     }
   };
   callbacks.request_stop = [core](const std::string& err) { core->graph_request_stop(err); };
@@ -952,6 +955,7 @@ void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
   {
     RunCoreStartOptions start_opt;
     start_opt.run_options = rt.run_options;
+    start_opt.graph_options = core->graph_options;
     start_opt.mode = RunMode::Async;
     start_opt.last_pipeline = &rt.last_pipeline;
     start_opt.push_sample_policy = PushSamplePolicy::PreserveSample;

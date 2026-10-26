@@ -85,8 +85,9 @@ inline bool is_bound_dense_scalar(const simaai::neat::Tensor& tensor) noexcept {
 simaai::neat::Mapping map_dense_tensor_read(const simaai::neat::Tensor& tensor);
 
 // Materialize public output storage once per carrier, retaining tensor views and
-// metadata but no producer buffer/pool loan. Auto may preserve existing DMA-BUFs.
-void materialize_owned_output(Sample& sample, bool preserve_dmabuf = false);
+// metadata but no producer buffer/pool loan. Auto may preserve actual DMA-BUFs
+// and certified framework terminal host carriers, selected per tensor span.
+void materialize_owned_output(Sample& sample, bool preserve_framework = false);
 
 // Copy a specific GstBuffer memory index into an owned simaai::neat::Tensor.
 simaai::neat::Tensor copy_tensor_from_sample_memory(const simaai::neat::Tensor& ref,

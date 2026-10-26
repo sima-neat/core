@@ -10,6 +10,7 @@ namespace simaai::neat::pipeline_internal::sima {
 // Core's application wire formats, not numerical kernel output layouts.
 enum class BoxDecodeWireFormat {
   Boxes,
+  OrientedBoxesV1,
   Pose,
   Masks,
   MasksPose,

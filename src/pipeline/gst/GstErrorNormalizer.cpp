@@ -683,10 +683,19 @@ std::string dimensions(const std::optional<int64_t>& width, const std::optional<
 // category/rule in raw details; this is public presentation, not revalidation.
 NormalizedDiagnostic kernel_runner_failure(RawGstError raw) {
   const auto category = find_structured_detail(raw, {"runtime-category"}).value_or("");
+  const bool allocation_failed =
+      category == "execution_failed" &&
+      find_structured_detail(raw, {"runtime-phase"}) == "implementation_admission" &&
+      find_structured_detail(raw, {"kernel-rule"}) == "memory.allocation_failed";
   const char* code = error_codes::kRuntimeElementFailed;
   const char* title = "The kernel stage could not complete.";
   const char* action = "Inspect the stage's Runtime diagnostic and underlying device cause.";
-  if (category == "invalid_request") {
+  if (allocation_failed) {
+    code = error_codes::kMemoryAllocationFailed;
+    title = "The kernel stage could not allocate its required memory.";
+    action = "Check the reported allocation size and pool count; reduce retained buffers or "
+             "concurrent workloads, and verify available memory in the required allocation domain.";
+  } else if (category == "invalid_request") {
     code = error_codes::kKernelRequest;
     title = "The kernel request violates its operation contract.";
     action = "Correct the reported tensor specification or parameter before preparing the stage.";
@@ -722,14 +731,18 @@ NormalizedDiagnostic kernel_runner_failure(RawGstError raw) {
     action =
         "A timeout is not retirement: retain buffers until completion or verified device recovery.";
   }
-  auto out = base(std::move(raw), code, "neatkernelrunner." + category, title);
+  auto out = base(std::move(raw), code,
+                  allocation_failed ? "neatkernelrunner.memory_allocation_failed"
+                                    : "neatkernelrunner." + category,
+                  title);
   for (const auto* key : {"runtime-category", "runtime-phase", "runtime-field", "kernel-rule",
                           "kernel-code", "operation-index"})
     add_fact(out, key, find_structured_detail(out.raw, {key}).value_or(""));
   // Access contention is not necessarily exhausted execution capacity. Preserve
   // the provider cause without guessing from its category; serialization is
   // failure-only, bounded and credential-redacted.
-  if (category == "invalid_request" || category == "invalid_binding" || category == "resource_busy")
+  if (allocation_failed || category == "invalid_request" || category == "invalid_binding" ||
+      category == "resource_busy")
     add_fact(out, "Reason", sanitize_gst_diagnostic_text(out.raw.message));
   out.actions = {action};
   return out;
@@ -1035,6 +1048,7 @@ NormalizedDiagnostic memory_allocation_failed(RawGstError raw) {
                                   "gstreamer.memory_allocation_failed",
                                   "The pipeline could not allocate a required memory buffer.");
   add_fact(out, "Allocator", find_detail(out.raw, {"allocator"}).value_or(""));
+  add_fact(out, "Reason", sanitize_gst_diagnostic_text(out.raw.message));
   out.actions = {
       "Reduce memory use by lowering the number or resolution of simultaneous streams or by "
       "reducing buffer and queue depth.",

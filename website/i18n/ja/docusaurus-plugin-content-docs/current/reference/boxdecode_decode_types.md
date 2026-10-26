@@ -6,13 +6,13 @@ sidebar_position: 6
 
 # BoxDecode デコードの種類
 
-`nodes::SimaBoxDecode` は、生の検出ヘッドのテンソルを検出結果に変換します。これはモデル推論の後に実行され、選択されたモデルファミリーのデコード計算を適用し、信頼度の低いボックスをフィルタリングし、NMS（Non-Maximum Suppression）を実行し、デコードされたボックスから始まるテンソルペイロードを出力します。検出モデルは、そのペイロードをボックスとして解析できます。姿勢およびセグメンテーションモデルも、ボックスの後に続くキーポイントまたはマスクを解析できます。
+`nodes::SimaBoxDecode` は、生の検出ヘッドテンソルを検出結果に変換します。モデル推論の後に、選択したモデルファミリーのデコード計算を適用し、検出をフィルタリングします。NMS と出力形式は選択したファミリーによって異なります。検出モデルはペイロードをボックスとして解析でき、姿勢・セグメンテーションモデルはボックスに続くキーポイントやマスクも解析できます。
 
 通常のモデルパックの使用では、`Model` を認識するコンストラクタを使用することを推奨します。モデルアーカイブは、デコーダーに必要なテンソルの順序、レイアウト、量子化、クラス数、リサイズメタデータ、およびスコアドメインのヒントを提供します。通常、アプリケーションはデコードファミリーとフィルタリングの閾値を選択するだけです。
 
 ## ランタイムバックエンド
 
-BoxDecode と SuperPoint は、検証済みの Kernels 実行ファイルと `neatkernelrunner` を使います。公開される検出・特徴出力の形式は変わりません。テンソルを直接入力する場合は、デコードを A65 で実行する場合も共有 CMA テンソル（`TensorMemory::EV74`）を使ってください。このメモリの選択は DMA-BUF 転送を提供するものであり、実行ターゲットを指定するものではありません。
+BoxDecode と SuperPoint は、検証済みの Kernels 実行ファイルと `neatkernelrunner` を使います。既存の検出・特徴出力形式は変わりません。YOLO26 の回転ボックスには、別のバージョン付き形式を使います。テンソルを直接入力する場合は、デコードを A65 で実行する場合も共有 CMA テンソル（`TensorMemory::EV74`）を使ってください。このメモリの選択は DMA-BUF 転送を提供するものであり、実行ターゲットを指定するものではありません。
 
 RCNN ステージ 1 はカーネルが管理するレベル別 top-K 契約を使います。グローバル NMS の後、モデル面積レベルごとに最大 `top_k` 件を残します。出力は通常の BBOX 形式ではなく、提案用ワイヤ形式です。4 つのグループがあり、それぞれに INT32 の件数と、6 個の FP16 からなる `top_k` 件のレコード（`score, 0, x1, y1, x2, y2`）が含まれます。座標変換では最終シリアライズまで小数の幾何情報を保持します。ステージ 2 の提案入力として使い、`decode_bbox_tensor()` には渡さないでください。従来のプラグインはロードされません。
 
@@ -64,12 +64,36 @@ opt.top_k = 100;
 | モデルタスク | C++ヘルパー | Pythonヘルパー | デコードされたテンソル |
 | --- | --- | --- | --- |
 | 検出 | `decode_bbox(...)` | `pyneat.decode_bbox(...)` | `[N, 6]` float32 boxes: `x1, y1, x2, y2, score, class_id` |
+| 回転物体検出 | `decode_obb(...)` | `pyneat.decode_obb(...)` | 所有権を持つジオメトリ `[N, 5]` float32（`cx, cy, width, height, angle_radians`）、スコア `[N]` float32、クラス ID `[N]` int32 |
 | ポーズ | `decode_pose(...)` | `pyneat.decode_pose(...)` | ボックス `[N, 6]` とキーポイント `[N, 17, 3]` float32: `x, y, visibility` |
 | セグメンテーション | `decode_segmentation(...)` | `pyneat.decode_segmentation(...)` | ボックス `[N, 6]` float32、マスク `[N, 160, 160]` uint8 |
 | セグメンテーション + ポーズ | `decode_segmentation_pose(...)` | `pyneat.decode_segmentation_pose(...)` | ボックス `[N, 6]` float32、マスク `[N, 160, 160]` uint8、キーポイント `[N, 17, 3]` float32 |
 | SuperPoint | `decode_superpoint(...)` | `pyneat.decode_superpoint(...)` | キーポイント `[N,2]`、スコア `[N]`、記述子 `[N,D]` |
 
-検出結果を表示するグラフは、その結果を`SimaRender`に渡すことができます。ボックスのみが必要なアプリケーションコードは、引き続きBoxDecodeの出力に対して`decode_bbox(...)`を使用できます。
+軸に平行な検出結果の表示グラフでは、結果を `SimaRender` に渡せます。`decode_bbox(...)` は既存のボックス先頭形式にのみ使ってください。これも `SimaRender` も回転ボックスには対応していません。
+
+## YOLO26 の回転ボックス {#yolo26-oriented-boxes}
+
+`BoxDecodeType::YoloV26Obb`（Python: `pyneat.BoxDecodeType.YoloV26Obb`、トークン `yolo26-obb`）を明示的に選択します。このプロファイルは、ストライド 8、16、32 の 4 チャネル距離ヘッド 3 個、クラスロジットヘッド 3 個、1 チャネルの生の角度ヘッド 3 個を、役割ごとにまとめた 9 個の FP32、BF16、または INT8 ヘッドとして受け取ります。すべてのヘッドで完全なクラス数（1–256）が一致する必要があります。`Auto`、`GroupedByRole`、`GroupedByRoleLogit` はこのグループ化レイアウトを選択します。確率値のクラスヘッドやインターリーブレイアウトは拒否されます。
+
+INT8 ヘッドには、正の有限値を持つテンソル単位の量子化メタデータと INT8 のゼロポイントが必要です。BF16 と FP32 のヘッドでは整数量子化メタデータを使いません。
+
+正の `top_k` と `nms_iou_threshold = 0` を指定します。クラスロジットに sigmoid を適用し、最大の活性化スコアでアンカーを選んだ後、アンカーとクラスのペアを選択します。同点では第 1 段階の順位とクラス順を保持します。スコアの比較は厳密な不等号（`score > detection_threshold`）です。生の角度はすでにラジアン単位であり、デコーダーは sigmoid の適用や範囲の正規化を行いません。
+
+前処理メタデータには、X/Y のスケールが正かつ等しく、せん断を含まない、モデル座標から元画像座標への明示的で有限な変換が必要です。モデルと同じサイズのタイルでも、明示的な恒等変換が必要です。変換がない場合や異方的な場合は、回転矩形を近似せずに拒否します。符号付きの有限な幅・高さを保持し、画像境界でクリップしません。タイル分割した DOTA 評価では各タイルに恒等変換を使い、タイルのオフセット復元とタイル間のポリゴン抑制はアプリケーションで行ってください。
+
+ソース駆動グラフでは、Core は検証済みの上流 Preproc 契約から初期準備用のジオメトリを導出します。これは準備用の初期値にすぎません。各フレームには引き続き、有限で正の一様なアフィン変換と、モデルに一致するキャンバス寸法が必要です。フレームの変換がない場合はエラーとなり、恒等変換にフォールバックしません。
+
+出力には `BBOX_OBB_V1` タグが付きます。32 バイトのバージョン付きヘッダーに、32 バイトのレコードが `top_k` 個続きます。未使用レコードはゼロです。`decode_obb_tensor(tensor)` は単一のキャリアを検証し、`decode_obb(tensors)` はキャリアごとに 1 個の型付き結果を返します。どちらも所有権を持つ CPU テンソルにコピーし、クラス ID は INT32 のままです。例:
+
+```python
+result = pyneat.decode_obb(outputs)[0]
+geometry = result.geometry.to_numpy()  # cx, cy, width, height, angle_radians
+scores = result.scores.to_numpy()
+class_ids = result.class_ids.to_numpy()
+```
+
+この形式は、意図的に先頭 BBOX の拡張としていません。`decode_bbox`、セグメンテーション・姿勢パーサー、軸に平行なボックス用レンダラーではなく、型付きヘルパーを使ってください。
 
 ## スーパーポイント
 
@@ -259,6 +283,7 @@ MPK はテンソル契約とデコードファミリーの情報を提供しま�
 | `BoxDecodeType::YoloV26` | `yolo26` | YOLO26による検出 |
 | `BoxDecodeType::YoloV26Pose` | `yolo26-pose` | YOLO26 ポーズ |
 | `BoxDecodeType::YoloV26Seg` | `yolo26-seg` | YOLO26セグメンテーション |
+| `BoxDecodeType::YoloV26Obb` | `yolo26-obb` | YOLO26 回転物体検出 (`BBOX_OBB_V1`) |
 | `BoxDecodeType::YoloV6` | `yolov6` | YOLOv6による検出 |
 | `BoxDecodeType::YoloX` | `yolox` | YOLOXによる検出 |
 | `BoxDecodeType::YoloXSegPose` | `yolox-seg-pose` | ボックス、マスク、キーポイントのヘッドをまとめた YOLOX パック形式のエクスポート |

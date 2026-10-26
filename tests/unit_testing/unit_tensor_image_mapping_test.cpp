@@ -8,6 +8,9 @@
 #include "test_utils.h"
 
 #include <gst/gst.h>
+#include <gst/allocators/gstdmabuf.h>
+#include <simaai/scheduler/client/dma_memory.h>
+#include <fcntl.h>
 
 #include <cstring>
 #include <memory>
@@ -70,6 +73,49 @@ bool throws_with(const std::function<void()>& fn, const std::string& needle) {
     return std::string(e.what()).find(needle) != std::string::npos;
   }
   return false;
+}
+
+void test_dmabuf_failure_preserves_provider_diagnostic() {
+  using namespace simaai::neat;
+  namespace dma = simaai::scheduler::client::dma;
+  gst_init(nullptr, nullptr);
+  // A non-DMA fd deterministically rejects admission or CPU synchronization.
+  // No heap, device job, fake completion or change to provider policy is needed.
+  const int fd = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
+  require(fd >= 0, "open diagnostic fixture");
+  std::shared_ptr<GstAllocator> allocator(gst_dmabuf_allocator_new(), gst_object_unref);
+  GstMemory* memory = gst_dmabuf_allocator_alloc(allocator.get(), fd, 32);
+  require(memory != nullptr, "allocate diagnostic fixture memory");
+  std::shared_ptr<GstBuffer> buffer(gst_buffer_new(), gst_buffer_unref);
+  gst_buffer_append_memory(buffer.get(), memory); // Owns the fd; never a real DMA allocation.
+  dma::Error expected;
+  auto view = dma::DmaBufView::fromGstMemory(memory, &expected);
+  if (view) {
+    auto mapping = view->map(dma::CpuAccess::Read, &expected);
+    require(!mapping, "non-DMA fixture unexpectedly admitted CPU synchronization");
+  }
+  require(expected.code != 0 && !expected.operation.empty(), "provider lost the original cause");
+  std::shared_ptr<GstSample> sample(gst_sample_new(buffer.get(), nullptr, nullptr, nullptr),
+                                    gst_sample_unref);
+  auto storage = pipeline_internal::make_gst_sample_storage(sample.get());
+  struct WarningCapture {
+    std::string message;
+    guint handler = g_log_set_handler(
+        nullptr, G_LOG_LEVEL_WARNING,
+        +[](const gchar*, GLogLevelFlags, const gchar* text, gpointer data) {
+          static_cast<WarningCapture*>(data)->message += text;
+        },
+        this);
+    ~WarningCapture() {
+      g_log_remove_handler(nullptr, handler);
+    }
+  } capture;
+  const auto mapping = storage->map(MapMode::Read);
+  require(!mapping.data, "failed DMA-BUF map changed its empty-Mapping API contract");
+  require_contains(capture.message, expected.operation, "Core discarded the provider operation");
+  require_contains(capture.message, "errno=" + std::to_string(expected.code),
+                   "Core discarded the provider errno");
+  require_contains(capture.message, "bytes=", "Core discarded the failed mapping range");
 }
 
 void test_dmabuf_logical_read_range(bool shared_memory) {
@@ -476,6 +522,7 @@ void test_shared_dmabuf_read_views(bool release_first_view_first) {
 RUN_TEST("unit_tensor_image_mapping_test", ([] {
            using namespace simaai::neat;
            gst_init(nullptr, nullptr);
+           test_dmabuf_failure_preserves_provider_diagnostic();
            test_dmabuf_logical_read_range(false);
            test_dmabuf_logical_read_range(true);
            test_dmabuf_composite_read(true);

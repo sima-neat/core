@@ -14,12 +14,15 @@
 #include "pipeline/internal/sima/static_contract/KernelRegistry.h"
 #include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
 
+#include "asset_utils.h"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -1446,21 +1449,24 @@ void test_dense_ifm_tail_padding() {
   const auto& port = plan.backend_ports(0U, BackendPortDirection::Input).front();
   const auto* value = plan.value(port.value_id);
   check(value->required_bytes == 14U && value->logical_shape == TensorShape({1, 7}) &&
-            port.physical_extent_bytes == 14U,
-        "IFM allocation tail does not enlarge the MPK transfer");
+            port.physical_extent_bytes == 16U,
+        "IFM allocation tail enlarges the physical reservation without changing the MPK payload");
+  const auto* carrier = plan.carrier(value->storage_binding->carrier_id);
+  check(carrier && carrier->required_bytes == 16U,
+        "producer carrier covers the complete MLA-readable allocation tail");
   const auto contract = project_single_mla(plan);
-  check(contract.physical_inputs.front().size_bytes == 14U &&
-            contract.input_bindings.front().src_physical_size_bytes == 14U,
-        "IFM arena projection binds exactly the MPK bytes");
+  check(contract.physical_inputs.front().size_bytes == 16U &&
+            contract.input_bindings.front().src_physical_size_bytes == 16U,
+        "IFM arena projection binds the complete ELF reservation");
   for (const auto bad_extent : {13U, 15U, 17U, 32U}) {
     topology.ifm_extent_bytes = {bad_extent};
     expect_error(manifest.dump(), topology, MpkDecodeErrorCode::ValueSizeMismatch,
                  "undersized, unaligned, and excessive IFM extents remain rejected");
   }
   const auto monolithic = MpkDecoder{}.decode_json(manifest.dump(), monolithic_topology(16U, 8U));
-  check(static_cast<bool>(monolithic), "monolithic allocation tail preserves MPK transfer length");
-  check(project_single_mla(*monolithic.plan).physical_inputs.front().size_bytes == 14U,
-        "monolithic transfer is not rounded to the ELF reservation");
+  check(static_cast<bool>(monolithic), "monolithic allocation tail preserves MPK payload length");
+  check(project_single_mla(*monolithic.plan).physical_inputs.front().size_bytes == 16U,
+        "monolithic physical input covers the ELF reservation");
   auto spatial = manifest;
   spatial["input_nodes"][0]["size"] = 420;
   spatial["plugins"][0]["input_nodes"][0]["size"] = 420;
@@ -1471,9 +1477,9 @@ void test_dense_ifm_tail_padding() {
   const auto c7 = MpkDecoder{}.decode_json(spatial.dump(), monolithic_topology(224U, 8U));
   check(static_cast<bool>(c7), "C7 BF16 HWC input admits 210-byte MPK transfer with 224-byte ELF");
   const auto c7_contract = project_single_mla(*c7.plan);
-  check(c7_contract.physical_inputs.front().size_bytes == 210U &&
-            c7_contract.input_bindings.front().src_physical_size_bytes == 210U,
-        "C7 BF16 HWC projection retains exactly 210 bytes");
+  check(c7_contract.physical_inputs.front().size_bytes == 224U &&
+            c7_contract.input_bindings.front().src_physical_size_bytes == 224U,
+        "C7 BF16 HWC projection reserves the complete 224-byte ELF input");
   for (const auto bad_extent : {209U, 211U, 223U, 225U, 256U}) {
     expect_error(spatial.dump(), monolithic_topology(bad_extent, 8U),
                  MpkDecodeErrorCode::ValueSizeMismatch,
@@ -1489,6 +1495,64 @@ void test_dense_ifm_tail_padding() {
   cast["config_params"]["params"]["output_shapes"] = {{7, 1}};
   expect_error(manifest.dump(), topology, MpkDecodeErrorCode::ValueSizeMismatch,
                "logical leading dimension must also prove batch one");
+}
+
+void test_int8_mask_ifm_tail_padding() {
+  auto manifest = nlohmann::json::parse(valid_manifest());
+  manifest["input_nodes"][0]["size"] = 32;
+  auto& quant = manifest["plugins"][0];
+  quant["input_nodes"][0]["size"] = 32;
+  quant["output_nodes"][0]["size"] = 8;
+  quant["config_params"]["kernel"] = "quantization_transform";
+  quant["config_params"]["params"] = {{"channel_params", {{0.01, 0}}}, {"num_bits", 8},
+                                      {"rounding", "TONEAREST"},       {"output_data_type", "int8"},
+                                      {"input_shapes", {{1, 8}}},      {"output_shapes", {{1, 8}}}};
+  const auto decoded = MpkDecoder{}.decode_json(manifest.dump(), monolithic_topology(16U, 8U));
+  check(static_cast<bool>(decoded), "eight-element INT8 mask admits a 16-byte MLA reservation");
+  const auto& plan = *decoded.plan;
+  const auto& port = plan.backend_ports(0U, BackendPortDirection::Input).front();
+  const auto* value = plan.value(port.value_id);
+  check(plan.value(plan.model_inputs().front())->required_bytes == 32U &&
+            value->required_bytes == 8U && value->logical_shape == TensorShape({1, 8}) &&
+            value->logical_dtype == "int8" && port.physical_extent_bytes == 16U,
+        "eight FP32 application values remain eight INT8 mask elements");
+  const auto* carrier = plan.carrier(value->storage_binding->carrier_id);
+  check(carrier && carrier->required_bytes == 16U,
+        "mask producer reserves the complete MLA-readable range");
+  const auto contract = project_single_mla(plan);
+  check(contract.physical_inputs.front().size_bytes == 16U &&
+            contract.input_bindings.front().src_physical_size_bytes == 16U,
+        "mask DMA contract includes physical tail without changing tensor geometry");
+}
+
+void test_direct_input_ifm_tail_padding() {
+  auto manifest = nlohmann::json::parse(qmla_padded_output_manifest());
+  manifest["input_nodes"][0]["size"] = 8;
+  auto& mla = manifest["plugins"][0];
+  mla["input_nodes"][0]["size"] = 8;
+  mla["config_params"]["input_types"] = {{{"scalar", "int8"}, {"shape", {1, 8}}}};
+  for (const auto& topology : {qmla_padded_topology(), monolithic_topology(16U, 109200U)}) {
+    const auto decoded = MpkDecoder{}.decode_json(manifest.dump(), topology);
+    if (!decoded && decoded.error) {
+      std::cerr << decoded.error->json_path << ": " << decoded.error->detail << "\n";
+    }
+    check(static_cast<bool>(decoded), "direct eight-byte INT8 input admits a 16-byte ELF extent");
+    const auto& plan = *decoded.plan;
+    const auto* value = plan.value(plan.model_inputs().front());
+    check(value->required_bytes == 8U && value->logical_shape == TensorShape({1, 8}) &&
+              value->storage_binding->kind == StorageBindingKind::External &&
+              value->storage_binding->physical_span == 16U,
+          "direct input keeps its logical geometry and declares the complete external extent");
+    const auto contract = project_single_mla(plan);
+    check(contract.physical_inputs.front().size_bytes == 16U &&
+              contract.input_bindings.front().src_physical_size_bytes == 16U,
+          "direct input projection binds the complete ELF reservation");
+  }
+  for (const auto bad_extent : {7U, 9U, 15U, 17U, 32U}) {
+    expect_error(manifest.dump(), monolithic_topology(bad_extent, 109200U),
+                 MpkDecodeErrorCode::ValueSizeMismatch,
+                 "direct input still rejects unproved ELF extents");
+  }
 }
 
 void test_compiler_version_does_not_restrict_admission() {
@@ -1673,6 +1737,209 @@ void test_reshape_is_an_exact_read_expression() {
       MpkDecoder{}.decode_json(mismatch, monolithic_topology(16U, 8U), "reshape-mismatch.json");
   check(!rejected && rejected.error->code == MpkDecodeErrorCode::ValueSizeMismatch,
         "reshape that changes the byte extent fails closed");
+}
+
+void test_host_alias_publication() {
+  std::ifstream file(sima_test::test_model_archive_fixture_root_path() /
+                     "strict-seeds/nemotron_joiner_argmax_mpk.json");
+  check(file.is_open(), "the real joiner MPK manifest fixture must be installed");
+  auto manifest = nlohmann::json::parse(file);
+  auto topology = monolithic_topology(0U, 16U);
+  topology.monolithic_ifm = false;
+  topology.ifm_symbol_names = {"data.ifm.persistent.qmla_ifm_0.b0",
+                               "data.ifm.persistent.qmla_ifm_1.b0"};
+  topology.ifm_extent_bytes = {1280U, 1280U};
+  const auto& mla = manifest["plugins"][2];
+  const auto& host = manifest["plugins"][4];
+  const std::vector<MlaStageExecutableEvidence> mla_evidence{
+      {mla["name"], mla["resources"]["executable"], topology, 100U, "synthetic-mla-digest"}};
+  const std::vector<HostTvmExecutableEvidence> host_evidence{{host["name"],
+                                                              host["resources"]["executable"],
+                                                              {"arm_2_i0"},
+                                                              {{"int32", {1, 1, 1, 1}}},
+                                                              {{"int32", {1, 1, 1, 1}}},
+                                                              {0},
+                                                              100U,
+                                                              "synthetic-identity-digest"}};
+  const auto result = MpkDecoder{}.decode_json(manifest.dump(), mla_evidence, host_evidence);
+  if (!result && result.error) {
+    std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
+  }
+  check(static_cast<bool>(result), "terminal INT32 index crop and identity module decode");
+  const auto& output = result.plan->values().at(result.plan->model_outputs().front().value_id);
+  check(output.logical_dtype == "int32" && output.logical_shape == TensorShape({1, 1}) &&
+            output.required_bytes == 4U && output.read_expression.has_value(),
+        "terminal index remains a four-byte INT32 view with its declared shape");
+  std::string error;
+  const auto physical = PhysicalExecutionLowerer::lower(*result.plan, &error);
+  check(physical.has_value(), "native index plan lowers to physical commands");
+  check(std::none_of(physical->commands.begin(), physical->commands.end(),
+                     [](const auto& command) { return command.engine == PhysicalEngine::A65; }),
+        "the argument-only A65 module produces no physical CPU command");
+
+  const auto project_shared_arena = [&](const ModelExecutionPlan& plan,
+                                        const PhysicalExecutionPlan& commands) {
+    const auto arena =
+        FrameSlotArenaPlan::compile(plan, commands, FrameSlotArenaReuse::DisjointLifetimes,
+                                    kLegacyEvoCmaRegionAlignmentBytes, &error);
+    check(arena.has_value(), "terminal index shared arena compiles");
+    const auto sources = resolve_mla_input_physical_sources(plan, 0U, *arena, {}, &error);
+    check(sources.has_value(), "terminal index IFM sources resolve");
+    MlaStaticContract projected;
+    for (const auto& port : plan.backend_ports()) {
+      const auto& value = plan.values().at(port.value_id);
+      PhysicalBufferStaticSpec buffer;
+      buffer.physical_index = static_cast<int>(port.port_index);
+      buffer.size_bytes = value.required_bytes;
+      buffer.segment_name = value.name;
+      if (port.direction == BackendPortDirection::Input) {
+        projected.physical_inputs.push_back(std::move(buffer));
+        TensorStaticSpec input;
+        input.tensor_index = static_cast<int>(port.port_index);
+        projected.logical_inputs.push_back(std::move(input));
+      } else {
+        projected.dispatcher_physical_outputs.push_back(std::move(buffer));
+      }
+    }
+    check(apply_dmabuf_plan_contract_projection(plan, 0U, *arena, &projected, *sources, &error),
+          "terminal index projects through the shared-arena MLA fragment");
+    return projected;
+  };
+  const auto projected = project_shared_arena(*result.plan, *physical);
+  check(projected.logical_outputs.size() == 1U &&
+            projected.logical_outputs.front().logical_name == "EV_2/reshape_0/selected_token" &&
+            projected.logical_outputs.front().dtype == "int32" &&
+            projected.logical_outputs.front().shape == TensorShape({1, 1}) &&
+            projected.logical_outputs.front().size_bytes == 4U,
+        "MLA fragment publishes one declared INT32 result, not intermediate alias views");
+
+  auto cast_manifest = manifest;
+  cast_manifest["plugins"].erase(5);
+  cast_manifest["plugins"][4]["config_params"]["output_types"][0]["scalar"] = "int64";
+  cast_manifest["plugins"][4]["output_nodes"][0]["size"] = 8;
+  auto cast_evidence = host_evidence;
+  cast_evidence[0].output_types[0].scalar = "int64";
+  cast_evidence[0].output_alias_input = {-1};
+  const auto cast_result =
+      MpkDecoder{}.decode_json(cast_manifest.dump(), mla_evidence, cast_evidence);
+  check(static_cast<bool>(cast_result), "real INT32-to-INT64 host cast decodes");
+  const auto& cast_output =
+      cast_result.plan->values().at(cast_result.plan->model_outputs().front().value_id);
+  check(cast_output.logical_dtype == "int64" && cast_output.required_bytes == 8U &&
+            !cast_output.read_expression.has_value(),
+        "real integer conversion publishes a materialized INT64 output");
+  const auto cast_physical = PhysicalExecutionLowerer::lower(*cast_result.plan, &error);
+  check(cast_physical.has_value() &&
+            std::count_if(
+                cast_physical->commands.begin(), cast_physical->commands.end(),
+                [](const auto& command) { return command.engine == PhysicalEngine::A65; }) == 1,
+        "real integer conversion retains exactly one physical CPU command");
+
+  const auto before_cast = project_shared_arena(*cast_result.plan, *cast_physical);
+  check(before_cast.logical_outputs.size() == 1U &&
+            before_cast.logical_outputs.front().dtype == "int32" &&
+            before_cast.logical_outputs.front().shape == TensorShape({1, 1, 1, 1}),
+        "MLA fragment before a real CPU cast retains its native INT32 boundary");
+
+  // A one-element channel crop over multiple padded rows still has real gaps.
+  auto strided = manifest;
+  strided["plugins"][2]["output_nodes"][0]["size"] = 32;
+  auto& slice = strided["plugins"][3];
+  slice["config_params"]["params"]["input_shapes"] = {{1, 1, 2, 4}};
+  slice["config_params"]["params"]["output_shapes"] = {{1, 1, 2, 1}};
+  slice["config_params"]["params"]["input_shape"] = {1, 1, 2, 4};
+  slice["config_params"]["params"]["output_shape"] = {1, 1, 2, 1};
+  slice["config_params"]["params"]["end"] = {1, 1, 2, 1};
+  slice["input_nodes"][0]["size"] = 32;
+  slice["output_nodes"][0]["size"] = 8;
+  strided["plugins"][4]["config_params"]["input_types"][0]["shape"] = {1, 1, 2, 1};
+  strided["plugins"][4]["config_params"]["output_types"][0]["shape"] = {1, 1, 2, 1};
+  strided["plugins"][4]["input_nodes"][0]["size"] = 8;
+  strided["plugins"][4]["output_nodes"][0]["size"] = 8;
+  auto strided_evidence = mla_evidence;
+  strided_evidence[0].topology.monolithic_ofm_extent_bytes = 32U;
+  auto materialized_evidence = host_evidence;
+  materialized_evidence[0].input_types[0].shape = {1, 1, 2, 1};
+  materialized_evidence[0].output_types[0].shape = {1, 1, 2, 1};
+  materialized_evidence[0].output_alias_input = {-1};
+  strided["plugins"].erase(5);
+  const auto rejected =
+      MpkDecoder{}.decode_json(strided.dump(), strided_evidence, materialized_evidence);
+  check(!rejected && rejected.error &&
+            rejected.error->detail.find("non-contiguous view") != std::string::npos,
+        "a genuinely strided index array cannot feed a dense materializing host job");
+
+  // An identity must preserve multi-element MLA row padding, not make it tight.
+  auto padded = manifest;
+  padded["plugins"].erase(5); // Final reshape.
+  padded["plugins"].erase(3); // Scalar crop.
+  const auto type = nlohmann::json{{"scalar", "float32"}, {"shape", {1, 2, 3}}};
+  const auto input_type = nlohmann::json{{"scalar", "bfloat16"}, {"shape", {1, 1, 640}}};
+  padded["plugins"][2]["config_params"]["input_types"] = {input_type, input_type};
+  padded["plugins"][2]["config_params"]["output_types"] = {type};
+  padded["plugins"][2]["output_nodes"][0]["size"] = 24;
+  auto& identity = padded["plugins"][3];
+  identity["sequence"] = 4;
+  identity["config_params"]["input_types"] = {type};
+  identity["config_params"]["output_types"] = {type};
+  identity["input_nodes"][0] = {{"name", "MLA_0"}, {"size", 24}};
+  identity["output_nodes"][0]["size"] = 24;
+  auto padded_mla = mla_evidence;
+  padded_mla[0].topology.monolithic_ofm = false;
+  padded_mla[0].topology.ofm_symbol_names = {"data.ofm.persistent.afe_mla_output_0.b0"};
+  padded_mla[0].topology.ofm_extent_bytes = {32U};
+  auto padded_host = host_evidence;
+  padded_host[0].input_types = {{"float32", {1, 2, 3}}};
+  padded_host[0].output_types = padded_host[0].input_types;
+  const auto decoded = MpkDecoder{}.decode_json(padded.dump(), padded_mla, padded_host);
+  if (!decoded && decoded.error)
+    std::cerr << decoded.error->json_path << ": " << decoded.error->detail << "\n";
+  check(static_cast<bool>(decoded), "padded multi-element identity decodes");
+  const auto commands = PhysicalExecutionLowerer::lower(*decoded.plan, &error);
+  check(commands && std::none_of(commands->commands.begin(), commands->commands.end(),
+                                 [](const auto& cmd) { return cmd.engine == PhysicalEngine::A65; }),
+        "padded identity remains an address alias without an A65 command");
+  const auto publication = project_shared_arena(*decoded.plan, *commands);
+  const auto& view = publication.logical_outputs.front();
+  check(publication.logical_outputs.size() == 1U && view.dtype == "float32" &&
+            view.shape == TensorShape({1, 2, 3}) && view.stride_bytes == TensorShape({32, 16, 4}),
+        "identity publication preserves the padded MLA row pitch");
+  const std::array<float, 8> storage{1, 2, 3, -999, 4, 5, 6, -999};
+  std::vector<float> actual;
+  for (int row = 0; row < 2; ++row) {
+    for (int column = 0; column < 3; ++column) {
+      const auto offset =
+          view.byte_offset + row * view.stride_bytes[1] + column * view.stride_bytes[2];
+      check(offset >= 0 && offset % sizeof(float) == 0 && offset / sizeof(float) < storage.size(),
+            "published padded identity stays inside its allocation");
+      actual.push_back(storage[offset / sizeof(float)]);
+    }
+  }
+  check(actual == std::vector<float>({1, 2, 3, 4, 5, 6}),
+        "published identity values exclude padding from both rows");
+
+  auto chained = padded;
+  chained["plugins"].push_back(identity);
+  auto& tail = chained["plugins"].back();
+  tail["name"] = "alias_2";
+  tail["sequence"] = 5;
+  tail["input_nodes"][0]["name"] = "APU_1";
+  tail["output_nodes"][0]["name"] = "alias_2";
+  auto chain_host = padded_host;
+  chain_host.push_back(padded_host.front());
+  chain_host.back().logical_stage_id = "alias_2";
+  const auto chain = MpkDecoder{}.decode_json(chained.dump(), padded_mla, chain_host);
+  check(chain && chain.plan->value(chain.plan->model_outputs().front().value_id)
+                         ->storage_binding->stride_bytes == view.stride_bytes,
+        "an identity chain preserves an existing padded read expression");
+
+  identity["config_params"]["output_types"][0]["shape"] = {1, 6};
+  padded_host[0].output_types[0].shape = {1, 6};
+  const auto reshaped = MpkDecoder{}.decode_json(padded.dump(), padded_mla, padded_host);
+  check(!reshaped && reshaped.error &&
+            reshaped.error->code == MpkDecodeErrorCode::ConfigurationMismatch &&
+            reshaped.error->detail.find("non-contiguous") != std::string::npos,
+        "an alias cannot reshape padded rows into a tight tensor");
 }
 
 void test_registered_detess_layout_is_preserved_through_dequant() {
@@ -2932,8 +3199,11 @@ int main(const int argc, char** argv) {
   test_detess_byte_carrier_keeps_logical_frame();
   test_unpack_tiled_carriers_keep_storage_geometry();
   test_dense_ifm_tail_padding();
+  test_int8_mask_ifm_tail_padding();
+  test_direct_input_ifm_tail_padding();
   test_unpack_and_slice_are_read_expressions();
   test_reshape_is_an_exact_read_expression();
+  test_host_alias_publication();
   test_registered_detess_layout_is_preserved_through_dequant();
   test_rank2_detess_dequant_execution_geometry();
   test_resnet_batch_flatten_is_transparent_to_fused_graph227();

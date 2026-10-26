@@ -1,5 +1,7 @@
 #include "pipeline/internal/sima/BoxDecodeKernelRecipe.h"
+#include "pipeline/DetectionTypes.h"
 #include "pipeline/internal/sima/BoxDecodePublication.h"
+#include "pipeline/FeatureTypes.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/sima/stagesemantics/SsdDecodeContract.h"
@@ -140,6 +142,20 @@ struct Builder {
                                {}});
     input = {output, port, {member}};
   }
+  void to_fp32(Input& input, std::span<const k::Parameter> parameters) {
+    if (input.tensor.dtype == k::DType::Float32)
+      return;
+    const auto operation = input.tensor.dtype == k::DType::Int8 ? "dequant" : "cast";
+    const k::TensorSpec output{input.tensor.shape, k::DType::Float32};
+    auto executable = checked(scheduler::check_kernel(
+        {operation, k::Target::A65, {&input.tensor, 1}, {&output, 1}, parameters}));
+    const auto inspection = checked(scheduler::inspect_kernel(executable));
+    auto port = scratch(inspection.outputs().front(), inspection.output_requirements().front());
+    const auto member = recipe->members.size();
+    recipe->members.push_back(
+        {std::move(executable), {input.port}, {port}, input.dependencies, {}});
+    input = {output, port, {member}};
+  }
   Input input(const CompiledBoxDecodeContract& source, std::size_t index, int logical_channels,
               bool box_operation) {
     auto& logical = compiled.runtime_contract.logical_inputs.at(index);
@@ -204,6 +220,8 @@ std::string_view profile(BoxDecodeType type) {
   case BoxDecodeType::YoloV26Pose:
   case BoxDecodeType::YoloV26Seg:
     return "yolo26_v1";
+  case BoxDecodeType::YoloV26Obb:
+    return "yolo26_obb_v1";
   case BoxDecodeType::YoloV5:
   case BoxDecodeType::YoloV5Seg:
     return "yolov5_v1";
@@ -295,7 +313,9 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
       geometry.original_height <= 0)
     invalid("model and original image geometry must be resolved");
   if (geometry.resize == ResizeMode::Crop && p.decode_type != BoxDecodeType::SuperPoint &&
-      !(p.decode_type == BoxDecodeType::YoloXSegPose && geometry.model_to_original))
+      !((p.decode_type == BoxDecodeType::YoloXSegPose ||
+         p.decode_type == BoxDecodeType::YoloV26Obb) &&
+        geometry.model_to_original))
     invalid("crop geometry is not supported by the numerical recipe");
   if (p.topk == 0)
     invalid("top_k is unresolved: set a positive output capacity for standalone bounding-box "
@@ -390,6 +410,22 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
     const auto selected_task = task(p.decode_type);
     int model_width = geometry.model_width, model_height = geometry.model_height;
     const bool rcnn = selected_profile == "rcnn_proposals_v1";
+    const bool oriented = selected_profile == "yolo26_obb_v1";
+    if (oriented) {
+      const auto option = p.decode_type_option.value_or(BoxDecodeTypeOption::Auto);
+      if (count != 9 || p.num_classes > 256 || p.nms_iou_threshold != 0 ||
+          p.score_activation != BoxDecodeScoreActivation::Sigmoid ||
+          (option != BoxDecodeTypeOption::Auto && option != BoxDecodeTypeOption::GroupedByRole &&
+           option != BoxDecodeTypeOption::GroupedByRoleLogit) ||
+          !p.pose_classes.empty())
+        invalid("YOLO26-OBB requires nine grouped FP32 heads, sigmoid classes and NMS zero");
+      if (!geometry.model_to_original)
+        invalid("YOLO26-OBB requires an explicit uniform model-to-original transform");
+      const auto& t = *geometry.model_to_original;
+      if (std::any_of(t.begin(), t.end(), [](float v) { return !std::isfinite(v); }) || t[0] <= 0 ||
+          t[0] != t[1])
+        invalid("YOLO26-OBB transform must be finite, positive and uniform");
+    }
     if (rcnn && p.topk > 16384)
       invalid("RCNN topk is per level and must not exceed 16384");
     const int capacity = rcnn ? 4 * p.topk : p.topk;
@@ -419,12 +455,13 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
     const auto option = p.decode_type_option.value_or(BoxDecodeTypeOption::Auto);
     const bool split_extents = decoded && (option == BoxDecodeTypeOption::Split3Interleaved ||
                                            option == BoxDecodeTypeOption::Split3Grouped);
-    const std::size_t per_head = (combined ? 1 : 2) + (x || center || split_extents ? 1 : 0) +
+    const std::size_t per_head = (combined ? 1 : 2) +
+                                 (x || center || split_extents || oriented ? 1 : 0) +
                                  (auxiliary ? 1 : 0) + (seg_pose ? 1 : 0);
     if (count < (masks ? 1U : 0U) || (count - (masks ? 1 : 0)) % per_head)
       invalid("head arity does not match profile/task");
     const std::size_t heads = (count - (masks ? 1 : 0)) / per_head;
-    bool by_role = ssd;
+    bool by_role = ssd || oriented;
     if (!ssd && !combined && heads > 1) {
       if (option != BoxDecodeTypeOption::Auto)
         by_role = grouped(option);
@@ -484,7 +521,9 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
                     : selected_profile == "efficientdet_v1" ? 9
                     : ssd ? ssd_descriptor->ordered_levels[h].localization_channels / 4
                           : 1;
-      if (center) {
+      if (oriented)
+        extra = port(h, 2);
+      else if (center) {
         scores = port(h, 0);
         boxes = port(h, 1);
         extra = port(h, 2);
@@ -529,7 +568,7 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
                 ? p.num_classes + 1
                 : anchors * (p.num_classes + (seg_pose || (decoded && decoded_objectness) ? 1 : 0));
       if (extra)
-        channels[*extra] = x ? 1 : center ? 2 : 2 * anchors;
+        channels[*extra] = (x || oriented) ? 1 : center ? 2 : 2 * anchors;
       std::optional<std::size_t> aux;
       if (auxiliary) {
         aux = port(h, seg_pose ? 2 : per_head - 1);
@@ -575,21 +614,30 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
       channels.back() = 32;
     }
     for (std::size_t i = 0; i < count; ++i) {
+      if (oriented && logical_depth(i) != channels[i])
+        invalid("YOLO26-OBB requires exact logical role depths");
       inputs.push_back(build.input(source, i, channels[i], true));
       if (inputs.back().tensor.dtype == k::DType::Int8) {
         const auto& q = quantization(runtime.logical_inputs[i]);
         // Existing compiler contracts carry the quantization divisor. Preserve
         // the historical FP32 reciprocal, not an FP64 reciprocal rounded later.
+        const float scale = 1.0F / static_cast<float>(q.scales[0]);
+        const auto zero_point = static_cast<std::int32_t>(q.zero_points[0]);
+        // The named profile owns exact dtype-aware reads. Preserve the
+        // checked source view and convert only values the numerical recipe
+        // actually uses, rather than materializing whole FP32 head tensors.
         quantization_parameters.push_back(
-            {{"input", i},
-             {"dequant_scale", 1.0F / static_cast<float>(q.scales[0])},
-             {"zero_point", static_cast<std::int32_t>(q.zero_points[0])}});
+            {{"input", i}, {"dequant_scale", scale}, {"zero_point", zero_point}});
       }
     }
-    outputs = {{{capacity, 4}, rcnn ? k::DType::Float32 : k::DType::Int32},
-               {{capacity}, k::DType::Float32},
-               {{capacity}, k::DType::Int32},
-               {{1}, k::DType::Int32}};
+
+    outputs = {
+        {{capacity, oriented ? 5 : 4}, (rcnn || oriented) ? k::DType::Float32 : k::DType::Int32},
+        {{capacity}, k::DType::Float32},
+        {{capacity}, k::DType::Int32},
+        {{1}, k::DType::Int32}};
+    if (oriented)
+      wire = BoxDecodeWireFormat::OrientedBoxesV1;
     if (rcnn) {
       outputs.push_back({{capacity}, k::DType::Int32});
       wire = BoxDecodeWireFormat::RcnnProposals;
@@ -615,7 +663,8 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
         {"model_input_size", k::ParameterArray{model_width, model_height}},
         {"original_image_size",
          k::ParameterArray{geometry.original_width, geometry.original_height}},
-        {"resize", geometry.resize == ResizeMode::Stretch ? "stretch" : "centered_letterbox"},
+        {"resize",
+         !oriented && geometry.resize == ResizeMode::Stretch ? "stretch" : "centered_letterbox"},
         {"num_classes", p.num_classes},
         {"max_detections", capacity},
         {"rcnn_per_level_topk", rcnn ? p.topk : 0},
@@ -640,6 +689,9 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
         const auto& t = *geometry.model_to_original;
         parameters.push_back({"model_to_original", k::ParameterArray{t[0], t[1], t[2], t[3]}});
       }
+    } else if (oriented) {
+      const auto& t = *geometry.model_to_original;
+      parameters.push_back({"model_to_original", k::ParameterArray{t[0], t[1], t[2], t[3]}});
     } else if (geometry.model_to_original) {
       invalid("explicit affine requires a complete-geometry BoxDecode profile");
     }
@@ -657,22 +709,52 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
   decode.dependencies.erase(std::unique(decode.dependencies.begin(), decode.dependencies.end()),
                             decode.dependencies.end());
   const auto inspection = checked(scheduler::inspect_kernel(decode.executable));
-  for (std::size_t i = 0; i < inspection.outputs().size(); ++i)
-    decode.outputs.push_back(
-        build.scratch(inspection.outputs()[i], inspection.output_requirements()[i]));
-  const auto publication = prepare_boxdecode_publication(wire, outputs);
+  if (inspection.outputs().size() != outputs.size())
+    invalid("provider result arity differs from the requested output contract");
+  for (std::size_t i = 0; i < outputs.size(); ++i)
+    if (inspection.outputs()[i].dtype != outputs[i].dtype ||
+        inspection.outputs()[i].shape != outputs[i].shape ||
+        !std::holds_alternative<k::Contiguous>(inspection.outputs()[i].layout))
+      invalid("provider result differs from the requested canonical output contract");
+  // YOLO26 masks are already complete bytes, including ROI complements and
+  // unused capacity. Write them into the public wire suffix directly. The
+  // dependent ordinary Boxes serializer writes only its disjoint prefix; it
+  // never borrows a mask input or needs an input/output alias exception.
+  const bool direct_masks =
+      p.decode_type == BoxDecodeType::YoloV26Seg && wire == BoxDecodeWireFormat::Masks;
+  const auto publication = prepare_boxdecode_publication(
+      direct_masks ? BoxDecodeWireFormat::Boxes : wire,
+      std::span<const k::TensorSpec>(outputs).first(direct_masks ? 4 : outputs.size()));
+  std::size_t wire_bytes = publication.bytes;
+  if (direct_masks) {
+    const auto mask_bytes = inspection.output_requirements()[4].storage_bytes;
+    if (mask_bytes > static_cast<std::size_t>(INT64_MAX) - wire_bytes)
+      invalid("mask wire extent overflows");
+    wire_bytes += mask_bytes;
+  }
+  for (std::size_t i = 0; i < inspection.outputs().size(); ++i) {
+    if (direct_masks && i == 4)
+      decode.outputs.push_back({0, publication.bytes, gs::TensorStagePortSource::Output});
+    else
+      decode.outputs.push_back(
+          build.scratch(inspection.outputs()[i], inspection.output_requirements()[i]));
+  }
   const auto decode_member = build.recipe->members.size();
   auto publication_inputs = decode.outputs;
+  if (direct_masks)
+    publication_inputs.resize(4);
   build.recipe->members.push_back(std::move(decode));
   build.recipe->members.push_back(
       {publication.executable, std::move(publication_inputs), {{0, 0}}, {decode_member}, {}});
   const auto name = runtime.logical_outputs.empty() ? std::string("boxdecode")
                                                     : runtime.logical_outputs.front().logical_name;
   runtime.physical_outputs = {
-      specs::build_physical_buffer_static_spec(0, 0, publication.bytes, DeviceKind::Cpu, name)};
+      specs::build_physical_buffer_static_spec(0, 0, wire_bytes, DeviceKind::Cpu, name)};
   runtime.logical_outputs = {specs::build_logical_output_static_spec(
-      0, 0, 0, 0, 0, {static_cast<std::int64_t>(publication.bytes)}, "UINT8", "", name, name, name,
-      0, publication.bytes)};
+      0, 0, 0, 0, 0, {static_cast<std::int64_t>(wire_bytes)}, "UINT8", "", name, name, name, 0,
+      wire_bytes)};
+  if (direct_masks)
+    runtime.logical_outputs.front().publication_relation = PublicationViewRelation::PackedStorage;
   runtime.output_order = {specs::build_output_route_static_spec(0, 0, 0, name, name)};
   auto metrics = std::make_shared<gs::StageMetrics>();
   metrics->phase = "Exec";
@@ -681,6 +763,11 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
   metrics->regions.push_back(
       {"Run", "boxdecode_backend_wall_v2", decode_member, decode_member + 1});
   build.recipe->metrics = std::move(metrics);
+  build.recipe->output_format =
+      wire == BoxDecodeWireFormat::FeaturePointsV1         ? kFeatureFormatPointsV1
+      : wire == BoxDecodeWireFormat::LegacyFeaturePointsV0 ? kFeatureFormatLegacyA65V0
+      : wire == BoxDecodeWireFormat::OrientedBoxesV1       ? kDetectionFormatBboxObbV1
+                                                           : kDetectionFormatBbox;
   build.compiled.recipe = std::move(build.recipe);
   return {std::move(build.compiled), decode_member};
 }

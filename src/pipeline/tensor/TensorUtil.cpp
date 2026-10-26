@@ -1,3 +1,4 @@
+#include "pipeline/internal/SampleUtil.h"
 // src/pipeline/TensorUtil.cpp
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/TensorMath.h"
@@ -585,6 +586,8 @@ Mapping DmaBufStorageMapper::map_range(MapMode mode, std::size_t offset, std::si
   auto view = length != 0U ? dma_client::DmaBufView::fromGstMemory(memory, offset, length, &error)
                            : dma_client::DmaBufView::fromGstMemory(memory, &error);
   if (!view) {
+    g_warning("Tensor DMA-BUF view failed: %s (errno=%d offset=%zu bytes=%zu)",
+              error.message().c_str(), error.code, offset, length);
     return {};
   }
   // Each public Mapping owns its lower lease. Scheduler/Runner already share
@@ -605,8 +608,11 @@ Mapping DmaBufStorageMapper::map_range(MapMode mode, std::size_t offset, std::si
     scope->reset();
   };
   auto mapped = view->map(dmabuf_cpu_access(mode), &error);
-  if (!mapped)
+  if (!mapped) {
+    g_warning("Tensor DMA-BUF CPU mapping failed: %s (errno=%d offset=%zu bytes=%zu)",
+              error.message().c_str(), error.code, view->offset(), view->length());
     return {};
+  }
   scope->emplace(std::move(*mapped));
 
   Mapping result;
@@ -1350,7 +1356,8 @@ dma_client::DmaBufMemory copy_output_storage(const std::shared_ptr<Storage>& sou
 // their checked spans match as well.
 class OwnedOutputMaterializer {
 public:
-  explicit OwnedOutputMaterializer(bool preserve_dmabuf) : preserve_dmabuf_(preserve_dmabuf) {}
+  explicit OwnedOutputMaterializer(bool preserve_framework)
+      : preserve_framework_(preserve_framework) {}
 
   void apply(Sample& sample) {
     plan(sample);
@@ -1489,7 +1496,7 @@ private:
     }
   }
 
-  static Selection resolve(const Tensor& tensor, bool preserve_dmabuf) {
+  static Selection resolve(const Tensor& tensor, bool preserve_framework) {
     if (tensor.route.memory_index < -1) {
       throw std::runtime_error("Owned output: invalid negative selected memory index");
     }
@@ -1578,7 +1585,8 @@ private:
       }
     }
     selected.dmabuf = gst_is_dmabuf_memory(selected.memory);
-    if (preserve_dmabuf && selected.dmabuf) {
+    if (preserve_framework &&
+        (selected.dmabuf || tensor_has_certified_terminal_host_memory(tensor))) {
       // Use the already admitted output Storage without constructing another
       // map state on the retained hot path. The selected GstMemory, not the
       // enclosing buffer or possibly stale metadata, supplies its live extent.
@@ -1614,10 +1622,11 @@ private:
   }
 
   void plan(Tensor& tensor) {
-    const Selection selected = resolve(tensor, preserve_dmabuf_);
+    const Selection selected = resolve(tensor, preserve_framework_);
     // Retention is per selected payload, not memory zero or its siblings. This
     // path performs no allocation, CPU map, synchronization or identity import.
-    if (preserve_dmabuf_ && selected.dmabuf) {
+    if (preserve_framework_ &&
+        (selected.dmabuf || tensor_has_certified_terminal_host_memory(tensor))) {
       return;
     }
     std::vector<SpanKey> spans;
@@ -1771,7 +1780,7 @@ private:
     tensor.route.memory_index = static_cast<int>(index);
   }
 
-  bool preserve_dmabuf_;
+  bool preserve_framework_;
   std::vector<Carrier> carriers_;
   std::vector<Envelope> envelopes_;
   std::vector<Binding> bindings_;
@@ -1779,8 +1788,8 @@ private:
 
 } // namespace
 
-void materialize_owned_output(Sample& sample, bool preserve_dmabuf) {
-  OwnedOutputMaterializer(preserve_dmabuf).apply(sample);
+void materialize_owned_output(Sample& sample, bool preserve_framework) {
+  OwnedOutputMaterializer(preserve_framework).apply(sample);
 }
 
 simaai::neat::Tensor copy_tensor_from_sample_memory(const simaai::neat::Tensor& ref,

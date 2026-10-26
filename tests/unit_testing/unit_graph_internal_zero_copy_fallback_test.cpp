@@ -18,6 +18,7 @@
 #include "test_main.h"
 #include "test_utils.h"
 #include "nodes/common/Output.h"
+#include "nodes/common/Caps.h"
 #include "graphs/Fragments.h"
 #include "nodes/io/CameraInput.h"
 #include "nodes/io/HttpSource.h"
@@ -25,6 +26,7 @@
 
 #include <gst/gst.h>
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
@@ -454,6 +456,15 @@ void require_output_policy_matrix() {
           require(resolved.output_memory == memory,
                   "build resolution must preserve caller output-memory intent");
           auto stream = session_build_make_stream_options(resolved, mode);
+          for (const bool reserved : {false, true}) {
+            auto no_op = resolved;
+            no_op.advanced.prepare_output_cpu_visible = reserved;
+            const auto unchanged = session_build_make_stream_options(no_op, mode);
+            require(unchanged.copy_output == stream.copy_output &&
+                        unchanged.preserve_framework_output == stream.preserve_framework_output &&
+                        unchanged.holder_loan_credits == stream.holder_loan_credits,
+                    "reserved CPU-visibility option must not change output memory policy");
+          }
           const bool auto_owned = override && std::string(override) == "owned";
           const bool auto_zero_copy = override && std::string(override) == "zerocopy";
           const bool preserve_dma = memory == OutputMemory::Auto && !auto_owned;
@@ -461,7 +472,7 @@ void require_output_policy_matrix() {
                                  (memory == OutputMemory::Auto && !auto_owned &&
                                   (auto_zero_copy || (mode != RunMode::Sync &&
                                                       resolved.preset != RunPreset::Reliable)));
-          require(stream.preserve_dmabuf_output == preserve_dma,
+          require(stream.preserve_framework_output == preserve_dma,
                   "Auto must retain DMA unless the caller deliberately selects owned output");
           require(stream.copy_output == !zero_copy,
                   "ordinary CPU and legacy output must keep their preset/mode copy policy");
@@ -483,7 +494,7 @@ void require_output_policy_matrix() {
     start.graph_options = runtime::graph_runtime_options_from_run_options(options);
     auto core = runtime::RunCore::start(runtime::ExecutionGraphPlan{}, std::move(start));
     require(core->pipeline.stream_opt.copy_output &&
-                core->pipeline.stream_opt.preserve_dmabuf_output && core->holder_loan_gate &&
+                core->pipeline.stream_opt.preserve_framework_output && core->holder_loan_gate &&
                 core->holder_loan_gate->enabled(),
             "graph Auto must retain a loan gate even when ordinary output defaults to owned");
     core->stop();
@@ -715,11 +726,65 @@ simaai::neat::Sample make_device_gst_sample_with_external_ref(GstSample** extern
   return out;
 }
 
+void require_child_holder_window_uses_parent_policy() {
+  using namespace simaai::neat;
+  ScopedEnv synchronous_teardown("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", "0");
+  ScopedEnv no_async_teardown("SIMA_GST_TEARDOWN_ASYNC", "0");
+  for (const bool source : {false, true}) {
+    for (const std::size_t edge_queue : {1U, 3U, 12U}) {
+      Graph graph;
+      if (source) {
+        graph.add(nodes::Custom("videotestsrc num-buffers=1 pattern=black ! "
+                                "video/x-raw,format=RGB,width=32,height=24,framerate=30/1",
+                                InputRole::Source));
+      } else {
+        graph.add(nodes::Input("image"));
+      }
+      graph.add(nodes::Output("output", OutputOptions::EveryFrame(3)));
+      RunOptions options;
+      options.queue_depth = 3;
+      const auto seed =
+          sample_from_tensors({make_color_tensor(32, 24, ImageSpec::PixelFormat::RGB, 0x29)});
+      auto plan = runtime::compile_public_graph(graph, options,
+                                                source ? std::nullopt : std::optional{seed});
+      require(plan.pipeline_segments.size() == 1, "holder policy fixture requires one segment");
+      // Exercise the actual graph-owned source and seeded child startup paths,
+      // not start_pipeline_segment called with hand-authored child options.
+      plan.linear_compat = false;
+      plan.pipeline_segments.front().boundary.graph_internal_output = true;
+      runtime::RunCoreStartOptions start;
+      start.run_options = options;
+      start.graph_options = runtime::graph_runtime_options_from_run_options(options);
+      start.graph_options.edge_queue = edge_queue;
+      start.mode = RunMode::Async;
+      start.allow_startup_preflight = false;
+      if (!source)
+        start.seed = seed;
+      auto parent = runtime::RunCore::start(std::move(plan), std::move(start));
+      require(parent->graph_execution_ && parent->graph_execution().pipelines.size() == 1,
+              "holder policy fixture bypassed graph startup");
+      const auto child = parent->graph_execution().pipelines.front()->run_core;
+      require(child != nullptr, "graph did not publish its constructed child");
+      const auto& stream = child->pipeline.stream_opt;
+      require(stream.holder_loan_credits_auto && !stream.copy_output,
+              "internal fixture did not select retained transport");
+      const auto expected = static_cast<int>(std::max(std::size_t{5}, edge_queue));
+      require(stream.holder_loan_sample_window == expected &&
+                  stream.holder_loan_credits ==
+                      expected * std::max(1, stream.holder_loan_per_sample_arity),
+              "child used the default edge queue instead of its parent's retention policy");
+      parent->close();
+      require(child->closed.load(), "parent did not normally close its child");
+    }
+  }
+}
+
 } // namespace
 
 RUN_TEST(
     "unit_graph_internal_zero_copy_fallback_test", ([] {
       require_native_retention_pool_policy();
+      require_child_holder_window_uses_parent_policy();
       require_shared_arena_budget();
       require_output_policy_matrix();
       require_dmabuf_loans_and_pressure_preserve_storage();

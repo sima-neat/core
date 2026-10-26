@@ -150,6 +150,8 @@ compile_node_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
     stage_input.node_index =
         use_node_indices ? input.node_indices[node_index] : static_cast<int>(node_index);
     stage_input.immediate_upstream = immediate_upstream;
+    stage_input.upstream_preprocess =
+        last_preprocess_contract(compiled.stages, input.upstream_preprocess);
 
     const auto* provider = dynamic_cast<const NodeContractProvider*>(node.get());
     if (!provider) {

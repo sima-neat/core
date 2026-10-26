@@ -449,7 +449,7 @@ bool RealtimeLatestLink::offer(simaai::neat::Sample&& sample, std::size_t edge_i
   if (!accepted) {
     return false;
   }
-  cv_.notify_one();
+  cv_->notify_one();
   return true;
 }
 
@@ -497,7 +497,7 @@ void RealtimeLatestLink::producer_done() {
     std::lock_guard<std::mutex> lock(mu_);
     finishing_ = true;
   }
-  cv_.notify_all();
+  cv_->notify_all();
 }
 
 void RealtimeLatestLink::start(DispatchFn dispatch, StopFn stop, ErrorFn error,
@@ -532,13 +532,19 @@ void RealtimeLatestLink::close() {
   }
   pipeline_internal::release_all_registered_realtime_frame_credits(credit_namespace_,
                                                                    "graph-realtime-close");
-  cv_.notify_all();
+  cv_->notify_all();
 }
 
 void RealtimeLatestLink::join() {
   if (worker_.joinable()) {
     worker_.join();
   }
+  // These callbacks retain RunCore, which owns this link. Release them only
+  // after its worker has finished; a failed join must retain the active owner.
+  dispatch_ = {};
+  stop_ = {};
+  error_ = {};
+  complete_ = {};
 }
 
 RealtimeLatestLink::Stats RealtimeLatestLink::stats() const {
@@ -613,7 +619,7 @@ RealtimeLatestLink::credit_lane_for_key_locked_(const std::string& key) {
     return it->second;
   }
   auto lane = pipeline_internal::make_realtime_frame_credit_lane(credit_limit_per_stream_,
-                                                                 [this] { cv_.notify_one(); });
+                                                                 [cv = cv_] { cv->notify_one(); });
   credit_lanes_.emplace(key, lane);
   configure_global_credit_limit_locked_();
   return lane;
@@ -665,7 +671,7 @@ void RealtimeLatestLink::configure_global_credit_limit_locked_() {
   }
   if (!global_credit_lane_) {
     global_credit_lane_ = pipeline_internal::make_realtime_frame_credit_lane(
-        credit_limit_global_, [this] { cv_.notify_one(); });
+        credit_limit_global_, [cv = cv_] { cv->notify_one(); });
     return;
   }
   if (global_credit_lane_->gate) {
@@ -691,8 +697,8 @@ void RealtimeLatestLink::run_() {
     std::string selected_key;
     {
       std::unique_lock<std::mutex> lock(mu_);
-      cv_.wait(lock,
-               [&] { return closed_ || finishing_ || (stop_ && stop_()) || !ready_.empty(); });
+      cv_->wait(lock,
+                [&] { return closed_ || finishing_ || (stop_ && stop_()) || !ready_.empty(); });
       if ((closed_ || (stop_ && stop_())) && ready_.empty()) {
         return;
       }
@@ -790,7 +796,7 @@ void RealtimeLatestLink::run_() {
       }
 
       if (!selected) {
-        cv_.wait_for(lock, std::chrono::milliseconds(5));
+        cv_->wait_for(lock, std::chrono::milliseconds(5));
         continue;
       }
     }

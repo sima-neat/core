@@ -181,7 +181,8 @@ void maybe_refine_boxdecode_contract_from_ingress_sample_local(
   if (!contract ||
       !(decode_type == BoxDecodeType::YoloV8 || decode_type == BoxDecodeType::YoloV26 ||
         decode_type == BoxDecodeType::YoloV26Pose || decode_type == BoxDecodeType::YoloV26Seg ||
-        decode_type == BoxDecodeType::YoloV6 || decode_type == BoxDecodeType::YoloX) ||
+        decode_type == BoxDecodeType::YoloV26Obb || decode_type == BoxDecodeType::YoloV6 ||
+        decode_type == BoxDecodeType::YoloX) ||
       !boxdecode_contract_needs_sample_semantic_refinement_local(*contract)) {
     return;
   }
@@ -1393,7 +1394,7 @@ OutputSpec SimaBoxDecode::output_spec(const OutputSpec& input) const {
                      ? kFeatureFormatLegacyA65V0
                      : kFeatureFormatPointsV1;
   } else {
-    out.format = "BBOX";
+    out.format = opt_ && opt_->decode_type == BoxDecodeType::YoloV26Obb ? "BBOX_OBB_V1" : "BBOX";
   }
   out.memory = input.memory;
   out.certainty = SpecCertainty::Hint;

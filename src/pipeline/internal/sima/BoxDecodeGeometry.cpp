@@ -3,6 +3,7 @@
 #include <gstsimaaitensorbuffer_meta.h>
 #include <simaai/scheduler/client/kernel.h>
 #include <array>
+#include <algorithm>
 #include <cmath>
 #include <mutex>
 #include <stdexcept>
@@ -21,12 +22,14 @@ struct Geometry {
 rt::Error invalid(const char* message) {
   return {rt::ErrorCode::InvalidRequest, "boxdecode.geometry", message};
 }
-rt::Result<Transform> checked_transform(const std::array<double, 6>& matrix) {
+rt::Result<Transform> checked_transform(const std::array<double, 6>& matrix, bool uniform) {
   for (const auto value : matrix)
     if (!std::isfinite(value))
       return invalid("preprocess affine must be finite");
   if (matrix[1] != 0. || matrix[3] != 0. || matrix[0] <= 0. || matrix[4] <= 0.)
     return invalid("preprocess affine requires positive axis-aligned scales without shear");
+  if (uniform && matrix[0] != matrix[4])
+    return invalid("oriented boxes require equal authoritative affine scales");
   // PreprocFrameAdapter and the Scheduler facts serializer publish SOURCE from
   // DESTINATION coordinates: original = model * scale + offset. Do not invert.
   Transform result{static_cast<float>(matrix[0]), static_cast<float>(matrix[4]),
@@ -38,7 +41,7 @@ rt::Result<Transform> checked_transform(const std::array<double, 6>& matrix) {
     return invalid("preprocess affine scales underflow FP32");
   return result;
 }
-rt::Result<Geometry> read_geometry(GstBuffer* buffer, bool complete) {
+rt::Result<Geometry> read_geometry(GstBuffer* buffer, bool complete, bool uniform) {
   if (!buffer)
     return invalid("input buffer is absent");
   std::string error;
@@ -61,7 +64,7 @@ rt::Result<Geometry> read_geometry(GstBuffer* buffer, bool complete) {
     if (complete) {
       if (facts->roi_list)
         return invalid("one BoxDecode frame requires one unambiguous preprocessing transform");
-      auto transform = checked_transform(facts->affine);
+      auto transform = checked_transform(facts->affine, uniform);
       if (const auto* error = std::get_if<rt::Error>(&transform))
         return *error;
       geometry.transform = std::get<Transform>(transform);
@@ -99,7 +102,7 @@ rt::Result<Geometry> read_geometry(GstBuffer* buffer, bool complete) {
       for (std::size_t i = 0; i < matrix.size(); ++i)
         if (!gst_structure_get_double(meta, matrix_names[i], &matrix[i]))
           return invalid("preprocess affine matrix is partial or has invalid field types");
-      auto transform = checked_transform(matrix);
+      auto transform = checked_transform(matrix, uniform);
       if (const auto* error = std::get_if<rt::Error>(&transform))
         return *error;
       geometry.transform = std::get<Transform>(transform);
@@ -109,7 +112,8 @@ rt::Result<Geometry> read_geometry(GstBuffer* buffer, bool complete) {
       for (std::size_t i = 0; i < values.size(); ++i)
         if (!gst_structure_get_double(meta, alias_names[i], &values[i]))
           return invalid("preprocess affine aliases are partial or have invalid field types");
-      auto transform = checked_transform({values[0], 0., values[2], 0., values[1], values[3]});
+      auto transform =
+          checked_transform({values[0], 0., values[2], 0., values[1], values[3]}, uniform);
       if (const auto* error = std::get_if<rt::Error>(&transform))
         return *error;
       if (geometry.transform && *geometry.transform != std::get<Transform>(transform))
@@ -166,7 +170,8 @@ void attach_boxdecode_geometry_resolver(KernelStageRecipe& recipe, std::size_t m
            Geometry selected;
            bool found = false, found_transform_authority = false;
            for (auto* buffer : buffers) {
-             auto parsed = read_geometry(buffer, options.complete_geometry);
+             auto parsed = read_geometry(buffer, options.complete_geometry,
+                                         options.uniform_transform_required);
              if (const auto* error = std::get_if<rt::Error>(&parsed))
                return *error;
              const auto geometry = std::get<Geometry>(parsed);
@@ -221,8 +226,17 @@ void attach_boxdecode_geometry_resolver(KernelStageRecipe& recipe, std::size_t m
            if (!options.complete_geometry && !original_size_from_metadata)
              return base;
            if (options.complete_geometry) {
+             if (options.require_frame_transform &&
+                 (!found_transform_authority || !selected.transform))
+               return invalid("source-driven oriented boxes require per-frame preprocess affine");
              if (!found_transform_authority)
                selected.transform = options.model_to_original;
+             if (options.uniform_transform_required &&
+                 (!selected.transform || (*selected.transform)[0] <= 0 ||
+                  (*selected.transform)[0] != (*selected.transform)[1] ||
+                  !std::all_of(selected.transform->begin(), selected.transform->end(),
+                               [](float value) { return std::isfinite(value); })))
+               return invalid("oriented boxes require a positive uniform explicit transform");
              if (options.resize == ResizeMode::Crop && !selected.transform)
                return invalid("crop decoding requires the actual model-to-original affine");
            }

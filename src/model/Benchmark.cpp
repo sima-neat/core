@@ -5,6 +5,7 @@
 #include "model/internal/ModelFormat.h"
 #include "model/internal/ModelInternal.h"
 #include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/internal/sima/BoxDecodeKernelAdmission.h"
 #include "pipeline/internal/TelemetryMonitorInternal.h"
 #include "pipeline/internal/TensorMath.h"
 
@@ -313,9 +314,23 @@ void attach_benchmark_preprocess_meta_for_boxdecode(const Model& model,
 
   const internal::PreprocessContractFlags flags =
       internal::ModelAccess::preprocess_contract_flags(model);
+  BenchmarkOptions geometry_options = options;
+  if (!geometry_options.resize_mode.has_value()) {
+    const bool resize_runs = plan.enabled && plan.effective.resize.enable != AutoFlag::Off;
+    if (resize_runs) {
+      geometry_options.resize_mode = plan.effective.resize.mode;
+    } else {
+      // A model-shaped synthetic tensor has identity geometry, but its nominal
+      // resize policy still belongs to the decoded recipe. Absence of an image
+      // resize is not evidence of Stretch (for example, YOLO26 segmentation).
+      const auto contract = internal::ModelAccess::build_boxdecode_stage_contract(model, false);
+      geometry_options.resize_mode =
+          pipeline_internal::sima::default_boxdecode_resize_mode(contract.payload.decode_type);
+    }
+  }
   for (Tensor& tensor : inputs) {
     tensor.semantic.preprocess =
-        internal::resolve_benchmark_preprocess_meta(tensor, plan, flags, options);
+        internal::resolve_benchmark_preprocess_meta(tensor, plan, flags, geometry_options);
   }
 }
 
@@ -649,7 +664,7 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
     print_metric("Die temp:      ", board.die_temperature_max_c, "°C");
     print_metric("CPU usage:     ", board.cpu_usage_pct, "%");
     print_metric("MLA memory:    ", board.mla_memory_mib, "MiB");
-    print_metric("CMA used:      ", board.cma_memory_mib, "MiB");
+    print_metric("EV74 memory:   ", board.ev74_memory_mib, "MiB");
     print_metric("Linux memory:  ", board.linux_memory_used_mib, "MiB");
     std::cout << "Telemetry:     Sentinel " << board.sentinel_version << ", " << board.samples
               << " samples\n";

@@ -110,7 +110,7 @@ template <typename Fn> void for_each_metric(Telemetry& telemetry, Fn&& fn) {
   fn(telemetry.cpu_usage_pct);
   std::for_each(telemetry.cpu_cores_usage_pct.begin(), telemetry.cpu_cores_usage_pct.end(), fn);
   fn(telemetry.mla_memory_mib);
-  fn(telemetry.cma_memory_mib);
+  fn(telemetry.ev74_memory_mib);
   fn(telemetry.linux_memory_used_mib);
 }
 
@@ -299,7 +299,7 @@ Telemetry internal::telemetry_layout(const json& metrics) {
   telemetry.cpu_cores_usage_pct =
       unmeasured_each(metrics, keys_like(metrics, "cpu_core_", "_usage_pct"));
   telemetry.mla_memory_mib = unmeasured_memory(metrics, "mla_mem_allocated_mb");
-  telemetry.cma_memory_mib = unmeasured_memory(metrics, "ev74_cma_used_mb");
+  telemetry.ev74_memory_mib = unmeasured_memory(metrics, "ev74_mem_allocated_mb");
   telemetry.linux_memory_used_mib = unmeasured_memory(metrics, "linux_mem_used_mb");
   return telemetry;
 }

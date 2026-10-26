@@ -249,7 +249,7 @@ bool decode_type_is_yolov8_family_local(BoxDecodeType decode_type) {
 
 bool decode_type_is_yolov26_family_local(BoxDecodeType decode_type) {
   return decode_type == BoxDecodeType::YoloV26 || decode_type == BoxDecodeType::YoloV26Pose ||
-         decode_type == BoxDecodeType::YoloV26Seg;
+         decode_type == BoxDecodeType::YoloV26Seg || decode_type == BoxDecodeType::YoloV26Obb;
 }
 
 bool decode_type_is_raw_yolov6_yolox_family_local(BoxDecodeType decode_type) {
@@ -805,8 +805,9 @@ std::optional<BoxDecodeScoreActivation> resolve_boxdecode_score_activation_from_
   if (saw_logit_tensor) {
     return BoxDecodeScoreActivation::Sigmoid;
   }
-  if (decode_type_is_yolov8_family_local(decode_type) ||
-      decode_type_is_yolov26_family_local(decode_type)) {
+  if (decode_type != BoxDecodeType::YoloV26Obb &&
+      (decode_type_is_yolov8_family_local(decode_type) ||
+       decode_type_is_yolov26_family_local(decode_type))) {
     if (const auto inferred = maybe_infer_float_yolov8_score_activation_from_sample_values_local(
             tensors, input_contract);
         inferred.has_value()) {
@@ -1147,6 +1148,7 @@ enum class BoxDecodeTensorRoleLocal {
   Unknown = 0,
   Regression,
   Score,
+  Angle,
 };
 
 enum class BoxDecodeScoreDomainLocal {
@@ -1178,6 +1180,8 @@ synthesize_boxdecode_tensor_name_from_lineage_local(const BoxDecodeTensorLineage
     return {};
   }
   switch (facts.role) {
+  case BoxDecodeTensorRoleLocal::Angle:
+    return "angle_" + std::to_string(*facts.head_index);
   case BoxDecodeTensorRoleLocal::Regression:
     return "bbox_" + std::to_string(*facts.head_index);
   case BoxDecodeTensorRoleLocal::Score:
@@ -1790,6 +1794,8 @@ std::optional<int> parse_head_index_after_token_local(const std::string& raw_nam
 
 std::optional<std::pair<BoxDecodeTensorRoleLocal, int>>
 classify_boxdecode_tensor_semantics_from_name_local(const std::string& raw_name) {
+  if (const auto idx = parse_head_index_after_token_local(raw_name, "angle_"))
+    return std::make_pair(BoxDecodeTensorRoleLocal::Angle, *idx);
   if (const auto idx = parse_head_index_after_token_local(raw_name, "class_prob_")) {
     return std::make_pair(BoxDecodeTensorRoleLocal::Score, *idx);
   }
@@ -2382,6 +2388,8 @@ int boxdecode_role_sort_order_local(BoxDecodeTensorRoleLocal role) {
     return 0;
   case BoxDecodeTensorRoleLocal::Score:
     return 1;
+  case BoxDecodeTensorRoleLocal::Angle:
+    return 2;
   case BoxDecodeTensorRoleLocal::Unknown:
   default:
     return 2;

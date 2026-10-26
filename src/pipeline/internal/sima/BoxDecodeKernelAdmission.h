@@ -9,6 +9,13 @@ namespace simaai::neat {
 struct ContractCompileInput;
 }
 namespace simaai::neat::pipeline_internal::sima {
+// Nominal geometry belongs to the admitted decode recipe, even for identity
+// model-shaped input with no resize operation. Explicit provenance still wins.
+constexpr ResizeMode default_boxdecode_resize_mode(BoxDecodeType type) {
+  return (type == BoxDecodeType::Ssd || type == BoxDecodeType::Detr) ? ResizeMode::Stretch
+                                                                     : ResizeMode::Letterbox;
+}
+
 // Shared graph-build admission for public nodes and authored MPK terminals.
 // Preserve authoritative carriers and install dynamic geometry resolution once.
 CompiledKernelContract

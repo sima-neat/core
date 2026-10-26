@@ -19,6 +19,7 @@ enum class ArenaStorageDomain : std::uint8_t {
   Unknown = 0,
   Cma = 1,
   Dms = 2,
+  HostCpu = 3,
 };
 
 enum class ArenaAllocationProvenance : std::uint8_t {
@@ -37,6 +38,7 @@ enum class ArenaDeviceAccess : std::uint32_t {
 enum class ArenaEscapePolicy : std::uint8_t {
   InternalOnly = 0,
   CpuMappablePublic = 1,
+  CpuOnlyPublic = 2,
 };
 
 // Allocation mechanism preference is distinct from placement. Existing DMS

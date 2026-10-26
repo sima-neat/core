@@ -132,6 +132,53 @@ RUN_TEST(
         require(found_reason, "a long binding reason must remain available, not be discarded");
       }
 
+      // Memory admission is not a bad binding, running-device failure or pool
+      // starvation. Match the provider's structured rule, never human wording.
+      for (const auto* field : {"output.pool", "workspace.pool", "constant"}) {
+        auto raw = raw_error("neatkernelrunner", "gst-stream-error-quark", GST_STREAM_ERROR_FAILED,
+                             "DMA_HEAP_IOCTL_ALLOC: Cannot allocate memory; errno=12 "
+                             "bytes=10973184 count=258; source=rtsp://user:alloc-secret@host/path");
+        raw.details["neat-diagnostic-id"] = "neatkernelrunner.failure";
+        raw.details["runtime-category"] = "execution_failed";
+        raw.details["runtime-phase"] = "implementation_admission";
+        raw.details["runtime-field"] = field;
+        raw.details["kernel-rule"] = "memory.allocation_failed";
+        const auto diagnostic = classify_gst_error(raw);
+        require_code(diagnostic, error_codes::kMemoryAllocationFailed);
+        require(diagnostic.diagnostic_id == "neatkernelrunner.memory_allocation_failed" &&
+                    diagnostic.raw.details.at("runtime-category") == "execution_failed" &&
+                    diagnostic.raw.details.at("runtime-field") == field,
+                "memory admission classification lost the provider contract");
+        const auto text = render_diagnostic_body(diagnostic, false);
+        for (const auto* fact :
+             {"Cannot allocate memory", "errno=12", "bytes=10973184", "count=258"})
+          require_contains(text, fact, "allocation cause omitted from default diagnostic");
+        require(text.find("alloc-secret") == std::string::npos &&
+                    text.find("retirement or recovery procedure") == std::string::npos,
+                "allocation failure leaked credentials or suggested device recovery");
+        for (const auto* changed : {"runtime-phase", "kernel-rule"}) {
+          auto other = raw;
+          other.details[changed] = "another_cause";
+          require_code(classify_gst_error(std::move(other)),
+                       error_codes::kAcceleratorExecutionFailed);
+        }
+        raw.details["runtime-category"] = "invalid_binding";
+        require_code(classify_gst_error(std::move(raw)), error_codes::kKernelBinding);
+      }
+
+      {
+        const auto diagnostic = classify_gst_error(
+            raw_error("neatdecoder", "gst-resource-error-quark", GST_RESOURCE_ERROR_NO_SPACE_LEFT,
+                      "Could not allocate decoder DMA-BUF output pool: Cannot allocate memory; "
+                      "errno=12 bytes=1382400 count=8 heap=linux,cma; password=alloc-secret"));
+        require_code(diagnostic, error_codes::kMemoryAllocationFailed);
+        const auto text = render_diagnostic_body(diagnostic, false);
+        require_contains(text, "errno=12 bytes=1382400 count=8 heap=linux,cma",
+                         "decoder allocator cause was hidden in default diagnostics");
+        require(text.find("alloc-secret") == std::string::npos,
+                "decoder memory error leaked a credential");
+      }
+
       // Preserve distinct ownership failures instead of claiming the kernel
       // queue is full. These are real provider causes, not classification keys.
       for (const auto* cause :

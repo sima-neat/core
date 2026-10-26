@@ -7,6 +7,7 @@
 #include "pipeline/internal/Diagnostics.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
+#include "pipeline/internal/OutputQueueMemory.h"
 #include "pipeline/internal/TensorMath.h"
 #include "pipeline/internal/TensorUtil.h"
 
@@ -388,29 +389,35 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
       const int max =
           explicit_output ? st->pipeline.stream_opt.appsink_max_buffers : st->opt.queue_depth;
       const bool has_zero_copy_output = sample_has_zero_copy_tensor(out);
-      const bool has_dmabuf_output = pipeline_internal::sample_has_dmabuf_memory(out);
-      const bool strict_zero_copy = st->opt.output_memory == OutputMemory::ZeroCopy;
-      const bool preserve_dmabuf =
-          has_dmabuf_output &&
-          (st->pipeline.stream_opt.preserve_dmabuf_output || !st->pipeline.stream_opt.copy_output);
+      const auto memory = pipeline_internal::output_queue_memory_decision(
+          out, st->pipeline.stream_opt.copy_output,
+          st->pipeline.stream_opt.preserve_framework_output,
+          st->opt.output_memory == OutputMemory::ZeroCopy);
+      const bool strict_zero_copy = memory.strict_zero_copy;
+      const bool preserve_framework = memory.preserve_framework;
       if (!st->pipeline.copy_output_latched.load(std::memory_order_relaxed) &&
-          st->pipeline.zero_copy_fallback_enabled && !has_dmabuf_output && has_zero_copy_output &&
-          max > 0 && static_cast<int>(st->pipeline.out_queue.size()) >= max) {
+          st->pipeline.zero_copy_fallback_enabled && memory.permits_pressure_copy() &&
+          has_zero_copy_output && max > 0 &&
+          static_cast<int>(st->pipeline.out_queue.size()) >= max) {
         st->pipeline.copy_output_latched.store(true, std::memory_order_relaxed);
         if (!st->pipeline.zero_copy_warned.exchange(true, std::memory_order_relaxed)) {
           std::fprintf(stderr, "[WARN] Balanced preset: zero-copy output reliability trip; "
                                "switching to copy-output mode.\n");
         }
       }
-      const bool copy_output = st->pipeline.copy_output_latched.load(std::memory_order_relaxed) &&
-                               !preserve_dmabuf && !strict_zero_copy;
+      // A retained host sibling protects producer credits/Block semantics, not
+      // a foreign sibling from its normal copy policy. Materialize per payload.
+      const bool copy_output = memory.copy_when_latched(
+          st->pipeline.copy_output_latched.load(std::memory_order_relaxed));
       if (copy_output && has_zero_copy_output) {
         // InputStream may already have materialized Owned into independent
         // DMA-BUF storage. A GstSample holder alone does not imply a pool loan.
         if (!out.owned) {
-          pipeline_internal::materialize_owned_output(out);
+          pipeline_internal::materialize_owned_output(
+              out, st->pipeline.stream_opt.preserve_framework_output);
         }
-        release_incoming_realtime_credits("async-output-copy");
+        if (out.owned)
+          release_incoming_realtime_credits("async-output-copy");
       }
       if (max > 0) {
         OverflowPolicy output_drop =
@@ -419,7 +426,7 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
                             : st->opt.overflow_policy;
         if (output_drop == OverflowPolicy::Block &&
             !st->pipeline.stream_opt.explicit_public_output_options && !copy_output &&
-            !preserve_dmabuf && !strict_zero_copy &&
+            !preserve_framework && !strict_zero_copy &&
             pipeline_internal::env_bool("SIMA_PIPELINE_OUTPUT_DROP_ON_ZERO_COPY", true)) {
           output_drop = OverflowPolicy::KeepLatest;
         }

@@ -94,8 +94,10 @@ execution or firmware activation. See [local dependency builds](../build-test/lo
 
 ### Renderer and optional backend providers
 
-Core owns box/mask publication policy and emits int32 coordinates. Scheduler owns
-caps, lifecycle and cold provider admission. Production composition requires the
+Core owns box/mask publication policy. Existing axis-aligned BBOX payloads use int32
+coordinates; the separate `BBOX_OBB_V1` oriented-box format preserves FP32 geometry
+and is rejected by the axis-aligned renderer. Scheduler owns caps, lifecycle and
+cold provider admission. Production composition requires the
 renderer’s typed int32 capability; it does not reinterpret those values as float
 or add per-frame conversion. Kernels owns the canonical A65 `render` operation;
 Runner owns execution and ReadWrite image retirement. Scheduler records the
@@ -651,7 +653,13 @@ Runner owns dependencies, asynchronous execution and execution-time buffer lifet
 capacities from the upstream allocation contract or ingress storage, never from
 logical shapes alone. BoxDecode and SuperPoint numerical outputs stay private; a
 dependent Core wire-serialization executable preserves the public BBOX and feature
-payloads without duplicating decode math.
+payloads without duplicating decode math. Oriented boxes use a separate versioned
+`BBOX_OBB_V1` serializer with the same numerical-completion dependency; failed
+numerical work must not publish stale results.
+
+The immutable kernel recipe retains the producer-authored tensor wire format after the typed node contract is lowered. Cold publication applies that format to both fresh and cached caps; it never infers semantics from a kernel name or byte shape. The public OBB tensor remains dense, rank-one UInt8 with `BBOX_OBB_V1` semantics.
+
+InputStream projects the authored format onto each returned tensor before publishing a Sample, including owned-copy and cached-metadata paths. Raw `Sample.tensors` and the `TensorList` convenience API therefore carry the same detection semantics.
 
 Image-size changes select immutable, resource-compatible prepared BoxDecode variants
 before binding. They do not mutate an operation used by an in-flight frame. RCNN
@@ -1102,7 +1110,8 @@ Both authored MPK BoxDecode terminals and public `SimaBoxDecode` nodes use
 numerical requests, output publication and dynamic image geometry. Model dimensions
 come from the MLA input contract or explicit ingress metadata, not detection-head
 shapes. Deploy matching Kernels and Runtime packages and rebuild Core when upgrading
-the backend; C++ and Python application APIs are unchanged.
+the backend. Existing public output formats remain compatible; oriented decoding
+uses its own typed C++ and Python parsing helpers.
 
 ##### YOLOv5 and YOLO26 BoxDecode class-count contracts
 
@@ -1113,13 +1122,44 @@ class counts before lowering. The runtime derives the rectangular x/y strides fr
 head geometry and applies the standard YOLOv5 anchor table. Custom AutoAnchor tables are outside
 this contract.
 
-For model-managed YOLO26 detection, pose, and segmentation routes, the MPK class-head depth is the
+For model-managed YOLO26 detection, pose, segmentation, and oriented-box routes, the MPK class-head depth is the
 authoritative class count. `Model::Options::num_classes = 0` selects that inferred value. A positive
 value must match it; a contradiction fails during contract construction and reports the configured
 value, the MPK-derived value, and the decode type. This prevents an invalid class count from being
 used to interpret the grouped raw-head layout. SSD and other pre-YOLO26 non-pose YOLO families
 retain their existing explicit-override behavior, while pose and SuperPoint decoders retain their
 family-specific rules.
+
+##### YOLO26 oriented-box contract
+
+`BoxDecodeType::YoloV26Obb` lowers to the named `yolo26_obb_v1` numerical profile.
+It requires nine grouped heads in FP32, BF16, or INT8: three four-channel distance heads, three
+class-logit heads with the same complete class count (1–256), and three one-channel
+raw-radian angle heads, at strides 8, 16, and 32. Core rejects contradictory roles,
+probability score domains, class-count mismatches, and nonzero per-frame NMS.
+Kernels owns sigmoid, two-stage anchor/class selection, rotated geometry and
+strict score filtering; Core does not duplicate those numerical operations.
+
+INT8 heads require positive finite per-tensor quantization metadata and an INT8 zero point. BF16 and FP32 heads do not use integer quantization metadata. Core preserves the checked native dtype and byte strides. For INT8 it forwards the FP32 reciprocal `1.0F / float(divisor)` and zero point to Kernels. It does not materialize complete FP32 head tensors; required MLA detessellation remains explicit and dtype-preserving.
+
+Geometry requires an explicit finite model-to-original transform with positive
+equal X/Y scales and no shear, including explicit identity for model-sized tiles.
+Core checks authoritative scale equality before narrowing metadata to FP32.
+Per-frame changes select immutable, resource-compatible `image_geometry` variants;
+missing or anisotropic transforms fail rather than approximate a rotated rectangle.
+
+In source-driven graphs, Core derives cold admission geometry from a checked upstream Preproc contract. This is only a preparation seed: every frame must still carry a finite, positive uniform affine and a matching model canvas. A missing frame transform is an error, not an identity fallback.
+
+The numerical outputs are private FP32 `[K,5]` geometry, FP32 `[K]` scores,
+INT32 `[K]` class IDs, and INT32 `[1]` count. The dependent serializer publishes
+`BBOX_OBB_V1`: a 32-byte header and `K` 32-byte records, with unused records zeroed.
+Geometry remains `cx, cy, width, height, angle_radians`; signed finite extents are
+preserved without clipping. The owned `decode_obb_tensor` and `decode_obb` helpers
+validate the versioned carrier and return separate typed tensors. Legacy BBOX
+parsers and the axis-aligned renderer reject this format. Tile recovery and
+cross-tile polygon suppression remain application responsibilities. See
+[YOLO26 oriented boxes](../../../reference/boxdecode_decode_types.md#yolo26-oriented-boxes)
+for configuration and Python usage.
 
 ##### SuperPoint BoxDecode contract
 
@@ -1308,6 +1348,16 @@ the complete stopped candidate bin, request pads, member ordering, metrics and
 resource budgets before preparing and attaching contexts. Failures propagate with their original diagnostic, without
 fallback or fabricated input authority.
 
+For YOLO26 segmentation, the numerical member writes masks directly into the mask
+suffix of the public output buffer. A dependent serializer writes only the count
+and box-record prefix. Core declares an explicit packed-storage view; Scheduler
+still validates every writer, complete byte coverage, bounds and cache-line
+dependencies, and retains one allocation-owned access epoch.
+
+Small numerical results stay in private buffers. The wire format is unchanged.
+A member or retirement failure suppresses downstream publication; it does not
+guarantee that the unpublished buffer was untouched.
+
 Preproc's Core-owned frame adapter preserves dynamic image/ROI geometry and
 metadata. Its bounded two-entry cache holds immutable operations and publication
 facts, never current buffers or producer loans. Independent preparations receive
@@ -1411,17 +1461,21 @@ its optional tail-caps memory constraint to `Any`. Explicit format conversion or
 SystemMemory requests remain compatibility operations, not native zero-copy paths.
 
 At public outputs, `OutputMemory::Auto` retains actual standard DMA-BUF payloads
-in sync and async modes. Non-DMA payloads keep the preset/mode policy; explicit
+and certified framework CPU-only terminal output pools in sync and async modes.
+Other CPU-backed payloads keep the preset/mode policy; explicit
 `Owned` and the Auto-only owned environment override keep their copy semantics.
 Mixed output envelopes resolve this policy per selected payload, not from another
-field's memory type. Recognition uses `GstDmaBufMemory`, without inventing legacy
-device flags or changing tensor placement metadata.
+field's memory type. DMA recognition uses `GstDmaBufMemory`. CPU-only pool
+recognition requires Runtime to certify the selected carrier, allocation generation
+and span; a host allocator name or a retained sibling is not sufficient. CPU-only
+storage remains CPU storage, not a DMA-BUF.
 
 `OutputMemory::Owned` materializes public outputs into independent CMA DMA-BUF
 storage after logical output projection. Each physical carrier is copied once
 per pull, preserving head offsets, padded strides, planes and numerical metadata.
 Only carriers needed by the selected outputs are materialized. In mixed Auto
-output, copying a CPU-backed head does not copy its retained DMA-backed siblings.
+output, copying an unretained CPU-backed head does not copy its retained framework
+siblings.
 Copy planning and alias deduplication are local to that output operation; allocation
 identity and the checked view span must both match before sharing a copy.
 Copied envelopes contain only selected carriers. Their `memory_index` selectors
@@ -1435,6 +1489,16 @@ Reentry to another graph retains these carriers without another staging copy.
 `Auto`/`ZeroCopy` retain compatible DMA-BUF outputs; explicit `.cpu()` and `.clone()`
 continue to create host-memory copies. Allocation errors do not select a hidden
 CPU-memory fallback.
+
+Core can select a CPU-only pool for a fresh native tensor arena only at an exact,
+typed public terminal. Every member and physical region must be CPU-only, with no
+aliases, export requirement or downstream device consumer. Authored allocation
+requirements are not reinterpreted. Scheduler independently validates the stopped
+terminal connection and owns the bounded pool. A selected CPU-only allocation
+failure is an error, not a fallback to another storage domain. Retained tensors
+and open mappings keep their pool generation alive after the Run closes; producer
+credits remain held until the last public loan is released. Existing DMA access
+completion and cache synchronization are unchanged for DMA allocations.
 
 Output decoding caches metadata, not frame payload ownership or final copy policy.
 Logical output projection precedes ownership materialization on both cold and warm
@@ -1833,7 +1897,7 @@ BoxDecode exposes two versioned A65 wall-time components:
 
 | Phase/component | Boundary |
 | --- | --- |
-| `Run/boxdecode_backend_wall_v2` | Actual decode invocation begins through dependent wire publication completion. Includes scheduling gaps between these endpoints; excludes earlier conversion helpers. |
+| `Run/boxdecode_backend_wall_v2.execution_envelope_wall` | Actual decode invocation begins through dependent wire publication completion. Includes scheduling gaps between these endpoints; excludes earlier conversion helpers. |
 | `Exec/boxdecode_stage_wall_v2` | Complete-frame admission, before output acquisition, through retirement, finish and input release. Excludes that frame's own downstream push. |
 
 The outer interval includes pool waits, binding and output-ordering residence. An
@@ -2271,3 +2335,7 @@ Keep docs and code aligned:
 * If you add new env knobs, add them to the "Environment / configuration knobs" section.
 
 ---
+
+## Native MLA tensor views
+
+Core reuses shared backing memory slots while retaining producer leases and skips shared descriptor imports for mixed-owner inputs. Proven identity host modules preserve native output types and shapes without A65 execution, including INT32 ArgMax results and cold `Model::output_specs()` metadata.

@@ -18,6 +18,8 @@
 #include "pipeline/Tensor.h"
 
 #include <cstdint>
+#include <cstddef>
+#include <bit>
 #include <string>
 #include <vector>
 
@@ -67,6 +69,58 @@ inline constexpr char kDetectionFormatBboxSegmentation[] = "BBOX_SEGMENTATION";
 /// Canonical detection-format token for BoxDecode payloads carrying masks AND keypoints.
 inline constexpr char kDetectionFormatBboxSegmentationPose[] = "BBOX_SEGMENTATION_POSE";
 
+/// Versioned, little-endian oriented-box carrier; not an axis-aligned BBOX payload.
+inline constexpr char kDetectionFormatBboxObbV1[] = "BBOX_OBB_V1";
+struct OrientedBoxesHeaderV1 {
+  std::uint32_t magic = 0x3156424f;
+  std::uint16_t version = 1;
+  std::uint16_t header_bytes = 32;
+  std::uint32_t total_bytes = 32;
+  std::uint32_t count = 0;
+  std::uint32_t capacity = 0;
+  std::uint32_t records_offset = 32;
+  std::uint32_t record_stride = 32;
+  std::uint32_t flags = 0;
+};
+struct OrientedBoxRecordV1 {
+  float center_x = 0, center_y = 0, width = 0, height = 0;
+  float angle_radians = 0, score = 0;
+  std::int32_t class_id = 0;
+  std::uint32_t reserved = 0;
+};
+static_assert(std::endian::native == std::endian::little);
+static_assert(sizeof(OrientedBoxesHeaderV1) == 32);
+static_assert(offsetof(OrientedBoxesHeaderV1, magic) == 0);
+static_assert(offsetof(OrientedBoxesHeaderV1, version) == 4);
+static_assert(offsetof(OrientedBoxesHeaderV1, header_bytes) == 6);
+static_assert(offsetof(OrientedBoxesHeaderV1, total_bytes) == 8);
+static_assert(offsetof(OrientedBoxesHeaderV1, count) == 12);
+static_assert(offsetof(OrientedBoxesHeaderV1, capacity) == 16);
+static_assert(offsetof(OrientedBoxesHeaderV1, records_offset) == 20);
+static_assert(offsetof(OrientedBoxesHeaderV1, record_stride) == 24);
+static_assert(offsetof(OrientedBoxesHeaderV1, flags) == 28);
+static_assert(sizeof(OrientedBoxRecordV1) == 32);
+static_assert(offsetof(OrientedBoxRecordV1, center_x) == 0);
+static_assert(offsetof(OrientedBoxRecordV1, center_y) == 4);
+static_assert(offsetof(OrientedBoxRecordV1, width) == 8);
+static_assert(offsetof(OrientedBoxRecordV1, height) == 12);
+static_assert(offsetof(OrientedBoxRecordV1, angle_radians) == 16);
+static_assert(offsetof(OrientedBoxRecordV1, score) == 20);
+static_assert(offsetof(OrientedBoxRecordV1, class_id) == 24);
+static_assert(offsetof(OrientedBoxRecordV1, reserved) == 28);
+
+/// Owned dense CPU results. Geometry is FP32[N,5] cx,cy,w,h,angle (raw radians),
+/// scores FP32[N], class_ids INT32[N]. Parsing never clamps, rounds or remaps geometry.
+struct OrientedDecodeTensors {
+  Tensor geometry;
+  Tensor scores;
+  Tensor class_ids;
+};
+using OrientedDecodeTensorList = std::vector<OrientedDecodeTensors>;
+/// Strict parsing of a tensor explicitly tagged BBOX_OBB_V1; malformed payloads throw.
+OrientedDecodeTensors decode_obb_tensor(const Tensor& tensor);
+/// Positional one-to-one list parsing; no axis-aligned BBOX fallback.
+OrientedDecodeTensorList decode_obb(const TensorList& tensors);
 /// Number of keypoints emitted by the BoxDecode pose wire format.
 inline constexpr int64_t kDecodedPoseKeypoints = 17;
 /// Number of values per keypoint: x, y, visibility.

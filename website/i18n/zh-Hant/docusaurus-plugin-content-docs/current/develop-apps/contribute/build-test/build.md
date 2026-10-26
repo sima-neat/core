@@ -186,3 +186,5 @@ cmake -LA -B build      # include advanced
 ```
 
 最上層的 `CMakeLists.txt` 檔案是選項名稱的權威來源。
+
+Core 從所選 Scheduler 套件的收據繼承韌體及確切的 sysroot，不再另行宣告韌體。收據的平台與 SDK 通道必須符合 Core。CI 將此政策保留在建置產物中，並用它選取韌體完全相符的 DevKit，不使用備援版本。安裝 LLiMa 前，Core 會將其已發佈的韌體、平台及 SDK 通道與 Scheduler 比對，並驗證所選 DEB 屬於同一份發佈產物。LLiMa 未發佈確切的 sysroot 收據，因此此檢查確認的是宣告的韌體相容性，而非 sysroot 套件清單完全相同。使用本機 `--llima PATH` 建置時，請提供包含 core/dev/cli DEB、`llima-package-manifest.json` 及 `metadata.json` 的 LLiMa 發佈根目錄。缺少證據或證據不符時會停止建置。重新建置 Core 前，請先重新建置並發佈 Kernels → Runner → Scheduler，以及相符的 LLiMa。

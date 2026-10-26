@@ -1,5 +1,6 @@
 #include "pipeline/internal/sima/BoxDecodePublication.h"
 #include "pipeline/FeatureTypes.h"
+#include "pipeline/DetectionTypes.h"
 
 #include <simaai/scheduler/client/host_task.h>
 
@@ -114,6 +115,33 @@ k::HostStatus publish(const WirePlan& plan, k::HostBuffers buffers) {
                         "numerical result count exceeds capacity"};
   auto* output = target.data;
   const auto n = static_cast<std::size_t>(count);
+  if (plan.format == BoxDecodeWireFormat::OrientedBoxesV1) {
+    // Validate the complete selected result before touching the public carrier.
+    for (std::size_t i = 0; i < n; ++i) {
+      for (std::size_t axis = 0; axis < 5; ++axis)
+        if (!std::isfinite(load<float>(inputs[0].data + (i * 5 + axis) * 4)))
+          return k::HostError{k::ProviderErrorCode::InvalidParameter, "geometry",
+                              "oriented geometry is nonfinite"};
+      const auto score = load<float>(inputs[1].data + i * 4);
+      if (!std::isfinite(score) || score < 0 || score > 1 ||
+          load<std::int32_t>(inputs[2].data + i * 4) < 0)
+        return k::HostError{k::ProviderErrorCode::InvalidParameter, "records",
+                            "oriented score or class is invalid"};
+    }
+    OrientedBoxesHeaderV1 header;
+    header.total_bytes = static_cast<std::uint32_t>(plan.bytes);
+    header.capacity = static_cast<std::uint32_t>(plan.capacity);
+    header.count = static_cast<std::uint32_t>(n);
+    std::memset(output, 0, plan.bytes);
+    store(output, header);
+    for (std::size_t i = 0; i < n; ++i) {
+      auto* row = output + sizeof(header) + i * sizeof(OrientedBoxRecordV1);
+      std::memcpy(row, inputs[0].data + i * 20, 20);
+      std::memcpy(row + 20, inputs[1].data + i * 4, 4);
+      std::memcpy(row + 24, inputs[2].data + i * 4, 4);
+    }
+    return {};
+  }
   if (plan.format == BoxDecodeWireFormat::RcnnProposals) {
     const auto per_level = plan.capacity / 4;
     const auto group_bytes = 4 + per_level * 12;
@@ -237,11 +265,12 @@ BoxDecodePublication prepare_boxdecode_publication(BoxDecodeWireFormat format,
   const bool features = format == BoxDecodeWireFormat::FeaturePointsV1 ||
                         format == BoxDecodeWireFormat::LegacyFeaturePointsV0;
   const bool rcnn = format == BoxDecodeWireFormat::RcnnProposals;
+  const bool oriented = format == BoxDecodeWireFormat::OrientedBoxesV1;
   const bool combined = format == BoxDecodeWireFormat::MasksPose;
   const bool pose = format == BoxDecodeWireFormat::Pose || combined;
   const bool masks = format == BoxDecodeWireFormat::Masks || combined;
   const bool auxiliary = rcnn || pose || masks;
-  if ((!features && !auxiliary && format != BoxDecodeWireFormat::Boxes) ||
+  if ((!features && !auxiliary && !oriented && format != BoxDecodeWireFormat::Boxes) ||
       inputs.size() != (combined    ? 6u
                         : auxiliary ? 5u
                                     : 4u) ||
@@ -253,8 +282,10 @@ BoxDecodePublication prepare_boxdecode_publication(BoxDecodeWireFormat format,
   auto plan = std::make_shared<WirePlan>();
   plan->format = format;
   plan->capacity = static_cast<std::size_t>(capacity);
-  require_spec(inputs[0], (features || rcnn) ? k::DType::Float32 : k::DType::Int32,
-               {capacity, features ? 2 : 4});
+  require_spec(inputs[0], (features || rcnn || oriented) ? k::DType::Float32 : k::DType::Int32,
+               {capacity, features   ? 2
+                          : oriented ? 5
+                                     : 4});
   require_spec(inputs[1], k::DType::Float32, {capacity});
   require_spec(inputs[3], k::DType::Int32, {1});
   if (features) {
@@ -315,7 +346,9 @@ BoxDecodePublication prepare_boxdecode_publication(BoxDecodeWireFormat format,
       require_spec(inputs[4], k::DType::UInt8, {capacity, shape[1], shape[2]});
       plan->auxiliary_row = checked_mul(shape[1], shape[2]);
     }
-    if (rcnn) {
+    if (oriented) {
+      plan->bytes = checked_add(32, checked_mul(plan->capacity, 32));
+    } else if (rcnn) {
       if (capacity % 4)
         throw std::invalid_argument("RCNN wire capacity must be four times per-level top-K");
       require_spec(inputs[4], k::DType::Int32, {capacity});

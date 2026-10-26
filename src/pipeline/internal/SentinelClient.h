@@ -21,8 +21,8 @@ inline constexpr const char* kSentinelSocketPath = "/run/simaai-sentinel/api.soc
  *
  * Sentinel samples board power, temperature, CPU, and memory every 2 s and keeps the latest
  * samples in a cache. Every method throws `std::runtime_error` naming the failed action and
- * Sentinel's reason; when Sentinel is not running, the message says how to install and start
- * it.
+ * Sentinel's reason; when the socket cannot be reached, the message names it and says how to
+ * install and start Sentinel.
  */
 class SentinelClient {
 public:

@@ -189,8 +189,9 @@ int main(int argc, char** argv) {
     // Graph construction applies its per-run name transform (for example, `boxdecode_1`) to the
     // element and stage. Select the stable tracepoint identity and then require exactly one row;
     // requiring stage_name == gst_element_name still rejects malformed or cross-node attribution.
-    constexpr ComponentIdentity kBackendComponent{"boxdecode_backend_wall_v2", "A65", "Run",
-                                                  "boxdecode_backend_wall_v2"};
+    constexpr ComponentIdentity kBackendComponent{
+        "boxdecode_backend_wall_v2", "A65", "Run",
+        "boxdecode_backend_wall_v2.execution_envelope_wall"};
     constexpr ComponentIdentity kStageComponent{"boxdecode_stage_wall_v2", "A65", "Exec",
                                                 "boxdecode_stage_wall_v2"};
     auto backend_rows = select_exact_component_rows(measured, kBackendComponent);

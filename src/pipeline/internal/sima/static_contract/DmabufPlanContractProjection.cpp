@@ -533,6 +533,47 @@ resolve_publication_transport_view(const ModelExecutionPlan& plan, const ValueSp
                                   std::move(carrier_layout), physical_span};
 }
 
+bool has_terminal_read_publications(const ModelExecutionPlan& plan, const OpSpec& mla,
+                                    const std::span<const BackendPortSpec> outputs) {
+  if (plan.model_outputs().empty()) {
+    return false;
+  }
+  std::unordered_set<ValueId> roots;
+  for (const auto& port : outputs) {
+    if (!roots.emplace(root_value_id(plan, port.value_id)).second) {
+      return false;
+    }
+  }
+  std::unordered_set<ValueId> public_roots;
+  bool has_read_view = false;
+  for (const auto& output : plan.model_outputs()) {
+    const auto* value = plan.value(output.value_id);
+    if (!value || !value->logical_shape || !value->logical_dtype) {
+      return false;
+    }
+    has_read_view = has_read_view || value->read_expression.has_value();
+    public_roots.emplace(root_value_id(plan, output.value_id));
+  }
+  if (!has_read_view || roots != public_roots) {
+    return false;
+  }
+  // Storage policy does not decide logical output arity. A selected MLA-only
+  // fragment can keep its arena while a terminal Slice/identity/Reshape chain
+  // still publishes exactly the model's declared root-relative views.
+  for (const auto& op : plan.ops()) {
+    if (op.sequence <= mla.sequence) {
+      continue;
+    }
+    for (const auto id : op.outputs) {
+      const auto* value = plan.value(id);
+      if (!value || !value->read_expression || !roots.contains(root_value_id(plan, id))) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 bool project_terminal_mla_publications(const ModelExecutionPlan& plan,
                                        const std::span<const BackendPortSpec> outputs,
                                        MlaStaticContract* contract, std::string* error) {
@@ -1905,7 +1946,9 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
     contract->physical_outputs.push_back(std::move(physical));
   }
 
-  if (output_carrier_policy == MlaOutputCarrierPolicy::SeparateCpuVisible) {
+  if (output_carrier_policy == MlaOutputCarrierPolicy::SeparateCpuVisible ||
+      (batch_count == 1U &&
+       has_terminal_read_publications(plan, plan.ops()[stage->key.op_id], outputs))) {
     // A terminal publication chain has no materializing consumer for the old
     // consumer-oriented read-view query to discover.  The model-output table
     // is the ordered public authority; map each composed root-relative view

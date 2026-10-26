@@ -2,6 +2,14 @@
 #include <simaai/scheduler/testing/segment_allocator.h>
 #include "runtime_segment_allocator_fixture.h"
 #include "test_main.h"
+#include <array>
+#include <cstdint>
+#include <string_view>
+#include "pipeline/DetectionTypes.h"
+#include "pipeline/FeatureTypes.h"
+#include "pipeline/internal/sima/KernelStageRecipe.h"
+#include "pipeline/internal/sima/PreparedRuntimeBuild.h"
+#include "pipeline/internal/sima/StaticSpecBuilders.h"
 
 namespace {
 using namespace sima_test::output_contract;
@@ -19,6 +27,94 @@ std::shared_ptr<GstSample> typed_tensor_sample(GstBuffer* buffer, GstCaps* caps,
               gst_caps_is_equal(gst_sample_get_caps(sample.get()), caps),
           context + ": typed sample allocation");
   return sample;
+}
+
+void producer_wire_publication_survives_conversion() {
+  namespace sima = neat::pipeline_internal::sima;
+  sima::StageStaticSpec stage;
+  stage.element_name = stage.logical_stage_id = "decoded-wire";
+  stage.plugin_kind = "kernel";
+  stage.physical_outputs = {sima::specbuilders::build_physical_buffer_static_spec(
+      0, 0, 64, sima::DeviceKind::Cpu, "arena")};
+  stage.logical_outputs = {sima::specbuilders::build_logical_output_static_spec(
+      0, 0, 0, 0, 0, {28}, "UINT8", "", "detections", "detections", "arena", 16, 28)};
+  stage.output_order = {
+      sima::specbuilders::build_output_route_static_spec(0, 0, 0, "detections", "arena")};
+  auto recipe = std::make_shared<sima::KernelStageRecipe>();
+  stage.native_kernel = recipe;
+  std::string error;
+  for (const char* token : {"", neat::kDetectionFormatBbox, neat::kFeatureFormatPointsV1,
+                            neat::kFeatureFormatLegacyA65V0}) {
+    recipe->output_format = token;
+    client::TensorStagePublication publication;
+    require(sima::build_kernel_stage_publication(stage, &publication, &error),
+            "build producer wire publication: " + error);
+    const char* actual = gst_structure_get_string(
+        gst_caps_get_structure(publication.output_caps.get(), 0), "format");
+    require(*token ? actual && std::string(actual) == token : actual == nullptr,
+            "producer format token was lost or invented");
+    require(publication.contract && publication.contract->physical_outputs.size() == 1 &&
+                publication.contract->physical_outputs[0].size_bytes == 64 &&
+                publication.contract->logical_outputs.size() == 1 &&
+                publication.contract->logical_outputs[0].byte_offset == 16,
+            "semantic publication bypassed final physical layout");
+    if (*token && std::string_view(token) != neat::kDetectionFormatBbox)
+      continue;
+    transport::TensorBufferPreparedMetaTemplate prepared;
+    require(transport::tensor_buffer_prepare_meta_template_from_contract(*publication.contract,
+                                                                         &prepared, &error),
+            "prepare producer wire metadata: " + error);
+    const auto frozen = transport::tensor_buffer_freeze_publication(prepared, &error);
+    require(bool(frozen), "freeze producer wire metadata: " + error);
+    for (const bool compact : {false, true}) {
+      for (const bool owned : {false, true}) {
+        neat::InputStream::State cache;
+        for (const std::int32_t count : {1, 0}) {
+          auto source = frame(*publication.contract, {false}, 0, compact, 64, "wire", &frozen);
+          // Discard the fixture's generic sample before filling its fresh backing;
+          // the typed sample below is the first published payload owner.
+          source.sample.reset();
+          require(gst_buffer_is_writable(source.buffer.get()), "fresh wire buffer is shared");
+          // Exact legacy BBOX wire: count followed by x,y,w,h,score,class.
+          const std::array<std::int32_t, 4> box{2, 3, 4, 5};
+          const float score = .75F;
+          const std::int32_t category = 6;
+          require(gst_buffer_fill(source.buffer.get(), 16, &count, sizeof(count)) ==
+                          sizeof(count) &&
+                      gst_buffer_fill(source.buffer.get(), 20, box.data(), sizeof(box)) ==
+                          sizeof(box) &&
+                      gst_buffer_fill(source.buffer.get(), 36, &score, sizeof(score)) ==
+                          sizeof(score) &&
+                      gst_buffer_fill(source.buffer.get(), 40, &category, sizeof(category)) ==
+                          sizeof(category),
+                  "failed to fill the fresh detection wire");
+          auto sample = typed_tensor_sample(source.buffer.get(), publication.output_caps.get(),
+                                            "producer wire output");
+          auto output = neat::output_from_sample_stream(sample.get(), "producer wire output", owned,
+                                                        nullptr, &cache);
+          neat::tag_detection_format_in_sample(output); // The existing public pull projection.
+          require(output.tensors.size() == 1, "wire output count changed");
+          const auto& tensor = output.tensors.front();
+          if (!*token) {
+            require(neat::read_detection_format(tensor).empty(),
+                    "an ordinary UInt8 tensor acquired an invented detection tag");
+            continue;
+          }
+          require(neat::read_detection_format(tensor) == neat::kDetectionFormatBbox,
+                  "cold/warm or borrowed/owned conversion lost BBOX identity");
+          const auto decoded = neat::decode_bbox_tensor(tensor, 32, 24, -1, false);
+          require(decoded.boxes.size() == static_cast<std::size_t>(count),
+                  "published detection wire did not decode");
+          if (count) {
+            const auto& result = decoded.boxes.front();
+            require(result.x1 == 2 && result.y1 == 3 && result.x2 == 6 && result.y2 == 8 &&
+                        result.score == score && result.class_id == category,
+                    "published detection payload changed during conversion");
+          }
+        }
+      }
+    }
+  }
 }
 
 void require_retained_sample_storage(const neat::Tensor& tensor, GstSample* source,
@@ -730,7 +826,9 @@ int main(int argc, char** argv) {
   return sima_test::run_test("unit_output_metadata_cache_contract_test", [&] {
     neat::gst_init_once();
     const std::string selected = argc > 1 ? argv[1] : "0";
-    if (selected == "bounds") {
+    if (selected == "publication") {
+      producer_wire_publication_survives_conversion();
+    } else if (selected == "bounds") {
       warm_storage_extent_is_checked();
     } else if (selected == "table") {
       current_segment_table_and_capacity_are_not_cached_payload_facts();

@@ -26,9 +26,10 @@ httplib::Result get(const std::string& socket_path, std::chrono::seconds timeout
   }
   if (result.error() == httplib::Error::Connection) {
     throw std::runtime_error(
-        "Sentinel is not running on this board, so no telemetry is recorded. Install it on the "
-        "board with 'sima-cli neat install sentinel'. If it is already installed, start it with "
-        "'sudo systemctl start simaai-sentinel'.");
+        "Could not connect to Sentinel at '" + socket_path +
+        "', so no telemetry is recorded. Check the socket path. If Sentinel is not installed, "
+        "install it on the board with 'sima-cli neat install sentinel'; if it is stopped, start "
+        "it with 'sudo systemctl start simaai-sentinel'.");
   }
   throw std::runtime_error("Sentinel did not answer GET " + path + ": " +
                            httplib::to_string(result.error()));

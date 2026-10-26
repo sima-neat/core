@@ -25,6 +25,10 @@ public:
   static const KernelExecutable& checked_executable(const CheckedPolicy&);
   static std::shared_ptr<const gstreamer::TensorStageImagePublication>
   checked_image_publication(const CheckedPolicy&);
+  // Initial immutable facts from the same checked policy as runtime publication.
+  // This cold query opens no session and retains no frame or adapter state.
+  static Result<simaai::gst::TensorBufferPreprocessFactsOwner>
+      checked_initial_preprocess_facts(std::shared_ptr<const CheckedPolicy>);
   // Check the complete initial image recipe before opening the graph's device.
   static Result<std::shared_ptr<PreprocFrameAdapter>>
       check(std::shared_ptr<const ProcessCvuStagePayload>);

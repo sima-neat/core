@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 import sys
 import tempfile
+import textwrap
 import unittest
 from unittest.mock import Mock, patch
 
@@ -22,6 +23,52 @@ publication = importlib.util.module_from_spec(spec); spec.loader.exec_module(pub
 
 
 class PublicationInventory(unittest.TestCase):
+    def test_ci_uploads_source_archives_and_keeps_metadata_pending(self):
+        workflow = (ROOT.parent / '.github/workflows/vulcan-ci.yml').read_text()
+        step = workflow.split('- name: Publish PCIe host Debian packages', 1)[1]
+        script = textwrap.dedent(step.split('run: |\n', 1)[1].split('\n        env:', 1)[0])
+        # Run the actual uploader with a local AWS seam; no network or credentials.
+        aws = '''aws() {
+  [[ "$1" == s3 && "$2" == cp && -f "$3" ]] || return 99
+  printf '%s\\t%s\\n' "${3##*/}" "$4" >> "$UPLOAD_LOG"
+}
+'''
+        for provider, sidecar in (('official-platform-source.deb', True),
+                                  ('platform-source.tar.gz', False), ('platform-source.tar.gz', True)):
+            with self.subTest(provider=provider, sidecar=sidecar), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp); dist = root / 'pcie_host/dist'; dist.mkdir(parents=True)
+                names = ['scheduler.deb', provider, 'core-extras.tar.gz', 'pyneatpcie-1.whl',
+                         'metadata.json', 'metadata-extras.json', 'metadata-pyneatpcie.json',
+                         'platform-source.json', 'native_artifacts.py', 'install_pciehost.sh']
+                names += [name + '.sha256' for name in names if name.endswith(('.deb', '.tar.gz', '.whl'))]
+                if not sidecar: names.remove(provider + '.sha256')
+                for name in names + ['not-a-resource.txt']: (dist / name).touch()
+                scripts = root / 'pcie_host/scripts'
+                scripts.mkdir()
+                shutil.copy2(ROOT / 'scripts/pcie_delivery.py', scripts / 'pcie_delivery.py')
+                resources = [name for name in names
+                             if not name.startswith('metadata') and not name.endswith('.sha256')]
+                hashes = {name: delivery.sha(dist / name) for name in resources}
+                (dist / 'metadata.json').write_text(json.dumps({
+                    'resources': resources, 'resources-checksum': hashes}))
+                for name in resources:
+                    checksum = dist / (name + '.sha256')
+                    if checksum.exists():
+                        checksum.write_text(hashes[name] + '  ' + name + '\n')
+                log = root / 'uploads.tsv'
+                result = subprocess.run(['bash', '-c', aws + script], cwd=root, text=True,
+                                        capture_output=True, env={
+                                            'PATH': '/usr/bin:/bin', 'REF_NAME': 'feature/source',
+                                            'GITHUB_SHA': 'a' * 40, 'DISTRO': 'ubuntu22',
+                                            'DEB_ARCH': 'amd64', 'ARTIFACT_BUCKET': 'fixture',
+                                            'UPLOAD_LOG': str(log)})
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                uploads = [line.split('\t') for line in log.read_text().splitlines()]
+                prefix = 's3://fixture/core/feature%2Fsource/' + 'a' * 12 + '/pciehost/ubuntu22/amd64/'
+                expected = [[name, prefix + name + ('.pending' if name.startswith('metadata') else '')]
+                            for name in names]
+                self.assertCountEqual(uploads, expected)
+
     def test_complete_inventory_and_each_required_role(self):
         for arch in ('amd64', 'arm64'):
             with tempfile.TemporaryDirectory() as temporary:
@@ -414,6 +461,10 @@ GENAI_CMAKE_ARGS=()
                 with self.subTest(distro=distro, arch=arch), tempfile.TemporaryDirectory() as temp:
                     root = Path(temp) / 'selected'
                     candidate = root / 'candidate'
+                    core = Path(temp) / 'core'
+                    (core / 'deps').mkdir(parents=True)
+                    (core / 'deps/manifest.json').write_text(
+                        json.dumps({'scheduler': {'policy': 'snap'}}))
 
                     def acquire(*args, **kwargs):
                         # The transport seam represents an already hash-verified
@@ -433,7 +484,8 @@ GENAI_CMAKE_ARGS=()
                     argv = ['acquire_scheduler.py', '--cli', 'test-cli', '--branch', 'feature/native',
                             '--spec', 'latest', '--environment', 'production', '--distro', distro,
                             '--arch', arch, '--output', str(root)]
-                    with patch.object(sys, 'argv', argv), patch.object(sys, 'stdout', io.StringIO()), \
+                    with patch.object(acquisition, 'CORE', core), \
+                         patch.object(sys, 'argv', argv), patch.object(sys, 'stdout', io.StringIO()), \
                          patch('scheduler_dependency.acquire', side_effect=acquire) as transport:
                         acquisition.main()
                     transport.assert_called_once_with(
