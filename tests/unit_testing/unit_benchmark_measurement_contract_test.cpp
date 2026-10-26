@@ -318,7 +318,8 @@ void provided_image_inputs_need_one_tensor_with_image_format() {
   ingress.valid = true;
   const std::string multi = input_shape_error(
       [&] { internal::check_model_image_inputs({image}, {ingress, ingress}, "bench"); });
-  require(!multi.empty(), "an image route must reject a model with more than one ingress");
+  require(contains(multi, "multi-ingress image input is unsupported; the model has 2"),
+          "an image route must reject a model with more than one ingress: " + multi);
 }
 
 void provided_tensor_inputs_match_ingress_contracts() {

@@ -7878,11 +7878,18 @@ void ModelAccess::check_inputs(const Model& model, const TensorList& inputs, con
 void check_model_image_inputs(const TensorList& inputs,
                               const std::vector<IngressTensorContract>& ingress_contracts,
                               const char* where) {
-  if (inputs.size() != 1U || ingress_contracts.size() > 1U) {
+  if (inputs.size() != 1U) {
     throw_model_error(error_codes::kInputShape,
                       std::string(where) + ": image input expects exactly one image tensor, got " +
                           std::to_string(inputs.size()),
                       "Pass one image tensor; use input_specs() to inspect the model input.");
+  }
+  if (ingress_contracts.size() > 1U) {
+    throw_model_error(error_codes::kInputShape,
+                      std::string(where) +
+                          ": multi-ingress image input is unsupported; the model has " +
+                          std::to_string(ingress_contracts.size()) + " ingress contracts",
+                      "Use input_specs() to inspect the model inputs.");
   }
   // Preprocessing resizes and converts color, so any image size and color format is accepted.
   require_explicit_image_input_info(input_info_from_tensor(inputs.front(), true), where);
