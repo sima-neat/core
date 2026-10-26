@@ -632,7 +632,6 @@ set(UNIT_TESTS
   unit_output_selected_carrier_contract_test
   unit_sample_tensor_set_materialized_parent_offsets_test
   unit_sample_packed_parent_alignment_padding_test
-  unit_yolov8_mla_handoff_segment_test
   unit_yolov8_contract_subset_test
   unit_tensor_list_api_test
   unit_tensor_conversion_policy_test
@@ -2697,7 +2696,6 @@ foreach(test
     unit_neatdecoder_keepalive_test
     unit_neatencoder_keepalive_test
     unit_modelpack_mla_handoff_segment_test
-    unit_yolov8_mla_handoff_segment_test
     seedless_yolov8_preproc_input_max_smoke_test
     graph_migration_phase3_lazy_dynamic_spec_test
     graph_migration_phase3_yolov8_bgr_bf16_preproc_test

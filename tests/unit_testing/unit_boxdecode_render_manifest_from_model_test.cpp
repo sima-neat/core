@@ -239,6 +239,7 @@ RUN_TEST(
       require(rendered_box != nullptr, "rendered manifest should contain a boxdecode stage");
       CompiledPipelineContracts nested;
       nested.fully_renderable = true;
+      nested.model_storage_scopes = compiled.model_storage_scopes;
       CompiledNodeContract fragment;
       fragment.node_kind = "ModelFragment";
       fragment.element_name = fragment.logical_stage_id = "infer";

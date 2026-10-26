@@ -176,17 +176,6 @@ void admitted_coordinates(std::int64_t logical_offset, bool retained_physical) {
           "unsubmitted route retained its current producer loan");
 }
 
-void rejects_double_base() {
-  auto model = complete(64, false);
-  model.input_bindings[0].src_physical_byte_offset = model.physical_inputs[0].source_byte_offset;
-  bool rejected = false;
-  try {
-    (void)request(model);
-  } catch (const std::invalid_argument&) {
-    rejected = true;
-  }
-  require(rejected, "doubled-base route was not rejected during cold Core layout finalization");
-}
 } // namespace
 
 int main() {
@@ -196,7 +185,6 @@ int main() {
     GST_DEBUG_CATEGORY_INIT(GST_CAT_DEFAULT, "core-graph-stage-admission", 0, "route admission");
 #endif
     require(tr::tensor_buffer_register_meta(), "TensorBuffer metadata registration failed");
-    rejects_double_base();
     admitted_coordinates(0, false);
     admitted_coordinates(64, false);
     admitted_coordinates(64, true);

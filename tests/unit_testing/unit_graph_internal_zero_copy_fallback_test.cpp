@@ -428,8 +428,8 @@ void require_native_retention_pool_policy() {
               "untyped runner must not acquire legacy execution properties");
     }
   }
-  require(build.kernel_runner_output_pool_capacity == 0,
-          "missing typed ownership must not invent a Runtime retention budget");
+  require(build.kernel_runner_capacity == 1 && build.kernel_runner_output_pool_capacity == 2,
+          "untyped routes must retain only the baseline synchronous budget");
 }
 
 void require_shared_arena_budget() {

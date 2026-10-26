@@ -380,6 +380,21 @@ struct StorageCompilation {
     groups[group].carriers.push_back(id);
     return id;
   }
+  std::optional<std::size_t> input_producer(std::size_t index,
+                                            const InputBindingStaticSpec& binding,
+                                            const PhysicalBufferStaticSpec& physical,
+                                            std::string* error) const {
+    if (physical.model_carrier_id && stages[index].model_scope) {
+      for (std::size_t producer = index; producer-- > 0;)
+        if (stages[producer].model_scope == stages[index].model_scope &&
+            std::any_of(manifest.stages[producer].physical_outputs.begin(),
+                        manifest.stages[producer].physical_outputs.end(), [&](const auto& output) {
+                          return output.model_carrier_id == physical.model_carrier_id;
+                        }))
+          return producer;
+    }
+    return edgecontract::resolve_producer_stage_exact(manifest, index, binding, error);
+  }
   const InputRoute& input_route(std::size_t index, const InputBindingStaticSpec& binding,
                                 const PhysicalBufferStaticSpec& physical) {
     auto& inputs = stages[index].inputs;
@@ -390,16 +405,17 @@ struct StorageCompilation {
       const auto& roots = model_carriers[*stages[index].model_scope];
       if (const auto found = roots.find(*physical.model_carrier_id); found != roots.end()) {
         route.carrier = found->second;
-        for (const auto producer : carriers[*route.carrier].stages)
-          if (producer < index && (!route.producer || producer > *route.producer))
-            route.producer = producer;
+        std::string error;
+        route.producer = input_producer(index, binding, physical, &error);
+        if (!error.empty())
+          throw std::invalid_argument("memory placement: " + error);
         return inputs.emplace(binding.local_logical_input_index, route).first->second;
       }
     }
     if (physical.address_source != PhysicalAddressSource::RuntimePhysicalBinding ||
         !binding.src_stage_id.empty() || binding.src_stage_index >= 0) {
       std::string error;
-      route.producer = edgecontract::resolve_producer_stage_exact(manifest, index, binding, &error);
+      route.producer = input_producer(index, binding, physical, &error);
       if (!error.empty())
         throw std::invalid_argument("memory placement: " + error);
       if (route.producer) {
@@ -425,6 +441,20 @@ struct StorageCompilation {
     const auto& scopes = manifest.model_storage_scopes->scopes;
     models.reserve(scopes.size());
     model_carriers.resize(scopes.size());
+    const auto stage_index = [&](const auto& origin) {
+      const auto found =
+          std::find_if(manifest.stages.begin(), manifest.stages.end(), [&](const auto& stage) {
+            return stage.compile_stage_index == origin.compile_stage_index;
+          });
+      if (found == manifest.stages.end())
+        throw std::invalid_argument("memory placement: model stage identity was lost");
+      return static_cast<std::size_t>(found - manifest.stages.begin());
+    };
+    // Register every invocation before resolving edges: authored value names
+    // are reusable between invocations, whereas carrier identities are scoped.
+    for (std::size_t scope = 0; scope < scopes.size(); ++scope)
+      for (const auto& origin : scopes[scope].stages)
+        stages[stage_index(origin)].model_scope = scope;
     for (std::size_t scope_index = 0; scope_index < scopes.size(); ++scope_index) {
       const auto& scope = scopes[scope_index];
       if (!scope.source)
@@ -435,17 +465,11 @@ struct StorageCompilation {
       route.published_outputs = scope.published_outputs;
       std::optional<client::AllocationPolicy> policy;
       for (const auto& origin : scope.stages) {
-        const auto found =
-            std::find_if(manifest.stages.begin(), manifest.stages.end(), [&](const auto& stage) {
-              return stage.compile_stage_index == origin.compile_stage_index;
-            });
-        if (found == manifest.stages.end())
-          throw std::invalid_argument("memory placement: model stage identity was lost");
-        const auto index = static_cast<std::size_t>(found - manifest.stages.begin());
-        stages[index].model_scope = scope_index;
-        const auto access = resolved_stage_device_access(*found);
-        if (found->allocation_policy)
-          policy = found->allocation_policy;
+        const auto index = stage_index(origin);
+        const auto& stage = manifest.stages[index];
+        const auto access = resolved_stage_device_access(stage);
+        if (stage.allocation_policy)
+          policy = stage.allocation_policy;
         for (const auto command_id : origin.commands) {
           if (command_id >= physical.commands.size())
             throw std::invalid_argument("memory placement: unknown model command");
@@ -463,9 +487,20 @@ struct StorageCompilation {
         if (stages[consumer].model_scope == scope_index)
           continue;
         for (const auto& binding : manifest.stages[consumer].input_bindings) {
+          const auto& stage = manifest.stages[consumer];
+          const auto logical = std::find_if(
+              stage.logical_inputs.begin(), stage.logical_inputs.end(), [&](const auto& input) {
+                return input.logical_index == binding.local_logical_input_index;
+              });
+          const auto physical = std::find_if(
+              stage.physical_inputs.begin(), stage.physical_inputs.end(), [&](const auto& input) {
+                return logical != stage.logical_inputs.end() &&
+                       input.physical_index == logical->physical_index;
+              });
+          if (physical == stage.physical_inputs.end())
+            throw std::invalid_argument("memory placement: input binding has no physical carrier");
           std::string error;
-          const auto producer =
-              edgecontract::resolve_producer_stage_exact(manifest, consumer, binding, &error);
+          const auto producer = input_producer(consumer, binding, *physical, &error);
           if (!error.empty())
             throw std::invalid_argument("memory placement: " + error);
           if (!producer || stages[*producer].model_scope != scope_index)

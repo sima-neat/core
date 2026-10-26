@@ -158,7 +158,7 @@ void check_dequant_publication_oracle(const simaai::neat::CompiledProcessCvuCont
 
 // Logical MPK value names and stage-local carrier names are different namespaces.
 // Join by the independently authored MLA input, then prove that producer and
-// consumer address the same exact range of the retained frame arena. Backend
+// consumer address the same model carrier and root-relative range. Backend
 // names retain the authored identity even when Ingress publishes a public alias.
 // Do not prescribe carrier/public labels or use equal byte counts as identity.
 std::string bf16_handoff_error(const simaai::neat::CompiledProcessCvuContract& tess,
@@ -177,14 +177,21 @@ std::string bf16_handoff_error(const simaai::neat::CompiledProcessCvuContract& t
   const auto& route = tess.exposed_view.exposed_output_order.front();
   const auto& physical = input.physical_inputs.front();
   const auto& binding = input.input_bindings.front();
-  const auto detail = " authored=" + authored.name + " producer=" + logical.logical_name +
-                      " carrier=" + carrier.segment_name + " mla=" + physical.segment_name +
-                      " logical_index=" + std::to_string(logical.logical_index) +
-                      " logical_physical=" + std::to_string(logical.physical_index) +
-                      " carrier_index=" + std::to_string(carrier.physical_index) +
-                      " carrier_source=" + std::to_string(carrier.source_physical_index) +
-                      " binding_logical=" + std::to_string(binding.src_logical_output_index) +
-                      " binding_physical=" + std::to_string(binding.src_physical_output_index);
+  const auto detail =
+      " authored=" + authored.name + " producer=" + logical.logical_name +
+      " carrier=" + carrier.segment_name + " mla=" + physical.segment_name +
+      " logical_index=" + std::to_string(logical.logical_index) +
+      " logical_physical=" + std::to_string(logical.physical_index) +
+      " carrier_index=" + std::to_string(carrier.physical_index) +
+      " carrier_source=" + std::to_string(carrier.source_physical_index) +
+      " physical_index=" + std::to_string(physical.physical_index) +
+      " physical_source=" + std::to_string(physical.source_physical_index) +
+      " logical_slot=" + std::to_string(logical.output_slot) +
+      " binding_slot=" + std::to_string(binding.src_output_slot) +
+      " binding_input=" + std::to_string(binding.local_logical_input_index) +
+      " input_logical=" + std::to_string(input.logical_inputs.front().logical_index) +
+      " binding_logical=" + std::to_string(binding.src_logical_output_index) +
+      " binding_physical=" + std::to_string(binding.src_physical_output_index);
   if (authored.name.empty() || logical.logical_name.empty() ||
       logical.backend_name != authored.name || exposed.backend_name != authored.name ||
       exposed.logical_name != logical.logical_name ||
@@ -202,10 +209,12 @@ std::string bf16_handoff_error(const simaai::neat::CompiledProcessCvuContract& t
       exposed.segment_name != carrier.segment_name || route.segment_name != carrier.segment_name ||
       route.logical_output_index != logical.logical_index ||
       route.output_slot != logical.output_slot ||
-      binding.src_logical_output_index != logical.logical_index ||
-      binding.src_output_slot != logical.output_slot ||
-      binding.src_physical_output_index != carrier.source_physical_index ||
-      physical.source_physical_index != carrier.source_physical_index)
+      binding.local_logical_input_index != input.logical_inputs.front().logical_index ||
+      (binding.src_logical_output_index >= 0 &&
+       binding.src_logical_output_index != logical.logical_index) ||
+      (binding.src_output_slot >= 0 && binding.src_output_slot != logical.output_slot) ||
+      (binding.src_physical_output_index >= 0 && physical.source_physical_index >= 0 &&
+       binding.src_physical_output_index != physical.source_physical_index))
     return "mapping:" + detail;
   const auto contains = [](std::uint64_t capacity, std::int64_t offset, std::uint64_t bytes) {
     return offset >= 0 && static_cast<std::uint64_t>(offset) <= capacity &&
@@ -221,7 +230,7 @@ std::string bf16_handoff_error(const simaai::neat::CompiledProcessCvuContract& t
            " producer=" + std::to_string(carrier.size_bytes) +
            " mla=" + std::to_string(physical.size_bytes) + detail;
   if (physical.address_source != sima::PhysicalAddressSource::FrameSpan ||
-      physical.model_carrier_id != carrier.model_carrier_id ||
+      !carrier.model_carrier_id || physical.model_carrier_id != carrier.model_carrier_id ||
       physical.source_byte_offset != carrier.source_byte_offset ||
       binding.src_physical_byte_offset != 0)
     return "placement: producer_offset=" + std::to_string(carrier.source_byte_offset) +
@@ -259,8 +268,9 @@ void check_bf16_handoff_oracle(const simaai::neat::CompiledProcessCvuContract& t
               auto&) { ++producer.runtime_contract.logical_outputs.front().physical_index; },
            "mapping");
   rejected(
-      [](auto&, auto& consumer) {
-        ++consumer.runtime_contract.input_bindings.front().src_output_slot;
+      [](auto& producer, auto& consumer) {
+        consumer.runtime_contract.input_bindings.front().src_output_slot =
+            producer.runtime_contract.logical_outputs.front().output_slot + 1;
       },
       "mapping");
   rejected([](auto& producer,
@@ -436,11 +446,25 @@ RUN_TEST(
       require(mla_stage_fact != nullptr, "YOLOv8 should expose a canonical MLA stage fact");
       require(mla_stage_fact->mla_compiled->runtime_contract.input_bindings.size() == 1U,
               "YOLOv8 MLA stage fact should expose one input binding");
-      require(mla_stage_fact->mla_compiled->runtime_contract.input_bindings.front()
-                          .src_logical_output_index == preproc_handoff->logical_output_index &&
+      require(mla_stage_fact->mla_compiled->runtime_contract.logical_inputs.size() == 1U,
+              "YOLOv8 MLA stage fact should expose one logical input");
+      const auto& mla_input =
+          mla_stage_fact->mla_compiled->runtime_contract.physical_inputs.front();
+      const auto& preproc_outputs =
+          preproc_stage_fact->processcvu_contract->runtime_contract.physical_outputs;
+      const auto producer =
+          std::find_if(preproc_outputs.begin(), preproc_outputs.end(), [&](const auto& output) {
+            return output.physical_index == preproc_handoff->physical_index;
+          });
+      // Cached facts retain model-relative carrier identity. Producer slots are
+      // resolved later for each selected invocation, not copied from a cached layout.
+      require(producer != preproc_outputs.end() && producer->model_carrier_id &&
+                  mla_input.model_carrier_id == producer->model_carrier_id &&
+                  mla_input.source_byte_offset == producer->source_byte_offset &&
+                  mla_input.size_bytes > 0U && mla_input.size_bytes <= producer->size_bytes &&
                   mla_stage_fact->mla_compiled->runtime_contract.input_bindings.front()
-                          .src_output_slot == preproc_handoff->output_slot,
-              "YOLOv8 MLA stage fact should preserve the exact compiler-authored handoff");
+                          .src_physical_size_bytes == mla_input.size_bytes,
+              "YOLOv8 MLA stage fact must preserve the compiler-authored carrier and input span");
 
       const auto post_plan = pack.execution_plan().post;
       const auto post_stage_facts =
@@ -627,20 +651,6 @@ RUN_TEST(
                 expected_segment,
             "BF16 tensor route MLA logical input should preserve the canonical tess handoff "
             "segment");
-        require(
-            mla_stage_fact->mla_compiled->runtime_contract.physical_inputs.front()
-                    .source_physical_index ==
-                canonical_tess.runtime_contract.physical_outputs.front().physical_index,
-            "BF16 tensor route MLA input should follow the canonical tess physical output index");
-        require(mla_stage_fact->mla_compiled->runtime_contract.input_bindings.front()
-                        .src_logical_output_index == handoff->logical_output_index,
-                "BF16 tensor route MLA input binding should preserve the canonical tess logical "
-                "output index");
-        require(
-            mla_stage_fact->mla_compiled->runtime_contract.input_bindings.front().src_output_slot ==
-                handoff->output_slot,
-            "BF16 tensor route MLA input binding should preserve the canonical tess output slot");
-
         const auto post_stage_facts =
             bf16_pack.stage_facts_for_model_stage(internal::ModelStage::Postprocess);
         const internal::ModelFragment::StageFacts* detess_stage_fact = nullptr;

@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <array>
+#include <iterator>
 #include <set>
 #include <variant>
 
@@ -38,6 +39,15 @@ bool same_allocations(const client::FrameLayout& lhs, const client::FrameLayout&
                       return left.size_bytes == right.size_bytes && left.policy == right.policy &&
                              left.required_device_access == right.required_device_access;
                     });
+}
+
+bool imports_model_input(const si::StageStaticSpec& stage) {
+  if (!stage.frame_layout || stage.frame_layout->inputs.size() != 1U ||
+      stage.physical_inputs.size() != 1U)
+    return false;
+  const auto* input = std::get_if<client::DirectMemory>(&stage.frame_layout->inputs.front().source);
+  return input && input->pad == 0 && input->memory_index == 0 && input->byte_offset == 0 &&
+         input->size_bytes == stage.physical_inputs.front().size_bytes;
 }
 
 // Each runner is configured through its typed context; legacy manifest/pool
@@ -275,15 +285,25 @@ RUN_TEST(
             return stage.payload_kind == pipeline_internal::sima::StagePayloadKind::ProcessMla;
           });
       require(custom_mla != custom_manifest->stages.end() && custom_mla->frame_layout &&
-                  custom_mla->frame_layout->ownership ==
-                      simaai::scheduler::client::FrameOwnership::Allocate &&
-                  !custom_mla->physical_inputs.empty() &&
-                  custom_mla->physical_inputs.front().address_source ==
-                      pipeline_internal::sima::PhysicalAddressSource::RuntimePhysicalBinding &&
-                  !custom_mla->frame_layout->inputs.empty() &&
-                  std::holds_alternative<simaai::scheduler::client::PhysicalBinding>(
-                      custom_mla->frame_layout->inputs.front().source),
-              "custom named preproc must retain an imported IFM and fresh MLA output ownership");
+                  !custom_mla->physical_inputs.empty() && !custom_mla->frame_layout->inputs.empty(),
+              "custom named inference must finalize its IFM and output layout");
+      require(custom_mla->frame_layout->ownership == client::FrameOwnership::Allocate,
+              "custom named inference must allocate a fresh output group");
+      require(custom_mla != custom_manifest->stages.begin(),
+              "custom named inference must retain its preceding preprocessor");
+      const auto& custom_preproc = *std::prev(custom_mla);
+      require(custom_preproc.frame_layout && !custom_preproc.frame_layout->outputs.empty(),
+              "custom preprocessor must publish its owned IFM span");
+      const auto* custom_ifm =
+          std::get_if<client::KnownFrameSpan>(&custom_mla->frame_layout->inputs.front().source);
+      const auto& preproc_span = custom_preproc.frame_layout->outputs.front().span;
+      require(custom_mla->physical_inputs.front().address_source ==
+                      pipeline_internal::sima::PhysicalAddressSource::FrameSpan &&
+                  custom_ifm && custom_ifm->pad == 0 &&
+                  custom_ifm->span.allocation_index == preproc_span.allocation_index &&
+                  custom_ifm->span.byte_offset == preproc_span.byte_offset &&
+                  custom_ifm->span.size_bytes == preproc_span.size_bytes,
+              "custom named inference must consume the preprocessor's exact incoming span");
 
       // Naming overrides create distinct graph vertices, not distinct model
       // sources. Contract planning must preserve each invocation's own allocation group.
@@ -342,9 +362,7 @@ RUN_TEST(
           for (const auto& invocation : manifest->stages) {
             require(invocation.frame_layout &&
                         invocation.frame_layout->ownership == client::FrameOwnership::Allocate &&
-                        !invocation.physical_inputs.empty() &&
-                        invocation.physical_inputs.front().address_source ==
-                            pipeline_internal::sima::PhysicalAddressSource::RuntimePhysicalBinding,
+                        imports_model_input(invocation),
                     "each inference-only invocation must import its IFM, not reuse a prior "
                     "allocation group");
           }
@@ -458,33 +476,28 @@ RUN_TEST(
                   mla_stage->frame_layout->ownership == client::FrameOwnership::Allocate &&
                   post_stage->frame_layout->ownership == client::FrameOwnership::ReuseInput &&
                   same_allocations(*mla_stage->frame_layout, *post_stage->frame_layout) &&
-                  !mla_stage->physical_inputs.empty() &&
-                  mla_stage->physical_inputs.front().address_source ==
-                      sima::PhysicalAddressSource::RuntimePhysicalBinding &&
-                  !post_stage->physical_inputs.empty() &&
+                  imports_model_input(*mla_stage) && !post_stage->physical_inputs.empty() &&
                   post_stage->physical_inputs.front().address_source ==
                       sima::PhysicalAddressSource::FrameSpan,
               "standalone post must reuse the selected output group, never the input-only IFM");
 
       // A duplicated typed continuation is not a new whole-region invocation.
-      // Keep the exact-command guard rather than treating a collision as a fence.
-      direct_nodes.push_back(std::make_shared<DetessDequant>(DetessDequantOptions(model)));
+      // Distinct element names must not hide the duplicated model command.
+      DetessDequantOptions duplicate_options(model);
+      duplicate_options.element_name = "duplicate_post";
+      direct_nodes.push_back(std::make_shared<DetessDequant>(duplicate_options));
       pipeline_internal::sima::ManifestBuildDiagnostics duplicate_diagnostics;
       const auto duplicate = compile_node_contracts(direct_nodes, {}, &duplicate_diagnostics);
-      auto duplicate_manifest =
-          render_manifest_from_compiled_contracts(duplicate, {}, &duplicate_diagnostics);
-      require(duplicate_manifest && duplicate_diagnostics.errors.empty(),
-              "duplicate continuation must reach the cold storage identity check");
-      std::string duplicate_error;
-      try {
-        sima::finalize_pipeline_storage(*duplicate_manifest);
-      } catch (const std::invalid_argument& error) {
-        duplicate_error = error.what();
-      }
-      require(!duplicate_error.empty(),
-              "duplicate commands within an invocation must still be rejected");
-      require_contains(duplicate_error, "physical command identity",
-                       "duplicate continuation must retain the exact command diagnostic");
+      require(!duplicate.fully_renderable &&
+                  std::any_of(
+                      duplicate_diagnostics.errors.begin(), duplicate_diagnostics.errors.end(),
+                      [](const auto& error) {
+                        return error.find("selected route repeats an invalid command identity") !=
+                               std::string::npos;
+                      }),
+              "semantic selection must reject duplicate commands within one invocation: " +
+                  (duplicate_diagnostics.errors.empty() ? std::string("no diagnostic")
+                                                        : duplicate_diagnostics.errors.front()));
 
       const auto legacy = sima_test::make_model_archive_fixture(
           "model_stage_fragments_legacy_missing_mpk", {

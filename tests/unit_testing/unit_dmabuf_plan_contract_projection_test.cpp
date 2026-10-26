@@ -1523,10 +1523,11 @@ void test_casttess_hwc_execution_view() {
       }
       const auto input_bytes = plan.value(0U)->required_bytes;
       const auto output_bytes = plan.value(2U)->required_bytes;
-      require(input.storage.nbytes == input_bytes && output.storage.nbytes == output_bytes &&
-                  contract->runtime_contract.physical_inputs[member].source_byte_offset == 0U &&
-                  contract->runtime_contract.physical_outputs[member].source_byte_offset == 32U,
-              "execution views preserve whole-batch spans without fabricated sample offsets");
+      require(
+          input.storage.nbytes == input_bytes && output.storage.nbytes == output_bytes &&
+              contract->runtime_contract.physical_inputs[member].source_byte_offset == 64U &&
+              contract->runtime_contract.physical_outputs[member].source_byte_offset == 32U,
+          "execution views preserve whole-batch spans and carrier-relative input/output origins");
       if (test.output_storage_bytes) {
         const auto& logical = contract->runtime_contract.logical_outputs.front();
         require(logical.shape == test.shape && logical.size_bytes == test.output_storage_bytes &&
@@ -2123,8 +2124,6 @@ RUN_TEST(
           }
         }
         require(!fused_commands.empty(), "fused graph id was not selected");
-        for (std::size_t member = 0; member < fused_case.members; ++member) {
-        }
         auto fused_contract = sc::build_dmabuf_plan_processcvu_command_contract(
             fused_plan, *fused_physical, fused_commands, &error);
         require(fused_contract.has_value(),
@@ -2162,7 +2161,9 @@ RUN_TEST(
               input && input->storage_binding && fused_plan.model_inputs()[member] == input_id &&
                   physical.address_source == sima::PhysicalAddressSource::RuntimePhysicalBinding &&
                   physical.physical_index == selector &&
-                  physical.source_physical_index == selector && physical.source_byte_offset == 0 &&
+                  physical.source_physical_index == selector &&
+                  physical.source_byte_offset ==
+                      static_cast<std::int64_t>(fused_case.input_offset) &&
                   physical.size_bytes == input->storage_binding->physical_span &&
                   physical.segment_name == "value_" + std::to_string(input_id) &&
                   logical.logical_index == selector && logical.physical_index == selector &&

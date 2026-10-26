@@ -2049,6 +2049,9 @@ void check_resnet_canonical_publication(const simaai::neat::CompiledProcessCvuCo
   auto stage = simaai::neat::project_processcvu_stage_contract(contract);
   stage.element_name = stage.logical_stage_id = "resnet_fused_postprocess";
   stage.processcvu.requested_run_target = "EV74";
+  // This standalone postprocessor imports its MLA producer's published buffers.
+  for (auto& input : stage.physical_inputs)
+    input.address_source = PhysicalAddressSource::RuntimePhysicalBinding;
   SimaPluginStaticManifest manifest;
   manifest.stages.push_back(std::move(stage));
   const auto failure = prepare_kernel_stage_recipes(&manifest, {}, {}, {}, {});
