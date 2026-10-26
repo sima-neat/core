@@ -102,6 +102,7 @@ def test_preflight_runs_admission_without_package_install(tmp_path, monkeypatch,
         assert deploy.os.environ['PIP_NO_INDEX'] == '1'
         assert deploy.os.environ['PIP_FIND_LINKS'] == (tmp_path/role/'wheels').as_uri()
         assert deploy.os.environ['LC_ALL'] == 'C'
+    assert not any('--clear' in c for c in calls)
     assert not any('install' in c and '--simulate' not in c for c in calls)
     assert calls[-1][2:4] == [role, 'preflight']
     plan = next(c for c in calls if '--simulate' in c)
@@ -314,6 +315,7 @@ def test_verification_does_not_reserve_installation_space(tmp_path, monkeypatch)
     calls = []
     monkeypatch.setattr(deploy, 'verify_bundle', lambda *args: None)
     monkeypatch.setattr(deploy, 'environment', lambda *args: None)
+    monkeypatch.setattr(deploy, 'recreate_python_environment', lambda *args: pytest.fail('verification must not clear venv'))
     monkeypatch.setattr(deploy, 'check_space', lambda *args: pytest.fail('verification must not reserve install space'))
     monkeypatch.setattr(deploy, 'run', lambda *args, **kwargs: None)
     monkeypatch.setattr(deploy, 'missing_prerequisites', lambda: [])
@@ -368,7 +370,7 @@ def test_python_paths_match_online_defaults(tmp_path, monkeypatch, role, nvme_ex
     assert deploy.python_location(role, tmp_path/'nvme') == (user, tmp_path/expected)
 
 
-def test_nvme_activation_preserves_existing_home_environment(tmp_path, monkeypatch):
+def test_nvme_activation_replaces_existing_home_environment(tmp_path, monkeypatch):
     from types import SimpleNamespace
     user = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid(), pw_dir=str(tmp_path))
     old = tmp_path/'pyneat'
@@ -379,10 +381,10 @@ def test_nvme_activation_preserves_existing_home_environment(tmp_path, monkeypat
     monkeypatch.setattr(deploy.os, 'chown', lambda *args, **kwargs: None)
     deploy.finish_python_location(user, path, 'card')
     assert old.is_symlink() and old.resolve() == path
-    backups = list(tmp_path.glob('pyneat-before-offline-*/pyneat/user-package'))
-    assert len(backups) == 1 and backups[0].read_text() == 'keep'
+    assert not (old/'user-package').exists()
+    assert not list(tmp_path.glob('pyneat-before-offline-*'))
     deploy.finish_python_location(user, path, 'card')
-    assert len(list(tmp_path.glob('pyneat-before-offline-*'))) == 1
+    assert not list(tmp_path.glob('pyneat-before-offline-*'))
 
 
 def test_sudo_selects_invoking_user_and_checks_nvme_as_that_user(tmp_path, monkeypatch):
@@ -416,45 +418,21 @@ def test_host_lifecycle_does_not_reopen_prepared_python_environment(tmp_path):
     assert result.stdout.splitlines() == ['--skip-setup']
 
 
+@pytest.mark.parametrize('name', ['pyneatpcie', 'pyneat'])
 @pytest.mark.parametrize('symlink', [False, True])
-@pytest.mark.parametrize('fails', [False, True])
-def test_fresh_environment_preserves_previous_packages(tmp_path, monkeypatch, symlink, fails):
-    path = tmp_path/'pyneatpcie'
-    original = tmp_path/'original' if symlink else path
-    original.mkdir()
-    (original/'user-data').write_text('preserve me')
-    if symlink:
-        path.symlink_to(original.name, target_is_directory=True)
-    def create(args):
-        Path(args[-1]).mkdir()
-        (Path(args[-1])/'new-data').touch()
-    monkeypatch.setattr(deploy, 'run', create)
-    def install():
-        with deploy.fresh_python_environment(path):
-            assert not (path/'user-data').exists()
-            if fails:
-                raise RuntimeError('install failed')
-    if fails:
-        with pytest.raises(RuntimeError, match='install failed'):
-            install()
-        assert (path/'user-data').read_text() == 'preserve me'
-        assert path.is_symlink() == symlink
-        assert not list(tmp_path.glob('pyneatpcie-before-offline-*'))
-    else:
-        install()
-        backups = list(tmp_path.glob('pyneatpcie-before-offline-*'))
-        assert len(backups) == 1
-        assert (backups[0]/'user-data').read_text() == 'preserve me'
-        assert backups[0].is_symlink() == symlink
-        assert (path/'new-data').exists()
-
-
-def test_existing_broken_pytest_does_not_contaminate_offline_environment(tmp_path):
+def test_existing_broken_pytest_does_not_contaminate_offline_environment(tmp_path, name, symlink):
     import json
     import subprocess
     import sys
-    path = tmp_path/'pyneatpcie'
-    subprocess.run([sys.executable, '-m', 'venv', str(path)], check=True)
+    path = tmp_path/name
+    if symlink:
+        target = tmp_path/'nvme'/name
+        target.mkdir(parents=True)
+        path.symlink_to(target.relative_to(tmp_path), target_is_directory=True)
+    unrelated = tmp_path/'unrelated'
+    unrelated.mkdir()
+    (unrelated/'keep').write_text('keep')
+    subprocess.run([sys.executable, '-m', 'venv', str(path.resolve())], check=True)
     python = str(path/'bin/python')
     site = Path(subprocess.check_output([python, '-c',
         'import sysconfig; print(sysconfig.get_path("purelib"))'], text=True).strip())
@@ -465,8 +443,26 @@ def test_existing_broken_pytest_does_not_contaminate_offline_environment(tmp_pat
     broken = subprocess.run([python, '-m', 'pip', 'check'], capture_output=True, text=True)
     assert broken.returncode == 1
     assert 'packaging' in broken.stdout and 'pygments' in broken.stdout
-    with deploy.fresh_python_environment(path):
-        subprocess.run([python, '-m', 'pip', 'check'], check=True, capture_output=True)
-        names = json.loads(subprocess.check_output([python, '-m', 'pip', 'list', '--format=json'], text=True))
-        assert 'pytest' not in {row['name'] for row in names}
-    assert list(tmp_path.glob('pyneatpcie-before-offline-*'))
+    deploy.recreate_python_environment(path)
+    subprocess.run([python, '-m', 'pip', 'check'], check=True, capture_output=True)
+    names = json.loads(subprocess.check_output([python, '-m', 'pip', 'list', '--format=json'], text=True))
+    assert 'pytest' not in {row['name'] for row in names}
+    assert not list(tmp_path.glob('*before-offline-*'))
+    assert path.is_symlink() == symlink
+    assert (unrelated/'keep').read_text() == 'keep'
+    assert not metadata.exists()
+
+
+def test_venv_creation_failure_propagates_without_backup_or_restore(tmp_path, monkeypatch):
+    import subprocess
+    path = tmp_path/'pyneat'
+    def fail(args):
+        assert args == ['python3', '-m', 'venv', '--clear', str(path)]
+        path.mkdir()
+        (path/'partial').touch()
+        raise subprocess.CalledProcessError(1, args)
+    monkeypatch.setattr(deploy, 'run', fail)
+    with pytest.raises(subprocess.CalledProcessError):
+        deploy.recreate_python_environment(path)
+    assert (path/'partial').exists()
+    assert not list(tmp_path.glob('*before-offline-*'))
