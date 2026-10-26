@@ -28,7 +28,7 @@ def output(args):
 def configure(repo, state):
     for directory in ('lists/partial', 'cache/partial', 'empty'):
         (state / directory).mkdir(parents=True, exist_ok=True)
-    (state / 'sources.list').write_text(f'deb [trusted=yes] file:{repo} ./\n')
+    (state / 'sources.list').write_text(f'deb [trusted=yes] {repo.resolve().as_uri()} ./\n')
     settings = {
         'Dir::Etc::main': '/dev/null', 'Dir::Etc::parts': str(state/'empty'),
         'Dir::Etc::sourcelist': str(state/'sources.list'),
@@ -145,7 +145,7 @@ def execute(root, role, phase):
     os.environ.update({
         'DEBIAN_FRONTEND': 'noninteractive', 'LC_ALL': 'C', 'PYTHONDONTWRITEBYTECODE': '1',
         'PIP_CONFIG_FILE': '/dev/null', 'PIP_NO_INDEX': '1', 'PIP_NO_CACHE_DIR': '1',
-        'PIP_FIND_LINKS': str(target/'wheels'), 'PIP_DISABLE_PIP_VERSION_CHECK': '1',
+        'PIP_FIND_LINKS': (target/'wheels').resolve().as_uri(), 'PIP_DISABLE_PIP_VERSION_CHECK': '1',
         'PYNEAT_VENV_DIR': venv, 'NEAT_INSTALLER_APT_UPDATE': 'OFF',
         'NEAT_INSTALLER_INSTALL_CODEX_SKILL': 'OFF', 'NEAT_INSTALLER_INSTALL_CLAUDE_SKILL': 'OFF',
         'SIMAPCIE_INSTALL_CODEX_SKILL': 'OFF', 'SIMAPCIE_INSTALL_CLAUDE_SKILL': 'OFF',

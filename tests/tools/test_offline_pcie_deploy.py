@@ -20,14 +20,72 @@ def test_private_apt_sources_and_hooks(tmp_path, monkeypatch):
     config = Path(os.environ['APT_CONFIG']).read_text()
     assert 'Dir::Etc::main "/dev/null"' in config
     assert str(tmp_path/'state/empty') in config
-    assert (tmp_path/'state/sources.list').read_text() == f'deb [trusted=yes] file:{tmp_path}/repo ./\n'
+    assert (tmp_path/'state/sources.list').read_text() == f'deb [trusted=yes] {(tmp_path/"repo").as_uri()} ./\n'
     assert 'Acquire::IndexTargets::deb::Packages::CompressionTypes "uncompressed";' in config
     assert 'https:' not in config
+
+
+@pytest.mark.parametrize('sdk', [False, True])
+def test_apt_reads_and_downloads_from_encoded_bundle_path(tmp_path, sdk):
+    import subprocess
+    repo = tmp_path/'offline space # café'/'repo'
+    repo.mkdir(parents=True)
+    package = tmp_path/'package'
+    (package/'DEBIAN').mkdir(parents=True)
+    (package/'DEBIAN/control').write_text(
+        'Package: neat-offline-path-test\nVersion: 1.0\nArchitecture: all\n'
+        'Maintainer: Test <test@example.com>\nDescription: Offline path fixture\n')
+    deb = repo/'neat-offline-path-test_1.0_all.deb'
+    subprocess.run(['dpkg-deb', '--build', str(package), str(deb)], check=True, capture_output=True)
+    with (repo/'Packages').open('w') as stream:
+        subprocess.run(['dpkg-scanpackages', '.', '/dev/null'], cwd=repo,
+                       stdout=stream, stderr=subprocess.PIPE, check=True)
+    destination = tmp_path/'download'
+    destination.mkdir()
+    # Exercise real APT parsing and fetching without changing installed packages.
+    with deploy.private_apt(repo) as state:
+        if sdk:
+            from sdk_install import local_apt_methods
+            local_apt_methods(state)
+        subprocess.run(['apt-get', 'update'], check=True, capture_output=True, timeout=30)
+        subprocess.run(['apt-get', 'download', 'neat-offline-path-test=1.0'], cwd=destination,
+                       check=True, capture_output=True, timeout=30)
+    assert (destination/deb.name).read_bytes() == deb.read_bytes()
+
+
+def test_pip_resolves_dependencies_from_encoded_wheelhouse(tmp_path, monkeypatch):
+    import subprocess
+    from zipfile import ZipFile
+    root = tmp_path/'offline space # café'
+    wheels = root/'card/wheels'
+    wheels.mkdir(parents=True)
+    wheel = wheels/'neat_offline_path_test-1.0-py3-none-any.whl'
+    dist = 'neat_offline_path_test-1.0.dist-info'
+    with ZipFile(wheel, 'w') as archive:
+        archive.writestr(dist+'/METADATA', 'Metadata-Version: 2.1\nName: neat-offline-path-test\nVersion: 1.0\n')
+        archive.writestr(dist+'/WHEEL', 'Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n')
+        archive.writestr(dist+'/RECORD', '')
+    monkeypatch.setattr(deploy, 'verify_bundle', lambda *args: None)
+    monkeypatch.setattr(deploy, 'environment', lambda *args: None)
+    monkeypatch.setattr(deploy, 'missing_prerequisites', lambda: [])
+    monkeypatch.setattr(deploy, 'check_space', lambda *args: None)
+    monkeypatch.setattr(deploy, 'run', lambda *args, **kwargs: None)
+    with monkeypatch.context() as context:
+        context.setattr(deploy.os, 'environ', os.environ.copy())
+        deploy.execute(root, 'card', 'preflight')
+        env = dict(deploy.os.environ)
+    destination = tmp_path/'download'
+    # Resolve by name, as pip must do for dependencies of the payload wheels.
+    subprocess.run([sys.executable, '-m', 'pip', 'download', '--no-deps', '--only-binary=:all:',
+                    '--dest', str(destination), 'neat-offline-path-test==1.0'], env=env,
+                   check=True, capture_output=True, timeout=30)
+    assert (destination/wheel.name).read_bytes() == wheel.read_bytes()
 
 
 @pytest.mark.parametrize('role', ['host', 'card'])
 def test_preflight_runs_admission_without_package_install(tmp_path, monkeypatch, role):
     calls = []
+    tmp_path = tmp_path/'offline space # café'
     (tmp_path/role/'payload').mkdir(parents=True)
     (tmp_path/role/'payload/test.deb').touch()
     monkeypatch.setattr(deploy, 'verify_bundle', lambda *args: None)
@@ -42,6 +100,7 @@ def test_preflight_runs_admission_without_package_install(tmp_path, monkeypatch,
         assert 'PIP_EXTRA_INDEX_URL' not in deploy.os.environ
         assert 'NEAT_INSTALLER_SKIP_PLATFORM_CHECK' not in deploy.os.environ
         assert deploy.os.environ['PIP_NO_INDEX'] == '1'
+        assert deploy.os.environ['PIP_FIND_LINKS'] == (tmp_path/role/'wheels').as_uri()
         assert deploy.os.environ['LC_ALL'] == 'C'
     assert not any('install' in c and '--simulate' not in c for c in calls)
     assert calls[-1][2:4] == [role, 'preflight']
