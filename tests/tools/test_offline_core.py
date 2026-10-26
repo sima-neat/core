@@ -198,6 +198,7 @@ def test_sdk_routes_to_sysroot_and_paired_devkit_after_preflight(tmp_path, phase
     device.phase.side_effect = lambda value: events.append(('devkit', value))
     def local(args, **kwargs):
         assert args[-2] == str(tmp_path/'sdk_install.py')
+        assert 'unshare' not in args
         events.append(('sdk', args[-1]))
     with patch.object(core_install.os, 'geteuid', return_value=0), \
          patch.object(core_install, 'verify_bundle', return_value={'scope': 'core'}), \
@@ -308,6 +309,7 @@ def test_sdk_uses_private_arm64_repository_and_disables_online_paired_sync(tmp_p
          patch.object(core_install, 'environment', return_value='sdk'), \
          patch.object(sdk_install, 'verify_bundle', return_value={'scope': 'core'}), \
          patch.object(sdk_install, 'output', return_value='arm64'), \
+         patch.object(sdk_install, 'local_apt_methods'), \
          patch.object(sdk_install, 'run', side_effect=lambda args, **kwargs: calls.append((args, kwargs))):
         sdk_install.execute(tmp_path, 'preflight')
     assert len(calls) == 2
@@ -318,6 +320,75 @@ def test_sdk_uses_private_arm64_repository_and_disables_online_paired_sync(tmp_p
     assert 'NEAT_INSTALLER_SKIP_PLATFORM_CHECK' not in env
     assert 'DEVKIT_SYNC_DEVKIT_IP' not in env
     assert 'ensure_platform_compatible' in calls[-1][0][2]
+
+
+def test_sdk_does_not_require_namespace_capabilities(tmp_path):
+    from unittest.mock import mock_open
+    from contextlib import nullcontext
+    with patch.object(core_install.os, 'geteuid', return_value=0), \
+         patch.object(core_install, 'verify_bundle', return_value={'scope': 'core'}), \
+         patch.object(core_install, 'environment', return_value='sdk'), \
+         patch.object(core_install.shutil, 'which', side_effect=lambda name: None if name == 'unshare' else '/bin/'+name), \
+         patch('builtins.open', mock_open()), patch.object(core_install.fcntl, 'flock'), \
+         patch.object(core_install, 'paired_devkit', return_value=nullcontext(None)), \
+         patch.object(core_install, 'run_host') as run:
+        core_install.install(tmp_path, 'preflight')
+    assert 'unshare' not in run.call_args.args[0]
+    assert str(tmp_path/'sdk_install.py') in run.call_args.args[0]
+
+
+def test_sdk_apt_exposes_only_local_transport_methods(tmp_path):
+    source, state = tmp_path/'system-methods', tmp_path/'private-apt'
+    source.mkdir(); state.mkdir()
+    for name in ('file', 'copy', 'store', 'http', 'https', 'mirror', 'ssh'):
+        (source/name).write_text('method')
+    sdk_install.local_apt_methods(state, source)
+    assert {path.name for path in (state/'methods').iterdir()} == {'file', 'copy', 'store'}
+    assert all(path.is_symlink() for path in (state/'methods').iterdir())
+    assert str(state/'methods')+'/' in (state/'config').read_text()
+
+
+def test_sdk_fails_closed_if_local_apt_methods_are_missing(tmp_path):
+    source, state = tmp_path/'system-methods', tmp_path/'private-apt'
+    source.mkdir(); state.mkdir()
+    with pytest.raises(ValueError, match='SDK prerequisite missing'):
+        sdk_install.local_apt_methods(state, source)
+    assert not (state/'config').exists()
+
+
+def test_sdk_apt_blocks_http_even_with_an_online_source(tmp_path):
+    import http.server
+    import os
+    import subprocess
+    import threading
+    from deploy import private_apt
+    requests = []
+    class Canary(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.path)
+            self.send_error(404)
+        def log_message(self, *args):
+            pass
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Canary)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        with private_apt(tmp_path/'repo') as state:
+            (state/'sources.list').write_text(f'deb [trusted=yes] http://127.0.0.1:{server.server_port}/ ./\n')
+            env = {**os.environ, 'LC_ALL': 'C'}
+            # Positive control: the regular APT HTTP method can reach the server.
+            subprocess.run(['apt-get', 'update'], env=env, capture_output=True, timeout=30)
+            assert requests
+            requests.clear()
+            sdk_install.local_apt_methods(state)
+            result = subprocess.run(['apt-get', 'update'], env=env, capture_output=True, text=True, timeout=30)
+            assert result.returncode != 0
+            assert '/methods/http' in result.stderr
+            assert not requests
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join()
 
 
 @pytest.mark.parametrize('field,value', [('os_id', 'ubuntu'), ('os_version', '24.04'), ('architecture', 'amd64')])

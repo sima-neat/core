@@ -3,13 +3,25 @@
 import argparse
 import os
 from pathlib import Path
-import socket
 import tempfile
 
 from assemble import sha, verify_bundle
 from deploy import private_apt, run, output
 
 SYSROOT = Path('/opt/toolchain/aarch64/modalix')
+
+
+def local_apt_methods(state, source=Path('/usr/lib/apt/methods')):
+    """SDK containers need no namespace capability to restrict APT to files."""
+    methods = state/'methods'
+    methods.mkdir()
+    for name in ('file', 'copy', 'store'):
+        method = source/name
+        if not method.is_file():
+            raise ValueError('SDK prerequisite missing: local APT method '+str(method))
+        (methods/name).symlink_to(method)
+    with (state/'config').open('a') as config:
+        config.write('Dir::Bin::Methods "'+str(methods)+'/";\n')
 
 
 def verify(target, sysroot=SYSROOT):
@@ -49,6 +61,7 @@ def execute(root, phase):
     env.update(SYSROOT=str(SYSROOT), NEAT_INSTALLER_SKIP_DEVKIT_SYNC='ON',
                NEAT_INSTALLER_INSTALL_CODEX_SKILL='OFF', NEAT_INSTALLER_INSTALL_CLAUDE_SKILL='OFF')
     with private_apt(target/'repo') as state:
+        local_apt_methods(state)
         with (state/'config').open('a') as config:
             config.write('APT::Architecture "arm64";\nAPT::Architectures { "arm64"; };\n')
         env['APT_CONFIG'] = str(state/'config')
@@ -76,6 +89,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('phase', choices=['preflight', 'install', 'verify'])
     args = parser.parse_args()
-    if os.geteuid() != 0 or any(name != 'lo' for _, name in socket.if_nameindex()):
-        parser.error('requires root and an isolated network namespace; use install.sh')
+    if os.geteuid() != 0:
+        parser.error('requires root inside the Neat SDK; use install.sh')
     execute(Path(__file__).resolve().parent, args.phase)

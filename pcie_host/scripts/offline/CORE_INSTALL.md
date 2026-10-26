@@ -23,9 +23,10 @@ sudo ./install.sh --verify
 
 The archive includes the Core and matching Scheduler Debian packages, installer
 lifecycle scripts, local APT dependency repository, Python wheels and their
-dependencies, compatibility metadata, and a checksum inventory. Installation
-uses an isolated network namespace and only the bundled APT repository and
-wheelhouse. It does not need sima-cli, a PCIe host, SSH, or Internet access.
+dependencies, compatibility metadata, and a checksum inventory. DevKit
+installation uses an isolated network namespace and only the bundled APT
+repository and wheelhouse. It does not need sima-cli, a PCIe host, SSH, or
+Internet access.
 `--check` verifies integrity and compatibility and simulates the package
 transaction without installing. `--verify` checks installed package versions,
 APT health, Python dependencies, and the PyNeat import. These checks do not prove
@@ -37,6 +38,12 @@ Python wheels are retained for DevKit deployment, not installed into SDK host
 Python. SDK `--check` validates environment, Platform, package architecture and
 package composition; `--verify` compares installed sysroot files and symlinks
 against the bundled DEBs.
+The SDK path works in the standard unprivileged SDK container: it does not use
+`unshare` or require additional container capabilities. Its private APT
+configuration enables only the `file`, `copy`, and `store` methods. HTTP,
+HTTPS, and other network transports are unavailable; missing dependencies fail
+without an online fallback. Only the selected package archives are extracted
+into the sysroot; their native package installation scripts are not executed.
 
 If the SDK has `DEVKIT_SYNC_DEVKIT_IP` configured by DevKit Sync, the installer
 transfers the same offline bundle over SSH and runs it on the paired DevKit.
@@ -45,7 +52,7 @@ must already be provisioned. The transfer uses the SDK user's SSH identity;
 `DEVKIT_DEPLOY_USER` defaults to `sima`. DevKit sudo authentication follows the
 online installer's `SUDO_PASSWORD` / `DEVKIT_PASSWORD` convention. Set
 `NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON` to install only into the SDK sysroot.
-Package installation remains network-isolated on both targets; SSH is used only
+Package installation uses only bundled files on both targets; SSH is used only
 to transfer the bundle and invoke its installer. An explicitly configured but
 unreachable or incompatible paired DevKit fails installation.
 If `sudo` filters the SDK's pairing variables, preserve them explicitly:

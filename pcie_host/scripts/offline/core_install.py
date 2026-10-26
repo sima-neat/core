@@ -65,7 +65,7 @@ def install(root, phase, devkit_only=False):
     mode = environment(root)
     if devkit_only and mode != 'devkit':
         raise ValueError('Paired target must be a provisioned Modalix DevKit')
-    for command in ('unshare', 'timeout', 'python3'):
+    for command in (('timeout', 'python3') if mode == 'sdk' else ('unshare', 'timeout', 'python3')):
         if not shutil.which(command):
             raise ValueError('Platform prerequisite missing: ' + command)
     # Shared with the PCIe installer to prevent simultaneous runtime upgrades.
@@ -74,7 +74,8 @@ def install(root, phase, devkit_only=False):
         def local(current):
             command = [str(root/'sdk_install.py'), current] if mode == 'sdk' else [str(root/'deploy.py'), 'card', current]
             run_host(['timeout', '--foreground', '--kill-after=30', '1500',
-                      'unshare', '--net', 'python3', '-B', *command], stdin=subprocess.DEVNULL)
+                      *([] if mode == 'sdk' else ['unshare', '--net']),
+                      'python3', '-B', *command], stdin=subprocess.DEVNULL)
         if mode == 'sdk':
             with paired_devkit(root) as device:
                 if phase == 'install':
