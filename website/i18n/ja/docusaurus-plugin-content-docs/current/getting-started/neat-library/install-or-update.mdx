@@ -152,7 +152,7 @@ SDK のセットアップと DevKit Sync の初期設定については、[Neat 
 
 ## スタンドアロンのオフラインインストール
 
-Platform 3.0 と eLxr 26.04 を実行する Modalix DevKit には、スタンドアロンの `neat-core-offline-installer.tar.gz` を使用します。ネットワーク接続のあるコンピューターで Core の `offline` バリアントをダウンロードし、`metadata-offline.json` のチェックサムと照合してから DevKit にコピーします。Neat アプリケーションを停止し、アーカイブを展開して次を実行します。
+Platform 3.0 と eLxr 26.04 を実行する Modalix DevKit には、スタンドアロンの `neat-core-offline-installer.tar.gz` を使用します。ネットワーク接続のあるコンピューターで Core の `offline` バリアントをダウンロードし、`offline/metadata.json` のチェックサムと照合してから DevKit にコピーします。Neat アプリケーションを停止し、アーカイブを展開して次を実行します。
 
 ```bash
 tar -xzf neat-core-offline-installer.tar.gz
@@ -174,3 +174,5 @@ sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
 ```
 
 `neat-core-offline-installer.tar.gz` を展開し、`cd neat-core-offline && sudo ./install.sh` を実行します。チュートリアルやテストが必要な場合は、別の追加アーカイブを任意のディレクトリに展開してください。
+
+インストーラーは Neat eLxr SDK またはセットアップ済みの Modalix DevKit のみを受け入れます。`/etc/sdk-release` または `/etc/buildinfo` をアーカイブ内のパッケージマニフェストと照合するため、ダウンロードした公開用メタデータは不要です。他の環境や互換性のない Platform バージョンでは、インストール前に停止します。SDK では Core を `/opt/toolchain/aarch64/modalix` にコピーします。`DEVKIT_SYNC_DEVKIT_IP` が設定されていれば、同じオフラインバンドルを SSH 経由でペアリング済みの DevKit に転送します。インストール開始前に両方の環境が事前チェックに合格する必要があります。DevKit 上ではローカルにインストールします。

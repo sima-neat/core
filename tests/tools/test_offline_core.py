@@ -13,6 +13,8 @@ sys.path.insert(0, str(HERE))
 import assemble
 import ci
 import core_install
+import paired_devkit
+import sdk_install
 
 
 def spec(tmp_path):
@@ -50,6 +52,8 @@ def test_core_archive_is_self_contained_and_validated_offline(tmp_path):
     with tarfile.open(archive) as tar:
         assert tar.getmember('neat-core-offline/install.sh').mode == 0o755
         assert tar.getmember('neat-core-offline/process.py').isfile()
+        assert tar.getmember('neat-core-offline/sdk_install.py').isfile()
+        assert tar.getmember('neat-core-offline/paired_devkit.py').isfile()
     meta = json.loads((tmp_path/'metadata.json').read_text())
     assert meta['resources'] == [assemble.CORE_ARCHIVE_NAME, 'sima-neat-1-Linux-extras.tar.gz']
     minimal = json.loads((tmp_path/'metadata-minimal.json').read_text())
@@ -110,6 +114,7 @@ def test_installer_uses_shared_lock_and_isolated_supervised_process(tmp_path):
     from unittest.mock import mock_open
     with patch.object(core_install.os, 'geteuid', return_value=0), \
          patch.object(core_install, 'verify_bundle', return_value={'scope': 'core'}), \
+         patch.object(core_install, 'environment', return_value='devkit'), \
          patch.object(core_install.shutil, 'which', return_value='/bin/tool'), \
          patch('builtins.open', mock_open()) as opened, \
          patch.object(core_install.fcntl, 'flock') as lock, \
@@ -122,6 +127,197 @@ def test_installer_uses_shared_lock_and_isolated_supervised_process(tmp_path):
     assert argv[argv.index('unshare')+1] == '--net'
     assert '--foreground' in argv
     assert run.call_args.kwargs['stdin'] == core_install.subprocess.DEVNULL
+
+
+def environment_fixture(tmp_path, identity):
+    root, system = tmp_path/'bundle', tmp_path/'system'
+    (root/'card/payload').mkdir(parents=True)
+    (root/'card/payload/manifest.json').write_text(json.dumps({'platform-version': '3.0.0'}))
+    (system/'etc').mkdir(parents=True)
+    if identity == 'devkit':
+        (system/'etc/buildinfo').write_text('MACHINE = modalix\nDISTRO_VERSION = 3.0.0\n')
+    elif identity == 'sdk':
+        (system/'etc/sdk-release').write_text('SDK Version = 3.0.0_Palette_SDK_neat_develop\nPlatform Base = 3.0.0\n')
+        (system/'opt/toolchain/aarch64/modalix/usr').mkdir(parents=True)
+    return root, system
+
+
+@pytest.mark.parametrize('identity', ['devkit', 'sdk'])
+def test_offline_environment_uses_bundled_manifest_without_download_metadata(tmp_path, identity):
+    root, system = environment_fixture(tmp_path, identity)
+    with patch.object(core_install.platform, 'machine', return_value='aarch64'), \
+         patch.object(core_install.platform, 'system', return_value='Linux'):
+        assert core_install.environment(root, system) == identity
+    assert not (root/'metadata.json').exists()
+
+
+@pytest.mark.parametrize('identity', ['devkit', 'sdk'])
+def test_offline_environment_rejects_platform_mismatch(tmp_path, identity):
+    root, system = environment_fixture(tmp_path, identity)
+    (root/'card/payload/manifest.json').write_text(json.dumps({'platform-version': '4.0.0'}))
+    with patch.object(core_install.platform, 'machine', return_value='aarch64'), \
+         patch.object(core_install.platform, 'system', return_value='Linux'):
+        with pytest.raises(ValueError, match='Incompatible.*Platform version'):
+            core_install.environment(root, system)
+
+
+@pytest.mark.parametrize('identity', ['missing', 'other_board', 'unknown_sdk', 'missing_sysroot', 'wrong_arch'])
+def test_offline_environment_rejects_unsupported_identity(tmp_path, identity):
+    root, system = environment_fixture(tmp_path, 'sdk' if identity == 'missing_sysroot' else 'missing')
+    if identity == 'other_board':
+        (system/'etc/buildinfo').write_text('MACHINE = other\nDISTRO_VERSION = 3.0.0\n')
+    elif identity == 'unknown_sdk':
+        (system/'etc/sdk-release').write_text('SDK Type = other-sdk\nSDK Version = 3.0.0\n')
+    elif identity == 'missing_sysroot':
+        (system/'opt/toolchain/aarch64/modalix/usr').rmdir()
+    elif identity == 'wrong_arch':
+        (system/'etc/buildinfo').write_text('MACHINE = modalix\nDISTRO_VERSION = 3.0.0\n')
+    with patch.object(core_install.platform, 'machine', return_value='x86_64'), \
+         patch.object(core_install.platform, 'system', return_value='Linux'):
+        with pytest.raises(ValueError):
+            core_install.environment(root, system)
+
+
+@pytest.mark.parametrize('phase', ['preflight', 'install', 'verify'])
+def test_environment_rejection_precedes_lock_namespace_and_mutation(tmp_path, phase):
+    with patch.object(core_install.os, 'geteuid', return_value=0), \
+         patch.object(core_install, 'verify_bundle', return_value={'scope': 'core'}), \
+         patch.object(core_install, 'environment', side_effect=ValueError('Unsupported installation environment')), \
+         patch.object(core_install, 'run_host') as run, patch('builtins.open') as opened:
+        with pytest.raises(ValueError, match='Unsupported installation environment'):
+            core_install.install(tmp_path, phase)
+        run.assert_not_called()
+        opened.assert_not_called()
+
+
+@pytest.mark.parametrize('phase', ['preflight', 'install', 'verify'])
+def test_sdk_routes_to_sysroot_and_paired_devkit_after_preflight(tmp_path, phase):
+    from unittest.mock import mock_open, MagicMock
+    events = []
+    device = MagicMock()
+    device.phase.side_effect = lambda value: events.append(('devkit', value))
+    def local(args, **kwargs):
+        assert args[-2] == str(tmp_path/'sdk_install.py')
+        events.append(('sdk', args[-1]))
+    with patch.object(core_install.os, 'geteuid', return_value=0), \
+         patch.object(core_install, 'verify_bundle', return_value={'scope': 'core'}), \
+         patch.object(core_install, 'environment', return_value='sdk'), \
+         patch.object(core_install.shutil, 'which', return_value='/bin/tool'), \
+         patch('builtins.open', mock_open()), patch.object(core_install.fcntl, 'flock'), \
+         patch.object(core_install, 'paired_devkit') as pairing, \
+         patch.object(core_install, 'run_host', side_effect=local):
+        pairing.return_value.__enter__.return_value = device
+        core_install.install(tmp_path, phase)
+    expected = [('sdk', 'preflight'), ('devkit', 'preflight')] if phase == 'install' else []
+    assert events == expected+[('sdk', phase), ('devkit', phase)]
+
+
+def test_paired_preflight_failure_prevents_sdk_installation(tmp_path):
+    from unittest.mock import mock_open, MagicMock
+    device = MagicMock()
+    device.phase.side_effect = ValueError('incompatible paired DevKit')
+    with patch.object(core_install.os, 'geteuid', return_value=0), \
+         patch.object(core_install, 'verify_bundle', return_value={'scope': 'core'}), \
+         patch.object(core_install, 'environment', return_value='sdk'), \
+         patch.object(core_install.shutil, 'which', return_value='/bin/tool'), \
+         patch('builtins.open', mock_open()), patch.object(core_install.fcntl, 'flock'), \
+         patch.object(core_install, 'paired_devkit') as pairing, \
+         patch.object(core_install, 'run_host') as run:
+        pairing.return_value.__enter__.return_value = device
+        with pytest.raises(ValueError, match='paired DevKit'):
+            core_install.install(tmp_path, 'install')
+    assert [call.args[0][-1] for call in run.call_args_list] == ['preflight']
+
+
+def test_paired_target_cannot_be_another_sdk(tmp_path):
+    with patch.object(core_install.os, 'geteuid', return_value=0), \
+         patch.object(core_install, 'verify_bundle', return_value={'scope': 'core'}), \
+         patch.object(core_install, 'environment', return_value='sdk'), \
+         patch.object(core_install, 'run_host') as run:
+        with pytest.raises(ValueError, match='Paired target'):
+            core_install.install(tmp_path, 'install', devkit_only=True)
+        run.assert_not_called()
+
+
+def test_generic_host_cannot_use_environment_overrides_as_identity(tmp_path, monkeypatch):
+    root, system = environment_fixture(tmp_path, 'missing')
+    for key in ('SYSROOT', 'ELXR_SDK_RELEASE_FILE', 'NEAT_BUILDINFO_FILE', 'FORCE_INSTALL', 'NEAT_INSTALLER_SKIP_PLATFORM_CHECK'):
+        monkeypatch.setenv(key, str(tmp_path))
+    with patch.object(core_install.platform, 'system', return_value='Linux'):
+        with pytest.raises(ValueError, match='Unsupported installation environment'):
+            core_install.environment(root, system)
+
+
+def test_paired_deployment_requires_explicit_sdk_pairing(tmp_path, monkeypatch):
+    monkeypatch.delenv('DEVKIT_SYNC_DEVKIT_IP', raising=False)
+    with patch.object(paired_devkit, 'PairedDevKit') as device:
+        with paired_devkit.paired_devkit(tmp_path) as result:
+            assert result is None
+        device.assert_not_called()
+
+
+def test_paired_deployment_sends_password_only_on_stdin(monkeypatch):
+    monkeypatch.setenv('SUDO_PASSWORD', 'test-secret')
+    with patch.object(paired_devkit.os, 'getuid', return_value=0), \
+         patch.object(paired_devkit.shutil, 'which', return_value='/usr/bin/ssh'), \
+         patch.object(paired_devkit, 'run') as run:
+        device = paired_devkit.PairedDevKit('192.0.2.2', 'sima')
+        device.directory = '/var/tmp/neat-core-offline-ABCDEFGH'
+        device.phase('install')
+    assert '--devkit-only' in run.call_args.args[0][-1]
+    assert 'test-secret' not in str(run.call_args.args)
+    assert run.call_args.kwargs['input'] == 'test-secret\n'
+
+
+@pytest.mark.parametrize('fails', [False, True])
+def test_paired_transfer_uses_same_bundle_and_retains_unknown_installation(tmp_path, monkeypatch, fails, capsys):
+    monkeypatch.setenv('DEVKIT_SYNC_DEVKIT_IP', '192.0.2.2')
+    monkeypatch.delenv('NEAT_INSTALLER_SKIP_DEVKIT_SYNC', raising=False)
+    (tmp_path/'install.py').write_text('offline entry point')
+    commands = []
+    def ssh(device, command, **kwargs):
+        commands.append(command)
+        if 'mktemp' in command:
+            return SimpleNamespace(stdout='/var/tmp/neat-core-offline-ABCDEFGH\n')
+        if 'tar --no-same-owner' in command:
+            with tarfile.open(fileobj=kwargs['stdin']) as archive:
+                assert archive.extractfile('neat-core-offline/install.py').read() == b'offline entry point'
+        if 'sudo' in command and fails:
+            raise core_install.subprocess.CalledProcessError(255, ['ssh'])
+    with patch.object(paired_devkit.PairedDevKit, 'ssh', ssh), \
+         patch.object(paired_devkit.shutil, 'which', return_value='/usr/bin/ssh'):
+        if fails:
+            with pytest.raises(core_install.subprocess.CalledProcessError):
+                with paired_devkit.paired_devkit(tmp_path) as device:
+                    device.phase('install')
+        else:
+            with paired_devkit.paired_devkit(tmp_path) as device:
+                device.phase('install')
+    assert any(command.startswith('rm -rf') for command in commands) == (not fails)
+    assert ('outcome unknown' in capsys.readouterr().out) == fails
+
+
+def test_sdk_uses_private_arm64_repository_and_disables_online_paired_sync(tmp_path, monkeypatch):
+    (tmp_path/'card/payload').mkdir(parents=True)
+    (tmp_path/'card/payload/runtime.deb').touch()
+    monkeypatch.setenv('FORCE_INSTALL', '1')
+    monkeypatch.setenv('NEAT_INSTALLER_SKIP_PLATFORM_CHECK', 'ON')
+    monkeypatch.setenv('DEVKIT_SYNC_DEVKIT_IP', '192.0.2.2')
+    calls = []
+    with patch.dict(sys.modules, {'install': core_install}), \
+         patch.object(core_install, 'environment', return_value='sdk'), \
+         patch.object(sdk_install, 'verify_bundle', return_value={'scope': 'core'}), \
+         patch.object(sdk_install, 'output', return_value='arm64'), \
+         patch.object(sdk_install, 'run', side_effect=lambda args, **kwargs: calls.append((args, kwargs))):
+        sdk_install.execute(tmp_path, 'preflight')
+    assert len(calls) == 2
+    env = calls[-1][1]['env']
+    assert env['SYSROOT'] == '/opt/toolchain/aarch64/modalix'
+    assert env['NEAT_INSTALLER_SKIP_DEVKIT_SYNC'] == 'ON'
+    assert 'FORCE_INSTALL' not in env
+    assert 'NEAT_INSTALLER_SKIP_PLATFORM_CHECK' not in env
+    assert 'DEVKIT_SYNC_DEVKIT_IP' not in env
+    assert 'ensure_platform_compatible' in calls[-1][0][2]
 
 
 @pytest.mark.parametrize('field,value', [('os_id', 'ubuntu'), ('os_version', '24.04'), ('architecture', 'amd64')])

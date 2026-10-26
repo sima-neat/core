@@ -122,6 +122,8 @@ def assemble(spec, output):
         shutil.copyfile(HERE / name, output / name)
     if core:
         shutil.copyfile(HERE / 'core_install.py', output / 'install.py')
+        for name in ('sdk_install.py', 'paired_devkit.py'):
+            shutil.copyfile(HERE / name, output / name)
         shutil.copyfile(HERE / 'CORE_INSTALL.md', output / 'INSTALL.md')
         (output / 'install.sh').write_text('#!/bin/sh\nset -eu\ncd -- "$(dirname -- "$0")"\nexec python3 -B ./install.py "$@"\n')
         (output / 'install.sh').chmod(0o755)
@@ -224,13 +226,13 @@ def write_core_metadata(root, archive):
         'name': 'gh:sima-neat/core/offline',
         'version': source.get('version', manifest['core_revision']),
         'release': source.get('release', ''),
-        'description': 'Offline Neat Core installer for standalone Platform 3.0 Modalix DevKits',
+        'description': 'Offline Neat Core installer for the Platform 3.0 Neat SDK and standalone Modalix DevKits',
         # Downloadable on any connected computer; install.py checks the target.
         'platforms': [],
         'resources': [archive.name], 'resources-checksum': {archive.name: sha(archive)},
         'selectable-resources': [],
         'installation': {'script': '', 'post-message':
-            'Copy the archive to the DevKit, extract it, then run: cd neat-core-offline && sudo ./install.sh'},
+            'Extract the archive inside the Neat SDK or on the Modalix DevKit, then run: cd neat-core-offline && sudo ./install.sh'},
         'artifact': {'type': 'offline', 'repository': 'core', 'package_path': 'offline',
                      'distro': 'elxr26', 'arches': ['arm64']},
         'size': {'download': f'{(archive.stat().st_size + 2**20 - 1)//2**20}MB'},
@@ -287,13 +289,18 @@ def validate(root):
         dest = root / target
         row = json.loads((dest / 'target.json').read_text())
         image(row['image'])
+        standalone = manifest.get('scope') == 'core'
+        admission = ('; python3 -B -c \'import sys; from pathlib import Path; '
+                     'sys.path.insert(0, "/offline-bundle"); from install import environment; '
+                     'assert environment(Path("/offline-bundle")) == "devkit"\'' if standalone else '')
         run('docker', 'run', '--rm', '--user', '0:0', '--env', 'DEBIAN_FRONTEND=noninteractive', '--env', 'PYTHONDONTWRITEBYTECODE=1', '--network=none', '--platform', 'linux/' + row['architecture'],
             '--mount', f'type=bind,src={dest.resolve()},dst=/bundle,readonly',
+            *(['--mount', f'type=bind,src={root.resolve()},dst=/offline-bundle,readonly'] if standalone else []),
             '--entrypoint', '/bin/sh', row['image'], '-ec',
             # Bootstrap Python from the local repo; the baseline need not contain it.
             'cmp /var/lib/dpkg/status /bundle/baseline.status; '
             'cp -a /bundle /tmp/offline; cd /tmp/offline; '
-            'sh ./bootstrap.sh; python3 ./target.py validate')
+            'sh ./bootstrap.sh; python3 ./target.py validate'+admission)
 
 
 def main():

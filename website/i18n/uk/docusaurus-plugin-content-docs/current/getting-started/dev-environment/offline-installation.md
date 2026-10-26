@@ -95,3 +95,5 @@ sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
 ```
 
 Розпакуйте `neat-core-offline-installer.tar.gz`, а потім виконайте `cd neat-core-offline && sudo ./install.sh`. За потреби розпакуйте окремий архів із навчальними матеріалами й тестами у вибрану теку.
+
+Інсталятор підтримує лише Neat eLxr SDK або підготовлений Modalix DevKit. Він порівнює `/etc/sdk-release` або `/etc/buildinfo` з маніфестом пакета в архіві; завантажені метадані публікації не потрібні. Інші середовища й несумісні версії Platform відхиляються до встановлення. У SDK Core копіюється до `/opt/toolchain/aarch64/modalix`. Якщо задано `DEVKIT_SYNC_DEVKIT_IP`, той самий автономний пакет передається через SSH на спарований DevKit. Перед початком встановлення обидва середовища мають пройти попередню перевірку. На DevKit встановлення виконується локально.

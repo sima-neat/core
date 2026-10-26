@@ -1,8 +1,12 @@
 # Offline standalone Neat Core installation
 
-Use this bundle on an ARM64 Modalix DevKit already provisioned with Platform 3.0
-and eLxr 26.04. Platform firmware and OS provisioning remain prerequisites.
-The DevKit must provide Python 3, `unshare`, and `timeout`. Stop applications
+Use this bundle inside the Neat eLxr SDK for Platform 3.0 or on an ARM64 Modalix
+DevKit already provisioned with Platform 3.0 and eLxr 26.04. The installer checks
+the canonical `/etc/sdk-release` or `/etc/buildinfo` against the bundled package
+manifest. It rejects other environments and incompatible Platform versions
+before installation. Publication `metadata.json` is not needed on the target.
+Platform firmware and OS provisioning remain prerequisites.
+The environment must provide Python 3, `unshare`, and `timeout`. Stop applications
 using Neat before upgrading. Allow root access and sufficient free disk space.
 
 Copy `neat-core-offline-installer.tar.gz` to the DevKit, verify its SHA-256
@@ -26,6 +30,29 @@ wheelhouse. It does not need sima-cli, a PCIe host, SSH, or Internet access.
 transaction without installing. `--verify` checks installed package versions,
 APT health, Python dependencies, and the PyNeat import. These checks do not prove
 model inference; validate your application separately on the target.
+
+Inside the SDK, Core is extracted into `/opt/toolchain/aarch64/modalix`, using
+the published Core installer and the bundled dependency repository. ARM64
+Python wheels are retained for DevKit deployment, not installed into SDK host
+Python. SDK `--check` validates environment, Platform, package architecture and
+package composition; `--verify` compares installed sysroot files and symlinks
+against the bundled DEBs.
+
+If the SDK has `DEVKIT_SYNC_DEVKIT_IP` configured by DevKit Sync, the installer
+transfers the same offline bundle over SSH and runs it on the paired DevKit.
+Both SDK and DevKit preflight must pass before installation starts. SSH access
+must already be provisioned. The transfer uses the SDK user's SSH identity;
+`DEVKIT_DEPLOY_USER` defaults to `sima`. DevKit sudo authentication follows the
+online installer's `SUDO_PASSWORD` / `DEVKIT_PASSWORD` convention. Set
+`NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON` to install only into the SDK sysroot.
+Package installation remains network-isolated on both targets; SSH is used only
+to transfer the bundle and invoke its installer. An explicitly configured but
+unreachable or incompatible paired DevKit fails installation.
+If `sudo` filters the SDK's pairing variables, preserve them explicitly:
+
+```sh
+sudo --preserve-env=DEVKIT_SYNC_DEVKIT_IP,DEVKIT_DEPLOY_USER,SUDO_PASSWORD,DEVKIT_PASSWORD,NEAT_INSTALLER_SKIP_DEVKIT_SYNC ./install.sh
+```
 
 The installer retains the published Core platform admission, package ownership,
 and firmware lifecycle checks. It does not update optional Sentinel telemetry.
