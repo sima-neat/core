@@ -54,6 +54,18 @@ def image(value):
     return value
 
 
+def core_extras(source):
+    extras = [row for row in source.get('selectable-resources', [])
+              if str(row.get('resource', '')).endswith('-Linux-extras.tar.gz')]
+    if len(extras) != 1:
+        raise ValueError('Core publication must declare exactly one tutorials/tests extras archive')
+    name, digest = extras[0]['resource'], extras[0].get('checksum', '')
+    if (not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._+~-]*', name)
+            or not re.fullmatch(r'[0-9a-f]{64}', digest)):
+        raise ValueError('unsafe Core extras resource or checksum')
+    return name, digest
+
+
 def assemble(spec, output):
     core = spec.get('scope') == 'core'
     roles = ('card',) if core else ('host', 'card')
@@ -74,6 +86,11 @@ def assemble(spec, output):
         if target == 'host' and (row['os_id'] != 'ubuntu' or row['os_version'] not in ('22.04', '24.04')):
             raise ValueError('host support requires Ubuntu 22.04 or 24.04 amd64 or arm64')
         publications[target] = verify_publication(Path(row['publication']), row['metadata_sha256'])
+        if core:
+            name, digest = core_extras(publications[target])
+            extras = Path(row['publication']) / name
+            if extras.is_symlink() or not extras.is_file() or sha(extras) != digest:
+                raise ValueError('Core extras archive checksum mismatch')
     # Publications must describe one immutable Core revision, not merely version 0.6.0.
     revisions = [row['core_revision'] for row in spec['targets'].values()]
     if len(set(revisions)) != 1 or not re.fullmatch(r'[0-9a-f]{12,40}', revisions[0]):
@@ -121,6 +138,7 @@ def assemble(spec, output):
     validate(output)
     archive = archive_bundle(output, archive_name, 'neat-core-offline' if core else 'neat-offline')
     if core:
+        shutil.copyfile(extras, output.parent / extras.name)
         write_core_metadata(output, archive)
     else:
         write_metadata(output, archive)
@@ -203,22 +221,42 @@ def write_core_metadata(root, archive):
     metadata = {key: source[key] for key in (
         'repository', 'branch', 'commit', 'commit_folder', 'published_at_utc') if key in source}
     metadata.update({
-        'name': 'gh:sima-neat/core',
+        'name': 'gh:sima-neat/core/offline',
         'version': source.get('version', manifest['core_revision']),
         'release': source.get('release', ''),
         'description': 'Offline Neat Core installer for standalone Platform 3.0 Modalix DevKits',
-        'platforms': source.get('platforms', [{'type': 'board', 'arch': ['arm64']}]),
+        # Downloadable on any connected computer; install.py checks the target.
+        'platforms': [],
         'resources': [archive.name], 'resources-checksum': {archive.name: sha(archive)},
         'selectable-resources': [],
         'installation': {'script': '', 'post-message':
             'Copy the archive to the DevKit, extract it, then run: cd neat-core-offline && sudo ./install.sh'},
-        'artifact': {'type': 'offline', 'repository': 'core', 'package_path': '',
+        'artifact': {'type': 'offline', 'repository': 'core', 'package_path': 'offline',
                      'distro': 'elxr26', 'arches': ['arm64']},
         'size': {'download': f'{(archive.stat().st_size + 2**20 - 1)//2**20}MB'},
     })
-    path = archive.parent/METADATA_NAME
-    path.write_text(json.dumps(metadata, indent=2)+'\n')
-    return path
+    extras_name, extras_hash = core_extras(source)
+    extras = archive.parent / extras_name
+    if extras.is_symlink() or sha(extras) != extras_hash:
+        raise ValueError('Core extras archive checksum mismatch')
+    with tarfile.open(extras, 'r:*') as package:
+        extras_size = sum(member.size for member in package if member.isfile())
+    installed_size = sum(p.stat().st_size for p in root.rglob('*') if p.is_file())
+    paths = {}
+    for minimal, filename in ((False, 'metadata.json'), (True, 'metadata-minimal.json')):
+        data = dict(metadata)
+        resources = [archive.name] if minimal else [archive.name, extras_name]
+        hashes = {archive.name: sha(archive), extras_name: extras_hash}
+        data['resources'] = resources
+        data['resources-checksum'] = {name: hashes[name] for name in resources}
+        data['size'] = {
+            'download': f'{(sum((archive.parent / name).stat().st_size for name in resources) + 2**20 - 1)//2**20}MB',
+            'install': f'{(installed_size + (0 if minimal else extras_size) + 2**20 - 1)//2**20}MB',
+        }
+        path = archive.parent / filename
+        path.write_text(json.dumps(data, indent=2)+'\n')
+        paths[filename] = path
+    return paths
 
 
 def verify_bundle(root, target=None):

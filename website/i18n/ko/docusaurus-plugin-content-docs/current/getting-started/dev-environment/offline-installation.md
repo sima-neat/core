@@ -84,3 +84,14 @@ deactivate-model-compiler
 조직에서 승인된 아티팩트를 내부적으로 복제하는 경우, 내부 위치에 게시할 때 다운로드한 패키지 디렉터리를 그대로 유지하십시오. 메타데이터 파일, 설치 스크립트, 체크섬, 패키지 리소스는 함께 유지되어야 합니다.
 
 사용자는 내부 패키지 디렉터리를 다운로드한 다음 대상 호스트에서 동일한 설치 스크립트를 실행할 수 있습니다.
+
+## 오프라인 Core 패키지
+
+인터넷에 연결된 컴퓨터에서 다운로드한 다음 준비된 Modalix DevKit에 아카이브를 복사합니다. 기본 프로필에는 런타임 번들과 튜토리얼 및 테스트 추가 패키지가 포함됩니다. 추가 패키지를 제외하려면 `-t minimal`을 사용합니다. 대상 설치 프로그램이 OS, 아키텍처 및 Platform 호환성을 확인합니다.
+
+```bash
+sima-cli neat install core/offline@v0.6.0 --download-only
+sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
+```
+
+`neat-core-offline-installer.tar.gz`를 추출한 후 `cd neat-core-offline && sudo ./install.sh`를 실행합니다. 튜토리얼이나 테스트가 필요하면 별도의 추가 아카이브를 원하는 디렉터리에 추출하세요.

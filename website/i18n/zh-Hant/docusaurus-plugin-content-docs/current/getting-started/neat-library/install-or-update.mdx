@@ -178,3 +178,14 @@ sudo ./install.sh --verify
 ```
 
 封存檔包含 Core、相符的 Scheduler 套件、APT 相依套件、Python wheel 與安裝指令碼。安裝過程不需要網路連線。您仍須事先完成 Platform 韌體與 OS 的佈建。此安裝程式使用 `/opt/sima/neat/pyneat`；請以 `source /opt/sima/neat/pyneat/bin/activate` 啟用。
+
+## 離線 Core 套件
+
+在可連線的電腦上下載，然後將封存檔複製到已佈建的 Modalix DevKit。預設組合包含執行階段套件及教學課程與測試的額外套件。使用 `-t minimal` 可省略額外套件。目標安裝程式會檢查 OS、架構與 Platform 相容性。
+
+```bash
+sima-cli neat install core/offline@v0.6.0 --download-only
+sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
+```
+
+解壓縮 `neat-core-offline-installer.tar.gz`，然後執行 `cd neat-core-offline && sudo ./install.sh`。需要教學課程或測試時，請將另一個額外套件封存檔解壓縮到您選擇的目錄。

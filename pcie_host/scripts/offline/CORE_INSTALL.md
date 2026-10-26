@@ -6,7 +6,7 @@ The DevKit must provide Python 3, `unshare`, and `timeout`. Stop applications
 using Neat before upgrading. Allow root access and sufficient free disk space.
 
 Copy `neat-core-offline-installer.tar.gz` to the DevKit, verify its SHA-256
-against `metadata-offline.json`, then run:
+against `offline/metadata.json` or `offline/metadata-minimal.json`, then run:
 
 ```sh
 tar -xzf neat-core-offline-installer.tar.gz
@@ -32,13 +32,27 @@ and firmware lifecycle checks. It does not update optional Sentinel telemetry.
 The isolated Python environment is `/opt/sima/neat/pyneat`; activate it with
 `source /opt/sima/neat/pyneat/bin/activate`.
 
+## Download profiles
+
+```sh
+sima-cli neat install core/offline@develop --download-only
+sima-cli neat install core/offline@develop -t minimal --download-only
+```
+
+The previous `core@develop -t offline` command selects a different metadata
+filename and is not the standalone Core package path. Keep all downloaded
+archives together when transferring the full profile. Extract the separate
+extras archive to a directory of your choice for tutorials and tests.
+
 ## Building and publication
 
 The PCIe Offline Bundles workflow builds this standalone archive alongside the
 four PCIe variants from the same immutable Core publication. All five builds
 must pass before any new offline metadata is exposed. The standalone artifact
-is published as `metadata-offline.json` beside Core's normal `metadata.json`;
-the PCIe variants remain under their existing architecture-specific paths.
+is published in Core's `offline/` subdirectory. `metadata.json` includes the
+runtime bundle and the separate tutorials/tests extras archive;
+`metadata-minimal.json` includes only the runtime bundle. Both profiles use the
+same checksummed runtime archive. The PCIe variants retain their existing paths.
 Existing completed publications are verified and never replaced.
 
 For a local SDK-generated `dist/` publication, create a specification with

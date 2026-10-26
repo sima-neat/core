@@ -2343,3 +2343,5 @@ Core reuses shared backing memory slots while retaining producer leases and skip
 ## Offline Core delivery
 
 Standalone Core and PCIe offline bundles use the same immutable Core publication, dependency collector, checksum verification, and platform admission lifecycle. Standalone installation runs locally in an isolated network namespace with a shared installation lock. CI validates packages and Python imports against a pristine provisioned baseline with networking disabled, then exposes offline metadata only after the standalone bundle and all four PCIe variants pass.
+
+Standalone Core publishes `offline/metadata.json` with the runtime bundle and extras, and `offline/metadata-minimal.json` with only the runtime bundle.

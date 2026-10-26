@@ -84,3 +84,14 @@ deactivate-model-compiler
 如果您的組織內部有已核准的成品複本，在將其發佈到內部位置時，請保持下載的套件目錄的完整性。預期中，中繼資料檔案、安裝指令碼、校驗總和以及套件資源應保持在一起。
 
 使用者接著可以下載內部套件目錄，並在目標主機上執行相同的安裝指令碼。
+
+## 離線 Core 套件
+
+在可連線的電腦上下載，然後將封存檔複製到已佈建的 Modalix DevKit。預設組合包含執行階段套件及教學課程與測試的額外套件。使用 `-t minimal` 可省略額外套件。目標安裝程式會檢查 OS、架構與 Platform 相容性。
+
+```bash
+sima-cli neat install core/offline@v0.6.0 --download-only
+sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
+```
+
+解壓縮 `neat-core-offline-installer.tar.gz`，然後執行 `cd neat-core-offline && sudo ./install.sh`。需要教學課程或測試時，請將另一個額外套件封存檔解壓縮到您選擇的目錄。

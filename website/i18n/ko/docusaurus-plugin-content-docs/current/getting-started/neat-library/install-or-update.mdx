@@ -175,3 +175,14 @@ sudo ./install.sh --verify
 ```
 
 아카이브에는 Core, 호환되는 Scheduler 패키지, APT 의존성, Python wheel 및 설치 스크립트가 포함됩니다. 설치는 네트워크 연결 없이 실행됩니다. Platform 펌웨어와 OS는 미리 설치해야 합니다. 이 설치 프로그램은 `/opt/sima/neat/pyneat`를 사용합니다. `source /opt/sima/neat/pyneat/bin/activate`로 활성화하세요.
+
+## 오프라인 Core 패키지
+
+인터넷에 연결된 컴퓨터에서 다운로드한 다음 준비된 Modalix DevKit에 아카이브를 복사합니다. 기본 프로필에는 런타임 번들과 튜토리얼 및 테스트 추가 패키지가 포함됩니다. 추가 패키지를 제외하려면 `-t minimal`을 사용합니다. 대상 설치 프로그램이 OS, 아키텍처 및 Platform 호환성을 확인합니다.
+
+```bash
+sima-cli neat install core/offline@v0.6.0 --download-only
+sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
+```
+
+`neat-core-offline-installer.tar.gz`를 추출한 후 `cd neat-core-offline && sudo ./install.sh`를 실행합니다. 튜토리얼이나 테스트가 필요하면 별도의 추가 아카이브를 원하는 디렉터리에 추출하세요.

@@ -86,7 +86,7 @@ def put(bucket, key, path, kms, immutable=False):
                '--body', str(path), '--server-side-encryption', 'aws:kms',
                '--checksum-algorithm', 'SHA256', '--checksum-sha256',
                base64.b64encode(bytes.fromhex(digest)).decode(),
-               '--content-type', 'application/json' if path.suffix == '.json' else 'application/gzip']
+               '--content-type', 'application/json' if key.endswith(('.json', '.json.pending')) else 'application/gzip']
     if kms:
         command += ['--ssekms-key-id', kms]
     if immutable:
@@ -100,11 +100,7 @@ def is_core(args):
 
 
 def artifact_prefix(args):
-    return prefix(args.ref, args.sha) if is_core(args) else prefix(args.ref, args.sha, args.distro, args.arch)
-
-
-def archive_name(args):
-    return assemble.CORE_ARCHIVE_NAME if is_core(args) else assemble.ARCHIVE_NAME
+    return prefix(args.ref, args.sha) + '/offline' if is_core(args) else prefix(args.ref, args.sha, args.distro, args.arch)
 
 
 def source_metadata(args, work):
@@ -121,27 +117,50 @@ def source_metadata(args, work):
     return records, paths, inputs
 
 
+def metadata_names(args):
+    return ('metadata.json', 'metadata-minimal.json') if is_core(args) else (assemble.METADATA_NAME,)
+
+
+def core_identity(data, args, inputs, minimal):
+    metadata_identity(data, args.sha, args.ref)
+    resources = data['resources']
+    extras = [name for name in resources if name.endswith('-Linux-extras.tar.gz')]
+    if (assemble.CORE_ARCHIVE_NAME not in resources
+            or (resources != [assemble.CORE_ARCHIVE_NAME] if minimal else
+                len(resources) != 2 or len(extras) != 1)
+            or data.get('installation', {}).get('script') != ''
+            or data.get('artifact') != {'type': 'offline', 'repository': 'core',
+                                      'package_path': 'offline', 'distro': 'elxr26', 'arches': ['arm64']}
+            or data.get('source_metadata_sha256') != inputs):
+        raise ValueError('existing standalone Core publication differs')
+
+
 def existing(args, work, inputs, pending=True):
     base = artifact_prefix(args)
-    for suffix in ('', '.pending') if pending else ('',):
-        path = work/('existing'+suffix+'.json')
-        if download(args.bucket, base+'/'+assemble.METADATA_NAME+suffix, path, optional=True):
+    ready, documents = {}, {}
+    for filename in metadata_names(args):
+        for suffix in ('', '.pending') if pending else ('',):
+            path = work/(filename+suffix)
+            if not download(args.bucket, base+'/'+filename+suffix, path, optional=True):
+                continue
             data = json.loads(path.read_text())
             if is_core(args):
-                metadata_identity(data, args.sha, args.ref)
-                if (data['resources'] != [assemble.CORE_ARCHIVE_NAME]
-                        or data.get('installation', {}).get('script') != ''
-                        or data.get('artifact') != {'type': 'offline', 'repository': 'core',
-                                                  'package_path': '', 'distro': 'elxr26', 'arches': ['arm64']}
-                        or data.get('source_metadata_sha256') != inputs):
-                    raise ValueError('existing standalone Core publication differs')
+                core_identity(data, args, inputs, filename == 'metadata-minimal.json')
             else:
                 offline_identity(data, args.sha, args.ref, args.distro, args.arch, inputs)
-            verify_uploaded(args.bucket, base+'/'+archive_name(args),
-                            data['resources-checksum'][archive_name(args)])
-            print('Already validated offline publication: '+base+suffix)
-            return path
-    return None
+            for name, digest in data['resources-checksum'].items():
+                verify_uploaded(args.bucket, base+'/'+name, digest)
+            ready[filename], documents[filename] = path, data
+            break
+    if ready and set(ready) != set(metadata_names(args)):
+        if all(path.name.endswith('.pending') for path in ready.values()):
+            return None  # Interrupted staging is safe to rebuild before publication.
+        raise ValueError('incomplete offline publication; refusing replacement')
+    if is_core(args) and ready:
+        name = assemble.CORE_ARCHIVE_NAME
+        if documents['metadata.json']['resources-checksum'][name] != documents['metadata-minimal.json']['resources-checksum'][name]:
+            raise ValueError('Core offline profiles refer to different runtime archives')
+    return ready or None
 
 
 def build(args):
@@ -155,6 +174,12 @@ def build(args):
             if assemble.sha(directory/name) != digest:
                 raise ValueError('publication resource checksum differs: '+name)
         assemble.verify_publication(directory, inputs[role])
+    if is_core(args):
+        name, digest = assemble.core_extras(records['card'])
+        key, directory = paths['card']
+        download(args.bucket, key+'/'+name, directory/name)
+        if assemble.sha(directory/name) != digest:
+            raise ValueError('Core extras archive checksum mismatch')
     baselines = json.loads((HERE/'baselines.json').read_text())
     if not is_core(args):
         host = paths['host'][1]
@@ -197,21 +222,25 @@ def build(args):
     (args.work/'spec.json').write_text(json.dumps(spec, indent=2)+'\n')
     root = args.work/('neat-core-offline' if is_core(args) else 'neat-offline')
     assemble.assemble(spec, root)
-    path = args.work/assemble.METADATA_NAME
-    metadata = json.loads(path.read_text())
-    metadata.update(source_metadata_sha256=inputs, installer_revision=args.installer_revision,
-                    source_run_id=args.run_id)
-    path.write_text(json.dumps(metadata, indent=2)+'\n')
+    documents = {}
+    for filename in metadata_names(args):
+        path = args.work/filename
+        metadata = json.loads(path.read_text())
+        metadata.update(source_metadata_sha256=inputs, installer_revision=args.installer_revision,
+                        source_run_id=args.run_id)
+        path.write_text(json.dumps(metadata, indent=2)+'\n')
+        documents[filename] = metadata
     if args.validation_only:
-        print('Offline validation passed; bundle retained locally without publication.')
+        print('Offline validation passed; bundles retained locally without publication.')
         return
     base = artifact_prefix(args)
-    # Metadata is staged only after clean-container network-disabled validation.
-    # The final metadata is exposed by the aggregate publish job, after all five
-    # bundles pass. A failed pre-metadata upload can be safely retried under the
-    # workflow's per-source concurrency group; completed publications are immutable.
-    put(args.bucket, base+'/'+archive_name(args), args.work/archive_name(args), args.kms)
-    put(args.bucket, base+'/'+assemble.METADATA_NAME+'.pending', path, args.kms)
+    # Stage all resources before metadata. The aggregate gate validates all builds
+    # and both Core profiles before exposing any new metadata.
+    resources = set().union(*(set(data['resources']) for data in documents.values()))
+    for name in sorted(resources):
+        put(args.bucket, base+'/'+name, args.work/name, args.kms)
+    for filename in documents:
+        put(args.bucket, base+'/'+filename+'.pending', args.work/filename, args.kms)
 
 
 def publish(args):
@@ -226,7 +255,7 @@ def publish(args):
         path = existing(args, work, inputs)
         if path is None:
             raise ValueError('missing validated offline tuple: '+distro+'/'+arch)
-        ready.append((prefix(args.ref, args.sha, distro, arch), path))
+        ready.extend((prefix(args.ref, args.sha, distro, arch), filename, record) for filename, record in path.items())
     args.core = True
     work = args.work/'core'
     work.mkdir()
@@ -234,15 +263,15 @@ def publish(args):
     path = existing(args, work, inputs)
     if path is None:
         raise ValueError('missing validated standalone Core bundle')
-    ready.append((artifact_prefix(args), path))
+    ready.extend((artifact_prefix(args), filename, record) for filename, record in path.items())
     # Complete every read/check before publishing any new metadata.
-    for base, path in ready:
-        if path.name == 'existing.json':
+    for base, filename, path in ready:
+        if path.name == filename:
             continue
-        put(args.bucket, base+'/'+assemble.METADATA_NAME, path, args.kms, immutable=True)
+        put(args.bucket, base+'/'+filename, path, args.kms, immutable=True)
     if args.distribution:
         run('aws', 'cloudfront', 'create-invalidation', '--distribution-id', args.distribution,
-            '--paths', *['/'+quote(base, safe='/')+'/'+assemble.METADATA_NAME for base, _ in ready])
+            '--paths', *['/'+quote(base, safe='/')+'/'+filename for base, filename, _ in ready])
     print('Published standalone Core and all four PCIe offline variants.')
 
 

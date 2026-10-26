@@ -216,3 +216,14 @@ sudo ./install.sh --verify
 ```
 
 The archive includes Core, matching Scheduler packages, APT dependencies, Python wheels, and installation scripts. Installation runs without network access. Platform firmware and OS provisioning remain prerequisites. This installer uses `/opt/sima/neat/pyneat`; activate it with `source /opt/sima/neat/pyneat/bin/activate`.
+
+## Offline Core packages
+
+Download on a connected computer, then copy the archives to the provisioned Modalix DevKit. The default profile includes the runtime bundle and tutorials/tests extras. Use `-t minimal` to omit extras. The target installer checks OS, architecture, and Platform compatibility.
+
+```bash
+sima-cli neat install core/offline@v0.6.0 --download-only
+sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
+```
+
+Extract `neat-core-offline-installer.tar.gz`, then run `cd neat-core-offline && sudo ./install.sh`. Extract the separate extras archive in a directory of your choice when you need tutorials or tests.

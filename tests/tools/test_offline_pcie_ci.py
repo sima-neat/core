@@ -101,7 +101,7 @@ def test_missing_last_tuple_publishes_nothing(tmp_path):
     args = SimpleNamespace(work=tmp_path/'publish', ref='develop', sha=SHA,
                            bucket='bucket', kms='', distribution='')
     with patch.object(ci, 'source_metadata', return_value=({}, {}, INPUTS)), \
-         patch.object(ci, 'existing', side_effect=[tmp_path/'existing.pending.json'] * 3 + [None]), \
+         patch.object(ci, 'existing', side_effect=[{'metadata-offline.json': tmp_path/'metadata-offline.json.pending'}] * 3 + [None]), \
          patch.object(ci, 'put') as put:
         with pytest.raises(ValueError, match='missing validated'):
             ci.publish(args)
@@ -112,7 +112,7 @@ def test_completed_publication_not_replaced(tmp_path):
     args = SimpleNamespace(work=tmp_path/'publish', ref='develop', sha=SHA,
                            bucket='bucket', kms='', distribution='')
     with patch.object(ci, 'source_metadata', return_value=({}, {}, INPUTS)), \
-         patch.object(ci, 'existing', return_value=tmp_path/'existing.json'), \
+         patch.object(ci, 'existing', return_value={'metadata-offline.json': tmp_path/'metadata-offline.json'}), \
          patch.object(ci, 'put') as put:
         ci.publish(args)
         put.assert_not_called()
@@ -141,13 +141,14 @@ def test_uploaded_checksum_required():
 
 
 def test_final_metadata_write_is_conditional(tmp_path):
-    path = tmp_path/'metadata.json'
+    path = tmp_path/'metadata.json.pending'
     path.write_text('{}')
     with patch.object(ci, 'run') as run, patch.object(ci, 'verify_uploaded'):
-        ci.put('bucket', 'key', path, 'kms-key', immutable=True)
+        ci.put('bucket', 'offline/metadata.json', path, 'kms-key', immutable=True)
         command = run.call_args.args
         assert command[command.index('--if-none-match') + 1] == '*'
         assert '--checksum-sha256' in command
+        assert command[command.index('--content-type') + 1] == 'application/json'
 
 
 def test_shared_card_publication_version_identity():
@@ -245,6 +246,6 @@ def test_manual_publication_is_opt_in_and_reuses_the_validated_matrix():
 def test_cloudfront_invalidation_encodes_s3_branch_keys(tmp_path):
     args = SimpleNamespace(work=tmp_path/'publish', ref='codex/offline', sha=SHA,
                            bucket='bucket', kms='', distribution='distribution')
-    with patch.object(ci, 'source_metadata', return_value=({}, {}, INPUTS)),          patch.object(ci, 'existing', return_value=tmp_path/'existing.json'),          patch.object(ci, 'run') as run:
+    with patch.object(ci, 'source_metadata', return_value=({}, {}, INPUTS)),          patch.object(ci, 'existing', return_value={'metadata-offline.json': tmp_path/'metadata-offline.json'}),          patch.object(ci, 'run') as run:
         ci.publish(args)
         assert '/core/codex%252Foffline/aaaaaaaaaaaa/pciehost/ubuntu24/amd64/metadata-offline.json' in run.call_args.args

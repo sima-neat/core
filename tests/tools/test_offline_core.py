@@ -23,6 +23,13 @@ def spec(tmp_path):
     metadata = {'version': '0.6.0+develop.'+'a'*12,
                 'resources': ['runtime.deb', 'pyneat.whl'],
                 'resources-checksum': {p.name: assemble.sha(p) for p in pub.iterdir()}}
+    extra = pub/'sima-neat-1-Linux-extras.tar.gz'
+    import io
+    with tarfile.open(extra, 'w:gz') as package:
+        entry = tarfile.TarInfo('share/tutorials/README.md')
+        entry.size = len(b'tutorials and tests')
+        package.addfile(entry, io.BytesIO(b'tutorials and tests'))
+    metadata['selectable-resources'] = [{'resource': extra.name, 'checksum': assemble.sha(extra)}]
     (pub/'metadata.json').write_text(json.dumps(metadata))
     return {'scope': 'core', 'targets': {'card': {
         'publication': str(pub), 'metadata_sha256': assemble.sha(pub/'metadata.json'),
@@ -43,10 +50,16 @@ def test_core_archive_is_self_contained_and_validated_offline(tmp_path):
     with tarfile.open(archive) as tar:
         assert tar.getmember('neat-core-offline/install.sh').mode == 0o755
         assert tar.getmember('neat-core-offline/process.py').isfile()
-    meta = json.loads((tmp_path/'metadata-offline.json').read_text())
-    assert meta['resources'] == [assemble.CORE_ARCHIVE_NAME]
+    meta = json.loads((tmp_path/'metadata.json').read_text())
+    assert meta['resources'] == [assemble.CORE_ARCHIVE_NAME, 'sima-neat-1-Linux-extras.tar.gz']
+    minimal = json.loads((tmp_path/'metadata-minimal.json').read_text())
+    assert minimal['resources'] == [assemble.CORE_ARCHIVE_NAME]
+    assert not (root/'card/payload/sima-neat-1-Linux-extras.tar.gz').exists()
+    assert meta['artifact']['package_path'] == 'offline'
     assert meta['resources-checksum'][archive.name] == assemble.sha(archive)
     assert meta['installation']['script'] == ''
+    assert meta['platforms'] == []
+    assert set(meta['size']) == set(minimal['size']) == {'download', 'install'}
     (root/'install.sh').write_text('corrupted')
     with pytest.raises(ValueError, match='checksum'):
         assemble.verify_bundle(root, 'card')
@@ -57,14 +70,15 @@ def test_no_archive_or_metadata_when_offline_validation_fails(tmp_path):
         with pytest.raises(ValueError, match='missing wheel'):
             assemble.assemble(spec(tmp_path), tmp_path/'bundle')
     assert not (tmp_path/assemble.CORE_ARCHIVE_NAME).exists()
-    assert not (tmp_path/'metadata-offline.json').exists()
+    assert not (tmp_path/'metadata.json').exists()
+    assert not (tmp_path/'metadata-minimal.json').exists()
 
 
 def test_missing_core_publishes_none_of_the_ready_pcie_variants(tmp_path):
     args = SimpleNamespace(work=tmp_path/'publish', ref='develop', sha='a'*40,
                            bucket='bucket', kms='', distribution='')
     with patch.object(ci, 'source_metadata', return_value=({}, {}, {})), \
-         patch.object(ci, 'existing', side_effect=[tmp_path/'existing.pending.json']*4+[None]), \
+         patch.object(ci, 'existing', side_effect=[{'metadata-offline.json': tmp_path/'metadata-offline.json.pending'}]*4+[None]), \
          patch.object(ci, 'put') as put:
         with pytest.raises(ValueError, match='standalone Core'):
             ci.publish(args)
@@ -128,15 +142,17 @@ def test_core_build_uses_only_card_baseline_and_stages_root_variant(tmp_path):
     pub = tmp_path/'pub'
     pub.mkdir()
     def download(bucket, key, path):
-        assert key == baseline['key']
+        assert key in (baseline['key'], 'core-key/sima-neat-1-Linux-extras.tar.gz')
         path.write_text('baseline')
     def build(config, root):
         assert config['scope'] == 'core'
         assert set(config['targets']) == {'card'}
-        (root.parent/'metadata-offline.json').write_text('{}')
+        for filename, resources in (('metadata.json', [assemble.CORE_ARCHIVE_NAME, 'sima-neat-1-Linux-extras.tar.gz']),
+                                    ('metadata-minimal.json', [assemble.CORE_ARCHIVE_NAME])):
+            (root.parent/filename).write_text(json.dumps({'resources': resources}))
         (root.parent/assemble.CORE_ARCHIVE_NAME).write_text('validated bundle')
     with patch.object(ci, 'source_metadata', return_value=(
-             {'card': {'resources-checksum': {}}}, {'card': ('core-key', pub)}, {'card': 'c'*64})), \
+             {'card': {'resources-checksum': {}, 'selectable-resources': [{'resource': 'sima-neat-1-Linux-extras.tar.gz', 'checksum': baseline['sha256']}]}}, {'card': ('core-key', pub)}, {'card': 'c'*64})), \
          patch.object(ci, 'existing', return_value=None), \
          patch.object(ci, 'download', side_effect=download), \
          patch.object(ci, 'run', return_value=baseline['image_id']), \
@@ -146,5 +162,68 @@ def test_core_build_uses_only_card_baseline_and_stages_root_variant(tmp_path):
          patch.object(ci, 'put') as put:
         ci.build(args)
     assert [call.args[1] for call in put.call_args_list] == [
-        'core/develop/'+'a'*12+'/'+assemble.CORE_ARCHIVE_NAME,
-        'core/develop/'+'a'*12+'/metadata-offline.json.pending']
+        'core/develop/'+'a'*12+'/offline/'+assemble.CORE_ARCHIVE_NAME,
+        'core/develop/'+'a'*12+'/offline/sima-neat-1-Linux-extras.tar.gz',
+        'core/develop/'+'a'*12+'/offline/metadata.json.pending',
+        'core/develop/'+'a'*12+'/offline/metadata-minimal.json.pending']
+
+
+def core_metadata(minimal=False, archive_hash='d'*64):
+    name = assemble.CORE_ARCHIVE_NAME
+    hashes = {name: archive_hash}
+    if not minimal:
+        hashes['sima-neat-1-Linux-extras.tar.gz'] = 'e'*64
+    return {'version': '0.6.0+develop.'+'a'*12, 'resources': list(hashes),
+            'resources-checksum': hashes, 'installation': {'script': ''},
+            'artifact': {'type': 'offline', 'repository': 'core', 'package_path': 'offline',
+                         'distro': 'elxr26', 'arches': ['arm64']},
+            'source_metadata_sha256': {'card': 'c'*64}}
+
+
+@pytest.mark.parametrize('mutation', ['valid', 'missing_minimal', 'different_runtime', 'extras_in_minimal'])
+def test_reuse_requires_complete_consistent_core_profiles(tmp_path, mutation):
+    args = SimpleNamespace(core=True, ref='develop', sha='a'*40, bucket='bucket')
+    def download(bucket, key, path, optional=False):
+        assert '/offline/' in key
+        if key.endswith('.pending'):
+            return False
+        minimal = key.endswith('/metadata-minimal.json')
+        if minimal and mutation == 'missing_minimal':
+            return False
+        data = core_metadata(minimal and mutation != 'extras_in_minimal',
+                             'f'*64 if minimal and mutation == 'different_runtime' else 'd'*64)
+        path.write_text(json.dumps(data))
+        return True
+    with patch.object(ci, 'download', side_effect=download), patch.object(ci, 'verify_uploaded'):
+        if mutation == 'valid':
+            assert set(ci.existing(args, tmp_path, {'card': 'c'*64})) == {'metadata.json', 'metadata-minimal.json'}
+        else:
+            with pytest.raises(ValueError):
+                ci.existing(args, tmp_path, {'card': 'c'*64})
+
+
+def test_all_profiles_verified_before_any_metadata_is_published(tmp_path):
+    args = SimpleNamespace(work=tmp_path/'publish', ref='codex/offline', sha='a'*40,
+                           bucket='bucket', kms='', distribution='cdn')
+    def existing(args, work, inputs):
+        return {name: work/(name+'.pending') for name in ci.metadata_names(args)}
+    with patch.object(ci, 'source_metadata', return_value=({}, {}, {})), \
+         patch.object(ci, 'existing', side_effect=existing), patch.object(ci, 'put') as put, \
+         patch.object(ci, 'run') as run:
+        ci.publish(args)
+    assert put.call_count == 6
+    keys = {call.args[1] for call in put.call_args_list}
+    base = 'core/codex%2Foffline/'+'a'*12+'/offline/'
+    assert base+'metadata.json' in keys
+    assert base+'metadata-minimal.json' in keys
+    assert all(call.kwargs['immutable'] for call in put.call_args_list)
+    assert '/'+base.replace('%2F','%252F')+'metadata-minimal.json' in run.call_args.args
+
+
+def test_extras_checksum_failure_prevents_collection(tmp_path):
+    config = spec(tmp_path)
+    (Path(config['targets']['card']['publication'])/'sima-neat-1-Linux-extras.tar.gz').write_text('tampered')
+    with patch.object(assemble, 'run') as run:
+        with pytest.raises(ValueError, match='extras archive checksum'):
+            assemble.assemble(config, tmp_path/'bundle')
+        run.assert_not_called()

@@ -199,7 +199,9 @@ jobs:
           name: offline-bundle-core
           path: |
             ${{ runner.temp }}/offline/neat-core-offline-installer.tar.gz
-            ${{ runner.temp }}/offline/metadata-offline.json
+            ${{ runner.temp }}/offline/*-Linux-extras.tar.gz
+            ${{ runner.temp }}/offline/metadata.json
+            ${{ runner.temp }}/offline/metadata-minimal.json
           if-no-files-found: error
           retention-days: 3
       - name: Retain assembly evidence
@@ -210,7 +212,8 @@ jobs:
           path: |
             ${{ runner.temp }}/offline-build.log
             ${{ runner.temp }}/offline/spec.json
-            ${{ runner.temp }}/offline/metadata-offline.json
+            ${{ runner.temp }}/offline/metadata.json
+            ${{ runner.temp }}/offline/metadata-minimal.json
             ${{ runner.temp }}/offline/neat-core-offline/bundle.json
           if-no-files-found: ignore
           retention-days: 3
