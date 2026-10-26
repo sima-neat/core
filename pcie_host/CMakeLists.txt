@@ -243,7 +243,8 @@ if (SIMAPCIE_BUILD_TESTS)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_output_layout_test.cpp
   )
   target_include_directories(unit_pcie_host_output_layout_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-  target_link_libraries(unit_pcie_host_output_layout_test PRIVATE sima_neat_pcie_host PkgConfig::GST)
+  target_link_libraries(unit_pcie_host_output_layout_test PRIVATE
+    sima_neat_pcie_host SimaScheduler::pcie_host PkgConfig::GST)
   add_test(NAME unit_pcie_host_output_layout_test COMMAND unit_pcie_host_output_layout_test)
 
   add_executable(unit_pcie_host_model_archive_snapshot_test

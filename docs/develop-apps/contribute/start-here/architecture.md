@@ -2104,21 +2104,21 @@ card processes the input.
 
 Output transport preserves the physical buffer layout, including padding and
 gaps. Before the first return DATA message, `neatpciesink` sends a versioned
-return CAPS envelope describing the raw byte extent and ordered physical output
-regions. The host plugin performs the existing `si_mla_read()` copy into a
-GStreamer receive buffer and exposes that layout in CAPS. `HostPcieChannel`
-validates the regions and payload extent, then creates tensor views at the
-correct offsets in public model-output order. No extra reorder copy is needed.
+return CAPS envelope describing the raw byte extent and logical tensor regions
+in public output order. The host plugin performs the existing `si_mla_read()`
+copy into a GStreamer receive buffer and exposes that layout in CAPS.
+`HostPcieChannel` checks model tensor regions against the MPK contract,
+including strides. Tensor and BBOX views use the negotiated offsets without
+an extra reorder copy.
 
 Receive capacity must be configured before the host opens its PCIe queue.
-After building the card graph, `pcie-pipeline-builder` reads the compiled
-manifest for the producer feeding `neatpciesink` and reports a conservative
-`output_buffer_bytes` bound in its readiness status over SSH. The bound covers
-the planned frame arena and physical output spans; BoxDecode uses its output
-record format and `topk`. On the first input, the host selects the maximum of
-512 KiB, packed model input/output sizes, the submitted payload size, and this
-bound. Return metadata is validated against the configured capacity, not used
-to resize an active queue. Matching host and card packages are required.
+After building the card graph, `pcie-pipeline-builder` sums the allocation
+capacities in the output producer's finalized `FrameLayout` and reports
+`output_buffer_bytes` in its readiness status over SSH. On the first input,
+the host selects the maximum of 512 KiB, packed model input/output sizes, the
+submitted payload size, and this bound. Return metadata is validated against
+the configured capacity, not used to resize an active queue. Matching host
+and card packages are required.
 
 `ModelOptions::mla_only` moves the execution boundary. The card then runs the
 MLA stage alone, with no quantize before it and no dequantize after it, and the
