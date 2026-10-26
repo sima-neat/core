@@ -125,7 +125,7 @@ def assemble(spec, output):
         for name in ('sdk_install.py', 'paired_devkit.py'):
             shutil.copyfile(HERE / name, output / name)
         shutil.copyfile(HERE / 'CORE_INSTALL.md', output / 'INSTALL.md')
-        (output / 'install.sh').write_text('#!/bin/sh\nset -eu\ncd -- "$(dirname -- "$0")"\nexec python3 -B ./install.py "$@"\n')
+        shutil.copyfile(HERE / 'core_install.sh', output / 'install.sh')
         (output / 'install.sh').chmod(0o755)
     else:
         for name in ('install.py', 'discover.py', 'INSTALL.md'):
@@ -232,7 +232,7 @@ def write_core_metadata(root, archive):
         'resources': [archive.name], 'resources-checksum': {archive.name: sha(archive)},
         'selectable-resources': [],
         'installation': {'script': '', 'post-message':
-            'Extract the archive inside the Neat SDK or on the Modalix DevKit, then run: cd neat-core-offline && sudo ./install.sh'},
+            'Extract the archive inside the Neat SDK or on the Modalix DevKit, then run: cd neat-core-offline && ./install.sh'},
         'artifact': {'type': 'offline', 'repository': 'core', 'package_path': 'offline',
                      'distro': 'elxr26', 'arches': ['arm64']},
         'size': {'download': f'{(archive.stat().st_size + 2**20 - 1)//2**20}MB'},

@@ -59,7 +59,7 @@ def environment(root, system=Path('/')):
 
 def install(root, phase, devkit_only=False):
     if os.geteuid() != 0:
-        raise ValueError('Run with sudo inside the Neat SDK or on the target Modalix DevKit')
+        raise ValueError('Run ./install.sh inside the Neat SDK or on the target Modalix DevKit')
     if verify_bundle(root).get('scope') != 'core':
         raise ValueError('Expected a standalone Core offline bundle')
     mode = environment(root)

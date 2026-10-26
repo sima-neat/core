@@ -541,3 +541,34 @@ def test_paired_staging_cleans_incomplete_transfer(tmp_path, monkeypatch):
             with paired_devkit.paired_devkit(tmp_path):
                 pytest.fail('incomplete transfer must not start installation')
     assert commands[-1] == 'rm -rf -- /tmp/neat-core-offline-ABCDEFGH'
+
+
+@pytest.mark.parametrize('uid,args,elevates', [('1000', ['--check'], True), ('0', ['--verify'], False), ('1000', ['--help'], False)])
+def test_launcher_elevates_with_only_explicit_pairing_settings(tmp_path, uid, args, elevates):
+    import os
+    import shutil
+    import subprocess
+    bin_dir = tmp_path/'bin'
+    bin_dir.mkdir()
+    bundle = tmp_path/'bundle with spaces'
+    bundle.mkdir()
+    shutil.copyfile(HERE/'core_install.sh', bundle/'install.sh')
+    record = tmp_path/'args.json'
+    # Executed helpers record argv, rather than modifying privileges or packages.
+    python = shutil.which('python3')
+    for name, source in {
+        'id': '#!/bin/sh\necho '+uid+'\n',
+        'sudo': '#!'+python+'\nimport json,sys\nfrom pathlib import Path\nPath('+repr(str(record))+').write_text(json.dumps(sys.argv[1:]))\n',
+        'python3': '#!'+python+'\nimport json,sys\nfrom pathlib import Path\nPath('+repr(str(record))+').write_text(json.dumps(sys.argv[1:]))\n',
+    }.items():
+        path=bin_dir/name
+        path.write_text(source)
+        path.chmod(0o755)
+    env={**os.environ, 'PATH':str(bin_dir)+os.pathsep+os.environ['PATH']}
+    subprocess.run(['/bin/sh', str(bundle/'install.sh'), *args], env=env, check=True)
+    actual=json.loads(record.read_text())
+    if elevates:
+        assert actual[:2] == ['--preserve-env=DEVKIT_SYNC_DEVKIT_IP,DEVKIT_DEPLOY_USER,SUDO_PASSWORD,DEVKIT_PASSWORD,NEAT_INSTALLER_SKIP_DEVKIT_SYNC,SSH_AUTH_SOCK', '--']
+        assert actual[2:] == ['python3', '-B', str(bundle/'install.py'), *args]
+    else:
+        assert actual == ['-B', './install.py', *args]

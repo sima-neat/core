@@ -94,7 +94,7 @@ sima-cli neat install core/offline@v0.6.0 --download-only
 sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
 ```
 
-`neat-core-offline-installer.tar.gz`를 추출한 후 `cd neat-core-offline && sudo ./install.sh`를 실행합니다. 튜토리얼이나 테스트가 필요하면 별도의 추가 아카이브를 원하는 디렉터리에 추출하세요.
+`neat-core-offline-installer.tar.gz`를 추출한 후 `cd neat-core-offline && ./install.sh`를 실행합니다. 튜토리얼이나 테스트가 필요하면 별도의 추가 아카이브를 원하는 디렉터리에 추출하세요.
 
 설치 프로그램은 Neat eLxr SDK 또는 프로비저닝된 Modalix DevKit만 허용합니다. `/etc/sdk-release` 또는 `/etc/buildinfo`를 아카이브에 포함된 패키지 매니페스트와 비교하므로 다운로드한 배포 메타데이터는 필요하지 않습니다. 다른 환경이나 호환되지 않는 Platform 버전에서는 설치 전에 중단합니다. SDK에서는 Core를 `/opt/toolchain/aarch64/modalix`에 복사합니다. `DEVKIT_SYNC_DEVKIT_IP`가 설정되어 있으면 SSH를 통해 동일한 오프라인 번들을 페어링된 DevKit에 전송합니다. 설치를 시작하기 전에 두 환경 모두 사전 검사를 통과해야 합니다. DevKit에서는 로컬로 설치합니다.
 
@@ -103,3 +103,5 @@ sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
 네이티브 설치 프로그램은 오프라인 APT 트랜잭션 계획에 따라 설치 또는 재설치할 Debian 패키지와 모든 Python wheel의 압축 해제 크기의 3배에 더해 메타데이터와 Python 환경을 위한 128 MiB를 확보합니다. APT가 변경하지 않는 종속 패키지는 이 설치 공간 계산에서 제외합니다. NVMe 또는 tmpfs의 번들을 포함하여 이미 배치된 아카이브는 다시 계산하지 않습니다. 공간이 부족하면 루트 파일 시스템의 사용 가능한 공간, 필요한 공간, 추가로 필요한 공간을 MiB 단위로 표시합니다.
 
 페어링된 DevKit으로 전송할 때는 표준 DevKit에서 RAM 기반인 `/tmp` 아래의 전용 디렉터리를 사용합니다. 설치 실패가 보고되거나 전송이 완료되지 않은 경우를 포함하여 작업이 끝나면 스테이징 디렉터리를 삭제합니다. 설치 중 SSH 연결이 끊기거나 시간 초과가 발생하면 원격 설치 프로그램이 계속 실행 중일 수 있으므로 디렉터리를 유지하고 경로를 표시합니다.
+
+일반 SDK 또는 DevKit 사용자로 `./install.sh`를 실행합니다. 실행 스크립트는 `sudo` 권한을 자동으로 요청하고 페어링, DevKit 인증, 동기화 기본 설정 및 SSH 에이전트 설정만 명시적으로 유지합니다. 페어링된 장치 배포에는 실행한 SDK 사용자의 SSH 자격 증명을 계속 사용합니다.

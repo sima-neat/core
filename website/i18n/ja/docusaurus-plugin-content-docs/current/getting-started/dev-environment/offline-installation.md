@@ -94,7 +94,7 @@ sima-cli neat install core/offline@v0.6.0 --download-only
 sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
 ```
 
-`neat-core-offline-installer.tar.gz` を展開し、`cd neat-core-offline && sudo ./install.sh` を実行します。チュートリアルやテストが必要な場合は、別の追加アーカイブを任意のディレクトリに展開してください。
+`neat-core-offline-installer.tar.gz` を展開し、`cd neat-core-offline && ./install.sh` を実行します。チュートリアルやテストが必要な場合は、別の追加アーカイブを任意のディレクトリに展開してください。
 
 インストーラーは Neat eLxr SDK またはセットアップ済みの Modalix DevKit のみを受け入れます。`/etc/sdk-release` または `/etc/buildinfo` をアーカイブ内のパッケージマニフェストと照合するため、ダウンロードした公開用メタデータは不要です。他の環境や互換性のない Platform バージョンでは、インストール前に停止します。SDK では Core を `/opt/toolchain/aarch64/modalix` にコピーします。`DEVKIT_SYNC_DEVKIT_IP` が設定されていれば、同じオフラインバンドルを SSH 経由でペアリング済みの DevKit に転送します。インストール開始前に両方の環境が事前チェックに合格する必要があります。DevKit 上ではローカルにインストールします。
 
@@ -103,3 +103,5 @@ sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
 ネイティブインストーラーはオフライン APT トランザクション計画を使い、インストールまたは再インストールする Debian パッケージとすべての Python wheel の展開後サイズの 3 倍に加え、メタデータと Python 環境用に 128 MiB を確保します。APT が変更しない依存パッケージは、この容量に含めません。NVMe や tmpfs 上のバンドルを含め、配置済みアーカイブを再計上しません。容量不足の場合は、ルートファイルシステムの空き容量、必要容量、追加で必要な容量を MiB 単位で表示します。
 
 ペアリングされた DevKit への転送には、標準 DevKit では RAM 上にある `/tmp` 内の専用ディレクトリを使用します。インストール失敗が報告された場合や転送が未完了の場合も、処理終了後にステージングディレクトリを削除します。インストール中に SSH が切断またはタイムアウトした場合は、リモートのインストーラーが実行中の可能性があるため、ディレクトリを保持してパスを表示します。
+
+SDK または DevKit の通常ユーザーとして `./install.sh` を実行します。ランチャーは必要な `sudo` 権限を自動的に要求し、ペアリング、DevKit 認証、同期設定、SSH エージェントの設定のみを明示的に保持します。ペアリング先へのデプロイには、起動した SDK ユーザーの SSH ID を引き続き使用します。

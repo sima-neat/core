@@ -111,7 +111,7 @@ sima-cli neat install core/offline@v0.6.0 --download-only
 sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
 ```
 
-Extract `neat-core-offline-installer.tar.gz`, then run `cd neat-core-offline && sudo ./install.sh`. Extract the separate extras archive in a directory of your choice when you need tutorials or tests.
+Extract `neat-core-offline-installer.tar.gz`, then run `cd neat-core-offline && ./install.sh`. Extract the separate extras archive in a directory of your choice when you need tutorials or tests.
 
 The installer accepts only the Neat eLxr SDK or a provisioned Modalix DevKit. It checks `/etc/sdk-release` or `/etc/buildinfo` against the package manifest bundled in the archive; downloaded publication metadata is not required. Other environments and incompatible Platform versions are rejected before installation. In the SDK, Core is copied into `/opt/toolchain/aarch64/modalix`. If `DEVKIT_SYNC_DEVKIT_IP` is configured, the same offline bundle is transferred over SSH to the paired DevKit. Both environments must pass preflight before installation begins. On a DevKit, installation runs locally.
 
@@ -120,3 +120,5 @@ Inside the standard SDK container, the offline installer does not require `unsha
 The native installer uses the offline APT transaction plan to reserve three times the expanded contents of Debian packages selected for installation or reinstallation and all Python wheels, plus 128 MiB for metadata and the Python environment. Dependencies left untouched by APT do not consume this installation budget. It does not count already-staged archives again, including bundles on NVMe or tmpfs. A disk-space failure reports available, required, and additional root space in MiB.
 
 Paired DevKit transfers use a private directory under `/tmp`, which is RAM-backed on the standard DevKit. The staging directory is removed after the operation finishes, including reported installation failures and incomplete transfers. If SSH disconnects or times out during installation, the directory is retained and its path is printed because the remote installer may still be running.
+
+Run `./install.sh` as your regular SDK or DevKit user. The launcher requests `sudo` privileges automatically and preserves only the explicit pairing, DevKit authentication, sync preference, and SSH-agent settings. Paired deployment continues to use the invoking SDK user’s SSH identity.

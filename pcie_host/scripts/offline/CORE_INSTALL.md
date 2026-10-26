@@ -15,9 +15,9 @@ against `offline/metadata.json` or `offline/metadata-minimal.json`, then run:
 ```sh
 tar -xzf neat-core-offline-installer.tar.gz
 cd neat-core-offline
-sudo ./install.sh --check
-sudo ./install.sh
-sudo ./install.sh --verify
+./install.sh --check
+./install.sh
+./install.sh --verify
 /opt/sima/neat/pyneat/bin/python -c 'import pyneat; print(pyneat.__version__)'
 ```
 
@@ -55,7 +55,8 @@ online installer's `SUDO_PASSWORD` / `DEVKIT_PASSWORD` convention. Set
 Package installation uses only bundled files on both targets; SSH is used only
 to transfer the bundle and invoke its installer. An explicitly configured but
 unreachable or incompatible paired DevKit fails installation.
-If `sudo` filters the SDK's pairing variables, preserve them explicitly:
+Run the launcher as your regular user so it preserves the SDK pairing before
+requesting sudo privileges. If invoking `sudo` yourself, preserve them explicitly:
 
 ```sh
 sudo --preserve-env=DEVKIT_SYNC_DEVKIT_IP,DEVKIT_DEPLOY_USER,SUDO_PASSWORD,DEVKIT_PASSWORD,NEAT_INSTALLER_SKIP_DEVKIT_SYNC ./install.sh
@@ -110,3 +111,5 @@ when they are stored on NVMe or tmpfs. A space failure reports available,
 required, and additional root space in MiB.
 
 Paired DevKit transfers use a private directory under `/tmp`, which is RAM-backed on the standard DevKit. The staging directory is removed after the operation finishes, including reported installation failures and incomplete transfers. If SSH disconnects or times out during installation, the directory is retained and its path is printed because the remote installer may still be running.
+
+Run `./install.sh` as your regular SDK or DevKit user. The launcher requests `sudo` privileges automatically and preserves only the explicit pairing, DevKit authentication, sync preference, and SSH-agent settings. Paired deployment continues to use the invoking SDK user’s SSH identity.

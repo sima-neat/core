@@ -94,7 +94,7 @@ sima-cli neat install core/offline@v0.6.0 --download-only
 sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
 ```
 
-解壓縮 `neat-core-offline-installer.tar.gz`，然後執行 `cd neat-core-offline && sudo ./install.sh`。需要教學課程或測試時，請將另一個額外套件封存檔解壓縮到您選擇的目錄。
+解壓縮 `neat-core-offline-installer.tar.gz`，然後執行 `cd neat-core-offline && ./install.sh`。需要教學課程或測試時，請將另一個額外套件封存檔解壓縮到您選擇的目錄。
 
 安裝程式僅接受 Neat eLxr SDK 或已佈建的 Modalix DevKit。它會將 `/etc/sdk-release` 或 `/etc/buildinfo` 與封存檔內的套件資訊清單比對，不需要下載的發佈中繼資料。其他環境或不相容的 Platform 版本會在安裝前遭到拒絕。在 SDK 中，Core 會複製到 `/opt/toolchain/aarch64/modalix`。若已設定 `DEVKIT_SYNC_DEVKIT_IP`，同一個離線套件會透過 SSH 傳送至已配對的 DevKit。開始安裝前，兩個環境都必須通過預先檢查。在 DevKit 上則會於本機安裝。
 
@@ -103,3 +103,5 @@ sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
 原生安裝程式會依據離線 APT 交易計畫，預留將安裝或重新安裝的 Debian 套件與所有 Python wheel 解壓後大小的三倍，另加 128 MiB 供中繼資料與 Python 環境使用。APT 不會變更的相依套件不計入此安裝空間預算。已放置的封存檔不會重複計算，包括位於 NVMe 或 tmpfs 的套件。空間不足時會以 MiB 顯示根檔案系統的可用空間、所需空間與尚需釋放的空間。
 
 配對 DevKit 的傳輸使用 `/tmp` 下的私有目錄；標準 DevKit 的此目錄位於 RAM。作業結束後會刪除暫存目錄，包括已回報的安裝失敗與未完成的傳輸。若安裝期間 SSH 中斷或逾時，遠端安裝程式可能仍在執行，因此會保留目錄並顯示其路徑。
+
+請以一般 SDK 或 DevKit 使用者執行 `./install.sh`。啟動腳本會自動要求 `sudo` 權限，並僅明確保留配對、DevKit 驗證、同步偏好及 SSH 代理設定。部署至配對裝置時仍使用啟動腳本的 SDK 使用者之 SSH 身分。
