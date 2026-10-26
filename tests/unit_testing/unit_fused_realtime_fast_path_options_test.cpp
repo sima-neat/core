@@ -196,13 +196,14 @@ simaai::neat::Graph make_live_source_graph(int index, std::uint32_t width = 1920
   return graph;
 }
 
-// A resolved USB camera, so no hardware is needed to compose the graph.
-simaai::neat::Graph make_usb_live_source_graph(int index) {
+// A resolved USB camera, so no hardware is needed to compose the graph. NV16
+// (4:2:2 JPEGs) adds the EV74 ColorConvert to NV12.
+simaai::neat::Graph make_usb_live_source_graph(int index, simaai::neat::FormatTag sampling) {
   simaai::neat::UsbCameraInputOptions options;
   options.camera_name = "usb-camera-" + std::to_string(index);
   options.buffer_name = "fused_queue_usb" + std::to_string(index);
   return simaai::neat::internal::uvc::mjpeg_camera_graph(
-      options, {"/dev/video" + std::to_string(index), simaai::neat::FormatTag::NV12}, 0);
+      options, {"/dev/video" + std::to_string(index), sampling}, 0);
 }
 
 std::size_t count_occurrences(const std::string& value, const std::string& token) {
@@ -741,19 +742,29 @@ RUN_TEST(
       require(default_live_fused != default_live_plan.pipeline_segments.end() &&
                   default_live_fused->fused_realtime_ingress->branches.size() == 2U,
               "ordinary connect()/build() live fan-in must select fused lowering automatically");
-      simaai::neat::Graph usb_live_app("usb_live_fan_in", outer_options);
-      auto usb_live_detector = make_composed_consumer_graph();
-      usb_live_app.connect(make_usb_live_source_graph(402), usb_live_detector);
-      usb_live_app.connect(make_usb_live_source_graph(403), usb_live_detector);
-      const auto usb_live_plan =
-          simaai::neat::runtime::compile_public_graph(usb_live_app, simaai::neat::RunOptions{});
-      require(std::any_of(usb_live_plan.pipeline_segments.begin(),
-                          usb_live_plan.pipeline_segments.end(),
-                          [](const auto& segment) {
-                            return segment.fused_realtime_ingress.has_value() &&
-                                   segment.fused_realtime_ingress->branches.size() == 2U;
-                          }),
-              "two USB cameras into one consumer must fuse like two CameraInputs");
+      for (const auto sampling : {simaai::neat::FormatTag::NV12, simaai::neat::FormatTag::NV16}) {
+        simaai::neat::Graph usb_live_app("usb_live_fan_in", outer_options);
+        auto usb_live_detector = make_composed_consumer_graph();
+        usb_live_app.connect(make_usb_live_source_graph(402, sampling), usb_live_detector);
+        usb_live_app.connect(make_usb_live_source_graph(403, sampling), usb_live_detector);
+        const auto usb_live_plan =
+            simaai::neat::runtime::compile_public_graph(usb_live_app, simaai::neat::RunOptions{});
+        // A 4:2:2 branch keeps its ColorConvert inside the fused source branch.
+        const std::size_t branch_nodes = sampling == simaai::neat::FormatTag::NV16 ? 2U : 1U;
+        require(std::any_of(usb_live_plan.pipeline_segments.begin(),
+                            usb_live_plan.pipeline_segments.end(),
+                            [&](const auto& segment) {
+                              return segment.fused_realtime_ingress.has_value() &&
+                                     segment.fused_realtime_ingress->branches.size() == 2U &&
+                                     std::all_of(segment.fused_realtime_ingress->branches.begin(),
+                                                 segment.fused_realtime_ingress->branches.end(),
+                                                 [&](const auto& branch) {
+                                                   return branch.nodes.size() == branch_nodes;
+                                                 });
+                            }),
+                std::string("two USB cameras into one consumer must fuse like two CameraInputs (") +
+                    (sampling == simaai::neat::FormatTag::NV16 ? "4:2:2" : "4:2:0") + ")");
+      }
       for (const auto& branch : default_live_fused->fused_realtime_ingress->branches) {
         require(branch.link_options.policy ==
                         simaai::neat::GraphLinkPolicy::RealtimeLatestByStream &&
