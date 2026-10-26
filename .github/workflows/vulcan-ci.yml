@@ -496,6 +496,8 @@ jobs:
       artifact_glob: "*"
       min_artifact_count: ${{ (inputs.build_mode || 'standard') == 'fuzz' && 10 || 11 }}
       publish_manifest: false
+      # Runner resolution and job retries still consume this artifact.
+      cleanup_github_artifacts: false
 
   build-pciehost-packages:
     name: Build PCIe Host ${{ matrix.distro }} ${{ matrix.deb_arch }}
