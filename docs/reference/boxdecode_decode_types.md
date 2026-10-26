@@ -84,6 +84,17 @@ opt.top_k = 100;
 
 Axis-aligned detection-display graphs can feed the result to `SimaRender`. Use `decode_bbox(...)` only for the existing box-leading formats; neither it nor `SimaRender` accepts oriented boxes.
 
+## YOLOv8 and YOLO11 oriented boxes {#yolov8-oriented-boxes}
+
+Select `BoxDecodeType::YoloV8Obb` (Python: `pyneat.BoxDecodeType.YoloV8Obb`; tokens
+`yolov8-obb` or `yolo11-obb`). Supply nine grouped INT8, BF16 or FP32 heads: three
+64-channel DFL box heads, three class-logit heads, and three angle-logit heads, in
+stride-8/16/32 order. The complete class count is inferred from the class heads.
+
+BoxDecode applies DFL, class sigmoid, `(sigmoid(angle)-0.25)*pi`, and class-aware
+rotated Fast-NMS using `nms_iou_threshold`. Inputs must be raw logits. Geometry and
+`BBOX_OBB_V1` output follow the YOLO26 contract below; use the same `decode_obb` helper.
+
 ## YOLO26 oriented boxes {#yolo26-oriented-boxes}
 
 Select `BoxDecodeType::YoloV26Obb` (Python: `pyneat.BoxDecodeType.YoloV26Obb`,

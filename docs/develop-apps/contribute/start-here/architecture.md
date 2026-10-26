@@ -1132,6 +1132,8 @@ family-specific rules.
 
 ##### YOLO26 oriented-box contract
 
+`BoxDecodeType::YoloV8Obb` uses `yolo_dfl_obb_v1` with 64-channel DFL boxes and angle logits. It shares the oriented geometry and publication path; Kernels owns DFL, angle activation and rotated Fast-NMS.
+
 `BoxDecodeType::YoloV26Obb` lowers to the named `yolo26_obb_v1` numerical profile.
 It requires nine grouped heads in FP32, BF16, or INT8: three four-channel distance heads, three
 class-logit heads with the same complete class count (1–256), and three one-channel

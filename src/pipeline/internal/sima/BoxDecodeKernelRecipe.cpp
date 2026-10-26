@@ -220,6 +220,8 @@ std::string_view profile(BoxDecodeType type) {
   case BoxDecodeType::YoloV26Pose:
   case BoxDecodeType::YoloV26Seg:
     return "yolo26_v1";
+  case BoxDecodeType::YoloV8Obb:
+    return "yolo_dfl_obb_v1";
   case BoxDecodeType::YoloV26Obb:
     return "yolo26_obb_v1";
   case BoxDecodeType::YoloV5:
@@ -314,7 +316,7 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
     invalid("model and original image geometry must be resolved");
   if (geometry.resize == ResizeMode::Crop && p.decode_type != BoxDecodeType::SuperPoint &&
       !((p.decode_type == BoxDecodeType::YoloXSegPose ||
-         p.decode_type == BoxDecodeType::YoloV26Obb) &&
+         box_decode_type_is_oriented(p.decode_type)) &&
         geometry.model_to_original))
     invalid("crop geometry is not supported by the numerical recipe");
   if (p.topk == 0)
@@ -410,21 +412,24 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
     const auto selected_task = task(p.decode_type);
     int model_width = geometry.model_width, model_height = geometry.model_height;
     const bool rcnn = selected_profile == "rcnn_proposals_v1";
-    const bool oriented = selected_profile == "yolo26_obb_v1";
+    const bool oriented = box_decode_type_is_oriented(p.decode_type);
+    const bool dfl = selected_profile == "yolo_dfl_v1" || selected_profile == "yolo_dfl_obb_v1";
     if (oriented) {
       const auto option = p.decode_type_option.value_or(BoxDecodeTypeOption::Auto);
-      if (count != 9 || p.num_classes > 256 || p.nms_iou_threshold != 0 ||
+      if (count != 9 || p.num_classes > 256 ||
+          (p.decode_type == BoxDecodeType::YoloV26Obb && p.nms_iou_threshold != 0) ||
           p.score_activation != BoxDecodeScoreActivation::Sigmoid ||
           (option != BoxDecodeTypeOption::Auto && option != BoxDecodeTypeOption::GroupedByRole &&
            option != BoxDecodeTypeOption::GroupedByRoleLogit) ||
           !p.pose_classes.empty())
-        invalid("YOLO26-OBB requires nine grouped FP32 heads, sigmoid classes and NMS zero");
+        invalid("Oriented YOLO requires nine grouped raw heads and sigmoid classes; YOLO26 "
+                "requires NMS zero");
       if (!geometry.model_to_original)
-        invalid("YOLO26-OBB requires an explicit uniform model-to-original transform");
+        invalid("Oriented YOLO requires an explicit uniform model-to-original transform");
       const auto& t = *geometry.model_to_original;
       if (std::any_of(t.begin(), t.end(), [](float v) { return !std::isfinite(v); }) || t[0] <= 0 ||
           t[0] != t[1])
-        invalid("YOLO26-OBB transform must be finite, positive and uniform");
+        invalid("Oriented YOLO transform must be finite, positive and uniform");
     }
     if (rcnn && p.topk > 16384)
       invalid("RCNN topk is per level and must not exceed 16384");
@@ -557,10 +562,10 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
         if (hwc(runtime.logical_inputs[boxes].shape, runtime.logical_inputs[boxes].layout)[2] != 4)
           std::swap(boxes, scores);
       }
-      channels[boxes] = combined                            ? 3 * (p.num_classes + 5)
-                        : center                            ? 2
-                        : selected_profile == "yolo_dfl_v1" ? 64
-                                                            : (split_extents ? 2 : 4) * anchors;
+      channels[boxes] = combined ? 3 * (p.num_classes + 5)
+                        : center ? 2
+                        : dfl    ? 64
+                                 : (split_extents ? 2 : 4) * anchors;
       if (!combined)
         channels[scores] =
             ssd ? ssd_descriptor->ordered_levels[h].confidence_channels
@@ -615,7 +620,7 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
     }
     for (std::size_t i = 0; i < count; ++i) {
       if (oriented && logical_depth(i) != channels[i])
-        invalid("YOLO26-OBB requires exact logical role depths");
+        invalid("Oriented YOLO requires exact logical role depths");
       inputs.push_back(build.input(source, i, channels[i], true));
       if (inputs.back().tensor.dtype == k::DType::Int8) {
         const auto& q = quantization(runtime.logical_inputs[i]);

@@ -1,17 +1,17 @@
 // Exercise the real cold publication contract and InputStream materializer.
 // No Graph/MLA, firmware or DMA allocation: numerical wire bytes are an
 // independent fixture; existing recipe tests cover numerical serialization.
-void oriented_publication_sample_bridge() {
+void oriented_publication_sample_bridge(BoxDecodeType type = BoxDecodeType::YoloV26Obb) {
   using namespace simaai::neat::pipeline_internal;
   constexpr std::size_t bytes = 96; // Header32 + two records32.
   // Reproduce the production lowering boundary: authored typed contract ->
   // checked kernel -> discard typed payload -> generic native-stage renderer.
   // A manually tagged StageStaticSpec bypasses the bug this test must catch.
-  auto typed = source(BoxDecodeType::YoloV26Obb, 2);
+  auto typed = source(type, 2);
   typed.payload.topk = 2;
   typed.payload.nms_iou_threshold = 0;
   typed.payload.decode_type_option = BoxDecodeTypeOption::GroupedByRoleLogit;
-  for (int channels : {4, 2, 1})
+  for (int channels : {type == BoxDecodeType::YoloV8Obb ? 64 : 4, 2, 1})
     for (int side : {8, 4, 2})
       input(typed, side, side, channels, "FP32");
   for (std::size_t i = 0; i < typed.runtime_contract.logical_inputs.size(); ++i) {

@@ -84,6 +84,7 @@ enum class BoxDecodeType : std::int32_t {
   SuperPoint = 23,   ///< SuperPoint detector-logit and descriptor-grid postprocessing.
   YoloV26Obb = 25,   ///< YOLO26 oriented boxes: raw radians, grouped FP32 heads, no NMS.
   YoloXSegPose = 24, ///< YOLOX packed export carrying box, mask and keypoint heads together.
+  YoloV8Obb = 26,    ///< YOLOv8/YOLO11 oriented boxes: DFL and angle logits, rotated Fast-NMS.
 };
 
 /**
@@ -171,6 +172,8 @@ constexpr const char* box_decode_type_token(BoxDecodeType type) {
     return "yolo26-pose";
   case BoxDecodeType::YoloV26Seg:
     return "yolo26-seg";
+  case BoxDecodeType::YoloV8Obb:
+    return "yolov8-obb";
   case BoxDecodeType::YoloV26Obb:
     return "yolo26-obb";
   case BoxDecodeType::YoloV6:
@@ -244,6 +247,7 @@ constexpr bool box_decode_type_is_yolo_family(BoxDecodeType type) {
   case BoxDecodeType::YoloV26Pose:
   case BoxDecodeType::YoloV26Seg:
   case BoxDecodeType::YoloV26Obb:
+  case BoxDecodeType::YoloV8Obb:
   case BoxDecodeType::YoloV6:
   case BoxDecodeType::YoloX:
   case BoxDecodeType::YoloXSegPose:
@@ -262,7 +266,7 @@ constexpr bool box_decode_type_is_yolo_family(BoxDecodeType type) {
 
 /// @brief True iff @p type produces oriented floating-point boxes.
 constexpr bool box_decode_type_is_oriented(BoxDecodeType type) {
-  return type == BoxDecodeType::YoloV26Obb;
+  return type == BoxDecodeType::YoloV26Obb || type == BoxDecodeType::YoloV8Obb;
 }
 
 /// @brief True iff @p type selects the SSD decode family.
@@ -355,6 +359,9 @@ constexpr const char* box_decode_type_contract_summary(BoxDecodeType type) {
     return "YOLOv5 contract: exactly three raw packed P3/P4/P5 heads in stride-8/16/32 "
            "order, each depth=3*(num_classes+5), using standard YOLOv5 anchors and sigmoid "
            "box/objectness/class logits.";
+  case BoxDecodeType::YoloV8Obb:
+    return "YOLOv8/YOLO11-OBB: nine grouped tensors, three DFL(64), class(C), angle-logit(1) "
+           "heads at strides 8/16/32; sigmoid classes, rotated Fast-NMS, uniform affine.";
   case BoxDecodeType::YoloV26Obb:
     return "YOLO26-OBB: nine grouped FP32 tensors, three bbox(4), class(C), angle(1) "
            "heads at strides 8/16/32; raw radians, two-stage top-K, no NMS, uniform affine.";

@@ -4403,6 +4403,7 @@ NB_MODULE(_pyneat_core, m) {
       .value("YoloV26", simaai::neat::BoxDecodeType::YoloV26)
       .value("YoloV26Pose", simaai::neat::BoxDecodeType::YoloV26Pose)
       .value("YoloV26Seg", simaai::neat::BoxDecodeType::YoloV26Seg)
+      .value("YoloV8Obb", simaai::neat::BoxDecodeType::YoloV8Obb)
       .value("YoloV26Obb", simaai::neat::BoxDecodeType::YoloV26Obb)
       .value("YoloV6", simaai::neat::BoxDecodeType::YoloV6)
       .value("YoloX", simaai::neat::BoxDecodeType::YoloX)

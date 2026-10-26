@@ -84,6 +84,12 @@ opt.top_k = 100;
 
 축 정렬 감지 표시 그래프는 결과를 `SimaRender`에 전달할 수 있습니다. `decode_bbox(...)`는 기존 박스 선두 형식에만 사용하십시오. 이 함수와 `SimaRender`는 회전 박스를 지원하지 않습니다.
 
+## YOLOv8 및 YOLO11 회전 바운딩 박스 {#yolov8-oriented-boxes}
+
+`BoxDecodeType::YoloV8Obb`(Python: `pyneat.BoxDecodeType.YoloV8Obb`, 토큰 `yolov8-obb` 또는 `yolo11-obb`)를 선택합니다. INT8, BF16 또는 FP32 헤드 9개를 역할별로 묶어 전달합니다. 64채널 DFL 박스 헤드, 클래스 로짓 헤드, 각도 로짓 헤드를 각각 3개씩 스트라이드 8, 16, 32 순서로 배치합니다. 전체 클래스 수는 클래스 헤드에서 추론합니다.
+
+BoxDecode는 DFL, 클래스 sigmoid, `(sigmoid(angle)-0.25)*pi`, `nms_iou_threshold`에 따른 클래스별 회전 Fast-NMS를 적용합니다. 입력은 원시 로짓이어야 합니다. 기하 정보와 `BBOX_OBB_V1` 출력은 아래 YOLO26 계약을 따르며 같은 `decode_obb` 헬퍼를 사용합니다.
+
 ## YOLO26 회전 박스 {#yolo26-oriented-boxes}
 
 `BoxDecodeType::YoloV26Obb`(Python: `pyneat.BoxDecodeType.YoloV26Obb`, 토큰 `yolo26-obb`)를 명시적으로 선택하십시오. 이 프로파일은 스트라이드 8, 16, 32의 4채널 거리 헤드 3개, 클래스 로짓 헤드 3개, 1채널 원시 각도 헤드 3개를 역할별로 묶은 FP32, BF16 또는 INT8 헤드 9개를 입력으로 받습니다. 모든 헤드는 전체 클래스 수(1–256)가 일치해야 합니다. `Auto`, `GroupedByRole`, `GroupedByRoleLogit`는 이 그룹 레이아웃을 선택합니다. 확률값 클래스 헤드와 인터리브 레이아웃은 거부됩니다.

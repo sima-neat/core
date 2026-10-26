@@ -869,6 +869,8 @@ YOLOv5 偵測是採用標準錨點的固定設定檔。Core 需要正好三個�
 
 ##### YOLO26 旋轉框契約
 
+`BoxDecodeType::YoloV8Obb` 使用 `yolo_dfl_obb_v1`，接收 64 通道 DFL 邊界框與角度 logit。它共用旋轉幾何與輸出路徑；DFL、角度啟用與旋轉 Fast-NMS 由 Kernels 負責。
+
 `BoxDecodeType::YoloV26Obb` 會降階至具名數值設定檔 `yolo26_obb_v1`。它需要九個依角色分組的 FP32、BF16 或 INT8 頭：三個四通道距離頭、三個完整類別數相同（1–256）的類別 logit 頭，以及三個單通道原始弧度角度頭，各組步幅為 8、16、32。Core 會拒絕角色矛盾、機率分數域、類別數不符，以及非零的逐影格 NMS。Kernels 負責 sigmoid、兩階段錨點/類別選取、旋轉幾何運算與嚴格分數篩選；Core 不會重複這些數值運算。
 
 INT8 頭需要正且有限的逐張量量化中繼資料與 INT8 零點。BF16 和 FP32 頭不使用整數量化中繼資料。 Core 保留已驗證的原生 dtype 與位元組步幅。對於 INT8，它會將 FP32 倒數 `1.0F / float(divisor)` 與零點傳給 Kernels。它不會將完整頭實體化為 FP32 張量；必要的 MLA 去平鋪轉換仍會明確執行並保留 dtype。
