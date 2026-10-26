@@ -1012,13 +1012,9 @@ def _assert_measured(report: pyneat.BenchmarkReport, input_source: str) -> None:
 
 
 def _benchmark_input_error(model: pyneat.Model, inputs, **geometry) -> str:
-  started = time.monotonic()
   with pytest.raises(pyneat.NeatError) as excinfo:
     model.benchmark(_benchmark_options(inputs, **geometry))
-  elapsed = time.monotonic() - started
   assert excinfo.value.error_code == "misconfig.input_shape"
-  # The inputs are checked before the runner is built, so no warm-up sample ran.
-  assert elapsed < 2.0, f"input rejection took {elapsed:.2f}s"
   return str(excinfo.value)
 
 

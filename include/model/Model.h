@@ -186,8 +186,9 @@ struct BenchmarkOptions {
   /// `BenchmarkReport::mla_stage_stats.status`.
   bool include_mla_stage_stats = false;
   /// Inputs pushed for every sample: one tensor per model input, in `input_specs()` order, as
-  /// `run()` takes them. Empty selects synthetic inputs. Inputs that do not match the model throw
-  /// `NeatError` with error code `misconfig.input_shape` before the benchmark starts.
+  /// `run()` takes them. Empty selects synthetic inputs. Inputs whose count, shape or data type
+  /// does not match the model throw `NeatError` with error code `misconfig.input_shape` before the
+  /// benchmark starts; a color format the route cannot convert fails when the pipeline is built.
   TensorList inputs;
 };
 

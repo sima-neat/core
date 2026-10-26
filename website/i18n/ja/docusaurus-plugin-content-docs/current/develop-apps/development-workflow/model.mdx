@@ -809,7 +809,7 @@ print("input=", report.input, "fps=", report.fps)  # input= provided
 </CodeTab>
 </CodeTabs>
 
-入力がモデルと一致しない場合、`benchmark()` は開始前にエラーコード `misconfig.input_shape` の `NeatError` をスローします。画像のサイズは任意です。色フォーマットは `input_specs()` が示すものを使用してください。
+入力の数、形状、データ型がモデルと一致しない場合、`benchmark()` は開始前にエラーコード `misconfig.input_shape` の `NeatError` をスローします。ルートが変換できない色フォーマットは、`run()` と同様にパイプラインの構築時にエラーになります。画像を前処理するルートでは、画像のサイズは任意です。色フォーマットは `input_specs()` が示すものを使用してください。
 
 ### 実行時間
 

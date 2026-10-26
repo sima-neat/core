@@ -831,9 +831,11 @@ print("input=", report.input, "fps=", report.fps)  # input= provided
 </CodeTab>
 </CodeTabs>
 
-If the inputs do not match the model, `benchmark()` throws `NeatError` with error code
-`misconfig.input_shape` before it starts. An image can have any size. Pass it in the color format
-that `input_specs()` reports.
+If the count, shape or data type of the inputs does not match the model, `benchmark()` throws
+`NeatError` with error code `misconfig.input_shape` before it starts. A color format the route
+cannot convert fails when the pipeline is built, as it does in `run()`. On a route that
+preprocesses images, the image can have any size. Pass it in the color format that `input_specs()`
+reports.
 
 ### Run length
 

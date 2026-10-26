@@ -811,7 +811,7 @@ print("input=", report.input, "fps=", report.fps)  # input= provided
 </CodeTab>
 </CodeTabs>
 
-若輸入與模型不符，`benchmark()` 會在開始前擲回錯誤代碼為 `misconfig.input_shape` 的 `NeatError`。影像可以是任意大小，請以 `input_specs()` 回報的色彩格式傳入。
+若輸入的數量、形狀或資料型別與模型不符，`benchmark()` 會在開始前擲回錯誤代碼為 `misconfig.input_shape` 的 `NeatError`。路由無法轉換的色彩格式會在建立管線時失敗，與 `run()` 相同。在會預處理影像的路由上，影像可以是任意大小，請以 `input_specs()` 回報的色彩格式傳入。
 
 ### 執行長度
 
