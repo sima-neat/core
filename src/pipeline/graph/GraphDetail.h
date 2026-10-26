@@ -384,6 +384,9 @@ struct BuildResult {
   NameTransform name_transform{};
   std::shared_ptr<CompiledPipelineContracts> compiled_contracts;
   std::optional<pipeline_internal::sima::SimaPluginStaticManifest> rendered_manifest;
+  // Owning checked recipes, final transformed FrameLayouts and publication.
+  // Prepared once before storage budgeting; parse only admits this result.
+  std::optional<pipeline_internal::sima::SimaPluginStaticManifest> prepared_manifest;
   std::vector<std::string> model_source_paths;
   // Name provenance for build-owned scaffolding that is not represented by a public Node.
   // Node-fragment origins are derived from DiagCtx::node_reports at the final parse boundary so

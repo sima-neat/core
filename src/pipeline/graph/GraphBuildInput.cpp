@@ -998,13 +998,16 @@ void maybe_apply_public_terminal_output_override(const BuildResult& build_result
                                                  const std::vector<std::shared_ptr<Node>>& nodes,
                                                  InputStreamOptions& stream_opt,
                                                  const char* where) {
-  if (!stream_opt.public_output_contract || !build_result.rendered_manifest.has_value()) {
+  if (!stream_opt.public_output_contract || !build_result.prepared_manifest.has_value()) {
     return;
   }
-  const auto endpoint = public_output_endpoint_selector_local(nodes);
+  auto endpoint = public_output_endpoint_selector_local(nodes);
+  if (!endpoint.terminal_stage_key.empty())
+    endpoint.terminal_stage_key =
+        apply_name_transform(build_result.name_transform, endpoint.terminal_stage_key);
   std::string error;
   auto override = build_public_terminal_output_override_with_fallback(
-      *build_result.rendered_manifest, endpoint, &error);
+      *build_result.prepared_manifest, endpoint, &error);
   if (override.has_value()) {
     stream_opt.output_override = std::move(*override);
   } else if (detess_override_debug_enabled()) {
@@ -1861,15 +1864,10 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
       &br, &build_nodes, sess_opt, input_contract_from_input(sample), seed_spec,
       contract_compile_sample_from_input(sample), "Graph::build(input)");
   InputStreamOptions stream_opt = opt;
-  if (has_sink) {
-    maybe_apply_public_terminal_output_override(br, build_nodes, stream_opt, "Graph::build(input)");
-  }
-  finalize_public_zero_copy_holder_loan_credits(stream_opt);
   // Execution and output ownership are independent: a completed frame may
   // remain retained by the application after its execution slot is reusable.
   br.kernel_runner_capacity =
       sync_mode ? 1U : static_cast<std::size_t>(std::clamp(sess_opt.async_queue_depth, 1, 64));
-  session_build_reserve_kernel_runner_outputs(br, stream_opt);
   const bool legacy_observer = env_bool("SIMA_GST_FLOW_DEBUG", false) ||
                                env_bool("SIMA_GST_BOUNDARY_PROBES", false) ||
                                env_bool("SIMA_GST_DETESS_INPUT_DEBUG", false) ||
@@ -1881,6 +1879,15 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   br.kernel_runner_compact =
       !insert_boundaries && !legacy_observer && env_bool("SIMA_CORE_COMPACT_METADATA", false);
 
+  if (sync_mode) {
+    session_build_clamp_sync_kernel_runner_capacity(br);
+  }
+  session_build_prepare_stage_contracts(br, "Graph::build(input)");
+  if (has_sink) {
+    maybe_apply_public_terminal_output_override(br, build_nodes, stream_opt, "Graph::build(input)");
+  }
+  finalize_public_zero_copy_holder_loan_credits(stream_opt);
+  session_build_reserve_kernel_runner_outputs(br, stream_opt);
   if (sync_mode) {
     br.pipeline_string = session_build_clamp_sync_build_result(br, sync_num_buffers_override);
     br.diag->pipeline_string = br.pipeline_string;

@@ -121,6 +121,7 @@ session_build_materialize_model_bound_nodes(const std::vector<std::shared_ptr<No
 
 bool session_build_has_output_appsink(const std::vector<std::shared_ptr<Node>>& nodes);
 
+void session_build_prepare_stage_contracts(BuildResult& build, const char* where);
 GstElement* session_build_parse_pipeline_or_throw(const BuildResult& build, const char* where);
 void session_build_validate_explicit_launch_names_or_throw(
     std::string_view pipeline, const char* where, std::span<const LaunchNameOrigin> origins = {});

@@ -380,8 +380,8 @@ std::vector<ExpectedHead> expected_raw_heads(const simaai::neat::Model& model) {
   return heads;
 }
 
-sima_test::DmaBufBackingIdentity validate_raw_heads(const simaai::neat::Sample& sample,
-                                                    const std::vector<ExpectedHead>& expected) {
+std::vector<sima_test::DmaBufBackingIdentity>
+validate_raw_heads(const simaai::neat::Sample& sample, const std::vector<ExpectedHead>& expected) {
   require(sample.kind == simaai::neat::SampleKind::TensorSet &&
               sample.tensors.size() == expected.size(),
           "sync: expected all six raw output tensors");
@@ -389,12 +389,20 @@ sima_test::DmaBufBackingIdentity validate_raw_heads(const simaai::neat::Sample& 
   std::string error;
   require(simaai::neat::pipeline_internal::tensor_buffer_view_from_sample(sample, &carrier, &error),
           "sync: raw heads must retain their shared native carrier: " + error);
-  const auto backing = sima_test::dmabuf_span(carrier.buffer).backing;
+  std::vector<sima_test::DmaBufBackingIdentity> backings;
+  backings.reserve(expected.size());
   for (const auto& head : expected) {
     const auto matches = [&](const auto& tensor) { return tensor.route.name == head.name; };
     require(std::count_if(sample.tensors.begin(), sample.tensors.end(), matches) == 1,
             "sync: missing/duplicate MPK output identity " + head.name);
     const auto& tensor = *std::find_if(sample.tensors.begin(), sample.tensors.end(), matches);
+    const int memory_index =
+        carrier.buffer && gst_buffer_n_memory(carrier.buffer) == 1 ? 0 : tensor.route.memory_index;
+    require(carrier.buffer && memory_index >= 0 &&
+                static_cast<guint>(memory_index) < gst_buffer_n_memory(carrier.buffer),
+            "sync: raw head has no selected DMA allocation " + head.name);
+    backings.push_back(
+        sima_test::dmabuf_span(gst_buffer_peek_memory(carrier.buffer, memory_index)).backing);
     if (tensor.shape != head.shape || tensor.dtype != simaai::neat::TensorDType::Float32 ||
         !tensor.is_dense() || !tensor.is_contiguous()) {
       std::ostringstream detail;
@@ -419,7 +427,7 @@ sima_test::DmaBufBackingIdentity validate_raw_heads(const simaai::neat::Sample& 
       }
     }
   }
-  return backing;
+  return backings;
 }
 
 RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
@@ -490,7 +498,7 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
   std::optional<simaai::neat::Sample> retained_first;
   simaai::neat::Mapping retained_view;
   std::vector<std::uint8_t> retained_bytes;
-  std::optional<sima_test::DmaBufBackingIdentity> retained_backing;
+  std::optional<std::vector<sima_test::DmaBufBackingIdentity>> retained_backings;
   cv::Mat replacement_input;
   bool saw_raw_heads = false;
   bool checked_retained_view = false;
@@ -530,17 +538,23 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
     if (out.kind == simaai::neat::SampleKind::TensorSet) {
       saw_raw_heads = true;
       try {
-        const auto backing = validate_raw_heads(out, raw_heads);
+        const auto backings = validate_raw_heads(out, raw_heads);
         if (i == 0 && cfg.iters > 1) {
           retained_first = out;
-          retained_backing = backing;
+          retained_backings = backings;
           retained_view = retained_first->tensors.front().map_read();
           const auto* begin = static_cast<const std::uint8_t*>(retained_view.data);
           retained_bytes.assign(begin, begin + retained_view.size_bytes);
           replacement_input = cv::Mat::zeros(img.size(), img.type());
         } else if (i == 1 && retained_first) {
-          require(retained_backing && backing != *retained_backing,
-                  "sync: second output reused the still-retained first DMA allocation");
+          require(retained_backings && std::none_of(backings.begin(), backings.end(),
+                                                    [&](const auto& backing) {
+                                                      return std::find(retained_backings->begin(),
+                                                                       retained_backings->end(),
+                                                                       backing) !=
+                                                             retained_backings->end();
+                                                    }),
+                  "sync: second output reused a still-retained first DMA allocation");
           require(std::memcmp(retained_view.data, retained_bytes.data(), retained_bytes.size()) ==
                       0,
                   "sync: retained first output changed during second frame execution");
@@ -548,7 +562,7 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
           // progress, not unbounded progress while old user outputs stay live.
           retained_view = {};
           retained_first.reset();
-          retained_backing.reset();
+          retained_backings.reset();
           retained_bytes.clear();
           checked_retained_view = true;
           append_note(res.note, "six_raw_heads_finite retained_view_stable");

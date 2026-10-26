@@ -544,8 +544,21 @@ void finalize_pipeline_storage(
                        [&](const auto& value) { return value.physical_index == physical_id; });
       if (output == stage.physical_outputs.end() || output->source_byte_offset < 0)
         throw std::invalid_argument("memory placement: invalid output identity or offset");
-      layout->outputs.push_back(
-          {tensor, allocation_span(stage, output->source_byte_offset, output->size_bytes)});
+      auto offset = static_cast<std::uint64_t>(output->source_byte_offset);
+      auto bytes = output->size_bytes;
+      if (stage.native_kernel && stage.native_kernel->image_publication) {
+        const auto plane = std::find_if(
+            stage.logical_outputs.begin(), stage.logical_outputs.end(), [&](const auto& value) {
+              return value.backend_output_index == static_cast<int>(tensor);
+            });
+        if (plane == stage.logical_outputs.end() || plane->byte_offset < 0 ||
+            std::uint64_t(plane->byte_offset) > bytes ||
+            plane->size_bytes > bytes - std::uint64_t(plane->byte_offset))
+          throw std::invalid_argument("memory placement: image plane exceeds its carrier");
+        offset += std::uint64_t(plane->byte_offset);
+        bytes = plane->size_bytes;
+      }
+      layout->outputs.push_back({tensor, allocation_span(stage, offset, bytes)});
     };
     if (stage.native_kernel) {
       for (const auto& member : stage.native_kernel->members)

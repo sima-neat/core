@@ -15,6 +15,8 @@
 #include "test_main.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
 
+#include <simaai/scheduler/client/frame_layout.h>
+
 #include <algorithm>
 #include <cstdlib>
 #include <limits>
@@ -304,15 +306,19 @@ void require_default_sync_retention_contract(const simaai::neat::Model& model) {
                                   "unit_modelpack_mla_handoff_segment_test", &nodes);
   require(build.manifest_diagnostics.errors.empty() && build.rendered_manifest.has_value(),
           "real YOLO sync route must compile its MPK-derived typed manifest");
-  const auto& manifest = *build.rendered_manifest;
+  session_build_prepare_stage_contracts(build, "unit_modelpack_mla_handoff_segment_test");
+  require(build.prepared_manifest.has_value(), "real YOLO sync route must finalize storage");
+  const auto& manifest = *build.prepared_manifest;
   const auto* owner = query::find_preproc_stage(manifest);
   const auto* mla = query::find_mla_stage(manifest);
   const auto* terminal = query::find_processcvu_stage(manifest, "detessdequant");
-  require(owner && mla && terminal &&
-              owner->frame_arena_role == contract::FrameArenaRole::Allocate &&
-              mla->frame_arena_role == contract::FrameArenaRole::ReuseInput &&
-              terminal->frame_arena_role == contract::FrameArenaRole::ReuseInput,
-          "real YOLO serial route must reuse the preproc-allocated frame arena");
+  namespace client = simaai::scheduler::client;
+  require(owner && mla && terminal && owner->frame_layout && mla->frame_layout &&
+              terminal->frame_layout &&
+              owner->frame_layout->ownership == client::FrameOwnership::Allocate &&
+              mla->frame_layout->ownership == client::FrameOwnership::ReuseInput &&
+              terminal->frame_layout->ownership == client::FrameOwnership::ReuseInput,
+          "real YOLO serial route must reuse the preproc-allocated frame carrier");
   require(mla->physical_outputs.size() == 1U && mla->logical_outputs.size() == 6U &&
               terminal->input_bindings.size() == 6U,
           "retention regression must cover the real six-head packed MLA handoff");

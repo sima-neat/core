@@ -9,6 +9,7 @@
 #include "pipeline/internal/sima/StageMemoryPolicy.h"
 #include "pipeline/internal/TerminalOutputContractQuery.h"
 #include "test_main.h"
+#include <gstsimaaitensorbuffer_meta.h>
 
 namespace {
 using namespace simaai::neat;
@@ -313,8 +314,16 @@ void render_images() {
                   stage.frame_layout->outputs[i].tensor ==
                       std::size_t(stage.image_publication->planes[i].backend_output_index) &&
                   stage.image_publication->planes[i].byte_offset ==
-                      stage.frame_layout->outputs[i].span.byte_offset +
-                          std::uint64_t(stage.logical_outputs[i].byte_offset),
+                      stage.frame_layout->outputs[i].span.byte_offset &&
+                  stage.tensor_publication->contract->logical_outputs[i].byte_offset ==
+                      std::int64_t(stage.frame_layout->outputs[i].span.byte_offset) &&
+                  stage.tensor_publication->contract->logical_outputs[i].memory_index ==
+                      int(stage.frame_layout->outputs[i].span.allocation_index) &&
+                  stage.frame_layout->outputs[i].span.byte_offset ==
+                      std::uint64_t(stage.physical_outputs[0].source_byte_offset) +
+                          std::uint64_t(stage.logical_outputs[i].byte_offset) &&
+                  stage.frame_layout->outputs[i].span.size_bytes ==
+                      stage.logical_outputs[i].size_bytes,
               "final image metadata differs from its allocation-local plane binding");
   }
   auto normalization = nodes::Normalization();

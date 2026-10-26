@@ -1,5 +1,7 @@
 #include "pipeline/internal/TerminalOutputContractQuery.h"
 
+#include <gstsimaaitensorbuffer_meta.h>
+
 #include "pipeline/internal/TensorMath.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 
@@ -390,6 +392,22 @@ bool logical_to_override_entry(const StageStaticSpec& stage, const LogicalTensor
                     ? logical.logical_name
                     : (!logical.backend_name.empty() ? logical.backend_name : "output");
   entry->segment_name = !logical.segment_name.empty() ? logical.segment_name : entry->name;
+  if (stage.tensor_publication && stage.tensor_publication->contract) {
+    const auto& outputs = stage.tensor_publication->contract->logical_outputs;
+    const auto published = std::find_if(outputs.begin(), outputs.end(), [&](const auto& output) {
+      return output.logical_index == logical.logical_index;
+    });
+    if (published == outputs.end()) {
+      if (error_message)
+        *error_message = "terminal output has no finalized publication route";
+      return false;
+    }
+    // Semantic views remain producer-local. The checked publication carries
+    // their final allocation index and offset after shared carrier packing.
+    entry->memory_index = published->memory_index;
+    entry->byte_offset = published->byte_offset;
+    entry->segment_name = published->segment_name;
+  }
   return true;
 }
 

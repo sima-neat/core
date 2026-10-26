@@ -530,11 +530,13 @@ bool build_publish_contract_from_manifest_stage_local(const StageStaticSpec& sta
           [&](const auto& candidate) {
             return candidate.tensor == static_cast<std::size_t>(logical.backend_output_index);
           });
+      const auto relative = stage.native_kernel && stage.native_kernel->image_publication
+                                ? std::int64_t{0}
+                                : logical.byte_offset;
       if (binding == stage.frame_layout->outputs.end() ||
           binding->span.allocation_index >= out->physical_outputs.size() ||
-          logical.byte_offset < 0 ||
-          std::uint64_t(logical.byte_offset) > binding->span.size_bytes ||
-          logical.size_bytes > binding->span.size_bytes - std::uint64_t(logical.byte_offset)) {
+          logical.byte_offset < 0 || std::uint64_t(relative) > binding->span.size_bytes ||
+          logical.size_bytes > binding->span.size_bytes - std::uint64_t(relative)) {
         if (error_message)
           *error_message = "publication view exceeds its final physical binding";
         return false;
@@ -542,8 +544,7 @@ bool build_publish_contract_from_manifest_stage_local(const StageStaticSpec& sta
       output.physical_index = static_cast<int>(binding->span.allocation_index);
       output.memory_index = static_cast<int>(binding->span.allocation_index);
       output.segment_name = out->physical_outputs[binding->span.allocation_index].segment_name;
-      output.byte_offset =
-          static_cast<std::int64_t>(binding->span.byte_offset) + logical.byte_offset;
+      output.byte_offset = static_cast<std::int64_t>(binding->span.byte_offset) + relative;
     }
     output.shape = logical.shape;
     output.stride_bytes = logical.stride_bytes;
@@ -2017,11 +2018,6 @@ apply_kernel_publication_views(const StageStaticSpec& stage,
           });
       if (logical == stage->logical_outputs.end() || logical->byte_offset < 0)
         return invalid("stage.image", "raw image plane lacks an exact publication route");
-      const auto physical = std::find_if(
-          stage->physical_outputs.begin(), stage->physical_outputs.end(),
-          [&](const auto& value) { return value.physical_index == logical->physical_index; });
-      if (physical == stage->physical_outputs.end() || physical->source_byte_offset < 0)
-        return invalid("stage.image", "raw image plane lacks an allocation route");
       const auto binding = std::find_if(
           stage->frame_layout->outputs.begin(), stage->frame_layout->outputs.end(),
           [&](const auto& candidate) {
@@ -2029,7 +2025,7 @@ apply_kernel_publication_views(const StageStaticSpec& stage,
           });
       if (binding == stage->frame_layout->outputs.end())
         return invalid("stage.image", "raw image plane has no final allocation binding");
-      plane.byte_offset = binding->span.byte_offset + std::uint64_t(logical->byte_offset);
+      plane.byte_offset = binding->span.byte_offset;
     }
     recipe->image_publication = std::move(image_view);
   }

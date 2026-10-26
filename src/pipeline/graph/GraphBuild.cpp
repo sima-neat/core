@@ -2875,8 +2875,10 @@ std::string clamp_detess_num_buffers(std::string pipeline, int num_buffers_overr
 
 void session_build_clamp_sync_kernel_runner_capacity(BuildResult& build) {
   build.kernel_runner_capacity = 1U;
-  if (build.rendered_manifest) {
-    for (auto& stage : build.rendered_manifest->stages) {
+  for (auto* manifest : {&build.rendered_manifest, &build.prepared_manifest}) {
+    if (!*manifest)
+      continue;
+    for (auto& stage : (*manifest)->stages) {
       if (stage.native_execution_capacity) {
         stage.native_execution_capacity = 1U;
       }
@@ -2886,18 +2888,16 @@ void session_build_clamp_sync_kernel_runner_capacity(BuildResult& build) {
 
 std::string session_build_clamp_sync_build_result(BuildResult& build, int num_buffers_override) {
   namespace sima = pipeline_internal::sima;
-  using sima::FrameArenaRole;
-  using sima::static_contract::ArenaAllocationProvenance;
+  namespace client = ::simaai::scheduler::client;
   // Clamp even when a non-native terminal takes the legacy retention path.
   session_build_clamp_sync_kernel_runner_capacity(build);
   const auto legacy = [&] {
     return clamp_detess_num_buffers(
         clamp_sync_pipeline(build.pipeline_string, num_buffers_override), num_buffers_override);
   };
-  if (!build.rendered_manifest ||
-      std::none_of(
-          build.rendered_manifest->stages.begin(), build.rendered_manifest->stages.end(),
-          [](const auto& stage) { return stage.frame_arena_role != FrameArenaRole::None; })) {
+  if (!build.prepared_manifest ||
+      std::none_of(build.prepared_manifest->stages.begin(), build.prepared_manifest->stages.end(),
+                   [](const auto& stage) { return bool(stage.frame_layout); })) {
     return legacy();
   }
   const auto fail = [&](const std::string& detail) -> void {
@@ -2908,7 +2908,7 @@ std::string session_build_clamp_sync_build_result(BuildResult& build, int num_bu
         "pool capacity cannot be inferred from stage order or execution depth.",
         build.pipeline_string);
   };
-  const auto& manifest = *build.rendered_manifest;
+  const auto& manifest = *build.prepared_manifest;
   auto elements = sima::parse_pipeline_elements(build.pipeline_string);
   std::size_t sink = elements.size();
   std::size_t sink_count = 0U;
@@ -2942,11 +2942,11 @@ std::string session_build_clamp_sync_build_result(BuildResult& build, int num_bu
   std::unordered_set<std::string> native_names;
   for (std::size_t i = 0; i < manifest.stages.size(); ++i) {
     const auto& stage = manifest.stages[i];
-    const auto name = apply_name_transform(build.name_transform, stage.element_name);
+    const auto name = stage.element_name;
     if (!name.empty() && !stage_by_element.emplace(name, i).second) {
       fail("duplicate typed element name '" + name + "'");
     }
-    if (stage.frame_arena_role != FrameArenaRole::None) {
+    if (stage.frame_layout) {
       if (name.empty()) {
         fail("native stage has no exact rendered element identity");
       }
@@ -2957,7 +2957,7 @@ std::string session_build_clamp_sync_build_result(BuildResult& build, int num_bu
   if (endpoint == stage_by_element.end()) {
     fail("no typed contract for terminal element '" + elements[terminal].element_name + "'");
   }
-  if (manifest.stages[endpoint->second].frame_arena_role == FrameArenaRole::None) {
+  if (!manifest.stages[endpoint->second].frame_layout) {
     return legacy();
   }
   // Check topology only for the selected native endpoint. An unrelated native
@@ -2986,23 +2986,25 @@ std::string session_build_clamp_sync_build_result(BuildResult& build, int num_bu
     if (origins[index]) {
       return *origins[index];
     }
-    const auto rendered_name = apply_name_transform(build.name_transform, stage.element_name);
+    const auto rendered_name = stage.element_name;
     if (std::count_if(elements.begin(), elements.end(), [&](const auto& element) {
           return element.element_name == rendered_name;
         }) != 1) {
       fail("native carrier stage is not uniquely rendered: '" + rendered_name + "'");
     }
-    if (stage.frame_arena_size_bytes == 0U || stage.frame_arena_role == FrameArenaRole::None) {
-      fail("ReuseInput reaches a stage without a native arena: '" + stage.element_name + "'");
+    if (!stage.frame_layout || stage.frame_layout->allocations.empty()) {
+      fail("ReuseInput reaches a stage without a finalized FrameLayout: '" + stage.element_name +
+           "'");
     }
-    if (stage.frame_arena_role == FrameArenaRole::Allocate) {
-      if (stage.frame_arena_provenance != ArenaAllocationProvenance::CoreAllocated) {
-        fail("Allocate stage lacks CoreAllocated provenance: '" + stage.element_name + "'");
-      }
+    const auto& layout = *stage.frame_layout;
+    if (layout.ownership == client::FrameOwnership::Allocate) {
       origins[index] = index;
       return index;
     }
-    if (stage.frame_arena_provenance == ArenaAllocationProvenance::ExternalAdopted) {
+    if (std::all_of(layout.allocations.begin(), layout.allocations.end(),
+                    [](const auto& allocation) {
+                      return allocation.policy == client::AllocationPolicy::PreserveImported;
+                    })) {
       origins[index] = index; // No local pool may be invented for externally loaned storage.
       return index;
     }
@@ -3016,7 +3018,7 @@ std::string session_build_clamp_sync_build_result(BuildResult& build, int num_bu
     while (upstream != elements.begin() && transparent(*std::prev(upstream))) {
       --upstream;
     }
-    if (stage.frame_arena_role == FrameArenaRole::ReuseInput && upstream != elements.begin() &&
+    if (layout.ownership == client::FrameOwnership::ReuseInput && upstream != elements.begin() &&
         std::prev(upstream)->plugin == "appsrc") {
       origins[index] = index;
       return index;
@@ -3030,12 +3032,17 @@ std::string session_build_clamp_sync_build_result(BuildResult& build, int num_bu
     }
     std::optional<std::size_t> owner;
     for (const auto& edge : edges) {
+      if (!edge.binding || edge.binding->sink_pad_index < 0 ||
+          static_cast<std::size_t>(edge.binding->sink_pad_index) != layout.source_pad)
+        continue;
       const auto origin = resolve_owner(edge.producer_stage_index);
       if (owner && *owner != origin) {
         fail("ReuseInput bindings have different carrier origins at '" + stage.element_name + "'");
       }
       owner = origin; // Multiple logical heads retain one carrier, not one pool slot per head.
     }
+    if (!owner)
+      fail("ReuseInput has no exact producer for its source pad at '" + stage.element_name + "'");
     visiting[index] = false;
     origins[index] = owner;
     return *owner;
@@ -3044,12 +3051,11 @@ std::string session_build_clamp_sync_build_result(BuildResult& build, int num_bu
   auto pipeline = clamp_detess_num_buffers_impl(
       clamp_sync_pipeline_impl(build.pipeline_string, num_buffers_override, false),
       num_buffers_override, native_names);
-  if (manifest.stages[owner].frame_arena_role != FrameArenaRole::Allocate ||
+  if (manifest.stages[owner].frame_layout->ownership != client::FrameOwnership::Allocate ||
       num_buffers_override > 1) {
     return pipeline;
   }
-  const auto owner_name =
-      apply_name_transform(build.name_transform, manifest.stages[owner].element_name);
+  const auto owner_name = manifest.stages[owner].element_name;
   elements = sima::parse_pipeline_elements(pipeline);
   std::size_t owner_matches = 0U;
   for (auto& element : elements) {

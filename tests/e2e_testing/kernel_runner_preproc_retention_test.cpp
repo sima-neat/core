@@ -210,6 +210,11 @@ void actual_preproc(bool compact = false, bool full = false, bool preflight = fa
   request.layout = manifest.stages.front().frame_layout;
   request.publication = original_publication;
   request.options.capacity = 4;
+  const auto output_span = request.layout->outputs.front().span;
+  const auto output_capacity = request.layout->allocations[output_span.allocation_index].size_bytes;
+  require(output_span.byte_offset <= output_capacity &&
+              output_span.size_bytes <= output_capacity - output_span.byte_offset,
+          "Preproc output exceeds its finalized allocation");
   auto stage = take(probe::StageProbe::create(std::move(request), compact));
   // Three simultaneous outputs outlive the two-entry geometry cache. The
   // fourth output then returns to A, forcing a real preparation after eviction.
@@ -244,7 +249,9 @@ void actual_preproc(bool compact = false, bool full = false, bool preflight = fa
     require(tensor.shape == std::vector<std::int64_t>({8, 8, 3}) &&
                 tensor.stride_bytes == std::vector<std::int64_t>({48, 6, 2}) &&
                 tensor.size_bytes == 384 && tensor.physical_span_bytes == 384 &&
-                tensor.byte_offset == 128 && tensor.memory_index == 0 &&
+                tensor.byte_offset == std::int64_t(output_span.byte_offset) &&
+                tensor.memory_index == int(output_span.allocation_index) &&
+                tensor.physical_span_bytes <= output_span.size_bytes &&
                 tensor.dtype == SIMA_TENSOR_SET_DTYPE_BF16_V1,
             "dynamic Preproc changed fixed output shape/valid extent");
     auto current = tr::tensor_buffer_publication(output, &view_error);

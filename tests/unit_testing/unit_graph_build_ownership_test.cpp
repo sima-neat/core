@@ -160,6 +160,7 @@ void cold_rejection_releases_graph_and_recipe(bool reject_output_span,
         0, 0, output_requirement.storage_bytes, si::DeviceKind::Cpu, "output", -1, 0,
         output_requirement.alignment_bytes));
     try {
+      session_build_prepare_stage_contracts(build, "ownership-factory-test");
       std::unique_ptr<GstElement, decltype(&gst_object_unref)> pipeline(
           session_build_parse_pipeline_or_throw(build, "ownership-factory-test"),
           &gst_object_unref);
@@ -220,6 +221,7 @@ RUN_TEST("unit_graph_build_ownership_test", ([] {
              session_test::arm_composition_failure_for_test(point);
              bool threw = false;
              try {
+               session_build_prepare_stage_contracts(build, "ownership-exception-test");
                std::unique_ptr<GstElement, decltype(&gst_object_unref)> pipeline(
                    session_build_parse_pipeline_or_throw(build, "ownership-exception-test"),
                    &gst_object_unref);
@@ -236,6 +238,7 @@ RUN_TEST("unit_graph_build_ownership_test", ([] {
            invalid.kernel_runner_a65_workers = 0;
            bool rejected = false;
            try {
+             session_build_prepare_stage_contracts(invalid, "ownership-typed-error-test");
              std::unique_ptr<GstElement, decltype(&gst_object_unref)> pipeline(
                  session_build_parse_pipeline_or_throw(invalid, "ownership-typed-error-test"),
                  &gst_object_unref);
@@ -259,6 +262,7 @@ RUN_TEST("unit_graph_build_ownership_test", ([] {
            cold_rejection_releases_graph_and_recipe(true);
            reset_observation();
            auto build = build_input();
+           session_build_prepare_stage_contracts(build, "ownership-success-test");
            std::unique_ptr<GstElement, decltype(&gst_object_unref)> pipeline(
                session_build_parse_pipeline_or_throw(build, "ownership-success-test"),
                &gst_object_unref);

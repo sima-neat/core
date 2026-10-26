@@ -1,6 +1,9 @@
 #include "pipeline/internal/TerminalOutputContractQuery.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
+
+#include <simaai/scheduler/client/frame_layout.h>
 
 #include <cassert>
 #include <cstdint>
@@ -67,6 +70,33 @@ void normal_terminal_logical_contract_is_preserved() {
   assert((override->outputs[0].strides_bytes == std::vector<std::int64_t>{16, 4}));
   assert(override->outputs[0].memory_index == 0);
   assert(override->outputs[0].name == "scores");
+}
+
+void finalized_publication_selects_allocation_and_composed_view() {
+  namespace client = simaai::scheduler::client;
+  sima::SimaPluginStaticManifest manifest;
+  auto& stage = manifest.stages.emplace_back();
+  stage.logical_stage_id = "terminal_packed";
+  stage.native_kernel = std::make_shared<sima::KernelStageRecipe>();
+  stage.physical_outputs.push_back(physical(0, 64, "scores"));
+  stage.logical_outputs.push_back(logical(0, 0, {3, 4}, {16, 4}, "FP32", "scores", "scores", 48));
+  stage.logical_outputs.front().byte_offset = 16;
+  auto layout = std::make_shared<client::FrameLayout>();
+  layout->allocations = {{512U, 0U, client::AllocationPolicy::RequireHostCpu},
+                         {4096U, 0U, client::AllocationPolicy::RequireCma}};
+  layout->outputs.push_back({0U, {1U, 256U, 64U}});
+  stage.frame_layout = std::move(layout);
+  assert(!sima::finalize_stage_publications(&manifest));
+
+  std::string error;
+  const auto override = build_output_override_from_manifest(manifest, {}, &error);
+  assert(override && error.empty() && override->outputs.size() == 1U);
+  const auto& output = override->outputs.front();
+  assert(output.memory_index == 1 && output.byte_offset == 272);
+  assert(output.segment_name == "allocation_1");
+  assert(output.name == "scores" && output.dtype == TensorDType::Float32);
+  assert((output.shape == std::vector<std::int64_t>{3, 4}));
+  assert(stage.logical_outputs.front().byte_offset == 16);
 }
 
 void terminal_mla_with_downstream_slice_metadata_falls_back_to_raw_physical() {
@@ -590,6 +620,7 @@ void explicit_image_publication_preserves_one_semantic_image() {
 
 int main() {
   normal_terminal_logical_contract_is_preserved();
+  finalized_publication_selects_allocation_and_composed_view();
   terminal_mla_with_downstream_slice_metadata_falls_back_to_raw_physical();
   terminal_raw_fallback_drops_boundary_view_physical_name();
   terminal_raw_fallback_keeps_non_view_dispatcher_name();

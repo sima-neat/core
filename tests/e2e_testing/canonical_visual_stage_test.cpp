@@ -221,13 +221,14 @@ gs::StageRequest prepared(const Fixture& f, const Placement& storage) {
     tensor.byte_offset = storage.output_offsets[i];
     tensor.backend_output_index = i;
     tensor.route_slot = i;
-    tensor.logical_name = tensor.backend_name = tensor.segment_name = name;
+    tensor.logical_name = tensor.backend_name = name;
+    tensor.segment_name = "arena";
     tensor.size_bytes = bytes(f.outputs[i]);
     tensor.dtype = f.outputs[i].dtype == rt::DType::Float32 ? SIMA_TENSOR_SET_DTYPE_FP32_V1
                                                             : SIMA_TENSOR_SET_DTYPE_INT32_V1;
     tensor.shape.assign(f.outputs[i].shape.begin(), f.outputs[i].shape.end());
     pub.logical_outputs.push_back(tensor);
-    pub.output_order.push_back({int(i), tensor.logical_index, name, name});
+    pub.output_order.push_back({int(i), tensor.logical_index, name, "arena"});
   }
   auto recipe = take(lower::check_visual_stage(semantic));
   require(recipe->members.size() == (f.graph == 238 && f.detect ? 2U : 1U),
