@@ -226,3 +226,7 @@ guarantee.
 
 See [Test Requirements](../../develop-apps/contribute/build-test/test_requirements.md)
 for fixture-group selection and installed-package profiles.
+
+## PCIe host and card status
+
+`NEAT_PCIE_SSH_USER` selects the card SSH user (default `sima`). `NEAT_PCIE_SSH_KEY` selects a private key (default `~/.ssh/sima_neat_pcie_ed25519`); existing SSH configuration and agent authentication remain available. `--offline` skips Internet update checks but still reads attached cards over local SSH. PCIe host status skips artifact update checks; use `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>` to update the host package. `neat update` does not update PCIe cards.

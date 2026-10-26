@@ -9,6 +9,16 @@ slug: /develop-apps/contribute/release-checklist
 
 This document is the authoritative release gate policy.
 
+## Rolling documentation versions
+
+Update `website/release-data/current.json` once for the release, after updating
+`deps/manifest.json`. Run `npm --prefix website run sync:release-readmes` and commit
+the generated concrete README command. Run `npm --prefix website run check:releases`
+and `./build.sh --doc` to validate tokens, historical exceptions, localization,
+and rendered commands. Maintain the compatibility page manually with concrete versions. Keep historical
+release notes pinned. Release-data-only changes do not require translation or source-hash updates.
+Field ownership and token rules are documented in `website/release-data/README.md`.
+
 ## Release-Blocking Conditions
 
 A release is blocked unless all conditions below are true:

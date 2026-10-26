@@ -32,6 +32,13 @@ def local_candidate(source, destination):
     destination.mkdir()
     for name in names:
         shutil.copy2(source / name, destination / name)
+    # A local producer may rebuild resources after source validation. Only
+    # import helpers once the staged bytes match the captured publication.
+    for name in names:
+        path = destination / name
+        if (path.is_symlink() or not path.is_file()
+                or hashlib.sha256(path.read_bytes()).hexdigest() != hashes[name]):
+            raise ValueError('Staged Scheduler resource changed: ' + name)
     return metadata
 
 

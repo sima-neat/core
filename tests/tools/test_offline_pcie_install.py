@@ -59,6 +59,27 @@ def test_all_preflight_before_host_and_sequential_cards():
     assert all(r['status'] == 'installed_verified' for r in result['cards'])
 
 
+@pytest.mark.parametrize('change', ['topology', 'route'])
+def test_final_card_change_prevents_success_and_preserves_cleanup(change):
+    class ChangedAfterLastCard(Fake):
+        def topology(self):
+            if change == 'topology' and (CARDS[-1]['bdf'], 'install') in self.events:
+                return ['changed']
+            return super().topology()
+
+        def route(self, card):
+            if change == 'route' and (CARDS[-1]['bdf'], 'install') in self.events:
+                raise ValueError('PCIe route changed')
+
+    ops = ChangedAfterLastCard()
+    report = installer.orchestrate(CARDS, ['original'], ops)
+    assert report['errors'] and change in report['errors'][0]
+    assert report['host'] == 'installed_verified'
+    assert all(row['status'] == 'installed_verified' for row in report['cards'])
+    assert [event for event in ops.events if event[1] == 'cleanup'] == [
+        (card['bdf'], 'cleanup') for card in CARDS]
+
+
 def test_card_preflight_failure_changes_no_packages_and_cleans_staging():
     ops = Fake((CARDS[1]['bdf'], 'preflight'))
     result = installer.orchestrate(CARDS, ['original'], ops)
@@ -167,7 +188,7 @@ def test_staged_card_manifest_verification(tmp_path):
     import json
     assembly = sys.modules['assemble']
     files = {}
-    for name in ('assemble.py', 'install.py', 'discover.py', 'deploy.py', 'lifecycle.sh', 'INSTALL.md',
+    for name in ('assemble.py', 'log_progress.py', 'install.py', 'discover.py', 'deploy.py', 'lifecycle.sh', 'INSTALL.md',
                  'card/target.json', 'card/payload/test.deb', 'host/target.json'):
         path = tmp_path/name
         path.parent.mkdir(parents=True, exist_ok=True)

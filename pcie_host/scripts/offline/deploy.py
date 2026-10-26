@@ -4,13 +4,16 @@ import argparse
 from contextlib import contextmanager
 import json
 import os
+import pwd
 from pathlib import Path
 import re
 import shutil
 import socket
 import subprocess
 import sys
+import tarfile
 import tempfile
+from zipfile import ZipFile
 
 from assemble import verify_bundle
 
@@ -26,7 +29,7 @@ def output(args):
 def configure(repo, state):
     for directory in ('lists/partial', 'cache/partial', 'empty'):
         (state / directory).mkdir(parents=True, exist_ok=True)
-    (state / 'sources.list').write_text(f'deb [trusted=yes] file:{repo} ./\n')
+    (state / 'sources.list').write_text(f'deb [trusted=yes] {repo.resolve().as_uri()} ./\n')
     settings = {
         'Dir::Etc::main': '/dev/null', 'Dir::Etc::parts': str(state/'empty'),
         'Dir::Etc::sourcelist': str(state/'sources.list'),
@@ -85,11 +88,90 @@ def environment(target, role):
     audit = output(['dpkg', '--audit'])
     if audit:
         raise ValueError('Repair package database before installation: ' + audit)
-    size = sum(p.stat().st_size for p in target.rglob('*') if p.is_file())
-    installed = sum(int(output(['dpkg-deb', '-f', str(p), 'Installed-Size']) or '0') * 1024
-                    for p in (target/'repo').glob('*.deb'))
-    if shutil.disk_usage('/').free < 3 * (size + installed):
-        raise ValueError('Insufficient free root filesystem space')
+
+
+def check_space(target, plan=None):
+    # Archives are already staged, potentially on NVMe or tmpfs. Their current
+    # allocation is reflected in disk_usage; do not charge it to root again.
+    selected = None if plan is None else {
+        line.split()[1].split(':')[0] for line in plan.read_text().splitlines()
+        if line.startswith('Inst ')
+    }
+    accounted = set()
+    installed = 0
+    for package in (target/'repo').glob('*.deb'):
+        if selected is not None:
+            name = output(['dpkg-deb', '-f', str(package), 'Package'])
+            if name not in selected:
+                continue
+            accounted.add(name)
+        size = int(output(['dpkg-deb', '-f', str(package), 'Installed-Size']) or '0') * 1024
+        if not size:
+            # Some producer packages omit Installed-Size. Never treat their
+            # installed contents as free; read the archive without extracting it.
+            with tempfile.TemporaryFile() as stream:
+                run(['dpkg-deb', '--fsys-tarfile', str(package)], stdout=stream)
+                stream.seek(0)
+                with tarfile.open(fileobj=stream) as archive:
+                    size = sum((entry.size + 4095) // 4096 * 4096
+                               for entry in archive if entry.isfile())
+        installed += size
+    if selected is not None and selected - accounted:
+        raise ValueError('Planned packages missing from offline repository: ' + ', '.join(sorted(selected - accounted)))
+    for wheel in (target/'wheels').glob('*.whl'):
+        with ZipFile(wheel) as archive:
+            installed += sum((entry.file_size + 4095) // 4096 * 4096
+                             for entry in archive.infolist())
+    # Reserve every package APT will unpack, including explicit reinstalls, plus
+    # replacement and Python staging space, and 128 MiB for metadata/venv growth.
+    required = 3 * installed + 128 * 1024**2
+    free = shutil.disk_usage('/').free
+    if free < required:
+        mib = 1024**2
+        raise ValueError(f'Insufficient free root filesystem space: {free // mib} MiB available, '
+                         f'{(required + mib - 1) // mib} MiB required; '
+                         f'free at least {(required - free + mib - 1) // mib} MiB on /. '
+                         'Moving the already-staged bundle does not free installation space.')
+
+
+def python_location(role, nvme=Path('/media/nvme')):
+    """Use the online installer's defaults for the user who invoked sudo."""
+    user = pwd.getpwuid(int(os.environ.get('SUDO_UID', os.getuid())))
+    home = Path(user.pw_dir)
+    name = 'pyneatpcie' if role == 'host' else 'pyneat'
+    path = home/name
+    if role == 'card' and nvme.is_dir():
+        if user.pw_uid == os.getuid():
+            writable = os.access(nvme, os.W_OK)
+        else:
+            writable = subprocess.run(
+                ['test', '-w', str(nvme)], user=user.pw_uid, group=user.pw_gid,
+                extra_groups=os.getgrouplist(user.pw_name, user.pw_gid),
+                timeout=30).returncode == 0
+        if writable:
+            path = nvme/name
+    return user, path
+
+
+def finish_python_location(user, path, role):
+    # Python installation runs as root because staged bundle files can be private.
+    # Restore ownership so subsequent online updates can run as the same user.
+    actual = path.resolve()
+    for directory, directories, files in os.walk(actual):
+        for entry in [Path(directory), *(Path(directory)/name for name in directories + files)]:
+            os.chown(entry, user.pw_uid, user.pw_gid, follow_symlinks=False)
+    home_path = Path(user.pw_dir)/'pyneat'
+    if role == 'card' and path != home_path:
+        if home_path.is_symlink() and home_path.resolve() == actual:
+            return
+        if home_path.exists() or home_path.is_symlink():
+            # Keep the previous environment instead of deleting user packages.
+            backup = Path(tempfile.mkdtemp(prefix='pyneat-before-offline-', dir=user.pw_dir))
+            os.chown(backup, user.pw_uid, user.pw_gid)
+            home_path.rename(backup/'pyneat')
+            print('Previous Python environment retained at '+str(backup/'pyneat'))
+        home_path.symlink_to(path)
+        os.chown(home_path, user.pw_uid, user.pw_gid, follow_symlinks=False)
 
 
 def execute(root, role, phase):
@@ -100,12 +182,13 @@ def execute(root, role, phase):
     for key in list(os.environ):
         if key.startswith(('PIP_', 'NEAT_', 'SIMAPCIE_', 'PYNEAT_')) or key in ('SYSROOT', 'ELXR_SDK_RELEASE_FILE'):
             del os.environ[key]
-    venv = '/opt/sima/neat/' + ('pyneatpcie' if role == 'host' else 'pyneat')
+    user, python_path = python_location(role)
+    venv = str(python_path)
     os.environ.update({
-        'DEBIAN_FRONTEND': 'noninteractive', 'PYTHONDONTWRITEBYTECODE': '1',
+        'DEBIAN_FRONTEND': 'noninteractive', 'LC_ALL': 'C', 'PYTHONDONTWRITEBYTECODE': '1',
         'PIP_CONFIG_FILE': '/dev/null', 'PIP_NO_INDEX': '1', 'PIP_NO_CACHE_DIR': '1',
-        'PIP_FIND_LINKS': str(target/'wheels'), 'PIP_DISABLE_PIP_VERSION_CHECK': '1',
-        'PYNEAT_VENV_DIR': venv, 'NEAT_INSTALLER_APT_UPDATE': 'OFF',
+        'PIP_FIND_LINKS': (target/'wheels').resolve().as_uri(), 'PIP_DISABLE_PIP_VERSION_CHECK': '1',
+        'HOME': user.pw_dir, 'PYNEAT_VENV_DIR': venv, 'NEAT_INSTALLER_APT_UPDATE': 'OFF',
         'NEAT_INSTALLER_INSTALL_CODEX_SKILL': 'OFF', 'NEAT_INSTALLER_INSTALL_CLAUDE_SKILL': 'OFF',
         'SIMAPCIE_INSTALL_CODEX_SKILL': 'OFF', 'SIMAPCIE_INSTALL_CLAUDE_SKILL': 'OFF',
     })
@@ -126,6 +209,7 @@ def execute(root, role, phase):
         plan = state/'plan.txt'
         with plan.open('w') as stream:
             run([*args, *prerequisites, '--simulate'], stdout=stream)
+        check_space(target, plan)
         # Producer admission checks the whole local transaction before mutations.
         lifecycle = ['bash', str(root/'lifecycle.sh'), role, 'preflight', str(target/'payload'), str(plan)]
         run(lifecycle)
@@ -144,6 +228,9 @@ def execute(root, role, phase):
         lifecycle[3] = 'install'
         run(lifecycle)
         verify(target, role, venv)
+        finish_python_location(user, python_path, role)
+        print('Python environment: '+venv)
+        print('Activate with: source '+str(Path(user.pw_dir)/('pyneatpcie' if role == 'host' else 'pyneat'))+'/bin/activate')
 
 
 def verify(target, role, venv):

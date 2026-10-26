@@ -191,3 +191,7 @@ ProcessCVU 단계는 기본적으로 Runtime의 `neatkernelrunner`를 통해 실
 
 픽스처 그룹 선택 및 설치된 패키지 프로파일은
 [테스트 요구 사항](../../develop-apps/contribute/build-test/test_requirements.md)을 참조하세요.
+
+## PCIe 호스트 및 카드 상태
+
+`NEAT_PCIE_SSH_USER`는 카드 SSH 사용자(기본값 `sima`)를 선택합니다. `NEAT_PCIE_SSH_KEY`는 개인 키(기본값 `~/.ssh/sima_neat_pcie_ed25519`)를 선택하며 기존 SSH 설정과 에이전트 인증도 사용할 수 있습니다. `--offline`은 인터넷 업데이트 확인을 생략하지만 로컬 SSH로 연결된 카드를 조회합니다. PCIe 호스트 상태에서는 아티팩트 업데이트를 확인하지 않습니다. 호스트 패키지를 업데이트하려면 `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>`를 사용하세요. `neat update`는 PCIe 카드를 업데이트하지 않습니다.

@@ -26,17 +26,17 @@ sidebar_position: 2
 
 ## Встановити
 
-Встановіть поточну версію Neat SDK 2.1:
+Встановіть поточну версію Neat SDK %%release.sdk_series%%:
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@release-2.1
+sima-cli neat install sdk@%%release.sdk_channel%%
 </ShellCommand>
 
 Перше встановлення може зайняти кілька хвилин, оскільки відбувається завантаження контейнерного образу Neat SDK. Після завантаження образу, інсталятор запускає налаштування SDK і запитує, чи бажаєте ви підключитися до Modalix DevKit і чи потрібно встановити відповідний Model Compiler всередині SDK.
 
 Якщо ви вирішите підключитися до DevKit, введіть IP-адресу DevKit, коли буде запропоновано. Процес налаштування конфігурує робочий простір SDK, запускає контейнер SDK і налаштовує DevKit Sync. Якщо ви пропустите етап підключення, робочий простір SDK все одно буде створено, і ви зможете підключитися пізніше.
 
-Пакет `release-2.1` містить останню версію Neat SDK у серії 2.1. Поточна версія — Neat SDK 2.1.3.0, яка сумісна з програмним забезпеченням DevKit 2.1.3.
+Пакет `%%release.sdk_channel%%` містить останню версію Neat SDK у серії %%release.sdk_series%%. Поточна версія — Neat SDK %%release.sdk%%, яка сумісна з програмним забезпеченням DevKit %%release.platform%%.
 
 Під час налаштування `sima-cli` також пропонує встановити відповідний Model Compiler всередині SDK — прийміть пропозицію, якщо ви самі компілюєте або квантуєте моделі; окремої версії для вибору немає. Пропустіть цей крок, якщо ви використовуєте лише попередньо скомпільовані пакети моделей. Щоб встановити його пізніше, вкажіть конкретну версію або використовуйте окремий хост, див. [Встановіть Model Compiler.](/getting-started/dev-environment/install-model-compiler/) та [Посібник зі сумісності](/getting-started/compatibility/).
 
@@ -90,7 +90,7 @@ codeUI      | https://192.168.76.4:10000/?tkn=gA5CS...&folder=/workspace
 Щоб повторно встановити або оновити до поточної версії пакета SDK, повторно запустіть команду встановлення, наведену вище, на хості:
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@release-2.1
+sima-cli neat install sdk@%%release.sdk_channel%%
 </ShellCommand>
 
 Щоб оновити Neat Library у межах наявного контейнера Neat SDK, запустіть Neat

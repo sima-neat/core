@@ -777,6 +777,44 @@ report = model.benchmark(options)
 
 Щоб також виміряти час кожного шару або етапу MLA, встановіть `include_mla_layer_stats` або `include_mla_stage_stats`. Щоб зберегти результати, `report.save(path)` записує звіт у форматі YAML, а для шляху з `.json` — у форматі JSON. Обидва варіанти показано в [Тестування продуктивності моделі](/tutorials/benchmark-your-model).
 
+### Вимірювання з власними вхідними даними {#measure-with-your-own-inputs}
+
+Синтетичні вхідні дані можуть спотворювати результати для моделі, вартість якої залежить від даних, наприклад для декодера виявлення або сегментації. Щоб виміряти на реальних даних, задайте в `inputs` тензори, які ви передали б у `run()`, по одному на кожен вхід моделі. Бенчмарк використовує їх і для вимірювання затримки, і для вимірювання пропускної здатності.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+cv::Mat image;
+cv::cvtColor(cv::imread("bus.jpg"), image, cv::COLOR_BGR2RGB);  // the format input_specs() reports
+
+simaai::neat::BenchmarkOptions options;
+options.inputs = simaai::neat::TensorList{
+    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::RGB,
+                                      simaai::neat::TensorMemory::EV74)};
+
+simaai::neat::BenchmarkReport report = model.benchmark(options);
+std::cout << "input=" << report.input << " fps=" << report.fps << "\n";  // input=provided
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+image = cv2.cvtColor(cv2.imread("bus.jpg"), cv2.COLOR_BGR2RGB)  # the format input_specs() reports
+
+options = pyneat.BenchmarkOptions()
+options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.RGB)]
+
+report = model.benchmark(options)
+print("input=", report.input, "fps=", report.fps)  # input= provided
+```
+
+</CodeTab>
+</CodeTabs>
+
+Якщо кількість, форма або тип вхідних даних не відповідають моделі, `benchmark()` ще до початку викидає `NeatError` з кодом помилки `misconfig.input_shape`. Колірний формат, який маршрут не може перетворити, спричиняє помилку під час побудови конвеєра, як і в `run()`. На маршруті з попередньою обробкою зображень зображення може мати будь-який розмір. Передавайте його в колірному форматі, який повідомляє `input_specs()`.
+
 ### Тривалість запуску
 
 Тест вимірює затримку, подаючи вхідні дані по одному (single-flight), а потім виконує окремий прохід для вимірювання пропускної здатності. Кожен прохід триває, доки не виміряє щонайменше `num_samples` вхідних даних і не мине `min_duration_ms` (типово 10 с), тож обидва проходи зупиняються за одним правилом, а показники потужності й температури проходу пропускної здатності охоплюють кілька зразків телеметрії, а не короткий сплеск. `latency_ms` — це середня затримка проходу вимірювання затримки, а `latency_p50_ms`, `latency_p95_ms` і `latency_p99_ms` — її процентилі. `throughput_samples` і `throughput_duration_ms` показують, що саме виміряв прохід пропускної здатності. Для швидкої перевірки встановіть `min_duration_ms` на 0, щоб кожен прохід зупинявся після `num_samples` вхідних даних:

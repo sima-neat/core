@@ -10,8 +10,25 @@ Core 會針對兩個相依項目建置：Scheduler 與 LLiMa。在 Neat SDK 中�
 依預設，`build.sh` 會：
 
 1. 從 Vulcan 下載已發布的 Scheduler 套件組與 LLiMa 套件。
-2. 將兩者安裝至 SDK sysroot。
+2. 將 Scheduler 套件組解壓縮至原始碼目錄的 `deps/` 資料夾，並將 LLiMa 安裝至 SDK sysroot。
 3. 建置 Core。
+
+`build.sh` 不會將 Scheduler 套件組安裝至 SDK sysroot，因此多個 Core 原始碼目錄可在同一個
+SDK 容器中，同時針對不同的 Scheduler 套件組建置。這些原始碼目錄共用 sysroot 中的 LLiMa：
+若 sysroot 已包含相同的套件，`build.sh` 會略過 LLiMa 的安裝。
+
+## 讓 SDK sysroot 與 Scheduler 套件組一致
+
+每個 Scheduler 套件組都會記錄其建置時所對應的 sysroot 版本。`build.sh` 會將它與
+`sysroot status` 比較，若兩者不同，會顯示警告並附上確切的 `sysroot update` 命令。
+若要在建置時一併更新 sysroot，請傳入 `--update-sysroot`：
+
+```bash
+./build.sh --all --no-doc --update-sysroot
+```
+
+這會連同 Core 編譯時所依據的平台套件執行 `sudo sysroot update <version>`。
+CI 一律會傳入此選項。
 
 ## 使用本機 Scheduler 或 LLiMa 套件
 
@@ -21,8 +38,8 @@ Core 會針對兩個相依項目建置：Scheduler 與 LLiMa。在 Neat SDK 中�
 ./build.sh --scheduler ../scheduler-debs --llima ../llima/dist/debs
 ```
 
-每個選項都可單獨使用；`build.sh` 仍會下載另一個相依項目。指定的套件會取代 sysroot 中
-已發布的套件。
+每個選項都可單獨使用；`build.sh` 仍會下載另一個相依項目。指定的 Scheduler 套件組會取代此原始碼目錄 `deps/` 資料夾中
+已發布的套件組，指定的 LLiMa 套件則會取代 SDK sysroot 中的 LLiMa。
 
 Scheduler 資料夾須包含 Scheduler 建置時使用的完整套件組：
 
@@ -155,8 +172,9 @@ Core 分支。只有在解析失敗，且 Scheduler 的已發布分支索引確�
 Codecs 封存檔。Core 不會獨立解析這些儲存庫。
 
 選定的 Scheduler 套件會安裝其確切 SDK 原則。在 SDK 中，`build.sh` 會執行
-`scripts/ci/prepare_scheduler_sdk.sh`，該指令碼使用該版本的官方 sysroot 設定命令，
-並保留下載的平台封存檔。協調器會檢查實際的 GCC14 版本／目標與目標 SDK 身分，
+`scripts/ci/prepare_scheduler_sdk.sh`，該指令碼會檢查 sysroot 版本，並以專用的 APT 設定將
+Runner 所需確切的平台封存檔下載至 `deps/`。只有指定 `--update-sysroot` 時，
+它才會執行 `sysroot update`。協調器會檢查實際的 GCC14 版本／目標與目標 SDK 身分，
 再透過 `NEAT_RUNNER_PLATFORM_RUNTIME_DEBS` 選擇 Runner 所使用的確切執行階段
 提供者封存檔。原生 ARM64 與交叉編譯器的執行檔位元組不必完全相同，
 但目標 ABI 與所選平台必須一致。此步驟不會安裝裝置套件或驗證韌體。

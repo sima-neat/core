@@ -171,3 +171,7 @@ ProcessCVU ステージはデフォルトで Runtime の `neatkernelrunner` を�
 - `SIMA_RUN_MNIST_PREPROC_CHANNELS1=1` — 長時間の MNIST 前処理精度テストを有効にします。単にスキップを抑制するために設定せず、フィクスチャの検証後に `tools/ci/prepare_weekly_fixtures.py` から値を取得してください。ローカルランチャーは `--environment-json` を使い、CI は同じマッピングを `--github-env` で受け取ります。
 
 フィクスチャグループの選択とインストール済みパッケージのプロファイルについては、[テスト要件](../../develop-apps/contribute/build-test/test_requirements.md)を参照してください。
+
+## PCIe ホストとカードの状態
+
+`NEAT_PCIE_SSH_USER` はカードの SSH ユーザー（既定値 `sima`）を選択します。`NEAT_PCIE_SSH_KEY` は秘密キー（既定値 `~/.ssh/sima_neat_pcie_ed25519`）を選択します。既存の SSH 設定とエージェント認証も利用できます。`--offline` はインターネット経由の更新確認を省略しますが、ローカル SSH によるカードの読み取りは行います。PCIe ホストの状態表示ではアーティファクト更新を確認しません。ホストの更新には `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>` を使用してください。`neat update` は PCIe カードを更新しません。

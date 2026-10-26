@@ -65,6 +65,10 @@ Release notes for the SiMa.ai Neat Library.
   `RunOptions::power_monitor`, and `MeasureOptions::include_power` are
   deprecated in favor of `TelemetryMonitor` and keep working. See
   [Record board telemetry](/develop-apps/development-workflow/model#record-board-telemetry).
+- `BenchmarkOptions::inputs` runs `Model::benchmark()` on your own tensors
+  instead of synthetic ones, and `BenchmarkReport::input` records which were
+  used. See
+  [Measure with your own inputs](/develop-apps/development-workflow/model#measure-with-your-own-inputs).
 - Plugin latency is deprecated and will be removed. This covers
   `MeasureOptions::include_plugin_latency` and `plugin_latency_source`,
   `BenchmarkOptions::include_plugin_latency`, `start_measurement(bool)`, and

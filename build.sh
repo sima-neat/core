@@ -55,9 +55,9 @@ NEAT_BACKEND_DIR="${REPO_ROOT}/deps/backend"
 NEAT_BACKEND_DEB_DIR="${NEAT_BACKEND_DIR}/debs"
 NEAT_SCHEDULER_DEPS_DIR="${REPO_ROOT}/deps/scheduler"
 NEAT_SCHEDULER_ARTIFACT_DIR="${NEAT_SCHEDULER_ARTIFACT_DIR:-}"
-# Files the last build put into the SDK sysroot from Scheduler and LLiMa packages.
-NEAT_SYSROOT_DEPENDENCY_FILES="var/lib/sima-neat/dependency.files"
-NEAT_SYSROOT_FILE_RECORD="${NEAT_SCHEDULER_DEPS_DIR}/sysroot.files"
+# Hashes of the LLiMa packages last unpacked into the SDK sysroot.
+NEAT_SYSROOT_LLIMA_RECORD="var/lib/sima-neat/llima.sha256"
+UPDATE_SYSROOT=OFF
 NEAT_LLIMA_DEB_DIR="${NEAT_LLIMA_DEB_DIR:-${NEAT_DEPS_DIR}/llima-debs}"
 NEAT_LLIMA_RESOLVED_REF=""
 NEAT_LLIMA_REQUESTED_REF=""
@@ -271,6 +271,9 @@ Options:
   --scheduler PATH
                  Use the Scheduler DEB folder at PATH instead of downloading it from Vulcan
   --llima PATH   Use the LLiMa DEB folder at PATH instead of downloading it from Vulcan
+  --update-sysroot
+                 Update the SDK sysroot to the Scheduler set's pinned version first
+                 (runs sudo sysroot update). Without it, build.sh only warns on a mismatch.
   --install-neat-internals, --install-deps
                  Prepare Scheduler dependencies and existing LLiMa dependencies
   --no-llima     Build LLiMa-independent Core targets using the unavailable stubs
@@ -402,49 +405,17 @@ modify_sysroot() {
   "$@" 2>/dev/null || run_privileged "$@"
 }
 
-record_sysroot_files() {
-  # Record the files before extracting, so a failed extraction is still removed next time.
-  local deb installed="${SYSROOT}/${NEAT_SYSROOT_DEPENDENCY_FILES}"
-  mkdir -p "$(dirname "${NEAT_SYSROOT_FILE_RECORD}")"
-  for deb in "$@"; do
-    dpkg-deb --fsys-tarfile "${deb}" | tar -t | sed -n "/\/\$/!s|^\./|${SYSROOT}/|p" >> "${NEAT_SYSROOT_FILE_RECORD}"
-  done
-  modify_sysroot install -D -m 644 "${NEAT_SYSROOT_FILE_RECORD}" "${installed}"
-}
-
 prepare_scheduler_sdk() {
+  # Check the sysroot version and fetch the Runner's platform archives. The
+  # selected set stays in deps/; nothing is installed into the sysroot.
   if [[ "${DOCS_ONLY}" != "ON" && "${ELXR_SDK}" == "ON" &&
         "${INSTALL_DEPS_ONLY}" != "ON" && -z "${NEAT_RUNNER_PLATFORM_RUNTIME_DEBS:-}" ]]; then
-    local sdk_exports installed="${SYSROOT:?eLxr SDK mode requires SYSROOT}/${NEAT_SYSROOT_DEPENDENCY_FILES}"
-    # dpkg-deb -x only adds files, so remove the previous build's dependency files
-    # first. The SDK setup below then restores any platform file they shadowed.
-    if [[ -f "${installed}" ]]; then
-      modify_sysroot xargs -a "${installed}" -d '\n' rm -f --
-    fi
-    sdk_exports="$(SDK_PKG_LIST="${SDK_PKG_LIST:+${SDK_PKG_LIST},}nlohmann-json3-dev,libyaml-cpp-dev" \
+    local sdk_exports
+    rm -rf -- "${NEAT_SCHEDULER_DEPS_DIR}/platform-debs"
+    sdk_exports="$(NEAT_UPDATE_SYSROOT="${UPDATE_SYSROOT}" SDK_PKG_LIST="${SDK_PKG_LIST:+${SDK_PKG_LIST},}nlohmann-json3-dev,libyaml-cpp-dev" \
       bash scripts/ci/prepare_scheduler_sdk.sh "${NEAT_SCHEDULER_DEPS_DIR}/platform-debs")"
     eval "${sdk_exports}"
   fi
-}
-
-install_scheduler_set_into_sysroot() {
-  # The SDK compiler searches the sysroot first, so it must hold the selected set.
-  [[ "${ELXR_SDK}" == "ON" ]] || return 0
-  : "${SYSROOT:?eLxr SDK mode requires SYSROOT to install Scheduler packages}"
-  local deb
-  local -a debs=()
-  for deb in "${NEAT_BACKEND_DEB_DIR}"/*.deb; do
-    # Firmware runs on the device; nothing in the sysroot links against it.
-    [[ "$(dpkg-deb -f "${deb}" Package)" != simaai-kernels-firmware ]] || continue
-    debs+=("${deb}")
-  done
-  : > "${NEAT_SYSROOT_FILE_RECORD}"
-  record_sysroot_files "${debs[@]}"
-  echo "Installing Scheduler packages into eLxr sysroot: ${SYSROOT}"
-  for deb in "${debs[@]}"; do
-    echo "  $(basename "${deb}")"
-    modify_sysroot dpkg-deb -x "${deb}" "${SYSROOT}"
-  done
 }
 
 parse_args() {
@@ -525,6 +496,10 @@ parse_args() {
       --llima)
         NEAT_LLIMA_ARTIFACT_DIR="$(absolute_input_dir --llima "${2:-}")"
         shift 2
+        ;;
+      --update-sysroot)
+        UPDATE_SYSROOT=ON
+        shift
         ;;
       --install-neat-internals|--install-deps)
         INSTALL_NEAT_LLIMA=ON
@@ -674,6 +649,16 @@ activate_elxr_build_env_if_needed() {
   echo "Activating eLxr build environment: source ${ELXR_INIT_SCRIPT} ${ELXR_MACHINE}"
   # shellcheck disable=SC1090
   source "${ELXR_INIT_SCRIPT}" "${ELXR_MACHINE}"
+  # The init script puts the sysroot headers first with -I, ahead of the
+  # Scheduler set's include directories in deps/. As -isystem, simaai/ comes
+  # after those but still before the sysroot's usr/include, which GCC searches
+  # last on its own; LLiMa needs the nlohmann-json copy in simaai/.
+  local variable
+  for variable in CFLAGS CXXFLAGS CPPFLAGS; do
+    printf -v "${variable}" '%s' "${!variable//" -I${SYSROOT}/usr/include/simaai"/" -isystem ${SYSROOT}/usr/include/simaai"}"
+    printf -v "${variable}" '%s' "${!variable//" -I${SYSROOT}/usr/include"/}"
+    export "${variable}"
+  done
   detect_elxr_wheel_platform
 }
 
@@ -1338,20 +1323,27 @@ ensure_neat_llima() {
         exit 1
       fi
     fi
-    echo "Installing LLiMa .deb payloads into eLxr sysroot: ${install_root}"
     ensure_llima_sdk_sysroot_deps
-    record_sysroot_files "${llima_debs[@]}"
-    local deb_path
-    for deb_path in "${llima_debs[@]}"; do
-      echo "  $(basename "${deb_path}")"
-      if ! dpkg-deb -x "${deb_path}" "${install_root}" 2>/dev/null; then
-        if ! run_privileged dpkg-deb -x "${deb_path}" "${install_root}"; then
-          echo "ERROR: Failed to install $(basename "${deb_path}") into SYSROOT=${install_root}" >&2
-          rm -rf "${tmp_dir}"
-          exit 1
+    # Skip the unpack when the sysroot already holds these exact packages.
+    local llima_record="${install_root}/${NEAT_SYSROOT_LLIMA_RECORD}"
+    sha256sum "${llima_debs[@]}" | cut -d ' ' -f 1 > "${tmp_dir}/llima.sha256"
+    if cmp -s "${tmp_dir}/llima.sha256" "${llima_record}"; then
+      echo "LLiMa packages already in eLxr sysroot: ${install_root}"
+    else
+      echo "Installing LLiMa .deb payloads into eLxr sysroot: ${install_root}"
+      local deb_path
+      for deb_path in "${llima_debs[@]}"; do
+        echo "  $(basename "${deb_path}")"
+        if ! dpkg-deb -x "${deb_path}" "${install_root}" 2>/dev/null; then
+          if ! run_privileged dpkg-deb -x "${deb_path}" "${install_root}"; then
+            echo "ERROR: Failed to install $(basename "${deb_path}") into SYSROOT=${install_root}" >&2
+            rm -rf "${tmp_dir}"
+            exit 1
+          fi
         fi
-      fi
-    done
+      done
+      modify_sysroot install -D -m 644 "${tmp_dir}/llima.sha256" "${llima_record}"
+    fi
   else
     if ! command -v dpkg >/dev/null 2>&1; then
       echo "ERROR: dpkg is required to install LLiMa .deb packages." >&2
@@ -1829,7 +1821,8 @@ PY
     # Keep target libc after C++ wrappers and never borrow missing C++ headers.
     local -a cpp_header_dirs=("${cxx_headers}" "${target_headers}/c++/${cross_gcc_major}")
     [[ ! -d "${cxx_headers}/backward" ]] || cpp_header_dirs+=("${cxx_headers}/backward")
-    cpp_header_dirs+=("${target_headers}" "${SYSROOT}/usr/include")
+    # GCC searches ${SYSROOT}/usr/include after these, so deps/ headers win.
+    cpp_header_dirs+=("${target_headers}")
     local cpp_header_flags
     printf -v cpp_header_flags ' -isystem %q' "${cpp_header_dirs[@]}"
     export CXXFLAGS="${CXXFLAGS:-} -nostdinc++${cpp_header_flags}"
@@ -1914,6 +1907,8 @@ for directory in directories:
     if directory not in includes:
         missing.extend(("-isystem", directory))
         includes.append(directory)
+if str(Path(sysroot) / "usr/include") in includes:
+    reject("The cached SDK header order searches the sysroot before the Scheduler set")
 ordered = list(dict.fromkeys(path for path in includes if path in directories))
 if ordered != directories:
     reject("The cached SDK header order cannot be preserved by appending missing flags")
@@ -1938,6 +1933,14 @@ PYSDKCACHE
       -DPYNEAT_EXT_SUFFIX=".cpython-${ELXR_TARGET_PYTHON_VERSION/./}-$(elxr_ext_platform_triplet).so"
       -DSIMANEAT_CTEST_FOR_DEVKIT=ON
     )
+    # Let the linker find the selected set's own library dependencies.
+    local package_dir
+    for package_dir in "${NEAT_KERNELS_PACKAGE_DIR:-}" "${NEAT_RUNNER_PACKAGE_DIR:-}" \
+        "${NEAT_SCHEDULER_PACKAGE_DIR:-}" "${NEAT_CODECS_PACKAGE_DIR:-}"; do
+      if [[ -n "${package_dir}" && -d "${package_dir}/usr/lib/aarch64-linux-gnu" ]]; then
+        export LDFLAGS="-Wl,-rpath-link,${package_dir}/usr/lib/aarch64-linux-gnu ${LDFLAGS:-}"
+      fi
+    done
   fi
 
   if [[ "${DOCS_ONLY}" != "ON" ]]; then
@@ -3006,7 +3009,6 @@ main() {
     [[ "${BUILD_TESTS}" == "ON" ]] && dependency_args+=(--client-test-support)
     python3 tools/build_dependencies.py prepare --core "${REPO_ROOT}" \
       --output "${NEAT_BACKEND_DIR}" --jobs "${BUILD_JOBS}" "${dependency_args[@]}"
-    install_scheduler_set_into_sysroot
   fi
   if [[ "${OS_NAME}" != "Darwin" && "${INSTALL_NEAT_LLIMA}" == "ON" ]]; then
     ensure_neat_llima

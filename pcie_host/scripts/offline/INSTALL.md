@@ -1,7 +1,9 @@
 # Install the offline Neat PCIe bundle
 
-This installs Neat on an Ubuntu 24.04 amd64 host and every attached compatible
-Platform 3.0 card. It does not convert firmware or install the host driver.
+This installs Neat on an Ubuntu 22.04 or 24.04 host (`amd64` or `arm64`) and
+every attached compatible Platform 3.0 ARM64 card. Select the bundle matching
+the host operating system and architecture. It does not convert firmware or
+install the host driver.
 
 ## Prepare the system
 
@@ -12,7 +14,11 @@ and library architecture/exports without requiring Platform DEB registration.
 Older Scheduler publications with hard Platform DEB dependencies must be rebuilt
 with that producer correction, not modified after publication.
 Every card needs a working discovery responder on its PCIe interface, a unique
-PCIe IPv4 address, Python 3, and SSH access. The host needs Python 3.11 or later,
+PCIe IPv4 address, system Python 3, and SSH access. Use the host and card system
+interpreters matching the Python ABIs recorded in the bundle's
+`host/dependencies.json` and `card/dependencies.json`. Preflight rejects a
+mismatch; installing an arbitrary newer Python does not satisfy this requirement.
+The host also needs
 `ip`, OpenSSH, `sudo`, `timeout`, and `unshare`; cards need `sudo`, `flock`,
 `timeout`, and `unshare`.
 The SSH account must have sudo access. Use passwordless sudo or pass
@@ -55,8 +61,7 @@ repository and pip uses only bundled wheels. Existing install scripts retain
 Platform admission and runtime lifecycle handling. Optional Sentinel telemetry
 is retained if installed; its online updater is never called.
 
-Python environments are installed at `/opt/sima/neat/pyneatpcie` on the host and
-`/opt/sima/neat/pyneat` on each card. Post-install checks cover exact native
+Offline installation uses the same Python paths as online installation. The PCIe host uses `~/pyneatpcie`. A DevKit uses `/media/nvme/pyneat` when `/media/nvme` is writable by the installing user; otherwise, it uses `~/pyneat`. For an NVMe installation, `~/pyneat` links to that environment. If a different environment already exists at `~/pyneat`, the installer keeps it in a `pyneat-before-offline-*` directory in your home directory before creating the link. Post-install checks cover exact native
 package versions, package health, Python dependencies/imports, the host GStreamer
 plugin, and the existing card installer's runtime checks. They do not replace an
 application inference acceptance test.
@@ -119,3 +124,14 @@ command group before releasing its lock. It allows up to 30 seconds for graceful
 termination, then kills and reaps remaining children. Further Ctrl-C presses
 cannot bypass cleanup. An interrupted package transaction may still require
 repair; check `sudo dpkg --audit` and the diagnostic log before retrying.
+
+## Disk space
+
+The native installer uses the offline APT transaction plan to reserve three times
+the expanded contents of Debian packages selected for installation or
+reinstallation and all Python wheels, plus 128 MiB for package metadata and the
+Python environment. Dependencies left untouched by APT do not consume this
+installation budget. Packages without an `Installed-Size` field are measured from their
+archive contents. Already-staged bundle files are not counted again, including
+when they are stored on NVMe or tmpfs. A space failure reports available,
+required, and additional root space in MiB.

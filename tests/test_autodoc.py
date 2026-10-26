@@ -18,6 +18,34 @@ sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
 
+class CategoryKeyTests(unittest.TestCase):
+    def test_staging_uses_same_key_and_preserves_metadata_in_each_locale(self):
+        for locale in (None, "ko", "ja", "zh-Hant", "uk"):
+            with self.subTest(locale=locale), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source = root / "source"
+                target = root / "target"
+                folder = source / "peripherals"
+                folder.mkdir(parents=True)
+                (folder / "camera.md").write_text("# Camera\n", encoding="utf-8")
+                metadata = {"label": f"Peripherals {locale}", "position": 3}
+                (folder / "_category_.json").write_text(json.dumps(metadata), encoding="utf-8")
+                MODULE.stage_source_section(
+                    {"key": "sentinel", "category_keys": {"peripherals": "sentinel-peripherals"}},
+                    root, source, target, localized=locale is not None, locale=locale,
+                )
+                actual = json.loads((target / "peripherals" / "_category_.json").read_text())
+                self.assertEqual(actual, dict(metadata, key="sentinel-peripherals"))
+
+    def test_invalid_or_missing_directory_and_empty_key_fail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "peripherals").mkdir()
+            for entry in ({"../outside": "key"}, {"/outside": "key"}, {"missing": "key"}, {"peripherals": ""}):
+                with self.subTest(entry=entry), self.assertRaises(ValueError):
+                    MODULE.apply_category_keys(root, entry)
+
+
 class PromoteIndexFileTests(unittest.TestCase):
     def test_rewrites_inbound_markdown_and_html_links(self):
         with tempfile.TemporaryDirectory() as directory:

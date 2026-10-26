@@ -44,7 +44,7 @@ only when you need them or once you pair a DevKit.
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/getting-started/dev-environment/install-the-environment/"><strong>Install the Environment</strong><span>Install and set up the SDK package that matches your DevKit software version.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/dev-environment/devkit-sync/"><strong>DevKit Sync</strong><span>Understand workspace sharing, pairing updates, rsync fallback, and <code>dk</code> command execution.</span></a></li>
-      <li><a class="overview-link-card" href="/getting-started/dev-environment/offline-installation/"><strong>Offline Installation</strong><span>Download SDK and Model Compiler packages for restricted network environments.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/offline-installation/"><strong>Offline Installation</strong><span>Download SDK and Model Compiler packages for offline installation.</span></a></li>
     </ul>
   </section>
 </div>
@@ -112,9 +112,9 @@ have. The Model Compiler install commands use `arm64` and `amd64` — see
 :::
 
 :::note Installing a specific version
-Standard installation pulls the current supported defaults. The `release-2.1`
+Standard installation pulls the current supported defaults. The `%%release.sdk_channel%%`
 channel used on the [Install the Environment](/getting-started/dev-environment/install-the-environment/)
-page always tracks the latest 2.1 patch release. To pin an exact SDK, Neat Library,
+page always tracks the latest %%release.sdk_series%% patch release. To pin an exact SDK, Neat Library,
 or Model Compiler version, see the [Compatibility Guide](/getting-started/compatibility/).
 :::
 

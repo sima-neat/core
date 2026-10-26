@@ -1,15 +1,17 @@
-# Offline PCIe discovery qualification (draft)
+# Offline PCIe discovery and installation qualification
 
 Related: [Core #1132](https://github.com/sima-neat/core/issues/1132).
 
-This directory contains a **read-only evidence collector** and the draft
+This directory contains a **read-only evidence collector** and the
 [offline package assembler](ASSEMBLY.md).
 The collector itself never installs or authorizes changes. The assembler bundles
 a separate [installation entry point](INSTALL.md) that preflights the prepared
 system, authenticates SSH, and deploys Neat to the host and all cards sequentially.
 Existing host/card install lifecycles are reused; firmware, driver, networking and
-SSH provisioning remain separate system prerequisites. Physical qualification is
-still pending.
+SSH provisioning remain separate system prerequisites. Automatic discovery and
+host/card installation have passed on one physical Ubuntu 24.04 amd64 system
+with a Platform 3.0 card. Physical multi-card and application inference
+qualification remain pending. See [assembly and qualification evidence](ASSEMBLY.md).
 
 ## Source findings
 
@@ -118,38 +120,27 @@ approval**. JSON always contains `installation_authorized: false` and
 `identity_status: unverified`. Replies are untrusted diagnostic data. Review
 collected device/network identifiers before sharing the report.
 
-## Required verification before implementing installation targeting
+## Installation targeting and remaining qualification
 
-1. Obtain the actual Platform 3.0 responder source/service and exact firmware and
-   host-driver versions. Confirm enablement, interface binding, response schema,
-   and reply destination behavior against the client convention above.
-2. On single-card and multi-card hosts, correlate each PCI BDF and sysfs netdev
-   with a responder endpoint and an independently read, authenticated board
-   identity. Confirm how the inference scheduler's card index maps to that same
-   device; do not assume it equals PCI enumeration order.
-3. Verify which PCI IDs/functions constitute each supported HHHL card and whether
-   multifunction devices require grouping. A BDF is an attachment identifier for
-   a run, not a serial number stable across replacement or reboot.
-4. Exercise missing responders, duplicate identities, unrelated responses, and
-   topology changes. Confirm that incomplete discovery cannot yield success.
-5. Record the evidence and select the initial supported host/firmware combination.
+The separate `install.py` entry point uses PCI-scoped discovery, validates reply
+source/advertised address agreement and direct routes, and authenticates SSH
+with provisioned host keys. It preflights the host and every card before package
+mutation, installs the host once, then installs and verifies cards sequentially.
+The discovery collector's `installation_authorized: false` field remains
+intentional: raw discovery replies alone do not authorize installation.
 
-Single-card inspection found the configuration blocker above. Successful PCIe
-discovery, multi-card qualification, and complete stable identity mapping remain
-pending. Until those gates pass, this collector must not feed package or
-SSH installation commands.
+The successful one-card installation recorded in ASSEMBLY.md includes automatic
+discovery and host/card package and runtime verification. The responder
+configuration was repaired separately as system provisioning; the installer
+does not make that repair. Clean-container offline validation and synthetic
+multi-card tests provide additional coverage, but do not establish physical
+multi-card or inference acceptance.
 
-## Subsequent implementation
-
-Reuse existing host/card installers with isolated offline dependency inputs. The
-small orchestrator will preflight host and every card before mutation, install
-host software once, then install **and verify each card sequentially**. Individual
-card failures will not skip remaining cards while host/inventory remain valid.
-Reruns will inspect actual installed state and always repeat inference verification.
-The package assembler collects dependencies and validates package transactions in
-network-disabled containers. Integration with the existing installers, bundle
-publication, package recovery, and offline hardware qualification remain tracked
-in #1132; this draft does not close that issue.
+Remaining qualification includes physical multi-card installation, persistent
+board identity and scheduler-index correlation, and per-card application
+inference/numerical acceptance. PCI BDFs identify current attachments, not
+persistent board serial numbers. Broader delivery qualification remains tracked
+in #1132.
 
 ## Tests
 
@@ -157,5 +148,5 @@ in #1132; this draft does not close that issue.
 python3 -m pytest -q tests/tools/test_offline_pcie_discovery.py
 ```
 
-These host-only tests exercise synthetic sysfs and sockets. They do not qualify
-firmware, responder behavior, physical identity, or offline installation.
+These host-only discovery tests exercise synthetic sysfs and sockets. They do not
+replace the installation evidence above or qualify physical multi-card behavior.

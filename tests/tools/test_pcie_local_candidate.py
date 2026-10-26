@@ -51,3 +51,16 @@ def test_bad_local_candidate_is_rejected_before_staging(candidate, failure):
     with pytest.raises(ValueError):
         module.local_candidate(source, dest)
     assert not dest.exists()
+
+
+def test_local_rebuild_during_copy_is_rejected_before_helper_import(candidate, monkeypatch):
+    source, metadata, dest = candidate
+    copy = module.shutil.copy2
+
+    def rebuild_and_copy(path, destination):
+        Path(path).write_bytes(b'changed by concurrent local producer rebuild')
+        return copy(path, destination)
+
+    monkeypatch.setattr(module.shutil, 'copy2', rebuild_and_copy)
+    with pytest.raises(ValueError, match='Staged Scheduler resource changed: native_artifacts.py'):
+        module.local_candidate(source, dest)

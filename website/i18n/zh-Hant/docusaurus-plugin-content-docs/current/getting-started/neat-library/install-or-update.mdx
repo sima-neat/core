@@ -10,6 +10,11 @@ sidebar_position: 2
 當您在執行 `sima-cli sdk setup` 時配對一個 DevKit，SDK 會自動在其 DevKit 上安裝包含的 Neat Library 和捆綁的 PyNeat 環境，並將其安裝在 `~/pyneat` 上。
 :::
 
+:::tip 何時需要離線安裝
+若目標無法從 SiMa.ai 服務下載套件，請使用[離線安裝](#offline-installation)。
+在可連上網際網路的電腦上下載套件。
+:::
+
 ## 選擇安裝位置
 
 從您建立或執行 Neat 應用程式的環境中執行安裝程式：
@@ -48,7 +53,7 @@ target_link_libraries(my_app PRIVATE SimaNeat::sima_neat_static)
 靜態 Core 仍使用共用實作程式庫。從來源建置 Core 時，也使用相同的 Scheduler 前端
 邊界，並需要其他相依項目的開發檔案，包括啟用時所需的 LLiMa。
 
-## 先決條件
+## 線上安裝先決條件
 
 在您打算安裝 Neat Library 的環境中安裝 `sima-cli`。
 請參考 [sima-cli 安裝指南](/tools/sima-cli/)。
@@ -68,7 +73,7 @@ sima-cli login
 curl -fsS https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh -o /dev/null && echo "artifacts reachable"
 </ShellCommand>
 
-顯示「`artifacts reachable`」表示主機可連線。如果出現 `curl` 錯誤，例如逾時、連線被拒絕，或「無法解析主機」，則表示已封鎖外向連線——請檢查您的主機網路、Proxy 或防火牆（請參閱 [Neat SDK 網路功能](/tools/sima-cli/sdk-networking/) 和 [主機設定注意事項](/reference/elxr-sdk-host-setup/ubuntu)），或者如果機器無法直接連線到 SiMa.ai 服務，請使用 [離線安裝](/getting-started/dev-environment/offline-installation)。
+顯示「`artifacts reachable`」表示主機可連線。如果出現 `curl` 錯誤，例如逾時、連線被拒絕，或「無法解析主機」，則表示已封鎖外向連線——請檢查您的主機網路、Proxy 或防火牆（請參閱 [Neat SDK 網路功能](/tools/sima-cli/sdk-networking/) 和 [主機設定注意事項](/reference/elxr-sdk-host-setup/ubuntu)），或者如果機器無法直接連線到 SiMa.ai 服務，請使用 [離線安裝](#offline-installation)。
 
 ## 安裝 Neat Library
 
@@ -95,7 +100,7 @@ cd $HOME && mkdir -p neat && cd neat
 安裝 `sima-cli` 預設選取的 Neat Library 套件。您可以選擇性地安裝額外內容，包括預先建置的教學課程、原始碼教學課程和測試：
 
 <ShellCommand prompt="sdk">
-sima-cli neat install core@v0.4.0
+sima-cli neat install core@v%%release.core%%
 </ShellCommand>
 
 </CodeTab>
@@ -112,7 +117,7 @@ grep -E '^(SDK Type|Platform Base|Platform Version) =' /etc/sdk-release
 
 <ShellCommand prompt="sdk">
 cd $HOME &amp;&amp; mkdir -p neat &amp;&amp; cd neat
-sima-cli neat install core@release-0.3
+sima-cli neat install core@v%%release.core%%
 </ShellCommand>
 
 </CodeTab>
@@ -133,13 +138,13 @@ cd /media/nvme && mkdir -p neat && cd neat
 安裝 `sima-cli` 預設選取的 Neat Library 套件。您可以選擇性地安裝額外內容，包括預先建置的教學課程、原始碼教學課程和測試：
 
 <ShellCommand prompt="devkit">
-sima-cli neat install core@v0.2.2
+sima-cli neat install core@v%%release.core%%
 </ShellCommand>
 
 </CodeTab>
 </CodeTabs>
 
-## 預設 PyNeat 環境
+## 線上安裝的預設 PyNeat 環境
 
 在 DevKit 上安裝 Neat Library，同時也會在 DevKit 上的 `~/pyneat` 位置建立一個預設的 PyNeat
 虛擬環境。這是支援的 PyNeat
@@ -160,6 +165,73 @@ source ~/pyneat/bin/activate
 如果您偏好從原始碼開始建置，請遵循「[建造](/develop-apps/contribute/build)」指南。
 
 如需了解 SDK 的設定和 DevKit Sync 的導入流程，請參閱 [Neat SDK](/getting-started/dev-environment/)。
+
+## 離線安裝 {#offline-installation}
+
+Neat Library 離線套件自 0.6.0 版本起提供。
+對於使用 Platform 3.0 或更新版本的 Modalix DevKit，請使用此套件。
+
+### 1. 下載套件
+
+在可連上網際網路的電腦上安裝 `sima-cli`。請參閱 [sima-cli 安裝指南](/tools/sima-cli/)。
+
+在可連上網際網路的電腦上執行此命令：
+
+<ShellCommand prompt="host">
+sima-cli neat install core/offline@v%%release.core%% --download-only
+</ShellCommand>
+
+預設套件包含執行階段、教學和測試。
+若只要下載執行階段，請使用：
+
+<ShellCommand prompt="host">
+sima-cli neat install core/offline@v%%release.core%% -t minimal --download-only
+</ShellCommand>
+
+### 2. 安裝套件
+
+1. 將下載的檔案複製到 Modalix DevKit 或 Neat SDK 工作區。
+2. 在該目錄中開啟終端機。若要安裝至 SDK，請使用 SDK shell。
+3. 解壓縮安裝程式封存檔：
+
+<ShellCommand prompt="sdk|devkit">
+tar -xzf neat-core-offline-installer.tar.gz
+</ShellCommand>
+
+4. 進入解壓縮後的目錄：
+
+<ShellCommand prompt="sdk|devkit">
+cd neat-core-offline
+</ShellCommand>
+
+5. 以一般使用者身分啟動安裝程式。安裝程式會在必要時要求 `sudo` 權限。
+
+<ShellCommand prompt="sdk|devkit">
+./install.sh
+</ShellCommand>
+
+若需要教學或測試，請將獨立的額外封存檔解壓縮至所選目錄。
+
+離線安裝後，請使用下列命令啟用 Python 環境：
+
+<ShellCommand prompt="devkit">
+source ~/pyneat/bin/activate
+</ShellCommand>
+
+離線安裝使用與線上安裝相同的 Python 路徑。PCIe 主機使用 `~/pyneatpcie`。若安裝使用者可寫入 `/media/nvme`，DevKit 使用 `/media/nvme/pyneat`；否則使用 `~/pyneat`。安裝至 NVMe 時，`~/pyneat` 會連結至該環境。若 `~/pyneat` 已有其他環境，安裝程式會先將其保存在家目錄的 `pyneat-before-offline-*` 目錄中，再建立連結。
+
+### 套件選項與安裝程式行為
+
+- 安裝程式會在安裝前檢查系統相容性和可用磁碟空間。
+- 安裝程式使用套件內含的相依項目。若缺少必要的相依項目，安裝程式會停止。
+- 在 SDK 中，安裝程式會將 Neat Library 複製到 `/opt/toolchain/aarch64/modalix`。
+- 若已設定 `DEVKIT_SYNC_DEVKIT_IP`，安裝程式也會透過 SSH 安裝至已配對的 DevKit。兩個環境都必須通過檢查。
+
+如果安裝失敗，請閱讀所顯示路徑中的記錄：`/tmp/neat-core-offline-*.log`。
+若要查看詳細輸出，請使用 `./install.sh --verbose`。
+
+若安裝期間 SSH 中斷連線，遠端安裝程式可能會繼續執行。
+重試或刪除報告中顯示的暫存目錄之前，請確認安裝程式已停止。
 
 ## 下一步
 

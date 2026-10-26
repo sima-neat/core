@@ -10,6 +10,11 @@ sidebar_position: 2
 `sima-cli sdk setup` の際に DevKit をペアリングすると、SDK は、DevKit 上の `~/pyneat` に、同梱されている Neat Library とバンドルされた PyNeat 環境を自動的にインストールします。
 :::
 
+:::tip オフラインでのインストールが必要な場合
+対象が SiMa.ai サービスからパッケージをダウンロードできない場合は、[オフラインでのインストール](#offline-installation)を使用してください。
+インターネットに接続されたコンピューターでパッケージをダウンロードしてください。
+:::
+
 ## インストール場所を選択してください
 
 Neatアプリケーションをビルドまたは実行する環境から、インストーラーを実行してください。
@@ -40,7 +45,7 @@ target_link_libraries(my_app PRIVATE SimaNeat::sima_neat_static)
 
 静的 Core も共有実装ライブラリを使用します。Core をソースからビルドする場合も同じ Scheduler フロントエンド境界を使い、ほかの依存関係の開発ファイルが必要です。LLiMa が有効な場合は、その開発ファイルも含まれます。
 
-## 前提条件
+## オンラインインストールの前提条件
 
 Neat Library をインストールする予定の環境に、`sima-cli` をインストールしてください。
 [sima-cli のインストールガイド](/tools/sima-cli/) を使用してください。
@@ -59,7 +64,7 @@ sima-cli login
 curl -fsS https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh -o /dev/null && echo "artifacts reachable"
 </ShellCommand>
 
-「`artifacts reachable`」と表示される場合、ホストにアクセスできる状態です。タイムアウト、接続拒否、または「ホストを解決できません」などの`curl`エラーは、外部へのアクセスがブロックされていることを意味します。ホストのネットワーク、プロキシ、またはファイアウォールを確認してください（[Neat SDK ネットワーク機能](/tools/sima-cli/sdk-networking/)および[ホスト設定に関する注意事項](/reference/elxr-sdk-host-setup/ubuntu)を参照）。または、マシンがSiMa.aiサービスに直接アクセスできない場合は、[オフラインでのインストール](/getting-started/dev-environment/offline-installation)を使用してください。
+「`artifacts reachable`」と表示される場合、ホストにアクセスできる状態です。タイムアウト、接続拒否、または「ホストを解決できません」などの`curl`エラーは、外部へのアクセスがブロックされていることを意味します。ホストのネットワーク、プロキシ、またはファイアウォールを確認してください（[Neat SDK ネットワーク機能](/tools/sima-cli/sdk-networking/)および[ホスト設定に関する注意事項](/reference/elxr-sdk-host-setup/ubuntu)を参照）。または、マシンがSiMa.aiサービスに直接アクセスできない場合は、[オフラインでのインストール](#offline-installation)を使用してください。
 
 ## Neat Library をインストールします。
 
@@ -83,7 +88,7 @@ cd $HOME && mkdir -p neat && cd neat
 `sima-cli` で選択されたデフォルトの Neat Library パッケージをインストールします。必要に応じて、事前に作成されたチュートリアル、ソースコードのチュートリアル、およびテストなど、追加のパッケージをインストールすることもできます。
 
 <ShellCommand prompt="sdk">
-sima-cli neat install core@v0.4.0
+sima-cli neat install core@v%%release.core%%
 </ShellCommand>
 
 </CodeTab>
@@ -100,7 +105,7 @@ grep -E '^(SDK Type|Platform Base|Platform Version) =' /etc/sdk-release
 
 <ShellCommand prompt="sdk">
 cd $HOME &amp;&amp; mkdir -p neat &amp;&amp; cd neat
-sima-cli neat install core@release-0.3
+sima-cli neat install core@v%%release.core%%
 </ShellCommand>
 
 </CodeTab>
@@ -120,13 +125,13 @@ cd /media/nvme && mkdir -p neat && cd neat
 `sima-cli` で選択されたデフォルトの Neat Library パッケージをインストールします。必要に応じて、事前に作成されたチュートリアル、ソースコードのチュートリアル、テストなど、追加のパッケージをインストールすることもできます。
 
 <ShellCommand prompt="devkit">
-sima-cli neat install core@v0.2.2
+sima-cli neat install core@v%%release.core%%
 </ShellCommand>
 
 </CodeTab>
 </CodeTabs>
 
-## デフォルトの PyNeat 環境
+## オンラインインストールのデフォルト PyNeat 環境
 
 Neat Library を DevKit にインストールすると、`~/pyneat` 上の DevKit にデフォルトの PyNeat 仮想環境が設定されます。これがサポートされている PyNeat 環境です。直接アクティブにしてください。
 
@@ -145,6 +150,73 @@ DevKit SyncとペアになったSDKコンテナ内でインストーラーを実
 もしソースコードからビルドしたい場合は、以下の[構築する](/develop-apps/contribute/build)ガイドに従ってください。
 
 SDK のセットアップと DevKit Sync の初期設定については、[Neat SDK](/getting-started/dev-environment/) を参照してください。
+
+## オフラインでのインストール {#offline-installation}
+
+Neat Library オフラインパッケージは、バージョン 0.6.0 以降で利用できます。
+Platform 3.0 以降を使用する Modalix DevKit には、このパッケージを使用してください。
+
+### 1. パッケージをダウンロードする
+
+インターネットに接続されたコンピューターに `sima-cli` をインストールしてください。[sima-cli インストールガイド](/tools/sima-cli/)を参照してください。
+
+インターネットに接続されたコンピューターで、次のコマンドを実行してください：
+
+<ShellCommand prompt="host">
+sima-cli neat install core/offline@v%%release.core%% --download-only
+</ShellCommand>
+
+既定のパッケージには、ランタイム、チュートリアル、テストが含まれます。
+ランタイムのみをダウンロードするには、次を使用してください：
+
+<ShellCommand prompt="host">
+sima-cli neat install core/offline@v%%release.core%% -t minimal --download-only
+</ShellCommand>
+
+### 2. パッケージをインストールする
+
+1. ダウンロードしたファイルを Modalix DevKit または Neat SDK ワークスペースにコピーしてください。
+2. そのディレクトリでターミナルを開いてください。SDK にインストールする場合は、SDK シェルを使用してください。
+3. インストーラーのアーカイブを展開してください：
+
+<ShellCommand prompt="sdk|devkit">
+tar -xzf neat-core-offline-installer.tar.gz
+</ShellCommand>
+
+4. 展開したディレクトリに移動してください：
+
+<ShellCommand prompt="sdk|devkit">
+cd neat-core-offline
+</ShellCommand>
+
+5. 通常ユーザーとしてインストーラーを起動してください。必要に応じて `sudo` 権限を要求します。
+
+<ShellCommand prompt="sdk|devkit">
+./install.sh
+</ShellCommand>
+
+チュートリアルやテストが必要な場合は、別の追加アーカイブを任意のディレクトリに展開してください。
+
+オフラインでのインストール後、次のコマンドで Python 環境を有効にしてください：
+
+<ShellCommand prompt="devkit">
+source ~/pyneat/bin/activate
+</ShellCommand>
+
+オフラインインストールでは、オンラインインストールと同じ Python パスを使用します。PCIe ホストは `~/pyneatpcie` を使用します。DevKit は、インストールするユーザーが `/media/nvme` に書き込める場合は `/media/nvme/pyneat` を使用し、それ以外は `~/pyneat` を使用します。NVMe へのインストールでは、`~/pyneat` はその環境へのリンクになります。`~/pyneat` に別の環境がある場合、インストーラーはリンクを作成する前にホームディレクトリの `pyneat-before-offline-*` ディレクトリに保存します。
+
+### パッケージオプションとインストーラーの動作
+
+- インストーラーは、インストール前にシステムの互換性とディスクの空き容量を確認します。
+- インストーラーは同梱の依存パッケージを使用します。必要な依存パッケージがない場合は停止します。
+- SDK では、Neat Library を `/opt/toolchain/aarch64/modalix` にコピーします。
+- `DEVKIT_SYNC_DEVKIT_IP` が設定されている場合は、SSH 経由でペアリング済みの DevKit にもインストールします。両方の環境がチェックに合格する必要があります。
+
+インストールに失敗した場合は、表示されたパスのログを読んでください：`/tmp/neat-core-offline-*.log`。
+詳細な出力には、`./install.sh --verbose` を使用してください。
+
+インストール中に SSH が切断されても、リモートのインストーラーは動作を続ける場合があります。
+再試行する前、またはレポートに表示された一時ディレクトリを削除する前に、インストーラーが停止したことを確認してください。
 
 ## 次のステップ
 
