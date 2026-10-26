@@ -958,7 +958,9 @@ void oriented_source_geometry() {
   std::string error;
   const bool preproc_compiled = Preproc(options).compile_node_contract({}, &preproc, &error);
   require(preproc_compiled, error.c_str());
-  require(preproc.processcvu && preproc.processcvu->payload.resolved_exec_backend.empty(),
+  // The payload defaults its backend to EVXX; only render-time policy resolves the run target.
+  require(preproc.processcvu && preproc.processcvu->payload.run_target == "AUTO" &&
+              preproc.processcvu->payload.run_target_resolution_reason.empty(),
           "public Preproc must exercise canonical unresolved-backend admission");
   CompiledNodeContract fragment;
   fragment.child_stages.push_back(preproc);

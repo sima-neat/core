@@ -241,6 +241,8 @@ void terminal_host_output_lifetime(bool dma_denied = false) {
               "ordinary Auto pressure independent byte oracle");
   }
   auto mixed = neat::sample_from_tensors(neat::TensorList{tensor, foreign_output.tensors.front()});
+  // sample_from_tensors marks its result owned; these are zero-copy views like a graph output.
+  mixed.owned = false;
   for (bool requested_copy : {false, true}) {
     const auto decision =
         internal::output_queue_memory_decision(mixed, requested_copy, true, false);
