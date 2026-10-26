@@ -251,8 +251,10 @@ If you need tutorials or tests, extract the separate extras archive into a direc
 For offline installation, activate the Python environment with:
 
 <ShellCommand prompt="devkit">
-source /opt/sima/neat/pyneat/bin/activate
+source ~/pyneat/bin/activate
 </ShellCommand>
+
+Offline installation uses the same Python paths as online installation. The PCIe host uses `~/pyneatpcie`. A DevKit uses `/media/nvme/pyneat` when `/media/nvme` is writable by the installing user; otherwise, it uses `~/pyneat`. For an NVMe installation, `~/pyneat` links to that environment. If a different environment already exists at `~/pyneat`, the installer keeps it in a `pyneat-before-offline-*` directory in your home directory before creating the link.
 
 ### Package options and installer behavior
 

@@ -199,6 +199,7 @@ def test_prerequisites_preserve_installed_system_packages(monkeypatch):
 
 
 def test_install_refreshes_plan_after_prerequisites(tmp_path, monkeypatch):
+    monkeypatch.setattr(deploy, 'finish_python_location', lambda *args: None)
     calls = []
     (tmp_path/'card/payload').mkdir(parents=True)
     (tmp_path/'card/payload/test.deb').touch()
@@ -345,3 +346,69 @@ def test_space_budget_rejects_unaccounted_planned_package(tmp_path):
     plan.write_text('Inst missing-package (1 offline [arm64])\n')
     with pytest.raises(ValueError, match='Planned packages missing.*missing-package'):
         deploy.check_space(tmp_path, plan)
+
+
+@pytest.mark.parametrize('role,nvme_exists,writable,expected', [
+    ('host', True, True, 'home/pyneatpcie'),
+    ('card', False, False, 'home/pyneat'),
+    ('card', True, False, 'home/pyneat'),
+    ('card', True, True, 'nvme/pyneat'),
+])
+def test_python_paths_match_online_defaults(tmp_path, monkeypatch, role, nvme_exists, writable, expected):
+    from types import SimpleNamespace
+    user = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid(), pw_dir=str(tmp_path/'home'))
+    monkeypatch.setenv('HOME', '/root')
+    monkeypatch.setenv('SUDO_UID', str(user.pw_uid))
+    monkeypatch.setattr(deploy.pwd, 'getpwuid', lambda uid: user)
+    monkeypatch.setattr(deploy.os, 'access', lambda *args: writable)
+    if nvme_exists:
+        (tmp_path/'nvme').mkdir()
+    assert deploy.python_location(role, tmp_path/'nvme') == (user, tmp_path/expected)
+
+
+def test_nvme_activation_preserves_existing_home_environment(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    user = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid(), pw_dir=str(tmp_path))
+    old = tmp_path/'pyneat'
+    old.mkdir()
+    (old/'user-package').write_text('keep')
+    path = tmp_path/'nvme/pyneat'
+    path.mkdir(parents=True)
+    monkeypatch.setattr(deploy.os, 'chown', lambda *args, **kwargs: None)
+    deploy.finish_python_location(user, path, 'card')
+    assert old.is_symlink() and old.resolve() == path
+    backups = list(tmp_path.glob('pyneat-before-offline-*/pyneat/user-package'))
+    assert len(backups) == 1 and backups[0].read_text() == 'keep'
+    deploy.finish_python_location(user, path, 'card')
+    assert len(list(tmp_path.glob('pyneat-before-offline-*'))) == 1
+
+
+def test_sudo_selects_invoking_user_and_checks_nvme_as_that_user(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    user = SimpleNamespace(pw_uid=1234, pw_gid=2345, pw_name='installer', pw_dir=str(tmp_path/'home'))
+    monkeypatch.setenv('SUDO_UID', '1234')
+    monkeypatch.setenv('HOME', '/root')
+    monkeypatch.setattr(deploy.os, 'getuid', lambda: 0)
+    def account(uid):
+        assert uid == 1234
+        return user
+    monkeypatch.setattr(deploy.pwd, 'getpwuid', account)
+    monkeypatch.setattr(deploy.os, 'getgrouplist', lambda *args: [2345, 3456])
+    nvme = tmp_path/'nvme'
+    nvme.mkdir()
+    def writable(args, **kwargs):
+        assert args == ['test', '-w', str(nvme)]
+        assert kwargs['user'] == 1234 and kwargs['group'] == 2345
+        assert kwargs['extra_groups'] == [2345, 3456]
+        return SimpleNamespace(returncode=1)
+    monkeypatch.setattr(deploy.subprocess, 'run', writable)
+    assert deploy.python_location('card', nvme)[1] == tmp_path/'home/pyneat'
+    assert not (tmp_path/'home').exists()
+
+
+def test_host_lifecycle_does_not_reopen_prepared_python_environment(tmp_path):
+    import subprocess
+    (tmp_path/'install_pciehost.sh').write_text('printf "%s\\n" "$@"\n')
+    result = subprocess.run(['bash', str(HERE/'lifecycle.sh'), 'host', 'install', str(tmp_path), '/tmp/plan'],
+                            text=True, capture_output=True, check=True)
+    assert result.stdout.splitlines() == ['--skip-setup']

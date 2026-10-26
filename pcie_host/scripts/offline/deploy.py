@@ -4,6 +4,7 @@ import argparse
 from contextlib import contextmanager
 import json
 import os
+import pwd
 from pathlib import Path
 import re
 import shutil
@@ -133,6 +134,46 @@ def check_space(target, plan=None):
                          'Moving the already-staged bundle does not free installation space.')
 
 
+def python_location(role, nvme=Path('/media/nvme')):
+    """Use the online installer's defaults for the user who invoked sudo."""
+    user = pwd.getpwuid(int(os.environ.get('SUDO_UID', os.getuid())))
+    home = Path(user.pw_dir)
+    name = 'pyneatpcie' if role == 'host' else 'pyneat'
+    path = home/name
+    if role == 'card' and nvme.is_dir():
+        if user.pw_uid == os.getuid():
+            writable = os.access(nvme, os.W_OK)
+        else:
+            writable = subprocess.run(
+                ['test', '-w', str(nvme)], user=user.pw_uid, group=user.pw_gid,
+                extra_groups=os.getgrouplist(user.pw_name, user.pw_gid),
+                timeout=30).returncode == 0
+        if writable:
+            path = nvme/name
+    return user, path
+
+
+def finish_python_location(user, path, role):
+    # Python installation runs as root because staged bundle files can be private.
+    # Restore ownership so subsequent online updates can run as the same user.
+    actual = path.resolve()
+    for directory, directories, files in os.walk(actual):
+        for entry in [Path(directory), *(Path(directory)/name for name in directories + files)]:
+            os.chown(entry, user.pw_uid, user.pw_gid, follow_symlinks=False)
+    home_path = Path(user.pw_dir)/'pyneat'
+    if role == 'card' and path != home_path:
+        if home_path.is_symlink() and home_path.resolve() == actual:
+            return
+        if home_path.exists() or home_path.is_symlink():
+            # Keep the previous environment instead of deleting user packages.
+            backup = Path(tempfile.mkdtemp(prefix='pyneat-before-offline-', dir=user.pw_dir))
+            os.chown(backup, user.pw_uid, user.pw_gid)
+            home_path.rename(backup/'pyneat')
+            print('Previous Python environment retained at '+str(backup/'pyneat'))
+        home_path.symlink_to(path)
+        os.chown(home_path, user.pw_uid, user.pw_gid, follow_symlinks=False)
+
+
 def execute(root, role, phase):
     verify_bundle(root, 'card' if role == 'card' and not (root/'host').exists() else None)
     target = root/role
@@ -141,12 +182,13 @@ def execute(root, role, phase):
     for key in list(os.environ):
         if key.startswith(('PIP_', 'NEAT_', 'SIMAPCIE_', 'PYNEAT_')) or key in ('SYSROOT', 'ELXR_SDK_RELEASE_FILE'):
             del os.environ[key]
-    venv = '/opt/sima/neat/' + ('pyneatpcie' if role == 'host' else 'pyneat')
+    user, python_path = python_location(role)
+    venv = str(python_path)
     os.environ.update({
         'DEBIAN_FRONTEND': 'noninteractive', 'LC_ALL': 'C', 'PYTHONDONTWRITEBYTECODE': '1',
         'PIP_CONFIG_FILE': '/dev/null', 'PIP_NO_INDEX': '1', 'PIP_NO_CACHE_DIR': '1',
         'PIP_FIND_LINKS': (target/'wheels').resolve().as_uri(), 'PIP_DISABLE_PIP_VERSION_CHECK': '1',
-        'PYNEAT_VENV_DIR': venv, 'NEAT_INSTALLER_APT_UPDATE': 'OFF',
+        'HOME': user.pw_dir, 'PYNEAT_VENV_DIR': venv, 'NEAT_INSTALLER_APT_UPDATE': 'OFF',
         'NEAT_INSTALLER_INSTALL_CODEX_SKILL': 'OFF', 'NEAT_INSTALLER_INSTALL_CLAUDE_SKILL': 'OFF',
         'SIMAPCIE_INSTALL_CODEX_SKILL': 'OFF', 'SIMAPCIE_INSTALL_CLAUDE_SKILL': 'OFF',
     })
@@ -186,6 +228,9 @@ def execute(root, role, phase):
         lifecycle[3] = 'install'
         run(lifecycle)
         verify(target, role, venv)
+        finish_python_location(user, python_path, role)
+        print('Python environment: '+venv)
+        print('Activate with: source '+str(Path(user.pw_dir)/('pyneatpcie' if role == 'host' else 'pyneat'))+'/bin/activate')
 
 
 def verify(target, role, venv):

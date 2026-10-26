@@ -1316,3 +1316,5 @@ Core は生成側の貸し出しを保持しながら共有バッキングメモ
 スタンドアロン Core は、ランタイムバンドルと追加パッケージを含む `offline/metadata.json` と、ランタイムバンドルのみを含む `offline/metadata-minimal.json` を公開します。
 
 インストーラーは Neat eLxr SDK またはセットアップ済みの Modalix DevKit のみを受け入れます。`/etc/sdk-release` または `/etc/buildinfo` をアーカイブ内のパッケージマニフェストと照合するため、ダウンロードした公開用メタデータは不要です。他の環境や互換性のない Platform バージョンでは、インストール前に停止します。SDK では Core を `/opt/toolchain/aarch64/modalix` にコピーします。`DEVKIT_SYNC_DEVKIT_IP` が設定されていれば、同じオフラインバンドルを SSH 経由でペアリング済みの DevKit に転送します。インストール開始前に両方の環境が事前チェックに合格する必要があります。DevKit 上ではローカルにインストールします。
+
+オフラインインストールでは、オンラインインストールと同じ Python パスを使用します。PCIe ホストは `~/pyneatpcie` を使用します。DevKit は、インストールするユーザーが `/media/nvme` に書き込める場合は `/media/nvme/pyneat` を使用し、それ以外は `~/pyneat` を使用します。NVMe へのインストールでは、`~/pyneat` はその環境へのリンクになります。`~/pyneat` に別の環境がある場合、インストーラーはリンクを作成する前にホームディレクトリの `pyneat-before-offline-*` ディレクトリに保存します。

@@ -170,3 +170,5 @@ sudo python3 -B install.py
 ## 下一步
 
 繼續進行 [PCIe 協同處理](/develop-apps/hello-neat/pcie/)，以驗證主機與卡之間的完整開發路徑。
+
+離線安裝使用與線上安裝相同的 Python 路徑。PCIe 主機使用 `~/pyneatpcie`。若安裝使用者可寫入 `/media/nvme`，DevKit 使用 `/media/nvme/pyneat`；否則使用 `~/pyneat`。安裝至 NVMe 時，`~/pyneat` 會連結至該環境。若 `~/pyneat` 已有其他環境，安裝程式會先將其保存在家目錄的 `pyneat-before-offline-*` 目錄中，再建立連結。

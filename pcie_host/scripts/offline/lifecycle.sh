@@ -10,7 +10,8 @@ if [[ "$role" == host ]]; then
   if [[ "$phase" == preflight ]]; then
     python3 ./pcie_delivery.py install-list --directory "$payload" --extra-dependency python3-venv >/dev/null
   else
-    bash ./install_pciehost.sh --skip-setup --python --python-venv /opt/sima/neat/pyneatpcie
+    # deploy.py installs and verifies Python from the complete offline wheelhouse.
+    bash ./install_pciehost.sh --skip-setup
   fi
 else
   source ./install_neat_framework.sh

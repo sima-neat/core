@@ -215,8 +215,10 @@ cd neat-core-offline
 離線安裝後，請使用下列命令啟用 Python 環境：
 
 <ShellCommand prompt="devkit">
-source /opt/sima/neat/pyneat/bin/activate
+source ~/pyneat/bin/activate
 </ShellCommand>
+
+離線安裝使用與線上安裝相同的 Python 路徑。PCIe 主機使用 `~/pyneatpcie`。若安裝使用者可寫入 `/media/nvme`，DevKit 使用 `/media/nvme/pyneat`；否則使用 `~/pyneat`。安裝至 NVMe 時，`~/pyneat` 會連結至該環境。若 `~/pyneat` 已有其他環境，安裝程式會先將其保存在家目錄的 `pyneat-before-offline-*` 目錄中，再建立連結。
 
 ### 套件選項與安裝程式行為
 

@@ -1669,3 +1669,5 @@ Core는 생산자의 대여 수명을 유지하면서 공유 기반 메모리 �
 독립 실행형 Core는 런타임 번들과 추가 패키지가 포함된 `offline/metadata.json` 및 런타임 번들만 포함된 `offline/metadata-minimal.json`을 게시합니다.
 
 설치 프로그램은 Neat eLxr SDK 또는 프로비저닝된 Modalix DevKit만 허용합니다. `/etc/sdk-release` 또는 `/etc/buildinfo`를 아카이브에 포함된 패키지 매니페스트와 비교하므로 다운로드한 배포 메타데이터는 필요하지 않습니다. 다른 환경이나 호환되지 않는 Platform 버전에서는 설치 전에 중단합니다. SDK에서는 Core를 `/opt/toolchain/aarch64/modalix`에 복사합니다. `DEVKIT_SYNC_DEVKIT_IP`가 설정되어 있으면 SSH를 통해 동일한 오프라인 번들을 페어링된 DevKit에 전송합니다. 설치를 시작하기 전에 두 환경 모두 사전 검사를 통과해야 합니다. DevKit에서는 로컬로 설치합니다.
+
+오프라인 설치는 온라인 설치와 같은 Python 경로를 사용합니다. PCIe 호스트는 `~/pyneatpcie`를 사용합니다. DevKit은 설치 사용자가 `/media/nvme`에 쓸 수 있으면 `/media/nvme/pyneat`를 사용하고, 그렇지 않으면 `~/pyneat`를 사용합니다. NVMe 설치에서는 `~/pyneat`가 해당 환경을 가리키는 링크입니다. `~/pyneat`에 다른 환경이 이미 있으면 설치 프로그램은 링크를 만들기 전에 홈 디렉터리의 `pyneat-before-offline-*` 디렉터리에 보관합니다.

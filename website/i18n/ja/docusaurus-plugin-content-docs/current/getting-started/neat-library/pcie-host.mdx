@@ -170,3 +170,5 @@ sudo python3 -B install.py
 ## 次のステップ
 
 [PCIeによる共同処理](/develop-apps/hello-neat/pcie/) を使用して、ホストからカードへの完全な開発パスを検証してください。
+
+オフラインインストールでは、オンラインインストールと同じ Python パスを使用します。PCIe ホストは `~/pyneatpcie` を使用します。DevKit は、インストールするユーザーが `/media/nvme` に書き込める場合は `/media/nvme/pyneat` を使用し、それ以外は `~/pyneat` を使用します。NVMe へのインストールでは、`~/pyneat` はその環境へのリンクになります。`~/pyneat` に別の環境がある場合、インストーラーはリンクを作成する前にホームディレクトリの `pyneat-before-offline-*` ディレクトリに保存します。

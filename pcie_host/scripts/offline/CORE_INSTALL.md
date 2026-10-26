@@ -18,7 +18,7 @@ cd neat-core-offline
 ./install.sh --check
 ./install.sh
 ./install.sh --verify
-/opt/sima/neat/pyneat/bin/python -c 'import pyneat; print(pyneat.__version__)'
+~/pyneat/bin/python -c 'import pyneat; print(pyneat.__version__)'
 ```
 
 The archive includes the Core and matching Scheduler Debian packages, installer
@@ -64,8 +64,9 @@ sudo --preserve-env=DEVKIT_SYNC_DEVKIT_IP,DEVKIT_DEPLOY_USER,SUDO_PASSWORD,DEVKI
 
 The installer retains the published Core platform admission, package ownership,
 and firmware lifecycle checks. It does not update optional Sentinel telemetry.
-The isolated Python environment is `/opt/sima/neat/pyneat`; activate it with
-`source /opt/sima/neat/pyneat/bin/activate`.
+Offline installation uses the same Python paths as online installation. The PCIe host uses `~/pyneatpcie`. A DevKit uses `/media/nvme/pyneat` when `/media/nvme` is writable by the installing user; otherwise, it uses `~/pyneat`. For an NVMe installation, `~/pyneat` links to that environment. If a different environment already exists at `~/pyneat`, the installer keeps it in a `pyneat-before-offline-*` directory in your home directory before creating the link.
+Activate the DevKit environment with
+`source ~/pyneat/bin/activate`.
 
 ## Download profiles
 

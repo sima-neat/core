@@ -55,8 +55,7 @@ repository and pip uses only bundled wheels. Existing install scripts retain
 Platform admission and runtime lifecycle handling. Optional Sentinel telemetry
 is retained if installed; its online updater is never called.
 
-Python environments are installed at `/opt/sima/neat/pyneatpcie` on the host and
-`/opt/sima/neat/pyneat` on each card. Post-install checks cover exact native
+Offline installation uses the same Python paths as online installation. The PCIe host uses `~/pyneatpcie`. A DevKit uses `/media/nvme/pyneat` when `/media/nvme` is writable by the installing user; otherwise, it uses `~/pyneat`. For an NVMe installation, `~/pyneat` links to that environment. If a different environment already exists at `~/pyneat`, the installer keeps it in a `pyneat-before-offline-*` directory in your home directory before creating the link. Post-install checks cover exact native
 package versions, package health, Python dependencies/imports, the host GStreamer
 plugin, and the existing card installer's runtime checks. They do not replace an
 application inference acceptance test.

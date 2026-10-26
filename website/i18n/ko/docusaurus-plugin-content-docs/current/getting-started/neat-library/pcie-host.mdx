@@ -170,3 +170,5 @@ sudo python3 -B install.py
 ## 다음 단계
 
 [PCIe 공동 처리](/develop-apps/hello-neat/pcie/)을 계속 진행하여 호스트에서 카드까지의 전체 개발 경로를 확인합니다.
+
+오프라인 설치는 온라인 설치와 같은 Python 경로를 사용합니다. PCIe 호스트는 `~/pyneatpcie`를 사용합니다. DevKit은 설치 사용자가 `/media/nvme`에 쓸 수 있으면 `/media/nvme/pyneat`를 사용하고, 그렇지 않으면 `~/pyneat`를 사용합니다. NVMe 설치에서는 `~/pyneat`가 해당 환경을 가리키는 링크입니다. `~/pyneat`에 다른 환경이 이미 있으면 설치 프로그램은 링크를 만들기 전에 홈 디렉터리의 `pyneat-before-offline-*` 디렉터리에 보관합니다.

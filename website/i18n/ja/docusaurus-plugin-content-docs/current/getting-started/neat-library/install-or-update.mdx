@@ -200,8 +200,10 @@ cd neat-core-offline
 オフラインでのインストール後、次のコマンドで Python 環境を有効にしてください：
 
 <ShellCommand prompt="devkit">
-source /opt/sima/neat/pyneat/bin/activate
+source ~/pyneat/bin/activate
 </ShellCommand>
+
+オフラインインストールでは、オンラインインストールと同じ Python パスを使用します。PCIe ホストは `~/pyneatpcie` を使用します。DevKit は、インストールするユーザーが `/media/nvme` に書き込める場合は `/media/nvme/pyneat` を使用し、それ以外は `~/pyneat` を使用します。NVMe へのインストールでは、`~/pyneat` はその環境へのリンクになります。`~/pyneat` に別の環境がある場合、インストーラーはリンクを作成する前にホームディレクトリの `pyneat-before-offline-*` ディレクトリに保存します。
 
 ### パッケージオプションとインストーラーの動作
 
