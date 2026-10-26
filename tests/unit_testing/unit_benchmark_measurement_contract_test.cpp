@@ -298,6 +298,27 @@ void provided_image_inputs_need_one_tensor_with_image_format() {
           "an image tensor without image format metadata must be rejected by name");
   require(contains(check({image, image}), "exactly one image tensor, got 2"),
           "an image route must reject more than one tensor");
+  require(contains(check({}), "exactly one image tensor, got 0"),
+          "an image route must reject an empty input list passed to the check");
+
+  require(
+      check({make_provided_tensor(TensorDType::UInt8, {217, 333, 3}, ImageSpec::PixelFormat::RGB)})
+          .empty(),
+      "an image route must accept an image of any size");
+  require(check({make_provided_tensor(TensorDType::UInt8, {217, 333, 1},
+                                      ImageSpec::PixelFormat::GRAY8)})
+              .empty(),
+          "an image route must accept any color format the tensor declares");
+  require(check({make_provided_tensor(TensorDType::UInt8, {1, 720, 1280, 3},
+                                      ImageSpec::PixelFormat::BGR)})
+              .empty(),
+          "an image route must accept a batch-1 NHWC image, as run() does");
+
+  internal::IngressTensorContract ingress;
+  ingress.valid = true;
+  const std::string multi = input_shape_error(
+      [&] { internal::check_model_image_inputs({image}, {ingress, ingress}, "bench"); });
+  require(!multi.empty(), "an image route must reject a model with more than one ingress");
 }
 
 void provided_tensor_inputs_match_ingress_contracts() {
@@ -329,6 +350,44 @@ void provided_tensor_inputs_match_ingress_contracts() {
   const auto tensor = make_provided_tensor(TensorDType::Float32, {1, 640, 640, 3});
   require(contains(check({tensor, tensor}), "expected exactly 1 ingress tensor inputs"),
           "a tensor route must reject the wrong number of inputs");
+  require(contains(check({}), "got 0"), "a tensor route must reject an empty input list");
+  require(contains(check({make_provided_tensor(TensorDType::UInt8, {640, 640, 3},
+                                               ImageSpec::PixelFormat::RGB)}),
+                   "format=FP32"),
+          "a tensor route must reject an image where it expects a float tensor");
+}
+
+void provided_tensor_inputs_follow_multi_ingress_order() {
+  using namespace simaai::neat;
+  const auto make_ingress = [](int index, std::string name, std::string dtype, int width,
+                               int depth) {
+    internal::IngressTensorContract ingress;
+    ingress.valid = true;
+    ingress.ingress_index = index;
+    ingress.media_type = "application/vnd.simaai.tensor";
+    ingress.dtype = std::move(dtype);
+    ingress.width = width;
+    ingress.height = 1;
+    ingress.depth = depth;
+    ingress.source_tensor_name = std::move(name);
+    return ingress;
+  };
+  const std::vector<internal::IngressTensorContract> contracts = {
+      make_ingress(0, "tokens", "FP32", 1024, 2), make_ingress(1, "mask", "BF16", 64, 1)};
+  const auto tokens = make_provided_tensor(TensorDType::Float32, {1, 1024, 2});
+  const auto mask = make_provided_tensor(TensorDType::BFloat16, {1, 64, 1});
+  const auto check = [&](const TensorList& inputs) {
+    return input_shape_error(
+        [&] { internal::check_model_tensor_inputs(inputs, contracts, "bench"); });
+  };
+
+  require(check({tokens, mask}).empty(),
+          "one tensor per ingress, in input_specs() order, must be accepted");
+  require(contains(check({mask, tokens}), "ingress[0] (tokens)"),
+          "inputs in the wrong order must be rejected at the first mismatching ingress");
+  const std::string count = check({tokens});
+  require(contains(count, "expected exactly 2 ingress tensor inputs (tokens,mask), got 1"),
+          "a missing input must name every expected ingress: " + count);
 }
 
 void provided_image_geometry_rejects_conflicting_original_size() {
@@ -347,6 +406,11 @@ void provided_image_geometry_rejects_conflicting_original_size() {
     rejected = contains(error.what(), "(640x640) must match the provided image (1280x720)");
   }
   require(rejected, "an original size that disagrees with the provided image must be rejected");
+
+  const auto batched =
+      make_provided_tensor(TensorDType::UInt8, {1, 720, 1280, 3}, ImageSpec::PixelFormat::RGB);
+  internal::require_provided_source_geometry(batched, plan,
+                                             make_benchmark_source_options(1280, 720));
 
   plan.resolved_kind = InputKind::Tensor;
   internal::require_provided_source_geometry(image, plan, make_benchmark_source_options(640, 640));
@@ -968,6 +1032,8 @@ RUN_TEST("unit_benchmark_measurement_contract_test", ([] {
                     provided_image_inputs_need_one_tensor_with_image_format);
            run_case("provided_tensor_inputs_match_ingress_contracts",
                     provided_tensor_inputs_match_ingress_contracts);
+           run_case("provided_tensor_inputs_follow_multi_ingress_order",
+                    provided_tensor_inputs_follow_multi_ingress_order);
            run_case("provided_image_geometry_rejects_conflicting_original_size",
                     provided_image_geometry_rejects_conflicting_original_size);
            run_case("provided_image_supplies_boxdecode_source_geometry",
