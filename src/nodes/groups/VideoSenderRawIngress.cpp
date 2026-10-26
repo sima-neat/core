@@ -1,6 +1,7 @@
 #include "nodes/groups/internal/VideoSenderRawIngress.h"
 
 #include "builder/internal/InputSpecSpecialization.h"
+#include "nodes/sima/ImageTransform.h"
 
 #include <memory>
 #include <sstream>
@@ -117,6 +118,13 @@ public:
   std::shared_ptr<Node> specialize_for_input(
       const OutputSpec& input,
       const simaai::neat::internal::InputSpecSpecializationContext& context) const override {
+    // The encoder takes NV12 only; convert NV16 (4:2:2) into its NV12 surface on the EV74.
+    if (input.media_type == "video/x-raw" && input.format == "NV16") {
+      ColorConvertOptions color;
+      color.output_format = ImageFormat::NV12;
+      color.surface = ImageSurfaceLayout::EncoderNv12;
+      return nodes::ColorConvert(color);
+    }
     const bool layout_aware = context.capability(kNeatEncoderInputLayoutAwareCapability);
     const bool direct = can_encode_nv12_direct(input, layout_aware);
     return std::make_shared<VideoSenderRawIngressNode>(
