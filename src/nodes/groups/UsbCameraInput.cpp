@@ -1,5 +1,6 @@
 #include "nodes/groups/UsbCameraInput.h"
 
+#include "gst/GstHelpers.h"
 #include "nodes/groups/internal/UvcCamera.h"
 #include "nodes/sima/ImageTransform.h"
 #include "nodes/sima/SimaDecode.h"
@@ -154,6 +155,10 @@ namespace simaai::neat::nodes::groups {
 simaai::neat::Graph UsbCameraInput(simaai::neat::UsbCameraInputOptions opt,
                                    std::uint32_t capture_buffer_count) {
   validate_options(opt, capture_buffer_count);
+  // Capture lands in CMA buffers that neatdecoder offers; older decoders cannot offer them.
+  if (!element_property_exists("neatdecoder", "input-pool-buffers"))
+    throw std::runtime_error("UsbCameraInput requires a neatdecoder with the input-pool-buffers "
+                             "property; update the simaai-scheduler package");
   const auto camera = internal::uvc::resolve_mjpeg_camera(opt.camera_name, opt.width, opt.height,
                                                           opt.framerate_num, opt.framerate_den);
   return internal::uvc::mjpeg_camera_graph(opt, camera, capture_buffer_count);
