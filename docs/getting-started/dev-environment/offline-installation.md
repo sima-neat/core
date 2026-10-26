@@ -214,34 +214,49 @@ Run this command on the computer with internet access:
 sima-cli neat install core@v0.6.0 -t offline --download-only
 </ShellCommand>
 
+The default package includes the runtime, tutorials, and tests.
+To download only the runtime, use:
+
+<ShellCommand prompt="host">
+sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
+</ShellCommand>
+
 ### 2. Install the package
 
-1. Copy the complete downloaded directory to the target host.
-2. Open a terminal in that directory.
-3. Use the installation instructions supplied with the package.
+1. Copy the downloaded files to the Modalix DevKit or the Neat SDK workspace.
+2. Open a terminal in that directory. For SDK installation, use the SDK shell.
+3. Extract the installer archive:
+
+<ShellCommand prompt="sdk|devkit">
+tar -xzf neat-core-offline-installer.tar.gz
+</ShellCommand>
+
+4. Go to the extracted directory:
+
+<ShellCommand prompt="sdk|devkit">
+cd neat-core-offline
+</ShellCommand>
+
+5. Start the installer as your regular user. It requests `sudo` permissions when necessary.
+
+<ShellCommand prompt="sdk|devkit">
+./install.sh
+</ShellCommand>
+
+If you need tutorials or tests, extract the separate extras archive into a directory of your choice.
 
 ### Package options and installer behavior
 
-Download on a connected computer, then copy the archives to the provisioned Modalix DevKit. The default profile includes the runtime bundle and tutorials/tests extras. Use `-t minimal` to omit extras. The target installer checks OS, architecture, and Platform compatibility.
+- The installer checks system compatibility and available disk space before installation.
+- The installer uses bundled dependencies. It stops if a required dependency is missing.
+- In the SDK, the installer copies Neat Library into `/opt/toolchain/aarch64/modalix`.
+- If `DEVKIT_SYNC_DEVKIT_IP` is set, the installer also installs on the paired DevKit through SSH. Both environments must pass checks.
 
-```bash
-sima-cli neat install core/offline@v0.6.0 --download-only
-sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
-```
+If installation fails, read the log at the printed path: `/tmp/neat-core-offline-*.log`.
+For detailed output, use `./install.sh --verbose`.
 
-Extract `neat-core-offline-installer.tar.gz`, then run `cd neat-core-offline && ./install.sh`. Extract the separate extras archive in a directory of your choice when you need tutorials or tests.
-
-The installer accepts only the Neat eLxr SDK or a provisioned Modalix DevKit. It checks `/etc/sdk-release` or `/etc/buildinfo` against the package manifest bundled in the archive; downloaded publication metadata is not required. Other environments and incompatible Platform versions are rejected before installation. In the SDK, Neat Library is copied into `/opt/toolchain/aarch64/modalix`. If `DEVKIT_SYNC_DEVKIT_IP` is configured, the same offline bundle is transferred over SSH to the paired DevKit. Both environments must pass preflight before installation begins. On a DevKit, installation runs locally.
-
-Inside the standard SDK container, the offline installer does not require `unshare`, privileged mode, or additional container capabilities. It extracts packages into the sysroot and enables only local APT `file`, `copy`, and `store` methods. HTTP, HTTPS, and other network transports are disabled; missing dependencies fail without online fallback. Native DevKit installation retains its isolated network namespace.
-
-The native installer uses the offline APT transaction plan to reserve three times the expanded contents of Debian packages selected for installation or reinstallation and all Python wheels, plus 128 MiB for metadata and the Python environment. Dependencies left untouched by APT do not consume this installation budget. It does not count already-staged archives again, including bundles on NVMe or tmpfs. A disk-space failure reports available, required, and additional root space in MiB.
-
-Paired DevKit transfers use a private directory under `/tmp`, which is RAM-backed on the standard DevKit. The staging directory is removed after the operation finishes, including reported installation failures and incomplete transfers. If SSH disconnects or times out during installation, the directory is retained and its path is printed because the remote installer may still be running.
-
-Run `./install.sh` as your regular SDK or DevKit user. The launcher requests `sudo` privileges automatically and preserves only the explicit pairing, DevKit authentication, sync preference, and SSH-agent settings. Paired deployment continues to use the invoking SDK user’s SSH identity.
-
-Standalone Neat Library and PCIe installation use the same live terminal renderer. Each standalone step keeps its numbered phase and elapsed time, with up to 10 recent command-output lines refreshed every second and clipped to the terminal size. Redirected output uses plain 15-second activity updates. Detailed reports remain in a private `/tmp/neat-core-offline-*.log` file, including on failure. Use `NO_COLOR=1 ./install.sh` to disable colors or `./install.sh --verbose` to stream the full log. Repeated compatibility checks protect the package transaction; they are separate from installation.
+If SSH disconnects during installation, the remote installer can continue to run.
+Check that it has stopped before you retry or remove the temporary directory shown in the report.
 
 ## Store packages internally {#hosting-packages-internally}
 

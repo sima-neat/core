@@ -214,34 +214,49 @@ Platform 3.0 이상을 사용하는 Modalix DevKit에 이 패키지를 사용하
 sima-cli neat install core@v0.6.0 -t offline --download-only
 </ShellCommand>
 
+기본 패키지에는 런타임, 튜토리얼 및 테스트가 포함됩니다.
+런타임만 다운로드하려면 다음을 사용하세요:
+
+<ShellCommand prompt="host">
+sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
+</ShellCommand>
+
 ### 2. 패키지 설치
 
-1. 다운로드한 전체 디렉터리를 대상 호스트에 복사하세요.
-2. 해당 디렉터리에서 터미널을 여세요.
-3. 패키지에 포함된 설치 지침을 사용하세요.
+1. 다운로드한 파일을 Modalix DevKit 또는 Neat SDK 작업 공간에 복사하세요.
+2. 해당 디렉터리에서 터미널을 여세요. SDK에 설치하려면 SDK 셸을 사용하세요.
+3. 설치 프로그램 아카이브의 압축을 푸세요:
+
+<ShellCommand prompt="sdk|devkit">
+tar -xzf neat-core-offline-installer.tar.gz
+</ShellCommand>
+
+4. 압축을 푼 디렉터리로 이동하세요:
+
+<ShellCommand prompt="sdk|devkit">
+cd neat-core-offline
+</ShellCommand>
+
+5. 일반 사용자로 설치 프로그램을 시작하세요. 필요한 경우 `sudo` 권한을 요청합니다.
+
+<ShellCommand prompt="sdk|devkit">
+./install.sh
+</ShellCommand>
+
+튜토리얼이나 테스트가 필요하면 별도의 추가 아카이브를 원하는 디렉터리에 압축 해제하세요.
 
 ### 패키지 옵션 및 설치 프로그램 동작
 
-인터넷에 연결된 컴퓨터에서 다운로드한 다음 준비된 Modalix DevKit에 아카이브를 복사합니다. 기본 프로필에는 런타임 번들과 튜토리얼 및 테스트 추가 패키지가 포함됩니다. 추가 패키지를 제외하려면 `-t minimal`을 사용합니다. 대상 설치 프로그램이 OS, 아키텍처 및 Platform 호환성을 확인합니다.
+- 설치 프로그램은 설치 전에 시스템 호환성과 사용 가능한 디스크 공간을 확인합니다.
+- 설치 프로그램은 포함된 종속성을 사용합니다. 필요한 종속성이 없으면 중지합니다.
+- SDK에서는 Neat Library를 `/opt/toolchain/aarch64/modalix`에 복사합니다.
+- `DEVKIT_SYNC_DEVKIT_IP`가 설정되어 있으면 SSH를 통해 페어링된 DevKit에도 설치합니다. 두 환경 모두 검사를 통과해야 합니다.
 
-```bash
-sima-cli neat install core/offline@v0.6.0 --download-only
-sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
-```
+설치가 실패하면 표시된 경로의 로그를 읽으세요: `/tmp/neat-core-offline-*.log`.
+자세한 출력을 보려면 `./install.sh --verbose`를 사용하세요.
 
-`neat-core-offline-installer.tar.gz`를 추출한 후 `cd neat-core-offline && ./install.sh`를 실행합니다. 튜토리얼이나 테스트가 필요하면 별도의 추가 아카이브를 원하는 디렉터리에 추출하세요.
-
-설치 프로그램은 Neat eLxr SDK 또는 프로비저닝된 Modalix DevKit만 허용합니다. `/etc/sdk-release` 또는 `/etc/buildinfo`를 아카이브에 포함된 패키지 매니페스트와 비교하므로 다운로드한 배포 메타데이터는 필요하지 않습니다. 다른 환경이나 호환되지 않는 Platform 버전에서는 설치 전에 중단합니다. SDK에서는 Core를 `/opt/toolchain/aarch64/modalix`에 복사합니다. `DEVKIT_SYNC_DEVKIT_IP`가 설정되어 있으면 SSH를 통해 동일한 오프라인 번들을 페어링된 DevKit에 전송합니다. 설치를 시작하기 전에 두 환경 모두 사전 검사를 통과해야 합니다. DevKit에서는 로컬로 설치합니다.
-
-표준 SDK 컨테이너의 오프라인 설치 프로그램에는 `unshare`, 특권 모드 또는 추가 컨테이너 권한이 필요하지 않습니다. 패키지를 sysroot에 추출하며 로컬 APT `file`, `copy`, `store` 메서드만 활성화합니다. HTTP, HTTPS 및 다른 네트워크 전송은 비활성화되며 의존성이 누락되면 온라인 대체 경로 없이 실패합니다. 네이티브 DevKit 설치는 격리된 네트워크 네임스페이스를 유지합니다.
-
-네이티브 설치 프로그램은 오프라인 APT 트랜잭션 계획에 따라 설치 또는 재설치할 Debian 패키지와 모든 Python wheel의 압축 해제 크기의 3배에 더해 메타데이터와 Python 환경을 위한 128 MiB를 확보합니다. APT가 변경하지 않는 종속 패키지는 이 설치 공간 계산에서 제외합니다. NVMe 또는 tmpfs의 번들을 포함하여 이미 배치된 아카이브는 다시 계산하지 않습니다. 공간이 부족하면 루트 파일 시스템의 사용 가능한 공간, 필요한 공간, 추가로 필요한 공간을 MiB 단위로 표시합니다.
-
-페어링된 DevKit으로 전송할 때는 표준 DevKit에서 RAM 기반인 `/tmp` 아래의 전용 디렉터리를 사용합니다. 설치 실패가 보고되거나 전송이 완료되지 않은 경우를 포함하여 작업이 끝나면 스테이징 디렉터리를 삭제합니다. 설치 중 SSH 연결이 끊기거나 시간 초과가 발생하면 원격 설치 프로그램이 계속 실행 중일 수 있으므로 디렉터리를 유지하고 경로를 표시합니다.
-
-일반 SDK 또는 DevKit 사용자로 `./install.sh`를 실행합니다. 실행 스크립트는 `sudo` 권한을 자동으로 요청하고 페어링, DevKit 인증, 동기화 기본 설정 및 SSH 에이전트 설정만 명시적으로 유지합니다. 페어링된 장치 배포에는 실행한 SDK 사용자의 SSH 자격 증명을 계속 사용합니다.
-
-독립형 Core와 PCIe 설치는 같은 실시간 터미널 렌더러를 사용합니다. 각 독립형 단계는 번호가 있는 단계와 경과 시간을 표시하고 최근 명령 출력 최대 10줄을 터미널 크기에 맞춰 매초 갱신합니다. 출력을 리디렉션하면 색상이나 화면 갱신 없이 15초마다 실행 상태를 표시합니다. 상세 보고서는 실패 시에도 비공개 `/tmp/neat-core-offline-*.log` 파일에 보존됩니다. 색상을 끄려면 `NO_COLOR=1 ./install.sh`를, 전체 로그를 표시하려면 `./install.sh --verbose`를 사용합니다. 반복되는 호환성 확인은 패키지 트랜잭션을 보호하기 위한 것으로 설치 작업과 별개입니다.
+설치 중 SSH 연결이 끊어져도 원격 설치 프로그램은 계속 실행될 수 있습니다.
+다시 시도하거나 보고서에 표시된 임시 디렉터리를 삭제하기 전에 설치 프로그램이 중지되었는지 확인하세요.
 
 ## 내부에 패키지 저장 {#hosting-packages-internally}
 
