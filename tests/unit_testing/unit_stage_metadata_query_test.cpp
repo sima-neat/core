@@ -32,7 +32,9 @@ CompiledMlaContract make_mla_contract() {
   physical.segment_name = "producer_carrier";
   physical.source_byte_offset = 128;
   physical.size_bytes = 96U;
+  physical.required_alignment_bytes = 64U;
   compiled.runtime_contract.physical_inputs = {physical};
+  compiled.runtime_contract.elf_ifm_symbol_names = {"input0"};
   contract::InputBindingStaticSpec binding;
   binding.local_logical_input_index = 0;
   binding.cm_input_name = "consumer_input";
@@ -175,7 +177,9 @@ RUN_TEST("unit_stage_metadata_query_test", ([] {
            carrier.physical_index = 0;
            carrier.segment_name = "output_carrier";
            carrier.size_bytes = 32768;
+           carrier.required_alignment_bytes = 64U;
            chw_mla.runtime_contract.physical_outputs = {carrier};
+           chw_mla.runtime_contract.elf_ofm_symbol_names = {"output0"};
            contract::SimaPluginStaticManifest mla_manifest;
            mla_manifest.stages.push_back(project_mla_stage_contract(chw_mla));
            const auto outputs = query::mla_output_tensors_from_manifest(mla_manifest);

@@ -3636,6 +3636,9 @@ selected_model_fragment_stage_facts(const std::vector<std::shared_ptr<Node>>& no
       return std::nullopt;
     }
   }
+  if (error) {
+    error->clear();
+  }
   return result;
 }
 

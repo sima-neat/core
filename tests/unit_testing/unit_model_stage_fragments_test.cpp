@@ -3,6 +3,8 @@
 #include "nodes/sima/DetessDequant.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/sima/ContractRender.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
 #include "model_archive_fixture_utils.h"
 #include "pipeline/Graph.h"
 #include "test_main.h"
@@ -172,11 +174,11 @@ RUN_TEST(
                     std::to_string(static_cast<int>(stage)) + "): " +
                     (region_diagnostics.errors.empty() ? std::string("no diagnostic")
                                                        : region_diagnostics.errors.front()));
-        const auto manifest =
-            render_manifest_from_compiled_contracts(regions, {}, &region_diagnostics);
+        auto manifest = render_manifest_from_compiled_contracts(regions, {}, &region_diagnostics);
         require(manifest && region_diagnostics.errors.empty(),
                 "repeated whole regions must retain renderable physical contracts");
         if (stage == internal::ModelStage::MlaOnly) {
+          pipeline_internal::sima::finalize_pipeline_storage(*manifest);
           for (const auto& invocation : manifest->stages) {
             require(invocation.frame_arena_role ==
                             pipeline_internal::sima::FrameArenaRole::Allocate &&
@@ -277,6 +279,10 @@ RUN_TEST(
       require(direct_manifest && diagnostics.errors.empty(),
               "public MLA plus typed DetessDequant must compile one contextual route");
       namespace sima = pipeline_internal::sima;
+      const auto preparation =
+          sima::prepare_kernel_stage_recipes(&*direct_manifest, std::nullopt, {}, {}, {});
+      require(!preparation, preparation ? preparation->field + ": " + preparation->message : "");
+      sima::finalize_pipeline_storage(*direct_manifest);
       const sima::StageStaticSpec* mla_stage = nullptr;
       const sima::StageStaticSpec* post_stage = nullptr;
       for (const auto& stage : direct_manifest->stages) {
@@ -302,9 +308,19 @@ RUN_TEST(
       direct_nodes.push_back(std::make_shared<DetessDequant>(DetessDequantOptions(model)));
       pipeline_internal::sima::ManifestBuildDiagnostics duplicate_diagnostics;
       const auto duplicate = compile_node_contracts(direct_nodes, {}, &duplicate_diagnostics);
-      require(!duplicate.fully_renderable && !duplicate_diagnostics.errors.empty(),
+      auto duplicate_manifest =
+          render_manifest_from_compiled_contracts(duplicate, {}, &duplicate_diagnostics);
+      require(duplicate_manifest && duplicate_diagnostics.errors.empty(),
+              "duplicate continuation must reach the cold storage identity check");
+      std::string duplicate_error;
+      try {
+        sima::finalize_pipeline_storage(*duplicate_manifest);
+      } catch (const std::invalid_argument& error) {
+        duplicate_error = error.what();
+      }
+      require(!duplicate_error.empty(),
               "duplicate commands within an invocation must still be rejected");
-      require_contains(duplicate_diagnostics.errors.front(), "physical command identity",
+      require_contains(duplicate_error, "physical command identity",
                        "duplicate continuation must retain the exact command diagnostic");
 
       const auto legacy = sima_test::make_model_archive_fixture(
