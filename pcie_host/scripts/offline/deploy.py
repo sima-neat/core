@@ -89,11 +89,21 @@ def environment(target, role):
         raise ValueError('Repair package database before installation: ' + audit)
 
 
-def check_space(target):
+def check_space(target, plan=None):
     # Archives are already staged, potentially on NVMe or tmpfs. Their current
     # allocation is reflected in disk_usage; do not charge it to root again.
+    selected = None if plan is None else {
+        line.split()[1].split(':')[0] for line in plan.read_text().splitlines()
+        if line.startswith('Inst ')
+    }
+    accounted = set()
     installed = 0
     for package in (target/'repo').glob('*.deb'):
+        if selected is not None:
+            name = output(['dpkg-deb', '-f', str(package), 'Package'])
+            if name not in selected:
+                continue
+            accounted.add(name)
         size = int(output(['dpkg-deb', '-f', str(package), 'Installed-Size']) or '0') * 1024
         if not size:
             # Some producer packages omit Installed-Size. Never treat their
@@ -105,11 +115,13 @@ def check_space(target):
                     size = sum((entry.size + 4095) // 4096 * 4096
                                for entry in archive if entry.isfile())
         installed += size
+    if selected is not None and selected - accounted:
+        raise ValueError('Planned packages missing from offline repository: ' + ', '.join(sorted(selected - accounted)))
     for wheel in (target/'wheels').glob('*.whl'):
         with ZipFile(wheel) as archive:
             installed += sum((entry.file_size + 4095) // 4096 * 4096
                              for entry in archive.infolist())
-    # Reserve the full dependency cohort even if already installed, plus unpack/
+    # Reserve every package APT will unpack, including explicit reinstalls, plus
     # replacement and Python staging space, and 128 MiB for metadata/venv growth.
     required = 3 * installed + 128 * 1024**2
     free = shutil.disk_usage('/').free
@@ -125,15 +137,13 @@ def execute(root, role, phase):
     verify_bundle(root, 'card' if role == 'card' and not (root/'host').exists() else None)
     target = root/role
     environment(target, role)
-    if phase != 'verify':
-        check_space(target)
     # Ignore caller configuration, including pip extra-index-url/find-links.
     for key in list(os.environ):
         if key.startswith(('PIP_', 'NEAT_', 'SIMAPCIE_', 'PYNEAT_')) or key in ('SYSROOT', 'ELXR_SDK_RELEASE_FILE'):
             del os.environ[key]
     venv = '/opt/sima/neat/' + ('pyneatpcie' if role == 'host' else 'pyneat')
     os.environ.update({
-        'DEBIAN_FRONTEND': 'noninteractive', 'PYTHONDONTWRITEBYTECODE': '1',
+        'DEBIAN_FRONTEND': 'noninteractive', 'LC_ALL': 'C', 'PYTHONDONTWRITEBYTECODE': '1',
         'PIP_CONFIG_FILE': '/dev/null', 'PIP_NO_INDEX': '1', 'PIP_NO_CACHE_DIR': '1',
         'PIP_FIND_LINKS': str(target/'wheels'), 'PIP_DISABLE_PIP_VERSION_CHECK': '1',
         'PYNEAT_VENV_DIR': venv, 'NEAT_INSTALLER_APT_UPDATE': 'OFF',
@@ -157,6 +167,7 @@ def execute(root, role, phase):
         plan = state/'plan.txt'
         with plan.open('w') as stream:
             run([*args, *prerequisites, '--simulate'], stdout=stream)
+        check_space(target, plan)
         # Producer admission checks the whole local transaction before mutations.
         lifecycle = ['bash', str(root/'lifecycle.sh'), role, 'preflight', str(target/'payload'), str(plan)]
         run(lifecycle)

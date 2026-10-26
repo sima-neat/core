@@ -42,6 +42,7 @@ def test_preflight_runs_admission_without_package_install(tmp_path, monkeypatch,
         assert 'PIP_EXTRA_INDEX_URL' not in deploy.os.environ
         assert 'NEAT_INSTALLER_SKIP_PLATFORM_CHECK' not in deploy.os.environ
         assert deploy.os.environ['PIP_NO_INDEX'] == '1'
+        assert deploy.os.environ['LC_ALL'] == 'C'
     assert not any('install' in c and '--simulate' not in c for c in calls)
     assert calls[-1][2:4] == [role, 'preflight']
     plan = next(c for c in calls if '--simulate' in c)
@@ -259,3 +260,29 @@ def test_verification_does_not_reserve_installation_space(tmp_path, monkeypatch)
         context.setattr(deploy.os, 'environ', os.environ.copy())
         deploy.execute(tmp_path, 'card', 'verify')
     assert len(calls) == 1
+
+
+def test_space_budget_uses_apt_plan_and_retains_explicit_reinstalls(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    mib = 1024**2
+    (tmp_path/'repo').mkdir()
+    for name in ('runtime', 'dependency'):
+        (tmp_path/'repo'/f'{name}.deb').touch()
+    plan = tmp_path/'plan.txt'
+    plan.write_text('Inst runtime:arm64 [1] (1 offline [arm64])\nConf runtime (1 offline [arm64])\n')
+    def metadata(args):
+        return Path(args[2]).stem if args[-1] == 'Package' else '1024'
+    monkeypatch.setattr(deploy, 'output', metadata)
+    monkeypatch.setattr(deploy.shutil, 'disk_usage', lambda path: SimpleNamespace(free=131*mib))
+    deploy.check_space(tmp_path, plan)
+    # An uninstalled dependency is charged when the solver adds it to the plan.
+    plan.write_text(plan.read_text()+'Inst dependency (1 offline [arm64])\n')
+    with pytest.raises(ValueError, match='134 MiB required'):
+        deploy.check_space(tmp_path, plan)
+
+
+def test_space_budget_rejects_unaccounted_planned_package(tmp_path):
+    plan = tmp_path/'plan.txt'
+    plan.write_text('Inst missing-package (1 offline [arm64])\n')
+    with pytest.raises(ValueError, match='Planned packages missing.*missing-package'):
+        deploy.check_space(tmp_path, plan)

@@ -100,9 +100,11 @@ not the dependency-enriched SDK image, to avoid omitting target dependencies.
 
 ## Disk space
 
-The native installer reserves three times the expanded Debian dependency and
-Python wheel contents, plus 128 MiB for package metadata and the Python
-environment. Packages without an `Installed-Size` field are measured from their
+The native installer uses the offline APT transaction plan to reserve three times
+the expanded contents of Debian packages selected for installation or
+reinstallation and all Python wheels, plus 128 MiB for package metadata and the
+Python environment. Dependencies left untouched by APT do not consume this
+installation budget. Packages without an `Installed-Size` field are measured from their
 archive contents. Already-staged bundle files are not counted again, including
 when they are stored on NVMe or tmpfs. A space failure reports available,
 required, and additional root space in MiB.
