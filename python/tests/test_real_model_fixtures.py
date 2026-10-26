@@ -987,3 +987,105 @@ def test_boxdecode_runtime_output_produces_overlay_artifact(tmp_path):
     assert boxes
 
   assert counts == sorted(counts, reverse=True)
+
+
+def _benchmark_options(inputs=(), **geometry) -> pyneat.BenchmarkOptions:
+  options = pyneat.BenchmarkOptions()
+  options.num_samples = 2
+  options.min_duration_ms = 0  # These tests check input plumbing, not steady-state timing.
+  options.inputs = list(inputs)
+  for name, value in geometry.items():
+    setattr(options, name, value)
+  return options
+
+
+def _assert_measured(report: pyneat.BenchmarkReport, input_source: str) -> None:
+  assert report.input == input_source
+  assert report.latency_ms > 0.0
+  assert report.fps > 0.0
+
+
+def _benchmark_input_error(model: pyneat.Model, inputs, **geometry) -> str:
+  started = time.monotonic()
+  with pytest.raises(pyneat.NeatError) as excinfo:
+    model.benchmark(_benchmark_options(inputs, **geometry))
+  elapsed = time.monotonic() - started
+  assert excinfo.value.error_code == "misconfig.input_shape"
+  # The inputs are checked before the runner is built, so no warm-up sample ran.
+  assert elapsed < 2.0, f"input rejection took {elapsed:.2f}s"
+  return str(excinfo.value)
+
+
+def _people_bgr() -> np.ndarray:
+  image = cv2.imread(str(_fixture_image_path(Path("tests/images/people.jpg"))), cv2.IMREAD_COLOR)
+  assert image is not None
+  return image
+
+
+@pytest.mark.parametrize("variant", ["bgr", "rgb", "batched", "small_odd_size"])
+def test_benchmark_measures_provided_image_on_image_route(variant):
+  model = _image_input_model(_env_path("SIMA_RESNET50_TAR"))
+  bgr = cv2.imread(str(_fixture_image_path(Path("test.jpg"))), cv2.IMREAD_COLOR)
+  assert bgr is not None
+  if variant == "rgb":
+    tensor = _rgb_tensor(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
+  else:
+    if variant == "batched":
+      bgr = bgr[np.newaxis]
+    elif variant == "small_odd_size":
+      bgr = cv2.resize(bgr, (333, 217))
+    tensor = pyneat.Tensor.from_numpy(bgr, copy=True, image_format=pyneat.PixelFormat.BGR)
+
+  _assert_measured(model.benchmark(_benchmark_options([tensor])), "provided")
+
+
+def test_benchmark_without_inputs_stays_synthetic():
+  model = _image_input_model(_env_path("SIMA_RESNET50_TAR"))
+  _assert_measured(model.benchmark(_benchmark_options()), "synthetic")
+
+
+def test_benchmark_rejects_image_inputs_that_do_not_fit_the_image_route():
+  model = _image_input_model(_env_path("SIMA_RESNET50_TAR"))
+  bgr = _people_bgr()
+  image = pyneat.Tensor.from_numpy(bgr, copy=True, image_format=pyneat.PixelFormat.BGR)
+
+  untagged = pyneat.Tensor.from_numpy(bgr, copy=True)
+  assert "explicit image format" in _benchmark_input_error(model, [untagged])
+  assert "exactly one image tensor, got 2" in _benchmark_input_error(model, [image, image])
+
+
+def test_benchmark_boxdecode_image_route_uses_provided_image_geometry(tmp_path):
+  model = _image_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8)
+  bgr = _people_bgr()
+  height, width = bgr.shape[:2]
+  image = pyneat.Tensor.from_numpy(bgr, copy=True, image_format=pyneat.PixelFormat.BGR)
+
+  report = model.benchmark(_benchmark_options([image]))
+  _assert_measured(report, "provided")
+  saved = json.loads(Path(report.save(str(tmp_path / "report.json"))).read_text())
+  assert saved["input"] == "provided"
+
+  matching = _benchmark_options([image], original_width=width, original_height=height)
+  _assert_measured(model.benchmark(matching), "provided")
+  with pytest.raises(RuntimeError, match=rf"must match the provided image \({width}x{height}\)"):
+    model.benchmark(_benchmark_options([image], original_width=640, original_height=640))
+
+
+def test_benchmark_tensor_route_takes_real_tensors_and_rejects_mismatches():
+  preproc_model = _image_input_model(_env_path("SIMA_YOLO_TAR"))
+  model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8)
+  letterboxed = _cpu_quanttess_input(preproc_model, cv2.cvtColor(_people_bgr(), cv2.COLOR_BGR2RGB))
+  tensor = pyneat.Tensor.from_numpy(letterboxed, copy=True)
+
+  _assert_measured(model.benchmark(_benchmark_options([tensor])), "provided")
+  # A tensor route keeps the model shape; the source size only describes BoxDecode geometry.
+  geometry = _benchmark_options([tensor], original_width=1280, original_height=720)
+  _assert_measured(model.benchmark(geometry), "provided")
+
+  small = pyneat.Tensor.from_numpy(np.zeros((320, 320, 3), dtype=np.float32), copy=True)
+  shape_error = _benchmark_input_error(model, [small])
+  assert "ingress[0]" in shape_error and "shape=640x640x3" in shape_error
+  assert "shape=320x320x3" in shape_error
+  as_uint8 = pyneat.Tensor.from_numpy((letterboxed * 255).astype(np.uint8), copy=True)
+  assert "format=FP32" in _benchmark_input_error(model, [as_uint8])
+  assert "expected exactly 1 ingress tensor inputs" in _benchmark_input_error(model, [tensor, tensor])
