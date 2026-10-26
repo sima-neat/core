@@ -719,7 +719,7 @@ runner = model.build([tensor], route_options=route)
 
 ## Вимірюйте час виконання моделі.
 
-Використовуйте `model.benchmark(...)` для швидкого тестування моделі. За замовчуванням він генерує синтетичні вхідні дані на основі `input_specs()` і повертає показники затримки, пропускної здатності, потужності та телеметрії плати. Використовуйте його для порівняння змін у моделі/середовищі виконання, а не для підтвердження показників пропускної здатності у виробничому середовищі.
+Використовуйте `model.benchmark(...)` для швидкого синтетичного тестування моделі. Він генерує вхідні дані на основі `input_specs()` і повертає показники затримки, пропускної здатності, потужності та телеметрії плати. Використовуйте його для порівняння змін у моделі/середовищі виконання, а не для підтвердження показників пропускної здатності у виробничому середовищі.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -741,48 +741,6 @@ print("latency_ms=", report.latency_ms, "fps=", report.fps)
 
 </CodeTab>
 </CodeTabs>
-
-### Вимірювання з власними вхідними даними {#measure-with-your-own-inputs}
-
-Синтетичні вхідні дані не схожі на реальні. Якщо вартість моделі залежить від вхідних даних, як у декодера виявлення чи сегментації, що обробляє кожну знайдену рамку, вимірюйте на реальних даних. Створіть по одному тензору на кожен вхід моделі в порядку `input_specs()`, точно так, як ви передали б їх у `run()`, і задайте їх у `inputs`. Тест надсилає ті самі вхідні дані для кожного зразка.
-
-Цей приклад призначено для моделі, завантаженої з вхідним зображенням, як у розділі «Вхідне зображення з декодуванням для виявлення об’єктів» вище; моделі, завантаженій із необробленим тензорним входом, передавайте тензори, які описує `input_specs()`.
-
-<CodeTabs>
-<CodeTab label="C++" lang="cpp">
-
-```cpp
-cv::Mat image;
-cv::cvtColor(cv::imread("bus.jpg"), image, cv::COLOR_BGR2RGB);  // the format input_specs() reports
-
-simaai::neat::BenchmarkOptions options;
-options.inputs = simaai::neat::TensorList{
-    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::RGB,
-                                      simaai::neat::TensorMemory::EV74)};
-
-simaai::neat::BenchmarkReport report = model.benchmark(options);
-std::cout << "input=" << report.input << " fps=" << report.fps << "\n";  // input=provided
-```
-
-</CodeTab>
-<CodeTab label="Python" lang="python">
-
-```python
-image = cv2.cvtColor(cv2.imread("bus.jpg"), cv2.COLOR_BGR2RGB)  # the format input_specs() reports
-
-options = pyneat.BenchmarkOptions()
-options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.RGB)]
-
-report = model.benchmark(options)
-print("input=", report.input, "fps=", report.fps)  # input= provided
-```
-
-</CodeTab>
-</CodeTabs>
-
-Перед початком тест перевіряє вхідні дані. Якщо кількість тензорів, форма, dtype або метадані формату зображення не відповідають моделі, він викидає `NeatError` з кодом помилки `misconfig.input_shape` і повідомленням, що називає вхід, очікуване та фактичне значення. Вхідне зображення може мати будь-який розмір, бо попередня обробка змінює розмір. Передавайте його в колірному форматі, який повідомляє `input_specs()`: деякі маршрути, зокрема BoxDecode, не перетворюють кольори, і тоді `run()` і тест завершуються помилкою з кодом `misconfig.media_caps`. Маршрут BoxDecode відображає виявлені об’єкти на власний розмір наданого зображення, тому не задавайте `original_width` і `original_height` або задайте їм цей розмір.
-
-### Опишіть геометрію вихідного зображення
 
 Для маршруту BoxDecode опишіть геометрію вихідного зображення синтетичних даних, щоб еталонний тест міг зіставити виявлені об’єкти з координатами моделі:
 
@@ -818,6 +776,44 @@ report = model.benchmark(options)
 Встановіть `original_width` і `original_height` разом. Тест все ще генерує синтетичний тензор, що має форму моделі; ці поля містять вихідну геометрію та трансформацію зміни розміру, необхідні для метаданих BoxDecode. Якщо їх не вказати, тест визначає геометрію на основі попередньої обробки та контракту вхідних даних моделі. Ці значення для кожного запуску мають пріоритет над застарілими підказками щодо геометрії BoxDecode в `ModelOptions`. Існуючі виклики `benchmark(num_samples)` зберігають ту саму поведінку.
 
 Щоб також виміряти час кожного шару або етапу MLA, встановіть `include_mla_layer_stats` або `include_mla_stage_stats`. Щоб зберегти результати, `report.save(path)` записує звіт у форматі YAML, а для шляху з `.json` — у форматі JSON. Обидва варіанти показано в [Тестування продуктивності моделі](/tutorials/benchmark-your-model).
+
+### Вимірювання з власними вхідними даними {#measure-with-your-own-inputs}
+
+Синтетичні вхідні дані можуть спотворювати результати для моделі, вартість якої залежить від даних, наприклад для декодера виявлення або сегментації. Щоб виміряти на реальних даних, задайте в `inputs` тензори, які ви передали б у `run()`, по одному на кожен вхід моделі.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+cv::Mat image;
+cv::cvtColor(cv::imread("bus.jpg"), image, cv::COLOR_BGR2RGB);  // the format input_specs() reports
+
+simaai::neat::BenchmarkOptions options;
+options.inputs = simaai::neat::TensorList{
+    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::RGB,
+                                      simaai::neat::TensorMemory::EV74)};
+
+simaai::neat::BenchmarkReport report = model.benchmark(options);
+std::cout << "input=" << report.input << " fps=" << report.fps << "\n";  // input=provided
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+image = cv2.cvtColor(cv2.imread("bus.jpg"), cv2.COLOR_BGR2RGB)  # the format input_specs() reports
+
+options = pyneat.BenchmarkOptions()
+options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.RGB)]
+
+report = model.benchmark(options)
+print("input=", report.input, "fps=", report.fps)  # input= provided
+```
+
+</CodeTab>
+</CodeTabs>
+
+Якщо вхідні дані не відповідають моделі, `benchmark()` ще до початку викидає `NeatError` з кодом помилки `misconfig.input_shape`. Зображення може мати будь-який розмір. Передавайте його в колірному форматі, який повідомляє `input_specs()`.
 
 ### Тривалість запуску
 

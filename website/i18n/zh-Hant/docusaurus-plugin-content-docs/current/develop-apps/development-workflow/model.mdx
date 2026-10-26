@@ -717,7 +717,7 @@ runner = model.build([tensor], route_options=route)
 
 ## 測量模型執行效能
 
-使用 `model.benchmark(...)` 進行快速的模型基準測試。預設會從 `input_specs()` 產生合成輸入，並回傳延遲、吞吐量、功耗以及板子遙測等主要指標。請使用它來比較模型/執行階段的變更，而不是用來宣稱生產應用程式的吞吐量。
+使用 `model.benchmark(...)` 進行快速的合成模型基準測試。它會從 `input_specs()` 產生輸入，並回傳延遲、吞吐量、功耗以及板子遙測等主要指標。請使用它來比較模型/執行階段的變更，而不是用來宣稱生產應用程式的吞吐量。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -739,48 +739,6 @@ print("latency_ms=", report.latency_ms, "fps=", report.fps)
 
 </CodeTab>
 </CodeTabs>
-
-### 使用自己的輸入進行測量 {#measure-with-your-own-inputs}
-
-合成輸入與真實資料不同。當模型的成本取決於輸入時，例如會處理每個找到的方框的偵測或分割解碼器，請改用真實輸入測量。依 `input_specs()` 的順序為每個模型輸入建立一個張量，就像傳給 `run()` 時一樣，並設定到 `inputs`。基準測試會在每個樣本推送相同的輸入。
-
-此範例適用於以影像輸入載入的模型，如上方「具有偵測解碼的影像輸入」所示；以原始張量輸入載入的模型，請改為傳入 `input_specs()` 所描述的張量。
-
-<CodeTabs>
-<CodeTab label="C++" lang="cpp">
-
-```cpp
-cv::Mat image;
-cv::cvtColor(cv::imread("bus.jpg"), image, cv::COLOR_BGR2RGB);  // the format input_specs() reports
-
-simaai::neat::BenchmarkOptions options;
-options.inputs = simaai::neat::TensorList{
-    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::RGB,
-                                      simaai::neat::TensorMemory::EV74)};
-
-simaai::neat::BenchmarkReport report = model.benchmark(options);
-std::cout << "input=" << report.input << " fps=" << report.fps << "\n";  // input=provided
-```
-
-</CodeTab>
-<CodeTab label="Python" lang="python">
-
-```python
-image = cv2.cvtColor(cv2.imread("bus.jpg"), cv2.COLOR_BGR2RGB)  # the format input_specs() reports
-
-options = pyneat.BenchmarkOptions()
-options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.RGB)]
-
-report = model.benchmark(options)
-print("input=", report.input, "fps=", report.fps)  # input= provided
-```
-
-</CodeTab>
-</CodeTabs>
-
-基準測試會在開始前檢查輸入。如果張量數量、形狀、dtype 或影像格式中繼資料與模型不符，會擲回錯誤代碼為 `misconfig.input_shape` 的 `NeatError`，訊息中會指出該輸入、預期值與實際值。由於預處理會調整大小，影像輸入可以是任何大小。請使用 `input_specs()` 回報的色彩格式：部分路由（包括 BoxDecode 路由）不會轉換色彩，此時 `run()` 與基準測試都會以錯誤代碼 `misconfig.media_caps` 失敗。BoxDecode 路由會將偵測結果映射回所提供影像本身的大小，因此請不要設定 `original_width` 與 `original_height`，或將其設為該大小。
-
-### 描述來源影像幾何資訊
 
 對於 BoxDecode 路由，請描述合成輸入的來源影像幾何資訊，以便基準測試可以將檢測結果映射回模型座標：
 
@@ -816,6 +774,44 @@ report = model.benchmark(options)
 將 `original_width` 和 `original_height` 組合在一起。基準測試仍然會產生一個模型形狀的合成張量；這些欄位提供 BoxDecode 中繼資料所需的來源幾何形狀和調整大小的轉換。如果您省略它們，基準測試將從解析後的預處理和模型輸入合約中推斷幾何形狀。這些每次執行的值優先於 `ModelOptions` 中已棄用的 BoxDecode 幾何形狀提示。現有的 `benchmark(num_samples)` 呼叫會保持相同的行為。
 
 若也要量測每個 MLA 層或每個階段的時間，請設定 `include_mla_layer_stats` 或 `include_mla_stage_stats`。若要保留結果，`report.save(path)` 會將報告寫成 YAML；路徑以 `.json` 結尾時則寫成 JSON。兩者的範例請參閱[為您的模型進行基準測試](/tutorials/benchmark-your-model)。
+
+### 使用自己的輸入進行測量 {#measure-with-your-own-inputs}
+
+對於成本取決於資料的模型（例如偵測或分割解碼器），合成輸入可能無法反映實際情況。若要以真實資料測量，請將 `inputs` 設為您會傳給 `run()` 的張量，每個模型輸入各一個。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+cv::Mat image;
+cv::cvtColor(cv::imread("bus.jpg"), image, cv::COLOR_BGR2RGB);  // the format input_specs() reports
+
+simaai::neat::BenchmarkOptions options;
+options.inputs = simaai::neat::TensorList{
+    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::RGB,
+                                      simaai::neat::TensorMemory::EV74)};
+
+simaai::neat::BenchmarkReport report = model.benchmark(options);
+std::cout << "input=" << report.input << " fps=" << report.fps << "\n";  // input=provided
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+image = cv2.cvtColor(cv2.imread("bus.jpg"), cv2.COLOR_BGR2RGB)  # the format input_specs() reports
+
+options = pyneat.BenchmarkOptions()
+options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.RGB)]
+
+report = model.benchmark(options)
+print("input=", report.input, "fps=", report.fps)  # input= provided
+```
+
+</CodeTab>
+</CodeTabs>
+
+若輸入與模型不符，`benchmark()` 會在開始前擲回錯誤代碼為 `misconfig.input_shape` 的 `NeatError`。影像可以是任意大小，請以 `input_specs()` 回報的色彩格式傳入。
 
 ### 執行長度
 
