@@ -77,6 +77,11 @@ bash ./install_offline_sdk.sh
 
 ## Model Compiler をインストールする {#download-the-model-compiler-offline-package}
 
+:::tip この手順を使用する場合
+この手順は、既存の SDK 内またはホスト上に直接 Model Compiler を別途インストールする場合に使用してください。
+前の手順で SDK と Model Compiler の両方をインストールした場合は、このセクションを省略してください。
+:::
+
 ### 1. パッケージをダウンロードする {#download-model-compiler-package}
 
 [Model Compiler の互換性要件](/getting-started/compatibility/#model-compiler)を確認してください。
