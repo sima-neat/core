@@ -633,3 +633,28 @@ Validated on a Modalix PCIe Card:
 - simultaneous execution across six PCIe queues (0–5)
 - YOLOv8n and EVO50 model variants
 - `mla_only` against the default route, single- and multi-input archives
+
+## Building packages in CI
+
+Vulcan CI builds Ubuntu 22.04 and 24.04 packages natively on both AMD64 and ARM64
+Ubuntu runners. Each job uses a matching `ghcr.io/sima-neat/pcie-host-build` image
+published by Vulcan's `build-pcie-host-images.yml` workflow. The workflow pins the
+image recipe hash (Dockerfile SHA-256); build, unit tests, and staged package/wheel smoke tests all
+run in that container. Scheduler native artifacts are still selected through the
+existing manifest and publication environment.
+
+CI passes `--skip-deps`, which verifies all requested APT prerequisites and fails
+if any are missing. It never runs APT or silently repairs an incomplete image.
+Regular local builds still install prerequisites by default.
+
+Use `./build.sh --all --jobs 8` to set compilation parallelism. Without `--jobs`,
+`CMAKE_BUILD_PARALLEL_LEVEL` is used, falling back to two jobs. Values must be
+positive integers. CI uses `nproc` unless the `PCIE_HOST_BUILD_JOBS` repository or
+environment variable is set in GitHub Actions.
+
+Before enabling this workflow, deploy the Vulcan Ubuntu pool access policy for
+Core, publish all four dependency images at the pinned recipe hash, and grant Core
+Actions read access to the private GHCR package. See Vulcan's
+`docs/pcie-host-build-images.md` for publication and rollout steps. Refresh the
+image recipe hash when changing prerequisites; verify all four targets before
+merging an image update. Public C++ and Python APIs are unchanged.

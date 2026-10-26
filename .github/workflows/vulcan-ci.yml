@@ -176,6 +176,7 @@ jobs:
             tests/tools/test_offline_pcie_host_process.py \
             tests/tools/test_offline_pcie_deploy.py \
             tests/tools/test_pcie_local_candidate.py \
+            tests/tools/test_pcie_build_options.py \
             tests/tools/test_required_test_coverage.py \
             tests/tools/test_ci_weekly_preparation.py \
             tests/tools/test_docs_native_prerequisites.py \
@@ -504,23 +505,30 @@ jobs:
       - detect-changes
       - resolve-vulcan-config
     environment: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
-    runs-on: ${{ matrix.runs_on }}
+    runs-on: [self-hosted, linux, "${{ matrix.deb_arch }}", "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}", ubuntu, default]
+    timeout-minutes: 40
+    container:
+      # Dockerfile SHA-256 from Vulcan; publish all four images before enabling.
+      image: ghcr.io/sima-neat/pcie-host-build:${{ matrix.distro }}-${{ matrix.deb_arch }}-6de04f775097ed90b2c937c02816c4a101de1b1cb47870115d42c02916b3a2d3
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - distro: ubuntu22
             deb_arch: amd64
-            runs_on: ubuntu-22.04
+            ubuntu_version: "22.04"
           - distro: ubuntu24
             deb_arch: amd64
-            runs_on: ubuntu-24.04
+            ubuntu_version: "24.04"
           - distro: ubuntu22
             deb_arch: arm64
-            runs_on: ubuntu-22.04-arm
+            ubuntu_version: "22.04"
           - distro: ubuntu24
             deb_arch: arm64
-            runs_on: ubuntu-24.04-arm
+            ubuntu_version: "24.04"
 
     steps:
       - name: Checkout code
@@ -528,6 +536,20 @@ jobs:
         with:
           clean: true
           fetch-depth: 0
+
+      - name: Verify native dependency image
+        shell: bash
+        env:
+          EXPECTED_UBUNTU: ${{ matrix.ubuntu_version }}
+          EXPECTED_ARCH: ${{ matrix.deb_arch }}
+        run: |
+          set -euo pipefail
+          source /etc/os-release
+          test "${ID}" = ubuntu
+          test "${VERSION_ID}" = "${EXPECTED_UBUNTU}"
+          test "$(dpkg --print-architecture)" = "${EXPECTED_ARCH}"
+          test "$(cat /etc/pcie-host-build-image)" = "${EXPECTED_UBUNTU} ${EXPECTED_ARCH}"
+          ./pcie_host/build.sh --all --skip-deps --install-deps-only
 
       - name: Install sima-cli
         shell: bash
@@ -546,8 +568,9 @@ jobs:
           if [[ -n "${SCHEDULER_NATIVE_SPEC}" ]]; then
             scheduler_spec_args+=(--scheduler-spec "${SCHEDULER_NATIVE_SPEC}")
           fi
-          ./build.sh --clean --all "${scheduler_spec_args[@]}" --scheduler-environment "${NEAT_VULCAN_ENV}"
+          ./build.sh --clean --all --skip-deps --jobs "${PCIE_HOST_BUILD_JOBS:-$(nproc)}" "${scheduler_spec_args[@]}" --scheduler-environment "${NEAT_VULCAN_ENV}"
         env:
+          PCIE_HOST_BUILD_JOBS: ${{ vars.PCIE_HOST_BUILD_JOBS }}
           SCHEDULER_NATIVE_SPEC: ${{ vars.SCHEDULER_NATIVE_SPEC }}
           NEAT_VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
 
