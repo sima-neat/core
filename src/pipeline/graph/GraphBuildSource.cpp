@@ -837,6 +837,11 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   const NameTransform name_transform = make_name_transform(sess_opt);
   BuildResult br = build_pipeline_full(build_nodes, insert_boundaries, "mysink", insert_queue2,
                                        name_transform, &sess_opt);
+  if (graph_build_internal::explicit_public_terminal_output(stream_opt, build_nodes)) {
+    const auto endpoint = session_build_public_output_endpoint_selector(build_nodes);
+    if (endpoint.terminal_stage_key_required && !endpoint.terminal_stage_key.empty())
+      br.terminal_host_stage_key = endpoint.terminal_stage_key;
+  }
   maybe_compile_source_contracts(&br, build_nodes, sess_opt, where);
   if (has_sink && stream_opt.public_output_contract && br.rendered_manifest.has_value()) {
     const auto endpoint = session_build_public_output_endpoint_selector(build_nodes);

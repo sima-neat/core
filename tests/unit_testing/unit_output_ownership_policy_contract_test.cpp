@@ -37,7 +37,7 @@ void policy_matrix(int selected_case) {
           const auto override = projection(mixed, override_enabled);
           neat::InputStream::State state;
           state.opt.copy_output = copy;
-          state.opt.preserve_dmabuf_output = preserve;
+          state.opt.preserve_framework_output = preserve;
           std::vector<Frame> inputs;
           std::vector<neat::Sample> outputs;
           for (int frame_index = 0; frame_index != 2; ++frame_index) {

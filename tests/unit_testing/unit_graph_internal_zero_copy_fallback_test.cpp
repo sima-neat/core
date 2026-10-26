@@ -456,6 +456,15 @@ void require_output_policy_matrix() {
           require(resolved.output_memory == memory,
                   "build resolution must preserve caller output-memory intent");
           auto stream = session_build_make_stream_options(resolved, mode);
+          for (const bool reserved : {false, true}) {
+            auto no_op = resolved;
+            no_op.advanced.prepare_output_cpu_visible = reserved;
+            const auto unchanged = session_build_make_stream_options(no_op, mode);
+            require(unchanged.copy_output == stream.copy_output &&
+                        unchanged.preserve_framework_output == stream.preserve_framework_output &&
+                        unchanged.holder_loan_credits == stream.holder_loan_credits,
+                    "reserved CPU-visibility option must not change output memory policy");
+          }
           const bool auto_owned = override && std::string(override) == "owned";
           const bool auto_zero_copy = override && std::string(override) == "zerocopy";
           const bool preserve_dma = memory == OutputMemory::Auto && !auto_owned;
@@ -463,7 +472,7 @@ void require_output_policy_matrix() {
                                  (memory == OutputMemory::Auto && !auto_owned &&
                                   (auto_zero_copy || (mode != RunMode::Sync &&
                                                       resolved.preset != RunPreset::Reliable)));
-          require(stream.preserve_dmabuf_output == preserve_dma,
+          require(stream.preserve_framework_output == preserve_dma,
                   "Auto must retain DMA unless the caller deliberately selects owned output");
           require(stream.copy_output == !zero_copy,
                   "ordinary CPU and legacy output must keep their preset/mode copy policy");
@@ -485,7 +494,7 @@ void require_output_policy_matrix() {
     start.graph_options = runtime::graph_runtime_options_from_run_options(options);
     auto core = runtime::RunCore::start(runtime::ExecutionGraphPlan{}, std::move(start));
     require(core->pipeline.stream_opt.copy_output &&
-                core->pipeline.stream_opt.preserve_dmabuf_output && core->holder_loan_gate &&
+                core->pipeline.stream_opt.preserve_framework_output && core->holder_loan_gate &&
                 core->holder_loan_gate->enabled(),
             "graph Auto must retain a loan gate even when ordinary output defaults to owned");
     core->stop();

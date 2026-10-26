@@ -1,3 +1,4 @@
+#include "pipeline/internal/sima/BoxDecodeKernelAdmission.h"
 #ifndef SIMA_NEAT_INTERNAL
 #define SIMA_NEAT_INTERNAL 1
 #endif
@@ -348,6 +349,31 @@ void benchmark_preprocess_meta_defaults_to_model_geometry() {
           "benchmark metadata should preserve preprocess operation flags");
   require(meta.axis_perm == std::vector<int>({2, 0, 1}),
           "benchmark metadata should preserve the resolved axis permutation");
+}
+
+void benchmark_disabled_resize_keeps_decode_recipe_geometry() {
+  using namespace simaai::neat;
+  using pipeline_internal::sima::default_boxdecode_resize_mode;
+  auto plan = make_benchmark_preprocess_plan();
+  plan.enabled = false;
+  plan.effective.resize.enable = AutoFlag::Off;
+  const Tensor tensor = make_color_tensor(640, 640, ImageSpec::PixelFormat::RGB);
+  BenchmarkOptions geometry_options;
+  geometry_options.resize_mode = default_boxdecode_resize_mode(BoxDecodeType::YoloV26Seg);
+  const auto meta = internal::resolve_benchmark_preprocess_meta(tensor, plan, {}, geometry_options);
+  require(meta.resize_mode == "letterbox" && meta.original_width == 640 &&
+              meta.resized_width == 640 && meta.pad_left == 0 && meta.pad_right == 0 &&
+              meta.affine_m00 == 1.0 && meta.affine_m11 == 1.0,
+          "disabled image resize must preserve identity YOLO26 letterbox metadata");
+  require(default_boxdecode_resize_mode(BoxDecodeType::YoloV26Obb) == ResizeMode::Letterbox &&
+              default_boxdecode_resize_mode(BoxDecodeType::Ssd) == ResizeMode::Stretch &&
+              default_boxdecode_resize_mode(BoxDecodeType::Detr) == ResizeMode::Stretch,
+          "canonical recipe defaults must not change SSD/DETR or OBB geometry");
+  geometry_options.resize_mode = ResizeMode::Stretch;
+  const auto explicit_meta =
+      internal::resolve_benchmark_preprocess_meta(tensor, plan, {}, geometry_options);
+  require(explicit_meta.resize_mode == "stretch",
+          "explicit benchmark resize provenance remains explicit, not silently repaired");
 }
 
 void benchmark_preprocess_meta_supports_explicit_geometry() {
@@ -835,6 +861,8 @@ RUN_TEST("unit_benchmark_measurement_contract_test", ([] {
                     benchmark_tensor_input_keeps_model_shape);
            run_case("benchmark_preprocess_meta_matches_allocated_image_size",
                     benchmark_preprocess_meta_matches_allocated_image_size);
+           run_case("benchmark_disabled_resize_keeps_decode_recipe_geometry",
+                    benchmark_disabled_resize_keeps_decode_recipe_geometry);
            run_case("benchmark_preprocess_meta_explicit_geometry",
                     benchmark_preprocess_meta_supports_explicit_geometry);
            run_case("benchmark_preprocess_meta_invalid_options",

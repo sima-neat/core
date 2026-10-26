@@ -2790,6 +2790,8 @@ private:
             auto child_input = input;
             if (!stages.empty())
               child_input.immediate_upstream = &stages.back();
+            child_input.upstream_preprocess =
+                last_preprocess_contract(stages, input.upstream_preprocess);
             auto geometry = boxdecode_model_geometry();
             std::optional<ResizeMode> resize;
             if (model_lineage_ && model_lineage_->base_options.preprocess.enable != AutoFlag::Off &&

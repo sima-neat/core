@@ -1,3 +1,5 @@
+#include "pipeline/internal/sima/TerminalHostPlacement.h"
+#include "pipeline/internal/sima/ContractRender.h"
 #include "gst/GstInit.h"
 #include "pipeline/internal/sima/KernelRunnerIntegration.h"
 #include "pipeline/internal/sima/BoxDecodeGeometry.h"
@@ -5,13 +7,24 @@
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
-#include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "nodes/sima/Preproc.h"
 #include <simaai/scheduler/testing/probe.h>
 #include <gstsimaaitensorbuffer_meta.h>
 #include <simaai/scheduler/testing/route_probe.h>
 
+#include "tensor_output_contract_fixtures.h"
+#include "support/cold_contract_gst_init.h"
+#include "pipeline/internal/HolderLoanGate.h"
+#include "pipeline/internal/OutputQueueMemory.h"
+#include "pipeline/internal/Diagnostics.h"
+#include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/internal/RealtimeFrameCredit.h"
+#include "graph/internal/GraphRunState.h"
+#include <simaai/scheduler/client/memory_access.h>
+#include <gst/app/gstappsrc.h>
+#include <gst/app/gstappsink.h>
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstring>
@@ -60,6 +73,110 @@ simaai::gst::TensorBufferPublicationOwner compact_geometry_publication() {
   require_fixture(bool(owner), "freeze compact geometry publication", error);
   return owner;
 }
+void terminal_host_placement_proof() {
+  namespace domain = integration::static_contract;
+  namespace specs = integration::specbuilders;
+  const std::array inputs{rt::TensorSpec{{2}, rt::DType::Float32}};
+  const std::array outputs{rt::TensorSpec{{2}, rt::DType::BFloat16}};
+  auto checked = rt::check_kernel({"cast", rt::Hardware::A65, inputs, outputs, {}});
+  require(std::holds_alternative<rt::KernelExecutable>(checked), "host proof Cast admission");
+  auto recipe = std::make_shared<integration::KernelStageRecipe>();
+  recipe->members.push_back({std::get<rt::KernelExecutable>(checked), {{0, 0}}, {{0, 0}}, {}});
+  integration::StageStaticSpec stage;
+  stage.element_name = stage.logical_stage_id = "unrelated-cast";
+  stage.native_kernel = recipe;
+  stage.core_fresh_default_arena = true;
+  stage.frame_arena_role = integration::FrameArenaRole::Allocate;
+  stage.frame_arena_size_bytes = 4096;
+  stage.frame_arena_storage_domain = domain::ArenaStorageDomain::Cma;
+  stage.frame_arena_provenance = domain::ArenaAllocationProvenance::CoreAllocated;
+  stage.frame_arena_required_device_access =
+      static_cast<std::uint32_t>(domain::ArenaDeviceAccess::CpuA65);
+  stage.frame_arena_escape_policy = domain::ArenaEscapePolicy::CpuMappablePublic;
+  stage.physical_outputs.push_back(specs::build_physical_buffer_static_spec(
+      0, 0, 4, integration::DeviceKind::Cpu, "output", -1, 0, 64));
+  stage.logical_outputs.push_back(specs::build_logical_output_static_spec(
+      0, 0, 0, 0, 0, {2}, "BF16", "", "output", "output", "output", 0, 4));
+  stage.output_order.push_back(specs::build_output_route_static_spec(0, 0, 0, "output", "output"));
+  // Exercise the real renderer: identical rendered CMA fields do not erase
+  // whether the caller authored a placement requirement before rendering.
+  simaai::neat::CompiledNodeContract compiled;
+  compiled.node_kind = "Cast";
+  compiled.element_name = compiled.logical_stage_id = stage.element_name;
+  compiled.renderable = true;
+  compiled.kernel.emplace();
+  compiled.kernel->recipe = recipe;
+  compiled.kernel->runtime_contract.physical_outputs = stage.physical_outputs;
+  compiled.kernel->runtime_contract.logical_outputs = stage.logical_outputs;
+  compiled.kernel->runtime_contract.output_order = stage.output_order;
+  const auto render = [&](const simaai::neat::CompiledNodeContract& node) {
+    simaai::neat::CompiledPipelineContracts contracts;
+    contracts.fully_renderable = true;
+    contracts.stages.push_back(node);
+    integration::ManifestBuildDiagnostics diagnostics;
+    auto value = simaai::neat::render_manifest_from_compiled_contracts(contracts, {}, &diagnostics);
+    require(value && diagnostics.errors.empty() && value->stages.size() == 1,
+            "terminal host origin renderer failed");
+    return value->stages.front();
+  };
+  require(render(compiled).core_fresh_default_arena, "fresh Cast origin was lost");
+  const auto authored = [&](auto set) {
+    auto node = compiled;
+    set(node.kernel->runtime_contract);
+    require(!render(node).core_fresh_default_arena, "authored placement acquired fresh origin");
+  };
+  authored([](auto& r) { r.frame_arena_storage_domain = domain::ArenaStorageDomain::Cma; });
+  authored([](auto& r) { r.frame_arena_storage_domain = domain::ArenaStorageDomain::Dms; });
+  authored([](auto& r) { r.frame_arena_required_device_access = 2U; });
+  authored(
+      [](auto& r) { r.frame_arena_escape_policy = domain::ArenaEscapePolicy::CpuMappablePublic; });
+  authored([](auto& r) {
+    r.frame_arena_allocation_policy = domain::ArenaAllocationPolicy::PreferDmsThenCma;
+  });
+  integration::SimaPluginStaticManifest manifest;
+  manifest.stages.push_back(stage);
+  require(integration::terminal_host_arena_eligible(stage, manifest),
+          "generic Cast host eligibility");
+  const auto reject = [&](auto change) {
+    auto invalid = stage;
+    change(invalid);
+    require(!integration::terminal_host_arena_eligible(invalid, manifest),
+            "unsafe host placement accepted");
+  };
+  reject([](auto& v) { v.core_fresh_default_arena = false; });
+  reject([](auto& v) { v.frame_arena_required_device_access |= 2U; });
+  reject([](auto& v) { v.frame_arena_storage_domain = domain::ArenaStorageDomain::Dms; });
+  reject([](auto& v) {
+    v.frame_arena_allocation_policy = domain::ArenaAllocationPolicy::PreferDmsThenCma;
+  });
+  reject([](auto& v) { v.frame_arena_role = integration::FrameArenaRole::ReuseInput; });
+  reject([](auto& v) { v.physical_outputs[0].memory_flags = 1; });
+  reject([](auto& v) { v.physical_outputs[0].source_physical_index = 0; });
+  reject([](auto& v) { v.physical_outputs[0].size_bytes = 4097; });
+  reject([](auto& v) { v.physical_outputs[0].device_kind = integration::DeviceKind::Mla; });
+  reject([](auto& v) { v.physical_outputs.push_back(v.physical_outputs[0]); });
+  reject([](auto& v) { v.logical_outputs.clear(); });
+  auto consumer = stage;
+  consumer.element_name = consumer.logical_stage_id = "later-consumer";
+  integration::InputBindingStaticSpec binding;
+  binding.src_stage_id = stage.logical_stage_id;
+  consumer.input_bindings.push_back(binding);
+  manifest.stages.push_back(consumer);
+  require(!integration::terminal_host_arena_eligible(stage, manifest),
+          "intermediate arena accepted");
+  std::shared_ptr<GstElement> pipeline(gst_pipeline_new(nullptr), gst_object_unref);
+  auto* source = gst_element_factory_make("identity", nullptr);
+  auto* sink = gst_element_factory_make("appsink", nullptr);
+  require(source && sink, "host proof topology factories");
+  gst_bin_add_many(GST_BIN(pipeline.get()), source, sink, nullptr);
+  require(gst_element_link(source, sink), "host proof direct edge");
+  require(integration::terminal_host_direct_peer(pipeline.get(), source, sink),
+          "direct stopped proof");
+  gst_element_unlink(source, sink);
+  require(!integration::terminal_host_direct_peer(pipeline.get(), source, sink),
+          "missing peer accepted");
+}
+
 void output_carrier_budget() {
   const auto check = [](std::size_t executing, std::size_t held, std::size_t expected) {
     const auto result = integration::kernel_runner_output_pool_capacity(executing, held);
@@ -255,7 +372,7 @@ void ev_service_capacity() {
         2);
 }
 
-gs::TensorStageRequest cast_request(std::size_t input_pads = 1) {
+gs::TensorStageRequest cast_request(std::size_t input_pads = 1, bool terminal_host = false) {
   namespace specs = integration::specbuilders;
   const std::array inputs{rt::TensorSpec{{2}, rt::DType::Float32}};
   const std::array outputs{rt::TensorSpec{{2}, rt::DType::BFloat16}};
@@ -277,6 +394,11 @@ gs::TensorStageRequest cast_request(std::size_t input_pads = 1) {
       integration::static_contract::ArenaAllocationProvenance::CoreAllocated;
   stage.frame_arena_required_device_access =
       static_cast<std::uint32_t>(integration::static_contract::ArenaDeviceAccess::CpuA65);
+  if (terminal_host) {
+    stage.frame_arena_storage_domain = integration::static_contract::ArenaStorageDomain::HostCpu;
+    stage.frame_arena_escape_policy =
+        integration::static_contract::ArenaEscapePolicy::CpuOnlyPublic;
+  }
   gs::TensorStageRequest request;
   request.target = rt::Hardware::A65;
   auto publication = std::make_shared<simaai::gst::TensorBufferPublishContract>();
@@ -328,6 +450,8 @@ gs::TensorStageRequest cast_request(std::size_t input_pads = 1) {
                                      gst_caps_unref};
   return request;
 }
+#include "terminal_host_output_test.inc"
+
 void memory_coherency_candidate_policy() {
   for (const char* launch :
        {"appsrc ! queue ! appsink", "appsrc ! tee name=t t. ! queue ! appsink t. ! queue ! appsink",
@@ -1116,12 +1240,26 @@ int main(int argc, char** argv) {
       std::cout << "PASS: authored capacity, retained carriers, nested contracts and sync policy\n";
       return 0;
     }
+    const bool host_cpu_only = argc == 2 && std::string_view(argv[1]) == "--terminal-host-cpu-only";
+    // This explicit CPU-only profile requires the real factories used below,
+    // not unrelated optional MLA/EV factories from Core's full installation.
+    if (host_cpu_only) {
+      sima_test::initialize_cold_contract_gstreamer();
+      require(probe::register_element(), "register native candidate plugin");
+      terminal_host_output_lifetime(true);
+      return 0;
+    }
     simaai::neat::gst_init_once();
     immutable_recipe_instances();
     if (argc == 2 && std::string_view(argv[1]) == "--instance-only")
       return 0;
     require(probe::register_element(), "register native candidate plugin");
+    terminal_host_placement_proof();
+    terminal_host_output_lifetime(false);
+    if (argc == 2 && std::string_view(argv[1]) == "--terminal-host-only")
+      return 0;
     capacity_policy();
+    ev_service_capacity();
     memory_coherency_candidate_policy();
     real_request_memory_policy_transaction(false);
     real_request_memory_policy_transaction(true);

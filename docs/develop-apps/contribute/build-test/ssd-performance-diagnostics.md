@@ -16,7 +16,7 @@ numerical operation. Scheduler submits the checked members through Runner.
 
 | Component | Begins | Ends | Included work |
 |---|---|---|---|
-| `boxdecode_backend_wall_v2` | Numerical decode invocation | Dependent wire-publication invocation completes | Decode, intervening scheduling and access work, wire encoding |
+| `boxdecode_backend_wall_v2.execution_envelope_wall` | Numerical decode invocation | Dependent wire-publication invocation completes | Decode, intervening scheduling and access work, wire encoding |
 | `boxdecode_stage_wall_v2` | Complete-frame admission, before output acquisition | Retirement, finish and input release complete | Pool acquisition, binding, all member execution and finalization |
 
 Neither stage timing nor backend timing includes that frame's own downstream

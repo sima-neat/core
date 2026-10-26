@@ -3,6 +3,7 @@
 
 #include "gst/GstSampleAttributes.h"
 #include "gst/SimaTensorSetMetaAbi.h"
+#include "pipeline/DetectionTypes.h"
 #include "pipeline/EncodedSampleUtil.h"
 #include "pipeline/TensorAdapters.h"
 #include "pipeline/internal/CapsBridge.h"
@@ -522,7 +523,8 @@ void log_sample_tensor_state(const char* where, const char* label,
 }
 
 static std::optional<Sample> bundle_from_sample_meta(GstSample* sample, const char* where,
-                                                     bool copy_output, bool preserve_dmabuf_output);
+                                                     bool copy_output,
+                                                     bool preserve_framework_output);
 static std::optional<Sample> tensor_set_from_meta(GstSample* sample, const char* where,
                                                   InputStream::State* st);
 static std::optional<Sample>
@@ -825,9 +827,9 @@ static void fill_output_meta_minimal_from_sample(GstSample* sample, Sample* out)
 
 static Sample output_from_sample_stream_inner(GstSample* sample, const char* where,
                                               bool copy_output, bool keep_holder_for_tensor_copy,
-                                              bool preserve_dmabuf_output = false) {
+                                              bool preserve_framework_output = false) {
   copy_output =
-      copy_output && !(preserve_dmabuf_output &&
+      copy_output && !(preserve_framework_output &&
                        pipeline_internal::buffer_has_dmabuf_memory(gst_sample_get_buffer(sample)));
   const auto normalize_format = [](const std::string& fmt) {
     std::string out;
@@ -988,15 +990,19 @@ static Sample output_from_sample_stream_inner(GstSample* sample, const char* whe
 Sample output_from_sample_stream(GstSample* sample, const char* where, bool copy_output,
                                  const std::optional<OutputTensorOverride>* override_opt,
                                  InputStream::State* st) {
-  const bool preserve_dmabuf_output = st && st->opt.preserve_dmabuf_output;
+  const bool preserve_framework_output = st && st->opt.preserve_framework_output;
   const auto materialize = [&](Sample out) {
+    // Project producer-authored wire semantics before publishing raw Samples.
+    // Both raw pull and TensorList convenience APIs must expose the same typed
+    // tensors; an owning copy below preserves this metadata with its storage.
+    tag_detection_format_in_sample(out);
     // Only retained source storage belongs to the producer. Mark it before an
     // owning copy replaces its storage; that copy can outlive the producer Run.
-    if (st && (!copy_output || preserve_dmabuf_output)) {
+    if (st && (!copy_output || preserve_framework_output)) {
       pipeline_internal::mark_sample_producer_stream_lifetime(out, st->lifetime_token);
     }
     if (copy_output) {
-      pipeline_internal::materialize_owned_output(out, preserve_dmabuf_output);
+      pipeline_internal::materialize_owned_output(out, preserve_framework_output);
     }
     return out;
   };
@@ -1005,22 +1011,22 @@ Sample output_from_sample_stream(GstSample* sample, const char* where, bool copy
   if (auto tensor_set = tensor_set_from_meta(sample, where, st)) {
     Sample out = std::move(*tensor_set);
     if (has_override) {
-      out = apply_output_tensor_override(out, **override_opt, false, preserve_dmabuf_output);
+      out = apply_output_tensor_override(out, **override_opt, false, preserve_framework_output);
     }
     return materialize(std::move(out));
   }
-  if (auto bundle = bundle_from_sample_meta(sample, where, false, preserve_dmabuf_output)) {
+  if (auto bundle = bundle_from_sample_meta(sample, where, false, preserve_framework_output)) {
     Sample out = std::move(*bundle);
     if (has_override) {
-      out = apply_output_tensor_override(out, **override_opt, false, preserve_dmabuf_output);
+      out = apply_output_tensor_override(out, **override_opt, false, preserve_framework_output);
     }
     return materialize(std::move(out));
   }
   Sample out = output_from_sample_stream_inner(sample, where, false,
                                                /*keep_holder_for_tensor_copy=*/has_override,
-                                               preserve_dmabuf_output);
+                                               preserve_framework_output);
   if (has_override) {
-    out = apply_output_tensor_override(out, **override_opt, false, preserve_dmabuf_output);
+    out = apply_output_tensor_override(out, **override_opt, false, preserve_framework_output);
   }
   if (pipeline_internal::env_bool("SIMA_SAMPLE_FORCE_BUNDLE", false)) {
     if (!sample_is_multi_output(out)) {
@@ -1060,7 +1066,7 @@ Sample sample_from_gst_envelope(GstSample* sample, const char* where, bool copy_
 
 static std::optional<Sample> bundle_from_sample_meta(GstSample* sample, const char* where,
                                                      bool copy_output,
-                                                     bool preserve_dmabuf_output) {
+                                                     bool preserve_framework_output) {
   if (!sample)
     return std::nullopt;
   GstBuffer* buffer = gst_sample_get_buffer(sample);
@@ -1155,7 +1161,7 @@ static std::optional<Sample> bundle_from_sample_meta(GstSample* sample, const ch
       continue;
 
     Sample field_out = output_from_sample_stream_inner(field_sample, where, copy_output, false,
-                                                       preserve_dmabuf_output);
+                                                       preserve_framework_output);
     gst_sample_unref(field_sample);
 
     if (field_name && *field_name) {

@@ -100,6 +100,8 @@ rt::Status prepare_and_attach_kernel_runners(GstElement* pipeline,
     return invalid("kernel-runner.graph", "a candidate graph bin is required");
   std::vector<std::shared_ptr<GstElement>> elements, sinks;
   std::vector<gs::StageAttachment> attachments;
+  gs::HostCpuTerminalEndpoint terminal_host;
+  std::shared_ptr<GstElement> terminal_host_sink;
   elements.reserve(requests.size());
   sinks.reserve(requests.size());
   attachments.reserve(requests.size());
@@ -141,6 +143,13 @@ rt::Status prepare_and_attach_kernel_runners(GstElement* pipeline,
         request.compact_sink.empty()
             ? nullptr
             : gst_bin_get_by_name(GST_BIN(pipeline), std::string(request.compact_sink).c_str()));
+    if (!request.terminal_host_sink.empty()) {
+      if (terminal_host.stage)
+        return invalid("kernel-runner.host-terminal", "one proven public terminal is required");
+      terminal_host_sink = retain_gst(
+          gst_bin_get_by_name(GST_BIN(pipeline), std::string(request.terminal_host_sink).c_str()));
+      terminal_host = {element.get(), terminal_host_sink.get()};
+    }
     attachments.push_back(
         {element.get(), std::move(prepared), recipe.image_publication, recipe.metrics, sink.get()});
     elements.push_back(std::move(element));
@@ -152,6 +161,7 @@ rt::Status prepare_and_attach_kernel_runners(GstElement* pipeline,
   // Scheduler owns stopped-topology checks, storage/session selection, fresh
   // factory admission and all-or-nothing context/coherency publication.
   return gs::prepare_and_attach_tensor_stages(pipeline, attachments, options,
-                                              gs::CompactFrameReaderContract::SourceValuesV3);
+                                              gs::CompactFrameReaderContract::SourceValuesV3,
+                                              terminal_host);
 }
 } // namespace simaai::neat::pipeline_internal::sima

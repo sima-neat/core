@@ -14,6 +14,7 @@
 namespace simaai::neat {
 
 struct CompiledNodeContract;
+struct CompiledProcessCvuContract;
 namespace internal {
 struct ModelFragmentCompileContext;
 }
@@ -55,6 +56,9 @@ struct ContractCompileInput {
   std::vector<int> node_indices;
   InputContractFacts ingress;
   const CompiledNodeContract* immediate_upstream = nullptr;
+  // Borrowed only during cold compilation. The typed preceding Preproc policy
+  // supplies initial geometry; actual frame metadata remains authoritative.
+  const CompiledProcessCvuContract* upstream_preprocess = nullptr;
   std::shared_ptr<const internal::ModelFragmentCompileContext> model_fragments;
   bool strict = true;
   std::string processcvu_requested_run_target = "AUTO";

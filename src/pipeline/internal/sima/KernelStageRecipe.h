@@ -3,6 +3,7 @@
 #error "Internal header. Not part of the public API."
 #endif
 
+#include <string>
 #include <simaai/scheduler/client/stage.h>
 #include <simaai/scheduler/client/metrics.h>
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"

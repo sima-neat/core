@@ -89,9 +89,9 @@ struct InputStreamOptions {
   int stability_frames = 2;
   std::size_t max_input_bytes = 0;
   bool copy_output = true;
-  // Auto retains standard DMA-BUF payloads; copy_output remains the fallback
-  // for other storage. Explicit Owned disables this intent.
-  bool preserve_dmabuf_output = false;
+  // Auto retains actual DMA-BUFs and certified framework terminal host pools.
+  // copy_output remains the fallback for other storage; Owned disables retention.
+  bool preserve_framework_output = false;
   bool copy_input = false;
   int holder_loan_credits = 0;
   bool holder_loan_credits_auto = false;

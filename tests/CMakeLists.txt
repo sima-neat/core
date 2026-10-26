@@ -92,6 +92,7 @@ add_executable(unit_kernel_runner_integration_test
 target_link_libraries(unit_kernel_runner_integration_test PRIVATE
   sima_neat sima_neat_internal_headers SimaScheduler::frontend
   SimaScheduler::ClientTestSupport)
+target_include_directories(unit_kernel_runner_integration_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 simaneat_add_test(NAME unit_kernel_runner_integration_test COMMAND unit_kernel_runner_integration_test)
 set_tests_properties(unit_kernel_runner_integration_test PROPERTIES
   TIMEOUT 30 LABELS "strict;unit;runtime;gstreamer")
@@ -607,6 +608,7 @@ set(UNIT_TESTS
   unit_stage_cache_identity_test
   unit_simaai_guard_test
   unit_static_spec_builders_dtype_token_test
+  unit_boxdecode_obb_per_port_contract_test
   unit_sima_boxdecode_static_contract_extractor_test
   unit_boxdecode_uses_upstream_cast_contract_test
   unit_sima_boxdecode_node_fragment_test

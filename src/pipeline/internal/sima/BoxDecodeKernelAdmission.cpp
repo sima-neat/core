@@ -1,5 +1,6 @@
 #include "pipeline/internal/sima/BoxDecodeKernelAdmission.h"
 #include "pipeline/internal/sima/BoxDecodeGeometry.h"
+#include "pipeline/internal/sima/PreprocFrameAdapter.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
@@ -133,7 +134,9 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
              existing->address_source != physical.address_source)
       throw std::invalid_argument("SimaBoxDecode: shared head carrier contracts disagree");
   }
-  geometry.complete_geometry = compiled.payload.decode_type == BoxDecodeType::YoloXSegPose;
+  geometry.uniform_transform_required = compiled.payload.decode_type == BoxDecodeType::YoloV26Obb;
+  geometry.complete_geometry = compiled.payload.decode_type == BoxDecodeType::YoloXSegPose ||
+                               geometry.uniform_transform_required;
   const auto affine = [](const PreprocessRuntimeMeta& meta) {
     return std::array<double, 6>{meta.affine_m00, meta.affine_m01, meta.affine_m02,
                                  meta.affine_m10, meta.affine_m11, meta.affine_m12};
@@ -153,6 +156,47 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
         throw std::invalid_argument("SimaBoxDecode: ingress tensors disagree on affine geometry");
       observed = facts;
     }
+  }
+  if (!observed && geometry.uniform_transform_required && !geometry.model_to_original &&
+      input.upstream_preprocess) {
+    // Source-driven graphs have no frame at build time. Derive the cold seed
+    // from the same checked Preproc policy that will publish frame affines,
+    // never from tensor shapes or a fabricated identity transform.
+    namespace rt = ::simaai::scheduler::client;
+    using Adapter = kernel_lowering::PreprocFrameAdapter;
+    auto policy = input.upstream_preprocess->payload;
+    // Match the canonical Preproc lowering default without mutating its typed snapshot.
+    if (policy.resolved_exec_backend.empty())
+      policy.resolved_exec_backend = "EVXX";
+    auto checked = Adapter::check_policy(policy);
+    if (const auto* error = std::get_if<rt::Error>(&checked))
+      throw std::invalid_argument("SimaBoxDecode: upstream preprocessing: " + error->message);
+    auto frozen = Adapter::checked_initial_preprocess_facts(
+        std::get<std::shared_ptr<const Adapter::CheckedPolicy>>(std::move(checked)));
+    if (const auto* error = std::get_if<rt::Error>(&frozen))
+      throw std::invalid_argument("SimaBoxDecode: upstream preprocessing facts: " + error->message);
+    const auto owner = std::get<::simaai::gst::TensorBufferPreprocessFactsOwner>(std::move(frozen));
+    const auto* facts = ::simaai::gst::tensor_buffer_preprocess_facts(owner);
+    if (!facts || facts->roi_list || facts->input_batch != 1 || facts->capacity != 1)
+      throw std::invalid_argument("SimaBoxDecode: oriented decoding requires one upstream image");
+    if ((geometry.model_width > 0 && geometry.model_width != facts->resized_width) ||
+        (geometry.model_height > 0 && geometry.model_height != facts->resized_height))
+      throw std::invalid_argument(
+          "SimaBoxDecode: upstream preprocessing canvas differs from model");
+    PreprocessRuntimeMeta meta;
+    meta.original_width = facts->original_width;
+    meta.original_height = facts->original_height;
+    meta.resized_width = facts->resized_width;
+    meta.resized_height = facts->resized_height;
+    meta.resize_mode = facts->resize_mode;
+    meta.affine_m00 = facts->affine[0];
+    meta.affine_m01 = facts->affine[1];
+    meta.affine_m02 = facts->affine[2];
+    meta.affine_m10 = facts->affine[3];
+    meta.affine_m11 = facts->affine[4];
+    meta.affine_m12 = facts->affine[5];
+    observed = std::move(meta);
+    geometry.require_frame_transform = true;
   }
   if (observed && geometry.model_width <= 0 && geometry.model_height <= 0) {
     const auto width =
@@ -190,10 +234,7 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
   geometry.original_height = dynamic_image
                                  ? (observed ? observed->original_height : geometry.model_height)
                                  : geometry.original_height;
-  geometry.resize = (compiled.payload.decode_type == BoxDecodeType::Ssd ||
-                     compiled.payload.decode_type == BoxDecodeType::Detr)
-                        ? ResizeMode::Stretch
-                        : ResizeMode::Letterbox;
+  geometry.resize = default_boxdecode_resize_mode(compiled.payload.decode_type);
   if (resize_mode)
     geometry.resize = *resize_mode;
   else if (observed && !observed->resize_mode.empty()) {
@@ -213,7 +254,7 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
     // model-to-original coefficients. Do not invert them a second time.
     const auto values = affine(*observed);
     if (observed->roi_list_enabled || observed->has_roi_list())
-      throw std::invalid_argument("SimaBoxDecode: combined segmentation/pose requires one image "
+      throw std::invalid_argument("SimaBoxDecode: complete geometry requires one image "
                                   "transform, not ROI-list metadata");
     if (std::any_of(values.begin(), values.end(),
                     [](double v) {
@@ -222,6 +263,9 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
         values[1] != 0 || values[3] != 0 || values[0] <= 0 || values[4] <= 0)
       throw std::invalid_argument("SimaBoxDecode: model-to-original affine must be finite, "
                                   "axis-aligned and have positive scales");
+    if (geometry.uniform_transform_required && values[0] != values[4])
+      throw std::invalid_argument(
+          "SimaBoxDecode: oriented boxes require equal authoritative affine scales");
     geometry.model_to_original =
         std::array<float, 4>{static_cast<float>(values[0]), static_cast<float>(values[4]),
                              static_cast<float>(values[2]), static_cast<float>(values[5])};
@@ -230,14 +274,18 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
       !geometry.model_to_original)
     throw std::invalid_argument("SimaBoxDecode: crop geometry requires authoritative ingress "
                                 "preprocess model-to-original affine metadata");
+  if (geometry.uniform_transform_required && !geometry.model_to_original)
+    throw std::invalid_argument("SimaBoxDecode: oriented boxes require authoritative ingress "
+                                "preprocess affine metadata (explicit identity for model pixels)");
   auto native = si::prepare_boxdecode_kernel(admitted, geometry);
   if (compiled.payload.decode_type != BoxDecodeType::SuperPoint) {
     auto recipe = std::make_shared<si::KernelStageRecipe>(*native.compiled.recipe);
     const bool require_mode =
+        geometry.require_frame_transform ||
         std::find(compiled.runtime_contract.required_preprocess_meta_fields.begin(),
                   compiled.runtime_contract.required_preprocess_meta_fields.end(),
                   "preproc_resize_mode") !=
-        compiled.runtime_contract.required_preprocess_meta_fields.end();
+            compiled.runtime_contract.required_preprocess_meta_fields.end();
     si::attach_boxdecode_geometry_resolver(*recipe, native.decode_member, geometry, dynamic_image,
                                            require_mode);
     native.compiled.recipe = std::move(recipe);

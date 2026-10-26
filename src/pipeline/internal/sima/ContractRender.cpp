@@ -827,6 +827,14 @@ StageStaticSpec render_kernel_stage(const CompiledNodeContract& compiled_stage) 
       !stage.frame_arena_size_bytes)
     throw std::invalid_argument("native kernel requires nonempty output storage");
   using namespace pipeline_internal::sima;
+  stage.core_fresh_default_arena =
+      runtime.frame_arena_role == FrameArenaRole::None && !runtime.frame_arena_size_bytes &&
+      runtime.frame_arena_storage_domain == static_contract::ArenaStorageDomain::Unknown &&
+      runtime.frame_arena_provenance == static_contract::ArenaAllocationProvenance::Unknown &&
+      runtime.frame_arena_allocation_policy ==
+          static_contract::ArenaAllocationPolicy::RequiredDomain &&
+      runtime.frame_arena_required_device_access == 0 &&
+      runtime.frame_arena_escape_policy == static_contract::ArenaEscapePolicy::InternalOnly;
   stage.frame_arena_role = FrameArenaRole::Allocate;
   stage.frame_arena_storage_domain = static_contract::ArenaStorageDomain::Cma;
   stage.frame_arena_provenance = static_contract::ArenaAllocationProvenance::CoreAllocated;

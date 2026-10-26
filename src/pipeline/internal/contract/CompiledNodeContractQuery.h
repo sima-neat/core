@@ -43,4 +43,22 @@ inline const CompiledNodeContract* last_effective_child_stage(const CompiledNode
   return last_effective_child_stage(&stage->child_stages.back());
 }
 
+inline const CompiledProcessCvuContract*
+last_preprocess_contract(const CompiledNodeContract& stage) {
+  for (auto child = stage.child_stages.rbegin(); child != stage.child_stages.rend(); ++child)
+    if (const auto* found = last_preprocess_contract(*child))
+      return found;
+  return stage.processcvu && stage.processcvu->payload.graph_name == "preproc" ? &*stage.processcvu
+                                                                               : nullptr;
+}
+
+inline const CompiledProcessCvuContract*
+last_preprocess_contract(const std::vector<CompiledNodeContract>& stages,
+                         const CompiledProcessCvuContract* fallback = nullptr) {
+  for (auto stage = stages.rbegin(); stage != stages.rend(); ++stage)
+    if (const auto* found = last_preprocess_contract(*stage))
+      return found;
+  return fallback;
+}
+
 } // namespace simaai::neat

@@ -1,5 +1,6 @@
 #include "pipeline/internal/sima/BoxDecodePublication.h"
 #include "pipeline/FeatureTypes.h"
+#include "pipeline/DetectionTypes.h"
 #include <simaai/scheduler/testing/probe.h>
 
 #include <array>
@@ -289,9 +290,62 @@ void features(F format, k::DType dtype, std::int64_t dim) {
     f.check_guard();
   }
 }
+void oriented() {
+  const std::array<k::TensorSpec, 4> specs{{{{3, 5}, k::DType::Float32},
+                                            {{3}, k::DType::Float32},
+                                            {{3}, k::DType::Int32},
+                                            {{1}, k::DType::Int32}}};
+  Fixture f(F::OrientedBoxesV1, specs);
+  require(f.plan.bytes == 128, "OBB wire extent must be header32 + capacity*32");
+  for (int count : {3, 1, 0}) {
+    write(f.storage[3].data(), std::int32_t(count));
+    for (int i = 0; i < count; ++i) {
+      const std::array<float, 5> values{-4.f + i, 12.f, -32.f, 48.f, .4f};
+      std::memcpy(f.storage[0].data() + i * 20, values.data(), 20);
+      write(f.storage[1].data() + i * 4, .5f);
+      write(f.storage[2].data() + i * 4, std::int32_t(9 + i));
+    }
+    require(!f.run(), "valid OBB publication rejected");
+    require(read<std::uint32_t>(f.output.data()) == 0x3156424f &&
+                read<std::uint16_t>(f.output.data() + 4) == 1 &&
+                read<std::uint16_t>(f.output.data() + 6) == 32 &&
+                read<std::uint32_t>(f.output.data() + 8) == 128 &&
+                read<std::uint32_t>(f.output.data() + 12) == unsigned(count) &&
+                read<std::uint32_t>(f.output.data() + 16) == 3 &&
+                read<std::uint32_t>(f.output.data() + 20) == 32 &&
+                read<std::uint32_t>(f.output.data() + 24) == 32 &&
+                read<std::uint32_t>(f.output.data() + 28) == 0,
+            "OBB independent header byte offsets changed");
+    for (int i = 0; i < count; ++i) {
+      const auto* row = f.output.data() + 32 + i * 32;
+      require(read<float>(row) == -4.f + i && read<float>(row + 8) == -32.f &&
+                  read<float>(row + 16) == .4f && read<float>(row + 20) == .5f &&
+                  read<std::int32_t>(row + 24) == 9 + i && read<std::uint32_t>(row + 28) == 0,
+              "OBB signed geometry, angle, score or integer class altered");
+    }
+    require(std::all_of(f.output.begin() + 32 + count * 32, f.output.begin() + f.plan.bytes,
+                        [](auto b) { return b == std::byte{}; }),
+            "OBB tails not cleared");
+    f.check_guard();
+  }
+  for (int port : {0, 1, 2, 3}) {
+    write(f.storage[3].data(), std::int32_t(1));
+    write(f.storage[0].data(), 1.f);
+    write(f.storage[1].data(), .5f);
+    write(f.storage[2].data(), std::int32_t(1));
+    if (port < 2)
+      write(f.storage[port].data(), std::numeric_limits<float>::quiet_NaN());
+    else
+      write(f.storage[port].data(), std::int32_t(-1));
+    const auto before = f.output;
+    require(bool(f.run()), "malformed OBB result accepted");
+    require(f.output == before, "failed OBB publication changed caller output");
+  }
+}
 } // namespace
 int main() {
   try {
+    oriented();
     rcnn();
     for (int points : {1, 13, 17})
       masks_pose(points);

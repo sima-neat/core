@@ -268,7 +268,7 @@ void unresolved_mixed_dmabuf_descriptor_fails_without_copy() {
 
     InputStream::State state;
     state.opt.copy_output = true;
-    state.opt.preserve_dmabuf_output = true;
+    state.opt.preserve_framework_output = true;
     pipeline_internal::reset_tensor_io_stats();
     bool rejected = false;
     try {

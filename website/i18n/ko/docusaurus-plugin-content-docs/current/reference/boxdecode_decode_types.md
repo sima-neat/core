@@ -6,14 +6,14 @@ sidebar_position: 6
 
 # BoxDecode 디코딩 유형
 
-`nodes::SimaBoxDecode`는 원시 감지 헤드 텐서를 감지 결과로 변환합니다. 이 노드는 모델 추론 후에 실행되며, 선택한 모델 제품군에 대한 디코딩 연산을 적용하고, 낮은 신뢰도 박스를 필터링하고, NMS(Non-Maximum Suppression)를 실행한 다음, 디코딩된 박스로 시작하는 텐서 페이로드를 출력합니다. 감지 모델은 해당 페이로드를 박스로 파싱할 수 있으며, 자세 및 분할 모델은 박스 다음에 나오는 키포인트 또는 마스크도 파싱할 수 있습니다.
+`nodes::SimaBoxDecode`는 원시 감지 헤드 텐서를 감지 결과로 변환합니다. 모델 추론 후 선택한 모델 제품군의 디코딩 연산을 적용하고 감지를 필터링합니다. NMS와 출력 인코딩은 선택한 제품군에 따라 다릅니다. 감지 모델은 페이로드를 박스로 파싱할 수 있으며, 자세 및 분할 모델은 박스 뒤의 키포인트나 마스크도 파싱할 수 있습니다.
 
 일반적인 모델 패키지 사용의 경우, `Model`을 인식하는 생성자를 사용하는 것이 좋습니다. 모델 아카이브는 디코더에 필요한 텐서 순서, 레이아웃, 양자화, 클래스 수, 크기 조정 메타데이터 및 점수 범위 힌트를 제공합니다. 일반적으로 애플리케이션은 디코딩 제품군과 필터링 임계값만 선택합니다.
 
 ## 런타임 백엔드
 
 BoxDecode와 SuperPoint는 검증된 Kernels 실행 파일과 함께 `neatkernelrunner`를
-사용합니다. 공개 감지 및 특징 출력 형식은 바뀌지 않습니다. 텐서를 직접 입력할
+사용합니다. 기존 감지 및 특징 출력 형식은 바뀌지 않습니다. YOLO26 회전 박스 디코딩은 별도의 버전 지정 형식을 사용합니다. 텐서를 직접 입력할
 때는 디코딩이 A65에서 실행되더라도 공유 CMA 텐서(`TensorMemory::EV74`)를 사용합니다.
 이 메모리 선택은 실행 타깃이 아니라 DMA-BUF 전송을 제공합니다.
 
@@ -76,12 +76,36 @@ opt.top_k = 100;
 | 모델 작업 | C++ 헬퍼 | Python 헬퍼 | 디코딩된 텐서 |
 | --- | --- | --- | --- |
 | 감지 | `decode_bbox(...)` | `pyneat.decode_bbox(...)` | `[N, 6]` float32 박스: `x1, y1, x2, y2, score, class_id` |
+| 회전 객체 감지 | `decode_obb(...)` | `pyneat.decode_obb(...)` | 소유권이 있는 기하 정보 `[N, 5]` float32 (`cx, cy, width, height, angle_radians`), 점수 `[N]` float32, 클래스 ID `[N]` int32 |
 | 자세 | `decode_pose(...)` | `pyneat.decode_pose(...)` | 박스 `[N, 6]` 및 키포인트 `[N, 17, 3]` float32: `x, y, visibility` |
 | 분할 | `decode_segmentation(...)` | `pyneat.decode_segmentation(...)` | 박스 `[N, 6]` float32 및 마스크 `[N, 160, 160]` uint8 |
 | 분할 + 포즈 | `decode_segmentation_pose(...)` | `pyneat.decode_segmentation_pose(...)` | 박스 `[N, 6]` float32, 마스크 `[N, 160, 160]` uint8, 키포인트 `[N, 17, 3]` float32 |
 | SuperPoint | `decode_superpoint(...)` | `pyneat.decode_superpoint(...)` | 키포인트 `[N,2]`, 점수 `[N]`, 디스크립터 `[N,D]` |
 
-감지-표시 그래프는 결과를 `SimaRender`에 전달할 수 있습니다. 단순히 박스만 필요한 애플리케이션 코드는 BoxDecode 출력에 대해 `decode_bbox(...)`를 계속 사용할 수 있습니다.
+축 정렬 감지 표시 그래프는 결과를 `SimaRender`에 전달할 수 있습니다. `decode_bbox(...)`는 기존 박스 선두 형식에만 사용하십시오. 이 함수와 `SimaRender`는 회전 박스를 지원하지 않습니다.
+
+## YOLO26 회전 박스 {#yolo26-oriented-boxes}
+
+`BoxDecodeType::YoloV26Obb`(Python: `pyneat.BoxDecodeType.YoloV26Obb`, 토큰 `yolo26-obb`)를 명시적으로 선택하십시오. 이 프로파일은 스트라이드 8, 16, 32의 4채널 거리 헤드 3개, 클래스 로짓 헤드 3개, 1채널 원시 각도 헤드 3개를 역할별로 묶은 FP32, BF16 또는 INT8 헤드 9개를 입력으로 받습니다. 모든 헤드는 전체 클래스 수(1–256)가 일치해야 합니다. `Auto`, `GroupedByRole`, `GroupedByRoleLogit`는 이 그룹 레이아웃을 선택합니다. 확률값 클래스 헤드와 인터리브 레이아웃은 거부됩니다.
+
+INT8 헤드에는 양의 유한한 텐서별 양자화 메타데이터와 INT8 영점이 필요합니다. BF16 및 FP32 헤드는 정수 양자화 메타데이터를 사용하지 않습니다.
+
+양수 `top_k`와 `nms_iou_threshold = 0`을 사용하십시오. 클래스 로짓에 sigmoid를 적용하고 최대 활성화 점수로 앵커를 선택한 뒤 앵커/클래스 쌍을 선택합니다. 동점이면 첫 단계의 순위와 클래스 순서를 유지합니다. 점수 기준은 엄격한 부등식(`score > detection_threshold`)입니다. 원시 각도는 이미 라디안 단위이므로 디코더는 sigmoid를 적용하거나 범위를 정규화하지 않습니다.
+
+전처리 메타데이터에는 모델 좌표에서 원본 좌표로의 명시적인 유한 변환이 필요합니다. X/Y 배율은 양수이며 같아야 하고 전단 변환이 없어야 합니다. 모델 크기의 타일에도 명시적인 항등 변환이 필요합니다. 변환이 없거나 비등방성이면 회전 사각형을 근사하지 않고 거부합니다. 부호가 있는 유한 너비/높이를 유지하며 이미지 경계에서 자르지 않습니다. 타일 기반 DOTA 평가에서는 각 타일에 항등 변환을 사용하고, 타일 오프셋 복원과 타일 간 다각형 억제는 애플리케이션에서 수행하십시오.
+
+소스 구동 그래프에서 Core는 검증된 업스트림 Preproc 계약으로부터 초기 준비용 지오메트리를 도출합니다. 이는 준비용 초기값일 뿐이며, 모든 프레임에는 유한하고 양수인 균일 아핀 변환과 모델에 일치하는 캔버스 크기가 여전히 필요합니다. 프레임 변환이 없으면 오류가 발생하며 항등 변환으로 폴백하지 않습니다.
+
+출력 태그는 `BBOX_OBB_V1`입니다. 32바이트 버전 지정 헤더 뒤에 32바이트 레코드가 `top_k`개 이어집니다. 사용하지 않는 레코드는 0입니다. `decode_obb_tensor(tensor)`는 단일 캐리어를 검증하고, `decode_obb(tensors)`는 캐리어마다 형식이 지정된 결과 하나를 반환합니다. 둘 다 소유권이 있는 CPU 텐서로 복사하며 클래스 ID는 INT32로 유지합니다. 예:
+
+```python
+result = pyneat.decode_obb(outputs)[0]
+geometry = result.geometry.to_numpy()  # cx, cy, width, height, angle_radians
+scores = result.scores.to_numpy()
+class_ids = result.class_ids.to_numpy()
+```
+
+이 형식은 의도적으로 선두 BBOX의 확장이 아닙니다. `decode_bbox`, 분할/자세 파서 또는 축 정렬 렌더러 대신 형식이 지정된 헬퍼를 사용하십시오.
 
 ## 슈퍼포인트
 
@@ -284,6 +308,7 @@ MPK는 텐서 계약과 디코딩 계열 정보를 제공합니다. 필터링 �
 | `BoxDecodeType::YoloV26` | `yolo26` | YOLO26 감지 |
 | `BoxDecodeType::YoloV26Pose` | `yolo26-pose` | YOLO26 자세 |
 | `BoxDecodeType::YoloV26Seg` | `yolo26-seg` | YOLO26 분할 |
+| `BoxDecodeType::YoloV26Obb` | `yolo26-obb` | YOLO26 회전 객체 감지 (`BBOX_OBB_V1`) |
 | `BoxDecodeType::YoloV6` | `yolov6` | YOLOv6 감지 |
 | `BoxDecodeType::YoloX` | `yolox` | YOLOX 감지 |
 | `BoxDecodeType::YoloXSegPose` | `yolox-seg-pose` | 박스, 마스크 및 키포인트 헤드를 함께 포함하는 YOLOX 압축 내보내기 |
