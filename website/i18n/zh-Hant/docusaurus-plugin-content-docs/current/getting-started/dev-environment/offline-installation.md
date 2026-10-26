@@ -58,6 +58,10 @@ sima-cli neat install sdk@v2.1.3.0 -t offline-arm64
 
 ### 2. 安裝套件
 
+若要隨 SDK 一起安裝 Model Compiler，請將 Model Compiler 離線套件檔案放在與 SDK 離線套件相同的目錄中。
+SDK 安裝程式會自動找到該檔案。
+出現提示時，請選擇從本機套件安裝。
+
 1. 將下載的完整目錄複製到目標主機。
 2. 在該目錄中開啟終端機。
 3. 執行安裝程式：
