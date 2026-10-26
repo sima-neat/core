@@ -1290,6 +1290,27 @@ def write_root_index_file(
     return True
 
 
+def apply_category_keys(dst_section: Path, category_keys: Dict[str, str]) -> None:
+    """Disambiguate imported sidebar categories without changing their labels.
+
+    Keys are source-relative directory names and are shared by every locale.
+    Existing category metadata, including translated labels, is preserved.
+    """
+    for directory, key in category_keys.items():
+        relative = Path(directory)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(f"category_keys directory must stay within the source: {directory}")
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError(f"category_keys requires a non-empty key for {directory}")
+        folder = dst_section / relative
+        if not folder.is_dir():
+            raise ValueError(f"category_keys directory does not exist: {directory}")
+        metadata = folder / "_category_.json"
+        content = json.loads(metadata.read_text(encoding="utf-8")) if metadata.exists() else {}
+        content["key"] = key
+        metadata.write_text(json.dumps(content, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
 def stage_source_section(
     source: Dict,
     staging: Path,
@@ -1357,6 +1378,7 @@ def stage_source_section(
     group_commands = source.get("group_commands")
     if group_commands and run_group_commands:
         regroup_command_pages(dst_section, group_commands)
+    apply_category_keys(dst_section, source.get("category_keys", {}))
     return file_count
 
 

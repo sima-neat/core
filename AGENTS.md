@@ -93,7 +93,8 @@ A change is ready when:
 
 - Core builds against two dependencies: Scheduler and LLiMa. By default `build.sh`
   acquires one published Scheduler set through `tools/ci/acquire_scheduler.py` and
-  the LLiMa packages from Vulcan, installs both into the SDK sysroot, then builds Core.
+  the LLiMa packages from Vulcan, keeps the Scheduler set in the checkout's `deps/`,
+  installs LLiMa into the shared SDK sysroot, then builds Core.
   Scheduler acquisition tries the snap branch, then explicitly retries
   `develop:latest` only if resolution fails and the published branch index confirms
   absence. Other lookup failures, tags and explicit selectors remain strict.

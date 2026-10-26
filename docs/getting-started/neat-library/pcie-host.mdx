@@ -16,6 +16,11 @@ Card. Do not run it inside the Neat SDK container, on a DevKit, or on the
 Modalix PCIe Card.
 :::
 
+:::tip When to use offline installation
+If the target cannot download packages from SiMa.ai services, use [offline installation](#offline-installation).
+Download the package on a computer with internet access.
+:::
+
 ## Supported host operating systems
 
 The Neat PCIe host package supports the following validated host platforms:
@@ -27,7 +32,7 @@ The Neat PCIe host package supports the following validated host platforms:
 
 Arm64 host builds have not yet been validated. Windows 11 is not supported.
 
-## Prerequisites
+## Online installation prerequisites
 
 Before installing the package:
 
@@ -53,13 +58,13 @@ Choose a working directory on the PCIe host, then run the command for the instal
 **Ubuntu 22.04 on x86_64:**
 
 <ShellCommand prompt="pcie-host">
-sima-cli neat install core/pciehost/ubuntu22/amd64@v0.4.0
+sima-cli neat install core/pciehost/ubuntu22/amd64@v%%release.core%%
 </ShellCommand>
 
 **Ubuntu 24.04 on x86_64:**
 
 <ShellCommand prompt="pcie-host">
-sima-cli neat install core/pciehost/ubuntu24/amd64@v0.4.0
+sima-cli neat install core/pciehost/ubuntu24/amd64@v%%release.core%%
 </ShellCommand>
 
 The installer adds everything needed to develop and run Neat PCIe host
@@ -75,7 +80,7 @@ password for the card. It creates or reuses
 `~/.ssh/sima_neat_pcie_ed25519` and installs its public key on the card. Normal
 PCIe operation then uses passwordless SSH for card-side model setup.
 
-## Verify the installation
+## Verify the online installation
 
 Confirm that the Python API and PCIe host plugin are available:
 
@@ -104,7 +109,81 @@ If package installation or runtime startup fails, confirm that the PCIe host
 package and the Neat Library installed on the card are from compatible
 releases.
 
+## Offline installation {#offline-installation}
+
+Neat PCIe offline packages are available in version 0.6.0 or later.
+
+The PCIe package installs Neat on the host and all attached compatible cards.
+The target system does not need Docker or internet access for this installation.
+The host must have a working PCIe network connection to each card.
+
+### 1. Prepare the host and cards
+
+Complete these tasks before you run the Neat installer:
+
+- Install the compatible Platform host driver.
+- Install the matching Platform 3.0 firmware on each card.
+- Configure discovery on each card's PCIe interface.
+- Assign a unique PCIe IPv4 address to each card.
+- Configure SSH access and trusted SSH host keys for each card.
+- Give the SSH account permission to use `sudo` on each card.
+
+The Neat installer does not install the Platform driver or change the Platform firmware.
+Use the system setup instructions supplied with your Platform release.
+
+### 2. Download the package
+
+Install `sima-cli` on the computer with internet access. See the [sima-cli installation guide](/tools/sima-cli/).
+
+Select version 0.6.0 or later for the target host.
+Packages support Ubuntu 22.04 and 24.04 hosts with `amd64` or `arm64` processors.
+
+This example downloads version %%release.core%% on the computer with internet access.
+For an Ubuntu 24.04 `amd64` target host, run:
+
+<ShellCommand prompt="host">
+sima-cli neat install 'core/pciehost/ubuntu24/amd64@v%%release.core%%' -t offline -d ./pcie-offline
+</ShellCommand>
+
+For Ubuntu 22.04, replace `ubuntu24` with `ubuntu22`.
+For an `arm64` host, replace `amd64` with `arm64`.
+The command downloads and extracts the package. It does not install Neat.
+
+### 3. Check the system
+
+1. Copy the complete `pcie-offline` directory to the target host. Use a path without spaces.
+2. Open the extracted `neat-offline` directory that contains `install.py`.
+3. Read the supplied `INSTALL.md` for required system tools and SSH settings.
+4. Run the checks:
+
+<ShellCommand prompt="host">
+sudo python3 -B install.py --preflight-only
+</ShellCommand>
+
+The installer discovers all attached cards automatically. Do not supply card IP addresses.
+The checks create temporary files but do not install packages.
+Correct any reported errors before installation.
+
+### 4. Install and check the results
+
+Run this command from the same directory:
+
+<ShellCommand prompt="host">
+sudo python3 -B install.py
+</ShellCommand>
+
+The installer checks all cards before it installs packages.
+It installs and verifies the host first, then each card in sequence.
+Check that the final summary reports successful installation and verification for the host and every card.
+Then run your application acceptance test.
+
+If installation fails, read the diagnostic log at the printed path.
+If a card connection fails during installation, check that the card's installation process has stopped before you try again.
+The installer does not automatically restore the previous installation after a failure.
+
 ## Next Step
 
 Continue with [PCIe Co-Processing](/develop-apps/hello-neat/pcie/) to verify the
 complete host-to-card development path.
+
+Offline installation uses the same Python paths as online installation. The PCIe host uses `~/pyneatpcie`. A DevKit uses `/media/nvme/pyneat` when `/media/nvme` is writable by the installing user; otherwise, it uses `~/pyneat`. For an NVMe installation, `~/pyneat` links to that environment. If a different environment already exists at `~/pyneat`, the installer keeps it in a `pyneat-before-offline-*` directory in your home directory before creating the link.

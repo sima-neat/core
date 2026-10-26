@@ -23,17 +23,17 @@ sidebar_position: 2
 
 ## インストール
 
-現在のNeat SDK 2.1リリースチャネルをインストールします。
+現在のNeat SDK %%release.sdk_series%%リリースチャネルをインストールします。
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@release-2.1
+sima-cli neat install sdk@%%release.sdk_channel%%
 </ShellCommand>
 
 初回インストールではNeat SDKコンテナイメージをダウンロードするため、数分かかることがあります。ダウンロード後、インストーラーがSDKのセットアップを開始し、Modalix DevKitとペアリングするか、対応するModel CompilerをSDK内にインストールするかを確認します。
 
 DevKitとのペアリングを選んだ場合は、表示されたプロンプトにDevKitのIPアドレスを入力します。セットアップ処理はSDKワークスペースを構成し、SDKコンテナを起動してDevKit Syncを設定します。ペアリングを省略してもSDKワークスペースは作成され、後からペアリングできます。
 
-`release-2.1`パッケージは、2.1系の最新Neat SDKパッチリリースを追跡します。現在のリリースはNeat SDK 2.1.3.0で、DevKitソフトウェア2.1.3と互換性があります。
+`%%release.sdk_channel%%`パッケージは、%%release.sdk_series%%系の最新Neat SDKパッチリリースを追跡します。現在のリリースはNeat SDK %%release.sdk%%で、DevKitソフトウェア%%release.platform%%と互換性があります。
 
 セットアップ中、`sima-cli`は対応するModel CompilerをSDK内にインストールするか確認します。モデルを自分でコンパイルまたは量子化する場合は承認してください。別のバージョンを選択する必要はありません。コンパイル済みモデルパッケージだけを実行する場合は省略できます。後からインストールする場合、特定のパッチを固定する場合、またはスタンドアロンホストを使用する場合は、[Model Compilerのインストール](/getting-started/dev-environment/install-model-compiler/)と[互換性ガイド](/getting-started/compatibility/)を参照してください。
 
@@ -84,7 +84,7 @@ codeUI      | https://192.168.76.4:10000/?tkn=gA5CS...&folder=/workspace
 現在のSDKパッケージを再インストールまたはアップグレードするには、ホストから上記のインストールコマンドを再実行します。
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@release-2.1
+sima-cli neat install sdk@%%release.sdk_channel%%
 </ShellCommand>
 
 既存のNeat SDKコンテナ内にあるNeatライブラリを更新するには、コンテナシェルからNeat CLIを実行します。

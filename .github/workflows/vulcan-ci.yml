@@ -31,6 +31,16 @@ on:
         type: string
   workflow_dispatch:
     inputs:
+      offline_publish:
+        description: "Publish offline bundles beside the selected same-branch online packages"
+        required: false
+        default: false
+        type: boolean
+      offline_source_run_id:
+        description: "Build offline tuples from ready same-branch CI publications; skip normal CI"
+        required: false
+        default: ""
+        type: string
       build_mode:
         description: "Build mode: standard or fuzz"
         required: false
@@ -66,13 +76,21 @@ permissions:
   packages: read
 
 concurrency:
-  group: ${{ github.repository }}-${{ github.workflow }}-${{ github.ref }}-${{ inputs.build_mode || 'standard' }}
+  group: ${{ github.repository }}-${{ github.workflow }}-${{ github.ref }}-${{ inputs.offline_source_run_id || inputs.build_mode || 'standard' }}
   cancel-in-progress: ${{ github.ref_type == 'branch' }}
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  validate-offline:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.offline_source_run_id != '' }}
+    uses: ./.github/workflows/pcie-offline.yml
+    with:
+      source_run_id: ${{ inputs.offline_source_run_id }}
+      validation_only: ${{ !inputs.offline_publish }}
+      publish_branch: ${{ inputs.offline_publish || false }}
+
   documentation-localization:
     name: Validate Documentation Localization
     runs-on: ubuntu-latest
@@ -99,6 +117,7 @@ jobs:
         run: bash scripts/ci/check_documentation_localization.sh
 
   resolve-vulcan-config:
+    if: ${{ !inputs.offline_source_run_id }}
     name: Resolve Vulcan Config
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
     with:
@@ -135,6 +154,8 @@ jobs:
           python3 -m venv "${test_venv}"
           "${test_venv}/bin/python" -m pip install --disable-pip-version-check pytest packaging PyYAML
           "${test_venv}/bin/python" -m pytest -q \
+            python/tests/test_neat_cli.py \
+            python/tests/test_neat_pcie_status.py \
             tests/test_build_pyneat_wheel.py \
             tests/test_resolve_compiler_cache.py \
             tests/tools/test_internals_package_boundary.py \
@@ -147,6 +168,14 @@ jobs:
             tests/tools/test_build_install_sanity.py \
             tests/tools/test_core_inventory_soname.py \
             tests/tools/test_native_platform_baseline.py \
+            tests/tools/test_offline_core.py \
+            tests/tools/test_offline_pcie_discovery.py \
+            tests/tools/test_offline_pcie_assembly.py \
+            tests/tools/test_offline_pcie_ci.py \
+            tests/tools/test_offline_pcie_install.py \
+            tests/tools/test_offline_pcie_host_process.py \
+            tests/tools/test_offline_pcie_deploy.py \
+            tests/tools/test_pcie_local_candidate.py \
             tests/tools/test_required_test_coverage.py \
             tests/tools/test_ci_weekly_preparation.py \
             tests/tools/test_docs_native_prerequisites.py \
@@ -175,6 +204,7 @@ jobs:
             --github-output "${GITHUB_OUTPUT}"
 
   detect-changes:
+    if: ${{ !inputs.offline_source_run_id }}
     name: Detect Changes
     runs-on: ubuntu-latest
     outputs:
@@ -313,7 +343,7 @@ jobs:
 
   build:
     name: Build Core on Vulcan
-    if: ${{ always() && !failure() && !cancelled() && needs.detect-changes.outputs.docs_only != 'true' }}
+    if: ${{ !inputs.offline_source_run_id && always() && !failure() && !cancelled() && needs.detect-changes.outputs.docs_only != 'true' }}
     needs:
       - resolve-vulcan-config
       - resolve-compiler-cache
@@ -365,10 +395,10 @@ jobs:
         echo "Resolved build mode: ${core_build_mode}"
 
         if [[ "${core_build_mode}" == "fuzz" ]]; then
-          CORE_BUILD_ARGS="--fuzz --clean --no-doc"
+          CORE_BUILD_ARGS="--fuzz --clean --no-doc --update-sysroot"
           ALLOW_FUZZ_IN_NEAT_SDK=ON
         else
-          CORE_BUILD_ARGS="--all --clean --no-doc"
+          CORE_BUILD_ARGS="--all --clean --no-doc --update-sysroot"
           ALLOW_FUZZ_IN_NEAT_SDK=OFF
         fi
 
@@ -423,7 +453,8 @@ jobs:
             sima-cli neat install --help >/dev/null
             sima-cli packages build --help >/dev/null
             cd /workspace
-            # build.sh acquires the Scheduler and LLiMa sets and installs them into the sysroot.
+            # build.sh acquires the Scheduler set into deps/, installs LLiMa into the
+            # disposable SDK sysroot, and updates it to the version the Scheduler set pins.
             source /opt/bin/simaai-init-build-env modalix >/dev/null
             ./build.sh ${CORE_BUILD_ARGS}
             if [[ "${CORE_BUILD_ARGS}" == *"--all"* ]]; then
@@ -665,16 +696,9 @@ jobs:
             s3_args+=(--sse-kms-key-id "${SSE_KMS_KEY_ID}")
           fi
 
-          for path in \
-            pcie_host/dist/*.deb \
-            pcie_host/dist/*.deb.sha256 \
-            pcie_host/dist/*.tar.gz \
-            pcie_host/dist/*.tar.gz.sha256 \
-            pcie_host/dist/pyneatpcie-*.whl \
-            pcie_host/dist/pyneatpcie-*.whl.sha256 \
-            pcie_host/dist/*.json \
-            pcie_host/dist/*.py \
-            pcie_host/dist/*.sh; do
+          publication_paths="$(python3 pcie_host/scripts/pcie_delivery.py publication-list --directory pcie_host/dist)"
+          mapfile -t paths <<< "$publication_paths"
+          for path in "${paths[@]}"; do
             name="$(basename "${path}")"
             # Metadata becomes visible only after the aggregate closure audit.
             case "$name" in metadata*.json) name="${name}.pending" ;; esac

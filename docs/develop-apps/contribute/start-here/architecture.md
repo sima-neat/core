@@ -2271,3 +2271,25 @@ Keep docs and code aligned:
 ## Native MLA tensor views
 
 Core reuses shared backing memory slots while retaining producer leases and skips shared descriptor imports for mixed-owner inputs. Proven identity host modules preserve native output types and shapes without A65 execution, including INT32 ArgMax results and cold `Model::output_specs()` metadata.
+
+## Offline Core delivery
+
+Standalone Core and PCIe offline bundles use the same immutable Core publication, dependency collector, checksum verification, and platform admission lifecycle. DevKit installation uses an isolated network namespace; SDK sysroot installation uses file-only APT methods. Both use a shared installation lock. CI validates packages and Python imports against a pristine provisioned baseline with networking disabled, then exposes offline metadata only after the standalone bundle and all four PCIe variants pass.
+
+Standalone Core publishes `offline/metadata.json` with the runtime bundle and extras, and `offline/metadata-minimal.json` with only the runtime bundle.
+
+The installer accepts only the Neat eLxr SDK or a provisioned Modalix DevKit. It checks `/etc/sdk-release` or `/etc/buildinfo` against the package manifest bundled in the archive; downloaded publication metadata is not required. Other environments and incompatible Platform versions are rejected before installation. In the SDK, Core is copied into `/opt/toolchain/aarch64/modalix`. If `DEVKIT_SYNC_DEVKIT_IP` is configured, the same offline bundle is transferred over SSH to the paired DevKit. Both environments must pass preflight before installation begins. On a DevKit, installation runs locally.
+
+Offline installation uses the same Python paths as online installation. The PCIe host uses `~/pyneatpcie`. A DevKit uses `/media/nvme/pyneat` when `/media/nvme` is writable by the installing user; otherwise, it uses `~/pyneat`. For an NVMe installation, `~/pyneat` links to that environment. If a different environment already exists at `~/pyneat`, the installer keeps it in a `pyneat-before-offline-*` directory in your home directory before creating the link.
+
+## PCIe host and card status
+
+The `sima-pcie-host` package also installs `neat` on Ubuntu. Run `neat` or `neat --json` to read installed host packages, PyNeatPCIe, and the board and installed software on each SiMa PCIe card. Cards are listed by PCI address and interface. A PCI address describes the current attachment, not a permanent board serial number.
+
+Card queries use the provisioned `10.0.N.1` host interface and `10.0.N.2` card address, matching `pcie-setup.sh`. Configure network access and trusted SSH keys first. The command does not configure interfaces, enroll host keys, prompt for passwords, use sudo on cards, or modify packages. Missing interfaces, nonstandard addresses, SSH failures, and unavailable software are reported per card; reachable cards still report their versions.
+
+JSON retains `sima.neat.status.v1` and adds `components.pcieHost`, `components.pcieScheduler`, `components.pyneatpcie`, and `pcie`. The `pcie` object contains host software, a `cards` array with PCI address, interfaces, address, state, software and error fields, and topology errors. Missing remote software is `null`, not an inferred installed version.
+
+PyNeat and PyNeatPCIe status lists each detected installation with its version and virtual environment path. Separate environments are reported as multiple environments, not a version conflict. For packages outside a virtual environment, the output shows the package directory instead. Status reads package metadata without importing native modules.
+
+Each Python entry in JSON adds an `installations` array. Each record contains `version`, `environment`, and `path` (the package directory). `environment` is `null` outside a virtual environment. The summary `version` is `null` when installed versions differ; multiple installations alone do not set `error`. Symlinked paths to the same installation are listed once.

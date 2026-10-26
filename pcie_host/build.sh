@@ -28,6 +28,7 @@ INSTALLER_STAGE="${PACKAGE_DIR}/install_pciehost.sh"
 DEPS_MANIFEST="${SIMAPCIE_DEPS_MANIFEST:-${CORE_ROOT}/deps/manifest.json}"
 SIMAPCIE_PYTHON_EXECUTABLE="${SIMAPCIE_PYTHON_EXECUTABLE:-}"
 SCHEDULER_SPEC=""
+SCHEDULER_CANDIDATE=""
 SCHEDULER_ENVIRONMENT="production"
 SCHEDULER_SELECTION=""
 
@@ -45,6 +46,7 @@ Options:
   --no-deb            Skip DEB package generation
   --scheduler-spec <sha|latest> Override the manifest's Scheduler revision
   --scheduler-environment <name> Publication environment (default: production)
+  --scheduler-candidate <dir> Trusted local Scheduler producer output (no download)
   --build-dir <dir>   Build directory (default: build)
   --debug             Build type Debug (default: Release)
   -h, --help          Show this help
@@ -158,10 +160,14 @@ while [[ $# -gt 0 ]]; do
       fi
       shift 2
       ;;
-    --scheduler-spec|--scheduler-environment)
+    --scheduler-spec|--scheduler-environment|--scheduler-candidate)
       option="$1"
       [[ -n "${2:-}" ]] || { echo "ERROR: $option requires a value" >&2; exit 2; }
-      if [[ "$option" == --scheduler-spec ]]; then SCHEDULER_SPEC="$2"; else SCHEDULER_ENVIRONMENT="$2"; fi
+      case "$option" in
+        --scheduler-spec) SCHEDULER_SPEC="$2" ;;
+        --scheduler-environment) SCHEDULER_ENVIRONMENT="$2" ;;
+        --scheduler-candidate) SCHEDULER_CANDIDATE="$2" ;;
+      esac
       shift 2
       ;;
     --debug)
@@ -518,6 +524,7 @@ else
   native_root="$(mktemp -d "${TMPDIR:-/tmp}/core-native-scheduler.XXXXXX")"
   scheduler_spec_args=()
   if [[ -n "$SCHEDULER_SPEC" ]]; then scheduler_spec_args+=(--spec "$SCHEDULER_SPEC"); fi
+  if [[ -n "$SCHEDULER_CANDIDATE" ]]; then scheduler_spec_args+=(--candidate "$SCHEDULER_CANDIDATE"); fi
   python3 scripts/acquire_scheduler.py --branch "$(current_core_branch)" \
     "${scheduler_spec_args[@]}" --environment "$SCHEDULER_ENVIRONMENT" \
     --distro "$HOST_DISTRO" --arch "$DEB_ARCH" --output "$native_root/selected"

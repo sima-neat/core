@@ -197,3 +197,7 @@ slug: /reference/environment-variables
 
 Про вибір груп тестових даних і профілі встановлених пакетів див.
 [Вимоги до тестування](../../develop-apps/contribute/build-test/test_requirements.md).
+
+## Стан хоста та карт PCIe
+
+`NEAT_PCIE_SSH_USER` вибирає користувача SSH карти (типово `sima`). `NEAT_PCIE_SSH_KEY` вибирає приватний ключ (типово `~/.ssh/sima_neat_pcie_ed25519`); наявні налаштування SSH та автентифікація через агент також доступні. `--offline` пропускає перевірку оновлень через Інтернет, але читає підключені карти через локальний SSH. Перегляд стану хоста PCIe не перевіряє оновлення артефактів; для оновлення пакета хоста використовуйте `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>`. `neat update` не оновлює карти PCIe.

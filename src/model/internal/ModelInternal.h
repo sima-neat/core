@@ -81,6 +81,8 @@ struct ModelAccess {
   static Model::Runner build_benchmark_runner(Model& model, const TensorList& inputs,
                                               const RunOptions& run_options,
                                               const Model::Options& model_options);
+  // Reject caller inputs that do not match the model ingress contract, before any build.
+  static void check_inputs(const Model& model, const TensorList& inputs, const char* where);
   static Model::Options options(const Model& model);
   static Model clone_with_options(const Model& model, const Model::Options& opt);
   static PostRouteStageKind resolved_post_kind(const Model& model);
@@ -124,6 +126,17 @@ struct ModelAccess {
 
 BenchmarkReport run_benchmark(Model& model, const BenchmarkOptions& options);
 
+// Pure ingress admission checks behind ModelAccess::check_inputs, shared with contract tests.
+// An image route takes one tensor carrying explicit image format metadata; a tensor route
+// takes one tensor per ingress contract with matching media, format, and HxWxC. Each tensor
+// must also pass the storage and layout checks run() applies on push.
+void check_model_image_inputs(const TensorList& inputs,
+                              const std::vector<IngressTensorContract>& ingress_contracts,
+                              const char* where);
+void check_model_tensor_inputs(const TensorList& inputs,
+                               const std::vector<IngressTensorContract>& ingress_contracts,
+                               const char* where);
+
 // Pure admission check shared by synthetic input construction and contract tests.
 void validate_synthetic_benchmark_image_format(const TensorSpec& spec);
 
@@ -138,6 +151,10 @@ BenchmarkReport build_benchmark_report_from_measurements(const MeasureReport& la
 
 TensorSpec resolve_benchmark_input_spec(TensorSpec spec, const ResolvedPreprocessPlan& plan,
                                         const BenchmarkOptions& options);
+
+// A provided source image supplies its own geometry; reject an original size that disagrees.
+void require_provided_source_geometry(const Tensor& tensor, const ResolvedPreprocessPlan& plan,
+                                      const BenchmarkOptions& options);
 
 PreprocessRuntimeMeta resolve_benchmark_preprocess_meta(const Tensor& tensor,
                                                         const ResolvedPreprocessPlan& plan,

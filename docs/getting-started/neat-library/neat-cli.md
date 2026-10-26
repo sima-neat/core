@@ -35,12 +35,12 @@ Neat Environment
   Update check       online
 
 Components
-  Neat core              0.4.0 channel=release latest=0.4.0
-  PyNeat                 0.4.0
-  neat-runtime           0.4.0
-  neat-gst-plugins       0.4.0
-  neat-insight           0.0.6 channel=release status=Running venv=/opt/neat-insight/venv
-  Model Compiler         2.1.3 run activate-model-compiler to activate
+  Neat core              %%release.core%% channel=release latest=%%release.core%%
+  PyNeat                 %%release.core%%
+  neat-runtime           %%release.core%%
+  neat-gst-plugins       %%release.core%%
+  neat-insight           %%release.insight%% channel=release status=Running venv=/opt/neat-insight/venv
+  Model Compiler         %%release.model_compiler%% run activate-model-compiler to activate
 
 Exposed Ports
   Insight Web UI     https://10.0.0.22:9900
@@ -86,3 +86,23 @@ Continue to [Compile a Model](/compile-a-model/) to prepare a model for Modalix 
 this runs in the SDK and needs no DevKit. To run a full application on hardware,
 see [Hello Neat!](/develop-apps/hello-neat/minimal/), which requires a paired
 DevKit.
+
+## PCIe host and card status
+
+The `sima-pcie-host` package also installs `neat` on Ubuntu. Run `neat` or `neat --json` to read installed host packages, PyNeatPCIe, and the board and installed software on each SiMa PCIe card. Cards are listed by PCI address and interface. A PCI address describes the current attachment, not a permanent board serial number.
+
+```bash
+neat
+neat --json
+neat --offline
+```
+
+Card queries use the provisioned `10.0.N.1` host interface and `10.0.N.2` card address, matching `pcie-setup.sh`. Configure network access and trusted SSH keys first. The command does not configure interfaces, enroll host keys, prompt for passwords, use sudo on cards, or modify packages. Missing interfaces, nonstandard addresses, SSH failures, and unavailable software are reported per card; reachable cards still report their versions.
+
+`NEAT_PCIE_SSH_USER` selects the card SSH user (default `sima`). `NEAT_PCIE_SSH_KEY` selects a private key (default `~/.ssh/sima_neat_pcie_ed25519`); existing SSH configuration and agent authentication remain available. `--offline` skips Internet update checks but still reads attached cards over local SSH. PCIe host status skips artifact update checks; use `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>` to update the host package. `neat update` does not update PCIe cards.
+
+JSON retains `sima.neat.status.v1` and adds `components.pcieHost`, `components.pcieScheduler`, `components.pyneatpcie`, and `pcie`. The `pcie` object contains host software, a `cards` array with PCI address, interfaces, address, state, software and error fields, and topology errors. Missing remote software is `null`, not an inferred installed version.
+
+PyNeat and PyNeatPCIe status lists each detected installation with its version and virtual environment path. Separate environments are reported as multiple environments, not a version conflict. For packages outside a virtual environment, the output shows the package directory instead. Status reads package metadata without importing native modules.
+
+Each Python entry in JSON adds an `installations` array. Each record contains `version`, `environment`, and `path` (the package directory). `environment` is `null` outside a virtual environment. The summary `version` is `null` when installed versions differ; multiple installations alone do not set `error`. Symlinked paths to the same installation are listed once.

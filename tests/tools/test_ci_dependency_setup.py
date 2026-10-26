@@ -91,62 +91,72 @@ else:
         assert 'fixture package configuration failed' in result.stderr
 
 
-@pytest.mark.parametrize('missing_archive', [False, True])
-def test_sdk_shell_retains_only_actual_official_cache_exports(tmp_path, missing_archive):
-    """Exercise the actual shell below its SDK/coordinator command boundaries."""
+# overlay None is a fresh SDK image: no overlay, so the sysroot is the image's platform.
+@pytest.mark.parametrize(('update', 'image', 'overlay', 'code'), [
+    ('OFF', '3.0.0~pre2371', '3.0.0~pre2372', 0), ('ON', '3.0.0~pre2371', '3.0.0~pre2372', 0),
+    ('OFF', '3.0.0~pre2372', '3.0.0~pre2371', 0),
+    ('OFF', '3.0.0~pre2372', None, 0), ('ON', '3.0.0~pre2372', None, 0),
+    ('OFF', '3.0.0~pre2371', None, 0), ('ON', '3.0.0~pre2371', None, 1),
+])
+def test_sdk_shell_checks_sysroot_and_downloads_exact_archives(tmp_path, update, image, overlay, code):
+    """Run the real shell with sysroot, APT and the coordinator mocked."""
     import json
     import os
     import shlex
-    import sys
-    script = (ROOT / 'scripts/ci/prepare_scheduler_sdk.sh').read_text()
-    assert 'SYSROOT_UPDATE_DOWNLOAD_DIR=$package_dir/downloads' in script
-    assert 'sysroot update' in script
-    cache = tmp_path / 'official-cache'; cache.mkdir()
-    provider = cache / 'consumed.deb'; provider.write_bytes(b'exact provider')
-    (cache / 'unrelated.deb').write_bytes(b'unrelated SDK package')
+    calls = tmp_path / 'calls'
     tools = tmp_path / 'tools'; tools.mkdir()
-    (tools / 'build_dependencies.py').write_text('''import json, pathlib, shlex, sys
+    (tools / 'build_dependencies.py').write_text('''import json, os, pathlib, shlex, sys
 command = sys.argv[1]
 if command == 'sdk-policy': print(json.dumps({'elxr_version':'3.0.0_master_B2372', 'sysroot-version':'3.0.0~pre2372', 'platform-version':'3.0.0', 'sdk':{'channel':'develop'}}))
 elif command == 'verify-sdk': print(json.dumps({'status':'verified'}))
 else:
     root = pathlib.Path(sys.argv[sys.argv.index('--platform-package-dir')+1])
-    matches = list(root.rglob('consumed.deb'))
-    if len(matches) != 1: raise SystemExit(31)
-    p = matches[0]
-    print('export NEAT_RUNNER_PLATFORM_RUNTIME_DEBS=' + shlex.quote(json.dumps([str(p)])))
+    print('export NEAT_RUNNER_PLATFORM_RUNTIME_DEBS=' + shlex.quote(json.dumps(sorted(map(str, root.glob('*.deb'))))))
 ''')
-    official = tmp_path / 'official.sh'
-    official.write_text('#!/bin/sh\nset -eu\n[ "$SDK_PKG_LIST" = fixture-dev ]\n'
-                        'if [ "$1" = update ]; then\n'
-                        '  mkdir -p "$SYSROOT_UPDATE_DOWNLOAD_DIR"\n'
-                        f'  cp {shlex.quote(str(cache))}/*.deb "$SYSROOT_UPDATE_DOWNLOAD_DIR/"\n'
-                        'fi\n')
-    official.chmod(0o755)
-    env = tmp_path / 'env.sh'; env.write_text('export CXX=cross-g++-14\n')
-    script = script.replace('sysroot update', str(official) + ' update').replace('sysroot status', str(official) + ' status')
-    script = script.replace('/opt/bin/simaai-init-build-env', str(env))
+    coordinator = tmp_path / 'scheduler/usr/share/SimaScheduler/tools'; coordinator.mkdir(parents=True)
+    (coordinator / 'client_dependencies.py').write_text('''
+def receipt(root, name): return name
+def platform_provider_contracts(runner):
+    return {'heap': {'debian_provider': {'Package': 'simaai-heap', 'Architecture': 'arm64', 'Version': '3.0~pre2372'}}}
+''')
+    stubs = tmp_path / 'bin'; stubs.mkdir()
+    (stubs / 'sysroot').write_text(f'#!/bin/sh\necho "sysroot $* SDK_PKG_LIST=$SDK_PKG_LIST" >> {calls}\n'
+                                   f'[ "$1" = status ] && printf "%s\\n" "SDK image platform:       {image}" '
+                                   f'"Sysroot overlay state:    {"active" if overlay else "inactive"}" '
+                                   f'"Sysroot overlay revision: {overlay or "none"}"\nexit 0\n')
+    (stubs / 'apt-get').write_text(f'#!/bin/sh\necho "apt-get $* APT_CONFIG=$APT_CONFIG" >> {calls}\n'
+                                   '[ "$1" = download ] && touch "$(echo "$2" | tr ":=" "__").deb"\nexit 0\n')
+    for stub in stubs.iterdir():
+        stub.chmod(0o755)
+    env_script = tmp_path / 'env.sh'; env_script.write_text('export CXX=cross-g++-14\n')
+    script = (ROOT / 'scripts/ci/prepare_scheduler_sdk.sh').read_text()
+    script = script.replace('/opt/bin/simaai-init-build-env', str(env_script))
     script = script.replace('tools/ci/scheduler_sdk_policy.py', str(ROOT / 'tools/ci/scheduler_sdk_policy.py'))
+    script = script.replace('[[ $(id -u) == 0 ]]', '[[ 0 == 0 ]]')
     (tmp_path / 'deps').mkdir()
     (tmp_path / 'deps/manifest.json').write_text(json.dumps({'platform-version': '3.0.0', 'sdk': {'channel': 'develop'}}))
-    # Never grant fixture privileges; source production root/sudo branches are unchanged.
-    script = script.replace('[[ $(id -u) == 0 ]]', '[[ 0 == 0 ]]')
-    if missing_archive: provider.unlink()
-    retained = tmp_path / 'retained'
-    result = subprocess.run(['/bin/bash', '-c', script, 'sdk-test', str(retained)], cwd=tmp_path,
-                            text=True, capture_output=True, env={**os.environ, 'SDK_PKG_LIST': 'fixture-dev'})
-    if missing_archive:
-        assert result.returncode == 31, result.stderr
-        assert not list(retained.glob('*.deb'))
-    else:
-        assert result.returncode == 0, result.stderr
-        selected = retained / 'retained'
-        assert [p.name for p in selected.glob('*.deb')] == ['consumed.deb']
-        assert (selected / 'consumed.deb').read_bytes() == provider.read_bytes()
-        assert str(selected / 'consumed.deb') in result.stdout
-        assert (retained / 'downloads/consumed.deb').read_bytes() == provider.read_bytes()
-        assert str(retained / 'downloads') not in result.stdout
-        assert str(cache) not in result.stdout
+    cache = tmp_path / 'cache'
+    result = subprocess.run(['/bin/bash', '-c', script, 'sdk-test', str(cache)], cwd=tmp_path, text=True,
+                            capture_output=True, env={**os.environ, 'PATH': f'{stubs}:{os.environ["PATH"]}',
+                                                      'SDK_PKG_LIST': '\tfixture-dev,\t,extra-dev',
+                                                      'NEAT_UPDATE_SYSROOT': update,
+                                                      'NEAT_SCHEDULER_PACKAGE_DIR': str(tmp_path / 'scheduler'),
+                                                      'NEAT_RUNNER_PACKAGE_DIR': str(tmp_path / 'runner')})
+    log = calls.read_text().splitlines()
+    updates = [line for line in log if line.startswith('sysroot update')]
+    assert updates == ([f'sysroot update 3.0.0~pre2372 SDK_PKG_LIST=fixture-dev,extra-dev'] if update == 'ON' else [])
+    assert result.returncode == code, result.stderr
+    if code:
+        assert 'after updating' in result.stderr
+        return
+    mismatch = (overlay or image) != '3.0.0~pre2372'
+    assert ('sudo env SDK_PKG_LIST=fixture-dev,extra-dev sysroot update 3.0.0~pre2372' in result.stderr) == mismatch
+    apt_config = str(cache / 'apt/apt.conf')
+    assert f'apt-get download simaai-heap:arm64=3.0~pre2372 APT_CONFIG={apt_config}' in log
+    assert 'https://debian.neat.sima.ai/pre-release agate' in (cache / 'apt/sources.list').read_text()
+    archive = cache / 'downloads/simaai-heap_arm64_3.0~pre2372.deb'
+    assert result.stdout.strip() == 'export NEAT_RUNNER_PLATFORM_RUNTIME_DEBS=' + shlex.quote(json.dumps([str(archive)]))
+    assert not list(coordinator.rglob('__pycache__'))
 
 
 @pytest.mark.parametrize('version', ['', '3.0.0~pre2371'])

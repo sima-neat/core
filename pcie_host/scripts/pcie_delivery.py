@@ -130,16 +130,56 @@ def stage(directory, destination):
     return selection
 
 
+def publication_paths(directory):
+    """Publish the declared closure, including producer resources of any type."""
+    directory = Path(directory)
+    metadata = json.loads((directory / 'metadata.json').read_text())
+    resources = metadata['resources']
+    hashes = metadata['resources-checksum']
+    if (not resources or len(resources) != len(set(resources))
+            or set(resources) != set(hashes)):
+        raise ValueError('Invalid publication inventory')
+    paths = []
+    for name in resources:
+        if Path(name).name != name or name in ('.', '..') or '\n' in name or '\r' in name:
+            raise ValueError('Invalid publication resource path')
+        path = directory / name
+        if path.is_symlink() or not path.is_file() or sha(path) != hashes[name]:
+            raise ValueError('Publication resource missing or changed: ' + name)
+        paths.append(path)
+    # Preserve metadata staging and existing downloadable checksum sidecars.
+    for name in ('metadata.json', 'metadata-extras.json', 'metadata-pyneatpcie.json'):
+        path = directory / name
+        if path.is_symlink():
+            raise ValueError('Invalid publication metadata')
+        if path.is_file():
+            paths.append(path)
+    for name in resources:
+        path = directory / (name + '.sha256')
+        if path.is_symlink():
+            raise ValueError('Invalid checksum sidecar')
+        if path.is_file():
+            fields = path.read_text().split()
+            if len(fields) != 2 or fields[0] != hashes[name] or Path(fields[1].lstrip('*')).name != name:
+                raise ValueError('Checksum sidecar differs: ' + name)
+            paths.append(path)
+    return sorted(set(paths))
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest='command', required=True)
     c = sub.add_parser('compose'); c.add_argument('--selection', required=True); c.add_argument('--output', required=True)
     s = sub.add_parser('stage'); s.add_argument('--directory', required=True); s.add_argument('--destination', required=True)
+    listing = sub.add_parser('publication-list'); listing.add_argument('--directory', required=True)
     for command in ('verify', 'install-list'):
         v = sub.add_parser(command); v.add_argument('--directory', required=True); v.add_argument('--runtime'); v.add_argument('--development'); v.add_argument('--runtime-only', action='store_true')
         if command == 'install-list':
             v.add_argument('--extra-dependency', action='append', default=[])
     args = p.parse_args()
+    if args.command == 'publication-list':
+        print('\n'.join(map(str, publication_paths(args.directory))))
+        return
     if args.command == 'compose': compose(args.selection, args.output); return
     if args.command == 'stage':
         selection = stage(args.directory, args.destination)

@@ -30,7 +30,7 @@ SDK를 설치하고 DevKit와 페어링하지 않은 경우, 다음 두 단계�
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/getting-started/dev-environment/install-the-environment/"><strong>환경을 설치하세요.</strong><span>사용 중인 DevKit 소프트웨어 버전에 맞는 SDK 패키지를 설치하고 설정합니다.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/dev-environment/devkit-sync/"><strong>DevKit Sync</strong><span>작업 공간 공유, 페어링 업데이트, rsync 백업 방식 등을 이해합니다. <code>dk</code> 명령어 실행.</span></a></li>
-      <li><a class="overview-link-card" href="/getting-started/dev-environment/offline-installation/"><strong>오프라인 설치</strong><span>제한된 네트워크 환경을 위한 SDK 및 Model Compiler 패키지를 다운로드하세요.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/offline-installation/"><strong>오프라인 설치</strong><span>오프라인 설치를 위한 SDK 및 Model Compiler 패키지를 다운로드하세요.</span></a></li>
     </ul>
   </section>
 </div>
@@ -78,7 +78,7 @@ LLiMa를 사용하여 GenAI 모델을 컴파일하는 작업은 기본 SDK보다
 `arm64`와 `aarch64`는 동일한 64비트 Arm 아키텍처입니다. macOS에서는 `arm64`로, Linux에서는 `aarch64`로 보고됩니다. 마찬가지로 `x86_64`와 `amd64`는 동일한 아키텍처입니다. 호스트(또는 SDK 내부)에서 `uname -m`을 실행하여 어떤 아키텍처를 사용하는지 확인하십시오. Model Compiler 설치 명령어는 `arm64`와 `amd64`를 사용합니다. 자세한 내용은 [Model Compiler를 설치합니다.](/getting-started/dev-environment/install-model-compiler/)를 참조하십시오.
 
 :::note 특정 버전 설치
-기본 설치는 현재 지원되는 기본값을 사용합니다. `release-2.1` 채널은 [환경을 설치하세요.](/getting-started/dev-environment/install-the-environment/) 페이지에서 항상 최신 2.1 패치 릴리스를 추적합니다. 정확한 SDK, Neat Library 또는 Model Compiler 버전을 지정하려면 [호환성 안내서](/getting-started/compatibility/)을 참조하십시오.
+기본 설치는 현재 지원되는 기본값을 사용합니다. `%%release.sdk_channel%%` 채널은 [환경을 설치하세요.](/getting-started/dev-environment/install-the-environment/) 페이지에서 항상 최신 %%release.sdk_series%% 패치 릴리스를 추적합니다. 정확한 SDK, Neat Library 또는 Model Compiler 버전을 지정하려면 [호환성 안내서](/getting-started/compatibility/)을 참조하십시오.
 :::
 
 ## SDK에 포함된 도구
