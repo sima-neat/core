@@ -42,18 +42,18 @@ sidebar_position: 6
 ### 1. 패키지 다운로드
 
 인터넷에 연결된 컴퓨터에서 해당하는 명령 하나를 실행하세요.
-다음 예제는 SDK 2.1.3.0을 사용합니다.
+다음 예제는 SDK %%release.sdk%%을 사용합니다.
 
 `amd64` 대상 호스트의 경우:
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@v2.1.3.0 -t offline-amd64
+sima-cli neat install sdk@v%%release.sdk%% -t offline-amd64
 </ShellCommand>
 
 `arm64` 대상 호스트의 경우:
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@v2.1.3.0 -t offline-arm64
+sima-cli neat install sdk@v%%release.sdk%% -t offline-arm64
 </ShellCommand>
 
 ### 2. 패키지 설치
@@ -86,18 +86,18 @@ bash ./install_offline_sdk.sh
 
 [Model Compiler 호환성 요구 사항](/getting-started/compatibility/#model-compiler)을 확인하세요.
 인터넷에 연결된 컴퓨터에서 해당하는 명령 하나를 실행하세요.
-다음 예제는 Model Compiler 2.1.3을 사용합니다.
+다음 예제는 Model Compiler %%release.model_compiler%%을 사용합니다.
 
 `amd64` 대상 호스트의 경우:
 
 <ShellCommand prompt="host">
-sima-cli neat install model-compiler/amd64@v2.1.3 -t offline
+sima-cli neat install model-compiler/amd64@v%%release.model_compiler%% -t offline
 </ShellCommand>
 
 `arm64` 대상 호스트의 경우:
 
 <ShellCommand prompt="host">
-sima-cli neat install model-compiler/arm64@v2.1.3 -t offline
+sima-cli neat install model-compiler/arm64@v%%release.model_compiler%% -t offline
 </ShellCommand>
 
 ### 2. 패키지 설치

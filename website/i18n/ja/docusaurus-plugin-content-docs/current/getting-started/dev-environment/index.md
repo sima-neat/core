@@ -80,7 +80,7 @@ LLiMa を使用して GenAI モデルをコンパイルする場合、基本的�
 :::
 
 :::note 特定のバージョンをインストールする
-標準インストールでは、現在サポートされているデフォルト設定が適用されます。`release-2.1`チャンネルは、[環境をインストールします。](/getting-started/dev-environment/install-the-environment/)ページで常に最新の2.1パッチリリースを追跡します。特定のSDK、Neat Library、またはModel Compilerバージョンを固定するには、[互換性ガイド](/getting-started/compatibility/)を参照してください。
+標準インストールでは、現在サポートされているデフォルト設定が適用されます。`%%release.sdk_channel%%`チャンネルは、[環境をインストールします。](/getting-started/dev-environment/install-the-environment/)ページで常に最新の%%release.sdk_series%%パッチリリースを追跡します。特定のSDK、Neat Library、またはModel Compilerバージョンを固定するには、[互換性ガイド](/getting-started/compatibility/)を参照してください。
 :::
 
 ## SDKに含まれるツール

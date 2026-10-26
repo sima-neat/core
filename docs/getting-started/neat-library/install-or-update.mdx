@@ -121,7 +121,7 @@ optionally install extras, including prebuilt tutorials, source-code tutorials,
 and tests:
 
 <ShellCommand prompt="sdk">
-sima-cli neat install core@v0.4.0
+sima-cli neat install core@v%%release.core%%
 </ShellCommand>
 
 </CodeTab>
@@ -142,7 +142,7 @@ paths. PyNeat is not installed because it remains a DevKit runtime feature:
 
 <ShellCommand prompt="sdk">
 cd $HOME &amp;&amp; mkdir -p neat &amp;&amp; cd neat
-sima-cli neat install core@release-0.3
+sima-cli neat install core@v%%release.core%%
 </ShellCommand>
 
 </CodeTab>
@@ -166,7 +166,7 @@ optionally install extras, including prebuilt tutorials, source-code tutorials,
 and tests:
 
 <ShellCommand prompt="devkit">
-sima-cli neat install core@v0.2.2
+sima-cli neat install core@v%%release.core%%
 </ShellCommand>
 
 </CodeTab>
@@ -214,14 +214,14 @@ Install `sima-cli` on the computer with internet access. See the [sima-cli insta
 Run this command on the computer with internet access:
 
 <ShellCommand prompt="host">
-sima-cli neat install core/offline@v0.6.0 --download-only
+sima-cli neat install core/offline@v%%release.core%% --download-only
 </ShellCommand>
 
 The default package includes the runtime, tutorials, and tests.
 To download only the runtime, use:
 
 <ShellCommand prompt="host">
-sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
+sima-cli neat install core/offline@v%%release.core%% -t minimal --download-only
 </ShellCommand>
 
 ### 2. Install the package

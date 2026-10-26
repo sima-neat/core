@@ -1778,3 +1778,15 @@ Core 會保留產生端的借用生命週期並重用共用底層記憶體槽位
 安裝程式僅接受 Neat eLxr SDK 或已佈建的 Modalix DevKit。它會將 `/etc/sdk-release` 或 `/etc/buildinfo` 與封存檔內的套件資訊清單比對，不需要下載的發佈中繼資料。其他環境或不相容的 Platform 版本會在安裝前遭到拒絕。在 SDK 中，Core 會複製到 `/opt/toolchain/aarch64/modalix`。若已設定 `DEVKIT_SYNC_DEVKIT_IP`，同一個離線套件會透過 SSH 傳送至已配對的 DevKit。開始安裝前，兩個環境都必須通過預先檢查。在 DevKit 上則會於本機安裝。
 
 離線安裝使用與線上安裝相同的 Python 路徑。PCIe 主機使用 `~/pyneatpcie`。若安裝使用者可寫入 `/media/nvme`，DevKit 使用 `/media/nvme/pyneat`；否則使用 `~/pyneat`。安裝至 NVMe 時，`~/pyneat` 會連結至該環境。若 `~/pyneat` 已有其他環境，安裝程式會先將其保存在家目錄的 `pyneat-before-offline-*` 目錄中，再建立連結。
+
+## PCIe 主機與卡片狀態
+
+`sima-pcie-host` 套件也會在 Ubuntu 安裝 `neat`。執行 `neat` 或 `neat --json`，可讀取主機已安裝的套件、PyNeatPCIe，以及每張 SiMa PCIe 卡片的板卡與已安裝軟體資訊。卡片以 PCI 位址和介面列出。PCI 位址代表目前的連接位置，並非永久的板卡序號。
+
+卡片查詢使用已設定的主機介面 `10.0.N.1` 與卡片位址 `10.0.N.2`，與 `pcie-setup.sh` 相同。請先設定網路連線與受信任的 SSH 金鑰。此命令不會設定介面、登錄主機金鑰、提示輸入密碼、在卡片上使用 sudo 或修改套件。缺少介面、非標準位址、SSH 失敗及無法讀取軟體資訊的情況會逐卡回報；可連線的卡片仍會顯示版本。
+
+JSON 保留 `sima.neat.status.v1`，並新增 `components.pcieHost`、`components.pcieScheduler`、`components.pyneatpcie` 與 `pcie`。`pcie` 包含主機軟體、具有 PCI 位址、介面、位址、狀態、軟體與錯誤欄位的 `cards` 陣列，以及拓樸錯誤。無法讀取遠端軟體時回傳 `null`，不會推測已安裝的版本。
+
+PyNeat 和 PyNeatPCIe 狀態會列出每個偵測到的安裝版本及其虛擬環境路徑。不同環境會顯示為多個環境，而非版本衝突。對於虛擬環境以外的套件，輸出會改為顯示套件目錄。狀態查詢只讀取套件中繼資料，不會匯入原生模組。
+
+JSON 中的每個 Python 項目會新增 `installations` 陣列。每筆記錄包含 `version`、`environment` 和 `path`（套件目錄）。在虛擬環境以外，`environment` 為 `null`。若安裝版本不同，摘要的 `version` 為 `null`；僅有多個安裝不會設定 `error`。指向同一安裝的符號連結路徑只會列出一次。

@@ -10,8 +10,28 @@ your Core checkout in the Neat SDK:
 By default, `build.sh`:
 
 1. Downloads the published Scheduler set and the LLiMa packages from Vulcan.
-2. Installs both into the SDK sysroot.
+2. Unpacks the Scheduler set into the checkout's `deps/` folder and installs
+   LLiMa into the SDK sysroot.
 3. Builds Core.
+
+`build.sh` does not install the Scheduler set into the SDK sysroot, so several
+Core checkouts can build against different Scheduler sets in one SDK container
+at the same time. They share the sysroot's LLiMa: `build.sh` skips the LLiMa
+install when the sysroot already holds the same packages.
+
+## Match the SDK sysroot to the Scheduler set
+
+Each Scheduler set records the sysroot version it was built for. `build.sh`
+compares it with `sysroot status` and prints a warning with the exact
+`sysroot update` command when they differ. To update the sysroot as part of the
+build, pass `--update-sysroot`:
+
+```bash
+./build.sh --all --no-doc --update-sysroot
+```
+
+This runs `sudo sysroot update <version>` with the platform packages Core
+compiles against. CI always passes it.
 
 ## Use local Scheduler or LLiMa packages
 
@@ -22,7 +42,8 @@ To build Core against your own Scheduler or LLiMa build, pass its DEB folder:
 ```
 
 Each option works alone; `build.sh` still downloads the other dependency. The
-given packages replace the published ones in the sysroot.
+given Scheduler set replaces the published one in this checkout's `deps/`
+folder, and the given LLiMa packages replace the LLiMa in the SDK sysroot.
 
 The Scheduler folder holds the complete set that Scheduler was built with:
 
@@ -197,8 +218,9 @@ validates the bundled Runner, Kernels and Codecs archives. Core does not resolve
 those repositories independently.
 
 The selected Scheduler package installs its exact SDK policy. In the SDK,
-`build.sh` runs `scripts/ci/prepare_scheduler_sdk.sh`, which uses the official
-sysroot setup command for that revision and retains downloaded platform archives. The
+`build.sh` runs `scripts/ci/prepare_scheduler_sdk.sh`, which checks the sysroot
+version and downloads the Runner's exact platform archives into `deps/` with a
+private APT configuration. It runs `sysroot update` only with `--update-sysroot`. The
 coordinator checks the real GCC14 version/target and target SDK identities, then
 selects the exact Runner-consumed runtime provider archives through
 `NEAT_RUNNER_PLATFORM_RUNTIME_DEBS`. Native ARM64 and cross-compilers need not

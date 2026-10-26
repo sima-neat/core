@@ -100,7 +100,7 @@ cd $HOME && mkdir -p neat && cd neat
 安裝 `sima-cli` 預設選取的 Neat Library 套件。您可以選擇性地安裝額外內容，包括預先建置的教學課程、原始碼教學課程和測試：
 
 <ShellCommand prompt="sdk">
-sima-cli neat install core@v0.4.0
+sima-cli neat install core@v%%release.core%%
 </ShellCommand>
 
 </CodeTab>
@@ -117,7 +117,7 @@ grep -E '^(SDK Type|Platform Base|Platform Version) =' /etc/sdk-release
 
 <ShellCommand prompt="sdk">
 cd $HOME &amp;&amp; mkdir -p neat &amp;&amp; cd neat
-sima-cli neat install core@release-0.3
+sima-cli neat install core@v%%release.core%%
 </ShellCommand>
 
 </CodeTab>
@@ -138,7 +138,7 @@ cd /media/nvme && mkdir -p neat && cd neat
 安裝 `sima-cli` 預設選取的 Neat Library 套件。您可以選擇性地安裝額外內容，包括預先建置的教學課程、原始碼教學課程和測試：
 
 <ShellCommand prompt="devkit">
-sima-cli neat install core@v0.2.2
+sima-cli neat install core@v%%release.core%%
 </ShellCommand>
 
 </CodeTab>
@@ -178,14 +178,14 @@ Neat Library 離線套件自 0.6.0 版本起提供。
 在可連上網際網路的電腦上執行此命令：
 
 <ShellCommand prompt="host">
-sima-cli neat install core/offline@v0.6.0 --download-only
+sima-cli neat install core/offline@v%%release.core%% --download-only
 </ShellCommand>
 
 預設套件包含執行階段、教學和測試。
 若只要下載執行階段，請使用：
 
 <ShellCommand prompt="host">
-sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
+sima-cli neat install core/offline@v%%release.core%% -t minimal --download-only
 </ShellCommand>
 
 ### 2. 安裝套件

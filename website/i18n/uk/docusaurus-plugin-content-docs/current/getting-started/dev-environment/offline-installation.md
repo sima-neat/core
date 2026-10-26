@@ -42,18 +42,18 @@ sidebar_position: 6
 ### 1. Завантажте пакет
 
 Виконайте одну відповідну команду на комп’ютері з доступом до інтернету.
-У цих прикладах використано SDK 2.1.3.0.
+У цих прикладах використано SDK %%release.sdk%%.
 
 Для цільового хоста `amd64`:
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@v2.1.3.0 -t offline-amd64
+sima-cli neat install sdk@v%%release.sdk%% -t offline-amd64
 </ShellCommand>
 
 Для цільового хоста `arm64`:
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@v2.1.3.0 -t offline-arm64
+sima-cli neat install sdk@v%%release.sdk%% -t offline-arm64
 </ShellCommand>
 
 ### 2. Встановіть пакет
@@ -86,18 +86,18 @@ bash ./install_offline_sdk.sh
 
 Перевірте [вимоги до сумісності Model Compiler](/getting-started/compatibility/#model-compiler).
 Виконайте одну відповідну команду на комп’ютері з доступом до інтернету.
-У цих прикладах використано Model Compiler 2.1.3.
+У цих прикладах використано Model Compiler %%release.model_compiler%%.
 
 Для цільового хоста `amd64`:
 
 <ShellCommand prompt="host">
-sima-cli neat install model-compiler/amd64@v2.1.3 -t offline
+sima-cli neat install model-compiler/amd64@v%%release.model_compiler%% -t offline
 </ShellCommand>
 
 Для цільового хоста `arm64`:
 
 <ShellCommand prompt="host">
-sima-cli neat install model-compiler/arm64@v2.1.3 -t offline
+sima-cli neat install model-compiler/arm64@v%%release.model_compiler%% -t offline
 </ShellCommand>
 
 ### 2. Встановіть пакет

@@ -775,6 +775,44 @@ report = model.benchmark(options)
 
 若也要量測每個 MLA 層或每個階段的時間，請設定 `include_mla_layer_stats` 或 `include_mla_stage_stats`。若要保留結果，`report.save(path)` 會將報告寫成 YAML；路徑以 `.json` 結尾時則寫成 JSON。兩者的範例請參閱[為您的模型進行基準測試](/tutorials/benchmark-your-model)。
 
+### 使用自己的輸入進行測量 {#measure-with-your-own-inputs}
+
+對於成本取決於資料的模型（例如偵測或分割解碼器），合成輸入可能無法反映實際情況。若要以真實資料測量，請將 `inputs` 設為您會傳給 `run()` 的張量，每個模型輸入各一個。基準測試會將這些張量同時用於延遲與吞吐量的測量。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+cv::Mat image;
+cv::cvtColor(cv::imread("bus.jpg"), image, cv::COLOR_BGR2RGB);  // the format input_specs() reports
+
+simaai::neat::BenchmarkOptions options;
+options.inputs = simaai::neat::TensorList{
+    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::RGB,
+                                      simaai::neat::TensorMemory::EV74)};
+
+simaai::neat::BenchmarkReport report = model.benchmark(options);
+std::cout << "input=" << report.input << " fps=" << report.fps << "\n";  // input=provided
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+image = cv2.cvtColor(cv2.imread("bus.jpg"), cv2.COLOR_BGR2RGB)  # the format input_specs() reports
+
+options = pyneat.BenchmarkOptions()
+options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.RGB)]
+
+report = model.benchmark(options)
+print("input=", report.input, "fps=", report.fps)  # input= provided
+```
+
+</CodeTab>
+</CodeTabs>
+
+若輸入的數量、形狀或資料型別與模型不符，`benchmark()` 會在開始前擲回錯誤代碼為 `misconfig.input_shape` 的 `NeatError`。路由無法轉換的色彩格式會在建立管線時失敗，與 `run()` 相同。在會預處理影像的路由上，影像可以是任意大小，請以 `input_specs()` 回報的色彩格式傳入。
+
 ### 執行長度
 
 基準測試會測量單次執行（single-flight）延遲，然後執行另一個獨立的吞吐量階段。每個階段都會持續執行，直到至少測量了 `num_samples` 個輸入且已經過 `min_duration_ms`（預設為 10 秒），因此兩個階段依相同規則停止，吞吐量階段的功耗和溫度讀數也會涵蓋多個遙測樣本，而不只是短暫的爆發。`latency_ms` 是延遲階段的平均延遲，`latency_p50_ms`、`latency_p95_ms` 和 `latency_p99_ms` 則是其百分位數。`throughput_samples` 和 `throughput_duration_ms` 會回報吞吐量階段實際測量的內容。若要進行快速的初步檢查，請將 `min_duration_ms` 設為 0，讓每個階段在測量 `num_samples` 個輸入後即停止：

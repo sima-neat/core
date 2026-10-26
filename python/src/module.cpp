@@ -4703,7 +4703,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("include_plugin_latency", &simaai::neat::BenchmarkOptions::include_plugin_latency)
       .def_rw("min_duration_ms", &simaai::neat::BenchmarkOptions::min_duration_ms)
       .def_rw("include_mla_layer_stats", &simaai::neat::BenchmarkOptions::include_mla_layer_stats)
-      .def_rw("include_mla_stage_stats", &simaai::neat::BenchmarkOptions::include_mla_stage_stats);
+      .def_rw("include_mla_stage_stats", &simaai::neat::BenchmarkOptions::include_mla_stage_stats)
+      .def_rw("inputs", &simaai::neat::BenchmarkOptions::inputs);
 
   using simaai::neat::Telemetry;
   using simaai::neat::TelemetryMonitor;
@@ -4789,6 +4790,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("peak_power_watts", &simaai::neat::BenchmarkReport::peak_power_watts)
       .def_rw("throughput_samples", &simaai::neat::BenchmarkReport::throughput_samples)
       .def_rw("throughput_duration_ms", &simaai::neat::BenchmarkReport::throughput_duration_ms)
+      .def_rw("input", &simaai::neat::BenchmarkReport::input)
       .def_ro("telemetry", &simaai::neat::BenchmarkReport::telemetry)
       .def_ro("mla_layer_stats", &simaai::neat::BenchmarkReport::mla_layer_stats)
       .def_ro("mla_stage_stats", &simaai::neat::BenchmarkReport::mla_stage_stats)

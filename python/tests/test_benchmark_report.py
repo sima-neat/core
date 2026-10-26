@@ -23,6 +23,7 @@ def test_report_round_trip(tmp_path, filename):
   report.fps = 100.5
   report.avg_power_watts = 7.25
   report.energy_joules = 0.00125
+  report.input = "provided"
   path = tmp_path / "model with spaces" / filename
   written = report.save(path)
   assert Path(written) == path
@@ -50,6 +51,7 @@ def test_report_round_trip(tmp_path, filename):
       "latency_p99_ms": report.latency_p99_ms,
       "peak_power_watts": report.peak_power_watts,
       "throughput_samples": report.throughput_samples,
+      "input": "provided",
       "throughput_duration_ms": report.throughput_duration_ms,
       "fps": report.fps,
       "avg_power_watts": report.avg_power_watts,

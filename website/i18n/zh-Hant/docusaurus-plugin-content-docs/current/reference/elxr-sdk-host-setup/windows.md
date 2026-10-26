@@ -15,7 +15,7 @@ sidebar_position: 2
 
 ## 從 WSL 開始。
 
-請從您的 WSL Linux 發行版內部執行 Neat SDK 指令，而不是從 PowerShell 或命令提示字元執行。這包括 `sima-cli neat install sdk@release-2.1`。
+請從您的 WSL Linux 發行版內部執行 Neat SDK 指令，而不是從 PowerShell 或命令提示字元執行。這包括 `sima-cli neat install sdk@%%release.sdk_channel%%`。
 
 ## WSL 網路模式
 

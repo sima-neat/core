@@ -99,7 +99,7 @@ cd $HOME && mkdir -p neat && cd neat
 `sima-cli`에서 선택한 기본 Neat Library 패키지를 설치합니다. 필요에 따라 미리 만들어진 튜토리얼, 소스 코드 튜토리얼, 테스트 등 추가 기능을 설치할 수 있습니다.
 
 <ShellCommand prompt="sdk">
-sima-cli neat install core@v0.4.0
+sima-cli neat install core@v%%release.core%%
 </ShellCommand>
 
 </CodeTab>
@@ -116,7 +116,7 @@ grep -E '^(SDK Type|Platform Base|Platform Version) =' /etc/sdk-release
 
 <ShellCommand prompt="sdk">
 cd $HOME &amp;&amp; mkdir -p neat &amp;&amp; cd neat
-sima-cli neat install core@release-0.3
+sima-cli neat install core@v%%release.core%%
 </ShellCommand>
 
 </CodeTab>
@@ -136,7 +136,7 @@ cd /media/nvme && mkdir -p neat && cd neat
 `sima-cli`에서 선택한 기본 Neat Library 패키지를 설치합니다. 필요에 따라 미리 만들어진 튜토리얼, 소스 코드 튜토리얼, 테스트 등 추가 기능을 설치할 수 있습니다.
 
 <ShellCommand prompt="devkit">
-sima-cli neat install core@v0.2.2
+sima-cli neat install core@v%%release.core%%
 </ShellCommand>
 
 </CodeTab>
@@ -175,14 +175,14 @@ Platform 3.0 이상을 사용하는 Modalix DevKit에 이 패키지를 사용하
 인터넷에 연결된 컴퓨터에서 다음 명령을 실행하세요:
 
 <ShellCommand prompt="host">
-sima-cli neat install core/offline@v0.6.0 --download-only
+sima-cli neat install core/offline@v%%release.core%% --download-only
 </ShellCommand>
 
 기본 패키지에는 런타임, 튜토리얼 및 테스트가 포함됩니다.
 런타임만 다운로드하려면 다음을 사용하세요:
 
 <ShellCommand prompt="host">
-sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
+sima-cli neat install core/offline@v%%release.core%% -t minimal --download-only
 </ShellCommand>
 
 ### 2. 패키지 설치

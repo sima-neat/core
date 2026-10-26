@@ -112,9 +112,9 @@ have. The Model Compiler install commands use `arm64` and `amd64` — see
 :::
 
 :::note Installing a specific version
-Standard installation pulls the current supported defaults. The `release-2.1`
+Standard installation pulls the current supported defaults. The `%%release.sdk_channel%%`
 channel used on the [Install the Environment](/getting-started/dev-environment/install-the-environment/)
-page always tracks the latest 2.1 patch release. To pin an exact SDK, Neat Library,
+page always tracks the latest %%release.sdk_series%% patch release. To pin an exact SDK, Neat Library,
 or Model Compiler version, see the [Compatibility Guide](/getting-started/compatibility/).
 :::
 

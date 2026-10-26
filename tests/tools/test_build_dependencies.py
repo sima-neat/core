@@ -116,7 +116,9 @@ int main() {
         self.assertIn('fenv_t', broken.stderr)
         selected = self.configure()
         self.assertEqual(selected.returncode, 0, selected.stderr)
-        result = self.compile(shlex.split(selected.stdout))
+        # --sysroot makes GCC search the SDK's usr/include after every -isystem
+        # directory; this fixture is too small for a real --sysroot.
+        result = self.compile([*shlex.split(selected.stdout), '-isystem', str(self.sdk / 'usr/include')])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn(str(self.sdk / 'usr/include/fenv.h'), result.stderr)
         self.assertNotIn(f'/usr/include/c++/{self.major}/fenv.h\n',
@@ -471,62 +473,27 @@ select_and_normalize_local_artifact_paths
                 # Every selection starts from an empty folder.
                 self.assertEqual((staging / 'previous-set').exists(), not expected)
 
-    @unittest.skipUnless(shutil.which('dpkg-deb'), 'needs dpkg-deb')
-    def test_sysroot_holds_only_the_selected_scheduler_set(self):
-        def scheduler_set(name, files):
-            folder = self.root / name
-            for package, paths in files.items():
-                root = self.root / 'packages' / name / package
-                (root / 'DEBIAN').mkdir(parents=True)
-                (root / 'DEBIAN/control').write_text(
-                    f'Package: {package}\nVersion: 1\nArchitecture: all\nMaintainer: test\nDescription: test\n')
-                for path in paths:
-                    (root / path).parent.mkdir(parents=True, exist_ok=True)
-                    (root / path).write_text(name)
-                folder.mkdir(exist_ok=True)
-                subprocess.run(['dpkg-deb', '--build', '--root-owner-group', str(root), str(folder / f'{package}.deb')],
-                               check=True, capture_output=True)
-            return folder
-        first = scheduler_set('first', {'simaai-scheduler': ['usr/include/old.h', 'usr/include/shared.h'],
-                                        'simaai-kernels-firmware': ['usr/share/firmware.bin']})
-        scheduler_set('first/llima', {'sima-lmm-core': ['usr/include/old_llima.h']})
-        second = scheduler_set('second', {'simaai-scheduler': ['usr/include/new.h']})
-        # The SDK setup re-extracts the platform packages, one of which also ships shared.h.
-        sdk_setup = self.core / 'scripts/ci/prepare_scheduler_sdk.sh'
-        sdk_setup.parent.mkdir(parents=True)
-        sdk_setup.write_text('mkdir -p "$SYSROOT/usr/include"; echo platform > "$SYSROOT/usr/include/shared.h"\n')
-        script = 'set -euo pipefail\n' + '\n'.join(shell_function(name) for name in (
-            'modify_sysroot', 'record_sysroot_files', 'prepare_scheduler_sdk',
-            'install_scheduler_set_into_sysroot')) + '''
-run_privileged() { return 1; }
-for folder in "$@"; do
-  rm -rf "$NEAT_BACKEND_DEB_DIR"; mkdir -p "$NEAT_BACKEND_DEB_DIR"; cp "$folder"/*.deb "$NEAT_BACKEND_DEB_DIR"
-  prepare_scheduler_sdk
-  install_scheduler_set_into_sysroot
-  # The LLiMa step of ensure_neat_llima.
-  if [[ -d "$folder/llima" ]]; then
-    record_sysroot_files "$folder"/llima/*.deb
-    for deb in "$folder"/llima/*.deb; do modify_sysroot dpkg-deb -x "$deb" "$SYSROOT"; done
-  fi
-done
-'''
-        sysroot = self.root / 'sysroot'
-        staging = self.core / 'deps/scheduler'
-        staging.mkdir(parents=True)
-        env = {key: value for key, value in os.environ.items() if key in ('PATH', 'HOME', 'LANG')}
-        env.update(SYSROOT=str(sysroot), ELXR_SDK='ON', DOCS_ONLY='OFF', INSTALL_DEPS_ONLY='OFF',
-                   NEAT_BACKEND_DEB_DIR=str(self.core / 'deps/backend/debs'), NEAT_SCHEDULER_DEPS_DIR=str(staging),
-                   NEAT_SYSROOT_DEPENDENCY_FILES='var/lib/sima-neat/dependency.files',
-                   NEAT_SYSROOT_FILE_RECORD=str(staging / 'sysroot.files'))
-        result = subprocess.run(['bash', '-c', script, 'sysroot-test', str(first), str(second)],
-                                cwd=self.core, env=env, text=True, capture_output=True)
+    def test_scheduler_set_is_never_installed_into_the_sysroot(self):
+        build = (ROOT / 'build.sh').read_text()
+        self.assertNotIn('install_scheduler_set_into_sysroot', build)
+        self.assertNotIn('dependency.files', build)
+        self.assertNotIn('${SYSROOT', shell_function('prepare_scheduler_sdk'))
+
+    def test_sdk_environment_searches_deps_before_sysroot_headers(self):
+        init = self.root / 'init-env'
+        init.write_text('export SYSROOT=/sdk\n'
+                        'for v in CFLAGS CXXFLAGS CPPFLAGS; do\n'
+                        '  export $v="-O2 -I/sdk/usr/include -I/sdk/usr/include/simaai"\n'
+                        'done\n')
+        script = ('set -euo pipefail\n' + shell_function('activate_elxr_build_env_if_needed') +
+                  '\ndetect_elxr_wheel_platform() { :; }\n'
+                  'activate_elxr_build_env_if_needed >/dev/null\n'
+                  'printf "%s\\n" "$CFLAGS" "$CXXFLAGS" "$CPPFLAGS"\n')
+        env = {**os.environ, 'ELXR_SDK': 'ON', 'ELXR_INIT_SCRIPT': str(init), 'ELXR_MACHINE': 'modalix',
+               'ELXR_SDK_VERSION': 'test', 'ELXR_VERSION': 'test'}
+        result = subprocess.run(['bash', '-c', script], env=env, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        include = sysroot / 'usr/include'
-        self.assertEqual(sorted(path.name for path in include.iterdir()), ['new.h', 'shared.h'])
-        self.assertEqual((include / 'shared.h').read_text(), 'platform\n')
-        self.assertFalse((sysroot / 'usr/share/firmware.bin').exists())
-        llima = shell_function('ensure_neat_llima')
-        self.assertLess(llima.index('record_sysroot_files'), llima.index('dpkg-deb -x'))
+        self.assertEqual(result.stdout.splitlines(), ['-O2 -isystem /sdk/usr/include/simaai'] * 3)
 
     def test_cmake_always_receives_the_selected_docs_only_mode(self):
         values = {name: 'OFF' for name in (
@@ -568,7 +535,7 @@ done
         self.assertNotIn("ensure_neat_internals", main)
         order = ("maybe_reexec_from_shadow", "select_and_normalize_local_artifact_paths",
                  "activate_elxr_build_env_if_needed", "prepare_scheduler_sdk", "build_dependencies.py prepare",
-                 "install_scheduler_set_into_sysroot", "ensure_neat_llima", "configure_cmake")
+                 "ensure_neat_llima", "configure_cmake")
         self.assertEqual([main.index(step) for step in order], sorted(main.index(step) for step in order))
 
 

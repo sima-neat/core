@@ -54,13 +54,13 @@ sima-cli login
 **x86_64 上的 Ubuntu 22.04：**
 
 <ShellCommand prompt="pcie-host">
-sima-cli neat install core/pciehost/ubuntu22/amd64@v0.4.0
+sima-cli neat install core/pciehost/ubuntu22/amd64@v%%release.core%%
 </ShellCommand>
 
 **Ubuntu 24.04 於 x86_64 平台上：**
 
 <ShellCommand prompt="pcie-host">
-sima-cli neat install core/pciehost/ubuntu24/amd64@v0.4.0
+sima-cli neat install core/pciehost/ubuntu24/amd64@v%%release.core%%
 </ShellCommand>
 
 安裝程式會新增所有必要的元件，以便開發和執行 Neat PCIe 主機應用程式，包括 C++ API 和位於 `~/pyneatpcie` 的 Python 環境。
@@ -124,11 +124,11 @@ Neat 安裝程式不會安裝 Platform 驅動程式或變更 Platform 韌體。
 選擇適用於目標主機的 0.6.0 或更新版本。
 套件支援使用 `amd64` 或 `arm64` 處理器的 Ubuntu 22.04 和 24.04 主機。
 
-此範例在可連上網際網路的電腦上下載 0.6.0 版本。
+此範例在可連上網際網路的電腦上下載 %%release.core%% 版本。
 對於 Ubuntu 24.04 `amd64` 目標主機，請執行：
 
 <ShellCommand prompt="host">
-sima-cli neat install 'core/pciehost/ubuntu24/amd64@v0.6.0' -t offline -d ./pcie-offline
+sima-cli neat install 'core/pciehost/ubuntu24/amd64@v%%release.core%%' -t offline -d ./pcie-offline
 </ShellCommand>
 
 對於 Ubuntu 22.04，請將 `ubuntu24` 替換為 `ubuntu22`。

@@ -54,13 +54,13 @@ PCIeホスト上で作業ディレクトリを選択し、インストールさ�
 **x86_64環境におけるUbuntu 22.04:**
 
 <ShellCommand prompt="pcie-host">
-sima-cli neat install core/pciehost/ubuntu22/amd64@v0.4.0
+sima-cli neat install core/pciehost/ubuntu22/amd64@v%%release.core%%
 </ShellCommand>
 
 **x86_64 アーキテクチャにおける Ubuntu 24.04:**
 
 <ShellCommand prompt="pcie-host">
-sima-cli neat install core/pciehost/ubuntu24/amd64@v0.4.0
+sima-cli neat install core/pciehost/ubuntu24/amd64@v%%release.core%%
 </ShellCommand>
 
 インストーラーは、C++ APIや、`~/pyneatpcie` にあるPython環境など、Neat PCIeホストアプリケーションを開発および実行するために必要なものをすべて追加します。
@@ -124,11 +124,11 @@ Platform リリースに付属するシステムセットアップ手順を使�
 対象ホスト用のバージョン 0.6.0 以降を選択してください。
 パッケージは、`amd64` または `arm64` プロセッサーを搭載した Ubuntu 22.04 および 24.04 ホストに対応しています。
 
-この例では、インターネットに接続されたコンピューターでバージョン 0.6.0 をダウンロードします。
+この例では、インターネットに接続されたコンピューターでバージョン %%release.core%% をダウンロードします。
 Ubuntu 24.04 の `amd64` 対象ホストの場合は、次を実行してください：
 
 <ShellCommand prompt="host">
-sima-cli neat install 'core/pciehost/ubuntu24/amd64@v0.6.0' -t offline -d ./pcie-offline
+sima-cli neat install 'core/pciehost/ubuntu24/amd64@v%%release.core%%' -t offline -d ./pcie-offline
 </ShellCommand>
 
 Ubuntu 22.04 の場合は、`ubuntu24` を `ubuntu22` に置き換えてください。

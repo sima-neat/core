@@ -56,13 +56,13 @@ sima-cli login
 **Ubuntu 22.04 на x86_64:**
 
 <ShellCommand prompt="pcie-host">
-sima-cli neat install core/pciehost/ubuntu22/amd64@v0.4.0
+sima-cli neat install core/pciehost/ubuntu22/amd64@v%%release.core%%
 </ShellCommand>
 
 **Ubuntu 24.04 для архітектури x86_64:**
 
 <ShellCommand prompt="pcie-host">
-sima-cli neat install core/pciehost/ubuntu24/amd64@v0.4.0
+sima-cli neat install core/pciehost/ubuntu24/amd64@v%%release.core%%
 </ShellCommand>
 
 Програма встановлення додає все необхідне для розробки та запуску PCIe-застосунків Neat, зокрема, API C++ та середовище Python у `~/pyneatpcie`.
@@ -126,11 +126,11 @@ pcie-setup.sh --hosts "10.0.0.2"
 Виберіть версію 0.6.0 або новішу для цільового хоста.
 Пакети підтримують хости Ubuntu 22.04 та 24.04 з процесорами `amd64` або `arm64`.
 
-У цьому прикладі версію 0.6.0 завантажують на комп’ютері з доступом до інтернету.
+У цьому прикладі версію %%release.core%% завантажують на комп’ютері з доступом до інтернету.
 Для цільового хоста Ubuntu 24.04 `amd64` виконайте:
 
 <ShellCommand prompt="host">
-sima-cli neat install 'core/pciehost/ubuntu24/amd64@v0.6.0' -t offline -d ./pcie-offline
+sima-cli neat install 'core/pciehost/ubuntu24/amd64@v%%release.core%%' -t offline -d ./pcie-offline
 </ShellCommand>
 
 Для Ubuntu 22.04 замініть `ubuntu24` на `ubuntu22`.

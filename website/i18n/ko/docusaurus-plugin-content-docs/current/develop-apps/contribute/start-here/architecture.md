@@ -1671,3 +1671,15 @@ Core는 생산자의 대여 수명을 유지하면서 공유 기반 메모리 �
 설치 프로그램은 Neat eLxr SDK 또는 프로비저닝된 Modalix DevKit만 허용합니다. `/etc/sdk-release` 또는 `/etc/buildinfo`를 아카이브에 포함된 패키지 매니페스트와 비교하므로 다운로드한 배포 메타데이터는 필요하지 않습니다. 다른 환경이나 호환되지 않는 Platform 버전에서는 설치 전에 중단합니다. SDK에서는 Core를 `/opt/toolchain/aarch64/modalix`에 복사합니다. `DEVKIT_SYNC_DEVKIT_IP`가 설정되어 있으면 SSH를 통해 동일한 오프라인 번들을 페어링된 DevKit에 전송합니다. 설치를 시작하기 전에 두 환경 모두 사전 검사를 통과해야 합니다. DevKit에서는 로컬로 설치합니다.
 
 오프라인 설치는 온라인 설치와 같은 Python 경로를 사용합니다. PCIe 호스트는 `~/pyneatpcie`를 사용합니다. DevKit은 설치 사용자가 `/media/nvme`에 쓸 수 있으면 `/media/nvme/pyneat`를 사용하고, 그렇지 않으면 `~/pyneat`를 사용합니다. NVMe 설치에서는 `~/pyneat`가 해당 환경을 가리키는 링크입니다. `~/pyneat`에 다른 환경이 이미 있으면 설치 프로그램은 링크를 만들기 전에 홈 디렉터리의 `pyneat-before-offline-*` 디렉터리에 보관합니다.
+
+## PCIe 호스트 및 카드 상태
+
+`sima-pcie-host` 패키지는 Ubuntu에도 `neat`를 설치합니다. `neat` 또는 `neat --json`으로 호스트에 설치된 패키지, PyNeatPCIe 및 각 SiMa PCIe 카드의 보드와 설치된 소프트웨어를 확인합니다. 카드는 PCI 주소와 인터페이스로 표시됩니다. PCI 주소는 현재 연결을 나타내며 영구적인 보드 일련번호가 아닙니다.
+
+카드 조회는 `pcie-setup.sh`와 동일하게 구성된 호스트 인터페이스 `10.0.N.1`과 카드 주소 `10.0.N.2`를 사용합니다. 네트워크 연결과 신뢰할 SSH 키를 먼저 설정하세요. 이 명령은 인터페이스 설정, 호스트 키 등록, 암호 입력, 카드에서의 sudo 실행 또는 패키지 변경을 수행하지 않습니다. 인터페이스 누락, 비표준 주소, SSH 오류 및 소프트웨어 정보 조회 실패는 카드별로 표시하며 연결 가능한 카드의 버전은 계속 표시합니다.
+
+JSON은 `sima.neat.status.v1`을 유지하며 `components.pcieHost`, `components.pcieScheduler`, `components.pyneatpcie` 및 `pcie`를 추가합니다. `pcie`에는 호스트 소프트웨어, PCI 주소·인터페이스·주소·상태·소프트웨어·오류 필드가 있는 `cards` 배열 및 토폴로지 오류가 포함됩니다. 원격 소프트웨어 정보를 읽을 수 없으면 설치된 버전을 추정하지 않고 `null`을 반환합니다.
+
+PyNeat 및 PyNeatPCIe 상태는 감지된 각 설치의 버전과 가상 환경 경로를 표시합니다. 별도 환경은 버전 충돌이 아닌 여러 환경으로 표시합니다. 가상 환경 외부의 패키지는 패키지 디렉터리를 대신 표시합니다. 상태 조회는 네이티브 모듈을 가져오지 않고 패키지 메타데이터를 읽습니다.
+
+JSON의 각 Python 항목에 `installations` 배열이 추가됩니다. 각 레코드에는 `version`, `environment`, `path`(패키지 디렉터리)가 포함됩니다. 가상 환경 외부에서는 `environment`가 `null`입니다. 설치된 버전이 다르면 요약 `version`은 `null`이며, 여러 설치가 있다는 이유만으로 `error`를 설정하지 않습니다. 같은 설치를 가리키는 심볼릭 링크 경로는 한 번만 표시합니다.

@@ -7865,6 +7865,49 @@ Model::Runner ModelAccess::build_benchmark_runner(Model& model, const TensorList
   return model.build_with_model_options(inputs, Model::RouteOptions{}, run_options, model_options);
 }
 
+void ModelAccess::check_inputs(const Model& model, const TensorList& inputs, const char* where) {
+  const auto& plan = model.impl_->preprocess_plan;
+  const auto ingress_contracts = normalized_ingress_contracts(plan.session_route_plan);
+  if (pipeline_requires_tensor_input(plan)) {
+    check_model_tensor_inputs(inputs, ingress_contracts, where);
+  } else {
+    check_model_image_inputs(inputs, ingress_contracts, where);
+  }
+}
+
+void check_model_image_inputs(const TensorList& inputs,
+                              const std::vector<IngressTensorContract>& ingress_contracts,
+                              const char* where) {
+  if (inputs.size() != 1U) {
+    throw_model_error(error_codes::kInputShape,
+                      std::string(where) + ": image input expects exactly one image tensor, got " +
+                          std::to_string(inputs.size()),
+                      "Pass one image tensor; use input_specs() to inspect the model input.");
+  }
+  if (ingress_contracts.size() > 1U) {
+    throw_model_error(error_codes::kInputShape,
+                      std::string(where) +
+                          ": multi-ingress image input is unsupported; the model has " +
+                          std::to_string(ingress_contracts.size()) + " ingress contracts",
+                      "Use input_specs() to inspect the model inputs.");
+  }
+  // Preprocessing resizes any image size. Color conversion is route-dependent, so a format the
+  // route cannot convert fails when run() builds the pipeline, as it does for benchmark().
+  require_explicit_image_input_info(input_info_from_tensor(inputs.front(), true), where);
+  validate_public_input(inputs.front(), InputOptions{}, InputStreamOptions{}, where);
+}
+
+void check_model_tensor_inputs(const TensorList& inputs,
+                               const std::vector<IngressTensorContract>& ingress_contracts,
+                               const char* where) {
+  require_exact_ingress_count(inputs.size(), ingress_contracts, where, "tensor inputs");
+  for (std::size_t i = 0; i < ingress_contracts.size(); ++i) {
+    validate_single_tensor_ingress_expectation(ingress_contracts[i],
+                                               input_info_from_tensor(inputs[i], false), where);
+    validate_public_input(inputs[i], InputOptions{}, InputStreamOptions{}, where);
+  }
+}
+
 Model::Options ModelAccess::options(const Model& model) {
   return model.impl_->options;
 }

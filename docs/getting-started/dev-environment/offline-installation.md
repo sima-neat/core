@@ -42,18 +42,18 @@ Keep all package files together, including scripts, metadata, checksums, and dep
 ### 1. Download the package
 
 Run one command on the computer with internet access.
-These examples use SDK 2.1.3.0.
+These examples use SDK %%release.sdk%%.
 
 For an `amd64` target host:
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@v2.1.3.0 -t offline-amd64
+sima-cli neat install sdk@v%%release.sdk%% -t offline-amd64
 </ShellCommand>
 
 For an `arm64` target host:
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@v2.1.3.0 -t offline-arm64
+sima-cli neat install sdk@v%%release.sdk%% -t offline-arm64
 </ShellCommand>
 
 ### 2. Install the package
@@ -86,18 +86,18 @@ If you installed both the SDK and Model Compiler in the previous step, skip this
 
 Check the [Model Compiler compatibility requirements](/getting-started/compatibility/#model-compiler).
 Run one command on the computer with internet access.
-These examples use Model Compiler 2.1.3.
+These examples use Model Compiler %%release.model_compiler%%.
 
 For an `amd64` target host:
 
 <ShellCommand prompt="host">
-sima-cli neat install model-compiler/amd64@v2.1.3 -t offline
+sima-cli neat install model-compiler/amd64@v%%release.model_compiler%% -t offline
 </ShellCommand>
 
 For an `arm64` target host:
 
 <ShellCommand prompt="host">
-sima-cli neat install model-compiler/arm64@v2.1.3 -t offline
+sima-cli neat install model-compiler/arm64@v%%release.model_compiler%% -t offline
 </ShellCommand>
 
 ### 2. Install the package

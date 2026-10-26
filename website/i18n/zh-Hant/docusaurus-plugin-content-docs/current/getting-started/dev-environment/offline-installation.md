@@ -42,18 +42,18 @@ sidebar_position: 6
 ### 1. 下載套件
 
 在可連上網際網路的電腦上執行其中一個命令。
-以下範例使用 SDK 2.1.3.0。
+以下範例使用 SDK %%release.sdk%%。
 
 對於 `amd64` 目標主機：
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@v2.1.3.0 -t offline-amd64
+sima-cli neat install sdk@v%%release.sdk%% -t offline-amd64
 </ShellCommand>
 
 對於 `arm64` 目標主機：
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@v2.1.3.0 -t offline-arm64
+sima-cli neat install sdk@v%%release.sdk%% -t offline-arm64
 </ShellCommand>
 
 ### 2. 安裝套件
@@ -86,18 +86,18 @@ bash ./install_offline_sdk.sh
 
 檢查 [Model Compiler 相容性需求](/getting-started/compatibility/#model-compiler)。
 在可連上網際網路的電腦上執行其中一個命令。
-以下範例使用 Model Compiler 2.1.3。
+以下範例使用 Model Compiler %%release.model_compiler%%。
 
 對於 `amd64` 目標主機：
 
 <ShellCommand prompt="host">
-sima-cli neat install model-compiler/amd64@v2.1.3 -t offline
+sima-cli neat install model-compiler/amd64@v%%release.model_compiler%% -t offline
 </ShellCommand>
 
 對於 `arm64` 目標主機：
 
 <ShellCommand prompt="host">
-sima-cli neat install model-compiler/arm64@v2.1.3 -t offline
+sima-cli neat install model-compiler/arm64@v%%release.model_compiler%% -t offline
 </ShellCommand>
 
 ### 2. 安裝套件
