@@ -263,7 +263,15 @@ simaai::neat::Tensor make_provided_tensor(
     simaai::neat::TensorDType dtype, std::vector<int64_t> shape,
     std::optional<simaai::neat::ImageSpec::PixelFormat> image_format = std::nullopt) {
   using namespace simaai::neat;
+  const std::size_t element_bytes =
+      dtype == TensorDType::UInt8 ? 1U : (dtype == TensorDType::BFloat16 ? 2U : 4U);
+  std::size_t bytes = element_bytes;
+  for (const int64_t dim : shape) {
+    bytes *= static_cast<std::size_t>(dim);
+  }
   Tensor tensor;
+  tensor.storage = make_cpu_owned_storage(bytes);
+  tensor.device = {DeviceType::CPU, 0};
   tensor.dtype = dtype;
   tensor.shape = std::move(shape);
   if (image_format.has_value()) {
@@ -320,6 +328,11 @@ void provided_image_inputs_need_one_tensor_with_image_format() {
                                       ImageSpec::PixelFormat::BGR)})
               .empty(),
           "an image route must accept a batch-1 NHWC image, as run() does");
+  auto unknown_layout =
+      make_provided_tensor(TensorDType::UInt8, {1, 720, 1280, 3}, ImageSpec::PixelFormat::BGR);
+  unknown_layout.layout = TensorLayout::Unknown;
+  require(contains(check({unknown_layout}), "batched packed video must use HWC layout"),
+          "an image route must reject a batched image without NHWC layout, as run() does");
 
   internal::IngressTensorContract ingress;
   ingress.valid = true;
@@ -359,6 +372,10 @@ void provided_tensor_inputs_match_ingress_contracts() {
   require(contains(check({tensor, tensor}), "expected exactly 1 ingress tensor inputs"),
           "a tensor route must reject the wrong number of inputs");
   require(contains(check({}), "got 0"), "a tensor route must reject an empty input list");
+  auto no_storage = make_provided_tensor(TensorDType::Float32, {1, 640, 640, 3});
+  no_storage.storage.reset();
+  require(contains(check({no_storage}), "missing storage"),
+          "a tensor route must reject a tensor without storage, as run() does");
   require(contains(check({make_provided_tensor(TensorDType::UInt8, {640, 640, 3},
                                                ImageSpec::PixelFormat::RGB)}),
                    "format=FP32"),

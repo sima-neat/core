@@ -7893,6 +7893,7 @@ void check_model_image_inputs(const TensorList& inputs,
   }
   // Preprocessing resizes and converts color, so any image size and color format is accepted.
   require_explicit_image_input_info(input_info_from_tensor(inputs.front(), true), where);
+  validate_public_input(inputs.front(), InputOptions{}, InputStreamOptions{}, where);
 }
 
 void check_model_tensor_inputs(const TensorList& inputs,
@@ -7902,6 +7903,7 @@ void check_model_tensor_inputs(const TensorList& inputs,
   for (std::size_t i = 0; i < ingress_contracts.size(); ++i) {
     validate_single_tensor_ingress_expectation(ingress_contracts[i],
                                                input_info_from_tensor(inputs[i], false), where);
+    validate_public_input(inputs[i], InputOptions{}, InputStreamOptions{}, where);
   }
 }
 

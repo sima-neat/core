@@ -128,7 +128,8 @@ BenchmarkReport run_benchmark(Model& model, const BenchmarkOptions& options);
 
 // Pure ingress admission checks behind ModelAccess::check_inputs, shared with contract tests.
 // An image route takes one tensor carrying explicit image format metadata; a tensor route
-// takes one tensor per ingress contract with matching media, format, and HxWxC.
+// takes one tensor per ingress contract with matching media, format, and HxWxC. Each tensor
+// must also pass the storage and layout checks run() applies on push.
 void check_model_image_inputs(const TensorList& inputs,
                               const std::vector<IngressTensorContract>& ingress_contracts,
                               const char* where);
