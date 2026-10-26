@@ -236,7 +236,11 @@ FormatTag read_sampling(int fd, const std::string& id, std::uint32_t width, std:
     std::string last_error = "sent no frames";
     for (int attempt = 0; attempt < 15; ++attempt) {
       pollfd p{fd, POLLIN, 0};
-      if (::poll(&p, 1, 2000) <= 0)
+      int ready;
+      do {
+        ready = ::poll(&p, 1, 2000);
+      } while (ready == -1 && errno == EINTR);
+      if (ready <= 0)
         throw fail("sent no frame within 2 s");
       v4l2_buffer buf{};
       buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
