@@ -58,6 +58,7 @@ sima-cli neat install sdk@v2.1.3.0 -t offline-arm64
 
 ### 2. 패키지 설치
 
+먼저 [Model Compiler 오프라인 패키지를 다운로드하세요](#download-model-compiler-package).
 SDK와 함께 Model Compiler를 설치하려면 Model Compiler 오프라인 패키지 파일을 SDK 오프라인 패키지와 같은 디렉터리에 넣으세요.
 SDK 설치 프로그램이 파일을 자동으로 찾습니다.
 메시지가 표시되면 로컬 패키지에서 설치하도록 선택하세요.
@@ -72,7 +73,7 @@ bash ./install_offline_sdk.sh
 
 ## Model Compiler 설치 {#download-the-model-compiler-offline-package}
 
-### 1. 패키지 다운로드
+### 1. 패키지 다운로드 {#download-model-compiler-package}
 
 [Model Compiler 호환성 요구 사항](/getting-started/compatibility/#model-compiler)을 확인하세요.
 인터넷에 연결된 컴퓨터에서 해당하는 명령 하나를 실행하세요.

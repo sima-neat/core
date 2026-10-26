@@ -58,6 +58,7 @@ sima-cli neat install sdk@v2.1.3.0 -t offline-arm64
 
 ### 2. 安裝套件
 
+首先，[下載 Model Compiler 離線套件](#download-model-compiler-package)。
 若要隨 SDK 一起安裝 Model Compiler，請將 Model Compiler 離線套件檔案放在與 SDK 離線套件相同的目錄中。
 SDK 安裝程式會自動找到該檔案。
 出現提示時，請選擇從本機套件安裝。
@@ -72,7 +73,7 @@ bash ./install_offline_sdk.sh
 
 ## 安裝 Model Compiler {#download-the-model-compiler-offline-package}
 
-### 1. 下載套件
+### 1. 下載套件 {#download-model-compiler-package}
 
 檢查 [Model Compiler 相容性需求](/getting-started/compatibility/#model-compiler)。
 在可連上網際網路的電腦上執行其中一個命令。
