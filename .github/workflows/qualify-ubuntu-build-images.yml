@@ -1,0 +1,65 @@
+name: Qualify Ubuntu build images for PCIe host
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_revision:
+        description: Vulcan Ubuntu image recipe SHA-256 to qualify
+        required: true
+        default: e8e65f2ca4722bb5d03730bb3b72ba24f57171e5a0e2b39681d7c2fb26aa0268
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  qualify:
+    name: Qualify ${{ matrix.distro }} ${{ matrix.arch }}
+    environment: production
+    runs-on: [self-hosted, linux, "${{ matrix.arch }}", vulcan-production, ubuntu, default]
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: ubuntu22
+            ubuntu: '22.04'
+            arch: amd64
+          - distro: ubuntu24
+            ubuntu: '24.04'
+            arch: amd64
+          - distro: ubuntu22
+            ubuntu: '22.04'
+            arch: arm64
+          - distro: ubuntu24
+            ubuntu: '24.04'
+            arch: arm64
+    container:
+      image: ghcr.io/sima-neat/ubuntu-build:${{ matrix.distro }}-${{ matrix.arch }}-media-${{ inputs.image_revision }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Build and test PCIe host consumer
+        shell: bash
+        env:
+          CORE_VALIDATION_SHA: ${{ github.sha }}
+          EXPECTED_UBUNTU: ${{ matrix.ubuntu }}
+          EXPECTED_ARCH: ${{ matrix.arch }}
+          IMAGE_REVISION: ${{ inputs.image_revision }}
+        run: |
+          set -euo pipefail
+          [[ "${IMAGE_REVISION}" =~ ^[0-9a-f]{64}$ ]]
+          ./scripts/ci/pciehost/validate_build_image.sh 2>&1 | tee "${RUNNER_TEMP}/image-qualification.log"
+      - name: Retain qualification log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: image-qualification-${{ matrix.distro }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/image-qualification.log
+          if-no-files-found: ignore
+          retention-days: 7

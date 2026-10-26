@@ -102,3 +102,20 @@ def test_ci_keeps_all_native_targets_and_validation():
     assert "Run PCIe host unit tests" in steps
     assert "Smoke test staged PCIe host packages and wheel" in steps
     assert '--skip-deps --jobs "${PCIE_HOST_BUILD_JOBS:-$(nproc)}"' in steps["Build PCIe host Debian packages"]["run"]
+
+
+def test_shared_image_qualification_preserves_all_targets_without_publication():
+    regular = yaml.safe_load((ROOT / ".github/workflows/vulcan-ci.yml").read_text())["jobs"]["build-pciehost-packages"]
+    workflow = yaml.safe_load((ROOT / ".github/workflows/qualify-ubuntu-build-images.yml").read_text())
+    job = workflow["jobs"]["qualify"]
+    assert {(row["distro"], row["arch"]) for row in job["strategy"]["matrix"]["include"]} == {
+        (row["distro"], row["deb_arch"]) for row in regular["strategy"]["matrix"]["include"]}
+    assert "ghcr.io/sima-neat/ubuntu-build:" in job["container"]["image"]
+    assert "-media-" in job["container"]["image"]
+    assert "ghcr.io/sima-neat/ubuntu-build:" in regular["container"]["image"]
+    assert "-media-" in regular["container"]["image"]
+    assert "id-token" not in workflow["permissions"]
+    scripts = "\n".join(step.get("run", "") for step in job["steps"])
+    assert "validate_build_image.sh" in scripts
+    assert "aws s3" not in scripts
+    assert "CORE_VALIDATION_SHA" in next(step["env"] for step in job["steps"] if step.get("name") == "Build and test PCIe host consumer")

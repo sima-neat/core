@@ -637,11 +637,10 @@ Validated on a Modalix PCIe Card:
 ## Building packages in CI
 
 Vulcan CI builds Ubuntu 22.04 and 24.04 packages natively on both AMD64 and ARM64
-Ubuntu runners. Each job uses a matching `ghcr.io/sima-neat/pcie-host-build` image
-published by Vulcan's `build-pcie-host-images.yml` workflow. The workflow pins the
-image recipe hash (Dockerfile SHA-256); build, unit tests, and staged package/wheel smoke tests all
-run in that container. Scheduler native artifacts are still selected through the
-existing manifest and publication environment.
+Ubuntu runners. Each job uses the matching `media` profile from the shared
+`ghcr.io/sima-neat/ubuntu-build` image family. The image recipe SHA-256 is pinned;
+build, unit tests, and staged package/wheel smoke tests run in that container.
+Scheduler artifacts retain their existing manifest and environment selection.
 
 CI passes `--skip-deps`, which verifies all requested APT prerequisites and fails
 if any are missing. It never runs APT or silently repairs an incomplete image.
@@ -652,9 +651,19 @@ Use `./build.sh --all --jobs 8` to set compilation parallelism. Without `--jobs`
 positive integers. CI uses `nproc` unless the `PCIE_HOST_BUILD_JOBS` repository or
 environment variable is set in GitHub Actions.
 
-Before enabling this workflow, deploy the Vulcan Ubuntu pool access policy for
-Core, publish all four dependency images at the pinned recipe hash, and grant Core
-Actions read access to the private GHCR package. See Vulcan's
-`docs/pcie-host-build-images.md` for publication and rollout steps. Refresh the
-image recipe hash when changing prerequisites; verify all four targets before
-merging an image update. Public C++ and Python APIs are unchanged.
+### Qualify a shared image before adoption
+
+Vulcan publishes generic toolchain images without checking out Core. Core owns
+PCIe compatibility: run `qualify-ubuntu-build-images.yml` on the intended Core
+revision, supplying the candidate image recipe SHA-256. All four targets must
+pass before changing the regular CI pin or merging the initial migration.
+The `scripts/ci/pciehost/validate_build_image.sh` entrypoint blocks APT and runs
+the full package build, CTest, delivery verification, a relocated C++ consumer,
+and installed-wheel imports. Logs are retained. Nanobind, sima-cli, and Scheduler
+artifacts remain normal build-time downloads; no device or Platform driver is
+installed. This qualification workflow does not publish Core packages.
+
+Before enabling the migration, deploy the Vulcan Ubuntu pool policy for Core,
+publish the four `media` images, and grant Core Actions read access to the private
+GHCR package. See Vulcan's `docs/ubuntu-build-images.md` for publication and
+other consumers such as SDK builds. Public C++ and Python APIs are unchanged.
