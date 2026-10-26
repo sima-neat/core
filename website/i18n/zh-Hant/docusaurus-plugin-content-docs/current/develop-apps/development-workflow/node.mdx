@@ -90,6 +90,7 @@ graph.add(pyneat.groups.video_input(vopt))
 | 解碼圖片 | `nodes::ImageDecode()` 或 `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` 或 `pyneat.nodes.jpeg_decode()` |
 | 編碼原始視訊 | `nodes::SimaEncode(SimaEncodeOptions{...})` | `pyneat.nodes.sima_encode(options)` |
 | 解碼已編碼的影片 | `nodes::SimaDecode(SimaDecodeOptions{...})` | `pyneat.nodes.sima_decode(options)` |
+| 解碼 MJPEG 攝影機影格 (4:2:0 或 4:2:2) | `nodes::groups::MjpegDecode(...)` 搭配 `jpeg_output_format(...)` | `pyneat.groups.mjpeg_decode(...)` 搭配 `pyneat.jpeg_output_format(...)` |
 | 調整影片的畫質或限制播放速率。 | `nodes::VideoScale()`, `VideoRate()`, `ImageFreeze()` | `pyneat.nodes.video_scale()`, `video_rate()`, `image_freeze()` |
 | 建立一個可重複使用的影像輸入路徑。 | `nodes::groups::ImageInputGroup(...)` | `pyneat.groups.image_input(...)` |
 | 建立一個可重複使用的視訊輸入路徑。 | `nodes::groups::VideoInputGroup(...)` | `pyneat.groups.video_input(...)` |
@@ -162,6 +163,46 @@ Core 會將明確的 `num_buffers` 值傳給解碼器，由解碼器套用硬體
 JPEG 解碼節點。將它們用於簡單的 CPU 影像管線。不要將它們用於模型預處理之前的原生 MJPEG 視訊解碼。
 
 對於 RTSP，如果來源的解析度是標準的，請優先使用支援特定編碼器的群組。H.264 仍然是預設設定。明確選擇 H.265 或 HEVC。
+
+### 解碼 MJPEG 攝影機
+
+USB 攝影機會以 4:2:0 或 4:2:2 色彩取樣傳送 MJPEG，其中大多數使用 4:2:2。在零複製輸出中，解碼器只能寫入串流本身的取樣格式，因此必須在建置圖之前就知道它。將攝影機的第一個影格傳入 `jpeg_output_format(...)`，4:2:0 會傳回 `NV12`，4:2:2 會傳回 `NV16`，再將結果傳給 `MjpegDecode(...)`。此群組一律輸出 NV12：對於 4:2:2 串流，它會在解碼器之後加入 EV74 色彩轉換。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include "neat.h"
+
+// first_frame: the camera's first complete MJPEG frame, from your capture code.
+simaai::neat::SimaDecodeOptions decode;
+decode.type = simaai::neat::SimaDecodeType::MJPEG;
+decode.dec_width = 1920;
+decode.dec_height = 1080;
+decode.dec_fps = 30;
+graph.add(simaai::neat::nodes::JpegParse());
+graph.add(simaai::neat::nodes::groups::MjpegDecode(
+    decode, simaai::neat::jpeg_output_format(first_frame)));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+# first_frame: the camera's first complete MJPEG frame, as bytes.
+decode = pyneat.SimaDecodeOptions()
+decode.type = pyneat.SimaDecodeType.MJPEG
+decode.dec_width, decode.dec_height, decode.dec_fps = 1920, 1080, 30
+graph.add(pyneat.nodes.jpeg_parse())
+graph.add(pyneat.groups.mjpeg_decode(decode, pyneat.jpeg_output_format(first_frame)))
+```
+
+</CodeTab>
+</CodeTabs>
+
+`HttpMjpegDecodedInput(...)` 與 `RtspDecodedInput(...)` 仍會向解碼器要求 NV12，因此只支援 4:2:0 MJPEG 串流。
 
 ### 保留 RTSP 輸入的編碼格式
 

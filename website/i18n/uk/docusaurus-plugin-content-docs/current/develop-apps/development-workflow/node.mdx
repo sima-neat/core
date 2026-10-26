@@ -90,6 +90,7 @@ graph.add(pyneat.groups.video_input(vopt))
 | Декодуйте зображення. | `nodes::ImageDecode()` або `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` або `pyneat.nodes.jpeg_decode()` |
 | Кодування сирого відео | `nodes::SimaEncode(SimaEncodeOptions{...})` | `pyneat.nodes.sima_encode(options)` |
 | Декодуйте відео, закодоване певним алгоритмом. | `nodes::SimaDecode(SimaDecodeOptions{...})` | `pyneat.nodes.sima_decode(options)` |
+| Декодуйте кадри MJPEG з камери (4:2:0 або 4:2:2) | `nodes::groups::MjpegDecode(...)` з `jpeg_output_format(...)` | `pyneat.groups.mjpeg_decode(...)` з `pyneat.jpeg_output_format(...)` |
 | Змінюйте масштаб або встановлюйте обмеження частоти відтворення відео. | `nodes::VideoScale()`, `VideoRate()`, `ImageFreeze()` | `pyneat.nodes.video_scale()`, `video_rate()`, `image_freeze()` |
 | Створіть повторно використовуваний шлях для введення зображень. | `nodes::groups::ImageInputGroup(...)` | `pyneat.groups.image_input(...)` |
 | Створіть повторно використовуваний шлях для введення відео. | `nodes::groups::VideoInputGroup(...)` | `pyneat.groups.video_input(...)` |
@@ -160,6 +161,46 @@ ffprobe -v error -rtsp_transport tcp -select_streams v:0 \
 `nodes::JpegDecode()` і `pyneat.nodes.jpeg_decode()` — це окремі вузли декодування JPEG для CPU/GStreamer. Використовуйте їх для простих конвеєрів обробки зображень на CPU. Не використовуйте їх для нативного декодування відео MJPEG перед попередньою обробкою моделі.
 
 Для RTSP віддавайте перевагу групам, що враховують кодек, коли форма джерела є стандартною. H.264 залишається значенням за замовчуванням. Явно виберіть H.265 або HEVC.
+
+### Декодування камер MJPEG
+
+USB-камери надсилають MJPEG із субдискретизацією кольору 4:2:0 або 4:2:2; більшість використовує 4:2:2. Під час виведення без копіювання декодер записує лише власну субдискретизацію потоку, тому граф має знати її ще до побудови. Передайте перший кадр камери в `jpeg_output_format(...)`, яка повертає `NV12` для 4:2:0 і `NV16` для 4:2:2, і передайте результат у `MjpegDecode(...)`. Група завжди виводить NV12: для потоку 4:2:2 вона додає перетворення кольору на EV74 після декодера.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include "neat.h"
+
+// first_frame: the camera's first complete MJPEG frame, from your capture code.
+simaai::neat::SimaDecodeOptions decode;
+decode.type = simaai::neat::SimaDecodeType::MJPEG;
+decode.dec_width = 1920;
+decode.dec_height = 1080;
+decode.dec_fps = 30;
+graph.add(simaai::neat::nodes::JpegParse());
+graph.add(simaai::neat::nodes::groups::MjpegDecode(
+    decode, simaai::neat::jpeg_output_format(first_frame)));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+# first_frame: the camera's first complete MJPEG frame, as bytes.
+decode = pyneat.SimaDecodeOptions()
+decode.type = pyneat.SimaDecodeType.MJPEG
+decode.dec_width, decode.dec_height, decode.dec_fps = 1920, 1080, 30
+graph.add(pyneat.nodes.jpeg_parse())
+graph.add(pyneat.groups.mjpeg_decode(decode, pyneat.jpeg_output_format(first_frame)))
+```
+
+</CodeTab>
+</CodeTabs>
+
+`HttpMjpegDecodedInput(...)` і `RtspDecodedInput(...)` і надалі запитують у декодера NV12, тому підтримують лише потоки MJPEG 4:2:0.
 
 ### Залиште вхідний потік RTSP у кодованому вигляді.
 

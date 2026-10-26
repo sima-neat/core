@@ -90,6 +90,7 @@ graph.add(pyneat.groups.video_input(vopt))
 | 이미지 디코딩 | `nodes::ImageDecode()` 또는 `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` 또는 `pyneat.nodes.jpeg_decode()` |
 | 원시 비디오 인코딩 | `nodes::SimaEncode(SimaEncodeOptions{...})` | `pyneat.nodes.sima_encode(options)` |
 | 인코딩된 비디오 디코딩 | `nodes::SimaDecode(SimaDecodeOptions{...})` | `pyneat.nodes.sima_decode(options)` |
+| MJPEG 카메라 프레임 디코딩 (4:2:0 또는 4:2:2) | `nodes::groups::MjpegDecode(...)`와 `jpeg_output_format(...)` | `pyneat.groups.mjpeg_decode(...)`와 `pyneat.jpeg_output_format(...)` |
 | 비디오 크기 조정 또는 속도 제한 | `nodes::VideoScale()`, `VideoRate()`, `ImageFreeze()` | `pyneat.nodes.video_scale()`, `video_rate()`, `image_freeze()` |
 | 재사용 가능한 이미지 입력 경로 구축 | `nodes::groups::ImageInputGroup(...)` | `pyneat.groups.image_input(...)` |
 | 재사용 가능한 비디오 입력 경로 구축 | `nodes::groups::VideoInputGroup(...)` | `pyneat.groups.video_input(...)` |
@@ -153,6 +154,46 @@ H.265 디코더는 `codec_name=hevc`, `profile=Main` 및 `pix_fmt=yuv420p`를 �
 `nodes::JpegDecode()` 및 `pyneat.nodes.jpeg_decode()`는 별도의 CPU/GStreamer JPEG 디코딩 노드입니다. 간단한 CPU 이미지 파이프라인에 사용합니다. 모델 전처리기 전에 기본 MJPEG 비디오 디코딩에는 사용하지 마십시오.
 
 RTSP의 경우 소스 형식이 표준일 때 코덱을 인식하는 그룹을 사용하는 것이 좋습니다. H.264는 기본값으로 유지됩니다. H.265 또는 HEVC를 명시적으로 선택합니다.
+
+### MJPEG 카메라 디코딩
+
+USB 카메라는 4:2:0 또는 4:2:2 색 샘플링으로 MJPEG를 보내며, 대부분은 4:2:2를 사용합니다. 제로 카피 출력에서는 디코더가 스트림 고유의 샘플링으로만 쓸 수 있으므로, 그래프를 빌드하기 전에 이를 알아야 합니다. 카메라의 첫 프레임을 `jpeg_output_format(...)`에 전달하면 4:2:0에는 `NV12`, 4:2:2에는 `NV16`이 반환됩니다. 그 결과를 `MjpegDecode(...)`에 전달하세요. 이 그룹은 항상 NV12를 출력하며, 4:2:2 스트림에는 디코더 뒤에 EV74 색 변환을 추가합니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include "neat.h"
+
+// first_frame: the camera's first complete MJPEG frame, from your capture code.
+simaai::neat::SimaDecodeOptions decode;
+decode.type = simaai::neat::SimaDecodeType::MJPEG;
+decode.dec_width = 1920;
+decode.dec_height = 1080;
+decode.dec_fps = 30;
+graph.add(simaai::neat::nodes::JpegParse());
+graph.add(simaai::neat::nodes::groups::MjpegDecode(
+    decode, simaai::neat::jpeg_output_format(first_frame)));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+# first_frame: the camera's first complete MJPEG frame, as bytes.
+decode = pyneat.SimaDecodeOptions()
+decode.type = pyneat.SimaDecodeType.MJPEG
+decode.dec_width, decode.dec_height, decode.dec_fps = 1920, 1080, 30
+graph.add(pyneat.nodes.jpeg_parse())
+graph.add(pyneat.groups.mjpeg_decode(decode, pyneat.jpeg_output_format(first_frame)))
+```
+
+</CodeTab>
+</CodeTabs>
+
+`HttpMjpegDecodedInput(...)`와 `RtspDecodedInput(...)`는 여전히 디코더에 NV12를 요청하므로 4:2:0 MJPEG 스트림만 지원합니다.
 
 ### RTSP 입력을 인코딩된 상태로 유지
 

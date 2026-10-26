@@ -918,6 +918,12 @@ target_link_libraries(canonical_visual_stage_test PRIVATE
 set_tests_properties(canonical_visual_stage_test PROPERTIES
   TIMEOUT 90 LABELS "strict;e2e;runtime;kernel-runner;modalix-only")
 
+# groups::MjpegDecode: 4:2:2 MJPEG (NV16 + EV74 ColorConvert) must match 4:2:0 as NV12.
+add_pipeline_test(mjpeg_decode_group_e2e_test
+  SOURCES e2e_testing/mjpeg_decode_group_e2e_test.cpp LOCK_ACCELERATOR)
+set_tests_properties(mjpeg_decode_group_e2e_test PROPERTIES
+  TIMEOUT 90 LABELS "strict;e2e;runtime;kernel-runner;modalix-only;codec")
+
 # Actual EV74 image frontends; no provider skips or CPU numerical fallback.
 add_pipeline_test(image_transform_ev_test
   SOURCES e2e_testing/image_transform_ev_test.cpp LOCK_ACCELERATOR)
