@@ -89,7 +89,7 @@ graph.add(pyneat.groups.video_input(vopt))
 | HTTPマルチパートMJPEGを読み取る | `nodes::groups::HttpMjpegDecodedInput(...)`、または`nodes::HttpSource(...)`、`MultipartJpegDemux()`、`JpegParse()`（手動でのフレーム処理） | `pyneat.groups.http_mjpeg_decoded_input(...)`、または`pyneat.nodes.http_source(...)`、`pyneat.nodes.multipart_jpeg_demux()`、`pyneat.nodes.jpeg_parse()` |
 | 画像をデコードする | `nodes::ImageDecode()`または`nodes::JpegDecode()` | `pyneat.nodes.image_decode()`または`pyneat.nodes.jpeg_decode()` |
 | エンコードされたビデオをデコードする | `nodes::SimaDecode(SimaDecodeOptions{...})` | `pyneat.nodes.sima_decode(options)` |
-| MJPEG カメラのフレームをデコードする (4:2:0 または 4:2:2) | `nodes::groups::MjpegDecode(...)` と `jpeg_output_format(...)` | `pyneat.groups.mjpeg_decode(...)` と `pyneat.jpeg_output_format(...)` |
+| MJPEG カメラのフレームをデコードする (4:2:0 または 4:2:2) | `jpeg_output_format(...)` の後に `nodes::SimaDecode(...)`、4:2:2 では `nodes::ColorConvert(...)` も追加 | `pyneat.jpeg_output_format(...)` の後に `pyneat.nodes.sima_decode(...)`、4:2:2 では `pyneat.nodes.color_convert(...)` も追加 |
 | 生ビデオのエンコード | `nodes::SimaEncode(SimaEncodeOptions{...})` | `pyneat.nodes.sima_encode(options)` |
 | ビデオのスケールまたはレート制限を行う | `nodes::VideoScale()`、`VideoRate()`、`ImageFreeze()` | `pyneat.nodes.video_scale()`、`video_rate()`、`image_freeze()` |
 | 再利用可能な画像入力パスを構築する | `nodes::groups::ImageInputGroup(...)` | `pyneat.groups.image_input(...)` |
@@ -157,7 +157,7 @@ RTSP の場合は、ソースの形状が標準の場合、コーデックを認
 
 ### MJPEG カメラのデコード
 
-USB カメラは 4:2:0 または 4:2:2 のカラーサンプリングで MJPEG を送信し、多くは 4:2:2 を使用します。ゼロコピー出力では、デコーダーはストリーム本来のサンプリングでしか書き込めないため、グラフをビルドする前にそれを把握しておく必要があります。カメラの最初のフレームを `jpeg_output_format(...)` に渡すと、4:2:0 では `NV12`、4:2:2 では `NV16` が返されます。その結果を `MjpegDecode(...)` に渡します。このグループは常に NV12 を出力し、4:2:2 ストリームではデコーダーの後に EV74 での色変換を追加します。
+USB カメラは 4:2:0 または 4:2:2 のカラーサンプリングで MJPEG を送信し、多くは 4:2:2 を使用します。ゼロコピー出力では、デコーダーはストリーム本来のサンプリングでしか書き込めないため、グラフをビルドする前にそれを把握しておく必要があります。カメラの最初のフレームを `jpeg_output_format(...)` に渡すと、4:2:0 では `NV12`、4:2:2 では `NV16` が返されます。その結果をデコーダーの `out_format` に設定します。NV16 の場合は、グラフの残りが NV12 を受け取れるよう、デコーダーの後に EV74 の `ColorConvert` で NV12 に変換します。エンコーダー用のサーフェスを使うため、`VideoSender` はコピーなしでフレームを受け取れます。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -168,12 +168,18 @@ USB カメラは 4:2:0 または 4:2:2 のカラーサンプリングで MJPEG �
 // first_frame: the camera's first complete MJPEG frame, from your capture code.
 simaai::neat::SimaDecodeOptions decode;
 decode.type = simaai::neat::SimaDecodeType::MJPEG;
+decode.out_format = simaai::neat::jpeg_output_format(first_frame);  // NV12 or NV16
 decode.dec_width = 1920;
 decode.dec_height = 1080;
 decode.dec_fps = 30;
 graph.add(simaai::neat::nodes::JpegParse());
-graph.add(simaai::neat::nodes::groups::MjpegDecode(
-    decode, simaai::neat::jpeg_output_format(first_frame)));
+graph.add(simaai::neat::nodes::SimaDecode(decode));
+if (decode.out_format == simaai::neat::FormatTag::NV16) {
+  simaai::neat::ColorConvertOptions color;
+  color.output_format = simaai::neat::ImageFormat::NV12;
+  color.surface = simaai::neat::ImageSurfaceLayout::EncoderNv12;
+  graph.add(simaai::neat::nodes::ColorConvert(color));
+}
 ```
 
 </CodeTab>
@@ -185,9 +191,15 @@ import pyneat
 # first_frame: the camera's first complete MJPEG frame, as bytes.
 decode = pyneat.SimaDecodeOptions()
 decode.type = pyneat.SimaDecodeType.MJPEG
+decode.out_format = pyneat.jpeg_output_format(first_frame)  # NV12 or NV16
 decode.dec_width, decode.dec_height, decode.dec_fps = 1920, 1080, 30
 graph.add(pyneat.nodes.jpeg_parse())
-graph.add(pyneat.groups.mjpeg_decode(decode, pyneat.jpeg_output_format(first_frame)))
+graph.add(pyneat.nodes.sima_decode(decode))
+if decode.out_format == pyneat.Format.NV16:
+    color = pyneat.ColorConvertOptions()
+    color.output_format = pyneat.ImageFormat.NV12
+    color.surface = pyneat.ImageSurfaceLayout.EncoderNv12
+    graph.add(pyneat.nodes.color_convert(color))
 ```
 
 </CodeTab>

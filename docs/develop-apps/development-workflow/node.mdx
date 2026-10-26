@@ -90,7 +90,7 @@ Use this map before you open the full API reference.
 | Decode images | `nodes::ImageDecode()` or `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` or `pyneat.nodes.jpeg_decode()` |
 | Encode raw video | `nodes::SimaEncode(SimaEncodeOptions{...})` | `pyneat.nodes.sima_encode(options)` |
 | Decode encoded video | `nodes::SimaDecode(SimaDecodeOptions{...})` | `pyneat.nodes.sima_decode(options)` |
-| Decode MJPEG camera frames (4:2:0 or 4:2:2) | `nodes::groups::MjpegDecode(...)` with `jpeg_output_format(...)` | `pyneat.groups.mjpeg_decode(...)` with `pyneat.jpeg_output_format(...)` |
+| Decode MJPEG camera frames (4:2:0 or 4:2:2) | `jpeg_output_format(...)`, then `nodes::SimaDecode(...)`, plus `nodes::ColorConvert(...)` for 4:2:2 | `pyneat.jpeg_output_format(...)`, then `pyneat.nodes.sima_decode(...)`, plus `pyneat.nodes.color_convert(...)` for 4:2:2 |
 | Scale or rate-limit video | `nodes::VideoScale()`, `VideoRate()`, `ImageFreeze()` | `pyneat.nodes.video_scale()`, `video_rate()`, `image_freeze()` |
 | Build a reusable image input path | `nodes::groups::ImageInputGroup(...)` | `pyneat.groups.image_input(...)` |
 | Build a reusable video input path | `nodes::groups::VideoInputGroup(...)` | `pyneat.groups.video_input(...)` |
@@ -193,9 +193,10 @@ H.264 remains the default. Select H.265 or HEVC explicitly.
 USB cameras send MJPEG with 4:2:0 or 4:2:2 color sampling; most use 4:2:2. With
 zero-copy output, the decoder writes only the stream's own sampling, so the graph must
 know it before it is built. Pass the camera's first frame to `jpeg_output_format(...)`,
-which returns `NV12` for 4:2:0 and `NV16` for 4:2:2, and give the result to
-`MjpegDecode(...)`. The group always outputs NV12: for a 4:2:2 stream it adds an EV74
-color conversion after the decoder.
+which returns `NV12` for 4:2:0 and `NV16` for 4:2:2, and use the result as the
+decoder's `out_format`. For NV16, add an EV74 `ColorConvert` to NV12 after the decoder
+so the rest of the graph receives NV12; its encoder surface lets a `VideoSender` take
+the frame without a copy.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -206,12 +207,18 @@ color conversion after the decoder.
 // first_frame: the camera's first complete MJPEG frame, from your capture code.
 simaai::neat::SimaDecodeOptions decode;
 decode.type = simaai::neat::SimaDecodeType::MJPEG;
+decode.out_format = simaai::neat::jpeg_output_format(first_frame);  // NV12 or NV16
 decode.dec_width = 1920;
 decode.dec_height = 1080;
 decode.dec_fps = 30;
 graph.add(simaai::neat::nodes::JpegParse());
-graph.add(simaai::neat::nodes::groups::MjpegDecode(
-    decode, simaai::neat::jpeg_output_format(first_frame)));
+graph.add(simaai::neat::nodes::SimaDecode(decode));
+if (decode.out_format == simaai::neat::FormatTag::NV16) {
+  simaai::neat::ColorConvertOptions color;
+  color.output_format = simaai::neat::ImageFormat::NV12;
+  color.surface = simaai::neat::ImageSurfaceLayout::EncoderNv12;
+  graph.add(simaai::neat::nodes::ColorConvert(color));
+}
 ```
 
 </CodeTab>
@@ -223,9 +230,15 @@ import pyneat
 # first_frame: the camera's first complete MJPEG frame, as bytes.
 decode = pyneat.SimaDecodeOptions()
 decode.type = pyneat.SimaDecodeType.MJPEG
+decode.out_format = pyneat.jpeg_output_format(first_frame)  # NV12 or NV16
 decode.dec_width, decode.dec_height, decode.dec_fps = 1920, 1080, 30
 graph.add(pyneat.nodes.jpeg_parse())
-graph.add(pyneat.groups.mjpeg_decode(decode, pyneat.jpeg_output_format(first_frame)))
+graph.add(pyneat.nodes.sima_decode(decode))
+if decode.out_format == pyneat.Format.NV16:
+    color = pyneat.ColorConvertOptions()
+    color.output_format = pyneat.ImageFormat.NV12
+    color.surface = pyneat.ImageSurfaceLayout.EncoderNv12
+    graph.add(pyneat.nodes.color_convert(color))
 ```
 
 </CodeTab>

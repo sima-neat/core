@@ -3,8 +3,7 @@
  * @brief Compatibility umbrella include for SiMa NEAT's reusable Graph fragment factories.
  *
  * Pulls in every built-in reusable Graph fragment factory the framework ships: image and
- * video input fragments, HTTP MJPEG input, zero-copy MJPEG decode, RTSP encoded/decoded input,
- * still-image input,
+ * video input fragments, HTTP MJPEG input, RTSP encoded/decoded input, still-image input,
  * model fragments, metadata/video sender fragments, UDP/H264 output fragments,
  * image-to-H264-RTSP, and the
  * GroupOutputSpec metadata type.
@@ -19,7 +18,6 @@
 #include "nodes/groups/HttpMjpegDecodedInput.h"
 #include "nodes/groups/ImageInputGroup.h"
 #include "nodes/groups/ImageToH264RtspGroup.h"
-#include "nodes/groups/MjpegDecode.h"
 #include "nodes/groups/ModelGroups.h"
 #include "nodes/groups/RtspDecodedInput.h"
 #include "nodes/groups/RtspEncodedInput.h"

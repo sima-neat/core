@@ -41,7 +41,6 @@
 #include "nodes/groups/GroupOutputSpec.h"
 #include "nodes/groups/HttpMjpegDecodedInput.h"
 #include "nodes/groups/ImageInputGroup.h"
-#include "nodes/groups/MjpegDecode.h"
 #include "nodes/groups/ModelGroups.h"
 #include "nodes/groups/RtspDecodedInput.h"
 #include "nodes/groups/RtspEncodedInput.h"
@@ -4221,8 +4220,6 @@ NB_MODULE(_pyneat_core, m) {
   groups_mod.def("video_input", &simaai::neat::nodes::groups::VideoInputGroup, "options"_a);
   groups_mod.def("http_mjpeg_decoded_input", &simaai::neat::nodes::groups::HttpMjpegDecodedInput,
                  "options"_a);
-  groups_mod.def("mjpeg_decode", &simaai::neat::nodes::groups::MjpegDecode, "decode"_a,
-                 "source_format"_a);
   groups_mod.def("rtsp_encoded_input", &simaai::neat::nodes::groups::RtspEncodedInput, "options"_a);
   groups_mod.def("rtsp_decoded_input", &simaai::neat::nodes::groups::RtspDecodedInput, "options"_a);
   groups_mod.def("udp_h264_output_group", &simaai::neat::nodes::groups::UdpH264OutputGroup,

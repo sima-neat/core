@@ -607,7 +607,6 @@ def test_jpeg_output_format_surface():
   assert pyneat.jpeg_output_format(header(0x21)) == pyneat.Format.NV16
   with pytest.raises(ValueError, match="only 4:2:0 and 4:2:2"):
     pyneat.jpeg_output_format(header(0x11))
-  assert hasattr(pyneat.groups, "mjpeg_decode")
 
 
 def test_camera_input_surface_is_exposed():
