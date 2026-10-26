@@ -436,6 +436,14 @@ void provided_image_geometry_rejects_conflicting_original_size() {
       make_provided_tensor(TensorDType::UInt8, {1, 720, 1280, 3}, ImageSpec::PixelFormat::RGB);
   internal::require_provided_source_geometry(batched, plan,
                                              make_benchmark_source_options(1280, 720));
+  rejected = false;
+  try {
+    internal::require_provided_source_geometry(batched, plan,
+                                               make_benchmark_source_options(640, 640));
+  } catch (const std::runtime_error& error) {
+    rejected = contains(error.what(), "(640x640) must match the provided image (1280x720)");
+  }
+  require(rejected, "a batch-1 image must reject a disagreeing original size, as HWC does");
 
   plan.resolved_kind = InputKind::Tensor;
   internal::require_provided_source_geometry(image, plan, make_benchmark_source_options(640, 640));
@@ -452,6 +460,31 @@ void provided_image_supplies_boxdecode_source_geometry() {
       internal::resolve_benchmark_preprocess_meta(image, plan, {}, options);
   require(meta.original_width == 1280 && meta.original_height == 720,
           "BoxDecode must map detections back to the provided image's own size");
+
+  const auto batched =
+      make_provided_tensor(TensorDType::UInt8, {1, 720, 1280, 3}, ImageSpec::PixelFormat::RGB);
+  const PreprocessRuntimeMeta batched_meta =
+      internal::resolve_benchmark_preprocess_meta(batched, plan, {}, BenchmarkOptions{});
+  require(batched_meta.original_width == 1280 && batched_meta.original_height == 720,
+          "a batch-1 image must supply its own size, as its HWC form does");
+}
+
+void provided_tensor_keeps_its_preprocess_metadata() {
+  using namespace simaai::neat;
+  ResolvedPreprocessPlan plan = make_benchmark_preprocess_plan();
+  plan.resolved_kind = InputKind::Tensor;
+  auto tensor = make_provided_tensor(TensorDType::Float32, {1, 640, 640, 3});
+  PreprocessRuntimeMeta carried;
+  carried.original_width = 1280;
+  carried.original_height = 720;
+  carried.resize_mode = "letterbox";
+  tensor.semantic.preprocess = carried;
+
+  const PreprocessRuntimeMeta meta = internal::resolve_benchmark_preprocess_meta(
+      tensor, plan, {}, make_benchmark_source_options(320, 240));
+  require(meta.original_width == 1280 && meta.original_height == 720 &&
+              meta.resize_mode == "letterbox",
+          "a provided tensor's own preprocess metadata must reach BoxDecode, as in run()");
 }
 
 void benchmark_build_options_prefer_runtime_metadata() {
@@ -1056,6 +1089,8 @@ RUN_TEST("unit_benchmark_measurement_contract_test", ([] {
                     provided_image_geometry_rejects_conflicting_original_size);
            run_case("provided_image_supplies_boxdecode_source_geometry",
                     provided_image_supplies_boxdecode_source_geometry);
+           run_case("provided_tensor_keeps_its_preprocess_metadata",
+                    provided_tensor_keeps_its_preprocess_metadata);
            run_case("benchmark_build_options_prefer_runtime_metadata",
                     benchmark_build_options_prefer_runtime_metadata);
            run_case("benchmark_preprocess_meta_defaults",

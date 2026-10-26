@@ -195,6 +195,13 @@ bool benchmark_takes_source_image(const ResolvedPreprocessPlan& plan, bool has_i
          (rank == 2U || rank == 3U);
 }
 
+// A batch-1 NHWC image is the same source image as its HWC form.
+bool benchmark_takes_source_image(const ResolvedPreprocessPlan& plan, const Tensor& tensor) {
+  const bool batch_of_one = tensor.shape.size() == 4U && tensor.shape[0] == 1;
+  return benchmark_takes_source_image(plan, tensor.semantic.image.has_value(),
+                                      batch_of_one ? 3U : tensor.shape.size());
+}
+
 // Source image size: the requested original size, then the source image's own size, then the
 // model input size, then the input tensor's size.
 BenchmarkInputGeometry benchmark_source_geometry(BenchmarkInputGeometry input, bool source_image,
@@ -260,9 +267,7 @@ resolve_benchmark_preprocess_meta_impl(const Tensor& tensor, const ResolvedPrepr
 
   const BenchmarkInputGeometry tensor_geometry = benchmark_tensor_geometry(tensor);
   const BenchmarkInputGeometry source_geometry = benchmark_source_geometry(
-      tensor_geometry,
-      benchmark_takes_source_image(plan, tensor.semantic.image.has_value(), tensor.shape.size()),
-      plan, options);
+      tensor_geometry, benchmark_takes_source_image(plan, tensor), plan, options);
   if (!source_geometry) {
     throw std::runtime_error(
         "Model::benchmark: unable to infer synthetic source geometry required by BoxDecode");
@@ -404,8 +409,7 @@ void validate_synthetic_benchmark_image_format(const TensorSpec& spec) {
 
 void require_provided_source_geometry(const Tensor& tensor, const ResolvedPreprocessPlan& plan,
                                       const BenchmarkOptions& options) {
-  if (!options.original_width.has_value() ||
-      !benchmark_takes_source_image(plan, tensor.semantic.image.has_value(), tensor.shape.size()))
+  if (!options.original_width.has_value() || !benchmark_takes_source_image(plan, tensor))
     return;
   const BenchmarkInputGeometry image = benchmark_tensor_geometry(tensor);
   if (image.width == *options.original_width && image.height == *options.original_height)
@@ -435,6 +439,9 @@ PreprocessRuntimeMeta resolve_benchmark_preprocess_meta(const Tensor& tensor,
                                                         const ResolvedPreprocessPlan& plan,
                                                         const PreprocessContractFlags& flags,
                                                         const BenchmarkOptions& options) {
+  // run() decodes with the metadata a provided tensor already carries, so keep it.
+  if (tensor.semantic.preprocess.has_value())
+    return *tensor.semantic.preprocess;
   return resolve_benchmark_preprocess_meta_impl(tensor, plan, flags, options);
 }
 

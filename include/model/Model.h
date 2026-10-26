@@ -154,7 +154,9 @@ struct BenchmarkReport {
  * source geometry. When they are omitted, the benchmark infers geometry from the resolved
  * preprocess and model ingress contracts, preserving the behavior of `benchmark(num_samples)`.
  * Image preprocessing routes allocate the synthetic image at that source geometry; a provided
- * image supplies its own geometry, so the original size must be omitted or match it. Tensor
+ * image supplies its own geometry, so the original size must be omitted or match it. A provided
+ * tensor that already carries `Tensor::semantic.preprocess` keeps it, as `run()` does, and the
+ * original size and `resize_mode` do not apply to it. Tensor
  * routes (including cast/quantize) retain the model input shape; the source geometry is used
  * only for BoxDecode metadata.
  * Per-run benchmark geometry takes precedence over deprecated model-construction BoxDecode hints.
