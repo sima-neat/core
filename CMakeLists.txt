@@ -837,6 +837,13 @@ install(TARGETS pcie-pipeline-builder
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   COMPONENT core
 )
+# PCIe queue state belongs to the card-side helper, not the retired runtime daemon.
+# tmpfiles.d is architecture-independent; do not use the multiarch library directory.
+install(
+  FILES ${CMAKE_CURRENT_SOURCE_DIR}/distribution/sima-neat-pcie.conf
+  DESTINATION lib/tmpfiles.d
+  COMPONENT core
+)
 
 # ------------------------------------------------------------------------------
 # Tutorials
@@ -1014,6 +1021,10 @@ set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "arm64")
 
 set(CPACK_DEBIAN_CORE_PACKAGE_NAME "sima-neat")
 set(CPACK_DEBIAN_DEV_PACKAGE_NAME "sima-neat-dev")
+set(CPACK_DEBIAN_CORE_PACKAGE_CONTROL_EXTRA
+  "${CMAKE_CURRENT_SOURCE_DIR}/distribution/debian/postinst"
+)
+set(CPACK_DEBIAN_CORE_PACKAGE_CONTROL_STRICT_PERMISSION TRUE)
 
 # Source-first preparation verifies the complete selected DEBs and supplies
 # their actual control versions. Never derive dependency pins from Git hashes.
@@ -1023,6 +1034,7 @@ if (SIMANEAT_SCHEDULER_DEBIAN_VERSION)
   set(_simaneat_runtime_dependency "simaai-scheduler (= ${SIMANEAT_SCHEDULER_DEBIAN_VERSION})")
 endif()
 set(SIMANEAT_CORE_DEBIAN_DEPENDS
+  "systemd | systemd-standalone-tmpfiles"
   "libgstreamer1.0-0"
   "libgstreamer-plugins-base1.0-0"
   "libgstrtspserver-1.0-0"

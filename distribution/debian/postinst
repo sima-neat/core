@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+  configure)
+    # Create state now as well as at boot, respecting local tmpfiles overrides.
+    systemd-tmpfiles --create sima-neat-pcie.conf
+    ;;
+esac
