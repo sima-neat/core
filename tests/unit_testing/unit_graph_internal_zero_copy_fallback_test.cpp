@@ -439,6 +439,7 @@ void require_shared_arena_budget() {
     options.queue_depth = depth;
     BuildResult build;
     session_build_initialize_kernel_runner_budget(&build, nullptr);
+    const auto base_pool_capacity = build.kernel_runner_output_pool_capacity;
     auto stream = session_build_make_stream_options(options, RunMode::Async);
     session_build_reserve_kernel_runner_outputs(build, stream);
     require(build.kernel_runner_capacity == 4,
@@ -449,11 +450,11 @@ void require_shared_arena_budget() {
     session_build_reserve_kernel_runner_outputs(build, stream);
     require(build.kernel_runner_output_pool_capacity == static_cast<std::size_t>(depth + 9),
             "retention budgeting must preserve a larger explicit pool");
-    build.kernel_runner_output_pool_capacity = 2;
+    build.kernel_runner_output_pool_capacity = base_pool_capacity;
     options.output_memory = OutputMemory::Owned;
     stream = session_build_make_stream_options(options, RunMode::Async);
     session_build_reserve_kernel_runner_outputs(build, stream);
-    require(build.kernel_runner_output_pool_capacity == 2,
+    require(build.kernel_runner_output_pool_capacity == base_pool_capacity,
             "owned output must not reserve zero-copy retention slots");
   }
 }
