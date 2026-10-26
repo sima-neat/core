@@ -96,17 +96,22 @@ def _decode_rgb_image(path: Path) -> np.ndarray:
 
 
 def _tensor_input_model(
-    model_tar: Path, decode_type: pyneat.BoxDecodeType = pyneat.BoxDecodeType.Unspecified
+    model_tar: Path,
+    decode_type: pyneat.BoxDecodeType = pyneat.BoxDecodeType.Unspecified,
+    top_k: int = 0,
 ) -> pyneat.Model:
   opt = pyneat.ModelOptions()
   opt.preprocess.kind = pyneat.InputKind.Tensor
   opt.preprocess.enable = pyneat.AutoFlag.Off
   opt.decode_type = decode_type
+  opt.top_k = top_k
   return pyneat.Model(str(model_tar), opt)
 
 
 def _image_input_model(
-    model_tar: Path, decode_type: pyneat.BoxDecodeType = pyneat.BoxDecodeType.Unspecified
+    model_tar: Path,
+    decode_type: pyneat.BoxDecodeType = pyneat.BoxDecodeType.Unspecified,
+    top_k: int = 0,
 ) -> pyneat.Model:
   opt = pyneat.ModelOptions()
   opt.preprocess.kind = pyneat.InputKind.Image
@@ -114,6 +119,7 @@ def _image_input_model(
   opt.preprocess.resize.enable = pyneat.AutoFlag.On
   opt.preprocess.normalize.enable = pyneat.AutoFlag.On
   opt.decode_type = decode_type
+  opt.top_k = top_k
   return pyneat.Model(str(model_tar), opt)
 
 
@@ -1029,10 +1035,14 @@ def test_benchmark_measures_provided_image_on_image_route(variant):
   assert bgr is not None
   if variant == "rgb":
     tensor = _rgb_tensor(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
+  elif variant == "batched":
+    # A 4-D array needs an explicit HWC layout to be read as batch-1 NHWC, as in run().
+    tensor = pyneat.Tensor.from_numpy(
+        bgr[np.newaxis], copy=True, layout=pyneat.TensorLayout.HWC,
+        image_format=pyneat.PixelFormat.BGR,
+    )
   else:
-    if variant == "batched":
-      bgr = bgr[np.newaxis]
-    elif variant == "small_odd_size":
+    if variant == "small_odd_size":
       bgr = cv2.resize(bgr, (333, 217))
     tensor = pyneat.Tensor.from_numpy(bgr, copy=True, image_format=pyneat.PixelFormat.BGR)
 
@@ -1052,10 +1062,12 @@ def test_benchmark_rejects_image_inputs_that_do_not_fit_the_image_route():
   untagged = pyneat.Tensor.from_numpy(bgr, copy=True)
   assert "explicit image format" in _benchmark_input_error(model, [untagged])
   assert "exactly one image tensor, got 2" in _benchmark_input_error(model, [image, image])
+  batched = pyneat.Tensor.from_numpy(bgr[np.newaxis], copy=True, image_format=pyneat.PixelFormat.BGR)
+  assert "batched packed video must use HWC layout" in _benchmark_input_error(model, [batched])
 
 
 def test_benchmark_boxdecode_image_route_uses_provided_image_geometry(tmp_path):
-  model = _image_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8)
+  model = _image_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8, top_k=100)
   bgr = _people_bgr()
   height, width = bgr.shape[:2]
   image = pyneat.Tensor.from_numpy(bgr, copy=True, image_format=pyneat.PixelFormat.BGR)
@@ -1073,7 +1085,7 @@ def test_benchmark_boxdecode_image_route_uses_provided_image_geometry(tmp_path):
 
 def test_benchmark_tensor_route_takes_real_tensors_and_rejects_mismatches():
   preproc_model = _image_input_model(_env_path("SIMA_YOLO_TAR"))
-  model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8)
+  model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8, top_k=100)
   letterboxed = _cpu_quanttess_input(preproc_model, cv2.cvtColor(_people_bgr(), cv2.COLOR_BGR2RGB))
   tensor = pyneat.Tensor.from_numpy(letterboxed, copy=True)
 
