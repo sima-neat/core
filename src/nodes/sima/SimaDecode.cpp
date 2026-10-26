@@ -39,8 +39,11 @@ std::string native_decoder_output_format(const SimaDecodeOptions& opt) {
   if (out == "I420") {
     return "YUV420P";
   }
-  // 4:2:2 JPEGs decode natively to NV16; H.264/H.265 are 4:2:0 only.
-  if (out == "NV16" && (opt.type == SimaDecodeType::JPEG || opt.type == SimaDecodeType::MJPEG)) {
+  // 4:2:2 JPEGs decode natively to NV16 in zero-copy output; H.264/H.265 are 4:2:0 only.
+  // The copy path keeps decoding to NV12 and converting, because the codec rejects NV16
+  // for a 4:2:0 stream.
+  if (out == "NV16" && opt.raw_output &&
+      (opt.type == SimaDecodeType::JPEG || opt.type == SimaDecodeType::MJPEG)) {
     return "NV16";
   }
   return {};

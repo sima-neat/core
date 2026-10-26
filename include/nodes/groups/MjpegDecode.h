@@ -19,8 +19,8 @@ namespace simaai::neat::nodes::groups {
  * writes only the stream's own chroma layout in zero-copy mode. `decode.out_format` is
  * replaced by `source_format`.
  *
- * @throws std::invalid_argument if `decode.type` is not JPEG/MJPEG or `source_format` is
- * neither NV12 nor NV16.
+ * @throws std::invalid_argument if `decode.type` is not JPEG/MJPEG, `source_format` is
+ * neither NV12 nor NV16, or `source_format` is NV16 without `decode.raw_output`.
  */
 simaai::neat::Graph MjpegDecode(SimaDecodeOptions decode, FormatTag source_format);
 

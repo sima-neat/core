@@ -270,6 +270,12 @@ void check_mjpeg_native_nv16() {
   const auto spec = decode.output_spec({});
   require(spec.format == "NV16" && spec.memory == "SimaAI" && spec.byte_size == 1280U * 720U * 2U,
           "MJPEG NV16 output must advertise SimaAI 4:2:2 frames");
+  // The copy path keeps develop's behaviour: decode to NV12, then convert, so 4:2:0 still works.
+  options.raw_output = false;
+  const std::string copied = simaai::neat::SimaDecode(options).backend_fragment(4);
+  require_not_contains(copied, "dec-fmt=NV16",
+                       "copy-path NV16 must not request NV16 from the codec");
+  require_contains(copied, "format=NV16", "copy-path NV16 must convert after decoding");
 
   using simaai::neat::jpeg_output_format;
   require(jpeg_output_format(jpeg_header(0x22)) == simaai::neat::FormatTag::NV12, "4:2:0 -> NV12");
@@ -301,6 +307,9 @@ void check_mjpeg_decode_group() {
                       "standalone preproc", "4:2:2 MJPEG must add the EV74 ColorConvert");
   require_throws_with([&] { (void)MjpegDecode(options, FormatTag::I420); },
                       "source_format must be NV12", "unsupported source format");
+  options.raw_output = false;
+  require_throws_with([&] { (void)MjpegDecode(options, FormatTag::NV16); }, "requires raw_output",
+                      "4:2:2 without zero-copy output");
   options.type = simaai::neat::SimaDecodeType::H264;
   require_throws_with([&] { (void)MjpegDecode(options, FormatTag::NV12); },
                       "decode.type must be JPEG or MJPEG", "non-JPEG decode");

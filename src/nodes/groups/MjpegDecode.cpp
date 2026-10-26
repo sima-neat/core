@@ -14,6 +14,9 @@ simaai::neat::Graph MjpegDecode(SimaDecodeOptions decode, FormatTag source_forma
   if (source_format != FormatTag::NV12 && source_format != FormatTag::NV16) {
     throw std::invalid_argument("MjpegDecode: source_format must be NV12 (4:2:0) or NV16 (4:2:2)");
   }
+  if (source_format == FormatTag::NV16 && !decode.raw_output) {
+    throw std::invalid_argument("MjpegDecode: 4:2:2 (NV16) decoding requires raw_output");
+  }
   decode.out_format = source_format;
   simaai::neat::Graph graph;
   graph.add(nodes::SimaDecode(std::move(decode)));
