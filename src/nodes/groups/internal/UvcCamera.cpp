@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <charconv>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -46,6 +47,15 @@ std::string firmware_node(const fs::path& dir, const fs::path& root) {
   if (fs::exists(dir / "firmware_node" / "path", ec))
     return read_line(dir / "firmware_node" / "path");
   return {};
+}
+
+// The node's sysfs index within its USB interface (capture 0, metadata 1); -1 when unreadable.
+int node_index(const std::string& sysfs_root, const std::string& device) {
+  const std::string text = read_line(fs::path(sysfs_root) / "class" / "video4linux" /
+                                     fs::path(device).filename() / "index");
+  int index = -1;
+  const auto [end, ec] = std::from_chars(text.data(), text.data() + text.size(), index);
+  return ec == std::errc() && end == text.data() + text.size() ? index : -1;
 }
 
 int xioctl(int fd, unsigned long request, void* arg) {
@@ -316,7 +326,10 @@ void require_still_connected(const ResolvedCamera& camera) {
   const fs::path node = fs::path(camera.sysfs_root) / "class" / "video4linux" /
                         fs::path(camera.device).filename() / "device";
   const fs::path iface = fs::canonical(node, ec);
-  if (ec || camera_id(iface.string(), camera.sysfs_root) != camera.id)
+  // An unknown index (no sysfs file) does not decide; a changed one does.
+  const int index = node_index(camera.sysfs_root, camera.device);
+  if (ec || camera_id(iface.string(), camera.sysfs_root) != camera.id ||
+      (camera.index >= 0 && index >= 0 && index != camera.index))
     throw std::runtime_error("UsbCameraInput: USB camera '" + camera.id + "' is no longer " +
                              camera.device +
                              "; it was unplugged, moved or renumbered. Call UsbCameraInput again "
@@ -345,7 +358,7 @@ ResolvedCamera resolve_mjpeg_camera(const std::string& id, std::uint32_t width,
     if (!mjpeg_mode_listed(fd.fd, width, height, framerate_num, framerate_den, &modes))
       continue;
     return {node.device, read_sampling(fd.fd, id, width, height, framerate_num, framerate_den), id,
-            sysfs_root};
+            sysfs_root, node_index(sysfs_root, node.device)};
   }
   if (mjpeg_node) {
     std::ostringstream m;

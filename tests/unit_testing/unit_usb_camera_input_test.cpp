@@ -74,7 +74,7 @@ struct FakeSysfs {
   static void write(const fs::path& file, const std::string& text) {
     std::ofstream(file) << text << "\n";
   }
-  // USB camera at `port` with interface 1.0; one node per entry of `nodes`.
+  // USB camera at `port` with interface 1.0; one node per entry of `nodes`, indexed in order.
   void camera(const std::string& port, const std::vector<std::string>& nodes,
               bool with_product = true) {
     const fs::path dev = usb_device(port);
@@ -85,10 +85,11 @@ struct FakeSysfs {
       write(dev / "idProduct", "08e5");
     fs::create_directory_symlink(fs::relative(root / "bus/usb/drivers/uvcvideo", iface),
                                  iface / "driver");
-    for (const auto& node : nodes) {
-      fs::create_directories(root / "class/video4linux" / node);
-      fs::create_directory_symlink(fs::relative(iface, root / "class/video4linux" / node),
-                                   root / "class/video4linux" / node / "device");
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+      const fs::path node = root / "class/video4linux" / nodes[i];
+      fs::create_directories(node);
+      fs::create_directory_symlink(fs::relative(iface, node), node / "device");
+      write(node / "index", std::to_string(i));
     }
   }
   // A MIPI capture node (not uvcvideo).
@@ -144,7 +145,7 @@ void check_reconnect() {
   FakeSysfs sys;
   sys.camera("3.1", {"video1"});
   const std::string id = "/base/pci@7000000000-3.1:1.0-046d:08e5";
-  const uvc::ResolvedCamera camera{"/dev/video1", FormatTag::NV12, id, sys.root.string()};
+  const uvc::ResolvedCamera camera{"/dev/video1", FormatTag::NV12, id, sys.root.string(), 0};
   const Graph graph = uvc::mjpeg_camera_graph(mjpeg_options(), camera, 0);
   require_contains(graph.describe_backend(), "device=/dev/video1", "camera still at video1");
   // Replugged into port 3.2: video1 now belongs to a camera with another ID.
@@ -152,6 +153,22 @@ void check_reconnect() {
   sys.camera("3.2", {"video1"});
   require_throws<std::runtime_error>([&] { (void)graph.describe_backend(); },
                                      "is no longer /dev/video1", "moved camera is not reopened");
+}
+
+void check_renumbered_to_metadata_node() {
+  FakeSysfs sys;
+  sys.camera("3.1", {"video1", "video2"}); // capture + metadata node
+  const std::string id = "/base/pci@7000000000-3.1:1.0-046d:08e5";
+  const uvc::ResolvedCamera camera{"/dev/video1", FormatTag::NV12, id, sys.root.string(), 0};
+  const Graph graph = uvc::mjpeg_camera_graph(mjpeg_options(), camera, 0);
+  require_contains(graph.describe_backend(), "device=/dev/video1", "capture node still at video1");
+  // Re-enumerated: video1 is now the same camera's metadata node, so the ID still matches.
+  FakeSysfs::write(sys.root / "class/video4linux/video1/index", "1");
+  require_throws<std::runtime_error>([&] { (void)graph.describe_backend(); },
+                                     "is no longer /dev/video1", "metadata node is not opened");
+  // No index file: unknown, so the ID check alone decides.
+  fs::remove(sys.root / "class/video4linux/video1/index");
+  require_contains(graph.describe_backend(), "device=/dev/video1", "missing index is unknown");
 }
 
 void check_ids_and_nodes() {
@@ -237,6 +254,7 @@ int main() {
     check_validation();
     check_ids_sorted();
     check_reconnect();
+    check_renumbered_to_metadata_node();
     check_ids_and_nodes();
     check_acpi_controller();
     check_no_cameras();

@@ -35,10 +35,12 @@ struct ResolvedCamera {
   FormatTag sampling;     ///< NV12 for 4:2:0 JPEGs, NV16 for 4:2:2.
   std::string id;         ///< The camera ID; empty skips require_still_connected().
   std::string sysfs_root; ///< Where `id` was resolved.
+  int index = -1;         ///< sysfs index of `device` in its interface (capture 0); -1 unknown.
 };
 
-/// Throw when `camera.device` no longer belongs to `camera.id`, for example after the
-/// camera was unplugged, moved to another port or renumbered since it was resolved.
+/// Throw when `camera.device` no longer belongs to `camera.id` or is no longer the node at
+/// `camera.index`, for example after the camera was unplugged, moved to another port or
+/// renumbered since it was resolved (its metadata node can take the old device number).
 void require_still_connected(const ResolvedCamera& camera);
 
 /// Find the camera by ID, require the exact MJPEG mode, and read one frame to
