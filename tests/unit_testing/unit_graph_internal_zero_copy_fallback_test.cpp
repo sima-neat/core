@@ -441,13 +441,13 @@ void require_shared_arena_budget() {
     session_build_initialize_kernel_runner_budget(&build, nullptr);
     auto stream = session_build_make_stream_options(options, RunMode::Async);
     session_build_reserve_kernel_runner_outputs(build, stream);
-    require(build.kernel_runner_capacity == 1,
+    require(build.kernel_runner_capacity == 4,
             "retained arenas must not increase execution concurrency");
-    require(build.kernel_runner_output_pool_capacity == static_cast<std::size_t>(depth + 4),
+    require(build.kernel_runner_output_pool_capacity == static_cast<std::size_t>(depth + 7),
             "source and input graphs must reserve the same retained arena window");
     build.kernel_runner_output_pool_capacity += 2;
     session_build_reserve_kernel_runner_outputs(build, stream);
-    require(build.kernel_runner_output_pool_capacity == static_cast<std::size_t>(depth + 6),
+    require(build.kernel_runner_output_pool_capacity == static_cast<std::size_t>(depth + 9),
             "retention budgeting must preserve a larger explicit pool");
     build.kernel_runner_output_pool_capacity = 2;
     options.output_memory = OutputMemory::Owned;

@@ -767,8 +767,8 @@ request checked by Kernels for the selected backend. Source logical identities, 
 strides and byte offsets remain explicit; allocation extents include the addressed
 strided span. The renderer applies normal target resolution and direct arena
 projection. Cast uses the same typed execution and output-pool budgets as other
-runner stages: graph construction selects the bounded execution capacity (one for
-synchronous Input graphs) and reserves output carriers for retention. These budgets
+runner stages: graph construction selects the bounded execution capacity (four by
+default, one for synchronous Input graphs) and reserves output carriers for retention. These budgets
 are passed to Runtime preparation, not rendered as legacy plugin properties.
 Rebinding compact output tensors into a public subset or reordered TensorSet first
 materializes metadata on an owned, parent-retaining envelope. The original held

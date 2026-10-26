@@ -299,6 +299,25 @@ void output_carrier_budget() {
             "invalid or overflowing output budget accepted");
   }
 }
+void automatic_execution_capacity() {
+  using namespace simaai::neat;
+  const std::array<std::pair<int, std::size_t>, 6> cases{
+      {{0, 4}, {1, 1}, {4, 4}, {64, 64}, {65, 64}, {-1, 1}}};
+  for (const auto [requested, expected] : cases) {
+    GraphOptions options;
+    options.async_queue_depth = requested;
+    BuildResult build;
+    session_build_initialize_kernel_runner_budget(&build, &options);
+    require(build.kernel_runner_capacity == expected &&
+                build.kernel_runner_output_pool_capacity == expected + 1,
+            "automatic capacity must use four slots and preserve explicit limits");
+  }
+  BuildResult defaults;
+  session_build_initialize_kernel_runner_budget(&defaults, nullptr);
+  require(defaults.kernel_runner_capacity == 4 && defaults.kernel_runner_output_pool_capacity == 5,
+          "missing graph options must retain the automatic execution window");
+}
+
 void authored_stage_budget() {
   const auto check = [](std::optional<std::size_t> authored, std::size_t graph_execution,
                         std::size_t graph_pool, std::size_t execution, std::size_t pool) {
@@ -1291,6 +1310,7 @@ int main(int argc, char** argv) {
   try {
     const auto capacity_policy = [] {
       output_carrier_budget();
+      automatic_execution_capacity();
       authored_stage_budget();
       authored_preproc_contract_policy();
       ev_service_capacity();

@@ -1867,7 +1867,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   // Execution and output ownership are independent: a completed frame may
   // remain retained by the application after its execution slot is reusable.
   br.kernel_runner_capacity =
-      sync_mode ? 1U : static_cast<std::size_t>(std::clamp(sess_opt.async_queue_depth, 1, 64));
+      sync_mode ? 1U : session_build_kernel_runner_capacity(sess_opt.async_queue_depth);
   const bool legacy_observer = env_bool("SIMA_GST_FLOW_DEBUG", false) ||
                                env_bool("SIMA_GST_BOUNDARY_PROBES", false) ||
                                env_bool("SIMA_GST_DETESS_INPUT_DEBUG", false) ||

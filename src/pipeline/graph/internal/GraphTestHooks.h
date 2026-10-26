@@ -15,6 +15,8 @@
 
 namespace simaai::neat {
 struct GraphOptions;
+struct BuildResult;
+struct OutputSpec;
 struct GraphLinkOptions;
 class Node;
 struct Sample;
@@ -29,6 +31,11 @@ struct ExecutionGraphPlan;
 } // namespace simaai::neat
 
 namespace simaai::neat::session_test {
+
+BuildResult compile_fused_realtime_contracts_for_test(
+    const std::vector<std::shared_ptr<Node>>& consumer_nodes,
+    const std::vector<std::vector<std::shared_ptr<Node>>>& branch_nodes,
+    const GraphOptions& options, const OutputSpec& ingress_spec);
 
 std::string export_graph_topology_for_test(const runtime::ExecutionGraphPlan& plan);
 

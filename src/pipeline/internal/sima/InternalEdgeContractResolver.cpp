@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <sstream>
+#include <stdexcept>
 #include <string_view>
 #include <utility>
 
@@ -528,6 +529,26 @@ std::optional<std::size_t> resolve_producer_stage_exact(const SimaPluginStaticMa
   // Planning is topological. A public input can share a later output's name.
   return resolve_producer_stage(manifest, consumer_stage_index, binding, consumer_stage_index,
                                 error_message);
+}
+
+void pin_local_producer_bindings(SimaPluginStaticManifest& manifest) {
+  for (std::size_t index = 0; index < manifest.stages.size(); ++index) {
+    auto& stage = manifest.stages[index];
+    for (auto& binding : stage.input_bindings) {
+      if (binding.src_stage_index >= 0 || !binding.src_stage_id.empty())
+        continue;
+      const auto* logical = find_consumer_logical_input(stage, binding);
+      const auto* physical = find_consumer_physical_input(stage, logical, binding);
+      if (physical && physical->address_source == PhysicalAddressSource::RuntimePhysicalBinding)
+        continue;
+      std::string error;
+      const auto producer = resolve_producer_stage_exact(manifest, index, binding, &error);
+      if (!error.empty())
+        throw std::invalid_argument(error);
+      if (producer)
+        binding.src_stage_index = static_cast<int>(*producer);
+    }
+  }
 }
 
 std::vector<ResolvedEdgeContract>

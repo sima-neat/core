@@ -65,6 +65,10 @@ std::shared_ptr<const ModelFragmentStoragePlan>
 make_model_fragment_storage_plan(const std::vector<std::shared_ptr<Node>>& nodes,
                                  const std::vector<CompiledNodeContract>& stages,
                                  std::span<const std::size_t> node_contract_indices);
+std::shared_ptr<const ModelFragmentStoragePlan> append_model_fragment_storage_plan(
+    const std::shared_ptr<const ModelFragmentStoragePlan>& destination,
+    const std::shared_ptr<const ModelFragmentStoragePlan>& source, std::size_t compile_node_offset,
+    std::size_t compile_stage_offset);
 void project_model_fragment_storage(pipeline_internal::sima::SimaPluginStaticManifest&);
 
 bool apply_model_fragment_contract_context(const ContractCompileInput& input,

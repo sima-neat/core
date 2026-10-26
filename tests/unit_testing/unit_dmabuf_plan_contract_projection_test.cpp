@@ -1456,19 +1456,18 @@ sc::ModelExecutionPlan make_grouped_padded_cast_plan() {
   return std::move(*plan);
 }
 
-sc::ModelExecutionPlan
-make_fused_transform_plan(const sc::OpKind first_kind, const sc::OpKind second_kind,
-                          const std::size_t members, const std::uint64_t input_offset = 0U,
-                          const sc::TensorShape shape = {1, 2, 2, 16},
-                          const std::string layout = "HWC", const std::uint32_t batch_count = 1U,
-                          const bool c16_packed = true) {
+sc::ModelExecutionPlan make_fused_transform_plan(
+    const sc::OpKind first_kind, const sc::OpKind second_kind, const std::size_t members,
+    const std::uint64_t input_offset = 0U, const sc::TensorShape shape = {1, 2, 2, 16},
+    const std::string layout = "HWC", const std::uint32_t batch_count = 1U,
+    const bool c16_packed = true, const std::uint64_t output_storage_bytes = 0U) {
   sc::ModelExecutionPlanData data;
   data.contract_version = "2.1.0";
   std::uint64_t elements = 1U;
   for (const auto dim : shape) {
     elements *= static_cast<std::uint64_t>(dim);
   }
-  const sc::TensorShape tile{1, 1, 1, 16};
+  const sc::TensorShape tile{1, 1, 1, c16_packed ? 16 : shape.back()};
   const auto dtype_bytes = [](const std::string& dtype) {
     return dtype == "FP32" ? 4U : dtype == "BF16" ? 2U : 1U;
   };
@@ -1488,7 +1487,8 @@ make_fused_transform_plan(const sc::OpKind first_kind, const sc::OpKind second_k
     const auto output_id = input_id + 2U;
     const auto input_bytes = elements * dtype_bytes(input_dtype);
     const auto middle_bytes = elements * dtype_bytes(middle_dtype);
-    const auto output_bytes = elements * dtype_bytes(output_dtype);
+    const auto output_bytes =
+        output_storage_bytes ? output_storage_bytes : elements * dtype_bytes(output_dtype);
     const auto input_carrier = static_cast<sc::CarrierId>(data.carriers.size());
     data.carriers.push_back(
         {input_carrier, input_offset + input_bytes, 64U, sc::ValueRepresentation::Dense});
@@ -1642,18 +1642,20 @@ void test_casttess_hwc_execution_view() {
     std::uint32_t batch;
     std::uint32_t execution_rank;
     bool c16_packed;
+    std::uint64_t output_storage_bytes = 0U;
   };
-  const std::array<Case, 5U> cases{{
+  const std::array<Case, 6U> cases{{
       {{1, 2, 2, 16}, "HWC", 1U, 4U, false},
       {{1, 2, 2, 16}, "HWC", 1U, 4U, true},
       {{2, 2, 16}, "HWC", 1U, 3U, true},
       {{2, 2, 2, 16}, "HWC", 1U, 4U, true},
       {{2, 2, 2, 16}, "NHWC", 2U, 4U, true},
+      {{2, 2, 3}, "HWC", 1U, 3U, false, 64U},
   }};
   for (const auto& test : cases) {
-    const auto plan =
-        make_fused_transform_plan(sc::OpKind::Cast, sc::OpKind::Tessellate, 1U, 64U, test.shape,
-                                  test.layout, test.batch, test.c16_packed);
+    const auto plan = make_fused_transform_plan(sc::OpKind::Cast, sc::OpKind::Tessellate, 1U, 64U,
+                                                test.shape, test.layout, test.batch,
+                                                test.c16_packed, test.output_storage_bytes);
     std::string error;
     const auto physical = sc::PhysicalExecutionLowerer::lower(plan, &error);
     require(physical.has_value(), "CastTess execution view lowers: " + error);
@@ -1680,18 +1682,19 @@ void test_casttess_hwc_execution_view() {
       const auto& input = contract->payload.input_tensors[member].descriptor();
       const auto& output = contract->payload.output_tensors[member].descriptor();
       const auto hwc = test.execution_rank - 3U;
+      const auto channels = test.shape.back();
       require(input.shape.rank == test.execution_rank && output.shape.rank == test.execution_rank &&
                   input.shape.axis_semantics[hwc] == SIMA_EV_AXIS_H &&
                   input.shape.axis_semantics[hwc + 1U] == SIMA_EV_AXIS_W &&
                   input.shape.axis_semantics[hwc + 2U] == SIMA_EV_AXIS_C &&
                   input.shape.sizes[hwc] == 2 && input.shape.sizes[hwc + 1U] == 2 &&
-                  input.shape.sizes[hwc + 2U] == 16 &&
-                  input.layout.strided.strides_bytes[hwc] == 128 &&
-                  input.layout.strided.strides_bytes[hwc + 1U] == 64 &&
+                  input.shape.sizes[hwc + 2U] == channels &&
+                  input.layout.strided.strides_bytes[hwc] == 2 * channels * 4 &&
+                  input.layout.strided.strides_bytes[hwc + 1U] == channels * 4 &&
                   input.layout.strided.strides_bytes[hwc + 2U] == 4 &&
                   output.layout.tiled.tile_sizes[hwc] == 1 &&
                   output.layout.tiled.tile_sizes[hwc + 1U] == 1 &&
-                  output.layout.tiled.tile_sizes[hwc + 2U] == 16 &&
+                  output.layout.tiled.tile_sizes[hwc + 2U] == (test.c16_packed ? 16 : channels) &&
                   output.layout.tiled.tile_align_bytes == 16U &&
                   ((output.layout.tiled.flags & SIMA_EV_TILED_FLAG_COMPACT_CHANNELS) == 0U) ==
                       test.c16_packed,
@@ -1708,6 +1711,12 @@ void test_casttess_hwc_execution_view() {
                   contract->runtime_contract.physical_outputs[member].source_byte_offset ==
                       arena->region(2U)->byte_offset + 32U,
               "execution views preserve whole-batch spans without fabricated sample offsets");
+      if (test.output_storage_bytes) {
+        const auto& logical = contract->runtime_contract.logical_outputs.front();
+        require(logical.shape == test.shape && logical.size_bytes == test.output_storage_bytes &&
+                    logical.size_bytes % (2 * 2 * channels) != 0,
+                "compact C3 publication must retain tile-aligned storage without changing shape");
+      }
     }
   }
 }

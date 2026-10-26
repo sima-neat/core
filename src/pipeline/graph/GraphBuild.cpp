@@ -3092,6 +3092,10 @@ std::string session_build_clamp_sync_build_result(BuildResult& build, int num_bu
   return out;
 }
 
+std::size_t session_build_kernel_runner_capacity(int requested_depth) {
+  return static_cast<std::size_t>(std::clamp(requested_depth == 0 ? 4 : requested_depth, 1, 64));
+}
+
 void session_build_initialize_kernel_runner_budget(BuildResult* build,
                                                    const GraphOptions* options) {
   if (!build) {
@@ -3104,7 +3108,7 @@ void session_build_initialize_kernel_runner_budget(BuildResult* build,
   }
   build->kernel_runner_a65_workers = static_cast<std::size_t>(workers);
   build->kernel_runner_capacity =
-      static_cast<std::size_t>(std::clamp(options ? options->async_queue_depth : 1, 1, 64));
+      session_build_kernel_runner_capacity(options ? options->async_queue_depth : 0);
   build->kernel_runner_output_pool_capacity = build->kernel_runner_capacity + 1U;
   if (options && options->processmla.output_pool_buffers > 0 &&
       build->pipeline_string.find("neatprocessmla") != std::string::npos) {

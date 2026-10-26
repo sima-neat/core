@@ -2,7 +2,10 @@
 #include "model/internal/ModelInternal.h"
 #include "nodes/sima/DetessDequant.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
+#include "pipeline/graph/internal/GraphTestHooks.h"
+#include "pipeline/graph/GraphDetail.h"
 #include "pipeline/internal/sima/ContractRender.h"
+#include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StageMemoryPolicy.h"
 #include "pipeline/internal/sima/StageRecipePreparation.h"
 #include "model_archive_fixture_utils.h"
@@ -14,6 +17,7 @@
 
 #include <algorithm>
 #include <array>
+#include <set>
 #include <variant>
 
 namespace {
@@ -134,6 +138,84 @@ RUN_TEST(
                     stage.frame_arena_role == pipeline_internal::sima::FrameArenaRole::ReuseInput,
                 "cold public route must retain one placement authority across all stages");
       }
+
+      // Fused compilation must retain each independently compiled model plan,
+      // including its full preproc-owned group and the global stage identities.
+      Model::Options live_options;
+      live_options.preprocess.kind = InputKind::Image;
+      live_options.preprocess.enable = AutoFlag::On;
+      live_options.preprocess.color_convert.input_format = PreprocessColorFormat::NV12;
+      Model live_model(fixture.tar_path, live_options);
+      const auto live_nodes = internal::ModelAccess::build_public_route_nodes(live_model, {});
+      GraphOptions live_graph_options;
+      live_graph_options.processcvu.post_run_target = "A65";
+      OutputSpec live_ingress;
+      live_ingress.media_type = "video/x-raw";
+      live_ingress.format = "NV12";
+      live_ingress.width = 1280;
+      live_ingress.height = 720;
+      auto fused = session_test::compile_fused_realtime_contracts_for_test(
+          live_nodes, {{std::make_shared<Input>(InputOptions{})}, live_nodes}, live_graph_options,
+          live_ingress);
+      require(fused.rendered_manifest && fused.manifest_diagnostics.errors.empty() &&
+                  fused.rendered_manifest->model_storage_plan,
+              "fused compilation must preserve model storage ownership");
+      auto& live_manifest = *fused.rendered_manifest;
+      const auto live_preparation = pipeline_internal::sima::prepare_kernel_stage_recipes(
+          &live_manifest, std::nullopt, {}, {}, {});
+      require(!live_preparation,
+              live_preparation ? live_preparation->field + ": " + live_preparation->message : "");
+      pipeline_internal::sima::finalize_pipeline_storage(live_manifest);
+      namespace client = simaai::scheduler::client;
+      std::size_t planned_invocations = 0;
+      std::set<std::size_t> rendered_indices;
+      std::set<std::size_t> model_node_indices;
+      for (std::size_t i = 0; i < live_manifest.stages.size(); ++i) {
+        const auto& owner = live_manifest.stages[i];
+        require(owner.compile_stage_index &&
+                    rendered_indices.insert(*owner.compile_stage_index).second,
+                "fused rendered stage identities must remain unique");
+        if (!owner.native_kernel || !owner.native_kernel->frame_adapter_factory)
+          continue;
+        require(i + 1 < live_manifest.stages.size() && owner.model_storage_planned &&
+                    owner.frame_layout &&
+                    owner.frame_layout->ownership == client::FrameOwnership::Allocate &&
+                    owner.compile_node_index &&
+                    model_node_indices.insert(*owner.compile_node_index).second,
+                "each fused model invocation must keep its own planned owner");
+        const auto& mla = live_manifest.stages[i + 1];
+        require(mla.payload_kind == pipeline_internal::sima::StagePayloadKind::ProcessMla &&
+                    mla.model_storage_planned && mla.frame_layout &&
+                    mla.frame_layout->ownership == client::FrameOwnership::ReuseInput,
+                "fused MLA must reuse the preprocess-owned allocation group: owner=" +
+                    owner.element_name + ", next=" + mla.element_name + ", ownership=" +
+                    std::to_string(mla.frame_layout ? static_cast<int>(mla.frame_layout->ownership)
+                                                    : -1));
+        const auto& allocations = owner.frame_layout->allocations;
+        const auto& mla_layout = *mla.frame_layout;
+        require(allocations.size() == 2 && allocations.size() == mla_layout.allocations.size(),
+                "fused preproc must own the complete CMA/DMS group reused by MLA");
+        for (std::size_t allocation = 0; allocation < allocations.size(); ++allocation) {
+          require(allocations[allocation].size_bytes ==
+                          mla_layout.allocations[allocation].size_bytes &&
+                      allocations[allocation].policy == mla_layout.allocations[allocation].policy &&
+                      allocations[allocation].required_device_access ==
+                          mla_layout.allocations[allocation].required_device_access,
+                  "fused producer and reuser must agree on allocations in index order");
+        }
+        const auto& ifm = std::get<client::KnownArena>(mla_layout.inputs.front().source).span;
+        const auto& ofm = mla_layout.outputs.front().span;
+        for (const auto& span : {ifm, ofm}) {
+          require(span.allocation_index < allocations.size() &&
+                      span.byte_offset <= allocations[span.allocation_index].size_bytes &&
+                      span.size_bytes <=
+                          allocations[span.allocation_index].size_bytes - span.byte_offset,
+                  "fused MLA spans must fit the producer's actual allocation group");
+        }
+        ++planned_invocations;
+      }
+      require(planned_invocations == 2,
+              "fused consumer and model-bearing branch must retain independent storage plans");
 
       // Custom preprocessing owns its own output group. A named inference
       // fragment must import that IFM and allocate its selected outputs rather

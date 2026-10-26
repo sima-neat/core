@@ -15,6 +15,7 @@
 
 #include "builder/InputContractConfigurable.h"
 #include "builder/OutputSpec.h"
+#include "model/internal/ModelPack.h"
 #include "nodes/common/Queue.h"
 #include "nodes/io/Input.h"
 #include "nodes/sima/PCIeSrc.h"
@@ -28,6 +29,7 @@
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/RealtimeLinkOptions.h"
+#include "pipeline/internal/sima/InternalEdgeContractResolver.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TerminalOutputContractQuery.h"
 #include "pipeline/internal/UxLogging.h"
@@ -1184,6 +1186,9 @@ void apply_name_transform_to_compiled_contract_stage(CompiledNodeContract* stage
   }
   stage->element_name = apply_name_transform(name_transform, stage->element_name);
   stage->logical_stage_id = apply_name_transform(name_transform, stage->logical_stage_id);
+  if (stage->kernel) {
+    apply_name_transform_to_runtime_contract(&stage->kernel->runtime_contract, name_transform);
+  }
   if (stage->processcvu) {
     apply_name_transform_to_runtime_contract(&stage->processcvu->runtime_contract, name_transform);
   }
@@ -1224,15 +1229,25 @@ void append_compiled_contracts(BuildResult* dst, const BuildResult& src,
 }
 
 void append_rendered_manifest(BuildResult* dst, const BuildResult& src,
-                              const NameTransform& local_name_transform) {
+                              const NameTransform& local_name_transform,
+                              std::size_t compile_node_offset, std::size_t compile_stage_offset) {
   if (!dst || !src.rendered_manifest.has_value()) {
     return;
   }
   if (!dst->rendered_manifest.has_value()) {
     dst->rendered_manifest = pipeline_internal::sima::SimaPluginStaticManifest{};
   }
-  for (auto stage : src.rendered_manifest->stages) {
+  auto component = *src.rendered_manifest;
+  pipeline_internal::sima::edgecontract::pin_local_producer_bindings(component);
+  for (auto& stage : component.stages) {
     apply_name_transform_to_fused_manifest_stage(&stage, local_name_transform);
+    if (stage.compile_node_index)
+      *stage.compile_node_index += compile_node_offset;
+    if (stage.compile_stage_index)
+      *stage.compile_stage_index += compile_stage_offset;
+    for (auto& binding : stage.input_bindings)
+      if (binding.src_stage_index >= 0)
+        binding.src_stage_index += static_cast<int>(compile_stage_offset);
     dst->rendered_manifest->stages.push_back(std::move(stage));
   }
 }
@@ -1263,8 +1278,20 @@ void append_model_source_paths(BuildResult* dst, const BuildResult& src) {
 
 void merge_fused_contract_build_result(BuildResult* dst, const BuildResult& src,
                                        const NameTransform& local_name_transform) {
+  const auto compile_node_offset =
+      dst->compiled_contracts ? dst->compiled_contracts->stages.size() : 0U;
+  const auto compile_stage_offset =
+      dst->rendered_manifest ? dst->rendered_manifest->stages.size() : 0U;
   append_compiled_contracts(dst, src, local_name_transform);
-  append_rendered_manifest(dst, src, local_name_transform);
+  append_rendered_manifest(dst, src, local_name_transform, compile_node_offset,
+                           compile_stage_offset);
+  if (dst->compiled_contracts && src.compiled_contracts) {
+    dst->compiled_contracts->model_storage_plan = internal::append_model_fragment_storage_plan(
+        dst->compiled_contracts->model_storage_plan, src.compiled_contracts->model_storage_plan,
+        compile_node_offset, compile_stage_offset);
+    if (dst->rendered_manifest)
+      dst->rendered_manifest->model_storage_plan = dst->compiled_contracts->model_storage_plan;
+  }
   append_manifest_diagnostics(dst, src);
   append_model_source_paths(dst, src);
 }
@@ -3223,6 +3250,16 @@ BuildResult build_fused_realtime_source_pipeline(
 }
 
 namespace session_test {
+
+BuildResult compile_fused_realtime_contracts_for_test(
+    const std::vector<std::shared_ptr<Node>>& consumer_nodes,
+    const std::vector<std::vector<std::shared_ptr<Node>>>& branch_nodes,
+    const GraphOptions& options, const OutputSpec& ingress_spec) {
+  BuildResult result;
+  maybe_compile_fused_realtime_contracts(&result, consumer_nodes, branch_nodes, {}, options,
+                                         "fused contract test", ingress_spec);
+  return result;
+}
 
 bool source_sima_meta_probe_required_for_test(const Node& node) {
   return source_sima_meta_probe_required_for_node(node);

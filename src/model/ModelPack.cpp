@@ -81,9 +81,14 @@ struct ModelFragmentCompileContext {
 };
 
 struct ModelFragmentStoragePlan {
-  std::vector<std::shared_ptr<Node>> nodes;
-  std::vector<CompiledNodeContract> semantic_stages;
-  std::vector<std::size_t> node_contract_indices;
+  struct Scope {
+    std::vector<std::shared_ptr<Node>> nodes;
+    std::vector<CompiledNodeContract> semantic_stages;
+    std::vector<std::size_t> node_contract_indices;
+    std::size_t compile_node_offset = 0;
+    std::size_t compile_stage_offset = 0;
+  };
+  std::vector<Scope> scopes;
 };
 
 struct ModelFragmentPlanSource {
@@ -3390,8 +3395,7 @@ finalize_model_fragment_contracts(const std::vector<std::shared_ptr<Node>>& node
           lineage && upstream_lineage && !lineage->lineage_key.empty() &&
           upstream_lineage->lineage_key == lineage->lineage_key &&
           upstream_lineage->stage_role == ModelLineageStageRole::Preprocess && upstream_cvu &&
-          upstream_cvu->model_execution_source.get() == &source &&
-          upstream_cvu->runtime_contract.frame_arena_size_bytes == source.arena.allocation_bytes();
+          upstream_cvu->model_execution_source.get() == &source;
       if (includes_ingress)
         add_commands(upstream_cvu->physical_command_ids, first - 1U);
       for (std::size_t position = includes_ingress ? first - 1U : first; position < end; ++position)
@@ -3755,84 +3759,116 @@ make_model_fragment_storage_plan(const std::vector<std::shared_ptr<Node>>& nodes
       }))
     return {};
   auto plan = std::make_shared<ModelFragmentStoragePlan>();
-  plan->nodes = nodes;
-  plan->semantic_stages = stages;
-  plan->node_contract_indices.assign(node_contract_indices.begin(), node_contract_indices.end());
+  auto& scope = plan->scopes.emplace_back();
+  scope.nodes = nodes;
+  scope.semantic_stages = stages;
+  scope.node_contract_indices.assign(node_contract_indices.begin(), node_contract_indices.end());
   return plan;
+}
+
+std::shared_ptr<const ModelFragmentStoragePlan> append_model_fragment_storage_plan(
+    const std::shared_ptr<const ModelFragmentStoragePlan>& destination,
+    const std::shared_ptr<const ModelFragmentStoragePlan>& source, std::size_t compile_node_offset,
+    std::size_t compile_stage_offset) {
+  if (!source)
+    return destination;
+  auto result = destination ? std::make_shared<ModelFragmentStoragePlan>(*destination)
+                            : std::make_shared<ModelFragmentStoragePlan>();
+  for (auto scope : source->scopes) {
+    scope.compile_node_offset += compile_node_offset;
+    scope.compile_stage_offset += compile_stage_offset;
+    result->scopes.push_back(std::move(scope));
+  }
+  return result;
 }
 
 void project_model_fragment_storage(pipeline_internal::sima::SimaPluginStaticManifest& manifest) {
   const auto source = manifest.model_storage_plan;
   if (!source)
     return;
-  CompiledPipelineContracts compiled;
-  compiled.stages = source->semantic_stages;
-  compiled.fully_renderable = true;
-  std::vector<const CompiledNodeContract*> resolved_nodes(source->nodes.size());
-  for (std::size_t index = 0; index < source->nodes.size(); ++index)
-    if (source->node_contract_indices[index] < compiled.stages.size())
-      resolved_nodes[index] = &compiled.stages[source->node_contract_indices[index]];
-  std::string error;
-  const auto storage = finalize_model_fragment_contracts(
-      source->nodes, resolved_nodes, source->node_contract_indices, manifest, &error);
-  if (!storage)
-    throw std::invalid_argument(error);
-  ContractCompileInput input;
-  input.model_fragments = storage;
-  for (std::size_t index = 0; index < source->nodes.size(); ++index) {
-    const auto slot = source->node_contract_indices[index];
-    if (slot >= compiled.stages.size())
-      continue;
-    input.node_occurrence_index = index;
-    if (!apply_model_fragment_contract_context(input, &compiled.stages[slot], &error))
+  for (const auto& scope : source->scopes) {
+    CompiledPipelineContracts compiled;
+    compiled.stages = scope.semantic_stages;
+    compiled.fully_renderable = true;
+    std::vector<const CompiledNodeContract*> resolved_nodes(scope.nodes.size());
+    for (std::size_t index = 0; index < scope.nodes.size(); ++index)
+      if (scope.node_contract_indices[index] < compiled.stages.size())
+        resolved_nodes[index] = &compiled.stages[scope.node_contract_indices[index]];
+    auto global_node_indices = scope.node_contract_indices;
+    for (auto& index : global_node_indices)
+      index += scope.compile_node_offset;
+    std::string error;
+    const auto storage = finalize_model_fragment_contracts(scope.nodes, resolved_nodes,
+                                                           global_node_indices, manifest, &error);
+    if (!storage)
       throw std::invalid_argument(error);
-    input.immediate_upstream = last_effective_child_stage(&compiled.stages[slot]);
-  }
-  auto projected = render_manifest_from_compiled_contracts(compiled, {}, nullptr);
-  if (!projected)
-    throw std::invalid_argument("model storage projection produced no stages");
-  std::unordered_map<std::string, std::string> renamed;
-  for (const auto& stage : projected->stages) {
-    const auto current =
-        std::find_if(manifest.stages.begin(), manifest.stages.end(), [&](const auto& value) {
-          return value.compile_stage_index == stage.compile_stage_index;
-        });
-    if (current == manifest.stages.end())
-      throw std::invalid_argument("model storage projection lost a selected stage");
-    renamed.emplace(stage.element_name, current->element_name);
-    renamed.emplace(stage.logical_stage_id, current->logical_stage_id);
-  }
-  for (auto& stage : projected->stages) {
-    const auto current =
-        std::find_if(manifest.stages.begin(), manifest.stages.end(), [&](const auto& value) {
-          return value.compile_stage_index == stage.compile_stage_index;
-        });
-    if (current == manifest.stages.end())
-      throw std::invalid_argument("model storage projection lost a selected stage");
-    if (stage.model_storage_planned) {
-      stage.element_name = current->element_name;
-      stage.logical_stage_id = current->logical_stage_id;
+    ContractCompileInput input;
+    input.model_fragments = storage;
+    for (std::size_t index = 0; index < scope.nodes.size(); ++index) {
+      const auto slot = scope.node_contract_indices[index];
+      if (slot >= compiled.stages.size())
+        continue;
+      input.node_occurrence_index = index;
+      if (!apply_model_fragment_contract_context(input, &compiled.stages[slot], &error))
+        throw std::invalid_argument(error);
+      input.immediate_upstream = last_effective_child_stage(&compiled.stages[slot]);
+    }
+    auto projected = render_manifest_from_compiled_contracts(compiled, {}, nullptr);
+    if (!projected)
+      throw std::invalid_argument("model storage projection produced no stages");
+    pipeline_internal::sima::edgecontract::pin_local_producer_bindings(*projected);
+    for (auto& stage : projected->stages) {
+      if (stage.compile_stage_index)
+        *stage.compile_stage_index += scope.compile_stage_offset;
+      if (stage.compile_node_index)
+        *stage.compile_node_index += scope.compile_node_offset;
       for (auto& binding : stage.input_bindings)
-        if (const auto name = renamed.find(binding.src_stage_id); name != renamed.end())
-          binding.src_stage_id = name->second;
-      stage.native_kernel = current->native_kernel;
-      stage.image_publication = current->image_publication;
-      stage.mla_program = current->mla_program;
-      if (current->tvm_program && stage.tvm_program) {
-        auto program =
-            std::make_shared<::simaai::scheduler::client::TvmProgram>(*current->tvm_program);
-        program->cpu_epoch_start = stage.tvm_program->cpu_epoch_start;
-        program->cpu_epoch_end = stage.tvm_program->cpu_epoch_end;
-        stage.tvm_program = std::move(program);
+        if (binding.src_stage_index >= 0)
+          binding.src_stage_index += static_cast<int>(scope.compile_stage_offset);
+    }
+    std::unordered_map<std::string, std::string> renamed;
+    for (const auto& stage : projected->stages) {
+      const auto current =
+          std::find_if(manifest.stages.begin(), manifest.stages.end(), [&](const auto& value) {
+            return value.compile_stage_index == stage.compile_stage_index;
+          });
+      if (current == manifest.stages.end())
+        throw std::invalid_argument("model storage projection lost a selected stage");
+      renamed.emplace(stage.element_name, current->element_name);
+      renamed.emplace(stage.logical_stage_id, current->logical_stage_id);
+    }
+    for (auto& stage : projected->stages) {
+      const auto current =
+          std::find_if(manifest.stages.begin(), manifest.stages.end(), [&](const auto& value) {
+            return value.compile_stage_index == stage.compile_stage_index;
+          });
+      if (current == manifest.stages.end())
+        throw std::invalid_argument("model storage projection lost a selected stage");
+      if (stage.model_storage_planned) {
+        stage.element_name = current->element_name;
+        stage.logical_stage_id = current->logical_stage_id;
+        for (auto& binding : stage.input_bindings)
+          if (const auto name = renamed.find(binding.src_stage_id); name != renamed.end())
+            binding.src_stage_id = name->second;
+        stage.native_kernel = current->native_kernel;
+        stage.image_publication = current->image_publication;
+        stage.mla_program = current->mla_program;
+        if (current->tvm_program && stage.tvm_program) {
+          auto program =
+              std::make_shared<::simaai::scheduler::client::TvmProgram>(*current->tvm_program);
+          program->cpu_epoch_start = stage.tvm_program->cpu_epoch_start;
+          program->cpu_epoch_end = stage.tvm_program->cpu_epoch_end;
+          stage.tvm_program = std::move(program);
+        }
+        *current = std::move(stage);
+      } else if (stage.native_kernel) {
+        current->physical_inputs = std::move(stage.physical_inputs);
+        current->logical_inputs = std::move(stage.logical_inputs);
+        current->input_bindings = std::move(stage.input_bindings);
+        for (auto& binding : current->input_bindings)
+          if (const auto name = renamed.find(binding.src_stage_id); name != renamed.end())
+            binding.src_stage_id = name->second;
       }
-      *current = std::move(stage);
-    } else if (stage.native_kernel) {
-      current->physical_inputs = std::move(stage.physical_inputs);
-      current->logical_inputs = std::move(stage.logical_inputs);
-      current->input_bindings = std::move(stage.input_bindings);
-      for (auto& binding : current->input_bindings)
-        if (const auto name = renamed.find(binding.src_stage_id); name != renamed.end())
-          binding.src_stage_id = name->second;
     }
   }
   manifest.model_storage_plan.reset();

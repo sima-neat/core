@@ -66,6 +66,10 @@ std::optional<std::size_t> resolve_producer_stage_exact(const SimaPluginStaticMa
                                                         const InputBindingStaticSpec& binding,
                                                         std::string* error_message = nullptr);
 
+// Preserve internal edge identity before independently compiled components are merged.
+// Unresolved public/imported inputs remain unbound.
+void pin_local_producer_bindings(SimaPluginStaticManifest& manifest);
+
 // Ownership-sensitive query. Resolve an explicit unique stage selector, or a
 // unique compiler-authored value identity (cm/source name), never a neighboring
 // stage or a coincidentally equal local output ordinal. Public runtime bindings
