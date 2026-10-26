@@ -23,6 +23,16 @@ std::string name(int node_index, const char* suffix) {
   return "n" + std::to_string(node_index) + "_camera_" + suffix;
 }
 
+std::string quoted(const std::string& value) {
+  std::string out = "\"";
+  for (char ch : value) {
+    if (ch == '\\' || ch == '"')
+      out.push_back('\\');
+    out.push_back(ch);
+  }
+  return out + '"';
+}
+
 // One node keeps capture and decode in one GStreamer segment: v4l2src gets its
 // CMA buffers from neatdecoder's answer to its ALLOCATION query.
 class UvcMjpegCameraNode final : public Node, public OutputSpecProvider {
@@ -51,6 +61,7 @@ public:
   }
 
   std::string backend_fragment(int node_index) const override {
+    internal::uvc::require_still_connected(camera_);
     std::ostringstream ss;
     ss << "v4l2src name=" << name(node_index, "src") << " device=" << camera_.device
        << " io-mode=dmabuf-import ! capsfilter name=" << name(node_index, "caps")
@@ -64,9 +75,10 @@ public:
       if (opt_.leaky_queue)
         ss << " leaky=downstream";
     }
-    ss << " ! " << decoder().backend_fragment(node_index) << " op-buff-name=" << opt_.buffer_name
-       << " input-pool-buffers=" << pool_buffers_
-       << " copy-allowed=" << (opt_.allow_cpu_fallback ? "true" : "false");
+    // Capture always lands in the decoder's own buffers, so no frame ever needs a copy.
+    ss << " ! " << decoder().backend_fragment(node_index)
+       << " op-buff-name=" << quoted(opt_.buffer_name) << " input-pool-buffers=" << pool_buffers_
+       << " copy-allowed=false";
     return ss.str();
   }
 
@@ -84,8 +96,7 @@ public:
     out.payload_type = PayloadType::Image;
     out.fps_num = static_cast<int>(opt_.framerate_num); // exact, e.g. 30000/1001
     out.fps_den = static_cast<int>(opt_.framerate_den);
-    out.note = opt_.allow_cpu_fallback ? "USB MJPEG camera input, decoded in place or copied"
-                                       : "USB MJPEG camera input, decoded in place";
+    out.note = "USB MJPEG camera input, decoded in place";
     return out;
   }
 
@@ -112,6 +123,8 @@ void validate_options(const UsbCameraInputOptions& opt, std::uint32_t capture_bu
         "UsbCameraInput requires camera_name: a USB camera ID from usb_camera_ids()");
   if (opt.width == 0 || opt.height == 0 || opt.framerate_num == 0 || opt.framerate_den == 0)
     throw std::invalid_argument("UsbCameraInput requires a nonzero width, height and frame rate");
+  if (opt.buffer_name.empty())
+    throw std::invalid_argument("UsbCameraInput requires a buffer_name");
   if (capture_buffer_count > kMaxCaptureBuffers)
     throw std::invalid_argument("UsbCameraInput capture_buffer_count exceeds 64");
 }
@@ -141,11 +154,7 @@ simaai::neat::Graph mjpeg_camera_graph(const UsbCameraInputOptions& opt,
 } // namespace internal::uvc
 
 std::vector<std::string> usb_camera_ids() {
-  std::vector<std::string> ids;
-  for (const auto& node : internal::uvc::list_nodes())
-    if (std::find(ids.begin(), ids.end(), node.id) == ids.end())
-      ids.push_back(node.id);
-  return ids;
+  return internal::uvc::camera_ids(internal::uvc::list_nodes());
 }
 
 } // namespace simaai::neat

@@ -124,6 +124,34 @@ void check_validation() {
                                         "nonzero width, height and frame rate", "zero rate");
   require_throws<std::invalid_argument>([&] { (void)UsbCameraInput(mjpeg_options(), 65); },
                                         "exceeds 64", "too many capture buffers");
+  opt = mjpeg_options();
+  opt.buffer_name.clear();
+  require_throws<std::invalid_argument>([&] { (void)UsbCameraInput(opt); },
+                                        "requires a buffer_name", "empty buffer name");
+}
+
+void check_ids_sorted() {
+  FakeSysfs sys;
+  sys.camera("3.2", {"video1"}); // plugged first, so it has the lower device number
+  sys.camera("3.1", {"video5"});
+  const auto ids = uvc::camera_ids(uvc::list_nodes(sys.root.string()));
+  require(ids.size() == 2 && ids[0] == "/base/pci@7000000000-3.1:1.0-046d:08e5" &&
+              ids[1] == "/base/pci@7000000000-3.2:1.0-046d:08e5",
+          "IDs are sorted by ID, not by plug order");
+}
+
+void check_reconnect() {
+  FakeSysfs sys;
+  sys.camera("3.1", {"video1"});
+  const std::string id = "/base/pci@7000000000-3.1:1.0-046d:08e5";
+  const uvc::ResolvedCamera camera{"/dev/video1", FormatTag::NV12, id, sys.root.string()};
+  const Graph graph = uvc::mjpeg_camera_graph(mjpeg_options(), camera, 0);
+  require_contains(graph.describe_backend(), "device=/dev/video1", "camera still at video1");
+  // Replugged into port 3.2: video1 now belongs to a camera with another ID.
+  fs::remove(sys.root / "class/video4linux/video1/device");
+  sys.camera("3.2", {"video1"});
+  require_throws<std::runtime_error>([&] { (void)graph.describe_backend(); },
+                                     "is no longer /dev/video1", "moved camera is not reopened");
 }
 
 void check_ids_and_nodes() {
@@ -179,7 +207,7 @@ void check_pipeline() {
   require_contains(text, "leaky=downstream", "stale frames drop before decode");
   require_contains(text, "dec-type=mjpeg", "MJPEG decode");
   require_contains(text, "dec-fmt=NV12", "4:2:0 decodes straight to NV12");
-  require_contains(text, "op-buff-name=camera", "decoded frames carry the buffer name");
+  require_contains(text, "op-buff-name=\"camera\"", "decoded frames carry the buffer name");
   require_contains(text, "input-pool-buffers=4", "queue depth plus decoder input slots");
   require_contains(text, "copy-allowed=false", "strict zero-copy by default");
   require_not_contains(direct.describe(), "Preproc", "4:2:0 adds no conversion");
@@ -188,7 +216,7 @@ void check_pipeline() {
   opt.queue_depth = 3;
   const std::string relaxed =
       uvc::mjpeg_camera_graph(opt, {"/dev/video1", FormatTag::NV12}, 9).describe_backend();
-  require_contains(relaxed, "copy-allowed=true", "allow_cpu_fallback permits the copy");
+  require_contains(relaxed, "copy-allowed=false", "allow_cpu_fallback has no effect");
   require_contains(relaxed, "input-pool-buffers=9", "explicit capture_buffer_count");
   require_contains(relaxed, "max-size-buffers=3", "queue depth");
 
@@ -207,6 +235,8 @@ void check_pipeline() {
 int main() {
   try {
     check_validation();
+    check_ids_sorted();
+    check_reconnect();
     check_ids_and_nodes();
     check_acpi_controller();
     check_no_cameras();

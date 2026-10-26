@@ -300,11 +300,36 @@ std::vector<CaptureNode> list_nodes(const std::string& sysfs_root) {
   return nodes;
 }
 
+std::vector<std::string> camera_ids(const std::vector<CaptureNode>& nodes) {
+  std::vector<std::string> ids;
+  for (const auto& node : nodes)
+    ids.push_back(node.id);
+  std::sort(ids.begin(), ids.end());
+  ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+  return ids;
+}
+
+void require_still_connected(const ResolvedCamera& camera) {
+  if (camera.id.empty())
+    return;
+  std::error_code ec;
+  const fs::path node = fs::path(camera.sysfs_root) / "class" / "video4linux" /
+                        fs::path(camera.device).filename() / "device";
+  const fs::path iface = fs::canonical(node, ec);
+  if (ec || camera_id(iface.string(), camera.sysfs_root) != camera.id)
+    throw std::runtime_error("UsbCameraInput: USB camera '" + camera.id + "' is no longer " +
+                             camera.device +
+                             "; it was unplugged, moved or renumbered. Call UsbCameraInput again "
+                             "to open it.");
+}
+
 ResolvedCamera resolve_mjpeg_camera(const std::string& id, std::uint32_t width,
                                     std::uint32_t height, std::uint32_t framerate_num,
                                     std::uint32_t framerate_den, const std::string& sysfs_root) {
   const auto nodes = list_nodes(sysfs_root);
   bool matched = false;
+  bool mjpeg_node = false;
+  std::vector<std::string> modes;
   for (const auto& node : nodes) {
     if (node.id != id)
       continue;
@@ -315,25 +340,26 @@ ResolvedCamera resolve_mjpeg_camera(const std::string& id, std::uint32_t width,
                                node.device + "): " + errno_text(errno));
     if (!captures_mjpeg(fd.fd))
       continue;
-    std::vector<std::string> modes;
-    if (!mjpeg_mode_listed(fd.fd, width, height, framerate_num, framerate_den, &modes)) {
-      std::ostringstream m;
-      m << "UsbCameraInput: USB camera '" << id << "' has no MJPEG mode " << width << 'x' << height
-        << " at " << framerate_num << '/' << framerate_den << " fps; its MJPEG modes are:";
-      for (const auto& mode : modes)
-        m << ' ' << mode;
-      throw std::runtime_error(m.str());
-    }
-    return {node.device, read_sampling(fd.fd, id, width, height, framerate_num, framerate_den)};
+    mjpeg_node = true;
+    // A camera can expose several MJPEG nodes; use the first that lists the mode.
+    if (!mjpeg_mode_listed(fd.fd, width, height, framerate_num, framerate_den, &modes))
+      continue;
+    return {node.device, read_sampling(fd.fd, id, width, height, framerate_num, framerate_den), id,
+            sysfs_root};
+  }
+  if (mjpeg_node) {
+    std::ostringstream m;
+    m << "UsbCameraInput: USB camera '" << id << "' has no MJPEG mode " << width << 'x' << height
+      << " at " << framerate_num << '/' << framerate_den << " fps; its MJPEG modes are:";
+    for (const auto& mode : modes)
+      m << ' ' << mode;
+    throw std::runtime_error(m.str());
   }
   if (matched)
     throw std::runtime_error("UsbCameraInput: USB camera '" + id + "' has no MJPEG capture node");
   std::ostringstream m;
   m << "UsbCameraInput: no USB camera with ID '" << id << "'";
-  std::vector<std::string> ids;
-  for (const auto& node : nodes)
-    if (std::find(ids.begin(), ids.end(), node.id) == ids.end())
-      ids.push_back(node.id);
+  const auto ids = camera_ids(nodes);
   if (ids.empty())
     m << "; no USB cameras are connected";
   for (std::size_t i = 0; i < ids.size(); ++i)

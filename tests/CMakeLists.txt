@@ -996,6 +996,18 @@ if (NOT ev74_four_process_rpmsg_concurrency_test IN_LIST PIPELINESESSION_TEST_BL
   set_tests_properties(ev74_four_process_rpmsg_concurrency_test PROPERTIES TIMEOUT 120)
 endif()
 
+# Runs when SIMA_NEAT_TEST_USB_CAMERA names a connected USB camera; skips otherwise.
+add_pipeline_test_long(
+  usb_camera_input_e2e_test
+  SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_testing/usb_camera_input_e2e_test.cpp
+)
+
+if (NOT usb_camera_input_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST usb_camera_input_e2e_test APPEND PROPERTY LABELS "e2e;camera;long")
+  set_property(TEST usb_camera_input_e2e_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+endif()
+
 add_pipeline_test_long(
   video_sender_adaptive_ingress_e2e_test
   SOURCES

@@ -4237,8 +4237,9 @@ NB_MODULE(_pyneat_core, m) {
                  "options"_a);
   groups_mod.def("rtsp_encoded_input", &simaai::neat::nodes::groups::RtspEncodedInput, "options"_a);
   groups_mod.def("rtsp_decoded_input", &simaai::neat::nodes::groups::RtspDecodedInput, "options"_a);
+  // Opening the camera reads a frame; let other Python threads run meanwhile.
   groups_mod.def("usb_camera_input", &simaai::neat::nodes::groups::UsbCameraInput, "options"_a,
-                 "capture_buffer_count"_a = 0U);
+                 "capture_buffer_count"_a = 0U, nb::call_guard<nb::gil_scoped_release>());
   groups_mod.def("udp_h264_output_group", &simaai::neat::nodes::groups::UdpH264OutputGroup,
                  "options"_a);
   groups_mod.def("video_sender", &simaai::neat::nodes::groups::VideoSender, "options"_a);

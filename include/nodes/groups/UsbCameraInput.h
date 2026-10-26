@@ -17,9 +17,10 @@
 namespace simaai::neat {
 
 /**
- * @brief Options for UsbCameraInput. The fields mirror CameraInputOptions.
+ * @brief Options for UsbCameraInput, with CameraInputOptions' field names and defaults.
  *
- * There is no `format`: the output is always NV12 in SiMaAI memory.
+ * `camera_name` is required here, and there is no `format`: the output is always NV12 in
+ * SiMaAI memory.
  */
 struct UsbCameraInputOptions {
   // Required stable USB camera ID from usb_camera_ids().
@@ -39,9 +40,8 @@ struct UsbCameraInputOptions {
   bool leaky_queue = true;
   std::uint32_t queue_depth = 2;
 
-  // False (default): strict zero-copy. The decoder reads each captured frame in
-  // place and fails on any frame it would have to copy.
-  // True: permit the decoder to copy such frames into its own input buffer.
+  // No effect here; kept so the options match CameraInputOptions. Capture always
+  // lands in the decoder's own CMA buffers, so no frame needs a copy.
   bool allow_cpu_fallback = false;
 };
 
@@ -61,20 +61,23 @@ namespace simaai::neat::nodes::groups {
  * Opens the camera whose stable ID is `opt.camera_name` (see `usb_camera_ids()`),
  * requires the exact MJPEG mode `opt.width` x `opt.height` at
  * `opt.framerate_num`/`opt.framerate_den`, and captures through V4L2. The camera
- * writes each frame into CMA buffers the hardware decoder reads in place;
- * `opt.allow_cpu_fallback = false` (the default) makes a frame that would need a
- * copy a stream error. Frames with bytes after their JPEG end marker are trimmed;
- * incomplete or corrupt frames are dropped. A camera that sends 4:2:2 JPEGs gets one
- * EV74 ColorConvert from NV16 to NV12, read from its first frame when the Graph is
- * created.
+ * writes each frame into CMA buffers the hardware decoder reads in place, so no
+ * frame is copied before decode. Frames with bytes after their JPEG end marker are
+ * trimmed; incomplete or corrupt frames are dropped. A camera that sends 4:2:2 JPEGs
+ * gets one EV74 ColorConvert from NV16 to NV12, read from its first frame when the
+ * Graph is created.
+ *
+ * Building the Graph again after the camera was unplugged, moved or renumbered
+ * throws; call UsbCameraInput again to open it.
  *
  * @param capture_buffer_count CMA capture buffers shared by the camera and the
  *        decoder; 0 uses the queue depth plus the decoder's input slots. At most 64.
- * @throws std::invalid_argument for a missing camera ID, a zero size or rate, or
- *         more than 64 capture buffers.
- * @throws std::runtime_error when the camera is not connected, is in use, lacks the
- *         mode, or sends no decodable frame. The message names the camera ID and lists
- *         the connected IDs or the camera's MJPEG modes.
+ * @throws std::invalid_argument for a missing camera ID or buffer name, a zero size
+ *         or rate, or more than 64 capture buffers.
+ * @throws std::runtime_error when the installed decoder is too old, or the camera
+ *         is not connected, is in use, lacks the mode, or sends no decodable frame.
+ *         The message names the camera ID and lists the connected IDs or the
+ *         camera's MJPEG modes.
  */
 simaai::neat::Graph UsbCameraInput(simaai::neat::UsbCameraInputOptions opt,
                                    std::uint32_t capture_buffer_count = 0);

@@ -26,11 +26,20 @@ std::string camera_id(const std::string& interface_dir, const std::string& sysfs
 /// expose several nodes (capture plus metadata), which then share an ID.
 std::vector<CaptureNode> list_nodes(const std::string& sysfs_root = "/sys");
 
+/// The distinct camera IDs of `nodes`, sorted by ID so the order does not depend on plug order.
+std::vector<std::string> camera_ids(const std::vector<CaptureNode>& nodes);
+
 /// The camera's MJPEG capture node and the chroma layout of its decoded frames.
 struct ResolvedCamera {
-  std::string device; ///< /dev/videoN that captures MJPEG for the camera ID.
-  FormatTag sampling; ///< NV12 for 4:2:0 JPEGs, NV16 for 4:2:2.
+  std::string device;     ///< /dev/videoN that captures MJPEG for the camera ID.
+  FormatTag sampling;     ///< NV12 for 4:2:0 JPEGs, NV16 for 4:2:2.
+  std::string id;         ///< The camera ID; empty skips require_still_connected().
+  std::string sysfs_root; ///< Where `id` was resolved.
 };
+
+/// Throw when `camera.device` no longer belongs to `camera.id`, for example after the
+/// camera was unplugged, moved to another port or renumbered since it was resolved.
+void require_still_connected(const ResolvedCamera& camera);
 
 /// Find the camera by ID, require the exact MJPEG mode, and read one frame to
 /// learn its chroma sampling. Throws std::runtime_error with the camera ID and

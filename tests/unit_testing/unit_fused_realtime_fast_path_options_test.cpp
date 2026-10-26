@@ -13,7 +13,9 @@
 #include "nodes/io/RTSPInput.h"
 #include "nodes/io/UdpOutput.h"
 #include "nodes/groups/RtspEncodedInput.h"
+#include "nodes/groups/UsbCameraInput.h"
 #include "nodes/groups/VideoSender.h"
+#include "nodes/groups/internal/UvcCamera.h"
 #include "nodes/rtp/H264Depacketize.h"
 #include "nodes/sima/H264Packetize.h"
 #include "nodes/sima/H264Parse.h"
@@ -192,6 +194,15 @@ simaai::neat::Graph make_live_source_graph(int index, std::uint32_t width = 1920
   simaai::neat::Graph graph("camera" + std::to_string(index));
   graph.add(simaai::neat::nodes::CameraInput(options));
   return graph;
+}
+
+// A resolved USB camera, so no hardware is needed to compose the graph.
+simaai::neat::Graph make_usb_live_source_graph(int index) {
+  simaai::neat::UsbCameraInputOptions options;
+  options.camera_name = "usb-camera-" + std::to_string(index);
+  options.buffer_name = "fused_queue_usb" + std::to_string(index);
+  return simaai::neat::internal::uvc::mjpeg_camera_graph(
+      options, {"/dev/video" + std::to_string(index), simaai::neat::FormatTag::NV12}, 0);
 }
 
 std::size_t count_occurrences(const std::string& value, const std::string& token) {
@@ -730,6 +741,19 @@ RUN_TEST(
       require(default_live_fused != default_live_plan.pipeline_segments.end() &&
                   default_live_fused->fused_realtime_ingress->branches.size() == 2U,
               "ordinary connect()/build() live fan-in must select fused lowering automatically");
+      simaai::neat::Graph usb_live_app("usb_live_fan_in", outer_options);
+      auto usb_live_detector = make_composed_consumer_graph();
+      usb_live_app.connect(make_usb_live_source_graph(402), usb_live_detector);
+      usb_live_app.connect(make_usb_live_source_graph(403), usb_live_detector);
+      const auto usb_live_plan =
+          simaai::neat::runtime::compile_public_graph(usb_live_app, simaai::neat::RunOptions{});
+      require(std::any_of(usb_live_plan.pipeline_segments.begin(),
+                          usb_live_plan.pipeline_segments.end(),
+                          [](const auto& segment) {
+                            return segment.fused_realtime_ingress.has_value() &&
+                                   segment.fused_realtime_ingress->branches.size() == 2U;
+                          }),
+              "two USB cameras into one consumer must fuse like two CameraInputs");
       for (const auto& branch : default_live_fused->fused_realtime_ingress->branches) {
         require(branch.link_options.policy ==
                         simaai::neat::GraphLinkPolicy::RealtimeLatestByStream &&

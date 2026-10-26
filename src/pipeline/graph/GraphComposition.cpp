@@ -36,7 +36,8 @@ bool node_is_live_source(const Node* node) {
     return false;
   }
   const std::string kind = node->kind();
-  if (kind == "RTSPInput" || kind == "CameraInput" || kind == "PCIeSrc") {
+  if (kind == "RTSPInput" || kind == "CameraInput" || kind == "UsbCameraInput" ||
+      kind == "PCIeSrc") {
     return true;
   }
   if (kind == "HttpSource") {
