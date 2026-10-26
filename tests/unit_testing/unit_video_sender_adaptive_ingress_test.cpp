@@ -316,6 +316,19 @@ RUN_TEST(
         require(nv16.output_spec.format == "NV12" && nv16.output_spec.memory == "SimaAI" &&
                     nv16.output_spec.width == kWidth && nv16.output_spec.height == kHeight,
                 "NV16 sender input must still hand NV12 to the encoder");
+
+        // A standalone SimaEncode cannot host that stage; it must fail clearly, not at build.
+        const std::vector<std::shared_ptr<simaai::neat::Node>> encoder = {
+            simaai::neat::nodes::SimaEncode(simaai::neat::SimaEncodeOptions{})};
+        bool rejected = false;
+        try {
+          (void)simaai::neat::pipeline_internal::specialize_pipeline_nodes_for_input(
+              encoder, raw_spec("NV16", "SimaAI", SpecCertainty::Derived), {});
+        } catch (const std::invalid_argument& error) {
+          rejected = std::string(error.what()).find("NV16 input is not supported directly") !=
+                     std::string::npos;
+        }
+        require(rejected, "standalone SimaEncode must reject NV16 with guidance");
       }
 
       // Missing factories/properties are represented explicitly, then collapsed

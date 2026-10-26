@@ -131,6 +131,12 @@ std::shared_ptr<Node>
 internal::SimaEncodeAccess::specialize_for_input(const SimaEncode& node, const OutputSpec& input,
                                                  const InputSpecSpecializationContext& context) {
   auto selected = std::make_shared<SimaEncode>(node);
+  // The embedded adapter cannot host the EV74 NV16 conversion stage VideoSender inserts.
+  if (node.input_adapter_ && input.media_type == "video/x-raw" && input.format == "NV16") {
+    throw std::invalid_argument("SimaEncode: NV16 input is not supported directly; use "
+                                "VideoSender or add nodes::ColorConvert with "
+                                "ImageSurfaceLayout::EncoderNv12 before the encoder");
+  }
   if (node.input_adapter_) {
     auto adapter = specialize_nodes_for_input(std::span(&node.input_adapter_, 1), input, context);
     selected->input_adapter_ = std::move(adapter.nodes.front());
