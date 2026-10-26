@@ -744,15 +744,18 @@ print("latency_ms=", report.latency_ms, "fps=", report.fps)
 
 합성 입력은 실제 데이터와 다릅니다. 찾은 모든 박스를 처리하는 검출 또는 분할 디코더처럼 모델의 비용이 입력에 따라 달라진다면 실제 입력으로 측정하십시오. 모델 입력마다 텐서를 하나씩 `input_specs()` 순서대로 만들고, `run()`에 전달할 때와 똑같이 `inputs`에 설정합니다. 벤치마크는 모든 샘플에 같은 입력을 푸시합니다.
 
+이 예는 위의 "감지 디코딩을 사용한 이미지 입력"처럼 이미지 입력으로 로드한 모델용입니다. 원시 텐서 입력으로 로드한 모델에는 `input_specs()`가 설명하는 텐서를 전달하십시오.
+
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-cv::Mat image = cv::imread("bus.jpg");  // BGR
+cv::Mat image;
+cv::cvtColor(cv::imread("bus.jpg"), image, cv::COLOR_BGR2RGB);  // the format input_specs() reports
 
 simaai::neat::BenchmarkOptions options;
 options.inputs = simaai::neat::TensorList{
-    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::BGR,
+    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::RGB,
                                       simaai::neat::TensorMemory::EV74)};
 
 simaai::neat::BenchmarkReport report = model.benchmark(options);
@@ -763,10 +766,10 @@ std::cout << "input=" << report.input << " fps=" << report.fps << "\n";  // inpu
 <CodeTab label="Python" lang="python">
 
 ```python
-image = cv2.imread("bus.jpg")  # BGR
+image = cv2.cvtColor(cv2.imread("bus.jpg"), cv2.COLOR_BGR2RGB)  # the format input_specs() reports
 
 options = pyneat.BenchmarkOptions()
-options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.BGR)]
+options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.RGB)]
 
 report = model.benchmark(options)
 print("input=", report.input, "fps=", report.fps)  # input= provided
@@ -775,7 +778,7 @@ print("input=", report.input, "fps=", report.fps)  # input= provided
 </CodeTab>
 </CodeTabs>
 
-벤치마크는 시작하기 전에 입력을 검사합니다. 텐서 개수, 형상, dtype 또는 이미지 형식 메타데이터가 모델과 맞지 않으면 오류 코드 `misconfig.input_shape`와 함께 `NeatError`를 던지며, 메시지에 해당 입력, 기대값, 실제 값을 표시합니다. 전처리가 크기 조정과 색 변환을 수행하므로 이미지 입력은 어떤 크기와 색 형식이든 사용할 수 있습니다. BoxDecode 경로는 검출 결과를 제공된 이미지 자체의 크기로 매핑하므로 `original_width`와 `original_height`는 설정하지 않거나 그 크기로 설정하십시오.
+벤치마크는 시작하기 전에 입력을 검사합니다. 텐서 개수, 형상, dtype 또는 이미지 형식 메타데이터가 모델과 맞지 않으면 오류 코드 `misconfig.input_shape`와 함께 `NeatError`를 던지며, 메시지에 해당 입력, 기대값, 실제 값을 표시합니다. 전처리가 크기 조정을 수행하므로 이미지 입력은 어떤 크기든 사용할 수 있습니다. 색 형식은 `input_specs()`가 보고하는 형식을 사용하십시오. BoxDecode 경로 등 일부 경로는 색 변환을 수행하지 않으며, 이 경우 `run()`과 벤치마크 모두 오류 코드 `misconfig.media_caps`로 실패합니다. BoxDecode 경로는 검출 결과를 제공된 이미지 자체의 크기로 매핑하므로 `original_width`와 `original_height`는 설정하지 않거나 그 크기로 설정하십시오.
 
 ### 원본 이미지 기하 정보 설명
 

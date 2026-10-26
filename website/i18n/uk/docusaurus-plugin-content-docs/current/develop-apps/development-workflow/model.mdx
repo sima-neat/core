@@ -746,15 +746,18 @@ print("latency_ms=", report.latency_ms, "fps=", report.fps)
 
 Синтетичні вхідні дані не схожі на реальні. Якщо вартість моделі залежить від вхідних даних, як у декодера виявлення чи сегментації, що обробляє кожну знайдену рамку, вимірюйте на реальних даних. Створіть по одному тензору на кожен вхід моделі в порядку `input_specs()`, точно так, як ви передали б їх у `run()`, і задайте їх у `inputs`. Тест надсилає ті самі вхідні дані для кожного зразка.
 
+Цей приклад призначено для моделі, завантаженої з вхідним зображенням, як у розділі «Вхідне зображення з декодуванням для виявлення об’єктів» вище; моделі, завантаженій із необробленим тензорним входом, передавайте тензори, які описує `input_specs()`.
+
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-cv::Mat image = cv::imread("bus.jpg");  // BGR
+cv::Mat image;
+cv::cvtColor(cv::imread("bus.jpg"), image, cv::COLOR_BGR2RGB);  // the format input_specs() reports
 
 simaai::neat::BenchmarkOptions options;
 options.inputs = simaai::neat::TensorList{
-    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::BGR,
+    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::RGB,
                                       simaai::neat::TensorMemory::EV74)};
 
 simaai::neat::BenchmarkReport report = model.benchmark(options);
@@ -765,10 +768,10 @@ std::cout << "input=" << report.input << " fps=" << report.fps << "\n";  // inpu
 <CodeTab label="Python" lang="python">
 
 ```python
-image = cv2.imread("bus.jpg")  # BGR
+image = cv2.cvtColor(cv2.imread("bus.jpg"), cv2.COLOR_BGR2RGB)  # the format input_specs() reports
 
 options = pyneat.BenchmarkOptions()
-options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.BGR)]
+options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.RGB)]
 
 report = model.benchmark(options)
 print("input=", report.input, "fps=", report.fps)  # input= provided
@@ -777,7 +780,7 @@ print("input=", report.input, "fps=", report.fps)  # input= provided
 </CodeTab>
 </CodeTabs>
 
-Перед початком тест перевіряє вхідні дані. Якщо кількість тензорів, форма, dtype або метадані формату зображення не відповідають моделі, він викидає `NeatError` з кодом помилки `misconfig.input_shape` і повідомленням, що називає вхід, очікуване та фактичне значення. Вхідне зображення може мати будь-який розмір і колірний формат, бо попередня обробка змінює розмір і перетворює кольори. Маршрут BoxDecode відображає виявлені об’єкти на власний розмір наданого зображення, тому не задавайте `original_width` і `original_height` або задайте їм цей розмір.
+Перед початком тест перевіряє вхідні дані. Якщо кількість тензорів, форма, dtype або метадані формату зображення не відповідають моделі, він викидає `NeatError` з кодом помилки `misconfig.input_shape` і повідомленням, що називає вхід, очікуване та фактичне значення. Вхідне зображення може мати будь-який розмір, бо попередня обробка змінює розмір. Передавайте його в колірному форматі, який повідомляє `input_specs()`: деякі маршрути, зокрема BoxDecode, не перетворюють кольори, і тоді `run()` і тест завершуються помилкою з кодом `misconfig.media_caps`. Маршрут BoxDecode відображає виявлені об’єкти на власний розмір наданого зображення, тому не задавайте `original_width` і `original_height` або задайте їм цей розмір.
 
 ### Опишіть геометрію вихідного зображення
 

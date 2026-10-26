@@ -756,16 +756,20 @@ Synthetic inputs do not look like real data. When a model's cost depends on its 
 detection or segmentation decoder that processes every box it finds, measure with real inputs
 instead. Create one tensor per model input, in `input_specs()` order, exactly as you would pass
 them to `run()`, and set them on `inputs`. The benchmark pushes the same inputs for every sample.
+This example is for a model loaded with image input, as in Image input with detection decode
+above; a model loaded with raw tensor input takes the tensors that `input_specs()` describes
+instead.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-cv::Mat image = cv::imread("bus.jpg");  // BGR
+cv::Mat image;
+cv::cvtColor(cv::imread("bus.jpg"), image, cv::COLOR_BGR2RGB);  // the format input_specs() reports
 
 simaai::neat::BenchmarkOptions options;
 options.inputs = simaai::neat::TensorList{
-    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::BGR,
+    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::RGB,
                                       simaai::neat::TensorMemory::EV74)};
 
 simaai::neat::BenchmarkReport report = model.benchmark(options);
@@ -776,10 +780,10 @@ std::cout << "input=" << report.input << " fps=" << report.fps << "\n";  // inpu
 <CodeTab label="Python" lang="python">
 
 ```python
-image = cv2.imread("bus.jpg")  # BGR
+image = cv2.cvtColor(cv2.imread("bus.jpg"), cv2.COLOR_BGR2RGB)  # the format input_specs() reports
 
 options = pyneat.BenchmarkOptions()
-options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.BGR)]
+options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.RGB)]
 
 report = model.benchmark(options)
 print("input=", report.input, "fps=", report.fps)  # input= provided
@@ -791,8 +795,10 @@ print("input=", report.input, "fps=", report.fps)  # input= provided
 The benchmark checks the inputs before it starts. If the number of tensors, a shape, a dtype, or
 the image format metadata does not match the model, it throws `NeatError` with error code
 `misconfig.input_shape` and a message that names the input, the expected value, and the actual
-value. An image input may have any size and color format, because preprocessing resizes and
-converts it. A BoxDecode route maps detections back to the provided image's own size, so leave
+value. An image input may have any size, because preprocessing resizes it. Pass it in the color
+format that `input_specs()` reports: some routes, including BoxDecode routes, do not convert
+color, and there `run()` and the benchmark both fail with error code `misconfig.media_caps`. A
+BoxDecode route maps detections back to the provided image's own size, so leave
 `original_width` and `original_height` unset, or set them to that size.
 
 ### Describe the source geometry

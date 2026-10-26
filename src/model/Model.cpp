@@ -7891,7 +7891,8 @@ void check_model_image_inputs(const TensorList& inputs,
                           std::to_string(ingress_contracts.size()) + " ingress contracts",
                       "Use input_specs() to inspect the model inputs.");
   }
-  // Preprocessing resizes and converts color, so any image size and color format is accepted.
+  // Preprocessing resizes any image size. Color conversion is route-dependent, so a format the
+  // route cannot convert fails when run() builds the pipeline, as it does for benchmark().
   require_explicit_image_input_info(input_info_from_tensor(inputs.front(), true), where);
   validate_public_input(inputs.front(), InputOptions{}, InputStreamOptions{}, where);
 }

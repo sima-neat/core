@@ -744,15 +744,18 @@ print("latency_ms=", report.latency_ms, "fps=", report.fps)
 
 合成輸入與真實資料不同。當模型的成本取決於輸入時，例如會處理每個找到的方框的偵測或分割解碼器，請改用真實輸入測量。依 `input_specs()` 的順序為每個模型輸入建立一個張量，就像傳給 `run()` 時一樣，並設定到 `inputs`。基準測試會在每個樣本推送相同的輸入。
 
+此範例適用於以影像輸入載入的模型，如上方「具有偵測解碼的影像輸入」所示；以原始張量輸入載入的模型，請改為傳入 `input_specs()` 所描述的張量。
+
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-cv::Mat image = cv::imread("bus.jpg");  // BGR
+cv::Mat image;
+cv::cvtColor(cv::imread("bus.jpg"), image, cv::COLOR_BGR2RGB);  // the format input_specs() reports
 
 simaai::neat::BenchmarkOptions options;
 options.inputs = simaai::neat::TensorList{
-    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::BGR,
+    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::RGB,
                                       simaai::neat::TensorMemory::EV74)};
 
 simaai::neat::BenchmarkReport report = model.benchmark(options);
@@ -763,10 +766,10 @@ std::cout << "input=" << report.input << " fps=" << report.fps << "\n";  // inpu
 <CodeTab label="Python" lang="python">
 
 ```python
-image = cv2.imread("bus.jpg")  # BGR
+image = cv2.cvtColor(cv2.imread("bus.jpg"), cv2.COLOR_BGR2RGB)  # the format input_specs() reports
 
 options = pyneat.BenchmarkOptions()
-options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.BGR)]
+options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.RGB)]
 
 report = model.benchmark(options)
 print("input=", report.input, "fps=", report.fps)  # input= provided
@@ -775,7 +778,7 @@ print("input=", report.input, "fps=", report.fps)  # input= provided
 </CodeTab>
 </CodeTabs>
 
-基準測試會在開始前檢查輸入。如果張量數量、形狀、dtype 或影像格式中繼資料與模型不符，會擲回錯誤代碼為 `misconfig.input_shape` 的 `NeatError`，訊息中會指出該輸入、預期值與實際值。由於預處理會調整大小並轉換色彩，影像輸入可以是任何大小與色彩格式。BoxDecode 路由會將偵測結果映射回所提供影像本身的大小，因此請不要設定 `original_width` 與 `original_height`，或將其設為該大小。
+基準測試會在開始前檢查輸入。如果張量數量、形狀、dtype 或影像格式中繼資料與模型不符，會擲回錯誤代碼為 `misconfig.input_shape` 的 `NeatError`，訊息中會指出該輸入、預期值與實際值。由於預處理會調整大小，影像輸入可以是任何大小。請使用 `input_specs()` 回報的色彩格式：部分路由（包括 BoxDecode 路由）不會轉換色彩，此時 `run()` 與基準測試都會以錯誤代碼 `misconfig.media_caps` 失敗。BoxDecode 路由會將偵測結果映射回所提供影像本身的大小，因此請不要設定 `original_width` 與 `original_height`，或將其設為該大小。
 
 ### 描述來源影像幾何資訊
 

@@ -742,15 +742,18 @@ print("latency_ms=", report.latency_ms, "fps=", report.fps)
 
 合成入力は実際のデータとは異なります。検出したすべてのボックスを処理する検出やセグメンテーションのデコーダーのように、モデルのコストが入力に依存する場合は、実際の入力で測定してください。モデルの入力ごとに 1 つのテンソルを `input_specs()` の順序で作成し、`run()` に渡すときとまったく同じ形で `inputs` に設定します。ベンチマークは、すべてのサンプルで同じ入力をプッシュします。
 
+この例は、上記の「検出機能を備えた画像入力」のように画像入力で読み込んだモデル向けです。生のテンソル入力で読み込んだモデルには、`input_specs()` が示すテンソルを渡してください。
+
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-cv::Mat image = cv::imread("bus.jpg");  // BGR
+cv::Mat image;
+cv::cvtColor(cv::imread("bus.jpg"), image, cv::COLOR_BGR2RGB);  // the format input_specs() reports
 
 simaai::neat::BenchmarkOptions options;
 options.inputs = simaai::neat::TensorList{
-    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::BGR,
+    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::RGB,
                                       simaai::neat::TensorMemory::EV74)};
 
 simaai::neat::BenchmarkReport report = model.benchmark(options);
@@ -761,10 +764,10 @@ std::cout << "input=" << report.input << " fps=" << report.fps << "\n";  // inpu
 <CodeTab label="Python" lang="python">
 
 ```python
-image = cv2.imread("bus.jpg")  # BGR
+image = cv2.cvtColor(cv2.imread("bus.jpg"), cv2.COLOR_BGR2RGB)  # the format input_specs() reports
 
 options = pyneat.BenchmarkOptions()
-options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.BGR)]
+options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.RGB)]
 
 report = model.benchmark(options)
 print("input=", report.input, "fps=", report.fps)  # input= provided
@@ -773,7 +776,7 @@ print("input=", report.input, "fps=", report.fps)  # input= provided
 </CodeTab>
 </CodeTabs>
 
-ベンチマークは開始前に入力を検査します。テンソルの数、形状、dtype、または画像フォーマットのメタデータがモデルと一致しない場合は、エラーコード `misconfig.input_shape` の `NeatError` をスローし、対象の入力、期待値、実際の値をメッセージで示します。前処理でサイズ変更と色変換が行われるため、画像入力のサイズと色フォーマットは任意です。BoxDecode ルートは検出結果を提供された画像自体のサイズにマッピングするため、`original_width` と `original_height` は設定しないか、そのサイズに設定してください。
+ベンチマークは開始前に入力を検査します。テンソルの数、形状、dtype、または画像フォーマットのメタデータがモデルと一致しない場合は、エラーコード `misconfig.input_shape` の `NeatError` をスローし、対象の入力、期待値、実際の値をメッセージで示します。前処理でサイズ変更が行われるため、画像入力のサイズは任意です。色フォーマットは `input_specs()` が示すものを使用してください。BoxDecode ルートなど一部のルートは色変換を行わず、その場合は `run()` もベンチマークもエラーコード `misconfig.media_caps` で失敗します。BoxDecode ルートは検出結果を提供された画像自体のサイズにマッピングするため、`original_width` と `original_height` は設定しないか、そのサイズに設定してください。
 
 ### ソース画像のジオメトリを記述する
 
