@@ -2096,6 +2096,17 @@ bool build_kernel_stage_publication(const StageStaticSpec& stage,
       gst_caps_new_empty_simple("application/vnd.simaai.tensor"), gst_caps_unref);
   output->output_caps =
       std::shared_ptr<GstCaps>(make_generic_tensor_set_caps_local(), gst_caps_unref);
+  if ((stage.mla_program || stage.tvm_program) && contract->logical_outputs.size() == 1 &&
+      contract->output_order.size() <= 1) {
+    const auto tensor =
+        caps_tensor_from_publish_logical_output_local(contract->logical_outputs.front());
+    if (!tensor.dtype.empty() && !tensor.shape.empty()) {
+      const auto format = processcvu_caps_format_from_dtype_local(tensor.dtype, {});
+      gst_caps_set_simple(output->output_caps.get(), "format", G_TYPE_STRING, format.c_str(),
+                          "dtype", G_TYPE_STRING, format.c_str(), nullptr);
+      processmla_add_shape_fields_to_caps_local(output->output_caps.get(), tensor);
+    }
+  }
   if (stage.native_kernel && !stage.native_kernel->output_format.empty()) {
     gst_caps_set_simple(output->output_caps.get(), "format", G_TYPE_STRING,
                         stage.native_kernel->output_format.c_str(), nullptr);

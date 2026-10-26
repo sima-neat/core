@@ -3865,7 +3865,7 @@ RUN_TEST(
               pipeline.get(), {&attachment, 1});
           const auto* rejected = admitted ? &*admitted : nullptr;
           require(rejected && rejected->field == "output.span" &&
-                      rejected->message.find("unwritten") != std::string::npos,
+                      rejected->message.find("checked writes") != std::string::npos,
                   "independent cold admission must reject contradictory typed storage: " +
                       (rejected ? rejected->field + ": " + rejected->message : "accepted"));
         }
