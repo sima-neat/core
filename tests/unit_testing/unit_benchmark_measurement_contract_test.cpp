@@ -252,6 +252,13 @@ void synthetic_benchmark_rejects_planar_images() {
   internal::validate_synthetic_benchmark_image_format(spec);
 }
 
+simaai::neat::BenchmarkOptions make_benchmark_source_options(int width, int height) {
+  simaai::neat::BenchmarkOptions options;
+  options.original_width = width;
+  options.original_height = height;
+  return options;
+}
+
 simaai::neat::Tensor make_provided_tensor(
     simaai::neat::TensorDType dtype, std::vector<int64_t> shape,
     std::optional<simaai::neat::ImageSpec::PixelFormat> image_format = std::nullopt) {
@@ -455,13 +462,6 @@ simaai::neat::TensorSpec make_benchmark_image_spec(std::vector<int64_t> shape) {
   spec.dtypes = {TensorDType::UInt8};
   spec.image_format = ImageSpec::PixelFormat::RGB;
   return spec;
-}
-
-simaai::neat::BenchmarkOptions make_benchmark_source_options(int width, int height) {
-  simaai::neat::BenchmarkOptions options;
-  options.original_width = width;
-  options.original_height = height;
-  return options;
 }
 
 void benchmark_image_input_uses_requested_source_size() {
