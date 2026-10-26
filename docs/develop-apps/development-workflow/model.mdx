@@ -796,7 +796,8 @@ path. [Benchmark Your Model](/tutorials/benchmark-your-model) shows both.
 
 Synthetic inputs can misrepresent a model whose cost depends on its data, such as a detection or
 segmentation decoder. To measure with real data, set `inputs` to the tensors you would pass to
-`run()`, one per model input.
+`run()`, one per model input. The benchmark uses them for both the latency and throughput
+measurements.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
