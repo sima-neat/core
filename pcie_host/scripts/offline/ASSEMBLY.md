@@ -300,12 +300,18 @@ still produce `Ign` lines; bundle file checksums are verified before deployment.
 
 ## CI assembly and publication
 
-`.github/workflows/pcie-offline.yml` runs after successful **Vulcan CI** push runs
-on `develop`, `main`, `release-*`, and tags whose commit matches the run. Both
-host and card publication jobs must have succeeded in that run attempt. Fork,
-PR, failed, and docs-only runs cannot publish offline packages. Manual dispatch
-accepts a source run ID and applies the same checks. The workflow must be present
-on the default branch before GitHub delivers `workflow_run` events.
+Develop push runs call `.github/workflows/pcie-offline.yml` directly from **Vulcan
+CI**, after the standard validation jobs and artifact promotion succeed. The
+caller supplies its own run ID and admits ready same-branch publications while
+that parent run remains in progress. This does not require a workflow listener on
+`main`. Docs-only, failed, cancelled, PR, manual validation, and fuzz runs do not
+enter this automatic publication path.
+
+For `main`, `release-*`, and matching tags, the separate `workflow_run` listener
+still requires the workflow on the default branch and a completed successful
+source run. It excludes `develop` to avoid duplicate publication. Both host and
+card publication jobs must have succeeded in the selected run attempt. Manual
+dispatch retains its existing source-run checks.
 
 Four native GitHub runner jobs cover Ubuntu 22.04/24.04 × AMD64/ARM64. They reuse
 the authenticated Vulcan publications at the exact successful source SHA; they
