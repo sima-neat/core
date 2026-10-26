@@ -87,3 +87,7 @@ neat --offline
 `NEAT_PCIE_SSH_USER` はカードの SSH ユーザー（既定値 `sima`）を選択します。`NEAT_PCIE_SSH_KEY` は秘密キー（既定値 `~/.ssh/sima_neat_pcie_ed25519`）を選択します。既存の SSH 設定とエージェント認証も利用できます。`--offline` はインターネット経由の更新確認を省略しますが、ローカル SSH によるカードの読み取りは行います。PCIe ホストの状態表示ではアーティファクト更新を確認しません。ホストの更新には `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>` を使用してください。`neat update` は PCIe カードを更新しません。
 
 JSON は `sima.neat.status.v1` を維持し、`components.pcieHost`、`components.pcieScheduler`、`components.pyneatpcie`、`pcie` を追加します。`pcie` にはホストのソフトウェア、PCI アドレス・インターフェース・アドレス・状態・ソフトウェア・エラーを持つ `cards` 配列、トポロジーエラーが含まれます。リモートのソフトウェア情報が取得できない場合は、バージョンを推測せず `null` を返します。
+
+PyNeat と PyNeatPCIe の状態には、検出した各インストールのバージョンと仮想環境のパスが表示されます。別々の環境は、バージョンの競合ではなく複数の環境として表示されます。仮想環境の外にあるパッケージには、代わりにパッケージディレクトリを表示します。状態の取得では、ネイティブモジュールをインポートせずにパッケージメタデータを読み取ります。
+
+JSON の各 Python エントリーに `installations` 配列が追加されます。各レコードには `version`、`environment`、`path`（パッケージディレクトリ）が含まれます。仮想環境の外では `environment` は `null` です。インストール済みバージョンが異なる場合、要約の `version` は `null` になります。複数のインストールがあるだけでは `error` は設定されません。同じインストールを指すシンボリックリンクのパスは一度だけ表示されます。

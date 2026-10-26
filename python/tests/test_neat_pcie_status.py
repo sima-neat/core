@@ -160,3 +160,96 @@ def test_packaged_neat_detects_host_and_reports_without_registry_queries(tmp_pat
     update = subprocess.run([str(bindir/'neat'), 'update', '--yes'], env=env, text=True, capture_output=True)
     assert update.returncode != 0
     assert 'core/pciehost/' in update.stderr
+
+
+def distribution(root, name, version, venv=True):
+    """Use real distribution metadata; importing the package must never occur."""
+    site = root/'lib/python3.13/site-packages'
+    metadata = site/f'{name}-{version}.dist-info'
+    metadata.mkdir(parents=True)
+    (metadata/'METADATA').write_text(f'Name: {name}\nVersion: {version}\n')
+    package = site/name
+    package.mkdir(exist_ok=True)
+    (package/'__init__.py').write_text('raise RuntimeError("status must not import me")\n')
+    if venv:
+        (root/'pyvenv.cfg').write_text('include-system-site-packages = false\n')
+    return status.importlib.metadata.PathDistribution(metadata)
+
+
+@pytest.mark.parametrize('name', ['pyneat', 'pyneatpcie'])
+@pytest.mark.parametrize('second_version', ['0.6.0', '0.6.1'])
+def test_python_installations_list_each_environment_without_conflict(tmp_path, monkeypatch, capsys,
+                                                                    name, second_version):
+    home = tmp_path/'home'
+    first = distribution(home/name, name, '0.6.0')
+    second = distribution(tmp_path/'offline'/name, name, second_version)
+    monkeypatch.setattr(status.Path, 'home', lambda: home)
+    real_distributions = status.importlib.metadata.distributions
+    # The current interpreter also sees the home venv: do not count it twice.
+    monkeypatch.setattr(status.importlib.metadata, 'distributions',
+                        lambda **kwargs: real_distributions(**kwargs) if kwargs else [second, first])
+    result = status.python_installations(name)
+    assert result['error'] is None
+    assert result['version'] == ('0.6.0' if second_version == '0.6.0' else None)
+    assert [item['environment'] for item in result['installations']] == [
+        str(home/name), str(tmp_path/'offline'/name)]
+    assert len(result['installations']) == 2
+    status.print_software({'packages': {}, 'python': {name: result}}, name)
+    output = capsys.readouterr().out
+    assert f'{name}  Multiple environments' in output
+    assert f'0.6.0  (venv: {home/name})' in output
+    assert f'{second_version}  (venv: {tmp_path/"offline"/name})' in output
+    assert 'Conflicting' not in output
+
+
+def test_python_installations_deduplicate_symlinked_environment(tmp_path, monkeypatch):
+    home = tmp_path/'home'
+    home.mkdir()
+    actual = tmp_path/'actual'
+    dist = distribution(actual, 'pyneat', '0.6.0')
+    (home/'pyneat').symlink_to(actual, target_is_directory=True)
+    monkeypatch.setattr(status.Path, 'home', lambda: home)
+    real_distributions = status.importlib.metadata.distributions
+    monkeypatch.setattr(status.importlib.metadata, 'distributions',
+                        lambda **kwargs: real_distributions(**kwargs) if kwargs else [dist])
+    result = status.python_installations('pyneat')
+    assert result['installations'] == [{'version': '0.6.0', 'environment': str(actual),
+                                      'path': str(actual/'lib/python3.13/site-packages')}]
+
+
+def test_system_python_location_and_missing_distribution(tmp_path, monkeypatch, capsys):
+    dist = distribution(tmp_path/'system', 'pyneat', '0.6.0', venv=False)
+    monkeypatch.setattr(status.Path, 'home', lambda: tmp_path/'home')
+    monkeypatch.setattr(status.importlib.metadata, 'distributions', lambda **kwargs: [dist] if not kwargs else [])
+    result = status.python_installations('pyneat')
+    assert result['installations'][0]['environment'] is None
+    status.print_software({'packages': {}, 'python': {'pyneat': result}}, 'pyneat')
+    assert f'site-packages: {tmp_path}/system/lib/python3.13/site-packages' in capsys.readouterr().out
+    assert status.python_installations('pyneatpcie') == {'version': None, 'error': None, 'installations': []}
+
+
+def test_two_versions_in_one_environment_are_not_reported_as_two_environments(tmp_path, monkeypatch, capsys):
+    root = tmp_path/'venv'
+    distributions = [distribution(root, 'pyneat', version) for version in ['0.6.0', '0.6.1']]
+    monkeypatch.setattr(status.Path, 'home', lambda: tmp_path/'home')
+    monkeypatch.setattr(status.importlib.metadata, 'distributions', lambda **kwargs: distributions if not kwargs else [])
+    result = status.python_installations('pyneat')
+    assert len(result['installations']) == 2
+    status.print_software({'packages': {}, 'python': {'pyneat': result}}, 'pyneat')
+    output = capsys.readouterr().out
+    assert 'Multiple installed versions' in output
+    assert 'Multiple environments' not in output
+
+
+@pytest.mark.parametrize('installations', ['invalid', [None], [{'version': '0.6.0', 'path': 123}],
+                                          [{'version': '0.6.0', 'path': '/venv', 'environment': []}]])
+def test_invalid_installation_records_do_not_mark_card_healthy(tmp_path, installations):
+    pci(tmp_path, '0000:01:00.0', 'enp1s0')
+    remote = report()
+    remote['python']['pyneat']['installations'] = installations
+    with patch.object(status, 'software', return_value=report()), \
+         patch.object(status, 'endpoint', return_value=('10.0.0.1', '10.0.0.2')), \
+         patch.object(status, 'command', return_value=json.dumps(remote)):
+        result = status.collect(tmp_path)
+    assert result['cards'][0]['state'] == 'unavailable'
+    assert 'Invalid card Python installation report' in result['cards'][0]['error']

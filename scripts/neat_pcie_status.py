@@ -38,23 +38,34 @@ def software():
             packages[row[0]] = {'version': row[1], 'architecture': row[2]}
     if result.returncode:
         raise ValueError('Unable to read installed Neat packages: '+result.stderr.strip())
-    python = {}
-    # Read distribution metadata without loading native modules or starting hardware.
-    for name in ('pyneat', 'pyneatpcie'):
-        versions = set()
-        try:
-            versions.add(importlib.metadata.version(name))
-        except importlib.metadata.PackageNotFoundError:
-            pass
-        for venv in (Path.home()/name, Path('/opt/sima/neat')/name, Path('/media/nvme')/name):
-            for site in venv.glob('lib/python*/site-packages'):
-                for distribution in importlib.metadata.distributions(path=[str(site)]):
-                    if distribution.metadata.get('Name', '').lower() == name:
-                        versions.add(distribution.version)
-        python[name] = {'version': next(iter(versions)) if len(versions) == 1 else None,
-                        'error': 'Conflicting installed versions' if len(versions) > 1 else None}
+    python = {name: python_installations(name) for name in ('pyneat', 'pyneatpcie')}
     return {'os': fields(Path('/etc/os-release')), 'board': fields(Path('/etc/buildinfo')),
             'packages': packages, 'python': python}
+
+
+def python_installations(name):
+    # Inspect metadata only: importing native modules can initialize hardware.
+    found = {}
+
+    def add(distribution):
+        if distribution.metadata.get('Name', '').lower() != name:
+            return
+        site = Path(distribution.locate_file('')).resolve()
+        environment = next((str(parent) for parent in site.parents
+                            if (parent/'pyvenv.cfg').is_file()), None)
+        found[(str(site), distribution.version)] = {
+            'version': distribution.version, 'environment': environment, 'path': str(site)}
+
+    for distribution in importlib.metadata.distributions():
+        add(distribution)
+    for venv in (Path.home()/name, Path('/opt/sima/neat')/name, Path('/media/nvme')/name):
+        for site in sorted(venv.glob('lib/python*/site-packages')):
+            for distribution in importlib.metadata.distributions(path=[str(site)]):
+                add(distribution)
+    installations = [found[key] for key in sorted(found)]
+    versions = {item['version'] for item in installations}
+    return {'version': next(iter(versions)) if len(versions) == 1 else None,
+            'error': None, 'installations': installations}
 
 
 def inventory(root):
@@ -131,6 +142,16 @@ def collect(root=Path('/sys/bus/pci/devices'), user='sima', key=None):
             if any(not isinstance(value, dict) or 'version' not in value or 'error' not in value
                    for value in remote['python'].values()):
                 raise ValueError('Invalid card Python version report')
+            for distribution in remote['python'].values():
+                installations = distribution.get('installations', [])
+                if (not isinstance(installations, list) or any(
+                        not isinstance(item, dict)
+                        or not isinstance(item.get('version'), str)
+                        or not isinstance(item.get('path'), str)
+                        or not (item.get('environment') is None
+                                or isinstance(item['environment'], str))
+                        for item in installations)):
+                    raise ValueError('Invalid card Python installation report')
             card.update(state='ok', software=remote)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             detail = exc.stderr.strip() if isinstance(exc, subprocess.CalledProcessError) and exc.stderr else str(exc)
@@ -153,7 +174,18 @@ def print_software(value, python_name):
     for name, package in sorted(value['packages'].items()):
         print('    '+safe(name)+'  '+safe(package['version'])+'  '+safe(package['architecture']))
     for name, distribution in sorted(value['python'].items()):
-        if distribution['version'] or distribution['error'] or name == python_name:
+        installations = distribution.get('installations', [])
+        if installations:
+            locations = {item['environment'] or item['path'] for item in installations}
+            detail = ('Multiple environments' if len(locations) > 1
+                      else 'Multiple installed versions' if len(installations) > 1
+                      else installations[0]['version'])
+            print('    '+safe(name)+'  '+safe(detail))
+            for item in installations:
+                location = ('venv: '+item['environment'] if item['environment']
+                            else 'site-packages: '+item['path'])
+                print('      '+safe(item['version'])+'  ('+safe(location)+')')
+        elif distribution['version'] or distribution['error'] or name == python_name:
             print('    '+name+'  '+safe(distribution['version'] or distribution['error'] or 'not installed'))
 
 
