@@ -1,6 +1,6 @@
 ---
 title: オフラインでのインストール
-description: 対象ホストでインターネットに接続せずに SDK、Model Compiler、PCIe パッケージをインストールする
+description: 対象ホストでインターネットに接続せずに SDK と Model Compiler パッケージをインストールする
 sidebar_position: 6
 ---
 
@@ -17,14 +17,14 @@ sidebar_position: 6
 インターネットに接続されたコンピューターでパッケージをダウンロードしてください。
 次に、インストールするパッケージを対象ホストに転送してください。
 
+ランタイムパッケージについては、[PCIe ホストのオフラインインストール](/getting-started/neat-library/pcie-host/#offline-installation)または [Neat Library のオフラインインストール](/getting-started/neat-library/install-or-update/#offline-installation)を参照してください。
+
 ## パッケージを選択する
 
 | パッケージ | 用途 | 提供状況 |
 | --- | --- | --- |
 | Neat SDK | SDK 開発環境をセットアップします。 | SDK 2.1.3.0 以降 |
 | Model Compiler | SDK 内またはスタンドアロンホストに Model Compiler をインストールします。 | Model Compiler 2.1.3 以降 |
-| Neat PCIe | 準備済みの PCIe ホストと、接続されている互換カードすべてに Neat をインストールします。 | 0.6.0 以降 |
-| Neat Library | インターネットに接続せずに core パッケージをインストールします。 | 0.6.0 以降 |
 
 ## 開始前の準備
 
@@ -132,131 +132,6 @@ Model Compiler 環境を終了するには、次を実行してください：
 <ShellCommand prompt="sdk|host">
 deactivate-model-compiler
 </ShellCommand>
-
-## PCIe 用の Neat をインストールする
-
-PCIe パッケージは、ホストと接続されている互換カードすべてに Neat をインストールします。
-このインストールでは、対象システムに Docker やインターネット接続は必要ありません。
-ホストから各カードへの PCIe ネットワーク接続が動作している必要があります。
-
-### 1. ホストとカードを準備する
-
-Neat インストーラーを実行する前に、次の作業を完了してください：
-
-- 互換性のある Platform ホストドライバーをインストールしてください。
-- 各カードに対応する Platform 3.0 ファームウェアをインストールしてください。
-- 各カードの PCIe インターフェースで検出を設定してください。
-- 各カードに一意の PCIe IPv4 アドレスを割り当ててください。
-- 各カードの SSH アクセスと信頼できる SSH ホストキーを設定してください。
-- SSH アカウントに、各カードで `sudo` を使用する権限を付与してください。
-
-Neat インストーラーは、Platform ドライバーのインストールや Platform ファームウェアの変更を行いません。
-Platform リリースに付属するシステムセットアップ手順を使用してください。
-
-### 2. パッケージをダウンロードする
-
-対象ホスト用のバージョン 0.6.0 以降を選択してください。
-パッケージは、`amd64` または `arm64` プロセッサーを搭載した Ubuntu 22.04 および 24.04 ホストに対応しています。
-
-この例では、インターネットに接続されたコンピューターでバージョン 0.6.0 をダウンロードします。
-Ubuntu 24.04 の `amd64` 対象ホストの場合は、次を実行してください：
-
-<ShellCommand prompt="host">
-sima-cli neat install 'core/pciehost/ubuntu24/amd64@v0.6.0' -t offline -d ./pcie-offline
-</ShellCommand>
-
-Ubuntu 22.04 の場合は、`ubuntu24` を `ubuntu22` に置き換えてください。
-`arm64` ホストの場合は、`amd64` を `arm64` に置き換えてください。
-このコマンドはパッケージをダウンロードして展開します。Neat はインストールしません。
-
-### 3. システムを確認する
-
-1. `pcie-offline` ディレクトリ全体を対象ホストにコピーしてください。スペースを含まないパスを使用してください。
-2. `install.py` を含む、展開済みの `neat-offline` ディレクトリを開いてください。
-3. 必要なシステムツールと SSH 設定について、付属の `INSTALL.md` を読んでください。
-4. チェックを実行してください：
-
-<ShellCommand prompt="host">
-sudo python3 -B install.py --preflight-only
-</ShellCommand>
-
-インストーラーは接続されているすべてのカードを自動的に検出します。カードの IP アドレスは指定しないでください。
-チェックでは一時ファイルを作成しますが、パッケージはインストールしません。
-インストール前に、報告されたエラーを修正してください。
-
-### 4. インストールして結果を確認する
-
-同じディレクトリから次のコマンドを実行してください：
-
-<ShellCommand prompt="host">
-sudo python3 -B install.py
-</ShellCommand>
-
-インストーラーは、パッケージをインストールする前にすべてのカードを確認します。
-最初にホストをインストールして検証し、次に各カードを順番に処理します。
-最終サマリーで、ホストとすべてのカードのインストールおよび検証が成功したことを確認してください。
-次に、アプリケーションの受け入れテストを実行してください。
-
-インストールに失敗した場合は、表示されたパスの診断ログを読んでください。
-インストール中にカードへの接続が失敗した場合は、再試行前にカードのインストールプロセスが停止したことを確認してください。
-失敗しても、インストーラーは以前のインストール状態を自動的には復元しません。
-
-## Neat Library をインストールする
-
-Neat Library オフラインパッケージは、バージョン 0.6.0 以降で利用できます。
-Platform 3.0 以降を使用する Modalix DevKit には、このパッケージを使用してください。
-
-### 1. パッケージをダウンロードする
-
-インターネットに接続されたコンピューターで、次のコマンドを実行してください：
-
-<ShellCommand prompt="host">
-sima-cli neat install core@v0.6.0 -t offline --download-only
-</ShellCommand>
-
-既定のパッケージには、ランタイム、チュートリアル、テストが含まれます。
-ランタイムのみをダウンロードするには、次を使用してください：
-
-<ShellCommand prompt="host">
-sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
-</ShellCommand>
-
-### 2. パッケージをインストールする
-
-1. ダウンロードしたファイルを Modalix DevKit または Neat SDK ワークスペースにコピーしてください。
-2. そのディレクトリでターミナルを開いてください。SDK にインストールする場合は、SDK シェルを使用してください。
-3. インストーラーのアーカイブを展開してください：
-
-<ShellCommand prompt="sdk|devkit">
-tar -xzf neat-core-offline-installer.tar.gz
-</ShellCommand>
-
-4. 展開したディレクトリに移動してください：
-
-<ShellCommand prompt="sdk|devkit">
-cd neat-core-offline
-</ShellCommand>
-
-5. 通常ユーザーとしてインストーラーを起動してください。必要に応じて `sudo` 権限を要求します。
-
-<ShellCommand prompt="sdk|devkit">
-./install.sh
-</ShellCommand>
-
-チュートリアルやテストが必要な場合は、別の追加アーカイブを任意のディレクトリに展開してください。
-
-### パッケージオプションとインストーラーの動作
-
-- インストーラーは、インストール前にシステムの互換性とディスクの空き容量を確認します。
-- インストーラーは同梱の依存パッケージを使用します。必要な依存パッケージがない場合は停止します。
-- SDK では、Neat Library を `/opt/toolchain/aarch64/modalix` にコピーします。
-- `DEVKIT_SYNC_DEVKIT_IP` が設定されている場合は、SSH 経由でペアリング済みの DevKit にもインストールします。両方の環境がチェックに合格する必要があります。
-
-インストールに失敗した場合は、表示されたパスのログを読んでください：`/tmp/neat-core-offline-*.log`。
-詳細な出力には、`./install.sh --verbose` を使用してください。
-
-インストール中に SSH が切断されても、リモートのインストーラーは動作を続ける場合があります。
-再試行する前、またはレポートに表示された一時ディレクトリを削除する前に、インストーラーが停止したことを確認してください。
 
 ## パッケージを内部に保管する {#hosting-packages-internally}
 

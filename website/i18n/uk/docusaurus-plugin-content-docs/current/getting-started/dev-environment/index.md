@@ -34,7 +34,7 @@ SDK. Налаштуйте SDK, виконайте DevKit Sync, встанові�
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/getting-started/dev-environment/install-the-environment/"><strong>Встановіть необхідне програмне забезпечення.</strong><span>Встановіть і налаштуйте пакет SDK, який відповідає версії вашого програмного забезпечення DevKit.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/dev-environment/devkit-sync/"><strong>DevKit Sync</strong><span>Зрозумійте принципи спільного використання робочого простору, оновлення парних з’єднань, резервне копіювання rsync та інші аспекти. <code>дк</code> виконання команди.</span></a></li>
-      <li><a class="overview-link-card" href="/getting-started/dev-environment/offline-installation/"><strong>Встановлення в автономному режимі</strong><span>Завантажте пакети SDK, Model Compiler та PCIe для встановлення в автономному режимі.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/offline-installation/"><strong>Встановлення в автономному режимі</strong><span>Завантажте пакети SDK та Model Compiler для автономного встановлення.</span></a></li>
     </ul>
   </section>
 </div>

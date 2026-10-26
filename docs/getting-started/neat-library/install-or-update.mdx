@@ -11,6 +11,11 @@ When you pair a DevKit during `sima-cli sdk setup`, the SDK installs its include
 Neat Library and bundled PyNeat environment at `~/pyneat` on the DevKit automatically.
 :::
 
+:::tip When to use offline installation
+If the target cannot download packages from SiMa.ai services, use [offline installation](#offline-installation).
+Download the package on a computer with internet access.
+:::
+
 ## Choose Where to Install
 
 Run the installer from the environment where you build or run Neat applications:
@@ -52,7 +57,7 @@ Static Core still uses shared implementation libraries. Building Core from sourc
 uses the same Scheduler frontend boundary and requires development files for its
 other dependencies, including LLiMa when enabled.
 
-## Prerequisites
+## Online installation prerequisites
 
 Install `sima-cli` in the environment where you plan to install the Neat Library.
 Use the [sima-cli installation guide](/tools/sima-cli/).
@@ -78,7 +83,7 @@ a timeout, connection refused, or "could not resolve host" means outbound access
 is blocked — check your host network, proxy, or firewall (see
 [Neat SDK Networking](/tools/sima-cli/sdk-networking/) and the
 [host setup notes](/reference/elxr-sdk-host-setup/ubuntu)), or use
-[Offline Installation](/getting-started/dev-environment/offline-installation) if
+[Offline Installation](#offline-installation) if
 the machine cannot reach SiMa.ai services directly.
 
 ## Install the Neat Library
@@ -167,7 +172,7 @@ sima-cli neat install core@v0.2.2
 </CodeTab>
 </CodeTabs>
 
-## Default PyNeat Environment
+## Default PyNeat environment for online installation
 
 Installing the Neat Library on the DevKit also provisions a default PyNeat
 virtual environment at `~/pyneat` on the DevKit. This is the supported PyNeat
@@ -197,35 +202,73 @@ If you prefer building from source, follow the
 For SDK setup and DevKit Sync onboarding, see
 [Neat SDK](/getting-started/dev-environment/).
 
+## Offline installation {#offline-installation}
+
+Neat Library offline packages are available in version 0.6.0 or later.
+Use this package for a Modalix DevKit with Platform 3.0 or later.
+
+### 1. Download the package
+
+Install `sima-cli` on the computer with internet access. See the [sima-cli installation guide](/tools/sima-cli/).
+
+Run this command on the computer with internet access:
+
+<ShellCommand prompt="host">
+sima-cli neat install core@v0.6.0 -t offline --download-only
+</ShellCommand>
+
+The default package includes the runtime, tutorials, and tests.
+To download only the runtime, use:
+
+<ShellCommand prompt="host">
+sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
+</ShellCommand>
+
+### 2. Install the package
+
+1. Copy the downloaded files to the Modalix DevKit or the Neat SDK workspace.
+2. Open a terminal in that directory. For SDK installation, use the SDK shell.
+3. Extract the installer archive:
+
+<ShellCommand prompt="sdk|devkit">
+tar -xzf neat-core-offline-installer.tar.gz
+</ShellCommand>
+
+4. Go to the extracted directory:
+
+<ShellCommand prompt="sdk|devkit">
+cd neat-core-offline
+</ShellCommand>
+
+5. Start the installer as your regular user. It requests `sudo` permissions when necessary.
+
+<ShellCommand prompt="sdk|devkit">
+./install.sh
+</ShellCommand>
+
+If you need tutorials or tests, extract the separate extras archive into a directory of your choice.
+
+For offline installation, activate the Python environment with:
+
+<ShellCommand prompt="devkit">
+source /opt/sima/neat/pyneat/bin/activate
+</ShellCommand>
+
+### Package options and installer behavior
+
+- The installer checks system compatibility and available disk space before installation.
+- The installer uses bundled dependencies. It stops if a required dependency is missing.
+- In the SDK, the installer copies Neat Library into `/opt/toolchain/aarch64/modalix`.
+- If `DEVKIT_SYNC_DEVKIT_IP` is set, the installer also installs on the paired DevKit through SSH. Both environments must pass checks.
+
+If installation fails, read the log at the printed path: `/tmp/neat-core-offline-*.log`.
+For detailed output, use `./install.sh --verbose`.
+
+If SSH disconnects during installation, the remote installer can continue to run.
+Check that it has stopped before you retry or remove the temporary directory shown in the report.
+
 ## Next Step
 
 Continue to [Install PyNeat](/getting-started/neat-library/pyneat/) for custom
 Python environments, or [Neat CLI](/getting-started/neat-library/neat-cli/) to
 inspect the installed environment.
-
-## Offline standalone installation
-
-For a Modalix DevKit running Platform 3.0 and eLxr 26.04, use the standalone `neat-core-offline-installer.tar.gz` archive. Download the Core `offline` variant on a connected computer, verify its checksum against `offline/metadata.json`, and copy it to the DevKit. Stop Neat applications, extract the archive, and run:
-
-```bash
-tar -xzf neat-core-offline-installer.tar.gz
-cd neat-core-offline
-sudo ./install.sh --check
-sudo ./install.sh
-sudo ./install.sh --verify
-```
-
-The archive includes Core, matching Scheduler packages, APT dependencies, Python wheels, and installation scripts. Installation runs without network access. Platform firmware and OS provisioning remain prerequisites. This installer uses `/opt/sima/neat/pyneat`; activate it with `source /opt/sima/neat/pyneat/bin/activate`.
-
-## Offline Core packages
-
-Download on a connected computer, then copy the archives to the provisioned Modalix DevKit. The default profile includes the runtime bundle and tutorials/tests extras. Use `-t minimal` to omit extras. The target installer checks OS, architecture, and Platform compatibility.
-
-```bash
-sima-cli neat install core/offline@v0.6.0 --download-only
-sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
-```
-
-Extract `neat-core-offline-installer.tar.gz`, then run `cd neat-core-offline && sudo ./install.sh`. Extract the separate extras archive in a directory of your choice when you need tutorials or tests.
-
-The installer accepts only the Neat eLxr SDK or a provisioned Modalix DevKit. It checks `/etc/sdk-release` or `/etc/buildinfo` against the package manifest bundled in the archive; downloaded publication metadata is not required. Other environments and incompatible Platform versions are rejected before installation. In the SDK, Core is copied into `/opt/toolchain/aarch64/modalix`. If `DEVKIT_SYNC_DEVKIT_IP` is configured, the same offline bundle is transferred over SSH to the paired DevKit. Both environments must pass preflight before installation begins. On a DevKit, installation runs locally.

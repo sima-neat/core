@@ -32,7 +32,7 @@ SDKをインストールし、DevKitとペアリングしていない場合は�
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/getting-started/dev-environment/install-the-environment/"><strong>環境をインストールします。</strong><span>お使いの DevKit ソフトウェアのバージョンに合った SDK パッケージをインストールして設定してください。</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/dev-environment/devkit-sync/"><strong>DevKit Sync</strong><span>ワークスペースの共有、ペアリングの更新、rsyncによる代替処理について理解する。 <code>dk</code> コマンドの実行。</span></a></li>
-      <li><a class="overview-link-card" href="/getting-started/dev-environment/offline-installation/"><strong>オフラインでのインストール</strong><span>オフラインでのインストール用に、SDK、Model Compiler、PCIeパッケージをダウンロードしてください。</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/offline-installation/"><strong>オフラインでのインストール</strong><span>オフラインでのインストール用に、SDK と Model Compiler パッケージをダウンロードしてください。</span></a></li>
     </ul>
   </section>
 </div>

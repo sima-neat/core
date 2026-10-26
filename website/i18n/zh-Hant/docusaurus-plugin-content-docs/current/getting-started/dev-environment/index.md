@@ -31,7 +31,7 @@ DevKit Sync 將這些位置連接到一個共享的 `/workspace`，因此，建�
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/getting-started/dev-environment/install-the-environment/"><strong>安裝環境</strong><span>安裝並設定與您的 DevKit 軟體版本相符的 SDK 套件。</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/dev-environment/devkit-sync/"><strong>DevKit Sync</strong><span>了解工作區共用、配對更新、rsync 備援機制等。 <code>dk</code> 命令執行。</span></a></li>
-      <li><a class="overview-link-card" href="/getting-started/dev-environment/offline-installation/"><strong>離線安裝</strong><span>下載 SDK、Model Compiler 和 PCIe 套件，以供離線安裝。</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/offline-installation/"><strong>離線安裝</strong><span>下載 SDK 和 Model Compiler 套件，以供離線安裝。</span></a></li>
     </ul>
   </section>
 </div>
