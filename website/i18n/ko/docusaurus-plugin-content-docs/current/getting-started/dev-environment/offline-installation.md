@@ -99,3 +99,5 @@ sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
 설치 프로그램은 Neat eLxr SDK 또는 프로비저닝된 Modalix DevKit만 허용합니다. `/etc/sdk-release` 또는 `/etc/buildinfo`를 아카이브에 포함된 패키지 매니페스트와 비교하므로 다운로드한 배포 메타데이터는 필요하지 않습니다. 다른 환경이나 호환되지 않는 Platform 버전에서는 설치 전에 중단합니다. SDK에서는 Core를 `/opt/toolchain/aarch64/modalix`에 복사합니다. `DEVKIT_SYNC_DEVKIT_IP`가 설정되어 있으면 SSH를 통해 동일한 오프라인 번들을 페어링된 DevKit에 전송합니다. 설치를 시작하기 전에 두 환경 모두 사전 검사를 통과해야 합니다. DevKit에서는 로컬로 설치합니다.
 
 표준 SDK 컨테이너의 오프라인 설치 프로그램에는 `unshare`, 특권 모드 또는 추가 컨테이너 권한이 필요하지 않습니다. 패키지를 sysroot에 추출하며 로컬 APT `file`, `copy`, `store` 메서드만 활성화합니다. HTTP, HTTPS 및 다른 네트워크 전송은 비활성화되며 의존성이 누락되면 온라인 대체 경로 없이 실패합니다. 네이티브 DevKit 설치는 격리된 네트워크 네임스페이스를 유지합니다.
+
+네이티브 설치 프로그램은 압축 해제된 Debian 패키지와 Python wheel 크기의 3배에 더해 메타데이터와 Python 환경을 위한 128 MiB를 확보합니다. NVMe 또는 tmpfs의 번들을 포함하여 이미 배치된 아카이브는 다시 계산하지 않습니다. 공간이 부족하면 루트 파일 시스템의 사용 가능한 공간, 필요한 공간, 추가로 필요한 공간을 MiB 단위로 표시합니다.

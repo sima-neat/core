@@ -119,3 +119,12 @@ command group before releasing its lock. It allows up to 30 seconds for graceful
 termination, then kills and reaps remaining children. Further Ctrl-C presses
 cannot bypass cleanup. An interrupted package transaction may still require
 repair; check `sudo dpkg --audit` and the diagnostic log before retrying.
+
+## Disk space
+
+The native installer reserves three times the expanded Debian dependency and
+Python wheel contents, plus 128 MiB for package metadata and the Python
+environment. Packages without an `Installed-Size` field are measured from their
+archive contents. Already-staged bundle files are not counted again, including
+when they are stored on NVMe or tmpfs. A space failure reports available,
+required, and additional root space in MiB.

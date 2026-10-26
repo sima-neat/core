@@ -99,3 +99,5 @@ sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
 安裝程式僅接受 Neat eLxr SDK 或已佈建的 Modalix DevKit。它會將 `/etc/sdk-release` 或 `/etc/buildinfo` 與封存檔內的套件資訊清單比對，不需要下載的發佈中繼資料。其他環境或不相容的 Platform 版本會在安裝前遭到拒絕。在 SDK 中，Core 會複製到 `/opt/toolchain/aarch64/modalix`。若已設定 `DEVKIT_SYNC_DEVKIT_IP`，同一個離線套件會透過 SSH 傳送至已配對的 DevKit。開始安裝前，兩個環境都必須通過預先檢查。在 DevKit 上則會於本機安裝。
 
 標準 SDK 容器內的離線安裝不需要 `unshare`、特權模式或額外容器權限。安裝程式會將套件解壓縮到 sysroot，並僅啟用本機 APT 的 `file`、`copy` 與 `store` 方法。HTTP、HTTPS 及其他網路傳輸皆停用；缺少相依套件時會失敗，不會改用線上來源。原生 DevKit 安裝仍使用隔離的網路命名空間。
+
+原生安裝程式會預留 Debian 套件與 Python wheel 解壓後大小的三倍，另加 128 MiB 供中繼資料與 Python 環境使用。已放置的封存檔不會重複計算，包括位於 NVMe 或 tmpfs 的套件。空間不足時會以 MiB 顯示根檔案系統的可用空間、所需空間與尚需釋放的空間。

@@ -10,7 +10,9 @@ import shutil
 import socket
 import subprocess
 import sys
+import tarfile
 import tempfile
+from zipfile import ZipFile
 
 from assemble import verify_bundle
 
@@ -85,17 +87,46 @@ def environment(target, role):
     audit = output(['dpkg', '--audit'])
     if audit:
         raise ValueError('Repair package database before installation: ' + audit)
-    size = sum(p.stat().st_size for p in target.rglob('*') if p.is_file())
-    installed = sum(int(output(['dpkg-deb', '-f', str(p), 'Installed-Size']) or '0') * 1024
-                    for p in (target/'repo').glob('*.deb'))
-    if shutil.disk_usage('/').free < 3 * (size + installed):
-        raise ValueError('Insufficient free root filesystem space')
+
+
+def check_space(target):
+    # Archives are already staged, potentially on NVMe or tmpfs. Their current
+    # allocation is reflected in disk_usage; do not charge it to root again.
+    installed = 0
+    for package in (target/'repo').glob('*.deb'):
+        size = int(output(['dpkg-deb', '-f', str(package), 'Installed-Size']) or '0') * 1024
+        if not size:
+            # Some producer packages omit Installed-Size. Never treat their
+            # installed contents as free; read the archive without extracting it.
+            with tempfile.TemporaryFile() as stream:
+                run(['dpkg-deb', '--fsys-tarfile', str(package)], stdout=stream)
+                stream.seek(0)
+                with tarfile.open(fileobj=stream) as archive:
+                    size = sum((entry.size + 4095) // 4096 * 4096
+                               for entry in archive if entry.isfile())
+        installed += size
+    for wheel in (target/'wheels').glob('*.whl'):
+        with ZipFile(wheel) as archive:
+            installed += sum((entry.file_size + 4095) // 4096 * 4096
+                             for entry in archive.infolist())
+    # Reserve the full dependency cohort even if already installed, plus unpack/
+    # replacement and Python staging space, and 128 MiB for metadata/venv growth.
+    required = 3 * installed + 128 * 1024**2
+    free = shutil.disk_usage('/').free
+    if free < required:
+        mib = 1024**2
+        raise ValueError(f'Insufficient free root filesystem space: {free // mib} MiB available, '
+                         f'{(required + mib - 1) // mib} MiB required; '
+                         f'free at least {(required - free + mib - 1) // mib} MiB on /. '
+                         'Moving the already-staged bundle does not free installation space.')
 
 
 def execute(root, role, phase):
     verify_bundle(root, 'card' if role == 'card' and not (root/'host').exists() else None)
     target = root/role
     environment(target, role)
+    if phase != 'verify':
+        check_space(target)
     # Ignore caller configuration, including pip extra-index-url/find-links.
     for key in list(os.environ):
         if key.startswith(('PIP_', 'NEAT_', 'SIMAPCIE_', 'PYNEAT_')) or key in ('SYSROOT', 'ELXR_SDK_RELEASE_FILE'):

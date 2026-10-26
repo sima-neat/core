@@ -190,3 +190,72 @@ def test_private_apt_restores_environment_before_cleanup(tmp_path, monkeypatch, 
         assert fails
     assert os.environ.get('APT_CONFIG') == previous
     assert not config.exists()
+
+
+def test_space_budget_excludes_staged_archives_and_counts_expanded_wheels(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from zipfile import ZipFile
+    mib = 1024**2
+    (tmp_path/'repo').mkdir()
+    (tmp_path/'repo/runtime.deb').write_bytes(b'archive')
+    (tmp_path/'payload').mkdir()
+    # Duplicates/staging are already allocated, not future root growth.
+    (tmp_path/'payload/runtime.deb').write_bytes(b'duplicate' * mib)
+    (tmp_path/'wheels').mkdir()
+    with ZipFile(tmp_path/'wheels/runtime.whl', 'w') as wheel:
+        wheel.writestr('module.py', b'x' * mib)
+    monkeypatch.setattr(deploy, 'output', lambda args: '1024')
+    required = 3 * (mib + mib) + 128 * mib
+    monkeypatch.setattr(deploy.shutil, 'disk_usage', lambda path: SimpleNamespace(free=required))
+    deploy.check_space(tmp_path)
+    monkeypatch.setattr(deploy.shutil, 'disk_usage', lambda path: SimpleNamespace(free=required-1))
+    with pytest.raises(ValueError, match='133 MiB available, 134 MiB required; free at least 1 MiB on /'):
+        deploy.check_space(tmp_path)
+
+
+def test_space_budget_counts_packages_without_installed_size(tmp_path, monkeypatch):
+    import io
+    import tarfile
+    from types import SimpleNamespace
+    (tmp_path/'repo').mkdir()
+    (tmp_path/'repo/runtime.deb').touch()
+    monkeypatch.setattr(deploy, 'output', lambda args: '')
+    def contents(args, stdout):
+        assert args[0:2] == ['dpkg-deb', '--fsys-tarfile']
+        with tarfile.open(fileobj=stdout, mode='w') as archive:
+            member = tarfile.TarInfo('./usr/lib/runtime.so')
+            member.size = 4097
+            archive.addfile(member, io.BytesIO(b'x' * member.size))
+    monkeypatch.setattr(deploy, 'run', contents)
+    required = 3 * 8192 + 128 * 1024**2
+    monkeypatch.setattr(deploy.shutil, 'disk_usage', lambda path: SimpleNamespace(free=required-1))
+    with pytest.raises(ValueError, match='Insufficient free root filesystem space'):
+        deploy.check_space(tmp_path)
+    monkeypatch.setattr(deploy.shutil, 'disk_usage', lambda path: SimpleNamespace(free=required))
+    deploy.check_space(tmp_path)
+
+
+def test_space_budget_rejects_unreadable_package_without_size(tmp_path, monkeypatch):
+    import subprocess
+    (tmp_path/'repo').mkdir()
+    (tmp_path/'repo/runtime.deb').touch()
+    monkeypatch.setattr(deploy, 'output', lambda args: '0')
+    def fail(*args, **kwargs):
+        raise subprocess.CalledProcessError(2, args[0])
+    monkeypatch.setattr(deploy, 'run', fail)
+    with pytest.raises(subprocess.CalledProcessError):
+        deploy.check_space(tmp_path)
+
+
+def test_verification_does_not_reserve_installation_space(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(deploy, 'verify_bundle', lambda *args: None)
+    monkeypatch.setattr(deploy, 'environment', lambda *args: None)
+    monkeypatch.setattr(deploy, 'check_space', lambda *args: pytest.fail('verification must not reserve install space'))
+    monkeypatch.setattr(deploy, 'run', lambda *args, **kwargs: None)
+    monkeypatch.setattr(deploy, 'missing_prerequisites', lambda: [])
+    monkeypatch.setattr(deploy, 'verify', lambda *args: calls.append(args))
+    with monkeypatch.context() as context:
+        context.setattr(deploy.os, 'environ', os.environ.copy())
+        deploy.execute(tmp_path, 'card', 'verify')
+    assert len(calls) == 1
