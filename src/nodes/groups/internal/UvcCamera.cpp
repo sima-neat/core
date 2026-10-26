@@ -94,12 +94,15 @@ bool mjpeg_mode_listed(int fd, std::uint32_t width, std::uint32_t height, std::u
   v4l2_frmsizeenum size{};
   size.pixel_format = V4L2_PIX_FMT_MJPEG;
   for (; xioctl(fd, VIDIOC_ENUM_FRAMESIZES, &size) == 0; ++size.index) {
+    const bool discrete = size.type == V4L2_FRMSIZE_TYPE_DISCRETE;
     std::uint32_t w = 0, h = 0;
     bool size_ok = false;
-    if (size.type == V4L2_FRMSIZE_TYPE_DISCRETE) {
+    std::ostringstream listed;
+    if (discrete) {
       w = size.discrete.width;
       h = size.discrete.height;
       size_ok = w == width && h == height;
+      listed << w << 'x' << h << '@';
     } else {
       const auto& s = size.stepwise;
       w = width;
@@ -107,15 +110,19 @@ bool mjpeg_mode_listed(int fd, std::uint32_t width, std::uint32_t height, std::u
       size_ok = width >= s.min_width && width <= s.max_width && height >= s.min_height &&
                 height <= s.max_height && (width - s.min_width) % std::max(1U, s.step_width) == 0 &&
                 (height - s.min_height) % std::max(1U, s.step_height) == 0;
+      // One range covers every size (continuous ranges step 1x1); rates only for the request.
+      listed << s.min_width << 'x' << s.min_height << '-' << s.max_width << 'x' << s.max_height
+             << " step " << s.step_width << 'x' << s.step_height;
+      if (size_ok)
+        listed << " (" << w << 'x' << h << '@';
     }
-    std::ostringstream listed;
-    listed << w << 'x' << h << '@';
     bool first = true;
     v4l2_frmivalenum ival{};
     ival.pixel_format = V4L2_PIX_FMT_MJPEG;
     ival.width = w;
     ival.height = h;
-    for (; xioctl(fd, VIDIOC_ENUM_FRAMEINTERVALS, &ival) == 0; ++ival.index) {
+    for (; (discrete || size_ok) && xioctl(fd, VIDIOC_ENUM_FRAMEINTERVALS, &ival) == 0;
+         ++ival.index) {
       // A frame interval is the reciprocal of the frame rate.
       if (ival.type == V4L2_FRMIVAL_TYPE_DISCRETE) {
         const auto& iv = ival.discrete;
@@ -135,9 +142,11 @@ bool mjpeg_mode_listed(int fd, std::uint32_t width, std::uint32_t height, std::u
       if (ival.type != V4L2_FRMIVAL_TYPE_DISCRETE)
         break;
     }
-    if (modes && size.type == V4L2_FRMSIZE_TYPE_DISCRETE)
+    if (!discrete && size_ok)
+      listed << ')';
+    if (modes)
       modes->push_back(listed.str());
-    if (size.type != V4L2_FRMSIZE_TYPE_DISCRETE)
+    if (!discrete)
       break;
   }
   return found;
