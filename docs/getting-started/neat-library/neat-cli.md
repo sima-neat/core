@@ -86,3 +86,19 @@ Continue to [Compile a Model](/compile-a-model/) to prepare a model for Modalix 
 this runs in the SDK and needs no DevKit. To run a full application on hardware,
 see [Hello Neat!](/develop-apps/hello-neat/minimal/), which requires a paired
 DevKit.
+
+## PCIe host and card status
+
+The `sima-pcie-host` package also installs `neat` on Ubuntu. Run `neat` or `neat --json` to read installed host packages, PyNeatPCIe, and the board and installed software on each SiMa PCIe card. Cards are listed by PCI address and interface. A PCI address describes the current attachment, not a permanent board serial number.
+
+```bash
+neat
+neat --json
+neat --offline
+```
+
+Card queries use the provisioned `10.0.N.1` host interface and `10.0.N.2` card address, matching `pcie-setup.sh`. Configure network access and trusted SSH keys first. The command does not configure interfaces, enroll host keys, prompt for passwords, use sudo on cards, or modify packages. Missing interfaces, nonstandard addresses, SSH failures, and unavailable software are reported per card; reachable cards still report their versions.
+
+`NEAT_PCIE_SSH_USER` selects the card SSH user (default `sima`). `NEAT_PCIE_SSH_KEY` selects a private key (default `~/.ssh/sima_neat_pcie_ed25519`); existing SSH configuration and agent authentication remain available. `--offline` skips Internet update checks but still reads attached cards over local SSH. PCIe host status skips artifact update checks; use `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>` to update the host package. `neat update` does not update PCIe cards.
+
+JSON retains `sima.neat.status.v1` and adds `components.pcieHost`, `components.pcieScheduler`, `components.pyneatpcie`, and `pcie`. The `pcie` object contains host software, a `cards` array with PCI address, interfaces, address, state, software and error fields, and topology errors. Missing remote software is `null`, not an inferred installed version.

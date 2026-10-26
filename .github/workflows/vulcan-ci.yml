@@ -135,6 +135,8 @@ jobs:
           python3 -m venv "${test_venv}"
           "${test_venv}/bin/python" -m pip install --disable-pip-version-check pytest packaging PyYAML
           "${test_venv}/bin/python" -m pytest -q \
+            python/tests/test_neat_cli.py \
+            python/tests/test_neat_pcie_status.py \
             tests/test_build_pyneat_wheel.py \
             tests/test_resolve_compiler_cache.py \
             tests/tools/test_internals_package_boundary.py \

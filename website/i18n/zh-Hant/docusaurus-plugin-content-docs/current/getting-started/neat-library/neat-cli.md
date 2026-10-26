@@ -74,3 +74,19 @@ neat update --core-only
 
 繼續進行 [編譯模型](/compile-a-model/)，以準備用於 Modalix 的模型——
 此程式碼在 SDK 中執行，且不需要 DevKit。若要在硬體上執行完整的應用程式，請參閱 [您好，Neat！](/develop-apps/hello-neat/minimal/)，它需要配對的 DevKit。
+
+## PCIe 主機與卡片狀態
+
+`sima-pcie-host` 套件也會在 Ubuntu 安裝 `neat`。執行 `neat` 或 `neat --json`，可讀取主機已安裝的套件、PyNeatPCIe，以及每張 SiMa PCIe 卡片的板卡與已安裝軟體資訊。卡片以 PCI 位址和介面列出。PCI 位址代表目前的連接位置，並非永久的板卡序號。
+
+```bash
+neat
+neat --json
+neat --offline
+```
+
+卡片查詢使用已設定的主機介面 `10.0.N.1` 與卡片位址 `10.0.N.2`，與 `pcie-setup.sh` 相同。請先設定網路連線與受信任的 SSH 金鑰。此命令不會設定介面、登錄主機金鑰、提示輸入密碼、在卡片上使用 sudo 或修改套件。缺少介面、非標準位址、SSH 失敗及無法讀取軟體資訊的情況會逐卡回報；可連線的卡片仍會顯示版本。
+
+`NEAT_PCIE_SSH_USER` 指定卡片的 SSH 使用者（預設為 `sima`）。`NEAT_PCIE_SSH_KEY` 指定私密金鑰（預設為 `~/.ssh/sima_neat_pcie_ed25519`），也可繼續使用既有 SSH 設定與代理程式驗證。`--offline` 會略過網際網路更新檢查，但仍透過本機 SSH 讀取已連接的卡片。PCIe 主機狀態不檢查成品更新；請使用 `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>` 更新主機套件。`neat update` 不會更新 PCIe 卡片。
+
+JSON 保留 `sima.neat.status.v1`，並新增 `components.pcieHost`、`components.pcieScheduler`、`components.pyneatpcie` 與 `pcie`。`pcie` 包含主機軟體、具有 PCI 位址、介面、位址、狀態、軟體與錯誤欄位的 `cards` 陣列，以及拓樸錯誤。無法讀取遠端軟體時回傳 `null`，不會推測已安裝的版本。

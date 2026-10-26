@@ -1768,3 +1768,11 @@ VLM 影像以記憶體形式提供，並在內部暫存以供傳輸；影像檔�
 ## 原生 MLA 張量檢視
 
 Core 會保留產生端的借用生命週期並重用共用底層記憶體槽位；輸入來自不同擁有者時，會略過共用描述元的匯入。經驗證的恆等主機模組不執行 A65，即可保留原生輸出的型別與形狀，包括 INT32 ArgMax 結果及推論前的 `Model::output_specs()` 中繼資料。
+
+## PCIe 主機與卡片狀態
+
+`sima-pcie-host` 套件也會在 Ubuntu 安裝 `neat`。執行 `neat` 或 `neat --json`，可讀取主機已安裝的套件、PyNeatPCIe，以及每張 SiMa PCIe 卡片的板卡與已安裝軟體資訊。卡片以 PCI 位址和介面列出。PCI 位址代表目前的連接位置，並非永久的板卡序號。
+
+卡片查詢使用已設定的主機介面 `10.0.N.1` 與卡片位址 `10.0.N.2`，與 `pcie-setup.sh` 相同。請先設定網路連線與受信任的 SSH 金鑰。此命令不會設定介面、登錄主機金鑰、提示輸入密碼、在卡片上使用 sudo 或修改套件。缺少介面、非標準位址、SSH 失敗及無法讀取軟體資訊的情況會逐卡回報；可連線的卡片仍會顯示版本。
+
+JSON 保留 `sima.neat.status.v1`，並新增 `components.pcieHost`、`components.pcieScheduler`、`components.pyneatpcie` 與 `pcie`。`pcie` 包含主機軟體、具有 PCI 位址、介面、位址、狀態、軟體與錯誤欄位的 `cards` 陣列，以及拓樸錯誤。無法讀取遠端軟體時回傳 `null`，不會推測已安裝的版本。

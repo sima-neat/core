@@ -144,9 +144,13 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/simaai/
 )
 
 install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/scripts/pcie-setup.sh
+  ${SIMA_NEAT_CORE_ROOT}/scripts/neat
   DESTINATION ${CMAKE_INSTALL_BINDIR}
   COMPONENT Runtime
 )
+install(FILES ${SIMA_NEAT_CORE_ROOT}/scripts/neat_pcie_status.py
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/sima-pcie-host
+  COMPONENT Runtime)
 
 set(SIMAPCIE_APPLICATION_SKILL_INSTALL_DIR
   ${CMAKE_INSTALL_DATADIR}/sima-pcie-host/skills/neat-pcie-application-builder)
@@ -362,7 +366,7 @@ set(CPACK_PROJECT_CONFIG_FILE "${CMAKE_CURRENT_BINARY_DIR}/NativePackageGuard.cm
 set(CPACK_DEBIAN_RUNTIME_PACKAGE_NAME "sima-pcie-host")
 set(CPACK_DEBIAN_RUNTIME_PACKAGE_SECTION "libs")
 set(CPACK_DEBIAN_RUNTIME_PACKAGE_DEPENDS
-  "${_scheduler_runtime}, libstdc++6, openssh-client, libgstreamer-plugins-base1.0-0, libglib2.0-0"
+  "${_scheduler_runtime}, libstdc++6, openssh-client, python3, iproute2, libgstreamer-plugins-base1.0-0, libglib2.0-0"
 )
 set(CPACK_DEBIAN_RUNTIME_PACKAGE_RECOMMENDS "sshpass")
 set(CPACK_DEBIAN_RUNTIME_DESCRIPTION
