@@ -30,6 +30,9 @@ Neat selects the safe encoder ingress automatically:
 NV12 in a compatible DMA-BUF:
 SimaEncode -> codec parser -> RTP payloader -> UdpOutput
 
+NV16 (4:2:2) in a DMA-BUF, for example from a 4:2:2 MJPEG decode:
+EV74 ColorConvert into the encoder NV12 surface -> SimaEncode -> codec parser -> RTP payloader -> UdpOutput
+
 CPU input or raw frames requiring conversion:
 Convert/upload into encoder DMA-BUF -> SimaEncode -> codec parser -> RTP payloader -> UdpOutput
 ```
@@ -38,7 +41,9 @@ The codec selects the encoder, parser and RTP payloader together. The deprecated
 allocation. CPU-backed NV12 requires an upload; RGB, BGR, grayscale and I420
 require conversion. Neat performs that work at the encoder-input boundary,
 writing into the final DMA surface rather than staging a second copy inside
-the encoder. Applications do not need to select a memory backend.
+the encoder. Applications do not need to select a memory backend. NV16 input,
+such as a 4:2:2 webcam decoded natively, is converted to NV12 on the EV74 by
+`ColorConvert`, also directly into the encoder surface.
 
 ### Raw frame geometry and layout
 

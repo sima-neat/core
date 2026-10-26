@@ -29,11 +29,14 @@ Insight の RTP/WebRTC ビューアーは H.264 と H.265 をサポートしま�
 NV12 in a compatible DMA-BUF:
 SimaEncode -> codec parser -> RTP payloader -> UdpOutput
 
+NV16 (4:2:2) in a DMA-BUF, for example from a 4:2:2 MJPEG decode:
+EV74 ColorConvert into the encoder NV12 surface -> SimaEncode -> codec parser -> RTP payloader -> UdpOutput
+
 CPU input or raw frames requiring conversion:
 Convert/upload into encoder DMA-BUF -> SimaEncode -> codec parser -> RTP payloader -> UdpOutput
 ```
 
-コーデックの選択により、エンコーダー、パーサー、RTP ペイローダーがまとめて選択されます。非推奨の `H264RtpUdpFromRaw(...)` ファクトリーは引き続き利用でき、H.264 のデフォルトを保持します。互換性のある NV12 DMA-BUF 入力は、元の割り当てを保持します。CPU 上の NV12 はアップロードが必要です。RGB、BGR、グレースケール、I420 は変換が必要です。Neat はエンコーダー入力境界でこの処理を行い、最終的な DMA サーフェスに書き込みます。エンコーダー内部で 2 回目のコピーを行うことはありません。アプリケーションでメモリバックエンドを選択する必要はありません。
+コーデックの選択により、エンコーダー、パーサー、RTP ペイローダーがまとめて選択されます。非推奨の `H264RtpUdpFromRaw(...)` ファクトリーは引き続き利用でき、H.264 のデフォルトを保持します。互換性のある NV12 DMA-BUF 入力は、元の割り当てを保持します。CPU 上の NV12 はアップロードが必要です。RGB、BGR、グレースケール、I420 は変換が必要です。Neat はエンコーダー入力境界でこの処理を行い、最終的な DMA サーフェスに書き込みます。エンコーダー内部で 2 回目のコピーを行うことはありません。アプリケーションでメモリバックエンドを選択する必要はありません。4:2:2 のウェブカメラをネイティブにデコードした場合などの NV16 入力は、EV74 上の `ColorConvert` によって NV12 に変換され、同じくエンコーダーのサーフェスに直接書き込まれます。
 
 ### 生のフレームのジオメトリとレイアウト
 
