@@ -5,7 +5,6 @@
 #include "nodes/sima/ImageTransform.h"
 #include "nodes/sima/SimaDecode.h"
 
-#include <algorithm>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -127,6 +126,11 @@ void validate_options(const UsbCameraInputOptions& opt, std::uint32_t capture_bu
     throw std::invalid_argument("UsbCameraInput requires a buffer_name");
   if (capture_buffer_count > kMaxCaptureBuffers)
     throw std::invalid_argument("UsbCameraInput capture_buffer_count exceeds 64");
+  // The default pool is the queue depth plus the decoder's input slots.
+  if (capture_buffer_count == 0 && opt.insert_queue &&
+      opt.queue_depth > kMaxCaptureBuffers - kDecoderInputSlots)
+    throw std::invalid_argument("UsbCameraInput queue_depth exceeds 62: its default capture pool "
+                                "(queue_depth + 2 decoder slots) would exceed the 64 buffer limit");
 }
 
 } // namespace
@@ -140,7 +144,7 @@ simaai::neat::Graph mjpeg_camera_graph(const UsbCameraInputOptions& opt,
                                  ? capture_buffer_count
                                  : (opt.insert_queue ? opt.queue_depth : 0U) + kDecoderInputSlots;
   simaai::neat::Graph graph;
-  graph.add(std::make_shared<UvcMjpegCameraNode>(opt, camera, std::min(pool, kMaxCaptureBuffers)));
+  graph.add(std::make_shared<UvcMjpegCameraNode>(opt, camera, pool));
   if (camera.sampling == FormatTag::NV16) {
     // 4:2:2 JPEGs decode zero-copy only to NV16; convert to NV12 on the EV74.
     ColorConvertOptions color;

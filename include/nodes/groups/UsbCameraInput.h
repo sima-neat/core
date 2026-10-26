@@ -73,7 +73,8 @@ namespace simaai::neat::nodes::groups {
  * @param capture_buffer_count CMA capture buffers shared by the camera and the
  *        decoder; 0 uses the queue depth plus the decoder's input slots. At most 64.
  * @throws std::invalid_argument for a missing camera ID or buffer name, a zero size
- *         or rate, or more than 64 capture buffers.
+ *         or rate, or more than 64 capture buffers (a default pool needs a queue depth
+ *         of at most 62).
  * @throws std::runtime_error when the installed decoder is too old, or the camera
  *         is not connected, is in use, lacks the mode, or sends no decodable frame.
  *         The message names the camera ID and lists the connected IDs or the

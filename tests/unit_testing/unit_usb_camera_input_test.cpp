@@ -126,6 +126,10 @@ void check_validation() {
   require_throws<std::invalid_argument>([&] { (void)UsbCameraInput(mjpeg_options(), 65); },
                                         "exceeds 64", "too many capture buffers");
   opt = mjpeg_options();
+  opt.queue_depth = 63;
+  require_throws<std::invalid_argument>([&] { (void)UsbCameraInput(opt); },
+                                        "queue_depth exceeds 62", "default pool over 64 buffers");
+  opt = mjpeg_options();
   opt.buffer_name.clear();
   require_throws<std::invalid_argument>([&] { (void)UsbCameraInput(opt); },
                                         "requires a buffer_name", "empty buffer name");
@@ -236,6 +240,10 @@ void check_pipeline() {
   require_contains(relaxed, "copy-allowed=false", "allow_cpu_fallback has no effect");
   require_contains(relaxed, "input-pool-buffers=9", "explicit capture_buffer_count");
   require_contains(relaxed, "max-size-buffers=3", "queue depth");
+  opt.queue_depth = 62;
+  require_contains(
+      uvc::mjpeg_camera_graph(opt, {"/dev/video1", FormatTag::NV12}, 0).describe_backend(),
+      "input-pool-buffers=64", "largest default pool");
 
   // 4:2:2 decodes to NV16 and adds the EV74 ColorConvert, which renders only
   // inside a built pipeline that supplies its input contract.
