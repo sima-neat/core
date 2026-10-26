@@ -5,13 +5,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SITE_DIR="${DOCS_LINK_SITE_DIR:-${REPO_ROOT}/website/build}"
 START_PATHS="${DOCS_LINK_START_PATHS:-all}"
 PORT="${DOCS_LINK_CHECK_PORT:-}"
-# Keep concurrency low and the per-request timeout generous: the site is served
-# by a single-process static server (`serve`) sharing the CI runner's few cores
-# with the linkinator crawler, so aggressive concurrency starves the server and
-# a request can stall past the timeout. linkinator surfaces that stall as an
-# aborted request (AbortController DOMException) and exits non-zero, which reads
-# as a spurious link failure. Fewer in-flight requests + a longer timeout keep
-# the crawl within what the local server can service.
+# Bound the crawl load and per-request duration on shared CI runners. Linkinator
+# 8.1.0 drains unused response bodies and keeps delayed retries alive; 7.6.1 can
+# abort or exit with an unsettled promise while crawling the generated API pages.
 CONCURRENCY="${DOCS_LINK_CONCURRENCY:-2}"
 RETRY_ERRORS_COUNT="${DOCS_LINK_RETRY_ERRORS_COUNT:-3}"
 TIMEOUT_MS="${DOCS_LINK_TIMEOUT_MS:-60000}"
@@ -208,7 +204,7 @@ for start_path in ${START_PATHS}; do
     if [[ -n "${EXTERNAL_SKIP}" ]]; then
       linkinator_args+=(--skip "${EXTERNAL_SKIP}")
     fi
-    if npx --yes linkinator@7.6.1 "${linkinator_args[@]}"; then
+    if npx --yes linkinator@8.1.0 "${linkinator_args[@]}"; then
       break
     fi
 
