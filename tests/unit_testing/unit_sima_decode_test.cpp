@@ -3,6 +3,7 @@
 
 #include "test_utils.h"
 
+#include <cstdint>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
@@ -247,6 +248,40 @@ void check_invalid_options() {
           "converted NV16 output must advertise its planar 4:2:2 boundary");
 }
 
+// SOI, APP0 and a 3-component SOF0 with the given luma sampling (chroma 1x1), then SOS.
+std::vector<std::uint8_t> jpeg_header(std::uint8_t luma_sampling) {
+  return {0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x00, 0x00, 0xff,          0xc0, 0x00,
+          0x11, 0x08, 0x00, 0x10, 0x00, 0x10, 0x03, 0x01, luma_sampling, 0x00, 0x02,
+          0x11, 0x01, 0x03, 0x11, 0x01, 0xff, 0xda, 0x00, 0x08};
+}
+
+void check_mjpeg_native_nv16() {
+  simaai::neat::SimaDecodeOptions options;
+  options.type = simaai::neat::SimaDecodeType::MJPEG;
+  options.out_format = simaai::neat::FormatTag::NV16;
+  options.dec_width = 1280;
+  options.dec_height = 720;
+  const simaai::neat::SimaDecode decode(options);
+  const std::string fragment = decode.backend_fragment(4);
+  require_contains(fragment, "dec-fmt=NV16", "MJPEG NV16 must use native decoder output");
+  require_contains(fragment, "zero-copy-output=true", "MJPEG NV16 must stay zero-copy");
+  require_not_contains(fragment, "videoconvert", "MJPEG NV16 must not convert");
+  const auto spec = decode.output_spec({});
+  require(spec.format == "NV16" && spec.memory == "SimaAI" && spec.byte_size == 1280U * 720U * 2U,
+          "MJPEG NV16 output must advertise SimaAI 4:2:2 frames");
+
+  using simaai::neat::jpeg_output_format;
+  require(jpeg_output_format(jpeg_header(0x22)) == simaai::neat::FormatTag::NV12, "4:2:0 -> NV12");
+  require(jpeg_output_format(jpeg_header(0x21)) == simaai::neat::FormatTag::NV16, "4:2:2 -> NV16");
+  require_throws_with([] { (void)jpeg_output_format(jpeg_header(0x11)); }, "only 4:2:0 and 4:2:2",
+                      "4:4:4 JPEG");
+  require_throws_with([] { (void)jpeg_output_format(std::vector<std::uint8_t>{0x00, 0x01}); },
+                      "not a JPEG", "non-JPEG data");
+  const std::vector<std::uint8_t> no_sof{0xff, 0xd8, 0xff, 0xda, 0x00, 0x08};
+  require_throws_with([&] { (void)jpeg_output_format(no_sof); }, "no 3-component frame header",
+                      "JPEG without frame header");
+}
+
 void check_h264_decode_wrapper_compatibility() {
   simaai::neat::H264Decode decode(2, "NV12", "legacy_decoder", true, "CVU", 1280, 720, 30, 6);
   const std::string fragment = decode.backend_fragment(6);
@@ -282,6 +317,7 @@ int main() {
     check_mjpeg_system_memory_output();
     check_decoder_controls();
     check_invalid_options();
+    check_mjpeg_native_nv16();
     check_h264_decode_wrapper_compatibility();
 
     std::cout << "[OK] unit_sima_decode_test passed\n";

@@ -9,7 +9,9 @@
 #include "builder/OutputSpec.h"
 #include "pipeline/FormatSpec.h"
 
+#include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -47,6 +49,17 @@ struct SimaDecodeOptions {
                               ///< "throughput-low-latency", ...).
   bool memory_opt = false;    ///< If true, enable the decoder memory-optimized path.
 };
+
+/**
+ * @brief Native `SimaDecode` output format for a JPEG frame.
+ *
+ * Returns `FormatTag::NV12` for 4:2:0 JPEGs and `FormatTag::NV16` for 4:2:2 JPEGs, the
+ * format the decoder writes without a conversion. Call it on a camera's first MJPEG frame
+ * to set `SimaDecodeOptions::out_format` before building the graph.
+ *
+ * @throws std::invalid_argument if the data is not a JPEG or uses another sampling.
+ */
+FormatTag jpeg_output_format(std::span<const std::uint8_t> jpeg);
 
 /**
  * @brief Hardware-accelerated native decoder node.

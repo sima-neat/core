@@ -1970,6 +1970,14 @@ NB_MODULE(_pyneat_core, m) {
       "data"_a, "caps_string"_a, "pts_ns"_a = -1, "dts_ns"_a = -1, "duration_ns"_a = -1);
 
   m.def(
+      "jpeg_output_format",
+      [](nb::bytes jpeg) {
+        return simaai::neat::jpeg_output_format(
+            {reinterpret_cast<const uint8_t*>(jpeg.c_str()), jpeg.size()});
+      },
+      "jpeg"_a, "Native SimaDecode output format for a JPEG frame: Format.NV12 or Format.NV16.");
+
+  m.def(
       "decode_bbox",
       [](const TensorList& bbox_tensors, std::optional<std::pair<int, int>> clamp_to,
          std::optional<int> top_k, bool strict) {
@@ -4371,7 +4379,8 @@ NB_MODULE(_pyneat_core, m) {
       .value("BGR", simaai::neat::PreprocessColorFormat::BGR)
       .value("GRAY8", simaai::neat::PreprocessColorFormat::GRAY8)
       .value("NV12", simaai::neat::PreprocessColorFormat::NV12)
-      .value("I420", simaai::neat::PreprocessColorFormat::I420);
+      .value("I420", simaai::neat::PreprocessColorFormat::I420)
+      .value("NV16", simaai::neat::PreprocessColorFormat::NV16);
 
   nb::enum_<simaai::neat::NormalizePreset>(m, "NormalizePreset")
       .value("None", simaai::neat::NormalizePreset::None)

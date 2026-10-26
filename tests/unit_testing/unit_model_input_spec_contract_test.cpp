@@ -269,8 +269,8 @@ Tensor make_route_tensor(int logical_index, int physical_index, int route_slot, 
 }
 
 void check_synthetic_image_inputs() {
-  // This exercises the production seed builder directly. NV16 is not added to
-  // the public Model preprocessing enum by this defensive construction fix.
+  // This exercises the production seed builder directly for every planar and packed
+  // public Model preprocessing format, including NV16.
   for (const auto* format : {"NV12", "NV16", "I420", "RGB", "BGR", "GRAY8"}) {
     InputOptions options;
     options.payload_type = PayloadType::Image;
