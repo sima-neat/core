@@ -844,8 +844,6 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   if (mode == RunMode::Sync) {
     session_build_clamp_sync_kernel_runner_capacity(br);
   }
-  br.pipeline_string = session_build_apply_run_preset_to_pipeline(
-      std::move(br.pipeline_string), merged_opt, br.framework_name_origins);
   if (br.diag) {
     br.diag->pipeline_string = br.pipeline_string;
   }
@@ -3459,8 +3457,6 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   if (mode == RunMode::Sync) {
     session_build_clamp_sync_kernel_runner_capacity(br);
   }
-  br.pipeline_string = session_build_apply_run_preset_to_pipeline(
-      std::move(br.pipeline_string), merged_opt, br.framework_name_origins);
   if (br.diag) {
     br.diag->pipeline_string = br.pipeline_string;
   }
