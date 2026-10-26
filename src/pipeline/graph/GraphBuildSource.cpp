@@ -862,8 +862,6 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   session_build_tune_internal_zero_copy_holder_window(stream_opt, internal_edge_queue,
                                                       !public_output_contract);
   session_build_reserve_kernel_runner_outputs(br, stream_opt);
-  br.pipeline_string = session_build_apply_run_preset_to_pipeline(
-      std::move(br.pipeline_string), merged_opt, br.framework_name_origins);
   if (br.diag) {
     br.diag->pipeline_string = br.pipeline_string;
   }
@@ -3470,8 +3468,6 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   session_build_tune_internal_zero_copy_holder_window(stream_opt, internal_edge_queue,
                                                       !public_output_contract);
   session_build_reserve_kernel_runner_outputs(br, stream_opt);
-  br.pipeline_string = session_build_apply_run_preset_to_pipeline(
-      std::move(br.pipeline_string), merged_opt, br.framework_name_origins);
   if (br.diag) {
     br.diag->pipeline_string = br.pipeline_string;
   }
