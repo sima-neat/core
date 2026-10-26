@@ -2446,6 +2446,29 @@ add_subdirectory(python)
     # Collection reproduces the CI failure; execution also verifies that the
     # packaged CLI and helper work without the producer checkout.
     command(sys.executable, '-B', '-m', 'pytest', '-p', 'no:cacheprovider', '--collect-only', '-q', test_file)
-    result = command(sys.executable, '-B', '-m', 'pytest', '-p', 'no:cacheprovider', '-q', test_file)
+    # Reproduce an occupied DevKit without changing its real installations.
+    # These distributions live outside every nested test's tmp_path.
+    sites = []
+    for python, version in [('python3.11', '0.5.0'), ('python3.13', '0.6.0+ci')]:
+        site = tmp_path/'ambient'/'pyneat'/'lib'/python/'site-packages'
+        metadata = site/f'pyneat-{version}.dist-info'
+        metadata.mkdir(parents=True)
+        (metadata/'METADATA').write_text(f'Name: pyneat\nVersion: {version}\n')
+        sites.append(str(site))
+    (tmp_path/'ambient/pyneat/pyvenv.cfg').write_text('include-system-site-packages = false\n')
+    (tmp_path/'ambient_pyneat.py').write_text(f'''import pytest
+from pathlib import Path
+
+@pytest.fixture(autouse=True)
+def ambient_pyneat(monkeypatch):
+    original = Path.glob
+    def glob(path, pattern):
+        if str(path) == '/media/nvme/pyneat' and pattern == 'lib/python*/site-packages':
+            return iter(Path(site) for site in {sites!r})
+        return original(path, pattern)
+    monkeypatch.setattr(Path, 'glob', glob)
+''')
+    result = command(sys.executable, '-B', '-m', 'pytest', '-p', 'no:cacheprovider',
+                     '-p', 'ambient_pyneat', '-q', test_file)
     assert re.search(r'\b[1-9][0-9]* passed', result)
     assert 'skipped' not in result

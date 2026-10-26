@@ -176,6 +176,22 @@ def distribution(root, name, version, venv=True):
     return status.importlib.metadata.PathDistribution(metadata)
 
 
+def isolate_python_distributions(monkeypatch, fixture_root, current):
+    """Keep real metadata discovery inside this test's synthetic environments."""
+    real_distributions = status.importlib.metadata.distributions
+    fixture_root = fixture_root.resolve()
+
+    def distributions(**kwargs):
+        if not kwargs:
+            return current
+        paths = kwargs.get('path', [])
+        if not all(Path(path).resolve().is_relative_to(fixture_root) for path in paths):
+            return []
+        return real_distributions(**kwargs)
+
+    monkeypatch.setattr(status.importlib.metadata, 'distributions', distributions)
+
+
 @pytest.mark.parametrize('name', ['pyneat', 'pyneatpcie'])
 @pytest.mark.parametrize('second_version', ['0.6.0', '0.6.1'])
 def test_python_installations_list_each_environment_without_conflict(tmp_path, monkeypatch, capsys,
@@ -184,10 +200,8 @@ def test_python_installations_list_each_environment_without_conflict(tmp_path, m
     first = distribution(home/name, name, '0.6.0')
     second = distribution(tmp_path/'offline'/name, name, second_version)
     monkeypatch.setattr(status.Path, 'home', lambda: home)
-    real_distributions = status.importlib.metadata.distributions
     # The current interpreter also sees the home venv: do not count it twice.
-    monkeypatch.setattr(status.importlib.metadata, 'distributions',
-                        lambda **kwargs: real_distributions(**kwargs) if kwargs else [second, first])
+    isolate_python_distributions(monkeypatch, tmp_path, [second, first])
     result = status.python_installations(name)
     assert result['error'] is None
     assert result['version'] == ('0.6.0' if second_version == '0.6.0' else None)
@@ -209,9 +223,7 @@ def test_python_installations_deduplicate_symlinked_environment(tmp_path, monkey
     dist = distribution(actual, 'pyneat', '0.6.0')
     (home/'pyneat').symlink_to(actual, target_is_directory=True)
     monkeypatch.setattr(status.Path, 'home', lambda: home)
-    real_distributions = status.importlib.metadata.distributions
-    monkeypatch.setattr(status.importlib.metadata, 'distributions',
-                        lambda **kwargs: real_distributions(**kwargs) if kwargs else [dist])
+    isolate_python_distributions(monkeypatch, tmp_path, [dist])
     result = status.python_installations('pyneat')
     assert result['installations'] == [{'version': '0.6.0', 'environment': str(actual),
                                       'path': str(actual/'lib/python3.13/site-packages')}]
