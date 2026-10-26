@@ -174,6 +174,32 @@ def finish_python_location(user, path, role):
         os.chown(home_path, user.pw_uid, user.pw_gid, follow_symlinks=False)
 
 
+@contextmanager
+def fresh_python_environment(path):
+    """Keep user packages recoverable without importing them into this bundle."""
+    backup = None
+    if path.exists() or path.is_symlink():
+        directory = Path(tempfile.mkdtemp(prefix=path.name+'-before-offline-', dir=path.parent))
+        # Keep the backup beside the original so relative symlinks still resolve.
+        directory.rmdir()
+        backup = directory
+        path.rename(backup)
+        print('Previous Python environment retained at '+str(backup), flush=True)
+    try:
+        # Build at the final path so activation scripts and shebangs stay valid.
+        run(['python3', '-m', 'venv', str(path)])
+        yield
+    except BaseException:
+        if path.is_symlink():
+            path.unlink()
+        elif path.exists():
+            shutil.rmtree(path)
+        if backup is not None:
+            backup.rename(path)
+            print('Restored previous Python environment at '+str(path), flush=True)
+        raise
+
+
 def execute(root, role, phase):
     verify_bundle(root, 'card' if role == 'card' and not (root/'host').exists() else None)
     target = root/role
@@ -217,18 +243,18 @@ def execute(root, role, phase):
             return
         if prerequisites:
             run(['apt-get', '--no-remove', '--no-install-recommends', '-y', 'install', *prerequisites])
-        run(['python3', '-m', 'venv', venv])
-        wheels = sorted((target/'payload').glob('*.whl'))
-        run([venv+'/bin/python', '-m', 'pip', 'install', '--force-reinstall',
-             '--only-binary=:all:', *map(str, wheels)])
-        # Prerequisite installation changed dpkg state; admission must inspect
-        # a fresh plan rather than treating already-installed prerequisites as new.
-        with plan.open('w') as stream:
-            run([*args, '--simulate'], stdout=stream)
-        lifecycle[3] = 'install'
-        run(lifecycle)
-        verify(target, role, venv)
-        finish_python_location(user, python_path, role)
+        with fresh_python_environment(python_path):
+            wheels = sorted((target/'payload').glob('*.whl'))
+            run([venv+'/bin/python', '-m', 'pip', 'install', '--force-reinstall',
+                 '--only-binary=:all:', *map(str, wheels)])
+            # Prerequisite installation changed dpkg state; admission must inspect
+            # a fresh plan rather than treating already-installed prerequisites as new.
+            with plan.open('w') as stream:
+                run([*args, '--simulate'], stdout=stream)
+            lifecycle[3] = 'install'
+            run(lifecycle)
+            verify(target, role, venv)
+            finish_python_location(user, python_path, role)
         print('Python environment: '+venv)
         print('Activate with: source '+str(Path(user.pw_dir)/('pyneatpcie' if role == 'host' else 'pyneat'))+'/bin/activate')
 

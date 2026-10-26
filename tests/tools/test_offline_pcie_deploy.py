@@ -199,6 +199,8 @@ def test_prerequisites_preserve_installed_system_packages(monkeypatch):
 
 
 def test_install_refreshes_plan_after_prerequisites(tmp_path, monkeypatch):
+    import pwd
+    monkeypatch.setattr(deploy, 'python_location', lambda role: (pwd.getpwuid(os.getuid()), tmp_path/'venv'))
     monkeypatch.setattr(deploy, 'finish_python_location', lambda *args: None)
     calls = []
     (tmp_path/'card/payload').mkdir(parents=True)
@@ -412,3 +414,59 @@ def test_host_lifecycle_does_not_reopen_prepared_python_environment(tmp_path):
     result = subprocess.run(['bash', str(HERE/'lifecycle.sh'), 'host', 'install', str(tmp_path), '/tmp/plan'],
                             text=True, capture_output=True, check=True)
     assert result.stdout.splitlines() == ['--skip-setup']
+
+
+@pytest.mark.parametrize('symlink', [False, True])
+@pytest.mark.parametrize('fails', [False, True])
+def test_fresh_environment_preserves_previous_packages(tmp_path, monkeypatch, symlink, fails):
+    path = tmp_path/'pyneatpcie'
+    original = tmp_path/'original' if symlink else path
+    original.mkdir()
+    (original/'user-data').write_text('preserve me')
+    if symlink:
+        path.symlink_to(original.name, target_is_directory=True)
+    def create(args):
+        Path(args[-1]).mkdir()
+        (Path(args[-1])/'new-data').touch()
+    monkeypatch.setattr(deploy, 'run', create)
+    def install():
+        with deploy.fresh_python_environment(path):
+            assert not (path/'user-data').exists()
+            if fails:
+                raise RuntimeError('install failed')
+    if fails:
+        with pytest.raises(RuntimeError, match='install failed'):
+            install()
+        assert (path/'user-data').read_text() == 'preserve me'
+        assert path.is_symlink() == symlink
+        assert not list(tmp_path.glob('pyneatpcie-before-offline-*'))
+    else:
+        install()
+        backups = list(tmp_path.glob('pyneatpcie-before-offline-*'))
+        assert len(backups) == 1
+        assert (backups[0]/'user-data').read_text() == 'preserve me'
+        assert backups[0].is_symlink() == symlink
+        assert (path/'new-data').exists()
+
+
+def test_existing_broken_pytest_does_not_contaminate_offline_environment(tmp_path):
+    import json
+    import subprocess
+    import sys
+    path = tmp_path/'pyneatpcie'
+    subprocess.run([sys.executable, '-m', 'venv', str(path)], check=True)
+    python = str(path/'bin/python')
+    site = Path(subprocess.check_output([python, '-c',
+        'import sysconfig; print(sysconfig.get_path("purelib"))'], text=True).strip())
+    metadata = site/'pytest-9.1.1.dist-info'
+    metadata.mkdir()
+    (metadata/'METADATA').write_text('Metadata-Version: 2.1\nName: pytest\nVersion: 9.1.1\n'
+                                   'Requires-Dist: packaging\nRequires-Dist: pygments\n')
+    broken = subprocess.run([python, '-m', 'pip', 'check'], capture_output=True, text=True)
+    assert broken.returncode == 1
+    assert 'packaging' in broken.stdout and 'pygments' in broken.stdout
+    with deploy.fresh_python_environment(path):
+        subprocess.run([python, '-m', 'pip', 'check'], check=True, capture_output=True)
+        names = json.loads(subprocess.check_output([python, '-m', 'pip', 'list', '--format=json'], text=True))
+        assert 'pytest' not in {row['name'] for row in names}
+    assert list(tmp_path.glob('pyneatpcie-before-offline-*'))
