@@ -168,6 +168,10 @@ source ~/pyneat/bin/activate
 
 ## 離線安裝 {#offline-installation}
 
+:::caution 現有的 Python 環境將被取代
+離線安裝會清除並重建 PCIe 主機上的 `~/pyneatpcie`，以及各卡或 DevKit 上的 `~/pyneat` 或 `/media/nvme/pyneat`。這些環境中的額外套件與其他檔案會被刪除，不會備份或回復。建立 NVMe 連結時，也會刪除 `~/pyneat` 上現有的目錄。安裝前，請將所需檔案與應用程式相依套件清單儲存至這些路徑之外，並取得離線重新安裝相依套件所需的 wheel 檔案。安裝成功後，請重新安裝這些相依套件。若安裝失敗，請修正回報的原因並重新執行安裝程式；沒有已儲存的環境可供還原。僅執行預先檢查或驗證的命令不會重建環境。
+:::
+
 Neat Library 離線套件自 0.6.0 版本起提供。
 對於使用 Platform 3.0 或更新版本的 Modalix DevKit，請使用此套件。
 
@@ -218,7 +222,7 @@ cd neat-core-offline
 source ~/pyneat/bin/activate
 </ShellCommand>
 
-離線安裝使用與線上安裝相同的 Python 路徑。PCIe 主機使用 `~/pyneatpcie`。若安裝使用者可寫入 `/media/nvme`，DevKit 使用 `/media/nvme/pyneat`；否則使用 `~/pyneat`。安裝至 NVMe 時，`~/pyneat` 會連結至該環境。若 `~/pyneat` 已有其他環境，安裝程式會先將其保存在家目錄的 `pyneat-before-offline-*` 目錄中，再建立連結。
+離線安裝使用與線上安裝相同的 Python 路徑。PCIe 主機使用 `~/pyneatpcie`。若安裝使用者可寫入 `/media/nvme`，DevKit 使用 `/media/nvme/pyneat`；否則使用 `~/pyneat`。安裝至 NVMe 時，`~/pyneat` 會連結至該環境。
 
 ### 套件選項與安裝程式行為
 
