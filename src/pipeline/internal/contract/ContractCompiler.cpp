@@ -3,6 +3,7 @@
 #include "builder/CompiledChildStageProvider.h"
 #include "model/internal/ModelPack.h"
 #include "pipeline/internal/sima/StageMemoryPolicy.h"
+#include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "builder/NodeContractProvider.h"
 #include "builder/OutputSpec.h"
 
@@ -160,14 +161,11 @@ void reconcile_standalone_cast_mla_ports(std::vector<CompiledNodeContract>& cont
     output.physical_outputs.clear();
     for (std::size_t port = 0; port < logical_for_port.size(); ++port) {
       const auto& input_port = input.physical_inputs[port];
-      pipeline_internal::sima::PhysicalBufferStaticSpec physical;
-      physical.physical_index = physical.allocator_index = static_cast<int>(port);
-      physical.source_physical_index = static_cast<int>(port);
-      physical.size_bytes = input_port.size_bytes;
-      physical.required_alignment_bytes = input_port.required_alignment_bytes;
-      physical.device_kind = device;
-      physical.segment_name = input_port.segment_name;
-      output.physical_outputs.push_back(std::move(physical));
+      output.physical_outputs.push_back(
+          pipeline_internal::sima::specbuilders::build_physical_buffer_static_spec(
+              static_cast<int>(port), static_cast<int>(port), input_port.size_bytes, device,
+              input_port.segment_name, static_cast<int>(port), 0,
+              input_port.required_alignment_bytes));
       auto& logical = output.logical_outputs[logical_for_port[port]];
       logical.physical_index = static_cast<int>(port);
       logical.byte_offset = 0;
