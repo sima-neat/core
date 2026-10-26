@@ -91,10 +91,14 @@ else:
         assert 'fixture package configuration failed' in result.stderr
 
 
-@pytest.mark.parametrize(('update', 'status_version', 'code'), [
-    ('OFF', 'none', 0), ('OFF', '3.0.0~pre2372', 0), ('ON', '3.0.0~pre2372', 0), ('ON', 'none', 1),
+# overlay None is a fresh SDK image: no overlay, so the sysroot is the image's platform.
+@pytest.mark.parametrize(('update', 'image', 'overlay', 'code'), [
+    ('OFF', '3.0.0~pre2371', '3.0.0~pre2372', 0), ('ON', '3.0.0~pre2371', '3.0.0~pre2372', 0),
+    ('OFF', '3.0.0~pre2372', '3.0.0~pre2371', 0),
+    ('OFF', '3.0.0~pre2372', None, 0), ('ON', '3.0.0~pre2372', None, 0),
+    ('OFF', '3.0.0~pre2371', None, 0), ('ON', '3.0.0~pre2371', None, 1),
 ])
-def test_sdk_shell_checks_sysroot_and_downloads_exact_archives(tmp_path, update, status_version, code):
+def test_sdk_shell_checks_sysroot_and_downloads_exact_archives(tmp_path, update, image, overlay, code):
     """Run the real shell with sysroot, APT and the coordinator mocked."""
     import json
     import os
@@ -117,7 +121,9 @@ def platform_provider_contracts(runner):
 ''')
     stubs = tmp_path / 'bin'; stubs.mkdir()
     (stubs / 'sysroot').write_text(f'#!/bin/sh\necho "sysroot $* SDK_PKG_LIST=$SDK_PKG_LIST" >> {calls}\n'
-                                   f'[ "$1" = status ] && echo "Sysroot overlay revision: {status_version}"\nexit 0\n')
+                                   f'[ "$1" = status ] && printf "%s\\n" "SDK image platform:       {image}" '
+                                   f'"Sysroot overlay state:    {"active" if overlay else "inactive"}" '
+                                   f'"Sysroot overlay revision: {overlay or "none"}"\nexit 0\n')
     (stubs / 'apt-get').write_text(f'#!/bin/sh\necho "apt-get $* APT_CONFIG=$APT_CONFIG" >> {calls}\n'
                                    '[ "$1" = download ] && touch "$(echo "$2" | tr ":=" "__").deb"\nexit 0\n')
     for stub in stubs.iterdir():
@@ -143,7 +149,7 @@ def platform_provider_contracts(runner):
     if code:
         assert 'after updating' in result.stderr
         return
-    mismatch = status_version != '3.0.0~pre2372'
+    mismatch = (overlay or image) != '3.0.0~pre2372'
     assert ('sudo env SDK_PKG_LIST=fixture-dev,extra-dev sysroot update 3.0.0~pre2372' in result.stderr) == mismatch
     apt_config = str(cache / 'apt/apt.conf')
     assert f'apt-get download simaai-heap:arm64=3.0~pre2372 APT_CONFIG={apt_config}' in log

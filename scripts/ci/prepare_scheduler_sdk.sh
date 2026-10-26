@@ -23,7 +23,12 @@ if [[ "${NEAT_UPDATE_SYSROOT:-OFF}" == ON ]]; then
 fi
 sysroot_status=$(sysroot status)
 echo "$sysroot_status" >&2
-active_version=$(sed -n 's/^Sysroot overlay revision: *//p' <<< "$sysroot_status")
+# Without an active overlay, the sysroot is the one the SDK image shipped.
+if [[ $(sed -n 's/^Sysroot overlay state: *//p' <<< "$sysroot_status") == inactive ]]; then
+  active_version=$(sed -n 's/^SDK image platform: *//p' <<< "$sysroot_status")
+else
+  active_version=$(sed -n 's/^Sysroot overlay revision: *//p' <<< "$sysroot_status")
+fi
 if [[ "$active_version" != "$sysroot_version" ]]; then
   if [[ "${NEAT_UPDATE_SYSROOT:-OFF}" == ON ]]; then
     echo "ERROR: sysroot is at ${active_version:-unknown} after updating to $sysroot_version" >&2
@@ -39,7 +44,7 @@ python3 tools/build_dependencies.py verify-sdk --core "$PWD" \
 cat "$package_dir/sdk-verification.json" >&2
 
 # Download the exact platform DEBs the selected Runner consumes, with a private
-# APT configuration so neither the system nor the sysroot changes. -B keeps
+# APT configuration so neither the sysroot nor the dpkg state changes. -B keeps
 # bytecode out of the receipted Scheduler tools folder.
 platform_debs=$(python3 -B - "$NEAT_SCHEDULER_PACKAGE_DIR" "$NEAT_RUNNER_PACKAGE_DIR" <<'PY'
 import sys
