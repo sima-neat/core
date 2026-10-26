@@ -310,6 +310,7 @@ void require_native_retention_pool_policy() {
   require(session_build_clamp_sync_build_result(build, 1) == clamped,
           "retention floor and both legacy clamp exclusions must be idempotent");
   build.kernel_runner_output_pool_capacity = 7;
+  build.kernel_runner_output_pool_minimum = 7;
   check(build, session_build_clamp_sync_build_result(build, 1), "actual_preproc", 1, 7);
   build = make_retention_build();
   check(build, session_build_clamp_sync_build_result(build, 4), "", 4);

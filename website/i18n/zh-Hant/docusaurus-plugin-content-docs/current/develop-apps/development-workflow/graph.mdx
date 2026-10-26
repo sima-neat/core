@@ -151,7 +151,7 @@ graph.add(pyneat.nodes.output(
 | 控制項 | 限制的對象 |
 | --- | --- |
 | 應用程式在途視窗 | 已接受、但應用程式尚未使用其輸出的輸入。在推送／拉取迴圈中管理此視窗。 |
-| `advanced_execution.internal_queue_depth` | 內部插入的佇列與數值 Runner 執行容量。Runner 容量限制於 `1`–`64`；未設定／預設深度會選擇一個 Runner 槽位。 |
+| `advanced_execution.internal_queue_depth` | 內部插入的佇列與數值 Runner 執行容量。Runner 容量限制於 `1`–`64`；未設定／預設深度在非同步執行時使用 4 個槽位，同步執行時使用 1 個。 |
 | `advanced_execution.inference_output_buffers` | MLA 階段緩衝。變更應用程式或執行階段佇列深度不會取代此設定。 |
 | `RunOptions::queue_depth` | 框架輸入與內部執行階段佇列，而非加速器容量。 |
 | `OutputOptions` | 公開輸出緩衝與丟棄行為。量測不丟棄影格的完成工作量時，請使用 `EveryFrame(...)`。 |

@@ -15,7 +15,6 @@
 #include "pipeline/internal/RenderedMlaContractQuery.h"
 #include "pipeline/internal/SelectedStageBoundary.h"
 #include "pipeline/internal/sima/MpkContract.h"
-#include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
 #include "test_main.h"
 
 #include <glib.h>
@@ -29,6 +28,7 @@
 #include <initializer_list>
 #include <nlohmann/json.hpp>
 #include <string_view>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -586,7 +586,6 @@ RUN_TEST(
       using simaai::neat::internal::ModelPack;
       using simaai::neat::internal::ModelStage;
       using simaai::neat::internal::PipelineType;
-      using simaai::neat::pipeline_internal::sima::FrameArenaRole;
       namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
       const auto root = fs::temp_directory_path() / "neat-modelpack-two-mla-unit";
       std::error_code ec;
@@ -631,15 +630,19 @@ RUN_TEST(
               "ModelPack did not render one typed ProcessMLA contract per MLA stage");
       const auto& first = facts[0].mla_compiled->runtime_contract;
       const auto& second = facts[1].mla_compiled->runtime_contract;
-      require(first.frame_arena_role == FrameArenaRole::Allocate &&
-                  second.frame_arena_role == FrameArenaRole::Allocate &&
-                  second.frame_arena_storage_domain == sc::ArenaStorageDomain::Dms &&
-                  second.frame_arena_escape_policy == sc::ArenaEscapePolicy::CpuMappablePublic,
-              "only the terminal public MLA must own a separate CPU-visible output pool");
-      require(first.frame_arena_size_bytes != 0U && second.frame_arena_size_bytes != 0U,
-              "both MLA stages must retain a non-empty output allocation contract");
+      require(!first.frame_layout && !second.frame_layout,
+              "model metadata must not cache speculative storage");
+      const auto planned = plan_stages(model.to_nodes(ModelStage::MlaOnly));
+      using Ownership = simaai::scheduler::client::FrameOwnership;
+      using Policy = simaai::scheduler::client::AllocationPolicy;
+      require(planned.stages.size() == 2 && planned.stages[0].frame_layout &&
+                  planned.stages[1].frame_layout &&
+                  planned.stages[0].frame_layout->ownership == Ownership::Allocate &&
+                  planned.stages[1].frame_layout->ownership == Ownership::Allocate &&
+                  has_policy(planned.stages[1], Policy::RequireDms),
+              "terminal MLA outputs must own a separate DMS buffer group");
       require(first.physical_outputs.size() == 1U && second.physical_inputs.size() == 1U &&
-                  second.physical_inputs[0].source_physical_index == 0 &&
+                  second.physical_inputs[0].source_physical_index == -1 &&
                   second.physical_inputs[0].source_byte_offset == 0 &&
                   second.physical_outputs[0].source_byte_offset == 0,
               "the later MLA must import its exact preceding TensorBuffer carrier without "
@@ -650,7 +653,7 @@ RUN_TEST(
 
       // Metadata belongs to the selected invocation, not the whole pack. In
       // particular infer_block truncates at the authored terminal before the
-      // contextual arena is projected; the unused second MLA must not reappear.
+      // storage is planned; the unused second MLA must not reappear.
       simaai::neat::internal::InferenceTerminalPolicy selected_terminal;
       selected_terminal.last_stage_name = "MLA_encoder";
       ModelPack truncated_model(root.string(), "application/vnd.simaai.tensor", "INT8", 1, 64, 1, 1,
@@ -798,6 +801,35 @@ RUN_TEST(
                 "the internal MLA must retain its distinct BF16 ingress without claiming source "
                 "authority");
 
+        const auto cached_source_digest = transform_model.model_source_digest();
+        simaai::neat::ContractCompileInput route_input;
+        route_input.processcvu_requested_run_target = "EV74";
+        route_input.processcvu.post_run_target = "A65";
+        auto selected_route_nodes = transform_model.to_nodes(ModelStage::Preprocess);
+        const auto inference_nodes = transform_model.to_nodes(ModelStage::MlaOnly);
+        selected_route_nodes.insert(selected_route_nodes.end(), inference_nodes.begin(),
+                                    inference_nodes.end());
+        const auto selected_route = plan_stages(selected_route_nodes, route_input);
+        require(selected_route.stages.size() == 2U &&
+                    has_policy(selected_route.stages.front(), Policy::RequireCma) &&
+                    selected_route.stages.back().frame_layout &&
+                    selected_route.stages.back().frame_layout->ownership == Ownership::Allocate &&
+                    has_policy(selected_route.stages.back(), Policy::RequireDms) &&
+                    !has_policy(selected_route.stages.back(), Policy::RequireCma),
+                "selected terminal MLA must detach its DMS output from EV74 ingress despite an "
+                "unselected postprocessor in the cached model");
+        const auto full_after_selection =
+            plan_stages(transform_model.to_nodes(ModelStage::Full), route_input);
+        require(
+            full_after_selection.stages.size() == 3U &&
+                full_after_selection.stages[1].frame_layout &&
+                full_after_selection.stages[1].frame_layout->ownership == Ownership::ReuseInput &&
+                has_policy(full_after_selection.stages[1], Policy::RequireCma) &&
+                transform_model.model_source_digest() == cached_source_digest &&
+                !selected_route.model_storage_scopes && !full_after_selection.model_storage_scopes,
+            "selected-route detachment must preserve the cached full-model source and its "
+            "live MLA-to-postprocessor group");
+
         for (const bool queued : {false, true}) {
           auto nodes = transform_model.to_nodes(ModelStage::Full);
           if (queued)
@@ -812,19 +844,28 @@ RUN_TEST(
           require(manifest.stages.size() == 4U,
                   "model-to-EV Cast must compile with or without a transport Queue");
           const auto& producer = manifest.stages[2];
-          const auto offset = producer.physical_outputs.front().source_byte_offset;
-          const auto allocation = std::find_if(
-              producer.frame_arena_allocations.begin(), producer.frame_arena_allocations.end(),
-              [&](const auto& part) {
-                return offset >= 0 && static_cast<std::uint64_t>(offset) >= part.byte_offset &&
-                       static_cast<std::uint64_t>(offset) - part.byte_offset < part.size_bytes;
-              });
-          require(allocation != producer.frame_arena_allocations.end() &&
-                      allocation->placement.domain == sc::ArenaStorageDomain::Cma &&
-                      (allocation->placement.required_device_access &
-                       static_cast<std::uint32_t>(sc::ArenaDeviceAccess::Ev74)),
+          require(producer.frame_layout && !producer.frame_layout->outputs.empty(),
+                  "external consumer producer lost its final layout");
+          const auto& span = producer.frame_layout->outputs.front().span;
+          const auto& allocation = producer.frame_layout->allocations.at(span.allocation_index);
+          require(allocation.policy == simaai::scheduler::client::AllocationPolicy::RequireCma &&
+                      (allocation.required_device_access & simaai::scheduler::client::kAccessEv74),
                   queued ? "Queue must preserve the external EV74 consumer's CMA requirement"
                          : "external EV74 consumer must require CMA on its producer's output");
+          const auto source_digest = transform_model.model_source_digest();
+          auto cpu_input = input;
+          cpu_input.processcvu_requested_run_target = "A65";
+          const auto cpu_manifest = plan_stages(nodes, cpu_input);
+          const auto& cpu_producer = cpu_manifest.stages[2];
+          const auto& cpu_span = cpu_producer.frame_layout->outputs.front().span;
+          require(cpu_producer.frame_layout->allocations.at(cpu_span.allocation_index).policy ==
+                          simaai::scheduler::client::AllocationPolicy::RequireDms &&
+                      allocation.policy ==
+                          simaai::scheduler::client::AllocationPolicy::RequireCma &&
+                      transform_model.model_source_digest() == source_digest &&
+                      !cpu_manifest.model_storage_scopes && !manifest.model_storage_scopes,
+                  "independent builds must use their own executor placement and retain immutable "
+                  "model semantics");
         }
       }
       fs::remove(transform_archive, ec);
@@ -886,7 +927,7 @@ RUN_TEST(
           "[1,1225] QMLA pitch is dense-address-equivalent and must remain valid for A65");
 
       // A terminal consumer changes only the rendered execution boundary.
-      // The compiler-authored semantic/physical/arena plan and its audit
+      // The compiler-authored semantic/physical source and its audit
       // proof remain immutable, including interleaved materializing tail
       // operations. Unpack/Slice are read views over the MLA carrier.
       const auto make_relation_tail_package = [&](const std::string& label, const bool interleaved,
@@ -912,7 +953,7 @@ RUN_TEST(
                             {}, policy,
                             /*cleanup_extracted_model_data=*/false);
         const auto full_proof = candidate.execution_admission().proof;
-        const auto full_digest = candidate.execution_plan_digest();
+        const auto full_digest = candidate.model_source_digest();
         simaai::neat::pipeline_internal::sima::ModelManagedRouteFlags route_flags;
         route_flags.boxdecode_selected = true;
         route_flags.terminal_consumer_owns_tensor_tail = true;
@@ -939,7 +980,7 @@ RUN_TEST(
       auto [interleaved_model, interleaved_full_proof, interleaved_full_digest] =
           select_relation_tail_route(interleaved_package);
       const auto& interleaved_admission = interleaved_model.execution_admission();
-      require(interleaved_model.execution_plan_digest() == interleaved_full_digest,
+      require(interleaved_model.model_source_digest() == interleaved_full_digest,
               "terminal selection changed the immutable full-plan digest");
       require_proof_unchanged(interleaved_full_proof, interleaved_admission.proof);
       const auto interleaved_plan = interleaved_model.execution_plan();
@@ -973,7 +1014,7 @@ RUN_TEST(
           make_relation_tail_package("neat-modelpack-boxdecode-prefix-tail-unit", false);
       auto [prefix_model, prefix_full_proof, prefix_full_digest] =
           select_relation_tail_route(prefix_package);
-      require(prefix_model.execution_plan_digest() == prefix_full_digest,
+      require(prefix_model.model_source_digest() == prefix_full_digest,
               "dense-prefix terminal selection changed the full-plan digest");
       require_proof_unchanged(prefix_full_proof, prefix_model.execution_admission().proof);
 
@@ -988,12 +1029,12 @@ RUN_TEST(
                                -1, {}, {}, policy,
                                /*cleanup_extracted_model_data=*/false);
         const auto full_proof = yolo26_model.execution_admission().proof;
-        const auto full_digest = yolo26_model.execution_plan_digest();
+        const auto full_digest = yolo26_model.model_source_digest();
         simaai::neat::pipeline_internal::sima::ModelManagedRouteFlags route_flags;
         route_flags.boxdecode_selected = true;
         route_flags.terminal_consumer_owns_tensor_tail = true;
         yolo26_model.set_model_managed_stage_facts(route_flags, {ExecutionStageKind::BoxDecode});
-        require(yolo26_model.execution_plan_digest() == full_digest,
+        require(yolo26_model.model_source_digest() == full_digest,
                 "exact YOLO26 terminal selection changed the full-plan digest");
         require_proof_unchanged(full_proof, yolo26_model.execution_admission().proof);
         require(yolo26_model.infer_block().size() == 1U,
@@ -1030,14 +1071,14 @@ RUN_TEST(
         (void)multirow_model.stage_facts_for_model_stage(ModelStage::MlaOnly);
       } catch (const std::runtime_error& failure) {
         multirow_rejected =
-            std::string(failure.what()).find("A65 input has no exact typed storage binding") !=
+            std::string(failure.what()).find("A65 port has no exact dense carrier binding") !=
             std::string::npos;
       }
       require(multirow_rejected,
               "[2,1225] QMLA row pitch must fail closed before A65 drops its strides");
 
       // APU_2 joins the MLA root with APU_1. Its EV74 successor requires a
-      // separate allocation, so the mixed arena cannot retain one CPU epoch.
+      // separate allocation, so the mixed allocation group cannot retain one CPU epoch.
       const fs::path join_package =
           root.parent_path() / "neat-modelpack-a65-join-device-boundary-unit";
       fs::remove_all(join_package, ec);
@@ -1083,28 +1124,25 @@ RUN_TEST(
                   terminal_stage.frame_layout->ownership ==
                       simaai::scheduler::client::FrameOwnership::Allocate &&
                   terminal_stage.physical_inputs.size() == 1U &&
-                  terminal_stage.physical_inputs[0].source_byte_offset > 0,
+                  terminal_stage.physical_inputs[0].model_carrier_id.has_value(),
               "synthetic terminal MLA must detach outputs while importing a nonzero IFM span");
       const auto& ifm = terminal_stage.physical_inputs[0];
-      const auto* source = std::get_if<simaai::scheduler::client::KnownArena>(
+      const auto* source = std::get_if<simaai::scheduler::client::KnownFrameSpan>(
           &terminal_stage.frame_layout->inputs[0].source);
-      require(source != nullptr, "terminal MLA IFM lost its known producer allocation");
-      const auto allocation_index = source->span.allocation_index;
-      const auto base = ifm_producer.frame_arena_allocations.empty()
-                            ? 0U
-                            : ifm_producer.frame_arena_allocations.at(allocation_index).byte_offset;
+      require(source && ifm_producer.frame_layout, "terminal MLA IFM lost its producer layout");
       const auto extent =
-          ifm_producer.frame_arena_allocations.empty()
-              ? ifm_producer.frame_arena_size_bytes
-              : ifm_producer.frame_arena_allocations.at(allocation_index).size_bytes;
-      require(
-          source->span.byte_offset <= extent &&
-              source->span.size_bytes <= extent - source->span.byte_offset &&
-              base + source->span.byte_offset ==
-                  static_cast<std::uint64_t>(ifm.source_byte_offset) &&
-              source->span.size_bytes == ifm.size_bytes,
-          "nonzero MLA IFM must preserve its physical-DAG span once in the producer allocation");
-      using Policy = simaai::scheduler::client::AllocationPolicy;
+          ifm_producer.frame_layout->allocations.at(source->span.allocation_index).size_bytes;
+      const auto producer_binding =
+          std::find_if(ifm_producer.frame_layout->outputs.begin(),
+                       ifm_producer.frame_layout->outputs.end(), [&](const auto& output) {
+                         return output.span.allocation_index == source->span.allocation_index &&
+                                output.span.byte_offset == source->span.byte_offset;
+                       });
+      require(producer_binding != ifm_producer.frame_layout->outputs.end() &&
+                  source->span.byte_offset <= extent &&
+                  source->span.size_bytes <= extent - source->span.byte_offset &&
+                  source->span.size_bytes == ifm.size_bytes,
+              "MLA input must preserve its producer span in that buffer group's allocation");
       require(join_contracts.size() == 2U && has_policy(*join_contracts[0], Policy::RequireCma) &&
                   has_policy(*join_contracts[0], Policy::RequireDms) &&
                   has_policy(*join_contracts[1], Policy::RequireCma) &&
@@ -1307,19 +1345,16 @@ RUN_TEST(
                 "RF-DETR initial MLA lost exact OFM1 physical/logical extents");
 
         const auto& terminal_mla = real_facts[mla_indices[1]].mla_compiled->runtime_contract;
-        require(terminal_mla.frame_arena_role == FrameArenaRole::Allocate &&
-                    terminal_mla.frame_arena_storage_domain == sc::ArenaStorageDomain::Dms &&
-                    terminal_mla.frame_arena_escape_policy ==
-                        sc::ArenaEscapePolicy::CpuMappablePublic &&
-                    (terminal_mla.frame_arena_required_device_access &
-                     static_cast<std::uint32_t>(sc::ArenaDeviceAccess::Mla)) != 0U &&
-                    (terminal_mla.frame_arena_required_device_access &
-                     static_cast<std::uint32_t>(sc::ArenaDeviceAccess::CpuA65)) != 0U &&
-                    (terminal_mla.frame_arena_required_device_access &
-                     static_cast<std::uint32_t>(sc::ArenaDeviceAccess::Ev74)) == 0U &&
-                    terminal_mla.physical_inputs.size() == 161U,
-                "RF-DETR terminal MLA must import its exact 161 IFMs while owning a "
-                "distinct CPU-visible DMS output carrier");
+        require(terminal_mla.physical_inputs.size() == 161U,
+                "RF-DETR terminal MLA must retain its exact 161 IFMs");
+        const auto real_manifest = plan_stages(real_model.to_nodes(ModelStage::MlaOnly));
+        const auto terminal_layout =
+            std::find_if(real_manifest.stages.rbegin(), real_manifest.stages.rend(),
+                         [](const auto& stage) { return stage.mla_program != nullptr; });
+        require(terminal_layout != real_manifest.stages.rend() && terminal_layout->frame_layout &&
+                    terminal_layout->frame_layout->ownership == Ownership::Allocate &&
+                    has_policy(*terminal_layout, Policy::RequireDms),
+                "RF-DETR terminal MLA must allocate its own DMS output group");
         require(terminal_mla.physical_outputs.size() > 1U &&
                     terminal_mla.logical_outputs.size() > 1U,
                 "RF-DETR terminal MLA lost one of its two physical/logical OFMs");
@@ -1328,12 +1363,14 @@ RUN_TEST(
         // the BF16 [300,91] tensor with a 192-byte physical row pitch.
         // 118,784 bytes / 110,400-byte OFM1 belongs to the stale FP32
         // synthetic expectation and must not override package authority.
-        require(terminal_mla.frame_arena_size_bytes == 69632U &&
+        require(terminal_layout->frame_layout->allocations.size() == 1 &&
+                    terminal_layout->frame_layout->allocations[0].size_bytes == 69632U &&
                     terminal_mla.physical_outputs[0].size_bytes == 4800U &&
                     terminal_mla.physical_outputs[0].source_byte_offset == 0 &&
                     terminal_mla.physical_outputs[1].size_bytes == 57600U &&
-                    terminal_mla.physical_outputs[1].source_byte_offset == 8192,
-                "RF-DETR all-BF16 terminal DMS arena changed its exact QMLA layout");
+                    terminal_mla.physical_outputs[1].source_byte_offset == 0 &&
+                    terminal_layout->frame_layout->outputs.at(1).span.byte_offset == 8192,
+                "RF-DETR all-BF16 terminal DMS group changed its exact QMLA layout");
         const auto& terminal_boxes = terminal_mla.logical_outputs[0];
         const auto& terminal_logits = terminal_mla.logical_outputs[1];
         require(terminal_logits.size_bytes % (300U * 91U) == 0U,
@@ -1353,11 +1390,11 @@ RUN_TEST(
             "RF-DETR terminal logits lost exact physical carrier/logical row pitch");
         // MLA_171 is a DAG join, not a linear handoff. Its first IFM is
         // produced by cast_3 while the other 160 are still-live MLA_0
-        // outputs retained in the same frame arena. The immediately
+        // outputs retained in the same buffer group. The immediately
         // preceding rendered stage therefore cannot own the complete
         // input catalogue. Reconcile every terminal port against the
         // unique typed publication with the same decoded value identity,
-        // parent-relative arena range and physical extent across all
+        // root-relative carrier range and physical extent across all
         // prior stages instead.
         struct PriorPhysicalPublication {
           std::size_t stage_index = 0U;
@@ -1397,7 +1434,7 @@ RUN_TEST(
                 "RF-DETR terminal MLA lost one of its exact 161 input bindings");
         std::vector<bool> publication_used(prior_publications.size(), false);
         std::vector<bool> producer_stage_used(mla_indices[1], false);
-        bool saw_nonzero_upstream_parent_offset = false;
+        std::set<std::uint32_t> input_roots;
         for (std::size_t index = 0; index < terminal_mla.physical_inputs.size(); ++index) {
           const auto& input = terminal_mla.physical_inputs[index];
           const auto& binding = terminal_mla.input_bindings[index];
@@ -1409,6 +1446,7 @@ RUN_TEST(
                        candidate.physical != nullptr &&
                        candidate.logical->backend_name == input.segment_name &&
                        candidate.physical->size_bytes == input.size_bytes &&
+                       candidate.physical->model_carrier_id == input.model_carrier_id &&
                        candidate.physical->source_byte_offset == input.source_byte_offset &&
                        candidate.physical->required_alignment_bytes ==
                            input.required_alignment_bytes;
@@ -1420,22 +1458,22 @@ RUN_TEST(
           publication_used[publication_index] = true;
           producer_stage_used[publication->stage_index] = true;
           require(input.physical_index == static_cast<int>(index) &&
-                      input.source_physical_index == 0 && input.source_byte_offset >= 0 &&
+                      input.source_physical_index == -1 && input.source_byte_offset >= 0 &&
                       binding.local_logical_input_index == static_cast<int>(index) &&
-                      binding.src_physical_output_index == 0 &&
+                      binding.src_physical_output_index == -1 &&
                       binding.src_physical_size_bytes == input.size_bytes &&
-                      binding.src_physical_byte_offset == input.source_byte_offset &&
+                      binding.src_physical_byte_offset == 0 &&
                       binding.cm_input_name == input.segment_name &&
                       binding.source_segment_name == input.segment_name,
                   "RF-DETR terminal MLA IFM lost its exact upstream shared-parent "
                   "region");
-          saw_nonzero_upstream_parent_offset |= input.source_byte_offset != 0;
+          require(input.model_carrier_id.has_value(), "MLA input lost its root identity");
+          input_roots.insert(*input.model_carrier_id);
         }
         require(std::count(producer_stage_used.begin(), producer_stage_used.end(), true) > 1,
                 "RF-DETR terminal MLA DAG join collapsed to one producer stage");
-        require(saw_nonzero_upstream_parent_offset,
-                "RF-DETR split-carrier proof must include nonzero offsets in the shared "
-                "upstream parent");
+        require(input_roots.size() > 1,
+                "RF-DETR terminal join must retain independent producer roots");
 
         const std::string fragment = real_model.backend_fragment(ModelStage::MlaOnly);
         const auto occurrences = [&](const std::string& token) {
@@ -1487,7 +1525,7 @@ RUN_TEST(
                              false, {}, {}, {}, PipelineType::QuantTess, "decoder", 4, 4, 0, -1, {},
                              {}, terminal_policy,
                              /*cleanup_extracted_model_data=*/false);
-        const auto full_digest = yolo_model.execution_plan_digest();
+        const auto full_digest = yolo_model.model_source_digest();
         const auto full_proof = yolo_model.execution_admission().proof;
 
         simaai::neat::pipeline_internal::sima::ModelManagedRouteFlags flags;
@@ -1501,7 +1539,7 @@ RUN_TEST(
                               return stage.kind == ExecutionStageKind::DetessDequant;
                             }),
                 "physical projection lost graph227 from the post-MLA region");
-        require(yolo_model.execution_plan_digest() == full_digest,
+        require(yolo_model.model_source_digest() == full_digest,
                 "terminal selection changed the exact YOLO full-plan digest");
         require_proof_unchanged(full_proof, yolo_model.execution_admission().proof);
         require(yolo_model.infer_block().size() == 1U,
@@ -1532,8 +1570,8 @@ RUN_TEST(
       // Optional six-real-OFM production-path gate.  Unlike the packed
       // YOLOv8s ELF above, this MLATess ELF exposes six independent MLArt
       // output ports.  A strict terminal BoxDecode route still owns one
-      // DMS arena, but its manifest must retain all six physical port
-      // bindings and their exact arena offsets.  Collapsing them into a
+      // DMS group, but its manifest must retain all six physical port
+      // bindings and their exact allocation-local offsets.  Collapsing them into a
       // legacy packed-parent physical output makes ProcessMLA reject the
       // Core/backend OFM arity before the graph can start.
       if (const char* six_ofm_package = std::getenv("SIMANEAT_EXACT_YOLOV8N_SIX_REAL_OFM_PACKAGE");
@@ -1564,12 +1602,16 @@ RUN_TEST(
                                                             540672, 1052672, 1183744};
         const std::array<std::uint64_t, 6U> expected_extents{409600U, 102400U, 25600U,
                                                              512000U, 128000U, 32000U};
-        require(runtime.frame_arena_storage_domain == sc::ArenaStorageDomain::Dms &&
-                    runtime.frame_arena_role == FrameArenaRole::Allocate &&
-                    runtime.frame_arena_size_bytes == 1216512U,
-                "six-real-OFM terminal MLA must own one aligned 1,216,512-byte DMS arena "
-                "(actual_bytes=" +
-                    std::to_string(runtime.frame_arena_size_bytes) + ")");
+        const auto six_manifest = plan_stages(six_ofm_model.infer_block());
+        const auto planned_mla =
+            std::find_if(six_manifest.stages.rbegin(), six_manifest.stages.rend(),
+                         [](const auto& stage) { return stage.mla_program != nullptr; });
+        require(planned_mla != six_manifest.stages.rend() && planned_mla->frame_layout &&
+                    planned_mla->frame_layout->ownership == Ownership::Allocate &&
+                    planned_mla->frame_layout->allocations.size() == 1 &&
+                    planned_mla->frame_layout->allocations[0].policy == Policy::RequireDms &&
+                    planned_mla->frame_layout->allocations[0].size_bytes == 1216512U,
+                "six-real-OFM terminal MLA must retain one exact DMS output group");
         require(runtime.physical_outputs.size() == expected_offsets.size() &&
                     terminal_mla->dispatcher_physical_outputs.size() == expected_offsets.size() &&
                     terminal_mla->payload.dispatcher_output_sizes.size() ==
@@ -1583,7 +1625,9 @@ RUN_TEST(
           const auto& logical = runtime.logical_outputs[index];
           require(physical.physical_index == static_cast<int>(index) &&
                       physical.source_physical_index == static_cast<int>(index) &&
-                      physical.source_byte_offset == expected_offsets[index] &&
+                      physical.source_byte_offset == 0 &&
+                      planned_mla->frame_layout->outputs.at(index).span.byte_offset ==
+                          static_cast<std::size_t>(expected_offsets[index]) &&
                       physical.size_bytes == expected_extents[index] &&
                       dispatcher.size_bytes == expected_extents[index] &&
                       terminal_mla->payload.dispatcher_output_sizes[index] ==

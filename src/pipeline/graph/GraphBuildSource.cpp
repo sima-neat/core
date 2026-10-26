@@ -1286,11 +1286,11 @@ void merge_fused_contract_build_result(BuildResult* dst, const BuildResult& src,
   append_rendered_manifest(dst, src, local_name_transform, compile_node_offset,
                            compile_stage_offset);
   if (dst->compiled_contracts && src.compiled_contracts) {
-    dst->compiled_contracts->model_storage_plan = internal::append_model_fragment_storage_plan(
-        dst->compiled_contracts->model_storage_plan, src.compiled_contracts->model_storage_plan,
-        compile_node_offset, compile_stage_offset);
+    dst->compiled_contracts->model_storage_scopes = internal::append_model_storage_scopes(
+        dst->compiled_contracts->model_storage_scopes, src.compiled_contracts->model_storage_scopes,
+        compile_stage_offset);
     if (dst->rendered_manifest)
-      dst->rendered_manifest->model_storage_plan = dst->compiled_contracts->model_storage_plan;
+      dst->rendered_manifest->model_storage_scopes = dst->compiled_contracts->model_storage_scopes;
   }
   append_manifest_diagnostics(dst, src);
   append_model_source_paths(dst, src);

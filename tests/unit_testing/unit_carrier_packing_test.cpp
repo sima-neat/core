@@ -1,7 +1,8 @@
 #define SIMA_NEAT_INTERNAL 1
-#include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
+#include "pipeline/internal/sima/static_contract/ModelStorageRequirements.h"
 #include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -30,7 +31,7 @@ sc::ValueSpec value(sc::ValueId id, std::string name, std::uint64_t bytes) {
 
 sc::ModelExecutionPlan make_plan() {
   sc::ModelExecutionPlanData data;
-  data.contract_version = "arena-test-v1";
+  data.contract_version = "storage-test-v1";
   data.values = {
       value(0, "input0", 64), value(1, "input1", 64), value(2, "ifm0", 1024),
       value(3, "ifm1", 2048), value(4, "ofm0", 1536), value(5, "ofm1", 512),
@@ -94,7 +95,7 @@ sc::ModelExecutionPlan make_plan() {
 
 sc::ModelExecutionPlan make_staggered_read_plan() {
   sc::ModelExecutionPlanData data;
-  data.contract_version = "arena-read-test-v1";
+  data.contract_version = "storage-read-test-v1";
   data.values = {
       value(0, "input", 64),   value(1, "ofm0", 4096),  value(2, "ofm1", 4096),
       value(3, "view0", 4096), value(4, "post0", 4096), value(5, "view1", 4096),
@@ -142,9 +143,9 @@ sc::ModelExecutionPlan make_staggered_read_plan() {
   return std::move(*plan);
 }
 
-sc::ModelExecutionPlan make_fused_quanttess_arena_plan(std::size_t lanes,
-                                                       std::vector<sc::ValueId>* intermediates,
-                                                       std::vector<sc::ValueId>* final_tess) {
+sc::ModelExecutionPlan make_fused_quanttess_plan(std::size_t lanes,
+                                                 std::vector<sc::ValueId>* intermediates,
+                                                 std::vector<sc::ValueId>* final_tess) {
   sc::ModelExecutionPlanData data;
   data.contract_version = "arena-fused-v1";
   std::vector<sc::ValueId> inputs;
@@ -353,117 +354,38 @@ sc::ModelExecutionPlan make_producer_direct_pack_plan(std::size_t lanes,
   return std::move(*plan);
 }
 
-bool overlaps(const sc::FrameSlotArenaRegion& lhs, const sc::FrameSlotArenaRegion& rhs) {
-  return lhs.byte_offset < rhs.byte_offset + rhs.size_bytes &&
-         rhs.byte_offset < lhs.byte_offset + lhs.size_bytes;
-}
+namespace client = ::simaai::scheduler::client;
 
-void test_no_reuse_oracle() {
-  const auto execution = make_plan();
-  std::string error;
-  const auto plan =
-      sc::FrameSlotArenaPlan::compile(execution, sc::FrameSlotArenaReuse::Disabled, 4096, &error);
-  CHECK(plan.has_value());
-  CHECK(error.empty());
-  if (!plan) {
-    return;
-  }
-  CHECK(plan->regions().size() == 6U);
-  CHECK(plan->region(0) == nullptr);
-  CHECK(plan->region(2) != nullptr);
-  CHECK(plan->region(2)->byte_offset == 0U);
-  CHECK(plan->region(3)->byte_offset == 4096U);
-  CHECK(plan->region(4)->byte_offset == 8192U);
-  CHECK(plan->region(5)->byte_offset == 12288U);
-  CHECK(plan->region(6)->byte_offset == 16384U);
-  CHECK(plan->region(7)->byte_offset == 24576U);
-  CHECK(plan->allocation_bytes() == 32768U);
-  CHECK(plan->allocation_alignment_bytes() == 8192U);
-  CHECK(plan->placement().domain == sc::ArenaStorageDomain::Cma);
-  CHECK(plan->placement().provenance == sc::ArenaAllocationProvenance::CoreAllocated);
-  CHECK(plan->placement().requires_access(sc::ArenaDeviceAccess::Ev74));
-  CHECK(plan->placement().requires_access(sc::ArenaDeviceAccess::Mla));
-  CHECK(plan->placement().requires_access(sc::ArenaDeviceAccess::CpuA65));
-  CHECK(plan->placement().escape == sc::ArenaEscapePolicy::CpuMappablePublic);
-}
-
-void test_disjoint_lifetime_reuse() {
-  const auto execution = make_plan();
-  std::string error;
-  const auto reused = sc::FrameSlotArenaPlan::compile(
-      execution, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096, &error);
-  const auto oracle =
-      sc::FrameSlotArenaPlan::compile(execution, sc::FrameSlotArenaReuse::Disabled, 4096, &error);
-  CHECK(reused.has_value());
-  CHECK(oracle.has_value());
-  if (!reused || !oracle) {
-    return;
-  }
-  CHECK(reused->allocation_bytes() < oracle->allocation_bytes());
-  CHECK(reused->region(2)->lifetime.first_sequence == 1U);
-  CHECK(reused->region(2)->lifetime.last_sequence == 2U);
-  CHECK(reused->region(4)->lifetime.first_sequence == 2U);
-  CHECK(reused->region(4)->lifetime.last_sequence == 3U);
-  CHECK(reused->region(6)->lifetime.first_sequence == 3U);
-  CHECK(reused->region(6)->lifetime.last_sequence == 4U);
-
-  // Input and output of MLA overlap at sequence 2, so they may not alias.
-  CHECK(!overlaps(*reused->region(2), *reused->region(4)));
-  CHECK(!overlaps(*reused->region(3), *reused->region(5)));
-  // The final outputs begin after the pre-MLA carriers' last use and therefore
-  // deterministically reuse that dead bank.
-  CHECK(overlaps(*reused->region(2), *reused->region(7)) ||
-        overlaps(*reused->region(3), *reused->region(7)));
-
-  const auto repeated = sc::FrameSlotArenaPlan::compile(
-      execution, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096, &error);
-  CHECK(repeated.has_value());
-  if (repeated) {
-    CHECK(repeated->regions().size() == reused->regions().size());
-    for (std::size_t i = 0; i < reused->regions().size(); ++i) {
-      CHECK(repeated->regions()[i].value_id == reused->regions()[i].value_id);
-      CHECK(repeated->regions()[i].byte_offset == reused->regions()[i].byte_offset);
+sc::PhysicalExecutionPlan linear_physical(const sc::ModelExecutionPlan& execution) {
+  sc::PhysicalExecutionPlan result;
+  result.command_for_semantic_op.resize(execution.ops().size());
+  for (const auto& op : execution.ops()) {
+    const auto id = static_cast<sc::PhysicalCommandId>(result.commands.size());
+    sc::PhysicalCommand command;
+    command.id = id;
+    command.topological_rank = id;
+    command.engine = op.kind == sc::OpKind::Mla ? sc::PhysicalEngine::Mla
+                     : op.processor == "A65"    ? sc::PhysicalEngine::A65
+                                                : sc::PhysicalEngine::Cvu;
+    command.implementation_id = op.name;
+    command.inputs = op.inputs;
+    command.outputs = op.outputs;
+    command.members = {{0U, {op.id}, op.inputs, op.outputs}};
+    if (id) {
+      command.predecessors = {id - 1U};
+      result.commands.back().successors = {id};
     }
+    result.command_for_semantic_op[op.id] = id;
+    result.commands.push_back(std::move(command));
   }
+  return result;
 }
 
-void test_invalid_alignment_fails_closed() {
-  const auto execution = make_plan();
-  std::string error;
-  CHECK(!sc::FrameSlotArenaPlan::compile(execution, sc::FrameSlotArenaReuse::DisjointLifetimes, 24,
-                                         &error));
-  CHECK(!error.empty());
-}
-
-void test_read_expressions_do_not_replace_real_producers() {
-  const auto execution = make_staggered_read_plan();
-  std::string error;
-  const auto plan = sc::FrameSlotArenaPlan::compile(
-      execution, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096, &error);
-  CHECK(plan.has_value());
-  if (!plan) {
-    return;
-  }
-  CHECK(plan->region(3) == plan->region(1));
-  CHECK(plan->region(5) == plan->region(2));
-  CHECK(plan->region(1)->lifetime.first_sequence == 1U);
-  CHECK(plan->region(2)->lifetime.first_sequence == 1U);
-  CHECK(!overlaps(*plan->region(1), *plan->region(2)));
-}
-
-void test_grouped_physical_command_keeps_every_input_and_output_disjoint() {
-  const auto execution = make_staggered_read_plan();
-
-  // The two Slice operations are relation-only.  Both Dequantize operations
-  // are members of one physical CVU submission, exactly like a grouped
-  // multi-OFM MLA egress.  Semantic sequence 3 would otherwise make post1 look
-  // later than—and reusable with—ofm0, although the backend consumes ofm0 and
-  // writes post1 in the same call.
+sc::PhysicalExecutionPlan grouped_staggered_physical(const sc::ModelExecutionPlan& execution) {
   sc::PhysicalExecutionPlan physical;
   physical.command_for_semantic_op.resize(execution.ops().size());
   sc::PhysicalCommand mla;
   mla.id = 0;
-  mla.cohort_id = 0;
   mla.topological_rank = 0;
   mla.engine = sc::PhysicalEngine::Mla;
   mla.implementation_id = "mla";
@@ -475,7 +397,6 @@ void test_grouped_physical_command_keeps_every_input_and_output_disjoint() {
 
   sc::PhysicalCommand post;
   post.id = 1;
-  post.cohort_id = 1;
   post.topological_rank = 1;
   post.engine = sc::PhysicalEngine::Cvu;
   post.implementation_id = "dequant";
@@ -487,75 +408,178 @@ void test_grouped_physical_command_keeps_every_input_and_output_disjoint() {
   physical.command_for_semantic_op[2] = 1;
   physical.command_for_semantic_op[4] = 1;
   physical.commands = {std::move(mla), std::move(post)};
-
-  std::string error;
-  const auto semantic = sc::FrameSlotArenaPlan::compile(
-      execution, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096, &error);
-  CHECK(semantic.has_value());
-  CHECK(semantic && overlaps(*semantic->region(1), *semantic->region(6)));
-
-  const auto arena = sc::FrameSlotArenaPlan::compile(
-      execution, physical, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096, &error);
-  CHECK(arena.has_value());
-  CHECK(error.empty());
-  if (!arena) {
-    return;
-  }
-  for (const auto input : {1U, 2U}) {
-    for (const auto output : {4U, 6U}) {
-      CHECK(!overlaps(*arena->region(input), *arena->region(output)));
-    }
-  }
-  CHECK(!overlaps(*arena->region(4), *arena->region(6)));
-
-  const auto cma_with_ev = sc::FrameSlotArenaPlan::compile(
-      execution, physical, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096, &error,
-      sc::ArenaDmsPolicy::RequireDmsForEligible);
-  CHECK(cma_with_ev.has_value());
-  CHECK(cma_with_ev && cma_with_ev->placement().domain == sc::ArenaStorageDomain::Cma);
-
-  auto a65_physical = physical;
-  a65_physical.commands[1].engine = sc::PhysicalEngine::A65;
-  const auto dms = sc::FrameSlotArenaPlan::compile(
-      execution, a65_physical, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096, &error,
-      sc::ArenaDmsPolicy::RequireDmsForEligible);
-  CHECK(dms.has_value());
-  if (dms) {
-    CHECK(dms->placement().domain == sc::ArenaStorageDomain::Dms);
-    CHECK(dms->placement().requires_access(sc::ArenaDeviceAccess::Mla));
-    CHECK(dms->placement().requires_access(sc::ArenaDeviceAccess::CpuA65));
-    CHECK(!dms->placement().requires_access(sc::ArenaDeviceAccess::Ev74));
-    CHECK(dms->allocations().front().placement.allocation_policy ==
-          sc::ArenaAllocationPolicy::RequiredDomain);
-  }
-  const auto preferred = sc::FrameSlotArenaPlan::compile(
-      execution, a65_physical, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096, &error,
-      sc::ArenaDmsPolicy::PreferDmsThenCma);
-  CHECK(preferred && preferred->placement().domain == sc::ArenaStorageDomain::Dms);
-  CHECK(preferred && preferred->allocations().front().placement.allocation_policy ==
-                         sc::ArenaAllocationPolicy::PreferDmsThenCma);
-  const auto ev_preferred = sc::FrameSlotArenaPlan::compile(
-      execution, physical, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096, &error,
-      sc::ArenaDmsPolicy::PreferDmsThenCma);
-  CHECK(ev_preferred && ev_preferred->dms_policy() == sc::ArenaDmsPolicy::PreferDmsThenCma);
-  CHECK(ev_preferred && ev_preferred->allocations().size() == 1);
-  CHECK(ev_preferred &&
-        ev_preferred->allocations().front().placement.domain == sc::ArenaStorageDomain::Cma);
-  CHECK(ev_preferred && ev_preferred->allocations().front().placement.allocation_policy ==
-                            sc::ArenaAllocationPolicy::RequiredDomain);
+  return physical;
 }
 
-void test_resolved_executors_select_required_heap_partitions() {
-  sc::ModelExecutionPlanData data;
-  data.contract_version = "arena-a65-mla-a65-dms-v1";
-  data.values = {
-      value(0, "public_input", 64),
-      value(1, "a65_pre_output", 64),
-      value(2, "mla_output", 64),
-      value(3, "a65_post_output", 64),
-  };
-  data.model_inputs = {0};
+struct StorageFixture {
+  sc::ModelStorageRequirements requirements;
+  sc::CarrierPacking packed;
 
+  const client::FrameSpan* span(sc::ValueId value_id) const {
+    if (value_id >= requirements.value_carriers.size() || !requirements.value_carriers[value_id])
+      return nullptr;
+    return packed.span(*requirements.value_carriers[value_id]);
+  }
+
+  const sc::CarrierRequirement* requirement(sc::ValueId value_id) const {
+    if (value_id >= requirements.value_carriers.size() || !requirements.value_carriers[value_id])
+      return nullptr;
+    const auto id = *requirements.value_carriers[value_id];
+    const auto found = std::find_if(requirements.carriers.begin(), requirements.carriers.end(),
+                                    [&](const auto& item) { return item.carrier_id == id; });
+    return found == requirements.carriers.end() ? nullptr : &*found;
+  }
+
+  std::size_t capacity() const {
+    std::size_t bytes = 0;
+    for (const auto& allocation : packed.allocations)
+      bytes += allocation.size_bytes;
+    return bytes;
+  }
+};
+
+std::optional<StorageFixture>
+collect_and_pack(const sc::ModelExecutionPlan& execution, const sc::PhysicalExecutionPlan& physical,
+                 sc::StorageReuse reuse, std::uint64_t alignment, std::string* error,
+                 client::AllocationPolicy policy = client::AllocationPolicy::RequireDms,
+                 const sc::ModelStorageRoute* route = nullptr) {
+  auto requirements = sc::collect_model_storage_requirements(execution, physical, alignment, error,
+                                                             policy, {}, route);
+  if (!requirements)
+    return std::nullopt;
+  auto packed = sc::pack_carriers(
+      requirements->carriers, reuse,
+      [&](const auto& lhs, const auto& rhs) { return requirements->lifetimes_conflict(lhs, rhs); },
+      error);
+  if (!packed)
+    return std::nullopt;
+  return StorageFixture{std::move(*requirements), std::move(*packed)};
+}
+
+bool overlaps(const client::FrameSpan& lhs, const client::FrameSpan& rhs) {
+  return lhs.allocation_index == rhs.allocation_index &&
+         lhs.byte_offset < rhs.byte_offset + rhs.size_bytes &&
+         rhs.byte_offset < lhs.byte_offset + lhs.size_bytes;
+}
+
+void test_no_reuse_oracle() {
+  const auto execution = make_plan();
+  const auto physical = linear_physical(execution);
+  std::string error;
+  const auto plan = collect_and_pack(execution, physical, sc::StorageReuse::Disabled, 4096, &error);
+  CHECK(plan.has_value());
+  CHECK(error.empty());
+  if (!plan)
+    return;
+  CHECK(plan->packed.carriers.size() == 6U);
+  CHECK(plan->span(0) == nullptr);
+  for (const auto& [value_id, offset] :
+       {std::pair{2U, 0U}, {3U, 4096U}, {4U, 8192U}, {5U, 12288U}, {6U, 16384U}, {7U, 24576U}}) {
+    CHECK(plan->span(value_id));
+    CHECK(plan->span(value_id)->byte_offset == offset);
+    CHECK(plan->span(value_id)->allocation_index == 0U);
+    CHECK(plan->span(value_id)->byte_offset + plan->span(value_id)->size_bytes <=
+          plan->packed.allocations[0].size_bytes);
+  }
+  CHECK(plan->packed.allocations.size() == 1U);
+  CHECK(plan->packed.allocations[0].size_bytes == 32768U);
+  CHECK(plan->packed.allocations[0].policy == client::AllocationPolicy::RequireCma);
+  CHECK(plan->packed.allocations[0].required_device_access ==
+        (client::kAccessEv74 | client::kAccessMla | client::kAccessCpuA65));
+}
+
+void test_disjoint_lifetime_reuse() {
+  const auto execution = make_plan();
+  const auto physical = linear_physical(execution);
+  std::string error;
+  const auto reused =
+      collect_and_pack(execution, physical, sc::StorageReuse::DisjointLifetimes, 4096, &error);
+  const auto oracle =
+      collect_and_pack(execution, physical, sc::StorageReuse::Disabled, 4096, &error);
+  CHECK(reused.has_value());
+  CHECK(oracle.has_value());
+  if (!reused || !oracle)
+    return;
+  CHECK(reused->capacity() < oracle->capacity());
+  CHECK(reused->requirement(2)->lifetime.first_sequence == 1U);
+  CHECK(reused->requirement(2)->lifetime.last_sequence == 2U);
+  CHECK(reused->requirement(4)->lifetime.first_sequence == 2U);
+  CHECK(reused->requirement(4)->lifetime.last_sequence == 3U);
+  CHECK(reused->requirement(6)->lifetime.first_sequence == 3U);
+  CHECK(reused->requirement(6)->lifetime.last_sequence == 4U);
+
+  CHECK(!overlaps(*reused->span(2), *reused->span(4)));
+  CHECK(!overlaps(*reused->span(3), *reused->span(5)));
+  CHECK(overlaps(*reused->span(2), *reused->span(7)) ||
+        overlaps(*reused->span(3), *reused->span(7)));
+
+  const auto repeated =
+      collect_and_pack(execution, physical, sc::StorageReuse::DisjointLifetimes, 4096, &error);
+  CHECK(repeated.has_value());
+  if (repeated)
+    for (const auto& carrier : reused->packed.carriers) {
+      const auto* span = repeated->packed.span(carrier.carrier_id);
+      CHECK(span && span->allocation_index == carrier.span.allocation_index);
+      CHECK(span && span->byte_offset == carrier.span.byte_offset);
+    }
+}
+
+void test_invalid_alignment_fails_closed() {
+  const auto execution = make_plan();
+  std::string error;
+  CHECK(
+      !sc::collect_model_storage_requirements(execution, linear_physical(execution), 24U, &error));
+  CHECK(!error.empty());
+}
+
+void test_grouped_command_preserves_aliases_and_concurrent_storage() {
+  const auto execution = make_staggered_read_plan();
+  const auto physical = grouped_staggered_physical(execution);
+  std::string error;
+  const auto plan =
+      collect_and_pack(execution, physical, sc::StorageReuse::DisjointLifetimes, 4096, &error);
+  CHECK(plan.has_value());
+  CHECK(error.empty());
+  if (!plan)
+    return;
+  CHECK(plan->span(3) == plan->span(1));
+  CHECK(plan->span(5) == plan->span(2));
+  CHECK(plan->requirement(1)->lifetime.first_sequence == 1U);
+  CHECK(plan->requirement(2)->lifetime.first_sequence == 1U);
+  CHECK(!overlaps(*plan->span(1), *plan->span(2)));
+  for (const auto input : {1U, 2U})
+    for (const auto output : {4U, 6U})
+      CHECK(!overlaps(*plan->span(input), *plan->span(output)));
+  CHECK(!overlaps(*plan->span(4), *plan->span(6)));
+
+  auto a65 = physical;
+  a65.commands[1].resolved_executor = sc::PhysicalEngine::A65;
+  const auto required =
+      collect_and_pack(execution, a65, sc::StorageReuse::DisjointLifetimes, 4096, &error);
+  CHECK(required && required->packed.allocations.size() == 1U);
+  if (required) {
+    CHECK(required->packed.allocations[0].policy == client::AllocationPolicy::RequireDms);
+    CHECK(required->packed.allocations[0].required_device_access ==
+          (client::kAccessMla | client::kAccessCpuA65));
+  }
+  const auto preferred = collect_and_pack(execution, a65, sc::StorageReuse::DisjointLifetimes, 4096,
+                                          &error, client::AllocationPolicy::PreferDmsThenCma);
+  CHECK(preferred &&
+        preferred->packed.allocations[0].policy == client::AllocationPolicy::PreferDmsThenCma);
+  const auto ev_preferred =
+      collect_and_pack(execution, physical, sc::StorageReuse::DisjointLifetimes, 4096, &error,
+                       client::AllocationPolicy::PreferDmsThenCma);
+  CHECK(ev_preferred && ev_preferred->packed.allocations.size() == 1U);
+  CHECK(ev_preferred &&
+        ev_preferred->packed.allocations[0].policy == client::AllocationPolicy::RequireCma);
+}
+
+void test_resolved_executors_select_allocation_local_spans() {
+  sc::ModelExecutionPlanData data;
+  data.contract_version = "a65-mla-a65-storage-v1";
+  data.values = {value(0, "public_input", 64), value(1, "pre_output", 64),
+                 value(2, "mla_output", 64), value(3, "post_output", 64)};
+  data.model_inputs = {0};
   sc::OpSpec pre;
   pre.id = 0;
   pre.sequence = 1;
@@ -565,7 +589,6 @@ void test_resolved_executors_select_required_heap_partitions() {
   pre.inputs = {0};
   pre.outputs = {1};
   pre.config = sc::CastOpConfig{"INT8"};
-
   sc::OpSpec mla;
   mla.id = 1;
   mla.sequence = 2;
@@ -575,7 +598,6 @@ void test_resolved_executors_select_required_heap_partitions() {
   mla.inputs = {1};
   mla.outputs = {2};
   mla.config = sc::MlaOpConfig{"model.elf", 4};
-
   sc::OpSpec post;
   post.id = 2;
   post.sequence = 3;
@@ -587,73 +609,17 @@ void test_resolved_executors_select_required_heap_partitions() {
   post.config = sc::CastOpConfig{"FP32"};
   data.ops = {std::move(pre), std::move(mla), std::move(post)};
   data.backend_ports = {
-      {0, sc::BackendPortDirection::Input, 0, "data.ifm.b0", 1, 64, 4096,
+      {0, sc::BackendPortDirection::Input, 0, "ifm", 1, 64, 4096,
        sc::BackendPortAlignmentAuthority::Contract, sc::BackendPortAccess::ReadOnly},
-      {0, sc::BackendPortDirection::Output, 0, "data.ofm.b0", 2, 64, 4096,
-       sc::BackendPortAlignmentAuthority::Contract, sc::BackendPortAccess::WriteOnly},
-  };
+      {0, sc::BackendPortDirection::Output, 0, "ofm", 2, 64, 8192,
+       sc::BackendPortAlignmentAuthority::Contract, sc::BackendPortAccess::WriteOnly}};
   data.model_outputs = {{0, "public_output", 3}};
-
   std::string error;
-  auto execution = sc::ModelExecutionPlan::create(std::move(data), &error);
+  const auto execution = sc::ModelExecutionPlan::create(std::move(data), &error);
   CHECK(execution.has_value());
-  if (!execution) {
+  if (!execution)
     return;
-  }
-
-  sc::PhysicalExecutionPlan physical;
-  physical.command_for_semantic_op = {0U, 1U, 2U};
-  physical.commands = {
-      sc::PhysicalCommand{
-          .id = 0U,
-          .topological_rank = 0U,
-          .engine = sc::PhysicalEngine::A65,
-          .implementation_id = "a65.prepared.pre",
-          .members = {{0U, {0U}, {0U}, {1U}}},
-          .inputs = {0U},
-          .outputs = {1U},
-          .successors = {1U},
-      },
-      sc::PhysicalCommand{
-          .id = 1U,
-          .topological_rank = 1U,
-          .engine = sc::PhysicalEngine::Mla,
-          .implementation_id = "mla.model.elf",
-          .members = {{0U, {1U}, {1U}, {2U}}},
-          .inputs = {1U},
-          .outputs = {2U},
-          .predecessors = {0U},
-          .successors = {2U},
-      },
-      sc::PhysicalCommand{
-          .id = 2U,
-          .topological_rank = 2U,
-          .engine = sc::PhysicalEngine::A65,
-          .implementation_id = "a65.prepared.post",
-          .members = {{0U, {2U}, {2U}, {3U}}},
-          .inputs = {2U},
-          .outputs = {3U},
-          .predecessors = {1U},
-      },
-  };
-
-  const auto arena =
-      sc::FrameSlotArenaPlan::compile(*execution, physical, sc::FrameSlotArenaReuse::Disabled,
-                                      4096U, &error, sc::ArenaDmsPolicy::RequireDmsForEligible);
-  CHECK(arena.has_value());
-  CHECK(error.empty());
-  if (!arena) {
-    return;
-  }
-  CHECK(arena->placement().domain == sc::ArenaStorageDomain::Dms);
-  CHECK(arena->placement().requires_access(sc::ArenaDeviceAccess::CpuA65));
-  CHECK(arena->placement().requires_access(sc::ArenaDeviceAccess::Mla));
-  CHECK(!arena->placement().requires_access(sc::ArenaDeviceAccess::Ev74));
-  CHECK(arena->placement().provenance == sc::ArenaAllocationProvenance::CoreAllocated);
-  CHECK(arena->region(1) != nullptr);
-  CHECK(arena->region(2) != nullptr);
-  CHECK(arena->region(3) != nullptr);
-
+  const auto physical = linear_physical(*execution);
   for (const auto pre_engine : {sc::PhysicalEngine::Cvu, sc::PhysicalEngine::A65}) {
     for (const auto post_engine : {sc::PhysicalEngine::Cvu, sc::PhysicalEngine::A65}) {
       auto resolved = physical;
@@ -661,82 +627,74 @@ void test_resolved_executors_select_required_heap_partitions() {
       resolved.commands[0].resolved_executor = pre_engine;
       resolved.commands[2].engine = sc::PhysicalEngine::Cvu;
       resolved.commands[2].resolved_executor = post_engine;
-      const auto placed = sc::FrameSlotArenaPlan::compile(
-          *execution, resolved, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096U, &error,
-          sc::ArenaDmsPolicy::RequireDmsForEligible);
+      const auto placed = collect_and_pack(*execution, resolved,
+                                           sc::StorageReuse::DisjointLifetimes, 4096U, &error);
       CHECK(placed.has_value());
       if (!placed)
         continue;
-      CHECK(placed->region(0U) == nullptr);
-      CHECK(placed->region(1U)->storage_domain == (pre_engine == sc::PhysicalEngine::Cvu
-                                                       ? sc::ArenaStorageDomain::Cma
-                                                       : sc::ArenaStorageDomain::Dms));
+      CHECK(placed->span(0U) == nullptr);
+      const auto policy = [&](sc::ValueId id) {
+        return placed->packed.allocations[placed->span(id)->allocation_index].policy;
+      };
+      CHECK(policy(1) == (pre_engine == sc::PhysicalEngine::Cvu
+                              ? client::AllocationPolicy::RequireCma
+                              : client::AllocationPolicy::RequireDms));
       for (const auto id : {2U, 3U})
-        CHECK(placed->region(id)->storage_domain == (post_engine == sc::PhysicalEngine::Cvu
-                                                         ? sc::ArenaStorageDomain::Cma
-                                                         : sc::ArenaStorageDomain::Dms));
-      CHECK(placed->allocations().size() == (pre_engine == post_engine ? 1U : 2U));
-      std::uint64_t end = 0U;
-      for (std::size_t index = 0; index < placed->allocations().size(); ++index) {
-        const auto& allocation = placed->allocations()[index];
-        CHECK(allocation.byte_offset == end);
-        end += allocation.size_bytes;
-        for (const auto& region : placed->regions()) {
-          if (region.storage_domain != allocation.placement.domain)
-            continue;
-          CHECK(region.byte_offset >= allocation.byte_offset);
-          CHECK(region.byte_offset + region.size_bytes <= end);
-        }
+        CHECK(policy(id) == (post_engine == sc::PhysicalEngine::Cvu
+                                 ? client::AllocationPolicy::RequireCma
+                                 : client::AllocationPolicy::RequireDms));
+      CHECK(placed->packed.allocations.size() == (pre_engine == post_engine ? 1U : 2U));
+      for (const auto& carrier : placed->packed.carriers) {
+        const auto& allocation = placed->packed.allocations[carrier.span.allocation_index];
+        CHECK(carrier.span.byte_offset + carrier.span.size_bytes <= allocation.size_bytes);
       }
-      CHECK(end == placed->allocation_bytes());
+      if (pre_engine != post_engine) {
+        // Offset zero belongs to each allocation independently; matching local
+        // offsets in CMA and DMS never imply overlap.
+        CHECK(placed->span(1)->byte_offset == 0U);
+        CHECK(placed->span(2)->byte_offset == 0U);
+        CHECK(placed->span(1)->allocation_index != placed->span(2)->allocation_index);
+        CHECK(!overlaps(*placed->span(1), *placed->span(2)));
+      }
     }
   }
 
-  auto mixed_physical = physical;
-  mixed_physical.commands[0].resolved_executor = sc::PhysicalEngine::Cvu;
-  const auto mixed =
-      sc::FrameSlotArenaPlan::compile(*execution, mixed_physical, sc::FrameSlotArenaReuse::Disabled,
-                                      4096, &error, sc::ArenaDmsPolicy::PreferDmsThenCma);
-  CHECK(mixed && mixed->allocations().size() == 2);
-  if (mixed) {
-    for (const auto& part : mixed->allocations()) {
-      const bool cma = part.placement.domain == sc::ArenaStorageDomain::Cma;
-      CHECK(part.placement.allocation_policy ==
-            (cma ? sc::ArenaAllocationPolicy::RequiredDomain
-                 : sc::ArenaAllocationPolicy::PreferDmsThenCma));
-      CHECK(part.placement.requires_access(sc::ArenaDeviceAccess::Ev74) == cma);
-    }
-    sc::FrameSlotArenaRoute route;
-    route.commands = {1, 2};
-    route.imported_inputs = {1};
-    route.published_outputs = {3};
-    const auto narrowed =
-        sc::FrameSlotArenaPlan::compile(*execution, mixed_physical, mixed->reuse_policy(), 4096,
-                                        &error, mixed->dms_policy(), {}, &route);
-    CHECK(narrowed && narrowed->dms_policy() == sc::ArenaDmsPolicy::PreferDmsThenCma);
-    CHECK(narrowed && narrowed->allocations().size() == 1);
-    CHECK(narrowed &&
-          narrowed->allocations().front().placement.domain == sc::ArenaStorageDomain::Dms);
-    CHECK(narrowed && narrowed->allocations().front().placement.allocation_policy ==
-                          sc::ArenaAllocationPolicy::PreferDmsThenCma);
+  auto mixed = physical;
+  mixed.commands[0].resolved_executor = sc::PhysicalEngine::Cvu;
+  const auto placed = collect_and_pack(*execution, mixed, sc::StorageReuse::Disabled, 4096, &error,
+                                       client::AllocationPolicy::PreferDmsThenCma);
+  CHECK(placed && placed->packed.allocations.size() == 2U);
+  if (!placed)
+    return;
+  CHECK(placed->packed.allocations[placed->span(1)->allocation_index].size_bytes == 4096U);
+  CHECK(placed->packed.allocations[placed->span(2)->allocation_index].size_bytes == 16384U);
+  for (const auto& allocation : placed->packed.allocations) {
+    const bool cma = allocation.policy == client::AllocationPolicy::RequireCma;
+    CHECK(cma || allocation.policy == client::AllocationPolicy::PreferDmsThenCma);
+    CHECK(bool(allocation.required_device_access & client::kAccessEv74) == cma);
   }
+  sc::ModelStorageRoute route;
+  route.commands = {1, 2};
+  route.imported_inputs = {1};
+  route.published_outputs = {3};
+  const auto narrowed =
+      collect_and_pack(*execution, mixed, sc::StorageReuse::Disabled, 4096, &error,
+                       client::AllocationPolicy::PreferDmsThenCma, &route);
+  CHECK(narrowed && narrowed->packed.allocations.size() == 1U);
+  CHECK(narrowed && narrowed->span(1) == nullptr);
+  CHECK(narrowed &&
+        narrowed->packed.allocations[0].policy == client::AllocationPolicy::PreferDmsThenCma);
 }
 
 void test_multiple_values_share_one_authored_carrier() {
   sc::ModelExecutionPlanData data;
   data.contract_version = "carrier-test-v1";
-  data.values = {
-      value(0, "input", 64),
-      value(1, "left", 64),
-      value(2, "right", 64),
-      value(3, "output", 64),
-  };
+  data.values = {value(0, "input", 64), value(1, "left", 64), value(2, "right", 64),
+                 value(3, "output", 64)};
   data.model_inputs = {0};
-  data.carriers = {
-      {0, 64, 16, sc::ValueRepresentation::Dense},
-      {10, 128, 16, sc::ValueRepresentation::Packed},
-      {11, 64, 16, sc::ValueRepresentation::Dense},
-  };
+  data.carriers = {{0, 64, 16, sc::ValueRepresentation::Dense},
+                   {10, 128, 16, sc::ValueRepresentation::Packed},
+                   {11, 64, 16, sc::ValueRepresentation::Dense}};
   data.values[0].storage_binding = sc::StorageBinding{
       sc::StorageBindingKind::External, 0, 0, 64, {}, sc::StorageAccess::ReadOnly, std::nullopt};
   data.values[1].storage_binding = sc::StorageBinding{
@@ -745,7 +703,6 @@ void test_multiple_values_share_one_authored_carrier() {
       sc::StorageBindingKind::Root, 10, 64, 64, {}, sc::StorageAccess::WriteOnly, std::nullopt};
   data.values[3].storage_binding = sc::StorageBinding{
       sc::StorageBindingKind::Root, 11, 0, 64, {}, sc::StorageAccess::ReadWrite, std::nullopt};
-
   sc::OpSpec producer;
   producer.id = 0;
   producer.sequence = 1;
@@ -755,7 +712,6 @@ void test_multiple_values_share_one_authored_carrier() {
   producer.inputs = {0};
   producer.outputs = {1, 2};
   producer.config = sc::QuantizeOpConfig{};
-
   sc::OpSpec consumer;
   consumer.id = 1;
   consumer.sequence = 2;
@@ -767,52 +723,42 @@ void test_multiple_values_share_one_authored_carrier() {
   consumer.config = sc::DequantizeOpConfig{};
   data.ops = {std::move(producer), std::move(consumer)};
   data.model_outputs = {{0, "output", 3}};
-
   std::string error;
-  auto execution = sc::ModelExecutionPlan::create(std::move(data), &error);
+  const auto execution = sc::ModelExecutionPlan::create(std::move(data), &error);
   CHECK(execution.has_value());
-  if (!execution) {
+  if (!execution)
     return;
-  }
-  const auto arena =
-      sc::FrameSlotArenaPlan::compile(*execution, sc::FrameSlotArenaReuse::Disabled, 16, &error);
-  CHECK(arena.has_value());
-  if (!arena) {
+  const auto placed = collect_and_pack(*execution, linear_physical(*execution),
+                                       sc::StorageReuse::Disabled, 16, &error);
+  CHECK(placed.has_value());
+  if (!placed)
     return;
-  }
-  CHECK(arena->regions().size() == 2U);
-  CHECK(arena->region(1) == arena->region(2));
-  CHECK(arena->region(1)->carrier_id == 10U);
-  CHECK(arena->region(1)->size_bytes == 128U);
+  CHECK(placed->packed.carriers.size() == 2U);
+  CHECK(placed->span(1) == placed->span(2));
+  CHECK(placed->requirement(1)->carrier_id == 10U);
+  CHECK(placed->span(1)->size_bytes == 128U);
 }
 
 void test_fused_intermediates_are_not_materialized_at_capacity_boundaries() {
   for (const auto lanes : {1U, 32U, 33U}) {
     std::vector<sc::ValueId> intermediates;
     std::vector<sc::ValueId> final_tess;
-    const auto execution = make_fused_quanttess_arena_plan(lanes, &intermediates, &final_tess);
+    const auto execution = make_fused_quanttess_plan(lanes, &intermediates, &final_tess);
     std::string error;
     const auto physical = sc::PhysicalExecutionLowerer::lower(execution, &error);
     CHECK(physical.has_value());
-    if (!physical) {
+    if (!physical)
       continue;
-    }
-    const auto arena = sc::FrameSlotArenaPlan::compile(
-        execution, *physical, sc::FrameSlotArenaReuse::Disabled, 4096U, &error);
-    CHECK(arena.has_value());
-    CHECK(error.empty());
-    if (!arena) {
+    const auto placed =
+        collect_and_pack(execution, *physical, sc::StorageReuse::Disabled, 4096U, &error);
+    CHECK(placed.has_value());
+    if (!placed)
       continue;
-    }
-    for (const auto value_id : intermediates) {
-      CHECK(arena->region(value_id) == nullptr);
-    }
-    for (const auto value_id : final_tess) {
-      CHECK(arena->region(value_id) != nullptr);
-    }
-    // N final tessellation carriers plus one MLA output. Capacity chunking
-    // changes submissions, never storage or final placement.
-    CHECK(arena->regions().size() == lanes + 1U);
+    for (const auto value_id : intermediates)
+      CHECK(placed->span(value_id) == nullptr);
+    for (const auto value_id : final_tess)
+      CHECK(placed->span(value_id) != nullptr);
+    CHECK(placed->packed.carriers.size() == lanes + 1U);
   }
 }
 
@@ -826,41 +772,30 @@ void test_producer_direct_pack_preserves_every_lane_and_parent_offset() {
     std::string error;
     const auto physical = sc::PhysicalExecutionLowerer::lower(execution, &error);
     CHECK(physical.has_value());
-    if (!physical) {
+    if (!physical)
       continue;
-    }
-    std::vector<const sc::PhysicalCommand*> fused;
-    for (const auto& command : physical->commands) {
+    std::size_t fused_commands = 0, members = 0;
+    for (const auto& command : physical->commands)
       if (command.implementation_id == "quanttess") {
-        fused.push_back(&command);
+        ++fused_commands;
+        members += command.members.size();
       }
-    }
-    CHECK(fused.size() == (lanes + 31U) / 32U);
-    std::size_t member_count = 0U;
-    for (const auto* command : fused) {
-      member_count += command->members.size();
-    }
-    CHECK(member_count == lanes);
+    CHECK(fused_commands == (lanes + 31U) / 32U);
+    CHECK(members == lanes);
     CHECK(execution.value(producer_outputs.back())->storage_binding->byte_offset ==
           (lanes - 1U) * 16U);
-
-    const auto arena = sc::FrameSlotArenaPlan::compile(
-        execution, *physical, sc::FrameSlotArenaReuse::Disabled, 4096U, &error);
-    CHECK(arena.has_value());
-    if (!arena) {
+    const auto placed =
+        collect_and_pack(execution, *physical, sc::StorageReuse::Disabled, 4096U, &error);
+    CHECK(placed.has_value());
+    if (!placed)
       continue;
-    }
-    for (const auto intermediate : intermediates) {
-      CHECK(arena->region(intermediate) == nullptr);
-    }
-    const auto* parent_region = arena->region(parent);
-    CHECK(parent_region != nullptr);
-    for (const auto output : producer_outputs) {
-      CHECK(arena->region(output) == parent_region);
-    }
-    // One packed parent plus one MLA output; children are disjoint spans, not
-    // N independently allocated carriers.
-    CHECK(arena->regions().size() == 2U);
+    for (const auto intermediate : intermediates)
+      CHECK(placed->span(intermediate) == nullptr);
+    CHECK(placed->span(parent));
+    for (const auto output : producer_outputs)
+      CHECK(placed->span(output) == placed->span(parent));
+    CHECK(placed->packed.carriers.size() == 2U);
+    CHECK(placed->span(parent)->size_bytes == lanes * 16U);
   }
 }
 
@@ -870,9 +805,8 @@ int main() {
   test_no_reuse_oracle();
   test_disjoint_lifetime_reuse();
   test_invalid_alignment_fails_closed();
-  test_read_expressions_do_not_replace_real_producers();
-  test_grouped_physical_command_keeps_every_input_and_output_disjoint();
-  test_resolved_executors_select_required_heap_partitions();
+  test_grouped_command_preserves_aliases_and_concurrent_storage();
+  test_resolved_executors_select_allocation_local_spans();
   test_multiple_values_share_one_authored_carrier();
   test_fused_intermediates_are_not_materialized_at_capacity_boundaries();
   test_producer_direct_pack_preserves_every_lane_and_parent_offset();

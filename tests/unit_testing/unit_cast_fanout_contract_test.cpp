@@ -128,14 +128,11 @@ RUN_TEST(
           &*rendered, std::nullopt, {}, {}, {});
       require(!preparation, preparation ? preparation->field + ": " + preparation->message : "");
       pipeline_internal::sima::finalize_pipeline_storage(*rendered);
-      require(rendered->stages.front().native_kernel &&
-                  rendered->stages.front().frame_arena_role ==
-                      pipeline_internal::sima::FrameArenaRole::Allocate &&
-                  rendered->stages.front().frame_layout &&
+      require(rendered->stages.front().native_kernel && rendered->stages.front().frame_layout &&
                   rendered->stages.front().frame_layout->ownership ==
                       simaai::scheduler::client::FrameOwnership::Allocate &&
                   rendered->stages.front().frame_layout->outputs.size() == 6U,
-              "standalone Cast lacks checked direct arena placement");
+              "standalone Cast lacks checked allocated output spans");
       const auto& runtime = transport.runtime_contract;
       require(runtime.logical_outputs.size() == 6U,
               "Cast should publish all six logical outputs from the upstream contract");

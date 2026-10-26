@@ -492,7 +492,7 @@ set(UNIT_TESTS
   unit_graph_strict_sync_test
   unit_header_neat_compile_surface_test
   unit_realtime_link_options_test
-  unit_realtime_processcvu_input_queue_test
+  unit_realtime_source_queue_test
   unit_verbose_options_surface_test
   unit_gst_data_adapter_edge_test
   unit_groups_test
@@ -572,9 +572,9 @@ set(UNIT_TESTS
   unit_physical_execution_plan_test
   unit_tvm_host_module_graph_test
   unit_modelpack_multi_mla_plan_test
-  unit_frame_slot_arena_plan_test
+  unit_carrier_packing_test
   unit_stage_memory_policy_test
-  unit_frame_arena_allocation_policy_test
+  unit_frame_layout_policy_test
   unit_dmabuf_plan_contract_projection_test
   unit_model_archive_loader_test
   unit_modelpack_compact_extraction_path_test
@@ -670,6 +670,9 @@ foreach(test ${UNIT_TESTS})
     set_property(TEST ${test} APPEND PROPERTY LABELS "unit")
   endif()
 endforeach()
+
+# This metadata fixture uses assert for its runtime checks, including publication setup.
+target_compile_options(unit_terminal_output_contract_query_test PRIVATE -UNDEBUG)
 
 # Exercise cold instance isolation without requiring a target-only A65 catalogue.
 simaneat_add_test(NAME unit_kernel_runner_instances_test
@@ -2167,7 +2170,7 @@ add_pipeline_test(
   e2e_pipelines/obj_detection/sync_yolov8_test_detessdequant.cpp
   e2e_pipelines/e2e_utils.cpp
   e2e_pipelines/obj_detection/obj_detection_utils.cpp
-  ARGS ${CMAKE_SOURCE_DIR}
+  ARGS ${CMAKE_SOURCE_DIR} --memory-policy
 )
 
 if (NOT sync_yolov8_test_detessdequant IN_LIST PIPELINESESSION_TEST_BLACKLIST)

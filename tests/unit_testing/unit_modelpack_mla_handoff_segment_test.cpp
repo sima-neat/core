@@ -220,14 +220,10 @@ std::string bf16_handoff_error(const simaai::neat::CompiledProcessCvuContract& t
     return "span: expected=" + std::to_string(authored.size_bytes) +
            " producer=" + std::to_string(carrier.size_bytes) +
            " mla=" + std::to_string(physical.size_bytes) + detail;
-  if (output.frame_arena_size_bytes == 0U ||
-      input.frame_arena_size_bytes != output.frame_arena_size_bytes ||
-      output.frame_arena_role != sima::FrameArenaRole::Allocate ||
-      input.frame_arena_role != sima::FrameArenaRole::ReuseInput ||
-      physical.address_source != sima::PhysicalAddressSource::FrameArenaSpan ||
+  if (physical.address_source != sima::PhysicalAddressSource::FrameSpan ||
+      physical.model_carrier_id != carrier.model_carrier_id ||
       physical.source_byte_offset != carrier.source_byte_offset ||
-      binding.src_physical_byte_offset != carrier.source_byte_offset ||
-      !contains(output.frame_arena_size_bytes, carrier.source_byte_offset, carrier.size_bytes))
+      binding.src_physical_byte_offset != 0)
     return "placement: producer_offset=" + std::to_string(carrier.source_byte_offset) +
            " mla_offset=" + std::to_string(physical.source_byte_offset) + detail;
   return {};
@@ -669,10 +665,8 @@ RUN_TEST(
                     detess.payload.output_dtype == "FP32",
                 "BF16 postprocessing must retain mandatory DetessCast fusion");
         require(mla_outputs.physical_outputs.size() == authored_mla->output_tensors.size() &&
-                    mla_outputs.physical_outputs.size() == 1U &&
-                    detess.runtime_contract.frame_arena_size_bytes ==
-                        mla_outputs.frame_arena_size_bytes,
-                "BF16 packed heads must share the manifest-authored MLA output arena");
+                    mla_outputs.physical_outputs.size() == 1U,
+                "BF16 packed heads must share the manifest-authored MLA output carrier");
         const auto contains = [](std::uint64_t capacity, std::int64_t offset, std::uint64_t bytes) {
           return offset >= 0 && static_cast<std::uint64_t>(offset) <= capacity &&
                  bytes <= capacity - static_cast<std::uint64_t>(offset);
@@ -709,11 +703,8 @@ RUN_TEST(
                   consumer->source_physical_index == producer->source_physical_index &&
                   contains(producer->size_bytes, mla_output.byte_offset, mla_output.size_bytes) &&
                   contains(consumer->size_bytes, input.byte_offset, input.size_bytes) &&
-                  contains(mla_outputs.frame_arena_size_bytes, producer->source_byte_offset,
-                           producer->size_bytes) &&
-                  contains(mla_outputs.frame_arena_size_bytes, consumer->source_byte_offset,
-                           consumer->size_bytes),
-              "BF16 DetessCast packed head must remain within its source carrier and arena");
+                  producer->model_carrier_id == consumer->model_carrier_id,
+              "BF16 DetessCast packed head must retain its root and contained source view");
           // Command projection may rebase the head into a selected physical
           // input. Compare absolute addresses, not offsets in different views.
           const auto producer_address = static_cast<std::uint64_t>(producer->source_byte_offset) +

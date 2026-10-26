@@ -323,9 +323,7 @@ simaai::neat::CompiledProcessCvuContract make_selected_post_cast_contract() {
   require(semantic.has_value(), "pre/post cast semantic fixture: " + error);
   const auto physical = sc::PhysicalExecutionLowerer::lower(*semantic, &error);
   require(physical.has_value(), "pre/post cast physical fixture: " + error);
-  const auto arena = sc::FrameSlotArenaPlan::compile(
-      *semantic, *physical, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096U, &error);
-  require(arena.has_value(), "pre/post cast arena fixture: " + error);
+
   std::vector<sc::PhysicalCommandId> post_commands;
   for (const auto& command : physical->commands) {
     if (command.engine == sc::PhysicalEngine::Cvu && command.implementation_id == "cast" &&
@@ -340,8 +338,8 @@ simaai::neat::CompiledProcessCvuContract make_selected_post_cast_contract() {
               post.members[0].semantic_chain == std::vector<sc::OpId>{3U} &&
               post.members[1].semantic_chain == std::vector<sc::OpId>{4U},
           "only the two exact post-MLA semantic casts may be selected");
-  const auto result = sc::build_dmabuf_plan_processcvu_command_contract(
-      *semantic, *physical, post_commands, *arena, &error);
+  const auto result = sc::build_dmabuf_plan_processcvu_command_contract(*semantic, *physical,
+                                                                        post_commands, &error);
   require(result.has_value(), "selected post-MLA cast fixture: " + error);
   return *result;
 }

@@ -62,12 +62,7 @@ ps::StageStaticSpec complete(std::int64_t logical_offset, bool retained_physical
   output_descriptor.storage.nbytes = 48;
   stage.processcvu.input_tensors = {{input, "FP32"}};
   stage.processcvu.output_tensors = {{output_descriptor, "BF16"}};
-  stage.frame_arena_size_bytes = 4096;
-  stage.frame_arena_role = ps::FrameArenaRole::Allocate;
-  stage.frame_arena_storage_domain = ps::static_contract::ArenaStorageDomain::Cma;
-  stage.frame_arena_provenance = ps::static_contract::ArenaAllocationProvenance::CoreAllocated;
-  stage.frame_arena_required_device_access =
-      static_cast<std::uint32_t>(ps::static_contract::ArenaDeviceAccess::CpuA65);
+  stage.allocation_policy = c::AllocationPolicy::RequireCma;
   ps::PhysicalBufferStaticSpec output;
   output.physical_index = output.allocator_index = 0;
   output.size_bytes = 48;

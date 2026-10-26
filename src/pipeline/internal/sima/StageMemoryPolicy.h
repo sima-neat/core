@@ -4,6 +4,7 @@
 #endif
 
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
+#include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
 #include "pipeline/internal/contract/ContractFacts.h"
 
 namespace simaai::neat::pipeline_internal::terminal_output_contract {

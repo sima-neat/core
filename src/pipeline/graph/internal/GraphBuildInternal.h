@@ -78,11 +78,6 @@ std::string session_build_async_queue2_fragment(int requested_depth = 0,
                                                 std::string_view element_name = {});
 std::string session_build_apply_fast_path_options_to_fragment(std::string fragment,
                                                               const GraphOptions* sess_opt);
-// Cold live-source policy. Customer values win; retained framework origins
-// distinguish generated defaults from explicit count-only queues.
-std::string
-session_build_apply_run_preset_to_pipeline(std::string pipeline, const RunOptions& opt,
-                                           std::span<const LaunchNameOrigin> origins = {});
 // Propagate an authored producer lane window to its immediate terminal
 // consumer. Both endpoints declare `num-buffers`; memory visibility is not
 // selected here and no consumer factory/plugin name is encoded.

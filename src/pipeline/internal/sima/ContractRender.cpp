@@ -154,118 +154,6 @@ require_exposed_output_routes(const CompiledExposedView& exposed_view) {
   return exposed_view.exposed_output_order;
 }
 
-bool stage_is_cast_transport(const StageStaticSpec& stage) {
-  return upper_copy_local(stage.plugin_kind) == "CAST" ||
-         upper_copy_local(stage.kernel_kind) == "CAST";
-}
-
-bool stage_is_distinct_mla_consumer(const StageStaticSpec& stage) {
-  return stage.consumer_keeps_distinct_physical_inputs &&
-         upper_copy_local(stage.kernel_kind) == "MLA" && stage.physical_inputs.size() > 1U;
-}
-
-std::string
-physical_segment_name(const pipeline_internal::sima::PhysicalBufferStaticSpec& physical) {
-  return physical.segment_name;
-}
-
-bool logical_matches_segment_name(const LogicalTensorStaticSpec& logical,
-                                  const std::string& segment_name) {
-  return !segment_name.empty() &&
-         (logical.segment_name == segment_name || logical.backend_name == segment_name ||
-          logical.logical_name == segment_name);
-}
-
-void normalize_cast_outputs_for_distinct_mla_boundary(StageStaticSpec* producer,
-                                                      const StageStaticSpec& consumer) {
-  if (!producer || !stage_is_cast_transport(*producer) ||
-      !stage_is_distinct_mla_consumer(consumer) ||
-      producer->logical_outputs.size() != consumer.physical_inputs.size()) {
-    return;
-  }
-
-  // The physical execution plan already reconciled this boundary. Its arena
-  // placements, alignments, and binding identities are authoritative; the
-  // legacy normalization below would replace them with incomplete buffers.
-  if (producer->payload_kind == StagePayloadKind::ProcessCvu &&
-      producer->processcvu.dmabuf_plan_contract) {
-    return;
-  }
-
-  std::vector<std::size_t> logical_by_physical(consumer.physical_inputs.size(),
-                                               producer->logical_outputs.size());
-  std::vector<bool> used(producer->logical_outputs.size(), false);
-  for (std::size_t physical_idx = 0; physical_idx < consumer.physical_inputs.size();
-       ++physical_idx) {
-    const auto& consumer_physical = consumer.physical_inputs[physical_idx];
-    const std::string segment_name = physical_segment_name(consumer_physical);
-    if (segment_name.empty() || consumer_physical.size_bytes == 0U) {
-      return;
-    }
-    for (std::size_t logical_idx = 0; logical_idx < producer->logical_outputs.size();
-         ++logical_idx) {
-      if (used[logical_idx] ||
-          !logical_matches_segment_name(producer->logical_outputs[logical_idx], segment_name)) {
-        continue;
-      }
-      const auto& logical = producer->logical_outputs[logical_idx];
-      if (logical.size_bytes != 0U && logical.size_bytes != consumer_physical.size_bytes) {
-        return;
-      }
-      logical_by_physical[physical_idx] = logical_idx;
-      used[logical_idx] = true;
-      break;
-    }
-    if (logical_by_physical[physical_idx] == producer->logical_outputs.size()) {
-      return;
-    }
-  }
-
-  const auto old_physical_outputs = producer->physical_outputs;
-  const auto fallback_device = old_physical_outputs.empty()
-                                   ? pipeline_internal::sima::DeviceKind::Cpu
-                                   : old_physical_outputs.front().device_kind;
-  producer->physical_outputs.clear();
-  producer->physical_outputs.reserve(consumer.physical_inputs.size());
-  for (std::size_t physical_idx = 0; physical_idx < consumer.physical_inputs.size();
-       ++physical_idx) {
-    const auto& consumer_physical = consumer.physical_inputs[physical_idx];
-    producer->physical_outputs.push_back(
-        pipeline_internal::sima::specbuilders::build_physical_buffer_static_spec(
-            static_cast<int>(physical_idx), static_cast<int>(physical_idx),
-            consumer_physical.size_bytes, fallback_device,
-            physical_segment_name(consumer_physical)));
-    auto& logical = producer->logical_outputs[logical_by_physical[physical_idx]];
-    logical.physical_index = static_cast<int>(physical_idx);
-    logical.byte_offset = 0;
-    logical.segment_name = physical_segment_name(consumer_physical);
-  }
-
-  for (auto& route : producer->output_order) {
-    if (route.logical_output_index < 0) {
-      continue;
-    }
-    const auto it = std::find_if(producer->logical_outputs.begin(), producer->logical_outputs.end(),
-                                 [&](const LogicalTensorStaticSpec& logical) {
-                                   return logical.logical_index == route.logical_output_index;
-                                 });
-    if (it != producer->logical_outputs.end()) {
-      route.segment_name = it->segment_name;
-    }
-  }
-  producer->consumer_keeps_distinct_physical_inputs = true;
-}
-
-void normalize_manifest_boundaries(SimaPluginStaticManifest* manifest) {
-  if (!manifest || manifest->stages.size() < 2U) {
-    return;
-  }
-  for (std::size_t i = 0; i + 1U < manifest->stages.size(); ++i) {
-    normalize_cast_outputs_for_distinct_mla_boundary(&manifest->stages[i],
-                                                     manifest->stages[i + 1U]);
-  }
-}
-
 void populate_processcvu_runtime_output_contract(ProcessCvuStagePayload* payload,
                                                  const CompiledRuntimeContract& runtime) {
   if (!payload) {
@@ -573,16 +461,6 @@ void populate_processcvu_runtime_output_contract(ProcessCvuStagePayload* payload
   }
 }
 
-std::string stage_match_key(const StageStaticSpec& stage) {
-  if (!stage.logical_stage_id.empty()) {
-    return "id:" + stage.logical_stage_id;
-  }
-  if (!stage.element_name.empty()) {
-    return "element:" + stage.element_name;
-  }
-  return {};
-}
-
 StageStaticSpec render_processcvu_stage(const CompiledProcessCvuContract& compiled,
                                         const std::string& element_name,
                                         const std::string& logical_stage_id) {
@@ -634,15 +512,9 @@ StageStaticSpec render_processcvu_stage(const CompiledProcessCvuContract& compil
   stage.output_order = compiled.exposed_view.exposed_output_order;
   stage.output_quant = compiled.runtime_contract.output_quant;
   stage.required_preprocess_meta_fields = compiled.runtime_contract.required_preprocess_meta_fields;
-  stage.frame_arena_size_bytes = compiled.runtime_contract.frame_arena_size_bytes;
-  stage.frame_arena_allocations = compiled.runtime_contract.frame_arena_allocations;
-  stage.frame_arena_role = compiled.runtime_contract.frame_arena_role;
-  stage.frame_arena_storage_domain = compiled.runtime_contract.frame_arena_storage_domain;
-  stage.frame_arena_provenance = compiled.runtime_contract.frame_arena_provenance;
-  stage.frame_arena_allocation_policy = compiled.runtime_contract.frame_arena_allocation_policy;
-  stage.frame_arena_required_device_access =
-      compiled.runtime_contract.frame_arena_required_device_access;
-  stage.frame_arena_escape_policy = compiled.runtime_contract.frame_arena_escape_policy;
+  stage.allocation_policy = compiled.runtime_contract.allocation_policy;
+  stage.reuse_input_pad = compiled.runtime_contract.reuse_input_pad;
+  stage.frame_layout = compiled.runtime_contract.frame_layout;
   stage.consumer_keeps_distinct_physical_inputs =
       compiled.runtime_contract.consumer_keeps_distinct_physical_inputs;
   return stage;
@@ -670,15 +542,9 @@ StageStaticSpec render_processmla_stage(const CompiledMlaContract& compiled,
   stage.output_order = compiled.runtime_contract.output_order;
   stage.output_quant = compiled.runtime_contract.output_quant;
   stage.required_preprocess_meta_fields = compiled.runtime_contract.required_preprocess_meta_fields;
-  stage.frame_arena_size_bytes = compiled.runtime_contract.frame_arena_size_bytes;
-  stage.frame_arena_allocations = compiled.runtime_contract.frame_arena_allocations;
-  stage.frame_arena_role = compiled.runtime_contract.frame_arena_role;
-  stage.frame_arena_storage_domain = compiled.runtime_contract.frame_arena_storage_domain;
-  stage.frame_arena_provenance = compiled.runtime_contract.frame_arena_provenance;
-  stage.frame_arena_allocation_policy = compiled.runtime_contract.frame_arena_allocation_policy;
-  stage.frame_arena_required_device_access =
-      compiled.runtime_contract.frame_arena_required_device_access;
-  stage.frame_arena_escape_policy = compiled.runtime_contract.frame_arena_escape_policy;
+  stage.allocation_policy = compiled.runtime_contract.allocation_policy;
+  stage.reuse_input_pad = compiled.runtime_contract.reuse_input_pad;
+  stage.frame_layout = compiled.runtime_contract.frame_layout;
   stage.consumer_keeps_distinct_physical_inputs =
       compiled.runtime_contract.consumer_keeps_distinct_physical_inputs;
   stage.elf_ifm_symbol_names = compiled.runtime_contract.elf_ifm_symbol_names;
@@ -715,7 +581,6 @@ StageStaticSpec render_kernel_stage(const CompiledNodeContract& compiled_stage) 
     throw std::invalid_argument("native kernel stage requires checked executable members");
   const auto& runtime = compiled.runtime_contract;
   StageStaticSpec stage;
-  stage.model_storage_planned = compiled_stage.model_storage_planned;
   stage.native_kernel = compiled.recipe;
   stage.element_name = compiled_stage.element_name;
   stage.logical_stage_id = compiled_stage.logical_stage_id;
@@ -732,31 +597,9 @@ StageStaticSpec render_kernel_stage(const CompiledNodeContract& compiled_stage) 
   stage.logical_outputs = runtime.logical_outputs;
   stage.output_order = runtime.output_order;
   stage.required_preprocess_meta_fields = runtime.required_preprocess_meta_fields;
-  if (runtime.frame_arena_size_bytes && compiled.recipe->private_buffers.empty()) {
-    stage.frame_arena_size_bytes = runtime.frame_arena_size_bytes;
-    stage.frame_arena_allocations = runtime.frame_arena_allocations;
-    stage.frame_arena_role = runtime.frame_arena_role;
-    stage.frame_arena_storage_domain = runtime.frame_arena_storage_domain;
-    stage.frame_arena_provenance = runtime.frame_arena_provenance;
-    stage.frame_arena_allocation_policy = runtime.frame_arena_allocation_policy;
-    stage.frame_arena_required_device_access = runtime.frame_arena_required_device_access;
-    stage.frame_arena_escape_policy = runtime.frame_arena_escape_policy;
-    return stage;
-  }
-  using namespace pipeline_internal::sima;
-  stage.core_fresh_default_arena =
-      runtime.frame_arena_role == FrameArenaRole::None && !runtime.frame_arena_size_bytes &&
-      runtime.frame_arena_storage_domain == static_contract::ArenaStorageDomain::Unknown &&
-      runtime.frame_arena_provenance == static_contract::ArenaAllocationProvenance::Unknown &&
-      runtime.frame_arena_allocation_policy ==
-          static_contract::ArenaAllocationPolicy::RequiredDomain &&
-      runtime.frame_arena_required_device_access == 0 &&
-      runtime.frame_arena_escape_policy == static_contract::ArenaEscapePolicy::InternalOnly;
-  stage.frame_arena_role = pipeline_internal::sima::FrameArenaRole::Allocate;
-  stage.frame_arena_provenance =
-      pipeline_internal::sima::static_contract::ArenaAllocationProvenance::CoreAllocated;
-  stage.frame_arena_escape_policy =
-      pipeline_internal::sima::static_contract::ArenaEscapePolicy::CpuMappablePublic;
+  stage.allocation_policy = runtime.allocation_policy;
+  stage.reuse_input_pad = runtime.reuse_input_pad;
+  stage.frame_layout = runtime.frame_layout;
   return stage;
 }
 
@@ -780,6 +623,9 @@ StageStaticSpec render_boxdecode_stage(const CompiledNodeContract& compiled_stag
   stage.logical_outputs = compiled.runtime_contract.logical_outputs;
   stage.output_order = compiled.runtime_contract.output_order;
   stage.required_preprocess_meta_fields = compiled.runtime_contract.required_preprocess_meta_fields;
+  stage.allocation_policy = compiled.runtime_contract.allocation_policy;
+  stage.reuse_input_pad = compiled.runtime_contract.reuse_input_pad;
+  stage.frame_layout = compiled.runtime_contract.frame_layout;
   return stage;
 }
 
@@ -903,6 +749,9 @@ StageStaticSpec render_dequant_stage(const CompiledNodeContract& compiled_stage)
   stage.physical_outputs = compiled.runtime_contract.physical_outputs;
   stage.output_order = compiled.runtime_contract.output_order;
   stage.required_preprocess_meta_fields = compiled.runtime_contract.required_preprocess_meta_fields;
+  stage.allocation_policy = compiled.runtime_contract.allocation_policy;
+  stage.reuse_input_pad = compiled.runtime_contract.reuse_input_pad;
+  stage.frame_layout = compiled.runtime_contract.frame_layout;
   stage.processcvu = dequant_execution_payload(stage);
   return stage;
 }
@@ -910,7 +759,6 @@ StageStaticSpec render_dequant_stage(const CompiledNodeContract& compiled_stage)
 StageStaticSpec render_transport_stage(const CompiledNodeContract& compiled_stage) {
   const auto& compiled = *compiled_stage.transport;
   StageStaticSpec stage;
-  stage.model_storage_planned = compiled_stage.model_storage_planned;
   stage.element_name = compiled_stage.element_name;
   stage.logical_stage_id = compiled_stage.logical_stage_id;
   stage.model_managed_stage = compiled.model_managed_stage;
@@ -926,15 +774,9 @@ StageStaticSpec render_transport_stage(const CompiledNodeContract& compiled_stag
   stage.output_order = compiled.runtime_contract.output_order;
   stage.required_preprocess_meta_fields = compiled.runtime_contract.required_preprocess_meta_fields;
   stage.tvm_program = compiled.tvm_program;
-  stage.frame_arena_size_bytes = compiled.runtime_contract.frame_arena_size_bytes;
-  stage.frame_arena_allocations = compiled.runtime_contract.frame_arena_allocations;
-  stage.frame_arena_role = compiled.runtime_contract.frame_arena_role;
-  stage.frame_arena_storage_domain = compiled.runtime_contract.frame_arena_storage_domain;
-  stage.frame_arena_provenance = compiled.runtime_contract.frame_arena_provenance;
-  stage.frame_arena_allocation_policy = compiled.runtime_contract.frame_arena_allocation_policy;
-  stage.frame_arena_required_device_access =
-      compiled.runtime_contract.frame_arena_required_device_access;
-  stage.frame_arena_escape_policy = compiled.runtime_contract.frame_arena_escape_policy;
+  stage.allocation_policy = compiled.runtime_contract.allocation_policy;
+  stage.reuse_input_pad = compiled.runtime_contract.reuse_input_pad;
+  stage.frame_layout = compiled.runtime_contract.frame_layout;
   stage.consumer_keeps_distinct_physical_inputs =
       compiled.runtime_contract.consumer_keeps_distinct_physical_inputs;
   if (compiled.payload_kind == StagePayloadKind::ProcessCvu &&
@@ -967,96 +809,34 @@ StageStaticSpec render_transport_stage(const CompiledNodeContract& compiled_stag
 
 std::vector<StageStaticSpec>
 render_stages_from_compiled_contract(const CompiledNodeContract& stage,
-                                     const ContractCompileInput& compile_input,
                                      ManifestBuildDiagnostics* diagnostics) {
   if (!stage.child_stages.empty()) {
     std::vector<StageStaticSpec> rendered;
     for (const auto& child : stage.child_stages) {
-      auto child_rendered = render_stages_from_compiled_contract(child, compile_input, diagnostics);
-      rendered.insert(rendered.end(), std::make_move_iterator(child_rendered.begin()),
-                      std::make_move_iterator(child_rendered.end()));
+      auto stages = render_stages_from_compiled_contract(child, diagnostics);
+      rendered.insert(rendered.end(), std::make_move_iterator(stages.begin()),
+                      std::make_move_iterator(stages.end()));
     }
     return rendered;
   }
-  if (stage.kernel.has_value()) {
-    try {
-      return {render_kernel_stage(stage)};
-    } catch (const std::exception& ex) {
-      if (diagnostics)
-        diagnostics->errors.push_back("contract render: native kernel stage '" + stage.node_kind +
-                                      "' failed: " + ex.what());
-      return {};
-    }
-  }
-  if (stage.processcvu.has_value()) {
-    StageStaticSpec rendered;
-    try {
-      rendered =
-          render_processcvu_stage(*stage.processcvu, stage.element_name, stage.logical_stage_id);
-      rendered.native_execution_capacity = stage.native_execution_capacity;
-    } catch (const std::exception& ex) {
-      if (diagnostics) {
-        diagnostics->errors.push_back("contract render: processcvu stage '" + stage.node_kind +
-                                      "' failed: " + ex.what());
-      }
-      return {};
-    }
-    rendered.model_storage_planned = stage.model_storage_planned;
+  if (stage.kernel)
+    return {render_kernel_stage(stage)};
+  if (stage.processcvu) {
+    auto rendered =
+        render_processcvu_stage(*stage.processcvu, stage.element_name, stage.logical_stage_id);
+    rendered.native_execution_capacity = stage.native_execution_capacity;
     return {std::move(rendered)};
   }
-  if (stage.processmla.has_value()) {
-    try {
-      auto rendered =
-          render_processmla_stage(*stage.processmla, stage.element_name, stage.logical_stage_id);
-      rendered.model_storage_planned = stage.model_storage_planned;
-      return {std::move(rendered)};
-    } catch (const std::exception& ex) {
-      if (diagnostics) {
-        diagnostics->errors.push_back("contract render: processmla stage '" + stage.node_kind +
-                                      "' failed: " + ex.what());
-      }
-      return {};
-    }
-  }
-  if (stage.boxdecode.has_value()) {
-    try {
-      return {render_boxdecode_stage(stage)};
-    } catch (const std::exception& ex) {
-      if (diagnostics) {
-        diagnostics->errors.push_back("contract render: boxdecode stage '" + stage.node_kind +
-                                      "' failed: " + ex.what());
-      }
-      return {};
-    }
-  }
-  if (stage.dequant.has_value()) {
-    try {
-      return {render_dequant_stage(stage)};
-    } catch (const std::exception& ex) {
-      if (diagnostics) {
-        diagnostics->errors.push_back("contract render: dequant stage '" + stage.node_kind +
-                                      "' failed: " + ex.what());
-      }
-      return {};
-    }
-  }
-  if (stage.transport.has_value()) {
-    try {
-      auto rendered = render_transport_stage(stage);
-      rendered.model_storage_planned = stage.model_storage_planned;
-      return {std::move(rendered)};
-    } catch (const std::exception& ex) {
-      if (diagnostics) {
-        diagnostics->errors.push_back("contract render: transport stage '" + stage.node_kind +
-                                      "' failed: " + ex.what());
-      }
-      return {};
-    }
-  }
-  if (diagnostics && stage.node_kind != "Input" && stage.node_kind != "Output") {
-    diagnostics->warnings.push_back("contract render: skipping non-renderable node kind '" +
-                                    stage.node_kind + "'");
-  }
+  if (stage.processmla)
+    return {render_processmla_stage(*stage.processmla, stage.element_name, stage.logical_stage_id)};
+  if (stage.boxdecode)
+    return {render_boxdecode_stage(stage)};
+  if (stage.dequant)
+    return {render_dequant_stage(stage)};
+  if (stage.transport)
+    return {render_transport_stage(stage)};
+  if (stage.node_kind != "Input" && stage.node_kind != "Output")
+    throw std::invalid_argument("no stage renderer for node kind '" + stage.node_kind + "'");
   return {};
 }
 
@@ -1074,40 +854,32 @@ project_mla_stage_contract(const CompiledMlaContract& compiled) {
 
 std::optional<pipeline_internal::sima::SimaPluginStaticManifest>
 render_manifest_from_compiled_contracts(
-    const CompiledPipelineContracts& compiled, const ContractCompileInput& compile_input,
+    const CompiledPipelineContracts& compiled, const ContractCompileInput&,
     pipeline_internal::sima::ManifestBuildDiagnostics* diagnostics) {
   SimaPluginStaticManifest manifest;
-  manifest.model_storage_plan = compiled.model_storage_plan;
+  manifest.model_storage_scopes = compiled.model_storage_scopes;
 
-  for (std::size_t node_index = 0; node_index < compiled.stages.size(); ++node_index) {
-    const auto& stage = compiled.stages[node_index];
-    for (auto& rendered : render_stages_from_compiled_contract(stage, compile_input, diagnostics)) {
-      rendered.compile_stage_index = manifest.stages.size();
-      rendered.compile_node_index = node_index;
-      // Child renderers carry their own marker; top-level numerical stages are leaves.
-      if (stage.child_stages.empty())
-        rendered.model_storage_planned = stage.model_storage_planned;
-      manifest.stages.push_back(std::move(rendered));
-    }
+  try {
+    for (std::size_t node_index = 0; node_index < compiled.stages.size(); ++node_index)
+      for (auto& rendered :
+           render_stages_from_compiled_contract(compiled.stages[node_index], diagnostics)) {
+        rendered.compile_stage_index = manifest.stages.size();
+        rendered.compile_node_index = node_index;
+        manifest.stages.push_back(std::move(rendered));
+      }
+  } catch (const std::exception& error) {
+    if (!diagnostics)
+      throw;
+    diagnostics->errors.push_back(std::string("contract render: ") + error.what());
+    return std::nullopt;
   }
-
-  normalize_manifest_boundaries(&manifest);
 
   if (diagnostics && !diagnostics->errors.empty()) {
     return std::nullopt;
   }
 
-  if (manifest.stages.empty()) {
-    if (diagnostics && !compiled.fully_renderable) {
-      diagnostics->warnings.push_back("contract render: compiled contract set is partial and no "
-                                      "renderable stages were produced");
-    }
+  if (manifest.stages.empty())
     return std::nullopt;
-  }
-  if (diagnostics && !compiled.fully_renderable) {
-    diagnostics->warnings.push_back(
-        "contract render: compiled contract set is partial; rendered stages will require overlay");
-  }
   return manifest;
 }
 

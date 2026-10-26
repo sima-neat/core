@@ -561,40 +561,6 @@ void explicit_image_publication_preserves_one_semantic_image() {
     assert(!build_output_override_from_manifest(manifest, invalid_endpoint, &error, &reason));
     assert(reason == OutputOverrideFailureReason::EndpointSelectorNoMatch && !error.empty());
 
-    const auto json = sima::to_json(manifest);
-    const auto roundtrip = sima::parse_manifest_json(json.dump(), &error);
-    assert(roundtrip && error.empty() && !roundtrip->stages.back().native_kernel);
-    assert(sima::to_json(roundtrip->stages.back())["image_publication"] ==
-           json["stages"].back()["image_publication"]);
-    assert(!build_output_override_from_manifest(*roundtrip, {}, &error) && error.empty());
-    for (int invalid = 0; invalid != 7; ++invalid) {
-      auto malformed = json;
-      auto& descriptor = malformed["stages"].back()["image_publication"];
-      switch (invalid) {
-      case 0:
-        descriptor["width"] = -1;
-        break;
-      case 1:
-        descriptor["height"] = 0;
-        break;
-      case 2:
-        descriptor["planes"] = nlohmann::json::array();
-        break;
-      case 3:
-        descriptor["planes"][0]["byte_offset"] = -1;
-        break;
-      case 4:
-        descriptor["planes"][0]["stride"] = 1;
-        break;
-      case 5:
-        descriptor["planes"][0]["visible_rows"] = 1.5;
-        break;
-      case 6:
-        descriptor["planes"].push_back(descriptor["planes"][0]);
-        break;
-      }
-      assert(!sima::parse_manifest_json(malformed.dump(), &error) && !error.empty());
-    }
     // A downstream tensor producer still controls the implicit endpoint; the
     // upstream semantic image remains selectable without leaking its planes.
     manifest.stages.push_back(manifest.stages.front());

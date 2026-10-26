@@ -22,6 +22,24 @@
 
 namespace {
 
+namespace client = simaai::scheduler::client;
+namespace si = simaai::neat::pipeline_internal::sima;
+
+void finalize_storage(si::SimaPluginStaticManifest& manifest) {
+  const auto failure = si::prepare_kernel_stage_recipes(&manifest, {}, {}, {}, {});
+  require(!failure, failure ? failure->field + ": " + failure->message : "");
+  si::finalize_pipeline_storage(manifest);
+}
+
+bool same_allocations(const client::FrameLayout& lhs, const client::FrameLayout& rhs) {
+  return lhs.allocations.size() == rhs.allocations.size() &&
+         std::equal(lhs.allocations.begin(), lhs.allocations.end(), rhs.allocations.begin(),
+                    [](const auto& left, const auto& right) {
+                      return left.size_bytes == right.size_bytes && left.policy == right.policy &&
+                             left.required_device_access == right.required_device_access;
+                    });
+}
+
 // Each runner is configured through its typed context; legacy manifest/pool
 // properties must not leak from mixed model fragments onto the new factory.
 void require_runner_property_boundary(const std::string& pipeline) {
@@ -119,24 +137,25 @@ RUN_TEST(
       Model model(fixture.tar_path);
 
       // Exercise the cold route before another helper prepares the model. A
-      // copied pack must not independently replan MLA away from its pre/post arena.
+      // copied pack must retain the selected pre/MLA/post allocation group.
       const auto cold_nodes = internal::ModelAccess::build_public_route_nodes(model, {});
       pipeline_internal::sima::ManifestBuildDiagnostics cold_diagnostics;
       const auto cold_contracts = compile_node_contracts(cold_nodes, {}, &cold_diagnostics);
-      const auto cold_manifest =
+      auto cold_manifest =
           render_manifest_from_compiled_contracts(cold_contracts, {}, &cold_diagnostics);
       require(cold_manifest && cold_diagnostics.errors.empty() &&
                   cold_manifest->stages.size() == 3U,
               "cold public route must compile preproc, MLA and postprocess together");
-      const auto arena_bytes = cold_manifest->stages.front().frame_arena_size_bytes;
-      require(arena_bytes > 0U && cold_manifest->stages.front().frame_arena_role ==
-                                      pipeline_internal::sima::FrameArenaRole::Allocate,
-              "cold public route must allocate its admitted ingress arena");
+      finalize_storage(*cold_manifest);
+      const auto& owner = cold_manifest->stages.front().frame_layout;
+      require(owner && !owner->allocations.empty() &&
+                  owner->ownership == client::FrameOwnership::Allocate,
+              "cold public route must finalize its owned ingress group");
       for (std::size_t i = 1; i < cold_manifest->stages.size(); ++i) {
-        const auto& stage = cold_manifest->stages[i];
-        require(stage.frame_arena_size_bytes == arena_bytes &&
-                    stage.frame_arena_role == pipeline_internal::sima::FrameArenaRole::ReuseInput,
-                "cold public route must retain one placement authority across all stages");
+        const auto& layout = cold_manifest->stages[i].frame_layout;
+        require(layout && layout->ownership == client::FrameOwnership::ReuseInput &&
+                    same_allocations(*layout, *owner),
+                "cold public route must retain the finalized shared allocation group");
       }
 
       // Fused compilation must retain each independently compiled model plan,
@@ -158,7 +177,7 @@ RUN_TEST(
           live_nodes, {{std::make_shared<Input>(InputOptions{})}, live_nodes}, live_graph_options,
           live_ingress);
       require(fused.rendered_manifest && fused.manifest_diagnostics.errors.empty() &&
-                  fused.rendered_manifest->model_storage_plan,
+                  fused.rendered_manifest->model_storage_scopes,
               "fused compilation must preserve model storage ownership");
       auto& live_manifest = *fused.rendered_manifest;
       const auto live_preparation = pipeline_internal::sima::prepare_kernel_stage_recipes(
@@ -177,15 +196,14 @@ RUN_TEST(
                 "fused rendered stage identities must remain unique");
         if (!owner.native_kernel || !owner.native_kernel->frame_adapter_factory)
           continue;
-        require(i + 1 < live_manifest.stages.size() && owner.model_storage_planned &&
-                    owner.frame_layout &&
+        require(i + 1 < live_manifest.stages.size() && owner.frame_layout &&
                     owner.frame_layout->ownership == client::FrameOwnership::Allocate &&
                     owner.compile_node_index &&
                     model_node_indices.insert(*owner.compile_node_index).second,
                 "each fused model invocation must keep its own planned owner");
         const auto& mla = live_manifest.stages[i + 1];
         require(mla.payload_kind == pipeline_internal::sima::StagePayloadKind::ProcessMla &&
-                    mla.model_storage_planned && mla.frame_layout &&
+                    mla.frame_layout &&
                     mla.frame_layout->ownership == client::FrameOwnership::ReuseInput,
                 "fused MLA must reuse the preprocess-owned allocation group: owner=" +
                     owner.element_name + ", next=" + mla.element_name + ", ownership=" +
@@ -203,7 +221,7 @@ RUN_TEST(
                           mla_layout.allocations[allocation].required_device_access,
                   "fused producer and reuser must agree on allocations in index order");
         }
-        const auto& ifm = std::get<client::KnownArena>(mla_layout.inputs.front().source).span;
+        const auto& ifm = std::get<client::KnownFrameSpan>(mla_layout.inputs.front().source).span;
         const auto& ofm = mla_layout.outputs.front().span;
         for (const auto& span : {ifm, ofm}) {
           require(span.allocation_index < allocations.size() &&
@@ -256,8 +274,7 @@ RUN_TEST(
           custom_manifest->stages.begin(), custom_manifest->stages.end(), [](const auto& stage) {
             return stage.payload_kind == pipeline_internal::sima::StagePayloadKind::ProcessMla;
           });
-      require(custom_mla != custom_manifest->stages.end() && custom_mla->model_storage_planned &&
-                  custom_mla->frame_layout &&
+      require(custom_mla != custom_manifest->stages.end() && custom_mla->frame_layout &&
                   custom_mla->frame_layout->ownership ==
                       simaai::scheduler::client::FrameOwnership::Allocate &&
                   !custom_mla->physical_inputs.empty() &&
@@ -269,7 +286,7 @@ RUN_TEST(
               "custom named preproc must retain an imported IFM and fresh MLA output ownership");
 
       // Naming overrides create distinct graph vertices, not distinct model
-      // sources. Contract planning must preserve each invocation's own arena.
+      // sources. Contract planning must preserve each invocation's own allocation group.
       Model::RouteOptions first_route;
       first_route.name_suffix = "_first";
       Model::RouteOptions second_route;
@@ -285,17 +302,21 @@ RUN_TEST(
               "separate model routes must not share command selection: " +
                   (repeated_diagnostics.errors.empty() ? std::string{}
                                                        : repeated_diagnostics.errors.front()));
-      const auto repeated_manifest =
+      auto repeated_manifest =
           render_manifest_from_compiled_contracts(repeated_contracts, {}, &repeated_diagnostics);
       require(repeated_manifest && repeated_diagnostics.errors.empty() &&
                   repeated_manifest->stages.size() == 2U * cold_manifest->stages.size(),
               "repeated routes must preserve every stage of both invocations");
+      finalize_storage(*repeated_manifest);
       for (std::size_t i = 0; i < repeated_manifest->stages.size(); ++i) {
         const auto& stage = repeated_manifest->stages[i];
         const auto& original = cold_manifest->stages[i % cold_manifest->stages.size()];
-        require(stage.frame_arena_role == original.frame_arena_role &&
-                    stage.frame_arena_size_bytes == original.frame_arena_size_bytes,
-                "each invocation must retain its admitted arena ownership and placement");
+        require(
+            stage.frame_layout && original.frame_layout &&
+                stage.frame_layout != original.frame_layout &&
+                stage.frame_layout->ownership == original.frame_layout->ownership &&
+                same_allocations(*stage.frame_layout, *original.frame_layout),
+            "independent invocations must finalize separate layouts with the same requirements");
       }
 
       // Whole-region fragments also carry an invocation boundary when there
@@ -319,12 +340,13 @@ RUN_TEST(
         if (stage == internal::ModelStage::MlaOnly) {
           pipeline_internal::sima::finalize_pipeline_storage(*manifest);
           for (const auto& invocation : manifest->stages) {
-            require(invocation.frame_arena_role ==
-                            pipeline_internal::sima::FrameArenaRole::Allocate &&
+            require(invocation.frame_layout &&
+                        invocation.frame_layout->ownership == client::FrameOwnership::Allocate &&
                         !invocation.physical_inputs.empty() &&
                         invocation.physical_inputs.front().address_source ==
                             pipeline_internal::sima::PhysicalAddressSource::RuntimePhysicalBinding,
-                    "each inference-only invocation must import its IFM, not reuse a prior arena");
+                    "each inference-only invocation must import its IFM, not reuse a prior "
+                    "allocation group");
           }
         }
       }
@@ -337,16 +359,18 @@ RUN_TEST(
       }
       pipeline_internal::sima::ManifestBuildDiagnostics split_diagnostics;
       const auto split = compile_node_contracts(split_nodes, {}, &split_diagnostics);
-      const auto split_manifest =
-          render_manifest_from_compiled_contracts(split, {}, &split_diagnostics);
+      auto split_manifest = render_manifest_from_compiled_contracts(split, {}, &split_diagnostics);
       require(split_manifest && split_diagnostics.errors.empty() &&
                   split_manifest->stages.size() == cold_manifest->stages.size(),
               "split regions of one invocation must retain one complete route");
+      finalize_storage(*split_manifest);
       for (std::size_t i = 0; i < split_manifest->stages.size(); ++i) {
-        require(split_manifest->stages[i].frame_arena_role ==
-                        cold_manifest->stages[i].frame_arena_role &&
-                    split_manifest->stages[i].frame_arena_size_bytes == arena_bytes,
-                "split regions must preserve the full route's admitted placement");
+        const auto& split_layout = split_manifest->stages[i].frame_layout;
+        const auto& complete_layout = cold_manifest->stages[i].frame_layout;
+        require(split_layout && complete_layout &&
+                    split_layout->ownership == complete_layout->ownership &&
+                    same_allocations(*split_layout, *complete_layout),
+                "split regions must finalize the same ownership and allocation requirements");
       }
 
       Graph pre = model.preprocess();
@@ -407,7 +431,7 @@ RUN_TEST(
 
       // The public standalone post node carries the same immutable model
       // source as the inference fragment. Both must consume one contextual
-      // arena, rather than keeping the post node's original full-model offsets.
+      // output group, rather than keeping the post node's original full-model offsets.
       auto direct_nodes = internal::ModelAccess::build_public_inference_nodes(model);
       direct_nodes.push_back(std::make_shared<DetessDequant>(DetessDequantOptions(model)));
       ContractCompileInput compile_input;
@@ -430,17 +454,17 @@ RUN_TEST(
         if (stage.payload_kind == sima::StagePayloadKind::ProcessCvu)
           post_stage = &stage;
       }
-      require(mla_stage && post_stage &&
-                  mla_stage->frame_arena_role == sima::FrameArenaRole::Allocate &&
-                  post_stage->frame_arena_role == sima::FrameArenaRole::ReuseInput &&
-                  mla_stage->frame_arena_size_bytes == post_stage->frame_arena_size_bytes &&
+      require(mla_stage && post_stage && mla_stage->frame_layout && post_stage->frame_layout &&
+                  mla_stage->frame_layout->ownership == client::FrameOwnership::Allocate &&
+                  post_stage->frame_layout->ownership == client::FrameOwnership::ReuseInput &&
+                  same_allocations(*mla_stage->frame_layout, *post_stage->frame_layout) &&
                   !mla_stage->physical_inputs.empty() &&
                   mla_stage->physical_inputs.front().address_source ==
                       sima::PhysicalAddressSource::RuntimePhysicalBinding &&
                   !post_stage->physical_inputs.empty() &&
                   post_stage->physical_inputs.front().address_source ==
-                      sima::PhysicalAddressSource::FrameArenaSpan,
-              "standalone post must reuse the selected output arena, never the input-only IFM");
+                      sima::PhysicalAddressSource::FrameSpan,
+              "standalone post must reuse the selected output group, never the input-only IFM");
 
       // A duplicated typed continuation is not a new whole-region invocation.
       // Keep the exact-command guard rather than treating a collision as a fence.

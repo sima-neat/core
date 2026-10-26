@@ -82,7 +82,6 @@ simaai::gst::TensorBufferPublicationOwner compact_geometry_publication() {
   return owner;
 }
 void terminal_host_placement_proof() {
-  namespace domain = integration::static_contract;
   namespace specs = integration::specbuilders;
   const std::array inputs{rt::TensorSpec{{2}, rt::DType::Float32}};
   const std::array outputs{rt::TensorSpec{{2}, rt::DType::BFloat16}};
@@ -94,8 +93,6 @@ void terminal_host_placement_proof() {
   stage.element_name = stage.logical_stage_id = "unrelated-cast";
   stage.plugin_kind = "kernel";
   stage.native_kernel = recipe;
-  stage.core_fresh_default_arena = true;
-  stage.frame_arena_escape_policy = domain::ArenaEscapePolicy::CpuMappablePublic;
   stage.logical_inputs.push_back(
       specs::build_logical_input_static_spec(0, 0, 0, {2}, "FP32", "C", "input", "input", "input"));
   stage.input_bindings.push_back(specs::build_input_binding_static_spec(0, 0, "input", "input"));
@@ -143,7 +140,6 @@ void terminal_host_placement_proof() {
     return layout->allocations.front().policy;
   };
   const auto fresh = render(compiled);
-  require(fresh.core_fresh_default_arena, "fresh Cast origin was lost");
   Endpoint direct;
   direct.terminal_stage_key = fresh.element_name;
   direct.terminal_stage_key_required = true;
@@ -196,41 +192,21 @@ void terminal_host_placement_proof() {
   require(policy(place(fresh)) == gs::AllocationPolicy::RequireDms,
           "ordinary A65 output implicitly selected HostCpu");
   require(!integration::finalize_stage_publications(&host), "host final publication failed");
-  std::string error;
-  const auto roundtrip =
-      integration::parse_manifest_json(integration::serialize_manifest_json(host), &error);
-  require_fixture(roundtrip && roundtrip->stages.front().frame_arena_allocations.size() == 1 &&
-                      roundtrip->stages.front().frame_arena_allocations.front().placement.domain ==
-                          domain::ArenaStorageDomain::HostCpu &&
-                      roundtrip->stages.front().frame_arena_escape_policy ==
-                          domain::ArenaEscapePolicy::CpuOnlyPublic,
-                  "final Host allocation JSON roundtrip", error);
-  const auto authored = [&](auto set) {
+  for (const auto requested : {gs::AllocationPolicy::RequireCma, gs::AllocationPolicy::RequireDms,
+                               gs::AllocationPolicy::PreferDmsThenCma}) {
     auto node = compiled;
-    set(node.kernel->runtime_contract);
+    node.kernel->runtime_contract.allocation_policy = requested;
     const auto rendered = render(node);
-    require(!rendered.core_fresh_default_arena &&
-                policy(place(rendered, &direct)) != gs::AllocationPolicy::RequireHostCpu,
-            "authored placement acquired fresh HostCpu authority");
-  };
-  authored([](auto& r) { r.frame_arena_storage_domain = domain::ArenaStorageDomain::Cma; });
-  authored([](auto& r) { r.frame_arena_storage_domain = domain::ArenaStorageDomain::Dms; });
-  authored([](auto& r) { r.frame_arena_required_device_access = 2U; });
-  authored(
-      [](auto& r) { r.frame_arena_escape_policy = domain::ArenaEscapePolicy::CpuMappablePublic; });
-  authored([](auto& r) {
-    r.frame_arena_allocation_policy = domain::ArenaAllocationPolicy::PreferDmsThenCma;
-  });
+    require(rendered.allocation_policy == requested &&
+                policy(place(rendered, &direct)) == requested,
+            "explicit allocation policy must survive rendering and HostCpu selection");
+  }
   const auto ineligible = [&](auto change) {
     auto value = fresh;
     change(value);
     require(policy(place(value, &direct)) != gs::AllocationPolicy::RequireHostCpu,
             "ineligible native carrier acquired HostCpu authority");
   };
-  ineligible([](auto& v) { v.core_fresh_default_arena = false; });
-  ineligible([](auto& v) {
-    v.frame_arena_allocation_policy = domain::ArenaAllocationPolicy::PreferDmsThenCma;
-  });
   ineligible([](auto& v) { v.physical_outputs[0].memory_flags = 1; });
   ineligible([](auto& v) { v.physical_outputs[0].source_physical_index = 0; });
   ineligible([](auto& v) { v.physical_outputs[0].required_alignment_bytes = 128; });
@@ -243,7 +219,6 @@ void terminal_host_placement_proof() {
   consumer.element_name = consumer.logical_stage_id = "later-consumer";
   // A consumer only needs the original result's BF16 contract for this cold edge proof.
   consumer.native_kernel.reset();
-  consumer.frame_arena_required_device_access = gs::kAccessCpuA65;
   consumer.logical_inputs[0].dtype = "BF16";
   consumer.physical_inputs[0].size_bytes = 4;
   consumer.input_bindings[0].src_stage_id = fresh.logical_stage_id;
@@ -316,6 +291,17 @@ void automatic_execution_capacity() {
   session_build_initialize_kernel_runner_budget(&defaults, nullptr);
   require(defaults.kernel_runner_capacity == 4 && defaults.kernel_runner_output_pool_capacity == 5,
           "missing graph options must retain the automatic execution window");
+  session_build_clamp_sync_kernel_runner_capacity(defaults);
+  require(defaults.kernel_runner_capacity == 1 && defaults.kernel_runner_output_pool_capacity == 2,
+          "default sync builds need one execution slot and one retained output");
+  GraphOptions explicit_buffers;
+  explicit_buffers.processmla.output_pool_buffers = 8;
+  BuildResult authored;
+  authored.pipeline_string = "neatprocessmla";
+  session_build_initialize_kernel_runner_budget(&authored, &explicit_buffers);
+  session_build_clamp_sync_kernel_runner_capacity(authored);
+  require(authored.kernel_runner_output_pool_capacity == 9,
+          "sync clamp must preserve explicitly requested downstream buffering");
 }
 
 void authored_stage_budget() {
@@ -437,6 +423,7 @@ void authored_preproc_contract_policy() {
   BuildResult build;
   build.kernel_runner_capacity = 1;
   build.kernel_runner_output_pool_capacity = 20;
+  build.kernel_runner_output_pool_minimum = 20;
   build.rendered_manifest = manifest;
   build.compiled_contracts = std::make_shared<CompiledPipelineContracts>(contracts);
   build.pipeline_string = "identity name=producer ! appsink name=mysink";
@@ -570,13 +557,7 @@ void native_stage_admission_transaction() {
     integration::StageStaticSpec stage;
     stage.element_name = stage.logical_stage_id = name;
     stage.plugin_kind = "kernel";
-    stage.frame_arena_size_bytes = 4096;
-    stage.frame_arena_role = integration::FrameArenaRole::Allocate;
-    stage.frame_arena_storage_domain = integration::static_contract::ArenaStorageDomain::Cma;
-    stage.frame_arena_provenance =
-        integration::static_contract::ArenaAllocationProvenance::CoreAllocated;
-    stage.frame_arena_required_device_access =
-        static_cast<std::uint32_t>(integration::static_contract::ArenaDeviceAccess::CpuA65);
+    stage.allocation_policy = gs::AllocationPolicy::RequireCma;
     stage.logical_inputs.push_back(specs::build_logical_input_static_spec(
         0, 0, 0, {2}, "FP32", "C", "input", "input", "input"));
     stage.input_bindings.push_back(specs::build_input_binding_static_spec(0, 0, "input", "input"));
@@ -598,7 +579,7 @@ void native_stage_admission_transaction() {
     const auto output_requirement = inspection.output_requirements().front();
     // Core authors storage placement, but Kernels owns the executable's exact
     // extent/alignment contract. A generic physical spec's zero alignment is
-    // not a placed arena output and must not make this transaction fail early.
+    // not a checked output span and must not make this transaction fail early.
     stage.physical_inputs.push_back(specs::build_physical_buffer_static_spec(
         0, 0, input_requirement.storage_bytes, DeviceKind::Cpu, "input", -1, 0,
         input_requirement.alignment_bytes));

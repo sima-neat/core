@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://sima.ai/schemas/neat/execution_plan/v1.json",
   "title": "SiMa NEAT Execution Plan",
-  "description": "What one Model build executes: its graph nodes in pipeline order, where each node runs, and the tensors on the edges between them. Emitted by Model.execution_plan().",
+  "description": "What one Model build executes: its graph nodes in pipeline order, where each node runs, and the tensors on the edges between them. Emitted by Model.execution_plan(). Version 1 permits additive memory.type values; consumers must allow unknown memory types.",
   "type": "object",
   "required": ["schema", "schema_version", "model", "nodes", "edges"],
   "additionalProperties": false,
@@ -22,7 +22,7 @@
           "required": ["per_frame_bytes", "type"],
           "additionalProperties": false,
           "properties": {
-            "per_frame_bytes": {"type": "integer", "minimum": 1},
+            "per_frame_bytes": {"type": "integer", "minimum": 1, "description": "Sum of all owned allocation capacities for one frame, excluding pool depth and imported backing."},
             "type": {"enum": ["CMA", "DMS", "HostCpu", "Mixed"]}
           }
         }

@@ -53,9 +53,6 @@ void actual_preproc(bool compact = false, bool full = false, bool preflight = fa
   namespace ps = simaai::neat::pipeline_internal::sima;
   ps::StageStaticSpec authored;
   authored.element_name = authored.logical_stage_id = "preproc-retention";
-  authored.frame_arena_role = ps::FrameArenaRole::Allocate;
-  authored.frame_arena_size_bytes = 4096;
-  authored.frame_arena_provenance = ps::static_contract::ArenaAllocationProvenance::CoreAllocated;
   authored.payload_kind = ps::StagePayloadKind::ProcessCvu;
   auto& cfg = authored.processcvu;
   cfg.canonical_contract = true;

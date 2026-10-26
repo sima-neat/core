@@ -16,11 +16,6 @@ si::StageStaticSpec stage(std::string name, client::Hardware target) {
   result.element_name = name;
   result.payload_kind = si::StagePayloadKind::ProcessCvu;
   result.processcvu.resolved_exec_backend = target == client::Hardware::EV74 ? "EV74" : "A65";
-  result.frame_arena_required_device_access =
-      target == client::Hardware::EV74 ? client::kAccessEv74 : client::kAccessCpuA65;
-  result.frame_arena_role = si::FrameArenaRole::Allocate;
-  result.frame_arena_size_bytes = 4096;
-  result.frame_arena_provenance = sc::ArenaAllocationProvenance::CoreAllocated;
   si::PhysicalBufferStaticSpec physical;
   physical.physical_index = 0;
   physical.source_physical_index = 0;
@@ -42,7 +37,7 @@ void connect(si::StageStaticSpec& consumer, const std::string& producer) {
   input.size_bytes = 64;
   consumer.logical_inputs = {input};
   auto physical = consumer.physical_outputs.front();
-  physical.address_source = si::PhysicalAddressSource::FrameArenaSpan;
+  physical.address_source = si::PhysicalAddressSource::FrameSpan;
   consumer.physical_inputs = {physical};
   si::InputBindingStaticSpec binding;
   binding.sink_pad_index = 0;
@@ -66,8 +61,8 @@ void check_independent_carriers(bool prefer_dms) {
 
   auto producer = stage("producer", client::Hardware::A65);
   producer.native_kernel = std::move(recipe);
-  producer.frame_arena_allocation_policy = prefer_dms ? sc::ArenaAllocationPolicy::PreferDmsThenCma
-                                                      : sc::ArenaAllocationPolicy::RequiredDomain;
+  if (prefer_dms)
+    producer.allocation_policy = client::AllocationPolicy::PreferDmsThenCma;
   producer.physical_outputs.front().size_bytes = 32;
   producer.logical_outputs.front().size_bytes = 32;
   auto second = producer.physical_outputs.front();
@@ -104,7 +99,8 @@ void check_independent_carriers(bool prefer_dms) {
   const auto& cpu_output = layout.outputs.at(1).span;
   const auto& ev_allocation = layout.allocations.at(ev_output.allocation_index);
   const auto& cpu_allocation = layout.allocations.at(cpu_output.allocation_index);
-  require(ev_output.allocation_index != cpu_output.allocation_index &&
+  require(ev_output.allocation_index != cpu_output.allocation_index && ev_output.byte_offset == 0 &&
+              cpu_output.byte_offset == 0 &&
               ev_allocation.policy == client::AllocationPolicy::RequireCma &&
               (ev_allocation.required_device_access & client::kAccessEv74) &&
               cpu_allocation.policy == (prefer_dms ? client::AllocationPolicy::PreferDmsThenCma
@@ -131,8 +127,7 @@ void check_memory_placement() {
                     stage("ev", client::Hardware::EV74)};
   connect(aliases.stages[1], "producer");
   aliases.stages[1].payload_kind = si::StagePayloadKind::None;
-  aliases.stages[1].frame_arena_required_device_access = 0;
-  aliases.stages[1].frame_arena_role = si::FrameArenaRole::ReuseInput;
+  aliases.stages[1].reuse_input_pad = 0;
   connect(aliases.stages[2], "view");
   si::finalize_pipeline_storage(aliases);
   require(aliases.stages[0].frame_layout->allocations.front().policy ==
@@ -143,18 +138,26 @@ void check_memory_placement() {
                   simaai::scheduler::client::AllocationPolicy::RequireCma,
           "views must propagate the EV74 requirement to the original allocation");
 
-  fanout.stages[0].frame_arena_provenance = sc::ArenaAllocationProvenance::ExternalAdopted;
-  fanout.stages[0].frame_arena_storage_domain = sc::ArenaStorageDomain::Unknown;
-  fanout.stages[0].frame_arena_role = si::FrameArenaRole::ReuseInput;
   connect(fanout.stages[0], "");
   auto& imported = fanout.stages[0].input_bindings.front();
   imported.src_logical_output_index = imported.src_physical_output_index = -1;
   imported.src_physical_size_bytes = 0;
+  auto pinned = std::make_shared<client::FrameLayout>();
+  pinned->ownership = client::FrameOwnership::ReuseInput;
+  pinned->allocations = {{256, client::kAccessCpuA65, client::AllocationPolicy::PreserveImported},
+                         {256, client::kAccessCpuA65, client::AllocationPolicy::PreserveImported}};
+  pinned->outputs = {{0, {1, 64, 64}}};
+  pinned->inputs = {{client::KnownFrameSpan{0, {1, 64, 64}}, 0}};
+  fanout.stages[0].frame_layout = pinned;
   si::finalize_pipeline_storage(fanout);
-  require(fanout.stages[0].frame_arena_storage_domain == sc::ArenaStorageDomain::Unknown &&
-              fanout.stages[0].frame_layout->allocations.front().policy ==
-                  simaai::scheduler::client::AllocationPolicy::PreserveImported,
-          "imported DMA-BUF provenance must not be relabelled or relocated");
+  const auto& adopted = *fanout.stages[0].frame_layout;
+  require(adopted.ownership == client::FrameOwnership::ReuseInput &&
+              adopted.allocations.size() == 2 &&
+              adopted.allocations[1].policy == client::AllocationPolicy::PreserveImported &&
+              adopted.outputs.front().span.allocation_index == 1 &&
+              adopted.outputs.front().span.byte_offset == 64 &&
+              adopted.outputs.front().span.size_bytes == 64,
+          "imported allocation identity and view origin must not be relabelled or relocated");
   si::SimaPluginStaticManifest public_input;
   public_input.stages = {stage("first", client::Hardware::A65),
                          stage("later", client::Hardware::A65)};

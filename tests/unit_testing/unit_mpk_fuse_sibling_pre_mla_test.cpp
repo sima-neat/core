@@ -26,7 +26,7 @@ RUN_TEST(
                     fixture.semantic.ops()[member.semantic_chain[1]].kind == sc::OpKind::Tessellate,
                 "every member must retain the connected Quantize + Tessellate fusion");
         const auto intermediate = fixture.semantic.ops()[member.semantic_chain[0]].outputs.front();
-        require(!fixture.arena.region(intermediate),
+        require(!fixture.materializes(intermediate),
                 "fused scalar intermediate must not allocate storage");
         const auto& input = compiled.runtime_contract.physical_inputs.at(lane);
         require(input.source_physical_index == static_cast<int>(lane) &&

@@ -1857,7 +1857,7 @@ static bool fragment_segment_uses_factory(std::string_view segment, std::string_
 }
 
 static void set_fragment_segment_property(std::string* segment, std::string_view property,
-                                          std::string_view value, bool replace_existing = true) {
+                                          std::string_view value) {
   if (!segment) {
     return;
   }
@@ -1870,16 +1870,14 @@ static void set_fragment_segment_property(std::string* segment, std::string_view
     if (assignment.key != property) {
       continue;
     }
-    if (replace_existing) {
-      const gst::launch::AssignmentValueReplacement replacement{
-          assignment.value_span, std::string(value), assignment.quote};
-      auto rewritten =
-          gst::launch::rewrite_assignment_values(*segment, parsed, std::span(&replacement, 1U));
-      if (!rewritten.complete) {
-        throw std::invalid_argument("cannot replace a launch property value");
-      }
-      *segment = std::move(rewritten.text);
+    const gst::launch::AssignmentValueReplacement replacement{assignment.value_span,
+                                                              std::string(value), assignment.quote};
+    auto rewritten =
+        gst::launch::rewrite_assignment_values(*segment, parsed, std::span(&replacement, 1U));
+    if (!rewritten.complete) {
+      throw std::invalid_argument("cannot replace a launch property value");
     }
+    *segment = std::move(rewritten.text);
     return;
   }
 
@@ -1907,35 +1905,16 @@ static std::vector<gst::launch::ByteSpan> fragment_segments(std::string_view fra
   return segments;
 }
 
-static std::string
-set_property_for_factory_segments(std::string fragment, std::string_view factory,
-                                  std::string_view property, std::string_view value,
-                                  bool replace_existing = true,
-                                  std::span<const std::string_view> default_names = {}) {
+static std::string set_property_for_factory_segments(std::string fragment, std::string_view factory,
+                                                     std::string_view property,
+                                                     std::string_view value) {
   // Reverse edits preserve the shared lexer's byte spans. Caps, URLs and
   // assignment values stay opaque. This is cold graph preparation only.
   const auto segments = fragment_segments(fragment);
   for (auto it = segments.rbegin(); it != segments.rend(); ++it) {
     std::string segment = fragment.substr(it->begin, it->end - it->begin);
     if (fragment_segment_uses_factory(segment, factory)) {
-      // A framework-authored default is not a customer override. Use the
-      // retained origin, never an element-name prefix, to identify that case.
-      bool replace_default = false;
-      if (!default_names.empty()) {
-        const auto parsed = gst::launch::analyze(segment);
-        bool owned = false;
-        bool zero_default = false;
-        for (const auto& assignment : parsed.assignments) {
-          if (assignment.key == "name") {
-            owned = std::find(default_names.begin(), default_names.end(),
-                              assignment.canonical_value) != default_names.end();
-          } else if (assignment.key == property) {
-            zero_default = assignment.canonical_value == "0";
-          }
-        }
-        replace_default = owned && zero_default;
-      }
-      set_fragment_segment_property(&segment, property, value, replace_existing || replace_default);
+      set_fragment_segment_property(&segment, property, value);
       fragment.replace(it->begin, it->end - it->begin, segment);
     }
   }
@@ -2079,31 +2058,6 @@ std::string session_build_apply_fast_path_options_to_fragment(std::string fragme
   return fragment;
 }
 
-std::string session_build_apply_run_preset_to_pipeline(std::string pipeline, const RunOptions& opt,
-                                                       std::span<const LaunchNameOrigin> origins) {
-  if (opt.preset != RunPreset::Realtime) {
-    return pipeline;
-  }
-  // KernelRunner is a bounded-slot GstElement, not a GstAggregator: live
-  // upstream latency cannot grow its accepted-job capacity. Only an existing
-  // queue may hold unsent buffers. Bound its default media-time depth without
-  // creating a second queue or changing its count bound/leak/reliability policy.
-  // Customer time limits (including QueueOptions' explicit count-only zero)
-  // remain authoritative. Framework async queues render a default zero before
-  // RunOptions are known; their retained origins allow this cold policy to
-  // distinguish defaults without parsing name conventions or changing nodes.
-  // This is a queue-size policy, not a deadline or DMA cancellation authority.
-  std::vector<std::string_view> generated_queues;
-  for (const auto& origin : origins) {
-    if (origin.kind == LaunchNameOrigin::Kind::Queue) {
-      generated_queues.push_back(origin.name);
-    }
-  }
-  constexpr std::uint64_t kRealtimeMaxQueueTimeNs = 20'000'000;
-  return set_property_for_factory_segments(std::move(pipeline), "queue", "max-size-time",
-                                           std::to_string(kRealtimeMaxQueueTimeNs),
-                                           /*replace_existing=*/false, generated_queues);
-}
 static std::uint64_t checked_mul_u64(std::uint64_t a, std::uint64_t b);
 
 TensorCompatDims sample_shape_limits_dims(const SampleSpec& spec) {
@@ -2875,6 +2829,7 @@ std::string clamp_detess_num_buffers(std::string pipeline, int num_buffers_overr
 
 void session_build_clamp_sync_kernel_runner_capacity(BuildResult& build) {
   build.kernel_runner_capacity = 1U;
+  build.kernel_runner_output_pool_capacity = build.kernel_runner_output_pool_minimum;
   for (auto* manifest : {&build.rendered_manifest, &build.prepared_manifest}) {
     if (!*manifest)
       continue;
@@ -3109,15 +3064,16 @@ void session_build_initialize_kernel_runner_budget(BuildResult* build,
   build->kernel_runner_a65_workers = static_cast<std::size_t>(workers);
   build->kernel_runner_capacity =
       session_build_kernel_runner_capacity(options ? options->async_queue_depth : 0);
-  build->kernel_runner_output_pool_capacity = build->kernel_runner_capacity + 1U;
+  build->kernel_runner_output_pool_minimum = 2U;
   if (options && options->processmla.output_pool_buffers > 0 &&
       build->pipeline_string.find("neatprocessmla") != std::string::npos) {
     // A reused arena must cover the explicitly requested downstream MLA window,
     // plus a published carrier. Do not multiply queues by logical tensor heads.
-    build->kernel_runner_output_pool_capacity =
-        std::max(build->kernel_runner_output_pool_capacity,
-                 static_cast<std::size_t>(options->processmla.output_pool_buffers) + 1U);
+    build->kernel_runner_output_pool_minimum =
+        static_cast<std::size_t>(options->processmla.output_pool_buffers) + 1U;
   }
+  build->kernel_runner_output_pool_capacity =
+      std::max(build->kernel_runner_capacity + 1U, build->kernel_runner_output_pool_minimum);
 }
 
 BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,

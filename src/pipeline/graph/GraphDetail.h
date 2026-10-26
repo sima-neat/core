@@ -379,6 +379,8 @@ struct BuildResult {
   std::size_t kernel_runner_capacity = 1;
   std::size_t kernel_runner_a65_workers = 2;
   std::size_t kernel_runner_output_pool_capacity = 0;
+  // Explicit downstream buffering survives a synchronous execution clamp.
+  std::size_t kernel_runner_output_pool_minimum = 2;
   std::string appsink_name; // mysink or tap_* (after session name transform)
   int tap_node_index = -1;
   NameTransform name_transform{};

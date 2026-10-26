@@ -142,14 +142,6 @@ void require_image_query(const ps::SimaPluginStaticManifest& manifest) {
               "raw image planes became a tensor override or upstream fallback");
     }
   }
-  std::string error;
-  const auto roundtrip = ps::parse_manifest_json(ps::serialize_manifest_json(manifest), &error);
-  require(roundtrip && error.empty() && roundtrip->stages.back().image_publication &&
-              ps::to_json(roundtrip->stages.back())["image_publication"] ==
-                  ps::to_json(stage)["image_publication"],
-          "metadata roundtrip lost relative image publication fields");
-  require(!terminal::build_output_override_from_manifest(*roundtrip, {}, &error) && error.empty(),
-          "metadata roundtrip restored a tensor-plane override");
 }
 
 void require_tensor_query(const ps::SimaPluginStaticManifest& manifest) {
@@ -220,8 +212,7 @@ void render_images() {
             ? 3U
             : (format == ImageFormat::NV12 || format == ImageFormat::NV16 ? 2U : 1U);
     require(manifest->stages[0].logical_outputs.size() == expected_planes &&
-                manifest->stages[0].physical_outputs.size() == 1 &&
-                !manifest->stages[0].frame_layout,
+                manifest->stages[0].physical_outputs.size() == 1,
             "render lost one-image plane ownership");
     // GraphBuildInput queries public output semantics immediately after render,
     // before GraphBuildPipeline prepares recipes. Test that actual phase order.

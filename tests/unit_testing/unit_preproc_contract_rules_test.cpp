@@ -370,7 +370,6 @@ RUN_TEST(
                 "model must retain its admitted preproc contract");
         const auto admitted = opt.compiled_contract;
         const auto original_source = admitted->runtime_contract.physical_inputs.front().size_bytes;
-        const auto original_arena = admitted->runtime_contract.frame_arena_size_bytes;
         const auto original_output = admitted->payload.output_tensors.front().descriptor();
         const auto original_logical = admitted->runtime_contract.logical_outputs.front();
         const auto slot_bytes = admitted->runtime_contract.physical_outputs.front().size_bytes;
@@ -385,8 +384,8 @@ RUN_TEST(
         gst_init_once();
         for (const int capacity : {1, 2, 3}) {
           auto inherited = *admitted;
-          inherited.runtime_contract.frame_arena_allocation_policy =
-              pipeline_internal::sima::static_contract::ArenaAllocationPolicy::PreferDmsThenCma;
+          inherited.runtime_contract.allocation_policy =
+              simaai::scheduler::client::AllocationPolicy::PreferDmsThenCma;
           auto invocation = pipeline_internal::sima::specialize_preproc_roi_contract(
               inherited, 2, 48, 64, 3, capacity);
           require(
@@ -416,11 +415,8 @@ RUN_TEST(
                       invocation.payload.q_zp == admitted->payload.q_zp,
                   "ROI carrier batching must preserve exact slot span, identities and qparams");
           require(!invocation.physical_command_role && !invocation.payload.dmabuf_plan_contract &&
-                      invocation.runtime_contract.frame_arena_size_bytes == 0U &&
-                      invocation.runtime_contract.frame_arena_allocation_policy ==
-                          pipeline_internal::sima::static_contract::ArenaAllocationPolicy::
-                              RequiredDomain,
-                  "ROI invocation must discard only stale model arena placement facts");
+                      !invocation.runtime_contract.allocation_policy,
+                  "ROI invocation must obtain its own storage after executor resolution");
           auto roi_opt = opt;
           roi_opt.batch_size = capacity;
           roi_opt.compiled_contract =
@@ -453,7 +449,6 @@ RUN_TEST(
         require(admitted == opt.compiled_contract &&
                     admitted->runtime_contract.physical_inputs.front().size_bytes ==
                         original_source &&
-                    admitted->runtime_contract.frame_arena_size_bytes == original_arena &&
                     admitted->runtime_contract.logical_outputs.front().shape ==
                         original_logical.shape &&
                     std::memcmp(&admitted->payload.output_tensors.front().descriptor(),
@@ -569,13 +564,6 @@ RUN_TEST(
                 "rendered Preproc static contract must expose the full dynamic input capacity");
         require(rendered_stage.processcvu.dmabuf_plan_contract ==
                         processcvu.payload.dmabuf_plan_contract &&
-                    !rendered_stage.frame_layout &&
-                    rendered_stage.frame_arena_size_bytes ==
-                        processcvu.runtime_contract.frame_arena_size_bytes &&
-                    rendered_stage.frame_arena_role ==
-                        processcvu.runtime_contract.frame_arena_role &&
-                    rendered_stage.frame_arena_required_device_access ==
-                        processcvu.runtime_contract.frame_arena_required_device_access &&
                     rendered_stage.processcvu.graph_name == "preproc" &&
                     rendered_stage.input_bindings.size() == 1U &&
                     rendered_stage.physical_inputs.size() == 1U &&

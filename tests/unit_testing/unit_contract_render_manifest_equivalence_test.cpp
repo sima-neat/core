@@ -1,6 +1,10 @@
 #include <simaai/scheduler/client/stage.h>
 #include "builder/NodeContractProvider.h"
 #include "nodes/sima/Preproc.h"
+#include "nodes/sima/Cast.h"
+#include "pipeline/Tensor.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
 #include "pipeline/internal/contract/CompiledNodeContract.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/sima/ContractRender.h"
@@ -13,6 +17,32 @@
 #include <vector>
 
 namespace {
+
+using namespace simaai::neat;
+
+struct ContractNode final : Node, NodeContractProvider {
+  CompiledNodeContract contract;
+  std::string kind() const override {
+    return contract.node_kind;
+  }
+  std::string backend_fragment(int) const override {
+    return {};
+  }
+  std::vector<std::string> element_names(int) const override {
+    return {"nested_stages"};
+  }
+  NodeCapsBehavior caps_behavior() const override {
+    return NodeCapsBehavior::Static;
+  }
+  NodeContractDefinition contract_definition() const override {
+    return {};
+  }
+  bool compile_node_contract(const ContractCompileInput&, CompiledNodeContract* out,
+                             std::string*) const override {
+    *out = contract;
+    return true;
+  }
+};
 
 simaai::neat::PreprocOptions make_render_preproc_options() {
   simaai::neat::PreprocOptions opt;
@@ -247,7 +277,7 @@ void verify_runtime_output_order_rendering() {
           "manual multi-output runtime contract should default logical shape for output 1");
 }
 
-void verify_projected_cast_mla_boundary_preserves_storage() {
+void verify_cast_mla_boundary_preserves_carrier_requirements() {
   using namespace simaai::neat;
   using namespace simaai::neat::pipeline_internal::sima;
   namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
@@ -265,8 +295,6 @@ void verify_projected_cast_mla_boundary_preserves_storage() {
   cast.payload.graph_id = 221;
   cast.payload.dmabuf_plan_contract = true;
   cast.physical_command_role = sc::PhysicalCommandRole::Ingress;
-  cast.runtime_contract.frame_arena_size_bytes = 16384U;
-  cast.runtime_contract.frame_arena_role = FrameArenaRole::Allocate;
   cast.runtime_contract.consumer_keeps_distinct_physical_inputs = true;
 
   CompiledNodeContract mla_stage;
@@ -279,8 +307,6 @@ void verify_projected_cast_mla_boundary_preserves_storage() {
   auto& mla = *mla_stage.processmla;
   mla.payload.dmabuf_plan_contract = true;
   mla.runtime_contract.consumer_keeps_distinct_physical_inputs = true;
-  mla.runtime_contract.frame_arena_size_bytes = 16384U;
-  mla.runtime_contract.frame_arena_role = FrameArenaRole::ReuseInput;
 
   const std::array<std::uint64_t, 2> sizes{60U, 120U};
   for (int index = 0; index < 2; ++index) {
@@ -294,7 +320,7 @@ void verify_projected_cast_mla_boundary_preserves_storage() {
     physical.required_alignment_bytes = 128U << index;
     physical.memory_flags = 0x10U << index;
     physical.device_kind = DeviceKind::Evxx;
-    physical.address_source = PhysicalAddressSource::FrameArenaSpan;
+    physical.address_source = PhysicalAddressSource::FrameSpan;
     physical.segment_name = name;
     cast.runtime_contract.physical_outputs.push_back(physical);
     mla.runtime_contract.physical_inputs.push_back(physical);
@@ -337,7 +363,34 @@ void verify_projected_cast_mla_boundary_preserves_storage() {
     input.source_segment_name = name;
     input.required = true;
     mla.runtime_contract.input_bindings.push_back(input);
+    LogicalInputStaticSpec logical_input;
+    logical_input.logical_index = logical_input.backend_input_index = index;
+    logical_input.physical_index = index;
+    logical_input.shape = logical.shape;
+    logical_input.dtype = logical.dtype;
+    logical_input.layout = logical.layout;
+    logical_input.size_bytes = logical.size_bytes;
+    logical_input.logical_name = logical_input.backend_name = logical_input.segment_name = name;
+    mla.runtime_contract.logical_inputs.push_back(std::move(logical_input));
   }
+  PhysicalBufferStaticSpec mla_output;
+  mla_output.physical_index = mla_output.allocator_index = 0;
+  mla_output.size_bytes = 4;
+  mla_output.required_alignment_bytes = 4096;
+  mla_output.segment_name = "mla_output";
+  mla.runtime_contract.physical_outputs.push_back(mla_output);
+  mla.runtime_contract.elf_ofm_symbol_names.push_back("ofm_0");
+  LogicalTensorStaticSpec mla_logical_output;
+  mla_logical_output.logical_index = mla_logical_output.backend_output_index =
+      mla_logical_output.physical_index = mla_logical_output.output_slot =
+          mla_logical_output.tensor_index = 0;
+  mla_logical_output.size_bytes = 4;
+  mla_logical_output.shape = {1};
+  mla_logical_output.dtype = "FP32";
+  mla_logical_output.logical_name = mla_logical_output.backend_name =
+      mla_logical_output.segment_name = "mla_output";
+  mla.runtime_contract.logical_outputs.push_back(mla_logical_output);
+  mla.runtime_contract.output_order.push_back({0, 0, 0, "mla_output", "mla_output"});
   cast.exposed_view.primary_output_name = "cast_0";
   const auto expected_outputs = cast.runtime_contract.physical_outputs;
   CompiledPipelineContracts compiled;
@@ -358,11 +411,6 @@ void verify_projected_cast_mla_boundary_preserves_storage() {
               consumer.mla_program->inputs[0].required_alignment_bytes == 128U &&
               consumer.mla_program->inputs[1].required_alignment_bytes == 256U,
           "rendering must retain ordered MLA input symbols and exact port alignment");
-  require(producer.frame_arena_role == FrameArenaRole::Allocate &&
-              consumer.frame_arena_role == FrameArenaRole::ReuseInput &&
-              producer.frame_arena_size_bytes == 16384U &&
-              consumer.frame_arena_size_bytes == 16384U,
-          "rendering must preserve projected arena ownership");
   require(producer.physical_outputs.size() == 2U && producer.logical_outputs.size() == 2U &&
               producer.output_order.size() == 2U && consumer.input_bindings.size() == 2U &&
               consumer.physical_inputs.size() == 2U,
@@ -397,6 +445,63 @@ void verify_projected_cast_mla_boundary_preserves_storage() {
                 input.cm_input_name == expected.segment_name &&
                 input.source_segment_name == expected.segment_name,
             "rendering must retain each cast output and MLA inbound binding identity");
+  }
+
+  auto consumer_node = std::make_shared<ContractNode>();
+  consumer_node->contract = compiled.stages.back();
+  auto& consumer_runtime = consumer_node->contract.processmla->runtime_contract;
+  consumer_runtime.reuse_input_pad = 0;
+  for (auto& physical : consumer_runtime.physical_inputs) {
+    physical.source_byte_offset = 0;
+    physical.address_source = PhysicalAddressSource::DirectCarrierSpan;
+  }
+  TensorList tensors;
+  const auto backing = make_cpu_owned_storage(360);
+  for (int index = 0; index < 2; ++index) {
+    Tensor tensor;
+    tensor.dtype = TensorDType::Float32;
+    tensor.layout = TensorLayout::HWC;
+    tensor.shape = {1, 3, 5, 2 * (index + 1)};
+    tensor.storage = backing;
+    tensor.route.logical_index = tensor.route.route_slot = index;
+    tensor.route.physical_index = tensor.route.memory_index = 0;
+    tensor.route.physical_byte_offset = index ? 120 : 0;
+    tensor.route.name = tensor.route.backend_name = tensor.route.segment_name =
+        "cast_" + std::to_string(index);
+    tensors.push_back(std::move(tensor));
+  }
+  ContractCompileInput input;
+  input.ingress.ingress_sample = sample_from_tensors(tensors);
+  input.processcvu_requested_run_target = "A65";
+  const auto public_cast = nodes::Cast(CastOptions{.direction = CastDirection::Fp32ToBf16});
+  const auto standalone = compile_node_contracts({public_cast}, input, &diagnostics);
+  require(diagnostics.errors.empty() && standalone.stages.front().transport &&
+              standalone.stages.front().transport->runtime_contract.physical_outputs.size() == 1,
+          "public Cast fixture must begin with its supported packed carrier");
+  const auto routed = compile_node_contracts({public_cast, consumer_node}, input, &diagnostics);
+  require(diagnostics.errors.empty() && routed.stages.front().transport &&
+              routed.stages.front().transport->runtime_contract.physical_outputs.size() == 2,
+          "semantic compilation must reconcile distinct MLA ports before rendering");
+  auto routed_manifest = render_manifest_from_compiled_contracts(routed, input, &diagnostics);
+  require(routed_manifest && diagnostics.errors.empty(),
+          "public Cast/MLA contract must render without layout repair: " +
+              join_errors(diagnostics));
+  const auto preparation =
+      prepare_kernel_stage_recipes(&*routed_manifest, std::nullopt, {}, {}, {});
+  require(!preparation, preparation ? preparation->message : "");
+  finalize_pipeline_storage(*routed_manifest);
+  const auto& cast_layout = *routed_manifest->stages[0].frame_layout;
+  const auto& mla_layout = *routed_manifest->stages[1].frame_layout;
+  require(cast_layout.outputs.size() == 2 && mla_layout.inputs.size() == 2,
+          "both checked Cast outputs must reach their MLA ports");
+  for (std::size_t port = 0; port < 2; ++port) {
+    const auto& span = cast_layout.outputs[port].span;
+    const auto* source =
+        std::get_if<simaai::scheduler::client::KnownFrameSpan>(&mla_layout.inputs[port].source);
+    require(source && source->span.allocation_index == span.allocation_index &&
+                source->span.byte_offset == span.byte_offset &&
+                span.byte_offset % (128U << port) == 0,
+            "MLA input must retain the exact independently aligned checked Cast span");
   }
 }
 
@@ -440,30 +545,6 @@ void verify_nested_processcvu_role_placement_rendering() {
   using namespace simaai::neat;
   using namespace simaai::neat::pipeline_internal::sima;
   namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
-
-  struct NestedStages final : Node, NodeContractProvider {
-    CompiledNodeContract contract;
-    std::string kind() const override {
-      return "NestedStages";
-    }
-    std::string backend_fragment(int) const override {
-      return {};
-    }
-    std::vector<std::string> element_names(int) const override {
-      return {"nested_stages"};
-    }
-    NodeCapsBehavior caps_behavior() const override {
-      return NodeCapsBehavior::Static;
-    }
-    NodeContractDefinition contract_definition() const override {
-      return {};
-    }
-    bool compile_node_contract(const ContractCompileInput&, CompiledNodeContract* out,
-                               std::string*) const override {
-      *out = contract;
-      return true;
-    }
-  };
 
   struct Case {
     ProcessCvuGraphFamily family;
@@ -539,7 +620,7 @@ void verify_nested_processcvu_role_placement_rendering() {
     child.processcvu->exposed_view.primary_output_name = output_name;
     parent.child_stages.push_back(std::move(child));
   }
-  auto node = std::make_shared<NestedStages>();
+  auto node = std::make_shared<ContractNode>();
   node->contract = std::move(parent);
   ManifestBuildDiagnostics diagnostics;
   const auto compiled = compile_node_contracts({node}, input, &diagnostics);
@@ -587,12 +668,34 @@ void verify_nested_processcvu_role_placement_rendering() {
   }
 }
 
+void verify_render_failure_does_not_drop_stages() {
+  using namespace simaai::neat;
+  pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
+  auto compiled = compile_node_contracts({nodes::Preproc(make_render_preproc_options())},
+                                         ContractCompileInput{}, &diagnostics);
+  require(diagnostics.errors.empty(), "valid render failure control did not compile");
+  CompiledNodeContract missing;
+  missing.node_kind = "MissingRenderer";
+  compiled.stages.push_back(std::move(missing));
+  require(!render_manifest_from_compiled_contracts(compiled, {}, &diagnostics) &&
+              !diagnostics.errors.empty(),
+          "a missing renderer must reject the whole contract instead of dropping its stage");
+  bool threw = false;
+  try {
+    (void)render_manifest_from_compiled_contracts(compiled, {}, nullptr);
+  } catch (const std::invalid_argument&) {
+    threw = true;
+  }
+  require(threw, "missing diagnostic storage must not hide a failed render");
+}
+
 } // namespace
 
 RUN_TEST("unit_contract_render_manifest_equivalence_test", ([] {
            verify_render_manifest_equivalence();
            verify_runtime_output_order_rendering();
-           verify_projected_cast_mla_boundary_preserves_storage();
+           verify_cast_mla_boundary_preserves_carrier_requirements();
+           verify_render_failure_does_not_drop_stages();
            verify_non_tess_preproc_semantic_rendering();
            verify_nested_processcvu_role_placement_rendering();
          }));

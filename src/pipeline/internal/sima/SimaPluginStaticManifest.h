@@ -34,7 +34,7 @@
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
 #include "pipeline/internal/sima/stagesemantics/SsdRecipeId.h"
 #include "pipeline/internal/sima/SuperPointContract.h"
-#include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
+#include <simaai/scheduler/client/frame_layout.h>
 #include <ev/ev_tensor_abi.h>
 
 #include <cstdint>
@@ -52,7 +52,7 @@ struct MlaProgram;
 } // namespace simaai::scheduler::client
 
 namespace simaai::neat::internal {
-struct ModelFragmentStoragePlan;
+struct ModelStorageScopes;
 }
 
 namespace simaai::neat::pipeline_internal::sima {
@@ -125,17 +125,11 @@ enum class TensorMaterializationKind : std::uint8_t {
   Bf16LaneSplitRepack = 3, ///< Requires BF16 lane-split repack at runtime.
 };
 
-enum class FrameArenaRole : std::uint8_t {
-  None = 0,
-  Allocate = 1,
-  ReuseInput = 2,
-};
-
 /// Authority that supplies a physical input's carrier and base offset.
 enum class PhysicalAddressSource {
   DirectCarrierSpan = 0,
   RuntimePhysicalBinding = 1,
-  FrameArenaSpan = 2,
+  FrameSpan = 2,
 };
 
 /// Static spec for one physical buffer (input or output) on a stage.
@@ -151,6 +145,8 @@ struct PhysicalBufferStaticSpec {
   std::string segment_name; ///< Segment name.
   std::uint64_t required_alignment_bytes = 0; ///< Required DMA base/offset alignment.
   PhysicalAddressSource address_source = PhysicalAddressSource::DirectCarrierSpan;
+  std::optional<std::uint32_t>
+      model_carrier_id; ///< Invocation-local root carrier, before placement.
 };
 
 // In-process authority for a byte-preserving publication view of a checked
@@ -470,7 +466,6 @@ struct KernelStageRecipe;
 struct StageStaticSpec {
   std::optional<std::size_t> compile_stage_index;
   std::optional<std::size_t> compile_node_index;
-  bool model_storage_planned = false;
   std::shared_ptr<const KernelStageRecipe> native_kernel;
   std::shared_ptr<const ::simaai::scheduler::client::TvmProgram> tvm_program;
   std::shared_ptr<const ::simaai::scheduler::client::MlaProgram> mla_program;
@@ -496,23 +491,11 @@ struct StageStaticSpec {
   std::vector<StageOutputRoute> output_order;
   std::vector<QuantStaticSpec> output_quant;
   std::vector<std::string> required_preprocess_meta_fields;
-  // Non-zero only for the strict driver route. Every participating stage uses
-  // the same parent size; Allocate creates the first per-frame slot and each
-  // ReuseInput stage retains that standard GstBuffer/GstMemory ownership.
-  std::uint64_t frame_arena_size_bytes = 0;
-  // In-process construction authority only: never accepted from serialized manifests.
-  bool core_fresh_default_arena = false;
-  std::vector<static_contract::FrameSlotArenaAllocation> frame_arena_allocations;
-  FrameArenaRole frame_arena_role = FrameArenaRole::None;
-  static_contract::ArenaStorageDomain frame_arena_storage_domain =
-      static_contract::ArenaStorageDomain::Unknown;
-  static_contract::ArenaAllocationProvenance frame_arena_provenance =
-      static_contract::ArenaAllocationProvenance::Unknown;
-  static_contract::ArenaAllocationPolicy frame_arena_allocation_policy =
-      static_contract::ArenaAllocationPolicy::RequiredDomain;
-  std::uint32_t frame_arena_required_device_access = 0U;
-  static_contract::ArenaEscapePolicy frame_arena_escape_policy =
-      static_contract::ArenaEscapePolicy::InternalOnly;
+  // Cold authoring requirements, consumed by storage finalization. The absence
+  // of a policy selects the normal access-based policy and allows a proved
+  // HostCpu terminal. A final layout is the only execution storage authority.
+  std::optional<::simaai::scheduler::client::AllocationPolicy> allocation_policy;
+  std::optional<std::size_t> reuse_input_pad;
   // Mirrors CompiledRuntimeContract::consumer_keeps_distinct_physical_inputs.
   // Plumbed from the upstream MLA contract through ContractRender so that
   // publish-contract construction can stamp TensorBufferPublishContract::
@@ -541,7 +524,7 @@ struct StageStaticSpec {
  * Carries the session identity, the model id, and the ordered list of stage specs.
  */
 struct SimaPluginStaticManifest {
-  std::shared_ptr<const ::simaai::neat::internal::ModelFragmentStoragePlan> model_storage_plan;
+  std::shared_ptr<const ::simaai::neat::internal::ModelStorageScopes> model_storage_scopes;
   std::string session_id;              ///< Per-run session identifier.
   std::string model_id;                ///< Model identity (typically derived from MPK).
   std::vector<StageStaticSpec> stages; ///< Stages in execution order.
@@ -596,9 +579,5 @@ nlohmann::json to_json(const SimaPluginStaticManifest& manifest);
 
 /// Serialize a manifest to a JSON string.
 std::string serialize_manifest_json(const SimaPluginStaticManifest& manifest);
-
-/// Parse a manifest from a JSON string; returns nullopt on failure (see `error_message`).
-std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& manifest_json,
-                                                            std::string* error_message = nullptr);
 
 } // namespace simaai::neat::pipeline_internal::sima

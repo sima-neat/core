@@ -309,8 +309,7 @@ void execute_compiler_contract(const ps::SimaPluginStaticManifest& manifest, boo
   const auto carrier_extent =
       std::size_t(input_contract.source_byte_offset) + input_contract.size_bytes;
   const auto input_offset = carrier_base + std::size_t(input_contract.source_byte_offset);
-  const auto allocation_bytes = std::max<std::size_t>(
-      4096, std::max(authored.frame_arena_size_bytes, carrier_base + carrier_extent + 64));
+  const auto allocation_bytes = std::max<std::size_t>(4096, carrier_base + carrier_extent + 64);
   std::optional<tr::TensorBufferPreparedMetaTemplate> input_publication;
   if (uses_binding) {
     require(input_contract.physical_index == 0 && authored.logical_inputs.size() == 1,
@@ -567,12 +566,9 @@ ps::SimaPluginStaticManifest make_detessdequant_cblock_manifest(unsigned batches
       commands.push_back(command.id);
   }
   require(commands.size() == 1U, "CBlock semantic chain must fuse into one command");
-  const auto arena =
-      sc::FrameSlotArenaPlan::compile(*plan, *physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-                                      sc::kLegacyEvoCmaRegionAlignmentBytes, &error);
-  require(arena.has_value(), "CBlock frame arena must compile: " + error);
+
   const auto compiled =
-      sc::build_dmabuf_plan_processcvu_command_contract(*plan, *physical, commands, *arena, &error);
+      sc::build_dmabuf_plan_processcvu_command_contract(*plan, *physical, commands, &error);
   require(compiled.has_value(), "CBlock native command contract must compile: " + error);
   simaai::neat::CompiledNodeContract node;
   node.element_name = node.logical_stage_id = "detessdequant_cblock";
@@ -804,7 +800,7 @@ void authoritative_bf16_contract(ExecutionMode mode = ExecutionMode::None, bool 
   if (blocked) {
     require(fixture.physical.commands.size() == 1U &&
                 fixture.physical.commands.front().members.front().semantic_chain.size() == 2U &&
-                !fixture.arena.region(scalar_input),
+                !fixture.materializes(scalar_input),
             "DetessCast must remain fused without materializing its private intermediate");
   }
   if (blocked)

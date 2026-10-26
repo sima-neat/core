@@ -159,19 +159,12 @@ specialize_preproc_roi_contract(const CompiledProcessCvuContract& admitted, int 
       std::vector<int>(output.shape.begin(), output.shape.end())};
   payload.runtime_output_logical_layout_list = {output.layout};
 
-  // A standalone invocation must not inherit offsets/extent/access policy from
-  // the model-wide Ingress arena. The existing standalone renderer authors the
-  // new Allocate/CMA arena after run-target resolution using its shared policy.
+  // Standalone invocations obtain fresh storage after executor resolution.
   result.physical_command_role.reset();
   payload.dmabuf_plan_contract = false;
-  runtime.frame_arena_size_bytes = 0;
-  runtime.frame_arena_allocations.clear();
-  runtime.frame_arena_role = FrameArenaRole::None;
-  runtime.frame_arena_storage_domain = static_contract::ArenaStorageDomain::Unknown;
-  runtime.frame_arena_provenance = static_contract::ArenaAllocationProvenance::Unknown;
-  runtime.frame_arena_allocation_policy = static_contract::ArenaAllocationPolicy::RequiredDomain;
-  runtime.frame_arena_required_device_access = 0;
-  runtime.frame_arena_escape_policy = static_contract::ArenaEscapePolicy::InternalOnly;
+  runtime.allocation_policy.reset();
+  runtime.reuse_input_pad.reset();
+  runtime.frame_layout.reset();
   runtime.physical_outputs.front().source_byte_offset = 0;
   return result;
 }

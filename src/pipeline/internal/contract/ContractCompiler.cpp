@@ -6,7 +6,9 @@
 #include "builder/NodeContractProvider.h"
 #include "builder/OutputSpec.h"
 
+#include <algorithm>
 #include <exception>
+#include <stdexcept>
 #include "nodes/io/Input.h"
 #include "nodes/common/Output.h"
 #include "pipeline/internal/contract/CompiledNodeContractQuery.h"
@@ -100,6 +102,86 @@ bool compile_known_node_contract(const std::shared_ptr<Node>& node,
     *handled = false;
   }
   return false;
+}
+
+// Standalone Cast may initially coalesce logical tensors into one carrier.
+// An MLA's ordered input contract can require separate, independently aligned
+// ports. Finish that semantic port contract before checked recipe preparation;
+// storage packing and rendering never choose this representation.
+void reconcile_standalone_cast_mla_ports(std::vector<CompiledNodeContract>& contracts) {
+  std::vector<CompiledNodeContract*> leaves;
+  const auto collect = [&](const auto& self, CompiledNodeContract& stage) -> void {
+    if (!stage.child_stages.empty()) {
+      for (auto& child : stage.child_stages)
+        self(self, child);
+    } else if (stage.kernel || stage.processcvu || stage.processmla || stage.boxdecode ||
+               stage.dequant || stage.transport) {
+      leaves.push_back(&stage);
+    }
+  };
+  for (auto& stage : contracts)
+    collect(collect, stage);
+  for (std::size_t i = 1; i < leaves.size(); ++i) {
+    auto& producer = *leaves[i - 1];
+    const auto& consumer = *leaves[i];
+    if (producer.node_kind != "Cast" || !producer.transport || !consumer.processmla)
+      continue;
+    auto& output = producer.transport->runtime_contract;
+    const auto& input = consumer.processmla->runtime_contract;
+    if (!input.consumer_keeps_distinct_physical_inputs || input.physical_inputs.size() < 2 ||
+        output.logical_outputs.size() != input.physical_inputs.size())
+      continue;
+    std::vector<std::size_t> logical_for_port;
+    for (const auto& port : input.physical_inputs) {
+      const auto logical = std::find_if(
+          output.logical_outputs.begin(), output.logical_outputs.end(), [&](const auto& tensor) {
+            return !port.segment_name.empty() && (tensor.segment_name == port.segment_name ||
+                                                  tensor.backend_name == port.segment_name ||
+                                                  tensor.logical_name == port.segment_name);
+          });
+      if (logical == output.logical_outputs.end() || !port.size_bytes ||
+          (logical->size_bytes && logical->size_bytes != port.size_bytes)) {
+        logical_for_port.clear();
+        break;
+      }
+      const auto index = static_cast<std::size_t>(logical - output.logical_outputs.begin());
+      if (std::find(logical_for_port.begin(), logical_for_port.end(), index) !=
+          logical_for_port.end()) {
+        logical_for_port.clear();
+        break;
+      }
+      logical_for_port.push_back(index);
+    }
+    if (logical_for_port.size() != input.physical_inputs.size())
+      continue;
+    const auto device = output.physical_outputs.empty()
+                            ? pipeline_internal::sima::DeviceKind::Cpu
+                            : output.physical_outputs.front().device_kind;
+    output.physical_outputs.clear();
+    for (std::size_t port = 0; port < logical_for_port.size(); ++port) {
+      const auto& input_port = input.physical_inputs[port];
+      pipeline_internal::sima::PhysicalBufferStaticSpec physical;
+      physical.physical_index = physical.allocator_index = static_cast<int>(port);
+      physical.source_physical_index = static_cast<int>(port);
+      physical.size_bytes = input_port.size_bytes;
+      physical.required_alignment_bytes = input_port.required_alignment_bytes;
+      physical.device_kind = device;
+      physical.segment_name = input_port.segment_name;
+      output.physical_outputs.push_back(std::move(physical));
+      auto& logical = output.logical_outputs[logical_for_port[port]];
+      logical.physical_index = static_cast<int>(port);
+      logical.byte_offset = 0;
+      logical.segment_name = input_port.segment_name;
+    }
+    for (auto& route : output.output_order) {
+      const auto logical = std::find_if(
+          output.logical_outputs.begin(), output.logical_outputs.end(),
+          [&](const auto& tensor) { return tensor.logical_index == route.logical_output_index; });
+      if (logical != output.logical_outputs.end())
+        route.segment_name = logical->segment_name;
+    }
+    output.consumer_keeps_distinct_physical_inputs = true;
+  }
 }
 
 } // namespace
@@ -232,10 +314,11 @@ compile_node_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
   }
 
   try {
+    reconcile_standalone_cast_mla_ports(compiled.stages);
     for (auto& stage : compiled.stages)
       pipeline_internal::sima::resolve_compiled_execution_targets(stage, input);
-    compiled.model_storage_plan =
-        internal::make_model_fragment_storage_plan(nodes, compiled.stages, compiled_node_indices);
+    compiled.model_storage_scopes =
+        internal::make_model_storage_scopes(nodes, compiled.stages, compiled_node_indices);
   } catch (const std::exception& error) {
     compiled.fully_renderable = false;
     if (diagnostics)

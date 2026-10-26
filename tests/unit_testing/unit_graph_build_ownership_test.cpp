@@ -141,14 +141,8 @@ void cold_rejection_releases_graph_and_recipe(bool reject_output_span,
     stage.element_name = stage.logical_stage_id = "native";
     stage.plugin_kind = "kernel";
     stage.native_kernel = recipe;
-    // Author the same real arena and checked routes as a compiled Core stage.
-    // Missing placement must not preempt the intended factory/span failures.
-    stage.frame_arena_size_bytes = 4096;
-    stage.frame_arena_role = si::FrameArenaRole::Allocate;
-    stage.frame_arena_storage_domain = si::static_contract::ArenaStorageDomain::Cma;
-    stage.frame_arena_provenance = si::static_contract::ArenaAllocationProvenance::CoreAllocated;
-    stage.frame_arena_required_device_access =
-        static_cast<std::uint32_t>(si::static_contract::ArenaDeviceAccess::Ev74);
+    // Finalization supplies storage before the intended factory/span failure.
+    stage.allocation_policy = gs::AllocationPolicy::RequireCma;
     stage.logical_inputs.push_back(si::specbuilders::build_logical_input_static_spec(
         0, 0, 0, {2}, "FP32", "C", "input", "input", "input"));
     stage.input_bindings.push_back(

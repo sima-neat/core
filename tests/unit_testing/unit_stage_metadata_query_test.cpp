@@ -40,7 +40,6 @@ CompiledMlaContract make_mla_contract() {
   binding.cm_input_name = "consumer_input";
   binding.source_segment_name = "authored_source";
   compiled.runtime_contract.input_bindings = {binding};
-  compiled.runtime_contract.frame_arena_size_bytes = 4096U;
   return compiled;
 }
 
@@ -119,7 +118,6 @@ CompiledProcessCvuContract make_preproc_contract() {
   physical.source_byte_offset = 4096;
   physical.size_bytes = 288U;
   compiled.runtime_contract.physical_outputs = {physical};
-  compiled.runtime_contract.frame_arena_size_bytes = 8192U;
   contract::StageOutputRoute route;
   route.logical_output_index = 5;
   route.output_slot = 9;
@@ -221,10 +219,9 @@ RUN_TEST("unit_stage_metadata_query_test", ([] {
            require(packed.transport_kind == stages::PreprocOutputTransportKind::Packed &&
                        packed.roi_slot_bytes == dense.roi_slot_bytes &&
                        packed.roi_member_strides_bytes == dense.roi_member_strides_bytes &&
-                       preproc.runtime_contract.frame_arena_size_bytes == 8192U &&
                        preproc.runtime_contract.physical_outputs.front().source_byte_offset == 4096,
-                   "read-only projection must neither substitute aligned arena bytes nor reauthor "
-                   "placement");
+                   "read-only projection must retain the exact member pitch and carrier-relative "
+                   "origin");
 
            auto probe = std::make_shared<ContextProbe>();
            const std::vector<std::shared_ptr<Node>> nodes{probe};

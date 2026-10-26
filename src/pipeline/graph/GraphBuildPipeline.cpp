@@ -904,6 +904,10 @@ void prepare_stage_contracts(BuildResult& build, const char* where) {
           apply_name_transform(build.name_transform, terminal_host->terminal_stage_key);
     pipeline_internal::sima::finalize_pipeline_storage(*transformed_manifest,
                                                        terminal_host ? &*terminal_host : nullptr);
+    if (build.compiled_contracts)
+      build.compiled_contracts->model_storage_scopes.reset();
+    if (build.rendered_manifest)
+      build.rendered_manifest->model_storage_scopes.reset();
     if (auto failure = pipeline_internal::sima::finalize_stage_publications(&*transformed_manifest))
       throw_kernel_preparation_error(*failure, where, pipeline_string);
     const SimaPluginStaticManifest& manifest = *transformed_manifest;
@@ -1047,8 +1051,12 @@ static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char*
           {stage.element_name, budget.execution_capacity, budget.output_pool_capacity,
            build.kernel_runner_compact ? std::string_view(build.appsink_name) : std::string_view{},
            &stage,
-           stage.frame_arena_storage_domain ==
-                   pipeline_internal::sima::static_contract::ArenaStorageDomain::HostCpu
+           std::any_of(stage.frame_layout->allocations.begin(),
+                       stage.frame_layout->allocations.end(),
+                       [](const auto& allocation) {
+                         return allocation.policy ==
+                                ::simaai::scheduler::client::AllocationPolicy::RequireHostCpu;
+                       })
                ? std::string_view(build.appsink_name)
                : std::string_view{}});
     }
