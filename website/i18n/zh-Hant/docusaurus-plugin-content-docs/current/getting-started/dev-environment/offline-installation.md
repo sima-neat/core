@@ -105,3 +105,5 @@ sima-cli neat install core/offline@v0.6.0 -t minimal --download-only
 配對 DevKit 的傳輸使用 `/tmp` 下的私有目錄；標準 DevKit 的此目錄位於 RAM。作業結束後會刪除暫存目錄，包括已回報的安裝失敗與未完成的傳輸。若安裝期間 SSH 中斷或逾時，遠端安裝程式可能仍在執行，因此會保留目錄並顯示其路徑。
 
 請以一般 SDK 或 DevKit 使用者執行 `./install.sh`。啟動腳本會自動要求 `sudo` 權限，並僅明確保留配對、DevKit 驗證、同步偏好及 SSH 代理設定。部署至配對裝置時仍使用啟動腳本的 SDK 使用者之 SSH 身分。
+
+安裝程式會以編號顯示傳輸、相容性檢查、SDK 安裝、配對 DevKit 安裝及清理步驟。終端輸出使用色彩，耗時步驟每 15 秒會顯示仍在執行的訊息。詳細的 APT、套件及相容性報告會儲存在私有的 `/tmp/neat-core-offline-*.log` 檔案中；安裝程式會顯示完整路徑，失敗時也會保留。使用 `NO_COLOR=1 ./install.sh` 可停用色彩。重複的相容性檢查用於保護套件交易，與安裝作業是不同的步驟。

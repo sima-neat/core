@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Install standalone Core in the Neat SDK or on a Modalix DevKit offline."""
 import argparse
+from contextlib import nullcontext
 import fcntl
 import json
 import os
@@ -12,6 +13,7 @@ import subprocess
 from assemble import verify_bundle
 from process import run_host
 from paired_devkit import paired_devkit
+from progress import Progress
 
 
 def metadata(path):
@@ -57,12 +59,13 @@ def environment(root, system=Path('/')):
     return mode
 
 
-def install(root, phase, devkit_only=False):
+def install(root, phase, devkit_only=False, progress=None):
     if os.geteuid() != 0:
         raise ValueError('Run ./install.sh inside the Neat SDK or on the target Modalix DevKit')
-    if verify_bundle(root).get('scope') != 'core':
-        raise ValueError('Expected a standalone Core offline bundle')
-    mode = environment(root)
+    with progress.step('Checking bundle integrity and supported environment') if progress else nullcontext():
+        if verify_bundle(root).get('scope') != 'core':
+            raise ValueError('Expected a standalone Core offline bundle')
+        mode = environment(root)
     if devkit_only and mode != 'devkit':
         raise ValueError('Paired target must be a provisioned Modalix DevKit')
     for command in (('timeout', 'python3') if mode == 'sdk' else ('unshare', 'timeout', 'python3')):
@@ -73,11 +76,18 @@ def install(root, phase, devkit_only=False):
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         def local(current):
             command = [str(root/'sdk_install.py'), current] if mode == 'sdk' else [str(root/'deploy.py'), 'card', current]
-            run_host(['timeout', '--foreground', '--kill-after=30', '1500',
-                      *([] if mode == 'sdk' else ['unshare', '--net']),
-                      'python3', '-B', *command], stdin=subprocess.DEVNULL)
+            labels = {
+                'preflight': 'Checking SDK compatibility and offline dependencies' if mode == 'sdk' else 'Checking DevKit compatibility and offline dependencies',
+                'install': 'Installing Core into SDK sysroot' if mode == 'sdk' else 'Installing Core on Modalix DevKit and verifying installation',
+                'verify': 'Verifying SDK sysroot installation' if mode == 'sdk' else 'Verifying Modalix DevKit installation',
+            }
+            with progress.step(labels[current]) if progress else nullcontext():
+                logs = {'stdout': progress.log, 'stderr': subprocess.STDOUT} if progress else {}
+                run_host(['timeout', '--foreground', '--kill-after=30', '1500',
+                          *([] if mode == 'sdk' else ['unshare', '--net']),
+                          'python3', '-B', *command], stdin=subprocess.DEVNULL, **logs)
         if mode == 'sdk':
-            with paired_devkit(root) as device:
+            with paired_devkit(root, progress=progress) as device:
                 if phase == 'install':
                     local('preflight')
                     if device:
@@ -97,12 +107,27 @@ def main():
     args = parser.parse_args()
     if args.check and args.verify:
         parser.error('choose only one of --check and --verify')
+    progress = None if args.devkit_only else Progress()
     try:
         install(Path(__file__).resolve().parent,
-                'preflight' if args.check else 'verify' if args.verify else 'install', args.devkit_only)
+                'preflight' if args.check else 'verify' if args.verify else 'install', args.devkit_only, progress)
     except (ValueError, OSError, subprocess.SubprocessError) as exc:
-        parser.exit(1, 'Core offline installation failed: '+str(exc)+'\n')
-    print('PASS: standalone Core ' + ('preflight' if args.check else 'verification' if args.verify else 'installation'))
+        if progress:
+            progress.message('FAIL', 'Offline Core operation failed: '+str(exc))
+            progress.message('INFO', 'Read details with: sudo tail -n 60 '+str(progress.path))
+        else:
+            print('Core offline installation failed: '+str(exc))
+        raise SystemExit(1)
+    else:
+        action = 'preflight' if args.check else 'verification' if args.verify else 'installation'
+        if progress:
+            progress.message('OK', 'Offline Core '+action+' completed successfully')
+            progress.message('INFO', 'Detailed log: '+str(progress.path))
+        else:
+            print('PASS: standalone Core '+action)
+    finally:
+        if progress:
+            progress.close()
 
 
 if __name__ == '__main__':

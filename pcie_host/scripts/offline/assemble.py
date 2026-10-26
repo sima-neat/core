@@ -122,7 +122,7 @@ def assemble(spec, output):
         shutil.copyfile(HERE / name, output / name)
     if core:
         shutil.copyfile(HERE / 'core_install.py', output / 'install.py')
-        for name in ('sdk_install.py', 'paired_devkit.py'):
+        for name in ('sdk_install.py', 'paired_devkit.py', 'progress.py'):
             shutil.copyfile(HERE / name, output / name)
         shutil.copyfile(HERE / 'CORE_INSTALL.md', output / 'INSTALL.md')
         shutil.copyfile(HERE / 'core_install.sh', output / 'install.sh')

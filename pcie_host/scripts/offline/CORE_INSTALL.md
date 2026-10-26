@@ -113,3 +113,7 @@ required, and additional root space in MiB.
 Paired DevKit transfers use a private directory under `/tmp`, which is RAM-backed on the standard DevKit. The staging directory is removed after the operation finishes, including reported installation failures and incomplete transfers. If SSH disconnects or times out during installation, the directory is retained and its path is printed because the remote installer may still be running.
 
 Run `./install.sh` as your regular SDK or DevKit user. The launcher requests `sudo` privileges automatically and preserves only the explicit pairing, DevKit authentication, sync preference, and SSH-agent settings. Paired deployment continues to use the invoking SDK user’s SSH identity.
+
+## Progress and logs
+
+The installer shows numbered transfer, compatibility, SDK installation, paired DevKit installation, and cleanup steps. Terminal output uses color and prints a still-working message every 15 seconds during long steps. Detailed APT, package, and compatibility reports are saved in a private `/tmp/neat-core-offline-*.log` file; the installer prints its exact path and retains it on failure. Use `NO_COLOR=1 ./install.sh` for plain output. Repeated compatibility checks protect the package transaction; they are separate from installation.

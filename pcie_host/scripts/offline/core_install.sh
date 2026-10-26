@@ -7,7 +7,7 @@ case "${1-}" in
 esac
 if [ "$(id -u)" -ne 0 ]; then
     echo 'Requesting administrator privileges for offline Core installation.'
-    exec sudo --preserve-env=DEVKIT_SYNC_DEVKIT_IP,DEVKIT_DEPLOY_USER,SUDO_PASSWORD,DEVKIT_PASSWORD,NEAT_INSTALLER_SKIP_DEVKIT_SYNC,SSH_AUTH_SOCK \
+    exec sudo --preserve-env=DEVKIT_SYNC_DEVKIT_IP,DEVKIT_DEPLOY_USER,SUDO_PASSWORD,DEVKIT_PASSWORD,NEAT_INSTALLER_SKIP_DEVKIT_SYNC,SSH_AUTH_SOCK,NO_COLOR \
         -- python3 -B "$PWD/install.py" "$@"
 fi
 exec python3 -B ./install.py "$@"

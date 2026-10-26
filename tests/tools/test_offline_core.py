@@ -54,6 +54,7 @@ def test_core_archive_is_self_contained_and_validated_offline(tmp_path):
         assert tar.getmember('neat-core-offline/process.py').isfile()
         assert tar.getmember('neat-core-offline/sdk_install.py').isfile()
         assert tar.getmember('neat-core-offline/paired_devkit.py').isfile()
+        assert tar.getmember('neat-core-offline/progress.py').isfile()
     meta = json.loads((tmp_path/'metadata.json').read_text())
     assert meta['resources'] == [assemble.CORE_ARCHIVE_NAME, 'sima-neat-1-Linux-extras.tar.gz']
     minimal = json.loads((tmp_path/'metadata-minimal.json').read_text())
@@ -568,7 +569,7 @@ def test_launcher_elevates_with_only_explicit_pairing_settings(tmp_path, uid, ar
     subprocess.run(['/bin/sh', str(bundle/'install.sh'), *args], env=env, check=True)
     actual=json.loads(record.read_text())
     if elevates:
-        assert actual[:2] == ['--preserve-env=DEVKIT_SYNC_DEVKIT_IP,DEVKIT_DEPLOY_USER,SUDO_PASSWORD,DEVKIT_PASSWORD,NEAT_INSTALLER_SKIP_DEVKIT_SYNC,SSH_AUTH_SOCK', '--']
+        assert actual[:2] == ['--preserve-env=DEVKIT_SYNC_DEVKIT_IP,DEVKIT_DEPLOY_USER,SUDO_PASSWORD,DEVKIT_PASSWORD,NEAT_INSTALLER_SKIP_DEVKIT_SYNC,SSH_AUTH_SOCK,NO_COLOR', '--']
         assert actual[2:] == ['python3', '-B', str(bundle/'install.py'), *args]
     else:
         assert actual == ['-B', './install.py', *args]
