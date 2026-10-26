@@ -59,7 +59,7 @@ def environment(root, system=Path('/')):
     return mode
 
 
-def install(root, phase, devkit_only=False, progress=None):
+def install(root, phase, devkit_only=False, progress=None, recreate_venv=False):
     if os.geteuid() != 0:
         raise ValueError('Run ./install.sh inside the Neat SDK or on the target Modalix DevKit')
     with progress.step('Checking bundle integrity and supported environment') if progress else nullcontext():
@@ -76,6 +76,8 @@ def install(root, phase, devkit_only=False, progress=None):
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         def local(current):
             command = [str(root/'sdk_install.py'), current] if mode == 'sdk' else [str(root/'deploy.py'), 'card', current]
+            if mode != 'sdk' and recreate_venv:
+                command.append('--recreate-venv')
             labels = {
                 'preflight': 'Checking SDK compatibility and offline dependencies' if mode == 'sdk' else 'Checking DevKit compatibility and offline dependencies',
                 'install': 'Installing Core into SDK sysroot' if mode == 'sdk' else 'Installing Core on Modalix DevKit and verifying installation',
@@ -88,6 +90,8 @@ def install(root, phase, devkit_only=False, progress=None):
                           'python3', '-B', *command], stdin=subprocess.DEVNULL, **logs)
         if mode == 'sdk':
             with paired_devkit(root, progress=progress) as device:
+                if device:
+                    device.recreate_venv = recreate_venv
                 if phase == 'install':
                     local('preflight')
                     if device:
@@ -103,6 +107,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check', action='store_true', help='verify compatibility and simulate without installing')
     parser.add_argument('--verify', action='store_true', help='verify SDK sysroot contents or DevKit packages and Python imports')
+    parser.add_argument('--recreate-venv', action='store_true',
+                        help='discard existing DevKit Python environment packages and files during installation')
     parser.add_argument('--verbose', action='store_true', help='stream the complete detailed command log')
     parser.add_argument('--devkit-only', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -112,10 +118,13 @@ def main():
     try:
         with progress.stream_log() if progress else nullcontext():
             install(Path(__file__).resolve().parent,
-                    'preflight' if args.check else 'verify' if args.verify else 'install', args.devkit_only, progress)
+                    'preflight' if args.check else 'verify' if args.verify else 'install', args.devkit_only, progress, args.recreate_venv)
     except (ValueError, OSError, subprocess.SubprocessError) as exc:
         if progress:
             progress.message('FAIL', 'Offline Core operation failed: '+str(exc))
+            progress.log.flush()
+            for line in progress.tail(0, 20):
+                progress.message('FAIL', line)
             progress.message('INFO', 'Read details with: sudo tail -n 60 '+str(progress.path))
         else:
             print('Core offline installation failed: '+str(exc))

@@ -315,7 +315,7 @@ def test_verification_does_not_reserve_installation_space(tmp_path, monkeypatch)
     calls = []
     monkeypatch.setattr(deploy, 'verify_bundle', lambda *args: None)
     monkeypatch.setattr(deploy, 'environment', lambda *args: None)
-    monkeypatch.setattr(deploy, 'recreate_python_environment', lambda *args: pytest.fail('verification must not clear venv'))
+    monkeypatch.setattr(deploy, 'prepare_python_environment', lambda *args: pytest.fail('verification must not clear venv'))
     monkeypatch.setattr(deploy, 'check_space', lambda *args: pytest.fail('verification must not reserve install space'))
     monkeypatch.setattr(deploy, 'run', lambda *args, **kwargs: None)
     monkeypatch.setattr(deploy, 'missing_prerequisites', lambda: [])
@@ -370,21 +370,21 @@ def test_python_paths_match_online_defaults(tmp_path, monkeypatch, role, nvme_ex
     assert deploy.python_location(role, tmp_path/'nvme') == (user, tmp_path/expected)
 
 
-def test_nvme_activation_replaces_existing_home_environment(tmp_path, monkeypatch):
+def test_nvme_activation_refuses_to_replace_existing_home_environment(tmp_path, monkeypatch):
     from types import SimpleNamespace
     user = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid(), pw_dir=str(tmp_path))
+    monkeypatch.setattr(deploy.pwd, 'getpwuid', lambda uid: user)
     old = tmp_path/'pyneat'
     old.mkdir()
     (old/'user-package').write_text('keep')
     path = tmp_path/'nvme/pyneat'
     path.mkdir(parents=True)
     monkeypatch.setattr(deploy.os, 'chown', lambda *args, **kwargs: None)
-    deploy.finish_python_location(user, path, 'card')
-    assert old.is_symlink() and old.resolve() == path
-    assert not (old/'user-package').exists()
-    assert not list(tmp_path.glob('pyneat-before-offline-*'))
-    deploy.finish_python_location(user, path, 'card')
-    assert not list(tmp_path.glob('pyneat-before-offline-*'))
+    with pytest.raises(ValueError, match='Refusing to replace existing Python environment'):
+        deploy.finish_python_location(user, path, 'card')
+    assert not old.is_symlink()
+    assert (old/'user-package').read_text() == 'keep'
+    assert deploy.python_location('card', tmp_path/'nvme')[1] == old
 
 
 def test_sudo_selects_invoking_user_and_checks_nvme_as_that_user(tmp_path, monkeypatch):
@@ -420,7 +420,7 @@ def test_host_lifecycle_does_not_reopen_prepared_python_environment(tmp_path):
 
 @pytest.mark.parametrize('name', ['pyneatpcie', 'pyneat'])
 @pytest.mark.parametrize('symlink', [False, True])
-def test_existing_broken_pytest_does_not_contaminate_offline_environment(tmp_path, name, symlink):
+def test_broken_venv_is_preserved_until_explicit_recreation(tmp_path, name, symlink):
     import json
     import subprocess
     import sys
@@ -443,7 +443,13 @@ def test_existing_broken_pytest_does_not_contaminate_offline_environment(tmp_pat
     broken = subprocess.run([python, '-m', 'pip', 'check'], capture_output=True, text=True)
     assert broken.returncode == 1
     assert 'packaging' in broken.stdout and 'pygments' in broken.stdout
-    deploy.recreate_python_environment(path)
+    with pytest.raises(ValueError, match='Existing Python environment is broken') as error:
+        deploy.check_python_environment(path, 'before installation')
+    assert str(path) in str(error.value)
+    assert 'packaging' in str(error.value) and 'pygments' in str(error.value)
+    assert '--recreate-venv' in str(error.value)
+    assert metadata.exists()
+    deploy.prepare_python_environment(path, recreate=True)
     subprocess.run([python, '-m', 'pip', 'check'], check=True, capture_output=True)
     names = json.loads(subprocess.check_output([python, '-m', 'pip', 'list', '--format=json'], text=True))
     assert 'pytest' not in {row['name'] for row in names}
@@ -463,6 +469,122 @@ def test_venv_creation_failure_propagates_without_backup_or_restore(tmp_path, mo
         raise subprocess.CalledProcessError(1, args)
     monkeypatch.setattr(deploy, 'run', fail)
     with pytest.raises(subprocess.CalledProcessError):
-        deploy.recreate_python_environment(path)
+        deploy.prepare_python_environment(path, recreate=True)
     assert (path/'partial').exists()
     assert not list(tmp_path.glob('*before-offline-*'))
+
+
+@pytest.mark.parametrize('symlink', [False, True])
+def test_healthy_venv_and_extra_packages_survive_offline_install(tmp_path, symlink):
+    import subprocess
+    from zipfile import ZipFile
+    path = tmp_path/'pyneat'
+    if symlink:
+        target = tmp_path/'nvme/pyneat'
+        target.mkdir(parents=True)
+        path.symlink_to(target.relative_to(tmp_path), target_is_directory=True)
+        subprocess.run([sys.executable, '-m', 'venv', str(target)], check=True, capture_output=True)
+    deploy.prepare_python_environment(path)
+    python = str(path/'bin/python')
+    site = Path(subprocess.check_output([python, '-c',
+        'import sysconfig; print(sysconfig.get_path("purelib"))'], text=True).strip())
+    metadata = site/'user_application-1.0.dist-info'
+    metadata.mkdir()
+    (metadata/'METADATA').write_text('Metadata-Version: 2.1\nName: user-application\nVersion: 1.0\n')
+    marker = path/'application-settings'
+    marker.write_text('keep')
+    deploy.check_python_environment(path, 'before installation')
+    deploy.prepare_python_environment(path)
+    wheel = tmp_path/'neat_fixture-1.0-py3-none-any.whl'
+    dist = 'neat_fixture-1.0.dist-info'
+    with ZipFile(wheel, 'w') as archive:
+        archive.writestr(dist+'/METADATA', 'Metadata-Version: 2.1\nName: neat-fixture\nVersion: 1.0\n')
+        archive.writestr(dist+'/WHEEL', 'Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n')
+        archive.writestr(dist+'/RECORD', '')
+    subprocess.run([python, '-m', 'pip', 'install', '--no-index', str(wheel)], check=True, capture_output=True)
+    deploy.check_python_environment(path, 'after installation or during verification')
+    assert marker.read_text() == 'keep'
+    assert metadata.exists()
+    assert path.is_symlink() == symlink
+
+
+@pytest.mark.parametrize('phase', ['preflight', 'install'])
+def test_broken_environment_stops_before_any_package_mutation(tmp_path, monkeypatch, phase):
+    import subprocess
+    path = tmp_path/'pyneat'
+    path.mkdir()
+    monkeypatch.setattr(deploy, 'verify_bundle', lambda *args: None)
+    monkeypatch.setattr(deploy, 'environment', lambda *args: None)
+    monkeypatch.setattr(deploy, 'python_location', lambda role: (deploy.pwd.getpwuid(os.getuid()), path))
+    calls = []
+    def fail(args, **kwargs):
+        calls.append(args)
+        raise subprocess.CalledProcessError(1, args, output='pytest requires packaging, which is not installed.')
+    monkeypatch.setattr(deploy, 'run', fail)
+    with monkeypatch.context() as context:
+        context.setattr(deploy.os, 'environ', os.environ.copy())
+        with pytest.raises(ValueError, match='before package changes'):
+            deploy.execute(tmp_path, 'card', phase)
+    assert calls == [[str(path/'bin/python'), '-m', 'pip', 'check']]
+
+
+def test_dependency_conflict_after_installation_has_distinct_diagnostics(tmp_path, monkeypatch):
+    import subprocess
+    def fail(args, **kwargs):
+        raise subprocess.CalledProcessError(1, args, output='user-app requires numpy<2, but you have numpy 2.0.')
+    monkeypatch.setattr(deploy, 'run', fail)
+    with pytest.raises(ValueError, match='installation may have changed packages') as error:
+        deploy.check_python_environment(tmp_path/'pyneat', 'after installation or during verification')
+    assert 'user-app requires numpy<2' in str(error.value)
+    assert 'Existing Python environment is broken' not in str(error.value)
+
+
+@pytest.mark.parametrize('phase', ['preflight', 'verify'])
+def test_recreate_option_does_not_clear_on_read_only_operations(tmp_path, monkeypatch, phase):
+    (tmp_path/'card/payload').mkdir(parents=True)
+    monkeypatch.setattr(deploy, 'verify_bundle', lambda *args: None)
+    monkeypatch.setattr(deploy, 'environment', lambda *args: None)
+    monkeypatch.setattr(deploy, 'missing_prerequisites', lambda: [])
+    monkeypatch.setattr(deploy, 'check_space', lambda *args: None)
+    monkeypatch.setattr(deploy, 'verify', lambda *args: None)
+    monkeypatch.setattr(deploy, 'prepare_python_environment', lambda *args: pytest.fail('must not clear'))
+    monkeypatch.setattr(deploy, 'run', lambda *args, **kwargs: None)
+    with monkeypatch.context() as context:
+        context.setattr(deploy.os, 'environ', os.environ.copy())
+        deploy.execute(tmp_path, 'card', phase, recreate_venv=True)
+
+
+@pytest.mark.parametrize('failure', ['missing-pip', 'missing-interpreter'])
+def test_unusable_existing_environment_reports_path_and_recovery(tmp_path, monkeypatch, failure):
+    import subprocess
+    def fail(args, **kwargs):
+        if failure == 'missing-interpreter':
+            raise FileNotFoundError(str(args[0]))
+        raise subprocess.CalledProcessError(1, args, stderr='No module named pip')
+    monkeypatch.setattr(deploy, 'run', fail)
+    with pytest.raises(ValueError, match='Existing Python environment is broken') as error:
+        deploy.check_python_environment(tmp_path, 'before installation')
+    assert str(tmp_path) in str(error.value)
+    assert '--recreate-venv' in str(error.value)
+
+
+def test_pip_install_error_reports_environment_and_resolver_diagnostics(tmp_path, monkeypatch):
+    import subprocess
+    (tmp_path/'card/payload').mkdir(parents=True)
+    path = tmp_path/'new-venv'
+    monkeypatch.setattr(deploy, 'python_location', lambda role: (deploy.pwd.getpwuid(os.getuid()), path))
+    monkeypatch.setattr(deploy, 'verify_bundle', lambda *args: None)
+    monkeypatch.setattr(deploy, 'environment', lambda *args: None)
+    monkeypatch.setattr(deploy, 'missing_prerequisites', lambda: [])
+    monkeypatch.setattr(deploy, 'check_space', lambda *args: None)
+    def run(args, **kwargs):
+        if 'pip' in args and 'install' in args:
+            raise subprocess.CalledProcessError(1, args, stderr='No matching distribution found for application-dep')
+    monkeypatch.setattr(deploy, 'run', run)
+    with monkeypatch.context() as context:
+        context.setattr(deploy.os, 'environ', os.environ.copy())
+        with pytest.raises(ValueError, match='Offline Python installation failed') as error:
+            deploy.execute(tmp_path, 'card', 'install')
+    assert str(path) in str(error.value)
+    assert 'No matching distribution found for application-dep' in str(error.value)
+    assert 'packages may have changed' in str(error.value)

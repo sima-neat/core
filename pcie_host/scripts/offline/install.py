@@ -102,13 +102,14 @@ def ethernet_ports(value):
 
 
 class Operations:
-    def __init__(self, root, user, key, known_hosts, sudo_password=None, log=None):
+    def __init__(self, root, user, key, known_hosts, sudo_password=None, log=None, recreate_venv=False):
         self.root, self.user = root, user
         self.key, self.known_hosts = key, known_hosts
         self.staged = {}
         self.sudo_password = sudo_password
         self.card_passwords = {}
         self.log = log
+        self.recreate_venv = recreate_venv
 
     def topology(self):
         return discover.inventory(PCI_ROOT)
@@ -174,7 +175,8 @@ print(json.dumps(ports))
     def host(self, phase):
         # Keep timeout and its children in the supervised session/process group.
         # Host deployment is noninteractive; do not expose terminal stdin.
-        run_host(['timeout', '--foreground', '--kill-after=30', '1500', 'unshare', '--net', 'python3', '-B', str(self.root/'deploy.py'), 'host', phase], stdin=subprocess.DEVNULL, **self.output_options())
+        run_host(['timeout', '--foreground', '--kill-after=30', '1500', 'unshare', '--net', 'python3', '-B', str(self.root/'deploy.py'), 'host', phase,
+                  *(['--recreate-venv'] if self.recreate_venv else [])], stdin=subprocess.DEVNULL, **self.output_options())
 
     def output_options(self):
         return {'stdout': self.log, 'stderr': subprocess.STDOUT} if self.log is not None else {}
@@ -224,7 +226,8 @@ print(json.dumps(ports))
 
     def card(self, card, phase):
         command = ['timeout', '--kill-after=30', '1500', 'flock', '-n', '/run/neat-offline-install.lock', 'unshare', '--net', 'python3', '-B',
-                   self.staged[card['bdf']]+'/deploy.py', 'card', phase]
+                   self.staged[card['bdf']]+'/deploy.py', 'card', phase,
+                   *(['--recreate-venv'] if self.recreate_venv else [])]
         self.privileged(card, command)
 
     def cleanup(self, card):
@@ -313,6 +316,8 @@ def main():
     parser.add_argument('--ssh-key', type=Path, default=home/'.ssh/sima_neat_pcie_ed25519')
     parser.add_argument('--known-hosts', type=Path, default=home/'.ssh/known_hosts')
     parser.add_argument('--preflight-only', action='store_true')
+    parser.add_argument('--recreate-venv', action='store_true',
+                        help='discard existing Python environments on host and cards during installation')
     parser.add_argument('--ask-card-sudo', action='store_true',
                         help='prompt once for the shared card sudo password; never saved')
     parser.add_argument('-v', '--verbose', action='store_true', help='stream all installation logs for debugging; also save the full log')
@@ -349,7 +354,7 @@ def main():
             with tempfile.NamedTemporaryFile(mode='w+', errors='replace', prefix='neat-offline-', suffix='.log', dir='/var/tmp', delete=False) as log:
                 progress.log_path = Path(log.name)
                 progress.show('Detailed log: '+log.name)
-                operations = Operations(root, args.ssh_user, args.ssh_key.resolve(), args.known_hosts.resolve(), password, log)
+                operations = Operations(root, args.ssh_user, args.ssh_key.resolve(), args.known_hosts.resolve(), password, log, args.recreate_venv)
                 with progress.stream_log():
                     report = orchestrate(cards, snapshot, operations, args.preflight_only, progress)
                 report['log'] = log.name
