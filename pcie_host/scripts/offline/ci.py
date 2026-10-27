@@ -119,21 +119,67 @@ def source_metadata(args, work):
     return records, paths, inputs
 
 
-def load_card_image(archive, expected):
-    # containerd may normalize legacy Docker config JSON during import.
-    # Authenticate the original config before accepting Docker's imported ID.
+def image_config_digest(archive):
     with tarfile.open(archive, 'r:*') as source:
         manifests = json.load(source.extractfile('manifest.json'))
         if len(manifests) != 1:
-            raise ValueError('card baseline must contain exactly one image')
+            raise ValueError('baseline must contain exactly one image')
         config = source.extractfile(manifests[0]['Config']).read()
-        if 'sha256:' + hashlib.sha256(config).hexdigest() != expected:
-            raise ValueError('card baseline image identity differs')
+        return 'sha256:' + hashlib.sha256(config).hexdigest()
+
+
+def load_card_image(archive, expected):
+    # Docker's image ID can name an OCI manifest rather than its config blob.
+    # Authenticate the exported config before accepting the imported local ID.
+    if image_config_digest(archive) != expected:
+        raise ValueError('card baseline image identity differs')
     output = run('docker', 'load', '--input', archive)
     references = re.findall(r'^Loaded image(?: ID)?: (.+)$', output, re.MULTILINE)
     if len(references) != 1:
         raise ValueError('Docker did not report exactly one loaded card image')
     return assemble.image(run('docker', 'image', 'inspect', references[0], '--format', '{{.Id}}'))
+
+
+def baseline_dependencies(record, role):
+    names = ({'simaai-scheduler.deb', 'resolved-deps-manifest.json', 'scheduler_platform_admission.py'}
+             if role == 'card' else {'platform_provider.py', 'platform-source.json'})
+    checksums = record['resources-checksum']
+    if not names <= set(checksums):
+        raise ValueError('publication lacks baseline provenance: '+role)
+    return {name: checksums[name] for name in sorted(names)}
+
+
+def baseline_identity(role, dependencies):
+    inputs = {'dependencies': dependencies, 'role': role,
+              'files': {p.name: assemble.sha(p) for p in sorted(HERE.iterdir())
+                        if p.is_file() and p.suffix in ('.py', '.json', '.Dockerfile')}}
+    return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
+
+
+def cached_baseline(args, role, builder, record=None):
+    directory = os.environ.get('OFFLINE_BASELINE_CACHE')
+    if not directory:
+        return builder()
+    cache = Path(directory)/role
+    identity = baseline_identity(role, baseline_dependencies(record, role) if record else {'source': args.sha})
+    receipt = cache/'receipt.json'
+    archive = cache/'image.tar'
+    if receipt.exists():
+        record = json.loads(receipt.read_text())
+        if record['inputs_sha256'] != identity or assemble.sha(archive) != record['archive_sha256']:
+            raise ValueError('cached baseline inputs or archive differ: '+role)
+        print('Baseline cache hit: '+role, flush=True)
+        return load_card_image(archive, record['config_sha256'])
+    if role == 'card' and os.environ.get('OFFLINE_CARD_REQUIRED') == 'true' and not getattr(args, 'prepare_card', False):
+        raise ValueError('shared card baseline cache is missing')
+    print('Baseline cache miss: '+role, flush=True)
+    image = builder()
+    cache.mkdir(parents=True, exist_ok=True)
+    run('docker', 'save', '--output', archive, image)
+    receipt.write_text(json.dumps({'inputs_sha256': identity, 'image_id': image,
+                                  'config_sha256': image_config_digest(archive),
+                                  'archive_sha256': assemble.sha(archive)}, sort_keys=True)+'\n')
+    return image
 
 
 def card_baseline(args, card, publication):
@@ -154,7 +200,8 @@ def card_baseline(args, card, publication):
     base = 'neat-offline-card-base:' + assemble.image(card['image_id']).removeprefix('sha256:')
     run('docker', 'tag', card['image_id'], base)
     run('docker', 'build', '--platform', 'linux/arm64',
-        '--iidfile', iid, '--build-arg', 'CARD_IMAGE='+base, context)
+        '--iidfile', iid, '--build-arg', 'CARD_IMAGE='+base,
+        '--build-arg', 'SDK_IMAGE='+card['sdk_image'], context)
     return assemble.image(iid.read_text().strip())
 
 
@@ -226,27 +273,36 @@ def build(args):
         host = paths['host'][1]
         if not (host/'platform_provider.py').is_file() or any(host.glob('simaai-pcie-host*.deb')):
             raise ValueError('Rebuild Core with the corrected Scheduler native producer; Platform provisioning must remain separate.')
-        context = args.work/'host-baseline'
-        context.mkdir()
-        for name in ('platform_provider.py', 'platform-source.json'):
-            shutil.copyfile(host/name, context/name)
-        source = baselines['platform_source']
-        download(args.bucket, source['key'], context/'platform-source.tar.gz')
-        if assemble.sha(context/'platform-source.tar.gz') != source['sha256']:
-            raise ValueError('Platform source baseline checksum differs')
-        shutil.copyfile(HERE/'HostBaseline.Dockerfile', context/'Dockerfile')
-        iid = args.work/'host-image-id'
-        run('docker', 'build', '--platform', 'linux/'+args.arch, '--iidfile', iid,
-            '--build-arg', 'UBUNTU_IMAGE='+baselines['ubuntu'][args.distro], context)
-        host_image = assemble.image(iid.read_text().strip())
+        def make_host():
+            context = args.work/'host-baseline'
+            context.mkdir()
+            for name in ('platform_provider.py', 'platform-source.json'):
+                shutil.copyfile(host/name, context/name)
+            source = baselines['platform_source']
+            download(args.bucket, source['key'], context/'platform-source.tar.gz')
+            if assemble.sha(context/'platform-source.tar.gz') != source['sha256']:
+                raise ValueError('Platform source baseline checksum differs')
+            shutil.copyfile(HERE/'HostBaseline.Dockerfile', context/'Dockerfile')
+            iid = args.work/'host-image-id'
+            run('docker', 'build', '--platform', 'linux/'+args.arch, '--iidfile', iid,
+                '--build-arg', 'UBUNTU_IMAGE='+baselines['ubuntu'][args.distro],
+                '--build-arg', 'HOST_BUILD_IMAGE='+baselines['host_build'][args.distro+'-'+args.arch], context)
+            return assemble.image(iid.read_text().strip())
+        host_image = cached_baseline(args, args.distro+'-'+args.arch, make_host, records['host'])
+    def make_card():
+        card = baselines['card']
+        image_archive = args.work/'card-baseline.docker.tar.gz'
+        download(args.bucket, card['key'], image_archive)
+        if assemble.sha(image_archive) != card['sha256']:
+            raise ValueError('card baseline image checksum differs')
+        card = dict(card, image_id=load_card_image(image_archive, card['image_id']))
+        image_archive.unlink()
+        return card_baseline(args, card, paths['card'][1])
     card = baselines['card']
-    image_archive = args.work/'card-baseline.docker.tar.gz'
-    download(args.bucket, card['key'], image_archive)
-    if assemble.sha(image_archive) != card['sha256']:
-        raise ValueError('card baseline image checksum differs')
-    card = dict(card, image_id=load_card_image(image_archive, card['image_id']))
-    image_archive.unlink()
-    card_image = card_baseline(args, card, paths['card'][1])
+    card_image = cached_baseline(args, 'card', make_card, records['card'])
+    if getattr(args, 'prepare_card', False):
+        print('Shared clean card baseline prepared.', flush=True)
+        return
     spec = {'installer_revision': args.installer_revision, 'targets': {}}
     if is_core(args):
         spec['scope'] = 'core'
@@ -315,9 +371,27 @@ def publish(args):
     print('Published standalone Core and all four PCIe offline variants.')
 
 
+def cache_keys(args):
+    args.work.mkdir(parents=True, exist_ok=False)
+    args.core = True
+    records, _, _ = source_metadata(args, args.work)
+    keys = {'card': 'offline-card-v2-'+baseline_identity('card', baseline_dependencies(records['card'], 'card'))}
+    for distro, arch in TUPLES:
+        path = args.work/(distro+'-'+arch+'.json')
+        download(args.bucket, prefix(args.ref, args.sha, distro, arch)+'/metadata.json', path)
+        record = json.loads(path.read_text())
+        metadata_identity(record, args.sha, args.ref, distro, arch)
+        role = distro+'-'+arch
+        keys[role] = 'offline-host-v2-'+baseline_identity(role, baseline_dependencies(record, role))
+    with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+        for role, key in keys.items():
+            stream.write(role+'='+key+'\n')
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('command', choices=['build', 'publish'])
+    p.add_argument('command', choices=['build', 'publish', 'cache-keys'])
+    p.add_argument('--prepare-card', action='store_true', help='prepare only the shared clean ARM64 card baseline')
     p.add_argument('--core', action='store_true', help='build standalone Core without PCIe host packages')
     p.add_argument('--validation-only', action='store_true', help='build and validate without reusing or publishing release objects')
     p.add_argument('--bucket', required=True)
@@ -332,9 +406,13 @@ def main():
     p.add_argument('--distribution', default='')
     args = p.parse_args()
     prefix(args.ref, args.sha)
-    if args.command == 'build':
+    if args.command == 'cache-keys':
+        cache_keys(args)
+    elif args.command == 'build':
         if (not args.core and (args.distro, args.arch) not in TUPLES) or not re.fullmatch(r'[0-9a-f]{40}', args.installer_revision):
             p.error('build requires a host tuple and immutable installer revision')
+        if args.prepare_card and not args.core:
+            p.error('prepare-card requires core mode')
         build(args)
     else:
         if args.validation_only:

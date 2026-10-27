@@ -75,17 +75,14 @@ def native_archives(directory, required, installed):
     return archives
 
 
-def provision(publication):
-    original = {name.split(':', 1)[0] for name in
-                Path('/tmp/offline-baseline-packages').read_text().splitlines()}
-    tooling = {name.split(':', 1)[0] for name in subprocess.check_output(
-        ['dpkg-query', '-W', '-f=${binary:Package}\n'], text=True).splitlines()} - original
+def prepare(publication):
     policy = sdk_policy(publication)
     resolution = resolve(policy)
-    REPORTS.mkdir(parents=True)
+    REPORTS.mkdir(parents=True, exist_ok=True)
     (REPORTS/'sysroot-resolution.json').write_text(json.dumps(resolution, indent=2)+'\n')
     (REPORTS/'scheduler-sdk-policy.json').write_text(json.dumps(policy, indent=2)+'\n')
-    # Install the unmodified SDK entrypoints and shared package classification.
+    # The SDK supplies the build environment. Keep its updater at the pinned
+    # version qualified with this baseline; newer SDK defaults add dev packages.
     for source, destination in (
             ('sysroot.sh', '/usr/local/bin/sysroot'),
             ('setup-sdk-sysroot.sh', '/usr/local/bin/setup-sdk-sysroot.sh'),
@@ -103,10 +100,26 @@ def provision(publication):
     source.write_text('deb [arch=arm64 trusted=yes] https://debian.neat.sima.ai/pre-release agate non-free\n')
     env = {**os.environ, 'SDK_RELEASE_FILE': str(release), 'SDK_SYSROOT_PYTHON': '/usr/bin/python3',
            'SYSROOT_UPDATE_DOWNLOAD_DIR': str(PACKAGES),
-           'PRE_RELEASE_PACKAGES_URL': resolution['index_url']}
+           'PRE_RELEASE_PACKAGES_URL': resolution['index_url'], 'SDK_PKG_LIST': ''}
     run(['sysroot', 'update', '--sysroot', SYSROOT, resolution['sysroot_version']], env=env)
     # The SDK extracts the platform anchor's closure, not the metapackage itself.
     run(['apt-get', 'download', resolution['package']+'='+resolution['sysroot_version']], cwd=PACKAGES)
+    source.unlink()
+
+
+def provision(publication):
+    original = {name.split(':', 1)[0] for name in
+                Path('/tmp/offline-baseline-packages').read_text().splitlines()}
+    tooling = {name.split(':', 1)[0] for name in subprocess.check_output(
+        ['dpkg-query', '-W', '-f=${binary:Package}\n'], text=True).splitlines()} - original
+    policy = sdk_policy(publication)
+    if json.loads((REPORTS/'scheduler-sdk-policy.json').read_text()) != policy:
+        raise ValueError('prepared SDK policy differs from selected Scheduler')
+    resolution = json.loads((REPORTS/'sysroot-resolution.json').read_text())
+    if resolution['sysroot_version'] != policy['sysroot-version']:
+        raise ValueError('prepared sysroot differs from selected Scheduler')
+    source = Path('/etc/apt/sources.list.d/neat-offline-sysroot.list')
+    source.write_text('deb [arch=arm64 trusted=yes] https://debian.neat.sima.ai/pre-release agate non-free\n')
     # Scheduler owns runtime-provider classification. Use the just-resolved SDK
     # archives to provision those packages in the native validation root too.
     description = REPORTS/'platform-providers.json'
@@ -145,4 +158,4 @@ def provision(publication):
 
 
 if __name__ == '__main__':
-    provision(Path(sys.argv[1]).resolve(strict=True))
+    {'prepare': prepare, 'install': provision}[sys.argv[1]](Path(sys.argv[2]).resolve(strict=True))

@@ -370,3 +370,67 @@ def test_card_image_import_authenticates_original_config(tmp_path):
         with pytest.raises(ValueError, match='identity differs'):
             ci.load_card_image(archive, 'sha256:' + '0'*64)
         command.assert_not_called()
+
+
+def test_clean_baseline_cache_hit_and_integrity(tmp_path, monkeypatch):
+    import json
+    monkeypatch.setenv('OFFLINE_BASELINE_CACHE', str(tmp_path/'cache'))
+    args = SimpleNamespace(sha=SHA)
+    image = 'sha256:' + 'a'*64
+    def command(*argv):
+        assert argv[:3] == ('docker', 'save', '--output')
+        Path(argv[3]).write_bytes(b'authenticated image archive')
+    with patch.object(ci, 'run', side_effect=command), \
+         patch.object(ci, 'load_card_image', return_value=image) as restore, \
+         patch.object(ci, 'image_config_digest', return_value=image), \
+         patch.object(ci, 'assemble') as assembler:
+        # Keep the real streaming hash implementation while replacing no image work.
+        import hashlib
+        assembler.sha.side_effect = lambda path: hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        with patch.object(ci, 'card_baseline', return_value=image) as build:
+            assert ci.cached_baseline(args, 'card', build) == image
+            assert ci.cached_baseline(args, 'card', build) == image
+            build.assert_called_once()
+        restore.assert_called_once_with(tmp_path/'cache/card/image.tar', image)
+        (tmp_path/'cache/card/image.tar').write_bytes(b'tampered')
+        with pytest.raises(ValueError, match='archive differ'):
+            ci.cached_baseline(args, 'card', lambda: pytest.fail('must not rebuild corrupt cache'))
+        receipt = json.loads((tmp_path/'cache/card/receipt.json').read_text())
+        assert receipt['image_id'] == image
+
+
+def test_missing_shared_card_cache_never_rebuilds_under_qemu(tmp_path, monkeypatch):
+    monkeypatch.setenv('OFFLINE_BASELINE_CACHE', str(tmp_path))
+    monkeypatch.setenv('OFFLINE_CARD_REQUIRED', 'true')
+    with pytest.raises(ValueError, match='shared card baseline cache is missing'):
+        ci.cached_baseline(SimpleNamespace(sha=SHA), 'card', lambda: pytest.fail('must prepare natively'))
+
+
+def test_shared_card_precedes_all_offline_assembly():
+    import yaml
+    workflow = yaml.safe_load((HERE.parents[2]/'.github/workflows/pcie-offline.yml').read_text())
+    jobs = workflow['jobs']
+    assert 'arm64' in jobs['prepare-card']['runs-on']
+    for name in ('build', 'build-core'):
+        assert 'prepare-card' in jobs[name]['needs']
+        restore = next(s for s in jobs[name]['steps'] if s.get('uses') == 'actions/cache/restore@v4')
+        assert restore['with']['fail-on-cache-miss'] is True
+    host = (HERE/'HostBaseline.Dockerfile').read_text()
+    assert 'FROM ${HOST_BUILD_IMAGE} AS platform-build' in host
+    assert 'apt-get install' not in host
+    card = (HERE/'CardBaseline.Dockerfile').read_text()
+    assert 'FROM ${SDK_IMAGE} AS sdk' in card
+    assert 'COPY --from=sdk /tmp/offline-sysroot-packages' in card
+    assert 'COPY --from=sdk /opt/toolchain' not in card
+
+
+def test_baseline_keys_ignore_core_payload_but_track_platform_inputs():
+    checksums = {name: 'a'*64 for name in ('simaai-scheduler.deb', 'resolved-deps-manifest.json',
+                 'scheduler_platform_admission.py', 'sima-neat-core.deb')}
+    first = ci.baseline_identity('card', ci.baseline_dependencies({'resources-checksum': checksums}, 'card'))
+    checksums['sima-neat-core.deb'] = 'b'*64
+    assert ci.baseline_identity('card', ci.baseline_dependencies({'resources-checksum': checksums}, 'card')) == first
+    checksums['simaai-scheduler.deb'] = 'b'*64
+    assert ci.baseline_identity('card', ci.baseline_dependencies({'resources-checksum': checksums}, 'card')) != first
+    with pytest.raises(ValueError, match='lacks baseline provenance'):
+        ci.baseline_dependencies({'resources-checksum': {}}, 'ubuntu24-arm64')

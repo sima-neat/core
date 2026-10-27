@@ -20,11 +20,18 @@
       "build": "20261014",
       "source": "read-only factory lower root; no Neat installation; user data and SSH host keys excluded",
       "factory_archive_sha256": "da453001abbb8cafe77ba06438022221e732fb7f38196497c2c7fba7cf4addc7"
-    }
+    },
+    "sdk_image": "ghcr.io/sima-neat/sdk-codex-sdk-pre2372-vulcan-validation@sha256:babded47310ed173e262d1cc63b9c431ac3603f3177bcf69c50a72f1aec16cbe"
   },
   "platform_source": {
     "key": "core/offline-build-input-fd50c300873e7dded850910fcdf64fc4e0599477d053cea8974d1d4f6c21611b-platform-source.tar.gz",
     "sha256": "fd50c300873e7dded850910fcdf64fc4e0599477d053cea8974d1d4f6c21611b",
     "provenance": "Packed with Scheduler platform_provider.py at 85b05060c221; source contents are reverified against the selected producer policy during every baseline build."
+  },
+  "host_build": {
+    "ubuntu22-amd64": "069171140053.dkr.ecr.us-west-2.amazonaws.com/vulcan/ubuntu-build@sha256:c943ebc07b34f73ccc4c3b1e3efb0ced11b3605bbc6297dc1303a8acb3c022b2",
+    "ubuntu22-arm64": "069171140053.dkr.ecr.us-west-2.amazonaws.com/vulcan/ubuntu-build@sha256:e73709ff09f9c36eda557fafad5acd9a196bfbc558244dde82e0487c5189512a",
+    "ubuntu24-amd64": "069171140053.dkr.ecr.us-west-2.amazonaws.com/vulcan/ubuntu-build@sha256:ccfbc53e4093f54070898fbc896dd227d28e20fb14b41813f958ba6823b43b36",
+    "ubuntu24-arm64": "069171140053.dkr.ecr.us-west-2.amazonaws.com/vulcan/ubuntu-build@sha256:d52b8aa204a0ddbe5915d00a45a1f05a911f661d6aa636af79024f94cd87417a"
   }
 }
