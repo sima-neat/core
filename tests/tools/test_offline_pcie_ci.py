@@ -280,6 +280,18 @@ def test_manual_publication_is_opt_in_and_reuses_the_validated_matrix():
     assert {(r['distro'], r['arch']) for r in matrix} == set(ci.TUPLES)
 
 
+def test_offline_assembly_uses_vulcan_native_pools_without_changing_target_matrix():
+    import yaml
+    worker = yaml.safe_load((HERE.parents[2]/'.github/workflows/pcie-offline.yml').read_text())
+    pool = 'vulcan-${{ needs.config.outputs.vulcan_env }}'
+    build = worker['jobs']['build']
+    assert build['runs-on'] == ['self-hosted', 'linux', '${{ matrix.arch }}', pool, 'ubuntu', 'default']
+    assert worker['jobs']['build-core']['runs-on'] == ['self-hosted', 'linux', 'arm64', pool, 'ubuntu', 'default']
+    assert {(row['distro'], row['arch']) for row in build['strategy']['matrix']['include']} == set(ci.TUPLES)
+    qemu = next(step for step in build['steps'] if step.get('uses') == 'docker/setup-qemu-action@v3')
+    assert qemu['if'] == "${{ matrix.arch == 'amd64' }}"
+
+
 
 def test_cloudfront_invalidation_encodes_s3_branch_keys(tmp_path):
     args = SimpleNamespace(work=tmp_path/'publish', ref='codex/offline', sha=SHA,

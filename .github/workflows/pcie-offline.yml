@@ -72,7 +72,7 @@ jobs:
     name: Assemble offline ${{ matrix.distro }} ${{ matrix.arch }}
     needs: [source, config]
     environment: ${{ needs.config.outputs.vulcan_env }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: [self-hosted, linux, "${{ matrix.arch }}", "vulcan-${{ needs.config.outputs.vulcan_env }}", ubuntu, default]
     timeout-minutes: 90
     concurrency:
       group: pcie-offline-build-${{ needs.source.outputs.ref }}-${{ needs.source.outputs.sha }}-${{ matrix.distro }}-${{ matrix.arch }}
@@ -81,10 +81,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {distro: ubuntu22, arch: amd64, runner: ubuntu-22.04}
-          - {distro: ubuntu24, arch: amd64, runner: ubuntu-24.04}
-          - {distro: ubuntu22, arch: arm64, runner: ubuntu-22.04-arm}
-          - {distro: ubuntu24, arch: arm64, runner: ubuntu-24.04-arm}
+          - {distro: ubuntu22, arch: amd64}
+          - {distro: ubuntu24, arch: amd64}
+          - {distro: ubuntu22, arch: arm64}
+          - {distro: ubuntu24, arch: arm64}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -96,6 +96,8 @@ jobs:
           platforms: arm64
       - name: Install publication client with conditional-write support
         run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-venv
           python3 -m venv "$RUNNER_TEMP/offline-aws"
           "$RUNNER_TEMP/offline-aws/bin/pip" install awscli==1.42.49
           echo "$RUNNER_TEMP/offline-aws/bin" >> "$GITHUB_PATH"
@@ -153,7 +155,7 @@ jobs:
     name: Assemble standalone Core offline
     needs: [source, config]
     environment: ${{ needs.config.outputs.vulcan_env }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: [self-hosted, linux, arm64, "vulcan-${{ needs.config.outputs.vulcan_env }}", ubuntu, default]
     timeout-minutes: 90
     concurrency:
       group: pcie-offline-build-${{ needs.source.outputs.ref }}-${{ needs.source.outputs.sha }}-core
@@ -164,6 +166,8 @@ jobs:
           ref: ${{ github.sha }}
       - name: Install publication client with conditional-write support
         run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-venv
           python3 -m venv "$RUNNER_TEMP/offline-aws"
           "$RUNNER_TEMP/offline-aws/bin/pip" install awscli==1.42.49
           echo "$RUNNER_TEMP/offline-aws/bin" >> "$GITHUB_PATH"
