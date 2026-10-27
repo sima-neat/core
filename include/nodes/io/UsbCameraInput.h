@@ -70,8 +70,8 @@ std::vector<std::string> usb_camera_ids();
 /**
  * @brief Validate `opt`, find its camera, check the mode and read one frame.
  *
- * `decoded_format` is the format UsbCameraOutput::Frames outputs, and the
- * `SimaDecodeOptions::out_format` a decoder of the camera's JPEGs should use.
+ * `decoded_format` is the format UsbCameraOutput::Frames outputs. A model reads NV16
+ * directly: set its preprocessing input format to match (`PreprocessColorFormat::NV16`).
  * @throws std::invalid_argument and std::runtime_error as UsbCameraInput does.
  */
 UsbCameraInfo usb_camera_info(const UsbCameraInputOptions& opt);

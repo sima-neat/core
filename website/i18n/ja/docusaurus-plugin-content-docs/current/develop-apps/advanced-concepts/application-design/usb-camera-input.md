@@ -13,7 +13,7 @@ slug: /develop-apps/advanced-concepts/usb-camera-input
 USB camera -> UsbCameraInput -> model-managed CVU preproc -> MLA -> Output
 ```
 
-内部では、カメラは圧縮された各フレームを、ハードウェアMJPEGデコーダーがその場で読み取るCMAバッファーに直接書き込むため、キャプチャーとデコードの間でCPUによるコピーは発生しません。多くのWebカメラは4:2:2のJPEGを送り、これはNV16にデコードされます。モデルのCVU前処理はNV16を直接読み取ります。別の処理のためにNV12が必要なアプリは、カメラの後に自分で `ColorConvert` を追加できます。
+内部では、カメラは圧縮された各フレームを、ハードウェアMJPEGデコーダーがその場で読み取るCMAバッファーに直接書き込むため、キャプチャーとデコードの間でCPUによるコピーは発生しません。多くのWebカメラは4:2:2のJPEGを送り、これはNV16にデコードされます。モデルはNV16を直接読み取ります。`usb_camera_info()` が `NV16` を返す場合は、モデルの `preprocess.color_convert.input_format` を `PreprocessColorFormat::NV16` に設定すると、フレームは変換段なしでモデルに届きます。別の処理のためにNV12が必要なアプリは、カメラの後に自分で `ColorConvert` を追加できます。
 
 ## Neatがサポートする範囲
 
