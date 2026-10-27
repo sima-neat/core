@@ -1,6 +1,5 @@
 // 4:2:2 MJPEG on hardware: the same solid-colour frame encoded as 4:2:2 and as 4:2:0 MJPEG
-// must both come out as NV12 with matching pixels. 4:2:2 decodes zero-copy to NV16 and an EV74
-// ColorConvert writes NV12; 4:2:0 decodes straight to NV12.
+// must decode zero-copy in the stream's own sampling (NV16 and NV12) with matching pixels.
 #include <neat.h>
 #include <gst/gst.h>
 #include <gst/video/video.h>
@@ -45,12 +44,6 @@ Means decode(const std::string& raw_format, FormatTag source_format) {
   decode.dec_fps = 30;
   decode.out_format = source_format;
   graph.add(nodes::SimaDecode(decode));
-  if (source_format == FormatTag::NV16) {
-    ColorConvertOptions color;
-    color.output_format = ImageFormat::NV12;
-    color.surface = ImageSurfaceLayout::EncoderNv12;
-    graph.add(nodes::ColorConvert(color));
-  }
   graph.add(nodes::Output(OutputOptions::EveryFrame(kFrames)));
 
   Means means;
@@ -60,11 +53,12 @@ Means decode(const std::string& raw_format, FormatTag source_format) {
             raw_format + ": output lost its zero-copy GstSample");
     auto* buffer = gst_sample_get_buffer(static_cast<GstSample*>(tensor.storage->holder.get()));
     const auto* meta = gst_buffer_get_video_meta(buffer);
-    require(meta && meta->format == GST_VIDEO_FORMAT_NV12 && meta->width == unsigned(kWidth) &&
-                meta->height == unsigned(kHeight),
-            raw_format + ": decoded output must be NV12 640x480");
+    const bool nv16 = source_format == FormatTag::NV16;
+    require(meta && meta->format == (nv16 ? GST_VIDEO_FORMAT_NV16 : GST_VIDEO_FORMAT_NV12) &&
+                meta->width == unsigned(kWidth) && meta->height == unsigned(kHeight),
+            raw_format + ": decoded output must be " + (nv16 ? "NV16" : "NV12") + " 640x480");
     const auto map = tensor.storage->map(MapMode::Read);
-    require(map.data != nullptr, raw_format + ": NV12 output map failed");
+    require(map.data != nullptr, raw_format + ": decoded output map failed");
     const auto* bytes = static_cast<const std::uint8_t*>(map.data);
     double y = 0, u = 0, v = 0;
     for (int row = 0; row < kHeight; ++row) {
@@ -72,14 +66,15 @@ Means decode(const std::string& raw_format, FormatTag source_format) {
         y += bytes[meta->offset[0] + std::size_t(row) * meta->stride[0] + col];
       }
     }
-    for (int row = 0; row < kHeight / 2; ++row) {
+    const int chroma_rows = nv16 ? kHeight : kHeight / 2;
+    for (int row = 0; row < chroma_rows; ++row) {
       for (int col = 0; col < kWidth; col += 2) {
         const auto* uv = bytes + meta->offset[1] + std::size_t(row) * meta->stride[1] + col;
         u += uv[0];
         v += uv[1];
       }
     }
-    const double chroma = double(kWidth / 2) * (kHeight / 2);
+    const double chroma = double(kWidth / 2) * chroma_rows;
     means.y += y / (double(kWidth) * kHeight);
     means.u += u / chroma;
     means.v += v / chroma;
@@ -105,11 +100,11 @@ int main() {
               << "  4:2:0 Y/U/V=" << yuv420.y << "/" << yuv420.u << "/" << yuv420.v << "\n";
     require(std::abs(yuv420.u - 128) > 10 && std::abs(yuv420.v - 128) > 10,
             "test colour must have non-neutral chroma");
-    // A solid colour has constant chroma, so halving the chroma rows keeps it exactly; allow
+    // A solid colour has constant chroma, so both samplings carry the same values; allow
     // JPEG rounding only.
     require(std::abs(yuv422.y - yuv420.y) <= 2 && std::abs(yuv422.u - yuv420.u) <= 2 &&
                 std::abs(yuv422.v - yuv420.v) <= 2,
-            "4:2:2 NV12 output differs from the 4:2:0 reference");
+            "4:2:2 NV16 output differs from the 4:2:0 reference");
     std::cout << "[OK] mjpeg_422_decode_e2e_test passed\n";
     return 0;
   } catch (const std::exception& error) {
