@@ -30,7 +30,7 @@ You do not need to master the full API yet; for now, focus on how `Model` and `M
 2. **Download the model:**
 
     <ShellCommand prompt="sdk|devkit">
-    sima-cli modelzoo -v 2.0.0 get yolo_v8s
+    sima-cli modelzoo -v 2.1.3 get yolo_v8s
     </ShellCommand>
 
     :::note sima-cli model download

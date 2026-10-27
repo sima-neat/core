@@ -7,7 +7,7 @@ sidebar_position: 3
 
 SiMa.ai Neat Library의 릴리스 노트입니다.
 
-## 미출시
+## 0.6.0
 
 ### 호환성이 깨지는 변경 사항
 
@@ -15,13 +15,7 @@ SiMa.ai Neat Library의 릴리스 노트입니다.
 - Neat Library C++ ABI는 이제 버전 6이며, 공유 라이브러리의 SONAME은 `libsima_neat.so.6`입니다. 텐서는 이제 특징 추출기의 의미 메타데이터를 포함하고, 공개 GenAI 요청/결과 유형은 ASR 작업, 언어 및 프로브 메타데이터를 포함하며, `GraphLinkOptions`에는 실시간 허용 한도가 포함되며, `BenchmarkOptions`와 `BenchmarkReport`에 필드가 추가되었습니다. C++ 애플리케이션과 플러그인을 다시 빌드하고 해당 Core 런타임 및 개발 패키지를 설치합니다. `SimaArgMaxOptions`에 `axis`와 `keepdims`가 추가되었으며, `SimaArgMax` 클래스 레이아웃도 변경되었습니다.
 - 실시간 그래프 구성은 이제 `GraphLinkOptions`, `Graph::connect()` 및 `Graph::build()`를 사용합니다. 미리보기 API인 `RealtimeGraphLinkOptions`, `connect_realtime()`, `build_fused_realtime_sources()` / `build_fused_realtime_source()` 및 `RealtimeEveryFrameByStream`은 제거되었습니다. `realtime_every_frame_by_stream`을 포함하는 저장된 그래프는 지원되는 정책으로 다시 생성해야 합니다. 자세한 내용은 [라이브 프래그먼트 연결](/develop-apps/development-workflow/graph/#connect-live-fragments)을 참조하십시오.
 
-- 미출시 패키지 버전은 **0.6.0**으로 유지됩니다. `Model::Options`와
-  `BoxDecodeOptions`에 `yolox_seg_pose.pose_classes`가 추가되었습니다. 이러한 공개
-  레이아웃 추가 사항에는 ABI 6 소비자가 필요합니다. ABI 호환성 심볼릭 링크를 사용하지 마세요.
-  프리뷰 릴리스에서는 `kernel_runner_a65_workers`가 추가된 `GraphOptions`와 같은
-  공개 타입도 변경될 수 있습니다. 0.6.0 프리뷰를 업데이트할 때는 일치하는 런타임 및
-  개발 패키지를 사용하여 애플리케이션, 플러그인 및 Python 확장을 다시 빌드하세요.
-  둘 다 ABI 6을 사용한다는 이유만으로 서로 다른 프리뷰의 바이너리를 혼용하지 마세요.
+- 패키지 버전은 **0.6.0**입니다. `Model::Options`와 `BoxDecodeOptions`에 `yolox_seg_pose.pose_classes`가 추가되었으며, 이러한 공개 레이아웃 추가에는 ABI 6을 사용하는 구성 요소가 필요합니다. ABI 호환성 심볼릭 링크를 사용하지 마십시오. `GraphOptions`에는 `kernel_runner_a65_workers`가 추가되었습니다. 0.6.0으로 업데이트할 때는 일치하는 런타임 및 개발 패키지에 맞춰 애플리케이션, 플러그인, Python 확장을 다시 빌드하십시오. 둘 다 ABI 6을 사용한다는 이유만으로 프리뷰 바이너리와 정식 릴리스 패키지를 혼합하지 마십시오.
 
 ### 런타임 변경 사항
 
@@ -50,6 +44,8 @@ SiMa.ai Neat Library의 릴리스 노트입니다.
 
 | 릴리스 | 호환되는 Neat SDK | 참고 사항 |
 | --- | --- | --- |
+| 0.6.0 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
+| 0.5.0 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |
 | 0.4.0 | 2.1.3.0 | [Neat Library 0.4.0](https://github.com/sima-neat/core/releases/tag/v0.4.0) |
 | 0.3.0 | 2.1.2.3 | [Neat Library 0.3.0](https://github.com/sima-neat/core/releases/tag/v0.3.0) |
 | 0.2.2 | 2.1.2.2 | [Neat Library 0.2.2](https://github.com/sima-neat/core/releases/tag/v0.2.2) |

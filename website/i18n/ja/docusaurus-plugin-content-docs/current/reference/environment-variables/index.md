@@ -96,7 +96,6 @@ Neat SDK 3.0 以降では、`sima-cli sdk setup` がコンテナー環境に `CO
 ## ディスパッチャー / ランタイム
 
 - `SIMA_DISPATCHER_TRACE=1` — ディスパッチャーの処理ステップを追跡します。
-- `SIMA_DISPATCHER_AUTO_RECOVER=0/1` — 自動復旧ディスパッチャー（デフォルトは有効）。
 - `SIMA_ASYNC_TPUT_DIAG=1` — 非同期スループット診断。
 - `SIMA_ASYNC_WARMUP=<n>` — 非同期ウォームアップフレーム。
 - `SIMA_PERF_POWER=1` — パフォーマンス測定のシナリオで、Sentinel からのボード電力の取得を有効にします。

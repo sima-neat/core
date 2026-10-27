@@ -23,33 +23,13 @@ slug: /develop-apps/contribute/build
 
 ### 크로스 컴파일 필수 조건
 
-일반적으로 크로스 컴파일은 DevKit에서 직접 빌드하는 것보다 빠르지만, 그 후에는 빌드된 아티팩트를 DevKit로 전송해야 합니다. 크로스 컴파일을 위해서는 Neat SDK가 필요합니다.
-
-먼저 호스트 머신에 `sima-cli`를 설치한 다음 SDK를 설치하십시오.
+크로스 컴파일에는 Neat SDK를 사용합니다. [SDK 설치](/getting-started/dev-environment/install-the-environment/)에 따라 지원되는 Ubuntu, Windows/WSL 또는 macOS 호스트에 SDK를 설정한 다음 SDK 셸을 여십시오.
 
 ```bash
-curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
-sima-cli install sdk
+sima-cli sdk neat
 ```
 
-`sima-cli`에서 메시지가 표시되면 SDK 옵션을 선택합니다.
-
-그런 다음 SDK를 시작합니다.
-
-```bash
-sima-cli sdk elxr
-```
-
-그런 다음 SDK 내에 `sima-cli`를 설치하고, SDK 패치를 설치합니다.
-
-```bash
-curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
-source ~/.bash_profile
-sima-cli install tools/sdk-patch
-```
-
-- SDK 설치는 Windows 및 Ubuntu에서 지원됩니다.
-- Modalix DevKit에서 기본적으로 개발하는 경우 SDK 설치/패치 단계는 필요하지 않습니다.
+SDK에는 툴체인과 `sima-cli`가 포함되어 있습니다. Core의 `build.sh`가 일치하는 Scheduler 및 LLiMa 종속성을 준비합니다. [로컬 종속성](/develop-apps/contribute/build-test/local-dependencies/)을 참조하십시오. 페어링된 SDK에서는 `./build.sh --install`이 일치하는 아티팩트를 DevKit에도 배포합니다. DevKit의 네이티브 빌드에는 SDK가 필요하지 않습니다.
 
 ## 빌드 옵션
 

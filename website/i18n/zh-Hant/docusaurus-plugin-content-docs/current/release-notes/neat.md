@@ -7,7 +7,7 @@ sidebar_position: 3
 
 SiMa.ai Neat Library 的版本資訊。
 
-## 尚未發布
+## 0.6.0
 
 ### 破壞性變更
 
@@ -15,12 +15,7 @@ SiMa.ai Neat Library 的版本資訊。
 - Neat Library 的 C++ ABI 現在為 6，共用函式庫 SONAME 為 `libsima_neat.so.6`。張量現在攜帶特徵擷取器語意中繼資料，公開的 GenAI 請求／結果型別攜帶 ASR 任務、語言與探測中繼資料，`GraphLinkOptions` 包含即時接納限制，而 `BenchmarkOptions` 與 `BenchmarkReport` 新增了欄位。請重新建置 C++ 應用程式與外掛程式，並安裝相符的 Core 執行階段與開發套件。 `SimaArgMaxOptions` 新增了 `axis` 與 `keepdims`，`SimaArgMax` 的類別佈局也已變更。
 - 即時圖組合現在使用 `GraphLinkOptions`、`Graph::connect()` 和 `Graph::build()`。預覽版 API `RealtimeGraphLinkOptions`、`connect_realtime()`、`build_fused_realtime_sources()` / `build_fused_realtime_source()` 和 `RealtimeEveryFrameByStream` 已移除。包含 `realtime_every_frame_by_stream` 的已儲存圖必須使用受支援的原則重新建立；請參閱[連接即時片段](/develop-apps/development-workflow/graph/#connect-live-fragments)。
 
-- 尚未發行的套件版本仍為 **0.6.0**。`Model::Options` 與 `BoxDecodeOptions`
-  現在包含 `yolox_seg_pose.pose_classes`；這些公開佈局新增欄位需要 ABI 6 使用元件。
-  不要使用 ABI 相容性符號連結。預覽版本也可能變更公開型別，例如目前包含
-  `kernel_runner_a65_workers` 的 `GraphOptions`。更新 0.6.0 預覽版本時，
-  請使用相符的執行階段與開發套件重新建置應用程式、外掛程式及 Python 擴充模組。
-  不要僅因不同預覽版本都使用 ABI 6，就混用它們的二進位檔案。
+- 套件版本為 **0.6.0**。`Model::Options` 與 `BoxDecodeOptions` 現在包含 `yolox_seg_pose.pose_classes`；這些公開佈局新增欄位需要 ABI 6 使用元件。不要使用 ABI 相容性符號連結。`GraphOptions` 現在包含 `kernel_runner_a65_workers`。更新至 0.6.0 時，請使用相符的執行階段與開發套件重新建置應用程式、外掛程式及 Python 擴充模組。不要僅因兩者都使用 ABI 6，就混用預覽版二進位檔與正式版本套件。
 
 ### 執行階段變更
 
@@ -49,6 +44,8 @@ SiMa.ai Neat Library 的版本資訊。
 
 | 版本 | 相容的 Neat SDK | 備註 |
 |---|---|---|
+| 0.6.0 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
+| 0.5.0 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |
 | 0.4.0 | 2.1.3.0 | [Neat Library 0.4.0](https://github.com/sima-neat/core/releases/tag/v0.4.0) |
 | 0.3.0 | 2.1.2.3 | [Neat Library 0.3.0](https://github.com/sima-neat/core/releases/tag/v0.3.0) |
 | 0.2.2 | 2.1.2.2 | [Neat Library 0.2.2](https://github.com/sima-neat/core/releases/tag/v0.2.2) |

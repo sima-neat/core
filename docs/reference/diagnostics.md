@@ -195,36 +195,10 @@ loans retained. Closing a file descriptor, stopping the application, or restarti
 a service does not prove that hardware stopped accessing memory. Collect the
 failure report and use the platform-approved recovery procedure before retrying.
 
-### Keep Core and Internals paired
+### Keep Core and Scheduler packages matched {#keep-core-and-scheduler-packages-matched}
 
-Build and install Core with the matching B1157 Internals packages. Core checks
-the runtime profile, kernel source revision, and SDK sysroot receipt separately
-from the public C++ ABI version. An older package with the same public ABI is
-not a compatible substitute.
+Install Core with the Scheduler package set selected for that Core release. Scheduler owns the matching Runner, Kernels, Codecs, and firmware dependencies. A matching public C++ ABI alone does not establish runtime compatibility.
 
-The installer checks the bundled `neat-runtime` profile and matching
-`neat-gst-plugins` version before changing packages. The platform-check override
-does not bypass runtime pairing. If a check fails, obtain a matching bundle;
-do not replace its receipt or force an older runtime into the installation.
+Use the published dependencies selected by `build.sh`, or supply a complete matching Scheduler DEB set with `--scheduler PATH`. See [Local dependencies](/develop-apps/contribute/build-test/local-dependencies/).
 
-Before a board installation, stop applications using CVU or the hardware codec.
-The full installer activates the staged EV74 firmware after installing all
-packages and refuses to reset EV74 while those devices are open. Set
-`NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=OFF` to leave the firmware staged for
-later activation with
-`sudo /usr/libexec/sima-neat-firmware/install.sh --activate`.
-
-If installation used `FORCE_INSTALL=1` (or `sima-cli neat install core -f`) and
-you deferred activation with `NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=OFF`,
-pass the override again when activating manually on the board; the installer
-does not persist it. After stopping applications using CVU or the hardware
-codec, run:
-
-```bash
-sudo env FORCE_INSTALL=1 /usr/libexec/sima-neat-firmware/install.sh --activate
-```
-
-This requests the EV74 kernel-build compatibility override and requires a
-firmware package that supports it. A mismatched runtime may be unsafe; forcing
-activation does not establish compatibility. Firmware integrity, ownership,
-and DMA safety checks still apply. Prefer a matching firmware/kernel bundle.
+For board updates, install the complete Core bundle using [Install or Update Neat Library](/getting-started/neat-library/install-or-update/). The selected Scheduler installer validates the package set and manages firmware activation. If validation fails, obtain the matching Core/Scheduler bundle; do not replace receipts or force individual incompatible runtime or firmware packages.

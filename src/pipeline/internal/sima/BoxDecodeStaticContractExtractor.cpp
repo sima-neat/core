@@ -244,7 +244,7 @@ bool tensor_name_explicitly_declares_score_semantics_local(
 
 bool decode_type_is_yolov8_family_local(BoxDecodeType decode_type) {
   return decode_type == BoxDecodeType::YoloV8 || decode_type == BoxDecodeType::YoloV8Seg ||
-         decode_type == BoxDecodeType::YoloV8Pose;
+         decode_type == BoxDecodeType::YoloV8Pose || decode_type == BoxDecodeType::YoloV8Obb;
 }
 
 bool decode_type_is_yolov26_family_local(BoxDecodeType decode_type) {
@@ -805,7 +805,7 @@ std::optional<BoxDecodeScoreActivation> resolve_boxdecode_score_activation_from_
   if (saw_logit_tensor) {
     return BoxDecodeScoreActivation::Sigmoid;
   }
-  if (decode_type != BoxDecodeType::YoloV26Obb &&
+  if (!box_decode_type_is_oriented(decode_type) &&
       (decode_type_is_yolov8_family_local(decode_type) ||
        decode_type_is_yolov26_family_local(decode_type))) {
     if (const auto inferred = maybe_infer_float_yolov8_score_activation_from_sample_values_local(

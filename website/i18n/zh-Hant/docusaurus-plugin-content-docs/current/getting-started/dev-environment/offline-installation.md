@@ -28,7 +28,7 @@ sidebar_position: 6
 
 ## 開始之前
 
-- 在可連上網際網路的電腦上安裝 `sima-cli`。請參閱[安裝環境](/getting-started/dev-environment/install-the-environment/)。
+- 在可連上網際網路的電腦上安裝 `sima-cli`。請參閱[安裝 SDK](/getting-started/dev-environment/install-the-environment/)。
 - 選擇與系統相容的套件版本。請參閱[相容性](/getting-started/compatibility/)。
 - 確認目標主機的作業系統和處理器架構。
 - 準備 USB 隨身碟或內部檔案共用空間，以供傳輸。

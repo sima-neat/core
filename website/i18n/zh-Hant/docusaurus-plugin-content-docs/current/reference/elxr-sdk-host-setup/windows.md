@@ -4,7 +4,7 @@ description: "為 Windows 11 主機準備 Neat SDK 和 DevKit-Sync。"
 sidebar_position: 2
 ---
 
-當您的主機為 Windows 11，且您想使用 DevKit-Sync 執行 Neat 開發環境（以下簡稱為 Neat SDK）時，請參考本指南。
+當您的主機為 Windows 11，且您想使用 DevKit-Sync 執行 Neat SDK 時，請參考本指南。
 
 ## 先決條件
 

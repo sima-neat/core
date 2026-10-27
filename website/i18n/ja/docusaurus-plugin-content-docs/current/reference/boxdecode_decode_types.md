@@ -72,6 +72,12 @@ opt.top_k = 100;
 
 軸に平行な検出結果の表示グラフでは、結果を `SimaRender` に渡せます。`decode_bbox(...)` は既存のボックス先頭形式にのみ使ってください。これも `SimaRender` も回転ボックスには対応していません。
 
+## YOLOv8 と YOLO11 の回転ボックス {#yolov8-oriented-boxes}
+
+`BoxDecodeType::YoloV8Obb`（Python: `pyneat.BoxDecodeType.YoloV8Obb`、トークン `yolov8-obb` または `yolo11-obb`）を選択します。INT8、BF16、FP32 のヘッド 9 個を役割別にグループ化して渡します。64 チャネルの DFL ボックス、クラスロジット、角度ロジットの各ヘッド 3 個を、ストライド 8、16、32 の順に並べます。完全なクラス数はクラスヘッドから推定されます。
+
+BoxDecode は DFL、クラスの sigmoid、`(sigmoid(angle)-0.25)*pi`、`nms_iou_threshold` によるクラス別の回転 Fast-NMS を適用します。入力は生のロジットでなければなりません。ジオメトリと `BBOX_OBB_V1` 出力は以下の YOLO26 契約に従い、同じ `decode_obb` ヘルパーを使用します。
+
 ## YOLO26 の回転ボックス {#yolo26-oriented-boxes}
 
 `BoxDecodeType::YoloV26Obb`（Python: `pyneat.BoxDecodeType.YoloV26Obb`、トークン `yolo26-obb`）を明示的に選択します。このプロファイルは、ストライド 8、16、32 の 4 チャネル距離ヘッド 3 個、クラスロジットヘッド 3 個、1 チャネルの生の角度ヘッド 3 個を、役割ごとにまとめた 9 個の FP32、BF16、または INT8 ヘッドとして受け取ります。すべてのヘッドで完全なクラス数（1–256）が一致する必要があります。`Auto`、`GroupedByRole`、`GroupedByRoleLogit` はこのグループ化レイアウトを選択します。確率値のクラスヘッドやインターリーブレイアウトは拒否されます。

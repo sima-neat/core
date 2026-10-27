@@ -28,7 +28,7 @@ sidebar_position: 6
 
 ## 開始前の準備
 
-- インターネットに接続されたコンピューターに `sima-cli` をインストールしてください。[環境のインストール](/getting-started/dev-environment/install-the-environment/)を参照してください。
+- インターネットに接続されたコンピューターに `sima-cli` をインストールしてください。[SDK のインストール](/getting-started/dev-environment/install-the-environment/)を参照してください。
 - システムと互換性のあるパッケージバージョンを選択してください。[互換性](/getting-started/compatibility/)を参照してください。
 - 対象ホストのオペレーティングシステムとプロセッサーアーキテクチャを確認してください。
 - 転送用の USB ドライブまたは内部ファイル共有を準備してください。

@@ -74,6 +74,10 @@ std::optional<BoxDecodeType> parse_box_decode_type_token(std::string_view token)
   if (lower == "yolov8") {
     return BoxDecodeType::YoloV8;
   }
+  if (lower == "yolov8-obb" || lower == "yolo8-obb" || lower == "yolo11-obb" ||
+      lower == "yolov11-obb") {
+    return BoxDecodeType::YoloV8Obb;
+  }
   if (lower == "yolov8-seg") {
     return BoxDecodeType::YoloV8Seg;
   }
@@ -168,7 +172,7 @@ std::optional<SuperPointOutputFormat> parse_superpoint_output_format_token(std::
 
 bool box_decode_type_uses_per_port_dtype(BoxDecodeType type) {
   return type == BoxDecodeType::SuperPoint || type == BoxDecodeType::YoloXSegPose ||
-         type == BoxDecodeType::YoloV26Obb;
+         box_decode_type_is_oriented(type);
 }
 
 bool is_box_decode_type_specified(BoxDecodeType type) {

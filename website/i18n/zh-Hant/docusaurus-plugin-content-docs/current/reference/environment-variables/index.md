@@ -96,7 +96,6 @@ slug: /reference/environment-variables
 ## 分派器／執行階段
 
 - `SIMA_DISPATCHER_TRACE=1` — 追蹤分派器步驟。
-- `SIMA_DISPATCHER_AUTO_RECOVER=0/1` — 自動恢復分派器（預設為啟用）。
 - `SIMA_ASYNC_TPUT_DIAG=1` — 非同步吞吐量診斷。
 - `SIMA_ASYNC_WARMUP=<n>` — 非同步預熱幀。
 - `SIMA_PERF_POWER=1` — 在效能測試情境中啟用從 Sentinel 擷取板子電力資料。

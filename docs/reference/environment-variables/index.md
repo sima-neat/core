@@ -101,7 +101,6 @@ Legacy per-variable debug toggles still work and override profile defaults when 
 ## Dispatcher / runtime
 
 - `SIMA_DISPATCHER_TRACE=1` — trace dispatcher steps.
-- `SIMA_DISPATCHER_AUTO_RECOVER=0/1` — auto-recover dispatcher (default true).
 - `SIMA_ASYNC_TPUT_DIAG=1` — async throughput diagnostics.
 - `SIMA_ASYNC_WARMUP=<n>` — async warmup frames.
 - `SIMA_PERF_POWER=1` — enable board power capture from Sentinel in perf scenarios.

@@ -23,33 +23,13 @@ slug: /develop-apps/contribute/build
 
 ### クロスコンパイルの前提条件
 
-クロスコンパイルは、DevKit 上で直接ビルドするよりも通常は高速ですが、その後、ビルドされたアーティファクトを DevKit に転送する必要があります。クロスコンパイルには、Neat SDK が必要です。
-
-まず、ホストマシンに `sima-cli` をインストールし、次に SDK をインストールします。
+クロスコンパイルには Neat SDK を使用します。[SDK のインストール](/getting-started/dev-environment/install-the-environment/)に従って、対応する Ubuntu、Windows/WSL、または macOS ホストに設定し、SDK シェルを開いてください。
 
 ```bash
-curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
-sima-cli install sdk
+sima-cli sdk neat
 ```
 
-`sima-cli` から指示があったら、SDKオプションを選択してください。
-
-次に、SDKを起動します。
-
-```bash
-sima-cli sdk elxr
-```
-
-次に、SDK内に`sima-cli`をインストールし、その後、SDKのパッチをインストールします。
-
-```bash
-curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
-source ~/.bash_profile
-sima-cli install tools/sdk-patch
-```
-
-- SDK のインストールは、Windows および Ubuntu でサポートされています。
-- Modalix DevKit 上でネイティブにビルドする場合、SDK のインストール/パッチ手順は不要です。
+SDK にはツールチェーンと `sima-cli` が含まれます。Core の `build.sh` は対応する Scheduler と LLiMa の依存関係を準備します。[ローカル依存関係](/develop-apps/contribute/build-test/local-dependencies/)を参照してください。ペアリング済みの SDK では、`./build.sh --install` が対応するアーティファクトを DevKit にもデプロイします。DevKit 上のネイティブビルドには SDK は不要です。
 
 ## ビルドオプション
 

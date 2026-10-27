@@ -4,7 +4,7 @@ description: "Ubuntuのホストを、Neat SDKとDevKit-Sync用に準備しま�
 sidebar_position: 1
 ---
 
-ホストマシンが Ubuntu で、Neat を実行したい場合は、このガイドを参照してください。開発環境（Neat SDK と呼ばれる）と DevKit-Sync を使用します。
+ホストマシンが Ubuntu で、DevKit-Sync を使用して Neat SDK を実行したい場合は、このガイドを参照してください。
 
 ## 前提条件
 

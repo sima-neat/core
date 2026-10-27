@@ -134,7 +134,7 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
              existing->address_source != physical.address_source)
       throw std::invalid_argument("SimaBoxDecode: shared head carrier contracts disagree");
   }
-  geometry.uniform_transform_required = compiled.payload.decode_type == BoxDecodeType::YoloV26Obb;
+  geometry.uniform_transform_required = box_decode_type_is_oriented(compiled.payload.decode_type);
   geometry.complete_geometry = compiled.payload.decode_type == BoxDecodeType::YoloXSegPose ||
                                geometry.uniform_transform_required;
   const auto affine = [](const PreprocessRuntimeMeta& meta) {

@@ -46,7 +46,7 @@ command-line tool. It requires an idle DevKit with no other MLA work.
 
 Scheduler owns the GStreamer transport and structured error interfaces, including
 the installed `gst/SimaaiGstErrors.h` header. Core consumes those interfaces; it
-does not keep a second implementation. The unreleased Core `0.6.0` includes this
+does not keep a second implementation. The Core `0.6.0` includes this
 file-ownership transition. Upgrade the matching Core/Scheduler package set
 together; this package version does not change a platform or numerical contract.
 
@@ -1003,6 +1003,8 @@ retain their existing explicit-override behavior, while pose and SuperPoint deco
 family-specific rules.
 
 ##### YOLO26 oriented-box contract
+
+`BoxDecodeType::YoloV8Obb` uses `yolo_dfl_obb_v1` with 64-channel DFL boxes and angle logits. It shares the oriented geometry and publication path; Kernels owns DFL, angle activation and rotated Fast-NMS.
 
 `BoxDecodeType::YoloV26Obb` lowers to the named `yolo26_obb_v1` numerical profile.
 It requires nine grouped heads in FP32, BF16, or INT8: three four-channel distance heads, three

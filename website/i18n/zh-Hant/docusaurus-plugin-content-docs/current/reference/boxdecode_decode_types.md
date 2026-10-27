@@ -82,6 +82,12 @@ opt.top_k = 100;
 
 軸對齊偵測結果的顯示圖可將結果傳給 `SimaRender`。`decode_bbox(...)` 僅適用於既有的方框前置格式；此函式與 `SimaRender` 都不接受旋轉框。
 
+## YOLOv8 與 YOLO11 旋轉邊界框 {#yolov8-oriented-boxes}
+
+選取 `BoxDecodeType::YoloV8Obb`（Python：`pyneat.BoxDecodeType.YoloV8Obb`；代碼 `yolov8-obb` 或 `yolo11-obb`）。提供九個依角色分組的 INT8、BF16 或 FP32 頭：三個 64 通道 DFL 邊界框頭、三個類別 logit 頭，以及三個角度 logit 頭，各組依步幅 8、16、32 排列。完整類別數由類別頭推導。
+
+BoxDecode 會套用 DFL、類別 sigmoid、`(sigmoid(angle)-0.25)*pi`，以及使用 `nms_iou_threshold` 的各類別旋轉 Fast-NMS。輸入必須為原始 logit。幾何資訊與 `BBOX_OBB_V1` 輸出遵循下方的 YOLO26 契約，並使用相同的 `decode_obb` 輔助函式。
+
 ## YOLO26 旋轉框 {#yolo26-oriented-boxes}
 
 明確選取 `BoxDecodeType::YoloV26Obb`（Python：`pyneat.BoxDecodeType.YoloV26Obb`，代碼 `yolo26-obb`）。此設定檔接收九個 FP32、BF16 或 INT8 頭，依角色分組為三個四通道距離頭、三個類別 logit 頭，以及三個單通道原始角度頭，各組步幅為 8、16、32。所有頭的完整類別數（1–256）必須一致。`Auto`、`GroupedByRole` 與 `GroupedByRoleLogit` 會選用此分組佈局；機率值類別頭與交錯佈局會遭到拒絕。

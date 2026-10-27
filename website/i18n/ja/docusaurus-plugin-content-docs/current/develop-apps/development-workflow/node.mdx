@@ -597,7 +597,7 @@ def push_h265_access_unit(run: pyneat.Run, data: bytes) -> None:
 
 ### サンプル出力
 
-コンシューマーが完全な [`Sample`](/develop-apps/development-workflow/core_types#sample)（ペイロードに加えて、ストリーム/フレーム/タイムスタンプのメタデータ）を必要とする場合は、`nodes::Output` を使用します。
+コンシューマーが完全な [`Sample`](/develop-apps/development-workflow/core_types#use-sample-for-metadata)（ペイロードに加えて、ストリーム/フレーム/タイムスタンプのメタデータ）を必要とする場合は、`nodes::Output` を使用します。
 
 プル動作が重要な場合は、`OutputOptions` を使用します。
 

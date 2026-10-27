@@ -75,12 +75,12 @@ Scheduler 相依關係。標準套件各自只擁有一次其檔案；僅 Runner
 
 ### 遷移 GStreamer 標頭擁有權
 
-尚未發行的 Core `0.6.0` 將 `/usr/include/gst/SimaaiGstErrors.h` 的擁有權移交給
+Core `0.6.0` 將 `/usr/include/gst/SimaaiGstErrors.h` 的擁有權移交給
 Scheduler。包含路徑保持不變。Core 不再攜帶自己的實作或安裝該檔案；
 使用者改用已安裝的 Scheduler 標頭與 `SimaScheduler::Headers` 目標。
 
 請使用完整且相符的發行套件組，一起升級 Core 和 Scheduler。
-Scheduler 會宣告尚未發行的 0.6.0 系列套件之標頭移轉，而不會將已修正的 Core 0.6.0 套件判定為不相容。
+Scheduler 會宣告0.6.0 系列套件之標頭移轉，而不會將已修正的 Core 0.6.0 套件判定為不相容。
 APT 變更檔案前，安裝程式會使用經過驗證的 Scheduler 擁有權檢查：原擁有者必須由同一套件組中不再包含該檔案的套件取代，或屬於明確宣告且核准的淘汰對象。
 若新套件有重複的擁有者，或與無關套件發生擁有權衝突，安裝會遭拒。
 
