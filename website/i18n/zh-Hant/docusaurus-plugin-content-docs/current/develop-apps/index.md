@@ -82,8 +82,7 @@ Modalix 將應用程式核心、視覺處理、機器學習加速、視訊引擎
 
 ## 請描述您的應用程式。 <span className="agentic-heading-highlight">一位具備 Neat 技能的代理人會開發它。</span>
 
-SiMa.ai Neat 透過內建的技能，支援即開即用的代理應用程式開發。 Neat 開發環境（以下簡稱為） Neat SDK)。這些技能讓程式碼代理程式能夠理解如何使用公開的 Python 和 C++ API，遵循既定的應用程式模式，並與其他程式碼協同運作。 Modalix 開發與驗證
-工作流程。
+SiMa.ai 和 Neat 透過 Neat SDK 內建的技能，支援即開即用的代理應用程式開發。這些技能讓程式碼代理程式能夠使用公開的 Python 和 C++ API，遵循既定的應用程式模式，並在 Modalix 開發與驗證工作流程中作業。
 
 建議的代理路徑可以建立一個應用程式，並在配對的
 Modalix DevKit，檢查結果和診斷資訊，並最佳化實作方式。傳統的開發方式仍然是一種平行途徑，可透過相同的 API 進行直接控制。這兩種方式都能產生標準且可檢查的 SiMa.ai Neat 應用程式，因此您可以檢閱或修改代理程式開發的程式碼，並隨著應用程式的發展，在兩種工作流程之間切換。請參閱 [設定 Neat SDK](/getting-started/dev-environment/)，以促進具主動性的發展。

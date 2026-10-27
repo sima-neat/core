@@ -4,8 +4,8 @@ description: Prepare a Windows 11 host for the Neat SDK and DevKit-Sync
 sidebar_position: 2
 ---
 
-Use this guide when your host machine is Windows 11 and you want to run the
-Neat Development Environment (referred to as Neat SDK) with DevKit-Sync.
+Use this guide when your host machine is Windows 11 and you want to run the Neat
+SDK with DevKit-Sync.
 
 ## Prerequisites
 

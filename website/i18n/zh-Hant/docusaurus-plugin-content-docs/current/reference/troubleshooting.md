@@ -135,12 +135,11 @@ opt.preprocess.preset = pyneat.NormalizePreset.COCO_YOLO
 ### 10. `No channel available (all candidate channel opens failed)`
 
 :::info 原因
-EV74 派遣器嘗試排程一個內核，但已載入的韌體並未實作該內核——通常是因為 `neat-runtime` 和 `neat-ev74-firmware` **不是相同的版本**（內部雜湊值不符），例如部分更新。
+執行要求無法開啟相容的 EV74 通道。其中一個可能原因是部分更新後，Scheduler、Runner、Kernels 或韌體套件組不相符。
 :::
 
 :::tip 修復
-一起安裝匹配的 `neat-*` 套件（哈希值相同）；確認在執行階段和韌體中顯示的哈希值是否相同。請參閱 [相容性 → 版本相符的集合](/getting-started/compatibility#the-version-matched-set-firmware--runtime)。
-*（此訊息來自 EV74 派遣器。）*
+請依照[安裝或更新 Neat Library](/getting-started/neat-library/install-or-update/)安裝完整 Core 套件組與選定的 Scheduler 相依套件。請檢查[執行階段套件配對](/reference/diagnostics/#keep-core-and-scheduler-packages-matched)，而不是比較不同元件的 Git 雜湊值或強制安裝個別韌體套件。
 :::
 
 ### 11. `frame=N rtsp_timeout`

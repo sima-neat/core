@@ -1,10 +1,10 @@
 ---
-title: "安裝開發環境"
+title: "安裝 SDK"
 description: "安裝並設定 Neat SDK 容器"
 sidebar_position: 2
 ---
 
-安裝最新的 Neat 開發環境（以下稱 Neat SDK）。它會以容器形式在主機上執行。
+安裝最新的 Neat SDK。它會以容器形式在主機上執行。
 
 ## 必要條件
 
@@ -37,8 +37,20 @@ sima-cli neat install sdk@%%release.sdk_channel%%
 
 設定期間，`sima-cli` 也會詢問是否要在 SDK 中安裝相容的 Model Compiler。若您會自行編譯或量化模型，請接受提示；不需要另外選擇版本。若只執行預先編譯的模型套件，則可略過。若要稍後安裝、固定特定修補版本或使用獨立主機，請參閱[安裝 Model Compiler](/getting-started/dev-environment/install-model-compiler/)及[相容性指南](/getting-started/compatibility/)。
 
-:::note 舊版 SDK 使用傳統的兩階段安裝流程
-若舊版 SDK 需要分別執行映像提取與設定命令，請參閱[兩階段 SDK 安裝](/reference/two-step-sdk-installation/)。
+### 安裝特定 SDK 版本 {#install-a-specific-sdk-version}
+
+SDK 2.1.3.0 及更新版本可使用已發布的 `v<version>` 標籤安裝特定版本，包括較舊的修補程式版本。例如，在主機上執行：
+
+<ShellCommand prompt="host">
+sima-cli neat install sdk@v2.1.3.0
+</ShellCommand>
+
+`v` 前綴不可省略。請勿使用 `release-<full-version>` 作為特定版本標籤。`release-<series>` 通道會追蹤該系列最新發布的版本。若選取相同的 SDK 套件，兩種方式都會執行相同的安裝與 SDK 設定步驟。
+
+請在 [SDK 版本](https://github.com/sima-neat/sdk/releases)中尋找已發布的標籤，並依照[相容性指南](/getting-started/compatibility/)選擇與 DevKit 軟體相容的版本。
+
+:::note 傳統兩階段安裝
+SDK 2.0.0、2.1.2.0 和 2.1.2.1 需要分別執行映像提取與設定命令。僅這些版本需要使用[兩階段 SDK 安裝](/reference/two-step-sdk-installation/)。
 :::
 
 若要在安裝後變更 SDK 設定，請參閱[設定 SDK](/getting-started/dev-environment/configure-sdk/)。受限網路環境請參閱[離線安裝](/getting-started/dev-environment/offline-installation/)。
@@ -63,17 +75,20 @@ Neat Insight 由 SDK 內部提供，可從瀏覽器開啟。請在 SDK shell 中
 neat
 </ShellCommand>
 
-命令輸出的 **Web Access** 區段包含 Insight 與瀏覽器版 VS Code 的本機及遠端 URL。本機存取是從執行 SDK 的同一部電腦開啟 URL；遠端存取則是從另一部電腦開啟。若瀏覽器與 SDK 位於同一主機，建議使用本機 `127.0.0.1` URL，因為即使主機的網路 IP 改變仍可運作。遠端存取請使用由 `NFS_SERVER_HOST_IP` 衍生的 URL。VS Code URL 包含已設定的存取權杖，並會開啟設定的工作區。詳情請參閱 [Insight](/tools/insight/)。
+`neat` 輸出的 **Web Access** 區段包含 Insight 與瀏覽器版 VS Code 的本機及遠端 URL。若瀏覽器在 SDK 主機上執行，請開啟本機 `127.0.0.1` URL。從其他電腦存取時，請使用以 `NFS_SERVER_HOST_IP` 為基礎的遠端 URL。VS Code URL 會開啟設定的工作區；請使用 `neat` 針對已安裝伺服器顯示的登入資訊。請參閱 [SDK 網頁存取](/reference/environment-variables/)與 [Insight](/tools/insight/)。
 
 ### 使用 VS Code
 
-可以透過 SDK Code UI 從瀏覽器使用 VS Code。SDK 安裝結束時，`sima-cli` 會輸出類似下列的 `codeUI` URL：
+在 SDK shell 中執行 `neat`，然後在 SDK 主機的瀏覽器中開啟 **VS Code (local)** URL。從其他電腦存取時，請使用 **VS Code (remote)**。若映像包含 code-server，`neat` 也會顯示 **VS Code password**：
 
-<ShellCommand prompt="host">
-codeUI      | https://192.168.76.4:10000/?tkn=gA5CS...&folder=/workspace
-</ShellCommand>
+```text
+VS Code (local)    https://127.0.0.1:10000/?folder=/workspace
+VS Code password   <password shown by neat>
+```
 
-在瀏覽器中開啟該 URL，即可在 SDK 工作區中作業。SDK 會在瀏覽器 Code UI 中預先安裝 Codex 與 Claude Code 擴充功能。
+在 code-server 登入畫面輸入顯示的密碼。密碼不會包含在 URL 中。
+
+舊版 OpenVSCode 映像改用含權杖的 URL；請開啟 `neat` 顯示的 URL。SDK 已在瀏覽器 Code UI 中預先安裝 Codex 與 Claude Code 擴充功能。
 
 若偏好瀏覽器以外的方式，也可以使用原生 VS Code。使用 [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) 將 VS Code 連線至 SDK 容器。
 

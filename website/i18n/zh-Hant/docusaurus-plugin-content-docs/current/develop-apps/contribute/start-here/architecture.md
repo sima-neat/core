@@ -38,7 +38,7 @@ GenAI 直接呼叫 LLiMa，不經過 Runner 或 Scheduler GenAI 配接器。MLA 
 
 Scheduler 擁有 GStreamer 傳輸與結構化錯誤介面，包括已安裝的
 `gst/SimaaiGstErrors.h` 標頭。Core 使用這些介面，不保留第二套實作。
-尚未發行的 Core `0.6.0` 包含此檔案擁有權移轉。請一併升級相符的 Core/Scheduler
+Core `0.6.0` 包含此檔案擁有權移轉。請一併升級相符的 Core/Scheduler
 套件組；此套件版本不會變更平台或數值契約。
 
 ## 框架與環境

@@ -8,7 +8,7 @@ sidebar_position: 3
 SDK 설치 중에 DevKit Sync 설정을 선택적으로 진행할 수 있으며, 설치 프로그램에서 이미 해당 설정을 묻는 메시지를 표시합니다. 이 페이지를 참고하여 DevKit Sync의 작동 방식을 확인하거나, 나중에 SDK 페어링을 다른 DevKit로 변경하려는 경우에 활용하십시오.
 :::
 
-DevKit Sync는 Neat 개발 환경(Neat SDK로 지칭)을 동일 네트워크의 Modalix DevKit와 연결합니다. 이를 통해 호스트, Neat SDK 컨테이너, DevKit 전반에 걸쳐 하나의 공유 작업 공간을 제공하며, 하드웨어에서 SDK 기반 명령을 실행하기 위한 `dk` 헬퍼를 제공합니다.
+DevKit Sync는 Neat SDK를 동일 네트워크의 Modalix DevKit와 연결합니다. 이를 통해 호스트, Neat SDK 컨테이너, DevKit 전반에 걸쳐 하나의 공유 작업 공간을 제공하며, 하드웨어에서 SDK 기반 명령을 실행하기 위한 `dk` 헬퍼를 제공합니다.
 
 ![호스트, 컨테이너 및 DevKit 작업 공간 매핑](@site/../docs/images/elxr-sdk-workspaces.svg)
 
@@ -24,7 +24,7 @@ sima-cli sdk setup --devkit {devkit-ip}
 
 설정 중:
 
-- 둘 이상의 SDK 이미지가 있는 경우 설치된 `sdk:v2.1-latest` 이미지를 선택합니다.
+- 둘 이상의 SDK 이미지가 있는 경우 설치된 Neat SDK %%release.sdk%% 이미지를 선택합니다.
 - 다른 경로가 필요하지 않은 경우 기본 `/workspace` DevKit 마운트 경로를 사용합니다.
 - 호스트에서 NFS 서버를 설정하라는 메시지가 표시되면 호스트 관리자 비밀번호를 입력합니다.
 - 메시지가 표시되면 DevKit 사용자 계정을 입력합니다. 기본 사용자는 `sima`이고 기본 비밀번호는 `edgeai`입니다.

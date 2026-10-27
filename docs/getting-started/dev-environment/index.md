@@ -4,10 +4,10 @@ description: Set up the Neat SDK for fast, agent-ready Neat application developm
 sidebar_position: 1
 ---
 
-The Neat Development Environment (referred to as Neat SDK) is the recommended
-host-side workspace for building large scale Neat applications and validating them on a
-Modalix DevKit. It brings the build tools, model tools, hardware connection, and
-agent-ready source context into one containerized workflow.
+The Neat SDK is the recommended host-side workspace for building large scale
+Neat applications and validating them on a Modalix DevKit. It brings the build
+tools, model tools, hardware connection, and agent-ready source context into one
+containerized workflow.
 
 The SDK connects three places:
 
@@ -30,7 +30,7 @@ offline packages for restricted networks.
 
 :::tip SDK-only happy path
 If you installed the SDK and have not paired a DevKit, you only need two steps:
-[Install the Environment](/getting-started/dev-environment/install-the-environment/),
+[Install the SDK](/getting-started/dev-environment/install-the-environment/),
 then [Compile a Model](/compile-a-model/) — model compilation runs entirely in the
 SDK. Configure SDK, DevKit Sync, Install Model Compiler (it is offered during
 setup), and the Neat Library and PyNeat pages are optional side-trips; visit them
@@ -42,7 +42,7 @@ only when you need them or once you pair a DevKit.
     <h2>SDK Topics</h2>
     <p>Install the SDK, then use optional configuration topics when you need to change settings, install Model Compiler, or work with a paired DevKit.</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="/getting-started/dev-environment/install-the-environment/"><strong>Install the Environment</strong><span>Install and set up the SDK package that matches your DevKit software version.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/install-the-environment/"><strong>Install the SDK</strong><span>Install and set up the SDK package that matches your DevKit software version.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/dev-environment/devkit-sync/"><strong>DevKit Sync</strong><span>Understand workspace sharing, pairing updates, rsync fallback, and <code>dk</code> command execution.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/dev-environment/offline-installation/"><strong>Offline Installation</strong><span>Download SDK and Model Compiler packages for offline installation.</span></a></li>
     </ul>
@@ -113,7 +113,7 @@ have. The Model Compiler install commands use `arm64` and `amd64` — see
 
 :::note Installing a specific version
 Standard installation pulls the current supported defaults. The `%%release.sdk_channel%%`
-channel used on the [Install the Environment](/getting-started/dev-environment/install-the-environment/)
+channel used on the [Install the SDK](/getting-started/dev-environment/install-the-environment/)
 page always tracks the latest %%release.sdk_series%% patch release. To pin an exact SDK, Neat Library,
 or Model Compiler version, see the [Compatibility Guide](/getting-started/compatibility/).
 :::
@@ -125,7 +125,7 @@ The SDK is the recommended place to install and update the
 applications for a paired DevKit.
 
 To access the SDK from a terminal, VS Code, or a browser with Neat Insight, see
-[Install the Environment](/getting-started/dev-environment/install-the-environment/#access-the-sdk).
+[Install the SDK](/getting-started/dev-environment/install-the-environment/#access-the-sdk).
 
 During SDK setup, `sima-cli` prompts you to install the matching Model Compiler
 automatically. Install it if you compile or quantize models yourself; you can
@@ -134,4 +134,4 @@ usage, see [Compile a Model](/compile-a-model/).
 
 ## Next Step
 
-Start with [Install the Environment](/getting-started/dev-environment/install-the-environment/).
+Start with [Install the SDK](/getting-started/dev-environment/install-the-environment/).

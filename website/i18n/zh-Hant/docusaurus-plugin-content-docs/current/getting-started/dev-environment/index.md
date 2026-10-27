@@ -4,7 +4,7 @@ description: "設定 Neat SDK，以便快速開發已準備好用於部署的 Ne
 sidebar_position: 1
 ---
 
-Neat 開發環境（以下簡稱 Neat SDK）是建構大型 Neat 應用程式並在 Modalix DevKit 上驗證它們的建議主機端工作區。它將建置工具、模型工具、硬體連接和已準備好的代理程式原始碼環境整合到一個容器化的工作流程中。
+Neat SDK 是建構大型 Neat 應用程式並在 Modalix DevKit 上驗證它們的建議主機端工作區。它將建置工具、模型工具、硬體連接和已準備好的代理程式原始碼環境整合到一個容器化的工作流程中。
 
 SDK 將三個地點連接起來：
 
@@ -20,7 +20,7 @@ DevKit Sync 將這些位置連接到一個共享的 `/workspace`，因此，建�
 
 :::tip 僅限 SDK 的理想情境
 如果您已安裝 SDK 且尚未配對 DevKit，您只需要執行兩個步驟：
-[安裝環境](/getting-started/dev-environment/install-the-environment/)，
+[安裝 SDK](/getting-started/dev-environment/install-the-environment/)，
 然後 [編譯模型](/compile-a-model/)——模型編譯完全在 SDK 中執行。設定 SDK、DevKit Sync、安裝 Model Compiler（它會在設定過程中提供），而 Neat Library 和 PyNeat 頁面則是可選的附加步驟；只有在您需要時或配對 DevKit 後才訪問它們。
 :::
 
@@ -29,7 +29,7 @@ DevKit Sync 將這些位置連接到一個共享的 `/workspace`，因此，建�
     <h2>SDK 主題</h2>
     <p>安裝 SDK，然後在需要變更設定、安裝 Model Compiler 或與配對的 DevKit 搭配使用時，使用選用的設定主題。</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="/getting-started/dev-environment/install-the-environment/"><strong>安裝環境</strong><span>安裝並設定與您的 DevKit 軟體版本相符的 SDK 套件。</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/install-the-environment/"><strong>安裝 SDK</strong><span>安裝並設定與您的 DevKit 軟體版本相符的 SDK 套件。</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/dev-environment/devkit-sync/"><strong>DevKit Sync</strong><span>了解工作區共用、配對更新、rsync 備援機制等。 <code>dk</code> 命令執行。</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/dev-environment/offline-installation/"><strong>離線安裝</strong><span>下載 SDK 和 Model Compiler 套件，以供離線安裝。</span></a></li>
     </ul>
@@ -80,7 +80,7 @@ Model Compiler 會在 SDK 設定期間提供。若要稍後安裝，請指定特
 :::
 
 :::note 安裝特定版本
-標準安裝會採用目前支援的預設設定。在「[安裝環境](/getting-started/dev-environment/install-the-environment/)」頁面上使用的 `%%release.sdk_channel%%` 通道，會隨時追蹤最新的 %%release.sdk_series%% 版本更新。若要指定確切的 SDK、Neat Library 或 Model Compiler 版本，請參閱「[相容性指南](/getting-started/compatibility/)」。
+標準安裝會採用目前支援的預設設定。在「[安裝 SDK](/getting-started/dev-environment/install-the-environment/)」頁面上使用的 `%%release.sdk_channel%%` 通道，會隨時追蹤最新的 %%release.sdk_series%% 版本更新。若要指定確切的 SDK、Neat Library 或 Model Compiler 版本，請參閱「[相容性指南](/getting-started/compatibility/)」。
 :::
 
 ## SDK 中的工具
@@ -88,10 +88,10 @@ Model Compiler 會在 SDK 設定期間提供。若要稍後安裝，請指定特
 當您為配對的 DevKit 建置應用程式時，建議您在此處安裝和更新 [Neat Library](/getting-started/neat-library/)。
 
 若要從終端機、VS Code 或具有 Neat Insight 的瀏覽器存取 SDK，請參閱
-[安裝環境](/getting-started/dev-environment/install-the-environment/#access-the-sdk)。
+[安裝 SDK](/getting-started/dev-environment/install-the-environment/#access-the-sdk)。
 
 在 SDK 設定期間，`sima-cli` 會提示您自動安裝對應的 Model Compiler。如果您自行編譯或量化模型，請安裝它；如果您僅使用預先編譯的模型套件，則可以跳過此步驟。有關編譯器設定和使用方式，請參閱 [編譯模型](/compile-a-model/)。
 
 ## 下一步
 
-首先，請執行 [安裝環境](/getting-started/dev-environment/install-the-environment/)。
+首先，請執行 [安裝 SDK](/getting-started/dev-environment/install-the-environment/)。

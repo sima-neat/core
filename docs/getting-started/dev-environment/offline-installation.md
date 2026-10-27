@@ -28,7 +28,7 @@ For runtime packages, see [PCIe host offline installation](/getting-started/neat
 
 ## Before you start
 
-- Install `sima-cli` on the computer with internet access. See [Install the Environment](/getting-started/dev-environment/install-the-environment/).
+- Install `sima-cli` on the computer with internet access. See [Install the SDK](/getting-started/dev-environment/install-the-environment/).
 - Select a package version that is compatible with your system. See [Compatibility](/getting-started/compatibility/).
 - Identify the operating system and processor architecture of the target host.
 - Prepare a USB drive or an internal file share for the transfer.

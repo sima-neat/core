@@ -46,7 +46,7 @@ command-line tool. It requires an idle DevKit with no other MLA work.
 
 Scheduler owns the GStreamer transport and structured error interfaces, including
 the installed `gst/SimaaiGstErrors.h` header. Core consumes those interfaces; it
-does not keep a second implementation. The unreleased Core `0.6.0` includes this
+does not keep a second implementation. The Core `0.6.0` includes this
 file-ownership transition. Upgrade the matching Core/Scheduler package set
 together; this package version does not change a platform or numerical contract.
 

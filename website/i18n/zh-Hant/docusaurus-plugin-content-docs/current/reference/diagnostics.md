@@ -173,27 +173,10 @@ std::cout << report.to_text() << telemetry;
 
 若驅動程式回報完成狀態不明，請持續保留其 DMA 緩衝區與原始集區借用權。關閉檔案描述元、停止應用程式或重新啟動服務，都不能證明硬體已停止存取記憶體。請收集失敗報告，並在重試前使用平台核准的復原程序。
 
-### 維持 Core 與 Internals 配對
+### 維持 Core 與 Scheduler 套件相符 {#keep-core-and-scheduler-packages-matched}
 
-建置與安裝 Core 時，請使用相符的 B1157 Internals 套件。Core 會分別檢查執行階段設定檔、核心原始碼版本與 SDK sysroot 收據，而不是只看公開 C++ ABI 版本。即使公開 ABI 相同，較舊的套件也不能作為相容替代品。
+請將 Core 與該 Core 版本選定的 Scheduler 套件組一起安裝。Scheduler 管理相符的 Runner、Kernels、Codecs 和韌體相依套件。僅公開 C++ ABI 相同，並不能確保執行階段相容。
 
-安裝程式在變更套件前，會檢查套件組中 `neat-runtime` 的設定檔與相符的
-`neat-gst-plugins` 版本。平台檢查覆寫不會繞過執行階段配對。若檢查失敗，請取得相符的套件組；不要取代其收據或強制安裝較舊的執行階段。
+請使用 `build.sh` 選定的已發布相依套件，或以 `--scheduler PATH` 提供完整且相符的 Scheduler DEB 套件組。請參閱[本機相依套件](/develop-apps/contribute/build-test/local-dependencies/)。
 
-在板上安裝前，請停止使用 CVU 或硬體編解碼器的應用程式。完整安裝程式會在所有套件安裝完成後啟用已暫存的 EV74 韌體；若這些裝置仍開啟，則拒絕重設 EV74。設定
-`NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=OFF` 可讓韌體維持暫存狀態，
-稍後再以
-`sudo /usr/libexec/sima-neat-firmware/install.sh --activate`
-啟用。
-
-若安裝時使用了 `FORCE_INSTALL=1`（或 `sima-cli neat install core -f`），並以
-`NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=OFF` 延後啟用，請在板上手動啟用時
-再次傳入覆寫設定；安裝程式不會保留此設定。停止使用 CVU 或硬體編解碼器的應用程式後，執行：
-
-```bash
-sudo env FORCE_INSTALL=1 /usr/libexec/sima-neat-firmware/install.sh --activate
-```
-
-此命令會要求覆寫 EV74 核心建置相容性檢查，因此需要支援此覆寫功能的韌體套件。
-不相符的執行階段可能不安全；強制啟用不代表具有相容性。韌體完整性、擁有權與
-DMA 安全性檢查仍會執行。請優先使用相符的韌體與核心套件組。
+更新板子時，請依照[安裝或更新 Neat Library](/getting-started/neat-library/install-or-update/)安裝完整的 Core 套件組。選定的 Scheduler 安裝程式會驗證套件組並管理韌體啟用。如果驗證失敗，請取得相符的 Core/Scheduler 套件組；不要取代安裝記錄，也不要強制安裝個別不相容的執行階段或韌體套件。

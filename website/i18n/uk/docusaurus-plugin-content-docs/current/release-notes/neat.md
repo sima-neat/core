@@ -7,7 +7,7 @@ sidebar_position: 3
 
 Примітки до випуску для SiMa.ai Neat Library.
 
-## Не опубліковано
+## 0.6.0
 
 ### Зміни, що порушують сумісність
 
@@ -15,15 +15,7 @@ sidebar_position: 3
 - C++ ABI Neat Library тепер має версію 6, а SONAME динамічної бібліотеки — `libsima_neat.so.6`. Тензори тепер містять семантичні метадані екстрактора ознак, публічні типи запитів/результатів GenAI містять метадані завдання ASR, мови та проби, `GraphLinkOptions` містить обмеження приймання в реальному часі, а `BenchmarkOptions` і `BenchmarkReport` отримали нові поля. Перезберіть застосунки C++ і плагіни та встановіть відповідні пакети середовища виконання й розробки Core. До `SimaArgMaxOptions` додано `axis` і `keepdims`, а розміщення класу `SimaArgMax` також змінено.
 - Тепер для створення графа в реальному часі використовуються `GraphLinkOptions`, `Graph::connect()` та `Graph::build()`. API для попереднього перегляду `RealtimeGraphLinkOptions`, `connect_realtime()`, `build_fused_realtime_sources()` / `build_fused_realtime_source()` та `RealtimeEveryFrameByStream` було видалено. Збережені графи, що містять `realtime_every_frame_by_stream`, необхідно відтворити з використанням підтримуваної політики; див. [З’єднайте фрагменти в реальному часі.](/develop-apps/development-workflow/graph/#connect-live-fragments).
 
-- Невипущена версія пакета залишається **0.6.0**. `Model::Options` і
-  `BoxDecodeOptions` тепер містять `yolox_seg_pose.pose_classes`; ці доповнення
-  публічного розміщення потребують споживачів ABI 6. Не використовуйте символічні
-  посилання для сумісності ABI. Попередні випуски також можуть змінювати публічні
-  типи, як-от `GraphOptions`, що тепер містить `kernel_runner_a65_workers`.
-  Оновлюючи попередній випуск 0.6.0, перебудовуйте застосунки, зовнішні модулі
-  та розширення Python з відповідними пакетами середовища виконання й розробки.
-  Не змішуйте двійкові файли різних попередніх випусків лише тому, що обидва
-  використовують ABI 6.
+- Версія пакета — **0.6.0**. `Model::Options` і `BoxDecodeOptions` тепер містять `yolox_seg_pose.pose_classes`; ці доповнення публічного представлення потребують компонентів з ABI 6. Не використовуйте символічні посилання для сумісності ABI. `GraphOptions` тепер містить `kernel_runner_a65_workers`. Під час оновлення до 0.6.0 перебудуйте застосунки, плагіни та розширення Python з відповідними пакетами середовища виконання й розробки. Не змішуйте двійкові файли попередніх збірок із пакетами випуску лише тому, що обидва використовують ABI 6.
 
 ### Зміни під час роботи (в середовищі виконання)
 
@@ -66,6 +58,8 @@ sidebar_position: 3
 
 | Випуск | Сумісний з Neat SDK. | Примітки |
 | --- | --- | --- |
+| 0.6.0 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
+| 0.5.0 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |
 | 0.4.0 | 2.1.3.0 | [Neat Library 0.4.0](https://github.com/sima-neat/core/releases/tag/v0.4.0) |
 | 0.3.0 | 2.1.2.3 | [Neat Library 0.3.0](https://github.com/sima-neat/core/releases/tag/v0.3.0) |
 | 0.2.2 | 2.1.2.2 | [Neat Library 0.2.2](https://github.com/sima-neat/core/releases/tag/v0.2.2) |

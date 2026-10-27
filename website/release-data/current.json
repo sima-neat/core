@@ -7,7 +7,7 @@
     "sdk_channel": {"value": "release-3.0", "owner": "SDK release maintainers", "source": "Published SDK channel; independent of the build dependency channel"},
     "sdk_series": {"value": "3.0", "owner": "SDK release maintainers", "source": "Published SDK release series"},
     "apps": {"value": "0.6.0", "owner": "Apps release maintainers", "source": "docs/release-notes/neat-examples.md"},
-    "model_compiler": {"value": "3.0.0.0", "owner": "Model Compiler release maintainers", "source": "docs/release-notes/modelsdk.md"},
+    "model_compiler": {"value": "3.0.0", "owner": "Model Compiler release maintainers", "source": "docs/release-notes/modelsdk.md"},
     "insight": {"value": "0.0.9", "owner": "Insight release maintainers", "source": "docs/release-notes/insight.md"},
     "sima_cli": {"value": "2.1.20", "owner": "sima-cli release maintainers", "source": "docs/release-notes/sima-cli.md"}
   }

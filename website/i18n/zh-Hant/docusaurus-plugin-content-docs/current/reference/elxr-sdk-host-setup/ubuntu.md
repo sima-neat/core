@@ -4,7 +4,7 @@ description: "準備一個 Ubuntu 主機，以便安裝 Neat SDK 和 DevKit-Sync
 sidebar_position: 1
 ---
 
-當您的主機是 Ubuntu，並且您想執行 Neat 開發環境（稱為 Neat SDK），請參考本指南，並搭配使用 DevKit-Sync。
+當您的主機是 Ubuntu，並且您想執行 Neat SDK，請參考本指南，並搭配使用 DevKit-Sync。
 
 ## 先決條件
 

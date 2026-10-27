@@ -138,12 +138,11 @@ opt.preprocess.preset = pyneat.NormalizePreset.COCO_YOLO
 ### 10. `No channel available (all candidate channel opens failed)`
 
 :::info Cause
-The EV74 dispatcher tried to schedule a kernel the loaded firmware doesn't implement — usually because `neat-runtime` and `neat-ev74-firmware` are **not the same build** (mismatched internals hash), e.g. a partial update.
+The execution request could not open a compatible EV74 channel. One possible cause is a mismatched Scheduler, Runner, Kernels, or firmware package set after a partial update.
 :::
 
 :::tip Fix
-Install the matched `neat-*` set (same hash) together; confirm runtime and firmware report the same hash. See [Compatibility → the version-matched set](/getting-started/compatibility#the-version-matched-set-firmware--runtime).
-*(Message originates in the EV74 dispatcher.)*
+Install the complete Core bundle with its selected Scheduler dependencies using [Install or Update Neat Library](/getting-started/neat-library/install-or-update/). Check [runtime package pairing](/reference/diagnostics/#keep-core-and-scheduler-packages-matched) rather than comparing unrelated component Git hashes or forcing individual firmware packages.
 :::
 
 ### 11. `frame=N rtsp_timeout`
