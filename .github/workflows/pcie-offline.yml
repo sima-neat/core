@@ -68,80 +68,11 @@ jobs:
     with:
       vulcan_env: ${{ vars.VULCAN_ENV || 'production' }}
 
-  prepare-card:
-    name: Prepare shared clean card baseline
-    needs: [source, config]
-    environment: ${{ needs.config.outputs.vulcan_env }}
-    runs-on: [self-hosted, linux, arm64, "vulcan-${{ needs.config.outputs.vulcan_env }}", ubuntu, default]
-    timeout-minutes: 45
-    outputs:
-      cache_key: ${{ steps.key.outputs.card }}
-      ubuntu22-amd64: ${{ steps.key.outputs.ubuntu22-amd64 }}
-      ubuntu24-amd64: ${{ steps.key.outputs.ubuntu24-amd64 }}
-      ubuntu22-arm64: ${{ steps.key.outputs.ubuntu22-arm64 }}
-      ubuntu24-arm64: ${{ steps.key.outputs.ubuntu24-arm64 }}
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.sha }}
-      - name: Set baseline cache directory
-        run: echo "OFFLINE_BASELINE_CACHE=$RUNNER_TEMP/offline-baselines" >> "$GITHUB_ENV"
-      - name: Install publication client
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3-venv
-          python3 -m venv "$RUNNER_TEMP/offline-aws"
-          "$RUNNER_TEMP/offline-aws/bin/pip" install awscli==1.42.49
-          echo "$RUNNER_TEMP/offline-aws/bin" >> "$GITHUB_PATH"
-      - uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-region: ${{ needs.config.outputs.aws_region }}
-          role-to-assume: ${{ needs.config.outputs.artifact_publisher_role_arn }}
-          role-session-name: offline-card-${{ github.run_id }}
-      - id: key
-        name: Resolve baseline cache identities from immutable publications
-        env:
-          ARTIFACT_BUCKET: ${{ needs.config.outputs.artifact_bucket }}
-          SOURCE_REF: ${{ needs.source.outputs.ref }}
-          SOURCE_SHA: ${{ needs.source.outputs.sha }}
-        run: |
-          python3 -B pcie_host/scripts/offline/ci.py cache-keys \
-            --bucket "$ARTIFACT_BUCKET" --ref "$SOURCE_REF" --sha "$SOURCE_SHA" \
-            --work "$RUNNER_TEMP/baseline-keys"
-      - uses: actions/cache@v4
-        id: cache
-        with:
-          path: ${{ runner.temp }}/offline-baselines/card
-          key: ${{ steps.key.outputs.card }}
-          lookup-only: true
-      - name: Prepare baseline with the pinned SDK image
-        if: steps.cache.outputs.cache-hit != 'true'
-        env:
-          ARTIFACT_BUCKET: ${{ needs.config.outputs.artifact_bucket }}
-          SOURCE_REF: ${{ needs.source.outputs.ref }}
-          SOURCE_SHA: ${{ needs.source.outputs.sha }}
-        run: |
-          set -euo pipefail
-          python3 -B pcie_host/scripts/offline/ci.py build --core --prepare-card --validation-only \
-            --bucket "$ARTIFACT_BUCKET" --ref "$SOURCE_REF" --sha "$SOURCE_SHA" \
-            --installer-revision "$GITHUB_SHA" --work "$RUNNER_TEMP/card-preparation" \
-            2>&1 | tee "$RUNNER_TEMP/card-preparation.log"
-      - name: Retain preparation evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: offline-card-preparation
-          path: ${{ runner.temp }}/card-preparation.log
-          if-no-files-found: ignore
-          retention-days: 3
-
   build:
     name: Assemble offline ${{ matrix.distro }} ${{ matrix.arch }}
-    needs: [source, config, prepare-card]
+    needs: [source, config]
     environment: ${{ needs.config.outputs.vulcan_env }}
     runs-on: [self-hosted, linux, "${{ matrix.arch }}", "vulcan-${{ needs.config.outputs.vulcan_env }}", ubuntu, default]
-    env:
-      OFFLINE_CARD_REQUIRED: 'true'
     timeout-minutes: 90
     concurrency:
       group: pcie-offline-build-${{ needs.source.outputs.ref }}-${{ needs.source.outputs.sha }}-${{ matrix.distro }}-${{ matrix.arch }}
@@ -158,19 +89,6 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
-      - name: Set baseline cache directory
-        run: echo "OFFLINE_BASELINE_CACHE=$RUNNER_TEMP/offline-baselines" >> "$GITHUB_ENV"
-      - name: Restore shared clean card baseline
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ runner.temp }}/offline-baselines/card
-          key: ${{ needs.prepare-card.outputs.cache_key }}
-          fail-on-cache-miss: true
-      - name: Cache clean host baseline
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/offline-baselines/${{ matrix.distro }}-${{ matrix.arch }}
-          key: ${{ needs.prepare-card.outputs[format('{0}-{1}', matrix.distro, matrix.arch)] }}
       - name: Enable ARM64 card-container validation on AMD64
         if: ${{ matrix.arch == 'amd64' }}
         uses: docker/setup-qemu-action@v3
@@ -235,6 +153,7 @@ jobs:
           path: |
             ${{ runner.temp }}/offline-build.log
             ${{ runner.temp }}/offline/spec.json
+            ${{ runner.temp }}/offline/baseline-images.json
             ${{ runner.temp }}/offline/metadata-offline.json
             ${{ runner.temp }}/offline/neat-offline/bundle.json
           if-no-files-found: ignore
@@ -242,11 +161,9 @@ jobs:
 
   build-core:
     name: Assemble standalone Core offline
-    needs: [source, config, prepare-card]
+    needs: [source, config]
     environment: ${{ needs.config.outputs.vulcan_env }}
     runs-on: [self-hosted, linux, arm64, "vulcan-${{ needs.config.outputs.vulcan_env }}", ubuntu, default]
-    env:
-      OFFLINE_CARD_REQUIRED: 'true'
     timeout-minutes: 90
     concurrency:
       group: pcie-offline-build-${{ needs.source.outputs.ref }}-${{ needs.source.outputs.sha }}-core
@@ -255,14 +172,6 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
-      - name: Set baseline cache directory
-        run: echo "OFFLINE_BASELINE_CACHE=$RUNNER_TEMP/offline-baselines" >> "$GITHUB_ENV"
-      - name: Restore shared clean card baseline
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ runner.temp }}/offline-baselines/card
-          key: ${{ needs.prepare-card.outputs.cache_key }}
-          fail-on-cache-miss: true
       - name: Install publication client with conditional-write support
         run: |
           sudo apt-get update
@@ -270,6 +179,13 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/offline-aws"
           "$RUNNER_TEMP/offline-aws/bin/pip" install awscli==1.42.49
           echo "$RUNNER_TEMP/offline-aws/bin" >> "$GITHUB_PATH"
+      - name: Authenticate clean baseline images
+        run: |
+          # The AMI credential helper does not implement credential storage.
+          export DOCKER_CONFIG="$RUNNER_TEMP/offline-docker"
+          mkdir -p "$DOCKER_CONFIG"
+          echo "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
+          aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 069171140053.dkr.ecr.us-west-2.amazonaws.com
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: ${{ needs.config.outputs.aws_region }}
@@ -315,6 +231,7 @@ jobs:
           path: |
             ${{ runner.temp }}/offline-build.log
             ${{ runner.temp }}/offline/spec.json
+            ${{ runner.temp }}/offline/baseline-images.json
             ${{ runner.temp }}/offline/metadata.json
             ${{ runner.temp }}/offline/metadata-minimal.json
             ${{ runner.temp }}/offline/neat-core-offline/bundle.json

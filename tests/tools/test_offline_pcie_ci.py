@@ -179,16 +179,9 @@ def test_validation_build_does_not_reuse_or_publish(tmp_path):
     card.mkdir()
     for name in ('platform_provider.py', 'platform-source.json'):
         (host/name).write_text('fixture')
-    baselines = json.loads((HERE/'baselines.json').read_text())
-    baseline = baselines['card']
     args = SimpleNamespace(work=tmp_path/'work', ref='develop', sha=SHA,
                            bucket='bucket', distro='ubuntu24', arch='amd64',
                            installer_revision=SHA, run_id=123, validation_only=True)
-
-    def command(*argv):
-        if argv[:2] == ('docker', 'build'):
-            Path(argv[argv.index('--iidfile') + 1]).write_text('sha256:' + 'a' * 64)
-        return baseline['image_id'] if argv[:3] == ('docker', 'image', 'inspect') else ''
 
     def download(bucket, key, path):
         path.write_text('fixture')
@@ -202,55 +195,17 @@ def test_validation_build_does_not_reuse_or_publish(tmp_path):
     records = {role: {'resources-checksum': {}} for role in ('host', 'card')}
     paths = {'host': ('host-key', host), 'card': ('card-key', card)}
     with patch.object(ci, 'source_metadata', return_value=(records, paths, INPUTS)), \
-         patch.object(ci, 'load_card_image', return_value=baseline['image_id']), \
-         patch.object(ci, 'card_baseline', return_value='sha256:' + 'd' * 64), \
+         patch.object(ci, 'pull_baseline', return_value='sha256:' + 'd' * 64) as pull, \
          patch.object(ci, 'existing') as existing, patch.object(ci, 'put') as put, \
          patch.object(ci, 'download', side_effect=download), \
-         patch.object(ci, 'run', side_effect=command), \
-         patch.object(ci.assemble, 'sha', side_effect=lambda p: baselines['platform_source']['sha256'] if p.name == 'platform-source.tar.gz' else baseline['sha256']), \
          patch.object(ci.assemble, 'verify_publication'), \
          patch.object(ci.assemble, 'assemble', side_effect=assemble) as build:
         ci.build(args)
         existing.assert_not_called()
         put.assert_not_called()
         build.assert_called_once()
+        assert [call.args[1] for call in pull.call_args_list] == ['ubuntu24-amd64', 'card']
     assert (args.work/ci.assemble.ARCHIVE_NAME).is_file()
-
-
-def test_card_baseline_provisions_selected_sysroot_outside_bundle(tmp_path):
-    import json
-    card = json.loads((HERE/'baselines.json').read_text())['card']
-    args = SimpleNamespace(work=tmp_path, bucket='bucket')
-    digest = 'sha256:' + 'e' * 64
-    publication = tmp_path/'publication'
-    publication.mkdir()
-    (publication/'runtime.deb').write_text('selected')
-
-    def build(*argv):
-        if argv[:2] == ('docker', 'tag'):
-            assert argv[2] == card['image_id']
-            return
-        assert argv[:2] == ('docker', 'build')
-        assert 'linux/arm64' in argv
-        assert 'CARD_IMAGE=neat-offline-card-base:' + card['image_id'].removeprefix('sha256:') in argv
-        Path(argv[argv.index('--iidfile') + 1]).write_text(digest)
-
-    with patch.object(ci, 'download', side_effect=lambda b, k, p: p.write_text('deb')) as fetch, \
-         patch.object(ci.assemble, 'sha', return_value=card['sysroot_tools']['sha256']), \
-         patch.object(ci, 'run', side_effect=build):
-        assert ci.card_baseline(args, card, publication) == digest
-    fetch.assert_called_once_with('bucket', card['sysroot_tools']['key'], tmp_path/'card-baseline/sdk-tools.tar.gz')
-    assert not (tmp_path/'neat-offline').exists()
-
-
-def test_card_baseline_rejects_corrupt_sysroot_tools_before_build(tmp_path):
-    import json
-    card = json.loads((HERE/'baselines.json').read_text())['card']
-    with patch.object(ci, 'download', side_effect=lambda b, k, p: p.write_text('corrupt')), \
-         patch.object(ci, 'run') as build:
-        with pytest.raises(ValueError, match='sysroot tooling checksum'):
-            ci.card_baseline(SimpleNamespace(work=tmp_path, bucket='bucket'), card, tmp_path/'publication')
-        build.assert_not_called()
 
 
 @pytest.mark.parametrize('status', ['queued', 'in_progress', 'waiting', 'pending'])
@@ -262,7 +217,6 @@ def test_validation_can_use_ready_publications_while_other_tests_run(status):
     assert resolver.eligible(run, [], validation_ref=run['head_branch']) is None
     run.update(status='completed', conclusion='failure')
     assert resolver.eligible(run, jobs(), validation_ref=run['head_branch']) is None
-
 
 
 def test_manual_publication_is_opt_in_and_reuses_the_validated_matrix():
@@ -291,7 +245,6 @@ def test_offline_assembly_uses_vulcan_native_pools_without_changing_target_matri
     assert {(row['distro'], row['arch']) for row in build['strategy']['matrix']['include']} == set(ci.TUPLES)
     qemu = next(step for step in build['steps'] if step.get('uses') == 'docker/setup-qemu-action@v3')
     assert qemu['if'] == "${{ matrix.arch == 'amd64' }}"
-
 
 
 def test_cloudfront_invalidation_encodes_s3_branch_keys(tmp_path):
@@ -348,88 +301,6 @@ def test_completed_run_listener_does_not_duplicate_develop_publication():
     assert "github.event.workflow_run.head_branch != 'develop'" in worker['jobs']['source']['if']
 
 
-def test_card_image_import_authenticates_original_config(tmp_path):
-    import hashlib
-    import io
-    import json
-    import tarfile
-    config = b'{"architecture":"arm64"}'
-    archive = tmp_path/'image.tar'
-    with tarfile.open(archive, 'w') as target:
-        for name, data in [('manifest.json', json.dumps([{'Config': 'config.json'}]).encode()),
-                           ('config.json', config)]:
-            member = tarfile.TarInfo(name)
-            member.size = len(data)
-            target.addfile(member, io.BytesIO(data))
-    original = 'sha256:' + hashlib.sha256(config).hexdigest()
-    imported = 'sha256:' + 'f'*64
-    with patch.object(ci, 'run', side_effect=['Loaded image: factory:baseline', imported]) as command:
-        assert ci.load_card_image(archive, original) == imported
-        assert command.call_args.args[3] == 'factory:baseline'
-    with patch.object(ci, 'run') as command:
-        with pytest.raises(ValueError, match='identity differs'):
-            ci.load_card_image(archive, 'sha256:' + '0'*64)
-        command.assert_not_called()
-
-
-def test_clean_baseline_cache_hit_and_integrity(tmp_path, monkeypatch):
-    import json
-    monkeypatch.setenv('OFFLINE_BASELINE_CACHE', str(tmp_path/'cache'))
-    args = SimpleNamespace(sha=SHA)
-    image = 'sha256:' + 'a'*64
-    def command(*argv):
-        assert argv[:3] == ('docker', 'save', '--output')
-        Path(argv[3]).write_bytes(b'authenticated image archive')
-    with patch.object(ci, 'run', side_effect=command), \
-         patch.object(ci, 'load_card_image', return_value=image) as restore, \
-         patch.object(ci, 'image_config_digest', return_value=image), \
-         patch.object(ci, 'assemble') as assembler:
-        # Keep the real streaming hash implementation while replacing no image work.
-        import hashlib
-        assembler.sha.side_effect = lambda path: hashlib.sha256(Path(path).read_bytes()).hexdigest()
-        with patch.object(ci, 'card_baseline', return_value=image) as build:
-            assert ci.cached_baseline(args, 'card', build) == image
-            assert ci.cached_baseline(args, 'card', build) == image
-            build.assert_called_once()
-        restore.assert_called_once_with(tmp_path/'cache/card/image.tar', image)
-        (tmp_path/'cache/card/image.tar').write_bytes(b'tampered')
-        with pytest.raises(ValueError, match='archive differ'):
-            ci.cached_baseline(args, 'card', lambda: pytest.fail('must not rebuild corrupt cache'))
-        receipt = json.loads((tmp_path/'cache/card/receipt.json').read_text())
-        assert receipt['image_id'] == image
-
-
-def test_missing_shared_card_cache_never_rebuilds_under_qemu(tmp_path, monkeypatch):
-    monkeypatch.setenv('OFFLINE_BASELINE_CACHE', str(tmp_path))
-    monkeypatch.setenv('OFFLINE_CARD_REQUIRED', 'true')
-    with pytest.raises(ValueError, match='shared card baseline cache is missing'):
-        ci.cached_baseline(SimpleNamespace(sha=SHA), 'card', lambda: pytest.fail('must prepare natively'))
-
-
-def test_shared_card_precedes_all_offline_assembly():
-    import yaml
-    workflow = yaml.safe_load((HERE.parents[2]/'.github/workflows/pcie-offline.yml').read_text())
-    jobs = workflow['jobs']
-    assert 'arm64' in jobs['prepare-card']['runs-on']
-    for name in ('build', 'build-core'):
-        assert 'prepare-card' in jobs[name]['needs']
-        restore = next(s for s in jobs[name]['steps'] if s.get('uses') == 'actions/cache/restore@v4')
-        assert restore['with']['fail-on-cache-miss'] is True
-    names = [step.get('name') for step in jobs['build']['steps']]
-    assert names.index('Install publication client with conditional-write support') < names.index('Authenticate existing PCIe build images')
-    login = next(s['run'] for s in jobs['build']['steps'] if s.get('name') == 'Authenticate existing PCIe build images')
-    assert 'export DOCKER_CONFIG="$RUNNER_TEMP/offline-docker"' in login
-    cache = next(s for s in jobs['prepare-card']['steps'] if s.get('id') == 'cache')
-    assert cache['with']['lookup-only'] is True
-    host = (HERE/'HostBaseline.Dockerfile').read_text()
-    assert 'FROM ${HOST_BUILD_IMAGE} AS platform-build' in host
-    assert 'apt-get install' not in host
-    card = (HERE/'CardBaseline.Dockerfile').read_text()
-    assert 'FROM ${SDK_IMAGE} AS sdk' in card
-    assert 'COPY --from=sdk /tmp/offline-sysroot-packages' in card
-    assert 'COPY --from=sdk /opt/toolchain' not in card
-
-
 def test_baseline_keys_ignore_core_payload_but_track_platform_inputs():
     checksums = {name: 'a'*64 for name in ('simaai-scheduler.deb', 'resolved-deps-manifest.json',
                  'scheduler_platform_admission.py', 'sima-neat-core.deb')}
@@ -440,3 +311,55 @@ def test_baseline_keys_ignore_core_payload_but_track_platform_inputs():
     assert ci.baseline_identity('card', ci.baseline_dependencies({'resources-checksum': checksums}, 'card')) != first
     with pytest.raises(ValueError, match='lacks baseline provenance'):
         ci.baseline_dependencies({'resources-checksum': {}}, 'ubuntu24-arm64')
+
+
+def test_core_consumes_registry_images_without_a_baseline_producer():
+    import yaml
+    workflow = yaml.safe_load((HERE.parents[2]/'.github/workflows/pcie-offline.yml').read_text())
+    assert 'prepare-card' not in workflow['jobs']
+    assert 'actions/cache' not in (HERE.parents[2]/'.github/workflows/pcie-offline.yml').read_text()
+    source = (HERE/'ci.py').read_text()
+    assert "run('docker', 'build'" not in source
+    assert "run('docker', 'push'" not in source
+    assert not list(HERE.glob('*.Dockerfile'))
+
+
+def baseline_record():
+    return {'resources-checksum': {name: 'a'*64 for name in (
+        'simaai-scheduler.deb', 'resolved-deps-manifest.json', 'scheduler_platform_admission.py')}}
+
+
+@pytest.mark.parametrize('fault', [None, 'labels', 'architecture'])
+def test_baseline_resolution_pulls_only_digest_and_checks_provenance(tmp_path, fault):
+    import json
+    args = SimpleNamespace(sha=SHA, work=tmp_path)
+    config = ci.baseline_config()
+    key = ci.baseline_identity('card', ci.baseline_dependencies(baseline_record(), 'card'))
+    digest = 'sha256:'+'b'*64
+    local_id = 'sha256:'+'c'*64
+    labels = {'ai.sima.offline.'+name: value for name, value in
+              [('inputs', key), ('recipe', config['recipe_sha256']), ('role', 'card')]}
+    if fault == 'labels':
+        labels['ai.sima.offline.inputs'] = 'd'*64
+    info = {'Architecture': 'amd64' if fault == 'architecture' else 'arm64',
+            'Config': {'Labels': labels}, 'Id': local_id}
+    result = SimpleNamespace(returncode=0, stdout=json.dumps({'Descriptor': {'digest': digest}}))
+    with patch.object(ci.subprocess, 'run', return_value=result), \
+         patch.object(ci, 'run', side_effect=['', json.dumps([info])]) as command:
+        if fault:
+            with pytest.raises(ValueError, match='provenance|architecture'):
+                ci.pull_baseline(args, 'card', baseline_record())
+            assert not (tmp_path/'baseline-images.json').exists()
+        else:
+            assert ci.pull_baseline(args, 'card', baseline_record()) == local_id
+            evidence = json.loads((tmp_path/'baseline-images.json').read_text())
+            assert evidence['card']['image'] == config['repository']+'@'+digest
+        assert command.call_args_list[0].args == ('docker', 'pull', config['repository']+'@'+digest)
+
+
+def test_missing_baseline_fails_without_local_build(tmp_path):
+    result = SimpleNamespace(returncode=1, stderr='manifest unknown')
+    with patch.object(ci.subprocess, 'run', return_value=result), patch.object(ci, 'run') as docker:
+        with pytest.raises(RuntimeError, match='Publish matching images with Vulcan'):
+            ci.pull_baseline(SimpleNamespace(sha=SHA, work=tmp_path), 'card', baseline_record())
+        docker.assert_not_called()

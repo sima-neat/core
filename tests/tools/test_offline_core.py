@@ -416,11 +416,11 @@ def test_core_build_uses_only_card_baseline_and_stages_root_variant(tmp_path):
     args = SimpleNamespace(core=True, work=tmp_path/'work', ref='develop', sha='a'*40,
                            bucket='bucket', installer_revision='a'*40, run_id=123,
                            validation_only=False, kms='', arch=None)
-    baseline = json.loads((HERE/'baselines.json').read_text())['card']
+    baseline = {'sha256': 'b'*64}
     pub = tmp_path/'pub'
     pub.mkdir()
     def download(bucket, key, path):
-        assert key in (baseline['key'], 'core-key/sima-neat-1-Linux-extras.tar.gz')
+        assert key == 'core-key/sima-neat-1-Linux-extras.tar.gz'
         path.write_text('baseline')
     def build(config, root):
         assert config['scope'] == 'core'
@@ -432,11 +432,9 @@ def test_core_build_uses_only_card_baseline_and_stages_root_variant(tmp_path):
         (root.parent/assemble.CORE_ARCHIVE_NAME).write_text('validated bundle')
     with patch.object(ci, 'source_metadata', return_value=(
              {'card': {'resources-checksum': {}, 'selectable-resources': [{'resource': 'sima-neat-1-Linux-extras.tar.gz', 'checksum': baseline['sha256']}]}}, {'card': ('core-key', pub)}, {'card': 'c'*64})), \
-         patch.object(ci, 'load_card_image', return_value=baseline['image_id']), \
-         patch.object(ci, 'card_baseline', return_value='sha256:' + 'd'*64), \
+         patch.object(ci, 'pull_baseline', return_value='sha256:' + 'd'*64), \
          patch.object(ci, 'existing', return_value=None), \
          patch.object(ci, 'download', side_effect=download), \
-         patch.object(ci, 'run', return_value=baseline['image_id']), \
          patch.object(ci.assemble, 'sha', return_value=baseline['sha256']), \
          patch.object(ci.assemble, 'verify_publication'), \
          patch.object(ci.assemble, 'assemble', side_effect=build), \

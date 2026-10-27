@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "repository": "069171140053.dkr.ecr.us-west-2.amazonaws.com/vulcan/ubuntu-build",
+  "recipe_sha256": "b1183f5809e457a4c1019b79a3a228198fec45d413656429e2cdcae965a990bd",
+  "card": {
+    "os_id": "elxr",
+    "os_version": "26.04"
+  }
+}
