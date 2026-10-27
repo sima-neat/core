@@ -13,7 +13,7 @@ slug: /develop-apps/advanced-concepts/usb-camera-input
 USB camera -> UsbCameraInput -> model-managed CVU preproc -> MLA -> Output
 ```
 
-在內部，攝影機會把每個壓縮影格直接寫入硬體 MJPEG 解碼器就地讀取的 CMA 緩衝區，因此擷取與解碼之間不會發生 CPU 複製。大多數網路攝影機傳送 4:2:2 JPEG，會解碼為 NV16。模型可直接讀取 NV16：當 `usb_camera_info()` 回報 `NV16` 時，請將模型的 `preprocess.color_convert.input_format` 設為 `PreprocessColorFormat::NV16`，影格便會不經轉換階段直接送達模型。若應用程式需要 NV12 給其他取用端使用，可以自行在攝影機之後加上 `ColorConvert`。
+在內部，攝影機會把每個壓縮影格直接寫入硬體 MJPEG 解碼器就地讀取的 CMA 緩衝區，因此擷取與解碼之間不會發生 CPU 複製。大多數網路攝影機傳送 4:2:2 JPEG，會解碼為 NV16。模型可直接讀取 NV16：當 `usb_camera_info()` 回報 `NV16` 時，請將模型的 `preprocess.color_convert.input_format` 設為 `PreprocessColorFormat::NV16`，影格便會不經轉換階段直接送達模型。
 
 ## Neat 支援的範圍
 

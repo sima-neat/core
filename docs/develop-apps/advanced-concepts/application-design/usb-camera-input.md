@@ -13,7 +13,7 @@ slug: /develop-apps/advanced-concepts/usb-camera-input
 USB camera -> UsbCameraInput -> model-managed CVU preproc -> MLA -> Output
 ```
 
-Under the hood, the camera writes each compressed frame into CMA buffers that the hardware MJPEG decoder reads in place, so no CPU copy happens between capture and decode. Most webcams send 4:2:2 JPEGs, which decode to NV16. A model reads NV16 directly: set its `preprocess.color_convert.input_format` to `PreprocessColorFormat::NV16` when `usb_camera_info()` reports `NV16`, so frames reach the model with no conversion stage. An app that needs NV12 for another consumer can add a `ColorConvert` after the camera itself.
+Under the hood, the camera writes each compressed frame into CMA buffers that the hardware MJPEG decoder reads in place, so no CPU copy happens between capture and decode. Most webcams send 4:2:2 JPEGs, which decode to NV16. A model reads NV16 directly: set its `preprocess.color_convert.input_format` to `PreprocessColorFormat::NV16` when `usb_camera_info()` reports `NV16`, so frames reach the model with no conversion stage.
 
 ## What Neat supports
 

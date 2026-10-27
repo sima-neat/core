@@ -13,7 +13,7 @@ slug: /develop-apps/advanced-concepts/usb-camera-input
 USB camera -> UsbCameraInput -> model-managed CVU preproc -> MLA -> Output
 ```
 
-내부적으로 카메라는 압축된 각 프레임을 하드웨어 MJPEG 디코더가 제자리에서 읽는 CMA 버퍼에 직접 기록하므로, 캡처와 디코딩 사이에 CPU 복사가 일어나지 않습니다. 대부분의 웹캠은 4:2:2 JPEG를 보내며, 이는 NV16으로 디코딩됩니다. 모델은 NV16을 바로 읽습니다. `usb_camera_info()`가 `NV16`을 반환하면 모델의 `preprocess.color_convert.input_format`을 `PreprocessColorFormat::NV16`으로 설정하세요. 그러면 프레임이 변환 단계 없이 모델에 전달됩니다. 다른 소비자를 위해 NV12가 필요한 앱은 카메라 뒤에 직접 `ColorConvert`를 추가할 수 있습니다.
+내부적으로 카메라는 압축된 각 프레임을 하드웨어 MJPEG 디코더가 제자리에서 읽는 CMA 버퍼에 직접 기록하므로, 캡처와 디코딩 사이에 CPU 복사가 일어나지 않습니다. 대부분의 웹캠은 4:2:2 JPEG를 보내며, 이는 NV16으로 디코딩됩니다. 모델은 NV16을 바로 읽습니다. `usb_camera_info()`가 `NV16`을 반환하면 모델의 `preprocess.color_convert.input_format`을 `PreprocessColorFormat::NV16`으로 설정하세요. 그러면 프레임이 변환 단계 없이 모델에 전달됩니다.
 
 ## Neat가 지원하는 범위
 
