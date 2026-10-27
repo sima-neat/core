@@ -655,7 +655,10 @@ environment variable is set in GitHub Actions.
 
 Vulcan publishes generic toolchain images without checking out Core. Core owns
 PCIe compatibility: run `qualify-ubuntu-build-images.yml` on the intended Core
-revision, supplying the candidate image recipe SHA-256. All four targets must
+revision, supplying the candidate image recipe SHA-256. Pull requests that change
+the qualification workflow or validation script also run the four-target matrix
+using the default recipe pin, so initial adoption can be qualified before merge.
+All four targets must
 pass before changing the regular CI pin or merging the initial migration.
 The `scripts/ci/pciehost/validate_build_image.sh` entrypoint blocks APT and runs
 the full package build, CTest, delivery verification, a relocated C++ consumer,

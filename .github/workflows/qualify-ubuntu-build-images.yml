@@ -1,6 +1,10 @@
 name: Qualify Ubuntu build images for PCIe host
 
 on:
+  pull_request:
+    paths:
+      - .github/workflows/qualify-ubuntu-build-images.yml
+      - scripts/ci/pciehost/validate_build_image.sh
   workflow_dispatch:
     inputs:
       image_revision:
@@ -35,7 +39,7 @@ jobs:
             ubuntu: '24.04'
             arch: arm64
     container:
-      image: 069171140053.dkr.ecr.us-west-2.amazonaws.com/vulcan/ubuntu-build:${{ matrix.distro }}-${{ matrix.arch }}-media-${{ inputs.image_revision }}
+      image: 069171140053.dkr.ecr.us-west-2.amazonaws.com/vulcan/ubuntu-build:${{ matrix.distro }}-${{ matrix.arch }}-media-${{ inputs.image_revision || '463e7eb999e953b18069904b81b378ebd6d6b1a7bc4a5641a12c279d72e711b0' }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -46,7 +50,7 @@ jobs:
           CORE_VALIDATION_SHA: ${{ github.sha }}
           EXPECTED_UBUNTU: ${{ matrix.ubuntu }}
           EXPECTED_ARCH: ${{ matrix.arch }}
-          IMAGE_REVISION: ${{ inputs.image_revision }}
+          IMAGE_REVISION: ${{ inputs.image_revision || '463e7eb999e953b18069904b81b378ebd6d6b1a7bc4a5641a12c279d72e711b0' }}
         run: |
           set -euo pipefail
           [[ "${IMAGE_REVISION}" =~ ^[0-9a-f]{64}$ ]]
