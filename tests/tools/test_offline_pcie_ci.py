@@ -417,6 +417,10 @@ def test_shared_card_precedes_all_offline_assembly():
         assert restore['with']['fail-on-cache-miss'] is True
     names = [step.get('name') for step in jobs['build']['steps']]
     assert names.index('Install publication client with conditional-write support') < names.index('Authenticate existing PCIe build images')
+    login = next(s['run'] for s in jobs['build']['steps'] if s.get('name') == 'Authenticate existing PCIe build images')
+    assert 'export DOCKER_CONFIG="$RUNNER_TEMP/offline-docker"' in login
+    cache = next(s for s in jobs['prepare-card']['steps'] if s.get('id') == 'cache')
+    assert cache['with']['lookup-only'] is True
     host = (HERE/'HostBaseline.Dockerfile').read_text()
     assert 'FROM ${HOST_BUILD_IMAGE} AS platform-build' in host
     assert 'apt-get install' not in host

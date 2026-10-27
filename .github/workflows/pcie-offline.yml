@@ -113,6 +113,7 @@ jobs:
         with:
           path: ${{ runner.temp }}/offline-baselines/card
           key: ${{ steps.key.outputs.card }}
+          lookup-only: true
       - name: Prepare baseline with the pinned SDK image
         if: steps.cache.outputs.cache-hit != 'true'
         env:
@@ -184,6 +185,10 @@ jobs:
           echo "$RUNNER_TEMP/offline-aws/bin" >> "$GITHUB_PATH"
       - name: Authenticate existing PCIe build images
         run: |
+          # The AMI credential helper does not implement credential storage.
+          export DOCKER_CONFIG="$RUNNER_TEMP/offline-docker"
+          mkdir -p "$DOCKER_CONFIG"
+          echo "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
           aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 069171140053.dkr.ecr.us-west-2.amazonaws.com
       - uses: aws-actions/configure-aws-credentials@v6
         with:
