@@ -654,12 +654,20 @@ def test_usb_camera_input_surface_is_exposed():
   assert opt.camera_name == ""
   assert (opt.width, opt.height, opt.framerate_num, opt.framerate_den) == (1920, 1080, 30, 1)
   assert opt.buffer_name == "camera" and opt.allow_cpu_fallback is False
+  assert opt.output == pyneat.UsbCameraOutput.Frames
+  assert not hasattr(pyneat.groups, "usb_camera_input")
+  assert {"device", "decoded_format"} <= set(dir(pyneat.UsbCameraInfo))
   # Options are validated before any camera is touched.
   with pytest.raises(ValueError, match="requires camera_name"):
-    pyneat.groups.usb_camera_input(opt)
+    pyneat.nodes.usb_camera_input(opt)
+  with pytest.raises(ValueError, match="requires camera_name"):
+    pyneat.usb_camera_info(opt)
   opt.camera_name = "/base/pci@7000000000-3.1:1.0-046d:08e5"
   with pytest.raises(ValueError, match="exceeds 64"):
-    pyneat.groups.usb_camera_input(opt, capture_buffer_count=65)
+    pyneat.nodes.usb_camera_input(opt, capture_buffer_count=65)
+  opt.output = pyneat.UsbCameraOutput.Jpeg
+  with pytest.raises(ValueError, match="applies only to UsbCameraOutput.Frames"):
+    pyneat.nodes.usb_camera_input(opt, capture_buffer_count=4)
 
 
 def test_input_stage_option_struct_constructors_accept_expected_args():

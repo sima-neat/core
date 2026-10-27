@@ -1,10 +1,10 @@
 #pragma once
 
-#include "nodes/groups/UsbCameraInput.h"
+#include "nodes/io/UsbCameraInput.h"
 #include "pipeline/FormatSpec.h"
-#include "pipeline/Graph.h"
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -51,9 +51,8 @@ ResolvedCamera resolve_mjpeg_camera(const std::string& camera_id, std::uint32_t 
                                     std::uint32_t framerate_den,
                                     const std::string& sysfs_root = "/sys");
 
-/// The UsbCameraInput Graph for an already resolved camera (validated options).
-simaai::neat::Graph mjpeg_camera_graph(const UsbCameraInputOptions& opt,
-                                       const ResolvedCamera& camera,
-                                       std::uint32_t capture_buffer_count);
+/// The UsbCameraInput node for an already resolved camera (validated options).
+std::shared_ptr<Node> camera_node(const UsbCameraInputOptions& opt, const ResolvedCamera& camera,
+                                  std::uint32_t capture_buffer_count);
 
 } // namespace simaai::neat::internal::uvc

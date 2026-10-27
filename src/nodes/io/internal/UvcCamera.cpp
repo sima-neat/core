@@ -1,4 +1,4 @@
-#include "nodes/groups/internal/UvcCamera.h"
+#include "nodes/io/internal/UvcCamera.h"
 
 #include "nodes/sima/SimaDecode.h"
 

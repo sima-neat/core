@@ -1,8 +1,8 @@
-#include "nodes/groups/UsbCameraInput.h"
+#include "nodes/io/UsbCameraInput.h"
 
+#include "builder/OutputSpec.h"
 #include "gst/GstHelpers.h"
-#include "nodes/groups/internal/UvcCamera.h"
-#include "nodes/sima/ImageTransform.h"
+#include "nodes/io/internal/UvcCamera.h"
 #include "nodes/sima/SimaDecode.h"
 
 #include <memory>
@@ -32,8 +32,8 @@ std::string quoted(const std::string& value) {
   return out + '"';
 }
 
-// One node keeps capture and decode in one GStreamer segment: v4l2src gets its
-// CMA buffers from neatdecoder's answer to its ALLOCATION query.
+// Frames: one node keeps capture and decode in one GStreamer segment, so v4l2src gets
+// its CMA buffers from neatdecoder's answer to its ALLOCATION query.
 class UvcMjpegCameraNode final : public Node, public OutputSpecProvider {
 public:
   UvcMjpegCameraNode(UsbCameraInputOptions opt, internal::uvc::ResolvedCamera camera,
@@ -53,7 +53,7 @@ public:
     return NodeCapsBehavior::Static;
   }
   MemoryContract memory_contract() const override {
-    return MemoryContract::PreferDeviceZeroCopy;
+    return jpeg() ? MemoryContract::AllowEitherButReport : MemoryContract::PreferDeviceZeroCopy;
   }
   std::string buffer_name_hint(int /*node_index*/) const override {
     return opt_.buffer_name;
@@ -63,7 +63,8 @@ public:
     internal::uvc::require_still_connected(camera_);
     std::ostringstream ss;
     ss << "v4l2src name=" << name(node_index, "src") << " device=" << camera_.device
-       << " io-mode=dmabuf-import ! capsfilter name=" << name(node_index, "caps")
+       << (jpeg() ? " io-mode=mmap" : " io-mode=dmabuf-import")
+       << " ! capsfilter name=" << name(node_index, "caps")
        << " caps=\"image/jpeg,width=" << opt_.width << ",height=" << opt_.height
        << ",framerate=" << opt_.framerate_num << '/' << opt_.framerate_den << '"';
     if (opt_.insert_queue) {
@@ -74,6 +75,8 @@ public:
       if (opt_.leaky_queue)
         ss << " leaky=downstream";
     }
+    if (jpeg())
+      return ss.str();
     // Capture always lands in the decoder's own buffers, so no frame ever needs a copy.
     ss << " ! " << decoder().backend_fragment(node_index)
        << " op-buff-name=" << quoted(opt_.buffer_name) << " input-pool-buffers=" << pool_buffers_
@@ -85,21 +88,38 @@ public:
     std::vector<std::string> names{name(node_index, "src"), name(node_index, "caps")};
     if (opt_.insert_queue)
       names.push_back(name(node_index, "queue"));
+    if (jpeg())
+      return names;
     const auto decoder_names = decoder().element_names(node_index);
     names.insert(names.end(), decoder_names.begin(), decoder_names.end());
     return names;
   }
 
   OutputSpec output_spec(const OutputSpec& input) const override {
-    OutputSpec out = decoder().output_spec(input);
-    out.payload_type = PayloadType::Image;
+    OutputSpec out;
+    if (jpeg()) {
+      out.payload_type = PayloadType::Encoded;
+      out.media_type = "image/jpeg";
+      out.format = "JPEG";
+      out.width = static_cast<int>(opt_.width);
+      out.height = static_cast<int>(opt_.height);
+      out.certainty = SpecCertainty::Hint;
+      out.note = "USB MJPEG camera input, JPEG frames";
+    } else {
+      out = decoder().output_spec(input);
+      out.payload_type = PayloadType::Image;
+      out.note = "USB MJPEG camera input, decoded in place";
+    }
     out.fps_num = static_cast<int>(opt_.framerate_num); // exact, e.g. 30000/1001
     out.fps_den = static_cast<int>(opt_.framerate_den);
-    out.note = "USB MJPEG camera input, decoded in place";
     return out;
   }
 
 private:
+  bool jpeg() const {
+    return opt_.output == UsbCameraOutput::Jpeg;
+  }
+
   SimaDecode decoder() const {
     SimaDecodeOptions decode;
     decode.type = SimaDecodeType::MJPEG;
@@ -124,6 +144,13 @@ void validate_options(const UsbCameraInputOptions& opt, std::uint32_t capture_bu
     throw std::invalid_argument("UsbCameraInput requires a nonzero width, height and frame rate");
   if (opt.buffer_name.empty())
     throw std::invalid_argument("UsbCameraInput requires a buffer_name");
+  if (opt.output == UsbCameraOutput::Jpeg) {
+    // Jpeg mode has no decoder, so no capture pool to size.
+    if (capture_buffer_count != 0)
+      throw std::invalid_argument(
+          "UsbCameraInput capture_buffer_count applies only to UsbCameraOutput::Frames");
+    return;
+  }
   if (capture_buffer_count > kMaxCaptureBuffers)
     throw std::invalid_argument("UsbCameraInput capture_buffer_count exceeds 64");
   // The default pool is the queue depth plus the decoder's input slots.
@@ -137,22 +164,12 @@ void validate_options(const UsbCameraInputOptions& opt, std::uint32_t capture_bu
 
 namespace internal::uvc {
 
-simaai::neat::Graph mjpeg_camera_graph(const UsbCameraInputOptions& opt,
-                                       const ResolvedCamera& camera,
-                                       std::uint32_t capture_buffer_count) {
+std::shared_ptr<Node> camera_node(const UsbCameraInputOptions& opt, const ResolvedCamera& camera,
+                                  std::uint32_t capture_buffer_count) {
   const std::uint32_t pool = capture_buffer_count
                                  ? capture_buffer_count
                                  : (opt.insert_queue ? opt.queue_depth : 0U) + kDecoderInputSlots;
-  simaai::neat::Graph graph;
-  graph.add(std::make_shared<UvcMjpegCameraNode>(opt, camera, pool));
-  if (camera.sampling == FormatTag::NV16) {
-    // 4:2:2 JPEGs decode zero-copy only to NV16; convert to NV12 on the EV74.
-    ColorConvertOptions color;
-    color.output_format = ImageFormat::NV12;
-    color.surface = ImageSurfaceLayout::EncoderNv12;
-    graph.add(nodes::ColorConvert(color));
-  }
-  return graph;
+  return std::make_shared<UvcMjpegCameraNode>(opt, camera, pool);
 }
 
 } // namespace internal::uvc
@@ -161,20 +178,28 @@ std::vector<std::string> usb_camera_ids() {
   return internal::uvc::camera_ids(internal::uvc::list_nodes());
 }
 
+UsbCameraInfo usb_camera_info(const UsbCameraInputOptions& opt) {
+  validate_options(opt, 0);
+  const auto camera = internal::uvc::resolve_mjpeg_camera(opt.camera_name, opt.width, opt.height,
+                                                          opt.framerate_num, opt.framerate_den);
+  return {camera.device, camera.sampling};
+}
+
 } // namespace simaai::neat
 
-namespace simaai::neat::nodes::groups {
+namespace simaai::neat::nodes {
 
-simaai::neat::Graph UsbCameraInput(simaai::neat::UsbCameraInputOptions opt,
-                                   std::uint32_t capture_buffer_count) {
+std::shared_ptr<simaai::neat::Node> UsbCameraInput(simaai::neat::UsbCameraInputOptions opt,
+                                                   std::uint32_t capture_buffer_count) {
   validate_options(opt, capture_buffer_count);
-  // Capture lands in CMA buffers that neatdecoder offers; older decoders cannot offer them.
-  if (!element_property_exists("neatdecoder", "input-pool-buffers"))
+  // Frames capture lands in CMA buffers that neatdecoder offers; older decoders cannot offer them.
+  if (opt.output == UsbCameraOutput::Frames &&
+      !element_property_exists("neatdecoder", "input-pool-buffers"))
     throw std::runtime_error("UsbCameraInput requires a neatdecoder with the input-pool-buffers "
                              "property; update the simaai-scheduler package");
   const auto camera = internal::uvc::resolve_mjpeg_camera(opt.camera_name, opt.width, opt.height,
                                                           opt.framerate_num, opt.framerate_den);
-  return internal::uvc::mjpeg_camera_graph(opt, camera, capture_buffer_count);
+  return internal::uvc::camera_node(opt, camera, capture_buffer_count);
 }
 
-} // namespace simaai::neat::nodes::groups
+} // namespace simaai::neat::nodes

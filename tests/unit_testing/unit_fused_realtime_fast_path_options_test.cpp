@@ -12,10 +12,10 @@
 #include "nodes/io/Input.h"
 #include "nodes/io/RTSPInput.h"
 #include "nodes/io/UdpOutput.h"
+#include "nodes/io/UsbCameraInput.h"
+#include "nodes/io/internal/UvcCamera.h"
 #include "nodes/groups/RtspEncodedInput.h"
-#include "nodes/groups/UsbCameraInput.h"
 #include "nodes/groups/VideoSender.h"
-#include "nodes/groups/internal/UvcCamera.h"
 #include "nodes/rtp/H264Depacketize.h"
 #include "nodes/sima/H264Packetize.h"
 #include "nodes/sima/H264Parse.h"
@@ -196,14 +196,16 @@ simaai::neat::Graph make_live_source_graph(int index, std::uint32_t width = 1920
   return graph;
 }
 
-// A resolved USB camera, so no hardware is needed to compose the graph. NV16
-// (4:2:2 JPEGs) adds the EV74 ColorConvert to NV12.
+// A resolved USB camera node, so no hardware is needed to compose the graph. NV16
+// (4:2:2 JPEGs) decodes to NV16 in the same single node.
 simaai::neat::Graph make_usb_live_source_graph(int index, simaai::neat::FormatTag sampling) {
   simaai::neat::UsbCameraInputOptions options;
   options.camera_name = "usb-camera-" + std::to_string(index);
   options.buffer_name = "fused_queue_usb" + std::to_string(index);
-  return simaai::neat::internal::uvc::mjpeg_camera_graph(
-      options, {"/dev/video" + std::to_string(index), sampling}, 0);
+  simaai::neat::Graph graph;
+  graph.add(simaai::neat::internal::uvc::camera_node(
+      options, {"/dev/video" + std::to_string(index), sampling}, 0));
+  return graph;
 }
 
 std::size_t count_occurrences(const std::string& value, const std::string& token) {
@@ -749,8 +751,6 @@ RUN_TEST(
         usb_live_app.connect(make_usb_live_source_graph(403, sampling), usb_live_detector);
         const auto usb_live_plan =
             simaai::neat::runtime::compile_public_graph(usb_live_app, simaai::neat::RunOptions{});
-        // A 4:2:2 branch keeps its ColorConvert inside the fused source branch.
-        const std::size_t branch_nodes = sampling == simaai::neat::FormatTag::NV16 ? 2U : 1U;
         require(std::any_of(usb_live_plan.pipeline_segments.begin(),
                             usb_live_plan.pipeline_segments.end(),
                             [&](const auto& segment) {
@@ -759,7 +759,7 @@ RUN_TEST(
                                      std::all_of(segment.fused_realtime_ingress->branches.begin(),
                                                  segment.fused_realtime_ingress->branches.end(),
                                                  [&](const auto& branch) {
-                                                   return branch.nodes.size() == branch_nodes;
+                                                   return branch.nodes.size() == 1U;
                                                  });
                             }),
                 std::string("two USB cameras into one consumer must fuse like two CameraInputs (") +

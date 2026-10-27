@@ -44,9 +44,9 @@
 #include "nodes/groups/ModelGroups.h"
 #include "nodes/groups/RtspDecodedInput.h"
 #include "nodes/groups/RtspEncodedInput.h"
-#include "nodes/groups/UsbCameraInput.h"
 #include "nodes/groups/VideoInputGroup.h"
 #include "nodes/io/CameraInput.h"
+#include "nodes/io/UsbCameraInput.h"
 #include "nodes/io/Input.h"
 #include "nodes/io/MetadataSender.h"
 #include "nodes/io/UdpOutput.h"
@@ -3409,6 +3409,10 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("queue_depth", &simaai::neat::CameraInputOptions::queue_depth)
       .def_rw("allow_cpu_fallback", &simaai::neat::CameraInputOptions::allow_cpu_fallback);
 
+  nb::enum_<simaai::neat::UsbCameraOutput>(m, "UsbCameraOutput")
+      .value("Frames", simaai::neat::UsbCameraOutput::Frames)
+      .value("Jpeg", simaai::neat::UsbCameraOutput::Jpeg);
+
   nb::class_<simaai::neat::UsbCameraInputOptions>(m, "UsbCameraInputOptions")
       .def(nb::init<>())
       .def_rw("camera_name", &simaai::neat::UsbCameraInputOptions::camera_name)
@@ -3420,8 +3424,15 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("insert_queue", &simaai::neat::UsbCameraInputOptions::insert_queue)
       .def_rw("leaky_queue", &simaai::neat::UsbCameraInputOptions::leaky_queue)
       .def_rw("queue_depth", &simaai::neat::UsbCameraInputOptions::queue_depth)
-      .def_rw("allow_cpu_fallback", &simaai::neat::UsbCameraInputOptions::allow_cpu_fallback);
+      .def_rw("allow_cpu_fallback", &simaai::neat::UsbCameraInputOptions::allow_cpu_fallback)
+      .def_rw("output", &simaai::neat::UsbCameraInputOptions::output);
+  nb::class_<simaai::neat::UsbCameraInfo>(m, "UsbCameraInfo")
+      .def_ro("device", &simaai::neat::UsbCameraInfo::device)
+      .def_ro("decoded_format", &simaai::neat::UsbCameraInfo::decoded_format);
   m.def("usb_camera_ids", &simaai::neat::usb_camera_ids);
+  // Checking the camera reads a frame; let other Python threads run meanwhile.
+  m.def("usb_camera_info", &simaai::neat::usb_camera_info, "options"_a,
+        nb::call_guard<nb::gil_scoped_release>());
 
   nb::module_ graphs_mod = m.def_submodule("graphs", "Reusable public Graph fragment helpers");
   graphs_mod.def("branch", &simaai::neat::graphs::Branch, "input"_a, "outputs"_a);
@@ -4134,6 +4145,9 @@ NB_MODULE(_pyneat_core, m) {
                                                                   capture_buffer_count);
       },
       "options"_a = simaai::neat::CameraInputOptions{}, "capture_buffer_count"_a = 0U);
+  // Opening the camera reads a frame; let other Python threads run meanwhile.
+  nodes_mod.def("usb_camera_input", &simaai::neat::nodes::UsbCameraInput, "options"_a,
+                "capture_buffer_count"_a = 0U, nb::call_guard<nb::gil_scoped_release>());
   nodes_mod.def("output",
                 static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::OutputOptions)>(
                     &simaai::neat::nodes::Output),
@@ -4237,9 +4251,6 @@ NB_MODULE(_pyneat_core, m) {
                  "options"_a);
   groups_mod.def("rtsp_encoded_input", &simaai::neat::nodes::groups::RtspEncodedInput, "options"_a);
   groups_mod.def("rtsp_decoded_input", &simaai::neat::nodes::groups::RtspDecodedInput, "options"_a);
-  // Opening the camera reads a frame; let other Python threads run meanwhile.
-  groups_mod.def("usb_camera_input", &simaai::neat::nodes::groups::UsbCameraInput, "options"_a,
-                 "capture_buffer_count"_a = 0U, nb::call_guard<nb::gil_scoped_release>());
   groups_mod.def("udp_h264_output_group", &simaai::neat::nodes::groups::UdpH264OutputGroup,
                  "options"_a);
   groups_mod.def("video_sender", &simaai::neat::nodes::groups::VideoSender, "options"_a);
