@@ -110,11 +110,13 @@ def test_shared_image_qualification_preserves_all_targets_without_publication():
     job = workflow["jobs"]["qualify"]
     assert {(row["distro"], row["arch"]) for row in job["strategy"]["matrix"]["include"]} == {
         (row["distro"], row["deb_arch"]) for row in regular["strategy"]["matrix"]["include"]}
-    assert "ghcr.io/sima-neat/ubuntu-build:" in job["container"]["image"]
+    assert "069171140053.dkr.ecr.us-west-2.amazonaws.com/vulcan/ubuntu-build:" in job["container"]["image"]
     assert "-media-" in job["container"]["image"]
-    assert "ghcr.io/sima-neat/ubuntu-build:" in regular["container"]["image"]
+    assert "069171140053.dkr.ecr.us-west-2.amazonaws.com/vulcan/ubuntu-build:" in regular["container"]["image"]
     assert "-media-" in regular["container"]["image"]
     assert "id-token" not in workflow["permissions"]
+    assert "credentials" not in job["container"]
+    assert "credentials" not in regular["container"]
     scripts = "\n".join(step.get("run", "") for step in job["steps"])
     assert "validate_build_image.sh" in scripts
     assert "aws s3" not in scripts

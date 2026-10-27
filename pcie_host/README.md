@@ -638,7 +638,7 @@ Validated on a Modalix PCIe Card:
 
 Vulcan CI builds Ubuntu 22.04 and 24.04 packages natively on both AMD64 and ARM64
 Ubuntu runners. Each job uses the matching `media` profile from the shared
-`ghcr.io/sima-neat/ubuntu-build` image family. The image recipe SHA-256 is pinned;
+`069171140053.dkr.ecr.us-west-2.amazonaws.com/vulcan/ubuntu-build` image family. The image recipe SHA-256 is pinned;
 build, unit tests, and staged package/wheel smoke tests run in that container.
 Scheduler artifacts retain their existing manifest and environment selection.
 
@@ -664,6 +664,6 @@ artifacts remain normal build-time downloads; no device or Platform driver is
 installed. This qualification workflow does not publish Core packages.
 
 Before enabling the migration, deploy the Vulcan Ubuntu pool policy for Core,
-publish the four `media` images, and grant Core Actions read access to the private
-GHCR package. See Vulcan's `docs/ubuntu-build-images.md` for publication and
+publish the four `media` images, and deploy the runner ECR pull policy and credential helper before runner
+registration. Job containers authenticate using the EC2 role. See Vulcan's `docs/ubuntu-build-images.md` for publication and
 other consumers such as SDK builds. Public C++ and Python APIs are unchanged.

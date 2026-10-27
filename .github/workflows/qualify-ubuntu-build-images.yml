@@ -11,7 +11,6 @@ on:
 
 permissions:
   contents: read
-  packages: read
 
 jobs:
   qualify:
@@ -36,10 +35,7 @@ jobs:
             ubuntu: '24.04'
             arch: arm64
     container:
-      image: ghcr.io/sima-neat/ubuntu-build:${{ matrix.distro }}-${{ matrix.arch }}-media-${{ inputs.image_revision }}
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ github.token }}
+      image: 069171140053.dkr.ecr.us-west-2.amazonaws.com/vulcan/ubuntu-build:${{ matrix.distro }}-${{ matrix.arch }}-media-${{ inputs.image_revision }}
     steps:
       - uses: actions/checkout@v5
         with:
