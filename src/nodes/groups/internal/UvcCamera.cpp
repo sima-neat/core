@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <charconv>
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -244,10 +245,14 @@ FormatTag read_sampling(int fd, const std::string& id, std::uint32_t width, std:
     // A live camera can send the odd corrupt frame; try a few before giving up.
     std::string last_error = "sent no frames";
     for (int attempt = 0; attempt < 15; ++attempt) {
+      // One 2 s budget per attempt; a signal resumes the wait with the time left.
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
       pollfd p{fd, POLLIN, 0};
       int ready;
       do {
-        ready = ::poll(&p, 1, 2000);
+        const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now());
+        ready = ::poll(&p, 1, static_cast<int>(std::max<std::int64_t>(0, left.count())));
       } while (ready == -1 && errno == EINTR);
       if (ready <= 0)
         throw fail("sent no frame within 2 s");
