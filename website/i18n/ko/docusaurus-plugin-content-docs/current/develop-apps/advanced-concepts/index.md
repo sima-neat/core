@@ -16,7 +16,7 @@ slug: /develop-apps/advanced-concepts/
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/graphs/"><strong>그래프</strong><span>모델, 노드, 명명된 입력 및 출력, 분기, 그리고 실행을 구성합니다.</span></a></li>
       <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/mipi-camera-input/"><strong>MIPI 카메라를 사용하세요.</strong><span>libcamera 입력을 사용하고 CVU 전처리를 통해 소스에서 직접 카메라-모델 그래프를 구축합니다.</span></a></li>
-      <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/usb-camera-input/"><strong>USB 카메라 사용하기</strong><span>고정 ID로 UVC MJPEG 웹캠을 읽고 제자리 디코딩해 NV12로 받습니다.</span></a></li>
+      <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/usb-camera-input/"><strong>USB 카메라 사용하기</strong><span>고정 ID로 UVC MJPEG 웹캠을 읽고, 제자리 디코딩하거나 JPEG를 그대로 전달합니다.</span></a></li>
       <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/video_sender/"><strong>비디오 보내기</strong><span>Neat 애플리케이션에서 H.264 RTP/UDP를 통해 비디오 출력을 스트리밍합니다.</span></a></li>
       <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/metadata_sender/"><strong>JSON 메타데이터 전송</strong><span>UDP JSON을 통해 구조화된 애플리케이션 메타데이터를 게시합니다.</span></a></li>
     </ul>

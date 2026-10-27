@@ -1,19 +1,19 @@
 ---
 title: "使用 USB 攝影機"
-description: "使用 UsbCameraInput 從 USB（UVC）網路攝影機讀取 MJPEG 影格，由硬體解碼器就地解碼為 NV12，不需要裝置編號或管線字串。"
+description: "使用 UsbCameraInput 從 USB（UVC）網路攝影機讀取 MJPEG 影格，由硬體解碼器就地解碼，或直接轉送 JPEG，不需要裝置編號或管線字串。"
 sidebar_position: 5
 slug: /develop-apps/advanced-concepts/usb-camera-input
 ---
 
 # 使用 USB 攝影機
 
-`groups::UsbCameraInput` 會讀取傳送 MJPEG 的 USB（UVC）網路攝影機。傳入攝影機的穩定 ID 後，圖會在 SiMaAI 記憶體中收到 NV12 影格，與 [MIPI 攝影機](./mipi-camera-input.md) 相同。`UsbCameraInputOptions` 沿用 `CameraInputOptions` 的欄位名稱與預設值，但 `camera_name` 為必填，且沒有 `format`：輸出一律為 NV12。
+`nodes::UsbCameraInput` 會讀取傳送 MJPEG 的 USB（UVC）網路攝影機。傳入攝影機的穩定 ID 後，圖會在 SiMaAI 記憶體中收到影格，與 [MIPI 攝影機](./mipi-camera-input.md) 相同。`UsbCameraInputOptions` 沿用 `CameraInputOptions` 的欄位名稱與預設值，但 `camera_name` 為必填，且沒有 `format`：影格保留攝影機原生的排列方式，4:2:0 JPEG 為 NV12，4:2:2 JPEG 為 NV16。
 
 ```text
 USB camera -> UsbCameraInput -> model-managed CVU preproc -> MLA -> Output
 ```
 
-在內部，攝影機會把每個壓縮影格直接寫入硬體 MJPEG 解碼器就地讀取的 CMA 緩衝區，因此擷取與解碼之間不會發生 CPU 複製。若攝影機傳送 4:2:2 JPEG（大多數網路攝影機都是如此），解碼器之後會加上一個將 NV16 轉為 NV12 的 EV74 轉換。
+在內部，攝影機會把每個壓縮影格直接寫入硬體 MJPEG 解碼器就地讀取的 CMA 緩衝區，因此擷取與解碼之間不會發生 CPU 複製。大多數網路攝影機傳送 4:2:2 JPEG，會解碼為 NV16；模型的 CVU 前處理可直接讀取 NV16。若應用程式需要 NV12 給其他取用端使用，可以自行在攝影機之後加上 `ColorConvert`。
 
 ## Neat 支援的範圍
 
@@ -80,7 +80,7 @@ camera.framerate_den = 1;
 camera.buffer_name = "camera0";
 
 neat::Graph graph("usb_camera");
-graph.add(neat::nodes::groups::UsbCameraInput(camera));
+graph.add(neat::nodes::UsbCameraInput(camera));
 graph.add(neat::nodes::Output());
 
 neat::Run run = graph.build();
@@ -102,7 +102,7 @@ camera.framerate_den = 1
 camera.buffer_name = "camera0"
 
 graph = pyneat.Graph("usb_camera")
-graph.add(pyneat.groups.usb_camera_input(camera))
+graph.add(pyneat.nodes.usb_camera_input(camera))
 graph.add(pyneat.nodes.output())
 
 run = graph.build()
@@ -114,9 +114,79 @@ frame = run.pull(timeout_ms=5000)
 
 加入模型的方式與 MIPI 攝影機相同；請參閱 [使用 MIPI 攝影機](./mipi-camera-input.md) 中建立原始 MLA 圖的章節。
 
-`UsbCameraInput` 會在建立圖時開啟攝影機一次，以檢查模式並讀取第一個影格的色度取樣。請先關閉其他正在使用攝影機的程式。
+`UsbCameraInput` 會在建立節點時開啟攝影機一次，以檢查模式並讀取第一個影格的色度取樣。請先關閉其他正在使用攝影機的程式。`usb_camera_info(camera)` 會執行相同的檢查但不建立節點，並傳回擷取裝置與 `decoded_format`（`NV12` 或 `NV16`）。
 
 攝影機拔除或移到另一個連接埠後，請再次呼叫 `UsbCameraInput`。先前建立的圖在建置時會失敗，因此絕不會開啟接手舊裝置編號的另一台攝影機。
+
+## 轉送攝影機的 JPEG
+
+若要將攝影機的視訊傳送給檢視器，同時在其上執行模型，請將 `output` 設為 `UsbCameraOutput::Jpeg`。節點便會輸出攝影機的 JPEG 影格而不解碼。將它連接到 `VideoSender` 直通模式（不重新編碼，直接以 RTP/JPEG 傳送 JPEG），以及 `out_format` 為攝影機 `decoded_format` 的 `SimaDecode`：
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+camera.output = neat::UsbCameraOutput::Jpeg;
+
+neat::SimaDecodeOptions decode;
+decode.type = neat::SimaDecodeType::MJPEG;
+decode.out_format = neat::usb_camera_info(camera).decoded_format;  // NV12 or NV16
+decode.dec_width = 1920;
+decode.dec_height = 1080;
+decode.dec_fps = 30;
+
+auto sender = neat::nodes::groups::VideoSenderOptions::Passthrough(
+    neat::nodes::groups::RtspCodec::MJPEG);
+sender.host = "127.0.0.1";
+
+neat::GraphLinkOptions video_link;
+video_link.policy = neat::GraphLinkPolicy::RealtimeLatestByStream;
+
+neat::Graph source;
+source.add(neat::nodes::UsbCameraInput(camera));
+neat::Graph decoder;
+decoder.add(neat::nodes::SimaDecode(decode));
+
+neat::Graph graph("usb_camera_forward");
+graph.connect(source, decoder);
+graph.connect(decoder, detector);  // your model Graph
+graph.connect(source, neat::nodes::groups::VideoSender(sender), video_link);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+camera.output = pyneat.UsbCameraOutput.Jpeg
+
+decode = pyneat.SimaDecodeOptions()
+decode.type = pyneat.SimaDecodeType.MJPEG
+decode.out_format = pyneat.usb_camera_info(camera).decoded_format  # NV12 or NV16
+decode.dec_width = 1920
+decode.dec_height = 1080
+decode.dec_fps = 30
+
+sender = pyneat.VideoSenderOptions.passthrough(pyneat.RtspCodec.MJPEG)
+sender.host = "127.0.0.1"
+
+video_link = pyneat.GraphLinkOptions()
+video_link.policy = pyneat.GraphLinkPolicy.RealtimeLatestByStream
+
+source = pyneat.Graph()
+source.add(pyneat.nodes.usb_camera_input(camera))
+decoder = pyneat.Graph()
+decoder.add(pyneat.nodes.sima_decode(decode))
+
+graph = pyneat.Graph("usb_camera_forward")
+graph.connect(source, decoder)
+graph.connect(decoder, detector)  # your model Graph
+graph.connect(source, pyneat.groups.video_sender(sender), video_link)
+```
+
+</CodeTab>
+</CodeTabs>
+
+在此模式下，攝影機會擷取到驅動程式的記憶體中，因此解碼器在解碼每個影格前都會先複製它。傳送端適用 [傳送視訊](./video_sender.md) 中的 RTP/JPEG 限制。
 
 ## 記憶體與捨棄的影格
 
@@ -124,9 +194,9 @@ frame = run.pull(timeout_ms=5000)
 | --- | --- |
 | `allow_cpu_fallback` | 對 USB 攝影機沒有作用：擷取一律寫入解碼器自己的緩衝區，因此不會複製任何影格。保留此選項是為了讓選項與 `CameraInputOptions` 一致。 |
 | `queue_depth`, `leaky_queue` | 解碼器前方的小型 leaky 佇列會在圖處理落後時捨棄過時的影格。 |
-| `capture_buffer_count`（第二個引數） | 攝影機與解碼器共用的 CMA 緩衝區。0 表示使用佇列深度加上解碼器的兩個輸入槽。 |
+| `capture_buffer_count`（第二個引數） | 攝影機與解碼器共用的 CMA 緩衝區。0 表示使用佇列深度加上解碼器的兩個輸入槽。僅適用於影格輸出；使用 `UsbCameraOutput::Jpeg` 時必須為 0。 |
 
-這裡的零複製是指壓縮影格在擷取與解碼之間不會被複製。解碼後的 NV12 影格是另一個緩衝區，而 4:2:2 的 EV74 轉換還會寫入另一個緩衝區。
+這裡的零複製是指壓縮影格在擷取與解碼之間不會被複製。解碼後的影格是另一個緩衝區。
 
 網路攝影機經常在 JPEG 結束標記之後補上位元組，有些影格則會不完整地抵達，或被 USB 驅動程式標示為損毀。解碼器會把每個影格解碼到其結束標記為止，並在不停止的情況下捨棄不完整或損毀的影格。解碼器元件會在其 `dropped-count` 屬性中計數。
 

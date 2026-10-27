@@ -85,7 +85,7 @@ graph.add(pyneat.groups.video_input(vopt))
 | ファイルからフレームを読み取る | `nodes::FileInput(...)`とデコードノード、または`nodes::groups::VideoInputGroup(...)` | `pyneat.nodes.file_input(...)`とデコードノード、または`pyneat.groups.video_input(...)` |
 | ソースとして1つの画像を読み取る | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
 | MIPI/libcameraカメラを読み取る | `nodes::CameraInput(...)` | `pyneat.nodes.camera_input(...)` |
-| USB（UVC）MJPEGカメラを読み取る | `nodes::groups::UsbCameraInput(...)` | `pyneat.groups.usb_camera_input(...)` |
+| USB（UVC）MJPEGカメラを読み取る | `nodes::UsbCameraInput(...)` | `pyneat.nodes.usb_camera_input(...)` |
 | RTSPストリームを読み取る | `nodes::RTSPInput(...)`、`nodes::groups::RtspEncodedInput(...)`、または`nodes::groups::RtspDecodedInput(...)` | `pyneat.nodes.rtsp_input(...)`、`pyneat.groups.rtsp_encoded_input(...)`、または`pyneat.groups.rtsp_decoded_input(...)` |
 | HTTPマルチパートMJPEGを読み取る | `nodes::groups::HttpMjpegDecodedInput(...)`、または`nodes::HttpSource(...)`、`MultipartJpegDemux()`、`JpegParse()`（手動でのフレーム処理） | `pyneat.groups.http_mjpeg_decoded_input(...)`、または`pyneat.nodes.http_source(...)`、`pyneat.nodes.multipart_jpeg_demux()`、`pyneat.nodes.jpeg_parse()` |
 | 画像をデコードする | `nodes::ImageDecode()`または`nodes::JpegDecode()` | `pyneat.nodes.image_decode()`または`pyneat.nodes.jpeg_decode()` |

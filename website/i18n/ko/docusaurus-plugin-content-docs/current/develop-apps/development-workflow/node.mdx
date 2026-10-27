@@ -85,7 +85,7 @@ graph.add(pyneat.groups.video_input(vopt))
 | 파일에서 프레임 읽기 | `nodes::FileInput(...)` 더하기 디코딩 노드, 또는 `nodes::groups::VideoInputGroup(...)` | `pyneat.nodes.file_input(...)` 더하기 디코딩 노드, 또는 `pyneat.groups.video_input(...)` |
 | 소스로 단일 이미지 읽기 | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
 | MIPI/libcamera 카메라 읽기 | `nodes::CameraInput(...)` | `pyneat.nodes.camera_input(...)` |
-| USB(UVC) MJPEG 카메라 읽기 | `nodes::groups::UsbCameraInput(...)` | `pyneat.groups.usb_camera_input(...)` |
+| USB(UVC) MJPEG 카메라 읽기 | `nodes::UsbCameraInput(...)` | `pyneat.nodes.usb_camera_input(...)` |
 | RTSP 스트림 읽기 | `nodes::RTSPInput(...)`, `nodes::groups::RtspEncodedInput(...)`, 또는 `nodes::groups::RtspDecodedInput(...)` | `pyneat.nodes.rtsp_input(...)`, `pyneat.groups.rtsp_encoded_input(...)`, 또는 `pyneat.groups.rtsp_decoded_input(...)` |
 | HTTP 멀티파트 MJPEG 읽기 | `nodes::groups::HttpMjpegDecodedInput(...)`, 또는 `nodes::HttpSource(...)`, `MultipartJpegDemux()`, `JpegParse()` (수동 프레임 구성) | `pyneat.groups.http_mjpeg_decoded_input(...)`, 또는 `pyneat.nodes.http_source(...)`, `pyneat.nodes.multipart_jpeg_demux()`, `pyneat.nodes.jpeg_parse()` |
 | 이미지 디코딩 | `nodes::ImageDecode()` 또는 `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` 또는 `pyneat.nodes.jpeg_decode()` |

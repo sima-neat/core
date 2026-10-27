@@ -16,7 +16,7 @@ slug: /develop-apps/advanced-concepts/
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/graphs/"><strong>Графи</strong><span>Створюйте моделі, вузли, іменовані вхідні та вихідні дані, гілки та сценарії виконання.</span></a></li>
       <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/mipi-camera-input/"><strong>Використовуйте камеру MIPI.</strong><span>Створіть граф, що відображає зв’язок між даними з камери та моделлю, використовуючи вхідні дані від libcamera та попередню обробку CVU.</span></a></li>
-      <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/usb-camera-input/"><strong>Використання USB-камери</strong><span>Зчитуйте вебкамеру UVC MJPEG за її стабільним ідентифікатором і декодуйте на місці в NV12.</span></a></li>
+      <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/usb-camera-input/"><strong>Використання USB-камери</strong><span>Зчитуйте вебкамеру UVC MJPEG за її стабільним ідентифікатором, декодуйте на місці або передавайте її JPEG.</span></a></li>
       <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/video_sender/"><strong>Надіслати відео</strong><span>Транслюйте відеопотік з програми Neat за допомогою протоколів H.264 RTP/UDP.</span></a></li>
       <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/metadata_sender/"><strong>Надсилайте метадані у форматі JSON.</strong><span>Публікуйте структуровані метадані застосунку за допомогою UDP JSON.</span></a></li>
     </ul>

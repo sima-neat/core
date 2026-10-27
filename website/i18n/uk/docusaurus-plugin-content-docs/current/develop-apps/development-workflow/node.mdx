@@ -85,7 +85,7 @@ graph.add(pyneat.groups.video_input(vopt))
 | Зчитуйте кадри з файлу. | `nodes::FileInput(...)` плюс вузли декодування або `nodes::groups::VideoInputGroup(...)`. | `pyneat.nodes.file_input(...)` плюс декодування вузлів, або `pyneat.groups.video_input(...)`. |
 | Зчитайте одне зображення як джерело. | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
 | Зчитайте дані з камери MIPI/libcamera. | `nodes::CameraInput(...)` | `pyneat.nodes.camera_input(...)` |
-| Зчитування з камери USB (UVC) MJPEG | `nodes::groups::UsbCameraInput(...)` | `pyneat.groups.usb_camera_input(...)` |
+| Зчитування з камери USB (UVC) MJPEG | `nodes::UsbCameraInput(...)` | `pyneat.nodes.usb_camera_input(...)` |
 | Відтворіть RTSP-потік. | `nodes::RTSPInput(...)`, `nodes::groups::RtspEncodedInput(...)` або `nodes::groups::RtspDecodedInput(...)` | `pyneat.nodes.rtsp_input(...)`, `pyneat.groups.rtsp_encoded_input(...)` або `pyneat.groups.rtsp_decoded_input(...)` |
 | Зчитування HTTP-потоку, що складається з частин у форматі MJPEG. | `nodes::groups::HttpMjpegDecodedInput(...)`, або `nodes::HttpSource(...)`, `MultipartJpegDemux()`, `JpegParse()` для ручного налаштування кадру. | `pyneat.groups.http_mjpeg_decoded_input(...)`, або `pyneat.nodes.http_source(...)`, `pyneat.nodes.multipart_jpeg_demux()`, `pyneat.nodes.jpeg_parse()`. |
 | Декодуйте зображення. | `nodes::ImageDecode()` або `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` або `pyneat.nodes.jpeg_decode()` |

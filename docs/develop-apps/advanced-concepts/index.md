@@ -18,7 +18,7 @@ behind richer Neat applications.
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/graphs/"><strong>Graphs</strong><span>Compose models, nodes, named inputs and outputs, branches, and runs.</span></a></li>
       <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/mipi-camera-input/"><strong>Use a MIPI Camera</strong><span>Build a source-owned camera-to-model graph with libcamera input and CVU preprocessing.</span></a></li>
-      <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/usb-camera-input/"><strong>Use a USB Camera</strong><span>Read a UVC MJPEG webcam by its stable ID and decode it in place to NV12.</span></a></li>
+      <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/usb-camera-input/"><strong>Use a USB Camera</strong><span>Read a UVC MJPEG webcam by its stable ID, decode it in place, or forward its JPEG.</span></a></li>
       <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/video_sender/"><strong>Send Video</strong><span>Stream video output from a Neat application over H.264 RTP/UDP.</span></a></li>
       <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/metadata_sender/"><strong>Send JSON Metadata</strong><span>Publish structured application metadata over UDP JSON.</span></a></li>
     </ul>
