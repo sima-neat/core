@@ -97,7 +97,6 @@ Neat SDK 3.0 이상에서는 `sima-cli sdk setup`이 컨테이너 환경에 `COD
 ## 디스패처 / 런타임
 
 - `SIMA_DISPATCHER_TRACE=1` — 디스패처 단계를 추적합니다.
-- `SIMA_DISPATCHER_AUTO_RECOVER=0/1` — 자동 복구 디스패처 (기본값: true).
 - `SIMA_ASYNC_TPUT_DIAG=1` — 비동기 처리량 진단.
 - `SIMA_ASYNC_WARMUP=<n>` — 비동기 워밍업 프레임.
 - `SIMA_PERF_POWER=1` — 성능 테스트 시 Sentinel에서 보드 전력을 수집하는 기능을 활성화합니다.

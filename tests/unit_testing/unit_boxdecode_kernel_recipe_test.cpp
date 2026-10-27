@@ -11,6 +11,7 @@
 #include "pipeline/internal/sima/StageMemoryPolicy.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/sima/BoxDecodeKernelAdmission.h"
+#include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
 #include "pipeline/internal/contract/ContractFacts.h"
@@ -82,7 +83,7 @@ BoxDecodeKernelRecipeResult check(const CompiledBoxDecodeContract& s,
   auto r = prepare_boxdecode_kernel(s, geometry);
   const auto& recipe = *r.compiled.recipe;
   const auto expected_format =
-      s.payload.decode_type == BoxDecodeType::YoloV26Obb   ? kDetectionFormatBboxObbV1
+      box_decode_type_is_oriented(s.payload.decode_type)   ? kDetectionFormatBboxObbV1
       : s.payload.decode_type != BoxDecodeType::SuperPoint ? kDetectionFormatBbox
       : s.payload.superpoint.output_format == SuperPointOutputFormat::LegacyA65InterleavedV0
           ? kFeatureFormatLegacyA65V0
@@ -867,7 +868,7 @@ void combined_execution(bool planar, int ingress_route = 0, bool gaps = false) {
   }
 }
 
-void oriented_source_geometry() {
+void oriented_source_geometry(BoxDecodeType type = BoxDecodeType::YoloV26Obb) {
   // Public Preproc compilation supplies a typed cold policy; no sample, image
   // allocation, MLA session or EV execution is involved in this admission test.
   PreprocOptions options;
@@ -892,10 +893,10 @@ void oriented_source_geometry() {
   context.upstream_preprocess = last_preprocess_contract(preceding);
   require(context.upstream_preprocess == &preceding[0].child_stages[0].processcvu.value(),
           "nested source Preproc policy was lost behind the MLA child");
-  auto heads = source(BoxDecodeType::YoloV26Obb, 2);
+  auto heads = source(type, 2);
   heads.payload.decode_type_option = BoxDecodeTypeOption::GroupedByRoleLogit;
   heads.payload.nms_iou_threshold = 0;
-  for (int channels : {4, 2, 1})
+  for (int channels : {type == BoxDecodeType::YoloV8Obb ? 64 : 4, 2, 1})
     for (int side : {8, 4, 2})
       input(heads, side, side, channels, "FP32");
   for (auto& logical : heads.runtime_contract.logical_inputs) {
@@ -961,6 +962,96 @@ void oriented_source_geometry() {
       rejected = true;
     }
     require(rejected, "missing, anisotropic, wrong-canvas or unsupported upstream policy admitted");
+  }
+}
+
+void dfl_oriented_contract_and_execution() {
+  require(parse_box_decode_type_token("yolov8-obb") == BoxDecodeType::YoloV8Obb &&
+              parse_box_decode_type_token("yolo11-obb") == BoxDecodeType::YoloV8Obb,
+          "DFL OBB public tokens do not select the shared recipe");
+  BoxDecodeGeometryOptions geometry{64, 64, 128, 128, ResizeMode::Letterbox};
+  geometry.model_to_original = std::array<float, 4>{2, 2, 10, -10};
+  geometry.complete_geometry = geometry.uniform_transform_required = true;
+  for (const std::string dtype : {"FP32", "BF16", "INT8"}) {
+    auto s = source(BoxDecodeType::YoloV8Obb, 2);
+    s.payload.decode_type_option = BoxDecodeTypeOption::GroupedByRoleLogit;
+    for (int channels : {64, 2, 1})
+      for (int side : {8, 4, 2}) {
+        input(s, side, side, channels, dtype);
+        if (dtype == "INT8")
+          s.runtime_contract.logical_inputs.back().quant =
+              QuantStaticSpec{QuantGranularity::PerTensor, -1, {1.}, {0}};
+      }
+    const auto recipe = check(s, geometry);
+    const auto& members = recipe.compiled.recipe->members;
+    require(members.size() == 2 && recipe.decode_member == 0,
+            "DFL OBB introduced a conversion or alternate publication path");
+    const auto contract = inspect(members[0].executable);
+    test::OperationProbe executor, publisher;
+    require(!executor.prepare(members[0].executable) && !publisher.prepare(members[1].executable),
+            "DFL OBB preparation");
+    std::vector<std::shared_ptr<HostStorage>> inputs, outputs;
+    std::vector<c::ConstBytes> in, publication_inputs;
+    std::vector<c::MutableBytes> out;
+    for (auto requirement : contract.input_requirements()) {
+      inputs.push_back(std::make_shared<HostStorage>(requirement.storage_bytes));
+      std::memset(inputs.back()->memory.get(), 0, requirement.storage_bytes);
+      in.push_back(
+          {static_cast<const std::byte*>(inputs.back()->memory.get()), requirement.storage_bytes});
+    }
+    for (auto requirement : contract.output_requirements()) {
+      outputs.push_back(std::make_shared<HostStorage>(requirement.storage_bytes));
+      out.push_back(
+          {static_cast<std::byte*>(outputs.back()->memory.get()), requirement.storage_bytes});
+      publication_inputs.push_back({out.back().data, out.back().size_bytes});
+    }
+    const auto set = [&](int port, std::size_t index, float value) {
+      auto* bytes = static_cast<std::byte*>(inputs[port]->memory.get());
+      if (dtype == "FP32")
+        std::memcpy(bytes + index * 4, &value, 4);
+      else if (dtype == "BF16") {
+        const auto bf16 = static_cast<std::uint16_t>(std::bit_cast<std::uint32_t>(value) >> 16);
+        std::memcpy(bytes + index * 2, &bf16, 2);
+      } else {
+        const auto code = static_cast<std::int8_t>(value);
+        std::memcpy(bytes + index, &code, 1);
+      }
+    };
+    for (int port : {3, 4, 5})
+      for (std::size_t i = 0; i < std::size_t((8 >> (port - 3)) * (8 >> (port - 3)) * 2); ++i)
+        set(port, i, -80);
+    // Uniform DFL logits have mean 7.5 on each side. Two overlapping same-class
+    // candidates prove rotated suppression is enabled; a second class must survive.
+    set(3, 0, 8);
+    set(3, 2, 7);
+    set(3, 5, 6);
+    const auto take = []<class T>(c::Result<T> result) -> T {
+      if (const auto* error = std::get_if<c::Error>(&result))
+        throw std::runtime_error(error->field + ": " + error->message);
+      return std::get<T>(std::move(result));
+    };
+    const auto bytes = recipe.compiled.runtime_contract.logical_outputs.front().size_bytes;
+    auto wire = std::make_shared<HostStorage>(bytes);
+    const std::array<c::MutableBytes, 1> published{
+        {{static_cast<std::byte*>(wire->memory.get()), bytes}}};
+    auto binding = take(executor.bind_host(executor.operation(), in, out));
+    auto publication =
+        take(publisher.bind_host(publisher.operation(), publication_inputs, published));
+    auto done = executor.submit(binding);
+    const std::span<const test::Completion> dependency{&done, 1};
+    require(!publisher.submit(publication, dependency).wait(), "DFL OBB execution/publication");
+    require(wire->read<std::uint32_t>(12) == 2, "DFL OBB class-aware rotated NMS count");
+    const auto record = wire->read<OrientedBoxRecordV1>(sizeof(OrientedBoxesHeaderV1));
+    require(std::abs(record.center_x - 18.f) < .001f && std::abs(record.center_y + 2.f) < .001f &&
+                std::abs(record.width - 240.f) < .001f && std::abs(record.height - 240.f) < .001f &&
+                std::abs(record.angle_radians - std::acos(-1.f) * .25f) < .00001f &&
+                std::abs(record.score - 1.f / (1.f + std::exp(-8.f))) < .00001f &&
+                record.class_id == 0,
+            "DFL/sigmoid-angle/inverse-transform result was not preserved in BBOX_OBB_V1");
+    require(
+        wire->read<OrientedBoxRecordV1>(sizeof(OrientedBoxesHeaderV1) + sizeof(OrientedBoxRecordV1))
+                .class_id == 1,
+        "DFL OBB NMS suppressed a different class");
   }
 }
 
@@ -1445,6 +1536,9 @@ int main(int argc, char** argv) {
       return 0;
     }
     simaai::neat::gst_init_once();
+    dfl_oriented_contract_and_execution();
+    oriented_publication_sample_bridge(BoxDecodeType::YoloV8Obb);
+    oriented_source_geometry(BoxDecodeType::YoloV8Obb);
     oriented_source_geometry();
     oriented_publication_sample_bridge();
     linear_metadata_contracts();

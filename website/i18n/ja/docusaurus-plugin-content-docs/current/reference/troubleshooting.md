@@ -135,12 +135,11 @@ opt.preprocess.preset = pyneat.NormalizePreset.COCO_YOLO
 ### 10. `No channel available (all candidate channel opens failed)`
 
 :::info 原因
-EV74ディスパッチャーは、ロードされたファームウェアが実装していないカーネルのスケジュールを試みました。これは通常、`neat-runtime`と`neat-ev74-firmware`が**同じビルドではない**（内部ハッシュが一致しない）ためです。たとえば、部分的なアップデートが原因で発生します。
+実行リクエストが互換性のある EV74 チャネルを開けませんでした。考えられる原因の一つは、部分的な更新による Scheduler、Runner、Kernels、またはファームウェアのパッケージ一式の不一致です。
 :::
 
 :::tip 修正
-一致する`neat-*`セット（同じハッシュ値）をまとめてインストールし、ランタイムとファームウェアが同じハッシュ値を報告することを確認してください。[互換性 → バージョンが一致するセット](/getting-started/compatibility#the-version-matched-set-firmware--runtime)を参照してください。
-*(このメッセージはEV74ディスパッチャーから送信されます。)*
+[Neat Library のインストールまたは更新](/getting-started/neat-library/install-or-update/)に従って、選択された Scheduler 依存関係と Core の完全なバンドルをインストールしてください。無関係なコンポーネントの Git ハッシュを比較したり、個別のファームウェアパッケージを強制的にインストールしたりするのではなく、[ランタイムパッケージの組み合わせ](/reference/diagnostics/#keep-core-and-scheduler-packages-matched)を確認してください。
 :::
 
 ### 11. `frame=N rtsp_timeout`

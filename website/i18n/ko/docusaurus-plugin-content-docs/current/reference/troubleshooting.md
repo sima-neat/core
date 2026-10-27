@@ -136,12 +136,11 @@ opt.preprocess.preset = pyneat.NormalizePreset.COCO_YOLO
 ### 10. `No channel available (all candidate channel opens failed)`
 
 :::info 원인
-EV74 디스패처는 로드된 펌웨어에서 구현되지 않은 커널을 예약하려고 시도했습니다. 이는 일반적으로 `neat-runtime`과 `neat-ev74-firmware`가 **동일한 빌드가 아니기** 때문입니다(내부 해시 불일치). 예를 들어, 부분 업데이트가 발생한 경우입니다.
+실행 요청이 호환되는 EV74 채널을 열지 못했습니다. 부분 업데이트로 인해 Scheduler, Runner, Kernels 또는 펌웨어 패키지 세트가 일치하지 않는 것이 한 가지 원인일 수 있습니다.
 :::
 
 :::tip 수정
-일치하는 `neat-*` 세트를 함께 설치합니다(동일한 해시 값). 런타임과 펌웨어가 동일한 해시 값을 보고하는지 확인합니다. [호환성 → 버전이 일치하는 세트](/getting-started/compatibility#the-version-matched-set-firmware--runtime)를 참조하십시오.
-*(이 메시지는 EV74 디스패처에서 보냅니다.)*
+[Neat Library 설치 또는 업데이트](/getting-started/neat-library/install-or-update/)에 따라 선택된 Scheduler 종속성과 전체 Core 번들을 설치하십시오. 서로 다른 구성 요소의 Git 해시를 비교하거나 개별 펌웨어 패키지를 강제로 설치하는 대신 [런타임 패키지 조합](/reference/diagnostics/#keep-core-and-scheduler-packages-matched)을 확인하십시오.
 :::
 
 ### 11. `frame=N rtsp_timeout`

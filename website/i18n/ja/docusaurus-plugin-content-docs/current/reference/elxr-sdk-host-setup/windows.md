@@ -4,7 +4,7 @@ description: "Windows 11のホストを、Neat SDKおよびDevKit-Sync用に準�
 sidebar_position: 2
 ---
 
-ホストマシンが Windows 11 で、DevKit-Sync を使用して Neat 開発環境（Neat SDK と呼ばれる）を実行したい場合は、このガイドを参照してください。
+ホストマシンが Windows 11 で、DevKit-Sync を使用して Neat SDK を実行したい場合は、このガイドを参照してください。
 
 ## 前提条件
 

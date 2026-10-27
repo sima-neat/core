@@ -86,13 +86,13 @@ install the complete matching distribution rather than replacing one package.
 
 ### Migrating GStreamer header ownership
 
-The unreleased Core `0.6.0` moves ownership to Scheduler for
+The Core `0.6.0` moves ownership to Scheduler for
 `/usr/include/gst/SimaaiGstErrors.h`. The include path remains unchanged. Core
 no longer carries its own implementation or installs that file; consumers use
 the installed Scheduler headers and `SimaScheduler::Headers` target.
 
 Upgrade Core and Scheduler together using the complete matching distribution.
-Scheduler declares the header transfer for the unreleased 0.6.0 package lineage
+Scheduler declares the header transfer for the 0.6.0 package lineage
 without marking corrected Core 0.6.0 packages incompatible. Before APT changes
 files, the installer uses Scheduler's authenticated ownership check: the former
 owner must be replaced in the same package set with that file removed, or be

@@ -38,7 +38,7 @@ GenAI 直接呼叫 LLiMa，不經過 Runner 或 Scheduler GenAI 配接器。MLA 
 
 Scheduler 擁有 GStreamer 傳輸與結構化錯誤介面，包括已安裝的
 `gst/SimaaiGstErrors.h` 標頭。Core 使用這些介面，不保留第二套實作。
-尚未發行的 Core `0.6.0` 包含此檔案擁有權移轉。請一併升級相符的 Core/Scheduler
+Core `0.6.0` 包含此檔案擁有權移轉。請一併升級相符的 Core/Scheduler
 套件組；此套件版本不會變更平台或數值契約。
 
 ## 框架與環境
@@ -767,6 +767,8 @@ YOLOv5 偵測是採用標準錨點的固定設定檔。Core 需要正好三個�
 對於模型管理的 YOLO26 偵測、姿勢、分割與旋轉框路徑，MPK 類別標頭深度是權威的類別計數。`Model::Options::num_classes = 0` 選擇該推斷值。一個正值必須與其匹配；如果出現矛盾，則會在合約建構期間失敗，並報告已設定的值、MPK 衍生的值和解碼類型。這可防止使用無效的類別計數來解釋分組的原始標頭佈局。SSD 和預先 YOLO26 非姿勢 YOLO 系列保留其現有的明確覆寫行為，而姿勢和 SuperPoint 解碼器保留其系列特定的規則。
 
 ##### YOLO26 旋轉框契約
+
+`BoxDecodeType::YoloV8Obb` 使用 `yolo_dfl_obb_v1`，接收 64 通道 DFL 邊界框與角度 logit。它共用旋轉幾何與輸出路徑；DFL、角度啟用與旋轉 Fast-NMS 由 Kernels 負責。
 
 `BoxDecodeType::YoloV26Obb` 會降階至具名數值設定檔 `yolo26_obb_v1`。它需要九個依角色分組的 FP32、BF16 或 INT8 頭：三個四通道距離頭、三個完整類別數相同（1–256）的類別 logit 頭，以及三個單通道原始弧度角度頭，各組步幅為 8、16、32。Core 會拒絕角色矛盾、機率分數域、類別數不符，以及非零的逐影格 NMS。Kernels 負責 sigmoid、兩階段錨點/類別選取、旋轉幾何運算與嚴格分數篩選；Core 不會重複這些數值運算。
 

@@ -33,6 +33,7 @@ def test_decode_obb_shapes_and_values():
   np.testing.assert_array_equal(result.scores.to_numpy(), np.array([0.5], dtype=np.float32))
   np.testing.assert_array_equal(result.class_ids.to_numpy(), np.array([9], dtype=np.int32))
   assert pyneat.BoxDecodeType.YoloV26Obb is not pyneat.BoxDecodeType.YoloV26
+  assert pyneat.BoxDecodeType.YoloV8Obb is not pyneat.BoxDecodeType.YoloV26Obb
 
 
 def test_decode_obb_empty_and_list_correspondence():

@@ -28,7 +28,7 @@ sidebar_position: 6
 
 ## 시작하기 전에
 
-- 인터넷에 연결된 컴퓨터에 `sima-cli`를 설치하세요. [환경 설치](/getting-started/dev-environment/install-the-environment/)를 참조하세요.
+- 인터넷에 연결된 컴퓨터에 `sima-cli`를 설치하세요. [SDK 설치](/getting-started/dev-environment/install-the-environment/)를 참조하세요.
 - 시스템과 호환되는 패키지 버전을 선택하세요. [호환성](/getting-started/compatibility/)을 참조하세요.
 - 대상 호스트의 운영 체제와 프로세서 아키텍처를 확인하세요.
 - 전송에 사용할 USB 드라이브 또는 내부 파일 공유를 준비하세요.

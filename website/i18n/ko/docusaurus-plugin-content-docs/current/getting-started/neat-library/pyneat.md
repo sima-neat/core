@@ -18,17 +18,13 @@ PyNeat은 Neat Library와 함께 제공되며, Neat Library를 설치하면 자�
 
 ## 휠 다운로드
 
-<ShellCommand prompt="devkit">
-sima-cli neat install core -t pyneat
-</ShellCommand>
-
-특정 Neat Library 버전에 대한 휠 파일을 다운로드하려면 해당 버전 정보를 포함하세요.
-
-특정 버전을 설치하려면:
+DevKit에 이미 설치된 Neat Library 런타임과 같은 버전의 휠을 선택하십시오. 현재 릴리스의 경우 다음 명령을 실행합니다.
 
 <ShellCommand prompt="devkit">
 sima-cli neat install core@v%%release.core%% -t pyneat
 </ShellCommand>
+
+다른 런타임 버전을 사용하고 있다면 해당 버전과 일치하는 게시된 Core 태그로 바꾸십시오. 휠을 다운로드해도 런타임 패키지는 업데이트되지 않습니다.
 
 ## 파이썬 환경을 설정합니다.
 
