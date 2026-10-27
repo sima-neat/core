@@ -249,3 +249,49 @@ def test_cloudfront_invalidation_encodes_s3_branch_keys(tmp_path):
     with patch.object(ci, 'source_metadata', return_value=({}, {}, INPUTS)),          patch.object(ci, 'existing', return_value={'metadata-offline.json': tmp_path/'metadata-offline.json'}),          patch.object(ci, 'run') as run:
         ci.publish(args)
         assert '/core/codex%252Foffline/aaaaaaaaaaaa/pciehost/ubuntu24/amd64/metadata-offline.json' in run.call_args.args
+
+
+@pytest.mark.parametrize('event,ref,mode,validation,manual_source,failed,cancelled,promoted,expected', [
+    ('push', 'refs/heads/develop', 'standard', False, '', False, False, True, True),
+    ('pull_request', 'refs/heads/develop', 'standard', False, '', False, False, True, False),
+    ('workflow_dispatch', 'refs/heads/develop', 'standard', False, '', False, False, True, False),
+    ('push', 'refs/heads/main', 'standard', False, '', False, False, True, False),
+    ('push', 'refs/heads/develop', 'fuzz', False, '', False, False, True, False),
+    ('push', 'refs/heads/develop', 'standard', True, '', False, False, True, False),
+    ('push', 'refs/heads/develop', 'standard', False, '123', False, False, True, False),
+    ('push', 'refs/heads/develop', 'standard', False, '', True, False, True, False),
+    ('push', 'refs/heads/develop', 'standard', False, '', False, True, True, False),
+    ('push', 'refs/heads/develop', 'standard', False, '', False, False, False, False),
+])
+def test_automatic_develop_publication_gate(event, ref, mode, validation, manual_source,
+                                           failed, cancelled, promoted, expected):
+    import yaml
+    caller = yaml.safe_load((HERE.parents[2]/'.github/workflows/vulcan-ci.yml').read_text())
+    job = caller['jobs']['publish-offline-develop']
+    # Evaluate the actual workflow gate with representative GitHub contexts.
+    expression = job['if'][3:-2].strip()
+    values = {
+        'always()': True, 'github.event_name': event, 'github.ref': ref,
+        'inputs.validation_only': validation, 'inputs.offline_source_run_id': manual_source,
+        'inputs.build_mode': mode, "contains(needs.*.result, 'failure')": failed,
+        "contains(needs.*.result, 'cancelled')": cancelled,
+        'needs.documentation-localization.result': 'success',
+        'needs.code-hygiene.result': 'success',
+        'needs.promote-latest-tag.result': 'success' if promoted else 'skipped',
+    }
+    for key, value in values.items():
+        expression = expression.replace(key, repr(value))
+    expression = expression.replace('&&', ' and ').replace('||', ' or ').replace('!', ' not ')
+    assert bool(eval(expression, {'__builtins__': {}}, {})) is expected
+    assert job['uses'] == './.github/workflows/pcie-offline.yml'
+    assert job['with'] == {'source_run_id': "${{ format('{0}', github.run_id) }}",
+                           'publish_branch': True, 'validation_only': False}
+    # Every standard job gates automatic publication, including optional hardware.
+    standard_jobs = set(caller['jobs']) - {'validate-offline', 'publish-offline-develop', 'validation-complete'}
+    assert set(job['needs']) == standard_jobs
+
+
+def test_completed_run_listener_does_not_duplicate_develop_publication():
+    import yaml
+    worker = yaml.safe_load((HERE.parents[2]/'.github/workflows/pcie-offline.yml').read_text())
+    assert "github.event.workflow_run.head_branch != 'develop'" in worker['jobs']['source']['if']

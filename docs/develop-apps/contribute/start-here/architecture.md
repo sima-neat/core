@@ -226,36 +226,21 @@ within one frame. It avoids exposing independent CPU and device work as serial
 pipeline stalls, without another synchronization worker. Graph construction sets
 budgets once; no per-frame operation-specific scheduling policy is needed.
 
-### Explicit frame-arena capacity preference
+### Memory planning with FrameLayout
 
-Storage placement and allocation fallback are separate contracts. The existing
-`ArenaDmsPolicy::PreferDmsForEligible` selects **required DMS** for eligible closed
-MLA/A65 lifetimes; it does not permit fallback when DMS allocation fails. Existing
-production callers keep that behavior.
+Core has one build-local planning flow:
 
-The internal planner can explicitly select `ArenaDmsPolicy::PreferDmsThenCma`.
-This produces `ArenaAllocationPolicy::PreferDmsThenCma` only for Core-owned DMS
-arenas whose complete consumer access set excludes EV74. Any EV74 consumer makes
-that opt-in compilation fail; it must not become a hidden staging copy or an
-assumption that every CMA range is reachable. External-adopted, unknown, custom,
-and uncached/control storage cannot acquire this preference.
+1. Select model routes and preserve invocation identity.
+2. Compile checked recipes and resolve each executor once.
+3. Resolve root carriers, views, consumers and ownership groups.
+4. Choose heaps and pack with the shared physical-DAG lifetime proof.
+5. Finalize stage-local `FrameLayout` objects and publication; render once without repairing placement.
 
-This is an internal planning capability, not a new public ModelPack option or an
-environment switch. Default public workflows remain strict. The policy travels
-through existing MLA/numerical contract projection into Scheduler's installed
-static-manifest ABI **31**, or the direct-TVM lane schema **3**. New JSON readers
-accept historical strict manifest JSON and TVM schema 2 as `RequiredDomain`; a
-preference field in an old schema is rejected. Old static ABI consumers reject
-31, and old TVM consumers reject schema 3. Historical Core JSON readers may ignore
-unknown fields and reconstruct strict placement; that is not support for transporting
-a new preference through an old Core. Rebuild Core and Scheduler together;
-Runner's public library ABI and canonical Kernels request semantics are unchanged.
+Any EV74 access requires CMA; owned MLA/A65-only carriers use DMS. Qualified fresh A65 public terminals may use HostCpu. Imported backing, offsets, geometry and producer loans remain pinned. Fan-out includes every consumer, and views share their root carrier.
 
-Scheduler allocates the ordered canonical DMS/CMA alternatives once at pool setup,
-records the actual selected heap, and performs CMA initialization when CMA was
-actually selected. Reuse validates actual provenance against the authored policy:
-strict DMS cannot admit CMA, while a validated preference can admit either. No
-policy JSON is parsed during warmed execution, and no payload migration is added.
+`AllocationPolicy::PreferDmsThenCma` explicitly permits eligible owned DMS allocations to fall back to CMA on capacity failure. It does not select Linux system memory. Pool boundaries, Queue boundaries, independent invocations and retained outputs constrain lifetime reuse.
+
+Scheduler prepares each layout's allocation groups through Runner. Allocation indices and offsets are local to their buffer group; identical offsets in different groups do not overlap. Rebuild matched Core and Scheduler packages together.
 
 ### Default device-to-CPU coherency
 
@@ -434,10 +419,11 @@ failure should surface as an actionable structured error rather than a hidden ru
 `Model::execution_plan(...)` returns what `build(...)` with the same arguments runs: the Model's
 graph nodes in pipeline order, where each node runs (`A65`, `EV74`, or `MLA`), and the tensors on
 the edges between them. It calls `build(...)` with startup preflight off, reads the plan that the
-build recorded on its `DiagCtx` before GStreamer parse, and closes the pipeline, so it needs the
+build recorded on its `DiagCtx` after placement and publication planning, and closes the pipeline, so it needs the
 same device as `build(...)`. It is a public diagnostic view, separate from the internal `ModelExecutionPlan` described below. Its JSON
 contract is `schemas/execution_plan_v1.schema.json`; `schema_version` changes only when a change
-breaks existing readers.
+breaks existing readers. The memory summary counts owned allocations once and reports `CMA`,
+`DMS`, `HostCpu`, or `Mixed`; explicit DMS fallback is reported by its preferred heap.
 
 ### Board telemetry
 
@@ -524,7 +510,7 @@ storage. Core compiles model-load facts into one immutable internal
 - public outputs contain only publication order and the value they expose.
 
 MPK manifests use `MpkDecoder`. `MpkDecoder::load` is the single manifest
-entry point: model loading, prepared-runtime builds, and the PCIe host read
+entry point: model loading, stage preparation, and the PCIe host read
 `mpk.json` through it once, and it builds the semantic `MpkContract` from the
 same bytes that admission decodes. The optional `model_sdk_version`
 string is retained as provenance and does not restrict admission. The decoder
@@ -547,18 +533,12 @@ Single-input, batch-one models with normal spatial storage can use automatic
 input channel padding. Applications keep the model's logical tensor shape;
 custom spatial storage padding is outside this support scope.
 
-An AFE artifact ending in `.so` is therefore classified by its MPK stage, not
-by its suffix. For `processor="MLA"`, Core reads the file as an ELF container
-without loading it into the host process, proves its section topology, and
-passes the exact artifact to MLArt. For `processor="A65"` with the
-compiler-authored `input_names`, `input_types`, and `output_types` contract, it
-is a host TVM module and is not an MLA executable.
-The strict DMA-BUF route rejects that stage until a typed direct host-module
-ABI is available; it never calls `dlopen`, silently skips the stage, or routes
-through the dispatcher-based ProcessTVM compatibility element.
-The legacy EVO alignment is an explicit 4096-byte migration policy with
-`LegacyPolicy` provenance, not a fact inferred from its MPK or ELF. New typed
-contracts must declare their own alignment.
+An AFE artifact ending in `.so` is classified by its MPK stage. For
+`processor="MLA"`, Core validates its ELF topology without loading it into the host
+process and passes the artifact to MLArt. An A65 host module with the compiler's
+`input_names`, `input_types` and `output_types` becomes a typed TVM program. The
+legacy EVO alignment remains an explicit 4096-byte `LegacyPolicy`; new typed
+contracts declare their own alignment.
 
 Runtime frames do not copy the static plan. The direct path carries standard
 DMA-BUF ownership plus checked absolute `{fd, offset, length}` views and a
@@ -570,11 +550,7 @@ semantics unless a lowering pass proves exact backend production or equivalent
 fusion. This prevents storage placement from silently changing MLA port arity
 or model behavior.
 
-All MLA stages in one accepted graph project through the same retained
-`FrameSlotArenaPlan`. The first materializing strict stage allocates the arena;
-later MLA stages use `ReuseInput` and submit exact root-relative IFM/OFM views
-over that same DMA-BUF. Stage-less projection helpers remain available only
-for an unambiguous one-MLA graph and fail closed for multi-stage plans.
+`FrameLayout` is each stage's storage contract: an allocation list, allocation-local spans, input routes and output ownership. `ReuseInput` retains an identified input allocation group. Core packs owned carriers once; Scheduler prepares pools through Runner. MLA's padded physical capacity remains separate from logical publication bytes. Imported backing and producer loans stay pinned.
 
 Core's immutable MPK package is the inference-contract authority. Logical public
 shapes remain distinct from native MLA sample spans, whole-batch CVU execution
@@ -639,12 +615,7 @@ without enabling verbose GStreamer diagnostics.
 
 #### Checked numerical stages
 
-At graph preparation, Core projects producer output regions into consumer input
-bindings. For a declared frame arena, each region addresses the same DMA-BUF at
-its authored arena offset; a region ID is not a `GstMemory` index. The shared
-projection used by BoxDecode and ArgMax validates region bounds and preserves
-the separate head-relative offset. Direct-carrier and runtime-binding inputs
-without a declared producer arena retain their original addressing mode.
+`FrameSpan` offsets are local to their allocation and buffer group, not global graph addresses. Identical offsets in different groups do not overlap. BoxDecode and ArgMax keep head-relative tensor offsets separate from storage offsets. Direct-memory and runtime physical-binding inputs retain their addressing mode.
 
 Core lowers Preproc, transforms and vision stages, including ArgMax, BoxDecode
 and SuperPoint, to canonical requests and explicit tensor-port mappings.
@@ -775,17 +746,7 @@ Each Node must produce:
 - `backend_fragment(index)` -- the GStreamer fragment for this node at a given index
 - `element_names(index)` -- deterministic element names owned by this node (for diagnostics and enforcement)
 
-Standalone `Cast` compiles its typed transport views into a canonical `cast`
-request checked by Kernels for the selected backend. Source logical identities, per-axis
-strides and byte offsets remain explicit; allocation extents include the addressed
-strided span. The renderer applies normal target resolution and direct arena
-projection. Cast uses the same typed execution and output-pool budgets as other
-runner stages: graph construction selects the bounded execution capacity (one for
-synchronous Input graphs) and reserves output carriers for retention. These budgets
-are passed to Runtime preparation, not rendered as legacy plugin properties.
-Rebinding compact output tensors into a public subset or reordered TensorSet first
-materializes metadata on an owned, parent-retaining envelope. The original held
-publication and payload storage are not modified.
+Standalone `Cast` compiles typed views into a canonical `cast` request checked by Kernels. Logical identities, strides and tensor-relative offsets remain explicit. Semantic compilation reconciles ordered MLA input ports before packing; rendering preserves the checked contracts. Execution capacity defaults to four asynchronously and one synchronously, with separate output carriers for retention. Subset or reordered TensorSets use parent-retaining metadata envelopes without changing the held publication or payload.
 
 #### Typed image frontends and multi-plane publication
 
@@ -796,21 +757,7 @@ PreprocOptions layouts. Model-specific ROI/source-template behavior remains gate
 to the legacy fused mode. Resize admits bounded dynamic input geometry with fixed
 output dimensions; color conversion and normalization fix geometry per run.
 
-Raw image compilation retains exact checked numerical descriptors for each plane
-and one physical image allocation. The additive Scheduler image publication API
-validates plane backend identities, absolute arena offsets, strides and bounds,
-then publishes one `GstVideoMeta` image with dynamic `GstSimaMeta`. It does not
-publish a tensor-set descriptor or fabricate an aggregate numerical tensor.
-Core retains checked image-publication metadata in the compiled runtime contract
-and rendered stage before preparing any numerical recipe. The terminal output
-query runs at this earlier phase: numerical plane descriptors must not become
-public tensor overrides. Named selectors are still validated. The checked raw
-caps and `GstVideoMeta` remain the image-layout authority. The internal metadata
-JSON roundtrip retains the ordered image descriptor but does not restore an
-executable. Recipe preparation compares every descriptor field with its checked
-output contract, then makes a separate arena-rebased view; the authored relative
-plane offsets remain immutable. Normalization instead publishes a BF16 tensor. Public raw-video import preserves
-NV16's full-height UV plane and the same image owner.
+Raw image contracts retain checked plane descriptors and one image carrier. After placement, Core projects allocation-local plane offsets, strides and bounds into `GstVideoMeta` and dynamic `GstSimaMeta`. Metadata queries use immutable plane-relative geometry without adapters or device allocation. Named selectors remain validated; raw images do not acquire tensor-set descriptors. Normalization publishes a BF16 tensor, while NV16 preserves its full-height UV plane and image owner.
 
 New image stages preserve known upstream temporal caps in a cold, stage-local
 OutputSpec projection. A boundary without an OutputSpecProvider invalidates only
@@ -933,40 +880,18 @@ Under `src/pipeline/internal/` (internal-only):
   - `ElementFlowCounters` (atomic per-element flow stats)
 - `GstDiagnosticsUtil.h` -- helpers for formatting and collecting GStreamer diagnostics
 
-#### SIMA static manifest context contract {#sima-static-manifest-context-contract}
+#### Typed Scheduler stage contract {#sima-static-manifest-context-contract}
 
-For model pipelines, static stage/tensor contract data is built in framework and injected as a
-pipeline-level `GstContext`:
-
-- Context type: `sima.model.manifest.v1`
-- Context fields:
-  - `manifest_version`
-  - `manifest_json` (legacy compatibility payload)
-  - `manifest_accessor_v1` (ABI-safe accessor table pointer)
-  - optional `session_id`, `model_id`
-- The context owns immutable metadata backing for its accessor pointers. Retaining
-  the context keeps that metadata readable, not numerical sessions or execution
-  caches. Plugins must retain the context while borrowing its pointers.
-- Repository boundary: this repo must not add build-time dependencies on plugin/dispatcher repos.
-  Integration is interface-only (runtime `GstContext`, properties, caps/meta, and C-ABI contracts).
+Core passes immutable `StageRequest` objects through Scheduler's installed client.
+Each owns its frame layout, output publication and checked kernel, MLA or TVM program.
+Scheduler validates the stopped cohort before attachment and retains those owners
+through execution.
 
 ##### Model execution and admission
 
-Model execution uses the admitted DMA-BUF path. `ModelPack` keeps MPK metadata
-inspection separate from executable-plan preparation: inspection describes the
-model without opening devices or requiring its executable artifacts; execution
-requires an admitted semantic-command, physical-command and frame-arena plan.
-The prepared plan is cached and reused by graph and synchronous-runner clones.
-Routing preserves the compiler's pre/inference/post partition and does not
-change when the executable cache becomes ready.
+`ModelPack` caches immutable `ModelExecutionPlan`, artifact identity and `PhysicalExecutionPlan` facts. It caches neither selected executors nor speculative placement. Metadata inspection allocates no device storage and instantiates no adapters.
 
-A public model-fragment entry compiles ownership for its selected commands with
-the same frame-arena planner. Application inputs retain their physical bindings
-and DMA-BUF storage; they are not treated as a full-model arena. Participating
-model fragments and typed model-owned CVU stages share one build-local placement
-plan, preserving command and value identities. The cached full-model plan stays
-immutable. A real model-owned preprocessing producer retains its admitted shared
-arena for downstream stages.
+Each build selects routes and resolves checked executors once. Selected fragments preserve the compiler's pre/inference/post boundaries. Fan-out, views, imports and retained public outputs contribute access and lifetime evidence before packing; separate invocations preserve their ownership groups.
 
 Device transfers and InputStream allocation use standard DMA-BUF memory and
 resolved CMA/DMS placement. Shared TensorSet envelopes retain each source
@@ -985,26 +910,9 @@ device-visible input checks. Device-preferred routes forward caller-owned
 input remains zero-copy; CPU input may still require materialization at an
 existing device-ingress boundary such as `neatencoderinput`.
 
-Execution preparation invokes the same side-effect-free
-`try_compile_dmabuf_plan()` operation used by the offline
-`neat-dmabuf-plan-audit` tool. Pass `--mpk <mpk.json>` and one repeatable
-`--mla-artifact <stage-id> <manifest-executable> <resolved-file>` triple per
-MLA stage. The one-stage `--elf` spelling remains an unambiguous compatibility
-form. Admission requires an exact MPK manifest and exact identity for every
-MLA ELF, a successful strict reverse-AFE decode, and an accepted immutable
-frame-arena plan. The audit emits a versioned JSON record
-with stable reason codes, contract locations, content digests, and basenames;
-it does not allocate accelerator memory, open a device, or expose customer
-filesystem paths. Execution preparation records the same canonical plan digest and
-fails rather than constructing or retrying a legacy executor after rejection.
+`try_compile_dmabuf_plan()` validates the MPK and exact MLA/TVM artifacts without choosing storage. The offline `neat-dmabuf-plan-audit` tool accepts `--mpk <mpk.json>` and repeatable `--mla-artifact <stage-id> <manifest-executable> <resolved-file>` triples; `--elf` handles one unambiguous MLA stage. It runs the common planner without device allocations or adapter factories. Its versioned JSON retains reason codes, locations and basenames: `source_digest` identifies immutable model facts, while `plan_digest` identifies finalized default-target layouts. Failure never selects a legacy executor.
 
-Only after admission does Core set `processmla.dmabuf_plan_contract` in static
-manifest ABI version 31. Core also projects each backend port's `required_alignment_bytes`
-and the immutable frame-arena placement plan into its physical buffer record;
-ProcessMLA consumes that value rather than duplicating the legacy
-page-alignment policy. It consumes these Core-owned facts; it must not infer missing ports
-or fall back to a legacy transport. Core and every plugin that consumes the static-manifest
-header must therefore be built and released together at ABI version 31.
+After checked recipes are available, Core resolves producer/consumer carriers and ownership, then packs once through the common lifetime-aware packer. It finalizes allocation-local spans and publication. Rendering preserves those decisions; Scheduler validates and executes them.
 
 When `cv::Mat` input is materialized as a Tensor, unresolved `Auto` placement
 uses the owning Tensor default: copy directly into EV74-visible DMA-BUF-backed
@@ -1013,17 +921,7 @@ Explicit `SystemMemory` (or `use_simaai_pool=false` with `Auto`) retains a borro
 host view; explicit DMS placement remains unchanged. This does not change the
 public `from_cv_mat_view()` API or make borrowed host storage device-compatible.
 
-Public Tensor device transfers allocate standard CMA or DMS DMA-BUF memory,
-perform the required cache-synchronized host copy, and record device placement
-in Tensor storage metadata. Shared tensor-list ingress retains each DMA-backed
-field's existing memory and producer lifetime. CPU fields can share storage or
-pack independently; packing a CPU field never copies its DMA-backed siblings.
-Public input positions identify logical views, not concatenated allocations.
-Each frame's compact physical-binding table identifies the memory slot, offset
-and extent of each requested view, including reordered or subset views of one
-shared sample. Scheduler resolves application bindings separately from direct
-memory inputs and compiler-owned frame-arena spans. Only a frame-arena input
-can establish ownership of a reused output arena.
+`Tensor` device transfers perform explicit cache-synchronized copies. Shared ingress retains each DMA-BUF, checked view and producer loan; packing a CPU field does not copy DMA-backed siblings. `DirectMemory`, `PhysicalBinding` and `KnownFrameSpan` are input representations. Reuse follows resolved backing identity and the input allocation group, including aliases; no tag alone grants ownership.
 
 A non-materializing, component-form Pack establishes producer placement before
 carrier allocation. Writable producer outputs occupy their final component
@@ -1053,12 +951,7 @@ submits exactly one physical port in each direction; the consuming CVU kernel
 uses the compiled offset/stride expressions directly, without an unpack job or
 intermediate copy.
 
-Multiple direct MLA OFMs can be logical views of one physical arena. In that
-case every descriptor with the same memory index publishes the same parent
-physical segment name, while logical/backend names preserve OFM identity and
-exact arena offsets preserve each view. Direct Scheduler output publication
-likewise uses its exact strict arena layout rather than the legacy packed
-output reconstruction heuristic.
+Multiple MLA OFMs may be logical views of one allocation. Descriptors sharing an allocation retain its parent segment; logical/backend names preserve port identity, and allocation-local spans preserve each view. Publication describes the finalized `FrameLayout` without reconstructing packed outputs.
 
 Core may simplify singleton batch dimensions in internal conversion descriptors
 when the execution view preserves the same addressed bytes. Model tensor shapes,
@@ -1066,11 +959,7 @@ batch routing, and public APIs remain unchanged.
 
 ##### Direct runtime execution
 
-Strict numerical stages pass Core-projected tensor routes and frame-arena bindings through
-Scheduler to Runner. Kernels owns the checked numerical executable; Runner owns backend
-execution, memory access, completion and retirement. A `ReuseInput` post stage retains its
-shared MLA arena rather than copying or reconstructing individual outputs. No failed preparation
-or execution may fall back to ConfigManager or dispatcher execution.
+Checked numerical stages pass tensor routes and `FrameLayout` through Scheduler to Runner. Kernels owns numerical admission; Runner owns execution, memory access, completion and retirement. `ReuseInput` preserves the identified input group and its loans. Failed preparation or execution never falls back to ConfigManager or a dispatcher.
 
 ProcessMLA submits through kernel-driver MLArt on `/dev/mla` without the MLA
 dispatcher, MLASHM, segmented allocation, or M4. Legacy libraries may still
@@ -1080,30 +969,13 @@ or synchronization error is terminal.
 
 ##### Configuration resolution
 
-Resolver precedence for migrated fields is deterministic:
-
-1. infer from contract/runtime signal (shape/meta/caps)
-2. context/default/property path
-3. hard bus error (never abort/SIGSEGV)
-
 `StageTransformRuleRegistry` (internal) is the single mapping table that tells the resolver which
 non-MLA stages inherit tensor contracts from MLA inputs vs MLA outputs, and when output quant is
 propagated. This keeps pre/post derivation explicit and testable.
 
-For migrated SIMA plugins using the aggregator template, runtime config now follows
-context/property-driven resolution:
-1. stage static fields come from manifest context
-2. runtime knobs come from properties/context defaults
-3. unresolved required fields fail explicitly (no stage-JSON fallback in framework)
-
 Compiled numerical routes carry explicit source bindings and tensor-port mappings through the
 Scheduler frontend. Legacy input-buffer names are not execution authority; consumers must use
 the checked current-frame bindings.
-
-`logical_stage_id` is resolved from `stage-id`/`stage_id` pipeline properties when provided,
-otherwise it falls back to element name.
-Numerical model fragments use `neatkernelrunner` and match their typed Runtime
-context by element name; they do not set a `stage-id` property on that element.
 
 Both authored MPK BoxDecode terminals and public `SimaBoxDecode` nodes use
 `neatkernelrunner`. They share graph-build admission for carrier capacities,
@@ -1163,7 +1035,7 @@ for configuration and Python usage.
 
 ##### SuperPoint BoxDecode contract
 
-SuperPoint uses the same MPK-to-static-manifest boundary as other model-managed BoxDecode
+SuperPoint uses the same MPK-to-checked-kernel boundary as other model-managed BoxDecode
 families, with these additional invariants:
 
 - The MPK record owns the detector-logits and descriptor-grid tensor identities, storage
@@ -1173,16 +1045,15 @@ families, with these additional invariants:
   representations, applies explicit `Model::Options::superpoint` overrides, and resolves only
   omitted profile defaults. Changing a profile recomputes its derived defaults while preserving
   controls explicitly authored by the MPK or API.
-- The versioned static-manifest ABI carries the resolved contract to `neatobjectdecode`. Plugins
-  borrow manifest pointers only during configuration and must copy any state needed at runtime;
-  Core retains manifest ownership for the pipeline lifetime.
+- Core forwards the resolved contract in the checked kernel program attached to
+  `neatkernelrunner`; the prepared stage retains its immutable authoring data.
 - Production output uses the `FEATURE_POINTS_V1` wire format and feature semantic metadata.
   `FEATURE_POINTS_LEGACY_A65_V0` is available only when explicitly selected for compatibility;
   consumers must not infer either format from buffer size.
 
 ##### YOLOX segmentation + pose BoxDecode contract
 
-`yolox-seg-pose` uses the same MPK-to-static-manifest path as other BoxDecode families.
+`yolox-seg-pose` uses the same MPK-to-checked-kernel path as other BoxDecode families.
 
 - Inputs are 13 tensors: three boxes, three class heads, three mask-coefficient heads, three keypoint heads, then one mask prototype. Each group uses stride-8/16/32 order.
 - `Auto` selects `GroupedByRoleLogit`. Only `GroupedByRole` and `GroupedByRoleLogit` are accepted; scores use sigmoid.
@@ -1340,13 +1211,10 @@ Internally:
    * `node_reports` for reproducibility
    * `boundaries` as `BoundaryFlowCounters` (atomics)
 
-Normal graph construction lowers numerical requests before serializing placement
-and publication. Numerical manifest payloads are `NONE`; immutable recipes remain
-in-process. The shared prepared context remains for MLA and other nonnumerical
-compatibility, not ProcessCVU requests. `prepare_and_attach_tensor_stages()` in Scheduler validates
-the complete stopped candidate bin, request pads, member ordering, metrics and
-resource budgets before preparing and attaching contexts. Failures propagate with their original diagnostic, without
-fallback or fabricated input authority.
+Normal graph construction prepares checked recipes, finalizes storage, then
+output publication. `prepare_and_attach_stages()` validates the complete stopped
+candidate bin, pads, member ordering and resource budgets before attachment.
+Failures retain their original diagnostic.
 
 For YOLO26 segmentation, the numerical member writes masks directly into the mask
 suffix of the public output buffer. A dependent serializer writes only the count
@@ -1441,17 +1309,10 @@ rechecking unchanged numerical semantics. BoxDecode instances have independent
 bounded geometry caches, so preparing another stage cannot evict a sibling's
 warmed variants. New geometry still follows checked variant preparation.
 
-The static manifest context receives a private metadata projection: canonical
-stages keep payload `NONE`, legacy value payloads remain intact, and numerical
-recipe references are removed before building the ABI accessor. The original
-Core semantic manifest is unchanged. Do not retain whole execution-capable
-manifests in diagnostic history.
-
-Construction owns its pipeline and contexts through RAII until successful
-handoff. A failed build releases uncommitted owners; it does not reset consumed
-adapters or stop an unrelated shared Runtime domain. An intentionally retained
-execution context may keep its stage alive. Static metadata may not. Host object
-destruction alone does not prove DMA retirement.
+Construction owns its pipeline and stage requests through RAII until successful
+handoff. A failed build releases uncommitted owners without resetting consumed
+adapters or stopping an unrelated shared Runtime domain. Host object destruction
+alone does not prove DMA retirement.
 
 ### DMA-BUF output ownership
 
@@ -2045,23 +1906,9 @@ therefore reported on the first `push()` or `pull()`, with the original `GraphRe
 
 ## Stage naming and wiring
 
-The framework now treats plugin JSON as plugin-owned data and does **not** rewrite or validate
-per-stage JSON fields during pipeline build.
-
-Wiring source of truth:
-
-1. Deterministic GStreamer element names from node fragments.
-2. `stage-id` on SIMA model-path elements.
-3. `sima.model.manifest.v1` context for static stage/tensor contract lookup.
-
-Implications:
-
-* Build no longer mutates `node_name` / `input_buffers[*].name` / `buffers.input[*].name`.
-* Build no longer performs JSON-based wiring checks.
-* Name transform still applies to element names only.
-
-For model-managed graph runs, stage resolution is driven by `stage-id` + manifest context.
-For non-model graph runs, explicit plugin properties are the runtime control plane.
+Core matches each finalized `StageRequest` to its deterministic GStreamer element
+name. Name transforms finish before Scheduler admission. Each request owns its
+program, `FrameLayout` and output publication.
 
 ---
 
@@ -2172,21 +2019,21 @@ card processes the input.
 
 Output transport preserves the physical buffer layout, including padding and
 gaps. Before the first return DATA message, `neatpciesink` sends a versioned
-return CAPS envelope describing the raw byte extent and ordered physical output
-regions. The host plugin performs the existing `si_mla_read()` copy into a
-GStreamer receive buffer and exposes that layout in CAPS. `HostPcieChannel`
-validates the regions and payload extent, then creates tensor views at the
-correct offsets in public model-output order. No extra reorder copy is needed.
+return CAPS envelope describing the raw byte extent and logical tensor regions
+in public output order. The host plugin performs the existing `si_mla_read()`
+copy into a GStreamer receive buffer and exposes that layout in CAPS.
+`HostPcieChannel` checks model tensor regions against the MPK contract,
+including strides. Tensor and BBOX views use the negotiated offsets without
+an extra reorder copy.
 
 Receive capacity must be configured before the host opens its PCIe queue.
-After building the card graph, `pcie-pipeline-builder` reads the compiled
-manifest for the producer feeding `neatpciesink` and reports a conservative
-`output_buffer_bytes` bound in its readiness status over SSH. The bound covers
-the planned frame arena and physical output spans; BoxDecode uses its output
-record format and `topk`. On the first input, the host selects the maximum of
-512 KiB, packed model input/output sizes, the submitted payload size, and this
-bound. Return metadata is validated against the configured capacity, not used
-to resize an active queue. Matching host and card packages are required.
+After building the card graph, `pcie-pipeline-builder` sums the allocation
+capacities in the output producer's finalized `FrameLayout` and reports
+`output_buffer_bytes` in its readiness status over SSH. On the first input,
+the host selects the maximum of 512 KiB, packed model input/output sizes, the
+submitted payload size, and this bound. Return metadata is validated against
+the configured capacity, not used to resize an active queue. Matching host
+and card packages are required.
 
 `ModelOptions::mla_only` moves the execution boundary. The card then runs the
 MLA stage alone, with no quantize before it and no dequantize after it, and the

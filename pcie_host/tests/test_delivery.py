@@ -499,7 +499,7 @@ GENAI_CMAKE_ARGS=()
 
     def test_selected_environment_reaches_native_acquisition(self):
         source = (ROOT / 'build.sh').read_text()
-        parser = source.split('while [[ $# -gt 0 ]]; do', 1)[1].split('\ndone\n\n# Refuse inherited', 1)[0]
+        parser = source.split('while [[ $# -gt 0 ]]; do', 1)[1].split('\ndone\n', 1)[0]
         parser = 'while [[ $# -gt 0 ]]; do' + parser + '\ndone\n'
         for environment in ('production', 'staging', 'dev'):
             with self.subTest(environment=environment):

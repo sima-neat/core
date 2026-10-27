@@ -1,6 +1,9 @@
 #pragma once
 
 #include "pipeline/internal/sima/static_contract/DmabufPlanContractProjection.h"
+#include "pipeline/internal/sima/static_contract/ModelStorageRequirements.h"
+
+#include <algorithm>
 
 #include <stdexcept>
 #include <string>
@@ -16,8 +19,15 @@ namespace sima_test {
 struct ProcessCvuPlanFixture {
   simaai::neat::pipeline_internal::sima::static_contract::ModelExecutionPlan semantic;
   simaai::neat::pipeline_internal::sima::static_contract::PhysicalExecutionPlan physical;
-  simaai::neat::pipeline_internal::sima::static_contract::FrameSlotArenaPlan arena;
+  simaai::neat::pipeline_internal::sima::static_contract::ModelStorageRequirements storage;
   simaai::neat::CompiledProcessCvuContract contract;
+
+  [[nodiscard]] bool
+  materializes(simaai::neat::pipeline_internal::sima::static_contract::ValueId value) const {
+    const auto carrier = storage.value_carriers.at(value);
+    return carrier && std::any_of(storage.carriers.begin(), storage.carriers.end(),
+                                  [&](const auto& item) { return item.carrier_id == *carrier; });
+  }
 };
 
 inline ProcessCvuPlanFixture compile_processcvu_fixture(
@@ -36,16 +46,14 @@ inline ProcessCvuPlanFixture compile_processcvu_fixture(
   if (commands.empty())
     throw std::invalid_argument("fixture has no physical operation '" + std::string(operation) +
                                 "'");
-  auto arena = sc::FrameSlotArenaPlan::compile(semantic, *physical,
-                                               sc::FrameSlotArenaReuse::DisjointLifetimes,
-                                               sc::kLegacyEvoCmaRegionAlignmentBytes, &error);
-  if (!arena)
-    throw std::invalid_argument("fixture frame arena: " + error);
-  auto contract = sc::build_dmabuf_plan_processcvu_command_contract(semantic, *physical, commands,
-                                                                    *arena, &error);
+  auto storage = sc::collect_model_storage_requirements(semantic, *physical, 4096, &error);
+  if (!storage)
+    throw std::invalid_argument("fixture carrier requirements: " + error);
+  auto contract =
+      sc::build_dmabuf_plan_processcvu_command_contract(semantic, *physical, commands, &error);
   if (!contract)
     throw std::invalid_argument("fixture command contract: " + error);
-  return {std::move(semantic), std::move(*physical), std::move(*arena), std::move(*contract)};
+  return {std::move(semantic), std::move(*physical), std::move(*storage), std::move(*contract)};
 }
 
 inline ProcessCvuPlanFixture compile_processcvu_fixture(

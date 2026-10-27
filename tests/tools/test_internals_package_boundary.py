@@ -51,9 +51,7 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
         start = text.index("  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/")
         install_headers = text[start : text.index("\n)", start)]
         for header in (
-            "ProcessMlaRuntimeConfig.h",
             "SimaPluginStaticManifestAbi.h",
-            "SimaPreparedRuntimeAbi.h",
             "SimaTensorSetMetaAbi.h",
         ):
             with self.subTest(header=header):
@@ -99,7 +97,7 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
                            check=True, capture_output=True)
             installed = root / "installed/include"
             self.assertTrue((installed / "neat.h").is_file())
-            for name in ("SimaaiGstErrors.h", "SimaTensorSetMetaAbi.h", "SimaPreparedRuntimeAbi.h"):
+            for name in ("SimaaiGstErrors.h", "SimaTensorSetMetaAbi.h"):
                 self.assertFalse((installed / "gst" / name).exists(), name)
 
     def test_no_manually_constructed_internals_version_ranges(self) -> None:

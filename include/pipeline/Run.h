@@ -74,8 +74,8 @@ MeasureScope start_measurement_on_core(std::shared_ptr<runtime::RunCore> core,
  * @ingroup pipeline
  */
 enum class RunPreset {
-  Realtime, ///< Low-latency; small queues; KeepLatest overflow. Existing Gst queues
-            ///< default to a 20 ms media-time limit unless explicitly configured.
+  Realtime, ///< Low-latency; small queues; KeepLatest overflow. Preserves existing
+            ///< Gst queue time limits; configure media-time limits explicitly.
   Balanced, ///< Default; moderate queues; Block overflow.
   Reliable, ///< Lossless; deeper queues; Block overflow.
 };

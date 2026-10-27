@@ -633,3 +633,40 @@ Validated on a Modalix PCIe Card:
 - simultaneous execution across six PCIe queues (0–5)
 - YOLOv8n and EVO50 model variants
 - `mla_only` against the default route, single- and multi-input archives
+
+## Building packages in CI
+
+Vulcan CI builds Ubuntu 22.04 and 24.04 packages natively on both AMD64 and ARM64
+Ubuntu runners. Each job uses the matching `media` profile from the shared
+`069171140053.dkr.ecr.us-west-2.amazonaws.com/vulcan/ubuntu-build` image family. The image recipe SHA-256 is pinned;
+build, unit tests, and staged package/wheel smoke tests run in that container.
+Scheduler artifacts retain their existing manifest and environment selection.
+
+CI passes `--skip-deps`, which verifies all requested APT prerequisites and fails
+if any are missing. It never runs APT or silently repairs an incomplete image.
+Regular local builds still install prerequisites by default.
+
+Use `./build.sh --all --jobs 8` to set compilation parallelism. Without `--jobs`,
+`CMAKE_BUILD_PARALLEL_LEVEL` is used, falling back to two jobs. Values must be
+positive integers. CI uses `nproc` unless the `PCIE_HOST_BUILD_JOBS` repository or
+environment variable is set in GitHub Actions.
+
+### Qualify a shared image before adoption
+
+Vulcan publishes generic toolchain images without checking out Core. Core owns
+PCIe compatibility: run `qualify-ubuntu-build-images.yml` on the intended Core
+revision, supplying the candidate image recipe SHA-256. Pull requests that change
+the qualification workflow or validation script also run the four-target matrix
+using the default recipe pin, so initial adoption can be qualified before merge.
+All four targets must
+pass before changing the regular CI pin or merging the initial migration.
+The `scripts/ci/pciehost/validate_build_image.sh` entrypoint blocks APT and runs
+the full package build, CTest, delivery verification, a relocated C++ consumer,
+and installed-wheel imports. Logs are retained. Nanobind, sima-cli, and Scheduler
+artifacts remain normal build-time downloads; no device or Platform driver is
+installed. This qualification workflow does not publish Core packages.
+
+Before enabling the migration, deploy the Vulcan Ubuntu pool policy for Core,
+publish the four `media` images, and deploy the runner ECR pull policy and credential helper before runner
+registration. Job containers authenticate using the EC2 role. See Vulcan's `docs/ubuntu-build-images.md` for publication and
+other consumers such as SDK builds. Public C++ and Python APIs are unchanged.

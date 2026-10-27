@@ -396,7 +396,7 @@ def test_inventory_workflow_uses_required_accounting_without_changing_selector()
 
 def test_kernel_runner_contract_has_required_source_gate_not_installed_registration():
     workflow = yaml.safe_load((ROOT / '.github/workflows/vulcan-ci.yml').read_text())
-    steps = workflow['jobs']['resolve-compiler-cache']['steps']
+    steps = workflow['jobs']['build-tooling-tests']['steps']
     step = next(item for item in steps if item['name'] == 'Run build-tooling tests')
     commands = step['run'].replace('\\\n', ' ').splitlines()
     pytest_command = next(line for line in commands if ' -m pytest ' in line)

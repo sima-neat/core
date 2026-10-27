@@ -5,12 +5,12 @@
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/sima/CanonicalKernelLowering.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
-#include "pipeline/internal/sima/PreparedRuntimeBuild.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
 #include <gstsimaaitensorbuffer_meta.h>
 #include "pipeline/internal/sima/static_contract/MpkDecoder.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessMlaStageSemantics.h"
 #include "pipeline/internal/sima/static_contract/DmabufPlanContractProjection.h"
-#include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
 #include "pipeline/internal/sima/static_contract/KernelRegistry.h"
 #include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
 
@@ -693,10 +693,7 @@ void test_generic_cast_does_not_invent_image_layout() {
     std::string error;
     const auto physical = PhysicalExecutionLowerer::lower(plan, &error);
     check(physical.has_value(), "generic Cast chain lowers physically");
-    const auto arena =
-        FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-                                    kLegacyEvoCmaRegionAlignmentBytes, &error);
-    check(arena.has_value(), "generic Cast frame arena compiles");
+
     std::size_t cast_commands = 0U;
     for (const auto& command : physical->commands) {
       if (command.engine != PhysicalEngine::Cvu) {
@@ -704,8 +701,8 @@ void test_generic_cast_does_not_invent_image_layout() {
       }
       ++cast_commands;
       const std::array<std::uint32_t, 1> command_ids{command.id};
-      const auto contract = build_dmabuf_plan_processcvu_command_contract(
-          plan, *physical, command_ids, *arena, &error);
+      const auto contract =
+          build_dmabuf_plan_processcvu_command_contract(plan, *physical, command_ids, &error);
       if (!contract) {
         std::cerr << error << '\n';
       }
@@ -792,11 +789,14 @@ MlaStaticContract project_single_mla(const ModelExecutionPlan& plan,
     }
   }
   std::string error;
-  const bool projected = apply_dmabuf_plan_contract_projection(plan, &contract, sources, &error);
+  const auto physical = PhysicalExecutionLowerer::lower(plan, &error);
+  check(physical.has_value(), "decoded MLA port contract lowers physically");
+  const bool projected =
+      apply_dmabuf_plan_contract_projection(plan, *physical, 0U, &contract, sources, &error);
   if (!projected) {
     std::cerr << error << "\n";
   }
-  check(projected, "decoded exact contracts project through the frame arena");
+  check(projected, "decoded exact contracts retain root-relative port bindings");
   return contract;
 }
 
@@ -1097,10 +1097,7 @@ void test_reordered_command_contracts() {
   std::string error;
   const auto physical = PhysicalExecutionLowerer::lower(*result.plan, &error);
   check(physical.has_value(), "reordered commands lower");
-  const auto arena =
-      FrameSlotArenaPlan::compile(*result.plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-                                  kLegacyEvoCmaRegionAlignmentBytes, &error);
-  check(arena.has_value(), "reordered commands arena compiles");
+
   for (const auto role : {PhysicalCommandRole::Ingress, PhysicalCommandRole::Egress}) {
     std::vector<PhysicalCommandId> commands;
     for (const auto& command : physical->commands) {
@@ -1108,12 +1105,10 @@ void test_reordered_command_contracts() {
         commands.push_back(command.id);
       }
     }
-    const auto contract = build_dmabuf_plan_processcvu_command_contract(*result.plan, *physical,
-                                                                        commands, *arena, &error);
+    const auto contract =
+        build_dmabuf_plan_processcvu_command_contract(*result.plan, *physical, commands, &error);
     check(contract.has_value(), "reordered command contract compiles");
     if (role == PhysicalCommandRole::Ingress) {
-      check(contract->runtime_contract.frame_arena_role == FrameArenaRole::Allocate,
-            "the first ingress cohort allocates even when members are not in sequence order");
       continue;
     }
     const auto& runtime = contract->runtime_contract.logical_outputs;
@@ -1325,12 +1320,9 @@ void test_unpack_tiled_carriers_keep_storage_geometry() {
     }
   }
   check(!detesscast_commands.empty(), "BF16 tiled branches select graph225 Detess+Cast");
-  const auto arena =
-      FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-                                  kLegacyEvoCmaRegionAlignmentBytes, &error);
-  check(arena.has_value(), "tiled Unpack branches compile their shared frame arena");
-  const auto cvu = build_dmabuf_plan_processcvu_command_contract(
-      plan, *physical, detesscast_commands, *arena, &error);
+
+  const auto cvu =
+      build_dmabuf_plan_processcvu_command_contract(plan, *physical, detesscast_commands, &error);
   if (!cvu) {
     std::cerr << error << "\n";
   }
@@ -1339,8 +1331,6 @@ void test_unpack_tiled_carriers_keep_storage_geometry() {
             cvu->runtime_contract.logical_inputs.size() == frames.size() &&
             cvu->runtime_contract.physical_inputs.size() == frames.size(),
         "graph225 projection retains both tiled input and dense output contracts");
-  const auto* parent_region = arena->region(unpack_op.inputs.front());
-  check(parent_region != nullptr, "packed MLA output owns one arena region");
   for (std::size_t index = 0; index < frames.size(); ++index) {
     const auto& input = cvu->payload.input_tensors[index].descriptor();
     const auto& output = cvu->payload.output_tensors[index].descriptor();
@@ -1363,10 +1353,9 @@ void test_unpack_tiled_carriers_keep_storage_geometry() {
                   std::vector<std::int64_t>({static_cast<std::int64_t>(stored_bytes[index]), 1}) &&
               logical.size_bytes == stored_bytes[index] && logical.byte_offset == 0 &&
               binding.size_bytes == stored_bytes[index] &&
-              binding.address_source == PhysicalAddressSource::FrameArenaSpan &&
-              binding.source_byte_offset ==
-                  static_cast<std::int64_t>(parent_region->byte_offset + offset),
-          "CVU runtime inputs use exact byte-carrier metadata and shared-arena offsets");
+              binding.address_source == PhysicalAddressSource::FrameSpan &&
+              binding.source_byte_offset == static_cast<std::int64_t>(offset),
+          "CVU runtime inputs use exact byte-carrier metadata and root-relative offsets");
   }
 
   // The final admission consumes the semantic records, never the INT8 byte
@@ -1457,7 +1446,7 @@ void test_dense_ifm_tail_padding() {
   const auto contract = project_single_mla(plan);
   check(contract.physical_inputs.front().size_bytes == 16U &&
             contract.input_bindings.front().src_physical_size_bytes == 16U,
-        "IFM arena projection binds the complete ELF reservation");
+        "IFM projection binds the complete ELF reservation");
   for (const auto bad_extent : {13U, 15U, 17U, 32U}) {
     topology.ifm_extent_bytes = {bad_extent};
     expect_error(manifest.dump(), topology, MpkDecodeErrorCode::ValueSizeMismatch,
@@ -1676,11 +1665,7 @@ void test_unpack_and_slice_are_read_expressions() {
   std::string error;
   const auto physical = PhysicalExecutionLowerer::lower(plan, &error);
   check(physical.has_value(), "decoded direct Pack lowers without a Pack command");
-  const auto arena =
-      FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-                                  kLegacyEvoCmaRegionAlignmentBytes, &error);
-  check(arena && arena->region(2U) == arena->region(4U) && arena->region(3U) == arena->region(4U),
-        "producer writes and MLA input allocate one canonical carrier region");
+
   std::vector<PhysicalCommandId> commands;
   for (const auto& command : physical->commands) {
     if (command.engine == PhysicalEngine::Cvu) {
@@ -1688,7 +1673,7 @@ void test_unpack_and_slice_are_read_expressions() {
     }
   }
   const auto contract =
-      build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, *arena, &error);
+      build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, &error);
   if (!contract) {
     std::cerr << error << '\n';
   }
@@ -1698,8 +1683,7 @@ void test_unpack_and_slice_are_read_expressions() {
     const auto& logical = contract->runtime_contract.logical_outputs[index];
     const auto& output = contract->runtime_contract.physical_outputs[index];
     const auto offset = logical.logical_name == "input0" ? 0U : 16U;
-    check(output.source_byte_offset ==
-                  static_cast<std::int64_t>(arena->region(4U)->byte_offset + offset) &&
+    check(output.source_byte_offset == static_cast<std::int64_t>(offset) &&
               output.size_bytes == 16U &&
               output.source_byte_offset % output.required_alignment_bytes == 0U,
           "each exact producer range equals its MLA parent component without 4KiB member padding");
@@ -1777,13 +1761,9 @@ void test_host_alias_publication() {
                      [](const auto& command) { return command.engine == PhysicalEngine::A65; }),
         "the argument-only A65 module produces no physical CPU command");
 
-  const auto project_shared_arena = [&](const ModelExecutionPlan& plan,
-                                        const PhysicalExecutionPlan& commands) {
-    const auto arena =
-        FrameSlotArenaPlan::compile(plan, commands, FrameSlotArenaReuse::DisjointLifetimes,
-                                    kLegacyEvoCmaRegionAlignmentBytes, &error);
-    check(arena.has_value(), "terminal index shared arena compiles");
-    const auto sources = resolve_mla_input_physical_sources(plan, 0U, *arena, {}, &error);
+  const auto project_mla_ports = [&](const ModelExecutionPlan& plan,
+                                     const PhysicalExecutionPlan& commands) {
+    const auto sources = resolve_mla_input_physical_sources(plan, 0U, &error);
     check(sources.has_value(), "terminal index IFM sources resolve");
     MlaStaticContract projected;
     for (const auto& port : plan.backend_ports()) {
@@ -1801,11 +1781,11 @@ void test_host_alias_publication() {
         projected.dispatcher_physical_outputs.push_back(std::move(buffer));
       }
     }
-    check(apply_dmabuf_plan_contract_projection(plan, 0U, *arena, &projected, *sources, &error),
-          "terminal index projects through the shared-arena MLA fragment");
+    check(apply_dmabuf_plan_contract_projection(plan, commands, 0U, &projected, *sources, &error),
+          "terminal index projects root-relative MLA ports");
     return projected;
   };
-  const auto projected = project_shared_arena(*result.plan, *physical);
+  const auto projected = project_mla_ports(*result.plan, *physical);
   check(projected.logical_outputs.size() == 1U &&
             projected.logical_outputs.front().logical_name == "EV_2/reshape_0/selected_token" &&
             projected.logical_outputs.front().dtype == "int32" &&
@@ -1835,7 +1815,7 @@ void test_host_alias_publication() {
                 [](const auto& command) { return command.engine == PhysicalEngine::A65; }) == 1,
         "real integer conversion retains exactly one physical CPU command");
 
-  const auto before_cast = project_shared_arena(*cast_result.plan, *cast_physical);
+  const auto before_cast = project_mla_ports(*cast_result.plan, *cast_physical);
   check(before_cast.logical_outputs.size() == 1U &&
             before_cast.logical_outputs.front().dtype == "int32" &&
             before_cast.logical_outputs.front().shape == TensorShape({1, 1, 1, 1}),
@@ -1899,7 +1879,7 @@ void test_host_alias_publication() {
   check(commands && std::none_of(commands->commands.begin(), commands->commands.end(),
                                  [](const auto& cmd) { return cmd.engine == PhysicalEngine::A65; }),
         "padded identity remains an address alias without an A65 command");
-  const auto publication = project_shared_arena(*decoded.plan, *commands);
+  const auto publication = project_mla_ports(*decoded.plan, *commands);
   const auto& view = publication.logical_outputs.front();
   check(publication.logical_outputs.size() == 1U && view.dtype == "float32" &&
             view.shape == TensorShape({1, 2, 3}) && view.stride_bytes == TensorShape({32, 16, 4}),
@@ -2017,12 +1997,9 @@ void test_rank2_detess_dequant_execution_geometry() {
         commands.push_back(command.id);
     }
     check(commands.size() == 1U, "rank-2 detess/dequant uses one fused command");
-    const auto arena =
-        FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-                                    kLegacyEvoCmaRegionAlignmentBytes, &error);
-    check(arena.has_value(), "rank-2 detess/dequant arena compiles");
+
     const auto contract =
-        build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, *arena, &error);
+        build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, &error);
     if (!contract)
       std::cerr << error << "\n";
     check(contract.has_value(), "rank-2 detess/dequant projects runtime descriptors");
@@ -2072,12 +2049,18 @@ void check_resnet_canonical_publication(const simaai::neat::CompiledProcessCvuCo
   auto stage = simaai::neat::project_processcvu_stage_contract(contract);
   stage.element_name = stage.logical_stage_id = "resnet_fused_postprocess";
   stage.processcvu.requested_run_target = "EV74";
+  // This standalone postprocessor imports its MLA producer's published buffers.
+  for (auto& input : stage.physical_inputs)
+    input.address_source = PhysicalAddressSource::RuntimePhysicalBinding;
   SimaPluginStaticManifest manifest;
   manifest.stages.push_back(std::move(stage));
   const auto failure = prepare_kernel_stage_recipes(&manifest, {}, {}, {}, {});
   if (failure)
     std::cerr << failure->field << ": " << failure->message << '\n';
   check(!failure, "ResNet MPK-derived fused contract prepares canonically");
+  finalize_pipeline_storage(manifest);
+  check(!finalize_stage_publications(&manifest),
+        "ResNet publication finalizes against its owned layout");
   const auto& authored = manifest.stages.front();
   const auto& recipe = *authored.native_kernel;
   check(recipe.members.size() == 1U && recipe.members.front().inputs.size() == 1U &&
@@ -2103,24 +2086,13 @@ void check_resnet_canonical_publication(const simaai::neat::CompiledProcessCvuCo
                 gs::TensorStagePublicationRelation::SingletonAxes,
         "Core preserves MPK public geometry and proven singleton authority");
 
-  const auto pipeline = std::shared_ptr<GstElement>(gst_pipeline_new("cold-resnet-admission"),
-                                                    [](auto* value) { gst_object_unref(value); });
-  check(attach_manifest_context(pipeline.get(), manifest, &error), "production placement attaches");
-  const auto context = std::shared_ptr<GstContext>(
-      gst_element_get_context(pipeline.get(), SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE),
-      [](auto* value) {
-        if (value)
-          gst_context_unref(value);
-      });
-  const auto* placement = sima_plugin_manifest_context_stage_lookup_typed(
-      context.get(), authored.logical_stage_id.c_str(), authored.element_name.c_str(),
-      SIMA_PLUGIN_STAGE_PAYLOAD_NONE);
-  check(placement != nullptr, "production placement is retrievable");
-  gs::TensorStageRequest request;
-  request.target = recipe.target;
-  request.members = recipe.members;
+  gs::StageRequest request;
+  gs::KernelProgram program;
+  program.target = recipe.target;
+  program.members = recipe.members;
+  request.program = std::move(program);
   request.publication = publication;
-  request.placement = std::shared_ptr<const SimaPluginStageSpec>(context, placement);
+  request.layout = authored.frame_layout;
   test::AdmissionCapture transport;
   const auto result = test::reject_device_after_validation(request, transport);
   const auto* admission = result ? &*result : nullptr;
@@ -2167,6 +2139,25 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
   check(!grammar_rejected && grammar_rejected.error->code == MpkDecodeErrorCode::InvalidField,
         "batch flatten accepts only its exact two-shape-list grammar");
   const auto& plan = *result.plan;
+  auto mla_contract = project_single_mla(plan);
+  check(mla_contract.logical_outputs.front().size_bytes == 1000U &&
+            mla_contract.logical_outputs.front().shape == TensorShape({1, 1, 1, 1000}) &&
+            mla_contract.physical_outputs.front().size_bytes == 1008U &&
+            mla_contract.dispatcher_physical_outputs.front().size_bytes == 1008U,
+        "MLA publishes logical bytes while retaining its padded hardware transfer extent");
+  mla_contract.stage_id = mla_contract.node_name = "MLA_0";
+  mla_contract.model_path = "resnet.elf";
+  mla_contract.batch_size = mla_contract.batch_sz_model = 1;
+  SimaPluginStaticManifest mla_manifest;
+  mla_manifest.stages.push_back(simaai::neat::project_mla_stage_contract(
+      stagesemantics::build_mla_compiled_contract(mla_contract)));
+  finalize_pipeline_storage(mla_manifest);
+  check(!finalize_stage_publications(&mla_manifest), "padded MLA publication finalizes");
+  const auto& mla_stage = mla_manifest.stages.front();
+  check(mla_stage.frame_layout && mla_stage.tensor_publication &&
+            mla_stage.frame_layout->outputs.front().span.size_bytes == 1008U &&
+            mla_stage.tensor_publication->contract->logical_outputs.front().size_bytes == 1000U,
+        "Scheduler reserved storage remains separate from logical tensor publication");
   check(plan.ops().size() == 4U && plan.ops()[1].kind == OpKind::Detessellate &&
             plan.ops()[2].kind == OpKind::Reshape &&
             plan.ops()[2].kernel == "batch_flatten_transform" &&
@@ -2207,12 +2198,8 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
             !physical->command_for_semantic_op[2U].has_value(),
         "detess/view/dequant is one graph227 submission and the view schedules no command");
 
-  const auto arena =
-      FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-                                  kLegacyEvoCmaRegionAlignmentBytes, &error);
-  check(arena.has_value(), "relation-transparent graph227 frame arena compiles");
-  const auto contract = build_dmabuf_plan_processcvu_command_contract(
-      plan, *physical, graph227_commands, *arena, &error);
+  const auto contract =
+      build_dmabuf_plan_processcvu_command_contract(plan, *physical, graph227_commands, &error);
   check(contract && contract->payload.graph_name == "detessdequant" &&
             contract->payload.input_tensors.size() == 1U &&
             contract->payload.output_tensors.size() == 1U,
@@ -2277,17 +2264,14 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
   check(static_cast<bool>(reshaped), "equal-byte non-singleton reshape has valid model semantics");
   const auto reshaped_physical = PhysicalExecutionLowerer::lower(*reshaped.plan, &error);
   check(reshaped_physical.has_value(), "non-singleton shape remains a mandatory fused candidate");
-  const auto reshaped_arena = FrameSlotArenaPlan::compile(
-      *reshaped.plan, *reshaped_physical, FrameSlotArenaReuse::DisjointLifetimes,
-      kLegacyEvoCmaRegionAlignmentBytes, &error);
-  check(reshaped_arena.has_value(), "non-singleton candidate arena compiles");
+
   std::vector<PhysicalCommandId> reshaped_commands;
   for (const auto& command : reshaped_physical->commands)
     if (command.engine == PhysicalEngine::Cvu && command.implementation_id == "detessdequant")
       reshaped_commands.push_back(command.id);
   check(reshaped_commands.size() == 1U, "non-singleton reshape must not silently unfuse");
   const auto incompatible = build_dmabuf_plan_processcvu_command_contract(
-      *reshaped.plan, *reshaped_physical, reshaped_commands, *reshaped_arena, &error);
+      *reshaped.plan, *reshaped_physical, reshaped_commands, &error);
   check(!incompatible && error.find("singleton") != std::string::npos,
         "equal-byte non-singleton projection fails with a specific singleton-relation diagnostic");
 
@@ -2411,12 +2395,9 @@ void test_fused_ingress_layout_evidence_authors_exact_descriptor_axes() {
       }
     }
     check(commands.size() == 1U, "raw AFE pair selects one exact fused graph command");
-    const auto arena =
-        FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-                                    kLegacyEvoCmaRegionAlignmentBytes, &error);
-    check(arena.has_value(), "raw fused-ingress frame arena compiles");
+
     const auto contract =
-        build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, *arena, &error);
+        build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, &error);
     check(contract.has_value(), "raw fused-ingress ProcessCVU descriptor contract builds");
     check(contract->payload.input_tensors.size() == 1U &&
               contract->payload.output_tensors.size() == 1U,
@@ -2490,12 +2471,9 @@ void test_standalone_quantize_authors_exact_graph222_layout() {
     }
   }
   check(commands.size() == 1U, "standalone Quantize selects one exact graph 222 command");
-  const auto arena =
-      FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-                                  kLegacyEvoCmaRegionAlignmentBytes, &error);
-  check(arena.has_value(), "standalone Quantize frame arena compiles");
+
   const auto contract =
-      build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, *arena, &error);
+      build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, &error);
   check(contract.has_value(), "standalone graph 222 descriptor contract builds");
 
   const auto& payload = contract->payload;
@@ -2548,18 +2526,14 @@ void test_scalar_quantize_keeps_generic_logical_shapes() {
     const auto project = [](const ModelExecutionPlan& plan, std::string* error) {
       const auto physical = PhysicalExecutionLowerer::lower(plan, error);
       check(physical.has_value(), "generic Quantize lowers physically");
-      const auto arena =
-          FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-                                      kLegacyEvoCmaRegionAlignmentBytes, error);
-      check(arena.has_value(), "generic Quantize arena compiles");
+
       std::vector<PhysicalCommandId> commands;
       for (const auto& command : physical->commands) {
         if (command.engine == PhysicalEngine::Cvu && command.implementation_id == "quant")
           commands.push_back(command.id);
       }
       check(commands.size() == 1U, "generic Quantize selects graph 222");
-      return build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, *arena,
-                                                           error);
+      return build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, error);
     };
     std::string error;
     const auto contract = project(*decoded.plan, &error);
@@ -2934,17 +2908,14 @@ void test_batch_slice_transport() {
     std::string error;
     const auto physical = PhysicalExecutionLowerer::lower(plan, &error);
     check(physical.has_value(), "batched slice transport lowers");
-    const auto arena =
-        FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-                                    kLegacyEvoCmaRegionAlignmentBytes, &error);
-    check(arena.has_value(), "batched slice transport allocates");
+
     bool checked = false;
     for (const auto& command : physical->commands) {
       if (command.role != PhysicalCommandRole::Egress)
         continue;
       const std::array<PhysicalCommandId, 1> ids{command.id};
       const auto contract =
-          build_dmabuf_plan_processcvu_command_contract(plan, *physical, ids, *arena, &error);
+          build_dmabuf_plan_processcvu_command_contract(plan, *physical, ids, &error);
       if (!contract)
         std::cerr << error << '\n';
       check(contract.has_value(), "batched slice transport projects");
@@ -3039,16 +3010,13 @@ void test_input_storage_from_executable() {
             std::string error;
             const auto physical = PhysicalExecutionLowerer::lower(plan, &error);
             check(physical.has_value(), "inferred input storage lowers to existing conversions");
-            const auto arena =
-                FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-                                            kLegacyEvoCmaRegionAlignmentBytes, &error);
-            check(arena.has_value(), "inferred input storage allocates its physical span");
+
             for (const auto& command : physical->commands) {
               if (command.role != PhysicalCommandRole::Ingress)
                 continue;
               const std::array<PhysicalCommandId, 1> ids{command.id};
-              const auto contract = build_dmabuf_plan_processcvu_command_contract(
-                  plan, *physical, ids, *arena, &error);
+              const auto contract =
+                  build_dmabuf_plan_processcvu_command_contract(plan, *physical, ids, &error);
               if (!contract)
                 std::cerr << error << '\n';
               check(contract.has_value(), "inferred channel padding projects a runtime contract");

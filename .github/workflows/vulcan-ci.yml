@@ -141,6 +141,32 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Resolve cache namespace and access
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/resolve_compiler_cache.py \
+            --base-key-prefix '${{ format('{0}/sccache-v1/arm64/{1}/{2}', needs.resolve-vulcan-config.outputs.compiler_cache_key_prefix, needs.resolve-vulcan-config.outputs.sdk_cache, inputs.build_mode || 'standard') }}' \
+            --reader-role-arn '${{ needs.resolve-vulcan-config.outputs.compiler_cache_reader_role_arn }}' \
+            --protected-writer-role-arn '${{ needs.resolve-vulcan-config.outputs.compiler_cache_writer_role_arn }}' \
+            --branch-writer-role-arn '${{ needs.resolve-vulcan-config.outputs.compiler_cache_branch_writer_role_arn }}' \
+            --base-branch '${{ inputs.cache_base_branch || 'auto' }}' \
+            --repo "${GITHUB_WORKSPACE}" \
+            --github-output "${GITHUB_OUTPUT}"
+
+  # Keep host tooling validation parallel to compilation; publication requires both.
+  build-tooling-tests:
+    name: Build Tooling Tests
+    needs:
+      - resolve-vulcan-config
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout build-tooling tests
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
       - name: Install native build-tooling prerequisites
         run: |
           sudo apt-get update
@@ -153,7 +179,7 @@ jobs:
           test_venv="${RUNNER_TEMP}/build-tooling-tests"
           python3 -m venv "${test_venv}"
           "${test_venv}/bin/python" -m pip install --disable-pip-version-check pytest packaging PyYAML
-          "${test_venv}/bin/python" -m pytest -q \
+          "${test_venv}/bin/python" -m pytest -q --durations=25 \
             python/tests/test_neat_cli.py \
             python/tests/test_neat_pcie_status.py \
             tests/test_build_pyneat_wheel.py \
@@ -176,6 +202,7 @@ jobs:
             tests/tools/test_offline_pcie_host_process.py \
             tests/tools/test_offline_pcie_deploy.py \
             tests/tools/test_pcie_local_candidate.py \
+            tests/tools/test_pcie_build_options.py \
             tests/tools/test_required_test_coverage.py \
             tests/tools/test_ci_weekly_preparation.py \
             tests/tools/test_docs_native_prerequisites.py \
@@ -188,20 +215,6 @@ jobs:
             tests/tools/test_vulcan_ci_docs_only.py \
             tests/tools/test_cpp_tidy_scope.py \
             tests/tools/test_vulcan_ci_notification.py
-
-      - name: Resolve cache namespace and access
-        id: resolve
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 scripts/ci/resolve_compiler_cache.py \
-            --base-key-prefix '${{ format('{0}/sccache-v1/arm64/{1}/{2}', needs.resolve-vulcan-config.outputs.compiler_cache_key_prefix, needs.resolve-vulcan-config.outputs.sdk_cache, inputs.build_mode || 'standard') }}' \
-            --reader-role-arn '${{ needs.resolve-vulcan-config.outputs.compiler_cache_reader_role_arn }}' \
-            --protected-writer-role-arn '${{ needs.resolve-vulcan-config.outputs.compiler_cache_writer_role_arn }}' \
-            --branch-writer-role-arn '${{ needs.resolve-vulcan-config.outputs.compiler_cache_branch_writer_role_arn }}' \
-            --base-branch '${{ inputs.cache_base_branch || 'auto' }}' \
-            --repo "${GITHUB_WORKSPACE}" \
-            --github-output "${GITHUB_OUTPUT}"
 
   detect-changes:
     if: ${{ !inputs.offline_source_run_id }}
@@ -478,8 +491,9 @@ jobs:
 
   publish-vulcan-artifacts:
     name: Publish to Vulcan
-    if: ${{ always() && !inputs.validation_only && needs.build.result == 'success' && ((inputs.build_mode || 'standard') == 'fuzz' || needs.code-hygiene.result == 'success') }}
+    if: ${{ always() && !inputs.validation_only && needs.build.result == 'success' && needs.build-tooling-tests.result == 'success' && ((inputs.build_mode || 'standard') == 'fuzz' || needs.code-hygiene.result == 'success') }}
     needs:
+      - build-tooling-tests
       - resolve-vulcan-config
       - build
       - code-hygiene
@@ -496,6 +510,8 @@ jobs:
       artifact_glob: "*"
       min_artifact_count: ${{ (inputs.build_mode || 'standard') == 'fuzz' && 10 || 11 }}
       publish_manifest: false
+      # Runner resolution and job retries still consume this artifact.
+      cleanup_github_artifacts: false
 
   build-pciehost-packages:
     name: Build PCIe Host ${{ matrix.distro }} ${{ matrix.deb_arch }}
@@ -504,23 +520,27 @@ jobs:
       - detect-changes
       - resolve-vulcan-config
     environment: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
-    runs-on: ${{ matrix.runs_on }}
+    runs-on: [self-hosted, linux, "${{ matrix.deb_arch }}", "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}", ubuntu, default]
+    timeout-minutes: 40
+    container:
+      # Dockerfile SHA-256 from Vulcan; publish all four images before enabling.
+      image: 069171140053.dkr.ecr.us-west-2.amazonaws.com/vulcan/ubuntu-build:${{ matrix.distro }}-${{ matrix.deb_arch }}-media-463e7eb999e953b18069904b81b378ebd6d6b1a7bc4a5641a12c279d72e711b0
     strategy:
       fail-fast: false
       matrix:
         include:
           - distro: ubuntu22
             deb_arch: amd64
-            runs_on: ubuntu-22.04
+            ubuntu_version: "22.04"
           - distro: ubuntu24
             deb_arch: amd64
-            runs_on: ubuntu-24.04
+            ubuntu_version: "24.04"
           - distro: ubuntu22
             deb_arch: arm64
-            runs_on: ubuntu-22.04-arm
+            ubuntu_version: "22.04"
           - distro: ubuntu24
             deb_arch: arm64
-            runs_on: ubuntu-24.04-arm
+            ubuntu_version: "24.04"
 
     steps:
       - name: Checkout code
@@ -528,6 +548,20 @@ jobs:
         with:
           clean: true
           fetch-depth: 0
+
+      - name: Verify native dependency image
+        shell: bash
+        env:
+          EXPECTED_UBUNTU: ${{ matrix.ubuntu_version }}
+          EXPECTED_ARCH: ${{ matrix.deb_arch }}
+        run: |
+          set -euo pipefail
+          source /etc/os-release
+          test "${ID}" = ubuntu
+          test "${VERSION_ID}" = "${EXPECTED_UBUNTU}"
+          test "$(dpkg --print-architecture)" = "${EXPECTED_ARCH}"
+          test "$(cat /etc/vulcan-build-image)" = "${EXPECTED_UBUNTU} ${EXPECTED_ARCH} media"
+          ./pcie_host/build.sh --all --skip-deps --install-deps-only
 
       - name: Install sima-cli
         shell: bash
@@ -546,8 +580,9 @@ jobs:
           if [[ -n "${SCHEDULER_NATIVE_SPEC}" ]]; then
             scheduler_spec_args+=(--scheduler-spec "${SCHEDULER_NATIVE_SPEC}")
           fi
-          ./build.sh --clean --all "${scheduler_spec_args[@]}" --scheduler-environment "${NEAT_VULCAN_ENV}"
+          ./build.sh --clean --all --skip-deps --jobs "${PCIE_HOST_BUILD_JOBS:-$(nproc)}" "${scheduler_spec_args[@]}" --scheduler-environment "${NEAT_VULCAN_ENV}"
         env:
+          PCIE_HOST_BUILD_JOBS: ${{ vars.PCIE_HOST_BUILD_JOBS }}
           SCHEDULER_NATIVE_SPEC: ${{ vars.SCHEDULER_NATIVE_SPEC }}
           NEAT_VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
 
@@ -735,6 +770,7 @@ jobs:
     name: Publish PCIe Host Package Metadata
     if: ${{ !inputs.validation_only && (inputs.build_mode || 'standard') == 'standard' && (github.ref_type == 'branch' || github.ref_type == 'tag') }}
     needs:
+      - build-tooling-tests
       - resolve-vulcan-config
       - build-pciehost-packages
     environment: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
@@ -1842,10 +1878,37 @@ jobs:
       sse_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
       artifact_folder: "."
 
+  publish-offline-develop:
+    name: Publish develop offline bundles
+    # Call from this branch: workflow_run requires a listener on the default branch.
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/develop' && !inputs.validation_only && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && needs.documentation-localization.result == 'success' && needs.code-hygiene.result == 'success' && needs.promote-latest-tag.result == 'success' }}
+    needs:
+      - build-tooling-tests
+      - documentation-localization
+      - resolve-vulcan-config
+      - resolve-compiler-cache
+      - detect-changes
+      - code-hygiene
+      - resolve-test-runner
+      - build
+      - build-pciehost-packages
+      - publish-vulcan-artifacts
+      - publish-pciehost-package
+      - test-devkit
+      - test-pciehost-hardware
+      - promote-latest-tag
+    uses: ./.github/workflows/pcie-offline.yml
+    with:
+      source_run_id: ${{ format('{0}', github.run_id) }}
+      # The parent run is still in progress; all standard CI gates above have passed.
+      publish_branch: true
+      validation_only: false
+
   validation-complete:
     name: Verify validation-only Core run
     if: ${{ always() && inputs.validation_only }}
     needs:
+      - build-tooling-tests
       - documentation-localization
       - resolve-vulcan-config
       - resolve-compiler-cache

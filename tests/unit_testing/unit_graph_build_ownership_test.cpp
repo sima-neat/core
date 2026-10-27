@@ -6,7 +6,6 @@
 #include "pipeline/graph/internal/GraphTestHooks.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
-#include "gst/SimaPluginStaticManifestAbi.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -24,10 +23,6 @@ namespace si = pipeline_internal::sima;
 
 std::size_t created = 0;
 std::size_t finalized = 0;
-std::size_t contexts_seen = 0;
-std::size_t contexts_finalized = 0;
-GstContext* observed_context = nullptr; // Weak identity only; never dereferenced after destruction.
-
 struct OwnershipProbe {
   GstElement parent;
 };
@@ -47,18 +42,8 @@ void ownership_probe_class_init(OwnershipProbeClass* klass) {
     ++finalized;
     G_OBJECT_CLASS(ownership_probe_parent_class)->finalize(value);
   };
-  element->set_context = +[](GstElement* value, GstContext* context) {
-    if (sima_plugin_manifest_context_matches(context) && context != observed_context) {
-      observed_context = context;
-      ++contexts_seen;
-      gst_mini_object_weak_ref(
-          GST_MINI_OBJECT(context), +[](gpointer, GstMiniObject*) { ++contexts_finalized; },
-          nullptr);
-    }
-    GST_ELEMENT_CLASS(ownership_probe_parent_class)->set_context(value, context);
-  };
   gst_element_class_set_static_metadata(element, "Build ownership probe", "Testing",
-                                        "Counts actual graph and context finalization", "SiMa.ai");
+                                        "Counts actual graph finalization", "SiMa.ai");
 }
 
 BuildResult build_input() {
@@ -74,17 +59,13 @@ BuildResult build_input() {
 }
 
 void reset_observation() {
-  require(created == finalized && contexts_seen == contexts_finalized,
-          "previous graph/context must close before starting a new case");
-  created = finalized = contexts_seen = contexts_finalized = 0;
-  observed_context = nullptr;
+  require(created == finalized, "previous graph must close before starting a new case");
+  created = finalized = 0;
   session_test::clear_composition_failure_for_test();
 }
 
-void assert_closed(bool context_expected) {
+void assert_closed() {
   require(created == 1 && finalized == 1, "every parsed probe must finalize on the cold exit");
-  require(contexts_seen == (context_expected ? 1U : 0U) && contexts_finalized == contexts_seen,
-          "temporary and pipeline metadata-context references must both close");
 }
 
 struct OriginalFactoryException final : std::runtime_error {
@@ -154,19 +135,14 @@ void cold_rejection_releases_graph_and_recipe(bool reject_output_span,
     output.stride_bytes = {2};
     contract->logical_outputs.push_back(std::move(output));
     publication.contract = std::move(contract);
-    recipe->publication = std::move(publication);
     auto& stage = build.rendered_manifest->stages.emplace_back();
+    stage.tensor_publication =
+        std::make_shared<const gs::TensorStagePublication>(std::move(publication));
     stage.element_name = stage.logical_stage_id = "native";
     stage.plugin_kind = "kernel";
     stage.native_kernel = recipe;
-    // Author the same real arena and checked routes as a compiled Core stage.
-    // Missing placement must not preempt the intended factory/span failures.
-    stage.frame_arena_size_bytes = 4096;
-    stage.frame_arena_role = si::FrameArenaRole::Allocate;
-    stage.frame_arena_storage_domain = si::static_contract::ArenaStorageDomain::Cma;
-    stage.frame_arena_provenance = si::static_contract::ArenaAllocationProvenance::CoreAllocated;
-    stage.frame_arena_required_device_access =
-        static_cast<std::uint32_t>(si::static_contract::ArenaDeviceAccess::Ev74);
+    // Finalization supplies storage before the intended factory/span failure.
+    stage.allocation_policy = gs::AllocationPolicy::RequireCma;
     stage.logical_inputs.push_back(si::specbuilders::build_logical_input_static_spec(
         0, 0, 0, {2}, "FP32", "C", "input", "input", "input"));
     stage.input_bindings.push_back(
@@ -178,6 +154,7 @@ void cold_rejection_releases_graph_and_recipe(bool reject_output_span,
         0, 0, output_requirement.storage_bytes, si::DeviceKind::Cpu, "output", -1, 0,
         output_requirement.alignment_bytes));
     try {
+      session_build_prepare_stage_contracts(build, "ownership-factory-test");
       std::unique_ptr<GstElement, decltype(&gst_object_unref)> pipeline(
           session_build_parse_pipeline_or_throw(build, "ownership-factory-test"),
           &gst_object_unref);
@@ -201,7 +178,7 @@ void cold_rejection_releases_graph_and_recipe(bool reject_output_span,
   }
   require(threw, "the real cold construction rejection was not exercised");
   require(observer.expired(), "a failed graph must not record or retain the caller's recipe");
-  assert_closed(true);
+  assert_closed();
 }
 
 } // namespace
@@ -230,16 +207,15 @@ RUN_TEST("unit_graph_build_ownership_test", ([] {
            require(gst_element_register(nullptr, "coreownershipprobe", GST_RANK_NONE,
                                         ownership_probe_get_type()),
                    "ownership probe factory registration must succeed");
-           const std::array points{
-               session_test::CompositionFailurePoint::PipelineBeforeManifest,
-               session_test::CompositionFailurePoint::PipelineStaticManifestAcquired,
-               session_test::CompositionFailurePoint::PipelinePrepared};
+           const std::array points{session_test::CompositionFailurePoint::PipelineBeforeManifest,
+                                   session_test::CompositionFailurePoint::PipelinePrepared};
            for (const auto point : points) {
              reset_observation();
              auto build = build_input();
              session_test::arm_composition_failure_for_test(point);
              bool threw = false;
              try {
+               session_build_prepare_stage_contracts(build, "ownership-exception-test");
                std::unique_ptr<GstElement, decltype(&gst_object_unref)> pipeline(
                    session_build_parse_pipeline_or_throw(build, "ownership-exception-test"),
                    &gst_object_unref);
@@ -249,13 +225,14 @@ RUN_TEST("unit_graph_build_ownership_test", ([] {
                        "the original injected exception must survive cold cleanup unchanged");
              }
              require(threw, "each actual graph construction failure point must be exercised");
-             assert_closed(point != session_test::CompositionFailurePoint::PipelineBeforeManifest);
+             assert_closed();
            }
            reset_observation();
            auto invalid = build_input();
            invalid.kernel_runner_a65_workers = 0;
            bool rejected = false;
            try {
+             session_build_prepare_stage_contracts(invalid, "ownership-typed-error-test");
              std::unique_ptr<GstElement, decltype(&gst_object_unref)> pipeline(
                  session_build_parse_pipeline_or_throw(invalid, "ownership-typed-error-test"),
                  &gst_object_unref);
@@ -270,7 +247,7 @@ RUN_TEST("unit_graph_build_ownership_test", ([] {
                                   "\nrepro=" + error.report().repro_note);
            }
            require(rejected, "invalid cold cohort options must fail after metadata attachment");
-           assert_closed(true);
+           assert_closed();
            reset_observation();
            cold_rejection_releases_graph_and_recipe(false);
            reset_observation();
@@ -279,12 +256,12 @@ RUN_TEST("unit_graph_build_ownership_test", ([] {
            cold_rejection_releases_graph_and_recipe(true);
            reset_observation();
            auto build = build_input();
+           session_build_prepare_stage_contracts(build, "ownership-success-test");
            std::unique_ptr<GstElement, decltype(&gst_object_unref)> pipeline(
                session_build_parse_pipeline_or_throw(build, "ownership-success-test"),
                &gst_object_unref);
-           require(pipeline && created == 1 && finalized == 0 && contexts_seen == 1 &&
-                       contexts_finalized == 0,
+           require(pipeline && created == 1 && finalized == 0,
                    "successful construction must transfer a live pipeline to its caller");
            pipeline.reset();
-           assert_closed(true);
+           assert_closed();
          }));

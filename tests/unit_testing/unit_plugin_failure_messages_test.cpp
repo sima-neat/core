@@ -101,21 +101,11 @@ static void require_caps_production_error(const std::string& err, const std::str
 }
 
 static void test_processmla_failure() {
-  TempFile cfg = write_temp("sima_mla_bad", "{\n"
-                                            "  \"caps\": {\n"
-                                            "    \"sink_pads\": [],\n"
-                                            "    \"src_pads\": []\n"
-                                            "  },\n"
-                                            "  \"simaai__params\": {\n"
-                                            "    \"batch_size\": 1,\n"
-                                            "    \"outputs\": [\n"
-                                            "      {\"name\": \"out0\", \"size\": 4}\n"
-                                            "    ]\n"
-                                            "  }\n"
-                                            "}\n");
   Graph p;
+  // Core admits the stopped execution cohort before plugin startup. A raw MLA
+  // element without its typed stage must report the cold request failure.
   const std::string frag =
-      "fakesrc ! neatprocessmla name=mla_fail config=" + cfg.path + " num-buffers=4 ! fakesink";
+      "fakesrc num-buffers=1 ! neatprocessmla name=mla_fail num-buffers=4 ! fakesink";
   p.add(Custom(frag, simaai::neat::InputRole::Source));
 
   RunOptions opt;
@@ -125,7 +115,22 @@ static void test_processmla_failure() {
   });
 
   maybe_dump_error("processmla", err);
-  require_configuration_error(err, "mla_fail");
+  require_contains(err, "[misconfig.kernel_request]", "expected the typed request error code");
+  require_contains(err, "The kernel request violates its operation contract.",
+                   "expected a plain-language preparation failure title");
+  require_contains(err, "Stage: RunCore::start(plan/source)",
+                   "expected the failing stopped-cohort admission stage");
+  require_contains(err, "runtime-field: kernel-runner.element",
+                   "expected the missing prepared-element field");
+  require_contains(err, "candidate execution element has no prepared stage",
+                   "expected the exact missing typed-stage failure");
+  require_contains(err, "How to fix:", "expected actionable user guidance");
+  require_contains(err, "Diagnostic ID: neatkernelrunner.invalid_request",
+                   "expected a stable preparation diagnostic id");
+  require(err.find("GST ERROR") == std::string::npos &&
+              err.find("config_path=") == std::string::npos &&
+              err.find("hint=") == std::string::npos,
+          "production error should not expose raw plugin diagnostics");
 }
 
 static void test_boxdecode_failure() {

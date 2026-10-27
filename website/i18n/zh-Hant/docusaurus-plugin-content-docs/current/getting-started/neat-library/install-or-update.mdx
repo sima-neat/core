@@ -168,6 +168,12 @@ source ~/pyneat/bin/activate
 
 ## 離線安裝 {#offline-installation}
 
+:::caution 安裝前檢查 Python 相依性
+離線安裝會保留現有的 Python 環境，以及其中額外的套件與檔案。安裝套件前會執行 `pip check`。如果環境已損壞，安裝會停止，並顯示環境路徑與相依性錯誤。請修復回報的相依性後再重試；離線修復需要額外的 wheel 檔案。安裝後會再次檢查相依性，回報仍存在或新引入的衝突。套件變更不會自動復原。
+
+只有在您要捨棄環境並重新安裝時，才明確執行 `./install.sh --recreate-venv`（獨立 Core）或 `sudo python3 -B install.py --recreate-venv`（PCIe）。這會刪除所選環境中的套件與檔案，且不建立備份。在 SDK 中，此選項適用於已配對的 DevKit，不會變更 SDK 主機的 Python。請先儲存需要的檔案。預先檢查與僅驗證命令都不會重建環境。
+:::
+
 Neat Library 離線套件自 0.6.0 版本起提供。
 對於使用 Platform 3.0 或更新版本的 Modalix DevKit，請使用此套件。
 
@@ -218,7 +224,7 @@ cd neat-core-offline
 source ~/pyneat/bin/activate
 </ShellCommand>
 
-離線安裝使用與線上安裝相同的 Python 路徑。PCIe 主機使用 `~/pyneatpcie`。若安裝使用者可寫入 `/media/nvme`，DevKit 使用 `/media/nvme/pyneat`；否則使用 `~/pyneat`。安裝至 NVMe 時，`~/pyneat` 會連結至該環境。若 `~/pyneat` 已有其他環境，安裝程式會先將其保存在家目錄的 `pyneat-before-offline-*` 目錄中，再建立連結。
+離線安裝會重用主機上現有的 `~/pyneatpcie`，或卡及 DevKit 上現有的 `~/pyneat`；如果是符號連結，則重用其目標。若家目錄中沒有環境，卡或 DevKit 會在安裝使用者可寫入 NVMe 時使用 `/media/nvme/pyneat`，否則使用 `~/pyneat`。新的 NVMe 安裝會建立 `~/pyneat` 連結，不會取代現有的家目錄環境。
 
 ### 套件選項與安裝程式行為
 

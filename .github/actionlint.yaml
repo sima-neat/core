@@ -13,6 +13,9 @@ self-hosted-runner:
     - vulcan-stg
     - vulcan-staging
     - vulcan-production
+    - ubuntu
+    - default
+    - amd64
 
 # Configuration variables in array of strings defined in your repository or
 # organization. `null` means disabling configuration variables check.

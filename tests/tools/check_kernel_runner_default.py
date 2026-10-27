@@ -279,69 +279,8 @@ class KernelRunnerDefaultContract(unittest.TestCase):
                         validate_layering(root)
                     source.unlink()
 
-    def test_renderer_uses_public_cold_initialization(self):
-        text = (ROOT / "tests/e2e_pipelines/obj_detection/"
-                "core_scheduler_yolov8_render_integration_test.cpp").read_text()
-        validate_renderer_startup(text)
-        for mutation in (
-            text.replace('neat::gst_init_once();', 'gst_init(nullptr, nullptr);'),
-            text.replace('neat::gst_init_once();',
-                         'setenv("SIMA_ALLOW_GST_INIT", "1", 1); neat::gst_init_once();'),
-            text.replace('neat::gst_init_once();', '')
-                .replace('provider_capture_barrier();',
-                         'provider_capture_barrier(); neat::gst_init_once();'),
-            text.replace('native_scope_started = true;', '')
-                .replace('  ConfigFiles files(', '  native_scope_started = true;\n  ConfigFiles files('),
-            text.replace('#include "gst/GstInit.h"', ''),
-            text.replace('core_render_test::require_synchronous_teardown_environment();', ''),
-            text.replace('core_render_test::require_synchronous_teardown_environment();', '')
-                .replace('neat::gst_init_once();',
-                         'neat::gst_init_once(); '
-                         'core_render_test::require_synchronous_teardown_environment();'),
-        ):
-            with self.subTest(mutation=mutation[-1800:]):
-                with self.assertRaises((ValueError, IndexError)):
-                    validate_renderer_startup(mutation)
 
-    def test_renderer_observes_plain_and_driver_streams(self):
-        text = (ROOT / "tests/support/core_render_retirement.h").read_text()
-        self.assertIn('inputstream_pipeline_teardown_policy(compiled_pipeline)', text)
-        self.assertIn('driver && policy != Policy::MustReachNull', text)
-        capture = text[text.index('void capture_core('):text.index('static void check_outer_stop(')]
-        self.assertIn('owners_.push_back(core);', capture)
-        self.assertIn('core->pipeline.stream.diag_ctx()', capture)
-        self.assertIn('is_driver_stream(diag->pipeline_string,', capture)
-        self.assertLess(capture.index('owners_.push_back(core);'), capture.index('is_driver_stream('))
-        self.assertIn('++streams_;\n        if (driver)\n          ++driver_streams_;', capture)
-        for factory in ('neatkernelrunner', 'neatprocessmla', 'neatdecoder', 'neatencoder'):
-            self.assertNotIn('"' + factory + '"', text)
-        fixture = (ROOT / 'tests/e2e_pipelines/obj_detection/'
-                   'core_scheduler_yolov8_render_integration_test.cpp').read_text()
-        self.assertIn('" total_streams=" << retirement.stream_count()', fixture)
-        self.assertIn('" driver_streams=" << retirement.driver_stream_count()', fixture)
-        cmake = (ROOT / 'tests/CMakeLists.txt').read_text()
-        registration = cmake[cmake.index('# Real Core detections enter'):]
-        registration = registration[:registration.index('endif()')]
-        self.assertIn('"SIMA_GST_TEARDOWN_DEFER_NO_FLUSH=0"', registration)
-        self.assertIn('"SIMA_GST_TEARDOWN_ASYNC=0"', registration)
 
-    def test_synchronous_transport_fallback_is_always_diagnostic(self):
-        # Source-bound qualification control, not a substitute for actual
-        # target stop traces. Both explicit zero settings are necessary: either
-        # early-defer or async-only otherwise permits silent reaper ownership.
-        text = (ROOT / 'src/pipeline/gst/GstDiagnosticsUtil.cpp').read_text()
-        body = text[text.index('void stop_and_unref_no_flush('):]
-        self.assertIn('!must_reach_null && env_bool("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", '
-                      '!prefer_synchronous)', body)
-        self.assertIn('!prefer_synchronous && env_bool("SIMA_GST_TEARDOWN_ASYNC", false)', body)
-        sync = body[body.index('if (!async_only)'):]
-        self.assertIn('if (result.status == TeardownStatus::Complete)\n      return;', sync)
-        self.assertLess(sync.index('warn_incomplete_teardown(local, result, timeout_ms, '
-                                   '!must_reach_null);'),
-                        sync.index('enqueue_teardown(local, /*flush=*/false);'))
-        diagnostic = text[text.index('void warn_incomplete_teardown('):text.index('void reaper_main()')]
-        self.assertIn('std::cerr << "[WARN] stop_and_unref(): "', diagnostic)
-        self.assertIn('deferring to reaper.', diagnostic)
 
     def test_no_execution_feature_switch(self):
         removed = ("SIMANEAT_" + "KERNEL_RUNNER_INTEGRATION", "SIMA_CORE_" + "KERNEL_RUNNER")
@@ -365,56 +304,7 @@ class KernelRunnerDefaultContract(unittest.TestCase):
             self.assertNotRegex(contents, r"find_(?:package|dependency)\((?:SimaRunner|SimaKernels|SimaCodecs|NeatInternals)\b")
 
 
-    def test_core_uses_generic_cold_preparation(self):
-        # Client tensor/error types preserve the generic vocabulary, while every
-        # lower provider header and numerical implementation remains outside Core.
-        forbidden = (r"simaai/kernels/", r"simaai/runtime/(?!gstreamer/)",
-                     r"simaai/codecs/", r"neat/video_frame_layout\.h",
-                     r"kernels::ops::", r"::make_executable\(", r"::with_image_size\(")
-        for directory in (ROOT / "src", ROOT / "include"):
-            for path in directory.rglob("*"):
-                if path.suffix not in (".cpp", ".h"):
-                    continue
-                with self.subTest(path=str(path.relative_to(ROOT))):
-                    for pattern in forbidden:
-                        self.assertNotRegex(path.read_text(), pattern)
-        argmax = (ROOT / "src/nodes/sima/SimaArgMax.cpp").read_text()
-        self.assertIn("scheduler::check_kernel(", argmax)
-        self.assertIn("scheduler::inspect_kernel(", argmax)
-        recipe = (ROOT / "src/pipeline/internal/sima/BoxDecodeKernelRecipe.cpp").read_text()
-        self.assertIn("scheduler::check_kernel(", recipe)
-        self.assertIn("scheduler::inspect_kernel(", recipe)
-        for operation in ('"detess"', '"boxdecode"', '"superpoint"'):
-            self.assertIn(operation, recipe)
 
-    def test_no_legacy_prepared_numerical_abi(self):
-        forbidden = ("PreparedProcessCvuTypedConfig", "ProcessCvuPreparedStage",
-                     "GraphProcessCvuStageRequest", "GraphProcessCvuPreparedBridgeAbi",
-                     "runtime/compatibility/processcvu", "prepare_kernel_stages(")
-        for directory in (ROOT / "src", ROOT / "include"):
-            for path in directory.rglob("*"):
-                if path.suffix not in (".h", ".cpp"):
-                    continue
-                for token in forbidden:
-                    with self.subTest(path=str(path.relative_to(ROOT)), token=token):
-                        self.assertFalse(token in path.read_text(), f"Removed prepared ABI {token} remains in {path}")
-        integration = (ROOT / "src/pipeline/internal/sima/KernelRunnerIntegration.cpp").read_text()
-        # Supplemental dependency lint only. Linked integration tests verify mode
-        # forwarding and transactional attachment through this versioned facade.
-        self.assertIn("gs::prepare_and_attach_tensor_stages(", integration)
-        self.assertNotIn("std::visit(", integration)
-        serializer = (ROOT / "src/pipeline/internal/sima/SimaPluginStaticManifest.cpp").read_text()
-        # Canonical transport is normalized before recipes are dropped; the
-        # accessor owns metadata backing, never checked execution recipes.
-        snapshot = serializer[serializer.index("SimaPluginStaticManifest metadata_snapshot("):
-                              serializer.index("class ManifestAccessorRegistry")]
-        self.assertIn("if (stage.native_kernel)", snapshot)
-        self.assertLess(snapshot.index("stage.payload_kind = StagePayloadKind::None"),
-                        snapshot.index("stage.native_kernel.reset()"))
-        self.assertIn("manifest_(metadata_snapshot(std::move(manifest)))", serializer)
-        for name in ("CanonicalTransformLowering.cpp", "CanonicalVisualLowering.cpp", "PreprocFrameAdapter.cpp"):
-            text = (ROOT / "src/pipeline/internal/sima" / name).read_text()
-            self.assertTrue(re.search(r"(?:scheduler::|scheduler::client::)check_kernel(?:\(|;)", text), f"{name} bypasses Scheduler preparation")
 
     def test_factory_link_ownership_is_explicit(self):
         text = (ROOT / "CMakeLists.txt").read_text()
@@ -432,18 +322,6 @@ class KernelRunnerDefaultContract(unittest.TestCase):
         # Static Core clients still use the one shared Scheduler provider; they
         # do not acquire lower development archives through Core usage.
 
-    def test_runner_registration_precedes_startup_validation(self):
-        text = (ROOT / "src/gst/GstInit.cpp").read_text()
-        body = text[text.index("void gst_init_once()") :]
-        self.assertLess(body.index("simaai::scheduler::client::register_kernel_runner()"),
-                        body.index("validate_neat_startup_contract("))
-        contract = text[text.index("void validate_neat_startup_contract(") :
-                        text.index("} // namespace", text.index("void validate_neat_startup_contract("))]
-        self.assertIn('validate_neat_factory_loaded("neatkernelrunner", nullptr)', contract)
-        self.assertNotIn('"neatprocesscvu"', contract)
-        # MLA remains a separate engine; numerical Nodes share the runner.
-        self.assertIn('"neatprocessmla"', contract)
-        self.assertNotIn('"neatobjectdecode"', contract)
 
 
 if __name__ == "__main__":

@@ -155,7 +155,7 @@ The controls have different jobs:
 | Control | What it bounds |
 | --- | --- |
 | Application in-flight window | Accepted inputs whose outputs the application has not yet consumed. Manage this window in the push/pull loop. |
-| `advanced_execution.internal_queue_depth` | Internally inserted queues and the numerical Runner's execution capacity. Runner capacity is clamped to `1`–`64`; an unset/default depth selects one Runner slot. |
+| `advanced_execution.internal_queue_depth` | Internally inserted queues and the numerical Runner's execution capacity. Runner capacity is clamped to `1`–`64`; an unset/default depth selects four async slots; synchronous execution uses one. |
 | `advanced_execution.inference_output_buffers` | MLA stage buffering. Changing the application or runtime queue depth does not replace this setting. |
 | `RunOptions::queue_depth` | Framework ingress and internal runtime queues, not accelerator capacity. |
 | `OutputOptions` | Public output buffering and drop behavior. Use `EveryFrame(...)` when measuring completed work without drops. |

@@ -1857,7 +1857,7 @@ static bool fragment_segment_uses_factory(std::string_view segment, std::string_
 }
 
 static void set_fragment_segment_property(std::string* segment, std::string_view property,
-                                          std::string_view value, bool replace_existing = true) {
+                                          std::string_view value) {
   if (!segment) {
     return;
   }
@@ -1870,16 +1870,14 @@ static void set_fragment_segment_property(std::string* segment, std::string_view
     if (assignment.key != property) {
       continue;
     }
-    if (replace_existing) {
-      const gst::launch::AssignmentValueReplacement replacement{
-          assignment.value_span, std::string(value), assignment.quote};
-      auto rewritten =
-          gst::launch::rewrite_assignment_values(*segment, parsed, std::span(&replacement, 1U));
-      if (!rewritten.complete) {
-        throw std::invalid_argument("cannot replace a launch property value");
-      }
-      *segment = std::move(rewritten.text);
+    const gst::launch::AssignmentValueReplacement replacement{assignment.value_span,
+                                                              std::string(value), assignment.quote};
+    auto rewritten =
+        gst::launch::rewrite_assignment_values(*segment, parsed, std::span(&replacement, 1U));
+    if (!rewritten.complete) {
+      throw std::invalid_argument("cannot replace a launch property value");
     }
+    *segment = std::move(rewritten.text);
     return;
   }
 
@@ -1907,35 +1905,16 @@ static std::vector<gst::launch::ByteSpan> fragment_segments(std::string_view fra
   return segments;
 }
 
-static std::string
-set_property_for_factory_segments(std::string fragment, std::string_view factory,
-                                  std::string_view property, std::string_view value,
-                                  bool replace_existing = true,
-                                  std::span<const std::string_view> default_names = {}) {
+static std::string set_property_for_factory_segments(std::string fragment, std::string_view factory,
+                                                     std::string_view property,
+                                                     std::string_view value) {
   // Reverse edits preserve the shared lexer's byte spans. Caps, URLs and
   // assignment values stay opaque. This is cold graph preparation only.
   const auto segments = fragment_segments(fragment);
   for (auto it = segments.rbegin(); it != segments.rend(); ++it) {
     std::string segment = fragment.substr(it->begin, it->end - it->begin);
     if (fragment_segment_uses_factory(segment, factory)) {
-      // A framework-authored default is not a customer override. Use the
-      // retained origin, never an element-name prefix, to identify that case.
-      bool replace_default = false;
-      if (!default_names.empty()) {
-        const auto parsed = gst::launch::analyze(segment);
-        bool owned = false;
-        bool zero_default = false;
-        for (const auto& assignment : parsed.assignments) {
-          if (assignment.key == "name") {
-            owned = std::find(default_names.begin(), default_names.end(),
-                              assignment.canonical_value) != default_names.end();
-          } else if (assignment.key == property) {
-            zero_default = assignment.canonical_value == "0";
-          }
-        }
-        replace_default = owned && zero_default;
-      }
-      set_fragment_segment_property(&segment, property, value, replace_existing || replace_default);
+      set_fragment_segment_property(&segment, property, value);
       fragment.replace(it->begin, it->end - it->begin, segment);
     }
   }
@@ -2079,31 +2058,6 @@ std::string session_build_apply_fast_path_options_to_fragment(std::string fragme
   return fragment;
 }
 
-std::string session_build_apply_run_preset_to_pipeline(std::string pipeline, const RunOptions& opt,
-                                                       std::span<const LaunchNameOrigin> origins) {
-  if (opt.preset != RunPreset::Realtime) {
-    return pipeline;
-  }
-  // KernelRunner is a bounded-slot GstElement, not a GstAggregator: live
-  // upstream latency cannot grow its accepted-job capacity. Only an existing
-  // queue may hold unsent buffers. Bound its default media-time depth without
-  // creating a second queue or changing its count bound/leak/reliability policy.
-  // Customer time limits (including QueueOptions' explicit count-only zero)
-  // remain authoritative. Framework async queues render a default zero before
-  // RunOptions are known; their retained origins allow this cold policy to
-  // distinguish defaults without parsing name conventions or changing nodes.
-  // This is a queue-size policy, not a deadline or DMA cancellation authority.
-  std::vector<std::string_view> generated_queues;
-  for (const auto& origin : origins) {
-    if (origin.kind == LaunchNameOrigin::Kind::Queue) {
-      generated_queues.push_back(origin.name);
-    }
-  }
-  constexpr std::uint64_t kRealtimeMaxQueueTimeNs = 20'000'000;
-  return set_property_for_factory_segments(std::move(pipeline), "queue", "max-size-time",
-                                           std::to_string(kRealtimeMaxQueueTimeNs),
-                                           /*replace_existing=*/false, generated_queues);
-}
 static std::uint64_t checked_mul_u64(std::uint64_t a, std::uint64_t b);
 
 TensorCompatDims sample_shape_limits_dims(const SampleSpec& spec) {
@@ -2717,13 +2671,6 @@ static std::string clamp_sync_pipeline_impl(std::string pipeline, int num_buffer
       --end;
     s = s.substr(start, end - start);
   };
-  // The old code carried two duplicated value-token scanners here as lambdas
-  // (force_bool_prop / force_num_buffers); both replaced by gst_props::set_prop
-  // which uses one canonical value-token grammar. Bug #4 (force_bool_prop
-  // corrupting "key=1" into "key=false1") goes away by construction.
-  auto force_bool_prop = [&](std::string& seg, std::string_view key, bool value) {
-    gst_props::set_prop(seg, key, value ? "true" : "false");
-  };
   auto force_num_buffers = [&](std::string& seg) {
     gst_props::set_prop(seg, "num-buffers=", std::to_string(forced));
   };
@@ -2762,37 +2709,6 @@ static std::string clamp_sync_pipeline_impl(std::string pipeline, int num_buffer
     return seg.find("neatprocesscvu") != std::string::npos ||
            seg.find("neatprocessmla") != std::string::npos;
   });
-
-  if (forced <= 1) {
-    std::vector<std::string> parts;
-    size_t start = 0;
-    while (start < pipeline.size()) {
-      size_t bang = pipeline.find('!', start);
-      if (bang == std::string::npos) {
-        parts.push_back(pipeline.substr(start));
-        break;
-      }
-      parts.push_back(pipeline.substr(start, bang - start));
-      start = bang + 1;
-    }
-    for (auto& part : parts) {
-      std::string seg = part;
-      trim(seg);
-      if (seg.find("neatprocessmla") == std::string::npos)
-        continue;
-      force_bool_prop(seg, "multi-pipeline=", false);
-      part = " " + seg + " ";
-    }
-    std::ostringstream out;
-    for (size_t i = 0; i < parts.size(); ++i) {
-      if (i)
-        out << " ! ";
-      std::string seg = parts[i];
-      trim(seg);
-      out << seg;
-    }
-    pipeline = out.str();
-  }
 
   bool force_boxdecode = (num_buffers_override > 0);
   if (!force_boxdecode) {
@@ -2913,8 +2829,11 @@ std::string clamp_detess_num_buffers(std::string pipeline, int num_buffers_overr
 
 void session_build_clamp_sync_kernel_runner_capacity(BuildResult& build) {
   build.kernel_runner_capacity = 1U;
-  if (build.rendered_manifest) {
-    for (auto& stage : build.rendered_manifest->stages) {
+  build.kernel_runner_output_pool_capacity = build.kernel_runner_output_pool_minimum;
+  for (auto* manifest : {&build.rendered_manifest, &build.prepared_manifest}) {
+    if (!*manifest)
+      continue;
+    for (auto& stage : (*manifest)->stages) {
       if (stage.native_execution_capacity) {
         stage.native_execution_capacity = 1U;
       }
@@ -2924,18 +2843,16 @@ void session_build_clamp_sync_kernel_runner_capacity(BuildResult& build) {
 
 std::string session_build_clamp_sync_build_result(BuildResult& build, int num_buffers_override) {
   namespace sima = pipeline_internal::sima;
-  using sima::FrameArenaRole;
-  using sima::static_contract::ArenaAllocationProvenance;
+  namespace client = ::simaai::scheduler::client;
   // Clamp even when a non-native terminal takes the legacy retention path.
   session_build_clamp_sync_kernel_runner_capacity(build);
   const auto legacy = [&] {
     return clamp_detess_num_buffers(
         clamp_sync_pipeline(build.pipeline_string, num_buffers_override), num_buffers_override);
   };
-  if (!build.rendered_manifest ||
-      std::none_of(
-          build.rendered_manifest->stages.begin(), build.rendered_manifest->stages.end(),
-          [](const auto& stage) { return stage.frame_arena_role != FrameArenaRole::None; })) {
+  if (!build.prepared_manifest ||
+      std::none_of(build.prepared_manifest->stages.begin(), build.prepared_manifest->stages.end(),
+                   [](const auto& stage) { return bool(stage.frame_layout); })) {
     return legacy();
   }
   const auto fail = [&](const std::string& detail) -> void {
@@ -2946,7 +2863,7 @@ std::string session_build_clamp_sync_build_result(BuildResult& build, int num_bu
         "pool capacity cannot be inferred from stage order or execution depth.",
         build.pipeline_string);
   };
-  const auto& manifest = *build.rendered_manifest;
+  const auto& manifest = *build.prepared_manifest;
   auto elements = sima::parse_pipeline_elements(build.pipeline_string);
   std::size_t sink = elements.size();
   std::size_t sink_count = 0U;
@@ -2980,11 +2897,11 @@ std::string session_build_clamp_sync_build_result(BuildResult& build, int num_bu
   std::unordered_set<std::string> native_names;
   for (std::size_t i = 0; i < manifest.stages.size(); ++i) {
     const auto& stage = manifest.stages[i];
-    const auto name = apply_name_transform(build.name_transform, stage.element_name);
+    const auto name = stage.element_name;
     if (!name.empty() && !stage_by_element.emplace(name, i).second) {
       fail("duplicate typed element name '" + name + "'");
     }
-    if (stage.frame_arena_role != FrameArenaRole::None) {
+    if (stage.frame_layout) {
       if (name.empty()) {
         fail("native stage has no exact rendered element identity");
       }
@@ -2995,7 +2912,7 @@ std::string session_build_clamp_sync_build_result(BuildResult& build, int num_bu
   if (endpoint == stage_by_element.end()) {
     fail("no typed contract for terminal element '" + elements[terminal].element_name + "'");
   }
-  if (manifest.stages[endpoint->second].frame_arena_role == FrameArenaRole::None) {
+  if (!manifest.stages[endpoint->second].frame_layout) {
     return legacy();
   }
   // Check topology only for the selected native endpoint. An unrelated native
@@ -3024,23 +2941,25 @@ std::string session_build_clamp_sync_build_result(BuildResult& build, int num_bu
     if (origins[index]) {
       return *origins[index];
     }
-    const auto rendered_name = apply_name_transform(build.name_transform, stage.element_name);
+    const auto rendered_name = stage.element_name;
     if (std::count_if(elements.begin(), elements.end(), [&](const auto& element) {
           return element.element_name == rendered_name;
         }) != 1) {
       fail("native carrier stage is not uniquely rendered: '" + rendered_name + "'");
     }
-    if (stage.frame_arena_size_bytes == 0U || stage.frame_arena_role == FrameArenaRole::None) {
-      fail("ReuseInput reaches a stage without a native arena: '" + stage.element_name + "'");
+    if (!stage.frame_layout || stage.frame_layout->allocations.empty()) {
+      fail("ReuseInput reaches a stage without a finalized FrameLayout: '" + stage.element_name +
+           "'");
     }
-    if (stage.frame_arena_role == FrameArenaRole::Allocate) {
-      if (stage.frame_arena_provenance != ArenaAllocationProvenance::CoreAllocated) {
-        fail("Allocate stage lacks CoreAllocated provenance: '" + stage.element_name + "'");
-      }
+    const auto& layout = *stage.frame_layout;
+    if (layout.ownership == client::FrameOwnership::Allocate) {
       origins[index] = index;
       return index;
     }
-    if (stage.frame_arena_provenance == ArenaAllocationProvenance::ExternalAdopted) {
+    if (std::all_of(layout.allocations.begin(), layout.allocations.end(),
+                    [](const auto& allocation) {
+                      return allocation.policy == client::AllocationPolicy::PreserveImported;
+                    })) {
       origins[index] = index; // No local pool may be invented for externally loaned storage.
       return index;
     }
@@ -3054,7 +2973,7 @@ std::string session_build_clamp_sync_build_result(BuildResult& build, int num_bu
     while (upstream != elements.begin() && transparent(*std::prev(upstream))) {
       --upstream;
     }
-    if (stage.frame_arena_role == FrameArenaRole::ReuseInput && upstream != elements.begin() &&
+    if (layout.ownership == client::FrameOwnership::ReuseInput && upstream != elements.begin() &&
         std::prev(upstream)->plugin == "appsrc") {
       origins[index] = index;
       return index;
@@ -3068,12 +2987,17 @@ std::string session_build_clamp_sync_build_result(BuildResult& build, int num_bu
     }
     std::optional<std::size_t> owner;
     for (const auto& edge : edges) {
+      if (!edge.binding || edge.binding->sink_pad_index < 0 ||
+          static_cast<std::size_t>(edge.binding->sink_pad_index) != layout.source_pad)
+        continue;
       const auto origin = resolve_owner(edge.producer_stage_index);
       if (owner && *owner != origin) {
         fail("ReuseInput bindings have different carrier origins at '" + stage.element_name + "'");
       }
       owner = origin; // Multiple logical heads retain one carrier, not one pool slot per head.
     }
+    if (!owner)
+      fail("ReuseInput has no exact producer for its source pad at '" + stage.element_name + "'");
     visiting[index] = false;
     origins[index] = owner;
     return *owner;
@@ -3082,12 +3006,11 @@ std::string session_build_clamp_sync_build_result(BuildResult& build, int num_bu
   auto pipeline = clamp_detess_num_buffers_impl(
       clamp_sync_pipeline_impl(build.pipeline_string, num_buffers_override, false),
       num_buffers_override, native_names);
-  if (manifest.stages[owner].frame_arena_role != FrameArenaRole::Allocate ||
+  if (manifest.stages[owner].frame_layout->ownership != client::FrameOwnership::Allocate ||
       num_buffers_override > 1) {
     return pipeline;
   }
-  const auto owner_name =
-      apply_name_transform(build.name_transform, manifest.stages[owner].element_name);
+  const auto owner_name = manifest.stages[owner].element_name;
   elements = sima::parse_pipeline_elements(pipeline);
   std::size_t owner_matches = 0U;
   for (auto& element : elements) {
@@ -3124,6 +3047,10 @@ std::string session_build_clamp_sync_build_result(BuildResult& build, int num_bu
   return out;
 }
 
+std::size_t session_build_kernel_runner_capacity(int requested_depth) {
+  return static_cast<std::size_t>(std::clamp(requested_depth == 0 ? 4 : requested_depth, 1, 64));
+}
+
 void session_build_initialize_kernel_runner_budget(BuildResult* build,
                                                    const GraphOptions* options) {
   if (!build) {
@@ -3136,16 +3063,17 @@ void session_build_initialize_kernel_runner_budget(BuildResult* build,
   }
   build->kernel_runner_a65_workers = static_cast<std::size_t>(workers);
   build->kernel_runner_capacity =
-      static_cast<std::size_t>(std::clamp(options ? options->async_queue_depth : 1, 1, 64));
-  build->kernel_runner_output_pool_capacity = build->kernel_runner_capacity + 1U;
+      session_build_kernel_runner_capacity(options ? options->async_queue_depth : 0);
+  build->kernel_runner_output_pool_minimum = 2U;
   if (options && options->processmla.output_pool_buffers > 0 &&
       build->pipeline_string.find("neatprocessmla") != std::string::npos) {
     // A reused arena must cover the explicitly requested downstream MLA window,
     // plus a published carrier. Do not multiply queues by logical tensor heads.
-    build->kernel_runner_output_pool_capacity =
-        std::max(build->kernel_runner_output_pool_capacity,
-                 static_cast<std::size_t>(options->processmla.output_pool_buffers) + 1U);
+    build->kernel_runner_output_pool_minimum =
+        static_cast<std::size_t>(options->processmla.output_pool_buffers) + 1U;
   }
+  build->kernel_runner_output_pool_capacity =
+      std::max(build->kernel_runner_capacity + 1U, build->kernel_runner_output_pool_minimum);
 }
 
 BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,

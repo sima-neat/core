@@ -34,6 +34,10 @@ Docker and Internet access are not needed on the customer system.
 
 ## Install
 
+**Existing Python environments are preserved by default.** Offline installation preserves existing Python environments and their extra packages and files. Before installing packages, it runs `pip check`. If the environment is already broken, installation stops and reports the environment path and dependency errors. Repair the reported dependencies, using additional wheels when offline, then retry. A dependency check after installation reports any remaining or newly introduced conflicts; package changes are not automatically rolled back.
+
+To discard an environment and install from scratch, explicitly run `./install.sh --recreate-venv` (standalone Core) or `sudo python3 -B install.py --recreate-venv` (PCIe). This removes packages and files in the selected environment without backup. In the SDK, the option applies to the paired DevKit, not SDK host Python. Save required files first. Preflight and verification-only commands never recreate environments.
+
 Run on the host, using the SSH key provisioned during system setup:
 
 ```sh
@@ -61,7 +65,7 @@ repository and pip uses only bundled wheels. Existing install scripts retain
 Platform admission and runtime lifecycle handling. Optional Sentinel telemetry
 is retained if installed; its online updater is never called.
 
-Offline installation uses the same Python paths as online installation. The PCIe host uses `~/pyneatpcie`. A DevKit uses `/media/nvme/pyneat` when `/media/nvme` is writable by the installing user; otherwise, it uses `~/pyneat`. For an NVMe installation, `~/pyneat` links to that environment. If a different environment already exists at `~/pyneat`, the installer keeps it in a `pyneat-before-offline-*` directory in your home directory before creating the link. Post-install checks cover exact native
+Offline installation reuses an existing `~/pyneatpcie` on the host or `~/pyneat` on a card or DevKit, including its symlink target. If no home environment exists, a card or DevKit uses `/media/nvme/pyneat` when NVMe is writable by the installing user; otherwise, it uses `~/pyneat`. A new NVMe installation creates a `~/pyneat` link without replacing an existing home environment. Post-install checks cover exact native
 package versions, package health, Python dependencies/imports, the host GStreamer
 plugin, and the existing card installer's runtime checks. They do not replace an
 application inference acceptance test.

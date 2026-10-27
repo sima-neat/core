@@ -19,6 +19,7 @@ def run(args, **kwargs):
 class PairedDevKit:
     def __init__(self, address, user, progress=None):
         self.progress = progress
+        self.recreate_venv = False
         self.target = user+'@'+str(ipaddress.ip_address(address))
         if not re.fullmatch(r'[a-z_][a-z0-9_-]*', user):
             raise ValueError('Invalid DEVKIT_DEPLOY_USER')
@@ -44,6 +45,8 @@ class PairedDevKit:
     def phase(self, phase):
         option = {'preflight': ['--check'], 'install': [], 'verify': ['--verify']}[phase]
         command = ['sudo', '-S', '-p', '', 'python3', '-B', self.directory+'/neat-core-offline/install.py', '--devkit-only', *option]
+        if self.recreate_venv:
+            command.append('--recreate-venv')
         password = os.environ.get('SUDO_PASSWORD') or os.environ.get('DEVKIT_PASSWORD') or 'edgeai'
         # Never put the sudo password in argv, artifacts, or diagnostic messages.
         label = {'preflight': 'Checking compatibility and offline dependencies on paired DevKit',

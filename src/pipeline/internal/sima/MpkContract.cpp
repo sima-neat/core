@@ -6962,9 +6962,7 @@ std::vector<MpkTensorContract> get_mla_published_outputs_contract(const MpkContr
         // reads ALL 16 bytes per stride and dequantizes the padding zeros as
         // probabilities, garbling segmentation output. Flag the boundary
         // tensor with Bf16LaneSplitRepack — the existing Bf16-named enum is
-        // reused as a generic "lane-split" hint that downstream consumers
-        // already plumb through (PreparedRuntimeBuild, ProcessCvuStageSemantics,
-        // PreparedRuntimeBridge).
+        // reused as a generic lane-split hint by the downstream stage compiler.
         if (mla && ((mla->has_align_c16 && mla->align_c16) || (mla->has_cblock && mla->cblock))) {
           const auto dtype_lower = canonical_token_local(tensor.dtype);
           const bool is_int8 = dtype_lower == "int8" || dtype_lower == "i8";

@@ -176,8 +176,13 @@ void oriented_carrier_conversions() {
             const auto& buffer = p.source == c::TensorStagePortSource::Input
                                      ? source_storage[p.tensor]
                                      : outputs[p.tensor];
-            in.push_back({static_cast<const std::byte*>(buffer->memory.get()) + 64 + p.byte_offset,
-                          buffer->size - 128 - p.byte_offset});
+            const auto offset =
+                p.byte_offset +
+                (p.source == c::TensorStagePortSource::Input
+                     ? compiled.compiled.runtime_contract.logical_inputs[p.tensor].byte_offset
+                     : 0);
+            in.push_back({static_cast<const std::byte*>(buffer->memory.get()) + 64 + offset,
+                          buffer->size - 128 - offset});
           }
           for (const auto& p : m.outputs) {
             const auto& buffer = outputs[p.tensor];

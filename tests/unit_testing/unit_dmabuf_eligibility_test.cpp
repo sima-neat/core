@@ -231,33 +231,22 @@ void test_canonical_digest() {
   namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
   std::string error;
   const auto physical = sc::PhysicalExecutionLowerer::lower(plan, &error);
-  const auto detached_roots =
-      physical ? sc::detached_mla_output_roots(plan, *physical) : std::vector<sc::ValueId>{};
-  const auto arena = physical ? sc::FrameSlotArenaPlan::compile(
-                                    plan, *physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-                                    sc::kLegacyEvoCmaRegionAlignmentBytes, &error,
-                                    sc::kModalixProductionArenaDmsPolicy, detached_roots)
-                              : std::nullopt;
   CHECK(physical.has_value());
-  CHECK(arena.has_value());
-  if (!arena) {
-    std::cerr << "canonical execution fixture arena failed: " << error << '\n';
-  }
-  if (physical && arena) {
-    const auto execution =
-        simaai::neat::pipeline_internal::canonical_dmabuf_execution_json(plan, *physical, *arena);
-    const auto execution_json = nlohmann::json::parse(execution);
-    CHECK(execution_json.at("schema_version") == 3);
-    CHECK(detached_roots.empty());
-    CHECK(execution_json.at("frame_arena").at("storage_domain") == "dms");
-    CHECK(execution_json.at("frame_arena").at("detached_roots").empty());
-    CHECK(execution_json.at("frame_arena").at("allocation_provenance") == "core-allocated");
-    CHECK(execution_json.at("frame_arena").at("required_device_access").get<std::uint32_t>() != 0U);
-    CHECK(execution_json.at("physical_commands").size() == physical->commands.size());
-    CHECK(!execution_json.at("physical_digest_material").get<std::string>().empty());
-    CHECK(
-        simaai::neat::pipeline_internal::dmabuf_execution_digest(plan, *physical, *arena).size() ==
-        64U);
+  if (physical) {
+    const auto source =
+        simaai::neat::pipeline_internal::canonical_dmabuf_source_json(plan, *physical);
+    const auto source_json = nlohmann::json::parse(source);
+    CHECK(source_json.at("schema_version") == 4);
+    CHECK(!source_json.contains("frame_arena"));
+    CHECK(source_json.at("physical_commands").size() == physical->commands.size());
+    CHECK(!source_json.at("physical_digest_material").get<std::string>().empty());
+    const auto digest = simaai::neat::pipeline_internal::dmabuf_source_digest(plan, *physical);
+    CHECK(digest.size() == 64U);
+    auto selected = *physical;
+    selected.commands.front().resolved_executor = sc::PhysicalEngine::A65;
+    CHECK(simaai::neat::pipeline_internal::dmabuf_source_digest(plan, selected) == digest);
+    selected.commands.front().inputs.clear();
+    CHECK(simaai::neat::pipeline_internal::dmabuf_source_digest(plan, selected) != digest);
   }
 }
 
@@ -343,48 +332,48 @@ void test_exact_multi_stage_artifact_admission() {
   }
   CHECK(accepted.eligible());
   CHECK(accepted.plan && accepted.plan->mla_stage_count() == 2U);
-  CHECK(accepted.arena_plan.has_value());
-  if (accepted.plan && accepted.arena_plan) {
-    CHECK(accepted.arena_plan->placement().domain == sc::ArenaStorageDomain::Dms);
-    CHECK(accepted.arena_plan->placement().requires_access(sc::ArenaDeviceAccess::Mla));
-    CHECK(!accepted.arena_plan->placement().requires_access(sc::ArenaDeviceAccess::CpuA65));
-    CHECK(!accepted.arena_plan->placement().requires_access(sc::ArenaDeviceAccess::Ev74));
-    const auto encoder_outputs = accepted.plan->backend_ports(0U, sc::BackendPortDirection::Output);
-    const auto decoder_outputs = accepted.plan->backend_ports(1U, sc::BackendPortDirection::Output);
-    CHECK(encoder_outputs.size() == 1U && decoder_outputs.size() == 1U);
-    const auto* encoded = accepted.arena_plan->region(encoder_outputs.front().value_id);
-    const auto* decoded = accepted.arena_plan->region(decoder_outputs.front().value_id);
-    CHECK(encoded != nullptr);
-    CHECK(decoded == nullptr);
-    CHECK(accepted.arena_plan->is_detached_root(decoder_outputs.front().value_id));
-    CHECK(accepted.arena_plan->detached_roots().size() == 1U &&
-          accepted.arena_plan->detached_roots().front() == decoder_outputs.front().value_id);
-    const auto arena_proof =
-        std::find_if(accepted.report.proof.begin(), accepted.report.proof.end(),
-                     [](const auto& fact) { return fact.subject == "frame-slot-arena"; });
-    CHECK(arena_proof != accepted.report.proof.end());
-    CHECK(arena_proof != accepted.report.proof.end() &&
-          arena_proof->evidence.find("detached_count=1;detached_roots=[" +
-                                     std::to_string(decoder_outputs.front().value_id) + "]") !=
-              std::string::npos);
-    CHECK(accepted.physical_plan.has_value());
-    std::string unfiltered_error;
-    const auto unfiltered_arena =
-        accepted.physical_plan
-            ? sc::FrameSlotArenaPlan::compile(
-                  *accepted.plan, *accepted.physical_plan,
-                  sc::FrameSlotArenaReuse::DisjointLifetimes, sc::kLegacyEvoCmaRegionAlignmentBytes,
-                  &unfiltered_error, sc::kModalixProductionArenaDmsPolicy)
-            : std::nullopt;
-    CHECK(unfiltered_arena.has_value());
-    CHECK(unfiltered_arena && dmabuf_execution_digest(*accepted.plan, *accepted.physical_plan,
-                                                      *unfiltered_arena) != accepted.plan_digest);
-  }
+  CHECK(accepted.physical_plan.has_value());
+  CHECK(accepted.source_digest.size() == 64U);
+  CHECK(accepted.physical_plan &&
+        std::none_of(accepted.physical_plan->commands.begin(),
+                     accepted.physical_plan->commands.end(),
+                     [](const auto& command) { return command.resolved_executor.has_value(); }));
+  CHECK(std::none_of(accepted.report.proof.begin(), accepted.report.proof.end(),
+                     [](const auto& fact) { return fact.subject == "frame-slot-arena"; }));
   CHECK(accepted.plan &&
         accepted.plan->mla_stage_for_identity("MLA_encoder", "encoder.so") != nullptr);
   const auto audit =
       nlohmann::json::parse(dmabuf_plan_audit_json(accepted, mpk, reversed_evidence, false));
   CHECK(audit.at("schema_version") == 2);
+  CHECK(audit.at("eligible") == true);
+  CHECK(audit.at("source_digest") == accepted.source_digest);
+  CHECK(audit.at("plan_digest").get<std::string>().size() == 64U);
+  CHECK(audit.at("plan_digest") != audit.at("source_digest"));
+  CHECK(audit.at("frame_layouts").size() == 2U);
+  CHECK(audit.at("frame_layouts").at(0).at("group") == "model");
+  CHECK(audit.at("frame_layouts").at(1).at("group") == "mla-output-1");
+  for (const auto& group : audit.at("frame_layouts")) {
+    const auto& storage = group.at("storage");
+    const auto name = group.at("group").get<std::string>();
+    CHECK(storage.at("allocations").size() == 1U);
+    CHECK(storage.at("allocations").at(0).at("policy") ==
+          static_cast<int>(simaai::scheduler::client::AllocationPolicy::RequireDms));
+    const auto expected_access =
+        simaai::scheduler::client::kAccessMla |
+        (name == "mla-output-1" ? simaai::scheduler::client::kAccessCpuA65 : 0U);
+    CHECK(storage.at("allocations").at(0).at("required_device_access") == expected_access);
+    CHECK(storage.at("carriers").at(0).at("allocation_index") == 0U);
+    CHECK(storage.at("carriers").at(0).at("byte_offset") == 0U);
+  }
+  CHECK(audit.at("proof").back().at("subject") == "frame-slot-arena");
+  CHECK(audit.at("proof").back().at("evidence").get<std::string>().find("detached_count=1") !=
+        std::string::npos);
+  CHECK(nlohmann::json::parse(dmabuf_plan_audit_json(accepted, mpk, reversed_evidence, false))
+            .at("plan_digest") == audit.at("plan_digest"));
+  CHECK(accepted.physical_plan &&
+        std::none_of(accepted.physical_plan->commands.begin(),
+                     accepted.physical_plan->commands.end(),
+                     [](const auto& command) { return command.resolved_executor.has_value(); }));
   CHECK(audit.at("mla_artifacts").size() == 2U);
   CHECK(audit.at("mla_artifacts").at(0).at("logical_stage_id") == "MLA_decoder");
   CHECK(audit.at("mla_artifacts").at(1).at("manifest_executable") == "encoder.so");
@@ -441,7 +430,7 @@ void test_mpk_decoder_entry_admits_the_bytes_it_loaded() {
   }
   const auto admitted = try_compile_dmabuf_plan(loaded->package);
   CHECK(admitted.eligible());
-  CHECK(admitted.plan_digest == from_path.plan_digest);
+  CHECK(admitted.source_digest == from_path.source_digest);
   CHECK(admitted.report.artifact_digest == from_path.report.artifact_digest);
   const auto decoded = sc::MpkDecoder{}.decode(loaded->package);
   CHECK(static_cast<bool>(decoded));
@@ -526,7 +515,7 @@ int main(int argc, char** argv) {
       std::cout << "route-modelpack-admission: "
                 << simaai::neat::pipeline_internal::dmabuf_eligibility_code_name(admission.code)
                 << " contract=" << admission.contract_version
-                << " plan=" << model.execution_plan_digest() << " stages=" << stage_count
+                << " plan=" << model.model_source_digest() << " stages=" << stage_count
                 << " grouped-stages=" << grouped_stage_count
                 << " grouped-members=" << grouped_semantic_members
                 << " physical-cvu-commands=" << grouped_physical_commands
