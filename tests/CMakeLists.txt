@@ -579,6 +579,7 @@ set(UNIT_TESTS
   unit_dmabuf_plan_contract_projection_test
   unit_model_archive_loader_test
   unit_modelpack_compact_extraction_path_test
+  unit_modelpack_process_root_test
   unit_outputspec_test
   unit_pcie_nodes_test
   unit_pcie_output_capacity_test
@@ -1940,6 +1941,7 @@ foreach(test
     gst_data_adapter_runtime_regression_test
     unit_model_archive_loader_test
     unit_modelpack_compact_extraction_path_test
+    unit_modelpack_process_root_test
     graph_rtsp_lifecycle_regression_test
     graph_validate_report_regression_test
     security_modelpack_matrix_test)
@@ -1969,6 +1971,7 @@ foreach(test
     unit_detection_types_bbox_test
     unit_model_archive_loader_test
     unit_modelpack_compact_extraction_path_test
+    unit_modelpack_process_root_test
     unit_modalix_contract_preflight_test
     graph_validate_report_regression_test
     graph_rtsp_lifecycle_regression_test

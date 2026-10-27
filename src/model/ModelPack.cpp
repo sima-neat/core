@@ -1,4 +1,5 @@
 #include "model/internal/ModelPack.h"
+#include "model/internal/ModelPackProcessRoot.h"
 #include "pipeline/internal/sima/static_contract/TransformOperation.h"
 #include "model/internal/ModelManagedPreprocEnvelope.h"
 #include "pipeline/internal/sima/ProcessCvuFamily.h"
@@ -54,6 +55,7 @@
 #include <iomanip>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <queue>
 #include <set>
@@ -68,7 +70,6 @@
 #include <utility>
 #include <vector>
 
-#include <signal.h>
 #include <unistd.h>
 
 namespace simaai::neat::internal {
@@ -83,7 +84,6 @@ namespace {
 
 constexpr const char* kDefaultBaseOutputDir = "/data/simaai/coprocessing/models/";
 constexpr const char* kDirConf = "etc";
-constexpr const char* kModelPackKeepMarkerFile = ".sima_modelpack_keep";
 constexpr std::uint64_t kDefaultExtractFreeReserveBytes = 16ULL * 1024ULL * 1024ULL;
 
 constexpr const char* kDefaultPreviousNodeName = "decoder";
@@ -497,112 +497,11 @@ static const pipeline_internal::sima::MpkPluginIoContract* find_mpk_stage_for_ex
   return nullptr;
 }
 
-static std::string& modelpack_process_root_storage() {
-  static std::string root;
-  return root;
-}
-
-static bool& modelpack_process_cleanup_enabled_storage() {
-  static bool enabled = true;
-  return enabled;
-}
-
-static bool parse_proc_pid(const std::string& name, pid_t* out_pid) {
-  if (!out_pid) {
-    return false;
-  }
-  *out_pid = 0;
-  const std::string prefix = "proc_";
-  if (name.rfind(prefix, 0) != 0 || name.size() <= prefix.size()) {
-    return false;
-  }
-  const char* raw = name.c_str() + static_cast<std::ptrdiff_t>(prefix.size());
-  char* end = nullptr;
-  errno = 0;
-  const long pid = std::strtol(raw, &end, 10);
-  if (errno != 0 || !end || *end != '\0' || pid <= 0) {
-    return false;
-  }
-  *out_pid = static_cast<pid_t>(pid);
-  return true;
-}
-
-static bool pid_is_alive(pid_t pid) {
-  if (pid <= 0) {
-    return false;
-  }
-  if (::kill(pid, 0) == 0) {
-    return true;
-  }
-  return errno == EPERM;
-}
-
-static void cleanup_stale_modelpack_process_roots(const fs::path& base) {
-  if (!pipeline_internal::env_bool("SIMA_MPK_EXTRACT_GC_STALE_PROC", true)) {
-    return;
-  }
-  std::error_code ec;
-  fs::create_directories(base, ec);
-  ec.clear();
-  for (const auto& entry : fs::directory_iterator(base, ec)) {
-    if (ec) {
-      break;
-    }
-    if (!entry.is_directory()) {
-      continue;
-    }
-    const std::string name = entry.path().filename().string();
-    pid_t pid = 0;
-    if (!parse_proc_pid(name, &pid)) {
-      continue;
-    }
-    if (pid == ::getpid() || pid_is_alive(pid)) {
-      continue;
-    }
-    const fs::path keep_marker = entry.path() / kModelPackKeepMarkerFile;
-    if (fs::exists(keep_marker, ec) && !ec) {
-      ec.clear();
-      continue;
-    }
-    ec.clear();
-    fs::remove_all(entry.path(), ec);
-    ec.clear();
-  }
-}
-
-static void mark_modelpack_process_root_keep(const std::string& root) {
-  if (root.empty()) {
-    return;
-  }
-  std::error_code ec;
-  const fs::path marker = fs::path(root) / kModelPackKeepMarkerFile;
-  if (fs::exists(marker, ec) && !ec) {
-    return;
-  }
-  std::ofstream out(marker, std::ios::out | std::ios::trunc);
-  if (!out.is_open()) {
-    return;
-  }
-  out << "keep\n";
-}
-
 static bool modelpack_cleanup_enabled_for_request(bool request_enabled) {
   if (!request_enabled) {
     return false;
   }
   return pipeline_internal::env_bool("SIMA_MPK_CLEANUP_EXTRACTED", true);
-}
-
-static void cleanup_modelpack_process_root() {
-  const std::string& root = modelpack_process_root_storage();
-  if (root.empty()) {
-    return;
-  }
-  if (!modelpack_process_cleanup_enabled_storage()) {
-    return;
-  }
-  std::error_code ec;
-  fs::remove_all(fs::path(root), ec);
 }
 
 // Model paths are baked into rewritten JSON, so the selected base must not depend on a later cwd.
@@ -659,10 +558,6 @@ static std::vector<std::string> nvme_model_bases() {
 // writable, which makes an eligible NVMe unconditional: a full one fails the load rather than
 // silently moving hundreds of megabytes of writes onto eMMC.
 static std::string modelpack_output_root(bool cleanup_enabled_request) {
-  if (!modelpack_cleanup_enabled_for_request(cleanup_enabled_request)) {
-    modelpack_process_cleanup_enabled_storage() = false;
-  }
-
   auto is_writable_dir = [&](const fs::path& dir, std::string* reason = nullptr) {
     std::error_code ec;
     fs::create_directories(dir, ec);
@@ -671,7 +566,6 @@ static std::string modelpack_output_root(bool cleanup_enabled_request) {
         *reason = "create_directories failed: " + ec.message();
       return false;
     }
-    cleanup_stale_modelpack_process_roots(dir);
     const fs::path probe = dir / ".sima_modelpack_write_probe";
     std::ofstream out(probe, std::ios::out | std::ios::trunc);
     if (!out.is_open()) {
@@ -737,31 +631,17 @@ static std::string modelpack_output_root(bool cleanup_enabled_request) {
   };
 
   static std::mutex root_mu;
-  static std::string root;
+  static std::unique_ptr<ModelPackProcessRoot> root;
   std::lock_guard<std::mutex> lock(root_mu);
-  if (root.empty()) {
-    const fs::path base = canonical_base(choose_base());
-    const fs::path proc_root =
-        base / ("proc_" + std::to_string(static_cast<long long>(::getpid())));
-    std::error_code ec;
-    fs::create_directories(proc_root, ec);
-    if (ec) {
-      throw std::runtime_error("ModelPack: output_storage_unavailable: failed to create "
-                               "per-process extraction root: " +
-                               proc_root.string() + " (" + ec.message() + ")");
-    }
-    root = proc_root.string();
-    modelpack_process_root_storage() = root;
-    static const bool registered = []() {
-      std::atexit(cleanup_modelpack_process_root);
-      return true;
-    }();
-    (void)registered;
+  if (!root) {
+    root = std::make_unique<ModelPackProcessRoot>(
+        canonical_base(choose_base()),
+        pipeline_internal::env_bool("SIMA_MPK_EXTRACT_GC_STALE_PROC", true));
   }
-  if (!modelpack_process_cleanup_enabled_storage()) {
-    mark_modelpack_process_root_keep(root);
+  if (!modelpack_cleanup_enabled_for_request(cleanup_enabled_request)) {
+    root->preserve();
   }
-  return root;
+  return root->path().string();
 }
 
 static bool directory_has_json(const fs::path& dir) {
