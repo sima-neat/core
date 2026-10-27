@@ -170,9 +170,6 @@ jobs:
         with:
           path: ${{ runner.temp }}/offline-baselines/${{ matrix.distro }}-${{ matrix.arch }}
           key: ${{ needs.prepare-card.outputs[format('{0}-{1}', matrix.distro, matrix.arch)] }}
-      - name: Authenticate existing PCIe build images
-        run: |
-          aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 069171140053.dkr.ecr.us-west-2.amazonaws.com
       - name: Enable ARM64 card-container validation on AMD64
         if: ${{ matrix.arch == 'amd64' }}
         uses: docker/setup-qemu-action@v3
@@ -185,6 +182,9 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/offline-aws"
           "$RUNNER_TEMP/offline-aws/bin/pip" install awscli==1.42.49
           echo "$RUNNER_TEMP/offline-aws/bin" >> "$GITHUB_PATH"
+      - name: Authenticate existing PCIe build images
+        run: |
+          aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 069171140053.dkr.ecr.us-west-2.amazonaws.com
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: ${{ needs.config.outputs.aws_region }}

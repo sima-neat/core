@@ -415,6 +415,8 @@ def test_shared_card_precedes_all_offline_assembly():
         assert 'prepare-card' in jobs[name]['needs']
         restore = next(s for s in jobs[name]['steps'] if s.get('uses') == 'actions/cache/restore@v4')
         assert restore['with']['fail-on-cache-miss'] is True
+    names = [step.get('name') for step in jobs['build']['steps']]
+    assert names.index('Install publication client with conditional-write support') < names.index('Authenticate existing PCIe build images')
     host = (HERE/'HostBaseline.Dockerfile').read_text()
     assert 'FROM ${HOST_BUILD_IMAGE} AS platform-build' in host
     assert 'apt-get install' not in host
