@@ -509,7 +509,7 @@ jobs:
     timeout-minutes: 40
     container:
       # Dockerfile SHA-256 from Vulcan; publish all four images before enabling.
-      image: ghcr.io/sima-neat/ubuntu-build:${{ matrix.distro }}-${{ matrix.deb_arch }}-media-e8e65f2ca4722bb5d03730bb3b72ba24f57171e5a0e2b39681d7c2fb26aa0268
+      image: ghcr.io/sima-neat/ubuntu-build:${{ matrix.distro }}-${{ matrix.deb_arch }}-media-463e7eb999e953b18069904b81b378ebd6d6b1a7bc4a5641a12c279d72e711b0
       credentials:
         username: ${{ github.actor }}
         password: ${{ github.token }}
