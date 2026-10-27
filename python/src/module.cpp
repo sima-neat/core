@@ -65,6 +65,10 @@
 #include "nodes/io/StillImageInput.h"
 #include "nodes/sima/SimaRender.h"
 #include "nodes/sima/SimaArgMax.h"
+#include "nodes/sima/SimaBEVPool.h"
+#include "nodes/sima/SimaBEVPoolPlan.h"
+#include "nodes/sima/SimaPillarScatter.h"
+#include "nodes/sima/SimaVoxelize.h"
 #include "nodes/sima/Cast.h"
 #include "nodes/sima/CastTess.h"
 #include "nodes/sima/Dequant.h"
@@ -3974,6 +3978,69 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit)
       .def_rw("axis", &simaai::neat::SimaArgMaxOptions::axis)
       .def_rw("keepdims", &simaai::neat::SimaArgMaxOptions::keepdims);
+  // Kernels-library LiDAR/BEV Nodes: one named kernels request each, on an explicit target.
+  nb::enum_<simaai::neat::SimaKernelTarget>(m, "SimaKernelTarget")
+      .value("A65", simaai::neat::SimaKernelTarget::A65)
+      .value("EV74", simaai::neat::SimaKernelTarget::EV74);
+  nb::enum_<simaai::neat::SimaQuantRounding>(m, "SimaQuantRounding")
+      .value("NearestEven", simaai::neat::SimaQuantRounding::NearestEven)
+      .value("TowardZero", simaai::neat::SimaQuantRounding::TowardZero)
+      .value("TowardPositive", simaai::neat::SimaQuantRounding::TowardPositive)
+      .value("TowardNegative", simaai::neat::SimaQuantRounding::TowardNegative);
+  nb::enum_<simaai::neat::SimaBEVPoolPlanFormat>(m, "SimaBEVPoolPlanFormat")
+      .value("V1", simaai::neat::SimaBEVPoolPlanFormat::V1)
+      .value("V2", simaai::neat::SimaBEVPoolPlanFormat::V2);
+  nb::class_<simaai::neat::SimaKernelQuantization>(m, "SimaKernelQuantization")
+      .def(nb::init<>())
+      .def_rw("multiplier", &simaai::neat::SimaKernelQuantization::multiplier)
+      .def_rw("zero_point", &simaai::neat::SimaKernelQuantization::zero_point)
+      .def_rw("rounding", &simaai::neat::SimaKernelQuantization::rounding);
+  nb::class_<simaai::neat::SimaVoxelizeOptions>(m, "SimaVoxelizeOptions")
+      .def(nb::init<>())
+      .def_rw("voxel_size", &simaai::neat::SimaVoxelizeOptions::voxel_size)
+      .def_rw("point_cloud_range", &simaai::neat::SimaVoxelizeOptions::point_cloud_range)
+      .def_rw("quantization", &simaai::neat::SimaVoxelizeOptions::quantization)
+      .def_rw("max_pillars", &simaai::neat::SimaVoxelizeOptions::max_pillars)
+      .def_rw("max_points_per_pillar", &simaai::neat::SimaVoxelizeOptions::max_points_per_pillar)
+      .def_rw("output_dtype", &simaai::neat::SimaVoxelizeOptions::output_dtype)
+      .def_rw("target", &simaai::neat::SimaVoxelizeOptions::target);
+  nb::class_<simaai::neat::SimaPillarScatterOptions>(m, "SimaPillarScatterOptions")
+      .def(nb::init<>())
+      .def_rw("rows", &simaai::neat::SimaPillarScatterOptions::rows)
+      .def_rw("columns", &simaai::neat::SimaPillarScatterOptions::columns)
+      .def_rw("zero_point", &simaai::neat::SimaPillarScatterOptions::zero_point)
+      .def_rw("target", &simaai::neat::SimaPillarScatterOptions::target);
+  nb::class_<simaai::neat::SimaBEVPoolPlanOptions>(m, "SimaBEVPoolPlanOptions")
+      .def(nb::init<>())
+      .def_rw("xs", &simaai::neat::SimaBEVPoolPlanOptions::xs)
+      .def_rw("ys", &simaai::neat::SimaBEVPoolPlanOptions::ys)
+      .def_rw("ds", &simaai::neat::SimaBEVPoolPlanOptions::ds)
+      .def_rw("bx", &simaai::neat::SimaBEVPoolPlanOptions::bx)
+      .def_rw("dx", &simaai::neat::SimaBEVPoolPlanOptions::dx)
+      .def_rw("nx", &simaai::neat::SimaBEVPoolPlanOptions::nx)
+      .def_rw("format", &simaai::neat::SimaBEVPoolPlanOptions::format)
+      .def_rw("context_channels", &simaai::neat::SimaBEVPoolPlanOptions::context_channels)
+      .def_rw("input_dtype", &simaai::neat::SimaBEVPoolPlanOptions::input_dtype)
+      .def_rw("workers", &simaai::neat::SimaBEVPoolPlanOptions::workers)
+      .def_rw("tile_h", &simaai::neat::SimaBEVPoolPlanOptions::tile_h)
+      .def_rw("tile_w", &simaai::neat::SimaBEVPoolPlanOptions::tile_w)
+      .def_rw("cache_plan", &simaai::neat::SimaBEVPoolPlanOptions::cache_plan)
+      .def_rw("plan_capacity_bytes", &simaai::neat::SimaBEVPoolPlanOptions::plan_capacity_bytes)
+      .def_rw("target", &simaai::neat::SimaBEVPoolPlanOptions::target);
+  nb::enum_<simaai::neat::SimaBEVPoolStorage>(m, "SimaBEVPoolStorage")
+      .value("ChannelsLast", simaai::neat::SimaBEVPoolStorage::ChannelsLast)
+      .value("Contiguous", simaai::neat::SimaBEVPoolStorage::Contiguous);
+  nb::class_<simaai::neat::SimaBEVPoolOptions>(m, "SimaBEVPoolOptions")
+      .def(nb::init<>())
+      .def_rw("cells", &simaai::neat::SimaBEVPoolOptions::cells)
+      .def_rw("depth_zero_point", &simaai::neat::SimaBEVPoolOptions::depth_zero_point)
+      .def_rw("context_zero_point", &simaai::neat::SimaBEVPoolOptions::context_zero_point)
+      .def_rw("plan_format", &simaai::neat::SimaBEVPoolOptions::plan_format)
+      .def_rw("quantization", &simaai::neat::SimaBEVPoolOptions::quantization)
+      .def_rw("input_storage", &simaai::neat::SimaBEVPoolOptions::input_storage)
+      .def_rw("output_storage", &simaai::neat::SimaBEVPoolOptions::output_storage)
+      .def_rw("output_dtype", &simaai::neat::SimaBEVPoolOptions::output_dtype)
+      .def_rw("target", &simaai::neat::SimaBEVPoolOptions::target);
   nb::enum_<simaai::neat::SimaEncodeType>(m, "SimaEncodeType")
       .value("H264", simaai::neat::SimaEncodeType::H264)
       .value("H265", simaai::neat::SimaEncodeType::H265)
@@ -4224,6 +4291,10 @@ NB_MODULE(_pyneat_core, m) {
                 "options"_a = simaai::neat::SimaRenderOptions{});
   nodes_mod.def("sima_argmax", &simaai::neat::nodes::SimaArgMax,
                 "options"_a = simaai::neat::SimaArgMaxOptions{});
+  nodes_mod.def("sima_voxelize", &simaai::neat::nodes::SimaVoxelize, "options"_a);
+  nodes_mod.def("sima_pillar_scatter", &simaai::neat::nodes::SimaPillarScatter, "options"_a);
+  nodes_mod.def("sima_bev_pool_plan", &simaai::neat::nodes::SimaBEVPoolPlan, "options"_a);
+  nodes_mod.def("sima_bev_pool", &simaai::neat::nodes::SimaBEVPool, "options"_a);
   nodes_mod.def("cast", &simaai::neat::nodes::Cast, "options"_a = simaai::neat::CastOptions{});
   nodes_mod.def("cast_tess", &simaai::neat::nodes::CastTess,
                 "options"_a = simaai::neat::CastTessOptions{});
