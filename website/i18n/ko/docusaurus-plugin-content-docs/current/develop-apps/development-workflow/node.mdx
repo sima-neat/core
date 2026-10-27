@@ -91,7 +91,7 @@ graph.add(pyneat.groups.video_input(vopt))
 | 이미지 디코딩 | `nodes::ImageDecode()` 또는 `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` 또는 `pyneat.nodes.jpeg_decode()` |
 | 원시 비디오 인코딩 | `nodes::SimaEncode(SimaEncodeOptions{...})` | `pyneat.nodes.sima_encode(options)` |
 | 인코딩된 비디오 디코딩 | `nodes::SimaDecode(SimaDecodeOptions{...})` | `pyneat.nodes.sima_decode(options)` |
-| MJPEG 카메라 프레임 디코딩 (4:2:0 또는 4:2:2) | `jpeg_output_format(...)` 다음에 `nodes::SimaDecode(...)`, 4:2:2에는 `nodes::ColorConvert(...)` 추가 | `pyneat.jpeg_output_format(...)` 다음에 `pyneat.nodes.sima_decode(...)`, 4:2:2에는 `pyneat.nodes.color_convert(...)` 추가 |
+| MJPEG 카메라 프레임 디코딩 (4:2:0 또는 4:2:2) | `jpeg_output_format(...)` 다음에 `nodes::SimaDecode(...)`, 모델 입력 형식을 같게 설정 | `pyneat.jpeg_output_format(...)` 다음에 `pyneat.nodes.sima_decode(...)`, 모델 입력 형식을 같게 설정 |
 | 비디오 크기 조정 또는 속도 제한 | `nodes::VideoScale()`, `VideoRate()`, `ImageFreeze()` | `pyneat.nodes.video_scale()`, `video_rate()`, `image_freeze()` |
 | 재사용 가능한 이미지 입력 경로 구축 | `nodes::groups::ImageInputGroup(...)` | `pyneat.groups.image_input(...)` |
 | 재사용 가능한 비디오 입력 경로 구축 | `nodes::groups::VideoInputGroup(...)` | `pyneat.groups.video_input(...)` |
@@ -158,7 +158,7 @@ RTSP의 경우 소스 형식이 표준일 때 코덱을 인식하는 그룹을 �
 
 ### MJPEG 카메라 디코딩
 
-USB 카메라는 4:2:0 또는 4:2:2 색 샘플링으로 MJPEG를 보내며, 대부분은 4:2:2를 사용합니다. 제로 카피 출력에서는 디코더가 스트림 고유의 샘플링으로만 쓸 수 있으므로, 그래프를 빌드하기 전에 이를 알아야 합니다. 카메라의 첫 프레임을 `jpeg_output_format(...)`에 전달하면 4:2:0에는 `NV12`, 4:2:2에는 `NV16`이 반환됩니다. 그 결과를 디코더의 `out_format`으로 사용하세요. NV16이면 디코더 뒤에 EV74 `ColorConvert`를 추가해 NV12로 변환하므로 그래프의 나머지 부분은 NV12를 받습니다. 인코더용 서피스를 사용하므로 `VideoSender`가 복사 없이 프레임을 받을 수 있습니다.
+USB 카메라는 4:2:0 또는 4:2:2 색 샘플링으로 MJPEG를 보내며, 대부분은 4:2:2를 사용합니다. 제로 카피 출력에서는 디코더가 스트림 고유의 샘플링으로만 쓸 수 있으므로, 그래프를 빌드하기 전에 이를 알아야 합니다. 카메라의 첫 프레임을 `jpeg_output_format(...)`에 전달하면 4:2:0에는 `NV12`, 4:2:2에는 `NV16`이 반환됩니다. 그 결과를 디코더의 `out_format`으로 사용하세요. 모델은 NV16을 직접 읽습니다. 모델의 전처리 입력 형식을 같은 값으로 설정하면 4:2:2 프레임이 변환 단계 없이 모델에 전달됩니다.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -173,14 +173,14 @@ decode.out_format = simaai::neat::jpeg_output_format(first_frame);  // NV12 or N
 decode.dec_width = 1920;
 decode.dec_height = 1080;
 decode.dec_fps = 30;
+decode.raw_output = true;  // zero-copy: the decoder writes the camera's own sampling
 graph.add(simaai::neat::nodes::JpegParse());
 graph.add(simaai::neat::nodes::SimaDecode(decode));
-if (decode.out_format == simaai::neat::FormatTag::NV16) {
-  simaai::neat::ColorConvertOptions color;
-  color.output_format = simaai::neat::ImageFormat::NV12;
-  color.surface = simaai::neat::ImageSurfaceLayout::EncoderNv12;
-  graph.add(simaai::neat::nodes::ColorConvert(color));
-}
+
+simaai::neat::Model::Options model_options;
+model_options.preprocess.color_convert.input_format =
+    decode.out_format == simaai::neat::FormatTag::NV16 ? simaai::neat::PreprocessColorFormat::NV16
+                                                       : simaai::neat::PreprocessColorFormat::NV12;
 ```
 
 </CodeTab>
@@ -194,13 +194,14 @@ decode = pyneat.SimaDecodeOptions()
 decode.type = pyneat.SimaDecodeType.MJPEG
 decode.out_format = pyneat.jpeg_output_format(first_frame)  # NV12 or NV16
 decode.dec_width, decode.dec_height, decode.dec_fps = 1920, 1080, 30
+decode.raw_output = True  # zero-copy: the decoder writes the camera's own sampling
 graph.add(pyneat.nodes.jpeg_parse())
 graph.add(pyneat.nodes.sima_decode(decode))
-if decode.out_format == pyneat.Format.NV16:
-    color = pyneat.ColorConvertOptions()
-    color.output_format = pyneat.ImageFormat.NV12
-    color.surface = pyneat.ImageSurfaceLayout.EncoderNv12
-    graph.add(pyneat.nodes.color_convert(color))
+
+model_options = pyneat.ModelOptions()
+model_options.preprocess.color_convert.input_format = (
+    pyneat.PreprocessColorFormat.NV16 if decode.out_format == pyneat.Format.NV16
+    else pyneat.PreprocessColorFormat.NV12)
 ```
 
 </CodeTab>

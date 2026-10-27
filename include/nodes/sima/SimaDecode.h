@@ -56,7 +56,7 @@ struct SimaDecodeOptions {
  * Returns `FormatTag::NV12` for 4:2:0 JPEGs and `FormatTag::NV16` for 4:2:2 JPEGs, the
  * format the decoder writes without a conversion. Call it on a camera's first MJPEG frame
  * and set it as `SimaDecodeOptions::out_format` (zero-copy `raw_output`) before building
- * the graph; for NV16, add a `nodes::ColorConvert` to NV12 after the decoder.
+ * the graph. A model reads NV16 directly (`PreprocessColorFormat::NV16`).
  *
  * @throws std::invalid_argument if the data is not a JPEG or uses another sampling.
  */

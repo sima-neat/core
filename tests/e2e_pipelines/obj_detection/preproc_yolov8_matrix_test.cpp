@@ -88,6 +88,8 @@ std::string preprocess_color_format_name(simaai::neat::PreprocessColorFormat for
     return "NV12";
   case simaai::neat::PreprocessColorFormat::I420:
     return "I420";
+  case simaai::neat::PreprocessColorFormat::NV16:
+    return "NV16";
   case simaai::neat::PreprocessColorFormat::Auto:
     break;
   }

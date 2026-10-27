@@ -91,7 +91,7 @@ graph.add(pyneat.groups.video_input(vopt))
 | Декодуйте зображення. | `nodes::ImageDecode()` або `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` або `pyneat.nodes.jpeg_decode()` |
 | Кодування сирого відео | `nodes::SimaEncode(SimaEncodeOptions{...})` | `pyneat.nodes.sima_encode(options)` |
 | Декодуйте відео, закодоване певним алгоритмом. | `nodes::SimaDecode(SimaDecodeOptions{...})` | `pyneat.nodes.sima_decode(options)` |
-| Декодуйте кадри MJPEG з камери (4:2:0 або 4:2:2) | `jpeg_output_format(...)`, потім `nodes::SimaDecode(...)`, а для 4:2:2 ще й `nodes::ColorConvert(...)` | `pyneat.jpeg_output_format(...)`, потім `pyneat.nodes.sima_decode(...)`, а для 4:2:2 ще й `pyneat.nodes.color_convert(...)` |
+| Декодуйте кадри MJPEG з камери (4:2:0 або 4:2:2) | `jpeg_output_format(...)`, потім `nodes::SimaDecode(...)`, і такий самий вхідний формат моделі | `pyneat.jpeg_output_format(...)`, потім `pyneat.nodes.sima_decode(...)`, і такий самий вхідний формат моделі |
 | Змінюйте масштаб або встановлюйте обмеження частоти відтворення відео. | `nodes::VideoScale()`, `VideoRate()`, `ImageFreeze()` | `pyneat.nodes.video_scale()`, `video_rate()`, `image_freeze()` |
 | Створіть повторно використовуваний шлях для введення зображень. | `nodes::groups::ImageInputGroup(...)` | `pyneat.groups.image_input(...)` |
 | Створіть повторно використовуваний шлях для введення відео. | `nodes::groups::VideoInputGroup(...)` | `pyneat.groups.video_input(...)` |
@@ -165,7 +165,7 @@ ffprobe -v error -rtsp_transport tcp -select_streams v:0 \
 
 ### Декодування камер MJPEG
 
-USB-камери надсилають MJPEG із субдискретизацією кольору 4:2:0 або 4:2:2; більшість використовує 4:2:2. Під час виведення без копіювання декодер записує лише власну субдискретизацію потоку, тому граф має знати її ще до побудови. Передайте перший кадр камери в `jpeg_output_format(...)`, яка повертає `NV12` для 4:2:0 і `NV16` для 4:2:2, і використайте результат як `out_format` декодера. Для NV16 додайте після декодера `ColorConvert` на EV74 у NV12, щоб решта графа отримувала NV12; поверхня кодувальника дає змогу `VideoSender` прийняти кадр без копіювання.
+USB-камери надсилають MJPEG із субдискретизацією кольору 4:2:0 або 4:2:2; більшість використовує 4:2:2. Під час виведення без копіювання декодер записує лише власну субдискретизацію потоку, тому граф має знати її ще до побудови. Передайте перший кадр камери в `jpeg_output_format(...)`, яка повертає `NV12` для 4:2:0 і `NV16` для 4:2:2, і використайте результат як `out_format` декодера. Модель читає NV16 напряму: задайте такий самий вхідний формат її попередньої обробки, і кадри 4:2:2 надходитимуть до моделі без етапу перетворення.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -180,14 +180,14 @@ decode.out_format = simaai::neat::jpeg_output_format(first_frame);  // NV12 or N
 decode.dec_width = 1920;
 decode.dec_height = 1080;
 decode.dec_fps = 30;
+decode.raw_output = true;  // zero-copy: the decoder writes the camera's own sampling
 graph.add(simaai::neat::nodes::JpegParse());
 graph.add(simaai::neat::nodes::SimaDecode(decode));
-if (decode.out_format == simaai::neat::FormatTag::NV16) {
-  simaai::neat::ColorConvertOptions color;
-  color.output_format = simaai::neat::ImageFormat::NV12;
-  color.surface = simaai::neat::ImageSurfaceLayout::EncoderNv12;
-  graph.add(simaai::neat::nodes::ColorConvert(color));
-}
+
+simaai::neat::Model::Options model_options;
+model_options.preprocess.color_convert.input_format =
+    decode.out_format == simaai::neat::FormatTag::NV16 ? simaai::neat::PreprocessColorFormat::NV16
+                                                       : simaai::neat::PreprocessColorFormat::NV12;
 ```
 
 </CodeTab>
@@ -201,13 +201,14 @@ decode = pyneat.SimaDecodeOptions()
 decode.type = pyneat.SimaDecodeType.MJPEG
 decode.out_format = pyneat.jpeg_output_format(first_frame)  # NV12 or NV16
 decode.dec_width, decode.dec_height, decode.dec_fps = 1920, 1080, 30
+decode.raw_output = True  # zero-copy: the decoder writes the camera's own sampling
 graph.add(pyneat.nodes.jpeg_parse())
 graph.add(pyneat.nodes.sima_decode(decode))
-if decode.out_format == pyneat.Format.NV16:
-    color = pyneat.ColorConvertOptions()
-    color.output_format = pyneat.ImageFormat.NV12
-    color.surface = pyneat.ImageSurfaceLayout.EncoderNv12
-    graph.add(pyneat.nodes.color_convert(color))
+
+model_options = pyneat.ModelOptions()
+model_options.preprocess.color_convert.input_format = (
+    pyneat.PreprocessColorFormat.NV16 if decode.out_format == pyneat.Format.NV16
+    else pyneat.PreprocessColorFormat.NV12)
 ```
 
 </CodeTab>
