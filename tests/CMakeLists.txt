@@ -555,6 +555,7 @@ set(UNIT_TESTS
   unit_canonical_graph_stage_admission_test
   unit_canonical_transform_lowering_test
   unit_canonical_visual_lowering_test
+  unit_metoak_depth_test
   unit_preproc_frame_adapter_test
   unit_route_graph_slice_kernel_test
   unit_modelpack_mla_handoff_segment_test
@@ -731,7 +732,7 @@ if (TARGET unit_fused_realtime_fast_path_options_test)
   target_link_libraries(unit_fused_realtime_fast_path_options_test PRIVATE SimaScheduler::ClientTestSupport)
 endif()
 
-foreach(canonical_test unit_image_transform_render_test unit_image_transform_frontends_test unit_canonical_transform_lowering_test unit_canonical_visual_lowering_test unit_preproc_frame_adapter_test)
+foreach(canonical_test unit_metoak_depth_test unit_image_transform_render_test unit_image_transform_frontends_test unit_canonical_transform_lowering_test unit_canonical_visual_lowering_test unit_preproc_frame_adapter_test)
   target_link_libraries(${canonical_test} PRIVATE
     SimaScheduler::frontend  SimaScheduler::ClientTestSupport)
 endforeach()
@@ -910,6 +911,13 @@ target_link_libraries(canonical_visual_stage_test PRIVATE
     SimaScheduler::ClientTestSupport)
 set_tests_properties(canonical_visual_stage_test PROPERTIES
   TIMEOUT 90 LABELS "strict;e2e;runtime;kernel-runner;modalix-only")
+
+# Camera-free Metoak public Graph numerical/ownership regression.
+add_pipeline_test(metoak_depth_ev_test
+  SOURCES e2e_testing/metoak_depth_ev_test.cpp LOCK_ACCELERATOR)
+target_compile_options(metoak_depth_ev_test PRIVATE -ffp-contract=off)
+set_tests_properties(metoak_depth_ev_test PROPERTIES
+  TIMEOUT 180 LABELS "strict;e2e;runtime;kernel-runner;modalix-only")
 
 # Actual EV74 image frontends; no provider skips or CPU numerical fallback.
 add_pipeline_test(image_transform_ev_test

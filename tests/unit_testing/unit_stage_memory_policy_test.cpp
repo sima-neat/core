@@ -4,6 +4,7 @@
 #include "test_main.h"
 
 #include <array>
+#include <stdexcept>
 
 namespace si = simaai::neat::pipeline_internal::sima;
 namespace sc = si::static_contract;
@@ -109,7 +110,122 @@ void check_independent_carriers(bool prefer_dms) {
           "an EV74 consumer must affect only its selected producer carrier");
 }
 
+si::StageStaticSpec checked_tensor_stage() {
+  const std::array inputs{client::TensorSpec{{16}, client::DType::Float32}};
+  const std::array outputs{client::TensorSpec{{16}, client::DType::BFloat16}};
+  auto checked = client::check_kernel({"cast", client::Hardware::A65, inputs, outputs, {}});
+  require(std::holds_alternative<client::KernelExecutable>(checked), "Cast admission failed");
+  auto recipe = std::make_shared<si::KernelStageRecipe>();
+  recipe->members = {
+      {std::get<client::KernelExecutable>(std::move(checked)), {{0, 0}}, {{0, 0}}, {}}};
+  auto result = stage("tensor", client::Hardware::A65);
+  result.native_kernel = std::move(recipe);
+  result.physical_outputs.front().size_bytes = 32;
+  result.logical_outputs.front().size_bytes = 32;
+  connect(result, "");
+  result.physical_inputs.front().size_bytes = 64;
+  result.physical_inputs.front().address_source = si::PhysicalAddressSource::DirectCarrierSpan;
+  result.input_bindings.front().cm_input_name = "public_tensor";
+  return result;
+}
+
+void check_public_tensor_routes() {
+  const auto prepare = [](si::StageStaticSpec input) {
+    si::SimaPluginStaticManifest manifest;
+    manifest.stages.push_back(std::move(input));
+    si::finalize_pipeline_storage(manifest);
+    return manifest.stages.front();
+  };
+  const auto expect_direct = [&](si::StageStaticSpec input, const char* message) {
+    const auto prepared = prepare(std::move(input));
+    require(
+        std::holds_alternative<client::DirectMemory>(prepared.frame_layout->inputs.at(0).source),
+        message);
+  };
+
+  auto external = checked_tensor_stage();
+  // Public binding ordinals are not stage-local physical/memory ordinals.
+  external.input_bindings.front().sink_pad_index = 2;
+  external.input_bindings.front().src_physical_output_index = 3;
+  external.logical_inputs.front().byte_offset = 4;
+  external.physical_inputs.front().size_bytes = 68;
+  const auto prepared = prepare(external);
+  const auto& input = prepared.frame_layout->inputs.at(0);
+  const auto* binding = std::get_if<client::PhysicalBinding>(&input.source);
+  require(binding && binding->pad == 2 && binding->binding_index == 3 &&
+              binding->byte_offset == 0 && binding->size_bytes == 68 && input.view_offset == 4,
+          "public tensor must retain its pad, binding ordinal and relative logical view");
+  require(prepared.physical_inputs.front().address_source ==
+              si::PhysicalAddressSource::DirectCarrierSpan,
+          "final placement must not rewrite earlier provenance contracts");
+
+  auto consumer = checked_tensor_stage();
+  consumer.input_bindings.front().src_stage_id = "producer";
+  si::SimaPluginStaticManifest internal;
+  internal.stages = {stage("producer", client::Hardware::A65), std::move(consumer)};
+  si::finalize_pipeline_storage(internal);
+  const auto* known = std::get_if<client::KnownFrameSpan>(
+      &internal.stages.back().frame_layout->inputs.at(0).source);
+  require(known && known->pad == 0 && known->span.size_bytes == 64,
+          "an exact internal producer must keep its known allocation span");
+
+  // The renderer sets this legacy flag even for standalone ProcessCVU nodes.
+  auto standalone = checked_tensor_stage();
+  standalone.model_managed_stage = true;
+  require(std::holds_alternative<client::PhysicalBinding>(
+              prepare(standalone).frame_layout->inputs.at(0).source),
+          "the legacy model-managed flag is not model storage provenance");
+  auto model = checked_tensor_stage();
+  model.physical_inputs.front().model_carrier_id = 17;
+  expect_direct(std::move(model), "model-derived carriers must keep their authored direct binding");
+  auto nonnative = checked_tensor_stage();
+  nonnative.native_kernel.reset();
+  expect_direct(std::move(nonnative), "non-native direct ingress must not require tensor metadata");
+  auto other_payload = checked_tensor_stage();
+  other_payload.payload_kind = si::StagePayloadKind::None;
+  expect_direct(std::move(other_payload), "other native payloads must keep their binding contract");
+
+  auto imported = checked_tensor_stage();
+  auto pinned = std::make_shared<client::FrameLayout>();
+  pinned->ownership = client::FrameOwnership::ReuseInput;
+  pinned->allocations = {{256, client::kAccessCpuA65, client::AllocationPolicy::PreserveImported}};
+  pinned->outputs = {{0, {0, 64, 32}}};
+  pinned->inputs = {{client::KnownFrameSpan{0, {0, 128, 64}}, 0}};
+  imported.frame_layout = pinned;
+  const auto retained = prepare(std::move(imported));
+  const auto* preserved =
+      std::get_if<client::KnownFrameSpan>(&retained.frame_layout->inputs.at(0).source);
+  require(preserved && preserved->span.allocation_index == 0 &&
+              preserved->span.byte_offset == 128 && preserved->span.size_bytes == 64 &&
+              retained.frame_layout->ownership == client::FrameOwnership::ReuseInput,
+          "pinned imported views must keep their exact source span");
+
+  auto image = checked_tensor_stage();
+  auto image_recipe = std::make_shared<si::KernelStageRecipe>(*image.native_kernel);
+  bool adapter_called = false;
+  image_recipe->frame_adapter_factory =
+      [&]() -> client::Result<std::shared_ptr<client::TensorStageFrameAdapter>> {
+    adapter_called = true;
+    return client::Error{client::ErrorCode::InvalidRequest, "test", "not an execution test"};
+  };
+  image.native_kernel = std::move(image_recipe);
+  const auto adapted = prepare(std::move(image));
+  require(adapted.frame_layout->inputs.empty() && !adapter_called,
+          "image adapters must retain authority over frame-dependent input binding");
+
+  auto missing_producer = checked_tensor_stage();
+  missing_producer.input_bindings.front().src_stage_id = "missing";
+  bool rejected = false;
+  try {
+    (void)prepare(std::move(missing_producer));
+  } catch (const std::invalid_argument&) {
+    rejected = true;
+  }
+  require(rejected, "an invalid explicit producer must not become public ingress");
+}
+
 void check_memory_placement() {
+  check_public_tensor_routes();
   check_independent_carriers(false);
   check_independent_carriers(true);
   si::SimaPluginStaticManifest fanout;

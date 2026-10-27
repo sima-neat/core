@@ -248,6 +248,21 @@ void require_track_klt_envelope(const TrackKLTOptions& opt) {
   require_u32_buffer_bytes(owner, "scratch", scratch);
 }
 
+void require_metoak_depth_envelope(const MetoakDepthOptions& opt) {
+  constexpr const char* owner = "MetoakDepth";
+  require_range(owner, "width", opt.width, 8, 2048);
+  require_range(owner, "height", opt.height, 8, 1536);
+  if (opt.width % 2 || opt.height % 2)
+    throw std::runtime_error("MetoakDepth: width/height must be even (4:2:0 chroma)");
+  require_range(owner, "debug", opt.debug, 0, 2);
+  require_non_negative(owner, "num_buffers", opt.num_buffers);
+  if (opt.y_name != "y_src" || opt.u_name != "u_src" || opt.v_name != "v_src" ||
+      opt.disp_name != "disp_src" || opt.bf_mm_name != "bf_mm_src" || opt.proj_name != "proj_src" ||
+      opt.rgb_output_name != "rgb_dst" || opt.depth_output_name != "depth_dst" ||
+      opt.points_output_name != "points_dst")
+    throw std::runtime_error("MetoakDepth: canonical tensor names are required");
+}
+
 std::string default_element_name(int node_index, const char* suffix) {
   return "n" + std::to_string(node_index) + "_" + suffix;
 }
@@ -658,6 +673,41 @@ NativeVisualSpec spec_from_options(const TrackKLTOptions& opt) {
   return spec;
 }
 
+NativeVisualSpec spec_from_options(const MetoakDepthOptions& opt) {
+  require_metoak_depth_envelope(opt);
+  NativeVisualSpec spec;
+  spec.graph_name = "simor_depth_map";
+  spec.input_names = {opt.y_name,    opt.u_name,     opt.v_name,
+                      opt.disp_name, opt.bf_mm_name, opt.proj_name};
+  spec.input_shapes = {
+      {opt.height, opt.width},         // y_src
+      {opt.height / 2, opt.width / 2}, // u_src
+      {opt.height / 2, opt.width / 2}, // v_src
+      {opt.height, opt.width},         // disp_src
+      {1},                             // bf_mm_src
+      {3},                             // proj_src
+  };
+  // SIMOR is batch-one: public and transport shapes are identical.
+  spec.transport_input_shapes = spec.input_shapes;
+  spec.input_dtypes = {"UINT8", "UINT8", "UINT8", "UINT16", "FP32", "FP32"};
+  // Calibration inputs are dense vectors, not images.
+  spec.input_layouts = {"HW", "HW", "HW", "HW", "", ""};
+  spec.runtime_output_names = {opt.rgb_output_name, opt.depth_output_name, opt.points_output_name};
+  spec.published_output_names = spec.runtime_output_names;
+  spec.output_shapes = {
+      {opt.height, opt.width, 3}, // rgb_dst
+      {opt.height, opt.width},    // depth_dst
+      {opt.height, opt.width, 3}, // points_dst
+  };
+  spec.transport_output_shapes = spec.output_shapes;
+  spec.output_dtypes = {"UINT8", "UINT16", "FP32"};
+  spec.output_layouts = {"HWC", "HW", "HWC"};
+  spec.logical_output_layouts = spec.output_layouts;
+  // The primary boundary description does not hide RGB or XYZ publication.
+  spec.primary_output_name = opt.depth_output_name;
+  return spec;
+}
+
 RuntimeConfig make_runtime(const FeatureHistogramOptions& opt) {
   auto runtime = make_runtime_base(spec_from_options(opt));
   runtime.width = opt.width;
@@ -712,6 +762,14 @@ RuntimeConfig make_runtime(const TrackKLTOptions& opt) {
   runtime.min_px_dist = opt.min_px_dist;
   runtime.debug = opt.debug;
   runtime.batch_size = opt.batch_size;
+  return runtime;
+}
+
+RuntimeConfig make_runtime(const MetoakDepthOptions& opt) {
+  auto runtime = make_runtime_base(spec_from_options(opt));
+  runtime.width = opt.width;
+  runtime.height = opt.height;
+  runtime.debug = opt.debug;
   return runtime;
 }
 
@@ -901,6 +959,59 @@ OutputSpec TrackKLT::output_spec(const OutputSpec& input) const {
   return tensor_output_spec("TRACK_POINTS", spec.output_shapes.front(), "FP32", input, "HW");
 }
 
+MetoakDepth::MetoakDepth(MetoakDepthOptions opt) : opt_(std::move(opt)) {}
+
+std::string MetoakDepthOptions::summary() const {
+  std::ostringstream ss;
+  ss << "MetoakDepthOptions(graph=simor_depth_map,width=" << width << ",height=" << height
+     << ",debug=" << debug << ",num_buffers=" << num_buffers
+     << ",element_name=" << quoted_or_auto(element_name) << ",y=" << quoted_or_auto(y_name)
+     << ",u=" << quoted_or_auto(u_name) << ",v=" << quoted_or_auto(v_name)
+     << ",disp=" << quoted_or_auto(disp_name) << ",bf_mm=" << quoted_or_auto(bf_mm_name)
+     << ",proj=" << quoted_or_auto(proj_name) << ",rgb_output=" << quoted_or_auto(rgb_output_name)
+     << ",depth_output=" << quoted_or_auto(depth_output_name)
+     << ",points_output=" << quoted_or_auto(points_output_name) << ",luma_shape=[" << height << ","
+     << width << "],rgb_shape=[" << height << "," << width << ",3],points_shape=[" << height << ","
+     << width << ",3])";
+  return ss.str();
+}
+
+NodeContractDefinition MetoakDepth::contract_definition() const {
+  const auto spec = spec_from_options(opt_);
+  return make_contract_definition(kind(), spec.input_names, spec.published_output_names);
+}
+
+bool MetoakDepth::compile_node_contract(const ContractCompileInput& input,
+                                        CompiledNodeContract* out, std::string* err) const {
+  const std::string name = element_names(input.node_index).front();
+  if (!compile_runtime_contract(kind(), name, contract_definition(), make_runtime(opt_), out, err))
+    return false;
+  if (opt_.num_buffers > 0)
+    out->native_execution_capacity = static_cast<std::size_t>(opt_.num_buffers);
+  return true;
+}
+
+void MetoakDepth::apply_compiled_contract(const CompiledNodeContract&, std::string* err) {
+  if (err)
+    err->clear();
+}
+
+std::vector<std::string> MetoakDepth::element_names(int node_index) const {
+  return {opt_.element_name.empty() ? default_element_name(node_index, "metoak_depth")
+                                    : opt_.element_name};
+}
+
+OutputSpec MetoakDepth::output_spec(const OutputSpec& input) const {
+  // Preserve the legacy primary depth boundary; all three tensors are published.
+  const auto spec = spec_from_options(opt_);
+  return tensor_output_spec("METOAK_DEPTH", spec.output_shapes[1], spec.output_dtypes[1], input,
+                            spec.output_layouts[1]);
+}
+
+std::string MetoakDepth::backend_fragment(int node_index) const {
+  return processcvu_backend_fragment(element_names(node_index).front());
+}
+
 } // namespace simaai::neat
 
 namespace simaai::neat::nodes {
@@ -915,5 +1026,8 @@ std::shared_ptr<simaai::neat::Node> TrackDescriptor(TrackDescriptorOptions opt) 
 }
 std::shared_ptr<simaai::neat::Node> TrackKLT(TrackKLTOptions opt) {
   return std::make_shared<simaai::neat::TrackKLT>(std::move(opt));
+}
+std::shared_ptr<simaai::neat::Node> MetoakDepth(MetoakDepthOptions opt) {
+  return std::make_shared<simaai::neat::MetoakDepth>(std::move(opt));
 }
 } // namespace simaai::neat::nodes

@@ -2423,7 +2423,7 @@ ProcessCvuGraphFamily family_enum_from_name(const std::string& graph_family) {
     return ProcessCvuGraphFamily::DetessDequant;
   }
   if (family == "feature_histogram" || family == "grider_fast" || family == "track_descriptor" ||
-      family == "track_klt") {
+      family == "track_klt" || family == "simor_depth_map") {
     return ProcessCvuGraphFamily::VisualFrontend;
   }
   return ProcessCvuGraphFamily::Unknown;
@@ -4274,7 +4274,7 @@ bool native_visual_payload_prefers_logical_input_shapes(const ProcessCvuStagePay
   const std::string family = canonical_family_name(
       !payload.graph_family.empty() ? payload.graph_family : payload.graph_name);
   return family == "feature_histogram" || family == "grider_fast" || family == "track_descriptor" ||
-         family == "track_klt";
+         family == "track_klt" || family == "simor_depth_map";
 }
 
 ProcessCvuCanonicalFacts

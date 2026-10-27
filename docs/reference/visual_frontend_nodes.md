@@ -204,3 +204,45 @@ It runs:
 - a targeted KLT no-detect ABI check;
 - a negative pre-dispatch guard check that confirms illegal batch input is
   rejected before EV74.
+
+## Metoak depth (C++)
+
+`nodes::MetoakDepth` restores the existing `MetoakDepthOptions` API. It consumes
+six named tensors and publishes RGB, depth and XYZ together. This node performs
+EV74 computation, not camera capture; synthetic tensors work without a camera.
+
+Unlike the batched visual nodes above, Metoak always uses batch one, with no
+leading batch dimension. Set even `W` in `[8,2048]` and even `H` in `[8,1536]`.
+Keep the canonical route names and supply the inputs in the order below.
+
+| Tensor | Dtype | Shape |
+| --- | --- | --- |
+| y_src | UInt8 | [H,W] |
+| u_src, v_src | UInt8 | [H/2,W/2] |
+| disp_src | UInt16 | [H,W] |
+| bf_mm_src | Float32 | [1] |
+| proj_src | Float32 | [3] |
+| rgb_dst | UInt8 | [H,W,3] |
+| depth_dst | UInt16 | [H,W] |
+| points_dst | Float32 | [H,W,3] |
+
+`y_src`, `u_src` and `v_src` are the separate I420 planes. Disparity is scaled by 32.
+Supply positive finite `bf_mm_src` (baseline × focal length, in mm) and
+`proj_src = {fx_fy, cx, cy}` for each frame; `fx_fy` must be positive and all
+three values finite. Calibration can change between frames.
+
+Depth is rounded to millimetres and saturated to UInt16; XYZ uses unrounded
+depth in metres. Zero disparity produces zero depth and NaN XYZ. All three
+outputs remain available even though depth is the primary output description.
+
+```cpp
+MetoakDepthOptions depth;
+depth.width = 640;
+depth.height = 360;
+graph.add(nodes::MetoakDepth(depth));
+```
+
+The existing `debug`, `num_buffers` and `element_name` fields remain available.
+`num_buffers = 0` uses the graph's default capacity; a positive value selects
+this stage's execution capacity. C++ is the restored public surface; this change
+does not add a Python Metoak factory.

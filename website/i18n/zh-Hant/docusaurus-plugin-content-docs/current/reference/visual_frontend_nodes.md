@@ -192,3 +192,43 @@ ctest --test-dir /workspace/core_graph_changes/build/tests \
 - 針對特定 KLT 進行的無偵測 ABI 檢查；
 - 一個在發送之前執行的負面安全檢查，用於確認是否存在非法的批次輸入。
   在 EV74 之前已被拒絕。
+
+## Metoak 深度（C++）
+
+`nodes::MetoakDepth` 恢復既有的 `MetoakDepthOptions` API。
+它接收六個具名張量，並同時發布 RGB、深度及 XYZ。
+此節點執行 EV74 運算，而非攝影機擷取；沒有攝影機也能使用合成張量。
+
+與上述支援批次的節點不同，Metoak 固定使用批次一，且沒有前置批次維度。
+將 `W` 設為 `[8,2048]` 內的偶數，`H` 設為 `[8,1536]` 內的偶數。
+保留標準路由名稱，並依下列順序提供輸入。
+
+| 張量 | 資料型別 | 形狀 |
+| --- | --- | --- |
+| y_src | UInt8 | [H,W] |
+| u_src, v_src | UInt8 | [H/2,W/2] |
+| disp_src | UInt16 | [H,W] |
+| bf_mm_src | Float32 | [1] |
+| proj_src | Float32 | [3] |
+| rgb_dst | UInt8 | [H,W,3] |
+| depth_dst | UInt16 | [H,W] |
+| points_dst | Float32 | [H,W,3] |
+
+`y_src`、`u_src`、`v_src` 為各自獨立的 I420 平面。視差縮放倍率為 32。
+每個影格都需提供正有限值 `bf_mm_src`（基線 × 焦距，mm）及
+`proj_src = {fx_fy, cx, cy}`；`fx_fy` 必須為正值，三個值皆須有限。
+校正值可以在影格之間變更。
+
+深度會四捨五入為 mm，並在 UInt16 上限飽和；XYZ 使用未捨入的深度，單位為 m。
+視差為零時，深度為零，XYZ 為 NaN。即使深度是主要輸出描述，三個輸出仍可全部取得。
+
+```cpp
+MetoakDepthOptions depth;
+depth.width = 640;
+depth.height = 360;
+graph.add(nodes::MetoakDepth(depth));
+```
+
+既有的 `debug`、`num_buffers`、`element_name` 欄位仍可使用。
+`num_buffers = 0` 使用圖的預設容量；正值指定此階段的執行容量。
+此次恢復的是 C++ 公開 API，不會新增 Python Metoak 工廠函式。
