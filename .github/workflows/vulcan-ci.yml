@@ -275,7 +275,8 @@ jobs:
     needs:
       - resolve-vulcan-config
       - detect-changes
-    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+    runs-on: [self-hosted, linux, arm64, "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}", ubuntu, default]
 
     steps:
       - name: Checkout code

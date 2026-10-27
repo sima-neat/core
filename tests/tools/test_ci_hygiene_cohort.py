@@ -48,6 +48,15 @@ def test_dependency_dag_and_publication_gate():
     assert 'publish-vulcan-artifacts' in needs('test-devkit')
 
 
+def test_hygiene_uses_vulcan_native_ubuntu_arm64_runner():
+    body = job('code-hygiene')
+    assert 'environment: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}' in body
+    assert ('runs-on: [self-hosted, linux, arm64, '
+            '"vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}", ubuntu, default]') in body
+    assert 'scripts/ci/install_code_hygiene_deps.sh' in body
+    assert needs('code-hygiene') == ['resolve-vulcan-config', 'detect-changes']
+
+
 def test_build_tooling_runs_alongside_compilation_and_gates_publication():
     assert needs('build-tooling-tests') == ['resolve-vulcan-config']
     assert 'build-tooling-tests' not in needs('resolve-compiler-cache')
