@@ -202,6 +202,7 @@ def test_validation_build_does_not_reuse_or_publish(tmp_path):
     records = {role: {'resources-checksum': {}} for role in ('host', 'card')}
     paths = {'host': ('host-key', host), 'card': ('card-key', card)}
     with patch.object(ci, 'source_metadata', return_value=(records, paths, INPUTS)), \
+         patch.object(ci, 'load_card_image', return_value=baseline['image_id']), \
          patch.object(ci, 'card_baseline', return_value='sha256:' + 'd' * 64), \
          patch.object(ci, 'existing') as existing, patch.object(ci, 'put') as put, \
          patch.object(ci, 'download', side_effect=download), \
@@ -345,3 +346,27 @@ def test_completed_run_listener_does_not_duplicate_develop_publication():
     import yaml
     worker = yaml.safe_load((HERE.parents[2]/'.github/workflows/pcie-offline.yml').read_text())
     assert "github.event.workflow_run.head_branch != 'develop'" in worker['jobs']['source']['if']
+
+
+def test_card_image_import_authenticates_original_config(tmp_path):
+    import hashlib
+    import io
+    import json
+    import tarfile
+    config = b'{"architecture":"arm64"}'
+    archive = tmp_path/'image.tar'
+    with tarfile.open(archive, 'w') as target:
+        for name, data in [('manifest.json', json.dumps([{'Config': 'config.json'}]).encode()),
+                           ('config.json', config)]:
+            member = tarfile.TarInfo(name)
+            member.size = len(data)
+            target.addfile(member, io.BytesIO(data))
+    original = 'sha256:' + hashlib.sha256(config).hexdigest()
+    imported = 'sha256:' + 'f'*64
+    with patch.object(ci, 'run', side_effect=['Loaded image: factory:baseline', imported]) as command:
+        assert ci.load_card_image(archive, original) == imported
+        assert command.call_args.args[3] == 'factory:baseline'
+    with patch.object(ci, 'run') as command:
+        with pytest.raises(ValueError, match='identity differs'):
+            ci.load_card_image(archive, 'sha256:' + '0'*64)
+        command.assert_not_called()

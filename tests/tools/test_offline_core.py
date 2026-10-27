@@ -432,6 +432,7 @@ def test_core_build_uses_only_card_baseline_and_stages_root_variant(tmp_path):
         (root.parent/assemble.CORE_ARCHIVE_NAME).write_text('validated bundle')
     with patch.object(ci, 'source_metadata', return_value=(
              {'card': {'resources-checksum': {}, 'selectable-resources': [{'resource': 'sima-neat-1-Linux-extras.tar.gz', 'checksum': baseline['sha256']}]}}, {'card': ('core-key', pub)}, {'card': 'c'*64})), \
+         patch.object(ci, 'load_card_image', return_value=baseline['image_id']), \
          patch.object(ci, 'card_baseline', return_value='sha256:' + 'd'*64), \
          patch.object(ci, 'existing', return_value=None), \
          patch.object(ci, 'download', side_effect=download), \

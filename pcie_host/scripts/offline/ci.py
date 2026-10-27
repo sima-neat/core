@@ -3,6 +3,8 @@
 import argparse
 import base64
 import json
+import hashlib
+import tarfile
 import os
 from pathlib import Path
 import re
@@ -117,6 +119,23 @@ def source_metadata(args, work):
     return records, paths, inputs
 
 
+def load_card_image(archive, expected):
+    # containerd may normalize legacy Docker config JSON during import.
+    # Authenticate the original config before accepting Docker's imported ID.
+    with tarfile.open(archive, 'r:*') as source:
+        manifests = json.load(source.extractfile('manifest.json'))
+        if len(manifests) != 1:
+            raise ValueError('card baseline must contain exactly one image')
+        config = source.extractfile(manifests[0]['Config']).read()
+        if 'sha256:' + hashlib.sha256(config).hexdigest() != expected:
+            raise ValueError('card baseline image identity differs')
+    output = run('docker', 'load', '--input', archive)
+    references = re.findall(r'^Loaded image(?: ID)?: (.+)$', output, re.MULTILINE)
+    if len(references) != 1:
+        raise ValueError('Docker did not report exactly one loaded card image')
+    return assemble.image(run('docker', 'image', 'inspect', references[0], '--format', '{{.Id}}'))
+
+
 def card_baseline(args, card, publication):
     """Resolve/provision the selected Scheduler's sysroot outside the bundle."""
     context = args.work/'card-baseline'
@@ -225,9 +244,7 @@ def build(args):
     download(args.bucket, card['key'], image_archive)
     if assemble.sha(image_archive) != card['sha256']:
         raise ValueError('card baseline image checksum differs')
-    run('docker', 'load', '--input', image_archive)
-    if run('docker', 'image', 'inspect', card['image_id'], '--format', '{{.Id}}') != card['image_id']:
-        raise ValueError('card baseline image identity differs')
+    card = dict(card, image_id=load_card_image(image_archive, card['image_id']))
     image_archive.unlink()
     card_image = card_baseline(args, card, paths['card'][1])
     spec = {'installer_revision': args.installer_revision, 'targets': {}}
