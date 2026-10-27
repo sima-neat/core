@@ -120,7 +120,7 @@ After a camera is unplugged or moved to another port, call `UsbCameraInput` agai
 
 ## Forward the camera's JPEG
 
-To send the camera's video to a viewer and also run a model on it, set `output` to `UsbCameraOutput::Jpeg`. The node then outputs the camera's JPEG frames without decoding them. Connect it to a `VideoSender` passthrough, which sends the JPEGs as RTP/JPEG without re-encoding, and to a `SimaDecode` whose `out_format` is the camera's `decoded_format`:
+To send the camera's video to a viewer without decoding it, set `output` to `UsbCameraOutput::Jpeg`. The node then outputs the camera's JPEG frames. Connect it to a `VideoSender` passthrough, which sends the JPEGs as RTP/JPEG without re-encoding:
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -128,29 +128,13 @@ To send the camera's video to a viewer and also run a model on it, set `output` 
 ```cpp
 camera.output = neat::UsbCameraOutput::Jpeg;
 
-neat::SimaDecodeOptions decode;
-decode.type = neat::SimaDecodeType::MJPEG;
-decode.out_format = neat::usb_camera_info(camera).decoded_format;  // NV12 or NV16
-decode.dec_width = 1920;
-decode.dec_height = 1080;
-decode.dec_fps = 30;
-
 auto sender = neat::nodes::groups::VideoSenderOptions::Passthrough(
     neat::nodes::groups::RtspCodec::MJPEG);
 sender.host = "127.0.0.1";
 
-neat::GraphLinkOptions video_link;
-video_link.policy = neat::GraphLinkPolicy::RealtimeLatestByStream;
-
-neat::Graph source;
-source.add(neat::nodes::UsbCameraInput(camera));
-neat::Graph decoder;
-decoder.add(neat::nodes::SimaDecode(decode));
-
 neat::Graph graph("usb_camera_forward");
-graph.connect(source, decoder);
-graph.connect(decoder, detector);  // your model Graph
-graph.connect(source, neat::nodes::groups::VideoSender(sender), video_link);
+graph.add(neat::nodes::UsbCameraInput(camera));
+graph.add(neat::nodes::groups::VideoSender(sender));
 ```
 
 </CodeTab>
@@ -159,34 +143,18 @@ graph.connect(source, neat::nodes::groups::VideoSender(sender), video_link);
 ```python
 camera.output = pyneat.UsbCameraOutput.Jpeg
 
-decode = pyneat.SimaDecodeOptions()
-decode.type = pyneat.SimaDecodeType.MJPEG
-decode.out_format = pyneat.usb_camera_info(camera).decoded_format  # NV12 or NV16
-decode.dec_width = 1920
-decode.dec_height = 1080
-decode.dec_fps = 30
-
 sender = pyneat.VideoSenderOptions.passthrough(pyneat.RtspCodec.MJPEG)
 sender.host = "127.0.0.1"
 
-video_link = pyneat.GraphLinkOptions()
-video_link.policy = pyneat.GraphLinkPolicy.RealtimeLatestByStream
-
-source = pyneat.Graph()
-source.add(pyneat.nodes.usb_camera_input(camera))
-decoder = pyneat.Graph()
-decoder.add(pyneat.nodes.sima_decode(decode))
-
 graph = pyneat.Graph("usb_camera_forward")
-graph.connect(source, decoder)
-graph.connect(decoder, detector)  # your model Graph
-graph.connect(source, pyneat.groups.video_sender(sender), video_link)
+graph.add(pyneat.nodes.usb_camera_input(camera))
+graph.add(pyneat.groups.video_sender(sender))
 ```
 
 </CodeTab>
 </CodeTabs>
 
-In this mode the camera captures into its driver's memory, so the decoder copies each frame before it decodes it. The RTP/JPEG limits in [Send Video](./video_sender.md) apply to the sender.
+In this mode the frames stay in the camera driver's memory. `SimaDecode` cannot read that memory yet: its decoder stops at the first frame with `Failed to map input buffer`. To run a model, use `UsbCameraOutput::Frames`. The RTP/JPEG limits in [Send Video](./video_sender.md) apply to the sender.
 
 ## Memory and dropped frames
 

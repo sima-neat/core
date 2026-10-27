@@ -93,8 +93,9 @@ namespace simaai::neat::nodes {
  * frame when the node is created. Frames with bytes after their JPEG end marker are
  * trimmed; incomplete or corrupt frames are dropped.
  *
- * UsbCameraOutput::Jpeg: the camera's JPEG frames in driver memory, for example for
- * `SimaDecode` and `VideoSender` passthrough on the same Graph.
+ * UsbCameraOutput::Jpeg: the camera's JPEG frames in driver memory, for example for a
+ * `VideoSender` passthrough. `SimaDecode` cannot read that memory yet (its decoder stops
+ * with "Failed to map input buffer"); decode with UsbCameraOutput::Frames.
  *
  * Building a Graph again after the camera was unplugged, moved or renumbered
  * throws; call UsbCameraInput again to open it.

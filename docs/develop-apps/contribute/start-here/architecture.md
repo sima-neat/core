@@ -1626,7 +1626,9 @@ buffers from the CMA pool that `neatdecoder` offers through
 and `copy-allowed=false` makes any frame outside that pool a stream error. The
 decoder writes the camera's native layout, NV12 for 4:2:0 and NV16 for 4:2:2.
 With `UsbCameraOutput::Jpeg` the node is only `v4l2src io-mode=mmap`, the JPEG
-capsfilter and the queue, and outputs encoded JPEG frames.
+capsfilter and the queue, and outputs encoded JPEG frames in V4L2 driver memory.
+`neatdecoder` reads only DMA-BUF, SiMaAI or system memory, so it fails such a
+frame with "Failed to map input buffer"; the mode is for passthrough consumers.
 
 ### Teardown
 
