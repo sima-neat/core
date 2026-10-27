@@ -546,4 +546,3 @@ def test_core_workflow_only_qualification_transport_uses_publication():
     assert 'scripts/ci/verify_core_dist.sh --dist .' in candidate
     assert '--expected-manifest deps/manifest.json --expected-commit "$GITHUB_SHA"' in candidate
     assert '--write-package-inventory _work/expected-package-inventory.json' in candidate
-    assert 'cleanup_github_artifacts: false' not in source

@@ -64,7 +64,7 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
       if (source == upstream->physical_outputs.end())
         throw std::invalid_argument(
             "SimaBoxDecode: head has no authoritative upstream physical carrier");
-      physical = si::specbuilders::build_physical_input_from_output(*source, *upstream);
+      physical = *source;
       physical.physical_index = logical.physical_index;
       binding->src_physical_size_bytes = source->size_bytes;
       // Bind the complete carrier; the native port applies the logical

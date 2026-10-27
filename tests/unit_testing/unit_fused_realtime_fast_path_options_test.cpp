@@ -475,6 +475,27 @@ RUN_TEST(
                   std::string::npos,
               "lane propagation must not invent a property for an undeclared consumer");
 
+      const auto lane_window = simaai::neat::session_build_propagate_terminal_consumer_lane_window(
+          "neatprocessmla name=p num-buffers = \"4\" ! application/x-test,field=opaque ! "
+          "identity note=\"num-buffers=99 !queue\" ! genericterminal num-buffers = \"2\"");
+      require(lane_window ==
+                  "neatprocessmla name=p num-buffers = \"4\" ! application/x-test,field=opaque ! "
+                  "identity note=\"num-buffers=99 !queue\" ! genericterminal num-buffers = \"4\"",
+              "terminal lane policy uses the same opaque token/value-span authority");
+      for (const std::string topology :
+           {"neatprocessmla num-buffers=7 : genericterminal num-buffers=2",
+            "( neatprocessmla num-buffers=7 ! genericterminal num-buffers=2 )",
+            "neatprocessmla num-buffers=7 ; genericterminal num-buffers=2"}) {
+        require(simaai::neat::session_build_propagate_terminal_consumer_lane_window(topology) ==
+                    topology,
+                "nontrivial topology cannot grant a lexical lane-adjacency proof");
+      }
+      const std::string undeclared =
+          "neatprocessmla num-buffers=4 ! genericterminal note=\"num-buffers=2\"";
+      require(simaai::neat::session_build_propagate_terminal_consumer_lane_window(undeclared) ==
+                  undeclared,
+              "a property-like substring is not a declared terminal lane-window contract");
+
       // Regression: ordinary Graph building renders each Node independently.
       // The Model's terminal MLA and the public SimaBoxDecode therefore become
       // adjacent only after build_pipeline_full inserts its inter-node queue.

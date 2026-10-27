@@ -25,6 +25,7 @@
 #include "nodes/io/Input.h"
 
 #include <gst/gst.h>
+#include <simaai/scheduler/client/frame_layout.h>
 
 #include <algorithm>
 #include <chrono>
@@ -107,6 +108,16 @@ private:
   std::optional<std::string> prior_;
 };
 
+void set_retention_layout(simaai::neat::pipeline_internal::sima::StageStaticSpec& stage,
+                          simaai::scheduler::client::FrameOwnership ownership,
+                          simaai::scheduler::client::AllocationPolicy policy =
+                              simaai::scheduler::client::AllocationPolicy::RequireCma) {
+  auto layout = std::make_shared<simaai::scheduler::client::FrameLayout>();
+  layout->ownership = ownership;
+  layout->allocations.push_back({4096U, 0U, policy});
+  stage.frame_layout = std::move(layout);
+}
+
 // Six logical edges are six regions of one retained native frame, not six
 // independently budgeted output carriers. Names deliberately do not identify
 // the allocation role; the container node name is not needed by this policy.
@@ -119,16 +130,14 @@ simaai::neat::BuildResult make_retention_build() {
                           "neatprocessmla name=actual_mla num-buffers=1 multi-pipeline=false ! "
                           "neatkernelrunner name=actual_detess ! "
                           "identity name=adapter ! queue max-size-buffers=1 ! appsink name=mysink";
-  build.rendered_manifest.emplace();
+  build.prepared_manifest.emplace();
   for (int i = 0; i < 3; ++i) {
     sima::StageStaticSpec stage;
     stage.element_name = i == 0 ? "actual_preproc" : i == 1 ? "actual_mla" : "actual_detess";
     stage.logical_stage_id = "logical_" + std::to_string(i);
     stage.plugin_kind = i == 1 ? "neatprocessmla" : "neatprocesscvu";
-    stage.frame_arena_size_bytes = 4096U;
-    stage.frame_arena_role =
-        i == 0 ? sima::FrameArenaRole::Allocate : sima::FrameArenaRole::ReuseInput;
-    stage.frame_arena_provenance = sima::static_contract::ArenaAllocationProvenance::CoreAllocated;
+    set_retention_layout(stage, i == 0 ? simaai::scheduler::client::FrameOwnership::Allocate
+                                       : simaai::scheduler::client::FrameOwnership::ReuseInput);
     for (int head = 0; head < 6; ++head) {
       sima::PhysicalBufferStaticSpec physical;
       physical.physical_index = head;
@@ -146,6 +155,7 @@ simaai::neat::BuildResult make_retention_build() {
         input.physical_index = head;
         stage.logical_inputs.push_back(input);
         sima::InputBindingStaticSpec binding;
+        binding.sink_pad_index = 0;
         binding.local_logical_input_index = head;
         binding.src_stage_index = i - 1;
         binding.src_stage_id = "logical_" + std::to_string(i - 1);
@@ -154,7 +164,7 @@ simaai::neat::BuildResult make_retention_build() {
         stage.input_bindings.push_back(binding);
       }
     }
-    build.rendered_manifest->stages.push_back(std::move(stage));
+    build.prepared_manifest->stages.push_back(std::move(stage));
   }
   return build;
 }
@@ -164,7 +174,7 @@ simaai::neat::BuildResult make_retention_build() {
 // regions. Local source physical ordinals are not global producer identities.
 simaai::neat::BuildResult make_value_bound_retention_build() {
   auto build = make_retention_build();
-  auto& stages = build.rendered_manifest->stages;
+  auto& stages = build.prepared_manifest->stages;
   auto& preproc = stages[0];
   preproc.logical_outputs.resize(1U);
   preproc.physical_outputs.resize(1U);
@@ -204,6 +214,7 @@ simaai::neat::BuildResult make_value_bound_retention_build() {
 void require_native_retention_pool_policy() {
   using namespace simaai::neat;
   namespace sima = pipeline_internal::sima;
+  namespace client = simaai::scheduler::client;
   const auto check = [](const BuildResult& build, const std::string& pipeline,
                         const std::string& owner, int depth = 1, int floor = 2) {
     std::size_t floors = 0U;
@@ -249,7 +260,7 @@ void require_native_retention_pool_policy() {
   auto value_bound = make_value_bound_retention_build();
   check(value_bound, session_build_clamp_sync_build_result(value_bound, -1), "actual_preproc");
   auto mixed = make_value_bound_retention_build();
-  auto& mixed_stage = mixed.rendered_manifest->stages.back();
+  auto& mixed_stage = mixed.prepared_manifest->stages.back();
   auto external_physical = mixed_stage.physical_inputs.front();
   external_physical.physical_index = 6;
   external_physical.address_source = sima::PhysicalAddressSource::RuntimePhysicalBinding;
@@ -271,7 +282,7 @@ void require_native_retention_pool_policy() {
   check(caps_bound, session_build_clamp_sync_build_result(caps_bound, -1), "actual_preproc");
   std::string edge_error;
   const auto edges = sima::edgecontract::resolve_consumer_edge_contracts_exact(
-      *value_bound.rendered_manifest, 2U, &edge_error);
+      *value_bound.prepared_manifest, 2U, &edge_error);
   require(edge_error.empty() && edges.size() == 6U,
           "authored head identities must resolve six selector-free packed-parent edges");
   for (std::size_t head = 0; head < edges.size(); ++head) {
@@ -279,17 +290,17 @@ void require_native_retention_pool_policy() {
         edges[head].producer_stage_index == 1U &&
             edges[head].producer_logical_output->logical_index == static_cast<int>(head) &&
             edges[head].producer_physical_output->physical_index == 0 &&
-            edges[head].binding == &value_bound.rendered_manifest->stages[2].input_bindings[head],
+            edges[head].binding == &value_bound.prepared_manifest->stages[2].input_bindings[head],
         "exact producer resolution must preserve each logical head, backing parent and binding");
   }
-  std::swap(value_bound.rendered_manifest->stages[0], value_bound.rendered_manifest->stages[2]);
+  std::swap(value_bound.prepared_manifest->stages[0], value_bound.prepared_manifest->stages[2]);
   check(value_bound, session_build_clamp_sync_build_result(value_bound, -1), "actual_preproc");
   value_bound = make_value_bound_retention_build();
-  value_bound.rendered_manifest->stages[0].logical_outputs[0].logical_name =
+  value_bound.prepared_manifest->stages[0].logical_outputs[0].logical_name =
       "MLA_0_ofm_unpack_transform_0";
   reject(value_bound, "ambiguous authored producer value");
   value_bound = make_value_bound_retention_build();
-  value_bound.rendered_manifest->stages[2].input_bindings[0].cm_input_name = "missing_value";
+  value_bound.prepared_manifest->stages[2].input_bindings[0].cm_input_name = "missing_value";
   reject(value_bound, "no producer for authored value");
 
   auto build = make_retention_build();
@@ -299,11 +310,12 @@ void require_native_retention_pool_policy() {
   require(session_build_clamp_sync_build_result(build, 1) == clamped,
           "retention floor and both legacy clamp exclusions must be idempotent");
   build.kernel_runner_output_pool_capacity = 7;
+  build.kernel_runner_output_pool_minimum = 7;
   check(build, session_build_clamp_sync_build_result(build, 1), "actual_preproc", 1, 7);
   build = make_retention_build();
   check(build, session_build_clamp_sync_build_result(build, 4), "", 4);
-  build.rendered_manifest->stages[2].input_bindings[0].src_stage_index = 0;
-  build.rendered_manifest->stages[2].input_bindings[0].src_stage_id = "logical_0";
+  build.prepared_manifest->stages[2].input_bindings[0].src_stage_index = 0;
+  build.prepared_manifest->stages[2].input_bindings[0].src_stage_id = "logical_0";
   check(build, session_build_clamp_sync_build_result(build, 1), "actual_preproc");
 
   build = make_retention_build();
@@ -314,25 +326,30 @@ void require_native_retention_pool_policy() {
       "neatprocessmla name=branch_actual_mla num-buffers=1 ! "
       "neatkernelrunner name=branch_actual_detess ! "
       "identity name=adapter ! queue max-size-buffers=1 ! appsink name=branch_mysink";
+  for (auto& stage : build.prepared_manifest->stages) {
+    stage.element_name = apply_name_transform(build.name_transform, stage.element_name);
+    stage.logical_stage_id = apply_name_transform(build.name_transform, stage.logical_stage_id);
+    for (auto& binding : stage.input_bindings)
+      binding.src_stage_id = apply_name_transform(build.name_transform, binding.src_stage_id);
+  }
   check(build, session_build_clamp_sync_build_result(build, 1), "branch_actual_preproc");
 
   build = make_retention_build();
-  build.rendered_manifest->stages[1].frame_arena_role = sima::FrameArenaRole::Allocate;
+  set_retention_layout(build.prepared_manifest->stages[1], client::FrameOwnership::Allocate);
   check(build, session_build_clamp_sync_build_result(build, 1), "actual_mla");
-  build.rendered_manifest->stages[2].frame_arena_role = sima::FrameArenaRole::Allocate;
+  set_retention_layout(build.prepared_manifest->stages[2], client::FrameOwnership::Allocate);
   check(build, session_build_clamp_sync_build_result(build, 1), "actual_detess");
   build.pipeline_string = "appsrc name=input ! neatkernelrunner name=actual_preproc ! "
                           "neatprocessmla name=actual_mla num-buffers=1 ! "
                           "queue max-size-buffers=1 ! appsink name=mysink";
-  build.rendered_manifest->stages.pop_back();
+  build.prepared_manifest->stages.pop_back();
   check(build, session_build_clamp_sync_build_result(build, 1), "actual_mla");
 
   build = make_retention_build();
-  build.rendered_manifest->stages[0].frame_arena_role = sima::FrameArenaRole::ReuseInput;
-  build.rendered_manifest->stages[0].frame_arena_provenance =
-      sima::static_contract::ArenaAllocationProvenance::ExternalAdopted;
+  set_retention_layout(build.prepared_manifest->stages[0], client::FrameOwnership::ReuseInput,
+                       client::AllocationPolicy::PreserveImported);
   check(build, session_build_clamp_sync_build_result(build, 1), "");
-  build.rendered_manifest->stages[0].input_bindings.push_back(
+  build.prepared_manifest->stages[0].input_bindings.push_back(
       sima::InputBindingStaticSpec{.cm_input_name = "external_value"});
   check(build, session_build_clamp_sync_build_result(build, 1), "");
 
@@ -340,44 +357,46 @@ void require_native_retention_pool_policy() {
   build.pipeline_string = "appsrc name=input ! neatprocessmla name=actual_mla num-buffers=1 ! "
                           "neatkernelrunner name=actual_detess ! queue max-size-buffers=1 ! "
                           "appsink name=mysink";
-  build.rendered_manifest->stages.erase(build.rendered_manifest->stages.begin());
-  build.rendered_manifest->stages[0].frame_arena_role = sima::FrameArenaRole::ReuseInput;
-  build.rendered_manifest->stages[0].input_bindings[0].src_stage_index = -1;
-  build.rendered_manifest->stages[0].input_bindings[0].src_stage_id.clear();
-  for (auto& binding : build.rendered_manifest->stages[1].input_bindings) {
+  build.prepared_manifest->stages.erase(build.prepared_manifest->stages.begin());
+  set_retention_layout(build.prepared_manifest->stages[0], client::FrameOwnership::ReuseInput);
+  build.prepared_manifest->stages[0].input_bindings[0].src_stage_index = -1;
+  build.prepared_manifest->stages[0].input_bindings[0].src_stage_id.clear();
+  for (auto& binding : build.prepared_manifest->stages[1].input_bindings) {
     binding.src_stage_index = 0;
     binding.src_stage_id = "logical_1";
   }
   check(build, session_build_clamp_sync_build_result(build, 1), "");
 
   build = make_retention_build();
-  build.rendered_manifest->stages[2].input_bindings[0].src_stage_index = -1;
-  build.rendered_manifest->stages[2].input_bindings[0].src_stage_id.clear();
+  build.prepared_manifest->stages[2].input_bindings[0].src_stage_index = -1;
+  build.prepared_manifest->stages[2].input_bindings[0].src_stage_id.clear();
   reject(build, "omits an explicit producer");
   build = make_retention_build();
-  build.rendered_manifest->stages[2].input_bindings[0].src_stage_id = "logical_0";
+  build.prepared_manifest->stages[2].input_bindings[0].src_stage_id = "logical_0";
   reject(build, "conflicting producer");
   build = make_retention_build();
-  build.rendered_manifest->stages[0].logical_stage_id = "logical_1";
+  build.prepared_manifest->stages[0].logical_stage_id = "logical_1";
   reject(build, "ambiguous producer");
   build = make_retention_build();
-  build.rendered_manifest->stages[0].element_name = "actual_mla";
+  build.prepared_manifest->stages[0].element_name = "actual_mla";
   reject(build, "duplicate typed element");
   build = make_retention_build();
   build.pipeline_string.insert(0, "identity name=actual_preproc ! ");
   reject(build, "not uniquely rendered");
   build = make_retention_build();
-  for (auto& binding : build.rendered_manifest->stages[1].input_bindings) {
+  for (auto& binding : build.prepared_manifest->stages[1].input_bindings) {
     binding.src_stage_index = 2;
     binding.src_stage_id = "logical_2";
   }
   reject(build, "cycle at stage");
   build = make_retention_build();
-  build.rendered_manifest->stages[1].frame_arena_role = sima::FrameArenaRole::Allocate;
-  auto& split_binding = build.rendered_manifest->stages[2].input_bindings[0];
+  set_retention_layout(build.prepared_manifest->stages[1], client::FrameOwnership::Allocate);
+  auto& split_binding = build.prepared_manifest->stages[2].input_bindings[0];
   split_binding.src_stage_index = 0;
   split_binding.src_stage_id = "logical_0";
   reject(build, "different carrier origins");
+  split_binding.sink_pad_index = 1;
+  check(build, session_build_clamp_sync_build_result(build, 1), "actual_mla");
   build = make_retention_build();
   build.pipeline_string += " ! appsink name=second_sink";
   reject(build, "expected exactly");
@@ -400,7 +419,7 @@ void require_native_retention_pool_policy() {
               materialized.find("output-pool-min-buffers=") == std::string::npos,
           "unrelated native topology must not reject a non-native terminal materializer");
   build = make_retention_build();
-  build.rendered_manifest.reset();
+  build.prepared_manifest.reset();
   const auto untyped = session_build_clamp_sync_build_result(build, 1);
   for (const auto& element : sima::parse_pipeline_elements(untyped)) {
     if (element.plugin == "neatkernelrunner") {
@@ -409,8 +428,8 @@ void require_native_retention_pool_policy() {
               "untyped runner must not acquire legacy execution properties");
     }
   }
-  require(build.kernel_runner_output_pool_capacity == 0,
-          "missing typed ownership must not invent a Runtime retention budget");
+  require(build.kernel_runner_capacity == 1 && build.kernel_runner_output_pool_capacity == 2,
+          "untyped routes must retain only the baseline synchronous budget");
 }
 
 void require_shared_arena_budget() {
@@ -421,21 +440,22 @@ void require_shared_arena_budget() {
     options.queue_depth = depth;
     BuildResult build;
     session_build_initialize_kernel_runner_budget(&build, nullptr);
+    const auto base_pool_capacity = build.kernel_runner_output_pool_capacity;
     auto stream = session_build_make_stream_options(options, RunMode::Async);
     session_build_reserve_kernel_runner_outputs(build, stream);
-    require(build.kernel_runner_capacity == 1,
+    require(build.kernel_runner_capacity == 4,
             "retained arenas must not increase execution concurrency");
-    require(build.kernel_runner_output_pool_capacity == static_cast<std::size_t>(depth + 4),
+    require(build.kernel_runner_output_pool_capacity == static_cast<std::size_t>(depth + 7),
             "source and input graphs must reserve the same retained arena window");
     build.kernel_runner_output_pool_capacity += 2;
     session_build_reserve_kernel_runner_outputs(build, stream);
-    require(build.kernel_runner_output_pool_capacity == static_cast<std::size_t>(depth + 6),
+    require(build.kernel_runner_output_pool_capacity == static_cast<std::size_t>(depth + 9),
             "retention budgeting must preserve a larger explicit pool");
-    build.kernel_runner_output_pool_capacity = 2;
+    build.kernel_runner_output_pool_capacity = base_pool_capacity;
     options.output_memory = OutputMemory::Owned;
     stream = session_build_make_stream_options(options, RunMode::Async);
     session_build_reserve_kernel_runner_outputs(build, stream);
-    require(build.kernel_runner_output_pool_capacity == 2,
+    require(build.kernel_runner_output_pool_capacity == base_pool_capacity,
             "owned output must not reserve zero-copy retention slots");
   }
 }

@@ -1,6 +1,10 @@
 #include "HostPcieOutputLayout.h"
 #include "HostPcieTensorSetMeta.h"
 
+#include <neat_pcie_return_layout.h>
+
+#include <array>
+#include <bit>
 #include <cstring>
 #include <iostream>
 #include <limits>
@@ -14,11 +18,16 @@ void check(bool condition, const char* message) {
     throw std::runtime_error(message);
 }
 
-GstCaps* caps(std::uint64_t raw, std::initializer_list<std::uint64_t> pairs) {
+GstCaps* caps(std::uint64_t raw, std::initializer_list<std::uint64_t> pairs,
+              const char* format = nullptr) {
   auto* c = gst_caps_new_empty_simple("application/vnd.simaai.tensor");
   auto* s = gst_caps_get_structure(c, 0);
-  gst_structure_set(s, "pcie-return-layout-version", G_TYPE_UINT, 2u, "pcie-return-raw-bytes",
-                    G_TYPE_UINT64, static_cast<guint64>(raw), nullptr);
+  gst_structure_set(s, "pcie-return-layout-version", G_TYPE_UINT, NEAT_PCIE_RETURN_CAPS_VERSION,
+                    "pcie-return-raw-bytes", G_TYPE_UINT64, static_cast<guint64>(raw),
+                    "representation", G_TYPE_STRING, "tensor-set", "storage", G_TYPE_STRING,
+                    "tensorbuffer", nullptr);
+  if (format)
+    gst_structure_set(s, "format", G_TYPE_STRING, format, nullptr);
   GValue array = G_VALUE_INIT;
   GValue value = G_VALUE_INIT;
   g_value_init(&array, GST_TYPE_ARRAY);
@@ -64,7 +73,7 @@ int main() {
     check(layout.raw_bytes == 16, "raw extent lost");
     check(layout.facts.outputs[0].payload_offset == 12 &&
               layout.facts.outputs[1].payload_offset == 0,
-          "physical order lost");
+          "logical output order lost");
     auto owner = std::make_shared<MappedSample>();
     auto* buffer = gst_buffer_new_allocate(nullptr, 16, nullptr);
     const char bytes[] = "BBBB--------AAAA";
@@ -91,24 +100,27 @@ int main() {
     rejects(facts, caps(16, {0, 4, 2, 4}));
     rejects(facts, caps(16, {15, 4, 0, 4}));
     rejects(facts, caps(16, {12, 3, 0, 4}));
+    rejects(facts, caps(16, {8, 5, 0, 4}));
+    rejects(facts, caps(16, {12, 4}));
     rejects(facts, caps(16, {12, 4, 0}));
     rejects(facts, caps(16, {std::numeric_limits<std::uint64_t>::max(), 4, 0, 4}));
     auto* bad_version = caps(16, {12, 4, 0, 4});
     gst_structure_set(gst_caps_get_structure(bad_version, 0), "pcie-return-layout-version",
-                      G_TYPE_UINT, 99u, nullptr);
+                      G_TYPE_UINT, NEAT_PCIE_RETURN_CAPS_VERSION - 1u, nullptr);
     rejects(facts, bad_version);
-    auto* legacy = gst_caps_new_empty_simple("application/vnd.simaai.tensor");
-    check(resolve_output_layout(facts, legacy).facts.outputs[1].payload_offset == 4,
-          "legacy packed layout changed");
-    gst_caps_unref(legacy);
+    auto* byte_stream = caps(0, {}, "BBOX");
+    check(resolve_output_layout(facts, byte_stream).raw_bytes == 0,
+          "variable byte-stream mode changed");
+    gst_caps_unref(byte_stream);
 
-    // MLA-only logical heads can be strided views within one packed carrier.
+    // MLA-only reservation includes padding; the logical region is its exact
+    // strided access footprint, independent of the allocation's capacity.
     facts.packed_output_bytes = 8;
     first.shape = {2, 2};
     first.transport_strides_bytes = {4, 1};
     first.payload_offset = 1;
     facts.outputs = {first};
-    auto* padded = caps(24, {16, 8});
+    auto* padded = caps(24, {17, 6});
     facts.dense_output_bytes = 4;
     auto padded_layout = resolve_output_layout(facts, padded);
     check(padded_layout.facts.outputs[0].payload_offset == 17, "intra-carrier offset lost");
@@ -130,6 +142,59 @@ int main() {
     first.payload_offset = 3; // Six-byte strided span would cross the carrier.
     facts.outputs = {first};
     rejects(facts, padded);
+
+    // Aliased logical outputs must retain their MPK-relative view positions.
+    first.shape = {4};
+    first.transport_strides_bytes.clear();
+    first.payload_offset = 0;
+    second = first;
+    second.name = "second";
+    second.payload_offset = 2;
+    facts.outputs = {first, second};
+    facts.dense_output_bytes = 0;
+    auto* aliases = caps(32, {16, 4, 18, 4});
+    const auto alias_layout = resolve_output_layout(facts, aliases);
+    check(alias_layout.facts.outputs[0].payload_offset == 16 &&
+              alias_layout.facts.outputs[1].payload_offset == 18,
+          "logical aliases lost their relative offset");
+    gst_caps_unref(aliases);
+    rejects(facts, caps(32, {16, 4, 19, 4}));
+    rejects(facts, caps(32, {16, 4, 24, 4}));
+
+    // A BBOX view can follow private scratch and allocation tail padding.
+    constexpr std::uint32_t scratch_count = 244;
+    const std::array<std::uint32_t, 7> bbox{1, 10, 20, 30, 40, std::bit_cast<std::uint32_t>(0.9f),
+                                            7};
+    auto* bbox_caps = caps(128, {64, sizeof(bbox)}, "BBOX");
+    const auto bbox_layout = resolve_output_layout(facts, bbox_caps);
+    check(bbox_layout.raw_bytes == 128 && bbox_layout.facts.outputs.size() == 1 &&
+              bbox_layout.facts.outputs[0].payload_offset == 64 &&
+              bbox_layout.facts.outputs[0].size_bytes == sizeof(bbox),
+          "BBOX logical span was replaced by the reserved allocation");
+    auto bbox_owner = std::make_shared<MappedSample>();
+    auto* bbox_buffer = gst_buffer_new_allocate(nullptr, 128, nullptr);
+    gst_buffer_fill(bbox_buffer, 0, &scratch_count, sizeof(scratch_count));
+    gst_buffer_fill(bbox_buffer, 64, bbox.data(), sizeof(bbox));
+    bbox_owner->sample = gst_sample_new(bbox_buffer, bbox_caps, nullptr, nullptr);
+    bbox_owner->buffer = bbox_buffer;
+    check(gst_buffer_map(bbox_buffer, &bbox_owner->map, GST_MAP_READ), "BBOX map failed");
+    bbox_owner->mapped = true;
+    gst_buffer_unref(bbox_buffer);
+    gst_caps_unref(bbox_caps);
+    auto bbox_tensors = tensors_from_output_payload(bbox_owner, bbox_layout.facts);
+    check(bbox_tensors.size() == 1 && bbox_tensors[0].route.name == "BBOX" &&
+              bbox_tensors[0].dtype == simaai::neat::pcie::TensorDType::UInt8 &&
+              bbox_tensors[0].shape == std::vector<std::int64_t>({sizeof(bbox)}) &&
+              bbox_tensors[0].data == bbox_owner->map.data + 64 &&
+              bbox_tensors[0].size_bytes == sizeof(bbox),
+          "BBOX public view contract changed");
+    std::weak_ptr<MappedSample> bbox_weak = bbox_owner;
+    bbox_owner.reset();
+    check(!bbox_weak.expired() && std::memcmp(bbox_tensors[0].data, bbox.data(), sizeof(bbox)) == 0,
+          "BBOX view read scratch bytes or lost its owner");
+    bbox_tensors.clear();
+    check(bbox_weak.expired(), "BBOX output owner leaked");
+    rejects(facts, caps(128, {64, sizeof(bbox), 0, 4}, "BBOX"));
     std::cout << "PCIe output layout tests passed\n";
     return 0;
   } catch (const std::exception& e) {

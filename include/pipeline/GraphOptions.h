@@ -388,7 +388,7 @@ struct GraphOptions {
   /// 0 preserves the single-chain consumer path and a positive value inserts
   /// bounded, non-leaky queues before CVU, MLA, and decode stages (never before
   /// the terminal Output). The numerical Runner also derives its bounded
-  /// execution capacity from this value (1..64, with 0 selecting one slot).
+  /// execution capacity from this value (1..64, with 0 selecting four slots).
   /// This does not override the MLA output pool or RunOptions::queue_depth.
   int async_queue_depth = 0;
 

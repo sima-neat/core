@@ -37,20 +37,18 @@ kernel_runner_stage_budget(std::optional<std::size_t> authored_capacity, std::si
 [[nodiscard]] std::size_t kernel_runner_ev_device_lanes(
     std::span<const ::simaai::scheduler::client::StageAttachment> attachments);
 
-// Prepare every native stage before attaching any of them. Placement, storage
+// Prepare every stage before attaching any of them. Placement, storage
 // and numerical contracts are resolved once while the graph is stopped.
-struct KernelRunnerStageRequest {
+struct SchedulerStageRequest {
   std::string_view element_name;
-  std::string_view stage_key;
   std::size_t capacity = 1;
   std::size_t output_pool_capacity = 0;
   std::string_view compact_sink;
-  const StageStaticSpec* native_stage = nullptr; // Borrowed for cold preparation only.
+  const StageStaticSpec* stage = nullptr; // Borrowed for cold preparation only.
   std::string_view terminal_host_sink;
 };
 [[nodiscard]] ::simaai::scheduler::client::Status
-prepare_and_attach_kernel_runners(GstElement* pipeline,
-                                  std::span<const KernelRunnerStageRequest> requests,
-                                  std::size_t a65_workers = 2);
+prepare_and_attach_stages(GstElement* pipeline, std::span<const SchedulerStageRequest> requests,
+                          std::size_t a65_workers = 2);
 
 } // namespace simaai::neat::pipeline_internal::sima

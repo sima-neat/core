@@ -149,7 +149,7 @@ graph.add(pyneat.nodes.output(
 | 設定 | 制限する対象 |
 | --- | --- |
 | アプリケーションの処理中ウィンドウ | 受け入れ済みで、アプリケーションがまだ出力を消費していない入力。push/pull ループで管理します。 |
-| `advanced_execution.internal_queue_depth` | 内部に挿入されるキューと数値演算 Runner の実行容量。Runner 容量は `1`–`64` に制限され、未設定またはデフォルトの深さでは Runner スロットを 1 つ選びます。 |
+| `advanced_execution.internal_queue_depth` | 内部に挿入されるキューと数値演算 Runner の実行容量。Runner 容量は `1`–`64` に制限され、未設定またはデフォルトの深さでは非同期実行に 4 スロット、同期実行に 1 スロットを使います。 |
 | `advanced_execution.inference_output_buffers` | MLA ステージのバッファリング。アプリケーションやランタイムのキュー深度を変更しても、この設定の代わりにはなりません。 |
 | `RunOptions::queue_depth` | フレームワークの入力キューと内部ランタイムキュー。アクセラレータの容量ではありません。 |
 | `OutputOptions` | 公開出力のバッファリングとドロップ動作。ドロップなしで完了した処理を測定する場合は `EveryFrame(...)` を使います。 |

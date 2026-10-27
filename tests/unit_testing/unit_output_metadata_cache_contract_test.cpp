@@ -8,7 +8,7 @@
 #include "pipeline/DetectionTypes.h"
 #include "pipeline/FeatureTypes.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
-#include "pipeline/internal/sima/PreparedRuntimeBuild.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 
 namespace {
@@ -115,6 +115,47 @@ void producer_wire_publication_survives_conversion() {
       }
     }
   }
+}
+
+void model_tensor_publication_caps_match_dense_and_packed_consumers() {
+  namespace sima = neat::pipeline_internal::sima;
+  sima::StageStaticSpec stage;
+  stage.element_name = stage.logical_stage_id = "text-encoder-mla";
+  stage.plugin_kind = "processmla";
+  stage.mla_program = std::make_shared<const client::MlaProgram>();
+  stage.physical_outputs = {sima::specbuilders::build_physical_buffer_static_spec(
+      0, 0, 8192, sima::DeviceKind::Mla, "MLA_0")};
+  stage.logical_outputs = {sima::specbuilders::build_logical_output_static_spec(
+      0, 0, 0, 0, 0, {1, 16, 256}, "BF16", "", "features", "MLA_0", "MLA_0", 0, 8192)};
+  stage.output_order = {
+      sima::specbuilders::build_output_route_static_spec(0, 0, 0, "features", "MLA_0")};
+  const std::shared_ptr<GstCaps> dense(
+      gst_caps_from_string("application/vnd.simaai.tensor,format=EVXX_BFLOAT16,"
+                           "dtype=EVXX_BFLOAT16,rank=3,dim0=1,dim1=16,dim2=256,"
+                           "shape=(string)\"1,16,256\""),
+      gst_caps_unref);
+  const std::shared_ptr<GstCaps> packed(
+      gst_caps_from_string("application/vnd.simaai.tensor,representation=tensor-set,"
+                           "storage=tensorbuffer"),
+      gst_caps_unref);
+  client::TensorStagePublication publication;
+  std::string error;
+  require(sima::build_kernel_stage_publication(stage, &publication, &error),
+          "build single-output MLA publication: " + error);
+  require(gst_caps_is_subset(publication.output_caps.get(), dense.get()),
+          "single MLA output must satisfy the following dense BF16 Cast contract");
+  require(gst_caps_is_subset(publication.output_caps.get(), packed.get()),
+          "fixed MLA output must retain compatibility with packed tensor-set consumers");
+  auto second = stage.logical_outputs.front();
+  second.logical_index = second.backend_output_index = second.output_slot = 1;
+  stage.logical_outputs.push_back(std::move(second));
+  stage.output_order.push_back(
+      sima::specbuilders::build_output_route_static_spec(1, 1, 1, "features2", "MLA_0"));
+  require(sima::build_kernel_stage_publication(stage, &publication, &error),
+          "build multi-output MLA publication: " + error);
+  require(gst_caps_is_equal(publication.output_caps.get(), packed.get()) &&
+              !gst_caps_is_subset(publication.output_caps.get(), dense.get()),
+          "multi-output MLA must keep generic tensor-set caps rather than one tensor's shape");
 }
 
 void require_retained_sample_storage(const neat::Tensor& tensor, GstSample* source,
@@ -827,6 +868,7 @@ int main(int argc, char** argv) {
     neat::gst_init_once();
     const std::string selected = argc > 1 ? argv[1] : "0";
     if (selected == "publication") {
+      model_tensor_publication_caps_match_dense_and_packed_consumers();
       producer_wire_publication_survives_conversion();
     } else if (selected == "bounds") {
       warm_storage_extent_is_checked();

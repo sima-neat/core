@@ -264,23 +264,6 @@ TensorList tensors_from_output_payload(const std::shared_ptr<MappedSample>& owne
 
 namespace {
 
-bool sample_has_bbox_caps(GstSample* sample) {
-  GstCaps* caps = gst_sample_get_caps(sample);
-  if (!caps || gst_caps_is_empty(caps)) {
-    return false;
-  }
-
-  const GstStructure* structure = gst_caps_get_structure(caps, 0);
-  if (!structure) {
-    return false;
-  }
-
-  const char* media_type = gst_structure_get_name(structure);
-  const char* format = gst_structure_get_string(structure, "format");
-  return media_type && std::strcmp(media_type, "application/vnd.simaai.tensor") == 0 && format &&
-         std::strcmp(format, "BBOX") == 0;
-}
-
 TensorList bbox_tensor_from_output_payload(const std::shared_ptr<MappedSample>& owner) {
   TensorList out;
   if (!owner || !owner->map.data) {
@@ -303,14 +286,6 @@ TensorList bbox_tensor_from_output_payload(const std::shared_ptr<MappedSample>& 
   tensor.route.physical_index = 0;
   out.push_back(std::move(tensor));
   return out;
-}
-
-TensorList tensors_from_output_sample(const std::shared_ptr<MappedSample>& owner,
-                                      const PcieModelFacts& facts, const bool expects_bbox_output) {
-  if (expects_bbox_output || (owner && sample_has_bbox_caps(owner->sample))) {
-    return bbox_tensor_from_output_payload(owner);
-  }
-  return tensors_from_output_payload(owner, facts);
 }
 
 } // namespace
@@ -445,15 +420,16 @@ std::optional<RuntimeInferenceResult> HostPcieChannel::pull_result(int timeout_m
   if (!owner->buffer || !gst_buffer_map(owner->buffer, &owner->map, GST_MAP_READ))
     throw std::runtime_error("PCIe output cannot be mapped for public tensor access");
   owner->mapped = true;
-  if (!expects_bbox_output_ && !sample_has_bbox_caps(owner->sample)) {
-    if (!output_layout_)
-      output_layout_ = resolve_output_layout(facts_, gst_sample_get_caps(owner->sample));
-    if (output_layout_->raw_bytes && owner->map.size != output_layout_->raw_bytes)
-      throw std::runtime_error("PCIe raw output extent differs from the negotiated layout");
-  }
-  return RuntimeInferenceResult{
-      received->request_id,
-      tensors_from_output_sample(owner, output_layout_ ? output_layout_->facts : facts_,
-                                 expects_bbox_output_)};
+  if (!output_layout_)
+    output_layout_ = resolve_output_layout(facts_, gst_sample_get_caps(owner->sample));
+  if (output_layout_->raw_bytes && owner->map.size != output_layout_->raw_bytes)
+    throw std::runtime_error("PCIe raw output extent differs from the negotiated layout");
+  const bool byte_stream_bbox =
+      !output_layout_->raw_bytes &&
+      (expects_bbox_output_ || is_bbox_output_caps(gst_sample_get_caps(owner->sample)));
+  return RuntimeInferenceResult{received->request_id,
+                                byte_stream_bbox
+                                    ? bbox_tensor_from_output_payload(owner)
+                                    : tensors_from_output_payload(owner, output_layout_->facts)};
 }
 } // namespace simaai::neat::pcie::internal

@@ -13,7 +13,7 @@
 namespace simaai::neat::pipeline_internal {
 
 /**
- * What a seeded pipeline-segment build resolved immediately before GStreamer parse.
+ * What a seeded pipeline-segment build resolved after storage and publication planning.
  *
  * `Graph::build()` records it on the segment's DiagCtx for `Model::execution_plan()`.
  */

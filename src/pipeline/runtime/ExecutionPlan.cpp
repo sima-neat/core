@@ -4,10 +4,13 @@
 #include "pipeline/internal/sima/InternalEdgeContractResolver.h"
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
 
+#include <simaai/scheduler/client/frame_layout.h>
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <initializer_list>
 #include <optional>
 #include <stdexcept>
@@ -313,15 +316,40 @@ int model_batch(const sima::SimaPluginStaticManifest& manifest) {
 }
 
 std::optional<json> model_memory(const sima::SimaPluginStaticManifest& manifest) {
+  namespace client = ::simaai::scheduler::client;
+  std::uint64_t bytes = 0;
+  bool cma = false;
+  bool dms = false;
+  bool host_cpu = false;
   for (const auto& stage : manifest.stages) {
-    if (stage.frame_arena_role == sima::FrameArenaRole::Allocate &&
-        stage.frame_arena_size_bytes > 0U) {
-      const bool dms =
-          stage.frame_arena_storage_domain == sima::static_contract::ArenaStorageDomain::Dms;
-      return json{{"per_frame_bytes", stage.frame_arena_size_bytes}, {"type", dms ? "DMS" : "CMA"}};
+    if (!stage.frame_layout || stage.frame_layout->ownership != client::FrameOwnership::Allocate)
+      continue;
+    for (const auto& allocation : stage.frame_layout->allocations) {
+      switch (allocation.policy) {
+      case client::AllocationPolicy::RequireCma:
+        cma = true;
+        break;
+      case client::AllocationPolicy::RequireDms:
+      case client::AllocationPolicy::PreferDmsThenCma:
+        dms = true;
+        break;
+      case client::AllocationPolicy::RequireHostCpu:
+        host_cpu = true;
+        break;
+      case client::AllocationPolicy::PreserveImported:
+        continue;
+      }
+      bytes += allocation.size_bytes;
     }
   }
-  return std::nullopt;
+  if (bytes == 0)
+    return std::nullopt;
+  const auto type = static_cast<int>(cma) + static_cast<int>(dms) + static_cast<int>(host_cpu) > 1
+                        ? "Mixed"
+                    : host_cpu ? "HostCpu"
+                    : dms      ? "DMS"
+                               : "CMA";
+  return json{{"per_frame_bytes", bytes}, {"type", type}};
 }
 
 } // namespace

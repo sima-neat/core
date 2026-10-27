@@ -1,5 +1,5 @@
 #include "pipeline/internal/sima/InternalEdgeContractResolver.h"
-#include "pipeline/internal/sima/PreparedRuntimeBuild.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
 

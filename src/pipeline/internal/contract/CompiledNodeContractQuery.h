@@ -33,14 +33,16 @@ compiled_runtime_contract_from_stage(const CompiledNodeContract* stage) {
   return nullptr;
 }
 
+inline const CompiledNodeContract* first_effective_child_stage(const CompiledNodeContract* stage) {
+  while (stage && !stage->child_stages.empty())
+    stage = &stage->child_stages.front();
+  return stage;
+}
+
 inline const CompiledNodeContract* last_effective_child_stage(const CompiledNodeContract* stage) {
-  if (!stage) {
-    return nullptr;
-  }
-  if (stage->child_stages.empty()) {
-    return stage;
-  }
-  return last_effective_child_stage(&stage->child_stages.back());
+  while (stage && !stage->child_stages.empty())
+    stage = &stage->child_stages.back();
+  return stage;
 }
 
 inline const CompiledProcessCvuContract*

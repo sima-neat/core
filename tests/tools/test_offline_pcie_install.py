@@ -489,3 +489,16 @@ def test_interrupted_card_retains_staging_and_stops_remaining_installs(interrupt
         if i > interrupted_index:
             assert (card['bdf'], 'install') not in ops.events
     assert ('host', 'verify') not in ops.events
+
+
+@pytest.mark.parametrize('recreate', [False, True])
+def test_recreate_option_reaches_both_host_and_card(tmp_path, monkeypatch, recreate):
+    calls = []
+    monkeypatch.setattr(installer, 'run_host', lambda args, **kwargs: calls.append(args))
+    ops = installer.Operations(tmp_path, 'sima', tmp_path/'key', tmp_path/'known', recreate_venv=recreate)
+    ops.host('install')
+    ops.staged['card'] = '/var/tmp/neat-offline-abcdefgh'
+    monkeypatch.setattr(ops, 'privileged', lambda card, command: calls.append(command))
+    ops.card({'bdf': 'card'}, 'install')
+    assert len(calls) == 2
+    assert all(('--recreate-venv' in args) == recreate for args in calls)

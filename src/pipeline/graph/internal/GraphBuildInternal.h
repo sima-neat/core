@@ -78,11 +78,6 @@ std::string session_build_async_queue2_fragment(int requested_depth = 0,
                                                 std::string_view element_name = {});
 std::string session_build_apply_fast_path_options_to_fragment(std::string fragment,
                                                               const GraphOptions* sess_opt);
-// Cold live-source policy. Customer values win; retained framework origins
-// distinguish generated defaults from explicit count-only queues.
-std::string
-session_build_apply_run_preset_to_pipeline(std::string pipeline, const RunOptions& opt,
-                                           std::span<const LaunchNameOrigin> origins = {});
 // Propagate an authored producer lane window to its immediate terminal
 // consumer. Both endpoints declare `num-buffers`; memory visibility is not
 // selected here and no consumer factory/plugin name is encoded.
@@ -110,6 +105,7 @@ std::string session_build_clamp_sync_pipeline(std::string pipeline, int num_buff
 std::string session_build_clamp_detess_num_buffers(std::string pipeline, int num_buffers_override);
 // Serial single-appsink retention is storage at the typed Allocate owner, not
 // execution depth at a downstream ReuseInput stage. Untyped routes keep legacy clamps.
+std::size_t session_build_kernel_runner_capacity(int requested_depth);
 void session_build_initialize_kernel_runner_budget(BuildResult* build, const GraphOptions* options);
 std::string session_build_clamp_sync_build_result(BuildResult& build, int num_buffers_override);
 void session_build_clamp_sync_kernel_runner_capacity(BuildResult& build);
@@ -121,9 +117,8 @@ session_build_materialize_model_bound_nodes(const std::vector<std::shared_ptr<No
 
 bool session_build_has_output_appsink(const std::vector<std::shared_ptr<Node>>& nodes);
 
+void session_build_prepare_stage_contracts(BuildResult& build, const char* where);
 GstElement* session_build_parse_pipeline_or_throw(const BuildResult& build, const char* where);
-// Keep the pre-parse plan on the build's DiagCtx for Model::execution_plan().
-void session_build_record_segment_plan(const BuildResult& build);
 void session_build_validate_explicit_launch_names_or_throw(
     std::string_view pipeline, const char* where, std::span<const LaunchNameOrigin> origins = {});
 void session_build_dump_pipeline_element_properties(GstElement* pipeline);

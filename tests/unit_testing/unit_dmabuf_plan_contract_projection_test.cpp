@@ -1,3 +1,4 @@
+#include <simaai/scheduler/client/tensor_buffer.h>
 #include <simaai/scheduler/client/capabilities.h>
 #include "pipeline/internal/sima/static_contract/DmabufPlanContractProjection.h"
 #include "pipeline/internal/sima/static_contract/MpkDecoder.h"
@@ -6,9 +7,9 @@
 #include "pipeline/internal/sima/stagesemantics/ProcessMlaStageSemantics.h"
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
-#include "pipeline/internal/sima/PreparedRuntimeBuild.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
 #include "nodes/sima/Preproc.h"
-#include "gst/SimaPreparedRuntimeAbi.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemanticsInternal.h"
 
 #include "test_main.h"
@@ -25,6 +26,13 @@ namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
 namespace sima = simaai::neat::pipeline_internal::sima;
 
 namespace {
+
+sc::PhysicalExecutionPlan physical_for(const sc::ModelExecutionPlan& plan) {
+  std::string error;
+  auto physical = sc::PhysicalExecutionLowerer::lower(plan, &error);
+  require(physical.has_value(), "physical contract lowers: " + error);
+  return std::move(*physical);
+}
 
 void test_cvu_whole_batch_projection(bool input_tail_padding = false) {
   sc::ModelExecutionPlanData data;
@@ -74,13 +82,9 @@ void test_cvu_whole_batch_projection(bool input_tail_padding = false) {
   require(plan.has_value(), "pitched batch fixture is valid: " + error);
   const auto physical = sc::PhysicalExecutionLowerer::lower(*plan, &error);
   require(physical.has_value(), "pitched batch lowers: " + error);
-  const auto arena =
-      sc::FrameSlotArenaPlan::compile(*plan, *physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-                                      sc::kLegacyEvoCmaRegionAlignmentBytes, &error);
-  require(arena.has_value(), "pitched batch arena compiles: " + error);
   const std::array<sc::PhysicalCommandId, 1U> commands{0U};
   const auto contract =
-      sc::build_dmabuf_plan_processcvu_command_contract(*plan, *physical, commands, *arena, &error);
+      sc::build_dmabuf_plan_processcvu_command_contract(*plan, *physical, commands, &error);
   require(contract.has_value(), "whole-batch contract compiles: " + error);
   require(plan->model_inputs().size() == 1U && plan->model_outputs().size() == 1U &&
               plan->value(1U)->logical_shape == sc::TensorShape({2, 1, 1, 7}),
@@ -97,64 +101,8 @@ void test_cvu_whole_batch_projection(bool input_tail_padding = false) {
               runtime.physical_inputs.size() == 1U && runtime.physical_outputs.size() == 1U &&
               runtime.physical_inputs.front().source_physical_index == 0 &&
               runtime.physical_inputs.front().source_byte_offset == 0U &&
-              runtime.physical_outputs.front().source_byte_offset == arena->region(1U)->byte_offset,
+              runtime.physical_outputs.front().source_byte_offset == 0U,
           "full-batch descriptors retain the real pitched span and original carrier identity");
-}
-
-void test_single_child_batch_pack() {
-  for (const std::uint32_t batch : {2U, 4U}) {
-    sc::ModelExecutionPlanData data;
-    for (sc::ValueId id = 0U; id < 3U; ++id) {
-      sc::ValueSpec value;
-      value.id = id;
-      value.name = "single_pack_" + std::to_string(id);
-      value.required_bytes = batch * 16U;
-      value.logical_dtype = "float32";
-      value.logical_shape = sc::TensorShape{batch, 4};
-      value.representation =
-          id == 2U ? sc::ValueRepresentation::Packed : sc::ValueRepresentation::Dense;
-      sc::StorageBinding binding;
-      binding.kind = id == 0U ? sc::StorageBindingKind::External : sc::StorageBindingKind::Root;
-      binding.carrier_id = id == 0U ? 0U : 2U;
-      binding.physical_span = value.required_bytes;
-      binding.stride_bytes = {16, 4};
-      binding.access = id == 0U ? sc::StorageAccess::ReadOnly : sc::StorageAccess::ReadWrite;
-      value.storage_binding = binding;
-      data.values.push_back(std::move(value));
-    }
-    data.model_inputs = {0U};
-    sc::OpSpec cast;
-    cast.id = 0U;
-    cast.sequence = 1U;
-    cast.processor = "EV74";
-    cast.name = "cast";
-    cast.kind = sc::OpKind::Cast;
-    cast.inputs = {0U};
-    cast.outputs = {1U};
-    cast.config = sc::CastOpConfig{"float32"};
-    sc::OpSpec pack;
-    pack.id = 1U;
-    pack.sequence = 2U;
-    pack.processor = "EV74";
-    pack.name = "pack";
-    pack.kind = sc::OpKind::Pack;
-    pack.inputs = {1U};
-    pack.outputs = {2U};
-    pack.dependencies = {0U};
-    sc::PackOpConfig config;
-    config.batch_count = batch;
-    config.parent_required_bytes = batch * 16U;
-    for (std::uint32_t sample = 0U; sample < batch; ++sample) {
-      config.spans.push_back({1U, sample, sample * 16U, sample * 16U, 16U, 16U, "none"});
-    }
-    pack.config = config;
-    data.ops = {cast, pack};
-    data.model_outputs = {{0U, "output", 2U}};
-    std::string error;
-    const auto plan = sc::ModelExecutionPlan::create(std::move(data), &error);
-    require(plan.has_value(),
-            "single-child batched Pack preserves contiguous sample placement: " + error);
-  }
 }
 
 void test_batched_backend_ports() {
@@ -206,7 +154,7 @@ void test_batched_backend_ports() {
     require(plan->backend_ports(0U, sc::BackendPortDirection::Output).size() == batches &&
                 plan->model_outputs().size() == 1U && plan->carrier(1U)->required_bytes == span,
             "physical samples share the correctly sized logical carrier");
-    const auto sources = sc::resolve_mla_input_physical_sources(*plan, {}, &error);
+    const auto sources = sc::resolve_mla_input_physical_sources(*plan, 0U, &error);
     require(sources.has_value() && sources->size() == batches,
             "direct MLA samples share their proved public carrier: " + error);
     require(std::all_of(sources->begin(), sources->end(),
@@ -224,12 +172,14 @@ void test_batched_backend_ports() {
     sima::TensorStaticSpec logical_input;
     logical_input.tensor_index = 0;
     projected.logical_inputs.push_back(logical_input);
-    require(sc::apply_dmabuf_plan_contract_projection(*plan, &projected, *sources, &error),
+    require(sc::apply_dmabuf_plan_contract_projection(*plan, physical_for(*plan), 0U, &projected,
+                                                      *sources, &error),
             "direct MLA samples project complete offset bindings: " + error);
     require(projected.input_bindings.size() == batches, "all sample bindings survive projection");
     for (std::uint32_t sample = 0; sample < batches; ++sample) {
       require(projected.input_bindings[sample].src_physical_output_index == 0 &&
-                  projected.input_bindings[sample].src_physical_byte_offset == sample * 4096U &&
+                  projected.input_bindings[sample].src_physical_byte_offset == 0 &&
+                  projected.physical_inputs[sample].source_byte_offset == sample * 4096U &&
                   projected.input_bindings[sample].src_physical_size_bytes == 4U,
               "sample bindings retain the proved carrier, offset and transfer extent");
     }
@@ -835,134 +785,6 @@ sc::ModelExecutionPlan make_terminal_dense_bf16_plan() {
   return std::move(*plan);
 }
 
-sc::ModelExecutionPlan make_pitched_batch_pack_plan(const std::uint32_t batch_count = 2U) {
-  require(batch_count > 1U, "pitched Pack fixture needs a multi-sample batch");
-  const std::uint64_t child_bytes = static_cast<std::uint64_t>(batch_count) * 4U;
-  const std::uint64_t child_span = static_cast<std::uint64_t>(batch_count - 1U) * 8U + 4U;
-  const std::uint64_t parent_bytes = static_cast<std::uint64_t>(batch_count) * 8U;
-  sc::ModelExecutionPlanData data;
-  data.contract_version = "2.1.0";
-  const auto binding = [](const sc::StorageBindingKind kind, const sc::CarrierId carrier,
-                          const std::uint64_t offset, const std::uint64_t span,
-                          std::vector<std::int64_t> strides, const sc::StorageAccess access) {
-    return sc::StorageBinding{kind,   carrier,     offset, span, std::move(strides),
-                              access, std::nullopt};
-  };
-  data.values = {
-      sc::ValueSpec{0U,
-                    "left_in",
-                    child_bytes,
-                    "float32",
-                    sc::TensorShape{batch_count, 1},
-                    "dense",
-                    {},
-                    sc::ValueRepresentation::Dense,
-                    std::nullopt,
-                    binding(sc::StorageBindingKind::External, 0U, 0U, child_bytes, {4, 4},
-                            sc::StorageAccess::ReadOnly)},
-      sc::ValueSpec{1U,
-                    "right_in",
-                    child_bytes,
-                    "float32",
-                    sc::TensorShape{batch_count, 1},
-                    "dense",
-                    {},
-                    sc::ValueRepresentation::Dense,
-                    std::nullopt,
-                    binding(sc::StorageBindingKind::External, 1U, 0U, child_bytes, {4, 4},
-                            sc::StorageAccess::ReadOnly)},
-      sc::ValueSpec{2U,
-                    "left",
-                    child_bytes,
-                    "float32",
-                    sc::TensorShape{batch_count, 1},
-                    "dense",
-                    {},
-                    sc::ValueRepresentation::Dense,
-                    std::nullopt,
-                    binding(sc::StorageBindingKind::Root, 4U, 0U, child_span, {8, 4},
-                            sc::StorageAccess::ReadWrite)},
-      sc::ValueSpec{3U,
-                    "right",
-                    child_bytes,
-                    "float32",
-                    sc::TensorShape{batch_count, 1},
-                    "dense",
-                    {},
-                    sc::ValueRepresentation::Dense,
-                    std::nullopt,
-                    binding(sc::StorageBindingKind::Root, 4U, 4U, child_span, {8, 4},
-                            sc::StorageAccess::ReadWrite)},
-      sc::ValueSpec{4U,
-                    "packed",
-                    parent_bytes,
-                    "float32",
-                    sc::TensorShape{batch_count, 2},
-                    "dense",
-                    {},
-                    sc::ValueRepresentation::Packed,
-                    std::nullopt,
-                    binding(sc::StorageBindingKind::Root, 4U, 0U, parent_bytes, {},
-                            sc::StorageAccess::ReadWrite)},
-      sc::ValueSpec{
-          5U,
-          "ofm",
-          4U,
-          "float32",
-          sc::TensorShape{1, 1},
-          "dense",
-          {},
-          sc::ValueRepresentation::BackendNative,
-          std::nullopt,
-          binding(sc::StorageBindingKind::Root, 5U, 0U, 4U, {}, sc::StorageAccess::ReadWrite)},
-  };
-  data.carriers = {
-      {0U, child_bytes, 64U, sc::ValueRepresentation::Dense},
-      {1U, child_bytes, 64U, sc::ValueRepresentation::Dense},
-      {4U, parent_bytes, 64U, sc::ValueRepresentation::Packed},
-      {5U, 4U, 64U, sc::ValueRepresentation::BackendNative},
-  };
-  data.model_inputs = {0U, 1U};
-  const auto add_op = [&](const sc::OpKind kind, std::string name, std::vector<sc::ValueId> inputs,
-                          std::vector<sc::ValueId> outputs, sc::OpConfig config,
-                          std::vector<sc::OpId> dependencies = {}) {
-    sc::OpSpec op;
-    op.id = static_cast<sc::OpId>(data.ops.size());
-    op.sequence = data.ops.size() + 1U;
-    op.name = std::move(name);
-    op.kind = kind;
-    op.processor = kind == sc::OpKind::Mla ? "MLA" : "EV74";
-    op.inputs = std::move(inputs);
-    op.outputs = std::move(outputs);
-    op.config = std::move(config);
-    op.dependencies = std::move(dependencies);
-    data.ops.push_back(std::move(op));
-  };
-  add_op(sc::OpKind::Cast, "left_cast", {0U}, {2U}, sc::CastOpConfig{"float32"});
-  add_op(sc::OpKind::Cast, "right_cast", {1U}, {3U}, sc::CastOpConfig{"float32"});
-  sc::PackOpConfig pack;
-  pack.batch_count = batch_count;
-  pack.parent_required_bytes = parent_bytes;
-  pack.materializes = false;
-  for (std::uint32_t batch = 0U; batch < batch_count; ++batch) {
-    pack.spans.push_back({2U, batch, batch * 4U, batch * 8U, 4U, 4U, "none"});
-    pack.spans.push_back({3U, batch, batch * 4U, batch * 8U + 4U, 4U, 4U, "none"});
-  }
-  add_op(sc::OpKind::Pack, "pack", {2U, 3U}, {4U}, std::move(pack), {0U, 1U});
-  add_op(sc::OpKind::Mla, "mla", {4U}, {5U}, sc::MlaOpConfig{"model.elf", 4}, {2U});
-  data.backend_ports = {
-      {0U, sc::BackendPortDirection::Input, 0U, "data.ifm.b0", 4U, parent_bytes, 64U,
-       sc::BackendPortAlignmentAuthority::Contract, sc::BackendPortAccess::ReadOnly},
-      {0U, sc::BackendPortDirection::Output, 0U, "data.ofm.b0", 5U, 4U, 64U,
-       sc::BackendPortAlignmentAuthority::Contract, sc::BackendPortAccess::WriteOnly},
-  };
-  data.model_outputs = {{0U, "ofm", 5U}};
-  std::string error;
-  auto plan = sc::ModelExecutionPlan::create(std::move(data), &error);
-  require(plan.has_value(), "pitched Pack execution plan must be valid: " + error);
-  return std::move(*plan);
-}
-
 sc::ModelExecutionPlan make_single_read_plan() {
   sc::ModelExecutionPlanData data;
   data.contract_version = "2.0.0";
@@ -1455,19 +1277,18 @@ sc::ModelExecutionPlan make_grouped_padded_cast_plan() {
   return std::move(*plan);
 }
 
-sc::ModelExecutionPlan
-make_fused_transform_plan(const sc::OpKind first_kind, const sc::OpKind second_kind,
-                          const std::size_t members, const std::uint64_t input_offset = 0U,
-                          const sc::TensorShape shape = {1, 2, 2, 16},
-                          const std::string layout = "HWC", const std::uint32_t batch_count = 1U,
-                          const bool c16_packed = true) {
+sc::ModelExecutionPlan make_fused_transform_plan(
+    const sc::OpKind first_kind, const sc::OpKind second_kind, const std::size_t members,
+    const std::uint64_t input_offset = 0U, const sc::TensorShape shape = {1, 2, 2, 16},
+    const std::string layout = "HWC", const std::uint32_t batch_count = 1U,
+    const bool c16_packed = true, const std::uint64_t output_storage_bytes = 0U) {
   sc::ModelExecutionPlanData data;
   data.contract_version = "2.1.0";
   std::uint64_t elements = 1U;
   for (const auto dim : shape) {
     elements *= static_cast<std::uint64_t>(dim);
   }
-  const sc::TensorShape tile{1, 1, 1, 16};
+  const sc::TensorShape tile{1, 1, 1, c16_packed ? 16 : shape.back()};
   const auto dtype_bytes = [](const std::string& dtype) {
     return dtype == "FP32" ? 4U : dtype == "BF16" ? 2U : 1U;
   };
@@ -1487,7 +1308,8 @@ make_fused_transform_plan(const sc::OpKind first_kind, const sc::OpKind second_k
     const auto output_id = input_id + 2U;
     const auto input_bytes = elements * dtype_bytes(input_dtype);
     const auto middle_bytes = elements * dtype_bytes(middle_dtype);
-    const auto output_bytes = elements * dtype_bytes(output_dtype);
+    const auto output_bytes =
+        output_storage_bytes ? output_storage_bytes : elements * dtype_bytes(output_dtype);
     const auto input_carrier = static_cast<sc::CarrierId>(data.carriers.size());
     data.carriers.push_back(
         {input_carrier, input_offset + input_bytes, 64U, sc::ValueRepresentation::Dense});
@@ -1641,33 +1463,31 @@ void test_casttess_hwc_execution_view() {
     std::uint32_t batch;
     std::uint32_t execution_rank;
     bool c16_packed;
+    std::uint64_t output_storage_bytes = 0U;
   };
-  const std::array<Case, 5U> cases{{
+  const std::array<Case, 6U> cases{{
       {{1, 2, 2, 16}, "HWC", 1U, 4U, false},
       {{1, 2, 2, 16}, "HWC", 1U, 4U, true},
       {{2, 2, 16}, "HWC", 1U, 3U, true},
       {{2, 2, 2, 16}, "HWC", 1U, 4U, true},
       {{2, 2, 2, 16}, "NHWC", 2U, 4U, true},
+      {{2, 2, 3}, "HWC", 1U, 3U, false, 64U},
   }};
   for (const auto& test : cases) {
-    const auto plan =
-        make_fused_transform_plan(sc::OpKind::Cast, sc::OpKind::Tessellate, 1U, 64U, test.shape,
-                                  test.layout, test.batch, test.c16_packed);
+    const auto plan = make_fused_transform_plan(sc::OpKind::Cast, sc::OpKind::Tessellate, 1U, 64U,
+                                                test.shape, test.layout, test.batch,
+                                                test.c16_packed, test.output_storage_bytes);
     std::string error;
     const auto physical = sc::PhysicalExecutionLowerer::lower(plan, &error);
     require(physical.has_value(), "CastTess execution view lowers: " + error);
-    const auto arena =
-        sc::FrameSlotArenaPlan::compile(plan, *physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-                                        sc::kLegacyEvoCmaRegionAlignmentBytes, &error);
-    require(arena.has_value(), "CastTess execution view arena compiles: " + error);
     std::vector<sc::PhysicalCommandId> commands;
     for (const auto& command : physical->commands) {
       if (command.engine == sc::PhysicalEngine::Cvu && command.implementation_id == "casttess") {
         commands.push_back(command.id);
       }
     }
-    const auto contract = sc::build_dmabuf_plan_processcvu_command_contract(
-        plan, *physical, commands, *arena, &error);
+    const auto contract =
+        sc::build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, &error);
     require(contract.has_value(), "CastTess execution view projects: " + error);
     require(plan.value(0U)->logical_shape == test.shape &&
                 plan.value(2U)->logical_shape == test.shape && contract->payload.batch_size == 1 &&
@@ -1679,18 +1499,19 @@ void test_casttess_hwc_execution_view() {
       const auto& input = contract->payload.input_tensors[member].descriptor();
       const auto& output = contract->payload.output_tensors[member].descriptor();
       const auto hwc = test.execution_rank - 3U;
+      const auto channels = test.shape.back();
       require(input.shape.rank == test.execution_rank && output.shape.rank == test.execution_rank &&
                   input.shape.axis_semantics[hwc] == SIMA_EV_AXIS_H &&
                   input.shape.axis_semantics[hwc + 1U] == SIMA_EV_AXIS_W &&
                   input.shape.axis_semantics[hwc + 2U] == SIMA_EV_AXIS_C &&
                   input.shape.sizes[hwc] == 2 && input.shape.sizes[hwc + 1U] == 2 &&
-                  input.shape.sizes[hwc + 2U] == 16 &&
-                  input.layout.strided.strides_bytes[hwc] == 128 &&
-                  input.layout.strided.strides_bytes[hwc + 1U] == 64 &&
+                  input.shape.sizes[hwc + 2U] == channels &&
+                  input.layout.strided.strides_bytes[hwc] == 2 * channels * 4 &&
+                  input.layout.strided.strides_bytes[hwc + 1U] == channels * 4 &&
                   input.layout.strided.strides_bytes[hwc + 2U] == 4 &&
                   output.layout.tiled.tile_sizes[hwc] == 1 &&
                   output.layout.tiled.tile_sizes[hwc + 1U] == 1 &&
-                  output.layout.tiled.tile_sizes[hwc + 2U] == 16 &&
+                  output.layout.tiled.tile_sizes[hwc + 2U] == (test.c16_packed ? 16 : channels) &&
                   output.layout.tiled.tile_align_bytes == 16U &&
                   ((output.layout.tiled.flags & SIMA_EV_TILED_FLAG_COMPACT_CHANNELS) == 0U) ==
                       test.c16_packed,
@@ -1702,11 +1523,17 @@ void test_casttess_hwc_execution_view() {
       }
       const auto input_bytes = plan.value(0U)->required_bytes;
       const auto output_bytes = plan.value(2U)->required_bytes;
-      require(input.storage.nbytes == input_bytes && output.storage.nbytes == output_bytes &&
-                  contract->runtime_contract.physical_inputs[member].source_byte_offset == 0U &&
-                  contract->runtime_contract.physical_outputs[member].source_byte_offset ==
-                      arena->region(2U)->byte_offset + 32U,
-              "execution views preserve whole-batch spans without fabricated sample offsets");
+      require(
+          input.storage.nbytes == input_bytes && output.storage.nbytes == output_bytes &&
+              contract->runtime_contract.physical_inputs[member].source_byte_offset == 64U &&
+              contract->runtime_contract.physical_outputs[member].source_byte_offset == 32U,
+          "execution views preserve whole-batch spans and carrier-relative input/output origins");
+      if (test.output_storage_bytes) {
+        const auto& logical = contract->runtime_contract.logical_outputs.front();
+        require(logical.shape == test.shape && logical.size_bytes == test.output_storage_bytes &&
+                    logical.size_bytes % (2 * 2 * channels) != 0,
+                "compact C3 publication must retain tile-aligned storage without changing shape");
+      }
     }
   }
 }
@@ -1993,11 +1820,6 @@ void test_cast_preproc_absorption_uses_explicit_image_layout() {
   const auto physical = sc::PhysicalExecutionLowerer::lower(plan, &error);
   require(physical.has_value(), "Cast ingress must lower: " + error);
   const auto detached = sc::detached_mla_output_roots(plan, *physical);
-  const auto arena =
-      sc::FrameSlotArenaPlan::compile(plan, *physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-                                      sc::kLegacyEvoCmaRegionAlignmentBytes, &error,
-                                      sc::kModalixProductionArenaDmsPolicy, detached);
-  require(arena.has_value(), "Cast ingress arena must compile: " + error);
 
   simaai::neat::PreprocOptions options;
   options.model_managed_contract = true;
@@ -2013,8 +1835,7 @@ void test_cast_preproc_absorption_uses_explicit_image_layout() {
       sima::stagesemantics::build_processcvu_compiled_contract_from_options(options);
   auto contract = original;
   std::vector<sc::PhysicalCommandId> absorbed;
-  require(sc::project_model_managed_preproc_contract(plan, *physical, *arena, &contract, &absorbed,
-                                                     &error),
+  require(sc::project_model_managed_preproc_contract(plan, *physical, &contract, &absorbed, &error),
           "explicit graph-200 image layout must absorb generic Cast ingress: " + error);
   require(absorbed.size() == 1U &&
               physical->commands[absorbed.front()].members.front().semantic_chain ==
@@ -2050,8 +1871,8 @@ void test_cast_preproc_absorption_uses_explicit_image_layout() {
                           const std::string& diagnostic) {
     std::vector<sc::PhysicalCommandId> rejected_commands;
     error.clear();
-    require(!sc::project_model_managed_preproc_contract(candidate_plan, *physical, *arena,
-                                                        &candidate, &rejected_commands, &error) &&
+    require(!sc::project_model_managed_preproc_contract(candidate_plan, *physical, &candidate,
+                                                        &rejected_commands, &error) &&
                 error.find(diagnostic) != std::string::npos,
             "invalid graph-200 evidence must fail with the contract diagnostic: " + error);
   };
@@ -2096,18 +1917,19 @@ void test_cast_preproc_absorption_uses_explicit_image_layout() {
 
 RUN_TEST(
     "unit_dmabuf_plan_contract_projection_test", ([] {
+      gst_init(nullptr, nullptr);
       test_cvu_whole_batch_projection();
       test_cvu_whole_batch_projection(true);
-      test_single_child_batch_pack();
       test_batched_backend_ports();
       test_cast_preproc_absorption_uses_explicit_image_layout();
       test_casttess_hwc_execution_view();
       const auto plan = make_plan();
       auto contract = make_projection(plan);
       std::string error;
-      auto input_sources = sc::resolve_mla_input_physical_sources(plan, {}, &error);
+      auto input_sources = sc::resolve_mla_input_physical_sources(plan, 0U, &error);
       require(input_sources.has_value(), "model-input carriers must resolve: " + error);
-      require(sc::apply_dmabuf_plan_contract_projection(plan, &contract, *input_sources, &error),
+      require(sc::apply_dmabuf_plan_contract_projection(plan, physical_for(plan), 0U, &contract,
+                                                        *input_sources, &error),
               "exact 2/28 projection must pass: " + error);
       require(contract.consumer_keeps_distinct_physical_inputs, "two IFMs must remain distinct");
       require(contract.elf_ifm_symbol_names.size() == 2U,
@@ -2140,19 +1962,16 @@ RUN_TEST(
                   contract.logical_outputs[7].size_bytes ==
                       plan.value(plan.backend_ports()[2U + 7U].value_id)->required_bytes,
               "raw OFM publication must preserve backend order and extent");
-      require(contract.frame_arena_size_bytes > 0U &&
-                  contract.frame_arena_role == sima::FrameArenaRole::Allocate,
-              "direct MLA must allocate the first common frame arena");
 
       const auto terminal_multi_ofm_plan = make_terminal_multi_ofm_plan();
       auto terminal_multi_ofm_contract = make_projection(terminal_multi_ofm_plan);
       auto terminal_multi_ofm_sources =
-          sc::resolve_mla_input_physical_sources(terminal_multi_ofm_plan, {}, &error);
+          sc::resolve_mla_input_physical_sources(terminal_multi_ofm_plan, 0U, &error);
       require(terminal_multi_ofm_sources.has_value(),
               "terminal multi-OFM input carrier must resolve: " + error);
-      require(sc::apply_dmabuf_plan_contract_projection(terminal_multi_ofm_plan,
-                                                        &terminal_multi_ofm_contract,
-                                                        *terminal_multi_ofm_sources, &error),
+      require(sc::apply_dmabuf_plan_contract_projection(
+                  terminal_multi_ofm_plan, physical_for(terminal_multi_ofm_plan), 0U,
+                  &terminal_multi_ofm_contract, *terminal_multi_ofm_sources, &error),
               "terminal multi-OFM projection must pass: " + error);
       require(terminal_multi_ofm_contract.logical_outputs.size() == 2U &&
                   terminal_multi_ofm_contract.logical_outputs[0].dtype == "FP32" &&
@@ -2180,25 +1999,9 @@ RUN_TEST(
           terminal_multi_ofm_plan, *terminal_multi_physical, 0U);
       const auto terminal_multi_detached =
           sc::detached_mla_output_roots(terminal_multi_ofm_plan, *terminal_multi_physical);
-      auto terminal_multi_shared_arena = sc::FrameSlotArenaPlan::compile(
-          terminal_multi_ofm_plan, *terminal_multi_physical,
-          sc::FrameSlotArenaReuse::DisjointLifetimes, sc::kLegacyEvoCmaRegionAlignmentBytes, &error,
-          sc::kModalixProductionArenaDmsPolicy, terminal_multi_detached);
-      require(terminal_multi_policy == sc::MlaOutputCarrierPolicy::SharedFrameArena &&
-                  terminal_multi_detached.empty() && terminal_multi_shared_arena.has_value() &&
-                  terminal_multi_shared_arena->region(1U) != nullptr &&
-                  terminal_multi_shared_arena->region(2U) != nullptr &&
-                  terminal_multi_shared_arena->placement().domain == sc::ArenaStorageDomain::Dms,
-              "public-input terminal MLA must keep its already-compact EV-free DMS output "
-              "arena rather than creating an empty shared plan");
-      auto contradictory_terminal = make_projection(terminal_multi_ofm_plan);
-      error.clear();
-      require(!sc::apply_dmabuf_plan_contract_projection(
-                  terminal_multi_ofm_plan, 0U, *terminal_multi_shared_arena,
-                  sc::MlaOutputCarrierPolicy::SeparateCpuVisible, &contradictory_terminal,
-                  *terminal_multi_ofm_sources, &error) &&
-                  error.find("contradicts the frame-arena authority") != std::string::npos,
-              "MLA projection must reject a caller-authored policy which contradicts the arena");
+      require(terminal_multi_policy == sc::MlaOutputCarrierPolicy::SharedInputGroup &&
+                  terminal_multi_detached.empty(),
+              "public-input terminal MLA needs no detached output group");
       const auto split_terminal_multi_plan = make_split_terminal_multi_ofm_plan();
       auto split_terminal_physical =
           sc::PhysicalExecutionLowerer::lower(split_terminal_multi_plan, &error);
@@ -2206,36 +2009,26 @@ RUN_TEST(
               "split terminal multi-OFM physical plan must lower: " + error);
       const auto split_terminal_detached =
           sc::detached_mla_output_roots(split_terminal_multi_plan, *split_terminal_physical);
-      auto split_terminal_arena = sc::FrameSlotArenaPlan::compile(
-          split_terminal_multi_plan, *split_terminal_physical,
-          sc::FrameSlotArenaReuse::DisjointLifetimes, sc::kLegacyEvoCmaRegionAlignmentBytes, &error,
-          sc::kModalixProductionArenaDmsPolicy, split_terminal_detached);
-      require(split_terminal_arena.has_value() &&
-                  split_terminal_detached == std::vector<sc::ValueId>({2U, 3U}) &&
-                  sc::mla_output_carrier_policy_from_arena(split_terminal_multi_plan,
-                                                           *split_terminal_arena, 1U) ==
-                      sc::MlaOutputCarrierPolicy::SeparateCpuVisible,
-              "connected terminal multi-OFM route must author the split policy in its arena");
-      auto split_terminal_sources = sc::resolve_mla_input_physical_sources(
-          split_terminal_multi_plan, 1U, *split_terminal_arena, {}, &error);
+      require(split_terminal_detached == std::vector<sc::ValueId>({2U, 3U}),
+              "connected terminal multi-OFM route must author the split policy in its carrier");
+      auto split_terminal_sources =
+          sc::resolve_mla_input_physical_sources(split_terminal_multi_plan, 1U, &error);
       require(split_terminal_sources.has_value(),
-              "split terminal multi-OFM input must resolve from the retained arena: " + error);
+              "split terminal multi-OFM input must resolve from the retained carrier: " + error);
       auto split_terminal_multi = make_projection(split_terminal_multi_plan, 1U);
       require(sc::apply_dmabuf_plan_contract_projection(
-                  split_terminal_multi_plan, 1U, *split_terminal_arena, &split_terminal_multi,
-                  *split_terminal_sources, &error),
+                  split_terminal_multi_plan, physical_for(split_terminal_multi_plan), 1U,
+                  &split_terminal_multi, *split_terminal_sources, &error),
               "terminal multi-OFM split projection must pass: " + error);
       require(split_terminal_multi.physical_outputs.size() == 2U &&
                   split_terminal_multi.physical_outputs[0].source_byte_offset == 0 &&
-                  split_terminal_multi.physical_outputs[1].source_byte_offset == 8192 &&
-                  split_terminal_multi.frame_arena_size_bytes == 118784U &&
+                  split_terminal_multi.physical_outputs[1].source_byte_offset == 0 &&
                   split_terminal_multi.logical_outputs.size() == 2U &&
                   split_terminal_multi.logical_outputs[1].physical_index == 1 &&
                   split_terminal_multi.logical_outputs[1].size_bytes == 109200U &&
                   split_terminal_multi.logical_outputs[1].stride_bytes ==
                       std::vector<std::int64_t>({110400, 368, 4}),
-              "split multi-OFM layout must preserve unequal alignments, the required gap, "
-              "final allocation rounding, and padded logical strides");
+              "split OFMs retain independent roots, logical extents and padded strides");
 
       sima::SimaPluginStaticManifest terminal_manifest;
       sima::StageStaticSpec terminal_stage;
@@ -2264,13 +2057,13 @@ RUN_TEST(
       const auto incomplete_terminal_plan = make_terminal_multi_ofm_plan(false);
       auto incomplete_terminal_contract = make_projection(incomplete_terminal_plan);
       auto incomplete_terminal_sources =
-          sc::resolve_mla_input_physical_sources(incomplete_terminal_plan, {}, &error);
+          sc::resolve_mla_input_physical_sources(incomplete_terminal_plan, 0U, &error);
       require(incomplete_terminal_sources.has_value(),
               "incomplete terminal fixture input carrier must still resolve: " + error);
       error.clear();
-      require(!sc::apply_dmabuf_plan_contract_projection(incomplete_terminal_plan,
-                                                         &incomplete_terminal_contract,
-                                                         *incomplete_terminal_sources, &error) &&
+      require(!sc::apply_dmabuf_plan_contract_projection(
+                  incomplete_terminal_plan, physical_for(incomplete_terminal_plan), 0U,
+                  &incomplete_terminal_contract, *incomplete_terminal_sources, &error) &&
                   error.find("no exact typed logical output contract") != std::string::npos,
               "strict MLA projection must reject missing public dtype/shape evidence");
 
@@ -2285,13 +2078,8 @@ RUN_TEST(
       }
       require(padded_cast_commands.size() == 1U,
               "the aligned padded-Cast lanes must form one graph221 cohort");
-      auto padded_cast_arena = sc::FrameSlotArenaPlan::compile(
-          padded_cast_plan, *padded_cast_physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-          sc::kLegacyEvoCmaRegionAlignmentBytes, &error);
-      require(padded_cast_arena.has_value(), "grouped padded-Cast arena must compile: " + error);
       auto padded_cast_contract = sc::build_dmabuf_plan_processcvu_command_contract(
-          padded_cast_plan, *padded_cast_physical, padded_cast_commands, *padded_cast_arena,
-          &error);
+          padded_cast_plan, *padded_cast_physical, padded_cast_commands, &error);
       require(padded_cast_contract.has_value(),
               "grouped padded-Cast contract must build: " + error);
       require(
@@ -2336,16 +2124,8 @@ RUN_TEST(
           }
         }
         require(!fused_commands.empty(), "fused graph id was not selected");
-        auto fused_arena = sc::FrameSlotArenaPlan::compile(
-            fused_plan, *fused_physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-            sc::kLegacyEvoCmaRegionAlignmentBytes, &error);
-        require(fused_arena.has_value(), "fused frame arena must compile: " + error);
-        for (std::size_t member = 0; member < fused_case.members; ++member) {
-          require(fused_arena->region(static_cast<sc::ValueId>(member * 3U + 1U)) == nullptr,
-                  "fused semantic intermediate must not own an arena region");
-        }
         auto fused_contract = sc::build_dmabuf_plan_processcvu_command_contract(
-            fused_plan, *fused_physical, fused_commands, *fused_arena, &error);
+            fused_plan, *fused_physical, fused_commands, &error);
         require(fused_contract.has_value(),
                 "fused graph " + fused_case.operation + " command contract must build: " + error);
         require(fused_contract->payload.graph_name == fused_case.operation &&
@@ -2367,11 +2147,9 @@ RUN_TEST(
                       descriptor.descriptor().layout.tiled.tile_align_bytes == 16U,
                   "physical cohort projection lost authored CBlock16 encoding");
         }
-        require(fused_contract->runtime_contract.frame_arena_role ==
-                        sima::FrameArenaRole::Allocate &&
-                    fused_contract->runtime_contract.consumer_keeps_distinct_physical_inputs ==
-                        (fused_case.members > 1U),
-                "fused ingress must allocate its output arena independently of public inputs");
+        require(fused_contract->runtime_contract.consumer_keeps_distinct_physical_inputs ==
+                    (fused_case.members > 1U),
+                "fused ingress must allocate its output carrier independently of public inputs");
         for (std::size_t member = 0; member < fused_case.members; ++member) {
           const auto input_id = static_cast<sc::ValueId>(member * 3U);
           const auto* input = fused_plan.value(input_id);
@@ -2383,7 +2161,9 @@ RUN_TEST(
               input && input->storage_binding && fused_plan.model_inputs()[member] == input_id &&
                   physical.address_source == sima::PhysicalAddressSource::RuntimePhysicalBinding &&
                   physical.physical_index == selector &&
-                  physical.source_physical_index == selector && physical.source_byte_offset == 0 &&
+                  physical.source_physical_index == selector &&
+                  physical.source_byte_offset ==
+                      static_cast<std::int64_t>(fused_case.input_offset) &&
                   physical.size_bytes == input->storage_binding->physical_span &&
                   physical.segment_name == "value_" + std::to_string(input_id) &&
                   logical.logical_index == selector && logical.physical_index == selector &&
@@ -2416,11 +2196,11 @@ RUN_TEST(
         }
         for (std::size_t member = 0; member < fused_case.members; ++member) {
           const auto output_id = static_cast<sc::ValueId>(member * 3U + 2U);
-          const auto* output_region = fused_arena->region(output_id);
           require(
-              output_region &&
+              fused_contract->runtime_contract.physical_outputs[member].model_carrier_id ==
+                      fused_plan.value(output_id)->storage_binding->carrier_id &&
                   fused_contract->runtime_contract.physical_outputs[member].source_byte_offset ==
-                      static_cast<std::int64_t>(output_region->byte_offset + 32U),
+                      32,
               "fused output must preserve its exact nonzero parent offset");
         }
         if (fused_case.operation == "detesscast") {
@@ -2434,247 +2214,40 @@ RUN_TEST(
 
       auto wrong_size = make_projection(plan);
       ++wrong_size.dispatcher_physical_outputs[7].size_bytes;
-      require(!sc::apply_dmabuf_plan_contract_projection(plan, &wrong_size, *input_sources, &error),
+      require(!sc::apply_dmabuf_plan_contract_projection(plan, physical_for(plan), 0U, &wrong_size,
+                                                         *input_sources, &error),
               "an OFM byte mismatch must fail closed");
 
       auto wrong_name = make_projection(plan);
       wrong_name.physical_inputs[1].segment_name = "guessed_ifm";
-      require(!sc::apply_dmabuf_plan_contract_projection(plan, &wrong_name, *input_sources, &error),
+      require(!sc::apply_dmabuf_plan_contract_projection(plan, physical_for(plan), 0U, &wrong_name,
+                                                         *input_sources, &error),
               "a guessed IFM name must fail closed");
 
       auto aliased_sources = *input_sources;
       aliased_sources[1].source_physical_index = aliased_sources[0].source_physical_index;
       auto aliased_contract = make_projection(plan);
-      require(!sc::apply_dmabuf_plan_contract_projection(plan, &aliased_contract, aliased_sources,
-                                                         &error),
+      require(!sc::apply_dmabuf_plan_contract_projection(
+                  plan, physical_for(plan), 0U, &aliased_contract, aliased_sources, &error),
               "two IFMs must not alias one physical carrier");
 
-      // Real AFE plans commonly create the MLA IFMs in frontend CVU ops.
-      // The setup lowering must preserve those graph values while mapping
-      // them to the exact (possibly non-identity) upstream logical slots.
+      // Frontend values retain their compiler carrier identities before packing.
       const auto frontend_plan = make_frontend_plan();
-      std::vector<sima::LogicalTensorStaticSpec> upstream(2U);
-      upstream[0].logical_index = 9;
-      upstream[0].backend_name = "quantize_1";
-      upstream[0].physical_index = 1;
-      upstream[0].size_bytes = 319488U;
-      upstream[1].logical_index = 4;
-      upstream[1].segment_name = "quantize_0";
-      upstream[1].physical_index = 0;
-      upstream[1].size_bytes = 638976U;
-      auto frontend_sources =
-          sc::resolve_mla_input_physical_sources(frontend_plan, upstream, &error);
-      require(frontend_sources.has_value(),
-              "frontend-produced IFM carriers must resolve: " + error);
-      require(frontend_sources->size() == 2U && (*frontend_sources)[0].value_id == 2U &&
-                  (*frontend_sources)[0].source_physical_index == 0 &&
-                  (*frontend_sources)[1].value_id == 3U &&
-                  (*frontend_sources)[1].source_physical_index == 1,
-              "frontend-produced IFMs must retain backend order and exact carriers");
-      auto frontend_mla = make_projection(frontend_plan);
-      require(sc::apply_dmabuf_plan_contract_projection(frontend_plan, &frontend_mla,
-                                                        *frontend_sources, &error),
-              "frontend MLA frame-arena projection must pass: " + error);
-      require(frontend_mla.frame_arena_role == sima::FrameArenaRole::Allocate &&
-                  frontend_mla.frame_arena_storage_domain == sc::ArenaStorageDomain::Dms &&
-                  frontend_mla.frame_arena_size_bytes > 0U &&
-                  frontend_mla.physical_inputs[0].source_physical_index == 0 &&
-                  frontend_mla.physical_inputs[1].source_physical_index == 0 &&
-                  frontend_mla.physical_inputs[0].source_byte_offset !=
-                      frontend_mla.physical_inputs[1].source_byte_offset,
-              "terminal MLA must import distinct pre-CVU regions and own its output pool");
-
-      sima::ProcessCvuStagePayload frontend_cvu;
-      frontend_cvu.graph_family_enum = sima::ProcessCvuGraphFamily::Quant;
-      frontend_cvu.graph_name = "quant";
-      simaai::neat::CompiledRuntimeContract frontend_runtime;
-      for (std::size_t index = 0; index < 2U; ++index) {
-        sima::PhysicalBufferStaticSpec output;
-        output.physical_index = static_cast<int>(index);
-        output.size_bytes = frontend_plan.values()[2U + index].required_bytes;
-        output.segment_name = frontend_plan.values()[2U + index].name;
-        frontend_runtime.physical_outputs.push_back(std::move(output));
-        sima::LogicalTensorStaticSpec logical;
-        logical.logical_index = static_cast<int>(index);
-        logical.backend_output_index = static_cast<int>(index);
-        logical.physical_index = static_cast<int>(index);
-        logical.output_slot = static_cast<int>(index);
-        logical.tensor_index = static_cast<int>(index);
-        logical.size_bytes = frontend_plan.values()[2U + index].required_bytes;
-        logical.logical_name = frontend_plan.values()[2U + index].name;
-        logical.backend_name = frontend_plan.values()[2U + index].name;
-        logical.segment_name = frontend_plan.values()[2U + index].name;
-        frontend_runtime.logical_outputs.push_back(std::move(logical));
-      }
-      simaai::neat::CompiledExposedView frontend_exposed;
-      frontend_exposed.exposed_logical_outputs = frontend_runtime.logical_outputs;
-      require(sc::apply_dmabuf_plan_processcvu_contract_projection(
-                  frontend_plan, sc::ProcessCvuMlaBoundary::Inputs, &frontend_cvu,
-                  &frontend_runtime, &frontend_exposed, &error),
-              "pre-CVU frame-arena projection must pass: " + error);
-      require(frontend_runtime.frame_arena_role == sima::FrameArenaRole::Allocate &&
-                  frontend_runtime.frame_arena_storage_domain == sc::ArenaStorageDomain::Cma &&
-                  frontend_runtime.physical_outputs[0].source_byte_offset ==
-                      frontend_mla.physical_inputs[0].source_byte_offset &&
-                  frontend_runtime.physical_outputs[1].source_byte_offset ==
-                      frontend_mla.physical_inputs[1].source_byte_offset,
-              "pre-CVU output regions must be the terminal MLA's exact imported IFM offsets");
-
-      auto frontend_physical = sc::PhysicalExecutionLowerer::lower(frontend_plan, &error);
-      require(frontend_physical.has_value(),
-              "grouped command fixture must lower a physical plan: " + error);
-      auto unfiltered_frontend_arena = sc::FrameSlotArenaPlan::compile(
-          frontend_plan, *frontend_physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-          sc::kLegacyEvoCmaRegionAlignmentBytes, &error, sc::kModalixProductionArenaDmsPolicy);
-      require(unfiltered_frontend_arena.has_value(),
-              "grouped command fixture must compile its unfiltered frame arena: " + error);
-      // Public inference fragments import the authored IFMs, not the omitted
-      // preprocessing producer's full arena. Use the same planner and retain
-      // original command ids; output offsets must be shared by continuation.
-      sc::FrameSlotArenaRoute mla_route;
-      for (const auto& command : frontend_physical->commands) {
-        if (command.engine == sc::PhysicalEngine::Mla) {
-          mla_route.commands.push_back(command.id);
-        }
-      }
-      mla_route.imported_inputs = {2U, 3U};
-      mla_route.published_outputs = {4U};
-      auto mla_route_arena = sc::FrameSlotArenaPlan::compile(
-          frontend_plan, *frontend_physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-          sc::kLegacyEvoCmaRegionAlignmentBytes, &error, sc::kModalixProductionArenaDmsPolicy, {},
-          &mla_route);
-      require(mla_route_arena && !mla_route_arena->region(2U) && !mla_route_arena->region(3U) &&
-                  mla_route_arena->region(4U) &&
-                  mla_route_arena->allocation_bytes() <
-                      unfiltered_frontend_arena->allocation_bytes() &&
-                  mla_route_arena->placement().domain == sc::ArenaStorageDomain::Dms,
-              "inference-only route must allocate only selected OFM storage: " + error);
-      auto imported_sources =
-          sc::resolve_mla_input_physical_sources(frontend_plan, 0U, *mla_route_arena, {}, &error);
-      auto imported_mla = make_projection(frontend_plan);
-      require(imported_sources && sc::apply_dmabuf_plan_contract_projection(
-                                      frontend_plan, 0U, *mla_route_arena, &imported_mla,
-                                      *imported_sources, &error),
-              "omitted preprocessing inputs must remain exact imported IFMs: " + error);
-      require(imported_mla.frame_arena_role == sima::FrameArenaRole::Allocate &&
-                  imported_mla.physical_inputs[0].address_source ==
-                      sima::PhysicalAddressSource::RuntimePhysicalBinding &&
-                  imported_mla.physical_inputs[1].address_source ==
-                      sima::PhysicalAddressSource::RuntimePhysicalBinding &&
-                  imported_mla.physical_inputs[0].source_physical_index == 0 &&
-                  imported_mla.physical_inputs[1].source_physical_index == 1 &&
-                  imported_mla.physical_inputs[0].source_byte_offset == 0 &&
-                  imported_mla.physical_inputs[1].source_byte_offset == 0 &&
-                  imported_mla.physical_outputs[0].source_byte_offset ==
-                      static_cast<std::int64_t>(mla_route_arena->region(4U)->byte_offset),
-              "IFM bindings and OFM ownership must agree without transport materialization");
-      mla_route.output_device_access = static_cast<std::uint32_t>(sc::ArenaDeviceAccess::Ev74);
-      auto ev_continuation_arena = sc::FrameSlotArenaPlan::compile(
-          frontend_plan, *frontend_physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-          sc::kLegacyEvoCmaRegionAlignmentBytes, &error, sc::kModalixProductionArenaDmsPolicy, {},
-          &mla_route);
-      require(ev_continuation_arena &&
-                  ev_continuation_arena->placement().domain == sc::ArenaStorageDomain::Cma &&
-                  ev_continuation_arena->allocation_bytes() == mla_route_arena->allocation_bytes(),
-              "an external EV consumer changes visibility, not IFM copying or arena size");
-      require(unfiltered_frontend_arena->region(2U) && unfiltered_frontend_arena->region(3U),
-              "contextual projection must not mutate the complete route arena");
-
-      const auto frontend_detached =
-          sc::detached_mla_output_roots(frontend_plan, *frontend_physical);
-      auto frontend_arena = sc::FrameSlotArenaPlan::compile(
-          frontend_plan, *frontend_physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-          sc::kLegacyEvoCmaRegionAlignmentBytes, &error, sc::kModalixProductionArenaDmsPolicy,
-          frontend_detached);
-      require(frontend_arena.has_value(),
-              "grouped command fixture must compile one frame arena: " + error);
-      const auto frontend_output_policy =
-          sc::select_mla_output_carrier_policy(frontend_plan, *frontend_physical, 0U);
-      require(frontend_output_policy == sc::MlaOutputCarrierPolicy::SeparateCpuVisible,
-              "terminal MLA public output must select a distinct CPU-visible carrier");
-      auto split_frontend_sources = sc::resolve_mla_input_physical_sources(
-          frontend_plan, 0U, *frontend_arena, upstream, &error);
-      require(split_frontend_sources.has_value(),
-              "split terminal MLA arena IFMs must resolve: " + error);
-      auto terminal_frontend_mla = make_projection(frontend_plan);
-      require(sc::apply_dmabuf_plan_contract_projection(
-                  frontend_plan, 0U, *frontend_arena, frontend_output_policy,
-                  &terminal_frontend_mla, *split_frontend_sources, &error),
-              "terminal MLA split-carrier projection must pass: " + error);
-      require(frontend_arena->placement().domain == sc::ArenaStorageDomain::Cma &&
-                  frontend_arena->placement().requires_access(sc::ArenaDeviceAccess::Ev74) &&
-                  terminal_frontend_mla.frame_arena_role == sima::FrameArenaRole::Allocate &&
-                  terminal_frontend_mla.frame_arena_storage_domain == sc::ArenaStorageDomain::Dms &&
-                  terminal_frontend_mla.frame_arena_size_bytes == 4096U &&
-                  terminal_frontend_mla.frame_arena_size_bytes <
-                      frontend_arena->allocation_bytes() &&
-                  terminal_frontend_mla.frame_arena_escape_policy ==
-                      sc::ArenaEscapePolicy::CpuMappablePublic &&
-                  (terminal_frontend_mla.frame_arena_required_device_access &
-                   static_cast<std::uint32_t>(sc::ArenaDeviceAccess::Mla)) != 0U &&
-                  (terminal_frontend_mla.frame_arena_required_device_access &
-                   static_cast<std::uint32_t>(sc::ArenaDeviceAccess::CpuA65)) != 0U &&
-                  (terminal_frontend_mla.frame_arena_required_device_access &
-                   static_cast<std::uint32_t>(sc::ArenaDeviceAccess::Ev74)) == 0U,
-              "EV ingress must keep its CMA arena while terminal MLA owns one right-sized "
-              "DMS output carrier");
-      require(terminal_frontend_mla.physical_inputs.size() == 2U &&
-                  terminal_frontend_mla.physical_inputs[0].source_physical_index == 0 &&
-                  terminal_frontend_mla.physical_inputs[1].source_physical_index == 0 &&
-                  terminal_frontend_mla.physical_inputs[0].source_byte_offset !=
-                      terminal_frontend_mla.physical_inputs[1].source_byte_offset &&
-                  terminal_frontend_mla.physical_outputs.size() == 1U &&
-                  terminal_frontend_mla.physical_outputs[0].source_byte_offset == 0,
-              "split output ownership must keep exact upstream arena IFM offsets without "
-              "copying or treating them as regions of the output pool");
-      auto compact_frontend_cvu = frontend_cvu;
-      auto compact_frontend_runtime = frontend_runtime;
-      auto compact_frontend_exposed = frontend_exposed;
-      require(sc::apply_dmabuf_plan_processcvu_contract_projection(
-                  frontend_plan, 0U, *frontend_arena, sc::ProcessCvuMlaBoundary::Inputs,
-                  &compact_frontend_cvu, &compact_frontend_runtime, &compact_frontend_exposed,
-                  &error),
-              "compact frontend CMA projection must pass: " + error);
-      require(
-          frontend_detached == std::vector<sc::ValueId>({4U}) &&
-              frontend_arena->region(4U) == nullptr &&
-              frontend_arena->allocation_bytes() < unfiltered_frontend_arena->allocation_bytes() &&
-              compact_frontend_runtime.frame_arena_size_bytes == frontend_arena->allocation_bytes(),
-          "YOLO-like EV ingress arena must exclude the detached terminal MLA OFM root");
-      require(compact_frontend_runtime.physical_outputs.size() == 2U &&
-                  compact_frontend_runtime.physical_outputs[0].source_byte_offset ==
-                      terminal_frontend_mla.physical_inputs[0].source_byte_offset &&
-                  compact_frontend_runtime.physical_outputs[1].source_byte_offset ==
-                      terminal_frontend_mla.physical_inputs[1].source_byte_offset &&
-                  compact_frontend_runtime.physical_outputs[0].source_byte_offset !=
-                      compact_frontend_runtime.physical_outputs[1].source_byte_offset &&
-                  (compact_frontend_runtime.physical_outputs[0].source_byte_offset != 0 ||
-                   compact_frontend_runtime.physical_outputs[1].source_byte_offset != 0),
-              "each zero-offset imported IFM selector must name an upstream physical binding "
-              "that retains its exact nonzero absolute offset in the shared CMA parent");
-
+      const auto frontend_physical = sc::PhysicalExecutionLowerer::lower(frontend_plan, &error);
+      require(frontend_physical.has_value(), "frontend physical plan lowers: " + error);
       const auto view_ifm_plan = make_nonzero_view_to_terminal_mla_plan();
       auto view_ifm_physical = sc::PhysicalExecutionLowerer::lower(view_ifm_plan, &error);
       require(view_ifm_physical.has_value(), "nonzero view-to-MLA fixture must lower: " + error);
       const auto view_ifm_detached =
           sc::detached_mla_output_roots(view_ifm_plan, *view_ifm_physical);
-      auto view_ifm_arena = sc::FrameSlotArenaPlan::compile(
-          view_ifm_plan, *view_ifm_physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-          sc::kLegacyEvoCmaRegionAlignmentBytes, &error, sc::kModalixProductionArenaDmsPolicy,
-          view_ifm_detached);
-      require(view_ifm_arena.has_value(), "nonzero view-to-MLA arena must compile: " + error);
-      auto view_ifm_sources =
-          sc::resolve_mla_input_physical_sources(view_ifm_plan, 0U, *view_ifm_arena, {}, &error);
+      auto view_ifm_sources = sc::resolve_mla_input_physical_sources(view_ifm_plan, 0U, &error);
       require(view_ifm_sources.has_value(), "nonzero view-to-MLA source must resolve: " + error);
       auto view_ifm_contract = make_projection(view_ifm_plan);
-      require(sc::apply_dmabuf_plan_contract_projection(
-                  view_ifm_plan, 0U, *view_ifm_arena,
-                  sc::mla_output_carrier_policy_from_arena(view_ifm_plan, *view_ifm_arena, 0U),
-                  &view_ifm_contract, *view_ifm_sources, &error),
+      require(sc::apply_dmabuf_plan_contract_projection(view_ifm_plan, physical_for(view_ifm_plan),
+                                                        0U, &view_ifm_contract, *view_ifm_sources,
+                                                        &error),
               "nonzero view-to-MLA projection must pass: " + error);
-      const auto* view_ifm_parent = view_ifm_arena->region(1U);
-      const auto expected_view_ifm_offset =
-          view_ifm_parent ? static_cast<std::int64_t>(view_ifm_parent->byte_offset + 4096U) : -1;
+      constexpr std::int64_t expected_view_ifm_offset = 4096;
       view_ifm_contract.stage_id = "MLA_view_ifm";
       view_ifm_contract.node_name = "MLA_view_ifm";
       view_ifm_contract.model_path = "view-ifm.elf";
@@ -2682,14 +2255,13 @@ RUN_TEST(
       view_ifm_contract.batch_sz_model = 1;
       const auto compiled_view_ifm =
           sima::stagesemantics::build_mla_compiled_contract(view_ifm_contract);
-      require(view_ifm_detached == std::vector<sc::ValueId>({3U}) && view_ifm_parent != nullptr &&
-                  expected_view_ifm_offset > 0 && view_ifm_contract.physical_inputs.size() == 1U &&
-                  view_ifm_contract.physical_inputs[0].source_physical_index == 0 &&
+      require(view_ifm_detached == std::vector<sc::ValueId>({3U}) && expected_view_ifm_offset > 0 &&
+                  view_ifm_contract.physical_inputs.size() == 1U &&
+                  view_ifm_contract.physical_inputs[0].source_physical_index == -1 &&
                   view_ifm_contract.physical_inputs[0].source_byte_offset ==
                       expected_view_ifm_offset &&
                   view_ifm_contract.input_bindings.size() == 1U &&
-                  view_ifm_contract.input_bindings[0].src_physical_byte_offset ==
-                      expected_view_ifm_offset &&
+                  view_ifm_contract.input_bindings[0].src_physical_byte_offset == 0 &&
                   compiled_view_ifm.runtime_contract.logical_inputs.size() == 1U &&
                   compiled_view_ifm.runtime_contract.logical_inputs[0].byte_offset == 0,
               "an affine MLA IFM view must add its carrier-relative offset exactly once "
@@ -2724,16 +2296,14 @@ RUN_TEST(
       require(!grouped_commands.empty() && !non_cvu_commands.empty(),
               "grouped fixture must contain quantize and MLA physical commands");
       require(sc::apply_dmabuf_plan_processcvu_command_projection(
-                  frontend_plan, *frontend_physical, grouped_commands, *frontend_arena,
-                  &grouped_quant, &grouped_runtime, &grouped_exposed, &error),
+                  frontend_plan, *frontend_physical, grouped_commands, &grouped_quant,
+                  &grouped_runtime, &grouped_exposed, &error),
               "two sibling quantize operations must render as one exact cohort: " + error);
-      const auto* grouped_region_0 = frontend_arena->region(2U);
-      const auto* grouped_region_1 = frontend_arena->region(3U);
       require(
           grouped_quant.graph_name == "quant" && grouped_quant.maximum_members == 32U &&
               grouped_runtime.physical_inputs.size() == 2U &&
-              grouped_runtime.physical_outputs.size() == 2U && grouped_region_0 &&
-              grouped_region_1 && grouped_runtime.physical_inputs[0].physical_index == 0 &&
+              grouped_runtime.physical_outputs.size() == 2U &&
+              grouped_runtime.physical_inputs[0].physical_index == 0 &&
               grouped_runtime.physical_inputs[0].source_physical_index == 1 &&
               grouped_runtime.physical_inputs[0].size_bytes == 100U &&
               grouped_runtime.physical_inputs[0].address_source ==
@@ -2756,15 +2326,14 @@ RUN_TEST(
               grouped_runtime.input_bindings[0].src_physical_size_bytes == 100U &&
               grouped_runtime.input_bindings[1].src_physical_size_bytes == 200U &&
               grouped_runtime.physical_outputs[0].source_byte_offset ==
-                  static_cast<std::int64_t>(grouped_region_0->byte_offset) &&
+                  static_cast<std::int64_t>(0U) &&
               grouped_runtime.physical_outputs[1].source_byte_offset ==
-                  static_cast<std::int64_t>(grouped_region_1->byte_offset) &&
+                  static_cast<std::int64_t>(0U) &&
               grouped_runtime.logical_outputs[0].byte_offset == 0 &&
               grouped_runtime.logical_outputs[1].byte_offset == 0 &&
-              grouped_runtime.frame_arena_role == sima::FrameArenaRole::Allocate &&
               grouped_runtime.consumer_keeps_distinct_physical_inputs,
           "grouped quantize must select independent public bindings in member order and write two "
-          "arena regions");
+          "carrier regions");
 
       // Numerical IDs are no longer authority, but contradictory semantic
       // families must still fail rather than changing policy or scalar meaning.
@@ -2774,8 +2343,8 @@ RUN_TEST(
       auto contradictory_exposed = grouped_exposed;
       error.clear();
       require(!sc::apply_dmabuf_plan_processcvu_command_projection(
-                  frontend_plan, *frontend_physical, grouped_commands, *frontend_arena,
-                  &contradictory_family, &contradictory_runtime, &contradictory_exposed, &error) &&
+                  frontend_plan, *frontend_physical, grouped_commands, &contradictory_family,
+                  &contradictory_runtime, &contradictory_exposed, &error) &&
                   error.find("family") != std::string::npos &&
                   error.find("contradict") != std::string::npos,
               "selected quant operation must reject a contradictory cast family: " + error);
@@ -2787,47 +2356,24 @@ RUN_TEST(
                                                                          non_cvu_commands.front()};
       error.clear();
       require(!sc::apply_dmabuf_plan_processcvu_command_projection(
-                  frontend_plan, *frontend_physical, heterogeneous_commands, *frontend_arena,
-                  &heterogeneous_payload, &heterogeneous_runtime, &heterogeneous_exposed, &error),
+                  frontend_plan, *frontend_physical, heterogeneous_commands, &heterogeneous_payload,
+                  &heterogeneous_runtime, &heterogeneous_exposed, &error),
               "a heterogeneous semantic frontier must fail closed");
 
-      auto ambiguous = upstream;
-      ambiguous.push_back(upstream[1]);
-      ambiguous.back().logical_index = 10;
-      require(!sc::resolve_mla_input_physical_sources(frontend_plan, ambiguous, &error),
-              "ambiguous upstream IFM names must fail closed");
-
-      auto missing = upstream;
-      missing[0].backend_name.clear();
-      require(!sc::resolve_mla_input_physical_sources(frontend_plan, missing, &error),
-              "missing upstream IFM values must fail closed");
-
       const auto packed_plan = make_packed_plan();
-      std::vector<sima::LogicalTensorStaticSpec> packed_upstream(2U);
-      packed_upstream[0].logical_index = 11;
-      packed_upstream[0].backend_name = "quantize_0";
-      packed_upstream[0].physical_index = 0;
-      packed_upstream[0].byte_offset = 0;
-      packed_upstream[0].size_bytes = 640U;
-      packed_upstream[1].logical_index = 12;
-      packed_upstream[1].backend_name = "quantize_1";
-      packed_upstream[1].physical_index = 0;
-      packed_upstream[1].byte_offset = 640;
-      packed_upstream[1].size_bytes = 320U;
-      auto packed_sources =
-          sc::resolve_mla_input_physical_sources(packed_plan, packed_upstream, &error);
+      auto packed_sources = sc::resolve_mla_input_physical_sources(packed_plan, 0U, &error);
       require(packed_sources.has_value(), "packed parent IFM must resolve: " + error);
-      require(packed_sources->size() == 1U && (*packed_sources)[0].source_physical_index == 0,
+      require(packed_sources->size() == 1U && (*packed_sources)[0].source_physical_index == -1,
               "packed IFM must resolve to its one physical parent");
       auto packed_contract = make_projection(packed_plan);
-      require(sc::apply_dmabuf_plan_contract_projection(packed_plan, &packed_contract,
-                                                        *packed_sources, &error),
+      require(sc::apply_dmabuf_plan_contract_projection(packed_plan, physical_for(packed_plan), 0U,
+                                                        &packed_contract, *packed_sources, &error),
               "packed 1/1 projection must pass: " + error);
       require(packed_contract.physical_outputs.size() == 1U &&
                   packed_contract.logical_outputs.size() == 2U,
               "packed OFM must stay one physical port with two logical read views");
       require(!packed_contract.logical_inputs[0].parent_carrier &&
-                  packed_contract.physical_inputs[0].source_physical_index == 0,
+                  packed_contract.physical_inputs[0].source_physical_index == -1,
               "packed IFM must not retain a logical parent-carrier anchor");
       require(packed_contract.logical_outputs[0].byte_offset == 0 &&
                   packed_contract.logical_outputs[0].stride_bytes ==
@@ -2837,10 +2383,6 @@ RUN_TEST(
 
       auto packed_physical = sc::PhysicalExecutionLowerer::lower(packed_plan, &error);
       require(packed_physical.has_value(), "packed ProcessCVU plan must lower: " + error);
-      auto packed_arena = sc::FrameSlotArenaPlan::compile(
-          packed_plan, *packed_physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-          sc::kLegacyEvoCmaRegionAlignmentBytes, &error);
-      require(packed_arena.has_value(), "packed ProcessCVU arena must compile: " + error);
       std::vector<sc::PhysicalCommandId> packed_quant_commands;
       for (const auto& command : packed_physical->commands) {
         if (command.engine == sc::PhysicalEngine::Cvu && command.implementation_id == "quant") {
@@ -2850,14 +2392,13 @@ RUN_TEST(
       require(!packed_quant_commands.empty(),
               "packed ProcessCVU plan must contain a quantize cohort");
       auto packed_quant_contract = sc::build_dmabuf_plan_processcvu_command_contract(
-          packed_plan, *packed_physical, packed_quant_commands, *packed_arena, &error);
-      const auto* packed_parent_region = packed_arena->region(4U);
-      require(packed_quant_contract.has_value() && packed_parent_region &&
+          packed_plan, *packed_physical, packed_quant_commands, &error);
+      require(packed_quant_contract.has_value() &&
                   packed_quant_contract->runtime_contract.physical_outputs.size() == 2U &&
                   packed_quant_contract->runtime_contract.physical_outputs[0].source_byte_offset ==
-                      static_cast<std::int64_t>(packed_parent_region->byte_offset) &&
+                      static_cast<std::int64_t>(0U) &&
                   packed_quant_contract->runtime_contract.physical_outputs[1].source_byte_offset ==
-                      static_cast<std::int64_t>(packed_parent_region->byte_offset + 640U),
+                      static_cast<std::int64_t>(640U),
               "ProcessCVU producers must write directly into their relation-only Pack parent: " +
                   error);
 
@@ -2866,24 +2407,14 @@ RUN_TEST(
           sc::PhysicalExecutionLowerer::lower(terminal_bf16_unpack_plan, &error);
       require(terminal_bf16_unpack_physical.has_value(),
               "terminal BF16-over-INT8 Unpack plan must lower: " + error);
-      const auto terminal_bf16_unpack_detached =
-          sc::detached_mla_output_roots(terminal_bf16_unpack_plan, *terminal_bf16_unpack_physical);
-      auto terminal_bf16_unpack_arena = sc::FrameSlotArenaPlan::compile(
-          terminal_bf16_unpack_plan, *terminal_bf16_unpack_physical,
-          sc::FrameSlotArenaReuse::DisjointLifetimes, sc::kLegacyEvoCmaRegionAlignmentBytes, &error,
-          sc::kModalixProductionArenaDmsPolicy, terminal_bf16_unpack_detached);
-      require(terminal_bf16_unpack_arena.has_value() &&
-                  sc::mla_output_carrier_policy_from_arena(terminal_bf16_unpack_plan,
-                                                           *terminal_bf16_unpack_arena, 0U) ==
-                      sc::MlaOutputCarrierPolicy::SeparateCpuVisible,
-              "terminal packed MLA output must own one detached DMS carrier: " + error);
-      auto terminal_bf16_unpack_sources = sc::resolve_mla_input_physical_sources(
-          terminal_bf16_unpack_plan, 0U, *terminal_bf16_unpack_arena, {}, &error);
+
+      auto terminal_bf16_unpack_sources =
+          sc::resolve_mla_input_physical_sources(terminal_bf16_unpack_plan, 0U, &error);
       require(terminal_bf16_unpack_sources.has_value(),
-              "terminal packed MLA input must resolve from its retained CMA arena: " + error);
+              "terminal packed MLA input must resolve from its retained CMA carrier: " + error);
       auto terminal_bf16_unpack_contract = make_projection(terminal_bf16_unpack_plan);
       require(sc::apply_dmabuf_plan_contract_projection(
-                  terminal_bf16_unpack_plan, 0U, *terminal_bf16_unpack_arena,
+                  terminal_bf16_unpack_plan, physical_for(terminal_bf16_unpack_plan), 0U,
                   &terminal_bf16_unpack_contract, *terminal_bf16_unpack_sources, &error),
               "terminal BF16-over-INT8 Unpack projection must pass: " + error);
       constexpr std::array<std::uint64_t, 6> kRow07Offsets = {0U,       819200U,  1024000U,
@@ -2892,9 +2423,7 @@ RUN_TEST(
                                                             1024000U, 256000U, 64000U};
       require(terminal_bf16_unpack_contract.physical_outputs.size() == 1U &&
                   terminal_bf16_unpack_contract.physical_outputs[0].size_bytes == 2419200U &&
-                  terminal_bf16_unpack_contract.logical_outputs.size() == kRow07Spans.size() &&
-                  terminal_bf16_unpack_contract.frame_arena_storage_domain ==
-                      sc::ArenaStorageDomain::Dms,
+                  terminal_bf16_unpack_contract.logical_outputs.size() == kRow07Spans.size(),
               "Row07 route cut must retain one exact 2,419,200-byte DMS parent");
       for (std::size_t index = 0U; index < kRow07Spans.size(); ++index) {
         const auto& logical = terminal_bf16_unpack_contract.logical_outputs[index];
@@ -2919,20 +2448,13 @@ RUN_TEST(
           sc::PhysicalExecutionLowerer::lower(terminal_dense_bf16_plan, &error);
       require(terminal_dense_bf16_physical.has_value(),
               "terminal dense BF16 plan must lower: " + error);
-      const auto terminal_dense_bf16_detached =
-          sc::detached_mla_output_roots(terminal_dense_bf16_plan, *terminal_dense_bf16_physical);
-      auto terminal_dense_bf16_arena = sc::FrameSlotArenaPlan::compile(
-          terminal_dense_bf16_plan, *terminal_dense_bf16_physical,
-          sc::FrameSlotArenaReuse::DisjointLifetimes, sc::kLegacyEvoCmaRegionAlignmentBytes, &error,
-          sc::kModalixProductionArenaDmsPolicy, terminal_dense_bf16_detached);
-      require(terminal_dense_bf16_arena.has_value(),
-              "terminal dense BF16 arena must compile: " + error);
+
       auto terminal_dense_bf16_contract = make_projection(terminal_dense_bf16_plan);
-      auto terminal_dense_bf16_sources = sc::resolve_mla_input_physical_sources(
-          terminal_dense_bf16_plan, 0U, *terminal_dense_bf16_arena, {}, &error);
+      auto terminal_dense_bf16_sources =
+          sc::resolve_mla_input_physical_sources(terminal_dense_bf16_plan, 0U, &error);
       require(terminal_dense_bf16_sources.has_value() &&
                   sc::apply_dmabuf_plan_contract_projection(
-                      terminal_dense_bf16_plan, 0U, *terminal_dense_bf16_arena,
+                      terminal_dense_bf16_plan, physical_for(terminal_dense_bf16_plan), 0U,
                       &terminal_dense_bf16_contract, *terminal_dense_bf16_sources, &error) &&
                   terminal_dense_bf16_contract.logical_outputs.size() == 1U &&
                   terminal_dense_bf16_contract.logical_outputs[0].dtype == "bfloat16" &&
@@ -2947,20 +2469,13 @@ RUN_TEST(
           sc::PhysicalExecutionLowerer::lower(terminal_composed_slice, &error);
       require(terminal_composed_slice_physical.has_value(),
               "terminal composed-Slice plan must lower: " + error);
-      const auto terminal_composed_slice_detached =
-          sc::detached_mla_output_roots(terminal_composed_slice, *terminal_composed_slice_physical);
-      auto terminal_composed_slice_arena = sc::FrameSlotArenaPlan::compile(
-          terminal_composed_slice, *terminal_composed_slice_physical,
-          sc::FrameSlotArenaReuse::DisjointLifetimes, sc::kLegacyEvoCmaRegionAlignmentBytes, &error,
-          sc::kModalixProductionArenaDmsPolicy, terminal_composed_slice_detached);
-      require(terminal_composed_slice_arena.has_value(),
-              "terminal composed-Slice arena must compile: " + error);
+
       auto terminal_composed_slice_contract = make_projection(terminal_composed_slice);
-      auto terminal_composed_slice_sources = sc::resolve_mla_input_physical_sources(
-          terminal_composed_slice, 0U, *terminal_composed_slice_arena, {}, &error);
+      auto terminal_composed_slice_sources =
+          sc::resolve_mla_input_physical_sources(terminal_composed_slice, 0U, &error);
       require(terminal_composed_slice_sources.has_value() &&
                   sc::apply_dmabuf_plan_contract_projection(
-                      terminal_composed_slice, 0U, *terminal_composed_slice_arena,
+                      terminal_composed_slice, physical_for(terminal_composed_slice), 0U,
                       &terminal_composed_slice_contract, *terminal_composed_slice_sources,
                       &error) &&
                   terminal_composed_slice_contract.logical_outputs.size() == 6U &&
@@ -2982,21 +2497,13 @@ RUN_TEST(
                 "malformed publication fixture must remain physically "
                 "lowerable: " +
                     error);
-        const auto malformed_detached =
-            sc::detached_mla_output_roots(malformed, *malformed_physical);
-        auto malformed_arena = sc::FrameSlotArenaPlan::compile(
-            malformed, *malformed_physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-            sc::kLegacyEvoCmaRegionAlignmentBytes, &error, sc::kModalixProductionArenaDmsPolicy,
-            malformed_detached);
-        require(malformed_arena.has_value(),
-                "malformed publication fixture must reach projection: " + error);
-        auto malformed_sources =
-            sc::resolve_mla_input_physical_sources(malformed, 0U, *malformed_arena, {}, &error);
+
+        auto malformed_sources = sc::resolve_mla_input_physical_sources(malformed, 0U, &error);
         require(malformed_sources.has_value(),
                 "malformed publication fixture input must resolve: " + error);
         auto malformed_contract = make_projection(malformed);
         error.clear();
-        require(!sc::apply_dmabuf_plan_contract_projection(malformed, 0U, *malformed_arena,
+        require(!sc::apply_dmabuf_plan_contract_projection(malformed, physical_for(malformed), 0U,
                                                            &malformed_contract, *malformed_sources,
                                                            &error) &&
                     (error.find("normalized storage") != std::string::npos ||
@@ -3010,11 +2517,12 @@ RUN_TEST(
       const auto bf16_unpack_plan = make_bf16_consumer_over_int8_unpack_plan(kGroupedUnpackMembers);
       auto bf16_unpack_contract = make_projection(bf16_unpack_plan);
       auto bf16_unpack_sources =
-          sc::resolve_mla_input_physical_sources(bf16_unpack_plan, {}, &error);
+          sc::resolve_mla_input_physical_sources(bf16_unpack_plan, 0U, &error);
       require(bf16_unpack_sources.has_value(),
               "BF16-over-INT8 Unpack MLA input must resolve: " + error);
-      require(sc::apply_dmabuf_plan_contract_projection(bf16_unpack_plan, &bf16_unpack_contract,
-                                                        *bf16_unpack_sources, &error),
+      require(sc::apply_dmabuf_plan_contract_projection(
+                  bf16_unpack_plan, physical_for(bf16_unpack_plan), 0U, &bf16_unpack_contract,
+                  *bf16_unpack_sources, &error),
               "BF16-over-INT8 Unpack MLA projection must pass: " + error);
       require(bf16_unpack_contract.logical_outputs.size() == kGroupedUnpackMembers &&
                   std::all_of(bf16_unpack_contract.logical_outputs.begin(),
@@ -3037,13 +2545,8 @@ RUN_TEST(
       }
       require(!detesscast_commands.empty(),
               "BF16 consumers must lower to the registered graph225 cohort");
-      auto bf16_unpack_arena = sc::FrameSlotArenaPlan::compile(
-          bf16_unpack_plan, *bf16_unpack_physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-          sc::kLegacyEvoCmaRegionAlignmentBytes, &error);
-      require(bf16_unpack_arena.has_value(),
-              "BF16-over-INT8 Unpack frame arena must compile: " + error);
       auto detesscast_contract = sc::build_dmabuf_plan_processcvu_command_contract(
-          bf16_unpack_plan, *bf16_unpack_physical, detesscast_commands, *bf16_unpack_arena, &error);
+          bf16_unpack_plan, *bf16_unpack_physical, detesscast_commands, &error);
       require(detesscast_contract.has_value(),
               "BF16 graph225 command contract must build: " + error);
       require(detesscast_contract->payload.input_tensors.size() == kGroupedUnpackMembers &&
@@ -3061,77 +2564,35 @@ RUN_TEST(
                   kGroupedUnpackMembers &&
               detesscast_contract->runtime_contract.logical_inputs.size() == kGroupedUnpackMembers,
           "six graph225 members must publish six exact logical and physical input spans");
-      const auto* unpack_parent_region = bf16_unpack_arena->region(1U);
-      require(unpack_parent_region != nullptr,
-              "MLA Unpack parent must retain its frame-arena region");
       for (std::size_t member = 0; member < kGroupedUnpackMembers; ++member) {
         const auto& route = detesscast_contract->runtime_contract.input_bindings[member];
         const auto& physical = detesscast_contract->runtime_contract.physical_inputs[member];
         const auto& logical = detesscast_contract->runtime_contract.logical_inputs[member];
         const int selector = static_cast<int>(member);
-        require(
-            route.sink_pad_index == 0 && route.local_logical_input_index == selector &&
-                route.src_logical_output_index == selector && route.src_output_slot == selector &&
-                route.src_physical_output_index == 0 && route.src_physical_byte_offset == 0 &&
-                route.src_physical_size_bytes == 200U &&
-                physical.address_source == sima::PhysicalAddressSource::FrameArenaSpan &&
-                physical.physical_index == selector && physical.source_physical_index == 0 &&
-                physical.source_byte_offset ==
-                    static_cast<std::int64_t>(unpack_parent_region->byte_offset + member * 200U) &&
-                physical.size_bytes == 200U && logical.logical_index == selector &&
-                logical.physical_index == selector && logical.byte_offset == 0 &&
-                logical.size_bytes == 200U &&
-                logical.logical_name == "unpack_" + std::to_string(member),
-            "one MLA arena carrier must retain six distinct logical identities and exact "
-            "compiler-authored member spans without rebinding memory slots");
+        require(route.sink_pad_index == 0 && route.local_logical_input_index == selector &&
+                    route.src_logical_output_index == selector &&
+                    route.src_output_slot == selector && route.src_physical_output_index == 0 &&
+                    route.src_physical_byte_offset == 0 && route.src_physical_size_bytes == 200U &&
+                    physical.address_source == sima::PhysicalAddressSource::FrameSpan &&
+                    physical.physical_index == selector && physical.source_physical_index == 0 &&
+                    physical.source_byte_offset == static_cast<std::int64_t>(member * 200U) &&
+                    physical.size_bytes == 200U && logical.logical_index == selector &&
+                    logical.physical_index == selector && logical.byte_offset == 0 &&
+                    logical.size_bytes == 200U &&
+                    logical.logical_name == "unpack_" + std::to_string(member),
+                "one MLA carrier carrier must retain six distinct logical identities and exact "
+                "compiler-authored member spans without rebinding memory slots");
       }
-
-      sima::ProcessCvuStagePayload packed_pre;
-      packed_pre.graph_family_enum = sima::ProcessCvuGraphFamily::Quant;
-      packed_pre.graph_name = "quant";
-      simaai::neat::CompiledRuntimeContract packed_pre_runtime;
-      sima::PhysicalBufferStaticSpec packed_pre_parent;
-      packed_pre_parent.physical_index = 0;
-      packed_pre_parent.size_bytes = 960U;
-      packed_pre_parent.segment_name = "output_tensor";
-      packed_pre_runtime.physical_outputs.push_back(std::move(packed_pre_parent));
-      for (std::size_t index = 0; index < 2U; ++index) {
-        sima::LogicalTensorStaticSpec logical;
-        logical.logical_index = static_cast<int>(index);
-        logical.backend_output_index = static_cast<int>(index);
-        logical.physical_index = 0;
-        logical.output_slot = static_cast<int>(index);
-        logical.tensor_index = static_cast<int>(index);
-        logical.byte_offset = index == 0U ? 0 : 640;
-        logical.size_bytes = index == 0U ? 640U : 320U;
-        logical.logical_name = "quantize_" + std::to_string(index);
-        logical.backend_name = logical.logical_name;
-        logical.segment_name = "output_tensor";
-        packed_pre_runtime.logical_outputs.push_back(std::move(logical));
-      }
-      simaai::neat::CompiledExposedView packed_pre_exposed;
-      packed_pre_exposed.exposed_logical_outputs = packed_pre_runtime.logical_outputs;
-      require(sc::apply_dmabuf_plan_processcvu_contract_projection(
-                  packed_plan, sc::ProcessCvuMlaBoundary::Inputs, &packed_pre, &packed_pre_runtime,
-                  &packed_pre_exposed, &error),
-              "packed pre-CVU placement must project: " + error);
-      require(packed_pre_runtime.physical_outputs.size() == 2U &&
-                  packed_pre_runtime.physical_outputs[1].source_byte_offset -
-                          packed_pre_runtime.physical_outputs[0].source_byte_offset ==
-                      640 &&
-                  packed_pre_runtime.physical_outputs[0].required_alignment_bytes == 4096U &&
-                  packed_pre_runtime.physical_outputs[1].required_alignment_bytes == 128U &&
-                  !packed_pre_runtime.consumer_keeps_distinct_physical_inputs,
-              "Pack children must be direct writes into one ordered parent carrier");
 
       const auto single_read_plan = make_single_read_plan();
       auto single_read_contract = make_projection(single_read_plan);
       auto single_read_sources =
-          sc::resolve_mla_input_physical_sources(single_read_plan, {}, &error);
+          sc::resolve_mla_input_physical_sources(single_read_plan, 0U, &error);
       require(single_read_sources.has_value(),
               "single-read model-input carrier must resolve: " + error);
-      require(sc::apply_dmabuf_plan_contract_projection(single_read_plan, &single_read_contract,
-                                                        *single_read_sources, &error),
+      require(sc::apply_dmabuf_plan_contract_projection(
+                  single_read_plan, physical_for(single_read_plan), 0U, &single_read_contract,
+                  *single_read_sources, &error),
               "single read-view projection must pass: " + error);
       require(single_read_contract.logical_outputs.size() == 1U &&
                   single_read_contract.logical_outputs[0].byte_offset == 8 &&
@@ -3143,16 +2604,9 @@ RUN_TEST(
       require(single_read_physical.has_value(), "MLA-to-EV negative fixture must lower: " + error);
       const auto single_read_detached =
           sc::detached_mla_output_roots(single_read_plan, *single_read_physical);
-      auto single_read_arena = sc::FrameSlotArenaPlan::compile(
-          single_read_plan, *single_read_physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-          sc::kLegacyEvoCmaRegionAlignmentBytes, &error, sc::kModalixProductionArenaDmsPolicy,
-          single_read_detached);
       require(sc::select_mla_output_carrier_policy(single_read_plan, *single_read_physical, 0U) ==
-                      sc::MlaOutputCarrierPolicy::SharedFrameArena &&
-                  single_read_detached.empty() && single_read_arena.has_value() &&
-                  single_read_arena->region(1U) != nullptr &&
-                  single_read_arena->region(3U) != nullptr &&
-                  single_read_arena->placement().domain == sc::ArenaStorageDomain::Cma,
+                      sc::MlaOutputCarrierPolicy::SharedInputGroup &&
+                  single_read_detached.empty(),
               "an EV command after MLA must keep its producer and consumer in CMA rather than "
               "detaching a CPU-only output carrier");
 
@@ -3165,22 +2619,16 @@ RUN_TEST(
           sc::select_mla_output_carrier_policy(terminal_slice_plan, *terminal_slice_physical, 0U);
       const auto terminal_slice_detached =
           sc::detached_mla_output_roots(terminal_slice_plan, *terminal_slice_physical);
-      auto terminal_slice_arena = sc::FrameSlotArenaPlan::compile(
-          terminal_slice_plan, *terminal_slice_physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-          sc::kLegacyEvoCmaRegionAlignmentBytes, &error, sc::kModalixProductionArenaDmsPolicy,
-          terminal_slice_detached);
-      require(terminal_slice_policy == sc::MlaOutputCarrierPolicy::SeparateCpuVisible &&
-                  terminal_slice_detached == std::vector<sc::ValueId>({2U}) &&
-                  terminal_slice_arena.has_value() && terminal_slice_arena->region(1U) != nullptr &&
-                  terminal_slice_arena->region(2U) == nullptr,
+      require(terminal_slice_policy == sc::MlaOutputCarrierPolicy::DetachedOutputGroup &&
+                  terminal_slice_detached == std::vector<sc::ValueId>({2U}),
               "pure terminal read views must detach their one physical MLA root");
-      auto terminal_slice_sources = sc::resolve_mla_input_physical_sources(
-          terminal_slice_plan, 0U, *terminal_slice_arena, {}, &error);
+      auto terminal_slice_sources =
+          sc::resolve_mla_input_physical_sources(terminal_slice_plan, 0U, &error);
       require(terminal_slice_sources.has_value(),
-              "terminal two-Slice arena IFM must resolve: " + error);
+              "terminal two-Slice carrier IFM must resolve: " + error);
       auto terminal_slice_contract = make_projection(terminal_slice_plan);
       require(sc::apply_dmabuf_plan_contract_projection(
-                  terminal_slice_plan, 0U, *terminal_slice_arena, terminal_slice_policy,
+                  terminal_slice_plan, physical_for(terminal_slice_plan), 0U,
                   &terminal_slice_contract, *terminal_slice_sources, &error),
               "pure terminal read-view projection must pass: " + error);
       require(terminal_slice_contract.physical_outputs.size() == 1U &&
@@ -3201,50 +2649,12 @@ RUN_TEST(
               "root-relative offsets, shapes, and strides");
 
       const auto mla_a65_plan = make_mla_a65_successor_plan();
-      auto mla_a65_physical = sc::PhysicalExecutionLowerer::lower(mla_a65_plan, &error);
-      require(mla_a65_physical.has_value(), "MLA-to-A65 fixture must lower: " + error);
-      const auto mla_a65_detached = sc::detached_mla_output_roots(mla_a65_plan, *mla_a65_physical);
-      auto mla_a65_arena = sc::FrameSlotArenaPlan::compile(
-          mla_a65_plan, *mla_a65_physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-          sc::kLegacyEvoCmaRegionAlignmentBytes, &error, sc::kModalixProductionArenaDmsPolicy,
-          mla_a65_detached);
-      require(sc::select_mla_output_carrier_policy(mla_a65_plan, *mla_a65_physical, 0U) ==
-                      sc::MlaOutputCarrierPolicy::SharedFrameArena &&
-                  mla_a65_detached.empty() && mla_a65_arena.has_value() &&
-                  mla_a65_arena->region(1U) != nullptr && mla_a65_arena->region(2U) != nullptr &&
-                  mla_a65_arena->placement().domain == sc::ArenaStorageDomain::Dms &&
-                  mla_a65_arena->placement().requires_access(sc::ArenaDeviceAccess::Mla) &&
-                  mla_a65_arena->placement().requires_access(sc::ArenaDeviceAccess::CpuA65) &&
-                  !mla_a65_arena->placement().requires_access(sc::ArenaDeviceAccess::Ev74),
-              "an exact A65 successor must keep the MLA output in the shared DMS arena; only "
-              "a public terminal boundary may detach it");
-
-      require(mla_a65_arena->placement().allocation_policy ==
-                  sc::ArenaAllocationPolicy::RequiredDomain,
-              "production DMS placement must not silently enable fallback");
-      auto preferred_arena = sc::FrameSlotArenaPlan::compile(
-          mla_a65_plan, *mla_a65_physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-          sc::kLegacyEvoCmaRegionAlignmentBytes, &error, sc::ArenaDmsPolicy::PreferDmsThenCma);
-      require(preferred_arena.has_value(), "explicit MLA/A65 preference must compile: " + error);
-      const auto preferred_sources =
-          sc::resolve_mla_input_physical_sources(mla_a65_plan, 0U, {}, &error);
-      require(preferred_sources.has_value(), "preferred MLA IFM must resolve: " + error);
-      auto preferred_contract = make_projection(mla_a65_plan, 0U);
-      require(sc::apply_dmabuf_plan_contract_projection(mla_a65_plan, 0U, *preferred_arena,
-                                                        &preferred_contract, *preferred_sources,
-                                                        &error),
-              "preferred projection must compile: " + error);
-      require(preferred_contract.frame_arena_allocation_policy ==
-                      sc::ArenaAllocationPolicy::PreferDmsThenCma &&
-                  preferred_contract.frame_arena_storage_domain == sc::ArenaStorageDomain::Dms,
-              "MLA projection lost opt-in allocation policy");
-      auto gapped = packed_upstream;
-      ++gapped[1].byte_offset;
-      require(!sc::resolve_mla_input_physical_sources(packed_plan, gapped, &error),
-              "packed IFM with a gap must fail closed");
-
-      require(!sc::ModelExecutionPlan::create(make_packed_plan_data(1920U), &error),
-              "direct Pack without exact parent coverage must fail during plan construction");
+      const auto mla_a65_physical = sc::PhysicalExecutionLowerer::lower(mla_a65_plan, &error);
+      require(mla_a65_physical &&
+                  sc::select_mla_output_carrier_policy(mla_a65_plan, *mla_a65_physical, 0U) ==
+                      sc::MlaOutputCarrierPolicy::SharedInputGroup &&
+                  sc::detached_mla_output_roots(mla_a65_plan, *mla_a65_physical).empty(),
+              "a live A65 successor keeps the MLA output in the shared ownership group");
       auto external_pack = make_packed_plan_data();
       external_pack.values[2].storage_binding =
           sc::StorageBinding{sc::StorageBindingKind::External, 2U,          0U, 640U, {},
@@ -3277,173 +2687,6 @@ RUN_TEST(
               aliased_plan->value(11U)->storage_binding->byte_offset == 656U &&
               aliased_plan->value(11U)->storage_binding->kind == sc::StorageBindingKind::View,
           "a retained producer view must follow canonical Pack placement without becoming a write");
-      const auto aliased_arena = sc::FrameSlotArenaPlan::compile(
-          *aliased_plan, sc::FrameSlotArenaReuse::DisjointLifetimes, 4096U, &error);
-      require(aliased_arena && aliased_arena->region(11U) == aliased_arena->region(4U),
-              "a public child alias must retain the same parent arena region");
-
-      const auto pitched_plan = make_pitched_batch_pack_plan();
-      std::vector<sima::LogicalTensorStaticSpec> pitched_upstream(2U);
-      pitched_upstream[0].logical_index = 0;
-      pitched_upstream[0].backend_name = "left";
-      pitched_upstream[0].physical_index = 0;
-      pitched_upstream[0].byte_offset = 0;
-      pitched_upstream[0].size_bytes = 8U;
-      pitched_upstream[0].stride_bytes = {8, 4};
-      pitched_upstream[1].logical_index = 1;
-      pitched_upstream[1].backend_name = "right";
-      pitched_upstream[1].physical_index = 0;
-      pitched_upstream[1].byte_offset = 4;
-      pitched_upstream[1].size_bytes = 8U;
-      pitched_upstream[1].stride_bytes = {8, 4};
-      auto pitched_sources =
-          sc::resolve_mla_input_physical_sources(pitched_plan, pitched_upstream, &error);
-      require(pitched_sources && pitched_sources->size() == 1U &&
-                  pitched_sources->front().source_physical_index == 0,
-              "batch-two pitched Pack must resolve to its shared parent: " + error);
-      const auto arbitrary_batch_plan = make_pitched_batch_pack_plan(3U);
-      auto arbitrary_batch_upstream = pitched_upstream;
-      arbitrary_batch_upstream[0].size_bytes = 12U;
-      arbitrary_batch_upstream[1].size_bytes = 12U;
-      auto arbitrary_batch_sources = sc::resolve_mla_input_physical_sources(
-          arbitrary_batch_plan, arbitrary_batch_upstream, &error);
-      require(arbitrary_batch_sources && arbitrary_batch_sources->size() == 1U &&
-                  arbitrary_batch_sources->front().source_physical_index == 0,
-              "non-power-of-two static-batch Pack must resolve generically: " + error);
-      auto wrong_pitch = pitched_upstream;
-      wrong_pitch[1].stride_bytes = {4, 4};
-      require(!sc::resolve_mla_input_physical_sources(pitched_plan, wrong_pitch, &error),
-              "a published Pack child with the wrong pitch must fail closed");
-
-      sima::ProcessCvuStagePayload dequant;
-      dequant.graph_family_enum = sima::ProcessCvuGraphFamily::Dequant;
-      dequant.graph_name = "dequant";
-      simaai::neat::CompiledRuntimeContract post_runtime;
-      sima::PhysicalBufferStaticSpec parent_output;
-      parent_output.physical_index = 0;
-      parent_output.allocator_index = 0;
-      parent_output.size_bytes = 28U * 4096U;
-      parent_output.device_kind = sima::DeviceKind::Evxx;
-      parent_output.segment_name = "output_tensor";
-      post_runtime.physical_outputs.push_back(std::move(parent_output));
-      for (std::size_t index = 0; index < 28U; ++index) {
-        sima::LogicalTensorStaticSpec logical;
-        logical.logical_index = static_cast<int>(index);
-        logical.backend_output_index = static_cast<int>(index);
-        logical.physical_index = 0;
-        logical.output_slot = static_cast<int>(index);
-        logical.tensor_index = static_cast<int>(index);
-        logical.size_bytes = 4096U;
-        logical.logical_name = "post_" + std::to_string(index);
-        logical.backend_name = logical.logical_name;
-        logical.segment_name = "output_tensor";
-        post_runtime.logical_outputs.push_back(std::move(logical));
-      }
-      simaai::neat::CompiledExposedView post_exposed;
-      post_exposed.exposed_logical_outputs = post_runtime.logical_outputs;
-      require(sc::apply_dmabuf_plan_processcvu_contract_projection(
-                  plan, sc::ProcessCvuMlaBoundary::Outputs, &dequant, &post_runtime, &post_exposed,
-                  &error),
-              "dequant must project onto the production driver graph: " + error);
-      require(dequant.dmabuf_plan_contract && dequant.graph_name == "dequant",
-              "dequant must use canonical graph 223 in dmabuf-plan mode");
-      require(post_runtime.physical_outputs.size() == 28U &&
-                  post_runtime.logical_outputs.size() == 28U,
-              "post-CVU must retain all independently placed destination outputs");
-      for (std::size_t index = 0; index < 28U; ++index) {
-        const auto* destination = plan.value(static_cast<sc::ValueId>(30U + index));
-        require(destination && destination->storage_binding,
-                "post-CVU fixture must have canonical destination storage");
-        const auto& storage = *destination->storage_binding;
-        const auto* carrier = plan.carrier(storage.carrier_id);
-        const auto& physical = post_runtime.physical_outputs[index];
-        const auto& logical = post_runtime.logical_outputs[index];
-        require(carrier && storage.byte_offset == 0U &&
-                    carrier->required_alignment_bytes == sc::kLegacyEvoCmaRegionAlignmentBytes &&
-                    physical.required_alignment_bytes == carrier->required_alignment_bytes &&
-                    physical.source_byte_offset >= 0 &&
-                    static_cast<std::uint64_t>(physical.source_byte_offset) %
-                            carrier->required_alignment_bytes ==
-                        0U &&
-                    physical.physical_index == static_cast<int>(index) &&
-                    physical.size_bytes == storage.physical_span &&
-                    physical.segment_name == destination->name &&
-                    logical.physical_index == static_cast<int>(index) && logical.byte_offset == 0,
-                "post-CVU output alignment, identity and span must describe its destination "
-                "carrier, not inherit the independent MLA input carrier's port alignment");
-      }
-      require(post_runtime.frame_arena_role == sima::FrameArenaRole::ReuseInput &&
-                  post_runtime.frame_arena_size_bytes == contract.frame_arena_size_bytes,
-              "post-CVU must reuse the same parent frame arena");
-      require(post_runtime.frame_arena_storage_domain == sc::ArenaStorageDomain::Cma &&
-                  post_runtime.frame_arena_provenance ==
-                      sc::ArenaAllocationProvenance::CoreAllocated &&
-                  (post_runtime.frame_arena_required_device_access &
-                   static_cast<std::uint32_t>(sc::ArenaDeviceAccess::Ev74)) != 0U,
-              "post-CVU must retain the Core-authored CMA/domain/provenance access join");
-
-      const std::vector<sima::ProcessCvuGraphFamily> driver_families = {
-          sima::ProcessCvuGraphFamily::Tess,
-          sima::ProcessCvuGraphFamily::Detess,
-      };
-      const std::vector<std::string> canonical_tokens = {
-          "tess",
-          "detess",
-      };
-      std::size_t family_index = 0U;
-      for (const auto family : driver_families) {
-        sima::ProcessCvuStagePayload projected;
-        projected.graph_family_enum = family;
-        projected.graph_name = canonical_tokens[family_index];
-        auto family_runtime = post_runtime;
-        auto family_exposed = post_exposed;
-        require(sc::apply_dmabuf_plan_processcvu_contract_projection(
-                    plan, sc::ProcessCvuMlaBoundary::Outputs, &projected, &family_runtime,
-                    &family_exposed, &error),
-                "tess/detess family must project onto a production driver graph: " + error);
-        require(projected.dmabuf_plan_contract &&
-                    projected.graph_name == canonical_tokens[family_index++] &&
-                    projected.graph_id == 0 && projected.descriptor_abi_id == 0U &&
-                    projected.descriptor_contract_version == 0U &&
-                    projected.binding_schema_version == 0U &&
-                    projected.supported_placement_mask == 0U &&
-                    projected.allowed_frame_patch_mask == 0U,
-                "canonical transform identity must not publish a legacy prepared handshake");
-      }
-
-      for (const auto& [family, operation] :
-           std::array{std::pair{sima::ProcessCvuGraphFamily::QuantTess, "quanttess"},
-                      std::pair{sima::ProcessCvuGraphFamily::CastTess, "casttess"},
-                      std::pair{sima::ProcessCvuGraphFamily::DetessCast, "detesscast"},
-                      std::pair{sima::ProcessCvuGraphFamily::DetessDequant, "detessdequant"}}) {
-        sima::ProcessCvuStagePayload projected;
-        projected.graph_family_enum = family;
-        projected.graph_name = operation;
-        auto retired_runtime = post_runtime;
-        auto retired_exposed = post_exposed;
-        error.clear();
-        require(!sc::apply_dmabuf_plan_processcvu_contract_projection(
-                    plan, sc::ProcessCvuMlaBoundary::Outputs, &projected, &retired_runtime,
-                    &retired_exposed, &error) &&
-                    error.find("does not support") != std::string::npos,
-                "boundary-only projection must reject fused operations without a physical command");
-      }
-
-      sima::ProcessCvuStagePayload preproc;
-      preproc.graph_family_enum = sima::ProcessCvuGraphFamily::Preproc;
-      preproc.graph_name = "preproc";
-      auto preproc_runtime = packed_pre_runtime;
-      auto preproc_exposed = packed_pre_exposed;
-      require(sc::apply_dmabuf_plan_processcvu_contract_projection(
-                  packed_plan, sc::ProcessCvuMlaBoundary::Inputs, &preproc, &preproc_runtime,
-                  &preproc_exposed, &error),
-              "preproc must project through its strict graph-200 descriptor ABI: " + error);
-      require(preproc.dmabuf_plan_contract && preproc.graph_name == "preproc" &&
-                  preproc.graph_id == 0 && preproc.descriptor_abi_id == 0U &&
-                  preproc.descriptor_contract_version == 0U &&
-                  preproc.binding_schema_version == 0U && preproc.maximum_members == 1U &&
-                  preproc.supported_placement_mask == 0U && preproc.allowed_frame_patch_mask == 0U,
-              "canonical Preproc must not publish a legacy prepared handshake");
 
       {
         const auto absorption_plan = make_model_managed_preproc_absorption_plan();
@@ -3452,18 +2695,7 @@ RUN_TEST(
                 "graph-200 absorption physical lowering must pass: " + error);
         const auto absorption_detached =
             sc::detached_mla_output_roots(absorption_plan, *absorption_physical);
-        auto absorption_arena = sc::FrameSlotArenaPlan::compile(
-            absorption_plan, *absorption_physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-            sc::kLegacyEvoCmaRegionAlignmentBytes, &error, sc::kModalixProductionArenaDmsPolicy,
-            absorption_detached);
-        require(absorption_arena.has_value(), "graph-200 absorption arena must compile: " + error);
-        require(absorption_detached == std::vector<sc::ValueId>({2U}) &&
-                    absorption_arena->region(1U) != nullptr &&
-                    absorption_arena->region(2U) == nullptr &&
-                    absorption_arena->placement().domain == sc::ArenaStorageDomain::Cma &&
-                    absorption_arena->placement().requires_access(sc::ArenaDeviceAccess::Ev74) &&
-                    absorption_arena->placement().requires_access(sc::ArenaDeviceAccess::Mla) &&
-                    absorption_arena->placement().escape == sc::ArenaEscapePolicy::InternalOnly,
+        require(absorption_detached == std::vector<sc::ValueId>({2U}),
                 "graph-200 must retain only its EV74/MLA CMA ingress carrier");
 
         simaai::neat::PreprocOptions graph200;
@@ -3482,8 +2714,8 @@ RUN_TEST(
             sima::stagesemantics::build_processcvu_compiled_contract_from_options(graph200);
         std::vector<sc::PhysicalCommandId> absorbed_commands;
         require(sc::project_model_managed_preproc_contract(absorption_plan, *absorption_physical,
-                                                           *absorption_arena, &graph200_contract,
-                                                           &absorbed_commands, &error),
+                                                           &graph200_contract, &absorbed_commands,
+                                                           &error),
                 "graph-200 must replace the exact leading graph222 command: " + error);
         require(
             absorbed_commands.size() == 1U &&
@@ -3512,8 +2744,6 @@ RUN_TEST(
                     std::vector<std::string>{"output_rgb_image"} &&
                 graph200_contract.payload.runtime_output_logical_index_list ==
                     std::vector<int>{0} &&
-                graph200_contract.runtime_contract.frame_arena_role ==
-                    sima::FrameArenaRole::Allocate &&
                 graph200_contract.runtime_contract.input_bindings.front()
                         .src_logical_output_index == 0 &&
                 graph200_contract.runtime_contract.input_bindings.front().src_output_slot == 0 &&
@@ -3532,29 +2762,28 @@ RUN_TEST(
                 graph200_contract.runtime_contract.logical_outputs.front().segment_name ==
                     "quantize_0" &&
                 graph200_contract.runtime_contract.physical_outputs.front().source_byte_offset ==
-                    static_cast<std::int64_t>(absorption_arena->region(1U)->byte_offset),
-            "graph-200 must write the original quant result directly into the one arena");
+                    static_cast<std::int64_t>(0U),
+            "graph-200 must write the original quant result directly into the one carrier");
 
-        auto graph200_mla_sources = sc::resolve_mla_input_physical_sources(
-            absorption_plan, 0U, *absorption_arena, {}, &error);
+        auto graph200_mla_sources =
+            sc::resolve_mla_input_physical_sources(absorption_plan, 0U, &error);
         require(graph200_mla_sources.has_value(),
-                "graph-200 first-MLA source must resolve from the compact arena: " + error);
+                "graph-200 first-MLA source must resolve from the compact carrier: " + error);
         auto graph200_mla = make_projection(absorption_plan);
-        require(
-            sc::apply_dmabuf_plan_contract_projection(
-                absorption_plan, 0U, *absorption_arena,
-                sc::mla_output_carrier_policy_from_arena(absorption_plan, *absorption_arena, 0U),
-                &graph200_mla, *graph200_mla_sources, &error),
-            "graph-200 first-MLA projection must pass: " + error);
+        require(sc::apply_dmabuf_plan_contract_projection(
+                    absorption_plan, physical_for(absorption_plan), 0U, &graph200_mla,
+                    *graph200_mla_sources, &error),
+                "graph-200 first-MLA projection must pass: " + error);
         require(graph200_mla.physical_inputs.size() == 1U &&
-                    graph200_mla.physical_inputs[0].source_physical_index == 0 &&
+                    graph200_mla.physical_inputs[0].source_physical_index == -1 &&
                     graph200_mla.physical_inputs[0].source_byte_offset ==
                         graph200_contract.runtime_contract.physical_outputs[0].source_byte_offset &&
                     graph200_mla.input_bindings.size() == 1U &&
-                    graph200_mla.input_bindings[0].src_physical_output_index == 0 &&
-                    graph200_mla.input_bindings[0].src_physical_byte_offset ==
-                        graph200_contract.runtime_contract.physical_outputs[0].source_byte_offset,
-                "graph-200 publication and first-MLA IFM must name one exact CMA region");
+                    graph200_mla.input_bindings[0].src_physical_output_index == -1 &&
+                    graph200_mla.input_bindings[0].src_physical_byte_offset == 0 &&
+                    graph200_mla.physical_inputs[0].model_carrier_id ==
+                        graph200_contract.runtime_contract.physical_outputs[0].model_carrier_id,
+                "graph-200 and first-MLA IFM retain one root and apply its offset once");
 
         const auto tess_absorption_plan = make_model_managed_tess_preproc_absorption_plan();
         auto tess_absorption_physical =
@@ -3563,20 +2792,8 @@ RUN_TEST(
                 "tessellated graph-200 absorption physical lowering must pass: " + error);
         const auto tess_absorption_detached =
             sc::detached_mla_output_roots(tess_absorption_plan, *tess_absorption_physical);
-        auto tess_absorption_arena = sc::FrameSlotArenaPlan::compile(
-            tess_absorption_plan, *tess_absorption_physical,
-            sc::FrameSlotArenaReuse::DisjointLifetimes, sc::kLegacyEvoCmaRegionAlignmentBytes,
-            &error, sc::kModalixProductionArenaDmsPolicy, tess_absorption_detached);
-        require(tess_absorption_arena.has_value(),
-                "tessellated graph-200 absorption arena must compile: " + error);
-        require(
-            tess_absorption_detached == std::vector<sc::ValueId>({3U}) &&
-                tess_absorption_arena->region(2U) != nullptr &&
-                tess_absorption_arena->region(3U) == nullptr &&
-                tess_absorption_arena->placement().domain == sc::ArenaStorageDomain::Cma &&
-                tess_absorption_arena->placement().requires_access(sc::ArenaDeviceAccess::Ev74) &&
-                tess_absorption_arena->placement().requires_access(sc::ArenaDeviceAccess::Mla),
-            "tessellated graph-200 must retain only its EV74/MLA CMA ingress carrier");
+        require(tess_absorption_detached == std::vector<sc::ValueId>({3U}),
+                "tessellated graph-200 must retain only its EV74/MLA CMA ingress carrier");
         auto tess_graph200 = graph200;
         tess_graph200.tessellate = true;
         tess_graph200.slice_shape = {2, 2, 3};
@@ -3585,8 +2802,8 @@ RUN_TEST(
         std::vector<sc::PhysicalCommandId> tess_absorbed_commands;
         error.clear();
         require(sc::project_model_managed_preproc_contract(
-                    tess_absorption_plan, *tess_absorption_physical, *tess_absorption_arena,
-                    &tess_graph200_contract, &tess_absorbed_commands, &error),
+                    tess_absorption_plan, *tess_absorption_physical, &tess_graph200_contract,
+                    &tess_absorbed_commands, &error),
                 "tessellated graph-200 must project its selected output onto the exact "
                 "first-MLA value: " +
                     error);
@@ -3612,8 +2829,7 @@ RUN_TEST(
                 tess_graph200_contract.runtime_contract.logical_outputs.front().segment_name ==
                     "tessellated_quantize_0" &&
                 tess_graph200_contract.runtime_contract.physical_outputs.front()
-                        .source_byte_offset ==
-                    static_cast<std::int64_t>(tess_absorption_arena->region(2U)->byte_offset),
+                        .source_byte_offset == static_cast<std::int64_t>(0U),
             "tessellated graph-200 single handoff must discard the unselected RGB "
             "firmware pointer and retain the compiler-authored MLA ingress");
 
@@ -3624,12 +2840,7 @@ RUN_TEST(
         const auto packed_plan = make_model_managed_tess_preproc_absorption_plan(true);
         const auto packed_physical = sc::PhysicalExecutionLowerer::lower(packed_plan, &error);
         require(packed_physical.has_value(), "packed ingress lowering must pass: " + error);
-        const auto packed_detached = sc::detached_mla_output_roots(packed_plan, *packed_physical);
-        const auto packed_arena = sc::FrameSlotArenaPlan::compile(
-            packed_plan, *packed_physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-            sc::kLegacyEvoCmaRegionAlignmentBytes, &error, sc::kModalixProductionArenaDmsPolicy,
-            packed_detached);
-        require(packed_arena.has_value(), "packed ingress arena must compile: " + error);
+
         auto packed_options = tess_graph200;
         packed_options.output_shape = {224, 224, 3};
         packed_options.scaled_width = packed_options.scaled_height = 224;
@@ -3644,7 +2855,7 @@ RUN_TEST(
         std::vector<sc::PhysicalCommandId> wrong_frame_absorbed;
         error.clear();
         require(!sc::project_model_managed_preproc_contract(packed_plan, *packed_physical,
-                                                            *packed_arena, &wrong_frame_contract,
+                                                            &wrong_frame_contract,
                                                             &wrong_frame_absorbed, &error) &&
                     error.find("frame geometry") != std::string::npos,
                 "equal-byte wrong image geometry must not become packed publication authority: " +
@@ -3653,9 +2864,8 @@ RUN_TEST(
         auto packed_contract =
             sima::stagesemantics::build_processcvu_compiled_contract_from_options(packed_options);
         std::vector<sc::PhysicalCommandId> packed_absorbed;
-        require(sc::project_model_managed_preproc_contract(packed_plan, *packed_physical,
-                                                           *packed_arena, &packed_contract,
-                                                           &packed_absorbed, &error),
+        require(sc::project_model_managed_preproc_contract(
+                    packed_plan, *packed_physical, &packed_contract, &packed_absorbed, &error),
                 "packed ingress must project from exact typed compiler authority: " + error);
         require(packed_contract.runtime_contract.logical_outputs.front().shape ==
                         sc::TensorShape({1, 150528}) &&
@@ -3672,11 +2882,19 @@ RUN_TEST(
             sima::prepare_kernel_stage_recipes(&packed_manifest, {}, {}, {}, {});
         require(!packed_failure, "packed ingress canonical lowering must pass: " +
                                      (packed_failure ? packed_failure->message : std::string{}));
+        sima::finalize_pipeline_storage(packed_manifest);
+        require(!sima::finalize_stage_publications(&packed_manifest),
+                "packed publication finalization");
         const auto& packed_recipe = packed_manifest.stages.front().native_kernel;
-        require(packed_recipe && packed_recipe->publication &&
-                    packed_recipe->publication->physical_views.size() == 1U &&
-                    packed_recipe->publication->physical_views.front().backend_output_index == 0 &&
-                    packed_recipe->publication->physical_views.front().relation ==
+        require(packed_recipe && packed_manifest.stages.front().tensor_publication &&
+                    packed_manifest.stages.front().tensor_publication->physical_views.size() ==
+                        1U &&
+                    packed_manifest.stages.front()
+                            .tensor_publication->physical_views.front()
+                            .backend_output_index == 0 &&
+                    packed_manifest.stages.front()
+                            .tensor_publication->physical_views.front()
+                            .relation ==
                         ::simaai::scheduler::client::TensorStagePublicationRelation::PackedStorage,
                 "canonical request must carry only compiler-authored packed view authority");
 
@@ -3689,13 +2907,7 @@ RUN_TEST(
                 make_model_managed_tess_preproc_absorption_plan(flat, true, offset);
             const auto padded_physical = sc::PhysicalExecutionLowerer::lower(padded_plan, &error);
             require(padded_physical.has_value(), "padded ingress lowering: " + error);
-            const auto padded_detached =
-                sc::detached_mla_output_roots(padded_plan, *padded_physical);
-            const auto padded_arena = sc::FrameSlotArenaPlan::compile(
-                padded_plan, *padded_physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-                sc::kLegacyEvoCmaRegionAlignmentBytes, &error, sc::kModalixProductionArenaDmsPolicy,
-                padded_detached);
-            require(padded_arena.has_value(), "padded ingress arena: " + error);
+
             auto padded_options = tess_graph200;
             padded_options.input_shape = {8, 12, 1};
             padded_options.input_img_type = padded_options.output_img_type = "GRAY";
@@ -3708,8 +2920,8 @@ RUN_TEST(
             const auto input_before = padded.runtime_contract.logical_inputs.front();
             const auto primary = padded.exposed_view.primary_output_name;
             std::vector<sc::PhysicalCommandId> commands;
-            require(sc::project_model_managed_preproc_contract(
-                        padded_plan, *padded_physical, *padded_arena, &padded, &commands, &error),
+            require(sc::project_model_managed_preproc_contract(padded_plan, *padded_physical,
+                                                               &padded, &commands, &error),
                     "padded ingress projection: " + error);
             require(commands.size() == 1U &&
                         padded_physical->commands[commands.front()].implementation_id ==
@@ -3734,13 +2946,12 @@ RUN_TEST(
                     exposed.primary_output_name == primary &&
                     exposed.exposed_output_order.front().cm_output_name == primary,
                 "public storage and both routes must derive from the finalized selected output");
-            require(
-                runtime.physical_outputs.front().source_byte_offset ==
-                        static_cast<std::int64_t>(padded_arena->region(2U)->byte_offset + offset) &&
-                    runtime.logical_inputs.front().shape == input_before.shape &&
-                    runtime.logical_inputs.front().size_bytes == input_before.size_bytes &&
-                    padded.payload.q_scale == 0.25 && padded.payload.q_zp == -128,
-                "finalization must preserve carrier offsets, source geometry and quantization");
+            require(runtime.physical_outputs.front().source_byte_offset ==
+                            static_cast<std::int64_t>(offset) &&
+                        runtime.logical_inputs.front().shape == input_before.shape &&
+                        runtime.logical_inputs.front().size_bytes == input_before.size_bytes &&
+                        padded.payload.q_scale == 0.25 && padded.payload.q_zp == -128,
+                    "finalization must preserve carrier offsets, source geometry and quantization");
             auto stage = simaai::neat::project_processcvu_stage_contract(padded);
             stage.element_name = stage.logical_stage_id = "padded_preproc";
             sima::SimaPluginStaticManifest manifest;
@@ -3748,37 +2959,36 @@ RUN_TEST(
             const auto failure = sima::prepare_kernel_stage_recipes(&manifest, {}, {}, {}, {});
             require(!failure,
                     "padded canonical recipe: " + (failure ? failure->message : std::string{}));
+            sima::finalize_pipeline_storage(manifest);
+            require(!sima::finalize_stage_publications(&manifest), "final preproc publication");
             const auto& recipe = manifest.stages.front().native_kernel;
-            require(recipe && recipe->members.size() == 1U && recipe->publication &&
-                        recipe->publication->contract->logical_outputs.size() == 1U,
-                    "padded Preproc must publish one canonical member without an intermediate");
+            require(
+                recipe && recipe->members.size() == 1U &&
+                    manifest.stages.front().tensor_publication &&
+                    manifest.stages.front().tensor_publication->contract->logical_outputs.size() ==
+                        1U,
+                "padded Preproc must publish one canonical member without an intermediate");
             const auto inspection =
                 ::simaai::scheduler::client::inspect_kernel(recipe->members.front().executable);
             const auto* checked =
                 std::get_if<::simaai::scheduler::client::KernelInspection>(&inspection);
             require(checked && checked->output_requirements().size() == 1U &&
                         checked->output_requirements().front().storage_bytes == 64U &&
-                        recipe->publication->contract->logical_outputs.front().size_bytes ==
-                            checked->output_requirements().front().storage_bytes,
+                        manifest.stages.front()
+                                .tensor_publication->contract->logical_outputs.front()
+                                .size_bytes == checked->output_requirements().front().storage_bytes,
                     "independent canonical storage must equal the published padded extent");
           }
         }
 
-        // An explicit compiler carrier remains authoritative even if its size
-        // is inconsistent with the kernel. Never repair it by enlarging storage:
-        // the unchanged Scheduler cold validator must reject both a short span
-        // and an extra unwritten packed byte, before any device is opened.
+        // Keep compiler extents unchanged: Core rejects a short carrier before
+        // packing; Scheduler rejects an extra unwritten publication byte.
         for (const std::int64_t delta : {-1, 1}) {
           const auto malformed =
               make_model_managed_tess_preproc_absorption_plan(true, true, 0, delta);
           const auto physical = sc::PhysicalExecutionLowerer::lower(malformed, &error);
           require(physical.has_value(), "malformed extent fixture lowering: " + error);
           const auto detached = sc::detached_mla_output_roots(malformed, *physical);
-          const auto arena = sc::FrameSlotArenaPlan::compile(
-              malformed, *physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-              sc::kLegacyEvoCmaRegionAlignmentBytes, &error, sc::kModalixProductionArenaDmsPolicy,
-              detached);
-          require(arena.has_value(), "malformed extent fixture arena: " + error);
           auto options = tess_graph200;
           options.input_shape = {8, 12, 1};
           options.output_shape = {4, 6, 1};
@@ -3789,8 +2999,8 @@ RUN_TEST(
           auto compiled =
               sima::stagesemantics::build_processcvu_compiled_contract_from_options(options);
           std::vector<sc::PhysicalCommandId> commands;
-          require(sc::project_model_managed_preproc_contract(malformed, *physical, *arena,
-                                                             &compiled, &commands, &error),
+          require(sc::project_model_managed_preproc_contract(malformed, *physical, &compiled,
+                                                             &commands, &error),
                   "projection must preserve declared typed storage for independent admission: " +
                       error);
           const auto declared = static_cast<std::uint64_t>(64 + delta);
@@ -3804,16 +3014,36 @@ RUN_TEST(
           const auto lowered = sima::prepare_kernel_stage_recipes(&manifest, {}, {}, {}, {});
           require(!lowered, "malformed publication fixture canonical executable: " +
                                 (lowered ? lowered->message : std::string{}));
-          const auto& recipe = *manifest.stages.front().native_kernel;
-          ::simaai::scheduler::client::TensorStageRequest request;
-          request.target = recipe.target;
-          request.members = recipe.members;
-          request.publication = *recipe.publication;
-          request.placement = std::make_shared<SimaPluginStageSpec>();
-          const auto state = sima::wire_kernel_stage_factories(recipe, request);
+          if (delta < 0) {
+            bool rejected = false;
+            try {
+              sima::finalize_pipeline_storage(manifest);
+            } catch (const std::invalid_argument& ex) {
+              rejected = std::string(ex.what()).find("checked output exceeds its carrier") !=
+                         std::string::npos;
+            }
+            require(rejected &&
+                        manifest.stages.front().physical_outputs.front().size_bytes == declared &&
+                        !manifest.stages.front().frame_layout,
+                    "storage finalization must reject a short carrier without enlarging it");
+            continue;
+          }
+          sima::finalize_pipeline_storage(manifest);
+          const auto publication_status = sima::finalize_stage_publications(&manifest);
+          require(!publication_status,
+                  "malformed fixture storage remains independently representable");
+          const auto& authored = manifest.stages.front();
+          const auto& recipe = *authored.native_kernel;
+          ::simaai::scheduler::client::StageRequest request;
+          ::simaai::scheduler::client::KernelProgram program;
+          program.target = recipe.target;
+          program.members = recipe.members;
+          request.publication = *authored.tensor_publication;
+          request.layout = authored.frame_layout;
+          const auto state = sima::wire_kernel_stage_factories(recipe, program);
+          request.program = std::move(program);
           require(!state,
                   "cold frame-adapter instantiation: " + (state ? state->message : std::string{}));
-          gst_init(nullptr, nullptr);
           require(::simaai::scheduler::client::register_kernel_runner(),
                   "Scheduler kernel runner registration required");
           auto pipeline = std::shared_ptr<GstElement>(gst_pipeline_new(nullptr), gst_object_unref);
@@ -3825,17 +3055,17 @@ RUN_TEST(
           gst_object_unref(pad);
           const ::simaai::scheduler::client::StageAttachment attachment{element,
                                                                         std::move(request)};
-          const auto admitted = ::simaai::scheduler::client::prepare_and_attach_tensor_stages(
+          const auto admitted = ::simaai::scheduler::client::prepare_and_attach_stages(
               pipeline.get(), {&attachment, 1});
           const auto* rejected = admitted ? &*admitted : nullptr;
           require(rejected && rejected->field == "output.span" &&
-                      rejected->message.find(delta < 0 ? "exceeds" : "unwritten") !=
-                          std::string::npos,
-                  "independent cold admission must reject contradictory typed storage");
+                      rejected->message.find("checked writes") != std::string::npos,
+                  "independent cold admission must reject contradictory typed storage: " +
+                      (rejected ? rejected->field + ": " + rejected->message : "accepted"));
         }
 
         // Standalone storage and ROI capacity must be final at first facts,
-        // before queries or arena allocation; batch one retains its HWC view.
+        // before queries or carrier allocation; batch one retains its HWC view.
         for (const auto& dtype : {std::string("INT8"), std::string("UINT8"), std::string("BF16")}) {
           for (const bool tiled : {false, true}) {
             for (const int batch : {1, 2}) {
@@ -3874,11 +3104,17 @@ RUN_TEST(
                           " must publish canonical storage and capacity at first construction");
               auto stage = simaai::neat::project_processcvu_stage_contract(compiled);
               stage.element_name = stage.logical_stage_id = "standalone_preproc";
+              require(stage.physical_outputs.size() == 1U &&
+                          stage.physical_outputs.front().physical_index == exposed.physical_index &&
+                          stage.physical_outputs.front().size_bytes == required_bytes,
+                      "standalone Preproc must materialize only its selected batched carrier");
               sima::SimaPluginStaticManifest manifest;
               manifest.stages.push_back(std::move(stage));
               const auto failure = sima::prepare_kernel_stage_recipes(&manifest, {}, {}, {}, {});
               require(!failure, "standalone " + dtype + " canonical recipe: " +
                                     (failure ? failure->message : std::string{}));
+              sima::finalize_pipeline_storage(manifest);
+              require(!sima::finalize_stage_publications(&manifest), "final preproc publication");
               const auto& recipe = manifest.stages.front().native_kernel;
               const auto inspection =
                   ::simaai::scheduler::client::inspect_kernel(recipe->members.front().executable);
@@ -3886,8 +3122,9 @@ RUN_TEST(
                   std::get_if<::simaai::scheduler::client::KernelInspection>(&inspection);
               require(checked && checked->output_requirements().size() == 1U &&
                           checked->output_requirements().front().storage_bytes == required_bytes &&
-                          recipe->publication->contract->logical_outputs.front().size_bytes ==
-                              required_bytes,
+                          manifest.stages.front()
+                                  .tensor_publication->contract->logical_outputs.front()
+                                  .size_bytes == required_bytes,
                       "standalone storage must survive render/recipe unchanged and match Kernels");
               if (tiled) {
                 auto unsupported = compiled.payload;
@@ -3933,64 +3170,42 @@ RUN_TEST(
         absorbed_commands.clear();
         error.clear();
         require(!sc::project_model_managed_preproc_contract(absorption_plan, *absorption_physical,
-                                                            *absorption_arena, &wrong_q,
-                                                            &absorbed_commands, &error) &&
+                                                            &wrong_q, &absorbed_commands, &error) &&
                     error.find("quantization contradicts") != std::string::npos,
                 "graph-200 absorption must reject mismatched compiler quantization");
       }
 
       const auto two_mla = make_two_mla_plan();
-      std::string arena_error;
-      const auto two_mla_physical = sc::PhysicalExecutionLowerer::lower(two_mla, &arena_error);
+      std::string carrier_error;
+      const auto two_mla_physical = sc::PhysicalExecutionLowerer::lower(two_mla, &carrier_error);
       require(two_mla_physical.has_value(),
-              "two MLA stages need an exact physical plan: " + arena_error);
+              "two MLA stages need an exact physical plan: " + carrier_error);
       const auto two_mla_detached = sc::detached_mla_output_roots(two_mla, *two_mla_physical);
-      const auto shared_arena = sc::FrameSlotArenaPlan::compile(
-          two_mla, *two_mla_physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-          sc::kLegacyEvoCmaRegionAlignmentBytes, &arena_error, sc::kModalixProductionArenaDmsPolicy,
-          two_mla_detached);
-      require(shared_arena.has_value(), "two MLA stages need one graph arena: " + arena_error);
 
       const auto encoder_policy =
           sc::select_mla_output_carrier_policy(two_mla, *two_mla_physical, 0U);
       const auto decoder_policy =
           sc::select_mla_output_carrier_policy(two_mla, *two_mla_physical, 1U);
-      require(encoder_policy == sc::MlaOutputCarrierPolicy::SharedFrameArena &&
-                  decoder_policy == sc::MlaOutputCarrierPolicy::SeparateCpuVisible &&
-                  two_mla_detached == std::vector<sc::ValueId>({2U}) &&
-                  shared_arena->region(1U) != nullptr && shared_arena->region(2U) == nullptr,
+      require(encoder_policy == sc::MlaOutputCarrierPolicy::SharedInputGroup &&
+                  decoder_policy == sc::MlaOutputCarrierPolicy::DetachedOutputGroup &&
+                  two_mla_detached == std::vector<sc::ValueId>({2U}),
               "only the exact terminal public MLA in a multi-MLA graph may detach its output");
 
-      auto encoder_sources = sc::resolve_mla_input_physical_sources(two_mla, 0U, {}, &error);
+      auto encoder_sources = sc::resolve_mla_input_physical_sources(two_mla, 0U, &error);
       require(encoder_sources.has_value(), "encoder public IFM must resolve: " + error);
       auto encoder = make_projection(two_mla, 0U);
-      require(sc::apply_dmabuf_plan_contract_projection(two_mla, 0U, *shared_arena, &encoder,
-                                                        *encoder_sources, &error),
+      require(sc::apply_dmabuf_plan_contract_projection(two_mla, physical_for(two_mla), 0U,
+                                                        &encoder, *encoder_sources, &error),
               "encoder stage-local projection must pass: " + error);
 
-      std::vector<sima::LogicalTensorStaticSpec> encoder_outputs = encoder.logical_outputs;
-      auto decoder_sources =
-          sc::resolve_mla_input_physical_sources(two_mla, 1U, encoder_outputs, &error);
+      auto decoder_sources = sc::resolve_mla_input_physical_sources(two_mla, 1U, &error);
       require(decoder_sources.has_value(), "decoder internal IFM must resolve: " + error);
       auto decoder = make_projection(two_mla, 1U);
-      decoder.frame_arena_allocation_policy = sc::ArenaAllocationPolicy::PreferDmsThenCma;
-      require(sc::apply_dmabuf_plan_contract_projection(two_mla, 1U, *shared_arena, decoder_policy,
+      require(sc::apply_dmabuf_plan_contract_projection(two_mla, physical_for(two_mla), 1U,
                                                         &decoder, *decoder_sources, &error),
               "decoder stage-local projection must pass: " + error);
-      require(encoder.frame_arena_role == sima::FrameArenaRole::Allocate &&
-                  decoder.frame_arena_role == sima::FrameArenaRole::Allocate &&
-                  decoder.frame_arena_storage_domain == sc::ArenaStorageDomain::Dms &&
-                  decoder.frame_arena_allocation_policy ==
-                      sc::ArenaAllocationPolicy::RequiredDomain &&
-                  decoder.frame_arena_size_bytes == 4096U &&
-                  decoder.physical_inputs[0].source_physical_index == 0 &&
+      require(decoder.physical_inputs[0].source_physical_index == -1 &&
                   decoder.physical_inputs[0].source_byte_offset == 0 &&
                   decoder.physical_outputs[0].source_byte_offset == 0,
-              "terminal MLA must import the prior carrier and own a distinct right-sized "
-              "CPU-visible output pool");
-
-      auto ambiguous_contract = make_projection(two_mla, 0U);
-      require(!sc::apply_dmabuf_plan_contract_projection(two_mla, &ambiguous_contract,
-                                                         *encoder_sources, &error),
-              "stage-less projection must reject a multi-MLA plan");
+              "terminal MLA retains the prior root and its own root-relative output");
     }));

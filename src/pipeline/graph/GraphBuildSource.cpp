@@ -15,6 +15,7 @@
 
 #include "builder/InputContractConfigurable.h"
 #include "builder/OutputSpec.h"
+#include "model/internal/ModelPack.h"
 #include "nodes/common/Queue.h"
 #include "nodes/io/Input.h"
 #include "nodes/sima/PCIeSrc.h"
@@ -28,6 +29,7 @@
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/RealtimeLinkOptions.h"
+#include "pipeline/internal/sima/InternalEdgeContractResolver.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TerminalOutputContractQuery.h"
 #include "pipeline/internal/UxLogging.h"
@@ -838,32 +840,12 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   BuildResult br = build_pipeline_full(build_nodes, insert_boundaries, "mysink", insert_queue2,
                                        name_transform, &sess_opt);
   if (graph_build_internal::explicit_public_terminal_output(stream_opt, build_nodes)) {
-    const auto endpoint = session_build_public_output_endpoint_selector(build_nodes);
-    if (endpoint.terminal_stage_key_required && !endpoint.terminal_stage_key.empty())
-      br.terminal_host_stage_key = endpoint.terminal_stage_key;
+    br.terminal_host_endpoint = session_build_public_output_endpoint_selector(build_nodes);
   }
   maybe_compile_source_contracts(&br, build_nodes, sess_opt, where);
-  if (has_sink && stream_opt.public_output_contract && br.rendered_manifest.has_value()) {
-    const auto endpoint = session_build_public_output_endpoint_selector(build_nodes);
-    std::string error;
-    auto override = build_public_terminal_output_override_with_fallback(*br.rendered_manifest,
-                                                                        endpoint, &error);
-    if (override.has_value()) {
-      stream_opt.output_override = std::move(*override);
-    } else if (pipeline_internal::env_bool("SIMA_DETESS_OVERRIDE_DEBUG", false)) {
-      std::fprintf(stderr, "[output-override] %s terminal override unavailable: %s\n",
-                   where ? where : "Graph::build(source)", error.c_str());
-    }
-  }
-  session_build_finalize_public_zero_copy_holder_loan_credits(stream_opt);
   if (mode == RunMode::Sync) {
     session_build_clamp_sync_kernel_runner_capacity(br);
   }
-  session_build_tune_internal_zero_copy_holder_window(stream_opt, internal_edge_queue,
-                                                      !public_output_contract);
-  session_build_reserve_kernel_runner_outputs(br, stream_opt);
-  br.pipeline_string = session_build_apply_run_preset_to_pipeline(
-      std::move(br.pipeline_string), merged_opt, br.framework_name_origins);
   if (br.diag) {
     br.diag->pipeline_string = br.pipeline_string;
   }
@@ -874,6 +856,26 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   // --- 5. parse + probes ------------------------------------------------------------
   // pipeline ownership is taken by the RAII handle immediately so any throw below
   // tears the bin down via stack unwinding (no manual cleanup blocks needed).
+  session_build_prepare_stage_contracts(br, where);
+  if (has_sink && stream_opt.public_output_contract && br.prepared_manifest.has_value()) {
+    auto endpoint = session_build_public_output_endpoint_selector(build_nodes);
+    if (!endpoint.terminal_stage_key.empty())
+      endpoint.terminal_stage_key =
+          apply_name_transform(br.name_transform, endpoint.terminal_stage_key);
+    std::string error;
+    auto override = build_public_terminal_output_override_with_fallback(*br.prepared_manifest,
+                                                                        endpoint, &error);
+    if (override.has_value()) {
+      stream_opt.output_override = std::move(*override);
+    } else if (pipeline_internal::env_bool("SIMA_DETESS_OVERRIDE_DEBUG", false)) {
+      std::fprintf(stderr, "[output-override] %s terminal override unavailable: %s\n",
+                   where ? where : "Graph::build(source)", error.c_str());
+    }
+  }
+  session_build_finalize_public_zero_copy_holder_loan_credits(stream_opt);
+  session_build_tune_internal_zero_copy_holder_window(stream_opt, internal_edge_queue,
+                                                      !public_output_contract);
+  session_build_reserve_kernel_runner_outputs(br, stream_opt);
   pipeline_internal::GstPipelinePtr pipeline(session_build_parse_pipeline_or_throw(br, where));
   session_build_dump_pipeline_element_properties(pipeline.get());
   if (env_bool("SIMA_GST_ENFORCE_NAMES", false)) {
@@ -1184,6 +1186,9 @@ void apply_name_transform_to_compiled_contract_stage(CompiledNodeContract* stage
   }
   stage->element_name = apply_name_transform(name_transform, stage->element_name);
   stage->logical_stage_id = apply_name_transform(name_transform, stage->logical_stage_id);
+  if (stage->kernel) {
+    apply_name_transform_to_runtime_contract(&stage->kernel->runtime_contract, name_transform);
+  }
   if (stage->processcvu) {
     apply_name_transform_to_runtime_contract(&stage->processcvu->runtime_contract, name_transform);
   }
@@ -1224,15 +1229,25 @@ void append_compiled_contracts(BuildResult* dst, const BuildResult& src,
 }
 
 void append_rendered_manifest(BuildResult* dst, const BuildResult& src,
-                              const NameTransform& local_name_transform) {
+                              const NameTransform& local_name_transform,
+                              std::size_t compile_node_offset, std::size_t compile_stage_offset) {
   if (!dst || !src.rendered_manifest.has_value()) {
     return;
   }
   if (!dst->rendered_manifest.has_value()) {
     dst->rendered_manifest = pipeline_internal::sima::SimaPluginStaticManifest{};
   }
-  for (auto stage : src.rendered_manifest->stages) {
+  auto component = *src.rendered_manifest;
+  pipeline_internal::sima::edgecontract::pin_local_producer_bindings(component);
+  for (auto& stage : component.stages) {
     apply_name_transform_to_fused_manifest_stage(&stage, local_name_transform);
+    if (stage.compile_node_index)
+      *stage.compile_node_index += compile_node_offset;
+    if (stage.compile_stage_index)
+      *stage.compile_stage_index += compile_stage_offset;
+    for (auto& binding : stage.input_bindings)
+      if (binding.src_stage_index >= 0)
+        binding.src_stage_index += static_cast<int>(compile_stage_offset);
     dst->rendered_manifest->stages.push_back(std::move(stage));
   }
 }
@@ -1263,8 +1278,20 @@ void append_model_source_paths(BuildResult* dst, const BuildResult& src) {
 
 void merge_fused_contract_build_result(BuildResult* dst, const BuildResult& src,
                                        const NameTransform& local_name_transform) {
+  const auto compile_node_offset =
+      dst->compiled_contracts ? dst->compiled_contracts->stages.size() : 0U;
+  const auto compile_stage_offset =
+      dst->rendered_manifest ? dst->rendered_manifest->stages.size() : 0U;
   append_compiled_contracts(dst, src, local_name_transform);
-  append_rendered_manifest(dst, src, local_name_transform);
+  append_rendered_manifest(dst, src, local_name_transform, compile_node_offset,
+                           compile_stage_offset);
+  if (dst->compiled_contracts && src.compiled_contracts) {
+    dst->compiled_contracts->model_storage_scopes = internal::append_model_storage_scopes(
+        dst->compiled_contracts->model_storage_scopes, src.compiled_contracts->model_storage_scopes,
+        compile_stage_offset);
+    if (dst->rendered_manifest)
+      dst->rendered_manifest->model_storage_scopes = dst->compiled_contracts->model_storage_scopes;
+  }
   append_manifest_diagnostics(dst, src);
   append_model_source_paths(dst, src);
 }
@@ -3224,6 +3251,16 @@ BuildResult build_fused_realtime_source_pipeline(
 
 namespace session_test {
 
+BuildResult compile_fused_realtime_contracts_for_test(
+    const std::vector<std::shared_ptr<Node>>& consumer_nodes,
+    const std::vector<std::vector<std::shared_ptr<Node>>>& branch_nodes,
+    const GraphOptions& options, const OutputSpec& ingress_spec) {
+  BuildResult result;
+  maybe_compile_fused_realtime_contracts(&result, consumer_nodes, branch_nodes, {}, options,
+                                         "fused contract test", ingress_spec);
+  return result;
+}
+
 bool source_sima_meta_probe_required_for_test(const Node& node) {
   return source_sima_meta_probe_required_for_node(node);
 }
@@ -3454,24 +3491,9 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   maybe_compile_fused_realtime_contracts(&br, build_consumer_nodes, build_branch_nodes,
                                          branch_actual_indices, sess_opt, where,
                                          fused_ingress_spec);
-  if (has_sink && stream_opt.public_output_contract && br.rendered_manifest.has_value()) {
-    const auto endpoint = session_build_public_output_endpoint_selector(build_consumer_nodes);
-    std::string error;
-    auto override = build_public_terminal_output_override_with_fallback(*br.rendered_manifest,
-                                                                        endpoint, &error);
-    if (override.has_value()) {
-      stream_opt.output_override = std::move(*override);
-    }
-  }
-  session_build_finalize_public_zero_copy_holder_loan_credits(stream_opt);
   if (mode == RunMode::Sync) {
     session_build_clamp_sync_kernel_runner_capacity(br);
   }
-  session_build_tune_internal_zero_copy_holder_window(stream_opt, internal_edge_queue,
-                                                      !public_output_contract);
-  session_build_reserve_kernel_runner_outputs(br, stream_opt);
-  br.pipeline_string = session_build_apply_run_preset_to_pipeline(
-      std::move(br.pipeline_string), merged_opt, br.framework_name_origins);
   if (br.diag) {
     br.diag->pipeline_string = br.pipeline_string;
   }
@@ -3479,6 +3501,23 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   session_build_enforce_mla_num_buffers(last_pipeline, where);
   session_build_maybe_dump_pipeline_string(last_pipeline, where);
 
+  session_build_prepare_stage_contracts(br, where);
+  if (has_sink && stream_opt.public_output_contract && br.prepared_manifest.has_value()) {
+    auto endpoint = session_build_public_output_endpoint_selector(build_consumer_nodes);
+    if (!endpoint.terminal_stage_key.empty())
+      endpoint.terminal_stage_key =
+          apply_name_transform(br.name_transform, endpoint.terminal_stage_key);
+    std::string error;
+    auto override = build_public_terminal_output_override_with_fallback(*br.prepared_manifest,
+                                                                        endpoint, &error);
+    if (override.has_value()) {
+      stream_opt.output_override = std::move(*override);
+    }
+  }
+  session_build_finalize_public_zero_copy_holder_loan_credits(stream_opt);
+  session_build_tune_internal_zero_copy_holder_window(stream_opt, internal_edge_queue,
+                                                      !public_output_contract);
+  session_build_reserve_kernel_runner_outputs(br, stream_opt);
   pipeline_internal::GstPipelinePtr pipeline(session_build_parse_pipeline_or_throw(br, where));
   session_build_dump_pipeline_element_properties(pipeline.get());
   if (env_bool("SIMA_GST_ENFORCE_NAMES", false)) {

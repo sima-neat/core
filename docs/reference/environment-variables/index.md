@@ -11,7 +11,7 @@ This page consolidates environment variables used by the runtime, builder, and
 SDK tooling. Many are debug/diagnostic toggles; most users can ignore them
 unless troubleshooting.
 
-For the exhaustive detected list, see [Environment Variable Inventory](./inventory).
+For the exhaustive detected list, see [Environment Variable Inventory](/reference/environment-variables/inventory/).
 
 > Note: Some knobs are internal/test-only and may change. They are included here
 > because they appear in code paths today.

@@ -4408,7 +4408,8 @@ NB_MODULE(_pyneat_core, m) {
       .value("BGR", simaai::neat::PreprocessColorFormat::BGR)
       .value("GRAY8", simaai::neat::PreprocessColorFormat::GRAY8)
       .value("NV12", simaai::neat::PreprocessColorFormat::NV12)
-      .value("I420", simaai::neat::PreprocessColorFormat::I420);
+      .value("I420", simaai::neat::PreprocessColorFormat::I420)
+      .value("NV16", simaai::neat::PreprocessColorFormat::NV16);
 
   nb::enum_<simaai::neat::NormalizePreset>(m, "NormalizePreset")
       .value("None", simaai::neat::NormalizePreset::None)

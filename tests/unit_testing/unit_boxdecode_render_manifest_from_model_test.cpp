@@ -1,3 +1,4 @@
+#include <simaai/scheduler/client/frame_layout.h>
 #include "asset_utils.h"
 #include "model/Model.h"
 #include "model/internal/ModelInternal.h"
@@ -8,7 +9,10 @@
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/contract/CompiledNodeContractQuery.h"
 #include "pipeline/internal/sima/ContractRender.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
+#include "pipeline/internal/TerminalOutputContractQuery.h"
 #include "test_main.h"
+#include "support/cold_contract_gst_init.h"
 
 #include <filesystem>
 #include <optional>
@@ -147,6 +151,7 @@ const simaai::neat::pipeline_internal::sima::StageStaticSpec* find_first_rendere
 RUN_TEST(
     "unit_boxdecode_render_manifest_from_model_test", ([] {
       using namespace simaai::neat;
+      sima_test::initialize_cold_contract_gstreamer();
 
       const auto fixture = make_fixture();
       const std::string tar_path = fixture.tar_path;
@@ -232,6 +237,29 @@ RUN_TEST(
       const auto* rendered_box =
           find_first_rendered_boxdecode_stage(*manifest_opt, boxdecode_stage->element_name);
       require(rendered_box != nullptr, "rendered manifest should contain a boxdecode stage");
+      CompiledPipelineContracts nested;
+      nested.fully_renderable = true;
+      nested.model_storage_scopes = compiled.model_storage_scopes;
+      CompiledNodeContract fragment;
+      fragment.node_kind = "ModelFragment";
+      fragment.element_name = fragment.logical_stage_id = "infer";
+      fragment.child_stages = compiled.stages;
+      nested.stages.push_back(std::move(fragment));
+      auto nested_manifest =
+          render_manifest_from_compiled_contracts(nested, ContractCompileInput{}, &diagnostics);
+      require(nested_manifest && diagnostics.errors.empty(),
+              "model-backed native child container must render");
+      pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector endpoint;
+      endpoint.terminal_stage_key = "infer";
+      endpoint.terminal_node_kind = "ModelFragment";
+      endpoint.allow_unresolved_terminal_stage_fallback = true;
+      pipeline_internal::sima::finalize_pipeline_storage(*nested_manifest, &endpoint);
+      const auto* terminal =
+          find_first_rendered_boxdecode_stage(*nested_manifest, rendered_box->element_name);
+      require(terminal && terminal->native_kernel && terminal->frame_layout &&
+                  terminal->frame_layout->allocations.front().policy ==
+                      ::simaai::scheduler::client::AllocationPolicy::RequireHostCpu,
+              "model-backed native BoxDecode child must retain final HostCpu placement");
       const auto* boxdecode_runtime = compiled_runtime_contract_from_stage(boxdecode_stage);
       require(boxdecode_runtime != nullptr, "BoxDecode must expose its tensor contract");
       require(!rendered_box->element_name.empty(),

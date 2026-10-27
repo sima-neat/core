@@ -67,6 +67,12 @@ RUN_TEST(
         }
       }
 
+      for (const std::string path : {"/tmp/!queue", "https://host/!queue", "\\!queue"}) {
+        const auto analysis = analyze("filesrc location=" + path + " ! fakesink");
+        require(analysis.complete && analysis.links.size() == 1U,
+                "an unquoted assignment link character must remain part of its value");
+      }
+
       {
         const Analysis unmatched_single = analyze("identity name='source ! fakesink");
         const auto single_names = explicit_name_bindings(unmatched_single);

@@ -329,8 +329,8 @@ const neat::Tensor& publication_tensor(const neat::Sample& output) {
   else if (neat::sample_has_tensor_list(output) && output.tensors.size() == 1)
     tensor = &output.tensors.front();
   require(tensor && tensor->storage && tensor->storage->kind == neat::StorageKind::GstSample &&
-              tensor->storage->holder && tensor->byte_offset == 0,
-          "Core must return one zero-copy, zero-offset GstSample-backed BoxDecode publication");
+              tensor->storage->holder && tensor->byte_offset >= 0,
+          "Core must return one zero-copy GstSample-backed BoxDecode publication");
   return *tensor;
 }
 
@@ -502,16 +502,22 @@ void qualify(const fs::path& model_path, const fs::path& image_path, bool& nativ
       const auto& tensor = publication_tensor(output);
       auto* publication =
           gst_sample_get_buffer(static_cast<GstSample*>(tensor.storage->holder.get()));
-      require(publication != nullptr && gst_buffer_n_memory(publication) == 1,
-              "Core publication must expose one physical memory view");
+      const int memory_index =
+          publication && gst_buffer_n_memory(publication) == 1 ? 0 : tensor.route.memory_index;
+      require(publication && memory_index >= 0 &&
+                  static_cast<guint>(memory_index) < gst_buffer_n_memory(publication),
+              "Core publication must identify its selected physical memory");
+      const auto allocation_bytes =
+          gst_memory_get_sizes(gst_buffer_peek_memory(publication, memory_index), nullptr, nullptr);
       // Check the actual Gst publication, not only Core's logical Sample wrapper.
       check_association(publication, input);
-      const auto physical_before = storage_bytes(tensor, gst_buffer_get_size(publication));
-      // Physical carrier padding may legitimately exceed the logical payload. The
-      // published boxes must start at offset zero; pass the original carrier,
-      // including its padding/metadata, rather than manufacturing a compact one.
-      require(physical_before.size() >= payload.size() &&
-                  std::equal(payload.begin(), payload.end(), physical_before.begin()),
+      const auto physical_before = storage_bytes(tensor, allocation_bytes);
+      // Packing may place boxes after other carriers. Pass the original
+      // publication, including its allocation list and metadata, without repacking.
+      const auto offset = static_cast<std::size_t>(tensor.byte_offset);
+      require(offset <= physical_before.size() &&
+                  payload.size() <= physical_before.size() - offset &&
+                  std::equal(payload.begin(), payload.end(), physical_before.begin() + offset),
               "Core logical boxes differ from their physical publication; do not repack silently");
       const auto probes = edge_probes(boxes, original, bgr.cols, bgr.rows);
       rendered = renderer.submit(image.get(), publication);
@@ -529,7 +535,7 @@ void qualify(const fs::path& model_path, const fs::path& image_path, bool& nativ
       require(!matches_pixels(corrupt, original, probes, bgr.cols, bgr.rows),
               "corrupted edge escaped pixel negative control");
       require(bytes(image.get()) == original, "renderer mutated the retained original image");
-      require(storage_bytes(tensor, gst_buffer_get_size(publication)) == physical_before,
+      require(storage_bytes(tensor, allocation_bytes) == physical_before,
               "renderer mutated Core detection publication");
       std::cout << "CORE_RENDER_FRAME index=" << index << " boxes=" << boxes.size()
                 << " pixel_probes=" << probes.size() << " PASS\n"

@@ -112,10 +112,9 @@ A change is ready when:
 - Core owns numerical request construction, MPK/publication policy and dynamic image geometry.
 - Use the installed `SimaScheduler::frontend` and `simaai::scheduler::client` APIs. Scheduler owns the compiled boundary; Runner delegates numerical admission to Kernels. Do not use the advanced lower-type alias facade from canonical Core code.
 - Do not restore the removed ProcessCVU prepared ABI, adapter or per-operation Scheduler dispatch.
-- Use generic `TensorStageRequest` publication/placement, immutable constants and the application-owned frame adapter. Constants are copied once at preparation, not uploaded per frame.
+- Use owning `StageRequest` programs, finalized `FrameLayout` placement, immutable constants and the application-owned frame adapter. Constants are copied once at preparation, not uploaded per frame.
 - Reusable Core recipes retain immutable checked policy and executable descriptors only. Instantiate their resolver caches and Preproc adapters once per cold preparation, after topology validation and before Scheduler admission; never reset or share an active geometry/session cache between independent preparations. Preserve current frame loans and bounded immutable geometry caching.
-- Manifest contexts own metadata backing, not numerical recipes or sessions. Normalize canonical payloads to `NONE` before dropping recipe references; retain contexts while borrowing ABI pointers. Keep cold pipeline/context ownership under RAII until successful handoff.
-- The retained shared prepared context is for MLA/other nonnumerical compatibility, not numerical kernel requests.
+- Prepare checked recipes before the shared carrier-packing pass; finalize allocation-local spans and publication from that placement. Keep cold pipeline/request ownership under RAII until successful handoff. Do not restore a manifest context or serialized runtime request transport.
 
 ## Scheduler client boundary
 

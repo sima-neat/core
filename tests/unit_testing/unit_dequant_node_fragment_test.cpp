@@ -1,9 +1,11 @@
+#include <simaai/scheduler/client/tensor_buffer.h>
 #include "gst/GstHelpers.h"
 #include "builder/NodeContractProvider.h"
 #include "nodes/sima/Dequant.h"
 #include "nodes/sima/Detess.h"
 #include "pipeline/internal/sima/ContractRender.h"
-#include "pipeline/internal/sima/PreparedRuntimeBuild.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/contract/CompiledNodeContract.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
@@ -212,13 +214,15 @@ int main() {
           &*manifest, std::nullopt, {}, {}, simaai::neat::NameTransform{});
       require(!failure, "native Dequant preparation failed: " +
                             (failure ? failure->field + ": " + failure->message : std::string{}));
+      simaai::neat::pipeline_internal::sima::finalize_pipeline_storage(*manifest);
+      require(!simaai::neat::pipeline_internal::sima::finalize_stage_publications(&*manifest),
+              "Dequant final publication failed");
       const auto& native = manifest->stages.front();
-      const auto& prepared_native = native;
-      require(prepared_native.native_kernel && prepared_native.native_kernel->publication,
+      require(native.native_kernel && native.tensor_publication,
               "Dequant must retain its checked canonical recipe and publication");
-      const auto& prepared_stage = *prepared_native.native_kernel;
+      const auto& prepared_stage = *native.native_kernel;
       require(prepared_stage.members.size() == 6 &&
-                  prepared_stage.publication->contract->logical_outputs.size() == 6,
+                  native.tensor_publication->contract->logical_outputs.size() == 6,
               "preparation must preserve executable members and published logical outputs");
       for (std::size_t index = 0; index < prepared_stage.members.size(); ++index) {
         const auto& member = prepared_stage.members[index];

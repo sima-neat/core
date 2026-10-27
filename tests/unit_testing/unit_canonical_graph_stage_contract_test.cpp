@@ -81,6 +81,7 @@ void carrier_authority_and_atomic_failure() {
           "graph completion replaced authoritative upstream carrier coordinates");
   require(candidate.input_bindings.front().src_physical_output_index == 7 &&
               candidate.input_bindings.front().src_physical_byte_offset == 0 &&
+              candidate.input_bindings.front().src_physical_size_bytes == retained.size_bytes &&
               candidate.input_bindings.front().source_segment_name == "retained-parent",
           "inferred binding mixed MPK source identity with compiler-owned physical coordinates");
   auto bad = stage(288);
@@ -114,10 +115,10 @@ void shared_offsets_and_conflicts() {
           "shared-parent logical views lost their independent offsets");
   require(candidate.physical_inputs.front().source_byte_offset == 128 &&
               candidate.input_bindings[0].src_physical_byte_offset == 0 &&
-              candidate.input_bindings[1].src_physical_byte_offset == 256 &&
-              candidate.input_bindings[0].src_physical_size_bytes == 198 &&
-              candidate.input_bindings[1].src_physical_size_bytes == 198,
-          "inferred routes must retain physical base once and independent logical offsets");
+              candidate.input_bindings[1].src_physical_byte_offset == 0 &&
+              candidate.input_bindings[0].src_physical_size_bytes == 454 &&
+              candidate.input_bindings[1].src_physical_size_bytes == 454,
+          "inferred routes must bind the shared carrier while logical views retain their offsets");
   inputs[1].source_physical_index = 1;
   auto bad = stage(198);
   bad.processcvu.input_tensors.push_back(bad.processcvu.input_tensors.front());

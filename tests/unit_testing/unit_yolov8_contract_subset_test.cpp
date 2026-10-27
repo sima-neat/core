@@ -10,6 +10,8 @@
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/sima/ContractRender.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
 #include "pipeline/internal/sima/MlaStaticContractExtractor.h"
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/PluginContractSubsets.h"
@@ -314,12 +316,12 @@ void verify_yolov8_int8_contract_subset() {
   }
 }
 
-void verify_casttess_frame_arena(const simaai::neat::Model& model) {
+void verify_casttess_frame_layouts(const simaai::neat::Model& model) {
   using namespace simaai::neat;
   namespace contract = pipeline_internal::sima;
 
   // Public tensor frontends and repeated invocations must retain their own
-  // admitted arena, exactly as the image-preprocessing route does.
+  // finalized allocation group, exactly as the image-preprocessing route does.
   for (const std::size_t count : {1U, 2U}) {
     std::vector<std::shared_ptr<Node>> nodes;
     for (std::size_t i = 0U; i < count; ++i) {
@@ -338,17 +340,28 @@ void verify_casttess_frame_arena(const simaai::neat::Model& model) {
 
     contract::ManifestBuildDiagnostics diagnostics;
     const auto compiled = compile_node_contracts(nodes, {}, &diagnostics);
-    const auto manifest = render_manifest_from_compiled_contracts(compiled, {}, &diagnostics);
+    auto manifest = render_manifest_from_compiled_contracts(compiled, {}, &diagnostics);
     require(manifest && diagnostics.errors.empty() && manifest->stages.size() == count * 3U,
             "each BF16 invocation must compile CastTess, MLA and DetessCast");
+    const auto preparation = contract::prepare_kernel_stage_recipes(&*manifest, {}, {}, {}, {});
+    require(!preparation, preparation ? preparation->message : "");
+    contract::finalize_pipeline_storage(*manifest);
+    namespace client = simaai::scheduler::client;
     for (std::size_t i = 0U; i < manifest->stages.size(); ++i) {
-      const auto& stage = manifest->stages[i];
-      const auto& owner = manifest->stages[(i / 3U) * 3U];
-      require(owner.frame_arena_size_bytes > 0U &&
-                  stage.frame_arena_size_bytes == owner.frame_arena_size_bytes &&
-                  stage.frame_arena_role == (i % 3U == 0U ? contract::FrameArenaRole::Allocate
-                                                          : contract::FrameArenaRole::ReuseInput),
-              "CastTess frontend must retain one admitted arena through MLA and DetessCast");
+      const auto& layout = manifest->stages[i].frame_layout;
+      const auto& owner = manifest->stages[(i / 3U) * 3U].frame_layout;
+      require(layout && owner && !owner->allocations.empty() &&
+                  layout->allocations.size() == owner->allocations.size() &&
+                  layout->ownership == (i % 3U == 0U ? client::FrameOwnership::Allocate
+                                                     : client::FrameOwnership::ReuseInput),
+              "each CastTess invocation must own its finalized allocation group");
+      for (std::size_t allocation = 0; allocation < owner->allocations.size(); ++allocation) {
+        const auto& actual = layout->allocations[allocation];
+        const auto& expected = owner->allocations[allocation];
+        require(actual.size_bytes == expected.size_bytes && actual.policy == expected.policy &&
+                    actual.required_device_access == expected.required_device_access,
+                "MLA and DetessCast must retain their invocation's exact allocations");
+      }
     }
     const auto* frontend = dynamic_cast<const CastTess*>(nodes.front().get());
     require(internal::node_model_lineage_binding(nodes.front()) ==
@@ -410,7 +423,7 @@ void verify_yolov8_bf16_contract_subset() {
   require(plan.post.front().kind == internal::ExecutionStageKind::DetessCast,
           "YOLOv8 BF16 post stage should be detesscast (fused detess+cast)");
 
-  verify_casttess_frame_arena(model);
+  verify_casttess_frame_layouts(model);
 
   const auto mpk = load_yolov8_bf16_contract();
 

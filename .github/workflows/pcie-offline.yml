@@ -7,7 +7,7 @@ on:
         required: true
         type: string
       publish_branch:
-        description: Explicitly publish a pre-merge bundle beside same-branch online packages
+        description: Publish ready same-branch packages from the gated caller or explicit manual dispatch
         required: false
         default: false
         type: boolean
@@ -37,7 +37,7 @@ concurrency:
 jobs:
   source:
     name: Admit successful source publication
-    if: ${{ inputs.validation_only || inputs.publish_branch || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ inputs.validation_only || inputs.publish_branch || github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch != 'develop') }}
     runs-on: ubuntu-24.04
     outputs:
       enabled: ${{ steps.source.outputs.enabled }}

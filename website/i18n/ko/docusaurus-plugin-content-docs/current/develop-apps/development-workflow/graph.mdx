@@ -152,7 +152,7 @@ graph.add(pyneat.nodes.output(
 | 제어 | 제한하는 항목 |
 | --- | --- |
 | 애플리케이션 진행 중 윈도우 | 수락된 입력 중 애플리케이션이 아직 출력을 소비하지 않은 입력 수. 푸시/풀 루프에서 관리합니다. |
-| `advanced_execution.internal_queue_depth` | 내부에 삽입된 큐와 수치 연산 Runner의 실행 용량. Runner 용량은 `1`–`64`로 제한되며, 미설정/기본 깊이는 Runner 슬롯 하나를 선택합니다. |
+| `advanced_execution.internal_queue_depth` | 내부에 삽입된 큐와 수치 연산 Runner의 실행 용량. Runner 용량은 `1`–`64`로 제한되며, 미설정/기본 깊이는 비동기 실행에서 슬롯 4개를 사용하며 동기 실행에서는 1개를 사용합니다. |
 | `advanced_execution.inference_output_buffers` | MLA 단계 버퍼링. 애플리케이션 또는 런타임 큐 깊이를 변경해도 이 설정을 대체하지 않습니다. |
 | `RunOptions::queue_depth` | 프레임워크 입력 및 내부 런타임 큐. 가속기 용량은 아닙니다. |
 | `OutputOptions` | 공개 출력 버퍼링과 드롭 동작. 드롭 없이 완료 작업량을 측정할 때는 `EveryFrame(...)`을 사용합니다. |

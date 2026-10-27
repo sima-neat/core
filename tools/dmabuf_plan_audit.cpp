@@ -1,6 +1,8 @@
 #define SIMA_NEAT_INTERNAL 1
 #include "pipeline/internal/DmabufEligibility.h"
 
+#include <nlohmann/json.hpp>
+
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -72,10 +74,11 @@ int main(int argc, char** argv) {
       elf.empty()
           ? simaai::neat::pipeline_internal::try_compile_dmabuf_plan(mpk, artifacts, host_artifacts)
           : simaai::neat::pipeline_internal::try_compile_dmabuf_plan(mpk, elf);
-  std::cout << (elf.empty() ? simaai::neat::pipeline_internal::dmabuf_plan_audit_json(
-                                  result, mpk, artifacts, host_artifacts, pretty)
-                            : simaai::neat::pipeline_internal::dmabuf_plan_audit_json(result, mpk,
-                                                                                      elf, pretty))
-            << "\n";
-  return result.eligible() ? 0 : 2;
+  const auto audit =
+      elf.empty()
+          ? simaai::neat::pipeline_internal::dmabuf_plan_audit_json(result, mpk, artifacts,
+                                                                    host_artifacts, pretty)
+          : simaai::neat::pipeline_internal::dmabuf_plan_audit_json(result, mpk, elf, pretty);
+  std::cout << audit << "\n";
+  return nlohmann::json::parse(audit).at("eligible").get<bool>() ? 0 : 2;
 }

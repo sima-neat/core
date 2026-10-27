@@ -3,7 +3,10 @@
 
 #include <limits>
 #include <stdexcept>
-#include <vector>
+#include <utility>
+
+static_assert(NEAT_PCIE_RETURN_CAPS_VERSION == 3u,
+              "Core PCIe requires logical return-layout version 3");
 
 namespace simaai::neat::pcie::internal {
 namespace {
@@ -51,35 +54,57 @@ HostPcieOutputLayout resolve_output_layout(const PcieModelFacts& facts, const Gs
   }
   if (!layout.count)
     return out;
-  struct Region {
-    std::size_t offset, size, packed;
-  };
-  std::vector<Region> carriers;
-  carriers.reserve(layout.count);
-  std::size_t packed = 0;
-  for (guint i = 0; i < layout.count; ++i) {
-    const auto& region = layout.regions[i];
-    carriers.push_back(
-        {static_cast<std::size_t>(region.offset), static_cast<std::size_t>(region.size), packed});
-    packed += static_cast<std::size_t>(region.size);
-  }
-  if (packed != facts.packed_output_bytes)
-    invalid("carrier extent differs from MPK contract");
-  for (auto& tensor : out.facts.outputs) {
-    const auto span = tensor_span(tensor);
-    bool found = false;
-    for (const auto& carrier : carriers) {
-      if (tensor.payload_offset < carrier.packed)
-        continue;
-      const auto local = tensor.payload_offset - carrier.packed;
-      if (local >= carrier.size || span > carrier.size - local)
-        continue;
-      tensor.payload_offset = carrier.offset + local;
-      found = true;
-      break;
+  if (is_bbox_output_caps(caps)) {
+    if (layout.count != 1)
+      invalid("BBOX output requires one logical region");
+    const auto& region = layout.regions[0];
+    PcieTensorFact tensor;
+    tensor.name = "BBOX";
+    tensor.dtype = "UINT8";
+    tensor.shape = {static_cast<std::int64_t>(region.size)};
+    tensor.size_bytes = region.size;
+    tensor.tensor_index = tensor.physical_index = 0;
+    tensor.payload_offset = region.offset;
+    out.facts.outputs = {std::move(tensor)};
+    out.facts.packed_output_bytes = region.size;
+    out.facts.dense_output_bytes = 0;
+  } else {
+    if (layout.count != facts.outputs.size())
+      invalid("logical output count differs from MPK contract");
+    const auto overlaps = [](std::size_t left, std::size_t left_size, std::size_t right,
+                             std::size_t right_size) {
+      return left <= right ? right - left < left_size : left - right < right_size;
+    };
+    for (std::size_t i = 0; i < facts.outputs.size(); ++i) {
+      const auto& tensor = facts.outputs[i];
+      const auto span = tensor_span(tensor);
+      const auto& region = layout.regions[i];
+      if (tensor.payload_offset > facts.packed_output_bytes ||
+          span > facts.packed_output_bytes - tensor.payload_offset || region.size != span)
+        invalid("logical output extent differs from MPK contract");
+      for (std::size_t j = 0; j < i; ++j) {
+        const auto& previous = facts.outputs[j];
+        const auto& previous_region = layout.regions[j];
+        const bool aliased =
+            overlaps(tensor.payload_offset, span, previous.payload_offset, previous_region.size);
+        if (aliased !=
+            overlaps(region.offset, region.size, previous_region.offset, previous_region.size))
+          invalid("logical output alias differs from MPK contract");
+        if (aliased) {
+          const bool same_relative_offset =
+              tensor.payload_offset <= previous.payload_offset
+                  ? region.offset <= previous_region.offset &&
+                        previous_region.offset - region.offset ==
+                            previous.payload_offset - tensor.payload_offset
+                  : previous_region.offset <= region.offset &&
+                        region.offset - previous_region.offset ==
+                            tensor.payload_offset - previous.payload_offset;
+          if (!same_relative_offset)
+            invalid("logical output alias offset differs from MPK contract");
+        }
+      }
+      out.facts.outputs[i].payload_offset = region.offset;
     }
-    if (!found)
-      invalid("tensor span does not fit its physical carrier");
   }
   out.raw_bytes = static_cast<std::size_t>(layout.raw_bytes);
   return out;

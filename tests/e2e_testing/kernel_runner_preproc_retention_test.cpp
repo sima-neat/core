@@ -1,8 +1,9 @@
 // Core-owned dynamic geometry policy through Scheduler's generic carrier engine.
 // Migrated from Scheduler's legacy stage test without changing pixel/fact assertions.
 #include "gst/GstInit.h"
-#include "pipeline/internal/sima/PreparedRuntimeBuild.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
 #include <gst/SimaPluginStaticManifestAbi.h>
 #include <gstsimaaitensorbuffer_meta.h>
 #include <simaai/scheduler/client/dma_memory.h>
@@ -48,48 +49,6 @@ sima_ev_tensor_desc descriptor(bool input) {
   result.layout.strided.strides_bytes[2] = bytes;
   return result;
 }
-struct Placement {
-  SimaPluginStageSpec stage{};
-  SimaPluginLogicalInput logical{};
-  SimaPluginInputBinding input{};
-  SimaPluginPhysicalBuffer source{}, output{};
-  Placement() {
-    stage.frame_arena_size_bytes = 4096;
-    stage.frame_arena_role = SIMA_PLUGIN_FRAME_ARENA_ALLOCATE;
-    stage.frame_arena_storage_domain = SIMA_PLUGIN_FRAME_ARENA_STORAGE_CMA;
-    stage.frame_arena_provenance = SIMA_PLUGIN_FRAME_ARENA_PROVENANCE_CORE_ALLOCATED;
-    stage.frame_arena_required_device_access = SIMA_PLUGIN_FRAME_ARENA_ACCESS_CPU_A65;
-    logical.logical_index = 0;
-    logical.backend_input_index = 0;
-    logical.physical_index = 0;
-    input.local_logical_input_index = 0;
-    input.sink_pad_index = 0;
-    input.required = TRUE;
-    input.src_stage_index = -1;
-    input.src_logical_output_index = -1;
-    input.src_physical_output_index = -1;
-    input.src_output_slot = -1;
-    source.physical_index = 0;
-    source.size_bytes = 96;
-    source.source_byte_offset = 64;
-    source.source_physical_index = 0;
-    source.segment_name = "source";
-    source.address_source = SIMA_PLUGIN_PHYSICAL_ADDRESS_DIRECT_CARRIER_SPAN;
-    output.physical_index = 0;
-    output.size_bytes = 48;
-    output.source_byte_offset = 128;
-    output.required_alignment_bytes = 64;
-    output.segment_name = "result";
-    stage.logical_inputs = &logical;
-    stage.logical_inputs_len = 1;
-    stage.input_bindings = &input;
-    stage.input_bindings_len = 1;
-    stage.physical_inputs = &source;
-    stage.physical_inputs_len = 1;
-    stage.physical_outputs = &output;
-    stage.physical_outputs_len = 1;
-  }
-};
 void actual_preproc(bool compact = false, bool full = false, bool preflight = false) {
   namespace ps = simaai::neat::pipeline_internal::sima;
   ps::StageStaticSpec authored;
@@ -166,11 +125,13 @@ void actual_preproc(bool compact = false, bool full = false, bool preflight = fa
   selected.stages.front().logical_outputs.front().backend_output_index = 1;
   okay(ps::prepare_kernel_stage_recipes(&selected, std::nullopt, {}, {},
                                         simaai::neat::NameTransform{}));
+  ps::finalize_pipeline_storage(selected);
+  okay(ps::finalize_stage_publications(&selected));
   const auto& selected_recipe = *selected.stages.front().native_kernel;
-  require(selected_recipe.members.front().outputs.front().tensor == 1 &&
-              selected_recipe.publication &&
-              selected_recipe.publication->physical_views.size() == 1 &&
-              selected_recipe.publication->physical_views.front().backend_output_index == 1,
+  const auto& selected_publication = selected.stages.front().tensor_publication;
+  require(selected_recipe.members.front().outputs.front().tensor == 1 && selected_publication &&
+              selected_publication->physical_views.size() == 1 &&
+              selected_publication->physical_views.front().backend_output_index == 1,
           "Preproc canonical route and physical publication must retain selected backend ID");
   okay(ps::prepare_kernel_stage_recipes(&manifest, std::nullopt, {}, {},
                                         simaai::neat::NameTransform{}));
@@ -189,6 +150,10 @@ void actual_preproc(bool compact = false, bool full = false, bool preflight = fa
   transformed.stages.front().element_name = "reused-preproc-element";
   okay(ps::prepare_kernel_stage_recipes(&transformed, std::nullopt, {}, {},
                                         simaai::neat::NameTransform{}));
+  ps::finalize_pipeline_storage(manifest);
+  okay(ps::finalize_stage_publications(&manifest));
+  ps::finalize_pipeline_storage(transformed);
+  okay(ps::finalize_stage_publications(&transformed));
   gs::TensorStagePublication original_publication, transformed_publication;
   std::string publication_error;
   require(ps::build_kernel_stage_publication(manifest.stages.front(), &original_publication,
@@ -197,19 +162,21 @@ void actual_preproc(bool compact = false, bool full = false, bool preflight = fa
   require(ps::build_kernel_stage_publication(transformed.stages.front(), &transformed_publication,
                                              &publication_error),
           publication_error.c_str());
-  require(transformed.stages.front().native_kernel == original_recipe &&
-              transformed_publication.contract->stage_key == "reused-preproc-instance" &&
-              original_publication.contract == original_recipe->publication->contract &&
-              original_publication.contract->stage_key !=
-                  transformed_publication.contract->stage_key &&
-              transformed_publication.contract->logical_outputs.front().backend_output_index ==
-                  original_publication.contract->logical_outputs.front().backend_output_index &&
-              transformed_publication.physical_views.front().backend_output_index ==
-                  original_publication.physical_views.front().backend_output_index &&
-              transformed_publication.input_caps == original_publication.input_caps &&
-              transformed_publication.output_caps == original_publication.output_caps,
-          "transformed graph lost instance publication identity or mutated checked recipe");
-  gs::TensorStageRequest first_instance, second_instance;
+  require(
+      transformed.stages.front().native_kernel->members.front().executable == original_executable &&
+          transformed_publication.contract->stage_key == "reused-preproc-instance" &&
+          original_publication.contract == manifest.stages.front().tensor_publication->contract &&
+          original_publication.contract->stage_key != transformed_publication.contract->stage_key &&
+          transformed_publication.contract->logical_outputs.front().backend_output_index ==
+              original_publication.contract->logical_outputs.front().backend_output_index &&
+          transformed_publication.physical_views.front().backend_output_index ==
+              original_publication.physical_views.front().backend_output_index &&
+          gst_caps_is_equal(transformed_publication.input_caps.get(),
+                            original_publication.input_caps.get()) &&
+          gst_caps_is_equal(transformed_publication.output_caps.get(),
+                            original_publication.output_caps.get()),
+      "transformed graph lost instance publication identity or mutated checked recipe");
+  gs::KernelProgram first_instance, second_instance;
   first_instance.members = original_recipe->members;
   second_instance.members = original_recipe->members;
   okay(ps::wire_kernel_stage_factories(*original_recipe, first_instance));
@@ -230,19 +197,21 @@ void actual_preproc(bool compact = false, bool full = false, bool preflight = fa
     return;
   }
   const auto& recipe = *manifest.stages.front().native_kernel;
-  auto owner = std::make_shared<Placement>();
-  owner->output.size_bytes = 384;
-  owner->stage.frame_arena_required_device_access = SIMA_PLUGIN_FRAME_ARENA_ACCESS_EV74;
-  gs::TensorStageRequest request;
-  request.target = recipe.target;
-  request.members = recipe.members;
-  okay(ps::wire_kernel_stage_factories(recipe, request));
-  request.constant_data = recipe.constant_data;
-  request.placement = std::shared_ptr<const SimaPluginStageSpec>(owner, &owner->stage);
-  std::string error;
-  require(ps::build_kernel_stage_publication(manifest.stages.front(), &request.publication, &error),
-          error.c_str());
+  gs::StageRequest request;
+  gs::KernelProgram program;
+  program.target = recipe.target;
+  program.members = recipe.members;
+  okay(ps::wire_kernel_stage_factories(recipe, program));
+  program.constant_data = recipe.constant_data;
+  request.program = std::move(program);
+  request.layout = manifest.stages.front().frame_layout;
+  request.publication = original_publication;
   request.options.capacity = 4;
+  const auto output_span = request.layout->outputs.front().span;
+  const auto output_capacity = request.layout->allocations[output_span.allocation_index].size_bytes;
+  require(output_span.byte_offset <= output_capacity &&
+              output_span.size_bytes <= output_capacity - output_span.byte_offset,
+          "Preproc output exceeds its finalized allocation");
   auto stage = take(probe::StageProbe::create(std::move(request), compact));
   // Three simultaneous outputs outlive the two-entry geometry cache. The
   // fourth output then returns to A, forcing a real preparation after eviction.
@@ -277,7 +246,9 @@ void actual_preproc(bool compact = false, bool full = false, bool preflight = fa
     require(tensor.shape == std::vector<std::int64_t>({8, 8, 3}) &&
                 tensor.stride_bytes == std::vector<std::int64_t>({48, 6, 2}) &&
                 tensor.size_bytes == 384 && tensor.physical_span_bytes == 384 &&
-                tensor.byte_offset == 128 && tensor.memory_index == 0 &&
+                tensor.byte_offset == std::int64_t(output_span.byte_offset) &&
+                tensor.memory_index == int(output_span.allocation_index) &&
+                tensor.physical_span_bytes <= output_span.size_bytes &&
                 tensor.dtype == SIMA_TENSOR_SET_DTYPE_BF16_V1,
             "dynamic Preproc changed fixed output shape/valid extent");
     auto current = tr::tensor_buffer_publication(output, &view_error);

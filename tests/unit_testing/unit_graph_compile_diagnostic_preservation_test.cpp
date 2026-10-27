@@ -133,6 +133,7 @@ RUN_TEST("unit_graph_compile_diagnostic_preservation_test", ([] {
 
            bool rejected_before_parse = false;
            try {
+             session_build_prepare_stage_contracts(build, "diagnostic preservation regression");
              GstElement* pipeline = session_build_parse_pipeline_or_throw(
                  build, "diagnostic preservation parse regression");
              if (pipeline) {
