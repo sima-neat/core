@@ -48,6 +48,57 @@ def test_dependency_dag_and_publication_gate():
     assert 'publish-vulcan-artifacts' in needs('test-devkit')
 
 
+def test_build_tooling_runs_alongside_compilation_and_gates_publication():
+    assert needs('build-tooling-tests') == ['resolve-vulcan-config']
+    assert 'build-tooling-tests' not in needs('resolve-compiler-cache')
+    assert 'build-tooling-tests' not in needs('build')
+    assert 'Run build-tooling tests' not in job('resolve-compiler-cache')
+    assert 'Install native build-tooling prerequisites' not in job('resolve-compiler-cache')
+    assert '-m pytest -q --durations=25' in job('build-tooling-tests')
+    for name in ('publish-vulcan-artifacts', 'publish-pciehost-package',
+                 'publish-offline-develop', 'validation-complete'):
+        assert 'build-tooling-tests' in needs(name)
+    # PCIe metadata uses Actions' implicit success() dependency gate.
+    assert 'always()' not in job('publish-pciehost-package')
+    assert 'continue-on-error' not in job('build-tooling-tests')
+
+
+@pytest.mark.parametrize('mode', ['standard', 'fuzz'])
+@pytest.mark.parametrize('outcome', ['success', 'failure', 'cancelled', 'skipped'])
+@pytest.mark.parametrize('validation_only', [False, True])
+def test_core_publication_requires_tooling_success_in_every_build_mode(mode, outcome, validation_only):
+    expression = re.search(r'(?m)^    if: \$\{\{ (.*?) \}\}$',
+                           job('publish-vulcan-artifacts'))[1]
+    values = {
+        'always()': True, 'inputs.validation_only': validation_only,
+        'needs.build.result': 'success', 'needs.build-tooling-tests.result': outcome,
+        'inputs.build_mode': mode,
+        'needs.code-hygiene.result': 'skipped' if mode == 'fuzz' else 'success',
+    }
+    for key, value in values.items():
+        expression = expression.replace(key, repr(value))
+    expression = expression.replace('&&', ' and ').replace('||', ' or ').replace('!', ' not ')
+    assert bool(eval(expression, {'__builtins__': {}}, {})) is (
+        outcome == 'success' and not validation_only)
+
+
+@pytest.mark.parametrize('outcome', ['success', 'failure', 'cancelled', 'skipped'])
+def test_final_validation_requires_tooling_success(monkeypatch, outcome):
+    results = {name: {'result': 'success'} for name in needs('validation-complete')}
+    for name in ('publish-vulcan-artifacts', 'publish-pciehost-package', 'promote-latest-tag'):
+        results[name]['result'] = 'skipped'
+    results['build-tooling-tests']['result'] = outcome
+    monkeypatch.setenv('RESULTS', json.dumps(results))
+    monkeypatch.setenv('BUILD_MODE', 'standard')
+    script = textwrap.dedent(job('validation-complete').split(
+        "          python3 - <<'PYGATE'\n", 1)[1].split('\n          PYGATE', 1)[0])
+    if outcome == 'success':
+        exec(compile(script, str(WORKFLOW), 'exec'), {})
+    else:
+        with pytest.raises(SystemExit, match='build-tooling-tests'):
+            exec(compile(script, str(WORKFLOW), 'exec'), {})
+
+
 @pytest.mark.parametrize(('profile', 'head_ref'), [
     ('ready', 'topic'), ('ready', ''), ('acquisition-failure', 'topic'),
     ('linefeed', 'topic'), ('carriage-return', 'topic'),
