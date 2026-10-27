@@ -292,7 +292,7 @@ void check_jpeg_pipeline() {
   const auto node = uvc::camera_node(opt, {"/dev/video1", FormatTag::NV16}, 0);
   require(node->kind() == "UsbCameraInput", "Jpeg mode is the same live source kind");
   const std::string text = node->backend_fragment(2);
-  require(text == "v4l2src name=n2_camera_src device=/dev/video1 io-mode=mmap ! capsfilter "
+  require(text == "v4l2src name=n2_camera_src device=/dev/video1 io-mode=dmabuf ! capsfilter "
                   "name=n2_camera_caps caps=\"image/jpeg,width=1920,height=1080,"
                   "framerate=30000/1001\" ! queue name=n2_camera_queue max-size-buffers=2 "
                   "max-size-bytes=0 max-size-time=0 leaky=downstream",

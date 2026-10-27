@@ -120,7 +120,7 @@ frame = run.pull(timeout_ms=5000)
 
 ## 轉送攝影機的 JPEG
 
-若要將攝影機的視訊直接傳送給檢視器而不解碼，請將 `output` 設為 `UsbCameraOutput::Jpeg`。節點便會輸出攝影機的 JPEG 影格。將它連接到 `VideoSender` 直通模式（不重新編碼，直接以 RTP/JPEG 傳送 JPEG）：
+若要將攝影機的視訊傳送給檢視器，同時在其上執行模型，請將 `output` 設為 `UsbCameraOutput::Jpeg`。節點便會輸出攝影機的 JPEG 影格而不解碼。將它連接到 `VideoSender` 直通模式（不重新編碼，直接以 RTP/JPEG 傳送 JPEG），以及 `out_format` 為攝影機 `decoded_format` 的 `SimaDecode`：
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -128,13 +128,29 @@ frame = run.pull(timeout_ms=5000)
 ```cpp
 camera.output = neat::UsbCameraOutput::Jpeg;
 
+neat::SimaDecodeOptions decode;
+decode.type = neat::SimaDecodeType::MJPEG;
+decode.out_format = neat::usb_camera_info(camera).decoded_format;  // NV12 or NV16
+decode.dec_width = 1920;
+decode.dec_height = 1080;
+decode.dec_fps = 30;
+
 auto sender = neat::nodes::groups::VideoSenderOptions::Passthrough(
     neat::nodes::groups::RtspCodec::MJPEG);
 sender.host = "127.0.0.1";
 
+neat::GraphLinkOptions video_link;
+video_link.policy = neat::GraphLinkPolicy::RealtimeLatestByStream;
+
+neat::Graph source;
+source.add(neat::nodes::UsbCameraInput(camera));
+neat::Graph decoder;
+decoder.add(neat::nodes::SimaDecode(decode));
+
 neat::Graph graph("usb_camera_forward");
-graph.add(neat::nodes::UsbCameraInput(camera));
-graph.add(neat::nodes::groups::VideoSender(sender));
+graph.connect(source, decoder);
+graph.connect(decoder, detector);  // your model Graph
+graph.connect(source, neat::nodes::groups::VideoSender(sender), video_link);
 ```
 
 </CodeTab>
@@ -143,18 +159,34 @@ graph.add(neat::nodes::groups::VideoSender(sender));
 ```python
 camera.output = pyneat.UsbCameraOutput.Jpeg
 
+decode = pyneat.SimaDecodeOptions()
+decode.type = pyneat.SimaDecodeType.MJPEG
+decode.out_format = pyneat.usb_camera_info(camera).decoded_format  # NV12 or NV16
+decode.dec_width = 1920
+decode.dec_height = 1080
+decode.dec_fps = 30
+
 sender = pyneat.VideoSenderOptions.passthrough(pyneat.RtspCodec.MJPEG)
 sender.host = "127.0.0.1"
 
+video_link = pyneat.GraphLinkOptions()
+video_link.policy = pyneat.GraphLinkPolicy.RealtimeLatestByStream
+
+source = pyneat.Graph()
+source.add(pyneat.nodes.usb_camera_input(camera))
+decoder = pyneat.Graph()
+decoder.add(pyneat.nodes.sima_decode(decode))
+
 graph = pyneat.Graph("usb_camera_forward")
-graph.add(pyneat.nodes.usb_camera_input(camera))
-graph.add(pyneat.groups.video_sender(sender))
+graph.connect(source, decoder)
+graph.connect(decoder, detector)  # your model Graph
+graph.connect(source, pyneat.groups.video_sender(sender), video_link)
 ```
 
 </CodeTab>
 </CodeTabs>
 
-在此模式下，影格會留在攝影機驅動程式的記憶體中。`SimaDecode` 目前還無法讀取這塊記憶體：其解碼器會在第一個影格以 `Failed to map input buffer` 停止。若要執行模型，請使用 `UsbCameraOutput::Frames`。傳送端適用 [傳送視訊](./video_sender.md) 中的 RTP/JPEG 限制。
+在此模式下，解碼分支在解碼每個影格前都會先複製它：攝影機驅動程式會把緩衝區匯出為 DMA-BUF，而解碼器通常無法就地匯入。傳送端適用 [傳送視訊](./video_sender.md) 中的 RTP/JPEG 限制。
 
 ## 記憶體與捨棄的影格
 

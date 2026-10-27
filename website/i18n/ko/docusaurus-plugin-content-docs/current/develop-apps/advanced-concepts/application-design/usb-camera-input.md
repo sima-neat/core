@@ -120,7 +120,7 @@ frame = run.pull(timeout_ms=5000)
 
 ## 카메라의 JPEG 전달하기
 
-카메라 영상을 디코딩하지 않고 뷰어로 보내려면 `output`을 `UsbCameraOutput::Jpeg`로 설정하세요. 그러면 노드는 카메라의 JPEG 프레임을 출력합니다. 이 노드를 JPEG를 다시 인코딩하지 않고 RTP/JPEG로 보내는 `VideoSender` 패스스루에 연결합니다.
+카메라 영상을 뷰어로 보내면서 동시에 모델을 실행하려면 `output`을 `UsbCameraOutput::Jpeg`로 설정하세요. 그러면 노드는 카메라의 JPEG 프레임을 디코딩하지 않고 그대로 출력합니다. 이 노드를 JPEG를 다시 인코딩하지 않고 RTP/JPEG로 보내는 `VideoSender` 패스스루와, `out_format`이 카메라의 `decoded_format`인 `SimaDecode`에 연결합니다.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -128,13 +128,29 @@ frame = run.pull(timeout_ms=5000)
 ```cpp
 camera.output = neat::UsbCameraOutput::Jpeg;
 
+neat::SimaDecodeOptions decode;
+decode.type = neat::SimaDecodeType::MJPEG;
+decode.out_format = neat::usb_camera_info(camera).decoded_format;  // NV12 or NV16
+decode.dec_width = 1920;
+decode.dec_height = 1080;
+decode.dec_fps = 30;
+
 auto sender = neat::nodes::groups::VideoSenderOptions::Passthrough(
     neat::nodes::groups::RtspCodec::MJPEG);
 sender.host = "127.0.0.1";
 
+neat::GraphLinkOptions video_link;
+video_link.policy = neat::GraphLinkPolicy::RealtimeLatestByStream;
+
+neat::Graph source;
+source.add(neat::nodes::UsbCameraInput(camera));
+neat::Graph decoder;
+decoder.add(neat::nodes::SimaDecode(decode));
+
 neat::Graph graph("usb_camera_forward");
-graph.add(neat::nodes::UsbCameraInput(camera));
-graph.add(neat::nodes::groups::VideoSender(sender));
+graph.connect(source, decoder);
+graph.connect(decoder, detector);  // your model Graph
+graph.connect(source, neat::nodes::groups::VideoSender(sender), video_link);
 ```
 
 </CodeTab>
@@ -143,18 +159,34 @@ graph.add(neat::nodes::groups::VideoSender(sender));
 ```python
 camera.output = pyneat.UsbCameraOutput.Jpeg
 
+decode = pyneat.SimaDecodeOptions()
+decode.type = pyneat.SimaDecodeType.MJPEG
+decode.out_format = pyneat.usb_camera_info(camera).decoded_format  # NV12 or NV16
+decode.dec_width = 1920
+decode.dec_height = 1080
+decode.dec_fps = 30
+
 sender = pyneat.VideoSenderOptions.passthrough(pyneat.RtspCodec.MJPEG)
 sender.host = "127.0.0.1"
 
+video_link = pyneat.GraphLinkOptions()
+video_link.policy = pyneat.GraphLinkPolicy.RealtimeLatestByStream
+
+source = pyneat.Graph()
+source.add(pyneat.nodes.usb_camera_input(camera))
+decoder = pyneat.Graph()
+decoder.add(pyneat.nodes.sima_decode(decode))
+
 graph = pyneat.Graph("usb_camera_forward")
-graph.add(pyneat.nodes.usb_camera_input(camera))
-graph.add(pyneat.groups.video_sender(sender))
+graph.connect(source, decoder)
+graph.connect(decoder, detector)  # your model Graph
+graph.connect(source, pyneat.groups.video_sender(sender), video_link)
 ```
 
 </CodeTab>
 </CodeTabs>
 
-이 모드에서는 프레임이 카메라 드라이버의 메모리에 그대로 남습니다. `SimaDecode`는 아직 이 메모리를 읽을 수 없으며, 디코더는 첫 프레임에서 `Failed to map input buffer`와 함께 멈춥니다. 모델을 실행하려면 `UsbCameraOutput::Frames`를 사용하세요. 송신기에는 [비디오 보내기](./video_sender.md)의 RTP/JPEG 제한이 적용됩니다.
+이 모드에서는 디코딩 분기가 각 프레임을 디코딩하기 전에 복사합니다. 카메라 드라이버는 버퍼를 DMA-BUF로 내보내지만, 디코더는 대개 이를 제자리에서 가져올 수 없기 때문입니다. 송신기에는 [비디오 보내기](./video_sender.md)의 RTP/JPEG 제한이 적용됩니다.
 
 ## 메모리와 버려지는 프레임
 

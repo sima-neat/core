@@ -63,7 +63,7 @@ public:
     internal::uvc::require_still_connected(camera_);
     std::ostringstream ss;
     ss << "v4l2src name=" << name(node_index, "src") << " device=" << camera_.device
-       << (jpeg() ? " io-mode=mmap" : " io-mode=dmabuf-import")
+       << (jpeg() ? " io-mode=dmabuf" : " io-mode=dmabuf-import")
        << " ! capsfilter name=" << name(node_index, "caps")
        << " caps=\"image/jpeg,width=" << opt_.width << ",height=" << opt_.height
        << ",framerate=" << opt_.framerate_num << '/' << opt_.framerate_den << '"';
