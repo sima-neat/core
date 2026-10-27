@@ -17,7 +17,7 @@ slug: /develop-apps/advanced-concepts/video_sender
 | H.265 | `SimaEncodeType::H265` | `RtspCodec::H265` | 98 |
 | MJPEG | `SimaEncodeType::MJPEG` | `RtspCodec::MJPEG` | 26 |
 
-Переглядач RTP/WebRTC в Insight підтримує H.264 і H.265. Вихід MJPEG потребує сумісного приймача RTP/JPEG; цей переглядач його не підтримує.
+Переглядач RTP/WebRTC в Insight підтримує H.264 і H.265, а у випусках після v0.0.8 також MJPEG (RTP/JPEG, тип корисного навантаження 26). З Insight v0.0.8 або старішим вихід MJPEG потребує іншого приймача RTP/JPEG.
 
 Якщо приймач працює за перенаправленням портів контейнера, передайте із застосунку відповідну адресу хоста та узгоджений `video_port_base`.
 

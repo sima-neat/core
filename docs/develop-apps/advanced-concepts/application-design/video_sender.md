@@ -17,7 +17,7 @@ Use `VideoSender` when a Graph should send video to an external receiver. `Video
 | H.265 | `SimaEncodeType::H265` | `RtspCodec::H265` | 98 |
 | MJPEG | `SimaEncodeType::MJPEG` | `RtspCodec::MJPEG` | 26 |
 
-Insight's RTP/WebRTC viewer supports H.264 and H.265. MJPEG output requires a compatible RTP/JPEG receiver; it is not supported by that viewer.
+Insight's RTP/WebRTC viewer supports H.264 and H.265, and MJPEG (RTP/JPEG, payload type 26) in releases after v0.0.8. With Insight v0.0.8 or earlier, MJPEG output needs another RTP/JPEG receiver.
 
 If the receiver runs behind container port remapping, pass the mapped host and a matching `video_port_base` from the app.
 

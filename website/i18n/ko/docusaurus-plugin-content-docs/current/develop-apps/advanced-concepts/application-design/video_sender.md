@@ -17,7 +17,7 @@ slug: /develop-apps/advanced-concepts/video_sender
 | H.265 | `SimaEncodeType::H265` | `RtspCodec::H265` | 98 |
 | MJPEG | `SimaEncodeType::MJPEG` | `RtspCodec::MJPEG` | 26 |
 
-Insight의 RTP/WebRTC 뷰어는 H.264와 H.265를 지원합니다. MJPEG 출력에는 호환되는 RTP/JPEG 수신기가 필요하며 이 뷰어에서는 지원하지 않습니다.
+Insight의 RTP/WebRTC 뷰어는 H.264와 H.265를 지원하며, v0.0.8 이후 릴리스에서는 MJPEG(RTP/JPEG, 페이로드 유형 26)도 지원합니다. Insight v0.0.8 이하에서는 MJPEG 출력에 별도의 RTP/JPEG 수신기가 필요합니다.
 
 수신기가 컨테이너 포트 매핑 뒤에서 실행되면 앱에서 매핑된 호스트와 그에 맞는 `video_port_base`를 전달합니다.
 
