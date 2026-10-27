@@ -236,12 +236,13 @@ void check_jpeg_pipeline() {
   const std::string text = node->backend_fragment(2);
   require(text == "v4l2src name=n2_camera_src device=/dev/video1 io-mode=dmabuf ! capsfilter "
                   "name=n2_camera_caps caps=\"image/jpeg,width=1920,height=1080,"
-                  "framerate=30000/1001\" ! queue name=n2_camera_queue max-size-buffers=2 "
+                  "framerate=30000/1001\" ! identity name=n2_camera_drop "
+                  "drop-buffer-flags=corrupted ! queue name=n2_camera_queue max-size-buffers=2 "
                   "max-size-bytes=0 max-size-time=0 leaky=downstream",
           "Jpeg fragment: " + text);
   require_not_contains(text, "neatdecoder", "the node has no decoder");
-  require(node->element_names(2) ==
-              std::vector<std::string>{"n2_camera_src", "n2_camera_caps", "n2_camera_queue"},
+  require(node->element_names(2) == std::vector<std::string>{"n2_camera_src", "n2_camera_caps",
+                                                             "n2_camera_drop", "n2_camera_queue"},
           "Jpeg element names match the fragment");
   const auto* provider = dynamic_cast<const simaai::neat::OutputSpecProvider*>(node.get());
   require(provider != nullptr, "Jpeg mode publishes an output spec");
@@ -262,7 +263,7 @@ void check_jpeg_pipeline() {
   opt.insert_queue = false;
   const auto bare = uvc::camera_node(opt, {"/dev/video1", FormatTag::NV12});
   require_not_contains(bare->backend_fragment(0), "queue", "no queue when insert_queue is off");
-  require(bare->element_names(0).size() == 2, "no queue name when insert_queue is off");
+  require(bare->element_names(0).size() == 3, "no queue name when insert_queue is off");
 }
 
 void check_jpeg_reconnect() {

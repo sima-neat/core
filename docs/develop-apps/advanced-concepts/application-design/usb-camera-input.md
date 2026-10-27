@@ -191,7 +191,7 @@ The decoder copies each JPEG into its own input buffer before it decodes it. The
 | --- | --- |
 | `queue_depth`, `leaky_queue` | A small leaky queue after the camera drops stale frames when the graph falls behind. |
 
-Webcams often pad frames past the JPEG end marker, and some frames arrive incomplete or flagged as corrupt by the USB driver. The decoder decodes each frame up to its end marker and drops incomplete or corrupt frames instead of stopping. The decoder element counts them in its `dropped-count` property.
+Webcams often pad frames past the JPEG end marker, and some frames arrive incomplete or flagged as corrupt by the USB driver. `UsbCameraInput` drops the frames the driver flags before its output, so neither `VideoSender` passthrough nor the decoder receives them. The decoder decodes each frame up to its end marker and drops incomplete or corrupt frames instead of stopping. The decoder element counts them in its `dropped-count` property.
 
 ## Troubleshooting
 

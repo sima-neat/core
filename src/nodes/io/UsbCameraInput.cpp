@@ -44,10 +44,13 @@ public:
   std::string backend_fragment(int node_index) const override {
     internal::uvc::require_still_connected(camera_);
     std::ostringstream ss;
+    // UVC delivers a frame damaged in transfer (lost USB packets) with V4L2_BUF_FLAG_ERROR,
+    // which v4l2src maps to CORRUPTED; identity drops it so passthrough never forwards it.
     ss << "v4l2src name=" << name(node_index, "src") << " device=" << camera_.device
        << " io-mode=dmabuf ! capsfilter name=" << name(node_index, "caps")
        << " caps=\"image/jpeg,width=" << opt_.width << ",height=" << opt_.height
-       << ",framerate=" << opt_.framerate_num << '/' << opt_.framerate_den << '"';
+       << ",framerate=" << opt_.framerate_num << '/' << opt_.framerate_den
+       << "\" ! identity name=" << name(node_index, "drop") << " drop-buffer-flags=corrupted";
     if (opt_.insert_queue) {
       ss << " ! queue name=" << name(node_index, "queue");
       if (opt_.queue_depth > 0)
@@ -60,7 +63,8 @@ public:
   }
 
   std::vector<std::string> element_names(int node_index) const override {
-    std::vector<std::string> names{name(node_index, "src"), name(node_index, "caps")};
+    std::vector<std::string> names{name(node_index, "src"), name(node_index, "caps"),
+                                   name(node_index, "drop")};
     if (opt_.insert_queue)
       names.push_back(name(node_index, "queue"));
     return names;
