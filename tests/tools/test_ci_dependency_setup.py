@@ -59,7 +59,7 @@ elif args[:2] == ['image', 'inspect']:
 elif args[0] == 'inspect':
     print('sha256:' + ('a' if os.environ['IMAGE_MATCHES'] == '1' else 'b') * 64)
 elif args == ['exec', '--user', 'root', '-e', 'DEBIAN_FRONTEND=noninteractive',
-              'selected-sdk', 'dpkg', '--configure', '-a']:
+              'selected-sdk', 'bash', '/workspace/scripts/ci/configure_sdk_packages.sh']:
     if int(os.environ['CONFIGURE_STATUS']):
         print('fixture package configuration failed', file=sys.stderr)
     sys.exit(int(os.environ['CONFIGURE_STATUS']))
@@ -78,7 +78,7 @@ else:
                                  'CONFIGURE_STATUS': str(configure_status),
                                  'BUILD_STATUS': str(build_status)})
     calls = [json.loads(line) for line in commands.read_text().splitlines()]
-    configuration = [i for i, args in enumerate(calls) if args[-3:] == ['dpkg', '--configure', '-a']]
+    configuration = [i for i, args in enumerate(calls) if args[-2:] == ['bash', '/workspace/scripts/ci/configure_sdk_packages.sh']]
     build = [i for i, args in enumerate(calls) if args[-3:-1] == ['bash', '-lc']]
     expected_status = (configure_status or build_status) if image_matches else 1
     assert result.returncode == expected_status, result.stderr

@@ -438,7 +438,7 @@ jobs:
         # Finish cached SDK package configuration before build.sh invokes APT.
         # This affects the verified SDK container, not the host or target sysroot.
         docker exec --user root -e DEBIAN_FRONTEND=noninteractive \
-          "${sdk_container}" dpkg --configure -a
+          "${sdk_container}" bash /workspace/scripts/ci/configure_sdk_packages.sh
 
         docker exec \
           -e SIMA_CLI_CHECK_FOR_UPDATE=0 \
