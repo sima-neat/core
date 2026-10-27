@@ -641,6 +641,8 @@ set(UNIT_TESTS
   unit_sima_plugin_static_manifest_parse_test
   unit_graph_build_ownership_test
   unit_sima_plugins_test
+  unit_bevfusion_kernel_requests_test
+  unit_bevfusion_kernel_nodes_test
   unit_internal_edge_contract_resolver_test
   unit_terminal_output_contract_query_test
   unit_tensor_set_meta_route_contract_test
@@ -716,6 +718,18 @@ target_link_libraries(unit_model_archive_loader_test PRIVATE ${CMAKE_DL_LIBS})
 # storage/admission API; do not rely on transitive Core DSO symbol leakage.
 target_link_libraries(unit_mpk_decoder_test PRIVATE
   SimaScheduler::frontend )
+
+# BEVFusion/PointPillars kernel Nodes. The references are exact only without FMA
+# contraction. Node admission needs the Scheduler set that bundles the pinned Kernels.
+foreach(_target unit_bevfusion_kernel_requests_test unit_bevfusion_kernel_nodes_test)
+  if (TARGET ${_target})
+    target_compile_options(${_target} PRIVATE -ffp-contract=off)
+    set_property(TEST ${_target} APPEND PROPERTY LABELS "contracts")
+  endif()
+endforeach()
+if (TARGET unit_bevfusion_kernel_nodes_test)
+  target_link_libraries(unit_bevfusion_kernel_nodes_test PRIVATE SimaScheduler::frontend)
+endif()
 
 target_sources(unit_output_metadata_cache_contract_test
   PRIVATE runtime_segment_allocator_fixture.cpp)
