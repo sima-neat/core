@@ -1590,6 +1590,16 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
     opt.tensor_input_opt_for_cv = pipeline_segment_ingress_input(segment);
   }
 
+  const auto public_contract = opt.input_route_processor
+                                   ? std::optional<pipeline_internal::OrderedPublicInputContract>{}
+                                   : segment.public_input_contract;
+  if (public_contract) {
+    if (opt.seed)
+      pipeline_internal::validate_ordered_public_input(*public_contract, *opt.seed);
+    else if (opt.image_seed)
+      pipeline_internal::validate_ordered_public_input(*public_contract, Sample{});
+  }
+
   if (opt.image_seed && opt.seed.has_value()) {
     throw std::runtime_error(
         "RunCore::start_pipeline_segment: image_seed and seed are mutually exclusive");
@@ -1620,6 +1630,7 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
         opt.tensor_input_opt_for_cv, std::move(opt.input_route_processor),
         std::move(opt.after_pipeline_start_for_test));
     core->push_sample_policy = opt.push_sample_policy;
+    core->pipeline.public_input_contract = public_contract;
     const auto start_single_us = pipeline_internal::build_timing_us(start_single_start);
     pipeline_internal::emit_build_timing(
         "RunCore::start_pipeline_segment",
@@ -1637,6 +1648,8 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
       nodes, route_options, opt.mode, opt.run_options, public_output_contract);
   const auto context_us = pipeline_internal::build_timing_us(context_start);
   InputStreamOptions build_stream_opt = ctx.stream_opt;
+  build_stream_opt.public_unrouted_input =
+      !opt.input_route_processor && segment.input_edges.empty();
   build_stream_opt.startup_preflight =
       opt.allow_startup_preflight && ctx.stream_opt.startup_preflight;
   build_stream_opt.allow_graph_internal_zero_copy_input =
@@ -1662,6 +1675,7 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
       std::move(stream), ctx.merged_opt, build_stream_opt, ctx.mode, opt.tensor_input_opt_for_cv,
       std::move(opt.input_route_processor), std::move(opt.after_pipeline_start_for_test));
   core->push_sample_policy = opt.push_sample_policy;
+  core->pipeline.public_input_contract = public_contract;
   const auto start_single_us = pipeline_internal::build_timing_us(start_single_start);
   pipeline_internal::emit_build_timing("RunCore::start_pipeline_segment",
                                        {{"materialize_nodes", materialize_us},

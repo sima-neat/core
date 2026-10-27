@@ -289,6 +289,11 @@ Sample stamp_public_graph_ingress_sample(runtime::RunCore& core, const Sample& i
 bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpoint& endpoint,
                                     std::string_view endpoint_name, const Sample& msgs,
                                     bool block) {
+  const auto* segment = graph_input_segment_for_endpoint(core, endpoint);
+  if (segment && segment->public_input_contract) {
+    for (const auto& msg : msgs)
+      pipeline_internal::validate_ordered_public_input(*segment->public_input_contract, msg);
+  }
   if (!core.graph_begin_public_push()) {
     return false;
   }
@@ -299,7 +304,6 @@ bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpo
     }
   } public_push_guard{core};
 
-  const auto* segment = graph_input_segment_for_endpoint(core, endpoint);
   for (const auto& msg : msgs) {
     if (segment) {
       // Routed items have already been checked against their original source
@@ -449,6 +453,9 @@ bool push_mat_to_core(runtime::RunCore& core, const cv::Mat& input, bool block) 
     throw std::runtime_error(decorate_with_error_code(
         error_codes::kRuntimePull, "Run::push: pipeline has no Input (push not supported)"));
   }
+  if (core.pipeline.public_input_contract)
+    pipeline_internal::validate_ordered_public_input(*core.pipeline.public_input_contract,
+                                                     Sample{});
   validate_public_input(input, declared_linear_input(core), core.pipeline.stream_opt, "Run::push");
   auto* st = &core;
   {
@@ -482,6 +489,8 @@ bool push_message_to_core(runtime::RunCore& core, const Sample& msg, bool block)
     throw std::runtime_error(decorate_with_error_code(
         error_codes::kRuntimePull, "Run::push: pipeline has no Input (push not supported)"));
   }
+  if (core.pipeline.public_input_contract && !core.pipeline.input_route_processor)
+    pipeline_internal::validate_ordered_public_input(*core.pipeline.public_input_contract, msg);
   // The route already validates each original input. Its output is a different,
   // possibly heterogeneous carrier, not another instance of the source geometry.
   // Keep intrinsic span checks and the actual handoff storage limit.
@@ -556,6 +565,8 @@ bool push_message_to_core(runtime::RunCore& core, const Sample& msg, bool block)
 }
 
 bool push_sample_to_core(runtime::RunCore& core, const Sample& msg, bool block) {
+  if (core.pipeline.public_input_contract && !core.pipeline.input_route_processor)
+    pipeline_internal::validate_ordered_public_input(*core.pipeline.public_input_contract, msg);
   if (core.push_sample_policy == runtime::PushSamplePolicy::PreserveSample) {
     return push_message_to_core(core, msg, block);
   }
@@ -603,6 +614,8 @@ bool Run::push_impl(const cv::Mat& input, bool block) {
         error_codes::kRuntimePull, "Run::push: pipeline has no Input (push not supported)"));
   }
   auto st = core_;
+  if (st->pipeline.public_input_contract)
+    pipeline_internal::validate_ordered_public_input(*st->pipeline.public_input_contract, Sample{});
   validate_public_input(input, declared_linear_input(*st), st->pipeline.stream_opt, "Run::push");
   {
     std::unique_lock<std::mutex> lock(st->pipeline.in_mu);
@@ -637,6 +650,8 @@ bool Run::push_impl(const simaai::neat::Tensor& input, bool block) {
         error_codes::kRuntimePull, "Run::push: pipeline has no Input (push not supported)"));
   }
   auto st = core_;
+  if (st->pipeline.public_input_contract)
+    pipeline_internal::validate_ordered_public_input(*st->pipeline.public_input_contract, input);
   validate_public_input(input, declared_linear_input(*st), st->pipeline.stream_opt, "Run::push");
   {
     std::unique_lock<std::mutex> lock(st->pipeline.in_mu);
@@ -709,6 +724,8 @@ bool Run::push_message_impl(const Sample& msg, bool block) {
   return push_message_to_core(*core_, msg, block);
 }
 bool Run::push_sample_impl(const Sample& msg, bool block) {
+  if (core_ && core_->pipeline.public_input_contract && !core_->pipeline.input_route_processor)
+    pipeline_internal::validate_ordered_public_input(*core_->pipeline.public_input_contract, msg);
   if (core_ && core_->graph_execution_)
     return push_message_impl(msg, block);
   enforce_public_sample_push_transferable(msg, "Run::push");

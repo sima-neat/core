@@ -4,8 +4,14 @@
 #endif
 
 #include "nodes/io/Input.h"
+#include "builder/NodeContractProvider.h"
+#include "pipeline/internal/contract/CompiledNodeContract.h"
+#include "pipeline/internal/contract/ContractFacts.h"
 
+#include <algorithm>
 #include <cstddef>
+#include <optional>
+#include <utility>
 #include <stdexcept>
 
 namespace simaai::neat::pipeline_internal {
@@ -70,6 +76,57 @@ template <typename View> InputOptions public_input_options(const View& view, std
     options.format = ingress->format;
   }
   return options;
+}
+
+// Only the direct, unambiguous consumer of an application Input can author
+// this policy. Internal links, fanouts and explicit model routes retain their
+// existing metadata authority. Compilation here is cold metadata work only.
+template <typename View>
+std::optional<OrderedPublicInputContract> ordered_public_input_contract(const View& view,
+                                                                        std::size_t vertex) {
+  if (!dynamic_cast<const Input*>(view.vertices.at(vertex).get()))
+    return std::nullopt;
+  std::optional<std::size_t> consumer;
+  for (const auto& edge : view.edges) {
+    if (edge.to == vertex)
+      return std::nullopt;
+    if (edge.from == vertex) {
+      if (consumer)
+        return std::nullopt;
+      consumer = edge.to;
+    }
+  }
+  if (!consumer)
+    return std::nullopt;
+  for (const auto& fragment : view.fragments) {
+    if (fragment.graph_start <= *consumer && *consumer < fragment.graph_end &&
+        fragment.boundary_hints && fragment.boundary_hints->input_route_processor)
+      return std::nullopt;
+  }
+  const auto* provider =
+      dynamic_cast<const NodeContractProvider*>(view.vertices.at(*consumer).get());
+  if (!provider)
+    return std::nullopt;
+  const auto definition = provider->contract_definition();
+  if (definition.inputs.size() < 2U ||
+      std::any_of(definition.fields.begin(), definition.fields.end(), [](const auto& field) {
+        return field.source != ContractFieldSource::Fixed &&
+               field.source != ContractFieldSource::BuilderOption;
+      }))
+    return std::nullopt;
+  // The normal contextual compile happens after seed specialization, and
+  // connected segments may be lazy. Query only context-free authors here;
+  // never supply a seed that could redefine the expected application geometry.
+  ContractCompileInput input;
+  input.pipeline_label = "public_input";
+  input.node_index = static_cast<int>(*consumer);
+  input.processcvu_requested_run_target = view.options.processcvu_requested_run_target;
+  input.processcvu = view.options.processcvu;
+  CompiledNodeContract compiled;
+  std::string error;
+  if (!provider->compile_node_contract(input, &compiled, &error))
+    return std::nullopt;
+  return std::move(compiled.public_input_contract);
 }
 
 } // namespace simaai::neat::pipeline_internal

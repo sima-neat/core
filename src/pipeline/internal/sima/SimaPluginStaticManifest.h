@@ -343,6 +343,10 @@ struct ProcessCvuStagePayload {
   int win_half = -1;
   int max_iters = -1;
   int max_level = -1;
+  bool publish_error = false;
+  float error_threshold = -1.0f;
+  float min_eig_threshold = 0.0f;
+  bool require_convergence = false;
   int detect_new_features = -1;
   int fast_threshold = -1;
   int debug = 0;

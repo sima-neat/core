@@ -188,6 +188,20 @@ preparation fails rather than splitting the operation into separate kernels.
 A Core stage need not correspond to one operation: TrackKLT still prepares its
 existing composite request.
 
+TrackKLT's public tensor list is positional: previous image, current image, then
+integer seed points. Optional names assert those roles; they do not reorder
+storage. Core checks the authored input contract before seed inference and again
+before queue admission, without mapping or copying tensor data. Unnamed tensors
+remain positional. This policy applies only to explicitly authored direct public
+inputs, not internal stage links or model input transformations.
+
+The tracker request owns numerical quality controls and optional residual
+publication. Core appends the residual after points, status and any requested
+features; it does not reinterpret status as unconditional tracking confidence.
+Disabling detection removes that operation and its output allocation. Kernels
+owns the versioned native packet and numerical validation; Runner and Scheduler
+continue to transport and bind generic checked requests.
+
 ### Direct-driver recovery
 
 `deps/manifest.json` selects Scheduler and LLiMa. Scheduler’s installed coordinator validates

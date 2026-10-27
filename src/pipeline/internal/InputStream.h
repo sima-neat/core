@@ -113,6 +113,10 @@ struct InputStreamOptions {
   // runtime, so they do not need a public cross-Run loan attached by Run::pull.
   // Public/cross-Run ingress keeps this false and must carry a transferable loan.
   bool allow_graph_internal_zero_copy_input = false;
+  // True only for a genuine application boundary without an InputRouteProcessor.
+  // The actual seed transport decides whether physical binding-table projection
+  // is applicable; raw video/Mat and internal producers retain their authority.
+  bool public_unrouted_input = false;
   // Source/live pipelines prefer a bounded NULL transition. Driver-backed
   // appsrc pipelines require NULL because their stop callback owns exact-once
   // async-job reclamation. Ordinary push/appsrc pipelines remain deferred.

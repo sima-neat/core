@@ -108,16 +108,24 @@ Result<std::shared_ptr<KernelStageRecipe>> check_visual_stage(const StageStaticS
     const std::array tracker_inputs{
         image, image, TensorSpec{std::vector<std::int64_t>{b, cfg.num_points, 2}, DType::Int32},
         TensorSpec{std::vector<std::int64_t>{b, 1}, DType::Int32}};
-    const std::array tracker_outputs{
+    std::vector<TensorSpec> tracker_outputs{
         TensorSpec{std::vector<std::int64_t>{b, cfg.num_points, 2}, DType::Float32},
         TensorSpec{std::vector<std::int64_t>{b, cfg.num_points}, DType::Int32}};
-    const std::array<Parameter, 3> tracker_parameters{
+    VisualMember tracking{{0, 1, 2, SIZE_MAX}, {0, 1}, {}};
+    if (cfg.publish_error) {
+      tracker_outputs.push_back({std::vector<std::int64_t>{b, cfg.num_points}, DType::Float32});
+      tracking.outputs.push_back(cfg.detect_new_features != 0 ? 3U : 2U);
+    }
+    const std::array<Parameter, 6> tracker_parameters{
         {{"window_half", std::uint32_t(cfg.win_half)},
          {"max_iterations", std::uint32_t(cfg.max_iters)},
-         {"pyramid_levels", std::uint32_t(cfg.max_level)}}};
+         {"pyramid_levels", std::uint32_t(cfg.max_level)},
+         {"error_threshold", cfg.error_threshold},
+         {"min_eig_threshold", cfg.min_eig_threshold},
+         {"require_convergence", cfg.require_convergence}}};
     append(check_kernel(
                {"tracker", Hardware::EV74, tracker_inputs, tracker_outputs, tracker_parameters}),
-           {{0, 1, 2, SIZE_MAX}, {0, 1}, {}});
+           std::move(tracking));
     if (cfg.detect_new_features) {
       if (cfg.max_features <= 0 || cfg.max_features > 65536)
         return invalid("max_features", "invalid detection capacity");

@@ -260,6 +260,9 @@ Sample connected_seed_from_tensors(const runtime::ExecutionGraphPlan& plan,
   if (auto route = connected_default_route_processor(segment, std::move(fallback_route))) {
     return route->seed_tensors(inputs, where);
   }
+  if (segment.public_input_contract)
+    pipeline_internal::validate_ordered_public_input(*segment.public_input_contract,
+                                                     sample_from_tensors(inputs));
   if (auto opt = connected_default_ingress_input(segment)) {
     return pipeline_internal::sample_from_tensors_for_input(inputs, *opt);
   }
@@ -300,6 +303,9 @@ Sample connected_seed_from_samples(const runtime::ExecutionGraphPlan& plan, cons
   if (auto route = connected_default_route_processor(segment, std::move(fallback_route))) {
     return route->seed_samples(inputs, where);
   }
+  if (segment.public_input_contract)
+    pipeline_internal::validate_ordered_public_input(*segment.public_input_contract,
+                                                     inputs.front());
   return inputs.front();
 }
 
@@ -825,7 +831,7 @@ void maybe_compile_build_result_contracts(BuildResult* build_result,
                                           const InputContract& ingress_contract,
                                           const SampleSpec& ingress_spec,
                                           const std::optional<Sample>& ingress_sample,
-                                          const char* where) {
+                                          bool public_tensor_binding_ingress, const char* where) {
   if (!build_result || !nodes) {
     return;
   }
@@ -847,6 +853,7 @@ void maybe_compile_build_result_contracts(BuildResult* build_result,
   spec.fps_den = ingress_spec.fps_d;
   compile_input.ingress.ingress_spec = spec;
   compile_input.ingress.ingress_sample = ingress_sample;
+  compile_input.public_tensor_binding_ingress = public_tensor_binding_ingress;
   session_build_compile_contracts(build_result, *nodes, compile_input, where, nodes);
 }
 
@@ -1862,7 +1869,8 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   }
   maybe_compile_build_result_contracts(
       &br, &build_nodes, sess_opt, input_contract_from_input(sample), seed_spec,
-      contract_compile_sample_from_input(sample), "Graph::build(input)");
+      contract_compile_sample_from_input(sample),
+      opt.public_unrouted_input && seed_spec.tensor_envelope_transport, "Graph::build(input)");
   InputStreamOptions stream_opt = opt;
   // Execution and output ownership are independent: a completed frame may
   // remain retained by the application after its execution slot is reusable.

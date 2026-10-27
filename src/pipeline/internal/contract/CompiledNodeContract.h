@@ -4,6 +4,7 @@
 #endif
 
 #include "contracts/NodeContractDefinition.h"
+#include "pipeline/internal/OrderedPublicInputContract.h"
 #include "pipeline/internal/contract/PluginCompiledContracts.h"
 
 #include <nlohmann/json.hpp>
@@ -26,6 +27,7 @@ struct CompiledNodeContract {
   // Current node authoring policy, independent of cached numerical contracts.
   std::optional<std::size_t> native_execution_capacity;
   NodeContractDefinition definition;
+  std::optional<pipeline_internal::OrderedPublicInputContract> public_input_contract;
   std::optional<pipeline_internal::sima::static_contract::PhysicalEngine> resolved_executor;
   std::optional<CompiledProcessCvuContract> processcvu;
   std::optional<CompiledMlaContract> processmla;
