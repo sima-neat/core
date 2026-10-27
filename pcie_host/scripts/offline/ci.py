@@ -117,6 +117,28 @@ def source_metadata(args, work):
     return records, paths, inputs
 
 
+def card_baseline(args, card, publication):
+    """Resolve/provision the selected Scheduler's sysroot outside the bundle."""
+    context = args.work/'card-baseline'
+    context.mkdir()
+    provider = card['sysroot_tools']
+    archive = context/'sdk-tools.tar.gz'
+    download(args.bucket, provider['key'], archive)
+    if assemble.sha(archive) != provider['sha256']:
+        raise ValueError('card sysroot tooling checksum differs')
+    shutil.copytree(publication, context/'payload', ignore=shutil.ignore_patterns('*-Linux-extras.tar.gz'))
+    shutil.copyfile(HERE/'sysroot_baseline.py', context/'sysroot_baseline.py')
+    shutil.copyfile(HERE/'CardBaseline.Dockerfile', context/'Dockerfile')
+    iid = args.work/'card-image-id'
+    # Dockerfile FROM treats a bare sha256 ID as a registry name. Tag only the
+    # already verified local image; the tag is never used as a trust anchor.
+    base = 'neat-offline-card-base:' + assemble.image(card['image_id']).removeprefix('sha256:')
+    run('docker', 'tag', card['image_id'], base)
+    run('docker', 'build', '--platform', 'linux/arm64',
+        '--iidfile', iid, '--build-arg', 'CARD_IMAGE='+base, context)
+    return assemble.image(iid.read_text().strip())
+
+
 def metadata_names(args):
     return ('metadata.json', 'metadata-minimal.json') if is_core(args) else (assemble.METADATA_NAME,)
 
@@ -207,6 +229,7 @@ def build(args):
     if run('docker', 'image', 'inspect', card['image_id'], '--format', '{{.Id}}') != card['image_id']:
         raise ValueError('card baseline image identity differs')
     image_archive.unlink()
+    card_image = card_baseline(args, card, paths['card'][1])
     spec = {'installer_revision': args.installer_revision, 'targets': {}}
     if is_core(args):
         spec['scope'] = 'core'
@@ -214,7 +237,7 @@ def build(args):
         spec['targets'][role] = {
             'publication': str(directory.resolve()), 'metadata_sha256': inputs[role],
             'core_revision': args.sha[:12],
-            'image': host_image if role == 'host' else card['image_id'],
+            'image': host_image if role == 'host' else card_image,
             'architecture': args.arch if role == 'host' else 'arm64',
             'os_id': 'ubuntu' if role == 'host' else card['os_id'],
             'os_version': {'ubuntu22': '22.04', 'ubuntu24': '24.04'}[args.distro] if role == 'host' else card['os_version'],

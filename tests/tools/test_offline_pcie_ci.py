@@ -195,12 +195,14 @@ def test_validation_build_does_not_reuse_or_publish(tmp_path):
 
     def assemble(spec, root):
         assert set(spec['targets']) == {'host', 'card'}
+        assert spec['targets']['card']['image'] == 'sha256:' + 'd' * 64
         (root.parent/ci.assemble.METADATA_NAME).write_text('{}')
         (root.parent/ci.assemble.ARCHIVE_NAME).write_text('validated bundle')
 
     records = {role: {'resources-checksum': {}} for role in ('host', 'card')}
     paths = {'host': ('host-key', host), 'card': ('card-key', card)}
     with patch.object(ci, 'source_metadata', return_value=(records, paths, INPUTS)), \
+         patch.object(ci, 'card_baseline', return_value='sha256:' + 'd' * 64), \
          patch.object(ci, 'existing') as existing, patch.object(ci, 'put') as put, \
          patch.object(ci, 'download', side_effect=download), \
          patch.object(ci, 'run', side_effect=command), \
@@ -212,6 +214,42 @@ def test_validation_build_does_not_reuse_or_publish(tmp_path):
         put.assert_not_called()
         build.assert_called_once()
     assert (args.work/ci.assemble.ARCHIVE_NAME).is_file()
+
+
+def test_card_baseline_provisions_selected_sysroot_outside_bundle(tmp_path):
+    import json
+    card = json.loads((HERE/'baselines.json').read_text())['card']
+    args = SimpleNamespace(work=tmp_path, bucket='bucket')
+    digest = 'sha256:' + 'e' * 64
+    publication = tmp_path/'publication'
+    publication.mkdir()
+    (publication/'runtime.deb').write_text('selected')
+
+    def build(*argv):
+        if argv[:2] == ('docker', 'tag'):
+            assert argv[2] == card['image_id']
+            return
+        assert argv[:2] == ('docker', 'build')
+        assert 'linux/arm64' in argv
+        assert 'CARD_IMAGE=neat-offline-card-base:' + card['image_id'].removeprefix('sha256:') in argv
+        Path(argv[argv.index('--iidfile') + 1]).write_text(digest)
+
+    with patch.object(ci, 'download', side_effect=lambda b, k, p: p.write_text('deb')) as fetch, \
+         patch.object(ci.assemble, 'sha', return_value=card['sysroot_tools']['sha256']), \
+         patch.object(ci, 'run', side_effect=build):
+        assert ci.card_baseline(args, card, publication) == digest
+    fetch.assert_called_once_with('bucket', card['sysroot_tools']['key'], tmp_path/'card-baseline/sdk-tools.tar.gz')
+    assert not (tmp_path/'neat-offline').exists()
+
+
+def test_card_baseline_rejects_corrupt_sysroot_tools_before_build(tmp_path):
+    import json
+    card = json.loads((HERE/'baselines.json').read_text())['card']
+    with patch.object(ci, 'download', side_effect=lambda b, k, p: p.write_text('corrupt')), \
+         patch.object(ci, 'run') as build:
+        with pytest.raises(ValueError, match='sysroot tooling checksum'):
+            ci.card_baseline(SimpleNamespace(work=tmp_path, bucket='bucket'), card, tmp_path/'publication')
+        build.assert_not_called()
 
 
 @pytest.mark.parametrize('status', ['queued', 'in_progress', 'waiting', 'pending'])

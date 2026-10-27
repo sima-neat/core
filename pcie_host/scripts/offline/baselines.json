@@ -9,6 +9,12 @@
     "image_id": "sha256:b58bac151bb1f93a9a497163ad9f6cb80d01956fcf6619079d7352f62a62abc6",
     "os_id": "elxr",
     "os_version": "26.04",
+    "sysroot_tools": {
+      "key": "core/offline-build-input-c9fa0adaa15381721a0e84559ccd43bec29cf3307b3d7fee119f2eb01409ff83-sdk-tools.tar.gz",
+      "sha256": "c9fa0adaa15381721a0e84559ccd43bec29cf3307b3d7fee119f2eb01409ff83",
+      "sdk_commit": "a903b8f264bcd4da0be33bd7bf5f5842fea8b7da",
+      "shared_commit": "63511fbf27217833b4a8a9eb74a3bb300fa76648"
+    },
     "provenance": {
       "platform": "3.0.0_develop_B2121",
       "build": "20261014",
