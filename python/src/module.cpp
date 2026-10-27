@@ -3409,10 +3409,6 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("queue_depth", &simaai::neat::CameraInputOptions::queue_depth)
       .def_rw("allow_cpu_fallback", &simaai::neat::CameraInputOptions::allow_cpu_fallback);
 
-  nb::enum_<simaai::neat::UsbCameraOutput>(m, "UsbCameraOutput")
-      .value("Frames", simaai::neat::UsbCameraOutput::Frames)
-      .value("Jpeg", simaai::neat::UsbCameraOutput::Jpeg);
-
   nb::class_<simaai::neat::UsbCameraInputOptions>(m, "UsbCameraInputOptions")
       .def(nb::init<>())
       .def_rw("camera_name", &simaai::neat::UsbCameraInputOptions::camera_name)
@@ -3423,8 +3419,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("buffer_name", &simaai::neat::UsbCameraInputOptions::buffer_name)
       .def_rw("insert_queue", &simaai::neat::UsbCameraInputOptions::insert_queue)
       .def_rw("leaky_queue", &simaai::neat::UsbCameraInputOptions::leaky_queue)
-      .def_rw("queue_depth", &simaai::neat::UsbCameraInputOptions::queue_depth)
-      .def_rw("output", &simaai::neat::UsbCameraInputOptions::output);
+      .def_rw("queue_depth", &simaai::neat::UsbCameraInputOptions::queue_depth);
   nb::class_<simaai::neat::UsbCameraInfo>(m, "UsbCameraInfo")
       .def_ro("device", &simaai::neat::UsbCameraInfo::device)
       .def_ro("decoded_format", &simaai::neat::UsbCameraInfo::decoded_format);
@@ -4146,7 +4141,7 @@ NB_MODULE(_pyneat_core, m) {
       "options"_a = simaai::neat::CameraInputOptions{}, "capture_buffer_count"_a = 0U);
   // Opening the camera reads a frame; let other Python threads run meanwhile.
   nodes_mod.def("usb_camera_input", &simaai::neat::nodes::UsbCameraInput, "options"_a,
-                "capture_buffer_count"_a = 0U, nb::call_guard<nb::gil_scoped_release>());
+                nb::call_guard<nb::gil_scoped_release>());
   nodes_mod.def("output",
                 static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::OutputOptions)>(
                     &simaai::neat::nodes::Output),

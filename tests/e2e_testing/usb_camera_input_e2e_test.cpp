@@ -1,8 +1,7 @@
 // nodes::UsbCameraInput on a DevKit USB camera. Set SIMA_NEAT_TEST_USB_CAMERA to an ID
-// from usb_camera_ids(); the camera must offer MJPEG 1920x1080 at 30 fps. In Frames mode
-// the decoder runs with copy-allowed=false, so a frame that needed a copy would stop the
-// stream: every pulled frame was decoded in place. Jpeg mode also feeds a VideoSender
-// passthrough and a SimaDecode on one Graph; that decoder copies each frame.
+// from usb_camera_ids(); the camera must offer MJPEG 1920x1080 at 30 fps. The camera's JPEGs
+// are pulled as they are, then fed to a VideoSender passthrough and a SimaDecode on one Graph;
+// that decoder copies each frame.
 #include "nodes/common/Output.h"
 #include "nodes/groups/VideoSender.h"
 #include "nodes/io/UsbCameraInput.h"
@@ -21,7 +20,6 @@ int main() {
   const char* id = std::getenv("SIMA_NEAT_TEST_USB_CAMERA");
   if (!id || !*id)
     return skip_test("set SIMA_NEAT_TEST_USB_CAMERA to a USB camera ID from usb_camera_ids()");
-  using simaai::neat::UsbCameraOutput;
   using simaai::neat::nodes::UsbCameraInput;
   try {
     simaai::neat::UsbCameraInputOptions opt;
@@ -30,10 +28,8 @@ int main() {
     const std::string format = simaai::neat::format_tag_to_string(info.decoded_format);
     require(format == "NV12" || format == "NV16", "decoded format is NV12 or NV16: " + format);
     std::cout << "[INFO] " << id << " at " << info.device << " decodes to " << format << "\n";
-    // Two Frames builds: stopping the first must release the camera and its capture pool.
-    // The last round forwards the camera's JPEGs.
-    for (int round = 1; round <= 3; ++round) {
-      opt.output = round == 3 ? UsbCameraOutput::Jpeg : UsbCameraOutput::Frames;
+    // Two builds: stopping the first must release the camera.
+    for (int round = 1; round <= 2; ++round) {
       simaai::neat::Graph graph("usb_camera_e2e");
       graph.add(UsbCameraInput(opt));
       graph.add(simaai::neat::nodes::Output());
@@ -44,12 +40,7 @@ int main() {
           return fail_test("round " + std::to_string(round) + ": no frame " +
                            std::to_string(frame) + " within 5 s");
         if (frame == 0) {
-          if (opt.output == UsbCameraOutput::Jpeg) {
-            require_contains(sample->caps_string, "image/jpeg", "JPEG output");
-          } else {
-            require_contains(sample->caps_string, "format=(string)" + format,
-                             "the camera's native layout");
-          }
+          require_contains(sample->caps_string, "image/jpeg", "JPEG output");
           require_contains(sample->caps_string, "width=(int)1920", "requested width");
           require_contains(sample->caps_string, "height=(int)1080", "requested height");
         }
@@ -59,7 +50,6 @@ int main() {
     // The passthrough pattern: the camera's JPEGs go unchanged to a VideoSender (nothing
     // needs to listen) and through SimaDecode to the app.
     namespace groups = simaai::neat::nodes::groups;
-    opt.output = UsbCameraOutput::Jpeg;
     simaai::neat::Graph source("usb_camera_jpeg");
     source.add(UsbCameraInput(opt));
     simaai::neat::SimaDecodeOptions decode;
@@ -89,7 +79,6 @@ int main() {
       require_contains(sample->caps_string, "height=(int)1080", "decoded height");
     }
     run.stop();
-    opt.output = UsbCameraOutput::Frames;
     opt.framerate_num = 1000;
     try {
       (void)UsbCameraInput(opt);

@@ -1,19 +1,20 @@
 ---
 title: "USBカメラを使う"
-description: "UsbCameraInputでUSB（UVC）WebカメラのMJPEGフレームを読み取り、ハードウェアデコーダーでその場でデコードするか、JPEGのまま転送します。デバイス番号やパイプライン文字列は不要です。"
+description: "UsbCameraInputでUSB（UVC）WebカメラのMJPEGフレームを読み取り、JPEGのまま転送するか、モデル用にデコードします。デバイス番号やパイプライン文字列は不要です。"
 sidebar_position: 5
 slug: /develop-apps/advanced-concepts/usb-camera-input
 ---
 
 # USBカメラを使う
 
-`nodes::UsbCameraInput` は、MJPEGを送るUSB（UVC）Webカメラを読み取ります。カメラの固定IDを渡すと、[MIPIカメラ](./mipi-camera-input.md)と同様に、グラフはSiMaAIメモリー上のフレームを受け取ります。`UsbCameraInputOptions` は `CameraInputOptions` のフィールド名と既定値を使いますが、`camera_name` は必須で、`format` はありません。フレームはカメラ本来のレイアウトのままで、4:2:0のJPEGはNV12、4:2:2のJPEGはNV16になります。
+`nodes::UsbCameraInput` は、MJPEGを送るUSB（UVC）Webカメラを読み取り、カメラのJPEGフレームを出力します。カメラの固定IDを渡します。`UsbCameraInputOptions` は（[MIPIカメラ](./mipi-camera-input.md)の）`CameraInputOptions` のフィールド名と既定値を使いますが、`camera_name` は必須で、`format` はありません。
 
 ```text
-USB camera -> UsbCameraInput -> model-managed CVU preproc -> MLA -> Output
+USB camera -> UsbCameraInput (JPEG) -+-> VideoSender passthrough (MJPEG)
+                                     `-> SimaDecode (NV12 or NV16) -> model
 ```
 
-既定の `UsbCameraOutput::Frames` では、カメラは圧縮された各フレームを、ハードウェアMJPEGデコーダーがその場で読み取るCMAバッファーに直接書き込むため、キャプチャーとデコードの間でコピーは発生しません。`UsbCameraOutput::Jpeg` の動作は後述します。多くのWebカメラは4:2:2のJPEGを送り、これはNV16にデコードされます。モデルはNV16を直接読み取ります。`usb_camera_info()` が `NV16` を返す場合は、モデルの `preprocess.color_convert.input_format` を `PreprocessColorFormat::NV16` に設定すると、フレームは変換段なしでモデルに届きます。
+多くのWebカメラは4:2:2のJPEGを送り、これはNV16にデコードされます。`usb_camera_info()` はカメラのJPEGがデコードされるレイアウトを返します。これを `SimaDecode` の `out_format` に使い、`NV16` が返された場合はモデルの `preprocess.color_convert.input_format` を `PreprocessColorFormat::NV16` に設定すると、フレームは変換段なしでモデルに届きます。
 
 ## Neatがサポートする範囲
 
@@ -112,7 +113,7 @@ frame = run.pull(timeout_ms=5000)
 </CodeTab>
 </CodeTabs>
 
-モデルはMIPIカメラと同じ方法で追加します。[MIPIカメラを使う](./mipi-camera-input.md)の、生のMLAグラフを作成する節を参照してください。
+ノードはカメラのJPEGフレームを出力します。モデルを実行するには、次の節のように `SimaDecode` でデコードします。
 
 `UsbCameraInput` はノードの作成時に、モードを確認して最初のフレームのクロマサンプリングを読み取るため、カメラを一度開きます。先に、カメラを使っている他のプログラムを終了してください。`usb_camera_info(camera)` はノードを作成せずに同じ確認を行い、キャプチャーデバイスと `decoded_format`（`NV12` または `NV16`）を返します。
 
@@ -120,14 +121,12 @@ frame = run.pull(timeout_ms=5000)
 
 ## カメラのJPEGを転送する
 
-カメラの映像をビューアーに送りつつ、同じ映像でモデルも実行するには、`output` を `UsbCameraOutput::Jpeg` に設定します。ノードはカメラのJPEGフレームをデコードせずにそのまま出力します。このノードを、JPEGを再エンコードせずにRTP/JPEGとして送る `VideoSender` パススルーと、`out_format` にカメラの `decoded_format` を指定した `SimaDecode` に接続します。
+カメラの映像をビューアーに送りつつ、同じ映像でモデルも実行するには、このノードを、JPEGを再エンコードせずにRTP/JPEGとして送る `VideoSender` パススルーと、`out_format` にカメラの `decoded_format` を指定した `SimaDecode` に接続します。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-camera.output = neat::UsbCameraOutput::Jpeg;
-
 neat::SimaDecodeOptions decode;
 decode.type = neat::SimaDecodeType::MJPEG;
 decode.out_format = neat::usb_camera_info(camera).decoded_format;  // NV12 or NV16
@@ -157,8 +156,6 @@ graph.connect(source, neat::nodes::groups::VideoSender(sender), video_link);
 <CodeTab label="Python" lang="python">
 
 ```python
-camera.output = pyneat.UsbCameraOutput.Jpeg
-
 decode = pyneat.SimaDecodeOptions()
 decode.type = pyneat.SimaDecodeType.MJPEG
 decode.out_format = pyneat.usb_camera_info(camera).decoded_format  # NV12 or NV16
@@ -186,16 +183,13 @@ graph.connect(source, pyneat.groups.video_sender(sender), video_link)
 </CodeTab>
 </CodeTabs>
 
-このモードでは、デコード側の分岐が各フレームをデコードする前にコピーします。カメラドライバーはバッファーをDMA-BUFとしてエクスポートしますが、デコーダーは通常それをそのままインポートできないためです。送信側には[ビデオを送信](./video_sender.md)のRTP/JPEGの制限が適用されます。
+デコーダーは、各JPEGをデコードする前に自身の入力バッファーへコピーします。送信側には[ビデオを送信](./video_sender.md)のRTP/JPEGの制限が適用されます。
 
 ## メモリーと破棄されるフレーム
 
 | オプション | 効果 |
 | --- | --- |
-| `queue_depth`, `leaky_queue` | デコーダーの前にある小さなleakyキューが、グラフの処理が遅れたときに古いフレームを破棄します。 |
-| `capture_buffer_count`（2番目の引数） | カメラとデコーダーが共有するCMAバッファーです。0の場合は、キューの深さにデコーダーの入力スロット2つを加えた数を使います。フレーム出力専用で、`UsbCameraOutput::Jpeg` では0にする必要があります。 |
-
-Frames 出力でのゼロコピーとは、キャプチャーとデコードの間で圧縮フレームがコピーされないことを指します。デコード済みのフレームは別のバッファーです。
+| `queue_depth`, `leaky_queue` | カメラの後にある小さなleakyキューが、グラフの処理が遅れたときに古いフレームを破棄します。 |
 
 Webカメラは、JPEGの終了マーカーの後にバイトを付け足すことがよくあり、一部のフレームは不完全な状態で届いたり、USBドライバーによって破損とマークされたりします。デコーダーは各フレームを終了マーカーまでデコードし、不完全なフレームや破損したフレームは停止せずに破棄します。デコーダー要素は、それらを `dropped-count` プロパティで数えます。
 
@@ -209,4 +203,3 @@ Webカメラは、JPEGの終了マーカーの後にバイトを付け足すこ�
 | `is in use by another process` | カメラを開いている他のプログラムを終了してください。 |
 | `sent no usable MJPEG frame` | NeatがデコードできないJPEG（4:4:4サンプリングなど）をカメラが送っているか、フレームがまったく届いていません。 |
 | `is no longer /dev/videoN` | グラフの作成後に、カメラが抜かれたか、移動されたか、番号が変わりました。`UsbCameraInput` をもう一度呼び出してください。 |
-| `requires a neatdecoder with the input-pool-buffers property` | インストールされているデコーダーが古すぎます。`simaai-scheduler` パッケージを更新してください。 |

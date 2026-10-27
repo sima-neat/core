@@ -1621,18 +1621,11 @@ compatibility-copy pool grows on demand up to 128 buffers and is not capped by t
 so a leaky queue can apply its drop policy without the upstream bridge
 stalling first.
 
-`nodes::UsbCameraInput` keeps V4L2 capture and MJPEG decode in one node and
-one GStreamer segment. `v4l2src io-mode=dmabuf-import` takes its capture
-buffers from the CMA pool that `neatdecoder` offers through
-`input-pool-buffers`, so the camera writes each JPEG where the decoder reads it,
-and `copy-allowed=false` makes any frame outside that pool a stream error. The
-decoder writes the camera's native layout, NV12 for 4:2:0 and NV16 for 4:2:2.
-With `UsbCameraOutput::Jpeg` the node is only `v4l2src io-mode=dmabuf`, the JPEG
-capsfilter and the queue, and outputs encoded JPEG frames in the driver's exported
+`nodes::UsbCameraInput` is only `v4l2src io-mode=dmabuf`, a JPEG capsfilter and
+an optional queue, and outputs encoded JPEG frames in the driver's exported
 DMA-BUFs. They can feed both `VideoSender` passthrough (MJPEG) and `SimaDecode`
-(MJPEG). `neatdecoder` tries to import each DMA-BUF in place; a non-contiguous
-exporter such as `videobuf2_vmalloc` cannot be imported, so the decode branch
-copies each frame (`copy-allowed` defaults to true).
+(MJPEG), which decodes to the camera's native layout, NV12 for 4:2:0 and NV16
+for 4:2:2. `neatdecoder` copies each JPEG into its own input buffer.
 
 ### Teardown
 

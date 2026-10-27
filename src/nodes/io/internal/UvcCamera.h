@@ -52,7 +52,6 @@ ResolvedCamera resolve_mjpeg_camera(const std::string& camera_id, std::uint32_t 
                                     const std::string& sysfs_root = "/sys");
 
 /// The UsbCameraInput node for an already resolved camera (validated options).
-std::shared_ptr<Node> camera_node(const UsbCameraInputOptions& opt, const ResolvedCamera& camera,
-                                  std::uint32_t capture_buffer_count);
+std::shared_ptr<Node> camera_node(const UsbCameraInputOptions& opt, const ResolvedCamera& camera);
 
 } // namespace simaai::neat::internal::uvc

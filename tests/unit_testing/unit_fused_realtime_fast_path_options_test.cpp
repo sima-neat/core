@@ -196,15 +196,23 @@ simaai::neat::Graph make_live_source_graph(int index, std::uint32_t width = 1920
   return graph;
 }
 
-// A resolved USB camera node, so no hardware is needed to compose the graph. NV16
-// (4:2:2 JPEGs) decodes to NV16 in the same single node.
+// A resolved USB camera node, so no hardware is needed to compose the graph, decoded in the
+// camera's own layout: NV16 for 4:2:2 JPEGs.
 simaai::neat::Graph make_usb_live_source_graph(int index, simaai::neat::FormatTag sampling) {
   simaai::neat::UsbCameraInputOptions options;
   options.camera_name = "usb-camera-" + std::to_string(index);
   options.buffer_name = "fused_queue_usb" + std::to_string(index);
+  simaai::neat::SimaDecodeOptions decode;
+  decode.type = simaai::neat::SimaDecodeType::MJPEG;
+  decode.raw_output = true;
+  decode.out_format = sampling;
+  decode.dec_width = static_cast<int>(options.width);
+  decode.dec_height = static_cast<int>(options.height);
+  decode.dec_fps = static_cast<int>(options.framerate_num);
   simaai::neat::Graph graph;
   graph.add(simaai::neat::internal::uvc::camera_node(
-      options, {"/dev/video" + std::to_string(index), sampling}, 0));
+      options, {"/dev/video" + std::to_string(index), sampling}));
+  graph.add(simaai::neat::nodes::SimaDecode(decode));
   return graph;
 }
 
@@ -780,7 +788,7 @@ RUN_TEST(
                                      std::all_of(segment.fused_realtime_ingress->branches.begin(),
                                                  segment.fused_realtime_ingress->branches.end(),
                                                  [&](const auto& branch) {
-                                                   return branch.nodes.size() == 1U;
+                                                   return branch.nodes.size() == 2U;
                                                  });
                             }),
                 std::string("two USB cameras into one consumer must fuse like two CameraInputs (") +

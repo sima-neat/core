@@ -25,7 +25,6 @@ using simaai::neat::Graph;
 using simaai::neat::Node;
 using simaai::neat::UsbCameraInfo;
 using simaai::neat::UsbCameraInputOptions;
-using simaai::neat::UsbCameraOutput;
 using simaai::neat::nodes::UsbCameraInput;
 
 static_assert(std::is_same_v<decltype(UsbCameraInput(std::declval<UsbCameraInputOptions>())),
@@ -37,10 +36,9 @@ static_assert(std::is_same_v<
 namespace {
 
 // A one-node Graph, so describe_backend() renders the camera's fragment.
-Graph camera_graph(const UsbCameraInputOptions& opt, const uvc::ResolvedCamera& camera,
-                   std::uint32_t capture_buffer_count) {
+Graph camera_graph(const UsbCameraInputOptions& opt, const uvc::ResolvedCamera& camera) {
   Graph graph;
-  graph.add(uvc::camera_node(opt, camera, capture_buffer_count));
+  graph.add(uvc::camera_node(opt, camera));
   return graph;
 }
 
@@ -139,27 +137,12 @@ void check_validation() {
   opt.framerate_num = 0;
   require_throws<std::invalid_argument>([&] { (void)UsbCameraInput(opt); },
                                         "nonzero width, height and frame rate", "zero rate");
-  require_throws<std::invalid_argument>([&] { (void)UsbCameraInput(mjpeg_options(), 65); },
-                                        "exceeds 64", "too many capture buffers");
-  opt = mjpeg_options();
-  opt.queue_depth = 63;
-  require_throws<std::invalid_argument>([&] { (void)UsbCameraInput(opt); },
-                                        "queue_depth exceeds 62", "default pool over 64 buffers");
   opt = mjpeg_options();
   opt.buffer_name.clear();
   require_throws<std::invalid_argument>([&] { (void)UsbCameraInput(opt); },
                                         "requires a buffer_name", "empty buffer name");
   require_throws<std::invalid_argument>([&] { (void)simaai::neat::usb_camera_info(opt); },
                                         "requires a buffer_name", "usb_camera_info validates");
-  // Jpeg mode has no decoder pool to size.
-  opt = mjpeg_options();
-  opt.output = UsbCameraOutput::Jpeg;
-  require_throws<std::invalid_argument>([&] { (void)UsbCameraInput(opt, 4); },
-                                        "applies only to UsbCameraOutput::Frames",
-                                        "Jpeg mode rejects capture_buffer_count");
-  opt.camera_name.clear();
-  require_throws<std::invalid_argument>([&] { (void)UsbCameraInput(opt); }, "requires camera_name",
-                                        "Jpeg mode validates the camera ID");
 }
 
 void check_ids_sorted() {
@@ -177,7 +160,7 @@ void check_reconnect() {
   sys.camera("3.1", {"video1"});
   const std::string id = "/base/pci@7000000000-3.1:1.0-046d:08e5";
   const uvc::ResolvedCamera camera{"/dev/video1", FormatTag::NV12, id, sys.root.string(), 0};
-  const Graph graph = camera_graph(mjpeg_options(), camera, 0);
+  const Graph graph = camera_graph(mjpeg_options(), camera);
   require_contains(graph.describe_backend(), "device=/dev/video1", "camera still at video1");
   // Replugged into port 3.2: video1 now belongs to a camera with another ID.
   fs::remove(sys.root / "class/video4linux/video1/device");
@@ -191,7 +174,7 @@ void check_renumbered_to_metadata_node() {
   sys.camera("3.1", {"video1", "video2"}); // capture + metadata node
   const std::string id = "/base/pci@7000000000-3.1:1.0-046d:08e5";
   const uvc::ResolvedCamera camera{"/dev/video1", FormatTag::NV12, id, sys.root.string(), 0};
-  const Graph graph = camera_graph(mjpeg_options(), camera, 0);
+  const Graph graph = camera_graph(mjpeg_options(), camera);
   require_contains(graph.describe_backend(), "device=/dev/video1", "capture node still at video1");
   // Re-enumerated: video1 is now the same camera's metadata node, so the ID still matches.
   FakeSysfs::write(sys.root / "class/video4linux/video1/index", "1");
@@ -244,72 +227,19 @@ void check_no_cameras() {
       "no USB cameras are connected", "empty system");
 }
 
-void check_pipeline() {
-  auto opt = mjpeg_options();
-  const Graph direct = camera_graph(opt, {"/dev/video1", FormatTag::NV12}, 0);
-  const std::string text = direct.describe_backend();
-  require_contains(text, "v4l2src name=n0_camera_src", "deterministic source name");
-  require_contains(text, "device=/dev/video1 io-mode=dmabuf-import",
-                   "captures into imported buffers");
-  require_contains(text, "image/jpeg,width=1920,height=1080,framerate=30/1", "exact mode caps");
-  require_contains(text, "leaky=downstream", "stale frames drop before decode");
-  require_contains(text, "dec-type=mjpeg", "MJPEG decode");
-  require_contains(text, "dec-fmt=NV12", "4:2:0 decodes straight to NV12");
-  require_contains(text, "op-buff-name=\"camera\"", "decoded frames carry the buffer name");
-  require_contains(text, "input-pool-buffers=4", "queue depth plus decoder input slots");
-  require_contains(text, "copy-allowed=false", "strict zero-copy by default");
-  require_not_contains(direct.describe(), "Preproc", "4:2:0 adds no conversion");
-
-  require_not_contains(text, "dec-fps=", "the decoder derives its rate from the caps");
-
-  opt.queue_depth = 3;
-  const std::string relaxed =
-      camera_graph(opt, {"/dev/video1", FormatTag::NV12}, 9).describe_backend();
-  require_contains(relaxed, "input-pool-buffers=9", "explicit capture_buffer_count");
-  require_contains(relaxed, "max-size-buffers=3", "queue depth");
-  opt.queue_depth = 62;
-  require_contains(camera_graph(opt, {"/dev/video1", FormatTag::NV12}, 0).describe_backend(),
-                   "input-pool-buffers=64", "largest default pool");
-
-  // An exact fractional mode reaches the decoder only through the caps. A rounded dec-fps
-  // beside them would conflict with the decoder's own rounding (100/3 -> 34, not 33).
-  opt.queue_depth = 2;
-  opt.framerate_num = 100;
-  opt.framerate_den = 3;
-  const std::string fractional =
-      camera_graph(opt, {"/dev/video1", FormatTag::NV12}, 0).describe_backend();
-  require_contains(fractional, "framerate=100/3", "fractional mode caps");
-  require_not_contains(fractional, "dec-fps=", "fractional rate is not rounded into dec-fps");
-  opt.framerate_num = 30;
-  opt.framerate_den = 1;
-
-  // 4:2:2 decodes in place to NV16, the camera's native layout, with no conversion.
-  const auto nv16_node = uvc::camera_node(mjpeg_options(), {"/dev/video1", FormatTag::NV16}, 0);
-  const Graph nv16 = camera_graph(mjpeg_options(), {"/dev/video1", FormatTag::NV16}, 0);
-  const std::string nv16_text = nv16.describe_backend();
-  require_contains(nv16_text, "dec-fmt=NV16", "4:2:2 decodes to NV16");
-  require_contains(nv16_text, "copy-allowed=false", "4:2:2 stays zero-copy");
-  require_not_contains(nv16.describe(), "Preproc", "4:2:2 adds no ColorConvert");
-  require_not_contains(nv16.describe(), "ColorConvert", "4:2:2 adds no ColorConvert node");
-  require_not_contains(nv16_text, "simaaiprocesscvu", "4:2:2 adds no EV74 stage");
-  const auto* nv16_spec = dynamic_cast<const simaai::neat::OutputSpecProvider*>(nv16_node.get());
-  require(nv16_spec && nv16_spec->output_spec({}).format == "NV16", "4:2:2 output spec is NV16");
-}
-
 void check_jpeg_pipeline() {
   auto opt = mjpeg_options();
-  opt.output = UsbCameraOutput::Jpeg;
   opt.framerate_num = 30000;
   opt.framerate_den = 1001;
-  const auto node = uvc::camera_node(opt, {"/dev/video1", FormatTag::NV16}, 0);
-  require(node->kind() == "UsbCameraInput", "Jpeg mode is the same live source kind");
+  const auto node = uvc::camera_node(opt, {"/dev/video1", FormatTag::NV16});
+  require(node->kind() == "UsbCameraInput", "a live source kind");
   const std::string text = node->backend_fragment(2);
   require(text == "v4l2src name=n2_camera_src device=/dev/video1 io-mode=dmabuf ! capsfilter "
                   "name=n2_camera_caps caps=\"image/jpeg,width=1920,height=1080,"
                   "framerate=30000/1001\" ! queue name=n2_camera_queue max-size-buffers=2 "
                   "max-size-bytes=0 max-size-time=0 leaky=downstream",
           "Jpeg fragment: " + text);
-  require_not_contains(text, "neatdecoder", "Jpeg mode has no decoder");
+  require_not_contains(text, "neatdecoder", "the node has no decoder");
   require(node->element_names(2) ==
               std::vector<std::string>{"n2_camera_src", "n2_camera_caps", "n2_camera_queue"},
           "Jpeg element names match the fragment");
@@ -321,8 +251,16 @@ void check_jpeg_pipeline() {
               spec.height == 1080 && spec.fps_num == 30000 && spec.fps_den == 1001,
           "Jpeg output spec describes encoded JPEG frames");
 
+  // The queue follows queue_depth, and an exact fractional mode stays exact in the caps.
+  opt.queue_depth = 3;
+  opt.framerate_num = 100;
+  opt.framerate_den = 3;
+  const std::string tuned = camera_graph(opt, {"/dev/video1", FormatTag::NV12}).describe_backend();
+  require_contains(tuned, "max-size-buffers=3", "queue depth");
+  require_contains(tuned, "framerate=100/3", "fractional mode caps");
+
   opt.insert_queue = false;
-  const auto bare = uvc::camera_node(opt, {"/dev/video1", FormatTag::NV12}, 0);
+  const auto bare = uvc::camera_node(opt, {"/dev/video1", FormatTag::NV12});
   require_not_contains(bare->backend_fragment(0), "queue", "no queue when insert_queue is off");
   require(bare->element_names(0).size() == 2, "no queue name when insert_queue is off");
 }
@@ -331,15 +269,14 @@ void check_jpeg_reconnect() {
   FakeSysfs sys;
   sys.camera("3.1", {"video1"});
   auto opt = mjpeg_options();
-  opt.output = UsbCameraOutput::Jpeg;
   const uvc::ResolvedCamera camera{"/dev/video1", FormatTag::NV12, opt.camera_name,
                                    sys.root.string(), 0};
-  const auto node = uvc::camera_node(opt, camera, 0);
+  const auto node = uvc::camera_node(opt, camera);
   require_contains(node->backend_fragment(0), "device=/dev/video1", "Jpeg camera at video1");
   fs::remove(sys.root / "class/video4linux/video1/device");
   sys.camera("3.2", {"video1"});
   require_throws<std::runtime_error>([&] { (void)node->backend_fragment(0); },
-                                     "is no longer /dev/video1", "Jpeg mode checks reconnects");
+                                     "is no longer /dev/video1", "reconnects are checked");
 }
 
 } // namespace
@@ -353,7 +290,6 @@ int main() {
     check_ids_and_nodes();
     check_acpi_controller();
     check_no_cameras();
-    check_pipeline();
     check_jpeg_pipeline();
     check_jpeg_reconnect();
   } catch (const std::exception& e) {

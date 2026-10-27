@@ -1195,7 +1195,7 @@ Caps 協商是自動的；失敗會在早期（驗證/預滾動）或在執行�
 
 面向應用程式的捕獲深度與核心的私有 CSI 到 ISP RAW 傳輸環以及後續的 GStreamer 佇列都是獨立的。 可選的 `capture_buffer_count` 參數，用於 `CameraInputWithCaptureBuffers`，用於控制在 ISP 輸出、libcamera 和應用程式之間保留的緩衝區（在 Platform 3.0 上，`libcamerasrc` 沒有 `buffer-count`，因此它必須保持為 `0`）。 `queue_depth` 和 `leaky_queue` 分別控制下游延遲和幀丟棄策略。 可選的相容性複製池會按需增長至最多 128 個緩衝區，並且不受該佇列深度的限制，因此，漏洩佇列可以應用其丟棄策略，而無需首先使上游橋接器停頓。
 
-`nodes::UsbCameraInput` 將 V4L2 擷取與 MJPEG 解碼保留在同一個節點與同一個 GStreamer 區段中。`v4l2src io-mode=dmabuf-import` 從 `neatdecoder` 透過 `input-pool-buffers` 提供的 CMA 集區取得擷取緩衝區，因此攝影機會把每個 JPEG 直接寫到解碼器讀取的位置，而 `copy-allowed=false` 會讓該集區之外的任何影格成為串流錯誤。 解碼器會寫出攝影機原生的排列方式，4:2:0 為 NV12，4:2:2 為 NV16。使用 `UsbCameraOutput::Jpeg` 時，節點只包含 `v4l2src io-mode=dmabuf`、JPEG capsfilter 與佇列，並輸出位於驅動程式匯出之 DMA-BUF 中的已編碼 JPEG 影格。這些影格可同時供給 `VideoSender` 直通（MJPEG）與 `SimaDecode`（MJPEG）。`neatdecoder` 會嘗試就地匯入每個 DMA-BUF；像 `videobuf2_vmalloc` 這類非連續的匯出者無法匯入，因此解碼分支會複製每個影格（`copy-allowed` 預設為 true）。
+`nodes::UsbCameraInput` 只包含 `v4l2src io-mode=dmabuf`、JPEG capsfilter 與可選的佇列，並輸出位於驅動程式匯出之 DMA-BUF 中的已編碼 JPEG 影格。這些影格可同時供給 `VideoSender` 直通（MJPEG）與 `SimaDecode`（MJPEG）；解碼器會解碼為攝影機原生的排列方式，4:2:0 為 NV12，4:2:2 為 NV16。`neatdecoder` 會把每個 JPEG 複製到自己的輸入緩衝區。
 
 ### 拆解
 

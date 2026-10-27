@@ -1,7 +1,7 @@
 /**
  * @file
  * @ingroup nodes_io
- * @brief USB (UVC) MJPEG camera source node: decoded frames, or the camera's JPEGs.
+ * @brief USB (UVC) MJPEG camera source node: the camera's JPEG frames.
  *
  * @see CameraInput
  * @see SimaDecode
@@ -18,17 +18,11 @@
 
 namespace simaai::neat {
 
-/// What UsbCameraInput outputs.
-enum class UsbCameraOutput {
-  Frames, ///< Frames decoded in place to the camera's native layout (UsbCameraInfo).
-  Jpeg,   ///< The camera's JPEG frames, not decoded.
-};
-
 /**
  * @brief Options for UsbCameraInput, with CameraInputOptions' field names and defaults.
  *
- * `camera_name` is required here, and there is no `format`: decoded frames keep the
- * camera's native chroma layout (see `usb_camera_info()`), in SiMaAI memory.
+ * `camera_name` is required here, and there is no `format`: the node outputs the camera's
+ * JPEG frames, and `usb_camera_info()` says which layout they decode to.
  */
 struct UsbCameraInputOptions {
   // Required stable USB camera ID from usb_camera_ids().
@@ -47,8 +41,6 @@ struct UsbCameraInputOptions {
   bool insert_queue = true;
   bool leaky_queue = true;
   std::uint32_t queue_depth = 2;
-
-  UsbCameraOutput output = UsbCameraOutput::Frames;
 };
 
 /// A USB camera as UsbCameraInput opens it.
@@ -66,8 +58,9 @@ std::vector<std::string> usb_camera_ids();
 /**
  * @brief Validate `opt`, find its camera, check the mode and read one frame.
  *
- * `decoded_format` is the format UsbCameraOutput::Frames outputs. A model reads NV16
- * directly: set its preprocessing input format to match (`PreprocessColorFormat::NV16`).
+ * `decoded_format` is the layout the camera's JPEGs decode to: set it as a `SimaDecode`
+ * `out_format`. A model reads NV16 directly: set its preprocessing input format to match
+ * (`PreprocessColorFormat::NV16`).
  * @throws std::invalid_argument and std::runtime_error as UsbCameraInput does.
  */
 UsbCameraInfo usb_camera_info(const UsbCameraInputOptions& opt);
@@ -83,30 +76,19 @@ namespace simaai::neat::nodes {
  * requires the exact MJPEG mode `opt.width` x `opt.height` at
  * `opt.framerate_num`/`opt.framerate_den`, and captures through V4L2.
  *
- * UsbCameraOutput::Frames: the camera writes each frame into CMA buffers the hardware
- * decoder reads in place, so no frame is copied before decode. Frames come out in the
- * camera's native layout: NV12 for 4:2:0 JPEGs, NV16 for 4:2:2, read from its first
- * frame when the node is created. Frames with bytes after their JPEG end marker are
- * trimmed; incomplete or corrupt frames are dropped.
- *
- * UsbCameraOutput::Jpeg: the camera's JPEG frames, exported by the driver as DMA-BUF,
- * for `VideoSender` passthrough (MJPEG) and `SimaDecode` (MJPEG) on the same Graph. The
+ * The node outputs the camera's JPEG frames, exported by the driver as DMA-BUF, for
+ * `VideoSender` passthrough (MJPEG) and `SimaDecode` (MJPEG) on the same Graph. The
  * decoder usually cannot import the camera's buffers in place, so it copies each frame.
  *
  * Building a Graph again after the camera was unplugged, moved or renumbered
  * throws; call UsbCameraInput again to open it.
  *
- * @param capture_buffer_count Frames only: CMA capture buffers shared by the camera and
- *        the decoder; 0 uses the queue depth plus the decoder's input slots. At most 64.
- * @throws std::invalid_argument for a missing camera ID or buffer name, a zero size
- *         or rate, more than 64 capture buffers (a default pool needs a queue depth
- *         of at most 62), or a nonzero capture_buffer_count with UsbCameraOutput::Jpeg.
- * @throws std::runtime_error when the installed decoder is too old (Frames), or the
- *         camera is not connected, is in use, lacks the mode, or sends no decodable
- *         frame. The message names the camera ID and lists the connected IDs or the
- *         camera's MJPEG modes.
+ * @throws std::invalid_argument for a missing camera ID or buffer name, or a zero size
+ *         or rate.
+ * @throws std::runtime_error when the camera is not connected, is in use, lacks the mode,
+ *         or sends no decodable frame. The message names the camera ID and lists the
+ *         connected IDs or the camera's MJPEG modes.
  */
-std::shared_ptr<simaai::neat::Node> UsbCameraInput(simaai::neat::UsbCameraInputOptions opt,
-                                                   std::uint32_t capture_buffer_count = 0);
+std::shared_ptr<simaai::neat::Node> UsbCameraInput(simaai::neat::UsbCameraInputOptions opt);
 
 } // namespace simaai::neat::nodes

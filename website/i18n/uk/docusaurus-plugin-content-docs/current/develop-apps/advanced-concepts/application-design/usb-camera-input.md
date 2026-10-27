@@ -1,19 +1,20 @@
 ---
 title: "Використання USB-камери"
-description: "Зчитуйте кадри MJPEG з USB-вебкамери (UVC) за допомогою UsbCameraInput: апаратний декодер декодує їх на місці, або ж вузол передає JPEG без змін, без номерів пристроїв і рядків конвеєра."
+description: "Зчитуйте кадри MJPEG з USB-вебкамери (UVC) за допомогою UsbCameraInput і передавайте їх як JPEG або декодуйте для моделі, без номерів пристроїв і рядків конвеєра."
 sidebar_position: 5
 slug: /develop-apps/advanced-concepts/usb-camera-input
 ---
 
 # Використання USB-камери
 
-`nodes::UsbCameraInput` зчитує USB-вебкамери (UVC), що надсилають MJPEG. Передайте стабільний ідентифікатор камери, і граф отримуватиме кадри в пам’яті SiMaAI, як і з [камери MIPI](./mipi-camera-input.md). `UsbCameraInputOptions` використовує назви полів і типові значення `CameraInputOptions`, але `camera_name` обов’язкове, а `format` немає: кадри зберігають власне розміщення камери, NV12 для JPEG 4:2:0 і NV16 для 4:2:2.
+`nodes::UsbCameraInput` зчитує USB-вебкамери (UVC), що надсилають MJPEG, і виводить кадри JPEG камери. Передайте стабільний ідентифікатор камери. `UsbCameraInputOptions` використовує назви полів і типові значення `CameraInputOptions` ([камери MIPI](./mipi-camera-input.md)), але `camera_name` обов’язкове, а `format` немає.
 
 ```text
-USB camera -> UsbCameraInput -> model-managed CVU preproc -> MLA -> Output
+USB camera -> UsbCameraInput (JPEG) -+-> VideoSender passthrough (MJPEG)
+                                     `-> SimaDecode (NV12 or NV16) -> model
 ```
 
-Зі стандартним `UsbCameraOutput::Frames` камера записує кожен стиснений кадр безпосередньо в буфери CMA, які апаратний декодер MJPEG читає на місці, тож між захопленням і декодуванням нічого не копіюється. Як працює `UsbCameraOutput::Jpeg`, описано нижче. Більшість вебкамер надсилає JPEG 4:2:2, які декодуються в NV16. Модель читає NV16 напряму: коли `usb_camera_info()` повертає `NV16`, задайте `preprocess.color_convert.input_format` моделі значення `PreprocessColorFormat::NV16`, і кадри надходитимуть до моделі без етапу перетворення.
+Більшість вебкамер надсилає JPEG 4:2:2, які декодуються в NV16. `usb_camera_info()` повідомляє, у яке розміщення декодуються JPEG камери: використайте його як `out_format` для `SimaDecode`, а коли воно повертає `NV16`, задайте `preprocess.color_convert.input_format` моделі значення `PreprocessColorFormat::NV16`, і кадри надходитимуть до моделі без етапу перетворення.
 
 ## Що підтримує Neat
 
@@ -112,7 +113,7 @@ frame = run.pull(timeout_ms=5000)
 </CodeTab>
 </CodeTabs>
 
-Модель додають так само, як для камери MIPI; див. розділ про базовий граф MLA у статті [Використання камери MIPI](./mipi-camera-input.md).
+Вузол виводить кадри JPEG камери. Щоб запустити на них модель, декодуйте їх за допомогою `SimaDecode`, як показано в наступному розділі.
 
 `UsbCameraInput` один раз відкриває камеру під час створення вузла, щоб перевірити режим і прочитати субдискретизацію кольоровості першого кадру. Спершу закрийте інші програми, що використовують камеру. `usb_camera_info(camera)` виконує ту саму перевірку без створення вузла й повертає пристрій захоплення та `decoded_format`: `NV12` або `NV16`.
 
@@ -120,14 +121,12 @@ frame = run.pull(timeout_ms=5000)
 
 ## Передавання JPEG камери
 
-Щоб надсилати відео камери до переглядача й водночас запускати на ньому модель, задайте `output` значення `UsbCameraOutput::Jpeg`. Тоді вузол виводить кадри JPEG камери без декодування. Під’єднайте його до наскрізного `VideoSender`, який надсилає JPEG як RTP/JPEG без повторного кодування, і до `SimaDecode`, у якого `out_format` дорівнює `decoded_format` камери:
+Щоб надсилати відео камери до переглядача й водночас запускати на ньому модель, під’єднайте вузол до наскрізного `VideoSender`, який надсилає JPEG як RTP/JPEG без повторного кодування, і до `SimaDecode`, у якого `out_format` дорівнює `decoded_format` камери:
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-camera.output = neat::UsbCameraOutput::Jpeg;
-
 neat::SimaDecodeOptions decode;
 decode.type = neat::SimaDecodeType::MJPEG;
 decode.out_format = neat::usb_camera_info(camera).decoded_format;  // NV12 or NV16
@@ -157,8 +156,6 @@ graph.connect(source, neat::nodes::groups::VideoSender(sender), video_link);
 <CodeTab label="Python" lang="python">
 
 ```python
-camera.output = pyneat.UsbCameraOutput.Jpeg
-
 decode = pyneat.SimaDecodeOptions()
 decode.type = pyneat.SimaDecodeType.MJPEG
 decode.out_format = pyneat.usb_camera_info(camera).decoded_format  # NV12 or NV16
@@ -186,16 +183,13 @@ graph.connect(source, pyneat.groups.video_sender(sender), video_link)
 </CodeTab>
 </CodeTabs>
 
-У цьому режимі гілка декодування копіює кожен кадр перед декодуванням: драйвер камери експортує свої буфери як DMA-BUF, і декодер зазвичай не може імпортувати їх на місці. До відправника застосовуються обмеження RTP/JPEG з розділу [Передавання відео](./video_sender.md).
+Декодер копіює кожен JPEG у власний вхідний буфер перед декодуванням. До відправника застосовуються обмеження RTP/JPEG з розділу [Передавання відео](./video_sender.md).
 
 ## Пам’ять і відкинуті кадри
 
 | Параметр | Дія |
 | --- | --- |
-| `queue_depth`, `leaky_queue` | Невелика черга з відкиданням перед декодером відкидає застарілі кадри, коли граф не встигає. |
-| `capture_buffer_count` (другий аргумент) | Буфери CMA, спільні для камери й декодера. Значення 0 означає глибину черги плюс два вхідні слоти декодера. Лише для виведення кадрів; для `UsbCameraOutput::Jpeg` має бути 0. |
-
-Для виходу Frames нульове копіювання означає, що стиснений кадр не копіюється між захопленням і декодуванням. Декодований кадр є окремим буфером.
+| `queue_depth`, `leaky_queue` | Невелика черга з відкиданням після камери відкидає застарілі кадри, коли граф не встигає. |
 
 Вебкамери часто додають байти після маркера кінця JPEG, а деякі кадри надходять неповними або позначеними драйвером USB як пошкоджені. Декодер декодує кожен кадр до маркера кінця й відкидає неповні чи пошкоджені кадри, не зупиняючись. Елемент декодера рахує їх у властивості `dropped-count`.
 
@@ -209,4 +203,3 @@ graph.connect(source, pyneat.groups.video_sender(sender), video_link)
 | `is in use by another process` | Закрийте іншу програму, яка відкрила камеру. |
 | `sent no usable MJPEG frame` | Камера надсилає JPEG, які Neat не може декодувати, наприклад із субдискретизацією 4:4:4, або не надсилає кадрів зовсім. |
 | `is no longer /dev/videoN` | Після створення графа камеру від’єднали, перенесли або її номер змінився. Знову викличте `UsbCameraInput`. |
-| `requires a neatdecoder with the input-pool-buffers property` | Встановлений декодер застарий. Оновіть пакет `simaai-scheduler`. |
