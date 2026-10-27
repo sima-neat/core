@@ -21,6 +21,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <iosfwd>
 #include <memory>
 #include <optional>
@@ -38,6 +39,25 @@ struct ContractCompileInput;
 }
 
 namespace simaai::neat::internal {
+
+// A unique extraction directory whose held lock identifies its owner across PID namespaces.
+class ModelPackProcessRoot {
+public:
+  explicit ModelPackProcessRoot(const std::filesystem::path& base, bool collect_stale);
+  ~ModelPackProcessRoot();
+  ModelPackProcessRoot(const ModelPackProcessRoot&) = delete;
+  ModelPackProcessRoot& operator=(const ModelPackProcessRoot&) = delete;
+
+  const std::filesystem::path& path() const {
+    return path_;
+  }
+  void preserve();
+
+private:
+  std::filesystem::path path_;
+  int lock_fd_ = -1;
+  bool preserved_ = false;
+};
 
 /// NVMe model-store candidates parsed from `/proc/mounts` content, in file order. Separated from
 /// the file read so the mount-option filtering is testable without a real NVMe device.
