@@ -369,7 +369,7 @@ jobs:
       - resolve-vulcan-config
       - resolve-compiler-cache
       - detect-changes
-    uses: sima-neat/.github/.github/workflows/vulcan-build.yml@b5223b0a64a25821dd980bd9800ef93f8bc243c8
+    uses: sima-neat/.github/.github/workflows/vulcan-build.yml@72084db65e6f790958dda65bdcc6f2326c972d6a
     with:
       vulcan_env: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
       sdk_cache: ${{ needs.resolve-vulcan-config.outputs.sdk_cache }}
