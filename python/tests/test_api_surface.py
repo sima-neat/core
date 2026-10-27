@@ -668,7 +668,7 @@ def test_usb_camera_input_surface_is_exposed():
   with pytest.raises(ValueError, match="exceeds 64"):
     pyneat.nodes.usb_camera_input(opt, capture_buffer_count=65)
   opt.output = pyneat.UsbCameraOutput.Jpeg
-  with pytest.raises(ValueError, match="applies only to UsbCameraOutput.Frames"):
+  with pytest.raises(ValueError, match="applies only to UsbCameraOutput::Frames"):
     pyneat.nodes.usb_camera_input(opt, capture_buffer_count=4)
 
 
