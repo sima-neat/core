@@ -369,7 +369,7 @@ jobs:
       - resolve-vulcan-config
       - resolve-compiler-cache
       - detect-changes
-    uses: sima-neat/.github/.github/workflows/vulcan-build.yml@main
+    uses: sima-neat/.github/.github/workflows/vulcan-build.yml@b5223b0a64a25821dd980bd9800ef93f8bc243c8
     with:
       vulcan_env: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
       sdk_cache: ${{ needs.resolve-vulcan-config.outputs.sdk_cache }}
@@ -437,8 +437,7 @@ jobs:
 
         # Finish cached SDK package configuration before build.sh invokes APT.
         # This affects the verified SDK container, not the host or target sysroot.
-        docker exec --user root -e DEBIAN_FRONTEND=noninteractive \
-          "${sdk_container}" dpkg --configure -a
+        "${SDK_PACKAGE_HELPER:?Shared SDK package helper required}" "${sdk_container}" configure
 
         docker exec \
           -e SIMA_CLI_CHECK_FOR_UPDATE=0 \
