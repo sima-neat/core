@@ -1385,6 +1385,71 @@ void test_unpack_tiled_carriers_keep_storage_geometry() {
           "provider admission retains exact per-carrier storage spans");
   }
 
+  auto batched = manifest;
+  constexpr std::size_t batch_count = 6;
+  batched["input_nodes"][0]["size"] = 32;
+  batched["plugins"][0]["input_nodes"][0]["size"] = 32;
+  batched["plugins"][0]["output_nodes"][0]["size"] = 16;
+  batched["plugins"][0]["config_params"]["params"]["input_shapes"] = {{1, 8}};
+  batched["plugins"][0]["config_params"]["params"]["output_shapes"] = {{1, 8}};
+  batched["plugins"][1]["input_nodes"][0]["size"] = 16;
+  for (auto& tensor : batched["input_nodes"])
+    tensor["size"] = tensor["size"].get<std::uint64_t>() * batch_count;
+  for (auto& plugin : batched["plugins"]) {
+    auto& config = plugin["config_params"];
+    config["actual_batch_size"] = config["desired_batch_size"] = batch_count;
+    if (config.contains("params")) {
+      auto& params = config["params"];
+      for (const auto* key : {"input_shapes", "output_shapes", "tensor_shapes"})
+        if (params.contains(key))
+          for (auto& shape : params[key])
+            shape[0] = batch_count;
+      if (params.contains("frame_shape"))
+        params["frame_shape"][0] = batch_count;
+    }
+    for (const auto* key : {"input_nodes", "output_nodes"})
+      for (auto& tensor : plugin[key])
+        tensor["size"] = tensor["size"].get<std::uint64_t>() * batch_count;
+  }
+  auto topology = monolithic_topology(16U, 576U);
+  for (std::size_t sample = 0; sample < batch_count; ++sample) {
+    topology.ifm_slots.push_back({0U, sample, "data.ifm.b" + std::to_string(sample), 16U});
+    topology.ofm_slots.push_back({0U, sample, "data.ofm.b" + std::to_string(sample), 576U});
+  }
+  const auto batch_decoded = MpkDecoder{}.decode_json(batched.dump(), topology);
+  if (!batch_decoded && batch_decoded.error)
+    std::cerr << batch_decoded.error->json_path << ": " << batch_decoded.error->detail << '\n';
+  check(bool(batch_decoded), "batched two-head tiled carrier must decode");
+  const auto batch_physical = PhysicalExecutionLowerer::lower(*batch_decoded.plan, &error);
+  check(bool(batch_physical), "batched two-head conversion must lower");
+  std::vector<PhysicalCommandId> batch_commands;
+  for (const auto& command : batch_physical->commands)
+    if (command.implementation_id == "detesscast")
+      batch_commands.push_back(command.id);
+  const auto batch_contract = build_dmabuf_plan_processcvu_command_contract(
+      *batch_decoded.plan, *batch_physical, batch_commands, &error);
+  check(bool(batch_contract), "batched two-head conversion must project");
+  stage.processcvu = batch_contract->payload;
+  stage.processcvu.resolved_exec_backend = "EV74";
+  stage.logical_inputs = batch_contract->runtime_contract.logical_inputs;
+  const auto batch_recipe = kernel_lowering::check_transform_stage(stage);
+  check(std::holds_alternative<std::shared_ptr<KernelStageRecipe>>(batch_recipe),
+        "batched conversion must preserve the Unpack sample pitch through admission");
+  const auto& batch_members = std::get<std::shared_ptr<KernelStageRecipe>>(batch_recipe)->members;
+  check(batch_members.size() == frames.size() * batch_count,
+        "both packed heads must bind every sample");
+  for (std::size_t head = 0; head < frames.size(); ++head) {
+    check(batch_contract->runtime_contract.logical_outputs[head].publication_relation ==
+              PublicationViewRelation::BatchSlices,
+          "per-sample writes must author a combined batch publication");
+    for (std::size_t sample = 0; sample < batch_count; ++sample) {
+      const auto& member = batch_members[head * batch_count + sample];
+      check(member.inputs.front().byte_offset == sample * 576U &&
+                member.outputs.front().byte_offset == sample * dense_bytes[head] * 2U,
+            "Unpack heads must retain parent sample pitch and dense output offsets");
+    }
+  }
+
   auto incompatible_consumer = manifest;
   auto& consumer_plugins = incompatible_consumer["plugins"];
   auto tess = consumer_plugins[3];

@@ -1064,6 +1064,22 @@ std::optional<CompiledProcessCvuContract> build_dmabuf_plan_processcvu_command_c
                   std::begin(output_descriptor.shape.axis_semantics));
       }
     }
+    if (detess && first_op.batch_count > 1U && input->storage_binding &&
+        !input->storage_binding->stride_bytes.empty() &&
+        input->storage_binding->stride_bytes.front() > 0 &&
+        std::uint64_t(input->storage_binding->stride_bytes.front()) >
+            input_descriptor.storage.nbytes / first_op.batch_count &&
+        publication_relation == PublicationViewRelation::Identity)
+      publication_relation = PublicationViewRelation::BatchSlices;
+    // MPK HWC annotations omit the leading N label. The semantic batch
+    // identifies that axis for both sides of a full-tensor transform.
+    for (auto* descriptor : {&input_descriptor, &output_descriptor}) {
+      const auto& shape = descriptor->shape;
+      if (first_op.batch_count > 1U && shape.rank == 4U && shape.sizes[0] == first_op.batch_count &&
+          shape.axis_semantics[0] == SIMA_EV_AXIS_D && shape.axis_semantics[1] == SIMA_EV_AXIS_H &&
+          shape.axis_semantics[2] == SIMA_EV_AXIS_W && shape.axis_semantics[3] == SIMA_EV_AXIS_C)
+        descriptor->shape.axis_semantics[0] = SIMA_EV_AXIS_N;
+    }
     authored.input_tensors.emplace_back(
         input_descriptor, cvu_dtype(*input, detess ? detess->frame_type : std::string{}));
     authored.output_tensors.emplace_back(
@@ -1954,7 +1970,9 @@ bool apply_dmabuf_plan_processcvu_command_projection(
         logical.dtype = *published->logical_dtype;
         logical.layout = published->logical_layout.value_or("");
         logical.size_bytes = published->required_bytes;
-        logical.stride_bytes = published->storage_binding->stride_bytes;
+        // Retain an Unpack view's batch pitch when its sample uses implicit dense strides.
+        if (!published->storage_binding->stride_bytes.empty())
+          logical.stride_bytes = published->storage_binding->stride_bytes;
         if (!published->storage_binding->storage_shape.empty() ||
             (published->read_expression && !published->read_expression->storage_shape.empty())) {
           const auto transport = resolve_publication_transport_view(plan, *published, error);

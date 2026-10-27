@@ -186,6 +186,8 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
   void close();
 
   bool push_samples(const Sample& msgs, bool block = true);
+  // Graph edges carry one sample, including a joined multi-input bundle.
+  bool push_pipeline_sample(const Sample& sample, bool block = true);
   bool push_named_samples(std::string_view input_name, const Sample& msgs, bool block = true);
   PullStatus pull(int timeout_ms, Sample& out, PullError* err = nullptr);
   PullStatus pull_named_output(std::string_view output_name, int timeout_ms, Sample& out,

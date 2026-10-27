@@ -742,7 +742,7 @@ void authoritative_bf16_contract(ExecutionMode mode = ExecutionMode::None, bool 
     value.required_bytes = bytes;
     value.logical_dtype = dtype;
     value.logical_shape = logical;
-    value.logical_layout = "NHWC";
+    value.logical_layout = "HWC"; // MPK transform annotation; N comes from the authored batch.
     value.representation =
         tiled ? sc::ValueRepresentation::Tessellated : sc::ValueRepresentation::Dense;
     value.storage_binding = sc::StorageBinding{
