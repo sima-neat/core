@@ -1450,6 +1450,81 @@ void test_unpack_tiled_carriers_keep_storage_geometry() {
     }
   }
 
+  // Preserve both the batch assembly and the MPK's ordered singleton view.
+  auto aliased = batched;
+  auto& alias_plugins = aliased["plugins"];
+  alias_plugins[6]["input_nodes"][0]["name"] = "view1";
+  alias_plugins[6]["config_params"]["params"]["input_shapes"] = {{1, 6, 3, 14}};
+  alias_plugins[6]["config_params"]["params"]["output_shapes"] = {{1, 6, 3, 14}};
+  const nlohmann::json view{
+      {"name", "view1"},
+      {"type", "sgpProcess"},
+      {"processor", "EV74"},
+      {"config_params",
+       {{"actual_batch_size", 6},
+        {"desired_batch_size", 6},
+        {"kernel", "batch_flatten_transform"},
+        {"params", {{"input_shapes", {{6, 1, 3, 14}}}, {"output_shapes", {{1, 6, 3, 14}}}}}}},
+      {"input_nodes", {{{"name", "detess1"}, {"size", 504}}}},
+      {"output_nodes", {{{"name", "view1"}, {"size", 504}}}}};
+  alias_plugins.insert(alias_plugins.begin() + 6, view);
+  for (std::size_t i = 0; i < alias_plugins.size(); ++i)
+    alias_plugins[i]["sequence"] = i + 1;
+  const auto alias_decoded = MpkDecoder{}.decode_json(aliased.dump(), topology);
+  check(bool(alias_decoded), "packed batch singleton view must decode");
+  const auto alias_physical = PhysicalExecutionLowerer::lower(*alias_decoded.plan, &error);
+  check(bool(alias_physical), "packed batch singleton view must lower");
+  batch_commands.clear();
+  for (const auto& command : alias_physical->commands)
+    if (command.implementation_id == "detesscast")
+      batch_commands.push_back(command.id);
+  const auto alias_contract = build_dmabuf_plan_processcvu_command_contract(
+      *alias_decoded.plan, *alias_physical, batch_commands, &error);
+  check(bool(alias_contract) &&
+            alias_contract->runtime_contract.logical_outputs[1].publication_relation ==
+                PublicationViewRelation::BatchSlices,
+        "singleton alias must retain batch-slice publication authority");
+  namespace rt = simaai::scheduler::client;
+  namespace test = simaai::scheduler::testing;
+  gst_init(nullptr, nullptr);
+  check(simaai::gst::tensor_buffer_register_meta(), "tensor metadata registration succeeds");
+  auto alias_stage = simaai::neat::project_processcvu_stage_contract(*alias_contract);
+  alias_stage.element_name = alias_stage.logical_stage_id = "packed_batch_singleton";
+  alias_stage.processcvu.requested_run_target = "EV74";
+  for (auto& input : alias_stage.physical_inputs)
+    input.address_source = PhysicalAddressSource::RuntimePhysicalBinding;
+  SimaPluginStaticManifest alias_manifest;
+  alias_manifest.stages.push_back(std::move(alias_stage));
+  check(!prepare_kernel_stage_recipes(&alias_manifest, {}, {}, {}, {}),
+        "packed batch singleton recipe must prepare");
+  finalize_pipeline_storage(alias_manifest);
+  check(!finalize_stage_publications(&alias_manifest),
+        "packed batch singleton layout must finalize");
+  const auto& ready = alias_manifest.stages.front();
+  rt::TensorStagePublication publication;
+  check(build_kernel_stage_publication(ready, &publication, &error),
+        "packed batch singleton publication must build");
+  check(ready.native_kernel->members.size() == frames.size() * batch_count &&
+            publication.contract->logical_outputs.size() == frames.size() &&
+            publication.contract->logical_outputs[1].shape ==
+                std::vector<std::int64_t>({1, 6, 3, 14}),
+        "batch slicing must preserve every sample and the public singleton shape");
+  rt::StageRequest request;
+  rt::KernelProgram program;
+  program.target = ready.native_kernel->target;
+  program.members = ready.native_kernel->members;
+  request.program = std::move(program);
+  request.publication = publication;
+  request.layout = ready.frame_layout;
+  test::AdmissionCapture transport;
+  const auto admitted = test::reject_device_after_validation(request, transport);
+  if (admitted)
+    std::cerr << admitted->field << ": " << admitted->message << '\n';
+  check(admitted && admitted->code == rt::ErrorCode::UnsupportedTarget &&
+            admitted->field == "prepared.ev74" && transport.queries > 0 &&
+            transport.submissions == 0,
+        "combined batch and singleton view must pass Scheduler before device admission");
+
   auto incompatible_consumer = manifest;
   auto& consumer_plugins = incompatible_consumer["plugins"];
   auto tess = consumer_plugins[3];

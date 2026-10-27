@@ -584,7 +584,8 @@ Typed model descriptors cover the full tensor, including its batch dimension.
 For an explicitly batched rank-four HWC tensor, the leading axis is N.
 Their execution repetition count is one: semantic batch size does not request
 repeated execution of the whole tensor. Packed, interleaved batch heads use per-sample
-bindings and publish one complete tensor per head. Batch size alone does not disable
+bindings and publish one complete tensor per head, preserving ordered singleton-axis
+views. Batch size alone does not disable
 DetessCast or DetessDequant fusion. These fused stages retain
 an explicitly proved private singleton-axis view when their published rank differs
 from their execution geometry.

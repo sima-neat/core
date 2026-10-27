@@ -1068,8 +1068,7 @@ std::optional<CompiledProcessCvuContract> build_dmabuf_plan_processcvu_command_c
         !input->storage_binding->stride_bytes.empty() &&
         input->storage_binding->stride_bytes.front() > 0 &&
         std::uint64_t(input->storage_binding->stride_bytes.front()) >
-            input_descriptor.storage.nbytes / first_op.batch_count &&
-        publication_relation == PublicationViewRelation::Identity)
+            input_descriptor.storage.nbytes / first_op.batch_count)
       publication_relation = PublicationViewRelation::BatchSlices;
     // MPK HWC annotations omit the leading N label. The semantic batch
     // identifies that axis for both sides of a full-tensor transform.
