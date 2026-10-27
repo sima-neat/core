@@ -28,7 +28,7 @@ inline bool initialize_canonical_stage_contract(ProcessCvuStagePayload& payload,
   const auto name = canonical_transform_operation(payload.graph_name);
   const auto* rule = static_contract::transform_operation(name);
   if (!rule && name != "preproc" && name != "feature_histogram" && name != "grider_fast" &&
-      name != "track_descriptor" && name != "track_klt") {
+      name != "track_descriptor" && name != "track_klt" && name != "simor_depth_map") {
     if (error)
       *error = "unknown canonical numerical stage '" + std::string(name) + "'";
     return false;

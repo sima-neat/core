@@ -965,7 +965,8 @@ struct StorageCompilation {
               logical.backend_input_index < 0 || logical.byte_offset < 0)
             throw std::invalid_argument("memory placement: incomplete physical input route");
           const auto pad = static_cast<std::size_t>(binding->sink_pad_index);
-          const auto owner = input_route(index, *binding, *physical).carrier;
+          const auto& route = input_route(index, *binding, *physical);
+          const auto owner = route.carrier;
           client::FrameInputBinding input;
           input.view_offset = static_cast<std::size_t>(logical.byte_offset);
           const auto imported_origin = imported_model_origin(index, *physical);
@@ -1008,10 +1009,19 @@ struct StorageCompilation {
             const auto offset =
                 static_cast<std::size_t>(static_cast<std::uint64_t>(physical->source_byte_offset) -
                                          (imported_origin ? imported_origin->second : 0));
-            if (direct)
+            // Public tensor views select this frame's binding, not its allocation
+            // ordinal. Resolve this only after producer discovery: classifying
+            // inputs as external earlier would hide genuine internal edges.
+            const bool public_tensor =
+                physical->address_source == PhysicalAddressSource::DirectCarrierSpan &&
+                stage.payload_kind == StagePayloadKind::ProcessCvu && stage.native_kernel &&
+                !stage.native_kernel->frame_adapter_factory && !physical->model_carrier_id &&
+                !storage.model_scope && !storage.pinned_layout && !route.producer && !owner;
+            if (direct && !public_tensor)
               input.source = client::DirectMemory{pad, static_cast<std::size_t>(source), offset,
                                                   static_cast<std::size_t>(physical->size_bytes)};
-            else if (physical->address_source == PhysicalAddressSource::RuntimePhysicalBinding)
+            else if (public_tensor ||
+                     physical->address_source == PhysicalAddressSource::RuntimePhysicalBinding)
               input.source =
                   client::PhysicalBinding{pad, static_cast<std::size_t>(source), offset,
                                           static_cast<std::size_t>(physical->size_bytes)};

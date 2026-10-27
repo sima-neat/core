@@ -39,6 +39,11 @@ if command -v clang-format >/dev/null 2>&1 \
   exit 0
 fi
 
+if [[ "${HYGIENE_REQUIRE_PREINSTALLED:-0}" == "1" ]]; then
+  echo "Pinned hygiene image is missing native tools or analysis dependencies; rebuild the shared media image." >&2
+  exit 1
+fi
+
 if [ "$(id -u)" -eq 0 ]; then
   apt-get update
   apt-get install -y "${host_packages[@]}"

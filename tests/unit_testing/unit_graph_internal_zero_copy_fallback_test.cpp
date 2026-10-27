@@ -799,12 +799,58 @@ void require_child_holder_window_uses_parent_policy() {
   }
 }
 
+void require_terminal_transport_defers_public_loans() {
+  using namespace simaai::neat;
+  Graph graph;
+  graph.add(nodes::Input("image"));
+  graph.add(nodes::Output("output", OutputOptions::EveryFrame(1)));
+  RunOptions options;
+  options.queue_depth = 1;
+  options.output_memory = OutputMemory::ZeroCopy;
+  const auto seed =
+      sample_from_tensors({make_color_tensor(32, 24, ImageSpec::PixelFormat::RGB, 0x29)});
+  auto plan = runtime::compile_public_graph(graph, options, seed);
+  plan.linear_compat = false;
+  runtime::RunCoreStartOptions start;
+  start.run_options = options;
+  start.graph_options = runtime::graph_runtime_options_from_run_options(options);
+  start.mode = RunMode::Async;
+  start.allow_startup_preflight = false;
+  start.seed = seed;
+  auto parent = runtime::RunCore::start(std::move(plan), std::move(start));
+  const auto child = parent->graph_execution().pipelines.front()->run_core;
+  std::vector<Sample> retained;
+  std::vector<PullStatus> statuses;
+  for (const int id : {1, 2}) {
+    // Inject at the native pipeline's output boundary; the real graph worker
+    // must forward each result while the application retains its predecessor.
+    {
+      std::lock_guard lock(child->pipeline.out_mu);
+      child->pipeline.out_queue.push_back(make_legacy_device_gst_sample(id));
+    }
+    child->pipeline.out_cv.notify_all();
+    Sample output;
+    PullError error;
+    statuses.push_back(parent->pull_named_output("output", 1000, output, &error));
+    retained.push_back(std::move(output));
+  }
+  const int child_loans = child->holder_loan_gate->inflight();
+  const int public_loans = parent->holder_loan_gate->inflight();
+  parent->close();
+  require(std::all_of(statuses.begin(), statuses.end(),
+                      [](PullStatus status) { return status == PullStatus::Ok; }),
+          "terminal forwarding must progress while an earlier public output is retained");
+  require(child_loans == 0 && public_loans == 2,
+          "the actual graph worker must defer terminal loan admission to the public pull");
+}
+
 } // namespace
 
 RUN_TEST(
     "unit_graph_internal_zero_copy_fallback_test", ([] {
       require_native_retention_pool_policy();
       require_child_holder_window_uses_parent_policy();
+      require_terminal_transport_defers_public_loans();
       require_shared_arena_budget();
       require_output_policy_matrix();
       require_dmabuf_loans_and_pressure_preserve_storage();
@@ -944,6 +990,12 @@ RUN_TEST(
                 "interruptible push should preserve the item after a queue-inspecting predicate");
       }
 
+      auto terminal_first = make_legacy_device_gst_sample(3);
+      auto terminal_second = make_legacy_device_gst_sample(4);
+      auto terminal_lifetime = std::make_shared<int>(0);
+      simaai::neat::pipeline_internal::mark_sample_producer_stream_lifetime(terminal_first,
+                                                                            terminal_lifetime);
+
       constexpr simaai::neat::graph::NodeId kSinkNode = 7;
       auto graph_core = std::make_shared<simaai::neat::runtime::RunCore>();
       graph_core->graph_execution_ =
@@ -957,15 +1009,20 @@ RUN_TEST(
       graph_core->holder_loan_gate =
           std::make_shared<simaai::neat::pipeline_internal::HolderLoanGate>(1);
       graph_core->graph_execution_->sinks[kSinkNode]->push(
-          simaai::neat::runtime::RuntimeSinkQueueMsg{make_legacy_device_gst_sample(3)});
+          simaai::neat::runtime::RuntimeSinkQueueMsg{std::move(terminal_first)});
       graph_core->graph_execution_->sinks[kSinkNode]->push(
-          simaai::neat::runtime::RuntimeSinkQueueMsg{make_legacy_device_gst_sample(4)});
+          simaai::neat::runtime::RuntimeSinkQueueMsg{std::move(terminal_second)});
 
       simaai::neat::Sample graph_first;
       require(graph_core->pull(0, graph_first, &err) == simaai::neat::PullStatus::Ok,
               "first graph output should acquire the only holder loan");
       require(graph_core->graph_execution_->sinks[kSinkNode]->size() == 1U,
               "first graph pull should remove exactly one queued output");
+      require(graph_core->holder_loan_gate->inflight() == 1,
+              "outer public pull must acquire the loan deferred by terminal transport");
+      terminal_lifetime.reset();
+      require(simaai::neat::pipeline_internal::sample_has_transferable_zero_copy_loan(graph_first),
+              "deferred public admission must retain producer ownership for cross-run transfer");
 
       simaai::neat::Sample graph_blocked;
       const auto graph_blocked_status = graph_core->pull(0, graph_blocked, &err);
@@ -975,6 +1032,11 @@ RUN_TEST(
               "graph loan exhaustion must restore the queued output for retry");
       require(graph_blocked.tensors.empty() && !graph_blocked.tensor.has_value(),
               "graph loan exhaustion must not publish an unloaned sample");
+      auto retained_graph_first = graph_first;
+      graph_first = simaai::neat::Sample{};
+      require(graph_core->pull(0, graph_blocked, &err) == simaai::neat::PullStatus::Timeout,
+              "a retained public copy must keep its loan until the last owner releases it");
+      graph_first = std::move(retained_graph_first);
 
       {
         GstSample* external_sample = nullptr;

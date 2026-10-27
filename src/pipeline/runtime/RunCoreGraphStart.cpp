@@ -1113,9 +1113,12 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
         const auto pull_start = std::chrono::steady_clock::now();
         Sample sample;
         PullError pull_error;
+        // The outer Run admits terminal public outputs. Internal edges still
+        // carry transferable loans for downstream stages and nested Runs.
         const PullStatus pull_status =
             pipe.run_core
-                ? pipe.run_core->pull(core->graph_options.pull_timeout_ms, sample, &pull_error)
+                ? pipe.run_core->pull(core->graph_options.pull_timeout_ms, sample, &pull_error,
+                                      pipe.seg.boundary.graph_internal_output)
                 : PullStatus::Closed;
         pipe.transport.telemetry.pull_thread_pull_calls.fetch_add(1, std::memory_order_relaxed);
         atomic_add_max(pipe.transport.telemetry.pull_thread_pull_ns,
@@ -1171,9 +1174,8 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
           }
         }
         core->graph_restore_stream_id_if_needed(i, sample);
-        // A pipeline output is an internal forwarding boundary, not final consumption. Keep
-        // realtime and holder credits attached until a terminal pull, drop, or closed sink owns
-        // the corresponding release.
+        // Forwarding preserves realtime credits and any internal-edge holder
+        // loans until terminal consumption, a drop or a closed sink releases them.
         simaai::neat::graph::log_first_decoded_once(sample, pipe.seg.id);
         if (simaai::neat::graph::graph_debug_enabled()) {
           simaai::neat::graph::graph_debug_sample("pipeline_pull", sample);

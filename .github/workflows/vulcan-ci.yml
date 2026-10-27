@@ -275,7 +275,10 @@ jobs:
     needs:
       - resolve-vulcan-config
       - detect-changes
-    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+    runs-on: [self-hosted, linux, arm64, "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}", ubuntu, default]
+    container:
+      image: 069171140053.dkr.ecr.us-west-2.amazonaws.com/vulcan/ubuntu-build:ubuntu24-arm64-media-877b9736cbffe3bc34f8008b1e9a29989a0f023ae128431862ff0f0179c5a584
 
     steps:
       - name: Checkout code
@@ -283,6 +286,9 @@ jobs:
         with:
           clean: true
           fetch-depth: 0
+
+      - name: Trust mounted checkout for native Git commands
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Install sima-cli
         run: |
@@ -311,7 +317,9 @@ jobs:
                   output.write(key + '=' + value + '\n')
           PY
 
-      - name: Install code hygiene tools
+      - name: Verify preinstalled code hygiene tools
+        env:
+          HYGIENE_REQUIRE_PREINSTALLED: "1"
         run: |
           ./scripts/ci/install_code_hygiene_deps.sh
 
@@ -429,8 +437,7 @@ jobs:
 
         # Finish cached SDK package configuration before build.sh invokes APT.
         # This affects the verified SDK container, not the host or target sysroot.
-        docker exec --user root -e DEBIAN_FRONTEND=noninteractive \
-          "${sdk_container}" dpkg --configure -a
+        "${SDK_PACKAGE_HELPER:?Shared SDK package helper required}" "${sdk_container}" configure
 
         docker exec \
           -e SIMA_CLI_CHECK_FOR_UPDATE=0 \

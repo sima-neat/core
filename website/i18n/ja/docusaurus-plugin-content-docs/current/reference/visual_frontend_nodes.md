@@ -192,3 +192,43 @@ ctest --test-dir /workspace/core_graph_changes/build/tests \
 - 特定の KLT 検出回避 ABI チェック。
 - 不正なバッチ入力がないことを確認する、出荷前のネガティブチェック。
   EV74より前に却下されました。
+
+## Metoak 深度（C++）
+
+`nodes::MetoakDepth` は既存の `MetoakDepthOptions` API を復元します。
+6 個の名前付きテンソルを受け取り、RGB、深度、XYZ を同時に公開します。
+カメラの取得ではなく EV74 計算を行うため、カメラなしで合成テンソルを使用できます。
+
+上記のバッチ対応ノードとは異なり、Metoak は常にバッチ 1 で、先頭にバッチ次元を付けません。
+`W` は `[8,2048]`、`H` は `[8,1536]` の偶数に設定します。
+標準のルート名を維持し、以下の順序で入力を渡してください。
+
+| テンソル | データ型 | 形状 |
+| --- | --- | --- |
+| y_src | UInt8 | [H,W] |
+| u_src, v_src | UInt8 | [H/2,W/2] |
+| disp_src | UInt16 | [H,W] |
+| bf_mm_src | Float32 | [1] |
+| proj_src | Float32 | [3] |
+| rgb_dst | UInt8 | [H,W,3] |
+| depth_dst | UInt16 | [H,W] |
+| points_dst | Float32 | [H,W,3] |
+
+`y_src`、`u_src`、`v_src` は独立した I420 プレーンです。視差の倍率は 32 です。
+各フレームに正の有限値 `bf_mm_src`（基線長 × 焦点距離、mm）と
+`proj_src = {fx_fy, cx, cy}` を渡します。`fx_fy` は正、3 値すべては有限である必要があります。
+キャリブレーションはフレーム間で変更できます。
+
+深度は mm 単位に丸められ、UInt16 の上限で飽和します。XYZ は丸め前の深度を m 単位で使用します。
+視差がゼロの場合、深度はゼロ、XYZ は NaN です。深度が主出力の説明であっても、3 出力すべてを利用できます。
+
+```cpp
+MetoakDepthOptions depth;
+depth.width = 640;
+depth.height = 360;
+graph.add(nodes::MetoakDepth(depth));
+```
+
+既存の `debug`、`num_buffers`、`element_name` フィールドは引き続き使用できます。
+`num_buffers = 0` はグラフの既定容量を使用し、正の値はこのステージの実行容量を選択します。
+復元される公開 API は C++ のみであり、Python の Metoak ファクトリは追加しません。

@@ -162,7 +162,8 @@ bool processcvu_stage_is_manifest_substitution_local(const StageStaticSpec& stag
          canonical_family == "detessdequant" || canonical_family == "detesscast" ||
          canonical_family == "cast" || canonical_family == "casttess" ||
          canonical_family == "feature_histogram" || canonical_family == "grider_fast" ||
-         canonical_family == "track_descriptor" || canonical_family == "track_klt";
+         canonical_family == "track_descriptor" || canonical_family == "track_klt" ||
+         canonical_family == "simor_depth_map";
 }
 
 bool stage_is_graph_owned_local(const StageStaticSpec& stage) {
@@ -709,7 +710,8 @@ std::string processcvu_canonical_graph_name_local(std::string graph_name) {
 bool processcvu_is_native_visual_graph_local(const std::string& graph_name) {
   const std::string canonical = processcvu_canonical_graph_name_local(graph_name);
   return canonical == "feature_histogram" || canonical == "grider_fast" ||
-         canonical == "track_descriptor" || canonical == "track_klt";
+         canonical == "track_descriptor" || canonical == "track_klt" ||
+         canonical == "simor_depth_map";
 }
 
 bool processcvu_graph_family_uses_packed_input_transport_local(const std::string& graph_family) {

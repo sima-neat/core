@@ -187,7 +187,8 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
 
   bool push_samples(const Sample& msgs, bool block = true);
   bool push_named_samples(std::string_view input_name, const Sample& msgs, bool block = true);
-  PullStatus pull(int timeout_ms, Sample& out, PullError* err = nullptr);
+  PullStatus pull(int timeout_ms, Sample& out, PullError* err = nullptr,
+                  bool acquire_output_loan = true);
   PullStatus pull_named_output(std::string_view output_name, int timeout_ms, Sample& out,
                                PullError* err = nullptr);
   std::optional<Sample> pull_optional(int timeout_ms = -1);
