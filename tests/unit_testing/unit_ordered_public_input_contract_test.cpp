@@ -397,11 +397,14 @@ void physical_projection_contract() {
   const std::vector<std::shared_ptr<Node>> consumers{std::make_shared<TrackKLT>(tracking),
                                                      std::make_shared<GriderFast>(fast),
                                                      std::make_shared<TrackDescriptor>(descriptor)};
+  InputOptions public_input;
+  public_input.payload_type = PayloadType::Tensor;
+  public_input.memory_policy = InputMemoryPolicy::Ev74;
   for (const auto& consumer : consumers) {
-    const std::vector<std::shared_ptr<Node>> nodes{std::make_shared<Input>(InputOptions{}),
-                                                   consumer};
+    const std::vector<std::shared_ptr<Node>> nodes{std::make_shared<Input>(public_input), consumer};
     for (const bool public_envelope : {false, true}) {
-      const auto context_name = consumer->kind() + (public_envelope ? " envelope: " : " raw: ");
+      const auto context_name =
+          consumer->kind() + (public_envelope ? " projected public: " : " late-bound public: ");
       ContractCompileInput context;
       context.public_tensor_binding_ingress = public_envelope;
       sima::ManifestBuildDiagnostics diagnostics;
@@ -461,19 +464,14 @@ void physical_projection_contract() {
         const auto& input = final.frame_layout->inputs[i];
         const auto label = context_name + "final input " + std::to_string(i) + ": ";
         require(input.view_offset == 0, label + "spurious view offset");
-        if (public_envelope) {
-          const auto* source = std::get_if<client::PhysicalBinding>(&input.source);
-          require(source && source->pad == 0 && source->binding_index == i &&
-                      source->byte_offset == 0 &&
-                      source->size_bytes == stage.physical_inputs[i].size_bytes,
-                  label + "public envelope did not become an exact PhysicalBinding");
-        } else {
-          const auto* source = std::get_if<client::DirectMemory>(&input.source);
-          require(source && source->pad == 0 && source->memory_index == i &&
-                      source->byte_offset == 0 &&
-                      source->size_bytes == stage.physical_inputs[i].size_bytes,
-                  label + "raw input did not retain exact DirectMemory authority");
-        }
+        // Final placement resolves standalone public tensor views after producer
+        // discovery, even without early projection. Their ordinal selects this
+        // frame's binding table, not an allocation index.
+        const auto* source = std::get_if<client::PhysicalBinding>(&input.source);
+        require(source && source->pad == 0 && source->binding_index == i &&
+                    source->byte_offset == 0 &&
+                    source->size_bytes == stage.physical_inputs[i].size_bytes,
+                label + "public tensor did not become an exact PhysicalBinding");
       }
     }
   }
@@ -481,45 +479,50 @@ void physical_projection_contract() {
        {PhysicalAddressSource::DirectCarrierSpan, PhysicalAddressSource::RuntimePhysicalBinding,
         PhysicalAddressSource::FrameSpan}) {
     for (const bool producer : {false, true})
-      for (const bool shared : {false, true}) {
-        const auto node = std::make_shared<PhysicalAuthorityNode>();
-        node->address = address;
-        node->producer = producer;
-        node->shared_views = shared;
-        std::vector<std::shared_ptr<Node>> nodes{std::make_shared<Input>(InputOptions{})};
-        if (producer) {
-          const auto upstream = std::make_shared<PhysicalAuthorityNode>();
-          upstream->address = PhysicalAddressSource::DirectCarrierSpan;
-          nodes.push_back(upstream);
+      for (const bool shared : {false, true})
+        for (const bool public_envelope : {false, true}) {
+          const auto node = std::make_shared<PhysicalAuthorityNode>();
+          node->address = address;
+          node->producer = producer;
+          node->shared_views = shared;
+          std::vector<std::shared_ptr<Node>> nodes{std::make_shared<Input>(InputOptions{})};
+          if (producer) {
+            const auto upstream = std::make_shared<PhysicalAuthorityNode>();
+            upstream->address = PhysicalAddressSource::DirectCarrierSpan;
+            nodes.push_back(upstream);
+          }
+          nodes.push_back(node);
+          ContractCompileInput context;
+          // Unlike the numerical public-input cases above, this transport can
+          // retain genuine raw GstMemory authority without a tensor envelope.
+          context.public_tensor_binding_ingress = public_envelope;
+          sima::ManifestBuildDiagnostics diagnostics;
+          const auto compiled = compile_node_contracts(nodes, context, &diagnostics);
+          require(diagnostics.errors.empty() && compiled.fully_renderable &&
+                      compiled.stages.size() == (producer ? 2U : 1U) &&
+                      compiled.stages.back().transport && !compiled.stages.back().processcvu &&
+                      !compiled.stages.back().resolved_executor,
+                  "non-executing transport authority fixture acquired a numerical executor");
+          const auto& runtime = compiled.stages.back().transport->runtime_contract;
+          const auto expected =
+              public_envelope && address == PhysicalAddressSource::DirectCarrierSpan && !producer
+                  ? PhysicalAddressSource::RuntimePhysicalBinding
+                  : address;
+          require(runtime.physical_inputs.front().address_source == expected &&
+                      runtime.physical_inputs.front().source_byte_offset ==
+                          (producer && address != PhysicalAddressSource::RuntimePhysicalBinding
+                               ? 136
+                               : 24) &&
+                      runtime.input_bindings.front().src_physical_byte_offset == 0 &&
+                      runtime.input_bindings.front().src_physical_size_bytes == 64,
+                  "projection changed a frame/producer authority or authored relative span");
+          auto manifest = render_manifest_from_compiled_contracts(compiled, context, &diagnostics);
+          require(manifest && diagnostics.errors.empty(), "transport authority render failed");
+          sima::finalize_pipeline_storage(*manifest);
+          require(bool(manifest->stages.back().frame_layout),
+                  "transport final FrameLayout missing");
+          check_final_authority(*manifest->stages.back().frame_layout, expected, producer, shared);
         }
-        nodes.push_back(node);
-        ContractCompileInput context;
-        context.public_tensor_binding_ingress = true;
-        sima::ManifestBuildDiagnostics diagnostics;
-        const auto compiled = compile_node_contracts(nodes, context, &diagnostics);
-        require(diagnostics.errors.empty() && compiled.fully_renderable &&
-                    compiled.stages.size() == (producer ? 2U : 1U) &&
-                    compiled.stages.back().transport && !compiled.stages.back().processcvu &&
-                    !compiled.stages.back().resolved_executor,
-                "non-executing transport authority fixture acquired a numerical executor");
-        const auto& runtime = compiled.stages.back().transport->runtime_contract;
-        const auto expected = address == PhysicalAddressSource::DirectCarrierSpan && !producer
-                                  ? PhysicalAddressSource::RuntimePhysicalBinding
-                                  : address;
-        require(runtime.physical_inputs.front().address_source == expected &&
-                    runtime.physical_inputs.front().source_byte_offset ==
-                        (producer && address != PhysicalAddressSource::RuntimePhysicalBinding
-                             ? 136
-                             : 24) &&
-                    runtime.input_bindings.front().src_physical_byte_offset == 0 &&
-                    runtime.input_bindings.front().src_physical_size_bytes == 64,
-                "projection changed an frame/producer authority or authored relative span");
-        auto manifest = render_manifest_from_compiled_contracts(compiled, context, &diagnostics);
-        require(manifest && diagnostics.errors.empty(), "transport authority render failed");
-        sima::finalize_pipeline_storage(*manifest);
-        require(bool(manifest->stages.back().frame_layout), "transport final FrameLayout missing");
-        check_final_authority(*manifest->stages.back().frame_layout, expected, producer, shared);
-      }
   }
   // The public marker must not reach transitive pipeline consumers.
   const std::vector<std::shared_ptr<Node>> transitive{std::make_shared<Input>(InputOptions{}),
