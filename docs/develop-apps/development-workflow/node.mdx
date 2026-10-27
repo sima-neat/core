@@ -99,6 +99,9 @@ Use this map before you open the full API reference.
 | Send metadata out | `MetadataSender` | `pyneat.MetadataSender` |
 | Render detections | `nodes::SimaRender(...)` | `pyneat.nodes.sima_render(...)` |
 | Convert logits to class index | `nodes::SimaArgMax(...)` | `pyneat.nodes.sima_argmax(...)` |
+| Voxelize a LiDAR sweep into pillars | `nodes::SimaVoxelize(SimaVoxelizeOptions{...})` | `pyneat.nodes.sima_voxelize(options)` |
+| Scatter pillar features onto a BEV canvas | `nodes::SimaPillarScatter(SimaPillarScatterOptions{...})` | `pyneat.nodes.sima_pillar_scatter(options)` |
+| Pool camera features into a BEV grid | `nodes::SimaBEVPoolPlan(...)` and `nodes::SimaBEVPool(...)` | `pyneat.nodes.sima_bev_pool_plan(options)` and `pyneat.nodes.sima_bev_pool(options)` |
 
 Use groups when you want a tested fragment. Use individual nodes when you need explicit topology. Use `Graph` helpers such as `graphs::Branch(...)` and `graphs::Combine(...)` for fan-out and fan-in instead of hiding topology behind duplicated outputs.
 

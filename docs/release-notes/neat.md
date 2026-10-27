@@ -115,6 +115,11 @@ Release notes for the SiMa.ai Neat Library.
 
 ### Graph construction and validation
 
+- New `SimaVoxelize`, `SimaPillarScatter`, `SimaBEVPoolPlan`, and `SimaBEVPool` nodes run the
+  kernels-library LiDAR and camera-to-BEV operations of PointPillars and BEVFusion
+  on A65 or EV74, with INT8 or BF16 tensors. Each runs on the target you select,
+  with no fallback. See
+  [LiDAR and BEV kernel nodes](/reference/lidar_bev_kernel_nodes).
 - A default public `Input` directly connected to one model image ingress now
   inherits its declared image format. Explicit input options remain authoritative;
   ambiguous connections require explicit options. This changes sample

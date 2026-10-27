@@ -441,7 +441,8 @@ Core 게시/캐리어 메타데이터는 명시적으로 유지되며 수치 타
 
 `FrameSpan` 오프셋은 그래프 전체 주소가 아니라 해당 할당과 버퍼 그룹 내부 값입니다. 서로 다른 그룹의 같은 오프셋은 겹치지 않습니다. BoxDecode와 ArgMax는 헤드 상대 텐서 오프셋과 저장 공간 오프셋을 분리합니다. 직접 메모리 입력과 런타임 물리 바인딩 입력은 각 주소 지정 방식을 유지합니다.
 
-Core는 Preproc, 변환과 ArgMax, BoxDecode, SuperPoint 등의 비전 단계를 표준 요청과
+Core는 Preproc, 변환과 ArgMax, BoxDecode, SuperPoint, LiDAR/BEV 커널 노드(SimaVoxelize, SimaPillarScatter,
+SimaBEVPoolPlan, SimaBEVPool) 등의 비전 단계를 표준 요청과
 명시적 텐서 포트 매핑으로 lowering합니다. Scheduler의 범용 텐서 단계 엔진은 GStreamer
 바인딩과 게시를 소유하고, Runner는 의존성, 비동기 실행과 실행 중 버퍼 수명을 소유합니다.
 Core는 논리 형상만이 아니라 상위 할당 계약이나 입력 저장소에서 캐리어 용량을 가져옵니다.

@@ -635,8 +635,10 @@ without enabling verbose GStreamer diagnostics.
 
 `FrameSpan` offsets are local to their allocation and buffer group, not global graph addresses. Identical offsets in different groups do not overlap. BoxDecode and ArgMax keep head-relative tensor offsets separate from storage offsets. Direct-memory and runtime physical-binding inputs retain their addressing mode.
 
-Core lowers Preproc, transforms and vision stages, including ArgMax, BoxDecode
-and SuperPoint, to canonical requests and explicit tensor-port mappings.
+Core lowers Preproc, transforms and vision stages, including ArgMax, BoxDecode,
+SuperPoint and the LiDAR/BEV kernel nodes (SimaVoxelize, SimaPillarScatter,
+SimaBEVPoolPlan and SimaBEVPool), to canonical requests and explicit tensor-port
+mappings.
 Scheduler's generic tensor-stage engine owns GStreamer binding and publication;
 Runner owns dependencies, asynchronous execution and execution-time buffer lifetime. Core imports carrier
 capacities from the upstream allocation contract or ingress storage, never from
