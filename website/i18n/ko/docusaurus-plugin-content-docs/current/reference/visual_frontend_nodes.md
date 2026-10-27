@@ -192,3 +192,43 @@ ctest --test-dir /workspace/core_graph_changes/build/tests \
 - 특정 KLT에 대한 탐지 방지 ABI 검사;
 - 불법적인 일괄 입력을 확인하는 사전 배송 검사 실패 시 발생하는 오류입니다.
   EV74 이전에 거부되었습니다.
+
+## Metoak 깊이 (C++)
+
+`nodes::MetoakDepth`는 기존 `MetoakDepthOptions` API를 복원합니다.
+이름이 지정된 텐서 6개를 입력받아 RGB, 깊이, XYZ를 함께 공개합니다.
+이 노드는 카메라 캡처가 아닌 EV74 연산을 수행하므로 카메라 없이 합성 텐서를 사용할 수 있습니다.
+
+위의 배치 지원 노드와 달리 Metoak은 항상 배치 1이며 선행 배치 차원이 없습니다.
+`W`는 `[8,2048]`, `H`는 `[8,1536]` 범위의 짝수로 설정합니다.
+표준 라우트 이름을 유지하고 아래 순서로 입력을 전달하세요.
+
+| 텐서 | 자료형 | 형상 |
+| --- | --- | --- |
+| y_src | UInt8 | [H,W] |
+| u_src, v_src | UInt8 | [H/2,W/2] |
+| disp_src | UInt16 | [H,W] |
+| bf_mm_src | Float32 | [1] |
+| proj_src | Float32 | [3] |
+| rgb_dst | UInt8 | [H,W,3] |
+| depth_dst | UInt16 | [H,W] |
+| points_dst | Float32 | [H,W,3] |
+
+`y_src`, `u_src`, `v_src`는 개별 I420 평면입니다. 시차 배율은 32입니다.
+각 프레임에 양의 유한 값인 `bf_mm_src`(기선 × 초점 거리, mm)와
+`proj_src = {fx_fy, cx, cy}`를 전달합니다. `fx_fy`는 양수여야 하며 세 값 모두 유한해야 합니다.
+보정값은 프레임마다 변경할 수 있습니다.
+
+깊이는 mm 단위로 반올림하고 UInt16 상한에서 포화됩니다. XYZ는 반올림 전 깊이를 m 단위로 사용합니다.
+시차가 0이면 깊이는 0이고 XYZ는 NaN입니다. 기본 출력 설명이 깊이여도 세 출력 모두 사용할 수 있습니다.
+
+```cpp
+MetoakDepthOptions depth;
+depth.width = 640;
+depth.height = 360;
+graph.add(nodes::MetoakDepth(depth));
+```
+
+기존 `debug`, `num_buffers`, `element_name` 필드를 그대로 사용할 수 있습니다.
+`num_buffers = 0`은 그래프의 기본 용량을 사용하며 양수는 이 단계의 실행 용량을 지정합니다.
+복원된 공개 API는 C++이며 Python Metoak 팩토리는 추가하지 않습니다.

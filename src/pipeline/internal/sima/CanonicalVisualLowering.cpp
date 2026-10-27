@@ -12,7 +12,7 @@ Error invalid(const char* field, const char* message) {
 } // namespace
 bool visual_family(std::string_view name) {
   return name == "feature_histogram" || name == "grider_fast" || name == "track_descriptor" ||
-         name == "track_klt";
+         name == "track_klt" || name == "simor_depth_map";
 }
 Result<std::shared_ptr<KernelStageRecipe>> check_visual_stage(const StageStaticSpec& stage) {
   const auto& cfg = stage.processcvu;
@@ -48,7 +48,26 @@ Result<std::shared_ptr<KernelStageRecipe>> check_visual_stage(const StageStaticS
     compiled.dependencies = std::move(member.dependencies);
     result->members.push_back(std::move(compiled));
   };
-  if (cfg.graph_name == "feature_histogram") {
+  if (cfg.graph_name == "simor_depth_map") {
+    if (cfg.batch_size != 1)
+      return invalid("batch_size", "SIMOR requires batch one");
+    std::vector<TensorSpec> inputs, outputs;
+    const auto convert = [](const auto& descriptors, auto& specs) -> Status {
+      for (const auto& descriptor : descriptors) {
+        auto converted = tensor_spec_from_model_descriptor(descriptor);
+        if (const auto* error = std::get_if<Error>(&converted))
+          return *error;
+        specs.push_back(std::get<TensorSpec>(std::move(converted)));
+      }
+      return {};
+    };
+    if (auto error = convert(cfg.input_tensors, inputs))
+      return *error;
+    if (auto error = convert(cfg.output_tensors, outputs))
+      return *error;
+    append(check_kernel({"simor_depth_map", Hardware::EV74, inputs, outputs, {}}),
+           {{0, 1, 2, 3, 4, 5}, {0, 1, 2}, {}});
+  } else if (cfg.graph_name == "feature_histogram") {
     const std::array inputs{image},
         outputs{TensorSpec{std::vector<std::int64_t>{b, 256}, DType::Int32}};
     append(check_kernel({"histogram", Hardware::EV74, inputs, outputs, {}}), {{0}, {0}, {}});

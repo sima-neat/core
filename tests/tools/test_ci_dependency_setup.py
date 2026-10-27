@@ -58,8 +58,7 @@ elif args[:2] == ['image', 'inspect']:
     print('sha256:' + 'a' * 64)
 elif args[0] == 'inspect':
     print('sha256:' + ('a' if os.environ['IMAGE_MATCHES'] == '1' else 'b') * 64)
-elif args == ['exec', '--user', 'root', '-e', 'DEBIAN_FRONTEND=noninteractive',
-              'selected-sdk', 'dpkg', '--configure', '-a']:
+elif args == ['shared-helper', 'selected-sdk', 'configure']:
     if int(os.environ['CONFIGURE_STATUS']):
         print('fixture package configuration failed', file=sys.stderr)
     sys.exit(int(os.environ['CONFIGURE_STATUS']))
@@ -71,14 +70,17 @@ else:
     raise AssertionError(args)
 ''')
     docker.chmod(0o755)
+    helper = tmp_path / 'sdk-package'
+    helper.write_text('#!/bin/sh\nexec docker shared-helper "$@"\n')
+    helper.chmod(0o755)
     result = subprocess.run(['/bin/bash', '-c', script], cwd=tmp_path,
                             text=True, capture_output=True,
                             env={'PATH': f'{tmp_path}:/usr/bin:/bin', 'HOME': str(tmp_path),
                                  'COMMANDS': str(commands), 'IMAGE_MATCHES': str(int(image_matches)),
                                  'CONFIGURE_STATUS': str(configure_status),
-                                 'BUILD_STATUS': str(build_status)})
+                                 'SDK_PACKAGE_HELPER': str(helper), 'BUILD_STATUS': str(build_status)})
     calls = [json.loads(line) for line in commands.read_text().splitlines()]
-    configuration = [i for i, args in enumerate(calls) if args[-3:] == ['dpkg', '--configure', '-a']]
+    configuration = [i for i, args in enumerate(calls) if args == ['shared-helper', 'selected-sdk', 'configure']]
     build = [i for i, args in enumerate(calls) if args[-3:-1] == ['bash', '-lc']]
     expected_status = (configure_status or build_status) if image_matches else 1
     assert result.returncode == expected_status, result.stderr

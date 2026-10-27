@@ -56,6 +56,7 @@
 #include "nodes/sima/PCIeSink.h"
 #include "nodes/sima/PCIeSrc.h"
 #include "nodes/sima/Preproc.h"
+#include "nodes/sima/MetoakDepth.h"
 #include "nodes/sima/ImageTransform.h"
 #include "nodes/sima/QuantTess.h"
 #include "nodes/sima/TrackDescriptor.h"

@@ -48,6 +48,17 @@ def test_dependency_dag_and_publication_gate():
     assert 'publish-vulcan-artifacts' in needs('test-devkit')
 
 
+def test_hygiene_uses_vulcan_native_ubuntu_arm64_runner():
+    body = job('code-hygiene')
+    assert 'environment: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}' in body
+    assert ('runs-on: [self-hosted, linux, arm64, '
+            '"vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}", ubuntu, default]') in body
+    assert 'scripts/ci/install_code_hygiene_deps.sh' in body
+    assert needs('code-hygiene') == ['resolve-vulcan-config', 'detect-changes']
+    assert 'vulcan/ubuntu-build:ubuntu24-arm64-media-' in body
+    assert 'HYGIENE_REQUIRE_PREINSTALLED: "1"' in body
+
+
 def test_build_tooling_runs_alongside_compilation_and_gates_publication():
     assert needs('build-tooling-tests') == ['resolve-vulcan-config']
     assert 'build-tooling-tests' not in needs('resolve-compiler-cache')
@@ -160,7 +171,7 @@ def test_hygiene_acquires_without_core_build_and_stops_on_failure(tmp_path, prof
     assert github_env.read_text() == 'EXISTING=value\n' + ''.join(f'{key}={value}\n' for key, value in expected.items())
 
 
-@pytest.mark.parametrize('profile', ['ready', 'broken-headers-root', 'missing-tool-unprivileged', 'missing-native-module-root', 'apt-failure'])
+@pytest.mark.parametrize('profile', ['ready', 'broken-headers-root', 'missing-tool-unprivileged', 'missing-native-module-root', 'apt-failure', 'preinstalled-required'])
 def test_hygiene_installer_only_prepares_host_tools(tmp_path, profile):
     """Exercise the real installer with shell doubles; never install packages."""
     tools = tmp_path / 'bin'
@@ -184,11 +195,12 @@ def test_hygiene_installer_only_prepares_host_tools(tmp_path, profile):
     tool('id', f'echo {1000 if profile == "missing-tool-unprivileged" else 0}\n')
     tool('sudo', 'exit 1\n')
     tool('pkg-config', 'test -z "${SYSROOT}${SDKTARGETSYSROOT}${PKG_CONFIG_SYSROOT_DIR}${PKG_CONFIG_PATH}${PKG_CONFIG_LIBDIR}" || exit 90\n'
-         + f'exit {1 if profile == "missing-native-module-root" else 0}\n')
+         + f'exit {1 if profile in ("missing-native-module-root", "preinstalled-required") else 0}\n')
     tool('apt-get', 'exit 47\n' if profile == 'apt-failure' else 'exit 0\n')
     result = subprocess.run(
         ['/bin/bash', str(ROOT / HYGIENE_INSTALLER)],
         env={'PATH': str(tools), 'TEST_CALLS': str(calls), 'TEST_HEADERS': str(headers),
+             'HYGIENE_REQUIRE_PREINSTALLED': '1' if profile == 'preinstalled-required' else '0',
              'SYSROOT': '/poison-sdk', 'SDKTARGETSYSROOT': '/poison-sdk',
              'PKG_CONFIG_SYSROOT_DIR': '/poison-sdk', 'PKG_CONFIG_PATH': '/poison-sdk',
              'PKG_CONFIG_LIBDIR': '/poison-sdk'},
@@ -209,6 +221,11 @@ def test_hygiene_installer_only_prepares_host_tools(tmp_path, profile):
                             'clang clang-format clang-tidy ripgrep cmake pkg-config python3 git '
                             'libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstrtspserver-1.0-dev '
                             'libopencv-dev nlohmann-json3-dev libcpp-httplib-dev libyaml-cpp-dev zlib1g-dev']
+    elif profile == 'preinstalled-required':
+        assert result.returncode == 1
+        assert observed == [module_probe]
+        assert 'rebuild the shared media image' in result.stderr
+        assert not headers.exists()
     elif profile == 'apt-failure':
         assert result.returncode == 47
         assert observed == [module_probe, clang_probe, 'id -u', 'apt-get update']
@@ -218,7 +235,7 @@ def test_hygiene_installer_only_prepares_host_tools(tmp_path, profile):
         assert 'cannot install without passwordless sudo' in result.stderr
         assert not headers.exists()
     assert all(':arm64' not in row and 'dpkg' not in row for row in observed)
-    if profile not in ('missing-tool-unprivileged', 'missing-native-module-root'):
+    if profile not in ('missing-tool-unprivileged', 'missing-native-module-root', 'preinstalled-required'):
         assert headers.read_text() == '#include <memory>\n#include <nlohmann/json.hpp>\n'
 
 

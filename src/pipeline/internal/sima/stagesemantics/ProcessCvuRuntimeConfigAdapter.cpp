@@ -49,7 +49,7 @@ bool is_native_visual_runtime_config(const CompiledProcessCvuRuntimeConfig& conf
   const auto token = native_visual_canonical_name_runtime(
       !config.graph_name.empty() ? config.graph_name : config.graph_family);
   return token == "feature_histogram" || token == "grider_fast" || token == "track_descriptor" ||
-         token == "track_klt";
+         token == "track_klt" || token == "simor_depth_map";
 }
 
 bool graph_family_implies_tessellate_local(const std::string& family) {
