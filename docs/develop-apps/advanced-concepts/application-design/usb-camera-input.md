@@ -13,7 +13,7 @@ slug: /develop-apps/advanced-concepts/usb-camera-input
 USB camera -> UsbCameraInput -> model-managed CVU preproc -> MLA -> Output
 ```
 
-Under the hood, the camera writes each compressed frame into CMA buffers that the hardware MJPEG decoder reads in place, so no CPU copy happens between capture and decode. Most webcams send 4:2:2 JPEGs, which decode to NV16. A model reads NV16 directly: set its `preprocess.color_convert.input_format` to `PreprocessColorFormat::NV16` when `usb_camera_info()` reports `NV16`, so frames reach the model with no conversion stage.
+With the default `UsbCameraOutput::Frames`, the camera writes each compressed frame into CMA buffers that the hardware MJPEG decoder reads in place, so nothing is copied between capture and decode. `UsbCameraOutput::Jpeg` works differently; see below. Most webcams send 4:2:2 JPEGs, which decode to NV16. A model reads NV16 directly: set its `preprocess.color_convert.input_format` to `PreprocessColorFormat::NV16` when `usb_camera_info()` reports `NV16`, so frames reach the model with no conversion stage.
 
 ## What Neat supports
 
@@ -192,11 +192,10 @@ In this mode the decode branch copies each frame before it decodes it: the camer
 
 | Option | Effect |
 | --- | --- |
-| `allow_cpu_fallback` | No effect for USB cameras: capture always lands in the decoder's own buffers, so no frame is copied. It is kept so the options match `CameraInputOptions`. |
 | `queue_depth`, `leaky_queue` | A small leaky queue before the decoder drops stale frames when the graph falls behind. |
 | `capture_buffer_count` (second argument) | CMA buffers shared by the camera and the decoder. 0 uses the queue depth plus the decoder's two input slots. Frames output only; it must be 0 for `UsbCameraOutput::Jpeg`. |
 
-Zero-copy here means the compressed frame is not copied between capture and decode. The decoded frame is a separate buffer.
+With Frames output, zero-copy means the compressed frame is not copied between capture and decode. The decoded frame is a separate buffer.
 
 Webcams often pad frames past the JPEG end marker, and some frames arrive incomplete or flagged as corrupt by the USB driver. The decoder decodes each frame up to its end marker and drops incomplete or corrupt frames instead of stopping. The decoder element counts them in its `dropped-count` property.
 

@@ -655,7 +655,7 @@ def test_usb_camera_input_surface_is_exposed():
   opt = pyneat.UsbCameraInputOptions()
   assert opt.camera_name == ""
   assert (opt.width, opt.height, opt.framerate_num, opt.framerate_den) == (1920, 1080, 30, 1)
-  assert opt.buffer_name == "camera" and opt.allow_cpu_fallback is False
+  assert opt.buffer_name == "camera" and not hasattr(opt, "allow_cpu_fallback")
   assert opt.output == pyneat.UsbCameraOutput.Frames
   assert not hasattr(pyneat.groups, "usb_camera_input")
   assert {"device", "decoded_format"} <= set(dir(pyneat.UsbCameraInfo))

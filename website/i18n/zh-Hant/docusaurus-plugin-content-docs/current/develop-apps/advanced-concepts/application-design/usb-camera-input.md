@@ -13,7 +13,7 @@ slug: /develop-apps/advanced-concepts/usb-camera-input
 USB camera -> UsbCameraInput -> model-managed CVU preproc -> MLA -> Output
 ```
 
-在內部，攝影機會把每個壓縮影格直接寫入硬體 MJPEG 解碼器就地讀取的 CMA 緩衝區，因此擷取與解碼之間不會發生 CPU 複製。大多數網路攝影機傳送 4:2:2 JPEG，會解碼為 NV16。模型可直接讀取 NV16：當 `usb_camera_info()` 回報 `NV16` 時，請將模型的 `preprocess.color_convert.input_format` 設為 `PreprocessColorFormat::NV16`，影格便會不經轉換階段直接送達模型。
+在預設的 `UsbCameraOutput::Frames` 下，攝影機會把每個壓縮影格直接寫入硬體 MJPEG 解碼器就地讀取的 CMA 緩衝區，因此擷取與解碼之間不會發生任何複製。`UsbCameraOutput::Jpeg` 的行為說明於下文。大多數網路攝影機傳送 4:2:2 JPEG，會解碼為 NV16。模型可直接讀取 NV16：當 `usb_camera_info()` 回報 `NV16` 時，請將模型的 `preprocess.color_convert.input_format` 設為 `PreprocessColorFormat::NV16`，影格便會不經轉換階段直接送達模型。
 
 ## Neat 支援的範圍
 
@@ -192,11 +192,10 @@ graph.connect(source, pyneat.groups.video_sender(sender), video_link)
 
 | 選項 | 效果 |
 | --- | --- |
-| `allow_cpu_fallback` | 對 USB 攝影機沒有作用：擷取一律寫入解碼器自己的緩衝區，因此不會複製任何影格。保留此選項是為了讓選項與 `CameraInputOptions` 一致。 |
 | `queue_depth`, `leaky_queue` | 解碼器前方的小型 leaky 佇列會在圖處理落後時捨棄過時的影格。 |
 | `capture_buffer_count`（第二個引數） | 攝影機與解碼器共用的 CMA 緩衝區。0 表示使用佇列深度加上解碼器的兩個輸入槽。僅適用於影格輸出；使用 `UsbCameraOutput::Jpeg` 時必須為 0。 |
 
-這裡的零複製是指壓縮影格在擷取與解碼之間不會被複製。解碼後的影格是另一個緩衝區。
+在 Frames 輸出下，零複製是指壓縮影格在擷取與解碼之間不會被複製。解碼後的影格是另一個緩衝區。
 
 網路攝影機經常在 JPEG 結束標記之後補上位元組，有些影格則會不完整地抵達，或被 USB 驅動程式標示為損毀。解碼器會把每個影格解碼到其結束標記為止，並在不停止的情況下捨棄不完整或損毀的影格。解碼器元件會在其 `dropped-count` 屬性中計數。
 

@@ -48,10 +48,6 @@ struct UsbCameraInputOptions {
   bool leaky_queue = true;
   std::uint32_t queue_depth = 2;
 
-  // No effect here; kept so the options match CameraInputOptions. Frames capture
-  // always lands in the decoder's own CMA buffers, so no frame needs a copy.
-  bool allow_cpu_fallback = false;
-
   UsbCameraOutput output = UsbCameraOutput::Frames;
 };
 

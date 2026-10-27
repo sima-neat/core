@@ -13,7 +13,7 @@ slug: /develop-apps/advanced-concepts/usb-camera-input
 USB camera -> UsbCameraInput -> model-managed CVU preproc -> MLA -> Output
 ```
 
-内部では、カメラは圧縮された各フレームを、ハードウェアMJPEGデコーダーがその場で読み取るCMAバッファーに直接書き込むため、キャプチャーとデコードの間でCPUによるコピーは発生しません。多くのWebカメラは4:2:2のJPEGを送り、これはNV16にデコードされます。モデルはNV16を直接読み取ります。`usb_camera_info()` が `NV16` を返す場合は、モデルの `preprocess.color_convert.input_format` を `PreprocessColorFormat::NV16` に設定すると、フレームは変換段なしでモデルに届きます。
+既定の `UsbCameraOutput::Frames` では、カメラは圧縮された各フレームを、ハードウェアMJPEGデコーダーがその場で読み取るCMAバッファーに直接書き込むため、キャプチャーとデコードの間でコピーは発生しません。`UsbCameraOutput::Jpeg` の動作は後述します。多くのWebカメラは4:2:2のJPEGを送り、これはNV16にデコードされます。モデルはNV16を直接読み取ります。`usb_camera_info()` が `NV16` を返す場合は、モデルの `preprocess.color_convert.input_format` を `PreprocessColorFormat::NV16` に設定すると、フレームは変換段なしでモデルに届きます。
 
 ## Neatがサポートする範囲
 
@@ -192,11 +192,10 @@ graph.connect(source, pyneat.groups.video_sender(sender), video_link)
 
 | オプション | 効果 |
 | --- | --- |
-| `allow_cpu_fallback` | USBカメラでは効果がありません。キャプチャーは常にデコーダー自身のバッファーに書き込まれるため、コピーされるフレームはありません。オプションを `CameraInputOptions` とそろえるために残しています。 |
 | `queue_depth`, `leaky_queue` | デコーダーの前にある小さなleakyキューが、グラフの処理が遅れたときに古いフレームを破棄します。 |
 | `capture_buffer_count`（2番目の引数） | カメラとデコーダーが共有するCMAバッファーです。0の場合は、キューの深さにデコーダーの入力スロット2つを加えた数を使います。フレーム出力専用で、`UsbCameraOutput::Jpeg` では0にする必要があります。 |
 
-ここでのゼロコピーとは、キャプチャーとデコードの間で圧縮フレームがコピーされないことを指します。デコード済みのフレームは別のバッファーです。
+Frames 出力でのゼロコピーとは、キャプチャーとデコードの間で圧縮フレームがコピーされないことを指します。デコード済みのフレームは別のバッファーです。
 
 Webカメラは、JPEGの終了マーカーの後にバイトを付け足すことがよくあり、一部のフレームは不完全な状態で届いたり、USBドライバーによって破損とマークされたりします。デコーダーは各フレームを終了マーカーまでデコードし、不完全なフレームや破損したフレームは停止せずに破棄します。デコーダー要素は、それらを `dropped-count` プロパティで数えます。
 

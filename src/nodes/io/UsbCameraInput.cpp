@@ -126,8 +126,8 @@ private:
     decode.out_format = camera_.sampling;
     decode.dec_width = static_cast<int>(opt_.width);
     decode.dec_height = static_cast<int>(opt_.height);
-    decode.dec_fps =
-        static_cast<int>((opt_.framerate_num + opt_.framerate_den / 2) / opt_.framerate_den);
+    // dec_fps stays unset: the decoder derives its rate from the fixed upstream caps, so an
+    // exact fractional mode such as 100/3 negotiates without a second rounding policy.
     return SimaDecode(std::move(decode));
   }
 

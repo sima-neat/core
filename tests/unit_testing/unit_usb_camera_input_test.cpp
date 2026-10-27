@@ -260,16 +260,28 @@ void check_pipeline() {
   require_contains(text, "copy-allowed=false", "strict zero-copy by default");
   require_not_contains(direct.describe(), "Preproc", "4:2:0 adds no conversion");
 
-  opt.allow_cpu_fallback = true;
+  require_not_contains(text, "dec-fps=", "the decoder derives its rate from the caps");
+
   opt.queue_depth = 3;
   const std::string relaxed =
       camera_graph(opt, {"/dev/video1", FormatTag::NV12}, 9).describe_backend();
-  require_contains(relaxed, "copy-allowed=false", "allow_cpu_fallback has no effect");
   require_contains(relaxed, "input-pool-buffers=9", "explicit capture_buffer_count");
   require_contains(relaxed, "max-size-buffers=3", "queue depth");
   opt.queue_depth = 62;
   require_contains(camera_graph(opt, {"/dev/video1", FormatTag::NV12}, 0).describe_backend(),
                    "input-pool-buffers=64", "largest default pool");
+
+  // An exact fractional mode reaches the decoder only through the caps. A rounded dec-fps
+  // beside them would conflict with the decoder's own rounding (100/3 -> 34, not 33).
+  opt.queue_depth = 2;
+  opt.framerate_num = 100;
+  opt.framerate_den = 3;
+  const std::string fractional =
+      camera_graph(opt, {"/dev/video1", FormatTag::NV12}, 0).describe_backend();
+  require_contains(fractional, "framerate=100/3", "fractional mode caps");
+  require_not_contains(fractional, "dec-fps=", "fractional rate is not rounded into dec-fps");
+  opt.framerate_num = 30;
+  opt.framerate_den = 1;
 
   // 4:2:2 decodes in place to NV16, the camera's native layout, with no conversion.
   const auto nv16_node = uvc::camera_node(mjpeg_options(), {"/dev/video1", FormatTag::NV16}, 0);

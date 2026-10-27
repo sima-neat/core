@@ -13,7 +13,7 @@ slug: /develop-apps/advanced-concepts/usb-camera-input
 USB camera -> UsbCameraInput -> model-managed CVU preproc -> MLA -> Output
 ```
 
-내부적으로 카메라는 압축된 각 프레임을 하드웨어 MJPEG 디코더가 제자리에서 읽는 CMA 버퍼에 직접 기록하므로, 캡처와 디코딩 사이에 CPU 복사가 일어나지 않습니다. 대부분의 웹캠은 4:2:2 JPEG를 보내며, 이는 NV16으로 디코딩됩니다. 모델은 NV16을 바로 읽습니다. `usb_camera_info()`가 `NV16`을 반환하면 모델의 `preprocess.color_convert.input_format`을 `PreprocessColorFormat::NV16`으로 설정하세요. 그러면 프레임이 변환 단계 없이 모델에 전달됩니다.
+기본값인 `UsbCameraOutput::Frames`에서는 카메라가 압축된 각 프레임을 하드웨어 MJPEG 디코더가 제자리에서 읽는 CMA 버퍼에 직접 기록하므로, 캡처와 디코딩 사이에 복사가 일어나지 않습니다. `UsbCameraOutput::Jpeg`의 동작은 아래에서 설명합니다. 대부분의 웹캠은 4:2:2 JPEG를 보내며, 이는 NV16으로 디코딩됩니다. 모델은 NV16을 바로 읽습니다. `usb_camera_info()`가 `NV16`을 반환하면 모델의 `preprocess.color_convert.input_format`을 `PreprocessColorFormat::NV16`으로 설정하세요. 그러면 프레임이 변환 단계 없이 모델에 전달됩니다.
 
 ## Neat가 지원하는 범위
 
@@ -192,11 +192,10 @@ graph.connect(source, pyneat.groups.video_sender(sender), video_link)
 
 | 옵션 | 효과 |
 | --- | --- |
-| `allow_cpu_fallback` | USB 카메라에서는 효과가 없습니다. 캡처는 항상 디코더 자체 버퍼에 기록되므로 복사되는 프레임이 없습니다. 옵션을 `CameraInputOptions`와 맞추기 위해 남겨 두었습니다. |
 | `queue_depth`, `leaky_queue` | 디코더 앞의 작은 leaky 큐가 그래프가 뒤처질 때 오래된 프레임을 버립니다. |
 | `capture_buffer_count`(두 번째 인수) | 카메라와 디코더가 공유하는 CMA 버퍼입니다. 0이면 큐 깊이에 디코더 입력 슬롯 두 개를 더한 값을 씁니다. 프레임 출력에만 해당하며, `UsbCameraOutput::Jpeg`에서는 0이어야 합니다. |
 
-여기서 제로 복사란 캡처와 디코딩 사이에 압축 프레임이 복사되지 않는다는 뜻입니다. 디코딩된 프레임은 별도 버퍼입니다.
+Frames 출력에서 제로 복사란 캡처와 디코딩 사이에 압축 프레임이 복사되지 않는다는 뜻입니다. 디코딩된 프레임은 별도 버퍼입니다.
 
 웹캠은 JPEG 종료 마커 뒤에 바이트를 덧붙이는 경우가 많고, 일부 프레임은 불완전하게 도착하거나 USB 드라이버가 손상으로 표시합니다. 디코더는 각 프레임을 종료 마커까지만 디코딩하고, 불완전하거나 손상된 프레임은 멈추지 않고 버립니다. 디코더 요소는 이를 `dropped-count` 속성에 셉니다.
 

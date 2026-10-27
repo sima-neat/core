@@ -3424,7 +3424,6 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("insert_queue", &simaai::neat::UsbCameraInputOptions::insert_queue)
       .def_rw("leaky_queue", &simaai::neat::UsbCameraInputOptions::leaky_queue)
       .def_rw("queue_depth", &simaai::neat::UsbCameraInputOptions::queue_depth)
-      .def_rw("allow_cpu_fallback", &simaai::neat::UsbCameraInputOptions::allow_cpu_fallback)
       .def_rw("output", &simaai::neat::UsbCameraInputOptions::output);
   nb::class_<simaai::neat::UsbCameraInfo>(m, "UsbCameraInfo")
       .def_ro("device", &simaai::neat::UsbCameraInfo::device)
