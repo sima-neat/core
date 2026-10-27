@@ -283,6 +283,38 @@ void contract() {
     const auto packet = test::packet_snapshot(checked->members.at(0).executable).payload;
     check((std::to_integer<unsigned>(packet[16]) & 1U) != 0,
           "compiler blocked contract did not select the fused native reader");
+    // Unpack can place another head between consecutive batch samples.
+    // Every member must read that head's actual sample, with no repack.
+    auto strided = c;
+    auto batched_input = input;
+    auto batched_output = output;
+    constexpr std::size_t samples = 6;
+    const auto input_bytes = input.storage.nbytes;
+    const auto output_bytes = output.storage.nbytes;
+    const auto input_stride = input_bytes * 2U;
+    batched_input.shape.sizes[0] = batched_output.shape.sizes[0] = samples;
+    batched_input.storage.nbytes = (samples - 1U) * input_stride + input_bytes;
+    batched_output.storage.nbytes = samples * output_bytes;
+    strided.processcvu.input_tensors[0] =
+        strided.processcvu.input_tensors[0].with_geometry(batched_input);
+    strided.processcvu.output_tensors[0] =
+        strided.processcvu.output_tensors[0].with_geometry(batched_output);
+    strided.logical_inputs.resize(1);
+    strided.logical_inputs[0].materialization_kind = core::TensorMaterializationKind::OffsetView;
+    strided.logical_inputs[0].stride_bytes = {static_cast<std::int64_t>(input_stride), 1};
+    const auto sliced = take(lower::check_transform_stage(strided));
+    check(sliced->members.size() == samples, "strided batch must bind every sample");
+    for (std::size_t sample = 0; sample < samples; ++sample) {
+      const auto& member = sliced->members[sample];
+      check(member.executable == sliced->members[0].executable && member.inputs[0].tensor == 0U &&
+                member.outputs[0].tensor == 0U &&
+                member.inputs[0].byte_offset == sample * input_stride &&
+                member.outputs[0].byte_offset == sample * output_bytes,
+            "strided batch lost executable reuse or exact sample offsets");
+    }
+    change_geometry(strided.processcvu.input_tensors[0], [](auto& desc) { ++desc.storage.nbytes; });
+    reject(strided);
+
     if (recipe.in == SIMA_EV_DTYPE_BF16) {
       // Older compiled DetessCast records author the same storage through bit6,
       // not the explicit CBlock marker. No lane-repack permission is implied.

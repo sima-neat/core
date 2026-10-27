@@ -1048,6 +1048,12 @@ bool Run::try_push_holder(const std::shared_ptr<void>& holder) {
   return push_holder_impl(holder, false);
 }
 
+bool runtime::RunCore::push_pipeline_sample(const Sample& sample, bool block) {
+  if (pipeline.input_route_processor)
+    return push_samples(sample, block);
+  return push_sample_to_core(*this, sample, block);
+}
+
 bool runtime::RunCore::push_samples(const Sample& msgs, bool block) {
   if (mode == RunMode::Sync) {
     throw std::runtime_error(decorate_with_error_code(

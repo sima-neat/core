@@ -361,7 +361,7 @@ only `Model`, `Graph`, `Run`, `Tensor`, and `Sample`; lower-level contributors a
 | Model archive | A sealed `.tar.gz` artifact containing the MPK inference contract, plugin-private configs, model binaries, and kernel artifacts. |
 | `Model` | The public loader for a `.tar.gz` model archive. It parses the MPK contract, runs route planning, exposes model stages, and provides simple `run(...)` / `Graph` composition entry points. |
 | `Tensor` | Typed numeric payload with dtype, shape, layout, storage, device, and semantic metadata. |
-| `Sample` | Runtime/media envelope around tensors, tensor lists, or bundles. Check `Sample::kind` before reading fields. |
+| `Sample` | Runtime/media envelope around tensors, tensor lists, or bundles. Check `Sample::kind` before reading fields. Pipeline boundaries preserve a bundle as one frame. |
 | `Node` | Atomic pipeline stage that emits a deterministic GStreamer fragment and owned element names. |
 | Reusable Graph fragment | A premade `Graph` that expands to multiple Nodes, such as decoded RTSP input or model stages. |
 | `Graph` | Assembly and validation boundary. Nodes, Models, and reusable Graph fragments become a negotiated, buildable pipeline. |
@@ -595,8 +595,12 @@ its batch axis in the public shape; single-image standalone views retain their
 existing HWC shape.
 
 Typed model descriptors cover the full tensor, including its batch dimension.
+For an explicitly batched rank-four HWC tensor, the leading axis is N.
 Their execution repetition count is one: semantic batch size does not request
-repeated execution of the whole tensor. Fused DetessCast and DetessDequant retain
+repeated execution of the whole tensor. Packed, interleaved batch heads use per-sample
+bindings and publish one complete tensor per head, preserving ordered singleton-axis
+views. Batch size alone does not disable
+DetessCast or DetessDequant fusion. These fused stages retain
 an explicitly proved private singleton-axis view when their published rank differs
 from their execution geometry.
 

@@ -82,7 +82,7 @@ inline void write_binary_file(const fs::path& path, const std::vector<unsigned c
 // Synthetic topology evidence for plan/render tests, not a hardware-executable program.
 inline void write_topology_elf(const std::filesystem::path& path, const std::string& ifm_name,
                                const std::uint64_t ifm_extent, const std::string& ofm_name,
-                               const std::uint64_t ofm_extent) {
+                               const std::uint64_t ofm_extent, const unsigned batch_size = 1U) {
   struct Elf64Header {
     std::uint8_t ident[16]{};
     std::uint16_t type = 0;
@@ -122,8 +122,13 @@ inline void write_topology_elf(const std::filesystem::path& path, const std::str
     return offset;
   };
   const auto shstrtab_name = append_name(".shstrtab");
-  const auto ifm_name_offset = append_name(ifm_name);
-  const auto ofm_name_offset = append_name(ofm_name);
+  std::vector<std::uint32_t> tensor_names;
+  for (const auto& name : {ifm_name, ofm_name}) {
+    for (unsigned batch = 0; batch < batch_size; ++batch) {
+      tensor_names.push_back(
+          append_name(batch_size == 1U ? name : name + ".b" + std::to_string(batch)));
+    }
+  }
   const std::uint64_t names_offset = sizeof(Elf64Header);
   const std::uint64_t sections_offset = (names_offset + names.size() + 7U) & ~std::uint64_t{7U};
 
@@ -141,23 +146,22 @@ inline void write_topology_elf(const std::filesystem::path& path, const std::str
   header.section_header_offset = sections_offset;
   header.header_size = sizeof(Elf64Header);
   header.section_header_size = sizeof(Elf64SectionHeader);
-  header.section_header_count = 4U;
+  header.section_header_count = 2U + tensor_names.size();
   header.section_name_table_index = 1U;
 
-  std::vector<Elf64SectionHeader> sections(4U);
+  std::vector<Elf64SectionHeader> sections(header.section_header_count);
   sections[1].name = shstrtab_name;
   sections[1].type = 3U;
   sections[1].offset = names_offset;
   sections[1].size = names.size();
   sections[1].alignment = 1U;
-  sections[2].name = ifm_name_offset;
-  sections[2].type = 0x71ba0002U;
-  sections[2].offset = sections_offset + sections.size() * sizeof(sections.front());
-  sections[2].size = 16U;
-  sections[3].name = ofm_name_offset;
-  sections[3].type = 0x71ba0002U;
-  sections[3].offset = sections[2].offset + 16U;
-  sections[3].size = 16U;
+  for (std::size_t index = 0; index < tensor_names.size(); ++index) {
+    auto& section = sections[2U + index];
+    section.name = tensor_names[index];
+    section.type = 0x71ba0002U;
+    section.offset = sections_offset + sections.size() * sizeof(sections.front()) + index * 16U;
+    section.size = 16U;
+  }
 
   std::ofstream output(path, std::ios::binary | std::ios::trunc);
   if (!output.is_open()) {
@@ -170,10 +174,12 @@ inline void write_topology_elf(const std::filesystem::path& path, const std::str
   output.write(padding.data(), static_cast<std::streamsize>(padding.size()));
   output.write(reinterpret_cast<const char*>(sections.data()),
                static_cast<std::streamsize>(sections.size() * sizeof(sections.front())));
-  const std::array<std::uint64_t, 2U> ifm_header{ifm_extent, 1U};
-  const std::array<std::uint64_t, 2U> ofm_header{ofm_extent, 1U};
-  output.write(reinterpret_cast<const char*>(ifm_header.data()), 16);
-  output.write(reinterpret_cast<const char*>(ofm_header.data()), 16);
+  for (const auto extent : {ifm_extent, ofm_extent}) {
+    const std::array<std::uint64_t, 2U> tensor_header{extent, 1U};
+    for (unsigned batch = 0; batch < batch_size; ++batch) {
+      output.write(reinterpret_cast<const char*>(tensor_header.data()), 16);
+    }
+  }
   if (!output.good()) {
     throw std::runtime_error("failed to write synthetic MLA ELF");
   }
