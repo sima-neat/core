@@ -1016,6 +1016,32 @@ foreach(mode compact full)
     RESOURCE_LOCK "accelerator-device")
 endforeach()
 
+# Public BEVFusion/PointPillars kernel correctness: one complete scenario matrix
+# per kernel and target. A suite source is built once per target it runs on;
+# SimaBEVPoolPlan exists on A65 only. Byte-exact references need no FMA contraction.
+foreach(bevfusion_suite sima_voxelize:ev74 sima_voxelize:a65 sima_pillar_scatter:ev74
+    sima_pillar_scatter:a65 sima_bev_pool_plan:a65 sima_bev_pool:ev74 sima_bev_pool:a65)
+  string(REPLACE ":" ";" bevfusion_parts "${bevfusion_suite}")
+  list(GET bevfusion_parts 0 bevfusion_kernel)
+  list(GET bevfusion_parts 1 bevfusion_target)
+  if (bevfusion_target STREQUAL "ev74")
+    set(bevfusion_test "${bevfusion_kernel}_ev_test")
+  else()
+    set(bevfusion_test "${bevfusion_kernel}_a65_test")
+  endif()
+  add_pipeline_test(${bevfusion_test}
+    SOURCES e2e_testing/${bevfusion_kernel}_test.cpp LOCK_ACCELERATOR)
+  if (NOT bevfusion_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    string(TOUPPER "${bevfusion_target}" bevfusion_define)
+    target_compile_definitions(${bevfusion_test} PRIVATE
+      SIMA_BEVFUSION_TARGET_${bevfusion_define}=1)
+    target_compile_options(${bevfusion_test} PRIVATE -ffp-contract=off)
+    set_property(TEST ${bevfusion_test} APPEND PROPERTY LABELS
+      "e2e;bevfusion;${bevfusion_target};customer_api;kernel-runner;modalix-only")
+    set_tests_properties(${bevfusion_test} PROPERTIES TIMEOUT 180)
+  endif()
+endforeach()
+
 add_pipeline_test(kernel_runner_public_cast_test
   SOURCES e2e_testing/kernel_runner_public_cast_test.cpp
   ARGS native LOCK_ACCELERATOR)
