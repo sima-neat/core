@@ -1651,4 +1651,17 @@ RUN_TEST(
                   "post-MLA routes must track their selected logical and physical outputs");
         }
       }
+
+      // Semi-planar YUV input carries its chroma plane below luma: half height for NV12,
+      // full height for NV16 (4:2:2 MJPEG decoded zero-copy).
+      for (const auto& [format, rows] :
+           {std::pair<const char*, std::int64_t>{"NV12", 1080}, {"NV16", 1440}}) {
+        auto opt = make_preproc_options();
+        opt.input_img_type = format;
+        const auto compiled = build_processcvu_compiled_contract_from_options(opt);
+        require(!compiled.runtime_contract.logical_inputs.empty() &&
+                    compiled.runtime_contract.logical_inputs.front().shape ==
+                        sc::TensorShape{rows, 1280},
+                std::string(format) + " preproc input must size its chroma plane");
+      }
     }));

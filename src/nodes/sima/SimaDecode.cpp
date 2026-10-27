@@ -108,6 +108,10 @@ FormatTag jpeg_output_format(std::span<const std::uint8_t> jpeg) {
       continue;
     }
     const std::uint8_t marker = jpeg[pos + 1];
+    if (marker == 0x01 || (marker >= 0xd0 && marker <= 0xd8)) { // TEM, RSTn, SOI: no length
+      pos += 2;
+      continue;
+    }
     const std::size_t length = (std::size_t{jpeg[pos + 2]} << 8) | jpeg[pos + 3];
     const bool sof = (marker >= 0xc0 && marker <= 0xc3) || (marker >= 0xc9 && marker <= 0xcb);
     if (sof && length >= 17 && pos + 2 + length <= jpeg.size() && jpeg[pos + 9] == 3) {
