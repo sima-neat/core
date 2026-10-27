@@ -287,6 +287,9 @@ jobs:
           clean: true
           fetch-depth: 0
 
+      - name: Trust mounted checkout for native Git commands
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Install sima-cli
         run: |
           ./scripts/ci/install_sima_cli_main.sh
