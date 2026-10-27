@@ -103,8 +103,10 @@ source ~/.bashrc
 
 추출/런타임 배치 설정:
 - `SIMA_MPK_EXTRACT_ROOT=<dir>`은 기본 추출 디렉터리를 설정합니다.
-- `SIMA_MPK_CLEANUP_EXTRACTED=0`은 프로세스 종료 후 추출된 `proc_*` 모델 데이터를 보존합니다.
-- `SIMA_MPK_EXTRACT_GC_STALE_PROC=0`은 시작 시 사용하지 않는 `proc_*` 정리 작업을 비활성화합니다.
+- `SIMA_MPK_CLEANUP_EXTRACTED=0`은 프로세스 종료 후 추출된 `proc_run_*` 모델 데이터를 보존합니다.
+- `SIMA_MPK_EXTRACT_GC_STALE_PROC=0`은 시작 시 소유권 잠금을 기반으로 사용이 끝난 `proc_run_*` 디렉터리를 정리하는 기능을 비활성화합니다.
+
+기존 `proc_<pid>` 루트는 사용 중이 아님을 확인한 후 수동으로 삭제하세요.
 
 #### ResNet50
 
