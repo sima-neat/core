@@ -43,7 +43,9 @@ namespace simaai::neat::internal {
 // A unique extraction directory whose held lock identifies its owner across PID namespaces.
 class ModelPackProcessRoot {
 public:
-  explicit ModelPackProcessRoot(const std::filesystem::path& base, bool collect_stale);
+  static bool prepare_base(const std::filesystem::path& base, bool collect_stale,
+                           std::string* reason = nullptr);
+  explicit ModelPackProcessRoot(const std::filesystem::path& base);
   ~ModelPackProcessRoot();
   ModelPackProcessRoot(const ModelPackProcessRoot&) = delete;
   ModelPackProcessRoot& operator=(const ModelPackProcessRoot&) = delete;

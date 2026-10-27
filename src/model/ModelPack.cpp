@@ -550,11 +550,31 @@ void cleanup_stale_roots(const fs::path& base) {
 }
 } // namespace
 
-ModelPackProcessRoot::ModelPackProcessRoot(const fs::path& base, bool collect_stale) {
-  fs::create_directories(base);
+bool ModelPackProcessRoot::prepare_base(const fs::path& dir, bool collect_stale,
+                                        std::string* reason) {
+  std::error_code ec;
+  fs::create_directories(dir, ec);
+  if (ec) {
+    if (reason)
+      *reason = "create_directories failed: " + ec.message();
+    return false;
+  }
   if (collect_stale)
-    cleanup_stale_roots(base);
+    cleanup_stale_roots(dir);
+  const fs::path probe = dir / ".sima_modelpack_write_probe";
+  std::ofstream out(probe, std::ios::out | std::ios::trunc);
+  if (!out.is_open()) {
+    if (reason)
+      *reason = "write probe failed";
+    return false;
+  }
+  out << "ok";
+  out.close();
+  fs::remove(probe, ec);
+  return true;
+}
 
+ModelPackProcessRoot::ModelPackProcessRoot(const fs::path& base) {
   std::string pattern = (base / "proc_run_XXXXXX").string();
   if (!::mkdtemp(pattern.data()))
     storage_error(base);
@@ -652,24 +672,8 @@ static std::vector<std::string> nvme_model_bases() {
 // silently moving hundreds of megabytes of writes onto eMMC.
 static std::string modelpack_output_root(bool cleanup_enabled_request) {
   auto is_writable_dir = [&](const fs::path& dir, std::string* reason = nullptr) {
-    std::error_code ec;
-    fs::create_directories(dir, ec);
-    if (ec) {
-      if (reason)
-        *reason = "create_directories failed: " + ec.message();
-      return false;
-    }
-    const fs::path probe = dir / ".sima_modelpack_write_probe";
-    std::ofstream out(probe, std::ios::out | std::ios::trunc);
-    if (!out.is_open()) {
-      if (reason)
-        *reason = "write probe failed";
-      return false;
-    }
-    out << "ok";
-    out.close();
-    fs::remove(probe, ec);
-    return true;
+    return ModelPackProcessRoot::prepare_base(
+        dir, pipeline_internal::env_bool("SIMA_MPK_EXTRACT_GC_STALE_PROC", true), reason);
   };
 
   auto choose_base = [&]() -> fs::path {
@@ -727,9 +731,7 @@ static std::string modelpack_output_root(bool cleanup_enabled_request) {
   static std::unique_ptr<ModelPackProcessRoot> root;
   std::lock_guard<std::mutex> lock(root_mu);
   if (!root) {
-    root = std::make_unique<ModelPackProcessRoot>(
-        canonical_base(choose_base()),
-        pipeline_internal::env_bool("SIMA_MPK_EXTRACT_GC_STALE_PROC", true));
+    root = std::make_unique<ModelPackProcessRoot>(canonical_base(choose_base()));
   }
   if (!modelpack_cleanup_enabled_for_request(cleanup_enabled_request)) {
     root->preserve();

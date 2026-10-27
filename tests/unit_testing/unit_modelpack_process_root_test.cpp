@@ -19,12 +19,18 @@ void require(bool value, const char* message) {
     throw std::runtime_error(message);
 }
 
+ModelPackProcessRoot make_root(const fs::path& base, bool collect_stale) {
+  require(ModelPackProcessRoot::prepare_base(base, collect_stale),
+          "extraction base must be writable after stale collection");
+  return ModelPackProcessRoot(base);
+}
+
 void test_roots(const fs::path& base) {
   fs::path ordinary;
   fs::path preserved;
   {
-    ModelPackProcessRoot first(base, true);
-    ModelPackProcessRoot second(base, true);
+    auto first = make_root(base, true);
+    auto second = make_root(base, true);
     ordinary = first.path();
     preserved = second.path();
     require(ordinary != preserved, "even owners with the same PID need distinct roots");
@@ -54,7 +60,7 @@ void test_roots(const fs::path& base) {
       ::close(ready[0]);
       ::close(release[1]);
       try {
-        ModelPackProcessRoot root(base, true);
+        auto root = make_root(base, true);
         std::ofstream(root.path() / "payload") << "owned\n";
         std::ofstream(base / ("child_" + std::to_string(i))) << root.path().string();
         if (::write(ready[1], "1", 1) != 1)
@@ -80,7 +86,7 @@ void test_roots(const fs::path& base) {
 
   std::vector<fs::path> child_roots;
   {
-    ModelPackProcessRoot collector(base, true);
+    auto collector = make_root(base, true);
     for (std::size_t i = 0; i < children.size(); ++i) {
       std::string path;
       std::ifstream(base / ("child_" + std::to_string(i))) >> path;
@@ -101,14 +107,24 @@ void test_roots(const fs::path& base) {
   }
 
   {
-    ModelPackProcessRoot no_gc(base, false);
+    auto no_gc = make_root(base, false);
     for (const auto& path : child_roots)
       require(fs::exists(path), "disabled stale collection must retain abandoned roots");
   }
+  // A failed candidate probe must not prevent recovery of abandoned storage.
+  const fs::path blocked_probe = base / ".sima_modelpack_write_probe";
+  fs::create_directory(blocked_probe);
+  require(!ModelPackProcessRoot::prepare_base(base, false), "blocked probe must reject the base");
+  for (const auto& path : child_roots)
+    require(fs::exists(path), "disabled collection must retain abandoned roots before probing");
+  require(!ModelPackProcessRoot::prepare_base(base, true),
+          "blocked probe must still reject the base");
+  for (const auto& path : child_roots)
+    require(!fs::exists(path), "stale collection must precede the candidate write probe");
+  fs::remove(blocked_probe);
+
   {
-    ModelPackProcessRoot collector(base, true);
-    for (const auto& path : child_roots)
-      require(!fs::exists(path), "stale collection must reclaim an exited owner's root");
+    auto collector = make_root(base, true);
     require(fs::exists(preserved), "stale collection must honor the keep marker");
     require(fs::exists(legacy / "payload"), "legacy roots without locks must remain untouched");
     require(fs::exists(initializing), "an unpublished owner must not be mistaken for a stale root");
@@ -119,7 +135,7 @@ void test_roots(const fs::path& base) {
 int main(int argc, char** argv) {
   // Also used by the external PID-namespace probe; no model or accelerator is opened.
   if (argc == 3 && std::string(argv[1]) == "--hold") {
-    ModelPackProcessRoot root(argv[2], true);
+    auto root = make_root(argv[2], true);
     std::cout << root.path().string() << std::endl;
     std::cin.get();
     return 0;
