@@ -21,6 +21,8 @@ BUILD_EXAMPLES="OFF"
 BUILD_TUTORIALS="ON"
 CLEAN_BUILD="OFF"
 INSTALL_DEPS_ONLY="OFF"
+SKIP_DEPS="OFF"
+BUILD_JOBS="${CMAKE_BUILD_PARALLEL_LEVEL:-2}"
 MAKE_DEB="ON"
 PACKAGE_DIR="${SCRIPT_DIR}/dist"
 INSTALLER_SOURCE="${SCRIPT_DIR}/scripts/install_pciehost.sh"
@@ -43,6 +45,8 @@ Options:
   --with-examples     Build PCIe host C++ examples
   --python            Build Python bindings and package a Python wheel
   --install-deps-only  Install native build prerequisites, then exit without building
+  --skip-deps         Verify preinstalled prerequisites without running APT
+  --jobs <count>      Parallel build jobs (default: CMAKE_BUILD_PARALLEL_LEVEL or 2)
   --no-deb            Skip DEB package generation
   --scheduler-spec <sha|latest> Override the manifest's Scheduler revision
   --scheduler-environment <name> Publication environment (default: production)
@@ -115,6 +119,17 @@ install_build_deps() {
   # Match the native profiles before making any package changes.
   source /etc/os-release
   [[ "$ID" == ubuntu && ( "$VERSION_ID" == 22.04 || "$VERSION_ID" == 24.04 ) ]]
+  if [[ "${SKIP_DEPS}" == "ON" ]]; then
+    local package status
+    for package in "${packages[@]}"; do
+      status="$(dpkg-query -W -f='${Status}' "${package}" 2>/dev/null || true)"
+      if [[ "${status}" != "install ok installed" ]]; then
+        echo "ERROR: --skip-deps requires installed package ${package}; rebuild the dependency image or run without --skip-deps." >&2
+        return 1
+      fi
+    done
+    return
+  fi
   run_privileged apt-get update
   run_privileged apt-get install -y --no-install-recommends "${packages[@]}"
 }
@@ -147,6 +162,15 @@ while [[ $# -gt 0 ]]; do
     --install-deps-only)
       INSTALL_DEPS_ONLY="ON"
       shift
+      ;;
+    --skip-deps)
+      SKIP_DEPS="ON"
+      shift
+      ;;
+    --jobs)
+      BUILD_JOBS="${2:-}"
+      [[ "${BUILD_JOBS}" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: --jobs requires a positive integer" >&2; exit 2; }
+      shift 2
       ;;
     --no-deb)
       MAKE_DEB="OFF"
@@ -185,6 +209,8 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+[[ "${BUILD_JOBS}" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: CMAKE_BUILD_PARALLEL_LEVEL must be a positive integer" >&2; exit 2; }
 
 # Refuse inherited SDK flags rather than silently mixing host and target ABIs.
 for name in CC CXX CFLAGS CXXFLAGS CPPFLAGS LDFLAGS CMAKE_TOOLCHAIN_FILE PKG_CONFIG_SYSROOT_DIR PKG_CONFIG_LIBDIR PKG_CONFIG_PATH CMAKE_LIBRARY_PATH CMAKE_INCLUDE_PATH CMAKE_PREFIX_PATH CMAKE_FIND_ROOT_PATH LIBRARY_PATH CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH; do
@@ -492,6 +518,7 @@ echo "========================================"
 echo " SiMa NEAT PCIe host build configuration"
 echo "========================================"
 echo "Build type      : ${BUILD_TYPE}"
+echo "Build jobs      : ${BUILD_JOBS}"
 echo "Build tests     : ${BUILD_TESTS}"
 echo "Build Python    : ${BUILD_PYTHON}"
 echo "Build examples  : ${BUILD_EXAMPLES}"
@@ -547,7 +574,7 @@ cmake -S . -B "${BUILD_DIR}" \
   -DPython_EXECUTABLE="${PYTHON_EXECUTABLE}" \
   "${GENAI_CMAKE_ARGS[@]}"
 
-cmake --build "${BUILD_DIR}" -j 2
+cmake --build "${BUILD_DIR}" --parallel "${BUILD_JOBS}"
 
 if [[ "${MAKE_DEB}" == "ON" ]]; then
   echo

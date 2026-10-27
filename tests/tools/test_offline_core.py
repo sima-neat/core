@@ -112,7 +112,8 @@ def test_installer_rejects_corruption_before_namespace_or_lock(tmp_path):
         run.assert_not_called()
 
 
-def test_installer_uses_shared_lock_and_isolated_supervised_process(tmp_path):
+@pytest.mark.parametrize('recreate', [False, True])
+def test_installer_uses_shared_lock_and_isolated_supervised_process(tmp_path, recreate):
     from unittest.mock import mock_open
     with patch.object(core_install.os, 'geteuid', return_value=0), \
          patch.object(core_install, 'verify_bundle', return_value={'scope': 'core'}), \
@@ -121,11 +122,13 @@ def test_installer_uses_shared_lock_and_isolated_supervised_process(tmp_path):
          patch('builtins.open', mock_open()) as opened, \
          patch.object(core_install.fcntl, 'flock') as lock, \
          patch.object(core_install, 'run_host') as run:
-        core_install.install(tmp_path, 'preflight')
+        core_install.install(tmp_path, 'preflight', recreate_venv=recreate)
     opened.assert_called_once_with('/run/neat-offline-install.lock', 'w')
     lock.assert_called_once()
     argv = run.call_args.args[0]
-    assert argv[-2:] == ['card', 'preflight']
+    assert ('--recreate-venv' in argv) == recreate
+    expected = ['card', 'preflight', *(['--recreate-venv'] if recreate else [])]
+    assert argv[-len(expected):] == expected
     assert argv[argv.index('unshare')+1] == '--net'
     assert '--foreground' in argv
     assert run.call_args.kwargs['stdin'] == core_install.subprocess.DEVNULL
@@ -192,8 +195,9 @@ def test_environment_rejection_precedes_lock_namespace_and_mutation(tmp_path, ph
         opened.assert_not_called()
 
 
+@pytest.mark.parametrize('recreate', [False, True])
 @pytest.mark.parametrize('phase', ['preflight', 'install', 'verify'])
-def test_sdk_routes_to_sysroot_and_paired_devkit_after_preflight(tmp_path, phase):
+def test_sdk_routes_to_sysroot_and_paired_devkit_after_preflight(tmp_path, phase, recreate):
     from unittest.mock import mock_open, MagicMock
     events = []
     device = MagicMock()
@@ -210,7 +214,8 @@ def test_sdk_routes_to_sysroot_and_paired_devkit_after_preflight(tmp_path, phase
          patch.object(core_install, 'paired_devkit') as pairing, \
          patch.object(core_install, 'run_host', side_effect=local):
         pairing.return_value.__enter__.return_value = device
-        core_install.install(tmp_path, phase)
+        core_install.install(tmp_path, phase, recreate_venv=recreate)
+    assert device.recreate_venv == recreate
     expected = [('sdk', 'preflight'), ('devkit', 'preflight')] if phase == 'install' else []
     assert events == expected+[('sdk', phase), ('devkit', phase)]
 
@@ -259,14 +264,17 @@ def test_paired_deployment_requires_explicit_sdk_pairing(tmp_path, monkeypatch):
         device.assert_not_called()
 
 
-def test_paired_deployment_sends_password_only_on_stdin(monkeypatch):
+@pytest.mark.parametrize('recreate', [False, True])
+def test_paired_deployment_sends_password_only_on_stdin(monkeypatch, recreate):
     monkeypatch.setenv('SUDO_PASSWORD', 'test-secret')
     with patch.object(paired_devkit.os, 'getuid', return_value=0), \
          patch.object(paired_devkit.shutil, 'which', return_value='/usr/bin/ssh'), \
          patch.object(paired_devkit, 'run') as run:
         device = paired_devkit.PairedDevKit('192.0.2.2', 'sima')
         device.directory = '/tmp/neat-core-offline-ABCDEFGH'
+        device.recreate_venv = recreate
         device.phase('install')
+    assert ('--recreate-venv' in run.call_args.args[0][-1]) == recreate
     assert '--devkit-only' in run.call_args.args[0][-1]
     assert 'test-secret' not in str(run.call_args.args)
     assert run.call_args.kwargs['input'] == 'test-secret\n'
@@ -574,3 +582,19 @@ def test_launcher_elevates_with_only_explicit_pairing_settings(tmp_path, uid, ar
         assert actual[2:] == ['python3', '-B', str(bundle/'install.py'), *args]
     else:
         assert actual == ['-B', './install.py', *args]
+
+
+
+def test_core_console_reports_dependency_errors_from_deployment_log(monkeypatch, capsys):
+    import sys
+    def fail(root, phase, devkit_only, progress, recreate):
+        progress.log.write('Existing Python environment is broken: /home/sima/pyneat\n'
+                           'pytest requires packaging, which is not installed.\n')
+        raise core_install.subprocess.CalledProcessError(1, ['deploy.py'])
+    monkeypatch.setattr(sys, 'argv', ['install.py'])
+    monkeypatch.setattr(core_install, 'install', fail)
+    with pytest.raises(SystemExit):
+        core_install.main()
+    console = capsys.readouterr().out
+    assert 'Existing Python environment is broken: /home/sima/pyneat' in console
+    assert 'pytest requires packaging' in console

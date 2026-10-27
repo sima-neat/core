@@ -15,6 +15,7 @@
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
+#include <simaai/scheduler/client/dma_memory.h>
 
 #include <algorithm>
 #include <chrono>
@@ -74,6 +75,7 @@ static void usage(const char* prog) {
       << "  --image <path>         Input image path.\n"
       << "  --model <path>         Model pack tar.gz path.\n"
       << "  --only-direct          Skip JPEG/RTSP paths; run direct model only.\n"
+      << "  --memory-policy        Also check A65/EV74 postprocessing placement.\n"
       << "  --samples <int>        Measure a reused async direct route (default: disabled).\n"
       << "  --warmup <int>         Untimed frames before measurement (default: 100).\n"
       << "  --depth <int>          Bounded async submission window, 1..4 (default: 4).\n"
@@ -425,7 +427,8 @@ struct DirectMeasurement {
 
 static simaai::neat::Tensor measure_direct_infer(const simaai::neat::Model& model,
                                                  const cv::Mat& rgb,
-                                                 const DirectMeasurement& options) {
+                                                 const DirectMeasurement& options,
+                                                 const simaai::neat::GraphOptions& graph_options) {
   using namespace simaai::neat;
   using Clock = std::chrono::steady_clock;
   const auto microseconds = [](auto duration) {
@@ -438,7 +441,7 @@ static simaai::neat::Tensor measure_direct_infer(const simaai::neat::Model& mode
   };
   Model::RouteOptions route;
   route.include_input = route.include_output = true;
-  Graph graph;
+  Graph graph(graph_options);
   graph.add(model.graph(route));
   RunOptions settings;
   settings.queue_depth = 4; // Keep the already qualified device stage budget.
@@ -542,7 +545,7 @@ static simaai::neat::Tensor measure_direct_infer(const simaai::neat::Model& mode
     return latencies[std::min(latencies.size() - 1, latencies.size() * p / 100)];
   };
   std::cout
-      << "# current-Core EV_Preproc->MLA->EV_DetessDequant; reused Run; uploaded immutable "
+      << "# current-Core model route; reused Run; uploaded immutable "
          "input; bounded public async window; initial/final numerics outside timing\n"
       << "samples,depth,build_us,median_us,p95_us,p99_us,max_us,delivery_fps,through_close_fps,"
          "delivery_cpu_us_per_frame,through_close_cpu_us_per_frame,eos_us,close_us\n"
@@ -557,11 +560,12 @@ static simaai::neat::Tensor measure_direct_infer(const simaai::neat::Model& mode
   return last;
 }
 
-static simaai::neat::Tensor run_direct_infer(const simaai::neat::Model& model, const cv::Mat& rgb) {
+static simaai::neat::Tensor run_direct_infer(const simaai::neat::Model& model, const cv::Mat& rgb,
+                                             const simaai::neat::GraphOptions& options = {}) {
   simaai::neat::Model::RouteOptions route_opt;
   route_opt.include_input = true;
   route_opt.include_output = true;
-  simaai::neat::Graph p;
+  simaai::neat::Graph p(options);
   p.add(model.graph(route_opt));
 
   // This accuracy fixture exercises the production async model stages through
@@ -572,16 +576,29 @@ static simaai::neat::Tensor run_direct_infer(const simaai::neat::Model& model, c
   simaai::neat::RunOptions run_opt;
   run_opt.advanced.sync_num_buffers_override = 4;
 
-  simaai::neat::TensorList out;
-  bool logged_sample = false;
-  for (int i = 0; i < 20; ++i) {
-    out = p.run(std::vector<cv::Mat>{rgb}, run_opt);
-    if (!logged_sample) {
-      log_tensor_sample(sample_from_tensors(out), "direct");
-      logged_sample = true;
-    }
-  }
+  run_opt.output_memory = simaai::neat::OutputMemory::ZeroCopy;
+  const auto out = p.run(std::vector<cv::Mat>{rgb}, run_opt);
+  log_tensor_sample(sample_from_tensors(out), "direct");
   return require_tensor(out, "direct");
+}
+
+static void require_output_heap(const simaai::neat::Tensor& tensor,
+                                simaai::scheduler::client::dma::HeapKind expected) {
+  namespace dma = simaai::scheduler::client::dma;
+  require(tensor.storage && tensor.storage->kind == simaai::neat::StorageKind::GstSample &&
+              tensor.storage->holder,
+          "placement check requires the original zero-copy output");
+  auto* sample = static_cast<GstSample*>(tensor.storage->holder.get());
+  auto* buffer = gst_sample_get_buffer(sample);
+  const int memory_index =
+      buffer && gst_buffer_n_memory(buffer) == 1 ? 0 : tensor.route.memory_index;
+  require(buffer && memory_index >= 0 &&
+              static_cast<guint>(memory_index) < gst_buffer_n_memory(buffer),
+          "output has no selected backing allocation");
+  const auto backing = dma::DmaBufMemory::retain(gst_buffer_peek_memory(buffer, memory_index));
+  require(backing && backing->knownHeapKind() == expected, expected == dma::HeapKind::MlaDms
+                                                               ? "A65 model output must use DMS"
+                                                               : "EV74 model output must use CMA");
 }
 
 static void compare_scores(const std::vector<float>& a, const std::vector<float>& b,
@@ -883,7 +900,8 @@ int main(int argc, char** argv) {
       continue;
     }
     if (arg == "--goldfish" || arg == "--only-direct" || arg == "--only-rtsp" ||
-        arg == "--only-jpeg" || arg == "--skip-direct" || arg == "--skip-jpeg") {
+        arg == "--only-jpeg" || arg == "--skip-direct" || arg == "--skip-jpeg" ||
+        arg == "--memory-policy") {
       continue;
     }
     if (!arg.empty() && arg[0] == '-') {
@@ -1023,10 +1041,25 @@ int main(int argc, char** argv) {
                 "model.graph({false,false}) should omit appsink");
       }
       cv::Mat rgb = load_rgb_resized(image_path, kInferWidth, kInferHeight);
-      auto direct_t = measurement.samples ? measure_direct_infer(model_rgb, rgb, measurement)
-                                          : run_direct_infer(model_rgb, rgb);
+      const bool check_memory_policy = sima_test::has_flag(argc, argv, "--memory-policy");
+      simaai::neat::GraphOptions options;
+      if (check_memory_policy) {
+        options.processcvu.pre_run_target = "EV74";
+        options.processcvu.post_run_target = "A65";
+      }
+      auto direct_t = measurement.samples
+                          ? measure_direct_infer(model_rgb, rgb, measurement, options)
+                          : run_direct_infer(model_rgb, rgb, options);
+      if (check_memory_policy)
+        require_output_heap(direct_t, simaai::scheduler::client::dma::HeapKind::MlaDms);
       auto direct_scores = scores_from_tensor(direct_t, "direct");
       check_top1(direct_scores, expect, prob, "direct");
+      if (check_memory_policy) {
+        options.processcvu.post_run_target = "EV74";
+        const auto tensor = run_direct_infer(model_rgb, rgb, options);
+        require_output_heap(tensor, simaai::scheduler::client::dma::HeapKind::Cma);
+        check_top1(scores_from_tensor(tensor, "placement_EV74"), expect, prob, "placement_EV74");
+      }
     }
 
     if (run_jpeg) {

@@ -171,8 +171,7 @@ bool SimaArgMax::compile_node_contract(const ContractCompileInput& input,
     runtime.plugin_kind = "kernel";
     runtime.physical_inputs.reserve(upstream->physical_outputs.size());
     for (const auto& physical : upstream->physical_outputs)
-      runtime.physical_inputs.push_back(
-          specs::build_physical_input_from_output(physical, *upstream));
+      runtime.physical_inputs.push_back(physical);
     auto recipe = std::make_shared<si::KernelStageRecipe>();
     for (std::size_t index = 0; index < upstream->logical_outputs.size(); ++index) {
       const auto& source = upstream->logical_outputs[index];

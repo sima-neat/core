@@ -1,9 +1,10 @@
 #define SIMA_NEAT_INTERNAL 1
 #include "pipeline/internal/DmabufEligibility.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
 
 #include "pipeline/internal/sima/MlaElfIoTopology.h"
 #include "pipeline/internal/sima/static_contract/DmabufPlanContractProjection.h"
-#include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
+#include "pipeline/internal/sima/static_contract/ModelStorageRequirements.h"
 #include "pipeline/internal/sima/static_contract/MpkDecoder.h"
 #include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
 
@@ -14,6 +15,8 @@
 #include <exception>
 #include <fstream>
 #include <limits>
+#include <map>
+#include <stdexcept>
 #include <span>
 #include <sstream>
 #include <string_view>
@@ -482,11 +485,10 @@ std::string dmabuf_plan_digest(const sc::ModelExecutionPlan& plan) {
   return sha256_text(canonical_dmabuf_plan_json(plan));
 }
 
-std::string canonical_dmabuf_execution_json(const sc::ModelExecutionPlan& plan,
-                                            const sc::PhysicalExecutionPlan& physical,
-                                            const sc::FrameSlotArenaPlan& arena) {
+std::string canonical_dmabuf_source_json(const sc::ModelExecutionPlan& plan,
+                                         const sc::PhysicalExecutionPlan& physical) {
   Json root = Json::parse(canonical_dmabuf_plan_json(plan));
-  root["schema_version"] = 3;
+  root["schema_version"] = 4;
 
   Json commands = Json::array();
   for (const auto& command : physical.commands) {
@@ -512,48 +514,12 @@ std::string canonical_dmabuf_execution_json(const sc::ModelExecutionPlan& plan,
   root["physical_commands"] = std::move(commands);
   root["physical_digest_material"] = physical.deterministic_digest_material;
 
-  const auto& placement = arena.placement();
-  const char* domain = placement.domain == sc::ArenaStorageDomain::Cma
-                           ? "cma"
-                           : (placement.domain == sc::ArenaStorageDomain::Dms ? "dms" : "unknown");
-  const char* provenance =
-      placement.provenance == sc::ArenaAllocationProvenance::CoreAllocated
-          ? "core-allocated"
-          : (placement.provenance == sc::ArenaAllocationProvenance::ExternalAdopted
-                 ? "external-adopted"
-                 : "unknown");
-  const char* escape = placement.escape == sc::ArenaEscapePolicy::CpuMappablePublic
-                           ? "cpu-mappable-public"
-                           : "internal-only";
-  Json regions = Json::array();
-  for (const auto& region : arena.regions()) {
-    regions.push_back({{"carrier_id", region.carrier_id},
-                       {"value_id", region.value_id},
-                       {"byte_offset", region.byte_offset},
-                       {"size_bytes", region.size_bytes},
-                       {"required_alignment_bytes", region.required_alignment_bytes},
-                       {"first_sequence", region.lifetime.first_sequence},
-                       {"last_sequence", region.lifetime.last_sequence}});
-  }
-  Json detached_roots = Json::array();
-  for (const auto root_id : arena.detached_roots()) {
-    detached_roots.push_back(root_id);
-  }
-  root["frame_arena"] = {{"allocation_bytes", arena.allocation_bytes()},
-                         {"allocation_alignment_bytes", arena.allocation_alignment_bytes()},
-                         {"storage_domain", domain},
-                         {"allocation_provenance", provenance},
-                         {"required_device_access", placement.required_device_access},
-                         {"escape_policy", escape},
-                         {"detached_roots", std::move(detached_roots)},
-                         {"regions", std::move(regions)}};
   return root.dump();
 }
 
-std::string dmabuf_execution_digest(const sc::ModelExecutionPlan& plan,
-                                    const sc::PhysicalExecutionPlan& physical,
-                                    const sc::FrameSlotArenaPlan& arena) {
-  return sha256_text(canonical_dmabuf_execution_json(plan, physical, arena));
+std::string dmabuf_source_digest(const sc::ModelExecutionPlan& plan,
+                                 const sc::PhysicalExecutionPlan& physical) {
+  return sha256_text(canonical_dmabuf_source_json(plan, physical));
 }
 
 DmabufPlanCompileResult
@@ -615,30 +581,16 @@ try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
       return result;
     }
 
-    std::string arena_error;
-    const auto detached_roots = sc::detached_mla_output_roots(*decoded.plan, *physical);
-    const auto arena = sc::FrameSlotArenaPlan::compile(
-        *decoded.plan, *physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-        sc::kLegacyEvoCmaRegionAlignmentBytes, &arena_error, sc::kModalixProductionArenaDmsPolicy,
-        detached_roots);
-    if (!arena) {
-      auto result = rejected(DmabufEligibilityCode::ArenaPlanInvalid, mpk_source, "$.plugins",
-                             std::move(arena_error));
-      result.report.contract_version = decoded.plan->contract_version();
-      result.report.artifact_digest = sha256_text("mpk=" + *mpk_digest + ";elf=" + *elf_digest);
-      return result;
-    }
-
     DmabufPlanCompileResult result;
-    result.plan_digest = dmabuf_execution_digest(*decoded.plan, *physical, *arena);
-    if (result.plan_digest.empty()) {
+    result.source_digest = dmabuf_source_digest(*decoded.plan, *physical);
+    if (result.source_digest.empty()) {
       return rejected(DmabufEligibilityCode::InternalError, mpk_source, "$",
-                      "failed to compute canonical plan digest");
+                      "failed to compute immutable model source digest");
     }
     result.report.code = DmabufEligibilityCode::Eligible;
     result.report.source = mpk_source;
     result.report.location = "$";
-    result.report.detail = "strict MPK, ELF topology, immutable plan, and frame arena accepted";
+    result.report.detail = "strict MPK, ELF topology, and immutable execution facts accepted";
     result.report.contract_version = decoded.plan->contract_version();
     result.report.artifact_digest = sha256_text("mpk=" + *mpk_digest + ";elf=" + *elf_digest);
     result.report.proof.reserve(decoded.proof.size() + 1U);
@@ -646,16 +598,10 @@ try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
       result.report.proof.push_back({std::move(fact.subject), std::move(fact.evidence)});
     }
     result.report.proof.push_back(
-        {"frame-slot-arena", "regions=" + std::to_string(arena->regions().size()) +
-                                 ";used_bytes=" + std::to_string(arena->used_bytes()) +
-                                 ";allocation_bytes=" + std::to_string(arena->allocation_bytes()) +
-                                 detached_root_proof(arena->detached_roots())});
-    result.report.proof.push_back(
         {"physical-execution-plan",
          "commands=" + std::to_string(physical->commands.size()) + ";aligned-cvu-member-capacity=" +
              std::to_string(sc::minimum_cvu_member_capacity(*physical).value_or(0U))});
     result.plan = std::move(decoded.plan);
-    result.arena_plan = *arena;
     result.physical_plan = std::move(physical);
     return result;
   } catch (const std::exception& error) {
@@ -764,31 +710,17 @@ DmabufPlanCompileResult try_compile_dmabuf_plan(const sc::MpkPackage& package) n
       return result;
     }
 
-    std::string arena_error;
-    const auto detached_roots = sc::detached_mla_output_roots(*decoded.plan, *physical);
-    auto arena = sc::FrameSlotArenaPlan::compile(
-        *decoded.plan, *physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-        sc::kLegacyEvoCmaRegionAlignmentBytes, &arena_error, sc::kModalixProductionArenaDmsPolicy,
-        detached_roots);
-    if (!arena) {
-      auto result = rejected(DmabufEligibilityCode::ArenaPlanInvalid, mpk_source, "$.plugins",
-                             std::move(arena_error));
-      result.report.contract_version = decoded.plan->contract_version();
-      result.report.artifact_digest = artifact_digest;
-      return result;
-    }
-
     DmabufPlanCompileResult result;
-    result.plan_digest = dmabuf_execution_digest(*decoded.plan, *physical, *arena);
-    if (result.plan_digest.empty()) {
+    result.source_digest = dmabuf_source_digest(*decoded.plan, *physical);
+    if (result.source_digest.empty()) {
       return rejected(DmabufEligibilityCode::InternalError, mpk_source, "$",
-                      "failed to compute canonical plan digest");
+                      "failed to compute immutable model source digest");
     }
     result.report.code = DmabufEligibilityCode::Eligible;
     result.report.source = mpk_source;
     result.report.location = "$";
     result.report.detail =
-        "strict MPK, exact ELF/TVM artifact structures, immutable plan, and graph arena accepted";
+        "strict MPK, exact ELF/TVM artifact structures, and immutable execution facts accepted";
     result.report.contract_version = decoded.plan->contract_version();
     result.report.artifact_digest = artifact_digest;
     result.report.proof.reserve(decoded.proof.size() + 1U);
@@ -796,16 +728,10 @@ DmabufPlanCompileResult try_compile_dmabuf_plan(const sc::MpkPackage& package) n
       result.report.proof.push_back({std::move(fact.subject), std::move(fact.evidence)});
     }
     result.report.proof.push_back(
-        {"frame-slot-arena", "regions=" + std::to_string(arena->regions().size()) +
-                                 ";used_bytes=" + std::to_string(arena->used_bytes()) +
-                                 ";allocation_bytes=" + std::to_string(arena->allocation_bytes()) +
-                                 detached_root_proof(arena->detached_roots())});
-    result.report.proof.push_back(
         {"physical-execution-plan",
          "commands=" + std::to_string(physical->commands.size()) + ";aligned-cvu-member-capacity=" +
              std::to_string(sc::minimum_cvu_member_capacity(*physical).value_or(0U))});
     result.plan = std::move(decoded.plan);
-    result.arena_plan = std::move(arena);
     result.physical_plan = std::move(physical);
     return result;
   } catch (const std::exception& error) {
@@ -816,25 +742,107 @@ DmabufPlanCompileResult try_compile_dmabuf_plan(const sc::MpkPackage& package) n
   }
 }
 
-std::string dmabuf_plan_audit_json(const DmabufPlanCompileResult& result,
-                                   const std::filesystem::path& mpk_manifest,
-                                   const std::filesystem::path& mla_executable, const bool pretty) {
+namespace {
+
+Json packing_json(const sc::CarrierPacking& packed) {
+  Json allocations = Json::array(), carriers = Json::array();
+  for (const auto& allocation : packed.allocations)
+    allocations.push_back({{"size_bytes", allocation.size_bytes},
+                           {"required_device_access", allocation.required_device_access},
+                           {"policy", static_cast<int>(allocation.policy)}});
+  for (const auto& carrier : packed.carriers)
+    carriers.push_back({{"carrier_id", carrier.carrier_id},
+                        {"allocation_index", carrier.span.allocation_index},
+                        {"byte_offset", carrier.span.byte_offset},
+                        {"size_bytes", carrier.span.size_bytes}});
+  return {{"allocations", std::move(allocations)}, {"carriers", std::move(carriers)}};
+}
+
+Json audit_record(const DmabufPlanCompileResult& result) {
   Json proof = Json::array();
-  for (const auto& fact : result.report.proof) {
+  for (const auto& fact : result.report.proof)
     proof.push_back({{"subject", fact.subject}, {"evidence", fact.evidence}});
-  }
-  Json root{{"schema_version", 1},
-            {"eligible", result.eligible()},
+  Json root{{"eligible", result.eligible()},
             {"code", dmabuf_eligibility_code_name(result.report.code)},
             {"source", result.report.source},
             {"location", result.report.location},
             {"detail", result.report.detail},
             {"contract_version", result.report.contract_version},
             {"artifact_digest", result.report.artifact_digest},
-            {"plan_digest", result.plan_digest},
-            {"mpk_basename", basename_or_placeholder(mpk_manifest, "<mpk-manifest>")},
-            {"elf_basename", basename_or_placeholder(mla_executable, "<mla-executable>")},
+            {"source_digest", result.source_digest},
+            {"plan_digest", ""},
             {"proof", std::move(proof)}};
+  if (!result.eligible())
+    return root;
+  try {
+    auto physical = *result.physical_plan;
+    sima::resolve_physical_execution_targets(physical, ContractCompileInput{});
+    const auto detached = sc::detached_mla_output_roots(*result.plan, physical);
+    std::string error;
+    const auto requirements = sc::collect_model_storage_requirements(
+        *result.plan, physical, sc::kLegacyEvoCmaRegionAlignmentBytes, &error,
+        ::simaai::scheduler::client::AllocationPolicy::RequireDms, detached);
+    if (!requirements)
+      throw std::invalid_argument(error);
+    const auto packed = sc::pack_carriers(
+        requirements->carriers, sc::StorageReuse::DisjointLifetimes,
+        [&](const auto& lhs, const auto& rhs) {
+          return requirements->lifetimes_conflict(lhs, rhs);
+        },
+        &error);
+    if (!packed)
+      throw std::invalid_argument(error);
+    Json layouts = Json::array({{{"group", "model"}, {"storage", packing_json(*packed)}}});
+    std::map<std::size_t, std::vector<sc::CarrierRequirement>> detached_groups(
+        requirements->detached_outputs.begin(), requirements->detached_outputs.end());
+    for (const auto& [stage, carriers] : detached_groups) {
+      const auto output = sc::pack_carriers(carriers, sc::StorageReuse::Disabled, {}, &error);
+      if (!output)
+        throw std::invalid_argument(error);
+      layouts.push_back(
+          {{"group", "mla-output-" + std::to_string(stage)}, {"storage", packing_json(*output)}});
+    }
+    std::uint64_t allocation_bytes = 0, used_bytes = 0;
+    std::vector<std::size_t> ends(packed->allocations.size());
+    for (const auto& allocation : packed->allocations)
+      allocation_bytes += allocation.size_bytes;
+    for (const auto& carrier : packed->carriers)
+      ends[carrier.span.allocation_index] = std::max(
+          ends[carrier.span.allocation_index], carrier.span.byte_offset + carrier.span.size_bytes);
+    for (const auto end : ends)
+      used_bytes += end;
+    // Keep the versioned report's proof label; no arena contract is retained.
+    root["proof"].push_back(
+        {{"subject", "frame-slot-arena"},
+         {"evidence", "regions=" + std::to_string(packed->carriers.size()) +
+                          ";used_bytes=" + std::to_string(used_bytes) + ";allocation_bytes=" +
+                          std::to_string(allocation_bytes) + detached_root_proof(detached)}});
+    Json resolved = Json::array();
+    for (const auto& command : physical.commands)
+      resolved.push_back(static_cast<int>(command.resolved_executor.value_or(command.engine)));
+    root["plan_digest"] = sha256_text(Json{
+        {"source_digest", result.source_digest},
+        {"execution_targets", resolved},
+        {"frame_layouts", layouts}}.dump());
+    root["frame_layouts"] = std::move(layouts);
+  } catch (const std::exception& error) {
+    root["eligible"] = false;
+    root["code"] = dmabuf_eligibility_code_name(DmabufEligibilityCode::ArenaPlanInvalid);
+    root["location"] = "$.plugins";
+    root["detail"] = error.what();
+  }
+  return root;
+}
+
+} // namespace
+
+std::string dmabuf_plan_audit_json(const DmabufPlanCompileResult& result,
+                                   const std::filesystem::path& mpk_manifest,
+                                   const std::filesystem::path& mla_executable, const bool pretty) {
+  Json root = audit_record(result);
+  root["schema_version"] = 1;
+  root["mpk_basename"] = basename_or_placeholder(mpk_manifest, "<mpk-manifest>");
+  root["elf_basename"] = basename_or_placeholder(mla_executable, "<mla-executable>");
   return root.dump(pretty ? 2 : -1);
 }
 
@@ -860,10 +868,6 @@ std::string dmabuf_plan_audit_json(const DmabufPlanCompileResult& result,
                                    const std::filesystem::path& mpk_manifest,
                                    const std::vector<MlaExecutableArtifact>& mla_executables,
                                    const bool pretty) {
-  Json proof = Json::array();
-  for (const auto& fact : result.report.proof) {
-    proof.push_back({{"subject", fact.subject}, {"evidence", fact.evidence}});
-  }
   Json artifacts = Json::array();
   for (const auto& artifact : mla_executables) {
     artifacts.push_back(
@@ -871,18 +875,10 @@ std::string dmabuf_plan_audit_json(const DmabufPlanCompileResult& result,
          {"manifest_executable", artifact.manifest_executable},
          {"elf_basename", basename_or_placeholder(artifact.resolved_path, "<mla-executable>")}});
   }
-  Json root{{"schema_version", 2},
-            {"eligible", result.eligible()},
-            {"code", dmabuf_eligibility_code_name(result.report.code)},
-            {"source", result.report.source},
-            {"location", result.report.location},
-            {"detail", result.report.detail},
-            {"contract_version", result.report.contract_version},
-            {"artifact_digest", result.report.artifact_digest},
-            {"plan_digest", result.plan_digest},
-            {"mpk_basename", basename_or_placeholder(mpk_manifest, "<mpk-manifest>")},
-            {"mla_artifacts", std::move(artifacts)},
-            {"proof", std::move(proof)}};
+  Json root = audit_record(result);
+  root["schema_version"] = 2;
+  root["mpk_basename"] = basename_or_placeholder(mpk_manifest, "<mpk-manifest>");
+  root["mla_artifacts"] = std::move(artifacts);
   return root.dump(pretty ? 2 : -1);
 }
 

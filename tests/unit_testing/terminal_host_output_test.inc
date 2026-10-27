@@ -42,8 +42,7 @@ void terminal_host_output_lifetime(bool dma_denied = false) {
   request.options.output_pool_capacity = std::max<std::size_t>(6, request.options.capacity + 1);
   gst_app_src_set_caps(GST_APP_SRC(source), request.publication.input_caps.get());
   std::array<gs::StageAttachment, 1> attachments{{{stage, std::move(request)}}};
-  auto failure = gs::prepare_and_attach_tensor_stages(
-      pipeline.get(), attachments, {}, gs::CompactFrameReaderContract::StageFrameV2, {stage, sink});
+  auto failure = gs::prepare_and_attach_stages(pipeline.get(), attachments, {}, {stage, sink});
   require_fixture(!failure, "terminal host frontend admission", failure ? failure->message : "");
   struct Stop {
     GstElement* pipeline;
@@ -240,9 +239,10 @@ void terminal_host_output_lifetime(bool dma_denied = false) {
       require(bytes[i] == static_cast<std::uint8_t>(51 + i),
               "ordinary Auto pressure independent byte oracle");
   }
-  auto mixed = neat::sample_from_tensors(neat::TensorList{tensor, foreign_output.tensors.front()});
-  // sample_from_tensors marks its result owned; these are zero-copy views like a graph output.
+  neat::Sample mixed;
+  mixed.kind = neat::SampleKind::TensorSet;
   mixed.owned = false;
+  mixed.tensors = {tensor, foreign_output.tensors.front()};
   for (bool requested_copy : {false, true}) {
     const auto decision =
         internal::output_queue_memory_decision(mixed, requested_copy, true, false);
@@ -323,9 +323,14 @@ void terminal_host_output_lifetime(bool dma_denied = false) {
       auto item = mixed;
       internal::reset_tensor_io_stats();
       neat::graph::maybe_force_copy_for_backpressure(item, queued, "terminal-host-test", 0, true);
-      require(internal::tensor_has_certified_terminal_host_memory(item.tensors.front()) &&
-                  !item.owned,
-              "queue pressure copied host sibling or claimed full ownership");
+      const auto queue_case = "queue" + std::to_string(queued) + ": ";
+      require(item.tensors.front().storage == tensor.storage &&
+                  internal::tensor_has_certified_terminal_host_memory(item.tensors.front()),
+              (queue_case + "pressure must retain the certified host sibling").c_str());
+      require(!item.owned, (queue_case + "retained producer output must remain borrowed").c_str());
+      require((item.tensors.back().storage == foreign_output.tensors.front().storage) ==
+                  (queued == 0),
+              (queue_case + "pressure must copy only the foreign sibling above threshold").c_str());
       require(internal::snapshot_tensor_io_stats().tensor_copy_count == queued,
               "queue0/queue1 must respectively retain/copy only the foreign payload");
       require(gate->inflight() == acquired,

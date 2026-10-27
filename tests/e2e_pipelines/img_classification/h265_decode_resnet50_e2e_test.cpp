@@ -390,7 +390,13 @@ void require_auto_output(const simaai::neat::Sample& sample, const std::string& 
           context + ": Auto copied terminal DMA-BUF output");
   auto* retained = static_cast<GstSample*>(tensor.storage->holder.get());
   require(GST_IS_SAMPLE(retained), context + ": output holder is not a GstSample");
-  (void)sima_test::dmabuf_span(gst_sample_get_buffer(retained));
+  auto* buffer = gst_sample_get_buffer(retained);
+  const int memory_index =
+      buffer && gst_buffer_n_memory(buffer) == 1 ? 0 : tensor.route.memory_index;
+  require(buffer && memory_index >= 0 &&
+              static_cast<guint>(memory_index) < gst_buffer_n_memory(buffer),
+          context + ": output has no selected DMA allocation");
+  (void)sima_test::dmabuf_span(gst_buffer_peek_memory(buffer, memory_index));
   require(tensor.dtype == simaai::neat::TensorDType::Float32 && tensor.is_dense() &&
               tensor.dense_bytes_tight() == sima_test::kResNet50Classes * sizeof(float),
           context + ": terminal model tensor contract mismatch");

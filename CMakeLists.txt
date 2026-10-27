@@ -772,7 +772,7 @@ add_library(sima_neat_internal_headers INTERFACE)
 # Internal contracts expose canonical preparation types. Propagate the installed
 # facade's usage requirements; public Core headers remain dependency-isolated.
 target_link_libraries(sima_neat_internal_headers INTERFACE
-  ${SIMANEAT_PRIVATE_LIBRARIES} SimaScheduler::frontend
+  SimaScheduler::frontend ${SIMANEAT_PRIVATE_LIBRARIES}
   nlohmann_json::nlohmann_json)
 target_include_directories(sima_neat_internal_headers INTERFACE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -837,6 +837,10 @@ install(TARGETS pcie-pipeline-builder
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   COMPONENT core
 )
+install(FILES cmake/packaging/sima-neat-pcie.conf
+  DESTINATION lib/tmpfiles.d
+  COMPONENT core
+)
 
 # ------------------------------------------------------------------------------
 # Tutorials
@@ -897,14 +901,11 @@ install(
   PATTERN "genai/nodes/*" EXCLUDE
   PATTERN "pipeline/internal" EXCLUDE
   PATTERN "pipeline/internal/*" EXCLUDE
-  PATTERN "ProcessMlaRuntimeConfig.h" EXCLUDE
   PATTERN "SimaPluginStaticManifestAbi.h" EXCLUDE
-  PATTERN "SimaPreparedRuntimeAbi.h" EXCLUDE
   PATTERN "SimaTensorSetMetaAbi.h" EXCLUDE
   # Scheduler owns this installed path; never restore a Core implementation.
   PATTERN "SimaaiGstErrors.h" EXCLUDE
   PATTERN "ev_tensor_abi.h" EXCLUDE
-  PATTERN "PreparedRuntimeBridge.h" EXCLUDE
 )
 
 install(
@@ -1014,6 +1015,9 @@ set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "arm64")
 
 set(CPACK_DEBIAN_CORE_PACKAGE_NAME "sima-neat")
 set(CPACK_DEBIAN_DEV_PACKAGE_NAME "sima-neat-dev")
+set(CPACK_DEBIAN_CORE_PACKAGE_CONTROL_EXTRA
+  "${CMAKE_CURRENT_SOURCE_DIR}/cmake/packaging/postinst")
+set(CPACK_DEBIAN_CORE_PACKAGE_CONTROL_STRICT_PERMISSION TRUE)
 
 # Source-first preparation verifies the complete selected DEBs and supplies
 # their actual control versions. Never derive dependency pins from Git hashes.

@@ -8,6 +8,7 @@ import pwd
 from pathlib import Path
 import re
 import shutil
+import shlex
 import socket
 import subprocess
 import sys
@@ -140,6 +141,9 @@ def python_location(role, nvme=Path('/media/nvme')):
     home = Path(user.pw_dir)
     name = 'pyneatpcie' if role == 'host' else 'pyneat'
     path = home/name
+    # Keep an existing home environment (including a link) at its current location.
+    if path.exists() or path.is_symlink():
+        return user, path
     if role == 'card' and nvme.is_dir():
         if user.pw_uid == os.getuid():
             writable = os.access(nvme, os.W_OK)
@@ -165,16 +169,47 @@ def finish_python_location(user, path, role):
         if home_path.is_symlink() and home_path.resolve() == actual:
             return
         if home_path.exists() or home_path.is_symlink():
-            # Keep the previous environment instead of deleting user packages.
-            backup = Path(tempfile.mkdtemp(prefix='pyneat-before-offline-', dir=user.pw_dir))
-            os.chown(backup, user.pw_uid, user.pw_gid)
-            home_path.rename(backup/'pyneat')
-            print('Previous Python environment retained at '+str(backup/'pyneat'))
+            raise ValueError(f'Refusing to replace existing Python environment at {home_path}; '
+                             f'the installed environment is at {path}')
         home_path.symlink_to(path)
         os.chown(home_path, user.pw_uid, user.pw_gid, follow_symlinks=False)
 
 
-def execute(root, role, phase):
+def check_python_environment(path, stage):
+    """Report the environment and pip's dependency diagnostics without repairing it."""
+    command = [str(path/'bin/python'), '-m', 'pip', 'check']
+    try:
+        result = run(command, capture_output=True, text=True)
+    except (subprocess.CalledProcessError, OSError) as exc:
+        details = '\n'.join(value.strip() for value in
+                            (getattr(exc, 'stdout', ''), getattr(exc, 'stderr', '')) if value)
+        if not details:
+            details = str(exc)
+        context = ('Existing Python environment is broken; installation stopped before package changes'
+                   if stage == 'before installation' else
+                   'Python dependency verification failed; installation may have changed packages')
+        raise ValueError(f'{context}. Environment: {path} ({stage}).\n{details}\n'
+                         f'Repair this environment and rerun {shlex.join(command)}. '
+                         'Offline repairs require the matching wheels. To discard its packages and files, '
+                         'explicitly rerun the installer with --recreate-venv. '
+                         'No automatic recreation or rollback was performed.') from None
+    if result and result.stdout:
+        print(result.stdout.strip())
+
+
+def prepare_python_environment(path, recreate=False):
+    """Reuse checked environments; only clear when the caller explicitly opts in."""
+    if not recreate and (path.exists() or path.is_symlink()):
+        return
+    command = ['python3', '-m', 'venv']
+    if recreate:
+        print(f'Recreating Python environment at {path}; existing packages and files will be removed.')
+        command.append('--clear')
+    # venv rejects a symlink as its root; retain the link and use its target.
+    run([*command, str(path.resolve())])
+
+
+def execute(root, role, phase, recreate_venv=False):
     verify_bundle(root, 'card' if role == 'card' and not (root/'host').exists() else None)
     target = root/role
     environment(target, role)
@@ -192,6 +227,8 @@ def execute(root, role, phase):
         'NEAT_INSTALLER_INSTALL_CODEX_SKILL': 'OFF', 'NEAT_INSTALLER_INSTALL_CLAUDE_SKILL': 'OFF',
         'SIMAPCIE_INSTALL_CODEX_SKILL': 'OFF', 'SIMAPCIE_INSTALL_CLAUDE_SKILL': 'OFF',
     })
+    if phase != 'verify' and not recreate_venv and (python_path.exists() or python_path.is_symlink()):
+        check_python_environment(python_path, 'before installation')
     with private_apt(target/'repo') as state:
         run(['apt-get', 'update'])
         native = sorted((target/'payload').glob('*.deb'))
@@ -217,10 +254,19 @@ def execute(root, role, phase):
             return
         if prerequisites:
             run(['apt-get', '--no-remove', '--no-install-recommends', '-y', 'install', *prerequisites])
-        run(['python3', '-m', 'venv', venv])
+        prepare_python_environment(python_path, recreate_venv)
         wheels = sorted((target/'payload').glob('*.whl'))
-        run([venv+'/bin/python', '-m', 'pip', 'install', '--force-reinstall',
-             '--only-binary=:all:', *map(str, wheels)])
+        try:
+            result = run([venv+'/bin/python', '-m', 'pip', 'install', '--force-reinstall',
+                          '--only-binary=:all:', *map(str, wheels)], capture_output=True, text=True)
+        except subprocess.CalledProcessError as exc:
+            details = '\n'.join(value.strip() for value in (exc.stdout, exc.stderr) if value)
+            raise ValueError(f'Offline Python installation failed in {venv}.\n{details}\n'
+                             'The bundle may lack wheels needed by existing application packages. '
+                             'Review the dependency errors before retrying; packages may have changed. '
+                             'No automatic recreation or rollback was performed.') from None
+        if result and result.stdout:
+            print(result.stdout.strip())
         # Prerequisite installation changed dpkg state; admission must inspect
         # a fresh plan rather than treating already-installed prerequisites as new.
         with plan.open('w') as stream:
@@ -243,7 +289,7 @@ def verify(target, role, venv):
         installed = output(['dpkg-query', '-W', '-f=${db:Status-Status} ${Version}', package])
         if installed != 'installed ' + version:
             raise ValueError('Installed package mismatch: ' + package)
-    run([venv+'/bin/python', '-m', 'pip', 'check'])
+    check_python_environment(Path(venv), 'after installation or during verification')
     run([venv+'/bin/python', '-c', 'import ' + ('pyneatpcie' if role == 'host' else 'pyneat')])
     if role == 'host':
         run(['gst-inspect-1.0', 'neatpciehost'])
@@ -253,12 +299,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('role', choices=['host', 'card'])
     parser.add_argument('phase', choices=['preflight', 'install', 'verify'])
+    parser.add_argument('--recreate-venv', action='store_true',
+                        help='discard existing Python environment packages and files before installation')
     args = parser.parse_args()
     if os.geteuid() != 0:
         parser.error('requires root')
     if any(name != 'lo' for _, name in socket.if_nameindex()):
         parser.error('deployment requires an isolated network namespace; use install.py')
-    execute(Path(__file__).resolve().parent, args.role, args.phase)
+    try:
+        execute(Path(__file__).resolve().parent, args.role, args.phase, args.recreate_venv)
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        parser.exit(1, f'Offline deployment failed: {exc}\n')
 
 
 if __name__ == '__main__':

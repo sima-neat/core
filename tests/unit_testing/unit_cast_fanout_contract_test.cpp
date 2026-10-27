@@ -2,10 +2,14 @@
 #include "pipeline/Tensor.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/sima/ContractRender.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
 #include "pipeline/internal/TerminalOutputContractQuery.h"
 #include "pipeline/internal/TensorMath.h"
 #include "test_main.h"
 #include "test_utils.h"
+
+#include <simaai/scheduler/client/frame_layout.h>
 
 namespace {
 
@@ -117,12 +121,18 @@ RUN_TEST(
                   transport.processcvu_payload &&
                   transport.processcvu_payload->graph_name == "cast",
               "standalone Cast lacks a canonical semantic execution payload");
-      const auto rendered = render_manifest_from_compiled_contracts(compiled, input, &diagnostics);
-      require(rendered && diagnostics.errors.empty() && rendered->stages.size() == 1 &&
-                  rendered->stages.front().frame_arena_role ==
-                      pipeline_internal::sima::FrameArenaRole::Allocate &&
-                  rendered->stages.front().processcvu.dmabuf_plan_contract,
-              "standalone Cast lacks checked direct arena placement");
+      auto rendered = render_manifest_from_compiled_contracts(compiled, input, &diagnostics);
+      require(rendered && diagnostics.errors.empty() && rendered->stages.size() == 1,
+              "standalone Cast lacks a renderable semantic contract");
+      const auto preparation = pipeline_internal::sima::prepare_kernel_stage_recipes(
+          &*rendered, std::nullopt, {}, {}, {});
+      require(!preparation, preparation ? preparation->field + ": " + preparation->message : "");
+      pipeline_internal::sima::finalize_pipeline_storage(*rendered);
+      require(rendered->stages.front().native_kernel && rendered->stages.front().frame_layout &&
+                  rendered->stages.front().frame_layout->ownership ==
+                      simaai::scheduler::client::FrameOwnership::Allocate &&
+                  rendered->stages.front().frame_layout->outputs.size() == 6U,
+              "standalone Cast lacks checked allocated output spans");
       const auto& runtime = transport.runtime_contract;
       require(runtime.logical_outputs.size() == 6U,
               "Cast should publish all six logical outputs from the upstream contract");

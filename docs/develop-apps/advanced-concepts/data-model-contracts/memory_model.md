@@ -1,37 +1,19 @@
 ---
 title: Memory model
-description: Zero-copy buffers, segments, the (buffer_id, paddr, vaddr) triple, and cache coherence.
+description: Allocation identity, FrameLayout placement, zero-copy ownership and cache visibility.
 sidebar_position: 3
 slug: /develop-apps/advanced-concepts/memory_model
 ---
 
 # Memory model
 
-The Neat framework's runtime moves a lot of bytes — encoded video frames, decoded YUV planes, FP32 input tensors, INT8 quantized tiles, MLA scratchpad images. Doing that without an explicit memory model would mean a copy at every stage boundary. This page explains how the framework avoids those copies.
+Core plans storage; Scheduler prepares its pools through Runner, which owns allocation identity, DMA-BUF mappings and CPU/device access.
 
-## The buffer triple: `(buffer_id, paddr, vaddr)`
+## Allocations and views
 
-Every buffer the framework moves is identified by three things:
+Each stage has one immutable `FrameLayout`: a list of `FrameAllocation` objects, allocation-local `FrameSpan` values, input routes and output ownership. A span identifies an allocation, offset and reserved capacity. Logical tensor shapes, strides and published bytes remain separate; MLA hardware padding must fit the reserved capacity.
 
-- **`buffer_id`** — a stable integer the runtime uses to track the buffer's lifecycle (refcount, segment ownership).
-- **`paddr`** — physical address, the IOMMU's view of the buffer. MLA / EV74 / DMA hardware sees this.
-- **`vaddr`** — virtual address, the application's view. CPU code dereferences this.
-
-The triple lets a buffer be addressed by either side (CPU or accelerator) without copying. A single allocation appears in *both* the kernel page tables (so software can read it) and the IOMMU page tables (so hardware can DMA into it).
-
-Stage-to-stage hand-offs pass the triple, not the bytes.
-
-## Segments
-
-Buffers come from named **segments**. A segment is a contiguous region of memory backed by a specific allocator (DMA-BUF, CMA, ION, plain heap) and tagged with metadata about who can access it: CPU only, MLA only, both, etc. The runtime picks the right segment for each buffer based on which stages will touch it.
-
-Examples:
-
-- A `nv12_decode` segment holds decoded YUV from H.264 — CPU-readable for diagnostic taps, IOMMU-readable for the resize node.
-- A `mla_input` segment holds the tessellated tensor handed to the MLA — only the MLA hardware reads it; CPU access requires an explicit map.
-- A `model_output` segment holds FP32 tensors after detessellation — CPU-readable so the application can pull them out.
-
-A `Tensor` carries its segment alongside the triple, so the framework knows whether a peek/poke from CPU code is valid.
+Views share a root carrier. Allocation indices belong to a buffer group: offset zero in two different groups does not mean the buffers overlap. Imported backing keeps its exporter, checked offsets, plane geometry and producer loans.
 
 With bound storage, a dense numeric `Tensor` with shape `{}` is a rank-zero
 scalar: its dense size is one `dtype` element. It differs from a zero-extent shape
@@ -42,75 +24,36 @@ and cloning reject it. Explicit encoded, byte-stream, tessellated and text
 carriers retain their carrier-byte semantics. This does not change the byte
 extent returned by public `map()`.
 
-## Cache coherence
+## Placement
 
-Scheduler prepares CPU/device access through Runner's shared memory authority,
-which owns allocation identity, DMA-BUF retention, CPU/device exclusion, checked
-ranges and generation-based visibility. MLA and EV publish completed device
-writes without an eager CPU READ epoch. Required READ cache maintenance runs
-when a CPU mapping or the A65 worker acquires checked access, **before reading**,
-not at unmap or in backend completion callbacks. Device-only successors do no
-CPU visibility work; independent frames can still overlap.
+Core selects routes and resolves executors, compiles checked recipes, resolves carriers and ownership, then packs from the access and lifetime evidence. It finalizes stage layouts and publication once.
 
-Use `Mapping` with the appropriate [`MapMode`](/reference/cppapi/namespaces/simaai-neat)
-when calling [`TensorBuffer::map()`](/reference/cppapi/structs/simaai-neat-tensorbuffer).
-A Tensor mapping retains its map guard and current storage/producer loan until
-CPU access ends. Required END synchronization, including write cleanup, completes
-before those owners release. Partial writes preserve neighboring cache-line bytes.
-Failed synchronization quarantines the affected allocation instead of returning
-it to normal reuse.
+- Any EV74 access requires CMA.
+- Owned MLA/A65-only carriers use DMS by default.
+- Qualified fresh A65 public terminals may use HostCpu storage.
+- Imported storage stays pinned. Fan-out includes every consumer; views retain their carrier's policy.
 
-Each public DMA mapping retains its own Scheduler lease. Compatible reads share
-Runner's access authority, including overlapping views; writes remain excluded.
-Virtual addresses from separate mappings need not be identical. Releasing one
-reader cannot invalidate another, and only the final owner performs the required
-END transition.
+`AllocationPolicy::PreferDmsThenCma` explicitly permits eligible owned DMS allocations to fall back to CMA on capacity failure. It does not permit a fallback to ordinary Linux memory. Queue boundaries, separate model invocations and retained outputs keep their ownership and lifetime constraints.
 
-Owned cached CMA requires cold platform and exporter admission; failure is
-actionable, not permission to fall back to whole-buffer synchronization. Imported DMA-BUFs and other heaps keep
-their exporter contract through the same ownership engine.
+For EV74 Preproc → MLA → A65 BoxDecode, the inference input uses CMA and the MLA output uses a separate DMS allocation. Actual placement follows every consumer's resolved executor.
 
-Private all-A65 recipes may retain an explicit parent batch; children require the
-live parent capability, exact permissions and range coverage.
-Final parent release cleans writes after every child has retired. Mixed device
-phases do not receive implicit batch membership. No hidden staging copy is added.
-Raw-FD writers and custom callbacks must still honor the ownership contract;
-removing a graph allowlist does not prove that untracked access is safe.
+## Ownership and CPU mapping
 
-Transport boundaries preserve backing allocation identity, checked offsets and
-lengths, and original pool-buffer ownership. Metadata-only envelopes share memory
-and retain the pool parent. EV/CVU and MLA imports retain the producer until
-completion. Unknown completion must not recycle potentially active storage.
+A zero-copy output retains its backing and producer loan while the application holds it. Scheduler and Runner keep device inputs alive through definitive completion; timeout or cancellation alone does not allow reuse.
 
-## Zero-copy in practice
+Use [`TensorBuffer::map()`](/reference/cppapi/structs/simaai-neat-tensorbuffer) with the appropriate [`MapMode`](/reference/cppapi/namespaces/simaai-neat). A `Mapping` retains checked access and storage until it closes. Compatible reads may share access; writes remain excluded. Required cache maintenance happens before CPU reads and after writes, including preservation of neighboring cache-line bytes. Failed synchronization quarantines affected storage.
 
-A typical inference pipeline:
+Owned cached CMA and DMS use the admitted SimaHeap range API. Imported buffers retain their exporter contract. Device-only successors do not open a CPU read epoch; CPU access is not inferred from a node name or graph position. Private CPU batches retain their parent until all child accesses retire.
 
-```
-file → demux → H.264 decode → resize → preproc → MLA → postproc → app
-```
+Metadata envelopes may share memory without copying payloads, but dtype conversion, explicit transfers and Owned output can copy bytes. Zero-copy does not mean every stage operates in place.
 
-Without zero-copy, that's seven copies. With the buffer triple and segments, it's zero — every stage hands off `(buffer_id, paddr, vaddr)` and the next stage operates in place.
+## Camera buffers
 
-The framework's planner is responsible for picking segments such that consecutive stages can share. When two adjacent stages have incompatible segment requirements, the planner inserts a `Transfer` `ConversionKind` and records it in any active `ConversionTraceCollector`. Watch for these — they're the only places real bytes move at runtime.
-
-## Camera sources and adaptive memory
-
-Live camera frames enter through the platform camera stack. `libcamerasrc` captures each frame into its own DMA-BUF, and Neat never owns that memory: any physically contiguous DMA-BUF is a valid EV74 input, and Neat's EV74 admission check accepts it when it comes from a CMA heap or the camera's contiguous capture allocator (`videobuf2_dma_contig`). `CameraInput`'s private bridge asks the source for `GstVideoMeta` through `GST_QUERY_ALLOCATION` and forwards each frame's DMA-BUF as one memory to the downstream CVU/MLA stages, retaining the camera's buffer until they release it.
-
-When a frame is not one DMA-BUF with its planes back to back and `allow_cpu_fallback` is enabled, the bridge copies it into a CMA DMA-BUF, stamps the expected metadata, and hands that buffer to model-managed CVU preprocessing. That copy is the compatibility bridge; resize, color conversion, normalization, quantization, and tessellation should still run on CVU/EV74.
-
-Do not add a public `OsToSima`, `videoconvert`, or `videoscale` stage just to make MIPI camera input work. Use [`CameraInput`](/reference/nodes/camera-input) and let the source path own the memory adaptation.
+[`CameraInput`](/reference/nodes/camera-input) validates captured DMA-BUF layout and retains the camera parent while downstream consumers use it. Compatible buffers keep their backing and plane geometry. When the layout needs adaptation and `allow_cpu_fallback` is enabled, the bridge makes an explicit CMA copy. Source adaptation remains separate from model preprocessing.
 
 ## Related types
 
-- [`TensorBuffer`](/reference/cppapi/structs/simaai-neat-tensorbuffer) — the buffer-triple container.
-- [`Segment`](/reference/cppapi/structs/simaai-neat-segment) — segment handle.
-- [`Mapping`](/reference/cppapi/structs/simaai-neat-mapping) — RAII map handle for direct CPU access.
-- [`MemoryContract`](/reference/cppapi/files/include-contracts-contracttypes-h) — how a Node prefers to allocate.
-- [`ConversionKind::Transfer`](/reference/cppapi/files/include-pipeline-tensorconversion-h) — the only conversion kind that copies across segments.
-
-## Further reading
-
-- "Tensors and buffers" — §0.10, §18, §19, §20 of the design deep dive.
-- "TensorBuffer ABI" — §20 of the design deep dive.
+- [`TensorBuffer`](/reference/cppapi/structs/simaai-neat-tensorbuffer): backing storage and views.
+- [`Segment`](/reference/cppapi/structs/simaai-neat-segment): retained allocation range.
+- [`Mapping`](/reference/cppapi/structs/simaai-neat-mapping): scoped CPU access.
+- [`MemoryContract`](/reference/cppapi/files/include-contracts-contracttypes-h): a node's declared memory requirements.

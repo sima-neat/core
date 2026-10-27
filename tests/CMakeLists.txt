@@ -88,7 +88,7 @@ set_tests_properties(unit_boxdecode_geometry_test PROPERTIES
 
 add_executable(unit_kernel_runner_integration_test
   unit_testing/unit_kernel_runner_integration_test.cpp
-  ${PROJECT_SOURCE_DIR}/src/pipeline/internal/sima/KernelRunnerIntegration.cpp)
+  ${PROJECT_SOURCE_DIR}/src/pipeline/internal/sima/SchedulerStageIntegration.cpp)
 target_link_libraries(unit_kernel_runner_integration_test PRIVATE
   sima_neat sima_neat_internal_headers SimaScheduler::frontend
   SimaScheduler::ClientTestSupport)
@@ -492,7 +492,7 @@ set(UNIT_TESTS
   unit_graph_strict_sync_test
   unit_header_neat_compile_surface_test
   unit_realtime_link_options_test
-  unit_realtime_processcvu_input_queue_test
+  unit_realtime_source_queue_test
   unit_verbose_options_surface_test
   unit_gst_data_adapter_edge_test
   unit_groups_test
@@ -572,8 +572,9 @@ set(UNIT_TESTS
   unit_physical_execution_plan_test
   unit_tvm_host_module_graph_test
   unit_modelpack_multi_mla_plan_test
-  unit_frame_slot_arena_plan_test
-  unit_frame_arena_allocation_policy_test
+  unit_carrier_packing_test
+  unit_stage_memory_policy_test
+  unit_frame_layout_policy_test
   unit_dmabuf_plan_contract_projection_test
   unit_model_archive_loader_test
   unit_modelpack_compact_extraction_path_test
@@ -619,16 +620,7 @@ set(UNIT_TESTS
   unit_processcvu_preproc_runtime_vs_exposed_outputs_test
   unit_stage_transform_rule_registry_test
   unit_sima_plugin_static_manifest_parse_test
-  unit_sima_plugin_static_manifest_contract_test
-  unit_sima_plugin_static_manifest_lifetime_test
-  unit_manifest_context_exception_test
   unit_graph_build_ownership_test
-  unit_sima_plugin_context_injection_test
-  unit_sima_plugin_context_late_child_injection_test
-  unit_sima_plugin_context_copy_test
-  unit_sima_plugin_context_attach_lifetime_test
-  unit_sima_plugin_context_replacement_test
-  unit_sima_plugin_context_destroyed_pipeline_test
   unit_sima_plugins_test
   unit_internal_edge_contract_resolver_test
   unit_terminal_output_contract_query_test
@@ -640,7 +632,6 @@ set(UNIT_TESTS
   unit_output_selected_carrier_contract_test
   unit_sample_tensor_set_materialized_parent_offsets_test
   unit_sample_packed_parent_alignment_padding_test
-  unit_yolov8_mla_handoff_segment_test
   unit_yolov8_contract_subset_test
   unit_tensor_list_api_test
   unit_tensor_conversion_policy_test
@@ -679,6 +670,9 @@ foreach(test ${UNIT_TESTS})
   endif()
 endforeach()
 
+# This metadata fixture uses assert for its runtime checks, including publication setup.
+target_compile_options(unit_terminal_output_contract_query_test PRIVATE -UNDEBUG)
+
 # Exercise cold instance isolation without requiring a target-only A65 catalogue.
 simaneat_add_test(NAME unit_kernel_runner_instances_test
   COMMAND unit_kernel_runner_integration_test --instance-only)
@@ -686,7 +680,6 @@ simaneat_append_ctest_env(unit_kernel_runner_instances_test)
 set_tests_properties(unit_kernel_runner_instances_test PROPERTIES
   TIMEOUT 30 LABELS "strict;unit;contracts")
 target_link_libraries(unit_graph_build_ownership_test PRIVATE SimaScheduler::frontend)
-target_link_libraries(unit_manifest_context_exception_test PRIVATE ${CMAKE_DL_LIBS})
 target_link_libraries(unit_model_archive_loader_test PRIVATE ${CMAKE_DL_LIBS})
 
 # The MPK-derived publication regression directly invokes Scheduler's public
@@ -2176,7 +2169,7 @@ add_pipeline_test(
   e2e_pipelines/obj_detection/sync_yolov8_test_detessdequant.cpp
   e2e_pipelines/e2e_utils.cpp
   e2e_pipelines/obj_detection/obj_detection_utils.cpp
-  ARGS ${CMAKE_SOURCE_DIR}
+  ARGS ${CMAKE_SOURCE_DIR} --memory-policy
 )
 
 if (NOT sync_yolov8_test_detessdequant IN_LIST PIPELINESESSION_TEST_BLACKLIST)
@@ -2326,7 +2319,8 @@ if (NOT resnet50_modelpack_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     e2e_pipelines/img_classification/resnet50_modelpack_test.cpp
   )
   add_dependencies(resnet50_modelpack_test prepare_test_fixtures)
-  target_link_libraries(resnet50_modelpack_test PRIVATE sima_neat sima_neat_internal_headers)
+  target_link_libraries(resnet50_modelpack_test PRIVATE
+    sima_neat sima_neat_internal_headers SimaScheduler::frontend)
   target_include_directories(resnet50_modelpack_test
     PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}
@@ -2337,7 +2331,7 @@ if (NOT resnet50_modelpack_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
 
   simaneat_add_test(
     NAME resnet50_modelpack_direct
-    COMMAND resnet50_modelpack_test --goldfish --only-direct
+    COMMAND resnet50_modelpack_test --goldfish --only-direct --memory-policy
   )
   simaneat_add_test(
     NAME resnet50_modelpack_jpeg
@@ -2702,7 +2696,6 @@ foreach(test
     unit_neatdecoder_keepalive_test
     unit_neatencoder_keepalive_test
     unit_modelpack_mla_handoff_segment_test
-    unit_yolov8_mla_handoff_segment_test
     seedless_yolov8_preproc_input_max_smoke_test
     graph_migration_phase3_lazy_dynamic_spec_test
     graph_migration_phase3_yolov8_bgr_bf16_preproc_test

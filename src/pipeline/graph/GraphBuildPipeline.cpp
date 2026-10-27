@@ -1,4 +1,3 @@
-#include "pipeline/internal/sima/TerminalHostPlacement.h"
 /**
  * @file SessionBuildPipeline.cpp
  * @brief Shared pipeline state-change helpers for Graph build paths.
@@ -20,13 +19,13 @@
 #include "pipeline/internal/SegmentBuildPlan.h"
 #include "pipeline/internal/UxLogging.h"
 #include "pipeline/internal/sima/ContractRender.h"
-#include "pipeline/internal/sima/PreparedRuntimeBuild.h"
-#include "pipeline/internal/sima/KernelRunnerIntegration.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
+#include "pipeline/internal/sima/SchedulerStageIntegration.h"
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
 
 #include <gst/SimaPluginStaticManifestAbi.h>
 #include "gst/internal/GstParseLaunch.h"
-#include <neat/PreparedRuntimeBridge.h>
 
 #include <algorithm>
 #include <atomic>
@@ -37,7 +36,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
-#include <dlfcn.h>
 #include <exception>
 #include <memory>
 #include <mutex>
@@ -111,51 +109,6 @@ const StageStaticSpec* find_boxdecode_manifest_stage(const SimaPluginStaticManif
   return nullptr;
 }
 
-std::string validate_prepared_runtime_bridge_abi() {
-  using AbiSizesFn = const PreparedRuntimeBridgeAbiSizes* (*)();
-  constexpr const char* kSymbol = "sima_neat_prepared_runtime_bridge_abi_sizes";
-
-  dlerror(); // Clear any prior dynamic-loader error.
-  void* symbol = dlsym(RTLD_DEFAULT, kSymbol);
-  if (!symbol) {
-    std::ostringstream oss;
-    oss << "prepared runtime ABI mismatch: loaded libneatpreparedruntimebridge.so does not expose "
-        << kSymbol
-        << "; rebuild and stage libneatpreparedruntimebridge.so together with libsima_neat.so";
-    return oss.str();
-  }
-
-  const auto* bridge = reinterpret_cast<AbiSizesFn>(symbol)();
-  if (!bridge) {
-    return "prepared runtime ABI mismatch: libneatpreparedruntimebridge.so returned null ABI "
-           "size probe; rebuild and stage matching runtime artifacts";
-  }
-
-  const PreparedRuntimeBridgeAbiSizes caller{
-      SIMA_PREPARED_RUNTIME_ABI_VERSION,
-      sizeof(simaai::gst::PreparedStageSpec),
-      sizeof(simaai::gst::ProcessMlaPreparedStage),
-  };
-
-  if (bridge->abi_version == caller.abi_version &&
-      bridge->prepared_stage_spec_size == caller.prepared_stage_spec_size &&
-      bridge->processmla_prepared_stage_size == caller.processmla_prepared_stage_size) {
-    return {};
-  }
-
-  std::ostringstream oss;
-  oss << "prepared runtime ABI mismatch between libsima_neat.so and "
-         "libneatpreparedruntimebridge.so: caller"
-      << " {abi_version=" << caller.abi_version
-      << ", PreparedStageSpec=" << caller.prepared_stage_spec_size
-      << ", ProcessMlaPreparedStage=" << caller.processmla_prepared_stage_size << "}, bridge"
-      << " {abi_version=" << bridge->abi_version
-      << ", PreparedStageSpec=" << bridge->prepared_stage_spec_size
-      << ", ProcessMlaPreparedStage=" << bridge->processmla_prepared_stage_size
-      << "}; rebuild and stage matching Scheduler/Core artifacts";
-  return oss.str();
-}
-
 void collect_renderable_boxdecode_stages(const CompiledNodeContract& stage,
                                          std::vector<const CompiledNodeContract*>* out) {
   if (!out) {
@@ -214,25 +167,6 @@ void validate_boxdecode_manifest_completeness(
           "'");
     }
   }
-}
-
-bool prepared_runtime_error_is_manifest_abi_mismatch(std::string_view error) {
-  return error.find("ABI mismatch") != std::string_view::npos ||
-         error.find("abi mismatch") != std::string_view::npos ||
-         error.find("handle_abi_mismatch") != std::string_view::npos ||
-         error.find("accessor_abi_mismatch") != std::string_view::npos;
-}
-
-const char* prepared_runtime_error_code(std::string_view error) {
-  return prepared_runtime_error_is_manifest_abi_mismatch(error) ? error_codes::kRuntimeAbiMismatch
-                                                                : error_codes::kPipelineShape;
-}
-
-const char* prepared_runtime_failure_hint(std::string_view error) {
-  return prepared_runtime_error_is_manifest_abi_mismatch(error)
-             ? "Use matching PyNEAT/framework and NEAT runtime plugin builds. Check PYTHONPATH, "
-               "LD_LIBRARY_PATH, GST_PLUGIN_PATH, and installed pyneat/runtime artifacts."
-             : "Ensure prepared stage generation is enabled for cast/processmla stages.";
 }
 
 struct StateChangeTask {
@@ -822,8 +756,38 @@ ExplicitBindingIndex validate_explicit_bindings_or_throw(
   return explicit_by_name;
 }
 
-static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char* where) {
-  const auto timing_start = pipeline_internal::build_timing_now();
+void throw_kernel_preparation_error(const simaai::scheduler::client::Error& failure,
+                                    const char* where, const std::string& pipeline_string) {
+  // Application factories used to execute directly at this cold boundary.
+  // Preserve their original exception type and message across Scheduler's
+  // result API; declared validation/provider errors still use NeatError below.
+  if (failure.application_exception)
+    std::rethrow_exception(failure.application_exception);
+  // Cold failures use the same canonical presentation as plugin bus errors.
+  // Do not collapse malformed requests and absent capabilities into graph shape.
+  pipeline_internal::RawGstError raw;
+  raw.factory_name = "neatkernelrunner";
+  raw.source_name = where ? where : "Graph::build";
+  raw.message = failure.field + ": " + failure.message;
+  raw.details = {{"neat-diagnostic-id", "neatkernelrunner.failure"},
+                 {"runtime-category", simaai::scheduler::client::error_code_name(failure.code)},
+                 {"runtime-phase", simaai::scheduler::client::error_phase_name(failure.phase)},
+                 {"runtime-field", failure.field}};
+  if (failure.kernel_code)
+    raw.details.emplace("kernel-code", std::to_string(static_cast<int>(*failure.kernel_code)));
+  if (!failure.rule_id.empty())
+    raw.details.emplace("kernel-rule", failure.rule_id);
+  if (failure.operation_index)
+    raw.details.emplace("operation-index", std::to_string(*failure.operation_index));
+  const auto diagnostic = pipeline_internal::classify_gst_error(std::move(raw));
+  session_build_throw_session_error_simple(
+      diagnostic.error_code,
+      pipeline_internal::render_diagnostic_body(
+          diagnostic, pipeline_internal::ux::should_emit_gstreamer_for_current_context()),
+      "", pipeline_string);
+}
+
+void prepare_stage_contracts(BuildResult& build, const char* where) {
   if (!build.manifest_diagnostics.errors.empty()) {
     std::ostringstream message;
     message << (where ? where : "Graph::build") << ": contract compilation failed";
@@ -833,6 +797,138 @@ static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char*
     session_build_throw_session_error_simple(
         error_codes::kPipelineShape, message.str(),
         "Supply the required input context and correct the reported stage contract.",
+        build.pipeline_string);
+  }
+  const auto& pipeline_string = build.pipeline_string;
+  using namespace simaai::neat::pipeline_internal::sima;
+  ManifestBuildDiagnostics manifest_diag;
+  // Helper: append captured compile/render diagnostics (collected by
+  // session_build_compile_contracts and stashed on build.manifest_diagnostics)
+  // to a wrapper failure message. The pipeline-shape throws below would
+  // otherwise discard the specific stage-level error string that explains
+  // *why* the rendered manifest came back empty or partial — historically
+  // surfacing as a generic "compiled manifest is missing" with no signal
+  // about which stage's compile or render call actually failed.
+  const auto append_compile_render_diagnostics = [&](std::string& msg) {
+    const auto& diag_errors = build.manifest_diagnostics.errors;
+    const auto& diag_warnings = build.manifest_diagnostics.warnings;
+    if (diag_errors.empty() && diag_warnings.empty()) {
+      return;
+    }
+    std::ostringstream oss;
+    oss << msg;
+    if (!diag_errors.empty()) {
+      oss << "\nCompile/render diagnostics (errors):";
+      for (const auto& e : diag_errors) {
+        oss << "\n  - " << e;
+      }
+    }
+    if (!diag_warnings.empty()) {
+      oss << "\nCompile/render diagnostics (warnings):";
+      for (const auto& w : diag_warnings) {
+        oss << "\n  - " << w;
+      }
+    }
+    msg = oss.str();
+  };
+  const bool has_compiled_stage_contracts =
+      build.compiled_contracts && !build.compiled_contracts->stages.empty();
+  if (has_compiled_stage_contracts && !build.rendered_manifest.has_value()) {
+    std::string msg = std::string(where ? where : "Graph::build") +
+                      ": compiled manifest is missing; semantic contracts were not rendered";
+    append_compile_render_diagnostics(msg);
+    session_build_throw_session_error_simple(
+        error_codes::kPipelineShape, msg,
+        "Compile and render stage contracts before pipeline parse/attach.", pipeline_string);
+  }
+  if (build.compiled_contracts && !build.compiled_contracts->fully_renderable) {
+    std::string msg = std::string(where ? where : "Graph::build") +
+                      ": compiled contracts are partial; resolver fallback is no longer supported";
+    append_compile_render_diagnostics(msg);
+    session_build_throw_session_error_simple(
+        error_codes::kPipelineShape, msg,
+        "Migrate every semantic stage to compiled-contract render before building the pipeline.",
+        pipeline_string);
+  }
+  std::optional<SimaPluginStaticManifest> transformed_manifest;
+  if (build.rendered_manifest.has_value()) {
+    transformed_manifest =
+        transform_manifest_stage_names(*build.rendered_manifest, build.name_transform);
+    validate_boxdecode_manifest_completeness(build, *transformed_manifest, &manifest_diag);
+  }
+
+  for (const auto& warning : manifest_diag.warnings) {
+    if (env_bool("SIMA_MANIFEST_DEBUG", false)) {
+      std::fprintf(stderr, "[DBG] %s: manifest warning: %s\n", where ? where : "Graph::build",
+                   warning.c_str());
+    }
+  }
+  if (!manifest_diag.errors.empty()) {
+    std::ostringstream oss;
+    oss << (where ? where : "Graph::build") << ": static manifest resolution failed:\n";
+    for (const auto& error : manifest_diag.errors) {
+      oss << "  - " << error << '\n';
+    }
+    std::string msg = oss.str();
+    append_compile_render_diagnostics(msg);
+    session_build_throw_session_error_simple(error_codes::kPipelineShape, msg,
+                                             "Fix manifest field ownership/precedence issues.",
+                                             pipeline_string);
+  }
+
+  if (transformed_manifest.has_value() && !transformed_manifest->stages.empty()) {
+    const auto pipeline_elements =
+        pipeline_internal::sima::parse_pipeline_elements(pipeline_string);
+    // Core owns semantic lowering and metadata policy. Scheduler receives only
+    // checked canonical operations and carrier routes, never legacy CVU config.
+    if (auto failure = pipeline_internal::sima::prepare_kernel_stage_recipes(
+            &*transformed_manifest, build.rendered_manifest, pipeline_elements,
+            build.model_source_paths, build.name_transform)) {
+      throw_kernel_preparation_error(*failure, where, pipeline_string);
+    }
+    const bool terminal_observer = env_bool("SIMA_GST_FLOW_DEBUG", false) ||
+                                   env_bool("SIMA_GST_BOUNDARY_PROBES", false) ||
+                                   env_bool("SIMA_GST_DETESS_INPUT_DEBUG", false) ||
+                                   env_bool("SIMA_GST_DETESS_OUTPUT_DEBUG", false) ||
+                                   env_bool("SIMA_GST_APPSINK_BUFFER_DEBUG", false) ||
+                                   env_bool("SIMA_GST_ALL_BUFFER_DEBUG", false) ||
+                                   env_bool("SIMA_GST_BOXDECODE_BUFFER_DEBUG", false) ||
+                                   !env_str("SIMA_GST_ELEMENT_BUFFER_DEBUG", "").empty();
+    // This candidate comes from the typed public endpoint. Scheduler proves
+    // the actual stopped stage-to-appsink edge during cohort admission.
+    auto terminal_host = build.terminal_host_endpoint;
+    if (terminal_observer)
+      terminal_host.reset();
+    else if (terminal_host && !terminal_host->terminal_stage_key.empty())
+      terminal_host->terminal_stage_key =
+          apply_name_transform(build.name_transform, terminal_host->terminal_stage_key);
+    pipeline_internal::sima::finalize_pipeline_storage(*transformed_manifest,
+                                                       terminal_host ? &*terminal_host : nullptr);
+    if (build.compiled_contracts)
+      build.compiled_contracts->model_storage_scopes.reset();
+    if (build.rendered_manifest)
+      build.rendered_manifest->model_storage_scopes.reset();
+    if (auto failure = pipeline_internal::sima::finalize_stage_publications(&*transformed_manifest))
+      throw_kernel_preparation_error(*failure, where, pipeline_string);
+    const SimaPluginStaticManifest& manifest = *transformed_manifest;
+    dump_mla_contract_debug(manifest, where);
+    if (env_bool("SIMA_MANIFEST_DEBUG", false)) {
+      const std::string manifest_json = serialize_manifest_json(manifest);
+      std::fprintf(stderr, "[DBG] %s: manifest=%s\n", where ? where : "Graph::build",
+                   manifest_json.c_str());
+    }
+  }
+
+  build.prepared_manifest = std::move(transformed_manifest);
+}
+
+static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char* where) {
+  const auto timing_start = pipeline_internal::build_timing_now();
+  if (build.rendered_manifest && !build.prepared_manifest) {
+    session_build_throw_session_error_simple(
+        error_codes::kPipelineShape,
+        std::string(where ? where : "Graph::build") + ": stage contracts were not prepared",
+        "Prepare checked recipes and final storage before pipeline admission.",
         build.pipeline_string);
   }
   const auto& pipeline_string = build.pipeline_string;
@@ -925,284 +1021,51 @@ static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char*
     }
   }
 
-  // Most native stages receive their compiled manifest below. A65 instead
-  // consumes one self-contained property. Set it on this new pipeline instance
-  // from the same per-build contract, not the original descriptive fragment's
-  // full-model arena encoding. No shared Node/Model state is modified.
-  if (build.compiled_contracts) {
-    const auto configure_transport = [&](const auto& self,
-                                         const CompiledNodeContract& stage) -> void {
-      for (const auto& child : stage.child_stages) {
-        self(self, child);
-      }
-      if (!stage.transport || stage.transport->direct_contract_b64.empty()) {
-        return;
-      }
-      const auto name = apply_name_transform(build.name_transform, stage.element_name);
-      GstElement* element = gst_bin_get_by_name(GST_BIN(pipeline), name.c_str());
-      GParamSpec* property =
-          element ? g_object_class_find_property(G_OBJECT_GET_CLASS(element), "direct-contract-b64")
-                  : nullptr;
-      const bool valid = element && stage.transport->plugin_kind == "neatprocesstvm" && property &&
-                         G_PARAM_SPEC_VALUE_TYPE(property) == G_TYPE_STRING &&
-                         (property->flags & G_PARAM_WRITABLE) != 0U;
-      if (valid) {
-        g_object_set(element, "direct-contract-b64", stage.transport->direct_contract_b64.c_str(),
-                     nullptr);
-      }
-      if (element) {
-        gst_object_unref(element);
-      }
-      if (!valid) {
-        session_build_throw_session_error_simple(
-            error_codes::kPipelineShape,
-            "Cannot attach compiled direct TVM contract to element '" + name + "'",
-            "Install matching Core and Internals; each compiled A65 stage needs its exact element.",
-            pipeline_string);
-      }
-    };
-    for (const auto& stage : build.compiled_contracts->stages) {
-      configure_transport(configure_transport, stage);
-    }
-  }
-
   // ParsedLaunch retains ownership through every cold construction step.
   session_test::maybe_throw_composition_failure_for_test(
       session_test::CompositionFailurePoint::PipelineBeforeManifest);
 
-  using namespace simaai::neat::pipeline_internal::sima;
-  ManifestBuildDiagnostics manifest_diag;
-  // Helper: append captured compile/render diagnostics (collected by
-  // session_build_compile_contracts and stashed on build.manifest_diagnostics)
-  // to a wrapper failure message. The pipeline-shape throws below would
-  // otherwise discard the specific stage-level error string that explains
-  // *why* the rendered manifest came back empty or partial — historically
-  // surfacing as a generic "compiled manifest is missing" with no signal
-  // about which stage's compile or render call actually failed.
-  const auto append_compile_render_diagnostics = [&](std::string& msg) {
-    const auto& diag_errors = build.manifest_diagnostics.errors;
-    const auto& diag_warnings = build.manifest_diagnostics.warnings;
-    if (diag_errors.empty() && diag_warnings.empty()) {
-      return;
-    }
-    std::ostringstream oss;
-    oss << msg;
-    if (!diag_errors.empty()) {
-      oss << "\nCompile/render diagnostics (errors):";
-      for (const auto& e : diag_errors) {
-        oss << "\n  - " << e;
-      }
-    }
-    if (!diag_warnings.empty()) {
-      oss << "\nCompile/render diagnostics (warnings):";
-      for (const auto& w : diag_warnings) {
-        oss << "\n  - " << w;
-      }
-    }
-    msg = oss.str();
-  };
-  const bool has_compiled_stage_contracts =
-      build.compiled_contracts && !build.compiled_contracts->stages.empty();
-  if (has_compiled_stage_contracts && !build.rendered_manifest.has_value()) {
-    std::string msg = std::string(where ? where : "Graph::build") +
-                      ": compiled manifest is missing; semantic contracts were not rendered";
-    append_compile_render_diagnostics(msg);
-    session_build_throw_session_error_simple(
-        error_codes::kPipelineShape, msg,
-        "Compile and render stage contracts before pipeline parse/attach.", pipeline_string);
-  }
-  if (build.compiled_contracts && !build.compiled_contracts->fully_renderable) {
-    std::string msg = std::string(where ? where : "Graph::build") +
-                      ": compiled contracts are partial; resolver fallback is no longer supported";
-    append_compile_render_diagnostics(msg);
-    session_build_throw_session_error_simple(
-        error_codes::kPipelineShape, msg,
-        "Migrate every semantic stage to compiled-contract render before building the pipeline.",
-        pipeline_string);
-  }
-  const auto throw_kernel_preparation_error = [&](const simaai::scheduler::client::Error& failure) {
-    // Application factories used to execute directly at this cold boundary.
-    // Preserve their original exception type and message across Scheduler's
-    // result API; declared validation/provider errors still use NeatError below.
-    if (failure.application_exception)
-      std::rethrow_exception(failure.application_exception);
-    // Cold failures use the same canonical presentation as plugin bus errors.
-    // Do not collapse malformed requests and absent capabilities into graph shape.
-    pipeline_internal::RawGstError raw;
-    raw.factory_name = "neatkernelrunner";
-    raw.source_name = where ? where : "Graph::build";
-    raw.message = failure.field + ": " + failure.message;
-    raw.details = {{"neat-diagnostic-id", "neatkernelrunner.failure"},
-                   {"runtime-category", simaai::scheduler::client::error_code_name(failure.code)},
-                   {"runtime-phase", simaai::scheduler::client::error_phase_name(failure.phase)},
-                   {"runtime-field", failure.field}};
-    if (failure.kernel_code)
-      raw.details.emplace("kernel-code", std::to_string(static_cast<int>(*failure.kernel_code)));
-    if (!failure.rule_id.empty())
-      raw.details.emplace("kernel-rule", failure.rule_id);
-    if (failure.operation_index)
-      raw.details.emplace("operation-index", std::to_string(*failure.operation_index));
-    const auto diagnostic = pipeline_internal::classify_gst_error(std::move(raw));
-    session_build_throw_session_error_simple(
-        diagnostic.error_code,
-        pipeline_internal::render_diagnostic_body(
-            diagnostic, pipeline_internal::ux::should_emit_gstreamer_for_current_context()),
-        "", pipeline_string);
-  };
-  std::optional<SimaPluginStaticManifest> transformed_manifest;
-  if (build.rendered_manifest.has_value()) {
-    transformed_manifest =
-        transform_manifest_stage_names(*build.rendered_manifest, build.name_transform);
-    validate_boxdecode_manifest_completeness(build, *transformed_manifest, &manifest_diag);
+  const auto& transformed_manifest = build.prepared_manifest;
+
+  if (build.diag) {
+    auto plan = std::make_shared<pipeline_internal::SegmentBuildPlan>();
+    plan->node_reports = build.diag->node_reports;
+    // Final stage names already match their pipeline elements.
+    plan->rendered_manifest = transformed_manifest;
+    build.diag->build_plan = std::move(plan);
   }
 
-  for (const auto& warning : manifest_diag.warnings) {
-    if (env_bool("SIMA_MANIFEST_DEBUG", false)) {
-      std::fprintf(stderr, "[DBG] %s: manifest warning: %s\n", where ? where : "Graph::build",
-                   warning.c_str());
-    }
-  }
-  if (!manifest_diag.errors.empty()) {
-    std::ostringstream oss;
-    oss << (where ? where : "Graph::build") << ": static manifest resolution failed:\n";
-    for (const auto& error : manifest_diag.errors) {
-      oss << "  - " << error << '\n';
-    }
-    std::string msg = oss.str();
-    append_compile_render_diagnostics(msg);
-    session_build_throw_session_error_simple(error_codes::kPipelineShape, msg,
-                                             "Fix manifest field ownership/precedence issues.",
-                                             pipeline_string);
-  }
-
-  if (transformed_manifest.has_value() && !transformed_manifest->stages.empty()) {
-    const auto pipeline_elements =
-        pipeline_internal::sima::parse_pipeline_elements(pipeline_string);
-    // Core owns semantic lowering and metadata policy. Scheduler receives only
-    // checked canonical operations and carrier routes, never legacy CVU config.
-    if (auto failure = pipeline_internal::sima::prepare_kernel_stage_recipes(
-            &*transformed_manifest, build.rendered_manifest, pipeline_elements,
-            build.model_source_paths, build.name_transform)) {
-      throw_kernel_preparation_error(*failure);
-    }
-    // Only the typed public endpoint can refine Core's fresh default arena.
-    // Prove the actual stopped direct edge before authoring a required domain.
-    // This pipeline is still owned by Core construction. Later Core timing
-    // probes inspect scalar metadata only; they retain no payload and perform
-    // no device/export access. Payload/debug observers below keep DMA placement.
-    // Scheduler independently rejects pre-existing unknown pad probes.
-    const bool terminal_observer = env_bool("SIMA_GST_FLOW_DEBUG", false) ||
-                                   env_bool("SIMA_GST_BOUNDARY_PROBES", false) ||
-                                   env_bool("SIMA_GST_DETESS_INPUT_DEBUG", false) ||
-                                   env_bool("SIMA_GST_DETESS_OUTPUT_DEBUG", false) ||
-                                   env_bool("SIMA_GST_APPSINK_BUFFER_DEBUG", false) ||
-                                   env_bool("SIMA_GST_ALL_BUFFER_DEBUG", false) ||
-                                   env_bool("SIMA_GST_BOXDECODE_BUFFER_DEBUG", false) ||
-                                   !env_str("SIMA_GST_ELEMENT_BUFFER_DEBUG", "").empty();
-    if (!build.terminal_host_stage_key.empty() && !terminal_observer) {
-      const auto key = apply_name_transform(build.name_transform, build.terminal_host_stage_key);
-      for (auto& stage : transformed_manifest->stages) {
-        if (stage.element_name != key && stage.logical_stage_id != key)
-          continue;
-        auto* element = gst_bin_get_by_name(GST_BIN(pipeline), stage.element_name.c_str());
-        auto* sink = gst_bin_get_by_name(GST_BIN(pipeline), build.appsink_name.c_str());
-        if (pipeline_internal::sima::terminal_host_arena_eligible(stage, *transformed_manifest) &&
-            pipeline_internal::sima::terminal_host_direct_peer(pipeline, element, sink)) {
-          stage.frame_arena_storage_domain =
-              pipeline_internal::sima::static_contract::ArenaStorageDomain::HostCpu;
-          stage.frame_arena_escape_policy =
-              pipeline_internal::sima::static_contract::ArenaEscapePolicy::CpuOnlyPublic;
-        }
-        if (element)
-          gst_object_unref(element);
-        if (sink)
-          gst_object_unref(sink);
-      }
-    }
-    const SimaPluginStaticManifest& manifest = *transformed_manifest;
-    // Validate the C++ bridge boundary before constructing any object across
-    // it.  A late check cannot protect move-assignment/destruction when the two
-    // sides were built from different prepared-runtime layouts.
-    if (std::string abi_error = validate_prepared_runtime_bridge_abi(); !abi_error.empty()) {
-      session_build_throw_session_error_simple(
-          error_codes::kPipelineShape,
-          std::string(where ? where : "Graph::build") +
-              ": failed to attach sima prepared runtime context: " + abi_error,
-          "Use a libneatpreparedruntimebridge.so built from the same source/runtime package as "
-          "libsima_neat.so.",
-          pipeline_string);
-    }
-    dump_mla_contract_debug(manifest, where);
-    if (env_bool("SIMA_MANIFEST_DEBUG", false)) {
-      const std::string manifest_json = serialize_manifest_json(manifest);
-      std::fprintf(stderr, "[DBG] %s: manifest=%s\n", where ? where : "Graph::build",
-                   manifest_json.c_str());
-    }
-    std::string attach_error;
-    if (!attach_manifest_context(pipeline, manifest, &attach_error)) {
-      session_build_throw_session_error_simple(
-          error_codes::kPipelineShape,
-          std::string(where ? where : "Graph::build") +
-              ": failed to attach sima static manifest context: " + attach_error,
-          "Ensure stage contract injection is enabled.", pipeline_string);
-    }
-
-    std::string prepared_error;
-    const std::unique_ptr<GstContext, decltype(&gst_context_unref)> static_manifest_context(
-        gst_element_get_context(pipeline, SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE),
-        &gst_context_unref);
-    session_test::maybe_throw_composition_failure_for_test(
-        session_test::CompositionFailurePoint::PipelineStaticManifestAcquired);
-    auto prepared_runtime = build_prepared_runtime_context(
-        static_manifest_context.get(), manifest, build.rendered_manifest, pipeline_elements,
-        build.model_source_paths, build.name_transform, &prepared_error);
-    if (!prepared_runtime.has_value()) {
-      session_build_throw_session_error_simple(
-          prepared_runtime_error_code(prepared_error),
-          std::string(where ? where : "Graph::build") +
-              ": failed to build sima prepared runtime context: " + prepared_error,
-          prepared_runtime_failure_hint(prepared_error), pipeline_string);
-    }
-    std::string attach_prepared_error;
-    if (!simaai::neat::attach_prepared_runtime_context(pipeline, std::move(*prepared_runtime),
-                                                       &attach_prepared_error)) {
-      session_build_throw_session_error_simple(
-          error_codes::kPipelineShape,
-          std::string(where ? where : "Graph::build") +
-              ": failed to attach sima prepared runtime context: " + attach_prepared_error,
-          "Ensure prepared stage context injection is enabled.", pipeline_string);
-    }
-  }
-
-  std::vector<pipeline_internal::sima::KernelRunnerStageRequest> requests;
+  std::vector<pipeline_internal::sima::SchedulerStageRequest> requests;
   if (transformed_manifest) {
     for (const auto& stage : transformed_manifest->stages) {
-      if (!stage.native_kernel)
+      if (!stage.frame_layout)
         continue;
-      const auto& key =
-          stage.logical_stage_id.empty() ? stage.element_name : stage.logical_stage_id;
       auto resolved_budget = pipeline_internal::sima::kernel_runner_stage_budget(
           stage.native_execution_capacity, build.kernel_runner_capacity,
           build.kernel_runner_output_pool_capacity);
       if (const auto* failure = std::get_if<::simaai::scheduler::client::Error>(&resolved_budget)) {
-        throw_kernel_preparation_error(*failure);
+        throw_kernel_preparation_error(*failure, where, pipeline_string);
       }
       const auto budget = std::get<pipeline_internal::sima::KernelRunnerBudget>(resolved_budget);
       requests.push_back(
-          {stage.element_name, key, budget.execution_capacity, budget.output_pool_capacity,
+          {stage.element_name, budget.execution_capacity, budget.output_pool_capacity,
            build.kernel_runner_compact ? std::string_view(build.appsink_name) : std::string_view{},
            &stage,
-           stage.frame_arena_storage_domain ==
-                   pipeline_internal::sima::static_contract::ArenaStorageDomain::HostCpu
+           std::any_of(stage.frame_layout->allocations.begin(),
+                       stage.frame_layout->allocations.end(),
+                       [](const auto& allocation) {
+                         return allocation.policy ==
+                                ::simaai::scheduler::client::AllocationPolicy::RequireHostCpu;
+                       })
                ? std::string_view(build.appsink_name)
                : std::string_view{}});
     }
   }
   // Even an empty cohort is checked: a custom rendered runner without a
   // corresponding typed stage must fail during construction, not at READY.
-  if (auto failure = pipeline_internal::sima::prepare_and_attach_kernel_runners(
+  if (auto failure = pipeline_internal::sima::prepare_and_attach_stages(
           pipeline, requests, build.kernel_runner_a65_workers)) {
-    throw_kernel_preparation_error(*failure);
+    throw_kernel_preparation_error(*failure, where, pipeline_string);
   }
 
   session_test::maybe_throw_composition_failure_for_test(
@@ -1210,7 +1073,7 @@ static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char*
   pipeline_internal::emit_build_timing(
       "parse_pipeline_or_throw",
       {{"gst_parse_launch", gst_parse_us},
-       {"manifest_context", pipeline_internal::build_timing_us(timing_start) - gst_parse_us},
+       {"stage_preparation", pipeline_internal::build_timing_us(timing_start) - gst_parse_us},
        {"total", pipeline_internal::build_timing_us(timing_start)}},
       std::string("where=") + (where ? where : "Graph::build") +
           " pipeline_chars=" + std::to_string(pipeline_string.size()));
@@ -2807,19 +2670,12 @@ static void attach_encoded_caps_fixups(GstElement* pipeline,
 
 } // namespace
 
-GstElement* session_build_parse_pipeline_or_throw(const BuildResult& build, const char* where) {
-  return parse_pipeline_or_throw(build, where);
+void session_build_prepare_stage_contracts(BuildResult& build, const char* where) {
+  prepare_stage_contracts(build, where);
 }
 
-void session_build_record_segment_plan(const BuildResult& build) {
-  if (!build.diag) {
-    return;
-  }
-  auto plan = std::make_shared<pipeline_internal::SegmentBuildPlan>();
-  plan->name_transform = build.name_transform;
-  plan->node_reports = build.diag->node_reports;
-  plan->rendered_manifest = build.rendered_manifest;
-  build.diag->build_plan = std::move(plan);
+GstElement* session_build_parse_pipeline_or_throw(const BuildResult& build, const char* where) {
+  return parse_pipeline_or_throw(build, where);
 }
 
 void session_build_validate_explicit_launch_names_or_throw(

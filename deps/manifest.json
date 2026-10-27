@@ -1,7 +1,6 @@
 {
   "scheduler": {
-    "ref": "develop",
-    "spec": "latest"
+    "policy": "snap"
   },
   "llima": {
     "policy": "snap"

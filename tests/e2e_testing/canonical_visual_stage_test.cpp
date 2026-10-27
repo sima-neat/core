@@ -158,60 +158,29 @@ std::vector<Bytes> reference(const Fixture& f) {
   return expected;
 }
 struct Placement {
-  SimaPluginStageSpec stage{};
-  std::vector<SimaPluginLogicalInput> logical;
-  std::vector<SimaPluginInputBinding> bindings;
-  std::vector<SimaPluginPhysicalBuffer> inputs, outputs;
+  std::shared_ptr<gs::FrameLayout> layout = std::make_shared<gs::FrameLayout>();
   std::vector<std::size_t> input_offsets, output_offsets;
-  explicit Placement(const Fixture& f, bool tight_outputs)
-      : logical(f.inputs.size()), bindings(f.inputs.size()), inputs(f.inputs.size()),
-        outputs(f.outputs.size()) {
-    stage.frame_arena_size_bytes = 4096;
-    stage.frame_arena_role = SIMA_PLUGIN_FRAME_ARENA_ALLOCATE;
-    stage.frame_arena_storage_domain = SIMA_PLUGIN_FRAME_ARENA_STORAGE_CMA;
-    stage.frame_arena_provenance = SIMA_PLUGIN_FRAME_ARENA_PROVENANCE_CORE_ALLOCATED;
-    stage.frame_arena_required_device_access = SIMA_PLUGIN_FRAME_ARENA_ACCESS_EV74;
+  explicit Placement(const Fixture& f, bool tight_outputs) {
+    layout->allocations.push_back({4096, gs::kAccessEv74, gs::AllocationPolicy::RequireCma});
     std::size_t offset = 64;
-    for (std::size_t i = 0; i < inputs.size(); ++i) {
-      logical[i].logical_index = logical[i].backend_input_index = logical[i].physical_index = i;
-      auto& binding = bindings[i];
-      binding.local_logical_input_index = i;
-      binding.sink_pad_index = 0;
-      binding.required = TRUE;
-      binding.src_stage_index = binding.src_logical_output_index =
-          binding.src_physical_output_index = binding.src_output_slot = -1;
-      auto& p = inputs[i];
-      p.physical_index = i;
-      p.size_bytes = bytes(f.inputs[i]);
-      p.source_byte_offset = offset;
-      p.address_source = SIMA_PLUGIN_PHYSICAL_ADDRESS_FRAME_ARENA_SPAN;
-      p.required_alignment_bytes = 64;
+    for (const auto& input : f.inputs) {
       input_offsets.push_back(offset);
-      offset += (p.size_bytes + 127) / 64 * 64;
+      layout->inputs.push_back({gs::DirectMemory{0, 0, offset, bytes(input)}, 0});
+      offset += (bytes(input) + 127) / 64 * 64;
     }
     offset = 128;
-    for (std::size_t i = 0; i < outputs.size(); ++i) {
-      auto& p = outputs[i];
-      p.physical_index = i;
-      p.size_bytes = bytes(f.outputs[i]);
-      p.source_byte_offset = offset;
-      p.required_alignment_bytes = tight_outputs ? 4 : 64;
+    for (std::size_t i = 0; i < f.outputs.size(); ++i) {
       output_offsets.push_back(offset);
-      offset += tight_outputs ? p.size_bytes : (p.size_bytes + 127) / 64 * 64;
+      layout->outputs.push_back({i, {0, offset, bytes(f.outputs[i])}});
+      offset += tight_outputs ? bytes(f.outputs[i]) : (bytes(f.outputs[i]) + 127) / 64 * 64;
     }
     require(offset < 4096, "test output arena overflow");
-    stage.logical_inputs = logical.data();
-    stage.logical_inputs_len = logical.size();
-    stage.input_bindings = bindings.data();
-    stage.input_bindings_len = bindings.size();
-    stage.physical_inputs = inputs.data();
-    stage.physical_inputs_len = inputs.size();
-    stage.physical_outputs = outputs.data();
-    stage.physical_outputs_len = outputs.size();
   }
 };
-gs::TensorStageRequest prepared(const Fixture& f) {
-  gs::TensorStageRequest request;
+gs::StageRequest prepared(const Fixture& f, const Placement& storage) {
+  gs::StageRequest request;
+  request.layout = storage.layout;
+  gs::KernelProgram program;
   core::StageStaticSpec semantic;
   auto& c = semantic.processcvu;
   c.graph_name = f.name;
@@ -243,29 +212,31 @@ gs::TensorStageRequest prepared(const Fixture& f) {
   auto publication = std::make_shared<tr::TensorBufferPublishContract>();
   auto& pub = *publication;
   pub.stage_key = f.name;
+  pub.physical_outputs.push_back({0, 4096, "arena"});
   for (std::size_t i = 0; i < f.outputs.size(); ++i) {
     auto name = "result" + std::to_string(i);
-    pub.physical_outputs.push_back({int(i), bytes(f.outputs[i]), name});
     tr::TensorBufferPublishLogicalOutput tensor;
     tensor.logical_index = 20 + i;
-    tensor.physical_index = i;
-    tensor.memory_index = i;
+    tensor.physical_index = tensor.memory_index = 0;
+    tensor.byte_offset = storage.output_offsets[i];
     tensor.backend_output_index = i;
     tensor.route_slot = i;
-    tensor.logical_name = tensor.backend_name = tensor.segment_name = name;
+    tensor.logical_name = tensor.backend_name = name;
+    tensor.segment_name = "arena";
     tensor.size_bytes = bytes(f.outputs[i]);
     tensor.dtype = f.outputs[i].dtype == rt::DType::Float32 ? SIMA_TENSOR_SET_DTYPE_FP32_V1
                                                             : SIMA_TENSOR_SET_DTYPE_INT32_V1;
     tensor.shape.assign(f.outputs[i].shape.begin(), f.outputs[i].shape.end());
     pub.logical_outputs.push_back(tensor);
-    pub.output_order.push_back({int(i), tensor.logical_index, name, name});
+    pub.output_order.push_back({int(i), tensor.logical_index, name, "arena"});
   }
   auto recipe = take(lower::check_visual_stage(semantic));
   require(recipe->members.size() == (f.graph == 238 && f.detect ? 2U : 1U),
           "visual numerical member count changed");
-  request.target = recipe->target;
-  request.members = recipe->members;
-  request.constant_data = recipe->constant_data;
+  program.target = recipe->target;
+  program.members = recipe->members;
+  program.constant_data = recipe->constant_data;
+  request.program = std::move(program);
   request.publication.contract = std::move(publication);
   request.publication.output_name = "result0";
   request.publication.input_caps = std::shared_ptr<GstCaps>(
@@ -311,10 +282,9 @@ void run(const Fixture& f, bool tight_outputs = false) {
   std::cout << "START visual " << f.name << " detect=" << f.detect << std::endl;
   const auto expected = reference(f);
   std::cout << "BRIDGE prepare " << f.name << std::endl;
-  auto config = prepared(f);
   auto locations = std::make_shared<Placement>(f, tight_outputs);
+  auto config = prepared(f, *locations);
   config.options.capacity = 2;
-  config.placement = std::shared_ptr<const SimaPluginStageSpec>(locations, &locations->stage);
   dma::Error error;
   test::GstBufferOwner input(dma::allocateDmaBufBuffer(dma::HeapKind::Cma, 4096, {}, &error));
   require(bool(input), error.message().c_str());
@@ -370,7 +340,7 @@ void run(const Fixture& f, bool tight_outputs = false) {
   gst_object_ref(element);
   require(gst_bin_add(GST_BIN(pipeline), element), "add numerical element");
   const std::array attachments{gs::StageAttachment{element, std::move(config)}};
-  okay(gs::prepare_and_attach_tensor_stages(pipeline, attachments));
+  okay(gs::prepare_and_attach_stages(pipeline, attachments));
   g_object_set_data(G_OBJECT(collector), "sink", &sink);
   gst_pad_set_chain_function(collector, collect);
   gst_pad_set_event_function(collector, event);

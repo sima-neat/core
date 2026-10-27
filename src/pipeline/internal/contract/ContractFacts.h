@@ -48,6 +48,7 @@ inline const std::vector<std::string>& default_preprocess_meta_required_fields()
 struct ContractCompileInput {
   std::string pipeline_label;
   int node_index = 0;
+  std::size_t node_occurrence_index = 0;
   // Optional render-time node indices for pipelines whose launch fragments are
   // materialized with non-local indices (for example fused branches embedded
   // after a shared consumer segment). When set, each entry maps the logical
