@@ -7,7 +7,7 @@ sidebar_position: 3
 
 Release notes for the SiMa.ai Neat Library.
 
-## Unreleased
+## 0.6.0
 
 ### Breaking changes
 
@@ -20,14 +20,13 @@ Release notes for the SiMa.ai Neat Library.
 - The Neat Library C++ ABI is now 6 and the shared-library SONAME is `libsima_neat.so.6`. Tensors now carry feature-extractor semantic metadata, public GenAI request/result types carry ASR task, language, and probe metadata, `GraphLinkOptions` contains realtime admission limits, and `BenchmarkOptions` and `BenchmarkReport` gained fields. Rebuild C++ applications and plugins and install matching Core runtime and development packages. `SimaArgMaxOptions` gained `axis` and `keepdims`, and the `SimaArgMax` class layout also changed.
 - Realtime graph composition now uses `GraphLinkOptions`, `Graph::connect()`, and `Graph::build()`. The preview `RealtimeGraphLinkOptions`, `connect_realtime()`, `build_fused_realtime_sources()` / `build_fused_realtime_source()`, and `RealtimeEveryFrameByStream` APIs were removed. Saved graphs containing `realtime_every_frame_by_stream` must be recreated with a supported policy; see [Connect live fragments](/develop-apps/development-workflow/graph/#connect-live-fragments).
 
-- The unreleased package version remains **0.6.0**. `Model::Options` and
+- The package version is **0.6.0**. `Model::Options` and
   `BoxDecodeOptions` now carry `yolox_seg_pose.pose_classes`; these public layout
   additions require ABI 6 consumers. Do not use ABI compatibility symlinks.
-  Preview releases can also change public types such as `GraphOptions`, which
-  now includes `kernel_runner_a65_workers`. Rebuild applications, plugins and
-  Python extensions against the matching runtime and development packages when
-  updating a 0.6.0 preview. Do not mix binaries from different previews merely
-  because both use ABI 6.
+  `GraphOptions` now includes `kernel_runner_a65_workers`. Rebuild applications,
+  plugins and Python extensions against the matching runtime and development
+  packages when updating to 0.6.0. Do not mix preview binaries with release
+  packages merely because both use ABI 6.
 
 ### Runtime changes
 
@@ -131,6 +130,8 @@ Release notes for the SiMa.ai Neat Library.
 
 | Release | Compatible Neat SDK | Notes |
 | --- | --- | --- |
+| 0.6.0 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
+| 0.5.0 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |
 | 0.4.0 | 2.1.3.0 | [Neat Library 0.4.0](https://github.com/sima-neat/core/releases/tag/v0.4.0) |
 | 0.3.0 | 2.1.2.3 | [Neat Library 0.3.0](https://github.com/sima-neat/core/releases/tag/v0.3.0) |
 | 0.2.2 | 2.1.2.2 | [Neat Library 0.2.2](https://github.com/sima-neat/core/releases/tag/v0.2.2) |

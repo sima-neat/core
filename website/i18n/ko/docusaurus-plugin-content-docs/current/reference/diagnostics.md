@@ -172,24 +172,10 @@ Platform 3.0.0에서 사용할 수 없는 디스패처는 조사해야 할 오�
 
 드라이버가 완료 여부를 알 수 없다고 보고하면 DMA 버퍼와 원래 풀 대여를 유지해야 합니다. 파일 디스크립터를 닫거나 앱을 중지하거나 서비스를 다시 시작해도 하드웨어가 메모리 접근을 멈췄다는 증거가 되지 않습니다. 오류 보고서를 수집하고 다시 시도하기 전에 플랫폼에서 승인한 복구 절차를 사용합니다.
 
-### Core와 Internals 버전 맞추기
+### Core 및 Scheduler 패키지 일치 유지 {#keep-core-and-scheduler-packages-matched}
 
-호환되는 B1157 Internals 패키지로 Core를 빌드하고 설치합니다. Core는 공개 C++ ABI 버전과 별도로 런타임 프로파일, 커널 소스 리비전, SDK sysroot 증명 기록을 확인합니다. 같은 공개 ABI를 가진 이전 패키지도 호환되는 대체품이 아닙니다.
+해당 Core 릴리스용으로 선택된 Scheduler 패키지 세트와 함께 Core를 설치하십시오. Scheduler가 일치하는 Runner, Kernels, Codecs 및 펌웨어 종속성을 관리합니다. 공개 C++ ABI가 같다는 것만으로 런타임 호환성이 보장되지는 않습니다.
 
-설치 프로그램은 패키지를 바꾸기 전에 번들된 `neat-runtime` 프로파일과 호환되는 `neat-gst-plugins` 버전을 확인합니다. 플랫폼 검사 재정의는 런타임 버전 일치 검사를 우회하지 않습니다. 검사에 실패하면 호환되는 번들을 구해야 하며 기록을 교체하거나 이전 런타임을 강제로 설치하지 않습니다.
+`build.sh`가 선택하는 게시된 종속성을 사용하거나 `--scheduler PATH`로 일치하는 전체 Scheduler DEB 세트를 지정하십시오. [로컬 종속성](/develop-apps/contribute/build-test/local-dependencies/)을 참조하십시오.
 
-보드에 설치하기 전에 CVU나 하드웨어 코덱을 사용하는 앱을 중지합니다. 전체 설치 프로그램은 모든 패키지를 설치한 뒤 준비된 EV74 펌웨어를 활성화하며 해당 장치가 열려 있으면 EV74 재설정을 거부합니다. `NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=OFF`로 설정하면 펌웨어를 준비 상태로 유지하고 나중에 `sudo /usr/libexec/sima-neat-firmware/install.sh --activate`로 활성화할 수 있습니다.
-
-설치 시 `FORCE_INSTALL=1`(또는 `sima-cli neat install core -f`)을 사용하고
-`NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=OFF`로 활성화를 미뤘다면,
-보드에서 수동으로 활성화할 때 재정의를 다시 전달해야 합니다. 설치 프로그램은
-이 설정을 저장하지 않습니다. CVU나 하드웨어 코덱을 사용하는 앱을 중지한 뒤 실행합니다.
-
-```bash
-sudo env FORCE_INSTALL=1 /usr/libexec/sima-neat-firmware/install.sh --activate
-```
-
-이 명령은 EV74 커널 빌드 호환성 검사 재정의를 요청하며, 이를 지원하는 펌웨어
-패키지가 필요합니다. 일치하지 않는 런타임은 안전하지 않을 수 있으며, 강제 활성화가
-호환성을 보장하지는 않습니다. 펌웨어 무결성, 소유권, DMA 안전성 검사는 계속
-적용됩니다. 가능한 한 서로 일치하는 펌웨어/커널 번들을 사용합니다.
+보드를 업데이트할 때는 [Neat Library 설치 또는 업데이트](/getting-started/neat-library/install-or-update/)에 따라 전체 Core 번들을 설치하십시오. 선택된 Scheduler 설치 프로그램이 패키지 세트를 검증하고 펌웨어 활성화를 관리합니다. 검증에 실패하면 일치하는 Core/Scheduler 번들을 구하십시오. 설치 기록을 바꾸거나 호환되지 않는 개별 런타임 또는 펌웨어 패키지를 강제로 설치하지 마십시오.

@@ -136,8 +136,8 @@ encoded sources later without redesign.
 field name or aggregate initialization keeps compiling.
 
 The binary layout of those public structs changed, so **already-built consumers must be
-rebuilt**. The current Neat ABI/SOVERSION is **6**; the package version remains
-**0.6.0** until release. Install matching headers, runtime libraries and Python bindings.
+rebuilt**. The current Neat ABI/SOVERSION is **6**; the package version is
+**%%release.core%%**. Install matching headers, runtime libraries and Python bindings.
 
 ## Adding another source later
 

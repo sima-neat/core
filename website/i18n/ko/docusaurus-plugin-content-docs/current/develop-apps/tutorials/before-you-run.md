@@ -23,7 +23,7 @@ PCIe 튜토리얼은 SDK 컨테이너 내부나 카드 자체에서 실행되는
 [Neat Library가 설치되었습니다.](/getting-started/neat-library/install-or-update/)인지 확인한 다음, 튜토리얼 번들을 적용하려는 디렉터리에서 다음 명령을 실행하세요.
 
 <ShellCommand prompt="sdk|devkit">
-sima-cli neat install core -t extras
+sima-cli neat install core@v%%release.core%% -t extras
 cd sima-neat-*-Linux-extras
 </ShellCommand>
 
@@ -43,14 +43,14 @@ python3 -c "import pyneat; print('pyneat ready')"
 **Ubuntu 22.04:**
 
 <ShellCommand prompt="pcie-host">
-sima-cli neat install core/pciehost/ubuntu22/amd64 -t extras
+sima-cli neat install core/pciehost/ubuntu22/amd64@v%%release.core%% -t extras
 cd sima-pcie-host-*-Linux-amd64-extras
 </ShellCommand>
 
 **Ubuntu 24.04:**
 
 <ShellCommand prompt="pcie-host">
-sima-cli neat install core/pciehost/ubuntu24/amd64 -t extras
+sima-cli neat install core/pciehost/ubuntu24/amd64@v%%release.core%% -t extras
 cd sima-pcie-host-*-Linux-amd64-extras
 </ShellCommand>
 

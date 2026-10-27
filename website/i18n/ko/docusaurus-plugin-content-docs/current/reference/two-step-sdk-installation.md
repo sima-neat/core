@@ -4,7 +4,7 @@ description: "SDK 2.0.0, 2.1.2 및 2.1.2.1 버전에 대한 기존의 2단계 �
 sidebar_position: 20
 ---
 
-이 참고 자료는 별도의 이미지 다운로드 및 설정 명령이 필요한 SDK 릴리스에만 적용됩니다. 이는 SDK 2.0.0, SDK 2.1.2.0 및 SDK 2.1.2.1에 해당합니다. 최신 SDK 릴리스는 [환경을 설치합니다.](/getting-started/dev-environment/install-the-environment/)에 설명된 간소화된 패키지 설치 방식을 사용합니다.
+이 참고 자료는 별도의 이미지 다운로드 및 설정 명령이 필요한 SDK 릴리스에만 적용됩니다. 이는 SDK 2.0.0, SDK 2.1.2.0 및 SDK 2.1.2.1에 해당합니다. 최신 SDK 릴리스는 [SDK 설치](/getting-started/dev-environment/install-the-environment/)에 설명된 간소화된 패키지 설치 방식을 사용합니다.
 
 기존 SDK 설치는 두 단계로 구성됩니다.
 

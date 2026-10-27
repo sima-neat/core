@@ -40,7 +40,7 @@ GenAI는 Runner나 Scheduler GenAI 어댑터를 거치지 않고 LLiMa를 직접
 
 Scheduler는 설치된 `gst/SimaaiGstErrors.h` 헤더를 포함해 GStreamer 전송 및 구조화된
 오류 인터페이스를 소유합니다. Core는 이를 사용하며 별도 구현을 유지하지 않습니다.
-미출시 Core `0.6.0`에는 이 파일 소유권 이전이 포함됩니다. 일치하는 Core/Scheduler
+Core `0.6.0`에는 이 파일 소유권 이전이 포함됩니다. 일치하는 Core/Scheduler
 패키지를 함께 업그레이드하십시오. 이 패키지 버전은 플랫폼이나 수치 계약을 변경하지 않습니다.
 
 ## 프레임워크 대 환경

@@ -1,6 +1,6 @@
 ---
 name: sima-neat
-description: Use this skill for SiMa Neat application work in C++ or Python on Modalix DevKit and Neat Development Environment/SDK, including build, runtime, and DevKit validation workflows.
+description: Use this skill for SiMa Neat application work in C++ or Python on Modalix DevKit and Neat SDK, including build, runtime, and DevKit validation workflows.
 metadata:
   short-description: SiMa Neat DevKit and SDK guidance
 ---

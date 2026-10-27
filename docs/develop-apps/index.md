@@ -111,10 +111,9 @@ SiMa.ai Neat handles the underlying hardware and runtime complexity.
 ## Describe your application. <span className="agentic-heading-highlight">An agent with Neat skills develops it.</span>
 
 SiMa.ai Neat supports agentic application development out of the box through
-skills included with the Neat Development Environment (referred to as Neat SDK). These skills give coding
-agents the context to use the public Python and C++ APIs, follow established
-application patterns, and work with the Modalix development and validation
-workflow.
+skills included with the Neat SDK. These skills give coding agents the context
+to use the public Python and C++ APIs, follow established application patterns,
+and work with the Modalix development and validation workflow.
 
 The recommended agentic path can create an application, run it on a paired
 Modalix DevKit, inspect results and diagnostics, and refine the implementation.

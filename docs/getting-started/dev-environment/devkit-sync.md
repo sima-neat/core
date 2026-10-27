@@ -10,10 +10,9 @@ prompts you for it. Use this page as a reference for how DevKit Sync works, or
 when you want to change the SDK pairing to a different DevKit later.
 :::
 
-DevKit Sync connects the Neat Development Environment (referred to as Neat SDK)
-with a Modalix DevKit on the same network. It exposes one shared workspace
-across the host, Neat SDK container, and DevKit, and it provides the `dk` helper
-for running SDK-built commands on hardware.
+DevKit Sync connects the Neat SDK with a Modalix DevKit on the same network. It
+exposes one shared workspace across the host, Neat SDK container, and DevKit,
+and it provides the `dk` helper for running SDK-built commands on hardware.
 
 ![Host-Container-DevKit workspace mapping](../../images/elxr-sdk-workspaces.svg)
 
@@ -32,7 +31,7 @@ sima-cli sdk setup --devkit {devkit-ip}
 
 During setup:
 
-- Select the installed `sdk:v2.1-latest` image if more than one SDK image is present.
+- Select the installed Neat SDK %%release.sdk%% image if more than one SDK image is present.
 - Accept the default `/workspace` DevKit mount path unless you need a different
   path.
 - Enter the host admin password when prompted for NFS server setup on the host.

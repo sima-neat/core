@@ -23,33 +23,13 @@ slug: /develop-apps/contribute/build
 
 ### Необхідні умови для перехресної компіляції.
 
-Перехресна компіляція зазвичай відбувається швидше, ніж безпосередня компіляція на DevKit, але після цього необхідно передати артефакти компіляції на DevKit. Для перехресної компіляції вам знадобиться Neat SDK.
-
-Спочатку встановіть `sima-cli` на хост-машині, а потім встановіть SDK.
+Використовуйте Neat SDK для перехресної компіляції. Виконайте [Встановлення SDK](/getting-started/dev-environment/install-the-environment/) на підтримуваному хості Ubuntu, Windows/WSL або macOS, а потім відкрийте оболонку SDK:
 
 ```bash
-curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
-sima-cli install sdk
+sima-cli sdk neat
 ```
 
-Коли `sima-cli` запропонує, оберіть опцію SDK.
-
-Потім запустіть SDK:
-
-```bash
-sima-cli sdk elxr
-```
-
-Потім встановіть `sima-cli` в межах SDK, а потім встановіть оновлення для SDK.
-
-```bash
-curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
-source ~/.bash_profile
-sima-cli install tools/sdk-patch
-```
-
-- Встановлення SDK підтримується на операційних системах Windows та Ubuntu.
-- Якщо ви розробляєте програмне забезпечення безпосередньо для Modalix DevKit, встановлення або оновлення SDK не потрібне.
+SDK містить набір інструментів і `sima-cli`. Скрипт Core `build.sh` готує відповідні залежності Scheduler та LLiMa; див. [Локальні залежності](/develop-apps/contribute/build-test/local-dependencies/). У підключеному SDK команда `./build.sh --install` також розгортає відповідні артефакти на DevKit. Для нативних збірок на DevKit SDK не потрібен.
 
 ## Параметри збірки
 

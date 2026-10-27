@@ -23,33 +23,13 @@ You can run the same `build.sh` commands in either environment.
 
 ### Cross Compilation Prerequisites
 
-Cross-compilation is typically faster than building directly on the DevKit, but you must transfer build artifacts to the DevKit afterward. You will need the Neat SDK for cross compilation.
-
-Install `sima-cli` first on the host machine, then install the SDK.
+Use the Neat SDK for cross-compilation. Follow [Install the SDK](/getting-started/dev-environment/install-the-environment/) to set it up on a supported Ubuntu, Windows/WSL, or macOS host, then open its shell:
 
 ```bash
-curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
-sima-cli install sdk
+sima-cli sdk neat
 ```
 
-When prompted by `sima-cli`, select the SDK option.
-
-Then start the SDK:
-
-```bash
-sima-cli sdk elxr
-```
-
-Then install `sima-cli` inside the SDK, then install the SDK patch.
-
-```bash
-curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
-source ~/.bash_profile
-sima-cli install tools/sdk-patch
-```
-
-- SDK installation is supported on Windows and Ubuntu.
-- If you are building natively on a Modalix DevKit, the SDK install/patch steps are not required.
+The SDK includes the toolchain and `sima-cli`. Core's `build.sh` prepares the matching Scheduler and LLiMa dependencies; see [Local dependencies](/develop-apps/contribute/build-test/local-dependencies/). In a paired SDK, `./build.sh --install` also deploys matching artifacts to the DevKit. Native DevKit builds do not require the SDK.
 
 ## Build Options
 

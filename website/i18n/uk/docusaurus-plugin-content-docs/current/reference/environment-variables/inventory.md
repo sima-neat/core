@@ -182,7 +182,7 @@ sidebar_position: 2
 - `SIMA_DECODER_COMPARE_MAX_ABS`
 - `SIMA_DECODER_COMPARE_PSNR_MIN`
 - `SIMA_DECODER_MIN_FRAMES`
-- `SIMA_DISPATCHER_AUTO_RECOVER`
+- `SIMA_DISPATCHER_AUTO_RECOVER` — застаріле налаштування лише для тестів; поточне середовище виконання його ігнорує.
 - `SIMA_DUMP_PIPELINE_ON_FAIL`
 - `SIMA_FILE_READ_TEST_ALARM_S`
 - `SIMA_FILE_READ_TEST_WATCHDOG_S`
@@ -302,7 +302,7 @@ sidebar_position: 2
 
 ## Список документації, орієнтованої на користувачів `SIMA_*` (`docs/reference/environment-variables/index.md`).
 
-Кількість: 61
+Кількість: 60
 
 - `SIMA_ALLOW_GST_INIT`
 - `SIMA_ASYNC_TPUT_DIAG`
@@ -312,7 +312,6 @@ sidebar_position: 2
 - `SIMA_DEBUG_PROFILE`
 - `SIMA_DETESS_ASSERT_ON_ZERO`
 - `SIMA_DISABLE_SYNC_NUMBUFFERS_CVU_MLA`
-- `SIMA_DISPATCHER_AUTO_RECOVER`
 - `SIMA_DISPATCHER_TRACE`
 - `SIMA_GST_ALL_BUFFER_DEBUG`
 - `SIMA_GST_APPSINK_BUFFER_DEBUG`
