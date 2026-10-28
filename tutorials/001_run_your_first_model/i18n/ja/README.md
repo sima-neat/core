@@ -103,8 +103,10 @@ source ~/.bashrc
 
 抽出/ランタイム配置の制御ノブ：
 - `SIMA_MPK_EXTRACT_ROOT=<dir>` は、ベースの抽出ディレクトリを設定します。
-- `SIMA_MPK_CLEANUP_EXTRACTED=0` は、プロセス終了後に抽出された `proc_*` モデルデータを保持します。
-- `SIMA_MPK_EXTRACT_GC_STALE_PROC=0` は、起動時のデッド `proc_*` のクリーンアップを無効にします。
+- `SIMA_MPK_CLEANUP_EXTRACTED=0` は、プロセス終了後に抽出された `proc_run_*` モデルデータを保持します。
+- `SIMA_MPK_EXTRACT_GC_STALE_PROC=0` は、所有権ロックに基づく、起動時の未使用の `proc_run_*` ディレクトリの削除を無効にします。
+
+従来の `proc_<pid>` ルートは、使用されていないことを確認してから手動で削除してください。
 
 #### ResNet50
 

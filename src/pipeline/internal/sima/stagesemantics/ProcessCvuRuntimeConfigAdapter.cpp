@@ -599,6 +599,10 @@ build_processcvu_payload_from_runtime_config_common(const CompiledProcessCvuRunt
   payload.win_half = config.win_half;
   payload.max_iters = config.max_iters;
   payload.max_level = config.max_level;
+  payload.publish_error = config.publish_error;
+  payload.error_threshold = config.error_threshold;
+  payload.min_eig_threshold = config.min_eig_threshold;
+  payload.require_convergence = config.require_convergence;
   payload.detect_new_features = config.detect_new_features;
   payload.fast_threshold = config.fast_threshold;
   payload.debug = config.debug;

@@ -3250,6 +3250,36 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
     return empty_plan;
   }
 
+  // Snapshot explicitly authored public boundary policy before deriving any
+  // representative media geometry. Wrong ordered members fail synchronously,
+  // not later while a device session is being prepared.
+  std::vector<std::pair<std::size_t, pipeline_internal::OrderedPublicInputContract>> ordered_inputs;
+  if (!public_graph.input_route_processor_) {
+    for (std::size_t vertex = 0; vertex < view.vertices.size(); ++vertex) {
+      auto contract = pipeline_internal::ordered_public_input_contract(view, vertex);
+      if (contract)
+        ordered_inputs.emplace_back(vertex, std::move(*contract));
+    }
+  }
+  if (view.linear && seed && ordered_inputs.size() == 1U)
+    pipeline_internal::validate_ordered_public_input(ordered_inputs.front().second, *seed);
+
+  const auto attach_ordered_inputs = [&](ExecutionGraphPlan* plan,
+                                         const std::vector<graph::NodeId>& runtime_nodes) {
+    for (const auto& [vertex, contract] : ordered_inputs) {
+      if (vertex >= runtime_nodes.size())
+        continue;
+      for (const auto& endpoint : plan->input_endpoints) {
+        if (endpoint.node != runtime_nodes[vertex] ||
+            endpoint.segment >= plan->pipeline_segments.size())
+          continue;
+        auto& segment = plan->pipeline_segments[endpoint.segment];
+        if (!segment.boundary_hints || !segment.boundary_hints->input_route_processor)
+          segment.public_input_contract = contract;
+      }
+    }
+  };
+
   std::optional<SampleSpec> seed_spec;
   if (seed.has_value()) {
     seed_spec = derive_sample_spec_or_throw(*seed);
@@ -3314,6 +3344,7 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
     map_explicit_public_vertex_endpoints(runtime_node_for_vertex, view.vertices, &plan);
     prune_to_public_interface(&plan);
     attach_public_graph_view(view, runtime_node_for_vertex, &plan);
+    attach_ordered_inputs(&plan, runtime_node_for_vertex);
     const auto metadata_us = pipeline_internal::build_timing_us(metadata_start);
     pipeline_internal::emit_build_timing(
         "compile_public_graph",
@@ -3368,6 +3399,7 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
   }
   prune_to_public_interface(&plan);
   attach_public_graph_view(view, runtime_node_for_vertex, &plan);
+  attach_ordered_inputs(&plan, runtime_node_for_vertex);
   const auto metadata_us = pipeline_internal::build_timing_us(metadata_start);
   pipeline_internal::emit_build_timing(
       "compile_public_graph",

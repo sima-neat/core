@@ -179,38 +179,32 @@ def test_validation_build_does_not_reuse_or_publish(tmp_path):
     card.mkdir()
     for name in ('platform_provider.py', 'platform-source.json'):
         (host/name).write_text('fixture')
-    baselines = json.loads((HERE/'baselines.json').read_text())
-    baseline = baselines['card']
     args = SimpleNamespace(work=tmp_path/'work', ref='develop', sha=SHA,
                            bucket='bucket', distro='ubuntu24', arch='amd64',
                            installer_revision=SHA, run_id=123, validation_only=True)
-
-    def command(*argv):
-        if argv[:2] == ('docker', 'build'):
-            Path(argv[argv.index('--iidfile') + 1]).write_text('sha256:' + 'a' * 64)
-        return baseline['image_id'] if argv[:3] == ('docker', 'image', 'inspect') else ''
 
     def download(bucket, key, path):
         path.write_text('fixture')
 
     def assemble(spec, root):
         assert set(spec['targets']) == {'host', 'card'}
+        assert spec['targets']['card']['image'] == 'sha256:' + 'd' * 64
         (root.parent/ci.assemble.METADATA_NAME).write_text('{}')
         (root.parent/ci.assemble.ARCHIVE_NAME).write_text('validated bundle')
 
     records = {role: {'resources-checksum': {}} for role in ('host', 'card')}
     paths = {'host': ('host-key', host), 'card': ('card-key', card)}
     with patch.object(ci, 'source_metadata', return_value=(records, paths, INPUTS)), \
+         patch.object(ci, 'pull_baseline', return_value='sha256:' + 'd' * 64) as pull, \
          patch.object(ci, 'existing') as existing, patch.object(ci, 'put') as put, \
          patch.object(ci, 'download', side_effect=download), \
-         patch.object(ci, 'run', side_effect=command), \
-         patch.object(ci.assemble, 'sha', side_effect=lambda p: baselines['platform_source']['sha256'] if p.name == 'platform-source.tar.gz' else baseline['sha256']), \
          patch.object(ci.assemble, 'verify_publication'), \
          patch.object(ci.assemble, 'assemble', side_effect=assemble) as build:
         ci.build(args)
         existing.assert_not_called()
         put.assert_not_called()
         build.assert_called_once()
+        assert [call.args[1] for call in pull.call_args_list] == ['ubuntu24-amd64', 'card']
     assert (args.work/ci.assemble.ARCHIVE_NAME).is_file()
 
 
@@ -223,7 +217,6 @@ def test_validation_can_use_ready_publications_while_other_tests_run(status):
     assert resolver.eligible(run, [], validation_ref=run['head_branch']) is None
     run.update(status='completed', conclusion='failure')
     assert resolver.eligible(run, jobs(), validation_ref=run['head_branch']) is None
-
 
 
 def test_manual_publication_is_opt_in_and_reuses_the_validated_matrix():
@@ -241,6 +234,17 @@ def test_manual_publication_is_opt_in_and_reuses_the_validated_matrix():
     matrix = worker['jobs']['build']['strategy']['matrix']['include']
     assert {(r['distro'], r['arch']) for r in matrix} == set(ci.TUPLES)
 
+
+def test_offline_assembly_uses_vulcan_native_pools_without_changing_target_matrix():
+    import yaml
+    worker = yaml.safe_load((HERE.parents[2]/'.github/workflows/pcie-offline.yml').read_text())
+    pool = 'vulcan-${{ needs.config.outputs.vulcan_env }}'
+    build = worker['jobs']['build']
+    assert build['runs-on'] == ['self-hosted', 'linux', '${{ matrix.arch }}', pool, 'ubuntu', 'default']
+    assert worker['jobs']['build-core']['runs-on'] == ['self-hosted', 'linux', 'arm64', pool, 'ubuntu', 'default']
+    assert {(row['distro'], row['arch']) for row in build['strategy']['matrix']['include']} == set(ci.TUPLES)
+    qemu = next(step for step in build['steps'] if step.get('uses') == 'docker/setup-qemu-action@v3')
+    assert qemu['if'] == "${{ matrix.arch == 'amd64' }}"
 
 
 def test_cloudfront_invalidation_encodes_s3_branch_keys(tmp_path):
@@ -295,3 +299,102 @@ def test_completed_run_listener_does_not_duplicate_develop_publication():
     import yaml
     worker = yaml.safe_load((HERE.parents[2]/'.github/workflows/pcie-offline.yml').read_text())
     assert "github.event.workflow_run.head_branch != 'develop'" in worker['jobs']['source']['if']
+
+
+def test_host_baseline_keys_track_only_platform_inputs():
+    checksums = {name: 'a'*64 for name in (
+        'platform_provider.py', 'platform-source.json', 'sima-neat-core.deb')}
+    record = {'resources-checksum': checksums}
+    first = ci.baseline_identity('ubuntu24-arm64', ci.baseline_dependencies(record, 'ubuntu24-arm64'))
+    checksums['sima-neat-core.deb'] = 'b'*64
+    assert ci.baseline_identity('ubuntu24-arm64', ci.baseline_dependencies(record, 'ubuntu24-arm64')) == first
+    checksums['platform-source.json'] = 'b'*64
+    assert ci.baseline_identity('ubuntu24-arm64', ci.baseline_dependencies(record, 'ubuntu24-arm64')) != first
+    with pytest.raises(ValueError, match='lacks baseline provenance'):
+        ci.baseline_dependencies({'resources-checksum': {}}, 'ubuntu24-arm64')
+
+
+def test_core_consumes_registry_images_without_a_baseline_producer():
+    import yaml
+    workflow = yaml.safe_load((HERE.parents[2]/'.github/workflows/pcie-offline.yml').read_text())
+    assert 'prepare-card' not in workflow['jobs']
+    assert 'actions/cache' not in (HERE.parents[2]/'.github/workflows/pcie-offline.yml').read_text()
+    source = (HERE/'ci.py').read_text()
+    assert "run('docker', 'build'" not in source
+    assert "run('docker', 'push'" not in source
+    assert not list(HERE.glob('*.Dockerfile'))
+
+
+def baseline_record():
+    return {'resources-checksum': {name: 'a'*64 for name in (
+        'platform_provider.py', 'platform-source.json')}}
+
+
+@pytest.mark.parametrize('role', ['card', 'ubuntu24-arm64'])
+@pytest.mark.parametrize('fault', [None, 'labels', 'architecture'])
+def test_baseline_resolution_pulls_only_digest_and_checks_provenance(tmp_path, role, fault):
+    import json
+    args = SimpleNamespace(sha=SHA, work=tmp_path)
+    config = ci.baseline_config()
+    key = (config['card']['inputs_sha256'] if role == 'card' else
+           ci.baseline_identity(role, ci.baseline_dependencies(baseline_record(), role)))
+    digest = config['card']['digest'] if role == 'card' else 'sha256:'+'b'*64
+    local_id = 'sha256:'+'c'*64
+    labels = {'ai.sima.offline.'+name: value for name, value in
+              [('inputs', key), ('recipe', config['recipe_sha256']), ('role', role)]}
+    if fault == 'labels':
+        labels['ai.sima.offline.inputs'] = 'd'*64
+    info = {'Architecture': 'amd64' if fault == 'architecture' else 'arm64',
+            'Config': {'Labels': labels}, 'Id': local_id}
+    result = SimpleNamespace(returncode=0, stdout=json.dumps({'Descriptor': {'digest': digest}}))
+    with patch.object(ci.subprocess, 'run', return_value=result) as manifest, \
+         patch.object(ci, 'run', side_effect=['', json.dumps([info])]) as command:
+        if fault:
+            with pytest.raises(ValueError, match='provenance|architecture'):
+                ci.pull_baseline(args, role, baseline_record())
+            assert not (tmp_path/'baseline-images.json').exists()
+        else:
+            assert ci.pull_baseline(args, role, baseline_record()) == local_id
+            evidence = json.loads((tmp_path/'baseline-images.json').read_text())
+            assert evidence[role]['image'] == config['repository']+'@'+digest
+            assert evidence[role]['inputs_sha256'] == key
+        assert command.call_args_list[0].args == ('docker', 'pull', config['repository']+'@'+digest)
+        if role == 'card':
+            manifest.assert_not_called()
+        else:
+            manifest.assert_called_once()
+
+
+def test_missing_host_baseline_fails_without_local_build(tmp_path):
+    result = SimpleNamespace(returncode=1, stderr='manifest unknown')
+    with patch.object(ci.subprocess, 'run', return_value=result), patch.object(ci, 'run') as docker:
+        with pytest.raises(RuntimeError, match='Publish matching images with Vulcan'):
+            ci.pull_baseline(SimpleNamespace(sha=SHA, work=tmp_path), 'ubuntu24-arm64', baseline_record())
+        docker.assert_not_called()
+
+
+def test_card_image_pin_is_independent_of_packages_under_test(tmp_path):
+    import json
+    config = ci.baseline_config()
+    info = {'Architecture': 'arm64', 'Id': config['card']['digest'], 'Config': {'Labels': {
+        'ai.sima.offline.inputs': config['card']['inputs_sha256'],
+        'ai.sima.offline.recipe': config['recipe_sha256'], 'ai.sima.offline.role': 'card'}}}
+    with patch.object(ci.subprocess, 'run') as manifest, \
+         patch.object(ci, 'run', side_effect=['', json.dumps([info])]*2) as docker:
+        for sha in ('a'*40, 'b'*40):
+            record = {'resources-checksum': {name: sha for name in (
+                'simaai-scheduler.deb', 'resolved-deps-manifest.json', 'scheduler_platform_admission.py')}}
+            assert ci.pull_baseline(SimpleNamespace(sha=sha, work=tmp_path), 'card', record) == config['card']['digest']
+        pulls = [call.args for call in docker.call_args_list if call.args[:2] == ('docker', 'pull')]
+        assert pulls == [('docker', 'pull', config['repository']+'@'+config['card']['digest'])]*2
+        manifest.assert_not_called()
+
+
+@pytest.mark.parametrize('field,value', [('digest', 'latest'), ('inputs_sha256', 'invalid')])
+def test_invalid_card_pin_is_rejected_before_docker(tmp_path, field, value):
+    config = ci.baseline_config()
+    config['card'][field] = value
+    with patch.object(ci, 'baseline_config', return_value=config), patch.object(ci, 'run') as docker:
+        with pytest.raises(ValueError, match='invalid pinned card baseline'):
+            ci.pull_baseline(SimpleNamespace(sha=SHA, work=tmp_path), 'card', {})
+        docker.assert_not_called()

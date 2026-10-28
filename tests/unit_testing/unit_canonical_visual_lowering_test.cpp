@@ -93,9 +93,61 @@ void grid_controls() {
     }
   }
 }
+
+void tracker_quality_controls() {
+  for (const bool detect : {false, true})
+    for (const bool publish : {false, true}) {
+      core::StageStaticSpec stage;
+      auto& cfg = stage.processcvu;
+      cfg.graph_name = "track_klt";
+      cfg.resolved_exec_backend = "EV74";
+      cfg.width = 128;
+      cfg.height = 96;
+      cfg.batch_size = 2;
+      cfg.num_points = 8;
+      cfg.win_half = 3;
+      cfg.max_iters = 7;
+      cfg.max_level = 2;
+      cfg.detect_new_features = detect;
+      cfg.publish_error = publish;
+      cfg.error_threshold = 11.25f;
+      cfg.min_eig_threshold = 0.00002f;
+      cfg.require_convergence = true;
+      cfg.max_features = 16;
+      cfg.fast_threshold = 30;
+      cfg.grid_x = cfg.grid_y = 1;
+      cfg.min_px_dist = 0;
+      const auto checked = lower::check_visual_stage(stage);
+      if (const auto* error = std::get_if<rt::Error>(&checked))
+        throw std::runtime_error(error->field + ": " + error->message);
+      const auto& actual = *std::get<std::shared_ptr<core::KernelStageRecipe>>(checked);
+      const k::TensorSpec image{{2, 96, 128, 1}, k::DType::UInt8};
+      const std::array inputs{image, image, k::TensorSpec{{2, 8, 2}, k::DType::Int32},
+                              k::TensorSpec{{2, 1}, k::DType::Int32}};
+      std::vector<k::TensorSpec> outputs{{{2, 8, 2}, k::DType::Float32}, {{2, 8}, k::DType::Int32}};
+      if (publish)
+        outputs.push_back({{2, 8}, k::DType::Float32});
+      const std::array<k::Parameter, 6> parameters{{{"window_half", 3U},
+                                                    {"max_iterations", 7U},
+                                                    {"pyramid_levels", 2U},
+                                                    {"error_threshold", 11.25f},
+                                                    {"min_eig_threshold", 0.00002f},
+                                                    {"require_convergence", true}}};
+      compare(actual.members.front().executable,
+              k::check_kernel({"tracker", k::Target::EV74, inputs, outputs, parameters}));
+      const auto& member = actual.members.front();
+      require(member.outputs.size() == (publish ? 3U : 2U));
+      require(actual.members.size() == (detect ? 2U : 1U));
+      if (publish)
+        require(member.outputs.back().tensor == (detect ? 3U : 2U));
+      if (detect)
+        require(actual.members[1].outputs.front().tensor == 2U);
+    }
+}
 int main() {
   try {
     grid_controls();
+    tracker_quality_controls();
     for (const int batch : {1, 3})
       for (const int graph : {235, 236, 237, 238})
         for (const bool detect : {false, true}) {

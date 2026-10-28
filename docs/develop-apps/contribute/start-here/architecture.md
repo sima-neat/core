@@ -188,6 +188,20 @@ preparation fails rather than splitting the operation into separate kernels.
 A Core stage need not correspond to one operation: TrackKLT still prepares its
 existing composite request.
 
+TrackKLT's public tensor list is positional: previous image, current image, then
+integer seed points. Optional names assert those roles; they do not reorder
+storage. Core checks the authored input contract before seed inference and again
+before queue admission, without mapping or copying tensor data. Unnamed tensors
+remain positional. This policy applies only to explicitly authored direct public
+inputs, not internal stage links or model input transformations.
+
+The tracker request owns numerical quality controls and optional residual
+publication. Core appends the residual after points, status and any requested
+features; it does not reinterpret status as unconditional tracking confidence.
+Disabling detection removes that operation and its output allocation. Kernels
+owns the versioned native packet and numerical validation; Runner and Scheduler
+continue to transport and bind generic checked requests.
+
 ### Direct-driver recovery
 
 `deps/manifest.json` selects Scheduler and LLiMa. Scheduler’s installed coordinator validates
@@ -347,7 +361,7 @@ only `Model`, `Graph`, `Run`, `Tensor`, and `Sample`; lower-level contributors a
 | Model archive | A sealed `.tar.gz` artifact containing the MPK inference contract, plugin-private configs, model binaries, and kernel artifacts. |
 | `Model` | The public loader for a `.tar.gz` model archive. It parses the MPK contract, runs route planning, exposes model stages, and provides simple `run(...)` / `Graph` composition entry points. |
 | `Tensor` | Typed numeric payload with dtype, shape, layout, storage, device, and semantic metadata. |
-| `Sample` | Runtime/media envelope around tensors, tensor lists, or bundles. Check `Sample::kind` before reading fields. |
+| `Sample` | Runtime/media envelope around tensors, tensor lists, or bundles. Check `Sample::kind` before reading fields. Pipeline boundaries preserve a bundle as one frame. |
 | `Node` | Atomic pipeline stage that emits a deterministic GStreamer fragment and owned element names. |
 | Reusable Graph fragment | A premade `Graph` that expands to multiple Nodes, such as decoded RTSP input or model stages. |
 | `Graph` | Assembly and validation boundary. Nodes, Models, and reusable Graph fragments become a negotiated, buildable pipeline. |
@@ -581,8 +595,12 @@ its batch axis in the public shape; single-image standalone views retain their
 existing HWC shape.
 
 Typed model descriptors cover the full tensor, including its batch dimension.
+For an explicitly batched rank-four HWC tensor, the leading axis is N.
 Their execution repetition count is one: semantic batch size does not request
-repeated execution of the whole tensor. Fused DetessCast and DetessDequant retain
+repeated execution of the whole tensor. Packed, interleaved batch heads use per-sample
+bindings and publish one complete tensor per head, preserving ordered singleton-axis
+views. Batch size alone does not disable
+DetessCast or DetessDequant fusion. These fused stages retain
 an explicitly proved private singleton-axis view when their published rank differs
 from their execution geometry.
 

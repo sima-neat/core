@@ -520,14 +520,14 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
 
   const auto terminal_output_options_for = [&](NodeId id) -> const OutputOptions* {
     for (const auto& segment : execution.plan.pipeline_segments) {
-      for (std::size_t local = 0; local < segment.nodes.size(); ++local) {
-        if (attributed_runtime_node_for_segment_node(segment, local) != id) {
-          continue;
-        }
-        const auto* output = dynamic_cast<const simaai::neat::Output*>(segment.nodes[local].get());
-        if (output) {
-          return &output->options();
-        }
+      if (segment.node_ids.empty() || segment.node_ids.back() != id || segment.nodes.empty()) {
+        continue;
+      }
+      // A runtime node can own several rendered nodes after fragment flattening.
+      // The sink belongs to the segment's terminal Output, not positional provenance.
+      const auto* output = dynamic_cast<const simaai::neat::Output*>(segment.nodes.back().get());
+      if (output) {
+        return &output->options();
       }
     }
     return nullptr;
@@ -1320,7 +1320,7 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
           core->graph_execution().plan.edges[queued.edge_index].link_options.policy ==
               GraphLinkPolicy::RealtimeLatestByStream;
       const bool pushed =
-          pipe.run_core && pipe.run_core->push_samples(Sample{sample}, !realtime_edge);
+          pipe.run_core && pipe.run_core->push_pipeline_sample(sample, !realtime_edge);
       pipe.transport.telemetry.push_thread_push_samples_calls.fetch_add(1,
                                                                         std::memory_order_relaxed);
       atomic_add_max(pipe.transport.telemetry.push_thread_push_samples_ns,

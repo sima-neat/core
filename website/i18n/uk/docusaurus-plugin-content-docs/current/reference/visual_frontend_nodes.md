@@ -1,197 +1,166 @@
 ---
-title: "EV74: Візуальні вузли інтерфейсу."
-description: "У стилі клієнта. Neat Використання графа для FeatureHistogram, GriderFast, TrackDescriptor і TrackKLT."
+title: "Візуальні вузли фронтенду EV74"
+description: "Публічні контракти Graph для FeatureHistogram, GriderFast, TrackDescriptor і TrackKLT"
 sidebar_position: 8
 ---
 
-# Візуальний інтерфейс EV74: вузли.
+# Візуальні вузли фронтенду EV74
 
-Neat надає доступ до візуальних графів EV74 як до звичайних вузлів `Graph`. Використовуйте загальнодоступні фабрики вузлів і структури параметрів; не викликайте `processcvu`, ConfigManager або API диспетчера безпосередньо з коду застосунку.
+Використовуйте операції EV74 через публічні фабрики вузлів `Graph`. Установіть узгоджений набір пакетів Core, Scheduler, Runner, Kernels і прошивки EV74. Старі ідентифікатори графів не перевіряють сумісність нативної прошивки; застосунку не потрібні ідентифікатори диспетчера.
 
-| Фабрика вузлів | Назва графа | Ідентифікатор графа | Призначення |
-| --- | --- | ---: | --- |
-| `nodes::FeatureHistogram` / `pyneat.nodes.feature_histogram` | `feature_histogram` | 235 | Гістограма зображення у відтінках сірого |
-| `nodes::GriderFast` / `pyneat.nodes.grider_fast` | `grider_fast` | 236 | Функції FAST, розподілені по сітці |
-| `nodes::TrackDescriptor` / `pyneat.nodes.track_descriptor` | `track_descriptor` | 237 | Швидкісні характеристики плюс дескриптори |
-| `nodes::TrackKLT` / `pyneat.nodes.track_klt` | `track_klt` | 238 | Пірамідальне відстеження KLT, опціонально з виявленими замінюючими ознаками |
+Параметри якості зберігають наявне використання на рівні вихідного коду та стандартні позиції виходів, але змінюють компонування `TrackKLTOptions` у C++; наявні бінарні файли C++ не є ABI-сумісними. Перезберіть застосунки C++ і розширення Python із відповідною версією Core. Для запитів трекера v2 використовуйте узгоджений набір Kernels, Runner, Scheduler і прошивки EV74. Наявні нативні запити v1 і далі підтримуються; це не робить запити v2 сумісними зі старішою прошивкою.
 
-Ідентифікатори графів корисні для діагностики та перевірки відповідності версій програмного забезпечення/пакетів. Вони не є обов’язковими в коді застосунку.
+| Фабрика вузлів | Призначення |
+| --- | --- |
+| `nodes::FeatureHistogram` / `pyneat.nodes.feature_histogram` | Гістограма відтінків сірого |
+| `nodes::GriderFast` / `pyneat.nodes.grider_fast` | Кути FAST, розподілені за сіткою |
+| `nodes::TrackDescriptor` / `pyneat.nodes.track_descriptor` | Кути FAST і дескриптори BRIEF |
+| `nodes::TrackKLT` / `pyneat.nodes.track_klt` | Пірамідальне відстеження KLT та необов’язкове виявлення ознак поточного кадру |
 
-## Тензорне скорочення.
+## Контракти тензорів
 
-Усі тензори використовують **логічні розміри пакету**. Якщо `batch_size == B`, то зображення у відтінках сірого має розмір `[B,H,W]`, а не `[B*H,W]`. Середовище виконання обробляє будь-яке внутрішнє пакування даних EV74.
+Логічна форма зображень — `[B,H,W]`, де `B` — це `batch_size`. Не об’єднуйте пакет із висотою зображення. Входи пристрою можуть мати окремі виділення або коректні представлення спільного сховища. Обхідний шлях із копіюванням через CPU не потрібний.
 
-| Вузол | Вхідні дані | Відкриті вихідні дані |
+| Вузол | Входи | Типові публічні виходи |
 | --- | --- | --- |
-| `FeatureHistogram` | `input_image`: UInt8 `[B,H,W]` | `output_hist`: Int32 `[B,256]` |
-| `GriderFast` | `input_image`: UInt8 `[B,H,W]` | `output_features`: Int32 `[B,1 + max_features*3]` |
-| `TrackDescriptor` | `input_image`: UInt8 `[B,H,W]` | `output_features`: Int32 `[B,1 + max_features*3]`; `output_descriptors`: Int32 `[B,max_features,8]` |
-| `TrackKLT` | `prev_image`: UInt8 `[B,H,W]`; `cur_image`: UInt8 `[B,H,W]`; `input_points`: Int32 `[B,num_points,2]` | `output_points`: Float32 `[B,num_points,2]`; `output_status`: Int32 `[B,num_points,1]`; плюс `output_features`: Int32 `[B,1 + max_features*3]` лише коли `detect_new_features != 0` |
+| `FeatureHistogram` | UInt8 `[B,H,W]` | Int32 `[B,256]` |
+| `GriderFast` | UInt8 `[B,H,W]` | Int32 `[B,1+3*max_features]` |
+| `TrackDescriptor` | UInt8 `[B,H,W]` | Int32 `[B,1+3*max_features]`; Int32 `[B,max_features,8]` |
+| `TrackKLT` | UInt8 `[B,H,W]`; UInt8 `[B,H,W]`; Int32 `[B,num_points,2]` | Float32 `[B,num_points,2]`; Int32 `[B,num_points,1]` |
 
-Тензори зі списком характеристик використовують такий формат для кожної партії даних:
+Формат ознак для кожного елемента пакета — `[count,x0,y0,score0,...]`. Читайте лише перші `count` записів. Невикористана місткість не є списком ознак. TrackDescriptor потребує `descriptor_words == 8`; кожний рядок дескриптора відповідає тому самому рядку вибраних ознак.
 
-```text
-[count, x0, y0, score0, x1, y1, score1, ...]
-```
+## Вибір за сіткою та межі
 
-Наразі для дескриптора графа потрібно `descriptor_words == 8`. Зміна цього є зміною ABI EV74 і відхиляється до моменту відправки.
+`grid_x` і `grid_y` ділять усе зображення на комірки. За місткості `K` і кількості комірок `M` кожна має `K / M` місць; перші `K % M` комірок у порядку рядків отримують ще одне. У кожній комірці вибираються найвищі оцінки, а загальний результат упорядковується за спаданням оцінки, за рівності — за зростанням `(y,x)`. Розріджені комірки не передають свої місця іншим. `min_px_dist` пригнічує близькі точки навіть через межі комірок; точна рівність відстані дозволена. Після пригнічення кандидатів не додають, тому результат може містити менше ніж `max_features` точок.
 
-## Швидкий старт з C++
+Звичайний FAST включає центри `x=3`, `y=3`, `x=W-4` і `y=H-4`. TrackDescriptor потребує повного фрагмента BRIEF 31×31, тому центри мають бути щонайменше за 15 пікселів від кожного краю. Відсутність дескрипторів у рядку 3 є очікуваною.
+
+## Входи та виходи KLT
+
+Передавайте впорядкований `TensorList`: **попереднє зображення, поточне зображення, вхідні точки**. На цьому прямому публічному маршруті з кількома входами непорожній логічний `route.name` має відповідати налаштованій позиції, а не змінювати порядок списку. Правильно впорядковані безіменні тензори також дозволені. Відсутні входи, суперечливі імена, неправильні типи чи форми та недоступні діапазони відхиляються до подання, зокрема й у наступних кадрах.
+
+Щоб повторно використати сумісний вихідний тензор, зробіть поверхневу копію та перейменуйте або очистьте лише `route.name` для нової публічної позиції. Збережіть сховище, зміщення та метадані фізичного маршруту. Це правило не перейменовує внутрішні зв’язки графа й не замінює явний процесор вхідного маршруту моделі.
+
+Типово TrackKLT публікує точки та статус. `detect_new_features != 0` додає ознаки, виявлені на **поточному** зображенні. За вимкненого виявлення прихований вихід ознак не виділяється. `publish_error = true` додає Float32 `[B,num_points,1]` після наявних виходів: індекс 2 без виявлення, індекс 3 із виявленням. Позиції наявних виходів не змінюються.
+
+### Приклад C++
+
+Надайте два вектори зображень UInt8 `640×480` і початкові координати Int32 `64×2`. Нижче кожний вхід має незалежне сховище EV74. Повертаються точки, статус і похибка.
 
 ```cpp
 #include <neat.h>
-
 #include <cstdint>
 #include <vector>
 
 using namespace simaai::neat;
 
-Tensor make_gray_batch(int width, int height, int batch) {
-  std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * height * batch);
-  // Fill pixels in batch-major order: b*height*width + y*width + x.
-  auto tensor = Tensor::from_vector(pixels, {batch, height, width}, TensorMemory::EV74);
-  tensor.layout = TensorLayout::HW;
-  tensor.axis_semantics = {TensorAxisSemantic::N, TensorAxisSemantic::H, TensorAxisSemantic::W};
-  tensor.route.name = "input_image";
-  tensor.route.segment_name = "input_image";
-  return tensor;
-}
-
-int main() {
-  constexpr int width = 320;
-  constexpr int height = 240;
-  constexpr int batch = 2;
-
-  Graph graph;
+TensorList track_pair(const std::vector<std::uint8_t>& previous,
+                     const std::vector<std::uint8_t>& current,
+                     const std::vector<std::int32_t>& xy) {
+  constexpr int width = 640, height = 480, count = 64;
+  auto image = [&](const auto& pixels, const char* name) {
+    auto tensor = Tensor::from_vector(pixels, {1, height, width}, TensorMemory::EV74);
+    tensor.layout = TensorLayout::HW;
+    tensor.axis_semantics = {TensorAxisSemantic::N, TensorAxisSemantic::H,
+                            TensorAxisSemantic::W};
+    tensor.route.name = name;
+    return tensor;
+  };
+  auto points = Tensor::from_vector(xy, {1, count, 2}, TensorMemory::EV74);
+  points.route.name = "input_points";
+  TensorList inputs{image(previous, "prev_image"), image(current, "cur_image"), points};
 
   InputOptions input;
   input.payload_type = PayloadType::Tensor;
   input.format = FormatTag::UINT8;
-  input.width = width;
-  input.height = height;
-  input.depth = 1;
-  input.max_width = width;
-  input.max_height = height * batch; // transport capacity; public tensor remains [B,H,W]
-  input.max_depth = 1;
+  input.width = input.max_width = width;
+  input.height = input.max_height = height;
+  input.depth = input.max_depth = 1;
   input.memory_policy = InputMemoryPolicy::Ev74;
-  input.buffer_name = "input_image";
+  input.buffer_name = "prev_image";
+  input.caps_override = "application/vnd.simaai.tensor, representation=(string)tensor-set, "
+                        "storage=(string)tensorbuffer";
 
+  TrackKLTOptions klt;
+  klt.width = width;
+  klt.height = height;
+  klt.num_points = count;
+  klt.win_half = 7;
+  klt.max_level = 2;
+  klt.max_iters = 20;
+  klt.publish_error = true;
+
+  Graph graph;
   graph.add(nodes::Input(input));
-
-  GriderFastOptions fast;
-  fast.width = width;
-  fast.height = height;
-  fast.batch_size = batch;
-  fast.max_features = 64;
-  fast.threshold = 30;
-  graph.add(nodes::GriderFast(fast));
-
+  graph.add(nodes::TrackKLT(klt));
   graph.add(nodes::Output());
-
-  RunOptions run_opt;
-  run_opt.output_memory = OutputMemory::Owned;
-
-  Tensor image = make_gray_batch(width, height, batch);
-  Run run = graph.build({image}, run_opt);
-  TensorList outputs = run.run({image}, /*timeout_ms=*/30000);
+  RunOptions options;
+  options.output_memory = OutputMemory::Owned;
+  Run run = graph.build(inputs, options);
+  TensorList outputs;
+  try {
+    outputs = run.run(inputs, 30000);
+  } catch (...) {
+    run.close();
+    throw;
+  }
   run.close();
+  return outputs;
 }
 ```
 
-## KLT з трьома входами.
+## Керування якістю
 
-`TrackKLT` використовує набір тензорів: попереднє зображення, поточне зображення та вхідні точки. Назвіть шляхи, щоб вони відповідали полям параметрів.
+| Параметр | Типове значення | Значення |
+| --- | --- | --- |
+| `publish_error` | `false` | Публікує середню абсолютну різницю яскравості в кінцевій координаті. Типове `output_error_name` — `output_error`. |
+| `error_threshold` | `-1.0` | `-1` вимикає перевірку; інакше це скінченний поріг у `[0,255]`. Залишок вище порога відхиляється, рівність дозволена. Фільтрування працює і без публікації похибки. |
+| `min_eig_threshold` | `0.0` | `0` вимикає перевірку; інакше це скінченний додатний поріг нормалізованого мінімального власного значення для оцінки текстури. |
+| `require_convergence` | `false` | Вимагає, щоб кінцеве оновлення в повній роздільності виконувало критерій збіжності. За false саме досягнення ліміту ітерацій не означає невдачі. |
 
-```cpp
-TrackKLTOptions klt;
-klt.width = 320;
-klt.height = 240;
-klt.batch_size = 2;
-klt.num_points = 32;
-klt.max_features = 64;
-klt.detect_new_features = 1; // publish output_features as the third output
+Залишок — це різниця яскравості, а не зміщення в пікселях чи впевненість. Його обчислюють у поверненій координаті; `+inf` означає, що коректний залишок не було обчислено. Показник текстури ділить найменше власне значення матриці центральних градієнтів на площу вікна й `255²`; його масштаб не взаємозамінний із порогами OpenCV. Вибирайте пороги на репрезентативних калібрувальних даних, перевіряючи і збереження коректних траєкторій, і відхилення хибних.
 
-graph.add(nodes::TrackKLT(klt));
-```
+Перевіряйте статус перед використанням координат. Некоректні початкові точки до розв’язання зберігають свої координати зі статусом 0. Скінченна обчислена точка поза зображенням або кандидат, відхилений порогом якості, може зберігати обчислені координати зі статусом 0. Типовий статус позначає придатність розв’язання й геометрії, а не доводить правильність відповідності в реальному світі.
 
-Очікувані результати, які будуть доступні для загального користування, коли `detect_new_features == 1`:
+## Рух, межі та фіксована кількість точок
 
-```text
-output_points   Float32 [2,32,2]
-output_status   Int32   [2,32,1]
-output_features Int32   [2,193]
-```
+Коли уточнення виходить за поточну плитку зображення, її повторно центрують і завантажують. Рух не обмежується мовчки діапазоном пошуку ±4 пікселі. Кількість завантажень та ітерацій обмежена. Граничні плитки повторюють крайні пікселі, використовуючи DMA лише всередині зображення. Це усуває стару смугу виключення, залежну від рівня піраміди, але не гарантує відстеження за довільного руху, перекриття чи неоднозначної текстури.
 
-Коли `detect_new_features == 0`, Neat публікує лише `output_points` та `output_status`; буфер видимих для EV функцій залишається внутрішнім ресурсом середовища виконання.
+Початкові точки Core залишаються Int32, результати — Float32. `num_points` фіксується під час побудови графа. Для невикористаної позиції задайте некоректні координати, наприклад `(-1,-1)`, і перевіряйте статус. `(0,0)` є коректною координатою краю, а не маркером неактивності. Обидві піраміди зображень перебудовуються за кожного виклику; повторне використання попередньої піраміди не передбачається.
 
-## Поверхня, створена за допомогою Python.
+## Параметри Python
 
-API Python повторює структуру C++, що передбачає використання опцій/фабрик, і має шароподібну структуру: створіть об’єкт опцій, задайте загальнодоступні параметри конфігурації та додайте вузол до `Graph`.
+Python надає ті самі параметри. Створюйте входи через `Tensor.from_numpy(..., memory="ev74")`, зберігайте контракт порядку входів і будуйте публічний вузол, як у C++.
 
 ```python
-import numpy as np
 import pyneat
 
-width, height, batch = 320, 240, 2
-
-opt = pyneat.GriderFastOptions()
-opt.width = width
-opt.height = height
-opt.batch_size = batch
-opt.max_features = 64
-print(opt.summary())
-
-graph = pyneat.Graph()
-input_opt = pyneat.InputOptions()
-input_opt.payload_type = pyneat.PayloadType.Tensor
-input_opt.format = pyneat.Format.UINT8
-input_opt.width = width
-input_opt.height = height
-input_opt.max_width = width
-input_opt.max_height = height * batch
-input_opt.memory_policy = pyneat.InputMemoryPolicy.Ev74
-input_opt.buffer_name = "input_image"
-
-graph.add(pyneat.nodes.input(input_opt))
-graph.add(pyneat.nodes.grider_fast(opt))
-graph.add(pyneat.nodes.output())
-
-image_np = np.zeros((batch, height, width), dtype=np.uint8)
-image = pyneat.Tensor.from_numpy(image_np, memory="ev74")
-image.layout = pyneat.TensorLayout.HW
-# If setting route metadata from Python in a custom app, keep it aligned with
-# the option names used above.
+options = pyneat.TrackKLTOptions()
+options.width, options.height = 640, 480
+options.num_points = 64
+options.win_half, options.max_level, options.max_iters = 7, 2, 20
+options.publish_error = True
+options.error_threshold = -1.0
+options.min_eig_threshold = 0.0
+options.require_convergence = False
+node = pyneat.nodes.track_klt(options)
 ```
 
-## Перевірки безпеки.
+## Перевірка
 
-Ці вузли перевіряють межі графа перед відправкою даних про електромобіль (EV). Вони відхиляють:
+Налаштовані імена портів мають бути непорожніми та унікальними. Некоректні розміри, кількості, вікна, рівні піраміди, розміри дескрипторів і нескінченні або позадіапазонні параметри якості відхиляються. Не обходьте перевірки й не змінюйте лише тип тензора для перетворення значень.
 
-- невід’ємні розміри або кількості;
-- непідтримувані розміри пакетів;
-- порогові значення поза межами `[0,255]`;
-- дублікати/порожні назви тензорів;
-- `TrackDescriptorOptions.descriptor_words != 8`;
-- недійсні значення для параметрів KLT: вікно, рівень і режим виявлення;
-- тензори середовища виконання недостатнього розміру під час попереднього узгодження.
+## Запуск тестів коректності
 
-Це важливо, оскільки нелегальні буфери можуть спричинити проблеми з EV74. Залишайте помилки під час перевірки як помилки на стороні хоста і не обходьте шлях, визначений контрактом Node.
-
-## Швидка команда для перевірки.
-
-Швидкий клієнтський DevKit інтерфейс:
+На DevKit задайте `CORE_TEST_DIR` як каталог установлених тестів Core або тестів нативного збирання, а потім виконайте:
 
 ```bash
-ctest --test-dir /workspace/core_graph_changes/build/tests \
-  -R visual_frontend_ --output-on-failure
+ctest --test-dir "$CORE_TEST_DIR" \
+  -R '^(grider_fast|track_descriptor|track_klt)_ev_test$' --output-on-failure
 ```
 
-Він працює:
-
-- усі чотири візуальні графіки з `320x240`, `batch_size=2`, `detect_new_features=1`;
-- цілеспрямована перевірка KLT на відсутність виявлення за допомогою ABI;
-- негативна перевірка перед відправленням, яка підтверджує наявність несанкціонованих даних у пакеті.
-  відхилено до версії EV74.
+Кожний зареєстрований тест виконує повну матрицю свого ядра. GriderFast перевіряє сітку, відстань і межі FAST; TrackDescriptor — також точну відповідність дескрипторів; TrackKLT — незалежні входи, повторне використання кадрів, перевірку, якість, рух, межі та детектор. Окремі швидкі набори є базовими тестами гістограми, KLT без виявлення та відхилення пакета і не замінюють числову перевірку.
 
 ## Глибина Metoak (C++)
 

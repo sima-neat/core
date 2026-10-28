@@ -12,6 +12,7 @@
 #include "pipeline/Run.h"
 #include "pipeline/GraphOptions.h"
 #include "pipeline/internal/InputRouteProcessor.h"
+#include "pipeline/internal/OrderedPublicInputContract.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -200,6 +201,7 @@ struct PipelineSegmentPlan {
   BoundaryPolicy boundary;
   // Allocation decision, separate from the declarative Input memory contract.
   InputMemoryPolicy resolved_input_memory_policy = InputMemoryPolicy::Auto;
+  std::optional<pipeline_internal::OrderedPublicInputContract> public_input_contract;
   OutputSpec input_spec;
   bool input_complete = false;
   OutputSpec output_spec;

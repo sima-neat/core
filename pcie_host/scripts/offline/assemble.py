@@ -112,10 +112,21 @@ def assemble(spec, output):
         # No host paths or credentials are saved in the distributable manifest.
         (dest / 'target.json').write_text(json.dumps(dict(role=target, **{k: row[k] for k in (
             'image', 'architecture', 'os_id', 'os_version', 'core_revision', 'metadata_sha256')}), indent=2)+'\n')
+        # EC2 regional archive avoids the public archive bottleneck during collection.
+        # Rewrite both legacy sources.list and Ubuntu 24.04 deb822 sources only
+        # in this disposable container; security and ARM64 repositories stay intact.
+        mirror = (
+            "for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list "
+            "/etc/apt/sources.list.d/*.sources; do "
+            '[ ! -f "$source" ] || sed -i '
+            "'s|http://archive.ubuntu.com/ubuntu|http://us-west-2.ec2.archive.ubuntu.com/ubuntu|g; "
+            "s|https://archive.ubuntu.com/ubuntu|http://us-west-2.ec2.archive.ubuntu.com/ubuntu|g' "
+            '"$source"; done; '
+        ) if target == 'host' and row['architecture'] == 'amd64' else ''
         run('docker', 'run', '--rm', '--user', '0:0', '--env', 'DEBIAN_FRONTEND=noninteractive', '--env', 'PYTHONDONTWRITEBYTECODE=1', '--platform', 'linux/' + row['architecture'],
             '--mount', f'type=bind,src={dest.resolve()},dst=/bundle',
             '--entrypoint', '/bin/sh', row['image'], '-ec',
-            'cp /var/lib/dpkg/status /bundle/baseline.status; '
+            mirror + 'cp /var/lib/dpkg/status /bundle/baseline.status; '
             'apt-get update; apt-get install -y --no-install-recommends python3 python3-venv python3-pip dpkg-dev; '
             'python3 /bundle/target.py collect')
     for name in ('assemble.py', 'deploy.py', 'process.py', 'log_progress.py', 'lifecycle.sh'):

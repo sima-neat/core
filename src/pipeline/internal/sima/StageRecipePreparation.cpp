@@ -1903,6 +1903,9 @@ apply_kernel_publication_views(const StageStaticSpec& stage,
           case PublicationViewRelation::PackedStorage:
             view.relation = gs::TensorStagePublicationRelation::PackedStorage;
             break;
+          case PublicationViewRelation::BatchSlices:
+            view.relation = gs::TensorStagePublicationRelation::BatchSlices;
+            break;
           default:
             return invalid("stage.publication", "unknown publication relation");
           }

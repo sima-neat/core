@@ -206,6 +206,7 @@ Result<std::shared_ptr<KernelStageRecipe>> check_transform_stage(const StageStat
   struct Transform {
     TensorSpec input, output;
     std::vector<Parameter> parameters;
+    std::size_t slices = 1, input_stride = 0, output_stride = 0;
   };
   std::vector<Transform> transforms;
   transforms.reserve(count);
@@ -263,6 +264,26 @@ Result<std::shared_ptr<KernelStageRecipe>> check_transform_stage(const StageStat
             {"multiplier", scalar}, {"zero_point", zero_point}, {"rounding", modes[round]}};
       }
     }
+    // An Unpack view can interleave batch samples with other heads. Native
+    // tiled readers own contiguous outer volumes; bind each sample directly
+    // rather than repacking that strided view into another allocation.
+    if (legacy_input.layout_kind == SIMA_EV_LAYOUT_TILED && legacy_input.shape.rank == 4U &&
+        legacy_input.shape.axis_semantics[0] == SIMA_EV_AXIS_N &&
+        legacy_input.shape.sizes[0] > 1U && i < stage.logical_inputs.size() &&
+        !stage.logical_inputs[i].stride_bytes.empty()) {
+      const auto slices = std::size_t(legacy_input.shape.sizes[0]);
+      const auto stride = stage.logical_inputs[i].stride_bytes.front();
+      if (stride > 0 && std::uint64_t(stride) > legacy_input.storage.nbytes / slices) {
+        transform.slices = slices;
+        transform.input_stride = std::size_t(stride);
+        if (const auto* dense = std::get_if<kernels::Strided>(&transform.output.layout)) {
+          if (dense->strides_bytes.front() <= 0)
+            return invalid("outputs.layout", "batched output requires a positive sample stride");
+          transform.output_stride = std::size_t(dense->strides_bytes.front());
+        }
+        transform.input.shape[0] = transform.output.shape[0] = 1;
+      }
+    }
     if (const auto* tile = std::get_if<kernels::MlaTiled>(&transform.output.layout);
         tile && family->scalar == Family::Tess && transform.output.dtype == DType::Int8 &&
         tile->channels == kernels::MlaTiled::Channels::PadTo16)
@@ -288,25 +309,34 @@ Result<std::shared_ptr<KernelStageRecipe>> check_transform_stage(const StageStat
     const auto& contract = std::get<KernelInspection>(inspected);
     const auto in_bytes = contract.input_requirements()[0].storage_bytes;
     const auto out_bytes = contract.output_requirements()[0].storage_bytes;
+    const auto input_stride = transform.input_stride ? transform.input_stride : in_bytes;
+    const auto output_stride = transform.output_stride ? transform.output_stride : out_bytes;
+    const auto slices = transform.slices;
     const auto batches = std::size_t(cfg.batch_size);
-    if (in_bytes > std::numeric_limits<std::size_t>::max() / batches ||
-        out_bytes > std::numeric_limits<std::size_t>::max() / batches)
+    const auto maximum = std::numeric_limits<std::size_t>::max();
+    if ((input_stride && (slices - 1U) > (maximum - in_bytes) / input_stride) ||
+        (output_stride && (slices - 1U) > (maximum - out_bytes) / output_stride))
+      return invalid("storage", "strided batch span overflow");
+    const auto input_span = (slices - 1U) * input_stride + in_bytes;
+    const auto output_span = (slices - 1U) * output_stride + out_bytes;
+    if (input_span > maximum / batches || output_span > maximum / batches)
       return invalid("storage", "batched transform span overflow");
-    // finalizeTensorStorageSpan inferred a missing per-member span, rejected
-    // contradictory declarations, then applied batch_size separately. A total
-    // batched allocation size is not a valid per-member descriptor span.
     const auto matches = [](std::uint64_t declared, std::size_t span) {
       return declared == 0 || declared == span;
     };
-    if (!matches(cfg.input_tensors[i].descriptor().storage.nbytes, in_bytes) ||
-        !matches(cfg.output_tensors[i].descriptor().storage.nbytes, out_bytes))
-      return invalid("storage", "legacy span differs from canonical physical storage");
+    if (!matches(cfg.input_tensors[i].descriptor().storage.nbytes, input_span) ||
+        !matches(cfg.output_tensors[i].descriptor().storage.nbytes, output_span))
+      return invalid("storage", "declared span differs from checked batch storage");
     for (std::size_t batch = 0; batch < batches; ++batch) {
-      gs::TensorStageMember member;
-      member.executable = executable;
-      member.inputs.push_back({i, batch * in_bytes, gs::TensorStagePortSource::Input});
-      member.outputs.push_back({i, batch * out_bytes, gs::TensorStagePortSource::Output});
-      members.push_back(std::move(member));
+      for (std::size_t slice = 0; slice < slices; ++slice) {
+        gs::TensorStageMember member;
+        member.executable = executable;
+        member.inputs.push_back(
+            {i, batch * input_span + slice * input_stride, gs::TensorStagePortSource::Input});
+        member.outputs.push_back(
+            {i, batch * output_span + slice * output_stride, gs::TensorStagePortSource::Output});
+        members.push_back(std::move(member));
+      }
     }
   }
   return recipe;

@@ -137,8 +137,10 @@ struct TrackDescriptorOptions : public VisualFrontendCommonOptions {
  * - outputs when `detect_new_features == 1` additionally include:
  *   - `output_features_name`, Int32 `[batch_size,1 + max_features*3]`
  *
- * The EV ABI always allocates the internal detected-features output; Neat only
- * publishes it when `detect_new_features != 0`.
+ * When `publish_error` is true, append Float32 `[batch_size,num_points,1]`
+ * residuals after the existing outputs. Disabled detection does not allocate a
+ * hidden feature output. Status reports solver/geometry validity by default;
+ * enable explicit quality thresholds to reject weak or inconsistent matches.
  */
 struct TrackKLTOptions {
   /// Input image width in pixels.
@@ -185,6 +187,16 @@ struct TrackKLTOptions {
   std::string output_status_name = "output_status";
   /// Optional published feature-list tensor name when `detect_new_features != 0`.
   std::string output_features_name = "output_features";
+  /// Append mean absolute photometric residuals at the returned coordinates.
+  bool publish_error = false;
+  /// Residual output name. Unevaluated residuals are positive infinity.
+  std::string output_error_name = "output_error";
+  /// Maximum mean absolute UInt8 intensity residual [0,255]; -1 disables filtering.
+  float error_threshold = -1.0f;
+  /// Minimum texture eigenvalue divided by window area and 255 squared; 0 disables.
+  float min_eig_threshold = 0.0f;
+  /// Require convergence of the final full-resolution solve, not every coarse level.
+  bool require_convergence = false;
 
   /// Human-readable, non-throwing summary for logs, diagnostics, and Python `repr`.
   std::string summary() const;

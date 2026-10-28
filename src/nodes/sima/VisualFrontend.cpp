@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <sstream>
@@ -204,6 +205,14 @@ void require_track_klt_envelope(const TrackKLTOptions& opt) {
   require_positive(owner, "max_iters", opt.max_iters);
   require_range(owner, "max_level", opt.max_level, 0, kTrackerMaxLevel);
   require_range(owner, "detect_new_features", opt.detect_new_features, 0, 1);
+  if (!std::isfinite(opt.error_threshold) ||
+      (opt.error_threshold != -1.0f &&
+       (opt.error_threshold < 0.0f || opt.error_threshold > 255.0f))) {
+    throw std::runtime_error("TrackKLT: error_threshold must be -1 or finite in [0,255]");
+  }
+  if (!std::isfinite(opt.min_eig_threshold) || opt.min_eig_threshold < 0.0f) {
+    throw std::runtime_error("TrackKLT: min_eig_threshold must be finite and non-negative");
+  }
   require_range(owner, "fast_threshold", opt.fast_threshold, 0, 255);
   require_positive(owner, "max_features", opt.max_features);
   require_positive(owner, "grid_x", opt.grid_x);
@@ -444,9 +453,11 @@ bool compile_runtime_contract(const std::string& node_kind, const std::string& e
       // The public status tensor retains [B,N,1]; the canonical tracker writes
       // [B,N] into the very same dense storage. Author that view at the public
       // semantic boundary, not by accepting a later inspection mismatch.
-      const auto authorize_status = [](auto& outputs) {
+      const auto authorize_status = [&runtime](auto& outputs) {
+        const int error_slot = runtime.detect_new_features != 0 ? 3 : 2;
         for (auto& logical : outputs) {
-          if (logical.backend_output_index == 1) {
+          if (logical.backend_output_index == 1 ||
+              (runtime.publish_error && logical.backend_output_index == error_slot)) {
             logical.publication_relation =
                 pipeline_internal::sima::PublicationViewRelation::SingletonAxes;
           }
@@ -632,9 +643,14 @@ NativeVisualSpec spec_from_options(const TrackKLTOptions& opt) {
   require_non_empty("TrackKLT", "output_points_name", opt.output_points_name);
   require_non_empty("TrackKLT", "output_status_name", opt.output_status_name);
   require_non_empty("TrackKLT", "output_features_name", opt.output_features_name);
-  require_distinct("TrackKLT",
-                   {opt.prev_image_name, opt.cur_image_name, opt.input_points_name,
-                    opt.output_points_name, opt.output_status_name, opt.output_features_name});
+  std::vector<std::string> port_names{opt.prev_image_name,    opt.cur_image_name,
+                                      opt.input_points_name,  opt.output_points_name,
+                                      opt.output_status_name, opt.output_features_name};
+  if (opt.publish_error) {
+    require_non_empty("TrackKLT", "output_error_name", opt.output_error_name);
+    port_names.push_back(opt.output_error_name);
+  }
+  require_distinct("TrackKLT", port_names);
   const auto feature_width = checked_shape_dim("TrackKLT", "feature_list_width",
                                                feature_list_ints("TrackKLT", opt.max_features));
   const auto point_rows = checked_shape_dim(
@@ -658,17 +674,21 @@ NativeVisualSpec spec_from_options(const TrackKLTOptions& opt) {
   spec.output_shapes = {{opt.batch_size, opt.num_points, 2}, {opt.batch_size, opt.num_points, 1}};
   spec.transport_output_shapes = {{point_rows, 2}, {point_rows, 1}};
   spec.output_dtypes = {"FP32", "INT32"};
-  spec.output_layouts = {"HW", "HW"};
-  spec.logical_output_layouts = {"HW", "HW"};
   if (opt.detect_new_features != 0) {
     spec.runtime_output_names.push_back(opt.output_features_name);
     spec.output_shapes.push_back({opt.batch_size, feature_width});
     spec.transport_output_shapes.push_back({opt.batch_size, feature_width});
     spec.output_dtypes.push_back("INT32");
-    spec.output_layouts.push_back("HW");
-    spec.logical_output_layouts.push_back("HW");
+  }
+  if (opt.publish_error) {
+    spec.runtime_output_names.push_back(opt.output_error_name);
+    spec.output_shapes.push_back({opt.batch_size, opt.num_points, 1});
+    spec.transport_output_shapes.push_back({point_rows, 1});
+    spec.output_dtypes.push_back("FP32");
   }
   spec.published_output_names = spec.runtime_output_names;
+  spec.output_layouts.assign(spec.runtime_output_names.size(), "HW");
+  spec.logical_output_layouts = spec.output_layouts;
   spec.primary_output_name = opt.output_points_name;
   return spec;
 }
@@ -754,6 +774,10 @@ RuntimeConfig make_runtime(const TrackKLTOptions& opt) {
   runtime.win_half = opt.win_half;
   runtime.max_iters = opt.max_iters;
   runtime.max_level = opt.max_level;
+  runtime.publish_error = opt.publish_error;
+  runtime.error_threshold = opt.error_threshold;
+  runtime.min_eig_threshold = opt.min_eig_threshold;
+  runtime.require_convergence = opt.require_convergence;
   runtime.detect_new_features = opt.detect_new_features;
   runtime.fast_threshold = opt.fast_threshold;
   runtime.max_features = opt.max_features;
@@ -820,7 +844,9 @@ std::string TrackKLTOptions::summary() const {
   ss << "TrackKLTOptions(graph=track_klt,width=" << width << ",height=" << height
      << ",batch_size=" << batch_size << ",num_points=" << num_points << ",win_half=" << win_half
      << ",max_iters=" << max_iters << ",max_level=" << max_level
-     << ",detect_new_features=" << detect_new_features;
+     << ",detect_new_features=" << detect_new_features << ",publish_error=" << publish_error
+     << ",error_threshold=" << error_threshold << ",min_eig_threshold=" << min_eig_threshold
+     << ",require_convergence=" << require_convergence;
   append_fast_summary(ss, fast_threshold, max_features, grid_x, grid_y, min_px_dist);
   ss << ",debug=" << debug << ",num_buffers=" << num_buffers
      << ",element_name=" << quoted_or_auto(element_name)
@@ -838,6 +864,10 @@ std::string TrackKLTOptions::summary() const {
        << (1LL + static_cast<long long>(max_features) * 3LL) << "]";
   } else {
     ss << ",published_feature_shape=<disabled>";
+  }
+  if (publish_error) {
+    ss << ",output_error=" << quoted_or_auto(output_error_name) << ",published_error_shape=["
+       << batch_size << "," << num_points << ",1]";
   }
   ss << ")";
   return ss.str();
@@ -887,8 +917,23 @@ bool TrackDescriptor::compile_node_contract(const ContractCompileInput& input,
 bool TrackKLT::compile_node_contract(const ContractCompileInput& input, CompiledNodeContract* out,
                                      std::string* err) const {
   const std::string name = element_names(input.node_index).front();
-  return compile_runtime_contract(kind(), name, contract_definition(), make_runtime(opt_), out,
-                                  err);
+  if (!compile_runtime_contract(kind(), name, contract_definition(), make_runtime(opt_), out, err))
+    return false;
+  out->public_input_contract = pipeline_internal::OrderedPublicInputContract{{
+      {opt_.prev_image_name,
+       TensorDType::UInt8,
+       TensorLayout::HW,
+       {opt_.batch_size, opt_.height, opt_.width}},
+      {opt_.cur_image_name,
+       TensorDType::UInt8,
+       TensorLayout::HW,
+       {opt_.batch_size, opt_.height, opt_.width}},
+      {opt_.input_points_name,
+       TensorDType::Int32,
+       TensorLayout::HW,
+       {opt_.batch_size, opt_.num_points, 2}},
+  }};
+  return true;
 }
 
 void FeatureHistogram::apply_compiled_contract(const CompiledNodeContract&, std::string* err) {

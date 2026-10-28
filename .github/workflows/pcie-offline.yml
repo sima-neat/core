@@ -72,7 +72,7 @@ jobs:
     name: Assemble offline ${{ matrix.distro }} ${{ matrix.arch }}
     needs: [source, config]
     environment: ${{ needs.config.outputs.vulcan_env }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: [self-hosted, linux, "${{ matrix.arch }}", "vulcan-${{ needs.config.outputs.vulcan_env }}", ubuntu, default]
     timeout-minutes: 90
     concurrency:
       group: pcie-offline-build-${{ needs.source.outputs.ref }}-${{ needs.source.outputs.sha }}-${{ matrix.distro }}-${{ matrix.arch }}
@@ -81,10 +81,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {distro: ubuntu22, arch: amd64, runner: ubuntu-22.04}
-          - {distro: ubuntu24, arch: amd64, runner: ubuntu-24.04}
-          - {distro: ubuntu22, arch: arm64, runner: ubuntu-22.04-arm}
-          - {distro: ubuntu24, arch: arm64, runner: ubuntu-24.04-arm}
+          - {distro: ubuntu22, arch: amd64}
+          - {distro: ubuntu24, arch: amd64}
+          - {distro: ubuntu22, arch: arm64}
+          - {distro: ubuntu24, arch: arm64}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -96,9 +96,18 @@ jobs:
           platforms: arm64
       - name: Install publication client with conditional-write support
         run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-venv
           python3 -m venv "$RUNNER_TEMP/offline-aws"
           "$RUNNER_TEMP/offline-aws/bin/pip" install awscli==1.42.49
           echo "$RUNNER_TEMP/offline-aws/bin" >> "$GITHUB_PATH"
+      - name: Authenticate existing PCIe build images
+        run: |
+          # The AMI credential helper does not implement credential storage.
+          export DOCKER_CONFIG="$RUNNER_TEMP/offline-docker"
+          mkdir -p "$DOCKER_CONFIG"
+          echo "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
+          aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 069171140053.dkr.ecr.us-west-2.amazonaws.com
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: ${{ needs.config.outputs.aws_region }}
@@ -144,6 +153,7 @@ jobs:
           path: |
             ${{ runner.temp }}/offline-build.log
             ${{ runner.temp }}/offline/spec.json
+            ${{ runner.temp }}/offline/baseline-images.json
             ${{ runner.temp }}/offline/metadata-offline.json
             ${{ runner.temp }}/offline/neat-offline/bundle.json
           if-no-files-found: ignore
@@ -153,7 +163,7 @@ jobs:
     name: Assemble standalone Core offline
     needs: [source, config]
     environment: ${{ needs.config.outputs.vulcan_env }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: [self-hosted, linux, arm64, "vulcan-${{ needs.config.outputs.vulcan_env }}", ubuntu, default]
     timeout-minutes: 90
     concurrency:
       group: pcie-offline-build-${{ needs.source.outputs.ref }}-${{ needs.source.outputs.sha }}-core
@@ -164,9 +174,18 @@ jobs:
           ref: ${{ github.sha }}
       - name: Install publication client with conditional-write support
         run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-venv
           python3 -m venv "$RUNNER_TEMP/offline-aws"
           "$RUNNER_TEMP/offline-aws/bin/pip" install awscli==1.42.49
           echo "$RUNNER_TEMP/offline-aws/bin" >> "$GITHUB_PATH"
+      - name: Authenticate clean baseline images
+        run: |
+          # The AMI credential helper does not implement credential storage.
+          export DOCKER_CONFIG="$RUNNER_TEMP/offline-docker"
+          mkdir -p "$DOCKER_CONFIG"
+          echo "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
+          aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 069171140053.dkr.ecr.us-west-2.amazonaws.com
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: ${{ needs.config.outputs.aws_region }}
@@ -212,6 +231,7 @@ jobs:
           path: |
             ${{ runner.temp }}/offline-build.log
             ${{ runner.temp }}/offline/spec.json
+            ${{ runner.temp }}/offline/baseline-images.json
             ${{ runner.temp }}/offline/metadata.json
             ${{ runner.temp }}/offline/metadata-minimal.json
             ${{ runner.temp }}/offline/neat-core-offline/bundle.json

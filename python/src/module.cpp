@@ -3935,6 +3935,11 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("output_points_name", &simaai::neat::TrackKLTOptions::output_points_name)
       .def_rw("output_status_name", &simaai::neat::TrackKLTOptions::output_status_name)
       .def_rw("output_features_name", &simaai::neat::TrackKLTOptions::output_features_name)
+      .def_rw("publish_error", &simaai::neat::TrackKLTOptions::publish_error)
+      .def_rw("output_error_name", &simaai::neat::TrackKLTOptions::output_error_name)
+      .def_rw("error_threshold", &simaai::neat::TrackKLTOptions::error_threshold)
+      .def_rw("min_eig_threshold", &simaai::neat::TrackKLTOptions::min_eig_threshold)
+      .def_rw("require_convergence", &simaai::neat::TrackKLTOptions::require_convergence)
       .def("summary", &simaai::neat::TrackKLTOptions::summary)
       .def("__repr__",
            [](const simaai::neat::TrackKLTOptions& options) { return options.summary(); });

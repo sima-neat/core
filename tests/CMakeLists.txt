@@ -77,6 +77,14 @@ simaneat_add_test(NAME unit_boxdecode_kernel_recipe_test COMMAND unit_boxdecode_
 set_tests_properties(unit_boxdecode_kernel_recipe_test PROPERTIES
   TIMEOUT 30 LABELS "strict;unit;contracts")
 
+add_executable(unit_boxdecode_public_input_binding_test
+  unit_testing/unit_boxdecode_public_input_binding_test.cpp)
+target_link_libraries(unit_boxdecode_public_input_binding_test PRIVATE
+  sima_neat sima_neat_internal_headers SimaScheduler::frontend)
+simaneat_add_test(NAME unit_boxdecode_public_input_binding_test COMMAND unit_boxdecode_public_input_binding_test)
+set_tests_properties(unit_boxdecode_public_input_binding_test PROPERTIES
+  TIMEOUT 30 LABELS "strict;unit;contracts")
+
 add_executable(unit_boxdecode_geometry_test
   unit_testing/unit_boxdecode_geometry_test.cpp)
 target_link_libraries(unit_boxdecode_geometry_test PRIVATE
@@ -171,6 +179,7 @@ endif()
 set(PIPELINESESSION_TEST_TARGETS
   unit_boxdecode_publication_test
   unit_boxdecode_kernel_recipe_test
+  unit_boxdecode_public_input_binding_test
   unit_boxdecode_geometry_test
   unit_kernel_runner_integration_test)
 foreach(_target IN LISTS PIPELINESESSION_TEST_TARGETS)
@@ -509,6 +518,7 @@ set(UNIT_TESTS
   unit_rtsp_encoded_input_group_test
   unit_input_policy_test
   unit_input_metadata_geometry_test
+  unit_ordered_public_input_contract_test
   unit_input_metadata_admission_test
   unit_input_planner_semantics_test
   unit_preprocess_meta_validation_test
@@ -579,6 +589,7 @@ set(UNIT_TESTS
   unit_dmabuf_plan_contract_projection_test
   unit_model_archive_loader_test
   unit_modelpack_compact_extraction_path_test
+  unit_modelpack_process_root_test
   unit_outputspec_test
   unit_pcie_nodes_test
   unit_pcie_output_capacity_test
@@ -901,6 +912,18 @@ foreach(test ${E2E_TESTS})
 
   if (NOT test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST ${test} APPEND PROPERTY LABELS "e2e")
+  endif()
+endforeach()
+
+# Public EV correctness: one complete scenario matrix per affected kernel.
+foreach(visual_kernel grider_fast track_descriptor track_klt)
+  set(visual_test "${visual_kernel}_ev_test")
+  add_pipeline_test(${visual_test}
+    SOURCES e2e_testing/${visual_test}.cpp LOCK_ACCELERATOR)
+  if (NOT visual_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_property(TEST ${visual_test} APPEND PROPERTY LABELS
+      "e2e;visual_frontend;ev74;customer_api;issue-regression")
+    set_tests_properties(${visual_test} PROPERTIES TIMEOUT 180)
   endif()
 endforeach()
 
@@ -1557,28 +1580,23 @@ function(add_visual_frontend_tput_preset_test name)
     set_property(TEST ${name} APPEND PROPERTY
       ENVIRONMENT "LD_LIBRARY_PATH=${SIMA_TEST_NEAT_LD_LIBRARY_PATH}")
   endif()
-  set_property(TEST ${name} APPEND PROPERTY ENVIRONMENT "SIMA_CLI_CHECK_FOR_UPDATE=0")
+  set_property(TEST ${name} APPEND PROPERTY ENVIRONMENT "SIMA_CLI_CHECK_FOR_UPDATE=0" "SIMA_TEST_IS_LONG=0")
   foreach(_vft_env IN LISTS VFT_ENV)
     set_property(TEST ${name} APPEND PROPERTY ENVIRONMENT "${_vft_env}")
   endforeach()
-  set_property(TEST ${name} APPEND PROPERTY LABELS "e2e;visual_frontend;ev74")
+  set_property(TEST ${name} APPEND PROPERTY LABELS "strict;e2e;visual_frontend;ev74")
   if (VFT_LABELS)
     set_property(TEST ${name} APPEND PROPERTY LABELS "${VFT_LABELS}")
   endif()
   set_tests_properties(${name} PROPERTIES
     RESOURCE_LOCK "accelerator-device"
-    SKIP_RETURN_CODE 77
     TIMEOUT 90
   )
 endfunction()
 
-# Fast customer-style API coverage for EV74 visual frontend graphs 235-238.
-# These CTest presets intentionally execute the public Neat Graph/Node/Run API via
-# visual_frontend_tput_test rather than processcvu internals.  They keep the image
-# size small enough for normal DevKit iteration while covering batched logical
-# tensors, all four visual graph IDs, KLT detect-on/off public output contracts,
-# CPU golden/semantic checks, processcvu timing capture, and the pre-dispatch
-# illegal-input guard that prevents bad payloads from reaching EV74.
+# Small installed-runtime smoke presets: histogram, KLT no-detect tuple, and
+# invalid histogram batch rejection. Numerical coverage lives in the three
+# per-kernel EV tests above; these presets do not enable CPU golden checks.
 add_visual_frontend_tput_preset_test(
   visual_frontend_customer_api_fast_test
   ENV
@@ -1946,6 +1964,7 @@ foreach(test
     gst_data_adapter_runtime_regression_test
     unit_model_archive_loader_test
     unit_modelpack_compact_extraction_path_test
+    unit_modelpack_process_root_test
     graph_rtsp_lifecycle_regression_test
     graph_validate_report_regression_test
     security_modelpack_matrix_test)
@@ -1975,6 +1994,7 @@ foreach(test
     unit_detection_types_bbox_test
     unit_model_archive_loader_test
     unit_modelpack_compact_extraction_path_test
+    unit_modelpack_process_root_test
     unit_modalix_contract_preflight_test
     graph_validate_report_regression_test
     graph_rtsp_lifecycle_regression_test
