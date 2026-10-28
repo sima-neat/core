@@ -1779,7 +1779,7 @@ jobs:
 
   test-devkit:
     name: Test Core on DevKit
-    if: ${{ always() && !cancelled() && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
+    if: ${{ always() && !cancelled() && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
     needs:
       - detect-changes
       - plan-devkit-tests

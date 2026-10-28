@@ -163,3 +163,11 @@ def test_reruns_replace_only_the_reexecuted_shards_artifact():
     assert 'matrix.shard' in upload['name'] and 'github.run_id' in upload['name']
     for gate in ('publish-offline-develop', 'validation-complete'):
         assert {'plan-devkit-tests', 'test-devkit-shard', 'test-devkit'} <= set(jobs[gate]['needs'])
+
+
+def test_offline_only_and_fuzz_runs_do_not_require_hardware_shards():
+    jobs = yaml.safe_load((ROOT / '.github/workflows/vulcan-ci.yml').read_text())['jobs']
+    gate = jobs['test-devkit']['if']
+    assert '!inputs.offline_source_run_id' in gate
+    assert "== 'standard'" in gate
+    assert "needs.detect-changes.outputs.docs_only != 'true'" in gate
