@@ -13,7 +13,10 @@ namespace {
 
 // Frames held below the camera at once besides the queue: the decoder's in-flight inputs
 // (2 by default, 4 with a raised SimaDecode input_buffers) plus one each for the passthrough
-// branch and the graph handoff. neatcapturepool accepts at most kMaxCaptureBuffers.
+// branch and the graph handoff. When the fan-out is fused into one tee pipeline
+// (ExecutionGraphCompiler), the sender branch holds up to 2 slots instead: the leaky sink
+// queue's frame and the one the UDP sink is still sending. neatcapturepool accepts at most
+// kMaxCaptureBuffers.
 constexpr std::uint32_t kHeldDownstream = 6;
 constexpr std::uint32_t kMaxCaptureBuffers = 64;
 

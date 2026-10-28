@@ -6,6 +6,7 @@
 #include "gst/GstInit.h"
 #include "graphs/Fragments.h"
 #include "nodes/common/Caps.h"
+#include "nodes/common/JpegParse.h"
 #include "nodes/common/Output.h"
 #include "nodes/common/Queue.h"
 #include "nodes/io/CameraInput.h"
@@ -1881,6 +1882,218 @@ RUN_TEST(
                   std::adjacent_find(merged_names.begin(), merged_names.end()) ==
                       merged_names.end(),
               "the encoded tee must not duplicate the decoded sender's payloader name");
+
+      // A USB camera's JPEG split to SimaDecode and an MJPEG passthrough VideoSender joins
+      // the same tee lowering: one pipeline, the capture buffer read in place by both branches.
+      enum class UsbSender { Passthrough, RtpUdpSink, RtpUdpSinkAlone, Async };
+      const auto compile_usb_video_app = [&](UsbSender sender_kind, bool decode_realtime,
+                                             bool rtsp_mjpeg_source = false) {
+        simaai::neat::UsbCameraInputOptions camera;
+        camera.camera_name = "usb-camera-tee";
+        camera.buffer_name = "usb_tee";
+        simaai::neat::Graph source("usb_tee_source");
+        if (rtsp_mjpeg_source) {
+          simaai::neat::nodes::groups::RtspEncodedInputOptions rtsp;
+          rtsp.url = "rtsp://example.test/mjpeg";
+          rtsp.codec = simaai::neat::nodes::groups::RtspCodec::MJPEG;
+          rtsp.insert_queue = false;
+          rtsp.auto_caps_from_stream = false;
+          source = simaai::neat::nodes::groups::RtspEncodedInput(rtsp);
+        } else {
+          source.add(simaai::neat::internal::uvc::camera_node(
+              camera, {"/dev/video0", simaai::neat::FormatTag::NV12}));
+        }
+        simaai::neat::SimaDecodeOptions decode;
+        decode.type = simaai::neat::SimaDecodeType::MJPEG;
+        decode.out_format = simaai::neat::FormatTag::NV12;
+        decode.dec_width = static_cast<int>(camera.width);
+        decode.dec_height = static_cast<int>(camera.height);
+        decode.dec_fps = static_cast<int>(camera.framerate_num);
+        simaai::neat::Graph decoder("usb_tee_decode");
+        decoder.add(simaai::neat::nodes::SimaDecode(decode));
+        decoder.add(simaai::neat::nodes::Output("usb_tee_frames"));
+        simaai::neat::Graph sender("usb_tee_sender");
+        if (sender_kind == UsbSender::RtpUdpSink || sender_kind == UsbSender::RtpUdpSinkAlone) {
+          // VideoSender's MJPEG shape on a Scheduler with neatjpegudpsink: [JpegRtpUdpSink],
+          // optionally behind JpegParse, no UdpOutput. The compiler matches the sink by kind.
+          if (sender_kind == UsbSender::RtpUdpSink) {
+            sender.add(simaai::neat::nodes::JpegParse());
+          }
+          sender.add(std::make_shared<FragmentNode>(
+              "JpegRtpUdpSink", "neatjpegudpsink", "jpegudp",
+              " host=127.0.0.1 port=5600 pt=26 sync=false async=false enable-last-sample=false"));
+        } else {
+          auto options = simaai::neat::nodes::groups::VideoSenderOptions::Passthrough(
+              simaai::neat::nodes::groups::RtspCodec::MJPEG);
+          options.host = "127.0.0.1";
+          options.async = sender_kind == UsbSender::Async;
+          sender = simaai::neat::nodes::groups::VideoSender(options);
+        }
+        simaai::neat::GraphLinkOptions decode_link;
+        if (decode_realtime) {
+          decode_link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+        }
+        // The usb_camera_input_e2e_test shape: a realtime (latest-frame) video link.
+        simaai::neat::GraphLinkOptions video_link;
+        video_link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+        simaai::neat::Graph app("usb_encoded_video_app", outer_options);
+        app.connect(source, decoder, decode_link);
+        app.connect(source, sender, video_link);
+        return simaai::neat::runtime::compile_public_graph(app, composed_run_options);
+      };
+      const auto single_open_segment = [](const auto& plan) {
+        const simaai::neat::runtime::PipelineSegmentPlan* open = nullptr;
+        std::size_t count = 0;
+        for (const auto& segment : plan.pipeline_segments) {
+          if (!segment.consumed_by_fused_realtime_ingress) {
+            ++count;
+            open = &segment;
+          }
+        }
+        return count == 1U ? open : nullptr;
+      };
+      for (const auto sender_kind : {UsbSender::RtpUdpSink, UsbSender::RtpUdpSinkAlone}) {
+        const bool parsed = sender_kind == UsbSender::RtpUdpSink;
+        const std::string label =
+            parsed ? "a [JpegParse, JpegRtpUdpSink] sender" : "a [JpegRtpUdpSink] sender";
+        const auto usb_plan = compile_usb_video_app(sender_kind, false);
+        const auto* usb_merged = single_open_segment(usb_plan);
+        require(usb_merged != nullptr && usb_merged->boundary.source_like &&
+                    usb_merged->input_edges.empty() &&
+                    !usb_merged->fused_realtime_ingress.has_value() && !has_open_fanout(usb_plan),
+                "a USB camera split to SimaDecode and " + label + " must become one pipeline");
+        const auto usb_tee =
+            std::find_if(usb_merged->nodes.begin(), usb_merged->nodes.end(),
+                         [](const auto& node) { return node->kind() == "EncodedVideoSenderTee"; });
+        require(usb_merged->nodes.size() == 4U &&
+                    usb_merged->nodes[0]->kind() == "UsbCameraInput" &&
+                    usb_tee == usb_merged->nodes.begin() + 1 &&
+                    usb_merged->nodes[2]->kind() == "SimaDecode" &&
+                    usb_merged->provenance.size() == usb_merged->nodes.size(),
+                "the encoded tee must sit between the USB camera and SimaDecode (" + label + ")");
+        require(!simaai::neat::runtime::segment_copies_encoded_input(*usb_merged) &&
+                    usb_plan.named_outputs.count("usb_tee_frames") == 1U &&
+                    usb_plan.output_endpoints.size() == 1U,
+                "the fused USB pipeline must keep only the decoder Output and copy nothing");
+        const std::string usb_tee_fragment = (*usb_tee)->backend_fragment(1);
+        require(usb_tee_fragment.rfind("tee name=n1_encoded_tee n1_encoded_tee. ! queue "
+                                       "name=n1_encoded_tee_sink_queue max-size-buffers=1 "
+                                       "max-size-bytes=0 max-size-time=0 leaky=downstream",
+                                       0) == 0 &&
+                    (usb_tee_fragment.find("jpegparse name=n2000_jpegparse") !=
+                     std::string::npos) == parsed &&
+                    usb_tee_fragment.find(parsed ? "neatjpegudpsink name=n2001_jpegudp"
+                                                 : "neatjpegudpsink name=n2000_jpegudp") !=
+                        std::string::npos &&
+                    usb_tee_fragment.find("udpsink") != std::string::npos &&
+                    usb_tee_fragment.find("enable-last-sample=false") != std::string::npos &&
+                    usb_tee_fragment.find("pay0") == std::string::npos,
+                "the realtime video link must render a leaky sink queue to the JPEG sender (" +
+                    label + "): " + usb_tee_fragment);
+        const auto usb_names = [&] {
+          std::vector<std::string> names;
+          for (std::size_t i = 0; i < usb_merged->nodes.size(); ++i) {
+            const auto node_names = usb_merged->nodes[i]->element_names(static_cast<int>(i));
+            names.insert(names.end(), node_names.begin(), node_names.end());
+          }
+          std::sort(names.begin(), names.end());
+          return names;
+        }();
+        require(std::adjacent_find(usb_names.begin(), usb_names.end()) == usb_names.end(),
+                "the fused USB pipeline must keep element names unique (" + label + ")");
+        const std::string usb_pipeline =
+            simaai::neat::build_pipeline_full(usb_merged->nodes, false, "mysink", false,
+                                              simaai::neat::NameTransform{})
+                .pipeline_string;
+        std::size_t at = 0;
+        for (const char* element :
+             {"v4l2src", "neatcapturepool", "identity", "tee name=", parsed ? "jpegparse" : "tee",
+              "neatjpegudpsink", "_main_queue", "neatdecoder", "appsink"}) {
+          const auto found = usb_pipeline.find(element, at);
+          require(found != std::string::npos, std::string("fused USB pipeline lacks ") + element +
+                                                  " in order: " + usb_pipeline);
+          at = found;
+        }
+        if (parsed) {
+          std::cout << "[INFO] fused USB camera pipeline: " << usb_pipeline << "\n";
+        }
+      }
+      // A latest-frame decode edge, an asynchronous UDP sink, and MJPEG from any source other
+      // than a USB camera keep the segmented route (and the sender's egress copy).
+      const auto stays_segmented = [&](const auto& plan) {
+        return find_encoded_tee(plan) == nullptr && has_open_fanout(plan) &&
+               std::any_of(plan.pipeline_segments.begin(), plan.pipeline_segments.end(),
+                           [](const auto& segment) {
+                             return !segment.consumed_by_fused_realtime_ingress &&
+                                    simaai::neat::runtime::segment_copies_encoded_input(segment);
+                           });
+      };
+      // The stock MJPEG VideoSender (jpegparse ! rtpjpegpay ! udpsink) reads the CMA slot
+      // slower than its segmented copy, so it keeps the FanOut and the copy path.
+      require(stays_segmented(compile_usb_video_app(UsbSender::Passthrough, false)),
+              "the stock MJPEG VideoSender must keep the USB camera FanOut and its copy");
+      require(stays_segmented(compile_usb_video_app(UsbSender::Passthrough, true)),
+              "a RealtimeLatestByStream decode edge must keep the USB camera FanOut");
+      // The sink's own copy decision is not modelled by this tree's copy predicate.
+      const auto realtime_sink_plan = compile_usb_video_app(UsbSender::RtpUdpSink, true);
+      require(find_encoded_tee(realtime_sink_plan) == nullptr &&
+                  has_open_fanout(realtime_sink_plan),
+              "a RealtimeLatestByStream decode edge must keep the FanOut before JpegRtpUdpSink");
+      require(stays_segmented(compile_usb_video_app(UsbSender::Async, false)),
+              "an async MJPEG VideoSender must keep the USB camera FanOut");
+      {
+        simaai::neat::Graph app("usb_async_jpeg_rtp_udp_sink", outer_options);
+        simaai::neat::UsbCameraInputOptions camera;
+        camera.camera_name = "usb-camera-async-sink";
+        camera.buffer_name = "usb_async_sink";
+        simaai::neat::Graph source("usb_async_sink_source");
+        source.add(simaai::neat::internal::uvc::camera_node(
+            camera, {"/dev/video0", simaai::neat::FormatTag::NV12}));
+        simaai::neat::SimaDecodeOptions decode;
+        decode.type = simaai::neat::SimaDecodeType::MJPEG;
+        decode.out_format = simaai::neat::FormatTag::NV12;
+        decode.dec_width = static_cast<int>(camera.width);
+        decode.dec_height = static_cast<int>(camera.height);
+        decode.dec_fps = static_cast<int>(camera.framerate_num);
+        simaai::neat::Graph decoder("usb_async_sink_decode");
+        decoder.add(simaai::neat::nodes::SimaDecode(decode));
+        decoder.add(simaai::neat::nodes::Output("usb_async_sink_frames"));
+        simaai::neat::Graph sender("usb_async_sink_sender");
+        sender.add(simaai::neat::nodes::JpegParse());
+        sender.add(std::make_shared<FragmentNode>(
+            "JpegRtpUdpSink", "neatjpegudpsink", "jpegudp",
+            " host=127.0.0.1 port=5600 pt=26 sync=false async=true enable-last-sample=false"));
+        app.connect(source, decoder);
+        app.connect(source, sender);
+        const auto plan = simaai::neat::runtime::compile_public_graph(app, composed_run_options);
+        require(find_encoded_tee(plan) == nullptr && has_open_fanout(plan),
+                "an async JpegRtpUdpSink must keep the USB camera FanOut");
+      }
+      require(stays_segmented(compile_usb_video_app(UsbSender::Passthrough, false, true)),
+              "an MJPEG source other than UsbCameraInput must keep its FanOut");
+      // Negative control: an H.264 RTSP source with an MJPEG sender is a codec mismatch.
+      {
+        simaai::neat::Graph app("h264_source_mjpeg_sender", outer_options);
+        simaai::neat::nodes::groups::RtspEncodedInputOptions source_options;
+        source_options.url = "rtsp://example.test/mismatch";
+        source_options.insert_queue = false;
+        source_options.auto_caps_from_stream = false;
+        source_options.h264_fps = 20;
+        source_options.h264_width = 1280;
+        source_options.h264_height = 720;
+        auto source = simaai::neat::nodes::groups::RtspEncodedInput(source_options);
+        simaai::neat::Graph decoder("mismatch_decoder");
+        decoder.add(simaai::neat::nodes::SimaDecode());
+        decoder.add(simaai::neat::nodes::Output("mismatch_frames"));
+        auto options = simaai::neat::nodes::groups::VideoSenderOptions::Passthrough(
+            simaai::neat::nodes::groups::RtspCodec::MJPEG);
+        options.host = "127.0.0.1";
+        app.connect(source, decoder);
+        app.connect(source, simaai::neat::nodes::groups::VideoSender(options));
+        require(find_encoded_tee(simaai::neat::runtime::compile_public_graph(
+                    app, composed_run_options)) == nullptr,
+                "an MJPEG sender must not fuse onto an H.264 source");
+      }
 
       // Kind-based recognition must preserve a customer-configured parser's
       // caps/header behavior exactly.
