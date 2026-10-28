@@ -272,6 +272,38 @@ install_board_sentinel
 
 
 class ModalixPythonVenvSupportTest(unittest.TestCase):
+    def test_dangling_interpreter_is_repaired_without_removing_packages(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            venv = Path(tmp) / "pyneat"
+            subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(venv)], check=True)
+            marker = venv / "lib" / "preserved-package"
+            marker.write_text("existing package")
+            for alias in (venv / "bin").glob("python*"):
+                if alias.is_symlink():
+                    alias.unlink()
+                    alias.symlink_to("/missing/previous-sdk/python3")
+            subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(venv)], check=True)
+            self.assertFalse((venv / "bin" / "python").exists())
+            result = run_bash(f'''
+source "$1"
+prepare_python_venv '{venv}'
+"{venv}/bin/python" -c 'import sys; assert sys.prefix != sys.base_prefix'
+''')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Removing dangling virtualenv interpreter link", result.stdout)
+            self.assertEqual(marker.read_text(), "existing package")
+
+    def test_working_interpreter_links_are_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            venv = Path(tmp) / "pyneat"
+            subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(venv)], check=True)
+            interpreter = venv / "bin" / "python"
+            before = interpreter.lstat().st_ino
+            result = run_bash(f'source "$1"; prepare_python_venv "{venv}"')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("Removing dangling", result.stdout)
+            self.assertEqual(interpreter.lstat().st_ino, before)
+
     @staticmethod
     def run_install(
         *, ensurepip_available: bool, apt_install_ok: bool = True

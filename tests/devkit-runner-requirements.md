@@ -28,3 +28,8 @@ and two 16GB). A weekly source profile adds at most one source-pod worker. Limit
 capacity combines lanes within a pool or queues a worker; it never drops tests.
 CTest labels/resource locks named `rtsp` alone are not proof that external access
 is required. Existing long/profile exclusions remain explicit coverage gaps.
+
+Runtime installation preserves existing PyNeat environments. If a previous SDK
+or system Python left dangling interpreter symlinks in the environment, the
+installer repairs those links before refreshing the venv and verifies that its
+Python runs as a virtual environment. Installed packages are retained.
