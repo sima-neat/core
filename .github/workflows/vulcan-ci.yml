@@ -206,6 +206,7 @@ jobs:
             tests/tools/test_required_test_coverage.py \
             tests/tools/test_ci_weekly_preparation.py \
             tests/tools/test_devkit_sharding.py \
+            tests/tools/test_install_test_dependencies.py \
             tests/tools/test_docs_native_prerequisites.py \
             tests/tools/test_ci_hygiene_cohort.py \
             tests/tools/test_published_artifact.py \
@@ -1078,6 +1079,20 @@ jobs:
             printf 'TUTORIALS_PYTEST_DIR=%s\n' "${TUTORIALS_PYTEST_DIR}"
           } >> "${GITHUB_ENV}"
 
+      - name: Install test dependencies on every allocated DevKit
+        run: |
+          set -euo pipefail
+          PYNEAT_HOME="${HOME}/pyneat"
+          if [[ -x "${PYNEAT_HOME}/bin/python" ]]; then
+            PYTHON_BIN="${PYNEAT_HOME}/bin/python"
+          elif [[ -x "${PYNEAT_HOME}/.venv/bin/python" ]]; then
+            PYTHON_BIN="${PYNEAT_HOME}/.venv/bin/python"
+          else
+            echo "Expected installed PyNeat Python environment under ${PYNEAT_HOME}." >&2
+            exit 1
+          fi
+          "${PYTHON_BIN}" tools/ci/install_test_dependencies.py
+
       - name: Smoke-test installed PyNeat wheel
         run: |
           set -euo pipefail
@@ -1645,7 +1660,6 @@ jobs:
           fi
 
           "${PYTHON_BIN}" -m pip install --upgrade pip
-          "${PYTHON_BIN}" -m pip install pytest requests
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
           export SIMA_NEAT_TUTORIAL_REQUIRE_RUNTIME=1
           export SIMA_GRAPH_PHASE3_PY_RUNTIME=1
@@ -1706,7 +1720,6 @@ jobs:
           fi
 
           "${PYTHON_BIN}" -m pip install --upgrade pip
-          "${PYTHON_BIN}" -m pip install pytest requests
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
           export SIMA_NEAT_TUTORIAL_REQUIRE_RUNTIME=1
           export SIMA_GRAPH_PHASE3_PY_RUNTIME=1

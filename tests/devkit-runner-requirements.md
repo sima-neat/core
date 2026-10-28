@@ -33,3 +33,10 @@ Runtime installation preserves existing PyNeat environments. If a previous SDK
 or system Python left dangling interpreter symlinks in the environment, the
 installer repairs those links before refreshing the venv and verifies that its
 Python runs as a virtual environment. Installed packages are retained.
+
+Every allocated shard installs the runtime and `dev` dependencies declared in
+`pyproject.toml` into its installed PyNeat environment before tests start,
+regardless of its assigned lanes. This includes PyYAML, Pillow, OpenCV, pytest
+and requests; it does not rebuild or reinstall PyNeat. Installation failure
+blocks the shard. Optional Torch remains governed by the explicit pinned Torch
+profile. Pre-existing packages on another board do not establish readiness.
