@@ -193,6 +193,7 @@ struct PipelineSegmentRuntime {
   std::shared_ptr<pipeline_internal::DiagCtx> retained_diag;
   GraphTransport transport;
 
+  std::optional<pipeline_internal::OrderedPublicInputContract> public_input_contract;
   InputStream stream;
   InputStreamOptions stream_opt;
   std::optional<InputOptions> tensor_input_opt_for_cv;

@@ -103,8 +103,10 @@ source ~/.bashrc
 
 提取/執行階段放置控制項：
 - `SIMA_MPK_EXTRACT_ROOT=<dir>` 設定基本提取目錄。
-- `SIMA_MPK_CLEANUP_EXTRACTED=0` 在程序結束後保留提取的 `proc_*` 模型資料。
-- `SIMA_MPK_EXTRACT_GC_STALE_PROC=0` 在啟動時停用已停止的 `proc_*` 清理。
+- `SIMA_MPK_CLEANUP_EXTRACTED=0` 在程序結束後保留提取的 `proc_run_*` 模型資料。
+- `SIMA_MPK_EXTRACT_GC_STALE_PROC=0` 停用啟動時依據擁有權鎖定清理已無人使用的 `proc_run_*` 目錄。
+
+請在確認無人使用後手動移除舊版 `proc_<pid>` 根目錄。
 
 #### ResNet50
 

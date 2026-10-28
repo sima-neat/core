@@ -5573,17 +5573,6 @@ std::size_t model_managed_mla_logical_output_count(const internal::ModelPack& pa
   return 0U;
 }
 
-std::vector<int> logical_indices_from_runtime_contract(const CompiledRuntimeContract& runtime) {
-  std::vector<int> indices;
-  indices.reserve(runtime.logical_outputs.size());
-  for (const auto& logical : runtime.logical_outputs) {
-    if (logical.logical_index >= 0) {
-      indices.push_back(logical.logical_index);
-    }
-  }
-  return indices;
-}
-
 std::vector<int>
 unique_logical_indices_from_bindings(const std::vector<internal::RouteTensorBinding>& bindings) {
   std::vector<int> indices;
@@ -5596,22 +5585,6 @@ unique_logical_indices_from_bindings(const std::vector<internal::RouteTensorBind
     indices.push_back(binding.logical_index);
   }
   return indices;
-}
-
-std::vector<int> sorted_logical_index_set(std::vector<int> indices) {
-  std::sort(indices.begin(), indices.end());
-  indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
-  return indices;
-}
-
-std::vector<int> model_managed_mla_logical_output_indices(const internal::ModelPack& pack) {
-  const auto stage_facts = pack.stage_facts_for_model_stage(internal::ModelStage::MlaOnly);
-  for (const auto& fact : stage_facts) {
-    if (fact.mla_compiled.has_value()) {
-      return logical_indices_from_runtime_contract(fact.mla_compiled->runtime_contract);
-    }
-  }
-  return {};
 }
 
 std::size_t post_region_compiled_logical_output_count(const internal::ModelPack& pack,
@@ -5657,64 +5630,6 @@ std::size_t post_region_compiled_logical_output_count(const internal::ModelPack&
   return 0U;
 }
 
-std::vector<int> post_region_compiled_logical_output_indices(const internal::ModelPack& pack,
-                                                             const internal::RouteRegion& region) {
-  using GraphKind = pipeline_internal::sima::RouteGraphKernelKind;
-  switch (region.op_kind) {
-  case GraphKind::Detess:
-    return logical_indices_from_runtime_contract(
-        require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::Detess)
-            .runtime_contract);
-  case GraphKind::DetessCast:
-    return logical_indices_from_runtime_contract(
-        require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::DetessCast)
-            .runtime_contract);
-  case GraphKind::DetessDequant:
-    return logical_indices_from_runtime_contract(
-        require_model_managed_postprocess_contract(pack,
-                                                   internal::ExecutionStageKind::DetessDequant)
-            .runtime_contract);
-  case GraphKind::Dequantize:
-    return logical_indices_from_runtime_contract(
-        require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::Dequant)
-            .runtime_contract);
-  case GraphKind::Cast:
-  case GraphKind::Unknown:
-  case GraphKind::Preproc:
-  case GraphKind::Quant:
-  case GraphKind::Tess:
-  case GraphKind::QuantTess:
-  case GraphKind::BoxDecode:
-  case GraphKind::Unpack:
-  case GraphKind::Slice:
-  case GraphKind::PassThrough:
-  case GraphKind::Mla:
-    return {};
-  }
-  return {};
-}
-
-[[maybe_unused]] std::vector<int>
-upstream_logical_indices_for_post_region(const internal::ModelPack& pack,
-                                         const std::vector<internal::RouteRegion>& regions,
-                                         const std::size_t region_index) {
-  if (region_index == 0U) {
-    return model_managed_mla_logical_output_indices(pack);
-  }
-
-  const auto& upstream_region = regions[region_index - 1U];
-  auto indices = post_region_compiled_logical_output_indices(pack, upstream_region);
-  if (!indices.empty()) {
-    return indices;
-  }
-
-  indices = unique_logical_indices_from_bindings(upstream_region.outputs);
-  if (!indices.empty()) {
-    return indices;
-  }
-  return unique_logical_indices_from_bindings(upstream_region.inputs);
-}
-
 void validate_fanout_region_contract_alignment(const internal::ModelPack& pack,
                                                const std::vector<internal::RouteRegion>& regions,
                                                const std::size_t region_index) {
@@ -5727,15 +5642,7 @@ void validate_fanout_region_contract_alignment(const internal::ModelPack& pack,
     throw std::runtime_error("Model post region fanout contract is empty.");
   }
 
-  // A fanout region handles a SUBSET of the MLA's logical outputs (those routed to this kernel
-  // kind). A heterogeneous egress -- e.g. an output published in normal layout that bypasses the
-  // detessellation fanout (per-token int8 "normal" output) -- is valid: that output simply does
-  // not appear in the Detess region while still appearing in the Dequant region. Validate each
-  // region against the MLA contract universe rather than assuming every fanout covers all MLA
-  // outputs (the old total-count equality) or a linear previous-region chain (which does not hold
-  // for DAG egress where one output skips a stage).
   const auto region_in_indices = unique_logical_indices_from_bindings(region.inputs);
-  const auto region_out_indices = unique_logical_indices_from_bindings(region.outputs);
 
   // Internal consistency: one fanout member per distinct logical output this region handles.
   if (!region_in_indices.empty() && region_in_indices.size() != expected_outputs) {
@@ -5743,25 +5650,9 @@ void validate_fanout_region_contract_alignment(const internal::ModelPack& pack,
         "Model post region fanout member count does not match its logical input count.");
   }
 
-  // Each region's logical indices must be a subset of the MLA's logical outputs.
-  const auto mla_indices = sorted_logical_index_set(model_managed_mla_logical_output_indices(pack));
-  if (!mla_indices.empty()) {
-    const auto in_universe = [&](int idx) {
-      return std::binary_search(mla_indices.begin(), mla_indices.end(), idx);
-    };
-    for (int idx : region_in_indices) {
-      if (!in_universe(idx)) {
-        throw std::runtime_error(
-            "Model post region fanout consumes a logical index absent from the MLA contract.");
-      }
-    }
-    for (int idx : region_out_indices) {
-      if (!in_universe(idx)) {
-        throw std::runtime_error(
-            "Model post region fanout produces a logical index absent from the MLA contract.");
-      }
-    }
-  }
+  // Region bindings come from the MPK graph and use post-route indices. Unpack
+  // can introduce more heads than MLA exposes; their storage is checked by the
+  // compiled contracts, not by membership in the MLA output-index set.
 
   // When model-managed post-process contracts are present, keep the stricter per-region
   // compiled-count alignment as a sanity check. MPKs whose post stages are not model-managed

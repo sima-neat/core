@@ -1590,6 +1590,16 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
     opt.tensor_input_opt_for_cv = pipeline_segment_ingress_input(segment);
   }
 
+  const auto public_contract = opt.input_route_processor
+                                   ? std::optional<pipeline_internal::OrderedPublicInputContract>{}
+                                   : segment.public_input_contract;
+  if (public_contract) {
+    if (opt.seed)
+      pipeline_internal::validate_ordered_public_input(*public_contract, *opt.seed);
+    else if (opt.image_seed)
+      pipeline_internal::validate_ordered_public_input(*public_contract, Sample{});
+  }
+
   if (opt.image_seed && opt.seed.has_value()) {
     throw std::runtime_error(
         "RunCore::start_pipeline_segment: image_seed and seed are mutually exclusive");
@@ -1620,6 +1630,7 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
         opt.tensor_input_opt_for_cv, std::move(opt.input_route_processor),
         std::move(opt.after_pipeline_start_for_test));
     core->push_sample_policy = opt.push_sample_policy;
+    core->pipeline.public_input_contract = public_contract;
     const auto start_single_us = pipeline_internal::build_timing_us(start_single_start);
     pipeline_internal::emit_build_timing(
         "RunCore::start_pipeline_segment",
@@ -1663,6 +1674,7 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
       std::move(stream), ctx.merged_opt, build_stream_opt, ctx.mode, opt.tensor_input_opt_for_cv,
       std::move(opt.input_route_processor), std::move(opt.after_pipeline_start_for_test));
   core->push_sample_policy = opt.push_sample_policy;
+  core->pipeline.public_input_contract = public_contract;
   const auto start_single_us = pipeline_internal::build_timing_us(start_single_start);
   pipeline_internal::emit_build_timing("RunCore::start_pipeline_segment",
                                        {{"materialize_nodes", materialize_us},

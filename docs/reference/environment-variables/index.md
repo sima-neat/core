@@ -151,7 +151,7 @@ Legacy per-variable debug toggles still work and override profile defaults when 
   rather than falling back to eMMC. Free space on that filesystem, or `SIMA_MPK_EXTRACT_ROOT`
   pointing elsewhere, is the fix.
 - `SIMA_MPK_CLEANUP_EXTRACTED=0/1` — delete per-process extracted model-archive data on normal exit (default `1`).
-  With cleanup on, each process extracts into its own `proc_<pid>` root and removes it at exit. With
+  With cleanup on, each process extracts into a unique, lock-protected `proc_run_*` root and removes it at exit. With
   cleanup off, that process root is kept for inspection and excluded from stale-root garbage
   collection. It is not automatically discovered or reused by another process; remove it by hand
   when it is no longer needed.
@@ -160,7 +160,8 @@ Legacy per-variable debug toggles still work and override profile defaults when 
 directory is used in place without decompression or copying; the caller owns its lifetime and must
 keep it unchanged while the model is in use. A flat directory produced by `tar -xzf` is not an
 organized package and is not accepted directly.
-- `SIMA_MPK_EXTRACT_GC_STALE_PROC=0/1` — remove stale dead-`proc_*` extraction roots on startup (default `1`).
+- `SIMA_MPK_EXTRACT_GC_STALE_PROC=0/1` — remove abandoned `proc_run_*` extraction roots on startup using ownership locks (default `1`).
+  Legacy `proc_<pid>` roots must be removed manually once unused.
 - `SIMA_MODEL_TAR=<path>` — base model-pack path used by examples/tests.
   Per-model overrides (`SIMA_RESNET50_TAR`, `SIMA_YOLO_TAR`, etc.) still take precedence.
 - `SIMA_MPK_EXTRACT_MIN_FREE_BYTES=<bytes>` — free space kept in reserve when staging and

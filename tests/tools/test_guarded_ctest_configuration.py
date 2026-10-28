@@ -138,7 +138,8 @@ endfunction()
             r'install\(\n  FILES \$\{CMAKE_BINARY_DIR\}/tests/CTestTestfile.cmake\n.*?\n\)',
             tests, re.DOTALL).group(0)
         executables = {'unit_boxdecode_publication_test', 'unit_boxdecode_kernel_recipe_test',
-                       'unit_boxdecode_geometry_test', 'unit_kernel_runner_integration_test'}
+                       'unit_boxdecode_geometry_test', 'unit_boxdecode_public_input_binding_test',
+                       'unit_kernel_runner_integration_test'}
         names = executables | {'unit_kernel_runner_capacity_policy_test'}
         env = os.environ.copy()
         for key in ('CC', 'CXX', 'CFLAGS', 'CXXFLAGS', 'CPPFLAGS', 'LDFLAGS', 'CPATH',
@@ -272,7 +273,8 @@ include("{ROOT}/cmake/NeatGuardedTests.cmake")
                     result = command('ctest', '--test-dir', installed_tests,
                                      '--output-on-failure', check=False)
                     self.assertNotEqual(result.returncode, 0)
-                    self.assertIn('0% tests passed, 5 tests failed out of 5', result.stdout)
+                    self.assertIn(f'0% tests passed, {len(names)} tests failed out of {len(names)}',
+                                  result.stdout)
                     self.assertIn('error while loading shared libraries: libfixture_plugin.so',
                                   result.stdout)
 

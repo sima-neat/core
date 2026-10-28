@@ -260,6 +260,9 @@ Sample connected_seed_from_tensors(const runtime::ExecutionGraphPlan& plan,
   if (auto route = connected_default_route_processor(segment, std::move(fallback_route))) {
     return route->seed_tensors(inputs, where);
   }
+  if (segment.public_input_contract)
+    pipeline_internal::validate_ordered_public_input(*segment.public_input_contract,
+                                                     sample_from_tensors(inputs));
   if (auto opt = connected_default_ingress_input(segment)) {
     return pipeline_internal::sample_from_tensors_for_input(inputs, *opt);
   }
@@ -300,6 +303,9 @@ Sample connected_seed_from_samples(const runtime::ExecutionGraphPlan& plan, cons
   if (auto route = connected_default_route_processor(segment, std::move(fallback_route))) {
     return route->seed_samples(inputs, where);
   }
+  if (segment.public_input_contract)
+    pipeline_internal::validate_ordered_public_input(*segment.public_input_contract,
+                                                     inputs.front());
   return inputs.front();
 }
 

@@ -2,11 +2,11 @@
 """Build offline variants from authenticated, immutable Vulcan publications."""
 import argparse
 import base64
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
 from urllib.parse import quote
 
@@ -117,6 +117,68 @@ def source_metadata(args, work):
     return records, paths, inputs
 
 
+def baseline_dependencies(record, role):
+    names = {'platform_provider.py', 'platform-source.json'}
+    checksums = record['resources-checksum']
+    if not names <= set(checksums):
+        raise ValueError('publication lacks baseline provenance: '+role)
+    return {name: checksums[name] for name in sorted(names)}
+
+
+def baseline_config():
+    config = json.loads((HERE/'baseline-images.json').read_text())
+    if config.get('schema') != 1 or not re.fullmatch(r'[0-9a-f]{64}', config.get('recipe_sha256', '')):
+        raise ValueError('unsupported baseline image contract')
+    if config.get('repository') != '069171140053.dkr.ecr.us-west-2.amazonaws.com/vulcan/ubuntu-build':
+        raise ValueError('unexpected baseline image registry')
+    return config
+
+
+def baseline_identity(role, dependencies):
+    return hashlib.sha256(json.dumps({'schema': 1, 'role': role, 'dependencies': dependencies,
+        'recipe_sha256': baseline_config()['recipe_sha256']},
+        sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+def pull_baseline(args, role, record):
+    config = baseline_config()
+    if role == 'card':
+        # The test environment changes with Platform requirements, not with
+        # every rebuilt Scheduler/Runner/Kernels package under test.
+        digest, key = config['card']['digest'], config['card']['inputs_sha256']
+        if (not re.fullmatch(r'sha256:[0-9a-f]{64}', digest)
+                or not re.fullmatch(r'[0-9a-f]{64}', key)):
+            raise ValueError('invalid pinned card baseline identity')
+    else:
+        key = baseline_identity(role, baseline_dependencies(record, role))
+        tag = config['repository']+':offline-'+role+'-'+key
+        result = subprocess.run(['docker', 'manifest', 'inspect', '--verbose', tag], capture_output=True, text=True)
+        if result.returncode:
+            raise RuntimeError('Cannot resolve clean baseline '+role+'. Publish matching images with Vulcan '
+                               'Build reusable Ubuntu images (offline_source_sha='+args.sha+'). '+result.stderr)
+        manifest = json.loads(result.stdout)
+        digest = manifest.get('Descriptor', {}).get('digest') if isinstance(manifest, dict) else None
+        if not re.fullmatch(r'sha256:[0-9a-f]{64}', digest or ''):
+            raise ValueError('baseline must be a single-platform manifest with a digest')
+    image = config['repository']+'@'+digest
+    print('Pulling Vulcan clean baseline: '+image, flush=True)
+    run('docker', 'pull', image)
+    info = json.loads(run('docker', 'image', 'inspect', image))[0]
+    labels = info.get('Config', {}).get('Labels', {}) or {}
+    if any(labels.get('ai.sima.offline.'+name) != value for name, value in
+           [('inputs', key), ('recipe', config['recipe_sha256']), ('role', role)]):
+        raise ValueError('published baseline provenance differs: '+role)
+    if info['Architecture'] != ('arm64' if role == 'card' else role.split('-')[1]):
+        raise ValueError('published baseline architecture differs: '+role)
+    local_id = assemble.image(info['Id'])
+    path = args.work/'baseline-images.json'
+    evidence = json.loads(path.read_text()) if path.exists() else {}
+    evidence[role] = {'image': image, 'local_id': local_id, 'inputs_sha256': key,
+                      'recipe_sha256': config['recipe_sha256']}
+    path.write_text(json.dumps(evidence, indent=2)+'\n')
+    return local_id
+
+
 def metadata_names(args):
     return ('metadata.json', 'metadata-minimal.json') if is_core(args) else (assemble.METADATA_NAME,)
 
@@ -180,33 +242,13 @@ def build(args):
         download(args.bucket, key+'/'+name, directory/name)
         if assemble.sha(directory/name) != digest:
             raise ValueError('Core extras archive checksum mismatch')
-    baselines = json.loads((HERE/'baselines.json').read_text())
     if not is_core(args):
         host = paths['host'][1]
         if not (host/'platform_provider.py').is_file() or any(host.glob('simaai-pcie-host*.deb')):
             raise ValueError('Rebuild Core with the corrected Scheduler native producer; Platform provisioning must remain separate.')
-        context = args.work/'host-baseline'
-        context.mkdir()
-        for name in ('platform_provider.py', 'platform-source.json'):
-            shutil.copyfile(host/name, context/name)
-        source = baselines['platform_source']
-        download(args.bucket, source['key'], context/'platform-source.tar.gz')
-        if assemble.sha(context/'platform-source.tar.gz') != source['sha256']:
-            raise ValueError('Platform source baseline checksum differs')
-        shutil.copyfile(HERE/'HostBaseline.Dockerfile', context/'Dockerfile')
-        iid = args.work/'host-image-id'
-        run('docker', 'build', '--platform', 'linux/'+args.arch, '--iidfile', iid,
-            '--build-arg', 'UBUNTU_IMAGE='+baselines['ubuntu'][args.distro], context)
-        host_image = assemble.image(iid.read_text().strip())
-    card = baselines['card']
-    image_archive = args.work/'card-baseline.docker.tar.gz'
-    download(args.bucket, card['key'], image_archive)
-    if assemble.sha(image_archive) != card['sha256']:
-        raise ValueError('card baseline image checksum differs')
-    run('docker', 'load', '--input', image_archive)
-    if run('docker', 'image', 'inspect', card['image_id'], '--format', '{{.Id}}') != card['image_id']:
-        raise ValueError('card baseline image identity differs')
-    image_archive.unlink()
+        host_image = pull_baseline(args, args.distro+'-'+args.arch, records['host'])
+    card_image = pull_baseline(args, 'card', records['card'])
+    card = baseline_config()['card']
     spec = {'installer_revision': args.installer_revision, 'targets': {}}
     if is_core(args):
         spec['scope'] = 'core'
@@ -214,7 +256,7 @@ def build(args):
         spec['targets'][role] = {
             'publication': str(directory.resolve()), 'metadata_sha256': inputs[role],
             'core_revision': args.sha[:12],
-            'image': host_image if role == 'host' else card['image_id'],
+            'image': host_image if role == 'host' else card_image,
             'architecture': args.arch if role == 'host' else 'arm64',
             'os_id': 'ubuntu' if role == 'host' else card['os_id'],
             'os_version': {'ubuntu22': '22.04', 'ubuntu24': '24.04'}[args.distro] if role == 'host' else card['os_version'],
