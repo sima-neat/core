@@ -82,6 +82,9 @@ void validate(const SimaBEVPoolOptions&);
 rt::Target kernel_target(SimaKernelTarget);
 const char* rounding_name(SimaQuantRounding);
 std::size_t scalar_bytes(rt::DType);
+/// Positive dense extent, checked before multiplication against Core's signed
+/// shape/byte-stride range. Provider-specific capacity limits remain in Kernels.
+std::uint64_t checked_tensor_bytes(std::span<const std::int64_t>, rt::DType, const char* node);
 /// Core's dtype token ("INT8", "FP32", ...) for a kernel dtype.
 std::string dtype_token(rt::DType);
 /// Inverse of `dtype_token`; throws on an unsupported token.

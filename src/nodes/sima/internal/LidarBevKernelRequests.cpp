@@ -33,6 +33,16 @@ std::uint64_t checked_add(std::uint64_t a, std::uint64_t b, const char* node) {
   return a + b;
 }
 
+// Core shapes and byte strides are signed 64-bit values. Bound a derived
+// extent before multiplying, not after a potentially overflowing expression.
+std::int64_t checked_extent_mul(std::int64_t a, std::int64_t b, const char* node) {
+  if (a <= 0 || b <= 0)
+    fail(node, "tensor has a nonpositive extent");
+  if (b > std::numeric_limits<std::int64_t>::max() / a)
+    fail(node, "tensor extent overflows");
+  return a * b;
+}
+
 std::int64_t element_count(const std::vector<std::int64_t>& shape, const char* node) {
   std::uint64_t count = 1;
   for (const auto dimension : shape) {
@@ -47,7 +57,8 @@ std::int64_t element_count(const std::vector<std::int64_t>& shape, const char* n
 
 // True when explicit strides, if any, address the shape in dense row-major order.
 // The stride of an extent-1 axis never addresses data and is ignored.
-bool dense(const TensorFact& fact) {
+bool dense(const TensorFact& fact, const char* node) {
+  checked_tensor_bytes(fact.shape, fact.dtype, node);
   if (fact.stride_bytes.empty())
     return true;
   if (fact.stride_bytes.size() != fact.shape.size())
@@ -56,18 +67,20 @@ bool dense(const TensorFact& fact) {
   for (std::size_t axis = fact.shape.size(); axis-- > 0;) {
     if (fact.shape[axis] != 1 && fact.stride_bytes[axis] != expected)
       return false;
-    expected *= fact.shape[axis];
+    expected = checked_extent_mul(expected, fact.shape[axis], node);
   }
   return true;
 }
 
 // Channels-last byte strides of a logical [A,K,H,W] tensor: physical [A,H,W,K].
 std::array<std::int64_t, 4> channels_last_strides(const std::array<std::int64_t, 4>& logical,
-                                                  std::size_t scalar) {
+                                                  std::size_t scalar, const char* node) {
   const auto s = static_cast<std::int64_t>(scalar);
   const auto [a, k, h, w] = logical;
   (void)a;
-  return {h * w * k * s, s, w * k * s, k * s};
+  const auto cell = checked_extent_mul(k, s, node);
+  const auto row = checked_extent_mul(w, cell, node);
+  return {checked_extent_mul(h, row, node), s, row, cell};
 }
 
 bool same_strides(const std::vector<std::int64_t>& shape, const std::vector<std::int64_t>& actual,
@@ -94,7 +107,7 @@ void require_dtype(const TensorFact& fact, rt::DType dtype, const char* node, co
 }
 
 void require_dense(const TensorFact& fact, const char* node, const char* port) {
-  if (!dense(fact))
+  if (!dense(fact, node))
     fail(node, std::string(port) + " " + describe(fact.shape) +
                    " must be dense; make it contiguous before this Node");
 }
@@ -195,6 +208,17 @@ std::size_t scalar_bytes(rt::DType dtype) {
   return 0;
 }
 
+std::uint64_t checked_tensor_bytes(std::span<const std::int64_t> shape, rt::DType dtype,
+                                   const char* node) {
+  const auto scalar = scalar_bytes(dtype);
+  if (!scalar)
+    fail(node, "unsupported tensor dtype");
+  auto bytes = static_cast<std::int64_t>(scalar);
+  for (const auto dimension : shape)
+    bytes = checked_extent_mul(bytes, dimension, node);
+  return static_cast<std::uint64_t>(bytes);
+}
+
 std::string dtype_token(rt::DType dtype) {
   switch (dtype) {
   case rt::DType::Float32:
@@ -285,6 +309,11 @@ void validate(const SimaBEVPoolOptions& opt) {
     fail("SimaBEVPool", "every cell count must be positive");
   if (opt.plan_format != SimaBEVPoolPlanFormat::V1 && opt.plan_format != SimaBEVPoolPlanFormat::V2)
     fail("SimaBEVPool", "plan_format must be V1 or V2");
+  const auto valid_storage = [](SimaBEVPoolStorage storage) {
+    return storage == SimaBEVPoolStorage::Contiguous || storage == SimaBEVPoolStorage::ChannelsLast;
+  };
+  if (!valid_storage(opt.input_storage) || !valid_storage(opt.output_storage))
+    fail("SimaBEVPool", "input_storage and output_storage must be Contiguous or ChannelsLast");
   narrow_dtype(opt.output_dtype, "SimaBEVPool", "output_dtype");
 }
 
@@ -341,13 +370,13 @@ KernelRequestPlan pillar_scatter_request(const SimaPillarScatterOptions& opt,
   require_count(facts[2], node, "count");
 
   const std::int64_t h = opt.rows, w = opt.columns;
-  // One tile spanning the whole canvas. For INT8 the tile stream is
-  // byte-identical to dense NHWC, which is what an MLA graph with linear input
-  // reads; a BF16 cell is split into a low-byte and a high-byte plane.
-  rt::MlaTiled whole;
-  whole.axes = {0, 1, 2, 3};
-  whole.tile_shape = {1, h, w, channels};
-  whole.channels = rt::MlaTiled::Channels::Compact;
+  // Full-channel cell tiles preserve the existing canvas bytes while allowing
+  // the provider to assemble bounded panels instead of one canvas-sized tile.
+  // INT8 is dense NHWC; BF16 keeps each cell's low then high channel bytes.
+  rt::MlaTiled cells;
+  cells.axes = {0, 1, 2, 3};
+  cells.tile_shape = {1, 1, 1, channels};
+  cells.channels = rt::MlaTiled::Channels::Compact;
   KernelRequestPlan plan;
   plan.operation = "pillar_scatter";
   plan.target = kernel_target(opt.target);
@@ -356,7 +385,7 @@ KernelRequestPlan pillar_scatter_request(const SimaPillarScatterOptions& opt,
   plan.inputs = {{{pillars, channels}, features.dtype},
                  {{pillars, 2}, rt::DType::Int32},
                  {{1}, rt::DType::Int32}};
-  plan.outputs = {{{1, h, w, channels}, features.dtype, whole}};
+  plan.outputs = {{{1, h, w, channels}, features.dtype, cells}};
   plan.parameters.push_back({"zero_point", static_cast<std::int64_t>(opt.zero_point)});
   plan.published = {{"canvas", {1, h, w, channels}, {}, "NHWC", true, {}}};
   // Features are copied unchanged, so the canvas keeps their quantization.
@@ -402,7 +431,7 @@ std::uint64_t bev_pool_plan_capacity_bytes(const SimaBEVPoolPlanOptions& opt,
   const auto bins = std::min<std::uint64_t>(depth_window_bytes / scalar / rows, max_window_bins);
   if (bins == 0)
     fail(node, "format V2 requires at most 256 image rows");
-  const auto windows = (depth + bins - 1) / bins;
+  const auto windows = depth / bins + (depth % bins != 0);
   const auto by_tiles =
       checked_mul(checked_mul(tiles, checked_mul(n, columns, node), node), windows, node);
   const auto records = std::min(by_tiles, points);
@@ -473,7 +502,7 @@ rt::TensorSpec bev_input(const TensorFact& fact, SimaBEVPoolStorage storage, con
     fail(node, std::string(port) + " must be INT8 or BF16, got " + dtype_token(fact.dtype));
   if (fact.shape.size() != 4)
     fail(node, std::string(port) + " must have rank 4, got " + describe(fact.shape));
-  element_count(fact.shape, node);
+  checked_tensor_bytes(fact.shape, fact.dtype, node);
   const auto& s = fact.shape;
   if (storage == SimaBEVPoolStorage::Contiguous) {
     require_dense(fact, node, port);
@@ -481,17 +510,17 @@ rt::TensorSpec bev_input(const TensorFact& fact, SimaBEVPoolStorage storage, con
   }
   const auto scalar = scalar_bytes(fact.dtype);
   std::array<std::int64_t, 4> logical{};
-  if (dense(fact)) {
+  if (dense(fact, node)) {
     // Dense NHWC [A,H,W,K] from the producer: the same bytes as logical
     // [A,K,H,W] with channels-last strides.
     logical = {s[0], s[3], s[1], s[2]};
   } else {
     logical = {s[0], s[1], s[2], s[3]};
-    if (!same_strides(s, fact.stride_bytes, channels_last_strides(logical, scalar)))
+    if (!same_strides(s, fact.stride_bytes, channels_last_strides(logical, scalar, node)))
       fail(node, std::string(port) + " " + describe(s) +
                      " is neither dense channels-last nor channels-last strided");
   }
-  const auto strides = channels_last_strides(logical, scalar);
+  const auto strides = channels_last_strides(logical, scalar, node);
   rt::Strided layout;
   std::copy(strides.begin(), strides.end(), layout.strides_bytes.begin());
   return {{logical.begin(), logical.end()}, fact.dtype, layout};
@@ -514,14 +543,14 @@ KernelRequestPlan bev_pool_request(const SimaBEVPoolOptions& opt,
 
   const std::int64_t nx = opt.cells[0], ny = opt.cells[1], nz = opt.cells[2];
   const auto channels = context.shape[1];
-  const auto k = nz * channels;
+  const auto k = checked_extent_mul(nz, channels, node);
   const auto dtype = narrow_dtype(opt.output_dtype, node, "output_dtype");
   const std::array<std::int64_t, 4> logical{1, k, nx, ny};
-  element_count({logical.begin(), logical.end()}, node);
+  checked_tensor_bytes(logical, dtype, node);
   rt::TensorSpec bev{{logical.begin(), logical.end()}, dtype};
   PublishedOutput published{"bev", {logical.begin(), logical.end()}, {}, "", false, {}};
   if (opt.output_storage == SimaBEVPoolStorage::ChannelsLast) {
-    const auto strides = channels_last_strides(logical, scalar_bytes(dtype));
+    const auto strides = channels_last_strides(logical, scalar_bytes(dtype), node);
     rt::Strided layout;
     std::copy(strides.begin(), strides.end(), layout.strides_bytes.begin());
     bev.layout = layout;

@@ -163,9 +163,9 @@ void pillar_scatter_request() {
   const auto* tile = std::get_if<rt::MlaTiled>(&plan.outputs[0].layout);
   require(tile && plan.outputs[0].shape == std::vector<std::int64_t>{1, 4, 6, 16} &&
               tile->axes == std::array<std::int8_t, 4>{0, 1, 2, 3} &&
-              tile->tile_shape == std::array<std::int64_t, 4>{1, 4, 6, 16} &&
+              tile->tile_shape == std::array<std::int64_t, 4>{1, 1, 1, 16} &&
               tile->channels == rt::MlaTiled::Channels::Compact,
-          "pillar_scatter canvas is one whole-canvas tile");
+          "pillar_scatter uses full-channel cell tiles without changing canvas bytes");
   require(plan.published[0].tiled && plan.published[0].layout == "NHWC" &&
               plan.published[0].shape == std::vector<std::int64_t>{1, 4, 6, 16},
           "pillar_scatter publishes the dense NHWC canvas");
@@ -315,6 +315,87 @@ void bev_pool_request() {
         kr::bev_pool_request(opt, bad);
       },
       "neither dense channels-last", "bev_pool rejects padded depth");
+}
+
+// Malformed metadata must be rejected before any signed shape/stride arithmetic,
+// including when the caller leaves dense strides implicit. No payload allocation
+// or provider is needed to exercise these cold request-construction boundaries.
+void checked_extent_boundaries() {
+  constexpr auto limit = std::numeric_limits<std::int64_t>::max();
+  const std::array largest_byte_shape{limit};
+  require(kr::checked_tensor_bytes(largest_byte_shape, rt::DType::UInt8, "test") ==
+              static_cast<std::uint64_t>(limit),
+          "the largest representable byte extent remains valid");
+  const std::array largest_bf16_shape{limit / 2};
+  require(kr::checked_tensor_bytes(largest_bf16_shape, rt::DType::BFloat16, "test") ==
+              static_cast<std::uint64_t>(limit - 1),
+          "the largest representable BF16 byte extent remains valid");
+  for (const auto& shape : {std::vector<std::int64_t>{limit / 2 + 1},
+                            std::vector<std::int64_t>{631832658, 1824726041, 16}})
+    require_throws([&] { kr::checked_tensor_bytes(shape, rt::DType::BFloat16, "test"); },
+                   "test: tensor extent overflows", "byte extent multiplication cannot wrap");
+  for (const auto bad_dimension : {std::int64_t{0}, std::int64_t{-1}}) {
+    const std::array shape{bad_dimension};
+    require_throws([&] { kr::checked_tensor_bytes(shape, rt::DType::Int8, "test"); },
+                   "nonpositive extent", "nonpositive dimensions are not byte extents");
+  }
+  require_throws(
+      [&] { kr::checked_tensor_bytes(largest_byte_shape, static_cast<rt::DType>(-1), "test"); },
+      "unsupported tensor dtype", "an unknown dtype cannot make every extent zero");
+
+  const auto voxelize = ref::voxelize_case().options;
+  for (const auto& strides : {std::vector<std::int64_t>{}, std::vector<std::int64_t>{16, 4}}) {
+    const std::array at_limit{fact({limit / 16, 4}, rt::DType::Float32, strides),
+                              fact({1}, rt::DType::Int32)};
+    require(kr::voxelize_request(voxelize, at_limit).inputs[0].shape == at_limit[0].shape,
+            "representable point extent is left to provider capacity admission");
+    for (const auto rows : {limit / 16 + 1, std::int64_t{1} << 62}) {
+      const std::array overflow{fact({rows, 4}, rt::DType::Float32, strides),
+                                fact({1}, rt::DType::Int32)};
+      require_throws([&] { kr::voxelize_request(voxelize, overflow); },
+                     "SimaVoxelize: tensor extent overflows",
+                     "implicit and explicit point strides reject overflow before multiplying");
+    }
+  }
+
+  auto pool = ref::bev_pool_case().options;
+  pool.cells = {1, 1, 4};
+  const std::array channel_overflow{fact({1, 1, 1, 1}, rt::DType::Int8),
+                                    fact({1, 1, 1, std::int64_t{1} << 62}, rt::DType::Int8),
+                                    fact({64}, rt::DType::UInt8)};
+  require_throws([&] { kr::bev_pool_request(pool, channel_overflow); },
+                 "SimaBEVPool: tensor extent overflows", "nZ times context channels is checked");
+
+  pool.cells = {1, 1, 1};
+  const std::array wide_input{fact({1, 1, 1, std::int64_t{1} << 62}, rt::DType::BFloat16),
+                              fact({1, 1, 1, 16}, rt::DType::BFloat16),
+                              fact({64}, rt::DType::UInt8)};
+  require_throws([&] { kr::bev_pool_request(pool, wide_input); },
+                 "SimaBEVPool: tensor extent overflows",
+                 "a representable element count does not authorize overflowing BF16 strides");
+
+  pool.cells = {1, 1, 2};
+  pool.output_dtype = TensorDType::BFloat16;
+  const std::array wide_output{fact({1, 1, 1, 1}, rt::DType::BFloat16),
+                               fact({1, 1, 1, std::int64_t{1} << 61}, rt::DType::BFloat16),
+                               fact({64}, rt::DType::UInt8)};
+  require_throws([&] { kr::bev_pool_request(pool, wide_output); },
+                 "SimaBEVPool: tensor extent overflows", "output byte extent is checked too");
+
+  auto plan = ref::bev_pool_plan_case().options;
+  for (const auto format : {SimaBEVPoolPlanFormat::V1, SimaBEVPoolPlanFormat::V2}) {
+    plan.format = format;
+    require_throws([&] { kr::bev_pool_plan_capacity_bytes(plan, limit); },
+                   "tensor or plan extent overflows", "plan point-count multiplication is checked");
+  }
+
+  pool = ref::bev_pool_case().options;
+  for (const bool input : {false, true}) {
+    auto invalid = pool;
+    (input ? invalid.input_storage : invalid.output_storage) = static_cast<SimaBEVPoolStorage>(-1);
+    require_throws([&] { kr::validate(invalid); }, "must be Contiguous or ChannelsLast",
+                   "unknown storage is not silently interpreted as a supported layout");
+  }
 }
 
 // --------------------------------------------------------------------------
@@ -557,6 +638,7 @@ int main() {
     pillar_scatter_request();
     bev_pool_plan_request();
     bev_pool_request();
+    checked_extent_boundaries();
     dtype_tokens();
     reference_known_answers();
     bf16_requests();
