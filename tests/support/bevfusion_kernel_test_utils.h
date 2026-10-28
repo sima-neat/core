@@ -13,6 +13,7 @@
 #include <cstring>
 #include <functional>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -210,6 +211,96 @@ inline std::vector<neat::TensorList> execute(const std::shared_ptr<neat::Node>& 
   std::cout << "KERNEL_RUN_CLOSED frames=" << results.size() << " outputs=owned\n";
   return results;
 }
+// Hold the first borrowed output while three inputs are pending and later
+// outputs rotate through the producer pool. This exercises lifetime/rebinding,
+// not a claim that the device executes all pending jobs concurrently.
+inline neat::RunOptions retained_run_options() {
+  auto options = run_options();
+  options.output_memory = neat::OutputMemory::ZeroCopy;
+  options.queue_depth = 3;
+  return options;
+}
+inline neat::Sample correlated_sample(const neat::TensorList& tensors, std::size_t frame) {
+  neat::Sample sample;
+  sample.kind = neat::SampleKind::TensorSet;
+  sample.tensors = tensors;
+  sample.frame_id = 1000 + frame;
+  sample.input_seq = 2000 + frame;
+  sample.orig_input_seq = 3000 + frame;
+  sample.stream_id = "bev-retained";
+  sample.pts_ns = (frame + 1) * 1000000;
+  sample.dts_ns = sample.pts_ns - 100;
+  sample.duration_ns = 1000000;
+  return sample;
+}
+inline void check_correlation(const neat::Sample& output, std::size_t frame) {
+  const auto expected = correlated_sample({}, frame);
+  require(output.frame_id == expected.frame_id && output.input_seq == expected.input_seq &&
+              output.orig_input_seq == expected.orig_input_seq &&
+              output.stream_id == expected.stream_id && output.pts_ns == expected.pts_ns &&
+              output.dts_ns == expected.dts_ns && output.duration_ns == expected.duration_ns,
+          "borrowed output lost frame correlation");
+  require(!output.owned, "ZeroCopy output unexpectedly became owned");
+  for (const auto& tensor : neat::tensors_from_sample(output))
+    require(tensor.storage && tensor.storage->kind == neat::StorageKind::GstSample &&
+                tensor.storage->holder,
+            "borrowed output lost its retained producer owner");
+}
+template <class Check>
+void execute_retained(neat::Graph& pipeline, const std::vector<neat::TensorList>& frames,
+                      Check&& check) {
+  require(frames.size() >= 6, "retained fixture must exceed one producer-pool rotation");
+  auto run = pipeline.build(frames.front(), retained_run_options());
+  std::optional<neat::Sample> held;
+  try {
+    std::size_t submitted = 0;
+    const auto push = [&] {
+      const bool accepted = run.push(correlated_sample(frames[submitted], submitted));
+      require(accepted, "retained fixture push failed: " + run.last_error());
+      ++submitted;
+    };
+    while (submitted < 3)
+      push();
+    for (std::size_t frame = 0; frame < frames.size(); ++frame) {
+      // Release each non-held output before the next push, keeping bounded
+      // producer credit instead of retaining every output until teardown.
+      {
+        neat::Sample output;
+        const auto status = run.pull(kTimeoutMs, output);
+        require(status == neat::PullStatus::Ok,
+                "retained fixture pull failed: " + run.last_error());
+        check_correlation(output, frame);
+        check(neat::tensors_from_sample(output), frame);
+        if (!held)
+          held = output;
+      }
+      check_correlation(*held, 0);
+      check(neat::tensors_from_sample(*held), 0);
+      if (submitted < frames.size())
+        push();
+    }
+    run.close_input();
+    neat::Sample extra;
+    require(run.pull(kTimeoutMs, extra) == neat::PullStatus::Closed,
+            "retained fixture EOS did not drain exactly the submitted frames");
+  } catch (...) {
+    run.close();
+    throw;
+  }
+  run.close();
+  require(!run.running(), "retained fixture did not close");
+  check_correlation(*held, 0);
+  check(neat::tensors_from_sample(*held), 0);
+  std::cout << "KERNEL_RUN_CLOSED frames=" << frames.size()
+            << " outputs=borrowed held_after_close=1 pending_window=3\n";
+}
+template <class Check>
+void execute_retained(const std::shared_ptr<neat::Node>& node,
+                      const std::vector<neat::TensorList>& frames, Check&& check) {
+  auto pipeline = graph(node);
+  execute_retained(pipeline, frames, std::forward<Check>(check));
+}
+
 // Graph admission must reject the request before any execution.
 inline void expect_rejected(const std::shared_ptr<neat::Node>& node, const neat::TensorList& frame,
                             std::string_view needle, const std::string& what) {
@@ -261,7 +352,20 @@ inline std::vector<std::uint8_t> stored_bytes(const neat::Tensor& tensor, neat::
                                               const std::string& what) {
   require(tensor.dtype == dtype && tensor.shape == shape,
           what + ": public output dtype/shape mismatch");
-  auto bytes = tensor.copy_dense_bytes_tight();
+  require(tensor.semantic.tess.has_value(), what + ": tiled output lost tessellation metadata");
+  require(tensor.semantic.tess->format == "MLA_TILED_BF16_COMPACT" &&
+              tensor.semantic.tess->slice_shape == std::vector<std::int64_t>{1, 1, 1, shape.back()},
+          what + ": tiled output lost its exact cell-tile geometry");
+  bool rejected_dense_copy = false;
+  try {
+    (void)tensor.copy_dense_bytes_tight();
+  } catch (const std::runtime_error& error) {
+    rejected_dense_copy =
+        std::string(error.what()).find("tiled storage requires explicit detessellation") !=
+        std::string::npos;
+  }
+  require(rejected_dense_copy, what + ": tiled output did not reject dense interpretation");
+  auto bytes = tensor.copy_payload_bytes();
   require(bytes.size() == tensor.dense_bytes_tight(),
           what + ": public output payload extent mismatch");
   return bytes;
@@ -276,6 +380,25 @@ void expect_bytes(const std::vector<T>& actual, const std::vector<T>& expected,
     ++first;
   throw Failure(what + ": differs from the oracle at element " + std::to_string(first) + " of " +
                 std::to_string(expected.size()));
+}
+
+// Independent argmax over a logical dense view. outer/inner describe the
+// dimensions before/after the reduction axis; strict > keeps the first tie.
+template <class T>
+std::vector<std::int32_t> argmax(const std::vector<T>& values, std::size_t outer,
+                                 std::size_t channels, std::size_t inner) {
+  require(channels && values.size() == outer * channels * inner, "argmax oracle extent");
+  std::vector<std::int32_t> result(outer * inner);
+  for (std::size_t o = 0; o < outer; ++o)
+    for (std::size_t i = 0; i < inner; ++i) {
+      std::size_t best = 0;
+      for (std::size_t channel = 1; channel < channels; ++channel)
+        if (values[(o * channels + channel) * inner + i] >
+            values[(o * channels + best) * inner + i])
+          best = channel;
+      result[o * inner + i] = static_cast<std::int32_t>(best);
+    }
+  return result;
 }
 
 // ------------------------------------------------------------ calibration ---

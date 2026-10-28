@@ -123,6 +123,64 @@ void reuse() {
   }
 }
 
+void retained_outputs(bool with_consumer) {
+  for (const bool wide : {false, true}) {
+    // Keep bit-preservation specials in the standalone scatter checks. The
+    // consumer fixture uses finite values to isolate tiled layout and lifetime
+    // from ArgMax's separate NaN policy.
+    auto c = fixture(wide);
+    if (with_consumer && wide)
+      c = ref::pillar_scatter_channels(c, c.channels);
+    std::vector<Frame> expected;
+    std::vector<neat::TensorList> frames;
+    for (int generation = 0; generation < 8; ++generation) {
+      expected.push_back(frame(ref::pillar_scatter_generation(c, generation % 4)));
+      if (generation % 3 == 1)
+        expected.back().count = 0;
+      frames.push_back(inputs(expected.back(), pillars(c), channels(c)));
+    }
+    neat::Graph pipeline;
+    pipeline.add(neat::nodes::Input(bt::input_options()));
+    pipeline.add(neat::nodes::SimaPillarScatter(c.options));
+    if (with_consumer) {
+      neat::SimaArgMaxOptions argmax;
+      argmax.axis = 3;
+      pipeline.add(neat::nodes::SimaArgMax(argmax));
+    }
+    pipeline.add(neat::nodes::Output());
+    bt::execute_retained(pipeline, frames, [&](const neat::TensorList& output, std::size_t frame) {
+      const auto& f = expected[frame];
+      const auto what = "retained scatter " + std::to_string(frame);
+      if (!with_consumer) {
+        check(output, c.options, f, c.channels, what);
+        return;
+      }
+      const auto cells = std::size_t(c.options.rows) * c.options.columns;
+      std::vector<std::int32_t> indices;
+      if (wide) {
+        const auto bytes = ref::pillar_scatter_bf16_bytes(c.options, f.features_bf16, f.coordinates,
+                                                          f.count, c.channels);
+        std::vector<float> dense(cells * c.channels);
+        for (std::size_t cell = 0; cell < cells; ++cell)
+          for (std::size_t channel = 0; channel < c.channels; ++channel) {
+            const auto base = cell * c.channels * 2 + channel;
+            dense[cell * c.channels + channel] = ref::from_bf16(
+                std::uint16_t(bytes[base]) | (std::uint16_t(bytes[base + c.channels]) << 8));
+          }
+        indices = bt::argmax(dense, cells, c.channels, 1);
+      } else {
+        indices = bt::argmax(
+            ref::pillar_scatter(c.options, f.features, f.coordinates, f.count, c.channels), cells,
+            c.channels, 1);
+      }
+      bt::require(output.size() == 1, what + ": ArgMax output arity");
+      bt::expect_bytes(bt::values<std::int32_t>(output[0], neat::TensorDType::Int32,
+                                                {1, c.options.rows, c.options.columns}, what),
+                       indices, what + " downstream ArgMax");
+    });
+  }
+}
+
 void shared_offset_view() {
   for (const bool wide : {false, true}) {
     const auto c = fixture(wide);
@@ -199,7 +257,8 @@ int main(int argc, char**) {
     bt::Suite suite("SimaPillarScatter",
                     {"int8_reference_canvas", "bf16_reference_canvas", "empty_canvas",
                      "full_canvas", "channels_64", "feature_shapes", "reuse_across_pushes",
-                     "shared_offset_view", "rejects_invalid_requests"});
+                     "retained_outputs_in_flight", "argmax_graph_handoff", "shared_offset_view",
+                     "rejects_invalid_requests"});
     for (const bool wide : {false, true})
       suite.run(wide ? "bf16_reference_canvas" : "int8_reference_canvas", [wide] {
         const auto c = fixture(wide);
@@ -211,6 +270,8 @@ int main(int argc, char**) {
     suite.run("channels_64", channels_64);
     suite.run("feature_shapes", feature_shapes);
     suite.run("reuse_across_pushes", reuse);
+    suite.run("retained_outputs_in_flight", [] { retained_outputs(false); });
+    suite.run("argmax_graph_handoff", [] { retained_outputs(true); });
     suite.run("shared_offset_view", shared_offset_view);
     suite.run("rejects_invalid_requests", rejections);
     suite.finish();

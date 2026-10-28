@@ -111,6 +111,25 @@ void reuse() {
   }
 }
 
+void retained_outputs() {
+  for (const bool wide : {false, true}) {
+    const auto c =
+        wide ? ref::voxelize_case_bf16(bt::suite_target()) : ref::voxelize_case(bt::suite_target());
+    std::vector<Frame> expected;
+    std::vector<neat::TensorList> frames;
+    for (int generation = 0; generation < 8; ++generation) {
+      expected.push_back(
+          shifted(c, float(generation % 3), 0.0f, generation % 3 == 1 ? 0 : c.point_count));
+      frames.push_back(inputs(expected.back()));
+    }
+    bt::execute_retained(neat::nodes::SimaVoxelize(c.options), frames,
+                         [&](const neat::TensorList& output, std::size_t frame) {
+                           check(output, c.options, expected[frame],
+                                 "retained voxelize " + std::to_string(frame));
+                         });
+  }
+}
+
 void shared_offset_view() {
   const auto c = ref::voxelize_case(bt::suite_target());
   const auto n = static_cast<std::int64_t>(c.points.size() / 4);
@@ -169,7 +188,8 @@ int main(int argc, char**) {
     bt::Suite suite("SimaVoxelize",
                     {"int8_reference_sweep", "int8_rounding_modes", "bf16_reference_sweep",
                      "pillar_capacity", "point_capacity", "empty_frame", "points_out_of_range",
-                     "reuse_across_pushes", "shared_offset_view", "rejects_invalid_requests"});
+                     "reuse_across_pushes", "retained_outputs_in_flight", "shared_offset_view",
+                     "rejects_invalid_requests"});
     suite.run("int8_reference_sweep", [] {
       const auto c = ref::voxelize_case(bt::suite_target());
       run_frames(c.options, {fixture(c)}, "INT8 sweep");
@@ -184,6 +204,7 @@ int main(int argc, char**) {
     suite.run("empty_frame", empty_frame);
     suite.run("points_out_of_range", out_of_range);
     suite.run("reuse_across_pushes", reuse);
+    suite.run("retained_outputs_in_flight", retained_outputs);
     suite.run("shared_offset_view", shared_offset_view);
     suite.run("rejects_invalid_requests", rejections);
     suite.finish();

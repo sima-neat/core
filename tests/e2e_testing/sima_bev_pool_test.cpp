@@ -15,7 +15,7 @@ bool wide(const ref::BEVPoolCase& c) {
   return c.bf16;
 }
 
-neat::TensorList inputs(const ref::BEVPoolCase& c) {
+neat::TensorList inputs(const ref::BEVPoolCase& c, const neat::Tensor* retained_plan = nullptr) {
   const bool cl = c.options.input_storage == Storage::ChannelsLast;
   const auto depth_shape =
       cl ? std::vector<std::int64_t>{c.cameras, c.rows, c.columns, c.depth_bins}
@@ -23,7 +23,9 @@ neat::TensorList inputs(const ref::BEVPoolCase& c) {
   const auto context_shape =
       cl ? std::vector<std::int64_t>{c.cameras, c.rows, c.columns, c.channels}
          : std::vector<std::int64_t>{c.cameras, c.channels, c.rows, c.columns};
-  const auto plan = bt::tensor(c.plan, {static_cast<std::int64_t>(c.plan.size())}, "plan");
+  const auto plan = retained_plan
+                        ? *retained_plan
+                        : bt::tensor(c.plan, {static_cast<std::int64_t>(c.plan.size())}, "plan");
   if (wide(c)) {
     const auto depth =
         cl ? ref::to_channels_last(c.depth_bf16, c.cameras, c.depth_bins, c.rows, c.columns)
@@ -101,6 +103,126 @@ void reuse() {
   run_cases(sequence(int8_case()), "INT8 reuse");
   run_cases(sequence(bf16_case(neat::TensorDType::BFloat16)), "BF16 reuse");
   run_cases(sequence(bf16_case(neat::TensorDType::Int8)), "BF16->INT8 reuse");
+}
+
+void retained_outputs(bool with_consumer) {
+  for (const bool bf16 : {false, true}) {
+    auto c = bf16 ? bf16_case(neat::TensorDType::BFloat16) : int8_case();
+    // Standalone pooling retains its NaN fixture; this chain isolates strides
+    // and ownership rather than prescribing the independent ArgMax NaN policy.
+    if (with_consumer && bf16)
+      c.context_bf16[0] = ref::to_bf16(-1.0f);
+    std::vector<ref::BEVPoolCase> cases;
+    std::vector<neat::TensorList> frames;
+    for (int generation = 0; generation < 8; ++generation) {
+      cases.push_back(ref::bev_pool_generation(c, generation % 3));
+      frames.push_back(inputs(cases.back()));
+    }
+    neat::Graph pipeline;
+    pipeline.add(neat::nodes::Input(bt::input_options()));
+    pipeline.add(neat::nodes::SimaBEVPool(c.options));
+    if (with_consumer) {
+      neat::SimaArgMaxOptions argmax;
+      argmax.axis = 1;
+      pipeline.add(neat::nodes::SimaArgMax(argmax));
+    }
+    pipeline.add(neat::nodes::Output());
+    bt::execute_retained(pipeline, frames, [&](const neat::TensorList& output, std::size_t frame) {
+      const auto& expected = cases[frame];
+      const auto what = "retained BEVPool " + std::to_string(frame);
+      if (!with_consumer) {
+        check(output, expected, what);
+        return;
+      }
+      // The producer stores NHWC but publishes logical NCHW with strides.
+      // ArgMax must consume that authority rather than reinterpret the bytes.
+      const auto channels = std::size_t(c.options.cells[2]) * c.channels;
+      const auto cells = std::size_t(c.options.cells[0]) * c.options.cells[1];
+      std::vector<std::int32_t> indices;
+      if (bf16) {
+        const auto bits = ref::bev_pool_bf16(expected);
+        std::vector<float> dense;
+        for (const auto value : bits)
+          dense.push_back(ref::from_bf16(value));
+        indices = bt::argmax(dense, 1, channels, cells);
+      } else {
+        indices = bt::argmax(ref::bev_pool(expected), 1, channels, cells);
+      }
+      bt::require(output.size() == 1, what + ": ArgMax output arity");
+      bt::expect_bytes(bt::values<std::int32_t>(output[0], neat::TensorDType::Int32,
+                                                {1, c.options.cells[0], c.options.cells[1]}, what),
+                       indices, what + " downstream ArgMax");
+    });
+  }
+}
+
+// Pass the actual borrowed Plan Tensor to a second graph, retaining its storage
+// through producer pool reuse and producer close. Reading bytes below is solely
+// for the independent oracle; no copied plan is uploaded to the consumer.
+// This proves public loan/lifetime transfer, not a claim that cross-graph ingress
+// never adapts an allocation when the next device requires a different heap.
+void retained_plan_handoff() {
+  for (const auto format : {neat::SimaBEVPoolPlanFormat::V1, neat::SimaBEVPoolPlanFormat::V2}) {
+    for (const bool bf16 : {false, true}) {
+      auto c = bf16 ? bf16_case(neat::TensorDType::BFloat16) : int8_case();
+      auto p = ref::bev_pool_plan_case();
+      p.options.format = format;
+      p.options.context_channels = static_cast<int>(c.channels);
+      p.options.input_dtype = bf16 ? neat::TensorDType::BFloat16 : neat::TensorDType::Int8;
+      auto producer = bt::graph(neat::nodes::SimaBEVPoolPlan(p.options));
+      auto producer_run =
+          producer.build(bt::calibration_tensors(p.calibration), bt::retained_run_options());
+      neat::Tensor held_plan;
+      try {
+        auto first = producer_run.run(bt::calibration_tensors(p.calibration), bt::kTimeoutMs);
+        bt::require(first.size() == 1, "retained Plan output arity");
+        held_plan = first.front();
+        bt::require(held_plan.storage && held_plan.storage->kind == neat::StorageKind::GstSample &&
+                        held_plan.storage->holder,
+                    "Plan handoff lost producer storage owner");
+        c.plan = held_plan.copy_payload_bytes();
+        // Both formats must describe the independent geometric point/cell map.
+        auto actual = ref::plan_cell_points(c.plan);
+        const auto expected = ref::plan_cell_points(ref::bev_pool_plan(p.options, p.calibration));
+        for (auto& cell : actual)
+          std::sort(cell.begin(), cell.end());
+        bt::require(actual == expected, "retained Plan geometry differs from independent oracle");
+        for (int generation = 1; generation < 5; ++generation) {
+          const auto changed = ref::calibration_moved(p.calibration, float(generation));
+          const auto other = producer_run.run(bt::calibration_tensors(changed), bt::kTimeoutMs);
+          bt::require(other.size() == 1, "changed Plan output arity");
+          auto changed_points = ref::plan_cell_points(other[0].copy_payload_bytes());
+          for (auto& cell : changed_points)
+            std::sort(cell.begin(), cell.end());
+          bt::require(changed_points ==
+                          ref::plan_cell_points(ref::bev_pool_plan(p.options, changed)),
+                      "changed Plan geometry differs from independent oracle");
+          bt::expect_bytes(held_plan.copy_payload_bytes(), c.plan,
+                           "held Plan during producer reuse");
+        }
+      } catch (...) {
+        producer_run.close();
+        throw;
+      }
+      producer_run.close();
+      c.options.plan_format = format;
+      std::vector<ref::BEVPoolCase> cases;
+      std::vector<neat::TensorList> frames;
+      for (int generation = 0; generation < 8; ++generation) {
+        cases.push_back(ref::bev_pool_generation(c, generation % 3));
+        frames.push_back(inputs(cases.back(), &held_plan));
+        bt::require(frames.back()[2].storage == held_plan.storage &&
+                        frames.back()[2].byte_offset == held_plan.byte_offset,
+                    "Plan handoff replaced the retained Tensor with an upload");
+      }
+      bt::execute_retained(neat::nodes::SimaBEVPool(c.options), frames,
+                           [&](const neat::TensorList& output, std::size_t frame) {
+                             check(output, cases[frame], "retained Plan consumer");
+                             bt::expect_bytes(held_plan.copy_payload_bytes(), c.plan,
+                                              "held Plan after producer close");
+                           });
+    }
+  }
 }
 
 void shared_offset_view() {
@@ -193,7 +315,8 @@ std::vector<std::string> scenarios() {
   if (!bt::on_ev74())
     names.push_back("bf16_contiguous");
   names.insert(names.end(),
-               {"reuse_across_pushes", "shared_offset_view", "rejects_invalid_requests"});
+               {"reuse_across_pushes", "retained_outputs_in_flight", "argmax_graph_handoff",
+                "retained_plan_handoff", "shared_offset_view", "rejects_invalid_requests"});
   return names;
 }
 } // namespace
@@ -247,6 +370,9 @@ int main(int argc, char**) {
         run_cases({bf16_case(neat::TensorDType::BFloat16, Storage::Contiguous)}, "BF16 contiguous");
       });
     suite.run("reuse_across_pushes", reuse);
+    suite.run("retained_outputs_in_flight", [] { retained_outputs(false); });
+    suite.run("argmax_graph_handoff", [] { retained_outputs(true); });
+    suite.run("retained_plan_handoff", retained_plan_handoff);
     suite.run("shared_offset_view", shared_offset_view);
     suite.run("rejects_invalid_requests", rejections);
     suite.finish();

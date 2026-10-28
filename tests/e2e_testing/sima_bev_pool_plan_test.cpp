@@ -99,6 +99,27 @@ void format_2(neat::TensorDType dtype) {
   }
 }
 
+void retained_outputs() {
+  for (const bool cache : {false, true}) {
+    auto c = ref::bev_pool_plan_case();
+    c.options.cache_plan = cache;
+    std::vector<ref::Calibration> calibrations;
+    std::vector<neat::TensorList> frames;
+    // Includes repeated keys and return to an old key while its output is held.
+    for (const float shift : {0.0f, 0.0f, 1.0f, 2.0f, 2.0f, 0.0f, -1.0f, 0.0f}) {
+      calibrations.push_back(ref::calibration_moved(c.calibration, shift));
+      frames.push_back(bt::calibration_tensors(calibrations.back()));
+    }
+    bt::execute_retained(neat::nodes::SimaBEVPoolPlan(c.options), frames,
+                         [&](const neat::TensorList& output, std::size_t frame) {
+                           bt::require(output.size() == 1, "retained plan output arity");
+                           const auto expected = ref::bev_pool_plan(c.options, calibrations[frame]);
+                           bt::expect_bytes(used(output[0], expected.size(), "retained plan"),
+                                            expected, "retained plan " + std::to_string(frame));
+                         });
+  }
+}
+
 void shared_offset_view() {
   const auto c = ref::bev_pool_plan_case();
   std::vector<bt::SharedCarrier> carriers(3);
@@ -169,8 +190,8 @@ int main(int argc, char**) {
     bt::Suite suite("SimaBEVPoolPlan",
                     {"v1_reference_plan", "cache_plan_hit_and_miss", "cache_plan_disabled",
                      "calibration_sequence", "bf16_input_dtype", "explicit_capacity",
-                     "format2_int8_points", "format2_bf16_points", "shared_offset_view",
-                     "rejects_invalid_requests"});
+                     "format2_int8_points", "format2_bf16_points", "retained_outputs_in_flight",
+                     "shared_offset_view", "rejects_invalid_requests"});
     suite.run("v1_reference_plan", [] {
       const auto c = ref::bev_pool_plan_case();
       run_sequence(c.options, {c.calibration}, kWorstCase, "v1 plan");
@@ -182,6 +203,7 @@ int main(int argc, char**) {
     suite.run("explicit_capacity", explicit_capacity);
     suite.run("format2_int8_points", [] { format_2(neat::TensorDType::Int8); });
     suite.run("format2_bf16_points", [] { format_2(neat::TensorDType::BFloat16); });
+    suite.run("retained_outputs_in_flight", retained_outputs);
     suite.run("shared_offset_view", shared_offset_view);
     suite.run("rejects_invalid_requests", rejections);
     suite.finish();
