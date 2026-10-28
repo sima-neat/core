@@ -22,7 +22,7 @@ USB camera -> UsbCameraInput (JPEG) -+-> VideoSender passthrough (MJPEG)
 - 4:2:0 或 4:2:2 色度取樣的 MJPEG 擷取。
 - 攝影機為 MJPEG 列出的確切寬度、高度與影格率。Neat 不會縮放，也不會挑選相近的模式。
 
-僅支援 H.264 的攝影機、未壓縮的 YUYV/NV12 擷取、深度或紅外線串流（例如 RealSense 深度），以及曝光等攝影機控制，都不在此路徑的範圍內。
+僅支援 H.264 的攝影機、未壓縮的 YUYV/NV12 擷取、深度或紅外線串流，以及曝光等攝影機控制，都不在此路徑的範圍內。
 
 ## 找出攝影機 ID
 

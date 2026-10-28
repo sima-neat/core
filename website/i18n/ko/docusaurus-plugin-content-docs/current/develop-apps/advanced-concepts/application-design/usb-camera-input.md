@@ -22,7 +22,7 @@ USB camera -> UsbCameraInput (JPEG) -+-> VideoSender passthrough (MJPEG)
 - 4:2:0 또는 4:2:2 크로마 샘플링의 MJPEG 캡처.
 - 카메라가 MJPEG용으로 제공하는 정확한 너비, 높이, 프레임 속도. Neat는 크기를 조정하거나 가까운 모드를 고르지 않습니다.
 
-H.264 전용 카메라, 원시 YUYV/NV12 캡처, 깊이 또는 IR 스트림(예: RealSense 깊이), 노출 같은 카메라 제어는 이 경로에 포함되지 않습니다.
+H.264 전용 카메라, 원시 YUYV/NV12 캡처, 깊이 또는 IR 스트림, 노출 같은 카메라 제어는 이 경로에 포함되지 않습니다.
 
 ## 카메라 ID 찾기
 

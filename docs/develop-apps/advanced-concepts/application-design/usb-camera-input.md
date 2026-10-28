@@ -22,7 +22,7 @@ Most webcams send 4:2:2 JPEGs, which decode to NV16. `usb_camera_info()` reports
 - MJPEG capture with 4:2:0 or 4:2:2 chroma sampling.
 - The exact width, height and frame rate the camera lists for MJPEG. Neat does not scale or pick a nearby mode.
 
-H.264-only cameras, raw YUYV/NV12 capture, depth or IR streams (for example RealSense depth), and camera controls such as exposure are not part of this path.
+H.264-only cameras, raw YUYV/NV12 capture, depth or IR streams, and camera controls such as exposure are not part of this path.
 
 ## Find the camera ID
 
