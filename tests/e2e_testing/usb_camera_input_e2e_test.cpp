@@ -51,7 +51,7 @@ int main() {
     // needs to listen) and through SimaDecode to the app.
     namespace groups = simaai::neat::nodes::groups;
     simaai::neat::Graph source("usb_camera_jpeg");
-    source.add(UsbCameraInput(opt));
+    source.add(UsbCameraInput(opt, info)); // probe once: reuse usb_camera_info's result
     simaai::neat::SimaDecodeOptions decode;
     decode.type = simaai::neat::SimaDecodeType::MJPEG;
     decode.out_format = info.decoded_format;
