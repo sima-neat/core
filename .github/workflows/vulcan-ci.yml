@@ -872,6 +872,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: core-devkit-shard-plan
+          overwrite: true
           path: devkit-shard-plan.json
           if-no-files-found: error
 
@@ -1533,7 +1534,8 @@ jobs:
         if: ${{ always() && contains(fromJSON(matrix.tasks), 'performance') }}
         uses: actions/upload-artifact@v6
         with:
-          name: modalix-performance-results-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: modalix-performance-results-${{ matrix.shard }}-${{ github.run_id }}
+          overwrite: true
           path: _work/perf-results/
           if-no-files-found: error
           retention-days: 30
@@ -1733,7 +1735,8 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: core-selected-coverage-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: core-selected-coverage-${{ matrix.shard }}-${{ github.run_id }}
+          overwrite: true
           path: _work/coverage/
           if-no-files-found: error
 
@@ -2061,6 +2064,8 @@ jobs:
       - build-pciehost-packages
       - publish-vulcan-artifacts
       - publish-pciehost-package
+      - plan-devkit-tests
+      - test-devkit-shard
       - test-devkit
       - test-pciehost-hardware
       - promote-latest-tag
@@ -2086,6 +2091,8 @@ jobs:
       - build-pciehost-packages
       - publish-vulcan-artifacts
       - publish-pciehost-package
+      - plan-devkit-tests
+      - test-devkit-shard
       - test-devkit
       - test-pciehost-hardware
       - promote-latest-tag

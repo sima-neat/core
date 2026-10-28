@@ -152,3 +152,14 @@ def test_group_visibility_and_pagination():
     def pages(path):
         return {'runners': [runner(i) for i in range(100)] if path.endswith('&page=1') else [runner(100)]}
     assert len(planner.collect(pages, '/runners', 'runners')) == 101
+
+
+def test_reruns_replace_only_the_reexecuted_shards_artifact():
+    jobs = yaml.safe_load((ROOT / '.github/workflows/vulcan-ci.yml').read_text())['jobs']
+    steps = jobs['test-devkit-shard']['steps']
+    upload = next(s for s in steps if s.get('name') == 'Upload selected coverage and outcomes')['with']
+    assert upload['overwrite'] is True
+    assert 'github.run_attempt' not in upload['name']
+    assert 'matrix.shard' in upload['name'] and 'github.run_id' in upload['name']
+    for gate in ('publish-offline-develop', 'validation-complete'):
+        assert {'plan-devkit-tests', 'test-devkit-shard', 'test-devkit'} <= set(jobs[gate]['needs'])
