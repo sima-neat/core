@@ -134,7 +134,10 @@ runner group after the candidate is ready. All workers require the exact firmwar
 and artifact environment. It uses up to five regular workers for fast/docs,
 two E2E partitions, performance and Python/tutorials, plus up to two regular
 `modalix-som-16gig` workers for C++ and Python GenAI. Default work does not impose
-a RAM size. Standard runs consume no RTSP-pod runners.
+a RAM size. GenAI reuses writable `/media/nvme/llima/models` when available; fresh
+workers cache models under `/media/nvme/kerrigan/neat-core-genai-models`. The model
+root is created before taking its preparation lock; explicit `LLIMA_MODELS_PATH`
+overrides remain supported. Standard runs consume no RTSP-pod runners.
 
 Weekly external stream coverage adds one RTSP-pod worker when the declared stream
 profile is `http` or `all`: HTTP MJPEG sources share that network-access boundary.

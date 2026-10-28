@@ -220,3 +220,19 @@ def test_planner_exports_generation_and_capabilities(tmp_path, monkeypatch):
     old = plan(plan_id='123-1')
     new = plan([runner(0)], plan_id='123-2')
     assert len(old['shards']) > len(new['shards']) and old['plan_id'] != new['plan_id']
+
+
+def test_fresh_genai_worker_creates_model_root_before_lock(tmp_path):
+    jobs = yaml.safe_load((ROOT / '.github/workflows/vulcan-ci.yml').read_text())['jobs']
+    body = next(s['run'] for s in jobs['test-devkit-shard']['steps'] if s.get('name') == 'Prepare GenAI models')
+    prefix = body[:body.index('flock ')]
+    work = tmp_path / '_work'; work.mkdir()
+    extras = tmp_path / 'extras'; helper = extras / 'share/sima-neat/tests/tools/prepare_genai_models.sh'
+    helper.parent.mkdir(parents=True); helper.write_text('#!/bin/sh\nexit 0\n'); helper.chmod(0o755)
+    (work / 'extras_prefix.txt').write_text(str(extras))
+    binary = tmp_path / 'bin'; binary.mkdir()
+    (binary / 'mountpoint').write_text('#!/bin/sh\nexit 0\n'); (binary / 'mountpoint').chmod(0o755)
+    model_root = tmp_path / 'fresh/models'
+    env = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ['PATH'], LLIMA_MODELS_PATH=str(model_root))
+    subprocess.run(['bash', '-c', prefix + '\ntouch "$prepare_models_lock"\n'], env=env, cwd=tmp_path, check=True)
+    assert (model_root / '.prepare-models.lock').is_file()
