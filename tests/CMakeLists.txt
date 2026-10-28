@@ -464,6 +464,7 @@ set(UNIT_TESTS
   unit_encoded_sample_test
   unit_gst_sample_concurrent_map_test
   unit_encoded_egress_copy_test
+  unit_edge_router_fanout_test
   unit_genai_prompt_builder_test
   unit_genai_image_types_test
   unit_genai_audio_types_test

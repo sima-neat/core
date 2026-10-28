@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -1211,13 +1212,13 @@ bool EdgeRouter::dispatch_to_targets(const std::vector<DownstreamTarget>& target
   (void)pipeline_internal::retain_realtime_frame_credits(realtime_credits, targets.size() - 1U,
                                                          "graph-fanout");
 
+  // Every branch but the last gets a copy; the last takes the routed Sample itself.
   bool ok = true;
-  for (const auto& target : targets) {
-    Sample sample_copy = sample;
-    ok = dispatch_to_target(target, std::move(sample_copy), options, callbacks, dispatch_options) &&
-         ok;
+  const auto last = std::prev(targets.end());
+  for (auto it = targets.begin(); it != last; ++it) {
+    ok = dispatch_to_target(*it, Sample{sample}, options, callbacks, dispatch_options) && ok;
   }
-  return ok;
+  return dispatch_to_target(*last, std::move(sample), options, callbacks, dispatch_options) && ok;
 }
 
 } // namespace simaai::neat::runtime

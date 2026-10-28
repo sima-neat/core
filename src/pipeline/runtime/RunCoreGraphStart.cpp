@@ -1320,8 +1320,7 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
           queued.edge_index < core->graph_execution().plan.edges.size() &&
           core->graph_execution().plan.edges[queued.edge_index].link_options.policy ==
               GraphLinkPolicy::RealtimeLatestByStream;
-      const bool pushed =
-          pipe.run_core && pipe.run_core->push_samples(Sample{sample}, !realtime_edge);
+      const bool pushed = pipe.run_core && pipe.run_core->push_samples(sample, !realtime_edge);
       pipe.transport.telemetry.push_thread_push_samples_calls.fetch_add(1,
                                                                         std::memory_order_relaxed);
       atomic_add_max(pipe.transport.telemetry.push_thread_push_samples_ns,
