@@ -76,9 +76,9 @@ namespace simaai::neat::nodes {
  * requires the exact MJPEG mode `opt.width` x `opt.height` at
  * `opt.framerate_num`/`opt.framerate_den`, and captures through V4L2.
  *
- * The node outputs the camera's JPEG frames, exported by the driver as DMA-BUF, for
- * `VideoSender` passthrough (MJPEG) and `SimaDecode` (MJPEG) on the same Graph. The
- * decoder usually cannot import the camera's buffers in place, so it copies each frame.
+ * The node outputs the camera's JPEG frames for `VideoSender` passthrough (MJPEG) and
+ * `SimaDecode` (MJPEG) on the same Graph. The camera captures into CMA DMA-BUFs that the
+ * hardware decoder reads in place, so no frame is copied between capture and decode.
  *
  * Building a Graph again after the camera was unplugged, moved or renumbered
  * throws; call UsbCameraInput again to open it.

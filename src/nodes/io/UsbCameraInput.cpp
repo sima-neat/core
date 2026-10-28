@@ -11,12 +11,16 @@
 namespace simaai::neat {
 namespace {
 
+// Frames held below the camera at once besides the queue: the decoder's in-flight inputs
+// (4) plus one each for the passthrough branch and the graph handoff.
+constexpr std::uint32_t kHeldDownstream = 6;
+
 std::string name(int node_index, const char* suffix) {
   return "n" + std::to_string(node_index) + "_camera_" + suffix;
 }
 
-// The camera's JPEG frames, exported by the driver as DMA-BUF, for VideoSender passthrough
-// and SimaDecode on the same Graph.
+// The camera's JPEG frames, captured into CMA DMA-BUFs that the hardware decoder reads in
+// place, for VideoSender passthrough and SimaDecode on the same Graph.
 class UvcMjpegCameraNode final : public Node, public OutputSpecProvider {
 public:
   UvcMjpegCameraNode(UsbCameraInputOptions opt, internal::uvc::ResolvedCamera camera)
@@ -44,13 +48,17 @@ public:
   std::string backend_fragment(int node_index) const override {
     internal::uvc::require_still_connected(camera_);
     std::ostringstream ss;
-    // UVC delivers a frame damaged in transfer (lost USB packets) with V4L2_BUF_FLAG_ERROR,
-    // which v4l2src maps to CORRUPTED; identity drops it so passthrough never forwards it.
+    // dmabuf-import captures into neatcapturepool's CMA buffers, which the decoder imports
+    // in place. UVC delivers a frame damaged in transfer (lost USB packets) with
+    // V4L2_BUF_FLAG_ERROR, which v4l2src maps to CORRUPTED; identity drops it so passthrough
+    // never forwards it.
+    const std::uint32_t pool = (opt_.insert_queue ? opt_.queue_depth : 0U) + kHeldDownstream;
     ss << "v4l2src name=" << name(node_index, "src") << " device=" << camera_.device
-       << " io-mode=dmabuf ! capsfilter name=" << name(node_index, "caps")
+       << " io-mode=dmabuf-import ! capsfilter name=" << name(node_index, "caps")
        << " caps=\"image/jpeg,width=" << opt_.width << ",height=" << opt_.height
        << ",framerate=" << opt_.framerate_num << '/' << opt_.framerate_den
-       << "\" ! identity name=" << name(node_index, "drop") << " drop-buffer-flags=corrupted";
+       << "\" ! neatcapturepool name=" << name(node_index, "pool") << " buffers=" << pool
+       << " ! identity name=" << name(node_index, "drop") << " drop-buffer-flags=corrupted";
     if (opt_.insert_queue) {
       ss << " ! queue name=" << name(node_index, "queue");
       if (opt_.queue_depth > 0)
@@ -64,7 +72,7 @@ public:
 
   std::vector<std::string> element_names(int node_index) const override {
     std::vector<std::string> names{name(node_index, "src"), name(node_index, "caps"),
-                                   name(node_index, "drop")};
+                                   name(node_index, "pool"), name(node_index, "drop")};
     if (opt_.insert_queue)
       names.push_back(name(node_index, "queue"));
     return names;
