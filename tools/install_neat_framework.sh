@@ -69,7 +69,8 @@ set -euo pipefail
 #   board installer refreshes APT metadata before installing local DEBs. AUTO
 #   refreshes only when /var/lib/apt/lists has no package index files.
 # - NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD: ON/OFF (default: ON) activate
-#   staged EV74 firmware from the selected package set after board replacement.
+#   staged EV74 firmware from the selected package set after board replacement
+#   and keep it selected across reboots.
 # - NEAT_INSTALLER_SENTINEL_REQUIRED: ON/OFF (default: OFF) fail the board
 #   install when Sentinel, the telemetry daemon Model::benchmark() reads,
 #   cannot be installed. OFF warns and continues; CI sets ON.
@@ -1428,7 +1429,14 @@ activate_board_runtime_after_install() {
   log "Activating staged EV74 firmware from ${package} ${version}."
   # Scope the normalized override to activation, after sudo environment filtering.
   # Do not preserve unrelated caller variables or expand SKIP_PLATFORM_CHECK.
-  run_sudo env "FORCE_INSTALL=${force_install}" "${helper}" --activate
+  run_sudo env "FORCE_INSTALL=${force_install}" "${helper}" --activate || return $?
+
+  # --activate selects the native image only until reboot. The EV74 boots
+  # modalix-cvu-fw, which the loader finds in /lib/firmware/updates before the
+  # platform file; a dangling link falls back to the platform image.
+  local boot_link=/lib/firmware/updates/modalix-cvu-fw
+  run_sudo mkdir -p "${boot_link%/*}" || return $?
+  run_sudo ln -sfn /lib/firmware/sima-neat-native-cvu-fw "${boot_link}"
 }
 
 restart_board_codec_services() {

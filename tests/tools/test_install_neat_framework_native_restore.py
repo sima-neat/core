@@ -742,9 +742,16 @@ dpkg-query() {{
             source = INSTALLER.read_text()
             fixed_path = "/usr/libexec/sima-neat-firmware/install.sh"
             self.assertIn(fixed_path, source)
+            # Likewise keep the boot link out of the host's /lib/firmware.
+            boot_link_path = "/lib/firmware/updates/modalix-cvu-fw"
+            self.assertIn(boot_link_path, source)
+            boot_link = root / "firmware-updates" / "modalix-cvu-fw"
+            fixture += f'BOOT_LINK="{boot_link}"\n'
             guard = 'if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then'
             self.assertEqual(source.count(guard), 1)
-            installer.write_text(source.replace(fixed_path, str(firmware)).replace(guard, fixture + guard))
+            installer.write_text(source.replace(fixed_path, str(firmware))
+                                 .replace(boot_link_path, str(boot_link))
+                                 .replace(guard, fixture + guard))
             return subprocess.run(
                 ["bash", "-c", script, "bash", str(installer)],
                 check=False,
@@ -799,10 +806,12 @@ source "$1"
 NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=ON
 run_sudo() { env -i PATH="$PATH" "$@"; }
 activate_board_runtime_after_install
+printf 'BOOT_LINK_TARGET=%s\n' "$(readlink "${BOOT_LINK}")"
 """, package=package, required=True, unrelated=True)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("FIRMWARE_FORCE=0 ARG=--activate", result.stdout)
                 self.assertNotIn("UNEXPECTED_UNRELATED_PAYLOAD", result.stderr)
+                self.assertIn("BOOT_LINK_TARGET=/lib/firmware/sima-neat-native-cvu-fw", result.stdout)
 
     def test_non_ev_split_cohort_skips_firmware_discovery(self) -> None:
         result = self.run_activation_fixture(r"""
@@ -931,7 +940,9 @@ if complete_board_install_after_packages; then
   printf 'UNEXPECTED_SUCCESS\n'
   exit 0
 else
-  exit "$?"
+  status=$?
+  [[ ! -e "${BOOT_LINK}" && ! -L "${BOOT_LINK}" ]] || printf 'UNEXPECTED_BOOT_LINK\n'
+  exit "${status}"
 fi
 """, exit_code=23)
         self.assertEqual(result.returncode, 23, result.stderr)
