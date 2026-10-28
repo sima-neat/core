@@ -47,6 +47,7 @@ struct UsbCameraInputOptions {
 struct UsbCameraInfo {
   std::string device;                         ///< /dev/videoN that captures its MJPEG.
   FormatTag decoded_format = FormatTag::Auto; ///< NV12 for 4:2:0 JPEGs, NV16 for 4:2:2.
+  int node_index = -1; ///< sysfs index of `device` in its USB interface; -1 unknown.
 };
 
 /// Stable IDs of the connected USB (UVC) cameras, for `UsbCameraInputOptions::camera_name`.
@@ -60,7 +61,8 @@ std::vector<std::string> usb_camera_ids();
  *
  * `decoded_format` is the layout the camera's JPEGs decode to: set it as a `SimaDecode`
  * `out_format`. A model reads NV16 directly: set its preprocessing input format to match
- * (`PreprocessColorFormat::NV16`).
+ * (`PreprocessColorFormat::NV16`). Pass the result to `UsbCameraInput(opt, info)` so the
+ * camera is not opened a second time.
  * @throws std::invalid_argument and std::runtime_error as UsbCameraInput does.
  */
 UsbCameraInfo usb_camera_info(const UsbCameraInputOptions& opt);
@@ -90,5 +92,19 @@ namespace simaai::neat::nodes {
  *         connected IDs or the camera's MJPEG modes.
  */
 std::shared_ptr<simaai::neat::Node> UsbCameraInput(simaai::neat::UsbCameraInputOptions opt);
+
+/**
+ * @brief UsbCameraInput for a camera that `usb_camera_info(opt)` already checked.
+ *
+ * Reuses `info` instead of opening the camera again: it validates `opt` like the overload
+ * above and confirms, from sysfs only, that `info.device` still belongs to the camera ID
+ * `opt.camera_name`. Pass the same `opt` that produced `info`; the mode is not checked again.
+ *
+ * @throws std::invalid_argument for invalid options, as the overload above.
+ * @throws std::runtime_error when `info` is stale (the camera was unplugged, moved or
+ *         renumbered since) or describes another camera; call usb_camera_info again.
+ */
+std::shared_ptr<simaai::neat::Node> UsbCameraInput(simaai::neat::UsbCameraInputOptions opt,
+                                                   const simaai::neat::UsbCameraInfo& info);
 
 } // namespace simaai::neat::nodes

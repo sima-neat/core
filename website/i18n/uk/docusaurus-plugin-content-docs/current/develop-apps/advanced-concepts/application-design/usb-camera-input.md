@@ -117,6 +117,8 @@ frame = run.pull(timeout_ms=5000)
 
 `UsbCameraInput` один раз відкриває камеру під час створення вузла, щоб перевірити режим і прочитати субдискретизацію кольоровості першого кадру. Спершу закрийте інші програми, що використовують камеру. `usb_camera_info(camera)` виконує ту саму перевірку без створення вузла й повертає пристрій захоплення та `decoded_format`: `NV12` або `NV16`.
 
+Якщо вам також потрібен `decoded_format`, викличте `usb_camera_info` один раз і передайте його результат у `UsbCameraInput(camera, info)`, як показано в наступному розділі. Тоді вузол повторно використовує цю перевірку замість того, щоб знову відкривати камеру, і лише перевіряє через sysfs, що пристрій досі належить цій камері. Передавайте однакові параметри в обидва виклики.
+
 Після від’єднання камери або перенесення на інший порт знову викличте `UsbCameraInput`. Збирання раніше створеного графа завершиться помилкою, тож він ніколи не відкриє іншу камеру, що отримала старий номер пристрою.
 
 ## Передавання JPEG камери
@@ -127,9 +129,11 @@ frame = run.pull(timeout_ms=5000)
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
+const neat::UsbCameraInfo info = neat::usb_camera_info(camera);  // opens the camera once
+
 neat::SimaDecodeOptions decode;
 decode.type = neat::SimaDecodeType::MJPEG;
-decode.out_format = neat::usb_camera_info(camera).decoded_format;  // NV12 or NV16
+decode.out_format = info.decoded_format;  // NV12 or NV16
 decode.dec_width = 1920;
 decode.dec_height = 1080;
 decode.dec_fps = 30;
@@ -142,7 +146,7 @@ neat::GraphLinkOptions video_link;
 video_link.policy = neat::GraphLinkPolicy::RealtimeLatestByStream;
 
 neat::Graph source;
-source.add(neat::nodes::UsbCameraInput(camera));
+source.add(neat::nodes::UsbCameraInput(camera, info));  // reuses info, no second open
 neat::Graph decoder;
 decoder.add(neat::nodes::SimaDecode(decode));
 
@@ -156,9 +160,11 @@ graph.connect(source, neat::nodes::groups::VideoSender(sender), video_link);
 <CodeTab label="Python" lang="python">
 
 ```python
+info = pyneat.usb_camera_info(camera)  # opens the camera once
+
 decode = pyneat.SimaDecodeOptions()
 decode.type = pyneat.SimaDecodeType.MJPEG
-decode.out_format = pyneat.usb_camera_info(camera).decoded_format  # NV12 or NV16
+decode.out_format = info.decoded_format  # NV12 or NV16
 decode.dec_width = 1920
 decode.dec_height = 1080
 decode.dec_fps = 30
@@ -170,7 +176,7 @@ video_link = pyneat.GraphLinkOptions()
 video_link.policy = pyneat.GraphLinkPolicy.RealtimeLatestByStream
 
 source = pyneat.Graph()
-source.add(pyneat.nodes.usb_camera_input(camera))
+source.add(pyneat.nodes.usb_camera_input(camera, info))  # reuses info, no second open
 decoder = pyneat.Graph()
 decoder.add(pyneat.nodes.sima_decode(decode))
 
@@ -203,3 +209,4 @@ graph.connect(source, pyneat.groups.video_sender(sender), video_link)
 | `is in use by another process` | Закрийте іншу програму, яка відкрила камеру. |
 | `sent no usable MJPEG frame` | Камера надсилає JPEG, які Neat не може декодувати, наприклад із субдискретизацією 4:4:4, або не надсилає кадрів зовсім. |
 | `is no longer /dev/videoN` | Після створення графа камеру від’єднали, перенесли або її номер змінився. Знову викличте `UsbCameraInput`. |
+| `is not at '/dev/videoN' as its UsbCameraInfo says` | Після виклику `usb_camera_info` камеру від’єднали, перенесли або її номер змінився, або ця інформація стосується іншої камери. Знову викличте `usb_camera_info` і передайте нову інформацію. |

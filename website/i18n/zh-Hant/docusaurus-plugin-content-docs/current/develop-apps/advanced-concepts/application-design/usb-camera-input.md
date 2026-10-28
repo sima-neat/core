@@ -117,6 +117,8 @@ frame = run.pull(timeout_ms=5000)
 
 `UsbCameraInput` 會在建立節點時開啟攝影機一次，以檢查模式並讀取第一個影格的色度取樣。請先關閉其他正在使用攝影機的程式。`usb_camera_info(camera)` 會執行相同的檢查但不建立節點，並傳回擷取裝置與 `decoded_format`（`NV12` 或 `NV16`）。
 
+若也需要 `decoded_format`，請依下一節所示呼叫 `usb_camera_info` 一次，並將結果傳給 `UsbCameraInput(camera, info)`。節點會重複使用該檢查結果而不再次開啟攝影機，只透過 sysfs 確認裝置仍屬於該攝影機。請對兩次呼叫傳入相同的選項。
+
 攝影機拔除或移到另一個連接埠後，請再次呼叫 `UsbCameraInput`。先前建立的圖在建置時會失敗，因此絕不會開啟接手舊裝置編號的另一台攝影機。
 
 ## 轉送攝影機的 JPEG
@@ -127,9 +129,11 @@ frame = run.pull(timeout_ms=5000)
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
+const neat::UsbCameraInfo info = neat::usb_camera_info(camera);  // opens the camera once
+
 neat::SimaDecodeOptions decode;
 decode.type = neat::SimaDecodeType::MJPEG;
-decode.out_format = neat::usb_camera_info(camera).decoded_format;  // NV12 or NV16
+decode.out_format = info.decoded_format;  // NV12 or NV16
 decode.dec_width = 1920;
 decode.dec_height = 1080;
 decode.dec_fps = 30;
@@ -142,7 +146,7 @@ neat::GraphLinkOptions video_link;
 video_link.policy = neat::GraphLinkPolicy::RealtimeLatestByStream;
 
 neat::Graph source;
-source.add(neat::nodes::UsbCameraInput(camera));
+source.add(neat::nodes::UsbCameraInput(camera, info));  // reuses info, no second open
 neat::Graph decoder;
 decoder.add(neat::nodes::SimaDecode(decode));
 
@@ -156,9 +160,11 @@ graph.connect(source, neat::nodes::groups::VideoSender(sender), video_link);
 <CodeTab label="Python" lang="python">
 
 ```python
+info = pyneat.usb_camera_info(camera)  # opens the camera once
+
 decode = pyneat.SimaDecodeOptions()
 decode.type = pyneat.SimaDecodeType.MJPEG
-decode.out_format = pyneat.usb_camera_info(camera).decoded_format  # NV12 or NV16
+decode.out_format = info.decoded_format  # NV12 or NV16
 decode.dec_width = 1920
 decode.dec_height = 1080
 decode.dec_fps = 30
@@ -170,7 +176,7 @@ video_link = pyneat.GraphLinkOptions()
 video_link.policy = pyneat.GraphLinkPolicy.RealtimeLatestByStream
 
 source = pyneat.Graph()
-source.add(pyneat.nodes.usb_camera_input(camera))
+source.add(pyneat.nodes.usb_camera_input(camera, info))  # reuses info, no second open
 decoder = pyneat.Graph()
 decoder.add(pyneat.nodes.sima_decode(decode))
 
@@ -203,3 +209,4 @@ graph.connect(source, pyneat.groups.video_sender(sender), video_link)
 | `is in use by another process` | 停止目前開啟攝影機的其他程式。 |
 | `sent no usable MJPEG frame` | 攝影機傳送 Neat 無法解碼的 JPEG（例如 4:4:4 取樣），或完全沒有傳送影格。 |
 | `is no longer /dev/videoN` | 建立圖之後，攝影機被拔除、移動或重新編號。請再次呼叫 `UsbCameraInput`。 |
+| `is not at '/dev/videoN' as its UsbCameraInfo says` | 呼叫 `usb_camera_info` 之後，攝影機被拔除、移動或重新編號，或該資訊屬於另一台攝影機。請再次呼叫 `usb_camera_info` 並傳入新的資訊。 |

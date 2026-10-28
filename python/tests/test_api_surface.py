@@ -668,6 +668,9 @@ def test_usb_camera_input_surface_is_exposed():
   opt.width = 0
   with pytest.raises(ValueError, match="nonzero width"):
     pyneat.nodes.usb_camera_input(opt)
+  # The probe-once overload reuses usb_camera_info()'s result.
+  doc = pyneat.nodes.usb_camera_input.__doc__
+  assert "info:" in doc and "UsbCameraInfo" in doc
 
 
 def test_input_stage_option_struct_constructors_accept_expected_args():

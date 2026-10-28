@@ -32,6 +32,9 @@ static_assert(std::is_same_v<decltype(UsbCameraInput(std::declval<UsbCameraInput
 static_assert(std::is_same_v<
               decltype(simaai::neat::usb_camera_info(std::declval<const UsbCameraInputOptions&>())),
               UsbCameraInfo>);
+static_assert(std::is_same_v<decltype(UsbCameraInput(std::declval<UsbCameraInputOptions>(),
+                                                     std::declval<const UsbCameraInfo&>())),
+                             std::shared_ptr<Node>>);
 
 namespace {
 
@@ -285,6 +288,49 @@ void check_jpeg_reconnect() {
                                      "is no longer /dev/video1", "reconnects are checked");
 }
 
+// UsbCameraInput(opt, info) reuses usb_camera_info()'s result: sysfs only, no device open.
+void check_from_info() {
+  FakeSysfs sys;
+  sys.camera("3.1", {"video1", "video2"}); // capture + metadata node
+  const auto opt = mjpeg_options();
+  // No such file: opening it would fail, so a match shows the device is not touched.
+  const std::string device = (sys.root / "dev/video1").string();
+  const UsbCameraInfo info{device, FormatTag::NV16, 0};
+  const auto from_info = uvc::camera_from_info(opt.camera_name, info, sys.root.string());
+  // What resolve_mjpeg_camera() returns for the same camera, after it read a frame.
+  const uvc::ResolvedCamera probed{device, FormatTag::NV16, opt.camera_name, sys.root.string(), 0};
+  const std::string fragment = uvc::camera_node(opt, from_info)->backend_fragment(0);
+  require(fragment == uvc::camera_node(opt, probed)->backend_fragment(0),
+          "info-based node matches the probed one: " + fragment);
+  require_contains(camera_graph(opt, from_info).describe_backend(), "device=" + device,
+                   "info-based node builds");
+  require(!fs::exists(device), "the device was never created or opened");
+
+  // Options are validated before the info is looked at.
+  auto bad = opt;
+  bad.buffer_name.clear();
+  require_throws<std::invalid_argument>([&] { (void)UsbCameraInput(bad, info); },
+                                        "requires a buffer_name", "info overload validates");
+
+  const auto stale = [&](const UsbCameraInfo& i, const std::string& label) {
+    require_throws<std::runtime_error>(
+        [&] { (void)uvc::camera_from_info(opt.camera_name, i, sys.root.string()); },
+        "Call usb_camera_info again", label);
+  };
+  // Info for the metadata node, or renumbered: the capture node index no longer matches.
+  stale({(sys.root / "dev/video2").string(), FormatTag::NV16, 0}, "metadata node is not opened");
+  // Another camera's info: video10 belongs to port 3.2.
+  sys.camera("3.2", {"video10"});
+  stale({(sys.root / "dev/video10").string(), FormatTag::NV16, 0}, "info of another camera");
+  // Replugged into port 3.3: video1 now belongs to a camera with another ID.
+  fs::remove(sys.root / "class/video4linux/video1/device");
+  sys.camera("3.3", {"video1"});
+  stale(info, "moved camera");
+  // Unplugged: the node is gone.
+  fs::remove_all(sys.root / "class/video4linux/video1");
+  stale(info, "unplugged camera");
+}
+
 } // namespace
 
 int main() {
@@ -298,6 +344,7 @@ int main() {
     check_no_cameras();
     check_jpeg_pipeline();
     check_jpeg_reconnect();
+    check_from_info();
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";
     return 1;

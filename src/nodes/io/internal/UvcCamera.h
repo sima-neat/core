@@ -43,6 +43,12 @@ struct ResolvedCamera {
 /// renumbered since it was resolved (its metadata node can take the old device number).
 void require_still_connected(const ResolvedCamera& camera);
 
+/// The camera that `info` (from usb_camera_info) describes, checked against sysfs only: no
+/// device is opened. Throws std::runtime_error naming usb_camera_info when `info.device` no
+/// longer belongs to `camera_id` or is no longer the node at `info.node_index`.
+ResolvedCamera camera_from_info(const std::string& camera_id, const UsbCameraInfo& info,
+                                const std::string& sysfs_root = "/sys");
+
 /// Find the camera by ID, require the exact MJPEG mode, and read one frame to
 /// learn its chroma sampling. Throws std::runtime_error with the camera ID and
 /// what was found (other IDs, supported modes) when any step fails.

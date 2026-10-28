@@ -117,6 +117,8 @@ frame = run.pull(timeout_ms=5000)
 
 `UsbCameraInput` はノードの作成時に、モードを確認して最初のフレームのクロマサンプリングを読み取るため、カメラを一度開きます。先に、カメラを使っている他のプログラムを終了してください。`usb_camera_info(camera)` はノードを作成せずに同じ確認を行い、キャプチャーデバイスと `decoded_format`（`NV12` または `NV16`）を返します。
 
+`decoded_format` も必要な場合は、次の節のように `usb_camera_info` を一度だけ呼び出し、その結果を `UsbCameraInput(camera, info)` に渡してください。ノードはカメラをもう一度開かずにその確認結果を再利用し、デバイスがまだそのカメラのものであることをsysfsで確認するだけです。両方の呼び出しには同じオプションを渡してください。
+
 カメラを抜いたり別のポートに移したりした後は、`UsbCameraInput` をもう一度呼び出してください。以前に作成したグラフはビルド時に失敗するため、古いデバイス番号を引き継いだ別のカメラを開くことはありません。
 
 ## カメラのJPEGを転送する
@@ -127,9 +129,11 @@ frame = run.pull(timeout_ms=5000)
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
+const neat::UsbCameraInfo info = neat::usb_camera_info(camera);  // opens the camera once
+
 neat::SimaDecodeOptions decode;
 decode.type = neat::SimaDecodeType::MJPEG;
-decode.out_format = neat::usb_camera_info(camera).decoded_format;  // NV12 or NV16
+decode.out_format = info.decoded_format;  // NV12 or NV16
 decode.dec_width = 1920;
 decode.dec_height = 1080;
 decode.dec_fps = 30;
@@ -142,7 +146,7 @@ neat::GraphLinkOptions video_link;
 video_link.policy = neat::GraphLinkPolicy::RealtimeLatestByStream;
 
 neat::Graph source;
-source.add(neat::nodes::UsbCameraInput(camera));
+source.add(neat::nodes::UsbCameraInput(camera, info));  // reuses info, no second open
 neat::Graph decoder;
 decoder.add(neat::nodes::SimaDecode(decode));
 
@@ -156,9 +160,11 @@ graph.connect(source, neat::nodes::groups::VideoSender(sender), video_link);
 <CodeTab label="Python" lang="python">
 
 ```python
+info = pyneat.usb_camera_info(camera)  # opens the camera once
+
 decode = pyneat.SimaDecodeOptions()
 decode.type = pyneat.SimaDecodeType.MJPEG
-decode.out_format = pyneat.usb_camera_info(camera).decoded_format  # NV12 or NV16
+decode.out_format = info.decoded_format  # NV12 or NV16
 decode.dec_width = 1920
 decode.dec_height = 1080
 decode.dec_fps = 30
@@ -170,7 +176,7 @@ video_link = pyneat.GraphLinkOptions()
 video_link.policy = pyneat.GraphLinkPolicy.RealtimeLatestByStream
 
 source = pyneat.Graph()
-source.add(pyneat.nodes.usb_camera_input(camera))
+source.add(pyneat.nodes.usb_camera_input(camera, info))  # reuses info, no second open
 decoder = pyneat.Graph()
 decoder.add(pyneat.nodes.sima_decode(decode))
 
@@ -203,3 +209,4 @@ Webカメラは、JPEGの終了マーカーの後にバイトを付け足すこ�
 | `is in use by another process` | カメラを開いている他のプログラムを終了してください。 |
 | `sent no usable MJPEG frame` | NeatがデコードできないJPEG（4:4:4サンプリングなど）をカメラが送っているか、フレームがまったく届いていません。 |
 | `is no longer /dev/videoN` | グラフの作成後に、カメラが抜かれたか、移動されたか、番号が変わりました。`UsbCameraInput` をもう一度呼び出してください。 |
+| `is not at '/dev/videoN' as its UsbCameraInfo says` | `usb_camera_info` の呼び出し後に、カメラが抜かれたか、移動されたか、番号が変わったか、またはその情報が別のカメラのものです。`usb_camera_info` をもう一度呼び出し、新しい情報を渡してください。 |

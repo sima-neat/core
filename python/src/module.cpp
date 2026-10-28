@@ -4140,8 +4140,17 @@ NB_MODULE(_pyneat_core, m) {
       },
       "options"_a = simaai::neat::CameraInputOptions{}, "capture_buffer_count"_a = 0U);
   // Opening the camera reads a frame; let other Python threads run meanwhile.
-  nodes_mod.def("usb_camera_input", &simaai::neat::nodes::UsbCameraInput, "options"_a,
-                nb::call_guard<nb::gil_scoped_release>());
+  nodes_mod.def(
+      "usb_camera_input",
+      static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::UsbCameraInputOptions)>(
+          &simaai::neat::nodes::UsbCameraInput),
+      "options"_a, nb::call_guard<nb::gil_scoped_release>());
+  // Reuses usb_camera_info()'s result: checks sysfs only, without opening the camera.
+  nodes_mod.def("usb_camera_input",
+                static_cast<std::shared_ptr<simaai::neat::Node> (*)(
+                    simaai::neat::UsbCameraInputOptions, const simaai::neat::UsbCameraInfo&)>(
+                    &simaai::neat::nodes::UsbCameraInput),
+                "options"_a, "info"_a, nb::call_guard<nb::gil_scoped_release>());
   nodes_mod.def("output",
                 static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::OutputOptions)>(
                     &simaai::neat::nodes::Output),

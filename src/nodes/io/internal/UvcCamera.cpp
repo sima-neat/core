@@ -337,21 +337,39 @@ std::vector<std::string> camera_ids(const std::vector<CaptureNode>& nodes) {
   return ids;
 }
 
-void require_still_connected(const ResolvedCamera& camera) {
-  if (camera.id.empty())
-    return;
+namespace {
+
+// True when `camera.device` still belongs to `camera.id` and is still the node at `camera.index`.
+bool still_connected(const ResolvedCamera& camera) {
   std::error_code ec;
   const fs::path node = fs::path(camera.sysfs_root) / "class" / "video4linux" /
                         fs::path(camera.device).filename() / "device";
   const fs::path iface = fs::canonical(node, ec);
   // An unknown index (no sysfs file) does not decide; a changed one does.
   const int index = node_index(camera.sysfs_root, camera.device);
-  if (ec || camera_id(iface.string(), camera.sysfs_root) != camera.id ||
-      (camera.index >= 0 && index >= 0 && index != camera.index))
+  return !ec && camera_id(iface.string(), camera.sysfs_root) == camera.id &&
+         (camera.index < 0 || index < 0 || index == camera.index);
+}
+
+} // namespace
+
+void require_still_connected(const ResolvedCamera& camera) {
+  if (!camera.id.empty() && !still_connected(camera))
     throw std::runtime_error("UsbCameraInput: USB camera '" + camera.id + "' is no longer " +
                              camera.device +
                              "; it was unplugged, moved or renumbered. Call UsbCameraInput again "
                              "to open it.");
+}
+
+ResolvedCamera camera_from_info(const std::string& id, const UsbCameraInfo& info,
+                                const std::string& sysfs_root) {
+  ResolvedCamera camera{info.device, info.decoded_format, id, sysfs_root, info.node_index};
+  if (!still_connected(camera))
+    throw std::runtime_error("UsbCameraInput: USB camera '" + id + "' is not at '" + info.device +
+                             "' as its UsbCameraInfo says; it was unplugged, moved or renumbered "
+                             "since, or the info is for another camera. Call usb_camera_info "
+                             "again and pass the new info.");
+  return camera;
 }
 
 ResolvedCamera resolve_mjpeg_camera(const std::string& id, std::uint32_t width,

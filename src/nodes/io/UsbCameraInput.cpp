@@ -125,7 +125,7 @@ UsbCameraInfo usb_camera_info(const UsbCameraInputOptions& opt) {
   validate_options(opt);
   const auto camera = internal::uvc::resolve_mjpeg_camera(opt.camera_name, opt.width, opt.height,
                                                           opt.framerate_num, opt.framerate_den);
-  return {camera.device, camera.sampling};
+  return {camera.device, camera.sampling, camera.index};
 }
 
 } // namespace simaai::neat
@@ -137,6 +137,12 @@ std::shared_ptr<simaai::neat::Node> UsbCameraInput(simaai::neat::UsbCameraInputO
   const auto camera = internal::uvc::resolve_mjpeg_camera(opt.camera_name, opt.width, opt.height,
                                                           opt.framerate_num, opt.framerate_den);
   return internal::uvc::camera_node(opt, camera);
+}
+
+std::shared_ptr<simaai::neat::Node> UsbCameraInput(simaai::neat::UsbCameraInputOptions opt,
+                                                   const simaai::neat::UsbCameraInfo& info) {
+  validate_options(opt);
+  return internal::uvc::camera_node(opt, internal::uvc::camera_from_info(opt.camera_name, info));
 }
 
 } // namespace simaai::neat::nodes
