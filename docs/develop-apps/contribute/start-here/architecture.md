@@ -1647,6 +1647,15 @@ that `neatdecoder` reads in place, with no copy between capture and decode. The
 frames can feed both `VideoSender` passthrough (MJPEG) and `SimaDecode` (MJPEG),
 which decodes to the camera's native layout, NV12 for 4:2:0 and NV16 for 4:2:2.
 
+An MJPEG `VideoSender` is the internal `JpegRtpUdpSink` (`neatjpegudpsink`) alone
+when that factory is registered, and `JpegParse`, `JpegPacketize` (`rtpjpegpay`) and
+`UdpOutput` otherwise. `VideoSender` checks the registry when the Graph is
+constructed. The sink reads each frame's JPEG headers itself but its caps require
+width and height, so `JpegRtpUdpSink` is an input-spec specializer: an input whose
+spec carries dimensions renders the bare sink, and any other input keeps a
+`jpegparse` inside the node's fragment. A segment that ends in either sink copies its
+encoded input rather than holding the producer's capture buffer and loan.
+
 ### Teardown
 
 Teardown is intentionally defensive.

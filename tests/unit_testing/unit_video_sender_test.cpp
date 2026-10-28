@@ -1,4 +1,5 @@
 #include "nodes/groups/VideoSender.h"
+#include "jpeg_rtp_udp_sink_fixture.h"
 #include "test_main.h"
 
 #include <functional>
@@ -164,6 +165,74 @@ RUN_TEST(
                 "VideoSender H265 must not encode raw video");
         require(backend.find("h264parse") == std::string::npos,
                 "VideoSender H265 must not use H264 parser");
+      }
+
+      {
+        // MJPEG sends through neatjpegudpsink when the Scheduler has it, else through
+        // rtpjpegpay ! udpsink. H.264 and H.265 do not depend on it.
+        auto mjpeg = VideoSenderOptions::Passthrough(RtspCodec::MJPEG);
+        mjpeg.host = "10.0.0.7";
+        mjpeg.channel = 4;
+        mjpeg.sync = true;
+        simaai::neat::SimaEncodeOptions jpeg_encode;
+        jpeg_encode.type = simaai::neat::SimaEncodeType::MJPEG;
+        const auto raw_mjpeg = VideoSenderOptions::FromRaw(jpeg_encode);
+        const auto h264 = VideoSenderOptions::Passthrough(RtspCodec::H264);
+        const auto h265 = VideoSenderOptions::Passthrough(RtspCodec::H265);
+        const std::string h264_nodes = VideoSender(h264).describe();
+        const std::string h265_nodes = VideoSender(h265).describe();
+        for (const bool present : {false, true, false}) {
+          jpeg_rtp_udp_sink_fixture::set_factory_present(present);
+          const auto graph = VideoSender(mjpeg);
+          const std::string described = graph.describe();
+          const std::string backend = graph.describe_backend();
+          require(described == VideoSender(mjpeg).describe(),
+                  "MJPEG sender composition must be deterministic");
+          if (present) {
+            // The sink reads the JPEG headers itself. The node list carries no parser; the
+            // unspecialized fragment keeps jpegparse until the compiler sees sized input
+            // caps (unit_encoded_egress_copy_test covers that for a USB camera).
+            require_in_order(described, {"JpegRtpUdpSink"},
+                             "MJPEG sender must send through neatjpegudpsink");
+            require(described.find("JpegParse") == std::string::npos &&
+                        described.find("JpegPacketize") == std::string::npos &&
+                        described.find("UdpOutput") == std::string::npos,
+                    "neatjpegudpsink replaces JpegParse, JpegPacketize and UdpOutput");
+            require_in_order(backend,
+                             {"jpegparse name=n0_jpegparse_", "neatjpegudpsink name=n0_jpegudp_",
+                              " host=10.0.0.7 port=9004 pt=26 mtu=1400 timestamp-offset=0 "
+                              "sync=true async=false enable-last-sample=false"},
+                             "MJPEG sender must pass its destination and timing to the sink");
+            require(backend.find("rtpjpegpay") == std::string::npos &&
+                        backend.find("udpsink host=") == std::string::npos,
+                    "MJPEG sender must not also packetize with rtpjpegpay");
+            require_in_order(VideoSender(raw_mjpeg).describe(), {"SimaEncode", "JpegRtpUdpSink"},
+                             "raw MJPEG sender must send through neatjpegudpsink");
+            require(VideoSender(raw_mjpeg).describe().find("JpegParse") == std::string::npos,
+                    "raw MJPEG sender must not add a parser node");
+          } else {
+            require_in_order(described, {"JpegParse", "JpegPacketize", "UdpOutput"},
+                             "MJPEG sender without neatjpegudpsink must keep rtpjpegpay");
+            require(described.find("JpegRtpUdpSink") == std::string::npos,
+                    "MJPEG sender must not render a missing factory");
+            require_contains(backend, "rtpjpegpay", "MJPEG fallback payloader missing");
+            require_contains(backend, "udpsink host=10.0.0.7 port=9004 sync=true async=false",
+                             "MJPEG fallback UDP sink mismatch");
+            require(backend.find("neatjpegudpsink") == std::string::npos,
+                    "MJPEG fallback must not reference neatjpegudpsink");
+            require_in_order(VideoSender(raw_mjpeg).describe(),
+                             {"SimaEncode", "JpegParse", "JpegPacketize", "UdpOutput"},
+                             "raw MJPEG sender without neatjpegudpsink must keep rtpjpegpay");
+          }
+          require(VideoSender(h264).describe() == h264_nodes &&
+                      VideoSender(h265).describe() == h265_nodes,
+                  "H.264/H.265 sender compositions must not depend on neatjpegudpsink");
+          for (const auto& codec : {h264, h265}) {
+            require(VideoSender(codec).describe_backend().find("neatjpegudpsink") ==
+                        std::string::npos,
+                    "H.264/H.265 senders must not use neatjpegudpsink");
+          }
+        }
       }
 
       const simaai::neat::SimaEncode defaults;

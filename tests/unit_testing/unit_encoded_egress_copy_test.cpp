@@ -6,6 +6,7 @@
 #endif
 
 #include "gst/GstInit.h"
+#include "jpeg_rtp_udp_sink_fixture.h"
 #include "nodes/common/Output.h"
 #include "nodes/groups/VideoSender.h"
 #include "nodes/io/Input.h"
@@ -50,8 +51,11 @@ bool has_node(const runtime::PipelineSegmentPlan& segment, const std::string& ki
 }
 
 // The camera's decode edge and its VideoSender edge land in separate segments; only the
-// sender's segment copies encoded input, and building it hands that to its InputStream.
-void sender_segment_is_the_only_copying_segment(GraphLinkPolicy policy) {
+// sender's segment copies encoded input, and building it hands that to its InputStream. The
+// sender ends in JpegRtpUdpSink when neatjpegudpsink is installed, else in rtpjpegpay ! udpsink.
+void sender_segment_is_the_only_copying_segment(GraphLinkPolicy policy, bool jpeg_rtp_udp_sink) {
+  jpeg_rtp_udp_sink_fixture::set_factory_present(jpeg_rtp_udp_sink);
+  const std::string sender_kind = jpeg_rtp_udp_sink ? "JpegRtpUdpSink" : "JpegPacketize";
   UsbCameraInputOptions camera;
   camera.camera_name = "usb-camera-egress";
   camera.buffer_name = "egress_usb";
@@ -89,8 +93,19 @@ void sender_segment_is_the_only_copying_segment(GraphLinkPolicy policy) {
     if (copies) {
       ++copying;
       sender_segment = &segment;
-      require(has_node(segment, "JpegPacketize") && !has_node(segment, "SimaDecode"),
+      require(has_node(segment, sender_kind) && !has_node(segment, "SimaDecode"),
               "only the VideoSender segment may copy encoded input");
+      if (jpeg_rtp_udp_sink) {
+        // The camera's caps carry width and height, so the compiler specializes the sink to
+        // read the JPEG headers itself instead of re-parsing every frame.
+        require(!has_node(segment, "JpegParse"), "the sink needs no JpegParse node");
+        for (const auto& node : segment.nodes) {
+          if (node && node->kind() == sender_kind) {
+            require(node->backend_fragment(0).find("jpegparse") == std::string::npos,
+                    "a sized camera input must not re-parse JPEG frames before the sink");
+          }
+        }
+      }
     }
   }
   require(saw_decoder, "plan must contain the decode segment");
@@ -216,8 +231,11 @@ void push_through_segment_edge(bool copy_encoded_input) {
 int main() {
   try {
     gst_init_once();
-    sender_segment_is_the_only_copying_segment(GraphLinkPolicy::Default);
-    sender_segment_is_the_only_copying_segment(GraphLinkPolicy::RealtimeLatestByStream);
+    for (const bool jpeg_rtp_udp_sink : {false, true}) {
+      sender_segment_is_the_only_copying_segment(GraphLinkPolicy::Default, jpeg_rtp_udp_sink);
+      sender_segment_is_the_only_copying_segment(GraphLinkPolicy::RealtimeLatestByStream,
+                                                 jpeg_rtp_udp_sink);
+    }
     push_through_segment_edge(/*copy_encoded_input=*/true);
     push_through_segment_edge(/*copy_encoded_input=*/false);
   } catch (const std::exception& e) {

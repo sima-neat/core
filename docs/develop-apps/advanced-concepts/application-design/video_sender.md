@@ -116,6 +116,8 @@ parses, packetizes, and sends the stream without re-encoding.
 
 Passthrough creates no encoder. The caller's codec selection must match the encoded input; encoder settings do not apply.
 
+MJPEG, raw or passthrough, sends through `neatjpegudpsink` when the installed Scheduler provides it. That one sink reads each frame's JPEG headers, builds the RTP/JPEG packets and sends them over UDP, with no `jpegparse` in front of it when the input caps carry width and height (a USB camera, the encoder, an `Input` with sized caps). An input whose caps may lack dimensions, such as HTTP multipart MJPEG or an `Input` with `image/jpeg` caps only, keeps `jpegparse` in front of the sink. With an older Scheduler, Neat keeps `jpegparse`, `rtpjpegpay` and `udpsink`. The host, port, payload type, `sync` and `async` settings are the same for both.
+
 When an RTSP source feeds both this sender and a `SimaDecode`, the default `async=false` lets Core render the sender behind a GStreamer `tee` in the source pipeline, so the source, sender, and decoder start, stop, and fail together. Set `async=true` (`async_` in Python) to keep them in separate pipelines.
 
 H.265 example:

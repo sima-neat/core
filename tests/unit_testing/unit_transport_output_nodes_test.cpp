@@ -2,15 +2,21 @@
 #include "nodes/groups/UdpH264OutputGroup.h"
 #include "nodes/groups/UdpOutputGroupG.h"
 #include "nodes/io/UdpOutput.h"
+#include "nodes/io/internal/JpegRtpUdpSink.h"
 #include "nodes/rtp/H264CapsFixup.h"
 #include "nodes/sima/QuantTess.h"
+#include "jpeg_rtp_udp_sink_fixture.h"
 #include "test_main.h"
 #include "test_utils.h"
+
+#include <gst/gst.h>
 
 #include <nlohmann/json.hpp>
 
 #include <functional>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -56,6 +62,108 @@ RUN_TEST(
         require_contains(fragment, "enable-last-sample=false",
                          "UdpOutput must not retain its last packet: it pins the frame's memory");
         require(node->element_names(7).empty(), "UdpOutput element_names contract should be empty");
+      }
+
+      // JpegRtpUdpSink fragment snapshot, element names, specialization, and parse against
+      // the element.
+      {
+        using simaai::neat::internal::JpegRtpUdpSink;
+        using simaai::neat::internal::JpegRtpUdpSinkOptions;
+        const JpegRtpUdpSink defaults{JpegRtpUdpSinkOptions{}};
+        require(defaults.kind() == "JpegRtpUdpSink",
+                "JpegRtpUdpSink kind is matched by name and must stay stable");
+        // Unspecialized, the node keeps a parser so an input without sized caps still
+        // negotiates.
+        require(defaults.input() == JpegRtpUdpSink::Input::ParseDimensions,
+                "JpegRtpUdpSink must default to parsing dimensions");
+        require(defaults.backend_fragment(3) ==
+                    "jpegparse name=n3_jpegparse disable-passthrough=true ! "
+                    "neatjpegudpsink name=n3_jpegudp host=127.0.0.1 port=5000 pt=26 mtu=1400 "
+                    "timestamp-offset=0 sync=false async=false enable-last-sample=false",
+                "JpegRtpUdpSink default fragment mismatch");
+        require(defaults.element_names(3) == std::vector<std::string>{"n3_jpegparse", "n3_jpegudp"},
+                "JpegRtpUdpSink parsing element_names mismatch");
+        // The sender fan-out fusion matcher reads these literal substrings from the fragment
+        // until it can match the node's class, so the defaults are always spelled out.
+        for (const char* literal : {" sync=false", " async=false", " enable-last-sample=false"}) {
+          require(defaults.backend_fragment(0).find(literal) != std::string::npos,
+                  std::string("JpegRtpUdpSink default fragment must contain '") + literal + "'");
+        }
+
+        JpegRtpUdpSinkOptions opt;
+        opt.host = "10.0.0.5";
+        opt.port = 5600;
+        opt.payload_type = 27;
+        opt.mtu = 1200;
+        opt.sync = true;
+        opt.async = true;
+        const JpegRtpUdpSink node(opt, JpegRtpUdpSink::Input::SizedCaps);
+        const std::string fragment = node.backend_fragment(7);
+        require(fragment == "neatjpegudpsink name=n7_jpegudp host=10.0.0.5 port=5600 pt=27 "
+                            "mtu=1200 timestamp-offset=0 sync=true async=true "
+                            "enable-last-sample=false",
+                "JpegRtpUdpSink sized fragment mismatch");
+        require(fragment ==
+                    JpegRtpUdpSink(opt, JpegRtpUdpSink::Input::SizedCaps).backend_fragment(7),
+                "JpegRtpUdpSink fragment must be deterministic");
+        require(node.element_names(7) == std::vector<std::string>{"n7_jpegudp"},
+                "JpegRtpUdpSink sized element_names must name the fragment's element");
+
+        // Specialization: an input with known dimensions drops the parser; anything else
+        // keeps it. The node's options survive either way.
+        simaai::neat::OutputSpec sized;
+        sized.media_type = "image/jpeg";
+        sized.width = 1920;
+        sized.height = 1080;
+        sized.certainty = simaai::neat::SpecCertainty::Hint;
+        simaai::neat::OutputSpec unsized = sized;
+        unsized.width = 0;
+        unsized.height = 0;
+        const simaai::neat::internal::InputSpecSpecializationContext context;
+        for (const auto* source : {&defaults, &node}) {
+          for (const auto& [input, parse] : {std::pair{&sized, false}, std::pair{&unsized, true}}) {
+            const auto selected = source->specialize_for_input(*input, context);
+            const auto* sink = dynamic_cast<const JpegRtpUdpSink*>(selected.get());
+            require(sink != nullptr && sink->kind() == "JpegRtpUdpSink",
+                    "specialization must return a JpegRtpUdpSink");
+            require((sink->input() == JpegRtpUdpSink::Input::ParseDimensions) == parse,
+                    "specialization must parse exactly when the input has no dimensions");
+            require(sink->options().host == source->options().host &&
+                        sink->options().port == source->options().port &&
+                        sink->options().async == source->options().async,
+                    "specialization must keep the sink's options");
+            require((sink->backend_fragment(2).find("jpegparse") != std::string::npos) == parse,
+                    "specialized fragment must match its variant");
+          }
+        }
+
+        jpeg_rtp_udp_sink_fixture::set_factory_present(true);
+        for (const auto* variant : {&defaults, &node}) {
+          const std::string launch = variant->backend_fragment(7);
+          GError* error = nullptr;
+          GstElement* bin = gst_parse_launch(launch.c_str(), &error);
+          require(bin != nullptr && error == nullptr,
+                  std::string("JpegRtpUdpSink fragment must parse: ") +
+                      (error ? error->message : "no element"));
+          GstElement* sink = GST_IS_BIN(bin) ? gst_bin_get_by_name(GST_BIN(bin), "n7_jpegudp")
+                                             : GST_ELEMENT(gst_object_ref(bin));
+          require(sink != nullptr && std::string(GST_OBJECT_NAME(sink)) == "n7_jpegudp",
+                  "parsed JpegRtpUdpSink element must carry its element name");
+          gboolean last_sample = TRUE;
+          g_object_get(sink, "enable-last-sample", &last_sample, nullptr);
+          require(!last_sample, "JpegRtpUdpSink must not retain the frame's buffer");
+          for (const auto& name : variant->element_names(7)) {
+            GstElement* element =
+                GST_IS_BIN(bin) ? gst_bin_get_by_name(GST_BIN(bin), name.c_str()) : nullptr;
+            require(element != nullptr || (!GST_IS_BIN(bin) && name == "n7_jpegudp"),
+                    "element_names must name an element of the parsed fragment: " + name);
+            if (element) {
+              gst_object_unref(element);
+            }
+          }
+          gst_object_unref(sink);
+          gst_object_unref(bin);
+        }
       }
 
       // H264CapsFixup snapshot.

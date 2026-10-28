@@ -10,6 +10,7 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "nodes/io/UdpOutput.h"
+#include "nodes/io/internal/JpegRtpUdpSink.h"
 #include "pipeline/Run.h"
 #include "pipeline/GraphOptions.h"
 #include "pipeline/internal/InputRouteProcessor.h"
@@ -290,12 +291,14 @@ inline InputOptions injected_boundary_input_options(const PipelineSegmentPlan& s
   return opt;
 }
 
-// A segment that ends in a network sink (VideoSender: RTP payload -> UdpOutput) can keep what it
-// is handed, so it copies compressed input instead of holding the producer's capture buffer and
-// loan. Decoder and model segments keep zero-copy holder transport.
+// A segment that ends in a network sink (VideoSender: RTP payload -> UdpOutput, or MJPEG ->
+// JpegRtpUdpSink) can keep what it is handed, so it copies compressed input instead of holding
+// the producer's capture buffer and loan. Decoder and model segments keep zero-copy holder
+// transport.
 inline bool segment_copies_encoded_input(const PipelineSegmentPlan& segment) {
   return std::any_of(segment.nodes.begin(), segment.nodes.end(), [](const auto& node) {
-    return dynamic_cast<const UdpOutput*>(node.get()) != nullptr;
+    return dynamic_cast<const UdpOutput*>(node.get()) != nullptr ||
+           dynamic_cast<const simaai::neat::internal::JpegRtpUdpSink*>(node.get()) != nullptr;
   });
 }
 
