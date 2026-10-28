@@ -130,26 +130,38 @@ A pass predicts the production docs build when the same Core commit is promoted,
 ### Adaptive DevKit CI
 
 The standard Vulcan workflow discovers online runners in the resolved DevKit
-runner group after the build is ready. It requires the resolver's exact firmware,
-RTSP and environment labels, and uses up to six idle DevKits. If all eligible
-runners are busy, it queues one worker containing all lanes; if none are online,
-planning fails explicitly. GitHub owns assignment and queueing: discovery is an
-availability snapshot, not a device reservation.
+runner group after the candidate is ready. All workers require the exact firmware
+and artifact environment. It uses up to five regular workers for fast/docs,
+two E2E partitions, performance and Python/tutorials, plus up to two regular
+`modalix-som-16gig` workers for C++ and Python GenAI. Default work does not impose
+a RAM size. Standard runs consume no RTSP-pod runners.
 
-Every worker installs the same commit and verifies firmware, the installed package
-inventory and runtime. Six canonical lanes are balanced across the available
-workers: fast tests/docs examples, two E2E partitions, C++ GenAI, performance, and
-Python/tutorials. E2E partitions use recorded durations from successful develop
-run `40626198772`; new tests receive a conservative default weight and remain
-included. Weekly fixtures, stream profiles, long tests, existing explicit
-exclusions and zero-skip coverage checks retain their existing behavior.
-Hardware tests remain isolated within each worker, including serial performance
-and GenAI execution. The existing `Test Core on DevKit` gate requires every worker
-to pass and verifies complete lane assignment and the exact union of both E2E
-selections before promotion, offline delivery or validation-only completion.
+Weekly external stream coverage adds one RTSP-pod worker when the declared stream
+profile is `http` or `all`: HTTP MJPEG sources share that network-access boundary.
+The `none` profile records its existing coverage exclusions on a regular worker.
+Local RTSP servers and mocked RTSP APIs do not need source-pod access; see the
+[test-to-runner audit](tests/devkit-runner-requirements.md).
+
+GitHub has no negative-label selector. The planner uses full candidate label
+conjunctions and checks all registered RTSP runners, including offline ones, to
+prove that regular selectors cannot land on that pod. An optional repository
+variable `CORE_UNREADY_RUNNERS` contains a JSON array of excluded runner names;
+the selector must exclude those registrations too. Without a safe selector,
+planning fails rather than silently falling back to RTSP hardware. An unavailable
+idle pool queues one complete worker for that pool; no online compatible pool
+fails explicitly. GitHub owns assignment and queueing: discovery is a snapshot,
+not a reservation, and candidate names do not pin jobs to individual devices.
+
+Every worker installs the same commit and verifies firmware, installed package
+inventory and runtime. Existing CTest/pytest assertions, timeouts, hardware
+isolation, weekly fixtures, capability profiles and explicit exclusions remain
+unchanged. E2E partitions use recorded test durations, and their exact union must
+match the original canonical selection. The `Test Core on DevKit` aggregate gate
+requires every worker to pass before promotion, offline delivery or validation-only
+completion. Offline-only and docs-only runs retain their intentional skips.
+
 Plan-specific `core-selected-coverage-*` artifacts contain coverage and outcome
 receipts; `core-devkit-shard-plan` records the fleet and assignments. Full reruns
-create a new plan ID, so removed shards from older attempts are ignored. Failed-job
-reruns retain the plan ID and replace only the re-executed shards' artifacts. Timing
-estimates exclude installation and downloads, which repeat on each selected
-DevKit. Runtime and public APIs are unchanged.
+create a new plan ID, excluding obsolete shards. Failed-job reruns retain that ID
+and replace only re-executed shards' artifacts. Estimates exclude repeated
+installation and downloads. Runtime and public APIs are unchanged.

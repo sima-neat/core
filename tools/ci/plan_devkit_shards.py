@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plan up to six DevKit workers, preserving all canonical Core test lanes."""
+"""Plan capability-aware DevKit workers without consuming RTSP capacity unnecessarily."""
 from __future__ import annotations
 import argparse
 from collections import Counter
@@ -11,7 +11,7 @@ from urllib.request import Request, urlopen
 
 # Seconds from successful develop run 40626198772. Setup is per worker.
 LANES = {"fast": 230, "e2e-0": 257, "e2e-1": 257,
-         "genai": 129, "performance": 276, "python-tutorials": 410}
+         "genai": 129, "genai-python": 100, "performance": 276, "python-tutorials": 310}
 
 def collect(get, path, key):
     result = []
@@ -48,35 +48,97 @@ def label_set(runner):
     return {label["name"].casefold() for label in runner["labels"]}
 
 
+def expected_lanes(weekly=False):
+    return {**LANES, **({"streams": 120} if weekly else {})}
+
+
+def task_pool(task, stream_profile):
+    if task in ("genai", "genai-python"):
+        return "llm-16gb"
+    if task == "streams" and stream_profile != "none":
+        return "rtsp"
+    return "default"
+
+
 def validate_plan(plan):
     shards = plan["shards"]
-    if not 1 <= len(shards) <= 6:
-        raise ValueError("Expected one to six DevKit shards")
+    expected = expected_lanes(plan.get("weekly", False))
+    if not 1 <= len(shards) <= 8:
+        raise ValueError("Expected one to eight DevKit shards")
     if len({s["id"] for s in shards}) != len(shards):
         raise ValueError("Duplicate shard IDs")
-    if Counter(t for s in shards for t in s["tasks"]) != Counter(LANES.keys()):
+    if Counter(t for s in shards for t in s["tasks"]) != Counter(expected.keys()):
         raise ValueError("Every canonical lane must be assigned exactly once")
-    if any(not s["tasks"] or not s["labels"] for s in shards):
-        raise ValueError("Empty shard or runner selector")
+    for pool, maximum in (("default", 5), ("llm-16gb", 2), ("rtsp", 1)):
+        if sum(s["pool"] == pool for s in shards) > maximum:
+            raise ValueError("Capability pool exceeds its fleet cap")
+    for shard in shards:
+        if not shard["tasks"] or not shard["labels"]:
+            raise ValueError("Empty shard or runner selector")
+        pools = {task_pool(t, plan["stream_profile"]) for t in shard["tasks"]}
+        if pools != {shard["pool"]}:
+            raise ValueError("Lane assigned to the wrong capability pool")
+        labels = {x.casefold() for x in shard["labels"]}
+        if shard["pool"] == "llm-16gb" and "modalix-som-16gig" not in labels:
+            raise ValueError("LLM tests require modalix-som-16gig")
+        if ("rtsp" in labels) != (shard["pool"] == "rtsp"):
+            raise ValueError("Only external-source lanes may require RTSP runners")
 
 
-def make_plan(runners, required, sha, maximum=6, plan_id="local"):
-    if not 1 <= maximum <= 6:
-        raise ValueError("Fleet cap must be one to six")
+def make_plan(runners, required, sha, maximum=5, plan_id="local", *, weekly=False,
+              stream_profile="http", excluded_names=()):
+    if not 1 <= maximum <= 5:
+        raise ValueError("Default fleet cap must be one to five")
+    if weekly and stream_profile not in ("none", "http", "all"):
+        raise ValueError("Unknown stream capability profile")
     required = {x.casefold() for x in required}
-    eligible = [r for r in runners if r["status"] == "online" and required <= label_set(r)]
-    if not eligible:
-        raise ValueError("No online DevKit matches the exact firmware/capabilities")
-    idle = sorted((r for r in eligible if not r["busy"]), key=lambda r: r["name"])
-    selected = idle[:maximum] or [min(eligible, key=lambda r: r["name"])]
-    shards = [{"id": f"devkit-{i+1}", "candidate": r["name"],
-               "labels": sorted(required), "idle_at_planning": not r["busy"],
-               "tasks": [], "estimated_seconds": 0} for i,r in enumerate(selected)]
-    for task, seconds in sorted(LANES.items(), key=lambda t: (-t[1], t[0])):
-        shard = min(shards, key=lambda s: (s["estimated_seconds"], s["id"]))
-        shard["tasks"].append(task)
-        shard["estimated_seconds"] += seconds
-    plan = {"sha": sha, "plan_id": plan_id, "shards": shards}
+    if "rtsp" in required:
+        raise ValueError("Base runner selector must not require RTSP")
+    expected = expected_lanes(weekly)
+    excluded = [r for r in runners if r["name"].casefold() in {x.casefold() for x in excluded_names}]
+    rtsp = [r for r in runners if "rtsp" in label_set(r)]
+    shards, reserved = [], set()
+    # Admit scarce memory-specific workers first. Count each candidate once.
+    for pool, limit in (("llm-16gb", 2), ("default", maximum), ("rtsp", 1)):
+        tasks = {t: w for t, w in expected.items() if task_pool(t, stream_profile) == pool}
+        if not tasks:
+            continue
+        candidates = []
+        for r in runners:
+            labels = label_set(r) | required
+            if (r["status"] != "online" or not required <= label_set(r)
+                    or ("rtsp" in label_set(r)) != (pool == "rtsp")
+                    or (pool == "llm-16gb" and "modalix-som-16gig" not in label_set(r))):
+                continue
+            # GitHub has no negative-label selector. Prove that even offline
+            # RTSP/unready registrations cannot claim this complete conjunction.
+            if any(labels <= label_set(other) for other in excluded):
+                continue
+            if pool != "rtsp" and any(labels <= label_set(other) for other in rtsp):
+                continue
+            candidates.append(r)
+        if not candidates:
+            raise ValueError(f"No safe online {pool} DevKit matches the firmware/capabilities")
+        idle = sorted((r for r in candidates if not r["busy"] and r["name"] not in reserved),
+                      key=lambda r: r["name"])
+        selected = idle[:min(limit, len(tasks))]
+        if not selected:
+            # Queue one complete pool when idle capacity is unavailable.
+            # A shared selector still permits GitHub to assign any eligible node.
+            selected = [min(candidates, key=lambda r: (r["name"] in reserved, r["name"]))]
+        bins = []
+        for r in selected:
+            reserved.add(r["name"])
+            bins.append({"id": f"{pool}-{len(bins)+1}", "pool": pool,
+                         "candidate": r["name"], "labels": sorted(required | label_set(r)),
+                         "idle_at_planning": not r["busy"], "tasks": [], "estimated_seconds": 0})
+        for task, seconds in sorted(tasks.items(), key=lambda t: (-t[1], t[0])):
+            shard = min(bins, key=lambda s: (s["estimated_seconds"], s["id"]))
+            shard["tasks"].append(task)
+            shard["estimated_seconds"] += seconds
+        shards.extend(bins)
+    plan = {"sha": sha, "plan_id": plan_id, "weekly": weekly,
+            "stream_profile": stream_profile, "shards": shards}
     validate_plan(plan)
     return plan
 
@@ -98,7 +160,7 @@ def verify_results(plan, directory):
     assigned = [n for p in partitions for n in p["selected"]]
     if Counter(assigned) != Counter(partitions[0]["canonical"]):
         raise ValueError("E2E partitions omitted or duplicated tests")
-    print(f"All {len(receipts)} DevKits passed; all six lanes and {len(assigned)} E2E tests accounted for")
+    print(f"All {len(receipts)} DevKits passed; all {len(expected_lanes(plan.get('weekly', False)))} lanes and {len(assigned)} E2E tests accounted for")
 
 
 def main():
@@ -124,8 +186,14 @@ def main():
             return json.load(response)
     runners = discover_runners(get, os.environ["GITHUB_REPOSITORY"], args.group,
                                os.environ.get("REPOSITORY_PRIVATE", "true") == "true")
+    excluded = json.loads(os.environ.get("CORE_UNREADY_RUNNERS") or "[]")
+    if not isinstance(excluded, list) or any(not isinstance(n, str) for n in excluded):
+        raise ValueError("CORE_UNREADY_RUNNERS must be a JSON array of names")
     plan = make_plan(runners, json.loads(args.labels), os.environ["GITHUB_SHA"],
-                     plan_id=f"{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}")
+                     plan_id=f"{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}",
+                     weekly=os.environ.get("RUN_LONG_TESTS") == "true",
+                     stream_profile=os.environ.get("STREAM_PROFILE", "http"),
+                     excluded_names=excluded)
     args.output.write_text(json.dumps(plan, indent=2) + "\n")
     matrix = {"include": [{"shard": s["id"], "plan_id": plan["plan_id"], "labels": s["labels"],
                             "tasks": json.dumps(s["tasks"])} for s in plan["shards"]]}

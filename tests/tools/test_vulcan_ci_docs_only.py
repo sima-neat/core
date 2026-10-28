@@ -57,7 +57,7 @@ class VulcanCiDocsOnlyTests(unittest.TestCase):
                          "${{ matrix.labels }}")
         resolver = yaml.safe_load(job_block("resolve-test-runner"))
         self.assertEqual(json.loads(resolver["with"]["runner-labels"]), [
-            "self-hosted", "Linux", "ARM64", "modalix", "rtsp",
+            "self-hosted", "Linux", "ARM64", "modalix",
             "vulcan-${{ " + env + " == 'prod' && 'production' || " + env + " }}",
         ])
         guard = devkit["steps"][0]
