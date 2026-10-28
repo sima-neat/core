@@ -118,7 +118,7 @@ def test_pytest_actual_node_accounting(tmp_path, body, expected):
 
 def genai_workflow_step(name):
     workflow = yaml.safe_load((ROOT / '.github/workflows/vulcan-ci.yml').read_text())
-    return next(step['run'] for step in workflow['jobs']['test-devkit']['steps']
+    return next(step['run'] for step in workflow['jobs']['test-devkit-shard']['steps']
                 if step['name'] == name)
 
 

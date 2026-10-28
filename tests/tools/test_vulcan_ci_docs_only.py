@@ -46,15 +46,15 @@ class VulcanCiDocsOnlyTests(unittest.TestCase):
         self.assertEqual(resolver["secrets"]["app_id"], "${{ secrets.NEAT_RELEASES_APP_ID }}")
         self.assertIn("== 'standard'", resolver["if"])
         self.assertIn("needs.detect-changes.outputs.docs_only != 'true'", resolver["if"])
-        devkit = yaml.safe_load(job_block("test-devkit"))
+        devkit = yaml.safe_load(job_block("test-devkit-shard"))
         self.assertEqual(devkit["runs-on"]["group"],
                          "${{ needs.resolve-test-runner.outputs.modalix_runner_group }}")
 
     def test_devkit_labels_preserve_capabilities_and_artifact_environment(self) -> None:
-        devkit = yaml.safe_load(job_block("test-devkit"))
+        devkit = yaml.safe_load(job_block("test-devkit-shard"))
         env = "needs.resolve-vulcan-config.outputs.vulcan_env"
         self.assertEqual(devkit["runs-on"]["labels"],
-                         "${{ fromJSON(needs.resolve-test-runner.outputs.runner_labels) }}")
+                         "${{ matrix.labels }}")
         resolver = yaml.safe_load(job_block("resolve-test-runner"))
         self.assertEqual(json.loads(resolver["with"]["runner-labels"]), [
             "self-hosted", "Linux", "ARM64", "modalix", "rtsp",

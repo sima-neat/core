@@ -126,3 +126,28 @@ gh workflow run "Vulcan Docs" --repo sima-neat/core --ref develop -f sibling_bra
 ```
 
 A pass predicts the production docs build when the same Core commit is promoted, no sibling `main` changes before the production deploy (compare the commits in the `[autodoc] ... using` log lines), and `git diff --stat origin/develop...origin/main` prints nothing.
+
+### Adaptive DevKit CI
+
+The standard Vulcan workflow discovers online runners in the resolved DevKit
+runner group after the build is ready. It requires the resolver's exact firmware,
+RTSP and environment labels, and uses up to six idle DevKits. If all eligible
+runners are busy, it queues one worker containing all lanes; if none are online,
+planning fails explicitly. GitHub owns assignment and queueing: discovery is an
+availability snapshot, not a device reservation.
+
+Every worker installs the same commit and verifies firmware, the installed package
+inventory and runtime. Six canonical lanes are balanced across the available
+workers: fast tests/docs examples, two E2E partitions, C++ GenAI, performance, and
+Python/tutorials. E2E partitions use recorded durations from successful develop
+run `40626198772`; new tests receive a conservative default weight and remain
+included. Weekly fixtures, stream profiles, long tests, existing explicit
+exclusions and zero-skip coverage checks retain their existing behavior.
+Hardware tests remain isolated within each worker, including serial performance
+and GenAI execution. The existing `Test Core on DevKit` gate requires every worker
+to pass and verifies complete lane assignment and the exact union of both E2E
+selections before promotion, offline delivery or validation-only completion.
+Per-worker `core-selected-coverage-*` artifacts contain coverage and outcome
+receipts; `core-devkit-shard-plan` records the fleet and assignments. Timing
+estimates exclude installation and downloads, which repeat on each selected
+DevKit. Runtime and public APIs are unchanged.

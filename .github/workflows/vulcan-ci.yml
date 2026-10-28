@@ -205,6 +205,7 @@ jobs:
             tests/tools/test_pcie_build_options.py \
             tests/tools/test_required_test_coverage.py \
             tests/tools/test_ci_weekly_preparation.py \
+            tests/tools/test_devkit_sharding.py \
             tests/tools/test_docs_native_prerequisites.py \
             tests/tools/test_ci_hygiene_cohort.py \
             tests/tools/test_published_artifact.py \
@@ -836,8 +837,8 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           SSE_KMS_KEY_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
 
-  test-devkit:
-    name: Test Core on DevKit
+  plan-devkit-tests:
+    name: Plan adaptive Core DevKit fleet
     if: ${{ !cancelled() && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' && needs.code-hygiene.result == 'success' && needs.resolve-test-runner.result == 'success' && ((inputs.validation_only && needs.publish-vulcan-artifacts.result == 'skipped') || (!inputs.validation_only && needs.publish-vulcan-artifacts.result == 'success')) }}
     needs:
       - detect-changes
@@ -846,10 +847,52 @@ jobs:
       - build
       - code-hygiene
       - publish-vulcan-artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Mint read-only runner discovery token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.NEAT_RELEASES_APP_ID }}
+          private-key: ${{ secrets.NEAT_RELEASES_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-organization-self-hosted-runners: read
+      - name: Discover available DevKits and assign all lanes
+        id: plan
+        env:
+          RUNNER_DISCOVERY_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+          RUNNER_GROUP: ${{ needs.resolve-test-runner.outputs.modalix_runner_group }}
+          REQUIRED_LABELS: ${{ needs.resolve-test-runner.outputs.runner_labels }}
+        run: python3 tools/ci/plan_devkit_shards.py --group "$RUNNER_GROUP" --labels "$REQUIRED_LABELS"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: core-devkit-shard-plan
+          path: devkit-shard-plan.json
+          if-no-files-found: error
+
+  test-devkit-shard:
+    name: Core DevKit ${{ matrix.shard }}
+    if: ${{ !cancelled() && needs.plan-devkit-tests.result == 'success' }}
+    needs:
+      - detect-changes
+      - resolve-vulcan-config
+      - resolve-test-runner
+      - build
+      - code-hygiene
+      - publish-vulcan-artifacts
+      - plan-devkit-tests
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan-devkit-tests.outputs.matrix) }}
     runs-on:
       group: ${{ needs.resolve-test-runner.outputs.modalix_runner_group }}
       # The dedicated production DevKit uses vulcan-production, not vulcan-prod.
-      labels: ${{ fromJSON(needs.resolve-test-runner.outputs.runner_labels) }}
+      labels: ${{ matrix.labels }}
     env:
       VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
       SIMA_CLI_CHECK_FOR_UPDATE: "0"
@@ -1100,6 +1143,7 @@ jobs:
           fi
 
       - name: Prepare GenAI models
+        if: ${{ contains(fromJSON(matrix.tasks), 'genai') || contains(fromJSON(matrix.tasks), 'python-tutorials') }}
         run: |
           set -euo pipefail
           EXTRAS_PREFIX="$(cat _work/extras_prefix.txt)"
@@ -1162,6 +1206,7 @@ jobs:
           echo "Installed immutable LightGlue regression model: ${archives[0]}"
 
       - name: Build docs C++ examples from DevKit-installed package
+        if: ${{ contains(fromJSON(matrix.tasks), 'fast') }}
         run: |
           tests/docs/build_docs_examples.sh \
             --environment devkit \
@@ -1200,6 +1245,7 @@ jobs:
             --no-tests=error
 
       - name: Run Fast Non-E2E Tests (Parallel)
+        if: ${{ contains(fromJSON(matrix.tasks), 'fast') }}
         env:
           SIMA_YOLOV8_VARIANTS_BASE_URL: https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix
           SIMA_CTEST_TAIL_ONLY: "0"
@@ -1249,6 +1295,7 @@ jobs:
             --environment-json "${GITHUB_WORKSPACE}/_work/weekly-environment.json"
 
       - name: Run E2E Tests
+        if: ${{ contains(fromJSON(matrix.tasks), 'e2e-0') }}
         env:
           SIMA_YOLOV8_VARIANTS_BASE_URL: https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix
           SIMANEAT_TEST_RTSP_H264_URL: ${{ vars.SIMANEAT_TEST_RTSP_H264_URL }}
@@ -1292,15 +1339,78 @@ jobs:
           fi
           if [[ "${SIMA_CTEST_TAIL_ONLY:-0}" == "1" ]]; then
             echo "TEMPORARY one-shot: ctest -R '${TAIL_REGEX}'"
-            COVERAGE_DIR=_work/coverage/e2e-tail bash scripts/ci/run_zero_skip_gate.sh \
+            COVERAGE_DIR=_work/coverage/e2e-tail-0 bash scripts/ci/run_zero_skip_gate.sh \
               ctest --test-dir "${TEST_DIR}" \
               -R "${TAIL_REGEX}" \
               -E "${SKIP_REGEX}" \
               --output-on-failure \
               --no-tests=error
           else
-            COVERAGE_DIR=_work/coverage/e2e COVERAGE_PROFILE=required \
-              bash scripts/ci/run_zero_skip_gate.sh ctest --test-dir "${TEST_DIR}" \
+            COVERAGE_DIR=_work/coverage/e2e-0 COVERAGE_PROFILE=required \
+              python3 tools/ci/partition_devkit_e2e.py --index 0 -- ctest --test-dir "${TEST_DIR}" \
+              --label-regex "e2e" \
+              --label-exclude "${E2E_LABEL_EXCLUDE}" \
+              -E "${SKIP_REGEX}|^(modelzoo_bulk_models_test)$" \
+              --timeout 240 \
+              -j "${SIMA_CTEST_E2E_JOBS:-1}" \
+              --output-on-failure \
+              --no-tests=error
+          fi
+
+      - name: Run E2E Tests (partition 2)
+        if: ${{ contains(fromJSON(matrix.tasks), 'e2e-1') }}
+        env:
+          SIMA_YOLOV8_VARIANTS_BASE_URL: https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix
+          SIMANEAT_TEST_RTSP_H264_URL: ${{ vars.SIMANEAT_TEST_RTSP_H264_URL }}
+          SIMANEAT_TEST_RTSP_H264_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H264_URLS }}
+          SIMANEAT_TEST_RTSP_H265_URL: ${{ vars.SIMANEAT_TEST_RTSP_H265_URL }}
+          SIMANEAT_TEST_RTSP_H265_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H265_URLS }}
+          SIMANEAT_TEST_RTSP_MJPEG_URL: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_URL }}
+          SIMANEAT_TEST_RTSP_MJPEG_URLS: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_URLS }}
+          SIMANEAT_TEST_RTSP_MJPEG_FPS: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_FPS }}
+          SIMANEAT_TEST_HTTP_MJPEG_URL: ${{ vars.SIMANEAT_TEST_HTTP_MJPEG_URL }}
+          SIMANEAT_TEST_HTTP_MJPEG_URLS: ${{ vars.SIMANEAT_TEST_HTTP_MJPEG_URLS }}
+          SIMANEAT_TEST_HTTP_MJPEG_FPS: ${{ vars.SIMANEAT_TEST_HTTP_MJPEG_FPS }}
+          SIMA_CTEST_TAIL_ONLY: "0"
+          SIMA_CTEST_E2E_JOBS: "1"
+        run: |
+          set -x
+          # Temporary external RTSP pause until runner connectivity is restored: core#890.
+          # Restore the H.265 URL prerequisite check when removing this pause.
+          # Keep HTTP cases in the mixed codec tests enabled by clearing only RTSP URLs.
+          unset SIMANEAT_TEST_RTSP_H264_URL SIMANEAT_TEST_RTSP_H264_URLS \
+            SIMANEAT_TEST_RTSP_H265_URL SIMANEAT_TEST_RTSP_H265_URLS \
+            SIMANEAT_TEST_RTSP_MJPEG_URL SIMANEAT_TEST_RTSP_MJPEG_URLS
+          echo "External streams have separate explicit capability-profile accounting; core#890 gaps remain."
+          TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
+          MPK_ROOT="${RUNNER_TEMP:-/tmp}/sima-mpk-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}"
+          mkdir -p "${MPK_ROOT}"
+          export SIMA_MPK_EXTRACT_ROOT="${MPK_ROOT}"
+          export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
+          echo "Using SIMA_MPK_EXTRACT_ROOT=${SIMA_MPK_EXTRACT_ROOT}"
+          echo "Using SIMA_GST_REGISTRY_DIR=${SIMA_GST_REGISTRY_DIR}"
+          echo "SIMA_CTEST_TAIL_ONLY=${SIMA_CTEST_TAIL_ONLY:-<unset>}"
+          echo "SIMA_CTEST_E2E_JOBS=${SIMA_CTEST_E2E_JOBS:-<unset>}"
+
+          TAIL_REGEX='^(sync_yolov8_test|sync_yolov8_test_detessdequant|yolov8_variant_route_matrix_test|boxdecode_yolo_layout_matrix_e2e_test|preproc_yolov8_matrix_test|graphpipes_yolo_metadata_sender_16stream_test)$'
+          # Temporary external RTSP exclusions; remove under core#890.
+          EXTERNAL_RTSP_TESTS='rtsp_encoded_boundary_caps_test|decoder_multirun_admission_boundary_test|h265_rtsp_resnet50_e2e_test'
+          SKIP_REGEX="^(unit_dispatcher_watchdog_test|${EXTERNAL_RTSP_TESTS})$"
+          E2E_LABEL_EXCLUDE='perf|llima|codec_stream|codec_aggregate'
+          if [[ "${{ inputs.run_long_tests }}" != "true" ]]; then
+            E2E_LABEL_EXCLUDE+='|long'
+          fi
+          if [[ "${SIMA_CTEST_TAIL_ONLY:-0}" == "1" ]]; then
+            echo "TEMPORARY one-shot: ctest -R '${TAIL_REGEX}'"
+            COVERAGE_DIR=_work/coverage/e2e-tail-1 bash scripts/ci/run_zero_skip_gate.sh \
+              ctest --test-dir "${TEST_DIR}" \
+              -R "${TAIL_REGEX}" \
+              -E "${SKIP_REGEX}" \
+              --output-on-failure \
+              --no-tests=error
+          else
+            COVERAGE_DIR=_work/coverage/e2e-1 COVERAGE_PROFILE=required \
+              python3 tools/ci/partition_devkit_e2e.py --index 1 -- ctest --test-dir "${TEST_DIR}" \
               --label-regex "e2e" \
               --label-exclude "${E2E_LABEL_EXCLUDE}" \
               -E "${SKIP_REGEX}|^(modelzoo_bulk_models_test)$" \
@@ -1311,7 +1421,7 @@ jobs:
           fi
 
       - name: Run declared weekly stream capability profile
-        if: ${{ inputs.run_long_tests }}
+        if: ${{ inputs.run_long_tests && (contains(fromJSON(matrix.tasks), 'performance')) }}
         env:
           NEAT_CI_STREAM_PROFILE: ${{ vars.NEAT_CI_STREAM_PROFILE || 'http' }}
           SIMANEAT_TEST_RTSP_H264_URL: ${{ vars.SIMANEAT_TEST_RTSP_H264_URL }}
@@ -1347,6 +1457,7 @@ jobs:
               --output-on-failure --no-tests=error
 
       - name: Run GenAI / LLiMa E2E Tests
+        if: ${{ contains(fromJSON(matrix.tasks), 'genai') }}
         run: |
           set -euo pipefail
           TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
@@ -1381,6 +1492,7 @@ jobs:
           done
 
       - name: Run Perf and Throughput Tests (Isolated)
+        if: ${{ contains(fromJSON(matrix.tasks), 'performance') }}
         env:
           SIMA_YOLOV8_VARIANTS_BASE_URL: https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix
         run: |
@@ -1401,6 +1513,7 @@ jobs:
             --no-tests=error
 
       - name: Run Modalix Performance Matrix
+        if: ${{ contains(fromJSON(matrix.tasks), 'performance') }}
         run: |
           TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
           PERF_MATRIX_ARGS=()
@@ -1417,15 +1530,16 @@ jobs:
             --results-dir "${GITHUB_WORKSPACE}/_work/perf-results/encoder"
 
       - name: Upload Modalix Performance Results
-        if: ${{ always() }}
+        if: ${{ always() && contains(fromJSON(matrix.tasks), 'performance') }}
         uses: actions/upload-artifact@v6
         with:
-          name: modalix-performance-results-${{ github.run_id }}-${{ github.run_attempt }}
+          name: modalix-performance-results-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: _work/perf-results/
           if-no-files-found: error
           retention-days: 30
 
       - name: Typed Contract Admission Gate
+        if: ${{ contains(fromJSON(matrix.tasks), 'fast') }}
         run: |
           TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
           MPK_ROOT="${RUNNER_TEMP:-/tmp}/sima-mpk-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}-manifest"
@@ -1454,6 +1568,7 @@ jobs:
           PY_GATE
 
       - name: Run Tutorial Tests
+        if: ${{ contains(fromJSON(matrix.tasks), 'python-tutorials') }}
         env:
           SIMANEAT_TEST_RTSP_H264_URL: ${{ vars.SIMANEAT_TEST_RTSP_H264_URL }}
           SIMANEAT_TEST_RTSP_H264_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H264_URLS }}
@@ -1489,6 +1604,7 @@ jobs:
           } >> "${GITHUB_ENV}"
 
       - name: Run Python pytest from installed extras
+        if: ${{ contains(fromJSON(matrix.tasks), 'python-tutorials') }}
         env:
           NEAT_CI_PYTHON_PROFILE: ${{ vars.NEAT_CI_PYTHON_PROFILE || 'runtime' }}
           NEAT_CI_TORCH_VERSION: ${{ vars.NEAT_CI_TORCH_VERSION }}
@@ -1570,7 +1686,7 @@ jobs:
             -k 'not (test_rtsp_codec_tutorial and (h264 or h265)) and not (test_tutorial_runs and 018_consume_rtsp_stream)'
 
       - name: Run weekly long Python pytest from installed extras
-        if: ${{ inputs.run_long_tests }}
+        if: ${{ inputs.run_long_tests && (contains(fromJSON(matrix.tasks), 'python-tutorials')) }}
         run: |
           PYNEAT_HOME="${HOME}/pyneat"
           if [[ -x "${PYNEAT_HOME}/bin/python" ]]; then
@@ -1594,13 +1710,32 @@ jobs:
             --core-coverage-dir _work/coverage/python-weekly \
             --junitxml _work/coverage/python-weekly.xml "${PYTEST_LONG_DIR}"
 
+      - name: Record DevKit shard outcome
+        if: ${{ always() }}
+        env:
+          SHARD_ID: ${{ matrix.shard }}
+          SHARD_TASKS: ${{ matrix.tasks }}
+          SHARD_RESULT: ${{ job.status }}
+        run: |
+          python3 - <<'PYRECEIPT'
+          import json, os
+          from pathlib import Path
+          out = Path('_work/coverage')
+          out.mkdir(parents=True, exist_ok=True)
+          (out / 'shard-receipt.json').write_text(json.dumps({
+              'id': os.environ['SHARD_ID'], 'sha': os.environ['GITHUB_SHA'],
+              'tasks': json.loads(os.environ['SHARD_TASKS']),
+              'result': os.environ['SHARD_RESULT'], 'runner': os.environ['RUNNER_NAME'],
+          }, indent=2) + '\n')
+          PYRECEIPT
+
       - name: Upload selected coverage and outcomes
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: core-selected-coverage-${{ github.run_id }}-${{ github.run_attempt }}
+          name: core-selected-coverage-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: _work/coverage/
-          if-no-files-found: warn
+          if-no-files-found: error
 
       - name: Cleanup test workspace tmp artifacts
         if: ${{ always() }}
@@ -1638,6 +1773,31 @@ jobs:
 
           echo "Disk usage after cleanup:"
           df -h "${TMP_ROOT}" || true
+
+  test-devkit:
+    name: Test Core on DevKit
+    if: ${{ always() && !cancelled() && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
+    needs:
+      - detect-changes
+      - plan-devkit-tests
+      - test-devkit-shard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Require every planned DevKit shard
+        env:
+          PLAN_RESULT: ${{ needs.plan-devkit-tests.result }}
+          SHARD_RESULT: ${{ needs.test-devkit-shard.result }}
+        run: test "$PLAN_RESULT" = success && test "$SHARD_RESULT" = success
+      - uses: actions/download-artifact@v4
+        with:
+          name: core-devkit-shard-plan
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: core-selected-coverage-*
+          path: _work/all-shards
+      - name: Verify complete lane and E2E coverage
+        run: python3 tools/ci/plan_devkit_shards.py --verify-results _work/all-shards
 
   test-pciehost-hardware:
     name: Test PCIe Host Hardware
