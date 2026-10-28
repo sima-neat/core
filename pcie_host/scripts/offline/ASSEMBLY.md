@@ -300,16 +300,19 @@ still produce `Ign` lines; bundle file checksums are verified before deployment.
 
 ## CI assembly and publication
 
-Develop push runs call `.github/workflows/pcie-offline.yml` directly from **Vulcan
-CI**, after the standard validation jobs and artifact promotion succeed. The
-caller supplies its own run ID and admits ready same-branch publications while
+Develop pushes and release-tag pushes (`v*`, including release candidates) call
+`.github/workflows/pcie-offline.yml` directly from **Vulcan CI**, after all standard
+validation jobs and artifact promotion succeed. The caller supplies its own run
+ID and admits ready publications for that same ref while
 that parent run remains in progress. This does not require a workflow listener on
 `main`. Docs-only, failed, cancelled, PR, manual validation, and fuzz runs do not
 enter this automatic publication path.
 
-For `main`, `release-*`, and matching tags, the separate `workflow_run` listener
+For `main`, `release-*`, and matching tags without the direct caller, the `workflow_run` listener
 still requires the workflow on the default branch and a completed successful
-source run. It excludes `develop` to avoid duplicate publication. Both host and
+source run. It excludes `develop` and skips runs that already completed the gated
+offline publication, avoiding duplicate assembly for release tags while keeping
+the listener available for older tagged commits. Both host and
 card publication jobs must have succeeded in the selected run attempt. Manual
 dispatch retains its existing source-run checks.
 
@@ -358,8 +361,8 @@ same-branch Vulcan CI push run with successful host/card publication jobs. That
 entry point skips normal CI and
 calls the same four-job offline workflow in validation-only mode. The source must
 still belong to this repository. Validation may start while other source CI tests
-are running, but a failed or cancelled source run is rejected. Release publication
-continues to require the entire source CI run to succeed.
+are running, but a failed or cancelled source run is rejected. Automatic release
+publication continues to require all standard CI gates to succeed.
 
 Validation mode always rebuilds and validates all four bundles, never reuses an
 existing offline release, never uploads release objects, and skips final metadata

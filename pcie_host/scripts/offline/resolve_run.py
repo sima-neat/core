@@ -19,11 +19,17 @@ def api(path):
         return json.load(response)
 
 
-def eligible(run, jobs, tag_sha=None, validation_ref=None):
+def eligible(run, jobs, tag_sha=None, validation_ref=None, skip_gated_publication=False):
     if (run.get('repository', {}).get('full_name') != REPOSITORY
             or run.get('head_repository', {}).get('full_name') != REPOSITORY
             or run.get('path') != '.github/workflows/vulcan-ci.yml'
             or run.get('event') != 'push'):
+        return None
+    # New release tags publish from the gated parent. Retain the listener for
+    # older tags without that caller, and leave explicit manual retries enabled.
+    if skip_gated_publication and any(
+            j['name'].endswith(' / Publish all offline metadata')
+            and j.get('conclusion') == 'success' for j in jobs):
         return None
     complete = run.get('status') == 'completed' and run.get('conclusion') == 'success'
     validating_published = (validation_ref and run.get('head_branch') == validation_ref
@@ -47,6 +53,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run-id', required=True, type=int)
     parser.add_argument('--validation-ref', help='allow this same-repository branch for an explicitly requested pre-merge build/publication')
+    parser.add_argument('--skip-gated-publication', action='store_true',
+                        help='skip completed-run notifications already published by the gated caller')
     args = parser.parse_args()
     run = api(f'actions/runs/{args.run_id}')
     jobs = []
@@ -72,7 +80,7 @@ def main():
         except HTTPError as exc:
             if exc.code != 404:
                 raise
-    source = eligible(run, jobs, tag_sha, args.validation_ref)
+    source = eligible(run, jobs, tag_sha, args.validation_ref, args.skip_gated_publication)
     if args.validation_ref and source is None:
         raise ValueError('Validation requires successful host/card publications from an eligible same-repository run')
     with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
