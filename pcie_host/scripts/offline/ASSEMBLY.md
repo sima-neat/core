@@ -408,9 +408,9 @@ docker run --rm --network=none --mount type=bind,src="$PWD",dst=/src,readonly \
 
 The test requires a fresh disposable container and refuses to run on the host.
 It starts with no host user credentials or enrolled card keys. It checks the
-first-run host-trust and login prompts, user ownership under sudo, an unchanged
-repeat run with no prompts, and changed-host-key rejection without modifying
-trust. Both simulated endpoints use loopback in the isolated container; PCIe
+first-run login prompts, user ownership under sudo, and an unchanged
+repeat run with no prompts. Host-key enrollment uses the shared script
+without changing its existing behavior. Both simulated endpoints use loopback in the isolated container; PCIe
 route validation has separate unit coverage. This is SSH qualification only.
 Final acceptance still requires a complete offline Neat installation on a
 freshly flashed host with the compatible Platform driver and card firmware.

@@ -180,16 +180,17 @@ sudo python3 -B install.py
 </ShellCommand>
 
 On a fresh host, the installer creates or reuses `~/.ssh/sima_neat_pcie_ed25519`
-for the user who invoked `sudo` and sets up SSH access to every discovered card.
-Verify and accept each new host-key fingerprint when prompted, then enter the
-card login password if requested. Changed host keys are rejected. Existing keys
-and trusted host entries are preserved. You do not need to run `ssh-keygen` or
-`ssh-copy-id` separately or enter card IP addresses.
+for the user who invoked `sudo` and sets up SSH access to every discovered card
+through the same setup script as online installation. Enter the card login
+password if requested. You do not need to run `ssh-keygen` or `ssh-copy-id`
+separately or enter card IP addresses.
 
-Use `--ssh-user`, `--ssh-key`, and `--known-hosts` to select existing credentials.
-An explicit `--ssh-key` must exist and have no passphrase. Unattended installation
-requires SSH access to be configured in advance. Password prompts use the
-terminal; passwords are not saved in logs or passed as command arguments.
+Use `--ssh-user` and `--ssh-key` to select existing credentials. An explicit
+`--ssh-key` must exist and have no passphrase. Automatic enrollment uses
+`~/.ssh/known_hosts`; a custom `--known-hosts` file must be provisioned in advance.
+Unattended installation requires SSH access to be configured in advance.
+Password prompts use the terminal; passwords are not saved in logs or passed as
+command arguments.
 
 The installer checks all cards before it installs packages.
 It installs and verifies the host first, then each card in sequence.

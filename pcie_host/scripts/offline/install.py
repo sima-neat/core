@@ -242,7 +242,7 @@ print(json.dumps(ports))
 
 
 def prepare_ssh(cards, snapshot, operations, account, progress, *, preflight_only=False, create_key=False):
-    """Bootstrap only discovered PCIe endpoints, with OpenSSH's explicit trust prompt."""
+    """Enroll discovered cards through the unchanged online setup utility."""
     def stable(card):
         if operations.topology() != snapshot:
             raise ValueError('PCI topology changed; stop and rerun discovery')
@@ -266,6 +266,8 @@ def prepare_ssh(cards, snapshot, operations, account, progress, *, preflight_onl
     if not operations.key.is_file() and not create_key:
         raise ValueError('SSH key not found: '+str(operations.key)+
                          '; supply an existing key or omit --ssh-key to create the default key')
+    if operations.known_hosts != (Path(account.pw_dir)/'.ssh/known_hosts').resolve():
+        raise ValueError('Automatic SSH setup uses ~/.ssh/known_hosts; omit --known-hosts or provision the custom trust file before retrying')
     # Open the terminal before creating files. Redirected stdin is never used for
     # passwords, and authentication output never enters the diagnostic log/JSON.
     try:
@@ -278,14 +280,10 @@ def prepare_ssh(cards, snapshot, operations, account, progress, *, preflight_onl
         for card in missing:
             stable(card)
             progress.show('Setting up SSH for card '+card['bdf']+' ('+card['ip']+'). '
-                          'Verify the host fingerprint when prompted, then enter the card login password if requested.')
-            # OpenSSH refuses changed keys and asks before trusting new ones.
+                          'Enter the card login password if requested.')
             # Run as the invoking user so new credentials remain user-owned.
             run(['bash', str(operations.root/'pcie-setup.sh'), '--strict', '--no-discover',
-                 '--hosts', card['ip'], '--user', operations.user, '--key', str(operations.key),
-                 '--known-hosts', str(operations.known_hosts), '--interface', card['interface'],
-                 '--source-ip', card['local_ip'], '--ssh-config', '/dev/null',
-                 '--host-key-checking', 'ask'], **identity,
+                 '--hosts', card['ip'], '--user', operations.user, '--key', str(operations.key)], **identity,
                 stdin=terminal, stdout=terminal, stderr=terminal)
             operations.ssh(card, 'true', stdin=subprocess.DEVNULL, capture_output=True, text=True)
             progress.show('Card '+card['bdf']+' SSH access ready.', 'ok')

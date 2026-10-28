@@ -25,10 +25,10 @@ The SSH account must have sudo access. Use passwordless sudo or pass
 `--ask-card-sudo` to securely prompt once for the shared card sudo password.
 Passwords are not stored in the bundle, reports, files, or command arguments. On first
 installation, the installer creates or reuses the invoking user's SSH key and sets
-up access to each discovered card. OpenSSH asks you to verify and accept each new
-host-key fingerprint and enter the card login password when needed. Changed host
-keys are rejected; existing trust entries are never removed. Discovery and SSH
-use only PCI-owned interfaces.
+up access to each discovered card through the unchanged online `pcie-setup.sh`.
+It may request the card login password. Host-key enrollment follows that script's
+existing behavior. Discovery and direct-route checks precede setup; strict SSH
+verification on the PCI-owned interface follows setup.
 
 Check the archive SHA-256 against the value obtained from your trusted download
 channel before extracting it. The embedded manifest detects corruption but is
@@ -55,6 +55,8 @@ with `--ssh-user`, `--ssh-key`, and `--known-hosts`; do not supply card IPs. An
 explicit `--ssh-key` must already exist. Keys used for unattended card operations
 must not have a passphrase. Newly created keys and trust entries belong to the
 invoking user, including when running through `sudo`. Existing keys are reused.
+Automatic enrollment uses `~/.ssh/known_hosts`; a custom `--known-hosts` file must
+be provisioned in advance.
 
 If SSH access is already provisioned, optionally run
 `sudo python3 -B install.py --preflight-only` first. This mode never creates SSH

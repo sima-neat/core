@@ -538,9 +538,7 @@ def test_fresh_host_delegates_every_discovered_card_to_shared_setup(ssh_setup):
     for (args, kw), card in zip(provisioning, CARDS):
         assert args[1] == str(setup.ops.root/'pcie-setup.sh')
         for option, value in {'--hosts': card['ip'], '--user': 'sima',
-                              '--interface': card['interface'], '--source-ip': card['local_ip'],
-                              '--key': str(setup.ops.key), '--known-hosts': str(setup.ops.known_hosts),
-                              '--ssh-config': '/dev/null', '--host-key-checking': 'ask'}.items():
+                              '--key': str(setup.ops.key)}.items():
             assert args[args.index(option)+1] == value
         assert '--strict' in args and '--no-discover' in args
         assert kw['user'] == 1234 and kw['group'] == 5678 and kw['extra_groups'] == []
@@ -612,7 +610,7 @@ def test_setup_failure_stops_before_package_or_other_card_changes(ssh_setup, mon
     original = installer.run
     def reject(args, **kwargs):
         if args[0] == 'bash':
-            assert args[args.index('--host-key-checking')+1] == 'ask'
+            assert '--host-key-checking' not in args
             raise subprocess.CalledProcessError(1, args)
         return original(args, **kwargs)
     monkeypatch.setattr(installer, 'run', reject)
@@ -663,3 +661,10 @@ def test_ssh_setup_accepts_a_real_nonseekable_terminal(ssh_setup, monkeypatch):
     finally:
         os.close(master)
         os.close(slave)
+
+
+def test_custom_trust_file_requires_prior_provisioning(ssh_setup):
+    ssh_setup.ops.known_hosts = ssh_setup.ops.root/'custom_known_hosts'
+    with pytest.raises(ValueError, match='omit --known-hosts'):
+        prepare(ssh_setup, create_key=True)
+    assert not ssh_setup.calls
