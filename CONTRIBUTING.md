@@ -145,9 +145,10 @@ The `none` profile records its existing coverage exclusions on a regular worker.
 Local RTSP servers and mocked RTSP APIs do not need source-pod access; see the
 [test-to-runner audit](tests/devkit-runner-requirements.md).
 
-GitHub has no negative-label selector. The planner uses full candidate label
-conjunctions and checks all registered RTSP runners, including offline ones, to
-prove that regular selectors cannot land on that pod. An optional repository
+GitHub has no negative-label selector. The planner starts from full candidate label
+conjunctions and removes optional labels only while preserving mandatory
+capabilities and exclusion of all registered RTSP runners, including offline ones.
+This avoids inheriting unnecessary memory/appliance labels for default work. An optional repository
 variable `CORE_UNREADY_RUNNERS` contains a JSON array of excluded runner names;
 the selector must exclude those registrations too. Without a safe selector,
 planning fails rather than silently falling back to RTSP hardware. An unavailable

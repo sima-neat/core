@@ -236,3 +236,15 @@ def test_fresh_genai_worker_creates_model_root_before_lock(tmp_path):
     env = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ['PATH'], LLIMA_MODELS_PATH=str(model_root))
     subprocess.run(['bash', '-c', prefix + '\ntouch "$prepare_models_lock"\n'], env=env, cwd=tmp_path, check=True)
     assert (model_root / '.prepare-models.lock').is_file()
+
+
+def test_default_selectors_do_not_inherit_memory_or_appliance_labels():
+    runners = [runner(i, labels=('firmware', 'model-registry', 'modalix-som-16gig', 'appliance-specific'))
+               for i in range(9)]
+    runners.append(runner('rtsp', labels=('firmware', 'rtsp', 'modalix-som-16gig')))
+    p = plan(runners)
+    for shard in p['shards']:
+        assert 'appliance-specific' not in shard['labels']
+        assert 'model-registry' in shard['labels']
+        assert ('modalix-som-16gig' in shard['labels']) == (shard['pool'] == 'llm-16gb')
+        assert not set(shard['labels']) <= planner.label_set(runners[-1])

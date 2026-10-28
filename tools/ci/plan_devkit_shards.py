@@ -48,6 +48,18 @@ def label_set(runner):
     return {label["name"].casefold() for label in runner["labels"]}
 
 
+def runner_selector(runner, required, blocked):
+    """Keep mandatory capabilities and only labels needed to exclude blocked nodes."""
+    labels = label_set(runner) | required
+    if any(labels <= label_set(other) for other in blocked):
+        return None
+    for label in sorted(labels - required):
+        trial = labels - {label}
+        if not any(trial <= label_set(other) for other in blocked):
+            labels = trial
+    return sorted(labels)
+
+
 def expected_lanes(weekly=False):
     return {**LANES, **({"streams": 120} if weekly else {})}
 
@@ -103,19 +115,19 @@ def make_plan(runners, required, sha, maximum=5, plan_id="local", *, weekly=Fals
         tasks = {t: w for t, w in expected.items() if task_pool(t, stream_profile) == pool}
         if not tasks:
             continue
-        candidates = []
+        candidates, selectors = [], {}
+        pool_required = required | ({"modalix-som-16gig"} if pool == "llm-16gb" else
+                                    {"rtsp"} if pool == "rtsp" else set())
+        blocked = excluded + (rtsp if pool != "rtsp" else [])
         for r in runners:
-            labels = label_set(r) | required
             if (r["status"] != "online" or not required <= label_set(r)
                     or ("rtsp" in label_set(r)) != (pool == "rtsp")
                     or (pool == "llm-16gb" and "modalix-som-16gig" not in label_set(r))):
                 continue
-            # GitHub has no negative-label selector. Prove that even offline
-            # RTSP/unready registrations cannot claim this complete conjunction.
-            if any(labels <= label_set(other) for other in excluded):
+            labels = runner_selector(r, pool_required, blocked)
+            if labels is None:
                 continue
-            if pool != "rtsp" and any(labels <= label_set(other) for other in rtsp):
-                continue
+            selectors[r["name"]] = labels
             candidates.append(r)
         if not candidates:
             raise ValueError(f"No safe online {pool} DevKit matches the firmware/capabilities")
@@ -130,7 +142,7 @@ def make_plan(runners, required, sha, maximum=5, plan_id="local", *, weekly=Fals
         for r in selected:
             reserved.add(r["name"])
             bins.append({"id": f"{pool}-{len(bins)+1}", "pool": pool,
-                         "candidate": r["name"], "labels": sorted(required | label_set(r)),
+                         "candidate": r["name"], "labels": selectors[r["name"]],
                          "idle_at_planning": not r["busy"], "tasks": [], "estimated_seconds": 0})
         for task, seconds in sorted(tasks.items(), key=lambda t: (-t[1], t[0])):
             shard = min(bins, key=lambda s: (s["estimated_seconds"], s["id"]))
@@ -160,7 +172,7 @@ def verify_results(plan, directory):
     assigned = [n for p in partitions for n in p["selected"]]
     if Counter(assigned) != Counter(partitions[0]["canonical"]):
         raise ValueError("E2E partitions omitted or duplicated tests")
-    print(f"All {len(receipts)} DevKits passed; all {len(expected_lanes(plan.get('weekly', False)))} lanes and {len(assigned)} E2E tests accounted for")
+    print(f"All {len(receipts)} shards passed; all {len(expected_lanes(plan.get('weekly', False)))} lanes and {len(assigned)} E2E tests accounted for")
 
 
 def main():
