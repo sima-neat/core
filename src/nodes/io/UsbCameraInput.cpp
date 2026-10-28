@@ -12,8 +12,10 @@ namespace simaai::neat {
 namespace {
 
 // Frames held below the camera at once besides the queue: the decoder's in-flight inputs
-// (4) plus one each for the passthrough branch and the graph handoff.
+// (2 by default, 4 with a raised SimaDecode input_buffers) plus one each for the passthrough
+// branch and the graph handoff. neatcapturepool accepts at most kMaxCaptureBuffers.
 constexpr std::uint32_t kHeldDownstream = 6;
+constexpr std::uint32_t kMaxCaptureBuffers = 64;
 
 std::string name(int node_index, const char* suffix) {
   return "n" + std::to_string(node_index) + "_camera_" + suffix;
@@ -108,6 +110,12 @@ void validate_options(const UsbCameraInputOptions& opt) {
     throw std::invalid_argument("UsbCameraInput requires a nonzero width, height and frame rate");
   if (opt.buffer_name.empty())
     throw std::invalid_argument("UsbCameraInput requires a buffer_name");
+  if (opt.insert_queue && opt.queue_depth > kMaxCaptureBuffers - kHeldDownstream)
+    throw std::invalid_argument("UsbCameraInput queue_depth exceeds " +
+                                std::to_string(kMaxCaptureBuffers - kHeldDownstream) +
+                                ": the capture pool (queue_depth + " +
+                                std::to_string(kHeldDownstream) + ") would exceed " +
+                                std::to_string(kMaxCaptureBuffers) + " buffers");
 }
 
 } // namespace

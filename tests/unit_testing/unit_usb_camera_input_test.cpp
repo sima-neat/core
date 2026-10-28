@@ -146,6 +146,10 @@ void check_validation() {
                                         "requires a buffer_name", "empty buffer name");
   require_throws<std::invalid_argument>([&] { (void)simaai::neat::usb_camera_info(opt); },
                                         "requires a buffer_name", "usb_camera_info validates");
+  opt = mjpeg_options();
+  opt.queue_depth = 59;
+  require_throws<std::invalid_argument>([&] { (void)UsbCameraInput(opt); },
+                                        "queue_depth exceeds 58", "capture pool above 64 buffers");
 }
 
 void check_ids_sorted() {
