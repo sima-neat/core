@@ -12,7 +12,8 @@ spec = importlib.util.spec_from_file_location('offline_install', HERE/'install.p
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
 
-CARDS = [{'bdf': f'0000:0{i}:00.0', 'ip': f'10.0.{i}.2'} for i in (1, 2, 3)]
+CARDS = [{'bdf': f'0000:0{i}:00.0', 'ip': f'10.0.{i}.2',
+          'local_ip': f'10.0.{i}.1', 'interface': f'pci{i}'} for i in (1, 2, 3)]
 
 
 class Fake:
@@ -301,7 +302,7 @@ def test_sudo_no_terminal_fails_without_echoing(tmp_path, monkeypatch):
     import builtins
     ops = installer.Operations(tmp_path, 'sima', tmp_path/'key', tmp_path/'known')
     monkeypatch.setattr(ops, 'sudo_probe', lambda *args: False)
-    def absent(*args):
+    def absent(*args, **kwargs):
         raise OSError('no terminal')
     monkeypatch.setattr(builtins, 'open', absent)
     with pytest.raises(ValueError, match='interactive terminal'):
@@ -502,3 +503,202 @@ def test_recreate_option_reaches_both_host_and_card(tmp_path, monkeypatch, recre
     ops.card({'bdf': 'card'}, 'install')
     assert len(calls) == 2
     assert all(('--recreate-venv' in args) == recreate for args in calls)
+
+
+@pytest.fixture
+def ssh_setup(tmp_path, monkeypatch):
+    import io
+    import builtins
+    from types import SimpleNamespace
+    ops = installer.Operations(tmp_path, 'sima', tmp_path/'home/.ssh/key', tmp_path/'home/.ssh/known_hosts')
+    account = SimpleNamespace(pw_uid=1234, pw_gid=5678, pw_name='owner', pw_dir=str(tmp_path/'home'))
+    monkeypatch.setattr(ops, 'topology', lambda: ['original'])
+    monkeypatch.setattr(ops, 'route', lambda card: None)
+    calls = []
+    terminal = io.StringIO()
+    monkeypatch.setattr(builtins, 'open', lambda *args, **kwargs: terminal)
+    def run(args, **kwargs):
+        calls.append((args, kwargs))
+        if args[0] == 'ssh-keygen' and '-y' in args:
+            return subprocess.CompletedProcess(args, 0, 'ssh-ed25519 AAAATEST generated-comment\n')
+        return subprocess.CompletedProcess(args, 0, '')
+    monkeypatch.setattr(installer, 'run', run)
+    return SimpleNamespace(ops=ops, account=account, calls=calls, terminal=terminal,
+                           progress=installer.Progress(io.StringIO()))
+
+
+def prepare(setup, **kwargs):
+    installer.prepare_ssh(CARDS, ['original'], setup.ops, setup.account, setup.progress, **kwargs)
+
+
+def test_fresh_host_setup_runs_as_invoking_user_and_binds_every_card(ssh_setup):
+    setup = ssh_setup
+    prepare(setup, create_key=True)
+    keygens = [(args, kw) for args, kw in setup.calls if args[0] == 'ssh-keygen']
+    assert len(keygens) == 2
+    assert keygens[0][0][-2:] == ['-f', str(setup.ops.key)]
+    interactive = [(args, kw) for args, kw in setup.calls if 'BatchMode=no' in args]
+    assert len(interactive) == len(CARDS)
+    for (args, kw), card in zip(interactive, CARDS):
+        assert args[-2] == 'sima@'+card['ip']
+        assert 'StrictHostKeyChecking=ask' in args
+        assert 'BindInterface='+card['interface'] in args
+        assert args[args.index('-b')+1] == card['local_ip']
+        assert kw['user'] == 1234 and kw['group'] == 5678 and kw['extra_groups'] == []
+        assert kw['env']['HOME'] == setup.account.pw_dir
+        assert kw['stdin'] is setup.terminal and kw['stderr'] is setup.terminal
+        assert 'capture_output' not in kw
+        assert 'generated-comment' not in args[-1]
+    verification = [args for args, kw in setup.calls if 'BatchMode=yes' in args]
+    assert [args[-2] for args in verification] == ['sima@'+card['ip'] for card in CARDS]
+    assert all('StrictHostKeyChecking=yes' in args and 'UpdateHostKeys=no' in args for args in verification)
+    assert not setup.ops.card_passwords
+    assert all('sudo' not in args[-1] for args, kw in interactive)
+
+
+def test_existing_key_without_public_file_is_reused(ssh_setup):
+    setup = ssh_setup
+    setup.ops.key.parent.mkdir(parents=True)
+    setup.ops.key.write_text('existing private key')
+    prepare(setup)
+    assert setup.ops.key.read_text() == 'existing private key'
+    assert not any('-t' in args for args, kw in setup.calls if args[0] == 'ssh-keygen')
+    assert not setup.ops.key.with_suffix('.pub').exists()
+
+
+def test_working_access_never_opens_terminal_or_generates_keys(ssh_setup, monkeypatch):
+    import builtins
+    setup = ssh_setup
+    setup.ops.key.parent.mkdir(parents=True)
+    setup.ops.key.touch()
+    setup.ops.known_hosts.touch()
+    monkeypatch.setattr(builtins, 'open', lambda *args: pytest.fail('unexpected terminal prompt'))
+    prepare(setup)
+    assert len(setup.calls) == len(CARDS)
+    assert all('BatchMode=yes' in args for args, kw in setup.calls)
+
+
+@pytest.mark.parametrize('existing', [False, True])
+def test_preflight_does_not_provision_keys_or_trust(ssh_setup, monkeypatch, existing):
+    setup = ssh_setup
+    if existing:
+        setup.ops.key.parent.mkdir(parents=True)
+        setup.ops.key.touch()
+        setup.ops.known_hosts.touch()
+        def fail(*args, **kwargs):
+            raise ConnectionError('untrusted host')
+        monkeypatch.setattr(setup.ops, 'ssh', fail)
+    with pytest.raises(ValueError, match='without --preflight-only'):
+        prepare(setup, preflight_only=True, create_key=True)
+    assert not setup.calls
+    assert setup.ops.key.exists() == existing
+
+
+def test_no_terminal_cannot_create_credentials(ssh_setup, monkeypatch):
+    import builtins
+    def absent(*args, **kwargs):
+        raise OSError('no terminal')
+    monkeypatch.setattr(builtins, 'open', absent)
+    with pytest.raises(ValueError, match='interactive terminal'):
+        prepare(ssh_setup, create_key=True)
+    assert not ssh_setup.calls
+    assert not ssh_setup.ops.key.exists()
+
+
+def test_missing_explicit_key_is_not_silently_created(ssh_setup):
+    with pytest.raises(ValueError, match='omit --ssh-key'):
+        prepare(ssh_setup)
+    assert not ssh_setup.calls
+
+
+def test_bootstrap_never_overrides_changed_host_keys(ssh_setup, monkeypatch):
+    setup = ssh_setup
+    original = installer.run
+    def reject(args, **kwargs):
+        if 'BatchMode=no' in args:
+            assert 'StrictHostKeyChecking=ask' in args
+            assert not any('accept-new' in str(arg) or 'ssh-keyscan' in str(arg) or 'ssh-keygen -R' in str(arg) for arg in args)
+            raise subprocess.CalledProcessError(255, args)
+        return original(args, **kwargs)
+    monkeypatch.setattr(installer, 'run', reject)
+    with pytest.raises(subprocess.CalledProcessError):
+        prepare(setup, create_key=True)
+    assert not any('BatchMode=yes' in args for args, kw in setup.calls)
+    assert not setup.ops.staged
+
+
+def test_topology_change_stops_ssh_setup_before_any_mutation(ssh_setup, monkeypatch):
+    monkeypatch.setattr(ssh_setup.ops, 'topology', lambda: ['changed'])
+    with pytest.raises(ValueError, match='topology changed'):
+        prepare(ssh_setup, create_key=True)
+    assert not ssh_setup.calls
+
+
+def test_route_failure_stops_ssh_setup_before_any_mutation(ssh_setup, monkeypatch):
+    def fail(card):
+        raise ValueError('not direct through its PCI-owned interface')
+    monkeypatch.setattr(ssh_setup.ops, 'route', fail)
+    with pytest.raises(ValueError, match='PCI-owned'):
+        prepare(ssh_setup, create_key=True)
+    assert not ssh_setup.calls
+
+
+def test_remote_authorized_keys_append_preserves_existing_and_is_idempotent(ssh_setup, tmp_path):
+    import os
+    prepare(ssh_setup, create_key=True)
+    command = next(args[-1] for args, kw in ssh_setup.calls if 'BatchMode=no' in args)
+    home = tmp_path/'card'
+    (home/'.ssh').mkdir(parents=True)
+    authorized = home/'.ssh/authorized_keys'
+    authorized.write_text('ssh-ed25519 AAAAEXISTING another-user')
+    for _ in range(2):
+        subprocess.run(['sh', '-c', command], env=dict(os.environ, HOME=str(home)), check=True)
+    assert authorized.read_text() == 'ssh-ed25519 AAAAEXISTING another-user\nssh-ed25519 AAAATEST\n'
+    assert authorized.stat().st_mode & 0o777 == 0o600
+    assert authorized.parent.stat().st_mode & 0o777 == 0o700
+
+
+def test_failed_batch_verification_stops_remaining_card_setup(ssh_setup, monkeypatch):
+    setup = ssh_setup
+    def fail(*args, **kwargs):
+        raise ConnectionError('new key not authorized')
+    monkeypatch.setattr(setup.ops, 'ssh', fail)
+    with pytest.raises(ConnectionError):
+        prepare(setup, create_key=True)
+    interactive = [args for args, kw in setup.calls if 'BatchMode=no' in args]
+    assert len(interactive) == 1
+    assert not setup.ops.staged
+
+
+def test_unreadable_or_encrypted_key_fails_without_prompting_or_overwriting(ssh_setup, monkeypatch):
+    setup = ssh_setup
+    setup.ops.key.parent.mkdir(parents=True)
+    setup.ops.key.write_text('existing encrypted private key')
+    original = installer.run
+    def fail(args, **kwargs):
+        if args[0] == 'ssh-keygen' and '-y' in args:
+            assert args[args.index('-P')+1] == ''
+            assert kwargs['stdin'] == subprocess.DEVNULL
+            raise subprocess.CalledProcessError(255, args)
+        return original(args, **kwargs)
+    monkeypatch.setattr(installer, 'run', fail)
+    with pytest.raises(ValueError, match='without a passphrase'):
+        prepare(setup)
+    assert not any('BatchMode=no' in args for args, kw in setup.calls)
+    assert setup.ops.key.read_text() == 'existing encrypted private key'
+
+
+def test_ssh_setup_accepts_a_real_nonseekable_terminal(ssh_setup, monkeypatch):
+    import builtins
+    import io
+    import os
+    master, slave = os.openpty()
+    def terminal(path, mode, **kwargs):
+        assert path == '/dev/tty'
+        return io.open(os.open(os.ttyname(slave), os.O_RDWR | os.O_NOCTTY), mode, **kwargs)
+    monkeypatch.setattr(builtins, 'open', terminal)
+    try:
+        prepare(ssh_setup, create_key=True)
+    finally:
+        os.close(master)
+        os.close(slave)

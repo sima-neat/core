@@ -121,15 +121,21 @@ class Operations:
         if len(routes) != 1 or routes[0].get('dev') != card['interface'] or routes[0].get('gateway'):
             raise ValueError('Card route is not direct through its PCI-owned interface')
 
-    def ssh(self, card, command, **kwargs):
+    def ssh_command(self, card, command, interactive=False):
         self.route(card)
+        return ['ssh', '-F', '/dev/null', '-T', '-i', str(self.key), '-b', card['local_ip'],
+                '-o', 'BindInterface='+card['interface'],
+                '-o', 'BatchMode='+('no' if interactive else 'yes'),
+                '-o', 'IdentitiesOnly=yes',
+                '-o', 'StrictHostKeyChecking='+('ask' if interactive else 'yes'),
+                '-o', 'UpdateHostKeys=no',
+                '-o', 'UserKnownHostsFile='+str(self.known_hosts),
+                '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15',
+                '-o', 'ServerAliveCountMax=2', self.user+'@'+card['ip'], command]
+
+    def ssh(self, card, command, **kwargs):
         try:
-            return run(['ssh', '-F', '/dev/null', '-T', '-i', str(self.key), '-b', card['local_ip'],
-                        '-o', 'BindInterface='+card['interface'], '-o', 'BatchMode=yes',
-                    '-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes',
-                    '-o', 'UserKnownHostsFile='+str(self.known_hosts),
-                    '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15',
-                    '-o', 'ServerAliveCountMax=2', self.user+'@'+card['ip'], command], **kwargs)
+            return run(self.ssh_command(card, command), **kwargs)
         except subprocess.CalledProcessError as exc:
             if exc.returncode == 255:
                 raise ConnectionError('SSH transport lost; remote outcome may be unknown') from exc
@@ -235,6 +241,81 @@ print(json.dumps(ports))
             self.privileged(card, ['rm', '-rf', '--', self.staged[card['bdf']]])
 
 
+def prepare_ssh(cards, snapshot, operations, account, progress, *, preflight_only=False, create_key=False):
+    """Bootstrap only discovered PCIe endpoints, with OpenSSH's explicit trust prompt."""
+    def stable(card):
+        if operations.topology() != snapshot:
+            raise ValueError('PCI topology changed; stop and rerun discovery')
+        operations.route(card)
+
+    missing = []
+    for card in cards:
+        stable(card)
+        if operations.key.is_file() and operations.known_hosts.is_file():
+            try:
+                operations.ssh(card, 'true', stdin=subprocess.DEVNULL, capture_output=True, text=True)
+                continue
+            except ConnectionError:
+                pass
+        missing.append(card)
+    if not missing:
+        return
+    if preflight_only:
+        raise ValueError('SSH setup required for card(s) '+', '.join(c['bdf'] for c in missing)+
+                         '; rerun sudo python3 -B install.py in an interactive terminal without --preflight-only')
+    if not operations.key.is_file() and not create_key:
+        raise ValueError('SSH key not found: '+str(operations.key)+
+                         '; supply an existing key or omit --ssh-key to create the default key')
+    # Open the terminal before creating files. Redirected stdin is never used for
+    # passwords, and authentication output never enters the diagnostic log/JSON.
+    try:
+        terminal = open('/dev/tty', 'r+b', buffering=0)
+    except OSError:
+        raise ValueError('SSH setup requires an interactive terminal; rerun sudo python3 -B install.py interactively') from None
+    with terminal:
+        if not shutil.which('ssh-keygen'):
+            raise ValueError('system prerequisite missing: ssh-keygen (install openssh-client)')
+        identity = {'user': account.pw_uid, 'group': account.pw_gid, 'extra_groups': [],
+                    'env': dict(os.environ, HOME=account.pw_dir, USER=account.pw_name, LOGNAME=account.pw_name)}
+        def local(command, **kwargs):
+            return run(command, **identity, **kwargs)
+
+        if not operations.key.is_file():
+            progress.show('Creating SSH key '+str(operations.key)+' for '+account.pw_name+'...')
+            local(['mkdir', '-p', '-m', '700', str(operations.key.parent)], stdin=subprocess.DEVNULL)
+            local(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(operations.key)],
+                  stdin=subprocess.DEVNULL, stdout=terminal, stderr=terminal)
+        # Derive from the selected private key, even when its .pub file is missing
+        # or stale. Batch deployment requires a key without a passphrase.
+        try:
+            public = local(['ssh-keygen', '-y', '-P', '', '-f', str(operations.key)],
+                           stdin=subprocess.DEVNULL, capture_output=True, text=True).stdout.strip()
+        except subprocess.CalledProcessError:
+            raise ValueError('Cannot read SSH key '+str(operations.key)+
+                             '; use a readable key without a passphrase for unattended card operations') from None
+        if len(public.split()) < 2 or '\n' in public:
+            raise ValueError('Invalid SSH public key')
+        # Ignore comments in the derived key so retries do not append duplicates.
+        public = ' '.join(public.split()[:2])
+        key = shlex.quote(public)
+        command = ('umask 077; mkdir -p "$HOME/.ssh" && '
+                   'touch "$HOME/.ssh/authorized_keys" && '
+                   'chmod 700 "$HOME/.ssh" && chmod 600 "$HOME/.ssh/authorized_keys" && '
+                   '(grep -qF -- '+key+' "$HOME/.ssh/authorized_keys" || '
+                   "printf '\\n%s\\n' "+key+' >> "$HOME/.ssh/authorized_keys")')
+        local(['mkdir', '-p', '-m', '700', str(operations.known_hosts.parent)], stdin=subprocess.DEVNULL)
+        for card in missing:
+            stable(card)
+            progress.show('Setting up SSH for card '+card['bdf']+' ('+card['ip']+'). '
+                          'Verify the host fingerprint when prompted, then enter the card login password if requested.')
+            # OpenSSH refuses changed keys and asks before trusting new ones.
+            # Run as the invoking user so new credentials remain user-owned.
+            local(operations.ssh_command(card, command, interactive=True),
+                  stdin=terminal, stdout=terminal, stderr=terminal)
+            operations.ssh(card, 'true', stdin=subprocess.DEVNULL, capture_output=True, text=True)
+            progress.show('Card '+card['bdf']+' SSH access ready.', 'ok')
+
+
 def orchestrate(cards, snapshot, operations, preflight_only=False, progress=None):
     notify = progress.show if progress else lambda *args: None
     def perform(message, operation, *args):
@@ -310,10 +391,11 @@ def orchestrate(cards, snapshot, operations, preflight_only=False, progress=None
 
 
 def main():
-    home = Path(pwd.getpwuid(int(os.environ.get('SUDO_UID', os.getuid()))).pw_dir)
+    account = pwd.getpwuid(int(os.environ.get('SUDO_UID', os.getuid())))
+    home = Path(account.pw_dir)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--ssh-user', default='sima')
-    parser.add_argument('--ssh-key', type=Path, default=home/'.ssh/sima_neat_pcie_ed25519')
+    parser.add_argument('--ssh-key', type=Path, help='existing private key; default: create/reuse ~/.ssh/sima_neat_pcie_ed25519')
     parser.add_argument('--known-hosts', type=Path, default=home/'.ssh/known_hosts')
     parser.add_argument('--preflight-only', action='store_true')
     parser.add_argument('--recreate-venv', action='store_true',
@@ -329,8 +411,8 @@ def main():
     import re
     if not re.fullmatch(r'[a-z_][a-z0-9_-]*', args.ssh_user):
         parser.error('invalid SSH user')
-    if not args.ssh_key.is_file() or not args.known_hosts.is_file():
-        parser.error('provision SSH key access and trusted host keys before installing')
+    create_key = args.ssh_key is None
+    args.ssh_key = args.ssh_key or home/'.ssh/sima_neat_pcie_ed25519'
     for command in ('ip', 'ssh', 'unshare', 'timeout'):
         if not shutil.which(command):
             parser.error('system prerequisite missing: ' + command)
@@ -355,6 +437,8 @@ def main():
                 progress.log_path = Path(log.name)
                 progress.show('Detailed log: '+log.name)
                 operations = Operations(root, args.ssh_user, args.ssh_key.resolve(), args.known_hosts.resolve(), password, log, args.recreate_venv)
+                prepare_ssh(cards, snapshot, operations, account, progress,
+                            preflight_only=args.preflight_only, create_key=create_key)
                 with progress.stream_log():
                     report = orchestrate(cards, snapshot, operations, args.preflight_only, progress)
                 report['log'] = log.name
@@ -365,8 +449,8 @@ def main():
                     for line in log.read().splitlines()[-20:]:
                         progress.show(line, 'error')
             report['core_revision'] = manifest['core_revision']
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        report = {'errors': [str(exc)]}
+    except (OSError, ValueError, subprocess.SubprocessError, KeyboardInterrupt) as exc:
+        report = {'errors': [str(exc) or 'Installation interrupted']}
     if args.json:
         print(json.dumps(report, indent=2))
     else:

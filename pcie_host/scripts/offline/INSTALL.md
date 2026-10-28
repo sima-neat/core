@@ -14,8 +14,8 @@ and library architecture/exports without requiring Platform DEB registration.
 Older Scheduler publications with hard Platform DEB dependencies must be rebuilt
 with that producer correction, not modified after publication.
 Every card needs a working discovery responder on its PCIe interface, a unique
-PCIe IPv4 address, system Python 3, and SSH access. Use the host and card system
-interpreters matching the Python ABIs recorded in the bundle's
+PCIe IPv4 address, system Python 3, and a running SSH server with a usable login
+account. Use the host and card system interpreters matching the Python ABIs recorded in the bundle's
 `host/dependencies.json` and `card/dependencies.json`. Preflight rejects a
 mismatch; installing an arbitrary newer Python does not satisfy this requirement.
 The host also needs
@@ -23,9 +23,12 @@ The host also needs
 `timeout`, and `unshare`.
 The SSH account must have sudo access. Use passwordless sudo or pass
 `--ask-card-sudo` to securely prompt once for the shared card sudo password.
-Passwords are not stored in the bundle, reports, files, or command arguments. Provision trusted card
-SSH host keys through your system setup procedure. The installer never accepts
-unknown keys or scans physical Ethernet interfaces.
+Passwords are not stored in the bundle, reports, files, or command arguments. On first
+installation, the installer creates or reuses the invoking user's SSH key and sets
+up access to each discovered card. OpenSSH asks you to verify and accept each new
+host-key fingerprint and enter the card login password when needed. Changed host
+keys are rejected; existing trust entries are never removed. Discovery and SSH
+use only PCI-owned interfaces.
 
 Check the archive SHA-256 against the value obtained from your trusted download
 channel before extracting it. The embedded manifest detects corruption but is
@@ -38,18 +41,27 @@ Docker and Internet access are not needed on the customer system.
 
 To discard an environment and install from scratch, explicitly run `./install.sh --recreate-venv` (standalone Core) or `sudo python3 -B install.py --recreate-venv` (PCIe). This removes packages and files in the selected environment without backup. In the SDK, the option applies to the paired DevKit, not SDK host Python. Save required files first. Preflight and verification-only commands never recreate environments.
 
-Run on the host, using the SSH key provisioned during system setup:
+Run on the host in an interactive terminal:
 
 ```sh
 tar -xzf neat-pcie-offline-installer.tar.gz
 cd neat-offline
-sudo python3 -B install.py --preflight-only
 sudo python3 -B install.py
 ```
 
 Defaults: SSH user `sima`, the invoking user's
 `~/.ssh/sima_neat_pcie_ed25519` key and `~/.ssh/known_hosts`. Override credentials
-with `--ssh-user`, `--ssh-key`, and `--known-hosts`; do not supply card IPs.
+with `--ssh-user`, `--ssh-key`, and `--known-hosts`; do not supply card IPs. An
+explicit `--ssh-key` must already exist. Keys used for unattended card operations
+must not have a passphrase. Newly created keys and trust entries belong to the
+invoking user, including when running through `sudo`. Existing keys are reused.
+
+If SSH access is already provisioned, optionally run
+`sudo python3 -B install.py --preflight-only` first. This mode never creates SSH
+keys, enrolls host keys, or changes card authorization. Missing SSH setup is
+reported with instructions to run the normal installer interactively. Unattended
+installation also requires provisioned access; it fails without prompting when
+no terminal is available.
 
 The installer verifies the bundle, inventories all attached SiMa PCI cards,
 discovers through each PCI-owned interface, checks direct routes and trusted SSH,
@@ -113,7 +125,7 @@ up; a cleanup failure reports its card so it can be addressed.
 
 If discovery, SSH, firmware compatibility, or driver checks fail, repair the
 system setup first. This installer does not change firmware, drivers, discovery
-services, SSH provisioning, or PCIe addressing.
+services, or PCIe addressing. SSH setup failures stop installation before package changes.
 
 ## Debugging and support logs
 
