@@ -2,6 +2,8 @@
 
 #include "gst/GstHelpers.h"
 #include "pipeline/internal/contract/CompiledNodeContractQuery.h"
+#include "pipeline/internal/contract/CompiledKernelTensor.h"
+#include "pipeline/internal/sima/KernelTensorLayout.h"
 #include "pipeline/internal/contract/ContractFacts.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
@@ -126,6 +128,9 @@ IngressTensors ingress_tensors(const Sample& sample, const std::string& node) {
 bool producer_output_tiled(const CompiledNodeContract* producer, int backend_output_index) {
   if (!producer || backend_output_index < 0)
     return false;
+  if (const auto canonical =
+          pipeline_internal::compiled_kernel_output_tensor(producer, backend_output_index))
+    return si::kernel_tensor_requires_detessellation(*canonical);
   const si::ProcessCvuStagePayload* legacy = nullptr;
   if (producer->processcvu)
     legacy = &producer->processcvu->payload;
@@ -137,12 +142,6 @@ bool producer_output_tiled(const CompiledNodeContract* producer, int backend_out
          SIMA_EV_LAYOUT_TILED;
 }
 
-std::uint64_t dense_bytes(const std::vector<std::int64_t>& shape, rt::DType dtype) {
-  std::uint64_t bytes = scalar_bytes(dtype);
-  for (const auto dimension : shape)
-    bytes *= static_cast<std::uint64_t>(dimension);
-  return bytes;
-}
 } // namespace
 
 bool compile_kernel_request_stage(const std::string& node_kind, const std::string& element_name,
@@ -239,7 +238,8 @@ bool compile_kernel_request_stage(const std::string& node_kind, const std::strin
       const auto& published = plan.published[index];
       const auto& requirement = contract.output_requirements()[index];
       const auto dtype = plan.outputs[index].dtype;
-      if (requirement.storage_bytes < dense_bytes(published.shape, dtype))
+      if (requirement.storage_bytes <
+          checked_tensor_bytes(published.shape, dtype, node_kind.c_str()))
         throw std::invalid_argument(node_kind + ": checked " + published.name +
                                     " storage is smaller than its published tensor");
       const auto i = static_cast<int>(index);

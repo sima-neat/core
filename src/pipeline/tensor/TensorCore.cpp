@@ -319,7 +319,8 @@ Tensor Tensor::clone() const {
   // Dense tensor clone (tight contiguous copy)
   // --------------------------
   if (is_dense()) {
-    const std::size_t bytes = dense_bytes_tight();
+    const std::size_t bytes =
+        has_tiled_storage() ? semantic.tess->storage_bytes : dense_bytes_tight();
     if (!shape.empty() && bytes == 0) {
       throw std::runtime_error("Tensor::clone: invalid/overflowing dense shape");
     }
@@ -352,7 +353,8 @@ Tensor Tensor::clone() const {
 
     auto storage_copy = make_cpu_owned_storage(alloc_bytes);
 
-    const Mapping src_map = pipeline_internal::map_dense_tensor_read(*this); // includes byte_offset
+    const Mapping src_map =
+        has_tiled_storage() ? map_read() : pipeline_internal::map_dense_tensor_read(*this);
     if (!src_map.data && bytes != 0) {
       throw std::runtime_error("Tensor::clone: failed to map source");
     }
@@ -370,7 +372,7 @@ Tensor Tensor::clone() const {
     auto* dst = static_cast<uint8_t*>(dst_map.data);
 
     if (bytes > 0) {
-      if (is_contiguous() || strides_bytes.empty()) {
+      if (has_tiled_storage() || is_contiguous() || strides_bytes.empty()) {
         std::memcpy(dst, src, bytes);
       } else {
         const std::vector<int64_t> src_strides =
@@ -387,7 +389,8 @@ Tensor Tensor::clone() const {
     out.dtype = dtype;
     out.layout = layout;
     out.shape = shape;
-    out.strides_bytes = contiguous_strides_bytes(shape, elem);
+    out.strides_bytes =
+        has_tiled_storage() ? std::vector<int64_t>{} : contiguous_strides_bytes(shape, elem);
     out.byte_offset = 0;
     out.device = {DeviceType::CPU, 0};
     out.semantic = semantic;
@@ -521,6 +524,8 @@ Tensor Tensor::clone() const {
 }
 
 Tensor Tensor::contiguous() const {
+  if (has_tiled_storage())
+    throw std::runtime_error("Tensor::contiguous: tiled storage requires explicit detessellation");
   if (is_dense() && is_contiguous())
     return *this;
   return clone();
@@ -623,7 +628,7 @@ std::size_t Tensor::dense_bytes_tight() const {
 bool Tensor::copy_dense_bytes_tight_to(uint8_t* dst, std::size_t dst_size) const {
   if (!dst)
     return false;
-  if (!is_dense())
+  if (!is_dense() || has_tiled_storage())
     return false;
 
   const std::size_t elem = dtype_bytes(dtype);
@@ -653,6 +658,10 @@ bool Tensor::copy_dense_bytes_tight_to(uint8_t* dst, std::size_t dst_size) const
 }
 
 std::vector<uint8_t> Tensor::copy_dense_bytes_tight() const {
+  if (has_tiled_storage())
+    throw std::runtime_error(
+        "copy_dense_bytes_tight: tiled storage requires explicit detessellation; "
+        "use copy_payload_bytes for stored bytes");
   const std::size_t bytes = dense_bytes_tight();
 
   if (bytes == 0) {
@@ -687,6 +696,14 @@ std::vector<uint8_t> Tensor::copy_dense_bytes_tight() const {
 bool Tensor::copy_payload_bytes_to(uint8_t* dst, std::size_t dst_size) const {
   if (!dst)
     return false;
+  if (has_tiled_storage()) {
+    const auto bytes = semantic.tess->storage_bytes;
+    const Mapping mapping = map_read();
+    if (!mapping.data || mapping.size_bytes < bytes || dst_size < bytes)
+      return false;
+    std::memcpy(dst, mapping.data, bytes);
+    return true;
+  }
 
   if (is_dense()) {
     const std::size_t bytes = dense_bytes_tight();
@@ -705,6 +722,13 @@ bool Tensor::copy_payload_bytes_to(uint8_t* dst, std::size_t dst_size) const {
 }
 
 std::vector<uint8_t> Tensor::copy_payload_bytes() const {
+  if (has_tiled_storage()) {
+    std::vector<uint8_t> out(semantic.tess->storage_bytes);
+    if (!copy_payload_bytes_to(out.data(), out.size()))
+      throw std::runtime_error(
+          "copy_payload_bytes: tiled storage mapping is smaller than its extent");
+    return out;
+  }
   const std::size_t dense_bytes = dense_bytes_tight();
   if (dense_bytes > 0) {
     std::vector<uint8_t> out(dense_bytes);
@@ -735,6 +759,9 @@ bool Tensor::validate(std::string* err) const {
       *err = msg;
     return false;
   };
+
+  if (has_tiled_storage() && is_composite())
+    return fail("explicit tiled storage cannot describe composite planes");
 
   if (is_composite() && byte_offset != 0) {
     return fail("composite tensor must have byte_offset == 0");

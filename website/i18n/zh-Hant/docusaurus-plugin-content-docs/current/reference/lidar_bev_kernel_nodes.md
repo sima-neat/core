@@ -96,12 +96,18 @@ BF16 輸入的 `SimaBEVPool` 為 `scale = 1 / quantization.multiplier`；兩個 
 - **SimaVoxelize** 在 `output_dtype = TensorDType::BFloat16` 時，會將每個 binary32 裝飾值以
   最近偶數捨入為 BF16，將所有 NaN 存為 `0x7FC0`，並以 +0.0 填滿空白槽位。請將
   `quantization` 保留為預設值；其他值都會被拒絕。
-- **SimaPillarScatter** 保留其特徵的型別。BF16 特徵需要 `zero_point = 0`，因此空白格存放
-  +0.0。BF16 畫布以 MLA 分塊 BF16 配置儲存：每個格子先存放其 `C` 個通道的低位元組，再存放
-  其高位元組。這不是密集的 NHWC，而發布的張量不會標示此差異：其 dtype 為 BF16、形狀為
-  `[1,H,W,C]`，因此 `copy_dense_bytes_tight()` 與 `numpy.from_dlpack` 等 DLPack 檢視取得的是
-  儲存的位元組，而不是 NHWC 順序的 BF16 值。請將畫布傳給讀取此配置的 MLA 模型，或以位元組
-  讀取後重新排列每個格子。
+- **SimaPillarScatter** 保留特徵的型別。BF16 特徵需要 `zero_point = 0`，因此空格子為
+  +0.0。BF16 畫布的每個格子先儲存 `C` 個通道的低位元組，再儲存高位元組。
+  `semantic.tess` 明確描述此實體配置：`slice_shape = [1,1,1,C]`、`axes = [0,1,2,3]`、
+  `format = "MLA_TILED_BF16_COMPACT"`，而 `storage_bytes` 是已驗證的有效負載大小。
+  D/H/W/C 區塊依 C/D/H/W 順序排列；區塊內依 D/H/W/C 順序儲存。BF16 使用各格子的
+  低／高位元組平面，每個區塊均對齊 16 位元組。
+  `copy_dense_bytes_tight()`、具型別的 `data_ptr()` 和 DLPack 會拒絕此非密集配置。
+  `copy_payload_bytes()` 讀取指定範圍的儲存位元組；`clone()` 與 Owned 輸出保留位元組和
+  中繼資料，不會自動去區塊化。`SimaArgMax` 等支援此配置的下游節點直接取得產生端
+  已驗證的配置（限同一張圖）；只接受密集資料的使用端與不支援的區塊圖輸入會拒絕它。全通道 INT8 格子區塊與密集 NHWC
+  逐位元組相同，因此仍支援一般密集複製和 DLPack。既有僅記錄格式的 `TessSpec` 註記
+  維持原有行為；非零 `storage_bytes` 表示明確的區塊儲存配置。
 - **SimaBEVPoolPlan** 接受 `input_dtype`，即 `SimaBEVPool` 輸入的型別。`V2` 計畫以位元組
   為單位配置 EV74 快取，因此 BF16 計畫可能較大。`V1` 計畫對兩種型別都相同。
 - **SimaBEVPool** 接受零點為 0 的 BF16 `depth` 與 `context`。每個格子的總和依計畫中點的

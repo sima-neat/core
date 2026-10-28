@@ -99,3 +99,34 @@ def test_concurrent_device_import_and_export_keep_owners():
 
   with ThreadPoolExecutor(max_workers=4) as executor:
     list(executor.map(roundtrip, range(4)))
+
+
+def test_explicit_tiled_storage_rejects_dense_exports():
+  stored = np.arange(32, dtype=np.uint8).reshape(1, 1, 2, 16)
+  tensor = pn.Tensor.from_numpy(stored, copy=False, memory=pn.TensorMemory.CPU)
+  tess = pn.TessSpec()
+  tess.format = "MLA_TILED_UINT8_PAD16"
+  tess.slice_shape = [1, 1, 1, 16]
+  tess.axes = [0, 1, 2, 3]
+  tess.storage_bytes = stored.nbytes
+  semantic = tensor.semantic
+  semantic.tess = tess
+  tensor.semantic = semantic
+
+  assert tensor.has_tiled_storage()
+  assert not tensor.is_contiguous()
+  for export in (tensor.__dlpack__, tensor.contiguous,
+                 tensor.copy_dense_bytes_tight, lambda: tensor.to_numpy(copy=False)):
+    with pytest.raises(RuntimeError, match="tiled storage"):
+      export()
+  clone = tensor.clone()
+  assert clone.has_tiled_storage()
+  assert clone.semantic.tess.axes == tess.axes
+  assert bytes(clone.copy_payload_bytes()) == stored.tobytes()
+
+  # Historical dtype-format annotations alone are not physical tile metadata.
+  tess.storage_bytes = 0
+  semantic.tess = tess
+  tensor.semantic = semantic
+  assert not tensor.has_tiled_storage()
+  np.testing.assert_array_equal(tensor.to_numpy(copy=False), stored)

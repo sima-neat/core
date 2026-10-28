@@ -672,6 +672,8 @@ void delete_dlpack_managed(DLManagedTensor* managed) {
 }
 
 PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
+  if (input.has_tiled_storage())
+    throw std::runtime_error("__dlpack__: tiled storage requires explicit detessellation");
   const Tensor source_pin = input;
   Tensor tensor = source_pin;
   if (tensor.device.type != DeviceType::CPU) {
@@ -1596,7 +1598,9 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<>())
       .def_rw("slice_shape", &simaai::neat::TessSpec::slice_shape)
       .def("set_slice_shape", &simaai::neat::TessSpec::set_slice_shape, "shape"_a)
-      .def_rw("format", &simaai::neat::TessSpec::format);
+      .def_rw("format", &simaai::neat::TessSpec::format)
+      .def_rw("axes", &simaai::neat::TessSpec::axes)
+      .def_rw("storage_bytes", &simaai::neat::TessSpec::storage_bytes);
 
   nb::class_<simaai::neat::DetectionSpec>(
       m, "DetectionSpec",
@@ -1750,6 +1754,7 @@ NB_MODULE(_pyneat_core, m) {
       .def("is_composite", &simaai::neat::Tensor::is_composite)
       .def("has_axis_semantics", &simaai::neat::Tensor::has_axis_semantics)
       .def("axis_semantics_match_shape", &simaai::neat::Tensor::axis_semantics_match_shape)
+      .def("has_tiled_storage", &simaai::neat::Tensor::has_tiled_storage)
       .def("is_contiguous", &simaai::neat::Tensor::is_contiguous)
       .def("has_plane", &simaai::neat::Tensor::has_plane, "role"_a)
       .def("contiguous", &simaai::neat::Tensor::contiguous)

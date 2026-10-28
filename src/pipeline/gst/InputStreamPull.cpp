@@ -7,6 +7,7 @@
 #include "pipeline/EncodedSampleUtil.h"
 #include "pipeline/TensorAdapters.h"
 #include "pipeline/internal/CapsBridge.h"
+#include "pipeline/internal/TensorTessellationMetadata.h"
 
 #include <cstring>
 #include <unordered_set>
@@ -1397,6 +1398,8 @@ tensor_set_from_meta_slow(GstSample* sample, const char* where,
     }
     Tensor tensor =
         apply_tensor_set_descriptor(base_tensor, descriptor, tensor_buffer_view.stage_key);
+    pipeline_internal::apply_tessellation_caps(tensor, gst_sample_get_caps(sample),
+                                               descriptor.logical_index, descriptor.size_bytes);
     if (tensor_set_debug_enabled()) {
       std::fprintf(stderr,
                    "[tensor-set][debug]     tensor route logical=%d memory=%d slot=%d name=%s "

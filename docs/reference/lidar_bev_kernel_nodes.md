@@ -108,11 +108,19 @@ INT8 inputs both carry a scale; and the features' quantization for
 - **SimaPillarScatter** keeps the type of its features. BF16 features need
   `zero_point = 0`, so empty cells hold +0.0. A BF16 canvas is stored in the MLA tiled
   BF16 layout: each cell holds the low bytes of its `C` channels, then their high
-  bytes. It is not dense NHWC, and the published tensor does not mark the
-  difference: its dtype is BF16 and its shape `[1,H,W,C]`, so
-  `copy_dense_bytes_tight()` and DLPack views such as `numpy.from_dlpack` expose
-  the stored bytes, not BF16 values in NHWC order. Pass the canvas to an MLA model
-  that reads this layout, or read it as bytes and deinterleave each cell.
+  bytes. `semantic.tess` describes that storage explicitly: `slice_shape = [1,1,1,C]`,
+  `axes = [0,1,2,3]`, `format = "MLA_TILED_BF16_COMPACT"`, and `storage_bytes` is the
+  checked payload extent. D/H/W/C tiles are ordered C/D/H/W; each tile payload is
+  D/H/W/C with per-cell low/high BF16 byte planes and 16-byte tile alignment.
+  `copy_dense_bytes_tight()`, typed `data_ptr()` and DLPack reject this non-dense
+  layout rather than misrepresent its values. `copy_payload_bytes()` reads the
+  bounded stored bytes; `clone()` and Owned graph output preserve those bytes and
+  metadata without detessellation. A layout-aware consumer such as `SimaArgMax`
+  receives the producer's checked layout directly within the same graph. Dense-only
+  consumers and unsupported tiled graph ingress reject it.
+  INT8 full-channel cell tiles remain byte-identical to dense NHWC and keep ordinary
+  dense-copy/DLPack behavior. Other `TessSpec` format-only annotations retain their
+  established behavior; a nonzero `storage_bytes` denotes explicit tiled storage.
 - **SimaBEVPoolPlan** takes `input_dtype`, the type of the `SimaBEVPool` inputs. A
   `V2` plan budgets its EV74 caches in bytes, so a BF16 plan can be larger. A `V1`
   plan is the same for both types.

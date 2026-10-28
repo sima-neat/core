@@ -655,6 +655,7 @@ set(UNIT_TESTS
   unit_sample_packed_parent_alignment_padding_test
   unit_yolov8_contract_subset_test
   unit_tensor_list_api_test
+  unit_tensor_tiled_storage_test
   unit_tensor_conversion_policy_test
   unit_tensor_image_mapping_test
   unit_transport_shared_parent_input_test

@@ -7,6 +7,7 @@
 // Admission needs a Scheduler set built with Kernels that register voxelize,
 // pillar_scatter, bev_pool_plan and bev_pool (sima-neat/kernels#10, #29, #31).
 #include "nodes/sima/SimaBEVPool.h"
+#include "nodes/sima/SimaArgMax.h"
 #include "nodes/sima/SimaBEVPoolPlan.h"
 #include "nodes/sima/SimaPillarScatter.h"
 #include "nodes/sima/SimaVoxelize.h"
@@ -432,6 +433,58 @@ void ingress_contracts() {
               canvas16.publication_relation ==
                   pipeline_internal::sima::PublicationViewRelation::PackedStorage,
           "SimaPillarScatter BF16 canvas keeps its tiled physical view");
+  {
+    ContractCompileInput downstream;
+    downstream.immediate_upstream = &compiled;
+    SimaArgMaxOptions options;
+    options.axis = 3;
+    CompiledNodeContract argmax;
+    std::string diagnostic;
+    require(SimaArgMax(options).compile_node_contract(downstream, &argmax, &diagnostic),
+            "ArgMax must consume checked BF16 tile layout: " + diagnostic);
+    auto inspected = rt::inspect_kernel(argmax.kernel->recipe->members.front().executable);
+    require(std::holds_alternative<rt::KernelInspection>(inspected) &&
+                std::holds_alternative<rt::MlaTiled>(
+                    std::get<rt::KernelInspection>(inspected).inputs().front().layout),
+            "ArgMax lost the producer's physical BF16 layout");
+  }
+  // Existing dense producers can legally remove singleton axes at publication.
+  // Forwarding their raw execution shape would regress model->ArgMax paths.
+  {
+    rt::TensorSpec cast_input{{1, 1, 1, 32}, rt::DType::Int8};
+    rt::TensorSpec cast_output{{1, 1, 1, 32}, rt::DType::Float32};
+    auto checked =
+        rt::check_kernel({"cast", rt::Hardware::A65, {&cast_input, 1}, {&cast_output, 1}, {}});
+    require(std::holds_alternative<rt::KernelExecutable>(checked),
+            "singleton projection fixture cast must admit");
+    auto producer = compiled;
+    auto recipe = std::make_shared<pipeline_internal::sima::KernelStageRecipe>();
+    rt::TensorStageMember member;
+    member.executable = std::get<rt::KernelExecutable>(std::move(checked));
+    member.outputs.push_back({0, 0, rt::TensorStagePortSource::Output});
+    recipe->members.push_back(std::move(member));
+    producer.kernel->recipe = recipe;
+    auto& logical = producer.kernel->runtime_contract.logical_outputs.front();
+    logical.dtype = "FP32";
+    logical.shape = {1, 32};
+    logical.stride_bytes.clear();
+    logical.size_bytes = 128;
+    logical.publication_relation = pipeline_internal::sima::PublicationViewRelation::SingletonAxes;
+    producer.kernel->runtime_contract.physical_outputs.front().size_bytes = 128;
+    ContractCompileInput downstream;
+    downstream.immediate_upstream = &producer;
+    SimaArgMaxOptions options;
+    options.axis = 1;
+    CompiledNodeContract argmax;
+    std::string diagnostic;
+    require(SimaArgMax(options).compile_node_contract(downstream, &argmax, &diagnostic),
+            "ArgMax must retain dense published singleton projection: " + diagnostic);
+    const auto inspected = rt::inspect_kernel(argmax.kernel->recipe->members.front().executable);
+    require(std::holds_alternative<rt::KernelInspection>(inspected) &&
+                std::get<rt::KernelInspection>(inspected).inputs().front().shape ==
+                    std::vector<std::int64_t>{1, 32},
+            "ArgMax replaced the published shape with raw execution dimensions");
+  }
   for (const auto output : {TensorDType::BFloat16, TensorDType::Int8}) {
     auto b = ref::bev_pool_case_bf16(SimaKernelTarget::EV74, output);
     compiled = compile(SimaBEVPool(b.options),
@@ -456,6 +509,15 @@ void ingress_contracts() {
   require(!SimaVoxelize(v.options).compile_node_contract(input, &out, &error),
           "SimaVoxelize accepted a Sample without point_count");
   require_contains(error, "SimaVoxelize: expects 2 input tensors", "SimaVoxelize arity diagnostic");
+  Tensor retained_tile = bf16_tensor(std::vector<std::uint16_t>(16, 0x3F80), {1, 1, 1, 16});
+  retained_tile.semantic.tess = TessSpec{{1, 1, 1, 16}, "MLA_TILED_BF16_COMPACT", {0, 1, 2, 3}, 32};
+  ContractCompileInput retained;
+  retained.ingress.ingress_sample = sample_from_tensors({retained_tile});
+  SimaArgMaxOptions argmax_options;
+  argmax_options.axis = 3;
+  require(!SimaArgMax(argmax_options).compile_node_contract(retained, &out, &error),
+          "ArgMax treated unsupported explicit tiled graph ingress as dense");
+  require_contains(error, "detessellate", "tiled ingress requires explicit layout admission");
   ContractCompileInput empty;
   require(!SimaBEVPool(ref::bev_pool_case().options).compile_node_contract(empty, &out, &error),
           "SimaBEVPool compiled without an upstream contract");

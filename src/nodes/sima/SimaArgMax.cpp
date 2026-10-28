@@ -2,6 +2,8 @@
 
 #include "gst/GstHelpers.h"
 #include "pipeline/internal/contract/CompiledNodeContractQuery.h"
+#include "pipeline/internal/contract/CompiledKernelTensor.h"
+#include "pipeline/internal/sima/KernelTensorLayout.h"
 #include "pipeline/internal/contract/ContractFacts.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
@@ -228,6 +230,13 @@ bool SimaArgMax::compile_node_contract(const ContractCompileInput& input,
           in = std::get<rt::TensorSpec>(std::move(native));
         }
       }
+      if (const auto canonical = pipeline_internal::compiled_kernel_output_tensor(
+              input.immediate_upstream, source.backend_output_index);
+          canonical && si::kernel_tensor_requires_detessellation(*canonical))
+        in = *canonical;
+      // Dense execution may publish a legal singleton-axis projection; its
+      // authored logical shape/strides stay authoritative. Only a non-dense
+      // physical layout needs the checked producer specification above.
       if (!(in.shape == source.shape) || in.dtype != kernel_dtype(source.dtype))
         throw std::invalid_argument(
             "SimaArgMax logical view disagrees with producer tensor storage");

@@ -29,11 +29,13 @@ namespace simaai::neat {
  * example `[1,M,1,C]` from a pillar-feature MLA graph. `C` must be a multiple of 16.
  *
  * The output `canvas` `[1,rows,columns,C]` has the features' element type and is stored
- * as one MLA tile that spans the whole canvas. An INT8 canvas is byte-identical to dense
+ * as compact full-channel MLA cell tiles. An INT8 canvas is byte-identical to dense
  * NHWC. A BF16 canvas uses the MLA-tiled BF16 payload: each cell stores the low bytes
- * of its `C` channels, then their high bytes. The published tensor does not mark this
- * layout, so read a BF16 canvas as bytes, not as dense BF16 values. Feature values are
- * copied unchanged, and an INT8 canvas keeps the features' `semantic.quant`.
+ * of all channels followed by their high bytes. `semantic.tess` retains its checked
+ * tile shape, axes, format and storage extent. Dense copying and DLPack export reject
+ * this layout; use `copy_payload_bytes()` for stored bytes, or a layout-aware consumer
+ * such as SimaArgMax. Cloning/Owned output preserves the layout without conversion.
+ * Feature values are copied unchanged, and an INT8 canvas keeps the features' `semantic.quant`.
  *
  * @ingroup nodes_sima
  */
