@@ -182,45 +182,6 @@ void reconcile_standalone_cast_mla_ports(std::vector<CompiledNodeContract>& cont
   }
 }
 
-// Only a proven public tensor envelope owns this address authority. Do not
-// reinterpret raw GstMemory inputs, model routes, or frame-layout producer links.
-void project_public_tensor_bindings(CompiledNodeContract* stage) {
-  const auto project = [](auto& compiled) {
-    auto& runtime = compiled.runtime_contract;
-    for (auto& physical : runtime.physical_inputs) {
-      using pipeline_internal::sima::PhysicalAddressSource;
-      if (physical.address_source != PhysicalAddressSource::DirectCarrierSpan)
-        continue;
-      bool referenced = false;
-      bool external = true;
-      for (const auto& logical : runtime.logical_inputs) {
-        if (logical.physical_index != physical.physical_index)
-          continue;
-        for (const auto& binding : runtime.input_bindings) {
-          if (binding.local_logical_input_index != logical.logical_index)
-            continue;
-          referenced = true;
-          external = external && binding.src_stage_index < 0 && binding.src_stage_id.empty();
-        }
-      }
-      if (referenced && external)
-        physical.address_source = PhysicalAddressSource::RuntimePhysicalBinding;
-    }
-  };
-  if (stage->kernel)
-    project(*stage->kernel);
-  else if (stage->processcvu)
-    project(*stage->processcvu);
-  else if (stage->processmla)
-    project(*stage->processmla);
-  else if (stage->boxdecode)
-    project(*stage->boxdecode);
-  else if (stage->dequant)
-    project(*stage->dequant);
-  else if (stage->transport)
-    project(*stage->transport);
-}
-
 } // namespace
 
 CompiledPipelineContracts
@@ -291,9 +252,6 @@ compile_node_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
     // most specific one we have.
     std::string provider_err;
     if (provider->compile_node_contract(stage_input, &stage, &provider_err)) {
-      if (input.public_tensor_binding_ingress && node_index == 1U &&
-          dynamic_cast<const Input*>(nodes.front().get()) != nullptr)
-        project_public_tensor_bindings(&stage);
       if (!project_image_temporal_contract(
               std::span<const std::shared_ptr<Node>>(nodes.data(), node_index), input, &stage,
               &provider_err)) {

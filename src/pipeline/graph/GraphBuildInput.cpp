@@ -831,7 +831,7 @@ void maybe_compile_build_result_contracts(BuildResult* build_result,
                                           const InputContract& ingress_contract,
                                           const SampleSpec& ingress_spec,
                                           const std::optional<Sample>& ingress_sample,
-                                          bool public_tensor_binding_ingress, const char* where) {
+                                          const char* where) {
   if (!build_result || !nodes) {
     return;
   }
@@ -853,7 +853,6 @@ void maybe_compile_build_result_contracts(BuildResult* build_result,
   spec.fps_den = ingress_spec.fps_d;
   compile_input.ingress.ingress_spec = spec;
   compile_input.ingress.ingress_sample = ingress_sample;
-  compile_input.public_tensor_binding_ingress = public_tensor_binding_ingress;
   session_build_compile_contracts(build_result, *nodes, compile_input, where, nodes);
 }
 
@@ -1869,8 +1868,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   }
   maybe_compile_build_result_contracts(
       &br, &build_nodes, sess_opt, input_contract_from_input(sample), seed_spec,
-      contract_compile_sample_from_input(sample),
-      opt.public_unrouted_input && seed_spec.tensor_envelope_transport, "Graph::build(input)");
+      contract_compile_sample_from_input(sample), "Graph::build(input)");
   InputStreamOptions stream_opt = opt;
   // Execution and output ownership are independent: a completed frame may
   // remain retained by the application after its execution slot is reusable.

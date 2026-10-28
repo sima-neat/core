@@ -62,9 +62,6 @@ struct ContractCompileInput {
   const CompiledProcessCvuContract* upstream_preprocess = nullptr;
   std::shared_ptr<const internal::ModelFragmentCompileContext> model_fragments;
   bool strict = true;
-  // Cold transport fact, not a numerical or logical-name policy. Public tensor
-  // envelopes resolve current-frame memory/offset from their binding table.
-  bool public_tensor_binding_ingress = false;
   std::string processcvu_requested_run_target = "AUTO";
   ProcessCvuOptions processcvu;
 };

@@ -383,7 +383,7 @@ void check_final_authority(const simaai::scheduler::client::FrameLayout& layout,
   }
 }
 
-void physical_projection_contract() {
+void physical_authority_contract() {
   using sima::PhysicalAddressSource;
   TrackKLTOptions tracking;
   tracking.width = tracking.height = 64;
@@ -402,134 +402,119 @@ void physical_projection_contract() {
   public_input.memory_policy = InputMemoryPolicy::Ev74;
   for (const auto& consumer : consumers) {
     const std::vector<std::shared_ptr<Node>> nodes{std::make_shared<Input>(public_input), consumer};
-    for (const bool public_envelope : {false, true}) {
-      const auto context_name =
-          consumer->kind() + (public_envelope ? " projected public: " : " late-bound public: ");
-      ContractCompileInput context;
-      context.public_tensor_binding_ingress = public_envelope;
-      sima::ManifestBuildDiagnostics diagnostics;
-      const auto compiled = compile_node_contracts(nodes, context, &diagnostics);
-      require(diagnostics.errors.empty() && compiled.stages.size() == 1 &&
-                  compiled.stages.front().processcvu.has_value(),
-              context_name + "visual contract compilation failed before projection");
-      const auto stage = project_processcvu_stage_contract(*compiled.stages.front().processcvu);
-      const auto expected = public_envelope ? PhysicalAddressSource::RuntimePhysicalBinding
-                                            : PhysicalAddressSource::DirectCarrierSpan;
-      require(stage.physical_inputs.size() == (consumer->kind() == "TrackKLT" ? 3U : 1U),
-              context_name + "projection changed physical input cardinality");
-      require(stage.input_bindings.size() == stage.physical_inputs.size() &&
-                  stage.logical_inputs.size() == stage.physical_inputs.size(),
-              context_name + "projection changed input binding/logical cardinality");
-      for (std::size_t i = 0; i < stage.physical_inputs.size(); ++i) {
-        const auto& physical = stage.physical_inputs[i];
-        const auto& binding = stage.input_bindings[i];
-        const auto label = context_name + "input " + std::to_string(i) + ": ";
-        require(physical.address_source == expected, label + "incorrect address authority");
-        require(physical.physical_index == int(i), label + "incorrect physical input order");
-        require(physical.source_byte_offset == 0 && physical.size_bytes > 0,
-                label + "incorrect physical span");
-        require(binding.sink_pad_index == 0 && binding.local_logical_input_index == int(i) &&
-                    binding.src_stage_index < 0 && binding.src_stage_id.empty() &&
-                    binding.src_physical_byte_offset == 0,
-                label + "incorrect public-root route");
-        if (consumer->kind() == "GriderFast") {
-          // Single-input/single-output facts leave upstream selectors unset.
-          // Final placement resolves this public root from physical_index; it
-          // must not fabricate an upstream producer to satisfy an early check.
-          require(binding.src_logical_output_index == -1 && binding.src_output_slot == -1 &&
-                      binding.src_physical_output_index == -1 &&
-                      binding.src_physical_size_bytes == 0,
-                  label + "incorrect implicit single-IO root contract");
-        } else {
-          require(binding.src_logical_output_index == int(i) && binding.src_output_slot == int(i) &&
-                      binding.src_physical_output_index == int(i) &&
-                      binding.src_physical_size_bytes == physical.size_bytes,
-                  label + "incorrect explicit multi-IO root contract");
-        }
-        require(stage.logical_inputs[i].backend_input_index == int(i),
-                label + "incorrect backend input order");
+    const auto context_name = consumer->kind() + " public input: ";
+    ContractCompileInput context;
+    sima::ManifestBuildDiagnostics diagnostics;
+    const auto compiled = compile_node_contracts(nodes, context, &diagnostics);
+    require(diagnostics.errors.empty() && compiled.stages.size() == 1 &&
+                compiled.stages.front().processcvu.has_value(),
+            context_name + "visual contract compilation failed before final placement");
+    const auto stage = project_processcvu_stage_contract(*compiled.stages.front().processcvu);
+    const auto expected = PhysicalAddressSource::DirectCarrierSpan;
+    require(stage.physical_inputs.size() == (consumer->kind() == "TrackKLT" ? 3U : 1U),
+            context_name + "compilation changed physical input cardinality");
+    require(stage.input_bindings.size() == stage.physical_inputs.size() &&
+                stage.logical_inputs.size() == stage.physical_inputs.size(),
+            context_name + "compilation changed input binding/logical cardinality");
+    for (std::size_t i = 0; i < stage.physical_inputs.size(); ++i) {
+      const auto& physical = stage.physical_inputs[i];
+      const auto& binding = stage.input_bindings[i];
+      const auto label = context_name + "input " + std::to_string(i) + ": ";
+      require(physical.address_source == expected, label + "incorrect address authority");
+      require(physical.physical_index == int(i), label + "incorrect physical input order");
+      require(physical.source_byte_offset == 0 && physical.size_bytes > 0,
+              label + "incorrect physical span");
+      require(binding.sink_pad_index == 0 && binding.local_logical_input_index == int(i) &&
+                  binding.src_stage_index < 0 && binding.src_stage_id.empty() &&
+                  binding.src_physical_byte_offset == 0,
+              label + "incorrect public-root route");
+      if (consumer->kind() == "GriderFast") {
+        // Single-input/single-output facts leave upstream selectors unset.
+        // Final placement resolves this public root from physical_index; it
+        // must not fabricate an upstream producer to satisfy an early check.
+        require(binding.src_logical_output_index == -1 && binding.src_output_slot == -1 &&
+                    binding.src_physical_output_index == -1 && binding.src_physical_size_bytes == 0,
+                label + "incorrect implicit single-IO root contract");
+      } else {
+        require(binding.src_logical_output_index == int(i) && binding.src_output_slot == int(i) &&
+                    binding.src_physical_output_index == int(i) &&
+                    binding.src_physical_size_bytes == physical.size_bytes,
+                label + "incorrect explicit multi-IO root contract");
       }
-      auto manifest = render_manifest_from_compiled_contracts(compiled, context, &diagnostics);
-      require(manifest && diagnostics.errors.empty(),
-              context_name + "visual contract render failed");
-      const auto failure = sima::prepare_kernel_stage_recipes(&*manifest, {}, {}, {}, {});
-      require(!failure, context_name + "visual checked recipe preparation failed");
-      sima::finalize_pipeline_storage(*manifest);
-      const auto& final = manifest->stages.front();
-      require(final.native_kernel && final.frame_layout &&
-                  final.frame_layout->inputs.size() == stage.physical_inputs.size(),
-              context_name + "inputs did not survive checked recipe/final allocation placement");
-      namespace client = simaai::scheduler::client;
-      for (std::size_t i = 0; i < final.frame_layout->inputs.size(); ++i) {
-        const auto& input = final.frame_layout->inputs[i];
-        const auto label = context_name + "final input " + std::to_string(i) + ": ";
-        require(input.view_offset == 0, label + "spurious view offset");
-        // Final placement resolves standalone public tensor views after producer
-        // discovery, even without early projection. Their ordinal selects this
-        // frame's binding table, not an allocation index.
-        const auto* source = std::get_if<client::PhysicalBinding>(&input.source);
-        require(source && source->pad == 0 && source->binding_index == i &&
-                    source->byte_offset == 0 &&
-                    source->size_bytes == stage.physical_inputs[i].size_bytes,
-                label + "public tensor did not become an exact PhysicalBinding");
-      }
+      require(stage.logical_inputs[i].backend_input_index == int(i),
+              label + "incorrect backend input order");
+    }
+    auto manifest = render_manifest_from_compiled_contracts(compiled, context, &diagnostics);
+    require(manifest && diagnostics.errors.empty(), context_name + "visual contract render failed");
+    const auto failure = sima::prepare_kernel_stage_recipes(&*manifest, {}, {}, {}, {});
+    require(!failure, context_name + "visual checked recipe preparation failed");
+    sima::finalize_pipeline_storage(*manifest);
+    const auto& final = manifest->stages.front();
+    require(final.native_kernel && final.frame_layout &&
+                final.frame_layout->inputs.size() == stage.physical_inputs.size(),
+            context_name + "inputs did not survive checked recipe/final allocation placement");
+    namespace client = simaai::scheduler::client;
+    for (std::size_t i = 0; i < final.frame_layout->inputs.size(); ++i) {
+      const auto& input = final.frame_layout->inputs[i];
+      const auto label = context_name + "final input " + std::to_string(i) + ": ";
+      require(input.view_offset == 0, label + "spurious view offset");
+      // Final placement resolves standalone public tensor views after producer
+      // discovery. Their ordinal selects this
+      // frame's binding table, not an allocation index.
+      const auto* source = std::get_if<client::PhysicalBinding>(&input.source);
+      require(source && source->pad == 0 && source->binding_index == i &&
+                  source->byte_offset == 0 &&
+                  source->size_bytes == stage.physical_inputs[i].size_bytes,
+              label + "public tensor did not become an exact PhysicalBinding");
     }
   }
   for (const auto address :
        {PhysicalAddressSource::DirectCarrierSpan, PhysicalAddressSource::RuntimePhysicalBinding,
         PhysicalAddressSource::FrameSpan}) {
     for (const bool producer : {false, true})
-      for (const bool shared : {false, true})
-        for (const bool public_envelope : {false, true}) {
-          const auto node = std::make_shared<PhysicalAuthorityNode>();
-          node->address = address;
-          node->producer = producer;
-          node->shared_views = shared;
-          std::vector<std::shared_ptr<Node>> nodes{std::make_shared<Input>(InputOptions{})};
-          if (producer) {
-            const auto upstream = std::make_shared<PhysicalAuthorityNode>();
-            upstream->address = PhysicalAddressSource::DirectCarrierSpan;
-            nodes.push_back(upstream);
-          }
-          nodes.push_back(node);
-          ContractCompileInput context;
-          // Unlike the numerical public-input cases above, this transport can
-          // retain genuine raw GstMemory authority without a tensor envelope.
-          context.public_tensor_binding_ingress = public_envelope;
-          sima::ManifestBuildDiagnostics diagnostics;
-          const auto compiled = compile_node_contracts(nodes, context, &diagnostics);
-          require(diagnostics.errors.empty() && compiled.fully_renderable &&
-                      compiled.stages.size() == (producer ? 2U : 1U) &&
-                      compiled.stages.back().transport && !compiled.stages.back().processcvu &&
-                      !compiled.stages.back().resolved_executor,
-                  "non-executing transport authority fixture acquired a numerical executor");
-          const auto& runtime = compiled.stages.back().transport->runtime_contract;
-          const auto expected =
-              public_envelope && address == PhysicalAddressSource::DirectCarrierSpan && !producer
-                  ? PhysicalAddressSource::RuntimePhysicalBinding
-                  : address;
-          require(runtime.physical_inputs.front().address_source == expected &&
-                      runtime.physical_inputs.front().source_byte_offset ==
-                          (producer && address != PhysicalAddressSource::RuntimePhysicalBinding
-                               ? 136
-                               : 24) &&
-                      runtime.input_bindings.front().src_physical_byte_offset == 0 &&
-                      runtime.input_bindings.front().src_physical_size_bytes == 64,
-                  "projection changed a frame/producer authority or authored relative span");
-          auto manifest = render_manifest_from_compiled_contracts(compiled, context, &diagnostics);
-          require(manifest && diagnostics.errors.empty(), "transport authority render failed");
-          sima::finalize_pipeline_storage(*manifest);
-          require(bool(manifest->stages.back().frame_layout),
-                  "transport final FrameLayout missing");
-          check_final_authority(*manifest->stages.back().frame_layout, expected, producer, shared);
+      for (const bool shared : {false, true}) {
+        const auto node = std::make_shared<PhysicalAuthorityNode>();
+        node->address = address;
+        node->producer = producer;
+        node->shared_views = shared;
+        std::vector<std::shared_ptr<Node>> nodes{std::make_shared<Input>(InputOptions{})};
+        if (producer) {
+          const auto upstream = std::make_shared<PhysicalAuthorityNode>();
+          upstream->address = PhysicalAddressSource::DirectCarrierSpan;
+          nodes.push_back(upstream);
         }
+        nodes.push_back(node);
+        ContractCompileInput context;
+        // Transport retains its explicitly authored physical authority.
+        sima::ManifestBuildDiagnostics diagnostics;
+        const auto compiled = compile_node_contracts(nodes, context, &diagnostics);
+        require(diagnostics.errors.empty() && compiled.fully_renderable &&
+                    compiled.stages.size() == (producer ? 2U : 1U) &&
+                    compiled.stages.back().transport && !compiled.stages.back().processcvu &&
+                    !compiled.stages.back().resolved_executor,
+                "non-executing transport authority fixture acquired a numerical executor");
+        const auto& runtime = compiled.stages.back().transport->runtime_contract;
+        const auto expected = address;
+        require(runtime.physical_inputs.front().address_source == expected &&
+                    runtime.physical_inputs.front().source_byte_offset ==
+                        (producer && address != PhysicalAddressSource::RuntimePhysicalBinding
+                             ? 136
+                             : 24) &&
+                    runtime.input_bindings.front().src_physical_byte_offset == 0 &&
+                    runtime.input_bindings.front().src_physical_size_bytes == 64,
+                "compilation changed a frame/producer authority or authored relative span");
+        auto manifest = render_manifest_from_compiled_contracts(compiled, context, &diagnostics);
+        require(manifest && diagnostics.errors.empty(), "transport authority render failed");
+        sima::finalize_pipeline_storage(*manifest);
+        require(bool(manifest->stages.back().frame_layout), "transport final FrameLayout missing");
+        check_final_authority(*manifest->stages.back().frame_layout, expected, producer, shared);
+      }
   }
-  // The public marker must not reach transitive pipeline consumers.
+  // Contract compilation must preserve transitive consumers' authored authority.
   const std::vector<std::shared_ptr<Node>> transitive{std::make_shared<Input>(InputOptions{}),
                                                       std::make_shared<GriderFast>(fast),
                                                       std::make_shared<TrackKLT>(tracking)};
   ContractCompileInput context;
-  context.public_tensor_binding_ingress = true;
   sima::ManifestBuildDiagnostics diagnostics;
   const auto compiled = compile_node_contracts(transitive, context, &diagnostics);
   require(diagnostics.errors.empty() && compiled.stages.size() == 2,
@@ -537,7 +522,7 @@ void physical_projection_contract() {
   require(
       compiled.stages.back().processcvu->runtime_contract.physical_inputs.front().address_source ==
           PhysicalAddressSource::DirectCarrierSpan,
-      "public address projection escaped its direct boundary");
+      "contract compilation changed a transitive consumer's address authority");
 }
 
 } // namespace
@@ -545,5 +530,5 @@ RUN_TEST("unit_ordered_public_input_contract_test", ([] {
            metadata_contract();
            queue_contract();
            boundary_policy_contract();
-           physical_projection_contract();
+           physical_authority_contract();
          }));

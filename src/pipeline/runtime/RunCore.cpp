@@ -1648,8 +1648,6 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
       nodes, route_options, opt.mode, opt.run_options, public_output_contract);
   const auto context_us = pipeline_internal::build_timing_us(context_start);
   InputStreamOptions build_stream_opt = ctx.stream_opt;
-  build_stream_opt.public_unrouted_input =
-      !opt.input_route_processor && segment.input_edges.empty();
   build_stream_opt.startup_preflight =
       opt.allow_startup_preflight && ctx.stream_opt.startup_preflight;
   build_stream_opt.allow_graph_internal_zero_copy_input =
