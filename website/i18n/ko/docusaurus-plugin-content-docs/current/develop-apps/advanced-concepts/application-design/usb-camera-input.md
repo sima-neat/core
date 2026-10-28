@@ -195,7 +195,7 @@ graph.connect(source, pyneat.groups.video_sender(sender), video_link)
 
 | 옵션 | 효과 |
 | --- | --- |
-| `queue_depth`, `leaky_queue` | 카메라 뒤의 작은 leaky 큐가 그래프가 뒤처질 때 오래된 프레임을 버립니다. |
+| `queue_depth`, `leaky_queue` | 카메라 뒤의 작은 leaky 큐가 그래프가 뒤처질 때 오래된 프레임을 버립니다. 카메라의 캡처 풀은 `queue_depth` + 6개의 버퍼를 가지며 최대 64개이므로, `queue_depth`는 최대 58입니다. |
 
 웹캠은 JPEG 종료 마커 뒤에 바이트를 덧붙이는 경우가 많고, 일부 프레임은 불완전하게 도착하거나 USB 드라이버가 손상으로 표시합니다. `UsbCameraInput`은 드라이버가 손상으로 표시한 프레임을 출력 전에 버리므로, `VideoSender` 패스스루와 디코더 모두 이 프레임을 받지 않습니다. 디코더는 각 프레임을 종료 마커까지만 디코딩하고, 불완전하거나 손상된 프레임은 멈추지 않고 버립니다. 디코더 요소는 이를 `dropped-count` 속성에 셉니다.
 

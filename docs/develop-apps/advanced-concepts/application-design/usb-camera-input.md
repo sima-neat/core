@@ -195,7 +195,7 @@ The camera captures into CMA buffers that the hardware decoder reads in place, s
 
 | Option | Effect |
 | --- | --- |
-| `queue_depth`, `leaky_queue` | A small leaky queue after the camera drops stale frames when the graph falls behind. |
+| `queue_depth`, `leaky_queue` | A small leaky queue after the camera drops stale frames when the graph falls behind. The camera's capture pool holds `queue_depth` + 6 buffers, at most 64, so `queue_depth` can be at most 58. |
 
 Webcams often pad frames past the JPEG end marker, and some frames arrive incomplete or flagged as corrupt by the USB driver. `UsbCameraInput` drops the frames the driver flags before its output, so neither `VideoSender` passthrough nor the decoder receives them. The decoder decodes each frame up to its end marker and drops incomplete or corrupt frames instead of stopping. The decoder element counts them in its `dropped-count` property.
 

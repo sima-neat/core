@@ -195,7 +195,7 @@ graph.connect(source, pyneat.groups.video_sender(sender), video_link)
 
 | 選項 | 效果 |
 | --- | --- |
-| `queue_depth`, `leaky_queue` | 攝影機後方的小型 leaky 佇列會在圖處理落後時捨棄過時的影格。 |
+| `queue_depth`, `leaky_queue` | 攝影機後方的小型 leaky 佇列會在圖處理落後時捨棄過時的影格。攝影機的擷取緩衝池包含 `queue_depth` + 6 個緩衝區，最多 64 個，因此 `queue_depth` 最多為 58。 |
 
 網路攝影機經常在 JPEG 結束標記之後補上位元組，有些影格則會不完整地抵達，或被 USB 驅動程式標示為損毀。`UsbCameraInput` 會在輸出前捨棄驅動程式標示為損毀的影格，因此 `VideoSender` 直通模式與解碼器都不會收到這些影格。解碼器會把每個影格解碼到其結束標記為止，並在不停止的情況下捨棄不完整或損毀的影格。解碼器元件會在其 `dropped-count` 屬性中計數。
 
