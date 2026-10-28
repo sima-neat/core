@@ -182,6 +182,9 @@ public:
   std::optional<pipeline_internal::InputStreamTeardownPolicy>
   effective_teardown_policy() const noexcept;
   GstElement* pipeline_handle() const;
+  // Owned reference (caller unrefs) taken under the teardown lock, or nullptr once stop() or
+  // close() has released the pipeline. Use this from threads that can race stop().
+  GstElement* acquire_pipeline_ref() const;
   void set_on_caps_change(std::function<void(const SampleSpec&, const SampleSpec&)> cb);
 
   void close();

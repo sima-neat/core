@@ -231,6 +231,16 @@ GstElement* InputStream::pipeline_handle() const {
   return state_->pipeline;
 }
 
+GstElement* InputStream::acquire_pipeline_ref() const {
+  const auto state = std::atomic_load_explicit(&state_, std::memory_order_acquire);
+  if (!state)
+    return nullptr;
+  std::lock_guard<std::mutex> lock(state->pipeline_mu);
+  if (!state->pipeline || state->teardown_started.load())
+    return nullptr;
+  return GST_ELEMENT(gst_object_ref(state->pipeline));
+}
+
 void InputStream::set_on_caps_change(std::function<void(const SampleSpec&, const SampleSpec&)> cb) {
   if (!state_)
     return;

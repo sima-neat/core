@@ -1405,11 +1405,16 @@ void start_sink_segment_bus_watch(const std::shared_ptr<RunCore>& core, std::siz
       });
       run_core = pipe.run_core;
     }
-    GstElement* pipeline = run_core ? run_core->pipeline.stream.pipeline_handle() : nullptr;
-    if (!pipeline || core->graph_stop_requested()) {
+    // Child stop() runs before graph_signal_stop() and releases the pipeline under its
+    // teardown lock, so only a reference taken under that lock is safe to poll.
+    GstElement* pipeline = run_core ? run_core->pipeline.stream.acquire_pipeline_ref() : nullptr;
+    if (!pipeline) {
       return;
     }
-    gst_object_ref(pipeline);
+    if (core->graph_stop_requested()) {
+      gst_object_unref(pipeline);
+      return;
+    }
     const auto diag = run_core->pipeline.stream.diag_ctx();
     while (true) {
       const bool last_check =
