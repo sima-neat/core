@@ -473,6 +473,7 @@ set(UNIT_TESTS
   unit_video_sender_test
   unit_video_sender_adaptive_ingress_test
   unit_video_sender_passthrough_drain_test
+  unit_graph_sink_segment_error_test
   unit_env_util_profile_test
   unit_framestream_test
   unit_move_semantics_proof_test
