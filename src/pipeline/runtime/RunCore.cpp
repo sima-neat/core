@@ -1641,6 +1641,7 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
       opt.allow_startup_preflight && ctx.stream_opt.startup_preflight;
   build_stream_opt.allow_graph_internal_zero_copy_input =
       segment.boundary.needs_input && !segment.input_edges.empty();
+  build_stream_opt.copy_encoded_input = segment_copies_encoded_input(segment);
   session_build_tune_internal_zero_copy_holder_window(
       build_stream_opt, opt.graph_options.edge_queue, segment.boundary.graph_internal_output);
   InputStream stream;

@@ -93,6 +93,9 @@ struct InputStreamOptions {
   // copy_output remains the fallback for other storage; Owned disables retention.
   bool preserve_framework_output = false;
   bool copy_input = false;
+  // Copy compressed payloads instead of forwarding their GstSample holder. Set for
+  // network egress segments, which keep what they are handed; raw input is unaffected.
+  bool copy_encoded_input = false;
   int holder_loan_credits = 0;
   bool holder_loan_credits_auto = false;
   int holder_loan_sample_window = 1;

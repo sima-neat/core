@@ -277,7 +277,7 @@ bool allow_inputstream_cpu_to_device_copy() {
 }
 
 bool encoded_holder_zero_copy_input_enabled(const InputStream::State& st) {
-  if (st.opt.copy_input) {
+  if (st.opt.copy_input || st.opt.copy_encoded_input) {
     return false;
   }
   if (const char* raw = std::getenv("SIMA_INPUTSTREAM_ENCODED_HOLDER_ZERO_COPY")) {
@@ -287,11 +287,13 @@ bool encoded_holder_zero_copy_input_enabled(const InputStream::State& st) {
    * Encoded GstSample holder transport is a zero-copy optimization for
    * in-process graph edges.  It is safe for the blocking decode path, where the
    * original compressed sample is consumed by one downstream pipeline.  For
-   * non-blocking preview/egress paths (for example H264 -> VideoSender/Insight)
-   * the same upstream holder may also feed the decoder branch.  Forwarding that
-   * shared holder lets downstream parser/payload stages retain or mutate the
-   * original GstBuffer long enough to starve the sibling branch.  Copy only the
-   * compressed payload on those egress paths; raw decoder tensors stay zero-copy.
+   * egress paths (for example H264/MJPEG -> VideoSender/Insight) the same
+   * upstream holder may also feed the decoder branch.  Forwarding that shared
+   * holder lets downstream parser/payload stages retain or mutate the original
+   * GstBuffer long enough to starve the sibling branch and the producer's
+   * capture pool.  Copy only the compressed payload on those egress paths:
+   * network egress segments set copy_encoded_input (see RunCore), and
+   * non-blocking inputs copy here.  Raw decoder tensors stay zero-copy.
    */
   return st.src_opt.block;
 }
