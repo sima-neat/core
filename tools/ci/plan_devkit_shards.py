@@ -60,7 +60,7 @@ def validate_plan(plan):
         raise ValueError("Empty shard or runner selector")
 
 
-def make_plan(runners, required, sha, maximum=6):
+def make_plan(runners, required, sha, maximum=6, plan_id="local"):
     if not 1 <= maximum <= 6:
         raise ValueError("Fleet cap must be one to six")
     required = {x.casefold() for x in required}
@@ -76,7 +76,7 @@ def make_plan(runners, required, sha, maximum=6):
         shard = min(shards, key=lambda s: (s["estimated_seconds"], s["id"]))
         shard["tasks"].append(task)
         shard["estimated_seconds"] += seconds
-    plan = {"sha": sha, "shards": shards}
+    plan = {"sha": sha, "plan_id": plan_id, "shards": shards}
     validate_plan(plan)
     return plan
 
@@ -88,7 +88,7 @@ def verify_results(plan, directory):
         raise ValueError("Missing or duplicate DevKit receipts")
     for shard in plan["shards"]:
         r = next(r for r in receipts if r["id"] == shard["id"])
-        if r["sha"] != plan["sha"] or r["result"] != "success" or r["tasks"] != shard["tasks"]:
+        if r["plan_id"] != plan["plan_id"] or r["sha"] != plan["sha"] or r["result"] != "success" or r["tasks"] != shard["tasks"]:
             raise ValueError("Failed, stale, or incomplete DevKit shard")
     partitions = [json.loads(p.read_text()) for p in directory.rglob("e2e-partition.json")]
     if len(partitions) != 2 or {p["index"] for p in partitions} != {0,1}:
@@ -124,12 +124,13 @@ def main():
             return json.load(response)
     runners = discover_runners(get, os.environ["GITHUB_REPOSITORY"], args.group,
                                os.environ.get("REPOSITORY_PRIVATE", "true") == "true")
-    plan = make_plan(runners, json.loads(args.labels), os.environ["GITHUB_SHA"])
+    plan = make_plan(runners, json.loads(args.labels), os.environ["GITHUB_SHA"],
+                     plan_id=f"{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}")
     args.output.write_text(json.dumps(plan, indent=2) + "\n")
-    matrix = {"include": [{"shard": s["id"], "labels": s["labels"],
+    matrix = {"include": [{"shard": s["id"], "plan_id": plan["plan_id"], "labels": s["labels"],
                             "tasks": json.dumps(s["tasks"])} for s in plan["shards"]]}
     with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-        f.write(f"matrix={json.dumps(matrix)}\n")
+        f.write(f"matrix={json.dumps(matrix)}\nplan_id={plan['plan_id']}\n")
     with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
         f.write("| Shard | Idle at discovery | Estimated tests | Lanes |\n|---|---|---:|---|\n")
         for s in plan["shards"]:

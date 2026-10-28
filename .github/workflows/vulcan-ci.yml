@@ -851,6 +851,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
+      plan_id: ${{ steps.plan.outputs.plan_id }}
     steps:
       - uses: actions/checkout@v5
       - name: Mint read-only runner discovery token
@@ -1534,7 +1535,7 @@ jobs:
         if: ${{ always() && contains(fromJSON(matrix.tasks), 'performance') }}
         uses: actions/upload-artifact@v6
         with:
-          name: modalix-performance-results-${{ matrix.shard }}-${{ github.run_id }}
+          name: modalix-performance-results-${{ matrix.plan_id }}-${{ matrix.shard }}-${{ github.run_id }}
           overwrite: true
           path: _work/perf-results/
           if-no-files-found: error
@@ -1715,6 +1716,7 @@ jobs:
       - name: Record DevKit shard outcome
         if: ${{ always() }}
         env:
+          PLAN_ID: ${{ matrix.plan_id }}
           SHARD_ID: ${{ matrix.shard }}
           SHARD_TASKS: ${{ matrix.tasks }}
           SHARD_RESULT: ${{ job.status }}
@@ -1726,6 +1728,7 @@ jobs:
           out.mkdir(parents=True, exist_ok=True)
           (out / 'shard-receipt.json').write_text(json.dumps({
               'id': os.environ['SHARD_ID'], 'sha': os.environ['GITHUB_SHA'],
+              'plan_id': os.environ['PLAN_ID'],
               'tasks': json.loads(os.environ['SHARD_TASKS']),
               'result': os.environ['SHARD_RESULT'], 'runner': os.environ['RUNNER_NAME'],
           }, indent=2) + '\n')
@@ -1735,7 +1738,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: core-selected-coverage-${{ matrix.shard }}-${{ github.run_id }}
+          name: core-selected-coverage-${{ matrix.plan_id }}-${{ matrix.shard }}-${{ github.run_id }}
           overwrite: true
           path: _work/coverage/
           if-no-files-found: error
@@ -1797,7 +1800,7 @@ jobs:
           name: core-devkit-shard-plan
       - uses: actions/download-artifact@v4
         with:
-          pattern: core-selected-coverage-*
+          pattern: core-selected-coverage-${{ needs.plan-devkit-tests.outputs.plan_id }}-*
           path: _work/all-shards
       - name: Verify complete lane and E2E coverage
         run: python3 tools/ci/plan_devkit_shards.py --verify-results _work/all-shards

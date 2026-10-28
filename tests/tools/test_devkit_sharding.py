@@ -67,7 +67,7 @@ def results(tmp_path):
     for s in plan['shards']:
         d = tmp_path / s['id']; d.mkdir()
         (d / 'shard-receipt.json').write_text(json.dumps(
-            {'id': s['id'], 'sha': 'sha', 'tasks': s['tasks'], 'result': 'success'}))
+            {'id': s['id'], 'plan_id': plan['plan_id'], 'sha': 'sha', 'tasks': s['tasks'], 'result': 'success'}))
     for i in range(2):
         (tmp_path / f'devkit-{i+1}' / 'e2e-partition.json').write_text(json.dumps(
             {'index': i, 'canonical': ['a', 'b'], 'selected': [['a'], ['b']][i]}))
@@ -171,3 +171,42 @@ def test_offline_only_and_fuzz_runs_do_not_require_hardware_shards():
     assert '!inputs.offline_source_run_id' in gate
     assert "== 'standard'" in gate
     assert "needs.detect-changes.outputs.docs_only != 'true'" in gate
+
+
+def test_rerun_all_uses_new_plan_generation_and_ignores_removed_shards(tmp_path):
+    # Re-run all jobs creates a fresh plan even when the commit is unchanged.
+    old = planner.make_plan([runner(i) for i in range(6)], ['rtsp'], 'sha', plan_id='run-1')
+    new = planner.make_plan([runner(0)], ['rtsp'], 'sha', plan_id='run-2')
+    assert len(old['shards']) == 6 and len(new['shards']) == 1
+    assert old['plan_id'] != new['plan_id']
+    jobs = yaml.safe_load((ROOT / '.github/workflows/vulcan-ci.yml').read_text())['jobs']
+    upload = next(s for s in jobs['test-devkit-shard']['steps']
+                  if s.get('name') == 'Upload selected coverage and outcomes')['with']
+    download = next(s for s in jobs['test-devkit']['steps']
+                    if 'pattern' in s.get('with', {}))['with']
+    assert '${{ matrix.plan_id }}' in upload['name']
+    assert download['pattern'] == 'core-selected-coverage-${{ needs.plan-devkit-tests.outputs.plan_id }}-*'
+    # A failed-job-only rerun keeps its original matrix plan ID and stable name.
+    assert 'github.run_attempt' not in upload['name'] and upload['overwrite'] is True
+    plan = results(tmp_path)
+    p = tmp_path / 'devkit-1/shard-receipt.json'
+    data = json.loads(p.read_text()); data['plan_id'] = 'stale-generation'
+    p.write_text(json.dumps(data))
+    with pytest.raises(ValueError): planner.verify_results(plan, tmp_path)
+
+
+def test_planner_exports_one_generation_to_manifest_matrix_and_gate(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, 'argv', ['planner', '--group', 'devkits', '--labels', '["rtsp"]'])
+    for key, value in {'RUNNER_DISCOVERY_TOKEN': 'fixture', 'GITHUB_REPOSITORY': 'sima-neat/core',
+                       'GITHUB_SHA': 'sha', 'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '2',
+                       'GITHUB_OUTPUT': str(tmp_path / 'outputs'),
+                       'GITHUB_STEP_SUMMARY': str(tmp_path / 'summary')}.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(planner, 'discover_runners', lambda *a: [runner(1)])
+    planner.main()
+    plan = json.loads((tmp_path / 'devkit-shard-plan.json').read_text())
+    output = dict(line.split('=', 1) for line in (tmp_path / 'outputs').read_text().splitlines())
+    matrix = json.loads(output['matrix'])
+    assert output['plan_id'] == plan['plan_id'] == matrix['include'][0]['plan_id'] == '123-2'
+    assert json.loads(matrix['include'][0]['tasks']) == plan['shards'][0]['tasks']

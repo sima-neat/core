@@ -147,7 +147,9 @@ Hardware tests remain isolated within each worker, including serial performance
 and GenAI execution. The existing `Test Core on DevKit` gate requires every worker
 to pass and verifies complete lane assignment and the exact union of both E2E
 selections before promotion, offline delivery or validation-only completion.
-Per-worker `core-selected-coverage-*` artifacts contain coverage and outcome
-receipts; `core-devkit-shard-plan` records the fleet and assignments. Timing
+Plan-specific `core-selected-coverage-*` artifacts contain coverage and outcome
+receipts; `core-devkit-shard-plan` records the fleet and assignments. Full reruns
+create a new plan ID, so removed shards from older attempts are ignored. Failed-job
+reruns retain the plan ID and replace only the re-executed shards' artifacts. Timing
 estimates exclude installation and downloads, which repeat on each selected
 DevKit. Runtime and public APIs are unchanged.
