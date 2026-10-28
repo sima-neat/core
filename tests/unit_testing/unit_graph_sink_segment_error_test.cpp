@@ -70,8 +70,7 @@ void check_acquired_pipeline_ref_outlives_stop() {
   GstElement* owned = stream.acquire_pipeline_ref();
   require(owned == pipeline, "a running stream must hand out its pipeline");
   static std::atomic<bool> finalized{false};
-  g_object_weak_ref(
-      G_OBJECT(owned), [](gpointer, GObject*) { finalized.store(true); }, nullptr);
+  g_object_weak_ref(G_OBJECT(owned), [](gpointer, GObject*) { finalized.store(true); }, nullptr);
   stream.stop();
   require(!finalized.load(), "stop() must not free a pipeline the watch acquired");
   GstState state = GST_STATE_VOID_PENDING;
