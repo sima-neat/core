@@ -1,0 +1,302 @@
+{
+  "schema": 1,
+  "sdk_policy": {
+    "schema_version": 1,
+    "runner": {
+      "policy": "snap"
+    },
+    "codecs": {
+      "policy": "snap"
+    },
+    "kernels": {
+      "policy": "runner-lock"
+    },
+    "sdk": {
+      "channel": "develop"
+    },
+    "platform-version": "3.0.0",
+    "elxr_version": "3.0.0_master_B2372",
+    "sysroot-version": "3.0.0~pre2372"
+  },
+  "platform": {
+    "platform_packages": {
+      "libc6": "arm64",
+      "libgcc-s1": "arm64",
+      "libstdc++6": "arm64",
+      "simaai-heap": "arm64",
+      "simaai-log": "arm64",
+      "simaai-mlart-modalix": "arm64",
+      "simaai-trace": "arm64",
+      "tvm": "arm64"
+    },
+    "provider_loaders": {
+      "ld-linux-aarch64.so.1": "libc6",
+      "libMLArt.so": "simaai-mlart-modalix",
+      "libc.so.6": "libc6",
+      "libgcc_s.so.1": "libgcc-s1",
+      "libm.so.6": "libc6",
+      "libsimaai_heap.so.2": "simaai-heap",
+      "libsimaailog.so": "simaai-log",
+      "libsimaaitrace.so": "simaai-trace",
+      "libstdc++.so.6": "libstdc++6",
+      "libtvm_runtime.so": "tvm"
+    },
+    "required_sonames": [
+      "libsimaai_heap.so.2"
+    ],
+    "platform_runtime": {
+      "providers": {
+        "MLArt": {
+          "archive": "/workspace/deps/scheduler/platform-debs/downloads/simaai-mlart-modalix_2.2.0~pre2372_arm64.deb",
+          "build_archive": {
+            "filename": "simaai-mlart-modalix_2.2.0~pre2372_arm64.deb",
+            "sha256": "680bf9f872a769d4997d6519841fc504439febc7200dc955ee3e739dbae77781"
+          },
+          "debian_provider": {
+            "Architecture": "arm64",
+            "Package": "simaai-mlart-modalix",
+            "Version": "2.2.0~pre2372",
+            "deb_sha256": "680bf9f872a769d4997d6519841fc504439febc7200dc955ee3e739dbae77781"
+          },
+          "installed_files": {
+            "usr/bin/modalix-mla-rt": {
+              "kind": "file",
+              "mode": 493,
+              "sha256": "7b535d1d2c15da93bb6afa8e8e9fc08edabab4f55799a19bd44790ed506b06f3"
+            },
+            "usr/lib/aarch64-linux-gnu/libMLArt.so": {
+              "kind": "file",
+              "mode": 420,
+              "sha256": "1e68acc3f535ba71c71843a99cbd138017ef0d8ef3e2149549851fb6df3964ad"
+            },
+            "usr/lib/aarch64-linux-gnu/modalix-libMLArt.so": {
+              "kind": "file",
+              "mode": 420,
+              "sha256": "1e68acc3f535ba71c71843a99cbd138017ef0d8ef3e2149549851fb6df3964ad"
+            },
+            "usr/lib/tmpfiles.d/simaai-mlart-modalix.conf": {
+              "kind": "file",
+              "mode": 420,
+              "sha256": "09c888ed0b7142a2ddc9705c0ffe6f0c1a1032c94f70874ee79f89e59ccd4dd9"
+            },
+            "usr/share/doc/simaai-mlart-modalix/changelog.gz": {
+              "kind": "file",
+              "mode": 420,
+              "sha256": "2b57fe329351914da0679ab155602bb8e9311c51ca26f479b3f50766f6d93c20"
+            },
+            "usr/share/doc/simaai-mlart-modalix/copyright": {
+              "kind": "file",
+              "mode": 420,
+              "sha256": "222bb2f7926a7935efec3f3c5a942f2d62d6c1fc6afd6f2233198808b2279c62"
+            }
+          },
+          "installed_payload_sha256": "32fb5ffa7282f97c07720ec04b57f4a0f90f3fb2cd5995b2f47beb687dd6e28f",
+          "kind": "platform-owned-runtime",
+          "loader_name": "libMLArt.so",
+          "required_soname": false
+        },
+        "SimaHeap": {
+          "archive": "/workspace/deps/scheduler/platform-debs/downloads/simaai-heap_3.0~pre2372_arm64.deb",
+          "build_archive": {
+            "filename": "simaai-heap_3.0~pre2372_arm64.deb",
+            "sha256": "b490809e5617f5b9730b7b1a7187b2389c77a9b15fc8a52b1d2a63cba6893a76"
+          },
+          "debian_provider": {
+            "Architecture": "arm64",
+            "Package": "simaai-heap",
+            "Version": "3.0~pre2372"
+          },
+          "installed_files": {
+            "usr/bin/simaai_heap_bench": {
+              "kind": "file",
+              "mode": 493,
+              "sha256": "49bdbd68d6dd4c433f2a8597fa99dc967a4da2e0e2ed95be4be9a46c3f395245"
+            },
+            "usr/bin/simaai_heap_example": {
+              "kind": "file",
+              "mode": 493,
+              "sha256": "42c2b906f57fa8774bc096903319756e3e7fe03fe98e1ba3f31d3576489e34df"
+            },
+            "usr/bin/simaai_heap_frag": {
+              "kind": "file",
+              "mode": 493,
+              "sha256": "742e32f4cddccd9fec2a36698f79741d2801c259bce12f31c2d2a93ab25a3bf9"
+            },
+            "usr/bin/simaai_heap_test": {
+              "kind": "file",
+              "mode": 493,
+              "sha256": "18b8cd784c6366ef3f466ce11e803c0ff839092a26bcd9bc06458848a98a5b41"
+            },
+            "usr/lib/aarch64-linux-gnu/libsimaai_heap.so.2": {
+              "kind": "symlink",
+              "target": "libsimaai_heap.so.2.1.0"
+            },
+            "usr/lib/aarch64-linux-gnu/libsimaai_heap.so.2.1.0": {
+              "kind": "file",
+              "mode": 420,
+              "sha256": "5f93bd54ce7d72445c31ed7a36b4aa855aabee983ce43e91a2f0523bfa356659"
+            },
+            "usr/share/doc/simaai-heap/changelog.gz": {
+              "kind": "file",
+              "mode": 420,
+              "sha256": "465749b517ce166738cc8ee1af5cb44d045728a112c6092cfe1f87409f8646b1"
+            },
+            "usr/share/doc/simaai-heap/copyright": {
+              "kind": "file",
+              "mode": 420,
+              "sha256": "222bb2f7926a7935efec3f3c5a942f2d62d6c1fc6afd6f2233198808b2279c62"
+            }
+          },
+          "installed_payload_sha256": "4f3a7c8cf4dec57b67fe320d8e5f75b73c93754b56807a00f85e907e53eb4f84",
+          "kind": "platform-owned-runtime",
+          "loader_name": "libsimaai_heap.so.2",
+          "required_soname": true
+        },
+        "TVM": {
+          "archive": "/workspace/deps/scheduler/platform-debs/downloads/tvm_1.4.1~git202605280444.c66e7682-0~pre2372_arm64.deb",
+          "build_archive": {
+            "filename": "tvm_1.4.1~git202605280444.c66e7682-0~pre2372_arm64.deb",
+            "sha256": "ec66da77aab1f4c57e9d7ab4b4e3087ebf8a34896f2056263c683b3d45c9643f"
+          },
+          "debian_provider": {
+            "Architecture": "arm64",
+            "Package": "tvm",
+            "Version": "1.4.1~git202605280444.c66e7682-0~pre2372",
+            "deb_sha256": "ec66da77aab1f4c57e9d7ab4b4e3087ebf8a34896f2056263c683b3d45c9643f"
+          },
+          "installed_files": {
+            "usr/lib/libtvm.so": {
+              "kind": "file",
+              "mode": 420,
+              "sha256": "e5aed0ae7516a4c48299e29af551bec3baa1e5eeb6d8791b15ac937e93e6b0d9"
+            },
+            "usr/lib/libtvm_runtime.so": {
+              "kind": "file",
+              "mode": 420,
+              "sha256": "ef61dbf9b972e63609460f70aab79d680d3d6dd9e956505b7e51473d346b43eb"
+            },
+            "usr/share/doc/tvm/changelog.Debian.gz": {
+              "kind": "file",
+              "mode": 420,
+              "sha256": "964182597191d1f00e3aa0428884e9cf912f8373494da174ab5839b6a48aeb26"
+            },
+            "usr/share/doc/tvm/copyright": {
+              "kind": "file",
+              "mode": 420,
+              "sha256": "222bb2f7926a7935efec3f3c5a942f2d62d6c1fc6afd6f2233198808b2279c62"
+            }
+          },
+          "installed_payload_sha256": "fe4a415044f52f8132fc9300b29821ee6c4d71df40c13012e1a62867d750338e",
+          "kind": "platform-owned-runtime",
+          "loader_name": "libtvm_runtime.so",
+          "required_soname": false
+        }
+      },
+      "schema_version": 1
+    },
+    "schema_version": 1
+  },
+  "platform_sdk": {
+    "required_providers": [
+      "MLArt",
+      "simaailog",
+      "simaaitrace",
+      "TVM"
+    ],
+    "selected_libraries": {
+      "GLIB2_LIBRARY": {
+        "path": "/opt/toolchain/aarch64/modalix/usr/lib/aarch64-linux-gnu/libglib-2.0.so",
+        "sha256": "a8458849feaa22469c20baf36917c3538bf75d52da710097b5829b6d4a95a6d1"
+      },
+      "GOBJECT2_LIBRARY": {
+        "path": "/opt/toolchain/aarch64/modalix/usr/lib/aarch64-linux-gnu/libgobject-2.0.so",
+        "sha256": "1e0f94a31513dc217b17aa995af65d19f938ef023648c8f22ccacb3f7d4def2f"
+      },
+      "GSTBASE_LIBRARY": {
+        "path": "/opt/toolchain/aarch64/modalix/usr/lib/aarch64-linux-gnu/libgstbase-1.0.so",
+        "sha256": "9add5b01254e7ec1a27d06f9fe0f74ee9b319830ed862091f5a8558f4bd01b49"
+      },
+      "GST_LIBRARY": {
+        "path": "/opt/toolchain/aarch64/modalix/usr/lib/aarch64-linux-gnu/libgstreamer-1.0.so",
+        "sha256": "e910bb39c9636ff4322c202ce32f990e1b881bc820d1c604bb05397613ae861a"
+      },
+      "SIMAAIPEP_LIBRARY": {
+        "path": "/opt/toolchain/aarch64/modalix/usr/lib/libsimaaipep.so",
+        "sha256": "44a5f4d083350861995563eee35ea0283900b36f97300676939af74aaea5851d"
+      },
+      "SIMANEAT_RESOLVED_LIB_simaailog": {
+        "path": "/opt/toolchain/aarch64/modalix/usr/lib/aarch64-linux-gnu/libsimaailog.so",
+        "sha256": "6cab04c451176588c323766d0ed49d554480c8e4cbf89f641dace067fa388d2a"
+      },
+      "SIMANEAT_RESOLVED_LIB_simaaitrace": {
+        "path": "/opt/toolchain/aarch64/modalix/usr/lib/aarch64-linux-gnu/libsimaaitrace.so",
+        "sha256": "922f1a3e097230b07b03c120130544b3986ef8f2d44968d26db6f9b6545f3a74"
+      }
+    }
+  },
+  "codecs_platform": {
+    "actual_platform_providers": {
+      "ld-linux-aarch64.so.1": {
+        "architecture": "arm64",
+        "deb_sha256": "8784eda966b189c777a384dac5ce009e8fc9b52d006926c5a013e7fa8aa688cc",
+        "library_sha256": "1b882eddacd494b060413a8aa4f0a4754ee3f84775e68cecbf8a86092b59cca6",
+        "package": "libc6",
+        "version": "2.41-12+deb13u4"
+      },
+      "libc.so.6": {
+        "architecture": "arm64",
+        "deb_sha256": "8784eda966b189c777a384dac5ce009e8fc9b52d006926c5a013e7fa8aa688cc",
+        "library_sha256": "70fa4c4cf57eabeb96097cce47582d02379c4cd1de3db3e98ade4dd7089a1b13",
+        "package": "libc6",
+        "version": "2.41-12+deb13u4"
+      },
+      "libgcc_s.so.1": {
+        "architecture": "arm64",
+        "deb_sha256": "1108bc87879833d6d9a145f22a4a15cddb34e065b4b5f4b97bee586adbac2851",
+        "library_sha256": "9a146967dc38c3820c5dc21c3209812655f66b6551264072b187bd0e787947e0",
+        "package": "libgcc-s1",
+        "version": "14.2.0-19"
+      },
+      "libm.so.6": {
+        "architecture": "arm64",
+        "deb_sha256": "8784eda966b189c777a384dac5ce009e8fc9b52d006926c5a013e7fa8aa688cc",
+        "library_sha256": "a8afb2d1f4a0c5e14c0fc82f794ec839eafe29738907aa92895410f57630bbe2",
+        "package": "libc6",
+        "version": "2.41-12+deb13u4"
+      },
+      "libsimaailog.so": {
+        "architecture": "arm64",
+        "deb_sha256": "ce59b7be55ca0a2beb1522c18cf2196ae28c873282521b94fe896c8a290de076",
+        "library_sha256": "6cab04c451176588c323766d0ed49d554480c8e4cbf89f641dace067fa388d2a",
+        "package": "simaai-log",
+        "version": "2.2.0~pre2372"
+      },
+      "libsimaaitrace.so": {
+        "architecture": "arm64",
+        "deb_sha256": "ebb7abce69fc8ce70687cb1376b84b8c1606514e5df07a33ba070d5a4f0af8bc",
+        "library_sha256": "922f1a3e097230b07b03c120130544b3986ef8f2d44968d26db6f9b6545f3a74",
+        "package": "simaai-trace",
+        "version": "2.2.0~pre2372"
+      },
+      "libstdc++.so.6": {
+        "architecture": "arm64",
+        "deb_sha256": "6669b0c52a2e7c6af9adfdabce3ff6e286065cdfbc7b85280862b5f799daebee",
+        "library_sha256": "fff1f0050a33ddf29c44634c7639ac16e2573a61e3daab4fcc4c007b432ccf19",
+        "package": "libstdc++6",
+        "version": "14.2.0-19"
+      }
+    },
+    "actual_sdk_platform": {
+      "architecture": "all",
+      "inventory_sha256": "91ffbc3af6293f189d4fae43888b458de1b4c5f34e56c1720a7f08b404c6014f",
+      "package": "simaai-palette-modalix",
+      "version": "3.0.0~pre2372"
+    },
+    "sdk_policy": {
+      "elxr_version": "3.0.0_master_B2372",
+      "platform_version": "3.0.0",
+      "sdk_channel": "develop",
+      "sysroot_version": "3.0.0~pre2372"
+    }
+  }
+}

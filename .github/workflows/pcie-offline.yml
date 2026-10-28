@@ -154,6 +154,7 @@ jobs:
             ${{ runner.temp }}/offline-build.log
             ${{ runner.temp }}/offline/spec.json
             ${{ runner.temp }}/offline/baseline-images.json
+            ${{ runner.temp }}/offline/card-baseline-requirements.json
             ${{ runner.temp }}/offline/metadata-offline.json
             ${{ runner.temp }}/offline/neat-offline/bundle.json
           if-no-files-found: ignore
@@ -232,6 +233,7 @@ jobs:
             ${{ runner.temp }}/offline-build.log
             ${{ runner.temp }}/offline/spec.json
             ${{ runner.temp }}/offline/baseline-images.json
+            ${{ runner.temp }}/offline/card-baseline-requirements.json
             ${{ runner.temp }}/offline/metadata.json
             ${{ runner.temp }}/offline/metadata-minimal.json
             ${{ runner.temp }}/offline/neat-core-offline/bundle.json

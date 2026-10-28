@@ -3,11 +3,13 @@
 import argparse
 import base64
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 from urllib.parse import quote
 
 import assemble
@@ -141,18 +143,79 @@ def baseline_identity(role, dependencies):
         sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
+def card_baseline_requirements(publication):
+    """Ask the authenticated Scheduler for the clean image's Platform inputs.
+
+    Scheduler/Runner/Kernels binaries and firmware belong to the incoming
+    payload. Their changing receipts do not change the pre-installation root.
+    """
+    helper_path = publication/'scheduler_platform_admission.py'
+    spec = importlib.util.spec_from_file_location('baseline_admission', helper_path)
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    resolved = json.loads((publication/'resolved-deps-manifest.json').read_text())
+    selected = resolved['scheduler']['buildinfo']
+    archives = helper._scheduler_archives(publication)
+    if len(archives) != 1:
+        raise ValueError('expected one selected Scheduler archive')
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)/'scheduler'
+        helper.extract_scheduler(archives[0], root)
+        helper.authenticate_tool(root/'usr', selected)
+        name = 'share/SimaScheduler/dependency-policy.json'
+        policy = root/'usr'/name
+        expected = selected['installed_files'].get(name, {})
+        if (policy.is_symlink() or not policy.is_file() or expected.get('kind') != 'file'
+                or assemble.sha(policy) != expected.get('sha256')):
+            raise ValueError('Scheduler SDK policy differs from selected receipt')
+        sdk_policy = json.loads(policy.read_text())
+    # describe authenticates the complete incoming cohort and delegates provider
+    # classification to Scheduler; Core does not infer providers from DEB names.
+    description = helper.invoke(publication, 'describe')
+    platform = {name: value for name, value in description.items()
+                if name not in ('firmware', 'redistributed_provider_controls')}
+    codecs = resolved.get('external_dependencies', {}).get('SimaCodecs', {}).get('buildinfo', {})
+    return {'schema': 1, 'sdk_policy': sdk_policy, 'platform': platform,
+            'platform_sdk': selected.get('external_dependencies', {}).get('platform_sdk'),
+            'codecs_platform': {name: codecs.get(name) for name in (
+                'actual_platform_providers', 'actual_sdk_platform', 'sdk_policy')}}
+
+
+def card_requirements_identity(requirements):
+    return hashlib.sha256(json.dumps({'recipe_sha256': baseline_config()['recipe_sha256'],
+        'requirements': requirements}, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
 def pull_baseline(args, role, record):
     config = baseline_config()
     key = baseline_identity(role, baseline_dependencies(record, role))
-    tag = config['repository']+':offline-'+role+'-'+key
-    result = subprocess.run(['docker', 'manifest', 'inspect', '--verbose', tag], capture_output=True, text=True)
-    if result.returncode:
-        raise RuntimeError('Cannot resolve clean baseline '+role+'. Publish matching images with Vulcan '
-                           'Build reusable Ubuntu images (offline_source_sha='+args.sha+'). '+result.stderr)
-    manifest = json.loads(result.stdout)
-    digest = manifest.get('Descriptor', {}).get('digest') if isinstance(manifest, dict) else None
-    if not re.fullmatch(r'sha256:[0-9a-f]{64}', digest or ''):
-        raise ValueError('baseline must be a single-platform manifest with a digest')
+    requirements_key = None
+    qualified = []
+    if role == 'card':
+        requirements = card_baseline_requirements(args.work/'card-publication')
+        requirements_key = card_requirements_identity(requirements)
+        (args.work/'card-baseline-requirements.json').write_text(json.dumps(requirements, indent=2)+'\n')
+        qualified = [row for row in config['card'].get('qualified_baselines', [])
+                     if row['requirements_sha256'] == requirements_key]
+    if len(qualified) > 1:
+        raise ValueError('ambiguous qualified card baseline')
+    if qualified:
+        # Reuse the original immutable image and its original provenance labels;
+        # never relabel it as if it had been built from the new Scheduler DEB.
+        digest, key = qualified[0]['digest'], qualified[0]['inputs_sha256']
+        if (not re.fullmatch(r'sha256:[0-9a-f]{64}', digest)
+                or not re.fullmatch(r'[0-9a-f]{64}', key)):
+            raise ValueError('invalid qualified card baseline identity')
+    else:
+        tag = config['repository']+':offline-'+role+'-'+key
+        result = subprocess.run(['docker', 'manifest', 'inspect', '--verbose', tag], capture_output=True, text=True)
+        if result.returncode:
+            raise RuntimeError('Cannot resolve clean baseline '+role+'. Publish matching images with Vulcan '
+                               'Build reusable Ubuntu images (offline_source_sha='+args.sha+'). '+result.stderr)
+        manifest = json.loads(result.stdout)
+        digest = manifest.get('Descriptor', {}).get('digest') if isinstance(manifest, dict) else None
+        if not re.fullmatch(r'sha256:[0-9a-f]{64}', digest or ''):
+            raise ValueError('baseline must be a single-platform manifest with a digest')
     image = config['repository']+'@'+digest
     print('Pulling Vulcan clean baseline: '+image, flush=True)
     run('docker', 'pull', image)
@@ -168,6 +231,8 @@ def pull_baseline(args, role, record):
     evidence = json.loads(path.read_text()) if path.exists() else {}
     evidence[role] = {'image': image, 'local_id': local_id, 'inputs_sha256': key,
                       'recipe_sha256': config['recipe_sha256']}
+    if requirements_key:
+        evidence[role]['requirements_sha256'] = requirements_key
     path.write_text(json.dumps(evidence, indent=2)+'\n')
     return local_id
 
