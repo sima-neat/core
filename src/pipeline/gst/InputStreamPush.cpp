@@ -1641,9 +1641,12 @@ bool try_push_message_encoded(InputStream::State& st, const Sample& msg,
   }
 
   const bool timings = st.timing_enabled;
+  // One Read mapping sizes and copies the payload: a DMA-BUF source pays its CPU access
+  // START/END and mmap once per frame, not once to size it and again to copy it.
+  simaai::neat::Mapping source = input.map(simaai::neat::MapMode::Read);
   size_t nbytes = 0;
   std::string bytes_err;
-  if (!pipeline_internal::resolve_encoded_payload_bytes(input, spec, &nbytes, &bytes_err)) {
+  if (!pipeline_internal::resolve_encoded_payload_bytes(source, spec, &nbytes, &bytes_err)) {
     throw std::runtime_error(std::string("InputStream::try_push_message: ") +
                              (bytes_err.empty() ? "encoded payload invalid" : bytes_err));
   }
@@ -1672,8 +1675,8 @@ bool try_push_message_encoded(InputStream::State& st, const Sample& msg,
     t_map_end = std::chrono::steady_clock::now();
   if (nbytes > 0) {
     std::string copy_err;
-    if (!pipeline_internal::copy_tensor_payload_to(input, static_cast<uint8_t*>(map.data), nbytes,
-                                                   &copy_err)) {
+    if (!pipeline_internal::copy_tensor_payload_to(input, source, static_cast<uint8_t*>(map.data),
+                                                   nbytes, &copy_err)) {
       gst_buffer_unmap(buf, &map);
       release_input_buffer(buf, "InputStream::try_push_message:encoded_copy_fail");
       throw std::runtime_error(std::string("InputStream::try_push_message: ") +
@@ -1681,6 +1684,7 @@ bool try_push_message_encoded(InputStream::State& st, const Sample& msg,
     }
   }
   gst_buffer_unmap(buf, &map);
+  source = simaai::neat::Mapping{};
   std::chrono::steady_clock::time_point t_copy_end{};
   if (timings)
     t_copy_end = std::chrono::steady_clock::now();

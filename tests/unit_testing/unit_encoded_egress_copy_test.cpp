@@ -30,6 +30,7 @@
 #include <opencv2/imgcodecs.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <iostream>
 #include <memory>
@@ -145,6 +146,13 @@ void push_through_segment_edge(bool copy_encoded_input) {
   auto gate = std::make_shared<pipeline_internal::HolderLoanGate>(1);
   GstMemory* holder_memory = nullptr;
   Sample sample = loaned_jpeg(gate, &holder_memory);
+  // Count CPU maps of the source payload: a DMA-BUF capture pays START/END and an mmap per map.
+  auto maps = std::make_shared<std::atomic<int>>(0);
+  auto& storage = *sample.tensors.front().storage;
+  storage.map_fn = [inner = storage.map_fn, maps](MapMode mode) {
+    maps->fetch_add(1);
+    return inner(mode);
+  };
 
   GstElement* pipeline = gst_pipeline_new(nullptr);
   GstElement* appsrc = gst_element_factory_make("appsrc", "mysrc");
@@ -186,9 +194,13 @@ void push_through_segment_edge(bool copy_encoded_input) {
   stream.close();
 
   if (copy_encoded_input) {
+    require(maps->load() == 1, "egress edge must size and copy the payload under one map (got " +
+                                   std::to_string(maps->load()) + ")");
     require(!same_memory, "egress edge must push a copy, not the holder's buffer");
     require(inflight_while_held == 0, "egress edge must not carry the producer's loan");
   } else {
+    require(maps->load() == 0,
+            "decode edge must not map the payload (got " + std::to_string(maps->load()) + ")");
     require(same_memory, "decode edge must forward the holder's buffer zero-copy");
     require(inflight_while_held == 1, "decode edge buffer must carry the producer's loan");
   }
