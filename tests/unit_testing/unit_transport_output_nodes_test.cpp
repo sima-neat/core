@@ -53,6 +53,8 @@ RUN_TEST(
         require_contains(fragment, "port=5500", "UdpOutput port mismatch");
         require_contains(fragment, "sync=true", "UdpOutput sync mismatch");
         require_contains(fragment, "async=false", "UdpOutput async mismatch");
+        require_contains(fragment, "enable-last-sample=false",
+                         "UdpOutput must not retain its last packet: it pins the frame's memory");
         require(node->element_names(7).empty(), "UdpOutput element_names contract should be empty");
       }
 
