@@ -1943,6 +1943,40 @@ Tensor make_dummy_tensor(const simaai::neat::InputOptions& opt) {
   return t;
 }
 
+// InputOptions project one frame (h, w, d), so a batched tensor ingress gets its stand-in from
+// the contract's canonical logical shape, which carries the batch axis the build validates.
+Tensor make_dummy_ingress_tensor(const simaai::neat::InputOptions& opt,
+                                 const internal::IngressTensorContract* contract) {
+  Tensor t = make_dummy_tensor(opt);
+  if (!contract || contract->batch <= 1 || contract->logical_shape.empty() || !t.planes.empty() ||
+      resolve_input_media_type(opt) != "application/vnd.simaai.tensor") {
+    return t;
+  }
+  std::size_t elements = 1;
+  for (const std::int64_t dim : contract->logical_shape) {
+    if (dim <= 0) {
+      throw std::runtime_error("Model::build: ingress[" + std::to_string(contract->ingress_index) +
+                               "] logical_shape has a non-concrete dimension; use "
+                               "build(TensorList).");
+    }
+    elements *= static_cast<std::size_t>(dim);
+  }
+  const std::size_t elem = pipeline_internal::dtype_bytes(t.dtype);
+  t.shape = contract->logical_shape;
+  // The contract's batch/h/w/d projection reads a rank-4 shape as N,H,W,C, so describe it the
+  // same way a caller's batched HWC tensor is described.
+  t.layout = TensorLayout::Unknown;
+  t.axis_semantics.clear();
+  if (t.shape.size() == 4U) {
+    t.layout = TensorLayout::HWC;
+    t.axis_semantics = {TensorAxisSemantic::N, TensorAxisSemantic::H, TensorAxisSemantic::W,
+                        TensorAxisSemantic::C};
+  }
+  t.storage = make_cpu_owned_storage(elements * elem);
+  t.strides_bytes = pipeline_internal::contiguous_strides_bytes(t.shape, elem);
+  return t;
+}
+
 simaai::neat::Sample make_bundle_from_tensors(const std::vector<Tensor>& inputs) {
   return sample_from_tensors(inputs);
 }
@@ -7238,8 +7272,10 @@ Model::Runner Model::build(const Model::RouteOptions& opt,
   const auto src_opts = input_appsrc_options_list(tensor_mode);
   TensorList dummy_inputs;
   dummy_inputs.reserve(src_opts.size());
-  for (const auto& src_opt : src_opts) {
-    dummy_inputs.push_back(make_dummy_tensor(src_opt));
+  for (std::size_t i = 0; i < src_opts.size(); ++i) {
+    const auto* contract =
+        tensor_mode && i < ingress_contracts.size() ? &ingress_contracts[i] : nullptr;
+    dummy_inputs.push_back(make_dummy_ingress_tensor(src_opts[i], contract));
   }
   impl_->pack.prepare_for_execution();
   internal::ModelPack pack = impl_->pack;
@@ -7606,6 +7642,11 @@ TensorList materialize_joined_ingress_tensors(
 
 Tensor ModelAccess::make_dummy_input(const InputOptions& options) {
   return make_dummy_tensor(options);
+}
+
+Tensor ModelAccess::make_dummy_input(const InputOptions& options,
+                                     const IngressTensorContract* contract) {
+  return make_dummy_ingress_tensor(options, contract);
 }
 
 Tensor materialize_dense_ingress_tail(Tensor tensor, const std::size_t required_storage_bytes,
