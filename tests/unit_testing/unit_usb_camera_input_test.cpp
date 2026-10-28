@@ -236,6 +236,7 @@ void check_jpeg_pipeline() {
   opt.framerate_den = 1001;
   const auto node = uvc::camera_node(opt, {"/dev/video1", FormatTag::NV16});
   require(node->kind() == "UsbCameraInput", "a live source kind");
+  require(node->is_live_source(), "the camera is a live source");
   const std::string text = node->backend_fragment(2);
   require(text == "v4l2src name=n2_camera_src device=/dev/video1 io-mode=dmabuf-import ! "
                   "capsfilter name=n2_camera_caps caps=\"image/jpeg,width=1920,height=1080,"

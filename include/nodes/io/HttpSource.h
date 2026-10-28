@@ -49,6 +49,9 @@ public:
   InputRole input_role() const override {
     return InputRole::Source;
   }
+  bool is_live_source() const override {
+    return opt_.is_live;
+  }
   NodeCapsBehavior caps_behavior() const override {
     return NodeCapsBehavior::Dynamic;
   }
