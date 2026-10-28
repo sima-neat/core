@@ -1201,6 +1201,8 @@ Caps 協商是自動的；失敗會在早期（驗證/預滾動）或在執行�
 
 `nodes::UsbCameraInput` 由 `v4l2src io-mode=dmabuf-import`、JPEG capsfilter、`neatcapturepool`、會捨棄驅動程式標示為損毀之影格的 `identity`，以及可選的佇列組成。`neatcapturepool` 以 CMA DMA-BUF 回應攝影機的配置查詢，因此攝影機會把每個已編碼的 JPEG 影格擷取到 `neatdecoder` 就地讀取的記憶體中，從擷取到解碼之間不會複製。這些影格可同時供給 `VideoSender` 直通（MJPEG）與 `SimaDecode`（MJPEG）；解碼器會解碼為攝影機原生的排列方式，4:2:0 為 NV12，4:2:2 為 NV16。
 
+若該工廠已註冊，MJPEG `VideoSender` 僅由內部 `JpegRtpUdpSink`（`neatjpegudpsink`）組成，否則由 `JpegParse`、`JpegPacketize`（`rtpjpegpay`）與 `UdpOutput` 組成。`VideoSender` 會在建構圖時檢查登錄表。此輸出端會自行讀取每個影格的 JPEG 標頭，但其 caps 需要寬度與高度，因此 `JpegRtpUdpSink` 是依輸入規格特化的節點：規格帶有尺寸的輸入只會產生該輸出端本身，其他輸入則在節點的 Graph 片段中保留 `jpegparse`。以任一輸出端結尾的區段會複製其已編碼輸入，而不是保留產生端的擷取緩衝區與借用。
+
 ### 拆解
 
 拆解是故意防禦性的。

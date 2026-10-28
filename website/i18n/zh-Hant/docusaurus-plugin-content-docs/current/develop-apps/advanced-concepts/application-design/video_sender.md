@@ -102,6 +102,8 @@ graph.add(pyneat.groups.video_sender(opt))
 
 直通不建立編碼器。呼叫端選擇的編解碼器必須符合已編碼輸入；編碼器設定不適用。
 
+無論是原始傳送或直通，只要已安裝的 Scheduler 提供 `neatjpegudpsink`，MJPEG 就會透過它傳送。這個單一輸出端會讀取每個影格的 JPEG 標頭、建立 RTP/JPEG 封包並透過 UDP 傳送；當輸入 caps 帶有寬度與高度時（USB 攝影機、編碼器、caps 帶有尺寸的 `Input`），其前方不會有 `jpegparse`。caps 可能缺少尺寸的輸入，例如 HTTP multipart MJPEG 或只有 `image/jpeg` caps 的 `Input`，會在輸出端前方保留 `jpegparse`。若 Scheduler 較舊，Neat 會保留 `jpegparse`、`rtpjpegpay` 與 `udpsink`。主機、連接埠、酬載類型、`sync` 與 `async` 設定在兩種情況下皆相同。
+
 當 RTSP 來源同時供應此傳送端與 `SimaDecode` 時，預設的 `async=false` 讓 Core 將傳送端放在來源管線中的 GStreamer `tee` 之後，因此來源、傳送端與解碼器會一起啟動、停止與失敗。若要保持各自獨立的管線，請設定 `async=true`（Python 中為 `async_`）。
 
 H.265 範例：

@@ -890,6 +890,8 @@ Capsネゴシエーションは自動的に行われ、エラーが発生した�
 
 `nodes::UsbCameraInput` は `v4l2src io-mode=dmabuf-import`、JPEGのcapsfilter、`neatcapturepool`、ドライバーが破損とマークしたフレームを破棄する `identity`、任意のキューで構成されます。`neatcapturepool` がカメラのアロケーションクエリーにCMA DMA-BUFで応答するため、カメラはエンコード済みの各JPEGフレームを `neatdecoder` がその場で読み取るメモリーにキャプチャーし、キャプチャーからデコードまでの間にコピーは発生しません。これらのフレームは `VideoSender` のパススルー（MJPEG）と `SimaDecode`（MJPEG）の両方に渡せます。デコーダーはカメラ本来のレイアウトでデコードし、4:2:0はNV12、4:2:2はNV16になります。
 
+MJPEG の `VideoSender` は、そのファクトリーが登録されている場合は内部の `JpegRtpUdpSink`（`neatjpegudpsink`）単体になり、登録されていない場合は `JpegParse`、`JpegPacketize`（`rtpjpegpay`）、`UdpOutput` になります。`VideoSender` はグラフの構築時にレジストリーを確認します。このシンクは各フレームの JPEG ヘッダーを自身で読み取りますが、その caps には幅と高さが必要なため、`JpegRtpUdpSink` は入力仕様に応じて特殊化されるノードです。仕様に寸法を持つ入力ではシンク単体をレンダリングし、それ以外の入力ではノードのグラフフラグメント内に `jpegparse` を残します。どちらかのシンクで終わるセグメントは、生成元のキャプチャバッファーと貸与を保持せず、エンコード済み入力をコピーします。
+
 ### 解体
 
 Teardown は、意図的に防御的な処理を行うように設計されています。

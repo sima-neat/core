@@ -1139,6 +1139,8 @@ BF16과 INT16은 레거시 와이어 코드를 공유하므로 바이트 캐리�
 
 `nodes::UsbCameraInput`은 `v4l2src io-mode=dmabuf-import`, JPEG capsfilter, `neatcapturepool`, 드라이버가 손상으로 표시한 프레임을 버리는 `identity`, 선택적 큐로 이루어집니다. `neatcapturepool`이 카메라의 할당 쿼리에 CMA DMA-BUF로 응답하므로, 카메라는 인코딩된 각 JPEG 프레임을 `neatdecoder`가 그 자리에서 읽는 메모리에 캡처하며 캡처와 디코딩 사이에 복사가 없습니다. 이 프레임은 `VideoSender` 패스스루(MJPEG)와 `SimaDecode`(MJPEG)에 모두 공급할 수 있으며, 디코더는 카메라 고유의 레이아웃으로 디코딩합니다(4:2:0은 NV12, 4:2:2는 NV16).
 
+MJPEG `VideoSender`는 해당 팩토리가 등록되어 있으면 내부 `JpegRtpUdpSink`(`neatjpegudpsink`) 하나로만 구성되고, 그렇지 않으면 `JpegParse`, `JpegPacketize`(`rtpjpegpay`), `UdpOutput`으로 구성됩니다. `VideoSender`는 그래프가 생성될 때 레지스트리를 확인합니다. 이 싱크는 각 프레임의 JPEG 헤더를 직접 읽지만 caps에 너비와 높이가 필요하므로, `JpegRtpUdpSink`는 입력 사양에 따라 특수화되는 노드입니다. 사양에 크기가 있는 입력은 싱크만 렌더링하고, 그 밖의 입력은 노드의 그래프 조각 안에 `jpegparse`를 유지합니다. 두 싱크 중 하나로 끝나는 세그먼트는 생산자의 캡처 버퍼와 대여를 유지하지 않고 인코딩된 입력을 복사합니다.
+
 ### 종료
 
 종료는 의도적으로 방어적입니다.

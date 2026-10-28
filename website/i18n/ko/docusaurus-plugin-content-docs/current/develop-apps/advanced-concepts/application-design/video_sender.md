@@ -97,6 +97,8 @@ MJPEG를 사용하려면 C++에서는 `SimaEncodeType::MJPEG`, Python에서는 `
 
 패스스루는 인코더를 생성하지 않습니다. 호출자가 선택한 코덱은 인코딩된 입력과 일치해야 하며 인코더 설정은 적용되지 않습니다.
 
+MJPEG는 원시 전송이든 패스스루든, 설치된 Scheduler가 `neatjpegudpsink`를 제공하면 이를 통해 전송됩니다. 이 단일 싱크가 각 프레임의 JPEG 헤더를 읽고 RTP/JPEG 패킷을 만들어 UDP로 전송하며, 입력 caps에 너비와 높이가 있으면(USB 카메라, 인코더, 크기가 지정된 caps의 `Input`) 앞에 `jpegparse`를 두지 않습니다. HTTP 멀티파트 MJPEG나 `image/jpeg` caps만 있는 `Input`처럼 caps에 크기가 없을 수 있는 입력은 싱크 앞에 `jpegparse`를 유지합니다. 이전 Scheduler에서는 Neat가 `jpegparse`, `rtpjpegpay`, `udpsink`를 유지합니다. 호스트, 포트, 페이로드 유형, `sync` 및 `async` 설정은 두 경우 모두 같습니다.
+
 RTSP 소스가 이 송신기와 `SimaDecode`에 모두 공급되는 경우, 기본값 `async=false`에서는 Core가 송신기를 소스 파이프라인 안의 GStreamer `tee` 뒤에 배치하므로 소스, 송신기, 디코더가 함께 시작, 중지, 실패합니다. 별도의 파이프라인으로 유지하려면 `async=true`(Python에서는 `async_`)를 설정합니다.
 
 H.265 예시:
