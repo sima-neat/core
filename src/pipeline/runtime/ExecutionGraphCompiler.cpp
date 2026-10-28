@@ -12,6 +12,7 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "nodes/io/UdpOutput.h"
+#include "nodes/io/internal/JpegRtpUdpSink.h"
 #include "nodes/rtp/H264Depacketize.h"
 #include "nodes/rtp/H265Depacketize.h"
 #include "nodes/sima/PCIeSrc.h"
@@ -1898,15 +1899,13 @@ std::optional<SimaDecodeType> encoded_video_sender_codec(const PipelineSegmentPl
   // while waiting for preroll from every encoded branch. Keep this public
   // topology segmented rather than coupling video egress to decoder startup.
   const simaai::neat::Node& sink = *nodes.back();
-  const bool jpeg_rtp_udp_sink = sink.kind() == "JpegRtpUdpSink";
+  const auto* jpeg_rtp_udp_sink =
+      dynamic_cast<const simaai::neat::internal::JpegRtpUdpSink*>(&sink);
   if (const auto* udp_output = dynamic_cast<const simaai::neat::UdpOutput*>(&sink)) {
     if (udp_output->options().async) {
       return std::nullopt;
     }
-  } else if (!jpeg_rtp_udp_sink ||
-             sink.backend_fragment(0).find(" async=false") == std::string::npos) {
-    // JpegRtpUdpSink (VideoSender's MJPEG sink on a Scheduler with neatjpegudpsink) is an
-    // internal node matched by kind; its fragment renders `async=` like UdpOutput's.
+  } else if (!jpeg_rtp_udp_sink || jpeg_rtp_udp_sink->options().async) {
     return std::nullopt;
   }
   // MJPEG fuses only onto this sink: it parses JPEG itself (VideoSender may omit JpegParse)

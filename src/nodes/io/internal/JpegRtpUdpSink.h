@@ -24,7 +24,8 @@ struct JpegRtpUdpSinkOptions {
 };
 
 /// Terminal sink that replaces JpegPacketize + UdpOutput when the installed Scheduler has
-/// `neatjpegudpsink`. The fusion compiler matches its kind() by name; keep it stable.
+/// `neatjpegudpsink`. ExecutionGraphCompiler matches this class (and options().async) when it
+/// fuses a USB camera's MJPEG fan-out onto the sink.
 ///
 /// The sink reads each frame's JPEG headers itself, so it needs no parser, but its caps require
 /// width and height. Until the compiler knows the input carries them, the fragment keeps a

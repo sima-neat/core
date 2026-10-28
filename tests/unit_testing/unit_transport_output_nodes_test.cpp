@@ -83,12 +83,6 @@ RUN_TEST(
                 "JpegRtpUdpSink default fragment mismatch");
         require(defaults.element_names(3) == std::vector<std::string>{"n3_jpegparse", "n3_jpegudp"},
                 "JpegRtpUdpSink parsing element_names mismatch");
-        // The sender fan-out fusion matcher reads these literal substrings from the fragment
-        // until it can match the node's class, so the defaults are always spelled out.
-        for (const char* literal : {" sync=false", " async=false", " enable-last-sample=false"}) {
-          require(defaults.backend_fragment(0).find(literal) != std::string::npos,
-                  std::string("JpegRtpUdpSink default fragment must contain '") + literal + "'");
-        }
 
         JpegRtpUdpSinkOptions opt;
         opt.host = "10.0.0.5";
@@ -137,6 +131,7 @@ RUN_TEST(
           }
         }
 
+        const jpeg_rtp_udp_sink_fixture::RestoreRegistry restore_registry;
         jpeg_rtp_udp_sink_fixture::set_factory_present(true);
         for (const auto* variant : {&defaults, &node}) {
           const std::string launch = variant->backend_fragment(7);

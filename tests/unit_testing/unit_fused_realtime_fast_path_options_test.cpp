@@ -14,6 +14,7 @@
 #include "nodes/io/RTSPInput.h"
 #include "nodes/io/UdpOutput.h"
 #include "nodes/io/UsbCameraInput.h"
+#include "nodes/io/internal/JpegRtpUdpSink.h"
 #include "nodes/io/internal/UvcCamera.h"
 #include "nodes/groups/RtspEncodedInput.h"
 #include "nodes/groups/VideoSender.h"
@@ -32,6 +33,7 @@
 #include "pipeline/runtime/RunCore.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include <simaai/scheduler/client/kernel.h>
+#include "jpeg_rtp_udp_sink_fixture.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -1886,6 +1888,7 @@ RUN_TEST(
       // A USB camera's JPEG split to SimaDecode and an MJPEG passthrough VideoSender joins
       // the same tee lowering: one pipeline, the capture buffer read in place by both branches.
       enum class UsbSender { Passthrough, RtpUdpSink, RtpUdpSinkAlone, Async };
+      const jpeg_rtp_udp_sink_fixture::RestoreRegistry restore_registry;
       const auto compile_usb_video_app = [&](UsbSender sender_kind, bool decode_realtime,
                                              bool rtsp_mjpeg_source = false) {
         simaai::neat::UsbCameraInputOptions camera;
@@ -1913,16 +1916,17 @@ RUN_TEST(
         decoder.add(simaai::neat::nodes::SimaDecode(decode));
         decoder.add(simaai::neat::nodes::Output("usb_tee_frames"));
         simaai::neat::Graph sender("usb_tee_sender");
-        if (sender_kind == UsbSender::RtpUdpSink || sender_kind == UsbSender::RtpUdpSinkAlone) {
-          // VideoSender's MJPEG shape on a Scheduler with neatjpegudpsink: [JpegRtpUdpSink],
-          // optionally behind JpegParse, no UdpOutput. The compiler matches the sink by kind.
-          if (sender_kind == UsbSender::RtpUdpSink) {
-            sender.add(simaai::neat::nodes::JpegParse());
-          }
-          sender.add(std::make_shared<FragmentNode>(
-              "JpegRtpUdpSink", "neatjpegudpsink", "jpegudp",
-              " host=127.0.0.1 port=5600 pt=26 sync=false async=false enable-last-sample=false"));
+        if (sender_kind == UsbSender::RtpUdpSink) {
+          // [JpegParse, JpegRtpUdpSink]: the compiler also accepts a parser ahead of the sink.
+          sender.add(simaai::neat::nodes::JpegParse());
+          simaai::neat::internal::JpegRtpUdpSinkOptions sink;
+          sink.host = "127.0.0.1";
+          sink.port = 5600;
+          sender.add(std::make_shared<simaai::neat::internal::JpegRtpUdpSink>(sink));
         } else {
+          // VideoSender's MJPEG shape: [JpegRtpUdpSink] alone on a Scheduler with
+          // neatjpegudpsink, jpegparse ! rtpjpegpay ! udpsink otherwise.
+          jpeg_rtp_udp_sink_fixture::set_factory_present(sender_kind == UsbSender::RtpUdpSinkAlone);
           auto options = simaai::neat::nodes::groups::VideoSenderOptions::Passthrough(
               simaai::neat::nodes::groups::RtspCodec::MJPEG);
           options.host = "127.0.0.1";
@@ -1985,11 +1989,21 @@ RUN_TEST(
                     usb_tee_fragment.find(parsed ? "neatjpegudpsink name=n2001_jpegudp"
                                                  : "neatjpegudpsink name=n2000_jpegudp") !=
                         std::string::npos &&
-                    usb_tee_fragment.find("udpsink") != std::string::npos &&
+                    usb_tee_fragment.find(" udpsink") == std::string::npos &&
                     usb_tee_fragment.find("enable-last-sample=false") != std::string::npos &&
                     usb_tee_fragment.find("pay0") == std::string::npos,
                 "the realtime video link must render a leaky sink queue to the JPEG sender (" +
                     label + "): " + usb_tee_fragment);
+        // The camera's caps carry width and height, so the sink is specialized before the
+        // fusion and the fused branch parses nothing beyond an explicit JpegParse node.
+        std::size_t jpegparse_count = 0;
+        for (auto at = usb_tee_fragment.find("jpegparse name="); at != std::string::npos;
+             at = usb_tee_fragment.find("jpegparse name=", at + 1)) {
+          ++jpegparse_count;
+        }
+        require(jpegparse_count == (parsed ? 1U : 0U),
+                "a sized camera input must fuse the bare neatjpegudpsink (" + label +
+                    "): " + usb_tee_fragment);
         const auto usb_names = [&] {
           std::vector<std::string> names;
           for (std::size_t i = 0; i < usb_merged->nodes.size(); ++i) {
@@ -2060,9 +2074,11 @@ RUN_TEST(
         decoder.add(simaai::neat::nodes::Output("usb_async_sink_frames"));
         simaai::neat::Graph sender("usb_async_sink_sender");
         sender.add(simaai::neat::nodes::JpegParse());
-        sender.add(std::make_shared<FragmentNode>(
-            "JpegRtpUdpSink", "neatjpegudpsink", "jpegudp",
-            " host=127.0.0.1 port=5600 pt=26 sync=false async=true enable-last-sample=false"));
+        simaai::neat::internal::JpegRtpUdpSinkOptions sink;
+        sink.host = "127.0.0.1";
+        sink.port = 5600;
+        sink.async = true;
+        sender.add(std::make_shared<simaai::neat::internal::JpegRtpUdpSink>(sink));
         app.connect(source, decoder);
         app.connect(source, sender);
         const auto plan = simaai::neat::runtime::compile_public_graph(app, composed_run_options);

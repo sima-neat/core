@@ -53,7 +53,11 @@ bool has_node(const runtime::PipelineSegmentPlan& segment, const std::string& ki
 // The camera's decode edge and its VideoSender edge land in separate segments; only the
 // sender's segment copies encoded input, and building it hands that to its InputStream. The
 // sender ends in JpegRtpUdpSink when neatjpegudpsink is installed, else in rtpjpegpay ! udpsink.
-void sender_segment_is_the_only_copying_segment(GraphLinkPolicy policy, bool jpeg_rtp_udp_sink) {
+// With JpegRtpUdpSink and a default decode edge the compiler fuses the fan-out instead: one
+// source pipeline whose tee feeds the sink and the decoder in place, so no segment copies. A
+// RealtimeLatestByStream decode edge keeps the sink segmented and copying.
+void sender_segment_is_the_only_copying_segment(GraphLinkPolicy policy, bool jpeg_rtp_udp_sink,
+                                                bool decode_realtime = false) {
   jpeg_rtp_udp_sink_fixture::set_factory_present(jpeg_rtp_udp_sink);
   const std::string sender_kind = jpeg_rtp_udp_sink ? "JpegRtpUdpSink" : "JpegPacketize";
   UsbCameraInputOptions camera;
@@ -76,11 +80,32 @@ void sender_segment_is_the_only_copying_segment(GraphLinkPolicy policy, bool jpe
   sender.host = "127.0.0.1";
   GraphLinkOptions video_link;
   video_link.policy = policy;
+  GraphLinkOptions decode_link;
+  if (decode_realtime) {
+    decode_link.policy = GraphLinkPolicy::RealtimeLatestByStream;
+  }
   Graph app("usb_split");
-  app.connect(source, decoder);
+  app.connect(source, decoder, decode_link);
   app.connect(source, nodes::groups::VideoSender(sender), video_link);
 
   const auto plan = runtime::compile_public_graph(app, RunOptions{});
+  if (jpeg_rtp_udp_sink && !decode_realtime) {
+    int open = 0;
+    bool fused = false;
+    for (const auto& segment : plan.pipeline_segments) {
+      if (segment.consumed_by_fused_realtime_ingress) {
+        continue;
+      }
+      ++open;
+      fused =
+          fused || (has_node(segment, "EncodedVideoSenderTee") && has_node(segment, "SimaDecode"));
+      require(!runtime::segment_copies_encoded_input(segment),
+              "the fused USB camera pipeline must copy nothing");
+    }
+    require(open == 1 && fused,
+            "a USB camera split to SimaDecode and JpegRtpUdpSink must fuse into one pipeline");
+    return;
+  }
   int copying = 0;
   bool saw_decoder = false;
   const runtime::PipelineSegmentPlan* sender_segment = nullptr;
@@ -231,10 +256,18 @@ void push_through_segment_edge(bool copy_encoded_input) {
 int main() {
   try {
     gst_init_once();
-    for (const bool jpeg_rtp_udp_sink : {false, true}) {
-      sender_segment_is_the_only_copying_segment(GraphLinkPolicy::Default, jpeg_rtp_udp_sink);
-      sender_segment_is_the_only_copying_segment(GraphLinkPolicy::RealtimeLatestByStream,
-                                                 jpeg_rtp_udp_sink);
+    {
+      const jpeg_rtp_udp_sink_fixture::RestoreRegistry restore_registry;
+      for (const bool jpeg_rtp_udp_sink : {false, true}) {
+        sender_segment_is_the_only_copying_segment(GraphLinkPolicy::Default, jpeg_rtp_udp_sink);
+        sender_segment_is_the_only_copying_segment(GraphLinkPolicy::RealtimeLatestByStream,
+                                                   jpeg_rtp_udp_sink);
+      }
+      for (const auto policy :
+           {GraphLinkPolicy::Default, GraphLinkPolicy::RealtimeLatestByStream}) {
+        sender_segment_is_the_only_copying_segment(policy, /*jpeg_rtp_udp_sink=*/true,
+                                                   /*decode_realtime=*/true);
+      }
     }
     push_through_segment_edge(/*copy_encoded_input=*/true);
     push_through_segment_edge(/*copy_encoded_input=*/false);

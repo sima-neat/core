@@ -1,6 +1,10 @@
 // Toggles whether the GStreamer registry has `neatjpegudpsink`, so a test covers both VideoSender
 // MJPEG compositions whichever Scheduler is installed. "Present" registers a stand-in: a fakesink
 // with the element's properties, which parses and accepts JPEG frames but sends nothing.
+//
+// The registry is process-wide and set_factory_present() removes a real neatjpegudpsink feature,
+// so every test that toggles it holds a RestoreRegistry for the toggling scope: its destructor
+// puts the original feature (or its absence) back for the tests that follow in the process.
 #pragma once
 
 #include "gst/GstHelpers.h"
@@ -65,5 +69,38 @@ inline void set_factory_present(bool present) {
   require(simaai::neat::element_exists(factory) == present,
           "neatjpegudpsink registry state did not follow the fixture");
 }
+
+class RestoreRegistry {
+public:
+  RestoreRegistry() {
+    simaai::neat::gst_init_once();
+    original_ = gst_registry_lookup_feature(gst_registry_get(),
+                                            simaai::neat::internal::kJpegRtpUdpSinkFactory);
+  }
+  RestoreRegistry(const RestoreRegistry&) = delete;
+  RestoreRegistry& operator=(const RestoreRegistry&) = delete;
+  ~RestoreRegistry() {
+    GstRegistry* registry = gst_registry_get();
+    GstPluginFeature* current =
+        gst_registry_lookup_feature(registry, simaai::neat::internal::kJpegRtpUdpSinkFactory);
+    if (current != original_) {
+      if (current) {
+        gst_registry_remove_feature(registry, current);
+      }
+      if (original_) {
+        gst_registry_add_feature(registry, original_);
+      }
+    }
+    if (current) {
+      gst_object_unref(current);
+    }
+    if (original_) {
+      gst_object_unref(original_);
+    }
+  }
+
+private:
+  GstPluginFeature* original_ = nullptr;
+};
 
 } // namespace jpeg_rtp_udp_sink_fixture

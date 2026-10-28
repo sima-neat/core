@@ -181,6 +181,7 @@ RUN_TEST(
         const auto h265 = VideoSenderOptions::Passthrough(RtspCodec::H265);
         const std::string h264_nodes = VideoSender(h264).describe();
         const std::string h265_nodes = VideoSender(h265).describe();
+        const jpeg_rtp_udp_sink_fixture::RestoreRegistry restore_registry;
         for (const bool present : {false, true, false}) {
           jpeg_rtp_udp_sink_fixture::set_factory_present(present);
           const auto graph = VideoSender(mjpeg);
