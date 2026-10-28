@@ -189,7 +189,7 @@ graph.connect(source, pyneat.groups.video_sender(sender), video_link)
 </CodeTab>
 </CodeTabs>
 
-디코더는 각 JPEG를 디코딩하기 전에 자체 입력 버퍼로 복사합니다. 송신기에는 [비디오 보내기](./video_sender.md)의 RTP/JPEG 제한이 적용됩니다.
+카메라는 하드웨어 디코더가 그 자리에서 읽는 CMA 버퍼에 캡처하므로, 캡처와 디코딩 사이에서 프레임이 복사되지 않습니다. 커널 UVC 드라이버는 여전히 USB 패킷을 각 프레임 버퍼로 복사합니다. 송신기에는 [비디오 보내기](./video_sender.md)의 RTP/JPEG 제한이 적용됩니다.
 
 ## 메모리와 버려지는 프레임
 

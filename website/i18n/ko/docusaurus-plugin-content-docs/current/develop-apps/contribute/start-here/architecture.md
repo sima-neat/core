@@ -1133,7 +1133,7 @@ BF16과 INT16은 레거시 와이어 코드를 공유하므로 바이트 캐리�
 
 애플리케이션에서 사용하는 캡처 깊이는 커널의 개인 CSI-to-ISP RAW 전송 링과 후속 GStreamer 큐 모두와 독립적입니다. `CameraInputWithCaptureBuffers`에 대한 선택적 `capture_buffer_count` 인수는 ISP 출력, libcamera 및 애플리케이션을 통해 유지되는 버퍼를 제어합니다(Platform 3.0에서는 `libcamerasrc`에 `buffer-count`가 없으므로 `0`으로 유지해야 합니다). `queue_depth` 및 `leaky_queue`는 다운스트림 지연 시간과 프레임 삭제 정책를 별도로 제어합니다. 선택적 호환성 복사 풀은 필요에 따라 최대 128개 버퍼까지 증가하며 해당 큐 깊이에 의해 제한되지 않으므로 누수 큐는 상위 브리지가 먼저 중단되지 않도록 삭제 정책을 적용할 수 있습니다.
 
-`nodes::UsbCameraInput`은 `v4l2src io-mode=dmabuf`, JPEG capsfilter, 선택적 큐로만 이루어지며 드라이버가 내보낸 DMA-BUF에 있는 인코딩된 JPEG 프레임을 출력합니다. 이 프레임은 `VideoSender` 패스스루(MJPEG)와 `SimaDecode`(MJPEG)에 모두 공급할 수 있으며, 디코더는 카메라 고유의 레이아웃으로 디코딩합니다(4:2:0은 NV12, 4:2:2는 NV16). `neatdecoder`는 각 JPEG를 자체 입력 버퍼로 복사합니다.
+`nodes::UsbCameraInput`은 `v4l2src io-mode=dmabuf-import`, JPEG capsfilter, `neatcapturepool`, 드라이버가 손상으로 표시한 프레임을 버리는 `identity`, 선택적 큐로 이루어집니다. `neatcapturepool`이 카메라의 할당 쿼리에 CMA DMA-BUF로 응답하므로, 카메라는 인코딩된 각 JPEG 프레임을 `neatdecoder`가 그 자리에서 읽는 메모리에 캡처하며 캡처와 디코딩 사이에 복사가 없습니다. 이 프레임은 `VideoSender` 패스스루(MJPEG)와 `SimaDecode`(MJPEG)에 모두 공급할 수 있으며, 디코더는 카메라 고유의 레이아웃으로 디코딩합니다(4:2:0은 NV12, 4:2:2는 NV16).
 
 ### 종료
 

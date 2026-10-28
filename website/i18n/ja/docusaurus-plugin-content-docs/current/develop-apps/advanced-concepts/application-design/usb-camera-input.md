@@ -189,7 +189,7 @@ graph.connect(source, pyneat.groups.video_sender(sender), video_link)
 </CodeTab>
 </CodeTabs>
 
-デコーダーは、各JPEGをデコードする前に自身の入力バッファーへコピーします。送信側には[ビデオを送信](./video_sender.md)のRTP/JPEGの制限が適用されます。
+カメラはハードウェアデコーダーがその場で読み取るCMAバッファーにキャプチャーするため、キャプチャーからデコードまでの間にフレームはコピーされません。カーネルのUVCドライバーは、引き続きUSBパケットを各フレームバッファーへコピーします。送信側には[ビデオを送信](./video_sender.md)のRTP/JPEGの制限が適用されます。
 
 ## メモリーと破棄されるフレーム
 

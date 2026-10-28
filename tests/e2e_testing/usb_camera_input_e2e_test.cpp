@@ -1,7 +1,7 @@
 // nodes::UsbCameraInput on a DevKit USB camera. Set SIMA_NEAT_TEST_USB_CAMERA to an ID
 // from usb_camera_ids(); the camera must offer MJPEG 1920x1080 at 30 fps. The camera's JPEGs
 // are pulled as they are, then fed to a VideoSender passthrough and a SimaDecode on one Graph;
-// that decoder copies each frame.
+// that decoder reads each frame in place from the camera's CMA buffer.
 #include "nodes/common/Output.h"
 #include "nodes/groups/VideoSender.h"
 #include "nodes/io/UsbCameraInput.h"

@@ -1621,11 +1621,13 @@ compatibility-copy pool grows on demand up to 128 buffers and is not capped by t
 so a leaky queue can apply its drop policy without the upstream bridge
 stalling first.
 
-`nodes::UsbCameraInput` is only `v4l2src io-mode=dmabuf`, a JPEG capsfilter and
-an optional queue, and outputs encoded JPEG frames in the driver's exported
-DMA-BUFs. They can feed both `VideoSender` passthrough (MJPEG) and `SimaDecode`
-(MJPEG), which decodes to the camera's native layout, NV12 for 4:2:0 and NV16
-for 4:2:2. `neatdecoder` copies each JPEG into its own input buffer.
+`nodes::UsbCameraInput` is `v4l2src io-mode=dmabuf-import`, a JPEG capsfilter,
+`neatcapturepool`, an `identity` that drops frames the driver flags as corrupted,
+and an optional queue. `neatcapturepool` answers the camera's allocation query
+with CMA DMA-BUFs, so the camera captures each encoded JPEG frame into memory
+that `neatdecoder` reads in place, with no copy between capture and decode. The
+frames can feed both `VideoSender` passthrough (MJPEG) and `SimaDecode` (MJPEG),
+which decodes to the camera's native layout, NV12 for 4:2:0 and NV16 for 4:2:2.
 
 ### Teardown
 

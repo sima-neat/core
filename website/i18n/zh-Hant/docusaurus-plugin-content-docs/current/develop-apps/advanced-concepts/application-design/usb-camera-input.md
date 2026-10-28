@@ -189,7 +189,7 @@ graph.connect(source, pyneat.groups.video_sender(sender), video_link)
 </CodeTab>
 </CodeTabs>
 
-解碼器會先把每個 JPEG 複製到自己的輸入緩衝區，再進行解碼。傳送端適用 [傳送視訊](./video_sender.md) 中的 RTP/JPEG 限制。
+攝影機會擷取到硬體解碼器就地讀取的 CMA 緩衝區，因此從擷取到解碼之間不會複製任何影格。核心的 UVC 驅動程式仍會把 USB 封包複製到每個影格緩衝區。傳送端適用 [傳送視訊](./video_sender.md) 中的 RTP/JPEG 限制。
 
 ## 記憶體與捨棄的影格
 

@@ -884,7 +884,7 @@ Capsネゴシエーションは自動的に行われ、エラーが発生した�
 
 アプリケーション向けのキャプチャ深度は、カーネルのプライベートな CSI-to-ISP RAW トランジットリングと、後続の GStreamer キューの両方とは独立しています。オプションの `capture_buffer_count` 引数は、`CameraInputWithCaptureBuffers` に渡され、ISP 出力、libcamera、およびアプリケーション間で保持されるバッファーを制御します（Platform 3.0 では `libcamerasrc` に `buffer-count` がないため、`0` のままにする必要があります）。`queue_depth` と `leaky_queue` は、それぞれ下流の遅延とフレームドロップポリシーを個別に制御します。オプションの互換性コピープールは、必要に応じて最大 128 バッファーまで拡張され、そのキュー深度によって制限されないため、リーキーキューは、上流のブリッジが最初に停止することなく、ドロップポリシーを適用できます。
 
-`nodes::UsbCameraInput` は `v4l2src io-mode=dmabuf`、JPEGのcapsfilter、任意のキューだけで構成され、ドライバーがエクスポートしたDMA-BUF上のエンコード済みJPEGフレームを出力します。これらのフレームは `VideoSender` のパススルー（MJPEG）と `SimaDecode`（MJPEG）の両方に渡せます。デコーダーはカメラ本来のレイアウトでデコードし、4:2:0はNV12、4:2:2はNV16になります。`neatdecoder` は各JPEGを自身の入力バッファーへコピーします。
+`nodes::UsbCameraInput` は `v4l2src io-mode=dmabuf-import`、JPEGのcapsfilter、`neatcapturepool`、ドライバーが破損とマークしたフレームを破棄する `identity`、任意のキューで構成されます。`neatcapturepool` がカメラのアロケーションクエリーにCMA DMA-BUFで応答するため、カメラはエンコード済みの各JPEGフレームを `neatdecoder` がその場で読み取るメモリーにキャプチャーし、キャプチャーからデコードまでの間にコピーは発生しません。これらのフレームは `VideoSender` のパススルー（MJPEG）と `SimaDecode`（MJPEG）の両方に渡せます。デコーダーはカメラ本来のレイアウトでデコードし、4:2:0はNV12、4:2:2はNV16になります。
 
 ### 解体
 

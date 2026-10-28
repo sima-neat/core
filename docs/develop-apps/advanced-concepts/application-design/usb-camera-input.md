@@ -189,7 +189,7 @@ graph.connect(source, pyneat.groups.video_sender(sender), video_link)
 </CodeTab>
 </CodeTabs>
 
-The decoder copies each JPEG into its own input buffer before it decodes it. The RTP/JPEG limits in [Send Video](./video_sender.md) apply to the sender.
+The camera captures into CMA buffers that the hardware decoder reads in place, so no frame is copied between capture and decode. The kernel UVC driver still copies the USB packets into each frame buffer. The RTP/JPEG limits in [Send Video](./video_sender.md) apply to the sender.
 
 ## Memory and dropped frames
 
