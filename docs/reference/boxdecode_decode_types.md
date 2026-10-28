@@ -224,6 +224,28 @@ Core validates the list at contract construction: entries must be unique and wit
 `[0, num_classes)`, and the option is rejected for decode types that cannot gate keypoints
 by class. The resolved list is emitted ascending.
 
+### Segmentation + pose + light/dark payload
+
+`yolox-seg-pose-lightdark` takes the 13 `yolox-seg-pose` tensors followed by one INT8
+light/dark head: 2 channels (light, dark) on the coarsest head's grid. Everything above
+about `yolox-seg-pose` applies unchanged. The decoder also averages each channel over the
+cells whose centre lies on image content (letterbox padding does not count) and appends a
+8-byte trailer after the poses:
+
+| Offset in trailer | Type | Field |
+| --- | --- | --- |
+| `0` | `float32` | logit: mean(dark) - mean(light) |
+| `4` | `float32` | P(DARK) = sigmoid(logit); NaN when no cell is on the image |
+
+The trailer carries no marker: the configured decode type says whether it is present, and
+the seg+pose size check rejects a payload whose length is off by it.
+
+The caps format stays `BBOX`, so select the parser by the decode type you configured:
+`decode_segmentation_pose_lightdark_tensor(...)` returns the seg+pose tensors and a
+`LightDarkDecode`. `decode_segmentation_pose(...)` rejects this payload, because the
+trailer does not fit its region layout. Only the JSON backend configuration route
+(`neatobjectdecode`) supports this type.
+
 ## When `model.run` returns raw heads
 
 Some model routes return raw feature-map heads from `model.run(...)` instead of
@@ -296,6 +318,7 @@ feeds the same control.
 | `BoxDecodeType::YoloV6` | `yolov6` | YOLOv6 detection |
 | `BoxDecodeType::YoloX` | `yolox` | YOLOX detection |
 | `BoxDecodeType::YoloXSegPose` | `yolox-seg-pose` | YOLOX packed export carrying box, mask and keypoint heads together |
+| `BoxDecodeType::YoloXSegPoseLightDark` | `yolox-seg-pose-lightdark` | `yolox-seg-pose` plus an image-level light/dark head |
 | `BoxDecodeType::Ssd` | `ssd` | Exact prepared SSD300, SSD-Mobile-300, SSD-Mobile-320, or SSDlite-Mobile-320 contract, selected from ordered head geometry |
 | `BoxDecodeType::SuperPoint` | `superpoint` | SuperPoint detector and descriptor postprocessing |
 | `BoxDecodeType::Detr` | `detr` | DETR-style transformer detection |

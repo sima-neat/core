@@ -35,8 +35,15 @@ struct RawPoseOut {
   RawPosePoint points[static_cast<std::size_t>(kDecodedPoseKeypoints)];
 };
 
+struct RawLightDarkOut {
+  float logit = 0.0f;
+  float p_dark = 0.0f;
+};
+
 static_assert(sizeof(RawBox) == 24, "BoxDecode BBOX wire record must stay 24 bytes");
 static_assert(sizeof(RawPoseOut) == 204, "BoxDecode pose wire record must stay 204 bytes");
+static_assert(sizeof(RawLightDarkOut) == kLightDarkTrailerBytes,
+              "BoxDecode light/dark trailer must stay 8 bytes");
 
 struct ParsedBoxRecords {
   std::vector<Box> boxes;
@@ -492,12 +499,11 @@ std::string sample_payload_format(const simaai::neat::Sample& sample) {
 
 } // namespace
 
-SegmentationPoseDecodeTensors decode_segmentation_pose_tensor(const simaai::neat::Tensor& tensor,
-                                                              int img_w, int img_h, int top_k,
-                                                              bool strict) {
-  validate_extended_detection_format(tensor, "segmentation-pose",
-                                     detection_format_is_segmentation_pose);
-  std::vector<uint8_t> bytes = copy_detection_payload(tensor, "segmentation-pose");
+namespace {
+
+SegmentationPoseDecodeTensors segmentation_pose_from_bytes(const std::vector<uint8_t>& bytes,
+                                                           int img_w, int img_h, int top_k,
+                                                           bool strict, const char* kind) {
   const std::size_t mask_bytes =
       static_cast<std::size_t>(kDecodedMaskWidth) * static_cast<std::size_t>(kDecodedMaskHeight);
   // Every region — boxes, masks, poses — is strided by the same slot count, so one
@@ -505,7 +511,7 @@ SegmentationPoseDecodeTensors decode_segmentation_pose_tensor(const simaai::neat
   // A decoder that strided the box array differently from its extension regions
   // could not be parsed this way.
   const std::size_t capacity =
-      infer_extended_capacity(bytes, mask_bytes + sizeof(RawPoseOut), "segmentation-pose", strict);
+      infer_extended_capacity(bytes, mask_bytes + sizeof(RawPoseOut), kind, strict);
   const int parse_topk =
       top_k > 0 ? static_cast<int>(std::min<std::size_t>(static_cast<std::size_t>(top_k), capacity))
                 : static_cast<int>(std::min<std::size_t>(
@@ -516,6 +522,38 @@ SegmentationPoseDecodeTensors decode_segmentation_pose_tensor(const simaai::neat
   out.masks = masks_to_tensor(bytes, parsed.record_indices, capacity);
   out.keypoints =
       keypoints_to_tensor(bytes, parsed.record_indices, capacity, capacity * mask_bytes);
+  return out;
+}
+
+} // namespace
+
+SegmentationPoseDecodeTensors decode_segmentation_pose_tensor(const simaai::neat::Tensor& tensor,
+                                                              int img_w, int img_h, int top_k,
+                                                              bool strict) {
+  validate_extended_detection_format(tensor, "segmentation-pose",
+                                     detection_format_is_segmentation_pose);
+  const std::vector<uint8_t> bytes = copy_detection_payload(tensor, "segmentation-pose");
+  return segmentation_pose_from_bytes(bytes, img_w, img_h, top_k, strict, "segmentation-pose");
+}
+
+SegmentationPoseLightDarkDecodeTensors
+decode_segmentation_pose_lightdark_tensor(const simaai::neat::Tensor& tensor, int img_w,
+                                          int img_h, int top_k, bool strict) {
+  constexpr const char* kKind = "segmentation-pose-lightdark";
+  validate_extended_detection_format(tensor, kKind, detection_format_is_segmentation_pose);
+  std::vector<uint8_t> bytes = copy_detection_payload(tensor, kKind);
+  if (bytes.size() < sizeof(uint32_t) + sizeof(RawLightDarkOut)) {
+    throw std::runtime_error(std::string(kKind) + " buffer too small for the light/dark trailer");
+  }
+  // No marker: the trailer's presence follows from the configured decode type, and the
+  // seg+pose size check below rejects a payload whose length is off by it.
+  RawLightDarkOut raw{};
+  std::memcpy(&raw, bytes.data() + bytes.size() - sizeof(raw), sizeof(raw));
+  bytes.resize(bytes.size() - sizeof(raw));
+  SegmentationPoseLightDarkDecodeTensors out;
+  out.seg_pose = segmentation_pose_from_bytes(bytes, img_w, img_h, top_k, strict, kKind);
+  out.light_dark.p_dark = raw.p_dark;
+  out.light_dark.logit = raw.logit;
   return out;
 }
 

@@ -81,6 +81,7 @@ enum class BoxDecodeType : std::int32_t {
   Ssd = 22, ///< SSD family token, resolved internally to an exact supported prepared signature.
   SuperPoint = 23,   ///< SuperPoint detector-logit and descriptor-grid postprocessing.
   YoloXSegPose = 24, ///< YOLOX packed export carrying box, mask and keypoint heads together.
+  YoloXSegPoseLightDark = 25, ///< YoloXSegPose plus an image-level light/dark head.
 };
 
 /**
@@ -178,6 +179,8 @@ constexpr const char* box_decode_type_token(BoxDecodeType type) {
     return "superpoint";
   case BoxDecodeType::YoloXSegPose:
     return "yolox-seg-pose";
+  case BoxDecodeType::YoloXSegPoseLightDark:
+    return "yolox-seg-pose-lightdark";
   case BoxDecodeType::Detr:
     return "detr";
   case BoxDecodeType::EffDet:
@@ -241,6 +244,7 @@ constexpr bool box_decode_type_is_yolo_family(BoxDecodeType type) {
   case BoxDecodeType::YoloV6:
   case BoxDecodeType::YoloX:
   case BoxDecodeType::YoloXSegPose:
+  case BoxDecodeType::YoloXSegPoseLightDark:
     return true;
   case BoxDecodeType::Ssd:
   case BoxDecodeType::SuperPoint:
@@ -252,6 +256,12 @@ constexpr bool box_decode_type_is_yolo_family(BoxDecodeType type) {
   default:
     return false;
   }
+}
+
+/// @brief True iff @p type is YoloXSegPose or a variant of it: the same 13 grouped-by-role
+///        tensors, decoded the same way, with any extra heads after the mask prototype.
+constexpr bool box_decode_type_is_yolox_seg_pose_family(BoxDecodeType type) {
+  return type == BoxDecodeType::YoloXSegPose || type == BoxDecodeType::YoloXSegPoseLightDark;
 }
 
 /// @brief True iff @p type selects the SSD decode family.
@@ -269,6 +279,7 @@ constexpr bool box_decode_type_is_segmentation(BoxDecodeType type) {
   case BoxDecodeType::YoloV10Seg:
   case BoxDecodeType::YoloV26Seg:
   case BoxDecodeType::YoloXSegPose:
+  case BoxDecodeType::YoloXSegPoseLightDark:
     return true;
   case BoxDecodeType::Yolo:
   case BoxDecodeType::YoloV5:
@@ -302,6 +313,7 @@ constexpr bool box_decode_type_is_pose(BoxDecodeType type) {
   // predicates were mutually exclusive over the previous value set; nothing in
   // the enum ever required that, but callers may have assumed it.
   case BoxDecodeType::YoloXSegPose:
+  case BoxDecodeType::YoloXSegPoseLightDark:
     return true;
   case BoxDecodeType::Yolo:
   case BoxDecodeType::YoloV5Seg:
@@ -377,6 +389,11 @@ constexpr const char* box_decode_type_contract_summary(BoxDecodeType type) {
            "plus one shared mask-prototype tensor; class scores are logits and objectness is "
            "packed into channel 0 of the class tensor, so num_classes is the class-block width "
            "and excludes it.";
+  case BoxDecodeType::YoloXSegPoseLightDark:
+    return "YOLOX seg+pose+light/dark contract: the 13 YOLOX seg+pose tensors followed by one "
+           "INT8 light/dark head with 2 channels (light, dark) on the coarsest head's grid. The "
+           "payload is the YOLOX seg+pose payload plus an 8-byte LightDark trailer carrying "
+           "P(DARK) over the cells that lie on image content.";
   case BoxDecodeType::YoloV5Seg:
   case BoxDecodeType::YoloV7Seg:
   case BoxDecodeType::YoloV8Seg:

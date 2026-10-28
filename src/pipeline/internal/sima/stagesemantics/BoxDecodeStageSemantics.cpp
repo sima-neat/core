@@ -386,9 +386,11 @@ int infer_yolox_seg_pose_positional_class_depth(const BoxDecodeStaticContract& c
   constexpr int kKpt = 3;
   constexpr int kBboxDepth = 4;
   constexpr int kProtoDepth = 32;
+  constexpr int kLightDarkDepth = 2;
   constexpr std::size_t kTensors = kHeads * kRoles + 1U;
 
-  if (contract.tensors.size() != kTensors) {
+  const bool light_dark = contract.decode_type == BoxDecodeType::YoloXSegPoseLightDark;
+  if (contract.tensors.size() != kTensors + (light_dark ? 1U : 0U)) {
     return 0;
   }
   std::array<int, kTensors> depth{};
@@ -425,6 +427,21 @@ int infer_yolox_seg_pose_positional_class_depth(const BoxDecodeStaticContract& c
       return 0;
     }
     class_depth = candidate;
+  }
+  if (light_dark) {
+    const auto& head = contract.tensors[kTensors];
+    const auto grid = tensor_hwc(head);
+    std::optional<TensorHwc> coarsest;
+    for (int h = 0; h < kHeads; ++h) {
+      const auto bbox = tensor_hwc(contract.tensors[slot(kBbox, h)]);
+      if (bbox && (!coarsest || bbox->h * bbox->w < coarsest->h * coarsest->w)) {
+        coarsest = bbox;
+      }
+    }
+    if (logical_channel_depth(head) != kLightDarkDepth || !grid || !coarsest ||
+        grid->h != coarsest->h || grid->w != coarsest->w) {
+      return 0;
+    }
   }
   return class_depth;
 }
@@ -704,7 +721,7 @@ int resolve_boxdecode_num_classes(const BoxDecodeStaticContract& contract, int u
     }
     return 1;
   }
-  if (contract.decode_type == BoxDecodeType::YoloXSegPose) {
+  if (box_decode_type_is_yolox_seg_pose_family(contract.decode_type)) {
     // The class tensor is Concat(objectness[1], classes[N]), so N is the head depth minus
     // one. Derive it rather than demanding it: the standalone SimaBoxDecode route always
     // finalizes with 0, so requiring a count made the decode type unusable outside an MPK.
@@ -712,10 +729,14 @@ int resolve_boxdecode_num_classes(const BoxDecodeStaticContract& contract, int u
     // recognized class name must not excuse a malformed layout.
     const int class_head_depth = infer_yolox_seg_pose_positional_class_depth(contract);
     if (class_head_depth <= 1) {
+      const bool light_dark = contract.decode_type == BoxDecodeType::YoloXSegPoseLightDark;
       throw std::invalid_argument(
-          std::string(context ? context : "BoxDecode") +
-          " yolox-seg-pose requires 13 tensors grouped by role: three heads of "
-          "[bbox, class, mask_coeff, kpt] plus one 32-channel mask prototype");
+          std::string(context ? context : "BoxDecode") + " " +
+          box_decode_type_token(contract.decode_type) + " requires " +
+          (light_dark ? "14" : "13") +
+          " tensors grouped by role: three heads of [bbox, class, mask_coeff, kpt] plus one "
+          "32-channel mask prototype" +
+          (light_dark ? ", then one 2-channel light/dark head on the coarsest head's grid" : ""));
     }
     const int named_depth = infer_named_class_depth(contract);
     if (named_depth > 1 && named_depth != class_head_depth) {
@@ -1000,7 +1021,7 @@ void apply_raw_yolov6_yolox_static_contract_overrides(BoxDecodeStaticContract* c
 }
 
 void apply_yolox_seg_pose_static_contract_overrides(BoxDecodeStaticContract* contract) {
-  if (!contract || contract->decode_type != BoxDecodeType::YoloXSegPose) {
+  if (!contract || !box_decode_type_is_yolox_seg_pose_family(contract->decode_type)) {
     return;
   }
   // Deliberately NOT folded into apply_raw_yolov6_yolox_static_contract_overrides:
@@ -1154,7 +1175,7 @@ int resolve_boxdecode_num_classes_override(BoxDecodeType decode_type, int inferr
     return inferred_num_classes;
   }
   if ((decode_type_is_yolov26_family(decode_type) || decode_type == BoxDecodeType::YoloV5 ||
-       decode_type == BoxDecodeType::YoloXSegPose) &&
+       box_decode_type_is_yolox_seg_pose_family(decode_type)) &&
       inferred_num_classes > 0 && requested_num_classes != inferred_num_classes) {
     throw std::invalid_argument(
         std::string(context ? context : "BoxDecode") +
@@ -1175,7 +1196,7 @@ std::vector<int> normalize_boxdecode_pose_classes(BoxDecodeType decode_type,
     return {};
   }
   const std::string prefix = std::string(context ? context : "BoxDecode") + " pose_classes";
-  if (decode_type != BoxDecodeType::YoloXSegPose) {
+  if (!box_decode_type_is_yolox_seg_pose_family(decode_type)) {
     throw std::invalid_argument(prefix + " is only supported for yolox-seg-pose, but decode_type=" +
                                 box_decode_type_token(decode_type) +
                                 ". Every other decode type either emits no keypoints or resolves "
@@ -1253,7 +1274,7 @@ void apply_yolov5_model_managed_contract_defaults(BoxDecodeStaticContract* contr
 
 void apply_yolox_seg_pose_model_managed_contract_defaults(BoxDecodeStaticContract* contract) {
   apply_yolox_seg_pose_static_contract_overrides(contract);
-  if (contract && contract->decode_type == BoxDecodeType::YoloXSegPose) {
+  if (contract && box_decode_type_is_yolox_seg_pose_family(contract->decode_type)) {
     // Without this the MPK route lowers a subset whose num_classes is still 0, and the
     // subset compiler then rejects the model at construction. resolve_ derives the count
     // from the class head (depth - 1 for packed objectness), so an MPK does not have to
@@ -1275,8 +1296,8 @@ void validate_model_managed_boxdecode_option_override(BoxDecodeType decode_type,
   // apply_yolox_seg_pose_static_contract_overrides() enforces on the static-contract path
   // is bypassed. Without this an unsupported layout reaches the backend, which cannot
   // decode the packed export as anything else.
-  if (decode_type == BoxDecodeType::YoloXSegPose && requested != BoxDecodeTypeOption::Auto &&
-      requested != BoxDecodeTypeOption::GroupedByRole &&
+  if (box_decode_type_is_yolox_seg_pose_family(decode_type) &&
+      requested != BoxDecodeTypeOption::Auto && requested != BoxDecodeTypeOption::GroupedByRole &&
       requested != BoxDecodeTypeOption::GroupedByRoleLogit) {
     throw std::invalid_argument("SimaBoxDecode(Model): yolox-seg-pose supports only Auto, "
                                 "GroupedByRole or GroupedByRoleLogit layout overrides");
@@ -1398,7 +1419,7 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
           box_decode_type_option_token(*compiled.payload.decode_type_option) + "'.");
     }
   }
-  if (compiled.payload.decode_type == BoxDecodeType::YoloXSegPose) {
+  if (box_decode_type_is_yolox_seg_pose_family(compiled.payload.decode_type)) {
     // Both routes arrive normalized - MPK through
     // apply_yolox_seg_pose_model_managed_contract_defaults, static contract through
     // finalize_boxdecode_static_contract - but options.decode_type_option replaces that
@@ -1432,7 +1453,7 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
                                : subset.num_classes,
                            "BoxDecode");
   compiled.payload.num_classes = options.num_classes > 0 ? options.num_classes : subset.num_classes;
-  if (compiled.payload.decode_type == BoxDecodeType::YoloXSegPose &&
+  if (box_decode_type_is_yolox_seg_pose_family(compiled.payload.decode_type) &&
       compiled.payload.num_classes <= 0) {
     // Both routes resolve a count before lowering, so reaching zero here means a subset
     // was built without the family defaults. Fail rather than let it mis-stride the

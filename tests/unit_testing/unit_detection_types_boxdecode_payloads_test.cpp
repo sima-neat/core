@@ -407,4 +407,37 @@ RUN_TEST(
               "top_k must cap the decoded row count");
       require(capped.masks.copy_payload_bytes()[sp_mask_bytes] == 2,
               "a top_k-capped decode must keep the capacity-derived mask stride");
+
+      // ---- yolox-seg-pose-lightdark: the seg+pose payload plus an 8-byte trailer ----
+
+      const auto with_trailer = [](std::vector<uint8_t> payload) {
+        struct {
+          float logit;
+          float p_dark;
+        } trailer{2.5f, 0.924141f};
+        static_assert(sizeof(trailer) == kLightDarkTrailerBytes);
+        const auto* bytes = reinterpret_cast<const uint8_t*>(&trailer);
+        payload.insert(payload.end(), bytes, bytes + sizeof(trailer));
+        return payload;
+      };
+      // The decoder element tags this payload BBOX, like every other non-SuperPoint one.
+      const Tensor ld_tensor = make_wire_tensor(
+          with_trailer(make_segmentation_pose_payload(2, 2)), kDetectionFormatBbox);
+      const SegmentationPoseLightDarkDecodeTensors ld =
+          decode_segmentation_pose_lightdark_tensor(ld_tensor);
+      require(ld.light_dark.logit == 2.5f && ld.light_dark.p_dark == 0.924141f,
+              "light/dark trailer values mismatch");
+      require(tensor_float_values(ld.seg_pose.boxes) == sp_boxes &&
+                  ld.seg_pose.masks.copy_payload_bytes() == sp_masks &&
+                  tensor_float_values(ld.seg_pose.keypoints) == sp_keypoints,
+              "the light/dark trailer must not move the seg+pose regions");
+      require(throws_with([&]() { (void)decode_segmentation_pose_lightdark_tensor(seg_pose_tensor); },
+                          "payload size does not match"),
+              "a seg+pose payload without a trailer must be rejected");
+      require(throws_with([&]() { (void)decode_segmentation_pose_tensor(ld_tensor); },
+                          "payload size does not match"),
+              "the seg+pose parser must reject a payload that carries a trailer");
+      require(throws_with([&]() { (void)decode_segmentation_pose(TensorList{ld_tensor}); },
+                          "payload size"),
+              "the seg+pose decoder must not silently accept a light/dark trailer");
     }));

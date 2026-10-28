@@ -54,8 +54,11 @@ struct Case {
   std::vector<int> grid_w = {80, 40, 20};
   std::vector<int> pose_classes;
   std::vector<int> expect_pose_classes; // empty: expect pose_classes verbatim
-  int tensor_count_override = 0;        // 0 keeps the full 13
+  int tensor_count_override = 0;        // 0 keeps the full 13 (14 with a light/dark head)
   std::string expect_error;             // non-empty: must throw with this substring
+  BoxDecodeType type = BoxDecodeType::YoloXSegPose;
+  int light_dark_depth = 0; // > 0: append a light/dark head of this depth after the proto
+  int light_dark_grid = 20;
 };
 
 int align_c16(int depth) {
@@ -72,7 +75,7 @@ BoxDecodeStaticContract build_contract(const Case& c) {
   const std::size_t levels = c.grid_h.size();
 
   BoxDecodeStaticContract contract;
-  contract.decode_type = BoxDecodeType::YoloXSegPose;
+  contract.decode_type = c.type;
   contract.pose_classes = c.pose_classes;
 
   auto add = [&](const std::string& name, int h, int w, int depth) {
@@ -114,6 +117,11 @@ BoxDecodeStaticContract build_contract(const Case& c) {
   }
   add(c.descriptive_names ? "mask_proto" : "output_" + std::to_string(contract.tensors.size()), 160,
       160, c.heads.proto);
+  if (c.light_dark_depth > 0) {
+    add(c.descriptive_names ? "light_dark_map"
+                            : "output_" + std::to_string(contract.tensors.size()),
+        c.light_dark_grid, c.light_dark_grid, c.light_dark_depth);
+  }
 
   if (c.tensor_count_override > 0 &&
       static_cast<std::size_t>(c.tensor_count_override) < contract.tensors.size()) {
@@ -137,7 +145,7 @@ void check(const Case& c) {
         BoxDecodeStaticContract managed = contract;
         apply_yolox_seg_pose_model_managed_contract_defaults(&managed);
       } else {
-        finalize_boxdecode_static_contract(contract, BoxDecodeType::YoloXSegPose, std::nullopt,
+        finalize_boxdecode_static_contract(contract, c.type, std::nullopt,
                                            std::nullopt, BoxDecodeTypeOption::Auto, 0.30, 0.60, 100,
                                            /*num_classes=*/0, {});
       }
@@ -155,12 +163,12 @@ void check(const Case& c) {
     apply_yolox_seg_pose_model_managed_contract_defaults(&resolved);
   } else {
     resolved =
-        finalize_boxdecode_static_contract(contract, BoxDecodeType::YoloXSegPose, std::nullopt,
+        finalize_boxdecode_static_contract(contract, c.type, std::nullopt,
                                            std::nullopt, BoxDecodeTypeOption::Auto, 0.30, 0.60, 100,
                                            /*num_classes=*/0, {});
   }
 
-  require(resolved.decode_type == BoxDecodeType::YoloXSegPose,
+  require(resolved.decode_type == c.type,
           label + "family type must be stable");
   require(resolved.num_classes == c.heads.classes, label + "class count must resolve to " +
                                                        std::to_string(c.heads.classes) + ", got " +
@@ -172,7 +180,7 @@ void check(const Case& c) {
 
   // The compiled payload is what reaches the on-device decoder.
   const auto compiled = build_boxdecode_compiled_contract(resolved);
-  require(compiled.payload.decode_type == BoxDecodeType::YoloXSegPose,
+  require(compiled.payload.decode_type == c.type,
           label + "compiled family type mismatch");
   require(compiled.payload.num_classes == c.heads.classes, label + "compiled class count mismatch");
   require(compiled.payload.decode_type_option.has_value() &&
@@ -300,6 +308,33 @@ RUN_TEST(
       cases.push_back({.name = "malformed/gate-negative",
                        .pose_classes = {-1},
                        .expect_error = "must lie in [0, 36)"});
+
+      // yolox-seg-pose-lightdark: the same 13 tensors plus a 2-channel head on the
+      // coarsest grid, decoded identically on both routes and both name sets.
+      const auto LD = BoxDecodeType::YoloXSegPoseLightDark;
+      for (const bool managed : {true, false}) {
+        for (const bool descriptive : {true, false}) {
+          cases.push_back({.name = std::string("lightdark/") + (managed ? "managed" : "standalone") +
+                                   (descriptive ? "/named" : "/generic"),
+                           .descriptive_names = descriptive,
+                           .model_managed = managed,
+                           .type = LD,
+                           .light_dark_depth = 2});
+        }
+      }
+      cases.push_back(
+          {.name = "lightdark/int8-gate", .dtype = "INT8", .pose_classes = {29}, .type = LD,
+           .light_dark_depth = 2});
+      const std::string kBadLightDark = "requires 14 tensors grouped by role";
+      cases.push_back({.name = "lightdark/missing-head", .expect_error = kBadLightDark,
+                       .type = LD});
+      cases.push_back({.name = "lightdark/three-channels", .expect_error = kBadLightDark,
+                       .type = LD, .light_dark_depth = 3});
+      cases.push_back({.name = "lightdark/wrong-grid", .expect_error = kBadLightDark, .type = LD,
+                       .light_dark_depth = 2, .light_dark_grid = 40});
+      // A light/dark head on a plain yolox-seg-pose contract is still a 14-tensor error.
+      cases.push_back({.name = "seg-pose/extra-head", .expect_error = kBadGeometry,
+                       .light_dark_depth = 2});
 
       for (const auto& c : cases) {
         check(c);

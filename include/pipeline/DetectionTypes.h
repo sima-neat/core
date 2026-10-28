@@ -18,6 +18,7 @@
 #include "pipeline/Tensor.h"
 
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -123,6 +124,28 @@ struct SegmentationPoseDecodeTensors {
   simaai::neat::Tensor keypoints;
 };
 
+/// Bytes of the light/dark trailer that a yolox-seg-pose-lightdark payload appends after
+/// the poses region.
+inline constexpr std::size_t kLightDarkTrailerBytes = 2 * sizeof(float);
+
+/**
+ * @brief Image-level light/dark result of a yolox-seg-pose-lightdark payload.
+ *
+ * `logit` is mean(dark) - mean(light) of the model's light/dark head over the cells whose
+ * centre lies on image content, and `p_dark` its sigmoid. Both are NaN when no cell lies on
+ * the image.
+ */
+struct LightDarkDecode {
+  float p_dark = std::numeric_limits<float>::quiet_NaN();
+  float logit = std::numeric_limits<float>::quiet_NaN();
+};
+
+/// A yolox-seg-pose-lightdark payload: the seg+pose tensors plus the light/dark result.
+struct SegmentationPoseLightDarkDecodeTensors {
+  SegmentationPoseDecodeTensors seg_pose;
+  LightDarkDecode light_dark;
+};
+
 using PoseDecodeTensorList = std::vector<PoseDecodeTensors>;
 using SegmentationDecodeTensorList = std::vector<SegmentationDecodeTensors>;
 using SegmentationPoseDecodeTensorList = std::vector<SegmentationPoseDecodeTensors>;
@@ -154,6 +177,19 @@ SegmentationPoseDecodeTensors decode_segmentation_pose_tensor(const simaai::neat
 SegmentationPoseDecodeTensorList decode_segmentation_pose(const simaai::neat::TensorList& tensors,
                                                           int img_w = 0, int img_h = 0,
                                                           int top_k = 0, bool strict = false);
+
+/**
+ * @brief Decode a yolox-seg-pose-lightdark BoxDecode payload.
+ *
+ * The payload is a combined segmentation + pose payload followed by a
+ * `kLightDarkTrailerBytes` light/dark trailer. The caps format stays BBOX, so the caller
+ * selects this function by the decode type it configured. Throws, in strict and non-strict
+ * mode alike, if the payload is shorter than the trailer or the rest does not match the
+ * seg+pose layout.
+ */
+SegmentationPoseLightDarkDecodeTensors
+decode_segmentation_pose_lightdark_tensor(const simaai::neat::Tensor& tensor, int img_w = 0,
+                                          int img_h = 0, int top_k = 0, bool strict = false);
 
 /**
  * @brief Parse a packed BBOX byte payload into typed `Box` records.

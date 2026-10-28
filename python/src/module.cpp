@@ -2006,6 +2006,17 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("masks", &simaai::neat::SegmentationPoseDecodeTensors::masks)
       .def_rw("keypoints", &simaai::neat::SegmentationPoseDecodeTensors::keypoints);
 
+  nb::class_<simaai::neat::LightDarkDecode>(m, "LightDarkDecode")
+      .def(nb::init<>())
+      .def_rw("p_dark", &simaai::neat::LightDarkDecode::p_dark)
+      .def_rw("logit", &simaai::neat::LightDarkDecode::logit);
+
+  nb::class_<simaai::neat::SegmentationPoseLightDarkDecodeTensors>(
+      m, "SegmentationPoseLightDarkDecodeTensors")
+      .def(nb::init<>())
+      .def_rw("seg_pose", &simaai::neat::SegmentationPoseLightDarkDecodeTensors::seg_pose)
+      .def_rw("light_dark", &simaai::neat::SegmentationPoseLightDarkDecodeTensors::light_dark);
+
   m.def(
       "decode_pose",
       [](const TensorList& pose_tensors, std::optional<std::pair<int, int>> clamp_to,
@@ -2110,6 +2121,33 @@ NB_MODULE(_pyneat_core, m) {
       "  TypeError: an input tensor is not segmentation-pose/BBOX-compatible.\n"
       "  RuntimeError: strict=True and a payload is malformed.",
       "tensors"_a, nb::kw_only(), "clamp_to"_a = nb::none(), "top_k"_a = nb::none(),
+      "strict"_a = false);
+
+  m.def(
+      "decode_segmentation_pose_lightdark",
+      [](const Tensor& tensor, std::optional<std::pair<int, int>> clamp_to,
+         std::optional<int> top_k, bool strict) {
+        const int w = clamp_to ? clamp_to->first : 0;
+        const int h = clamp_to ? clamp_to->second : 0;
+        try {
+          return simaai::neat::decode_segmentation_pose_lightdark_tensor(tensor, w, h,
+                                                                         top_k.value_or(0), strict);
+        } catch (const std::runtime_error& e) {
+          if (detection_decode_type_error_message(e.what())) {
+            throw nb::type_error(e.what());
+          }
+          throw;
+        }
+      },
+      "Decode one yolox-seg-pose-lightdark BoxDecode tensor.\n\n"
+      "Returns a SegmentationPoseLightDarkDecodeTensors: `seg_pose` as from\n"
+      "decode_segmentation_pose, and `light_dark` with `p_dark`, `logit`,\n"
+      "`valid_cells` and `total_cells` (p_dark and logit are NaN when valid_cells is 0).\n\n"
+      "Raises:\n"
+      "  TypeError: the tensor is not segmentation-pose/BBOX-compatible.\n"
+      "  RuntimeError: the payload has no light/dark trailer, or strict=True and it is\n"
+      "  malformed.",
+      "tensor"_a, nb::kw_only(), "clamp_to"_a = nb::none(), "top_k"_a = nb::none(),
       "strict"_a = false);
 
   nb::enum_<simaai::neat::genai::GenAITask>(m, "GenAITask")
@@ -4299,7 +4337,8 @@ NB_MODULE(_pyneat_core, m) {
       .value("RcnnStage1", simaai::neat::BoxDecodeType::RcnnStage1)
       .value("Centernet", simaai::neat::BoxDecodeType::Centernet)
       .value("SuperPoint", simaai::neat::BoxDecodeType::SuperPoint)
-      .value("YoloXSegPose", simaai::neat::BoxDecodeType::YoloXSegPose);
+      .value("YoloXSegPose", simaai::neat::BoxDecodeType::YoloXSegPose)
+      .value("YoloXSegPoseLightDark", simaai::neat::BoxDecodeType::YoloXSegPoseLightDark);
 
   nb::enum_<simaai::neat::BoxDecodeTypeOption>(m, "BoxDecodeTypeOption")
       .value("Auto", simaai::neat::BoxDecodeTypeOption::Auto)
