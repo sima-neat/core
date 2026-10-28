@@ -101,6 +101,10 @@ def ethernet_ports(value):
     return sorted(ports, key=lambda p: p['interface'])
 
 
+class SSHSetupRequired(ConnectionError):
+    """Strict SSH identified an unknown host or missing login authorization."""
+
+
 class Operations:
     def __init__(self, root, user, key, known_hosts, sudo_password=None, log=None, recreate_venv=False):
         self.root, self.user = root, user
@@ -134,10 +138,20 @@ class Operations:
                 '-o', 'ServerAliveCountMax=2', self.user+'@'+card['ip'], command]
 
     def ssh(self, card, command, **kwargs):
+        kwargs['env'] = dict(kwargs.get('env', os.environ), LC_ALL='C')
         try:
             return run(self.ssh_command(card, command), **kwargs)
         except subprocess.CalledProcessError as exc:
             if exc.returncode == 255:
+                detail = exc.stderr or ''
+                if isinstance(detail, bytes):
+                    detail = detail.decode(errors='replace')
+                if ('REMOTE HOST IDENTIFICATION HAS CHANGED' in detail
+                        or 'REVOKED HOST KEY DETECTED' in detail):
+                    raise ConnectionError('SSH host key rejected; verify the card identity and trust file before retrying') from exc
+                if (re.search(r'(?m)^No [^\n]+ host key is known for [^\n]+ and you have requested strict checking\.', detail)
+                        or re.search(r'Permission denied \([^)]+\)\.', detail)):
+                    raise SSHSetupRequired('SSH host enrollment or login authorization required') from exc
                 raise ConnectionError('SSH transport lost; remote outcome may be unknown') from exc
             raise
 
@@ -251,12 +265,13 @@ def prepare_ssh(cards, snapshot, operations, account, progress, *, preflight_onl
     missing = []
     for card in cards:
         stable(card)
-        if operations.key.is_file() and operations.known_hosts.is_file():
-            try:
-                operations.ssh(card, 'true', stdin=subprocess.DEVNULL, capture_output=True, text=True)
-                continue
-            except ConnectionError:
-                pass
+        # OpenSSH checks host trust even without a private key. Always probe:
+        # missing credentials must not bypass rejection of an existing host key.
+        try:
+            operations.ssh(card, 'true', stdin=subprocess.DEVNULL, capture_output=True, text=True)
+            continue
+        except SSHSetupRequired:
+            pass
         missing.append(card)
     if not missing:
         return

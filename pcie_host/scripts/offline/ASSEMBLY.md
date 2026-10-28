@@ -409,8 +409,13 @@ docker run --rm --network=none --mount type=bind,src="$PWD",dst=/src,readonly \
 The test requires a fresh disposable container and refuses to run on the host.
 It starts with no host user credentials or enrolled card keys. It checks the
 first-run login prompts, user ownership under sudo, and an unchanged
-repeat run with no prompts. Host-key enrollment uses the shared script
-without changing its existing behavior. Both simulated endpoints use loopback in the isolated container; PCIe
+repeat run with no prompts. It then rotates the server key and checks rejection
+with and without a private key: no password prompt, credential creation or trust
+file/authorization changes are allowed. Offline enrollment is entered only after
+strict SSH reports an unknown host or missing login authorization; changed,
+revoked and unclassified failures stop before the shared setup script runs.
+Host-key enrollment uses the shared script without changing its existing
+behavior. Both simulated endpoints use loopback in the isolated container; PCIe
 route validation has separate unit coverage. This is SSH qualification only.
 Final acceptance still requires a complete offline Neat installation on a
 freshly flashed host with the compatible Platform driver and card firmware.

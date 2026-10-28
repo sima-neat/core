@@ -154,8 +154,31 @@ try:
         known.stat().st_mtime_ns,
         authorized.stat().st_mtime_ns,
     )
+    sshd.terminate()
+    sshd.wait(timeout=5)
+    hostkey.unlink()
+    hostkey.with_suffix('.pub').unlink()
+    sshd = server()
+    for missing_key in [False, True]:
+        private = root / 'sima_neat_pcie_ed25519'
+        backup = private.with_suffix('.saved')
+        if missing_key:
+            private.rename(backup)
+        try:
+            text, trust, passwords = attempt(False)
+            assert 'SSH host key rejected' in text, text
+            assert trust == 0 and passwords == 0, text
+            assert private.exists() != missing_key
+            assert before == (
+                known.read_bytes(), authorized.read_bytes(),
+                known.stat().st_mtime_ns, authorized.stat().st_mtime_ns,
+            )
+        finally:
+            if missing_key:
+                backup.rename(private)
     print(
-        "PASS: first-run password setup; user-owned credentials; prompt-free retry"
+        "PASS: first-run password setup; user-owned credentials; prompt-free retry; "
+        "rotated host key rejected with and without a private key; trust unchanged; no password prompts"
     )
 finally:
     sshd.terminate()
