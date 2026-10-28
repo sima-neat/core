@@ -454,6 +454,8 @@ BoxDecode 與 SuperPoint 數值輸出保持私用；相依的 Core 線路序列�
 
 InputStream 會在發布 Sample 之前，將定義的格式投射至每個傳回的張量，包括自有複本與快取中繼資料路徑。因此，原始 `Sample.tensors` 與 `TensorList` 便利 API 具有相同的偵測語意。
 
+對於已驗證的 MLA 圖塊數值輸出，Core 僅在形狀和 dtype 與已驗證的產生端一致時，才將實體配置附加到各邏輯輸出。InputStream 會在初始化解碼快取時解析這些不可變的 caps 中繼資料，然後保留在快取的 Tensor 範本中。原始位元組別名，以及位元組排列已符合密集 NHWC 的 INT8 儲存格圖塊，均維持不變。`TessSpec::storage_bytes` 區分明確的圖塊儲存與舊有僅標示格式的註記。`copy_payload_bytes()` 和 `clone()` 保留儲存位元組、填補與配置；密集複製、具型別存取與 DLPack 則拒絕明確的圖塊儲存。支援此配置的圖消費端會接收已驗證的配置，不會執行隱藏轉換。
+
 影像尺寸變更會在綁定前選擇不可變且資源相容的已準備 BoxDecode 變體，
 不會修改在途影格使用中的操作。RCNN 第 1 階段保留逐層 top-K 計數加 FP16 提案群組。
 Core 不得載入已淘汰的 objectdecode 外掛程式作為備援。

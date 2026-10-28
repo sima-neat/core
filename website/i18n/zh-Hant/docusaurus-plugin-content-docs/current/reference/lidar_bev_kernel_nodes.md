@@ -116,6 +116,8 @@ BF16 輸入的 `SimaBEVPool` 為 `scale = 1 / quantization.multiplier`；兩個 
   `quantization`。由 BF16 輸入產生的 INT8 `bev` 會量化總和：請將
   `quantization.multiplier` 設為 `1 / output_scale`。INT8 輸入無法產生 BF16 `bev`。
 
+新增的 `TessSpec::axes` 與 `TessSpec::storage_bytes` 欄位具有預設值，因此現有的雙欄位聚合初始化仍保有原始碼相容性。不過，公開結構的二進位配置已改變：請使用相符的 Core 標頭與程式庫重新建置 C++ 消費端和 Python 繫結，不要重複使用以舊配置建置的二進位檔案。
+
 ## 將節點連接成管線
 
 這些節點是一般的圖階段，但其輸入來自多個上游階段：

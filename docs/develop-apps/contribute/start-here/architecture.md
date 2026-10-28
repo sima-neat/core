@@ -652,6 +652,8 @@ The immutable kernel recipe retains the producer-authored tensor wire format aft
 
 InputStream projects the authored format onto each returned tensor before publishing a Sample, including owned-copy and cached-metadata paths. Raw `Sample.tensors` and the `TensorList` convenience API therefore carry the same detection semantics.
 
+For checked MLA-tiled numerical outputs, Core attaches physical layout to each logical output only when its shape and dtype match the checked producer. InputStream decodes this immutable caps metadata when initializing its decode cache, then retains it in cached Tensor templates. Raw-byte aliases and INT8 cell tiles whose bytes already match dense NHWC remain unchanged. `TessSpec::storage_bytes` distinguishes explicit tiled storage from legacy format-only annotations. `copy_payload_bytes()` and `clone()` preserve stored bytes, padding and layout; dense copies, typed access and DLPack reject explicit tiled storage. Layout-aware graph consumers receive the checked layout without a hidden conversion.
+
 Image-size changes select immutable, resource-compatible prepared BoxDecode variants
 before binding. They do not mutate an operation used by an in-flight frame. RCNN
 stage 1 preserves per-level top-K count-plus-FP16 proposal groups. Core must not

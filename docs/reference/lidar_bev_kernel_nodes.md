@@ -131,6 +131,8 @@ INT8 inputs both carry a scale; and the features' quantization for
   `bev` from BF16 inputs quantizes the sum: set `quantization.multiplier` to
   `1 / output_scale`. INT8 inputs cannot produce a BF16 `bev`.
 
+The appended `TessSpec::axes` and `TessSpec::storage_bytes` fields have defaults, so existing two-field aggregate initializers remain source-compatible. The public struct's binary layout changes: rebuild C++ consumers and Python bindings against matching Core headers and libraries; do not reuse binaries built with the earlier layout.
+
 ## Connect the nodes into a pipeline
 
 These nodes are ordinary graph stages, but their inputs come from more than one
