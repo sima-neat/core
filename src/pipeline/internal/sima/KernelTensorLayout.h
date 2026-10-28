@@ -9,7 +9,10 @@ namespace simaai::neat::pipeline_internal::sima {
 
 // A compact one-byte, full-channel MLA cell tile is ordinary NHWC storage
 // when each cell satisfies tile alignment. A whole-volume tile is equivalent
-// too. Other tile orders/padding, and BF16 low/high byte planes, are not dense.
+// too: Kernels clips boundary tiles to actual extents, so oversized spatial
+// tiles have no row gaps. A single tile's final alignment bytes are outside the
+// dense logical prefix; cell tiles must not introduce inter-cell padding.
+// Other tile orders/padding, and BF16 low/high byte planes, are not dense.
 inline bool
 kernel_tensor_requires_detessellation(const ::simaai::scheduler::client::TensorSpec& tensor) {
   namespace rt = ::simaai::scheduler::client;

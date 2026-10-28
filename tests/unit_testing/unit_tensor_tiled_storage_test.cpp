@@ -43,6 +43,20 @@ RUN_TEST("unit_tensor_tiled_storage_test", ([] {
            spec.layout = cells;
            require(!pi::sima::kernel_tensor_requires_detessellation(spec),
                    "single whole-volume INT8 tile lost dense compatibility");
+           cells.tile_shape = {2, 8, 12, 16};
+           spec.layout = cells;
+           require(!pi::sima::kernel_tensor_requires_detessellation(spec),
+                   "boundary-clipped oversized whole tile lost dense compatibility");
+           spec.shape = {1, 2, 3, 3};
+           cells.tile_shape = {2, 4, 6, 3};
+           spec.layout = cells;
+           require(!pi::sima::kernel_tensor_requires_detessellation(spec),
+                   "single-tile trailing alignment was mistaken for internal padding");
+           spec.shape = {1, 2, 3, 15};
+           cells.tile_shape = {1, 1, 1, 15};
+           spec.layout = cells;
+           require(pi::sima::kernel_tensor_requires_detessellation(spec),
+                   "inter-cell alignment gaps were mistaken for dense INT8 storage");
 
            // Nonzero carrier offset and trailing bytes catch accidental whole-carrier
            // copying; the tile extent is larger than the logical value extent.
