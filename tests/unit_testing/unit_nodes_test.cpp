@@ -106,6 +106,8 @@ int main() {
     require(rtsp->is_live_source(), "RTSPInput must be a live source");
     require(simaai::neat::nodes::CameraInput()->is_live_source(),
             "CameraInput must be a live source");
+    require(simaai::neat::nodes::CameraInputWithCaptureBuffers({}, 0)->is_live_source(),
+            "CameraInput with capture buffers (Python camera_input) must be a live source");
     require(simaai::neat::nodes::PCIeSrc()->is_live_source(), "PCIeSrc must be a live source");
     simaai::neat::HttpSourceOptions http_opt;
     http_opt.location = "http://example.test/stream.mjpg";
