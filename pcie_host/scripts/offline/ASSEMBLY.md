@@ -388,21 +388,3 @@ a failed or cancelled source run is rejected. Automatic release-branch publicati
 continues to require complete successful CI. Without `offline_publish=true`, the
 manual entry point remains validation-only. Completed offline publications are
 verified and reused on rerun rather than replaced.
-
-
-## Pinning the card test image
-
-`baseline-images.json` pins the card test image by immutable ECR digest. Update
-this pin when Platform requirements or the baseline recipe change, then qualify
-the new image with offline installation tests. Rebuilding the Core, Scheduler,
-Runner, Kernels, or kernel firmware packages does not update the test-image pin.
-
-The config retains the pinned image's original producer input key, source SHA,
-and validation run. Core pulls that digest and checks its original input/recipe/
-role labels and ARM64 architecture. Host image selection is unchanged.
-
-Every assembly still installs the current published packages in a fresh container
-with `--network=none`, checks native/Python dependencies, and imports the Python
-module. If new packages require a different Platform environment, qualify a new
-Vulcan baseline and update the digest and producer receipt together. Do not change
-the receipt to match the packages under test; it describes the pinned image.
