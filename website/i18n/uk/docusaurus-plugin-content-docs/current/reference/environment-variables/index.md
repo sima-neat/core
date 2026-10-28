@@ -16,7 +16,7 @@ slug: /reference/environment-variables
 
 ## Веб-доступ до SDK.
 
-У Neat SDK 3.0 або новіших версіях команда `sima-cli sdk setup` задає `CODE_SERVER_PASSWORD` у середовищі контейнера. Повторно запустіть `neat`, щоб переглянути пароль, і введіть його на запит code-server. URL не містять пароля чи токена. `neat --json` додає `codeUI` з полями `backend`, `auth`, `password`, `localUrl` і `remoteUrl`; цей вивід містить облікові дані. Опублікований порт `codeUIHttps.host` із карти портів SDK має пріоритет над портом контейнера.
+У Palette SDK 3.0 або новіших версіях команда `sima-cli sdk setup` задає `CODE_SERVER_PASSWORD` у середовищі контейнера. Повторно запустіть `neat`, щоб переглянути пароль, і введіть його на запит code-server. URL не містять пароля чи токена. `neat --json` додає `codeUI` з полями `backend`, `auth`, `password`, `localUrl` і `remoteUrl`; цей вивід містить облікові дані. Опублікований порт `codeUIHttps.host` із карти портів SDK має пріоритет над портом контейнера.
 
 Поведінка визначається встановленим виконуваним файлом code-server; саме лише встановлення `CODE_SERVER_PASSWORD` не змінює поведінку старого OpenVSCode. `CODE_SERVER_HTTPS_PORT` і `CODE_SERVER_WORKSPACE` мають пріоритет над старими змінними. За `CODE_SERVER_WITHOUT_PASSWORD=1` повертається `auth: "none"` без значення пароля. Старі образи OpenVSCode зберігають URL із токенами.
 

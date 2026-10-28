@@ -1,6 +1,6 @@
 ---
 title: "SDK を設定します。"
-description: "インストール後、Neat SDK の作業スペース、DevKit のペアリング、または設定オプションを変更します。"
+description: "インストール後、Palette SDK の作業スペース、DevKit のペアリング、または設定オプションを変更します。"
 sidebar_position: 4
 ---
 
@@ -8,7 +8,7 @@ sidebar_position: 4
 SDK のインストールコマンドは、すでに SDK イメージをダウンロードし、設定を行います。ワークスペースの場所、DevKit のペアリング、SDK 拡張機能、その他の設定オプションなど、SDK の設定を変更する必要がある場合は、このページを参照してください。
 :::
 
-既存の Neat SDKコンテナを構成する必要がある場合は、`sima-cli sdk setup` を直接実行してください。
+既存の Palette SDKコンテナを構成する必要がある場合は、`sima-cli sdk setup` を直接実行してください。
 
 ## DevKit を使用したペアリング設定
 

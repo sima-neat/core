@@ -1,10 +1,10 @@
 ---
 title: "Примітки щодо хоста Windows."
-description: "Підготуйте хост із Windows 11 для Neat SDK та DevKit-Sync."
+description: "Підготуйте хост із Windows 11 для Palette SDK та DevKit-Sync."
 sidebar_position: 2
 ---
 
-Використовуйте цей посібник, якщо ваша хост-машина працює під керуванням Windows 11, і ви хочете запустити Neat SDK із синхронізацією DevKit.
+Використовуйте цей посібник, якщо ваша хост-машина працює під керуванням Windows 11, і ви хочете запустити Palette SDK із синхронізацією DevKit.
 
 ## Необхідні умови.
 
@@ -15,7 +15,7 @@ sidebar_position: 2
 
 ## Почніть з WSL.
 
-Виконуйте команди Neat SDK у середовищі вашої дистрибуції Linux WSL, а не в PowerShell або командному рядку. Це стосується і команди `sima-cli neat install sdk@%%release.sdk_channel%%`.
+Виконуйте команди Palette SDK у середовищі вашої дистрибуції Linux WSL, а не в PowerShell або командному рядку. Це стосується і команди `sima-cli neat install sdk@%%release.sdk_channel%%`.
 
 ## Режим мережі WSL.
 
@@ -66,7 +66,7 @@ sima-cli sdk setup --devkit <devkit-ip>
 ```
 
 :::note Insight: доступ до прямих посилань у Windows.
-Завдяки функції прямого мережевого обміну у Windows, брандмауер Windows і поведінка перенаправлення портів WSL можуть перешкоджати доступу до веб-інтерфейсу Neat Insight з інших машин у мережі. У цьому випадку відкрийте Insight безпосередньо на хості Windows Neat SDK, наприклад, за адресою `https://localhost:9900`.
+Завдяки функції прямого мережевого обміну у Windows, брандмауер Windows і поведінка перенаправлення портів WSL можуть перешкоджати доступу до веб-інтерфейсу Neat Insight з інших машин у мережі. У цьому випадку відкрийте Insight безпосередньо на хості Windows Palette SDK, наприклад, за адресою `https://localhost:9900`.
 :::
 
 ## Правила брандмауера NFS (PowerShell)
@@ -84,4 +84,4 @@ New-NetFirewallRule -DisplayName "Allow NFS UDP 2049" -Direction Inbound -Protoc
 
 ## Наступний крок.
 
-Поверніться до [Neat SDK](/getting-started/dev-environment/) і продовжуйте встановлення/налаштування.
+Поверніться до [Palette SDK](/getting-started/dev-environment/) і продовжуйте встановлення/налаштування.

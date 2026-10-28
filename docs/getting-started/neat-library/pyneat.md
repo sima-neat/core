@@ -6,7 +6,7 @@ sidebar_position: 4
 
 :::note DevKit only — skip for SDK installs
 These steps set up PyNeat on a DevKit (or a bare host acting as a runtime). If
-you are working inside the Neat SDK, skip this page.
+you are working inside the Palette SDK, skip this page.
 :::
 
 :::tip PyNeat is already installed with Neat Library

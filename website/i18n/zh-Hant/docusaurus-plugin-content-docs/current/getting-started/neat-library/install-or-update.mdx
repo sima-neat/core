@@ -4,9 +4,9 @@ description: "安裝或更新 Neat Library 執行階段、C++ 檔案、GStreamer
 sidebar_position: 2
 ---
 
-請使用此頁面來安裝或更新 Palette Neat Library。
+請使用此頁面來安裝或更新 Neat Library。
 
-:::tip Neat Library 位於 Neat SDK 之中。
+:::tip Neat Library 位於 Palette SDK 之中。
 當您在執行 `sima-cli sdk setup` 時配對一個 DevKit，SDK 會自動在其 DevKit 上安裝包含的 Neat Library 和捆綁的 PyNeat 環境，並將其安裝在 `~/pyneat` 上。
 :::
 
@@ -21,7 +21,7 @@ sidebar_position: 2
 
 | 環境 | 何時使用 |
 | --- | --- |
-| Neat SDK | 當您想要在不安裝新的 SDK 版本的情況下，升級 Neat SDK 中的 Neat Library 時。 |
+| Palette SDK | 當您想要在不安裝新的 SDK 版本的情況下，升級 Palette SDK 中的 Neat Library 時。 |
 | ROS2 SDK | 當您想要在容器的系統路徑中安裝 Neat 標頭和函式庫後，在 ARM64 上原生編譯 ROS 2 應用程式時。 |
 | DevKit | 當您想要直接在裝置上安裝或更新執行階段時。 |
 
@@ -73,7 +73,7 @@ sima-cli login
 curl -fsS https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh -o /dev/null && echo "artifacts reachable"
 </ShellCommand>
 
-顯示「`artifacts reachable`」表示主機可連線。如果出現 `curl` 錯誤，例如逾時、連線被拒絕，或「無法解析主機」，則表示已封鎖外向連線——請檢查您的主機網路、Proxy 或防火牆（請參閱 [Neat SDK 網路功能](/tools/sima-cli/sdk-networking/) 和 [主機設定注意事項](/reference/elxr-sdk-host-setup/ubuntu)），或者如果機器無法直接連線到 SiMa.ai 服務，請使用 [離線安裝](#offline-installation)。
+顯示「`artifacts reachable`」表示主機可連線。如果出現 `curl` 錯誤，例如逾時、連線被拒絕，或「無法解析主機」，則表示已封鎖外向連線——請檢查您的主機網路、Proxy 或防火牆（請參閱 [Palette SDK 網路功能](/tools/sima-cli/sdk-networking/) 和 [主機設定注意事項](/reference/elxr-sdk-host-setup/ubuntu)），或者如果機器無法直接連線到 SiMa.ai 服務，請使用 [離線安裝](#offline-installation)。
 
 ## 安裝 Neat Library
 
@@ -86,10 +86,10 @@ curl -fsS https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh -o /dev/null && e
 
 在執行安裝程式之前，請選擇一個工作目錄。在 DevKit 上，將安裝程式安裝在 `/media/nvme` 目錄下，以避免填滿根檔案系統。在 SDK 容器中，請使用容器內的本地路徑，例如 `$HOME/neat`。
 
-選擇您的環境，然後依序執行步驟。在 **Neat SDK** 容器中安裝，以進行跨平台編譯 C++ 應用程式。在 **ROS2 SDK** 中安裝，以在 ARM64 上進行原生編譯；其 Debian 套件會安裝到 `/usr`，而不是 Neat 跨平台編譯的系統根目錄。在 **DevKit** 上安裝，以設定該處的執行階段，同時也會在 `~/pyneat` 中設定 PyNeat。安裝程式指令在每個環境中都相同。
+選擇您的環境，然後依序執行步驟。在 **Palette SDK** 容器中安裝，以進行跨平台編譯 C++ 應用程式。在 **ROS2 SDK** 中安裝，以在 ARM64 上進行原生編譯；其 Debian 套件會安裝到 `/usr`，而不是 Neat 跨平台編譯的系統根目錄。在 **DevKit** 上安裝，以設定該處的執行階段，同時也會在 `~/pyneat` 中設定 PyNeat。安裝程式指令在每個環境中都相同。
 
 <CodeTabs>
-<CodeTab label="Neat SDK" lang="bash">
+<CodeTab label="Palette SDK" lang="bash">
 
 準備一個容器本地安裝目錄，例如：`$HOME/neat`。
 
@@ -164,7 +164,7 @@ source ~/pyneat/bin/activate
 
 如果您偏好從原始碼開始建置，請遵循「[建造](/develop-apps/contribute/build)」指南。
 
-如需了解 SDK 的設定和 DevKit Sync 的導入流程，請參閱 [Neat SDK](/getting-started/dev-environment/)。
+如需了解 SDK 的設定和 DevKit Sync 的導入流程，請參閱 [Palette SDK](/getting-started/dev-environment/)。
 
 ## 離線安裝 {#offline-installation}
 
@@ -196,7 +196,7 @@ sima-cli neat install core/offline@v%%release.core%% -t minimal --download-only
 
 ### 2. 安裝套件
 
-1. 將下載的檔案複製到 Modalix DevKit 或 Neat SDK 工作區。
+1. 將下載的檔案複製到 Modalix DevKit 或 Palette SDK 工作區。
 2. 在該目錄中開啟終端機。若要安裝至 SDK，請使用 SDK shell。
 3. 解壓縮安裝程式封存檔：
 

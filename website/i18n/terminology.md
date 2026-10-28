@@ -5,9 +5,7 @@ documentation. Product names and source-code identifiers remain unchanged.
 
 | English | Korean (`ko`) | Japanese (`ja`) | Traditional Chinese (`zh-Hant-TW`) | Ukrainian (`uk-UA`) |
 | --- | --- | --- | --- | --- |
-| Palette Neat | Palette Neat | Palette Neat | Palette Neat | Palette Neat |
-| Palette Neat Library | Palette Neat Library | Palette Neat Library | Palette Neat Library | Palette Neat Library |
-| Neat SDK | Neat SDK | Neat SDK | Neat SDK | Neat SDK |
+| Palette SDK | Palette SDK | Palette SDK | Palette SDK | Palette SDK |
 | Neat Library | Neat Library | Neat Library | Neat Library | Neat Library |
 | Neat Examples | Neat Examples | Neat Examples | Neat Examples | Neat Examples |
 | Modalix | Modalix | Modalix | Modalix | Modalix |

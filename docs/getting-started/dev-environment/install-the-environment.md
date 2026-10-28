@@ -1,10 +1,10 @@
 ---
 title: Install the SDK
-description: Install and set up the Neat SDK container
+description: Install and set up the Palette SDK container
 sidebar_position: 2
 ---
 
-Install the latest Neat SDK. It runs as a container on your host machine.
+Install the latest Palette SDK. It runs as a container on your host machine.
 
 ## Prerequisites
 
@@ -20,19 +20,19 @@ Install the latest Neat SDK. It runs as a container on your host machine.
 
 To use DevKit Sync later, you also need:
 
-- A DevKit running compatible software to the Neat SDK. Read the [Compatibility Guide](/getting-started/compatibility/) for more information.
+- A DevKit running compatible software to the Palette SDK. Read the [Compatibility Guide](/getting-started/compatibility/) for more information.
 - Your host machine and DevKit on the same network with NFS traffic allowed.
 - Your DevKit IP address.
 
 ## Install
 
-Install the current Neat SDK %%release.sdk_series%% release channel:
+Install the current Palette SDK %%release.sdk_series%% release channel:
 
 <ShellCommand prompt="host">
 sima-cli neat install sdk@%%release.sdk_channel%%
 </ShellCommand>
 
-The first install can take several minutes because it downloads the Neat SDK
+The first install can take several minutes because it downloads the Palette SDK
 container image. After the image is downloaded, the installer starts SDK setup
 and asks whether you want to pair with a Modalix DevKit and whether to install
 the matching Model Compiler inside the SDK.
@@ -42,8 +42,8 @@ The setup flow configures the SDK workspace, starts the SDK container, and
 configures DevKit Sync. If you skip pairing, the SDK workspace is still created
 and you can pair later.
 
-The `%%release.sdk_channel%%` package tracks the latest Neat SDK patch release in the %%release.sdk_series%%
-series. The current release is Neat SDK %%release.sdk%%, which is compatible with
+The `%%release.sdk_channel%%` package tracks the latest Palette SDK patch release in the %%release.sdk_series%%
+series. The current release is Palette SDK %%release.sdk%%, which is compatible with
 DevKit software %%release.platform%%.
 
 During setup, `sima-cli` also offers to install the matching Model Compiler
@@ -90,7 +90,7 @@ or VS Code.
 
 ### Use the SDK Shell
 
-Open the Neat SDK shell with:
+Open the Palette SDK shell with:
 
 <ShellCommand prompt="host">
 sima-cli sdk neat
@@ -136,18 +136,18 @@ above from the host:
 sima-cli neat install sdk@%%release.sdk_channel%%
 </ShellCommand>
 
-To update the Neat Library inside an existing Neat SDK container, run the Neat
+To update the Neat Library inside an existing Palette SDK container, run the Neat
 CLI from the container shell:
 
 <ShellCommand prompt="sdk">
 neat update
 </ShellCommand>
 
-This updates the installed Neat Library components in the current Neat SDK. It
+This updates the installed Neat Library components in the current Palette SDK. It
 does not replace a full container image upgrade when you need container-level
 changes.
 
-If you delete or recreate the Neat SDK container later, run `neat update` again
+If you delete or recreate the Palette SDK container later, run `neat update` again
 inside the new container.
 
 ## Uninstall

@@ -17,13 +17,13 @@ slug: /develop-apps/contribute/build
 `build.sh` は、アクティブな環境を自動的に検出します。
 
 - Modalix DevKit のネイティブ環境
-- Neat SDK 環境（クロスコンパイル）
+- Palette SDK 環境（クロスコンパイル）
 
 どちらの環境でも、同じ `build.sh` コマンドを実行できます。
 
 ### クロスコンパイルの前提条件
 
-クロスコンパイルには Neat SDK を使用します。[SDK のインストール](/getting-started/dev-environment/install-the-environment/)に従って、対応する Ubuntu、Windows/WSL、または macOS ホストに設定し、SDK シェルを開いてください。
+クロスコンパイルには Palette SDK を使用します。[SDK のインストール](/getting-started/dev-environment/install-the-environment/)に従って、対応する Ubuntu、Windows/WSL、または macOS ホストに設定し、SDK シェルを開いてください。
 
 ```bash
 sima-cli sdk neat
@@ -40,7 +40,7 @@ SDK にはツールチェーンと `sima-cli` が含まれます。Core の `bui
 - `--python`: 選択したターゲットに加えて、Python バインディング (`pyneat`) をビルドします。
 - `--install-neat-internals`, `--install-deps`: ビルド前に、依存関係のアーティファクトをダウンロードしてインストールします。
 - `--doc`: ドキュメントのみをビルドします。
-- `--install`: ビルド/パッケージング後、生成されたアーティファクトを現在の環境にインストールします。ペアリングされた Neat SDK モードでは、これはペアリングされた DevKit 上にも対応するアーティファクトをデプロイおよびインストールします。
+- `--install`: ビルド/パッケージング後、生成されたアーティファクトを現在の環境にインストールします。ペアリングされた Palette SDK モードでは、これはペアリングされた DevKit 上にも対応するアーティファクトをデプロイおよびインストールします。
 - `--no-dist`: ディストリビューションパッケージングをスキップします。
 - `--clean`: 構成前に `build/` を削除します。
 - `--no-doc`: ドキュメントのビルドをスキップします（`--all` を使用している場合でも）。

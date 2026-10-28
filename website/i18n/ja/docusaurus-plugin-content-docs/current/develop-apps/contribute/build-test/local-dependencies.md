@@ -1,6 +1,6 @@
 # Scheduler と LLiMa の依存関係を使って Core をビルドする
 
-Core は Scheduler と LLiMa の 2 つの依存関係に対してビルドされます。Neat SDK 内の Core チェックアウトで `build.sh` を実行します。
+Core は Scheduler と LLiMa の 2 つの依存関係に対してビルドされます。Palette SDK 内の Core チェックアウトで `build.sh` を実行します。
 
 ```bash
 ./build.sh --all --no-doc

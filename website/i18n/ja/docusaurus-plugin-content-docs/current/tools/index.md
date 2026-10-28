@@ -5,7 +5,7 @@ sidebar_position: 0
 
 # ツール
 
-Neat と併用する SiMa.ai ツールには、`sima-cli` コマンドライン、Insight、Sentinel、Model Zoo があります。SDK のセットアップについては、[Neat SDK](/getting-started/dev-environment/)を参照してください。
+Neat と併用する SiMa.ai ツールには、`sima-cli` コマンドライン、Insight、Sentinel、Model Zoo があります。SDK のセットアップについては、[Palette SDK](/getting-started/dev-environment/)を参照してください。
 
 これらのツールを使用して、ソフトウェアのインストール、モデルアーティファクトの取得、アプリケーション動作の確認、および一般的な DevKit ワークフローの管理を行います。
 

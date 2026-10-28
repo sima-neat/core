@@ -1,6 +1,6 @@
 ---
 title: Windows Host Notes
-description: Prepare a Windows 11 host for the Neat SDK and DevKit-Sync
+description: Prepare a Windows 11 host for the Palette SDK and DevKit-Sync
 sidebar_position: 2
 ---
 
@@ -16,7 +16,7 @@ SDK with DevKit-Sync.
 
 ## Start from WSL
 
-Run Neat SDK commands from inside your WSL Linux
+Run Palette SDK commands from inside your WSL Linux
 distribution, not from PowerShell or Command Prompt. This includes
 `sima-cli neat install sdk@%%release.sdk_channel%%`.
 
@@ -76,7 +76,7 @@ sima-cli sdk setup --devkit <devkit-ip>
 :::note Insight access on Windows direct links
 With Windows direct network sharing, Windows firewall and WSL port-forwarding behavior can prevent
 the Neat Insight web interface from being reached by other machines on the network. In this setup,
-open Insight directly on the Windows Neat SDK host, for
+open Insight directly on the Windows Palette SDK host, for
 example at `https://localhost:9900`.
 :::
 
@@ -95,4 +95,4 @@ Add any additional ports required by your NFS server/client setup.
 
 ## Next step
 
-Return to [Neat SDK](/getting-started/dev-environment/) and continue with install/setup.
+Return to [Palette SDK](/getting-started/dev-environment/) and continue with install/setup.

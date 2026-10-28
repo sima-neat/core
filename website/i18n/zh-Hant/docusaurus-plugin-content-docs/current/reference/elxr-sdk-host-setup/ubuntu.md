@@ -1,10 +1,10 @@
 ---
 title: "Ubuntu 主機注意事項"
-description: "準備一個 Ubuntu 主機，以便安裝 Neat SDK 和 DevKit-Sync。"
+description: "準備一個 Ubuntu 主機，以便安裝 Palette SDK 和 DevKit-Sync。"
 sidebar_position: 1
 ---
 
-當您的主機是 Ubuntu，並且您想執行 Neat SDK，請參考本指南，並搭配使用 DevKit-Sync。
+當您的主機是 Ubuntu，並且您想執行 Palette SDK，請參考本指南，並搭配使用 DevKit-Sync。
 
 ## 先決條件
 
@@ -81,4 +81,4 @@ sudo nmcli connection up "<connection-name>"
 
 ## 下一步
 
-傳回 [Neat SDK](/getting-started/dev-environment/)，繼續進行安裝/設定。
+傳回 [Palette SDK](/getting-started/dev-environment/)，繼續進行安裝/設定。
