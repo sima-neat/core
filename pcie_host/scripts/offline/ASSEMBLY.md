@@ -389,35 +389,20 @@ continues to require complete successful CI. Without `offline_publish=true`, the
 manual entry point remains validation-only. Completed offline publications are
 verified and reused on rerun rather than replaced.
 
-## Reusing a qualified card baseline in CI
 
-The clean card image contains Platform providers, not the incoming Neat,
-Scheduler, Runner, Kernels, or kernel firmware packages. Rebuilding those payloads
-must not require rebuilding an unchanged Platform root.
+## Pinning the card test image
 
-`ci.py` authenticates the incoming Scheduler and its installed SDK policy, then
-uses Scheduler's `describe` action to authenticate the complete cohort and report
-its Platform requirements. The reuse key includes the pinned Vulcan recipe, SDK
-policy, Platform packages/loaders/SONAMEs/runtime evidence, Scheduler Platform SDK
-evidence, and Codecs' actual SDK/provider evidence. It excludes payload build
-identities and kernel firmware, which are installed and validated from the current
-publication. Core does not infer provider ownership or relax Scheduler admission.
+`baseline-images.json` pins the card test image by immutable ECR digest. Update
+this pin when Platform requirements or the baseline recipe change, then qualify
+the new image with offline installation tests. Rebuilding the Core, Scheduler,
+Runner, Kernels, or kernel firmware packages does not update the test-image pin.
 
-`baseline-images.json` records qualified card image digests by that requirements
-key. Each entry retains the original producer input key, source publication, and
-successful validation run. Core pulls the pinned digest and verifies its original
-recipe/input/role labels and architecture. The pre2372 entry reuses the image
-qualified in run `40576835084`; its reviewable requirements are in
-`tests/tools/fixtures/offline-card-pre2372-requirements.json` at the repository root.
+The config retains the pinned image's original producer input key, source SHA,
+and validation run. Core pulls that digest and checks its original input/recipe/
+role labels and ARM64 architecture. Host image selection is unchanged.
 
-When requirements change, an existing entry cannot match. CI requires the exact
-publication-specific Vulcan image and reports the producer workflow command when
-it is missing. After Vulcan publishes and the new cohort passes offline validation,
-add its reviewed requirements key, digest, and original input receipt to the
-qualified entries. Never copy an old requirements hash onto a new image or change
-its producer provenance. Host image selection is unchanged.
-
-Every assembly still installs the current publication in a fresh container with
-`--network=none`. The evidence artifact retains `card-baseline-requirements.json`
-and `baseline-images.json`, including both the requirements key and the original
-producer identity. Image reuse does not reuse a previous payload's test result.
+Every assembly still installs the current published packages in a fresh container
+with `--network=none`, checks native/Python dependencies, and imports the Python
+module. If new packages require a different Platform environment, qualify a new
+Vulcan baseline and update the digest and producer receipt together. Do not change
+the receipt to match the packages under test; it describes the pinned image.

@@ -5,14 +5,9 @@
   "card": {
     "os_id": "elxr",
     "os_version": "26.04",
-    "qualified_baselines": [
-      {
-        "requirements_sha256": "c880deb6f70a5832d82519a54d39ccf5b28b9736ef19b94c00ca11d6714db5dd",
-        "digest": "sha256:5d8cabc0fea5ebb84a088e734453a1d890faf35a04960ebf3b57c4df07f42691",
-        "inputs_sha256": "aa63eff590245edb4a5b67bec87c2d26b682511e2c28dca083b68511a03404f7",
-        "source_sha": "e1eddd462e1d09062fae637581e2121ce1c2bf71",
-        "validation_run_id": 40576835084
-      }
-    ]
+    "digest": "sha256:5d8cabc0fea5ebb84a088e734453a1d890faf35a04960ebf3b57c4df07f42691",
+    "inputs_sha256": "aa63eff590245edb4a5b67bec87c2d26b682511e2c28dca083b68511a03404f7",
+    "source_sha": "e1eddd462e1d09062fae637581e2121ce1c2bf71",
+    "validation_run_id": 40576835084
   }
 }
