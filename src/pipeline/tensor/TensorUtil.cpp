@@ -25,7 +25,6 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
-#include <mutex>
 #include <stdexcept>
 #include <unordered_map>
 #include <vector>
@@ -703,14 +702,8 @@ std::shared_ptr<simaai::neat::Storage> make_gst_sample_memory_storage(
     }
   }
 
-  struct GstMemoryMapState {
-    GstMapInfo info{};
-    bool mapped = false;
-    std::mutex mu;
-  };
-  auto map_state = std::make_shared<GstMemoryMapState>();
   auto holder = storage->holder;
-  storage->map_fn = [holder, map_state, memory_index](simaai::neat::MapMode mode) {
+  storage->map_fn = [holder, memory_index](simaai::neat::MapMode mode) {
     GstSample* s = static_cast<GstSample*>(holder.get());
     GstBuffer* b = s ? gst_sample_get_buffer(s) : nullptr;
     if (!b)
@@ -719,36 +712,29 @@ std::shared_ptr<simaai::neat::Storage> make_gst_sample_memory_storage(
     if (!mem)
       return simaai::neat::Mapping{};
 
-    std::lock_guard<std::mutex> lock(map_state->mu);
-    if (map_state->mapped) {
-      return simaai::neat::Mapping{};
-    }
-
     GstMapFlags flags = GST_MAP_READ;
     if (mode == simaai::neat::MapMode::Write) {
       flags = GST_MAP_WRITE;
     } else if (mode == simaai::neat::MapMode::ReadWrite) {
       flags = static_cast<GstMapFlags>(GST_MAP_READ | GST_MAP_WRITE);
     }
+    // Every Sample copy shares this storage, so fan-out branches map it concurrently. Each
+    // mapping owns its GstMapInfo; GStreamer's memory lock refuses conflicting write maps.
+    auto info = std::make_shared<GstMapInfo>();
     ++g_gst_memory_map_calls;
-    if (!gst_memory_map(mem, &map_state->info, flags)) {
+    if (!gst_memory_map(mem, info.get(), flags)) {
       return simaai::neat::Mapping{};
     }
-    map_state->mapped = true;
     GstBuffer* buffer_ref = gst_buffer_ref(b);
 
     simaai::neat::Mapping mapping;
-    mapping.data = map_state->info.data;
-    mapping.size_bytes = map_state->info.size;
+    mapping.data = info->data;
+    mapping.size_bytes = info->size;
     mapping.keepalive = holder;
-    mapping.unmap = [buffer_ref, map_state, memory_index]() {
-      std::lock_guard<std::mutex> lock(map_state->mu);
-      if (map_state->mapped) {
-        GstMemory* mapped_mem = gst_buffer_peek_memory(buffer_ref, memory_index);
-        if (mapped_mem) {
-          gst_memory_unmap(mapped_mem, &map_state->info);
-        }
-        map_state->mapped = false;
+    mapping.unmap = [buffer_ref, info, memory_index]() {
+      GstMemory* mapped_mem = gst_buffer_peek_memory(buffer_ref, memory_index);
+      if (mapped_mem) {
+        gst_memory_unmap(mapped_mem, info.get());
       }
       gst_buffer_unref(buffer_ref);
     };
@@ -782,12 +768,6 @@ make_gst_sample_storage_impl(GstSample* sample,
 
   log_holder("make_storage", sample, buffer);
   auto holder = make_sample_holder(sample);
-  struct GstMapState {
-    GstMapInfo info{};
-    bool mapped = false;
-    std::mutex mu;
-  };
-  auto map_state = std::make_shared<GstMapState>();
 
   auto storage = std::make_shared<simaai::neat::Storage>();
   storage->kind = simaai::neat::StorageKind::GstSample;
@@ -820,37 +800,37 @@ make_gst_sample_storage_impl(GstSample* sample,
 
   const std::uint64_t mem_flags = mem_info.mem_flags;
   const std::uint64_t target_flags = mem_info.target_flags;
-  storage->map_fn = [holder, map_state, mem_flags, target_flags](simaai::neat::MapMode mode) {
+  storage->map_fn = [holder, mem_flags, target_flags](simaai::neat::MapMode mode) {
     GstSample* s = static_cast<GstSample*>(holder.get());
     GstBuffer* b = s ? gst_sample_get_buffer(s) : nullptr;
     if (!b)
       return simaai::neat::Mapping{};
 
-    std::lock_guard<std::mutex> lock(map_state->mu);
-    if (map_state->mapped) {
-      return simaai::neat::Mapping{};
-    }
     GstMapFlags flags = GST_MAP_READ;
     if (mode == simaai::neat::MapMode::Write) {
       flags = GST_MAP_WRITE;
     } else if (mode == simaai::neat::MapMode::ReadWrite) {
       flags = static_cast<GstMapFlags>(GST_MAP_READ | GST_MAP_WRITE);
     }
-    if (!gst_buffer_map(b, &map_state->info, flags)) {
+    // Concurrent mappings of the shared storage each own their GstMapInfo (see above). A read map
+    // refs first: mapping a writable multi-memory buffer merges its memories in place, racing
+    // other branches; mapping it read-only merges into a temporary memory instead.
+    auto info = std::make_shared<GstMapInfo>();
+    const bool read_only = mode == simaai::neat::MapMode::Read;
+    GstBuffer* buffer_ref = read_only ? gst_buffer_ref(b) : nullptr;
+    if (!gst_buffer_map(b, info.get(), flags)) {
+      if (buffer_ref)
+        gst_buffer_unref(buffer_ref);
       return simaai::neat::Mapping{};
     }
-    map_state->mapped = true;
-    GstBuffer* buffer_ref = gst_buffer_ref(b);
+    if (!buffer_ref)
+      buffer_ref = gst_buffer_ref(b);
 
     simaai::neat::Mapping mapping;
-    mapping.data = map_state->info.data;
-    mapping.size_bytes = map_state->info.size;
-    mapping.unmap = [buffer_ref, map_state]() {
-      std::lock_guard<std::mutex> lock(map_state->mu);
-      if (map_state->mapped) {
-        gst_buffer_unmap(buffer_ref, &map_state->info);
-        map_state->mapped = false;
-      }
+    mapping.data = info->data;
+    mapping.size_bytes = info->size;
+    mapping.unmap = [buffer_ref, info]() {
+      gst_buffer_unmap(buffer_ref, info.get());
       gst_buffer_unref(buffer_ref);
     };
     return mapping;

@@ -462,6 +462,7 @@ set(UNIT_TESTS
   unit_error_code_taxonomy_test
   unit_gst_error_normalizer_test
   unit_encoded_sample_test
+  unit_gst_sample_concurrent_map_test
   unit_encoded_egress_copy_test
   unit_genai_prompt_builder_test
   unit_genai_image_types_test
@@ -471,6 +472,7 @@ set(UNIT_TESTS
   unit_node_metadata_sender_test
   unit_video_sender_test
   unit_video_sender_adaptive_ingress_test
+  unit_video_sender_passthrough_drain_test
   unit_env_util_profile_test
   unit_framestream_test
   unit_move_semantics_proof_test
