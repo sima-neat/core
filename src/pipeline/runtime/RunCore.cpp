@@ -1166,7 +1166,7 @@ void RunCore::graph_sanitize_pipeline_input(std::size_t index, Sample& sample) {
   const int64_t prev_frame = sample.frame_id;
   sample = simaai::neat::pipeline_internal::canonicalize_tensor_transport_sample(sample);
   copy_encoded_pipeline_input_to_cpu_if_needed(pipe, sample);
-  if (simaai::neat::pipeline_internal::env_bool("SIMA_SAMPLE_TIMING_DEBUG", false)) {
+  if (simaai::neat::pipeline_internal::sample_timing_debug_enabled()) {
     std::fprintf(stderr,
                  "[SAMPLE_TIMING] graph_sanitize seg=%zu before_frame=%lld after_frame=%lld "
                  "before_pts=%lld after_pts=%lld before_dts=%lld after_dts=%lld "

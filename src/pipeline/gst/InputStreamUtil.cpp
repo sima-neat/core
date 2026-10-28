@@ -2944,7 +2944,7 @@ void restore_sample_timing_from_gst_buffer(GstBuffer* buffer, Sample* out) {
     return;
   }
 
-  const bool debug_timing = pipeline_internal::env_bool("SIMA_SAMPLE_TIMING_DEBUG", false);
+  const bool debug_timing = pipeline_internal::sample_timing_debug_enabled();
   const GstClockTime pts = GST_BUFFER_PTS(buffer);
   const GstClockTime dts = GST_BUFFER_DTS(buffer);
   const GstClockTime dur = GST_BUFFER_DURATION(buffer);
@@ -3006,7 +3006,7 @@ void restore_sample_timing_from_gst_buffer(GstBuffer* buffer, Sample* out) {
 
 bool write_simaai_preprocess_meta(GstBuffer* buffer, const PreprocessRuntimeMeta& meta) {
 #if SIMA_HAS_SIMAAI_POOL
-  const bool trace = pipeline_internal::env_bool("SIMA_PREPROC_META_TRACE", false);
+  const bool trace = pipeline_internal::preproc_meta_trace_enabled();
   if (!buffer)
     return false;
   if (const auto perm_error = validate_axis_perm_vector_local(meta.axis_perm, "preproc_axis_perm");

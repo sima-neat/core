@@ -58,19 +58,26 @@ void atomic_add_max(std::atomic<std::uint64_t>& total, std::atomic<std::uint64_t
   }
 }
 
+// Checked for every routed frame; resolved once per process like InputStreamDebugFlags.
 bool realtime_link_diag_enabled() {
-  return pipeline_internal::env_bool("SIMA_GRAPH_REALTIME_LINK_DEBUG", false) ||
-         pipeline_internal::env_bool("SIMA_GRAPH_DIAG_ON_STOP", false);
+  static const bool enabled =
+      pipeline_internal::env_bool("SIMA_GRAPH_REALTIME_LINK_DEBUG", false) ||
+      pipeline_internal::env_bool("SIMA_GRAPH_DIAG_ON_STOP", false);
+  return enabled;
 }
 
 bool realtime_overwrite_debug_enabled() {
-  return pipeline_internal::env_bool("SIMA_GRAPH_REALTIME_OVERWRITE_DEBUG", false);
+  static const bool enabled =
+      pipeline_internal::env_bool("SIMA_GRAPH_REALTIME_OVERWRITE_DEBUG", false);
+  return enabled;
 }
 
 bool realtime_credit_probe_enabled() {
-  return pipeline_internal::env_bool("SIMA_GRAPH_REALTIME_CREDIT_PROBE", false) ||
-         pipeline_internal::env_bool("SIMA_GRAPH_REALTIME_CREDIT_DEBUG", false) ||
-         realtime_link_diag_enabled();
+  static const bool enabled =
+      pipeline_internal::env_bool("SIMA_GRAPH_REALTIME_CREDIT_PROBE", false) ||
+      pipeline_internal::env_bool("SIMA_GRAPH_REALTIME_CREDIT_DEBUG", false) ||
+      realtime_link_diag_enabled();
+  return enabled;
 }
 
 const char* target_kind_name(DownstreamTarget::Kind kind);
@@ -78,8 +85,11 @@ const char* target_kind_name(DownstreamTarget::Kind kind);
 void log_realtime_credit_probe_basic(const char* event, const DownstreamTarget& target,
                                      std::size_t edge_index, const std::string& stream_id,
                                      std::size_t extra_value = 0) {
-  const char* force = std::getenv("SIMA_GRAPH_REALTIME_CREDIT_PROBE_BASIC");
-  if (!force || !*force || std::strcmp(force, "0") == 0) {
+  static const bool enabled = [] {
+    const char* force = std::getenv("SIMA_GRAPH_REALTIME_CREDIT_PROBE_BASIC");
+    return force && *force && std::strcmp(force, "0") != 0;
+  }();
+  if (!enabled) {
     return;
   }
   std::fprintf(

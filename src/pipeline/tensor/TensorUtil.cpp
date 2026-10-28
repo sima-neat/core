@@ -344,7 +344,8 @@ simaai::neat::Mapping map_tensor_storage_raw(const simaai::neat::Tensor& tensor,
 }
 
 bool holder_debug_enabled() {
-  return env_bool("SIMA_INPUTSTREAM_HOLDER_DEBUG", false);
+  static const bool enabled = env_bool("SIMA_INPUTSTREAM_HOLDER_DEBUG", false);
+  return enabled;
 }
 
 bool tensor_map_debug_enabled() {

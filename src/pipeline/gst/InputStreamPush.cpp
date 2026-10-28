@@ -276,12 +276,23 @@ bool allow_inputstream_cpu_to_device_copy() {
   return raw && *raw && std::strcmp(raw, "0") != 0;
 }
 
+bool jpeg_zc_trace_enabled() {
+  static const bool enabled = std::getenv("SIMA_JPEG_ZC_TRACE") != nullptr;
+  return enabled;
+}
+
 bool encoded_holder_zero_copy_input_enabled(const InputStream::State& st) {
   if (st.opt.copy_input || st.opt.copy_encoded_input) {
     return false;
   }
-  if (const char* raw = std::getenv("SIMA_INPUTSTREAM_ENCODED_HOLDER_ZERO_COPY")) {
-    return *raw && std::strcmp(raw, "0") != 0;
+  static const std::optional<bool> forced = []() -> std::optional<bool> {
+    if (const char* raw = std::getenv("SIMA_INPUTSTREAM_ENCODED_HOLDER_ZERO_COPY")) {
+      return *raw && std::strcmp(raw, "0") != 0;
+    }
+    return std::nullopt;
+  }();
+  if (forced.has_value()) {
+    return *forced;
   }
   /*
    * Encoded GstSample holder transport is a zero-copy optimization for
@@ -411,7 +422,7 @@ const Tensor* first_tensor_for_preprocess_meta(const Sample& sample) {
 void cache_preprocess_meta(InputStream::State& st, const Sample& msg,
                            const std::optional<int64_t>& input_seq_override,
                            const std::optional<int64_t>& orig_input_seq_override) {
-  const bool debug = pipeline_internal::env_bool("SIMA_PREPROC_META_TRACE", false);
+  const bool debug = pipeline_internal::preproc_meta_trace_enabled();
   const Tensor* tensor = first_tensor_for_preprocess_meta(msg);
   if (!tensor) {
     if (debug) {
@@ -1433,7 +1444,7 @@ bool push_holder_transport(
     if (completed) {
       metadata_spec = &*completed_video_spec;
     }
-    if (holder_debug_enabled() || pipeline_internal::env_bool("SIMA_PREPROC_META_TRACE", false)) {
+    if (holder_debug_enabled() || pipeline_internal::preproc_meta_trace_enabled()) {
       std::fprintf(stderr,
                    "[HOLDER] synthesize_video_meta format=%s dims=%dx%d bytes=%zu completed=%d "
                    "planes=%zu required=%zu\n",
@@ -1443,7 +1454,7 @@ bool push_holder_transport(
                    completed_video_spec->required_bytes_actual);
     }
   }
-  const bool preproc_trace = pipeline_internal::env_bool("SIMA_PREPROC_META_TRACE", false);
+  const bool preproc_trace = pipeline_internal::preproc_meta_trace_enabled();
   if (preproc_trace) {
     std::fprintf(stderr,
                  "[PREPROC_META_TRACE] holder before meta where=%s has_sima_meta=%d has_preproc=%d "
@@ -1525,7 +1536,7 @@ bool push_holder_transport(
       !gst_buffer_get_video_meta(buf) && !metadata_spec->planes.empty()) {
     apply_video_meta_or_throw(&buf, *metadata_spec, where);
   }
-  if (std::getenv("SIMA_JPEG_ZC_TRACE")) {
+  if (jpeg_zc_trace_enabled()) {
     GstVideoMeta* vmeta = gst_buffer_get_video_meta(buf);
     GstCustomMeta* smeta = gst_buffer_get_custom_meta(buf, "GstSimaMeta");
     GstStructure* ss = smeta ? gst_custom_meta_get_structure(smeta) : nullptr;
@@ -1854,7 +1865,7 @@ HolderFastPathResult try_push_message_holder_fastpath(
       holder_buf = nullptr;
     }
     if (holder_buf) {
-      if (std::getenv("SIMA_JPEG_ZC_TRACE")) {
+      if (jpeg_zc_trace_enabled()) {
         GstVideoMeta* vmeta = gst_buffer_get_video_meta(holder_buf);
         GstCustomMeta* smeta = gst_buffer_get_custom_meta(holder_buf, "GstSimaMeta");
         GstStructure* ss = smeta ? gst_custom_meta_get_structure(smeta) : nullptr;
@@ -2088,7 +2099,7 @@ bool InputStream::try_push_message(const Sample& msg) {
   }
 
   const Sample transport_msg = pipeline_internal::canonicalize_tensor_transport_sample(msg);
-  if (pipeline_internal::env_bool("SIMA_SAMPLE_TIMING_DEBUG", false)) {
+  if (pipeline_internal::sample_timing_debug_enabled()) {
     std::fprintf(
         stderr,
         "[SAMPLE_TIMING] inputstream_try_push incoming_kind=%d transport_kind=%d "
