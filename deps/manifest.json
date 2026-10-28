@@ -1,7 +1,7 @@
 {
   "scheduler": {
     "branch": "feature/bev-pool-ev74",
-    "spec": "latest"
+    "spec": "85e368396c1d"
   },
   "llima": {
     "policy": "snap"
