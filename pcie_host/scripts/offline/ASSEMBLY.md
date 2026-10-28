@@ -11,7 +11,11 @@ There are two independent offline deliverables:
 
 Do not combine the deliverables. Firmware payload format and the system-package
 installer are outside this PR. A compatible system package must already be
-installed, with PCIe networking, discovery responders, and SSH access provisioned.
+installed, with PCIe networking, discovery responders, and a running card SSH server.
+The offline archive includes the shared `pcie-setup.sh` used by the online installer
+and invokes it as the calling user for each discovered PCIe endpoint before
+package preflight. No pre-enrolled SSH key or host-trust file is required for an
+interactive installation. Preflight-only mode does not enroll SSH.
 The Neat installer checks those prerequisites and reports actionable errors; it
 does not flash firmware, install drivers, or repair Platform networking.
 
@@ -26,7 +30,7 @@ The installer must perform these steps:
 1. Verify bundle integrity and host/system compatibility.
 2. Inventory every attached SiMa PCI card and discover endpoints only through
    their sysfs-associated interfaces. No IP arguments or card-selection flags.
-3. Preflight every card, including unambiguous endpoint mapping, SSH access,
+3. Enroll SSH through the shared setup utility when needed, then preflight every card, including unambiguous endpoint mapping, SSH access,
    compatible system packages, disk space, and offline dependency resolution,
    before changing the host or any card.
 4. Install and verify host Neat once using the existing install lifecycle.
@@ -388,3 +392,25 @@ a failed or cancelled source run is rejected. Automatic release-branch publicati
 continues to require complete successful CI. Without `offline_publish=true`, the
 manual entry point remains validation-only. Completed offline publications are
 verified and reused on rerun rather than replaced.
+
+## Clean-host SSH bootstrap regression
+
+The shared online/offline SSH setup has a real OpenSSH integration test. Build
+its disposable fixture with network access, then run the test with Docker
+networking disabled:
+
+```sh
+docker build -f tests/tools/offline_pcie_ssh.Dockerfile -t neat-offline-ssh-test .
+docker run --rm --network=none --mount type=bind,src="$PWD",dst=/src,readonly \
+  --workdir /src neat-offline-ssh-test \
+  python3 -B tests/tools/run_offline_pcie_ssh_bootstrap_integration.py
+```
+
+The test requires a fresh disposable container and refuses to run on the host.
+It starts with no host user credentials or enrolled card keys. It checks the
+first-run host-trust and login prompts, user ownership under sudo, an unchanged
+repeat run with no prompts, and changed-host-key rejection without modifying
+trust. Both simulated endpoints use loopback in the isolated container; PCIe
+route validation has separate unit coverage. This is SSH qualification only.
+Final acceptance still requires a complete offline Neat installation on a
+freshly flashed host with the compatible Platform driver and card firmware.

@@ -121,13 +121,13 @@ class Operations:
         if len(routes) != 1 or routes[0].get('dev') != card['interface'] or routes[0].get('gateway'):
             raise ValueError('Card route is not direct through its PCI-owned interface')
 
-    def ssh_command(self, card, command, interactive=False):
+    def ssh_command(self, card, command):
         self.route(card)
         return ['ssh', '-F', '/dev/null', '-T', '-i', str(self.key), '-b', card['local_ip'],
                 '-o', 'BindInterface='+card['interface'],
-                '-o', 'BatchMode='+('no' if interactive else 'yes'),
+                '-o', 'BatchMode=yes',
                 '-o', 'IdentitiesOnly=yes',
-                '-o', 'StrictHostKeyChecking='+('ask' if interactive else 'yes'),
+                '-o', 'StrictHostKeyChecking=yes',
                 '-o', 'UpdateHostKeys=no',
                 '-o', 'UserKnownHostsFile='+str(self.known_hosts),
                 '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15',
@@ -273,45 +273,20 @@ def prepare_ssh(cards, snapshot, operations, account, progress, *, preflight_onl
     except OSError:
         raise ValueError('SSH setup requires an interactive terminal; rerun sudo python3 -B install.py interactively') from None
     with terminal:
-        if not shutil.which('ssh-keygen'):
-            raise ValueError('system prerequisite missing: ssh-keygen (install openssh-client)')
         identity = {'user': account.pw_uid, 'group': account.pw_gid, 'extra_groups': [],
                     'env': dict(os.environ, HOME=account.pw_dir, USER=account.pw_name, LOGNAME=account.pw_name)}
-        def local(command, **kwargs):
-            return run(command, **identity, **kwargs)
-
-        if not operations.key.is_file():
-            progress.show('Creating SSH key '+str(operations.key)+' for '+account.pw_name+'...')
-            local(['mkdir', '-p', '-m', '700', str(operations.key.parent)], stdin=subprocess.DEVNULL)
-            local(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(operations.key)],
-                  stdin=subprocess.DEVNULL, stdout=terminal, stderr=terminal)
-        # Derive from the selected private key, even when its .pub file is missing
-        # or stale. Batch deployment requires a key without a passphrase.
-        try:
-            public = local(['ssh-keygen', '-y', '-P', '', '-f', str(operations.key)],
-                           stdin=subprocess.DEVNULL, capture_output=True, text=True).stdout.strip()
-        except subprocess.CalledProcessError:
-            raise ValueError('Cannot read SSH key '+str(operations.key)+
-                             '; use a readable key without a passphrase for unattended card operations') from None
-        if len(public.split()) < 2 or '\n' in public:
-            raise ValueError('Invalid SSH public key')
-        # Ignore comments in the derived key so retries do not append duplicates.
-        public = ' '.join(public.split()[:2])
-        key = shlex.quote(public)
-        command = ('umask 077; mkdir -p "$HOME/.ssh" && '
-                   'touch "$HOME/.ssh/authorized_keys" && '
-                   'chmod 700 "$HOME/.ssh" && chmod 600 "$HOME/.ssh/authorized_keys" && '
-                   '(grep -qF -- '+key+' "$HOME/.ssh/authorized_keys" || '
-                   "printf '\\n%s\\n' "+key+' >> "$HOME/.ssh/authorized_keys")')
-        local(['mkdir', '-p', '-m', '700', str(operations.known_hosts.parent)], stdin=subprocess.DEVNULL)
         for card in missing:
             stable(card)
             progress.show('Setting up SSH for card '+card['bdf']+' ('+card['ip']+'). '
                           'Verify the host fingerprint when prompted, then enter the card login password if requested.')
             # OpenSSH refuses changed keys and asks before trusting new ones.
             # Run as the invoking user so new credentials remain user-owned.
-            local(operations.ssh_command(card, command, interactive=True),
-                  stdin=terminal, stdout=terminal, stderr=terminal)
+            run(['bash', str(operations.root/'pcie-setup.sh'), '--strict', '--no-discover',
+                 '--hosts', card['ip'], '--user', operations.user, '--key', str(operations.key),
+                 '--known-hosts', str(operations.known_hosts), '--interface', card['interface'],
+                 '--source-ip', card['local_ip'], '--ssh-config', '/dev/null',
+                 '--host-key-checking', 'ask'], **identity,
+                stdin=terminal, stdout=terminal, stderr=terminal)
             operations.ssh(card, 'true', stdin=subprocess.DEVNULL, capture_output=True, text=True)
             progress.show('Card '+card['bdf']+' SSH access ready.', 'ok')
 

@@ -10,6 +10,11 @@ Set up passwordless SSH from this host to SiMa PCIe cards.
 Options:
   --user USER             Remote user (default: sima)
   --key PATH              SSH private key path (default: ~/.ssh/sima_neat_pcie_ed25519)
+  --known-hosts PATH      Trusted host keys file (default: ~/.ssh/known_hosts)
+  --interface NAME        Bind SSH to this interface
+  --source-ip ADDRESS     Bind SSH to this local address
+  --ssh-config PATH       Use this SSH configuration file
+  --host-key-checking MODE  New host trust policy: accept-new (default) or ask
   --password PASSWORD     Bootstrap password for sshpass/ssh-copy-id
   --hosts LIST            Space/comma-separated host list
   --range FIRST-LAST      Use static card index range 10.0.<index>.2
@@ -33,6 +38,11 @@ EOF
 user="sima"
 port="22"
 key_path="${HOME}/.ssh/sima_neat_pcie_ed25519"
+known_hosts="${HOME}/.ssh/known_hosts"
+interface=""
+source_ip=""
+ssh_config=""
+host_key_checking="accept-new"
 hosts=()
 range_first=0
 range_last=9
@@ -99,6 +109,30 @@ while [[ $# -gt 0 ]]; do
       ;;
     --key)
       key_path="${2:?missing value for --key}"
+      shift 2
+      ;;
+    --known-hosts)
+      known_hosts="${2:?missing value for --known-hosts}"
+      shift 2
+      ;;
+    --interface)
+      interface="${2:?missing value for --interface}"
+      shift 2
+      ;;
+    --source-ip)
+      source_ip="${2:?missing value for --source-ip}"
+      shift 2
+      ;;
+    --ssh-config)
+      ssh_config="${2:?missing value for --ssh-config}"
+      shift 2
+      ;;
+    --host-key-checking)
+      host_key_checking="${2:?missing value for --host-key-checking}"
+      case "${host_key_checking}" in
+        accept-new|ask) ;;
+        *) echo "Invalid host-key policy: ${host_key_checking}" >&2; exit 2 ;;
+      esac
       shift 2
       ;;
     --password)
@@ -185,7 +219,7 @@ echo "Hosts: ${hosts[*]}"
 if (( dry_run )); then
   echo "[dry-run] would create key if missing: ${key_path}"
 else
-  mkdir -p "$(dirname "${key_path}")"
+  mkdir -p "$(dirname "${key_path}")" "$(dirname "${known_hosts}")"
   chmod 700 "$(dirname "${key_path}")"
   if [[ ! -f "${key_path}" ]]; then
     ssh-keygen -t ed25519 -N "" -f "${key_path}" -C "sima-neat-pcie@$(hostname)" >/dev/null
@@ -197,7 +231,12 @@ else
   chmod 644 "${pub_key}"
 fi
 
-copy_id_base=(ssh-copy-id -i "${pub_key}" -p "${port}" -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new)
+ssh_options=(-p "${port}" -o ConnectTimeout=5 -o IdentitiesOnly=yes
+             -o "UserKnownHostsFile=${known_hosts}" -o UpdateHostKeys=no)
+[[ -z "${interface}" ]] || ssh_options+=(-o "BindInterface=${interface}")
+[[ -z "${source_ip}" ]] || ssh_options+=(-o "BindAddress=${source_ip}")
+[[ -z "${ssh_config}" ]] || ssh_options+=(-F "${ssh_config}")
+copy_id_base=(ssh-copy-id -i "${pub_key}" "${ssh_options[@]}" -o "StrictHostKeyChecking=${host_key_checking}")
 if (( non_interactive )) && [[ -z "${password}" ]]; then
   copy_id_base+=(-o BatchMode=yes)
 fi
@@ -212,17 +251,13 @@ for host in "${hosts[@]}"; do
   echo "==> ${target}:${port}"
 
   if (( dry_run )); then
-    echo "[dry-run] ssh-keyscan -H -p ${port} ${host} >> ~/.ssh/known_hosts"
     echo "[dry-run] ${copy_id_base[*]} ${target}"
     ((success += 1))
     continue
   fi
 
-  ssh-keyscan -H -p "${port}" "${host}" >> "${HOME}/.ssh/known_hosts" 2>/dev/null || true
-  chmod 600 "${HOME}/.ssh/known_hosts" 2>/dev/null || true
-
-  if ssh -i "${key_path}" -p "${port}" -o BatchMode=yes -o ConnectTimeout=5 \
-      -o StrictHostKeyChecking=accept-new "${target}" true >/dev/null 2>&1; then
+  if ssh -i "${key_path}" "${ssh_options[@]}" -o BatchMode=yes \
+      -o StrictHostKeyChecking=yes "${target}" true >/dev/null 2>&1; then
     echo "Already provisioned."
     ((success += 1))
     continue

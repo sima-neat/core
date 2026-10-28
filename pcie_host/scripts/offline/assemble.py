@@ -139,6 +139,7 @@ def assemble(spec, output):
         shutil.copyfile(HERE / 'core_install.sh', output / 'install.sh')
         (output / 'install.sh').chmod(0o755)
     else:
+        shutil.copyfile(HERE.parent/'pcie-setup.sh', output/'pcie-setup.sh')
         for name in ('install.py', 'discover.py', 'INSTALL.md'):
             shutil.copyfile(HERE / name, output / name)
     files = {str(p.relative_to(output)): sha(p) for p in sorted(output.rglob('*')) if p.is_file()}
@@ -282,7 +283,7 @@ def verify_bundle(root, target=None):
     # A card transfer omits host files and the host-only discovery/coordinator.
     if target == 'card' and data.get('scope') != 'core':
         expected = {name: digest for name, digest in expected.items()
-                    if name not in ('install.py', 'discover.py')}
+                    if name not in ('install.py', 'discover.py', 'pcie-setup.sh')}
     if actual != set(expected):
         raise ValueError('bundle file inventory differs')
     for name, digest in expected.items():
