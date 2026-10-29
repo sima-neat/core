@@ -2265,6 +2265,22 @@ class PlatformAdmissionBoundaryTest(unittest.TestCase):
                           'dpkg_package_database_is_configured before-reinstall\n')
         self.assertEqual(failed.returncode, 2)
 
+    def test_admission_reports_stay_out_of_install_output(self) -> None:
+        for call in ("verify_board_platform_admission --installed",
+                     "verify_scheduler_transaction simulation.log"):
+            for fails in (False, True):
+                with self.subTest(call=call, fails=fails), tempfile.TemporaryDirectory() as tmp:
+                    admission = Path(tmp) / "scheduler_platform_admission.py"
+                    admission.write_text(
+                        "import sys\n"
+                        + ("sys.exit('Scheduler Platform admission failed: changed')\n" if fails else "")
+                        + "print('{\"status\": \"PASS\"}')\n")
+                    result = run_bash(f'source "$1"\nSCHEDULER_PLATFORM_ADMISSION_PATH="{admission}"\n'
+                                      f'BOARD_PLATFORM_ADMISSION_DIR="{tmp}"\n{call}\n')
+                    self.assertEqual(result.stdout, "")
+                    self.assertEqual(result.returncode, 1 if fails else 0, result.stderr)
+                    self.assertEqual("admission failed" in result.stderr, fails, result.stderr)
+
     @staticmethod
     def trigger_resume_probe(interim: str, final: str = "install ok installed", *,
                              handler_fails: bool = False) -> subprocess.CompletedProcess[str]:
