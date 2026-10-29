@@ -130,6 +130,16 @@ int main(int argc, char** argv) {
                    TensorList{image(max_width, max_height)}, TensorList{image(640, max_height + 2)},
                    "height");
     }
+    if (mode == "unseeded") {
+      options.processcvu.pre_run_target = "A65";
+      Model overridden(path, options);
+      Model::RouteOptions route;
+      route.processcvu.pre_run_target = "EV74";
+      auto runner = overridden.build(route, run_options);
+      require(!runner.run(TensorList{image(640, 640)}, 30000).empty(),
+              "a valid route override must supersede the unsupported model default");
+      runner.close();
+    }
     std::cout << "[OK] seeded input capacity: " << mode << '\n';
     return 0;
   } catch (const std::exception& error) {

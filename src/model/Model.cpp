@@ -1047,6 +1047,12 @@ void apply_model_ingress_memory_policy(InputOptions& opt,
   opt.memory_policy = resolve_model_ingress_memory_policy(plan, execution);
 }
 
+std::vector<InputOptions>
+model_input_appsrc_options_list(const internal::ModelPack& pack,
+                                const internal::PreprocessPlannerResult& plan, bool tensor_mode,
+                                const Model::Options& model_options,
+                                const Model::RouteOptions& route_options);
+
 bool runner_debug_enabled() {
   static const bool enabled = env_bool("SIMA_MODEL_RUNNER_DEBUG", false);
   return enabled;
@@ -3287,7 +3293,9 @@ public:
                              Model::RouteOptions route_opt)
       : model_(std::move(model)), plan_(std::move(plan)), route_opt_(std::move(route_opt)),
         ingress_contracts_(normalized_ingress_contracts(plan_.session_route_plan)),
-        source_options_(model_.input_appsrc_options_list(false)),
+        source_options_(
+            model_input_appsrc_options_list(internal::ModelAccess::pack(model_), plan_, false,
+                                            internal::ModelAccess::options(model_), route_opt_)),
         joined_consumer_identities_(main_route_joined_input_identities(model_)),
         joined_packed_segment_name_(main_route_joined_input_segment_name(model_)),
         consumer_keeps_distinct_physical_inputs_(
@@ -3747,7 +3755,9 @@ private:
     // appsrc API: multi-ingress packs legitimately expose multiple ingress
     // contracts, and the seed is only using the appsrc options as a base
     // before the MLA contract override below becomes authoritative.
-    const auto src_opts = model_.input_appsrc_options_list(true);
+    const auto src_opts =
+        model_input_appsrc_options_list(internal::ModelAccess::pack(model_), plan_, true,
+                                        internal::ModelAccess::options(model_), route_opt_);
     InputOptions opt = !src_opts.empty()
                            ? src_opts.front()
                            : internal::ModelAccess::pack(model_).input_appsrc_options(true);
@@ -6171,6 +6181,36 @@ void validate_pre_adapter_ingress_expectation(const internal::PreprocessPlannerR
       "Resize to the expected spatial size and convert BGR->RGB before calling run/build.");
 }
 
+std::vector<InputOptions>
+model_input_appsrc_options_list(const internal::ModelPack& pack,
+                                const internal::PreprocessPlannerResult& plan, bool tensor_mode,
+                                const Model::Options& model_options,
+                                const Model::RouteOptions& route_options) {
+  const bool route_requires_tensor = pipeline_requires_tensor_input(plan);
+  const bool effective_tensor_mode = tensor_mode || route_requires_tensor;
+  InputOptions base = pack.input_appsrc_options(effective_tensor_mode);
+  apply_model_ingress_memory_policy(
+      base, plan, route_options_from_model_route_options(route_options, &model_options));
+  base.preprocess_meta = make_preprocess_meta_template(plan);
+
+  const auto ingress_contracts = normalized_ingress_contracts(plan.session_route_plan);
+  if (ingress_contracts.empty()) {
+    return {base};
+  }
+  if (!should_overlay_appsrc_from_ingress_contract(plan.session_route_plan,
+                                                   effective_tensor_mode)) {
+    return std::vector<InputOptions>(ingress_contracts.size(), base);
+  }
+
+  std::vector<InputOptions> out;
+  out.reserve(ingress_contracts.size());
+  for (const auto& ingress : ingress_contracts) {
+    InputOptions opt = overlay_input_options_from_ingress_contract(base, ingress);
+    out.push_back(std::move(opt));
+  }
+  return out;
+}
+
 std::vector<std::shared_ptr<Node>>
 build_pipeline_nodes(const Model& model, const internal::ModelPack& pack, const Model::Options& opt,
                      const internal::PreprocessPlannerResult& plan, Model::RouteOptions popt,
@@ -6990,31 +7030,8 @@ InputOptions Model::input_appsrc_options(bool tensor_mode) const {
 }
 
 std::vector<InputOptions> Model::input_appsrc_options_list(bool tensor_mode) const {
-  const bool route_requires_tensor = pipeline_requires_tensor_input(impl_->preprocess_plan);
-  const bool effective_tensor_mode = tensor_mode || route_requires_tensor;
-  InputOptions base = impl_->pack.input_appsrc_options(effective_tensor_mode);
-  apply_model_ingress_memory_policy(
-      base, impl_->preprocess_plan,
-      route_options_from_model_route_options(Model::RouteOptions{}, &impl_->options));
-  base.preprocess_meta = make_preprocess_meta_template(impl_->preprocess_plan);
-
-  const auto ingress_contracts =
-      normalized_ingress_contracts(impl_->preprocess_plan.session_route_plan);
-  if (ingress_contracts.empty()) {
-    return {base};
-  }
-  if (!should_overlay_appsrc_from_ingress_contract(impl_->preprocess_plan.session_route_plan,
-                                                   effective_tensor_mode)) {
-    return std::vector<InputOptions>(ingress_contracts.size(), base);
-  }
-
-  std::vector<InputOptions> out;
-  out.reserve(ingress_contracts.size());
-  for (const auto& ingress : ingress_contracts) {
-    InputOptions opt = overlay_input_options_from_ingress_contract(base, ingress);
-    out.push_back(std::move(opt));
-  }
-  return out;
+  return model_input_appsrc_options_list(impl_->pack, impl_->preprocess_plan, tensor_mode,
+                                         impl_->options, Model::RouteOptions{});
 }
 
 std::string Model::find_config_path_by_plugin(const std::string& plugin_id) const {
@@ -7236,16 +7253,15 @@ Model::Runner Model::build(const Model::RouteOptions& opt,
     throw std::runtime_error(
         "Model::build(): multi-ingress image convenience is unsupported; use build(TensorList)");
   }
-  const auto src_opts = input_appsrc_options_list(tensor_mode);
-  const auto seed_memory = resolve_model_ingress_memory_policy(
-      impl_->preprocess_plan, route_options_from_model_route_options(build_opt, &impl_->options));
+  const auto src_opts = model_input_appsrc_options_list(impl_->pack, impl_->preprocess_plan,
+                                                        tensor_mode, impl_->options, build_opt);
   TensorList dummy_inputs;
   dummy_inputs.reserve(src_opts.size());
   for (const auto& src_opt : src_opts) {
     Tensor dummy = make_dummy_tensor(src_opt);
-    if (seed_memory == InputMemoryPolicy::Ev74) {
+    if (src_opt.memory_policy == InputMemoryPolicy::Ev74) {
       dummy = dummy.to({DeviceType::SIMA_CVU, 0});
-    } else if (seed_memory == InputMemoryPolicy::Dms0) {
+    } else if (src_opt.memory_policy == InputMemoryPolicy::Dms0) {
       dummy = dummy.to({DeviceType::SIMA_MLA, 0});
     }
     dummy_inputs.push_back(std::move(dummy));
@@ -7270,10 +7286,7 @@ Model::Runner Model::build(const Model::RouteOptions& opt,
   Run run = p.build(dummy_inputs, effective_run_opt);
   const auto ingress_names = ingress_names_from_contracts(ingress_contracts);
   if (tensor_mode) {
-    const auto src_opts2 = input_appsrc_options_list(true);
-    InputOptions src_opt = !src_opts2.empty() ? src_opts2.front() : pack.input_appsrc_options(true);
-    src_opt.memory_policy = seed_memory;
-    return Runner(std::move(run), src_opt, ingress_names);
+    return Runner(std::move(run), src_opts.front(), ingress_names);
   }
   return Runner(std::move(run), ingress_names);
 }
@@ -7333,10 +7346,9 @@ Model::Runner Model::build_with_model_options(const simaai::neat::TensorList& in
   if (!tensor_mode) {
     return Runner(std::move(run), ingress_names);
   }
-  const auto src_opts = input_appsrc_options_list(true);
-  InputOptions src_opt = !src_opts.empty() ? src_opts.front() : pack.input_appsrc_options(true);
-  apply_model_ingress_memory_policy(src_opt, impl_->preprocess_plan,
-                                    route_options_from_model_route_options(build_opt, &model_opt));
+  const auto src_opts =
+      model_input_appsrc_options_list(pack, impl_->preprocess_plan, true, model_opt, build_opt);
+  const auto& src_opt = src_opts.front();
   if (runner_debug_enabled()) {
     std::fprintf(stderr,
                  "[model-runner] build(tensors) tensor_mode=1 media=%s format=%s w=%d h=%d d=%d\n",
@@ -8290,7 +8302,8 @@ Graph ModelAccess::build_graph_fragment(const Model& model, Model::RouteOptions 
       plan_uses_model_input_route_processor(model.impl_->preprocess_plan);
   fragment_hints.tensor_mode = tensor_mode;
   fragment_hints.bundled_fan_in = bundled_fan_in;
-  fragment_hints.ingress_inputs = model.input_appsrc_options_list(tensor_mode);
+  fragment_hints.ingress_inputs = model_input_appsrc_options_list(
+      model.impl_->pack, model.impl_->preprocess_plan, tensor_mode, model.impl_->options, opt);
   fragment_hints.ingress_endpoint_names =
       make_unique_endpoint_names(ingress_names_from_contracts(normalized_ingress_contracts(
                                      model.impl_->preprocess_plan.session_route_plan)),
