@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <iostream>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -68,6 +69,24 @@ bool attach_public_holder_loan_or_error(runtime::RunCore& core, Sample& sample,
     return false;
   }
   return true;
+}
+
+// Reports once per stall when exhausted loan credits keep the queued output from being
+// pulled. Logging only: the pull keeps waiting or timing out exactly as before.
+void warn_if_loan_stalled(runtime::PipelineSegmentRuntime& pipeline, const std::string& message) {
+  const auto now = std::chrono::steady_clock::now();
+  if (!pipeline.loan_stalled_since) {
+    pipeline.loan_stalled_since = now;
+    return;
+  }
+  const auto stalled_for = now - *pipeline.loan_stalled_since;
+  if (pipeline.loan_stall_warned || stalled_for < pipeline.loan_stall_warn_after) {
+    return;
+  }
+  pipeline.loan_stall_warned = true;
+  std::cerr << "[WARN] " << message << " (no output delivered for "
+            << std::chrono::duration_cast<std::chrono::milliseconds>(stalled_for).count()
+            << " ms)\n";
 }
 
 constexpr auto kPullWaitPollQuantum = std::chrono::milliseconds(50);
@@ -675,6 +694,7 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err,
           "Run::pull: " +
           (loan_error.empty() ? std::string("zero-copy output loan unavailable") : loan_error) +
           "; release older zero-copy outputs and retry";
+      warn_if_loan_stalled(st->pipeline, message);
 
       const std::string loop_err = last_error();
       if (!loop_err.empty()) {
@@ -704,6 +724,8 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err,
     }
     out = std::move(st->pipeline.out_queue.front());
     st->pipeline.out_queue.pop_front();
+    st->pipeline.loan_stalled_since.reset();
+    st->pipeline.loan_stall_warned = false;
     st->outputs_pulled.fetch_add(1, std::memory_order_relaxed);
     {
       const auto now = std::chrono::steady_clock::now();
