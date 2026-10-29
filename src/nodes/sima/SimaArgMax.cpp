@@ -2,6 +2,8 @@
 
 #include "gst/GstHelpers.h"
 #include "pipeline/internal/contract/CompiledNodeContractQuery.h"
+#include "pipeline/internal/contract/CompiledKernelTensor.h"
+#include "pipeline/internal/sima/KernelTensorLayout.h"
 #include "pipeline/internal/contract/ContractFacts.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
@@ -39,71 +41,28 @@ rt::DType kernel_dtype(std::string token) {
     return rt::DType::Int32;
   throw std::invalid_argument("SimaArgMax: unsupported input dtype " + token);
 }
-// Resolve the same current-storage envelope as graph ingress. Producer route
-// offsets remain provenance after clone/Owned materialization; they cannot name
-// the new carriers. This conversion is cold admission, not a per-frame copy.
+// Resolve actual ingress storage before projecting the shared static contract.
+// ArgMax's typed-input policy stays here; carrier identity and view sizing do not.
 CompiledRuntimeContract ingress_tensors(const Sample& sample) {
-  CompiledRuntimeContract result;
   const auto tensors = tensors_from_sample(sample, true);
   for (const auto& tensor : tensors) {
     if (!tensor.storage || !tensor.storage->size_bytes || tensor.is_composite() ||
         tensor.semantic.tess)
       throw std::invalid_argument("SimaArgMax ingress requires typed single-plane tensors; "
                                   "detessellate image/tile inputs first");
+    if (tensor.dtype != TensorDType::UInt8 && tensor.dtype != TensorDType::Int8 &&
+        tensor.dtype != TensorDType::BFloat16 && tensor.dtype != TensorDType::Float32)
+      throw std::invalid_argument("SimaArgMax ingress supports INT8/UINT8/BF16/FP32");
   }
   std::string error;
   const auto holder = pipeline_internal::sample_to_gst_envelope_holder(sample, &error);
   pipeline_internal::TensorBufferView ingress;
-  if (!holder || !pipeline_internal::tensor_buffer_descriptor_from_sample(
-                     static_cast<GstSample*>(holder.get()), &ingress, &error))
+  CompiledRuntimeContract result;
+  if (!holder ||
+      !pipeline_internal::tensor_buffer_descriptor_from_sample(
+          static_cast<GstSample*>(holder.get()), &ingress, &error) ||
+      !specs::build_ingress_runtime_contract(ingress, tensors, &result, &error))
     throw std::invalid_argument("SimaArgMax: cannot resolve ingress carriers: " + error);
-  if (ingress.tensors.size() != tensors.size())
-    throw std::invalid_argument("SimaArgMax ingress tensor count changed during projection");
-  for (std::size_t i = 0; i < ingress.tensors.size(); ++i) {
-    const auto& tensor = ingress.tensors[i];
-    const char* dtype = nullptr;
-    switch (tensor.dtype) {
-    case SIMA_TENSOR_SET_DTYPE_UINT8_V1:
-      dtype = "UINT8";
-      break;
-    case SIMA_TENSOR_SET_DTYPE_INT8_V1:
-      dtype = "INT8";
-      break;
-    case SIMA_TENSOR_SET_DTYPE_BF16_V1:
-      dtype = "BF16";
-      break;
-    case SIMA_TENSOR_SET_DTYPE_FP32_V1:
-      dtype = "FP32";
-      break;
-    default:
-      throw std::invalid_argument("SimaArgMax ingress supports INT8/UINT8/BF16/FP32");
-    }
-    const int physical = tensor.memory_index;
-    if (physical < 0 || static_cast<guint>(physical) >= gst_buffer_n_memory(ingress.buffer))
-      throw std::invalid_argument("SimaArgMax ingress tensor has no physical carrier");
-    const auto bytes =
-        gst_memory_get_sizes(gst_buffer_peek_memory(ingress.buffer, physical), nullptr, nullptr);
-    const auto offset = tensor.byte_offset;
-    if (offset < 0 || static_cast<std::uint64_t>(offset) >= bytes || !tensor.size_bytes ||
-        tensor.size_bytes > bytes - static_cast<std::uint64_t>(offset))
-      throw std::invalid_argument("SimaArgMax ingress tensor offset exceeds its backing memory");
-    const auto name =
-        tensor.logical_name.empty() ? "input_" + std::to_string(i) : tensor.logical_name;
-    auto logical = specs::build_logical_output_static_spec(
-        static_cast<int>(i), static_cast<int>(i), physical, static_cast<int>(i),
-        static_cast<int>(i), tensor.shape, dtype, "", name, name, name, offset,
-        bytes - static_cast<std::uint64_t>(offset));
-    logical.stride_bytes = tensor.stride_bytes;
-    result.logical_outputs.push_back(std::move(logical));
-    const auto existing =
-        std::find_if(result.physical_outputs.begin(), result.physical_outputs.end(),
-                     [physical](const auto& value) { return value.physical_index == physical; });
-    if (existing == result.physical_outputs.end())
-      result.physical_outputs.push_back(specs::build_physical_buffer_static_spec(
-          physical, physical, bytes, si::DeviceKind::Cpu, name));
-    else if (existing->size_bytes != bytes)
-      throw std::invalid_argument("SimaArgMax ingress tensors disagree on shared carrier extent");
-  }
   return result;
 }
 } // namespace
@@ -169,9 +128,6 @@ bool SimaArgMax::compile_node_contract(const ContractCompileInput& input,
     CompiledKernelContract compiled;
     auto& runtime = compiled.runtime_contract;
     runtime.plugin_kind = "kernel";
-    runtime.physical_inputs.reserve(upstream->physical_outputs.size());
-    for (const auto& physical : upstream->physical_outputs)
-      runtime.physical_inputs.push_back(physical);
     auto recipe = std::make_shared<si::KernelStageRecipe>();
     for (std::size_t index = 0; index < upstream->logical_outputs.size(); ++index) {
       const auto& source = upstream->logical_outputs[index];
@@ -184,21 +140,10 @@ bool SimaArgMax::compile_node_contract(const ContractCompileInput& input,
       if (axis < 0 || axis >= rank)
         throw std::invalid_argument("SimaArgMax axis is outside input rank");
       const auto physical = std::find_if(
-          runtime.physical_inputs.begin(), runtime.physical_inputs.end(),
+          upstream->physical_outputs.begin(), upstream->physical_outputs.end(),
           [&](const auto& value) { return value.physical_index == source.physical_index; });
-      if (physical == runtime.physical_inputs.end())
+      if (physical == upstream->physical_outputs.end())
         throw std::invalid_argument("SimaArgMax input has no authored physical carrier");
-      auto logical = specs::build_logical_input_static_spec(
-          static_cast<int>(index), static_cast<int>(index), source.physical_index, source.shape,
-          source.dtype, source.layout, source.logical_name, source.backend_name,
-          source.segment_name, source.byte_offset, source.size_bytes,
-          si::TensorMaterializationKind::Direct, source.quant);
-      logical.stride_bytes = source.stride_bytes;
-      runtime.logical_inputs.push_back(std::move(logical));
-      runtime.input_bindings.push_back(specs::build_input_binding_static_spec(
-          0, static_cast<int>(index), source.backend_name, source.segment_name,
-          ingress ? -1 : source.logical_index, ingress ? -1 : source.output_slot,
-          ingress ? -1 : source.physical_index, ingress ? 0 : physical->size_bytes, 0, true));
       rt::TensorSpec in{source.shape, kernel_dtype(source.dtype)};
       if (!source.stride_bytes.empty()) {
         if (source.stride_bytes.size() != source.shape.size())
@@ -228,6 +173,13 @@ bool SimaArgMax::compile_node_contract(const ContractCompileInput& input,
           in = std::get<rt::TensorSpec>(std::move(native));
         }
       }
+      if (const auto canonical = pipeline_internal::compiled_kernel_output_tensor(
+              input.immediate_upstream, source.backend_output_index);
+          canonical && si::kernel_tensor_requires_detessellation(*canonical))
+        in = *canonical;
+      // Dense execution may publish a legal singleton-axis projection; its
+      // authored logical shape/strides stay authoritative. Only a non-dense
+      // physical layout needs the checked producer specification above.
       if (!(in.shape == source.shape) || in.dtype != kernel_dtype(source.dtype))
         throw std::invalid_argument(
             "SimaArgMax logical view disagrees with producer tensor storage");
@@ -258,6 +210,11 @@ bool SimaArgMax::compile_node_contract(const ContractCompileInput& input,
       const auto contract = std::get<rt::KernelInspection>(std::move(inspected));
       if (contract.output_requirements().front().storage_bytes != bytes)
         throw std::invalid_argument("SimaArgMax output projection differs from checked storage");
+      std::string binding_error;
+      if (!specs::append_direct_kernel_input(&runtime, source, *physical, index,
+                                             contract.input_requirements().front().storage_bytes,
+                                             ingress.has_value(), &binding_error))
+        throw std::invalid_argument("SimaArgMax input: " + binding_error);
       const auto name = "argmax_" + std::to_string(index);
       runtime.physical_outputs.push_back(specs::build_physical_buffer_static_spec(
           static_cast<int>(index), static_cast<int>(index), bytes, si::DeviceKind::Cpu, name));
@@ -267,10 +224,8 @@ bool SimaArgMax::compile_node_contract(const ContractCompileInput& input,
           opt_.keepdims ? source.layout : "", name, name, name, 0, bytes));
       runtime.output_order.push_back(specs::build_output_route_static_spec(
           static_cast<int>(index), static_cast<int>(index), static_cast<int>(index), name, name));
-      recipe->members.push_back({std::get<rt::KernelExecutable>(std::move(checked)),
-                                 {{index, static_cast<std::size_t>(source.byte_offset)}},
-                                 {{index, 0}},
-                                 {}});
+      recipe->members.push_back(
+          {std::get<rt::KernelExecutable>(std::move(checked)), {{index, 0}}, {{index, 0}}, {}});
     }
     compiled.recipe = std::move(recipe);
     output->node_kind = kind();

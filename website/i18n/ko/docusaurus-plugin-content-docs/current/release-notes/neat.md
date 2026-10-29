@@ -37,6 +37,7 @@ SiMa.ai Neat Library의 릴리스 노트입니다.
 
 ### 그래프 구성 및 검증
 
+- 새 `SimaVoxelize`, `SimaPillarScatter`, `SimaBEVPoolPlan`, `SimaBEVPool` 노드는 PointPillars와 BEVFusion의 커널 라이브러리 LiDAR 연산과 카메라-BEV 연산을 INT8 또는 BF16 텐서로 A65 또는 EV74에서 실행합니다. 각 노드는 선택한 대상에서 실행되며 대체 실행은 없습니다. [LiDAR 및 BEV 커널 노드](/reference/lidar_bev_kernel_nodes)를 참조하세요.
 - 기본 공개 `Input`이 한 모델의 이미지 입력에 직접 연결되면 선언된 이미지 형식을 상속합니다. 명시적 입력 옵션은 계속 기준이며 모호한 연결에는 명시적 옵션이 필요합니다. 페이로드 복사 없이 샘플 해석만 변경됩니다.
 - 그래프 구성은 이제 하나의 노드 객체를 하나의 논리적 정점으로 처리합니다. 중복 삽입 및 겹치는 조각 가져오기는 원자적으로 실패하며, 반복적인 `connect()` 호출은 기존 노드를 재사용하여 분기 처리를 수행합니다.
 - 이제 모든 구체화된 파이프라인 세그먼트는 `build()` 중에 최종 GStreamer 이름을 검증합니다. 명시적인 `validate()` 호출은 필요하지 않습니다. 중복되거나 누락된 이름은 `misconfig.pipeline_shape`와 함께 실패하며, 잘린 파이프라인을 생성하지 않습니다.

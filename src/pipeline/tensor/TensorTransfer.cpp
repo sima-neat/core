@@ -259,6 +259,8 @@ std::vector<Plane> contiguous_planes(const Tensor& src, std::size_t elem) {
  * For other composite tensors, returns packed plane bytes (throws if metadata invalid).
  */
 std::size_t compute_payload_bytes_strict(const Tensor& src) {
+  if (src.has_tiled_storage())
+    return src.semantic.tess->storage_bytes;
   // Prefer explicit NV12/I420 requirements (do not rely on plane shapes if not present).
   if (src.is_nv12()) {
     const std::size_t bytes = src.nv12_required_bytes();
@@ -297,6 +299,8 @@ std::size_t compute_payload_bytes_strict(const Tensor& src) {
 bool copy_tensor_payload(const Tensor& src, uint8_t* dst, std::size_t dst_size) {
   if (!dst)
     return false;
+  if (src.has_tiled_storage())
+    return src.copy_payload_bytes_to(dst, dst_size);
 
   if (src.is_nv12()) {
     return src.copy_nv12_contiguous_to(dst, dst_size);
@@ -447,7 +451,8 @@ Tensor finalize_transfer_tensor(const Tensor& src, const std::shared_ptr<Storage
   out.byte_offset = 0;
 
   // Dense: ensure contiguous strides.
-  out.strides_bytes = contiguous_strides(out.shape, elem);
+  out.strides_bytes =
+      src.has_tiled_storage() ? std::vector<int64_t>{} : contiguous_strides(out.shape, elem);
 
   // Composite: ensure plane layout matches packed payload copy.
   if (out.is_composite()) {

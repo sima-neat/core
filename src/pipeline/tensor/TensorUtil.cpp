@@ -442,6 +442,8 @@ void update_mem_flags(GstMemory* mem, SimaaiMemoryInfo* info) {
 }
 
 std::size_t dense_tensor_physical_span_bytes(const simaai::neat::Tensor& tensor) {
+  if (tensor.has_tiled_storage())
+    return tensor.semantic.tess->storage_bytes;
   if (!tensor.is_dense()) {
     return 0U;
   }
@@ -1216,6 +1218,7 @@ simaai::neat::Mapping map_tensor_view(const simaai::neat::Tensor& tensor,
 // observable logical extent. No geometry is cached across mutable Tensor views.
 simaai::neat::Mapping map_dense_tensor_read(const simaai::neat::Tensor& tensor) {
   if (!tensor.storage || tensor.byte_offset < 0 || !tensor.is_dense() ||
+      tensor.has_tiled_storage() ||
       (!tensor.strides_bytes.empty() && tensor.strides_bytes.size() != tensor.shape.size())) {
     return {};
   }
@@ -1411,6 +1414,8 @@ private:
   };
 
   static std::size_t checked_span(const Tensor& tensor, std::size_t element) {
+    if (tensor.has_tiled_storage())
+      return tensor.semantic.tess->storage_bytes;
     const auto& shape = tensor.shape;
     const auto& strides = tensor.strides_bytes;
     if (shape.empty() && !is_bound_dense_scalar(tensor)) {

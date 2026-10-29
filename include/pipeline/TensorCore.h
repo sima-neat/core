@@ -252,6 +252,10 @@ struct QuantSpec {
 struct TessSpec {
   std::vector<int64_t> slice_shape; ///< Per-axis tile dimensions.
   std::string format; ///< Tessellation format token (specific to the MLA hardware revision).
+  // Explicit checked storage description. Empty axes/zero bytes retain legacy
+  // format-only annotations, which do not prove a non-dense physical layout.
+  std::vector<int64_t> axes;     ///< D/H/W/C logical axes; -1 is an absent unit axis.
+  std::size_t storage_bytes = 0; ///< Exact tiled payload extent, including tile padding.
 
   /// Replace the slice shape (move-friendly).
   void set_slice_shape(std::vector<int64_t> shape) {
@@ -681,7 +685,13 @@ struct Tensor {
   bool read_only = true;   ///< If true, framework refuses mutable `data_ptr<T>()` access.
   TensorRouteMeta route{}; ///< Routing metadata (output identity in multi-output models).
 
-  /// True iff this tensor is single-plane (no composite plane records).
+  /// True when an explicit physical tile description requires detessellation.
+  /// `is_dense()` continues to mean single-plane, not numerical storage order.
+  bool has_tiled_storage() const {
+    return semantic.tess && semantic.tess->storage_bytes != 0;
+  }
+
+  /// True iff this tensor is single-plane.
   bool is_dense() const {
     return planes.empty();
   }
@@ -702,6 +712,8 @@ struct Tensor {
 
   /// True iff strides describe a compact row-major layout with no internal padding.
   bool is_contiguous() const {
+    if (has_tiled_storage())
+      return false;
     if (shape.empty())
       return true;
     if (strides_bytes.empty())
@@ -874,6 +886,9 @@ private:
     }
     if (!is_dense()) {
       throw std::runtime_error("Tensor::data_ptr: tensor is composite");
+    }
+    if (has_tiled_storage()) {
+      throw std::runtime_error("Tensor::data_ptr: tiled storage requires explicit detessellation");
     }
     if (!is_contiguous()) {
       throw std::runtime_error("Tensor::data_ptr: call cpu().contiguous() first");

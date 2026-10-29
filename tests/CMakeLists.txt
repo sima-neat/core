@@ -627,6 +627,7 @@ set(UNIT_TESTS
   unit_stage_cache_identity_test
   unit_simaai_guard_test
   unit_static_spec_builders_dtype_token_test
+  unit_kernel_input_contract_builders_test
   unit_boxdecode_obb_per_port_contract_test
   unit_sima_boxdecode_static_contract_extractor_test
   unit_boxdecode_uses_upstream_cast_contract_test
@@ -641,6 +642,8 @@ set(UNIT_TESTS
   unit_sima_plugin_static_manifest_parse_test
   unit_graph_build_ownership_test
   unit_sima_plugins_test
+  unit_bevfusion_kernel_requests_test
+  unit_bevfusion_kernel_nodes_test
   unit_internal_edge_contract_resolver_test
   unit_terminal_output_contract_query_test
   unit_tensor_set_meta_route_contract_test
@@ -653,6 +656,7 @@ set(UNIT_TESTS
   unit_sample_packed_parent_alignment_padding_test
   unit_yolov8_contract_subset_test
   unit_tensor_list_api_test
+  unit_tensor_tiled_storage_test
   unit_tensor_conversion_policy_test
   unit_tensor_image_mapping_test
   unit_transport_shared_parent_input_test
@@ -716,6 +720,18 @@ target_link_libraries(unit_model_archive_loader_test PRIVATE ${CMAKE_DL_LIBS})
 # storage/admission API; do not rely on transitive Core DSO symbol leakage.
 target_link_libraries(unit_mpk_decoder_test PRIVATE
   SimaScheduler::frontend )
+
+# BEVFusion/PointPillars kernel Nodes. The references are exact only without FMA
+# contraction. Node admission needs the Scheduler set that bundles the pinned Kernels.
+foreach(_target unit_bevfusion_kernel_requests_test unit_bevfusion_kernel_nodes_test)
+  if (TARGET ${_target})
+    target_compile_options(${_target} PRIVATE -ffp-contract=off)
+    set_property(TEST ${_target} APPEND PROPERTY LABELS "contracts")
+  endif()
+endforeach()
+if (TARGET unit_bevfusion_kernel_nodes_test)
+  target_link_libraries(unit_bevfusion_kernel_nodes_test PRIVATE SimaScheduler::frontend)
+endif()
 
 target_sources(unit_output_metadata_cache_contract_test
   PRIVATE runtime_segment_allocator_fixture.cpp)
@@ -1000,6 +1016,32 @@ foreach(mode compact full)
   set_tests_properties(kernel_runner_preproc_retention_${mode}_test PROPERTIES
     TIMEOUT 60 LABELS "strict;e2e;runtime;kernel-runner;modalix-only"
     RESOURCE_LOCK "accelerator-device")
+endforeach()
+
+# Public BEVFusion/PointPillars kernel correctness: one complete scenario matrix
+# per kernel and target. A suite source is built once per target it runs on;
+# SimaBEVPoolPlan exists on A65 only. Byte-exact references need no FMA contraction.
+foreach(bevfusion_suite sima_voxelize:ev74 sima_voxelize:a65 sima_pillar_scatter:ev74
+    sima_pillar_scatter:a65 sima_bev_pool_plan:a65 sima_bev_pool:ev74 sima_bev_pool:a65)
+  string(REPLACE ":" ";" bevfusion_parts "${bevfusion_suite}")
+  list(GET bevfusion_parts 0 bevfusion_kernel)
+  list(GET bevfusion_parts 1 bevfusion_target)
+  if (bevfusion_target STREQUAL "ev74")
+    set(bevfusion_test "${bevfusion_kernel}_ev_test")
+  else()
+    set(bevfusion_test "${bevfusion_kernel}_a65_test")
+  endif()
+  add_pipeline_test(${bevfusion_test}
+    SOURCES e2e_testing/${bevfusion_kernel}_test.cpp LOCK_ACCELERATOR)
+  if (NOT bevfusion_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    string(TOUPPER "${bevfusion_target}" bevfusion_define)
+    target_compile_definitions(${bevfusion_test} PRIVATE
+      SIMA_BEVFUSION_TARGET_${bevfusion_define}=1)
+    target_compile_options(${bevfusion_test} PRIVATE -ffp-contract=off)
+    set_property(TEST ${bevfusion_test} APPEND PROPERTY LABELS
+      "e2e;bevfusion;${bevfusion_target};customer_api;kernel-runner;modalix-only")
+    set_tests_properties(${bevfusion_test} PROPERTIES TIMEOUT 180)
+  endif()
 endforeach()
 
 add_pipeline_test(kernel_runner_public_cast_test

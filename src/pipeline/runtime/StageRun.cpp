@@ -2342,7 +2342,9 @@ TensorList split_preproc_roi_output_impl(const simaai::neat::Tensor& batched,
       batched.route.physical_byte_offset >
           std::numeric_limits<int64_t>::max() - slot_bytes * roi_capacity ||
       static_cast<std::uint64_t>(batched.byte_offset + slot_bytes * roi_capacity) >
-          batched.storage->size_bytes) {
+          batched.storage->size_bytes ||
+      (batched.has_tiled_storage() && static_cast<std::uint64_t>(slot_bytes * roi_capacity) >
+                                          batched.semantic.tess->storage_bytes)) {
     throw std::runtime_error("Preproc ROI-list: exact output slots exceed the selected storage");
   }
 
@@ -2361,7 +2363,13 @@ TensorList split_preproc_roi_output_impl(const simaai::neat::Tensor& batched,
         throw std::runtime_error("Preproc ROI-list: missing coherent output member shape");
       }
       view.shape = info.roi_member_shape;
-      view.strides_bytes = info.roi_member_strides_bytes;
+      if (view.has_tiled_storage()) {
+        // This view describes one compiled ROI slot, not the full batch extent.
+        view.semantic.tess->storage_bytes = static_cast<std::size_t>(slot_bytes);
+        view.strides_bytes.clear();
+      } else {
+        view.strides_bytes = info.roi_member_strides_bytes;
+      }
     }
     // The public view is one member, even when the producer published R members.
     sima_ev_shape_desc member_shape{};

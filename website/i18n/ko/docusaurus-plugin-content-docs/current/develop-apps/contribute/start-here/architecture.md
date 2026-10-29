@@ -441,7 +441,8 @@ Core 게시/캐리어 메타데이터는 명시적으로 유지되며 수치 타
 
 `FrameSpan` 오프셋은 그래프 전체 주소가 아니라 해당 할당과 버퍼 그룹 내부 값입니다. 서로 다른 그룹의 같은 오프셋은 겹치지 않습니다. BoxDecode와 ArgMax는 헤드 상대 텐서 오프셋과 저장 공간 오프셋을 분리합니다. 직접 메모리 입력과 런타임 물리 바인딩 입력은 각 주소 지정 방식을 유지합니다.
 
-Core는 Preproc, 변환과 ArgMax, BoxDecode, SuperPoint 등의 비전 단계를 표준 요청과
+Core는 Preproc, 변환과 ArgMax, BoxDecode, SuperPoint, LiDAR/BEV 커널 노드(SimaVoxelize, SimaPillarScatter,
+SimaBEVPoolPlan, SimaBEVPool) 등의 비전 단계를 표준 요청과
 명시적 텐서 포트 매핑으로 lowering합니다. Scheduler의 범용 텐서 단계 엔진은 GStreamer
 바인딩과 게시를 소유하고, Runner는 의존성, 비동기 실행과 실행 중 버퍼 수명을 소유합니다.
 Core는 논리 형상만이 아니라 상위 할당 계약이나 입력 저장소에서 캐리어 용량을 가져옵니다.
@@ -451,6 +452,8 @@ BoxDecode/SuperPoint 수치 출력은 비공개입니다. 종속 Core 와이어 
 불변 커널 레시피는 타입이 지정된 노드 계약을 변환한 후에도 생산자가 정의한 텐서 와이어 형식을 유지합니다. 콜드 경로의 게시 처리는 새 caps와 캐시된 caps 모두에 이 형식을 적용하며, 커널 이름이나 바이트 형태로 의미를 추론하지 않습니다. 공개 OBB 텐서는 `BBOX_OBB_V1` 의미를 가진 조밀한 랭크 1 UInt8로 유지됩니다.
 
 InputStream은 소유 복사 및 캐시된 메타데이터 경로를 포함하여 Sample을 게시하기 전에 정의된 형식을 각 반환 텐서에 반영합니다. 따라서 원시 `Sample.tensors`와 `TensorList` 편의 API는 같은 검출 의미를 가집니다.
+
+검증된 MLA 타일 형식의 수치 출력에 대해 Core는 형상과 dtype이 검증된 생성자와 일치할 때만 각 논리 출력에 물리 레이아웃을 연결합니다. InputStream은 디코드 캐시를 초기화할 때 이 불변 caps 메타데이터를 해석한 뒤 캐시된 Tensor 템플릿에 보관합니다. 원시 바이트 별칭과 바이트 배열이 이미 조밀한 NHWC와 일치하는 INT8 셀 타일은 변경하지 않습니다. `TessSpec::storage_bytes`는 명시적 타일 저장 형식과 형식만 나타내는 기존 주석을 구분합니다. `copy_payload_bytes()`와 `clone()`은 저장된 바이트, 패딩 및 레이아웃을 보존합니다. 반면 조밀한 복사, 타입 지정 접근 및 DLPack은 명시적 타일 저장 형식을 거부합니다. 레이아웃을 지원하는 그래프 소비자는 숨겨진 변환 없이 검증된 레이아웃을 전달받습니다.
 
 이미지 크기 변경은 바인딩 전에 불변이며 자원 호환적인 준비된 BoxDecode 변형을 선택합니다.
 진행 중인 프레임의 연산을 수정하지 않습니다. RCNN 단계 1은 레벨별 top-K 카운트와 FP16
@@ -552,6 +555,15 @@ LLiMa는 JSON을 포함한 C++ 메서드를 공개하므로 소스 문법 호환
 각 Node는 다음을 생성해야 합니다.
 - `backend_fragment(index)` -- 주어진 인덱스에서 이 노드에 대한 GStreamer 조각
 - `element_names(index)` -- 이 노드에서 소유한 결정적인 요소 이름 (진단 및 강제 적용용)
+
+LiDAR/BEV 노드는 옵션, 포트 설명, 부작용 없는 수치 요청 구성을 `nodes/`에 둡니다.
+기존 `NodeContractProvider` 컴파일 훅은
+`pipeline/internal/sima/LidarBevNodeContracts.cpp`에 구현됩니다. 이 컴파일러는
+Scheduler의 기존 `check_kernel(...)` API에 연산 이름을 전달하고 일반적인 스테이지
+레시피와 `FrameLayout` 실행 경로를 사용합니다. `StaticSpecBuilders.cpp`는 메타데이터만
+다루는 입력 투영과 직접 입력 바인딩을 `SimaArgMax`와 공유합니다. 이 헬퍼는 커널을
+준비하거나 스케줄링하지 않습니다. LiDAR/BEV 노드 파일은 파이프라인 내부 구현 헤더를
+포함하지 않습니다. 이 분리는 프레임별 작업이나 페이로드 복사를 추가하지 않습니다.
 
 독립 `Cast`는 타입이 있는 뷰를 Kernels가 검증하는 표준 `cast` 요청으로 컴파일합니다. 논리 식별, 스트라이드 및 텐서 상대 오프셋을 명시적으로 유지합니다. 의미 컴파일은 패킹 전 MLA 입력 포트 순서를 맞추고 렌더링은 검증된 계약을 유지합니다. 실행 용량 기본값은 비동기 4, 동기 1이며 출력 유지용 캐리어는 별도입니다. 부분 또는 순서를 바꾼 TensorSet은 부모를 유지하는 메타데이터 엔벌로프를 사용하며 기존 게시 정보나 페이로드를 수정하지 않습니다.
 

@@ -14,6 +14,10 @@ The format is based on Keep a Changelog and follows semantic versioning.
   Memory is reported as MLA memory and EV74 memory, which add up, and board-wide Linux memory.
   EV74 memory needs a Sentinel that reports `ev74_mem_allocated_mb`; older daemons leave it at
   `samples == 0`.
+- `SimaVoxelize`, `SimaPillarScatter`, `SimaBEVPoolPlan` and `SimaBEVPool` run the kernels-library
+  LiDAR and camera-to-BEV operations of PointPillars and BEVFusion on A65 or EV74, with INT8 or
+  BF16 tensors, in C++ and Python (`pyneat.nodes.sima_voxelize` and so on). Each runs on the
+  selected target with no fallback. See `docs/reference/lidar_bev_kernel_nodes.md`.
 
 ### Changed
 - Canonical naming contract docs and migration guidance.
