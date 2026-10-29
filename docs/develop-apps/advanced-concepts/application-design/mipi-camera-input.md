@@ -227,30 +227,35 @@ Leave `decode_type` unset and keep `mla_only = true` when you want raw MLA tenso
 
 | Mode | Use when | Behavior |
 | --- | --- | --- |
-| Strict zero-copy | Your `libcamerasrc` exposes `external-buffer-mode` and the memory library supports DMA-BUF export. | Neat requires direct capture into its downstream DMA-BUF pool and fails if the source cannot provide it. |
-| Adaptive fallback (explicit opt-in) | You need compatibility with a camera stack that cannot export device buffers. | Neat accepts OS/libcamera buffers, copies them into pooled SiMaAI memory for CVU/MLA handoff, and passes through SiMaAI buffers when the source already provides them. |
+| Strict zero-copy | Your `libcamerasrc` delivers each frame as one DMA-BUF (the normal case). | Neat forwards the camera's DMA-BUF to the accelerator stages and fails if a frame would need a copy. |
+| Adaptive fallback (explicit opt-in) | You need compatibility with a camera stack whose frames are not one DMA-BUF each. | Neat copies such frames into a CMA DMA-BUF for CVU/MLA handoff and still forwards frames that are one DMA-BUF. |
 
-Strict zero-copy is the framework default. It requires both a `libcamerasrc` that exposes the generic `external-buffer-mode` property and a memory library that supports DMA-BUF export. Set `camera.allow_cpu_fallback = true` only as an explicit compatibility escape hatch. The fallback copy is a bridge into the accelerator pipeline; it is not permission to add CPU color conversion or scaling to the hot path.
+Strict zero-copy is the framework default. Neat never owns the camera's memory:
+any physically contiguous DMA-BUF is a valid EV74 input, and Neat's EV74 admission check accepts it when it comes from a CMA heap or the camera's contiguous capture allocator (`videobuf2_dma_contig`), so no `libcamerasrc` property is required. Set
+`camera.allow_cpu_fallback = true` only as an explicit compatibility escape
+hatch. The fallback copy is a bridge into the accelerator pipeline; it is not
+permission to add CPU color conversion or scaling to the hot path.
 
 In both modes, Neat places its private memory bridge immediately after the
-camera caps and before any queue. The bridge proposes a standard buffer pool
-through `GST_QUERY_ALLOCATION`. That pool allocates the validated plane layout
-from one packed SiMaAI allocation and exports one DMA-BUF per plane.
-`libcamerasrc` imports those DMA-BUFs into the ISP capture queue; after capture,
-the bridge unwraps the same packed allocation for downstream processing. This
-is the normal path, not the fallback copy path.
+camera caps and before any queue. The bridge asks the source to attach
+`GstVideoMeta` through `GST_QUERY_ALLOCATION` and forwards each frame whose
+planes sit back to back in one DMA-BUF as a single memory, retaining the
+camera's buffer until every consumer has released it. This is the normal path,
+not the fallback copy path.
 
 The application owns the ISP-output retention policy. Leave the
 `capture_buffer_count` argument to `nodes::CameraInputWithCaptureBuffers()` or
 `pyneat.nodes.camera_input()` at `0` to use the camera default, or request a
 larger minimum when a temporal encoder or asynchronous ML graph holds frames longer.
+On Platform 3.0, `libcamerasrc` has no `buffer-count`, so leave it at `0` there
+(see the [CameraInput reference](/reference/nodes/camera-input)).
 The active camera pipeline validates its own limit; Neat's provider supports up
 to 128. This count is separate from the private CSI-to-ISP RAW transit ring and
 from `queue_depth`, which controls only Neat's live GStreamer queue. Use a leaky
 queue when current frames matter more than completeness; use downstream
 backpressure when every frame must be retained. In compatibility-copy mode,
-the bridge's private pool grows on demand so it does not block before a leaky
-queue can discard stale frames.
+the bridge's private pool grows on demand, up to 128 buffers, so it does not
+block before a leaky queue can discard stale frames.
 
 ## Keep preprocessing on CVU/EV74
 
@@ -269,7 +274,7 @@ The camera gives you frames. The CVU should do the frame math. The CPU should no
 | No camera appears | Confirm the selected `.dtbo`, cable orientation, power cycle, and kernel/libcamera logs. |
 | `libcamerasrc` is missing | Install the matching Neat/runtime camera image or camera packages for the DevKit build. |
 | `misconfig.media_caps` or `not-negotiated` | Validate the exact `format,width,height,framerate` with `gst-launch-1.0`. Try a known supported mode such as `NV12 1920x1080@30`. |
-| Strict zero-copy fails | Set `allow_cpu_fallback = true`, or use a camera stack that exposes SiMaAI zero-copy properties. |
+| Strict zero-copy fails | Set `allow_cpu_fallback = true`, or use a camera stack that delivers each frame as one DMA-BUF. |
 | Output colors look wrong | Confirm the frame is interpreted as `NV12`, not RGB/BGR. If a JPEG produced directly from `libcamerasrc` is also wrong, debug camera ISP/tuning before debugging Neat. |
 | Throughput is low | Remove CPU video conversion/scaling, pull continuously, and use a live-source queue policy that favors freshness. |
 

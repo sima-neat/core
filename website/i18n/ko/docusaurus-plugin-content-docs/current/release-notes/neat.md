@@ -7,18 +7,22 @@ sidebar_position: 3
 
 SiMa.ai Neat Library의 릴리스 노트입니다.
 
-## 미출시
+## 0.6.0
 
 ### 호환성이 깨지는 변경 사항
 
 - 모델 출력은 이제 중간 장치 형상 대신 MPK에 작성된 최종 논리 형상과 레이아웃을 제공합니다. 예를 들어 ResNet-50의 배치 평탄화 출력은 4차원 HWC 형상 대신 `[1, 1000]` 형상과 알 수 없는 논리 레이아웃을 가집니다. Float32 텐서 형식은 `FP32` 대신 `EVXX_FLOAT32`일 수 있습니다. 값은 텐서의 dtype과 형상으로 해석하며 백엔드 형식 태그에서 논리 축을 추론하지 않습니다.
-- Neat Library C++ ABI는 이제 버전 6이며, 공유 라이브러리의 SONAME은 `libsima_neat.so.6`입니다. 텐서는 이제 특징 추출기의 의미 메타데이터를 포함하고, 공개 GenAI 요청/결과 유형은 ASR 작업, 언어 및 프로브 메타데이터를 포함하며, `GraphLinkOptions`에는 실시간 허용 한도가 포함되며, `BenchmarkOptions`와 `BenchmarkReport`에 필드가 추가되었습니다. C++ 애플리케이션과 플러그인을 다시 빌드하고 해당 Core 런타임 및 개발 패키지를 설치합니다.
+- Neat Library C++ ABI는 이제 버전 6이며, 공유 라이브러리의 SONAME은 `libsima_neat.so.6`입니다. 텐서는 이제 특징 추출기의 의미 메타데이터를 포함하고, 공개 GenAI 요청/결과 유형은 ASR 작업, 언어 및 프로브 메타데이터를 포함하며, `GraphLinkOptions`에는 실시간 허용 한도가 포함되며, `BenchmarkOptions`와 `BenchmarkReport`에 필드가 추가되었습니다. C++ 애플리케이션과 플러그인을 다시 빌드하고 해당 Core 런타임 및 개발 패키지를 설치합니다. `SimaArgMaxOptions`에 `axis`와 `keepdims`가 추가되었으며, `SimaArgMax` 클래스 레이아웃도 변경되었습니다.
 - 실시간 그래프 구성은 이제 `GraphLinkOptions`, `Graph::connect()` 및 `Graph::build()`를 사용합니다. 미리보기 API인 `RealtimeGraphLinkOptions`, `connect_realtime()`, `build_fused_realtime_sources()` / `build_fused_realtime_source()` 및 `RealtimeEveryFrameByStream`은 제거되었습니다. `realtime_every_frame_by_stream`을 포함하는 저장된 그래프는 지원되는 정책으로 다시 생성해야 합니다. 자세한 내용은 [라이브 프래그먼트 연결](/develop-apps/development-workflow/graph/#connect-live-fragments)을 참조하십시오.
+
+- 패키지 버전은 **0.6.0**입니다. `Model::Options`와 `BoxDecodeOptions`에 `yolox_seg_pose.pose_classes`가 추가되었으며, 이러한 공개 레이아웃 추가에는 ABI 6을 사용하는 구성 요소가 필요합니다. ABI 호환성 심볼릭 링크를 사용하지 마십시오. `GraphOptions`에는 `kernel_runner_a65_workers`가 추가되었습니다. 0.6.0으로 업데이트할 때는 일치하는 런타임 및 개발 패키지에 맞춰 애플리케이션, 플러그인, Python 확장을 다시 빌드하십시오. 둘 다 ABI 6을 사용한다는 이유만으로 프리뷰 바이너리와 정식 릴리스 패키지를 혼합하지 마십시오.
 
 ### 런타임 변경 사항
 
-- `Model::benchmark()`는 전력 레일을 직접 샘플링하는 대신 [Sentinel](/tools/sentinel/)에서 보드 텔레메트리를 읽습니다. 이제 지연 시간 패스와 처리량 패스는 각각 `num_samples`개의 입력을 측정하고 최소 `BenchmarkOptions::min_duration_ms`(기본값 10초)가 경과할 때까지 실행되므로, 전력 및 온도 측정값이 여러 Sentinel 샘플에 걸쳐 수집됩니다. 이전의 입력 개수 기반 측정을 사용하려면 `min_duration_ms`를 0으로 설정하십시오. `BenchmarkReport`에는 `latency_p50_ms`, `latency_p95_ms`, `latency_p99_ms`, `peak_power_watts`, `throughput_samples`, `throughput_duration_ms`, 그리고 레일 전력, 다이 및 보드 온도, 전체 및 코어별 CPU 사용률, MLA·CMA·Linux 메모리를 포함하는 `telemetry`가 추가되었습니다. `avg_power_watts`와 `energy_joules`의 의미는 그대로이며, `energy_joules`는 `num_samples`개 입력에 대한 에너지입니다. Sentinel을 사용할 수 없는 경우에도 지연 시간과 FPS는 보고되며, `telemetry.status`에 그 이유가 표시됩니다. DevKit 설치 프로그램은 `sima-cli neat install sentinel`로 Sentinel을 설치하며, 실행 중인 버전이 최신 프로덕션 빌드가 아니면 업그레이드합니다. 자세한 내용은 [모델 실행 측정](/develop-apps/development-workflow/model#power-and-board-telemetry)을 참조하십시오.
+- `Model::benchmark()`는 전력 레일을 직접 샘플링하는 대신 [Sentinel](/tools/sentinel/)에서 보드 텔레메트리를 읽습니다. 이제 지연 시간 패스와 처리량 패스는 각각 `num_samples`개의 입력을 측정하고 최소 `BenchmarkOptions::min_duration_ms`(기본값 10초)가 경과할 때까지 실행되므로, 전력 및 온도 측정값이 여러 Sentinel 샘플에 걸쳐 수집됩니다. 이전의 입력 개수 기반 측정을 사용하려면 `min_duration_ms`를 0으로 설정하십시오. `BenchmarkReport`에는 `latency_p50_ms`, `latency_p95_ms`, `latency_p99_ms`, `peak_power_watts`, `throughput_samples`, `throughput_duration_ms`, 그리고 레일 전력, 다이 및 보드 온도, 전체 및 코어별 CPU 사용률, MLA·EV74 메모리와 보드 전체 Linux 메모리를 포함하는 `telemetry`가 추가되었습니다. `avg_power_watts`와 `energy_joules`의 의미는 그대로이며, `energy_joules`는 `num_samples`개 입력에 대한 에너지입니다. Sentinel을 사용할 수 없는 경우에도 지연 시간과 FPS는 보고되며, `telemetry.status`에 그 이유가 표시됩니다. DevKit 설치 프로그램은 `sima-cli neat install sentinel`로 Sentinel을 설치하며, 실행 중인 버전이 최신 프로덕션 빌드가 아니면 업그레이드합니다. 자세한 내용은 [모델 실행 측정](/develop-apps/development-workflow/model#power-and-board-telemetry)을 참조하십시오.
 - `enable_board_power()`로 활성화하는 Run 전력 텔레메트리도 Sentinel에서 읽습니다. Core가 더 이상 I2C 전력 모니터를 열지 않으므로 같은 레일에 대한 Sentinel의 읽기와 간섭하지 않으며, 설치 프로그램도 더 이상 `sima`를 `i2c` 그룹에 추가하지 않습니다. Sentinel은 2초마다 샘플링하므로 약 2초보다 짧은 측정 창에는 전력 샘플이 없을 수 있습니다. 레일 이름은 `mla`처럼 Sentinel 메트릭 이름을 따르며 전력만 보고합니다. `sample_interval_ms`, `PowerMonitorProfile`, 기본 제공 레일 테이블, `PowerRailConfig`의 I2C 필드, `enable_modalix_som_power()`, `enable_modalix_dvt_power()`, `modalix_som_power_monitor_options()` / `modalix_dvt_power_monitor_options()`는 더 이상 사용되지 않으며 무시됩니다.
+- `TelemetryMonitor`는 C++ 및 Python에서 `start()`와 `stop()` 사이의 보드 전력, 온도, CPU 사용률, 메모리를 Sentinel에서 기록합니다. `read()`는 지금까지의 요약을 반환하며, `Telemetry`는 YAML로 출력되고 YAML 또는 JSON으로 저장됩니다. `Model::benchmark()`는 `BenchmarkReport::telemetry`에 이를 사용합니다. `PowerMonitor`, `read_power_snapshot()`, `RunOptions::enable_board_power()`, `RunOptions::power_monitor`, `MeasureOptions::include_power`는 더 이상 사용되지 않고 `TelemetryMonitor`로 대체되며, 계속 동작합니다. 자세한 내용은 [보드 텔레메트리 기록](/develop-apps/development-workflow/model#record-board-telemetry)을 참조하십시오.
+- `BenchmarkOptions::inputs`를 사용하면 합성 입력 대신 직접 준비한 텐서로 `Model::benchmark()`를 실행할 수 있으며, `BenchmarkReport::input`에 사용된 입력이 기록됩니다. [직접 준비한 입력으로 측정](/develop-apps/development-workflow/model#measure-with-your-own-inputs)을 참조하십시오.
 - 플러그인 지연 시간은 더 이상 사용되지 않으며 제거될 예정입니다. 대상은 `MeasureOptions::include_plugin_latency` 및 `plugin_latency_source`, `BenchmarkOptions::include_plugin_latency`, `start_measurement(bool)`, `Model::benchmark(int, bool)` / `Model::benchmark(bool)`입니다. 대신 `start_measurement()`와 `benchmark(num_samples)`를 사용하세요.
 - 하드웨어 디코딩은 직접 코덱 세션과 DMA-BUF 출력을 사용합니다. Core는 더 이상 디코더 데몬 승인 임대나 `SIMA_DECODER_ADMISSION_REQUIRE`를 사용하지 않습니다. 디코더 풀 및 튜닝 옵션은 유지됩니다.
 - C++ 및 Python에서 `SimaDecode` 및 `RtspDecodedInput`을 통해 기본 H.265/HEVC 디코딩을 사용할 수 있습니다. `RtspEncodedInput`는 디코딩하지 않고 파싱된 H.265 액세스 유닛을 제공합니다. H.265 입력은 HEVC Main 프로필, 8비트, 4:2:0을 사용해야 합니다. 코덱 선택기는 `H265` 및 `HEVC`를 모두 허용합니다. H.264 선택기는 `AVC`도 허용합니다. `FormatTag` / `pyneat.Format`은 인코딩된 그래프 경계에서 동일한 별칭을 허용하며, 여전히 `H264` 및 `H265`로 직렬화됩니다.
@@ -40,6 +44,8 @@ SiMa.ai Neat Library의 릴리스 노트입니다.
 
 | 릴리스 | 호환되는 Neat SDK | 참고 사항 |
 | --- | --- | --- |
+| 0.6.0 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
+| 0.5.0 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |
 | 0.4.0 | 2.1.3.0 | [Neat Library 0.4.0](https://github.com/sima-neat/core/releases/tag/v0.4.0) |
 | 0.3.0 | 2.1.2.3 | [Neat Library 0.3.0](https://github.com/sima-neat/core/releases/tag/v0.3.0) |
 | 0.2.2 | 2.1.2.2 | [Neat Library 0.2.2](https://github.com/sima-neat/core/releases/tag/v0.2.2) |

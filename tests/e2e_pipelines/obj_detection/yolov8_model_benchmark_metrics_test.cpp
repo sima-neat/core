@@ -40,7 +40,7 @@ int main(int argc, char** argv) {
     std::cout << "[e2e_benchmark] compiled_batch_size=" << compiled_batch_size << "\n";
 
     const simaai::neat::BenchmarkReport report = model.benchmark(kBenchmarkSamples);
-    const simaai::neat::BenchmarkTelemetry& telemetry = report.telemetry;
+    const simaai::neat::Telemetry& telemetry = report.telemetry;
     std::cout << "[e2e_benchmark] latency_ms=" << report.latency_ms << "\n";
     std::cout << "[e2e_benchmark] fps=" << report.fps << "\n";
     std::cout << "[e2e_benchmark] throughput_samples=" << report.throughput_samples << "\n";
@@ -75,6 +75,8 @@ int main(int argc, char** argv) {
     require(telemetry.cpu_usage_pct.samples > 0, "yolov8 benchmark: CPU must be measured");
     require(telemetry.mla_memory_mib.maximum > 0.0,
             "yolov8 benchmark: the loaded model must hold MLA memory");
+    require(telemetry.ev74_memory_mib.samples > 0,
+            "yolov8 benchmark: Sentinel must report EV74 memory (ev74_mem_allocated_mb)");
 
     // A second run with no minimum duration keeps the count-based timing. Its trace starting at
     // all also proves the first run stopped its own trace.

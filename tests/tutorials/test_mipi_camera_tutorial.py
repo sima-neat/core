@@ -32,7 +32,7 @@ TIMEOUT_SEC = int(os.environ.get("SIMA_NEAT_MIPI_CAMERA_TEST_TIMEOUT_SEC", "120"
 PULL_TIMEOUT_MS = os.environ.get("SIMA_NEAT_MIPI_CAMERA_PULL_TIMEOUT_MS", "15000")
 
 
-pytestmark = pytest.mark.skipif(
+_hardware_only = pytest.mark.skipif(
     not ENABLED,
     reason="set SIMA_NEAT_TEST_MIPI_CAMERA=1 to run MIPI camera hardware tests",
 )
@@ -58,6 +58,8 @@ def test_installed_pyneat_exposes_camera_input() -> None:
   assert node.input_role() == pyneat.InputRole.Source
 
 
+@pytest.mark.mipi_camera
+@_hardware_only
 def test_camera_input_output_smoke() -> None:
   pyneat = _require_pyneat()
 
@@ -116,6 +118,8 @@ def _run_tutorial(decode: str) -> subprocess.CompletedProcess[str]:
   )
 
 
+@pytest.mark.mipi_camera
+@_hardware_only
 def test_mipi_camera_model_raw_outputs() -> None:
   result = _run_tutorial("none")
   assert result.returncode == 0, (
@@ -126,6 +130,8 @@ def test_mipi_camera_model_raw_outputs() -> None:
   assert "output_timeout" not in result.stdout
 
 
+@pytest.mark.mipi_camera
+@_hardware_only
 def test_mipi_camera_model_boxdecode_outputs() -> None:
   if not BOXDECODE:
     pytest.skip("set SIMA_NEAT_TUTORIAL_MIPI_DECODE to run the BoxDecode path")

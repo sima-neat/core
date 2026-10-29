@@ -87,6 +87,7 @@
 #include "pipeline/FeatureTypes.h"
 #include "pipeline/Tensor.h"
 #include "pipeline/TensorCore.h"
+#include "pipeline/internal/TensorUtil.h"
 #include "pipeline/FormatSpec.h"
 #include "pipeline/EncodedSampleUtil.h"
 #include "neat/version.h"
@@ -105,6 +106,7 @@
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -394,6 +396,8 @@ const char* pixel_format_name(ImageSpec::PixelFormat fmt) {
     return "GRAY8";
   case ImageSpec::PixelFormat::NV12:
     return "NV12";
+  case ImageSpec::PixelFormat::NV16:
+    return "NV16";
   case ImageSpec::PixelFormat::I420:
     return "I420";
   case ImageSpec::PixelFormat::UNKNOWN:
@@ -426,6 +430,13 @@ void warn_deprecated_use_simaai_pool_python_once() {
       throw nb::python_error();
     }
   });
+}
+
+void warn_use_telemetry_monitor(const char* api) {
+  const std::string msg = std::string(api) + " is deprecated; use pyneat.TelemetryMonitor";
+  if (PyErr_WarnEx(PyExc_DeprecationWarning, msg.c_str(), 1) < 0) {
+    throw nb::python_error();
+  }
 }
 
 void warn_deprecated_h264_decode_python() {
@@ -1162,7 +1173,7 @@ python_preproc_images_to_cv_mats(const nb::object& images,
       throw std::runtime_error(
           "pyneat.stages.preproc: images must be packed HW or packed HWC after conversion");
     }
-    simaai::neat::Mapping mapping = tensor.map_read();
+    simaai::neat::Mapping mapping = simaai::neat::pipeline_internal::map_dense_tensor_read(tensor);
     if (!mapping.data) {
       throw std::runtime_error("pyneat.stages.preproc: failed to map image tensor");
     }
@@ -1530,6 +1541,7 @@ NB_MODULE(_pyneat_core, m) {
       .value("GRAY8", ImageSpec::PixelFormat::GRAY8)
       .value("NV12", ImageSpec::PixelFormat::NV12)
       .value("I420", ImageSpec::PixelFormat::I420)
+      .value("NV16", ImageSpec::PixelFormat::NV16)
       .value("UNKNOWN", ImageSpec::PixelFormat::UNKNOWN);
   m.attr("Memory") = m.attr("TensorMemory");
   m.attr("ImageType") = m.attr("PixelFormat");
@@ -1958,6 +1970,14 @@ NB_MODULE(_pyneat_core, m) {
       "data"_a, "caps_string"_a, "pts_ns"_a = -1, "dts_ns"_a = -1, "duration_ns"_a = -1);
 
   m.def(
+      "jpeg_output_format",
+      [](nb::bytes jpeg) {
+        return simaai::neat::jpeg_output_format(
+            {reinterpret_cast<const uint8_t*>(jpeg.c_str()), jpeg.size()});
+      },
+      "jpeg"_a, "Native SimaDecode output format for a JPEG frame: Format.NV12 or Format.NV16.");
+
+  m.def(
       "decode_bbox",
       [](const TensorList& bbox_tensors, std::optional<std::pair<int, int>> clamp_to,
          std::optional<int> top_k, bool strict) {
@@ -2008,6 +2028,16 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<>())
       .def_rw("boxes", &simaai::neat::PoseDecodeTensors::boxes)
       .def_rw("keypoints", &simaai::neat::PoseDecodeTensors::keypoints);
+
+  nb::class_<simaai::neat::OrientedDecodeTensors>(m, "OrientedDecodeTensors")
+      .def(nb::init<>())
+      .def_rw("geometry", &simaai::neat::OrientedDecodeTensors::geometry)
+      .def_rw("scores", &simaai::neat::OrientedDecodeTensors::scores)
+      .def_rw("class_ids", &simaai::neat::OrientedDecodeTensors::class_ids);
+  m.def("decode_obb_tensor", &simaai::neat::decode_obb_tensor, "tensor"_a,
+        "Strict BBOX_OBB_V1 parser. Geometry columns: cx,cy,w,h,raw radians; no clamp or remap.");
+  m.def("decode_obb", &simaai::neat::decode_obb, "tensors"_a,
+        "Parse oriented carriers into owned geometry, score and integer class tensors.");
 
   nb::class_<simaai::neat::SegmentationDecodeTensors>(m, "SegmentationDecodeTensors")
       .def(nb::init<>())
@@ -2452,6 +2482,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("element_name_prefix", &GraphOptions::element_name_prefix)
       .def_rw("element_name_suffix", &GraphOptions::element_name_suffix)
       .def_rw("verbose", &GraphOptions::verbose)
+      .def_rw("kernel_runner_a65_workers", &GraphOptions::kernel_runner_a65_workers)
       .def_rw("advanced_execution", &GraphOptions::advanced_execution);
 
   nb::class_<simaai::neat::OutputTensorOptions>(m, "OutputTensorOptions")
@@ -2566,12 +2597,27 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("run_export", &RunOptions::run_export)
       .def_rw("graph_run_export", &RunOptions::graph_run_export)
       .def_rw("on_input_drop", &RunOptions::on_input_drop)
-      .def("enable_board_power", &RunOptions::enable_board_power, "sample_interval_ms"_a = 100,
-           nb::rv_policy::reference_internal)
-      .def("enable_modalix_som_power", &RunOptions::enable_modalix_som_power,
-           "sample_interval_ms"_a = 100, nb::rv_policy::reference_internal)
-      .def("enable_modalix_dvt_power", &RunOptions::enable_modalix_dvt_power,
-           "sample_interval_ms"_a = 100, nb::rv_policy::reference_internal)
+      .def(
+          "enable_board_power",
+          [](RunOptions& self, int sample_interval_ms) -> RunOptions& {
+            warn_use_telemetry_monitor("RunOptions.enable_board_power()");
+            return self.enable_board_power(sample_interval_ms);
+          },
+          "sample_interval_ms"_a = 100, nb::rv_policy::reference_internal)
+      .def(
+          "enable_modalix_som_power",
+          [](RunOptions& self, int sample_interval_ms) -> RunOptions& {
+            warn_use_telemetry_monitor("RunOptions.enable_modalix_som_power()");
+            return self.enable_modalix_som_power(sample_interval_ms);
+          },
+          "sample_interval_ms"_a = 100, nb::rv_policy::reference_internal)
+      .def(
+          "enable_modalix_dvt_power",
+          [](RunOptions& self, int sample_interval_ms) -> RunOptions& {
+            warn_use_telemetry_monitor("RunOptions.enable_modalix_dvt_power()");
+            return self.enable_modalix_dvt_power(sample_interval_ms);
+          },
+          "sample_interval_ms"_a = 100, nb::rv_policy::reference_internal)
       .def("disable_power_monitor", &RunOptions::disable_power_monitor,
            nb::rv_policy::reference_internal);
 
@@ -3889,6 +3935,11 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("output_points_name", &simaai::neat::TrackKLTOptions::output_points_name)
       .def_rw("output_status_name", &simaai::neat::TrackKLTOptions::output_status_name)
       .def_rw("output_features_name", &simaai::neat::TrackKLTOptions::output_features_name)
+      .def_rw("publish_error", &simaai::neat::TrackKLTOptions::publish_error)
+      .def_rw("output_error_name", &simaai::neat::TrackKLTOptions::output_error_name)
+      .def_rw("error_threshold", &simaai::neat::TrackKLTOptions::error_threshold)
+      .def_rw("min_eig_threshold", &simaai::neat::TrackKLTOptions::min_eig_threshold)
+      .def_rw("require_convergence", &simaai::neat::TrackKLTOptions::require_convergence)
       .def("summary", &simaai::neat::TrackKLTOptions::summary)
       .def("__repr__",
            [](const simaai::neat::TrackKLTOptions& options) { return options.summary(); });
@@ -3908,7 +3959,9 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("sima_allocator_type", &simaai::neat::SimaArgMaxOptions::sima_allocator_type)
       .def_rw("silent", &simaai::neat::SimaArgMaxOptions::silent)
       .def_rw("emit_signals", &simaai::neat::SimaArgMaxOptions::emit_signals)
-      .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit);
+      .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit)
+      .def_rw("axis", &simaai::neat::SimaArgMaxOptions::axis)
+      .def_rw("keepdims", &simaai::neat::SimaArgMaxOptions::keepdims);
   nb::enum_<simaai::neat::SimaEncodeType>(m, "SimaEncodeType")
       .value("H264", simaai::neat::SimaEncodeType::H264)
       .value("H265", simaai::neat::SimaEncodeType::H265)
@@ -4255,18 +4308,29 @@ NB_MODULE(_pyneat_core, m) {
       .def_ro("rails", &simaai::neat::PowerSnapshot::rails)
       .def_ro("total_watts", &simaai::neat::PowerSnapshot::total_watts)
       .def_ro("rails_with_power", &simaai::neat::PowerSnapshot::rails_with_power);
+  // The deprecated power monitor and profile helpers stay bound for compatibility.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
   nb::class_<simaai::neat::PowerMonitor>(power_mod, "PowerMonitor")
-      .def(nb::init<simaai::neat::PowerMonitorOptions>(),
-           "options"_a = simaai::neat::PowerMonitorOptions{})
+      .def(
+          "__init__",
+          [](simaai::neat::PowerMonitor* self, simaai::neat::PowerMonitorOptions options) {
+            warn_use_telemetry_monitor("pyneat.power.PowerMonitor");
+            new (self) simaai::neat::PowerMonitor(std::move(options));
+          },
+          "options"_a = simaai::neat::PowerMonitorOptions{})
       .def("start", &simaai::neat::PowerMonitor::start)
       .def("stop", &simaai::neat::PowerMonitor::stop)
       .def("sample_once", &simaai::neat::PowerMonitor::sample_once)
       .def("summary", &simaai::neat::PowerMonitor::summary)
       .def("running", &simaai::neat::PowerMonitor::running);
-  power_mod.def("read_power_snapshot", &simaai::neat::read_power_snapshot, "options"_a);
-  // The deprecated power profile helpers stay bound for compatibility.
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+  power_mod.def(
+      "read_power_snapshot",
+      [](const simaai::neat::PowerMonitorOptions& options) {
+        warn_use_telemetry_monitor("pyneat.power.read_power_snapshot()");
+        return simaai::neat::read_power_snapshot(options);
+      },
+      "options"_a);
   power_mod.def("default_modalix_som_power_rails", &simaai::neat::default_modalix_som_power_rails);
   power_mod.def("default_modalix_dvt_power_rails", &simaai::neat::default_modalix_dvt_power_rails);
   power_mod.def("detect_default_power_monitor_profile",
@@ -4320,7 +4384,8 @@ NB_MODULE(_pyneat_core, m) {
       .value("BGR", simaai::neat::PreprocessColorFormat::BGR)
       .value("GRAY8", simaai::neat::PreprocessColorFormat::GRAY8)
       .value("NV12", simaai::neat::PreprocessColorFormat::NV12)
-      .value("I420", simaai::neat::PreprocessColorFormat::I420);
+      .value("I420", simaai::neat::PreprocessColorFormat::I420)
+      .value("NV16", simaai::neat::PreprocessColorFormat::NV16);
 
   nb::enum_<simaai::neat::NormalizePreset>(m, "NormalizePreset")
       .value("None", simaai::neat::NormalizePreset::None)
@@ -4352,6 +4417,8 @@ NB_MODULE(_pyneat_core, m) {
       .value("YoloV26", simaai::neat::BoxDecodeType::YoloV26)
       .value("YoloV26Pose", simaai::neat::BoxDecodeType::YoloV26Pose)
       .value("YoloV26Seg", simaai::neat::BoxDecodeType::YoloV26Seg)
+      .value("YoloV8Obb", simaai::neat::BoxDecodeType::YoloV8Obb)
+      .value("YoloV26Obb", simaai::neat::BoxDecodeType::YoloV26Obb)
       .value("YoloV6", simaai::neat::BoxDecodeType::YoloV6)
       .value("YoloX", simaai::neat::BoxDecodeType::YoloX)
       .value("Ssd", simaai::neat::BoxDecodeType::Ssd)
@@ -4650,42 +4717,81 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("resize_mode", &simaai::neat::BenchmarkOptions::resize_mode)
       .def_rw("include_plugin_latency", &simaai::neat::BenchmarkOptions::include_plugin_latency)
       .def_rw("min_duration_ms", &simaai::neat::BenchmarkOptions::min_duration_ms)
-      .def_rw("include_layer_stats", &simaai::neat::BenchmarkOptions::include_layer_stats);
+      .def_rw("include_mla_layer_stats", &simaai::neat::BenchmarkOptions::include_mla_layer_stats)
+      .def_rw("include_mla_stage_stats", &simaai::neat::BenchmarkOptions::include_mla_stage_stats)
+      .def_rw("inputs", &simaai::neat::BenchmarkOptions::inputs);
 
-  nb::class_<simaai::neat::BenchmarkMetric>(m, "BenchmarkMetric")
+  using simaai::neat::Telemetry;
+  using simaai::neat::TelemetryMonitor;
+  using simaai::neat::TelemetryStats;
+  nb::class_<TelemetryStats>(m, "TelemetryStats")
       .def(nb::init<>())
-      .def_ro("key", &simaai::neat::BenchmarkMetric::key)
-      .def_ro("label", &simaai::neat::BenchmarkMetric::label)
-      .def_ro("unit", &simaai::neat::BenchmarkMetric::unit)
-      .def_ro("samples", &simaai::neat::BenchmarkMetric::samples)
-      .def_ro("mean", &simaai::neat::BenchmarkMetric::mean)
-      .def_ro("minimum", &simaai::neat::BenchmarkMetric::minimum)
-      .def_ro("maximum", &simaai::neat::BenchmarkMetric::maximum);
+      .def_ro("key", &TelemetryStats::key)
+      .def_ro("label", &TelemetryStats::label)
+      .def_ro("unit", &TelemetryStats::unit)
+      .def_ro("samples", &TelemetryStats::samples)
+      .def_ro("mean", &TelemetryStats::mean)
+      .def_ro("minimum", &TelemetryStats::minimum)
+      .def_ro("maximum", &TelemetryStats::maximum)
+      .def_ro("last", &TelemetryStats::last);
 
-  nb::class_<simaai::neat::BenchmarkTelemetry>(m, "BenchmarkTelemetry")
+  nb::class_<Telemetry>(m, "Telemetry")
       .def(nb::init<>())
-      .def_ro("status", &simaai::neat::BenchmarkTelemetry::status)
-      .def_ro("trace_id", &simaai::neat::BenchmarkTelemetry::trace_id)
-      .def_ro("sentinel_version", &simaai::neat::BenchmarkTelemetry::sentinel_version)
-      .def_ro("sample_interval_ms", &simaai::neat::BenchmarkTelemetry::sample_interval_ms)
-      .def_ro("samples", &simaai::neat::BenchmarkTelemetry::samples)
-      .def_ro("power_som_watts", &simaai::neat::BenchmarkTelemetry::power_som_watts)
-      .def_ro("power_mla_watts", &simaai::neat::BenchmarkTelemetry::power_mla_watts)
-      .def_ro("power_rails_watts", &simaai::neat::BenchmarkTelemetry::power_rails_watts)
-      .def_ro("die_temperatures_c", &simaai::neat::BenchmarkTelemetry::die_temperatures_c)
-      .def_ro("die_temperature_max_c", &simaai::neat::BenchmarkTelemetry::die_temperature_max_c)
-      .def_ro("board_temperatures_c", &simaai::neat::BenchmarkTelemetry::board_temperatures_c)
-      .def_ro("cpu_usage_pct", &simaai::neat::BenchmarkTelemetry::cpu_usage_pct)
-      .def_ro("cpu_cores_usage_pct", &simaai::neat::BenchmarkTelemetry::cpu_cores_usage_pct)
-      .def_ro("mla_memory_mib", &simaai::neat::BenchmarkTelemetry::mla_memory_mib)
-      .def_ro("cma_memory_mib", &simaai::neat::BenchmarkTelemetry::cma_memory_mib)
-      .def_ro("linux_memory_used_mib", &simaai::neat::BenchmarkTelemetry::linux_memory_used_mib);
+      .def_ro("status", &Telemetry::status)
+      .def_ro("sentinel_version", &Telemetry::sentinel_version)
+      .def_ro("sample_interval_ms", &Telemetry::sample_interval_ms)
+      .def_ro("samples", &Telemetry::samples)
+      .def_ro("duration_ms", &Telemetry::duration_ms)
+      .def_ro("power_som_watts", &Telemetry::power_som_watts)
+      .def_ro("power_mla_watts", &Telemetry::power_mla_watts)
+      .def_ro("power_rails_watts", &Telemetry::power_rails_watts)
+      .def_ro("die_temperatures_c", &Telemetry::die_temperatures_c)
+      .def_ro("die_temperature_max_c", &Telemetry::die_temperature_max_c)
+      .def_ro("board_temperatures_c", &Telemetry::board_temperatures_c)
+      .def_ro("cpu_usage_pct", &Telemetry::cpu_usage_pct)
+      .def_ro("cpu_cores_usage_pct", &Telemetry::cpu_cores_usage_pct)
+      .def_ro("mla_memory_mib", &Telemetry::mla_memory_mib)
+      .def_ro("ev74_memory_mib", &Telemetry::ev74_memory_mib)
+      .def_ro("linux_memory_used_mib", &Telemetry::linux_memory_used_mib)
+      .def("save", &Telemetry::save, "file_path"_a, nb::call_guard<nb::gil_scoped_release>())
+      .def("__str__",
+           [](const Telemetry& telemetry) {
+             std::ostringstream text;
+             text << telemetry;
+             return text.str();
+           })
+      .def("__repr__", [](const Telemetry& telemetry) {
+        return nb::str("<Telemetry status={!r} samples={} duration_ms={:.1f} "
+                       "power_som_watts.mean={:.2f}>")
+            .format(telemetry.status, telemetry.samples, telemetry.duration_ms,
+                    telemetry.power_som_watts.mean);
+      });
 
-  nb::class_<simaai::neat::LayerStats>(m, "LayerStats")
+  nb::class_<TelemetryMonitor>(m, "TelemetryMonitor")
       .def(nb::init<>())
-      .def_rw("name", &simaai::neat::LayerStats::name)
-      .def_rw("total_execution_time_us", &simaai::neat::LayerStats::total_execution_time_us)
-      .def_rw("stage_index", &simaai::neat::LayerStats::stage_index);
+      .def(nb::init<std::string>(), "socket_path"_a)
+      .def("start", &TelemetryMonitor::start, nb::call_guard<nb::gil_scoped_release>())
+      .def("read", &TelemetryMonitor::read, nb::call_guard<nb::gil_scoped_release>())
+      .def("stop", &TelemetryMonitor::stop, nb::call_guard<nb::gil_scoped_release>())
+      .def("running", &TelemetryMonitor::running);
+
+  // Benchmark results, not user-built.
+  nb::class_<simaai::neat::MlaLayer>(m, "MlaLayer")
+      .def_ro("stage_index", &simaai::neat::MlaLayer::stage_index)
+      .def_ro("name", &simaai::neat::MlaLayer::name)
+      .def_ro("latency_us", &simaai::neat::MlaLayer::latency_us);
+
+  nb::class_<simaai::neat::MlaLayerStats>(m, "MlaLayerStats")
+      .def_ro("status", &simaai::neat::MlaLayerStats::status)
+      .def_ro("layers", &simaai::neat::MlaLayerStats::layers);
+
+  nb::class_<simaai::neat::MlaStage>(m, "MlaStage")
+      .def_ro("stage_index", &simaai::neat::MlaStage::stage_index)
+      .def_ro("latency_us", &simaai::neat::MlaStage::latency_us);
+
+  nb::class_<simaai::neat::MlaStageStats>(m, "MlaStageStats")
+      .def_ro("status", &simaai::neat::MlaStageStats::status)
+      .def_ro("stages", &simaai::neat::MlaStageStats::stages);
 
   nb::class_<simaai::neat::BenchmarkReport>(m, "BenchmarkReport")
       .def(nb::init<>())
@@ -4699,8 +4805,10 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("peak_power_watts", &simaai::neat::BenchmarkReport::peak_power_watts)
       .def_rw("throughput_samples", &simaai::neat::BenchmarkReport::throughput_samples)
       .def_rw("throughput_duration_ms", &simaai::neat::BenchmarkReport::throughput_duration_ms)
+      .def_rw("input", &simaai::neat::BenchmarkReport::input)
       .def_ro("telemetry", &simaai::neat::BenchmarkReport::telemetry)
-      .def_rw("layer_stats", &simaai::neat::BenchmarkReport::layer_stats)
+      .def_ro("mla_layer_stats", &simaai::neat::BenchmarkReport::mla_layer_stats)
+      .def_ro("mla_stage_stats", &simaai::neat::BenchmarkReport::mla_stage_stats)
       .def(
           "save",
           [](const simaai::neat::BenchmarkReport& report, const std::filesystem::path& file_path) {
@@ -4731,6 +4839,7 @@ NB_MODULE(_pyneat_core, m) {
       .value("GRAY8", simaai::neat::FormatTag::GRAY8)
       .value("NV12", simaai::neat::FormatTag::NV12)
       .value("I420", simaai::neat::FormatTag::I420)
+      .value("NV16", simaai::neat::FormatTag::NV16)
       .value("YUYV", simaai::neat::FormatTag::YUYV)
       .value("ENCODED", simaai::neat::FormatTag::ENCODED)
       .value("H264", simaai::neat::FormatTag::H264)
@@ -5107,6 +5216,64 @@ NB_MODULE(_pyneat_core, m) {
   detess_opts_cls.def(nb::init<const simaai::neat::Model&>(), "model"_a);
   detess_cast_opts_cls.def(nb::init<const simaai::neat::Model&>(), "model"_a);
 
+  nb::enum_<simaai::neat::ImageFormat>(m, "ImageFormat")
+      .value("RGB", simaai::neat::ImageFormat::RGB)
+      .value("BGR", simaai::neat::ImageFormat::BGR)
+      .value("GRAY8", simaai::neat::ImageFormat::GRAY8)
+      .value("NV12", simaai::neat::ImageFormat::NV12)
+      .value("I420", simaai::neat::ImageFormat::I420)
+      .value("NV16", simaai::neat::ImageFormat::NV16);
+  nb::enum_<simaai::neat::ResizeInterpolation>(m, "ResizeInterpolation")
+      .value("Nearest", simaai::neat::ResizeInterpolation::Nearest)
+      .value("Bilinear", simaai::neat::ResizeInterpolation::Bilinear)
+      .value("Bicubic", simaai::neat::ResizeInterpolation::Bicubic)
+      .value("BoxAverage", simaai::neat::ResizeInterpolation::BoxAverage);
+  nb::enum_<simaai::neat::ResizeFit>(m, "ResizeFit")
+      .value("Stretch", simaai::neat::ResizeFit::Stretch)
+      .value("Contain", simaai::neat::ResizeFit::Contain);
+  nb::enum_<simaai::neat::ImageColorMatrix>(m, "ImageColorMatrix")
+      .value("Bt601", simaai::neat::ImageColorMatrix::Bt601)
+      .value("Bt709", simaai::neat::ImageColorMatrix::Bt709);
+  nb::enum_<simaai::neat::ImageYuvRange>(m, "ImageYuvRange")
+      .value("Full", simaai::neat::ImageYuvRange::Full)
+      .value("Limited", simaai::neat::ImageYuvRange::Limited);
+  nb::enum_<simaai::neat::ImageChromaSiting>(m, "ImageChromaSiting")
+      .value("Centered", simaai::neat::ImageChromaSiting::Centered)
+      .value("Cosited", simaai::neat::ImageChromaSiting::Cosited);
+  nb::enum_<simaai::neat::ImageSurfaceLayout>(m, "ImageSurfaceLayout")
+      .value("Native", simaai::neat::ImageSurfaceLayout::Native)
+      .value("EncoderNv12", simaai::neat::ImageSurfaceLayout::EncoderNv12);
+  nb::class_<simaai::neat::ImageColorOptions>(m, "ImageColorOptions")
+      .def(nb::init<>())
+      .def_rw("matrix", &simaai::neat::ImageColorOptions::matrix)
+      .def_rw("range", &simaai::neat::ImageColorOptions::range)
+      .def_rw("input_siting", &simaai::neat::ImageColorOptions::input_siting)
+      .def_rw("output_siting", &simaai::neat::ImageColorOptions::output_siting);
+  nb::class_<simaai::neat::ResizeOptions>(m, "ResizeOptions")
+      .def(nb::init<>())
+      .def_rw("width", &simaai::neat::ResizeOptions::width)
+      .def_rw("height", &simaai::neat::ResizeOptions::height)
+      .def_rw("interpolation", &simaai::neat::ResizeOptions::interpolation)
+      .def_rw("fit", &simaai::neat::ResizeOptions::fit)
+      .def_rw("max_input_width", &simaai::neat::ResizeOptions::max_input_width)
+      .def_rw("max_input_height", &simaai::neat::ResizeOptions::max_input_height)
+      .def_rw("pad_value", &simaai::neat::ResizeOptions::pad_value)
+      .def_rw("yuv_padding", &simaai::neat::ResizeOptions::yuv_padding)
+      .def_rw("color", &simaai::neat::ResizeOptions::color)
+      .def_rw("surface", &simaai::neat::ResizeOptions::surface)
+      .def_rw("element_name", &simaai::neat::ResizeOptions::element_name);
+  nb::class_<simaai::neat::ColorConvertOptions>(m, "ColorConvertOptions")
+      .def(nb::init<>())
+      .def_rw("output_format", &simaai::neat::ColorConvertOptions::output_format)
+      .def_rw("color", &simaai::neat::ColorConvertOptions::color)
+      .def_rw("surface", &simaai::neat::ColorConvertOptions::surface)
+      .def_rw("element_name", &simaai::neat::ColorConvertOptions::element_name);
+  nb::class_<simaai::neat::NormalizationOptions>(m, "NormalizationOptions")
+      .def(nb::init<>())
+      .def_rw("mean", &simaai::neat::NormalizationOptions::mean)
+      .def_rw("stddev", &simaai::neat::NormalizationOptions::stddev)
+      .def_rw("element_name", &simaai::neat::NormalizationOptions::element_name);
+
   nb::class_<simaai::neat::PreprocOptions>(m, "PreprocOptions")
       .def(nb::init<>())
       .def(nb::init<const simaai::neat::Model&>(), "model"_a)
@@ -5194,6 +5361,11 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("num_buffers_model", &simaai::neat::DetessDequantOptions::num_buffers_model)
       .def_rw("num_buffers_locked", &simaai::neat::DetessDequantOptions::num_buffers_locked);
 
+  nodes_mod.def("resize", &simaai::neat::nodes::Resize, "options"_a);
+  nodes_mod.def("color_convert", &simaai::neat::nodes::ColorConvert,
+                "options"_a = simaai::neat::ColorConvertOptions{});
+  nodes_mod.def("normalization", &simaai::neat::nodes::Normalization,
+                "options"_a = simaai::neat::NormalizationOptions{});
   nodes_mod.def("preproc", &simaai::neat::nodes::Preproc,
                 "options"_a = simaai::neat::PreprocOptions{});
   nodes_mod.def("quant_tess", &simaai::neat::nodes::QuantTess,

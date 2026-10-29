@@ -4,6 +4,10 @@
 
 #include "gst/GstInit.h"
 #include "nodes/common/Output.h"
+#include "nodes/common/Caps.h"
+#include "graph/Compiler.h"
+#include "graph/Graph.h"
+#include "graph/nodes/PipelineNode.h"
 #include "nodes/io/CameraInput.h"
 #include "nodes/io/RTSPInput.h"
 #include "pipeline/ErrorCodes.h"
@@ -444,6 +448,78 @@ RUN_TEST(
                 "Latest enqueue treated a public-pull reservation as fatal overflow");
         require(reserved_latest_queue.restore_reserved_front(std::move(reserved)),
                 "Latest reservation fixture could not restore its sample");
+      }
+
+      // Connected fragments flatten several rendered nodes under each runtime node.
+      // Their public terminal must retain its policy without relying on node attribution.
+      for (const bool drop : {true, false}) {
+        using namespace simaai::neat;
+        auto output_options = OutputOptions::EveryFrame(2);
+        output_options.drop = drop;
+        graph::Graph graph;
+        const auto input = graph.add(std::make_shared<graph::nodes::PipelineNode>(
+            NodeList{nodes::Input("image"), nodes::CapsRaw("RGB", 32, 24, 30, CapsMemory::Any)}));
+        const auto terminal = graph.add(std::make_shared<graph::nodes::PipelineNode>(
+            NodeList{nodes::CapsRaw("RGB", 32, 24, 30, CapsMemory::Any),
+                     nodes::Output("detections", output_options)}));
+        graph.connect(input, terminal);
+        RunOptions options;
+        options.queue_depth = 8;
+        options.output_memory = OutputMemory::ZeroCopy;
+        const auto seed =
+            sample_from_tensors({make_color_tensor(32, 24, ImageSpec::PixelFormat::RGB)});
+        graph::Compiler compiler;
+        runtime::RuntimeCompileOptions compile_options;
+        compile_options.run_options = options;
+        auto plan = runtime::build_execution_plan_from_compiled(graph, compiler.compile(graph),
+                                                                compile_options);
+        require(plan.pipeline_segments.size() == 1 &&
+                    plan.pipeline_segments.front().node_ids.size() > 1 &&
+                    plan.pipeline_segments.front().nodes.size() >
+                        plan.pipeline_segments.front().node_ids.size(),
+                "terminal-policy regression must flatten multiple pipeline fragments");
+        const auto sink_id = terminal;
+        runtime::RunCoreStartOptions start;
+        start.run_options = options;
+        start.graph_options = runtime::graph_runtime_options_from_run_options(options);
+        start.mode = RunMode::Async;
+        start.allow_startup_preflight = false;
+        start.seed = seed;
+        auto parent = runtime::RunCore::start(std::move(plan), std::move(start));
+        struct CloseGraph {
+          std::shared_ptr<runtime::RunCore> core;
+          ~CloseGraph() {
+            core->close();
+          }
+        } close{parent};
+        const auto sink = parent->graph_execution().sinks.at(sink_id);
+        const auto* policy = sink->output_options();
+        require(policy && policy->drop == drop && policy->max_buffers == 2,
+                "flattened terminal lost its explicit output policy");
+        runtime::EdgeRouter router(parent->graph_execution());
+        runtime::EdgeRouterOptions routing;
+        routing.push_timeout_ms = 0;
+        routing.request_stop_on_backpressure = false;
+        for (int id = 1; id <= (drop ? 6 : 2); ++id) {
+          auto sample = seed;
+          sample.frame_id = id;
+          require(router.push_to_sink(sink_id, std::move(sample), runtime::invalid_edge_index(),
+                                      routing, {}, 0),
+                  "undrained dropping terminal blocked its producer");
+        }
+        if (!drop) {
+          auto sample = seed;
+          require(!router.push_to_sink(sink_id, std::move(sample), runtime::invalid_edge_index(),
+                                       routing, {}, 0),
+                  "lossless terminal did not backpressure at its configured capacity");
+        }
+        require(sink->size() == 2, "terminal queue ignored its explicit capacity");
+        auto first = parent->graph_pull_msg(sink_id, 1000);
+        auto second = parent->graph_pull_msg(sink_id, 1000);
+        require(first && second, "terminal lost its retained frames");
+        require(first->sample.frame_id == (drop ? 5 : 1) &&
+                    second->sample.frame_id == (drop ? 6 : 2),
+                "terminal violated dropping or lossless frame order");
       }
 
       // Saturate the real appsink -> InputStream -> RunCore path with standard

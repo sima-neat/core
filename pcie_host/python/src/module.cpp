@@ -431,6 +431,7 @@ void bind_genai(nb::module_& parent) {
       .def_rw("asr_task", &g::GenerationRequest::asr_task)
       .def_rw("max_new_tokens", &g::GenerationRequest::max_new_tokens)
       .def_rw("enable_thinking", &g::GenerationRequest::enable_thinking)
+      .def_rw("reasoning_effort", &g::GenerationRequest::reasoning_effort)
       .def_prop_rw(
           "tools", [](const g::GenerationRequest& r) { return genai_json(r.tools); },
           [](g::GenerationRequest& r, nb::handle x) { r.tools = genai_json(x); })

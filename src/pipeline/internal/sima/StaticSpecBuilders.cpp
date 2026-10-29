@@ -1,4 +1,5 @@
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
+#include "pipeline/internal/contract/PluginCompiledContracts.h"
 
 #include "pipeline/internal/TensorMath.h"
 #include "pipeline/internal/EnvUtil.h"
@@ -9,6 +10,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <stdexcept>
 
 namespace simaai::neat::pipeline_internal::sima::specbuilders {
 namespace {

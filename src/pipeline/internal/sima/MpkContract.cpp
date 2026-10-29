@@ -2147,8 +2147,15 @@ void derive_logical_output_contracts(MpkContract* contract) {
       }
       if (!producer_is_mla && dtype_preserving_consumer && logical_source &&
           !logical_source->dtype.empty()) {
-        output.logical_dtype = normalize_dtype_local(logical_source->dtype);
-        output.logical_dtype_source = logical_source->dtype_source;
+        // Shape/byte size cannot distinguish FP32 from INT32. Preserve an
+        // authored producer type over a consumer's width-based inference.
+        const auto* type_source = logical_source;
+        if (!output.dtype.empty() && output.dtype_source != DTypeSource::InferredFromSize &&
+            logical_source->dtype_source == DTypeSource::InferredFromSize) {
+          type_source = &output;
+        }
+        output.logical_dtype = normalize_dtype_local(type_source->dtype);
+        output.logical_dtype_source = type_source->dtype_source;
       }
 
       if (output.logical_shape.empty() && physical_shape_structured) {
@@ -6955,9 +6962,7 @@ std::vector<MpkTensorContract> get_mla_published_outputs_contract(const MpkContr
         // reads ALL 16 bytes per stride and dequantizes the padding zeros as
         // probabilities, garbling segmentation output. Flag the boundary
         // tensor with Bf16LaneSplitRepack — the existing Bf16-named enum is
-        // reused as a generic "lane-split" hint that downstream consumers
-        // already plumb through (PreparedRuntimeBuild, ProcessCvuStageSemantics,
-        // PreparedRuntimeBridge).
+        // reused as a generic lane-split hint by the downstream stage compiler.
         if (mla && ((mla->has_align_c16 && mla->align_c16) || (mla->has_cblock && mla->cblock))) {
           const auto dtype_lower = canonical_token_local(tensor.dtype);
           const bool is_int8 = dtype_lower == "int8" || dtype_lower == "i8";

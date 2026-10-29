@@ -769,8 +769,9 @@ void throw_if_bus_error(GstElement* pipeline, const std::shared_ptr<DiagCtx>& di
   rep.error_code = diagnostic.error_code;
   rep.repro_note =
       render_diagnostic_body(diagnostic, ux::should_emit_gstreamer_for_current_context());
-  throw NeatError(pipeline_internal::error_util::decorate_error(rep.error_code, rep.repro_note),
-                  std::move(rep));
+  const std::string message =
+      pipeline_internal::error_util::decorate_error(rep.error_code, rep.repro_note);
+  throw NeatError(message, std::move(rep));
 }
 
 std::optional<GstSample*> try_pull_sample_sliced(GstElement* pipeline, GstElement* appsink,

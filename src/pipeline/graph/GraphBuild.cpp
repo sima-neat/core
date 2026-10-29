@@ -34,6 +34,7 @@
 #include "pipeline/internal/contract/ContractApply.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/sima/ContractRender.h"
+#include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/InternalEdgeContractResolver.h"
 #include "pipeline/internal/SyncBuild.h"
 #include "pipeline/internal/TensorUtil.h"
@@ -61,6 +62,7 @@
 #include <gst/base/gstbasetransform.h>
 #include <gst/sdp/sdp.h>
 #include <gst/video/video.h>
+#include <gstsimaaitensorbuffer_meta.h>
 #include <glib.h>
 
 #include <algorithm>
@@ -120,7 +122,8 @@ GraphReport make_error_report(const std::shared_ptr<DiagCtx>& diag, const std::s
                                              const std::string& hint = {},
                                              const std::string& pipeline = {}) {
   GraphReport rep = pipeline_internal::error_util::make_report(code, message, pipeline, hint);
-  throw NeatError(decorate_with_error_code(rep.error_code, rep.repro_note), std::move(rep));
+  const std::string diagnostic = decorate_with_error_code(rep.error_code, rep.repro_note);
+  throw NeatError(diagnostic, std::move(rep));
 }
 
 using internal::node_model_lineage_binding;
@@ -351,20 +354,38 @@ static bool should_attach_transport_pad_timing(GstElement* elem) {
   return std::strcmp(fname, "appsrc") == 0 || std::strcmp(fname, "appsink") == 0;
 }
 
-static bool extract_sima_meta_key(GstBuffer* buf, pipeline_internal::ElementTimingKey& out) {
+bool extract_element_timing_key(GstBuffer* buf, pipeline_internal::ElementTimingKey& out) noexcept {
   if (!buf)
     return false;
-  GstCustomMeta* meta = gst_buffer_get_custom_meta(buf, "GstSimaMeta");
-  GstStructure* s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
-  if (!s)
+  try {
+    std::string error;
+    if (const auto* frame = simaai::gst::tensor_buffer_frame_metadata(buf, &error)) {
+      out.frame_id = frame->frame_id;
+      out.stream_hash = std::hash<std::string>{}(frame->stream_id);
+      return true;
+    }
+    // A missing typed header is normal for legacy/V1. Conflicting authorities
+    // are not: never guess a correlation key from one of the two headers.
+    if (!error.empty())
+      return false;
+    GstCustomMeta* meta = gst_buffer_get_custom_meta(buf, "GstSimaMeta");
+    GstStructure* s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
+    if (!s)
+      return false;
+    gint64 frame_id = -1;
+    if (!gst_structure_get_int64(s, "frame-id", &frame_id))
+      return false;
+    const gchar* stream_id = gst_structure_get_string(s, "stream-id");
+    const auto stream_hash = stream_id ? std::hash<std::string_view>{}(stream_id) : 0U;
+    out.frame_id = frame_id;
+    out.stream_hash = stream_hash;
+    return true;
+  } catch (...) {
+    // This observer runs inside a GStreamer C callback. Invalid metadata or an
+    // allocation failure must not unwind across that boundary. Data readers
+    // separately reject malformed publication; timing simply has no key.
     return false;
-  gint64 frame_id = -1;
-  if (!gst_structure_get_int64(s, "frame-id", &frame_id))
-    return false;
-  out.frame_id = frame_id;
-  const gchar* stream_id = gst_structure_get_string(s, "stream-id");
-  out.stream_hash = stream_id ? std::hash<std::string>{}(stream_id) : 0U;
-  return true;
+  }
 }
 
 static void update_element_timing(simaai::neat::pipeline_internal::ElementTimingCounters* counters,
@@ -508,7 +529,7 @@ static GstPadProbeReturn element_timing_probe_cb(GstPad*, GstPadProbeInfo* info,
     *ts = now;
 
     pipeline_internal::ElementTimingKey key;
-    if (extract_sima_meta_key(buf, key)) {
+    if (extract_element_timing_key(buf, key)) {
       add_pending_timing(ctx->counters, key, now);
       // Also keep a bounded FIFO timestamp for simple 1:1 transforms that replace buffers or
       // strip metadata before the src pad.  If the normal qdata/key path succeeds on src, the
@@ -532,7 +553,7 @@ static GstPadProbeReturn element_timing_probe_cb(GstPad*, GstPadProbeInfo* info,
     discard_pending_fifo_timing(ctx->counters);
   } else {
     pipeline_internal::ElementTimingKey key;
-    if (extract_sima_meta_key(buf, key)) {
+    if (extract_element_timing_key(buf, key)) {
       if (pop_pending_timing(ctx->counters, key, start)) {
         used = true;
         discard_pending_fifo_timing(ctx->counters);
@@ -1836,38 +1857,27 @@ static bool fragment_segment_uses_factory(std::string_view segment, std::string_
 }
 
 static void set_fragment_segment_property(std::string* segment, std::string_view property,
-                                          std::string_view value, bool replace_existing = true) {
+                                          std::string_view value) {
   if (!segment) {
     return;
   }
   const std::string key = std::string(property) + "=";
-  if (!replace_existing) {
-    // Launch syntax allows spaces around '=', which a literal key search misses.
-    for (const auto& assignment : gst::launch::analyze(*segment).assignments) {
-      if (assignment.key == property) {
-        return;
-      }
-    }
+  const auto parsed = gst::launch::analyze(*segment);
+  if (!parsed.complete) {
+    throw std::invalid_argument("cannot configure an incomplete launch fragment");
   }
-  std::size_t search = 0;
-  while (replace_existing && search < segment->size()) {
-    const std::size_t pos = segment->find(key, search);
-    if (pos == std::string::npos) {
-      break;
-    }
-    const bool token_start =
-        pos == 0 || std::isspace(static_cast<unsigned char>((*segment)[pos - 1])) != 0;
-    if (!token_start) {
-      search = pos + key.size();
+  for (const auto& assignment : parsed.assignments) {
+    if (assignment.key != property) {
       continue;
     }
-    const std::size_t value_start = pos + key.size();
-    std::size_t value_end = value_start;
-    while (value_end < segment->size() &&
-           std::isspace(static_cast<unsigned char>((*segment)[value_end])) == 0) {
-      ++value_end;
+    const gst::launch::AssignmentValueReplacement replacement{assignment.value_span,
+                                                              std::string(value), assignment.quote};
+    auto rewritten =
+        gst::launch::rewrite_assignment_values(*segment, parsed, std::span(&replacement, 1U));
+    if (!rewritten.complete) {
+      throw std::invalid_argument("cannot replace a launch property value");
     }
-    segment->replace(value_start, value_end - value_start, value);
+    *segment = std::move(rewritten.text);
     return;
   }
 
@@ -1879,165 +1889,60 @@ static void set_fragment_segment_property(std::string* segment, std::string_view
   segment->insert(insert_pos, " " + key + std::string(value));
 }
 
-static std::string set_property_for_factory_segments(std::string fragment, std::string_view factory,
-                                                     std::string_view property,
-                                                     std::string_view value,
-                                                     bool replace_existing = true) {
-  std::size_t segment_start = 0;
-  while (segment_start <= fragment.size()) {
-    const std::size_t separator = fragment.find('!', segment_start);
-    const std::size_t segment_end = separator == std::string::npos ? fragment.size() : separator;
-    std::string segment = fragment.substr(segment_start, segment_end - segment_start);
-    if (fragment_segment_uses_factory(segment, factory)) {
-      set_fragment_segment_property(&segment, property, value, replace_existing);
-      fragment.replace(segment_start, segment_end - segment_start, segment);
-      if (separator != std::string::npos) {
-        segment_start += segment.size() + 1U;
-        continue;
-      }
-      break;
-    }
-    if (separator == std::string::npos) {
-      break;
-    }
-    segment_start = separator + 1U;
+static std::vector<gst::launch::ByteSpan> fragment_segments(std::string_view fragment) {
+  const auto parsed = gst::launch::analyze(fragment);
+  if (!parsed.complete) {
+    throw std::invalid_argument("cannot configure an incomplete launch fragment");
   }
-  return fragment;
-}
-
-std::string session_build_select_terminal_objectdecode_cpu_visibility(std::string fragment) {
-  struct SegmentRange {
-    std::size_t begin;
-    std::size_t end;
-  };
-  std::vector<SegmentRange> segments;
-  bool single_quoted = false;
-  bool double_quoted = false;
-  bool escaped = false;
+  std::vector<gst::launch::ByteSpan> segments;
+  segments.reserve(parsed.links.size() + 1U);
   std::size_t begin = 0U;
-  for (std::size_t i = 0U; i < fragment.size(); ++i) {
-    const char c = fragment[i];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (c == '\\' && (single_quoted || double_quoted)) {
-      escaped = true;
-      continue;
-    }
-    if (c == '\'' && !double_quoted) {
-      single_quoted = !single_quoted;
-      continue;
-    }
-    if (c == '"' && !single_quoted) {
-      double_quoted = !double_quoted;
-      continue;
-    }
-    if (c == '!' && !single_quoted && !double_quoted) {
-      segments.push_back({begin, i});
-      begin = i + 1U;
-    }
+  for (const auto& link : parsed.links) {
+    segments.push_back({begin, link.begin});
+    begin = link.end;
   }
   segments.push_back({begin, fragment.size()});
+  return segments;
+}
 
-  std::vector<std::size_t> selected;
-  for (std::size_t i = 0U; i < segments.size(); ++i) {
-    const auto current =
-        std::string_view(fragment).substr(segments[i].begin, segments[i].end - segments[i].begin);
-    if (!fragment_segment_uses_factory(current, "neatprocessmla")) {
-      continue;
+static std::string set_property_for_factory_segments(std::string fragment, std::string_view factory,
+                                                     std::string_view property,
+                                                     std::string_view value) {
+  // Reverse edits preserve the shared lexer's byte spans. Caps, URLs and
+  // assignment values stay opaque. This is cold graph preparation only.
+  const auto segments = fragment_segments(fragment);
+  for (auto it = segments.rbegin(); it != segments.rend(); ++it) {
+    std::string segment = fragment.substr(it->begin, it->end - it->begin);
+    if (fragment_segment_uses_factory(segment, factory)) {
+      set_fragment_segment_property(&segment, property, value);
+      fragment.replace(it->begin, it->end - it->begin, segment);
     }
-    std::size_t next = i + 1U;
-    while (next < segments.size()) {
-      const auto between = std::string_view(fragment).substr(
-          segments[next].begin, segments[next].end - segments[next].begin);
-      if (!fragment_segment_uses_factory(between, "queue") &&
-          !fragment_segment_uses_factory(between, "queue2")) {
-        break;
-      }
-      ++next;
-    }
-    if (next >= segments.size()) {
-      continue;
-    }
-    const auto consumer = std::string_view(fragment).substr(
-        segments[next].begin, segments[next].end - segments[next].begin);
-    if (fragment_segment_uses_factory(consumer, "neatobjectdecode")) {
-      selected.push_back(i);
-    }
-  }
-
-  // Edit from right to left so stored source ranges remain valid. This is an
-  // exact graph-rendering decision; plugins never infer adjacency from names,
-  // factories, qdata, or runtime pad topology.
-  for (auto it = selected.rbegin(); it != selected.rend(); ++it) {
-    const SegmentRange range = segments[*it];
-    std::string segment = fragment.substr(range.begin, range.end - range.begin);
-    set_fragment_segment_property(&segment, "defer-output-invalidate", "false");
-    fragment.replace(range.begin, range.end - range.begin, segment);
   }
   return fragment;
 }
 
 std::string session_build_propagate_terminal_consumer_lane_window(std::string fragment) {
-  struct SegmentRange {
-    std::size_t begin;
-    std::size_t end;
-  };
-  std::vector<SegmentRange> segments;
-  bool single_quoted = false;
-  bool double_quoted = false;
-  bool escaped = false;
-  std::size_t begin = 0U;
-  for (std::size_t i = 0U; i < fragment.size(); ++i) {
-    const char c = fragment[i];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (c == '\\' && (single_quoted || double_quoted)) {
-      escaped = true;
-      continue;
-    }
-    if (c == '\'' && !double_quoted) {
-      single_quoted = !single_quoted;
-      continue;
-    }
-    if (c == '"' && !single_quoted) {
-      double_quoted = !double_quoted;
-      continue;
-    }
-    if (c == '!' && !single_quoted && !double_quoted) {
-      segments.push_back({begin, i});
-      begin = i + 1U;
-    }
+  // Lexical link spans do not prove adjacency across bins, separate chains or
+  // all-pad links. Only ordinary generated chains admit this lane projection.
+  const auto parsed = gst::launch::analyze(fragment);
+  if (!parsed.complete) {
+    throw std::invalid_argument("cannot inspect an incomplete launch fragment");
   }
-  segments.push_back({begin, fragment.size()});
+  if (parsed.has_nontrivial_topology_syntax) {
+    return fragment;
+  }
+  const auto segments = fragment_segments(fragment);
 
   auto property_value = [](std::string_view segment,
                            std::string_view property) -> std::optional<std::string> {
-    const std::string key = std::string(property) + "=";
-    std::size_t search = 0U;
-    while (search < segment.size()) {
-      const std::size_t pos = segment.find(key, search);
-      if (pos == std::string_view::npos) {
-        return std::nullopt;
+    const auto parsed = gst::launch::analyze(segment);
+    if (!parsed.complete) {
+      throw std::invalid_argument("cannot inspect an incomplete launch fragment");
+    }
+    for (const auto& assignment : parsed.assignments) {
+      if (assignment.key == property) {
+        return assignment.canonical_value;
       }
-      if (pos != 0U && std::isspace(static_cast<unsigned char>(segment[pos - 1U])) == 0) {
-        search = pos + key.size();
-        continue;
-      }
-      std::size_t value_begin = pos + key.size();
-      std::size_t value_end = value_begin;
-      while (value_end < segment.size() &&
-             std::isspace(static_cast<unsigned char>(segment[value_end])) == 0 &&
-             segment[value_end] != '!') {
-        ++value_end;
-      }
-      if (value_end == value_begin) {
-        return std::nullopt;
-      }
-      return std::string(segment.substr(value_begin, value_end - value_begin));
     }
     return std::nullopt;
   };
@@ -2052,9 +1957,9 @@ std::string session_build_propagate_terminal_consumer_lane_window(std::string fr
   for (std::size_t i = 0U; i < segments.size(); ++i) {
     const auto producer =
         std::string_view(fragment).substr(segments[i].begin, segments[i].end - segments[i].begin);
-    const auto cpu_visible = property_value(producer, "defer-output-invalidate");
     const auto producer_window = property_value(producer, "num-buffers");
-    if (!cpu_visible.has_value() || *cpu_visible != "false" || !producer_window.has_value()) {
+    if (!fragment_segment_uses_factory(producer, "neatprocessmla") ||
+        !producer_window.has_value()) {
       continue;
     }
     const bool positive_window =
@@ -2103,94 +2008,12 @@ std::string session_build_propagate_terminal_consumer_lane_window(std::string fr
   std::sort(selected.begin(), selected.end(),
             [](const auto& lhs, const auto& rhs) { return lhs.first > rhs.first; });
   for (const auto& [index, window] : selected) {
-    const SegmentRange range = segments[index];
+    const auto range = segments[index];
     std::string segment = fragment.substr(range.begin, range.end - range.begin);
     set_fragment_segment_property(&segment, "num-buffers", window);
     fragment.replace(range.begin, range.end - range.begin, segment);
   }
   return fragment;
-}
-
-static std::string read_gst_fragment_property(const std::string& fragment,
-                                              const std::string& property) {
-  const std::string key = property + "=";
-  const size_t pos = fragment.find(key);
-  if (pos == std::string::npos) {
-    return {};
-  }
-  size_t vstart = pos + key.size();
-  if (vstart >= fragment.size()) {
-    return {};
-  }
-  char quote = 0;
-  if (fragment[vstart] == '\'' || fragment[vstart] == '"') {
-    quote = fragment[vstart++];
-  }
-  size_t vend = vstart;
-  while (vend < fragment.size()) {
-    const char c = fragment[vend];
-    if (quote) {
-      if (c == quote)
-        break;
-    } else if (std::isspace(static_cast<unsigned char>(c)) || c == '!') {
-      break;
-    }
-    ++vend;
-  }
-  return fragment.substr(vstart, vend - vstart);
-}
-
-static bool fragment_is_graph223_dequant_processcvu(const std::string& fragment) {
-  const std::string lower = lower_copy(fragment);
-  if (lower.find("neatprocesscvu") == std::string::npos) {
-    return false;
-  }
-  return lower.find("dequant") != std::string::npos ||
-         lower.find("graph-id=223") != std::string::npos ||
-         lower.find("graph_id=223") != std::string::npos;
-}
-
-static std::string maybe_replace_post_dequant_with_prepared_runner(const std::string& fragment,
-                                                                   const GraphOptions* sess_opt) {
-  if (!sess_opt) {
-    return fragment;
-  }
-  const std::string mode = lower_copy(sess_opt->prepared_runner.mode);
-  if (!(mode == "dequant" || mode == "post" || mode == "dequant-only")) {
-    return fragment;
-  }
-  if (!fragment_is_graph223_dequant_processcvu(fragment)) {
-    return fragment;
-  }
-
-  const std::string name = read_gst_fragment_property(fragment, "name");
-  std::string stage_id = read_gst_fragment_property(fragment, "stage-id");
-  if (stage_id.empty()) {
-    stage_id = read_gst_fragment_property(fragment, "stage_id");
-  }
-  if (stage_id.empty()) {
-    stage_id = name;
-  }
-
-  std::ostringstream out;
-  out << "neatpreparedrunner";
-  if (!name.empty()) {
-    out << " name=" << name;
-  }
-  out << " mode=dequant";
-  if (!stage_id.empty()) {
-    out << " post-stage-id=" << stage_id;
-  }
-  if (sess_opt->prepared_runner.ring_depth > 0) {
-    out << " ring-depth=" << std::min(sess_opt->prepared_runner.ring_depth, 64);
-  }
-  if (sess_opt->prepared_runner.profile) {
-    out << " profile=true";
-  }
-  if (!sess_opt->prepared_runner.dequant_flags.empty()) {
-    out << " dequant-flags=" << sess_opt->prepared_runner.dequant_flags;
-  }
-  return out.str();
 }
 
 static bool env_explicit_false_session_build_local(const char* name) {
@@ -2203,13 +2026,22 @@ std::string session_build_apply_fast_path_options_to_fragment(std::string fragme
   if (!sess_opt) {
     return fragment;
   }
-  fragment = maybe_replace_post_dequant_with_prepared_runner(fragment, sess_opt);
+  const auto& retired = sess_opt->prepared_runner;
+  const std::string retired_mode = lower_copy(retired.mode);
+  if ((!retired_mode.empty() && retired_mode != "passthrough" && retired_mode != "off") ||
+      retired.ring_depth != 0 || retired.profile || !retired.dequant_flags.empty()) {
+    throw_session_error_simple(
+        error_codes::kPipelineShape,
+        "PreparedRunnerOptions is retired; leave its fields at defaults. Use "
+        "processcvu.async and GraphOptions::async_queue_depth for execution concurrency; legacy "
+        "dequant-flags and profiling have no equivalent option");
+  }
   const bool processcvu_async = sess_opt->processcvu.async &&
                                 !env_explicit_false_session_build_local("SIMA_PROCESSCVU_ASYNC");
   const bool processmla_async =
       sess_opt->processmla.async &&
       !env_explicit_false_session_build_local("SIMA_PROCESSMLA_SAFE_ASYNC");
-  fragment = set_property_for_factory_segments(std::move(fragment), "neatprocesscvu", "async",
+  fragment = set_property_for_factory_segments(std::move(fragment), "neatkernelrunner", "async",
                                                processcvu_async ? "true" : "false");
   fragment = set_property_for_factory_segments(std::move(fragment), "neatprocessmla", "async",
                                                processmla_async ? "true" : "false");
@@ -2218,26 +2050,14 @@ std::string session_build_apply_fast_path_options_to_fragment(std::string fragme
     fragment = set_property_for_factory_segments(std::move(fragment), "neatprocessmla",
                                                  "num-buffers", route_depth);
   }
-  fragment = set_property_for_factory_segments(
-      std::move(fragment), "neatprocessmla", "defer-output-invalidate",
-      sess_opt->processmla.defer_output_invalidate ? "true" : "false");
+  if (!sess_opt->processmla.defer_output_invalidate) {
+    throw std::invalid_argument("processmla.defer_output_invalidate=false is retired (including "
+                                "advanced_execution.defer_output_cache_sync=false). Leave it true "
+                                "and use Tensor/GstMemory mapping for CPU access");
+  }
   return fragment;
 }
 
-std::string session_build_apply_run_preset_to_pipeline(std::string pipeline,
-                                                       const RunOptions& opt) {
-  if (opt.preset != RunPreset::Realtime) {
-    return pipeline;
-  }
-  // A live source's latency (e.g. a 100 ms RTSP jitter buffer) otherwise sizes
-  // each ProcessCVU input queue, and every queued frame keeps its decoder
-  // buffer, so the decoder stalls before the KeepLatest queue can drop.
-  constexpr std::uint64_t kRealtimeMaxInputQueueTimeNs = 20'000'000;
-  return set_property_for_factory_segments(std::move(pipeline), "neatprocesscvu",
-                                           "max-input-queue-time",
-                                           std::to_string(kRealtimeMaxInputQueueTimeNs),
-                                           /*replace_existing=*/false);
-}
 static std::uint64_t checked_mul_u64(std::uint64_t a, std::uint64_t b);
 
 TensorCompatDims sample_shape_limits_dims(const SampleSpec& spec) {
@@ -2287,6 +2107,7 @@ SampleSpec infer_input_spec(const InputOptions& opt, const cv::Mat& input, const
     if (input.empty()) {
       throw std::invalid_argument(std::string(tag) + ": input frame is empty");
     }
+    validate_public_input(input, opt, InputStreamOptions{}, tag);
     cv::Mat contiguous = input;
     if (!contiguous.isContinuous()) {
       contiguous = input.clone();
@@ -2850,13 +2671,6 @@ static std::string clamp_sync_pipeline_impl(std::string pipeline, int num_buffer
       --end;
     s = s.substr(start, end - start);
   };
-  // The old code carried two duplicated value-token scanners here as lambdas
-  // (force_bool_prop / force_num_buffers); both replaced by gst_props::set_prop
-  // which uses one canonical value-token grammar. Bug #4 (force_bool_prop
-  // corrupting "key=1" into "key=false1") goes away by construction.
-  auto force_bool_prop = [&](std::string& seg, std::string_view key, bool value) {
-    gst_props::set_prop(seg, key, value ? "true" : "false");
-  };
   auto force_num_buffers = [&](std::string& seg) {
     gst_props::set_prop(seg, "num-buffers=", std::to_string(forced));
   };
@@ -2895,37 +2709,6 @@ static std::string clamp_sync_pipeline_impl(std::string pipeline, int num_buffer
     return seg.find("neatprocesscvu") != std::string::npos ||
            seg.find("neatprocessmla") != std::string::npos;
   });
-
-  if (forced <= 1) {
-    std::vector<std::string> parts;
-    size_t start = 0;
-    while (start < pipeline.size()) {
-      size_t bang = pipeline.find('!', start);
-      if (bang == std::string::npos) {
-        parts.push_back(pipeline.substr(start));
-        break;
-      }
-      parts.push_back(pipeline.substr(start, bang - start));
-      start = bang + 1;
-    }
-    for (auto& part : parts) {
-      std::string seg = part;
-      trim(seg);
-      if (seg.find("neatprocessmla") == std::string::npos)
-        continue;
-      force_bool_prop(seg, "multi-pipeline=", false);
-      part = " " + seg + " ";
-    }
-    std::ostringstream out;
-    for (size_t i = 0; i < parts.size(); ++i) {
-      if (i)
-        out << " ! ";
-      std::string seg = parts[i];
-      trim(seg);
-      out << seg;
-    }
-    pipeline = out.str();
-  }
 
   bool force_boxdecode = (num_buffers_override > 0);
   if (!force_boxdecode) {
@@ -3044,19 +2827,32 @@ std::string clamp_detess_num_buffers(std::string pipeline, int num_buffers_overr
   return clamp_detess_num_buffers_impl(std::move(pipeline), num_buffers_override, {});
 }
 
-std::string session_build_clamp_sync_build_result(const BuildResult& build,
-                                                  int num_buffers_override) {
+void session_build_clamp_sync_kernel_runner_capacity(BuildResult& build) {
+  build.kernel_runner_capacity = 1U;
+  build.kernel_runner_output_pool_capacity = build.kernel_runner_output_pool_minimum;
+  for (auto* manifest : {&build.rendered_manifest, &build.prepared_manifest}) {
+    if (!*manifest)
+      continue;
+    for (auto& stage : (*manifest)->stages) {
+      if (stage.native_execution_capacity) {
+        stage.native_execution_capacity = 1U;
+      }
+    }
+  }
+}
+
+std::string session_build_clamp_sync_build_result(BuildResult& build, int num_buffers_override) {
   namespace sima = pipeline_internal::sima;
-  using sima::FrameArenaRole;
-  using sima::static_contract::ArenaAllocationProvenance;
+  namespace client = ::simaai::scheduler::client;
+  // Clamp even when a non-native terminal takes the legacy retention path.
+  session_build_clamp_sync_kernel_runner_capacity(build);
   const auto legacy = [&] {
     return clamp_detess_num_buffers(
         clamp_sync_pipeline(build.pipeline_string, num_buffers_override), num_buffers_override);
   };
-  if (!build.rendered_manifest ||
-      std::none_of(
-          build.rendered_manifest->stages.begin(), build.rendered_manifest->stages.end(),
-          [](const auto& stage) { return stage.frame_arena_role != FrameArenaRole::None; })) {
+  if (!build.prepared_manifest ||
+      std::none_of(build.prepared_manifest->stages.begin(), build.prepared_manifest->stages.end(),
+                   [](const auto& stage) { return bool(stage.frame_layout); })) {
     return legacy();
   }
   const auto fail = [&](const std::string& detail) -> void {
@@ -3067,7 +2863,7 @@ std::string session_build_clamp_sync_build_result(const BuildResult& build,
         "pool capacity cannot be inferred from stage order or execution depth.",
         build.pipeline_string);
   };
-  const auto& manifest = *build.rendered_manifest;
+  const auto& manifest = *build.prepared_manifest;
   auto elements = sima::parse_pipeline_elements(build.pipeline_string);
   std::size_t sink = elements.size();
   std::size_t sink_count = 0U;
@@ -3091,7 +2887,8 @@ std::string session_build_clamp_sync_build_result(const BuildResult& build,
   while (terminal > 0U && transparent(elements[terminal])) {
     --terminal;
   }
-  if (elements[terminal].plugin != "neatprocesscvu" &&
+  if (elements[terminal].plugin != "neatkernelrunner" &&
+      elements[terminal].plugin != "neatprocesscvu" &&
       elements[terminal].plugin != "neatprocessmla") {
     return legacy(); // A real non-native materializer owns its own terminal pool.
   }
@@ -3100,11 +2897,11 @@ std::string session_build_clamp_sync_build_result(const BuildResult& build,
   std::unordered_set<std::string> native_names;
   for (std::size_t i = 0; i < manifest.stages.size(); ++i) {
     const auto& stage = manifest.stages[i];
-    const auto name = apply_name_transform(build.name_transform, stage.element_name);
+    const auto name = stage.element_name;
     if (!name.empty() && !stage_by_element.emplace(name, i).second) {
       fail("duplicate typed element name '" + name + "'");
     }
-    if (stage.frame_arena_role != FrameArenaRole::None) {
+    if (stage.frame_layout) {
       if (name.empty()) {
         fail("native stage has no exact rendered element identity");
       }
@@ -3115,7 +2912,7 @@ std::string session_build_clamp_sync_build_result(const BuildResult& build,
   if (endpoint == stage_by_element.end()) {
     fail("no typed contract for terminal element '" + elements[terminal].element_name + "'");
   }
-  if (manifest.stages[endpoint->second].frame_arena_role == FrameArenaRole::None) {
+  if (!manifest.stages[endpoint->second].frame_layout) {
     return legacy();
   }
   // Check topology only for the selected native endpoint. An unrelated native
@@ -3144,23 +2941,25 @@ std::string session_build_clamp_sync_build_result(const BuildResult& build,
     if (origins[index]) {
       return *origins[index];
     }
-    const auto rendered_name = apply_name_transform(build.name_transform, stage.element_name);
+    const auto rendered_name = stage.element_name;
     if (std::count_if(elements.begin(), elements.end(), [&](const auto& element) {
           return element.element_name == rendered_name;
         }) != 1) {
       fail("native carrier stage is not uniquely rendered: '" + rendered_name + "'");
     }
-    if (stage.frame_arena_size_bytes == 0U || stage.frame_arena_role == FrameArenaRole::None) {
-      fail("ReuseInput reaches a stage without a native arena: '" + stage.element_name + "'");
+    if (!stage.frame_layout || stage.frame_layout->allocations.empty()) {
+      fail("ReuseInput reaches a stage without a finalized FrameLayout: '" + stage.element_name +
+           "'");
     }
-    if (stage.frame_arena_role == FrameArenaRole::Allocate) {
-      if (stage.frame_arena_provenance != ArenaAllocationProvenance::CoreAllocated) {
-        fail("Allocate stage lacks CoreAllocated provenance: '" + stage.element_name + "'");
-      }
+    const auto& layout = *stage.frame_layout;
+    if (layout.ownership == client::FrameOwnership::Allocate) {
       origins[index] = index;
       return index;
     }
-    if (stage.frame_arena_provenance == ArenaAllocationProvenance::ExternalAdopted) {
+    if (std::all_of(layout.allocations.begin(), layout.allocations.end(),
+                    [](const auto& allocation) {
+                      return allocation.policy == client::AllocationPolicy::PreserveImported;
+                    })) {
       origins[index] = index; // No local pool may be invented for externally loaned storage.
       return index;
     }
@@ -3174,7 +2973,7 @@ std::string session_build_clamp_sync_build_result(const BuildResult& build,
     while (upstream != elements.begin() && transparent(*std::prev(upstream))) {
       --upstream;
     }
-    if (stage.frame_arena_role == FrameArenaRole::ReuseInput && upstream != elements.begin() &&
+    if (layout.ownership == client::FrameOwnership::ReuseInput && upstream != elements.begin() &&
         std::prev(upstream)->plugin == "appsrc") {
       origins[index] = index;
       return index;
@@ -3188,12 +2987,17 @@ std::string session_build_clamp_sync_build_result(const BuildResult& build,
     }
     std::optional<std::size_t> owner;
     for (const auto& edge : edges) {
+      if (!edge.binding || edge.binding->sink_pad_index < 0 ||
+          static_cast<std::size_t>(edge.binding->sink_pad_index) != layout.source_pad)
+        continue;
       const auto origin = resolve_owner(edge.producer_stage_index);
       if (owner && *owner != origin) {
         fail("ReuseInput bindings have different carrier origins at '" + stage.element_name + "'");
       }
       owner = origin; // Multiple logical heads retain one carrier, not one pool slot per head.
     }
+    if (!owner)
+      fail("ReuseInput has no exact producer for its source pad at '" + stage.element_name + "'");
     visiting[index] = false;
     origins[index] = owner;
     return *owner;
@@ -3202,22 +3006,28 @@ std::string session_build_clamp_sync_build_result(const BuildResult& build,
   auto pipeline = clamp_detess_num_buffers_impl(
       clamp_sync_pipeline_impl(build.pipeline_string, num_buffers_override, false),
       num_buffers_override, native_names);
-  if (manifest.stages[owner].frame_arena_role != FrameArenaRole::Allocate ||
+  if (manifest.stages[owner].frame_layout->ownership != client::FrameOwnership::Allocate ||
       num_buffers_override > 1) {
     return pipeline;
   }
-  const auto owner_name =
-      apply_name_transform(build.name_transform, manifest.stages[owner].element_name);
+  const auto owner_name = manifest.stages[owner].element_name;
   elements = sima::parse_pipeline_elements(pipeline);
   std::size_t owner_matches = 0U;
   for (auto& element : elements) {
     if (element.element_name != owner_name) {
       continue;
     }
+    ++owner_matches;
+    if (element.plugin == "neatkernelrunner") {
+      // Carrier retention belongs to Runtime's prepared pool, not to a plugin
+      // property. Execution remains one submitted job followed by its wait.
+      build.kernel_runner_output_pool_capacity =
+          std::max<std::size_t>(2, build.kernel_runner_output_pool_capacity);
+      continue;
+    }
     if (element.plugin != "neatprocesscvu" && element.plugin != "neatprocessmla") {
       fail("native Allocate owner has no supported pool property: '" + owner_name + "'");
     }
-    ++owner_matches;
     // Exactly one active serial frame plus appsink's previous cached frame.
     // This is not an async lane/window override or a general fanout budget.
     const auto existing = gst_props::get_int(element.fragment, "output-pool-min-buffers=");
@@ -3235,6 +3045,35 @@ std::string session_build_clamp_sync_build_result(const BuildResult& build,
     out += element.fragment;
   }
   return out;
+}
+
+std::size_t session_build_kernel_runner_capacity(int requested_depth) {
+  return static_cast<std::size_t>(std::clamp(requested_depth == 0 ? 4 : requested_depth, 1, 64));
+}
+
+void session_build_initialize_kernel_runner_budget(BuildResult* build,
+                                                   const GraphOptions* options) {
+  if (!build) {
+    return;
+  }
+  const int workers = options ? options->kernel_runner_a65_workers : 2;
+  if (workers < 1 || workers > 64) {
+    throw_session_error_simple(error_codes::kPipelineShape,
+                               "kernel_runner_a65_workers must be between 1 and 64");
+  }
+  build->kernel_runner_a65_workers = static_cast<std::size_t>(workers);
+  build->kernel_runner_capacity =
+      session_build_kernel_runner_capacity(options ? options->async_queue_depth : 0);
+  build->kernel_runner_output_pool_minimum = 2U;
+  if (options && options->processmla.output_pool_buffers > 0 &&
+      build->pipeline_string.find("neatprocessmla") != std::string::npos) {
+    // A reused arena must cover the explicitly requested downstream MLA window,
+    // plus a published carrier. Do not multiply queues by logical tensor heads.
+    build->kernel_runner_output_pool_minimum =
+        static_cast<std::size_t>(options->processmla.output_pool_buffers) + 1U;
+  }
+  build->kernel_runner_output_pool_capacity =
+      std::max(build->kernel_runner_capacity + 1U, build->kernel_runner_output_pool_minimum);
 }
 
 BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,
@@ -3298,7 +3137,7 @@ BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,
     nr.index = (int)i;
     nr.kind = nodes[i]->kind();
     nr.user_label = nodes[i]->user_label();
-    NodeFragment frag = make_node_fragment(nodes[i], (int)i, name_transform);
+    NodeFragment frag = make_node_fragment(nodes[i], static_cast<int>(i), name_transform);
     nr.backend_fragment =
         session_build_apply_fast_path_options_to_fragment(frag.fragment, sess_opt);
     nr.elements = frag.element_names;
@@ -3320,9 +3159,9 @@ BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,
     }
   }
 
-  br.diag->pipeline_string = session_build_propagate_terminal_consumer_lane_window(
-      session_build_select_terminal_objectdecode_cpu_visibility(ss.str()));
+  br.diag->pipeline_string = session_build_propagate_terminal_consumer_lane_window(ss.str());
   br.pipeline_string = br.diag->pipeline_string;
+  session_build_initialize_kernel_runner_budget(&br, sess_opt);
   return br;
 }
 
@@ -3461,7 +3300,9 @@ void session_build_compile_contracts(BuildResult* build_result,
   const auto compile_us = pipeline_internal::build_timing_us(compile_start);
 
   std::int64_t apply_us = 0;
-  if (apply_nodes) {
+  // Never apply a partial/failed admission: an apply error can otherwise hide
+  // the provider diagnostic and mutate nodes that were not admitted.
+  if (apply_nodes && diagnostics.errors.empty()) {
     const auto apply_start = pipeline_internal::build_timing_now();
     std::string apply_error;
     apply_compiled_contracts(apply_nodes, *compiled, &apply_error);
@@ -3474,7 +3315,9 @@ void session_build_compile_contracts(BuildResult* build_result,
   build_result->compiled_contracts = compiled;
   const auto render_start = pipeline_internal::build_timing_now();
   build_result->rendered_manifest =
-      render_manifest_from_compiled_contracts(*compiled, compile_input, &diagnostics);
+      diagnostics.errors.empty()
+          ? render_manifest_from_compiled_contracts(*compiled, compile_input, &diagnostics)
+          : std::nullopt;
   const auto render_us = pipeline_internal::build_timing_us(render_start);
   // Carry forward compile + render diagnostics so the wrapper throws in
   // parse_pipeline_or_throw can surface the actual stage-level failure
@@ -4001,7 +3844,8 @@ void enforce_names_contract(GstElement* pipeline, const BuildResult& br) {
                          "' is not owned by any node.\n"
                          "Fix: ensure every fragment uses deterministic names and "
                          "element_names() matches.\n";
-        throw NeatError(decorate_with_error_code(rep.error_code, rep.repro_note), std::move(rep));
+        const std::string diagnostic = decorate_with_error_code(rep.error_code, rep.repro_note);
+        throw NeatError(diagnostic, std::move(rep));
       }
     }
   }

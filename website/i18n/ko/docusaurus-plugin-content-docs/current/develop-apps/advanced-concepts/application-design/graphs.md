@@ -676,14 +676,7 @@ run.save_json("/tmp/final.graph_run.json", export_opt)
 
 내보내기 기능은 현재 실행 중인 작업의 스냅샷을 생성합니다. 이 기능은 작업을 중지하지 않습니다. 유한한 작업량에 대한 최종 결과를 얻으려면 저장하기 전에 `run.close_input()`를 호출하여 출력을 정리하거나 `run.stop()`를 호출하십시오.
 
-보드 전력 텔레메트리 데이터를 포함하려면:
-
-```cpp
-neat::RunOptions opt;
-opt.enable_board_power();
-
-neat::Run run = app.build(opt);
-```
+더 이상 사용되지 않는 `RunOptions::enable_board_power()`는 내보내기에 보드 전력을 추가합니다. 새 코드에서는 [`TelemetryMonitor`](/develop-apps/development-workflow/model#record-board-telemetry)로 보드 전력, 온도, CPU 사용률, 메모리를 기록하고, 그 `Telemetry`를 내보내기 결과 옆에 저장하십시오.
 
 JSON 스키마는 `sima.neat.graph_run` 버전 `1`입니다. 스키마는 `schemas/graph_run_v1.schema.json`에 위치하며, CI 검증기는 `tests/perf/tools/graph_run_schema.py`에 위치합니다.
 

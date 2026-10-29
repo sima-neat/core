@@ -61,6 +61,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <cstddef>
 #include <cstdint>
 #include <cctype>
@@ -106,8 +107,9 @@ namespace {
   }
 
   GraphReport rep = pipeline_internal::error_util::make_report(code, oss.str());
-  throw NeatError(pipeline_internal::error_util::decorate_error(rep.error_code, rep.repro_note),
-                  std::move(rep));
+  const std::string message =
+      pipeline_internal::error_util::decorate_error(rep.error_code, rep.repro_note);
+  throw NeatError(message, std::move(rep));
 }
 
 struct JsonValue {
@@ -1125,17 +1127,22 @@ Model::Options parse_model_options_json(const JsonValue::JsonObject& obj) {
         int_field(*v->obj, "output_format", enum_int(opt.superpoint.output_format)));
   }
   const JsonValue* pose_classes = object_field(obj, "pose_classes");
-  if (const JsonValue* nested = object_field(obj, "yolox_seg_pose");
-      nested && nested->type == JsonValue::Type::Object && nested->obj) {
+  if (const JsonValue* nested = object_field(obj, "yolox_seg_pose")) {
+    if (nested->type != JsonValue::Type::Object || !nested->obj)
+      throw std::invalid_argument("model_options.yolox_seg_pose must be an object");
     pose_classes = object_field(*nested->obj, "pose_classes");
   }
-  if (const JsonValue* v = pose_classes; v && v->type == JsonValue::Type::Array && v->arr) {
-    opt.yolox_seg_pose.pose_classes.clear();
+  if (const JsonValue* v = pose_classes) {
+    if (v->type != JsonValue::Type::Array || !v->arr)
+      throw std::invalid_argument("model_options.yolox_seg_pose.pose_classes must be an array");
     opt.yolox_seg_pose.pose_classes.reserve(v->arr->size());
     for (const JsonValue& entry : *v->arr) {
-      if (entry.type == JsonValue::Type::Number) {
-        opt.yolox_seg_pose.pose_classes.push_back(static_cast<int>(entry.num));
-      }
+      if (entry.type != JsonValue::Type::Number || !std::isfinite(entry.num) ||
+          entry.num != std::trunc(entry.num) || entry.num < 0 ||
+          entry.num > std::numeric_limits<int>::max())
+        throw std::invalid_argument("model_options.yolox_seg_pose.pose_classes requires "
+                                    "non-negative integer class IDs");
+      opt.yolox_seg_pose.pose_classes.push_back(static_cast<int>(entry.num));
     }
   }
   opt.boxdecode_original_width =

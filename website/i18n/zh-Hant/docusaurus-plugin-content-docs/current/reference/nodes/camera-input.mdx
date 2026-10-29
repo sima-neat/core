@@ -114,7 +114,7 @@ node = pyneat.nodes.camera_input(opt, capture_buffer_count=32)
 | `insert_queue` | `true` | 在設定器協商和零拷貝驗證之後，插入一個小型即時來源佇列。|
 | `leaky_queue` | `true` | 讓佇列在下游處具有「漏水」特性，這樣即時圖就會優先選擇較新的影格，而不是過時的後備資料。|
 | `queue_depth` | `2` | 當 `insert_queue` 為 true 時，佇列中最多可容納的緩衝區數量。|
-| `allow_cpu_fallback` | `false` | 如果設定為 `false`，則需要相機/裝置支援零拷貝功能。 僅將其設定為 `true`，才能選擇使用 Neat 的私有自適應橋接，連接到 SiMaAI 記憶體。|
+| `allow_cpu_fallback` | `false` | 如果設定為 `false`，則轉送相機的 DMA-BUF，並在任何需要複製的幀上失敗。 僅在要讓 Neat 的私有橋接將此類幀複製到 CMA DMA-BUF 時，才將其設定為 `true`。|
 
 `capture_buffer_count` 是 `CameraInputWithCaptureBuffers` 的一個參數，而不是
 `CameraInputOptions` 欄位。其預設值為 `0`，這可保留相機
@@ -128,18 +128,20 @@ node = pyneat.nodes.camera_input(opt, capture_buffer_count=32)
 | 輸入角色 | 來源節點。圖形會從相機中提取畫面；應用程式不會將樣本推送至此節點。|
 | 輸出媒體類型為 | `video/x-raw`。|
 | 輸出格式 | 要求的 `format`，通常為 `NV12`。|
-| 記憶體合約 | 偏好使用裝置/SiMaAI 的零拷貝方式。啟用備援機制後，作業系統/libcamera 緩衝區會被轉換為 SiMaAI 記憶體，以便後續的 CVU/MLA 階段使用。|
+| 記憶體合約 | 相機自身的 DMA-BUF 會在不複製的情況下轉送至下游。啟用備援機制後，非單一 DMA-BUF 的幀會被複製到 CMA DMA-BUF 中，以便後續的 CVU/MLA 階段使用。|
 | 限制最大支援能力 | 根據使用者要求的選項，提供靜態提示。在執行階段進行的最大支援能力協商，仍然取決於相機堆疊。|
 
 ## 零複製與備援機制
 
-`allow_cpu_fallback = false` 是預設值，它要求嚴格的相機/設備零拷貝。除非已安裝的 `libcamerasrc` 公開通用的 `external-buffer-mode` 屬性，並且記憶體庫可以將相機分配匯出為 DMA-BUF，否則建置將會失敗，並顯示可操作的錯誤。
+`allow_cpu_fallback = false` 是預設值，它要求嚴格的零拷貝：相機會將每個幀寫入其自身的 DMA-BUF，而每個下游階段都會讀取同一塊記憶體。Neat 從不擁有相機的記憶體，因此不需要任何 `libcamerasrc` 屬性。任何實體連續的 DMA-BUF 都是有效的 EV74 輸入；當其來自 CMA 堆積或相機的連續擷取分配器（`videobuf2_dma_contig`）時，Neat 的 EV74 准入檢查會予以接受。
 
-Neat 始終將其私有相機橋接直接放置在 capsfilter 之後，並在即時佇列之前。該橋接通過 GStreamer 的下游 `GST_QUERY_ALLOCATION` 提出一個標準池。該池從已驗證的 caps 中獲取平面大小和步長，從一個打包的 SiMaAI 分配中分配它們，並為每個平面匯出一個 DMA-BUF。`libcamerasrc` 將這些 DMA-BUF 導入到 ISP 捕獲佇列中。該橋接驗證結果，並在嚴格模式下解包相同的打包分配，而無需進行拷貝。
+Neat 始終將其私有相機橋接直接放置在 capsfilter 之後，並在即時佇列之前。該橋接透過 `GST_QUERY_ALLOCATION` 要求來源附加 `GstVideoMeta`，然後將各平面在單一 DMA-BUF 中緊密相連的每個幀作為單一記憶體轉送，並保留相機的緩衝區，直到每個消費端都已釋放它。在嚴格模式下，無法以此方式轉送的幀會使管線失敗；啟用備援機制時，則會改為將其複製到 CMA DMA-BUF 中。
 
-根據下游所有者，將 `capture_buffer_count` 傳遞給相機工廠。一個時間編碼器或深度非同步 ML 圖可能需要 32 個緩衝區；一個低延遲的 CV 圖可能使用更少的緩衝區並丟棄過時的幀。此設定僅控制 ISP 輸出/應用程式週期。它不會擴大內核的私有 CSI 到 ISP RAW 傳輸環，並且與 GStreamer 的 `queue_depth` 丟棄策略無關。
+根據下游所有者，將 `capture_buffer_count` 傳遞給相機工廠。一個時間編碼器或深度非同步 ML 圖可能需要 32 個緩衝區；一個低延遲的 CV 圖可能使用更少的緩衝區並丟棄過時的幀。此設定僅控制 ISP 輸出/應用程式週期。它不會擴大內核的私有 CSI 到 ISP RAW 傳輸環，並且與 GStreamer 的 `queue_depth` 丟棄策略無關。在 Platform 3.0 上，`libcamerasrc` 沒有 `buffer-count` 屬性，因此請在該平台上將 `capture_buffer_count` 保持為 `0`。
 
-明確設定 `allow_cpu_fallback = true`，以允許已存在的橋接在相機堆疊無法滿足提出的分配器要求時進行拷貝。如果上游提供 SiMaAI/EV74 緩衝區，則橋接會直接傳遞這些緩衝區。否則，它會將相機幀複製到一個池化的 SiMaAI 緩衝區中，並附加下游階段所期望的元資料。該私有拷貝池會按需增長，而不是受到 `queue_depth` 的限制，這允許下游的「漏」佇列丟棄過時的幀，而無需橋接首先停止。
+由於橋接會轉送相機自身的緩衝區，下游階段仍持有的每個幀都會佔用 libcamera 擷取環中的一個緩衝區（在 Platform 3.0 上使用 IMX477 擷取 1080p NV12 時為 8 個緩衝區）。持有這麼多幀的圖會使擷取停滯，而不是丟棄幀，因此請及時釋放已拉取的幀。
+
+明確設定 `allow_cpu_fallback = true`，以允許已存在的橋接在幀並非各平面緊密相連的單一 DMA-BUF 時進行拷貝。對於屬於此類 DMA-BUF 的幀，橋接仍會直接轉送。否則，它會將相機幀複製到私有池中的 CMA DMA-BUF，並附加下游階段所期望的元資料。該池會按需增長至最多 128 個緩衝區，而不是受到 `queue_depth` 的限制，這允許下游的「漏」佇列丟棄過時的幀，而無需橋接首先停止。
 
 回退名稱表示橋接可以接受作業系統/libcamera 緩衝區。這並不意味著您應該將調整大小、色彩轉換或正規化移動到 CPU。只要路徑支援，請將這些操作保留在模型管理的 CVU 預處理中。
 
@@ -168,6 +170,6 @@ CameraInput -> model.graph({include_input=false, include_output=true})
 | `build.plugin_missing` |，`libcamerasrc` 或 `neatcamerabridge` 缺少於執行階段的外掛程式集中。|
 | `misconfig.media_caps` / `not-negotiated` | 攝影機不支援您所要求的格式、解析度或幀率。|
 | `misconfig.media_caps` / `gstreamer.camera_configuration_unsupported` | 攝影機未提供所要求的解析度或像素格式，因此 `libcamerasrc` 協商失敗。請以支援的尺寸擷取；模型圖形應由模型前處理調整尺寸，其他圖形則使用 `VideoScale`，後接 `CapsRaw`。|
-| 嚴格的零拷貝錯誤 |，`allow_cpu_fallback` 為「否」，且相機來源未公開 SiMaAI 零拷貝屬性。|
+| 嚴格的零拷貝錯誤 |，`allow_cpu_fallback` 為「否」，且相機傳遞的幀並非各平面緊密相連的單一 DMA-BUF。|
 | 讀取逾時 | 攝影機未傳輸畫面，圖的後壓過大，或攝影機堆疊已停止串流。|
 | 綠色、紫色或顏色過於鮮豔的相框。| 相框格式或模型的預處理色彩轉換可能出錯，或者相框的顏色已經存在於相機的 ISP/libcamera 輸出中。首先驗證一個 `NV12` 格式的圖像，看看是否在 Neat 之外也有同樣的問題。|

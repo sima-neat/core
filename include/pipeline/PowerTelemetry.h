@@ -3,6 +3,9 @@
  * @ingroup diagnostics
  * @brief Board power telemetry read from Sentinel.
  *
+ * @deprecated Use `TelemetryMonitor` (`pipeline/TelemetryMonitor.h`), which records power,
+ * temperatures, CPU usage, and memory. This API keeps working unchanged.
+ *
  * Power readings come from Sentinel, the board telemetry daemon, which samples the
  * PMBus rails every 2 s. Core does not access I2C. The rail tables, profiles, and
  * I2C fields below are deprecated and ignored.
@@ -87,6 +90,7 @@ struct PowerSnapshot {
 
 /**
  * @brief Options for a `PowerMonitor`.
+ * @deprecated Use `TelemetryMonitor`.
  * @ingroup diagnostics
  */
 struct PowerMonitorOptions {
@@ -122,6 +126,7 @@ struct PowerRailSummary {
 
 /**
  * @brief Aggregated power monitor result.
+ * @deprecated Use `TelemetryMonitor`, which returns `Telemetry`.
  * @ingroup diagnostics
  */
 struct PowerSummary {
@@ -174,6 +179,7 @@ std::vector<PowerRailConfig> power_rails_for_profile(PowerMonitorProfile profile
  * @brief Options that enable board power monitoring.
  *
  * Both arguments are deprecated and ignored.
+ * @deprecated Use `TelemetryMonitor`.
  * @ingroup diagnostics
  */
 PowerMonitorOptions
@@ -198,8 +204,10 @@ PowerMonitorOptions modalix_dvt_power_monitor_options(int sample_interval_ms = 1
  * @brief Read Sentinel's latest power sample.
  *
  * `options` is ignored. Throws `std::runtime_error` when Sentinel cannot be read.
+ * @deprecated Use `TelemetryMonitor`.
  * @ingroup diagnostics
  */
+[[deprecated("Use TelemetryMonitor")]]
 PowerSnapshot read_power_snapshot(const PowerMonitorOptions& options);
 
 /**
@@ -221,9 +229,10 @@ std::string power_summary_to_json(const PowerSummary& summary, int indent = 2);
  * samples Sentinel takes in between are kept, so an interval shorter than about 2 s
  * may have none. Never throws: when Sentinel cannot be read, the monitor warns once
  * on stderr and collects no samples.
+ * @deprecated Use `TelemetryMonitor`, which also records temperatures, CPU usage, and memory.
  * @ingroup diagnostics
  */
-class PowerMonitor {
+class [[deprecated("Use TelemetryMonitor")]] PowerMonitor {
 public:
   explicit PowerMonitor(PowerMonitorOptions options = {});
   ~PowerMonitor();

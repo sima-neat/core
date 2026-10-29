@@ -7,18 +7,22 @@ sidebar_position: 3
 
 SiMa.ai Neat Library 的版本資訊。
 
-## 尚未發布
+## 0.6.0
 
 ### 破壞性變更
 
 - 模型輸出現在呈現 MPK 中定義的最終邏輯形狀與佈局，而非中間裝置形狀。例如，ResNet-50 的批次展平輸出形狀為 `[1, 1000]`，邏輯佈局未知，而不是四維 HWC 形狀。其 Float32 張量格式可能是 `EVXX_FLOAT32` 而非 `FP32`。請依張量的 dtype 與形狀解讀數值，不要從後端格式標籤推斷邏輯軸。
-- Neat Library 的 C++ ABI 現在為 6，共用函式庫 SONAME 為 `libsima_neat.so.6`。張量現在攜帶特徵擷取器語意中繼資料，公開的 GenAI 請求／結果型別攜帶 ASR 任務、語言與探測中繼資料，`GraphLinkOptions` 包含即時接納限制，而 `BenchmarkOptions` 與 `BenchmarkReport` 新增了欄位。請重新建置 C++ 應用程式與外掛程式，並安裝相符的 Core 執行階段與開發套件。
+- Neat Library 的 C++ ABI 現在為 6，共用函式庫 SONAME 為 `libsima_neat.so.6`。張量現在攜帶特徵擷取器語意中繼資料，公開的 GenAI 請求／結果型別攜帶 ASR 任務、語言與探測中繼資料，`GraphLinkOptions` 包含即時接納限制，而 `BenchmarkOptions` 與 `BenchmarkReport` 新增了欄位。請重新建置 C++ 應用程式與外掛程式，並安裝相符的 Core 執行階段與開發套件。 `SimaArgMaxOptions` 新增了 `axis` 與 `keepdims`，`SimaArgMax` 的類別佈局也已變更。
 - 即時圖組合現在使用 `GraphLinkOptions`、`Graph::connect()` 和 `Graph::build()`。預覽版 API `RealtimeGraphLinkOptions`、`connect_realtime()`、`build_fused_realtime_sources()` / `build_fused_realtime_source()` 和 `RealtimeEveryFrameByStream` 已移除。包含 `realtime_every_frame_by_stream` 的已儲存圖必須使用受支援的原則重新建立；請參閱[連接即時片段](/develop-apps/development-workflow/graph/#connect-live-fragments)。
+
+- 套件版本為 **0.6.0**。`Model::Options` 與 `BoxDecodeOptions` 現在包含 `yolox_seg_pose.pose_classes`；這些公開佈局新增欄位需要 ABI 6 使用元件。不要使用 ABI 相容性符號連結。`GraphOptions` 現在包含 `kernel_runner_a65_workers`。更新至 0.6.0 時，請使用相符的執行階段與開發套件重新建置應用程式、外掛程式及 Python 擴充模組。不要僅因兩者都使用 ABI 6，就混用預覽版二進位檔與正式版本套件。
 
 ### 執行階段變更
 
-- `Model::benchmark()` 會從 [Sentinel](/tools/sentinel/) 讀取板子遙測資料，而不再自行取樣電源軌功耗。延遲階段與吞吐量階段現在都會持續執行，直到各自測量了 `num_samples` 個輸入且至少已經過 `BenchmarkOptions::min_duration_ms`（預設為 10 秒），讓功耗與溫度讀數涵蓋多個 Sentinel 樣本。若要使用先前以輸入數量為準的計時方式，請將 `min_duration_ms` 設為 0。`BenchmarkReport` 新增 `latency_p50_ms`、`latency_p95_ms`、`latency_p99_ms`、`peak_power_watts`、`throughput_samples`、`throughput_duration_ms`，以及包含電源軌功耗、晶粒與板子溫度、整體與各核心的 CPU 使用率，以及 MLA、CMA 與 Linux 記憶體的 `telemetry`。`avg_power_watts` 與 `energy_joules` 的意義不變；`energy_joules` 為 `num_samples` 個輸入的能耗。Sentinel 無法使用時，仍會回報延遲與 FPS，並由 `telemetry.status` 說明原因。DevKit 安裝程式會透過 `sima-cli neat install sentinel` 安裝 Sentinel；若執行中的版本不是最新的正式版建置，則會將其升級。請參閱[測量模型執行效能](/develop-apps/development-workflow/model#power-and-board-telemetry)。
+- `Model::benchmark()` 會從 [Sentinel](/tools/sentinel/) 讀取板子遙測資料，而不再自行取樣電源軌功耗。延遲階段與吞吐量階段現在都會持續執行，直到各自測量了 `num_samples` 個輸入且至少已經過 `BenchmarkOptions::min_duration_ms`（預設為 10 秒），讓功耗與溫度讀數涵蓋多個 Sentinel 樣本。若要使用先前以輸入數量為準的計時方式，請將 `min_duration_ms` 設為 0。`BenchmarkReport` 新增 `latency_p50_ms`、`latency_p95_ms`、`latency_p99_ms`、`peak_power_watts`、`throughput_samples`、`throughput_duration_ms`，以及包含電源軌功耗、晶粒與板子溫度、整體與各核心的 CPU 使用率，以及 MLA、EV74 記憶體與整塊板子的 Linux 記憶體的 `telemetry`。`avg_power_watts` 與 `energy_joules` 的意義不變；`energy_joules` 為 `num_samples` 個輸入的能耗。Sentinel 無法使用時，仍會回報延遲與 FPS，並由 `telemetry.status` 說明原因。DevKit 安裝程式會透過 `sima-cli neat install sentinel` 安裝 Sentinel；若執行中的版本不是最新的正式版建置，則會將其升級。請參閱[測量模型執行效能](/develop-apps/development-workflow/model#power-and-board-telemetry)。
 - 以 `enable_board_power()` 啟用的 Run 電力遙測也改從 Sentinel 讀取。Core 不再開啟 I2C 電源監測器，因此其讀取不再干擾 Sentinel 對相同電源軌的讀取，安裝程式也不再將 `sima` 加入 `i2c` 群組。Sentinel 每 2 秒取樣一次，因此短於約 2 秒的測量視窗可能沒有電力樣本。電源軌以 Sentinel 的指標命名，例如 `mla`，且只回報功耗。`sample_interval_ms`、`PowerMonitorProfile`、內建電源軌表、`PowerRailConfig` 的 I2C 欄位、`enable_modalix_som_power()`、`enable_modalix_dvt_power()`，以及 `modalix_som_power_monitor_options()` / `modalix_dvt_power_monitor_options()` 均已棄用並會被忽略。
+- `TelemetryMonitor` 會在 `start()` 與 `stop()` 之間從 Sentinel 記錄板子功耗、溫度、CPU 使用率與記憶體，C++ 與 Python 皆可使用。`read()` 會傳回目前為止的摘要，而 `Telemetry` 會以 YAML 格式列印，並可儲存為 YAML 或 JSON。`Model::benchmark()` 使用它產生 `BenchmarkReport::telemetry`。`PowerMonitor`、`read_power_snapshot()`、`RunOptions::enable_board_power()`、`RunOptions::power_monitor` 與 `MeasureOptions::include_power` 已棄用，請改用 `TelemetryMonitor`；這些 API 仍可繼續運作。請參閱[記錄板子遙測](/develop-apps/development-workflow/model#record-board-telemetry)。
+- `BenchmarkOptions::inputs` 可讓 `Model::benchmark()` 改用您自己的張量而非合成輸入執行，`BenchmarkReport::input` 會記錄使用了哪一種。請參閱[使用自己的輸入進行測量](/develop-apps/development-workflow/model#measure-with-your-own-inputs)。
 - 外掛程式延遲已棄用，並將被移除。涵蓋 `MeasureOptions::include_plugin_latency` 與 `plugin_latency_source`、`BenchmarkOptions::include_plugin_latency`、`start_measurement(bool)`，以及 `Model::benchmark(int, bool)` / `Model::benchmark(bool)`。請改用 `start_measurement()` 與 `benchmark(num_samples)`。
 - 硬體解碼使用直接編解碼器工作階段與 DMA-BUF 輸出。Core 不再使用解碼器常駐程式接納租約或 `SIMA_DECODER_ADMISSION_REQUIRE`。解碼器集區與調校選項仍可使用。
 - C++ 和 Python 可透過 `SimaDecode` 與 `RtspDecodedInput` 使用原生 H.265/HEVC 解碼。`RtspEncodedInput` 無需解碼即可提供已剖析的 H.265 存取單元。H.265 輸入必須使用 HEVC Main 設定檔、8 位元、4:2:0。編解碼器選擇器接受 `H265` 和 `HEVC`；H.264 選擇器也接受 `AVC`。`FormatTag` / `pyneat.Format` 在編碼資料的圖邊界接受相同別名，並仍序列化為 `H264` 和 `H265`。
@@ -40,6 +44,8 @@ SiMa.ai Neat Library 的版本資訊。
 
 | 版本 | 相容的 Neat SDK | 備註 |
 |---|---|---|
+| 0.6.0 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
+| 0.5.0 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |
 | 0.4.0 | 2.1.3.0 | [Neat Library 0.4.0](https://github.com/sima-neat/core/releases/tag/v0.4.0) |
 | 0.3.0 | 2.1.2.3 | [Neat Library 0.3.0](https://github.com/sima-neat/core/releases/tag/v0.3.0) |
 | 0.2.2 | 2.1.2.2 | [Neat Library 0.2.2](https://github.com/sima-neat/core/releases/tag/v0.2.2) |

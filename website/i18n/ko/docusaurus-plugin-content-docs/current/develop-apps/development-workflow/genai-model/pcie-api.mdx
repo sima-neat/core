@@ -70,6 +70,13 @@ with genai.GenAIModel("./models/Qwen3-0.6B-Autoround-a16w4", connection) as mode
 
 추측 디코딩을 사용하려면 준비된 타깃/드래프트 쌍의 상위 디렉터리를 전달하세요. 예를 들어 `target/`과 `draft/`를 포함하는 `./models/speculative-pair`입니다. 컴파일된 설정이 타깃과 드래프트 역할을 식별합니다. 두 모델은 같은 카드 세션에서 로드되며 추가 요청 옵션은 필요하지 않습니다. 두 모델을 위한 카드 메모리를 확보하세요.
 
+텍스트 생성에서는 `request.reasoning_effort`를 `"low"`(기본값),
+`"medium"` 또는 `"high"`로 설정하세요. 이는 추론 내용의 반환 여부를
+제어하는 `request.enable_thinking`과 별개입니다. 호스트와 카드에 일치하는
+패키지를 사용하세요. GenAI 프로토콜 리비전 3은 요청한 추론 수준을 조용히
+무시하는 대신 이전 버전의 피어를 거부합니다. 패키지를 업데이트한 후에는
+C++ 호스트 애플리케이션을 다시 빌드하세요.
+
 ## 스트리밍, 미디어 및 여러 모델
 
 - `model.stream(request)`를 사용하고 `TokenSample` 값을 순회하여 출력을 스트리밍하세요. 모델을 재사용하기 전에 `cancel()`을 호출하고 종료 샘플을 소비하세요. 모델당 활성 요청은 하나만 허용됩니다.

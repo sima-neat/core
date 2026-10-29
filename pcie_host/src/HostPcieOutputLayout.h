@@ -6,14 +6,21 @@
 
 namespace simaai::neat::pcie::internal {
 
+inline bool is_bbox_output_caps(const GstCaps* caps) {
+  const auto* structure =
+      caps && gst_caps_get_size(caps) ? gst_caps_get_structure(caps, 0) : nullptr;
+  return structure && gst_structure_has_name(structure, "application/vnd.simaai.tensor") &&
+         g_strcmp0(gst_structure_get_string(structure, "format"), "BBOX") == 0;
+}
+
 struct HostPcieOutputLayout {
   PcieModelFacts facts;
-  // Zero for legacy packed CAPS; otherwise the exact raw received extent.
+  // Zero for a variable byte stream; otherwise the exact raw received extent.
   std::size_t raw_bytes = 0;
 };
 
-// Translate MPK packed offsets into runtime arena offsets once per session.
-// The CAPS describe physical carriers in MPK order, not logical tensor order.
+// Bind MPK logical tensors to negotiated regions once per session. Reserved
+// allocation capacity is independent of each tensor's accessed stride footprint.
 HostPcieOutputLayout resolve_output_layout(const PcieModelFacts& facts, const GstCaps* caps);
 
 } // namespace simaai::neat::pcie::internal

@@ -4,7 +4,7 @@ description: "Windows 11のホストを、Neat SDKおよびDevKit-Sync用に準�
 sidebar_position: 2
 ---
 
-ホストマシンが Windows 11 で、DevKit-Sync を使用して Neat 開発環境（Neat SDK と呼ばれる）を実行したい場合は、このガイドを参照してください。
+ホストマシンが Windows 11 で、DevKit-Sync を使用して Neat SDK を実行したい場合は、このガイドを参照してください。
 
 ## 前提条件
 
@@ -15,7 +15,7 @@ sidebar_position: 2
 
 ## WSLから始めましょう。
 
-WSL Linuxディストリビューション内でNeat SDKコマンドを実行してください。PowerShellやコマンドプロンプトからは実行しないでください。これには、`sima-cli neat install sdk@release-2.1`も含まれます。
+WSL Linuxディストリビューション内でNeat SDKコマンドを実行してください。PowerShellやコマンドプロンプトからは実行しないでください。これには、`sima-cli neat install sdk@%%release.sdk_channel%%`も含まれます。
 
 ## WSL ネットワークモード
 

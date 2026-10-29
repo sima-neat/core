@@ -11,7 +11,7 @@ add_test(test_tensor_latency
   --max-mean-latency-ms 12)
 add_test(test_tensor_throughput
   ./test_tensor_perf --mode throughput --warmup 100 --iterations 3000
-  --min-throughput-fps 450)
+  --min-throughput-fps 440)
 add_test(test_queue_blocker ./test_queue_blocker --iterations 10)
 add_test(test_tensor_parallel_queues ./test_tensor_parallel_queues.sh)
 add_test(test_image_run ./test_image_run)

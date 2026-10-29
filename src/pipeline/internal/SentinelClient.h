@@ -9,8 +9,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <chrono>
 #include <string>
-#include <vector>
 
 namespace simaai::neat::pipeline_internal {
 
@@ -19,26 +19,25 @@ inline constexpr const char* kSentinelSocketPath = "/run/simaai-sentinel/api.soc
 /**
  * @brief Calls the Sentinel HTTP API (`/v1`) on its Unix socket.
  *
- * Sentinel samples board power, temperature, CPU, and memory. A trace records those samples
- * between its start and stop and is saved as a run. Every method throws `std::runtime_error`
- * naming the failed action and Sentinel's reason.
+ * Sentinel samples board power, temperature, CPU, and memory every 2 s and keeps the latest
+ * samples in a cache. Every method throws `std::runtime_error` naming the failed action and
+ * Sentinel's reason; when the socket cannot be reached, the message names it and says how to
+ * install and start Sentinel.
  */
 class SentinelClient {
 public:
-  explicit SentinelClient(std::string socket_path = kSentinelSocketPath);
+  explicit SentinelClient(std::string socket_path = kSentinelSocketPath,
+                          std::chrono::seconds timeout = std::chrono::seconds(5));
 
-  /// Start recording a trace; returns its ID. Fails while another trace is recording.
-  std::string start_trace(const std::string& name, const std::string& note,
-                          const std::vector<std::string>& tags) const;
-  /// Stop the trace with this ID.
-  void stop_trace(const std::string& trace_id) const;
-  /// Read a saved run: its metadata, metric definitions, and samples.
-  nlohmann::json read_run(const std::string& trace_id) const;
   /// Read the latest sample: its `timestamp` and metric `values`.
   nlohmann::json latest_sample() const;
+  /// Read the cache: Sentinel's `version`, the metric definitions in `metrics`, and the latest
+  /// `samples`, oldest first.
+  nlohmann::json cache() const;
 
 private:
   std::string socket_path_;
+  std::chrono::seconds timeout_;
 };
 
 } // namespace simaai::neat::pipeline_internal

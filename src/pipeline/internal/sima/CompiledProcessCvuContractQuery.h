@@ -64,7 +64,7 @@ specialize_preproc_roi_contract(const CompiledProcessCvuContract& admitted, int 
                                 int height, int width, int channels, int roi_capacity) {
   if (source_count <= 0 || source_count > 50 || height <= 0 || width <= 0 ||
       (channels != 1 && channels != 3) || roi_capacity <= 0 || roi_capacity > 50 ||
-      admitted.payload.graph_id != 200 || !admitted.preproc_single_output_handoff ||
+      admitted.payload.graph_name != "preproc" || !admitted.preproc_single_output_handoff ||
       admitted.payload.batch_size != 1 || admitted.payload.input_tensors.size() != 1U ||
       admitted.payload.output_tensors.size() != 1U ||
       admitted.runtime_contract.physical_inputs.size() != 1U ||
@@ -89,7 +89,7 @@ specialize_preproc_roi_contract(const CompiledProcessCvuContract& admitted, int 
   const auto& selected_output = runtime.logical_outputs.front();
   if (selected_output.backend_output_index != 0 || selected_output.physical_index != 0 ||
       runtime.physical_outputs.front().physical_index != 0 ||
-      payload.output_tensors.front().storage.nbytes == 0U ||
+      payload.output_tensors.front().descriptor().storage.nbytes == 0U ||
       (!selected_output.stride_bytes.empty() &&
        selected_output.stride_bytes.size() != selected_output.shape.size())) {
     throw std::invalid_argument("Preproc ROI-list: inconsistent admitted output descriptor/view");
@@ -99,13 +99,15 @@ specialize_preproc_roi_contract(const CompiledProcessCvuContract& admitted, int 
   const auto source_bytes = multiply(frame_bytes, source_count);
   const std::vector<int> source_shape{source_count, height, width, channels};
   std::string detail;
-  if (!tensorsemantics::build_dense_tensor_desc(
-          source_shape, "UINT8", "NHWC", &payload.input_tensors.front(), &detail,
-          "missing source descriptor", "invalid source rank", "invalid source dimension",
-          "invalid source dtype", "invalid source stride")) {
+  sima_ev_tensor_desc source_descriptor{};
+  if (!tensorsemantics::build_dense_tensor_desc(source_shape, "UINT8", "NHWC", &source_descriptor,
+                                                &detail, "missing source descriptor",
+                                                "invalid source rank", "invalid source dimension",
+                                                "invalid source dtype", "invalid source stride")) {
     throw std::invalid_argument("Preproc ROI-list: " + detail);
   }
-  payload.input_tensors.front().storage.nbytes = source_bytes;
+  source_descriptor.storage.nbytes = source_bytes;
+  payload.input_tensors.front() = AuthoredTensorDescriptor(source_descriptor, "UINT8");
   // Public PreprocOptions keeps HWC positional accessors. N is explicit only
   // in the typed/logical source descriptor, not in its image-shape option.
   payload.input_shapes = {{height, width, channels}};
@@ -127,12 +129,12 @@ specialize_preproc_roi_contract(const CompiledProcessCvuContract& admitted, int 
   const auto slot_bytes = runtime.physical_outputs.front().size_bytes;
   runtime.physical_outputs.front().size_bytes = multiply(slot_bytes, roi_capacity);
   auto& output = runtime.logical_outputs.front();
-  const auto output_axes =
-      tensorsemantics::host_axis_semantics_from_ev(payload.output_tensors.front().shape);
+  const auto output_axes = tensorsemantics::host_axis_semantics_from_ev(
+      payload.output_tensors.front().descriptor().shape);
   const auto batch_axis = tensorsemantics::find_axis(output_axes, TensorAxisSemantic::N);
   if (batch_axis) {
     if (*batch_axis != 0U || *batch_axis >= output.shape.size() || output.shape[*batch_axis] != 1 ||
-        payload.output_tensors.front().shape.sizes[*batch_axis] != 1) {
+        payload.output_tensors.front().descriptor().shape.sizes[*batch_axis] != 1) {
       throw std::invalid_argument("Preproc ROI-list: output descriptor is not one member");
     }
     output.shape[*batch_axis] = roi_capacity;
@@ -157,17 +159,12 @@ specialize_preproc_roi_contract(const CompiledProcessCvuContract& admitted, int 
       std::vector<int>(output.shape.begin(), output.shape.end())};
   payload.runtime_output_logical_layout_list = {output.layout};
 
-  // A standalone invocation must not inherit offsets/extent/access policy from
-  // the model-wide Ingress arena. The existing standalone renderer authors the
-  // new Allocate/CMA arena after run-target resolution using its shared policy.
+  // Standalone invocations obtain fresh storage after executor resolution.
   result.physical_command_role.reset();
   payload.dmabuf_plan_contract = false;
-  runtime.frame_arena_size_bytes = 0;
-  runtime.frame_arena_role = FrameArenaRole::None;
-  runtime.frame_arena_storage_domain = static_contract::ArenaStorageDomain::Unknown;
-  runtime.frame_arena_provenance = static_contract::ArenaAllocationProvenance::Unknown;
-  runtime.frame_arena_required_device_access = 0;
-  runtime.frame_arena_escape_policy = static_contract::ArenaEscapePolicy::InternalOnly;
+  runtime.allocation_policy.reset();
+  runtime.reuse_input_pad.reset();
+  runtime.frame_layout.reset();
   runtime.physical_outputs.front().source_byte_offset = 0;
   return result;
 }

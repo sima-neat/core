@@ -3,6 +3,7 @@
 #error "Internal header. Not part of the public API."
 #endif
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -192,12 +193,17 @@ struct ReshapeOpConfig {
   TensorShape new_shape;
 };
 
+// Typed recipes author tensor axes directly. Frozen MPK Detess rank-two
+// frames instead require the legacy NC/HW transport-byte proof at projection.
+enum class DetessFrameShapeSemantics { Tensor, LegacyMpk };
+
 struct DetessellateOpConfig {
   TensorShape slice_shape;
   TensorShape frame_shape;
   bool align_c16 = false;
   bool cblock = false;
   std::string frame_type;
+  DetessFrameShapeSemantics frame_shape_semantics = DetessFrameShapeSemantics::Tensor;
 };
 
 struct DequantizeOpConfig {
@@ -214,7 +220,7 @@ struct HostTvmOpConfig {
   std::vector<HostTensorTypeSpec> input_types;
   std::vector<HostTensorTypeSpec> output_types;
   // -1 means a materialized graph-executor output.  Otherwise the output is
-  // the exact compiler-authored __nop view of this input port.
+  // a proven argument-only identity or __nop view of this input port.
   std::vector<std::int32_t> output_alias_input;
   // TVM GraphExecutor lists linked constants alongside external inputs as
   // null/arg nodes. The compiler authors this disjoint set explicitly; these
@@ -250,6 +256,13 @@ struct OpSpec {
   OpConfig config = PassThroughOpConfig{};
   std::uint32_t batch_count = 1U;
 };
+
+inline bool is_alias_only_host_op(const OpSpec& op) noexcept {
+  const auto* host = std::get_if<HostTvmOpConfig>(&op.config);
+  return op.kind == OpKind::HostTvm && host && !host->output_alias_input.empty() &&
+         std::all_of(host->output_alias_input.begin(), host->output_alias_input.end(),
+                     [](std::int32_t input) { return input >= 0; });
+}
 
 enum class BackendPortDirection { Input, Output };
 enum class BackendPortAccess { ReadOnly, WriteOnly };

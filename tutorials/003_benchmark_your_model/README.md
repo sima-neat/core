@@ -55,33 +55,52 @@ benchmark geometry takes precedence over deprecated BoxDecode geometry in `Model
 
 The returned report starts with the headline fields most users need: average end-to-end latency in milliseconds, throughput in frames per second, average and peak SoM power in watts, and the energy in joules needed to process `samples` inputs. `throughput_duration_ms` reports how long the throughput pass ran.
 
-Power comes from Sentinel, the board telemetry daemon that the Neat installer sets up. `report.telemetry` also carries rail power, die and board temperatures, CPU utilization, and MLA memory for the throughput pass; see [Measure model execution](/develop-apps/development-workflow/model#power-and-board-telemetry) for each field. If Sentinel is not running or is recording another trace, the benchmark still reports latency and throughput, leaves the power fields at zero, and sets `report.telemetry.status` to the reason.
+Power comes from Sentinel, the board telemetry daemon that the Neat installer sets up. `report.telemetry` also carries rail power, die and board temperatures, CPU utilization, and MLA memory for the throughput pass; see [Measure model execution](/develop-apps/development-workflow/model#power-and-board-telemetry) for each field. If Sentinel is not running, the benchmark still reports latency and throughput, leaves the power fields at zero, and sets `report.telemetry.status` to the reason.
 
-### Advanced: per-layer stats {#step-read-layer-stats}
+### Advanced: MLA layer and stage stats {#step-read-mla-stats}
 
-Add `--include-layer-stats` to either tutorial command to include layer timings in the
-benchmark report. This option is disabled by default. To enable it through the API:
+Two opt-in options run `mla-rt` after the benchmark to time the compiled MLA code. Both are
+disabled by default and need an idle devkit with no other MLA workloads. Add
+`--include-mla-layer-stats` or `--include-mla-stage-stats` to either tutorial command, or enable them
+through the API:
 
 ```cpp
 simaai::neat::BenchmarkOptions options;
-options.include_layer_stats = true;
+options.include_mla_layer_stats = true;
+options.include_mla_stage_stats = true;
 auto report = model.benchmark(options);
 ```
 
 ```python
 options = pyneat.BenchmarkOptions()
-options.include_layer_stats = True
+options.include_mla_layer_stats = True
+options.include_mla_stage_stats = True
 report = model.benchmark(options)
 ```
 
-Read `report.layer_stats` for each compiled MLA layer's `name`, zero-based `stage_index`,
-and `total_execution_time_us`. Zero-time no-op entries are retained. Layer timings use
-separate profiling passes and do not sum to the headline latency.
+Read `report.mla_layer_stats.layers` for each compiled MLA layer's zero-based `stage_index`, `name`,
+and `latency_us`: the hardware run time from one profiling pass that runs that layer on its own.
+Zero-time no-op entries are retained. Layer latencies do not add up to the stage latency or the
+headline latency.
+
+Read `report.mla_stage_stats.stages` for each MLA stage's `stage_index` and `latency_us`: the mean
+hardware time of 200 uninterrupted runs of that stage. Stage latency includes MLA computation
+and the program's DRAM reads and writes. It excludes model loading, host and EV74 processing,
+and pipeline overhead.
+
+If `mla-rt` is missing, fails, or times out, `benchmark()` still returns the headline measurements,
+leaves the list empty, and sets `report.mla_layer_stats.status` or `report.mla_stage_stats.status`
+to the reason. Each status is `"not requested"` or `"ok"` otherwise. After an `mla-rt` run fails,
+times out, or crashes, MLA may still hold unfinished work, so later profiling in the same process
+is skipped with that reason. Keep the devkit idle until MLA recovery is verified.
+
+MLA layer stats follows the selected terminal policy: it measures only the MLA stages in the selected
+inference route, and each keeps its `stage_index` in the full model.
 
 ### Save the report {#step-save-report}
 
-Call `report.save(path)` to write the complete report as YAML or JSON, including layer stats when
-requested:
+Call `report.save(path)` to write the complete report as YAML or JSON, including MLA layer and
+stage stats when requested:
 
 ```cpp
 auto path = report.save("results/model/yolo_benchmark.yaml");
@@ -100,7 +119,8 @@ file is replaced, and the written path is returned. Saving is explicit; `benchma
 not create a report file automatically.
 
 For either tutorial command, append `--report results/model/yolo_benchmark.yaml`. Combine
-it with `--include-layer-stats` to save both the headline measurements and layer timings.
+it with `--include-mla-layer-stats` or `--include-mla-stage-stats` to save the headline measurements
+together with the MLA timings.
 
 ## Run
 
@@ -143,9 +163,8 @@ Energy:        0.91 J for 100 inputs
 Die temp:      46.34 °C avg, 47.56 °C max
 CPU usage:     12.38 % avg, 13.22 % max
 MLA memory:    29.65 MiB
-CMA used:      6035.02 MiB avg, 6044.38 MiB max
 Linux memory:  682.88 MiB avg, 697.41 MiB max
-Telemetry:     Sentinel, 15 samples, trace 20261014T144839.984Z-neat-benchmark-20261014t144839-905z
+Telemetry:     Sentinel main:766066b74f49, 15 samples
 report_latency_ms=1.96852
 report_fps=1457.04
 report_avg_power_watts=13.1875

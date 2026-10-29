@@ -580,8 +580,12 @@ postprocess = model.fragment(pyneat.ModelStage.Postprocess)
 | 允許 MLA 推論以非同步方式執行 | `advanced_execution.inference_async` | 對於保持工作進度的串流工作負載很有用。 |
 | 調整推論輸出緩衝 | `advanced_execution.inference_output_buffers` | 僅在測量結果顯示輸出緩衝是瓶頸時才增加。 |
 | 延遲輸出快取同步 | `advanced_execution.defer_output_cache_sync` | 進階。僅在理解消費者和記憶體生命週期時使用。 |
-| 使用已準備好的執行器 | `advanced_execution.prepared_runner` | 進階路由執行器實驗。請勿將其用於首次執行程式碼中。 |
-| 調整內部插入的佇列深度 | `advanced_execution.internal_queue_depth` | 進階。佇列深度可以吸收抖動；它不會產生加速器容量。 |
+| 調整內部並行度 | `advanced_execution.internal_queue_depth` | 限制內部插入的佇列與數值 Runner 執行容量；不會覆寫 MLA 輸出緩衝設定。 |
+
+有關有界重疊、輸入生命週期與每影格 CPU 量測，請參閱
+[讓影格重疊執行，而不使佇列無限增長](/develop-apps/development-workflow/graph#overlap-frames-without-growing-queues-indefinitely)。
+保留的 `prepared_runner` 欄位用於來源相容性，不是可選的執行後端。
+請保留預設值；已淘汰的模式會在圖建構時失敗。
 
 在最符合實驗需求的最小範圍內設定進階執行欄位：
 
@@ -769,6 +773,46 @@ report = model.benchmark(options)
 
 將 `original_width` 和 `original_height` 組合在一起。基準測試仍然會產生一個模型形狀的合成張量；這些欄位提供 BoxDecode 中繼資料所需的來源幾何形狀和調整大小的轉換。如果您省略它們，基準測試將從解析後的預處理和模型輸入合約中推斷幾何形狀。這些每次執行的值優先於 `ModelOptions` 中已棄用的 BoxDecode 幾何形狀提示。現有的 `benchmark(num_samples)` 呼叫會保持相同的行為。
 
+若也要量測每個 MLA 層或每個階段的時間，請設定 `include_mla_layer_stats` 或 `include_mla_stage_stats`。若要保留結果，`report.save(path)` 會將報告寫成 YAML；路徑以 `.json` 結尾時則寫成 JSON。兩者的範例請參閱[為您的模型進行基準測試](/tutorials/benchmark-your-model)。
+
+### 使用自己的輸入進行測量 {#measure-with-your-own-inputs}
+
+對於成本取決於資料的模型（例如偵測或分割解碼器），合成輸入可能無法反映實際情況。若要以真實資料測量，請將 `inputs` 設為您會傳給 `run()` 的張量，每個模型輸入各一個。基準測試會將這些張量同時用於延遲與吞吐量的測量。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+cv::Mat image;
+cv::cvtColor(cv::imread("bus.jpg"), image, cv::COLOR_BGR2RGB);  // the format input_specs() reports
+
+simaai::neat::BenchmarkOptions options;
+options.inputs = simaai::neat::TensorList{
+    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::RGB,
+                                      simaai::neat::TensorMemory::EV74)};
+
+simaai::neat::BenchmarkReport report = model.benchmark(options);
+std::cout << "input=" << report.input << " fps=" << report.fps << "\n";  // input=provided
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+image = cv2.cvtColor(cv2.imread("bus.jpg"), cv2.COLOR_BGR2RGB)  # the format input_specs() reports
+
+options = pyneat.BenchmarkOptions()
+options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.RGB)]
+
+report = model.benchmark(options)
+print("input=", report.input, "fps=", report.fps)  # input= provided
+```
+
+</CodeTab>
+</CodeTabs>
+
+若輸入的數量、形狀或資料型別與模型不符，`benchmark()` 會在開始前擲回錯誤代碼為 `misconfig.input_shape` 的 `NeatError`。路由無法轉換的色彩格式會在建立管線時失敗，與 `run()` 相同。在會預處理影像的路由上，影像可以是任意大小，請以 `input_specs()` 回報的色彩格式傳入。
+
 ### 執行長度
 
 基準測試會測量單次執行（single-flight）延遲，然後執行另一個獨立的吞吐量階段。每個階段都會持續執行，直到至少測量了 `num_samples` 個輸入且已經過 `min_duration_ms`（預設為 10 秒），因此兩個階段依相同規則停止，吞吐量階段的功耗和溫度讀數也會涵蓋多個遙測樣本，而不只是短暫的爆發。`latency_ms` 是延遲階段的平均延遲，`latency_p50_ms`、`latency_p95_ms` 和 `latency_p99_ms` 則是其百分位數。`throughput_samples` 和 `throughput_duration_ms` 會回報吞吐量階段實際測量的內容。若要進行快速的初步檢查，請將 `min_duration_ms` 設為 0，讓每個階段在測量 `num_samples` 個輸入後即停止：
@@ -796,7 +840,13 @@ report = model.benchmark(options)
 
 ### 功耗與板子遙測 {#power-and-board-telemetry}
 
-功耗與板子遙測資料來自 [Sentinel](/tools/sentinel/)，也就是 Neat 安裝程式在板子上設定的 DevKit 遙測常駐程式。基準測試會在吞吐量階段前後記錄一個名為 `neat-benchmark-<UTC time>` 的 Sentinel 追蹤並予以保留，讓您之後可以使用 Sentinel 本身的工具開啟它。`report.telemetry` 會彙整此追蹤：
+功耗與板卡遙測來自 [Sentinel](/tools/sentinel/)，也就是 Neat 安裝程式在 DevKit 上
+設定的遙測常駐程式。基準測試透過涵蓋吞吐量測試的
+[`TelemetryMonitor`](#record-board-telemetry) 記錄這些資料。它選取量測開始之後、
+所有必要輸出完成且量測停止之前的樣本。準備、等待監視執行緒結束，以及最後一次
+Sentinel 讀取都不會延長計時工作負載。無效樣本時間戳記或偵測到時鐘不連續時，
+基準測試遙測會變成無法取得，而不會選取不相關的時間視窗。
+`report.telemetry` 會彙整如下：
 
 | 欄位 | 意義 |
 | --- | --- |
@@ -807,13 +857,13 @@ report = model.benchmark(options)
 | `telemetry.board_temperatures_c` | SoM 頂面與底面感測器。 |
 | `telemetry.cpu_usage_pct` | CPU 使用率。每個樣本為前一個區間的平均值，因此 `maximum` 代表最忙碌的區間。 |
 | `telemetry.cpu_cores_usage_pct` | 依核心順序列出的各 CPU 核心使用率。即使所有核心平均值 `cpu_usage_pct` 維持偏低，單一忙碌的核心也會顯示在這裡。 |
-| `telemetry.mla_memory_mib` | 為 MLA 分配的記憶體（MiB）。模型在載入時分配這些記憶體，因此若沒有其他程式在執行，這就是模型的 MLA 記憶體。 |
-| `telemetry.cma_memory_mib` | 已使用的連續記憶體（CMA，MiB）。它包含 MLA 記憶體池，因此請勿將其與 `mla_memory_mib` 相加。閒置時，它也包含 Linux 從 CMA 借用的頁面快取。 |
-| `telemetry.linux_memory_used_mib` | Linux 已使用的記憶體（不含頁面快取，MiB）。 |
+| `telemetry.mla_memory_mib` | MLA 持有的記憶體（MiB），包括 MLA 記憶體池中的緩衝區，以及只有 MLA 使用的共用緩衝區。模型在載入時分配這些記憶體，因此若沒有其他程式在執行，這就是模型的 MLA 記憶體。 |
+| `telemetry.ev74_memory_mib` | EV74 持有的記憶體（MiB），例如 EV74 為 MLA 預處理的輸入影格。EV74 與 MLA 都使用的共用緩衝區計入此處，而非 `mla_memory_mib`，因此兩者相加即為模型的加速器記憶體。視訊解碼器或相機 ISP 產生的影格不計入任何一項。 |
+| `telemetry.linux_memory_used_mib` | 整塊板子使用的記憶體（Linux `MemTotal - MemAvailable`，MiB）。它包含所有行程與 EV74 的緩衝區，因此請勿將其與上述兩項相加。 |
 
-每項指標都會回報 `samples`、`mean`、`minimum` 與 `maximum`，而 `samples == 0` 表示板子未回報該項指標。記憶體數值涵蓋整個板子，包括其他正在執行的程序。Sentinel 每 2 秒取樣一次，因此 10 秒的階段約可取得 5 個樣本。
+每項指標都會回報 `samples`、`mean`、`minimum`、`maximum` 與 `last`，而 `samples == 0` 表示板子未回報該項指標。回報的 0 仍算作一個樣本：未載入模型時，`mla_memory_mib` 與 `ev74_memory_mib` 會在 `samples > 0` 的情況下顯示 0 MiB。Sentinel 每 2 秒取樣一次，因此 10 秒的階段約可取得 5 個樣本。所有數值都涵蓋整個板子，包括其他正在執行的程序。
 
-當 Sentinel 未執行、已有另一個 Sentinel 追蹤正在記錄，或階段太短而無法收集到樣本時，基準測試仍會傳回延遲與 FPS。功耗欄位會保持為零，`telemetry.status` 會指出原因（否則為 `"ok"`），而列印的摘要會顯示 `Power: unavailable (<reason>)`。
+當 Sentinel 未執行或階段太短而無法收集到樣本時，基準測試仍會傳回延遲與 FPS。功耗欄位會保持為零，`telemetry.status` 會指出原因（否則為 `"ok"`），而列印的摘要會顯示 `Power: unavailable (<reason>)`。
 
 ### 測量您自己的迴圈
 
@@ -852,6 +902,56 @@ runner.close()
 </CodeTabs>
 
 不要將一次性的煙霧測試與經過預熱的可重複使用的執行器進行比較。這兩者回答的是不同的問題。
+
+### 記錄板子遙測 {#record-board-telemetry}
+
+使用 `TelemetryMonitor` 在您選擇的任何視窗（例如您自己的推論迴圈）記錄功耗、溫度、CPU 使用率與記憶體。它會從 [Sentinel](/tools/sentinel/) 讀取這些資料，並傳回與 `report.telemetry` 相同的 `Telemetry` 摘要：
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::TelemetryMonitor monitor;
+monitor.start();
+
+for (const auto& input : inputs) {
+  (void)runner.run(simaai::neat::TensorList{input}, /*timeout_ms=*/2000);
+}
+
+simaai::neat::Telemetry telemetry = monitor.stop();
+std::cout << telemetry;            // YAML
+telemetry.save("telemetry.json");  // .json writes JSON; other names write YAML
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+monitor = pyneat.TelemetryMonitor()
+monitor.start()
+
+for tensor in tensors:
+    runner.run([tensor], timeout_ms=2000)
+
+telemetry = monitor.stop()
+print(telemetry)                 # YAML
+print(telemetry.power_som_watts.mean)
+telemetry.save("telemetry.json") # .json writes JSON; other names write YAML
+```
+
+</CodeTab>
+</CodeTabs>
+
+監控器預設讀取 `/run/simaai-sentinel/api.sock`。若要使用掛載於其他路徑的 Sentinel Unix 通訊端，請在 C++ 中將路徑傳入 `TelemetryMonitor(socket_path)`，或在 Python 中使用 `pyneat.TelemetryMonitor(socket_path="...")`。這只會選擇該監控器的端點，不會變更 `Model::benchmark()` 或啟動 Sentinel。建構時不會連線至通訊端。
+
+- `start()` 會開始一個新的視窗。只有 Sentinel 在此之後取得的樣本才會計入，而 Sentinel 每 2 秒取樣一次，因此短於此長度的視窗可能沒有任何樣本；此時 `status` 會指出這一點。
+- `read()` 會傳回目前為止的摘要，而不會停止監控。每項測量的 `last` 是其最新的數值，而 `mean`、`minimum` 與 `maximum` 涵蓋目前為止的視窗。
+- `stop()` 會傳回最終摘要。再次呼叫會傳回相同的結果。
+- 摘要中每項測量只保留一個項目，因此無論視窗持續多久，記憶體用量都維持不變。
+- 多個監控器（無論位於同一個程序或多個程序中）可以彼此同時執行，也可以與 `Model::benchmark()` 同時執行。
+- 所有數值都涵蓋整個板子，包括 Sentinel、監控器本身與其他程序。每個功耗數值來自每個樣本的一次 250 毫秒讀數，因此讀數之間的短暫尖峰不會顯示出來。
+- 當 Sentinel 未執行時，監控器會列印一則警告，`status` 會說明如何安裝或啟動 Sentinel，而監控器會在 Sentinel 回應後開始計入樣本。它絕不會因 Sentinel 的問題而拋出例外。
+- 在 Python 中，`start()`、`read()` 與 `stop()` 在等待期間會釋放 GIL。
 
 ## 解碼輸出
 

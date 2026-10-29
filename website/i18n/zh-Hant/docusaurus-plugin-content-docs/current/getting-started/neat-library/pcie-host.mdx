@@ -12,6 +12,11 @@ Neat PCIe 主機套件提供協同處理 API，用於將來自主機的輸入傳
 請在連接到 Modalix PCIe 卡的 **PCIe 主機**上執行此安裝。請勿在 Neat SDK 容器、DevKit 或 Modalix PCIe 卡上執行。
 :::
 
+:::tip 何時需要離線安裝
+若目標無法從 SiMa.ai 服務下載套件，請使用[離線安裝](#offline-installation)。
+在可連上網際網路的電腦上下載套件。
+:::
+
 ## 支援的主機作業系統
 
 Neat PCIe 主機封裝支援以下經過驗證的主機平台：
@@ -23,7 +28,7 @@ Neat PCIe 主機封裝支援以下經過驗證的主機平台：
 
 Arm64 主機上的建置尚未經過驗證。Windows 11 不受支援。
 
-## 先決條件
+## 線上安裝先決條件
 
 在安裝套件之前：
 
@@ -49,13 +54,13 @@ sima-cli login
 **x86_64 上的 Ubuntu 22.04：**
 
 <ShellCommand prompt="pcie-host">
-sima-cli neat install core/pciehost/ubuntu22/amd64@v0.4.0
+sima-cli neat install core/pciehost/ubuntu22/amd64@v%%release.core%%
 </ShellCommand>
 
 **Ubuntu 24.04 於 x86_64 平台上：**
 
 <ShellCommand prompt="pcie-host">
-sima-cli neat install core/pciehost/ubuntu24/amd64@v0.4.0
+sima-cli neat install core/pciehost/ubuntu24/amd64@v%%release.core%%
 </ShellCommand>
 
 安裝程式會新增所有必要的元件，以便開發和執行 Neat PCIe 主機應用程式，包括 C++ API 和位於 `~/pyneatpcie` 的 Python 環境。
@@ -64,7 +69,7 @@ sima-cli neat install core/pciehost/ubuntu24/amd64@v0.4.0
 
 在第一次安裝期間，SSH 設定程序可以要求提供卡片的 `sima` 帳戶密碼。它會建立或重新使用 `~/.ssh/sima_neat_pcie_ed25519`，並將其公鑰安裝到卡片上。之後，正常的 PCIe 作業會使用無密碼的 SSH 來進行卡片端模型的設定。
 
-## 驗證安裝程序
+## 驗證線上安裝
 
 確認 Python API 和 PCIe 主機外掛程式是否已安裝：
 
@@ -90,6 +95,91 @@ pcie-setup.sh --hosts "10.0.0.2"
 
 如果套件安裝或執行階段啟動失敗，請確認 PCIe 主機套件以及安裝在卡上的 Neat Library，是否來自相容的版本。
 
+## 離線安裝 {#offline-installation}
+
+:::caution 安裝前檢查 Python 相依性
+離線安裝會保留現有的 Python 環境，以及其中額外的套件與檔案。安裝套件前會執行 `pip check`。如果環境已損壞，安裝會停止，並顯示環境路徑與相依性錯誤。請修復回報的相依性後再重試；離線修復需要額外的 wheel 檔案。安裝後會再次檢查相依性，回報仍存在或新引入的衝突。套件變更不會自動復原。
+
+只有在您要捨棄環境並重新安裝時，才明確執行 `./install.sh --recreate-venv`（獨立 Core）或 `sudo python3 -B install.py --recreate-venv`（PCIe）。這會刪除所選環境中的套件與檔案，且不建立備份。在 SDK 中，此選項適用於已配對的 DevKit，不會變更 SDK 主機的 Python。請先儲存需要的檔案。預先檢查與僅驗證命令都不會重建環境。
+:::
+
+Neat PCIe 離線套件自 0.6.0 版本起提供。
+
+PCIe 套件會在主機及所有已連接的相容卡上安裝 Neat。
+目標系統不需要 Docker 或網際網路連線即可進行此安裝。
+主機必須與每張卡建立可正常運作的 PCIe 網路連線。
+
+### 1. 準備主機和卡
+
+執行 Neat 安裝程式之前，請完成下列工作：
+
+- 安裝相容的 Platform 主機驅動程式。
+- 在每張卡上安裝相符的 Platform 3.0 韌體。
+- 在每張卡的 PCIe 介面上設定探索功能。
+- 為每張卡指派唯一的 PCIe IPv4 位址。
+- 在每張卡上啟用 SSH 伺服器，並準備好登入密碼。
+- 授予 SSH 帳戶在每張卡上使用 `sudo` 的權限。
+
+Neat 安裝程式不會安裝 Platform 驅動程式或變更 Platform 韌體。
+請使用 Platform 版本隨附的系統設定說明。
+
+### 2. 下載套件
+
+在可連上網際網路的電腦上安裝 `sima-cli`。請參閱 [sima-cli 安裝指南](/tools/sima-cli/)。
+
+選擇適用於目標主機的 0.6.0 或更新版本。
+套件支援使用 `amd64` 或 `arm64` 處理器的 Ubuntu 22.04 和 24.04 主機。
+
+此範例在可連上網際網路的電腦上下載 %%release.core%% 版本。
+對於 Ubuntu 24.04 `amd64` 目標主機，請執行：
+
+<ShellCommand prompt="host">
+sima-cli neat install 'core/pciehost/ubuntu24/amd64@v%%release.core%%' -t offline -d ./pcie-offline
+</ShellCommand>
+
+對於 Ubuntu 22.04，請將 `ubuntu24` 替換為 `ubuntu22`。
+對於 `arm64` 主機，請將 `amd64` 替換為 `arm64`。
+此命令會下載並解壓縮套件，不會安裝 Neat。
+
+### 3. 選用：檢查已設定的系統
+
+1. 將完整的 `pcie-offline` 目錄複製到目標主機。請使用不含空格的路徑。
+2. 開啟解壓縮後包含 `install.py` 的 `neat-offline` 目錄。
+3. 閱讀隨附的 `INSTALL.md`，以瞭解必要的系統工具和 SSH 設定。
+4. 如果已設定 SSH 存取，請執行檢查：
+
+<ShellCommand prompt="host">
+sudo python3 -B install.py --preflight-only
+</ShellCommand>
+
+安裝程式會自動探索所有已連接的卡。請勿提供卡的 IP 位址。
+檢查會建立暫存檔案，但不會安裝套件或設定 SSH。
+在全新的主機上，請繼續進行安裝，讓安裝程式以互動方式設定 SSH。
+安裝之前，請修正其他回報的錯誤。
+
+### 4. 安裝並檢查結果
+
+在同一個目錄中執行此命令：
+
+<ShellCommand prompt="host">
+sudo python3 -B install.py
+</ShellCommand>
+
+在全新的主機上，安裝程式會為呼叫 `sudo` 的使用者建立或重用 `~/.ssh/sima_neat_pcie_ed25519`，並透過與線上安裝相同的設定指令碼，設定所有已探索卡片的 SSH 存取。請視需要輸入卡片的登入密碼。您不需要另外執行 `ssh-keygen` 或 `ssh-copy-id`，也不需要輸入卡片的 IP 位址。
+
+使用 `--ssh-user` 和 `--ssh-key` 選取現有認證。明確指定的 `--ssh-key` 必須已存在且沒有通關密語。自動註冊使用 `~/.ssh/known_hosts`；自訂的 `--known-hosts` 檔案必須事先設定。無人值守安裝需要事先設定 SSH 存取。密碼透過終端機輸入，不會儲存在記錄中或作為命令引數傳遞。
+
+安裝程式會先檢查所有卡，再安裝套件。
+安裝程式會先安裝並驗證主機，再依序處理每張卡。
+確認最終摘要顯示主機及每張卡均已成功安裝並通過驗證。
+接著執行應用程式驗收測試。
+
+如果安裝失敗，請閱讀所顯示路徑中的診斷記錄。
+如果安裝期間與卡的連線失敗，請先確認該卡的安裝程序已停止，再重試。
+安裝失敗後，安裝程式不會自動還原先前的安裝狀態。
+
 ## 下一步
 
 繼續進行 [PCIe 協同處理](/develop-apps/hello-neat/pcie/)，以驗證主機與卡之間的完整開發路徑。
+
+離線安裝會重用主機上現有的 `~/pyneatpcie`，或卡及 DevKit 上現有的 `~/pyneat`；如果是符號連結，則重用其目標。若家目錄中沒有環境，卡或 DevKit 會在安裝使用者可寫入 NVMe 時使用 `/media/nvme/pyneat`，否則使用 `~/pyneat`。新的 NVMe 安裝會建立 `~/pyneat` 連結，不會取代現有的家目錄環境。

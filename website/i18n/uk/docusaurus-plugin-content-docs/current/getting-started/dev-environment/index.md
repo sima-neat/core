@@ -4,7 +4,7 @@ description: "Налаштуйте Neat SDK для швидкої розробк
 sidebar_position: 1
 ---
 
-Neat — це рекомендоване середовище розробки (Neat SDK), яке використовується як робочий простір на стороні хоста для створення масштабних застосунків Neat і їх тестування на Modalix DevKit. Воно об’єднує інструменти для збирання, інструменти для роботи з моделями, підключення до апаратного забезпечення та контекст вихідного коду, готовий для використання агентом, в єдиний контейнеризований робочий процес.
+Neat SDK — це рекомендований робочий простір на стороні хоста для створення масштабних застосунків Neat і їх тестування на Modalix DevKit. Neat SDK об’єднує інструменти для збирання, інструменти для роботи з моделями, підключення до апаратного забезпечення та контекст вихідного коду, готовий для використання агентом, в єдиний контейнеризований робочий процес.
 
 SDK забезпечує зв’язок між трьома компонентами:
 
@@ -22,7 +22,7 @@ DevKit Sync з’єднує ці місця за допомогою спільн
 
 :::tip Оптимальний сценарій використання лише SDK.
 Якщо ви встановили SDK і не під’єднали DevKit, вам потрібно лише два кроки:
-[Встановіть необхідне програмне забезпечення.](/getting-started/dev-environment/install-the-environment/),
+[Встановлення SDK](/getting-started/dev-environment/install-the-environment/),
 потім [Складіть модель.](/compile-a-model/) — компіляція моделі повністю відбувається в
 SDK. Налаштуйте SDK, виконайте DevKit Sync, встановіть Model Compiler (це пропонується під час налаштування), а сторінки Neat Library та PyNeat є необов’язковими додатковими розділами; відвідайте їх лише тоді, коли вони вам потрібні, або після під’єднання DevKit.
 :::
@@ -32,9 +32,9 @@ SDK. Налаштуйте SDK, виконайте DevKit Sync, встанові�
     <h2>Теми, що стосуються SDK</h2>
     <p>Встановіть SDK, а потім використовуйте додаткові параметри конфігурації, коли потрібно змінити налаштування, встановити Model Compiler або працювати зі з’єднаним DevKit.</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="/getting-started/dev-environment/install-the-environment/"><strong>Встановіть необхідне програмне забезпечення.</strong><span>Встановіть і налаштуйте пакет SDK, який відповідає версії вашого програмного забезпечення DevKit.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/install-the-environment/"><strong>Встановлення SDK</strong><span>Встановіть і налаштуйте пакет SDK, який відповідає версії вашого програмного забезпечення DevKit.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/dev-environment/devkit-sync/"><strong>DevKit Sync</strong><span>Зрозумійте принципи спільного використання робочого простору, оновлення парних з’єднань, резервне копіювання rsync та інші аспекти. <code>дк</code> виконання команди.</span></a></li>
-      <li><a class="overview-link-card" href="/getting-started/dev-environment/offline-installation/"><strong>Встановлення в автономному режимі</strong><span>Завантажте пакети SDK та Model Compiler для використання в мережевих середовищах з обмеженим доступом.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/offline-installation/"><strong>Встановлення в автономному режимі</strong><span>Завантажте пакети SDK та Model Compiler для автономного встановлення.</span></a></li>
     </ul>
   </section>
 </div>
@@ -92,7 +92,7 @@ Model Compiler пропонується під час налаштування S
 :::
 
 :::note Встановлення певної версії
-Під час стандартної інсталяції використовуються поточні значення за замовчуванням. Канал `release-2.1`, який використовується на сторінці [Встановіть необхідне програмне забезпечення.](/getting-started/dev-environment/install-the-environment/), завжди містить інформацію про останню версію патчу 2.1. Щоб встановити конкретну версію SDK, Neat Library або Model Compiler, зверніться до [Посібник зі сумісності](/getting-started/compatibility/).
+Під час стандартної інсталяції використовуються поточні значення за замовчуванням. Канал `%%release.sdk_channel%%`, який використовується на сторінці [Встановлення SDK](/getting-started/dev-environment/install-the-environment/), завжди містить інформацію про останню версію патчу %%release.sdk_series%%. Щоб встановити конкретну версію SDK, Neat Library або Model Compiler, зверніться до [Посібник зі сумісності](/getting-started/compatibility/).
 :::
 
 ## Інструменти в SDK.
@@ -102,10 +102,10 @@ SDK – це рекомендоване місце для встановленн
 програми для парного DevKit.
 
 Щоб отримати доступ до SDK з терміналу, VS Code або браузера з Neat Insight, див.
-[Встановіть необхідне програмне забезпечення.](/getting-started/dev-environment/install-the-environment/#access-the-sdk).
+[Встановлення SDK](/getting-started/dev-environment/install-the-environment/#access-the-sdk).
 
 Під час налаштування SDK, `sima-cli` пропонує автоматично встановити відповідний Model Compiler. Встановіть його, якщо ви самостійно компілюєте або квантуєте моделі; ви можете пропустити цей крок, якщо використовуєте лише попередньо скомпільовані пакети моделей. Інструкції щодо налаштування та використання компілятора див. у розділі [Складіть модель.](/compile-a-model/).
 
 ## Наступний крок
 
-Почніть з [Встановіть необхідне програмне забезпечення.](/getting-started/dev-environment/install-the-environment/).
+Почніть з [Встановлення SDK](/getting-started/dev-environment/install-the-environment/).

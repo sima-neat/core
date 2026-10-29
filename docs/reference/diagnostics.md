@@ -143,18 +143,21 @@ Recommended support bundle:
 For throughput/latency/power reporting, prefer the graph-run JSON export:
 
 ```cpp
-RunOptions opt;
-opt.enable_board_power();        // graph-level power when supported by the board/SOM
-Run run = graph.build(opt);
+Run run = graph.build(RunOptions{});
 
-// run your normal push/pull loop inside a measurement window, then:
-auto report = run.start_measurement().stop();
-std::cout << report.to_text();
+TelemetryMonitor telemetry_monitor; // board power, temperatures, CPU usage, and memory
+telemetry_monitor.start();
+auto scope = run.start_measurement();
+// run your normal push/pull loop here, then:
+auto report = scope.stop();
+Telemetry telemetry = telemetry_monitor.stop();
+std::cout << report.to_text() << telemetry;
 ```
 
 The export keeps scopes explicit:
 
-- `run.graph_metrics.throughput_fps` and `run.graph_metrics.power` are graph-level headlines.
+- `run.graph_metrics.throughput_fps` is the graph-level headline. `run.graph_metrics.power` is
+  filled only by the deprecated `RunOptions::enable_board_power()`; use `TelemetryMonitor` instead.
 - `run.node_metrics[]` contains node/plugin latency only; node/plugin power is intentionally absent.
 - `latency_semantics` and `aggregation` tell you whether values are run-lifetime or measured-window deltas.
 - `plugin_metrics_unattributed[]` preserves kernel/plugin rows that could not be mapped to exactly one node.
@@ -192,21 +195,10 @@ loans retained. Closing a file descriptor, stopping the application, or restarti
 a service does not prove that hardware stopped accessing memory. Collect the
 failure report and use the platform-approved recovery procedure before retrying.
 
-### Keep Core and Internals paired
+### Keep Core and Scheduler packages matched {#keep-core-and-scheduler-packages-matched}
 
-Build and install Core with the matching B1157 Internals packages. Core checks
-the runtime profile, kernel source revision, and SDK sysroot receipt separately
-from the public C++ ABI version. An older package with the same public ABI is
-not a compatible substitute.
+Install Core with the Scheduler package set selected for that Core release. Scheduler owns the matching Runner, Kernels, Codecs, and firmware dependencies. A matching public C++ ABI alone does not establish runtime compatibility.
 
-The installer checks the bundled `neat-runtime` profile and matching
-`neat-gst-plugins` version before changing packages. The platform-check override
-does not bypass runtime pairing. If a check fails, obtain a matching bundle;
-do not replace its receipt or force an older runtime into the installation.
+Use the published dependencies selected by `build.sh`, or supply a complete matching Scheduler DEB set with `--scheduler PATH`. See [Local dependencies](/develop-apps/contribute/build-test/local-dependencies/).
 
-Before a board installation, stop applications using CVU or the hardware codec.
-The full installer activates the staged EV74 firmware after installing all
-packages and refuses to reset EV74 while those devices are open. Set
-`NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=OFF` to leave the firmware staged for
-later activation with
-`sudo /usr/libexec/sima-neat-firmware/install.sh --activate`.
+For board updates, install the complete Core bundle using [Install or Update Neat Library](/getting-started/neat-library/install-or-update/). The selected Scheduler installer validates the package set and manages firmware activation. If validation fails, obtain the matching Core/Scheduler bundle; do not replace receipts or force individual incompatible runtime or firmware packages.

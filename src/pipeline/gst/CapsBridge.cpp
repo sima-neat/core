@@ -24,6 +24,8 @@ simaai::neat::ImageSpec::PixelFormat pixel_format_from_gst(GstVideoFormat fmt) {
     return simaai::neat::ImageSpec::PixelFormat::BGR;
   case GST_VIDEO_FORMAT_GRAY8:
     return simaai::neat::ImageSpec::PixelFormat::GRAY8;
+  case GST_VIDEO_FORMAT_NV16:
+    return simaai::neat::ImageSpec::PixelFormat::NV16;
   case GST_VIDEO_FORMAT_NV12:
     return simaai::neat::ImageSpec::PixelFormat::NV12;
   case GST_VIDEO_FORMAT_I420:
@@ -204,6 +206,8 @@ const char* image_format_name(simaai::neat::ImageSpec::PixelFormat fmt) {
     return "GRAY8";
   case simaai::neat::ImageSpec::PixelFormat::NV12:
     return "NV12";
+  case simaai::neat::ImageSpec::PixelFormat::NV16:
+    return "NV16";
   case simaai::neat::ImageSpec::PixelFormat::I420:
     return "I420";
   case simaai::neat::ImageSpec::PixelFormat::UNKNOWN:
@@ -256,6 +260,7 @@ simaai::neat::TensorConstraint tensor_constraint_from_caps(GstCaps* caps) {
     }
 
     if (pixel == simaai::neat::ImageSpec::PixelFormat::NV12 ||
+        pixel == simaai::neat::ImageSpec::PixelFormat::NV16 ||
         pixel == simaai::neat::ImageSpec::PixelFormat::I420) {
       out.rank = 2;
       out.shape = {h, w};

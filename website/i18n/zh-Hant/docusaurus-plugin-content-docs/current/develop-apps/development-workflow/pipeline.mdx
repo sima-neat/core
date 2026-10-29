@@ -270,7 +270,7 @@ preview = run.pull("preview", timeout_ms=2000)
 | 工作負載 | 從這裡開始 | 原因 |
 |---|---|---|
 | 第一個可運作的應用程式 | 預設 `RunOptions` | 在調整之前，先驗證正確性。 |
-| 即時攝影機或 RTSP 輸入 | `RunPreset::Realtime`；`OutputOptions::Latest()`，如果輸出的新鮮度很重要 | 新的影格勝過完整的歷史記錄。即時預設設定會解析為最新影格溢出，除非您覆寫它。它也會將每個單一輸入 CVU 階段排隊的即時輸入限制為 20 毫秒，因此較慢的模型會丟棄過時的影格，而不是佔用解碼器緩衝區並拖慢來源。 |
+| 即時攝影機或 RTSP 輸入 | `RunPreset::Realtime`；`OutputOptions::Latest()`，如果輸出的新鮮度很重要 | 新的影格勝過完整的歷史記錄。即時預設設定會解析為最新影格溢出，除非您覆寫它。既有的 GStreamer 佇列預設值與明確設定的僅限緩衝區數量的限制會保持不變。若需要媒體時間限制，請在自訂節點的 `backend_fragment()` 中設定佇列的 `max-size-time`，單位為奈秒。 |
 | 檔案或批次處理 | `RunPreset::Reliable`；`OutputOptions::EveryFrame(...)` | 保留每個輸入並公開反壓。可靠預設設定會解析為阻塞溢出，除非您覆寫它。 |
 | 常見應用程式服務 | `RunPreset::Balanced` | 圖正常運作後，這是一個很好的預設值。 |
 | 抖動的來源需要有界緩衝 | `queue_depth` | 僅增加到足以吸收抖動。深度佇列可能會隱藏過時的影格和延遲的反壓。 |
@@ -289,7 +289,17 @@ preview = run.pull("preview", timeout_ms=2000)
 
 使用 `OutputMemory::Auto` 或 `ZeroCopy` 時，保留的 DMA-BUF 輸出會持有集區借用權。即使您釋放 Tensor，`Mapping` 仍會保留其借用權。讀取完成後請釋放兩者，讓生產端能重複使用緩衝區。佇列壓力不會讓 DMA-BUF 輸出改成複製，也不會暗中將 `Block` 改成丟棄；明確的最新影格／丟棄原則仍然適用。
 
-需要獨立儲存空間時，請使用 `OutputMemory::Owned` 或 `clone()`。明確的軟體轉換與 `advanced.copy_input` 仍是複製邊界。`SIMA_OUTPUT_MEMORY_DEFAULT=owned` 會刻意替 `Auto` 選擇自有輸出；它不會覆寫每次執行的明確選擇。
+使用 `OutputMemory::Owned` 可取得獨立的 DMA-BUF 副本，並將其送入另一個圖，
+不必再做一次暫存複製。封裝的張量輸出頭共用複製後的載體；其位移、填補步幅與
+數值中繼資料都會保留。此副本不會保留產生端集區的借用。
+保留式與獨立的 DMA-BUF 輸出都使用 `StorageKind::GstSample`；該儲存種類識別的是
+載體，而非擁有權原則。`Sample::owned` 識別獨立輸出。
+分配失敗時會回報錯誤，而不會暗中退回主機記憶體。
+
+使用 `Tensor::cpu()` 或 `clone()` 可取得獨立的主機記憶體副本。
+明確的軟體轉換與 `advanced.copy_input` 仍是複製邊界。
+`SIMA_OUTPUT_MEMORY_DEFAULT=owned` 會刻意替 `Auto` 選擇自有輸出；
+它不會覆寫每次執行的明確選擇。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -1048,40 +1058,42 @@ run.close()
 - C++ 的 `run_to_json(...)` 和 `save_run_json(...)` 會在執行完成後匯出執行結果。
 - Python 的 `run.json(...)` 和 `run.save_json(...)` 會匯出相同類型的證據。
 
-在用於建置執行的 `RunOptions` 中啟用電力遙測功能：
+使用 [`TelemetryMonitor`](/develop-apps/development-workflow/model#record-board-telemetry) 在同一個視窗內記錄板子電力、溫度、CPU 使用率與記憶體：
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-simaai::neat::RunOptions options;
-options.enable_board_power();
+simaai::neat::TelemetryMonitor telemetry_monitor;
+telemetry_monitor.start();
+auto scope = run.start_measurement();
 
-auto run = graph.build(options);
+// Push and pull here.
 
-simaai::neat::MeasureOptions measure_options;
-measure_options.include_power = true;
-auto scope = run.start_measurement(measure_options);
+simaai::neat::MeasureReport report = scope.stop();
+simaai::neat::Telemetry telemetry = telemetry_monitor.stop();
 ```
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 ```python
-options = pyneat.RunOptions()
-options.enable_board_power()
+telemetry_monitor = pyneat.TelemetryMonitor()
+telemetry_monitor.start()
+scope = run.start_measurement()
 
-run = graph.build(options)
+# Push and pull here.
 
-measure_options = pyneat.MeasureOptions()
-measure_options.include_power = True
-scope = run.start_measurement(measure_options)
+report = scope.stop()
+telemetry = telemetry_monitor.stop()
 ```
 
 </CodeTab>
 </CodeTabs>
 
-電力資料來自 Sentinel，它每 2 秒取樣一次板載電壓軌，因此短於約 2 秒的測量視窗可能沒有電力樣本。使用數字記錄測量設置；當電壓軌未啟用時，請勿使電力資料看起來像是可攜帶的。
+遙測資料來自 Sentinel，它每 2 秒對板子取樣一次，因此短於約 2 秒的測量視窗可能沒有樣本。使用數字記錄測量設置；當電壓軌未啟用時，請勿使電力資料看起來像是可攜帶的。
+
+`RunOptions::enable_board_power()`、`RunOptions::power_monitor` 和 `MeasureOptions::include_power` 已棄用，請改用 `TelemetryMonitor`。它們仍可繼續運作。
 
 編譯時的匯出功能回答了「Neat 建置了什麼？」；執行完成後的匯出功能回答了「在執行過程中發生了什麼？」。
 

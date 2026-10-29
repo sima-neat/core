@@ -1,12 +1,20 @@
+#include <simaai/scheduler/testing/reference.h>
 #define SIMA_NEAT_INTERNAL 1
 #include "gst/SimaPluginStaticManifestAbi.h"
 #include "pipeline/internal/sima/MlaElfIoTopology.h"
+#include "pipeline/internal/sima/ContractRender.h"
+#include "pipeline/internal/sima/CanonicalKernelLowering.h"
+#include "pipeline/internal/sima/KernelStageRecipe.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
+#include <gstsimaaitensorbuffer_meta.h>
 #include "pipeline/internal/sima/static_contract/MpkDecoder.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessMlaStageSemantics.h"
 #include "pipeline/internal/sima/static_contract/DmabufPlanContractProjection.h"
-#include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
 #include "pipeline/internal/sima/static_contract/KernelRegistry.h"
 #include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
+
+#include "asset_utils.h"
 
 #include <nlohmann/json.hpp>
 
@@ -14,6 +22,7 @@
 #include <array>
 #include <cstdint>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -684,10 +693,7 @@ void test_generic_cast_does_not_invent_image_layout() {
     std::string error;
     const auto physical = PhysicalExecutionLowerer::lower(plan, &error);
     check(physical.has_value(), "generic Cast chain lowers physically");
-    const auto arena =
-        FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-                                    kLegacyEvoCmaRegionAlignmentBytes, &error);
-    check(arena.has_value(), "generic Cast frame arena compiles");
+
     std::size_t cast_commands = 0U;
     for (const auto& command : physical->commands) {
       if (command.engine != PhysicalEngine::Cvu) {
@@ -695,16 +701,16 @@ void test_generic_cast_does_not_invent_image_layout() {
       }
       ++cast_commands;
       const std::array<std::uint32_t, 1> command_ids{command.id};
-      const auto contract = build_dmabuf_plan_processcvu_command_contract(
-          plan, *physical, command_ids, *arena, &error);
+      const auto contract =
+          build_dmabuf_plan_processcvu_command_contract(plan, *physical, command_ids, &error);
       if (!contract) {
         std::cerr << error << '\n';
       }
       check(contract && contract->payload.input_tensors.size() == 1U &&
                 contract->payload.output_tensors.size() == 1U,
             "generic Cast projection authors one input/output descriptor pair");
-      const auto& input = contract->payload.input_tensors.front();
-      const auto& output = contract->payload.output_tensors.front();
+      const auto& input = contract->payload.input_tensors.front().descriptor();
+      const auto& output = contract->payload.output_tensors.front().descriptor();
       check(input.shape.rank == shape.size() && output.shape.rank == shape.size(),
             "Cast descriptors preserve the authored rank");
       check((input.dtype == SIMA_EV_DTYPE_FP32 && output.dtype == SIMA_EV_DTYPE_BF16) ||
@@ -783,11 +789,14 @@ MlaStaticContract project_single_mla(const ModelExecutionPlan& plan,
     }
   }
   std::string error;
-  const bool projected = apply_dmabuf_plan_contract_projection(plan, &contract, sources, &error);
+  const auto physical = PhysicalExecutionLowerer::lower(plan, &error);
+  check(physical.has_value(), "decoded MLA port contract lowers physically");
+  const bool projected =
+      apply_dmabuf_plan_contract_projection(plan, *physical, 0U, &contract, sources, &error);
   if (!projected) {
     std::cerr << error << "\n";
   }
-  check(projected, "decoded exact contracts project through the frame arena");
+  check(projected, "decoded exact contracts retain root-relative port bindings");
   return contract;
 }
 
@@ -1088,10 +1097,7 @@ void test_reordered_command_contracts() {
   std::string error;
   const auto physical = PhysicalExecutionLowerer::lower(*result.plan, &error);
   check(physical.has_value(), "reordered commands lower");
-  const auto arena =
-      FrameSlotArenaPlan::compile(*result.plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-                                  kLegacyEvoCmaRegionAlignmentBytes, &error);
-  check(arena.has_value(), "reordered commands arena compiles");
+
   for (const auto role : {PhysicalCommandRole::Ingress, PhysicalCommandRole::Egress}) {
     std::vector<PhysicalCommandId> commands;
     for (const auto& command : physical->commands) {
@@ -1099,12 +1105,10 @@ void test_reordered_command_contracts() {
         commands.push_back(command.id);
       }
     }
-    const auto contract = build_dmabuf_plan_processcvu_command_contract(*result.plan, *physical,
-                                                                        commands, *arena, &error);
+    const auto contract =
+        build_dmabuf_plan_processcvu_command_contract(*result.plan, *physical, commands, &error);
     check(contract.has_value(), "reordered command contract compiles");
     if (role == PhysicalCommandRole::Ingress) {
-      check(contract->runtime_contract.frame_arena_role == FrameArenaRole::Allocate,
-            "the first ingress cohort allocates even when members are not in sequence order");
       continue;
     }
     const auto& runtime = contract->runtime_contract.logical_outputs;
@@ -1311,17 +1315,14 @@ void test_unpack_tiled_carriers_keep_storage_geometry() {
   check(physical.has_value(), "tiled Unpack branches lower to physical commands");
   std::vector<PhysicalCommandId> detesscast_commands;
   for (const auto& command : physical->commands) {
-    if (command.engine == PhysicalEngine::Cvu && command.graph_id == 225U) {
+    if (command.engine == PhysicalEngine::Cvu && command.implementation_id == "detesscast") {
       detesscast_commands.push_back(command.id);
     }
   }
   check(!detesscast_commands.empty(), "BF16 tiled branches select graph225 Detess+Cast");
-  const auto arena =
-      FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-                                  kLegacyEvoCmaRegionAlignmentBytes, &error);
-  check(arena.has_value(), "tiled Unpack branches compile their shared frame arena");
-  const auto cvu = build_dmabuf_plan_processcvu_command_contract(
-      plan, *physical, detesscast_commands, *arena, &error);
+
+  const auto cvu =
+      build_dmabuf_plan_processcvu_command_contract(plan, *physical, detesscast_commands, &error);
   if (!cvu) {
     std::cerr << error << "\n";
   }
@@ -1330,11 +1331,9 @@ void test_unpack_tiled_carriers_keep_storage_geometry() {
             cvu->runtime_contract.logical_inputs.size() == frames.size() &&
             cvu->runtime_contract.physical_inputs.size() == frames.size(),
         "graph225 projection retains both tiled input and dense output contracts");
-  const auto* parent_region = arena->region(unpack_op.inputs.front());
-  check(parent_region != nullptr, "packed MLA output owns one arena region");
   for (std::size_t index = 0; index < frames.size(); ++index) {
-    const auto& input = cvu->payload.input_tensors[index];
-    const auto& output = cvu->payload.output_tensors[index];
+    const auto& input = cvu->payload.input_tensors[index].descriptor();
+    const auto& output = cvu->payload.output_tensors[index].descriptor();
     check(input.dtype == SIMA_EV_DTYPE_BF16 && input.shape.rank == frames[index].size() &&
               input.storage.nbytes == stored_bytes[index] && output.dtype == SIMA_EV_DTYPE_FP32 &&
               output.shape.rank == frames[index].size() &&
@@ -1354,11 +1353,177 @@ void test_unpack_tiled_carriers_keep_storage_geometry() {
                   std::vector<std::int64_t>({static_cast<std::int64_t>(stored_bytes[index]), 1}) &&
               logical.size_bytes == stored_bytes[index] && logical.byte_offset == 0 &&
               binding.size_bytes == stored_bytes[index] &&
-              binding.address_source == PhysicalAddressSource::FrameArenaSpan &&
-              binding.source_byte_offset ==
-                  static_cast<std::int64_t>(parent_region->byte_offset + offset),
-          "CVU runtime inputs use exact byte-carrier metadata and shared-arena offsets");
+              binding.address_source == PhysicalAddressSource::FrameSpan &&
+              binding.source_byte_offset == static_cast<std::int64_t>(offset),
+          "CVU runtime inputs use exact byte-carrier metadata and root-relative offsets");
   }
+
+  // The final admission consumes the semantic records, never the INT8 byte
+  // carrier metadata. Keep both independent storage extents and fused members.
+  StageStaticSpec stage;
+  stage.processcvu = cvu->payload;
+  stage.processcvu.resolved_exec_backend = "EV74";
+  stage.logical_inputs = cvu->runtime_contract.logical_inputs;
+  stage.logical_outputs = cvu->runtime_contract.logical_outputs;
+  const auto checked = kernel_lowering::check_transform_stage(stage);
+  if (const auto* failure = std::get_if<::simaai::scheduler::client::Error>(&checked)) {
+    std::cerr << failure->field << ": " << failure->message << "\n";
+  }
+  check(std::holds_alternative<std::shared_ptr<KernelStageRecipe>>(checked),
+        "INT8 physical carriers must not overwrite BF16 DetessCast numerical inputs");
+  const auto& recipe = *std::get<std::shared_ptr<KernelStageRecipe>>(checked);
+  check(recipe.members.size() == frames.size(),
+        "each BF16 carrier retains one fused DetessCast without a separate Cast member");
+  for (std::size_t index = 0; index < frames.size(); ++index) {
+    const auto inspection =
+        ::simaai::scheduler::client::inspect_kernel(recipe.members[index].executable);
+    check(std::holds_alternative<::simaai::scheduler::client::KernelInspection>(inspection),
+          "checked fused executable is inspectable");
+    const auto& info = std::get<::simaai::scheduler::client::KernelInspection>(inspection);
+    check(info.input_requirements().front().storage_bytes == stored_bytes[index] &&
+              info.output_requirements().front().storage_bytes == dense_bytes[index] * 2U,
+          "provider admission retains exact per-carrier storage spans");
+  }
+
+  auto batched = manifest;
+  constexpr std::size_t batch_count = 6;
+  batched["input_nodes"][0]["size"] = 32;
+  batched["plugins"][0]["input_nodes"][0]["size"] = 32;
+  batched["plugins"][0]["output_nodes"][0]["size"] = 16;
+  batched["plugins"][0]["config_params"]["params"]["input_shapes"] = {{1, 8}};
+  batched["plugins"][0]["config_params"]["params"]["output_shapes"] = {{1, 8}};
+  batched["plugins"][1]["input_nodes"][0]["size"] = 16;
+  for (auto& tensor : batched["input_nodes"])
+    tensor["size"] = tensor["size"].get<std::uint64_t>() * batch_count;
+  for (auto& plugin : batched["plugins"]) {
+    auto& config = plugin["config_params"];
+    config["actual_batch_size"] = config["desired_batch_size"] = batch_count;
+    if (config.contains("params")) {
+      auto& params = config["params"];
+      for (const auto* key : {"input_shapes", "output_shapes", "tensor_shapes"})
+        if (params.contains(key))
+          for (auto& shape : params[key])
+            shape[0] = batch_count;
+      if (params.contains("frame_shape"))
+        params["frame_shape"][0] = batch_count;
+    }
+    for (const auto* key : {"input_nodes", "output_nodes"})
+      for (auto& tensor : plugin[key])
+        tensor["size"] = tensor["size"].get<std::uint64_t>() * batch_count;
+  }
+  auto topology = monolithic_topology(16U, 576U);
+  for (std::size_t sample = 0; sample < batch_count; ++sample) {
+    topology.ifm_slots.push_back({0U, sample, "data.ifm.b" + std::to_string(sample), 16U});
+    topology.ofm_slots.push_back({0U, sample, "data.ofm.b" + std::to_string(sample), 576U});
+  }
+  const auto batch_decoded = MpkDecoder{}.decode_json(batched.dump(), topology);
+  if (!batch_decoded && batch_decoded.error)
+    std::cerr << batch_decoded.error->json_path << ": " << batch_decoded.error->detail << '\n';
+  check(bool(batch_decoded), "batched two-head tiled carrier must decode");
+  const auto batch_physical = PhysicalExecutionLowerer::lower(*batch_decoded.plan, &error);
+  check(bool(batch_physical), "batched two-head conversion must lower");
+  std::vector<PhysicalCommandId> batch_commands;
+  for (const auto& command : batch_physical->commands)
+    if (command.implementation_id == "detesscast")
+      batch_commands.push_back(command.id);
+  const auto batch_contract = build_dmabuf_plan_processcvu_command_contract(
+      *batch_decoded.plan, *batch_physical, batch_commands, &error);
+  check(bool(batch_contract), "batched two-head conversion must project");
+  stage.processcvu = batch_contract->payload;
+  stage.processcvu.resolved_exec_backend = "EV74";
+  stage.logical_inputs = batch_contract->runtime_contract.logical_inputs;
+  const auto batch_recipe = kernel_lowering::check_transform_stage(stage);
+  check(std::holds_alternative<std::shared_ptr<KernelStageRecipe>>(batch_recipe),
+        "batched conversion must preserve the Unpack sample pitch through admission");
+  const auto& batch_members = std::get<std::shared_ptr<KernelStageRecipe>>(batch_recipe)->members;
+  check(batch_members.size() == frames.size() * batch_count,
+        "both packed heads must bind every sample");
+  for (std::size_t head = 0; head < frames.size(); ++head) {
+    check(batch_contract->runtime_contract.logical_outputs[head].publication_relation ==
+              PublicationViewRelation::BatchSlices,
+          "per-sample writes must author a combined batch publication");
+    for (std::size_t sample = 0; sample < batch_count; ++sample) {
+      const auto& member = batch_members[head * batch_count + sample];
+      check(member.inputs.front().byte_offset == sample * 576U &&
+                member.outputs.front().byte_offset == sample * dense_bytes[head] * 2U,
+            "Unpack heads must retain parent sample pitch and dense output offsets");
+    }
+  }
+
+  // Preserve both the batch assembly and the MPK's ordered singleton view.
+  auto aliased = batched;
+  auto& alias_plugins = aliased["plugins"];
+  alias_plugins[6]["input_nodes"][0]["name"] = "view1";
+  alias_plugins[6]["config_params"]["params"]["input_shapes"] = {{1, 6, 3, 14}};
+  alias_plugins[6]["config_params"]["params"]["output_shapes"] = {{1, 6, 3, 14}};
+  const nlohmann::json view{
+      {"name", "view1"},
+      {"type", "sgpProcess"},
+      {"processor", "EV74"},
+      {"config_params",
+       {{"actual_batch_size", 6},
+        {"desired_batch_size", 6},
+        {"kernel", "batch_flatten_transform"},
+        {"params", {{"input_shapes", {{6, 1, 3, 14}}}, {"output_shapes", {{1, 6, 3, 14}}}}}}},
+      {"input_nodes", {{{"name", "detess1"}, {"size", 504}}}},
+      {"output_nodes", {{{"name", "view1"}, {"size", 504}}}}};
+  alias_plugins.insert(alias_plugins.begin() + 6, view);
+  for (std::size_t i = 0; i < alias_plugins.size(); ++i)
+    alias_plugins[i]["sequence"] = i + 1;
+  const auto alias_decoded = MpkDecoder{}.decode_json(aliased.dump(), topology);
+  check(bool(alias_decoded), "packed batch singleton view must decode");
+  const auto alias_physical = PhysicalExecutionLowerer::lower(*alias_decoded.plan, &error);
+  check(bool(alias_physical), "packed batch singleton view must lower");
+  batch_commands.clear();
+  for (const auto& command : alias_physical->commands)
+    if (command.implementation_id == "detesscast")
+      batch_commands.push_back(command.id);
+  const auto alias_contract = build_dmabuf_plan_processcvu_command_contract(
+      *alias_decoded.plan, *alias_physical, batch_commands, &error);
+  check(bool(alias_contract) &&
+            alias_contract->runtime_contract.logical_outputs[1].publication_relation ==
+                PublicationViewRelation::BatchSlices,
+        "singleton alias must retain batch-slice publication authority");
+  namespace rt = simaai::scheduler::client;
+  namespace test = simaai::scheduler::testing;
+  gst_init(nullptr, nullptr);
+  check(simaai::gst::tensor_buffer_register_meta(), "tensor metadata registration succeeds");
+  auto alias_stage = simaai::neat::project_processcvu_stage_contract(*alias_contract);
+  alias_stage.element_name = alias_stage.logical_stage_id = "packed_batch_singleton";
+  alias_stage.processcvu.requested_run_target = "EV74";
+  for (auto& input : alias_stage.physical_inputs)
+    input.address_source = PhysicalAddressSource::RuntimePhysicalBinding;
+  SimaPluginStaticManifest alias_manifest;
+  alias_manifest.stages.push_back(std::move(alias_stage));
+  check(!prepare_kernel_stage_recipes(&alias_manifest, {}, {}, {}, {}),
+        "packed batch singleton recipe must prepare");
+  finalize_pipeline_storage(alias_manifest);
+  check(!finalize_stage_publications(&alias_manifest),
+        "packed batch singleton layout must finalize");
+  const auto& ready = alias_manifest.stages.front();
+  rt::TensorStagePublication publication;
+  check(build_kernel_stage_publication(ready, &publication, &error),
+        "packed batch singleton publication must build");
+  check(ready.native_kernel->members.size() == frames.size() * batch_count &&
+            publication.contract->logical_outputs.size() == frames.size() &&
+            publication.contract->logical_outputs[1].shape ==
+                std::vector<std::int64_t>({1, 6, 3, 14}),
+        "batch slicing must preserve every sample and the public singleton shape");
+  rt::StageRequest request;
+  rt::KernelProgram program;
+  program.target = ready.native_kernel->target;
+  program.members = ready.native_kernel->members;
+  request.program = std::move(program);
+  request.publication = publication;
+  request.layout = ready.frame_layout;
+  test::AdmissionCapture transport;
+  const auto admitted = test::reject_device_after_validation(request, transport);
+  if (admitted)
+    std::cerr << admitted->field << ": " << admitted->message << '\n';
+  check(admitted && admitted->code == rt::ErrorCode::UnsupportedTarget &&
+            admitted->field == "prepared.ev74" && transport.queries > 0 &&
+            transport.submissions == 0,
+        "combined batch and singleton view must pass Scheduler before device admission");
 
   auto incompatible_consumer = manifest;
   auto& consumer_plugins = incompatible_consumer["plugins"];
@@ -1413,21 +1578,24 @@ void test_dense_ifm_tail_padding() {
   const auto& port = plan.backend_ports(0U, BackendPortDirection::Input).front();
   const auto* value = plan.value(port.value_id);
   check(value->required_bytes == 14U && value->logical_shape == TensorShape({1, 7}) &&
-            port.physical_extent_bytes == 14U,
-        "IFM allocation tail does not enlarge the MPK transfer");
+            port.physical_extent_bytes == 16U,
+        "IFM allocation tail enlarges the physical reservation without changing the MPK payload");
+  const auto* carrier = plan.carrier(value->storage_binding->carrier_id);
+  check(carrier && carrier->required_bytes == 16U,
+        "producer carrier covers the complete MLA-readable allocation tail");
   const auto contract = project_single_mla(plan);
-  check(contract.physical_inputs.front().size_bytes == 14U &&
-            contract.input_bindings.front().src_physical_size_bytes == 14U,
-        "IFM arena projection binds exactly the MPK bytes");
+  check(contract.physical_inputs.front().size_bytes == 16U &&
+            contract.input_bindings.front().src_physical_size_bytes == 16U,
+        "IFM projection binds the complete ELF reservation");
   for (const auto bad_extent : {13U, 15U, 17U, 32U}) {
     topology.ifm_extent_bytes = {bad_extent};
     expect_error(manifest.dump(), topology, MpkDecodeErrorCode::ValueSizeMismatch,
                  "undersized, unaligned, and excessive IFM extents remain rejected");
   }
   const auto monolithic = MpkDecoder{}.decode_json(manifest.dump(), monolithic_topology(16U, 8U));
-  check(static_cast<bool>(monolithic), "monolithic allocation tail preserves MPK transfer length");
-  check(project_single_mla(*monolithic.plan).physical_inputs.front().size_bytes == 14U,
-        "monolithic transfer is not rounded to the ELF reservation");
+  check(static_cast<bool>(monolithic), "monolithic allocation tail preserves MPK payload length");
+  check(project_single_mla(*monolithic.plan).physical_inputs.front().size_bytes == 16U,
+        "monolithic physical input covers the ELF reservation");
   auto spatial = manifest;
   spatial["input_nodes"][0]["size"] = 420;
   spatial["plugins"][0]["input_nodes"][0]["size"] = 420;
@@ -1438,9 +1606,9 @@ void test_dense_ifm_tail_padding() {
   const auto c7 = MpkDecoder{}.decode_json(spatial.dump(), monolithic_topology(224U, 8U));
   check(static_cast<bool>(c7), "C7 BF16 HWC input admits 210-byte MPK transfer with 224-byte ELF");
   const auto c7_contract = project_single_mla(*c7.plan);
-  check(c7_contract.physical_inputs.front().size_bytes == 210U &&
-            c7_contract.input_bindings.front().src_physical_size_bytes == 210U,
-        "C7 BF16 HWC projection retains exactly 210 bytes");
+  check(c7_contract.physical_inputs.front().size_bytes == 224U &&
+            c7_contract.input_bindings.front().src_physical_size_bytes == 224U,
+        "C7 BF16 HWC projection reserves the complete 224-byte ELF input");
   for (const auto bad_extent : {209U, 211U, 223U, 225U, 256U}) {
     expect_error(spatial.dump(), monolithic_topology(bad_extent, 8U),
                  MpkDecodeErrorCode::ValueSizeMismatch,
@@ -1456,6 +1624,64 @@ void test_dense_ifm_tail_padding() {
   cast["config_params"]["params"]["output_shapes"] = {{7, 1}};
   expect_error(manifest.dump(), topology, MpkDecodeErrorCode::ValueSizeMismatch,
                "logical leading dimension must also prove batch one");
+}
+
+void test_int8_mask_ifm_tail_padding() {
+  auto manifest = nlohmann::json::parse(valid_manifest());
+  manifest["input_nodes"][0]["size"] = 32;
+  auto& quant = manifest["plugins"][0];
+  quant["input_nodes"][0]["size"] = 32;
+  quant["output_nodes"][0]["size"] = 8;
+  quant["config_params"]["kernel"] = "quantization_transform";
+  quant["config_params"]["params"] = {{"channel_params", {{0.01, 0}}}, {"num_bits", 8},
+                                      {"rounding", "TONEAREST"},       {"output_data_type", "int8"},
+                                      {"input_shapes", {{1, 8}}},      {"output_shapes", {{1, 8}}}};
+  const auto decoded = MpkDecoder{}.decode_json(manifest.dump(), monolithic_topology(16U, 8U));
+  check(static_cast<bool>(decoded), "eight-element INT8 mask admits a 16-byte MLA reservation");
+  const auto& plan = *decoded.plan;
+  const auto& port = plan.backend_ports(0U, BackendPortDirection::Input).front();
+  const auto* value = plan.value(port.value_id);
+  check(plan.value(plan.model_inputs().front())->required_bytes == 32U &&
+            value->required_bytes == 8U && value->logical_shape == TensorShape({1, 8}) &&
+            value->logical_dtype == "int8" && port.physical_extent_bytes == 16U,
+        "eight FP32 application values remain eight INT8 mask elements");
+  const auto* carrier = plan.carrier(value->storage_binding->carrier_id);
+  check(carrier && carrier->required_bytes == 16U,
+        "mask producer reserves the complete MLA-readable range");
+  const auto contract = project_single_mla(plan);
+  check(contract.physical_inputs.front().size_bytes == 16U &&
+            contract.input_bindings.front().src_physical_size_bytes == 16U,
+        "mask DMA contract includes physical tail without changing tensor geometry");
+}
+
+void test_direct_input_ifm_tail_padding() {
+  auto manifest = nlohmann::json::parse(qmla_padded_output_manifest());
+  manifest["input_nodes"][0]["size"] = 8;
+  auto& mla = manifest["plugins"][0];
+  mla["input_nodes"][0]["size"] = 8;
+  mla["config_params"]["input_types"] = {{{"scalar", "int8"}, {"shape", {1, 8}}}};
+  for (const auto& topology : {qmla_padded_topology(), monolithic_topology(16U, 109200U)}) {
+    const auto decoded = MpkDecoder{}.decode_json(manifest.dump(), topology);
+    if (!decoded && decoded.error) {
+      std::cerr << decoded.error->json_path << ": " << decoded.error->detail << "\n";
+    }
+    check(static_cast<bool>(decoded), "direct eight-byte INT8 input admits a 16-byte ELF extent");
+    const auto& plan = *decoded.plan;
+    const auto* value = plan.value(plan.model_inputs().front());
+    check(value->required_bytes == 8U && value->logical_shape == TensorShape({1, 8}) &&
+              value->storage_binding->kind == StorageBindingKind::External &&
+              value->storage_binding->physical_span == 16U,
+          "direct input keeps its logical geometry and declares the complete external extent");
+    const auto contract = project_single_mla(plan);
+    check(contract.physical_inputs.front().size_bytes == 16U &&
+              contract.input_bindings.front().src_physical_size_bytes == 16U,
+          "direct input projection binds the complete ELF reservation");
+  }
+  for (const auto bad_extent : {7U, 9U, 15U, 17U, 32U}) {
+    expect_error(manifest.dump(), monolithic_topology(bad_extent, 109200U),
+                 MpkDecodeErrorCode::ValueSizeMismatch,
+                 "direct input still rejects unproved ELF extents");
+  }
 }
 
 void test_compiler_version_does_not_restrict_admission() {
@@ -1579,11 +1805,7 @@ void test_unpack_and_slice_are_read_expressions() {
   std::string error;
   const auto physical = PhysicalExecutionLowerer::lower(plan, &error);
   check(physical.has_value(), "decoded direct Pack lowers without a Pack command");
-  const auto arena =
-      FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-                                  kLegacyEvoCmaRegionAlignmentBytes, &error);
-  check(arena && arena->region(2U) == arena->region(4U) && arena->region(3U) == arena->region(4U),
-        "producer writes and MLA input allocate one canonical carrier region");
+
   std::vector<PhysicalCommandId> commands;
   for (const auto& command : physical->commands) {
     if (command.engine == PhysicalEngine::Cvu) {
@@ -1591,7 +1813,7 @@ void test_unpack_and_slice_are_read_expressions() {
     }
   }
   const auto contract =
-      build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, *arena, &error);
+      build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, &error);
   if (!contract) {
     std::cerr << error << '\n';
   }
@@ -1601,8 +1823,7 @@ void test_unpack_and_slice_are_read_expressions() {
     const auto& logical = contract->runtime_contract.logical_outputs[index];
     const auto& output = contract->runtime_contract.physical_outputs[index];
     const auto offset = logical.logical_name == "input0" ? 0U : 16U;
-    check(output.source_byte_offset ==
-                  static_cast<std::int64_t>(arena->region(4U)->byte_offset + offset) &&
+    check(output.source_byte_offset == static_cast<std::int64_t>(offset) &&
               output.size_bytes == 16U &&
               output.source_byte_offset % output.required_alignment_bytes == 0U,
           "each exact producer range equals its MLA parent component without 4KiB member padding");
@@ -1640,6 +1861,205 @@ void test_reshape_is_an_exact_read_expression() {
       MpkDecoder{}.decode_json(mismatch, monolithic_topology(16U, 8U), "reshape-mismatch.json");
   check(!rejected && rejected.error->code == MpkDecodeErrorCode::ValueSizeMismatch,
         "reshape that changes the byte extent fails closed");
+}
+
+void test_host_alias_publication() {
+  std::ifstream file(sima_test::test_model_archive_fixture_root_path() /
+                     "strict-seeds/nemotron_joiner_argmax_mpk.json");
+  check(file.is_open(), "the real joiner MPK manifest fixture must be installed");
+  auto manifest = nlohmann::json::parse(file);
+  auto topology = monolithic_topology(0U, 16U);
+  topology.monolithic_ifm = false;
+  topology.ifm_symbol_names = {"data.ifm.persistent.qmla_ifm_0.b0",
+                               "data.ifm.persistent.qmla_ifm_1.b0"};
+  topology.ifm_extent_bytes = {1280U, 1280U};
+  const auto& mla = manifest["plugins"][2];
+  const auto& host = manifest["plugins"][4];
+  const std::vector<MlaStageExecutableEvidence> mla_evidence{
+      {mla["name"], mla["resources"]["executable"], topology, 100U, "synthetic-mla-digest"}};
+  const std::vector<HostTvmExecutableEvidence> host_evidence{{host["name"],
+                                                              host["resources"]["executable"],
+                                                              {"arm_2_i0"},
+                                                              {{"int32", {1, 1, 1, 1}}},
+                                                              {{"int32", {1, 1, 1, 1}}},
+                                                              {0},
+                                                              100U,
+                                                              "synthetic-identity-digest"}};
+  const auto result = MpkDecoder{}.decode_json(manifest.dump(), mla_evidence, host_evidence);
+  if (!result && result.error) {
+    std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
+  }
+  check(static_cast<bool>(result), "terminal INT32 index crop and identity module decode");
+  const auto& output = result.plan->values().at(result.plan->model_outputs().front().value_id);
+  check(output.logical_dtype == "int32" && output.logical_shape == TensorShape({1, 1}) &&
+            output.required_bytes == 4U && output.read_expression.has_value(),
+        "terminal index remains a four-byte INT32 view with its declared shape");
+  std::string error;
+  const auto physical = PhysicalExecutionLowerer::lower(*result.plan, &error);
+  check(physical.has_value(), "native index plan lowers to physical commands");
+  check(std::none_of(physical->commands.begin(), physical->commands.end(),
+                     [](const auto& command) { return command.engine == PhysicalEngine::A65; }),
+        "the argument-only A65 module produces no physical CPU command");
+
+  const auto project_mla_ports = [&](const ModelExecutionPlan& plan,
+                                     const PhysicalExecutionPlan& commands) {
+    const auto sources = resolve_mla_input_physical_sources(plan, 0U, &error);
+    check(sources.has_value(), "terminal index IFM sources resolve");
+    MlaStaticContract projected;
+    for (const auto& port : plan.backend_ports()) {
+      const auto& value = plan.values().at(port.value_id);
+      PhysicalBufferStaticSpec buffer;
+      buffer.physical_index = static_cast<int>(port.port_index);
+      buffer.size_bytes = value.required_bytes;
+      buffer.segment_name = value.name;
+      if (port.direction == BackendPortDirection::Input) {
+        projected.physical_inputs.push_back(std::move(buffer));
+        TensorStaticSpec input;
+        input.tensor_index = static_cast<int>(port.port_index);
+        projected.logical_inputs.push_back(std::move(input));
+      } else {
+        projected.dispatcher_physical_outputs.push_back(std::move(buffer));
+      }
+    }
+    check(apply_dmabuf_plan_contract_projection(plan, commands, 0U, &projected, *sources, &error),
+          "terminal index projects root-relative MLA ports");
+    return projected;
+  };
+  const auto projected = project_mla_ports(*result.plan, *physical);
+  check(projected.logical_outputs.size() == 1U &&
+            projected.logical_outputs.front().logical_name == "EV_2/reshape_0/selected_token" &&
+            projected.logical_outputs.front().dtype == "int32" &&
+            projected.logical_outputs.front().shape == TensorShape({1, 1}) &&
+            projected.logical_outputs.front().size_bytes == 4U,
+        "MLA fragment publishes one declared INT32 result, not intermediate alias views");
+
+  auto cast_manifest = manifest;
+  cast_manifest["plugins"].erase(5);
+  cast_manifest["plugins"][4]["config_params"]["output_types"][0]["scalar"] = "int64";
+  cast_manifest["plugins"][4]["output_nodes"][0]["size"] = 8;
+  auto cast_evidence = host_evidence;
+  cast_evidence[0].output_types[0].scalar = "int64";
+  cast_evidence[0].output_alias_input = {-1};
+  const auto cast_result =
+      MpkDecoder{}.decode_json(cast_manifest.dump(), mla_evidence, cast_evidence);
+  check(static_cast<bool>(cast_result), "real INT32-to-INT64 host cast decodes");
+  const auto& cast_output =
+      cast_result.plan->values().at(cast_result.plan->model_outputs().front().value_id);
+  check(cast_output.logical_dtype == "int64" && cast_output.required_bytes == 8U &&
+            !cast_output.read_expression.has_value(),
+        "real integer conversion publishes a materialized INT64 output");
+  const auto cast_physical = PhysicalExecutionLowerer::lower(*cast_result.plan, &error);
+  check(cast_physical.has_value() &&
+            std::count_if(
+                cast_physical->commands.begin(), cast_physical->commands.end(),
+                [](const auto& command) { return command.engine == PhysicalEngine::A65; }) == 1,
+        "real integer conversion retains exactly one physical CPU command");
+
+  const auto before_cast = project_mla_ports(*cast_result.plan, *cast_physical);
+  check(before_cast.logical_outputs.size() == 1U &&
+            before_cast.logical_outputs.front().dtype == "int32" &&
+            before_cast.logical_outputs.front().shape == TensorShape({1, 1, 1, 1}),
+        "MLA fragment before a real CPU cast retains its native INT32 boundary");
+
+  // A one-element channel crop over multiple padded rows still has real gaps.
+  auto strided = manifest;
+  strided["plugins"][2]["output_nodes"][0]["size"] = 32;
+  auto& slice = strided["plugins"][3];
+  slice["config_params"]["params"]["input_shapes"] = {{1, 1, 2, 4}};
+  slice["config_params"]["params"]["output_shapes"] = {{1, 1, 2, 1}};
+  slice["config_params"]["params"]["input_shape"] = {1, 1, 2, 4};
+  slice["config_params"]["params"]["output_shape"] = {1, 1, 2, 1};
+  slice["config_params"]["params"]["end"] = {1, 1, 2, 1};
+  slice["input_nodes"][0]["size"] = 32;
+  slice["output_nodes"][0]["size"] = 8;
+  strided["plugins"][4]["config_params"]["input_types"][0]["shape"] = {1, 1, 2, 1};
+  strided["plugins"][4]["config_params"]["output_types"][0]["shape"] = {1, 1, 2, 1};
+  strided["plugins"][4]["input_nodes"][0]["size"] = 8;
+  strided["plugins"][4]["output_nodes"][0]["size"] = 8;
+  auto strided_evidence = mla_evidence;
+  strided_evidence[0].topology.monolithic_ofm_extent_bytes = 32U;
+  auto materialized_evidence = host_evidence;
+  materialized_evidence[0].input_types[0].shape = {1, 1, 2, 1};
+  materialized_evidence[0].output_types[0].shape = {1, 1, 2, 1};
+  materialized_evidence[0].output_alias_input = {-1};
+  strided["plugins"].erase(5);
+  const auto rejected =
+      MpkDecoder{}.decode_json(strided.dump(), strided_evidence, materialized_evidence);
+  check(!rejected && rejected.error &&
+            rejected.error->detail.find("non-contiguous view") != std::string::npos,
+        "a genuinely strided index array cannot feed a dense materializing host job");
+
+  // An identity must preserve multi-element MLA row padding, not make it tight.
+  auto padded = manifest;
+  padded["plugins"].erase(5); // Final reshape.
+  padded["plugins"].erase(3); // Scalar crop.
+  const auto type = nlohmann::json{{"scalar", "float32"}, {"shape", {1, 2, 3}}};
+  const auto input_type = nlohmann::json{{"scalar", "bfloat16"}, {"shape", {1, 1, 640}}};
+  padded["plugins"][2]["config_params"]["input_types"] = {input_type, input_type};
+  padded["plugins"][2]["config_params"]["output_types"] = {type};
+  padded["plugins"][2]["output_nodes"][0]["size"] = 24;
+  auto& identity = padded["plugins"][3];
+  identity["sequence"] = 4;
+  identity["config_params"]["input_types"] = {type};
+  identity["config_params"]["output_types"] = {type};
+  identity["input_nodes"][0] = {{"name", "MLA_0"}, {"size", 24}};
+  identity["output_nodes"][0]["size"] = 24;
+  auto padded_mla = mla_evidence;
+  padded_mla[0].topology.monolithic_ofm = false;
+  padded_mla[0].topology.ofm_symbol_names = {"data.ofm.persistent.afe_mla_output_0.b0"};
+  padded_mla[0].topology.ofm_extent_bytes = {32U};
+  auto padded_host = host_evidence;
+  padded_host[0].input_types = {{"float32", {1, 2, 3}}};
+  padded_host[0].output_types = padded_host[0].input_types;
+  const auto decoded = MpkDecoder{}.decode_json(padded.dump(), padded_mla, padded_host);
+  if (!decoded && decoded.error)
+    std::cerr << decoded.error->json_path << ": " << decoded.error->detail << "\n";
+  check(static_cast<bool>(decoded), "padded multi-element identity decodes");
+  const auto commands = PhysicalExecutionLowerer::lower(*decoded.plan, &error);
+  check(commands && std::none_of(commands->commands.begin(), commands->commands.end(),
+                                 [](const auto& cmd) { return cmd.engine == PhysicalEngine::A65; }),
+        "padded identity remains an address alias without an A65 command");
+  const auto publication = project_mla_ports(*decoded.plan, *commands);
+  const auto& view = publication.logical_outputs.front();
+  check(publication.logical_outputs.size() == 1U && view.dtype == "float32" &&
+            view.shape == TensorShape({1, 2, 3}) && view.stride_bytes == TensorShape({32, 16, 4}),
+        "identity publication preserves the padded MLA row pitch");
+  const std::array<float, 8> storage{1, 2, 3, -999, 4, 5, 6, -999};
+  std::vector<float> actual;
+  for (int row = 0; row < 2; ++row) {
+    for (int column = 0; column < 3; ++column) {
+      const auto offset =
+          view.byte_offset + row * view.stride_bytes[1] + column * view.stride_bytes[2];
+      check(offset >= 0 && offset % sizeof(float) == 0 && offset / sizeof(float) < storage.size(),
+            "published padded identity stays inside its allocation");
+      actual.push_back(storage[offset / sizeof(float)]);
+    }
+  }
+  check(actual == std::vector<float>({1, 2, 3, 4, 5, 6}),
+        "published identity values exclude padding from both rows");
+
+  auto chained = padded;
+  chained["plugins"].push_back(identity);
+  auto& tail = chained["plugins"].back();
+  tail["name"] = "alias_2";
+  tail["sequence"] = 5;
+  tail["input_nodes"][0]["name"] = "APU_1";
+  tail["output_nodes"][0]["name"] = "alias_2";
+  auto chain_host = padded_host;
+  chain_host.push_back(padded_host.front());
+  chain_host.back().logical_stage_id = "alias_2";
+  const auto chain = MpkDecoder{}.decode_json(chained.dump(), padded_mla, chain_host);
+  check(chain && chain.plan->value(chain.plan->model_outputs().front().value_id)
+                         ->storage_binding->stride_bytes == view.stride_bytes,
+        "an identity chain preserves an existing padded read expression");
+
+  identity["config_params"]["output_types"][0]["shape"] = {1, 6};
+  padded_host[0].output_types[0].shape = {1, 6};
+  const auto reshaped = MpkDecoder{}.decode_json(padded.dump(), padded_mla, padded_host);
+  check(!reshaped && reshaped.error &&
+            reshaped.error->code == MpkDecodeErrorCode::ConfigurationMismatch &&
+            reshaped.error->detail.find("non-contiguous") != std::string::npos,
+        "an alias cannot reshape padded rows into a tight tensor");
 }
 
 void test_registered_detess_layout_is_preserved_through_dequant() {
@@ -1705,46 +2125,47 @@ void test_rank2_detess_dequant_execution_geometry() {
         manifest.dump(), monolithic_topology(16U, packed_bytes), "rank2-detess.json");
     check(static_cast<bool>(decoded), "rank-2 detess/dequant manifest decodes");
     const auto& plan = *decoded.plan;
+    check(std::get<DetessellateOpConfig>(plan.ops().at(1).config).frame_shape_semantics ==
+              DetessFrameShapeSemantics::LegacyMpk,
+          "MPK decoder explicitly marks its legacy rank-two geometry authority");
     std::string error;
     const auto physical = PhysicalExecutionLowerer::lower(plan, &error);
     check(physical.has_value(), "rank-2 detess/dequant lowers physically");
     std::vector<PhysicalCommandId> commands;
     for (const auto& command : physical->commands) {
-      if (command.graph_id == 227U)
+      if (command.implementation_id == "detessdequant")
         commands.push_back(command.id);
     }
     check(commands.size() == 1U, "rank-2 detess/dequant uses one fused command");
-    const auto arena =
-        FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-                                    kLegacyEvoCmaRegionAlignmentBytes, &error);
-    check(arena.has_value(), "rank-2 detess/dequant arena compiles");
+
     const auto contract =
-        build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, *arena, &error);
+        build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, &error);
     if (!contract)
       std::cerr << error << "\n";
     check(contract.has_value(), "rank-2 detess/dequant projects runtime descriptors");
-    const auto& input = contract->payload.input_tensors.front();
-    const auto& output = contract->payload.output_tensors.front();
-    check(sima_ev_infer_dense_tensor_format(&output) == SIMA_EV_DENSE_FORMAT_NDHWC,
-          "rank-2 detess/dequant output must satisfy the backend dense format contract");
+    const auto& input = contract->payload.input_tensors.front().descriptor();
+    const auto& output = contract->payload.output_tensors.front().descriptor();
+    // Exact NC/HW migration belongs to the MPK boundary, not a legacy graph
+    // adapter. Public rank two remains unchanged; blocked execution has HWC.
     const std::array<int, 4> shape{1, 1, 1, channels};
     const std::array<std::uint8_t, 4> axes{SIMA_EV_AXIS_N, SIMA_EV_AXIS_H, SIMA_EV_AXIS_W,
                                            SIMA_EV_AXIS_C};
     check(input.shape.rank == 4U && output.shape.rank == 4U,
-          "rank-2 detess/dequant supplies complete execution geometry");
-    for (std::size_t axis = 0U; axis < shape.size(); ++axis) {
+          "rank-2 detess/dequant supplies proved blocked execution geometry");
+    for (std::size_t axis = 0; axis < shape.size(); ++axis)
       check(input.shape.sizes[axis] == shape[axis] && output.shape.sizes[axis] == shape[axis] &&
                 input.shape.axis_semantics[axis] == axes[axis] &&
                 output.shape.axis_semantics[axis] == axes[axis],
-            "detess/dequant endpoints must agree on execution shape and axes");
-    }
-    const std::array<std::int64_t, 4> tiles{1, 1, 1, tile_channels};
-    const std::array<std::int64_t, 4> strides{channels * 4, channels * 4, channels * 4, 4};
-    for (std::size_t axis = 0U; axis < shape.size(); ++axis) {
-      check(input.layout.tiled.tile_sizes[axis] == tiles[axis] &&
-                output.layout.strided.strides_bytes[axis] == strides[axis],
-            "execution views preserve channel tiles and contiguous FP32 output strides");
-    }
+            "detess/dequant endpoints agree on exact execution geometry");
+    SimaPluginStaticManifest manifest_contract;
+    auto stage = simaai::neat::project_processcvu_stage_contract(*contract);
+    stage.element_name = stage.logical_stage_id = "rank2_detessdequant";
+    stage.processcvu.requested_run_target = "EV74";
+    manifest_contract.stages.push_back(std::move(stage));
+    const auto failure = prepare_kernel_stage_recipes(&manifest_contract, {}, {}, {}, {});
+    if (failure)
+      std::cerr << failure->field << ": " << failure->message << '\n';
+    check(!failure, "rank-2 fused request passes real installed Scheduler/Kernels admission");
     check(input.storage.nbytes == static_cast<std::uint64_t>(packed_bytes) &&
               output.storage.nbytes == static_cast<std::uint64_t>(channels * 4),
           "execution geometry preserves packed input and dense output byte extents");
@@ -1754,6 +2175,88 @@ void test_rank2_detess_dequant_execution_geometry() {
                   std::vector<std::vector<int>>{{1, channels}},
           "rank-2 detess/dequant preserves the public logical shape");
   }
+}
+
+// Real Scheduler public admission is exercised without connecting a device.
+// A valid request reaches this deliberately unavailable transport only after
+// Scheduler has proved its recipe/publication relation. No buffers are submitted.
+void check_resnet_canonical_publication(const simaai::neat::CompiledProcessCvuContract& contract) {
+  namespace rt = simaai::scheduler::client;
+  namespace test = simaai::scheduler::testing;
+  namespace gs = rt;
+  gst_init(nullptr, nullptr);
+  check(simaai::gst::tensor_buffer_register_meta(), "tensor metadata registration succeeds");
+  auto stage = simaai::neat::project_processcvu_stage_contract(contract);
+  stage.element_name = stage.logical_stage_id = "resnet_fused_postprocess";
+  stage.processcvu.requested_run_target = "EV74";
+  // This standalone postprocessor imports its MLA producer's published buffers.
+  for (auto& input : stage.physical_inputs)
+    input.address_source = PhysicalAddressSource::RuntimePhysicalBinding;
+  SimaPluginStaticManifest manifest;
+  manifest.stages.push_back(std::move(stage));
+  const auto failure = prepare_kernel_stage_recipes(&manifest, {}, {}, {}, {});
+  if (failure)
+    std::cerr << failure->field << ": " << failure->message << '\n';
+  check(!failure, "ResNet MPK-derived fused contract prepares canonically");
+  finalize_pipeline_storage(manifest);
+  check(!finalize_stage_publications(&manifest),
+        "ResNet publication finalizes against its owned layout");
+  const auto& authored = manifest.stages.front();
+  const auto& recipe = *authored.native_kernel;
+  check(recipe.members.size() == 1U && recipe.members.front().inputs.size() == 1U &&
+            recipe.members.front().outputs.size() == 1U,
+        "ResNet retains one fused executable with only outer bindings");
+  const auto inspected = rt::inspect_kernel(recipe.members.front().executable);
+  check(std::holds_alternative<rt::KernelInspection>(inspected), "fused executable is inspectable");
+  const auto& output = std::get<rt::KernelInspection>(inspected).outputs().front();
+  const auto dimensions = output.shape;
+  check(std::vector<std::int64_t>(dimensions.begin(), dimensions.end()) ==
+            std::vector<std::int64_t>({1, 1, 1, 1000}),
+        "checked fused execution retains Detess geometry");
+  gs::TensorStagePublication publication;
+  std::string error;
+  check(build_kernel_stage_publication(authored, &publication, &error),
+        "ResNet public tensor contract builds");
+  check(publication.contract->logical_outputs.size() == 1U &&
+            publication.contract->logical_outputs.front().shape ==
+                std::vector<std::int64_t>({1, 1000}) &&
+            publication.contract->logical_outputs.front().size_bytes == 4000U &&
+            publication.physical_views.size() == 1U &&
+            publication.physical_views.front().relation ==
+                gs::TensorStagePublicationRelation::SingletonAxes,
+        "Core preserves MPK public geometry and proven singleton authority");
+
+  gs::StageRequest request;
+  gs::KernelProgram program;
+  program.target = recipe.target;
+  program.members = recipe.members;
+  request.program = std::move(program);
+  request.publication = publication;
+  request.layout = authored.frame_layout;
+  test::AdmissionCapture transport;
+  const auto result = test::reject_device_after_validation(request, transport);
+  const auto* admission = result ? &*result : nullptr;
+  if (admission)
+    std::cerr << "ResNet cold admission boundary: " << admission->field << ": "
+              << admission->message << '\n';
+  check(admission && admission->code == rt::ErrorCode::UnsupportedTarget &&
+            admission->field == "prepared.ev74" && transport.queries > 0U &&
+            transport.submissions == 0U,
+        "valid Core publication passes Scheduler checks before unavailable transport rejection");
+
+  // Permission does not permit arbitrary equal-byte reshapes. Keep the checked
+  // operation unchanged and corrupt only the published logical geometry.
+  auto wrong_publication =
+      std::make_shared<simaai::gst::TensorBufferPublishContract>(*publication.contract);
+  wrong_publication->logical_outputs.front().shape = {2, 500};
+  request.publication.contract = std::move(wrong_publication);
+  const auto queries = transport.queries;
+  const auto rejected = test::reject_device_after_validation(request, transport);
+  const auto* mismatch = rejected ? &*rejected : nullptr;
+  check(mismatch && mismatch->code == rt::ErrorCode::InvalidBinding &&
+            mismatch->field == "output.contract" && transport.queries == queries &&
+            transport.submissions == 0U,
+        "equal-byte non-singleton shape fails Scheduler authority before device admission");
 }
 
 void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
@@ -1776,6 +2279,25 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
   check(!grammar_rejected && grammar_rejected.error->code == MpkDecodeErrorCode::InvalidField,
         "batch flatten accepts only its exact two-shape-list grammar");
   const auto& plan = *result.plan;
+  auto mla_contract = project_single_mla(plan);
+  check(mla_contract.logical_outputs.front().size_bytes == 1000U &&
+            mla_contract.logical_outputs.front().shape == TensorShape({1, 1, 1, 1000}) &&
+            mla_contract.physical_outputs.front().size_bytes == 1008U &&
+            mla_contract.dispatcher_physical_outputs.front().size_bytes == 1008U,
+        "MLA publishes logical bytes while retaining its padded hardware transfer extent");
+  mla_contract.stage_id = mla_contract.node_name = "MLA_0";
+  mla_contract.model_path = "resnet.elf";
+  mla_contract.batch_size = mla_contract.batch_sz_model = 1;
+  SimaPluginStaticManifest mla_manifest;
+  mla_manifest.stages.push_back(simaai::neat::project_mla_stage_contract(
+      stagesemantics::build_mla_compiled_contract(mla_contract)));
+  finalize_pipeline_storage(mla_manifest);
+  check(!finalize_stage_publications(&mla_manifest), "padded MLA publication finalizes");
+  const auto& mla_stage = mla_manifest.stages.front();
+  check(mla_stage.frame_layout && mla_stage.tensor_publication &&
+            mla_stage.frame_layout->outputs.front().span.size_bytes == 1008U &&
+            mla_stage.tensor_publication->contract->logical_outputs.front().size_bytes == 1000U,
+        "Scheduler reserved storage remains separate from logical tensor publication");
   check(plan.ops().size() == 4U && plan.ops()[1].kind == OpKind::Detessellate &&
             plan.ops()[2].kind == OpKind::Reshape &&
             plan.ops()[2].kernel == "batch_flatten_transform" &&
@@ -1805,7 +2327,7 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
       continue;
     }
     ++cvu_commands;
-    if (command.graph_id == 227U) {
+    if (command.implementation_id == "detessdequant") {
       graph227_commands.push_back(command.id);
     }
   }
@@ -1816,19 +2338,15 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
             !physical->command_for_semantic_op[2U].has_value(),
         "detess/view/dequant is one graph227 submission and the view schedules no command");
 
-  const auto arena =
-      FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-                                  kLegacyEvoCmaRegionAlignmentBytes, &error);
-  check(arena.has_value(), "relation-transparent graph227 frame arena compiles");
-  const auto contract = build_dmabuf_plan_processcvu_command_contract(
-      plan, *physical, graph227_commands, *arena, &error);
-  check(contract && contract->payload.graph_id == 227 &&
+  const auto contract =
+      build_dmabuf_plan_processcvu_command_contract(plan, *physical, graph227_commands, &error);
+  check(contract && contract->payload.graph_name == "detessdequant" &&
             contract->payload.input_tensors.size() == 1U &&
             contract->payload.output_tensors.size() == 1U,
         "projection accepts the same proved relation path and authors one graph227 outer pair");
   if (contract) {
-    const auto& input = contract->payload.input_tensors.front();
-    const auto& output = contract->payload.output_tensors.front();
+    const auto& input = contract->payload.input_tensors.front().descriptor();
+    const auto& output = contract->payload.output_tensors.front().descriptor();
     const std::array<int, 4U> expected_shape{1, 1, 1, 1000};
     const std::array<std::uint8_t, 4U> expected_axes{SIMA_EV_AXIS_N, SIMA_EV_AXIS_H, SIMA_EV_AXIS_W,
                                                      SIMA_EV_AXIS_C};
@@ -1854,6 +2372,12 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
               contract->runtime_contract.logical_outputs.size() == 1U &&
               contract->runtime_contract.logical_outputs.front().layout.empty(),
           "unknown post-view layout must not inherit the physical EV image axes");
+    check(contract->runtime_contract.logical_outputs.front().publication_relation ==
+                  PublicationViewRelation::SingletonAxes &&
+              contract->exposed_view.exposed_logical_outputs.front().publication_relation ==
+                  PublicationViewRelation::SingletonAxes,
+          "both runtime and exposed projection retain singleton authority");
+    check_resnet_canonical_publication(*contract);
     auto layout_payload = contract->payload;
     layout_payload.runtime_output_logical_layout_list = {"HWC", ""};
     check(layout_payload.logical_output_layout_token(0U) == "HWC" &&
@@ -1863,6 +2387,33 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
     check(layout_payload.logical_output_layout_token() == "HWC",
           "payloads without authored logical layout retain physical layout fallback");
   }
+
+  // A legitimate reshape may preserve bytes without being a singleton view.
+  // Keep batch one so this tests publication geometry, not a batch fusion barrier.
+  // Such a model must not receive authority for the fused Detess output geometry.
+  auto reshaped_json = nlohmann::json::parse(resnet_batch_flatten_manifest());
+  auto& view_config = reshaped_json["plugins"][2]["config_params"];
+  view_config["kernel"] = "reshape_transform";
+  view_config["params"]["newshape"] = {1, 20, 50};
+  view_config["params"]["output_shapes"] = {{1, 20, 50}};
+  auto& dequant_params = reshaped_json["plugins"][3]["config_params"]["params"];
+  dequant_params["input_shapes"] = {{1, 20, 50}};
+  dequant_params["output_shapes"] = {{1, 20, 50}};
+  const auto reshaped = MpkDecoder{}.decode_json(
+      reshaped_json.dump(), monolithic_topology(16U, 1008U), "resnet-nonsingleton-view.json");
+  check(static_cast<bool>(reshaped), "equal-byte non-singleton reshape has valid model semantics");
+  const auto reshaped_physical = PhysicalExecutionLowerer::lower(*reshaped.plan, &error);
+  check(reshaped_physical.has_value(), "non-singleton shape remains a mandatory fused candidate");
+
+  std::vector<PhysicalCommandId> reshaped_commands;
+  for (const auto& command : reshaped_physical->commands)
+    if (command.engine == PhysicalEngine::Cvu && command.implementation_id == "detessdequant")
+      reshaped_commands.push_back(command.id);
+  check(reshaped_commands.size() == 1U, "non-singleton reshape must not silently unfuse");
+  const auto incompatible = build_dmabuf_plan_processcvu_command_contract(
+      *reshaped.plan, *reshaped_physical, reshaped_commands, &error);
+  check(!incompatible && error.find("singleton") != std::string::npos,
+        "equal-byte non-singleton projection fails with a specific singleton-relation diagnostic");
 
   auto two_views =
       replace_once(resnet_batch_flatten_manifest(),
@@ -1903,7 +2454,7 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
   std::size_t twice_graph227 = 0U;
   if (twice_physical) {
     for (const auto& command : twice_physical->commands) {
-      twice_graph227 += command.graph_id == 227U ? 1U : 0U;
+      twice_graph227 += command.implementation_id == "detessdequant" ? 1U : 0U;
     }
   }
   check(twice_physical && twice_graph227 == 1U && !twice_physical->command_for_semantic_op[2U] &&
@@ -1929,9 +2480,9 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
   std::size_t graph227 = 0U;
   if (split) {
     for (const auto& command : split->commands) {
-      graph3 += command.graph_id == 3U ? 1U : 0U;
-      graph223 += command.graph_id == 223U ? 1U : 0U;
-      graph227 += command.graph_id == 227U ? 1U : 0U;
+      graph3 += command.implementation_id == "detess" ? 1U : 0U;
+      graph223 += command.implementation_id == "dequant" ? 1U : 0U;
+      graph227 += command.implementation_id == "detessdequant" ? 1U : 0U;
     }
   }
   check(split && graph3 == 1U && graph223 == 1U && graph227 == 0U,
@@ -1941,13 +2492,13 @@ void test_resnet_batch_flatten_is_transparent_to_fused_graph227() {
 void test_fused_ingress_layout_evidence_authors_exact_descriptor_axes() {
   struct Case {
     const std::string& manifest;
-    std::uint32_t graph_id;
+    const char* operation;
     std::uint64_t mla_ifm_bytes;
     const char* label;
   };
   const std::array cases{
-      Case{cast_tess_manifest(), 224U, 128U, "Cast+Tess"},
-      Case{quant_tess_manifest(), 226U, 64U, "Quantize+Tess"},
+      Case{cast_tess_manifest(), "casttess", 128U, "Cast+Tess"},
+      Case{quant_tess_manifest(), "quanttess", 64U, "Quantize+Tess"},
   };
   const std::array<std::uint8_t, 4U> expected_axes{SIMA_EV_AXIS_N, SIMA_EV_AXIS_H, SIMA_EV_AXIS_W,
                                                    SIMA_EV_AXIS_C};
@@ -1978,27 +2529,25 @@ void test_fused_ingress_layout_evidence_authors_exact_descriptor_axes() {
     check(physical.has_value(), "raw fused-ingress plan lowers physically");
     std::vector<PhysicalCommandId> commands;
     for (const auto& command : physical->commands) {
-      if (command.engine == PhysicalEngine::Cvu && command.graph_id == test_case.graph_id) {
+      if (command.engine == PhysicalEngine::Cvu &&
+          command.implementation_id == test_case.operation) {
         commands.push_back(command.id);
       }
     }
     check(commands.size() == 1U, "raw AFE pair selects one exact fused graph command");
-    const auto arena =
-        FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-                                    kLegacyEvoCmaRegionAlignmentBytes, &error);
-    check(arena.has_value(), "raw fused-ingress frame arena compiles");
+
     const auto contract =
-        build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, *arena, &error);
+        build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, &error);
     check(contract.has_value(), "raw fused-ingress ProcessCVU descriptor contract builds");
     check(contract->payload.input_tensors.size() == 1U &&
               contract->payload.output_tensors.size() == 1U,
           "fused ingress descriptor binds exactly one outer pair");
-    const auto& input = contract->payload.input_tensors.front();
-    const auto& output = contract->payload.output_tensors.front();
-    const std::size_t first_axis = test_case.graph_id == 224U ? 1U : 0U;
+    const auto& input = contract->payload.input_tensors.front().descriptor();
+    const auto& output = contract->payload.output_tensors.front().descriptor();
+    const std::size_t first_axis = 0U;
     check(input.shape.rank == expected_axes.size() - first_axis &&
               output.shape.rank == expected_axes.size() - first_axis,
-          "fused ingress uses HWC execution for batch-one CastTess and retains QuantTess rank");
+          "canonical fused ingress retains the exact NHWC execution geometry");
     for (std::size_t axis = first_axis; axis < expected_axes.size(); ++axis) {
       check(input.shape.axis_semantics[axis - first_axis] == expected_axes[axis] &&
                 output.shape.axis_semantics[axis - first_axis] == expected_axes[axis],
@@ -2057,28 +2606,25 @@ void test_standalone_quantize_authors_exact_graph222_layout() {
   check(physical.has_value(), "standalone Quantize plan lowers physically");
   std::vector<PhysicalCommandId> commands;
   for (const auto& command : physical->commands) {
-    if (command.engine == PhysicalEngine::Cvu && command.graph_id == 222U) {
+    if (command.engine == PhysicalEngine::Cvu && command.implementation_id == "quant") {
       commands.push_back(command.id);
     }
   }
   check(commands.size() == 1U, "standalone Quantize selects one exact graph 222 command");
-  const auto arena =
-      FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-                                  kLegacyEvoCmaRegionAlignmentBytes, &error);
-  check(arena.has_value(), "standalone Quantize frame arena compiles");
+
   const auto contract =
-      build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, *arena, &error);
+      build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, &error);
   check(contract.has_value(), "standalone graph 222 descriptor contract builds");
 
   const auto& payload = contract->payload;
-  check(payload.graph_id == 222 && payload.input_tensors.size() == 1U &&
+  check(payload.graph_name == "quant" && payload.input_tensors.size() == 1U &&
             payload.output_tensors.size() == 1U && payload.round_off == 1 && payload.has_q_scale &&
             payload.q_scale == 0.25 && payload.has_q_zp && payload.q_zp == 0 &&
             payload.q_scale_list == std::vector<double>{0.25} &&
             payload.q_zp_list == std::vector<int>{0},
         "graph 222 retains its exact typed qparams and TONEAREST mode");
-  const auto& input_desc = payload.input_tensors.front();
-  const auto& output_desc = payload.output_tensors.front();
+  const auto& input_desc = payload.input_tensors.front().descriptor();
+  const auto& output_desc = payload.output_tensors.front().descriptor();
   check(input_desc.dtype == SIMA_EV_DTYPE_FP32 && output_desc.dtype == SIMA_EV_DTYPE_INT8 &&
             input_desc.storage.nbytes == 256U && output_desc.storage.nbytes == 64U &&
             sima_ev_infer_dense_tensor_format(&input_desc) == SIMA_EV_DENSE_FORMAT_NDHWC &&
@@ -2120,18 +2666,14 @@ void test_scalar_quantize_keeps_generic_logical_shapes() {
     const auto project = [](const ModelExecutionPlan& plan, std::string* error) {
       const auto physical = PhysicalExecutionLowerer::lower(plan, error);
       check(physical.has_value(), "generic Quantize lowers physically");
-      const auto arena =
-          FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-                                      kLegacyEvoCmaRegionAlignmentBytes, error);
-      check(arena.has_value(), "generic Quantize arena compiles");
+
       std::vector<PhysicalCommandId> commands;
       for (const auto& command : physical->commands) {
-        if (command.engine == PhysicalEngine::Cvu && command.graph_id == 222U)
+        if (command.engine == PhysicalEngine::Cvu && command.implementation_id == "quant")
           commands.push_back(command.id);
       }
       check(commands.size() == 1U, "generic Quantize selects graph 222");
-      return build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, *arena,
-                                                           error);
+      return build_dmabuf_plan_processcvu_command_contract(plan, *physical, commands, error);
     };
     std::string error;
     const auto contract = project(*decoded.plan, &error);
@@ -2139,13 +2681,16 @@ void test_scalar_quantize_keeps_generic_logical_shapes() {
       std::cerr << "Generic Quantize projection: " << error << "\n";
     check(contract.has_value(), "generic Quantize physical descriptor builds");
     const auto& payload = contract->payload;
-    check(sima_ev_infer_dense_tensor_format(&payload.input_tensors.front()) ==
-                  SIMA_EV_DENSE_FORMAT_NDHWC &&
-              sima_ev_infer_dense_tensor_format(&payload.output_tensors.front()) ==
-                  SIMA_EV_DENSE_FORMAT_NDHWC,
-          "generic Quantize uses a dense HWC execution view");
-    check(payload.input_tensors.front().storage.nbytes == elements * 4U &&
-              payload.output_tensors.front().storage.nbytes == elements &&
+    check(payload.input_tensors.front().descriptor().shape.rank == shape.size() &&
+              payload.output_tensors.front().descriptor().shape.rank == shape.size(),
+          "canonical Quantize preserves generic tensor rank without a fabricated HWC view");
+    for (std::size_t axis = 0; axis < shape.size(); ++axis) {
+      check(payload.input_tensors.front().descriptor().shape.sizes[axis] == shape[axis] &&
+                payload.output_tensors.front().descriptor().shape.sizes[axis] == shape[axis],
+            "canonical Quantize retains every logical extent");
+    }
+    check(payload.input_tensors.front().descriptor().storage.nbytes == elements * 4U &&
+              payload.output_tensors.front().descriptor().storage.nbytes == elements &&
               payload.q_scale == 0.25 && payload.q_zp == 0 && payload.round_off == 1,
           "generic Quantize preserves exact bytes and arithmetic");
     const auto& op = decoded.plan->ops().front();
@@ -2175,8 +2720,15 @@ void test_scalar_quantize_keeps_generic_logical_shapes() {
       } else {
         check(strided.has_value(), "pitched Quantize fixture retains valid addressed storage");
         error.clear();
-        check(!project(*strided, &error).has_value(),
-              "generic Quantize must not flatten storage holes");
+        const auto pitched = project(*strided, &error);
+        check(pitched.has_value(), "canonical Quantize admits an exact pitched input");
+        const auto& descriptor = pitched->payload.input_tensors.front().descriptor();
+        check(descriptor.storage.nbytes == 52U && descriptor.shape.rank == shape.size(),
+              "pitched Quantize retains its addressed span rather than flattening holes");
+        for (std::size_t axis = 0; axis < strides.size(); ++axis) {
+          check(descriptor.layout.strided.strides_bytes[axis] == strides[axis],
+                "pitched Quantize preserves compiler-authored byte strides");
+        }
       }
     }
   }
@@ -2496,21 +3048,18 @@ void test_batch_slice_transport() {
     std::string error;
     const auto physical = PhysicalExecutionLowerer::lower(plan, &error);
     check(physical.has_value(), "batched slice transport lowers");
-    const auto arena =
-        FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-                                    kLegacyEvoCmaRegionAlignmentBytes, &error);
-    check(arena.has_value(), "batched slice transport allocates");
+
     bool checked = false;
     for (const auto& command : physical->commands) {
       if (command.role != PhysicalCommandRole::Egress)
         continue;
       const std::array<PhysicalCommandId, 1> ids{command.id};
       const auto contract =
-          build_dmabuf_plan_processcvu_command_contract(plan, *physical, ids, *arena, &error);
+          build_dmabuf_plan_processcvu_command_contract(plan, *physical, ids, &error);
       if (!contract)
         std::cerr << error << '\n';
       check(contract.has_value(), "batched slice transport projects");
-      const auto& input = contract->payload.input_tensors.front();
+      const auto& input = contract->payload.input_tensors.front().descriptor();
       check(input.shape.sizes[0] == batch && input.shape.sizes[1] == 7 &&
                 input.layout.strided.strides_bytes[0] == 16 &&
                 input.storage.nbytes == static_cast<std::uint64_t>((batch - 1) * 16 + 14),
@@ -2601,20 +3150,17 @@ void test_input_storage_from_executable() {
             std::string error;
             const auto physical = PhysicalExecutionLowerer::lower(plan, &error);
             check(physical.has_value(), "inferred input storage lowers to existing conversions");
-            const auto arena =
-                FrameSlotArenaPlan::compile(plan, *physical, FrameSlotArenaReuse::DisjointLifetimes,
-                                            kLegacyEvoCmaRegionAlignmentBytes, &error);
-            check(arena.has_value(), "inferred input storage allocates its physical span");
+
             for (const auto& command : physical->commands) {
               if (command.role != PhysicalCommandRole::Ingress)
                 continue;
               const std::array<PhysicalCommandId, 1> ids{command.id};
-              const auto contract = build_dmabuf_plan_processcvu_command_contract(
-                  plan, *physical, ids, *arena, &error);
+              const auto contract =
+                  build_dmabuf_plan_processcvu_command_contract(plan, *physical, ids, &error);
               if (!contract)
                 std::cerr << error << '\n';
               check(contract.has_value(), "inferred channel padding projects a runtime contract");
-              const auto& output = contract->payload.output_tensors.front();
+              const auto& output = contract->payload.output_tensors.front().descriptor();
               const auto addressed = quantized ? padded : padded - (lane_channels - channels) * 2U;
               check(output.storage.nbytes == addressed,
                     "conversion descriptor covers exactly the addressed channel values");
@@ -2761,8 +3307,11 @@ int main(const int argc, char** argv) {
   test_detess_byte_carrier_keeps_logical_frame();
   test_unpack_tiled_carriers_keep_storage_geometry();
   test_dense_ifm_tail_padding();
+  test_int8_mask_ifm_tail_padding();
+  test_direct_input_ifm_tail_padding();
   test_unpack_and_slice_are_read_expressions();
   test_reshape_is_an_exact_read_expression();
+  test_host_alias_publication();
   test_registered_detess_layout_is_preserved_through_dequant();
   test_rank2_detess_dequant_execution_geometry();
   test_resnet_batch_flatten_is_transparent_to_fused_graph227();

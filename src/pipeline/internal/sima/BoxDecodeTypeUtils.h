@@ -41,6 +41,10 @@ std::optional<SuperPointOutputFormat> parse_superpoint_output_format_token(std::
 /// True when `type` is anything other than `BoxDecodeType::Unspecified`.
 bool is_box_decode_type_specified(BoxDecodeType type);
 
+/// True when each port owns its dtype/quantization rather than one route-wide dtype.
+/// Numerical per-head compatibility remains a Kernels admission responsibility.
+bool box_decode_type_uses_per_port_dtype(BoxDecodeType type);
+
 /// True when the option implies all class-score channels live in the same domain (e.g.,
 /// post-sigmoid).
 bool is_box_decode_type_option_requires_uniform_score_domain(BoxDecodeTypeOption option);

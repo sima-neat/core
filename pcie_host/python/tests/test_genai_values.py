@@ -29,6 +29,19 @@ def test_explicit_request_values():
   assert len(request.images) == 1
 
 
+@pytest.mark.parametrize("effort", ["low", "medium", "high"])
+@pytest.mark.parametrize("thinking", [False, True])
+def test_reasoning_effort(effort, thinking):
+  request = genai.GenerationRequest()
+  assert request.reasoning_effort == "low"
+  request.reasoning_effort = effort
+  request.enable_thinking = thinking
+  assert request.reasoning_effort == effort
+  assert request.enable_thinking is thinking
+  with pytest.raises(TypeError):
+    request.reasoning_effort = 3
+
+
 def test_in_memory_vlm_images():
   image = np.zeros((2, 3, 3), dtype=np.uint8)
   for value in (genai.GenerationRequest(), genai.ChatMessage()):

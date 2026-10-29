@@ -90,9 +90,11 @@ struct BoxDecodeOptionsInternal;
  * variants, YOLOv8 pose, YOLO26 detection/pose/segmentation, YOLOv6, YOLOX, and four prepared SSD
  * profiles (SSD300-v1 softmax @300, SSD-Mobile-300-v1 sigmoid @300, SSD-Mobile-320-v1 sigmoid
  * @320, and SSDlite-Mobile-320-v1 softmax @320, all stretch-resize), plus DETR, EfficientDet,
- * RCNN stage 1, CenterNet, and SuperPoint. `BoxDecodeType::Unspecified` is only a sentinel and
- * fails before runtime. SuperPoint requires an explicit numerical profile unless an authoritative
- * MPK record supplies one; Neat never infers that profile from tensor geometry.
+ * CenterNet, SuperPoint and RCNN stage 1. RCNN uses top_k per area level and emits four
+ * count-plus-FP16 proposal groups for stage two, not ordinary BBOX records.
+ * `BoxDecodeType::Unspecified` is only a sentinel and fails before runtime. SuperPoint requires an
+ * explicit numerical profile unless an authoritative MPK record supplies one; Neat never infers
+ * that profile from tensor geometry.
  *
  * **Score and layout notes.**
  *
@@ -132,10 +134,11 @@ public:
    * @brief Construct from raw geometry — for graphs without a bound `Model`.
    *
    * @param decode_type          Decoder variant (see `BoxDecodeType`).
-   * @param detection_threshold  Score threshold; boxes below are dropped (`0.0` = use default).
-   * @param nms_iou_threshold    NMS IoU threshold. At `0.0`, YOLO26 skips NMS and other
-   *                             decoders suppress every overlapping box.
-   * @param top_k                Max boxes to keep after NMS (`0` = unlimited / variant default).
+   * @param detection_threshold  Score threshold; boxes below are dropped. Zero permits zero scores.
+   * @param nms_iou_threshold    NMS IoU threshold; zero skips YOLO26 NMS, not other NMS profiles.
+   * @param top_k                Positive output cap for bounding-box decoding. Zero is
+   *                             unspecified and must be resolved before build; it does not
+   *                             request unlimited output. SuperPoint uses its profile default.
    * @param element_name         Optional GStreamer element name.
    * @param original_width       Width of the unscaled source frame (used for box rescaling).
    * @param original_height      Height of the unscaled source frame.
@@ -182,9 +185,9 @@ public:
    *
    * @param model                Source model (provides input shape, routing hints, etc.).
    * @param decode_type          Decoder variant (see `BoxDecodeType`).
-   * @param detection_threshold  Score threshold (`0.0` = use default).
-   * @param nms_iou_threshold    NMS IoU threshold (`0.0` = keep the model's value).
-   * @param top_k                Max boxes to keep after NMS.
+   * @param detection_threshold  Score threshold (`0.0` = inherit the resolved Model value).
+   * @param nms_iou_threshold    NMS IoU threshold (`0.0` = inherit the resolved Model value).
+   * @param top_k                Output cap (`0` = inherit the resolved Model value, not unlimited).
    * @param element_name         Optional GStreamer element name.
    * @param route_tess_needed    Override: does the route need a tess stage upstream?
    * @param route_quant_needed   Override: does the route need a quant stage upstream?
@@ -282,6 +285,10 @@ public:
   int top_k_internal() const;
   int original_width_internal() const;
   int original_height_internal() const;
+  // Explicit user geometry, before model-derived defaults; retained by retargeting.
+  int model_width_internal() const;
+  int model_height_internal() const;
+  std::optional<ResizeMode> resize_mode_override_internal() const;
   std::shared_ptr<Node> retargeted_for_model_internal(const Model& model) const;
   BoxDecodeTypeOption decode_type_option_internal() const;
   const std::optional<pipeline_internal::sima::ModelBoxdecodeSemantics>&

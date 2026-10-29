@@ -149,7 +149,10 @@ Use `Run::start_measurement(...)` around the workload your app owns. The returne
 - end-to-end push-to-output latency and throughput;
 - runtime counters for pushed, pulled, and dropped samples;
 - plugin/kernel and edge timing when requested in `MeasureOptions`;
-- optional power telemetry when the run has power monitoring enabled.
+- power from the deprecated `RunOptions::power_monitor`, when enabled.
+
+Record board power, temperatures, CPU usage, and memory over the same window with a
+[`TelemetryMonitor`](/develop-apps/development-workflow/model#record-board-telemetry).
 
 Keep setup, file downloads, per-frame logging, and report export outside the measured hot loop unless the question is end-to-end application cost.
 

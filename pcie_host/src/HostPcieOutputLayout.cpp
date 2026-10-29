@@ -1,14 +1,15 @@
 #include "HostPcieOutputLayout.h"
+#include <neat_pcie_return_layout.h>
 
 #include <limits>
 #include <stdexcept>
-#include <vector>
+#include <utility>
+
+static_assert(NEAT_PCIE_RETURN_CAPS_VERSION == 3u,
+              "Core PCIe requires logical return-layout version 3");
 
 namespace simaai::neat::pcie::internal {
 namespace {
-
-constexpr std::size_t kMaxRegions = 256;
-constexpr std::uint64_t kMaxBytes = 128U * 1024U * 1024U;
 
 [[noreturn]] void invalid(const char* reason) {
   throw std::runtime_error(std::string("Invalid PCIe return layout: ") + reason);
@@ -44,64 +45,68 @@ std::size_t tensor_span(const PcieTensorFact& tensor) {
 
 HostPcieOutputLayout resolve_output_layout(const PcieModelFacts& facts, const GstCaps* caps) {
   HostPcieOutputLayout out{facts};
-  if (!caps || gst_caps_get_size(caps) != 1)
-    invalid("missing single output CAPS");
-  const auto* s = gst_caps_get_structure(caps, 0);
-  if (!gst_structure_has_field(s, "pcie-return-layout-version") &&
-      !gst_structure_has_field(s, "pcie-return-raw-bytes") &&
-      !gst_structure_has_field(s, "pcie-return-regions"))
+  NeatPcieReturnLayout layout{};
+  GError* error = nullptr;
+  if (!neat_pcie_return_layout_read_caps(caps, &layout, &error)) {
+    const std::string message = error ? error->message : "invalid Scheduler return description";
+    g_clear_error(&error);
+    throw std::runtime_error("Invalid PCIe return layout: " + message);
+  }
+  if (!layout.count)
     return out;
-
-  guint version = 0;
-  guint64 raw_bytes = 0;
-  const GValue* regions = gst_structure_get_value(s, "pcie-return-regions");
-  if (!gst_structure_get_uint(s, "pcie-return-layout-version", &version) || version != 2 ||
-      !gst_structure_get_uint64(s, "pcie-return-raw-bytes", &raw_bytes) || !raw_bytes ||
-      raw_bytes > kMaxBytes || !regions || !GST_VALUE_HOLDS_ARRAY(regions))
-    invalid("missing or incompatible raw tensor layout");
-  const guint count = gst_value_array_get_size(regions);
-  if (!count || count % 2 || count / 2 > kMaxRegions)
-    invalid("invalid carrier count");
-
-  struct Region {
-    std::size_t offset, size, packed;
-  };
-  std::vector<Region> carriers;
-  std::size_t packed = 0;
-  for (guint i = 0; i < count; i += 2) {
-    const auto* offset_value = gst_value_array_get_value(regions, i);
-    const auto* size_value = gst_value_array_get_value(regions, i + 1);
-    if (!G_VALUE_HOLDS_UINT64(offset_value) || !G_VALUE_HOLDS_UINT64(size_value))
-      invalid("carrier offsets and sizes must be uint64");
-    const auto offset = g_value_get_uint64(offset_value);
-    const auto size = g_value_get_uint64(size_value);
-    if (!size || offset > raw_bytes || size > raw_bytes - offset || size > kMaxBytes - packed)
-      invalid("carrier exceeds raw allocation");
-    for (const auto& other : carriers)
-      if (offset < other.offset + other.size && other.offset < offset + size)
-        invalid("overlapping carriers");
-    carriers.push_back({static_cast<std::size_t>(offset), static_cast<std::size_t>(size), packed});
-    packed += static_cast<std::size_t>(size);
-  }
-  if (packed != facts.packed_output_bytes)
-    invalid("carrier extent differs from MPK contract");
-  for (auto& tensor : out.facts.outputs) {
-    const auto span = tensor_span(tensor);
-    bool found = false;
-    for (const auto& carrier : carriers) {
-      if (tensor.payload_offset < carrier.packed)
-        continue;
-      const auto local = tensor.payload_offset - carrier.packed;
-      if (local >= carrier.size || span > carrier.size - local)
-        continue;
-      tensor.payload_offset = carrier.offset + local;
-      found = true;
-      break;
+  if (is_bbox_output_caps(caps)) {
+    if (layout.count != 1)
+      invalid("BBOX output requires one logical region");
+    const auto& region = layout.regions[0];
+    PcieTensorFact tensor;
+    tensor.name = "BBOX";
+    tensor.dtype = "UINT8";
+    tensor.shape = {static_cast<std::int64_t>(region.size)};
+    tensor.size_bytes = region.size;
+    tensor.tensor_index = tensor.physical_index = 0;
+    tensor.payload_offset = region.offset;
+    out.facts.outputs = {std::move(tensor)};
+    out.facts.packed_output_bytes = region.size;
+    out.facts.dense_output_bytes = 0;
+  } else {
+    if (layout.count != facts.outputs.size())
+      invalid("logical output count differs from MPK contract");
+    const auto overlaps = [](std::size_t left, std::size_t left_size, std::size_t right,
+                             std::size_t right_size) {
+      return left <= right ? right - left < left_size : left - right < right_size;
+    };
+    for (std::size_t i = 0; i < facts.outputs.size(); ++i) {
+      const auto& tensor = facts.outputs[i];
+      const auto span = tensor_span(tensor);
+      const auto& region = layout.regions[i];
+      if (tensor.payload_offset > facts.packed_output_bytes ||
+          span > facts.packed_output_bytes - tensor.payload_offset || region.size != span)
+        invalid("logical output extent differs from MPK contract");
+      for (std::size_t j = 0; j < i; ++j) {
+        const auto& previous = facts.outputs[j];
+        const auto& previous_region = layout.regions[j];
+        const bool aliased =
+            overlaps(tensor.payload_offset, span, previous.payload_offset, previous_region.size);
+        if (aliased !=
+            overlaps(region.offset, region.size, previous_region.offset, previous_region.size))
+          invalid("logical output alias differs from MPK contract");
+        if (aliased) {
+          const bool same_relative_offset =
+              tensor.payload_offset <= previous.payload_offset
+                  ? region.offset <= previous_region.offset &&
+                        previous_region.offset - region.offset ==
+                            previous.payload_offset - tensor.payload_offset
+                  : previous_region.offset <= region.offset &&
+                        region.offset - previous_region.offset ==
+                            tensor.payload_offset - previous.payload_offset;
+          if (!same_relative_offset)
+            invalid("logical output alias offset differs from MPK contract");
+        }
+      }
+      out.facts.outputs[i].payload_offset = region.offset;
     }
-    if (!found)
-      invalid("tensor span does not fit its physical carrier");
   }
-  out.raw_bytes = static_cast<std::size_t>(raw_bytes);
+  out.raw_bytes = static_cast<std::size_t>(layout.raw_bytes);
   return out;
 }
 

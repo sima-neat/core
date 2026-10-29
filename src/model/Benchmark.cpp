@@ -1,10 +1,12 @@
 #include "model/Model.h"
-#include "model/internal/BenchmarkTelemetry.h"
 #include "model/internal/MlaLayerStats.h"
+#include "model/internal/MlaStageStats.h"
 #include "model/internal/ModelPack.h"
 #include "model/internal/ModelFormat.h"
 #include "model/internal/ModelInternal.h"
 #include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/internal/sima/BoxDecodeKernelAdmission.h"
+#include "pipeline/internal/TelemetryMonitorInternal.h"
 #include "pipeline/internal/TensorMath.h"
 
 #include <glib.h>
@@ -15,6 +17,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <exception>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -30,6 +33,25 @@ namespace {
 
 using internal::image_format_name;
 using internal::preprocess_color_format_name;
+
+const pipeline_internal::sima::MpkContract& require_mpk_contract(const Model& model) {
+  const auto& contract = internal::ModelAccess::pack(model).mpk_contract();
+  if (!contract)
+    throw std::runtime_error("MLA profiling requires an MPK manifest");
+  return *contract;
+}
+
+// MLA profiling is best effort: a failure keeps the measurements and names the reason.
+std::string collection_status(const char* stats_name, const std::function<void()>& collect) {
+  try {
+    collect();
+    return "ok";
+  } catch (const std::exception& error) {
+    std::cerr << "[WARN] Model::benchmark " << stats_name << " not collected: " << error.what()
+              << "\n";
+    return error.what();
+  }
+}
 
 Tensor make_synthetic_benchmark_tensor(const TensorSpec& spec, std::size_t input_index) {
   if (spec.shape.empty()) {
@@ -59,11 +81,7 @@ Tensor make_synthetic_benchmark_tensor(const TensorSpec& spec, std::size_t input
     shape.push_back(dim);
   }
 
-  if (spec.image_format == ImageSpec::PixelFormat::NV12 ||
-      spec.image_format == ImageSpec::PixelFormat::I420) {
-    throw std::runtime_error(
-        "Model::benchmark: planar image input specs are not supported by the synthetic benchmark");
-  }
+  internal::validate_synthetic_benchmark_image_format(spec);
 
   std::uint64_t element_count = 1;
   for (const int64_t dim : shape) {
@@ -155,14 +173,11 @@ BenchmarkInputGeometry benchmark_tensor_geometry(const Tensor& tensor) {
   return {};
 }
 
-BenchmarkInputGeometry benchmark_model_geometry(const Tensor& tensor,
-                                                const ResolvedPreprocessPlan& plan,
-                                                const PreprocessRuntimeMeta& meta) {
+// Model input size: the resize target, then the MLA input, then the ingress contract.
+BenchmarkInputGeometry benchmark_plan_geometry(const ResolvedPreprocessPlan& plan) {
   auto wh = [](int w, int h) { return BenchmarkInputGeometry{w, h}; };
-  for (const auto g :
-       {wh(meta.resized_width, meta.resized_height), wh(meta.scaled_width, meta.scaled_height),
-        wh(plan.effective.resize.width, plan.effective.resize.height),
-        wh(plan.mla_contract.width, plan.mla_contract.height)}) {
+  for (const auto g : {wh(plan.effective.resize.width, plan.effective.resize.height),
+                       wh(plan.mla_contract.width, plan.mla_contract.height)}) {
     if (g)
       return g;
   }
@@ -170,11 +185,38 @@ BenchmarkInputGeometry benchmark_model_geometry(const Tensor& tensor,
     if (auto g = wh(c.width, c.height))
       return g;
   }
-  if (const BenchmarkInputGeometry tensor_geometry = benchmark_tensor_geometry(tensor);
-      tensor_geometry) {
-    return tensor_geometry;
+  return {};
+}
+
+// Image preprocessing routes take an HW/HWC source image; tensor routes take the model tensor.
+bool benchmark_takes_source_image(const ResolvedPreprocessPlan& plan, bool has_image_format,
+                                  std::size_t rank) {
+  return plan.enabled && plan.resolved_kind == InputKind::Image && has_image_format &&
+         (rank == 2U || rank == 3U);
+}
+
+// A batch-1 NHWC image is the same source image as its HWC form.
+bool benchmark_takes_source_image(const ResolvedPreprocessPlan& plan, const Tensor& tensor) {
+  const bool batch_of_one = tensor.shape.size() == 4U && tensor.shape[0] == 1;
+  return benchmark_takes_source_image(plan, tensor.semantic.image.has_value(),
+                                      batch_of_one ? 3U : tensor.shape.size());
+}
+
+// Source image size: the requested original size, then the source image's own size, then the
+// model input size, then the input tensor's size.
+BenchmarkInputGeometry benchmark_source_geometry(BenchmarkInputGeometry input, bool source_image,
+                                                 const ResolvedPreprocessPlan& plan,
+                                                 const BenchmarkOptions& options) {
+  if (options.original_width.has_value() && options.original_height.has_value()) {
+    return {*options.original_width, *options.original_height};
   }
-  return wh(meta.original_width, meta.original_height);
+  if (source_image && input) {
+    return input;
+  }
+  if (const BenchmarkInputGeometry model = benchmark_plan_geometry(plan); model) {
+    return model;
+  }
+  return input;
 }
 
 std::string benchmark_resize_mode(ResizeMode mode) {
@@ -223,21 +265,16 @@ resolve_benchmark_preprocess_meta_impl(const Tensor& tensor, const ResolvedPrepr
                                        const BenchmarkOptions& options) {
   validate_benchmark_options(options);
 
-  const PreprocessRuntimeMeta existing =
-      tensor.semantic.preprocess.value_or(PreprocessRuntimeMeta{});
-  BenchmarkInputGeometry model_geometry = benchmark_model_geometry(tensor, plan, existing);
-  BenchmarkInputGeometry source_geometry{
-      options.original_width.value_or(existing.original_width),
-      options.original_height.value_or(existing.original_height)};
+  const BenchmarkInputGeometry tensor_geometry = benchmark_tensor_geometry(tensor);
+  const BenchmarkInputGeometry source_geometry = benchmark_source_geometry(
+      tensor_geometry, benchmark_takes_source_image(plan, tensor), plan, options);
   if (!source_geometry) {
-    source_geometry = model_geometry;
-  }
-  if (!model_geometry) {
-    model_geometry = source_geometry;
-  }
-  if (!source_geometry || !model_geometry) {
     throw std::runtime_error(
         "Model::benchmark: unable to infer synthetic source geometry required by BoxDecode");
+  }
+  BenchmarkInputGeometry model_geometry = benchmark_plan_geometry(plan);
+  if (!model_geometry) {
+    model_geometry = tensor_geometry ? tensor_geometry : source_geometry;
   }
 
   const ResizeMode resize_mode = options.resize_mode.value_or(
@@ -273,17 +310,32 @@ resolve_benchmark_preprocess_meta_impl(const Tensor& tensor, const ResolvedPrepr
   return *meta;
 }
 
-void attach_benchmark_preprocess_meta_for_boxdecode(const Model& model, TensorList& inputs,
+void attach_benchmark_preprocess_meta_for_boxdecode(const Model& model,
+                                                    const ResolvedPreprocessPlan& plan,
+                                                    TensorList& inputs,
                                                     const BenchmarkOptions& options) {
   if (internal::ModelAccess::resolved_post_kind(model) != internal::PostRouteStageKind::BoxDecode)
     return;
 
-  const ResolvedPreprocessPlan plan = model.resolved_preprocess_plan();
   const internal::PreprocessContractFlags flags =
       internal::ModelAccess::preprocess_contract_flags(model);
+  BenchmarkOptions geometry_options = options;
+  if (!geometry_options.resize_mode.has_value()) {
+    const bool resize_runs = plan.enabled && plan.effective.resize.enable != AutoFlag::Off;
+    if (resize_runs) {
+      geometry_options.resize_mode = plan.effective.resize.mode;
+    } else {
+      // A model-shaped synthetic tensor has identity geometry, but its nominal
+      // resize policy still belongs to the decoded recipe. Absence of an image
+      // resize is not evidence of Stretch (for example, YOLO26 segmentation).
+      const auto contract = internal::ModelAccess::build_boxdecode_stage_contract(model, false);
+      geometry_options.resize_mode =
+          pipeline_internal::sima::default_boxdecode_resize_mode(contract.payload.decode_type);
+    }
+  }
   for (Tensor& tensor : inputs) {
     tensor.semantic.preprocess =
-        internal::resolve_benchmark_preprocess_meta(tensor, plan, flags, options);
+        internal::resolve_benchmark_preprocess_meta(tensor, plan, flags, geometry_options);
   }
 }
 
@@ -294,15 +346,33 @@ TensorList make_synthetic_benchmark_inputs(const Model& model, const BenchmarkOp
   }
   TensorList inputs;
   inputs.reserve(specs.size());
+  const ResolvedPreprocessPlan plan = model.resolved_preprocess_plan();
   for (std::size_t i = 0; i < specs.size(); ++i) {
-    inputs.push_back(make_synthetic_benchmark_tensor(specs[i], i));
+    inputs.push_back(make_synthetic_benchmark_tensor(
+        internal::resolve_benchmark_input_spec(specs[i], plan, options), i));
   }
-  attach_benchmark_preprocess_meta_for_boxdecode(model, inputs, options);
+  attach_benchmark_preprocess_meta_for_boxdecode(model, plan, inputs, options);
+  return inputs;
+}
+
+// Provided inputs are checked against the model, then placed like synthetic inputs so the
+// measurement excludes a per-sample host import.
+TensorList prepare_provided_benchmark_inputs(const Model& model, const BenchmarkOptions& options) {
+  internal::ModelAccess::check_inputs(model, options.inputs, "Model::benchmark");
+  const ResolvedPreprocessPlan plan = model.resolved_preprocess_plan();
+  TensorList inputs;
+  inputs.reserve(options.inputs.size());
+  for (const Tensor& tensor : options.inputs) {
+    internal::require_provided_source_geometry(tensor, plan, options);
+    inputs.push_back(tensor.cvu());
+  }
+  attach_benchmark_preprocess_meta_for_boxdecode(model, plan, inputs, options);
   return inputs;
 }
 
 MeasureOptions make_benchmark_measure_options(int timeout_ms, int logical_batch_size,
                                               bool include_plugin_latency,
+                                              const std::string& input_source,
                                               std::string title = "NEAT Benchmark") {
   MeasureOptions opt;
   opt.duration_ms = timeout_ms;
@@ -313,7 +383,7 @@ MeasureOptions make_benchmark_measure_options(int timeout_ms, int logical_batch_
   opt.include_message_latency = false;
   opt.logical_batch_size = logical_batch_size > 0 ? logical_batch_size : 1;
   opt.title = std::move(title);
-  opt.input = "synthetic";
+  opt.input = input_source;
   return opt;
 }
 
@@ -328,10 +398,50 @@ void require_benchmark_output(const simaai::neat::Sample& out, const char* where
 
 namespace internal {
 
+void validate_synthetic_benchmark_image_format(const TensorSpec& spec) {
+  if (spec.image_format == ImageSpec::PixelFormat::NV12 ||
+      spec.image_format == ImageSpec::PixelFormat::NV16 ||
+      spec.image_format == ImageSpec::PixelFormat::I420) {
+    throw std::runtime_error(
+        "Model::benchmark: planar image input specs are not supported by the synthetic benchmark");
+  }
+}
+
+void require_provided_source_geometry(const Tensor& tensor, const ResolvedPreprocessPlan& plan,
+                                      const BenchmarkOptions& options) {
+  if (!options.original_width.has_value() || !benchmark_takes_source_image(plan, tensor))
+    return;
+  const BenchmarkInputGeometry image = benchmark_tensor_geometry(tensor);
+  if (image.width == *options.original_width && image.height == *options.original_height)
+    return;
+  throw std::runtime_error("Model::benchmark: original_width x original_height (" +
+                           std::to_string(*options.original_width) + "x" +
+                           std::to_string(*options.original_height) +
+                           ") must match the provided image (" + std::to_string(image.width) + "x" +
+                           std::to_string(image.height) + "); omit them for provided images");
+}
+
+TensorSpec resolve_benchmark_input_spec(TensorSpec spec, const ResolvedPreprocessPlan& plan,
+                                        const BenchmarkOptions& options) {
+  if (!benchmark_takes_source_image(plan, spec.image_format.has_value(), spec.shape.size())) {
+    return spec;
+  }
+  const BenchmarkInputGeometry spec_geometry{benchmark_dim(spec.shape[1]),
+                                             benchmark_dim(spec.shape[0])};
+  const BenchmarkInputGeometry source =
+      benchmark_source_geometry(spec_geometry, true, plan, options);
+  spec.shape[0] = source.height;
+  spec.shape[1] = source.width;
+  return spec;
+}
+
 PreprocessRuntimeMeta resolve_benchmark_preprocess_meta(const Tensor& tensor,
                                                         const ResolvedPreprocessPlan& plan,
                                                         const PreprocessContractFlags& flags,
                                                         const BenchmarkOptions& options) {
+  // run() decodes with the metadata a provided tensor already carries, so keep it.
+  if (tensor.semantic.preprocess.has_value())
+    return *tensor.semantic.preprocess;
   return resolve_benchmark_preprocess_meta_impl(tensor, plan, flags, options);
 }
 
@@ -348,25 +458,12 @@ Model::Options benchmark_build_model_options(const Model::Options& model_options
 
 BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& options) {
   validate_benchmark_options(options);
-  // This gate covers benchmark calls only; MIP profiling requires an idle devkit.
+  // This gate covers benchmark calls only; MLA profiling requires an idle devkit.
   static std::shared_mutex benchmark_gate;
   std::unique_lock exclusive(benchmark_gate, std::defer_lock);
   std::shared_lock shared(benchmark_gate, std::defer_lock);
-  std::vector<LayerProfileStage> profile_stages;
-  std::filesystem::path mla_rt;
-  if (options.include_layer_stats) {
+  if (options.include_mla_layer_stats || options.include_mla_stage_stats) {
     exclusive.lock();
-    const auto& contract = ModelAccess::pack(model).mpk_contract();
-    if (!contract) {
-      throw std::runtime_error("Model::benchmark: layer profiling requires an MPK manifest");
-    }
-    profile_stages = resolve_layer_profile_stages(*contract);
-    gchar* executable = g_find_program_in_path("mla-rt");
-    if (!executable) {
-      throw std::runtime_error("Model::benchmark: mla-rt was not found in PATH");
-    }
-    mla_rt = executable;
-    g_free(executable);
   } else {
     shared.lock();
   }
@@ -375,7 +472,10 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
 
   constexpr int kWarmupSamples = 100;
   constexpr int kTimeoutMs = 120000;
-  const TensorList inputs = make_synthetic_benchmark_inputs(model, options);
+  const std::string input_source = options.inputs.empty() ? "synthetic" : "provided";
+  const TensorList inputs = options.inputs.empty()
+                                ? make_synthetic_benchmark_inputs(model, options)
+                                : prepare_provided_benchmark_inputs(model, options);
   const int logical_batch_size = model.compiled_batch_size();
   const Model::Options benchmark_model_options =
       internal::ModelAccess::resolved_post_kind(model) == internal::PostRouteStageKind::BoxDecode
@@ -400,8 +500,9 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
       require_benchmark_output(out, "latency warmup");
     }
 
-    MeasureScope measure = latency_runner.start_measurement(make_benchmark_measure_options(
-        kTimeoutMs, logical_batch_size, include_plugin_latency, "NEAT Benchmark latency"));
+    MeasureScope measure = latency_runner.start_measurement(
+        make_benchmark_measure_options(kTimeoutMs, logical_batch_size, include_plugin_latency,
+                                       input_source, "NEAT Benchmark latency"));
     const auto min_end =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(options.min_duration_ms);
     while (latency_samples < num_samples || std::chrono::steady_clock::now() < min_end) {
@@ -418,9 +519,7 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
     latency_runner.close();
   }
 
-  const std::string trace_note =
-      std::filesystem::path(ModelAccess::source_path(model)).filename().string();
-  BenchmarkTelemetry telemetry;
+  Telemetry telemetry;
 
   RunOptions throughput_run_options;
   throughput_run_options.startup_preflight = false;
@@ -440,9 +539,12 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
       require_benchmark_output(out, "throughput warmup");
     }
 
-    internal::SentinelTrace trace(trace_note);
-    MeasureScope measure = runner.start_measurement(make_benchmark_measure_options(
-        kTimeoutMs, logical_batch_size, include_plugin_latency, "NEAT Benchmark throughput"));
+    TelemetryMonitor telemetry_monitor;
+    internal::TelemetryMonitorAccess::prepare_benchmark(telemetry_monitor);
+    MeasureScope measure = runner.start_measurement(
+        make_benchmark_measure_options(kTimeoutMs, logical_batch_size, include_plugin_latency,
+                                       input_source, "NEAT Benchmark throughput"));
+    internal::TelemetryMonitorAccess::arm_benchmark(telemetry_monitor);
     const auto min_end =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(options.min_duration_ms);
 
@@ -527,26 +629,37 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
       throw std::runtime_error("Model::benchmark: async measured output count mismatch");
     }
 
-    // Stop timing before Sentinel's slower stop request.
+    // Seal without joining or contacting Sentinel while the model timer runs.
+    // The final poll and worker teardown belong after the throughput window.
+    internal::TelemetryMonitorAccess::seal_benchmark(telemetry_monitor);
     throughput_measured = measure.stop();
-    telemetry = trace.finish();
+    telemetry = telemetry_monitor.stop();
     runner.close();
   }
 
   BenchmarkReport report = internal::build_benchmark_report_from_measurements(
       latency_measured, throughput_measured, num_samples, latency_samples, pushed,
       std::move(telemetry));
-  if (options.include_layer_stats) {
-    report.layer_stats = collect_mla_layer_stats(profile_stages, mla_rt);
+  report.input = input_source;
+  if (options.include_mla_layer_stats) {
+    report.mla_layer_stats.status = collection_status("MLA layer stats", [&] {
+      report.mla_layer_stats.layers = collect_mla_layer_stats(
+          require_mpk_contract(model), ModelAccess::pack(model).mla_profile_plugin_indices());
+    });
+  }
+  if (options.include_mla_stage_stats) {
+    report.mla_stage_stats.status = collection_status("MLA stage stats", [&] {
+      report.mla_stage_stats.stages = collect_mla_stage_stats(require_mpk_contract(model));
+    });
   }
   const double batch_throughput = throughput_measured.throughput_batches_per_s;
-  const BenchmarkTelemetry& board = report.telemetry;
+  const Telemetry& board = report.telemetry;
 
   const auto old_flags = std::cout.flags();
   const auto old_precision = std::cout.precision();
   std::cout << std::fixed << std::setprecision(2);
   std::cout << "NEAT Benchmark\n";
-  std::cout << "Input: synthetic\n";
+  std::cout << "Input: " << input_source << "\n";
   std::cout << "Samples: " << num_samples << "\n";
   std::cout << "Compiled batch: " << logical_batch_size << "\n";
   std::cout << "Measurement detail: "
@@ -571,7 +684,7 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
                   throughput_measured.plugin_latency_unattributed.size())
               << "\n";
   }
-  const auto print_metric = [](const char* label, const BenchmarkMetric& metric, const char* unit) {
+  const auto print_metric = [](const char* label, const TelemetryStats& metric, const char* unit) {
     if (metric.samples == 0) {
       return;
     }
@@ -595,10 +708,10 @@ BenchmarkReport internal::run_benchmark(Model& model, const BenchmarkOptions& op
     print_metric("Die temp:      ", board.die_temperature_max_c, "°C");
     print_metric("CPU usage:     ", board.cpu_usage_pct, "%");
     print_metric("MLA memory:    ", board.mla_memory_mib, "MiB");
-    print_metric("CMA used:      ", board.cma_memory_mib, "MiB");
+    print_metric("EV74 memory:   ", board.ev74_memory_mib, "MiB");
     print_metric("Linux memory:  ", board.linux_memory_used_mib, "MiB");
-    std::cout << "Telemetry:     Sentinel, " << board.samples << " samples, trace "
-              << board.trace_id << "\n";
+    std::cout << "Telemetry:     Sentinel " << board.sentinel_version << ", " << board.samples
+              << " samples\n";
   }
   std::cout.flags(old_flags);
   std::cout.precision(old_precision);
@@ -661,7 +774,7 @@ BenchmarkReport build_benchmark_report_from_measurements(const MeasureReport& la
                                                          const MeasureReport& throughput_report,
                                                          int num_samples, int latency_samples,
                                                          int throughput_samples,
-                                                         BenchmarkTelemetry telemetry) {
+                                                         Telemetry telemetry) {
   require_benchmark_measure_report_window(latency_report, "latency", latency_samples);
   require_benchmark_measure_report_window(throughput_report, "throughput", throughput_samples);
 

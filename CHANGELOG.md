@@ -8,14 +8,22 @@ The format is based on Keep a Changelog and follows semantic versioning.
 
 ### Added
 - Release hygiene framework for Phase 1 (governance docs, CI policy scripts, release-gate workflow).
+- `TelemetryMonitor` records board power, temperatures, CPU usage, and memory from Sentinel over
+  a window the caller chooses, in C++ and Python. `Telemetry::save()` writes YAML or JSON, and a
+  `Telemetry` prints as YAML. `Model::benchmark()` uses it for `BenchmarkReport::telemetry`.
+  Memory is reported as MLA memory and EV74 memory, which add up, and board-wide Linux memory.
+  EV74 memory needs a Sentinel that reports `ev74_mem_allocated_mb`; older daemons leave it at
+  `samples == 0`.
 
 ### Changed
 - Canonical naming contract docs and migration guidance.
 - Build/config naming consistency updates.
-- BREAKING: The public C++ ABI is now 6 (`libsima_neat.so.6`) because tensors now carry
-  feature-extractor semantic metadata, the existing GenAI and graph-link public structures
-  changed, and `BenchmarkOptions` and `BenchmarkReport` gained fields. Rebuild downstream C++
-  consumers.
+- BREAKING: The unreleased 0.6.0 line uses public C++ ABI 6 (`libsima_neat.so.6`).
+  In addition to the tensor, GenAI, graph-link and benchmark layout changes,
+  `SimaArgMaxOptions` gained `axis` and `keepdims`, and the `SimaArgMax` class layout
+  changed. Rebuild downstream C++ consumers and Python extensions against matching
+  headers and libraries, including when updating between ABI 6 previews. Do not
+  redirect released ABI 5 binaries to ABI 6 with compatibility symlinks.
 - `Model::benchmark()` reads power, temperature, CPU, and memory from the Sentinel daemon and
   reports them in `BenchmarkReport::telemetry`, including per-core CPU usage, with
   `latency_p50_ms`, `latency_p95_ms`, `latency_p99_ms`, `peak_power_watts`, `throughput_samples`,
@@ -31,6 +39,9 @@ The format is based on Keep a Changelog and follows semantic versioning.
   `mpk/*` headers and `pyneat.mpk` inspection/extraction bindings were removed.
 
 ### Deprecated
+- `PowerMonitor`, `read_power_snapshot()`, `RunOptions::enable_board_power()`,
+  `RunOptions::power_monitor`, and `MeasureOptions::include_power`; use `TelemetryMonitor`. They
+  keep working.
 - `PowerMonitorOptions::sample_interval_ms`, `profile`, and `rails`, the `PowerRailConfig` I2C
   fields, the built-in power rail tables and profile helpers, `enable_modalix_som_power()`,
   `enable_modalix_dvt_power()`, and `modalix_som/dvt_power_monitor_options()`; they are ignored.

@@ -11,6 +11,11 @@ When you pair a DevKit during `sima-cli sdk setup`, the SDK installs its include
 Neat Library and bundled PyNeat environment at `~/pyneat` on the DevKit automatically.
 :::
 
+:::tip When to use offline installation
+If the target cannot download packages from SiMa.ai services, use [offline installation](#offline-installation).
+Download the package on a computer with internet access.
+:::
+
 ## Choose Where to Install
 
 Run the installer from the environment where you build or run Neat applications:
@@ -25,9 +30,10 @@ Run the installer from the environment where you build or run Neat applications:
 
 The minimal installation includes the runtime and `sima-neat-dev`. The default
 installation offers tutorials and tests as optional extras; `all` includes them.
-Shared-library applications need Core's public headers and GStreamer, OpenCV,
-and JSON development files. They do not need Internals, memory-library, heap,
-or LLiMa development packages. Their runtime libraries remain required.
+Shared-library applications need Core's public headers, the matching Scheduler
+frontend, and GStreamer, OpenCV, and JSON development files. They do not need the
+retired Internals umbrella or Runner, Kernels, Codecs, memory-library, heap, or
+LLiMa development APIs. The selected packages supply the required runtime dependencies.
 
 Use the installed shared target:
 
@@ -36,10 +42,11 @@ find_package(SimaNeat CONFIG REQUIRED)
 target_link_libraries(my_app PRIVATE SimaNeat::sima_neat)
 ```
 
-The static archive remains in `sima-neat-dev`. Existing static consumers must add
-`COMPONENTS Static` and provision compatible `neat-internals-dev`,
-`simaai-memory-lib-dev`, `zlib1g-dev`, `libcpp-httplib-dev`, and, for LLiMa-enabled
-builds, `sima-lmm-dev`, with their dependencies:
+The static archive remains in `sima-neat-dev`. Use `COMPONENTS Static` and keep the
+matching `simaai-scheduler` package installed. Provision `zlib1g-dev`,
+`libcpp-httplib-dev`, and, for LLiMa-enabled builds, `sima-lmm-dev`, with their
+dependencies. Core uses Scheduler's installed frontend; do not add Internals or
+lower-library development targets to your application:
 
 ```cmake
 find_package(SimaNeat CONFIG REQUIRED COMPONENTS Static)
@@ -47,9 +54,10 @@ target_link_libraries(my_app PRIVATE SimaNeat::sima_neat_static)
 ```
 
 Static Core still uses shared implementation libraries. Building Core from source
-also requires implementation development packages.
+uses the same Scheduler frontend boundary and requires development files for its
+other dependencies, including LLiMa when enabled.
 
-## Prerequisites
+## Online installation prerequisites
 
 Install `sima-cli` in the environment where you plan to install the Neat Library.
 Use the [sima-cli installation guide](/tools/sima-cli/).
@@ -75,14 +83,14 @@ a timeout, connection refused, or "could not resolve host" means outbound access
 is blocked — check your host network, proxy, or firewall (see
 [Neat SDK Networking](/tools/sima-cli/sdk-networking/) and the
 [host setup notes](/reference/elxr-sdk-host-setup/ubuntu)), or use
-[Offline Installation](/getting-started/dev-environment/offline-installation) if
+[Offline Installation](#offline-installation) if
 the machine cannot reach SiMa.ai services directly.
 
 ## Install the Neat Library
 
 :::note Package compatibility
 The installer uses every Debian package listed by the selected Core artifact
-and does not select different Internals or LLiMa versions. The installed
+and does not select different Scheduler or LLiMa versions. The installed
 platform must satisfy dependencies that are not delivered by that artifact. If
 APT would remove platform packages to complete the installation, the installer
 stops; update the platform instead of substituting packages in Core or LLiMa.
@@ -113,7 +121,7 @@ optionally install extras, including prebuilt tutorials, source-code tutorials,
 and tests:
 
 <ShellCommand prompt="sdk">
-sima-cli neat install core@v0.4.0
+sima-cli neat install core@v%%release.core%%
 </ShellCommand>
 
 </CodeTab>
@@ -134,7 +142,7 @@ paths. PyNeat is not installed because it remains a DevKit runtime feature:
 
 <ShellCommand prompt="sdk">
 cd $HOME &amp;&amp; mkdir -p neat &amp;&amp; cd neat
-sima-cli neat install core@release-0.3
+sima-cli neat install core@v%%release.core%%
 </ShellCommand>
 
 </CodeTab>
@@ -158,13 +166,13 @@ optionally install extras, including prebuilt tutorials, source-code tutorials,
 and tests:
 
 <ShellCommand prompt="devkit">
-sima-cli neat install core@v0.2.2
+sima-cli neat install core@v%%release.core%%
 </ShellCommand>
 
 </CodeTab>
 </CodeTabs>
 
-## Default PyNeat Environment
+## Default PyNeat environment for online installation
 
 Installing the Neat Library on the DevKit also provisions a default PyNeat
 virtual environment at `~/pyneat` on the DevKit. This is the supported PyNeat
@@ -193,6 +201,79 @@ If you prefer building from source, follow the
 
 For SDK setup and DevKit Sync onboarding, see
 [Neat SDK](/getting-started/dev-environment/).
+
+## Offline installation {#offline-installation}
+
+:::caution Check Python dependencies before installation
+Offline installation preserves existing Python environments and their extra packages and files. Before installing packages, it runs `pip check`. If the environment is already broken, installation stops and reports the environment path and dependency errors. Repair the reported dependencies, using additional wheels when offline, then retry. A dependency check after installation reports any remaining or newly introduced conflicts; package changes are not automatically rolled back.
+
+To discard an environment and install from scratch, explicitly run `./install.sh --recreate-venv` (standalone Core) or `sudo python3 -B install.py --recreate-venv` (PCIe). This removes packages and files in the selected environment without backup. In the SDK, the option applies to the paired DevKit, not SDK host Python. Save required files first. Preflight and verification-only commands never recreate environments.
+:::
+
+Neat Library offline packages are available in version 0.6.0 or later.
+Use this package for a Modalix DevKit with Platform 3.0 or later.
+
+### 1. Download the package
+
+Install `sima-cli` on the computer with internet access. See the [sima-cli installation guide](/tools/sima-cli/).
+
+Run this command on the computer with internet access:
+
+<ShellCommand prompt="host">
+sima-cli neat install core/offline@v%%release.core%% --download-only
+</ShellCommand>
+
+The default package includes the runtime, tutorials, and tests.
+To download only the runtime, use:
+
+<ShellCommand prompt="host">
+sima-cli neat install core/offline@v%%release.core%% -t minimal --download-only
+</ShellCommand>
+
+### 2. Install the package
+
+1. Copy the downloaded files to the Modalix DevKit or the Neat SDK workspace.
+2. Open a terminal in that directory. For SDK installation, use the SDK shell.
+3. Extract the installer archive:
+
+<ShellCommand prompt="sdk|devkit">
+tar -xzf neat-core-offline-installer.tar.gz
+</ShellCommand>
+
+4. Go to the extracted directory:
+
+<ShellCommand prompt="sdk|devkit">
+cd neat-core-offline
+</ShellCommand>
+
+5. Start the installer as your regular user. It requests `sudo` permissions when necessary.
+
+<ShellCommand prompt="sdk|devkit">
+./install.sh
+</ShellCommand>
+
+If you need tutorials or tests, extract the separate extras archive into a directory of your choice.
+
+For offline installation, activate the Python environment with:
+
+<ShellCommand prompt="devkit">
+source ~/pyneat/bin/activate
+</ShellCommand>
+
+Offline installation reuses an existing `~/pyneatpcie` on the host or `~/pyneat` on a card or DevKit, including its symlink target. If no home environment exists, a card or DevKit uses `/media/nvme/pyneat` when NVMe is writable by the installing user; otherwise, it uses `~/pyneat`. A new NVMe installation creates a `~/pyneat` link without replacing an existing home environment.
+
+### Package options and installer behavior
+
+- The installer checks system compatibility and available disk space before installation.
+- The installer uses bundled dependencies. It stops if a required dependency is missing.
+- In the SDK, the installer copies Neat Library into `/opt/toolchain/aarch64/modalix`.
+- If `DEVKIT_SYNC_DEVKIT_IP` is set, the installer also installs on the paired DevKit through SSH. Both environments must pass checks.
+
+If installation fails, read the log at the printed path: `/tmp/neat-core-offline-*.log`.
+For detailed output, use `./install.sh --verbose`.
+
+If SSH disconnects during installation, the remote installer can continue to run.
+Check that it has stopped before you retry or remove the temporary directory shown in the report.
 
 ## Next Step
 

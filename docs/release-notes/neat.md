@@ -7,7 +7,7 @@ sidebar_position: 3
 
 Release notes for the SiMa.ai Neat Library.
 
-## Unreleased
+## 0.6.0
 
 ### Breaking changes
 
@@ -17,8 +17,16 @@ Release notes for the SiMa.ai Neat Library.
   four-dimensional HWC shape. Its Float32 tensor format may be `EVXX_FLOAT32`
   instead of `FP32`. Use the tensor's dtype and shape to interpret values; do not
   infer logical axes from a backend format tag.
-- The Neat Library C++ ABI is now 6 and the shared-library SONAME is `libsima_neat.so.6`. Tensors now carry feature-extractor semantic metadata, public GenAI request/result types carry ASR task, language, and probe metadata, `GraphLinkOptions` contains realtime admission limits, and `BenchmarkOptions` and `BenchmarkReport` gained fields. Rebuild C++ applications and plugins and install matching Core runtime and development packages.
+- The Neat Library C++ ABI is now 6 and the shared-library SONAME is `libsima_neat.so.6`. Tensors now carry feature-extractor semantic metadata, public GenAI request/result types carry ASR task, language, and probe metadata, `GraphLinkOptions` contains realtime admission limits, and `BenchmarkOptions` and `BenchmarkReport` gained fields. Rebuild C++ applications and plugins and install matching Core runtime and development packages. `SimaArgMaxOptions` gained `axis` and `keepdims`, and the `SimaArgMax` class layout also changed.
 - Realtime graph composition now uses `GraphLinkOptions`, `Graph::connect()`, and `Graph::build()`. The preview `RealtimeGraphLinkOptions`, `connect_realtime()`, `build_fused_realtime_sources()` / `build_fused_realtime_source()`, and `RealtimeEveryFrameByStream` APIs were removed. Saved graphs containing `realtime_every_frame_by_stream` must be recreated with a supported policy; see [Connect live fragments](/develop-apps/development-workflow/graph/#connect-live-fragments).
+
+- The package version is **0.6.0**. `Model::Options` and
+  `BoxDecodeOptions` now carry `yolox_seg_pose.pose_classes`; these public layout
+  additions require ABI 6 consumers. Do not use ABI compatibility symlinks.
+  `GraphOptions` now includes `kernel_runner_a65_workers`. Rebuild applications,
+  plugins and Python extensions against the matching runtime and development
+  packages when updating to 0.6.0. Do not mix preview binaries with release
+  packages merely because both use ABI 6.
 
 ### Runtime changes
 
@@ -30,8 +38,8 @@ Release notes for the SiMa.ai Neat Library.
   for the previous count-based timing. `BenchmarkReport` adds `latency_p50_ms`, `latency_p95_ms`,
   `latency_p99_ms`, `peak_power_watts`, `throughput_samples`,
   `throughput_duration_ms`, and `telemetry` with rail power, die and board
-  temperatures, CPU utilization overall and per core, and MLA, CMA, and Linux
-  memory.
+  temperatures, CPU utilization overall and per core, and MLA, EV74, and
+  board-wide Linux memory.
   `avg_power_watts` and `energy_joules` keep their meaning; `energy_joules` is
   the energy for `num_samples` inputs. When Sentinel is unavailable, latency and
   FPS are still reported and `telemetry.status` names the reason. The DevKit
@@ -48,6 +56,18 @@ Release notes for the SiMa.ai Neat Library.
   `PowerRailConfig` I2C fields, `enable_modalix_som_power()`,
   `enable_modalix_dvt_power()`, and `modalix_som_power_monitor_options()` /
   `modalix_dvt_power_monitor_options()` are deprecated and ignored.
+- `TelemetryMonitor` records board power, temperatures, CPU usage, and memory
+  from Sentinel between `start()` and `stop()`, in C++ and Python. `read()`
+  returns the summary so far, and a `Telemetry` prints as YAML and saves as
+  YAML or JSON. `Model::benchmark()` uses it for `BenchmarkReport::telemetry`.
+  `PowerMonitor`, `read_power_snapshot()`, `RunOptions::enable_board_power()`,
+  `RunOptions::power_monitor`, and `MeasureOptions::include_power` are
+  deprecated in favor of `TelemetryMonitor` and keep working. See
+  [Record board telemetry](/develop-apps/development-workflow/model#record-board-telemetry).
+- `BenchmarkOptions::inputs` runs `Model::benchmark()` on your own tensors
+  instead of synthetic ones, and `BenchmarkReport::input` records which were
+  used. See
+  [Measure with your own inputs](/develop-apps/development-workflow/model#measure-with-your-own-inputs).
 - Plugin latency is deprecated and will be removed. This covers
   `MeasureOptions::include_plugin_latency` and `plugin_latency_source`,
   `BenchmarkOptions::include_plugin_latency`, `start_measurement(bool)`, and
@@ -110,6 +130,8 @@ Release notes for the SiMa.ai Neat Library.
 
 | Release | Compatible Neat SDK | Notes |
 | --- | --- | --- |
+| 0.6.0 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
+| 0.5.0 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |
 | 0.4.0 | 2.1.3.0 | [Neat Library 0.4.0](https://github.com/sima-neat/core/releases/tag/v0.4.0) |
 | 0.3.0 | 2.1.2.3 | [Neat Library 0.3.0](https://github.com/sima-neat/core/releases/tag/v0.3.0) |
 | 0.2.2 | 2.1.2.2 | [Neat Library 0.2.2](https://github.com/sima-neat/core/releases/tag/v0.2.2) |

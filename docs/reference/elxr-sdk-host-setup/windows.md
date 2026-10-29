@@ -4,8 +4,8 @@ description: Prepare a Windows 11 host for the Neat SDK and DevKit-Sync
 sidebar_position: 2
 ---
 
-Use this guide when your host machine is Windows 11 and you want to run the
-Neat Development Environment (referred to as Neat SDK) with DevKit-Sync.
+Use this guide when your host machine is Windows 11 and you want to run the Neat
+SDK with DevKit-Sync.
 
 ## Prerequisites
 
@@ -18,7 +18,7 @@ Neat Development Environment (referred to as Neat SDK) with DevKit-Sync.
 
 Run Neat SDK commands from inside your WSL Linux
 distribution, not from PowerShell or Command Prompt. This includes
-`sima-cli neat install sdk@release-2.1`.
+`sima-cli neat install sdk@%%release.sdk_channel%%`.
 
 ## WSL network mode
 

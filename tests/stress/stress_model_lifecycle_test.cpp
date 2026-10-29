@@ -36,7 +36,7 @@ std::string resolve_model_pack_for_stress() {
     return std::string(generic);
   }
 
-  const std::filesystem::path root = std::filesystem::current_path();
+  const std::filesystem::path root = sima_test::test_source_root();
   std::string tar = sima_test::resolve_resnet50_tar_local_only(root);
   if (!tar.empty()) {
     return tar;

@@ -16,7 +16,7 @@
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/TensorAdapters.h"
 #include "nodes/io/Input.h"
-#include "simaai/neat/internal/dmabuf/DmaBuf.h"
+#include <simaai/scheduler/client/dma_memory.h>
 
 #include <gst/allocators/gstdmabuf.h>
 #include <gst/gst.h>
@@ -642,7 +642,9 @@ bool flush_pending_buffer(InputStream::State& st, const char* where) {
   std::chrono::steady_clock::time_point t_push_start{};
   if (timings)
     t_push_start = std::chrono::steady_clock::now();
+  auto observed = st.input_publication_measurement.observe(buf);
   GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(st.appsrc), buf);
+  observed.finish(ret);
   const auto t_push_end = std::chrono::steady_clock::now();
 
   if (timings) {
@@ -738,7 +740,7 @@ BuiltBuffer build_buffer_with_fill(
   }
 
   GstMapInfo mi{};
-  std::optional<internal::dmabuf::CpuMapping> dmabuf_mapping;
+  std::optional<::simaai::scheduler::client::dma::CpuMapping> dmabuf_mapping;
   std::uint8_t* write_data = nullptr;
   std::size_t write_size = 0U;
   bool gst_mapped = false;
@@ -763,10 +765,11 @@ BuiltBuffer build_buffer_with_fill(
       throw std::runtime_error(std::string(where) +
                                ": DMA-BUF pool returned an invalid payload span");
     }
-    internal::dmabuf::Error error;
-    auto view =
-        internal::dmabuf::DmaBufView::fromGstMemory(payload_memory, 0U, payload_bytes, &error);
-    dmabuf_mapping = view ? view->map(internal::dmabuf::CpuAccess::Write, &error) : std::nullopt;
+    ::simaai::scheduler::client::dma::Error error;
+    auto view = ::simaai::scheduler::client::dma::DmaBufView::fromGstMemory(payload_memory, 0U,
+                                                                            payload_bytes, &error);
+    dmabuf_mapping =
+        view ? view->map(::simaai::scheduler::client::dma::CpuAccess::Write, &error) : std::nullopt;
     if (!dmabuf_mapping) {
       if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
         release_input_buffer(buf, (std::string(tag) + ":dmabuf_map_fail").c_str());
@@ -800,7 +803,7 @@ BuiltBuffer build_buffer_with_fill(
     if (gst_mapped) {
       gst_buffer_unmap(buf, &mi);
     } else if (dmabuf_mapping) {
-      internal::dmabuf::Error ignored;
+      ::simaai::scheduler::client::dma::Error ignored;
       (void)dmabuf_mapping->finish(&ignored);
       dmabuf_mapping.reset();
     }
@@ -812,7 +815,7 @@ BuiltBuffer build_buffer_with_fill(
   if (gst_mapped) {
     gst_buffer_unmap(buf, &mi);
   } else {
-    internal::dmabuf::Error error;
+    ::simaai::scheduler::client::dma::Error error;
     if (!dmabuf_mapping->finish(&error)) {
       // Drop the mapping (which makes one final best-effort END attempt)
       // before returning the physical slot to its pool.
@@ -1005,7 +1008,9 @@ bool InputStream::push_with_fill(const char* where,
   }
   const size_t buf_bytes = gst_buffer_get_size(push_buf);
   log_push_refcount(where, push_buf);
+  auto observed = st->input_publication_measurement.observe(push_buf);
   GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(st->appsrc), push_buf);
+  observed.finish(ret);
   const auto t_push_end = std::chrono::steady_clock::now();
 
   if (timings) {
@@ -1051,6 +1056,17 @@ bool InputStream::push_with_fill(const char* where,
       std::chrono::duration_cast<std::chrono::nanoseconds>(t_push_end.time_since_epoch()).count();
   st->last_push_ns.store(static_cast<std::int64_t>(push_ns), std::memory_order_relaxed);
   return true;
+}
+
+std::shared_ptr<pipeline_internal::InputPublicationMeasurement>
+InputStream::input_publication_measurement() noexcept {
+  auto state = std::atomic_load_explicit(&state_, std::memory_order_acquire);
+  if (!state)
+    return {};
+  auto* measurement = &state->input_publication_measurement;
+  // Cold alias only: a scope may outlive InputStream::close(). Close still
+  // releases stream resources through its existing teardown authority.
+  return {std::move(state), measurement};
 }
 
 } // namespace simaai::neat

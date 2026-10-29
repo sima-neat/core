@@ -100,6 +100,7 @@ Use [`GraphOptions`](/reference/{lsa}/structs/simaai-neat-graphoptions) for grap
 | Connect live graph fragments | `GraphLinkOptions` with `RealtimeLatestByStream` | Keep each stream fresh while bounding decoded-frame admission. |
 | Bound callback work | `callback_timeout_ms` | Use with C++ callback-style output consumption so a slow callback does not hide as a graph problem. |
 | Tune advanced execution | `advanced_execution` | Use only after the default graph has a measured baseline. |
+| Bound A65 kernel execution threads | `kernel_runner_a65_workers` | Default `2`; accepts `1`–`64`. Applies to the graph's numerical A65 stages, not EV74 or MLA. |
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -141,6 +142,88 @@ graph.add(pyneat.nodes.output(
 the queue contract of a public `Output`: `OutputOptions::max_buffers` and `drop` control that
 terminal queue and take precedence. Framework-created output queues fall back to the `RunOptions`
 defaults.
+
+### Overlap frames without growing queues indefinitely
+
+Async submission lets one frame run on a device while another frame is prepared
+or consumed on the CPU. Build the graph once, reuse it, and keep a bounded number
+of independent inputs in flight. A push followed immediately by its pull leaves
+only one frame available, even when the graph supports async execution.
+
+The controls have different jobs:
+
+| Control | What it bounds |
+| --- | --- |
+| Application in-flight window | Accepted inputs whose outputs the application has not yet consumed. Manage this window in the push/pull loop. |
+| `advanced_execution.internal_queue_depth` | Internally inserted queues and the numerical Runner's execution capacity. Runner capacity is clamped to `1`–`64`; an unset/default depth selects four async slots; synchronous execution uses one. |
+| `advanced_execution.inference_output_buffers` | MLA stage buffering. Changing the application or runtime queue depth does not replace this setting. |
+| `RunOptions::queue_depth` | Framework ingress and internal runtime queues, not accelerator capacity. |
+| `OutputOptions` | Public output buffering and drop behavior. Use `EveryFrame(...)` when measuring completed work without drops. |
+
+Async MLA execution is enabled by default. Keep it enabled for throughput work;
+do not add a cache-synchronization thread or disable memory synchronization to
+obtain overlap. Device completion and CPU visibility are separate requirements.
+The runtime preserves both while allowing independent frames to progress.
+
+Tune one workload at a time:
+
+1. Measure one in-flight frame as the serial baseline after graph construction
+   and warmup.
+2. Increase the application window one step at a time. Provide distinct writable
+   input allocations for concurrent frames, and release outputs promptly.
+3. Increase internal or MLA buffering only when its current limit prevents
+   useful overlap. A held zero-copy output still occupies its producer's pool;
+   pool size is not a promise that every slot is available to the application.
+4. Stop increasing the window when throughput stops improving. Extra queued
+   frames can increase latency and retained memory without doing more work.
+
+Do not overwrite an input allocation while accepted work may still read it.
+Reusing an immutable input is different from recycling its storage for the next
+camera frame. Keep the existing ownership contract in either case.
+
+Compare **CPU time per completed frame**, not CPU percentage alone. For the same
+measured window, divide process user-plus-system CPU time by completed outputs;
+divide that CPU time by elapsed wall time to obtain average busy CPU cores.
+Higher throughput can use more cores over time without increasing CPU work per
+frame. Exclude setup, warmup and teardown; include the same output extraction and
+release work in every comparison. Report frame latency separately: `1 / FPS` is
+the throughput interval, not an individual frame's latency. Process CPU excludes
+work charged to separate kernel workers and does not measure energy.
+
+### Set the A65 worker budget
+
+Set `GraphOptions.kernel_runner_a65_workers` before building the graph. The default
+is `2`; use `1` to limit numerical A65 execution to one worker, or increase the
+budget when independent A65 stages can overlap. Invalid values fail during graph
+preparation rather than being silently clamped.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::GraphOptions options;
+options.kernel_runner_a65_workers = 2;
+simaai::neat::Graph graph("camera", options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.GraphOptions()
+options.kernel_runner_a65_workers = 2
+graph = pyneat.Graph("camera", options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+The worker pool is shared by that graph's A65 kernel stages and created only when
+needed. Idle workers sleep without polling; they are reused across submissions.
+This setting does not change frame queue depth, override kernel resource limits,
+or configure EV74, MLA, or GStreamer threads. More workers are not necessarily
+faster: compare latency, throughput, and CPU use for your workload before changing
+the default.
 
 ## Validate before you build
 

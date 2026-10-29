@@ -120,31 +120,35 @@ Advanced knobs are opt-in under `RunOptions::advanced`:
 - `advanced.max_input_bytes`: cap input buffer growth.
 - `advanced.copy_input`: force defensive input copies.
 
-Use `Run::start_measurement()` to inspect latency, throughput, input counters, plugin/edge timing, and optional board power telemetry in one measured window.
+Use `Run::start_measurement()` to inspect latency, throughput, input counters, and plugin/edge timing in one measured window.
 
-To include board power, enable it in code (no environment variable required) and read it from the measurement report:
+To record board power, temperatures, CPU usage, and memory over the same window, run a `TelemetryMonitor` around it. It reads them from Sentinel, the board telemetry daemon:
 
 ```cpp
-simaai::neat::RunOptions run_opt;
-run_opt.enable_board_power(); // reads board power from Sentinel
 auto run = graph.build(inputs, run_opt);
+simaai::neat::TelemetryMonitor telemetry_monitor;
+telemetry_monitor.start();
 auto scope = run.start_measurement();
 run.push(inputs);
 (void)run.pull_tensors(5000);
 auto report = scope.stop();
+simaai::neat::Telemetry telemetry = telemetry_monitor.stop();
+std::cout << telemetry; // YAML summary
 ```
 
 ```python
-run_opt = neat.RunOptions()
-run_opt.enable_board_power()  # reads board power from Sentinel
 run = graph.build(tensor, run_opt)
+telemetry_monitor = neat.TelemetryMonitor()
+telemetry_monitor.start()
 scope = run.start_measurement()
 run.push(tensor)
 _ = run.pull_tensors(5000)
 report = scope.stop()
+telemetry = telemetry_monitor.stop()
+print(telemetry)  # YAML summary
 ```
 
-`Model::build(run_opt)`, `Model::build(route_opt, run_opt)`, and `Graph::build(run_opt)` forward the same runtime options to the underlying `Run`, so one graph-level board power monitor is used instead of per-pipeline duplicate rail sampling.
+Sentinel samples every 2 s, so a window shorter than that can have no samples; `telemetry.status` then says so. See [Record board telemetry](/develop-apps/development-workflow/model#record-board-telemetry).
 
 ## Source Files
 - C++: `tutorials/004_build_inference_pipeline/build_inference_pipeline.cpp`

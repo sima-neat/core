@@ -149,7 +149,9 @@ case simaai::neat::PullStatus::Error:
 - 전체 푸시-출력 지연 시간 및 처리량
 - 푸시, 풀, 삭제된 샘플에 대한 런타임 카운터
 - `MeasureOptions`에서 요청할 경우 플러그인/커널 및 에지 타이밍
-- 실행 시 전력 모니터링이 활성화된 경우 선택적 전력 텔레메트리
+- 더 이상 사용되지 않는 `RunOptions::power_monitor`를 활성화한 경우 이 모니터가 측정한 전력
+
+같은 구간의 보드 전력, 온도, CPU 사용률, 메모리는 [`TelemetryMonitor`](/develop-apps/development-workflow/model#record-board-telemetry)로 기록합니다.
 
 측정되는 핵심 루프 외부에서 설정, 파일 다운로드, 프레임별 로깅 및 보고서 내보내기를 수행하되, 질문이 전체 애플리케이션 비용에 관한 것이라면 예외입니다.
 

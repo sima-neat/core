@@ -17,6 +17,9 @@ usage() {
   cat <<USAGE
 Usage: bash scripts/ci/run_soak_lane.sh [options]
 
+Repeated stress execution with harness-process resource diagnostics.
+The CSV and RSS trend check describe this shell, not Neat leak qualification.
+
 Options:
   --test-dir <path>   Run soak tests from preinstalled test directory (skip local build)
   --build-dir <path>  Override local build directory for build-mode
@@ -120,6 +123,7 @@ iteration=0
 prev_rss=0
 monotonic_growth=0
 
+echo "[soak-lane] resource_scope=harness-process harness_pid=$$; CSV/RSS trend checks do not qualify Neat process leaks."
 echo "[soak-lane] running until $(date -d "@${end_epoch}" +"%Y-%m-%d %H:%M:%S") ..."
 
 while [[ "$(date +%s)" -lt "${end_epoch}" ]]; do
@@ -131,7 +135,7 @@ while [[ "$(date +%s)" -lt "${end_epoch}" ]]; do
   fd_count="$(ls /proc/$$/fd 2>/dev/null | wc -l | tr -d ' ')"
 
   echo "${timestamp},${vmrss_kb},${threads},${fd_count},${iteration}" >> "${SOAK_REPORT}"
-  echo "[soak-lane] iteration=${iteration} vmrss_kb=${vmrss_kb} threads=${threads} fd_count=${fd_count}"
+  echo "[soak-lane] iteration=${iteration} harness_pid=$$ vmrss_kb=${vmrss_kb} threads=${threads} fd_count=${fd_count}"
 
   ctest --test-dir "${TEST_DIR}" --output-on-failure --no-tests=error -R "${regex}"
 
@@ -143,7 +147,7 @@ while [[ "$(date +%s)" -lt "${end_epoch}" ]]; do
   prev_rss="${vmrss_kb}"
 
   if [[ "${monotonic_growth}" -ge "${SOAK_MONOTONIC_LIMIT}" ]]; then
-    echo "ERROR: potential monotonic leak trend detected (vmrss growth over ${SOAK_MONOTONIC_LIMIT} intervals)." >&2
+    echo "ERROR: harness-process RSS growth trend detected (vmrss growth over ${SOAK_MONOTONIC_LIMIT} intervals)." >&2
     exit 1
   fi
 
@@ -159,4 +163,4 @@ while [[ "$(date +%s)" -lt "${end_epoch}" ]]; do
   sleep "${sleep_for}"
 done
 
-echo "[soak-lane] completed. report=${SOAK_REPORT}"
+echo "[soak-lane] repeated stress execution completed; harness resource report=${SOAK_REPORT}"

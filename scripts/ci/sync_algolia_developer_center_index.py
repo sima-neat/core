@@ -8,6 +8,7 @@ import hashlib
 import html
 import json
 import re
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -177,6 +178,28 @@ def localized_doc_roots(docs_dir: Path, i18n_dir: Path | None) -> list[tuple[str
     return roots
 
 
+def resolve_release_sources(sources: dict[str, str]) -> dict[str, str]:
+    """Use the site's validated resolver before parsing searchable Markdown.
+
+    Batch token-bearing documents per locale so indexing does not spawn a
+    process per page. Plain Markdown keeps its existing Python-only path.
+    """
+    selected = {name: text for name, text in sources.items() if re.search(r"%{1,2}release\b", text, re.I)}
+    if not selected:
+        return sources
+    resolver = Path(__file__).resolve().parents[2] / "website/scripts/resolve-release-sources.js"
+    try:
+        result = subprocess.run(
+            ["node", str(resolver)], input=json.dumps(selected), text=True,
+            capture_output=True, timeout=30, check=False,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("Node.js is required to resolve release tokens for search indexing") from exc
+    if result.returncode:
+        raise RuntimeError(f"Release token resolution failed: {result.stderr.strip()}")
+    return {**sources, **json.loads(result.stdout)}
+
+
 def generate_records(
     docs_dir: Path,
     site_base_url: str,
@@ -191,13 +214,14 @@ def generate_records(
     max_seen = 0
 
     for language, language_docs_dir in localized_doc_roots(docs_dir, i18n_dir):
-        for path in sorted(language_docs_dir.rglob("*")):
-            if not path.is_file() or path.name in EXCLUDES or path.suffix.lower() not in EXTENSIONS:
-                continue
-            if any(part in SKIP_PARTS for part in path.relative_to(language_docs_dir).parts):
-                continue
-
-            source_text = path.read_text(encoding="utf-8")
+        paths = [
+            path for path in sorted(language_docs_dir.rglob("*"))
+            if path.is_file() and path.name not in EXCLUDES and path.suffix.lower() in EXTENSIONS
+            and not any(part in SKIP_PARTS for part in path.relative_to(language_docs_dir).parts)
+        ]
+        sources = resolve_release_sources({str(path): path.read_text(encoding="utf-8") for path in paths})
+        for path in paths:
+            source_text = sources[str(path)]
             raw = strip_frontmatter(source_text)
             body = clean_markdown(raw)
             if not body:

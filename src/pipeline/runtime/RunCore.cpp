@@ -1,4 +1,5 @@
 #include "RunCore.h"
+#include "GraphTransportLifecycle.h"
 
 #include "ExecutionGraphPlan.h"
 #include "gst/GstInit.h"
@@ -18,7 +19,6 @@
 #include <array>
 #include <atomic>
 #include <chrono>
-#include <climits>
 #include <cstdint>
 #include <cstdio>
 #include <functional>
@@ -46,22 +46,6 @@ bool is_encoded_sample(const Sample& sample);
 
 namespace simaai::neat::runtime {
 namespace {
-
-void tune_internal_zero_copy_holder_window(InputStreamOptions& stream_opt,
-                                           const GraphRuntimeOptions& graph_opt,
-                                           bool graph_internal_output) {
-  if (!graph_internal_output || !stream_opt.holder_loan_credits_auto ||
-      (stream_opt.copy_output && !stream_opt.preserve_dmabuf_output)) {
-    return;
-  }
-  const std::size_t edge_queue = graph_opt.edge_queue == 0 ? 256 : graph_opt.edge_queue;
-  const int edge_window =
-      static_cast<int>(std::min<std::size_t>(edge_queue, static_cast<std::size_t>(INT_MAX)));
-  stream_opt.holder_loan_sample_window =
-      std::max(stream_opt.holder_loan_sample_window, std::max(1, edge_window));
-  stream_opt.holder_loan_credits =
-      stream_opt.holder_loan_sample_window * std::max(1, stream_opt.holder_loan_per_sample_arity);
-}
 
 std::uint64_t elapsed_ns_since(std::chrono::steady_clock::time_point start) {
   return static_cast<std::uint64_t>(
@@ -387,7 +371,7 @@ void RunCore::graph_signal_stop() {
       continue;
     if (pipe->transport.input_queue)
       pipe->transport.input_queue->close();
-    pipe->transport.cv.notify_all();
+    notify_graph_transport_external_state(pipe->transport);
   }
 }
 
@@ -651,8 +635,9 @@ void RunCore::graph_pipeline_completed(std::size_t pipeline_index,
   if (!pipe.seg.node_ids.empty()) {
     graph_producer_completed(pipe.seg.node_ids.back());
   }
-  pipe.transport.completion_forwarded.store(true, std::memory_order_release);
-  pipe.transport.cv.notify_all();
+  // Forward downstream closure before publishing completion, but never call downstream code
+  // with the waiter mutex held. The mutex also pairs publication with lazy-build waiters.
+  publish_graph_transport_completion(pipe.transport);
 }
 
 void RunCore::graph_stage_worker_completed(std::size_t group_index) {
@@ -740,7 +725,7 @@ void RunCore::graph_close_public_input() {
   // lets the last push forward producer completion after that build returns.
   for (const auto& pipeline : execution.pipelines) {
     if (pipeline) {
-      pipeline->transport.cv.notify_all();
+      notify_graph_transport_external_state(pipeline->transport);
     }
   }
 
@@ -940,6 +925,7 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
 
     RunCoreStartOptions start_opt;
     start_opt.run_options = pipe.run_options;
+    start_opt.graph_options = graph_options;
     start_opt.mode = RunMode::Async;
     start_opt.seed = std::move(build_sample);
     start_opt.last_pipeline = &pipe.last_pipeline;
@@ -1604,6 +1590,16 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
     opt.tensor_input_opt_for_cv = pipeline_segment_ingress_input(segment);
   }
 
+  const auto public_contract = opt.input_route_processor
+                                   ? std::optional<pipeline_internal::OrderedPublicInputContract>{}
+                                   : segment.public_input_contract;
+  if (public_contract) {
+    if (opt.seed)
+      pipeline_internal::validate_ordered_public_input(*public_contract, *opt.seed);
+    else if (opt.image_seed)
+      pipeline_internal::validate_ordered_public_input(*public_contract, Sample{});
+  }
+
   if (opt.image_seed && opt.seed.has_value()) {
     throw std::runtime_error(
         "RunCore::start_pipeline_segment: image_seed and seed are mutually exclusive");
@@ -1621,12 +1617,12 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
             ? session_build_fused_realtime_source_stream_internal(
                   *segment.fused_realtime_ingress, nodes, opt.guard, last_pipeline, route_options,
                   opt.run_options, opt.mode, opt.require_sink, public_output_contract,
-                  "RunCore::start(plan/fused-realtime)", opt.fused_encoded_output_dispatch)
+                  opt.graph_options.edge_queue, "RunCore::start(plan/fused-realtime)",
+                  opt.fused_encoded_output_dispatch)
             : session_build_source_stream_internal(
                   nodes, opt.guard, last_pipeline, route_options, opt.run_options, opt.mode,
-                  opt.require_sink, public_output_contract, "RunCore::start(plan/source)");
-    tune_internal_zero_copy_holder_window(source.stream_opt, opt.graph_options,
-                                          segment.boundary.graph_internal_output);
+                  opt.require_sink, public_output_contract, opt.graph_options.edge_queue,
+                  "RunCore::start(plan/source)");
     const auto source_us = pipeline_internal::build_timing_us(source_start);
     const auto start_single_start = pipeline_internal::build_timing_now();
     auto core = RunCore::start_single_pipeline(
@@ -1634,6 +1630,7 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
         opt.tensor_input_opt_for_cv, std::move(opt.input_route_processor),
         std::move(opt.after_pipeline_start_for_test));
     core->push_sample_policy = opt.push_sample_policy;
+    core->pipeline.public_input_contract = public_contract;
     const auto start_single_us = pipeline_internal::build_timing_us(start_single_start);
     pipeline_internal::emit_build_timing(
         "RunCore::start_pipeline_segment",
@@ -1655,8 +1652,8 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
       opt.allow_startup_preflight && ctx.stream_opt.startup_preflight;
   build_stream_opt.allow_graph_internal_zero_copy_input =
       segment.boundary.needs_input && !segment.input_edges.empty();
-  tune_internal_zero_copy_holder_window(build_stream_opt, opt.graph_options,
-                                        segment.boundary.graph_internal_output);
+  session_build_tune_internal_zero_copy_holder_window(
+      build_stream_opt, opt.graph_options.edge_queue, segment.boundary.graph_internal_output);
   InputStream stream;
   const auto input_stream_start = pipeline_internal::build_timing_now();
   if (opt.image_seed) {
@@ -1676,6 +1673,7 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
       std::move(stream), ctx.merged_opt, build_stream_opt, ctx.mode, opt.tensor_input_opt_for_cv,
       std::move(opt.input_route_processor), std::move(opt.after_pipeline_start_for_test));
   core->push_sample_policy = opt.push_sample_policy;
+  core->pipeline.public_input_contract = public_contract;
   const auto start_single_us = pipeline_internal::build_timing_us(start_single_start);
   pipeline_internal::emit_build_timing("RunCore::start_pipeline_segment",
                                        {{"materialize_nodes", materialize_us},

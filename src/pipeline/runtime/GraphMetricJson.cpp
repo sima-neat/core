@@ -176,8 +176,7 @@ json output_materialization_json(const RunOptions& opt) {
     break;
   case OutputMemory::ZeroCopy:
     mode = "zero-copy";
-    semantics = opt.advanced.prepare_output_cpu_visible ? "lazy_zero_copy_cpu_visible_prepared"
-                                                        : "lazy_zero_copy";
+    semantics = "lazy_zero_copy";
     break;
   case OutputMemory::Auto:
     mode = "auto";

@@ -19,6 +19,11 @@ on:
         required: false
         default: false
         type: boolean
+      validation_only:
+        description: "Validate a standard build without publishing or promoting its artifacts"
+        required: false
+        default: false
+        type: boolean
       cache_base_branch:
         description: "Compiler-cache baseline: auto, develop, or main"
         required: false
@@ -26,6 +31,16 @@ on:
         type: string
   workflow_dispatch:
     inputs:
+      offline_publish:
+        description: "Publish offline bundles beside the selected same-branch online packages"
+        required: false
+        default: false
+        type: boolean
+      offline_source_run_id:
+        description: "Build offline tuples from ready same-branch CI publications; skip normal CI"
+        required: false
+        default: ""
+        type: string
       build_mode:
         description: "Build mode: standard or fuzz"
         required: false
@@ -36,6 +51,11 @@ on:
           - fuzz
       run_long_tests:
         description: "Run weekly-only long tests on the Modalix runner"
+        required: false
+        default: false
+        type: boolean
+      validation_only:
+        description: "Validate a standard build without publishing or promoting its artifacts"
         required: false
         default: false
         type: boolean
@@ -56,13 +76,21 @@ permissions:
   packages: read
 
 concurrency:
-  group: ${{ github.repository }}-${{ github.workflow }}-${{ github.ref }}-${{ inputs.build_mode || 'standard' }}
+  group: ${{ github.repository }}-${{ github.workflow }}-${{ github.ref }}-${{ inputs.offline_source_run_id || inputs.build_mode || 'standard' }}
   cancel-in-progress: ${{ github.ref_type == 'branch' }}
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  validate-offline:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.offline_source_run_id != '' }}
+    uses: ./.github/workflows/pcie-offline.yml
+    with:
+      source_run_id: ${{ inputs.offline_source_run_id }}
+      validation_only: ${{ !inputs.offline_publish }}
+      publish_branch: ${{ inputs.offline_publish || false }}
+
   documentation-localization:
     name: Validate Documentation Localization
     runs-on: ubuntu-latest
@@ -89,6 +117,7 @@ jobs:
         run: bash scripts/ci/check_documentation_localization.sh
 
   resolve-vulcan-config:
+    if: ${{ !inputs.offline_source_run_id }}
     name: Resolve Vulcan Config
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
     with:
@@ -112,23 +141,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Run build-tooling tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          test_venv="${RUNNER_TEMP}/build-tooling-tests"
-          python3 -m venv "${test_venv}"
-          "${test_venv}/bin/python" -m pip install --disable-pip-version-check pytest packaging
-          "${test_venv}/bin/python" -m pytest -q \
-            tests/test_build_pyneat_wheel.py \
-            tests/test_resolve_compiler_cache.py \
-            tests/tools/test_internals_package_boundary.py \
-            tests/tools/test_install_neat_framework_native_restore.py \
-            tests/tools/test_neat_model_compiler_discovery.py \
-            tests/tools/test_vulcan_ci_docs_only.py \
-            tests/tools/test_cpp_tidy_scope.py \
-            tests/tools/test_vulcan_ci_notification.py
-
       - name: Resolve cache namespace and access
         id: resolve
         shell: bash
@@ -143,7 +155,71 @@ jobs:
             --repo "${GITHUB_WORKSPACE}" \
             --github-output "${GITHUB_OUTPUT}"
 
+  # Keep host tooling validation parallel to compilation; publication requires both.
+  build-tooling-tests:
+    name: Build Tooling Tests
+    needs:
+      - resolve-vulcan-config
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout build-tooling tests
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install native build-tooling prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential file nlohmann-json3-dev python3-venv
+
+      - name: Run build-tooling tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_venv="${RUNNER_TEMP}/build-tooling-tests"
+          python3 -m venv "${test_venv}"
+          "${test_venv}/bin/python" -m pip install --disable-pip-version-check pytest packaging PyYAML
+          "${test_venv}/bin/python" -m pytest -q --durations=25 \
+            python/tests/test_neat_cli.py \
+            python/tests/test_neat_pcie_status.py \
+            tests/test_build_pyneat_wheel.py \
+            tests/test_resolve_compiler_cache.py \
+            tests/tools/test_internals_package_boundary.py \
+            tests/tools/check_kernel_runner_default.py \
+            tests/tools/test_build_dependencies.py \
+            tests/tools/test_install_neat_framework_native_restore.py \
+            tests/tools/test_neat_model_compiler_discovery.py \
+            tests/tools/test_core_dist_contract.py \
+            tests/tools/test_package_buildinfo.py \
+            tests/tools/test_build_install_sanity.py \
+            tests/tools/test_core_inventory_soname.py \
+            tests/tools/test_native_platform_baseline.py \
+            tests/tools/test_offline_core.py \
+            tests/tools/test_offline_pcie_discovery.py \
+            tests/tools/test_offline_pcie_assembly.py \
+            tests/tools/test_offline_pcie_ci.py \
+            tests/tools/test_offline_pcie_install.py \
+            tests/tools/test_offline_pcie_host_process.py \
+            tests/tools/test_offline_pcie_deploy.py \
+            tests/tools/test_pcie_local_candidate.py \
+            tests/tools/test_pcie_build_options.py \
+            tests/tools/test_required_test_coverage.py \
+            tests/tools/test_ci_weekly_preparation.py \
+            tests/tools/test_devkit_sharding.py \
+            tests/tools/test_install_test_dependencies.py \
+            tests/tools/test_docs_native_prerequisites.py \
+            tests/tools/test_ci_hygiene_cohort.py \
+            tests/tools/test_published_artifact.py \
+            tests/tools/test_ci_dependency_setup.py \
+            tests/tools/test_scheduler_sdk_policy.py \
+            tests/tools/test_guarded_ctest_configuration.py \
+            tests/tools/test_codec_stream_registration.py \
+            tests/tools/test_vulcan_ci_docs_only.py \
+            tests/tools/test_cpp_tidy_scope.py \
+            tests/tools/test_vulcan_ci_notification.py
+
   detect-changes:
+    if: ${{ !inputs.offline_source_run_id }}
     name: Detect Changes
     runs-on: ubuntu-latest
     outputs:
@@ -199,8 +275,12 @@ jobs:
     name: Code Hygiene
     if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
     needs:
+      - resolve-vulcan-config
       - detect-changes
-    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+    runs-on: [self-hosted, linux, arm64, "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}", ubuntu, default]
+    container:
+      image: 069171140053.dkr.ecr.us-west-2.amazonaws.com/vulcan/ubuntu-build:ubuntu24-arm64-media-877b9736cbffe3bc34f8008b1e9a29989a0f023ae128431862ff0f0179c5a584
 
     steps:
       - name: Checkout code
@@ -209,13 +289,39 @@ jobs:
           clean: true
           fetch-depth: 0
 
+      - name: Trust mounted checkout for native Git commands
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Install sima-cli
         run: |
           ./scripts/ci/install_sima_cli_main.sh
           echo "${HOME}/.sima-cli/.venv/bin" >> "${GITHUB_PATH}"
           "${HOME}/.sima-cli/.venv/bin/sima-cli" --version
 
-      - name: Install code hygiene tools
+      - name: Acquire published Scheduler for analysis
+        env:
+          NEAT_VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          dependency_exports=$(python3 tools/ci/acquire_scheduler.py \
+            --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" \
+            --environment "$NEAT_VULCAN_ENV" \
+            --output "$RUNNER_TEMP/core-hygiene-dependencies")
+          eval "$dependency_exports"
+          python3 - "$GITHUB_ENV" <<'PY'
+          import os, sys
+          with open(sys.argv[1], 'a') as output:
+              for key in ('NEAT_SCHEDULER_PACKAGE_DIR', 'NEAT_SCHEDULER_CLIENT_TEST_PACKAGE_DIR'):
+                  value = os.environ[key]
+                  if '\n' in value or '\r' in value:
+                      raise SystemExit('Invalid analysis package path')
+                  output.write(key + '=' + value + '\n')
+          PY
+
+      - name: Verify preinstalled code hygiene tools
+        env:
+          HYGIENE_REQUIRE_PREINSTALLED: "1"
         run: |
           ./scripts/ci/install_code_hygiene_deps.sh
 
@@ -242,16 +348,29 @@ jobs:
     if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
     needs:
       - detect-changes
+      - resolve-vulcan-config
+      - build
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-modalix-runner.yml@main
+    with:
+      manifest_artifact: neat-core-dist
+      manifest_path: scheduler-sdk-policy.json
+      legacy_runner_group: modalix-devkit
+      versioned_runner_group_prefix: modalix-devkit-
+      shared_workflow_ref: main
+      allow-version-fallback: false
+      runner-labels: >-
+        ["self-hosted", "Linux", "ARM64", "modalix", "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env == 'prod' && 'production' || needs.resolve-vulcan-config.outputs.vulcan_env }}"]
+    secrets:
+      app_id: ${{ secrets.NEAT_RELEASES_APP_ID }}
+      app_private_key: ${{ secrets.NEAT_RELEASES_APP_PRIVATE_KEY }}
 
   build:
     name: Build Core on Vulcan
-    if: ${{ always() && !failure() && !cancelled() && needs.detect-changes.outputs.docs_only != 'true' }}
+    if: ${{ !inputs.offline_source_run_id && always() && !failure() && !cancelled() && needs.detect-changes.outputs.docs_only != 'true' }}
     needs:
       - resolve-vulcan-config
       - resolve-compiler-cache
       - detect-changes
-      - code-hygiene
     uses: sima-neat/.github/.github/workflows/vulcan-build.yml@main
     with:
       vulcan_env: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
@@ -299,22 +418,28 @@ jobs:
         echo "Resolved build mode: ${core_build_mode}"
 
         if [[ "${core_build_mode}" == "fuzz" ]]; then
-          CORE_BUILD_ARGS="--fuzz --clean --no-doc"
+          CORE_BUILD_ARGS="--fuzz --clean --no-doc --update-sysroot"
           ALLOW_FUZZ_IN_NEAT_SDK=ON
         else
-          CORE_BUILD_ARGS="--all --clean --no-doc"
+          CORE_BUILD_ARGS="--all --clean --no-doc --update-sysroot"
           ALLOW_FUZZ_IN_NEAT_SDK=OFF
         fi
 
-        sdk_container="$(docker ps --filter 'ancestor=ghcr.io/sima-neat/sdk:latest' --format '{{.Names}}' | head -n 1)"
-        if [[ -z "${sdk_container}" ]]; then
-          sdk_container="$(docker ps --filter 'name=sdk' --format '{{.Names}}' | head -n 1)"
-        fi
-        if [[ -z "${sdk_container}" ]]; then
-          docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
-          echo "Could not find running SDK container." >&2
-          exit 1
-        fi
+        sdk_containers=()
+        while IFS= read -r id; do
+          if docker exec "$id" test -f /etc/sdk-release; then sdk_containers+=("$id"); fi
+        done < <(docker ps --format '{{.ID}}')
+        [[ ${#sdk_containers[@]} == 1 ]] || { echo 'Expected exactly one running SDK container' >&2; exit 1; }
+        sdk_container="${sdk_containers[0]}"
+        mapfile -t sdk_images < <(docker images --format '{{.Repository}}:{{.Tag}}' |
+          awk '/^ghcr[.]io\/sima-neat\/sdk/ && $0 !~ /:<none>$/ { print }')
+        [[ ${#sdk_images[@]} == 1 ]]
+        sdk_image_id=$(docker image inspect --format '{{.Id}}' "${sdk_images[0]}")
+        [[ "$(docker inspect --format '{{.Image}}' "$sdk_container")" == "$sdk_image_id" ]]
+
+        # Finish cached SDK package configuration before build.sh invokes APT.
+        # This affects the verified SDK container, not the host or target sysroot.
+        "${SDK_PACKAGE_HELPER:?Shared SDK package helper required}" "${sdk_container}" configure
 
         docker exec \
           -e SIMA_CLI_CHECK_FOR_UPDATE=0 \
@@ -337,7 +462,6 @@ jobs:
           -e NEAT_PACKAGE_NAME="gh:sima-neat/core" \
           -e NEAT_PACKAGE_DESCRIPTION="SiMa.ai Palette Neat" \
           -e NEAT_VULCAN_ENV="${neat_vulcan_env}" \
-          -e NEAT_SYNC_SYSROOT="ON" \
           -e SIMANEAT_HOST_PYTHON=/usr/bin/python3 \
           -e SIMANEAT_ALLOW_FUZZ_IN_NEAT_SDK="${ALLOW_FUZZ_IN_NEAT_SDK}" \
           -e CORE_BUILD_ARGS="${CORE_BUILD_ARGS}" \
@@ -351,6 +475,9 @@ jobs:
             sima-cli neat install --help >/dev/null
             sima-cli packages build --help >/dev/null
             cd /workspace
+            # build.sh acquires the Scheduler set into deps/, installs LLiMa into the
+            # disposable SDK sysroot, and updates it to the version the Scheduler set pins.
+            source /opt/bin/simaai-init-build-env modalix >/dev/null
             ./build.sh ${CORE_BUILD_ARGS}
             if [[ "${CORE_BUILD_ARGS}" == *"--all"* ]]; then
               (
@@ -369,71 +496,16 @@ jobs:
             fi
           '
 
-      post_build_command: |
-        set -euo pipefail
-
-        mapfile -t CORE_DEBS < <(find dist -maxdepth 1 -type f -name 'sima-neat-*-Linux-core.deb' | sort)
-        mapfile -t DEV_DEBS < <(find dist -maxdepth 1 -type f -name 'sima-neat-*-Linux-dev.deb' | sort)
-        mapfile -t EXTRAS_TARS < <(find dist -maxdepth 1 -type f -name 'sima-neat-*-Linux-extras.tar.gz' | sort)
-        mapfile -t WHEELS < <(find dist -maxdepth 1 -type f -name '*.whl' | sort)
-
-        if [[ "${#CORE_DEBS[@]}" -ne 1 || "${#DEV_DEBS[@]}" -ne 1 || "${#EXTRAS_TARS[@]}" -ne 1 || "${#WHEELS[@]}" -ne 1 ]]; then
-          echo "Expected exactly one NEAT core .deb, one NEAT dev .deb, one extras tar.gz, and one wheel." >&2
-          echo "core debs: ${#CORE_DEBS[@]}" >&2
-          printf '  %s\n' "${CORE_DEBS[@]}" >&2 || true
-          echo "dev debs: ${#DEV_DEBS[@]}" >&2
-          printf '  %s\n' "${DEV_DEBS[@]}" >&2 || true
-          echo "extras tars: ${#EXTRAS_TARS[@]}" >&2
-          printf '  %s\n' "${EXTRAS_TARS[@]}" >&2 || true
-          echo "wheels: ${#WHEELS[@]}" >&2
-          printf '  %s\n' "${WHEELS[@]}" >&2 || true
-          exit 1
-        fi
-
-        for metadata_file in metadata.json metadata-minimal.json metadata-all.json metadata-pyneat.json; do
-          test -f "dist/${metadata_file}"
-          python3 -m json.tool "dist/${metadata_file}" >/dev/null
-        done
-        python3 - <<'PY'
-        import hashlib
-        import json
-        from pathlib import Path
-
-        manifest_path = Path("dist/internals-manifest.json")
-        expected_checksum = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
-        for metadata_name in ("metadata.json", "metadata-minimal.json", "metadata-all.json"):
-            metadata = json.loads(Path("dist", metadata_name).read_text(encoding="utf-8"))
-            resources = metadata.get("resources", [])
-            if resources.count(manifest_path.name) != 1:
-                raise SystemExit(f"{metadata_name} must contain exactly one {manifest_path.name} resource")
-            if metadata.get("resources-checksum", {}).get(manifest_path.name) != expected_checksum:
-                raise SystemExit(f"{metadata_name} has the wrong {manifest_path.name} checksum")
-
-        metadata = json.loads(Path("dist/metadata-pyneat.json").read_text(encoding="utf-8"))
-        resources = metadata.get("resources", [])
-        if len(resources) != 1 or not resources[0].endswith(".whl"):
-            raise SystemExit(f"metadata-pyneat.json must contain exactly one wheel resource, got: {resources!r}")
-        if metadata.get("selectable-resources"):
-            raise SystemExit("metadata-pyneat.json must not contain selectable resources")
-        if "PyNeat wheel downloaded" not in metadata.get("installation", {}).get("post-message", ""):
-            raise SystemExit("metadata-pyneat.json is missing the PyNeat post-install message")
-        PY
-        tar -tzf "${EXTRAS_TARS[0]}" './lib/sima-neat/tests/CTestTestfile.cmake' >/dev/null
-        tar -tzf "${EXTRAS_TARS[0]}" './lib/sima-neat/tutorials/CTestTestfile.cmake' >/dev/null
-        test -f dist/install_neat_framework.sh
-        test -f dist/install_sentinel.sh
-        test -f dist/neat-install-manifest.txt
-        cmp deps/internals-manifest.json dist/internals-manifest.json
-        test -f build/resolved_manifest.json
-
-        sudo install -m 0644 build/resolved_manifest.json dist/resolved-deps-manifest.json
-        ls -lh dist
+      post_build_command: ls -lh dist
 
   publish-vulcan-artifacts:
     name: Publish to Vulcan
+    if: ${{ always() && !inputs.validation_only && needs.build.result == 'success' && needs.build-tooling-tests.result == 'success' && ((inputs.build_mode || 'standard') == 'fuzz' || needs.code-hygiene.result == 'success') }}
     needs:
+      - build-tooling-tests
       - resolve-vulcan-config
       - build
+      - code-hygiene
     uses: sima-neat/.github/.github/workflows/vulcan-publish-artifacts.yml@main
     with:
       aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
@@ -447,6 +519,8 @@ jobs:
       artifact_glob: "*"
       min_artifact_count: ${{ (inputs.build_mode || 'standard') == 'fuzz' && 10 || 11 }}
       publish_manifest: false
+      # Runner resolution and job retries still consume this artifact.
+      cleanup_github_artifacts: false
 
   build-pciehost-packages:
     name: Build PCIe Host ${{ matrix.distro }} ${{ matrix.deb_arch }}
@@ -455,23 +529,27 @@ jobs:
       - detect-changes
       - resolve-vulcan-config
     environment: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
-    runs-on: ${{ matrix.runs_on }}
+    runs-on: [self-hosted, linux, "${{ matrix.deb_arch }}", "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}", ubuntu, default]
+    timeout-minutes: 40
+    container:
+      # Dockerfile SHA-256 from Vulcan; publish all four images before enabling.
+      image: 069171140053.dkr.ecr.us-west-2.amazonaws.com/vulcan/ubuntu-build:${{ matrix.distro }}-${{ matrix.deb_arch }}-media-463e7eb999e953b18069904b81b378ebd6d6b1a7bc4a5641a12c279d72e711b0
     strategy:
       fail-fast: false
       matrix:
         include:
           - distro: ubuntu22
             deb_arch: amd64
-            runs_on: ubuntu-22.04
+            ubuntu_version: "22.04"
           - distro: ubuntu24
             deb_arch: amd64
-            runs_on: ubuntu-24.04
+            ubuntu_version: "24.04"
           - distro: ubuntu22
             deb_arch: arm64
-            runs_on: ubuntu-22.04-arm
+            ubuntu_version: "22.04"
           - distro: ubuntu24
             deb_arch: arm64
-            runs_on: ubuntu-24.04-arm
+            ubuntu_version: "24.04"
 
     steps:
       - name: Checkout code
@@ -479,6 +557,20 @@ jobs:
         with:
           clean: true
           fetch-depth: 0
+
+      - name: Verify native dependency image
+        shell: bash
+        env:
+          EXPECTED_UBUNTU: ${{ matrix.ubuntu_version }}
+          EXPECTED_ARCH: ${{ matrix.deb_arch }}
+        run: |
+          set -euo pipefail
+          source /etc/os-release
+          test "${ID}" = ubuntu
+          test "${VERSION_ID}" = "${EXPECTED_UBUNTU}"
+          test "$(dpkg --print-architecture)" = "${EXPECTED_ARCH}"
+          test "$(cat /etc/vulcan-build-image)" = "${EXPECTED_UBUNTU} ${EXPECTED_ARCH} media"
+          ./pcie_host/build.sh --all --skip-deps --install-deps-only
 
       - name: Install sima-cli
         shell: bash
@@ -493,8 +585,14 @@ jobs:
         run: |
           set -euo pipefail
           cd pcie_host
-          ./build.sh --clean --all
+          scheduler_spec_args=()
+          if [[ -n "${SCHEDULER_NATIVE_SPEC}" ]]; then
+            scheduler_spec_args+=(--scheduler-spec "${SCHEDULER_NATIVE_SPEC}")
+          fi
+          ./build.sh --clean --all --skip-deps --jobs "${PCIE_HOST_BUILD_JOBS:-$(nproc)}" "${scheduler_spec_args[@]}" --scheduler-environment "${NEAT_VULCAN_ENV}"
         env:
+          PCIE_HOST_BUILD_JOBS: ${{ vars.PCIE_HOST_BUILD_JOBS }}
+          SCHEDULER_NATIVE_SPEC: ${{ vars.SCHEDULER_NATIVE_SPEC }}
           NEAT_VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
 
       - name: Run PCIe host unit tests
@@ -561,31 +659,37 @@ jobs:
         env:
           DEB_ARCH: ${{ matrix.deb_arch }}
 
-      - name: Smoke test installed PCIe host packages
+      - name: Smoke test staged PCIe host packages and wheel
         shell: bash
         run: |
           set -euo pipefail
 
           python_venv="${RUNNER_TEMP}/pyneatpcie-package-smoke"
           consumer_build="${RUNNER_TEMP}/sima-pcie-host-consumer"
-          skill_home="${RUNNER_TEMP}/sima-pcie-host-skill-smoke"
+          prefix="${RUNNER_TEMP}/sima-pcie-host-stage"
+          python3 pcie_host/dist/pcie_delivery.py stage \
+            --directory pcie_host/dist --destination "${prefix}"
+          # The clean build runner has no Platform driver installation. Test
+          # the real installed exports after relocation, not a root/DKMS install.
+          mv "${prefix}" "${prefix}-relocated"
+          prefix="${prefix}-relocated"
+          multiarch="$(dpkg-architecture -qDEB_HOST_MULTIARCH)"
+          export LD_LIBRARY_PATH="${prefix}/usr/lib/${multiarch}/neat/runtime:${prefix}/usr/lib"
+          skill_root="${prefix}/usr/share/sima-pcie-host/skills/neat-pcie-application-builder"
+          test -f "${skill_root}/SKILL.md"
+          test -f "${skill_root}/agents/openai.yaml"
+          test -f "${skill_root}/references/build-and-validation.md"
 
-          CODEX_HOME="${skill_home}/codex" \
-          CLAUDE_HOME="${skill_home}/claude" \
-            pcie_host/dist/install_pciehost.sh \
-            --skip-setup \
-            --python \
-            --python-venv "${python_venv}"
-
-          test -f "${skill_home}/codex/skills/neat-pcie-application-builder/SKILL.md"
-          test -f "${skill_home}/codex/skills/neat-pcie-application-builder/agents/openai.yaml"
-          test -f "${skill_home}/claude/skills/neat-pcie-application-builder/SKILL.md"
+          python3 -m venv "${python_venv}"
+          "${python_venv}/bin/python" -m pip install pcie_host/dist/pyneatpcie-*.whl
 
           cmake \
             -S pcie_host/tests/package_smoke \
             -B "${consumer_build}" \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="${prefix}/usr"
           cmake --build "${consumer_build}" --parallel
+          file "${consumer_build}/sima_pcie_host_package_smoke"
           "${consumer_build}/sima_pcie_host_package_smoke"
 
           "${python_venv}/bin/python" - <<'PY'
@@ -599,7 +703,17 @@ jobs:
           assert pyneatpcie.Tensor
           PY
 
+      - name: Retain this run's PCIe host candidate
+        if: ${{ inputs.validation_only }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: core-pciehost-${{ matrix.distro }}-${{ matrix.deb_arch }}
+          path: pcie_host/dist/*
+          if-no-files-found: error
+          retention-days: 3
+
       - name: Configure AWS credentials
+        if: ${{ !inputs.validation_only }}
         uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
@@ -607,6 +721,7 @@ jobs:
           role-session-name: pciehost-${{ matrix.distro }}-${{ matrix.deb_arch }}-${{ github.run_id }}
 
       - name: Publish PCIe host Debian packages
+        if: ${{ !inputs.validation_only }}
         shell: bash
         run: |
           set -euo pipefail
@@ -625,14 +740,12 @@ jobs:
             s3_args+=(--sse-kms-key-id "${SSE_KMS_KEY_ID}")
           fi
 
-          for path in \
-            pcie_host/dist/*.deb \
-            pcie_host/dist/*.deb.sha256 \
-            pcie_host/dist/*-extras.tar.gz \
-            pcie_host/dist/*-extras.tar.gz.sha256 \
-            pcie_host/dist/pyneatpcie-*.whl \
-            pcie_host/dist/pyneatpcie-*.whl.sha256; do
+          publication_paths="$(python3 pcie_host/scripts/pcie_delivery.py publication-list --directory pcie_host/dist)"
+          mapfile -t paths <<< "$publication_paths"
+          for path in "${paths[@]}"; do
             name="$(basename "${path}")"
+            # Metadata becomes visible only after the aggregate closure audit.
+            case "$name" in metadata*.json) name="${name}.pending" ;; esac
             case "${name}" in
               *.deb) content_type="application/vnd.debian.binary-package" ;;
               *.tar.gz) content_type="application/gzip" ;;
@@ -664,8 +777,9 @@ jobs:
 
   publish-pciehost-package:
     name: Publish PCIe Host Package Metadata
-    if: ${{ (inputs.build_mode || 'standard') == 'standard' && (github.ref_type == 'branch' || github.ref_type == 'tag') }}
+    if: ${{ !inputs.validation_only && (inputs.build_mode || 'standard') == 'standard' && (github.ref_type == 'branch' || github.ref_type == 'tag') }}
     needs:
+      - build-tooling-tests
       - resolve-vulcan-config
       - build-pciehost-packages
     environment: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
@@ -697,247 +811,25 @@ jobs:
           PY
           )"
           short_sha="${GITHUB_SHA:0:12}"
-          install_script_source="pcie_host/scripts/install_pciehost.sh"
-
           s3_args=(--sse aws:kms)
           if [[ -n "${SSE_KMS_KEY_ID:-}" ]]; then
             s3_args+=(--sse-kms-key-id "${SSE_KMS_KEY_ID}")
           fi
-
           for distro in ubuntu22 ubuntu24; do
             for deb_arch in amd64 arm64; do
               prefix="core/${branch_key}/${short_sha}/pciehost/${distro}/${deb_arch}"
               work_dir="_vulcan/pciehost/${distro}/${deb_arch}"
-              resources_tsv="${work_dir}/resources.tsv"
-              install_script="${work_dir}/install_pciehost.sh"
-
-              rm -rf "${work_dir}"
-              mkdir -p "${work_dir}/checksums"
-              : > "${resources_tsv}"
-              install -m 0755 "${install_script_source}" "${install_script}"
-
-              mapfile -t package_keys < <(aws s3api list-objects-v2 \
-                --bucket "${ARTIFACT_BUCKET}" \
-                --prefix "${prefix}/" \
-                --query 'Contents[].Key' \
-                --output text \
-                | tr '\t' '\n' \
-                | grep -E '(\.deb|-extras\.tar\.gz|pyneatpcie-.*\.whl)$' \
-                | sort)
-
-              if [[ "${#package_keys[@]}" -ne 4 ]]; then
-                echo "Expected two PCIe host debs, one extras tarball, and one pyneatpcie wheel under s3://${ARTIFACT_BUCKET}/${prefix}/" >&2
-                printf 'found (%s):\n' "${#package_keys[@]}" >&2
-                printf '  %s\n' "${package_keys[@]}" >&2 || true
-                exit 1
-              fi
-
-              for key in "${package_keys[@]}"; do
-                size_bytes="$(aws s3api head-object \
-                  --bucket "${ARTIFACT_BUCKET}" \
-                  --key "${key}" \
-                  --query ContentLength \
-                  --output text)"
-                checksum_path="${work_dir}/checksums/$(basename "${key}").sha256"
-                aws s3 cp \
-                  "s3://${ARTIFACT_BUCKET}/${key}.sha256" \
-                  "${checksum_path}" \
-                  >/dev/null
-                checksum="$(awk '{print $1; exit}' "${checksum_path}")"
-                resource="${key#${prefix}/}"
-                printf '%s\t%s\t%s\n' "${resource}" "${checksum}" "${size_bytes}" \
-                  >> "${resources_tsv}"
+              python3 pcie_host/scripts/verify_published.py \
+                --bucket "$ARTIFACT_BUCKET" --prefix "$prefix" --distro "$distro" \
+                --arch "$deb_arch" --commit "$GITHUB_SHA" --output "$work_dir"
+              for name in metadata.json metadata-extras.json metadata-pyneatpcie.json; do
+                aws s3 cp "$work_dir/$name" "s3://${ARTIFACT_BUCKET}/${prefix}/${name}" \
+                  --content-type application/json "${s3_args[@]}"
               done
-
-              install_script_size="$(stat -c '%s' "${install_script}")"
-              install_script_checksum="$(sha256sum "${install_script}" | awk '{print $1}')"
-              printf '%s\t%s\t%s\n' \
-                "install_pciehost.sh" \
-                "${install_script_checksum}" \
-                "${install_script_size}" \
-                >> "${resources_tsv}"
-
-              export PREFIX="${prefix}"
-              export DISTRO="${distro}"
-              export DEB_ARCH="${deb_arch}"
-              export RESOURCES_TSV="${resources_tsv}"
-              export METADATA_PATH="${work_dir}/metadata.json"
-              export EXTRAS_METADATA_PATH="${work_dir}/metadata-extras.json"
-              export PYNEATPCIE_METADATA_PATH="${work_dir}/metadata-pyneatpcie.json"
-              python3 - <<'PY'
-          import json
-          import os
-          from datetime import datetime, timezone
-          from pathlib import Path
-
-          distro = os.environ["DISTRO"]
-          deb_arch = os.environ["DEB_ARCH"]
-          resources = []
-          resource_checksums = {}
-          resource_sizes = {}
-          total_size_bytes = 0
-          wheel_resources = []
-          extras_resources = []
-          for line in Path(os.environ["RESOURCES_TSV"]).read_text(
-              encoding="utf-8").splitlines():
-              resource, checksum, size_bytes = line.split("\t")
-              resources.append(resource)
-              resource_checksums[resource] = checksum
-              resource_sizes[resource] = int(size_bytes)
-              total_size_bytes += resource_sizes[resource]
-              if resource.startswith("pyneatpcie-") and resource.endswith(".whl"):
-                  wheel_resources.append(resource)
-              if resource.startswith("sima-pcie-host-") and resource.endswith("-extras.tar.gz"):
-                  extras_resources.append(resource)
-
-          if len(wheel_resources) != 1:
-              raise SystemExit(f"expected exactly one pyneatpcie wheel, got {wheel_resources!r}")
-          if len(extras_resources) != 1:
-              raise SystemExit(f"expected exactly one PCIe host extras archive, got {extras_resources!r}")
-
-          metadata = {
-              "name": f"gh:sima-neat/pciehost/{distro}/{deb_arch}",
-              "version": os.environ["GITHUB_SHA"][:12],
-              "release": "",
-              "description": (
-                  "SiMa.ai NEAT PCIe host runtime, development, and Python packages "
-                  f"({distro}, {deb_arch})"
-              ),
-              "platforms": [
-                  {
-                      "type": "host",
-                      "os": ["linux"],
-                      "arch": [deb_arch],
-                  }
-              ],
-              "resources": resources,
-              "resources-checksum": resource_checksums,
-              "selectable-resources": [],
-              "installation": {
-                  "script": "bash ./install_pciehost.sh --python",
-                  "post-message": "[bold]sima-pcie-host and pyneatpcie installed successfully.[/bold]\n"
-                                  "Activate pyneatpcie with: source ~/pyneatpcie/bin/activate\n",
-              },
-              "artifact": {
-                  "type": "debian-packages",
-                  "repository": "core",
-                  "package_path": f"pciehost/{distro}/{deb_arch}",
-                  "distro": distro,
-                  "arches": [deb_arch],
-              },
-              "repository": os.environ["GITHUB_REPOSITORY"],
-              "branch": os.environ["REF_NAME"],
-              "commit": os.environ["GITHUB_SHA"],
-              "commit_folder": os.environ["GITHUB_SHA"][:12],
-              "published_at_utc": datetime.now(timezone.utc).isoformat(),
-              "size": {
-                  "download": f"{max(1, (total_size_bytes + 1024 * 1024 - 1) // (1024 * 1024))}MB",
-                  "install": f"{max(1, (total_size_bytes + 1024 * 1024 - 1) // (1024 * 1024))}MB",
-              },
-          }
-          Path(os.environ["METADATA_PATH"]).write_text(
-              json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
-
-          extras = extras_resources[0]
-          extracted_dir = extras.removesuffix(".tar.gz")
-          extras_metadata = dict(metadata)
-          extras_metadata.update({
-              "description": (
-                  "SiMa.ai NEAT PCIe host tutorial extras "
-                  f"({distro}, {deb_arch})"
-              ),
-              "resources": [extras],
-              "resources-checksum": {extras: resource_checksums[extras]},
-              "selectable-resources": [],
-              "installation": {
-                  "script": ":",
-                  "post-message": "[bold]PCIe host tutorial extras downloaded and extracted.[/bold]\n"
-                                  f"Enter the tutorial directory with: cd {extracted_dir}\n"
-                                  "The matching PCIe host package must already be installed.\n",
-              },
-              "artifact": {
-                  "type": "tutorial-extras",
-                  "repository": "core",
-                  "package_path": f"pciehost/{distro}/{deb_arch}",
-                  "distro": distro,
-                  "arches": [deb_arch],
-              },
-              "size": {
-                  "download": f"{max(1, (resource_sizes[extras] + 1024 * 1024 - 1) // (1024 * 1024))}MB",
-                  "install": f"{max(1, (resource_sizes[extras] + 1024 * 1024 - 1) // (1024 * 1024))}MB",
-              },
-          })
-          Path(os.environ["EXTRAS_METADATA_PATH"]).write_text(
-              json.dumps(extras_metadata, indent=2) + "\n", encoding="utf-8")
-
-          wheel = wheel_resources[0]
-          pyneatpcie_metadata = dict(metadata)
-          pyneatpcie_metadata.update({
-              "name": f"gh:sima-neat/pyneatpcie/{distro}/{deb_arch}",
-              "description": (
-                  "pyneatpcie wheel for SiMa.ai NEAT PCIe host "
-                  f"({distro}, {deb_arch})"
-              ),
-              "resources": [wheel],
-              "resources-checksum": {wheel: resource_checksums[wheel]},
-              "installation": {
-                  "script": ":",
-                  "post-message": "[bold]pyneatpcie wheel downloaded.[/bold]\n"
-                                  f"Install it with: python3 -m pip install ./{wheel}\n"
-                                  "pyneatpcie requires the matching sima-pcie-host runtime package. "
-                                  "If it is not installed yet, run: sima-cli neat install "
-                                  f"core/pciehost/{distro}/{deb_arch}\n",
-              },
-              "artifact": {
-                  "type": "python-wheel",
-                  "repository": "core",
-                  "package_path": f"pciehost/{distro}/{deb_arch}",
-                  "distro": distro,
-                  "arches": [deb_arch],
-              },
-              "size": {
-                  "download": f"{max(1, (resource_sizes[wheel] + 1024 * 1024 - 1) // (1024 * 1024))}MB",
-                  "install": "1MB",
-              },
-          })
-          Path(os.environ["PYNEATPCIE_METADATA_PATH"]).write_text(
-              json.dumps(pyneatpcie_metadata, indent=2) + "\n", encoding="utf-8")
-          PY
-
-              aws s3 cp \
-                "${install_script}" \
-                "s3://${ARTIFACT_BUCKET}/${prefix}/install_pciehost.sh" \
-                --content-type text/x-shellscript \
-                "${s3_args[@]}"
-
-              aws s3 cp \
-                "${work_dir}/metadata.json" \
-                "s3://${ARTIFACT_BUCKET}/${prefix}/metadata.json" \
-                --content-type application/json \
-                "${s3_args[@]}"
-
-              aws s3 cp \
-                "${work_dir}/metadata-extras.json" \
-                "s3://${ARTIFACT_BUCKET}/${prefix}/metadata-extras.json" \
-                --content-type application/json \
-                "${s3_args[@]}"
-
-              aws s3 cp \
-                "${work_dir}/metadata-pyneatpcie.json" \
-                "s3://${ARTIFACT_BUCKET}/${prefix}/metadata-pyneatpcie.json" \
-                --content-type application/json \
-                "${s3_args[@]}"
-
               if [[ -n "${CLOUDFRONT_DISTRIBUTION_ID:-}" ]]; then
                 aws cloudfront create-invalidation \
-                  --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" \
-                  --paths "/${prefix}/metadata.json" "/${prefix}/metadata-extras.json" "/${prefix}/metadata-pyneatpcie.json" "/${prefix}/install_pciehost.sh"
+                  --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" --paths "/${prefix}/*"
               fi
-
-              cat "${work_dir}/metadata.json"
-              cat "${work_dir}/metadata-extras.json"
-              cat "${work_dir}/metadata-pyneatpcie.json"
-              echo "Published PCIe host ${distro} ${deb_arch} metadata under s3://${ARTIFACT_BUCKET}/${prefix}/"
             done
           done
         env:
@@ -946,22 +838,95 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           SSE_KMS_KEY_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
 
-  test-devkit:
-    name: Test Core on DevKit
-    if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
+  plan-devkit-tests:
+    name: Plan adaptive Core DevKit fleet
+    if: ${{ !cancelled() && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' && needs.code-hygiene.result == 'success' && needs.resolve-test-runner.result == 'success' && ((inputs.validation_only && needs.publish-vulcan-artifacts.result == 'skipped') || (!inputs.validation_only && needs.publish-vulcan-artifacts.result == 'success')) }}
     needs:
       - detect-changes
       - resolve-vulcan-config
       - resolve-test-runner
+      - build
+      - code-hygiene
       - publish-vulcan-artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      plan_id: ${{ steps.plan.outputs.plan_id }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Mint read-only runner discovery token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.NEAT_RELEASES_APP_ID }}
+          private-key: ${{ secrets.NEAT_RELEASES_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-organization-self-hosted-runners: read
+      - name: Discover available DevKits and assign all lanes
+        id: plan
+        env:
+          RUNNER_DISCOVERY_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+          RUNNER_GROUP: ${{ needs.resolve-test-runner.outputs.modalix_runner_group }}
+          REQUIRED_LABELS: ${{ needs.resolve-test-runner.outputs.runner_labels }}
+          RUN_LONG_TESTS: ${{ inputs.run_long_tests && 'true' || 'false' }}
+          STREAM_PROFILE: ${{ vars.NEAT_CI_STREAM_PROFILE || 'http' }}
+          CORE_UNREADY_RUNNERS: ${{ vars.CORE_UNREADY_RUNNERS || '[]' }}
+        run: python3 tools/ci/plan_devkit_shards.py --group "$RUNNER_GROUP" --labels "$REQUIRED_LABELS"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: core-devkit-shard-plan
+          overwrite: true
+          path: devkit-shard-plan.json
+          if-no-files-found: error
+
+  test-devkit-shard:
+    name: Core DevKit ${{ matrix.shard }}
+    if: ${{ !cancelled() && needs.plan-devkit-tests.result == 'success' }}
+    needs:
+      - detect-changes
+      - resolve-vulcan-config
+      - resolve-test-runner
+      - build
+      - code-hygiene
+      - publish-vulcan-artifacts
+      - plan-devkit-tests
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan-devkit-tests.outputs.matrix) }}
     runs-on:
       group: ${{ needs.resolve-test-runner.outputs.modalix_runner_group }}
-      labels: [self-hosted, Linux, ARM64, modalix, rtsp, "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}"]
+      # The dedicated production DevKit uses vulcan-production, not vulcan-prod.
+      labels: ${{ matrix.labels }}
     env:
       VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
       SIMA_CLI_CHECK_FOR_UPDATE: "0"
 
     steps:
+      - name: Verify selected DevKit firmware
+        env:
+          EXPECTED_ELXR_VERSION: ${{ needs.resolve-test-runner.outputs.elxr_version }}
+          VERSION_FALLBACK: ${{ needs.resolve-test-runner.outputs.version_fallback }}
+        shell: bash
+        run: |
+          python3 - <<'PYFIRMWARE'
+          import os
+          import re
+          from pathlib import Path
+
+          actual_versions = set()
+          for path in (Path('/etc/build'), Path('/etc/buildinfo')):
+              if path.is_file():
+                  actual_versions.update(re.findall(
+                      r'^SIMA_BUILD_VERSION\s*=\s*([\w.\-+]+)\s*$',
+                      path.read_text(), re.MULTILINE))
+          expected = os.environ['EXPECTED_ELXR_VERSION']
+          print(f"Runner: {os.environ['RUNNER_NAME']}; requested firmware: {expected}; actual firmware: {sorted(actual_versions)}")
+          if (not expected or os.environ['VERSION_FALLBACK'] != 'false'
+                  or actual_versions != {expected}):
+              raise SystemExit('Cannot verify exact DevKit firmware; refusing to run')
+          PYFIRMWARE
       - name: Checkout code
         uses: actions/checkout@v5
         with:
@@ -984,9 +949,42 @@ jobs:
         run: |
           ./scripts/cleanup_devkit_storage.sh
 
+      - name: Download this build's installed-qualification inputs
+        if: ${{ !inputs.validation_only }}
+        run: |
+          python3 tools/ci/acquire_core_qualification.py \
+            --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" \
+            --commit "${GITHUB_SHA}" --environment "${VULCAN_ENV}" \
+            --output _work/installed-qualification-dist \
+            --package-profile core-codecs-llima \
+            --write-package-inventory _work/expected-package-inventory.json
+
+      - name: Download this run's Core validation candidate
+        if: ${{ inputs.validation_only }}
+        uses: actions/download-artifact@v4
+        with:
+          name: neat-core-dist
+          path: .
+
+      - name: Verify this run's Core validation candidate
+        if: ${{ inputs.validation_only }}
+        run: |
+          bash scripts/ci/verify_core_dist.sh --dist . \
+            --expected-manifest deps/manifest.json --expected-commit "$GITHUB_SHA" \
+            --package-profile core-codecs-llima \
+            --write-package-inventory _work/expected-package-inventory.json
+
+      - name: Capture native platform before NEAT installation
+        run: |
+          python3 tools/ci/verify_core_dist.py \
+            --capture-platform-baseline _work/platform-before-install.json
+
       - name: Install test runtime from Vulcan artifact
+        if: ${{ !inputs.validation_only }}
         env:
           DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+          # Benchmark telemetry is part of CI; fail when Sentinel cannot be installed.
+          NEAT_INSTALLER_SENTINEL_REQUIRED: "ON"
         run: |
           if ! command -v sima-cli >/dev/null 2>&1; then
             echo "sima-cli not found on test runner." >&2
@@ -1008,6 +1006,13 @@ jobs:
             echo "Artifact installation attempt ${attempt} failed; retrying in ${delay}s." >&2
             sleep "${delay}"
           done
+
+      - name: Install this run's verified Core validation candidate
+        if: ${{ inputs.validation_only }}
+        env:
+          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+          NEAT_INSTALLER_SENTINEL_REQUIRED: "ON"
+        run: bash ./install_neat_framework.sh --local
 
       - name: Locate installed extras content
         run: |
@@ -1073,6 +1078,20 @@ jobs:
             printf 'PYTEST_DIR=%s\n' "${PYTEST_DIR}"
             printf 'TUTORIALS_PYTEST_DIR=%s\n' "${TUTORIALS_PYTEST_DIR}"
           } >> "${GITHUB_ENV}"
+
+      - name: Install test dependencies on every allocated DevKit
+        run: |
+          set -euo pipefail
+          PYNEAT_HOME="${HOME}/pyneat"
+          if [[ -x "${PYNEAT_HOME}/bin/python" ]]; then
+            PYTHON_BIN="${PYNEAT_HOME}/bin/python"
+          elif [[ -x "${PYNEAT_HOME}/.venv/bin/python" ]]; then
+            PYTHON_BIN="${PYNEAT_HOME}/.venv/bin/python"
+          else
+            echo "Expected installed PyNeat Python environment under ${PYNEAT_HOME}." >&2
+            exit 1
+          fi
+          "${PYTHON_BIN}" tools/ci/install_test_dependencies.py
 
       - name: Smoke-test installed PyNeat wheel
         run: |
@@ -1144,6 +1163,7 @@ jobs:
           fi
 
       - name: Prepare GenAI models
+        if: ${{ contains(fromJSON(matrix.tasks), 'genai') || contains(fromJSON(matrix.tasks), 'genai-python') }}
         run: |
           set -euo pipefail
           EXTRAS_PREFIX="$(cat _work/extras_prefix.txt)"
@@ -1153,14 +1173,26 @@ jobs:
             exit 1
           fi
 
-          export LLIMA_MODELS_PATH="${LLIMA_MODELS_PATH:-/media/nvme/llima/models}"
+          mountpoint -q /media/nvme || { echo 'GenAI requires mounted NVMe storage' >&2; exit 1; }
+          if [[ -z "${LLIMA_MODELS_PATH:-}" ]]; then
+            if [[ -d /media/nvme/llima/models && -w /media/nvme/llima/models ]]; then
+              LLIMA_MODELS_PATH=/media/nvme/llima/models
+            else
+              LLIMA_MODELS_PATH=/media/nvme/kerrigan/neat-core-genai-models
+            fi
+          fi
+          export LLIMA_MODELS_PATH
+          mkdir -p "${LLIMA_MODELS_PATH}"
           export SIMA_TEST_LLIMA_TEXT_MODEL="${SIMA_TEST_LLIMA_TEXT_MODEL:-Qwen2.5-0.5B-Instruct-Autoround-a16w4}"
           export SIMA_TEST_LLIMA_VLM_MODEL="${SIMA_TEST_LLIMA_VLM_MODEL:-LFM2.5-VL-450M-Autoround-a16w4}"
           export SIMA_TEST_LLIMA_ASR_MODEL="${SIMA_TEST_LLIMA_ASR_MODEL:-whisper-small-a16w8}"
           export SIMA_TEST_LLIMA_REASONING_QWEN_MODEL="${SIMA_TEST_LLIMA_REASONING_QWEN_MODEL:-Qwen3-0.6B-Autoround-a16w4}"
           export SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL="${SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL:-Gemma-4-E2B-it-TextOnly-GPTQ-a16w4}"
 
-          prepare_models_lock="/media/nvme/llima/.prepare-models.lock"
+          prepare_models_lock="${LLIMA_MODELS_PATH}/.prepare-models.lock"
+          if [[ "${LLIMA_MODELS_PATH}" == /media/nvme/llima/models ]]; then
+            prepare_models_lock=/media/nvme/llima/.prepare-models.lock
+          fi
           flock \
             --verbose \
             --wait 1800 \
@@ -1206,6 +1238,7 @@ jobs:
           echo "Installed immutable LightGlue regression model: ${archives[0]}"
 
       - name: Build docs C++ examples from DevKit-installed package
+        if: ${{ contains(fromJSON(matrix.tasks), 'fast') }}
         run: |
           tests/docs/build_docs_examples.sh \
             --environment devkit \
@@ -1228,13 +1261,23 @@ jobs:
 
       - name: Run Installed DevKit Package Inventory Test
         run: |
+          set -euo pipefail
+          # Acquisition verified the complete artifact and recorded expected
+          # package data. Read actual dpkg, payload and platform state freshly.
+          python3 tools/ci/verify_core_dist.py \
+            --read-package-inventory _work/expected-package-inventory.json \
+            --verify-installed --platform-baseline _work/platform-before-install.json
+          export SIMA_TEST_PACKAGE_INVENTORY="${GITHUB_WORKSPACE}/_work/expected-package-inventory.json"
+          export SIMA_TEST_PLATFORM_BASELINE="${GITHUB_WORKSPACE}/_work/platform-before-install.json"
           TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
-          ctest --test-dir "${TEST_DIR}" \
+          COVERAGE_DIR=_work/coverage/package-inventory COVERAGE_PROFILE=required bash scripts/ci/run_zero_skip_gate.sh \
+            ctest --test-dir "${TEST_DIR}" \
             --label-regex "devkit-package-inventory" \
             --output-on-failure \
             --no-tests=error
 
       - name: Run Fast Non-E2E Tests (Parallel)
+        if: ${{ contains(fromJSON(matrix.tasks), 'fast') }}
         env:
           SIMA_YOLOV8_VARIANTS_BASE_URL: https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix
           SIMA_CTEST_TAIL_ONLY: "0"
@@ -1256,7 +1299,8 @@ jobs:
           fi
 
           FAST_JOBS="${SIMA_CTEST_FAST_JOBS:-4}"
-          ctest --test-dir "${TEST_DIR}" \
+          COVERAGE_DIR=_work/coverage/fast COVERAGE_PROFILE=required bash scripts/ci/run_zero_skip_gate.sh \
+            ctest --test-dir "${TEST_DIR}" \
             --label-regex "strict" \
             --label-exclude "perf|e2e" \
             -E "^(unit_dispatcher_watchdog_test)$" \
@@ -1264,7 +1308,26 @@ jobs:
             --output-on-failure \
             --no-tests=error
 
+      - name: Prepare mandatory weekly model fixtures
+        if: ${{ inputs.run_long_tests }}
+        env:
+          SIMA_CI_MNIST_MODEL: ${{ vars.SIMA_CI_MNIST_MODEL }}
+          SIMA_CI_MNIST_MODEL_SHA256: ${{ vars.SIMA_CI_MNIST_MODEL_SHA256 }}
+          SIMA_CI_SSD300_MODEL: ${{ vars.SIMA_CI_SSD300_MODEL }}
+          SIMA_CI_SSD300_MODEL_SHA256: ${{ vars.SIMA_CI_SSD300_MODEL_SHA256 }}
+          SIMA_CI_MNIST_IMAGES: ${{ vars.SIMA_CI_MNIST_IMAGES }}
+          SIMA_CI_MNIST_IMAGES_SHA256: ${{ vars.SIMA_CI_MNIST_IMAGES_SHA256 }}
+          SIMA_CI_MNIST_LABELS: ${{ vars.SIMA_CI_MNIST_LABELS }}
+          SIMA_CI_MNIST_LABELS_SHA256: ${{ vars.SIMA_CI_MNIST_LABELS_SHA256 }}
+        run: |
+          python3 tools/ci/prepare_weekly_fixtures.py \
+            --output "${GITHUB_WORKSPACE}/_work/weekly-fixtures" \
+            --runtime-manifest "$(cat _work/extras_lib_dir.txt)/test-fixtures/runtime_manifest.json" \
+            --github-env "${GITHUB_ENV}" \
+            --environment-json "${GITHUB_WORKSPACE}/_work/weekly-environment.json"
+
       - name: Run E2E Tests
+        if: ${{ contains(fromJSON(matrix.tasks), 'e2e-0') }}
         env:
           SIMA_YOLOV8_VARIANTS_BASE_URL: https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix
           SIMANEAT_TEST_RTSP_H264_URL: ${{ vars.SIMANEAT_TEST_RTSP_H264_URL }}
@@ -1287,7 +1350,7 @@ jobs:
           unset SIMANEAT_TEST_RTSP_H264_URL SIMANEAT_TEST_RTSP_H264_URLS \
             SIMANEAT_TEST_RTSP_H265_URL SIMANEAT_TEST_RTSP_H265_URLS \
             SIMANEAT_TEST_RTSP_MJPEG_URL SIMANEAT_TEST_RTSP_MJPEG_URLS
-          echo "External RTSP cases temporarily disabled; restore under core#890."
+          echo "External streams have separate explicit capability-profile accounting; core#890 gaps remain."
           TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
           MPK_ROOT="${RUNNER_TEMP:-/tmp}/sima-mpk-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}"
           mkdir -p "${MPK_ROOT}"
@@ -1302,19 +1365,21 @@ jobs:
           # Temporary external RTSP exclusions; remove under core#890.
           EXTERNAL_RTSP_TESTS='rtsp_encoded_boundary_caps_test|decoder_multirun_admission_boundary_test|h265_rtsp_resnet50_e2e_test'
           SKIP_REGEX="^(unit_dispatcher_watchdog_test|${EXTERNAL_RTSP_TESTS})$"
-          E2E_LABEL_EXCLUDE='perf|llima'
+          E2E_LABEL_EXCLUDE='perf|llima|codec_stream|codec_aggregate'
           if [[ "${{ inputs.run_long_tests }}" != "true" ]]; then
             E2E_LABEL_EXCLUDE+='|long'
           fi
           if [[ "${SIMA_CTEST_TAIL_ONLY:-0}" == "1" ]]; then
             echo "TEMPORARY one-shot: ctest -R '${TAIL_REGEX}'"
-            ctest --test-dir "${TEST_DIR}" \
+            COVERAGE_DIR=_work/coverage/e2e-tail-0 bash scripts/ci/run_zero_skip_gate.sh \
+              ctest --test-dir "${TEST_DIR}" \
               -R "${TAIL_REGEX}" \
               -E "${SKIP_REGEX}" \
               --output-on-failure \
               --no-tests=error
           else
-            ctest --test-dir "${TEST_DIR}" \
+            COVERAGE_DIR=_work/coverage/e2e-0 COVERAGE_PROFILE=required \
+              python3 tools/ci/partition_devkit_e2e.py --index 0 -- ctest --test-dir "${TEST_DIR}" \
               --label-regex "e2e" \
               --label-exclude "${E2E_LABEL_EXCLUDE}" \
               -E "${SKIP_REGEX}|^(modelzoo_bulk_models_test)$" \
@@ -1324,7 +1389,107 @@ jobs:
               --no-tests=error
           fi
 
+      - name: Run E2E Tests (partition 2)
+        if: ${{ contains(fromJSON(matrix.tasks), 'e2e-1') }}
+        env:
+          SIMA_YOLOV8_VARIANTS_BASE_URL: https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix
+          SIMANEAT_TEST_RTSP_H264_URL: ${{ vars.SIMANEAT_TEST_RTSP_H264_URL }}
+          SIMANEAT_TEST_RTSP_H264_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H264_URLS }}
+          SIMANEAT_TEST_RTSP_H265_URL: ${{ vars.SIMANEAT_TEST_RTSP_H265_URL }}
+          SIMANEAT_TEST_RTSP_H265_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H265_URLS }}
+          SIMANEAT_TEST_RTSP_MJPEG_URL: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_URL }}
+          SIMANEAT_TEST_RTSP_MJPEG_URLS: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_URLS }}
+          SIMANEAT_TEST_RTSP_MJPEG_FPS: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_FPS }}
+          SIMANEAT_TEST_HTTP_MJPEG_URL: ${{ vars.SIMANEAT_TEST_HTTP_MJPEG_URL }}
+          SIMANEAT_TEST_HTTP_MJPEG_URLS: ${{ vars.SIMANEAT_TEST_HTTP_MJPEG_URLS }}
+          SIMANEAT_TEST_HTTP_MJPEG_FPS: ${{ vars.SIMANEAT_TEST_HTTP_MJPEG_FPS }}
+          SIMA_CTEST_TAIL_ONLY: "0"
+          SIMA_CTEST_E2E_JOBS: "1"
+        run: |
+          set -x
+          # Temporary external RTSP pause until runner connectivity is restored: core#890.
+          # Restore the H.265 URL prerequisite check when removing this pause.
+          # Keep HTTP cases in the mixed codec tests enabled by clearing only RTSP URLs.
+          unset SIMANEAT_TEST_RTSP_H264_URL SIMANEAT_TEST_RTSP_H264_URLS \
+            SIMANEAT_TEST_RTSP_H265_URL SIMANEAT_TEST_RTSP_H265_URLS \
+            SIMANEAT_TEST_RTSP_MJPEG_URL SIMANEAT_TEST_RTSP_MJPEG_URLS
+          echo "External streams have separate explicit capability-profile accounting; core#890 gaps remain."
+          TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
+          MPK_ROOT="${RUNNER_TEMP:-/tmp}/sima-mpk-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}"
+          mkdir -p "${MPK_ROOT}"
+          export SIMA_MPK_EXTRACT_ROOT="${MPK_ROOT}"
+          export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
+          echo "Using SIMA_MPK_EXTRACT_ROOT=${SIMA_MPK_EXTRACT_ROOT}"
+          echo "Using SIMA_GST_REGISTRY_DIR=${SIMA_GST_REGISTRY_DIR}"
+          echo "SIMA_CTEST_TAIL_ONLY=${SIMA_CTEST_TAIL_ONLY:-<unset>}"
+          echo "SIMA_CTEST_E2E_JOBS=${SIMA_CTEST_E2E_JOBS:-<unset>}"
+
+          TAIL_REGEX='^(sync_yolov8_test|sync_yolov8_test_detessdequant|yolov8_variant_route_matrix_test|boxdecode_yolo_layout_matrix_e2e_test|preproc_yolov8_matrix_test|graphpipes_yolo_metadata_sender_16stream_test)$'
+          # Temporary external RTSP exclusions; remove under core#890.
+          EXTERNAL_RTSP_TESTS='rtsp_encoded_boundary_caps_test|decoder_multirun_admission_boundary_test|h265_rtsp_resnet50_e2e_test'
+          SKIP_REGEX="^(unit_dispatcher_watchdog_test|${EXTERNAL_RTSP_TESTS})$"
+          E2E_LABEL_EXCLUDE='perf|llima|codec_stream|codec_aggregate'
+          if [[ "${{ inputs.run_long_tests }}" != "true" ]]; then
+            E2E_LABEL_EXCLUDE+='|long'
+          fi
+          if [[ "${SIMA_CTEST_TAIL_ONLY:-0}" == "1" ]]; then
+            echo "TEMPORARY one-shot: ctest -R '${TAIL_REGEX}'"
+            COVERAGE_DIR=_work/coverage/e2e-tail-1 bash scripts/ci/run_zero_skip_gate.sh \
+              ctest --test-dir "${TEST_DIR}" \
+              -R "${TAIL_REGEX}" \
+              -E "${SKIP_REGEX}" \
+              --output-on-failure \
+              --no-tests=error
+          else
+            COVERAGE_DIR=_work/coverage/e2e-1 COVERAGE_PROFILE=required \
+              python3 tools/ci/partition_devkit_e2e.py --index 1 -- ctest --test-dir "${TEST_DIR}" \
+              --label-regex "e2e" \
+              --label-exclude "${E2E_LABEL_EXCLUDE}" \
+              -E "${SKIP_REGEX}|^(modelzoo_bulk_models_test)$" \
+              --timeout 240 \
+              -j "${SIMA_CTEST_E2E_JOBS:-1}" \
+              --output-on-failure \
+              --no-tests=error
+          fi
+
+      - name: Run declared weekly stream capability profile
+        if: ${{ inputs.run_long_tests && contains(fromJSON(matrix.tasks), 'streams') }}
+        env:
+          NEAT_CI_STREAM_PROFILE: ${{ vars.NEAT_CI_STREAM_PROFILE || 'http' }}
+          SIMANEAT_TEST_RTSP_H264_URL: ${{ vars.SIMANEAT_TEST_RTSP_H264_URL }}
+          SIMANEAT_TEST_RTSP_H264_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H264_URLS }}
+          SIMANEAT_TEST_RTSP_H264_FPS: ${{ vars.SIMANEAT_TEST_RTSP_H264_FPS }}
+          SIMANEAT_TEST_RTSP_H265_URL: ${{ vars.SIMANEAT_TEST_RTSP_H265_URL }}
+          SIMANEAT_TEST_RTSP_H265_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H265_URLS }}
+          SIMANEAT_TEST_RTSP_H265_FPS: ${{ vars.SIMANEAT_TEST_RTSP_H265_FPS }}
+          SIMANEAT_TEST_RTSP_MJPEG_URL: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_URL }}
+          SIMANEAT_TEST_RTSP_MJPEG_URLS: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_URLS }}
+          SIMANEAT_TEST_RTSP_MJPEG_FPS: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_FPS }}
+          SIMANEAT_TEST_HTTP_MJPEG_URL: ${{ vars.SIMANEAT_TEST_HTTP_MJPEG_URL }}
+          SIMANEAT_TEST_HTTP_MJPEG_URLS: ${{ vars.SIMANEAT_TEST_HTTP_MJPEG_URLS }}
+          SIMANEAT_TEST_HTTP_MJPEG_FPS: ${{ vars.SIMANEAT_TEST_HTTP_MJPEG_FPS }}
+        run: |
+          # These cases used to share aggregate IDs that could PASS after only
+          # one available stream. Keep omitted transport coverage explicit.
+          python3 tools/ci/prepare_weekly_fixtures.py \
+            --stream-profile "${NEAT_CI_STREAM_PROFILE}" \
+            --stream-report _work/coverage/stream-profile.json
+          if [[ "${NEAT_CI_STREAM_PROFILE}" == none ]]; then
+            exit 0
+          fi
+          STREAM_ARGS=(-L codec_stream)
+          if [[ "${NEAT_CI_STREAM_PROFILE}" == http ]]; then
+            STREAM_ARGS+=(-LE rtsp)
+          fi
+          TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
+          export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
+          COVERAGE_DIR=_work/coverage/weekly-streams COVERAGE_PROFILE=required \
+            bash scripts/ci/run_zero_skip_gate.sh ctest --test-dir "${TEST_DIR}" \
+              "${STREAM_ARGS[@]}" --timeout 240 -j 1 \
+              --output-on-failure --no-tests=error
+
       - name: Run GenAI / LLiMa E2E Tests
+        if: ${{ contains(fromJSON(matrix.tasks), 'genai') }}
         run: |
           set -euo pipefail
           TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
@@ -1340,16 +1505,18 @@ jobs:
           echo "Using SIMA_TEST_LLIMA_ASR_MODEL=${SIMA_TEST_LLIMA_ASR_MODEL}"
           echo "Using SIMA_TEST_LLIMA_REASONING_QWEN_MODEL=${SIMA_TEST_LLIMA_REASONING_QWEN_MODEL}"
           echo "Using SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL=${SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL}"
+          ctest --test-dir "${TEST_DIR}" --show-only -L llima > _work/genai-ctest-selection.txt
           mapfile -t genai_tests < <(
-            ctest --test-dir "${TEST_DIR}" --show-only -L llima |
-              sed -n -E '/\(Disabled\)$/! s/^[[:space:]]*Test +#[0-9]+: ([^ ]+).*$/\1/p'
+            sed -n -E 's/^[[:space:]]*Test +#[0-9]+: ([^ ]+).*$/\1/p' _work/genai-ctest-selection.txt
           )
           if [[ "${#genai_tests[@]}" -eq 0 ]]; then
             echo "No C++ GenAI / LLiMa tests were discovered." >&2
             exit 1
           fi
-          for test_name in "${genai_tests[@]}"; do
-            ctest --test-dir "${TEST_DIR}" \
+          for index in "${!genai_tests[@]}"; do
+            test_name="${genai_tests[index]}"
+            COVERAGE_DIR="_work/coverage/genai-cpp/${index}" COVERAGE_PROFILE=required \
+              bash scripts/ci/run_zero_skip_gate.sh ctest --test-dir "${TEST_DIR}" \
               --tests-regex "^${test_name}$" \
               --timeout 900 \
               --output-on-failure \
@@ -1357,6 +1524,7 @@ jobs:
           done
 
       - name: Run Perf and Throughput Tests (Isolated)
+        if: ${{ contains(fromJSON(matrix.tasks), 'performance') }}
         env:
           SIMA_YOLOV8_VARIANTS_BASE_URL: https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix
         run: |
@@ -1368,7 +1536,8 @@ jobs:
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
           echo "Using SIMA_MPK_EXTRACT_ROOT=${SIMA_MPK_EXTRACT_ROOT}"
           echo "Using SIMA_GST_REGISTRY_DIR=${SIMA_GST_REGISTRY_DIR}"
-          ctest --test-dir "${TEST_DIR}" \
+          COVERAGE_DIR=_work/coverage/perf bash scripts/ci/run_zero_skip_gate.sh \
+            ctest --test-dir "${TEST_DIR}" \
             --label-regex "perf" \
             --label-exclude "llima|disabled|long" \
             -E "^(modelzoo_bulk_models_test)$" \
@@ -1376,6 +1545,7 @@ jobs:
             --no-tests=error
 
       - name: Run Modalix Performance Matrix
+        if: ${{ contains(fromJSON(matrix.tasks), 'performance') }}
         run: |
           TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
           PERF_MATRIX_ARGS=()
@@ -1392,35 +1562,46 @@ jobs:
             --results-dir "${GITHUB_WORKSPACE}/_work/perf-results/encoder"
 
       - name: Upload Modalix Performance Results
-        if: ${{ always() }}
+        if: ${{ always() && contains(fromJSON(matrix.tasks), 'performance') }}
         uses: actions/upload-artifact@v6
         with:
-          name: modalix-performance-results-${{ github.run_id }}-${{ github.run_attempt }}
+          name: modalix-performance-results-${{ matrix.plan_id }}-${{ matrix.shard }}-${{ github.run_id }}
+          overwrite: true
           path: _work/perf-results/
           if-no-files-found: error
           retention-days: 30
 
-      - name: Manifest Strict Fallback Gate
-        env:
-          SIMA_STRICT_MANIFEST_NO_JSON_FALLBACK: 1
+      - name: Typed Contract Admission Gate
+        if: ${{ contains(fromJSON(matrix.tasks), 'fast') }}
         run: |
           TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
           MPK_ROOT="${RUNNER_TEMP:-/tmp}/sima-mpk-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}-manifest"
           mkdir -p "${MPK_ROOT}"
           export SIMA_MPK_EXTRACT_ROOT="${MPK_ROOT}"
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
-          GATE_REGEX='^(unit_sima_plugin_manifest_strict_model_pipeline_test|unit_sima_plugin_manifest_strict_fallback_test)$'
-          if ctest --test-dir "${TEST_DIR}" -N -R "${GATE_REGEX}" 2>/dev/null \
-               | grep -qE "Test +#"; then
-            echo "Using SIMA_MPK_EXTRACT_ROOT=${SIMA_MPK_EXTRACT_ROOT}"
-            ctest --test-dir "${TEST_DIR}" \
-              --output-on-failure \
-              -R "${GATE_REGEX}"
-          else
-            echo "Manifest-strict tests not registered in this build; skipping the fallback gate."
-          fi
+          # Positive typed Model lowering and negative no-fallback admission.
+          # Plugin-only missing-MLA-contract admission belongs to Scheduler and
+          # is required in the separately qualified dependency test cohort.
+          # These are current tests, not aliases for retired JSON-manifest IDs.
+          GATE_REGEX='^(unit_model_stage_fragments_test|unit_kernel_runner_integration_test|unit_plugin_failure_messages_test)$'
+          COVERAGE_DIR=_work/coverage/manifest bash scripts/ci/run_zero_skip_gate.sh \
+            ctest --test-dir "${TEST_DIR}" --output-on-failure -R "${GATE_REGEX}"
+          python3 - <<'PY_GATE'
+          import json
+          from pathlib import Path
+          expected = {
+              'unit_model_stage_fragments_test',
+              'unit_kernel_runner_integration_test',
+              'unit_plugin_failure_messages_test',
+          }
+          selected = json.loads(Path('_work/coverage/manifest/selection.json').read_text())
+          actual = [test['name'] for test in selected['tests']]
+          if len(actual) != len(expected) or set(actual) != expected:
+              raise SystemExit('Typed admission gate requires all three Core-owned registrations')
+          PY_GATE
 
       - name: Run Tutorial Tests
+        if: ${{ contains(fromJSON(matrix.tasks), 'python-tutorials') }}
         env:
           SIMANEAT_TEST_RTSP_H264_URL: ${{ vars.SIMANEAT_TEST_RTSP_H264_URL }}
           SIMANEAT_TEST_RTSP_H264_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H264_URLS }}
@@ -1440,7 +1621,8 @@ jobs:
           TUTORIALS_DIR="$(cat _work/extras_lib_dir.txt)/tutorials"
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
           # Temporary external RTSP exclusions; remove under core#890.
-          ctest --test-dir "${TUTORIALS_DIR}" --output-on-failure \
+          COVERAGE_DIR=_work/coverage/tutorials COVERAGE_PROFILE=required \
+            bash scripts/ci/run_zero_skip_gate.sh ctest --test-dir "${TUTORIALS_DIR}" --output-on-failure \
             -E '^tutorial_018_consume_rtsp_stream(_h265)?$'
 
           RESNET_TAR="${TUTORIAL_MODEL_DIR}/resnet_50.tar.gz"
@@ -1455,7 +1637,13 @@ jobs:
           } >> "${GITHUB_ENV}"
 
       - name: Run Python pytest from installed extras
+        if: ${{ contains(fromJSON(matrix.tasks), 'python-tutorials') }}
         env:
+          NEAT_CI_PYTHON_PROFILE: ${{ vars.NEAT_CI_PYTHON_PROFILE || 'runtime' }}
+          NEAT_CI_TORCH_VERSION: ${{ vars.NEAT_CI_TORCH_VERSION }}
+          SIMA_NEAT_TEST_MIPI_CAMERA: ${{ vars.SIMA_NEAT_TEST_MIPI_CAMERA || '0' }}
+          SIMA_NEAT_TUTORIAL_MODEL_MIPI: ${{ vars.SIMA_NEAT_TUTORIAL_MODEL_MIPI }}
+          SIMA_NEAT_TUTORIAL_MIPI_DECODE: ${{ vars.SIMA_NEAT_TUTORIAL_MIPI_DECODE }}
           SIMANEAT_TEST_RTSP_H264_URL: ${{ vars.SIMANEAT_TEST_RTSP_H264_URL }}
           SIMANEAT_TEST_RTSP_H264_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H264_URLS }}
           SIMANEAT_TEST_RTSP_H265_URL: ${{ vars.SIMANEAT_TEST_RTSP_H265_URL }}
@@ -1472,33 +1660,103 @@ jobs:
           fi
 
           "${PYTHON_BIN}" -m pip install --upgrade pip
-          "${PYTHON_BIN}" -m pip install pytest requests
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
           export SIMA_NEAT_TUTORIAL_REQUIRE_RUNTIME=1
+          export SIMA_GRAPH_PHASE3_PY_RUNTIME=1
+          export SIMA_RESNET50_TAR="${SIMA_NEAT_TUTORIAL_MODEL_RESNET:?Tutorial model preparation required}"
+          test -s "${SIMA_RESNET50_TAR}"
+          PYTHON_MARKS=()
+          case "${NEAT_CI_PYTHON_PROFILE}" in
+            runtime)
+              PYTHON_MARKS=(-m 'not torch_interop')
+              echo 'EXCLUDED profile: optional Torch interop (not a pass).'
+              ;;
+            torch)
+              : "${NEAT_CI_TORCH_VERSION:?Set the reviewed exact Torch version for the Torch profile}"
+              [[ "${NEAT_CI_TORCH_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+][a-zA-Z0-9.]+)?$ ]]
+              "${PYTHON_BIN}" -m pip install "torch==${NEAT_CI_TORCH_VERSION}"
+              "${PYTHON_BIN}" -c 'import torch; print(torch.__version__)'
+              ;;
+            *) echo "Unknown Python capability profile: ${NEAT_CI_PYTHON_PROFILE}" >&2; exit 1;;
+          esac
+          CAMERA_MARKS=()
+          if [[ "${SIMA_NEAT_TEST_MIPI_CAMERA}" != 1 ]]; then
+            CAMERA_MARKS=(-m 'not mipi_camera')
+            echo 'EXCLUDED profile: MIPI hardware; the hardware-free camera API test remains selected.'
+          else
+            test -s "${SIMA_NEAT_TUTORIAL_MODEL_MIPI:?MIPI profile requires a staged model}"
+            : "${SIMA_NEAT_TUTORIAL_MIPI_DECODE:?MIPI profile requires the BoxDecode fixture}"
+          fi
+          export PYTHONPATH="${GITHUB_WORKSPACE}/tools/ci${PYTHONPATH:+:${PYTHONPATH}}"
           genai_test_file="${PYTEST_DIR}/test_genai_bindings.py"
           test -f "${genai_test_file}"
 
-          "${PYTHON_BIN}" -m pytest -q \
-            --ignore="${genai_test_file}" \
-            "${PYTEST_DIR}"
+          "${PYTHON_BIN}" -m pytest -q -p core_pytest_coverage \
+            --core-coverage-dir _work/coverage/python-bindings \
+            --junitxml _work/coverage/python-bindings.xml \
+            "${PYTHON_MARKS[@]}" --ignore="${genai_test_file}" "${PYTEST_DIR}"
 
-          mapfile -t genai_pytests < <(
-            "${PYTHON_BIN}" -m pytest --collect-only -q "${genai_test_file}" |
-              sed -n '/::/p'
-          )
+          # Temporary external RTSP exclusions; retain the FPS probe unit tests (core#890).
+          "${PYTHON_BIN}" -m pytest -q -p core_pytest_coverage \
+            --core-coverage-dir _work/coverage/python-tutorials \
+            --junitxml _work/coverage/python-tutorials.xml \
+            "${CAMERA_MARKS[@]}" "${TUTORIALS_PYTEST_DIR}" \
+            -k 'not (test_rtsp_codec_tutorial and (h264 or h265)) and not (test_tutorial_runs and 018_consume_rtsp_stream)'
+
+      - name: Run Python GenAI E2E tests from installed extras
+        if: ${{ contains(fromJSON(matrix.tasks), 'genai-python') }}
+        env:
+          NEAT_CI_PYTHON_PROFILE: ${{ vars.NEAT_CI_PYTHON_PROFILE || 'runtime' }}
+          NEAT_CI_TORCH_VERSION: ${{ vars.NEAT_CI_TORCH_VERSION }}
+        run: |
+          PYNEAT_HOME="${HOME}/pyneat"
+          if [[ -x "${PYNEAT_HOME}/bin/python" ]]; then
+            PYTHON_BIN="${PYNEAT_HOME}/bin/python"
+          elif [[ -x "${PYNEAT_HOME}/.venv/bin/python" ]]; then
+            PYTHON_BIN="${PYNEAT_HOME}/.venv/bin/python"
+          else
+            echo "Expected pyneat python not found at ${PYNEAT_HOME}/bin/python or ${PYNEAT_HOME}/.venv/bin/python" >&2
+            exit 1
+          fi
+
+          "${PYTHON_BIN}" -m pip install --upgrade pip
+          export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
+          export SIMA_NEAT_TUTORIAL_REQUIRE_RUNTIME=1
+          export SIMA_GRAPH_PHASE3_PY_RUNTIME=1
+          PYTHON_MARKS=()
+          case "${NEAT_CI_PYTHON_PROFILE}" in
+            runtime)
+              PYTHON_MARKS=(-m 'not torch_interop')
+              echo 'EXCLUDED profile: optional Torch interop (not a pass).'
+              ;;
+            torch)
+              : "${NEAT_CI_TORCH_VERSION:?Set the reviewed exact Torch version for the Torch profile}"
+              [[ "${NEAT_CI_TORCH_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+][a-zA-Z0-9.]+)?$ ]]
+              "${PYTHON_BIN}" -m pip install "torch==${NEAT_CI_TORCH_VERSION}"
+              "${PYTHON_BIN}" -c 'import torch; print(torch.__version__)'
+              ;;
+            *) echo "Unknown Python capability profile: ${NEAT_CI_PYTHON_PROFILE}" >&2; exit 1;;
+          esac
+          export PYTHONPATH="${GITHUB_WORKSPACE}/tools/ci${PYTHONPATH:+:${PYTHONPATH}}"
+          genai_test_file="${PYTEST_DIR}/test_genai_bindings.py"
+          test -f "${genai_test_file}"
+          "${PYTHON_BIN}" -m pytest --collect-only -q "${PYTHON_MARKS[@]}" \
+            "${genai_test_file}" > _work/genai-pytest-selection.txt
+          mapfile -t genai_pytests < <(sed -n '/::/p' _work/genai-pytest-selection.txt)
           if [[ "${#genai_pytests[@]}" -eq 0 ]]; then
             echo "No Python GenAI tests were discovered." >&2
             exit 1
           fi
-          for test_case in "${genai_pytests[@]}"; do
-            "${PYTHON_BIN}" -m pytest -q "${test_case}"
+          for index in "${!genai_pytests[@]}"; do
+            test_case="${genai_pytests[index]}"
+            coverage_dir="_work/coverage/genai-python/${index}"
+            "${PYTHON_BIN}" -m pytest -q -p core_pytest_coverage \
+              --core-coverage-dir "${coverage_dir}" --junitxml "${coverage_dir}/junit.xml" \
+              "${PYTHON_MARKS[@]}" "${test_case}"
           done
-          # Temporary external RTSP exclusions; retain the FPS probe unit tests (core#890).
-          "${PYTHON_BIN}" -m pytest -q "${TUTORIALS_PYTEST_DIR}" \
-            -k 'not (test_rtsp_codec_tutorial and (h264 or h265)) and not (test_tutorial_runs and 018_consume_rtsp_stream)'
 
       - name: Run weekly long Python pytest from installed extras
-        if: ${{ inputs.run_long_tests }}
+        if: ${{ inputs.run_long_tests && (contains(fromJSON(matrix.tasks), 'python-tutorials')) }}
         run: |
           PYNEAT_HOME="${HOME}/pyneat"
           if [[ -x "${PYNEAT_HOME}/bin/python" ]]; then
@@ -1517,7 +1775,40 @@ jobs:
             exit 1
           fi
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
-          SIMA_TEST_IS_LONG=1 "${PYTHON_BIN}" -m pytest -q "${PYTEST_LONG_DIR}"
+          PYTHONPATH="${GITHUB_WORKSPACE}/tools/ci${PYTHONPATH:+:${PYTHONPATH}}" \
+            SIMA_TEST_IS_LONG=1 "${PYTHON_BIN}" -m pytest -q -p core_pytest_coverage \
+            --core-coverage-dir _work/coverage/python-weekly \
+            --junitxml _work/coverage/python-weekly.xml "${PYTEST_LONG_DIR}"
+
+      - name: Record DevKit shard outcome
+        if: ${{ always() }}
+        env:
+          PLAN_ID: ${{ matrix.plan_id }}
+          SHARD_ID: ${{ matrix.shard }}
+          SHARD_TASKS: ${{ matrix.tasks }}
+          SHARD_RESULT: ${{ job.status }}
+        run: |
+          python3 - <<'PYRECEIPT'
+          import json, os
+          from pathlib import Path
+          out = Path('_work/coverage')
+          out.mkdir(parents=True, exist_ok=True)
+          (out / 'shard-receipt.json').write_text(json.dumps({
+              'id': os.environ['SHARD_ID'], 'sha': os.environ['GITHUB_SHA'],
+              'plan_id': os.environ['PLAN_ID'],
+              'tasks': json.loads(os.environ['SHARD_TASKS']),
+              'result': os.environ['SHARD_RESULT'], 'runner': os.environ['RUNNER_NAME'],
+          }, indent=2) + '\n')
+          PYRECEIPT
+
+      - name: Upload selected coverage and outcomes
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-selected-coverage-${{ matrix.plan_id }}-${{ matrix.shard }}-${{ github.run_id }}
+          overwrite: true
+          path: _work/coverage/
+          if-no-files-found: error
 
       - name: Cleanup test workspace tmp artifacts
         if: ${{ always() }}
@@ -1556,12 +1847,39 @@ jobs:
           echo "Disk usage after cleanup:"
           df -h "${TMP_ROOT}" || true
 
+  test-devkit:
+    name: Test Core on DevKit
+    if: ${{ always() && !cancelled() && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
+    needs:
+      - detect-changes
+      - plan-devkit-tests
+      - test-devkit-shard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Require every planned DevKit shard
+        env:
+          PLAN_RESULT: ${{ needs.plan-devkit-tests.result }}
+          SHARD_RESULT: ${{ needs.test-devkit-shard.result }}
+        run: test "$PLAN_RESULT" = success && test "$SHARD_RESULT" = success
+      - uses: actions/download-artifact@v4
+        with:
+          name: core-devkit-shard-plan
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: core-selected-coverage-${{ needs.plan-devkit-tests.outputs.plan_id }}-*
+          path: _work/all-shards
+      - name: Verify complete lane and E2E coverage
+        run: python3 tools/ci/plan_devkit_shards.py --verify-results _work/all-shards
+
   test-pciehost-hardware:
     name: Test PCIe Host Hardware
-    if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
+    if: ${{ !cancelled() && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' && needs.build-pciehost-packages.result == 'success' && ((inputs.validation_only && needs.publish-vulcan-artifacts.result == 'skipped' && needs.publish-pciehost-package.result == 'skipped') || (!inputs.validation_only && needs.publish-vulcan-artifacts.result == 'success' && needs.publish-pciehost-package.result == 'success')) }}
     needs:
       - detect-changes
       - resolve-vulcan-config
+      - build
+      - build-pciehost-packages
       - publish-vulcan-artifacts
       - publish-pciehost-package
     runs-on: [self-hosted, Linux, X64, pcie, 3.0.0-pcie-test]
@@ -1608,6 +1926,35 @@ jobs:
           set -euo pipefail
           echo "REF_NAME=${GITHUB_REF_NAME}" >> "${GITHUB_ENV}"
           echo "SHORT_SHA=${GITHUB_SHA:0:12}" >> "${GITHUB_ENV}"
+
+      - name: Download this run's Core candidate for PCIe validation
+        if: ${{ inputs.validation_only }}
+        uses: actions/download-artifact@v4
+        with:
+          name: neat-core-dist
+          path: _work/validation-core-dist
+
+      - name: Download this run's PCIe host validation candidates
+        if: ${{ inputs.validation_only }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: core-pciehost-*-amd64
+          path: _work/validation-pciehost
+
+      - name: Select this run's local PCIe validation candidates
+        if: ${{ inputs.validation_only }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          source pcie_host/scripts/host-platform.sh
+          host_distro="$(simapcie_detect_host_distro)"
+          host_dist="${GITHUB_WORKSPACE}/_work/validation-pciehost/core-pciehost-${host_distro}-amd64"
+          core_dist="${GITHUB_WORKSPACE}/_work/validation-core-dist"
+          test -d "${host_dist}"
+          {
+            printf 'SIMAPCIE_LOCAL_HOST_DIST=%s\n' "${host_dist}"
+            printf 'SIMAPCIE_LOCAL_CORE_DIST=%s\n' "${core_dist}"
+          } >> "$GITHUB_ENV"
 
       - name: Prepare PCIe host hardware workspace
         shell: bash
@@ -1755,7 +2102,7 @@ jobs:
 
   promote-latest-tag:
     name: Promote Latest Tag
-    if: ${{ always() && (github.ref_type == 'branch' || github.ref_type == 'tag') && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.test-devkit.result == 'success' && needs.publish-pciehost-package.result == 'success' && (needs.test-pciehost-hardware.result == 'success' || needs.test-pciehost-hardware.result == 'skipped') }}
+    if: ${{ always() && !inputs.validation_only && (github.ref_type == 'branch' || github.ref_type == 'tag') && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.test-devkit.result == 'success' && needs.publish-pciehost-package.result == 'success' && (needs.test-pciehost-hardware.result == 'success' || needs.test-pciehost-hardware.result == 'skipped') }}
     needs:
       - detect-changes
       - resolve-vulcan-config
@@ -1770,3 +2117,71 @@ jobs:
       role_to_assume: ${{ needs.resolve-vulcan-config.outputs.artifact_publisher_role_arn }}
       sse_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
       artifact_folder: "."
+
+  publish-offline-develop:
+    name: Publish develop and release offline bundles
+    # Call from this branch: workflow_run requires a listener on the default branch.
+    if: ${{ always() && github.event_name == 'push' && (github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v')) && !inputs.validation_only && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && needs.documentation-localization.result == 'success' && needs.code-hygiene.result == 'success' && needs.promote-latest-tag.result == 'success' }}
+    needs:
+      - build-tooling-tests
+      - documentation-localization
+      - resolve-vulcan-config
+      - resolve-compiler-cache
+      - detect-changes
+      - code-hygiene
+      - resolve-test-runner
+      - build
+      - build-pciehost-packages
+      - publish-vulcan-artifacts
+      - publish-pciehost-package
+      - plan-devkit-tests
+      - test-devkit-shard
+      - test-devkit
+      - test-pciehost-hardware
+      - promote-latest-tag
+    uses: ./.github/workflows/pcie-offline.yml
+    with:
+      source_run_id: ${{ format('{0}', github.run_id) }}
+      # The parent run is still in progress; all standard CI gates above have passed.
+      publish_branch: true
+      validation_only: false
+
+  validation-complete:
+    name: Verify validation-only Core run
+    if: ${{ always() && inputs.validation_only }}
+    needs:
+      - build-tooling-tests
+      - documentation-localization
+      - resolve-vulcan-config
+      - resolve-compiler-cache
+      - detect-changes
+      - code-hygiene
+      - resolve-test-runner
+      - build
+      - build-pciehost-packages
+      - publish-vulcan-artifacts
+      - publish-pciehost-package
+      - plan-devkit-tests
+      - test-devkit-shard
+      - test-devkit
+      - test-pciehost-hardware
+      - promote-latest-tag
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require complete validation and skipped delivery
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          BUILD_MODE: ${{ inputs.build_mode || 'standard' }}
+        run: |
+          python3 - <<'PYGATE'
+          import json, os
+          if os.environ['BUILD_MODE'] != 'standard':
+              raise SystemExit('Validation-only Core runs require standard build mode')
+          results = json.loads(os.environ['RESULTS'])
+          skipped = {'publish-vulcan-artifacts', 'publish-pciehost-package', 'promote-latest-tag'}
+          bad = {name: value['result'] for name, value in results.items()
+                 if value['result'] != ('skipped' if name in skipped else 'success')}
+          if bad:
+              raise SystemExit('Core validation incomplete or delivery was not skipped: ' + str(bad))
+          print('This run\'s Core and PCIe candidates passed validation without publication or promotion')
+          PYGATE

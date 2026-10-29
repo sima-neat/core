@@ -330,7 +330,8 @@ def test_run_export_api_surface():
 
   run_opt = pyneat.RunOptions()
   run_opt.run_export = auto_opt
-  run_opt.enable_board_power()
+  with pytest.warns(DeprecationWarning, match="enable_board_power.* use pyneat.TelemetryMonitor"):
+    run_opt.enable_board_power()
   assert not hasattr(run_opt, "enable_metrics")
   assert run_opt.power_monitor.enabled is True
   run_opt.disable_power_monitor()
@@ -453,7 +454,9 @@ def test_benchmark_options_are_mutable():
   assert opt.resize_mode is None
   assert opt.include_plugin_latency is False
   assert opt.min_duration_ms == 10000
-  assert opt.include_layer_stats is False
+  assert opt.include_mla_layer_stats is False
+  assert opt.include_mla_stage_stats is False
+  assert opt.inputs == []
 
   opt.num_samples = 7
   opt.original_width = 1920
@@ -461,7 +464,8 @@ def test_benchmark_options_are_mutable():
   opt.resize_mode = pyneat.ResizeMode.Letterbox
   opt.include_plugin_latency = True
   opt.min_duration_ms = 0
-  opt.include_layer_stats = True
+  opt.include_mla_layer_stats = True
+  opt.include_mla_stage_stats = True
 
   assert opt.num_samples == 7
   assert opt.original_width == 1920
@@ -469,7 +473,28 @@ def test_benchmark_options_are_mutable():
   assert opt.resize_mode == pyneat.ResizeMode.Letterbox
   assert opt.include_plugin_latency is True
   assert opt.min_duration_ms == 0
-  assert opt.include_layer_stats is True
+  assert opt.include_mla_layer_stats is True
+  assert opt.include_mla_stage_stats is True
+
+
+def test_benchmark_options_hold_provided_inputs():
+  opt = pyneat.BenchmarkOptions()
+  image = pyneat.Tensor.from_numpy(np.zeros((720, 1280, 3), dtype=np.uint8), copy=True,
+                                   image_format=pyneat.PixelFormat.BGR,
+                                   memory=pyneat.TensorMemory.CPU)
+  features = pyneat.Tensor.from_numpy(np.ones((1, 256), dtype=np.float32), copy=True,
+                                      memory=pyneat.TensorMemory.CPU)
+
+  opt.inputs = [image, features]
+
+  assert [list(t.shape) for t in opt.inputs] == [[720, 1280, 3], [1, 256]]
+  # The getter returns a copy; assign a new list to change the inputs.
+  opt.inputs.append(image)
+  assert len(opt.inputs) == 2
+  opt.inputs = []
+  assert opt.inputs == []
+  with pytest.raises(TypeError):
+    opt.inputs = [np.zeros((4, 4, 3), dtype=np.uint8)]
 
 
 def test_benchmark_report_exposes_telemetry():
@@ -479,16 +504,19 @@ def test_benchmark_report_exposes_telemetry():
                 "avg_power_watts", "energy_joules", "peak_power_watts", "throughput_duration_ms"):
     assert getattr(report, field) == 0.0, field
   assert report.throughput_samples == 0
+  assert report.input == ""
 
   telemetry = report.telemetry
-  assert isinstance(telemetry, pyneat.BenchmarkTelemetry)
+  assert isinstance(telemetry, pyneat.Telemetry)
   assert telemetry.status == ""
   assert telemetry.samples == 0
+  assert telemetry.duration_ms == 0.0
   for field in ("power_som_watts", "power_mla_watts", "die_temperature_max_c", "cpu_usage_pct",
-                "mla_memory_mib", "cma_memory_mib", "linux_memory_used_mib"):
+                "mla_memory_mib", "ev74_memory_mib", "linux_memory_used_mib"):
     metric = getattr(telemetry, field)
-    assert isinstance(metric, pyneat.BenchmarkMetric), field
-    assert (metric.samples, metric.mean, metric.minimum, metric.maximum) == (0, 0.0, 0.0, 0.0)
+    assert isinstance(metric, pyneat.TelemetryStats), field
+    assert (metric.samples, metric.mean, metric.minimum, metric.maximum, metric.last) == (
+        0, 0.0, 0.0, 0.0, 0.0)
   for field in ("power_rails_watts", "die_temperatures_c", "board_temperatures_c",
                 "cpu_cores_usage_pct"):
     assert getattr(telemetry, field) == [], field
@@ -568,6 +596,19 @@ def test_output_stage_option_structs_expose_expected_fields():
       "OptiViewMakeJson",
   ):
     assert not hasattr(pyneat, removed_name)
+
+
+def test_jpeg_output_format_surface():
+  def header(luma):  # SOI, APP0, 3-component SOF0 (chroma 1x1), SOS
+    return bytes([0xFF, 0xD8, 0xFF, 0xE0, 0, 4, 0, 0, 0xFF, 0xC0, 0, 17, 8, 0, 16, 0, 16, 3,
+                  1, luma, 0, 2, 0x11, 1, 3, 0x11, 1, 0xFF, 0xDA, 0, 8])
+
+  assert pyneat.jpeg_output_format(header(0x22)) == pyneat.Format.NV12
+  assert pyneat.jpeg_output_format(header(0x21)) == pyneat.Format.NV16
+  with pytest.raises(ValueError, match="only 4:2:0 and 4:2:2"):
+    pyneat.jpeg_output_format(header(0x11))
+  # A 4:2:2 camera's NV16 decode feeds Model preprocessing directly.
+  assert pyneat.PreprocessColorFormat.NV16 != pyneat.PreprocessColorFormat.NV12
 
 
 def test_camera_input_surface_is_exposed():
@@ -1301,7 +1342,7 @@ def test_graph_describe_backend_includes_detess_dequant_stage(tmp_path):
   info = model.info()
   assert info.capabilities.has_post_detessellation
   assert info.capabilities.has_post_dequantization
-  assert "neatprocesscvu" in graph.describe_backend().lower()
+  assert "neatkernelrunner" in graph.describe_backend().lower()
 
 
 def test_graph_describe_backend_includes_sima_box_decode_stage(tmp_path):
@@ -1381,9 +1422,12 @@ def test_sima_box_decode_runtime_dims_override_backend_config(tmp_path):
   graph.add(pyneat.nodes.output())
 
   backend = graph.describe_backend().lower()
+  # Numerical options are carried by typed admission, not GObject properties.
+  # Their effect is covered by the real-input geometry test and C++ admission
+  # tests; this API test owns constructor acceptance and logical identity.
+  assert "simaboxdecode" in graph.describe().lower()
   assert "boxdecode" in backend
-  assert "original-width=640" in backend
-  assert "original-height=360" in backend
+  assert backend == graph.describe_backend().lower()
 
 
 def test_graph_describe_backend_includes_explicit_h264_udp_output_chain():

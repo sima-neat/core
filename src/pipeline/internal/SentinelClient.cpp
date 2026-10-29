@@ -12,27 +12,35 @@ namespace {
 
 using nlohmann::json;
 
-constexpr int kTimeoutSeconds = 5;
-
-/// Send one request; throw when Sentinel cannot be reached.
-httplib::Result send(const std::string& socket_path, const std::string& method,
-                     const std::string& path, const std::string& body = {}) {
+/// GET `path`; throw when Sentinel does not answer.
+httplib::Result get(const std::string& socket_path, std::chrono::seconds timeout,
+                    const std::string& path) {
   httplib::Client client(socket_path);
   client.set_address_family(AF_UNIX);
-  client.set_connection_timeout(kTimeoutSeconds);
-  client.set_read_timeout(kTimeoutSeconds);
-  client.set_write_timeout(kTimeoutSeconds);
-  httplib::Result result =
-      method == "GET" ? client.Get(path) : client.Post(path, body, "application/json");
-  if (!result) {
-    throw std::runtime_error("Sentinel is not reachable at " + socket_path + ": " +
-                             httplib::to_string(result.error()));
+  client.set_connection_timeout(timeout);
+  client.set_read_timeout(timeout);
+  client.set_write_timeout(timeout);
+  httplib::Result result = client.Get(path);
+  if (result) {
+    return result;
   }
-  return result;
+  if (result.error() == httplib::Error::Connection) {
+    throw std::runtime_error(
+        "Could not connect to Sentinel at '" + socket_path +
+        "', so no telemetry is recorded. Check the socket path. If Sentinel is not installed, "
+        "install it on the board with 'sima-cli neat install sentinel'; if it is stopped, start "
+        "it with 'sudo systemctl start simaai-sentinel'.");
+  }
+  throw std::runtime_error("Sentinel did not answer GET " + path + ": " +
+                           httplib::to_string(result.error()));
 }
 
-/// Return the JSON body of a 200 reply; otherwise throw with Sentinel's error message.
+/// Return the JSON object of a 200 reply; otherwise throw with Sentinel's error message.
 json expect_ok(const httplib::Result& result, const std::string& action) {
+  if (result->status == 404) {
+    throw std::runtime_error("Sentinel is too old to " + action +
+                             ". Upgrade it on the board with 'sima-cli neat install sentinel'.");
+  }
   json body = json::parse(result->body, nullptr, /*allow_exceptions=*/false);
   if (result->status != 200) {
     const bool has_error = body.is_object() && body.contains("error") && body["error"].is_string();
@@ -40,7 +48,7 @@ json expect_ok(const httplib::Result& result, const std::string& action) {
                              std::to_string(result->status) +
                              (has_error ? "): " + body["error"].get<std::string>() : ")"));
   }
-  if (body.is_discarded()) {
+  if (!body.is_object()) {
     throw std::runtime_error("Sentinel sent invalid JSON when asked to " + action);
   }
   return body;
@@ -48,42 +56,26 @@ json expect_ok(const httplib::Result& result, const std::string& action) {
 
 } // namespace
 
-SentinelClient::SentinelClient(std::string socket_path) : socket_path_(std::move(socket_path)) {}
-
-std::string SentinelClient::start_trace(const std::string& name, const std::string& note,
-                                        const std::vector<std::string>& tags) const {
-  const json request = {{"name", name}, {"note", note}, {"tags", tags}};
-  const json reply =
-      expect_ok(send(socket_path_, "POST", "/v1/traces", request.dump()), "start a trace");
-  const json::json_pointer id("/trace/id");
-  if (!reply.contains(id) || !reply[id].is_string()) {
-    throw std::runtime_error("Sentinel started a trace without returning its ID");
-  }
-  return reply[id].get<std::string>();
-}
-
-void SentinelClient::stop_trace(const std::string& trace_id) const {
-  const std::string action = "stop trace " + trace_id;
-  const httplib::Result result = send(socket_path_, "POST", "/v1/traces/" + trace_id + "/stop");
-  if (result->status == 404) {
-    // Sentinel 0.1.0 has no stop-by-ID endpoint and stops the trace it is recording.
-    expect_ok(send(socket_path_, "POST", "/v1/traces/stop"), action);
-    return;
-  }
-  expect_ok(result, action);
-}
-
-json SentinelClient::read_run(const std::string& trace_id) const {
-  return expect_ok(send(socket_path_, "GET", "/v1/runs/" + trace_id), "read trace " + trace_id);
-}
+SentinelClient::SentinelClient(std::string socket_path, std::chrono::seconds timeout)
+    : socket_path_(std::move(socket_path)), timeout_(timeout) {}
 
 json SentinelClient::latest_sample() const {
   const std::string action = "read the latest sample";
-  const json reply = expect_ok(send(socket_path_, "GET", "/v1/samples/latest"), action);
+  const json reply = expect_ok(get(socket_path_, timeout_, "/v1/samples/latest"), action);
   if (!reply.contains("sample") || !reply["sample"].is_object()) {
     throw std::runtime_error("Sentinel sent no sample when asked to " + action);
   }
   return reply["sample"];
+}
+
+json SentinelClient::cache() const {
+  const std::string action = "read its sample cache";
+  json reply = expect_ok(get(socket_path_, timeout_, "/v1/cache"), action);
+  if (!reply.contains("samples") || !reply["samples"].is_array() || !reply.contains("metrics") ||
+      !reply["metrics"].is_array()) {
+    throw std::runtime_error("Sentinel sent no samples or metrics when asked to " + action);
+  }
+  return reply;
 }
 
 } // namespace simaai::neat::pipeline_internal

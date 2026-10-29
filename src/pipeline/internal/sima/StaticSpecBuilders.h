@@ -23,6 +23,10 @@
 #include <string>
 #include <vector>
 
+namespace simaai::neat {
+struct CompiledRuntimeContract;
+}
+
 namespace simaai::neat::pipeline_internal::sima::specbuilders {
 
 /// Bytes per element for a dtype token (e.g., `"FP32"` -> 4); 0 for unknown tokens.

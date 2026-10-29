@@ -27,12 +27,15 @@
 #include "pipeline/graph/internal/GraphTestHooks.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/RunCore.h"
+#include "pipeline/internal/sima/KernelStageRecipe.h"
+#include <simaai/scheduler/client/kernel.h>
 #include "test_main.h"
 #include "test_utils.h"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <set>
 #include <atomic>
 #include <cstddef>
@@ -44,6 +47,7 @@
 #include <string>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <gst/app/gstappsink.h>
@@ -158,11 +162,11 @@ std::vector<std::shared_ptr<simaai::neat::Node>> make_consumer_nodes() {
   // Model-managed routes render multiple hardware stages inside one Node
   // fragment. Keep explicit false/default properties here to prove that the
   // fused renderer rewrites the matching stage segment rather than mistaking
-  // ProcessCVU's `async` or `num-buffers` token for ProcessMLA's token.
+  // Runner's `async` token for ProcessMLA's independent pool settings.
   nodes.push_back(std::make_shared<FragmentNode>(
-      "ModelRoute", "neatprocesscvu", "preproc",
-      " async=false num-buffers=4 ! neatprocessmla name=n0_mla async=false num-buffers=4 "
-      "defer-output-invalidate=true ! neatobjectdecode name=n0_boxdecode num-buffers=2 ! appsink "
+      "ModelRoute", "neatkernelrunner", "preproc",
+      " async=false ! neatprocessmla name=n0_mla async=false num-buffers=4 "
+      "! neatkernelrunner name=n0_boxdecode async=false ! appsink "
       "name=n0_output"));
   return nodes;
 }
@@ -171,9 +175,9 @@ simaai::neat::Graph make_composed_consumer_graph() {
   simaai::neat::Graph graph("detector");
   graph.add(simaai::neat::nodes::Input("detector_frame"));
   graph.add(std::make_shared<FragmentNode>(
-      "ModelRoute", "neatprocesscvu", "preproc",
-      " async=false num-buffers=4 ! neatprocessmla name=n1_mla async=false num-buffers=4 "
-      "defer-output-invalidate=true ! neatobjectdecode name=n1_boxdecode num-buffers=2"));
+      "ModelRoute", "neatkernelrunner", "preproc",
+      " async=false ! neatprocessmla name=n1_mla async=false num-buffers=4 "
+      "! neatkernelrunner name=n1_boxdecode async=false"));
   graph.add(simaai::neat::nodes::Output("detections"));
   return graph;
 }
@@ -204,10 +208,36 @@ void mark_mini_object_finalized(gpointer data, GstMiniObject*) {
   *static_cast<bool*>(data) = true;
 }
 
+// Memory-policy and allocation-provenance assertions belong to Scheduler and
+// Runner. This fixture checks only the graph options Core actually authors.
+
+void graph_worker_budget() {
+  simaai::neat::GraphOptions options;
+  simaai::neat::BuildResult build;
+  require(options.kernel_runner_a65_workers == 2, "A65 graph worker default changed");
+  for (int workers : {1, 2, 4, 64}) {
+    options.kernel_runner_a65_workers = workers;
+    simaai::neat::session_build_initialize_kernel_runner_budget(&build, &options);
+    require(build.kernel_runner_a65_workers == static_cast<std::size_t>(workers),
+            "graph worker setting was not retained for preparation");
+  }
+  for (int workers : {-1, 0, 65}) {
+    options.kernel_runner_a65_workers = workers;
+    bool rejected = false;
+    try {
+      simaai::neat::session_build_initialize_kernel_runner_budget(&build, &options);
+    } catch (const std::exception&) {
+      rejected = true;
+    }
+    require(rejected, "invalid graph worker setting was silently clamped");
+  }
+}
+
 } // namespace
 
 RUN_TEST(
     "unit_fused_realtime_fast_path_options_test", ([] {
+      graph_worker_budget();
       ScopedUnsetEnv cvu_kill_switch("SIMA_PROCESSCVU_ASYNC");
       ScopedUnsetEnv mla_kill_switch("SIMA_PROCESSMLA_SAFE_ASYNC");
       ScopedUnsetEnv legacy_queue_enable("SIMA_ENABLE_ASYNC_QUEUE2");
@@ -343,24 +373,22 @@ RUN_TEST(
               "identity-preserving fused chains must not gain a raw-credit boundary");
       simaai::neat::GraphOptions synchronous_raw_credit_options = options;
       synchronous_raw_credit_options.processcvu.async = false;
-      require(!simaai::neat::session_test::fused_raw_input_credit_boundary_for_test(
-                   make_consumer_nodes(), synchronous_raw_credit_options)
+      require(simaai::neat::session_test::fused_raw_input_credit_boundary_for_test(
+                  make_consumer_nodes(), synchronous_raw_credit_options)
                       .has_value() &&
                   simaai::neat::session_test::attach_fused_raw_input_credit_probe_for_test(
                       raw_credit_probe_pipeline, make_consumer_nodes(),
                       synchronous_raw_credit_options,
-                      /*mux_namespace=*/17U) == 0U,
-              "synchronous ProcessCVU must retain terminal admission because input unref may be "
-              "deferred past src push");
-      std::vector<std::shared_ptr<simaai::neat::Node>> single_buffer_cvu_nodes{
-          std::make_shared<FragmentNode>(
-              "SingleBufferCvuRoute", "neatprocesscvu", "single_buffer_preproc",
-              " async=false num-buffers=1 ! appsink name=single_buffer_output")};
-      require(!simaai::neat::session_test::fused_raw_input_credit_boundary_for_test(
-                   single_buffer_cvu_nodes, options)
-                   .has_value(),
-              "async=true with num-buffers=1 still runs ProcessCVU synchronously and must retain "
-              "terminal admission");
+                      /*mux_namespace=*/17U) == 1U,
+              "the synchronous runner also releases input loans before src publication");
+      std::vector<std::shared_ptr<simaai::neat::Node>> synchronous_runner_nodes{
+          std::make_shared<FragmentNode>("SynchronousKernelRoute", "neatkernelrunner",
+                                         "single_buffer_preproc",
+                                         " async=false ! appsink name=single_buffer_output")};
+      require(simaai::neat::session_test::fused_raw_input_credit_boundary_for_test(
+                  synchronous_runner_nodes, synchronous_raw_credit_options)
+                  .has_value(),
+              "runner credit release must not depend on a nonexistent num-buffers property");
       gst_object_unref(raw_credit_probe_pipeline);
       require_contains(pipeline, "neatlatestbystreammux",
                        "test must exercise the fused realtime renderer");
@@ -368,63 +396,91 @@ RUN_TEST(
                        "unset per-stream admission must resolve to the public default");
       require_contains(pipeline, "max-inflight-total=4",
                        "single-stream fused admission must preserve the default total guard");
-      require_contains(pipeline, "neatprocesscvu name=n0_preproc async=true num-buffers=4",
+      require_contains(pipeline, "neatkernelrunner name=n0_preproc async=true",
                        "fused ProcessCVU must receive the public async option");
+      require(pipeline.find("neatkernelrunner name=n0_preproc async=true num-buffers") ==
+                  std::string::npos,
+              "runner capacity must be prepared, not serialized as a legacy plugin property");
       require_contains(pipeline, "neatprocessmla name=n0_mla async=true num-buffers=7",
                        "fused pipeline must retain ProcessMLA");
-      require(count_occurrences(pipeline, "async=true") == 2U,
-              "fused ProcessCVU and ProcessMLA must both receive the public async option");
+      require(count_occurrences(pipeline, "async=true") == 3U,
+              "both kernel stages and ProcessMLA must receive the public async option");
       require_contains(pipeline, "num-buffers=7",
                        "fused ProcessMLA must receive the public output-pool option");
+      // Legacy fragment-helper compatibility is tested as text only. Actual
+      // pipeline fixtures use the current BoxDecode backend, neatkernelrunner.
       const std::string objectdecode_fragment =
           simaai::neat::session_build_propagate_terminal_consumer_lane_window(
-              simaai::neat::session_build_select_terminal_objectdecode_cpu_visibility(
-                  simaai::neat::session_build_apply_fast_path_options_to_fragment(
-                      "neatprocessmla name=mla_1 defer-output-invalidate=true "
-                      "num-buffers=4 ! queue ! neatobjectdecode name=boxdecode_1 "
-                      "num-buffers=2",
-                      &options)));
+              simaai::neat::session_build_apply_fast_path_options_to_fragment(
+                  "neatprocessmla name=mla_1 "
+                  "num-buffers=4 ! queue ! neatobjectdecode name=boxdecode_1 "
+                  "num-buffers=2",
+                  &options));
       require_contains(objectdecode_fragment, "neatobjectdecode name=boxdecode_1 num-buffers=7",
                        "a declared terminal lane window must use the resolved MLA route depth");
-      require_contains(pipeline, "neatobjectdecode name=n0_boxdecode num-buffers=7",
-                       "rendered BoxDecode must share the exact MLA route depth");
-      require_contains(pipeline, "defer-output-invalidate=false",
-                       "terminal MLA-to-ObjectDecode must select producer CPU visibility");
+      require_contains(pipeline, "neatkernelrunner name=n0_boxdecode async=true",
+                       "rendered BoxDecode must use the current async kernel backend");
+      require(count_occurrences(pipeline, "num-buffers=") == 1U,
+              "only MLA declares a pool property; Runner capacity is prepared separately");
+      require(pipeline.find("defer-output-invalidate=") == std::string::npos &&
+                  pipeline.find("output-read-handoff=") == std::string::npos,
+              "Core must not emit retired memory tuning properties");
+      require(pipeline.find("neatobjectdecode") == std::string::npos,
+              "current model routes must not depend on the retired ObjectDecode plugin");
 
       const std::string scoped_visibility_fragment =
           simaai::neat::session_build_propagate_terminal_consumer_lane_window(
-              simaai::neat::session_build_select_terminal_objectdecode_cpu_visibility(
-                  simaai::neat::session_build_apply_fast_path_options_to_fragment(
-                      "neatprocessmla name=device_mla ! queue ! neatprocesscvu "
-                      "name=device_consumer ! neatprocessmla name=terminal_mla "
-                      "defer-output-invalidate=true ! queue ! queue2 ! "
-                      "neatobjectdecode name=cpu_consumer num-buffers=2",
-                      &options)));
+              simaai::neat::session_build_apply_fast_path_options_to_fragment(
+                  "neatprocessmla name=device_mla ! queue ! neatkernelrunner "
+                  "name=device_consumer ! neatprocessmla name=terminal_mla "
+                  "! queue ! queue2 ! "
+                  "neatobjectdecode name=cpu_consumer num-buffers=2",
+                  &options));
       require_contains(scoped_visibility_fragment,
                        "neatprocessmla name=device_mla async=true num-buffers=7 "
-                       "defer-output-invalidate=true ! queue ! neatprocesscvu",
+                       "! queue ! neatkernelrunner",
                        "MLA-to-device routes must remain device-produced");
-      require_contains(
-          scoped_visibility_fragment,
-          "neatprocessmla name=terminal_mla defer-output-invalidate=false",
-          "only the nearest MLA across queue-only segments may own the CPU READ epoch");
+      require_contains(scoped_visibility_fragment,
+                       "neatprocessmla name=terminal_mla async=true num-buffers=7",
+                       "terminal MLA also leaves CPU access to Scheduler");
       require_contains(scoped_visibility_fragment,
                        "neatobjectdecode name=cpu_consumer num-buffers=7",
                        "the terminal consumer must share the producer lane window");
 
       const std::string generic_lane_window =
           simaai::neat::session_build_propagate_terminal_consumer_lane_window(
-              "producer name=p num-buffers=4 defer-output-invalidate=false ! identity ! "
+              "neatprocessmla name=p num-buffers=4 ! identity ! "
               "genericterminal name=c num-buffers=2");
       require_contains(generic_lane_window, "genericterminal name=c num-buffers=4",
                        "lane propagation must depend on rendered contracts, not plugin names");
       const std::string undeclared_lane_window =
           simaai::neat::session_build_propagate_terminal_consumer_lane_window(
-              "producer name=p num-buffers=4 defer-output-invalidate=false ! queue ! "
+              "neatprocessmla name=p num-buffers=4 ! queue ! "
               "unboundedterminal name=c");
       require(undeclared_lane_window.find("unboundedterminal name=c num-buffers=") ==
                   std::string::npos,
               "lane propagation must not invent a property for an undeclared consumer");
+
+      const auto lane_window = simaai::neat::session_build_propagate_terminal_consumer_lane_window(
+          "neatprocessmla name=p num-buffers = \"4\" ! application/x-test,field=opaque ! "
+          "identity note=\"num-buffers=99 !queue\" ! genericterminal num-buffers = \"2\"");
+      require(lane_window ==
+                  "neatprocessmla name=p num-buffers = \"4\" ! application/x-test,field=opaque ! "
+                  "identity note=\"num-buffers=99 !queue\" ! genericterminal num-buffers = \"4\"",
+              "terminal lane policy uses the same opaque token/value-span authority");
+      for (const std::string topology :
+           {"neatprocessmla num-buffers=7 : genericterminal num-buffers=2",
+            "( neatprocessmla num-buffers=7 ! genericterminal num-buffers=2 )",
+            "neatprocessmla num-buffers=7 ; genericterminal num-buffers=2"}) {
+        require(simaai::neat::session_build_propagate_terminal_consumer_lane_window(topology) ==
+                    topology,
+                "nontrivial topology cannot grant a lexical lane-adjacency proof");
+      }
+      const std::string undeclared =
+          "neatprocessmla num-buffers=4 ! genericterminal note=\"num-buffers=2\"";
+      require(simaai::neat::session_build_propagate_terminal_consumer_lane_window(undeclared) ==
+                  undeclared,
+              "a property-like substring is not a declared terminal lane-window contract");
 
       // Regression: ordinary Graph building renders each Node independently.
       // The Model's terminal MLA and the public SimaBoxDecode therefore become
@@ -432,16 +488,25 @@ RUN_TEST(
       const std::vector<std::shared_ptr<simaai::neat::Node>> split_cpu_nodes{
           std::make_shared<FragmentNode>("Model", "identity", "model_fragment",
                                          " ! neatprocessmla name=split_terminal_mla "
-                                         "defer-output-invalidate=true"),
+                                         ""),
           std::make_shared<FragmentNode>("SimaBoxDecode", "neatobjectdecode", "split_boxdecode",
                                          " num-buffers=2")};
       const auto split_cpu_pipeline = simaai::neat::build_pipeline_full(
           split_cpu_nodes, false, "mysink", true, simaai::neat::NameTransform{}, &options);
-      require_contains(
-          split_cpu_pipeline.pipeline_string,
-          "neatprocessmla name=split_terminal_mla "
-          "defer-output-invalidate=false async=true num-buffers=7 ! queue ",
-          "final ordinary-pipeline pass must select CPU visibility across separate Nodes");
+      const auto check_mla_segment = [](const std::string& pipeline, const char* name) {
+        const auto start = pipeline.find(std::string("neatprocessmla name=") + name);
+        require(start != std::string::npos, "authored MLA producer missing");
+        const auto end = pipeline.find('!', start);
+        require(end != std::string::npos, "MLA successor missing");
+        const auto segment = pipeline.substr(start, end - start);
+        require_contains(segment, "async=true", "MLA async contract lost");
+        require_contains(segment, "num-buffers=7", "MLA lane contract lost");
+        require(segment.find("defer-output-invalidate") == std::string::npos &&
+                    segment.find("output-read-handoff") == std::string::npos,
+                "Core must not author a producer coherency selector");
+        require_contains(pipeline.substr(end), "! queue ", "inter-node queue missing");
+      };
+      check_mla_segment(split_cpu_pipeline.pipeline_string, "split_terminal_mla");
       require_contains(split_cpu_pipeline.pipeline_string,
                        "neatobjectdecode name=n1_split_boxdecode num-buffers=7",
                        "separate BoxDecode Node must share the exact route depth");
@@ -449,14 +514,11 @@ RUN_TEST(
       const std::vector<std::shared_ptr<simaai::neat::Node>> split_device_nodes{
           std::make_shared<FragmentNode>("Model", "identity", "device_model_fragment",
                                          " ! neatprocessmla name=split_device_mla "
-                                         "defer-output-invalidate=true"),
-          std::make_shared<FragmentNode>("DevicePost", "neatprocesscvu", "split_device_post")};
+                                         ""),
+          std::make_shared<FragmentNode>("DevicePost", "neatkernelrunner", "split_device_post")};
       const auto split_device_pipeline = simaai::neat::build_pipeline_full(
           split_device_nodes, false, "mysink", true, simaai::neat::NameTransform{}, &options);
-      require_contains(split_device_pipeline.pipeline_string,
-                       "neatprocessmla name=split_device_mla "
-                       "defer-output-invalidate=true async=true num-buffers=7 ! queue ",
-                       "final ordinary-pipeline pass must keep MLA-to-CVU device-produced");
+      check_mla_segment(split_device_pipeline.pipeline_string, "split_device_mla");
 
       simaai::neat::GraphOptions queue_independent_options = options;
       queue_independent_options.processmla.output_pool_buffers = 0;
@@ -493,18 +555,18 @@ RUN_TEST(
       require_contains(pipeline,
                        "stream-inflight-limits=\"4\" max-inflight-total=4 ! queue "
                        "name=queue_neat_fused_stage_0 " +
-                           queue_properties + " ! neatprocesscvu",
+                           queue_properties + " ! neatkernelrunner",
                        "first fused queue must decouple the mux from ProcessCVU");
       require_contains(pipeline,
-                       "num-buffers=4 ! queue name=queue_neat_fused_stage_1 " + queue_properties +
+                       "async=true ! queue name=queue_neat_fused_stage_1 " + queue_properties +
                            " ! neatprocessmla",
                        "second fused queue must decouple ProcessCVU from ProcessMLA");
       require_contains(pipeline,
-                       "defer-output-invalidate=false ! queue name=queue_neat_fused_stage_2 " +
-                           queue_properties + " ! neatobjectdecode",
-                       "third fused queue must preserve terminal CPU visibility selection");
+                       "! queue name=queue_neat_fused_stage_2 " + queue_properties +
+                           " ! neatkernelrunner",
+                       "third fused queue must preserve Runner-owned memory synchronization");
       require_contains(pipeline,
-                       "neatobjectdecode name=n0_boxdecode num-buffers=7 ! appsink name=n0_output",
+                       "neatkernelrunner name=n0_boxdecode async=true ! appsink name=n0_output",
                        "terminal Output must stay directly connected to decode");
 
       {
@@ -549,7 +611,7 @@ RUN_TEST(
                                                        const char* reason) {
         std::vector<std::shared_ptr<simaai::neat::Node>> dropping_nodes;
         dropping_nodes.push_back(std::make_shared<FragmentNode>(
-            "DroppingModelRoute", "neatprocesscvu", "drop_preproc", fragment));
+            "DroppingModelRoute", "neatkernelrunner", "drop_preproc", fragment));
         bool rejected = false;
         try {
           (void)simaai::neat::session_test::render_fused_realtime_consumer_pipeline_for_test(
@@ -579,7 +641,7 @@ RUN_TEST(
           "buffer-replacing fused consumers must reject pre-terminal videorate drops");
       std::vector<std::shared_ptr<simaai::neat::Node>> zero_drop_nodes;
       zero_drop_nodes.push_back(std::make_shared<FragmentNode>(
-          "NonDroppingModelRoute", "neatprocesscvu", "zero_drop_preproc",
+          "NonDroppingModelRoute", "neatkernelrunner", "zero_drop_preproc",
           " ! identity drop-probability = 0.0 ! queue leaky = 0 ! appsink "
           "name=zero_drop_output"));
       const std::string zero_drop_pipeline =
@@ -1441,6 +1503,8 @@ RUN_TEST(
                   direct_video_pipeline.substr(first_pay, first_pay_end - first_pay) !=
                       direct_video_pipeline.substr(second_pay, second_pay_end - second_pay),
               "fused direct VideoSender RTP packetizer names must be unique");
+      require(direct_video_pipeline.find("neatobjectdecode") == std::string::npos,
+              "the full fused route must use current BoxDecode lowering, not a legacy factory");
       GError* direct_video_parse_error = nullptr;
       GstElement* direct_video_parsed =
           gst_parse_launch(direct_video_pipeline.c_str(), &direct_video_parse_error);
@@ -1963,17 +2027,51 @@ RUN_TEST(
                 "automatic fusion must leave ineligible one-source topology unchanged");
       }
 
+      simaai::neat::GraphOptions retired_runner_options;
+      retired_runner_options.prepared_runner.mode = "dequant";
+      bool retired_runner_rejected = false;
+      try {
+        (void)simaai::neat::session_build_apply_fast_path_options_to_fragment(
+            "neatkernelrunner name=dequant", &retired_runner_options);
+      } catch (const std::exception& error) {
+        retired_runner_rejected = std::string(error.what()).find("retired") != std::string::npos;
+      }
+      require(retired_runner_rejected,
+              "retired prepared-runner tuning must fail instead of silently changing execution");
+
       simaai::neat::GraphOptions synchronous;
       synchronous.processcvu.async = false;
       synchronous.processmla.async = false;
-      synchronous.processmla.defer_output_invalidate = false;
       const std::string synchronous_pipeline =
           simaai::neat::session_test::render_fused_realtime_consumer_pipeline_for_test(
               make_consumer_nodes(), synchronous);
       require(synchronous_pipeline.find("async=true") == std::string::npos,
               "explicit public synchronous options must not enable fused async stages");
-      require_contains(synchronous_pipeline, "defer-output-invalidate=false",
-                       "explicit public cache-sync option must be preserved by fused rendering");
+      require(synchronous_pipeline.find("defer-output-invalidate=") == std::string::npos,
+              "synchronous execution also uses consumer-owned access");
+      synchronous.processmla.defer_output_invalidate = false;
+      bool eager_rejected = false;
+      try {
+        (void)simaai::neat::session_test::render_fused_realtime_consumer_pipeline_for_test(
+            make_consumer_nodes(), synchronous);
+      } catch (const std::invalid_argument& error) {
+        eager_rejected = std::string(error.what()).find("retired") != std::string::npos;
+      }
+      require(eager_rejected, "retired eager invalidation request must fail explicitly");
+      simaai::neat::GraphOptions advanced_eager;
+      advanced_eager.advanced_execution.defer_output_cache_sync = false;
+      advanced_eager.resolve_advanced_execution();
+      bool advanced_rejected = false;
+      try {
+        (void)simaai::neat::session_build_apply_fast_path_options_to_fragment("identity",
+                                                                              &advanced_eager);
+      } catch (const std::invalid_argument& error) {
+        const std::string message = error.what();
+        advanced_rejected =
+            message.find("advanced_execution.defer_output_cache_sync=false") != std::string::npos &&
+            message.find("Tensor/GstMemory mapping") != std::string::npos;
+      }
+      require(advanced_rejected, "advanced facade must name the safe CPU mapping replacement");
 
       const std::string clamped_sync_pipeline = simaai::neat::session_build_clamp_sync_pipeline(
           "neatprocessmla name=sync_mla num-buffers=8 ! "

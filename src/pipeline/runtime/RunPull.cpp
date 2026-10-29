@@ -476,7 +476,8 @@ bool runtime::RunCore::attach_public_output_loan(Sample& sample, std::string* er
   return attach_public_holder_loan_or_error(*this, sample, err);
 }
 
-PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
+PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err,
+                                  bool acquire_output_loan) {
   const auto pull_started_at = std::chrono::steady_clock::now();
   pipeline_internal::error_util::set_pull_error(err, "", "");
   const auto set_terminal_error = [&](const std::string& code, const std::string& message) {
@@ -668,7 +669,8 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
 
   while (!st->pipeline.out_queue.empty()) {
     std::string loan_error;
-    if (!attach_public_holder_loan_or_error(*st, st->pipeline.out_queue.front(), &loan_error)) {
+    if (acquire_output_loan &&
+        !attach_public_holder_loan_or_error(*st, st->pipeline.out_queue.front(), &loan_error)) {
       const std::string message =
           "Run::pull: " +
           (loan_error.empty() ? std::string("zero-copy output loan unavailable") : loan_error) +
@@ -1028,6 +1030,13 @@ void Run::enqueue_run_images(const std::vector<cv::Mat>& inputs) {
       throw_push_returned_false("Run::run", last_error());
     }
     return;
+  }
+  if (st->pipeline.input_route_processor) {
+    st->pipeline.input_route_processor->validate_images(inputs, "Run::run");
+  } else {
+    for (const auto& input : inputs)
+      validate_public_input(input, *st->pipeline.tensor_input_opt_for_cv, st->pipeline.stream_opt,
+                            "Run::run");
   }
   TensorList tensors;
   tensors.reserve(inputs.size());

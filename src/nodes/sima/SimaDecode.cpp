@@ -2,6 +2,7 @@
 
 #include "gst/GstHelpers.h"
 
+#include <cstddef>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -30,22 +31,30 @@ std::string public_output_format(const FormatSpec& format) {
   return format.empty() ? std::string("NV12") : format.str();
 }
 
-std::string native_decoder_output_format(const FormatSpec& format) {
-  const std::string out = public_output_format(format);
+std::string native_decoder_output_format(const SimaDecodeOptions& opt) {
+  const std::string out = public_output_format(opt.out_format);
   if (out == "NV12") {
     return "NV12";
   }
   if (out == "I420") {
     return "YUV420P";
   }
+  // 4:2:2 JPEGs decode natively to NV16 in zero-copy output; H.264/H.265 are 4:2:0 only.
+  // The copy path keeps decoding to NV12 and converting, because the codec rejects NV16
+  // for a 4:2:0 stream.
+  if (out == "NV16" && opt.raw_output &&
+      (opt.type == SimaDecodeType::JPEG || opt.type == SimaDecodeType::MJPEG)) {
+    return "NV16";
+  }
   return {};
 }
 
 void require_raw_output_format_supported(const SimaDecodeOptions& opt) {
-  if (!opt.raw_output || !native_decoder_output_format(opt.out_format).empty()) {
+  if (!opt.raw_output || !native_decoder_output_format(opt).empty()) {
     return;
   }
-  throw std::invalid_argument("SimaDecode: raw_output supports only NV12 or I420");
+  throw std::invalid_argument(
+      "SimaDecode: raw_output supports only NV12 or I420 (or NV16 for JPEG/MJPEG)");
 }
 
 void append_decoder_properties(std::ostringstream& ss, const SimaDecodeOptions& opt) {
@@ -56,7 +65,7 @@ void append_decoder_properties(std::ostringstream& ss, const SimaDecodeOptions& 
   if (!opt.decoder_name.empty()) {
     ss << " op-buff-name=" << opt.decoder_name;
   }
-  const std::string dec_fmt = native_decoder_output_format(opt.out_format);
+  const std::string dec_fmt = native_decoder_output_format(opt);
   if (!dec_fmt.empty()) {
     ss << " dec-fmt=" << dec_fmt;
   }
@@ -87,6 +96,38 @@ void append_decoder_properties(std::ostringstream& ss, const SimaDecodeOptions& 
 }
 
 } // namespace
+
+FormatTag jpeg_output_format(std::span<const std::uint8_t> jpeg) {
+  if (jpeg.size() < 4 || jpeg[0] != 0xff || jpeg[1] != 0xd8) {
+    throw std::invalid_argument("jpeg_output_format: data is not a JPEG");
+  }
+  // Walk marker segments to the frame header (SOF0-3, SOF9-11) and read its sampling factors.
+  for (std::size_t pos = 2; pos + 4 <= jpeg.size() && jpeg[pos] == 0xff;) {
+    if (jpeg[pos + 1] == 0xff) { // fill byte before a marker
+      ++pos;
+      continue;
+    }
+    const std::uint8_t marker = jpeg[pos + 1];
+    if (marker == 0x01 || (marker >= 0xd0 && marker <= 0xd8)) { // TEM, RSTn, SOI: no length
+      pos += 2;
+      continue;
+    }
+    const std::size_t length = (std::size_t{jpeg[pos + 2]} << 8) | jpeg[pos + 3];
+    const bool sof = (marker >= 0xc0 && marker <= 0xc3) || (marker >= 0xc9 && marker <= 0xcb);
+    if (sof && length >= 17 && pos + 2 + length <= jpeg.size() && jpeg[pos + 9] == 3) {
+      const std::uint8_t y = jpeg[pos + 11];
+      if (jpeg[pos + 14] == 0x11 && jpeg[pos + 17] == 0x11 && (y == 0x22 || y == 0x21)) {
+        return y == 0x22 ? FormatTag::NV12 : FormatTag::NV16;
+      }
+      throw std::invalid_argument("jpeg_output_format: only 4:2:0 and 4:2:2 JPEGs are supported");
+    }
+    if (marker == 0xda || length < 2) {
+      break;
+    }
+    pos += 2 + length;
+  }
+  throw std::invalid_argument("jpeg_output_format: no 3-component frame header before scan data");
+}
 
 SimaDecode::SimaDecode(SimaDecodeOptions opt) : opt_(std::move(opt)) {}
 
@@ -143,7 +184,8 @@ OutputSpec SimaDecode::output_spec(const OutputSpec& input) const {
     out.fps_num = input.fps_num;
     out.fps_den = (input.fps_den > 0) ? input.fps_den : 1;
   }
-  out.layout = (out.format == "NV12" || out.format == "I420") ? "Planar" : "HWC";
+  out.layout =
+      (out.format == "NV12" || out.format == "NV16" || out.format == "I420") ? "Planar" : "HWC";
   out.dtype = "UInt8";
   out.memory = opt_.raw_output ? "SimaAI" : "SystemMemory";
   out.certainty = SpecCertainty::Hint;

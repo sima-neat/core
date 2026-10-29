@@ -11,12 +11,16 @@ This page consolidates environment variables used by the runtime, builder, and
 SDK tooling. Many are debug/diagnostic toggles; most users can ignore them
 unless troubleshooting.
 
-For the exhaustive detected list, see [Environment Variable Inventory](./inventory).
+For the exhaustive detected list, see [Environment Variable Inventory](/reference/environment-variables/inventory/).
 
 > Note: Some knobs are internal/test-only and may change. They are included here
 > because they appear in code paths today.
 
 ## SDK web access
+
+For Neat SDK 3.0 or above, `sima-cli sdk setup` supplies `CODE_SERVER_PASSWORD` in the container environment. Run `neat` again to retrieve it and enter it when code-server prompts you. URLs contain no password or token. `neat --json` adds `codeUI` with `backend`, `auth`, `password`, `localUrl`, and `remoteUrl`; treat this output as credential-bearing. The published `codeUIHttps.host` port from the SDK port map takes precedence over the container port.
+
+The installed code-server executable selects this behavior; merely setting `CODE_SERVER_PASSWORD` does not change legacy OpenVSCode behavior. `CODE_SERVER_HTTPS_PORT` and `CODE_SERVER_WORKSPACE` override their legacy equivalents. `CODE_SERVER_WITHOUT_PASSWORD=1` reports `auth: "none"` and omits the password value. Legacy OpenVSCode images retain token URLs.
 
 - `NFS_SERVER_HOST_IP=<address>` — SDK host address used to construct remote
   Insight and browser-based VS Code URLs. This is normally supplied by
@@ -97,7 +101,6 @@ Legacy per-variable debug toggles still work and override profile defaults when 
 ## Dispatcher / runtime
 
 - `SIMA_DISPATCHER_TRACE=1` — trace dispatcher steps.
-- `SIMA_DISPATCHER_AUTO_RECOVER=0/1` — auto-recover dispatcher (default true).
 - `SIMA_ASYNC_TPUT_DIAG=1` — async throughput diagnostics.
 - `SIMA_ASYNC_WARMUP=<n>` — async warmup frames.
 - `SIMA_PERF_POWER=1` — enable board power capture from Sentinel in perf scenarios.
@@ -148,7 +151,7 @@ Legacy per-variable debug toggles still work and override profile defaults when 
   rather than falling back to eMMC. Free space on that filesystem, or `SIMA_MPK_EXTRACT_ROOT`
   pointing elsewhere, is the fix.
 - `SIMA_MPK_CLEANUP_EXTRACTED=0/1` — delete per-process extracted model-archive data on normal exit (default `1`).
-  With cleanup on, each process extracts into its own `proc_<pid>` root and removes it at exit. With
+  With cleanup on, each process extracts into a unique, lock-protected `proc_run_*` root and removes it at exit. With
   cleanup off, that process root is kept for inspection and excluded from stale-root garbage
   collection. It is not automatically discovered or reused by another process; remove it by hand
   when it is no longer needed.
@@ -157,7 +160,8 @@ Legacy per-variable debug toggles still work and override profile defaults when 
 directory is used in place without decompression or copying; the caller owns its lifetime and must
 keep it unchanged while the model is in use. A flat directory produced by `tar -xzf` is not an
 organized package and is not accepted directly.
-- `SIMA_MPK_EXTRACT_GC_STALE_PROC=0/1` — remove stale dead-`proc_*` extraction roots on startup (default `1`).
+- `SIMA_MPK_EXTRACT_GC_STALE_PROC=0/1` — remove abandoned `proc_run_*` extraction roots on startup using ownership locks (default `1`).
+  Legacy `proc_<pid>` roots must be removed manually once unused.
 - `SIMA_MODEL_TAR=<path>` — base model-pack path used by examples/tests.
   Per-model overrides (`SIMA_RESNET50_TAR`, `SIMA_YOLO_TAR`, etc.) still take precedence.
 - `SIMA_MPK_EXTRACT_MIN_FREE_BYTES=<bytes>` — free space kept in reserve when staging and
@@ -185,3 +189,44 @@ bytes written and the path it was using.
 ## Test / internal hooks
 
 - `SIMA_TENSOR_MAPFAIL_DEBUG=1` — log Tensor map failures.
+
+## Kernel metadata qualification
+
+ProcessCVU stages execute through Runtime's `neatkernelrunner` by default. No
+build option or environment variable selects the old ProcessCVU plugin.
+
+- `SIMA_CORE_COMPACT_METADATA=1` — permit compact TensorSet and typed current-frame
+  metadata on the owned direct runner-to-appsink edge after capability agreement.
+  Requires no incompatible boundary, debug, or flow observer. Standard owned
+  stage/element timings remain enabled and support both representations.
+  Unrepresented extensions retain legacy dynamic metadata.
+
+Do not attach legacy-only probes to a compact edge. Without capability agreement,
+Runtime preserves legacy metadata for unknown consumers and observers; execution
+still uses `neatkernelrunner`. This metadata option makes no latency or throughput
+guarantee.
+
+## Package and weekly qualification (test-only)
+
+- `SIMA_TEST_PACKAGE_INVENTORY=<absolute-path>` — expected package controls and
+  payload identity generated from selected, verified distribution archives by
+  `tools/ci/verify_core_dist.py --write-package-inventory`. Required by the
+  installed DevKit package-inventory test. It does not redirect `dpkg` to a
+  private prefix and is not an installation-result report.
+- `SIMA_TEST_PLATFORM_BASELINE=<absolute-path>` — native platform presence,
+  absence, package identities and OTA availability/identity captured **before installation**
+  with `tools/ci/verify_core_dist.py --capture-platform-baseline`. Required by
+  the installed DevKit package-inventory test alongside the selected package
+  inventory. Do not regenerate this baseline from the post-install state.
+- `SIMA_RUN_MNIST_PREPROC_CHANNELS1=1` — opt in to the long MNIST preproc accuracy
+  test. Obtain this value from `tools/ci/prepare_weekly_fixtures.py` after fixture
+  validation instead of setting it merely to suppress a skip. Local launchers
+  consume `--environment-json`; CI consumes the same mapping through
+  `--github-env`.
+
+See [Test Requirements](../../develop-apps/contribute/build-test/test_requirements.md)
+for fixture-group selection and installed-package profiles.
+
+## PCIe host and card status
+
+`NEAT_PCIE_SSH_USER` selects the card SSH user (default `sima`). `NEAT_PCIE_SSH_KEY` selects a private key (default `~/.ssh/sima_neat_pcie_ed25519`); existing SSH configuration and agent authentication remain available. `--offline` skips Internet update checks but still reads attached cards over local SSH. PCIe host status skips artifact update checks; use `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>` to update the host package. `neat update` does not update PCIe cards.

@@ -4,6 +4,7 @@
 #endif
 
 #include "pipeline/internal/InputStream.h"
+#include "pipeline/internal/InputPublicationMeasurement.h"
 #include "pipeline/internal/InputStreamUtil.h"
 
 #include "nodes/io/Input.h"
@@ -16,6 +17,7 @@
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/HolderLoanGate.h"
 
+#include <gstsimaaitensorbuffer_meta.h>
 #include <gst/gst.h>
 #include <gst/app/gstappsink.h>
 #include <gst/app/gstappsrc.h>
@@ -56,19 +58,24 @@ bool prepare_holder_buffer_for_zero_copy_transfer(GstBuffer** buffer, const Samp
                                                   const char* where);
 
 struct TensorSetOutputDecodeSignature {
-  guint caps_hash = 0;
+  simaai::gst::TensorBufferPublicationOwner publication;
+  std::shared_ptr<GstCaps> caps;
   guint tensor_count = 0;
   guint descriptor_size = 0;
   guint memory_count = 0;
-  bool copy_output = false;
   std::string stage_key;
   std::uint64_t meta_hash = 0;
 
   bool operator==(const TensorSetOutputDecodeSignature& other) const {
-    return caps_hash == other.caps_hash && tensor_count == other.tensor_count &&
+    const bool same_caps = caps == other.caps ||
+                           (caps && other.caps && gst_caps_is_equal(caps.get(), other.caps.get()));
+    if (publication || other.publication) {
+      return publication && publication == other.publication &&
+             memory_count == other.memory_count && same_caps;
+    }
+    return same_caps && tensor_count == other.tensor_count &&
            descriptor_size == other.descriptor_size && memory_count == other.memory_count &&
-           copy_output == other.copy_output && stage_key == other.stage_key &&
-           meta_hash == other.meta_hash;
+           stage_key == other.stage_key && meta_hash == other.meta_hash;
   }
 };
 
@@ -78,6 +85,7 @@ struct CachedTensorSetOutputDecode {
   Sample sample_template;
   TensorList tensor_templates;
   std::vector<Segment> runtime_segments;
+  std::vector<std::uint64_t> required_segment_extents;
 };
 
 struct InputStream::State {
@@ -162,6 +170,7 @@ struct InputStream::State {
   std::atomic<std::int64_t> last_push_ns{0};
   std::atomic<std::int64_t> inflight{0};
   std::atomic<std::int64_t> next_input_seq{0};
+  pipeline_internal::InputPublicationMeasurement input_publication_measurement;
   std::mutex preprocess_meta_mu;
   std::deque<std::int64_t> preprocess_meta_order;
   std::unordered_map<std::int64_t, PreprocessRuntimeMeta> preprocess_meta_by_input_seq;

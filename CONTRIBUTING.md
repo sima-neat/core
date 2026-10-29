@@ -83,10 +83,20 @@ Installed hooks:
 - `No merge if CI crash/correctness gate fails`.
 - Do not defer crash fixes behind waivers, skip lists, or release exceptions.
 
+## Issues
+
+Use the [bug report template](.github/ISSUE_TEMPLATE/bug_report.md) for defects
+and the [feature request template](.github/ISSUE_TEMPLATE/feature_request.md)
+for proposed improvements. Complete the relevant sections and mark others as
+not applicable. Include a minimal reproduction for bugs and an application use
+case for features; redact secrets and customer data from examples and logs.
+
 ## Commit and PR Standards
 
 - Keep commits focused and scoped.
 - Use imperative subject lines (for example: `Add release gate policy checks`).
+- Use the [pull request template](.github/PULL_REQUEST_TEMPLATE.md), target
+  `develop`, and link completed issues with `Fixes #<issue>`.
 - Every PR must include:
   - change type,
   - risk assessment,

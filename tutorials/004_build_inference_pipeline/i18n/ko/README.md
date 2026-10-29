@@ -120,31 +120,35 @@ tensor_rank=3
 - `advanced.max_input_bytes`: 입력 버퍼 증가 제한.
 - `advanced.copy_input`: 방어적인 입력 복사 강제.
 
-`Run::start_measurement()`를 사용하여 단일 측정 창에서 지연 시간, 처리량, 입력 카운터, 플러그인/에지 타이밍 및 선택적 보드 전력 텔레메트리를 검사합니다.
+`Run::start_measurement()`를 사용하여 단일 측정 창에서 지연 시간, 처리량, 입력 카운터 및 플러그인/에지 타이밍을 검사합니다.
 
-보드 전력을 포함하려면 코드에서 활성화하고(환경 변수는 필요하지 않음) 측정 보고서에서 읽습니다.
+같은 측정 창 동안의 보드 전력, 온도, CPU 사용률, 메모리를 기록하려면 그 주위에서 `TelemetryMonitor`를 실행합니다. 이 모니터는 보드 텔레메트리 데몬인 Sentinel에서 이 값들을 읽습니다.
 
 ```cpp
-simaai::neat::RunOptions run_opt;
-run_opt.enable_board_power(); // reads board power from Sentinel
 auto run = graph.build(inputs, run_opt);
+simaai::neat::TelemetryMonitor telemetry_monitor;
+telemetry_monitor.start();
 auto scope = run.start_measurement();
 run.push(inputs);
 (void)run.pull_tensors(5000);
 auto report = scope.stop();
+simaai::neat::Telemetry telemetry = telemetry_monitor.stop();
+std::cout << telemetry; // YAML summary
 ```
 
 ```python
-run_opt = neat.RunOptions()
-run_opt.enable_board_power()  # reads board power from Sentinel
 run = graph.build(tensor, run_opt)
+telemetry_monitor = neat.TelemetryMonitor()
+telemetry_monitor.start()
 scope = run.start_measurement()
 run.push(tensor)
 _ = run.pull_tensors(5000)
 report = scope.stop()
+telemetry = telemetry_monitor.stop()
+print(telemetry)  # YAML summary
 ```
 
-`Model::build(run_opt)`, `Model::build(route_opt, run_opt)` 및 `Graph::build(run_opt)`는 동일한 런타임 옵션을 기본 `Run`에 전달하므로, 파이프라인별로 중복되는 레일 샘플링 대신 그래프 수준의 보드 전력 모니터 하나를 사용합니다.
+Sentinel은 2초마다 샘플링하므로 이보다 짧은 측정 창에는 샘플이 없을 수 있으며, 이 경우 `telemetry.status`가 이를 알려 줍니다. [보드 텔레메트리 기록](/develop-apps/development-workflow/model#record-board-telemetry)을 참조하십시오.
 
 ## 소스 파일
 - C++: `tutorials/004_build_inference_pipeline/build_inference_pipeline.cpp`

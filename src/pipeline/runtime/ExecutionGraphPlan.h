@@ -12,6 +12,7 @@
 #include "pipeline/Run.h"
 #include "pipeline/GraphOptions.h"
 #include "pipeline/internal/InputRouteProcessor.h"
+#include "pipeline/internal/OrderedPublicInputContract.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -200,6 +201,7 @@ struct PipelineSegmentPlan {
   BoundaryPolicy boundary;
   // Allocation decision, separate from the declarative Input memory contract.
   InputMemoryPolicy resolved_input_memory_policy = InputMemoryPolicy::Auto;
+  std::optional<pipeline_internal::OrderedPublicInputContract> public_input_contract;
   OutputSpec input_spec;
   bool input_complete = false;
   OutputSpec output_spec;
@@ -214,6 +216,23 @@ struct PipelineSegmentPlan {
   std::vector<Provenance> provenance;
   std::vector<MaterializedNodeAttribution> materialized_node_attribution;
 };
+
+// Borrow the declared source contract for metadata-only public preflight. Unlike
+// media completion, this never infers a source size from a downstream model.
+inline const InputOptions& pipeline_segment_declared_ingress(const PipelineSegmentPlan& segment,
+                                                             std::size_t index = 0) {
+  const auto* input =
+      segment.nodes.empty() ? nullptr : dynamic_cast<const Input*>(segment.nodes.front().get());
+  if (input && (input->options().payload_type != PayloadType::Auto ||
+                !input->options().caps_override.empty()))
+    return input->options();
+  if (segment.boundary_hints && index < segment.boundary_hints->ingress_inputs.size())
+    return segment.boundary_hints->ingress_inputs[index];
+  if (input && segment.input_edges.empty())
+    return input->options();
+  static const InputOptions unspecified;
+  return unspecified;
+}
 
 // Source allocation is independent of media inference. Complete execution copies
 // without changing declarations or projecting a segment policy onto per-port hints.

@@ -176,6 +176,9 @@ jobs:
             exit 1
           fi
 
+          python3 tests/test_docs_link_checker.py
+          npm exec --yes --package=linkinator@8.1.0 -- sh -c \
+            'LINKINATOR_CLI="$(command -v linkinator)" node --test tests/docs/link_checker.test.mjs'
           python3 tests/test_autodoc.py
           python3 tests/test_algolia_developer_center_index.py
           ./build.sh --doc

@@ -47,6 +47,72 @@ inline bool safe_mul(std::size_t a, std::size_t b, std::size_t* out) noexcept {
   return true;
 }
 
+/**
+ * Compute the number of bytes spanned by a plane according to its shape + stride.
+ * This matches the access pattern used by map_nv12_read/map_i420_read and by copy loops:
+ *   last touched byte ~= byte_offset + stride0*(h-1) + row_bytes.
+ *
+ * @return 0 if invalid or overflow.
+ */
+inline std::size_t plane_span_bytes_checked(const std::vector<int64_t>& shape,
+                                            const std::vector<int64_t>& strides_bytes,
+                                            std::size_t elem_bytes) {
+  if (elem_bytes == 0)
+    return 0;
+
+  if (shape.size() >= 2) {
+    const int64_t h = shape[0];
+    const int64_t w = shape[1];
+    if (h <= 0 || w <= 0)
+      return 0;
+
+    std::size_t row_bytes = 0;
+    if (!safe_mul(static_cast<std::size_t>(w), elem_bytes, &row_bytes))
+      return 0;
+
+    int64_t stride0 = static_cast<int64_t>(row_bytes);
+    if (!strides_bytes.empty())
+      stride0 = strides_bytes[0];
+    if (stride0 <= 0)
+      return 0;
+    if (static_cast<std::size_t>(stride0) < row_bytes)
+      return 0;
+
+    // If a second stride is present, require it match elem_bytes (InputStream expectation).
+    if (strides_bytes.size() > 1) {
+      if (strides_bytes[1] != static_cast<int64_t>(elem_bytes))
+        return 0;
+    }
+
+    const std::size_t uh = static_cast<std::size_t>(h);
+    const std::size_t ustride = static_cast<std::size_t>(stride0);
+
+    // span = (h-1)*stride0 + row_bytes
+    std::size_t span = 0;
+    if (uh == 0)
+      return 0;
+    std::size_t rows_term = 0;
+    if (!safe_mul((uh - 1), ustride, &rows_term))
+      return 0;
+    if (!safe_add(rows_term, row_bytes, &span))
+      return 0;
+    return span;
+  }
+
+  // 1-D plane fallback (rare): treat as a vector of elements.
+  if (shape.size() == 1) {
+    const int64_t n = shape[0];
+    if (n <= 0)
+      return 0;
+    std::size_t bytes = 0;
+    if (!safe_mul(static_cast<std::size_t>(n), elem_bytes, &bytes))
+      return 0;
+    return bytes;
+  }
+
+  return 0;
+}
+
 //------------------------------------------------------------------------------
 // Tensor helpers
 //------------------------------------------------------------------------------

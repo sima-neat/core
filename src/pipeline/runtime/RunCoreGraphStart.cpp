@@ -1,4 +1,5 @@
 #include "RunCore.h"
+#include "GraphTransportLifecycle.h"
 
 #include "ExecutionGraphPlan.h"
 #include "builder/OutputSpec.h"
@@ -47,7 +48,7 @@ bool has_input_appsrc(std::span<const std::shared_ptr<simaai::neat::Node>> nodes
 bool has_output_appsink(std::span<const std::shared_ptr<simaai::neat::Node>> nodes);
 bool has_internal_source(std::span<const std::shared_ptr<simaai::neat::Node>> nodes);
 void maybe_force_copy_for_backpressure(Sample& sample, std::size_t qsize, const char* where,
-                                       std::size_t seg_id);
+                                       std::size_t seg_id, bool preserve_framework = false);
 bool is_encoded_sample(const Sample& sample);
 std::optional<Sample> sample_from_input_spec(const OutputSpec& spec, std::string* err);
 
@@ -225,7 +226,8 @@ GraphReport make_graph_start_report(const ExecutionGraphPlan& plan, const std::s
 [[noreturn]] void throw_graph_start_error(const ExecutionGraphPlan& plan,
                                           const std::string& detail) {
   GraphReport rep = make_graph_start_report(plan, detail.empty() ? "unknown failure" : detail);
-  throw NeatError("[" + rep.error_code + "] " + rep.repro_note, std::move(rep));
+  const std::string message = "[" + rep.error_code + "] " + rep.repro_note;
+  throw NeatError(message, std::move(rep));
 }
 
 PortId intern_runtime_port(ExecutionGraphRuntime& execution, const std::string& name) {
@@ -271,7 +273,10 @@ EdgeRouterCallbacks make_edge_router_callbacks(const std::shared_ptr<RunCore>& c
   callbacks.prepare_sink_sample = [core](NodeId, Sample& sample, std::size_t qsize,
                                          std::size_t diag_id) {
     if (core->opt.output_memory != OutputMemory::ZeroCopy) {
-      simaai::neat::graph::maybe_force_copy_for_backpressure(sample, qsize, "sink_queue", diag_id);
+      simaai::neat::graph::maybe_force_copy_for_backpressure(
+          sample, qsize, "sink_queue", diag_id,
+          core->opt.output_memory == OutputMemory::Auto &&
+              pipeline_internal::env_str("SIMA_OUTPUT_MEMORY_DEFAULT", "") != "owned");
     }
   };
   callbacks.request_stop = [core](const std::string& err) { core->graph_request_stop(err); };
@@ -376,10 +381,6 @@ void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
     runtime->run_options = core->graph_options.pipeline;
     if (seg.boundary.graph_internal_output) {
       runtime->run_options.output_memory = simaai::neat::OutputMemory::ZeroCopy;
-      // Graph-internal appsinks are transport edges to downstream stages or
-      // pipeline inputs, not user CPU-read boundaries. Preserve zero-copy
-      // forwarding and leave CPU visibility to the true consumer boundary.
-      runtime->run_options.advanced.prepare_output_cpu_visible = false;
     }
     runtime->seg.nodes = runtime->nodes;
     runtime->seg.route_options = runtime->route_options;
@@ -519,14 +520,14 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
 
   const auto terminal_output_options_for = [&](NodeId id) -> const OutputOptions* {
     for (const auto& segment : execution.plan.pipeline_segments) {
-      for (std::size_t local = 0; local < segment.nodes.size(); ++local) {
-        if (attributed_runtime_node_for_segment_node(segment, local) != id) {
-          continue;
-        }
-        const auto* output = dynamic_cast<const simaai::neat::Output*>(segment.nodes[local].get());
-        if (output) {
-          return &output->options();
-        }
+      if (segment.node_ids.empty() || segment.node_ids.back() != id || segment.nodes.empty()) {
+        continue;
+      }
+      // A runtime node can own several rendered nodes after fragment flattening.
+      // The sink belongs to the segment's terminal Output, not positional provenance.
+      const auto* output = dynamic_cast<const simaai::neat::Output*>(segment.nodes.back().get());
+      if (output) {
+        return &output->options();
       }
     }
     return nullptr;
@@ -939,7 +940,10 @@ void start_realtime_links(const std::shared_ptr<RunCore>& core) {
 void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
                                      PipelineSegmentRuntime& rt) {
   if (rt.seg.boundary.direct_graph_source) {
-    rt.transport.built.store(true, std::memory_order_release);
+    {
+      std::lock_guard<std::mutex> lock(rt.transport.mu);
+      rt.transport.built.store(true, std::memory_order_release);
+    }
     rt.transport.cv.notify_all();
     return;
   }
@@ -949,9 +953,9 @@ void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
   }
 
   {
-    std::lock_guard<std::mutex> lock(rt.transport.mu);
     RunCoreStartOptions start_opt;
     start_opt.run_options = rt.run_options;
+    start_opt.graph_options = core->graph_options;
     start_opt.mode = RunMode::Async;
     start_opt.last_pipeline = &rt.last_pipeline;
     start_opt.push_sample_policy = PushSamplePolicy::PreserveSample;
@@ -1000,10 +1004,9 @@ void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
           locked->graph_request_stop(reason);
           return FusedEncodedOutputDispatchResult::Failed;
         };
-    rt.run_core = RunCore::start_pipeline_segment(rt.seg, std::move(start_opt));
-    rt.transport.built.store(true, std::memory_order_release);
+    construct_graph_source_pipeline(
+        rt, [&] { return RunCore::start_pipeline_segment(rt.seg, std::move(start_opt)); });
   }
-  rt.transport.cv.notify_all();
 }
 
 void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_t i) {
@@ -1110,9 +1113,12 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
         const auto pull_start = std::chrono::steady_clock::now();
         Sample sample;
         PullError pull_error;
+        // The outer Run admits terminal public outputs. Internal edges still
+        // carry transferable loans for downstream stages and nested Runs.
         const PullStatus pull_status =
             pipe.run_core
-                ? pipe.run_core->pull(core->graph_options.pull_timeout_ms, sample, &pull_error)
+                ? pipe.run_core->pull(core->graph_options.pull_timeout_ms, sample, &pull_error,
+                                      pipe.seg.boundary.graph_internal_output)
                 : PullStatus::Closed;
         pipe.transport.telemetry.pull_thread_pull_calls.fetch_add(1, std::memory_order_relaxed);
         atomic_add_max(pipe.transport.telemetry.pull_thread_pull_ns,
@@ -1168,9 +1174,8 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
           }
         }
         core->graph_restore_stream_id_if_needed(i, sample);
-        // A pipeline output is an internal forwarding boundary, not final consumption. Keep
-        // realtime and holder credits attached until a terminal pull, drop, or closed sink owns
-        // the corresponding release.
+        // Forwarding preserves realtime credits and any internal-edge holder
+        // loans until terminal consumption, a drop or a closed sink releases them.
         simaai::neat::graph::log_first_decoded_once(sample, pipe.seg.id);
         if (simaai::neat::graph::graph_debug_enabled()) {
           simaai::neat::graph::graph_debug_sample("pipeline_pull", sample);
@@ -1315,7 +1320,7 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
           core->graph_execution().plan.edges[queued.edge_index].link_options.policy ==
               GraphLinkPolicy::RealtimeLatestByStream;
       const bool pushed =
-          pipe.run_core && pipe.run_core->push_samples(Sample{sample}, !realtime_edge);
+          pipe.run_core && pipe.run_core->push_pipeline_sample(sample, !realtime_edge);
       pipe.transport.telemetry.push_thread_push_samples_calls.fetch_add(1,
                                                                         std::memory_order_relaxed);
       atomic_add_max(pipe.transport.telemetry.push_thread_push_samples_ns,
@@ -1457,8 +1462,11 @@ std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartO
     }
 
     if (core->graph_options.power_monitor.enabled) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
       core->power_monitor =
           std::make_unique<simaai::neat::PowerMonitor>(core->graph_options.power_monitor);
+#pragma GCC diagnostic pop
       core->power_monitor->start();
     }
 

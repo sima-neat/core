@@ -23,33 +23,13 @@ slug: /develop-apps/contribute/build
 
 ### 跨平台編譯的先決條件
 
-跨平台編譯通常比直接在 DevKit 上建立更快，但您必須稍後將建立的成品傳輸到 DevKit。您需要 Neat SDK 才能進行跨平台編譯。
-
-首先在主機上安裝 `sima-cli`，然後安裝 SDK。
+跨平台編譯請使用 Neat SDK。依照[安裝 SDK](/getting-started/dev-environment/install-the-environment/)在支援的 Ubuntu、Windows/WSL 或 macOS 主機上完成設定，然後開啟 SDK shell：
 
 ```bash
-curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
-sima-cli install sdk
+sima-cli sdk neat
 ```
 
-當 `sima-cli` 提示時，請選擇 SDK 選項。
-
-然後啟動 SDK：
-
-```bash
-sima-cli sdk elxr
-```
-
-接著在 SDK 內部安裝 `sima-cli`，然後安裝 SDK 的更新檔。
-
-```bash
-curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
-source ~/.bash_profile
-sima-cli install tools/sdk-patch
-```
-
-- SDK 的安裝支援 Windows 和 Ubuntu。
-- 如果您在 Modalix DevKit 上進行原生建置，則不需要執行 SDK 安裝/修補步驟。
+SDK 包含工具鏈與 `sima-cli`。Core 的 `build.sh` 會準備相符的 Scheduler 和 LLiMa 相依套件；請參閱[本機相依套件](/develop-apps/contribute/build-test/local-dependencies/)。在已配對的 SDK 中，`./build.sh --install` 也會將相符的成品部署至 DevKit。在 DevKit 上原生建置不需要 SDK。
 
 ## 建置選項
 
@@ -186,3 +166,5 @@ cmake -LA -B build      # include advanced
 ```
 
 最上層的 `CMakeLists.txt` 檔案是選項名稱的權威來源。
+
+Core 從所選 Scheduler 套件的收據繼承韌體及確切的 sysroot，不再另行宣告韌體。收據的平台與 SDK 通道必須符合 Core。CI 將此政策保留在建置產物中，並用它選取韌體完全相符的 DevKit，不使用備援版本。安裝 LLiMa 前，Core 會將其已發佈的韌體、平台及 SDK 通道與 Scheduler 比對，並驗證所選 DEB 屬於同一份發佈產物。LLiMa 未發佈確切的 sysroot 收據，因此此檢查確認的是宣告的韌體相容性，而非 sysroot 套件清單完全相同。使用本機 `--llima PATH` 建置時，請提供包含 core/dev/cli DEB、`llima-package-manifest.json` 及 `metadata.json` 的 LLiMa 發佈根目錄。缺少證據或證據不符時會停止建置。重新建置 Core 前，請先重新建置並發佈 Kernels → Runner → Scheduler，以及相符的 LLiMa。

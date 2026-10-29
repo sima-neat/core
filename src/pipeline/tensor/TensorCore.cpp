@@ -45,6 +45,7 @@ namespace simaai::neat {
 
 using simaai::neat::pipeline_internal::contiguous_strides_bytes;
 using simaai::neat::pipeline_internal::dtype_bytes;
+using simaai::neat::pipeline_internal::plane_span_bytes_checked;
 using simaai::neat::pipeline_internal::safe_add;
 using simaai::neat::pipeline_internal::safe_mul;
 
@@ -141,9 +142,7 @@ void log_mapfail_once(const char* label, const Tensor& t, const Mapping& mapping
  * Returns 0 on invalid dims or overflow.
  */
 std::size_t dense_size_bytes_checked(const std::vector<int64_t>& shape, std::size_t elem_bytes) {
-  if (shape.empty())
-    return 0;
-
+  // The empty product is one element (rank-zero numerical tensor).
   std::size_t total = elem_bytes;
   for (int64_t dim : shape) {
     if (dim <= 0)
@@ -237,70 +236,6 @@ bool copy_dense_strided_to_contiguous(const uint8_t* src, std::size_t src_bytes,
   return true;
 }
 
-/**
- * Compute the number of bytes spanned by a plane according to its shape + stride.
- * This matches the access pattern used by map_nv12_read/map_i420_read and by copy loops:
- *   last touched byte ~= byte_offset + stride0*(h-1) + row_bytes.
- *
- * @return 0 if invalid or overflow.
- */
-std::size_t plane_span_bytes_checked(const Plane& plane, std::size_t elem_bytes) {
-  if (elem_bytes == 0)
-    return 0;
-
-  if (plane.shape.size() >= 2) {
-    const int64_t h = plane.shape[0];
-    const int64_t w = plane.shape[1];
-    if (h <= 0 || w <= 0)
-      return 0;
-
-    std::size_t row_bytes = 0;
-    if (!safe_mul(static_cast<std::size_t>(w), elem_bytes, &row_bytes))
-      return 0;
-
-    int64_t stride0 = static_cast<int64_t>(row_bytes);
-    if (!plane.strides_bytes.empty())
-      stride0 = plane.strides_bytes[0];
-    if (stride0 <= 0)
-      return 0;
-    if (static_cast<std::size_t>(stride0) < row_bytes)
-      return 0;
-
-    // If a second stride is present, require it match elem_bytes (InputStream expectation).
-    if (plane.strides_bytes.size() > 1) {
-      if (plane.strides_bytes[1] != static_cast<int64_t>(elem_bytes))
-        return 0;
-    }
-
-    const std::size_t uh = static_cast<std::size_t>(h);
-    const std::size_t ustride = static_cast<std::size_t>(stride0);
-
-    // span = (h-1)*stride0 + row_bytes
-    std::size_t span = 0;
-    if (uh == 0)
-      return 0;
-    std::size_t rows_term = 0;
-    if (!safe_mul((uh - 1), ustride, &rows_term))
-      return 0;
-    if (!safe_add(rows_term, row_bytes, &span))
-      return 0;
-    return span;
-  }
-
-  // 1-D plane fallback (rare): treat as a vector of elements.
-  if (plane.shape.size() == 1) {
-    const int64_t n = plane.shape[0];
-    if (n <= 0)
-      return 0;
-    std::size_t bytes = 0;
-    if (!safe_mul(static_cast<std::size_t>(n), elem_bytes, &bytes))
-      return 0;
-    return bytes;
-  }
-
-  return 0;
-}
-
 } // namespace
 
 //==============================================================================
@@ -374,6 +309,8 @@ std::shared_ptr<Storage> make_cpu_external_storage(void* data, std::size_t size_
 //==============================================================================
 
 Tensor Tensor::clone() const {
+  if (!storage)
+    throw std::runtime_error("Tensor::clone: missing source storage");
   const std::size_t elem = dtype_bytes(dtype);
   if (elem == 0)
     throw std::runtime_error("Tensor::clone: unknown element size");
@@ -382,7 +319,7 @@ Tensor Tensor::clone() const {
   // Dense tensor clone (tight contiguous copy)
   // --------------------------
   if (is_dense()) {
-    const std::size_t bytes = dense_size_bytes_checked(shape, elem);
+    const std::size_t bytes = dense_bytes_tight();
     if (!shape.empty() && bytes == 0) {
       throw std::runtime_error("Tensor::clone: invalid/overflowing dense shape");
     }
@@ -415,7 +352,7 @@ Tensor Tensor::clone() const {
 
     auto storage_copy = make_cpu_owned_storage(alloc_bytes);
 
-    const Mapping src_map = map(MapMode::Read); // includes byte_offset
+    const Mapping src_map = pipeline_internal::map_dense_tensor_read(*this); // includes byte_offset
     if (!src_map.data && bytes != 0) {
       throw std::runtime_error("Tensor::clone: failed to map source");
     }
@@ -675,7 +612,7 @@ Mapping Tensor::view(MapMode mode) const {
 //==============================================================================
 
 std::size_t Tensor::dense_bytes_tight() const {
-  if (!is_dense())
+  if (!is_dense() || (shape.empty() && !pipeline_internal::is_bound_dense_scalar(*this)))
     return 0;
   const std::size_t elem = dtype_bytes(dtype);
   if (elem == 0)
@@ -693,11 +630,11 @@ bool Tensor::copy_dense_bytes_tight_to(uint8_t* dst, std::size_t dst_size) const
   if (elem == 0)
     return false;
 
-  const std::size_t bytes = dense_size_bytes_checked(shape, elem);
+  const std::size_t bytes = dense_bytes_tight();
   if (bytes == 0 || dst_size < bytes)
     return false;
 
-  const Mapping mapping = map_read();
+  const Mapping mapping = pipeline_internal::map_dense_tensor_read(*this);
   if (!mapping.data || mapping.size_bytes == 0)
     return false;
   if (mapping.size_bytes < bytes)
@@ -851,7 +788,7 @@ bool Tensor::validate(std::string* err) const {
     if (storage_bytes == 0)
       continue;
 
-    const std::size_t span = plane_span_bytes_checked(plane, elem);
+    const std::size_t span = plane_span_bytes_checked(plane.shape, plane.strides_bytes, elem);
     if (span == 0)
       return fail("plane bytes could not be computed");
 
@@ -864,15 +801,16 @@ bool Tensor::validate(std::string* err) const {
   if (semantic.image.has_value()) {
     const ImageSpec::PixelFormat fmt = semantic.image->format;
 
-    if (fmt == ImageSpec::PixelFormat::NV12 || fmt == ImageSpec::PixelFormat::I420) {
+    if (fmt == ImageSpec::PixelFormat::NV12 || fmt == ImageSpec::PixelFormat::NV16 ||
+        fmt == ImageSpec::PixelFormat::I420) {
       if (dtype != simaai::neat::TensorDType::UInt8) {
-        return fail("NV12/I420 tensors must use UInt8 dtype");
+        return fail("NV12/I420/NV16 tensors must use UInt8 dtype");
       }
       const int w = width();
       const int h = height();
       if (w > 0 && h > 0) {
-        if ((w % 2) != 0 || (h % 2) != 0) {
-          return fail("NV12/I420 tensors require even width/height");
+        if ((w % 2) != 0 || (fmt != ImageSpec::PixelFormat::NV16 && (h % 2) != 0)) {
+          return fail("YUV tensor dimensions violate the chroma sampling grid");
         }
       }
     }
@@ -885,9 +823,19 @@ bool Tensor::validate(std::string* err) const {
       return false;
     };
 
-    if (fmt == ImageSpec::PixelFormat::NV12) {
+    if (fmt == ImageSpec::PixelFormat::NV12 || fmt == ImageSpec::PixelFormat::NV16) {
       if (!has_role(PlaneRole::Y) || !has_role(PlaneRole::UV)) {
-        return fail("NV12 tensor missing Y/UV planes");
+        return fail("NV12/NV16 tensor missing Y/UV planes");
+      }
+      if (fmt == ImageSpec::PixelFormat::NV16) {
+        if (planes.size() != 2 || width() <= 0 || height() <= 0)
+          return fail("NV16 requires exactly two planes and positive geometry");
+        for (const auto& p : planes) {
+          const auto expected = p.role == PlaneRole::Y ? std::vector<int64_t>{height(), width()}
+                                                       : std::vector<int64_t>{height(), width()};
+          if (p.shape != expected)
+            return fail("NV16 plane shape differs from its full-height sampling grid");
+        }
       }
     } else if (fmt == ImageSpec::PixelFormat::I420) {
       if (!has_role(PlaneRole::Y) || !has_role(PlaneRole::U) || !has_role(PlaneRole::V)) {

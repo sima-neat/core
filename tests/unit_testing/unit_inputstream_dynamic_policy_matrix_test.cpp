@@ -160,23 +160,29 @@ RUN_TEST("unit_inputstream_dynamic_policy_matrix_test", ([] {
              Run run = graph.build(std::vector<cv::Mat>{make_bgr(16, 16)}, run_opt);
              (void)run.run(std::vector<cv::Mat>{make_bgr(16, 16)}, 1000);
 
+             // Change only geometry: both frames fit the seed's 768-byte capacity.
+             // Oversized-input admission is exercised separately above/below.
+             const cv::Mat reshaped = make_bgr(32, 8);
+             require(reshaped.total() * reshaped.elemSize() == 16U * 16U * 3U,
+                     "caps_override: fixture must not exceed seeded byte capacity");
+             const auto blocked_before = run_internal::input_stats(run).renegotiation_blocked;
              bool threw_caps_override = false;
              try {
-               (void)run.run(std::vector<cv::Mat>{make_bgr(32, 32)}, 1000);
+               (void)run.run(std::vector<cv::Mat>{reshaped}, 1000);
              } catch (const std::exception& e) {
                threw_caps_override = true;
                const std::string emsg = e.what();
                const std::string lerr = run.last_error();
                const bool matched =
                    (emsg.find("caps_override_blocks_renegotiation") != std::string::npos) ||
-                   (lerr.find("caps_override_blocks_renegotiation") != std::string::npos) ||
-                   (emsg.find("shape_change_requires_rebuild") != std::string::npos) ||
-                   (lerr.find("shape_change_requires_rebuild") != std::string::npos);
+                   (lerr.find("caps_override_blocks_renegotiation") != std::string::npos);
                require(matched, "caps_override: unexpected block reason text: e.what='" + emsg +
                                     "' last_error='" + lerr + "'");
              }
              require(threw_caps_override,
                      "caps_override: expected renegotiation block when geometry changes");
+             require(run_internal::input_stats(run).renegotiation_blocked == blocked_before + 1,
+                     "caps_override: the existing caps policy must reject exactly once");
            }
 
            // 4) Validation parity: build-time and push-time checks use effective-max semantics.

@@ -31,6 +31,7 @@ struct SampleTimingOverrides;
 
 namespace pipeline_internal {
 struct DiagCtx;
+class InputPublicationMeasurement;
 } // namespace pipeline_internal
 
 struct InputStreamOptions {
@@ -88,11 +89,10 @@ struct InputStreamOptions {
   int stability_frames = 2;
   std::size_t max_input_bytes = 0;
   bool copy_output = true;
-  // Auto retains standard DMA-BUF payloads; copy_output remains the fallback
-  // for other storage. Explicit Owned disables this intent.
-  bool preserve_dmabuf_output = false;
+  // Auto retains actual DMA-BUFs and certified framework terminal host pools.
+  // copy_output remains the fallback for other storage; Owned disables retention.
+  bool preserve_framework_output = false;
   bool copy_input = false;
-  bool prepare_output_cpu_visible = false;
   int holder_loan_credits = 0;
   bool holder_loan_credits_auto = false;
   int holder_loan_sample_window = 1;
@@ -141,6 +141,8 @@ public:
   explicit operator bool() const noexcept;
   bool can_push() const noexcept;
   bool can_pull() const noexcept;
+  std::shared_ptr<pipeline_internal::InputPublicationMeasurement>
+  input_publication_measurement() noexcept;
 
   static InputStream create(GstElement* pipeline, GstElement* appsrc, GstElement* appsink,
                             const SampleSpec& spec, const InputOptions& src_opt,
@@ -172,6 +174,10 @@ public:
   InputStreamStats stats() const;
   std::string diagnostics_summary() const;
   std::shared_ptr<pipeline_internal::DiagCtx> diag_ctx() const;
+  // Finalized policy retained by the actual stream, not the caller's build
+  // options. Absence means no State; neither result certifies retirement.
+  std::optional<pipeline_internal::InputStreamTeardownPolicy>
+  effective_teardown_policy() const noexcept;
   GstElement* pipeline_handle() const;
   void set_on_caps_change(std::function<void(const SampleSpec&, const SampleSpec&)> cb);
 

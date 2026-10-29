@@ -25,6 +25,7 @@
 #include "pipeline/SuperPointTypes.h"
 #include "pipeline/YoloXSegPoseTypes.h"
 #include "pipeline/Run.h"
+#include "pipeline/TelemetryMonitor.h"
 #include "pipeline/TensorSpec.h"
 
 #include <filesystem>
@@ -54,84 +55,64 @@ class Graph;
 using TensorSpec = TensorConstraint;
 
 /**
- * @brief Hardware timing for one compiled MLA layer or segment.
+ * @brief Hardware latency of one compiled MLA layer or segment.
  *
- * Names describe compiler-generated MLA operations, which may fuse or split ONNX operators.
- * `total_execution_time_us` is the hardware `run_time` counter, not host wall-clock latency.
- * Zero-time no-op entries are retained. `stage_index` identifies the containing executable stage
- * in model execution order (zero-based, including A65 stages), not archive file order.
+ * `stage_index` identifies the containing executable stage in model execution order (zero-based,
+ * including A65 stages), not archive file order. `name` describes a compiler-generated MLA
+ * operation, which may fuse or split ONNX operators. `latency_us` is the hardware `run_time`
+ * counter from one profiling pass that runs the layer on its own; layer latencies do not add up
+ * to the stage latency. Zero-time no-op entries are retained.
  */
-struct LayerStats {
-  std::string name;
-  double total_execution_time_us = 0.0;
+struct MlaLayer {
   std::size_t stage_index = 0;
+  std::string name;
+  double latency_us = 0.0;
+};
+
+/// @brief MLA layer latencies from `BenchmarkOptions::include_mla_layer_stats`.
+struct MlaLayerStats {
+  /// "not requested", "ok", or why MLA layer stats were not collected.
+  std::string status = "not requested";
+  std::vector<MlaLayer> layers{}; ///< Empty unless `status` is "ok".
 };
 
 /**
- * @brief One Sentinel metric summarized over the benchmark throughput window.
+ * @brief Hardware latency of one compiled MLA stage, run uninterrupted.
  *
- * `samples == 0` means the board did not report the metric during the window, and the
- * statistics are then zero.
+ * `latency_us` is the mean MLA execution time of 200 back-to-back runs of the stage's ELF,
+ * measured by mla-rt with 1 us resolution. `stage_index` uses the same numbering as
+ * `MlaLayer::stage_index`.
  */
-struct BenchmarkMetric {
-  std::string key;   ///< Sentinel metric key, for example `power_current_watts`.
-  std::string label; ///< Sentinel display label.
-  std::string unit;  ///< Unit of the values.
-  int samples = 0;   ///< Telemetry samples that carried a value.
-  double mean = 0.0; ///< Mean over those samples.
-  double minimum = 0.0;
-  double maximum = 0.0;
+struct MlaStage {
+  std::size_t stage_index = 0;
+  double latency_us = 0.0;
 };
 
-/**
- * @brief Board telemetry recorded by the Sentinel daemon during the throughput window.
- *
- * `Model::benchmark()` records a Sentinel trace around the throughput pass. Sentinel samples
- * every 2 s by default, so the window yields about one sample per 2 s of measurement.
- * `status` is `"ok"` when the trace was recorded; otherwise it names why telemetry is missing
- * and every metric has `samples == 0`. Memory values are board-wide, in MiB, and include
- * whatever else is running.
- */
-struct BenchmarkTelemetry {
-  std::string status;              ///< `"ok"`, or why telemetry is unavailable.
-  std::string trace_id;            ///< Saved Sentinel trace, for `simaai-sentinel` tooling.
-  std::string sentinel_version;    ///< Version of the Sentinel daemon that recorded the trace.
-  int sample_interval_ms = 0;      ///< Sentinel sampling interval.
-  int samples = 0;                 ///< Telemetry samples recorded in the window.
-  BenchmarkMetric power_som_watts; ///< Total SoM input power.
-  BenchmarkMetric power_mla_watts; ///< MLA rail power; not reported on boards without that rail.
-  std::vector<BenchmarkMetric> power_rails_watts;  ///< Every power rail the board reports.
-  std::vector<BenchmarkMetric> die_temperatures_c; ///< Die sensors at the MLA, APU, CVU, and TOP.
-  BenchmarkMetric die_temperature_max_c; ///< Hottest die sensor per sample, then summarized.
-  std::vector<BenchmarkMetric> board_temperatures_c; ///< SoM top-side and bottom-side sensors.
-  /// CPU utilization. Each sample averages the preceding interval, so `maximum` is the busiest
-  /// interval rather than an instantaneous peak.
-  BenchmarkMetric cpu_usage_pct;
-  /// Utilization of each CPU core, in core order, summarized like `cpu_usage_pct`. A single busy
-  /// core shows here even when the all-core average stays low.
-  std::vector<BenchmarkMetric> cpu_cores_usage_pct;
-  /// DMA buffers allocated for the MLA. The model allocates them when it loads, so with nothing
-  /// else running this is the model's MLA memory.
-  BenchmarkMetric mla_memory_mib;
-  /// Used contiguous memory (CMA). This includes the MLA memory pool, so never add it to
-  /// `mla_memory_mib`. At idle it also includes movable pages, such as page cache, that Linux
-  /// borrows from CMA.
-  BenchmarkMetric cma_memory_mib;
-  BenchmarkMetric linux_memory_used_mib; ///< Linux used memory, excluding page cache.
+/// @brief MLA stage latencies from `BenchmarkOptions::include_mla_stage_stats`.
+struct MlaStageStats {
+  /// "not requested", "ok", or why MLA stage stats were not collected.
+  std::string status = "not requested";
+  std::vector<MlaStage> stages{}; ///< Empty unless `status` is "ok".
 };
 
 /**
  * @brief Headline result returned by `Model::benchmark()`.
  *
- * The benchmark uses deterministic synthetic inputs generated from `Model::input_specs()`.
+ * The benchmark pushes `BenchmarkOptions::inputs` for every sample, or deterministic synthetic
+ * inputs generated from `Model::input_specs()` when none are given; `input` names which.
  * `latency_ms` is measured with a warmed-up single-flight push/pull loop; `latency_p50_ms`,
  * `latency_p95_ms`, and `latency_p99_ms` are percentiles of the same loop. `fps` means logical
  * inferences per second from a separate async throughput pass (for batched models this is
  * batches/sec multiplied by the compiled batch size). Each pass runs until it has measured at
  * least `num_samples` inputs and `min_duration_ms` has elapsed.
  *
- * Power and board telemetry come from the Sentinel daemon. When Sentinel is unavailable, the
- * power fields are zero and `telemetry.status` names the reason.
+ * Power and board telemetry come from the Sentinel daemon, recorded by a `TelemetryMonitor`
+ * around the throughput pass. Its sample window is armed after measurement starts
+ * and sealed after the last required output, before measurement stops. Preparation,
+ * worker teardown and final reads are outside the timer. Invalid UTC timestamps or
+ * detected clock discontinuities make benchmark telemetry unavailable, without
+ * changing standalone monitor cache-order recovery. When Sentinel is unavailable,
+ * the power fields are zero and `telemetry.status` names the reason.
  */
 struct BenchmarkReport {
   double latency_ms = 0.0;
@@ -143,11 +124,13 @@ struct BenchmarkReport {
   /// Energy to process `num_samples` inputs: `avg_power_watts` multiplied by the time the
   /// measured throughput needs for `num_samples` inputs.
   double energy_joules = 0.0;
-  double peak_power_watts = 0.0;         ///< Highest SoM power sample in the throughput window.
-  int throughput_samples = 0;            ///< Inputs measured by the throughput pass.
-  double throughput_duration_ms = 0.0;   ///< Length of the throughput window.
-  BenchmarkTelemetry telemetry;          ///< Board telemetry for the throughput window.
-  std::vector<LayerStats> layer_stats{}; ///< Empty when layer profiling was not collected.
+  double peak_power_watts = 0.0;       ///< Highest SoM power sample in the throughput window.
+  int throughput_samples = 0;          ///< Inputs measured by the throughput pass.
+  double throughput_duration_ms = 0.0; ///< Length of the throughput window.
+  Telemetry telemetry;                 ///< Board telemetry for the throughput window.
+  MlaLayerStats mla_layer_stats;       ///< Per-layer MLA latency, when requested.
+  MlaStageStats mla_stage_stats;       ///< Per-stage MLA latency, when requested.
+  std::string input; ///< Measured inputs: "provided" (`BenchmarkOptions::inputs`) or "synthetic".
 
   /**
    * @brief Write the complete report as YAML or JSON to the exact destination filename.
@@ -161,18 +144,27 @@ struct BenchmarkReport {
 };
 
 /**
- * @brief Options for `Model::benchmark()` synthetic inputs and measurement.
+ * @brief Options for `Model::benchmark()` inputs and measurement.
+ *
+ * Set `inputs` to measure with real data, such as an image read with OpenCV. Without it, the
+ * benchmark generates deterministic synthetic inputs from `Model::input_specs()`.
  *
  * BoxDecode routes need source-image geometry to map detections from model coordinates back to
  * source coordinates. Set `original_width` and `original_height` together to benchmark a specific
  * source geometry. When they are omitted, the benchmark infers geometry from the resolved
  * preprocess and model ingress contracts, preserving the behavior of `benchmark(num_samples)`.
+ * Image preprocessing routes allocate the synthetic image at that source geometry; a provided
+ * image supplies its own geometry, so the original size must be omitted or match it. A provided
+ * tensor that already carries `Tensor::semantic.preprocess` keeps it, as `run()` does, and the
+ * original size and `resize_mode` do not apply to it. Tensor
+ * routes (including cast/quantize) retain the model input shape; the source geometry is used
+ * only for BoxDecode metadata.
  * Per-run benchmark geometry takes precedence over deprecated model-construction BoxDecode hints.
  */
 struct BenchmarkOptions {
-  int num_samples = 100; ///< Number of measured synthetic inputs; must be greater than zero.
-  std::optional<int> original_width;  ///< Synthetic source-image width, in pixels.
-  std::optional<int> original_height; ///< Synthetic source-image height, in pixels.
+  int num_samples = 100;              ///< Number of measured inputs; must be greater than zero.
+  std::optional<int> original_width;  ///< Source-image width, in pixels.
+  std::optional<int> original_height; ///< Source-image height, in pixels.
   /// Resize policy used to map the source geometry to the model input. When omitted, use the
   /// resolved preprocess policy, or stretch when the model route has no resize stage.
   std::optional<ResizeMode> resize_mode;
@@ -182,10 +174,22 @@ struct BenchmarkOptions {
   /// both passes follow the same rule and the throughput pass's power and temperature readings
   /// cover several telemetry samples. Set it to 0 to stop each pass after `num_samples` inputs.
   int min_duration_ms = 10000;
-  /// Advanced: collect compiled MLA layer timings in a separate profiling pass. Default off.
-  /// Requires mla-rt with the MIP-to-kernel handoff fix in PATH and an idle devkit with no
-  /// other active MLA workloads. See tutorial 003 for the verified runtime build.
-  bool include_layer_stats = false;
+  /// Advanced: measure each compiled MLA layer's hardware latency with mla-rt after the
+  /// benchmark. Default off. Requires mla-rt with the MIP-to-kernel handoff fix in PATH and an
+  /// idle devkit with no other active MLA workloads. Only MLA stages in the selected inference
+  /// route are measured. A failure leaves the measurements intact and names the reason in
+  /// `BenchmarkReport::mla_layer_stats.status`.
+  bool include_mla_layer_stats = false;
+  /// Advanced: measure each MLA stage's uninterrupted hardware latency with mla-rt after the
+  /// benchmark. Default off. Requires mla-rt in PATH and an idle devkit with no other active
+  /// MLA workloads. A failure leaves the measurements intact and names the reason in
+  /// `BenchmarkReport::mla_stage_stats.status`.
+  bool include_mla_stage_stats = false;
+  /// Inputs pushed for every sample: one tensor per model input, in `input_specs()` order, as
+  /// `run()` takes them. Empty selects synthetic inputs. Inputs whose count, shape or data type
+  /// does not match the model throw `NeatError` with error code `misconfig.input_shape` before the
+  /// benchmark starts; a color format the route cannot convert fails when the pipeline is built.
+  TensorList inputs;
 };
 
 /**
@@ -364,11 +368,13 @@ public:
      */
     BoxDecodeType decode_type = BoxDecodeType::Unspecified;
     BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto;
-    float score_threshold = 0.0f; ///< BoxDecode score threshold; 0 keeps all candidates.
-    /// BoxDecode IoU threshold for non-max suppression. `0` keeps the model's packaged value;
-    /// when none is packaged, YOLO26 skips NMS and other decoders suppress every overlapping box.
+    /// BoxDecode score threshold. Zero permits zero-valued scores; NMS and top-K still apply.
+    float score_threshold = 0.0f;
+    /// BoxDecode NMS IoU threshold. Zero skips YOLO26 NMS; other NMS profiles still suppress.
     float nms_iou_threshold = 0.0f;
-    int top_k = 0; ///< BoxDecode top-K cap; 0 means no cap.
+    /// BoxDecode output cap. Bounding-box routes require a positive resolved value;
+    /// SuperPoint resolves zero to its profile default. Unused by other model routes.
+    int top_k = 0;
     SuperPointOptions
         superpoint; ///< SuperPoint profile/output options when decode_type is SuperPoint.
     /// Number of classes produced by detection heads. Set this for detection MPKs whose raw
@@ -772,9 +778,10 @@ public:
 #endif
 
   /**
-   * @brief Run a small synthetic benchmark for simple model execution.
+   * @brief Run a small benchmark for simple model execution.
    *
-   * Generates deterministic synthetic input tensors from `input_specs()`, runs a fixed warmup,
+   * Uses `BenchmarkOptions::inputs`, or generates deterministic synthetic input tensors from
+   * `input_specs()` when none are given, runs a fixed warmup,
    * measures single-flight latency and async logical-inference throughput separately, records
    * board telemetry through Sentinel during the throughput pass, prints a compact summary, and
    * returns headline metrics. Each pass lasts at least `BenchmarkOptions::min_duration_ms`

@@ -18,17 +18,13 @@ PyNeat は、Neat Library と一緒にパッケージ化されており、Neat L
 
 ## ホイールをダウンロード
 
-<ShellCommand prompt="devkit">
-sima-cli neat install core -t pyneat
-</ShellCommand>
-
-特定の Neat Library リリースのホイールをダウンロードするには、バージョン番号を含めてください。
-
-特定のバージョンをインストールするには：
+DevKit にインストール済みの Neat Library ランタイムと同じバージョンのホイールを選択してください。現在のリリースでは次を実行します。
 
 <ShellCommand prompt="devkit">
-sima-cli neat install core@v0.4.0 -t pyneat
+sima-cli neat install core@v%%release.core%% -t pyneat
 </ShellCommand>
+
+別のランタイムバージョンを使用している場合は、対応する公開済み Core タグに置き換えてください。ホイールのダウンロードではランタイムパッケージは更新されません。
 
 ## Python環境の作成
 

@@ -4,7 +4,7 @@ description: "Neat SDK 및 DevKit-Sync를 위해 macOS 호스트를 준비합니
 sidebar_position: 3
 ---
 
-호스트 머신이 macOS이고 Neat 개발 환경(Neat SDK로 칭함)을 DevKit-Sync와 함께 실행하려는 경우 이 가이드를 참조하십시오.
+호스트 머신이 macOS이고 Neat SDK를 DevKit-Sync와 함께 실행하려는 경우 이 가이드를 참조하십시오.
 
 ## 필수 조건
 

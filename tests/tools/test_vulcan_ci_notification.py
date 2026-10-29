@@ -12,14 +12,16 @@ def notification_workflow() -> str:
     return NOTIFICATION_WORKFLOW.read_text(encoding="utf-8")
 
 
-def test_listener_observes_only_core_vulcan_ci_protected_branches() -> None:
+def test_listener_observes_vulcan_ci_and_docs_on_supported_branches() -> None:
     content = notification_workflow()
 
     assert "workflow_run:" in content
     assert "- Vulcan CI" in content
+    assert "- Vulcan Docs" in content
     assert "- completed" in content
     assert "- main" in content
     assert "- develop" in content
+    assert '- "v*.*.*"' in content
 
 
 def test_listener_alerts_only_on_actionable_conclusions() -> None:
@@ -44,6 +46,9 @@ def test_listener_uses_shared_notifier_with_minimal_permissions_and_secrets() ->
     assert "actions: read" in content
     assert "contents: read" in content
     assert "sima-neat/.github/.github/workflows/vulcan-notify-slack.yml@main" in content
+    assert "implementation_ref:" not in content
+    assert "openai_api_key: ${{ secrets.OPENAI_API_KEY }}" in content
+    assert "analyze_failure: true" in content
     assert "channel_id: ${{ vars.SLACK_VULCAN_EVENT_CHANNEL_ID }}" in content
     assert "slack_bot_token: ${{ secrets.SLACK_BOT_TOKEN }}" in content
     assert "secrets: inherit" not in content

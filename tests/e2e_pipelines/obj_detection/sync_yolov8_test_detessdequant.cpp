@@ -15,6 +15,7 @@
 #include "pipeline/internal/TensorTransfer.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "dmabuf_test_utils.h"
+#include "cli_utils.h"
 
 #include "e2e_pipelines/e2e_utils.h"
 #include "e2e_pipelines/obj_detection/obj_detection_utils.h"
@@ -380,8 +381,10 @@ std::vector<ExpectedHead> expected_raw_heads(const simaai::neat::Model& model) {
   return heads;
 }
 
-sima_test::DmaBufBackingIdentity validate_raw_heads(const simaai::neat::Sample& sample,
-                                                    const std::vector<ExpectedHead>& expected) {
+std::vector<sima_test::DmaBufBackingIdentity>
+validate_raw_heads(const simaai::neat::Sample& sample, const std::vector<ExpectedHead>& expected,
+                   std::optional<simaai::scheduler::client::dma::HeapKind> expected_heap) {
+  namespace dma = simaai::scheduler::client::dma;
   require(sample.kind == simaai::neat::SampleKind::TensorSet &&
               sample.tensors.size() == expected.size(),
           "sync: expected all six raw output tensors");
@@ -389,12 +392,27 @@ sima_test::DmaBufBackingIdentity validate_raw_heads(const simaai::neat::Sample& 
   std::string error;
   require(simaai::neat::pipeline_internal::tensor_buffer_view_from_sample(sample, &carrier, &error),
           "sync: raw heads must retain their shared native carrier: " + error);
-  const auto backing = sima_test::dmabuf_span(carrier.buffer).backing;
+  std::vector<sima_test::DmaBufBackingIdentity> backings;
+  backings.reserve(expected.size());
   for (const auto& head : expected) {
     const auto matches = [&](const auto& tensor) { return tensor.route.name == head.name; };
     require(std::count_if(sample.tensors.begin(), sample.tensors.end(), matches) == 1,
             "sync: missing/duplicate MPK output identity " + head.name);
     const auto& tensor = *std::find_if(sample.tensors.begin(), sample.tensors.end(), matches);
+    const int memory_index =
+        carrier.buffer && gst_buffer_n_memory(carrier.buffer) == 1 ? 0 : tensor.route.memory_index;
+    require(carrier.buffer && memory_index >= 0 &&
+                static_cast<guint>(memory_index) < gst_buffer_n_memory(carrier.buffer),
+            "sync: raw head has no selected DMA allocation " + head.name);
+    auto* memory = gst_buffer_peek_memory(carrier.buffer, memory_index);
+    backings.push_back(sima_test::dmabuf_span(memory).backing);
+    if (expected_heap) {
+      const auto backing = dma::DmaBufMemory::retain(memory);
+      require(backing && backing->knownHeapKind() == *expected_heap,
+              "sync: " + head.name +
+                  (*expected_heap == dma::HeapKind::MlaDms ? " A65 output must use DMS"
+                                                           : " EV74 output must use CMA"));
+    }
     if (tensor.shape != head.shape || tensor.dtype != simaai::neat::TensorDType::Float32 ||
         !tensor.is_dense() || !tensor.is_contiguous()) {
       std::ostringstream detail;
@@ -419,11 +437,12 @@ sima_test::DmaBufBackingIdentity validate_raw_heads(const simaai::neat::Sample& 
       }
     }
   }
-  return backing;
+  return backings;
 }
 
-RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
-                           const SyncTestConfig& cfg) {
+RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img, const SyncTestConfig& cfg,
+                           const simaai::neat::GraphOptions& options,
+                           std::optional<simaai::scheduler::client::dma::HeapKind> expected_heap) {
   RunSummary res;
 
   enable_detess_debug_defaults();
@@ -465,7 +484,7 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
   const int topk = 100;
 
   // [canonical_pipeline]
-  simaai::neat::Graph p;
+  simaai::neat::Graph p(options);
   p.add(simaai::neat::nodes::Input());
   p.add(simaai::neat::nodes::groups::Preprocess(model));
   p.add(simaai::neat::nodes::groups::Infer(model));
@@ -477,6 +496,7 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
 
   simaai::neat::RunOptions run_opt;
   run_opt.queue_depth = 1;
+  run_opt.output_memory = simaai::neat::OutputMemory::ZeroCopy;
   step_log("sync: before build");
   simaai::neat::Run runner = p.build_seeded_internal(
       simaai::neat::Sample{simaai::neat::Sample::from_image(
@@ -490,7 +510,7 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
   std::optional<simaai::neat::Sample> retained_first;
   simaai::neat::Mapping retained_view;
   std::vector<std::uint8_t> retained_bytes;
-  std::optional<sima_test::DmaBufBackingIdentity> retained_backing;
+  std::optional<std::vector<sima_test::DmaBufBackingIdentity>> retained_backings;
   cv::Mat replacement_input;
   bool saw_raw_heads = false;
   bool checked_retained_view = false;
@@ -527,20 +547,26 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
       logged_sample = true;
     }
 
-    if (out.kind == simaai::neat::SampleKind::TensorSet) {
+    if (out.kind == simaai::neat::SampleKind::TensorSet || expected_heap) {
       saw_raw_heads = true;
       try {
-        const auto backing = validate_raw_heads(out, raw_heads);
+        const auto backings = validate_raw_heads(out, raw_heads, expected_heap);
         if (i == 0 && cfg.iters > 1) {
           retained_first = out;
-          retained_backing = backing;
+          retained_backings = backings;
           retained_view = retained_first->tensors.front().map_read();
           const auto* begin = static_cast<const std::uint8_t*>(retained_view.data);
           retained_bytes.assign(begin, begin + retained_view.size_bytes);
           replacement_input = cv::Mat::zeros(img.size(), img.type());
         } else if (i == 1 && retained_first) {
-          require(retained_backing && backing != *retained_backing,
-                  "sync: second output reused the still-retained first DMA allocation");
+          require(retained_backings && std::none_of(backings.begin(), backings.end(),
+                                                    [&](const auto& backing) {
+                                                      return std::find(retained_backings->begin(),
+                                                                       retained_backings->end(),
+                                                                       backing) !=
+                                                             retained_backings->end();
+                                                    }),
+                  "sync: second output reused a still-retained first DMA allocation");
           require(std::memcmp(retained_view.data, retained_bytes.data(), retained_bytes.size()) ==
                       0,
                   "sync: retained first output changed during second frame execution");
@@ -548,7 +574,7 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
           // progress, not unbounded progress while old user outputs stay live.
           retained_view = {};
           retained_first.reset();
-          retained_backing.reset();
+          retained_backings.reset();
           retained_bytes.clear();
           checked_retained_view = true;
           append_note(res.note, "six_raw_heads_finite retained_view_stable");
@@ -632,15 +658,27 @@ int main(int argc, char** argv) {
 
     SyncTestConfig cfg;
     cfg.iters = env_int("SIMA_SYNC_ITERS", cfg.iters);
-    RunSummary res = run_yolov8_sync(tar_gz, img_bgr, cfg);
-
-    std::cout << "SYNC_YOLOV8 outputs=" << res.outputs << " avg_fps=" << res.avg_fps
-              << " ok=" << (res.ok ? "1" : "0") << " note=" << res.note << "\n";
-    if (!res.diagnostics.empty()) {
-      std::cout << "SYNC_YOLOV8 diagnostics\n" << res.diagnostics << "\n";
+    const bool check_memory_policy = sima_test::has_flag(argc, argv, "--memory-policy");
+    for (unsigned variant = 0; variant != (check_memory_policy ? 2U : 1U); ++variant) {
+      simaai::neat::GraphOptions options;
+      std::optional<simaai::scheduler::client::dma::HeapKind> expected_heap;
+      if (check_memory_policy) {
+        options.processcvu.pre_run_target = "EV74";
+        options.processcvu.post_run_target = variant == 0 ? "A65" : "EV74";
+        expected_heap = variant == 0 ? simaai::scheduler::client::dma::HeapKind::MlaDms
+                                     : simaai::scheduler::client::dma::HeapKind::Cma;
+      }
+      const auto res = run_yolov8_sync(tar_gz, img_bgr, cfg, options, expected_heap);
+      std::cout << "SYNC_YOLOV8 outputs=" << res.outputs << " avg_fps=" << res.avg_fps
+                << " ok=" << (res.ok ? "1" : "0") << " note=" << res.note << " post_target="
+                << (check_memory_policy ? options.processcvu.post_run_target : "auto") << "\n";
+      if (!res.diagnostics.empty()) {
+        std::cout << "SYNC_YOLOV8 diagnostics\n" << res.diagnostics << "\n";
+      }
+      if (!res.ok)
+        return 2;
     }
-
-    return res.ok ? 0 : 2;
+    return 0;
   } catch (const SkipTest& e) {
     std::cout << "[SKIP] " << e.what() << "\n";
     return skip_long_test(e.what());

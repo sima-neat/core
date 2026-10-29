@@ -106,7 +106,7 @@ bool Tess::compile_node_contract(const ContractCompileInput& input, CompiledNode
     }
     node_helpers::ProcessCvuRuntimeConfigOptions runtime_options;
     runtime_options.graph_family = "tessellate";
-    runtime_options.graph_id = 4;
+
     runtime_options.input_dtype_default = "INT8";
     runtime_options.output_dtype_follows_input = true;
     runtime_options.set_tessellate = true;
@@ -133,13 +133,10 @@ void Tess::apply_compiled_contract(const CompiledNodeContract&, std::string* err
 
 std::string Tess::backend_fragment(int node_index) const {
   std::ostringstream ss;
-  require_element("neatprocesscvu", "Tess::backend_fragment");
+  require_element("neatkernelrunner", "Tess::backend_fragment");
   const std::string name =
       opt_.element_name.empty() ? ("n" + std::to_string(node_index) + "_tess") : opt_.element_name;
-  ss << "neatprocesscvu name=" << name << " stage-id=" << name;
-  if (opt_.num_buffers > 0) {
-    ss << " num-buffers=" << opt_.num_buffers;
-  }
+  ss << "neatkernelrunner name=" << name;
   return ss.str();
 }
 

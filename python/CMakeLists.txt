@@ -116,7 +116,9 @@ install(
 )
 
 install(
-  PROGRAMS ${PROJECT_SOURCE_DIR}/scripts/neat
+  PROGRAMS
+    ${PROJECT_SOURCE_DIR}/scripts/neat
+    ${PROJECT_SOURCE_DIR}/scripts/neat_pcie_status.py
   DESTINATION share/sima-neat/scripts
   COMPONENT extras
 )

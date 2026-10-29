@@ -4,7 +4,7 @@ description: "適用於 SDK 2.0.0、2.1.2 和 2.1.2.1 的舊版兩步驟安裝�
 sidebar_position: 20
 ---
 
-僅針對需要單獨拉取映像檔和執行設定指令的 SDK 版本使用此參考資料。這適用於 SDK 2.0.0、SDK 2.1.2.0 和 SDK 2.1.2.1。較新的 SDK 版本使用簡化的套件安裝流程，該流程已在 [安裝環境。](/getting-started/dev-environment/install-the-environment/) 中記錄。
+僅針對需要單獨拉取映像檔和執行設定指令的 SDK 版本使用此參考資料。這適用於 SDK 2.0.0、SDK 2.1.2.0 和 SDK 2.1.2.1。較新的 SDK 版本使用簡化的套件安裝流程，該流程已在 [安裝 SDK](/getting-started/dev-environment/install-the-environment/) 中記錄。
 
 舊版 SDK 安裝包含兩個步驟：
 

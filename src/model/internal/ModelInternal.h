@@ -66,16 +66,23 @@ enum class StageNodeKind {
 };
 
 struct ModelAccess {
+  // Exercise the same synthetic input construction used by seedless builds.
+  static Tensor make_dummy_input(const InputOptions& options);
   static const class ModelPack& pack(const Model& model);
   static const class ModelPack& pack_for_sync(const Model& model);
   static void prepare_for_execution(const Model& model, bool sync);
   static std::string model_id(const Model& model);
+  // Complete value identity for stage reuse; computed once when the Model is constructed.
+  static const std::string& stage_cache_identity(const Model& model);
+  static bool stage_cache_has_dynamic_boxdecode_geometry(const Model& model);
   static std::string source_path(const Model& model);
   static Run& run(Model::Runner& runner);
   static const Run& run(const Model::Runner& runner);
   static Model::Runner build_benchmark_runner(Model& model, const TensorList& inputs,
                                               const RunOptions& run_options,
                                               const Model::Options& model_options);
+  // Reject caller inputs that do not match the model ingress contract, before any build.
+  static void check_inputs(const Model& model, const TensorList& inputs, const char* where);
   static Model::Options options(const Model& model);
   static Model clone_with_options(const Model& model, const Model::Options& opt);
   static PostRouteStageKind resolved_post_kind(const Model& model);
@@ -119,6 +126,20 @@ struct ModelAccess {
 
 BenchmarkReport run_benchmark(Model& model, const BenchmarkOptions& options);
 
+// Pure ingress admission checks behind ModelAccess::check_inputs, shared with contract tests.
+// An image route takes one tensor carrying explicit image format metadata; a tensor route
+// takes one tensor per ingress contract with matching media, format, and HxWxC. Each tensor
+// must also pass the storage and layout checks run() applies on push.
+void check_model_image_inputs(const TensorList& inputs,
+                              const std::vector<IngressTensorContract>& ingress_contracts,
+                              const char* where);
+void check_model_tensor_inputs(const TensorList& inputs,
+                               const std::vector<IngressTensorContract>& ingress_contracts,
+                               const char* where);
+
+// Pure admission check shared by synthetic input construction and contract tests.
+void validate_synthetic_benchmark_image_format(const TensorSpec& spec);
+
 /// Project the latency window (`latency_samples` inputs), the throughput window
 /// (`throughput_samples` inputs), and Sentinel telemetry into the public benchmark report.
 /// `num_samples` is the requested count that `energy_joules` is normalized to.
@@ -126,12 +147,23 @@ BenchmarkReport build_benchmark_report_from_measurements(const MeasureReport& la
                                                          const MeasureReport& throughput_report,
                                                          int num_samples, int latency_samples,
                                                          int throughput_samples,
-                                                         BenchmarkTelemetry telemetry);
+                                                         Telemetry telemetry);
+
+TensorSpec resolve_benchmark_input_spec(TensorSpec spec, const ResolvedPreprocessPlan& plan,
+                                        const BenchmarkOptions& options);
+
+// A provided source image supplies its own geometry; reject an original size that disagrees.
+void require_provided_source_geometry(const Tensor& tensor, const ResolvedPreprocessPlan& plan,
+                                      const BenchmarkOptions& options);
 
 PreprocessRuntimeMeta resolve_benchmark_preprocess_meta(const Tensor& tensor,
                                                         const ResolvedPreprocessPlan& plan,
                                                         const PreprocessContractFlags& flags,
                                                         const BenchmarkOptions& options);
+
+// Internal serializer shared with cache-compatibility regression tests. Advanced execution
+// overlays are resolved before serialization; diagnostic verbosity is intentionally excluded.
+std::string model_stage_options_cache_identity(const Model::Options& options);
 
 Model::Options benchmark_build_model_options(const Model::Options& model_options);
 
@@ -143,5 +175,7 @@ TensorList materialize_joined_ingress_tensors(
     const TensorList& tensors,
     const std::vector<IngressConsumerTensorIdentity>& consumer_identities,
     const std::string& segment_name, const char* where);
+Tensor materialize_dense_ingress_tail(Tensor tensor, std::size_t required_storage_bytes,
+                                      int batch_size = 1);
 
 } // namespace simaai::neat::internal

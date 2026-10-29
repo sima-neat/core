@@ -19,6 +19,8 @@
  * @see ContractRender.h (the renderer that builds these manifests)
  */
 #pragma once
+
+#include "nodes/sima/internal/ImageTransformPolicy.h"
 #ifndef SIMA_NEAT_INTERNAL
 #error "Internal header. Not part of the public API."
 #endif
@@ -28,16 +30,30 @@
 
 #include "pipeline/BoxDecodeType.h"
 #include "pipeline/internal/sima/DTypeSource.h"
+#include "pipeline/internal/sima/AuthoredTensorDescriptor.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
 #include "pipeline/internal/sima/stagesemantics/SsdRecipeId.h"
 #include "pipeline/internal/sima/SuperPointContract.h"
-#include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
+#include <simaai/scheduler/client/frame_layout.h>
 #include <ev/ev_tensor_abi.h>
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
+
+namespace simaai::scheduler::client {
+struct TensorStageImagePublication;
+struct TensorStagePublication;
+struct FrameLayout;
+struct TvmProgram;
+struct MlaProgram;
+} // namespace simaai::scheduler::client
+
+namespace simaai::neat::internal {
+struct ModelStorageScopes;
+}
 
 namespace simaai::neat::pipeline_internal::sima {
 
@@ -109,17 +125,11 @@ enum class TensorMaterializationKind : std::uint8_t {
   Bf16LaneSplitRepack = 3, ///< Requires BF16 lane-split repack at runtime.
 };
 
-enum class FrameArenaRole : std::uint8_t {
-  None = 0,
-  Allocate = 1,
-  ReuseInput = 2,
-};
-
 /// Authority that supplies a physical input's carrier and base offset.
 enum class PhysicalAddressSource {
   DirectCarrierSpan = 0,
   RuntimePhysicalBinding = 1,
-  FrameArenaSpan = 2,
+  FrameSpan = 2,
 };
 
 /// Static spec for one physical buffer (input or output) on a stage.
@@ -135,10 +145,24 @@ struct PhysicalBufferStaticSpec {
   std::string segment_name; ///< Segment name.
   std::uint64_t required_alignment_bytes = 0; ///< Required DMA base/offset alignment.
   PhysicalAddressSource address_source = PhysicalAddressSource::DirectCarrierSpan;
+  std::optional<std::uint32_t>
+      model_carrier_id; ///< Invocation-local root carrier, before placement.
+};
+
+// In-process authority for a byte-preserving publication view of a checked
+// kernel output. Authored by the semantic/compiler contract, never inferred
+// from a shape mismatch during kernel inspection. The stable plugin transport
+// ABI does not carry numerical preparation or this cold-only authority.
+enum class PublicationViewRelation : std::uint8_t {
+  Identity,
+  SingletonAxes,
+  PackedStorage,
+  BatchSlices
 };
 
 /// Static spec for one logical (publishable) output tensor on a stage.
 struct LogicalTensorStaticSpec {
+  std::optional<std::uint32_t> model_carrier_id;   // Build-local identity; not serialized.
   int logical_index = -1;                          ///< Stage-local logical-output index.
   int backend_output_index = -1;                   ///< Backend (compiled) output index.
   int physical_index = -1;                         ///< Backing physical-output index.
@@ -158,6 +182,7 @@ struct LogicalTensorStaticSpec {
   int segment_name_id = -1;                        ///< Name-table index for `segment_name`.
   std::string segment_name;                        ///< Backing segment name.
   std::optional<QuantStaticSpec> quant;            ///< Quant params, if quantized.
+  PublicationViewRelation publication_relation = PublicationViewRelation::Identity;
 };
 
 /// Static spec for one logical input tensor on a stage (the consumer-side counterpart).
@@ -255,6 +280,10 @@ enum class ProcessCvuOutputSemanticKind : std::uint8_t {
  * parallel arrays indexed by output number.
  */
 struct ProcessCvuStagePayload {
+  std::shared_ptr<const ::simaai::neat::internal::ImageTransformPolicy> image_transform;
+  // Cold stage-local temporal authority; zero means unknown, never a default rate.
+  int image_fps_num = 0;
+  int image_fps_den = 1;
   bool canonical_contract = false;
   bool dmabuf_plan_contract = false;
   std::uint32_t descriptor_abi_id = 0U;
@@ -319,6 +348,10 @@ struct ProcessCvuStagePayload {
   int win_half = -1;
   int max_iters = -1;
   int max_level = -1;
+  bool publish_error = false;
+  float error_threshold = -1.0f;
+  float min_eig_threshold = 0.0f;
+  bool require_convergence = false;
   int detect_new_features = -1;
   int fast_threshold = -1;
   int debug = 0;
@@ -336,8 +369,8 @@ struct ProcessCvuStagePayload {
   std::vector<double> q_scale_list;
   std::vector<int> q_zp_list;
   int num_in_tensor = 0;
-  std::vector<sima_ev_tensor_desc> input_tensors;
-  std::vector<sima_ev_tensor_desc> output_tensors;
+  std::vector<AuthoredTensorDescriptor> input_tensors;
+  std::vector<AuthoredTensorDescriptor> output_tensors;
   std::vector<std::vector<int>> input_shapes;
   std::vector<std::vector<int>> slice_shapes;
   std::vector<std::vector<int>> output_shapes;
@@ -437,7 +470,22 @@ struct QuantLikeStagePayload {
  * the active payload variant (selected by `payload_kind`), and a resolution trace recording
  * how each non-trivial field was decided.
  */
+struct KernelStageRecipe;
+
 struct StageStaticSpec {
+  std::optional<std::size_t> compile_stage_index;
+  std::optional<std::size_t> compile_node_index;
+  std::shared_ptr<const KernelStageRecipe> native_kernel;
+  std::shared_ptr<const ::simaai::scheduler::client::TvmProgram> tvm_program;
+  std::shared_ptr<const ::simaai::scheduler::client::MlaProgram> mla_program;
+  std::shared_ptr<const ::simaai::scheduler::client::FrameLayout> frame_layout;
+  std::shared_ptr<const ::simaai::scheduler::client::TensorStagePublication> tensor_publication;
+  // Private per-build policy; never serialized into the plugin manifest ABI.
+  std::optional<std::size_t> native_execution_capacity;
+  // Image output authority is relative before storage finalization. Final
+  // publication replaces this stage-local pointer with allocation-local plane
+  // offsets; the immutable semantic source and checked recipe stay unchanged.
+  std::shared_ptr<const ::simaai::scheduler::client::TensorStageImagePublication> image_publication;
   std::string element_name;
   std::string logical_stage_id;
   bool model_managed_stage = false;
@@ -452,18 +500,11 @@ struct StageStaticSpec {
   std::vector<StageOutputRoute> output_order;
   std::vector<QuantStaticSpec> output_quant;
   std::vector<std::string> required_preprocess_meta_fields;
-  // Non-zero only for the strict driver route. Every participating stage uses
-  // the same parent size; Allocate creates the first per-frame slot and each
-  // ReuseInput stage retains that standard GstBuffer/GstMemory ownership.
-  std::uint64_t frame_arena_size_bytes = 0;
-  FrameArenaRole frame_arena_role = FrameArenaRole::None;
-  static_contract::ArenaStorageDomain frame_arena_storage_domain =
-      static_contract::ArenaStorageDomain::Unknown;
-  static_contract::ArenaAllocationProvenance frame_arena_provenance =
-      static_contract::ArenaAllocationProvenance::Unknown;
-  std::uint32_t frame_arena_required_device_access = 0U;
-  static_contract::ArenaEscapePolicy frame_arena_escape_policy =
-      static_contract::ArenaEscapePolicy::InternalOnly;
+  // Cold authoring requirements, consumed by storage finalization. The absence
+  // of a policy selects the normal access-based policy and allows a proved
+  // HostCpu terminal. A final layout is the only execution storage authority.
+  std::optional<::simaai::scheduler::client::AllocationPolicy> allocation_policy;
+  std::optional<std::size_t> reuse_input_pad;
   // Mirrors CompiledRuntimeContract::consumer_keeps_distinct_physical_inputs.
   // Plumbed from the upstream MLA contract through ContractRender so that
   // publish-contract construction can stamp TensorBufferPublishContract::
@@ -492,6 +533,7 @@ struct StageStaticSpec {
  * Carries the session identity, the model id, and the ordered list of stage specs.
  */
 struct SimaPluginStaticManifest {
+  std::shared_ptr<const ::simaai::neat::internal::ModelStorageScopes> model_storage_scopes;
   std::string session_id;              ///< Per-run session identifier.
   std::string model_id;                ///< Model identity (typically derived from MPK).
   std::vector<StageStaticSpec> stages; ///< Stages in execution order.
@@ -546,13 +588,5 @@ nlohmann::json to_json(const SimaPluginStaticManifest& manifest);
 
 /// Serialize a manifest to a JSON string.
 std::string serialize_manifest_json(const SimaPluginStaticManifest& manifest);
-
-/// Parse a manifest from a JSON string; returns nullopt on failure (see `error_message`).
-std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& manifest_json,
-                                                            std::string* error_message = nullptr);
-
-/// Attach a manifest as a GstContext to `pipeline` so SiMa elements can retrieve it.
-bool attach_manifest_context(GstElement* pipeline, const SimaPluginStaticManifest& manifest,
-                             std::string* error_message = nullptr);
 
 } // namespace simaai::neat::pipeline_internal::sima

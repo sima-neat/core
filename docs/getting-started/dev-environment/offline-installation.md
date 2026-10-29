@@ -1,86 +1,141 @@
 ---
 title: Offline Installation
-description: Download SDK and Model Compiler packages for restricted network environments
+description: Install SDK and Model Compiler packages without internet access on the target host
 sidebar_position: 6
 ---
 
 :::tip When to use offline installation
-Use offline installation when the target machine cannot download packages
-directly from SiMa.ai services. This is common on corporate networks that block
-large downloads, restrict registry access, require manual artifact approval, or
-separate internet-connected machines from development hosts.
+Use offline installation when the target host cannot download packages from SiMa.ai services.
+This can occur when your organization:
+
+- Blocks large downloads.
+- Restricts access to package registries.
+- Requires approval before you can use downloaded packages.
+- Keeps development hosts separate from computers with internet access.
 :::
 
-In this workflow, use an internet-connected machine to retrieve the installation
-package, then move the downloaded directory to the target host with a USB drive,
-internal file share, or an internally hosted package location.
+Download the package on a computer with internet access.
+Then transfer the package to the target host for installation.
 
-## Download the SDK Offline Package
+For runtime packages, see [PCIe host offline installation](/getting-started/neat-library/pcie-host/#offline-installation) or [Neat Library offline installation](/getting-started/neat-library/install-or-update/#offline-installation).
 
-Run the command for the target host architecture on a machine that can access
-SiMa.ai package services.
+## Select a package
 
-For `amd64` hosts:
+| Package | Use | Availability |
+| --- | --- | --- |
+| Neat SDK | Set up the SDK development environment. | SDK 2.1.3.0 or later |
+| Model Compiler | Install Model Compiler in the SDK or on a standalone host. | Model Compiler 2.1.3 or later |
+
+## Before you start
+
+- Install `sima-cli` on the computer with internet access. See [Install the SDK](/getting-started/dev-environment/install-the-environment/).
+- Select a package version that is compatible with your system. See [Compatibility](/getting-started/compatibility/).
+- Identify the operating system and processor architecture of the target host.
+- Prepare a USB drive or an internal file share for the transfer.
+
+The download computer and the target host can have different processor architectures.
+Select the package for the **target host**.
+Keep all package files together, including scripts, metadata, checksums, and dependencies.
+
+## Install the Neat SDK {#download-the-sdk-offline-package}
+
+### 1. Download the package
+
+Run one command on the computer with internet access.
+These examples use SDK %%release.sdk%%.
+
+For an `amd64` target host:
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@v2.1.3.0 -t offline-amd64
+sima-cli neat install sdk@v%%release.sdk%% -t offline-amd64
 </ShellCommand>
 
-For `arm64` hosts:
+For an `arm64` target host:
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@v2.1.3.0 -t offline-arm64
+sima-cli neat install sdk@v%%release.sdk%% -t offline-arm64
 </ShellCommand>
 
-Copy the downloaded directory to the target host. From that directory, run:
+### 2. Install the package
+
+Model Compiler installation is optional.
+If you do not need to compile models, skip the Model Compiler download and follow the SDK installation steps below.
+When the SDK installer asks whether to install Model Compiler, choose to skip it.
+
+To install Model Compiler with the SDK, [download the Model Compiler offline package](#download-model-compiler-package).
+Put the Model Compiler offline package file in the same directory as the SDK offline package.
+The SDK installer finds the file automatically.
+When prompted, select installation from the local package.
+
+1. Copy the complete downloaded directory to the target host.
+2. Open a terminal in that directory.
+3. Run the installer:
 
 <ShellCommand prompt="host">
 bash ./install_offline_sdk.sh
 </ShellCommand>
 
-:::note
-SDK offline packages are supported for SDK 2.1.3.0 or later.
+## Install Model Compiler {#download-the-model-compiler-offline-package}
+
+:::tip When to use this procedure
+Use this procedure to install Model Compiler separately in an existing SDK or directly on a host.
+If you installed both the SDK and Model Compiler in the previous step, skip this section.
 :::
 
-## Download the Model Compiler Offline Package
+### 1. Download the package {#download-model-compiler-package}
 
-Download the Model Compiler package that matches the target environment and SDK
-compatibility requirements. For compatibility details, see
-[Compatibility](/getting-started/compatibility/#model-compiler).
+Check the [Model Compiler compatibility requirements](/getting-started/compatibility/#model-compiler).
+Run one command on the computer with internet access.
+These examples use Model Compiler %%release.model_compiler%%.
 
-For Model Compiler 2.1.3 on `amd64` hosts:
-
-<ShellCommand prompt="host">
-sima-cli neat install model-compiler/amd64@v2.1.3 -t offline
-</ShellCommand>
-
-For Model Compiler 2.1.3 on `arm64` hosts:
+For an `amd64` target host:
 
 <ShellCommand prompt="host">
-sima-cli neat install model-compiler/arm64@v2.1.3 -t offline
+sima-cli neat install model-compiler/amd64@v%%release.model_compiler%% -t offline
 </ShellCommand>
 
-:::note
-Model Compiler offline packages are supported for Model Compiler 2.1.3 or later.
-:::
+For an `arm64` target host:
 
-To install Model Compiler inside the Neat SDK, copy the downloaded directory into
-the host workspace folder that is mapped to the SDK container's `/workspace`
-folder. Then open the SDK shell and run the installer from the matching
-`/workspace` path:
+<ShellCommand prompt="host">
+sima-cli neat install model-compiler/arm64@v%%release.model_compiler%% -t offline
+</ShellCommand>
+
+### 2. Install the package
+
+Choose one installation location.
+
+**In the Neat SDK:**
+
+1. Copy the complete downloaded directory to the host workspace mapped to `/workspace` in the SDK container.
+2. Open the SDK shell.
+3. Go to the package directory. For an `amd64` package, use:
 
 <ShellCommand prompt="sdk">
 cd /workspace/model-compiler-offline-amd64
+</ShellCommand>
+
+For an `arm64` package, use `/workspace/model-compiler-offline-arm64`.
+
+4. Run the installer:
+
+<ShellCommand prompt="sdk">
 bash ./install_modelsdk_wheels.sh
 </ShellCommand>
 
-Use the `arm64` directory name instead if you downloaded the ARM64 package.
+**On a standalone host:**
 
-For standalone host installation, copy the downloaded directory directly to the
-target host and run the same installer from that directory.
+1. Copy the complete downloaded directory to the target host.
+2. Open a terminal in that directory.
+3. Run the installer:
 
-After installation, reload your shell environment or restart the SDK shell. Then
-activate Model Compiler with:
+<ShellCommand prompt="host">
+bash ./install_modelsdk_wheels.sh
+</ShellCommand>
+
+### 3. Activate Model Compiler
+
+1. Restart the SDK shell or the host shell that you used for installation.
+2. Activate Model Compiler:
 
 <ShellCommand prompt="sdk|host">
 activate-model-compiler
@@ -92,12 +147,8 @@ To leave the Model Compiler environment, run:
 deactivate-model-compiler
 </ShellCommand>
 
-## Hosting Packages Internally
+## Store packages internally {#hosting-packages-internally}
 
-If your organization mirrors approved artifacts internally, keep the downloaded
-package directory intact when publishing it to the internal location. The
-metadata file, install script, checksums, and package resources are expected to
-remain together.
-
-Users can then download the internal package directory and run the same install
-script on the target host.
+You can store approved packages on an internal file server.
+Keep each downloaded directory complete and separate from other package versions.
+Transfer the complete directory to the target host before you run its installer.

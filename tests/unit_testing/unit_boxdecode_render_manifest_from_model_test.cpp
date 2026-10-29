@@ -1,3 +1,4 @@
+#include <simaai/scheduler/client/frame_layout.h>
 #include "asset_utils.h"
 #include "model/Model.h"
 #include "model/internal/ModelInternal.h"
@@ -6,8 +7,12 @@
 #include "nodes/sima/SimaBoxDecode.h"
 #include "pipeline/BoxDecodeType.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
+#include "pipeline/internal/contract/CompiledNodeContractQuery.h"
 #include "pipeline/internal/sima/ContractRender.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
+#include "pipeline/internal/TerminalOutputContractQuery.h"
 #include "test_main.h"
+#include "support/cold_contract_gst_init.h"
 
 #include <filesystem>
 #include <optional>
@@ -117,7 +122,7 @@ find_first_boxdecode_stage(const simaai::neat::CompiledPipelineContracts& compil
   const simaai::neat::CompiledNodeContract* found = nullptr;
   const auto visit = [&](const auto& self,
                          const simaai::neat::CompiledNodeContract& stage) -> void {
-    if (!found && stage.boxdecode.has_value()) {
+    if (!found && stage.node_kind == "SimaBoxDecode") {
       found = &stage;
     }
     for (const auto& child : stage.child_stages) {
@@ -131,9 +136,10 @@ find_first_boxdecode_stage(const simaai::neat::CompiledPipelineContracts& compil
 }
 
 const simaai::neat::pipeline_internal::sima::StageStaticSpec* find_first_rendered_boxdecode_stage(
-    const simaai::neat::pipeline_internal::sima::SimaPluginStaticManifest& manifest) {
+    const simaai::neat::pipeline_internal::sima::SimaPluginStaticManifest& manifest,
+    const std::string& element_name) {
   for (const auto& stage : manifest.stages) {
-    if (stage.payload_kind == simaai::neat::pipeline_internal::sima::StagePayloadKind::BoxDecode) {
+    if (stage.element_name == element_name) {
       return &stage;
     }
   }
@@ -145,6 +151,7 @@ const simaai::neat::pipeline_internal::sima::StageStaticSpec* find_first_rendere
 RUN_TEST(
     "unit_boxdecode_render_manifest_from_model_test", ([] {
       using namespace simaai::neat;
+      sima_test::initialize_cold_contract_gstreamer();
 
       const auto fixture = make_fixture();
       const std::string tar_path = fixture.tar_path;
@@ -227,10 +234,34 @@ RUN_TEST(
       require(diagnostics.errors.empty(), "rendered manifest should not emit diagnostics errors");
       require(manifest_opt.has_value(), "compiled inference fragment should render a manifest");
 
-      const auto* rendered_box = find_first_rendered_boxdecode_stage(*manifest_opt);
+      const auto* rendered_box =
+          find_first_rendered_boxdecode_stage(*manifest_opt, boxdecode_stage->element_name);
       require(rendered_box != nullptr, "rendered manifest should contain a boxdecode stage");
-      require(rendered_box->payload_kind == pipeline_internal::sima::StagePayloadKind::BoxDecode,
-              "rendered stage payload kind should remain boxdecode");
+      CompiledPipelineContracts nested;
+      nested.fully_renderable = true;
+      nested.model_storage_scopes = compiled.model_storage_scopes;
+      CompiledNodeContract fragment;
+      fragment.node_kind = "ModelFragment";
+      fragment.element_name = fragment.logical_stage_id = "infer";
+      fragment.child_stages = compiled.stages;
+      nested.stages.push_back(std::move(fragment));
+      auto nested_manifest =
+          render_manifest_from_compiled_contracts(nested, ContractCompileInput{}, &diagnostics);
+      require(nested_manifest && diagnostics.errors.empty(),
+              "model-backed native child container must render");
+      pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector endpoint;
+      endpoint.terminal_stage_key = "infer";
+      endpoint.terminal_node_kind = "ModelFragment";
+      endpoint.allow_unresolved_terminal_stage_fallback = true;
+      pipeline_internal::sima::finalize_pipeline_storage(*nested_manifest, &endpoint);
+      const auto* terminal =
+          find_first_rendered_boxdecode_stage(*nested_manifest, rendered_box->element_name);
+      require(terminal && terminal->native_kernel && terminal->frame_layout &&
+                  terminal->frame_layout->allocations.front().policy ==
+                      ::simaai::scheduler::client::AllocationPolicy::RequireHostCpu,
+              "model-backed native BoxDecode child must retain final HostCpu placement");
+      const auto* boxdecode_runtime = compiled_runtime_contract_from_stage(boxdecode_stage);
+      require(boxdecode_runtime != nullptr, "BoxDecode must expose its tensor contract");
       require(!rendered_box->element_name.empty(),
               "rendered boxdecode stage should preserve element identity");
       require(!rendered_box->logical_stage_id.empty(),
@@ -239,24 +270,24 @@ RUN_TEST(
               "rendered boxdecode stage should preserve compiled element name");
       require(rendered_box->logical_stage_id == boxdecode_stage->logical_stage_id,
               "rendered boxdecode stage should preserve compiled logical stage id");
-      require(boxdecode_stage->boxdecode->runtime_contract.logical_inputs.size() == 10U &&
-                  boxdecode_stage->boxdecode->runtime_contract.input_bindings.size() == 10U,
+      require(boxdecode_runtime->logical_inputs.size() == 10U &&
+                  boxdecode_runtime->input_bindings.size() == 10U,
               "compiled boxdecode stage must preserve all ten segmentation heads and bindings");
       require(rendered_box->logical_inputs.size() == 10U &&
                   rendered_box->input_bindings.size() == 10U,
               "rendered boxdecode stage must preserve all ten segmentation heads and bindings");
       for (std::size_t index = 0; index < 10U; ++index) {
-        const auto& compiled_logical =
-            boxdecode_stage->boxdecode->runtime_contract.logical_inputs[index];
+        const auto& compiled_logical = boxdecode_runtime->logical_inputs[index];
         const auto& rendered_logical = rendered_box->logical_inputs[index];
-        const auto& compiled_binding =
-            boxdecode_stage->boxdecode->runtime_contract.input_bindings[index];
+        const auto& compiled_binding = boxdecode_runtime->input_bindings[index];
         const auto& rendered_binding = rendered_box->input_bindings[index];
         require(compiled_logical.logical_index == static_cast<int>(index) &&
                     compiled_logical.backend_input_index == static_cast<int>(index) &&
                     rendered_logical.logical_index == compiled_logical.logical_index &&
                     rendered_logical.backend_input_index == compiled_logical.backend_input_index &&
-                    rendered_logical.logical_name == compiled_logical.logical_name,
+                    rendered_logical.logical_name == compiled_logical.logical_name &&
+                    rendered_logical.dtype == compiled_logical.dtype &&
+                    rendered_logical.shape == compiled_logical.shape,
                 "compiled and rendered segmentation logical inputs must preserve exact 0..9 "
                 "order and identity");
         // All ten logical members travel in one grouped TensorBuffer/TensorList
@@ -287,7 +318,6 @@ RUN_TEST(
       require(!rendered_box->input_bindings.front().source_segment_name.empty(),
               "rendered boxdecode stage should preserve a concrete upstream segment identity");
       require(rendered_box->input_bindings.front().source_segment_name ==
-                  boxdecode_stage->boxdecode->runtime_contract.input_bindings.front()
-                      .source_segment_name,
+                  boxdecode_runtime->input_bindings.front().source_segment_name,
               "rendered boxdecode stage should preserve upstream packed segment binding");
     }));

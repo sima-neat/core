@@ -508,7 +508,8 @@ inline bool fill_dense_strides_contiguous(const sima_ev_shape_desc& shape,
  * @brief Map a dtype token (e.g., `"FP32"`, `"BF16"`, `"INT8"`) to its `SIMA_EV_DTYPE_*` value.
  *
  * Recognizes both the bare tokens (`"FP32"`, `"BF16"`, etc.) and the `EVXX_*` prefixed tokens.
- * `UINT8` is mapped to `INT8`. Returns false for unknown tokens.
+ * Unsigned integers use same-width signed storage; AuthoredTensorDescriptor retains
+ * numerical signedness. Returns false for unknown tokens.
  */
 inline bool dtype_token_to_ev(std::string raw_dtype, std::uint32_t* out_dtype) {
   if (!out_dtype) {
@@ -531,7 +532,7 @@ inline bool dtype_token_to_ev(std::string raw_dtype, std::uint32_t* out_dtype) {
     *out_dtype = SIMA_EV_DTYPE_INT32;
     return true;
   }
-  if (token == "INT16" || token == "EVXX_INT16") {
+  if (token == "INT16" || token == "EVXX_INT16" || token == "UINT16" || token == "EVXX_UINT16") {
     *out_dtype = SIMA_EV_DTYPE_INT16;
     return true;
   }
@@ -762,7 +763,8 @@ build_tiled_tensor_desc(const std::vector<int>& shape, const std::vector<int>& t
                                            dim_invalid_msg, dtype_invalid_msg,
                                            tile_rank_mismatch_msg, tile_dim_invalid_msg);
   }
-  if (!fill_shape_desc(shape, normalized_layout, &out->shape, error_detail, missing_output_msg,
+  // Preserve explicit batch/depth axes while validating the normalized layout above.
+  if (!fill_shape_desc(shape, layout_token, &out->shape, error_detail, missing_output_msg,
                        rank_invalid_msg, dim_invalid_msg)) {
     return false;
   }

@@ -249,6 +249,9 @@ PowerSnapshot read_power_snapshot(const PowerMonitorOptions& /*options*/) {
   return power_snapshot_from_sentinel_sample(pipeline_internal::SentinelClient().latest_sample());
 }
 
+// The deprecated PowerMonitor's own implementation.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 class PowerMonitor::Impl {
 public:
   Impl(PowerMonitorOptions options, pipeline_internal::SentinelClient sentinel)
@@ -453,6 +456,7 @@ PowerSummary PowerMonitor::summary() const {
 bool PowerMonitor::running() const {
   return impl_ && impl_->running();
 }
+#pragma GCC diagnostic pop
 
 std::string format_power_summary(const PowerSummary& summary) {
   if (!summary.enabled) {

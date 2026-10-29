@@ -10,6 +10,38 @@ namespace simaai::neat {
 
 namespace {
 
+// Public appsrc ingress is an unnegotiated compatibility boundary. Never
+// forward native publication metadata to an arbitrary legacy consumer. The
+// envelope clone retains its source checkout and shares payload memory only.
+std::shared_ptr<GstBuffer> legacy_appsrc_envelope(GstBuffer* source) {
+  std::string error;
+  auto publication = simaai::gst::tensor_buffer_publication(source, &error);
+  if (!error.empty()) {
+    throw std::runtime_error("InputStream appsrc publication: " + error);
+  }
+  if (!publication) {
+    return {};
+  }
+  auto clone = std::shared_ptr<GstBuffer>(simaai::gst::tensor_buffer_clone_envelope(source, &error),
+                                          [](GstBuffer* buffer) {
+                                            if (buffer)
+                                              gst_buffer_unref(buffer);
+                                          });
+  if (!clone || !simaai::gst::tensor_buffer_materialize_publication(clone.get(), &error)) {
+    throw std::runtime_error("InputStream appsrc materialization: " + error);
+  }
+  return clone;
+}
+
+void materialize_appsrc_holder(GstBuffer** owned) {
+  if (!owned || !*owned)
+    return;
+  if (auto legacy = legacy_appsrc_envelope(*owned)) {
+    gst_buffer_unref(*owned);
+    *owned = gst_buffer_ref(legacy.get());
+  }
+}
+
 struct SeqOverrides {
   std::optional<int64_t> input_seq;
   std::optional<int64_t> orig_input_seq;
@@ -506,14 +538,17 @@ make_prepare_for_spec(const SampleSpec& spec, const char* where,
     } else if (spec.kind == SampleMediaKind::Tensor) {
       apply_tensor_size_or_throw(buf, spec, where);
       if (tensor_set_meta_tensors && !tensor_set_meta_tensors->empty() &&
-          !gst_buffer_get_custom_meta(*buf, SIMA_TENSOR_SET_META_NAME)) {
+          !simaai::gst::tensor_buffer_has_canonical_meta(*buf)) {
         pipeline_internal::attach_tensor_set_meta_from_tensors(*buf, *tensor_set_meta_tensors);
       }
     } else {
       return;
     }
 
-    if (source_preproc_meta_buffer &&
+    // Match holder-path precedence for explicit ROI lists, including enabled empty lists.
+    const bool has_tensor_roi_list =
+        tensor_preprocess_meta.has_value() && tensor_preprocess_meta->has_roi_list();
+    if (!has_tensor_roi_list && source_preproc_meta_buffer &&
         has_simaai_preprocess_meta(source_preproc_meta_buffer.get())) {
       std::string copy_err;
       if (!copy_simaai_preprocess_meta(*buf, source_preproc_meta_buffer.get(), &copy_err)) {
@@ -552,91 +587,6 @@ make_copy_prepare_with_attributes(const std::function<void(GstBuffer**)>& prepar
                                ": failed to write sample attributes");
     }
   };
-}
-
-SampleSpec derive_mat_spec_or_throw(const cv::Mat& contiguous, const InputOptions& relaxed) {
-  SampleSpec spec;
-  const bool float_input = contiguous.depth() == CV_32F && contiguous.channels() > 0;
-  const std::string relaxed_media = resolve_input_media_type(relaxed);
-  spec.media_type = relaxed_media.empty()
-                        ? (float_input ? "application/vnd.simaai.tensor" : "video/x-raw")
-                        : relaxed_media;
-  spec.required_bytes_actual = 0;
-  if (spec.media_type == "video/x-raw") {
-    spec.kind = SampleMediaKind::RawVideo;
-    std::string fmt = upper_copy(relaxed.format);
-    if (fmt.empty()) {
-      fmt = (contiguous.channels() == 1) ? "GRAY8" : "BGR";
-    }
-    if (fmt == "GRAY")
-      fmt = "GRAY8";
-    if (fmt != "RGB" && fmt != "BGR" && fmt != "GRAY8") {
-      throw std::invalid_argument("InputStream::try_push: unsupported video format");
-    }
-    if ((fmt == "RGB" || fmt == "BGR") && contiguous.type() != CV_8UC3) {
-      throw std::invalid_argument("InputStream::try_push: expected CV_8UC3");
-    }
-    if (fmt == "GRAY8" && contiguous.type() != CV_8UC1) {
-      throw std::invalid_argument("InputStream::try_push: expected CV_8UC1");
-    }
-    if (fmt == "NV12" || fmt == "I420") {
-      throw std::invalid_argument(
-          "InputStream::try_push: planar video requires simaai::neat::Tensor planes");
-    }
-    spec.format = fmt;
-    spec.width = contiguous.cols;
-    spec.height = contiguous.rows;
-    spec.depth = contiguous.channels();
-    PlaneInfo plane;
-    plane.role = simaai::neat::PlaneRole::Unknown;
-    plane.width = spec.width;
-    plane.height = spec.height;
-    plane.stride_bytes = static_cast<int64_t>(contiguous.step[0]);
-    plane.offset_bytes = 0;
-    plane.size_bytes = static_cast<size_t>(plane.stride_bytes) * static_cast<size_t>(spec.height);
-    if (plane.size_bytes == 0) {
-      throw std::invalid_argument("InputStream::try_push: invalid video byte size");
-    }
-    spec.required_bytes_actual = plane.size_bytes;
-    spec.planes = {plane};
-    spec.dtype = TensorDType::UInt8;
-  } else if (spec.media_type == "application/vnd.simaai.tensor") {
-    spec.kind = SampleMediaKind::Tensor;
-    if (contiguous.depth() != CV_32F || contiguous.channels() <= 0) {
-      throw std::invalid_argument(
-          "InputStream::try_push: tensor input must be a non-empty CV_32F matrix");
-    }
-    const std::string requested_format =
-        normalize_caps_format_for_media("application/vnd.simaai.tensor", relaxed.format.str());
-    const std::string requested_up = upper_copy(requested_format);
-    const bool fp32_like = requested_up.empty() || requested_up == "FP32" ||
-                           requested_up == "FLOAT32" || requested_up == "EVXX_FLOAT32";
-    if (!fp32_like) {
-      throw std::invalid_argument(
-          "InputStream::try_push: cv::Mat tensor input supports FP32/EVXX_FLOAT32 only; "
-          "pass simaai::neat::Tensor for BF16 or quantized tensor ingress");
-    }
-    spec.required_bytes_actual = contiguous.total() * contiguous.elemSize();
-    spec.dtype = TensorDType::Float32;
-    spec.format = requested_format.empty() ? std::string("FP32") : requested_format;
-    spec.width = contiguous.cols;
-    spec.height = contiguous.rows;
-    spec.depth = contiguous.channels();
-    spec.layout = TensorLayout::Unknown;
-    if (spec.depth > 1) {
-      spec.shape = {spec.height, spec.width, spec.depth};
-    } else {
-      spec.shape = {spec.height, spec.width};
-    }
-  } else {
-    throw std::invalid_argument("InputStream::try_push: unsupported media_type");
-  }
-
-  spec.fps_n = relaxed.fps_n;
-  spec.fps_d = relaxed.fps_d;
-  spec.caps_key = capkey_from_spec(spec);
-  spec.caps_string = caps_string_from_spec(spec);
-  return spec;
 }
 
 std::function<void(GstBuffer**)>
@@ -732,12 +682,13 @@ bool complete_tight_video_spec_for_buffer(SampleSpec* spec, std::size_t buffer_b
     if (i == 0U) {
       plane.width = spec->width;
       plane.height = spec->height;
-      plane.role = (format == GST_VIDEO_FORMAT_NV12 || format == GST_VIDEO_FORMAT_I420)
+      plane.role = (format == GST_VIDEO_FORMAT_NV12 || format == GST_VIDEO_FORMAT_NV16 ||
+                    format == GST_VIDEO_FORMAT_I420)
                        ? PlaneRole::Y
                        : PlaneRole::Unknown;
-    } else if (format == GST_VIDEO_FORMAT_NV12) {
+    } else if (format == GST_VIDEO_FORMAT_NV12 || format == GST_VIDEO_FORMAT_NV16) {
       plane.width = spec->width;
-      plane.height = spec->height / 2;
+      plane.height = format == GST_VIDEO_FORMAT_NV16 ? spec->height : spec->height / 2;
       plane.role = PlaneRole::UV;
     } else {
       plane.width = spec->width / 2;
@@ -807,12 +758,13 @@ bool complete_video_spec_from_meta(SampleSpec* spec, GstBuffer* buffer, const Gs
     if (i == 0U) {
       plane.width = spec->width;
       plane.height = spec->height;
-      plane.role = (meta->format == GST_VIDEO_FORMAT_NV12 || meta->format == GST_VIDEO_FORMAT_I420)
+      plane.role = (meta->format == GST_VIDEO_FORMAT_NV12 ||
+                    meta->format == GST_VIDEO_FORMAT_NV16 || meta->format == GST_VIDEO_FORMAT_I420)
                        ? PlaneRole::Y
                        : PlaneRole::Unknown;
-    } else if (meta->format == GST_VIDEO_FORMAT_NV12) {
+    } else if (meta->format == GST_VIDEO_FORMAT_NV12 || meta->format == GST_VIDEO_FORMAT_NV16) {
       plane.width = spec->width;
-      plane.height = spec->height / 2;
+      plane.height = meta->format == GST_VIDEO_FORMAT_NV16 ? spec->height : spec->height / 2;
       plane.role = PlaneRole::UV;
     } else {
       plane.width = spec->width / 2;
@@ -887,16 +839,17 @@ void apply_holder_spec_and_meta_or_throw(
     InputBufferPoolGuard& guard, const char* where,
     const std::optional<PreprocessRuntimeMeta>& tensor_preprocess_meta = std::nullopt,
     const TensorList* tensor_set_meta_tensors = nullptr) {
+  materialize_appsrc_holder(buffer);
   GstBuffer* const original = buffer ? *buffer : nullptr;
   const bool source_has_preproc_meta = has_simaai_preprocess_meta(original);
 
   if (spec.kind == SampleMediaKind::Tensor) {
     apply_tensor_size_or_throw(buffer, spec, where);
     if (tensor_set_meta_tensors && !tensor_set_meta_tensors->empty() &&
-        !gst_buffer_get_custom_meta(*buffer, SIMA_TENSOR_SET_META_NAME)) {
+        !simaai::gst::tensor_buffer_has_canonical_meta(*buffer)) {
       ensure_holder_metadata_writable_or_throw(buffer, &spec, where, "attach tensor-set metadata");
       pipeline_internal::attach_tensor_set_meta_from_tensors(*buffer, *tensor_set_meta_tensors);
-      if (!gst_buffer_get_custom_meta(*buffer, SIMA_TENSOR_SET_META_NAME)) {
+      if (!simaai::gst::tensor_buffer_has_canonical_meta(*buffer)) {
         throw std::runtime_error(std::string(where ? where : "InputStream::apply_holder_spec") +
                                  ": failed to attach canonical tensor-set metadata");
       }
@@ -968,6 +921,12 @@ bool push_holder_buffer_with_appsrc(InputStream::State& st, GstBuffer* buffer, c
                                     const SampleSpec* fail_spec,
                                     const std::optional<int64_t>& input_seq_override,
                                     const std::optional<int64_t>& orig_input_seq_override) {
+  // This function consumes buffer. Protect it if validation/conversion throws.
+  BufferUnrefGuard publication_guard(&buffer, "InputStream::appsrc_publication_unref");
+  if (auto legacy = legacy_appsrc_envelope(buffer)) {
+    gst_buffer_unref(buffer);
+    buffer = gst_buffer_ref(legacy.get());
+  }
   std::chrono::steady_clock::time_point t_push_start{};
   if (record_timings || inputstream_push_timing_enabled()) {
     t_push_start = std::chrono::steady_clock::now();
@@ -979,8 +938,7 @@ bool push_holder_buffer_with_appsrc(InputStream::State& st, GstBuffer* buffer, c
     pipeline_internal::attach_zero_copy_loans_to_gst_buffer(buffer, *fail_msg);
   }
   if (holder_debug_enabled()) {
-    const bool has_tensor_set =
-        gst_buffer_get_custom_meta(buffer, SIMA_TENSOR_SET_META_NAME) != nullptr;
+    const bool has_tensor_set = simaai::gst::tensor_buffer_has_canonical_meta(buffer);
     std::fprintf(stderr,
                  "[HOLDER] push_holder_buffer_with_appsrc before_push where=%s buffer=%p bytes=%zu "
                  "mems=%u has_tensor_set=%d\n",
@@ -988,7 +946,10 @@ bool push_holder_buffer_with_appsrc(InputStream::State& st, GstBuffer* buffer, c
                  static_cast<std::size_t>(gst_buffer_get_size(buffer)), gst_buffer_n_memory(buffer),
                  has_tensor_set ? 1 : 0);
   }
+  auto observed = st.input_publication_measurement.observe(buffer);
+  publication_guard.release();
   GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(st.appsrc), buffer);
+  observed.finish(ret);
   if (holder_debug_enabled()) {
     std::fprintf(stderr, "[HOLDER] push_holder_buffer_with_appsrc after_push where=%s ret=%d\n",
                  where ? where : "<null>", static_cast<int>(ret));
@@ -1175,13 +1136,29 @@ bool push_holder_sample_with_appsrc(InputStream::State& st, GstSample* sample, G
                                     const SampleSpec* fail_spec,
                                     const std::optional<int64_t>& input_seq_override,
                                     const std::optional<int64_t>& orig_input_seq_override) {
+  auto legacy = legacy_appsrc_envelope(buffer);
+  std::shared_ptr<GstSample> compatibility_sample;
+  if (legacy) {
+    const auto* info = gst_sample_get_info(sample);
+    compatibility_sample = std::shared_ptr<GstSample>(
+        gst_sample_new(legacy.get(), gst_sample_get_caps(sample), gst_sample_get_segment(sample),
+                       info ? gst_structure_copy(info) : nullptr),
+        [](GstSample* value) {
+          if (value)
+            gst_sample_unref(value);
+        });
+    if (!compatibility_sample) {
+      throw std::runtime_error("InputStream: cannot materialize appsrc sample");
+    }
+    sample = compatibility_sample.get();
+    buffer = legacy.get();
+  }
   std::chrono::steady_clock::time_point t_push_start{};
   if (record_timings || inputstream_push_timing_enabled()) {
     t_push_start = std::chrono::steady_clock::now();
   }
   if (holder_debug_enabled()) {
-    const bool has_tensor_set =
-        buffer && gst_buffer_get_custom_meta(buffer, SIMA_TENSOR_SET_META_NAME) != nullptr;
+    const bool has_tensor_set = buffer && simaai::gst::tensor_buffer_has_canonical_meta(buffer);
     std::fprintf(stderr,
                  "[HOLDER] push_holder_sample_with_appsrc before_push where=%s sample=%p buffer=%p "
                  "bytes=%zu mems=%u has_tensor_set=%d\n",
@@ -1192,7 +1169,9 @@ bool push_holder_sample_with_appsrc(InputStream::State& st, GstSample* sample, G
   if (fail_msg) {
     pipeline_internal::attach_zero_copy_loans_to_gst_buffer(buffer, *fail_msg);
   }
+  auto observed = st.input_publication_measurement.observe(buffer);
   GstFlowReturn ret = gst_app_src_push_sample(GST_APP_SRC(st.appsrc), sample);
+  observed.finish(ret);
   if (holder_debug_enabled()) {
     std::fprintf(stderr, "[HOLDER] push_holder_sample_with_appsrc after_push where=%s ret=%d\n",
                  where ? where : "<null>", static_cast<int>(ret));
@@ -1429,6 +1408,7 @@ bool push_holder_transport(
                              ": missing GstBuffer");
   }
   BufferUnrefGuard holder_guard(&buf, "InputStream::push_holder_transport:buffer_unref");
+  materialize_appsrc_holder(&buf);
   std::optional<SampleSpec> completed_video_spec;
   const SampleSpec* metadata_spec = fail_spec;
   if (!metadata_spec && st.last_spec.has_value()) {
@@ -1502,11 +1482,11 @@ bool push_holder_transport(
   }
   if (metadata_spec && metadata_spec->kind == SampleMediaKind::Tensor && fail_msg &&
       sample_has_tensor_list(*fail_msg) && !fail_msg->tensors.empty() &&
-      !gst_buffer_get_custom_meta(buf, SIMA_TENSOR_SET_META_NAME)) {
+      !simaai::gst::tensor_buffer_has_canonical_meta(buf)) {
     ensure_holder_metadata_writable_or_throw(&buf, metadata_spec, where,
                                              "attach tensor-set metadata");
     pipeline_internal::attach_tensor_set_meta_from_tensors(buf, fail_msg->tensors);
-    if (!gst_buffer_get_custom_meta(buf, SIMA_TENSOR_SET_META_NAME)) {
+    if (!simaai::gst::tensor_buffer_has_canonical_meta(buf)) {
       throw std::runtime_error(std::string(where ? where : "InputStream::push_holder_transport") +
                                ": failed to attach canonical tensor-set metadata");
     }
@@ -1576,8 +1556,7 @@ bool push_holder_transport(
       &buf, fail_msg, holder, where ? where : "InputStream::push_holder_transport");
 
   if (GstSample* sample = holder_as_gstsample(holder)) {
-    const bool has_tensor_set =
-        buf && gst_buffer_get_custom_meta(buf, SIMA_TENSOR_SET_META_NAME) != nullptr;
+    const bool has_tensor_set = buf && simaai::gst::tensor_buffer_has_canonical_meta(buf);
     if (has_tensor_set) {
       if (holder_debug_enabled()) {
         std::fprintf(stderr,
@@ -1725,7 +1704,9 @@ bool try_push_message_encoded(InputStream::State& st, const Sample& msg,
   if (timings)
     t_push_start = std::chrono::steady_clock::now();
   log_push_refcount("InputStream::try_push_message(encoded)", buf);
+  auto observed = st.input_publication_measurement.observe(buf);
   GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(st.appsrc), buf);
+  observed.finish(ret);
   const auto t_push_end = std::chrono::steady_clock::now();
 
   if (timings) {
@@ -2028,6 +2009,7 @@ bool InputStream::try_push(const cv::Mat& input) {
   if (input.empty()) {
     throw std::invalid_argument("InputStream::try_push: input frame is empty");
   }
+  validate_public_input(input, state_->src_opt, state_->opt, "InputStream::try_push(mat)");
   InputOptions relaxed = state_->src_opt;
   relaxed.width = -1;
   relaxed.height = -1;
@@ -2247,8 +2229,13 @@ bool InputStream::try_push_message(const Sample& msg) {
   }
   const std::optional<PreprocessRuntimeMeta> tensor_preprocess_meta = input.semantic.preprocess;
 
+  // Permission to copy a CPU image must not forward its system-memory holder instead.
+  const bool requires_raw_device_copy = spec.kind == SampleMediaKind::RawVideo &&
+                                        st->opt.require_device_visible_input &&
+                                        tensor_requires_cpu_to_device_copy_for_push(input);
+  const bool allow_holder_transport = allow_zero_copy_transport && !requires_raw_device_copy;
   HolderFastPathResult holder_result;
-  if (allow_zero_copy_transport) {
+  if (allow_holder_transport) {
     holder_result = try_push_message_holder_fastpath(*st, msg, input, spec, decision, meta,
                                                      seq.input_seq, seq.orig_input_seq,
                                                      timing_override, tensor_preprocess_meta);
@@ -2263,7 +2250,7 @@ bool InputStream::try_push_message(const Sample& msg) {
                      ? "<unknown>"
                      : holder_result.holder_fail_reason.c_str());
   }
-  if (allow_zero_copy_transport && input.storage->kind == simaai::neat::StorageKind::GstSample) {
+  if (allow_holder_transport && input.storage->kind == simaai::neat::StorageKind::GstSample) {
     if (holder_result.holder_failed) {
       throw std::runtime_error(
           "InputStream::try_push_message: Cannot use this zero-copy frame as input because its "

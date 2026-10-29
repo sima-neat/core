@@ -2,7 +2,7 @@
  * @file
  * @ingroup nodes_sima
  * @brief EV74 visual-frontend processcvu Nodes (`FeatureHistogram`, `GriderFast`,
- *        `TrackDescriptor`, `TrackKLT`).
+ *        `TrackDescriptor`, `TrackKLT`, `MetoakDepth`).
  */
 #pragma once
 
@@ -137,8 +137,10 @@ struct TrackDescriptorOptions : public VisualFrontendCommonOptions {
  * - outputs when `detect_new_features == 1` additionally include:
  *   - `output_features_name`, Int32 `[batch_size,1 + max_features*3]`
  *
- * The EV ABI always allocates the internal detected-features output; Neat only
- * publishes it when `detect_new_features != 0`.
+ * When `publish_error` is true, append Float32 `[batch_size,num_points,1]`
+ * residuals after the existing outputs. Disabled detection does not allocate a
+ * hidden feature output. Status reports solver/geometry validity by default;
+ * enable explicit quality thresholds to reject weak or inconsistent matches.
  */
 struct TrackKLTOptions {
   /// Input image width in pixels.
@@ -185,8 +187,52 @@ struct TrackKLTOptions {
   std::string output_status_name = "output_status";
   /// Optional published feature-list tensor name when `detect_new_features != 0`.
   std::string output_features_name = "output_features";
+  /// Append mean absolute photometric residuals at the returned coordinates.
+  bool publish_error = false;
+  /// Residual output name. Unevaluated residuals are positive infinity.
+  std::string output_error_name = "output_error";
+  /// Maximum mean absolute UInt8 intensity residual [0,255]; -1 disables filtering.
+  float error_threshold = -1.0f;
+  /// Minimum texture eigenvalue divided by window area and 255 squared; 0 disables.
+  float min_eig_threshold = 0.0f;
+  /// Require convergence of the final full-resolution solve, not every coarse level.
+  bool require_convergence = false;
 
   /// Human-readable, non-throwing summary for logs, diagnostics, and Python `repr`.
+  std::string summary() const;
+};
+
+/**
+ * @brief Metoak S315 depth: separated I420, unsigned disparity and calibration
+ *        tensors to RGB, metric depth and XYZ, executed on EV74.
+ *
+ * Batch one; even width 8..2048 and height 8..1536. Ordered inputs:
+ * UInt8 Y[H,W], U[H/2,W/2], V[H/2,W/2], UInt16 disparity[H,W],
+ * Float32 BF[1], projection[3] = {focal_length, cx, cy}. Disparity scale is 32.
+ * Ordered outputs: UInt8 RGB[H,W,3], UInt16 depth[H,W] in millimetres,
+ * Float32 XYZ[H,W,3] in metres. Zero disparity produces zero depth and NaN XYZ.
+ * Calibration is per-frame input, not a preparation-time constant.
+ * Camera capture and raw-frame unpacking remain application responsibilities.
+ */
+struct MetoakDepthOptions {
+  int width = 0;
+  int height = 0;
+  /// Retained for source compatibility; numerical execution has no debug parameter.
+  int debug = 0;
+  /// Stage execution depth override; zero uses the normal graph buffer policy.
+  int num_buffers = 0;
+  std::string element_name;
+  /// Canonical port names, retained from the original C++ API.
+  std::string y_name = "y_src";
+  std::string u_name = "u_src";
+  std::string v_name = "v_src";
+  std::string disp_name = "disp_src";
+  std::string bf_mm_name = "bf_mm_src";
+  std::string proj_name = "proj_src";
+  std::string rgb_output_name = "rgb_dst";
+  std::string depth_output_name = "depth_dst";
+  std::string points_output_name = "points_dst";
+
   std::string summary() const;
 };
 
@@ -298,6 +344,33 @@ private:
   TrackKLTOptions opt_;
 };
 
+class MetoakDepth final : public Node,
+                          public OutputSpecProvider,
+                          public NodeContractProvider,
+                          public NodeContractConfigurable {
+public:
+  explicit MetoakDepth(MetoakDepthOptions opt = {});
+  std::string kind() const override {
+    return "MetoakDepth";
+  }
+  NodeCapsBehavior caps_behavior() const override {
+    return NodeCapsBehavior::Static;
+  }
+  NodeContractDefinition contract_definition() const override;
+  bool compile_node_contract(const ContractCompileInput& input, CompiledNodeContract* out,
+                             std::string* err) const override;
+  void apply_compiled_contract(const CompiledNodeContract& contract, std::string* err) override;
+  std::string backend_fragment(int node_index) const override;
+  std::vector<std::string> element_names(int node_index) const override;
+  OutputSpec output_spec(const OutputSpec& input) const override;
+  const MetoakDepthOptions& options() const {
+    return opt_;
+  }
+
+private:
+  MetoakDepthOptions opt_;
+};
+
 } // namespace simaai::neat
 
 namespace simaai::neat::nodes {
@@ -305,4 +378,5 @@ std::shared_ptr<simaai::neat::Node> FeatureHistogram(FeatureHistogramOptions opt
 std::shared_ptr<simaai::neat::Node> GriderFast(GriderFastOptions opt = {});
 std::shared_ptr<simaai::neat::Node> TrackDescriptor(TrackDescriptorOptions opt = {});
 std::shared_ptr<simaai::neat::Node> TrackKLT(TrackKLTOptions opt = {});
+std::shared_ptr<simaai::neat::Node> MetoakDepth(MetoakDepthOptions opt = {});
 } // namespace simaai::neat::nodes

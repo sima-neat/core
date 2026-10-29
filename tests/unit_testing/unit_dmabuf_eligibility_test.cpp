@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -41,7 +42,9 @@ sc::ValueSpec value(sc::ValueId id, std::string name, std::uint64_t bytes) {
   return result;
 }
 
-sc::ModelExecutionPlan make_plan(std::string contract_version) {
+sc::ModelExecutionPlan
+make_plan(std::string contract_version,
+          std::optional<sc::DetessFrameShapeSemantics> detess_semantics = std::nullopt) {
   sc::ModelExecutionPlanData data;
   data.contract_version = std::move(contract_version);
   data.values = {value(0, "input", 64), value(1, "mla-output", 64)};
@@ -65,6 +68,22 @@ sc::ModelExecutionPlan make_plan(std::string contract_version) {
        sc::BackendPortAlignmentAuthority::LegacyPolicy, sc::BackendPortAccess::WriteOnly},
   };
   data.model_outputs = {{0, "public-output", 1}};
+
+  if (detess_semantics) {
+    data.values.push_back(value(2, "detess-output", 64));
+    sc::OpSpec detess;
+    detess.id = 1;
+    detess.sequence = 2;
+    detess.name = "detess";
+    detess.kind = sc::OpKind::Detessellate;
+    detess.processor = "EV74";
+    detess.inputs = {1};
+    detess.outputs = {2};
+    detess.config =
+        sc::DetessellateOpConfig{{1, 64}, {1, 64}, false, false, "int8", *detess_semantics};
+    data.ops.push_back(std::move(detess));
+    data.model_outputs.front().value_id = 2;
+  }
 
   std::string error;
   auto plan = sc::ModelExecutionPlan::create(std::move(data), &error);
@@ -212,34 +231,46 @@ void test_canonical_digest() {
   namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
   std::string error;
   const auto physical = sc::PhysicalExecutionLowerer::lower(plan, &error);
-  const auto detached_roots =
-      physical ? sc::detached_mla_output_roots(plan, *physical) : std::vector<sc::ValueId>{};
-  const auto arena = physical ? sc::FrameSlotArenaPlan::compile(
-                                    plan, *physical, sc::FrameSlotArenaReuse::DisjointLifetimes,
-                                    sc::kLegacyEvoCmaRegionAlignmentBytes, &error,
-                                    sc::kModalixProductionArenaDmsPolicy, detached_roots)
-                              : std::nullopt;
   CHECK(physical.has_value());
-  CHECK(arena.has_value());
-  if (!arena) {
-    std::cerr << "canonical execution fixture arena failed: " << error << '\n';
+  if (physical) {
+    const auto source =
+        simaai::neat::pipeline_internal::canonical_dmabuf_source_json(plan, *physical);
+    const auto source_json = nlohmann::json::parse(source);
+    CHECK(source_json.at("schema_version") == 4);
+    CHECK(!source_json.contains("frame_arena"));
+    CHECK(source_json.at("physical_commands").size() == physical->commands.size());
+    CHECK(!source_json.at("physical_digest_material").get<std::string>().empty());
+    const auto digest = simaai::neat::pipeline_internal::dmabuf_source_digest(plan, *physical);
+    CHECK(digest.size() == 64U);
+    auto selected = *physical;
+    selected.commands.front().resolved_executor = sc::PhysicalEngine::A65;
+    CHECK(simaai::neat::pipeline_internal::dmabuf_source_digest(plan, selected) == digest);
+    selected.commands.front().inputs.clear();
+    CHECK(simaai::neat::pipeline_internal::dmabuf_source_digest(plan, selected) != digest);
   }
-  if (physical && arena) {
-    const auto execution =
-        simaai::neat::pipeline_internal::canonical_dmabuf_execution_json(plan, *physical, *arena);
-    const auto execution_json = nlohmann::json::parse(execution);
-    CHECK(execution_json.at("schema_version") == 3);
-    CHECK(detached_roots.empty());
-    CHECK(execution_json.at("frame_arena").at("storage_domain") == "dms");
-    CHECK(execution_json.at("frame_arena").at("detached_roots").empty());
-    CHECK(execution_json.at("frame_arena").at("allocation_provenance") == "core-allocated");
-    CHECK(execution_json.at("frame_arena").at("required_device_access").get<std::uint32_t>() != 0U);
-    CHECK(execution_json.at("physical_commands").size() == physical->commands.size());
-    CHECK(!execution_json.at("physical_digest_material").get<std::string>().empty());
-    CHECK(
-        simaai::neat::pipeline_internal::dmabuf_execution_digest(plan, *physical, *arena).size() ==
-        64U);
+}
+
+void test_detess_semantics_digest() {
+  using namespace simaai::neat::pipeline_internal;
+  const auto tensor = make_plan("detess-digest-v1", sc::DetessFrameShapeSemantics::Tensor);
+  const auto legacy = make_plan("detess-digest-v1", sc::DetessFrameShapeSemantics::LegacyMpk);
+  // The same dimensions and bytes can have different execution geometry. The
+  // explicit authority must participate in both plan and execution identity.
+  CHECK(dmabuf_plan_digest(tensor) != dmabuf_plan_digest(legacy));
+  auto tensor_json = nlohmann::json::parse(canonical_dmabuf_plan_json(tensor));
+  auto legacy_json = nlohmann::json::parse(canonical_dmabuf_plan_json(legacy));
+  auto& tensor_config = tensor_json.at("ops").at(1).at("config");
+  auto& legacy_config = legacy_json.at("ops").at(1).at("config");
+  constexpr auto key = "frame_shape_semantics";
+  CHECK(tensor_config.contains(key));
+  CHECK(legacy_config.contains(key));
+  if (tensor_config.contains(key) && legacy_config.contains(key)) {
+    CHECK(tensor_config.at(key) == static_cast<int>(sc::DetessFrameShapeSemantics::Tensor));
+    CHECK(legacy_config.at(key) == static_cast<int>(sc::DetessFrameShapeSemantics::LegacyMpk));
   }
+  tensor_config.erase(key);
+  legacy_config.erase(key);
+  CHECK(tensor_json == legacy_json);
 }
 
 void test_structured_rejections_and_sanitized_json() {
@@ -301,48 +332,48 @@ void test_exact_multi_stage_artifact_admission() {
   }
   CHECK(accepted.eligible());
   CHECK(accepted.plan && accepted.plan->mla_stage_count() == 2U);
-  CHECK(accepted.arena_plan.has_value());
-  if (accepted.plan && accepted.arena_plan) {
-    CHECK(accepted.arena_plan->placement().domain == sc::ArenaStorageDomain::Dms);
-    CHECK(accepted.arena_plan->placement().requires_access(sc::ArenaDeviceAccess::Mla));
-    CHECK(!accepted.arena_plan->placement().requires_access(sc::ArenaDeviceAccess::CpuA65));
-    CHECK(!accepted.arena_plan->placement().requires_access(sc::ArenaDeviceAccess::Ev74));
-    const auto encoder_outputs = accepted.plan->backend_ports(0U, sc::BackendPortDirection::Output);
-    const auto decoder_outputs = accepted.plan->backend_ports(1U, sc::BackendPortDirection::Output);
-    CHECK(encoder_outputs.size() == 1U && decoder_outputs.size() == 1U);
-    const auto* encoded = accepted.arena_plan->region(encoder_outputs.front().value_id);
-    const auto* decoded = accepted.arena_plan->region(decoder_outputs.front().value_id);
-    CHECK(encoded != nullptr);
-    CHECK(decoded == nullptr);
-    CHECK(accepted.arena_plan->is_detached_root(decoder_outputs.front().value_id));
-    CHECK(accepted.arena_plan->detached_roots().size() == 1U &&
-          accepted.arena_plan->detached_roots().front() == decoder_outputs.front().value_id);
-    const auto arena_proof =
-        std::find_if(accepted.report.proof.begin(), accepted.report.proof.end(),
-                     [](const auto& fact) { return fact.subject == "frame-slot-arena"; });
-    CHECK(arena_proof != accepted.report.proof.end());
-    CHECK(arena_proof != accepted.report.proof.end() &&
-          arena_proof->evidence.find("detached_count=1;detached_roots=[" +
-                                     std::to_string(decoder_outputs.front().value_id) + "]") !=
-              std::string::npos);
-    CHECK(accepted.physical_plan.has_value());
-    std::string unfiltered_error;
-    const auto unfiltered_arena =
-        accepted.physical_plan
-            ? sc::FrameSlotArenaPlan::compile(
-                  *accepted.plan, *accepted.physical_plan,
-                  sc::FrameSlotArenaReuse::DisjointLifetimes, sc::kLegacyEvoCmaRegionAlignmentBytes,
-                  &unfiltered_error, sc::kModalixProductionArenaDmsPolicy)
-            : std::nullopt;
-    CHECK(unfiltered_arena.has_value());
-    CHECK(unfiltered_arena && dmabuf_execution_digest(*accepted.plan, *accepted.physical_plan,
-                                                      *unfiltered_arena) != accepted.plan_digest);
-  }
+  CHECK(accepted.physical_plan.has_value());
+  CHECK(accepted.source_digest.size() == 64U);
+  CHECK(accepted.physical_plan &&
+        std::none_of(accepted.physical_plan->commands.begin(),
+                     accepted.physical_plan->commands.end(),
+                     [](const auto& command) { return command.resolved_executor.has_value(); }));
+  CHECK(std::none_of(accepted.report.proof.begin(), accepted.report.proof.end(),
+                     [](const auto& fact) { return fact.subject == "frame-slot-arena"; }));
   CHECK(accepted.plan &&
         accepted.plan->mla_stage_for_identity("MLA_encoder", "encoder.so") != nullptr);
   const auto audit =
       nlohmann::json::parse(dmabuf_plan_audit_json(accepted, mpk, reversed_evidence, false));
   CHECK(audit.at("schema_version") == 2);
+  CHECK(audit.at("eligible") == true);
+  CHECK(audit.at("source_digest") == accepted.source_digest);
+  CHECK(audit.at("plan_digest").get<std::string>().size() == 64U);
+  CHECK(audit.at("plan_digest") != audit.at("source_digest"));
+  CHECK(audit.at("frame_layouts").size() == 2U);
+  CHECK(audit.at("frame_layouts").at(0).at("group") == "model");
+  CHECK(audit.at("frame_layouts").at(1).at("group") == "mla-output-1");
+  for (const auto& group : audit.at("frame_layouts")) {
+    const auto& storage = group.at("storage");
+    const auto name = group.at("group").get<std::string>();
+    CHECK(storage.at("allocations").size() == 1U);
+    CHECK(storage.at("allocations").at(0).at("policy") ==
+          static_cast<int>(simaai::scheduler::client::AllocationPolicy::RequireDms));
+    const auto expected_access =
+        simaai::scheduler::client::kAccessMla |
+        (name == "mla-output-1" ? simaai::scheduler::client::kAccessCpuA65 : 0U);
+    CHECK(storage.at("allocations").at(0).at("required_device_access") == expected_access);
+    CHECK(storage.at("carriers").at(0).at("allocation_index") == 0U);
+    CHECK(storage.at("carriers").at(0).at("byte_offset") == 0U);
+  }
+  CHECK(audit.at("proof").back().at("subject") == "frame-slot-arena");
+  CHECK(audit.at("proof").back().at("evidence").get<std::string>().find("detached_count=1") !=
+        std::string::npos);
+  CHECK(nlohmann::json::parse(dmabuf_plan_audit_json(accepted, mpk, reversed_evidence, false))
+            .at("plan_digest") == audit.at("plan_digest"));
+  CHECK(accepted.physical_plan &&
+        std::none_of(accepted.physical_plan->commands.begin(),
+                     accepted.physical_plan->commands.end(),
+                     [](const auto& command) { return command.resolved_executor.has_value(); }));
   CHECK(audit.at("mla_artifacts").size() == 2U);
   CHECK(audit.at("mla_artifacts").at(0).at("logical_stage_id") == "MLA_decoder");
   CHECK(audit.at("mla_artifacts").at(1).at("manifest_executable") == "encoder.so");
@@ -399,7 +430,7 @@ void test_mpk_decoder_entry_admits_the_bytes_it_loaded() {
   }
   const auto admitted = try_compile_dmabuf_plan(loaded->package);
   CHECK(admitted.eligible());
-  CHECK(admitted.plan_digest == from_path.plan_digest);
+  CHECK(admitted.source_digest == from_path.source_digest);
   CHECK(admitted.report.artifact_digest == from_path.report.artifact_digest);
   const auto decoded = sc::MpkDecoder{}.decode(loaded->package);
   CHECK(static_cast<bool>(decoded));
@@ -484,7 +515,7 @@ int main(int argc, char** argv) {
       std::cout << "route-modelpack-admission: "
                 << simaai::neat::pipeline_internal::dmabuf_eligibility_code_name(admission.code)
                 << " contract=" << admission.contract_version
-                << " plan=" << model.execution_plan_digest() << " stages=" << stage_count
+                << " plan=" << model.model_source_digest() << " stages=" << stage_count
                 << " grouped-stages=" << grouped_stage_count
                 << " grouped-members=" << grouped_semantic_members
                 << " physical-cvu-commands=" << grouped_physical_commands
@@ -501,6 +532,7 @@ int main(int argc, char** argv) {
     return 2;
   }
   test_canonical_digest();
+  test_detess_semantics_digest();
   test_structured_rejections_and_sanitized_json();
   test_exact_multi_stage_artifact_admission();
   test_mpk_decoder_entry_admits_the_bytes_it_loaded();

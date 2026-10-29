@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+case "${1:-}" in
+    configure)
+        if command -v systemd-tmpfiles >/dev/null 2>&1; then
+            systemd-tmpfiles ${DPKG_ROOT:+--root="$DPKG_ROOT"} --create sima-neat-pcie.conf || true
+        fi
+        ;;
+esac
+
+exit 0

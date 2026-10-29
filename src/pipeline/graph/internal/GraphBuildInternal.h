@@ -8,6 +8,7 @@
 #include "pipeline/internal/contract/ContractFacts.h"
 #include "pipeline/internal/TerminalOutputContractQuery.h"
 
+#include <cstddef>
 #include <memory>
 #include <span>
 #include <string>
@@ -77,20 +78,17 @@ std::string session_build_async_queue2_fragment(int requested_depth = 0,
                                                 std::string_view element_name = {});
 std::string session_build_apply_fast_path_options_to_fragment(std::string fragment,
                                                               const GraphOptions* sess_opt);
-// Assembled live-source pipeline pass for RunOptions element settings; values
-// already rendered in the pipeline win.
-std::string session_build_apply_run_preset_to_pipeline(std::string pipeline, const RunOptions& opt);
-// Final assembled-pipeline pass. This is the only place allowed to select the
-// producer-owned CPU visibility boundary because adjacent stages may be
-// rendered by distinct Nodes.
-std::string session_build_select_terminal_objectdecode_cpu_visibility(std::string pipeline);
 // Propagate an authored producer lane window to its immediate terminal
-// consumer. Both endpoints opt in by rendering `num-buffers`; the producer is
-// selected by its CPU-visible handoff, so no consumer factory/plugin name is
-// encoded here.
+// consumer. Both endpoints declare `num-buffers`; memory visibility is not
+// selected here and no consumer factory/plugin name is encoded.
 std::string session_build_propagate_terminal_consumer_lane_window(std::string pipeline);
 InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunMode mode);
 void session_build_finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt);
+void session_build_tune_internal_zero_copy_holder_window(InputStreamOptions& stream_opt,
+                                                         std::size_t edge_queue,
+                                                         bool graph_internal_output);
+void session_build_reserve_kernel_runner_outputs(BuildResult& build,
+                                                 const InputStreamOptions& stream_opt);
 void session_build_maybe_enable_rtsp_appsink_drop(InputStreamOptions& stream_opt,
                                                   const std::vector<std::shared_ptr<Node>>& nodes);
 void session_build_maybe_enable_rtsp_appsink_drop(
@@ -107,8 +105,10 @@ std::string session_build_clamp_sync_pipeline(std::string pipeline, int num_buff
 std::string session_build_clamp_detess_num_buffers(std::string pipeline, int num_buffers_override);
 // Serial single-appsink retention is storage at the typed Allocate owner, not
 // execution depth at a downstream ReuseInput stage. Untyped routes keep legacy clamps.
-std::string session_build_clamp_sync_build_result(const BuildResult& build,
-                                                  int num_buffers_override);
+std::size_t session_build_kernel_runner_capacity(int requested_depth);
+void session_build_initialize_kernel_runner_budget(BuildResult* build, const GraphOptions* options);
+std::string session_build_clamp_sync_build_result(BuildResult& build, int num_buffers_override);
+void session_build_clamp_sync_kernel_runner_capacity(BuildResult& build);
 std::uint64_t session_build_estimate_frame_bytes_limit(const InputOptions& opt,
                                                        const SampleSpec& spec);
 std::vector<std::shared_ptr<Node>>
@@ -117,9 +117,8 @@ session_build_materialize_model_bound_nodes(const std::vector<std::shared_ptr<No
 
 bool session_build_has_output_appsink(const std::vector<std::shared_ptr<Node>>& nodes);
 
+void session_build_prepare_stage_contracts(BuildResult& build, const char* where);
 GstElement* session_build_parse_pipeline_or_throw(const BuildResult& build, const char* where);
-// Keep the pre-parse plan on the build's DiagCtx for Model::execution_plan().
-void session_build_record_segment_plan(const BuildResult& build);
 void session_build_validate_explicit_launch_names_or_throw(
     std::string_view pipeline, const char* where, std::span<const LaunchNameOrigin> origins = {});
 void session_build_dump_pipeline_element_properties(GstElement* pipeline);
@@ -173,17 +172,19 @@ struct SourceStreamBuildContext {
   InputStreamOptions stream_opt{};
 };
 
-SourceStreamBuildContext session_build_source_stream_internal(
-    const std::vector<std::shared_ptr<Node>>& nodes, const std::shared_ptr<void>& guard,
-    std::string& last_pipeline, const GraphOptions& sess_opt, const RunOptions& opt, RunMode mode,
-    bool require_sink, bool public_output_contract, const char* where);
+SourceStreamBuildContext
+session_build_source_stream_internal(const std::vector<std::shared_ptr<Node>>& nodes,
+                                     const std::shared_ptr<void>& guard, std::string& last_pipeline,
+                                     const GraphOptions& sess_opt, const RunOptions& opt,
+                                     RunMode mode, bool require_sink, bool public_output_contract,
+                                     std::size_t internal_edge_queue, const char* where);
 
 SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
     const runtime::FusedRealtimeIngress& ingress,
     const std::vector<std::shared_ptr<Node>>& consumer_nodes, const std::shared_ptr<void>& guard,
     std::string& last_pipeline, const GraphOptions& sess_opt, const RunOptions& opt, RunMode mode,
-    bool require_sink, bool public_output_contract, const char* where,
-    const runtime::FusedEncodedOutputDispatch& encoded_output_dispatch = {});
+    bool require_sink, bool public_output_contract, std::size_t internal_edge_queue,
+    const char* where, const runtime::FusedEncodedOutputDispatch& encoded_output_dispatch = {});
 
 void session_build_compile_contracts(BuildResult* build_result,
                                      const std::vector<std::shared_ptr<Node>>& source_nodes,

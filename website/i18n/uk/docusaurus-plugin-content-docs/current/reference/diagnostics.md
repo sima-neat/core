@@ -133,18 +133,20 @@ SIMA_NEAT_VERBOSE_TOPICS=gstreamer \
 Для звітування про пропускну здатність/затримку/споживання енергії, надавайте перевагу експорту даних у форматі JSON, отриманих під час виконання графа:
 
 ```cpp
-RunOptions opt;
-opt.enable_board_power();        // graph-level power when supported by the board/SOM
-Run run = graph.build(opt);
+Run run = graph.build(RunOptions{});
 
-// run your normal push/pull loop inside a measurement window, then:
-auto report = run.start_measurement().stop();
-std::cout << report.to_text();
+TelemetryMonitor telemetry_monitor; // board power, temperatures, CPU usage, and memory
+telemetry_monitor.start();
+auto scope = run.start_measurement();
+// run your normal push/pull loop here, then:
+auto report = scope.stop();
+Telemetry telemetry = telemetry_monitor.stop();
+std::cout << report.to_text() << telemetry;
 ```
 
 Експортований модуль зберігає чітке визначення областей видимості:
 
-- `run.graph_metrics.throughput_fps` та `run.graph_metrics.power` – це заголовки на рівні графа.
+- `run.graph_metrics.throughput_fps` – це заголовок на рівні графа. `run.graph_metrics.power` заповнюється лише застарілим `RunOptions::enable_board_power()`; натомість використовуйте `TelemetryMonitor`.
 - `run.node_metrics[]` містить лише дані про затримку вузла/плагіна; інформація про енергоспоживання вузла/плагіна навмисно відсутня.
 - `latency_semantics` та `aggregation` показують, чи є значення змінами, обчисленими протягом усього часу роботи, чи змінами, виміряними протягом певного проміжку часу.
 - `plugin_metrics_unattributed[]` зберігає рядки з таблиць kernel/plugin, які не вдалося однозначно зіставити з жодним вузлом.
@@ -172,13 +174,10 @@ std::cout << report.to_text();
 
 Якщо драйвер повідомляє про невідомий стан завершення, утримуйте його DMA-буфери та початкові позики з пулу. Закриття файлового дескриптора, зупинка застосунку або перезапуск служби не доводять, що апаратне забезпечення припинило доступ до пам’яті. Зберіть звіт про помилку й скористайтеся схваленою процедурою відновлення платформи перед повторною спробою.
 
-### Узгодження Core та Internals
+### Узгоджуйте пакети Core та Scheduler {#keep-core-and-scheduler-packages-matched}
 
-Збирайте та встановлюйте Core з відповідними пакетами Internals B1157. Core окремо перевіряє профіль середовища виконання, ревізію вихідного коду ядра та підтвердження SDK sysroot, незалежно від версії публічного C++ ABI. Старіший пакет з тим самим публічним ABI не є сумісною заміною.
+Встановлюйте Core разом із набором пакетів Scheduler, вибраним для цього випуску Core. Scheduler керує відповідними залежностями Runner, Kernels, Codecs та прошивки. Однакова версія публічного C++ ABI сама по собі не гарантує сумісності середовища виконання.
 
-Перед зміною пакетів інсталятор перевіряє профіль включеного `neat-runtime` і відповідну версію `neat-gst-plugins`. Перевизначення перевірки платформи не обходить узгодження середовища виконання. Якщо перевірка не проходить, отримайте відповідний комплект; не підміняйте його підтвердження й не примушуйте встановлювати старіше середовище виконання.
+Використовуйте опубліковані залежності, які вибирає `build.sh`, або передайте повний відповідний набір Scheduler DEB за допомогою `--scheduler PATH`. Див. [Локальні залежності](/develop-apps/contribute/build-test/local-dependencies/).
 
-Перед встановленням на платі зупиніть застосунки, що використовують CVU або апаратний кодек. Повний інсталятор активує підготовлену прошивку EV74 після встановлення всіх пакетів і відмовляється скидати EV74, поки ці пристрої відкриті. Задайте
-`NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=OFF`, щоб залишити прошивку підготовленою
-для пізнішої активації командою
-`sudo /usr/libexec/sima-neat-firmware/install.sh --activate`.
+Для оновлення плати встановіть повний комплект Core за інструкцією [Встановлення або оновлення Neat Library](/getting-started/neat-library/install-or-update/). Вибраний інсталятор Scheduler перевіряє набір пакетів і керує активацією прошивки. Якщо перевірка не проходить, отримайте відповідний комплект Core/Scheduler; не підміняйте записи встановлення й не встановлюйте примусово окремі несумісні пакети середовища виконання або прошивки.

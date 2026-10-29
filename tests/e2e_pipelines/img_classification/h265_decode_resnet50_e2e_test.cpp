@@ -9,6 +9,7 @@
 #include "asset_utils.h"
 #include "dmabuf_test_utils.h"
 #include "resnet50_test_utils.h"
+#include "owned_output_test_utils.h"
 #include "test_utils.h"
 
 #include <algorithm>
@@ -193,7 +194,7 @@ class DmaHandoffEvidence {
     const bool input = GST_PAD_DIRECTION(pad) == GST_PAD_SINK;
     if (name == "neatdecoder" && !input) {
       point = Point::DecoderOutput;
-    } else if (name == "neatprocesscvu") {
+    } else if (name == "neatkernelrunner") {
       point = input ? Point::CvuInput : Point::CvuOutput;
     } else if (name == "neatprocessmla" && input) {
       point = Point::MlaInput;
@@ -237,7 +238,7 @@ class DmaHandoffEvidence {
       GstElementFactory* factory = gst_element_get_factory(element);
       const std::string name =
           factory ? gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory)) : "";
-      if (name != "neatdecoder" && name != "neatprocesscvu" && name != "neatprocessmla") {
+      if (name != "neatdecoder" && name != "neatkernelrunner" && name != "neatprocessmla") {
         return TRUE;
       }
       {
@@ -389,7 +390,13 @@ void require_auto_output(const simaai::neat::Sample& sample, const std::string& 
           context + ": Auto copied terminal DMA-BUF output");
   auto* retained = static_cast<GstSample*>(tensor.storage->holder.get());
   require(GST_IS_SAMPLE(retained), context + ": output holder is not a GstSample");
-  (void)sima_test::dmabuf_span(gst_sample_get_buffer(retained));
+  auto* buffer = gst_sample_get_buffer(retained);
+  const int memory_index =
+      buffer && gst_buffer_n_memory(buffer) == 1 ? 0 : tensor.route.memory_index;
+  require(buffer && memory_index >= 0 &&
+              static_cast<guint>(memory_index) < gst_buffer_n_memory(buffer),
+          context + ": output has no selected DMA allocation");
+  (void)sima_test::dmabuf_span(gst_buffer_peek_memory(buffer, memory_index));
   require(tensor.dtype == simaai::neat::TensorDType::Float32 && tensor.is_dense() &&
               tensor.dense_bytes_tight() == sima_test::kResNet50Classes * sizeof(float),
           context + ": terminal model tensor contract mismatch");
@@ -402,20 +409,67 @@ void require_auto_output(const simaai::neat::Sample& sample, const std::string& 
           context + ": output scores are not finite");
 }
 
+void run_owned_sync(const std::string& model_path,
+                    const std::vector<simaai::neat::Sample>& access_units) {
+  sima_test::OwnedOutputEvidence ownership;
+  std::vector<simaai::neat::Sample> retained;
+  std::vector<std::vector<std::uint8_t>> scores;
+  {
+    DmaHandoffEvidence handoff;
+    auto graph = make_graph(access_units.front(), model_path, "owned_sync", 1);
+    const auto options = e2e_run_options(simaai::neat::OutputMemory::Owned);
+    // Supplemental Owned-only calls reuse the same cached producer over the
+    // existing eight AUs. The original Auto sync/async workloads stay unchanged.
+    for (std::size_t frame = 0; frame < access_units.size(); ++frame) {
+      auto output = graph.run(simaai::neat::Sample{access_units[frame]}, options);
+      auto sample = output.front();
+      const std::string context = "explicit Owned sync frame " + std::to_string(frame);
+      sima_test::require_valid_dma_owned_resnet50_output(sample, context);
+      ownership.verify(sample, context);
+      scores.push_back(
+          simaai::neat::tensors_from_sample(sample, true).front().copy_payload_bytes());
+      retained.push_back(std::move(sample));
+      // Check frame zero while later writes are happening in the same producer.
+      require(
+          simaai::neat::tensors_from_sample(retained.front(), true).front().copy_payload_bytes() ==
+              scores.front(),
+          context + ": retained first Owned scores changed during producer reuse");
+    }
+    require_zero_copy_pipeline(graph, "owned_sync");
+    handoff.verify("owned_sync");
+    ownership.require_reused_producer("owned_sync");
+    ownership.detach();
+    // Graph destruction stops the cached Run. Handoff's own pad/element refs
+    // are also destroyed before the producer weak-reference checks below.
+  }
+  ownership.require_released(access_units.size(), "owned_sync");
+  for (std::size_t frame = 0; frame < retained.size(); ++frame) {
+    const std::string context = "retained Owned sync frame " + std::to_string(frame);
+    sima_test::require_valid_dma_owned_resnet50_output(retained[frame], context);
+    require(simaai::neat::tensors_from_sample(retained[frame], true).front().copy_payload_bytes() ==
+                scores[frame],
+            context + ": scores changed after producer stop/destruction");
+  }
+  sima_test::require_explicit_host_copy(retained.front(), "owned_sync");
+  std::cout << "[OK] owned_sync Graph::run H.265 -> ResNet50 outputs=" << retained.size()
+            << ": actual producer DMA allocation reuse, independent Owned bytes, producer release "
+               "and post-stop finite scores verified (7 supplemental cached Owned calls)\n";
+}
+
 void run_sync(const std::string& model_path, const std::vector<simaai::neat::Sample>& access_units,
               simaai::neat::OutputMemory memory = simaai::neat::OutputMemory::Auto) {
+  if (memory == simaai::neat::OutputMemory::Owned) {
+    run_owned_sync(model_path, access_units);
+    return;
+  }
   DmaHandoffEvidence evidence;
-  const std::string mode = memory == simaai::neat::OutputMemory::Owned ? "owned_sync" : "sync";
+  const std::string mode = "sync";
   simaai::neat::Graph graph = make_graph(access_units.front(), model_path, mode, 1);
   const simaai::neat::RunOptions options = e2e_run_options(memory);
 
   const simaai::neat::Sample output =
       graph.run(simaai::neat::Sample{access_units.front()}, options);
-  if (memory == simaai::neat::OutputMemory::Owned) {
-    sima_test::require_valid_resnet50_output(output.front(), "explicit Owned sync frame 0");
-  } else {
-    require_auto_output(output.front(), "Auto sync frame 0");
-  }
+  require_auto_output(output.front(), "Auto sync frame 0");
   require_zero_copy_pipeline(graph, mode);
   evidence.verify(mode);
 

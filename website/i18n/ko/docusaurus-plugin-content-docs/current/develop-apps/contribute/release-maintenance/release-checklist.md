@@ -9,6 +9,10 @@ slug: /develop-apps/contribute/release-checklist
 
 본 문서는 공식적인 릴리스 게이트 정책입니다.
 
+## 최신 문서 버전
+
+`deps/manifest.json`을 업데이트한 후 릴리스에 맞게 `website/release-data/current.json`을 한 번 업데이트합니다. `npm --prefix website run sync:release-readmes`를 실행하고 구체적인 버전이 포함된 생성된 README 명령을 커밋합니다. `npm --prefix website run check:releases`와 `./build.sh --doc`를 실행하여 토큰, 과거 버전 예외, 현지화 및 렌더링된 명령을 검증합니다. 호환성 페이지는 구체적인 버전을 사용하여 수동으로 관리합니다. 과거 릴리스 노트의 버전은 고정합니다. 릴리스 데이터만 변경할 때는 번역이나 소스 해시를 업데이트할 필요가 없습니다. 필드별 관리 책임과 토큰 규칙은 `website/release-data/README.md`에 설명되어 있습니다.
+
 ## 릴리스 차단 조건
 
 아래의 모든 조건이 충족되지 않으면 릴리스가 차단됩니다.

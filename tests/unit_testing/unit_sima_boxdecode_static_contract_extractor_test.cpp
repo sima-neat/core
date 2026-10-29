@@ -1,6 +1,8 @@
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/PluginContractSubsets.h"
 #include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
+#include "pipeline/internal/sima/StaticSpecBuilders.h"
+#include "pipeline/Tensor.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -10,6 +12,97 @@ RUN_TEST(
     "unit_sima_boxdecode_static_contract_extractor_test", ([] {
       using namespace simaai::neat::pipeline_internal::sima;
       using namespace simaai::neat::pipeline_internal::sima::plugin_contracts;
+
+      // SuperPoint ports are independently typed; a detector must not stamp
+      // its dtype or quantization requirement onto the descriptor grid.
+      {
+        using namespace simaai::neat;
+        for (int integer_port : {-1, 0, 1}) {
+          TensorList heads{Tensor::from_vector(std::vector<std::uint16_t>(65), {1, 1, 65}),
+                           Tensor::from_vector(std::vector<float>(256), {1, 1, 256})};
+          heads[0].dtype = TensorDType::BFloat16;
+          if (integer_port >= 0) {
+            const int channels = integer_port == 0 ? 65 : 256;
+            heads[integer_port] =
+                Tensor::from_vector(std::vector<std::int8_t>(channels), {1, 1, channels});
+            QuantSpec quant;
+            quant.scales = {4.f};
+            quant.zero_points = {-2};
+            heads[integer_port].semantic.quant = quant;
+          }
+          for (std::size_t i = 0; i < heads.size(); ++i) {
+            heads[i].layout = TensorLayout::HWC;
+            heads[i].route.name = "superpoint_" + std::to_string(i);
+          }
+          std::string message;
+          auto extracted = build_boxdecode_static_contract_from_sample(
+              sample_from_tensors(heads), BoxDecodeType::SuperPoint, std::nullopt, {}, &message);
+          require(extracted.has_value(), "mixed SuperPoint source extraction: " + message);
+          for (const auto profile : {SuperPointProfile::A65V1, SuperPointProfile::LightGlueV1,
+                                     SuperPointProfile::MagicLeapDemoV1}) {
+            auto profiled = *extracted;
+            profiled.superpoint.profile = profile;
+            for (int requested : {0, 17}) {
+              const auto resolved = stagesemantics::finalize_boxdecode_static_contract(
+                  profiled, BoxDecodeType::SuperPoint, std::nullopt, std::nullopt,
+                  BoxDecodeTypeOption::Auto, 0., 0., requested, 0, {});
+              require(resolved.topk == (requested == 0 ? 600 : requested),
+                      "SuperPoint zero must retain its existing profile cap; explicit cap wins");
+            }
+          }
+          require(extracted->tensors[0].data_type == (integer_port == 0 ? "INT8" : "BF16") &&
+                      extracted->tensors[1].data_type == (integer_port == 1 ? "INT8" : "FP32"),
+                  "SuperPoint input dtypes were homogenized");
+          auto subset = extract_boxdecode_contract_subset_from_static_contract(*extracted);
+          validate_boxdecode_contract_subset(subset);
+          CompiledNodeContract upstream;
+          upstream.kernel.emplace();
+          for (std::size_t i = 0; i < 2; ++i) {
+            const auto& logical = subset.logical_inputs[i];
+            upstream.kernel->runtime_contract.logical_outputs.push_back(
+                specbuilders::build_logical_output_static_spec(
+                    i, i, i, i, i, logical.shape, logical.dtype, logical.layout,
+                    logical.logical_name, logical.backend_name, logical.segment_name, 0,
+                    logical.size_bytes, logical.quant));
+          }
+          BoxDecodeStandaloneContractOverrides overrides;
+          overrides.source_storage_kind = BoxDecodeSourceStorageKind::DenseHwcPhysical;
+          auto compiled = build_boxdecode_static_contract_from_compiled_upstream(
+              upstream, BoxDecodeType::SuperPoint, overrides, &message);
+          require(compiled.has_value(), "mixed SuperPoint upstream extraction: " + message);
+          if (integer_port >= 0) {
+            require(extracted->dq_scale[integer_port] == 4. &&
+                        extracted->dq_zp[integer_port] == -2 &&
+                        compiled->dq_scale[integer_port] == 4.,
+                    "SuperPoint authored integer quantization changed");
+            QuantSpec scalar_only;
+            scalar_only.scale = .25f;
+            scalar_only.zero_point = -2;
+            heads[integer_port].semantic.quant = scalar_only;
+            require(!build_boxdecode_static_contract_from_sample(sample_from_tensors(heads),
+                                                                 BoxDecodeType::SuperPoint,
+                                                                 std::nullopt, {}, &message),
+                    "SuperPoint scalar multiplier was silently treated as an authored divisor");
+            InputContract authored_quant;
+            authored_quant.q_scale = 4.;
+            authored_quant.q_zp = -2;
+            const auto authored = build_boxdecode_static_contract_from_sample(
+                sample_from_tensors(heads), BoxDecodeType::SuperPoint, authored_quant, {},
+                &message);
+            require(authored && authored->dq_scale[integer_port] == 4.,
+                    "SuperPoint explicit InputContract quantization fallback was lost");
+            heads[integer_port].semantic.quant.reset();
+            require(!build_boxdecode_static_contract_from_sample(sample_from_tensors(heads),
+                                                                 BoxDecodeType::SuperPoint,
+                                                                 std::nullopt, {}, &message),
+                    "SuperPoint integer port silently received invented quantization");
+            upstream.kernel->runtime_contract.logical_outputs[integer_port].quant.reset();
+            require(!build_boxdecode_static_contract_from_compiled_upstream(
+                        upstream, BoxDecodeType::SuperPoint, overrides, &message),
+                    "SuperPoint upstream integer port silently received invented quantization");
+          }
+        }
+      }
 
       auto shape_desc_matches = [](const sima_ev_shape_desc& desc, const std::vector<int>& dims) {
         if (desc.rank != dims.size()) {
