@@ -636,6 +636,32 @@ def test_camera_input_surface_is_exposed():
     pyneat.nodes.camera_input(opt, capture_buffer_count=129)
 
 
+def test_usb_camera_input_surface_is_exposed():
+  assert isinstance(pyneat.usb_camera_ids(), list)
+
+  opt = pyneat.UsbCameraInputOptions()
+  assert opt.camera_name == ""
+  assert (opt.width, opt.height, opt.framerate_num, opt.framerate_den) == (1920, 1080, 30, 1)
+  assert opt.buffer_name == "camera" and not hasattr(opt, "allow_cpu_fallback")
+  assert not hasattr(opt, "output") and not hasattr(pyneat, "UsbCameraOutput")
+  assert not hasattr(pyneat.groups, "usb_camera_input")
+  assert {"device", "decoded_format"} <= set(dir(pyneat.UsbCameraInfo))
+  # A 4:2:2 camera's NV16 decode feeds Model preprocessing directly.
+  assert pyneat.PreprocessColorFormat.NV16 != pyneat.PreprocessColorFormat.NV12
+  # Options are validated before any camera is touched.
+  with pytest.raises(ValueError, match="requires camera_name"):
+    pyneat.nodes.usb_camera_input(opt)
+  with pytest.raises(ValueError, match="requires camera_name"):
+    pyneat.usb_camera_info(opt)
+  opt.camera_name = "/base/pci@7000000000-3.1:1.0-046d:08e5"
+  opt.width = 0
+  with pytest.raises(ValueError, match="nonzero width"):
+    pyneat.nodes.usb_camera_input(opt)
+  # The probe-once overload reuses usb_camera_info()'s result.
+  doc = pyneat.nodes.usb_camera_input.__doc__
+  assert "info:" in doc and "UsbCameraInfo" in doc
+
+
 def test_input_stage_option_struct_constructors_accept_expected_args():
   model_path = _strict_resnet50_model_path()
   assert model_path.exists(), f"missing fixture: {model_path}"
@@ -1039,7 +1065,7 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
   assert encoded.codec == pyneat.RtspCodec.H264
   assert encoded.latency_ms == 200
   assert encoded.tcp is True
-  assert encoded.drop_on_latency is False
+  assert encoded.drop_on_latency is True
   assert encoded.buffer_mode == ""
   assert encoded.insert_queue is True
   assert encoded.sync_mode is False
@@ -1087,7 +1113,7 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
 
   decoded = pyneat.RtspDecodedInputOptions()
   assert decoded.codec == pyneat.RtspCodec.H264
-  assert decoded.drop_on_latency is False
+  assert decoded.drop_on_latency is True
   assert decoded.buffer_mode == ""
   assert decoded.payload_type == -1
   assert decoded.mjpeg_payload_type == 26

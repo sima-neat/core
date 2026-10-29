@@ -12,6 +12,7 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "nodes/io/UdpOutput.h"
+#include "nodes/io/internal/JpegRtpUdpSink.h"
 #include "nodes/rtp/H264Depacketize.h"
 #include "nodes/rtp/H265Depacketize.h"
 #include "nodes/sima/PCIeSrc.h"
@@ -1887,26 +1888,41 @@ std::optional<PcieDecodeFusionMatch> match_pcie_decode_fusion_branch(
 }
 
 std::optional<SimaDecodeType> encoded_video_sender_codec(const PipelineSegmentPlan& segment) {
-  if (segment.nodes.size() != 3U) {
-    return std::nullopt;
-  }
-  if (!segment.nodes[0] || !segment.nodes[1] || !segment.nodes[2] ||
-      segment.nodes[2]->kind() != "UdpOutput") {
+  const auto& nodes = segment.nodes;
+  if (nodes.empty() || nodes.size() > 3U ||
+      std::any_of(nodes.begin(), nodes.end(), [](const auto& node) { return !node; })) {
     return std::nullopt;
   }
 
-  const auto* udp_output = dynamic_cast<const simaai::neat::UdpOutput*>(segment.nodes[2].get());
   // Absorbing an asynchronous GstBaseSink into the live detector pipeline
   // changes its state domain: that sink can hold the shared pipeline in PAUSED
   // while waiting for preroll from every encoded branch. Keep this public
   // topology segmented rather than coupling video egress to decoder startup.
-  if (!udp_output || udp_output->options().async) {
+  const simaai::neat::Node& sink = *nodes.back();
+  const auto* jpeg_rtp_udp_sink =
+      dynamic_cast<const simaai::neat::internal::JpegRtpUdpSink*>(&sink);
+  if (const auto* udp_output = dynamic_cast<const simaai::neat::UdpOutput*>(&sink)) {
+    if (udp_output->options().async) {
+      return std::nullopt;
+    }
+  } else if (!jpeg_rtp_udp_sink || jpeg_rtp_udp_sink->options().async) {
     return std::nullopt;
   }
-  if (segment.nodes[0]->kind() == "H264Parse" && segment.nodes[1]->kind() == "H264Packetize") {
+  // MJPEG fuses only onto this sink: it parses JPEG itself (VideoSender may omit JpegParse)
+  // and reads the capture slot once. The stock jpegparse ! rtpjpegpay ! udpsink chain reads
+  // the uncached CMA slot several times and runs slower fused than on its segmented copy.
+  if (nodes.size() < 3U) {
+    return jpeg_rtp_udp_sink && (nodes.size() == 1U || nodes[0]->kind() == "JpegParse")
+               ? std::optional(SimaDecodeType::MJPEG)
+               : std::nullopt;
+  }
+  if (jpeg_rtp_udp_sink) {
+    return std::nullopt;
+  }
+  if (nodes[0]->kind() == "H264Parse" && nodes[1]->kind() == "H264Packetize") {
     return SimaDecodeType::H264;
   }
-  if (segment.nodes[0]->kind() == "H265Parse" && segment.nodes[1]->kind() == "H265Packetize") {
+  if (nodes[0]->kind() == "H265Parse" && nodes[1]->kind() == "H265Packetize") {
     return SimaDecodeType::H265;
   }
   return std::nullopt;
@@ -1922,6 +1938,11 @@ std::optional<SimaDecodeType> encoded_source_codec(const PipelineSegmentPlan& so
         return dynamic_cast<const simaai::neat::H265Depacketize*>(node.get()) != nullptr;
       })) {
     return SimaDecodeType::H265;
+  }
+  // A USB camera's JPEG capture. Other MJPEG sources (HTTP, files) stay segmented.
+  if (!source.nodes.empty() && source.nodes.back() &&
+      source.nodes.back()->kind() == "UsbCameraInput") {
+    return SimaDecodeType::MJPEG;
   }
   return std::nullopt;
 }
@@ -2479,8 +2500,8 @@ private:
   bool leaky_sink_ = false;
 };
 
-// Lowers live RTSP source -> generated FanOut -> {SimaDecode chain, async=false encoded
-// VideoSender} into one source pipeline with a tee, whatever link follows the decoder.
+// Lowers live RTSP or USB camera source -> generated FanOut -> {SimaDecode chain, async=false
+// encoded VideoSender} into one source pipeline with a tee, whatever link follows the decoder.
 // Runs after realtime fusion and only claims FanOuts that fusion left segmented.
 void fuse_encoded_video_sender_fanouts(const graph::Graph& graph, ExecutionGraphPlan* plan) {
   if (!plan) {

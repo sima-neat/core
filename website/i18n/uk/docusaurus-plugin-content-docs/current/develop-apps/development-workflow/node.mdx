@@ -85,11 +85,13 @@ graph.add(pyneat.groups.video_input(vopt))
 | Зчитуйте кадри з файлу. | `nodes::FileInput(...)` плюс вузли декодування або `nodes::groups::VideoInputGroup(...)`. | `pyneat.nodes.file_input(...)` плюс декодування вузлів, або `pyneat.groups.video_input(...)`. |
 | Зчитайте одне зображення як джерело. | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
 | Зчитайте дані з камери MIPI/libcamera. | `nodes::CameraInput(...)` | `pyneat.nodes.camera_input(...)` |
+| Зчитування з камери USB (UVC) MJPEG | `nodes::UsbCameraInput(...)` | `pyneat.nodes.usb_camera_input(...)` |
 | Відтворіть RTSP-потік. | `nodes::RTSPInput(...)`, `nodes::groups::RtspEncodedInput(...)` або `nodes::groups::RtspDecodedInput(...)` | `pyneat.nodes.rtsp_input(...)`, `pyneat.groups.rtsp_encoded_input(...)` або `pyneat.groups.rtsp_decoded_input(...)` |
 | Зчитування HTTP-потоку, що складається з частин у форматі MJPEG. | `nodes::groups::HttpMjpegDecodedInput(...)`, або `nodes::HttpSource(...)`, `MultipartJpegDemux()`, `JpegParse()` для ручного налаштування кадру. | `pyneat.groups.http_mjpeg_decoded_input(...)`, або `pyneat.nodes.http_source(...)`, `pyneat.nodes.multipart_jpeg_demux()`, `pyneat.nodes.jpeg_parse()`. |
 | Декодуйте зображення. | `nodes::ImageDecode()` або `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` або `pyneat.nodes.jpeg_decode()` |
 | Кодування сирого відео | `nodes::SimaEncode(SimaEncodeOptions{...})` | `pyneat.nodes.sima_encode(options)` |
 | Декодуйте відео, закодоване певним алгоритмом. | `nodes::SimaDecode(SimaDecodeOptions{...})` | `pyneat.nodes.sima_decode(options)` |
+| Декодуйте кадри MJPEG з камери (4:2:0 або 4:2:2) | `usb_camera_info(...).decoded_format` як `out_format` для `nodes::SimaDecode(...)`, і такий самий вхідний формат моделі | `pyneat.usb_camera_info(...).decoded_format` як `out_format` для `pyneat.nodes.sima_decode(...)`, і такий самий вхідний формат моделі |
 | Змінюйте масштаб або встановлюйте обмеження частоти відтворення відео. | `nodes::VideoScale()`, `VideoRate()`, `ImageFreeze()` | `pyneat.nodes.video_scale()`, `video_rate()`, `image_freeze()` |
 | Створіть повторно використовуваний шлях для введення зображень. | `nodes::groups::ImageInputGroup(...)` | `pyneat.groups.image_input(...)` |
 | Створіть повторно використовуваний шлях для введення відео. | `nodes::groups::VideoInputGroup(...)` | `pyneat.groups.video_input(...)` |
@@ -160,6 +162,61 @@ ffprobe -v error -rtsp_transport tcp -select_streams v:0 \
 `nodes::JpegDecode()` і `pyneat.nodes.jpeg_decode()` — це окремі вузли декодування JPEG для CPU/GStreamer. Використовуйте їх для простих конвеєрів обробки зображень на CPU. Не використовуйте їх для нативного декодування відео MJPEG перед попередньою обробкою моделі.
 
 Для RTSP віддавайте перевагу групам, що враховують кодек, коли форма джерела є стандартною. H.264 залишається значенням за замовчуванням. Явно виберіть H.265 або HEVC.
+
+### Декодування камер MJPEG
+
+USB-камери надсилають MJPEG із субдискретизацією кольору 4:2:0 або 4:2:2; більшість використовує 4:2:2. Під час виведення без копіювання декодер записує лише власну субдискретизацію потоку, тому граф має знати її ще до побудови. Для USB-камери її повідомляє `usb_camera_info(...)` у полі `decoded_format`; використайте це значення як `out_format` декодера. Для іншого джерела MJPEG задайте `out_format` як `NV12` для 4:2:0 або `NV16` для 4:2:2. Модель читає NV16 напряму: задайте такий самий вхідний формат її попередньої обробки, і кадри 4:2:2 надходитимуть до моделі без етапу перетворення.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include "neat.h"
+
+// camera: your UsbCameraInputOptions; also pass info to UsbCameraInput(camera, info).
+const simaai::neat::UsbCameraInfo info = simaai::neat::usb_camera_info(camera);
+simaai::neat::SimaDecodeOptions decode;
+decode.type = simaai::neat::SimaDecodeType::MJPEG;
+decode.out_format = info.decoded_format;  // NV12 or NV16
+decode.dec_width = 1920;
+decode.dec_height = 1080;
+decode.dec_fps = 30;
+decode.raw_output = true;  // zero-copy: the decoder writes the camera's own sampling
+graph.add(simaai::neat::nodes::JpegParse());
+graph.add(simaai::neat::nodes::SimaDecode(decode));
+
+simaai::neat::Model::Options model_options;
+model_options.preprocess.color_convert.input_format =
+    decode.out_format == simaai::neat::FormatTag::NV16 ? simaai::neat::PreprocessColorFormat::NV16
+                                                       : simaai::neat::PreprocessColorFormat::NV12;
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+# camera: your UsbCameraInputOptions; also pass info to usb_camera_input(camera, info).
+info = pyneat.usb_camera_info(camera)
+decode = pyneat.SimaDecodeOptions()
+decode.type = pyneat.SimaDecodeType.MJPEG
+decode.out_format = info.decoded_format  # NV12 or NV16
+decode.dec_width, decode.dec_height, decode.dec_fps = 1920, 1080, 30
+decode.raw_output = True  # zero-copy: the decoder writes the camera's own sampling
+graph.add(pyneat.nodes.jpeg_parse())
+graph.add(pyneat.nodes.sima_decode(decode))
+
+model_options = pyneat.ModelOptions()
+model_options.preprocess.color_convert.input_format = (
+    pyneat.PreprocessColorFormat.NV16 if decode.out_format == pyneat.Format.NV16
+    else pyneat.PreprocessColorFormat.NV12)
+```
+
+</CodeTab>
+</CodeTabs>
+
+`HttpMjpegDecodedInput(...)` і `RtspDecodedInput(...)` і надалі запитують у декодера NV12, тому підтримують лише потоки MJPEG 4:2:0.
 
 ### Залиште вхідний потік RTSP у кодованому вигляді.
 

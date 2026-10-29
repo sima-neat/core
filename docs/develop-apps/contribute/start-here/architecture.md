@@ -1639,6 +1639,23 @@ compatibility-copy pool grows on demand up to 128 buffers and is not capped by t
 so a leaky queue can apply its drop policy without the upstream bridge
 stalling first.
 
+`nodes::UsbCameraInput` is `v4l2src io-mode=dmabuf-import`, a JPEG capsfilter,
+`neatcapturepool`, an `identity` that drops frames the driver flags as corrupted,
+and an optional queue. `neatcapturepool` answers the camera's allocation query
+with CMA DMA-BUFs, so the camera captures each encoded JPEG frame into memory
+that `neatdecoder` reads in place, with no copy between capture and decode. The
+frames can feed both `VideoSender` passthrough (MJPEG) and `SimaDecode` (MJPEG),
+which decodes to the camera's native layout, NV12 for 4:2:0 and NV16 for 4:2:2.
+
+An MJPEG `VideoSender` is the internal `JpegRtpUdpSink` (`neatjpegudpsink`) alone
+when that factory is registered, and `JpegParse`, `JpegPacketize` (`rtpjpegpay`) and
+`UdpOutput` otherwise. `VideoSender` checks the registry when the Graph is
+constructed. The sink reads each frame's JPEG headers itself but its caps require
+width and height, so `JpegRtpUdpSink` is an input-spec specializer: an input whose
+spec carries dimensions renders the bare sink, and any other input keeps a
+`jpegparse` inside the node's fragment. A segment that ends in either sink copies its
+encoded input rather than holding the producer's capture buffer and loan.
+
 ### Teardown
 
 Teardown is intentionally defensive.

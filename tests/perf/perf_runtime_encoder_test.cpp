@@ -1,8 +1,10 @@
 #include "encoder_perf_common.h"
 #include "codec_perf_common.h"
 #include "codec_fixture_diagnostics.h"
+#include "gst/GstHelpers.h"
 #include "nodes/common/Output.h"
 #include "nodes/groups/VideoSender.h"
+#include "nodes/io/internal/JpegRtpUdpSink.h"
 #include "nodes/sima/H264EncodeSima.h"
 #include "nodes/sima/SimaEncode.h"
 
@@ -81,8 +83,16 @@ groups::RtspCodec sender_codec(const Config& c) {
 int payload_type(const Config& c) {
   return c.codec == "h264" ? 96 : c.codec == "h265" ? 98 : 26;
 }
+// VideoSender's MJPEG composition follows the registry: neatjpegudpsink when present.
+bool sink_sends(const Config& c) {
+  return c.sender() && c.codec == "mjpeg" &&
+         neat::element_exists(neat::internal::kJpegRtpUdpSinkFactory);
+}
 std::string payloader(const Config& c) {
-  return c.codec == "h264" ? "rtph264pay" : c.codec == "h265" ? "rtph265pay" : "rtpjpegpay";
+  return c.codec == "h264"   ? "rtph264pay"
+         : c.codec == "h265" ? "rtph265pay"
+         : sink_sends(c)     ? neat::internal::kJpegRtpUdpSinkFactory
+                             : "rtpjpegpay";
 }
 
 // Same static-blocks-v1 pixels as the native encoder workload. Preparing and
@@ -299,6 +309,7 @@ json execute(const Config& c) {
   auto run = graph.build(neat::Sample{prepared.front()}, options);
   const double startup = ep::seconds(build_start, ep::now_ns()) * 1000;
   ep::Accounting state(payload_type(c));
+  state.sink_sends = sink_sends(c);
   using Element = std::unique_ptr<GstElement, decltype(&gst_object_unref)>;
   Element encoder(c.passthrough() ? nullptr : ep::find_factory(run, "neatencoder"),
                   gst_object_unref);
@@ -307,7 +318,7 @@ json execute(const Config& c) {
   ep::PadCounter completed(c.passthrough() ? pay.get() : encoder.get(),
                            c.passthrough() ? "sink" : "src", state, false);
   std::unique_ptr<ep::PadCounter> packets;
-  if (pay)
+  if (pay && !state.sink_sends)
     packets = std::make_unique<ep::PadCounter>(pay.get(), "src", state, true);
   std::atomic<bool> stop{false};
   bool eos = false;
@@ -435,6 +446,12 @@ json execute(const Config& c) {
   }
   if (producer.joinable())
     producer.join();
+  if (state.sink_sends) {
+    guint64 frames = 0, packets_sent = 0;
+    g_object_get(pay.get(), "frames-sent", &frames, "packets-sent", &packets_sent, nullptr);
+    state.sent_frames = frames;
+    state.sent_packets = packets_sent;
+  }
   if (!c.capture.empty()) {
     std::ofstream file(c.capture, std::ios::binary);
     for (const auto& bytes : state.reference)

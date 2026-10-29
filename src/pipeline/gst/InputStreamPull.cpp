@@ -54,7 +54,7 @@ void maybe_restore_cached_preprocess_meta(InputStream::State& st, GstSample* sam
   if (!restore_buffer_meta) {
     return;
   }
-  const bool debug = pipeline_internal::env_bool("SIMA_PREPROC_META_TRACE", false);
+  const bool debug = pipeline_internal::preproc_meta_trace_enabled();
   if (!sample) {
     if (debug) {
       std::fprintf(stderr, "[PREPROC_META_TRACE] pull-buffer restore skip=no_sample\n");
@@ -151,7 +151,7 @@ bool sample_already_has_preprocess_semantic(const Sample& sample) {
 }
 
 void maybe_restore_cached_preprocess_meta_on_sample(InputStream::State& st, Sample* sample) {
-  const bool debug = pipeline_internal::env_bool("SIMA_PREPROC_META_TRACE", false);
+  const bool debug = pipeline_internal::preproc_meta_trace_enabled();
   if (!sample) {
     if (debug) {
       std::fprintf(stderr, "[PREPROC_META_TRACE] pull-sample restore skip=no_sample\n");
@@ -321,8 +321,10 @@ bool sample_bytes_enabled() {
 }
 
 bool sample_storage_debug_enabled() {
-  return sample_debug_enabled() || pipeline_internal::env_bool("SIMA_STAGE_DEBUG", false) ||
-         pipeline_internal::env_bool("SIMA_INPUTSTREAM_HOLDER_DEBUG", false);
+  static const bool enabled = sample_debug_enabled() ||
+                              pipeline_internal::env_bool("SIMA_STAGE_DEBUG", false) ||
+                              pipeline_internal::env_bool("SIMA_INPUTSTREAM_HOLDER_DEBUG", false);
+  return enabled;
 }
 
 bool tensor_set_debug_enabled() {
@@ -1028,7 +1030,8 @@ Sample output_from_sample_stream(GstSample* sample, const char* where, bool copy
   if (has_override) {
     out = apply_output_tensor_override(out, **override_opt, false, preserve_framework_output);
   }
-  if (pipeline_internal::env_bool("SIMA_SAMPLE_FORCE_BUNDLE", false)) {
+  static const bool force_bundle = pipeline_internal::env_bool("SIMA_SAMPLE_FORCE_BUNDLE", false);
+  if (force_bundle) {
     if (!sample_is_multi_output(out)) {
       Sample forced;
       forced.kind = SampleKind::Bundle;

@@ -148,6 +148,9 @@ public:
   InputRole input_role() const override {
     return base_.input_role();
   }
+  bool is_live_source() const override {
+    return base_.is_live_source();
+  }
   NodeCapsBehavior caps_behavior() const override {
     return base_.caps_behavior();
   }

@@ -271,8 +271,15 @@ bool copy_tensor_payload_to(const simaai::neat::Tensor& tensor, uint8_t* dst, st
       *err = "tensor copy: missing storage";
     return false;
   }
+  return copy_tensor_payload_to(tensor, tensor.map(simaai::neat::MapMode::Read), dst, dst_bytes,
+                                err);
+}
 
-  simaai::neat::Mapping mapping = tensor.map(simaai::neat::MapMode::Read);
+bool copy_tensor_payload_to(const simaai::neat::Tensor& tensor,
+                            const simaai::neat::Mapping& mapping, uint8_t* dst,
+                            std::size_t dst_bytes, std::string* err) {
+  if (dst_bytes == 0)
+    return true;
   if (!mapping.data) {
     if (err)
       *err = "tensor copy: map failed";
@@ -571,7 +578,7 @@ bool ensure_writable_for_meta(GstBuffer** buffer, const SampleSpec& spec, const 
   return true;
 }
 
-bool resolve_encoded_payload_bytes(const simaai::neat::Tensor& tensor, const SampleSpec& spec,
+bool resolve_encoded_payload_bytes(const simaai::neat::Mapping& mapping, const SampleSpec& spec,
                                    std::size_t* out_bytes, std::string* err) {
   if (!out_bytes) {
     if (err)
@@ -583,7 +590,6 @@ bool resolve_encoded_payload_bytes(const simaai::neat::Tensor& tensor, const Sam
       *err = "encoded bytes: SampleSpec is not encoded";
     return false;
   }
-  simaai::neat::Mapping mapping = tensor.map(simaai::neat::MapMode::Read);
   if (!mapping.data) {
     if (err)
       *err = "encoded bytes: tensor map failed";
