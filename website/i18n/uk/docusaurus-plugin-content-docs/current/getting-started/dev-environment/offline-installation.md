@@ -23,7 +23,7 @@ sidebar_position: 6
 
 | Пакет | Призначення | Доступність |
 | --- | --- | --- |
-| Neat SDK | Налаштування середовища розробки SDK. | SDK 2.1.3.0 або новішої версії |
+| Palette SDK | Налаштування середовища розробки SDK. | SDK 2.1.3.0 або новішої версії |
 | Model Compiler | Встановлення Model Compiler у SDK або на окремому хості. | Model Compiler 2.1.3 або новішої версії |
 
 ## Перед початком
@@ -37,7 +37,7 @@ sidebar_position: 6
 Виберіть пакет для **цільового хоста**.
 Зберігайте всі файли пакета разом, зокрема сценарії, метадані, контрольні суми та залежності.
 
-## Встановіть Neat SDK {#download-the-sdk-offline-package}
+## Встановіть Palette SDK {#download-the-sdk-offline-package}
 
 ### 1. Завантажте пакет
 
@@ -104,7 +104,7 @@ sima-cli neat install model-compiler/arm64@v%%release.model_compiler%% -t offlin
 
 Виберіть одне місце встановлення.
 
-**У Neat SDK:**
+**У Palette SDK:**
 
 1. Скопіюйте всю завантажену теку в робочий простір хоста, зіставлений із `/workspace` у контейнері SDK.
 2. Відкрийте оболонку SDK.

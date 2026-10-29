@@ -23,7 +23,7 @@ sidebar_position: 6
 
 | パッケージ | 用途 | 提供状況 |
 | --- | --- | --- |
-| Neat SDK | SDK 開発環境をセットアップします。 | SDK 2.1.3.0 以降 |
+| Palette SDK | SDK 開発環境をセットアップします。 | SDK 2.1.3.0 以降 |
 | Model Compiler | SDK 内またはスタンドアロンホストに Model Compiler をインストールします。 | Model Compiler 2.1.3 以降 |
 
 ## 開始前の準備
@@ -37,7 +37,7 @@ sidebar_position: 6
 **対象ホスト**用のパッケージを選択してください。
 スクリプト、メタデータ、チェックサム、依存関係を含むすべてのパッケージファイルを一緒に保管してください。
 
-## Neat SDK をインストールする {#download-the-sdk-offline-package}
+## Palette SDK をインストールする {#download-the-sdk-offline-package}
 
 ### 1. パッケージをダウンロードする
 
@@ -104,7 +104,7 @@ sima-cli neat install model-compiler/arm64@v%%release.model_compiler%% -t offlin
 
 インストール先を 1 つ選択してください。
 
-**Neat SDK 内：**
+**Palette SDK 内：**
 
 1. ダウンロードしたディレクトリ全体を、SDK コンテナーの `/workspace` にマッピングされたホストのワークスペースにコピーしてください。
 2. SDK シェルを開いてください。

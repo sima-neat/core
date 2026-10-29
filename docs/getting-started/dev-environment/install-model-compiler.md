@@ -1,6 +1,6 @@
 ---
 title: Install Model Compiler
-description: Install Model Compiler in the Neat SDK or on a supported standalone host
+description: Install Model Compiler in the Palette SDK or on a supported standalone host
 sidebar_position: 5
 ---
 
@@ -17,38 +17,38 @@ including GenAI models, and is **optional** only if you exclusively use
 precompiled model packages.
 
 During SDK install/setup, `sima-cli` prompts you to install the matching Model
-Compiler as an extension inside the Neat SDK. You can also install it later,
-either inside the Neat SDK container or standalone on a supported Ubuntu host.
+Compiler as an extension inside the Palette SDK. You can also install it later,
+either inside the Palette SDK container or standalone on a supported Ubuntu host.
 For supported version combinations and standalone host requirements, see
 [Compatibility](/getting-started/compatibility/#model-compiler).
 
 ## Install Inside the SDK
 
 If you skip Model Compiler during SDK setup, install it later from inside the
-Neat SDK. Run the command that matches your Neat SDK container architecture. To
+Palette SDK. Run the command that matches your Palette SDK container architecture. To
 check it, run `uname -m` inside the SDK shell: `aarch64` means use the `arm64`
 command, and `x86_64` means use the `amd64` command.
 
-For `amd64` Neat SDK containers:
+For `amd64` Palette SDK containers:
 
 <ShellCommand prompt="sdk">
 sima-cli neat install model-compiler/amd64@v%%release.model_compiler%%
 </ShellCommand>
 
-For `arm64` Neat SDK containers:
+For `arm64` Palette SDK containers:
 
 <ShellCommand prompt="sdk">
 sima-cli neat install model-compiler/arm64@v%%release.model_compiler%%
 </ShellCommand>
 
-After installation, activate the compiler environment from inside the Neat SDK
+After installation, activate the compiler environment from inside the Palette SDK
 shell:
 
 <ShellCommand prompt="sdk">
 activate-model-compiler
 </ShellCommand>
 
-To return to the default Neat SDK shell, run:
+To return to the default Palette SDK shell, run:
 
 <ShellCommand prompt="sdk">
 deactivate-model-compiler

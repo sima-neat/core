@@ -1,10 +1,10 @@
 ---
 title: "Windows 主機備註"
-description: "為 Windows 11 主機準備 Neat SDK 和 DevKit-Sync。"
+description: "為 Windows 11 主機準備 Palette SDK 和 DevKit-Sync。"
 sidebar_position: 2
 ---
 
-當您的主機為 Windows 11，且您想使用 DevKit-Sync 執行 Neat SDK 時，請參考本指南。
+當您的主機為 Windows 11，且您想使用 DevKit-Sync 執行 Palette SDK 時，請參考本指南。
 
 ## 先決條件
 
@@ -15,7 +15,7 @@ sidebar_position: 2
 
 ## 從 WSL 開始。
 
-請從您的 WSL Linux 發行版內部執行 Neat SDK 指令，而不是從 PowerShell 或命令提示字元執行。這包括 `sima-cli neat install sdk@%%release.sdk_channel%%`。
+請從您的 WSL Linux 發行版內部執行 Palette SDK 指令，而不是從 PowerShell 或命令提示字元執行。這包括 `sima-cli neat install sdk@%%release.sdk_channel%%`。
 
 ## WSL 網路模式
 
@@ -66,7 +66,7 @@ sima-cli sdk setup --devkit <devkit-ip>
 ```
 
 :::note Insight 在 Windows 上的直接連結
-透過 Windows 的直接網路共用功能，Windows 防火牆和 WSL 的埠轉發行為可能會阻止網路上的其他機器存取 Neat Insight 網路介面。在此設定中，請直接在 Windows Neat SDK 主機上開啟 Insight，例如在 `https://localhost:9900`。
+透過 Windows 的直接網路共用功能，Windows 防火牆和 WSL 的埠轉發行為可能會阻止網路上的其他機器存取 Neat Insight 網路介面。在此設定中，請直接在 Windows Palette SDK 主機上開啟 Insight，例如在 `https://localhost:9900`。
 :::
 
 ## NFS 防火牆規則（PowerShell）
@@ -84,4 +84,4 @@ New-NetFirewallRule -DisplayName "Allow NFS UDP 2049" -Direction Inbound -Protoc
 
 ## 下一步
 
-傳回 [Neat SDK](/getting-started/dev-environment/)，繼續進行安裝/設定。
+傳回 [Palette SDK](/getting-started/dev-environment/)，繼續進行安裝/設定。

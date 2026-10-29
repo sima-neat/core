@@ -8,7 +8,7 @@ const repoRoot = path.resolve(websiteRoot, "..");
 const locales = ["ko", "ja", "zh-Hant", "uk"];
 const categoryPrefix = "sidebar.docs.category.";
 const protectedLabels = new Set([
-  "API", "GenAI", "Insight", "Model Compiler API", "Neat Library", "Neat SDK",
+  "API", "GenAI", "Insight", "Model Compiler API", "Neat Library", "Palette SDK",
   "Sentinel", "pyneat", "sima-cli",
 ]);
 // sima-cli command names keep their English spelling. Listed by key, because

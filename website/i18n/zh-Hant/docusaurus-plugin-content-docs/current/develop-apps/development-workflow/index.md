@@ -54,7 +54,7 @@ sidebar_position: 4
 
 針對新使用者的逐步入門指南：
 
-- [Neat SDK](/getting-started/dev-environment/) — 安裝 Neat SDK，配對一個 DevKit，並在搭載 `dk` 的硬體上執行。
+- [Palette SDK](/getting-started/dev-environment/) — 安裝 Palette SDK，配對一個 DevKit，並在搭載 `dk` 的硬體上執行。
 - [建立](/develop-apps/contribute/build) — 使用 `build.sh`（貢獻者工作流程）從原始碼建立 Neat。
 - [您好，Neat！](/develop-apps/hello-neat/minimal)——一個簡潔的 CMake 應用程式，它會連結到已安裝的函式庫。
 - [教學指南](/tutorials) — 循序漸進的教學章節，內容從「第一個模型」到「生產管線」不等。

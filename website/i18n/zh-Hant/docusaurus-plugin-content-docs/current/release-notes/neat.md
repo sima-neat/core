@@ -43,7 +43,7 @@ SiMa.ai Neat Library 的版本資訊。
 - 每個具體化的管線區段現在都會在 `build()` 期間驗證最終的 GStreamer 名稱，不需另外明確呼叫 `validate()`。名稱重複或遺漏時會以 `misconfig.pipeline_shape` 失敗，而不會產生截斷的管線。
 - 自訂片段現在會報告所有明確名稱，並連同宣告一起轉換具名 pad 參照。名稱衝突會直接遭到拒絕，不會自動重新命名。
 
-| 版本 | 相容的 Neat SDK | 備註 |
+| 版本 | 相容的 Palette SDK | 備註 |
 |---|---|---|
 | 0.6.0 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
 | 0.5.0 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |

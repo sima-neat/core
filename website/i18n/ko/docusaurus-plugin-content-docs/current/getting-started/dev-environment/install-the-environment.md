@@ -1,10 +1,10 @@
 ---
 title: "SDK 설치"
-description: "Neat SDK 컨테이너 설치 및 설정"
+description: "Palette SDK 컨테이너 설치 및 설정"
 sidebar_position: 2
 ---
 
-최신 Neat SDK를 설치합니다. Neat SDK는 호스트 시스템에서 컨테이너로 실행됩니다.
+최신 Palette SDK를 설치합니다. Palette SDK는 호스트 시스템에서 컨테이너로 실행됩니다.
 
 ## 사전 요구 사항
 
@@ -17,23 +17,23 @@ sidebar_position: 2
 
 나중에 DevKit Sync를 사용하려면 다음 항목도 필요합니다.
 
-- Neat SDK와 호환되는 소프트웨어를 실행하는 DevKit. 자세한 내용은 [호환성 가이드](/getting-started/compatibility/)를 참조하십시오.
+- Palette SDK와 호환되는 소프트웨어를 실행하는 DevKit. 자세한 내용은 [호환성 가이드](/getting-started/compatibility/)를 참조하십시오.
 - NFS 트래픽이 허용되는 동일 네트워크에 연결된 호스트 시스템과 DevKit.
 - DevKit IP 주소.
 
 ## 설치
 
-현재 Neat SDK %%release.sdk_series%% 릴리스 채널을 설치합니다.
+현재 Palette SDK %%release.sdk_series%% 릴리스 채널을 설치합니다.
 
 <ShellCommand prompt="host">
 sima-cli neat install sdk@%%release.sdk_channel%%
 </ShellCommand>
 
-처음 설치할 때는 Neat SDK 컨테이너 이미지를 다운로드하므로 몇 분이 걸릴 수 있습니다. 이미지 다운로드가 완료되면 설치 프로그램이 SDK 설정을 시작하고 Modalix DevKit과 페어링할지, SDK 내부에 호환되는 Model Compiler를 설치할지 묻습니다.
+처음 설치할 때는 Palette SDK 컨테이너 이미지를 다운로드하므로 몇 분이 걸릴 수 있습니다. 이미지 다운로드가 완료되면 설치 프로그램이 SDK 설정을 시작하고 Modalix DevKit과 페어링할지, SDK 내부에 호환되는 Model Compiler를 설치할지 묻습니다.
 
 DevKit 페어링을 선택한 경우 메시지가 표시되면 DevKit IP 주소를 입력합니다. 설정 과정에서 SDK 작업 공간을 구성하고 SDK 컨테이너를 시작한 뒤 DevKit Sync를 구성합니다. 페어링을 건너뛰어도 SDK 작업 공간은 생성되며 나중에 페어링할 수 있습니다.
 
-`%%release.sdk_channel%%` 패키지는 %%release.sdk_series%% 계열의 최신 Neat SDK 패치 릴리스를 추적합니다. 현재 릴리스는 Neat SDK %%release.sdk%%이며 DevKit 소프트웨어 %%release.platform%%과 호환됩니다.
+`%%release.sdk_channel%%` 패키지는 %%release.sdk_series%% 계열의 최신 Palette SDK 패치 릴리스를 추적합니다. 현재 릴리스는 Palette SDK %%release.sdk%%이며 DevKit 소프트웨어 %%release.platform%%과 호환됩니다.
 
 설정 중 `sima-cli`는 호환되는 Model Compiler를 SDK 내부에 설치할지도 묻습니다. 모델을 직접 컴파일하거나 양자화한다면 수락하십시오. 별도로 버전을 선택할 필요가 없습니다. 사전 컴파일된 모델 패키지만 실행한다면 건너뛸 수 있습니다. 나중에 설치하거나 특정 패치를 고정하거나 독립 실행형 호스트를 사용하려면 [Model Compiler 설치](/getting-started/dev-environment/install-model-compiler/)와 [호환성 가이드](/getting-started/compatibility/)를 참조하십시오.
 
@@ -61,7 +61,7 @@ SDK 2.0.0, 2.1.2.0 및 2.1.2.1에서는 이미지 가져오기와 설정에 별�
 
 ### SDK 셸 사용
 
-다음 명령으로 Neat SDK 셸을 엽니다.
+다음 명령으로 Palette SDK 셸을 엽니다.
 
 <ShellCommand prompt="host">
 sima-cli sdk neat
@@ -102,15 +102,15 @@ SDK가 사전 빌드 모델과 같은 자산을 가져올 수 있도록 SDK 컨�
 sima-cli neat install sdk@%%release.sdk_channel%%
 </ShellCommand>
 
-기존 Neat SDK 컨테이너 내부의 Neat 라이브러리를 업데이트하려면 컨테이너 셸에서 Neat CLI를 실행합니다.
+기존 Palette SDK 컨테이너 내부의 Neat 라이브러리를 업데이트하려면 컨테이너 셸에서 Neat CLI를 실행합니다.
 
 <ShellCommand prompt="sdk">
 neat update
 </ShellCommand>
 
-이 명령은 현재 Neat SDK에 설치된 Neat 라이브러리 구성 요소를 업데이트합니다. 컨테이너 수준 변경이 필요한 경우 전체 컨테이너 이미지 업그레이드를 대신하지는 않습니다.
+이 명령은 현재 Palette SDK에 설치된 Neat 라이브러리 구성 요소를 업데이트합니다. 컨테이너 수준 변경이 필요한 경우 전체 컨테이너 이미지 업그레이드를 대신하지는 않습니다.
 
-나중에 Neat SDK 컨테이너를 삭제하거나 다시 만들면 새 컨테이너 안에서 `neat update`를 다시 실행하십시오.
+나중에 Palette SDK 컨테이너를 삭제하거나 다시 만들면 새 컨테이너 안에서 `neat update`를 다시 실행하십시오.
 
 ## 제거
 

@@ -8,11 +8,11 @@ sidebar_position: 3
 SDK 설치 중에 DevKit Sync 설정을 선택적으로 진행할 수 있으며, 설치 프로그램에서 이미 해당 설정을 묻는 메시지를 표시합니다. 이 페이지를 참고하여 DevKit Sync의 작동 방식을 확인하거나, 나중에 SDK 페어링을 다른 DevKit로 변경하려는 경우에 활용하십시오.
 :::
 
-DevKit Sync는 Neat SDK를 동일 네트워크의 Modalix DevKit와 연결합니다. 이를 통해 호스트, Neat SDK 컨테이너, DevKit 전반에 걸쳐 하나의 공유 작업 공간을 제공하며, 하드웨어에서 SDK 기반 명령을 실행하기 위한 `dk` 헬퍼를 제공합니다.
+DevKit Sync는 Palette SDK를 동일 네트워크의 Modalix DevKit와 연결합니다. 이를 통해 호스트, Palette SDK 컨테이너, DevKit 전반에 걸쳐 하나의 공유 작업 공간을 제공하며, 하드웨어에서 SDK 기반 명령을 실행하기 위한 `dk` 헬퍼를 제공합니다.
 
 ![호스트, 컨테이너 및 DevKit 작업 공간 매핑](@site/../docs/images/elxr-sdk-workspaces.svg)
 
-동일한 작업 공간이 Neat SDK 컨테이너와 DevKit에 `/workspace`로 마운트되므로, 빌드 아티팩트, 로그, 추적 정보 및 모델 파일이 각 환경에서 확인할 수 있습니다.
+동일한 작업 공간이 Palette SDK 컨테이너와 DevKit에 `/workspace`로 마운트되므로, 빌드 아티팩트, 로그, 추적 정보 및 모델 파일이 각 환경에서 확인할 수 있습니다.
 
 ## DevKit Sync 구성
 
@@ -24,7 +24,7 @@ sima-cli sdk setup --devkit {devkit-ip}
 
 설정 중:
 
-- 둘 이상의 SDK 이미지가 있는 경우 설치된 Neat SDK %%release.sdk%% 이미지를 선택합니다.
+- 둘 이상의 SDK 이미지가 있는 경우 설치된 Palette SDK %%release.sdk%% 이미지를 선택합니다.
 - 다른 경로가 필요하지 않은 경우 기본 `/workspace` DevKit 마운트 경로를 사용합니다.
 - 호스트에서 NFS 서버를 설정하라는 메시지가 표시되면 호스트 관리자 비밀번호를 입력합니다.
 - 메시지가 표시되면 DevKit 사용자 계정을 입력합니다. 기본 사용자는 `sima`이고 기본 비밀번호는 `edgeai`입니다.
@@ -53,9 +53,9 @@ dk status
 
 ## SDK에서 페어링을 업데이트하세요.
 
-Neat SDK가 이미 설치되어 있고 다른 DevKit를 페어링하거나 DevKit의 IP 주소가 변경된 후 페어링을 업데이트해야 할 때 이 단계를 따르세요.
+Palette SDK가 이미 설치되어 있고 다른 DevKit를 페어링하거나 DevKit의 IP 주소가 변경된 후 페어링을 업데이트해야 할 때 이 단계를 따르세요.
 
-Neat SDK 컨테이너 내부에서 다음 명령을 실행합니다.
+Palette SDK 컨테이너 내부에서 다음 명령을 실행합니다.
 
 <ShellCommand prompt="sdk">
 source devkit.sh {devkit-ip}
@@ -71,32 +71,32 @@ source devkit.sh 192.168.91.221
 
 ## DevKit Sync 없이 SDK 구성
 
-Neat SDK 호스트에서 DevKit에 연결할 수 없는 경우에도 페어링하지 않고 SDK 작업 공간을 구성할 수 있습니다.
+Palette SDK 호스트에서 DevKit에 연결할 수 없는 경우에도 페어링하지 않고 SDK 작업 공간을 구성할 수 있습니다.
 
 <ShellCommand prompt="host">
 sima-cli sdk setup
 </ShellCommand>
 
-Neat SDK 컨테이너에서 여전히 실행 파일을 빌드할 수 있지만, 테스트를 위해 해당 파일을 DevKit로 수동으로 전송해야 합니다. DevKit에서 호환되는 Neat Library 버전을 실행하고 있는지 확인하십시오.
+Palette SDK 컨테이너에서 여전히 실행 파일을 빌드할 수 있지만, 테스트를 위해 해당 파일을 DevKit로 수동으로 전송해야 합니다. DevKit에서 호환되는 Neat Library 버전을 실행하고 있는지 확인하십시오.
 
 ## DevKit Sync를 사용한 파일 공유
 
 DevKit Sync는 세 가지 환경을 연결합니다.
 
 1. 호스트
-2. Neat SDK 컨테이너
+2. Palette SDK 컨테이너
 3. DevKit
 
 `sima-cli sdk setup --devkit {devkit-ip}`는 NFS를 구성하여 동일한 작업 공간이 세 가지 환경 모두에서 사용 가능하도록 합니다.
 
 - 호스트 워크스페이스 폴더는 호스트 NFS를 통해 내보내집니다.
-- 해당 폴더는 Neat SDK 컨테이너에 `/workspace`로 마운트됩니다.
+- 해당 폴더는 Palette SDK 컨테이너에 `/workspace`로 마운트됩니다.
 - 동일한 콘텐츠가 NFS를 통해 DevKit의 `/workspace`에 표시됩니다.
 - 마운트된 폴더의 기본 이름은 `/workspace`이며, 설정 중에 변경할 수 있습니다.
 
 이 구성은 빌드 아티팩트에 대한 직접적인 작업 흐름을 제공합니다.
 
-- Neat SDK에서 생성된 아티팩트는 별도의 배포 단계 없이 DevKit에서 즉시 확인할 수 있습니다.
+- Palette SDK에서 생성된 아티팩트는 별도의 배포 단계 없이 DevKit에서 즉시 확인할 수 있습니다.
 - 에이전트는 DevKit에서 앱이 실행되는 동안 생성된 로그, 출력, 추적 정보 및 기타 임시 파일에 액세스할 수 있습니다.
 - 개발자와 에이전트는 동일한 작업 공간에서 동일한 파일을 검사할 수 있습니다.
 

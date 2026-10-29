@@ -1,10 +1,10 @@
 ---
 title: "Ubuntu 호스트 관련 참고 사항"
-description: "Neat SDK 및 DevKit-Sync를 위해 Ubuntu 호스트를 준비합니다."
+description: "Palette SDK 및 DevKit-Sync를 위해 Ubuntu 호스트를 준비합니다."
 sidebar_position: 1
 ---
 
-호스트 머신이 Ubuntu이고 Neat SDK를 DevKit-Sync와 함께 실행하려는 경우 이 가이드를 참조하십시오.
+호스트 머신이 Ubuntu이고 Palette SDK를 DevKit-Sync와 함께 실행하려는 경우 이 가이드를 참조하십시오.
 
 ## 필수 조건
 
@@ -81,4 +81,4 @@ Ubuntu 방화벽 규칙이 활성화된 경우, DevKit에 연결된 인터페이
 
 ## 다음 단계
 
-[Neat SDK](/getting-started/dev-environment/)로 돌아가서 설치/설정 작업을 계속하십시오.
+[Palette SDK](/getting-started/dev-environment/)로 돌아가서 설치/설정 작업을 계속하십시오.

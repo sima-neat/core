@@ -1,6 +1,6 @@
 ---
 title: "Примітки до випуску"
-description: "Примітки до випуску для Neat SDK, Neat Library, Neat Examples, sima-cli, Insight, Model Compiler та LLiMa."
+description: "Примітки до випуску для Palette SDK, Neat Library, Neat Examples, sima-cli, Insight, Model Compiler та LLiMa."
 sidebar_position: 1
 ---
 
@@ -13,9 +13,9 @@ sidebar_position: 1
 <div class="overview-link-columns overview-link-columns-single">
   <section class="overview-link-panel overview-link-panel-reference">
     <h2>Примітки до випуску</h2>
-    <p>Neat SDK, Neat Library, Neat Examples, sima-cli, Insight, Model Compiler та LLiMa: зміни в кожній версії.</p>
+    <p>Palette SDK, Neat Library, Neat Examples, sima-cli, Insight, Model Compiler та LLiMa: зміни в кожній версії.</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="/release-notes/neat-development-environment/"><strong>Neat SDK</strong><span>Зміни в середовищі розробки та на платформі.</span></a></li>
+      <li><a class="overview-link-card" href="/release-notes/neat-development-environment/"><strong>Palette SDK</strong><span>Зміни в середовищі розробки та на платформі.</span></a></li>
       <li><a class="overview-link-card" href="/release-notes/neat/"><strong>Neat Library</strong><span>Зміни в API бібліотеки та середовищі виконання.</span></a></li>
       <li><a class="overview-link-card" href="/release-notes/neat-examples/"><strong>Neat Examples</strong><span>Приклади змін і виправлень у застосунку.</span></a></li>
       <li><a class="overview-link-card" href="/release-notes/sima-cli/"><strong>sima-cli</strong><span>Встановлення через командний рядок, налаштування SDK, оновлення та зміни у робочому процесі DevKit.</span></a></li>

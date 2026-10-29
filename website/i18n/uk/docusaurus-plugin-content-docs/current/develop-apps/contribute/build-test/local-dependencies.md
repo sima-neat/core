@@ -1,7 +1,7 @@
 # Збирання Core із залежностями Scheduler і LLiMa
 
 Core збирається з двома залежностями: Scheduler і LLiMa. Виконайте `build.sh` зі
-своєї робочої копії Core в Neat SDK:
+своєї робочої копії Core в Palette SDK:
 
 ```bash
 ./build.sh --all --no-doc

@@ -1,7 +1,7 @@
 # Build Core with its Scheduler and LLiMa dependencies
 
 Core builds against two dependencies: Scheduler and LLiMa. Run `build.sh` from
-your Core checkout in the Neat SDK:
+your Core checkout in the Palette SDK:
 
 ```bash
 ./build.sh --all --no-doc

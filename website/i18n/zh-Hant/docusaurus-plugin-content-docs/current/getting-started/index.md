@@ -1,26 +1,26 @@
 ---
-title: "Palette Neat"
+title: "Palette SDK"
 sidebar_position: 1
 ---
 
-# Palette Neat
+# Palette SDK
 
-Palette Neat 是 SiMa.ai 為在 Modalix 上建置 AI 應用程式所提供的軟體開發工具組。
+Palette SDK 是 SiMa.ai 為在 Modalix 上建置 AI 應用程式所提供的軟體開發工具組。
 其中包含開發環境、執行階段程式庫、模型工具，以及 DevKit 驗證工作流程。這些元件共同
 支援完整的開發流程：準備模型、建置應用程式，並在 Modalix 硬體上驗證結果。
 
-您可以透過本概覽瞭解 Palette Neat 的主要組成，並選擇合適的環境設定、模型準備或
+您可以透過本概覽瞭解 Palette SDK 的主要組成，並選擇合適的環境設定、模型準備或
 應用程式開發路徑。
 
-![由 Neat SDK、Neat Library、Model Compiler、LLiMa 與 Modalix DevKit 組成的 Palette Neat 軟體堆疊](@site/../docs/images/neat-software-stack-animated.svg)
+![由 Palette SDK、Neat Library、Model Compiler、LLiMa 與 Modalix DevKit 組成的 Palette SDK 軟體堆疊](@site/../docs/images/neat-software-stack-animated.svg)
 
 <div class="overview-section-label">開發者旅程</div>
 
-:::tip 如果您是第一次使用 Palette Neat
-使用 Palette Neat 開發應用程式有兩種支援方式：
+:::tip 如果您是第一次使用 Palette SDK
+使用 Palette SDK 開發應用程式有兩種支援方式：
 
 - 若您需要效能更高的開發環境，特別是預計編譯模型或交叉編譯大型 C++ 程式碼，請選擇
-  **[使用 Neat SDK](/getting-started/dev-environment/)**。
+  **[使用 Palette SDK](/getting-started/dev-environment/)**。
 - 若您希望減少開發環境中的組成元件，尤其是不需要進行模型編譯時，請選擇
   **[直接在 DevKit 上開發](/getting-started/neat-library/)**。
 
@@ -40,7 +40,7 @@ Palette Neat 是 SiMa.ai 為在 Modalix 上建置 AI 應用程式所提供的軟
 | 提示字元 | 執行位置 |
 | --- | --- |
 | `host$` | 在您自己的機器上，SDK 之外。 |
-| `sdk$` | 在 Neat SDK 容器的 shell 內。 |
+| `sdk$` | 在 Palette SDK 容器的 shell 內。 |
 | `devkit$` | 在 Modalix DevKit 上。 |
 | `pcie-host$` | 在裝有 Modalix PCIe 卡的主機上。 |
 
@@ -49,9 +49,9 @@ Palette Neat 是 SiMa.ai 為在 Modalix 上建置 AI 應用程式所提供的軟
 <div class="overview-link-columns">
   <section class="overview-link-panel overview-link-panel-start">
     <h2>從這裡開始</h2>
-    <p>準備主機、Neat SDK 與 DevKit，以進行本機開發和硬體驗證。</p>
+    <p>準備主機、Palette SDK 與 DevKit，以進行本機開發和硬體驗證。</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="/getting-started/dev-environment/"><strong>Neat SDK</strong><span>使用 SDK 進行高效能的主機式工作流程、模型編譯、C++ 建置和 DevKit 驗證。</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/"><strong>Palette SDK</strong><span>使用 SDK 進行高效能的主機式工作流程、模型編譯、C++ 建置和 DevKit 驗證。</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/neat-library/"><strong>Neat Library</strong><span>若要以較少的組成元件在 DevKit 上製作應用程式原型，可直接安裝執行階段與 PyNeat。</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/compatibility/"><strong>相容性指南</strong><span>支援版本組合的參考指南。</span></a></li>
     </ul>

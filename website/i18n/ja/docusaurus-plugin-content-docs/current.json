@@ -7,9 +7,9 @@
     "message": "はじめに",
     "description": "The label for category 'Getting Started' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Neat SDK": {
-    "message": "Neat SDK",
-    "description": "The label for category 'Neat SDK' in sidebar 'docs'"
+  "sidebar.docs.category.Palette SDK": {
+    "message": "Palette SDK",
+    "description": "The label for category 'Palette SDK' in sidebar 'docs'"
   },
   "sidebar.docs.category.Neat Library": {
     "message": "Neatライブラリ",
@@ -144,8 +144,8 @@
     "description": "The label for category 'sdk' in sidebar 'docs'"
   },
   "sidebar.docs.category.tools/sima-cli/sdk-networking": {
-    "message": "Neat SDKネットワーク設定",
-    "description": "The label for category 'Neat SDK Networking Setup' in sidebar 'docs'"
+    "message": "Palette SDKネットワーク設定",
+    "description": "The label for category 'Palette SDK Networking Setup' in sidebar 'docs'"
   },
   "sidebar.docs.category.Insight": {
     "message": "Insight",
