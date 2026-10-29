@@ -770,11 +770,13 @@ Each Node must produce:
 
 The LiDAR/BEV nodes keep options, port descriptions and pure numerical request
 construction in `nodes/`. Their existing `NodeContractProvider` compilation hooks
-are implemented in `pipeline/internal/sima/LidarBevNodeContracts.cpp`.
-`KernelRequestStage.cpp` in that same pipeline directory resolves ingress carriers,
-checks requests through Scheduler and creates the runtime bindings and recipe
-once during preparation. Nodes do not include pipeline-private implementation
-headers, and this split adds no per-frame work or payload copies.
+are implemented in `pipeline/internal/sima/LidarBevNodeContracts.cpp`. That compiler
+passes the operation name to Scheduler's existing `check_kernel(...)` API and uses
+the normal stage recipe and `FrameLayout` execution path. `StaticSpecBuilders.cpp`
+shares metadata-only ingress projection and direct-input binding with `SimaArgMax`;
+these helpers neither prepare nor schedule kernels. The LiDAR/BEV node files do not
+include pipeline-private implementation headers. This split adds no per-frame work
+or payload copies.
 
 Standalone `Cast` compiles typed views into a canonical `cast` request checked by Kernels. Logical identities, strides and tensor-relative offsets remain explicit. Semantic compilation reconciles ordered MLA input ports before packing; rendering preserves the checked contracts. Execution capacity defaults to four asynchronously and one synchronously, with separate output carriers for retention. Subset or reordered TensorSets use parent-retaining metadata envelopes without changing the held publication or payload.
 

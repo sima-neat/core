@@ -344,15 +344,31 @@ void ingress_contracts() {
     require(SimaVoxelize(v.options).compile_node_contract(input, &shared, &error),
             "SimaVoxelize shared-carrier contract: " + error);
     const auto& member = shared.kernel->recipe->members.front();
-    const auto& logical = shared.kernel->runtime_contract.logical_inputs;
+    const auto& runtime = shared.kernel->runtime_contract;
+    const auto& logical = runtime.logical_inputs;
+    require(runtime.physical_inputs.size() == 1 &&
+                runtime.physical_inputs.front().physical_index == 0 &&
+                runtime.physical_inputs.front().size_bytes == carrier,
+            "SimaVoxelize retains one shared physical carrier");
+    const std::array<std::uint64_t, 2> bytes{points_bytes, sizeof(std::int32_t)};
     const std::array<std::uint64_t, 2> at{points_at, count_at};
     require(member.inputs.size() == at.size() && logical.size() == at.size(),
             "SimaVoxelize shared-carrier arity");
-    for (std::size_t i = 0; i < at.size(); ++i)
+    require(runtime.input_bindings.size() == at.size(), "SimaVoxelize shared-carrier bindings");
+    for (std::size_t i = 0; i < at.size(); ++i) {
       require(member.inputs[i].byte_offset == 0 &&
-                  logical[i].byte_offset == static_cast<std::int64_t>(at[i]),
+                  logical[i].byte_offset == static_cast<std::int64_t>(at[i]) &&
+                  logical[i].size_bytes == bytes[i],
               "SimaVoxelize shared-carrier input " + std::to_string(i) +
-                  " is placed once, by its logical view");
+                  " retains its own span, placed once by its logical view");
+      const auto& binding = runtime.input_bindings[i];
+      require(binding.src_logical_output_index == static_cast<int>(i) &&
+                  binding.src_output_slot == static_cast<int>(i) &&
+                  binding.src_physical_output_index == 0 &&
+                  binding.src_physical_size_bytes == carrier &&
+                  binding.src_physical_byte_offset == 0,
+              "SimaVoxelize retains authored producer coordinates for input " + std::to_string(i));
+    }
 
     // A view shorter than its shape implies must be refused even though the
     // carrier holds the bytes: they belong to the neighbouring tensor.
@@ -549,6 +565,16 @@ void ingress_contracts() {
           "SimaBEVPool compiled without an upstream contract");
   require_contains(error, "SimaBEVPool requires a typed upstream tensor contract",
                    "SimaBEVPool missing upstream diagnostic");
+  CompiledNodeContract empty_producer;
+  empty_producer.kernel.emplace();
+  empty.immediate_upstream = &empty_producer;
+  empty.ingress.ingress_sample = sample_from_tensors(
+      {Tensor::from_vector(v.points, {n, 4}, TensorMemory::CPU),
+       Tensor::from_vector(std::vector<std::int32_t>{v.point_count}, {1}, TensorMemory::CPU)});
+  require(!SimaVoxelize(v.options).compile_node_contract(empty, &out, &error),
+          "an authored empty producer cannot silently fall back to graph ingress");
+  require_contains(error, "requires a typed upstream tensor contract",
+                   "empty upstream diagnostic preserves producer authority");
 }
 // Authored producer contracts and graph ingress must retain the same semantic
 // authority. These are cold checks of real Scheduler executables, not kernels

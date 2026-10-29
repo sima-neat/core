@@ -558,10 +558,11 @@ SDK／程式庫憑證與實際連結檢查優先於套件寬鬆的最低版本�
 
 LiDAR/BEV 節點將選項、埠描述與無副作用的數值要求建構保留在 `nodes/`。
 既有的 `NodeContractProvider` 編譯掛鉤則在
-`pipeline/internal/sima/LidarBevNodeContracts.cpp` 中實作。同一管線目錄內的
-`KernelRequestStage.cpp` 在準備階段解析輸入載體、透過 Scheduler 檢查要求，
-並建立執行階段繫結與執行配方。節點不會包含管線私有實作標頭。此分工不會新增
-逐影格工作或承載資料複製。
+`pipeline/internal/sima/LidarBevNodeContracts.cpp` 中實作。此編譯器將運算名稱傳給
+Scheduler 既有的 `check_kernel(...)` API，並使用一般的階段執行配方與 `FrameLayout`
+執行路徑。`StaticSpecBuilders.cpp` 與 `SimaArgMax` 共用僅處理中繼資料的輸入投影及
+直接輸入繫結；這些輔助函式不會準備或排程核心。LiDAR/BEV 節點檔案不會包含管線
+私有實作標頭。此分工不會新增逐影格工作或承載資料複製。
 
 獨立的 `Cast` 將具型別檢視編譯成由 Kernels 檢查的標準 `cast` 要求。邏輯身分、步幅與張量相對位移保持明確。語意編譯在配置前調整有序 MLA 輸入埠；呈現過程保留已檢查合約。執行容量預設為非同步 4、同步 1，並以獨立輸出載體支援保留。子集或重新排序的 TensorSet 使用保留父物件的中繼資料封套，不修改已持有的發布資訊與承載資料。
 

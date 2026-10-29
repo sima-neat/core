@@ -558,11 +558,12 @@ LLiMa는 JSON을 포함한 C++ 메서드를 공개하므로 소스 문법 호환
 
 LiDAR/BEV 노드는 옵션, 포트 설명, 부작용 없는 수치 요청 구성을 `nodes/`에 둡니다.
 기존 `NodeContractProvider` 컴파일 훅은
-`pipeline/internal/sima/LidarBevNodeContracts.cpp`에 구현됩니다. 같은 파이프라인
-디렉터리의 `KernelRequestStage.cpp`는 준비 시 입력 캐리어를 해석하고 Scheduler를
-통해 요청을 검증한 뒤 런타임 바인딩과 실행 레시피를 만듭니다. 노드는 파이프라인
-내부 구현 헤더를 포함하지 않습니다. 이 분리는 프레임별 작업이나 페이로드 복사를
-추가하지 않습니다.
+`pipeline/internal/sima/LidarBevNodeContracts.cpp`에 구현됩니다. 이 컴파일러는
+Scheduler의 기존 `check_kernel(...)` API에 연산 이름을 전달하고 일반적인 스테이지
+레시피와 `FrameLayout` 실행 경로를 사용합니다. `StaticSpecBuilders.cpp`는 메타데이터만
+다루는 입력 투영과 직접 입력 바인딩을 `SimaArgMax`와 공유합니다. 이 헬퍼는 커널을
+준비하거나 스케줄링하지 않습니다. LiDAR/BEV 노드 파일은 파이프라인 내부 구현 헤더를
+포함하지 않습니다. 이 분리는 프레임별 작업이나 페이로드 복사를 추가하지 않습니다.
 
 독립 `Cast`는 타입이 있는 뷰를 Kernels가 검증하는 표준 `cast` 요청으로 컴파일합니다. 논리 식별, 스트라이드 및 텐서 상대 오프셋을 명시적으로 유지합니다. 의미 컴파일은 패킹 전 MLA 입력 포트 순서를 맞추고 렌더링은 검증된 계약을 유지합니다. 실행 용량 기본값은 비동기 4, 동기 1이며 출력 유지용 캐리어는 별도입니다. 부분 또는 순서를 바꾼 TensorSet은 부모를 유지하는 메타데이터 엔벌로프를 사용하며 기존 게시 정보나 페이로드를 수정하지 않습니다.
 
