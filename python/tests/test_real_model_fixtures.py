@@ -544,12 +544,14 @@ def _assert_overlay_changed(path: Path, image: np.ndarray) -> None:
   assert np.any(cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB) != image), "overlay drew no boxes"
 
 
-def test_resnet_real_fixture_run_preserves_stable_classification_contract():
+@pytest.mark.parametrize("seeded", [True, False])
+def test_resnet_real_fixture_run_preserves_stable_classification_contract(monkeypatch, seeded):
+  monkeypatch.setenv("SIMA_INPUTSTREAM_PREFLIGHT_RUN", "1")
   model = _image_input_model(_env_path("SIMA_RESNET50_TAR"))
   image = _decode_rgb_image(_fixture_image_path(Path("test.jpg")))
 
   input_tensor = _rgb_tensor(image)
-  runner = model.build([input_tensor])
+  runner = model.build([input_tensor]) if seeded else model.build()
   summaries = []
   try:
     for _ in range(3):

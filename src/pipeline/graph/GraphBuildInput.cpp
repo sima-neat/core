@@ -1988,8 +1988,11 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
       detect_dynamic_capability(nodes, src_opt, spec, stream_opt.shape_policy);
   stream_opt.allow_ingress_cvu_format_renegotiation = detect_allow_ingress_format_renegotiation(
       nodes, src_opt, spec, stream_opt.shape_policy, stream_opt.dynamic_capability);
-  if (sync_mode &&
-      stream_opt.dynamic_capability != InputStreamOptions::DynamicCapability::StaticOnly) {
+  // Dynamic preprocessing accepts each image without waiting for a second size match.
+  if (stream_opt.dynamic_capability ==
+          InputStreamOptions::DynamicCapability::IngressDynamicCvuOnly ||
+      (sync_mode &&
+       stream_opt.dynamic_capability != InputStreamOptions::DynamicCapability::StaticOnly)) {
     stream_opt.stability_frames = 1;
   }
   stream_opt.require_device_visible_input = memory.require_device_visible_input;
