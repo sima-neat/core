@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -161,7 +162,7 @@ void append_quantization(std::vector<rt::Parameter>& parameters, const SimaKerne
 
 // The kernel stores `round(x * multiplier) + zero_point`, so a code dequantizes
 // to `x` with `scale = 1 / multiplier`; `unit` is the real value of one `x`.
-PerTensorQuant stored_quant(const SimaKernelQuantization& q, double unit = 1.0) {
+Quantization stored_quant(const SimaKernelQuantization& q, double unit = 1.0) {
   return {unit / static_cast<double>(q.multiplier), q.zero_point};
 }
 
@@ -389,8 +390,27 @@ KernelRequestPlan pillar_scatter_request(const SimaPillarScatterOptions& opt,
   plan.parameters.push_back({"zero_point", static_cast<std::int64_t>(opt.zero_point)});
   plan.published = {{"canvas", {1, h, w, channels}, {}, "NHWC", true, {}}};
   // Features are copied unchanged, so the canvas keeps their quantization.
-  if (features.dtype == rt::DType::Int8)
+  if (features.dtype == rt::DType::Int8) {
     plan.published[0].quant = features.quant;
+    if (auto& quant = plan.published[0].quant; quant && quant->axis >= 0) {
+      if (static_cast<std::size_t>(quant->axis) != features.shape.size() - 1)
+        fail(node, "per-channel feature quantization must use the trailing channel axis");
+      if (quant->scales.size() != static_cast<std::size_t>(channels) ||
+          quant->zero_points.size() != static_cast<std::size_t>(channels))
+        fail(node, "per-channel quantization must have one scale and zero point per channel");
+      for (std::size_t channel = 0; channel < quant->scales.size(); ++channel) {
+        if (!std::isfinite(quant->scales[channel]) || quant->scales[channel] <= 0)
+          fail(node, "per-channel scales must be finite and positive");
+        if (quant->zero_points[channel] < -128 || quant->zero_points[channel] > 127)
+          fail(node, "per-channel zero points must fit INT8");
+        // Scatter copies feature codes and has one scalar empty-cell fill.
+        // A channel-dependent zero code cannot be represented by that fill.
+        if (quant->zero_points[channel] != opt.zero_point)
+          fail(node, "per-channel zero points must match the scalar empty-cell zero_point");
+      }
+      quant->axis = 3; // [M,C] or singleton-extended rows become [1,H,W,C].
+    }
+  }
   return plan;
 }
 
@@ -503,20 +523,42 @@ rt::TensorSpec bev_input(const TensorFact& fact, SimaBEVPoolStorage storage, con
   if (fact.shape.size() != 4)
     fail(node, std::string(port) + " must have rank 4, got " + describe(fact.shape));
   checked_tensor_bytes(fact.shape, fact.dtype, node);
+  if (fact.quant && fact.quant->axis >= 0)
+    fail(node, std::string(port) + " per-axis quantization is unsupported; use per-tensor "
+                                   "quantization or dequantize before this Node");
   const auto& s = fact.shape;
+  if (!fact.layout.empty() && fact.layout != "CHW" && fact.layout != "HWC")
+    fail(node, std::string(port) + " requires CHW or HWC logical axes");
   if (storage == SimaBEVPoolStorage::Contiguous) {
+    if (fact.layout == "HWC")
+      fail(node, std::string(port) + " contiguous storage requires logical CHW axes");
     require_dense(fact, node, port);
     return {s, fact.dtype};
   }
   const auto scalar = scalar_bytes(fact.dtype);
   std::array<std::int64_t, 4> logical{};
-  if (dense(fact, node)) {
+  // An explicit logical axis order wins even when singleton dimensions make
+  // CHW channels-last storage appear dense. Untagged dense inputs retain the
+  // documented NHWC convention; untagged non-dense inputs retain CHW strides.
+  if (fact.layout == "HWC" || (fact.layout.empty() && dense(fact, node))) {
+    require_dense(fact, node, port);
     // Dense NHWC [A,H,W,K] from the producer: the same bytes as logical
     // [A,K,H,W] with channels-last strides.
     logical = {s[0], s[3], s[1], s[2]};
   } else {
     logical = {s[0], s[1], s[2], s[3]};
-    if (!same_strides(s, fact.stride_bytes, channels_last_strides(logical, scalar, node)))
+    // Empty strides mean row-major CHW, which is also channels-last only for
+    // degenerate geometry (one channel or one spatial cell).
+    auto actual = fact.stride_bytes;
+    if (actual.empty()) {
+      actual.resize(4);
+      std::int64_t stride = static_cast<std::int64_t>(scalar);
+      for (std::size_t axis = 4; axis-- > 0;) {
+        actual[axis] = stride;
+        stride = checked_extent_mul(stride, s[axis], node);
+      }
+    }
+    if (!same_strides(s, actual, channels_last_strides(logical, scalar, node)))
       fail(node, std::string(port) + " " + describe(s) +
                      " is neither dense channels-last nor channels-last strided");
   }
@@ -548,7 +590,7 @@ KernelRequestPlan bev_pool_request(const SimaBEVPoolOptions& opt,
   const std::array<std::int64_t, 4> logical{1, k, nx, ny};
   checked_tensor_bytes(logical, dtype, node);
   rt::TensorSpec bev{{logical.begin(), logical.end()}, dtype};
-  PublishedOutput published{"bev", {logical.begin(), logical.end()}, {}, "", false, {}};
+  PublishedOutput published{"bev", {logical.begin(), logical.end()}, {}, "CHW", false, {}};
   if (opt.output_storage == SimaBEVPoolStorage::ChannelsLast) {
     const auto strides = channels_last_strides(logical, scalar_bytes(dtype), node);
     rt::Strided layout;

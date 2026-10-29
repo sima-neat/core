@@ -36,6 +36,10 @@ namespace simaai::neat {
  * this layout; use `copy_payload_bytes()` for stored bytes, or a layout-aware consumer
  * such as SimaArgMax. Cloning/Owned output preserves the layout without conversion.
  * Feature values are copied unchanged, and an INT8 canvas keeps the features' `semantic.quant`.
+ * Per-channel metadata must describe the final feature axis with C finite positive scales
+ * and C INT8 zero points, all equal to the empty-cell `zero_point`. The output remaps this
+ * axis to 3 in `[1,H,W,C]`. Other quantization axes are rejected. Existing per-tensor
+ * metadata and raw fill-code behavior are unchanged.
  *
  * @ingroup nodes_sima
  */

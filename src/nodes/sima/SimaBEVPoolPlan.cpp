@@ -1,8 +1,7 @@
 #include "nodes/sima/SimaBEVPoolPlan.h"
 
-#include "nodes/sima/internal/KernelRequestStage.h"
-#include "pipeline/internal/contract/CompiledNodeContract.h"
-#include "pipeline/internal/contract/ContractFacts.h"
+#include "nodes/sima/internal/KernelNodeDescription.h"
+#include "nodes/sima/internal/LidarBevKernelRequests.h"
 
 #include <array>
 #include <utility>
@@ -39,15 +38,6 @@ OutputSpec SimaBEVPoolPlan::output_spec(const OutputSpec& input) const {
 
 NodeContractDefinition SimaBEVPoolPlan::contract_definition() const {
   return kr::kernel_contract_definition(kind(), kInputs, kOutputs);
-}
-
-bool SimaBEVPoolPlan::compile_node_contract(const ContractCompileInput& input,
-                                            CompiledNodeContract* out, std::string* error) const {
-  const auto build = [this](std::span<const kr::TensorFact> facts) {
-    return kr::bev_pool_plan_request(opt_, facts);
-  };
-  return kr::compile_kernel_request_stage(kind(), element_names(input.node_index).front(),
-                                          contract_definition(), input, build, out, error);
 }
 
 } // namespace simaai::neat

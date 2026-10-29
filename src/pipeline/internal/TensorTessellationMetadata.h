@@ -4,6 +4,7 @@
 #endif
 
 #include "pipeline/TensorCore.h"
+#include "pipeline/internal/TensorTiledStorageValidation.h"
 #include <gst/gst.h>
 
 #include <algorithm>
@@ -74,18 +75,10 @@ inline void apply_tessellation_caps(Tensor& tensor, const GstCaps* caps, int log
   guint64 bytes = 0;
   if (!gst_structure_has_name(record, "sima-tiled-storage-v1") || !format ||
       !gst_structure_get_uint64(record, "storage-bytes", &bytes) || bytes == 0 ||
-      bytes > descriptor_bytes || bytes > std::numeric_limits<std::size_t>::max())
-    invalid();
-  const std::string token = format;
-  const char* dtype = tensor.dtype == TensorDType::BFloat16 ? "BF16"
-                      : tensor.dtype == TensorDType::Int8   ? "INT8"
-                      : tensor.dtype == TensorDType::UInt8  ? "UINT8"
-                                                            : nullptr;
-  if (!dtype || (token != std::string("MLA_TILED_") + dtype + "_COMPACT" &&
-                 token != std::string("MLA_TILED_") + dtype + "_PAD16"))
+      bytes > std::numeric_limits<std::size_t>::max())
     invalid();
   TessSpec tess;
-  tess.format = token;
+  tess.format = format;
   tess.storage_bytes = static_cast<std::size_t>(bytes);
   const auto read_array = [&](const char* field, std::vector<int64_t>& values) {
     const auto* array = gst_structure_get_value(record, field);
@@ -100,15 +93,8 @@ inline void apply_tessellation_caps(Tensor& tensor, const GstCaps* caps, int log
   };
   read_array("tile-shape", tess.slice_shape);
   read_array("axes", tess.axes);
-  for (std::size_t i = 0; i < 4; ++i) {
-    if (tess.slice_shape[i] <= 0 || tess.axes[i] < -1 ||
-        tess.axes[i] >= static_cast<int64_t>(tensor.shape.size()) ||
-        (tess.axes[i] < 0 && (i == 3 || tess.slice_shape[i] != 1)))
-      invalid();
-    for (std::size_t j = 0; j < i; ++j)
-      if (tess.axes[i] >= 0 && tess.axes[i] == tess.axes[j])
-        invalid();
-  }
+  if (const char* error = explicit_tiled_storage_error(tensor, tess, descriptor_bytes))
+    throw std::runtime_error(std::string("invalid checked tensor tessellation metadata: ") + error);
   tensor.semantic.tess = std::move(tess);
   // Logical strides cannot describe a split-byte/tiled payload.
   tensor.strides_bytes.clear();

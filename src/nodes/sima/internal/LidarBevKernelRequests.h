@@ -26,10 +26,13 @@
 namespace simaai::neat::nodes_internal::kernel_requests {
 namespace rt = ::simaai::scheduler::client;
 
-/// Per-tensor quantization: `real = (code - zero_point) * scale`.
-struct PerTensorQuant {
+/// Numerical metadata only; per-axis values use the authored logical axis.
+struct Quantization {
   double scale = 1.0;
   std::int64_t zero_point = 0;
+  int axis = -1; ///< Negative for scalar scale/zero_point; otherwise per-axis.
+  std::vector<double> scales;
+  std::vector<std::int64_t> zero_points;
 };
 
 /// One upstream tensor, as the Node's contract compiler observed it.
@@ -38,7 +41,8 @@ struct TensorFact {
   rt::DType dtype = rt::DType::Float32;
   std::vector<std::int64_t> stride_bytes; ///< Empty or per-axis byte strides.
   std::string name;
-  std::optional<PerTensorQuant> quant; ///< Set when the producer declares one.
+  std::optional<Quantization> quant; ///< Set when the producer declares one.
+  std::string layout; ///< Logical axis order (canonical CHW/HWC), not physical storage.
 };
 
 /// How the Node publishes one checked kernel output.
@@ -46,11 +50,11 @@ struct PublishedOutput {
   std::string name;
   std::vector<std::int64_t> shape;
   std::vector<std::int64_t> stride_bytes; ///< Empty for dense publication.
-  std::string layout;                     ///< Coarse layout token ("" or "NHWC").
+  std::string layout;                     ///< Logical layout token (for example CHW or NHWC).
   /// The checked output is MLA-tiled; publication needs an explicit physical view.
   bool tiled = false;
   /// The quantization of an INT8 output, when the request determines it.
-  std::optional<PerTensorQuant> quant;
+  std::optional<Quantization> quant;
 };
 
 /// The complete named request a Node forwards to `check_kernel`.

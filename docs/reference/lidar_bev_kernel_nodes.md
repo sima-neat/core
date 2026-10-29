@@ -19,6 +19,12 @@ build fails with the kernels' reason.
 | `SimaBEVPoolPlan` | Camera calibration to the BEV pooling plan | A65 |
 | `SimaBEVPool` | Camera depth and context features to the BEV grid | A65, EV74 |
 
+This graph-construction fragment belongs inside your application. Implement
+`read_sweep()` to return interleaved x, y, z and time-offset values: a nonempty
+vector of `4*N` floats, with `N` representable as INT32. The function is an
+application-provided reader, not a Neat API. The fragment builds the graph; it
+does not submit a frame or collect an output.
+
 ```cpp
 #include <neat.h>
 
@@ -93,12 +99,43 @@ checked when the graph is built.
   `[1,nX,nY,nZ*C]`. `SimaBEVPoolStorage::Contiguous` uses `[N,D,fH,fW]` and
   `[N,C,fH,fW]` inputs and a dense output.
 
+### Logical axes and physical storage
+
+For `SimaBEVPool`, logical axis order and physical byte order are separate.
+A tensor tagged `TensorLayout::HWC` has logical `[N,H,W,K]` axes; a tensor tagged
+`TensorLayout::CHW` has logical `[N,K,H,W]` axes. The node honors that tag and
+checks its strides against `input_storage`. With `ChannelsLast`, HWC inputs
+must be dense, while CHW inputs must have channels-last strides. With
+`Contiguous`, inputs must be dense CHW tensors; HWC tags are rejected.
+You can also declare the same canonical axes through `Tensor.axis_semantics`;
+when both annotations are present, they must agree.
+
+For untagged `ChannelsLast` inputs, the compatibility convention is dense NHWC
+or non-dense logical NCHW with channels-last strides. If singleton dimensions
+make a logical NCHW view also dense, set `Tensor.layout = TensorLayout::CHW`
+explicitly. Strides alone cannot identify the logical axes in that case. Pool
+outputs carry CHW logical axes and the strides for `output_storage`; the node
+does not transpose or copy payload bytes to change layouts.
+
+### Quantization metadata
+
 INT8 outputs carry their quantization in `Tensor.semantic.quant` when the node
 knows it: `scale = 1 / quantization.multiplier` for `SimaVoxelize` and for a
 `SimaBEVPool` with BF16 inputs;
 `depth_scale * context_scale / quantization.multiplier` for a `SimaBEVPool` whose
 INT8 inputs both carry a scale; and the features' quantization for
 `SimaPillarScatter`. Otherwise no quantization is published.
+
+For INT8 Scatter inputs, per-channel quantization is supported only on the final
+feature axis `C`, including shapes such as `[1,M,1,C]`. Provide `C` finite positive
+scales and `C` INT8 zero points. Every zero point must equal the Scatter
+`zero_point` used to fill empty cells. The canvas preserves those values and remaps the quantization axis
+to `3` in `[1,H,W,C]`. Other quantization axes are rejected; pillar-axis parameters
+cannot describe a fixed canvas after coordinates scatter the pillars.
+
+`SimaBEVPool` does not support per-channel quantization metadata and rejects it
+rather than silently removing it. Existing per-tensor metadata and explicit
+zero-point options keep their behavior; absent input metadata remains unknown.
 
 ## BF16 tensors
 

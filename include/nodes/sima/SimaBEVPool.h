@@ -29,11 +29,15 @@ namespace simaai::neat {
  */
 enum class SimaBEVPoolStorage {
   /// Channels innermost. Inputs arrive as `[N,fH,fW,D]` and `[N,fH,fW,C]`, the camera
-  /// graph's NHWC outputs. The output is published as logical `[1,nZ*C,nX,nY]` with
-  /// channels-last byte strides, so its bytes are NHWC `[1,nX,nY,nZ*C]`.
+  /// graph's NHWC outputs. An explicit CHW logical layout instead accepts `[N,K,H,W]`
+  /// with channels-last strides, including singleton dimensions. Without a layout
+  /// tag, dense inputs keep the NHWC convention; tag ambiguous logical NCHW views CHW.
+  /// Canonical Tensor.axis_semantics is equivalent; it must agree with any layout tag.
+  /// The output has CHW logical axes `[1,nZ*C,nX,nY]` with channels-last byte strides,
+  /// so its bytes are NHWC `[1,nX,nY,nZ*C]`.
   ChannelsLast,
   /// Logical order. Inputs arrive as `[N,D,fH,fW]` and `[N,C,fH,fW]`; the output is a
-  /// dense `[1,nZ*C,nX,nY]` tensor.
+  /// dense CHW `[1,nZ*C,nX,nY]` tensor. An explicit HWC input layout is rejected.
   Contiguous,
 };
 
@@ -43,6 +47,7 @@ enum class SimaBEVPoolStorage {
  * The input Sample holds three tensors, in order: `depth`, `context` (both INT8 or both
  * BF16, layout per `input_storage`) and the UINT8 `plan` `[P]` produced by
  * `SimaBEVPoolPlan` for the same frustum and grid. The output Sample holds one `bev` tensor.
+ * Per-channel quantization metadata is unsupported and rejected rather than discarded.
  *
  * BF16 inputs need zero points of 0. Their sums are binary32, in the plan's point order.
  * A BF16 `bev` stores each sum rounded to nearest-even (NaN as `0x7FC0`) and needs the

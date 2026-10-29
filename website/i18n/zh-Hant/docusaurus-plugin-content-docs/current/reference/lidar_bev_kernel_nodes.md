@@ -18,6 +18,11 @@ sidebar_position: 8
 | `SimaBEVPoolPlan` | 將相機校正資料轉為 BEV 池化計畫 | A65 |
 | `SimaBEVPool` | 將相機深度與上下文特徵轉為 BEV 網格 | A65、EV74 |
 
+以下是放在應用程式內的圖建構片段。請在應用程式中實作 `read_sweep()`，
+傳回非空的 float 向量，依 x、y、z、時間偏移量的順序交錯排列，共 `4*N` 個值。
+`N` 必須能以 INT32 表示。這個函式不是 Neat API。此片段只建構圖，不會提交影格
+或取得輸出。
+
 ```cpp
 #include <neat.h>
 
@@ -86,10 +91,37 @@ Python 提供相同的選項型別，以及 `pyneat.nodes.sima_voxelize`、
   因此其位元組為 NHWC `[1,nX,nY,nZ*C]`。`SimaBEVPoolStorage::Contiguous` 使用
   `[N,D,fH,fW]` 與 `[N,C,fH,fW]` 輸入以及密集輸出。
 
+### 邏輯軸與實體儲存順序
+
+`SimaBEVPool` 區分邏輯軸順序與實體位元組順序。標記為 `TensorLayout::HWC` 的張量
+具有 `[N,H,W,K]` 邏輯軸，標記為 `TensorLayout::CHW` 的張量則具有 `[N,K,H,W]` 邏輯軸。
+節點以標記為準，並檢查步幅是否符合 `input_storage`。在 `ChannelsLast` 模式下，
+HWC 輸入必須密集，CHW 輸入則必須具有通道在後的步幅。在 `Contiguous` 模式下，
+輸入必須是密集的 CHW 張量；HWC 標記會被拒絕。
+也可以透過 `Tensor.axis_semantics` 宣告相同的標準軸順序；若同時提供兩種註記，
+兩者必須一致。
+
+未標記的 `ChannelsLast` 輸入沿用相容規則：密集 NHWC，或具有通道在後步幅的非密集
+邏輯 NCHW。如果大小為 1 的維度讓邏輯 NCHW 檢視也呈密集排列，請明確設定
+`Tensor.layout = TensorLayout::CHW`。這種情況無法只靠步幅辨識邏輯軸。Pool 輸出
+帶有 CHW 邏輯軸與符合 `output_storage` 的步幅；節點不會為了改變排列而轉置或
+複製承載資料。
+
+### 量化中繼資料
+
 節點知道量化參數時，INT8 輸出會在 `Tensor.semantic.quant` 中帶有該量化：`SimaVoxelize` 與
 BF16 輸入的 `SimaBEVPool` 為 `scale = 1 / quantization.multiplier`；兩個 INT8 輸入都帶有
 縮放比例的 `SimaBEVPool` 為 `depth_scale * context_scale / quantization.multiplier`；
 `SimaPillarScatter` 則沿用特徵的量化。其他情況不會發布量化參數。
+
+INT8 Scatter 輸入只支援最後一個特徵軸 `C` 的逐通道量化，包括 `[1,M,1,C]`
+這類形狀。請提供 `C` 個有限正縮放比例與 `C` 個 INT8 零點；所有零點都必須等於
+Scatter 用來填滿空格子的 `zero_point`。畫布保留這些值，並將量化軸對應至
+`[1,H,W,C]` 的軸 `3`。其他量化軸會被拒絕：柱體依座標分散後，柱體軸參數無法
+描述固定畫布的量化。
+
+`SimaBEVPool` 不支援逐通道量化中繼資料，會明確拒絕而非悄悄移除。既有的逐張量
+中繼資料與明確指定的零點選項維持原有行為；沒有輸入中繼資料時仍視為未知。
 
 ## BF16 張量
 

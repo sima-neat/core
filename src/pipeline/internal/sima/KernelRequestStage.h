@@ -5,7 +5,7 @@
 
 // Shared contract compilation for Nodes that run exactly one named
 // kernels-library request on a neatkernelrunner stage. The Node supplies the
-// request builder; this helper resolves the upstream tensors (a compiled
+// request description; this pipeline helper resolves the upstream tensors (a compiled
 // producer stage or the graph's ingress sample), forwards the request to the
 // Scheduler's canonical check_kernel(), and authors the stage's runtime
 // contract from the checked inspection.
@@ -22,9 +22,10 @@ struct CompiledNodeContract;
 struct NodeContractDefinition;
 } // namespace simaai::neat
 
-namespace simaai::neat::nodes_internal::kernel_requests {
+namespace simaai::neat::pipeline_internal::sima {
 
-using RequestBuilder = std::function<KernelRequestPlan(std::span<const TensorFact>)>;
+using RequestBuilder = std::function<nodes_internal::kernel_requests::KernelRequestPlan(
+    std::span<const nodes_internal::kernel_requests::TensorFact>)>;
 
 /// Compile one single-member kernel stage. Returns false with `error` set on any
 /// structural, admission or inspection failure; there is no fallback target.
@@ -33,14 +34,4 @@ bool compile_kernel_request_stage(const std::string& node_kind, const std::strin
                                   const ContractCompileInput& input, const RequestBuilder& build,
                                   CompiledNodeContract* output, std::string* error);
 
-/// `neatkernelrunner name=n<index>_<suffix>`, after checking the element exists.
-std::string kernel_runner_fragment(int node_index, const std::string& suffix, const char* node);
-/// `n<index>_<suffix>`.
-std::string kernel_runner_element_name(int node_index, const std::string& suffix);
-
-/// Tensor-port contract definition with the given input and output port ids.
-NodeContractDefinition kernel_contract_definition(const std::string& node_kind,
-                                                  std::span<const char* const> inputs,
-                                                  std::span<const char* const> outputs);
-
-} // namespace simaai::neat::nodes_internal::kernel_requests
+} // namespace simaai::neat::pipeline_internal::sima

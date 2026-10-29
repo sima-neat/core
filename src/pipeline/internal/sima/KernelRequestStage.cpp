@@ -1,6 +1,5 @@
-#include "nodes/sima/internal/KernelRequestStage.h"
+#include "pipeline/internal/sima/KernelRequestStage.h"
 
-#include "gst/GstHelpers.h"
 #include "pipeline/internal/contract/CompiledNodeContractQuery.h"
 #include "pipeline/internal/contract/CompiledKernelTensor.h"
 #include "pipeline/internal/sima/KernelTensorLayout.h"
@@ -8,6 +7,7 @@
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
+#include "pipeline/internal/sima/TensorSemanticsUtil.h"
 #include <simaai/scheduler/client/kernel.h>
 
 #include <algorithm>
@@ -15,8 +15,14 @@
 #include <stdexcept>
 #include <utility>
 
-namespace simaai::neat::nodes_internal::kernel_requests {
+namespace simaai::neat::pipeline_internal::sima {
+using nodes_internal::kernel_requests::checked_tensor_bytes;
+using nodes_internal::kernel_requests::dtype_from_token;
+using nodes_internal::kernel_requests::dtype_token;
+using nodes_internal::kernel_requests::Quantization;
+using nodes_internal::kernel_requests::TensorFact;
 namespace {
+namespace rt = ::simaai::scheduler::client;
 namespace si = pipeline_internal::sima;
 namespace specs = si::specbuilders;
 
@@ -41,20 +47,58 @@ const char* ingress_dtype_token(int dtype) {
   }
 }
 
-std::optional<PerTensorQuant> per_tensor(const std::optional<si::QuantStaticSpec>& quant) {
-  if (!quant || quant->granularity != si::QuantGranularity::PerTensor ||
-      quant->scales.size() != 1 || quant->zero_points.size() != 1)
+std::optional<Quantization> quantization(const std::optional<si::QuantStaticSpec>& quant) {
+  if (!quant)
     return std::nullopt;
-  return PerTensorQuant{quant->scales.front(), quant->zero_points.front()};
+  if (quant->granularity == si::QuantGranularity::PerAxis) {
+    if (quant->axis < 0)
+      throw std::invalid_argument("per-axis quantization requires a nonnegative logical axis");
+    return Quantization{1.0, 0, quant->axis, quant->scales, quant->zero_points};
+  }
+  if (quant->granularity != si::QuantGranularity::PerTensor || quant->scales.size() != 1 ||
+      quant->zero_points.size() != 1)
+    throw std::invalid_argument("per-tensor quantization requires one scale and zero point");
+  return Quantization{quant->scales.front(), quant->zero_points.front()};
 }
 
-std::optional<si::QuantStaticSpec> static_quant(const std::optional<PerTensorQuant>& quant) {
+std::optional<si::QuantStaticSpec> static_quant(const std::optional<Quantization>& quant) {
   if (!quant)
     return std::nullopt;
   si::QuantStaticSpec result;
-  result.scales = {quant->scale};
-  result.zero_points = {quant->zero_point};
+  if (quant->axis >= 0) {
+    result.granularity = si::QuantGranularity::PerAxis;
+    result.axis = quant->axis;
+    result.scales = quant->scales;
+    result.zero_points = quant->zero_points;
+  } else {
+    result.scales = {quant->scale};
+    result.zero_points = {quant->zero_point};
+  }
   return result;
+}
+
+std::string ingress_layout(const Tensor& tensor, int descriptor_layout, const std::string& node) {
+  std::string layout;
+  switch (descriptor_layout) {
+  case SIMA_TENSOR_SET_LAYOUT_NCHW_V1:
+  case SIMA_TENSOR_SET_LAYOUT_CHW_V1:
+    layout = "CHW";
+    break;
+  case SIMA_TENSOR_SET_LAYOUT_NHWC_V1:
+  case SIMA_TENSOR_SET_LAYOUT_HWC_V1:
+    layout = "HWC";
+    break;
+  case SIMA_TENSOR_SET_LAYOUT_HW_V1:
+    layout = "HW";
+    break;
+  default:
+    break;
+  }
+  if (!si::tensorsemantics::axis_semantics_match_rank(tensor.shape.size(), tensor.axis_semantics) ||
+      !si::tensorsemantics::layout_token_matches_axis_semantics(layout, tensor.axis_semantics))
+    throw std::invalid_argument(node + ": ingress layout conflicts with logical axis semantics");
+  const auto axes = si::tensorsemantics::layout_token_from_axis_semantics(tensor.axis_semantics);
+  return axes.empty() ? layout : axes;
 }
 
 // Graph-ingress carriers, resolved from the current storage envelope rather
@@ -103,11 +147,17 @@ IngressTensors ingress_tensors(const Sample& sample, const std::string& node) {
         tensor.logical_name.empty() ? "input_" + std::to_string(i) : tensor.logical_name;
     auto logical = specs::build_logical_output_static_spec(
         static_cast<int>(i), static_cast<int>(i), physical, static_cast<int>(i),
-        static_cast<int>(i), tensor.shape, dtype, "", name, name, name, offset,
-        bytes - static_cast<std::uint64_t>(offset));
+        static_cast<int>(i), tensor.shape, dtype, ingress_layout(tensors[i], tensor.layout, node),
+        name, name, name, offset, bytes - static_cast<std::uint64_t>(offset));
     logical.stride_bytes = tensor.stride_bytes;
-    if (const auto& quant = tensors[i].semantic.quant; quant && quant->axis < 0)
-      logical.quant = static_quant(PerTensorQuant{quant->scale, quant->zero_point});
+    if (const auto& quant = tensors[i].semantic.quant) {
+      Quantization value{quant->scale,
+                         quant->zero_point,
+                         quant->axis,
+                         {quant->scales.begin(), quant->scales.end()},
+                         {quant->zero_points.begin(), quant->zero_points.end()}};
+      logical.quant = static_quant(value);
+    }
     result.logical_outputs.push_back(std::move(logical));
     ingress_result.tensor_bytes.push_back(tensor.size_bytes);
     const auto existing =
@@ -166,8 +216,10 @@ bool compile_kernel_request_stage(const std::string& node_kind, const std::strin
       if (!ingress && producer_output_tiled(input.immediate_upstream, source.backend_output_index))
         throw std::invalid_argument(node_kind + ": upstream tensor " + source.logical_name +
                                     " is MLA-tiled; detessellate it before this Node");
+      const auto normalized_layout = si::tensorsemantics::normalize_layout_token(source.layout);
       facts.push_back({source.shape, dtype_from_token(source.dtype, node_kind.c_str()),
-                       source.stride_bytes, source.logical_name, per_tensor(source.quant)});
+                       source.stride_bytes, source.logical_name, quantization(source.quant),
+                       normalized_layout.empty() ? source.layout : normalized_layout});
     }
     const auto plan = build(facts);
     if (plan.inputs.size() != facts.size() || plan.outputs.size() != plan.published.size())
@@ -283,35 +335,4 @@ bool compile_kernel_request_stage(const std::string& node_kind, const std::strin
   }
 }
 
-std::string kernel_runner_element_name(int node_index, const std::string& suffix) {
-  return "n" + std::to_string(node_index) + "_" + suffix;
-}
-
-std::string kernel_runner_fragment(int node_index, const std::string& suffix, const char* node) {
-  const auto context = std::string(node) + "::backend_fragment";
-  require_element("neatkernelrunner", context.c_str());
-  return "neatkernelrunner name=" + kernel_runner_element_name(node_index, suffix);
-}
-
-NodeContractDefinition kernel_contract_definition(const std::string& node_kind,
-                                                  std::span<const char* const> inputs,
-                                                  std::span<const char* const> outputs) {
-  NodeContractDefinition result;
-  result.node_kind = node_kind;
-  result.plugin_kind = "kernel";
-  for (const auto* id : inputs) {
-    ContractPortSpec port;
-    port.port_id = id;
-    port.media_type = "application/vnd.simaai.tensor";
-    result.inputs.push_back(std::move(port));
-  }
-  for (const auto* id : outputs) {
-    ContractPortSpec port;
-    port.port_id = id;
-    port.media_type = "application/vnd.simaai.tensor";
-    result.outputs.push_back(std::move(port));
-  }
-  return result;
-}
-
-} // namespace simaai::neat::nodes_internal::kernel_requests
+} // namespace simaai::neat::pipeline_internal::sima

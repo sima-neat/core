@@ -24,6 +24,7 @@
 #include "pipeline/TensorCore.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/TensorMath.h"
+#include "pipeline/internal/TensorTiledStorageValidation.h"
 #include "pipeline/internal/TensorTransfer.h"
 #include "pipeline/internal/TensorUtil.h"
 
@@ -760,8 +761,10 @@ bool Tensor::validate(std::string* err) const {
     return false;
   };
 
-  if (has_tiled_storage() && is_composite())
-    return fail("explicit tiled storage cannot describe composite planes");
+  if (has_tiled_storage()) {
+    if (const char* error = pipeline_internal::explicit_tiled_storage_error(*this, *semantic.tess))
+      return fail(error);
+  }
 
   if (is_composite() && byte_offset != 0) {
     return fail("composite tensor must have byte_offset == 0");

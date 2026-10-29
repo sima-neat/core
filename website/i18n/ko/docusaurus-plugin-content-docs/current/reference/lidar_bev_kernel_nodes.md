@@ -19,6 +19,12 @@ MLA가 아닌 단계를 실행합니다. 각 노드는 선택한 대상에서 Si
 | `SimaBEVPoolPlan` | 카메라 보정값에서 BEV 풀링 계획으로 | A65 |
 | `SimaBEVPool` | 카메라 깊이 및 컨텍스트 특징에서 BEV 격자로 | A65, EV74 |
 
+다음은 애플리케이션 안에 넣는 그래프 구성 코드 조각입니다. `read_sweep()`는
+애플리케이션에서 구현해야 하며, x, y, z, 시간 오프셋 순서로 배치한 `4*N`개의
+float 값을 비어 있지 않은 벡터로 반환해야 합니다. `N`은 INT32로 표현할 수 있어야
+합니다. 이 함수는 Neat API가 아닙니다. 이 코드는 그래프를 구성할 뿐, 프레임을
+제출하거나 출력을 가져오지는 않습니다.
+
 ```cpp
 #include <neat.h>
 
@@ -92,11 +98,43 @@ Python에서도 같은 옵션 형식과 `pyneat.nodes.sima_voxelize`,
   게시되므로, 바이트는 NHWC `[1,nX,nY,nZ*C]`입니다. `SimaBEVPoolStorage::Contiguous`는
   `[N,D,fH,fW]`와 `[N,C,fH,fW]` 입력과 조밀한 출력을 사용합니다.
 
+### 논리 축과 물리 저장 순서
+
+`SimaBEVPool`은 논리 축 순서와 물리 바이트 순서를 구분합니다.
+`TensorLayout::HWC` 태그가 있는 텐서는 논리 축 `[N,H,W,K]`를,
+`TensorLayout::CHW` 태그가 있는 텐서는 논리 축 `[N,K,H,W]`를 가집니다. 노드는
+이 태그를 우선하며 스트라이드가 `input_storage`와 일치하는지 검사합니다.
+`ChannelsLast`에서 HWC 입력은 조밀해야 하며 CHW 입력은 채널이 마지막인
+스트라이드를 가져야 합니다. `Contiguous`에서는 조밀한 CHW 입력만 허용하고
+HWC 태그는 거부합니다.
+같은 표준 축 순서를 `Tensor.axis_semantics`로 지정할 수도 있습니다. 두 주석을
+모두 지정하면 서로 일치해야 합니다.
+
+태그가 없는 `ChannelsLast` 입력은 호환성을 위해 조밀한 NHWC 또는 채널이 마지막인
+스트라이드를 가진 비조밀 논리 NCHW로 해석합니다. 크기가 1인 차원 때문에 논리 NCHW
+뷰도 조밀해지는 경우 `Tensor.layout = TensorLayout::CHW`를 명시하세요. 이 경우
+스트라이드만으로 논리 축을 식별할 수 없습니다. Pool 출력은 CHW 논리 축과
+`output_storage`에 맞는 스트라이드를 유지합니다. 노드는 레이아웃 변경을 위해
+페이로드 바이트를 전치하거나 복사하지 않습니다.
+
+### 양자화 메타데이터
+
 INT8 출력은 노드가 양자화를 알 때 그 값을 `Tensor.semantic.quant`에 담습니다.
 `SimaVoxelize`와 BF16 입력의 `SimaBEVPool`은 `scale = 1 / quantization.multiplier`,
 두 INT8 입력이 모두 스케일을 가진 `SimaBEVPool`은
 `depth_scale * context_scale / quantization.multiplier`, `SimaPillarScatter`는 특징의
 양자화를 게시합니다. 그 밖의 경우에는 양자화를 게시하지 않습니다.
+
+INT8 Scatter 입력의 채널별 양자화는 `[1,M,1,C]` 같은 모양을 포함하여 마지막 특징
+축 `C`에서만 지원됩니다. 유한한 양의 스케일 `C`개와 INT8 영점 `C`개를 제공하세요.
+모든 영점은 빈 셀을 채우는 Scatter의 `zero_point`와 같아야 합니다. 캔버스는 이 값을
+유지하고 양자화 축을 `[1,H,W,C]`의 `3`으로 바꿉니다. 다른 양자화 축은 거부합니다.
+좌표에 따라 기둥이 배치된 뒤에는 기둥 축 매개변수로 고정된 캔버스를 설명할 수
+없기 때문입니다.
+
+`SimaBEVPool`은 채널별 양자화 메타데이터를 지원하지 않으며, 조용히 제거하는 대신
+거부합니다. 기존 텐서별 메타데이터와 명시적 영점 옵션의 동작은 유지됩니다. 입력
+메타데이터가 없으면 알 수 없는 상태로 남습니다.
 
 ## BF16 텐서
 

@@ -317,6 +317,51 @@ void bev_pool_request() {
       "neither dense channels-last", "bev_pool rejects padded depth");
 }
 
+// Singleton dimensions cannot determine logical axis order from strides.
+void bev_pool_logical_axes() {
+  const auto options = ref::bev_pool_case().options;
+  for (const auto geometry :
+       {std::array<std::int64_t, 3>{1, 2, 3}, {16, 1, 3}, {16, 2, 1}, {16, 1, 1}, {1, 1, 1}}) {
+    const auto [channels, height, width] = geometry;
+    auto logical = fact({2, channels, height, width}, rt::DType::Int8,
+                        {height * width * channels, 1, width * channels, channels});
+    logical.layout = "CHW";
+    auto dense_hwc = fact({2, height, width, channels}, rt::DType::Int8);
+    dense_hwc.layout = "HWC";
+    const auto bytes = fact({228}, rt::DType::UInt8);
+    const std::array chw{logical, logical, bytes};
+    const std::array hwc{dense_hwc, dense_hwc, bytes};
+    const auto checked_chw = kr::bev_pool_request(options, chw);
+    const auto checked_hwc = kr::bev_pool_request(options, hwc);
+    require(checked_chw.inputs[0].shape == logical.shape &&
+                checked_chw.inputs == checked_hwc.inputs,
+            "tagged CHW and HWC must describe the same singleton geometry");
+    require(checked_chw.published[0].layout == "CHW",
+            "Pool output publishes logical CHW authority independently of storage");
+  }
+  auto depth = fact({2, 1, 2, 3}, rt::DType::Int8);
+  depth.layout = "CHW";
+  auto context = fact({2, 16, 2, 3}, rt::DType::Int8, {96, 1, 48, 16});
+  context.layout = "CHW";
+  std::array inputs{depth, context, fact({228}, rt::DType::UInt8)};
+  require(kr::bev_pool_request(options, inputs).inputs[0].shape == depth.shape,
+          "CHW singleton channel may omit redundant strides");
+  inputs[1].stride_bytes.clear();
+  require_throws([&] { kr::bev_pool_request(options, inputs); }, "channels-last strided",
+                 "logical CHW cannot hide a conflicting physical layout");
+  inputs[1] = context;
+  inputs[1].layout = "HWC";
+  require_throws([&] { kr::bev_pool_request(options, inputs); }, "must be dense",
+                 "logical HWC cannot hide a conflicting physical layout");
+  auto contiguous = options;
+  contiguous.input_storage = SimaBEVPoolStorage::Contiguous;
+  require_throws([&] { kr::bev_pool_request(contiguous, inputs); }, "logical CHW axes",
+                 "contiguous BEV storage has explicit CHW logical order");
+  inputs[1].layout = "HW";
+  require_throws([&] { kr::bev_pool_request(options, inputs); }, "requires CHW or HWC",
+                 "Pool refuses incompatible logical axes");
+}
+
 // Malformed metadata must be rejected before any signed shape/stride arithmetic,
 // including when the caller leaves dense strides implicit. No payload allocation
 // or provider is needed to exercise these cold request-construction boundaries.
@@ -590,7 +635,7 @@ void reference_known_answers() {
 // INT8 outputs publish `real = (code - zero_point) * scale`, with scale the
 // inverse of the fused multiplier times the real value of one summed unit.
 void published_quantization() {
-  const auto close = [](const std::optional<kr::PerTensorQuant>& q, double scale,
+  const auto close = [](const std::optional<kr::Quantization>& q, double scale,
                         std::int64_t zero_point) {
     return q && std::abs(q->scale - scale) <= 1e-12 * scale && q->zero_point == zero_point;
   };
@@ -610,9 +655,53 @@ void published_quantization() {
                       fact({1}, rt::DType::Int32)};
   require(!kr::pillar_scatter_request(scatter, features).published[0].quant,
           "pillar_scatter without feature quant publishes none");
-  features[0].quant = kr::PerTensorQuant{0.125, -7};
+  features[0].quant = kr::Quantization{0.125, -7};
   require(close(kr::pillar_scatter_request(scatter, features).published[0].quant, 0.125, -7),
           "pillar_scatter canvas keeps the features' quant");
+
+  // A channel-preserving scatter moves only the quantization axis, not values.
+  kr::Quantization per_channel;
+  per_channel.axis = 1;
+  per_channel.scales.assign(16, 0.125);
+  per_channel.scales[7] = 0.25;
+  per_channel.zero_points.assign(16, scatter.zero_point);
+  features[0].quant = per_channel;
+  auto published = kr::pillar_scatter_request(scatter, features).published[0].quant;
+  require(published && published->axis == 3 && published->scales == per_channel.scales &&
+              published->zero_points == per_channel.zero_points,
+          "Scatter preserves channel scales and remaps [M,C] quantization to canvas axis3");
+  features[0].shape = {1, 5, 1, 16};
+  features[0].quant->axis = 3;
+  published = kr::pillar_scatter_request(scatter, features).published[0].quant;
+  require(published && published->axis == 3 && published->scales == per_channel.scales,
+          "Scatter singleton-extended channel quantization remains axis3");
+  const auto valid = features[0];
+  features[0].quant->axis = 1;
+  require_throws([&] { kr::pillar_scatter_request(scatter, features); }, "trailing channel axis",
+                 "Scatter cannot preserve quantization over the scattered pillar axis");
+  features[0] = valid;
+  features[0].quant->scales.pop_back();
+  require_throws([&] { kr::pillar_scatter_request(scatter, features); }, "one scale and zero point",
+                 "Scatter validates channel quantization extent");
+  features[0] = valid;
+  features[0].quant->zero_points.pop_back();
+  require_throws([&] { kr::pillar_scatter_request(scatter, features); }, "one scale and zero point",
+                 "Scatter validates channel zero-point extent");
+  for (const auto scale : {0.0, -1.0, std::numeric_limits<double>::infinity(),
+                           std::numeric_limits<double>::quiet_NaN()}) {
+    features[0] = valid;
+    features[0].quant->scales[0] = scale;
+    require_throws([&] { kr::pillar_scatter_request(scatter, features); }, "finite and positive",
+                   "Scatter refuses malformed channel scales");
+  }
+  features[0] = valid;
+  features[0].quant->zero_points[0] = 128;
+  require_throws([&] { kr::pillar_scatter_request(scatter, features); }, "fit INT8",
+                 "Scatter refuses out-of-range channel zero points");
+  features[0] = valid;
+  features[0].quant->zero_points[0] = scatter.zero_point == 0 ? 1 : 0;
+  require_throws([&] { kr::pillar_scatter_request(scatter, features); }, "scalar empty-cell",
+                 "Scatter cannot fill channel-dependent zero codes with a scalar");
 
   auto pool = ref::bev_pool_case().options;
   pool.quantization.multiplier = 0.5f;
@@ -621,10 +710,18 @@ void published_quantization() {
                     fact({228}, rt::DType::UInt8)};
   require(!kr::bev_pool_request(pool, inputs).published[0].quant,
           "bev_pool INT8 inputs without scales publish no quant");
-  inputs[0].quant = kr::PerTensorQuant{0.01, -128};
-  inputs[1].quant = kr::PerTensorQuant{0.2, 3};
+  inputs[0].quant = kr::Quantization{0.01, -128};
+  inputs[1].quant = kr::Quantization{0.2, 3};
   require(close(kr::bev_pool_request(pool, inputs).published[0].quant, 0.01 * 0.2 / 0.5, 4),
           "bev_pool INT8 quant is depth_scale*context_scale/multiplier");
+  for (std::size_t port = 0; port < 2; ++port) {
+    const auto saved = inputs[port].quant;
+    inputs[port].quant = per_channel;
+    require_throws([&] { kr::bev_pool_request(pool, inputs); }, "per-axis quantization",
+                   "Pool explicitly rejects unsupported per-axis scale algebra");
+    inputs[port].quant = saved;
+  }
+
   inputs[0] = fact({2, 2, 3, 2}, rt::DType::BFloat16);
   inputs[1] = fact({2, 2, 3, 16}, rt::DType::BFloat16);
   pool.depth_zero_point = pool.context_zero_point = 0;
@@ -638,6 +735,7 @@ int main() {
     pillar_scatter_request();
     bev_pool_plan_request();
     bev_pool_request();
+    bev_pool_logical_axes();
     checked_extent_boundaries();
     dtype_tokens();
     reference_known_answers();

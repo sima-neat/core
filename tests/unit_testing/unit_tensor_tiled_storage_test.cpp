@@ -7,6 +7,7 @@
 
 #include <array>
 #include <cstring>
+#include <limits>
 #include <numeric>
 
 using namespace simaai::neat;
@@ -21,6 +22,138 @@ template <class F> void rejects(F action, const char* why) {
     rejected = true;
   }
   require(rejected, why);
+}
+
+void rejects_tiled_metadata(const Tensor& malformed, const char* why) {
+  std::string error;
+  require(!malformed.validate(&error) && !error.empty(), why);
+  auto caps = std::shared_ptr<GstCaps>(gst_caps_new_empty_simple("application/vnd.simaai.tensor"),
+                                       gst_caps_unref);
+  pi::set_tessellation_caps(caps.get(), 0, *malformed.semantic.tess);
+  Tensor decoded = malformed;
+  decoded.semantic.tess.reset();
+  decoded.strides_bytes = {97}; // Rejected metadata must not partially update the tensor.
+  rejects(
+      [&] {
+        pi::apply_tessellation_caps(decoded, caps.get(), 0,
+                                    std::numeric_limits<std::uint64_t>::max());
+      },
+      why);
+  require(!decoded.semantic.tess && decoded.strides_bytes == std::vector<int64_t>{97},
+          "rejected metadata mutated the receiving tensor");
+}
+
+void accepts_tiled_metadata(const Tensor& valid, const char* why) {
+  require(valid.validate(nullptr), why);
+  auto caps = std::shared_ptr<GstCaps>(gst_caps_new_empty_simple("application/vnd.simaai.tensor"),
+                                       gst_caps_unref);
+  pi::set_tessellation_caps(caps.get(), 0, *valid.semantic.tess);
+  Tensor decoded = valid;
+  decoded.semantic.tess.reset();
+  pi::apply_tessellation_caps(decoded, caps.get(), 0, valid.semantic.tess->storage_bytes);
+  require(decoded.validate(nullptr) &&
+              decoded.semantic.tess->format == valid.semantic.tess->format &&
+              decoded.semantic.tess->axes == valid.semantic.tess->axes &&
+              decoded.semantic.tess->slice_shape == valid.semantic.tess->slice_shape &&
+              decoded.semantic.tess->storage_bytes == valid.semantic.tess->storage_bytes,
+          why);
+}
+
+void check_tiled_validation(const Tensor& valid) {
+  accepts_tiled_metadata(valid, "valid padded tiled tensor rejected");
+  auto check_invalid = [&](auto mutate, const char* why) {
+    Tensor malformed = valid;
+    mutate(malformed);
+    rejects_tiled_metadata(malformed, why);
+  };
+  check_invalid([](Tensor& t) { t.semantic.tess->storage_bytes = 1; },
+                "tiled extent below logical bytes accepted");
+  check_invalid([](Tensor& t) { t.semantic.tess->axes[1] = 0; }, "duplicate tiled axes accepted");
+  check_invalid([](Tensor& t) { t.semantic.tess->axes[0] = 4; }, "out-of-range axis accepted");
+  check_invalid([](Tensor& t) { t.semantic.tess->axes[0] = -2; }, "invalid absent axis accepted");
+  check_invalid([](Tensor& t) { t.semantic.tess->axes[3] = -1; }, "absent channel axis accepted");
+  check_invalid(
+      [](Tensor& t) {
+        t.semantic.tess->axes[0] = -1;
+        t.semantic.tess->slice_shape[0] = 2;
+      },
+      "nonunit absent spatial axis accepted");
+  check_invalid([](Tensor& t) { t.semantic.tess->axes.pop_back(); }, "short axes accepted");
+  check_invalid([](Tensor& t) { t.semantic.tess->slice_shape.pop_back(); },
+                "short tile geometry accepted");
+  check_invalid([](Tensor& t) { t.semantic.tess->slice_shape[0] = 0; }, "zero tile size accepted");
+  check_invalid([](Tensor& t) { t.semantic.tess->slice_shape[0] = -1; },
+                "negative tile size accepted");
+  check_invalid([](Tensor& t) { t.semantic.tess->format = "MLA_TILED_INT8_PAD16"; },
+                "tiled format/dtype mismatch accepted");
+  check_invalid([](Tensor& t) { t.dtype = TensorDType::Float32; },
+                "unsupported tiled dtype accepted");
+  check_invalid([](Tensor& t) { t.shape[0] = 0; }, "zero logical dimension accepted");
+  check_invalid([](Tensor& t) { t.shape[0] = -1; }, "negative logical dimension accepted");
+  check_invalid([](Tensor& t) { t.shape.clear(); }, "missing logical geometry accepted");
+  // This product is exactly 2^64 + 32: checking only a multiplied result would
+  // mistake it for the declared 32-byte payload even on a 64-bit host.
+  check_invalid(
+      [](Tensor& t) {
+        t.dtype = TensorDType::Int8;
+        t.semantic.tess->format = "MLA_TILED_INT8_COMPACT";
+        t.shape = {1, 631832658, 1824726041, 16};
+      },
+      "wrapped logical byte product accepted");
+  check_invalid([](Tensor& t) { t.shape = {1, 1, 1, std::numeric_limits<int64_t>::max()}; },
+                "logical payload larger than declared storage accepted");
+  check_invalid([](Tensor& t) { t.byte_offset = -1; }, "negative tiled byte offset accepted");
+  check_invalid([](Tensor& t) { t.byte_offset = std::numeric_limits<int64_t>::max(); },
+                "tiled byte offset beyond selected storage accepted");
+  check_invalid([](Tensor& t) { t.byte_offset = 33; },
+                "tiled payload crossing selected storage end accepted");
+  check_invalid(
+      [](Tensor& t) {
+        t.storage = std::make_shared<TensorBuffer>();
+        t.storage->size_bytes = std::numeric_limits<std::size_t>::max();
+        t.semantic.tess->storage_bytes = t.storage->size_bytes;
+      },
+      "wrapped selected-storage end accepted");
+  check_invalid([](Tensor& t) { t.planes.emplace_back(); }, "composite tiled tensor accepted");
+
+  Tensor clipped = valid;
+  clipped.semantic.tess->slice_shape = {2, 8, 12, 16};
+  accepts_tiled_metadata(clipped, "oversized boundary-clipped tile rejected");
+  Tensor absent_axes = valid;
+  absent_axes.shape = {9};
+  absent_axes.semantic.tess->axes = {-1, -1, -1, 0};
+  accepts_tiled_metadata(absent_axes, "absent unit spatial axes rejected");
+  Tensor exact_end = valid;
+  exact_end.byte_offset = 32;
+  accepts_tiled_metadata(exact_end, "tiled payload ending at selected storage boundary rejected");
+  Tensor descriptor_only = valid;
+  descriptor_only.storage.reset();
+  accepts_tiled_metadata(descriptor_only, "storage-free metadata descriptor rejected");
+  Tensor opaque = valid;
+  opaque.storage = std::make_shared<TensorBuffer>();
+  opaque.storage->size_bytes = 64;
+  opaque.storage->map_fn = [](MapMode) -> Mapping {
+    throw std::runtime_error("metadata validation must not map storage");
+  };
+  accepts_tiled_metadata(opaque, "metadata validation needs a payload mapping");
+  opaque.storage->size_bytes = 0;
+  accepts_tiled_metadata(opaque, "unknown storage size was treated as a known empty buffer");
+
+  for (auto dtype : {TensorDType::Int8, TensorDType::UInt8}) {
+    Tensor integer = valid;
+    integer.dtype = dtype;
+    integer.semantic.tess->format =
+        dtype == TensorDType::Int8 ? "MLA_TILED_INT8_COMPACT" : "MLA_TILED_UINT8_PAD16";
+    accepts_tiled_metadata(integer, "valid explicit integer tiled tensor rejected");
+  }
+
+  // Zero is the legacy annotation discriminator, not a new validation mode.
+  Tensor legacy = valid;
+  legacy.semantic.tess->storage_bytes = 0;
+  legacy.semantic.tess->format = "BF16";
+  legacy.semantic.tess->axes = {0, 0};
+  legacy.semantic.tess->slice_shape = {-1};
+  require(legacy.validate(nullptr), "legacy format-only annotations became strict tiled metadata");
 }
 } // namespace
 
@@ -73,6 +206,7 @@ RUN_TEST("unit_tensor_tiled_storage_test", ([] {
            tess.axes = {0, 1, 2, 3};
            tess.storage_bytes = 32;
            tensor.semantic.tess = tess;
+           check_tiled_validation(tensor);
            const std::vector<uint8_t> expected(carrier.begin() + 8, carrier.begin() + 40);
            require(tensor.has_tiled_storage() && !tensor.is_contiguous(),
                    "explicit tiled storage was lost");

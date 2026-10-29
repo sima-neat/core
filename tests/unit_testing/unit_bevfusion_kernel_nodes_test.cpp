@@ -4,8 +4,8 @@
 // ingress Sample. The request builders themselves are covered without any
 // runtime by unit_bevfusion_kernel_requests_test.
 //
-// Admission needs a Scheduler set built with Kernels that register voxelize,
-// pillar_scatter, bev_pool_plan and bev_pool (sima-neat/kernels#10, #29, #31).
+// Admission needs the published Scheduler cohort to expose voxelize,
+// pillar_scatter, bev_pool_plan and bev_pool from its Kernels provider.
 #include "nodes/sima/SimaBEVPool.h"
 #include "nodes/sima/SimaArgMax.h"
 #include "nodes/sima/SimaBEVPoolPlan.h"
@@ -14,6 +14,7 @@
 #include "nodes/sima/internal/LidarBevKernelRequests.h"
 #include "pipeline/GraphOptions.h"
 #include "pipeline/internal/contract/CompiledNodeContract.h"
+#include "pipeline/internal/contract/CompiledKernelTensor.h"
 #include "pipeline/internal/contract/ContractFacts.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
@@ -155,13 +156,13 @@ void fragments_and_definitions() {
 }
 
 // --------------------------------------------------------------------------
-// Cold Scheduler admission (needs the pinned Kernels in the Scheduler set)
+// Cold Scheduler admission (needs the published cohort's Kernels capabilities)
 // --------------------------------------------------------------------------
 void admit(const kr::KernelRequestPlan& plan, const std::string& label) {
   require(rt::find_kernel_operation(plan.operation) != nullptr,
           "Scheduler set has no '" + plan.operation +
-              "' kernel; build Core against the Scheduler/Runner cohort that bundles "
-              "sima-neat/kernels feature/bev-pool-ev74 (deps/manifest.json)");
+              "' kernel; update the published Scheduler cohort and its Kernels provider "
+              "using Core's normal dependency acquisition (deps/manifest.json)");
   auto checked =
       rt::check_kernel({plan.operation, plan.target, plan.inputs, plan.outputs, plan.parameters});
   if (const auto* error = std::get_if<rt::Error>(&checked))
@@ -247,24 +248,25 @@ void scheduler_admission() {
   auto checked = rt::check_kernel({ev.operation, ev.target, ev.inputs, ev.outputs, ev.parameters});
   require(std::holds_alternative<rt::Error>(checked),
           "bev_pool_plan has no EV74 implementation and must not fall back");
-  // A capacity below the kernels' worst case is the kernels' rejection, not Core's.
+  // Qualify Core's size calculation against the provider, including both
+  // formats and scalar widths, without duplicating the provider's constants.
   plan.target = SimaKernelTarget::A65;
-  plan.plan_capacity_bytes =
-      static_cast<std::int64_t>(kr::bev_pool_plan_capacity_bytes(plan, 6)) - 1;
-  const auto small = kr::bev_pool_plan_request(plan, cf);
-  require(std::holds_alternative<rt::Error>(rt::check_kernel(
-              {small.operation, small.target, small.inputs, small.outputs, small.parameters})),
-          "bev_pool_plan capacity formula must match the kernels' format 2 bound");
-  plan.input_dtype = TensorDType::BFloat16;
-  plan.plan_capacity_bytes = 0;
-  admit(kr::bev_pool_plan_request(plan, cf), "bev_pool_plan BF16 A65 format 2");
-  plan.plan_capacity_bytes =
-      static_cast<std::int64_t>(kr::bev_pool_plan_capacity_bytes(plan, 6)) - 1;
-  const auto small16 = kr::bev_pool_plan_request(plan, cf);
-  require(std::holds_alternative<rt::Error>(
-              rt::check_kernel({small16.operation, small16.target, small16.inputs, small16.outputs,
-                                small16.parameters})),
-          "bev_pool_plan capacity formula must match the kernels' BF16 format 2 bound");
+  for (const auto format : {SimaBEVPoolPlanFormat::V1, SimaBEVPoolPlanFormat::V2}) {
+    for (const auto dtype : {TensorDType::Int8, TensorDType::BFloat16}) {
+      plan.format = format;
+      plan.input_dtype = dtype;
+      const auto capacity = static_cast<std::int64_t>(kr::bev_pool_plan_capacity_bytes(plan, 6));
+      plan.plan_capacity_bytes = capacity;
+      admit(kr::bev_pool_plan_request(plan, cf), "bev_pool_plan exact capacity");
+      plan.plan_capacity_bytes = capacity - 1;
+      const auto small = kr::bev_pool_plan_request(plan, cf);
+      const auto rejected = rt::check_kernel(
+          {small.operation, small.target, small.inputs, small.outputs, small.parameters});
+      const auto* error = std::get_if<rt::Error>(&rejected);
+      require(error != nullptr, "bev_pool_plan must reject one byte below its capacity bound");
+      require_contains(error->field, "outputs[0]", "plan rejection must concern output capacity");
+    }
+  }
 }
 
 // --------------------------------------------------------------------------
@@ -451,7 +453,9 @@ void ingress_contracts() {
   // Existing dense producers can legally remove singleton axes at publication.
   // Forwarding their raw execution shape would regress model->ArgMax paths.
   {
-    rt::TensorSpec cast_input{{1, 1, 1, 32}, rt::DType::Int8};
+    // Cast supports BF16 <-> FP32; the fixture tests logical-rank publication,
+    // not dequantization. Keep the checked execution shape deliberately rank 4.
+    rt::TensorSpec cast_input{{1, 1, 1, 32}, rt::DType::BFloat16};
     rt::TensorSpec cast_output{{1, 1, 1, 32}, rt::DType::Float32};
     auto checked =
         rt::check_kernel({"cast", rt::Hardware::A65, {&cast_input, 1}, {&cast_output, 1}, {}});
@@ -471,6 +475,28 @@ void ingress_contracts() {
     logical.size_bytes = 128;
     logical.publication_relation = pipeline_internal::sima::PublicationViewRelation::SingletonAxes;
     producer.kernel->runtime_contract.physical_outputs.front().size_bytes = 128;
+    const auto selected = pipeline_internal::compiled_kernel_output_tensor(&producer, 0);
+    require(selected && selected->shape == cast_output.shape,
+            "unique complete producer output keeps its checked physical specification");
+    require(!pipeline_internal::compiled_kernel_output_tensor(&producer, 8),
+            "missing backend output cannot borrow another tensor's specification");
+    auto partial = producer;
+    auto partial_recipe = std::make_shared<pipeline_internal::sima::KernelStageRecipe>(*recipe);
+    partial_recipe->members.front().outputs.front().byte_offset = 4;
+    partial.kernel->recipe = partial_recipe;
+    require(!pipeline_internal::compiled_kernel_output_tensor(&partial, 0),
+            "offset producer output requires an explicit view, not the whole tensor");
+    auto shared = producer;
+    auto shared_recipe = std::make_shared<pipeline_internal::sima::KernelStageRecipe>(*recipe);
+    shared_recipe->members.front().outputs.push_back(
+        shared_recipe->members.front().outputs.front());
+    shared.kernel->recipe = shared_recipe;
+    require(!pipeline_internal::compiled_kernel_output_tensor(&shared, 0),
+            "multiple ports writing one backend output cannot supply a unique tensor");
+    shared_recipe->members.front().outputs.pop_back();
+    shared_recipe->members.push_back(shared_recipe->members.front());
+    require(!pipeline_internal::compiled_kernel_output_tensor(&shared, 0),
+            "multiple members writing one backend output cannot supply a unique tensor");
     ContractCompileInput downstream;
     downstream.immediate_upstream = &producer;
     SimaArgMaxOptions options;
@@ -524,6 +550,165 @@ void ingress_contracts() {
   require_contains(error, "SimaBEVPool requires a typed upstream tensor contract",
                    "SimaBEVPool missing upstream diagnostic");
 }
+// Authored producer contracts and graph ingress must retain the same semantic
+// authority. These are cold checks of real Scheduler executables, not kernels
+// numerical substitutes or fake provider registrations.
+CompiledNodeContract producer_contract(std::span<const kr::TensorFact> facts) {
+  namespace si = pipeline_internal::sima;
+  namespace specs = si::specbuilders;
+  CompiledNodeContract result;
+  auto& runtime = result.kernel.emplace().runtime_contract;
+  for (std::size_t i = 0; i < facts.size(); ++i) {
+    const auto& fact = facts[i];
+    const auto index = static_cast<int>(i);
+    const auto name = "input_" + std::to_string(i);
+    const auto bytes = kr::checked_tensor_bytes(fact.shape, fact.dtype, "test fixture");
+    std::optional<si::QuantStaticSpec> quant;
+    if (fact.quant) {
+      quant.emplace();
+      if (fact.quant->axis >= 0) {
+        quant->granularity = si::QuantGranularity::PerAxis;
+        quant->axis = fact.quant->axis;
+        quant->scales = fact.quant->scales;
+        quant->zero_points = fact.quant->zero_points;
+      } else {
+        quant->scales = {fact.quant->scale};
+        quant->zero_points = {fact.quant->zero_point};
+      }
+    }
+    auto output = specs::build_logical_output_static_spec(
+        index, index, index, index, index, fact.shape, kr::dtype_token(fact.dtype), fact.layout,
+        name, name, name, 0, bytes, quant);
+    output.stride_bytes = fact.stride_bytes;
+    runtime.logical_outputs.push_back(std::move(output));
+    runtime.physical_outputs.push_back(
+        specs::build_physical_buffer_static_spec(index, index, bytes, si::DeviceKind::Cpu, name));
+  }
+  return result;
+}
+
+CompiledNodeContract compile_upstream(const NodeContractProvider& node,
+                                      const CompiledNodeContract& upstream) {
+  ContractCompileInput input;
+  input.node_index = 3;
+  input.immediate_upstream = &upstream;
+  CompiledNodeContract result;
+  std::string error;
+  const bool ok = node.compile_node_contract(input, &result, &error);
+  if (!ok)
+    throw std::invalid_argument(error);
+  return result;
+}
+
+void semantic_contracts() {
+  auto pool = ref::bev_pool_case().options;
+  auto depth = Tensor::from_vector(std::vector<std::int8_t>(12), {2, 1, 2, 3}, TensorMemory::CPU);
+  depth.strides_bytes = {6, 1, 3, 1};
+  auto context =
+      Tensor::from_vector(std::vector<std::int8_t>(192), {2, 16, 2, 3}, TensorMemory::CPU);
+  context.strides_bytes = {96, 1, 48, 16};
+  const auto plan = Tensor::from_vector(std::vector<std::uint8_t>(228), {228}, TensorMemory::CPU);
+  const auto check_pool = [](const CompiledNodeContract& compiled) {
+    const auto inspected = rt::inspect_kernel(compiled.kernel->recipe->members.front().executable);
+    require(std::holds_alternative<rt::KernelInspection>(inspected), "Pool semantic inspection");
+    const auto& view = std::get<rt::KernelInspection>(inspected);
+    require(view.inputs()[0].shape == std::vector<std::int64_t>{2, 1, 2, 3} &&
+                view.inputs()[1].shape == std::vector<std::int64_t>{2, 16, 2, 3},
+            "Pool must not reinterpret singleton logical CHW axes as NHWC");
+    require(compiled.kernel->runtime_contract.logical_outputs.front().layout == "CHW",
+            "Pool publishes logical CHW authority");
+  };
+  // Public coarse layout and explicit per-axis semantics are both existing
+  // sources of logical authority; neither changes the physical strides.
+  depth.layout = context.layout = TensorLayout::CHW;
+  check_pool(compile(SimaBEVPool(pool), {depth, context, plan}));
+  depth.layout = context.layout = TensorLayout::Unknown;
+  depth.axis_semantics = context.axis_semantics = {TensorAxisSemantic::N, TensorAxisSemantic::C,
+                                                   TensorAxisSemantic::H, TensorAxisSemantic::W};
+  check_pool(compile(SimaBEVPool(pool), {depth, context, plan}));
+  {
+    auto conflicting = depth;
+    conflicting.layout = TensorLayout::HWC;
+    ContractCompileInput bad;
+    bad.ingress.ingress_sample = sample_from_tensors({conflicting, context, plan});
+    CompiledNodeContract rejected;
+    std::string error;
+    require(!SimaBEVPool(pool).compile_node_contract(bad, &rejected, &error),
+            "ingress cannot disagree about logical axis order");
+    require_contains(error, "layout", "conflicting ingress layout diagnostic");
+    conflicting = depth;
+    conflicting.axis_semantics.pop_back();
+    bad.ingress.ingress_sample = sample_from_tensors({conflicting, context, plan});
+    require(!SimaBEVPool(pool).compile_node_contract(bad, &rejected, &error),
+            "ingress axis semantics must match the tensor rank");
+    require_contains(error, "axis", "ingress axis rank diagnostic");
+  }
+  std::array facts{fact(depth.shape, rt::DType::Int8, depth.strides_bytes),
+                   fact(context.shape, rt::DType::Int8, context.strides_bytes),
+                   fact(plan.shape, rt::DType::UInt8)};
+  facts[0].layout = facts[1].layout = "NCHW"; // Normalize rank4 producer spelling.
+  check_pool(compile_upstream(SimaBEVPool(pool), producer_contract(facts)));
+  facts[0] = fact({2, 2, 3, 1}, rt::DType::Int8);
+  facts[1] = fact({2, 2, 3, 16}, rt::DType::Int8);
+  facts[0].layout = facts[1].layout = "NHWC";
+  check_pool(compile_upstream(SimaBEVPool(pool), producer_contract(facts)));
+  facts[1].quant =
+      kr::Quantization{1, 0, 3, std::vector<double>(16, 0.25), std::vector<std::int64_t>(16, 0)};
+  require_throws([&] { compile_upstream(SimaBEVPool(pool), producer_contract(facts)); },
+                 "per-axis quantization", "compiled Pool input cannot lose per-channel metadata");
+  context.semantic.quant.emplace();
+  context.semantic.quant->axis = 1;
+  context.semantic.quant->scales.assign(16, 0.25f);
+  context.semantic.quant->zero_points.assign(16, 0);
+  ContractCompileInput input;
+  input.ingress.ingress_sample = sample_from_tensors({depth, context, plan});
+  CompiledNodeContract result;
+  std::string diagnostic;
+  require(!SimaBEVPool(pool).compile_node_contract(input, &result, &diagnostic),
+          "ingress Pool input cannot lose per-channel metadata");
+  require_contains(diagnostic, "per-axis quantization", "ingress Pool quantization diagnostic");
+
+  const auto scatter = ref::pillar_scatter_case().options;
+  auto features = Tensor::from_vector(std::vector<std::int8_t>(80), {5, 16}, TensorMemory::CPU);
+  features.semantic.quant.emplace();
+  auto& quant = *features.semantic.quant;
+  quant.axis = 1;
+  quant.scales.assign(16, 0.125f);
+  quant.scales[7] = 0.25f;
+  quant.zero_points.assign(16, scatter.zero_point);
+  const auto coordinates =
+      Tensor::from_vector(std::vector<std::int32_t>(10), {5, 2}, TensorMemory::CPU);
+  const auto count = Tensor::from_vector(std::vector<std::int32_t>{5}, {1}, TensorMemory::CPU);
+  const auto check_scatter = [&](const CompiledNodeContract& compiled) {
+    const auto& output = compiled.kernel->runtime_contract.logical_outputs.front();
+    require(output.quant &&
+                output.quant->granularity == pipeline_internal::sima::QuantGranularity::PerAxis &&
+                output.quant->axis == 3 &&
+                output.quant->scales ==
+                    std::vector<double>(quant.scales.begin(), quant.scales.end()) &&
+                output.quant->zero_points == std::vector<std::int64_t>(16, scatter.zero_point),
+            "Scatter must preserve every channel's quantization at the remapped canvas axis");
+  };
+  check_scatter(compile(SimaPillarScatter(scatter), {features, coordinates, count}));
+  std::array scatter_facts{fact({5, 16}, rt::DType::Int8), fact({5, 2}, rt::DType::Int32),
+                           fact({1}, rt::DType::Int32)};
+  scatter_facts[0].quant = kr::Quantization{1,
+                                            0,
+                                            1,
+                                            {quant.scales.begin(), quant.scales.end()},
+                                            {quant.zero_points.begin(), quant.zero_points.end()}};
+  check_scatter(compile_upstream(SimaPillarScatter(scatter), producer_contract(scatter_facts)));
+  scatter_facts[0].quant->axis = 0;
+  require_throws(
+      [&] { compile_upstream(SimaPillarScatter(scatter), producer_contract(scatter_facts)); },
+      "trailing channel axis", "compiled Scatter rejects pillar-axis quantization");
+  quant.zero_points[7] = scatter.zero_point == 0 ? 1 : 0;
+  input.ingress.ingress_sample = sample_from_tensors({features, coordinates, count});
+  require(!SimaPillarScatter(scatter).compile_node_contract(input, &result, &diagnostic),
+          "ingress Scatter rejects incoherent per-channel empty fill");
+  require_contains(diagnostic, "scalar empty-cell", "Scatter empty-fill diagnostic");
+}
+
 } // namespace
 
 int main() {
@@ -531,6 +716,7 @@ int main() {
     fragments_and_definitions();
     scheduler_admission();
     ingress_contracts();
+    semantic_contracts();
   } catch (const std::exception& error) {
     std::cerr << "[FAIL] unit_bevfusion_kernel_nodes_test: " << error.what() << "\n";
     return 1;
