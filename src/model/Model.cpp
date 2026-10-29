@@ -6,6 +6,7 @@
 #include "model/internal/ModelParser.h"
 #include "model/internal/ModelRouteRetarget.h"
 #include "pipeline/internal/sima/ProcessCvuFamily.h"
+#include "pipeline/internal/sima/ProcessCvuRunTargetPolicy.h"
 #include "pipeline/internal/sima/RouteGraph.h"
 #include "model/internal/RoutePlanner.h"
 
@@ -1017,36 +1018,33 @@ const char* input_memory_policy_name(InputMemoryPolicy policy) {
   return "auto";
 }
 
-InputMemoryPolicy
-resolve_model_ingress_memory_policy(const internal::PreprocessPlannerResult& plan) {
-  bool saw_non_cast_pre = false;
-  for (const auto op : plan.session_route_plan.pre_chain) {
-    if (op == internal::SessionPreStageOp::Cast) {
-      continue;
-    }
-    saw_non_cast_pre = true;
-    switch (op) {
-    case internal::SessionPreStageOp::Preproc:
-    case internal::SessionPreStageOp::Quant:
-    case internal::SessionPreStageOp::Tess:
-    case internal::SessionPreStageOp::QuantTess:
-    case internal::SessionPreStageOp::CastTess:
-      return InputMemoryPolicy::Ev74;
-    case internal::SessionPreStageOp::Cast:
-      break;
-    }
-  }
+const char* session_pre_stage_op_name(internal::SessionPreStageOp op);
+GraphOptions route_options_from_model_route_options(const Model::RouteOptions& opt,
+                                                    const Model::Options* model_opt);
 
-  // No effective pre adapter before inference (or Cast-only pre chain): treat as MLA-first.
-  if (!plan.session_route_plan.include_pre_stage || !saw_non_cast_pre) {
+InputMemoryPolicy resolve_model_ingress_memory_policy(const internal::PreprocessPlannerResult& plan,
+                                                      GraphOptions execution) {
+  if (!plan.session_route_plan.include_pre_stage || plan.session_route_plan.pre_chain.empty()) {
     return InputMemoryPolicy::Dms0;
   }
-  return InputMemoryPolicy::SystemMemory;
+  execution.resolve_advanced_execution();
+  ContractCompileInput input;
+  input.processcvu = execution.processcvu;
+  input.processcvu_requested_run_target = execution.processcvu_requested_run_target;
+  pipeline_internal::sima::ProcessCvuStagePayload payload;
+  payload.graph_family = session_pre_stage_op_name(plan.session_route_plan.pre_chain.front());
+  const auto decision = pipeline_internal::sima::resolve_processcvu_backend_decision(
+      payload, input, {}, pipeline_internal::sima::static_contract::PhysicalCommandRole::Ingress);
+  return decision.resolved_exec_backend ==
+                 pipeline_internal::sima::ProcessCvuResolvedExecBackend::Evxx
+             ? InputMemoryPolicy::Ev74
+             : InputMemoryPolicy::Dms0;
 }
 
 void apply_model_ingress_memory_policy(InputOptions& opt,
-                                       const internal::PreprocessPlannerResult& plan) {
-  opt.memory_policy = resolve_model_ingress_memory_policy(plan);
+                                       const internal::PreprocessPlannerResult& plan,
+                                       const GraphOptions& execution) {
+  opt.memory_policy = resolve_model_ingress_memory_policy(plan, execution);
 }
 
 bool runner_debug_enabled() {
@@ -1162,8 +1160,6 @@ const char* post_route_stage_kind_name(internal::PostRouteStageKind kind) {
   }
   return "unknown";
 }
-
-const char* session_pre_stage_op_name(internal::SessionPreStageOp op);
 
 const char* session_post_stage_op_name(internal::SessionPostStageOp op) {
   switch (op) {
@@ -6226,7 +6222,8 @@ build_pipeline_nodes(const Model& model, const internal::ModelPack& pack, const 
     } else if (!popt.name_suffix.empty()) {
       src_opt.buffer_name = std::string("decoder") + popt.name_suffix;
     }
-    apply_model_ingress_memory_policy(src_opt, plan);
+    apply_model_ingress_memory_policy(src_opt, plan,
+                                      route_options_from_model_route_options(popt, &opt));
     src_opt.preprocess_meta = make_preprocess_meta_template(plan);
     if (runner_debug_enabled()) {
       const InputOptions pack_opt = pack.input_appsrc_options(tensor_mode);
@@ -6985,7 +6982,9 @@ InputOptions Model::input_appsrc_options(bool tensor_mode) const {
   const bool route_requires_tensor = pipeline_requires_tensor_input(impl_->preprocess_plan);
   const bool effective_tensor_mode = tensor_mode || route_requires_tensor;
   InputOptions opt = impl_->pack.input_appsrc_options(effective_tensor_mode);
-  apply_model_ingress_memory_policy(opt, impl_->preprocess_plan);
+  apply_model_ingress_memory_policy(
+      opt, impl_->preprocess_plan,
+      route_options_from_model_route_options(Model::RouteOptions{}, &impl_->options));
   opt.preprocess_meta = make_preprocess_meta_template(impl_->preprocess_plan);
   return opt;
 }
@@ -6994,7 +6993,9 @@ std::vector<InputOptions> Model::input_appsrc_options_list(bool tensor_mode) con
   const bool route_requires_tensor = pipeline_requires_tensor_input(impl_->preprocess_plan);
   const bool effective_tensor_mode = tensor_mode || route_requires_tensor;
   InputOptions base = impl_->pack.input_appsrc_options(effective_tensor_mode);
-  apply_model_ingress_memory_policy(base, impl_->preprocess_plan);
+  apply_model_ingress_memory_policy(
+      base, impl_->preprocess_plan,
+      route_options_from_model_route_options(Model::RouteOptions{}, &impl_->options));
   base.preprocess_meta = make_preprocess_meta_template(impl_->preprocess_plan);
 
   const auto ingress_contracts =
@@ -7236,13 +7237,15 @@ Model::Runner Model::build(const Model::RouteOptions& opt,
         "Model::build(): multi-ingress image convenience is unsupported; use build(TensorList)");
   }
   const auto src_opts = input_appsrc_options_list(tensor_mode);
+  const auto seed_memory = resolve_model_ingress_memory_policy(
+      impl_->preprocess_plan, route_options_from_model_route_options(build_opt, &impl_->options));
   TensorList dummy_inputs;
   dummy_inputs.reserve(src_opts.size());
   for (const auto& src_opt : src_opts) {
     Tensor dummy = make_dummy_tensor(src_opt);
-    if (src_opt.memory_policy == InputMemoryPolicy::Ev74) {
+    if (seed_memory == InputMemoryPolicy::Ev74) {
       dummy = dummy.to({DeviceType::SIMA_CVU, 0});
-    } else if (src_opt.memory_policy == InputMemoryPolicy::Dms0) {
+    } else if (seed_memory == InputMemoryPolicy::Dms0) {
       dummy = dummy.to({DeviceType::SIMA_MLA, 0});
     }
     dummy_inputs.push_back(std::move(dummy));
@@ -7268,8 +7271,8 @@ Model::Runner Model::build(const Model::RouteOptions& opt,
   const auto ingress_names = ingress_names_from_contracts(ingress_contracts);
   if (tensor_mode) {
     const auto src_opts2 = input_appsrc_options_list(true);
-    const InputOptions src_opt =
-        !src_opts2.empty() ? src_opts2.front() : pack.input_appsrc_options(true);
+    InputOptions src_opt = !src_opts2.empty() ? src_opts2.front() : pack.input_appsrc_options(true);
+    src_opt.memory_policy = seed_memory;
     return Runner(std::move(run), src_opt, ingress_names);
   }
   return Runner(std::move(run), ingress_names);
@@ -7331,8 +7334,9 @@ Model::Runner Model::build_with_model_options(const simaai::neat::TensorList& in
     return Runner(std::move(run), ingress_names);
   }
   const auto src_opts = input_appsrc_options_list(true);
-  const InputOptions src_opt =
-      !src_opts.empty() ? src_opts.front() : pack.input_appsrc_options(true);
+  InputOptions src_opt = !src_opts.empty() ? src_opts.front() : pack.input_appsrc_options(true);
+  apply_model_ingress_memory_policy(src_opt, impl_->preprocess_plan,
+                                    route_options_from_model_route_options(build_opt, &model_opt));
   if (runner_debug_enabled()) {
     std::fprintf(stderr,
                  "[model-runner] build(tensors) tensor_mode=1 media=%s format=%s w=%d h=%d d=%d\n",
@@ -7403,7 +7407,10 @@ Model::Runner Model::build(const std::vector<cv::Mat>& inputs, const Model::Rout
     if (!build_opt.name_suffix.empty()) {
       pack = pack.clone_with_overrides(std::string{}, build_opt.name_suffix);
     }
-    const InputOptions src_opt = pack.input_appsrc_options(true);
+    InputOptions src_opt = pack.input_appsrc_options(true);
+    apply_model_ingress_memory_policy(
+        src_opt, impl_->preprocess_plan,
+        route_options_from_model_route_options(build_opt, &impl_->options));
     require_exact_ingress_count(inputs.size(), ingress_contracts, "Model::build", "image inputs");
     for (const auto& input : inputs)
       validate_public_input(input, src_opt, InputStreamOptions{}, "Model::build");
