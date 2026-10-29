@@ -18,6 +18,7 @@
 #include "test_main.h"
 #include "test_utils.h"
 #include "nodes/common/Output.h"
+#include "nodes/common/Queue.h"
 #include "nodes/common/Caps.h"
 #include "graphs/Fragments.h"
 #include "nodes/io/CameraInput.h"
@@ -846,6 +847,83 @@ void require_terminal_transport_defers_public_loans() {
           "the actual graph worker must defer terminal loan admission to the public pull");
 }
 
+// A decoder-like segment feeding a branch is forced to zero-copy transport, so Owned must copy
+// at the public pull. Otherwise each retained output keeps the segment's loan and the source stops.
+void require_owned_internal_output_releases_producer_loans() {
+  using namespace simaai::neat;
+  gst_init(nullptr, nullptr);
+  Graph source("source");
+  source.add(nodes::Input("image"));
+  source.add(nodes::Queue());
+  Graph frames("frames");
+  frames.add(nodes::Output("frames", OutputOptions::EveryFrame(1)));
+  Graph other("other");
+  other.add(nodes::Output("other", OutputOptions::Latest()));
+  Graph graph;
+  graph.connect(source, frames);
+  graph.connect(source, other);
+  RunOptions options;
+  options.queue_depth = 1;
+  options.output_memory = OutputMemory::Owned;
+  const auto seed =
+      sample_from_tensors({make_color_tensor(32, 24, ImageSpec::PixelFormat::RGB, 0x29)});
+  auto plan = runtime::compile_public_graph(graph, options, seed);
+  runtime::RunCoreStartOptions start;
+  start.run_options = options;
+  start.graph_options = runtime::graph_runtime_options_from_run_options(options);
+  start.mode = RunMode::Async;
+  start.allow_startup_preflight = false;
+  start.seed = seed;
+  auto parent = runtime::RunCore::start(std::move(plan), std::move(start));
+  std::shared_ptr<runtime::RunCore> producer;
+  for (const auto& pipe : parent->graph_execution().pipelines) {
+    if (pipe && pipe->seg.boundary.graph_internal_output) {
+      producer = pipe->run_core;
+    }
+  }
+  require(producer && producer->holder_loan_gate,
+          "the branching segment must forward zero-copy outputs under a loan gate");
+
+  const int retained_count = producer->holder_loan_gate->credit_limit() + 2;
+  std::vector<Sample> retained;
+  for (int id = 0; id < retained_count; ++id) {
+    GstBuffer* buffer = sima_test::allocate_cma_dmabuf(64);
+    const auto producer_identity = sima_test::dmabuf_span(buffer);
+    auto produced = sample_from_buffer(buffer);
+    gst_buffer_unref(buffer);
+    produced.frame_id = id;
+    // A zero-copy segment's appsink emits borrowed samples.
+    produced.owned = false;
+    {
+      std::lock_guard lock(producer->pipeline.out_mu);
+      producer->pipeline.out_queue.push_back(std::move(produced));
+    }
+    producer->pipeline.out_cv.notify_all();
+    Sample output;
+    PullError error;
+    const PullStatus status = parent->pull_named_output("frames", 1000, output, &error);
+    if (status != PullStatus::Ok) {
+      parent->close();
+      require(false, "Owned output " + std::to_string(id) +
+                         " stalled while earlier outputs were retained: " + error.message);
+    }
+    GstBuffer* delivered =
+        pipeline_internal::buffer_from_tensor_holder(output.tensors.front().storage->holder);
+    const bool copied = delivered && sima_test::dmabuf_span(delivered) != producer_identity;
+    if (delivered) {
+      gst_buffer_unref(delivered);
+    }
+    require(output.owned && copied, "Owned output must be an independent copy");
+    retained.push_back(std::move(output));
+  }
+  // The other branch's Latest queue still holds the newest frame; drain it before counting.
+  for (Sample dropped; parent->pull_named_output("other", 0, dropped, nullptr) == PullStatus::Ok;) {
+  }
+  const int producer_loans = producer->holder_loan_gate->inflight();
+  parent->close();
+  require(producer_loans == 0, "retained Owned outputs must not hold producer loans");
+}
+
 void require_loan_stall_warns_once_per_stall() {
   using namespace simaai::neat;
   struct CapturedStderr {
@@ -903,6 +981,7 @@ RUN_TEST(
       require_output_policy_matrix();
       require_dmabuf_loans_and_pressure_preserve_storage();
       require_loan_stall_warns_once_per_stall();
+      require_owned_internal_output_releases_producer_loans();
       require_device_preferred_input_ownership();
       require_cpu_admissible_input_preserves_dmabuf_images();
       {

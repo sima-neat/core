@@ -1,5 +1,6 @@
 #include "RunCore.h"
 #include "GraphTransportLifecycle.h"
+#include "RunInternal.h"
 
 #include "ExecutionGraphPlan.h"
 #include "gst/GstInit.h"
@@ -13,6 +14,7 @@
 #include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorTransfer.h"
+#include "pipeline/internal/TensorUtil.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 
 #include <algorithm>
@@ -1557,8 +1559,19 @@ std::optional<Sample> RunCore::graph_pull(simaai::neat::graph::NodeId node_id, i
     return std::nullopt;
   }
   Sample out = std::move(queued->sample);
-  pipeline_internal::release_realtime_frame_credits_for_sample(out, "graph-sink-pull");
+  graph_finish_sink_pull(out);
   return out;
+}
+
+void RunCore::graph_finish_sink_pull(Sample& sample) {
+  pipeline_internal::release_realtime_frame_credits_for_sample(sample, "graph-sink-pull");
+  // Graph-internal segments forward decoder frames zero-copy, so Owned copies them here to
+  // release the producer pool buffer and its loan before the app holds the sample.
+  const bool owned_output =
+      pipeline.stream_opt.copy_output && !pipeline.stream_opt.preserve_framework_output;
+  if (owned_output && !sample.owned && run_internal::sample_has_zero_copy_tensor(sample)) {
+    pipeline_internal::materialize_owned_output(sample);
+  }
 }
 
 std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPlan& segment,
