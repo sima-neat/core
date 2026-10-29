@@ -3,6 +3,7 @@
     "docs/develop-apps/advanced-concepts/application-design/graphs.md": "478b1a3b5dc8114a93cd4fce28faedd82567d21eeb485d2c09fd9b06f72295b9",
     "docs/develop-apps/advanced-concepts/application-design/metadata_sender.md": "975382342beb265709f11b6b7e54a608c8a0830cc545073e8a8fc69b84a4bd1a",
     "docs/develop-apps/advanced-concepts/application-design/mipi-camera-input.md": "02c16d3c5ed360e852a97f464c836e1a94dc4c1d4fa242b799b338f471e57862",
+    "docs/develop-apps/advanced-concepts/application-design/usb-camera-input.md": "2b8575931540ff049512534c8ac9679ea3fe124fd9da3188eb73d195c59b5623",
     "docs/develop-apps/advanced-concepts/application-design/video_sender.md": "f846de75ecb5a918036610043797705dfd9bdec3e86de76c75959be1af176c1e",
     "docs/develop-apps/advanced-concepts/data-model-contracts/data_formats.md": "e1e54f58b94a0c4eb2fb865b3531e940fb0a39a70c7a72f3977e4b1fb7fde84c",
     "docs/develop-apps/advanced-concepts/data-model-contracts/dtype_contract.md": "5961086758dc9e0efcd3d6389461100e2395429f254292848b4f35cfdfba582c",
@@ -93,13 +94,13 @@
     "docs/release-notes/sima-cli.md": "4cc01486502591ea0754898daf3eec79c65514cc29a3e2021a04932995fdb2a4",
     "docs/tools/index.md": "c5a630a414442127155efa0b7ec1abeaa8765799d994e35f53638cddbe344990",
     "docs/tools/model-compiler.md": "efe3cfcf3b8f2f4df4eb21a287e2cf29ea8c93330f388c94aea9aa23999543fc",
-    "docs/tools/model-zoo.md": "974e24f8d3aa03fb88b39c1a7a7b7127b1883e33de314ed2b2e2fca4cd0faafb",
-    "docs/develop-apps/advanced-concepts/application-design/usb-camera-input.md": "2b8575931540ff049512534c8ac9679ea3fe124fd9da3188eb73d195c59b5623"
+    "docs/tools/model-zoo.md": "974e24f8d3aa03fb88b39c1a7a7b7127b1883e33de314ed2b2e2fca4cd0faafb"
   },
   "ko": {
     "docs/develop-apps/advanced-concepts/application-design/graphs.md": "478b1a3b5dc8114a93cd4fce28faedd82567d21eeb485d2c09fd9b06f72295b9",
     "docs/develop-apps/advanced-concepts/application-design/metadata_sender.md": "975382342beb265709f11b6b7e54a608c8a0830cc545073e8a8fc69b84a4bd1a",
     "docs/develop-apps/advanced-concepts/application-design/mipi-camera-input.md": "02c16d3c5ed360e852a97f464c836e1a94dc4c1d4fa242b799b338f471e57862",
+    "docs/develop-apps/advanced-concepts/application-design/usb-camera-input.md": "2b8575931540ff049512534c8ac9679ea3fe124fd9da3188eb73d195c59b5623",
     "docs/develop-apps/advanced-concepts/application-design/video_sender.md": "f846de75ecb5a918036610043797705dfd9bdec3e86de76c75959be1af176c1e",
     "docs/develop-apps/advanced-concepts/data-model-contracts/data_formats.md": "e1e54f58b94a0c4eb2fb865b3531e940fb0a39a70c7a72f3977e4b1fb7fde84c",
     "docs/develop-apps/advanced-concepts/data-model-contracts/dtype_contract.md": "5961086758dc9e0efcd3d6389461100e2395429f254292848b4f35cfdfba582c",
@@ -190,13 +191,13 @@
     "docs/release-notes/sima-cli.md": "4cc01486502591ea0754898daf3eec79c65514cc29a3e2021a04932995fdb2a4",
     "docs/tools/index.md": "c5a630a414442127155efa0b7ec1abeaa8765799d994e35f53638cddbe344990",
     "docs/tools/model-compiler.md": "efe3cfcf3b8f2f4df4eb21a287e2cf29ea8c93330f388c94aea9aa23999543fc",
-    "docs/tools/model-zoo.md": "974e24f8d3aa03fb88b39c1a7a7b7127b1883e33de314ed2b2e2fca4cd0faafb",
-    "docs/develop-apps/advanced-concepts/application-design/usb-camera-input.md": "2b8575931540ff049512534c8ac9679ea3fe124fd9da3188eb73d195c59b5623"
+    "docs/tools/model-zoo.md": "974e24f8d3aa03fb88b39c1a7a7b7127b1883e33de314ed2b2e2fca4cd0faafb"
   },
   "uk": {
     "docs/develop-apps/advanced-concepts/application-design/graphs.md": "478b1a3b5dc8114a93cd4fce28faedd82567d21eeb485d2c09fd9b06f72295b9",
     "docs/develop-apps/advanced-concepts/application-design/metadata_sender.md": "975382342beb265709f11b6b7e54a608c8a0830cc545073e8a8fc69b84a4bd1a",
     "docs/develop-apps/advanced-concepts/application-design/mipi-camera-input.md": "02c16d3c5ed360e852a97f464c836e1a94dc4c1d4fa242b799b338f471e57862",
+    "docs/develop-apps/advanced-concepts/application-design/usb-camera-input.md": "2b8575931540ff049512534c8ac9679ea3fe124fd9da3188eb73d195c59b5623",
     "docs/develop-apps/advanced-concepts/application-design/video_sender.md": "f846de75ecb5a918036610043797705dfd9bdec3e86de76c75959be1af176c1e",
     "docs/develop-apps/advanced-concepts/data-model-contracts/data_formats.md": "e1e54f58b94a0c4eb2fb865b3531e940fb0a39a70c7a72f3977e4b1fb7fde84c",
     "docs/develop-apps/advanced-concepts/data-model-contracts/dtype_contract.md": "5961086758dc9e0efcd3d6389461100e2395429f254292848b4f35cfdfba582c",
@@ -287,13 +288,13 @@
     "docs/release-notes/sima-cli.md": "4cc01486502591ea0754898daf3eec79c65514cc29a3e2021a04932995fdb2a4",
     "docs/tools/index.md": "c5a630a414442127155efa0b7ec1abeaa8765799d994e35f53638cddbe344990",
     "docs/tools/model-compiler.md": "efe3cfcf3b8f2f4df4eb21a287e2cf29ea8c93330f388c94aea9aa23999543fc",
-    "docs/tools/model-zoo.md": "974e24f8d3aa03fb88b39c1a7a7b7127b1883e33de314ed2b2e2fca4cd0faafb",
-    "docs/develop-apps/advanced-concepts/application-design/usb-camera-input.md": "2b8575931540ff049512534c8ac9679ea3fe124fd9da3188eb73d195c59b5623"
+    "docs/tools/model-zoo.md": "974e24f8d3aa03fb88b39c1a7a7b7127b1883e33de314ed2b2e2fca4cd0faafb"
   },
   "zh-Hant": {
     "docs/develop-apps/advanced-concepts/application-design/graphs.md": "478b1a3b5dc8114a93cd4fce28faedd82567d21eeb485d2c09fd9b06f72295b9",
     "docs/develop-apps/advanced-concepts/application-design/metadata_sender.md": "975382342beb265709f11b6b7e54a608c8a0830cc545073e8a8fc69b84a4bd1a",
     "docs/develop-apps/advanced-concepts/application-design/mipi-camera-input.md": "02c16d3c5ed360e852a97f464c836e1a94dc4c1d4fa242b799b338f471e57862",
+    "docs/develop-apps/advanced-concepts/application-design/usb-camera-input.md": "2b8575931540ff049512534c8ac9679ea3fe124fd9da3188eb73d195c59b5623",
     "docs/develop-apps/advanced-concepts/application-design/video_sender.md": "f846de75ecb5a918036610043797705dfd9bdec3e86de76c75959be1af176c1e",
     "docs/develop-apps/advanced-concepts/data-model-contracts/data_formats.md": "e1e54f58b94a0c4eb2fb865b3531e940fb0a39a70c7a72f3977e4b1fb7fde84c",
     "docs/develop-apps/advanced-concepts/data-model-contracts/dtype_contract.md": "5961086758dc9e0efcd3d6389461100e2395429f254292848b4f35cfdfba582c",
@@ -384,7 +385,6 @@
     "docs/release-notes/sima-cli.md": "4cc01486502591ea0754898daf3eec79c65514cc29a3e2021a04932995fdb2a4",
     "docs/tools/index.md": "c5a630a414442127155efa0b7ec1abeaa8765799d994e35f53638cddbe344990",
     "docs/tools/model-compiler.md": "efe3cfcf3b8f2f4df4eb21a287e2cf29ea8c93330f388c94aea9aa23999543fc",
-    "docs/tools/model-zoo.md": "974e24f8d3aa03fb88b39c1a7a7b7127b1883e33de314ed2b2e2fca4cd0faafb",
-    "docs/develop-apps/advanced-concepts/application-design/usb-camera-input.md": "2b8575931540ff049512534c8ac9679ea3fe124fd9da3188eb73d195c59b5623"
+    "docs/tools/model-zoo.md": "974e24f8d3aa03fb88b39c1a7a7b7127b1883e33de314ed2b2e2fca4cd0faafb"
   }
 }

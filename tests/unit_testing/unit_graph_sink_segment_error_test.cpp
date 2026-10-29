@@ -77,6 +77,12 @@ void check_acquired_pipeline_ref_outlives_stop() {
   (void)gst_element_get_state(owned, &state, nullptr, 0);
   require(state == GST_STATE_NULL, "stop() must still tear the pipeline down");
   gst_object_unref(owned);
+  // A GStreamer thread may still drop its own transient reference just after stop(); wait for
+  // it, bounded, so a leaked reference still fails.
+  for (int waited_ms = 0; !finalized.load() && waited_ms < 2000; ++waited_ms) {
+    g_usleep(1000);
+  }
+  require(finalized.load(), "dropping the acquired reference must free the stopped pipeline");
   require(stream.acquire_pipeline_ref() == nullptr,
           "a stopped stream must not hand out its released pipeline");
   stream.close();
