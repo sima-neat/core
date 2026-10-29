@@ -842,7 +842,7 @@ report = model.benchmark(options)
 
 | フィールド | 意味 |
 | --- | --- |
-| `avg_power_watts`, `peak_power_watts` | スループット測定パス中の SoM 入力電力の平均値と最大値です。 |
+| `avg_power_watts`, `peak_power_watts` | スループット測定パス中の SoM 電力の推定平均値と推定最大値です。 |
 | `energy_joules` | `num_samples` 個の入力の処理に必要なエネルギーです。平均電力に、測定したスループットで `num_samples` 個の入力を処理するのに必要な時間を掛けた値です。パスが長くなっても増加しません。 |
 | `telemetry.power_mla_watts`, `telemetry.power_rails_watts` | MLA レールの電力と、ボードが報告するすべてのレールの電力です。MLA レールのないボードでは、`samples == 0` として報告されます。 |
 | `telemetry.die_temperatures_c`, `telemetry.die_temperature_max_c` | MLA、APU、CVU、TOP の各サイトにあるオンダイセンサーの温度と、各サンプルにおけるそれらの最高温度です。 |

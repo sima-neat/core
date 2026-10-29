@@ -882,7 +882,7 @@ summarizes them:
 
 | Field | Meaning |
 | --- | --- |
-| `avg_power_watts`, `peak_power_watts` | Mean and highest SoM input power during the throughput pass. |
+| `avg_power_watts`, `peak_power_watts` | Estimated mean and highest SoM power during the throughput pass. |
 | `energy_joules` | Energy to process `num_samples` inputs: average power multiplied by the time the measured throughput needs for `num_samples` inputs. A longer pass does not increase it. |
 | `telemetry.power_mla_watts`, `telemetry.power_rails_watts` | MLA rail power, and every rail the board reports. Boards without an MLA rail report it with `samples == 0`. |
 | `telemetry.die_temperatures_c`, `telemetry.die_temperature_max_c` | On-die sensors at the MLA, APU, CVU, and TOP sites, and the hottest of them in each sample. |
