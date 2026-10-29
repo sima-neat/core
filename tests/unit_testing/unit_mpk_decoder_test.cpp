@@ -7,6 +7,7 @@
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StageRecipePreparation.h"
 #include "pipeline/internal/sima/StageMemoryPolicy.h"
+#include "model/internal/ModelPack.h"
 #include <gstsimaaitensorbuffer_meta.h>
 #include "pipeline/internal/sima/static_contract/MpkDecoder.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessMlaStageSemantics.h"
@@ -3071,6 +3072,49 @@ void test_batch_slice_transport() {
             "transport matches the upstream sample while physical input retains the full batch");
       check(runtime.logical_outputs.front().shape == TensorShape({batch, 7}),
             "public conversion output retains full batch geometry");
+
+      auto mla = project_single_mla(plan);
+      mla.stage_id = mla.node_name = "MLA_0";
+      mla.model_path = "synthetic_mla.elf";
+      mla.batch_size = mla.batch_sz_model = batch;
+      SimaPluginStaticManifest stages;
+      stages.stages.push_back(simaai::neat::project_mla_stage_contract(
+          stagesemantics::build_mla_compiled_contract(mla)));
+      auto conversion = simaai::neat::project_processcvu_stage_contract(*contract);
+      conversion.element_name = conversion.logical_stage_id = "post_cast";
+      conversion.processcvu.requested_run_target = "A65";
+      stages.stages.push_back(std::move(conversion));
+      for (std::size_t index = 0; index < stages.stages.size(); ++index)
+        stages.stages[index].compile_stage_index = index;
+      auto source = std::make_shared<simaai::neat::internal::ModelFragmentPlanSource>(
+          simaai::neat::internal::ModelFragmentPlanSource{plan, *physical, {}, {}});
+      const auto mla_command = std::find_if(
+          physical->commands.begin(), physical->commands.end(),
+          [](const auto& candidate) { return candidate.engine == PhysicalEngine::Mla; });
+      check(mla_command != physical->commands.end(), "batch fixture has an MLA command");
+      auto scopes = std::make_shared<simaai::neat::internal::ModelStorageScopes>();
+      scopes->scopes.push_back({source,
+                                {{0U, {mla_command->id}}, {1U, {command.id}}},
+                                mla_command->inputs,
+                                command.outputs,
+                                {}});
+      stages.model_storage_scopes = std::move(scopes);
+      gst_init(nullptr, nullptr);
+      const auto failure = prepare_kernel_stage_recipes(&stages, {}, {}, {}, {});
+      if (failure)
+        std::cerr << failure->field << ": " << failure->message << '\n';
+      check(!failure, "batched MLA conversion recipe prepares");
+      finalize_pipeline_storage(stages);
+      check(!finalize_stage_publications(&stages), "batched MLA conversion publication finalizes");
+      const auto& producer = *stages.stages.front().tensor_publication;
+      const auto& consumer = *stages.stages.back().tensor_publication;
+      check(producer.contract->logical_outputs.size() == static_cast<std::size_t>(batch) &&
+                gst_caps_is_fixed(producer.output_caps.get()) &&
+                gst_caps_is_subset(producer.output_caps.get(), consumer.input_caps.get()),
+            "full-batch Cast must accept MLA's multi-sample tensor-set caps");
+      const auto& descriptor = stages.stages.back().processcvu.input_tensors.front().descriptor();
+      check(descriptor.shape.sizes[0] == batch && descriptor.storage.nbytes == input.storage.nbytes,
+            "transport caps must not shrink the checked full-batch Cast input");
       checked = true;
     }
     check(checked, "batched fixture exercises terminal conversion");

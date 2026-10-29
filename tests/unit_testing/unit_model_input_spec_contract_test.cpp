@@ -385,12 +385,49 @@ void check_synthetic_image_inputs() {
           "tensor-mode synthetic input changed");
 }
 
+void check_synthetic_tensor_contract_shapes() {
+  InputOptions options;
+  options.payload_type = PayloadType::Tensor;
+  options.format = FormatTag::FP32;
+  options.width = 192;
+  options.height = 1;
+  options.depth = 144;
+  internal::IngressTensorContract contract;
+  contract.valid = true;
+  contract.ingress_index = 0;
+  contract.media_type = "application/vnd.simaai.tensor";
+  contract.height = 1;
+  contract.width = 192;
+  contract.depth = 144;
+  for (const auto& shape :
+       {std::vector<int64_t>{2, 1, 1, 192, 144}, {2, 1, 192, 144}, {1, 1, 192, 144}}) {
+    contract.rank = static_cast<int>(shape.size());
+    // RoutePlanner projects batch from the fourth-last axis, losing leading axes at rank > 4.
+    contract.batch = static_cast<int>(shape[shape.size() - 4]);
+    contract.logical_shape = shape;
+    const auto tensor = internal::ModelAccess::make_dummy_input(options, &contract);
+    std::string error;
+    require(tensor.validate(&error), "synthetic tensor input: " + error);
+    require(
+        tensor.dtype == TensorDType::Float32 && tensor.planes.empty() && tensor.shape == shape &&
+            tensor.storage->size_bytes == std::size_t(shape.front()) * 192U * 144U * sizeof(float),
+        "synthetic tensor must retain every canonical axis and its full storage");
+    require(tensor.layout == (shape.size() == 4U ? TensorLayout::HWC : TensorLayout::Unknown),
+            "synthetic tensor layout must match its canonical rank");
+    const auto geometry =
+        describe_tensor_geometry_or_throw(tensor, options, "synthetic tensor input");
+    require(input_geometry_matches_logical_shape(geometry, shape, TensorLayout::Unknown),
+            "synthetic tensor must satisfy canonical input geometry");
+  }
+}
+
 } // namespace
 
 RUN_TEST(
     "unit_model_input_spec_contract_test", ([] {
       using namespace simaai::neat;
       check_synthetic_image_inputs();
+      check_synthetic_tensor_contract_shapes();
       check_ingress_memory_policy();
 
       {

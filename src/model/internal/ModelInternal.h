@@ -67,7 +67,8 @@ enum class StageNodeKind {
 
 struct ModelAccess {
   // Exercise the same synthetic input construction used by seedless builds.
-  static Tensor make_dummy_input(const InputOptions& options);
+  static Tensor make_dummy_input(const InputOptions& options,
+                                 const IngressTensorContract* contract = nullptr);
   static const class ModelPack& pack(const Model& model);
   static const class ModelPack& pack_for_sync(const Model& model);
   static void prepare_for_execution(const Model& model, bool sync);

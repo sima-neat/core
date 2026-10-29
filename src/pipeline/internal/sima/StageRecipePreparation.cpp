@@ -1948,7 +1948,8 @@ apply_kernel_publication_views(const StageStaticSpec& stage,
   return {};
 }
 
-::simaai::scheduler::client::Status finalize_processcvu_publication(StageStaticSpec* stage) {
+::simaai::scheduler::client::Status finalize_processcvu_publication(StageStaticSpec* stage,
+                                                                    const GstCaps* producer_caps) {
   namespace rt = ::simaai::scheduler::client;
   namespace gs = ::simaai::scheduler::client;
   const auto invalid = [](std::string field, std::string message) -> rt::Status {
@@ -1970,6 +1971,9 @@ apply_kernel_publication_views(const StageStaticSpec& stage,
     sink = gst_caps_new_empty_simple("video/x-raw");
     if (!payload.input_img_type.empty())
       gst_caps_set_simple(sink, "format", G_TYPE_STRING, payload.input_img_type.c_str(), nullptr);
+  } else if (producer_caps) {
+    // One logical input can read multiple MLA sample views in a tensor-set.
+    sink = gst_caps_copy(producer_caps);
   } else if (stage->input_bindings.size() == 1 && payload.input_tensors.size() <= 1 &&
              !processcvu_graph_family_uses_packed_input_transport_local(payload.graph_name)) {
     CapsTensorSpec input;
@@ -2299,11 +2303,19 @@ finalize_stage_publications(SimaPluginStaticManifest* manifest) {
     return ::simaai::scheduler::client::Error{
         ::simaai::scheduler::client::ErrorCode::InvalidRequest, "stage.publication",
         "manifest required"};
-  for (auto& stage : manifest->stages) {
+  for (std::size_t index = 0; index < manifest->stages.size(); ++index) {
+    auto& stage = manifest->stages[index];
     if (!stage.native_kernel && !stage.mla_program && !stage.tvm_program)
       continue;
     if (stage.native_kernel && stage_is_processcvu_local(stage)) {
-      if (auto error = finalize_processcvu_publication(&stage))
+      const GstCaps* producer_caps = nullptr;
+      if (stage.input_bindings.size() == 1) {
+        const auto producer = edgecontract::resolve_producer_stage_exact(
+            *manifest, index, stage.input_bindings.front());
+        if (producer && manifest->stages[*producer].tensor_publication)
+          producer_caps = manifest->stages[*producer].tensor_publication->output_caps.get();
+      }
+      if (auto error = finalize_processcvu_publication(&stage, producer_caps))
         return error;
     } else {
       ::simaai::scheduler::client::TensorStagePublication publication;
