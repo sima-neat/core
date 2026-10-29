@@ -17,7 +17,7 @@ slug: /develop-apps/advanced-concepts/video_sender
 | H.265 | `SimaEncodeType::H265` | `RtspCodec::H265` | 98 |
 | MJPEG | `SimaEncodeType::MJPEG` | `RtspCodec::MJPEG` | 26 |
 
-Insight の RTP/WebRTC ビューアーは H.264 と H.265 をサポートします。MJPEG 出力には互換性のある RTP/JPEG 受信側が必要です。このビューアーは MJPEG をサポートしません。
+Insight の RTP/WebRTC ビューアーは H.264 と H.265 をサポートし、v0.0.8 より後のリリースでは MJPEG（RTP/JPEG、ペイロードタイプ 26）もサポートします。Insight v0.0.8 以前では、MJPEG 出力には別の RTP/JPEG 受信側が必要です。
 
 受信側がコンテナのポート再割り当てを使用する場合は、アプリから割り当て後のホストと対応する `video_port_base` を渡してください。
 
@@ -96,6 +96,8 @@ MJPEG では、C++ の `SimaEncodeType::MJPEG` または Python の `pyneat.Sima
 | MJPEG | `Passthrough(RtspCodec::MJPEG)` | `passthrough(pyneat.RtspCodec.MJPEG)` | 26 |
 
 パススルーはエンコーダーを作成しません。呼び出し側のコーデック選択は、エンコード済み入力に一致する必要があります。エンコーダー設定は適用されません。
+
+MJPEG は、生入力でもパススルーでも、インストールされた Scheduler が `neatjpegudpsink` を提供している場合はそれを通じて送信されます。この1つのシンクが各フレームの JPEG ヘッダーを読み取り、RTP/JPEG パケットを構築して UDP で送信します。入力 caps に幅と高さが含まれる場合（USB カメラ、エンコーダー、寸法付き caps の `Input`）は、前段に `jpegparse` を置きません。HTTP マルチパート MJPEG や `image/jpeg` caps のみの `Input` など、caps に寸法が含まれない可能性がある入力では、シンクの前段に `jpegparse` を残します。古い Scheduler では、Neat は `jpegparse`、`rtpjpegpay`、`udpsink` を使い続けます。ホスト、ポート、ペイロードタイプ、`sync` と `async` の設定はどちらでも同じです。
 
 RTSP ソースがこの送信側と `SimaDecode` の両方に供給される場合、デフォルトの `async=false` では Core が送信側をソースパイプライン内の GStreamer `tee` の後段に配置するため、ソース、送信側、デコーダーは一緒に開始、停止、失敗します。別々のパイプラインに保つには `async=true`（Python では `async_`）を設定します。
 

@@ -598,19 +598,6 @@ def test_output_stage_option_structs_expose_expected_fields():
     assert not hasattr(pyneat, removed_name)
 
 
-def test_jpeg_output_format_surface():
-  def header(luma):  # SOI, APP0, 3-component SOF0 (chroma 1x1), SOS
-    return bytes([0xFF, 0xD8, 0xFF, 0xE0, 0, 4, 0, 0, 0xFF, 0xC0, 0, 17, 8, 0, 16, 0, 16, 3,
-                  1, luma, 0, 2, 0x11, 1, 3, 0x11, 1, 0xFF, 0xDA, 0, 8])
-
-  assert pyneat.jpeg_output_format(header(0x22)) == pyneat.Format.NV12
-  assert pyneat.jpeg_output_format(header(0x21)) == pyneat.Format.NV16
-  with pytest.raises(ValueError, match="only 4:2:0 and 4:2:2"):
-    pyneat.jpeg_output_format(header(0x11))
-  # A 4:2:2 camera's NV16 decode feeds Model preprocessing directly.
-  assert pyneat.PreprocessColorFormat.NV16 != pyneat.PreprocessColorFormat.NV12
-
-
 def test_camera_input_surface_is_exposed():
   assert hasattr(pyneat, "CameraInputOptions")
   assert hasattr(pyneat.nodes, "camera_input")
@@ -647,6 +634,32 @@ def test_camera_input_surface_is_exposed():
   assert node.input_role() == pyneat.InputRole.Source
   with pytest.raises(ValueError, match="128-buffer provider limit"):
     pyneat.nodes.camera_input(opt, capture_buffer_count=129)
+
+
+def test_usb_camera_input_surface_is_exposed():
+  assert isinstance(pyneat.usb_camera_ids(), list)
+
+  opt = pyneat.UsbCameraInputOptions()
+  assert opt.camera_name == ""
+  assert (opt.width, opt.height, opt.framerate_num, opt.framerate_den) == (1920, 1080, 30, 1)
+  assert opt.buffer_name == "camera" and not hasattr(opt, "allow_cpu_fallback")
+  assert not hasattr(opt, "output") and not hasattr(pyneat, "UsbCameraOutput")
+  assert not hasattr(pyneat.groups, "usb_camera_input")
+  assert {"device", "decoded_format"} <= set(dir(pyneat.UsbCameraInfo))
+  # A 4:2:2 camera's NV16 decode feeds Model preprocessing directly.
+  assert pyneat.PreprocessColorFormat.NV16 != pyneat.PreprocessColorFormat.NV12
+  # Options are validated before any camera is touched.
+  with pytest.raises(ValueError, match="requires camera_name"):
+    pyneat.nodes.usb_camera_input(opt)
+  with pytest.raises(ValueError, match="requires camera_name"):
+    pyneat.usb_camera_info(opt)
+  opt.camera_name = "/base/pci@7000000000-3.1:1.0-046d:08e5"
+  opt.width = 0
+  with pytest.raises(ValueError, match="nonzero width"):
+    pyneat.nodes.usb_camera_input(opt)
+  # The probe-once overload reuses usb_camera_info()'s result.
+  doc = pyneat.nodes.usb_camera_input.__doc__
+  assert "info:" in doc and "UsbCameraInfo" in doc
 
 
 def test_input_stage_option_struct_constructors_accept_expected_args():

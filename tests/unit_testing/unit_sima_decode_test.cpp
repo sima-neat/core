@@ -1,5 +1,6 @@
 #include "nodes/sima/H264DecodeSima.h"
 #include "nodes/sima/SimaDecode.h"
+#include "nodes/sima/internal/JpegOutputFormat.h"
 
 #include "test_utils.h"
 
@@ -276,7 +277,7 @@ void check_mjpeg_native_nv16() {
                        "copy-path NV16 must not request NV16 from the codec");
   require_contains(copied, "format=NV16", "copy-path NV16 must convert after decoding");
 
-  using simaai::neat::jpeg_output_format;
+  using simaai::neat::internal::jpeg_output_format;
   require(jpeg_output_format(jpeg_header(0x22)) == simaai::neat::FormatTag::NV12, "4:2:0 -> NV12");
   require(jpeg_output_format(jpeg_header(0x21)) == simaai::neat::FormatTag::NV16, "4:2:2 -> NV16");
   auto padded = jpeg_header(0x21); // 0xff fill bytes before APP0 and SOF0 are valid JPEG

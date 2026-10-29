@@ -888,6 +888,10 @@ Capsネゴシエーションは自動的に行われ、エラーが発生した�
 
 アプリケーション向けのキャプチャ深度は、カーネルのプライベートな CSI-to-ISP RAW トランジットリングと、後続の GStreamer キューの両方とは独立しています。オプションの `capture_buffer_count` 引数は、`CameraInputWithCaptureBuffers` に渡され、ISP 出力、libcamera、およびアプリケーション間で保持されるバッファーを制御します（Platform 3.0 では `libcamerasrc` に `buffer-count` がないため、`0` のままにする必要があります）。`queue_depth` と `leaky_queue` は、それぞれ下流の遅延とフレームドロップポリシーを個別に制御します。オプションの互換性コピープールは、必要に応じて最大 128 バッファーまで拡張され、そのキュー深度によって制限されないため、リーキーキューは、上流のブリッジが最初に停止することなく、ドロップポリシーを適用できます。
 
+`nodes::UsbCameraInput` は `v4l2src io-mode=dmabuf-import`、JPEGのcapsfilter、`neatcapturepool`、ドライバーが破損とマークしたフレームを破棄する `identity`、任意のキューで構成されます。`neatcapturepool` がカメラのアロケーションクエリーにCMA DMA-BUFで応答するため、カメラはエンコード済みの各JPEGフレームを `neatdecoder` がその場で読み取るメモリーにキャプチャーし、キャプチャーからデコードまでの間にコピーは発生しません。これらのフレームは `VideoSender` のパススルー（MJPEG）と `SimaDecode`（MJPEG）の両方に渡せます。デコーダーはカメラ本来のレイアウトでデコードし、4:2:0はNV12、4:2:2はNV16になります。
+
+MJPEG の `VideoSender` は、そのファクトリーが登録されている場合は内部の `JpegRtpUdpSink`（`neatjpegudpsink`）単体になり、登録されていない場合は `JpegParse`、`JpegPacketize`（`rtpjpegpay`）、`UdpOutput` になります。`VideoSender` はグラフの構築時にレジストリーを確認します。このシンクは各フレームの JPEG ヘッダーを自身で読み取りますが、その caps には幅と高さが必要なため、`JpegRtpUdpSink` は入力仕様に応じて特殊化されるノードです。仕様に寸法を持つ入力ではシンク単体をレンダリングし、それ以外の入力ではノードのグラフフラグメント内に `jpegparse` を残します。どちらかのシンクで終わるセグメントは、生成元のキャプチャバッファーと貸与を保持せず、エンコード済み入力をコピーします。
+
 ### 解体
 
 Teardown は、意図的に防御的な処理を行うように設計されています。

@@ -85,11 +85,12 @@ graph.add(pyneat.groups.video_input(vopt))
 | ファイルからフレームを読み取る | `nodes::FileInput(...)`とデコードノード、または`nodes::groups::VideoInputGroup(...)` | `pyneat.nodes.file_input(...)`とデコードノード、または`pyneat.groups.video_input(...)` |
 | ソースとして1つの画像を読み取る | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
 | MIPI/libcameraカメラを読み取る | `nodes::CameraInput(...)` | `pyneat.nodes.camera_input(...)` |
+| USB（UVC）MJPEGカメラを読み取る | `nodes::UsbCameraInput(...)` | `pyneat.nodes.usb_camera_input(...)` |
 | RTSPストリームを読み取る | `nodes::RTSPInput(...)`、`nodes::groups::RtspEncodedInput(...)`、または`nodes::groups::RtspDecodedInput(...)` | `pyneat.nodes.rtsp_input(...)`、`pyneat.groups.rtsp_encoded_input(...)`、または`pyneat.groups.rtsp_decoded_input(...)` |
 | HTTPマルチパートMJPEGを読み取る | `nodes::groups::HttpMjpegDecodedInput(...)`、または`nodes::HttpSource(...)`、`MultipartJpegDemux()`、`JpegParse()`（手動でのフレーム処理） | `pyneat.groups.http_mjpeg_decoded_input(...)`、または`pyneat.nodes.http_source(...)`、`pyneat.nodes.multipart_jpeg_demux()`、`pyneat.nodes.jpeg_parse()` |
 | 画像をデコードする | `nodes::ImageDecode()`または`nodes::JpegDecode()` | `pyneat.nodes.image_decode()`または`pyneat.nodes.jpeg_decode()` |
 | エンコードされたビデオをデコードする | `nodes::SimaDecode(SimaDecodeOptions{...})` | `pyneat.nodes.sima_decode(options)` |
-| MJPEG カメラのフレームをデコードする (4:2:0 または 4:2:2) | `jpeg_output_format(...)` の後に `nodes::SimaDecode(...)`、モデルの入力形式を合わせる | `pyneat.jpeg_output_format(...)` の後に `pyneat.nodes.sima_decode(...)`、モデルの入力形式を合わせる |
+| MJPEG カメラのフレームをデコードする (4:2:0 または 4:2:2) | `usb_camera_info(...).decoded_format` を `nodes::SimaDecode(...)` の `out_format` に設定し、モデルの入力形式を合わせる | `pyneat.usb_camera_info(...).decoded_format` を `pyneat.nodes.sima_decode(...)` の `out_format` に設定し、モデルの入力形式を合わせる |
 | 生ビデオのエンコード | `nodes::SimaEncode(SimaEncodeOptions{...})` | `pyneat.nodes.sima_encode(options)` |
 | ビデオのスケールまたはレート制限を行う | `nodes::VideoScale()`、`VideoRate()`、`ImageFreeze()` | `pyneat.nodes.video_scale()`、`video_rate()`、`image_freeze()` |
 | 再利用可能な画像入力パスを構築する | `nodes::groups::ImageInputGroup(...)` | `pyneat.groups.image_input(...)` |
@@ -157,7 +158,7 @@ RTSP の場合は、ソースの形状が標準の場合、コーデックを認
 
 ### MJPEG カメラのデコード
 
-USB カメラは 4:2:0 または 4:2:2 のカラーサンプリングで MJPEG を送信し、多くは 4:2:2 を使用します。ゼロコピー出力では、デコーダーはストリーム本来のサンプリングでしか書き込めないため、グラフをビルドする前にそれを把握しておく必要があります。カメラの最初のフレームを `jpeg_output_format(...)` に渡すと、4:2:0 では `NV12`、4:2:2 では `NV16` が返されます。その結果をデコーダーの `out_format` に設定します。モデルは NV16 を直接読み取れます。モデルの前処理の入力形式を同じ値に設定すると、4:2:2 のフレームが変換段階なしでモデルに届きます。
+USB カメラは 4:2:0 または 4:2:2 のカラーサンプリングで MJPEG を送信し、多くは 4:2:2 を使用します。ゼロコピー出力では、デコーダーはストリーム本来のサンプリングでしか書き込めないため、グラフをビルドする前にそれを把握しておく必要があります。USB カメラの場合は、`usb_camera_info(...)` がそれを `decoded_format` として返すので、その値をデコーダーの `out_format` に設定します。その他の MJPEG ソースでは、4:2:0 なら `NV12`、4:2:2 なら `NV16` を `out_format` に設定します。モデルは NV16 を直接読み取れます。モデルの前処理の入力形式を同じ値に設定すると、4:2:2 のフレームが変換段階なしでモデルに届きます。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -165,10 +166,11 @@ USB カメラは 4:2:0 または 4:2:2 のカラーサンプリングで MJPEG �
 ```cpp
 #include "neat.h"
 
-// first_frame: the camera's first complete MJPEG frame, from your capture code.
+// camera: your UsbCameraInputOptions; also pass info to UsbCameraInput(camera, info).
+const simaai::neat::UsbCameraInfo info = simaai::neat::usb_camera_info(camera);
 simaai::neat::SimaDecodeOptions decode;
 decode.type = simaai::neat::SimaDecodeType::MJPEG;
-decode.out_format = simaai::neat::jpeg_output_format(first_frame);  // NV12 or NV16
+decode.out_format = info.decoded_format;  // NV12 or NV16
 decode.dec_width = 1920;
 decode.dec_height = 1080;
 decode.dec_fps = 30;
@@ -188,10 +190,11 @@ model_options.preprocess.color_convert.input_format =
 ```python
 import pyneat
 
-# first_frame: the camera's first complete MJPEG frame, as bytes.
+# camera: your UsbCameraInputOptions; also pass info to usb_camera_input(camera, info).
+info = pyneat.usb_camera_info(camera)
 decode = pyneat.SimaDecodeOptions()
 decode.type = pyneat.SimaDecodeType.MJPEG
-decode.out_format = pyneat.jpeg_output_format(first_frame)  # NV12 or NV16
+decode.out_format = info.decoded_format  # NV12 or NV16
 decode.dec_width, decode.dec_height, decode.dec_fps = 1920, 1080, 30
 decode.raw_output = True  # zero-copy: the decoder writes the camera's own sampling
 graph.add(pyneat.nodes.jpeg_parse())

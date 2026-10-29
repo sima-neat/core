@@ -85,12 +85,13 @@ graph.add(pyneat.groups.video_input(vopt))
 | 파일에서 프레임 읽기 | `nodes::FileInput(...)` 더하기 디코딩 노드, 또는 `nodes::groups::VideoInputGroup(...)` | `pyneat.nodes.file_input(...)` 더하기 디코딩 노드, 또는 `pyneat.groups.video_input(...)` |
 | 소스로 단일 이미지 읽기 | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
 | MIPI/libcamera 카메라 읽기 | `nodes::CameraInput(...)` | `pyneat.nodes.camera_input(...)` |
+| USB(UVC) MJPEG 카메라 읽기 | `nodes::UsbCameraInput(...)` | `pyneat.nodes.usb_camera_input(...)` |
 | RTSP 스트림 읽기 | `nodes::RTSPInput(...)`, `nodes::groups::RtspEncodedInput(...)`, 또는 `nodes::groups::RtspDecodedInput(...)` | `pyneat.nodes.rtsp_input(...)`, `pyneat.groups.rtsp_encoded_input(...)`, 또는 `pyneat.groups.rtsp_decoded_input(...)` |
 | HTTP 멀티파트 MJPEG 읽기 | `nodes::groups::HttpMjpegDecodedInput(...)`, 또는 `nodes::HttpSource(...)`, `MultipartJpegDemux()`, `JpegParse()` (수동 프레임 구성) | `pyneat.groups.http_mjpeg_decoded_input(...)`, 또는 `pyneat.nodes.http_source(...)`, `pyneat.nodes.multipart_jpeg_demux()`, `pyneat.nodes.jpeg_parse()` |
 | 이미지 디코딩 | `nodes::ImageDecode()` 또는 `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` 또는 `pyneat.nodes.jpeg_decode()` |
 | 원시 비디오 인코딩 | `nodes::SimaEncode(SimaEncodeOptions{...})` | `pyneat.nodes.sima_encode(options)` |
 | 인코딩된 비디오 디코딩 | `nodes::SimaDecode(SimaDecodeOptions{...})` | `pyneat.nodes.sima_decode(options)` |
-| MJPEG 카메라 프레임 디코딩 (4:2:0 또는 4:2:2) | `jpeg_output_format(...)` 다음에 `nodes::SimaDecode(...)`, 모델 입력 형식을 같게 설정 | `pyneat.jpeg_output_format(...)` 다음에 `pyneat.nodes.sima_decode(...)`, 모델 입력 형식을 같게 설정 |
+| MJPEG 카메라 프레임 디코딩 (4:2:0 또는 4:2:2) | `usb_camera_info(...).decoded_format`을 `nodes::SimaDecode(...)`의 `out_format`으로 사용, 모델 입력 형식을 같게 설정 | `pyneat.usb_camera_info(...).decoded_format`을 `pyneat.nodes.sima_decode(...)`의 `out_format`으로 사용, 모델 입력 형식을 같게 설정 |
 | 비디오 크기 조정 또는 속도 제한 | `nodes::VideoScale()`, `VideoRate()`, `ImageFreeze()` | `pyneat.nodes.video_scale()`, `video_rate()`, `image_freeze()` |
 | 재사용 가능한 이미지 입력 경로 구축 | `nodes::groups::ImageInputGroup(...)` | `pyneat.groups.image_input(...)` |
 | 재사용 가능한 비디오 입력 경로 구축 | `nodes::groups::VideoInputGroup(...)` | `pyneat.groups.video_input(...)` |
@@ -157,7 +158,7 @@ RTSP의 경우 소스 형식이 표준일 때 코덱을 인식하는 그룹을 �
 
 ### MJPEG 카메라 디코딩
 
-USB 카메라는 4:2:0 또는 4:2:2 색 샘플링으로 MJPEG를 보내며, 대부분은 4:2:2를 사용합니다. 제로 카피 출력에서는 디코더가 스트림 고유의 샘플링으로만 쓸 수 있으므로, 그래프를 빌드하기 전에 이를 알아야 합니다. 카메라의 첫 프레임을 `jpeg_output_format(...)`에 전달하면 4:2:0에는 `NV12`, 4:2:2에는 `NV16`이 반환됩니다. 그 결과를 디코더의 `out_format`으로 사용하세요. 모델은 NV16을 직접 읽습니다. 모델의 전처리 입력 형식을 같은 값으로 설정하면 4:2:2 프레임이 변환 단계 없이 모델에 전달됩니다.
+USB 카메라는 4:2:0 또는 4:2:2 색 샘플링으로 MJPEG를 보내며, 대부분은 4:2:2를 사용합니다. 제로 카피 출력에서는 디코더가 스트림 고유의 샘플링으로만 쓸 수 있으므로, 그래프를 빌드하기 전에 이를 알아야 합니다. USB 카메라의 경우 `usb_camera_info(...)`가 이를 `decoded_format`으로 알려 주므로, 그 값을 디코더의 `out_format`으로 사용하세요. 다른 MJPEG 소스에서는 4:2:0이면 `NV12`, 4:2:2이면 `NV16`으로 `out_format`을 설정하세요. 모델은 NV16을 직접 읽습니다. 모델의 전처리 입력 형식을 같은 값으로 설정하면 4:2:2 프레임이 변환 단계 없이 모델에 전달됩니다.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -165,10 +166,11 @@ USB 카메라는 4:2:0 또는 4:2:2 색 샘플링으로 MJPEG를 보내며, 대�
 ```cpp
 #include "neat.h"
 
-// first_frame: the camera's first complete MJPEG frame, from your capture code.
+// camera: your UsbCameraInputOptions; also pass info to UsbCameraInput(camera, info).
+const simaai::neat::UsbCameraInfo info = simaai::neat::usb_camera_info(camera);
 simaai::neat::SimaDecodeOptions decode;
 decode.type = simaai::neat::SimaDecodeType::MJPEG;
-decode.out_format = simaai::neat::jpeg_output_format(first_frame);  // NV12 or NV16
+decode.out_format = info.decoded_format;  // NV12 or NV16
 decode.dec_width = 1920;
 decode.dec_height = 1080;
 decode.dec_fps = 30;
@@ -188,10 +190,11 @@ model_options.preprocess.color_convert.input_format =
 ```python
 import pyneat
 
-# first_frame: the camera's first complete MJPEG frame, as bytes.
+# camera: your UsbCameraInputOptions; also pass info to usb_camera_input(camera, info).
+info = pyneat.usb_camera_info(camera)
 decode = pyneat.SimaDecodeOptions()
 decode.type = pyneat.SimaDecodeType.MJPEG
-decode.out_format = pyneat.jpeg_output_format(first_frame)  # NV12 or NV16
+decode.out_format = info.decoded_format  # NV12 or NV16
 decode.dec_width, decode.dec_height, decode.dec_fps = 1920, 1080, 30
 decode.raw_output = True  # zero-copy: the decoder writes the camera's own sampling
 graph.add(pyneat.nodes.jpeg_parse())
