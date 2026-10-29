@@ -1972,6 +1972,7 @@ Tensor make_dummy_ingress_tensor(const simaai::neat::InputOptions& opt,
     t.axis_semantics = {TensorAxisSemantic::N, TensorAxisSemantic::H, TensorAxisSemantic::W,
                         TensorAxisSemantic::C};
   }
+  t.storage.reset(); // release the one-frame buffer before allocating the full batch
   t.storage = make_cpu_owned_storage(elements * elem);
   t.strides_bytes = pipeline_internal::contiguous_strides_bytes(t.shape, elem);
   return t;
