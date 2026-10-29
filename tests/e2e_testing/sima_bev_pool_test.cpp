@@ -156,11 +156,10 @@ void retained_outputs(bool with_consumer) {
   }
 }
 
-// Pass the actual borrowed Plan Tensor to a second graph, retaining its storage
-// through producer pool reuse and producer close. Reading bytes below is solely
-// for the independent oracle; no copied plan is uploaded to the consumer.
-// This proves public loan/lifetime transfer, not a claim that cross-graph ingress
-// never adapts an allocation when the next device requires a different heap.
+// Keep the original Plan loan through producer reuse and close. A65 consumes
+// that same loan; EV explicitly copies it to device storage once, before pushes.
+// All consumer frames reuse this fixed calibration's plan. Reading bytes below
+// checks the independent oracle and retained storage, not a zero-copy EV handoff.
 void retained_plan_handoff() {
   for (const auto format : {neat::SimaBEVPoolPlanFormat::V1, neat::SimaBEVPoolPlanFormat::V2}) {
     for (const bool bf16 : {false, true}) {
@@ -205,17 +204,38 @@ void retained_plan_handoff() {
         throw;
       }
       producer_run.close();
+      bt::require(!producer_run.running(), "retained Plan producer did not close");
+      auto consumer_plan = bt::on_ev74() ? held_plan.cvu() : held_plan;
+      consumer_plan.read_only = true;
+      bt::require(consumer_plan.dtype == held_plan.dtype && consumer_plan.shape == held_plan.shape,
+                  "Plan handoff changed tensor metadata");
+      if (bt::on_ev74()) {
+        bt::require(consumer_plan.device.type == neat::DeviceType::SIMA_CVU,
+                    "Plan handoff did not prepare EV storage");
+      } else {
+        bt::require(consumer_plan.storage == held_plan.storage &&
+                        consumer_plan.byte_offset == held_plan.byte_offset,
+                    "A65 Plan handoff replaced the original producer loan");
+      }
+      bt::expect_bytes(consumer_plan.copy_payload_bytes(), c.plan, "consumer Plan payload");
       c.options.plan_format = format;
       std::vector<ref::BEVPoolCase> cases;
       std::vector<neat::TensorList> frames;
       for (int generation = 0; generation < 8; ++generation) {
         cases.push_back(ref::bev_pool_generation(c, generation % 3));
-        frames.push_back(inputs(cases.back(), &held_plan));
-        bt::require(frames.back()[2].storage == held_plan.storage &&
-                        frames.back()[2].byte_offset == held_plan.byte_offset,
-                    "Plan handoff replaced the retained Tensor with an upload");
+        frames.push_back(inputs(cases.back(), &consumer_plan));
+        bt::require(frames.back()[2].storage == consumer_plan.storage &&
+                        frames.back()[2].byte_offset == consumer_plan.byte_offset,
+                    "Plan handoff did not reuse the prepared consumer storage");
       }
-      bt::execute_retained(neat::nodes::SimaBEVPool(c.options), frames,
+      auto consumer_input = bt::input_options();
+      if (!bt::on_ev74())
+        consumer_input.memory_policy = neat::InputMemoryPolicy::Auto;
+      neat::Graph consumer;
+      consumer.add(neat::nodes::Input(consumer_input));
+      consumer.add(neat::nodes::SimaBEVPool(c.options));
+      consumer.add(neat::nodes::Output());
+      bt::execute_retained(consumer, frames,
                            [&](const neat::TensorList& output, std::size_t frame) {
                              check(output, cases[frame], "retained Plan consumer");
                              bt::expect_bytes(held_plan.copy_payload_bytes(), c.plan,

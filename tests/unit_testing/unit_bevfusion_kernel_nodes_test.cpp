@@ -18,7 +18,9 @@
 #include "pipeline/internal/contract/ContractFacts.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
+#include "pipeline/internal/TensorUtil.h"
 #include <simaai/scheduler/client/kernel.h>
+#include <gst/gst.h>
 
 #include "support/bevfusion_kernel_reference.h"
 #include "test_utils.h"
@@ -26,6 +28,7 @@
 #include <array>
 #include <functional>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <variant>
@@ -627,12 +630,28 @@ CompiledNodeContract compile_upstream(const NodeContractProvider& node,
 }
 
 void semantic_contracts() {
-  auto pool = ref::bev_pool_case().options;
+  const auto fixture = ref::bev_pool_case();
+  auto pool = fixture.options;
   auto depth = Tensor::from_vector(std::vector<std::int8_t>(12), {2, 1, 2, 3}, TensorMemory::CPU);
   depth.strides_bytes = {6, 1, 3, 1};
-  auto context =
-      Tensor::from_vector(std::vector<std::int8_t>(192), {2, 16, 2, 3}, TensorMemory::CPU);
+  const auto physical = ref::to_channels_last(fixture.context, 2, 16, 2, 3);
+  auto context = Tensor::from_vector(physical, {2, 16, 2, 3}, TensorMemory::CPU);
   context.strides_bytes = {96, 1, 48, 16};
+  auto cpu_context = context;
+  // Borrowed Gst storage preserves this physical layout; CPU-owned ingress
+  // instead packs the logical CHW values, as covered by the ArgMax ingress test.
+  {
+    std::unique_ptr<GstBuffer, decltype(&gst_buffer_unref)> buffer(
+        gst_buffer_new_allocate(nullptr, physical.size(), nullptr), gst_buffer_unref);
+    require(buffer && gst_buffer_fill(buffer.get(), 0, physical.data(), physical.size()) ==
+                          physical.size(),
+            "could not fill borrowed Pool context carrier");
+    std::unique_ptr<GstSample, decltype(&gst_sample_unref)> sample(
+        gst_sample_new(buffer.get(), nullptr, nullptr, nullptr), gst_sample_unref);
+    require(bool(sample), "could not retain Pool context sample");
+    context.storage = pipeline_internal::make_gst_sample_storage(sample.get());
+    require(bool(context.storage), "could not wrap Pool context storage");
+  }
   const auto plan = Tensor::from_vector(std::vector<std::uint8_t>(228), {228}, TensorMemory::CPU);
   const auto check_pool = [](const CompiledNodeContract& compiled) {
     const auto inspected = rt::inspect_kernel(compiled.kernel->recipe->members.front().executable);
@@ -641,6 +660,10 @@ void semantic_contracts() {
     require(view.inputs()[0].shape == std::vector<std::int64_t>{2, 1, 2, 3} &&
                 view.inputs()[1].shape == std::vector<std::int64_t>{2, 16, 2, 3},
             "Pool must not reinterpret singleton logical CHW axes as NHWC");
+    const auto* strides = std::get_if<rt::Strided>(&view.inputs()[1].layout);
+    require(strides && strides->strides_bytes[0] == 96 && strides->strides_bytes[1] == 1 &&
+                strides->strides_bytes[2] == 48 && strides->strides_bytes[3] == 16,
+            "Pool must retain the context's physical channels-last strides");
     require(compiled.kernel->runtime_contract.logical_outputs.front().layout == "CHW",
             "Pool publishes logical CHW authority");
   };
@@ -648,6 +671,17 @@ void semantic_contracts() {
   // sources of logical authority; neither changes the physical strides.
   depth.layout = context.layout = TensorLayout::CHW;
   check_pool(compile(SimaBEVPool(pool), {depth, context, plan}));
+  {
+    cpu_context.layout = TensorLayout::CHW;
+    ContractCompileInput packed;
+    packed.ingress.ingress_sample = sample_from_tensors({depth, cpu_context, plan});
+    CompiledNodeContract rejected;
+    std::string error;
+    require(!SimaBEVPool(pool).compile_node_contract(packed, &rejected, &error),
+            "Pool must not treat packed CPU-owned CHW bytes as channels-last storage");
+    require_contains(error, "is neither dense channels-last nor channels-last strided",
+                     "packed CPU-owned Pool context storage diagnostic");
+  }
   depth.layout = context.layout = TensorLayout::Unknown;
   depth.axis_semantics = context.axis_semantics = {TensorAxisSemantic::N, TensorAxisSemantic::C,
                                                    TensorAxisSemantic::H, TensorAxisSemantic::W};
