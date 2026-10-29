@@ -1565,7 +1565,7 @@ std::optional<Sample> RunCore::graph_pull(simaai::neat::graph::NodeId node_id, i
 
 void RunCore::graph_finish_sink_pull(Sample& sample) {
   pipeline_internal::release_realtime_frame_credits_for_sample(sample, "graph-sink-pull");
-  // Graph-internal segments forward decoder frames zero-copy, so Owned copies them here to
+  // Graph-internal segments forward their outputs zero-copy, so Owned copies them here to
   // release the producer pool buffer and its loan before the app holds the sample.
   const bool owned_output =
       pipeline.stream_opt.copy_output && !pipeline.stream_opt.preserve_framework_output;

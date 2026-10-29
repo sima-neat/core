@@ -54,8 +54,8 @@ inline void require_resnet50_output_values(const simaai::neat::Sample& sample,
           context + ": output tensor contains a non-finite score");
 }
 
-// Existing callers explicitly require host-owned results; do not broaden them
-// just because the public OutputMemory::Owned policy now uses DMA storage.
+// Existing callers explicitly require CpuOwned results; OutputMemory::Owned
+// publishes GstSample-backed system memory, so it is checked separately.
 inline void require_valid_resnet50_output(const simaai::neat::Sample& sample,
                                           const std::string& context) {
   const auto tensors = simaai::neat::tensors_from_sample(sample, true);
@@ -66,9 +66,9 @@ inline void require_valid_resnet50_output(const simaai::neat::Sample& sample,
   require_resnet50_output_values(sample, context);
 }
 
-inline void require_valid_dma_owned_resnet50_output(const simaai::neat::Sample& sample,
-                                                    const std::string& context) {
-  (void)require_dma_owned_output(sample, {}, context);
+inline void require_valid_owned_resnet50_output(const simaai::neat::Sample& sample,
+                                                const std::string& context) {
+  (void)require_owned_output(sample, context);
   require_resnet50_output_values(sample, context);
 }
 

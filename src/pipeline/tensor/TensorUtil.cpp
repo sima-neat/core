@@ -1286,52 +1286,84 @@ namespace {
 
 using OwnedBuffer = std::unique_ptr<GstBuffer, decltype(&gst_buffer_unref)>;
 
-dma_client::DmaBufMemory copy_output_storage(const std::shared_ptr<Storage>& source,
-                                             GstSample* whole_sample = nullptr) {
-  dma_client::Error error;
-  dma_client::HeapAllocator allocator;
-  // A zero-length logical tensor still needs a valid transport allocation.
-  auto memory = allocator.allocate(dma_client::HeapKind::Cma,
-                                   std::max<std::size_t>(source->size_bytes, 1U), &error);
-  if (!memory) {
-    throw std::runtime_error("Owned output allocation failed: " + error.message());
+struct GstMemoryUnref {
+  void operator()(GstMemory* memory) const {
+    gst_memory_unref(memory);
   }
-  auto view = dma_client::DmaBufView::fromMemory(*memory, &error);
-  auto output = view ? view->map(dma_client::CpuAccess::Write, &error) : std::nullopt;
-  if (!output) {
-    throw std::runtime_error("Owned output mapping failed: " + error.message());
+};
+using OwnedMemory = std::unique_ptr<GstMemory, GstMemoryUnref>;
+
+// Owned outputs are for the application's CPU, so they use the same builtin
+// system allocator and page alignment as the Scheduler's terminal HostCpu pool.
+// Keeping them out of CMA leaves device memory to the running pipeline.
+constexpr gsize kOwnedOutputAlignment = 4096;
+
+OwnedMemory copy_output_storage(const std::shared_ptr<Storage>& source,
+                                GstSample* whole_sample = nullptr) {
+  GstAllocator* allocator = gst_allocator_find(GST_ALLOCATOR_SYSMEM);
+  if (!allocator) {
+    throw std::runtime_error("Owned output allocation failed: system allocator unavailable");
+  }
+  GstAllocationParams params;
+  gst_allocation_params_init(&params);
+  params.align = kOwnedOutputAlignment - 1;
+  // A zero-length logical tensor still needs a valid transport allocation.
+  OwnedMemory memory(
+      gst_allocator_alloc(allocator, std::max<std::size_t>(source->size_bytes, 1U), &params));
+  gst_object_unref(allocator);
+  if (!memory) {
+    throw std::runtime_error("Owned output allocation failed: " +
+                             std::to_string(source->size_bytes) + " bytes of system memory");
+  }
+  GstMapInfo output = GST_MAP_INFO_INIT;
+  if (!gst_memory_map(memory.get(), &output, GST_MAP_WRITE)) {
+    throw std::runtime_error("Owned output mapping failed");
   }
   // A whole-buffer view (for example a fragmented encoded access unit) needs
   // contiguous owned storage. Copy fragments directly, without GstBuffer's
-  // implicit merge/staging allocation or an unsynchronized DMA-BUF map.
+  // implicit merge/staging allocation.
   auto* buffer = whole_sample ? gst_sample_get_buffer(whole_sample) : nullptr;
   const guint count = buffer ? gst_buffer_n_memory(buffer) : 1U;
   std::size_t offset = 0;
-  for (guint i = 0; i < count; ++i) {
-    auto part = buffer ? make_gst_sample_memory_storage(whole_sample, i, i) : source;
-    if (!part || offset > source->size_bytes) {
-      throw std::runtime_error("Owned output: invalid source carrier extent");
+  try {
+    for (guint i = 0; i < count; ++i) {
+      auto part = buffer ? make_gst_sample_memory_storage(whole_sample, i, i) : source;
+      if (!part || offset > source->size_bytes) {
+        throw std::runtime_error("Owned output: invalid source carrier extent");
+      }
+      auto input = part->map(MapMode::Read);
+      if (part->size_bytes > input.size_bytes || part->size_bytes > source->size_bytes - offset ||
+          (part->size_bytes && !input.data)) {
+        throw std::runtime_error("Owned output: cannot map complete source storage");
+      }
+      if (part->size_bytes) {
+        std::memcpy(output.data + offset, input.data, part->size_bytes);
+      }
+      offset += part->size_bytes;
     }
-    auto input = part->map(MapMode::Read);
-    if (part->size_bytes > input.size_bytes || part->size_bytes > source->size_bytes - offset ||
-        (part->size_bytes && !input.data)) {
-      throw std::runtime_error("Owned output: cannot map complete source storage");
-    }
-    if (part->size_bytes) {
-      std::memcpy(static_cast<unsigned char*>(output->data()) + offset, input.data,
-                  part->size_bytes);
-    }
-    offset += part->size_bytes;
+  } catch (...) {
+    gst_memory_unmap(memory.get(), &output);
+    throw;
   }
+  gst_memory_unmap(memory.get(), &output);
   if (offset != source->size_bytes) {
     throw std::runtime_error("Owned output: inconsistent source extent");
   }
-  if (!output->finish(&error)) {
-    throw std::runtime_error("Owned output synchronization failed: " + error.message());
-  }
   ++g_tensor_copy_count;
   g_tensor_copy_bytes.fetch_add(source->size_bytes, std::memory_order_relaxed);
-  return std::move(*memory);
+  return memory;
+}
+
+// System memory keeps one address for its lifetime, so an Owned tensor can expose
+// it through Tensor::data_ptr() while the tensor's sample holds the memory.
+void* system_memory_address(GstMemory* memory) {
+  GstMapInfo info = GST_MAP_INFO_INIT;
+  if (!gst_memory_map(memory, &info, GST_MAP_READ)) {
+    throw std::runtime_error("Owned output mapping failed");
+  }
+  void* address = info.data;
+  gst_memory_unmap(memory, &info);
+  return address;
 }
 
 // A plan belongs to one output operation. It retains source authority until all
@@ -1378,7 +1410,7 @@ private:
     std::vector<SpanKey> spans;
     std::shared_ptr<Storage> source;
     GstSample* whole_sample = nullptr;
-    dma_client::DmaBufMemory destination;
+    OwnedMemory destination;
   };
 
   struct EnvelopeSlot {
@@ -1719,7 +1751,7 @@ private:
     }
     for (const auto& slot : envelope.slots) {
       gst_buffer_append_memory(destination.get(),
-                               gst_memory_ref(carriers_[slot.carrier].destination.gstMemory()));
+                               gst_memory_ref(carriers_[slot.carrier].destination.get()));
       envelope.segments.push_back(slot.segment);
     }
     auto* source = envelope.source_sample ? gst_sample_get_buffer(envelope.source_sample) : nullptr;
@@ -1757,7 +1789,8 @@ private:
     auto storage = make_gst_sample_memory_storage(
         static_cast<GstSample*>(envelope.destination.get()), index, index, envelope.destination);
     storage->sima_segments = envelope.segments;
-    storage->device = {DeviceType::SIMA_CVU, 0};
+    storage->device = {DeviceType::CPU, 0};
+    storage->data = system_memory_address(carriers_[slot->carrier].destination.get());
     tensor.storage = std::move(storage);
     tensor.device = tensor.storage->device;
     tensor.read_only = false;

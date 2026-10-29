@@ -166,8 +166,10 @@ int main() {
       require(pulled.has_value(), "encoded owned roundtrip pull timed out");
       require(pulled->tensors.size() == 1U, "encoded owned output should expose one tensor");
       require(pulled->tensors.front().storage != nullptr, "encoded owned output missing storage");
-      require(pulled->owned && pipeline_internal::sample_has_dmabuf_memory(*pulled),
-              "encoded owned output should materialize independent DMA-BUF storage");
+      require(pulled->owned &&
+                  pulled->tensors.front().device.type == simaai::neat::DeviceType::CPU &&
+                  !pipeline_internal::sample_has_dmabuf_memory(*pulled),
+              "encoded owned output should materialize independent system memory");
       const auto expected = h264_sample.tensors.front().view_read();
       const auto actual = pulled->tensors.front().view_read();
       require(actual.data && actual.size_bytes >= expected.size_bytes &&

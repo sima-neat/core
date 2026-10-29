@@ -8,6 +8,7 @@
 #include "pipeline/runtime/RunInternal.h"
 #include "graph/internal/GraphRunState.h"
 #include "dmabuf_test_utils.h"
+#include "owned_output_test_utils.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorUtil.h"
@@ -888,7 +889,6 @@ void require_owned_internal_output_releases_producer_loans() {
   std::vector<Sample> retained;
   for (int id = 0; id < retained_count; ++id) {
     GstBuffer* buffer = sima_test::allocate_cma_dmabuf(64);
-    const auto producer_identity = sima_test::dmabuf_span(buffer);
     auto produced = sample_from_buffer(buffer);
     gst_buffer_unref(buffer);
     produced.frame_id = id;
@@ -909,7 +909,9 @@ void require_owned_internal_output_releases_producer_loans() {
     }
     GstBuffer* delivered =
         pipeline_internal::buffer_from_tensor_holder(output.tensors.front().storage->holder);
-    const bool copied = delivered && sima_test::dmabuf_span(delivered) != producer_identity;
+    // The producer frame is CMA DMA-BUF; an Owned copy is system memory.
+    const bool copied = delivered && gst_buffer_n_memory(delivered) == 1 &&
+                        sima_test::is_system_memory(gst_buffer_peek_memory(delivered, 0));
     if (delivered) {
       gst_buffer_unref(delivered);
     }
