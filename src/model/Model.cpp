@@ -7239,7 +7239,13 @@ Model::Runner Model::build(const Model::RouteOptions& opt,
   TensorList dummy_inputs;
   dummy_inputs.reserve(src_opts.size());
   for (const auto& src_opt : src_opts) {
-    dummy_inputs.push_back(make_dummy_tensor(src_opt));
+    Tensor dummy = make_dummy_tensor(src_opt);
+    if (src_opt.memory_policy == InputMemoryPolicy::Ev74) {
+      dummy = dummy.to({DeviceType::SIMA_CVU, 0});
+    } else if (src_opt.memory_policy == InputMemoryPolicy::Dms0) {
+      dummy = dummy.to({DeviceType::SIMA_MLA, 0});
+    }
+    dummy_inputs.push_back(std::move(dummy));
   }
   impl_->pack.prepare_for_execution();
   internal::ModelPack pack = impl_->pack;
