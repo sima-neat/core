@@ -1836,26 +1836,43 @@ InputOptions appsrc_from_info(const InputInfo& info) {
   return opt;
 }
 
-Tensor make_dummy_tensor(const simaai::neat::InputOptions& opt) {
+Tensor make_dummy_tensor(const simaai::neat::InputOptions& opt,
+                         const internal::IngressTensorContract* contract = nullptr) {
   Tensor t;
   t.device = {DeviceType::CPU, 0};
   t.read_only = true;
 
   if (resolve_input_media_type(opt) == "application/vnd.simaai.tensor") {
-    const int w = (opt.width > 0) ? opt.width : opt.max_width;
-    const int h = (opt.height > 0) ? opt.height : opt.max_height;
-    const int d = (opt.depth > 0) ? opt.depth : opt.max_depth;
-    if (w <= 0 || h <= 0 || d <= 0) {
-      throw std::runtime_error(
-          "Model::build: missing tensor input shape for dummy input. "
-          "Fix: set Model::Options::preprocess.input_max_width/input_max_height/input_max_depth.");
-    }
     t.dtype = dtype_from_format(opt.format);
-    t.shape = {h, w, d};
-    t.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W, TensorAxisSemantic::C};
+    if (contract && contract->batch > 1 && !contract->logical_shape.empty()) {
+      // InputOptions describes one frame; the contract carries the full batch shape.
+      t.shape = contract->logical_shape;
+      if (t.shape.size() == 4U) {
+        t.layout = TensorLayout::HWC;
+        t.axis_semantics = {TensorAxisSemantic::N, TensorAxisSemantic::H, TensorAxisSemantic::W,
+                            TensorAxisSemantic::C};
+      }
+    } else {
+      const int w = (opt.width > 0) ? opt.width : opt.max_width;
+      const int h = (opt.height > 0) ? opt.height : opt.max_height;
+      const int d = (opt.depth > 0) ? opt.depth : opt.max_depth;
+      if (w <= 0 || h <= 0 || d <= 0) {
+        throw std::runtime_error(
+            "Model::build: missing tensor input shape for dummy input. "
+            "Fix: set "
+            "Model::Options::preprocess.input_max_width/input_max_height/input_max_depth.");
+      }
+      t.shape = {h, w, d};
+      t.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W, TensorAxisSemantic::C};
+    }
     const std::size_t elem = pipeline_internal::dtype_bytes(t.dtype);
-    const std::size_t bytes = static_cast<std::size_t>(w) * static_cast<std::size_t>(h) *
-                              static_cast<std::size_t>(d) * elem;
+    std::size_t bytes = elem;
+    for (const auto dim : t.shape) {
+      if (dim <= 0)
+        throw std::runtime_error(
+            "Model::build: dummy tensor input requires a concrete shape; use build(TensorList).");
+      bytes *= static_cast<std::size_t>(dim);
+    }
     t.storage = make_cpu_owned_storage(bytes);
     t.strides_bytes = pipeline_internal::contiguous_strides_bytes(t.shape, elem);
     return t;
@@ -1942,41 +1959,6 @@ Tensor make_dummy_tensor(const simaai::neat::InputOptions& opt) {
       static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * static_cast<std::size_t>(depth);
   t.storage = make_cpu_owned_storage(bytes);
   t.strides_bytes = pipeline_internal::contiguous_strides_bytes(t.shape, 1);
-  return t;
-}
-
-// InputOptions project one frame (h, w, d), so a batched tensor ingress gets its stand-in from
-// the contract's canonical logical shape, which carries the batch axis the build validates.
-Tensor make_dummy_ingress_tensor(const simaai::neat::InputOptions& opt,
-                                 const internal::IngressTensorContract* contract) {
-  Tensor t = make_dummy_tensor(opt);
-  if (!contract || contract->batch <= 1 || contract->logical_shape.empty() || !t.planes.empty() ||
-      resolve_input_media_type(opt) != "application/vnd.simaai.tensor") {
-    return t;
-  }
-  std::size_t elements = 1;
-  for (const std::int64_t dim : contract->logical_shape) {
-    if (dim <= 0) {
-      throw std::runtime_error("Model::build: ingress[" + std::to_string(contract->ingress_index) +
-                               "] logical_shape has a non-concrete dimension; use "
-                               "build(TensorList).");
-    }
-    elements *= static_cast<std::size_t>(dim);
-  }
-  const std::size_t elem = pipeline_internal::dtype_bytes(t.dtype);
-  t.shape = contract->logical_shape;
-  // The contract's batch/h/w/d projection reads a rank-4 shape as N,H,W,C, so describe it the
-  // same way a caller's batched HWC tensor is described.
-  t.layout = TensorLayout::Unknown;
-  t.axis_semantics.clear();
-  if (t.shape.size() == 4U) {
-    t.layout = TensorLayout::HWC;
-    t.axis_semantics = {TensorAxisSemantic::N, TensorAxisSemantic::H, TensorAxisSemantic::W,
-                        TensorAxisSemantic::C};
-  }
-  t.storage.reset(); // release the one-frame buffer before allocating the full batch
-  t.storage = make_cpu_owned_storage(elements * elem);
-  t.strides_bytes = pipeline_internal::contiguous_strides_bytes(t.shape, elem);
   return t;
 }
 
@@ -7296,7 +7278,7 @@ Model::Runner Model::build(const Model::RouteOptions& opt,
     const auto& src_opt = src_opts[i];
     const auto* contract =
         tensor_mode && i < ingress_contracts.size() ? &ingress_contracts[i] : nullptr;
-    Tensor dummy = make_dummy_ingress_tensor(src_opt, contract);
+    Tensor dummy = make_dummy_tensor(src_opt, contract);
     if (src_opt.memory_policy == InputMemoryPolicy::Ev74) {
       dummy = dummy.to({DeviceType::SIMA_CVU, 0});
     } else if (src_opt.memory_policy == InputMemoryPolicy::Dms0) {
@@ -7667,13 +7649,9 @@ TensorList materialize_joined_ingress_tensors(
   return materialize_joined_ingress_tensors_impl(tensors, consumer_identities, segment_name, where);
 }
 
-Tensor ModelAccess::make_dummy_input(const InputOptions& options) {
-  return make_dummy_tensor(options);
-}
-
 Tensor ModelAccess::make_dummy_input(const InputOptions& options,
                                      const IngressTensorContract* contract) {
-  return make_dummy_ingress_tensor(options, contract);
+  return make_dummy_tensor(options, contract);
 }
 
 Tensor materialize_dense_ingress_tail(Tensor tensor, const std::size_t required_storage_bytes,
