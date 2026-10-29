@@ -306,7 +306,9 @@ finish_output_tensor_override_entry(simaai::neat::Tensor out,
   }
   out.planes.clear();
   const std::size_t elem_bytes = pipeline_internal::dtype_bytes(out.dtype);
-  if (!entry.strides_bytes.empty() && entry.strides_bytes.size() == out.shape.size()) {
+  if (out.has_tiled_storage()) {
+    out.strides_bytes.clear();
+  } else if (!entry.strides_bytes.empty() && entry.strides_bytes.size() == out.shape.size()) {
     out.strides_bytes = entry.strides_bytes;
   } else if (!out.shape.empty() && elem_bytes > 0) {
     out.strides_bytes = pipeline_internal::contiguous_strides_bytes(out.shape, elem_bytes);
@@ -318,7 +320,7 @@ finish_output_tensor_override_entry(simaai::neat::Tensor out,
       simaai::neat::TessSpec tess;
       tess.format = entry.format;
       out.semantic.tess = tess;
-    } else {
+    } else if (!out.has_tiled_storage()) {
       out.semantic.tess->format = entry.format;
     }
   }
@@ -330,7 +332,9 @@ finish_output_tensor_override_entry(simaai::neat::Tensor out,
       if (out.byte_offset < 0) {
         throw std::runtime_error("output override materialize: negative logical byte offset");
       }
-      const std::uint64_t required_u64 = output_override_entry_physical_span_bytes(entry);
+      const std::uint64_t required_u64 = out.has_tiled_storage()
+                                             ? out.semantic.tess->storage_bytes
+                                             : output_override_entry_physical_span_bytes(entry);
       if (required_u64 == 0U ||
           required_u64 > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
         throw std::runtime_error("output override materialize: invalid logical output span");
@@ -421,7 +425,9 @@ inline void overlay_output_tensor_override_entry(simaai::neat::Tensor& out,
   }
   out.planes.clear();
   const std::size_t elem_bytes = pipeline_internal::dtype_bytes(out.dtype);
-  if (!entry.strides_bytes.empty() && entry.strides_bytes.size() == out.shape.size()) {
+  if (out.has_tiled_storage()) {
+    out.strides_bytes.clear();
+  } else if (!entry.strides_bytes.empty() && entry.strides_bytes.size() == out.shape.size()) {
     out.strides_bytes = entry.strides_bytes;
   } else if (!out.shape.empty() && elem_bytes > 0) {
     out.strides_bytes = pipeline_internal::contiguous_strides_bytes(out.shape, elem_bytes);
@@ -433,7 +439,7 @@ inline void overlay_output_tensor_override_entry(simaai::neat::Tensor& out,
       simaai::neat::TessSpec tess;
       tess.format = entry.format;
       out.semantic.tess = tess;
-    } else {
+    } else if (!out.has_tiled_storage()) {
       out.semantic.tess->format = entry.format;
     }
   }

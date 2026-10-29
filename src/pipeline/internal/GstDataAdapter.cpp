@@ -247,6 +247,8 @@ std::size_t tensor_plane_bytes_tight(const simaai::neat::Plane& plane, TensorDTy
 }
 
 std::size_t tensor_bytes_tight(const simaai::neat::Tensor& input) {
+  if (input.has_tiled_storage())
+    return input.semantic.tess->storage_bytes;
   if (input.is_composite()) {
     std::size_t total = 0;
     for (const auto& plane : input.planes) {

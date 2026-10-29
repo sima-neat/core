@@ -1836,26 +1836,43 @@ InputOptions appsrc_from_info(const InputInfo& info) {
   return opt;
 }
 
-Tensor make_dummy_tensor(const simaai::neat::InputOptions& opt) {
+Tensor make_dummy_tensor(const simaai::neat::InputOptions& opt,
+                         const internal::IngressTensorContract* contract = nullptr) {
   Tensor t;
   t.device = {DeviceType::CPU, 0};
   t.read_only = true;
 
   if (resolve_input_media_type(opt) == "application/vnd.simaai.tensor") {
-    const int w = (opt.width > 0) ? opt.width : opt.max_width;
-    const int h = (opt.height > 0) ? opt.height : opt.max_height;
-    const int d = (opt.depth > 0) ? opt.depth : opt.max_depth;
-    if (w <= 0 || h <= 0 || d <= 0) {
-      throw std::runtime_error(
-          "Model::build: missing tensor input shape for dummy input. "
-          "Fix: set Model::Options::preprocess.input_max_width/input_max_height/input_max_depth.");
-    }
     t.dtype = dtype_from_format(opt.format);
-    t.shape = {h, w, d};
-    t.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W, TensorAxisSemantic::C};
+    if (contract && !contract->logical_shape.empty()) {
+      // InputOptions carries h/w/d; the contract preserves every logical axis.
+      t.shape = contract->logical_shape;
+      if (t.shape.size() == 4U) {
+        t.layout = TensorLayout::HWC;
+        t.axis_semantics = {TensorAxisSemantic::N, TensorAxisSemantic::H, TensorAxisSemantic::W,
+                            TensorAxisSemantic::C};
+      }
+    } else {
+      const int w = (opt.width > 0) ? opt.width : opt.max_width;
+      const int h = (opt.height > 0) ? opt.height : opt.max_height;
+      const int d = (opt.depth > 0) ? opt.depth : opt.max_depth;
+      if (w <= 0 || h <= 0 || d <= 0) {
+        throw std::runtime_error(
+            "Model::build: missing tensor input shape for dummy input. "
+            "Fix: set "
+            "Model::Options::preprocess.input_max_width/input_max_height/input_max_depth.");
+      }
+      t.shape = {h, w, d};
+      t.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W, TensorAxisSemantic::C};
+    }
     const std::size_t elem = pipeline_internal::dtype_bytes(t.dtype);
-    const std::size_t bytes = static_cast<std::size_t>(w) * static_cast<std::size_t>(h) *
-                              static_cast<std::size_t>(d) * elem;
+    std::size_t bytes = elem;
+    for (const auto dim : t.shape) {
+      if (dim <= 0)
+        throw std::runtime_error(
+            "Model::build: dummy tensor input requires a concrete shape; use build(TensorList).");
+      bytes *= static_cast<std::size_t>(dim);
+    }
     t.storage = make_cpu_owned_storage(bytes);
     t.strides_bytes = pipeline_internal::contiguous_strides_bytes(t.shape, elem);
     return t;
@@ -7257,8 +7274,11 @@ Model::Runner Model::build(const Model::RouteOptions& opt,
                                                         tensor_mode, impl_->options, build_opt);
   TensorList dummy_inputs;
   dummy_inputs.reserve(src_opts.size());
-  for (const auto& src_opt : src_opts) {
-    Tensor dummy = make_dummy_tensor(src_opt);
+  for (std::size_t i = 0; i < src_opts.size(); ++i) {
+    const auto& src_opt = src_opts[i];
+    const auto* contract =
+        tensor_mode && i < ingress_contracts.size() ? &ingress_contracts[i] : nullptr;
+    Tensor dummy = make_dummy_tensor(src_opt, contract);
     if (src_opt.memory_policy == InputMemoryPolicy::Ev74) {
       dummy = dummy.to({DeviceType::SIMA_CVU, 0});
     } else if (src_opt.memory_policy == InputMemoryPolicy::Dms0) {
@@ -7629,8 +7649,9 @@ TensorList materialize_joined_ingress_tensors(
   return materialize_joined_ingress_tensors_impl(tensors, consumer_identities, segment_name, where);
 }
 
-Tensor ModelAccess::make_dummy_input(const InputOptions& options) {
-  return make_dummy_tensor(options);
+Tensor ModelAccess::make_dummy_input(const InputOptions& options,
+                                     const IngressTensorContract* contract) {
+  return make_dummy_tensor(options, contract);
 }
 
 Tensor materialize_dense_ingress_tail(Tensor tensor, const std::size_t required_storage_bytes,

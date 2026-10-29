@@ -1,5 +1,7 @@
 #include "pipeline/internal/sima/StageRecipePreparation.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
+#include "pipeline/internal/sima/KernelTensorLayout.h"
+#include "pipeline/internal/TensorTessellationMetadata.h"
 #include "pipeline/internal/sima/CanonicalKernelLowering.h"
 #include "pipeline/internal/sima/CanonicalGraphStageContract.h"
 #include "pipeline/internal/sima/PreprocFrameAdapter.h"
@@ -1910,6 +1912,34 @@ apply_kernel_publication_views(const StageStaticSpec& stage,
             return invalid("stage.publication", "unknown publication relation");
           }
         }
+        if (publication.output_caps && relation == PublicationViewRelation::PackedStorage &&
+            kernel_tensor_requires_detessellation(spec)) {
+          if (const auto* tiled = std::get_if<rt::MlaTiled>(&spec.layout)) {
+            const char* dtype = spec.dtype == rt::DType::BFloat16 ? "BF16"
+                                : spec.dtype == rt::DType::Int8   ? "INT8"
+                                : spec.dtype == rt::DType::UInt8  ? "UINT8"
+                                                                  : nullptr;
+            if (!dtype || i >= checked.output_requirements().size())
+              return invalid("stage.publication", "unsupported checked tiled output metadata");
+            TessSpec tess;
+            tess.format =
+                std::string("MLA_TILED_") + dtype +
+                (tiled->channels == rt::MlaTiled::Channels::Compact ? "_COMPACT" : "_PAD16");
+            tess.slice_shape.assign(tiled->tile_shape.begin(), tiled->tile_shape.end());
+            tess.axes.assign(tiled->axes.begin(), tiled->axes.end());
+            tess.storage_bytes = checked.output_requirements()[i].storage_bytes;
+            for (const auto& logical : stage.logical_outputs) {
+              // PackedStorage also represents deliberately opaque byte vectors
+              // (for example legacy Tess output). Annotate only the numerical
+              // view, never reinterpret a raw-byte alias of the same carrier.
+              if (logical.backend_output_index == static_cast<int>(backend) &&
+                  same_numerical_tensor_view(spec.shape, tensorbuffer_dtype_from_token_local(dtype),
+                                             logical.shape,
+                                             tensorbuffer_dtype_from_token_local(logical.dtype)))
+                set_tessellation_caps(publication.output_caps.get(), logical.logical_index, tess);
+            }
+          }
+        }
         if (include_identity_views || (relation && *relation != PublicationViewRelation::Identity))
           publication.physical_views.push_back(std::move(view));
       }
@@ -1918,7 +1948,8 @@ apply_kernel_publication_views(const StageStaticSpec& stage,
   return {};
 }
 
-::simaai::scheduler::client::Status finalize_processcvu_publication(StageStaticSpec* stage) {
+::simaai::scheduler::client::Status finalize_processcvu_publication(StageStaticSpec* stage,
+                                                                    const GstCaps* producer_caps) {
   namespace rt = ::simaai::scheduler::client;
   namespace gs = ::simaai::scheduler::client;
   const auto invalid = [](std::string field, std::string message) -> rt::Status {
@@ -1940,6 +1971,9 @@ apply_kernel_publication_views(const StageStaticSpec& stage,
     sink = gst_caps_new_empty_simple("video/x-raw");
     if (!payload.input_img_type.empty())
       gst_caps_set_simple(sink, "format", G_TYPE_STRING, payload.input_img_type.c_str(), nullptr);
+  } else if (producer_caps) {
+    // One logical input can read multiple MLA sample views in a tensor-set.
+    sink = gst_caps_copy(producer_caps);
   } else if (stage->input_bindings.size() == 1 && payload.input_tensors.size() <= 1 &&
              !processcvu_graph_family_uses_packed_input_transport_local(payload.graph_name)) {
     CapsTensorSpec input;
@@ -2269,11 +2303,19 @@ finalize_stage_publications(SimaPluginStaticManifest* manifest) {
     return ::simaai::scheduler::client::Error{
         ::simaai::scheduler::client::ErrorCode::InvalidRequest, "stage.publication",
         "manifest required"};
-  for (auto& stage : manifest->stages) {
+  for (std::size_t index = 0; index < manifest->stages.size(); ++index) {
+    auto& stage = manifest->stages[index];
     if (!stage.native_kernel && !stage.mla_program && !stage.tvm_program)
       continue;
     if (stage.native_kernel && stage_is_processcvu_local(stage)) {
-      if (auto error = finalize_processcvu_publication(&stage))
+      const GstCaps* producer_caps = nullptr;
+      if (stage.input_bindings.size() == 1) {
+        const auto producer = edgecontract::resolve_producer_stage_exact(
+            *manifest, index, stage.input_bindings.front());
+        if (producer && manifest->stages[*producer].tensor_publication)
+          producer_caps = manifest->stages[*producer].tensor_publication->output_caps.get();
+      }
+      if (auto error = finalize_processcvu_publication(&stage, producer_caps))
         return error;
     } else {
       ::simaai::scheduler::client::TensorStagePublication publication;

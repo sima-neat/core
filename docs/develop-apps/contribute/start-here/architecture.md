@@ -635,8 +635,10 @@ without enabling verbose GStreamer diagnostics.
 
 `FrameSpan` offsets are local to their allocation and buffer group, not global graph addresses. Identical offsets in different groups do not overlap. BoxDecode and ArgMax keep head-relative tensor offsets separate from storage offsets. Direct-memory and runtime physical-binding inputs retain their addressing mode.
 
-Core lowers Preproc, transforms and vision stages, including ArgMax, BoxDecode
-and SuperPoint, to canonical requests and explicit tensor-port mappings.
+Core lowers Preproc, transforms and vision stages, including ArgMax, BoxDecode,
+SuperPoint and the LiDAR/BEV kernel nodes (SimaVoxelize, SimaPillarScatter,
+SimaBEVPoolPlan and SimaBEVPool), to canonical requests and explicit tensor-port
+mappings.
 Scheduler's generic tensor-stage engine owns GStreamer binding and publication;
 Runner owns dependencies, asynchronous execution and execution-time buffer lifetime. Core imports carrier
 capacities from the upstream allocation contract or ingress storage, never from
@@ -649,6 +651,8 @@ numerical work must not publish stale results.
 The immutable kernel recipe retains the producer-authored tensor wire format after the typed node contract is lowered. Cold publication applies that format to both fresh and cached caps; it never infers semantics from a kernel name or byte shape. The public OBB tensor remains dense, rank-one UInt8 with `BBOX_OBB_V1` semantics.
 
 InputStream projects the authored format onto each returned tensor before publishing a Sample, including owned-copy and cached-metadata paths. Raw `Sample.tensors` and the `TensorList` convenience API therefore carry the same detection semantics.
+
+For checked MLA-tiled numerical outputs, Core attaches physical layout to each logical output only when its shape and dtype match the checked producer. InputStream decodes this immutable caps metadata when initializing its decode cache, then retains it in cached Tensor templates. Raw-byte aliases and INT8 cell tiles whose bytes already match dense NHWC remain unchanged. `TessSpec::storage_bytes` distinguishes explicit tiled storage from legacy format-only annotations. `copy_payload_bytes()` and `clone()` preserve stored bytes, padding and layout; dense copies, typed access and DLPack reject explicit tiled storage. Layout-aware graph consumers receive the checked layout without a hidden conversion.
 
 Image-size changes select immutable, resource-compatible prepared BoxDecode variants
 before binding. They do not mutate an operation used by an in-flight frame. RCNN
@@ -763,6 +767,16 @@ Examples:
 Each Node must produce:
 - `backend_fragment(index)` -- the GStreamer fragment for this node at a given index
 - `element_names(index)` -- deterministic element names owned by this node (for diagnostics and enforcement)
+
+The LiDAR/BEV nodes keep options, port descriptions and pure numerical request
+construction in `nodes/`. Their existing `NodeContractProvider` compilation hooks
+are implemented in `pipeline/internal/sima/LidarBevNodeContracts.cpp`. That compiler
+passes the operation name to Scheduler's existing `check_kernel(...)` API and uses
+the normal stage recipe and `FrameLayout` execution path. `StaticSpecBuilders.cpp`
+shares metadata-only ingress projection and direct-input binding with `SimaArgMax`;
+these helpers neither prepare nor schedule kernels. The LiDAR/BEV node files do not
+include pipeline-private implementation headers. This split adds no per-frame work
+or payload copies.
 
 Standalone `Cast` compiles typed views into a canonical `cast` request checked by Kernels. Logical identities, strides and tensor-relative offsets remain explicit. Semantic compilation reconciles ordered MLA input ports before packing; rendering preserves the checked contracts. Execution capacity defaults to four asynchronously and one synchronously, with separate output carriers for retention. Subset or reordered TensorSets use parent-retaining metadata envelopes without changing the held publication or payload.
 

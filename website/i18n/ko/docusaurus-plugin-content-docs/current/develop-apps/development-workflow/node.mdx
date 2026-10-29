@@ -99,6 +99,9 @@ graph.add(pyneat.groups.video_input(vopt))
 | 메타데이터 출력 | `MetadataSender` | `pyneat.MetadataSender` |
 | 감지 결과 렌더링 | `nodes::SimaRender(...)` | `pyneat.nodes.sima_render(...)` |
 | 로짓을 클래스 인덱스로 변환 | `nodes::SimaArgMax(...)` | `pyneat.nodes.sima_argmax(...)` |
+| LiDAR 스윕을 필러로 복셀화 | `nodes::SimaVoxelize(SimaVoxelizeOptions{...})` | `pyneat.nodes.sima_voxelize(options)` |
+| 필러 특징을 BEV 캔버스에 분산 | `nodes::SimaPillarScatter(SimaPillarScatterOptions{...})` | `pyneat.nodes.sima_pillar_scatter(options)` |
+| 카메라 특징을 BEV 격자로 풀링 | `nodes::SimaBEVPoolPlan(...)` 및 `nodes::SimaBEVPool(...)` | `pyneat.nodes.sima_bev_pool_plan(options)` 및 `pyneat.nodes.sima_bev_pool(options)` |
 
 테스트된 조각을 원할 때 그룹을 사용하고, 명시적인 토폴로지가 필요할 때 개별 노드를 사용하세요. 중복된 출력을 통해 토폴로지를 숨기는 대신 `Graph`와 같은 도우미(예: `graphs::Branch(...)` 및 `graphs::Combine(...)`)를 사용하여 팬아웃 및 팬인을 수행하세요.
 

@@ -37,6 +37,7 @@ SiMa.ai Neat Library 的版本資訊。
 
 ### 圖的建構與驗證
 
+- 新的 `SimaVoxelize`、`SimaPillarScatter`、`SimaBEVPoolPlan` 與 `SimaBEVPool` 節點會以 INT8 或 BF16 張量在 A65 或 EV74 上執行 PointPillars 與 BEVFusion 的核心函式庫 LiDAR 運算以及相機轉 BEV 運算。每個節點都在您選擇的目標上執行，不會退回其他目標。請參閱 [LiDAR 與 BEV 核心節點](/reference/lidar_bev_kernel_nodes)。
 - 預設的公開 `Input` 直接連接至單一模型影像輸入時，現在會繼承其宣告的影像格式。明確的輸入選項仍具決定權；有歧義的連接必須使用明確選項。這會改變樣本的解讀方式，而不新增負載複製。
 - 圖組合現在會將一個節點物件視為一個邏輯頂點。重複插入與重疊的片段匯入會以不可分割的方式失敗，而重複呼叫 `connect()` 時會重複使用既有節點進行扇出。
 - 每個具體化的管線區段現在都會在 `build()` 期間驗證最終的 GStreamer 名稱，不需另外明確呼叫 `validate()`。名稱重複或遺漏時會以 `misconfig.pipeline_shape` 失敗，而不會產生截斷的管線。

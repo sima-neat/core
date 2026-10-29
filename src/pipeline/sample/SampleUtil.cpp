@@ -2723,10 +2723,11 @@ bool tensor_has_certified_terminal_host_memory(const Tensor& tensor) {
     return false;
   if (!tensor.strides_bytes.empty() && tensor.strides_bytes.size() != tensor.shape.size())
     return false;
-  std::size_t span = dtype_bytes(tensor.dtype);
+  std::size_t span =
+      tensor.has_tiled_storage() ? tensor.semantic.tess->storage_bytes : dtype_bytes(tensor.dtype);
   if (!span)
     return false;
-  for (std::size_t i = 0; i < tensor.shape.size(); ++i) {
+  for (std::size_t i = 0; !tensor.has_tiled_storage() && i < tensor.shape.size(); ++i) {
     if (tensor.shape[i] <= 0)
       return false;
     const auto extent = static_cast<std::size_t>(tensor.shape[i]);

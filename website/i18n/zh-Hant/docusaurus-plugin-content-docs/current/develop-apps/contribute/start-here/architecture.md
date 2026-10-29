@@ -442,7 +442,8 @@ Scheduler 在準備階段依此關係檢查每個輸出綁定，包括 dtype、�
 
 `FrameSpan` 位移屬於個別配置與緩衝群組，不是整張圖的全域位址。不同群組中的相同位移不會重疊。BoxDecode 和 ArgMax 將輸出頭相對張量位移與儲存位移分開。直接記憶體輸入與執行階段實體繫結輸入維持原有定址方式。
 
-Core 將 Preproc、轉換與視覺階段，包括 ArgMax、BoxDecode 與 SuperPoint，降階為
+Core 將 Preproc、轉換與視覺階段，包括 ArgMax、BoxDecode、SuperPoint 與 LiDAR/BEV 核心節點（SimaVoxelize、SimaPillarScatter、
+SimaBEVPoolPlan 與 SimaBEVPool），降階為
 標準要求與明確張量埠對應。Scheduler 的一般化張量階段引擎擁有 GStreamer 綁定與
 發布；Runner 擁有相依、非同步執行與執行期間緩衝區生命週期。
 Core 從上游分配契約或輸入儲存空間匯入載體容量，絕不只根據邏輯形狀推斷。
@@ -452,6 +453,8 @@ BoxDecode 與 SuperPoint 數值輸出保持私用；相依的 Core 線路序列�
 不可變的核心配方會在具型別節點契約轉換後，保留生產者定義的張量傳輸格式。冷路徑發布會將此格式套用至新建與快取的 caps，絕不從核心名稱或位元組形狀推斷語意。公開 OBB 張量維持為具有 `BBOX_OBB_V1` 語意的密集一維 UInt8。
 
 InputStream 會在發布 Sample 之前，將定義的格式投射至每個傳回的張量，包括自有複本與快取中繼資料路徑。因此，原始 `Sample.tensors` 與 `TensorList` 便利 API 具有相同的偵測語意。
+
+對於已驗證的 MLA 圖塊數值輸出，Core 僅在形狀和 dtype 與已驗證的產生端一致時，才將實體配置附加到各邏輯輸出。InputStream 會在初始化解碼快取時解析這些不可變的 caps 中繼資料，然後保留在快取的 Tensor 範本中。原始位元組別名，以及位元組排列已符合密集 NHWC 的 INT8 儲存格圖塊，均維持不變。`TessSpec::storage_bytes` 區分明確的圖塊儲存與舊有僅標示格式的註記。`copy_payload_bytes()` 和 `clone()` 保留儲存位元組、填補與配置；密集複製、具型別存取與 DLPack 則拒絕明確的圖塊儲存。支援此配置的圖消費端會接收已驗證的配置，不會執行隱藏轉換。
 
 影像尺寸變更會在綁定前選擇不可變且資源相容的已準備 BoxDecode 變體，
 不會修改在途影格使用中的操作。RCNN 第 1 階段保留逐層 top-K 計數加 FP16 提案群組。
@@ -552,6 +555,14 @@ SDK／程式庫憑證與實際連結檢查優先於套件寬鬆的最低版本�
 每個節點都必須產生：
 - `backend_fragment(index)` -- 在特定索引處，此節點的 GStreamer 片段
 - `element_names(index)` -- 此節點所擁有的確定性元素名稱（用於診斷和強制執行）
+
+LiDAR/BEV 節點將選項、埠描述與無副作用的數值要求建構保留在 `nodes/`。
+既有的 `NodeContractProvider` 編譯掛鉤則在
+`pipeline/internal/sima/LidarBevNodeContracts.cpp` 中實作。此編譯器將運算名稱傳給
+Scheduler 既有的 `check_kernel(...)` API，並使用一般的階段執行配方與 `FrameLayout`
+執行路徑。`StaticSpecBuilders.cpp` 與 `SimaArgMax` 共用僅處理中繼資料的輸入投影及
+直接輸入繫結；這些輔助函式不會準備或排程核心。LiDAR/BEV 節點檔案不會包含管線
+私有實作標頭。此分工不會新增逐影格工作或承載資料複製。
 
 獨立的 `Cast` 將具型別檢視編譯成由 Kernels 檢查的標準 `cast` 要求。邏輯身分、步幅與張量相對位移保持明確。語意編譯在配置前調整有序 MLA 輸入埠；呈現過程保留已檢查合約。執行容量預設為非同步 4、同步 1，並以獨立輸出載體支援保留。子集或重新排序的 TensorSet 使用保留父物件的中繼資料封套，不修改已持有的發布資訊與承載資料。
 

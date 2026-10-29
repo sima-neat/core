@@ -13,6 +13,7 @@
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StageRecipePreparation.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/TensorUtil.h"
 #include <gstsimaaitensorbuffer_meta.h>
@@ -57,8 +58,8 @@ void check_argmax_ingress_projection() {
       require(actual.physical_index == projected.memory_index &&
                   actual.byte_offset == projected.byte_offset && actual.shape == projected.shape &&
                   actual.stride_bytes == projected.stride_bytes &&
-                  compiled.kernel->recipe->members[i].inputs[0].byte_offset ==
-                      static_cast<std::size_t>(projected.byte_offset),
+                  actual.size_bytes == projected.size_bytes &&
+                  compiled.kernel->recipe->members[i].inputs[0].byte_offset == 0,
               "ArgMax disagrees with the execution ingress descriptor");
       const auto carrier = std::find_if(
           runtime.physical_inputs.begin(), runtime.physical_inputs.end(),
@@ -69,6 +70,30 @@ void check_argmax_ingress_projection() {
                           gst_buffer_peek_memory(expected.buffer, projected.memory_index), nullptr,
                           nullptr),
               "ArgMax lost the actual ingress carrier extent");
+    }
+    // Placement owns the logical view offset. A member consumes that view,
+    // so adding the producer offset again would read another tensor/padding.
+    CompiledPipelineContracts pipeline;
+    pipeline.stages = {compiled};
+    pipeline.fully_renderable = true;
+    pi::sima::ManifestBuildDiagnostics diagnostics;
+    auto manifest = render_manifest_from_compiled_contracts(pipeline, input, &diagnostics);
+    require(manifest && diagnostics.errors.empty() && manifest->stages.size() == 1,
+            "ArgMax ingress manifest did not render");
+    pi::sima::finalize_pipeline_storage(*manifest);
+    const auto& stage = manifest->stages.front();
+    require(stage.frame_layout && stage.frame_layout->inputs.size() == expected.tensors.size(),
+            "ArgMax lost an input during final frame placement");
+    for (std::size_t i = 0; i < expected.tensors.size(); ++i) {
+      const auto& placement = stage.frame_layout->inputs[i];
+      const auto* direct = std::get_if<simaai::scheduler::client::DirectMemory>(&placement.source);
+      require(
+          direct &&
+              direct->memory_index == static_cast<std::size_t>(expected.tensors[i].memory_index) &&
+              direct->byte_offset == 0 &&
+              placement.view_offset == static_cast<std::size_t>(expected.tensors[i].byte_offset) &&
+              stage.native_kernel->members[i].inputs[0].byte_offset == 0,
+          "ArgMax final frame placement must apply the logical view offset exactly once");
     }
     return compiled;
   };
@@ -126,6 +151,43 @@ void check_argmax_ingress_projection() {
               borrowed.logical_inputs[0].byte_offset == 16 &&
               borrowed.logical_inputs[1].byte_offset == 64,
           "borrowed shared carrier lost its actual offsets or extent");
+
+  // A borrowed strided view has 24 logical bytes but touches 28 physical
+  // bytes. Do not confuse either with the capacity of its backing carrier.
+  for (const std::size_t capacity : {28U, 128U}) {
+    Tensor strided = source;
+    strided.strides_bytes = {16, 4};
+    strided.byte_offset = strided.route.physical_byte_offset = capacity == 28 ? 0 : 16;
+    strided.route.physical_index = strided.route.memory_index = 0;
+    GstBuffer* storage = gst_buffer_new_allocate(nullptr, capacity, nullptr);
+    require(storage != nullptr, "could not allocate strided ArgMax carrier");
+    pi::attach_tensor_set_meta_from_tensors(storage, {strided});
+    require(
+        simaai::gst::tensor_buffer_attach_physical_bindings(storage, {{0, 0, capacity}}, &error),
+        "could not describe strided ArgMax carrier: " + error);
+    GstCaps* tensor_caps = gst_caps_from_string("application/vnd.simaai.tensor");
+    GstSample* tensor_sample = gst_sample_new(storage, tensor_caps, nullptr, nullptr);
+    gst_buffer_unref(storage);
+    gst_caps_unref(tensor_caps);
+    require(tensor_sample != nullptr, "could not create strided ArgMax sample");
+    strided.storage = pi::make_gst_sample_storage(tensor_sample);
+    gst_sample_unref(tensor_sample);
+    const auto typed_sample = sample_from_tensors({strided});
+    auto envelope = pi::sample_to_gst_envelope_holder(typed_sample, &error);
+    pi::TensorBufferView descriptor;
+    require(envelope &&
+                pi::tensor_buffer_descriptor_from_sample(static_cast<GstSample*>(envelope.get()),
+                                                         &descriptor, &error) &&
+                descriptor.tensors.size() == 1 && descriptor.tensors[0].size_bytes == 24 &&
+                descriptor.tensors[0].stride_bytes == std::vector<std::int64_t>{16, 4} &&
+                descriptor.segments[0].size_bytes == capacity,
+            "strided ingress fixture must retain 24 logical bytes and a 28-byte footprint: " +
+                error);
+    current = compile(typed_sample);
+    const auto& input = current.kernel->runtime_contract.logical_inputs.front();
+    require(input.size_bytes == 24 && input.stride_bytes == std::vector<std::int64_t>{16, 4},
+            "ArgMax must preserve strided logical publication, not widen it to carrier capacity");
+  }
 
   // OutputMemory::Owned materializes each packed logical output independently,
   // retaining its route provenance just as clone() does.
@@ -247,6 +309,121 @@ void execute_argmax_graph(bool scalar) {
   }
   run.close();
 }
+// Dense and row-padded views share one real DMA carrier. Both doubled offsets
+// remain in-bounds, but point at different/sentinel values, making this a
+// numerical regression rather than merely an allocation-boundary failure.
+void execute_argmax_shared_carrier_graph() {
+  using namespace simaai::neat;
+  namespace pi = pipeline_internal;
+  constexpr std::array<std::size_t, 2> offsets{16, 64};
+  struct Frame {
+    Tensor carrier;
+    TensorList views;
+    std::array<std::array<std::int32_t, 2>, 2> expected;
+  };
+  const auto make_frame = [&](int iteration) {
+    Frame frame;
+    std::vector<float> values(64, -1000.f);
+    for (std::size_t i = 0; i < values.size(); i += 3)
+      values[i] = 1000.f;
+    for (std::size_t input = 0; input < offsets.size(); ++input) {
+      auto* scores = values.data() + offsets[input] / sizeof(float);
+      const auto row_stride = input == 0 ? 3U : 4U;
+      for (std::size_t row = 0; row < 2; ++row) {
+        std::fill_n(scores + row * row_stride, 3, -5.f);
+        const auto winner = (iteration + static_cast<int>(input + row)) % 3;
+        frame.expected[input][row] = winner;
+        scores[row * row_stride + static_cast<std::size_t>(winner)] = 10.f;
+      }
+    }
+    frame.carrier = Tensor::from_vector(values, {64}, TensorMemory::EV74);
+    for (std::size_t i = 0; i < offsets.size(); ++i) {
+      auto view = frame.carrier;
+      view.shape = {2, 3};
+      view.strides_bytes = {i == 0 ? 12 : 16, 4};
+      view.byte_offset = static_cast<std::int64_t>(offsets[i]);
+      view.route.logical_index = static_cast<int>(i);
+      view.route.physical_index = view.route.memory_index = 0;
+      view.route.physical_byte_offset = view.byte_offset;
+      view.route.name = "scores_" + std::to_string(i);
+      view.route.segment_name = "shared_scores";
+      frame.views.push_back(std::move(view));
+    }
+    std::string error;
+    const auto holder =
+        pi::sample_to_gst_envelope_holder(sample_from_tensors({frame.carrier}), &error);
+    require(holder != nullptr, "could not expose ArgMax DMA carrier: " + error);
+    GstBuffer* carrier = gst_sample_get_buffer(static_cast<GstSample*>(holder.get()));
+    require(carrier && gst_buffer_n_memory(carrier) == 1,
+            "ArgMax shared-input fixture requires one physical DMA carrier");
+    GstBuffer* buffer = gst_buffer_new();
+    require(buffer != nullptr, "could not allocate ArgMax carrier metadata");
+    gst_buffer_append_memory(buffer, gst_memory_ref(gst_buffer_peek_memory(carrier, 0)));
+    pi::attach_tensor_set_meta_from_tensors(buffer, frame.views);
+    require(simaai::gst::tensor_buffer_attach_physical_bindings(
+                buffer, {{0, 0, values.size() * sizeof(float)}}, &error),
+            "could not describe shared ArgMax DMA carrier: " + error);
+    GstCaps* caps = gst_caps_from_string("application/vnd.simaai.tensor");
+    GstSample* sample = gst_sample_new(buffer, caps, nullptr, nullptr);
+    gst_buffer_unref(buffer);
+    gst_caps_unref(caps);
+    require(sample != nullptr, "could not create shared ArgMax sample");
+    const auto storage = pi::make_gst_sample_storage(sample);
+    gst_sample_unref(sample);
+    for (auto& view : frame.views)
+      view.storage = storage;
+    pi::TensorBufferView descriptor;
+    const auto envelope =
+        pi::sample_to_gst_envelope_holder(sample_from_tensors(frame.views), &error);
+    require(envelope &&
+                pi::tensor_buffer_descriptor_from_sample(static_cast<GstSample*>(envelope.get()),
+                                                         &descriptor, &error) &&
+                descriptor.tensors.size() == 2 &&
+                descriptor.tensors[0].memory_index == descriptor.tensors[1].memory_index &&
+                descriptor.tensors[0].byte_offset == static_cast<std::int64_t>(offsets[0]) &&
+                descriptor.tensors[1].byte_offset == static_cast<std::int64_t>(offsets[1]) &&
+                descriptor.tensors[0].size_bytes == 24 && descriptor.tensors[1].size_bytes == 24 &&
+                descriptor.tensors[0].stride_bytes == std::vector<std::int64_t>{12, 4} &&
+                descriptor.tensors[1].stride_bytes == std::vector<std::int64_t>{16, 4},
+            "ArgMax shared-input fixture lost its nonzero offsets or dense/padded views: " + error);
+    return frame;
+  };
+  Graph graph;
+  InputOptions source;
+  source.payload_type = PayloadType::Tensor;
+  source.memory_policy = InputMemoryPolicy::Ev74;
+  graph.add(nodes::Input(source));
+  graph.add(nodes::SimaArgMax());
+  graph.add(nodes::Output(OutputOptions::EveryFrame(4)));
+  RunOptions options;
+  options.queue_depth = 2;
+  options.output_memory = OutputMemory::Owned;
+  options.advanced.copy_input = false;
+  auto initial = make_frame(0);
+  auto run = graph.build(initial.views, options);
+  for (int iteration = 0; iteration < 3; ++iteration) {
+    auto frame = make_frame(iteration);
+    const auto before = frame.carrier.copy_dense_bytes_tight();
+    require(run.push(frame.views), "Core shared-carrier ArgMax input was not accepted");
+    const auto sample = run.pull(5000);
+    require(sample.has_value(), "Core shared-carrier ArgMax output timed out");
+    const auto outputs = tensors_from_sample(*sample, true);
+    require(outputs.size() == offsets.size(), "Core shared-carrier ArgMax lost an output");
+    for (std::size_t i = 0; i < outputs.size(); ++i) {
+      require(outputs[i].dtype == TensorDType::Int32 &&
+                  outputs[i].shape == std::vector<std::int64_t>{2},
+              "Core shared-carrier ArgMax output contract changed");
+      const auto actual = outputs[i].copy_dense_bytes_tight();
+      require(actual.size() == sizeof(frame.expected[i]) &&
+                  std::memcmp(actual.data(), frame.expected[i].data(), actual.size()) == 0,
+              "Core ArgMax read the wrong shared-carrier view");
+    }
+    require(frame.carrier.copy_dense_bytes_tight() == before,
+            "Core ArgMax modified input scores or carrier sentinels");
+  }
+  run.close();
+}
+
 void execute_decode_graph(bool features,
                           std::optional<simaai::neat::TensorDType> padded_type = std::nullopt) {
   using namespace simaai::neat;
@@ -519,9 +696,16 @@ int main() {
       require(native.runtime_contract.logical_outputs[0].shape == std::vector<std::int64_t>{2} &&
                   native.runtime_contract.logical_outputs[0].dtype == "INT32",
               "ArgMax output contract mismatch");
-      require(native.recipe->members[0].inputs[0].byte_offset == 16 &&
+      require(native.recipe->members[0].inputs[0].byte_offset == 0 &&
+                  native.runtime_contract.logical_inputs[0].byte_offset == 16 &&
+                  native.runtime_contract.logical_inputs[0].size_bytes == 24 &&
                   native.runtime_contract.physical_inputs[0].physical_index == 7,
-              "ArgMax lost packed source identity or tensor offset");
+              "ArgMax must preserve packed source identity and apply the offset only in placement");
+      runtime.logical_outputs[0].size_bytes = 23;
+      require(!compiler->compile_node_contract(input, &compiled, &error),
+              "ArgMax must reject a logical extent smaller than its shape, even with spare carrier "
+              "capacity");
+      runtime.logical_outputs[0].size_bytes = 24;
       opt.keepdims = true;
       simaai::neat::SimaArgMax keepdims(opt);
       require(keepdims.compile_node_contract(input, &compiled, &error),
@@ -620,6 +804,7 @@ int main() {
 
     execute_argmax_graph(false);
     execute_argmax_graph(true);
+    execute_argmax_shared_carrier_graph();
     execute_decode_graph(false);
     execute_rcnn_stage1_graph();
     execute_decode_graph(true);
