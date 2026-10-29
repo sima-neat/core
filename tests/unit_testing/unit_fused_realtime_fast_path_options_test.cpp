@@ -2053,6 +2053,20 @@ RUN_TEST(
       require(find_encoded_tee(realtime_sink_plan) == nullptr &&
                   has_open_fanout(realtime_sink_plan),
               "a RealtimeLatestByStream decode edge must keep the FanOut before JpegRtpUdpSink");
+      // Export describes the sink's UDP destination exactly as it describes UdpOutput's.
+      const auto sink_topology = nlohmann::json::parse(
+          simaai::neat::session_test::export_graph_topology_for_test(realtime_sink_plan));
+      const nlohmann::json udp_sink = {
+          {"kind", "udp"},
+          {"uri", "udp://127.0.0.1:5600"},
+          {"details", {{"host", "127.0.0.1"}, {"port", 5600}, {"sync", false}, {"async", false}}}};
+      const auto& public_nodes = sink_topology.at("public_view").at("nodes");
+      require(std::any_of(public_nodes.begin(), public_nodes.end(),
+                          [&](const auto& node) {
+                            return node.value("kind", "") == "JpegRtpUdpSink" &&
+                                   node.value("sink", nlohmann::json()) == udp_sink;
+                          }),
+              "export must describe JpegRtpUdpSink as a udp sink: " + public_nodes.dump());
       require(stays_segmented(compile_usb_video_app(UsbSender::Async, false)),
               "an async MJPEG VideoSender must keep the USB camera FanOut");
       {
