@@ -1065,7 +1065,7 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
   assert encoded.codec == pyneat.RtspCodec.H264
   assert encoded.latency_ms == 200
   assert encoded.tcp is True
-  assert encoded.drop_on_latency is False
+  assert encoded.drop_on_latency is True
   assert encoded.buffer_mode == ""
   assert encoded.insert_queue is True
   assert encoded.sync_mode is False
@@ -1113,7 +1113,7 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
 
   decoded = pyneat.RtspDecodedInputOptions()
   assert decoded.codec == pyneat.RtspCodec.H264
-  assert decoded.drop_on_latency is False
+  assert decoded.drop_on_latency is True
   assert decoded.buffer_mode == ""
   assert decoded.payload_type == -1
   assert decoded.mjpeg_payload_type == 26
