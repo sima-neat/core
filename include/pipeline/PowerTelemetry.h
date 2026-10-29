@@ -133,9 +133,9 @@ struct PowerSummary {
   bool enabled = false;                ///< True when the monitor was configured to sample.
   std::uint64_t samples = 0;           ///< Sentinel samples taken while running.
   double duration_seconds = 0.0;       ///< Wall-clock monitor duration.
-  double total_avg_watts = 0.0;        ///< Average total SOM rail power.
-  double total_min_watts = 0.0;        ///< Minimum total SOM rail power.
-  double total_max_watts = 0.0;        ///< Maximum total SOM rail power.
+  double total_avg_watts = 0.0;        ///< Estimated average total SOM rail power.
+  double total_min_watts = 0.0;        ///< Estimated minimum total SOM rail power.
+  double total_max_watts = 0.0;        ///< Estimated maximum total SOM rail power.
   double energy_joules = 0.0;          ///< Estimated energy: avg watts * duration seconds.
   std::vector<PowerRailSummary> rails; ///< Per-rail summaries.
 };

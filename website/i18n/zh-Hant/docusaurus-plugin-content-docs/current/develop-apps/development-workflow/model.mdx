@@ -850,7 +850,7 @@ Sentinel 讀取都不會延長計時工作負載。無效樣本時間戳記或�
 
 | 欄位 | 意義 |
 | --- | --- |
-| `avg_power_watts`, `peak_power_watts` | 吞吐量階段期間 SoM 輸入功耗的平均值與最高值。 |
+| `avg_power_watts`, `peak_power_watts` | 吞吐量階段期間 SoM 功耗的估計平均值與估計最高值：為 Sentinel 對 SoM 穩壓器電源軌讀數的加總，而非校正過的輸入功率量測值。 |
 | `energy_joules` | 處理 `num_samples` 個輸入所需的能量：平均功耗乘以依測得的吞吐量處理 `num_samples` 個輸入所需的時間。較長的階段不會使其增加。 |
 | `telemetry.power_mla_watts`, `telemetry.power_rails_watts` | MLA 電源軌功耗，以及板子回報的每一個電源軌。沒有 MLA 電源軌的板子會以 `samples == 0` 回報該項。 |
 | `telemetry.die_temperatures_c`, `telemetry.die_temperature_max_c` | MLA、APU、CVU 與 TOP 位置的晶粒內感測器，以及每個樣本中其中最高的溫度。 |

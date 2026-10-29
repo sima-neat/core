@@ -107,7 +107,9 @@ struct MlaStageStats {
  * least `num_samples` inputs and `min_duration_ms` has elapsed.
  *
  * Power and board telemetry come from the Sentinel daemon, recorded by a `TelemetryMonitor`
- * around the throughput pass. Its sample window is armed after measurement starts
+ * around the throughput pass. The power figures are estimates: Sentinel sums the SoM
+ * regulator rail readings, which are not calibrated against the SoM input power.
+ * Its sample window is armed after measurement starts
  * and sealed after the last required output, before measurement stops. Preparation,
  * worker teardown and final reads are outside the timer. Invalid UTC timestamps or
  * detected clock discontinuities make benchmark telemetry unavailable, without
@@ -120,11 +122,11 @@ struct BenchmarkReport {
   double latency_p95_ms = 0.0;
   double latency_p99_ms = 0.0;
   double fps = 0.0;
-  double avg_power_watts = 0.0; ///< Mean SoM power over the throughput window.
-  /// Energy to process `num_samples` inputs: `avg_power_watts` multiplied by the time the
-  /// measured throughput needs for `num_samples` inputs.
+  double avg_power_watts = 0.0; ///< Estimated mean SoM power over the throughput window.
+  /// Estimated energy to process `num_samples` inputs: `avg_power_watts` multiplied by the
+  /// time the measured throughput needs for `num_samples` inputs.
   double energy_joules = 0.0;
-  double peak_power_watts = 0.0;       ///< Highest SoM power sample in the throughput window.
+  double peak_power_watts = 0.0;       ///< Estimated highest SoM power sample in the window.
   int throughput_samples = 0;          ///< Inputs measured by the throughput pass.
   double throughput_duration_ms = 0.0; ///< Length of the throughput window.
   Telemetry telemetry;                 ///< Board telemetry for the throughput window.

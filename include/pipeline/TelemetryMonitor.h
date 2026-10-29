@@ -52,11 +52,13 @@ struct Telemetry {
   /// `"ok"` once a sample was counted; otherwise why there is no telemetry, or
   /// `"not started"` before the monitor first started.
   std::string status;
-  std::string sentinel_version;   ///< Version of the Sentinel daemon that took the samples.
-  int sample_interval_ms = 0;     ///< Time between Sentinel samples.
-  int samples = 0;                ///< Sentinel samples counted in the window.
-  double duration_ms = 0.0;       ///< Window length so far, or up to `stop()`.
-  TelemetryStats power_som_watts; ///< Total SoM input power.
+  std::string sentinel_version; ///< Version of the Sentinel daemon that took the samples.
+  int sample_interval_ms = 0;   ///< Time between Sentinel samples.
+  int samples = 0;              ///< Sentinel samples counted in the window.
+  double duration_ms = 0.0;     ///< Window length so far, or up to `stop()`.
+  /// Estimated total SoM power: Sentinel's sum of the regulator rail readings, not a
+  /// calibrated measurement of the SoM input power.
+  TelemetryStats power_som_watts;
   TelemetryStats power_mla_watts; ///< MLA rail power; not reported on boards without that rail.
   std::vector<TelemetryStats> power_rails_watts;  ///< Every power rail the board reports.
   std::vector<TelemetryStats> die_temperatures_c; ///< Die sensors at the MLA, APU, CVU, and TOP.
