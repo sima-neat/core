@@ -849,7 +849,7 @@ report = model.benchmark(options)
 
 | 필드 | 의미 |
 | --- | --- |
-| `avg_power_watts`, `peak_power_watts` | 처리량 패스 동안의 SoM 전력 추정 평균값과 추정 최고값입니다. Sentinel이 SoM 레귤레이터 레일 읽기 값을 합산한 것이며, 보정된 입력 전력 측정값이 아닙니다. |
+| `avg_power_watts`, `peak_power_watts` | 처리량 패스 동안의 SoM 전력 추정 평균값과 추정 최고값입니다. |
 | `energy_joules` | `num_samples`개의 입력을 처리하는 데 필요한 에너지입니다. 평균 전력에, 측정된 처리량으로 `num_samples`개의 입력을 처리하는 데 걸리는 시간을 곱한 값입니다. 패스가 길어져도 이 값은 증가하지 않습니다. |
 | `telemetry.power_mla_watts`, `telemetry.power_rails_watts` | MLA 레일 전력 및 보드가 보고하는 모든 레일의 전력입니다. MLA 레일이 없는 보드는 이를 `samples == 0`으로 보고합니다. |
 | `telemetry.die_temperatures_c`, `telemetry.die_temperature_max_c` | MLA, APU, CVU, TOP 위치의 온다이 센서와, 각 샘플에서 그중 가장 높은 온도입니다. |

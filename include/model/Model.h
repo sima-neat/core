@@ -107,9 +107,7 @@ struct MlaStageStats {
  * least `num_samples` inputs and `min_duration_ms` has elapsed.
  *
  * Power and board telemetry come from the Sentinel daemon, recorded by a `TelemetryMonitor`
- * around the throughput pass. The power figures are estimates: Sentinel sums the SoM
- * regulator rail readings, which are not calibrated against the SoM input power.
- * Its sample window is armed after measurement starts
+ * around the throughput pass. Its sample window is armed after measurement starts
  * and sealed after the last required output, before measurement stops. Preparation,
  * worker teardown and final reads are outside the timer. Invalid UTC timestamps or
  * detected clock discontinuities make benchmark telemetry unavailable, without
