@@ -352,9 +352,8 @@ jobs:
       - build
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-modalix-runner.yml@main
     with:
-      # Hardware qualification target, separate from the immutable build SDK
-      # receipt. Installation still verifies the selected package compatibility.
-      manifest_path: .github/devkit-test-policy.json
+      manifest_artifact: neat-core-dist
+      manifest_path: scheduler-sdk-policy.json
       legacy_runner_group: modalix-devkit
       versioned_runner_group_prefix: modalix-devkit-
       shared_workflow_ref: main

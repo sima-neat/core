@@ -40,8 +40,8 @@ class VulcanCiDocsOnlyTests(unittest.TestCase):
             "versioned_runner_group_prefix": "modalix-devkit-",
         })
         self.assertEqual(resolver["needs"], ["detect-changes", "resolve-vulcan-config", "build"])
-        self.assertNotIn("manifest_artifact", resolver["with"])
-        self.assertEqual(resolver["with"]["manifest_path"], ".github/devkit-test-policy.json")
+        self.assertEqual(resolver["with"]["manifest_artifact"], "neat-core-dist")
+        self.assertEqual(resolver["with"]["manifest_path"], "scheduler-sdk-policy.json")
         self.assertEqual(resolver["with"]["shared_workflow_ref"], "main")
         self.assertIs(resolver["with"]["allow-version-fallback"], False)
         self.assertEqual(resolver["secrets"]["app_id"], "${{ secrets.NEAT_RELEASES_APP_ID }}")
@@ -51,32 +51,28 @@ class VulcanCiDocsOnlyTests(unittest.TestCase):
         self.assertEqual(devkit["runs-on"]["group"],
                          "${{ needs.resolve-test-runner.outputs.modalix_runner_group }}")
 
-    def test_devkit_target_does_not_rewrite_dependency_sdk_policy(self) -> None:
+    def test_devkit_target_uses_dependency_sdk_policy(self) -> None:
         resolver = yaml.safe_load(job_block("resolve-test-runner"))
-        target = json.loads((ROOT / resolver["with"]["manifest_path"]).read_text())
         dependencies = json.loads((ROOT / "deps/manifest.json").read_text())
-        self.assertEqual(target, {
-            "platform-version": dependencies["platform-version"],
-            "elxr_version": "3.0.0_master_B2479",
-        })
+        self.assertEqual(resolver["with"]["manifest_artifact"], "neat-core-dist")
+        self.assertEqual(resolver["with"]["manifest_path"], "scheduler-sdk-policy.json")
         self.assertNotIn("elxr_version", dependencies)
         self.assertEqual(dependencies["scheduler"], {"policy": "snap"})
         self.assertIn("--output dist/scheduler-sdk-policy.json", (ROOT / "build.sh").read_text())
 
     def test_devkit_guard_requires_actual_selected_firmware_without_fallback(self) -> None:
-        resolver = yaml.safe_load(job_block("resolve-test-runner"))
-        target = json.loads((ROOT / resolver["with"]["manifest_path"]).read_text())
+        expected_firmware = "3.0.0_master_B1234"
         guard = yaml.safe_load(job_block("test-devkit-shard"))["steps"][0]
         script = guard["run"].split("<<'PYFIRMWARE'\n", 1)[1].rsplit("\nPYFIRMWARE", 1)[0]
         for firmware, fallback, accepted in (
-            (target["elxr_version"], "false", True),
-            ("3.0.0_master_B2372", "false", False),
-            (target["elxr_version"], "true", False),
+            (expected_firmware, "false", True),
+            ("3.0.0_master_B5678", "false", False),
+            (expected_firmware, "true", False),
             ("", "false", False),
         ):
             with self.subTest(firmware=firmware, fallback=fallback), \
                     mock.patch.dict(os.environ, {
-                        "EXPECTED_ELXR_VERSION": target["elxr_version"],
+                        "EXPECTED_ELXR_VERSION": expected_firmware,
                         "VERSION_FALLBACK": fallback, "RUNNER_NAME": "fixture",
                     }), \
                     mock.patch.object(Path, "is_file", return_value=True), \
