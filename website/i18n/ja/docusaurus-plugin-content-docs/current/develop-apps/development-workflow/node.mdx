@@ -85,10 +85,12 @@ graph.add(pyneat.groups.video_input(vopt))
 | ファイルからフレームを読み取る | `nodes::FileInput(...)`とデコードノード、または`nodes::groups::VideoInputGroup(...)` | `pyneat.nodes.file_input(...)`とデコードノード、または`pyneat.groups.video_input(...)` |
 | ソースとして1つの画像を読み取る | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
 | MIPI/libcameraカメラを読み取る | `nodes::CameraInput(...)` | `pyneat.nodes.camera_input(...)` |
+| USB（UVC）MJPEGカメラを読み取る | `nodes::UsbCameraInput(...)` | `pyneat.nodes.usb_camera_input(...)` |
 | RTSPストリームを読み取る | `nodes::RTSPInput(...)`、`nodes::groups::RtspEncodedInput(...)`、または`nodes::groups::RtspDecodedInput(...)` | `pyneat.nodes.rtsp_input(...)`、`pyneat.groups.rtsp_encoded_input(...)`、または`pyneat.groups.rtsp_decoded_input(...)` |
 | HTTPマルチパートMJPEGを読み取る | `nodes::groups::HttpMjpegDecodedInput(...)`、または`nodes::HttpSource(...)`、`MultipartJpegDemux()`、`JpegParse()`（手動でのフレーム処理） | `pyneat.groups.http_mjpeg_decoded_input(...)`、または`pyneat.nodes.http_source(...)`、`pyneat.nodes.multipart_jpeg_demux()`、`pyneat.nodes.jpeg_parse()` |
 | 画像をデコードする | `nodes::ImageDecode()`または`nodes::JpegDecode()` | `pyneat.nodes.image_decode()`または`pyneat.nodes.jpeg_decode()` |
 | エンコードされたビデオをデコードする | `nodes::SimaDecode(SimaDecodeOptions{...})` | `pyneat.nodes.sima_decode(options)` |
+| MJPEG カメラのフレームをデコードする (4:2:0 または 4:2:2) | `usb_camera_info(...).decoded_format` を `nodes::SimaDecode(...)` の `out_format` に設定し、モデルの入力形式を合わせる | `pyneat.usb_camera_info(...).decoded_format` を `pyneat.nodes.sima_decode(...)` の `out_format` に設定し、モデルの入力形式を合わせる |
 | 生ビデオのエンコード | `nodes::SimaEncode(SimaEncodeOptions{...})` | `pyneat.nodes.sima_encode(options)` |
 | ビデオのスケールまたはレート制限を行う | `nodes::VideoScale()`、`VideoRate()`、`ImageFreeze()` | `pyneat.nodes.video_scale()`、`video_rate()`、`image_freeze()` |
 | 再利用可能な画像入力パスを構築する | `nodes::groups::ImageInputGroup(...)` | `pyneat.groups.image_input(...)` |
@@ -153,6 +155,61 @@ H.265 デコーダーには、`codec_name=hevc`、`profile=Main`、および `pi
 `nodes::JpegDecode()` と `pyneat.nodes.jpeg_decode()` は、CPU/ GStreamer JPEG デコードノードです。これらは、単純な CPU イメージパイプラインに使用します。モデルの前処理の前に、ネイティブ MJPEG ビデオのデコードには使用しないでください。
 
 RTSP の場合は、ソースの形状が標準の場合、コーデックを認識するグループを優先します。H.264 はデフォルトのままです。H.265 または HEVC を明示的に選択します。
+
+### MJPEG カメラのデコード
+
+USB カメラは 4:2:0 または 4:2:2 のカラーサンプリングで MJPEG を送信し、多くは 4:2:2 を使用します。ゼロコピー出力では、デコーダーはストリーム本来のサンプリングでしか書き込めないため、グラフをビルドする前にそれを把握しておく必要があります。USB カメラの場合は、`usb_camera_info(...)` がそれを `decoded_format` として返すので、その値をデコーダーの `out_format` に設定します。その他の MJPEG ソースでは、4:2:0 なら `NV12`、4:2:2 なら `NV16` を `out_format` に設定します。モデルは NV16 を直接読み取れます。モデルの前処理の入力形式を同じ値に設定すると、4:2:2 のフレームが変換段階なしでモデルに届きます。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include "neat.h"
+
+// camera: your UsbCameraInputOptions; also pass info to UsbCameraInput(camera, info).
+const simaai::neat::UsbCameraInfo info = simaai::neat::usb_camera_info(camera);
+simaai::neat::SimaDecodeOptions decode;
+decode.type = simaai::neat::SimaDecodeType::MJPEG;
+decode.out_format = info.decoded_format;  // NV12 or NV16
+decode.dec_width = 1920;
+decode.dec_height = 1080;
+decode.dec_fps = 30;
+decode.raw_output = true;  // zero-copy: the decoder writes the camera's own sampling
+graph.add(simaai::neat::nodes::JpegParse());
+graph.add(simaai::neat::nodes::SimaDecode(decode));
+
+simaai::neat::Model::Options model_options;
+model_options.preprocess.color_convert.input_format =
+    decode.out_format == simaai::neat::FormatTag::NV16 ? simaai::neat::PreprocessColorFormat::NV16
+                                                       : simaai::neat::PreprocessColorFormat::NV12;
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+# camera: your UsbCameraInputOptions; also pass info to usb_camera_input(camera, info).
+info = pyneat.usb_camera_info(camera)
+decode = pyneat.SimaDecodeOptions()
+decode.type = pyneat.SimaDecodeType.MJPEG
+decode.out_format = info.decoded_format  # NV12 or NV16
+decode.dec_width, decode.dec_height, decode.dec_fps = 1920, 1080, 30
+decode.raw_output = True  # zero-copy: the decoder writes the camera's own sampling
+graph.add(pyneat.nodes.jpeg_parse())
+graph.add(pyneat.nodes.sima_decode(decode))
+
+model_options = pyneat.ModelOptions()
+model_options.preprocess.color_convert.input_format = (
+    pyneat.PreprocessColorFormat.NV16 if decode.out_format == pyneat.Format.NV16
+    else pyneat.PreprocessColorFormat.NV12)
+```
+
+</CodeTab>
+</CodeTabs>
+
+`HttpMjpegDecodedInput(...)` と `RtspDecodedInput(...)` は引き続きデコーダーに NV12 を要求するため、4:2:0 の MJPEG ストリームのみをサポートします。
 
 ### RTSP 入力をエンコードされたままにする
 

@@ -471,6 +471,9 @@ set(UNIT_TESTS
   unit_error_code_taxonomy_test
   unit_gst_error_normalizer_test
   unit_encoded_sample_test
+  unit_gst_sample_concurrent_map_test
+  unit_encoded_egress_copy_test
+  unit_edge_router_fanout_test
   unit_genai_prompt_builder_test
   unit_genai_image_types_test
   unit_genai_audio_types_test
@@ -479,6 +482,8 @@ set(UNIT_TESTS
   unit_node_metadata_sender_test
   unit_video_sender_test
   unit_video_sender_adaptive_ingress_test
+  unit_video_sender_passthrough_drain_test
+  unit_graph_sink_segment_error_test
   unit_env_util_profile_test
   unit_framestream_test
   unit_move_semantics_proof_test
@@ -627,6 +632,7 @@ set(UNIT_TESTS
   unit_boxdecode_uses_upstream_cast_contract_test
   unit_sima_boxdecode_node_fragment_test
   unit_sima_decode_test
+  unit_usb_camera_input_test
   unit_decoder_admission_test
   unit_kernel200_envelope_guard_test
   unit_processcvu_binding_table_uses_runtime_outputs_test
@@ -947,6 +953,12 @@ target_link_libraries(canonical_visual_stage_test PRIVATE
 set_tests_properties(canonical_visual_stage_test PROPERTIES
   TIMEOUT 90 LABELS "strict;e2e;runtime;kernel-runner;modalix-only")
 
+# 4:2:2 MJPEG decodes to NV16 with pixels matching the same frame as 4:2:0 (NV12).
+add_pipeline_test(mjpeg_422_decode_e2e_test
+  SOURCES e2e_testing/mjpeg_422_decode_e2e_test.cpp LOCK_ACCELERATOR)
+set_tests_properties(mjpeg_422_decode_e2e_test PROPERTIES
+  TIMEOUT 90 LABELS "strict;e2e;runtime;kernel-runner;modalix-only;codec")
+
 # Camera-free Metoak public Graph numerical/ownership regression.
 add_pipeline_test(metoak_depth_ev_test
   SOURCES e2e_testing/metoak_depth_ev_test.cpp LOCK_ACCELERATOR)
@@ -1023,6 +1035,18 @@ if (NOT ev74_four_process_rpmsg_concurrency_test IN_LIST PIPELINESESSION_TEST_BL
   set_property(TEST ev74_four_process_rpmsg_concurrency_test APPEND PROPERTY
     LABELS "e2e;ev74;concurrency;direct-driver")
   set_tests_properties(ev74_four_process_rpmsg_concurrency_test PROPERTIES TIMEOUT 120)
+endif()
+
+# Runs when SIMA_NEAT_TEST_USB_CAMERA names a connected USB camera; skips otherwise.
+add_pipeline_test_long(
+  usb_camera_input_e2e_test
+  SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_testing/usb_camera_input_e2e_test.cpp
+)
+
+if (NOT usb_camera_input_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST usb_camera_input_e2e_test APPEND PROPERTY LABELS "e2e;camera;long")
+  set_property(TEST usb_camera_input_e2e_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
 endif()
 
 add_pipeline_test_long(

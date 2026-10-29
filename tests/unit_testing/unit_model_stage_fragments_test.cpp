@@ -10,6 +10,7 @@
 #include "pipeline/internal/sima/StageRecipePreparation.h"
 #include "model_archive_fixture_utils.h"
 #include "pipeline/Graph.h"
+#include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -145,6 +146,29 @@ RUN_TEST(
 
       const auto fixture = make_stage_fixture("model_stage_fragments");
       Model model(fixture.tar_path);
+
+      const auto memory_fixture = sima_test::make_strict_model_archive_fixture(
+          "model_fragment_memory", {}, true, "yolo_v9c_seg", true);
+      for (const auto* target : {"EV74", "A65"}) {
+        Model::Options options;
+        options.preprocess.kind = InputKind::Tensor;
+        options.processcvu.pre_run_target = std::string(target) == "EV74" ? "A65" : "EV74";
+        Model overridden(memory_fixture.tar_path, options);
+        for (const bool advanced : {false, true}) {
+          Model::RouteOptions route;
+          if (advanced)
+            route.advanced_execution.preprocess_target = target;
+          else
+            route.processcvu.pre_run_target = target;
+          runtime::FragmentBoundaryHints hints;
+          auto fragment = internal::ModelAccess::build_graph_fragment(overridden, route, &hints);
+          require(hints.ingress_inputs.size() == 1U &&
+                      hints.ingress_inputs.front().memory_policy == (std::string(target) == "EV74"
+                                                                         ? InputMemoryPolicy::Ev74
+                                                                         : InputMemoryPolicy::Dms0),
+                  "fragment input memory must follow the route override, not the model default");
+        }
+      }
 
       // Exercise the cold route before another helper prepares the model. A
       // copied pack must retain the selected pre/MLA/post allocation group.

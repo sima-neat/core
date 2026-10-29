@@ -206,6 +206,11 @@ struct PipelineSegmentRuntime {
   std::deque<InputItem> in_queue;
   std::deque<Sample> out_queue;
   std::deque<std::chrono::steady_clock::time_point> pending_times;
+  // Guarded by out_mu: when exhausted loan credits first blocked the queued output, and
+  // whether that stall has been reported.
+  std::optional<std::chrono::steady_clock::time_point> loan_stalled_since;
+  bool loan_stall_warned = false;
+  std::chrono::steady_clock::duration loan_stall_warn_after = std::chrono::seconds(5);
 
   bool supports_push = false;
   bool supports_pull = false;

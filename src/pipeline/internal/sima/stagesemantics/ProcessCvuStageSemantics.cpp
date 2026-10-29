@@ -1318,10 +1318,10 @@ bool graph_family_implies_tessellate(const std::string& family) {
 
 std::string layout_from_image_format(const std::string& format, int channels) {
   const std::string up = upper_copy_local(format);
-  const int resolved_channels = (up == "GRAY" || up == "GRAY8") ? 1
-                                : (up == "RGB" || up == "BGR" || up == "NV12" || up == "I420")
-                                    ? 3
-                                    : channels;
+  const int resolved_channels =
+      (up == "GRAY" || up == "GRAY8")                                                ? 1
+      : (up == "RGB" || up == "BGR" || up == "NV12" || up == "NV16" || up == "I420") ? 3
+                                                                                     : channels;
   return resolved_channels <= 1 ? "HW" : "HWC";
 }
 
@@ -2601,11 +2601,13 @@ static TensorStaticSpec synthesize_preproc_input_tensor(const ProcessCvuStagePay
   input.semantic_tag =
       payload.default_input_name.empty() ? std::string("input_image") : payload.default_input_name;
   const std::string input_img_type = upper_copy_local(payload.input_img_type);
-  const bool planar_yuv_input =
-      input_img_type == "NV12" || input_img_type == "IYUV" || input_img_type == "I420";
+  const bool nv16_input = input_img_type == "NV16";
+  const bool planar_yuv_input = nv16_input || input_img_type == "NV12" ||
+                                input_img_type == "IYUV" || input_img_type == "I420";
   const bool gray_input = input_img_type == "GRAY" || input_img_type == "GRAY8";
   if (in_d.width > 0 && in_d.height > 0 && planar_yuv_input) {
-    input.max_h = in_d.height + (in_d.height / 2);
+    // NV16 carries a full-height UV plane; the 4:2:0 formats carry half.
+    input.max_h = in_d.height + (nv16_input ? in_d.height : in_d.height / 2);
     input.layout = "HW";
     input.shape = {input.max_h, in_d.width};
     return input;

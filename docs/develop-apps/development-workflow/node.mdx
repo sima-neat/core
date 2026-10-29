@@ -85,11 +85,13 @@ Use this map before you open the full API reference.
 | Read frames from a file | `nodes::FileInput(...)` plus decode nodes, or `nodes::groups::VideoInputGroup(...)` | `pyneat.nodes.file_input(...)` plus decode nodes, or `pyneat.groups.video_input(...)` |
 | Read one image as a source | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
 | Read a MIPI/libcamera camera | `nodes::CameraInput(...)` | `pyneat.nodes.camera_input(...)` |
+| Read a USB (UVC) MJPEG camera | `nodes::UsbCameraInput(...)` | `pyneat.nodes.usb_camera_input(...)` |
 | Read an RTSP stream | `nodes::RTSPInput(...)`, `nodes::groups::RtspEncodedInput(...)`, or `nodes::groups::RtspDecodedInput(...)` | `pyneat.nodes.rtsp_input(...)`, `pyneat.groups.rtsp_encoded_input(...)`, or `pyneat.groups.rtsp_decoded_input(...)` |
 | Read HTTP multipart MJPEG | `nodes::groups::HttpMjpegDecodedInput(...)`, or `nodes::HttpSource(...)`, `MultipartJpegDemux()`, `JpegParse()` for manual framing | `pyneat.groups.http_mjpeg_decoded_input(...)`, or `pyneat.nodes.http_source(...)`, `pyneat.nodes.multipart_jpeg_demux()`, `pyneat.nodes.jpeg_parse()` |
 | Decode images | `nodes::ImageDecode()` or `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` or `pyneat.nodes.jpeg_decode()` |
 | Encode raw video | `nodes::SimaEncode(SimaEncodeOptions{...})` | `pyneat.nodes.sima_encode(options)` |
 | Decode encoded video | `nodes::SimaDecode(SimaDecodeOptions{...})` | `pyneat.nodes.sima_decode(options)` |
+| Decode MJPEG camera frames (4:2:0 or 4:2:2) | `usb_camera_info(...).decoded_format` as the `nodes::SimaDecode(...)` `out_format`, model input format to match | `pyneat.usb_camera_info(...).decoded_format` as the `pyneat.nodes.sima_decode(...)` `out_format`, model input format to match |
 | Scale or rate-limit video | `nodes::VideoScale()`, `VideoRate()`, `ImageFreeze()` | `pyneat.nodes.video_scale()`, `video_rate()`, `image_freeze()` |
 | Build a reusable image input path | `nodes::groups::ImageInputGroup(...)` | `pyneat.groups.image_input(...)` |
 | Build a reusable video input path | `nodes::groups::VideoInputGroup(...)` | `pyneat.groups.video_input(...)` |
@@ -186,6 +188,68 @@ native MJPEG video decode before model preprocessing.
 
 For RTSP, prefer the codec-aware groups when the source shape is standard.
 H.264 remains the default. Select H.265 or HEVC explicitly.
+
+### Decode MJPEG cameras
+
+USB cameras send MJPEG with 4:2:0 or 4:2:2 color sampling; most use 4:2:2. With
+zero-copy output, the decoder writes only the stream's own sampling, so the graph must
+know it before it is built. For a USB camera, `usb_camera_info(...)` reports it as
+`decoded_format`; use that as the decoder's `out_format`. For another MJPEG source, set
+`out_format` to `NV12` for 4:2:0 or `NV16` for 4:2:2. A model reads NV16 directly: set
+its preprocessing input format to the same value, so 4:2:2 frames reach the model with
+no conversion stage.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include "neat.h"
+
+// camera: your UsbCameraInputOptions; also pass info to UsbCameraInput(camera, info).
+const simaai::neat::UsbCameraInfo info = simaai::neat::usb_camera_info(camera);
+simaai::neat::SimaDecodeOptions decode;
+decode.type = simaai::neat::SimaDecodeType::MJPEG;
+decode.out_format = info.decoded_format;  // NV12 or NV16
+decode.dec_width = 1920;
+decode.dec_height = 1080;
+decode.dec_fps = 30;
+decode.raw_output = true;  // zero-copy: the decoder writes the camera's own sampling
+graph.add(simaai::neat::nodes::JpegParse());
+graph.add(simaai::neat::nodes::SimaDecode(decode));
+
+simaai::neat::Model::Options model_options;
+model_options.preprocess.color_convert.input_format =
+    decode.out_format == simaai::neat::FormatTag::NV16 ? simaai::neat::PreprocessColorFormat::NV16
+                                                       : simaai::neat::PreprocessColorFormat::NV12;
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+# camera: your UsbCameraInputOptions; also pass info to usb_camera_input(camera, info).
+info = pyneat.usb_camera_info(camera)
+decode = pyneat.SimaDecodeOptions()
+decode.type = pyneat.SimaDecodeType.MJPEG
+decode.out_format = info.decoded_format  # NV12 or NV16
+decode.dec_width, decode.dec_height, decode.dec_fps = 1920, 1080, 30
+decode.raw_output = True  # zero-copy: the decoder writes the camera's own sampling
+graph.add(pyneat.nodes.jpeg_parse())
+graph.add(pyneat.nodes.sima_decode(decode))
+
+model_options = pyneat.ModelOptions()
+model_options.preprocess.color_convert.input_format = (
+    pyneat.PreprocessColorFormat.NV16 if decode.out_format == pyneat.Format.NV16
+    else pyneat.PreprocessColorFormat.NV12)
+```
+
+</CodeTab>
+</CodeTabs>
+
+`HttpMjpegDecodedInput(...)` and `RtspDecodedInput(...)` still request NV12 from the
+decoder, so they support 4:2:0 MJPEG streams only.
 
 ### Keep RTSP input encoded
 

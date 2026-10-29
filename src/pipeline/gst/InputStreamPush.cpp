@@ -276,22 +276,35 @@ bool allow_inputstream_cpu_to_device_copy() {
   return raw && *raw && std::strcmp(raw, "0") != 0;
 }
 
+bool jpeg_zc_trace_enabled() {
+  static const bool enabled = std::getenv("SIMA_JPEG_ZC_TRACE") != nullptr;
+  return enabled;
+}
+
 bool encoded_holder_zero_copy_input_enabled(const InputStream::State& st) {
-  if (st.opt.copy_input) {
+  if (st.opt.copy_input || st.opt.copy_encoded_input) {
     return false;
   }
-  if (const char* raw = std::getenv("SIMA_INPUTSTREAM_ENCODED_HOLDER_ZERO_COPY")) {
-    return *raw && std::strcmp(raw, "0") != 0;
+  static const std::optional<bool> forced = []() -> std::optional<bool> {
+    if (const char* raw = std::getenv("SIMA_INPUTSTREAM_ENCODED_HOLDER_ZERO_COPY")) {
+      return *raw && std::strcmp(raw, "0") != 0;
+    }
+    return std::nullopt;
+  }();
+  if (forced.has_value()) {
+    return *forced;
   }
   /*
    * Encoded GstSample holder transport is a zero-copy optimization for
    * in-process graph edges.  It is safe for the blocking decode path, where the
    * original compressed sample is consumed by one downstream pipeline.  For
-   * non-blocking preview/egress paths (for example H264 -> VideoSender/Insight)
-   * the same upstream holder may also feed the decoder branch.  Forwarding that
-   * shared holder lets downstream parser/payload stages retain or mutate the
-   * original GstBuffer long enough to starve the sibling branch.  Copy only the
-   * compressed payload on those egress paths; raw decoder tensors stay zero-copy.
+   * egress paths (for example H264/MJPEG -> VideoSender/Insight) the same
+   * upstream holder may also feed the decoder branch.  Forwarding that shared
+   * holder lets downstream parser/payload stages retain or mutate the original
+   * GstBuffer long enough to starve the sibling branch and the producer's
+   * capture pool.  Copy only the compressed payload on those egress paths:
+   * network egress segments set copy_encoded_input (see RunCore), and
+   * non-blocking inputs copy here.  Raw decoder tensors stay zero-copy.
    */
   return st.src_opt.block;
 }
@@ -409,7 +422,7 @@ const Tensor* first_tensor_for_preprocess_meta(const Sample& sample) {
 void cache_preprocess_meta(InputStream::State& st, const Sample& msg,
                            const std::optional<int64_t>& input_seq_override,
                            const std::optional<int64_t>& orig_input_seq_override) {
-  const bool debug = pipeline_internal::env_bool("SIMA_PREPROC_META_TRACE", false);
+  const bool debug = pipeline_internal::preproc_meta_trace_enabled();
   const Tensor* tensor = first_tensor_for_preprocess_meta(msg);
   if (!tensor) {
     if (debug) {
@@ -1434,7 +1447,7 @@ bool push_holder_transport(
     if (completed) {
       metadata_spec = &*completed_video_spec;
     }
-    if (holder_debug_enabled() || pipeline_internal::env_bool("SIMA_PREPROC_META_TRACE", false)) {
+    if (holder_debug_enabled() || pipeline_internal::preproc_meta_trace_enabled()) {
       std::fprintf(stderr,
                    "[HOLDER] synthesize_video_meta format=%s dims=%dx%d bytes=%zu completed=%d "
                    "planes=%zu required=%zu\n",
@@ -1444,7 +1457,7 @@ bool push_holder_transport(
                    completed_video_spec->required_bytes_actual);
     }
   }
-  const bool preproc_trace = pipeline_internal::env_bool("SIMA_PREPROC_META_TRACE", false);
+  const bool preproc_trace = pipeline_internal::preproc_meta_trace_enabled();
   if (preproc_trace) {
     std::fprintf(stderr,
                  "[PREPROC_META_TRACE] holder before meta where=%s has_sima_meta=%d has_preproc=%d "
@@ -1526,7 +1539,7 @@ bool push_holder_transport(
       !gst_buffer_get_video_meta(buf) && !metadata_spec->planes.empty()) {
     apply_video_meta_or_throw(&buf, *metadata_spec, where);
   }
-  if (std::getenv("SIMA_JPEG_ZC_TRACE")) {
+  if (jpeg_zc_trace_enabled()) {
     GstVideoMeta* vmeta = gst_buffer_get_video_meta(buf);
     GstCustomMeta* smeta = gst_buffer_get_custom_meta(buf, "GstSimaMeta");
     GstStructure* ss = smeta ? gst_custom_meta_get_structure(smeta) : nullptr;
@@ -1642,9 +1655,12 @@ bool try_push_message_encoded(InputStream::State& st, const Sample& msg,
   }
 
   const bool timings = st.timing_enabled;
+  // One Read mapping sizes and copies the payload: a DMA-BUF source pays its CPU access
+  // START/END and mmap once per frame, not once to size it and again to copy it.
+  simaai::neat::Mapping source = input.map(simaai::neat::MapMode::Read);
   size_t nbytes = 0;
   std::string bytes_err;
-  if (!pipeline_internal::resolve_encoded_payload_bytes(input, spec, &nbytes, &bytes_err)) {
+  if (!pipeline_internal::resolve_encoded_payload_bytes(source, spec, &nbytes, &bytes_err)) {
     throw std::runtime_error(std::string("InputStream::try_push_message: ") +
                              (bytes_err.empty() ? "encoded payload invalid" : bytes_err));
   }
@@ -1673,8 +1689,8 @@ bool try_push_message_encoded(InputStream::State& st, const Sample& msg,
     t_map_end = std::chrono::steady_clock::now();
   if (nbytes > 0) {
     std::string copy_err;
-    if (!pipeline_internal::copy_tensor_payload_to(input, static_cast<uint8_t*>(map.data), nbytes,
-                                                   &copy_err)) {
+    if (!pipeline_internal::copy_tensor_payload_to(input, source, static_cast<uint8_t*>(map.data),
+                                                   nbytes, &copy_err)) {
       gst_buffer_unmap(buf, &map);
       release_input_buffer(buf, "InputStream::try_push_message:encoded_copy_fail");
       throw std::runtime_error(std::string("InputStream::try_push_message: ") +
@@ -1682,6 +1698,7 @@ bool try_push_message_encoded(InputStream::State& st, const Sample& msg,
     }
   }
   gst_buffer_unmap(buf, &map);
+  source = simaai::neat::Mapping{};
   std::chrono::steady_clock::time_point t_copy_end{};
   if (timings)
     t_copy_end = std::chrono::steady_clock::now();
@@ -1851,7 +1868,7 @@ HolderFastPathResult try_push_message_holder_fastpath(
       holder_buf = nullptr;
     }
     if (holder_buf) {
-      if (std::getenv("SIMA_JPEG_ZC_TRACE")) {
+      if (jpeg_zc_trace_enabled()) {
         GstVideoMeta* vmeta = gst_buffer_get_video_meta(holder_buf);
         GstCustomMeta* smeta = gst_buffer_get_custom_meta(holder_buf, "GstSimaMeta");
         GstStructure* ss = smeta ? gst_custom_meta_get_structure(smeta) : nullptr;
@@ -2085,7 +2102,7 @@ bool InputStream::try_push_message(const Sample& msg) {
   }
 
   const Sample transport_msg = pipeline_internal::canonicalize_tensor_transport_sample(msg);
-  if (pipeline_internal::env_bool("SIMA_SAMPLE_TIMING_DEBUG", false)) {
+  if (pipeline_internal::sample_timing_debug_enabled()) {
     std::fprintf(
         stderr,
         "[SAMPLE_TIMING] inputstream_try_push incoming_kind=%d transport_kind=%d "

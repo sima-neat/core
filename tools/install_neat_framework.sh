@@ -2103,7 +2103,7 @@ verify_board_platform_admission() {
     action=check-if-declared
   fi
   python3 -B "${SCHEDULER_PLATFORM_ADMISSION_PATH}" "${action}" --directory "$PWD" \
-    --baseline "${BOARD_PLATFORM_ADMISSION_DIR}/before.json" "$@"
+    --baseline "${BOARD_PLATFORM_ADMISSION_DIR}/before.json" "$@" >/dev/null
 }
 
 verify_board_platform_plan() {
@@ -2120,7 +2120,7 @@ verify_scheduler_transaction() {
     prepared_args=(--prepared-from "${BOARD_PLATFORM_ADMISSION_DIR}/before.json")
   fi
   python3 -B "${SCHEDULER_PLATFORM_ADMISSION_PATH}" transaction-if-declared \
-    --directory "$PWD" --simulation "${simulation}" "${prepared_args[@]}" "$@"
+    --directory "$PWD" --simulation "${simulation}" "${prepared_args[@]}" "$@" >/dev/null
 }
 
 install_debs_on_board() {

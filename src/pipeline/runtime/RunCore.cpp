@@ -1166,7 +1166,7 @@ void RunCore::graph_sanitize_pipeline_input(std::size_t index, Sample& sample) {
   const int64_t prev_frame = sample.frame_id;
   sample = simaai::neat::pipeline_internal::canonicalize_tensor_transport_sample(sample);
   copy_encoded_pipeline_input_to_cpu_if_needed(pipe, sample);
-  if (simaai::neat::pipeline_internal::env_bool("SIMA_SAMPLE_TIMING_DEBUG", false)) {
+  if (simaai::neat::pipeline_internal::sample_timing_debug_enabled()) {
     std::fprintf(stderr,
                  "[SAMPLE_TIMING] graph_sanitize seg=%zu before_frame=%lld after_frame=%lld "
                  "before_pts=%lld after_pts=%lld before_dts=%lld after_dts=%lld "
@@ -1652,6 +1652,7 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
       opt.allow_startup_preflight && ctx.stream_opt.startup_preflight;
   build_stream_opt.allow_graph_internal_zero_copy_input =
       segment.boundary.needs_input && !segment.input_edges.empty();
+  build_stream_opt.copy_encoded_input = segment_copies_encoded_input(segment);
   session_build_tune_internal_zero_copy_holder_window(
       build_stream_opt, opt.graph_options.edge_queue, segment.boundary.graph_internal_output);
   InputStream stream;

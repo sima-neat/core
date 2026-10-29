@@ -46,6 +46,7 @@
 #include "nodes/groups/RtspEncodedInput.h"
 #include "nodes/groups/VideoInputGroup.h"
 #include "nodes/io/CameraInput.h"
+#include "nodes/io/UsbCameraInput.h"
 #include "nodes/io/Input.h"
 #include "nodes/io/MetadataSender.h"
 #include "nodes/io/UdpOutput.h"
@@ -3400,6 +3401,25 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("queue_depth", &simaai::neat::CameraInputOptions::queue_depth)
       .def_rw("allow_cpu_fallback", &simaai::neat::CameraInputOptions::allow_cpu_fallback);
 
+  nb::class_<simaai::neat::UsbCameraInputOptions>(m, "UsbCameraInputOptions")
+      .def(nb::init<>())
+      .def_rw("camera_name", &simaai::neat::UsbCameraInputOptions::camera_name)
+      .def_rw("width", &simaai::neat::UsbCameraInputOptions::width)
+      .def_rw("height", &simaai::neat::UsbCameraInputOptions::height)
+      .def_rw("framerate_num", &simaai::neat::UsbCameraInputOptions::framerate_num)
+      .def_rw("framerate_den", &simaai::neat::UsbCameraInputOptions::framerate_den)
+      .def_rw("buffer_name", &simaai::neat::UsbCameraInputOptions::buffer_name)
+      .def_rw("insert_queue", &simaai::neat::UsbCameraInputOptions::insert_queue)
+      .def_rw("leaky_queue", &simaai::neat::UsbCameraInputOptions::leaky_queue)
+      .def_rw("queue_depth", &simaai::neat::UsbCameraInputOptions::queue_depth);
+  nb::class_<simaai::neat::UsbCameraInfo>(m, "UsbCameraInfo")
+      .def_ro("device", &simaai::neat::UsbCameraInfo::device)
+      .def_ro("decoded_format", &simaai::neat::UsbCameraInfo::decoded_format);
+  m.def("usb_camera_ids", &simaai::neat::usb_camera_ids);
+  // Checking the camera reads a frame; let other Python threads run meanwhile.
+  m.def("usb_camera_info", &simaai::neat::usb_camera_info, "options"_a,
+        nb::call_guard<nb::gil_scoped_release>());
+
   nb::module_ graphs_mod = m.def_submodule("graphs", "Reusable public Graph fragment helpers");
   graphs_mod.def("branch", &simaai::neat::graphs::Branch, "input"_a, "outputs"_a);
   graphs_mod.def("combine", &simaai::neat::graphs::Combine, "inputs"_a, "output"_a,
@@ -4094,7 +4114,7 @@ NB_MODULE(_pyneat_core, m) {
                     &simaai::neat::nodes::Queue),
                 "options"_a);
   nodes_mod.def("rtsp_input", &simaai::neat::nodes::RTSPInput, "url"_a, "latency_ms"_a = 200,
-                "tcp"_a = true, "drop_on_latency"_a = false, "buffer_mode"_a = "");
+                "tcp"_a = true, "drop_on_latency"_a = true, "buffer_mode"_a = "");
   nodes_mod.def("h264_depacketize", &simaai::neat::nodes::H264Depacketize, "payload_type"_a = 96,
                 "h264_parse_config_interval"_a = -1, "h264_fps"_a = -1, "h264_width"_a = -1,
                 "h264_height"_a = -1, "enforce_h264_caps"_a = true);
@@ -4116,6 +4136,18 @@ NB_MODULE(_pyneat_core, m) {
                                                                   capture_buffer_count);
       },
       "options"_a = simaai::neat::CameraInputOptions{}, "capture_buffer_count"_a = 0U);
+  // Opening the camera reads a frame; let other Python threads run meanwhile.
+  nodes_mod.def(
+      "usb_camera_input",
+      static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::UsbCameraInputOptions)>(
+          &simaai::neat::nodes::UsbCameraInput),
+      "options"_a, nb::call_guard<nb::gil_scoped_release>());
+  // Reuses usb_camera_info()'s result: checks sysfs only, without opening the camera.
+  nodes_mod.def("usb_camera_input",
+                static_cast<std::shared_ptr<simaai::neat::Node> (*)(
+                    simaai::neat::UsbCameraInputOptions, const simaai::neat::UsbCameraInfo&)>(
+                    &simaai::neat::nodes::UsbCameraInput),
+                "options"_a, "info"_a, nb::call_guard<nb::gil_scoped_release>());
   nodes_mod.def("output",
                 static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::OutputOptions)>(
                     &simaai::neat::nodes::Output),
@@ -4376,7 +4408,8 @@ NB_MODULE(_pyneat_core, m) {
       .value("BGR", simaai::neat::PreprocessColorFormat::BGR)
       .value("GRAY8", simaai::neat::PreprocessColorFormat::GRAY8)
       .value("NV12", simaai::neat::PreprocessColorFormat::NV12)
-      .value("I420", simaai::neat::PreprocessColorFormat::I420);
+      .value("I420", simaai::neat::PreprocessColorFormat::I420)
+      .value("NV16", simaai::neat::PreprocessColorFormat::NV16);
 
   nb::enum_<simaai::neat::NormalizePreset>(m, "NormalizePreset")
       .value("None", simaai::neat::NormalizePreset::None)

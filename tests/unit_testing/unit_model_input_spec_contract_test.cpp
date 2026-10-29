@@ -23,6 +23,52 @@ std::string require_yolov9_tar() {
   return fixture.tar_path;
 }
 
+void check_ingress_memory_policy() {
+  const auto cast_fixture = sima_test::make_model_archive_fixture("model_input_memory_cast",
+                                                                  {{"etc/cast_mpk.json", R"json({
+  "name": "cast_ingress", "model_path": "cast.onnx", "model_sdk_version": "3.0.0",
+  "input_nodes": [{"name": "input", "type": "buffer", "size": 192}],
+  "plugins": [
+    {"name": "cast_0", "processor": "EV74", "sequence": 1, "type": "sgpProcess",
+     "config_params": {"kernel": "cast_transform", "params": {
+       "in_dtype": "float32", "out_dtype": "bfloat16",
+       "input_shapes": [[1,4,4,3]], "output_shapes": [[1,4,4,3]]}},
+     "input_nodes": [{"name": "input", "size": 192}],
+     "output_nodes": [{"name": "cast_0", "type": "buffer", "size": 96}]},
+    {"name": "MLA_0", "processor": "MLA", "sequence": 2, "type": "sgpProcess",
+     "config_params": {"desired_batch_size": 1, "actual_batch_size": 1},
+     "input_nodes": [{"name": "cast_0", "size": 96}],
+     "output_nodes": [{"name": "MLA_0", "type": "buffer", "size": 32}],
+     "resources": {"executable": "model.elf"}},
+    {"name": "cast_1", "processor": "EV74", "sequence": 3, "type": "sgpProcess",
+     "config_params": {"kernel": "cast_transform", "params": {
+       "in_dtype": "bfloat16", "out_dtype": "float32",
+       "input_shapes": [[1,16]], "output_shapes": [[1,16]]}},
+     "input_nodes": [{"name": "MLA_0", "size": 32}],
+     "output_nodes": [{"name": "output", "type": "buffer", "size": 64}]}
+  ]
+})json"}});
+  for (const auto& path : {cast_fixture.tar_path, require_yolov9_tar()}) {
+    for (const auto* target : {"AUTO", "EV74", "A65"}) {
+      const auto expected =
+          std::string(target) == "A65" ? InputMemoryPolicy::Dms0 : InputMemoryPolicy::Ev74;
+      for (const bool advanced : {false, true}) {
+        Model::Options options;
+        options.preprocess.kind = InputKind::Tensor;
+        if (advanced)
+          options.advanced_execution.preprocess_target = target;
+        else
+          options.processcvu.pre_run_target = target;
+        Model model(path, options);
+        require(model.input_appsrc_options(true).memory_policy == expected,
+                "ingress memory must follow the selected Cast/Quant executor");
+        require(model.input_appsrc_options_list(true).front().memory_policy == expected,
+                "ordered ingress memory must follow the selected executor");
+      }
+    }
+  }
+}
+
 sima_test::ModelArchiveFixture make_evo_style_multi_ingress_fixture(const std::string& tag) {
   return sima_test::make_model_archive_fixture(tag, {
                                                         {"etc/evo_style_multi_ingress_mpk.json",
@@ -269,8 +315,8 @@ Tensor make_route_tensor(int logical_index, int physical_index, int route_slot, 
 }
 
 void check_synthetic_image_inputs() {
-  // This exercises the production seed builder directly. NV16 is not added to
-  // the public Model preprocessing enum by this defensive construction fix.
+  // This exercises the production seed builder directly for every planar and packed
+  // public Model preprocessing format, including NV16.
   for (const auto* format : {"NV12", "NV16", "I420", "RGB", "BGR", "GRAY8"}) {
     InputOptions options;
     options.payload_type = PayloadType::Image;
@@ -345,6 +391,7 @@ RUN_TEST(
     "unit_model_input_spec_contract_test", ([] {
       using namespace simaai::neat;
       check_synthetic_image_inputs();
+      check_ingress_memory_policy();
 
       {
         const std::string tar = require_yolov9_tar();
