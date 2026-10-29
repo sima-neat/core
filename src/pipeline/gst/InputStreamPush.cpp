@@ -558,7 +558,10 @@ make_prepare_for_spec(const SampleSpec& spec, const char* where,
       return;
     }
 
-    if (source_preproc_meta_buffer &&
+    // Match holder-path precedence for explicit ROI lists, including enabled empty lists.
+    const bool has_tensor_roi_list =
+        tensor_preprocess_meta.has_value() && tensor_preprocess_meta->has_roi_list();
+    if (!has_tensor_roi_list && source_preproc_meta_buffer &&
         has_simaai_preprocess_meta(source_preproc_meta_buffer.get())) {
       std::string copy_err;
       if (!copy_simaai_preprocess_meta(*buf, source_preproc_meta_buffer.get(), &copy_err)) {
@@ -2243,8 +2246,13 @@ bool InputStream::try_push_message(const Sample& msg) {
   }
   const std::optional<PreprocessRuntimeMeta> tensor_preprocess_meta = input.semantic.preprocess;
 
+  // Permission to copy a CPU image must not forward its system-memory holder instead.
+  const bool requires_raw_device_copy = spec.kind == SampleMediaKind::RawVideo &&
+                                        st->opt.require_device_visible_input &&
+                                        tensor_requires_cpu_to_device_copy_for_push(input);
+  const bool allow_holder_transport = allow_zero_copy_transport && !requires_raw_device_copy;
   HolderFastPathResult holder_result;
-  if (allow_zero_copy_transport) {
+  if (allow_holder_transport) {
     holder_result = try_push_message_holder_fastpath(*st, msg, input, spec, decision, meta,
                                                      seq.input_seq, seq.orig_input_seq,
                                                      timing_override, tensor_preprocess_meta);
@@ -2259,7 +2267,7 @@ bool InputStream::try_push_message(const Sample& msg) {
                      ? "<unknown>"
                      : holder_result.holder_fail_reason.c_str());
   }
-  if (allow_zero_copy_transport && input.storage->kind == simaai::neat::StorageKind::GstSample) {
+  if (allow_holder_transport && input.storage->kind == simaai::neat::StorageKind::GstSample) {
     if (holder_result.holder_failed) {
       throw std::runtime_error(
           "InputStream::try_push_message: Cannot use this zero-copy frame as input because its "

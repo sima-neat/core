@@ -118,7 +118,7 @@ def test_pytest_actual_node_accounting(tmp_path, body, expected):
 
 def genai_workflow_step(name):
     workflow = yaml.safe_load((ROOT / '.github/workflows/vulcan-ci.yml').read_text())
-    return next(step['run'] for step in workflow['jobs']['test-devkit']['steps']
+    return next(step['run'] for step in workflow['jobs']['test-devkit-shard']['steps']
                 if step['name'] == name)
 
 
@@ -206,9 +206,9 @@ def test_isolated_genai_pytest_workflow_requires_each_result(tmp_path, outcome):
     elif outcome == 'collection_failure':
         body += 'raise RuntimeError("collection failed")\n'
     script.write_text(body)
-    step = genai_workflow_step('Run Python pytest from installed extras')
+    step = genai_workflow_step('Run Python GenAI E2E tests from installed extras')
     start = step.index('"${PYTHON_BIN}" -m pytest --collect-only')
-    stop = step.index('# Temporary external RTSP exclusions;', start)
+    stop = len(step)
     command = ['bash', '-c', 'set -euo pipefail\nPYTHON_MARKS=(-m "not torch_interop")\n' + step[start:stop]]
     env = {**os.environ, 'PYTHON_BIN': sys.executable, 'genai_test_file': str(script),
            'PYTHONPATH': str(ROOT / 'tools/ci')}

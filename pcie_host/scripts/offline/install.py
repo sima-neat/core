@@ -101,6 +101,10 @@ def ethernet_ports(value):
     return sorted(ports, key=lambda p: p['interface'])
 
 
+class SSHSetupRequired(ConnectionError):
+    """Strict SSH identified an unknown host or missing login authorization."""
+
+
 class Operations:
     def __init__(self, root, user, key, known_hosts, sudo_password=None, log=None, recreate_venv=False):
         self.root, self.user = root, user
@@ -121,17 +125,33 @@ class Operations:
         if len(routes) != 1 or routes[0].get('dev') != card['interface'] or routes[0].get('gateway'):
             raise ValueError('Card route is not direct through its PCI-owned interface')
 
-    def ssh(self, card, command, **kwargs):
+    def ssh_command(self, card, command):
         self.route(card)
+        return ['ssh', '-F', '/dev/null', '-T', '-i', str(self.key), '-b', card['local_ip'],
+                '-o', 'BindInterface='+card['interface'],
+                '-o', 'BatchMode=yes',
+                '-o', 'IdentitiesOnly=yes',
+                '-o', 'StrictHostKeyChecking=yes',
+                '-o', 'UpdateHostKeys=no',
+                '-o', 'UserKnownHostsFile='+str(self.known_hosts),
+                '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15',
+                '-o', 'ServerAliveCountMax=2', self.user+'@'+card['ip'], command]
+
+    def ssh(self, card, command, **kwargs):
+        kwargs['env'] = dict(kwargs.get('env', os.environ), LC_ALL='C')
         try:
-            return run(['ssh', '-F', '/dev/null', '-T', '-i', str(self.key), '-b', card['local_ip'],
-                        '-o', 'BindInterface='+card['interface'], '-o', 'BatchMode=yes',
-                    '-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes',
-                    '-o', 'UserKnownHostsFile='+str(self.known_hosts),
-                    '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15',
-                    '-o', 'ServerAliveCountMax=2', self.user+'@'+card['ip'], command], **kwargs)
+            return run(self.ssh_command(card, command), **kwargs)
         except subprocess.CalledProcessError as exc:
             if exc.returncode == 255:
+                detail = exc.stderr or ''
+                if isinstance(detail, bytes):
+                    detail = detail.decode(errors='replace')
+                if ('REMOTE HOST IDENTIFICATION HAS CHANGED' in detail
+                        or 'REVOKED HOST KEY DETECTED' in detail):
+                    raise ConnectionError('SSH host key rejected; verify the card identity and trust file before retrying') from exc
+                if (re.search(r'(?m)^No [^\n]+ host key is known for [^\n]+ and you have requested strict checking\.', detail)
+                        or re.search(r'Permission denied \([^)]+\)\.', detail)):
+                    raise SSHSetupRequired('SSH host enrollment or login authorization required') from exc
                 raise ConnectionError('SSH transport lost; remote outcome may be unknown') from exc
             raise
 
@@ -235,6 +255,55 @@ print(json.dumps(ports))
             self.privileged(card, ['rm', '-rf', '--', self.staged[card['bdf']]])
 
 
+def prepare_ssh(cards, snapshot, operations, account, progress, *, preflight_only=False, create_key=False):
+    """Enroll discovered cards through the unchanged online setup utility."""
+    def stable(card):
+        if operations.topology() != snapshot:
+            raise ValueError('PCI topology changed; stop and rerun discovery')
+        operations.route(card)
+
+    missing = []
+    for card in cards:
+        stable(card)
+        # OpenSSH checks host trust even without a private key. Always probe:
+        # missing credentials must not bypass rejection of an existing host key.
+        try:
+            operations.ssh(card, 'true', stdin=subprocess.DEVNULL, capture_output=True, text=True)
+            continue
+        except SSHSetupRequired:
+            pass
+        missing.append(card)
+    if not missing:
+        return
+    if preflight_only:
+        raise ValueError('SSH setup required for card(s) '+', '.join(c['bdf'] for c in missing)+
+                         '; rerun sudo python3 -B install.py in an interactive terminal without --preflight-only')
+    if not operations.key.is_file() and not create_key:
+        raise ValueError('SSH key not found: '+str(operations.key)+
+                         '; supply an existing key or omit --ssh-key to create the default key')
+    if operations.known_hosts != (Path(account.pw_dir)/'.ssh/known_hosts').resolve():
+        raise ValueError('Automatic SSH setup uses ~/.ssh/known_hosts; omit --known-hosts or provision the custom trust file before retrying')
+    # Open the terminal before creating files. Redirected stdin is never used for
+    # passwords, and authentication output never enters the diagnostic log/JSON.
+    try:
+        terminal = open('/dev/tty', 'r+b', buffering=0)
+    except OSError:
+        raise ValueError('SSH setup requires an interactive terminal; rerun sudo python3 -B install.py interactively') from None
+    with terminal:
+        identity = {'user': account.pw_uid, 'group': account.pw_gid, 'extra_groups': [],
+                    'env': dict(os.environ, HOME=account.pw_dir, USER=account.pw_name, LOGNAME=account.pw_name)}
+        for card in missing:
+            stable(card)
+            progress.show('Setting up SSH for card '+card['bdf']+' ('+card['ip']+'). '
+                          'Enter the card login password if requested.')
+            # Run as the invoking user so new credentials remain user-owned.
+            run(['bash', str(operations.root/'pcie-setup.sh'), '--strict', '--no-discover',
+                 '--hosts', card['ip'], '--user', operations.user, '--key', str(operations.key)], **identity,
+                stdin=terminal, stdout=terminal, stderr=terminal)
+            operations.ssh(card, 'true', stdin=subprocess.DEVNULL, capture_output=True, text=True)
+            progress.show('Card '+card['bdf']+' SSH access ready.', 'ok')
+
+
 def orchestrate(cards, snapshot, operations, preflight_only=False, progress=None):
     notify = progress.show if progress else lambda *args: None
     def perform(message, operation, *args):
@@ -310,10 +379,11 @@ def orchestrate(cards, snapshot, operations, preflight_only=False, progress=None
 
 
 def main():
-    home = Path(pwd.getpwuid(int(os.environ.get('SUDO_UID', os.getuid()))).pw_dir)
+    account = pwd.getpwuid(int(os.environ.get('SUDO_UID', os.getuid())))
+    home = Path(account.pw_dir)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--ssh-user', default='sima')
-    parser.add_argument('--ssh-key', type=Path, default=home/'.ssh/sima_neat_pcie_ed25519')
+    parser.add_argument('--ssh-key', type=Path, help='existing private key; default: create/reuse ~/.ssh/sima_neat_pcie_ed25519')
     parser.add_argument('--known-hosts', type=Path, default=home/'.ssh/known_hosts')
     parser.add_argument('--preflight-only', action='store_true')
     parser.add_argument('--recreate-venv', action='store_true',
@@ -329,8 +399,8 @@ def main():
     import re
     if not re.fullmatch(r'[a-z_][a-z0-9_-]*', args.ssh_user):
         parser.error('invalid SSH user')
-    if not args.ssh_key.is_file() or not args.known_hosts.is_file():
-        parser.error('provision SSH key access and trusted host keys before installing')
+    create_key = args.ssh_key is None
+    args.ssh_key = args.ssh_key or home/'.ssh/sima_neat_pcie_ed25519'
     for command in ('ip', 'ssh', 'unshare', 'timeout'):
         if not shutil.which(command):
             parser.error('system prerequisite missing: ' + command)
@@ -355,6 +425,8 @@ def main():
                 progress.log_path = Path(log.name)
                 progress.show('Detailed log: '+log.name)
                 operations = Operations(root, args.ssh_user, args.ssh_key.resolve(), args.known_hosts.resolve(), password, log, args.recreate_venv)
+                prepare_ssh(cards, snapshot, operations, account, progress,
+                            preflight_only=args.preflight_only, create_key=create_key)
                 with progress.stream_log():
                     report = orchestrate(cards, snapshot, operations, args.preflight_only, progress)
                 report['log'] = log.name
@@ -365,8 +437,8 @@ def main():
                     for line in log.read().splitlines()[-20:]:
                         progress.show(line, 'error')
             report['core_revision'] = manifest['core_revision']
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        report = {'errors': [str(exc)]}
+    except (OSError, ValueError, subprocess.SubprocessError, KeyboardInterrupt) as exc:
+        report = {'errors': [str(exc) or 'Installation interrupted']}
     if args.json:
         print(json.dumps(report, indent=2))
     else:

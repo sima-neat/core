@@ -219,3 +219,26 @@ def test_host_collection_rejects_driver_dependency_before_apt(tmp_path, dependen
         with pytest.raises(ValueError, match='corrected Scheduler producer'):
             target.collect(tmp_path)
         run.assert_not_called()
+
+
+def test_pcie_archive_contains_the_shared_setup_with_manifest_integrity(tmp_path):
+    spec = {'targets': {}}
+    for role, arch, os_id, version in [('host', 'amd64', 'ubuntu', '24.04'), ('card', 'arm64', 'elxr', '26.04')]:
+        pub = tmp_path/role
+        publication(pub)
+        metadata = json.loads((pub/'metadata.json').read_text())
+        metadata['commit'] = 'a'*12
+        (pub/'metadata.json').write_text(json.dumps(metadata))
+        spec['targets'][role] = {'publication': str(pub), 'metadata_sha256': assembly.sha(pub/'metadata.json'),
+                                 'core_revision': 'a'*12, 'image': 'sha256:'+'b'*64,
+                                 'architecture': arch, 'os_id': os_id, 'os_version': version}
+    root = tmp_path/'bundle'
+    with patch.object(assembly, 'run'):
+        assembly.assemble(spec, root)
+    source = Path(__file__).resolve().parents[2]/'pcie_host/scripts/pcie-setup.sh'
+    assert (root/'pcie-setup.sh').read_bytes() == source.read_bytes()
+    manifest = assembly.verify_bundle(root)
+    assert manifest['files']['pcie-setup.sh'] == assembly.sha(source)
+    (root/'pcie-setup.sh').write_text('tampered')
+    with pytest.raises(ValueError, match='checksum'):
+        assembly.verify_bundle(root)

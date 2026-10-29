@@ -12,7 +12,8 @@ spec = importlib.util.spec_from_file_location('offline_install', HERE/'install.p
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
 
-CARDS = [{'bdf': f'0000:0{i}:00.0', 'ip': f'10.0.{i}.2'} for i in (1, 2, 3)]
+CARDS = [{'bdf': f'0000:0{i}:00.0', 'ip': f'10.0.{i}.2',
+          'local_ip': f'10.0.{i}.1', 'interface': f'pci{i}'} for i in (1, 2, 3)]
 
 
 class Fake:
@@ -188,7 +189,7 @@ def test_staged_card_manifest_verification(tmp_path):
     import json
     assembly = sys.modules['assemble']
     files = {}
-    for name in ('assemble.py', 'log_progress.py', 'install.py', 'discover.py', 'deploy.py', 'lifecycle.sh', 'INSTALL.md',
+    for name in ('assemble.py', 'log_progress.py', 'install.py', 'discover.py', 'pcie-setup.sh', 'deploy.py', 'lifecycle.sh', 'INSTALL.md',
                  'card/target.json', 'card/payload/test.deb', 'host/target.json'):
         path = tmp_path/name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -198,6 +199,7 @@ def test_staged_card_manifest_verification(tmp_path):
     (tmp_path/'host/target.json').unlink()
     (tmp_path/'install.py').unlink()
     (tmp_path/'discover.py').unlink()
+    (tmp_path/'pcie-setup.sh').unlink()
     assembly.verify_bundle(tmp_path, 'card')
     (tmp_path/'card/payload/test.deb').write_text('tampered')
     with pytest.raises(ValueError, match='checksum'):
@@ -301,7 +303,7 @@ def test_sudo_no_terminal_fails_without_echoing(tmp_path, monkeypatch):
     import builtins
     ops = installer.Operations(tmp_path, 'sima', tmp_path/'key', tmp_path/'known')
     monkeypatch.setattr(ops, 'sudo_probe', lambda *args: False)
-    def absent(*args):
+    def absent(*args, **kwargs):
         raise OSError('no terminal')
     monkeypatch.setattr(builtins, 'open', absent)
     with pytest.raises(ValueError, match='interactive terminal'):
@@ -502,3 +504,236 @@ def test_recreate_option_reaches_both_host_and_card(tmp_path, monkeypatch, recre
     ops.card({'bdf': 'card'}, 'install')
     assert len(calls) == 2
     assert all(('--recreate-venv' in args) == recreate for args in calls)
+
+
+@pytest.fixture
+def ssh_setup(tmp_path, monkeypatch):
+    import io
+    import builtins
+    from types import SimpleNamespace
+    ops = installer.Operations(tmp_path, 'sima', tmp_path/'home/.ssh/key', tmp_path/'home/.ssh/known_hosts')
+    account = SimpleNamespace(pw_uid=1234, pw_gid=5678, pw_name='owner', pw_dir=str(tmp_path/'home'))
+    monkeypatch.setattr(ops, 'topology', lambda: ['original'])
+    monkeypatch.setattr(ops, 'route', lambda card: None)
+    calls = []
+    terminal = io.StringIO()
+    monkeypatch.setattr(builtins, 'open', lambda *args, **kwargs: terminal)
+    ready = set()
+    def run(args, **kwargs):
+        if (args[0] == 'ssh' and args[-2] not in ready
+                and not (ops.key.is_file() and ops.known_hosts.is_file())):
+            raise subprocess.CalledProcessError(255, args, stderr=(
+                'No ED25519 host key is known for card and you have requested strict checking.\n'
+                'Host key verification failed.\n'))
+        if args[0] == 'bash':
+            ready.add('sima@'+args[args.index('--hosts')+1])
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args, 0, '')
+    monkeypatch.setattr(installer, 'run', run)
+    return SimpleNamespace(ops=ops, account=account, calls=calls, terminal=terminal,
+                           progress=installer.Progress(io.StringIO()))
+
+
+def prepare(setup, **kwargs):
+    installer.prepare_ssh(CARDS, ['original'], setup.ops, setup.account, setup.progress, **kwargs)
+
+
+def test_fresh_host_delegates_every_discovered_card_to_shared_setup(ssh_setup):
+    setup = ssh_setup
+    prepare(setup, create_key=True)
+    provisioning = [(args, kw) for args, kw in setup.calls if args[0] == 'bash']
+    assert len(provisioning) == len(CARDS)
+    for (args, kw), card in zip(provisioning, CARDS):
+        assert args[1] == str(setup.ops.root/'pcie-setup.sh')
+        for option, value in {'--hosts': card['ip'], '--user': 'sima',
+                              '--key': str(setup.ops.key)}.items():
+            assert args[args.index(option)+1] == value
+        assert '--strict' in args and '--no-discover' in args
+        assert kw['user'] == 1234 and kw['group'] == 5678 and kw['extra_groups'] == []
+        assert kw['env']['HOME'] == setup.account.pw_dir
+        assert kw['stdin'] is setup.terminal and kw['stderr'] is setup.terminal
+        assert 'capture_output' not in kw
+    verification = [args for args, kw in setup.calls if args[0] == 'ssh']
+    assert [args[-2] for args in verification] == ['sima@'+card['ip'] for card in CARDS]
+    assert all('StrictHostKeyChecking=yes' in args and 'UpdateHostKeys=no' in args for args in verification)
+    assert not setup.ops.card_passwords
+
+
+def test_existing_key_without_public_file_is_delegated_without_replacement(ssh_setup):
+    setup = ssh_setup
+    setup.ops.key.parent.mkdir(parents=True)
+    setup.ops.key.write_text('existing private key')
+    prepare(setup)
+    assert setup.ops.key.read_text() == 'existing private key'
+    assert len([args for args, kw in setup.calls if args[0] == 'bash']) == len(CARDS)
+
+
+def test_working_access_never_opens_terminal_or_provisions(ssh_setup, monkeypatch):
+    import builtins
+    setup = ssh_setup
+    setup.ops.key.parent.mkdir(parents=True)
+    setup.ops.key.touch()
+    setup.ops.known_hosts.touch()
+    monkeypatch.setattr(builtins, 'open', lambda *args: pytest.fail('unexpected terminal prompt'))
+    prepare(setup)
+    assert len(setup.calls) == len(CARDS)
+    assert all('BatchMode=yes' in args for args, kw in setup.calls)
+
+
+@pytest.mark.parametrize('key_exists', [False, True])
+@pytest.mark.parametrize('diagnostic', [
+    '@@@@@@@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@@@@@@@\nHost key verification failed.',
+    '@@@@@@@@@ WARNING: REVOKED HOST KEY DETECTED! @@@@@@@@@\nHost key verification failed.',
+    'Host key verification failed.',
+    'ssh: connect to host card port 22: Connection refused',
+])
+def test_untrusted_or_unclassified_failure_never_enters_setup(ssh_setup, monkeypatch, key_exists, diagnostic):
+    import builtins
+    setup = ssh_setup
+    setup.ops.known_hosts.parent.mkdir(parents=True)
+    setup.ops.known_hosts.write_text('existing trust\n')
+    if key_exists:
+        setup.ops.key.write_text('existing private key')
+    before = setup.ops.known_hosts.read_bytes()
+    def reject(args, **kwargs):
+        assert args[0] == 'ssh'
+        assert kwargs['env']['LC_ALL'] == 'C'
+        raise subprocess.CalledProcessError(255, args, stderr=diagnostic)
+    monkeypatch.setattr(installer, 'run', reject)
+    monkeypatch.setattr(builtins, 'open', lambda *args, **kwargs: pytest.fail('unexpected terminal prompt'))
+    with pytest.raises(ConnectionError):
+        prepare(setup, create_key=True)
+    assert setup.ops.known_hosts.read_bytes() == before
+    assert setup.ops.key.exists() == key_exists
+    assert not setup.ops.staged
+
+
+def test_missing_authorization_for_known_host_can_enter_setup(ssh_setup, monkeypatch):
+    setup = ssh_setup
+    setup.ops.key.parent.mkdir(parents=True)
+    setup.ops.key.write_text('existing private key')
+    setup.ops.known_hosts.write_text('existing trust\n')
+    original = installer.run
+    enrolled = set()
+    def run(args, **kwargs):
+        if args[0] == 'bash':
+            enrolled.add('sima@'+args[args.index('--hosts')+1])
+        if args[0] == 'ssh' and args[-2] not in enrolled:
+            raise subprocess.CalledProcessError(255, args, stderr='sima@card: Permission denied (publickey,password).\n')
+        return original(args, **kwargs)
+    monkeypatch.setattr(installer, 'run', run)
+    prepare(setup)
+    assert len(enrolled) == len(CARDS)
+
+
+def test_later_host_key_rejection_prevents_enrollment_of_earlier_cards(ssh_setup, monkeypatch):
+    import builtins
+    def probe(card, *args, **kwargs):
+        if card == CARDS[0]:
+            raise installer.SSHSetupRequired('unknown host')
+        raise ConnectionError('SSH host key rejected')
+    monkeypatch.setattr(ssh_setup.ops, 'ssh', probe)
+    monkeypatch.setattr(builtins, 'open', lambda *args, **kwargs: pytest.fail('unexpected terminal prompt'))
+    with pytest.raises(ConnectionError, match='host key rejected'):
+        prepare(ssh_setup, create_key=True)
+    assert not ssh_setup.calls
+    assert not ssh_setup.ops.key.exists()
+
+
+@pytest.mark.parametrize('existing', [False, True])
+def test_preflight_does_not_provision_keys_or_trust(ssh_setup, monkeypatch, existing):
+    setup = ssh_setup
+    if existing:
+        setup.ops.key.parent.mkdir(parents=True)
+        setup.ops.key.touch()
+        setup.ops.known_hosts.touch()
+        def fail(*args, **kwargs):
+            raise installer.SSHSetupRequired('untrusted host')
+        monkeypatch.setattr(setup.ops, 'ssh', fail)
+    with pytest.raises(ValueError, match='without --preflight-only'):
+        prepare(setup, preflight_only=True, create_key=True)
+    assert not setup.calls
+    assert setup.ops.key.exists() == existing
+
+
+def test_no_terminal_cannot_create_credentials(ssh_setup, monkeypatch):
+    import builtins
+    def absent(*args, **kwargs):
+        raise OSError('no terminal')
+    monkeypatch.setattr(builtins, 'open', absent)
+    with pytest.raises(ValueError, match='interactive terminal'):
+        prepare(ssh_setup, create_key=True)
+    assert not ssh_setup.calls
+    assert not ssh_setup.ops.key.exists()
+
+
+def test_missing_explicit_key_is_not_silently_created(ssh_setup):
+    with pytest.raises(ValueError, match='omit --ssh-key'):
+        prepare(ssh_setup)
+    assert not ssh_setup.calls
+
+
+def test_setup_failure_stops_before_package_or_other_card_changes(ssh_setup, monkeypatch):
+    setup = ssh_setup
+    original = installer.run
+    def reject(args, **kwargs):
+        if args[0] == 'bash':
+            assert '--host-key-checking' not in args
+            raise subprocess.CalledProcessError(1, args)
+        return original(args, **kwargs)
+    monkeypatch.setattr(installer, 'run', reject)
+    with pytest.raises(subprocess.CalledProcessError):
+        prepare(setup, create_key=True)
+    assert not setup.calls
+    assert not setup.ops.staged
+
+
+def test_topology_change_stops_ssh_setup_before_any_mutation(ssh_setup, monkeypatch):
+    monkeypatch.setattr(ssh_setup.ops, 'topology', lambda: ['changed'])
+    with pytest.raises(ValueError, match='topology changed'):
+        prepare(ssh_setup, create_key=True)
+    assert not ssh_setup.calls
+
+
+def test_route_failure_stops_ssh_setup_before_any_mutation(ssh_setup, monkeypatch):
+    def fail(card):
+        raise ValueError('not direct through its PCI-owned interface')
+    monkeypatch.setattr(ssh_setup.ops, 'route', fail)
+    with pytest.raises(ValueError, match='PCI-owned'):
+        prepare(ssh_setup, create_key=True)
+    assert not ssh_setup.calls
+
+
+def test_failed_batch_verification_stops_remaining_card_setup(ssh_setup, monkeypatch):
+    setup = ssh_setup
+    failures = iter([installer.SSHSetupRequired] * len(CARDS) + [ConnectionError])
+    def fail(*args, **kwargs):
+        raise next(failures)('new key not authorized')
+    monkeypatch.setattr(setup.ops, 'ssh', fail)
+    with pytest.raises(ConnectionError):
+        prepare(setup, create_key=True)
+    assert len(setup.calls) == 1 and setup.calls[0][0][0] == 'bash'
+    assert not setup.ops.staged
+
+
+def test_ssh_setup_accepts_a_real_nonseekable_terminal(ssh_setup, monkeypatch):
+    import builtins
+    import io
+    import os
+    master, slave = os.openpty()
+    def terminal(path, mode, **kwargs):
+        assert path == '/dev/tty'
+        return io.open(os.open(os.ttyname(slave), os.O_RDWR | os.O_NOCTTY), mode, **kwargs)
+    monkeypatch.setattr(builtins, 'open', terminal)
+    try:
+        prepare(ssh_setup, create_key=True)
+    finally:
+        os.close(master)
+        os.close(slave)
+
+
+def test_custom_trust_file_requires_prior_provisioning(ssh_setup):
+    ssh_setup.ops.known_hosts = ssh_setup.ops.root/'custom_known_hosts'
+    with pytest.raises(ValueError, match='omit --known-hosts'):
+        prepare(ssh_setup, create_key=True)
+    assert not ssh_setup.calls

@@ -2323,6 +2323,25 @@ ensure_python_venv_support() {
   fi
 }
 
+prepare_python_venv() {
+  local venv_dir="$1"
+  local interpreter
+  # venv leaves existing interpreter symlinks untouched, even when their
+  # original SDK/system Python has gone away. Repair only dangling aliases;
+  # retain site-packages, configuration and working interpreter links.
+  for interpreter in "${venv_dir}/bin/python" "${venv_dir}/bin/python3" "${venv_dir}"/bin/python3.[0-9]*; do
+    if [[ -L "${interpreter}" && ! -e "${interpreter}" ]]; then
+      log "Removing dangling virtualenv interpreter link: ${interpreter}"
+      rm -- "${interpreter}"
+    fi
+  done
+  python3 -m venv --system-site-packages "${venv_dir}"
+  if ! "${venv_dir}/bin/python" -c 'import sys; assert sys.prefix != sys.base_prefix'; then
+    echo "Virtualenv interpreter is unusable after preparation: ${venv_dir}/bin/python" >&2
+    return 1
+  fi
+}
+
 install_python_environment() {
   ensure_python_venv_support
   VENV_DIR="$(resolve_venv_dir)"
@@ -2330,7 +2349,7 @@ install_python_environment() {
   remove_stale_global_sima_lmm_pip_install
   log_green "Preparing Python virtual environment at ${VENV_DIR}"
   mkdir -p "$(dirname "${VENV_DIR}")"
-  python3 -m venv --system-site-packages "${VENV_DIR}"
+  prepare_python_venv "${VENV_DIR}"
   ensure_home_pyneat_symlink "${VENV_DIR}"
   print_green_banner "${VENV_DIR}" "${ACTIVATE_PATH}"
   "${VENV_DIR}/bin/python" -m pip install --upgrade pip

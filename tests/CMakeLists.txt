@@ -519,6 +519,7 @@ set(UNIT_TESTS
   unit_launch_validation_integration_test
   unit_inputstream_dynamic_policy_matrix_test
   unit_inputstream_batched_raw_video_spec_test
+  unit_inputstream_cpu_gst_copy_test
   unit_http_mjpeg_decoded_group_test
   unit_rtsp_encoded_input_group_test
   unit_input_policy_test
@@ -687,6 +688,17 @@ foreach(test ${UNIT_TESTS})
     set_property(TEST ${test} APPEND PROPERTY LABELS "unit")
   endif()
 endforeach()
+
+# Keep host dispatch evidence separate from the real DMA allocation requirement.
+if (TARGET unit_inputstream_cpu_gst_copy_test)
+  target_link_libraries(unit_inputstream_cpu_gst_copy_test PRIVATE SimaScheduler::frontend)
+  set_tests_properties(unit_inputstream_cpu_gst_copy_test PROPERTIES TIMEOUT 30)
+  simaneat_add_test(NAME unit_inputstream_cpu_gst_copy_dma_test
+    COMMAND unit_inputstream_cpu_gst_copy_test --device)
+  simaneat_append_ctest_env(unit_inputstream_cpu_gst_copy_dma_test)
+  set_tests_properties(unit_inputstream_cpu_gst_copy_dma_test PROPERTIES
+    TIMEOUT 30 LABELS "strict;unit;gstreamer;dma")
+endif()
 
 # This metadata fixture uses assert for its runtime checks, including publication setup.
 target_compile_options(unit_terminal_output_contract_query_test PRIVATE -UNDEBUG)

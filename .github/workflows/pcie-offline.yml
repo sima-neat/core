@@ -7,7 +7,7 @@ on:
         required: true
         type: string
       publish_branch:
-        description: Publish ready same-branch packages from the gated caller or explicit manual dispatch
+        description: Publish ready same-ref packages from the gated caller or explicit manual dispatch
         required: false
         default: false
         type: boolean
@@ -56,6 +56,9 @@ jobs:
           PUBLISH_BRANCH: ${{ inputs.publish_branch || false }}
         run: |
           options=()
+          if [[ "$GITHUB_EVENT_NAME" == workflow_run ]]; then
+            options+=(--skip-gated-publication)
+          fi
           if [[ "$VALIDATION_ONLY" == true || "$PUBLISH_BRANCH" == true ]]; then
             options+=(--validation-ref "$GITHUB_REF_NAME")
           fi

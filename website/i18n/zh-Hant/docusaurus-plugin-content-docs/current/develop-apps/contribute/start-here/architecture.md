@@ -1656,6 +1656,8 @@ Core 會保留產生端的借用生命週期並重用共用底層記憶體槽位
 
 獨立 Core 與 PCIe 離線套件使用相同的不可變 Core 發佈內容、相依性收集器、校驗碼驗證與平台相容性檢查流程。DevKit 安裝使用隔離的網路命名空間；SDK sysroot 安裝使用僅限檔案的 APT 方法。兩者均使用共用安裝鎖定。CI 會在停用網路且未經修改的已佈建基準環境中驗證套件與 Python 匯入；只有獨立套件及全部四種 PCIe 版本通過後，才會公開離線中繼資料。
 
+PCIe 離線安裝會在設定 SSH 之前探索所有卡片。它隨附既有的線上 `pcie-setup.sh`，不修改指令碼，並以呼叫使用者的身分執行，透過 `--hosts` 傳入每個已探索的位址。探索和直接路由檢查會在設定前執行，之後再透過屬於 PCI 的介面進行嚴格的 SSH 驗證。主機金鑰註冊沿用共用指令碼的既有行為。自動註冊使用 `~/.ssh/known_hosts`；自訂信任檔案必須事先設定。僅預先檢查模式不會設定 SSH。在完成 SSH 設定且主機與所有卡片通過預先檢查之前，不會開始安裝套件。
+
 獨立 Core 會發佈包含執行階段與額外套件的 `offline/metadata.json`，以及僅包含執行階段套件的 `offline/metadata-minimal.json`。
 
 安裝程式僅接受 Neat eLxr SDK 或已佈建的 Modalix DevKit。它會將 `/etc/sdk-release` 或 `/etc/buildinfo` 與封存檔內的套件資訊清單比對，不需要下載的發佈中繼資料。其他環境或不相容的 Platform 版本會在安裝前遭到拒絕。在 SDK 中，Core 會複製到 `/opt/toolchain/aarch64/modalix`。若已設定 `DEVKIT_SYNC_DEVKIT_IP`，同一個離線套件會透過 SSH 傳送至已配對的 DevKit。開始安裝前，兩個環境都必須通過預先檢查。在 DevKit 上則會於本機安裝。

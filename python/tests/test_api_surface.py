@@ -598,6 +598,19 @@ def test_output_stage_option_structs_expose_expected_fields():
     assert not hasattr(pyneat, removed_name)
 
 
+def test_jpeg_output_format_surface():
+  def header(luma):  # SOI, APP0, 3-component SOF0 (chroma 1x1), SOS
+    return bytes([0xFF, 0xD8, 0xFF, 0xE0, 0, 4, 0, 0, 0xFF, 0xC0, 0, 17, 8, 0, 16, 0, 16, 3,
+                  1, luma, 0, 2, 0x11, 1, 3, 0x11, 1, 0xFF, 0xDA, 0, 8])
+
+  assert pyneat.jpeg_output_format(header(0x22)) == pyneat.Format.NV12
+  assert pyneat.jpeg_output_format(header(0x21)) == pyneat.Format.NV16
+  with pytest.raises(ValueError, match="only 4:2:0 and 4:2:2"):
+    pyneat.jpeg_output_format(header(0x11))
+  # A 4:2:2 camera's NV16 decode feeds Model preprocessing directly.
+  assert pyneat.PreprocessColorFormat.NV16 != pyneat.PreprocessColorFormat.NV12
+
+
 def test_camera_input_surface_is_exposed():
   assert hasattr(pyneat, "CameraInputOptions")
   assert hasattr(pyneat.nodes, "camera_input")

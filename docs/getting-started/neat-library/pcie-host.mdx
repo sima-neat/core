@@ -131,7 +131,7 @@ Complete these tasks before you run the Neat installer:
 - Install the matching Platform 3.0 firmware on each card.
 - Configure discovery on each card's PCIe interface.
 - Assign a unique PCIe IPv4 address to each card.
-- Configure SSH access and trusted SSH host keys for each card.
+- Enable the SSH server on each card and have its login password available.
 - Give the SSH account permission to use `sudo` on each card.
 
 The Neat installer does not install the Platform driver or change the Platform firmware.
@@ -155,20 +155,21 @@ For Ubuntu 22.04, replace `ubuntu24` with `ubuntu22`.
 For an `arm64` host, replace `amd64` with `arm64`.
 The command downloads and extracts the package. It does not install Neat.
 
-### 3. Check the system
+### 3. Optional: check a prepared system
 
 1. Copy the complete `pcie-offline` directory to the target host. Use a path without spaces.
 2. Open the extracted `neat-offline` directory that contains `install.py`.
 3. Read the supplied `INSTALL.md` for required system tools and SSH settings.
-4. Run the checks:
+4. If SSH access is already configured, run the checks:
 
 <ShellCommand prompt="host">
 sudo python3 -B install.py --preflight-only
 </ShellCommand>
 
 The installer discovers all attached cards automatically. Do not supply card IP addresses.
-The checks create temporary files but do not install packages.
-Correct any reported errors before installation.
+The checks create temporary files but do not install packages or configure SSH.
+On a fresh host, proceed to installation so the installer can set up SSH interactively.
+Correct other reported errors before installation.
 
 ### 4. Install and check the results
 
@@ -177,6 +178,19 @@ Run this command from the same directory:
 <ShellCommand prompt="host">
 sudo python3 -B install.py
 </ShellCommand>
+
+On a fresh host, the installer creates or reuses `~/.ssh/sima_neat_pcie_ed25519`
+for the user who invoked `sudo` and sets up SSH access to every discovered card
+through the same setup script as online installation. Enter the card login
+password if requested. You do not need to run `ssh-keygen` or `ssh-copy-id`
+separately or enter card IP addresses.
+
+Use `--ssh-user` and `--ssh-key` to select existing credentials. An explicit
+`--ssh-key` must exist and have no passphrase. Automatic enrollment uses
+`~/.ssh/known_hosts`; a custom `--known-hosts` file must be provisioned in advance.
+Unattended installation requires SSH access to be configured in advance.
+Password prompts use the terminal; passwords are not saved in logs or passed as
+command arguments.
 
 The installer checks all cards before it installs packages.
 It installs and verifies the host first, then each card in sequence.

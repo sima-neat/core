@@ -7,8 +7,9 @@ This directory contains a **read-only evidence collector** and the
 The collector itself never installs or authorizes changes. The assembler bundles
 a separate [installation entry point](INSTALL.md) that preflights the prepared
 system, authenticates SSH, and deploys Neat to the host and all cards sequentially.
-Existing host/card install lifecycles are reused; firmware, driver, networking and
-SSH provisioning remain separate system prerequisites. Automatic discovery and
+Existing host/card install lifecycles are reused. SSH enrollment uses the same
+`pcie-setup.sh` as online installation, bundled with the offline entry point.
+Firmware, driver, networking, and a running card SSH server remain system prerequisites. Automatic discovery and
 host/card installation have passed on one physical Ubuntu 24.04 amd64 system
 with a Platform 3.0 card. Physical multi-card and application inference
 qualification remain pending. See [assembly and qualification evidence](ASSEMBLY.md).

@@ -117,7 +117,7 @@ PCIe 套件會在主機及所有已連接的相容卡上安裝 Neat。
 - 在每張卡上安裝相符的 Platform 3.0 韌體。
 - 在每張卡的 PCIe 介面上設定探索功能。
 - 為每張卡指派唯一的 PCIe IPv4 位址。
-- 為每張卡設定 SSH 存取權限和可信任的 SSH 主機金鑰。
+- 在每張卡上啟用 SSH 伺服器，並準備好登入密碼。
 - 授予 SSH 帳戶在每張卡上使用 `sudo` 的權限。
 
 Neat 安裝程式不會安裝 Platform 驅動程式或變更 Platform 韌體。
@@ -141,20 +141,21 @@ sima-cli neat install 'core/pciehost/ubuntu24/amd64@v%%release.core%%' -t offlin
 對於 `arm64` 主機，請將 `amd64` 替換為 `arm64`。
 此命令會下載並解壓縮套件，不會安裝 Neat。
 
-### 3. 檢查系統
+### 3. 選用：檢查已設定的系統
 
 1. 將完整的 `pcie-offline` 目錄複製到目標主機。請使用不含空格的路徑。
 2. 開啟解壓縮後包含 `install.py` 的 `neat-offline` 目錄。
 3. 閱讀隨附的 `INSTALL.md`，以瞭解必要的系統工具和 SSH 設定。
-4. 執行檢查：
+4. 如果已設定 SSH 存取，請執行檢查：
 
 <ShellCommand prompt="host">
 sudo python3 -B install.py --preflight-only
 </ShellCommand>
 
 安裝程式會自動探索所有已連接的卡。請勿提供卡的 IP 位址。
-檢查會建立暫存檔案，但不會安裝套件。
-安裝之前，請修正所有回報的錯誤。
+檢查會建立暫存檔案，但不會安裝套件或設定 SSH。
+在全新的主機上，請繼續進行安裝，讓安裝程式以互動方式設定 SSH。
+安裝之前，請修正其他回報的錯誤。
 
 ### 4. 安裝並檢查結果
 
@@ -163,6 +164,10 @@ sudo python3 -B install.py --preflight-only
 <ShellCommand prompt="host">
 sudo python3 -B install.py
 </ShellCommand>
+
+在全新的主機上，安裝程式會為呼叫 `sudo` 的使用者建立或重用 `~/.ssh/sima_neat_pcie_ed25519`，並透過與線上安裝相同的設定指令碼，設定所有已探索卡片的 SSH 存取。請視需要輸入卡片的登入密碼。您不需要另外執行 `ssh-keygen` 或 `ssh-copy-id`，也不需要輸入卡片的 IP 位址。
+
+使用 `--ssh-user` 和 `--ssh-key` 選取現有認證。明確指定的 `--ssh-key` 必須已存在且沒有通關密語。自動註冊使用 `~/.ssh/known_hosts`；自訂的 `--known-hosts` 檔案必須事先設定。無人值守安裝需要事先設定 SSH 存取。密碼透過終端機輸入，不會儲存在記錄中或作為命令引數傳遞。
 
 安裝程式會先檢查所有卡，再安裝套件。
 安裝程式會先安裝並驗證主機，再依序處理每張卡。

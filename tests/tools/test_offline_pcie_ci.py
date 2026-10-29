@@ -46,6 +46,18 @@ def test_tag_requires_exact_commit():
     assert resolver.eligible(source('v0.6'), jobs(), SHA)
 
 
+def test_tag_listener_skips_gated_publication_but_preserves_older_tags_and_manual_retry():
+    run = source('v0.6.0')
+    assert resolver.eligible(run, jobs(), SHA, skip_gated_publication=True)
+    published = jobs() + [dict(
+        name='Publish develop and release offline bundles / Publish all offline metadata',
+        conclusion='success')]
+    assert resolver.eligible(run, published, SHA, skip_gated_publication=True) is None
+    assert resolver.eligible(run, published, SHA)
+    published[-1]['conclusion'] = 'skipped'
+    assert resolver.eligible(run, published, SHA, skip_gated_publication=True)
+
+
 @pytest.mark.parametrize('field,value', [
     ('head_repository', {'full_name': 'fork/core'}), ('event', 'pull_request'),
     ('conclusion', 'failure'), ('status', 'in_progress'),
@@ -257,6 +269,15 @@ def test_cloudfront_invalidation_encodes_s3_branch_keys(tmp_path):
 
 @pytest.mark.parametrize('event,ref,mode,validation,manual_source,failed,cancelled,promoted,expected', [
     ('push', 'refs/heads/develop', 'standard', False, '', False, False, True, True),
+    ('push', 'refs/tags/v0.6.0', 'standard', False, '', False, False, True, True),
+    ('push', 'refs/tags/v0.7.0-rc.1', 'standard', False, '', False, False, True, True),
+    ('push', 'refs/heads/v0.6.0', 'standard', False, '', False, False, True, False),
+    ('push', 'refs/tags/nightly', 'standard', False, '', False, False, True, False),
+    ('workflow_dispatch', 'refs/tags/v0.6.0', 'standard', False, '', False, False, True, False),
+    ('push', 'refs/tags/v0.6.0', 'standard', True, '', False, False, True, False),
+    ('push', 'refs/tags/v0.6.0', 'standard', False, '', True, False, True, False),
+    ('push', 'refs/tags/v0.6.0', 'standard', False, '', False, True, True, False),
+    ('push', 'refs/tags/v0.6.0', 'standard', False, '', False, False, False, False),
     ('pull_request', 'refs/heads/develop', 'standard', False, '', False, False, True, False),
     ('workflow_dispatch', 'refs/heads/develop', 'standard', False, '', False, False, True, False),
     ('push', 'refs/heads/main', 'standard', False, '', False, False, True, False),
@@ -267,7 +288,7 @@ def test_cloudfront_invalidation_encodes_s3_branch_keys(tmp_path):
     ('push', 'refs/heads/develop', 'standard', False, '', False, True, True, False),
     ('push', 'refs/heads/develop', 'standard', False, '', False, False, False, False),
 ])
-def test_automatic_develop_publication_gate(event, ref, mode, validation, manual_source,
+def test_automatic_develop_and_release_publication_gate(event, ref, mode, validation, manual_source,
                                            failed, cancelled, promoted, expected):
     import yaml
     caller = yaml.safe_load((HERE.parents[2]/'.github/workflows/vulcan-ci.yml').read_text())
@@ -275,6 +296,7 @@ def test_automatic_develop_publication_gate(event, ref, mode, validation, manual
     # Evaluate the actual workflow gate with representative GitHub contexts.
     expression = job['if'][3:-2].strip()
     values = {
+        "startsWith(github.ref, 'refs/tags/v')": ref.startswith('refs/tags/v'),
         'always()': True, 'github.event_name': event, 'github.ref': ref,
         'inputs.validation_only': validation, 'inputs.offline_source_run_id': manual_source,
         'inputs.build_mode': mode, "contains(needs.*.result, 'failure')": failed,
@@ -299,6 +321,23 @@ def test_completed_run_listener_does_not_duplicate_develop_publication():
     import yaml
     worker = yaml.safe_load((HERE.parents[2]/'.github/workflows/pcie-offline.yml').read_text())
     assert "github.event.workflow_run.head_branch != 'develop'" in worker['jobs']['source']['if']
+
+
+@pytest.mark.parametrize('event,skip', [('workflow_run', True), ('push', False),
+                                       ('workflow_dispatch', False)])
+def test_only_completed_run_listener_requests_duplicate_suppression(event, skip):
+    import os
+    import subprocess
+    import yaml
+    worker = yaml.safe_load((HERE.parents[2]/'.github/workflows/pcie-offline.yml').read_text())
+    script = worker['jobs']['source']['steps'][-1]['run']
+    result = subprocess.run(['bash', '-c', 'python3() { printf "%s\\n" "$@"; };\n' + script],
+                            env={**os.environ, 'GITHUB_EVENT_NAME': event,
+                                 'VALIDATION_ONLY': 'false', 'PUBLISH_BRANCH': 'false',
+                                 'SOURCE_RUN': '123', 'GITHUB_REF_NAME': 'v0.6.0'},
+                            text=True, capture_output=True, check=True)
+    assert ('--skip-gated-publication' in result.stdout.splitlines()) is skip
+    assert worker['jobs']['publish']['name'] == 'Publish all offline metadata'
 
 
 def test_host_baseline_keys_track_only_platform_inputs():

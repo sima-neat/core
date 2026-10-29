@@ -45,7 +45,8 @@ def test_dependency_dag_and_publication_gate():
     gate = job('publish-vulcan-artifacts')
     assert "needs.build.result == 'success'" in gate
     assert "== 'fuzz' || needs.code-hygiene.result == 'success'" in gate
-    assert 'publish-vulcan-artifacts' in needs('test-devkit')
+    assert 'publish-vulcan-artifacts' in needs('plan-devkit-tests')
+    assert {'plan-devkit-tests', 'test-devkit-shard'} <= set(needs('test-devkit'))
 
 
 def test_hygiene_uses_vulcan_native_ubuntu_arm64_runner():
@@ -247,7 +248,7 @@ GATE_IDS = {
 
 
 def gate_block():
-    body = job('test-devkit')
+    body = job('test-devkit-shard')
     return body.split('      - name: Typed Contract Admission Gate\n', 1)[1].split(
         '      - name: Run Tutorial Tests\n', 1)[0]
 

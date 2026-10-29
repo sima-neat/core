@@ -909,7 +909,7 @@ def test_installed_workflow_verifies_complete_producer_not_cli_resource_workspac
         run(workspace)
 
     workflow = yaml.safe_load((ROOT / '.github/workflows/vulcan-ci.yml').read_text())
-    steps = workflow['jobs']['test-devkit']['steps']
+    steps = workflow['jobs']['test-devkit-shard']['steps']
     acquisition = next(step for step in steps if step.get('name') == "Download this build's installed-qualification inputs")
     acquisition_command = shlex.split(acquisition['run'].replace('\\\n', ' '))
     assert acquisition_command[:2] == ['python3', 'tools/ci/acquire_core_qualification.py']
