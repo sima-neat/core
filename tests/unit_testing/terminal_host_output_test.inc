@@ -292,6 +292,11 @@ void terminal_host_output_lifetime(bool dma_denied = false) {
     internal::release_realtime_frame_credits_for_sample(mixed, "test-denied-explicit-pull");
     require(lane->gate->inflight() == 0 && lane->released_by_output.load() == 1,
             "device-denied fixture credit release");
+    auto owned = output;
+    internal::materialize_owned_output(owned, false);
+    require(owned.owned && !internal::tensor_has_dmabuf_memory(owned.tensors.front()),
+            "Owned must copy into system memory while DMA is denied");
+    oracle(owned.tensors.front(), "DMA-denied Owned");
   } else {
     // Both queue sizes exercise the same graph queue helper without changing its threshold.
     for (std::size_t queued : {0U, 1U}) {

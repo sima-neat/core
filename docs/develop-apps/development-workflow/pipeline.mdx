@@ -309,7 +309,9 @@ as a pull error. To pass an output into a graph that starts with a device stage
 such as `Preproc`, use `ZeroCopy`, or copy the tensor to the device with
 `Tensor::to(...)` first.
 
-Use `Tensor::cpu()` or `clone()` for an independent host-memory copy. Explicit software conversion and `advanced.copy_input` remain copy
+`Tensor::cpu()` copies a device tensor into host memory and returns a tensor that is
+already in host memory, such as an `Owned` output, without copying. Use `clone()` for
+an independent copy. Explicit software conversion and `advanced.copy_input` remain copy
 boundaries. `SIMA_OUTPUT_MEMORY_DEFAULT=owned` deliberately selects owned output
 for `Auto`; it does not override an explicit per-run choice.
 

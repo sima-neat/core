@@ -377,6 +377,22 @@ void aliases_across_envelopes_copy_checked_span_once(bool different_span) {
   (void)sima_test::require_owned_output(output, "separate valid Owned carriers");
   require_payload(output.tensors[0], input.seed, 0, 0, 16, "first alias");
   require_payload(output.tensors[1], input.seed, 0, different_span ? 32 : 16, 16, "second alias");
+  // A shared copy is attached to both envelopes. Both aliases must still map for
+  // writing, see the same bytes, and a Mapping must keep the copy alive.
+  for (const auto mode : {neat::MapMode::Write, neat::MapMode::ReadWrite}) {
+    for (const auto& tensor : output.tensors) {
+      require(tensor.map(mode).data != nullptr, "Owned alias refused a write map");
+    }
+  }
+  require((output.tensors[0].storage->data == output.tensors[1].storage->data) == !different_span,
+          "Owned aliases do not share their copied bytes");
+  auto kept = output.tensors[1].map(neat::MapMode::ReadWrite);
+  auto* byte = static_cast<std::uint8_t*>(kept.data);
+  *byte = static_cast<std::uint8_t>(~*byte);
+  const auto written = *byte;
+  output = {};
+  require(*static_cast<const std::uint8_t*>(kept.data) == written,
+          "Owned Mapping did not keep its copy alive");
 }
 void broadcast_stride_publication_preserves_aliasing() {
   auto publication = contract();
