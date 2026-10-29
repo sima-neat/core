@@ -14,6 +14,7 @@
 #include <nlohmann/json.hpp>
 
 #include <functional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -136,6 +137,34 @@ RUN_TEST(
             require((sink->backend_fragment(2).find("jpegparse") != std::string::npos) == parse,
                     "specialized fragment must match its variant");
           }
+        }
+        // RTP/JPEG carries sizes in multiples of 8 up to 2040: a sized input outside that fails
+        // the build with a clear error instead of a generic caps negotiation failure.
+        for (const auto& [width, height] : {std::pair{8, 8}, std::pair{2040, 2040}}) {
+          simaai::neat::OutputSpec edge = sized;
+          edge.width = width;
+          edge.height = height;
+          const auto* sink = dynamic_cast<const JpegRtpUdpSink*>(
+              defaults.specialize_for_input(edge, context).get());
+          require(sink != nullptr && sink->input() == JpegRtpUdpSink::Input::SizedCaps,
+                  "RTP/JPEG-representable sizes must specialize to the bare sink");
+        }
+        for (const auto& [width, height] : {std::pair{320, 180}, std::pair{2048, 1536}}) {
+          simaai::neat::OutputSpec bad = sized;
+          bad.width = width;
+          bad.height = height;
+          std::string message;
+          try {
+            (void)defaults.specialize_for_input(bad, context);
+          } catch (const std::invalid_argument& e) {
+            message = e.what();
+          }
+          require(message == "VideoSender MJPEG: RTP/JPEG carries widths and heights in "
+                             "multiples of 8 up to 2040 (got " +
+                                 std::to_string(width) + "x" + std::to_string(height) +
+                                 "); choose another camera mode.",
+                  "unrepresentable RTP/JPEG size must throw a clear invalid_argument, got: " +
+                      message);
         }
 
         const jpeg_rtp_udp_sink_fixture::RestoreRegistry restore_registry;

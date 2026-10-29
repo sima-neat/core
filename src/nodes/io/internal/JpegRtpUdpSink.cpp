@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -36,6 +37,14 @@ std::shared_ptr<Node>
 JpegRtpUdpSink::specialize_for_input(const OutputSpec& input,
                                      const InputSpecSpecializationContext&) const {
   const bool sized = input.width > 0 && input.height > 0;
+  const auto representable = [](int size) { return size >= 8 && size <= 2040 && size % 8 == 0; };
+  if (sized && (!representable(input.width) || !representable(input.height))) {
+    // Fail at build time: the fragment's capsfilter would only report a generic caps error.
+    throw std::invalid_argument("VideoSender MJPEG: RTP/JPEG carries widths and heights in "
+                                "multiples of 8 up to 2040 (got " +
+                                std::to_string(input.width) + "x" + std::to_string(input.height) +
+                                "); choose another camera mode.");
+  }
   return std::make_shared<JpegRtpUdpSink>(opt_, sized ? Input::SizedCaps : Input::ParseDimensions);
 }
 

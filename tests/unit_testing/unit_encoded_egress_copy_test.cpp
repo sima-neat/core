@@ -35,6 +35,7 @@
 #include <chrono>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -148,6 +149,31 @@ void sender_segment_is_the_only_copying_segment(GraphLinkPolicy policy, bool jpe
   const bool stream_copies = core->pipeline.stream_opt.copy_encoded_input;
   core->close();
   require(stream_copies, "the built VideoSender segment must copy encoded input");
+}
+
+// RTP/JPEG cannot carry a 320x180 camera mode: building the graph names the limit instead of
+// failing caps negotiation later.
+void unrepresentable_camera_mode_fails_the_build() {
+  jpeg_rtp_udp_sink_fixture::set_factory_present(true);
+  UsbCameraInputOptions camera;
+  camera.camera_name = "usb-camera-egress";
+  camera.buffer_name = "egress_usb";
+  camera.width = 320;
+  camera.height = 180;
+  Graph source("usb_source");
+  source.add(internal::uvc::camera_node(camera, {"/dev/video0", FormatTag::NV12}));
+  auto sender = nodes::groups::VideoSenderOptions::Passthrough(nodes::groups::RtspCodec::MJPEG);
+  Graph app("usb_send");
+  app.connect(source, nodes::groups::VideoSender(sender));
+  std::string message;
+  try {
+    (void)runtime::compile_public_graph(app, RunOptions{});
+  } catch (const std::invalid_argument& e) {
+    message = e.what();
+  }
+  require(message.find("RTP/JPEG carries widths and heights in multiples of 8 up to 2040 (got "
+                       "320x180)") != std::string::npos,
+          "a 320x180 MJPEG camera must fail the build with the RTP/JPEG limit, got: " + message);
 }
 
 // A device-tagged JPEG holder that takes one loan credit, as a camera capture buffer does.
@@ -268,6 +294,7 @@ int main() {
         sender_segment_is_the_only_copying_segment(policy, /*jpeg_rtp_udp_sink=*/true,
                                                    /*decode_realtime=*/true);
       }
+      unrepresentable_camera_mode_fails_the_build();
     }
     push_through_segment_edge(/*copy_encoded_input=*/true);
     push_through_segment_edge(/*copy_encoded_input=*/false);
