@@ -91,7 +91,7 @@ Use this map before you open the full API reference.
 | Decode images | `nodes::ImageDecode()` or `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` or `pyneat.nodes.jpeg_decode()` |
 | Encode raw video | `nodes::SimaEncode(SimaEncodeOptions{...})` | `pyneat.nodes.sima_encode(options)` |
 | Decode encoded video | `nodes::SimaDecode(SimaDecodeOptions{...})` | `pyneat.nodes.sima_decode(options)` |
-| Decode MJPEG camera frames (4:2:0 or 4:2:2) | `jpeg_output_format(...)`, then `nodes::SimaDecode(...)`, model input format to match | `pyneat.jpeg_output_format(...)`, then `pyneat.nodes.sima_decode(...)`, model input format to match |
+| Decode MJPEG camera frames (4:2:0 or 4:2:2) | `usb_camera_info(...).decoded_format` as the `nodes::SimaDecode(...)` `out_format`, model input format to match | `pyneat.usb_camera_info(...).decoded_format` as the `pyneat.nodes.sima_decode(...)` `out_format`, model input format to match |
 | Scale or rate-limit video | `nodes::VideoScale()`, `VideoRate()`, `ImageFreeze()` | `pyneat.nodes.video_scale()`, `video_rate()`, `image_freeze()` |
 | Build a reusable image input path | `nodes::groups::ImageInputGroup(...)` | `pyneat.groups.image_input(...)` |
 | Build a reusable video input path | `nodes::groups::VideoInputGroup(...)` | `pyneat.groups.video_input(...)` |
@@ -193,10 +193,11 @@ H.264 remains the default. Select H.265 or HEVC explicitly.
 
 USB cameras send MJPEG with 4:2:0 or 4:2:2 color sampling; most use 4:2:2. With
 zero-copy output, the decoder writes only the stream's own sampling, so the graph must
-know it before it is built. Pass the camera's first frame to `jpeg_output_format(...)`,
-which returns `NV12` for 4:2:0 and `NV16` for 4:2:2, and use the result as the
-decoder's `out_format`. A model reads NV16 directly: set its preprocessing input
-format to the same value, so 4:2:2 frames reach the model with no conversion stage.
+know it before it is built. For a USB camera, `usb_camera_info(...)` reports it as
+`decoded_format`; use that as the decoder's `out_format`. For another MJPEG source, set
+`out_format` to `NV12` for 4:2:0 or `NV16` for 4:2:2. A model reads NV16 directly: set
+its preprocessing input format to the same value, so 4:2:2 frames reach the model with
+no conversion stage.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -204,10 +205,11 @@ format to the same value, so 4:2:2 frames reach the model with no conversion sta
 ```cpp
 #include "neat.h"
 
-// first_frame: the camera's first complete MJPEG frame, from your capture code.
+// camera: your UsbCameraInputOptions; also pass info to UsbCameraInput(camera, info).
+const simaai::neat::UsbCameraInfo info = simaai::neat::usb_camera_info(camera);
 simaai::neat::SimaDecodeOptions decode;
 decode.type = simaai::neat::SimaDecodeType::MJPEG;
-decode.out_format = simaai::neat::jpeg_output_format(first_frame);  // NV12 or NV16
+decode.out_format = info.decoded_format;  // NV12 or NV16
 decode.dec_width = 1920;
 decode.dec_height = 1080;
 decode.dec_fps = 30;
@@ -227,10 +229,11 @@ model_options.preprocess.color_convert.input_format =
 ```python
 import pyneat
 
-# first_frame: the camera's first complete MJPEG frame, as bytes.
+# camera: your UsbCameraInputOptions; also pass info to usb_camera_input(camera, info).
+info = pyneat.usb_camera_info(camera)
 decode = pyneat.SimaDecodeOptions()
 decode.type = pyneat.SimaDecodeType.MJPEG
-decode.out_format = pyneat.jpeg_output_format(first_frame)  # NV12 or NV16
+decode.out_format = info.decoded_format  # NV12 or NV16
 decode.dec_width, decode.dec_height, decode.dec_fps = 1920, 1080, 30
 decode.raw_output = True  # zero-copy: the decoder writes the camera's own sampling
 graph.add(pyneat.nodes.jpeg_parse())

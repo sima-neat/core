@@ -1,6 +1,6 @@
 #include "nodes/io/internal/UvcCamera.h"
 
-#include "nodes/sima/SimaDecode.h"
+#include "nodes/sima/internal/JpegOutputFormat.h"
 
 #include <linux/videodev2.h>
 
