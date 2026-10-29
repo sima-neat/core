@@ -1844,8 +1844,8 @@ Tensor make_dummy_tensor(const simaai::neat::InputOptions& opt,
 
   if (resolve_input_media_type(opt) == "application/vnd.simaai.tensor") {
     t.dtype = dtype_from_format(opt.format);
-    if (contract && contract->batch > 1 && !contract->logical_shape.empty()) {
-      // InputOptions describes one frame; the contract carries the full batch shape.
+    if (contract && !contract->logical_shape.empty()) {
+      // InputOptions carries h/w/d; the contract preserves every logical axis.
       t.shape = contract->logical_shape;
       if (t.shape.size() == 4U) {
         t.layout = TensorLayout::HWC;

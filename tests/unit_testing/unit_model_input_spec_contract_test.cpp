@@ -385,9 +385,7 @@ void check_synthetic_image_inputs() {
           "tensor-mode synthetic input changed");
 }
 
-void check_synthetic_batched_tensor_inputs() {
-  // A batch-2 ingress (for example a model compiled to run two guidance branches per call)
-  // projects one frame into InputOptions; the seedless build must still pass both slots.
+void check_synthetic_tensor_contract_shapes() {
   InputOptions options;
   options.payload_type = PayloadType::Tensor;
   options.format = FormatTag::FP32;
@@ -398,34 +396,29 @@ void check_synthetic_batched_tensor_inputs() {
   contract.valid = true;
   contract.ingress_index = 0;
   contract.media_type = "application/vnd.simaai.tensor";
-  contract.rank = 4;
-  contract.batch = 2;
   contract.height = 1;
   contract.width = 192;
   contract.depth = 144;
-  contract.logical_shape = {2, 1, 192, 144};
-
-  const auto batched = internal::ModelAccess::make_dummy_input(options, &contract);
-  std::string error;
-  require(batched.validate(&error), "batched synthetic tensor input: " + error);
-  require(batched.dtype == TensorDType::Float32 && batched.planes.empty() &&
-              batched.shape == contract.logical_shape && batched.layout == TensorLayout::HWC &&
-              batched.storage->size_bytes == 2U * 192U * 144U * sizeof(float),
-          "batched synthetic tensor input must carry the contract's batch axis");
-  const auto geometry =
-      describe_tensor_geometry_or_throw(batched, options, "batched synthetic tensor input");
-  // Tensor contracts parsed from an MPK leave layout empty, so the build checks with Unknown.
-  require(
-      input_geometry_matches_logical_shape(geometry, contract.logical_shape, TensorLayout::Unknown),
-      "batched synthetic tensor input must match its canonical logical_shape");
-
-  // Batch 1 keeps the existing single-frame stand-in.
-  contract.batch = 1;
-  contract.logical_shape = {1, 1, 192, 144};
-  const auto single = internal::ModelAccess::make_dummy_input(options, &contract);
-  require(single.shape == std::vector<int64_t>{1, 192, 144} &&
-              single.storage->size_bytes == 192U * 144U * sizeof(float),
-          "batch-1 synthetic tensor input changed");
+  for (const auto& shape :
+       {std::vector<int64_t>{2, 1, 1, 192, 144}, {2, 1, 192, 144}, {1, 1, 192, 144}}) {
+    contract.rank = static_cast<int>(shape.size());
+    // RoutePlanner projects batch from the fourth-last axis, losing leading axes at rank > 4.
+    contract.batch = static_cast<int>(shape[shape.size() - 4]);
+    contract.logical_shape = shape;
+    const auto tensor = internal::ModelAccess::make_dummy_input(options, &contract);
+    std::string error;
+    require(tensor.validate(&error), "synthetic tensor input: " + error);
+    require(
+        tensor.dtype == TensorDType::Float32 && tensor.planes.empty() && tensor.shape == shape &&
+            tensor.storage->size_bytes == std::size_t(shape.front()) * 192U * 144U * sizeof(float),
+        "synthetic tensor must retain every canonical axis and its full storage");
+    require(tensor.layout == (shape.size() == 4U ? TensorLayout::HWC : TensorLayout::Unknown),
+            "synthetic tensor layout must match its canonical rank");
+    const auto geometry =
+        describe_tensor_geometry_or_throw(tensor, options, "synthetic tensor input");
+    require(input_geometry_matches_logical_shape(geometry, shape, TensorLayout::Unknown),
+            "synthetic tensor must satisfy canonical input geometry");
+  }
 }
 
 } // namespace
@@ -434,7 +427,7 @@ RUN_TEST(
     "unit_model_input_spec_contract_test", ([] {
       using namespace simaai::neat;
       check_synthetic_image_inputs();
-      check_synthetic_batched_tensor_inputs();
+      check_synthetic_tensor_contract_shapes();
       check_ingress_memory_policy();
 
       {
