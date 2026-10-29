@@ -78,10 +78,14 @@ RUN_TEST(
                 "JpegRtpUdpSink must default to parsing dimensions");
         require(defaults.backend_fragment(3) ==
                     "jpegparse name=n3_jpegparse disable-passthrough=true ! "
+                    "capsfilter name=n3_rtp_jpeg_dimensions "
+                    "caps=\"image/jpeg,width=(int)[8,2040,8],height=(int)[8,2040,8]\" ! "
                     "neatjpegudpsink name=n3_jpegudp host=127.0.0.1 port=5000 pt=26 mtu=1400 "
                     "timestamp-offset=0 sync=false async=false enable-last-sample=false",
                 "JpegRtpUdpSink default fragment mismatch");
-        require(defaults.element_names(3) == std::vector<std::string>{"n3_jpegparse", "n3_jpegudp"},
+        require(defaults.element_names(3) == std::vector<std::string>{"n3_jpegparse",
+                                                                      "n3_rtp_jpeg_dimensions",
+                                                                      "n3_jpegudp"},
                 "JpegRtpUdpSink parsing element_names mismatch");
 
         JpegRtpUdpSinkOptions opt;
@@ -93,14 +97,17 @@ RUN_TEST(
         opt.async = true;
         const JpegRtpUdpSink node(opt, JpegRtpUdpSink::Input::SizedCaps);
         const std::string fragment = node.backend_fragment(7);
-        require(fragment == "neatjpegudpsink name=n7_jpegudp host=10.0.0.5 port=5600 pt=27 "
+        require(fragment == "capsfilter name=n7_rtp_jpeg_dimensions "
+                            "caps=\"image/jpeg,width=(int)[8,2040,8],height=(int)[8,2040,8]\" ! "
+                            "neatjpegudpsink name=n7_jpegudp host=10.0.0.5 port=5600 pt=27 "
                             "mtu=1200 timestamp-offset=0 sync=true async=true "
                             "enable-last-sample=false",
                 "JpegRtpUdpSink sized fragment mismatch");
         require(fragment ==
                     JpegRtpUdpSink(opt, JpegRtpUdpSink::Input::SizedCaps).backend_fragment(7),
                 "JpegRtpUdpSink fragment must be deterministic");
-        require(node.element_names(7) == std::vector<std::string>{"n7_jpegudp"},
+        require(node.element_names(7) ==
+                    std::vector<std::string>{"n7_rtp_jpeg_dimensions", "n7_jpegudp"},
                 "JpegRtpUdpSink sized element_names must name the fragment's element");
 
         // Specialization: an input with known dimensions drops the parser; anything else

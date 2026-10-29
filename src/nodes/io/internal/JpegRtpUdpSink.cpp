@@ -13,6 +13,9 @@ std::string JpegRtpUdpSink::backend_fragment(int node_index) const {
   if (input_ == Input::ParseDimensions) {
     ss << "jpegparse name=" << name << "_jpegparse disable-passthrough=true ! ";
   }
+  // RTP/JPEG carries dimensions in 8-pixel units up to 2040, as JpegPacketize enforces.
+  ss << "capsfilter name=" << name
+     << "_rtp_jpeg_dimensions caps=\"image/jpeg,width=(int)[8,2040,8],height=(int)[8,2040,8]\" ! ";
   // Like UdpOutput: a retained last sample would keep the frame's capture buffer referenced.
   ss << kJpegRtpUdpSinkFactory << " name=" << name << "_jpegudp host=" << opt_.host
      << " port=" << opt_.port << " pt=" << opt_.payload_type << " mtu=" << opt_.mtu
@@ -24,9 +27,9 @@ std::string JpegRtpUdpSink::backend_fragment(int node_index) const {
 std::vector<std::string> JpegRtpUdpSink::element_names(int node_index) const {
   const std::string name = "n" + std::to_string(node_index);
   if (input_ == Input::ParseDimensions) {
-    return {name + "_jpegparse", name + "_jpegudp"};
+    return {name + "_jpegparse", name + "_rtp_jpeg_dimensions", name + "_jpegudp"};
   }
-  return {name + "_jpegudp"};
+  return {name + "_rtp_jpeg_dimensions", name + "_jpegudp"};
 }
 
 std::shared_ptr<Node>
