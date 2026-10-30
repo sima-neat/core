@@ -22,8 +22,6 @@
  *
  * Segment semantics:
  *  - If required_segments is provided, it is used as the destination segment layout.
- *  - Else if required_segment_names is provided, we reuse the segment layout from src.storage
- *    and validate the required names exist.
  *  - Else allocate one segment for the selected payload: {"tensor", payload_bytes}.
  *
  */
@@ -339,49 +337,11 @@ std::size_t segment_total_bytes(const std::vector<Segment>& segments) {
   return total;
 }
 
-bool segments_contain_names(const std::vector<Segment>& segments,
-                            const std::vector<std::string>& names) {
-  for (const auto& required : names) {
-    bool found = false;
-    for (const auto& seg : segments) {
-      if (seg.name == required) {
-        found = true;
-        break;
-      }
-    }
-    if (!found)
-      return false;
-  }
-  return true;
-}
-
-std::vector<Segment> resolve_segments(const Tensor& src,
-                                      const std::vector<Segment>* required_segments,
-                                      const std::vector<std::string>* required_names,
+std::vector<Segment> resolve_segments(const std::vector<Segment>* required_segments,
                                       std::size_t payload_bytes) {
-  std::vector<Segment> segments;
-
-  if (required_segments && !required_segments->empty()) {
-    segments = *required_segments;
-  } else if (required_names && !required_names->empty()) {
-    if (!src.storage || src.storage->sima_segments.empty()) {
-      throw std::runtime_error("transfer: required segment names but no segment layout");
-    }
-    segments = src.storage->sima_segments;
-  }
-
-  if (segments.empty()) {
-    Segment seg;
-    seg.name = "tensor";
-    seg.size_bytes = payload_bytes;
-    segments.push_back(std::move(seg));
-  }
-
-  if (required_names && !required_names->empty()) {
-    if (!segments_contain_names(segments, *required_names)) {
-      throw std::runtime_error("transfer: missing required segments");
-    }
-  }
+  std::vector<Segment> segments = required_segments ? *required_segments : std::vector<Segment>{};
+  if (segments.empty())
+    segments.push_back({"tensor", payload_bytes});
 
   const std::size_t total = segment_total_bytes(segments);
   if (payload_bytes == 0 || total < payload_bytes) {
@@ -420,7 +380,15 @@ bool copy_gst_metadata(GstBuffer* dst, GstBuffer* src, std::string* error) {
     *error = "failed to copy buffer timing";
     return false;
   }
-  return !has_simaai_preprocess_meta(src) || copy_simaai_preprocess_meta(dst, src, error);
+  try {
+    const auto preprocess = read_simaai_preprocess_meta(src);
+    if (!preprocess || write_simaai_preprocess_meta(dst, *preprocess))
+      return true;
+    *error = "failed to write preprocessing metadata";
+  } catch (const std::exception& exception) {
+    *error = exception.what();
+  }
+  return false;
 }
 
 /**
@@ -560,8 +528,7 @@ Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
 //==============================================================================
 
 Tensor transfer_to_device(const Tensor& src, const Device& target,
-                          const std::vector<Segment>* required_segments,
-                          const std::vector<std::string>* required_segment_names) {
+                          const std::vector<Segment>* required_segments) {
   const std::uint64_t target_flags = target_flags_from_device(target);
   if (target_flags == 0) {
     throw std::runtime_error("transfer: unsupported target device");
@@ -591,8 +558,7 @@ Tensor transfer_to_device(const Tensor& src, const Device& target,
     throw std::runtime_error("transfer: unknown payload size");
   }
 
-  const std::vector<Segment> segments =
-      resolve_segments(src, required_segments, required_segment_names, payload_bytes);
+  const std::vector<Segment> segments = resolve_segments(required_segments, payload_bytes);
 
   return transfer_to_driver_dmabuf(src, target, target_flags, segments);
 }

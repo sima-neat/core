@@ -12,10 +12,12 @@
 
 #include <gst/gst.h>
 #include <gst/allocators/gstdmabuf.h>
+#include <gstsimaaitensorbuffer_meta.h>
 
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -33,6 +35,43 @@ static void add_sima_meta(GstBuffer* buffer) {
                     "stream-id", G_TYPE_STRING, "0", "timestamp", G_TYPE_UINT64,
                     static_cast<guint64>(123), "pcie-buffer-id", G_TYPE_INT64,
                     static_cast<gint64>(99), nullptr);
+}
+
+static void check_transfer_metadata_failure(const simaai::neat::Tensor& source) {
+  using namespace simaai::gst;
+  auto* buffer = gst_sample_get_buffer(static_cast<GstSample*>(source.storage->holder.get()));
+  const auto bytes = source.dense_bytes_tight();
+  TensorBufferPublishContract contract;
+  contract.stage_key = "transfer-metadata-test";
+  contract.physical_outputs = {{0, bytes, "tensor"}};
+  TensorBufferPublishLogicalOutput output;
+  output.logical_index = output.physical_index = output.memory_index = 0;
+  output.backend_output_index = output.route_slot = 0;
+  output.logical_name = output.segment_name = "tensor";
+  output.size_bytes = bytes;
+  output.dtype = SIMA_TENSOR_SET_DTYPE_UINT8_V1;
+  output.shape = source.shape;
+  output.stride_bytes = source.strides_bytes;
+  contract.logical_outputs = {output};
+  TensorBufferPreparedMetaTemplate prepared;
+  std::string error;
+  require(tensor_buffer_prepare_meta_template_from_contract(contract, {{0, 0, bytes}}, &prepared,
+                                                            &error),
+          error);
+  const auto publication = tensor_buffer_freeze_publication(prepared, &error);
+  require(publication && tensor_buffer_attach_publication(buffer, publication, &error), error);
+  require(tensor_buffer_attach_frame_metadata(buffer, TensorBufferFrameMetadata{}, &error), error);
+  add_sima_meta(buffer); // Competing authorities must fail without leaking the retained source.
+  const auto references = GST_MINI_OBJECT_REFCOUNT_VALUE(buffer);
+  bool rejected = false;
+  try {
+    (void)source.mla(true);
+  } catch (const std::runtime_error& exception) {
+    rejected = std::string(exception.what()).find("transfer: compact frame metadata:") == 0;
+  }
+  require(GST_MINI_OBJECT_REFCOUNT_VALUE(buffer) == references,
+          "failed metadata transfer leaked its source buffer reference");
+  require(rejected, "transfer did not report the compact metadata error");
 }
 
 static void check_selected_carrier_transfer(simaai::neat::Device target) {
@@ -161,7 +200,7 @@ int main() {
     seed.read_only = false;
 
     simaai::neat::Tensor t_ev74 = simaai::neat::pipeline_internal::transfer_to_device(
-        seed, {simaai::neat::DeviceType::SIMA_CVU, 0}, &segments, nullptr);
+        seed, {simaai::neat::DeviceType::SIMA_CVU, 0}, &segments);
     require(t_ev74.storage->sima_segments.size() == 2U &&
                 t_ev74.storage->sima_segments[0].name == "seg0" &&
                 t_ev74.storage->sima_segments[0].size_bytes == 64U &&
@@ -179,7 +218,7 @@ int main() {
     require(t_ev74.device.id == 0, "EV74 device id mismatch");
 
     simaai::neat::Tensor t_dms = simaai::neat::pipeline_internal::transfer_to_device(
-        seed, {simaai::neat::DeviceType::SIMA_MLA, 0}, &segments, nullptr);
+        seed, {simaai::neat::DeviceType::SIMA_MLA, 0}, &segments);
     require(t_dms.device.type == simaai::neat::DeviceType::SIMA_MLA, "DMS0 device mismatch");
     require(t_dms.device.id == 0, "DMS0 device id mismatch");
 
@@ -260,7 +299,7 @@ int main() {
         simaai::neat::TensorMemory::CPU);
     std::vector<simaai::neat::Segment> direct_segments{{"ifm0", direct_data.size()}};
     auto direct = simaai::neat::pipeline_internal::transfer_to_device(
-        direct_cpu, {simaai::neat::DeviceType::SIMA_CVU, 0}, &direct_segments, nullptr);
+        direct_cpu, {simaai::neat::DeviceType::SIMA_CVU, 0}, &direct_segments);
     require(direct.device.type == simaai::neat::DeviceType::SIMA_CVU,
             "direct EV74 device mismatch");
     require(direct.storage && direct.storage->sima_segments.size() == 1U,
@@ -285,7 +324,7 @@ int main() {
         simaai::neat::TensorMemory::CPU);
     std::vector<simaai::neat::Segment> direct_segments_1{{"ifm0", direct_data_1.size()}};
     auto direct_1 = simaai::neat::pipeline_internal::transfer_to_device(
-        direct_cpu_1, {simaai::neat::DeviceType::SIMA_CVU, 0}, &direct_segments_1, nullptr);
+        direct_cpu_1, {simaai::neat::DeviceType::SIMA_CVU, 0}, &direct_segments_1);
     direct.route.name = "image_l";
     direct.route.backend_name = "input_tensor";
     direct.route.segment_name = "input_tensor";
@@ -365,7 +404,7 @@ int main() {
       simaai::neat::TensorList distinct;
       for (guint i = 0U; i <= gst_buffer_get_max_memory(); ++i) {
         distinct.push_back(simaai::neat::pipeline_internal::transfer_to_device(
-            direct_cpu, {simaai::neat::DeviceType::SIMA_CVU, 0}, &direct_segments, nullptr));
+            direct_cpu, {simaai::neat::DeviceType::SIMA_CVU, 0}, &direct_segments));
       }
       auto rejected_input = simaai::neat::sample_from_tensors(distinct);
       rejected_input.payload_type = simaai::neat::PayloadType::Tensor;
@@ -463,6 +502,8 @@ int main() {
                   gst_buffer_get_parent_buffer_meta(retained_buffer) != nullptr,
               "retained envelope lost its DMA allocation or producer lease");
     }
+
+    check_transfer_metadata_failure(mla_pref);
 
     std::cout << "[OK] tensor_device_placement_test passed\n";
     return 0;
