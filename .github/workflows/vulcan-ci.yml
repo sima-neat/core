@@ -906,7 +906,7 @@ jobs:
     steps:
       - name: Verify selected DevKit firmware
         env:
-          EXPECTED_ELXR_VERSION: ${{ needs.resolve-test-runner.outputs.elxr_version }}
+          EXPECTED_ELXR_VERSION: ${{ needs.resolve-test-runner.outputs.devkit_firmware }}
           VERSION_FALLBACK: ${{ needs.resolve-test-runner.outputs.version_fallback }}
         shell: bash
         run: |
