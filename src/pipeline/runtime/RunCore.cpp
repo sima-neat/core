@@ -1569,7 +1569,7 @@ void RunCore::graph_finish_sink_pull(Sample& sample) {
   // release the producer pool buffer and its loan before the app holds the sample.
   const bool owned_output =
       pipeline.stream_opt.copy_output && !pipeline.stream_opt.preserve_framework_output;
-  if (owned_output && run_internal::sample_has_borrowed_zero_copy_tensor(sample)) {
+  if (owned_output && run_internal::sample_needs_owned_copy(sample)) {
     pipeline_internal::materialize_owned_output(sample);
   }
 }

@@ -1301,6 +1301,22 @@ struct OwnedCopy {
   std::uint8_t* data = nullptr;
 };
 
+// Maps an Owned copy at its own address. Its type identifies the copy, so a later
+// Owned pull can tell it apart from a pool buffer or device tensor.
+struct OwnedCopyMapper {
+  std::shared_ptr<void> holder;
+  void* data;
+  std::size_t size;
+
+  Mapping operator()(MapMode /*mode*/) const {
+    Mapping mapping;
+    mapping.data = data;
+    mapping.size_bytes = size;
+    mapping.keepalive = holder;
+    return mapping;
+  }
+};
+
 void release_owned_copy_holder(gpointer holder) {
   delete static_cast<std::shared_ptr<void>*>(holder);
 }
@@ -1780,13 +1796,7 @@ private:
     void* data = carriers_[slot->carrier].destination.data;
     const std::size_t size = storage->size_bytes;
     storage->data = data;
-    storage->map_fn = [holder = storage->holder, data, size](MapMode /*mode*/) {
-      Mapping mapping;
-      mapping.data = data;
-      mapping.size_bytes = size;
-      mapping.keepalive = holder;
-      return mapping;
-    };
+    storage->map_fn = OwnedCopyMapper{storage->holder, data, size};
     tensor.storage = std::move(storage);
     tensor.device = tensor.storage->device;
     tensor.read_only = false;
@@ -1802,6 +1812,10 @@ private:
 };
 
 } // namespace
+
+bool tensor_is_owned_copy(const Tensor& tensor) {
+  return tensor.storage && tensor.storage->map_fn.target<OwnedCopyMapper>() != nullptr;
+}
 
 void materialize_owned_output(Sample& sample, bool preserve_framework) {
   OwnedOutputMaterializer(preserve_framework).apply(sample);
