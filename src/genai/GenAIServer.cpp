@@ -58,7 +58,7 @@ void set_error(httplib::Response& res, const std::string& message, int status) {
 
 nlohmann::json generation_error(const std::exception& error) {
   nlohmann::json body = {{"error", {{"message", error.what()}, {"type", "invalid_request_error"}}}};
-  if (dynamic_cast<const internal::ContextLengthExceeded*>(&error)) {
+  if (dynamic_cast<const std::length_error*>(&error)) {
     body["error"]["code"] = "context_length_exceeded";
   }
   return body;
@@ -66,7 +66,7 @@ nlohmann::json generation_error(const std::exception& error) {
 
 void set_error(httplib::Response& res, const std::exception& error) {
   set_json(res, generation_error(error),
-           dynamic_cast<const internal::ContextLengthExceeded*>(&error) ? 400 : 500);
+           dynamic_cast<const std::length_error*>(&error) ? 400 : 500);
 }
 
 std::optional<std::string> apply_tool_options(const nlohmann::json& body,

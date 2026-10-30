@@ -521,8 +521,10 @@ struct VisionLanguageModel::Impl {
     }
     auto preprocessed = vlm_helper->preprocess(chat);
     if (preprocessed.input_token_ids.size() >= cfg.pipeline_cfg.max_num_tokens) {
-      throw internal::ContextLengthExceeded(preprocessed.input_token_ids.size(),
-                                            cfg.pipeline_cfg.max_num_tokens);
+      throw std::length_error("Prompt uses " + std::to_string(preprocessed.input_token_ids.size()) +
+                              " tokens; model context is " +
+                              std::to_string(cfg.pipeline_cfg.max_num_tokens) +
+                              ". Start a new conversation or shorten the input.");
     }
     if (preprocessed.image_tensors.size() != built.expected_image_count) {
       throw std::runtime_error("LLiMa chat template image count did not match GenAI request");
