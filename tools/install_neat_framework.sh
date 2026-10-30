@@ -924,14 +924,6 @@ collect_wheel_files() {
   fi
 }
 
-collect_debs_in_install_order() {
-  local search_dir="$1"
-  local out_array_name="$2"
-  local -n out_array="${out_array_name}"
-  out_array=()
-  append_matching_files "${out_array_name}" "${search_dir}" '*.deb'
-}
-
 # Disk-backed locations come before /tmp, which is RAM-backed on Modalix boards.
 bundle_stage_parent_candidates() {
   printf '%s\n' /media/nvme "${TMPDIR:-}" /var/tmp /tmp "${INSTALLER_START_DIR}"
@@ -987,6 +979,14 @@ stage_bundle_in_fresh_dir() {
   fi
   log "Installing from a fresh copy of the bundle: ${stage_dir}"
   cd -- "${stage_dir}"
+}
+
+collect_debs_in_install_order() {
+  local search_dir="$1"
+  local out_array_name="$2"
+  local -n out_array="${out_array_name}"
+  out_array=()
+  append_matching_files "${out_array_name}" "${search_dir}" '*.deb'
 }
 
 sysroot_path() {
