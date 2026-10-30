@@ -141,6 +141,10 @@ static void check_selected_carrier_transfer(simaai::neat::Device target) {
     const auto preprocess = read_simaai_preprocess_meta(destination);
     require(preprocess && preprocess->original_width == 1280 && preprocess->original_height == 720,
             "transfer lost preprocessing geometry");
+    auto* metadata = gst_buffer_get_custom_meta(destination, "GstSimaMeta");
+    require(metadata &&
+                !gst_structure_has_field(gst_custom_meta_get_structure(metadata), "buffer-id"),
+            "transfer copied the producer buffer-id with preprocessing metadata");
     std::string error;
     auto ingress = sample_to_gst_envelope_holder(sample_from_tensors({copy}), &error, true);
     require(ingress != nullptr, "transferred tensor cannot reenter a graph: " + error);
