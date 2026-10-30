@@ -924,9 +924,10 @@ collect_wheel_files() {
   fi
 }
 
-# Disk-backed locations come before /tmp, which is RAM-backed on Modalix boards.
+# /tmp is RAM-backed on Modalix boards, so a copy left by a killed install is
+# gone after reboot. The disk-backed locations hold bundles /tmp has no room for.
 bundle_stage_parent_candidates() {
-  printf '%s\n' /media/nvme "${TMPDIR:-}" /var/tmp /tmp "${INSTALLER_START_DIR}"
+  printf '%s\n' /tmp /data /media/nvme
 }
 
 create_bundle_stage_dir() {
