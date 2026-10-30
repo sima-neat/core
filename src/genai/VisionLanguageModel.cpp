@@ -438,7 +438,8 @@ struct VisionLanguageModel::Impl {
         result.text.clear();
       }
     }
-    result.finish_reason = result.tool_calls.empty() ? "stop" : "tool_calls";
+    result.finish_reason =
+        token_limit_reached ? "length" : (result.tool_calls.empty() ? "stop" : "tool_calls");
     return result;
   }
 
@@ -519,6 +520,10 @@ struct VisionLanguageModel::Impl {
       chat.set_tools(request.tools);
     }
     auto preprocessed = vlm_helper->preprocess(chat);
+    if (preprocessed.input_token_ids.size() >= cfg.pipeline_cfg.max_num_tokens) {
+      throw internal::ContextLengthExceeded(preprocessed.input_token_ids.size(),
+                                            cfg.pipeline_cfg.max_num_tokens);
+    }
     if (preprocessed.image_tensors.size() != built.expected_image_count) {
       throw std::runtime_error("LLiMa chat template image count did not match GenAI request");
     }
@@ -679,6 +684,7 @@ struct VisionLanguageModel::Impl {
   void reset_metrics() {
     std::lock_guard<std::mutex> lock(metrics_mutex);
     metrics = {};
+    token_limit_reached = false;
   }
 
   void record_metric(const std::string& metric, double value) {
@@ -687,6 +693,8 @@ struct VisionLanguageModel::Impl {
       metrics.time_to_first_token_s = value;
     } else if (metric == "tps") {
       metrics.tokens_per_second = value;
+    } else if (metric == "FULL") {
+      token_limit_reached = true;
     }
   }
 
@@ -696,6 +704,7 @@ struct VisionLanguageModel::Impl {
   }
 
   internal::ModelDirectoryInfo info;
+  std::atomic<bool> token_limit_reached{false};
   std::shared_ptr<simaai::llima::FileProvider> files;
   std::shared_ptr<simaai::llima::FileProvider> draft_files;
   simaai::llima::VlmConfig cfg;

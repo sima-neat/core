@@ -65,7 +65,8 @@ void require_generation_result(const simaai::neat::genai::GenerationResult& resu
             << " finish_reason=" << result.finish_reason << "\n";
   std::cout << label << " text=" << result.text << "\n";
   require(result.metrics.generated_tokens > 0, label + " expected generated tokens");
-  require(result.finish_reason == "stop" || result.finish_reason == "interrupted",
+  require(result.finish_reason == "stop" || result.finish_reason == "length" ||
+              result.finish_reason == "interrupted",
           label + " returned unexpected finish reason: " + result.finish_reason);
 }
 
@@ -127,7 +128,8 @@ int main(int argc, char** argv) {
       require(saw_stream_final, "GENAI_VLM_STREAM expected final sample");
       require(final_sample.metrics.generated_tokens > 0,
               "GENAI_VLM_STREAM expected generated tokens");
-      require(final_sample.finish_reason == "stop" || final_sample.finish_reason == "interrupted",
+      require(final_sample.finish_reason == "stop" || final_sample.finish_reason == "length" ||
+                  final_sample.finish_reason == "interrupted",
               "GENAI_VLM_STREAM returned unexpected finish reason: " + final_sample.finish_reason);
       std::cout << "GENAI_VLM_STREAM generated_tokens=" << final_sample.metrics.generated_tokens
                 << " ttft_s=" << final_sample.metrics.time_to_first_token_s

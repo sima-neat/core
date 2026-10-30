@@ -40,6 +40,8 @@ GenAI calls LLiMa directly, not through Runner or a Scheduler GenAI adapter. MLA
 a separate, default-off pass: Core calls Scheduler's client, and Runner runs the installed `mla-rt`
 command-line tool. It requires an idle DevKit with no other MLA work.
 
+GenAI checks context limits using the already-tokenized prompt and preserves conversation history. Runtime `FULL` signals become the `length` finish reason.
+
 ---
 
 ## GStreamer interface ownership

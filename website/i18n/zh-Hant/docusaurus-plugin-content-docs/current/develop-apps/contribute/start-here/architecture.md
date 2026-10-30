@@ -32,6 +32,8 @@ Scheduler 與 Core 都不維護韌體 ID 或逐操作派送表。Core 保留公�
 
 GenAI 直接呼叫 LLiMa，不經過 Runner 或 Scheduler GenAI 配接器。MLA 剖析是獨立且預設停用的流程：Core 呼叫 Scheduler 的用戶端，由 Runner 執行已安裝的 `mla-rt` 命令列工具。它需要沒有其他 MLA 工作的閒置 DevKit。
 
+GenAI 使用已完成詞元化的提示驗證上下文上限，並保留對話記錄。執行階段的 `FULL` 訊號會以 `length` 結束原因傳回。
+
 ---
 
 ## GStreamer 介面擁有權

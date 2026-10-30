@@ -195,6 +195,8 @@ Nodes/Graph fragments  ->  GStreamer fragments  ->  caps negotiation  ->  runtim
                                 Sample / Tensor
 ```
 
+GenAI перевіряє межі контексту за вже токенізованим запитом і зберігає історію розмови. Сигнал `FULL` середовища виконання передається як причина завершення `length`.
+
 ---
 
 ## Основні поняття

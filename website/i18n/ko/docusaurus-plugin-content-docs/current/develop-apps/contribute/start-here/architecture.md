@@ -34,6 +34,8 @@ Scheduler는 Runner를 통해 범용 요청을 전달하며, Scheduler와 Core �
 
 GenAI는 Runner나 Scheduler GenAI 어댑터를 거치지 않고 LLiMa를 직접 호출합니다. MLA 프로파일링은 기본적으로 비활성화된 별도의 패스입니다. Core는 Scheduler 클라이언트를 호출하고, Runner가 설치된 `mla-rt` 명령줄 도구를 실행합니다. 다른 MLA 작업이 없는 유휴 DevKit이 필요합니다.
 
+GenAI는 이미 토큰화된 프롬프트로 컨텍스트 한도를 검증하며 대화 기록을 유지합니다. 런타임의 `FULL` 신호는 종료 사유 `length`로 전달됩니다.
+
 ---
 
 ## GStreamer 인터페이스 소유권

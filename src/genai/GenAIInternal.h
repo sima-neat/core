@@ -3,8 +3,10 @@
 #include "genai/GenAITypes.h"
 #include "genai/ModelDirectory.h"
 
+#include <cstddef>
 #include <filesystem>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -13,6 +15,14 @@ class FileProvider;
 }
 
 namespace simaai::neat::genai::internal {
+
+class ContextLengthExceeded : public std::invalid_argument {
+public:
+  ContextLengthExceeded(std::size_t prompt_tokens, std::size_t context_tokens)
+      : std::invalid_argument("Prompt uses " + std::to_string(prompt_tokens) +
+                              " tokens; model context is " + std::to_string(context_tokens) +
+                              ". Start a new conversation or shorten the input.") {}
+};
 
 struct ModelLoadContext {
   ModelDirectoryInfo info;

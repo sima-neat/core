@@ -187,6 +187,8 @@ Nodes/Graph fragments  ->  GStreamer fragments  ->  caps negotiation  ->  runtim
                                 Sample / Tensor
 ```
 
+GenAI はトークン化済みのプロンプトでコンテキスト上限を検証し、会話履歴を保持します。ランタイムの `FULL` 通知は終了理由 `length` として返されます。
+
 ---
 
 ## 主要な概念
