@@ -943,6 +943,18 @@ create_bundle_stage_dir() {
   return 1
 }
 
+# Path overrides given relative to the caller's directory must keep pointing
+# there after the installer moves into the fresh bundle directory.
+resolve_caller_relative_overrides() {
+  local name value
+  for name in PYNEAT_VENV_DIR SYSROOT ELXR_SDK_RELEASE_FILE NEAT_OS_RELEASE_FILE \
+      NEAT_BUILDINFO_FILE CODEX_HOME CLAUDE_HOME; do
+    value="${!name:-}"
+    [[ -n "${value}" && "${value}" != /* ]] || continue
+    printf -v "${name}" '%s' "${INSTALLER_START_DIR}/${value}"
+  done
+}
+
 # sima-cli downloads every Core bundle into the same directory, so files from
 # earlier installs can sit next to this one. Scheduler admission rejects any
 # .deb the install manifest does not list, so install from a fresh directory
@@ -975,8 +987,12 @@ stage_bundle_in_fresh_dir() {
   chmod 0755 "${stage_dir}"
   cp -p -- "${bundle_files[@]}" "${stage_dir}/"
   if [[ -n "${package_manifest}" ]]; then
+    # The fresh directory has none of the caller's subdirectories, so keep the
+    # package manifest at its file name.
+    NEAT_PACKAGE_MANIFEST="$(basename "${NEAT_PACKAGE_MANIFEST}")"
     cp -p -- "${package_manifest}" "${stage_dir}/${NEAT_PACKAGE_MANIFEST}"
   fi
+  resolve_caller_relative_overrides
   log "Installing from a fresh copy of the bundle: ${stage_dir}"
   cd -- "${stage_dir}"
 }

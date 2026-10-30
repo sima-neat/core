@@ -2596,7 +2596,7 @@ class BundleStageTest(unittest.TestCase):
             "pyneat-0.6.0-cp313.whl\n")
         (self.bundle / "sima-neat-0.6.0+develop.old-Linux-core.deb").write_text("stale")
 
-    def stage(self, candidates: str, extra: str = "") -> subprocess.CompletedProcess[str]:
+    def stage(self, candidates: str, extra: str = "", probe: str = "") -> subprocess.CompletedProcess[str]:
         return run_bash(f"""
 source "$1"
 cd {self.bundle}
@@ -2607,6 +2607,7 @@ stage_bundle_in_fresh_dir
 echo "STAGE=$PWD"
 ls -1
 stat -c 'MODE=%a' . 2>/dev/null || stat -f 'MODE=%Lp' .
+{probe}
 cleanup_installer_tmp_dirs
 INSTALLER_TMP_DIRS=()
 echo "AFTER=$PWD"
@@ -2654,6 +2655,31 @@ df() {{
         self.assertEqual(result.returncode, 1)
         self.assertIn("No writable location has", result.stderr)
         self.assertNotIn("STAGE=", result.stdout)
+
+    def test_relative_path_overrides_still_point_at_caller_dir(self) -> None:
+        result = self.stage(
+            str(self.parent),
+            "PYNEAT_VENV_DIR=pyneat\nNEAT_BUILDINFO_FILE=meta/buildinfo\n"
+            "CODEX_HOME=homes/codex\nSYSROOT=/opt/sysroot",
+            'echo "VENV=$(resolve_venv_dir)"\necho "BUILDINFO=${NEAT_BUILDINFO_FILE}"\n'
+            'echo "CODEX=${CODEX_HOME}"\necho "SYSROOT=${SYSROOT}"')
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.splitlines()
+        self.assertIn(f"VENV={self.bundle}/pyneat", lines)
+        self.assertIn(f"BUILDINFO={self.bundle}/meta/buildinfo", lines)
+        self.assertIn(f"CODEX={self.bundle}/homes/codex", lines)
+        self.assertIn("SYSROOT=/opt/sysroot", lines)
+
+    def test_package_manifest_in_subdirectory_is_staged(self) -> None:
+        (self.bundle / "metadata").mkdir()
+        (self.bundle / "metadata" / "manifest.json").write_text("subdirectory manifest")
+
+        result = self.stage(str(self.parent), "NEAT_PACKAGE_MANIFEST=metadata/manifest.json",
+                            'echo "PACKAGE_MANIFEST=$(cat "$(resolve_package_manifest_path)")"')
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("PACKAGE_MANIFEST=subdirectory manifest", result.stdout.splitlines())
 
     def test_bundle_without_install_manifest_installs_in_place(self) -> None:
         (self.bundle / "neat-install-manifest.txt").unlink()
