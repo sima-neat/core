@@ -33,6 +33,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -926,6 +927,62 @@ void require_owned_internal_output_releases_producer_loans() {
   require(producer_loans == 0, "retained Owned outputs must not hold producer loans");
 }
 
+// Owned outputs are CPU memory. A graph whose input must be device-visible, as
+// Preproc, Quant, Tess and model fragments require, rejects them until
+// Tensor::to() copies them to the device.
+void require_owned_output_reenters_device_input_through_to() {
+  using namespace simaai::neat;
+  const std::vector<std::int64_t> shape{2, 3};
+  const std::vector<float> values{1, 2, 3, 4, 5, 6};
+  const auto build = [&](InputMemoryPolicy memory, OutputMemory output_memory) {
+    InputOptions input;
+    input.payload_type = PayloadType::Tensor;
+    input.memory_policy = memory;
+    Graph graph;
+    graph.add(nodes::Input(input));
+    graph.add(nodes::Output(OutputOptions::EveryFrame(4)));
+    RunOptions options;
+    options.output_memory = output_memory;
+    return graph.build(TensorList{Tensor::from_vector(values, shape)}, options);
+  };
+
+  auto producer = build(InputMemoryPolicy::SystemMemory, OutputMemory::Owned);
+  require(producer.push(TensorList{Tensor::from_vector(values, shape, TensorMemory::CPU)}),
+          "Owned producer push");
+  const auto produced = producer.pull(5000);
+  producer.close();
+  require(produced && produced->owned && produced->tensors.size() == 1 &&
+              produced->tensors[0].device.type == DeviceType::CPU,
+          "producer must publish one Owned CPU tensor");
+  const Tensor owned = produced->tensors[0];
+
+  auto rejecting = build(InputMemoryPolicy::Ev74, OutputMemory::Auto);
+  std::string error = "accepted";
+  try {
+    if (!rejecting.push(TensorList{owned})) {
+      error = "push returned false";
+    } else if (!rejecting.pull(2000)) {
+      error = "no output and no error";
+    }
+  } catch (const std::exception& failure) {
+    error = failure.what();
+  }
+  rejecting.close();
+  require(error.find("device-visible") != std::string::npos,
+          "device-visible input must reject an Owned CPU tensor, got: " + error);
+
+  auto accepting = build(InputMemoryPolicy::Ev74, OutputMemory::Auto);
+  require(accepting.push(TensorList{owned.to({DeviceType::SIMA_CVU, 0})}),
+          "device-visible input must accept an Owned tensor copied with Tensor::to");
+  const auto delivered = accepting.pull(5000);
+  accepting.close();
+  require(delivered && delivered->tensors.size() == 1, "device-visible graph produced no output");
+  const auto bytes = delivered->tensors[0].copy_dense_bytes_tight();
+  require(bytes.size() == values.size() * sizeof(float) &&
+              std::memcmp(bytes.data(), values.data(), bytes.size()) == 0,
+          "Tensor::to changed the Owned payload");
+}
+
 void require_loan_stall_warns_once_per_stall() {
   using namespace simaai::neat;
   struct CapturedStderr {
@@ -984,6 +1041,7 @@ RUN_TEST(
       require_dmabuf_loans_and_pressure_preserve_storage();
       require_loan_stall_warns_once_per_stall();
       require_owned_internal_output_releases_producer_loans();
+      require_owned_output_reenters_device_input_through_to();
       require_device_preferred_input_ownership();
       require_cpu_admissible_input_preserves_dmabuf_images();
       {
