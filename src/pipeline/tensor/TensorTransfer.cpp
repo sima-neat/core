@@ -22,16 +22,14 @@
  *
  * Segment semantics:
  *  - If required_segments is provided, it is used as the destination segment layout.
- *  - Else if required_segment_names is provided, we reuse the segment layout from src.storage
- *    and validate the required names exist.
- *  - Else if src.storage already has segment layout, reuse it.
- *  - Else allocate a single default segment: {"tensor", payload_bytes}.
+ *  - Else allocate one segment for the selected payload: {"tensor", payload_bytes}.
  *
  */
 
 #include "pipeline/internal/TensorTransfer.h"
 
 #include "pipeline/internal/GstDataAdapter.h"
+#include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/TensorMath.h"
@@ -39,12 +37,14 @@
 #include <simaai/scheduler/client/dma_memory.h>
 
 #include <gst/gst.h>
+#include <gstsimaaitensorbuffer_meta.h>
 
 #include <cstdint>
 #include <cstring>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -339,51 +339,11 @@ std::size_t segment_total_bytes(const std::vector<Segment>& segments) {
   return total;
 }
 
-bool segments_contain_names(const std::vector<Segment>& segments,
-                            const std::vector<std::string>& names) {
-  for (const auto& required : names) {
-    bool found = false;
-    for (const auto& seg : segments) {
-      if (seg.name == required) {
-        found = true;
-        break;
-      }
-    }
-    if (!found)
-      return false;
-  }
-  return true;
-}
-
-std::vector<Segment> resolve_segments(const Tensor& src,
-                                      const std::vector<Segment>* required_segments,
-                                      const std::vector<std::string>* required_names,
+std::vector<Segment> resolve_segments(const std::vector<Segment>* required_segments,
                                       std::size_t payload_bytes) {
-  std::vector<Segment> segments;
-
-  if (required_segments && !required_segments->empty()) {
-    segments = *required_segments;
-  } else if (required_names && !required_names->empty()) {
-    if (!src.storage || src.storage->sima_segments.empty()) {
-      throw std::runtime_error("transfer: required segment names but no segment layout");
-    }
-    segments = src.storage->sima_segments;
-  } else if (src.storage && !src.storage->sima_segments.empty()) {
-    segments = src.storage->sima_segments;
-  }
-
-  if (segments.empty()) {
-    Segment seg;
-    seg.name = "tensor";
-    seg.size_bytes = payload_bytes;
-    segments.push_back(std::move(seg));
-  }
-
-  if (required_names && !required_names->empty()) {
-    if (!segments_contain_names(segments, *required_names)) {
-      throw std::runtime_error("transfer: missing required segments");
-    }
-  }
+  std::vector<Segment> segments = required_segments ? *required_segments : std::vector<Segment>{};
+  if (segments.empty())
+    segments.push_back({"tensor", payload_bytes});
 
   const std::size_t total = segment_total_bytes(segments);
   if (payload_bytes == 0 || total < payload_bytes) {
@@ -414,15 +374,82 @@ std::uint64_t target_flags_from_device(const Device& target) {
   return 0;
 }
 
-/** Copy “lightweight” buffer metadata/timestamps/flags from src to dst when available. */
-void copy_gst_metadata(GstBuffer* dst, GstBuffer* src) {
-  if (!dst || !src)
-    return;
-  const GstBufferCopyFlags flags = static_cast<GstBufferCopyFlags>(
-      GST_BUFFER_COPY_METADATA | GST_BUFFER_COPY_TIMESTAMPS | GST_BUFFER_COPY_FLAGS);
-  gst_buffer_copy_into(dst, src, flags, 0, -1);
-  copy_custom_meta(dst, src, "GstSimaMeta");
-  copy_custom_meta(dst, src, "GstSimaSampleMeta");
+// A new allocation must not inherit producer bindings, layout or parent-buffer loans.
+bool copy_gst_metadata(GstBuffer* dst, GstBuffer* src, std::string* error) {
+  const auto flags =
+      static_cast<GstBufferCopyFlags>(GST_BUFFER_COPY_TIMESTAMPS | GST_BUFFER_COPY_FLAGS);
+  if (!gst_buffer_copy_into(dst, src, flags, 0, -1)) {
+    *error = "failed to copy buffer timing";
+    return false;
+  }
+  try {
+    using namespace simaai::gst;
+    const auto* frame = tensor_buffer_frame_metadata(src, error);
+    if (!error->empty()) {
+      *error = "compact frame metadata: " + *error;
+      return false;
+    }
+    auto* legacy = gst_buffer_get_custom_meta(src, "GstSimaMeta");
+    if (!frame && !legacy)
+      return true;
+    auto* metadata = gst_buffer_add_custom_meta(dst, "GstSimaMeta");
+    if (!metadata) {
+      *error = "failed to copy frame metadata";
+      return false;
+    }
+    auto* fields = gst_custom_meta_get_structure(metadata);
+    if (frame) {
+      gst_structure_set(fields, "frame-id", G_TYPE_INT64, gint64(frame->frame_id), "stream-id",
+                        G_TYPE_STRING, frame->stream_id.c_str(), "timestamp", G_TYPE_UINT64,
+                        guint64(frame->timestamp), nullptr);
+      if (frame->input_sequence)
+        gst_structure_set(fields, "input-seq", G_TYPE_INT64, gint64(*frame->input_sequence),
+                          nullptr);
+      if (frame->original_sequence)
+        gst_structure_set(fields, "orig-input-seq", G_TYPE_INT64, gint64(*frame->original_sequence),
+                          nullptr);
+      tensor_buffer_write_preprocess_facts(fields, frame->preprocess, true);
+    } else {
+      auto* source_fields = gst_custom_meta_get_structure(legacy);
+      for (const auto* name : {"frame-id", "input-seq", "orig-input-seq", "stream-id",
+                               "orig-stream-id", "timestamp", "attributes"}) {
+        if (const auto* value = gst_structure_get_value(source_fields, name))
+          gst_structure_set_value(fields, name, value);
+      }
+      const auto preprocess = read_simaai_preprocess_meta(src);
+      if (preprocess && !write_simaai_preprocess_meta(dst, *preprocess)) {
+        *error = "failed to write preprocessing metadata";
+        return false;
+      }
+    }
+    // Source timing is independent of the producing stage's frame and allocation IDs.
+    TensorBufferSourceValues source;
+    if (!tensor_buffer_read_source_values(src, &source, error))
+      return false;
+    using Values = TensorBufferSourceValues;
+    for (const auto& [flag, name] : {std::pair{Values::FrameIdValid, "sample-frame-id-valid"},
+                                     {Values::PtsValid, "sample-pts-valid"},
+                                     {Values::DtsValid, "sample-dts-valid"},
+                                     {Values::DurationValid, "sample-duration-valid"}}) {
+      if (source.has(flag))
+        gst_structure_set(fields, name, G_TYPE_BOOLEAN, gboolean(source.is_valid(flag)), nullptr);
+    }
+    if (source.has(Values::FrameId))
+      gst_structure_set(fields, "sample-frame-id", G_TYPE_INT64, gint64(source.frame_id), nullptr);
+    for (const auto& [flag, name, value] :
+         {std::tuple{Values::Pts, "sample-pts-ns", source.pts_ns},
+          {Values::Dts, "sample-dts-ns", source.dts_ns},
+          {Values::Duration, "sample-duration-ns", source.duration_ns},
+          {Values::Offset, "sample-offset", source.offset},
+          {Values::OffsetEnd, "sample-offset-end", source.offset_end}}) {
+      if (source.has(flag))
+        gst_structure_set(fields, name, G_TYPE_UINT64, guint64(value), nullptr);
+    }
+    return true;
+  } catch (const std::exception& exception) {
+    *error = exception.what();
+  }
+  return false;
 }
 
 /**
@@ -449,6 +476,8 @@ Tensor finalize_transfer_tensor(const Tensor& src, const std::shared_ptr<Storage
   out.device = storage->device;
   out.read_only = false;
   out.byte_offset = 0;
+  out.route.memory_index = 0;
+  out.route.physical_byte_offset = 0;
 
   // Dense: ensure contiguous strides.
   out.strides_bytes =
@@ -529,8 +558,13 @@ Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
     std::string holder_error;
     GstBuffer* src_buffer = buffer_from_holder_if_gstsample(src, &holder_error);
     if (src_buffer) {
-      copy_gst_metadata(dst, src_buffer);
+      std::string metadata_error;
+      const bool copied_metadata = copy_gst_metadata(dst, src_buffer, &metadata_error);
       gst_buffer_unref(src_buffer);
+      if (!copied_metadata) {
+        gst_buffer_unref(dst);
+        throw std::runtime_error("transfer: " + metadata_error);
+      }
     }
   }
 
@@ -555,8 +589,7 @@ Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
 //==============================================================================
 
 Tensor transfer_to_device(const Tensor& src, const Device& target,
-                          const std::vector<Segment>* required_segments,
-                          const std::vector<std::string>* required_segment_names) {
+                          const std::vector<Segment>* required_segments) {
   const std::uint64_t target_flags = target_flags_from_device(target);
   if (target_flags == 0) {
     throw std::runtime_error("transfer: unsupported target device");
@@ -586,8 +619,7 @@ Tensor transfer_to_device(const Tensor& src, const Device& target,
     throw std::runtime_error("transfer: unknown payload size");
   }
 
-  const std::vector<Segment> segments =
-      resolve_segments(src, required_segments, required_segment_names, payload_bytes);
+  const std::vector<Segment> segments = resolve_segments(required_segments, payload_bytes);
 
   return transfer_to_driver_dmabuf(src, target, target_flags, segments);
 }

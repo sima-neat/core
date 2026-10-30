@@ -305,9 +305,10 @@ share the copied carrier; their offsets, padded strides and numerical metadata a
 preserved. Retained and independent outputs both use `StorageKind::GstSample`;
 that storage kind identifies the carrier, not its ownership policy.
 `Sample::owned` identifies an independent output. Allocation failure is reported
-as a pull error. To pass an output into a graph that starts with a device stage
-such as `Preproc`, use `ZeroCopy`, or copy the tensor to the device with
-`Tensor::to(...)` first.
+as a pull error. To pass an output into a separate graph with an EV74 input stage,
+call `tensor.cvu()` first: it returns tensors already in EV74 memory unchanged
+and copies other tensors into EV74 memory. `ZeroCopy` preserves the producer’s
+storage and does not guarantee EV74 accessibility.
 
 `Tensor::cpu()` copies a device tensor into host memory and returns a tensor that is
 already in host memory, such as an `Owned` output, without copying. Use `clone()` for

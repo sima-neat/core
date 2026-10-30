@@ -953,7 +953,7 @@ Explicit `SystemMemory` (or `use_simaai_pool=false` with `Auto`) retains a borro
 host view; explicit DMS placement remains unchanged. This does not change the
 public `from_cv_mat_view()` API or make borrowed host storage device-compatible.
 
-`Tensor` device transfers perform explicit cache-synchronized copies. Shared ingress retains each DMA-BUF, checked view and producer loan; packing a CPU field does not copy DMA-backed siblings. `DirectMemory`, `PhysicalBinding` and `KnownFrameSpan` are input representations. Reuse follows resolved backing identity and the input allocation group, including aliases; no tag alone grants ownership.
+`Tensor` copies between devices use independent storage for the selected view and synchronize caches. Shared ingress retains each DMA-BUF, checked view and producer loan; packing a CPU field does not copy DMA-backed siblings. `DirectMemory`, `PhysicalBinding` and `KnownFrameSpan` are input representations. Reuse follows resolved backing identity and the input allocation group, including aliases; no tag alone grants ownership.
 
 A non-materializing, component-form Pack establishes producer placement before
 carrier allocation. Writable producer outputs occupy their final component

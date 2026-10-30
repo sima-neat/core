@@ -1650,8 +1650,7 @@ make_device_packed_preproc_source_batch_tensor(const std::vector<cv::Mat>& input
   }
   std::vector<Segment> segments{{"ifm0", device_bytes}};
   simaai::neat::Tensor device = pipeline_internal::transfer_to_device(
-      cpu, simaai::neat::Device{simaai::neat::DeviceType::SIMA_CVU, 0}, &segments,
-      /*required_segment_names=*/nullptr);
+      cpu, simaai::neat::Device{simaai::neat::DeviceType::SIMA_CVU, 0}, &segments);
   device.semantic.preprocess = runtime_meta;
   if (GstBuffer* buf = tensor_holder_buffer(device)) {
     (void)write_simaai_preprocess_meta(buf, runtime_meta);
