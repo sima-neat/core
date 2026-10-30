@@ -7,6 +7,7 @@
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "pipeline/runtime/RunInternal.h"
 #include "graph/internal/GraphRunState.h"
+#include "graph/nodes/JoinBundle.h"
 #include "dmabuf_test_utils.h"
 #include "owned_output_test_utils.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
@@ -849,9 +850,9 @@ void require_terminal_transport_defers_public_loans() {
           "the actual graph worker must defer terminal loan admission to the public pull");
 }
 
-// A decoder-like segment feeding a branch is forced to zero-copy transport, so Owned must copy
-// at the public pull. Otherwise each retained output keeps the segment's loan and the source stops.
-void require_owned_internal_output_releases_producer_loans() {
+// Starts an Owned graph whose source segment also feeds a second branch, so the segment
+// forwards zero-copy samples and Owned must copy them at the public pull.
+std::shared_ptr<simaai::neat::runtime::RunCore> start_owned_branching_graph() {
   using namespace simaai::neat;
   gst_init(nullptr, nullptr);
   Graph source("source");
@@ -876,7 +877,36 @@ void require_owned_internal_output_releases_producer_loans() {
   start.mode = RunMode::Async;
   start.allow_startup_preflight = false;
   start.seed = seed;
-  auto parent = runtime::RunCore::start(std::move(plan), std::move(start));
+  return runtime::RunCore::start(std::move(plan), std::move(start));
+}
+
+// A zero-copy segment's appsink emits borrowed samples that reference its CMA buffer.
+simaai::neat::Sample borrowed_cma_sample(int frame_id) {
+  GstBuffer* buffer = sima_test::allocate_cma_dmabuf(64);
+  auto sample = sample_from_buffer(buffer);
+  gst_buffer_unref(buffer);
+  sample.frame_id = frame_id;
+  sample.owned = false;
+  return sample;
+}
+
+// The producer frame is CMA DMA-BUF; an Owned copy is system memory.
+bool holds_system_memory_copy(const simaai::neat::Tensor& tensor) {
+  GstBuffer* buffer = simaai::neat::pipeline_internal::buffer_from_tensor_holder(
+      tensor.storage ? tensor.storage->holder : nullptr);
+  const bool copied = buffer && gst_buffer_n_memory(buffer) == 1 &&
+                      sima_test::is_system_memory(gst_buffer_peek_memory(buffer, 0));
+  if (buffer) {
+    gst_buffer_unref(buffer);
+  }
+  return copied;
+}
+
+// A decoder-like segment feeding a branch is forced to zero-copy transport, so Owned must copy
+// at the public pull. Otherwise each retained output keeps the segment's loan and the source stops.
+void require_owned_internal_output_releases_producer_loans() {
+  using namespace simaai::neat;
+  auto parent = start_owned_branching_graph();
   std::shared_ptr<runtime::RunCore> producer;
   for (const auto& pipe : parent->graph_execution().pipelines) {
     if (pipe && pipe->seg.boundary.graph_internal_output) {
@@ -889,12 +919,7 @@ void require_owned_internal_output_releases_producer_loans() {
   const int retained_count = producer->holder_loan_gate->credit_limit() + 2;
   std::vector<Sample> retained;
   for (int id = 0; id < retained_count; ++id) {
-    GstBuffer* buffer = sima_test::allocate_cma_dmabuf(64);
-    auto produced = sample_from_buffer(buffer);
-    gst_buffer_unref(buffer);
-    produced.frame_id = id;
-    // A zero-copy segment's appsink emits borrowed samples.
-    produced.owned = false;
+    auto produced = borrowed_cma_sample(id);
     {
       std::lock_guard lock(producer->pipeline.out_mu);
       producer->pipeline.out_queue.push_back(std::move(produced));
@@ -908,15 +933,8 @@ void require_owned_internal_output_releases_producer_loans() {
       require(false, "Owned output " + std::to_string(id) +
                          " stalled while earlier outputs were retained: " + error.message);
     }
-    GstBuffer* delivered =
-        pipeline_internal::buffer_from_tensor_holder(output.tensors.front().storage->holder);
-    // The producer frame is CMA DMA-BUF; an Owned copy is system memory.
-    const bool copied = delivered && gst_buffer_n_memory(delivered) == 1 &&
-                        sima_test::is_system_memory(gst_buffer_peek_memory(delivered, 0));
-    if (delivered) {
-      gst_buffer_unref(delivered);
-    }
-    require(output.owned && copied, "Owned output must be an independent copy");
+    require(output.owned && holds_system_memory_copy(output.tensors.front()),
+            "Owned output must be an independent copy");
     retained.push_back(std::move(output));
   }
   // The other branch's Latest queue still holds the newest frame; drain it before counting.
@@ -925,6 +943,49 @@ void require_owned_internal_output_releases_producer_loans() {
   const int producer_loans = producer->holder_loan_gate->inflight();
   parent->close();
   require(producer_loans == 0, "retained Owned outputs must not hold producer loans");
+}
+
+// The public pull must find borrowed producer buffers wherever a sample keeps them: in the
+// fields of a Combine bundle, under an outer Bundle that keeps the default owned flag, and in
+// a single-Tensor sample. An output that is already an Owned copy is not copied again.
+void require_owned_pull_copies_every_borrowed_tensor() {
+  using namespace simaai::neat;
+  auto parent = start_owned_branching_graph();
+
+  graph::nodes::JoinBundleOptions join_options;
+  join_options.inputs = {"left", "right"};
+  graph::nodes::JoinBundle join(join_options);
+  graph::StagePorts ports;
+  ports.in = {{"left", 0}, {"right", 1}};
+  ports.out = {{"bundle", 2}};
+  join.set_ports(ports);
+  std::vector<graph::StageOutMsg> joined;
+  join.on_input(graph::StageMsg{0, borrowed_cma_sample(7)}, joined);
+  join.on_input(graph::StageMsg{1, borrowed_cma_sample(7)}, joined);
+  require(joined.size() == 1 && !joined.front().sample.owned,
+          "Combine must not mark a bundle of borrowed fields as owned");
+
+  // make_bundle_sample() leaves the outer Bundle's owned flag at its default.
+  Sample nested;
+  nested.kind = SampleKind::Bundle;
+  nested.fields.push_back(std::move(joined.front().sample));
+  parent->graph_finish_sink_pull(nested);
+  const Sample& bundle = nested.fields.front();
+  require(bundle.owned && bundle.fields.size() == 2 &&
+              holds_system_memory_copy(bundle.fields[0].tensors.front()) &&
+              holds_system_memory_copy(bundle.fields[1].tensors.front()),
+          "Owned must copy every borrowed field of a nested Combine bundle");
+
+  Sample single = pipeline_internal::collapse_single_tensor_sample(borrowed_cma_sample(8));
+  require(single.kind == SampleKind::Tensor, "fixture must be a single-Tensor sample");
+  parent->graph_finish_sink_pull(single);
+  require(single.owned && holds_system_memory_copy(*single.tensor),
+          "Owned must copy a borrowed single-Tensor sample");
+
+  const auto copy = single.tensor->storage;
+  parent->graph_finish_sink_pull(single);
+  parent->close();
+  require(single.tensor->storage == copy, "Owned must not copy an output that is already a copy");
 }
 
 // Owned outputs are CPU memory. A graph whose input must be device-visible, as
@@ -1041,6 +1102,7 @@ RUN_TEST(
       require_dmabuf_loans_and_pressure_preserve_storage();
       require_loan_stall_warns_once_per_stall();
       require_owned_internal_output_releases_producer_loans();
+      require_owned_pull_copies_every_borrowed_tensor();
       require_owned_output_reenters_device_input_through_to();
       require_device_preferred_input_ownership();
       require_cpu_admissible_input_preserves_dmabuf_images();
