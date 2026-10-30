@@ -6,6 +6,7 @@
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
 #include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
 #include "pipeline/internal/contract/ContractFacts.h"
+#include "nodes/common/Output.h"
 
 namespace simaai::neat::pipeline_internal::terminal_output_contract {
 struct PublicOutputEndpointSelector;
@@ -25,6 +26,7 @@ std::uint32_t resolved_stage_device_access(const StageStaticSpec&);
 // Final owning allocation-local bindings, after checked private requirements exist.
 void finalize_pipeline_storage(
     SimaPluginStaticManifest& manifest,
-    const terminal_output_contract::PublicOutputEndpointSelector* terminal_host = nullptr);
+    const terminal_output_contract::PublicOutputEndpointSelector* endpoint = nullptr,
+    OutputPlacement placement = OutputPlacement::Auto);
 
 } // namespace simaai::neat::pipeline_internal::sima

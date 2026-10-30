@@ -150,7 +150,7 @@ PullStatus pull_graph_output_with_public_loan(runtime::RunCore& core,
       out = std::move(queued->sample);
       (void)core.graph_release_sink_restore_reservation(node_id);
       try {
-        core.graph_finish_sink_pull(out);
+        core.graph_finish_sink_pull(out, node_id);
       } catch (const std::exception& e) {
         out = Sample{};
         pipeline_internal::error_util::set_pull_error(err, error_codes::kRuntimePull,

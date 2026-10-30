@@ -147,6 +147,23 @@ RUN_TEST(
       const auto fixture = make_stage_fixture("model_stage_fragments");
       Model model(fixture.tar_path);
 
+      Model::RouteOptions output_route;
+      output_route.include_output = true;
+      output_route.output = OutputOptions::Latest();
+      output_route.output.sync = true;
+      output_route.output.placement = OutputPlacement::EV74Compatible;
+      const auto output_nodes =
+          internal::ModelAccess::build_public_route_nodes(model, output_route);
+      const auto* output = dynamic_cast<const Output*>(output_nodes.back().get());
+      require(output && output->options().max_buffers == 1 && output->options().drop &&
+                  output->options().sync &&
+                  output->options().placement == OutputPlacement::EV74Compatible,
+              "model routes must forward all OutputOptions to their generated Output");
+      output_route.include_output = false;
+      const auto open_nodes = internal::ModelAccess::build_public_route_nodes(model, output_route);
+      require(!dynamic_cast<const Output*>(open_nodes.back().get()),
+              "output options must not close an open model fragment");
+
       const auto memory_fixture = sima_test::make_strict_model_archive_fixture(
           "model_fragment_memory", {}, true, "yolo_v9c_seg", true);
       for (const auto* target : {"EV74", "A65"}) {

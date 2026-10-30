@@ -271,9 +271,14 @@ EdgeRouterCallbacks make_edge_router_callbacks(const std::shared_ptr<RunCore>& c
   callbacks.sanitize_pipeline_input = [core](std::size_t index, Sample& sample) {
     core->graph_sanitize_pipeline_input(index, sample);
   };
-  callbacks.prepare_sink_sample = [core](NodeId, Sample& sample, std::size_t qsize,
+  callbacks.prepare_sink_sample = [core](NodeId sink, Sample& sample, std::size_t qsize,
                                          std::size_t diag_id) {
-    if (core->opt.output_memory != OutputMemory::ZeroCopy) {
+    const auto found = core->graph_execution().sinks.find(sink);
+    const auto* output = found == core->graph_execution().sinks.end() || !found->second
+                             ? nullptr
+                             : found->second->output_options();
+    if (core->opt.output_memory != OutputMemory::ZeroCopy &&
+        (!output || output->placement == OutputPlacement::Auto)) {
       simaai::neat::graph::maybe_force_copy_for_backpressure(
           sample, qsize, "sink_queue", diag_id,
           core->opt.output_memory == OutputMemory::Auto &&
@@ -313,9 +318,48 @@ bool route_stage_output(const std::shared_ptr<RunCore>& core, StageRuntime& st,
                                     router_callbacks, dispatch_options);
 }
 
+// Output-only segments have no allocator. Follow forwarding stages to the
+// producer so shared backing satisfies every attached output endpoint.
+std::unordered_set<std::size_t> compatible_output_producers(const ExecutionGraphPlan& plan) {
+  std::unordered_map<NodeId, std::size_t> segment_by_node;
+  for (std::size_t i = 0; i < plan.pipeline_segments.size(); ++i)
+    for (const auto node : plan.pipeline_segments[i].node_ids)
+      segment_by_node.emplace(node, i);
+  std::vector<NodeId> pending;
+  for (const auto& sink : plan.pipeline_segments) {
+    if (sink.boundary.direct_graph_sink && graph_build_internal::terminal_output_placement(
+                                               sink.nodes) == OutputPlacement::EV74Compatible)
+      for (const auto edge : sink.input_edges)
+        pending.push_back(plan.edges.at(edge).from);
+  }
+  std::unordered_set<NodeId> visited;
+  std::unordered_set<std::size_t> required;
+  while (!pending.empty()) {
+    const auto node = pending.back();
+    pending.pop_back();
+    if (!visited.insert(node).second)
+      continue;
+    if (stage_forwards_payload(plan, node)) {
+      for (const auto& edge : plan.edges)
+        if (edge.to == node)
+          pending.push_back(edge.from);
+      continue;
+    }
+    const auto producer = segment_by_node.find(node);
+    if (producer == segment_by_node.end() ||
+        plan.pipeline_segments[producer->second].boundary.direct_graph_source)
+      throw std::invalid_argument(
+          "OutputPlacement::EV74Compatible requires a Core-allocated tensor output; "
+          "use tensor.cvu() to copy imported or application-stage output.");
+    required.insert(plan.pipeline_segments[producer->second].id);
+  }
+  return required;
+}
+
 void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
   ExecutionGraphRuntime& execution = core->graph_execution();
   execution.pipelines.reserve(execution.plan.pipeline_segments.size());
+  const auto compatible_producers = compatible_output_producers(execution.plan);
   for (const auto& seg : execution.plan.pipeline_segments) {
     if (seg.consumed_by_fused_realtime_ingress) {
       continue;
@@ -358,7 +402,10 @@ void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
     }
 
     if (seg.boundary.needs_output && !simaai::neat::graph::has_output_appsink(seg.nodes)) {
-      nodes.push_back(simaai::neat::nodes::Output());
+      OutputOptions output;
+      if (compatible_producers.contains(seg.id))
+        output.placement = OutputPlacement::EV74Compatible;
+      nodes.push_back(simaai::neat::nodes::Output(output));
       injected_output = true;
     }
 
@@ -1482,6 +1529,23 @@ std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartO
   configure_graph_public_output_loan_gate(core, core->graph_options, opt.mode);
   core->graph_verbose_guard = std::move(opt.graph_verbose_guard);
   core->graph_execution().plan = std::move(plan);
+  bool compatible_output = false;
+  for (const auto& segment : core->graph_execution().plan.pipeline_segments)
+    compatible_output |= graph_build_internal::terminal_output_placement(segment.nodes) ==
+                         OutputPlacement::EV74Compatible;
+  if (compatible_output) {
+    const auto retained = session_build_make_stream_options(core->graph_options.pipeline, opt.mode,
+                                                            OutputPlacement::EV74Compatible);
+    if (!core->holder_loan_gate) {
+      core->pipeline.stream_opt.holder_loan_credits = retained.holder_loan_credits;
+      core->pipeline.stream_opt.holder_loan_credits_auto = retained.holder_loan_credits_auto;
+      core->pipeline.stream_opt.holder_loan_sample_window = retained.holder_loan_sample_window;
+      core->pipeline.stream_opt.holder_loan_per_sample_arity =
+          retained.holder_loan_per_sample_arity;
+      core->holder_loan_gate =
+          std::make_shared<pipeline_internal::HolderLoanGate>(retained.holder_loan_credits);
+    }
+  }
 
   try {
     auto step_start = pipeline_internal::build_timing_now();

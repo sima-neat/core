@@ -110,7 +110,7 @@ namespace {
 namespace client = ::simaai::scheduler::client;
 
 const StageStaticSpec*
-terminal_host_candidate(const SimaPluginStaticManifest& manifest,
+public_output_candidate(const SimaPluginStaticManifest& manifest,
                         const terminal_output_contract::PublicOutputEndpointSelector* endpoint,
                         std::span<const StageConsumers> access) {
   namespace query = terminal_output_contract;
@@ -782,7 +782,7 @@ struct StorageCompilation {
   }
 
   void select_terminal(const terminal_output_contract::PublicOutputEndpointSelector* endpoint) {
-    const auto* terminal = terminal_host_candidate(manifest, endpoint, consumers);
+    const auto* terminal = public_output_candidate(manifest, endpoint, consumers);
     if (!terminal)
       return;
     const auto index = static_cast<std::size_t>(terminal - manifest.stages.data());
@@ -818,6 +818,22 @@ struct StorageCompilation {
       carriers[id].requirement.policy =
           owned_policy(carriers[id].requirement.required_device_access,
                        client::AllocationPolicy::RequireHostCpu);
+  }
+
+  void require_public_cma(const terminal_output_contract::PublicOutputEndpointSelector* endpoint) {
+    const auto* terminal = public_output_candidate(manifest, endpoint, consumers);
+    if (!terminal || terminal->logical_outputs.empty())
+      throw std::invalid_argument(
+          "OutputPlacement::EV74Compatible requires a resolved public tensor output.");
+    const auto index = static_cast<std::size_t>(terminal - manifest.stages.data());
+    for (const auto& output : terminal->logical_outputs) {
+      auto& carrier = carriers.at(stages[index].outputs.at(output.physical_index));
+      if (groups[group_root(carrier.group)].pinned)
+        throw std::invalid_argument(
+            "OutputPlacement::EV74Compatible cannot relocate imported backing; "
+            "use tensor.cvu() for an explicit copy.");
+      carrier.requirement.policy = client::AllocationPolicy::RequireCma;
+    }
   }
 
   void pack_groups() {
@@ -1084,12 +1100,16 @@ struct StorageCompilation {
 
 void finalize_pipeline_storage(
     SimaPluginStaticManifest& manifest,
-    const terminal_output_contract::PublicOutputEndpointSelector* terminal_host) {
+    const terminal_output_contract::PublicOutputEndpointSelector* endpoint,
+    OutputPlacement placement) {
   StorageCompilation storage(manifest);
   storage.collect_models();
   storage.collect_outputs();
   storage.collect_edges();
-  storage.select_terminal(terminal_host);
+  if (placement == OutputPlacement::EV74Compatible)
+    storage.require_public_cma(endpoint);
+  else
+    storage.select_terminal(endpoint);
   storage.pack_groups();
   storage.publish_layouts();
   storage.finalize_tvm_epochs();

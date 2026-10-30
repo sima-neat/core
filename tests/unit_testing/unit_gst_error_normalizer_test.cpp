@@ -115,6 +115,21 @@ RUN_TEST(
 
       {
         auto raw = raw_error("neatkernelrunner", "gst-stream-error-quark", GST_STREAM_ERROR_FAILED,
+                             "storage.hardware: EV74 requires admitted CMA memory");
+        raw.details["neat-diagnostic-id"] = "neatkernelrunner.failure";
+        raw.details["runtime-category"] = "invalid_binding";
+        raw.details["runtime-field"] = "storage.hardware";
+        const auto diagnostic = classify_gst_error(std::move(raw));
+        require_code(diagnostic, error_codes::kKernelBinding);
+        const auto text = render_diagnostic_body(diagnostic, false);
+        require_contains(text, "tensor.cvu()", "missing explicit transfer guidance");
+        require_contains(text, "OutputPlacement::EV74Compatible",
+                         "missing producer allocation guidance");
+        require_contains(text, "explicitly copy", "transfer guidance must disclose the copy");
+      }
+
+      {
+        auto raw = raw_error("neatkernelrunner", "gst-stream-error-quark", GST_STREAM_ERROR_FAILED,
                              "span mismatch: " + std::string(17000, 'x') + " password=late-secret");
         raw.details["neat-diagnostic-id"] = "neatkernelrunner.failure";
         raw.details["runtime-category"] = "invalid_binding";

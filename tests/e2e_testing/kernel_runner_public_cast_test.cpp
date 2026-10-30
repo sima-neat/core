@@ -75,7 +75,9 @@ void require_prepared_runners(Run& run, unsigned expected) {
           "every Cast stage must retain its prepared Scheduler stage");
 }
 
-void require_publication(const Tensor& tensor, bool compact) {
+void require_publication(const Tensor& tensor, bool compact,
+                         simaai::scheduler::client::dma::HeapKind expected =
+                             simaai::scheduler::client::dma::HeapKind::MlaDms) {
   const auto& storage = tensor.storage;
   require(storage && storage->kind == StorageKind::GstSample && storage->holder,
           "output lost zero-copy GstSample owner");
@@ -83,8 +85,8 @@ void require_publication(const Tensor& tensor, bool compact) {
   namespace dma = simaai::scheduler::client::dma;
   require(gst_buffer_n_memory(buffer) == 1, "A65 Cast output lost its single carrier");
   const auto backing = dma::DmaBufMemory::retain(gst_buffer_peek_memory(buffer, 0));
-  require(backing && backing->knownHeapKind() == dma::HeapKind::MlaDms,
-          "A65-only Cast output must use required DMS");
+  require(backing && backing->knownHeapKind() == expected,
+          "Cast output did not use its planned heap");
   std::string error;
   const auto publication = simaai::gst::tensor_buffer_publication(buffer, &error);
   require(error.empty() && bool(publication) == compact, "output publication mode mismatch");
@@ -92,6 +94,95 @@ void require_publication(const Tensor& tensor, bool compact) {
   require(error.empty() && bool(frame) == compact, "output dynamic metadata authority mismatch");
   require(bool(gst_buffer_get_custom_meta(buffer, "GstSimaMeta")) != compact,
           "output legacy metadata authority mismatch");
+}
+
+void qualify_output_placement(bool compact) {
+  for (const auto placement : {OutputPlacement::EV74Compatible, OutputPlacement::Auto}) {
+    GraphOptions graph_options;
+    graph_options.processcvu_requested_run_target = "A65";
+    Graph graph(graph_options);
+    InputOptions input_options;
+    input_options.payload_type = PayloadType::Tensor;
+    input_options.memory_policy = InputMemoryPolicy::SystemMemory;
+    graph.add(nodes::Input(input_options));
+    CastOptions cast_options;
+    cast_options.direction = CastDirection::Fp32ToBf16;
+    graph.add(nodes::Cast(cast_options));
+    OutputOptions output;
+    output.placement = placement;
+    graph.add(nodes::Output("features", output));
+    auto input = Tensor::from_vector(std::vector<float>(192, 1.5F), {8, 8, 3}, TensorMemory::CPU);
+    input.layout = TensorLayout::HWC;
+    RunOptions options;
+    options.output_memory = OutputMemory::ZeroCopy;
+    auto run = graph.build(TensorList{input}, options);
+    auto outputs = run.run(TensorList{input}, 5000);
+    require(outputs.size() == 1, "output placement count");
+    require_publication(outputs.front(), compact,
+                        placement == OutputPlacement::EV74Compatible
+                            ? simaai::scheduler::client::dma::HeapKind::Cma
+                            : simaai::scheduler::client::dma::HeapKind::MlaDms);
+    check(outputs.front(), 1.5F);
+    // Repeated pulls retain the planned storage and produce the same numbers.
+    outputs.clear();
+    outputs = run.run(TensorList{input}, 5000);
+    require_publication(outputs.front(), compact,
+                        placement == OutputPlacement::EV74Compatible
+                            ? simaai::scheduler::client::dma::HeapKind::Cma
+                            : simaai::scheduler::client::dma::HeapKind::MlaDms);
+    check(outputs.front(), 1.5F);
+  }
+}
+
+void qualify_named_output_placement(bool compact, bool shared, bool auto_owned = false) {
+  GraphOptions policy;
+  policy.processcvu_requested_run_target = "A65";
+  Graph graph(policy);
+  InputOptions ingress;
+  ingress.payload_type = PayloadType::Tensor;
+  ingress.memory_policy = InputMemoryPolicy::SystemMemory;
+  const auto source = nodes::Input("image", ingress);
+  CastOptions cast;
+  cast.direction = CastDirection::Fp32ToBf16;
+  cast.element_name = "features_cast";
+  const auto features = nodes::Cast(cast);
+  OutputOptions compatible;
+  compatible.placement = OutputPlacement::EV74Compatible;
+  graph.connect(source, features);
+  graph.connect(features, nodes::Output("features", compatible));
+  if (shared) {
+    graph.connect(features, nodes::Output("other"));
+  } else {
+    cast.element_name = "other_cast";
+    const auto other = nodes::Cast(cast);
+    graph.connect(source, other);
+    graph.connect(other, nodes::Output("other"));
+  }
+  auto input = Tensor::from_vector(std::vector<float>(192, 1.5F), {8, 8, 3}, TensorMemory::CPU);
+  input.layout = TensorLayout::HWC;
+  RunOptions options;
+  options.output_memory = auto_owned ? OutputMemory::Auto : OutputMemory::ZeroCopy;
+  auto run = graph.build(TensorList{input}, options);
+  require(run.push("image", TensorList{input}), "named input push");
+  const auto output = run.pull_tensors("features", 5000);
+  const auto other = run.pull_tensors("other", 5000);
+  require(output.size() == 1 && other.size() == 1, "named output counts");
+  require_publication(output.front(), compact, simaai::scheduler::client::dma::HeapKind::Cma);
+  if (auto_owned) {
+    const auto& storage = other.front().storage;
+    require(storage && storage->kind == StorageKind::GstSample && storage->holder,
+            "Owned output lost its independent sample");
+    auto* buffer = gst_sample_get_buffer(static_cast<GstSample*>(storage->holder.get()));
+    require(
+        !simaai::scheduler::client::dma::DmaBufMemory::retain(gst_buffer_peek_memory(buffer, 0)),
+        "Auto's owned default must still copy the other output into system memory");
+  } else {
+    require_publication(other.front(), compact,
+                        shared ? simaai::scheduler::client::dma::HeapKind::Cma
+                               : simaai::scheduler::client::dma::HeapKind::MlaDms);
+  }
+  check(output.front(), 1.5F);
+  check(other.front(), 1.5F);
 }
 
 void qualify_two_cast_stages(bool compact, int a65_workers) {
@@ -387,6 +478,18 @@ int main(int argc, char** argv) {
     require(measurement.raw.empty() || measurement.samples > 0, "raw requires measurement samples");
     setenv("SIMA_CORE_COMPACT_METADATA", mode == "compact" ? "1" : "0", 1);
     setenv("SIMA_GST_RUN_INSERT_BOUNDARIES", "0", 1);
+    qualify_output_placement(mode == "compact");
+    qualify_named_output_placement(mode == "compact", false);
+    qualify_named_output_placement(mode == "compact", true);
+    const char* output_default = std::getenv("SIMA_OUTPUT_MEMORY_DEFAULT");
+    const std::optional<std::string> saved_default =
+        output_default ? std::optional<std::string>(output_default) : std::nullopt;
+    setenv("SIMA_OUTPUT_MEMORY_DEFAULT", "owned", 1);
+    qualify_named_output_placement(mode == "compact", false, true);
+    if (saved_default)
+      setenv("SIMA_OUTPUT_MEMORY_DEFAULT", saved_default->c_str(), 1);
+    else
+      unsetenv("SIMA_OUTPUT_MEMORY_DEFAULT");
     GraphOptions graph_options;
     graph_options.processcvu_requested_run_target = "A65";
     graph_options.kernel_runner_a65_workers = a65_workers;

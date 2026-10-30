@@ -1,6 +1,7 @@
 #define SIMA_NEAT_INTERNAL 1
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StageMemoryPolicy.h"
+#include "pipeline/internal/TerminalOutputContractQuery.h"
 #include "test_main.h"
 
 #include <array>
@@ -224,7 +225,31 @@ void check_public_tensor_routes() {
   require(rejected, "an invalid explicit producer must not become public ingress");
 }
 
+void check_public_cma() {
+  si::SimaPluginStaticManifest source;
+  source.stages = {stage("upstream", client::Hardware::A65), checked_tensor_stage()};
+  connect(source.stages.back(), "upstream");
+  auto automatic = source;
+  si::finalize_pipeline_storage(automatic);
+  require(automatic.stages.back().frame_layout->allocations.front().policy ==
+              client::AllocationPolicy::RequireDms,
+          "Auto placement changed for an A65-only output");
+  simaai::neat::pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector endpoint;
+  endpoint.terminal_stage_key = "tensor";
+  endpoint.terminal_stage_key_required = true;
+  si::finalize_pipeline_storage(source, &endpoint, simaai::neat::OutputPlacement::EV74Compatible);
+  const auto& terminal = source.stages.back();
+  const auto& layout = *terminal.frame_layout;
+  require(layout.allocations.at(layout.outputs.front().span.allocation_index).policy ==
+                  client::AllocationPolicy::RequireCma &&
+              terminal.native_kernel->target == client::Hardware::A65 &&
+              source.stages.front().frame_layout->allocations.front().policy ==
+                  client::AllocationPolicy::RequireDms,
+          "public CMA must change only output storage, preserving upstream placement and executor");
+}
+
 void check_memory_placement() {
+  check_public_cma();
   check_public_tensor_routes();
   check_independent_carriers(false);
   check_independent_carriers(true);
@@ -265,6 +290,18 @@ void check_memory_placement() {
   pinned->outputs = {{0, {1, 64, 64}}};
   pinned->inputs = {{client::KnownFrameSpan{0, {1, 64, 64}}, 0}};
   fanout.stages[0].frame_layout = pinned;
+  auto explicit_import = fanout;
+  simaai::neat::pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector endpoint;
+  endpoint.terminal_stage_key = "producer";
+  endpoint.terminal_stage_key_required = true;
+  bool rejected = false;
+  try {
+    si::finalize_pipeline_storage(explicit_import, &endpoint,
+                                  simaai::neat::OutputPlacement::EV74Compatible);
+  } catch (const std::invalid_argument& error) {
+    rejected = std::string(error.what()).find("imported backing") != std::string::npos;
+  }
+  require(rejected, "explicit CMA must not relocate imported backing or insert a copy");
   si::finalize_pipeline_storage(fanout);
   const auto& adopted = *fanout.stages[0].frame_layout;
   require(adopted.ownership == client::FrameOwnership::ReuseInput &&

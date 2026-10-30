@@ -495,7 +495,15 @@ struct OutputMemoryResolution {
 // NOTE: this governs the PUBLIC output boundary only. Internal stage-chaining
 // defaults (StageRun ZeroCopy forces, Model ingress-branch sub-runs) deliberately
 // stay ZeroCopy to preserve packed tensor topology and must NOT be routed here.
-OutputMemoryResolution resolve_output_memory(const RunOptions& opt, RunMode mode) {
+OutputMemoryResolution resolve_output_memory(const RunOptions& opt, RunMode mode,
+                                             OutputPlacement placement) {
+  if (placement == OutputPlacement::EV74Compatible) {
+    if (opt.output_memory == OutputMemory::Owned)
+      throw std::invalid_argument(
+          "OutputPlacement::EV74Compatible is incompatible with OutputMemory::Owned; "
+          "use Auto or ZeroCopy to retain CMA output storage.");
+    return {true, true};
+  }
   bool zero_copy;
   bool preserve_framework = false;
   switch (opt.output_memory) {
@@ -1022,12 +1030,14 @@ void maybe_apply_public_terminal_output_override(const BuildResult& build_result
   }
 }
 
-InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
+InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode,
+                                       OutputPlacement placement) {
   InputStreamOptions stream_opt;
+  stream_opt.output_placement = placement;
   const int queue_depth = (opt.queue_depth > 0) ? opt.queue_depth : 0;
   // Single source of truth for public-output memory kind (mode-aware Auto +
   // reversible env override). See resolve_output_memory().
-  const OutputMemoryResolution output_mem = resolve_output_memory(opt, mode);
+  const OutputMemoryResolution output_mem = resolve_output_memory(opt, mode, placement);
   stream_opt.appsink_sync = false;
   stream_opt.appsink_drop = (opt.overflow_policy != OverflowPolicy::Block);
   stream_opt.appsink_max_buffers = queue_depth;
@@ -1425,7 +1435,8 @@ BuildInputContext prepare_build_input_context(const std::vector<std::shared_ptr<
   enforce_push_run_mode(nodes, "Graph::build(input)");
   require_input_appsrc(nodes, "Graph::build(input)", &ctx.src_node);
 
-  ctx.stream_opt = make_stream_options(ctx.merged_opt, ctx.mode);
+  ctx.stream_opt = make_stream_options(ctx.merged_opt, ctx.mode,
+                                       graph_build_internal::terminal_output_placement(nodes));
   ctx.stream_opt.public_output_contract = public_output_contract;
   graph_build_internal::apply_explicit_public_output_options(ctx.stream_opt, nodes);
   maybe_enable_rtsp_appsink_drop(ctx.stream_opt, nodes);
@@ -1863,9 +1874,11 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
 
   BuildResult br = build_pipeline_full(build_nodes, insert_boundaries, "mysink", insert_queue2,
                                        name_transform, &sess_opt);
-  if (graph_build_internal::explicit_public_terminal_output(opt, build_nodes)) {
-    br.terminal_host_endpoint = public_output_endpoint_selector_local(build_nodes);
+  if (graph_build_internal::explicit_public_terminal_output(opt, build_nodes) ||
+      opt.output_placement == OutputPlacement::EV74Compatible) {
+    br.public_output_endpoint = public_output_endpoint_selector_local(build_nodes);
   }
+  br.output_placement = opt.output_placement;
   maybe_compile_build_result_contracts(
       &br, &build_nodes, sess_opt, input_contract_from_input(sample), seed_spec,
       contract_compile_sample_from_input(sample), "Graph::build(input)");
@@ -2932,8 +2945,9 @@ bool session_build_should_insert_async_queue2(RunMode mode, const RunOptions& op
   return should_insert_async_queue2(mode, opt);
 }
 
-InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunMode mode) {
-  return make_stream_options(opt, mode);
+InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunMode mode,
+                                                     OutputPlacement placement) {
+  return make_stream_options(opt, mode, placement);
 }
 
 void session_build_finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt) {

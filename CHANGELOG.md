@@ -7,6 +7,8 @@ The format is based on Keep a Changelog and follows semantic versioning.
 ## [Unreleased]
 
 ### Added
+- `OutputOptions::placement` can request EV74-compatible output storage for direct handoff
+  between graphs. `Model::RouteOptions::output` also exposes output buffering, dropping and sync.
 - Release hygiene framework for Phase 1 (governance docs, CI policy scripts, release-gate workflow).
 - `TelemetryMonitor` records board power, temperatures, CPU usage, and memory from Sentinel over
   a window the caller chooses, in C++ and Python. `Telemetry::save()` writes YAML or JSON, and a

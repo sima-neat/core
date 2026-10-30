@@ -354,8 +354,9 @@ bool sample_has_cpu_backed_tensor_for_device_push(const simaai::neat::Sample& sa
 const char* device_visible_push_guard_message() {
   return "CPU-backed Tensor pushed into a device-visible EV74/DMS route. Create the Tensor "
          "with TensorMemory::EV74 (or TensorMemory::MLA for DMS routes) so the copy is owned by "
-         "Tensor creation, or set SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY=1 to allow the slow "
-         "compatibility copy in runner.push().";
+         "Tensor creation, explicitly copy with tensor.cvu(), or set "
+         "OutputOptions::placement = OutputPlacement::EV74Compatible on the producing "
+         "graph.";
 }
 
 // Shared fail-fast guard. Throws the actionable message when the route demands

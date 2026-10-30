@@ -896,14 +896,14 @@ void prepare_stage_contracts(BuildResult& build, const char* where) {
                                    !env_str("SIMA_GST_ELEMENT_BUFFER_DEBUG", "").empty();
     // This candidate comes from the typed public endpoint. Scheduler proves
     // the actual stopped stage-to-appsink edge during cohort admission.
-    auto terminal_host = build.terminal_host_endpoint;
-    if (terminal_observer)
-      terminal_host.reset();
-    else if (terminal_host && !terminal_host->terminal_stage_key.empty())
-      terminal_host->terminal_stage_key =
-          apply_name_transform(build.name_transform, terminal_host->terminal_stage_key);
-    pipeline_internal::sima::finalize_pipeline_storage(*transformed_manifest,
-                                                       terminal_host ? &*terminal_host : nullptr);
+    auto endpoint = build.public_output_endpoint;
+    if (terminal_observer && build.output_placement == OutputPlacement::Auto)
+      endpoint.reset();
+    else if (endpoint && !endpoint->terminal_stage_key.empty())
+      endpoint->terminal_stage_key =
+          apply_name_transform(build.name_transform, endpoint->terminal_stage_key);
+    pipeline_internal::sima::finalize_pipeline_storage(
+        *transformed_manifest, endpoint ? &*endpoint : nullptr, build.output_placement);
     if (build.compiled_contracts)
       build.compiled_contracts->model_storage_scopes.reset();
     if (build.rendered_manifest)
@@ -919,6 +919,11 @@ void prepare_stage_contracts(BuildResult& build, const char* where) {
     }
   }
 
+  if (build.output_placement == OutputPlacement::EV74Compatible &&
+      (!transformed_manifest || transformed_manifest->stages.empty()))
+    throw std::invalid_argument(
+        "OutputPlacement::EV74Compatible requires a Core-allocated tensor output; "
+        "use tensor.cvu() to copy externally allocated output.");
   build.prepared_manifest = std::move(transformed_manifest);
 }
 

@@ -250,7 +250,7 @@ Core has one build-local planning flow:
 4. Choose heaps and pack with the shared physical-DAG lifetime proof.
 5. Finalize stage-local `FrameLayout` objects and publication; render once without repairing placement.
 
-Any EV74 access requires CMA; owned MLA/A65-only carriers use DMS. Qualified fresh A65 public terminals may use HostCpu. Imported backing, offsets, geometry and producer loans remain pinned. Fan-out includes every consumer, and views share their root carrier.
+Any EV74 access or explicit `OutputOptions::placement = OutputPlacement::EV74Compatible` export requires CMA; owned MLA/A65-only carriers use DMS. Qualified fresh A65 public terminals may use HostCpu. Imported backing, offsets, geometry and producer loans remain pinned. Fan-out includes every consumer, and views share their root carrier.
 
 `AllocationPolicy::PreferDmsThenCma` explicitly permits eligible owned DMS allocations to fall back to CMA on capacity failure. It does not select Linux system memory. Pool boundaries, Queue boundaries, independent invocations and retained outputs constrain lifetime reuse.
 

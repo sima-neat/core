@@ -2531,8 +2531,8 @@ bool plan_uses_direct_mla_public_output_boundary(const internal::PreprocessPlann
 
 simaai::neat::RunOptions
 run_options_for_model_public_boundary(const internal::PreprocessPlannerResult& plan,
-                                      simaai::neat::RunOptions run_opt) {
-  if (run_opt.output_memory == OutputMemory::Auto &&
+                                      simaai::neat::RunOptions run_opt, OutputPlacement placement) {
+  if (run_opt.output_memory == OutputMemory::Auto && placement == OutputPlacement::Auto &&
       plan_uses_direct_mla_public_output_boundary(plan)) {
     // Direct MLA/QMLA public-IO artifacts expose the MLA session as the public
     // boundary: the input route processor stamps the single public input as a
@@ -6360,7 +6360,7 @@ build_pipeline_nodes(const Model& model, const internal::ModelPack& pack, const 
   }
 
   if (popt.include_output) {
-    nodes.push_back(simaai::neat::nodes::Output());
+    nodes.push_back(simaai::neat::nodes::Output(popt.output));
   }
 
   return nodes;
@@ -7301,8 +7301,8 @@ Model::Runner Model::build(const Model::RouteOptions& opt,
   if (use_input_route_processor) {
     internal::ModelAccess::configure_session_input_route(p, *this, build_opt);
   }
-  const RunOptions effective_run_opt =
-      run_options_for_model_public_boundary(impl_->preprocess_plan, run_opt);
+  const RunOptions effective_run_opt = run_options_for_model_public_boundary(
+      impl_->preprocess_plan, run_opt, build_opt.output.placement);
   Run run = p.build(dummy_inputs, effective_run_opt);
   const auto ingress_names = ingress_names_from_contracts(ingress_contracts);
   if (tensor_mode) {
@@ -7359,8 +7359,8 @@ Model::Runner Model::build_with_model_options(const simaai::neat::TensorList& in
   if (use_input_route_processor) {
     internal::ModelAccess::configure_session_input_route(p, *this, build_opt);
   }
-  const RunOptions effective_run_opt =
-      run_options_for_model_public_boundary(impl_->preprocess_plan, run_opt);
+  const RunOptions effective_run_opt = run_options_for_model_public_boundary(
+      impl_->preprocess_plan, run_opt, build_opt.output.placement);
   Run run = p.build(inputs, effective_run_opt);
   const auto ingress_names = ingress_names_from_contracts(ingress_contracts);
   if (!tensor_mode) {
@@ -7414,8 +7414,8 @@ Model::Runner Model::build(const simaai::neat::Sample& inputs, const Model::Rout
   if (use_input_route_processor) {
     internal::ModelAccess::configure_session_input_route(p, *this, build_opt);
   }
-  const RunOptions effective_run_opt =
-      run_options_for_model_public_boundary(impl_->preprocess_plan, run_opt);
+  const RunOptions effective_run_opt = run_options_for_model_public_boundary(
+      impl_->preprocess_plan, run_opt, build_opt.output.placement);
   Run run = p.build(inputs, effective_run_opt);
   return Runner(std::move(run), ingress_names);
 }
@@ -7474,8 +7474,8 @@ Model::Runner Model::build(const std::vector<cv::Mat>& inputs, const Model::Rout
                                     &info, false, false);
   Graph p(route_options_from_model_route_options(build_opt, &impl_->options));
   add_nodes_to_graph(p, std::move(nodes));
-  const RunOptions effective_run_opt =
-      run_options_for_model_public_boundary(impl_->preprocess_plan, run_opt);
+  const RunOptions effective_run_opt = run_options_for_model_public_boundary(
+      impl_->preprocess_plan, run_opt, build_opt.output.placement);
   Run run = p.build(inputs, effective_run_opt);
   return Runner(std::move(run));
 }
@@ -8376,6 +8376,7 @@ Graph ModelAccess::build_graph_fragment(const Model& model, Model::RouteOptions 
   provenance.model_route.prepared_runner = opt.prepared_runner;
   provenance.model_route.async_queue_depth = opt.async_queue_depth;
   provenance.model_route.expose_all_outputs = opt.expose_all_outputs;
+  provenance.model_route.output = opt.output;
   graph.attach_fragment_boundary_hints_(0, range_end, std::move(fragment_hints),
                                         std::move(provenance));
 

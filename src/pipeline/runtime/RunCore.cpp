@@ -1559,12 +1559,20 @@ std::optional<Sample> RunCore::graph_pull(simaai::neat::graph::NodeId node_id, i
     return std::nullopt;
   }
   Sample out = std::move(queued->sample);
-  graph_finish_sink_pull(out);
+  graph_finish_sink_pull(out, node_id);
   return out;
 }
 
-void RunCore::graph_finish_sink_pull(Sample& sample) {
+void RunCore::graph_finish_sink_pull(Sample& sample, graph::NodeId sink) {
   pipeline_internal::release_realtime_frame_credits_for_sample(sample, "graph-sink-pull");
+  if (graph_execution_) {
+    const auto found = graph_execution_->sinks.find(sink);
+    const auto* output = found == graph_execution_->sinks.end() || !found->second
+                             ? nullptr
+                             : found->second->output_options();
+    if (output && output->placement == OutputPlacement::EV74Compatible)
+      return;
+  }
   // Graph-internal segments forward their outputs zero-copy, so Owned copies them here to
   // release the producer pool buffer and its loan before the app holds the sample.
   const bool owned_output =

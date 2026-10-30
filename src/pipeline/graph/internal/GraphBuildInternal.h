@@ -48,6 +48,12 @@ apply_explicit_public_output_options(InputStreamOptions& stream_opt,
   return true;
 }
 
+static inline OutputPlacement
+terminal_output_placement(const std::vector<std::shared_ptr<Node>>& nodes) noexcept {
+  const auto* output = nodes.empty() ? nullptr : dynamic_cast<const Output*>(nodes.back().get());
+  return output ? output->options().placement : OutputPlacement::Auto;
+}
+
 } // namespace graph_build_internal
 
 namespace pipeline_internal::terminal_output_contract {
@@ -82,7 +88,9 @@ std::string session_build_apply_fast_path_options_to_fragment(std::string fragme
 // consumer. Both endpoints declare `num-buffers`; memory visibility is not
 // selected here and no consumer factory/plugin name is encoded.
 std::string session_build_propagate_terminal_consumer_lane_window(std::string pipeline);
-InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunMode mode);
+InputStreamOptions
+session_build_make_stream_options(const RunOptions& opt, RunMode mode,
+                                  OutputPlacement placement = OutputPlacement::Auto);
 void session_build_finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt);
 void session_build_tune_internal_zero_copy_holder_window(InputStreamOptions& stream_opt,
                                                          std::size_t edge_queue,

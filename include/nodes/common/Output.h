@@ -18,6 +18,12 @@
 
 namespace simaai::neat {
 
+/// Allocation placement for public tensor outputs, independent of execution target.
+enum class OutputPlacement {
+  Auto = 0,       ///< Core chooses storage from the graph's consumers.
+  EV74Compatible, ///< Allocate outputs accessible to a separate EV74 graph.
+};
+
 /**
  * @brief How a public Graph output combines multiple named producers.
  *
@@ -47,7 +53,7 @@ enum class CombinePolicy {
 };
 
 /**
- * @brief Buffering / sync options for the `Output` Node.
+ * @brief Buffering, synchronization and placement for the `Output` Node.
  *
  * The three factory presets cover the common use cases — pick one rather than
  * configuring fields manually.
@@ -59,6 +65,7 @@ struct OutputOptions {
   bool drop = false;   ///< If true, drop the oldest sample on overflow instead of blocking.
   bool sync = false;   ///< If true, sync to the pipeline clock (slower, but matches realtime).
   CombinePolicy combine_policy = CombinePolicy::None; ///< Multi-producer Graph combine policy.
+  OutputPlacement placement = OutputPlacement::Auto;  ///< Core-owned output storage requirement.
 
   /// Preset: keep only the most recent sample (drop=true, max_buffers=1). Lowest latency.
   static OutputOptions Latest();

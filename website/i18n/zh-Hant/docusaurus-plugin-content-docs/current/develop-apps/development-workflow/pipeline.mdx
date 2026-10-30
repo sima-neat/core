@@ -294,8 +294,12 @@ preview = run.pull("preview", timeout_ms=2000)
 不占用裝置（CMA）記憶體。封裝的張量輸出頭共用複製後的載體；其位移、填補步幅與
 數值中繼資料都會保留。保留式與獨立的輸出都使用 `StorageKind::GstSample`；該儲存
 種類識別的是載體，而非擁有權原則。`Sample::owned` 識別獨立輸出。分配失敗時會以
-拉取錯誤回報。若要將輸出送入以 `Preproc` 等裝置階段開頭的圖，請使用 `ZeroCopy`，
-或先以 `Tensor::to(...)` 將張量複製到裝置。
+拉取錯誤回報。若要將輸出傳入另一個 EV74 圖，請將產生端的 `OutputOptions::placement` 設為
+`OutputPlacement::EV74Compatible`。使用 `model.build()` 時，請透過 Python 的
+`ModelRouteOptions` 或 C++ 的 `Model::RouteOptions` 設定 `route.output.placement`；
+相同的 `output` 選項也控制緩衝、丟棄與時脈同步。Core 會直接在 CMA 分配選定的輸出，
+不變更執行目標，也不在拉取時複製。擁有權請使用 `Auto` 或 `ZeroCopy`；`Owned` 與匯入儲存空間的
+重新配置會遭拒。若要明確複製現有張量，請使用 `tensor.cvu()`。
 
 `Tensor::cpu()` 會將裝置上的張量複製到主機記憶體；已在主機記憶體中的張量（例如 `Owned` 輸出）則直接傳回，不會複製。
 需要獨立副本時請使用 `clone()`。

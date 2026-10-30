@@ -179,7 +179,7 @@ Core 在每次建置中使用單一規劃流程：
 4. 選擇記憶體堆積，依共用實體 DAG 生命週期證據配置。
 5. 確定各階段的 `FrameLayout` 與發布資訊，只呈現一次，不再修補放置。
 
-任何 EV74 存取都需要 CMA；自有且僅供 MLA／A65 使用的載體使用 DMS。符合條件的新 A65 公開終端可使用 HostCpu。匯入儲存空間、位移、幾何與產生端借用維持固定。分支納入所有使用端，檢視共用根載體。
+任何 EV74 存取或明確的 `OutputOptions::placement = OutputPlacement::EV74Compatible` 匯出都需要 CMA；自有且僅供 MLA／A65 使用的載體使用 DMS。符合條件的新 A65 公開終端可使用 HostCpu。匯入儲存空間、位移、幾何與產生端借用維持固定。分支納入所有使用端，檢視共用根載體。
 
 `AllocationPolicy::PreferDmsThenCma` 明確允許符合條件的自有 DMS 配置在容量不足時退回 CMA，不會選擇一般 Linux 記憶體。緩衝池邊界、Queue 邊界、獨立呼叫與保留的輸出限制生命週期重用。
 
