@@ -1753,12 +1753,15 @@ InputGeometry describe_tensor_geometry_or_throw(const simaai::neat::Tensor& inpu
       throw std::invalid_argument(std::string(tag) + ": tensor input must be dense");
     }
     std::span<const int64_t> normalized_shape = input.shape;
-    const bool layout_is_explicit = input.layout != TensorLayout::Unknown;
+    // Unspecified layouts already use HWC geometry. Apply the same batch-one
+    // shorthand unless the caller supplied explicit axis semantics.
+    const bool allow_batch_one_shorthand =
+        input.layout != TensorLayout::Unknown || input.axis_semantics.empty();
     const size_t expected_rank = (input.layout == TensorLayout::HW) ? 2u : 3u;
     const bool has_explicit_leading_batch_axis =
         input.axis_semantics.size() == normalized_shape.size() && !input.axis_semantics.empty() &&
         input.axis_semantics.front() == TensorAxisSemantic::N;
-    if (layout_is_explicit && normalized_shape.size() == expected_rank + 1 &&
+    if (allow_batch_one_shorthand && normalized_shape.size() == expected_rank + 1 &&
         !has_explicit_leading_batch_axis) {
       const int64_t batch = normalized_shape.front();
       if (batch <= 0) {

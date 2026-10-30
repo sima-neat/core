@@ -483,6 +483,20 @@ void check_synthetic_tensor_contract_shapes() {
       const auto input_spec = describe_tensor_spec_or_throw(submitted, options, "HWC input");
       require(seed_spec.shape == input_spec.shape && seed_spec.layout == input_spec.layout,
               "unseeded build and batch-one HWC input must have identical runtime specs");
+      auto unspecified = tensor;
+      unspecified.layout = TensorLayout::Unknown;
+      const auto unspecified_spec =
+          describe_tensor_spec_or_throw(unspecified, options, "unspecified NHWC input");
+      require(unspecified_spec.caps_key == seed_spec.caps_key &&
+                  unspecified_spec.required_bytes_actual == seed_spec.required_bytes_actual,
+              "input_specs()-shaped tensors must negotiate like batch-one HWC inputs");
+      require(unspecified.shape == shape && unspecified.storage == tensor.storage,
+              "wire normalization must not reshape or copy the caller's tensor");
+      unspecified.axis_semantics = {TensorAxisSemantic::N, TensorAxisSemantic::H,
+                                    TensorAxisSemantic::W, TensorAxisSemantic::C};
+      require(describe_tensor_spec_or_throw(unspecified, options, "explicit batch axis").shape ==
+                  shape,
+              "an explicit batch axis must remain in the wire contract");
     }
   }
 }

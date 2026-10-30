@@ -753,20 +753,26 @@ def test_tensor_input_model_unseeded_build_accepts_hwc(monkeypatch):
   model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"))
   image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
   image_model = _image_input_model(_env_path("SIMA_YOLO_TAR"))
-  tensor = pyneat.Tensor.from_numpy(
-      _cpu_quanttess_input(image_model, image), copy=True,
-      memory=pyneat.TensorMemory.EV74, layout=pyneat.TensorLayout.HWC,
-  )
+  values = _cpu_quanttess_input(image_model, image)
+  inputs = [
+      pyneat.Tensor.from_numpy(values, copy=True, memory=pyneat.TensorMemory.EV74,
+                              layout=pyneat.TensorLayout.HWC),
+      pyneat.Tensor.from_numpy(values[None], copy=True, memory=pyneat.TensorMemory.EV74),
+  ]
+  assert list(inputs[1].shape) == list(model.input_specs()[0].shape)
   results = []
-  for seeded in (True, False):
-    runner = model.build([tensor]) if seeded else model.build()
-    try:
-      results.append([t.to_numpy(copy=True) for t in runner.run([tensor], timeout_ms=30000)])
-    finally:
-      runner.close()
-  assert len(results[0]) == len(results[1]) > 0
-  for seeded, unseeded in zip(*results):
-    np.testing.assert_array_equal(unseeded, seeded)
+  for seed in inputs:
+    for seeded in (True, False):
+      runner = model.build([seed]) if seeded else model.build()
+      try:
+        for tensor in inputs:
+          results.append([t.to_numpy(copy=True) for t in runner.run([tensor], timeout_ms=30000)])
+      finally:
+        runner.close()
+  for result in results[1:]:
+    assert len(result) == len(results[0]) > 0
+    for actual, expected in zip(result, results[0]):
+      np.testing.assert_array_equal(actual, expected)
 
 
 def test_cpu_quanttess_input_matches_letterboxed_fp32_tensor_contract():
