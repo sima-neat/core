@@ -1044,28 +1044,36 @@ void require_owned_output_reenters_device_input_through_to() {
           "Tensor::to changed the Owned payload");
 }
 
+struct CapturedStderr {
+  std::ostringstream text;
+  std::streambuf* previous = std::cerr.rdbuf(text.rdbuf());
+  ~CapturedStderr() {
+    std::cerr.rdbuf(previous);
+  }
+  int count(const std::string& needle) const {
+    const std::string all = text.str();
+    int found = 0;
+    for (auto at = all.find(needle); at != std::string::npos; at = all.find(needle, at + 1)) {
+      ++found;
+    }
+    return found;
+  }
+};
+
 void require_loan_stall_warns_once_per_stall() {
   using namespace simaai::neat;
-  struct CapturedStderr {
-    std::ostringstream text;
-    std::streambuf* previous = std::cerr.rdbuf(text.rdbuf());
-    ~CapturedStderr() {
-      std::cerr.rdbuf(previous);
-    }
-    int warnings() const {
-      const std::string all = text.str();
-      const std::string warning = "[WARN] Run::pull: zero-copy output loan credits exhausted";
-      int count = 0;
-      for (auto at = all.find(warning); at != std::string::npos; at = all.find(warning, at + 1)) {
-        ++count;
-      }
-      return count;
-    }
-  };
+  const std::string warning =
+      "[WARN] Run::pull (graph segment 3): zero-copy output loan credits exhausted";
+  const std::string limits = "(sample_requires=1 holder, credit_limit=1, in_flight=1, "
+                             "output_window=1); release older zero-copy outputs and retry";
+  const std::string remedy = "to hold more, raise RunOptions.queue_depth or use "
+                             "OutputMemory::Owned.";
 
   auto core = std::make_shared<runtime::RunCore>();
   core->pipeline.supports_pull = true;
   core->pipeline.loan_stall_warn_after = std::chrono::milliseconds(100);
+  core->pipeline.loan_stall_label = "graph segment 3";
+  core->pipeline.stream_opt.holder_loan_sample_window = 1;
   core->holder_loan_gate = std::make_shared<pipeline_internal::HolderLoanGate>(1);
   for (const int id : {1, 2, 3}) {
     core->pipeline.out_queue.push_back(make_legacy_device_gst_sample(id));
@@ -1079,15 +1087,55 @@ void require_loan_stall_warns_once_per_stall() {
   require(core->pull(300, blocked, &error) == PullStatus::Timeout &&
               core->pipeline.out_queue.size() == 2U,
           "a loan stall must keep timing out without consuming the queued output");
-  require(captured.warnings() == 1, "a loan stall past the threshold must warn once");
-  require(core->pull(300, blocked, &error) == PullStatus::Timeout && captured.warnings() == 1,
+  require(captured.count(warning) == 1, "a loan stall past the threshold must warn once");
+  require(captured.count(limits) == 1 && captured.count(remedy) == 1,
+          "the loan-stall warning must report the gate's limits and how to raise them");
+  require(core->pull(300, blocked, &error) == PullStatus::Timeout && captured.count(warning) == 1,
           "a continuing loan stall must not warn again");
 
   held = Sample{};
   require(core->pull(1000, held, &error) == PullStatus::Ok,
           "releasing the held output must let the stalled pull recover");
-  require(core->pull(300, blocked, &error) == PullStatus::Timeout && captured.warnings() == 2,
+  require(core->pull(300, blocked, &error) == PullStatus::Timeout && captured.count(warning) == 2,
           "a new loan stall after recovery must warn again");
+}
+
+void require_graph_output_loan_stall_warns_once_per_stall() {
+  using namespace simaai::neat;
+  const std::string warning = "[WARN] Run::pull: zero-copy output loan credits exhausted";
+  constexpr graph::NodeId kSinkNode = 7;
+
+  auto core = std::make_shared<runtime::RunCore>();
+  core->graph_execution_ = std::make_unique<runtime::ExecutionGraphRuntime>();
+  runtime::Endpoint endpoint;
+  endpoint.kind = runtime::Endpoint::Kind::GraphSink;
+  endpoint.node = kSinkNode;
+  core->graph_execution_->plan.default_output = endpoint;
+  auto sink = std::make_shared<runtime::GraphSinkQueue>();
+  core->graph_execution_->sinks[kSinkNode] = sink;
+  core->pipeline.loan_stall_warn_after = std::chrono::milliseconds(100);
+  core->holder_loan_gate = std::make_shared<pipeline_internal::HolderLoanGate>(1);
+  for (const int id : {1, 2, 3}) {
+    sink->push(runtime::RuntimeSinkQueueMsg{make_legacy_device_gst_sample(id)});
+  }
+  CapturedStderr captured;
+  PullError error;
+  Sample held;
+  require(core->pull(0, held, &error) == PullStatus::Ok,
+          "first graph output must take the only loan");
+
+  Sample blocked;
+  require(core->pull(300, blocked, &error) == PullStatus::Timeout && sink->size() == 2U,
+          "a graph output loan stall must keep timing out without consuming the queued output");
+  require(captured.count(warning) == 1, "a graph output loan stall must warn once");
+  require(core->pull(300, blocked, &error) == PullStatus::Timeout && captured.count(warning) == 1,
+          "a continuing graph output loan stall must not warn again");
+
+  held = Sample{};
+  require(core->pull(1000, held, &error) == PullStatus::Ok,
+          "releasing the held graph output must let the stalled pull recover");
+  require(core->pull(300, blocked, &error) == PullStatus::Timeout && captured.count(warning) == 2,
+          "a new graph output loan stall after recovery must warn again");
 }
 
 } // namespace
@@ -1101,6 +1149,7 @@ RUN_TEST(
       require_output_policy_matrix();
       require_dmabuf_loans_and_pressure_preserve_storage();
       require_loan_stall_warns_once_per_stall();
+      require_graph_output_loan_stall_warns_once_per_stall();
       require_owned_internal_output_releases_producer_loans();
       require_owned_pull_copies_every_borrowed_tensor();
       require_owned_output_reenters_device_input_through_to();
