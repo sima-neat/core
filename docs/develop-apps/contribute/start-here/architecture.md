@@ -1366,9 +1366,9 @@ and span; a host allocator name or a retained sibling is not sufficient. CPU-onl
 storage remains CPU storage, not a DMA-BUF.
 
 `OutputMemory::Owned` materializes public outputs into independent system memory
-from GStreamer's builtin system allocator, the allocator of A65 HostCpu terminal
-pools, after logical output projection. Each physical carrier is copied once
-per pull, preserving head offsets, padded strides, planes and numerical metadata.
+that Core allocates and wraps as GStreamer memory, after logical output
+projection. Each physical carrier is copied once per pull, preserving head
+offsets, padded strides, planes and numerical metadata.
 Only carriers needed by the selected outputs are materialized. In mixed Auto
 output, copying an unretained CPU-backed head does not copy its retained framework
 siblings.
@@ -1378,13 +1378,16 @@ Copied envelopes contain only selected carriers. Their `memory_index` selectors
 and segment tables are remapped together; `physical_index` and physical offsets
 continue to identify the producing stage's contract, not destination slot order.
 The new carrier retains no producer pool loan or parent-buffer metadata. Its
-`StorageKind::GstSample` identifies a GStreamer carrier, not a borrowed pool loan;
-`Sample::owned` distinguishes independent output from retained producer output. Core
+`StorageKind::GstSample` identifies a GStreamer carrier, not a borrowed pool loan.
+`Sample::owned` only marks storage that no Run's producer lends; an app-wrapped pool
+buffer or a device tensor carries it too. The public pull therefore recognizes an
+Owned copy by its storage and copies every other GStreamer-backed tensor. Core
 owns the allocation and the Sample/Tensor projection. Owned outputs are application
 CPU memory and never use CMA, so retained outputs cannot exhaust device memory. A
 device-visible input rejects them like any CPU tensor; callers use `ZeroCopy` or an
 explicit `Tensor::to(...)` copy. `Auto`/`ZeroCopy` retain compatible DMA-BUF
-outputs; explicit `.cpu()` and `.clone()` continue to create host-memory copies.
+outputs. `.clone()` creates a host-memory copy; `.cpu()` copies only a tensor it
+cannot map on the CPU and returns an Owned output unchanged.
 An allocation failure is a pull error.
 
 Core can select a CPU-only pool for a fresh native tensor arena only at an exact,

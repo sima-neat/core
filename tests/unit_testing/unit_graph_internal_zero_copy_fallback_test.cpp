@@ -14,6 +14,7 @@
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/Graph.h"
+#include "pipeline/TensorAdapters.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/EdgeRouter.h"
 #include "pipeline/runtime/RunCore.h"
@@ -992,6 +993,55 @@ void require_owned_pull_copies_every_borrowed_tensor() {
   require(single.tensor->storage == copy, "Owned must not copy an output that is already a copy");
 }
 
+// Public helpers mark app-built samples owned without copying them. Owned must still copy an
+// app-wrapped pool buffer and a device tensor; only its own copy passes through unchanged.
+void require_owned_pull_copies_app_wrapped_storage() {
+  using namespace simaai::neat;
+  auto parent = start_owned_branching_graph();
+
+  GstBufferPool* pool = gst_buffer_pool_new();
+  GstStructure* config = gst_buffer_pool_get_config(pool);
+  gst_buffer_pool_config_set_params(config, nullptr, 64, 1, 1);
+  require(gst_buffer_pool_set_config(pool, config) && gst_buffer_pool_set_active(pool, TRUE),
+          "one-buffer test pool should start");
+  GstBuffer* buffer = nullptr;
+  require(gst_buffer_pool_acquire_buffer(pool, &buffer, nullptr) == GST_FLOW_OK,
+          "test pool should lend its buffer");
+  GstCaps* caps = gst_caps_from_string("video/x-raw,format=GRAY8,width=8,height=8");
+  GstSample* gst_sample = gst_sample_new(buffer, caps, nullptr, nullptr);
+  gst_caps_unref(caps);
+  gst_buffer_unref(buffer);
+  Sample wrapped = make_tensor_sample("frame", from_gst_sample(gst_sample));
+  gst_sample_unref(gst_sample);
+  require(wrapped.owned, "public helpers mark an app-wrapped sample owned");
+  parent->graph_finish_sink_pull(wrapped);
+  require(pipeline_internal::tensor_is_owned_copy(wrapped.tensors.front()),
+          "Owned must copy an app-wrapped pool buffer");
+  GstBufferPoolAcquireParams params{};
+  params.flags = GST_BUFFER_POOL_ACQUIRE_FLAG_DONTWAIT;
+  GstBuffer* returned = nullptr;
+  require(gst_buffer_pool_acquire_buffer(pool, &returned, &params) == GST_FLOW_OK,
+          "Owned output must give the app's pool buffer back");
+  gst_buffer_unref(returned);
+  gst_buffer_pool_set_active(pool, FALSE);
+  gst_object_unref(pool);
+
+  Sample device = make_tensor_sample(
+      "frame", Tensor::from_vector(std::vector<float>{1, 2, 3, 4}, std::vector<std::int64_t>{4}));
+  require(device.owned && device.tensors.front().device.type != DeviceType::CPU,
+          "fixture must be an owned device tensor");
+  parent->graph_finish_sink_pull(device);
+  const Tensor& copied = device.tensors.front();
+  require(copied.device.type == DeviceType::CPU && holds_system_memory_copy(copied),
+          "Owned must copy a device tensor into system memory");
+
+  const auto copy = copied.storage;
+  parent->graph_finish_sink_pull(device);
+  parent->close();
+  require(device.tensors.front().storage == copy,
+          "Owned must recognize its own copy and leave it unchanged");
+}
+
 // Owned outputs are CPU memory. A graph whose input must be device-visible, as
 // Preproc, Quant, Tess and model fragments require, rejects them until
 // Tensor::to() copies them to the device.
@@ -1158,6 +1208,7 @@ RUN_TEST(
       require_graph_output_loan_stall_warns_once_per_stall();
       require_owned_internal_output_releases_producer_loans();
       require_owned_pull_copies_every_borrowed_tensor();
+      require_owned_pull_copies_app_wrapped_storage();
       require_owned_output_reenters_device_input_through_to();
       require_device_preferred_input_ownership();
       require_cpu_admissible_input_preserves_dmabuf_images();
@@ -1303,6 +1354,8 @@ RUN_TEST(
 
       constexpr simaai::neat::graph::NodeId kSinkNode = 7;
       auto graph_core = std::make_shared<simaai::neat::runtime::RunCore>();
+      // Loan transfer is ZeroCopy behavior, which a default async Realtime Run resolves to.
+      graph_core->pipeline.stream_opt.copy_output = false;
       graph_core->graph_execution_ =
           std::make_unique<simaai::neat::runtime::ExecutionGraphRuntime>();
       simaai::neat::runtime::Endpoint endpoint;
