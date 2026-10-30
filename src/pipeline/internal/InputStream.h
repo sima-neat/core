@@ -1,10 +1,10 @@
 #pragma once
 
-#include "nodes/common/Output.h"
 #ifndef SIMA_NEAT_INTERNAL
 #error "Internal header. Not part of the public API."
 #endif
 
+#include "nodes/common/Output.h"
 #include "pipeline/internal/InputStreamStats.h"
 #include "pipeline/internal/InputStreamTeardownPolicy.h"
 #include "pipeline/Tensor.h"

@@ -102,6 +102,17 @@ RUN_TEST(
       require_contains(read_text(memory_policy_roundtrip_path), "\"placement\":0",
                        "another output must keep its independent Auto placement");
 
+      for (const int placement : {-1, 2}) {
+        auto invalid = saved_memory_policy_json;
+        const std::string key = "\"placement\":1";
+        invalid.replace(invalid.find(key), key.size(),
+                        "\"placement\":" + std::to_string(placement));
+        const auto path = tmp_json_path("invalid_output_placement.json");
+        write_text(path, invalid);
+        require_neat_error([&]() { (void)Graph::load(path); }, error_codes::kIoParse,
+                           "unknown Output placement", "unknown Output placement");
+      }
+
       std::string legacy_memory_policy_json = saved_memory_policy_json;
       const std::string memory_policy_key = "\"memory_policy\":1";
       const std::size_t memory_policy_pos = legacy_memory_policy_json.find(memory_policy_key);

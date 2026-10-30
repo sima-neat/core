@@ -93,7 +93,8 @@ std::string session_build_apply_fast_path_options_to_fragment(std::string fragme
 std::string session_build_propagate_terminal_consumer_lane_window(std::string pipeline);
 InputStreamOptions
 session_build_make_stream_options(const RunOptions& opt, RunMode mode,
-                                  OutputPlacement placement = OutputPlacement::Auto);
+                                  OutputPlacement placement = OutputPlacement::Auto,
+                                  const std::string& output_name = {});
 void session_build_finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt);
 void session_build_tune_internal_zero_copy_holder_window(InputStreamOptions& stream_opt,
                                                          std::size_t edge_queue,

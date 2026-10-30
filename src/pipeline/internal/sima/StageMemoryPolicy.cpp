@@ -831,13 +831,14 @@ struct StorageCompilation {
     // selector narrows placement using the same rules as publication.
     if (terminal_output_contract::stage_public_outputs_match_endpoint(*terminal, *endpoint) &&
         !terminal_output_contract::filter_publication_stage_for_endpoint(&publication, *endpoint))
-      throw std::invalid_argument("OutputPlacement::EV74Compatible has no selected tensor output.");
+      throw std::invalid_argument("stage '" + terminal->element_name +
+                                  "': EV74Compatible has no selected tensor output.");
     for (const auto& output : publication.logical_outputs) {
       auto& carrier = carriers.at(stages[index].outputs.at(output.physical_index));
       if (groups[group_root(carrier.group)].pinned)
-        throw std::invalid_argument(
-            "OutputPlacement::EV74Compatible cannot relocate imported backing; "
-            "use tensor.cvu() for an explicit copy.");
+        throw std::invalid_argument("stage '" + terminal->element_name +
+                                    "': EV74Compatible cannot relocate imported backing; "
+                                    "use tensor.cvu() for an explicit copy.");
       carrier.requirement.policy = client::AllocationPolicy::RequireCma;
     }
   }

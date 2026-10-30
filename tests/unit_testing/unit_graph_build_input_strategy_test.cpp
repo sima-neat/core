@@ -4,6 +4,8 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "pipeline/Graph.h"
+#include "pipeline/ErrorCodes.h"
+#include "pipeline/NeatError.h"
 #include "pipeline/graph/internal/GraphTestHooks.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "pipeline/internal/InputPolicy.h"
@@ -138,11 +140,29 @@ RUN_TEST(
         bool rejected = false;
         try {
           (void)session_build_make_stream_options(placement_options, mode,
-                                                  OutputPlacement::EV74Compatible);
-        } catch (const std::invalid_argument& error) {
-          rejected = std::string(error.what()).find("incompatible") != std::string::npos;
+                                                  OutputPlacement::EV74Compatible, "features");
+        } catch (const NeatError& error) {
+          rejected = error.report().error_code == error_codes::kPipelineShape &&
+                     std::string(error.what()).find("Output 'features'") != std::string::npos &&
+                     std::string(error.what()).find("incompatible") != std::string::npos;
         }
         require(rejected, "CMA and Owned are contradictory output requirements");
+      }
+
+      {
+        Graph graph;
+        InputOptions input;
+        input.payload_type = PayloadType::Tensor;
+        input.memory_policy = InputMemoryPolicy::SystemMemory;
+        const auto source = nodes::Input("input", input);
+        OutputOptions output;
+        output.placement = OutputPlacement::EV74Compatible;
+        graph.connect(source, nodes::Output("imported", output));
+        graph.connect(source, nodes::Output("other"));
+        const auto tensor =
+            Tensor::from_vector(std::vector<float>(16, 1.0F), {16}, TensorMemory::CPU);
+        require_neat_error([&]() { (void)graph.build(TensorList{tensor}); },
+                           error_codes::kPipelineShape, "Output 'imported'", "Output 'imported'");
       }
 
       // Sync build path parity for Mat/Tensor/Sample.

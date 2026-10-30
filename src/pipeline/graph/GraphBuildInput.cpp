@@ -496,12 +496,14 @@ struct OutputMemoryResolution {
 // defaults (StageRun ZeroCopy forces, Model ingress-branch sub-runs) deliberately
 // stay ZeroCopy to preserve packed tensor topology and must NOT be routed here.
 OutputMemoryResolution resolve_output_memory(const RunOptions& opt, RunMode mode,
-                                             OutputPlacement placement) {
+                                             OutputPlacement placement,
+                                             const std::string& output_name) {
   if (placement == OutputPlacement::EV74Compatible) {
     if (opt.output_memory == OutputMemory::Owned)
-      throw std::invalid_argument(
-          "OutputPlacement::EV74Compatible is incompatible with OutputMemory::Owned; "
-          "use Auto or ZeroCopy to retain CMA output storage.");
+      session_build_throw_session_error_simple(
+          error_codes::kPipelineShape,
+          "Output '" + output_name + "': EV74Compatible is incompatible with OutputMemory::Owned.",
+          "Use Auto or ZeroCopy to retain CMA output storage.");
     return {true, true};
   }
   bool zero_copy;
@@ -1018,13 +1020,14 @@ void maybe_apply_public_terminal_output_override(const BuildResult& build_result
 }
 
 InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode,
-                                       OutputPlacement placement) {
+                                       OutputPlacement placement, const std::string& output_name) {
   InputStreamOptions stream_opt;
   stream_opt.output_placement = placement;
   const int queue_depth = (opt.queue_depth > 0) ? opt.queue_depth : 0;
   // Single source of truth for public-output memory kind (mode-aware Auto +
   // reversible env override). See resolve_output_memory().
-  const OutputMemoryResolution output_mem = resolve_output_memory(opt, mode, placement);
+  const OutputMemoryResolution output_mem =
+      resolve_output_memory(opt, mode, placement, output_name);
   stream_opt.appsink_sync = false;
   stream_opt.appsink_drop = (opt.overflow_policy != OverflowPolicy::Block);
   stream_opt.appsink_max_buffers = queue_depth;
@@ -1423,7 +1426,8 @@ BuildInputContext prepare_build_input_context(const std::vector<std::shared_ptr<
   require_input_appsrc(nodes, "Graph::build(input)", &ctx.src_node);
 
   ctx.stream_opt = make_stream_options(ctx.merged_opt, ctx.mode,
-                                       graph_build_internal::terminal_output_placement(nodes));
+                                       graph_build_internal::terminal_output_placement(nodes),
+                                       nodes.empty() ? std::string{} : nodes.back()->user_label());
   ctx.stream_opt.public_output_contract = public_output_contract;
   graph_build_internal::apply_explicit_public_output_options(ctx.stream_opt, nodes);
   maybe_enable_rtsp_appsink_drop(ctx.stream_opt, nodes);
@@ -2929,8 +2933,9 @@ bool session_build_should_insert_async_queue2(RunMode mode, const RunOptions& op
 }
 
 InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunMode mode,
-                                                     OutputPlacement placement) {
-  return make_stream_options(opt, mode, placement);
+                                                     OutputPlacement placement,
+                                                     const std::string& output_name) {
+  return make_stream_options(opt, mode, placement, output_name);
 }
 
 void session_build_finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt) {
@@ -3005,6 +3010,7 @@ void session_build_configure_output_storage(BuildResult& build,
       stream_opt.output_placement == OutputPlacement::EV74Compatible)
     build.public_output_endpoint = public_output_endpoint_selector_local(nodes);
   build.output_placement = stream_opt.output_placement;
+  build.public_output_name = nodes.empty() ? std::string{} : nodes.back()->user_label();
   build.compatible_output_names.assign(compatible_output_names.begin(),
                                        compatible_output_names.end());
 }

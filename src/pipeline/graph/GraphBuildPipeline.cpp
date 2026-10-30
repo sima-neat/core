@@ -902,9 +902,15 @@ void prepare_stage_contracts(BuildResult& build, const char* where) {
     else if (endpoint && !endpoint->terminal_stage_key.empty())
       endpoint->terminal_stage_key =
           apply_name_transform(build.name_transform, endpoint->terminal_stage_key);
-    pipeline_internal::sima::finalize_pipeline_storage(
-        *transformed_manifest, endpoint ? &*endpoint : nullptr, build.output_placement,
-        build.compatible_output_names);
+    try {
+      pipeline_internal::sima::finalize_pipeline_storage(
+          *transformed_manifest, endpoint ? &*endpoint : nullptr, build.output_placement,
+          build.compatible_output_names);
+    } catch (const std::invalid_argument& error) {
+      session_build_throw_session_error_simple(
+          error_codes::kPipelineShape, "Output '" + build.public_output_name + "': " + error.what(),
+          "", pipeline_string);
+    }
     if (build.compiled_contracts)
       build.compiled_contracts->model_storage_scopes.reset();
     if (build.rendered_manifest)
@@ -922,9 +928,11 @@ void prepare_stage_contracts(BuildResult& build, const char* where) {
 
   if (build.output_placement == OutputPlacement::EV74Compatible &&
       (!transformed_manifest || transformed_manifest->stages.empty()))
-    throw std::invalid_argument(
-        "OutputPlacement::EV74Compatible requires a Core-allocated tensor output; "
-        "use tensor.cvu() to copy externally allocated output.");
+    session_build_throw_session_error_simple(
+        error_codes::kPipelineShape,
+        "Output '" + build.public_output_name +
+            "': EV74Compatible requires a Core-allocated tensor output.",
+        "Use tensor.cvu() to copy externally allocated output.", pipeline_string);
   build.prepared_manifest = std::move(transformed_manifest);
 }
 

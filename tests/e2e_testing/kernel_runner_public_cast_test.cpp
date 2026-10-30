@@ -147,6 +147,63 @@ void qualify_named_output_placement(bool compact, bool shared, bool auto_owned =
   check(other.front(), 1.5F);
 }
 
+void qualify_bundle_output_placement(bool compact, CombinePolicy combine) {
+  GraphOptions policy;
+  policy.processcvu_requested_run_target = "A65";
+  Graph graph(policy);
+  InputOptions ingress;
+  ingress.payload_type = PayloadType::Tensor;
+  ingress.memory_policy = InputMemoryPolicy::SystemMemory;
+  const auto source = nodes::Input("image", ingress);
+  CastOptions cast;
+  cast.direction = CastDirection::Fp32ToBf16;
+  cast.element_name = "first_cast";
+  const auto first = nodes::Cast(cast);
+  OutputOptions compatible;
+  compatible.placement = OutputPlacement::EV74Compatible;
+  compatible.combine_policy = combine;
+  // A sink label matching a tensor slot must not select only that tensor.
+  const auto output = nodes::Output("0", compatible);
+  if (combine == CombinePolicy::None) {
+    graph.connect(source, first);
+    graph.connect(first, output);
+    graph.connect(first, nodes::Output("other"));
+  } else {
+    for (const auto* name : {"left", "right"}) {
+      Graph branch(policy);
+      branch.add(nodes::Input(std::string(name) + "_input", ingress));
+      cast.element_name = std::string(name) + "_cast";
+      branch.add(nodes::Cast(cast));
+      branch.add(nodes::Output(name));
+      graph.connect(source, branch);
+      graph.connect(branch, output);
+      if (std::string(name) == "left")
+        graph.connect(branch, nodes::Output("other"));
+    }
+  }
+  TensorList inputs;
+  for (int i = 0; i < 2; ++i) {
+    auto tensor = Tensor::from_vector(std::vector<float>(192, 1.5F), {8, 8, 3}, TensorMemory::CPU);
+    tensor.layout = TensorLayout::HWC;
+    inputs.push_back(std::move(tensor));
+  }
+  RunOptions options;
+  options.output_memory = OutputMemory::ZeroCopy;
+  auto run = graph.build(inputs, options);
+  auto sample = sample_from_tensors(inputs);
+  sample.frame_id = 7;
+  sample.pts_ns = 7000;
+  require(run.push("image", sample), "bundle input push");
+  const auto tensors = run.pull_tensors("0", 5000);
+  const auto other = run.pull_tensors("other", 5000);
+  require(tensors.size() == (combine == CombinePolicy::None ? 2U : 4U) && other.size() == 2U,
+          "aggregate Output must preserve every tensor regardless of its label");
+  for (const auto& tensor : tensors) {
+    require_publication(tensor, compact, simaai::scheduler::client::dma::HeapKind::Cma);
+    check(tensor, 1.5F);
+  }
+}
+
 void qualify_two_cast_stages(bool compact, int a65_workers, OutputPlacement placement) {
   GraphOptions graph_options;
   graph_options.processcvu_requested_run_target = "A65";
@@ -446,6 +503,8 @@ int main(int argc, char** argv) {
     setenv("SIMA_GST_RUN_INSERT_BOUNDARIES", "0", 1);
     qualify_named_output_placement(mode == "compact", false);
     qualify_named_output_placement(mode == "compact", true);
+    for (const auto combine : {CombinePolicy::None, CombinePolicy::ByFrame, CombinePolicy::ByPts})
+      qualify_bundle_output_placement(mode == "compact", combine);
     const char* output_default = std::getenv("SIMA_OUTPUT_MEMORY_DEFAULT");
     const std::optional<std::string> saved_default =
         output_default ? std::optional<std::string>(output_default) : std::nullopt;

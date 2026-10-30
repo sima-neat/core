@@ -730,8 +730,12 @@ OutputOptions parse_output_options(const JsonValue::JsonObject& obj) {
   opt.max_buffers = int_field(obj, "max_buffers", opt.max_buffers);
   opt.drop = bool_field(obj, "drop", opt.drop);
   opt.sync = bool_field(obj, "sync", opt.sync);
-  opt.placement =
-      static_cast<OutputPlacement>(int_field(obj, "placement", static_cast<int>(opt.placement)));
+  const int placement = int_field(obj, "placement", static_cast<int>(opt.placement));
+  if (placement != static_cast<int>(OutputPlacement::Auto) &&
+      placement != static_cast<int>(OutputPlacement::EV74Compatible))
+    throw_io_error(error_codes::kIoParse, "Graph::load", "",
+                   "unknown Output placement: " + std::to_string(placement));
+  opt.placement = static_cast<OutputPlacement>(placement);
   opt.combine_policy = parse_combine_policy(
       string_field(obj, "combine_policy", combine_policy_name(opt.combine_policy)));
   return opt;

@@ -377,6 +377,7 @@ struct BuildResult {
   std::optional<pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector>
       public_output_endpoint;
   OutputPlacement output_placement = OutputPlacement::Auto;
+  std::string public_output_name;
   std::vector<std::string> compatible_output_names;
   std::size_t kernel_runner_capacity = 1;
   std::size_t kernel_runner_a65_workers = 2;

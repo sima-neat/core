@@ -151,14 +151,15 @@ std::uint64_t edge_port_key(NodeId id, PortId port) {
 void configure_graph_public_output_loan_gate(RunCore& core, const ExecutionGraphPlan& plan) {
   InputStreamOptions stream_opt =
       simaai::neat::session_build_make_stream_options(core.graph_options.pipeline, core.mode);
-  const bool compatible_output = std::any_of(
+  const auto compatible_output = std::find_if(
       plan.pipeline_segments.begin(), plan.pipeline_segments.end(), [](const auto& segment) {
         return graph_build_internal::terminal_output_placement(segment.nodes) ==
                OutputPlacement::EV74Compatible;
       });
-  if (compatible_output) {
-    const auto retained = session_build_make_stream_options(core.graph_options.pipeline, core.mode,
-                                                            OutputPlacement::EV74Compatible);
+  if (compatible_output != plan.pipeline_segments.end()) {
+    const auto retained = session_build_make_stream_options(
+        core.graph_options.pipeline, core.mode, OutputPlacement::EV74Compatible,
+        compatible_output->nodes.back()->user_label());
     // Reserve loans for compatible outputs without changing other outputs' ownership.
     stream_opt.holder_loan_credits = retained.holder_loan_credits;
     stream_opt.holder_loan_credits_auto = retained.holder_loan_credits_auto;
@@ -353,7 +354,11 @@ compatible_output_producers(const ExecutionGraphPlan& plan) {
     pending.pop_back();
     if (!visited.emplace(node, port, name).second)
       continue;
-    if (stage_forwards_payload(plan, node)) {
+    const bool bundle =
+        std::any_of(plan.stage_nodes.begin(), plan.stage_nodes.end(), [&](const auto& stage) {
+          return stage.node_id == node && stage.node && stage.node->kind() == "JoinBundle";
+        });
+    if (stage_forwards_payload(plan, node) || bundle) {
       for (const auto& edge : plan.edges)
         if (edge.to == node)
           pending.emplace_back(edge.from, edge.from_port, name);
@@ -362,12 +367,15 @@ compatible_output_producers(const ExecutionGraphPlan& plan) {
     const auto producer = segment_by_node.find(node);
     if (producer == segment_by_node.end() ||
         plan.pipeline_segments[producer->second].boundary.direct_graph_source)
-      throw std::invalid_argument(
-          "OutputPlacement::EV74Compatible requires a Core-allocated tensor output; "
-          "use tensor.cvu() to copy imported or application-stage output.");
-    if (port != kInvalidPort && plan.port_names.at(port) != "out")
-      name = plan.port_names[port];
-    required[plan.pipeline_segments[producer->second].id].push_back(std::move(name));
+      session_build_throw_session_error_simple(
+          error_codes::kPipelineShape,
+          "Output '" + name + "': EV74Compatible requires a Core-allocated tensor output.",
+          "Use tensor.cvu() to copy imported or application-stage output.");
+    // Output labels identify sinks; only a named producer port selects a tensor.
+    const auto selector = port != kInvalidPort && plan.port_names.at(port) != "out"
+                              ? plan.port_names[port]
+                              : std::string{};
+    required[plan.pipeline_segments[producer->second].id].push_back(selector);
   }
   return required;
 }
