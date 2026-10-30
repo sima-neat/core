@@ -56,6 +56,19 @@ void set_error(httplib::Response& res, const std::string& message, int status) {
   set_json(res, {{"error", {{"message", message}, {"type", "invalid_request_error"}}}}, status);
 }
 
+nlohmann::json generation_error(const std::exception& error) {
+  nlohmann::json body = {{"error", {{"message", error.what()}, {"type", "invalid_request_error"}}}};
+  if (dynamic_cast<const std::length_error*>(&error)) {
+    body["error"]["code"] = "context_length_exceeded";
+  }
+  return body;
+}
+
+void set_error(httplib::Response& res, const std::exception& error) {
+  set_json(res, generation_error(error),
+           dynamic_cast<const std::length_error*>(&error) ? 400 : 500);
+}
+
 std::optional<std::string> apply_tool_options(const nlohmann::json& body,
                                               GenerationRequest& request) {
   if (body.contains("tools")) {
@@ -1201,7 +1214,7 @@ struct GenAIServer::Impl {
                        {"usage", {{"completion_tokens", result.metrics.generated_tokens}}}});
       }
     } catch (const std::exception& e) {
-      set_error(res, e.what(), 500);
+      set_error(res, e);
     }
   }
 
@@ -1247,7 +1260,7 @@ struct GenAIServer::Impl {
                        {"usage", {{"completion_tokens", result.metrics.generated_tokens}}}});
       }
     } catch (const std::exception& e) {
-      set_error(res, e.what(), 500);
+      set_error(res, e);
     }
   }
 
@@ -1295,7 +1308,7 @@ struct GenAIServer::Impl {
                        {"eval_count", result.metrics.generated_tokens}});
       }
     } catch (const std::exception& e) {
-      set_error(res, e.what(), 500);
+      set_error(res, e);
     }
   }
 
@@ -1354,7 +1367,7 @@ struct GenAIServer::Impl {
         set_json(res, std::move(response));
       }
     } catch (const std::exception& e) {
-      set_error(res, e.what(), 500);
+      set_error(res, e);
     }
   }
 
@@ -1400,7 +1413,7 @@ struct GenAIServer::Impl {
                 chat_chunk(model_name, completion_id, created, "", "stop") + "data: [DONE]\n\n";
             write_sink(sink, done);
           } catch (const std::exception& e) {
-            const nlohmann::json error = {{"error", {{"message", e.what()}}}};
+            const auto error = generation_error(e);
             const std::string chunk = "data: " + error.dump() + "\n\ndata: [DONE]\n\n";
             write_sink(sink, chunk);
           }
@@ -1437,7 +1450,7 @@ struct GenAIServer::Impl {
             }
             write_sink(sink, completion_chunk(model_name, "", "stop") + "data: [DONE]\n\n");
           } catch (const std::exception& e) {
-            const nlohmann::json error = {{"error", {{"message", e.what()}}}};
+            const auto error = generation_error(e);
             write_sink(sink, "data: " + error.dump() + "\n\ndata: [DONE]\n\n");
           }
           sink.done();

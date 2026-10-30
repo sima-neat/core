@@ -177,7 +177,7 @@ void GenerationStream::Producer::record_metric(const std::string& metric, double
   } else if (metric == "tps") {
     impl_.metrics.tokens_per_second = value;
   } else if (metric == "FULL") {
-    impl_.finish_reason = "cache_full";
+    impl_.finish_reason = "length";
   }
 }
 
@@ -207,7 +207,7 @@ void GenerationStream::Producer::finish(std::string finish_reason,
     if (generated_tokens.has_value()) {
       impl_.metrics.generated_tokens = *generated_tokens;
     }
-    if (!finish_reason.empty()) {
+    if (!finish_reason.empty() && impl_.finish_reason != "length") {
       impl_.finish_reason = std::move(finish_reason);
     }
     if (impl_.finish_reason.empty()) {
