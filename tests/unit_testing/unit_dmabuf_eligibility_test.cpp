@@ -1,0 +1,545 @@
+#define SIMA_NEAT_INTERNAL 1
+#include "model/internal/ModelPack.h"
+#include "pipeline/internal/DmabufEligibility.h"
+#include "pipeline/internal/sima/static_contract/DmabufPlanContractProjection.h"
+
+#include <glib.h>
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
+#include <cstdlib>
+#include <cstdint>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <optional>
+#include <set>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
+
+namespace {
+
+int failures = 0;
+
+#define CHECK(expr)                                                                                \
+  do {                                                                                             \
+    if (!(expr)) {                                                                                 \
+      std::cerr << __FILE__ << ':' << __LINE__ << ": CHECK failed: " #expr << '\n';                \
+      ++failures;                                                                                  \
+    }                                                                                              \
+  } while (false)
+
+sc::ValueSpec value(sc::ValueId id, std::string name, std::uint64_t bytes) {
+  sc::ValueSpec result;
+  result.id = id;
+  result.name = std::move(name);
+  result.required_bytes = bytes;
+  return result;
+}
+
+sc::ModelExecutionPlan
+make_plan(std::string contract_version,
+          std::optional<sc::DetessFrameShapeSemantics> detess_semantics = std::nullopt) {
+  sc::ModelExecutionPlanData data;
+  data.contract_version = std::move(contract_version);
+  data.values = {value(0, "input", 64), value(1, "mla-output", 64)};
+  data.model_inputs = {0};
+
+  sc::OpSpec mla;
+  mla.id = 0;
+  mla.sequence = 1;
+  mla.name = "mla";
+  mla.kind = sc::OpKind::Mla;
+  mla.processor = "MLA";
+  mla.inputs = {0};
+  mla.outputs = {1};
+  mla.config = sc::MlaOpConfig{"model.elf", 4};
+
+  data.ops = {std::move(mla)};
+  data.backend_ports = {
+      {0, sc::BackendPortDirection::Input, 0, "data.ifm.b0", 0, 64, 4096,
+       sc::BackendPortAlignmentAuthority::LegacyPolicy, sc::BackendPortAccess::ReadOnly},
+      {0, sc::BackendPortDirection::Output, 0, "data.ofm.b0", 1, 64, 4096,
+       sc::BackendPortAlignmentAuthority::LegacyPolicy, sc::BackendPortAccess::WriteOnly},
+  };
+  data.model_outputs = {{0, "public-output", 1}};
+
+  if (detess_semantics) {
+    data.values.push_back(value(2, "detess-output", 64));
+    sc::OpSpec detess;
+    detess.id = 1;
+    detess.sequence = 2;
+    detess.name = "detess";
+    detess.kind = sc::OpKind::Detessellate;
+    detess.processor = "EV74";
+    detess.inputs = {1};
+    detess.outputs = {2};
+    detess.config =
+        sc::DetessellateOpConfig{{1, 64}, {1, 64}, false, false, "int8", *detess_semantics};
+    data.ops.push_back(std::move(detess));
+    data.model_outputs.front().value_id = 2;
+  }
+
+  std::string error;
+  auto plan = sc::ModelExecutionPlan::create(std::move(data), &error);
+  if (!plan) {
+    std::cerr << "fixture creation failed: " << error << '\n';
+    std::abort();
+  }
+  return std::move(*plan);
+}
+
+void write_monolithic_topology_elf(const std::filesystem::path& path) {
+  struct Elf64Header {
+    std::uint8_t ident[16]{};
+    std::uint16_t type = 0;
+    std::uint16_t machine = 0;
+    std::uint32_t version = 0;
+    std::uint64_t entry = 0;
+    std::uint64_t program_header_offset = 0;
+    std::uint64_t section_header_offset = 0;
+    std::uint32_t flags = 0;
+    std::uint16_t header_size = 0;
+    std::uint16_t program_header_size = 0;
+    std::uint16_t program_header_count = 0;
+    std::uint16_t section_header_size = 0;
+    std::uint16_t section_header_count = 0;
+    std::uint16_t section_name_table_index = 0;
+  };
+  struct Elf64SectionHeader {
+    std::uint32_t name = 0;
+    std::uint32_t type = 0;
+    std::uint64_t flags = 0;
+    std::uint64_t address = 0;
+    std::uint64_t offset = 0;
+    std::uint64_t size = 0;
+    std::uint32_t link = 0;
+    std::uint32_t info = 0;
+    std::uint64_t alignment = 0;
+    std::uint64_t entry_size = 0;
+  };
+  static_assert(sizeof(Elf64Header) == 64U);
+  static_assert(sizeof(Elf64SectionHeader) == 64U);
+
+  constexpr char names[] = "\0.shstrtab\0data.ifm.b0\0data.ofm.b0\0";
+  constexpr std::uint32_t shstrtab_name = 1U;
+  constexpr std::uint32_t ifm_name = 11U;
+  constexpr std::uint32_t ofm_name = 23U;
+  const std::uint64_t names_offset = sizeof(Elf64Header);
+  const std::uint64_t ifm_offset = (names_offset + sizeof(names) + 7U) & ~std::uint64_t{7U};
+  const std::uint64_t ofm_offset = ifm_offset + 16U;
+  const std::uint64_t sections_offset = ofm_offset + 16U;
+
+  Elf64Header header;
+  header.ident[0] = 0x7fU;
+  header.ident[1] = 'E';
+  header.ident[2] = 'L';
+  header.ident[3] = 'F';
+  header.ident[4] = 2U;
+  header.ident[5] = 1U;
+  header.ident[6] = 1U;
+  header.type = 1U;
+  header.machine = 183U;
+  header.version = 1U;
+  header.section_header_offset = sections_offset;
+  header.header_size = sizeof(Elf64Header);
+  header.section_header_size = sizeof(Elf64SectionHeader);
+  header.section_header_count = 4U;
+  header.section_name_table_index = 1U;
+
+  std::vector<Elf64SectionHeader> sections(4U);
+  sections[1].name = shstrtab_name;
+  sections[1].type = 3U;
+  sections[1].offset = names_offset;
+  sections[1].size = sizeof(names);
+  sections[1].alignment = 1U;
+  sections[2].name = ifm_name;
+  sections[2].type = 0x71ba0002U;
+  sections[2].offset = ifm_offset;
+  sections[2].size = 16U;
+  sections[2].alignment = 8U;
+  sections[3].name = ofm_name;
+  sections[3].type = 0x71ba0002U;
+  sections[3].offset = ofm_offset;
+  sections[3].size = 16U;
+  sections[3].alignment = 8U;
+
+  std::ofstream output(path, std::ios::binary | std::ios::trunc);
+  CHECK(output.is_open());
+  output.write(reinterpret_cast<const char*>(&header), sizeof(header));
+  output.write(names, sizeof(names));
+  const auto written = names_offset + sizeof(names);
+  std::vector<char> padding(static_cast<std::size_t>(ifm_offset - written), 0);
+  output.write(padding.data(), static_cast<std::streamsize>(padding.size()));
+  const std::array<std::uint64_t, 2U> ifm_header{64U, 0U};
+  const std::array<std::uint64_t, 2U> ofm_header{64U, 0U};
+  output.write(reinterpret_cast<const char*>(ifm_header.data()),
+               static_cast<std::streamsize>(sizeof(ifm_header)));
+  output.write(reinterpret_cast<const char*>(ofm_header.data()),
+               static_cast<std::streamsize>(sizeof(ofm_header)));
+  output.write(reinterpret_cast<const char*>(sections.data()),
+               static_cast<std::streamsize>(sections.size() * sizeof(sections.front())));
+  CHECK(output.good());
+}
+
+const char* two_mla_manifest() {
+  return R"json({
+    "name":"eligibility-two-mla","model_sdk_version":"2.0.0",
+    "input_nodes":[{"name":"input","size":64}],
+    "plugins":[
+      {"name":"MLA_encoder","sequence":1,"processor":"MLA","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+                        "number_of_quads_to_user":4},
+       "input_nodes":[{"name":"input","size":64}],
+       "output_nodes":[{"name":"encoded","size":64}],
+       "resources":{"executable":"encoder.so"}},
+      {"name":"MLA_decoder","sequence":2,"processor":"MLA","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+                        "number_of_quads_to_user":4},
+       "input_nodes":[{"name":"encoded","size":64}],
+       "output_nodes":[{"name":"decoded","size":64}],
+       "resources":{"executable":"decoder.elf"}},
+      {"name":"publish","sequence":3,"processor":"EV74","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+                        "kernel":"pass_through","params":{}},
+       "input_nodes":[{"name":"decoded","size":64}],
+       "output_nodes":[{"name":"output","size":64}]}
+    ]
+  })json";
+}
+
+void test_canonical_digest() {
+  const auto plan = make_plan("digest-v1");
+  const auto canonical = simaai::neat::pipeline_internal::canonical_dmabuf_plan_json(plan);
+  const auto first = simaai::neat::pipeline_internal::dmabuf_plan_digest(plan);
+  const auto second = simaai::neat::pipeline_internal::dmabuf_plan_digest(plan);
+  CHECK(!canonical.empty());
+  CHECK(nlohmann::json::parse(canonical).at("schema_version") == 2);
+  const auto parsed = nlohmann::json::parse(canonical);
+  CHECK(parsed.at("mla_stages").size() == 1U);
+  CHECK(parsed.at("mla_stages").at(0).at("logical_stage_id") == "mla");
+  CHECK(parsed.at("mla_stages").at(0).at("executable") == "model.elf");
+  CHECK(first.size() == 64U);
+  CHECK(first == second);
+  CHECK(first != simaai::neat::pipeline_internal::dmabuf_plan_digest(make_plan("digest-v2")));
+
+  namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
+  std::string error;
+  const auto physical = sc::PhysicalExecutionLowerer::lower(plan, &error);
+  CHECK(physical.has_value());
+  if (physical) {
+    const auto source =
+        simaai::neat::pipeline_internal::canonical_dmabuf_source_json(plan, *physical);
+    const auto source_json = nlohmann::json::parse(source);
+    CHECK(source_json.at("schema_version") == 4);
+    CHECK(!source_json.contains("frame_arena"));
+    CHECK(source_json.at("physical_commands").size() == physical->commands.size());
+    CHECK(!source_json.at("physical_digest_material").get<std::string>().empty());
+    const auto digest = simaai::neat::pipeline_internal::dmabuf_source_digest(plan, *physical);
+    CHECK(digest.size() == 64U);
+    auto selected = *physical;
+    selected.commands.front().resolved_executor = sc::PhysicalEngine::A65;
+    CHECK(simaai::neat::pipeline_internal::dmabuf_source_digest(plan, selected) == digest);
+    selected.commands.front().inputs.clear();
+    CHECK(simaai::neat::pipeline_internal::dmabuf_source_digest(plan, selected) != digest);
+  }
+}
+
+void test_detess_semantics_digest() {
+  using namespace simaai::neat::pipeline_internal;
+  const auto tensor = make_plan("detess-digest-v1", sc::DetessFrameShapeSemantics::Tensor);
+  const auto legacy = make_plan("detess-digest-v1", sc::DetessFrameShapeSemantics::LegacyMpk);
+  // The same dimensions and bytes can have different execution geometry. The
+  // explicit authority must participate in both plan and execution identity.
+  CHECK(dmabuf_plan_digest(tensor) != dmabuf_plan_digest(legacy));
+  auto tensor_json = nlohmann::json::parse(canonical_dmabuf_plan_json(tensor));
+  auto legacy_json = nlohmann::json::parse(canonical_dmabuf_plan_json(legacy));
+  auto& tensor_config = tensor_json.at("ops").at(1).at("config");
+  auto& legacy_config = legacy_json.at("ops").at(1).at("config");
+  constexpr auto key = "frame_shape_semantics";
+  CHECK(tensor_config.contains(key));
+  CHECK(legacy_config.contains(key));
+  if (tensor_config.contains(key) && legacy_config.contains(key)) {
+    CHECK(tensor_config.at(key) == static_cast<int>(sc::DetessFrameShapeSemantics::Tensor));
+    CHECK(legacy_config.at(key) == static_cast<int>(sc::DetessFrameShapeSemantics::LegacyMpk));
+  }
+  tensor_config.erase(key);
+  legacy_config.erase(key);
+  CHECK(tensor_json == legacy_json);
+}
+
+void test_structured_rejections_and_sanitized_json() {
+  using namespace simaai::neat::pipeline_internal;
+  const auto absent =
+      try_compile_dmabuf_plan("/tmp/not-present/mpk.json", "/tmp/not-present/model.elf");
+  CHECK(!absent.eligible());
+  CHECK(absent.report.code == DmabufEligibilityCode::MissingMpkManifest);
+  CHECK(absent.report.location == "$");
+
+  const auto root = std::filesystem::temp_directory_path() / "neat-dmabuf-eligibility-unit";
+  std::filesystem::create_directories(root);
+  const auto mpk = root / "fixture_mpk.json";
+  {
+    std::ofstream output(mpk);
+    output << "{}\n";
+  }
+  const auto missing_elf = root / "missing-model.elf";
+  const auto result = try_compile_dmabuf_plan(mpk, missing_elf);
+  CHECK(!result.eligible());
+  CHECK(result.report.code == DmabufEligibilityCode::MissingMlaExecutable);
+  const auto audit = dmabuf_plan_audit_json(result, mpk, missing_elf, false);
+  const auto parsed = nlohmann::json::parse(audit);
+  CHECK(parsed.at("schema_version") == 1);
+  CHECK(parsed.at("eligible") == false);
+  CHECK(parsed.at("code") == "missing-mla-executable");
+  CHECK(parsed.at("mpk_basename") == "fixture_mpk.json");
+  CHECK(audit.find(root.string()) == std::string::npos);
+  std::filesystem::remove_all(root);
+}
+
+void test_exact_multi_stage_artifact_admission() {
+  using namespace simaai::neat::pipeline_internal;
+  const auto root = std::filesystem::temp_directory_path() / "neat-dmabuf-multi-eligibility-unit";
+  std::error_code ec;
+  std::filesystem::remove_all(root, ec);
+  std::filesystem::create_directories(root, ec);
+  CHECK(!ec);
+  const auto mpk = root / "mpk.json";
+  const auto encoder = root / "encoder.so";
+  const auto decoder = root / "decoder.elf";
+  {
+    std::ofstream output(mpk);
+    output << two_mla_manifest();
+  }
+  write_monolithic_topology_elf(encoder);
+  write_monolithic_topology_elf(decoder);
+
+  const std::vector<MlaExecutableArtifact> reversed_evidence{
+      {"MLA_decoder", "decoder.elf", decoder},
+      {"MLA_encoder", "encoder.so", encoder},
+  };
+  const auto accepted = try_compile_dmabuf_plan(mpk, reversed_evidence);
+  if (!accepted.eligible()) {
+    std::cerr << "multi-stage admission rejected: code="
+              << dmabuf_eligibility_code_name(accepted.report.code)
+              << " location=" << accepted.report.location << " detail=" << accepted.report.detail
+              << '\n';
+  }
+  CHECK(accepted.eligible());
+  CHECK(accepted.plan && accepted.plan->mla_stage_count() == 2U);
+  CHECK(accepted.physical_plan.has_value());
+  CHECK(accepted.source_digest.size() == 64U);
+  CHECK(accepted.physical_plan &&
+        std::none_of(accepted.physical_plan->commands.begin(),
+                     accepted.physical_plan->commands.end(),
+                     [](const auto& command) { return command.resolved_executor.has_value(); }));
+  CHECK(std::none_of(accepted.report.proof.begin(), accepted.report.proof.end(),
+                     [](const auto& fact) { return fact.subject == "frame-slot-arena"; }));
+  CHECK(accepted.plan &&
+        accepted.plan->mla_stage_for_identity("MLA_encoder", "encoder.so") != nullptr);
+  const auto audit =
+      nlohmann::json::parse(dmabuf_plan_audit_json(accepted, mpk, reversed_evidence, false));
+  CHECK(audit.at("schema_version") == 2);
+  CHECK(audit.at("eligible") == true);
+  CHECK(audit.at("source_digest") == accepted.source_digest);
+  CHECK(audit.at("plan_digest").get<std::string>().size() == 64U);
+  CHECK(audit.at("plan_digest") != audit.at("source_digest"));
+  CHECK(audit.at("frame_layouts").size() == 2U);
+  CHECK(audit.at("frame_layouts").at(0).at("group") == "model");
+  CHECK(audit.at("frame_layouts").at(1).at("group") == "mla-output-1");
+  for (const auto& group : audit.at("frame_layouts")) {
+    const auto& storage = group.at("storage");
+    const auto name = group.at("group").get<std::string>();
+    CHECK(storage.at("allocations").size() == 1U);
+    CHECK(storage.at("allocations").at(0).at("policy") ==
+          static_cast<int>(simaai::scheduler::client::AllocationPolicy::RequireDms));
+    const auto expected_access =
+        simaai::scheduler::client::kAccessMla |
+        (name == "mla-output-1" ? simaai::scheduler::client::kAccessCpuA65 : 0U);
+    CHECK(storage.at("allocations").at(0).at("required_device_access") == expected_access);
+    CHECK(storage.at("carriers").at(0).at("allocation_index") == 0U);
+    CHECK(storage.at("carriers").at(0).at("byte_offset") == 0U);
+  }
+  CHECK(audit.at("proof").back().at("subject") == "frame-slot-arena");
+  CHECK(audit.at("proof").back().at("evidence").get<std::string>().find("detached_count=1") !=
+        std::string::npos);
+  CHECK(nlohmann::json::parse(dmabuf_plan_audit_json(accepted, mpk, reversed_evidence, false))
+            .at("plan_digest") == audit.at("plan_digest"));
+  CHECK(accepted.physical_plan &&
+        std::none_of(accepted.physical_plan->commands.begin(),
+                     accepted.physical_plan->commands.end(),
+                     [](const auto& command) { return command.resolved_executor.has_value(); }));
+  CHECK(audit.at("mla_artifacts").size() == 2U);
+  CHECK(audit.at("mla_artifacts").at(0).at("logical_stage_id") == "MLA_decoder");
+  CHECK(audit.at("mla_artifacts").at(1).at("manifest_executable") == "encoder.so");
+  CHECK(audit.dump().find(root.string()) == std::string::npos);
+
+  auto ambiguous = reversed_evidence;
+  ambiguous[0] = ambiguous[1];
+  const auto rejected = try_compile_dmabuf_plan(mpk, ambiguous);
+  CHECK(!rejected.eligible());
+  CHECK(rejected.report.code == DmabufEligibilityCode::AmbiguousMlaExecutableEvidence);
+  std::filesystem::remove_all(root, ec);
+}
+
+void test_mpk_decoder_entry_admits_the_bytes_it_loaded() {
+  using namespace simaai::neat::pipeline_internal;
+  const auto root = std::filesystem::temp_directory_path() / "neat-mpk-decoder-entry-unit";
+  std::error_code ec;
+  std::filesystem::remove_all(root, ec);
+  std::filesystem::create_directories(root / "etc", ec);
+  std::filesystem::create_directories(root / "lib", ec);
+  std::filesystem::create_directories(root / "share", ec);
+  CHECK(!ec);
+  const auto mpk = root / "etc" / "model_mpk.json";
+  {
+    std::ofstream output(mpk);
+    output << two_mla_manifest();
+  }
+  // Archive extraction places `.so` files under lib/ and `.elf` files under share/.
+  write_monolithic_topology_elf(root / "lib" / "encoder.so");
+  write_monolithic_topology_elf(root / "share" / "decoder.elf");
+
+  std::string error;
+  const auto loaded = sc::MpkDecoder::load_package_root(root, &error);
+  CHECK(loaded.has_value());
+  if (!loaded) {
+    std::cerr << "MpkDecoder::load_package_root failed: " << error << '\n';
+    return;
+  }
+  CHECK(loaded->contract.mpk_json_path == mpk.string());
+  CHECK(loaded->package.manifest_bytes == std::string(two_mla_manifest()));
+  CHECK(loaded->contract.plugins.size() == 3U);
+  CHECK(loaded->package.mla_executables.size() == 2U);
+  CHECK(loaded->package.mla_executables.at(0).resolved_path == root / "lib" / "encoder.so");
+  CHECK(loaded->package.mla_executables.at(1).resolved_path == root / "share" / "decoder.elf");
+  CHECK(loaded->package.host_executables.empty());
+
+  const auto from_path = try_compile_dmabuf_plan(mpk, loaded->package.mla_executables);
+  CHECK(from_path.eligible());
+
+  // Admission and decoding consume the loaded bytes, not the file on disk.
+  {
+    std::ofstream output(mpk, std::ios::trunc);
+    output << "{}";
+  }
+  const auto admitted = try_compile_dmabuf_plan(loaded->package);
+  CHECK(admitted.eligible());
+  CHECK(admitted.source_digest == from_path.source_digest);
+  CHECK(admitted.report.artifact_digest == from_path.report.artifact_digest);
+  const auto decoded = sc::MpkDecoder{}.decode(loaded->package);
+  CHECK(static_cast<bool>(decoded));
+  CHECK(decoded && from_path.plan &&
+        dmabuf_plan_digest(*decoded.plan) == dmabuf_plan_digest(*from_path.plan));
+
+  std::filesystem::remove(root / "share" / "decoder.elf", ec);
+  const auto evidence = sc::MpkDecoder::read_executable_evidence(loaded->package);
+  CHECK(evidence.error && evidence.error->kind == sc::MpkEvidenceError::Kind::MissingFile &&
+        !evidence.error->host_module);
+  CHECK(try_compile_dmabuf_plan(loaded->package).report.code ==
+        DmabufEligibilityCode::MissingMlaExecutable);
+  const auto undecodable = sc::MpkDecoder{}.decode(loaded->package);
+  CHECK(!undecodable && undecodable.error &&
+        undecodable.error->code == sc::MpkDecodeErrorCode::MissingMlaExecutableEvidence);
+  std::filesystem::remove_all(root, ec);
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+  // Optional integration mode for compiler-generated route fixtures.  This
+  // deliberately enters through ModelPack rather than calling the decoder
+  // directly, so an accepted contract must also render a complete strict
+  // execution plan.  The normal no-argument unit-test behavior is unchanged.
+  if (argc == 3 && std::string(argv[1]) == "--admit-modelpack") {
+    try {
+      simaai::neat::internal::ModelPack model(argv[2]);
+      const auto& admission = model.execution_admission();
+      const auto execution = model.execution_plan();
+      const auto stage_count =
+          execution.pre.size() + execution.infer.size() + execution.post.size();
+      std::size_t grouped_stage_count = 0U;
+      std::size_t grouped_semantic_members = 0U;
+      std::size_t grouped_physical_commands = 0U;
+      const auto inspect_stages = [&](const auto& stages) {
+        for (const auto& stage : stages) {
+          if (stage.execution_op_ids.size() <= 1U) {
+            continue;
+          }
+          ++grouped_stage_count;
+          grouped_semantic_members += stage.execution_op_ids.size();
+          grouped_physical_commands += stage.physical_command_ids.size();
+          const std::size_t expected_commands = (stage.execution_op_ids.size() + 31U) / 32U;
+          if (stage.physical_command_ids.size() != expected_commands) {
+            throw std::runtime_error(
+                "grouped strict stage lost its deterministic 32-member capacity split");
+          }
+        }
+      };
+      inspect_stages(execution.pre);
+      inspect_stages(execution.infer);
+      inspect_stages(execution.post);
+      const auto facts =
+          model.stage_facts_for_model_stage(simaai::neat::internal::ModelStage::Full);
+      for (std::size_t index = 1U; index < facts.size(); ++index) {
+        const auto& upstream = facts[index - 1U].processcvu_contract;
+        const auto& consumer = facts[index].processcvu_contract;
+        if (!upstream || !consumer || upstream->runtime_contract.logical_outputs.size() <= 1U ||
+            consumer->runtime_contract.logical_inputs.size() !=
+                upstream->runtime_contract.logical_outputs.size()) {
+          continue;
+        }
+        std::set<int> source_logicals;
+        for (const auto& binding : consumer->runtime_contract.input_bindings) {
+          if (binding.sink_pad_index != 0) {
+            throw std::runtime_error(
+                "grouped compatibility consumer requires more than the one upstream "
+                "TensorBuffer link");
+          }
+          source_logicals.emplace(binding.src_logical_output_index);
+        }
+        if (source_logicals.size() != consumer->runtime_contract.logical_inputs.size()) {
+          throw std::runtime_error(
+              "grouped compatibility consumer lost an upstream logical member");
+        }
+      }
+      const auto fragment = model.fragment(simaai::neat::internal::ModelStage::Full);
+      if (stage_count != 0U && fragment.gst.empty()) {
+        throw std::runtime_error("strict execution plan produced an empty full-model fragment");
+      }
+      std::cout << "route-modelpack-admission: "
+                << simaai::neat::pipeline_internal::dmabuf_eligibility_code_name(admission.code)
+                << " contract=" << admission.contract_version
+                << " plan=" << model.model_source_digest() << " stages=" << stage_count
+                << " grouped-stages=" << grouped_stage_count
+                << " grouped-members=" << grouped_semantic_members
+                << " physical-cvu-commands=" << grouped_physical_commands
+                << " fragment-elements=" << fragment.elements.size()
+                << " fragment-bytes=" << fragment.gst.size() << '\n';
+      return admission.eligible() ? 0 : 1;
+    } catch (const std::exception& error) {
+      std::cerr << "route-modelpack-admission: rejected: " << error.what() << '\n';
+      return 1;
+    }
+  }
+  if (argc != 1) {
+    std::cerr << "usage: " << argv[0] << " [--admit-modelpack MODEL_MPK_TAR_GZ]\n";
+    return 2;
+  }
+  test_canonical_digest();
+  test_detess_semantics_digest();
+  test_structured_rejections_and_sanitized_json();
+  test_exact_multi_stage_artifact_admission();
+  test_mpk_decoder_entry_admits_the_bytes_it_loaded();
+  if (failures != 0) {
+    std::cerr << failures << " DMA-BUF eligibility checks failed\n";
+    return 1;
+  }
+  std::cout << "DMA-BUF eligibility checks passed\n";
+  return 0;
+}

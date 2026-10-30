@@ -8,25 +8,32 @@ sidebar_position: 5
 
 У SDK вивід статусу також містить відображення хост-портів Insight з файлу `$HOME/.insight-config/neat-port-map.json`.
 
+Відсутність установлених PyNeat або Insight не заважає звітуванню про стан.
+Якщо перевірка версії завершується помилкою, компонент показує `unknown`, а `neat`
+записує діагностику постачальника у стандартний потік помилок. Вивід JSON
+зберігає наявну схему й повідомляє недоступні версії як `null`.
+
+Розділена інсталяція показує `simaai-runner` і `simaai-scheduler`. На DevKit версії беруться з бази встановлених пакетів, у SDK — з керувальних метаданих кешованих DEB. Рядки застарілих `neat-runtime` і `neat-gst-plugins` залишаються видимими, якщо ці пакети присутні або жодного розділеного компонента не виявлено. JSON додає `components.runner` і `components.scheduler`, зберігаючи старі ключі `runtime` та `gstPlugins`; відсутні версії залишаються `null`.
+
 <ShellCommand prompt="sdk|devkit">
 neat
 </ShellCommand>
 
-Приклад виводу:
+Приклад виводу застарілої інсталяції:
 
 ```text
 Neat Environment
-  Mode               Neat SDK
+  Mode               Palette SDK
   Sysroot            /opt/toolchain/aarch64/modalix
   Update check       online
 
 Components
-  Neat core              0.5.0 channel=release latest=0.5.0
-  PyNeat                 0.5.0
-  neat-runtime           0.5.0
-  neat-gst-plugins       0.5.0
-  neat-insight           0.0.8 channel=release status=Running venv=/opt/neat-insight/venv
-  Model Compiler         2.1.3.1 run activate-model-compiler to activate
+  Neat core              %%release.core%% channel=release latest=%%release.core%%
+  PyNeat                 %%release.core%%
+  neat-runtime           %%release.core%%
+  neat-gst-plugins       %%release.core%%
+  neat-insight           %%release.insight%% channel=release status=Running venv=/opt/neat-insight/venv
+  Model Compiler         %%release.model_compiler%% run activate-model-compiler to activate
 
 Exposed Ports
   Insight Web UI     https://10.0.0.22:9900
@@ -58,9 +65,36 @@ neat --json
 neat update
 </ShellCommand>
 
+Щоб оновити лише середовище виконання Neat Library, не перевіряючи й не
+оновлюючи Insight або сценарії, виконайте:
+
+<ShellCommand prompt="sdk|devkit">
+neat update --core-only
+</ShellCommand>
+
 ## Наступний крок
 
 Продовжуйте [Складіть модель.](/compile-a-model/), щоб підготувати модель для Modalix —
 це запускається в SDK і не потребує DevKit. Щоб запустити повну програму на апаратному забезпеченні,
 перегляньте [Привіт, Neat!](/develop-apps/hello-neat/minimal/), для чого потрібен комплект
 DevKit.
+
+## Стан хоста та карт PCIe
+
+Пакет `sima-pcie-host` також встановлює `neat` в Ubuntu. Виконайте `neat` або `neat --json`, щоб переглянути встановлені пакети хоста, PyNeatPCIe, відомості про плату й встановлене програмне забезпечення кожної карти SiMa PCIe. Карти перелічено за адресою PCI та інтерфейсом. Адреса PCI описує поточне підключення, а не постійний серійний номер плати.
+
+```bash
+neat
+neat --json
+neat --offline
+```
+
+Опитування карт використовує налаштований інтерфейс хоста `10.0.N.1` та адресу карти `10.0.N.2`, як і `pcie-setup.sh`. Спочатку налаштуйте мережу та довірені ключі SSH. Команда не налаштовує інтерфейси, не реєструє ключі хостів, не запитує паролі, не використовує sudo на картах і не змінює пакети. Відсутні інтерфейси, нестандартні адреси, помилки SSH та недоступні відомості про ПЗ відображаються для кожної карти окремо; доступні карти й далі показують свої версії.
+
+`NEAT_PCIE_SSH_USER` вибирає користувача SSH карти (типово `sima`). `NEAT_PCIE_SSH_KEY` вибирає приватний ключ (типово `~/.ssh/sima_neat_pcie_ed25519`); наявні налаштування SSH та автентифікація через агент також доступні. `--offline` пропускає перевірку оновлень через Інтернет, але читає підключені карти через локальний SSH. Перегляд стану хоста PCIe не перевіряє оновлення артефактів; для оновлення пакета хоста використовуйте `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>`. `neat update` не оновлює карти PCIe.
+
+JSON зберігає `sima.neat.status.v1` та додає `components.pcieHost`, `components.pcieScheduler`, `components.pyneatpcie` і `pcie`. Об’єкт `pcie` містить ПЗ хоста, масив `cards` з адресою PCI, інтерфейсами, адресою, станом, ПЗ та помилкою, а також помилки топології. Якщо ПЗ віддаленого пристрою недоступне, повертається `null`, а не припущена встановлена версія.
+
+Стан PyNeat і PyNeatPCIe містить версію та шлях віртуального середовища для кожного виявленого встановлення. Окремі середовища відображаються як кілька середовищ, а не як конфлікт версій. Для пакетів поза віртуальним середовищем натомість показується тека пакета. Перевірка стану читає метадані пакетів без імпорту нативних модулів.
+
+До кожного запису Python у JSON додається масив `installations`. Кожен елемент містить `version`, `environment` та `path` (теку пакета). Поза віртуальним середовищем `environment` має значення `null`. Якщо встановлені версії відрізняються, підсумкове значення `version` дорівнює `null`; наявність кількох встановлень сама по собі не задає `error`. Шляхи символічних посилань на те саме встановлення перелічуються лише один раз.

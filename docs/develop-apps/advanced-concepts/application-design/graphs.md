@@ -706,14 +706,10 @@ run.save_json("/tmp/final.graph_run.json", export_opt)
 The exporter snapshots the current run; it does not stop the run. If you need final numbers for a
 finite workload, call `run.close_input()` and drain outputs, or call `run.stop()`, before saving.
 
-To include board power telemetry:
-
-```cpp
-neat::RunOptions opt;
-opt.enable_board_power(/*sample_interval_ms=*/100);
-
-neat::Run run = app.build(opt);
-```
+The deprecated `RunOptions::enable_board_power()` adds board power to the export. For new code,
+record board power, temperatures, CPU usage, and memory with a
+[`TelemetryMonitor`](/develop-apps/development-workflow/model#record-board-telemetry) and save its
+`Telemetry` next to the export.
 
 The JSON schema is `sima.neat.graph_run` version `1`. The schema lives at
 `schemas/graph_run_v1.schema.json` and the CI validator lives at
@@ -767,6 +763,31 @@ neat::Graph app;
 app.add(neat::nodes::groups::RtspDecodedInput(source_opt));
 app.add(yolo);
 app.add(neat::nodes::Output("detections"));
+```
+
+The RTSP decoded group exposes the same decoder controls in C++ and Python:
+
+| `RtspDecodedInputOptions` field | Default | Purpose |
+| --- | --- | --- |
+| `decoder_input_buffers` | `-1` | Compressed-input buffer count; leave unset for the runtime default. |
+| `num_buffers` | `-1` | Decoded-output pool count; leave unset for automatic sizing. |
+| `decoder_tuning` | `""` | Optional decoder preset, such as `throughput-low-latency`. |
+| `decoder_memory_opt` | `false` | Legacy memory preset; explicit `decoder_tuning` takes precedence. |
+
+Positive count overrides remain in effect with a tuning preset. Use `-1` for
+unset counts; older nonpositive values also leave the property unset. The
+`throughput-low-latency` preset disables reordering and needs compatible streams
+without B-frame display reordering. Input counts do not set byte capacities.
+These controls already exist on `SimaDecodeOptions` as `input_buffers`,
+`num_buffers`, `decoder_tuning`, and `memory_opt`.
+
+```python
+source = pyneat.RtspDecodedInputOptions()
+source.url = "rtsp://camera/stream"
+source.decoder_input_buffers = 2
+source.decoder_tuning = "throughput-low-latency"
+# Leave num_buffers at -1 to use automatic output sizing.
+app.add(pyneat.groups.rtsp_decoded_input(source))
 ```
 
 ### App input to graph-owned UDP output

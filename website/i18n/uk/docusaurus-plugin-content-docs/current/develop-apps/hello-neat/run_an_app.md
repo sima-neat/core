@@ -43,7 +43,7 @@ mdx:
 2. **Завантажте модель:**
 
     <ShellCommand prompt="sdk|devkit">
-    sima-cli modelzoo -v 2.0.0 get yolo_v8s
+    sima-cli modelzoo -v 2.1.3 get yolo_v8s
     </ShellCommand>
 
     :::note sima-cli завантажити модель

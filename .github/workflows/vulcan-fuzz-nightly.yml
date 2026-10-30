@@ -53,7 +53,7 @@ jobs:
         run: |
           rm -rf _work
           mkdir -p _work
-          rm -f ./*-Linux-core.deb ./*extras.tar.gz ./*.whl ./neat-*.deb ./simaai-common*.deb ./appcomplex_*.deb ./sima-lmm-*.deb ./metadata*.json ./install_neat_framework.sh ./neat-install-manifest.txt || true
+          rm -f ./*-Linux-core.deb ./*extras.tar.gz ./*.whl ./neat-*.deb ./sima-lmm-*.deb ./metadata*.json ./install_neat_framework.sh ./install_sentinel.sh ./neat-install-manifest.txt || true
           find . -maxdepth 1 -type d -name 'sima-neat-*-Linux-extras' -exec rm -rf {} +
 
       - name: Install fuzz runtime from metadata-all
@@ -94,9 +94,9 @@ jobs:
 
       - name: Verify prebuilt fuzz binaries exist
         run: |
-          FUZZ_BIN_DIR="$(cat _work/extras_lib_dir.txt)/tests/fuzz"
+          FUZZ_BIN_DIR="$(cat _work/extras_lib_dir.txt)/tests"
           missing=0
-          for target in fuzz_modelpack_json fuzz_pipeline_sequence fuzz_gst_pipeline_string; do
+          for target in fuzz_modelpack_json fuzz_gst_pipeline_string; do
             if [[ ! -x "${FUZZ_BIN_DIR}/${target}" ]]; then
               echo "Missing prebuilt fuzz binary: ${FUZZ_BIN_DIR}/${target}" >&2
               missing=1
@@ -107,18 +107,12 @@ jobs:
             exit 1
           fi
 
-      - name: Fix devkit runtime
-        env:
-          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
-        run: |
-          ./scripts/fix_devkit_runtime.sh
-
       - name: Run fuzz nightly
         env:
           MAX_TOTAL_TIME: "60"
           FUZZ_PREBUILT_ONLY: "1"
         run: |
           EXTRAS_LIB_DIR="$(cat _work/extras_lib_dir.txt)"
-          export FUZZ_BIN_DIR="${EXTRAS_LIB_DIR}/tests/fuzz"
+          export FUZZ_BIN_DIR="${EXTRAS_LIB_DIR}/tests"
           export CORPUS_ROOT="${GITHUB_WORKSPACE}/tests/fuzz/corpus"
           bash scripts/ci/run_fuzz_nightly.sh

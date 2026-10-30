@@ -29,9 +29,9 @@
 
 ### 벤치마크 실행 {#step-run-benchmark}
 
-`benchmark(samples)`를 호출합니다. API는 비동기 모델 러너를 준비하고, 비동기 푸시/풀 창을 측정하고, 요약을 표준 출력으로 출력한 다음, 동일한 주요 값을 `BenchmarkReport`로 반환합니다.
+`benchmark(samples)`를 호출합니다. API는 모델을 준비하고, 단일 실행(single-flight) 지연 시간을 측정한 다음, 별도의 비동기 푸시/풀 패스에서 처리량을 측정하고, 요약을 표준 출력으로 출력한 뒤, 동일한 주요 값을 `BenchmarkReport`로 반환합니다.
 
-샘플 수는 측정된 합성 입력의 수입니다. 더 안정적인 처리량 및 전력 값을 얻으려면 더 큰 수를 사용하고, 간단한 성능 테스트만 수행하려는 경우 더 작은 수를 사용합니다.
+각 패스는 최소 `samples`개의 입력을 측정하고 10초가 경과할 때까지 실행되므로 처리량 패스의 전력 및 온도 측정값은 여러 샘플에 걸쳐 수집됩니다. 이 하한을 변경하려면 `BenchmarkOptions::min_duration_ms`를 설정하고, 각 패스가 `samples`개의 입력 후에 중지하는 빠른 스모크 테스트를 하려면 0으로 설정합니다.
 
 BoxDecode로 끝나는 경로를 가진 감지 모델은 `BenchmarkOptions`를 사용할 수도 있습니다. `original_width`, `original_height` 및 `resize_mode`를 설정하여 BoxDecode가 모델 좌표에서 감지를 매핑할 때 사용하는 소스 이미지의 기하학적 구조를 설명합니다. 합성 텐서는 모델의 형태를 유지합니다.
 
@@ -48,9 +48,55 @@ Python은 `pyneat.BenchmarkOptions`를 통해 동일한 필드를 노출합니�
 
 ### 보고서 읽기 {#step-read-report}
 
-반환되는 보고서는 대부분의 사용자가 필요로 하는 주요 필드만 유지합니다. 즉, 평균 엔드투엔드 지연 시간(밀리초), 초당 프레임 단위의 처리량, 사용 가능한 경우 평균 보드 전력(와트), 사용 가능한 경우 측정된 에너지(줄)입니다.
+반환되는 보고서는 대부분의 사용자가 필요로 하는 주요 필드로 시작합니다. 즉, 평균 엔드투엔드 지연 시간(밀리초), 초당 프레임 단위의 처리량, 평균 및 최대 SoM 전력(와트), `samples`개의 입력을 처리하는 데 필요한 에너지(줄)입니다. `throughput_duration_ms`는 처리량 패스가 실행된 시간을 보고합니다.
 
-전력 텔레메트리는 보드 지원에 따라 달라집니다. 런타임이 현재 대상에서 전력 레일을 샘플링할 수 없는 경우, 벤치마크는 여전히 지연 시간과 처리량을 보고하고 전력 필드를 0으로 둡니다.
+전력 값은 Neat 설치 프로그램이 설정하는 보드 텔레메트리 데몬인 Sentinel에서 제공됩니다. `report.telemetry`에는 처리량 패스 동안의 레일 전력, 다이 및 보드 온도, CPU 사용률, MLA 메모리도 포함됩니다. 각 필드에 대해서는 [모델 실행 측정](/develop-apps/development-workflow/model#power-and-board-telemetry)을 참조하십시오. Sentinel이 실행 중이 아닌 경우에도 벤치마크는 지연 시간과 처리량을 보고하고, 전력 필드를 0으로 두며, `report.telemetry.status`에 그 이유를 설정합니다.
+
+### 고급: MLA 레이어 및 스테이지 통계 {#step-read-mla-stats}
+
+두 가지 선택 옵션은 벤치마크 후 `mla-rt`를 실행해 컴파일된 MLA 코드의 시간을 측정합니다. 둘 다 기본값은 비활성화이며, 다른 MLA 워크로드가 없는 유휴 상태의 devkit이 필요합니다. 튜토리얼 명령에 `--include-mla-layer-stats` 또는 `--include-mla-stage-stats`를 추가하거나 API에서 다음과 같이 활성화합니다.
+
+```cpp
+simaai::neat::BenchmarkOptions options;
+options.include_mla_layer_stats = true;
+options.include_mla_stage_stats = true;
+auto report = model.benchmark(options);
+```
+
+```python
+options = pyneat.BenchmarkOptions()
+options.include_mla_layer_stats = True
+options.include_mla_stage_stats = True
+report = model.benchmark(options)
+```
+
+`report.mla_layer_stats.layers`에서 컴파일된 각 MLA 레이어의 0부터 시작하는 `stage_index`, `name`, `latency_us`를 읽습니다. 이는 해당 레이어만 실행하는 한 번의 프로파일링 실행에서 측정한 하드웨어 실행 시간입니다. 실행 시간이 0인 no-op 항목도 유지됩니다. 레이어 지연 시간을 합해도 스테이지 지연 시간이나 전체 지연 시간과 일치하지 않습니다.
+
+`report.mla_stage_stats.stages`에서 각 MLA 스테이지의 `stage_index`와 `latency_us`를 읽습니다. 이는 해당 스테이지를 중단 없이 200회 실행한 하드웨어 시간의 평균입니다. 스테이지 지연 시간에는 MLA 연산과 프로그램의 DRAM 읽기 및 쓰기가 포함됩니다. 모델 로딩, 호스트 및 EV74 처리, 파이프라인 오버헤드는 포함되지 않습니다.
+
+`mla-rt`가 없거나 실패하거나 시간 초과되어도 `benchmark()`는 주요 측정값을 반환하고, 목록을 비워 두며, `report.mla_layer_stats.status` 또는 `report.mla_stage_stats.status`에 그 이유를 설정합니다. 그 밖의 경우 각 상태는 `"not requested"` 또는 `"ok"`입니다. `mla-rt` 실행이 실패하거나 시간 초과되거나 비정상 종료된 후에는 MLA에 끝나지 않은 작업이 남아 있을 수 있으므로, 같은 프로세스의 이후 프로파일링은 그 이유와 함께 건너뜁니다. MLA 복구가 확인될 때까지 DevKit을 유휴 상태로 두십시오.
+
+MLA 레이어 통계는 선택한 종료 정책을 따르며, 선택한 추론 경로의 MLA 스테이지만 측정합니다. 각 스테이지의 `stage_index`는 전체 모델 기준 번호를 유지합니다.
+
+### 보고서 저장 {#step-save-report}
+
+`report.save(path)`를 호출하면 요청한 MLA 레이어 및 스테이지 통계를 포함한 전체 보고서를 YAML 또는 JSON으로 저장합니다.
+
+```cpp
+auto path = report.save("results/model/yolo_benchmark.yaml");
+auto json_path = report.save("results/model/yolo_benchmark.json");
+```
+
+```python
+path = report.save("results/model/yolo_benchmark.yaml")
+json_path = report.save("results/model/yolo_benchmark.json")
+```
+
+확장자가 `.json`이면 JSON을, `.yaml` 또는 그 외의 끝부분이면 YAML을 사용합니다. 파일 이름은 유지됩니다.
+
+파일 이름을 포함한 경로를 지정하세요. 없는 상위 디렉터리는 생성되고 기존 파일은 교체되며, 저장한 경로가 반환됩니다. 저장은 명시적으로 수행합니다. `benchmark()`는 보고서 파일을 자동으로 생성하지 않습니다.
+
+두 튜토리얼 명령 모두에 `--report results/model/yolo_benchmark.yaml`을 추가할 수 있습니다. `--include-mla-layer-stats` 또는 `--include-mla-stage-stats`와 함께 사용하면 주요 측정값과 MLA 실행 시간을 함께 저장합니다.
 
 ## Run
 
@@ -70,8 +116,8 @@ python3 share/sima-neat/tutorials/003_benchmark_your_model/benchmark_your_model.
 
 **C++ (build from source):**
 ```bash
-./build.sh --target tutorial_003_benchmark_your_model
-./build/tutorials-standalone/tutorial_003_benchmark_your_model \
+./build.sh --all --no-doc
+./build/tutorials/tutorial_003_benchmark_your_model \
   --model /tmp/resnet_50.tar.gz --samples 100
 ```
 
@@ -81,14 +127,27 @@ python3 share/sima-neat/tutorials/003_benchmark_your_model/benchmark_your_model.
 NEAT Benchmark
 Input: synthetic
 Samples: 100
-Latency:      12.4 ms
-FPS:          80.6
-Power avg:    2.3 W
-Energy:       2.8 J
-report_latency_ms=12.4
-report_fps=80.6
-report_avg_power_watts=2.3
-report_energy_joules=2.8
+Compiled batch: 1
+Measurement detail: e2e+throughput-only
+Latency: 1.97 ms
+FPS:     1457.04 inferences/s
+Batch throughput: 1457.04 batches/s
+Throughput window: 30.09 s, 43849 inputs
+Power:         13.19 W avg, 13.81 W peak (SoM)
+MLA power:     3.05 W avg, 3.25 W max
+Energy:        0.91 J for 100 inputs
+Die temp:      46.34 °C avg, 47.56 °C max
+CPU usage:     12.38 % avg, 13.22 % max
+MLA memory:    29.65 MiB
+Linux memory:  682.88 MiB avg, 697.41 MiB max
+Telemetry:     Sentinel main:766066b74f49, 15 samples
+report_latency_ms=1.96852
+report_fps=1457.04
+report_avg_power_watts=13.1875
+report_energy_joules=0.905085
+report_peak_power_watts=13.8125
+report_throughput_duration_ms=30094.5
+report_telemetry_status=ok
 [OK] 003_benchmark_your_model
 ```
 
@@ -103,5 +162,6 @@ report_energy_joules=2.8
 `Model::benchmark()`는 구체적인 `input_specs()` 차원을 필요로 합니다. 입력 모양이 동적이거나 구체적이지 않은 경우, 벤치마크는 추측하는 대신 명확하게 실패합니다.
 
 ## 소스 파일
+
 - C++: `tutorials/003_benchmark_your_model/benchmark_your_model.cpp`
 - Python: `tutorials/003_benchmark_your_model/benchmark_your_model.py`

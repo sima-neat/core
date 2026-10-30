@@ -4,10 +4,10 @@
 #endif
 
 #include "pipeline/internal/RunDiagnostics.h"
-#include "DecoderAdmission.h"
 #include "ExecutionGraphRuntime.h"
 #include "EdgeRouter.h"
 #include "PipelineSegmentRuntime.h"
+#include "pipeline/GraphOptions.h"
 #include "pipeline/Run.h"
 #include "pipeline/internal/HolderLoanGate.h"
 
@@ -134,7 +134,6 @@ struct RunCoreStartOptions {
   std::shared_ptr<void> graph_verbose_guard;
   PushSamplePolicy push_sample_policy = PushSamplePolicy::PublicCompatibility;
   FusedEncodedOutputDispatch fused_encoded_output_dispatch;
-  std::shared_ptr<DecoderAdmissionReservation> decoder_admission;
   std::function<void()> after_pipeline_start_for_test;
 };
 
@@ -170,7 +169,6 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
                         const InputStreamOptions& stream_opt, RunMode mode = RunMode::Async,
                         const std::optional<InputOptions>& tensor_input_opt_for_cv = std::nullopt,
                         pipeline_internal::InputRouteProcessorPtr input_route_processor = nullptr,
-                        std::shared_ptr<DecoderAdmissionReservation> decoder_admission = nullptr,
                         std::function<void()> after_pipeline_start_for_test = {});
 
   ~RunCore();
@@ -188,8 +186,11 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
   void close();
 
   bool push_samples(const Sample& msgs, bool block = true);
+  // Graph edges carry one sample, including a joined multi-input bundle.
+  bool push_pipeline_sample(const Sample& sample, bool block = true);
   bool push_named_samples(std::string_view input_name, const Sample& msgs, bool block = true);
-  PullStatus pull(int timeout_ms, Sample& out, PullError* err = nullptr);
+  PullStatus pull(int timeout_ms, Sample& out, PullError* err = nullptr,
+                  bool acquire_output_loan = true);
   PullStatus pull_named_output(std::string_view output_name, int timeout_ms, Sample& out,
                                PullError* err = nullptr);
   std::optional<Sample> pull_optional(int timeout_ms = -1);
@@ -255,6 +256,8 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
                                          RuntimeSinkQueueMsg&& msg);
   bool graph_release_sink_restore_reservation(simaai::neat::graph::NodeId node_id);
   std::optional<Sample> graph_pull(simaai::neat::graph::NodeId node_id, int timeout_ms);
+  // Releases realtime credits and applies Owned copying to a sample leaving a graph sink.
+  void graph_finish_sink_pull(Sample& sample);
 
   RunOptions opt;
   RunMode mode = RunMode::Async;
@@ -270,10 +273,12 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
   // can still show the customer's Graph::add topology instead of falling back
   // to node-metric order.
   std::unique_ptr<ExecutionGraphPlan> graph_export_plan_;
-  std::shared_ptr<DecoderAdmissionReservation> decoder_admission;
   GraphRuntimeOptions graph_options;
   PushSamplePolicy push_sample_policy = PushSamplePolicy::PublicCompatibility;
   pipeline_internal::HolderLoanGatePtr holder_loan_gate;
+  // Loan stalls of public graph outputs, by output node.
+  std::mutex graph_loan_stall_mu;
+  std::unordered_map<simaai::neat::graph::NodeId, LoanStall> graph_loan_stalls;
   std::shared_ptr<simaai::neat::graph::GraphRunStats> graph_stats;
 
   std::uint64_t latency_count = 0;
@@ -310,13 +315,20 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
   std::string error;
   std::optional<PullError> terminal_error_detail;
   std::string diag_sysinfo;
-  std::unique_ptr<PowerMonitor> power_monitor;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+  std::unique_ptr<PowerMonitor> power_monitor; // Deprecated RunOptions::power_monitor.
+#pragma GCC diagnostic pop
   std::shared_ptr<void> graph_verbose_guard;
   std::atomic<bool> graph_output_rate_reported{false};
   std::atomic<bool> graph_sched_reported{false};
 
   mutable std::mutex latency_mu;
   mutable std::mutex graph_sample_timing_mu;
+  // A graph transport thread may observe EOS while the graph owner is tearing
+  // down the same child pipeline. Only one caller may join its worker threads.
+  mutable std::mutex stop_mu;
+  bool stop_started = false;
   std::unordered_map<GraphSampleIdentityKey, GraphSampleTimingState, GraphSampleIdentityKeyHash>
       graph_sample_timing_by_key;
   std::deque<GraphSampleTimingOrderEntry> graph_sample_timing_order;

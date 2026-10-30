@@ -49,8 +49,8 @@ Neat 在執行模型封存檔之前會先解壓縮它們。這些變數主要用
 | 變數 | 效果 |
 | --- | --- |
 | `SIMA_MPK_EXTRACT_ROOT=<dir>` | 設定提取的模型資料的基本目錄。|
-| `SIMA_MPK_CLEANUP_EXTRACTED=0` | 在程序結束後，會保留程序本地的 `proc_*` 提取根目錄，以便進行檢查。其他程序不會自動發現或重複使用它。|
-| `SIMA_MPK_EXTRACT_GC_STALE_PROC=0` | 在啟動時停用清理過時的 `proc_*` 目錄。|
+| `SIMA_MPK_CLEANUP_EXTRACTED=0` | 在程序結束後，會保留程序本地的 `proc_run_*` 提取根目錄，以便進行檢查。其他程序不會自動發現或重複使用它。|
+| `SIMA_MPK_EXTRACT_GC_STALE_PROC=0` | 停用啟動時依據擁有權鎖定清理已無人使用的 `proc_run_*` 目錄。 |
 
 在您需要檢查產生的設定檔或比較不同執行次數產生的成品時，請使用它們。在一般教學過程中，請保留預設設定。
 

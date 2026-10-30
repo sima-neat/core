@@ -1,73 +1,52 @@
 ---
 title: "메모리 모델"
-description: "제로 복사 버퍼, 세그먼트, (버퍼 ID, 물리 주소, 가상 주소) 튜플, 그리고 캐시 일관성."
+description: 할당 식별, FrameLayout 배치, 제로 카피 소유권 및 캐시 가시성.
 sidebar_position: 3
 slug: /develop-apps/advanced-concepts/memory_model
 ---
 
 # 메모리 모델
 
-Neat 프레임워크의 런타임은 인코딩된 비디오 프레임, 디코딩된 YUV 평면, FP32 입력 텐서, INT8 양자화된 타일, MLA 스크래치패드 이미지 등 많은 바이트를 이동합니다. 명시적인 메모리 모델 없이 이를 수행하면 각 단계 경계에서 복사가 발생합니다. 이 페이지에서는 프레임워크가 이러한 복사를 어떻게 방지하는지 설명합니다.
+Core가 저장 공간을 계획하고 Scheduler가 Runner를 통해 풀을 준비합니다. Runner는 할당 식별, DMA-BUF 매핑 및 CPU/장치 접근을 관리합니다.
 
-## 버퍼 삼중: `(buffer_id, paddr, vaddr)`
+## 할당과 뷰
 
-프레임워크가 이동하는 모든 버퍼는 세 가지 요소로 식별됩니다.
+각 단계에는 불변 `FrameLayout` 하나가 있습니다. 여기에는 `FrameAllocation` 목록, 할당 내부 범위를 나타내는 `FrameSpan`, 입력 경로 및 출력 소유권이 포함됩니다. 범위는 할당, 오프셋 및 예약 용량을 지정합니다. 논리 텐서의 형상, 스트라이드, 게시 바이트 수는 별도입니다. MLA 하드웨어 패딩은 예약 용량 안에 들어가야 합니다.
 
-- **`buffer_id`** — 런타임에서 버퍼의 수명 주기를 추적하는 데 사용하는 안정적인 정수(참조 횟수, 세그먼트 소유권).
-- **`paddr`** — 물리 주소, IOMMU가 버퍼를 보는 방식. MLA / EV74 / DMA 하드웨어가 이를 확인합니다.
-- **`vaddr`** — 가상 주소, 애플리케이션이 버퍼를 보는 방식. CPU 코드가 이를 참조합니다.
+뷰는 루트 캐리어를 공유합니다. 할당 인덱스는 버퍼 그룹에 속합니다. 서로 다른 그룹의 오프셋이 모두 0이어도 버퍼가 겹치지는 않습니다. 가져온 저장 공간은 익스포터, 검증된 오프셋, 평면 형상 및 생산자 대여를 유지합니다.
 
-이 삼중은 복사 없이 양쪽(CPU 또는 가속기)에서 버퍼를 주소 지정할 수 있도록 합니다. 단일 할당은 *둘 다* 커널 페이지 테이블(소프트웨어가 읽을 수 있도록 함)과 IOMMU 페이지 테이블(하드웨어가 DMA를 수행할 수 있도록 함)에 나타납니다.
+저장소가 연결된 조밀한 수치형 `Tensor`에서 모양 `{}`는 0차원 스칼라를 나타냅니다. 조밀한 크기는 `dtype` 원소 하나의 크기입니다. 이는 `{0,256}`처럼 크기가 0인 차원을 포함하여 조밀한 크기가 0이 되는 모양과 다릅니다. 빈틈없는 바이트 복사와 `clone()`은 뷰 오프셋과 저장소 경계를 확인하면서 스칼라 값을 보존합니다. 저장소가 연결되지 않은 기본 Tensor의 `dense_bytes_tight()`는 0을 반환하며, 빈틈없는 복사와 복제는 거부됩니다. 명시적으로 인코딩, 바이트 스트림, 테셀레이션 또는 텍스트로 표시된 전달 버퍼는 기존의 전달 바이트 의미를 유지합니다. 공개 `map()`이 반환하는 바이트 범위는 바뀌지 않습니다.
 
-단계 간 핸드오프는 바이트가 아닌 삼중을 전달합니다.
+## 배치
 
-## 세그먼트
+Core는 경로와 실행 대상을 결정하고 검증된 레시피, 캐리어 및 소유권을 해석한 뒤 접근과 수명 근거에 따라 패킹합니다. 단계 레이아웃과 게시 정보는 한 번만 확정합니다.
 
-버퍼는 명명된 **세그먼트**에서 가져옵니다. 세그먼트는 특정 할당자(DMA-BUF, CMA, ION, 일반 힙)에 의해 지원되고 누가 액세스할 수 있는지에 대한 메타데이터로 태그가 지정된 연속적인 메모리 영역입니다(CPU만, MLA만, 둘 다 등). 런타임은 각 버퍼에 대해 어떤 단계에서 해당 버퍼에 액세스할지 여부에 따라 적절한 세그먼트를 선택합니다.
+- EV74가 접근하면 CMA가 필요합니다.
+- 소유한 MLA/A65 전용 캐리어는 기본적으로 DMS를 사용합니다.
+- 조건을 충족하는 새 A65 공개 종단은 HostCpu 저장 공간을 사용할 수 있습니다.
+- 가져온 저장 공간의 배치는 고정됩니다. 팬아웃은 모든 소비자를 포함하며 뷰는 캐리어 정책을 유지합니다.
 
-예:
+`AllocationPolicy::PreferDmsThenCma`는 해당 소유 DMS 할당의 용량이 부족할 때 CMA로 폴백하도록 명시적으로 허용합니다. 일반 Linux 메모리로의 폴백은 허용하지 않습니다. Queue 경계, 독립 모델 호출 및 유지된 출력은 소유권과 수명 제약을 유지합니다.
 
-- `nv12_decode` 세그먼트에는 H.264에서 디코딩된 YUV가 포함됩니다. CPU는 진단 탭을 위해 읽을 수 있고, IOMMU는 크기 조정 노드를 위해 읽을 수 있습니다.
-- `mla_input` 세그먼트에는 MLA에 전달되는 테셀레이션된 텐서가 포함됩니다. MLA 하드웨어만 읽을 수 있습니다. CPU 액세스를 위해서는 명시적인 매핑이 필요합니다.
-- `model_output` 세그먼트에는 디테셀레이션 후의 FP32 텐서가 포함됩니다. CPU는 읽을 수 있으므로 애플리케이션에서 이를 가져올 수 있습니다.
+EV74 Preproc → MLA → A65 BoxDecode에서는 추론 입력은 CMA를 사용하고 MLA 출력은 별도 DMS 할당을 사용합니다. 실제 배치는 모든 소비자의 확정된 실행 대상을 따릅니다.
 
-`Tensor`는 삼중과 함께 해당 세그먼트를 전달하므로 프레임워크는 CPU 코드에서 피크/포크가 유효한지 여부를 알 수 있습니다.
+## 소유권과 CPU 매핑
 
-## 캐시 일관성
+제로 카피 출력은 애플리케이션이 보유하는 동안 저장 공간과 생산자 대여를 유지합니다. Scheduler와 Runner는 장치의 확정된 완료까지 입력을 유지합니다. 시간 초과나 취소만으로는 재사용할 수 없습니다.
 
-MLA, EV74 및 CPU는 모두 자체 캐시를 가지고 있습니다. 버퍼가 하나에 의해 작성되고 다른 하나에 의해 읽히는 경우 프레임워크는 경계에서 캐시 플러시/무효화 호출을 삽입합니다. 애플리케이션 코드는 이에 대해 생각할 필요가 없습니다. 이는 버퍼가 단계를 교차할 때 세그먼트 수준에서 처리됩니다.
+[`TensorBuffer::map()`](/reference/cppapi/structs/simaai-neat-tensorbuffer)을 적절한 [`MapMode`](/reference/cppapi/namespaces/simaai-neat)로 사용합니다. `Mapping`은 닫힐 때까지 검증된 접근과 저장 공간을 유지합니다. 호환되는 읽기는 공유할 수 있지만 쓰기는 배타적입니다. 필요한 캐시 관리는 CPU 읽기 전과 쓰기 후에 수행하며 인접 캐시 라인의 바이트도 보존합니다. 동기화에 실패한 저장 공간은 격리됩니다.
 
-애플리케이션 코드가 이에 대해 생각해야 하는 유일한 경우는 `Mapping`을 통해 직접 CPU 읽기 또는 쓰기를 위해 `TensorBuffer`를 **매핑**할 때입니다. 프레임워크는 언매핑 시점에 적절한 무효화(읽기 매핑) 또는 플러시(쓰기 매핑)를 삽입합니다. [`MapMode`](/reference/cppapi/namespaces/simaai-neat) 및 [`TensorBuffer::map()`](/reference/cppapi/structs/simaai-neat-tensorbuffer)를 참조하십시오.
+소유한 캐시형 CMA와 DMS는 허용된 SimaHeap 범위 API를 사용합니다. 가져온 버퍼는 익스포터 계약을 유지합니다. 장치만 사용하는 후속 단계는 CPU 읽기 에포크를 열지 않습니다. CPU 접근을 노드 이름이나 그래프 위치에서 추측하지 않습니다. 내부 CPU 배치는 모든 자식 접근이 종료될 때까지 부모를 유지합니다.
 
-## 실제 제로 복사
+메타데이터 엔벌로프는 페이로드를 복사하지 않고 메모리를 공유할 수 있습니다. 하지만 자료형 변환, 명시적 전송 및 Owned 출력은 바이트를 복사할 수 있습니다. 제로 카피는 모든 단계가 제자리에서 실행된다는 뜻이 아닙니다.
 
-일반적인 추론 파이프라인:
+## 카메라 버퍼
 
-```
-file → demux → H.264 decode → resize → preproc → MLA → postproc → app
-```
+[`CameraInput`](/reference/nodes/camera-input)은 캡처한 DMA-BUF 레이아웃을 검증하고 하위 소비자가 사용하는 동안 카메라 부모 버퍼를 유지합니다. 호환 버퍼는 저장 공간과 평면 형상을 유지합니다. 레이아웃 조정이 필요하고 `allow_cpu_fallback`이 활성화된 경우 브리지는 명시적인 CMA 복사본을 만듭니다. 소스 조정과 모델 전처리는 별개입니다.
 
-제로 복사 방식을 사용하지 않으면 7번 복사가 발생합니다. 버퍼 트리플과 세그먼트를 사용하면 복사가 0번이 됩니다. 즉, 각 단계에서 `(buffer_id, paddr, vaddr)`를 전달하고 다음 단계에서는 해당 버퍼를 직접 사용합니다.
+## 관련 타입
 
-프레임워크의 플래너는 연속된 단계가 공유할 수 있도록 세그먼트를 선택하는 역할을 합니다. 인접한 두 단계의 세그먼트 요구 사항이 호환되지 않으면 플래너는 `Transfer` `ConversionKind`를 삽입하고 활성 `ConversionTraceCollector`에 기록합니다. 이 부분을 주의 깊게 확인하십시오. 런타임에 실제 바이트가 이동하는 유일한 지점입니다.
-
-## 카메라 소스 및 적응형 메모리
-
-실시간 카메라 프레임은 플랫폼 카메라 스택을 통해 입력되므로 메모리 유형은 설치된 커널, 드라이버 및 `libcamerasrc` 경로에 따라 달라집니다. `CameraInput`은 먼저 장치/SiMaAI 제로 복사 메모리를 요청합니다. 내부 브리지는 `GST_QUERY_ALLOCATION`을 통해 표준 풀을 제안합니다. 풀은 검증된 평면을 하나의 패키지된 SiMaAI 할당에서 할당하고 DMA-BUF로 내보냅니다. `libcamerasrc`는 해당 DMA-BUF를 ISP로 가져오고, 브리지는 다운스트림 CVU/MLA 단계에 대해 동일한 패키지된 할당을 해제합니다.
-
-카메라 스택이 OS/libcamera 버퍼만 제공하고 `allow_cpu_fallback`가 활성화된 경우, Neat은 내부 카메라 메모리 브리지를 삽입합니다. 브리지는 각 프레임을 풀링된 SiMaAI 버퍼에 복사하고, 예상되는 메타데이터를 추가한 다음 해당 버퍼를 모델에서 관리하는 CVU 전처리 단계로 전달합니다. 이 복사는 호환성 브리지입니다. 크기 조정, 색상 변환, 정규화, 양자화 및 테셀레이션은 여전히 CVU/EV74에서 실행되어야 합니다.
-
-MIPI 카메라 입력을 작동시키기 위해 공개 `OsToSima`, `videoconvert` 또는 `videoscale` 단계를 추가하지 마십시오. [`CameraInput`](/reference/nodes/camera-input)을 사용하고 소스 경로가 메모리 적응을 담당하도록 합니다.
-
-## 관련 유형
-
-- [`TensorBuffer`](/reference/cppapi/structs/simaai-neat-tensorbuffer) — 버퍼 트리플 컨테이너.
-- [`Segment`](/reference/cppapi/structs/simaai-neat-segment) — 세그먼트 핸들.
-- [`Mapping`](/reference/cppapi/structs/simaai-neat-mapping) — 직접 CPU 액세스를 위한 RAII 맵 핸들.
-- [`MemoryContract`](/reference/cppapi/files/include-contracts-contracttypes-h) — 노드가 메모리를 할당하는 방법을 정의합니다.
-- [`ConversionKind::Transfer`](/reference/cppapi/files/include-pipeline-tensorconversion-h) — 세그먼트 간에 복사하는 유일한 변환 유형.
-
-## 추가 정보
-
-- "텐서 및 버퍼" — 디자인 심층 분석의 §0.10, §18, §19, §20.
-- "TensorBuffer ABI" — 디자인 심층 분석의 §20.
+- [`TensorBuffer`](/reference/cppapi/structs/simaai-neat-tensorbuffer): 저장 공간과 뷰.
+- [`Segment`](/reference/cppapi/structs/simaai-neat-segment): 유지된 할당 범위.
+- [`Mapping`](/reference/cppapi/structs/simaai-neat-mapping): 범위가 지정된 CPU 접근.
+- [`MemoryContract`](/reference/cppapi/files/include-contracts-contracttypes-h): 노드가 선언한 메모리 요구 사항.

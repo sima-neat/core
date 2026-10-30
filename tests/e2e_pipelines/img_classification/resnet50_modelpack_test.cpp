@@ -15,12 +15,15 @@
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
+#include <simaai/scheduler/client/dma_memory.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
+#include <iomanip>
 #include <filesystem>
 #include <iostream>
 #include <limits>
@@ -72,6 +75,10 @@ static void usage(const char* prog) {
       << "  --image <path>         Input image path.\n"
       << "  --model <path>         Model pack tar.gz path.\n"
       << "  --only-direct          Skip JPEG/RTSP paths; run direct model only.\n"
+      << "  --memory-policy        Also check A65/EV74 postprocessing placement.\n"
+      << "  --samples <int>        Measure a reused async direct route (default: disabled).\n"
+      << "  --warmup <int>         Untimed frames before measurement (default: 100).\n"
+      << "  --depth <int>          Bounded async submission window, 1..4 (default: 4).\n"
       << "  --only-rtsp            Skip direct and JPEG paths; run RTSP only.\n"
       << "  --only-jpeg            Skip direct and RTSP paths; run JPEG only.\n"
       << "  --skip-direct          Skip the direct Input path.\n"
@@ -91,11 +98,16 @@ static std::vector<float> tensor_to_floats(const simaai::neat::Tensor& t) {
   if (!map.data || map.size_bytes == 0) {
     throw std::runtime_error("Tensor output is empty");
   }
-  if (map.size_bytes % sizeof(float) != 0) {
-    throw std::runtime_error("Tensor size is not a multiple of float");
+  // Mapping capacity may include device-alignment padding. clone() preserves
+  // that capacity but copies only logical elements; padding is not model data.
+  std::size_t elems = 1;
+  for (const auto dimension : cpu.shape) {
+    if (dimension <= 0 || std::size_t(dimension) > std::numeric_limits<std::size_t>::max() / elems)
+      throw std::runtime_error("Tensor output has an invalid or overflowing shape");
+    elems *= std::size_t(dimension);
   }
-
-  const size_t elems = map.size_bytes / sizeof(float);
+  if (elems > map.size_bytes / sizeof(float))
+    throw std::runtime_error("Tensor mapping is smaller than its logical output");
   std::vector<float> out(elems);
   std::memcpy(out.data(), map.data, elems * sizeof(float));
   return out;
@@ -407,23 +419,186 @@ static simaai::neat::Sample pull_sample_with_retry(simaai::neat::Run& runner,
   return out;
 }
 
-static simaai::neat::Tensor run_direct_infer(const simaai::neat::Model& model, const cv::Mat& rgb) {
+struct DirectMeasurement {
+  int samples = 0;
+  int warmup = 100;
+  int depth = 4;
+};
+
+static simaai::neat::Tensor measure_direct_infer(const simaai::neat::Model& model,
+                                                 const cv::Mat& rgb,
+                                                 const DirectMeasurement& options,
+                                                 const simaai::neat::GraphOptions& graph_options) {
+  using namespace simaai::neat;
+  using Clock = std::chrono::steady_clock;
+  const auto microseconds = [](auto duration) {
+    return std::chrono::duration<double, std::micro>(duration).count();
+  };
+  const auto cpu_seconds = [] {
+    timespec now{};
+    require(clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &now) == 0, "process CPU clock");
+    return double(now.tv_sec) + double(now.tv_nsec) * 1e-9;
+  };
+  Model::RouteOptions route;
+  route.include_input = route.include_output = true;
+  Graph graph(graph_options);
+  graph.add(model.graph(route));
+  RunOptions settings;
+  settings.queue_depth = 4; // Keep the already qualified device stage budget.
+  settings.output_memory = OutputMemory::ZeroCopy;
+  // Upload once. The timed interval contains public push/pull and graph work,
+  // not cv::Mat conversion, image decode, numerical scans or graph compilation.
+  Sample input;
+  input.kind = SampleKind::TensorSet;
+  input.tensors = {Tensor::from_cv_mat(rgb, ImageSpec::PixelFormat::RGB, TensorMemory::EV74)};
+  const auto build_begin = Clock::now();
+  auto run = graph.build(input, settings);
+  const auto built = Clock::now();
+  std::vector<Clock::time_point> starts(options.samples);
+  std::vector<double> latencies(options.samples);
+  Tensor last;
+  const auto uncertain = [] {
+    std::cerr << "UNRETIRED: async model frame did not retire; guarded device recovery required\n"
+              << std::flush;
+    for (;;)
+      std::this_thread::sleep_for(std::chrono::hours(24));
+  };
+  auto batch = [&](int count, bool measured) {
+    std::size_t outstanding = 0;
+    auto retire = [&](int frame) {
+      Sample sample;
+      if (run.pull(10000, sample) != PullStatus::Ok)
+        uncertain();
+      --outstanding;
+      const auto observed = Clock::now();
+      if (measured)
+        latencies[frame] = microseconds(observed - starts[frame]);
+      const auto& tensors = sample_tensor_list(sample);
+      require(sample.frame_id == frame, "async model frame correlation/order changed");
+      require(tensors.size() == 1 && tensors.front().dtype == TensorDType::Float32,
+              "async model output contract changed");
+      // Retain only the final carrier, after the last submission. Keeping an
+      // earlier result pinned could artificially constrain the output pool.
+      if (frame + 1 == count)
+        last = tensors.front();
+    };
+    last = {};
+    try {
+      for (int frame = 0; frame < count; ++frame) {
+        if (frame >= options.depth)
+          retire(frame - options.depth);
+        input.frame_id = frame;
+        if (measured)
+          starts[frame] = Clock::now();
+        ++outstanding;
+        if (!run.push(input))
+          uncertain();
+      }
+      for (int frame = std::max(0, count - options.depth); frame < count; ++frame)
+        retire(frame);
+    } catch (...) {
+      if (outstanding)
+        uncertain();
+      throw;
+    }
+  };
+  batch(std::max(1, options.warmup), false);
+  const auto expected = tensor_to_floats(last);
+  last = {};
+  const auto cpu_begin = cpu_seconds();
+  const auto begin = Clock::now();
+  batch(options.samples, true);
+  const auto delivered = Clock::now();
+  const auto cpu_delivered = cpu_seconds();
+  run.close_input();
+  Sample tail;
+  if (run.pull(10000, tail) != PullStatus::Closed)
+    uncertain();
+  const auto eos = Clock::now();
+  run.close();
+  const auto closed = Clock::now();
+  const auto cpu_closed = cpu_seconds();
+  const auto actual = tensor_to_floats(last);
+  if (actual != expected) {
+    std::ostringstream detail;
+    detail << "async model final output differs from untimed reference: expected_elements="
+           << expected.size() << " actual_elements=" << actual.size();
+    std::size_t changed = 0;
+    std::size_t nonfinite = 0;
+    double max_error = 0;
+    for (std::size_t i = 0; i < std::min(actual.size(), expected.size()); ++i) {
+      if (actual[i] == expected[i])
+        continue;
+      if (changed++ < 8)
+        detail << " [" << i << ":" << std::setprecision(9) << expected[i] << "->" << actual[i]
+               << "]";
+      if (std::isfinite(actual[i]) && std::isfinite(expected[i]))
+        max_error = std::max(max_error, std::abs(double(actual[i]) - double(expected[i])));
+      else
+        ++nonfinite;
+    }
+    detail << " changed=" << changed << " nonfinite=" << nonfinite << " max_error=" << max_error;
+    throw std::runtime_error(detail.str());
+  }
+  std::sort(latencies.begin(), latencies.end());
+  const auto percentile = [&](unsigned p) {
+    return latencies[std::min(latencies.size() - 1, latencies.size() * p / 100)];
+  };
+  std::cout
+      << "# current-Core model route; reused Run; uploaded immutable "
+         "input; bounded public async window; initial/final numerics outside timing\n"
+      << "samples,depth,build_us,median_us,p95_us,p99_us,max_us,delivery_fps,through_close_fps,"
+         "delivery_cpu_us_per_frame,through_close_cpu_us_per_frame,eos_us,close_us\n"
+      << std::setprecision(12) << options.samples << ',' << options.depth << ','
+      << microseconds(built - build_begin) << ',' << percentile(50) << ',' << percentile(95) << ','
+      << percentile(99) << ',' << latencies.back() << ','
+      << options.samples * 1e6 / microseconds(delivered - begin) << ','
+      << options.samples * 1e6 / microseconds(closed - begin) << ','
+      << (cpu_delivered - cpu_begin) * 1e6 / options.samples << ','
+      << (cpu_closed - cpu_begin) * 1e6 / options.samples << ',' << microseconds(eos - delivered)
+      << ',' << microseconds(closed - eos) << '\n';
+  return last;
+}
+
+static simaai::neat::Tensor run_direct_infer(const simaai::neat::Model& model, const cv::Mat& rgb,
+                                             const simaai::neat::GraphOptions& options = {}) {
   simaai::neat::Model::RouteOptions route_opt;
   route_opt.include_input = true;
   route_opt.include_output = true;
-  simaai::neat::Graph p;
+  simaai::neat::Graph p(options);
   p.add(model.graph(route_opt));
 
-  simaai::neat::TensorList out;
-  bool logged_sample = false;
-  for (int i = 0; i < 20; ++i) {
-    out = p.run(std::vector<cv::Mat>{rgb});
-    if (!logged_sample) {
-      log_tensor_sample(sample_from_tensors(out), "direct");
-      logged_sample = true;
-    }
-  }
+  // This accuracy fixture exercises the production async model stages through
+  // Graph::run's synchronous convenience API.  Preserve the model's validated
+  // four-slot device depth instead of letting the generic one-shot adapter
+  // clamp ProcessCVU/ProcessMLA to one slot, which cannot circulate the
+  // prepared ResNet preproc -> MLA -> post-CVU route.
+  simaai::neat::RunOptions run_opt;
+  run_opt.advanced.sync_num_buffers_override = 4;
+
+  run_opt.output_memory = simaai::neat::OutputMemory::ZeroCopy;
+  const auto out = p.run(std::vector<cv::Mat>{rgb}, run_opt);
+  log_tensor_sample(sample_from_tensors(out), "direct");
   return require_tensor(out, "direct");
+}
+
+static void require_output_heap(const simaai::neat::Tensor& tensor,
+                                simaai::scheduler::client::dma::HeapKind expected) {
+  namespace dma = simaai::scheduler::client::dma;
+  require(tensor.storage && tensor.storage->kind == simaai::neat::StorageKind::GstSample &&
+              tensor.storage->holder,
+          "placement check requires the original zero-copy output");
+  auto* sample = static_cast<GstSample*>(tensor.storage->holder.get());
+  auto* buffer = gst_sample_get_buffer(sample);
+  const int memory_index =
+      buffer && gst_buffer_n_memory(buffer) == 1 ? 0 : tensor.route.memory_index;
+  require(buffer && memory_index >= 0 &&
+              static_cast<guint>(memory_index) < gst_buffer_n_memory(buffer),
+          "output has no selected backing allocation");
+  const auto backing = dma::DmaBufMemory::retain(gst_buffer_peek_memory(buffer, memory_index));
+  require(backing && backing->knownHeapKind() == expected, expected == dma::HeapKind::MlaDms
+                                                               ? "A65 model output must use DMS"
+                                                               : "EV74 model output must use CMA");
 }
 
 static void compare_scores(const std::vector<float>& a, const std::vector<float>& b,
@@ -687,6 +862,16 @@ int main(int argc, char** argv) {
   int expected_id = -1;
   float min_prob = 0.0f;
   bool have_min_prob = false;
+  DirectMeasurement measurement;
+  sima_test::parse_int_arg(argc, argv, "--samples", measurement.samples);
+  sima_test::parse_int_arg(argc, argv, "--warmup", measurement.warmup);
+  sima_test::parse_int_arg(argc, argv, "--depth", measurement.depth);
+  if (measurement.samples < 0 || measurement.samples > 1000000 || measurement.warmup < 0 ||
+      measurement.warmup > 1000000 || measurement.depth < 1 || measurement.depth > 4 ||
+      (measurement.samples && !only_direct)) {
+    usage(argv[0]);
+    return 2;
+  }
 
   std::string tmp;
   if (sima_test::get_arg(argc, argv, "--image", tmp))
@@ -710,12 +895,13 @@ int main(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     if (arg == "--image" || arg == "--model" || arg == "--goldfish-url" || arg == "--expect-id" ||
-        arg == "--min-prob") {
+        arg == "--min-prob" || arg == "--samples" || arg == "--warmup" || arg == "--depth") {
       ++i;
       continue;
     }
     if (arg == "--goldfish" || arg == "--only-direct" || arg == "--only-rtsp" ||
-        arg == "--only-jpeg" || arg == "--skip-direct" || arg == "--skip-jpeg") {
+        arg == "--only-jpeg" || arg == "--skip-direct" || arg == "--skip-jpeg" ||
+        arg == "--memory-policy") {
       continue;
     }
     if (!arg.empty() && arg[0] == '-') {
@@ -855,9 +1041,25 @@ int main(int argc, char** argv) {
                 "model.graph({false,false}) should omit appsink");
       }
       cv::Mat rgb = load_rgb_resized(image_path, kInferWidth, kInferHeight);
-      auto direct_t = run_direct_infer(model_rgb, rgb);
+      const bool check_memory_policy = sima_test::has_flag(argc, argv, "--memory-policy");
+      simaai::neat::GraphOptions options;
+      if (check_memory_policy) {
+        options.processcvu.pre_run_target = "EV74";
+        options.processcvu.post_run_target = "A65";
+      }
+      auto direct_t = measurement.samples
+                          ? measure_direct_infer(model_rgb, rgb, measurement, options)
+                          : run_direct_infer(model_rgb, rgb, options);
+      if (check_memory_policy)
+        require_output_heap(direct_t, simaai::scheduler::client::dma::HeapKind::MlaDms);
       auto direct_scores = scores_from_tensor(direct_t, "direct");
       check_top1(direct_scores, expect, prob, "direct");
+      if (check_memory_policy) {
+        options.processcvu.post_run_target = "EV74";
+        const auto tensor = run_direct_infer(model_rgb, rgb, options);
+        require_output_heap(tensor, simaai::scheduler::client::dma::HeapKind::Cma);
+        check_top1(scores_from_tensor(tensor, "placement_EV74"), expect, prob, "placement_EV74");
+      }
     }
 
     if (run_jpeg) {

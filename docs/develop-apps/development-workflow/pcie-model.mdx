@@ -15,8 +15,11 @@ This is a separate API from the Neat Library that runs directly on a DevKit.
 The public types are in the `simaai::neat::pcie` C++ namespace and the
 `pyneatpcie` Python package.
 
+For LLM, VLM, and ASR models, use the
+[PCIe GenAI APIs](/develop-apps/development-workflow/genai-model/pcie-api).
+
 :::note Install on the host machine
-Install `core/pciehost` on the host machine, not inside the Neat SDK
+Install `core/pciehost` on the host machine, not inside the Palette SDK
 container or on the Modalix PCIe Card. Follow
 [Install PCIe Host](/getting-started/neat-library/pcie-host/) before using this
 page.
@@ -48,7 +51,7 @@ results use the PCIe data transport.
 | `card_host` | empty | Explicit SSH/SCP address. When empty, card `N` uses `10.0.N.2`. |
 | `card_id` | `0` | Card number passed to the host PCIe plugin. |
 | `user` | `sima` | User for card-side SSH and SCP. |
-| `queue` | `0` | Co-processing queue, from `0` through `3`. |
+| `queue` | `0` | Co-processing queue, from `0` through `5`. |
 | `max_inflight` | `10` | Maximum accepted inputs waiting for results. |
 
 Use the defaults for one card at `10.0.0.2` on queue 0. Set `card_host`
@@ -453,8 +456,8 @@ target_link_libraries(pcie_model PRIVATE ${OpenCV_LIBS})
 
 ## Current scope and limits
 
-- One `pcie::Model` owns one PCIe queue. Queues range from `0` through `3`.
-- The Modalix EV74 supports at most four concurrent co-processing pipelines.
+- One `pcie::Model` owns one PCIe data queue. Queues range from `0` through `5`.
+- Concurrent pipelines share card compute and memory; queue availability alone does not guarantee sufficient resources.
 - Do not assign two active models to the same queue.
 - The host package and the Neat Library installed on the card must be from
   compatible releases.

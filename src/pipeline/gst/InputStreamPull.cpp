@@ -1,17 +1,19 @@
+#include <simaai/scheduler/client/tensor_buffer.h>
 #include "InputStreamInternal.h"
 
 #include "gst/GstSampleAttributes.h"
 #include "gst/SimaTensorSetMetaAbi.h"
+#include "pipeline/DetectionTypes.h"
 #include "pipeline/EncodedSampleUtil.h"
 #include "pipeline/TensorAdapters.h"
 #include "pipeline/internal/CapsBridge.h"
+#include "pipeline/internal/TensorTessellationMetadata.h"
 
 #include <cstring>
 #include <unordered_set>
 
 namespace simaai::neat {
 bool inputstream_restore_preproc_buffer_meta_enabled();
-bool inputstream_fast_static_decode_enabled();
 bool inputstream_fast_minimal_output_meta_enabled();
 bool inputstream_fast_static_preprocess_meta_enabled();
 
@@ -25,6 +27,8 @@ static std::string image_format_name(simaai::neat::ImageSpec::PixelFormat fmt) {
     return "GRAY8";
   case simaai::neat::ImageSpec::PixelFormat::NV12:
     return "NV12";
+  case simaai::neat::ImageSpec::PixelFormat::NV16:
+    return "NV16";
   case simaai::neat::ImageSpec::PixelFormat::I420:
     return "I420";
   case simaai::neat::ImageSpec::PixelFormat::UNKNOWN:
@@ -51,7 +55,7 @@ void maybe_restore_cached_preprocess_meta(InputStream::State& st, GstSample* sam
   if (!restore_buffer_meta) {
     return;
   }
-  const bool debug = pipeline_internal::env_bool("SIMA_PREPROC_META_TRACE", false);
+  const bool debug = pipeline_internal::preproc_meta_trace_enabled();
   if (!sample) {
     if (debug) {
       std::fprintf(stderr, "[PREPROC_META_TRACE] pull-buffer restore skip=no_sample\n");
@@ -65,6 +69,12 @@ void maybe_restore_cached_preprocess_meta(InputStream::State& st, GstSample* sam
     }
     return;
   }
+
+  std::string compact_error;
+  if (simaai::gst::tensor_buffer_frame_metadata(buffer, &compact_error))
+    return;
+  if (!compact_error.empty())
+    throw std::runtime_error("InputStream compact restore metadata: " + compact_error);
 
   if (st.src_opt.preprocess_meta.has_value() && !st.src_opt.preprocess_meta->axis_perm.empty()) {
     merge_simaai_preprocess_axis_perm(buffer, st.src_opt.preprocess_meta->axis_perm);
@@ -142,7 +152,7 @@ bool sample_already_has_preprocess_semantic(const Sample& sample) {
 }
 
 void maybe_restore_cached_preprocess_meta_on_sample(InputStream::State& st, Sample* sample) {
-  const bool debug = pipeline_internal::env_bool("SIMA_PREPROC_META_TRACE", false);
+  const bool debug = pipeline_internal::preproc_meta_trace_enabled();
   if (!sample) {
     if (debug) {
       std::fprintf(stderr, "[PREPROC_META_TRACE] pull-sample restore skip=no_sample\n");
@@ -228,23 +238,44 @@ void maybe_restore_cached_preprocess_meta_on_sample(InputStream::State& st, Samp
     if (!source_buffer) {
       return;
     }
-    GstBuffer* cloned_buffer = gst_buffer_copy_deep(source_buffer);
+    const bool dmabuf = pipeline_internal::buffer_has_dmabuf_memory(source_buffer);
+    GstBuffer* cloned_buffer =
+        dmabuf ? gst_buffer_copy(source_buffer) : gst_buffer_copy_deep(source_buffer);
     if (!cloned_buffer) {
-      return;
+      throw std::runtime_error("InputStream::pull: failed to create preprocess metadata envelope");
+    }
+    if (dmabuf) {
+      try {
+        prepare_holder_buffer_for_zero_copy_transfer(&cloned_buffer, nullptr, holder,
+                                                     "InputStream::restore_preprocess_meta");
+      } catch (...) {
+        gst_buffer_unref(cloned_buffer);
+        throw;
+      }
     }
     if (!write_simaai_preprocess_meta(cloned_buffer, *cached)) {
       gst_buffer_unref(cloned_buffer);
-      return;
+      throw std::runtime_error("InputStream::pull: failed to restore preprocess metadata");
     }
     GstCaps* caps = gst_sample_get_caps(sample);
     GstSample* cloned_sample =
-        gst_sample_new(cloned_buffer, caps ? gst_caps_ref(caps) : nullptr, nullptr, nullptr);
+        gst_sample_new(cloned_buffer, caps, gst_sample_get_segment(sample), nullptr);
     gst_buffer_unref(cloned_buffer);
     if (!cloned_sample) {
-      return;
+      throw std::runtime_error("InputStream::pull: failed to retain preprocess metadata envelope");
     }
 
-    Tensor replaced = simaai::neat::from_gst_sample(cloned_sample);
+    Tensor replaced;
+    try {
+      replaced = simaai::neat::from_gst_sample(cloned_sample);
+      if (gst_buffer_n_memory(source_buffer) > 1U && tensor.route.memory_index >= 0) {
+        replaced = pipeline_internal::tensor_view_from_sample_segment(
+            replaced, tensor.route.segment_name, tensor.route.memory_index, /*keep_holder=*/true);
+      }
+    } catch (...) {
+      gst_sample_unref(cloned_sample);
+      throw;
+    }
     gst_sample_unref(cloned_sample);
     replaced.route = tensor.route;
     replaced.semantic = tensor.semantic;
@@ -291,8 +322,10 @@ bool sample_bytes_enabled() {
 }
 
 bool sample_storage_debug_enabled() {
-  return sample_debug_enabled() || pipeline_internal::env_bool("SIMA_STAGE_DEBUG", false) ||
-         pipeline_internal::env_bool("SIMA_INPUTSTREAM_HOLDER_DEBUG", false);
+  static const bool enabled = sample_debug_enabled() ||
+                              pipeline_internal::env_bool("SIMA_STAGE_DEBUG", false) ||
+                              pipeline_internal::env_bool("SIMA_INPUTSTREAM_HOLDER_DEBUG", false);
+  return enabled;
 }
 
 bool tensor_set_debug_enabled() {
@@ -306,15 +339,6 @@ bool inputstream_restore_preproc_buffer_meta_enabled() {
   }
   cached =
       pipeline_internal::env_bool("SIMA_INPUTSTREAM_RESTORE_PREPROC_BUFFER_META", false) ? 1 : 0;
-  return cached != 0;
-}
-
-bool inputstream_fast_static_decode_enabled() {
-  static int cached = -1;
-  if (cached >= 0) {
-    return cached != 0;
-  }
-  cached = pipeline_internal::env_bool("SIMA_INPUTSTREAM_FAST_STATIC_DECODE", true) ? 1 : 0;
   return cached != 0;
 }
 
@@ -502,11 +526,13 @@ void log_sample_tensor_state(const char* where, const char* label,
 }
 
 static std::optional<Sample> bundle_from_sample_meta(GstSample* sample, const char* where,
-                                                     bool copy_output);
+                                                     bool copy_output,
+                                                     bool preserve_framework_output);
 static std::optional<Sample> tensor_set_from_meta(GstSample* sample, const char* where,
-                                                  bool copy_output, InputStream::State* st);
-static std::optional<Sample> tensor_set_from_meta_slow(GstSample* sample, const char* where,
-                                                       bool copy_output);
+                                                  InputStream::State* st);
+static std::optional<Sample>
+tensor_set_from_meta_slow(GstSample* sample, const char* where,
+                          std::vector<std::uint64_t>* required_segment_extents = nullptr);
 
 TensorDType tensor_dtype_from_tensor_set_descriptor(gint dtype) {
   switch (dtype) {
@@ -620,15 +646,28 @@ void normalize_tensor_set_descriptor_shape(
 Tensor
 apply_tensor_set_descriptor(const Tensor& base,
                             const pipeline_internal::TensorBufferTensorDescriptor& descriptor,
-                            const std::string& stage_key, bool materialize_output) {
+                            const std::string& stage_key) {
+  if (base.storage && base.storage->kind == StorageKind::GstSample && base.storage->holder) {
+    auto* sample = static_cast<GstSample*>(base.storage->holder.get());
+    GstBuffer* buffer = sample && GST_IS_SAMPLE(sample) ? gst_sample_get_buffer(sample) : nullptr;
+    const guint memory_count = buffer ? gst_buffer_n_memory(buffer) : 0U;
+    if (memory_count > 1U && pipeline_internal::buffer_has_dmabuf_memory(buffer) &&
+        (descriptor.memory_index < 0 ||
+         static_cast<guint>(descriptor.memory_index) >= memory_count)) {
+      // A late segment-name resolution can validate metadata without authoring
+      // its physical memory index. Never guess memory 0 or map/merge the carrier.
+      throw std::runtime_error(
+          "tensor-set DMA output logical=" + std::to_string(descriptor.logical_index) +
+          " segment='" + descriptor.segment_name + "': unresolved physical memory index " +
+          std::to_string(descriptor.memory_index) + " for " + std::to_string(memory_count) +
+          "-memory carrier");
+    }
+  }
   Tensor out = base;
   const bool gst_sample_backed =
       base.storage && base.storage->kind == simaai::neat::StorageKind::GstSample;
   if (gst_sample_backed) {
-    if (materialize_output) {
-      out = pipeline_internal::copy_tensor_from_sample_memory(base, descriptor.memory_index,
-                                                              /*keep_holder=*/false);
-    } else if (descriptor.memory_index >= 0) {
+    if (descriptor.memory_index >= 0) {
       out = pipeline_internal::tensor_view_from_sample_memory(base, descriptor.memory_index,
                                                               /*keep_holder=*/true);
     }
@@ -687,31 +726,23 @@ apply_tensor_set_descriptor(const Tensor& base,
   if (out.route.segment_name.empty()) {
     out.route.segment_name = out.route.name;
   }
-  if (materialize_output) {
-    // GstSample-backed tensor-set descriptors already materialize the full backing
-    // memory segment above via copy_tensor_from_sample_memory(). Running an extra
-    // clone here would repack padded dense tensors into tight contiguous storage
-    // and destroy the published physical stride metadata.
-    if (!gst_sample_backed) {
-      out = out.clone();
-    } else if (out.is_dense() && out.is_contiguous()) {
-      const std::size_t bytes = out.dense_bytes_tight();
-      if (bytes > 0U) {
-        const Mapping src = out.map_read();
-        auto storage = simaai::neat::make_cpu_owned_storage(bytes);
-        const Mapping dst = storage->map(simaai::neat::MapMode::Write);
-        if (!src.data || src.size_bytes < bytes || !dst.data || dst.size_bytes < bytes) {
-          throw std::runtime_error("apply_tensor_set_descriptor: contiguous slice copy failed");
-        }
-        std::memcpy(dst.data, src.data, bytes);
-        out.storage = std::move(storage);
-        out.device = {simaai::neat::DeviceType::CPU, 0};
-        out.byte_offset = 0;
-        out.read_only = false;
-      }
+  return out;
+}
+
+static void fill_output_routing_from_legacy_meta(const GstStructure* structure, Sample* out) {
+  gint origin_output_slot = -1;
+  gint64 buffer_offset = -1;
+  gst_structure_get_int(structure, "origin_output_slot", &origin_output_slot);
+  gst_structure_get_int64(structure, "buffer-offset", &buffer_offset);
+  if (origin_output_slot >= 0) {
+    out->route_slot = origin_output_slot;
+  }
+  if (buffer_offset >= 0 && buffer_offset <= std::numeric_limits<int>::max()) {
+    out->output_index = out->logical_output_index = static_cast<int>(buffer_offset);
+    if (out->route_slot < 0) {
+      out->route_slot = out->logical_output_index;
     }
   }
-  return out;
 }
 
 static void fill_output_meta_from_sample(GstSample* sample, Sample* out) {
@@ -721,21 +752,39 @@ static void fill_output_meta_from_sample(GstSample* sample, Sample* out) {
   if (!buffer)
     return;
 
-  restore_sample_timing_from_gst_buffer(buffer, out);
-
+  std::string compact_error;
+  const auto* frame = simaai::gst::tensor_buffer_frame_metadata(buffer, &compact_error);
+  if (!compact_error.empty())
+    throw std::runtime_error("InputStream compact frame metadata: " + compact_error);
+  if (frame) {
+    out->frame_id = frame->frame_id >= 0 ? frame->frame_id : -1;
+    out->input_seq = frame->input_sequence && *frame->input_sequence >= 0
+                         ? *frame->input_sequence
+                         : frame->original_sequence.value_or(-1);
+    out->orig_input_seq = frame->original_sequence && *frame->original_sequence >= 0
+                              ? *frame->original_sequence
+                              : out->input_seq;
+    out->stream_id = frame->stream_id;
+    out->stream_label = out->segment_name = frame->buffer_name;
+    if (frame->buffer_offset >= 0 && frame->buffer_offset <= std::numeric_limits<int>::max()) {
+      out->output_index = out->logical_output_index = static_cast<int>(frame->buffer_offset);
+      if (out->route_slot < 0)
+        out->route_slot = out->logical_output_index;
+    }
+    restore_sample_timing_from_gst_buffer(buffer, out);
+    return;
+  }
   GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
   GstStructure* s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
-  if (!s)
+  if (!s) {
+    restore_sample_timing_from_gst_buffer(buffer, out);
     return;
+  }
 
   gst_internal::read_attributes_from_structure(s, &out->attributes);
 
   gint64 frame_id = -1;
-  gint64 buffer_offset = -1;
-  gint origin_output_slot = -1;
   gst_structure_get_int64(s, "frame-id", &frame_id);
-  gst_structure_get_int64(s, "buffer-offset", &buffer_offset);
-  gst_structure_get_int(s, "origin_output_slot", &origin_output_slot);
   gint64 input_seq = -1;
   gint64 orig_input_seq = -1;
   const bool has_input_seq = (gst_structure_get_int64(s, "input-seq", &input_seq) == TRUE);
@@ -744,21 +793,8 @@ static void fill_output_meta_from_sample(GstSample* sample, Sample* out) {
   const char* stream_id = gst_structure_get_string(s, "stream-id");
   const char* buffer_name = gst_structure_get_string(s, "buffer-name");
   const char* orig_stream_id = gst_structure_get_string(s, "orig-stream-id");
-  gboolean sample_frame_valid = FALSE;
-  const bool has_sample_frame =
-      gst_structure_get_boolean(s, "sample-frame-id-valid", &sample_frame_valid) == TRUE;
-  if (has_sample_frame) {
-    gint64 sample_frame_id = -1;
-    if (sample_frame_valid == TRUE &&
-        gst_structure_get_int64(s, "sample-frame-id", &sample_frame_id) == TRUE &&
-        sample_frame_id >= 0) {
-      out->frame_id = sample_frame_id;
-    } else {
-      out->frame_id = -1;
-    }
-  } else if (frame_id >= 0) {
+  if (frame_id >= 0)
     out->frame_id = frame_id;
-  }
   if (has_input_seq && input_seq >= 0) {
     out->input_seq = input_seq;
   } else if (has_orig_input_seq && orig_input_seq >= 0) {
@@ -782,266 +818,22 @@ static void fill_output_meta_from_sample(GstSample* sample, Sample* out) {
     out->stream_label = buffer_name;
   if (buffer_name)
     out->segment_name = buffer_name;
-  if (origin_output_slot >= 0) {
-    out->route_slot = origin_output_slot;
-  }
-  if (buffer_offset >= 0 && buffer_offset <= std::numeric_limits<int>::max()) {
-    out->output_index = static_cast<int>(buffer_offset);
-    out->logical_output_index = static_cast<int>(buffer_offset);
-    if (out->route_slot < 0) {
-      out->route_slot = static_cast<int>(buffer_offset);
-    }
-  }
+  fill_output_routing_from_legacy_meta(s, out);
+  restore_sample_timing_from_gst_buffer(buffer, out);
 }
 
 static void fill_output_meta_minimal_from_sample(GstSample* sample, Sample* out) {
-  if (!sample || !out)
-    return;
-  GstBuffer* buffer = gst_sample_get_buffer(sample);
-  if (!buffer)
-    return;
-
-  restore_sample_timing_from_gst_buffer(buffer, out);
-
-  GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
-  GstStructure* s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
-  if (!s)
-    return;
-
-  gst_internal::read_attributes_from_structure(s, &out->attributes);
-
-  gint64 frame_id = -1;
-  gboolean sample_frame_valid = FALSE;
-  const bool has_sample_frame =
-      gst_structure_get_boolean(s, "sample-frame-id-valid", &sample_frame_valid) == TRUE;
-  gint64 sample_frame_id = -1;
-  if (has_sample_frame) {
-    if (sample_frame_valid == TRUE &&
-        gst_structure_get_int64(s, "sample-frame-id", &sample_frame_id) == TRUE &&
-        sample_frame_id >= 0) {
-      out->frame_id = sample_frame_id;
-    } else {
-      out->frame_id = -1;
-    }
-  } else if (gst_structure_get_int64(s, "frame-id", &frame_id) == TRUE && frame_id >= 0) {
-    out->frame_id = frame_id;
-  }
-
-  gint64 input_seq = -1;
-  gint64 orig_input_seq = -1;
-  const bool has_input_seq = (gst_structure_get_int64(s, "input-seq", &input_seq) == TRUE);
-  const bool has_orig_input_seq =
-      (gst_structure_get_int64(s, "orig-input-seq", &orig_input_seq) == TRUE);
-  if (has_input_seq && input_seq >= 0) {
-    out->input_seq = input_seq;
-  } else if (has_orig_input_seq && orig_input_seq >= 0) {
-    out->input_seq = orig_input_seq;
-  }
-  if (has_orig_input_seq && orig_input_seq >= 0) {
-    out->orig_input_seq = orig_input_seq;
-  } else if (out->input_seq >= 0) {
-    out->orig_input_seq = out->input_seq;
-  }
-
-  const char* stream_id = gst_structure_get_string(s, "stream-id");
-  const char* buffer_name = gst_structure_get_string(s, "buffer-name");
-  const char* orig_stream_id = gst_structure_get_string(s, "orig-stream-id");
-  if (orig_stream_id && *orig_stream_id) {
-    if (!stream_id || !*stream_id || (buffer_name && std::string(stream_id) == buffer_name)) {
-      out->stream_id = orig_stream_id;
-    } else {
-      out->stream_id = stream_id;
-    }
-  } else if (stream_id) {
-    out->stream_id = stream_id;
-  }
-  if (buffer_name) {
-    out->stream_label = buffer_name;
-    out->segment_name = buffer_name;
-  }
+  // One checked authority and one source-value precedence policy for all output
+  // ownership modes; minimal used to omit compact frame routing entirely.
+  fill_output_meta_from_sample(sample, out);
 }
 
 static Sample output_from_sample_stream_inner(GstSample* sample, const char* where,
-                                              bool copy_output, bool keep_holder_for_tensor_copy) {
-  const auto copy_video_to_cpu = [](GstSample* s) -> simaai::neat::Tensor {
-    if (!s)
-      throw std::runtime_error("copy_video_to_cpu: null sample");
-    const auto make_plane_local = [](simaai::neat::PlaneRole role, int64_t h, int64_t w,
-                                     int64_t stride_bytes, int64_t offset_bytes,
-                                     int64_t elem_bytes) -> simaai::neat::Plane {
-      simaai::neat::Plane plane;
-      plane.role = role;
-      plane.shape = {h, w};
-      plane.strides_bytes = {stride_bytes, elem_bytes};
-      plane.byte_offset = offset_bytes;
-      return plane;
-    };
-    GstCaps* caps = gst_sample_get_caps(s);
-    if (!caps)
-      throw std::runtime_error("copy_video_to_cpu: missing caps");
-    GstVideoInfo info;
-    std::memset(&info, 0, sizeof(info));
-    if (!gst_video_info_from_caps(&info, caps)) {
-      throw std::runtime_error("copy_video_to_cpu: gst_video_info_from_caps failed");
-    }
-    GstBuffer* buffer = gst_sample_get_buffer(s);
-    if (!buffer)
-      throw std::runtime_error("copy_video_to_cpu: missing buffer");
-
-    GstVideoFrame frame;
-    std::memset(&frame, 0, sizeof(frame));
-    if (!gst_video_frame_map(&frame, &info, buffer, GST_MAP_READ)) {
-      throw std::runtime_error("copy_video_to_cpu: gst_video_frame_map failed");
-    }
-
-    const GstVideoFormat fmt = GST_VIDEO_INFO_FORMAT(&info);
-    const int w = GST_VIDEO_INFO_WIDTH(&info);
-    const int h = GST_VIDEO_INFO_HEIGHT(&info);
-    if (w <= 0 || h <= 0) {
-      gst_video_frame_unmap(&frame);
-      throw std::runtime_error("copy_video_to_cpu: invalid dimensions");
-    }
-
-    simaai::neat::Tensor out;
-    out.dtype = simaai::neat::TensorDType::UInt8;
-    out.device = {simaai::neat::DeviceType::CPU, 0};
-    out.read_only = false;
-
-    simaai::neat::ImageSpec image;
-    if (fmt == GST_VIDEO_FORMAT_NV12) {
-      image.format = simaai::neat::ImageSpec::PixelFormat::NV12;
-    } else if (fmt == GST_VIDEO_FORMAT_I420) {
-      image.format = simaai::neat::ImageSpec::PixelFormat::I420;
-    } else if (fmt == GST_VIDEO_FORMAT_RGB) {
-      image.format = simaai::neat::ImageSpec::PixelFormat::RGB;
-    } else if (fmt == GST_VIDEO_FORMAT_BGR) {
-      image.format = simaai::neat::ImageSpec::PixelFormat::BGR;
-    } else if (fmt == GST_VIDEO_FORMAT_GRAY8) {
-      image.format = simaai::neat::ImageSpec::PixelFormat::GRAY8;
-    } else {
-      gst_video_frame_unmap(&frame);
-      throw std::runtime_error("copy_video_to_cpu: unsupported video format");
-    }
-    out.semantic.image = image;
-
-    const int64_t elem = 1;
-    if (fmt == GST_VIDEO_FORMAT_NV12) {
-      const size_t y_sz = static_cast<size_t>(w) * static_cast<size_t>(h);
-      const size_t uv_sz = y_sz / 2;
-      auto storage = simaai::neat::make_cpu_owned_storage(y_sz + uv_sz);
-      auto map = storage->map(simaai::neat::MapMode::Write);
-      if (!map.data || map.size_bytes < (y_sz + uv_sz)) {
-        gst_video_frame_unmap(&frame);
-        throw std::runtime_error("copy_video_to_cpu: map failed");
-      }
-      uint8_t* dst = static_cast<uint8_t*>(map.data);
-      const uint8_t* y = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 0));
-      const uint8_t* uv = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 1));
-      const int y_stride = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0);
-      const int uv_stride = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 1);
-      {
-        for (int r = 0; r < h; ++r) {
-          std::memcpy(dst + static_cast<size_t>(r) * static_cast<size_t>(w),
-                      y + static_cast<size_t>(r) * static_cast<size_t>(y_stride),
-                      static_cast<size_t>(w));
-        }
-      }
-      uint8_t* dst_uv = dst + y_sz;
-      const int uv_h = h / 2;
-      {
-        for (int r = 0; r < uv_h; ++r) {
-          std::memcpy(dst_uv + static_cast<size_t>(r) * static_cast<size_t>(w),
-                      uv + static_cast<size_t>(r) * static_cast<size_t>(uv_stride),
-                      static_cast<size_t>(w));
-        }
-      }
-      out.storage = std::move(storage);
-      out.shape = {h, w};
-      out.layout = simaai::neat::TensorLayout::HW;
-      out.strides_bytes = {static_cast<int64_t>(w), elem};
-      out.planes.push_back(make_plane_local(simaai::neat::PlaneRole::Y, h, w, w, 0, elem));
-      out.planes.push_back(make_plane_local(simaai::neat::PlaneRole::UV, h / 2, w, w,
-                                            static_cast<int64_t>(y_sz), elem));
-    } else if (fmt == GST_VIDEO_FORMAT_I420) {
-      const size_t y_sz = static_cast<size_t>(w) * static_cast<size_t>(h);
-      const size_t u_sz = y_sz / 4;
-      const size_t v_sz = u_sz;
-      auto storage = simaai::neat::make_cpu_owned_storage(y_sz + u_sz + v_sz);
-      auto map = storage->map(simaai::neat::MapMode::Write);
-      if (!map.data || map.size_bytes < (y_sz + u_sz + v_sz)) {
-        gst_video_frame_unmap(&frame);
-        throw std::runtime_error("copy_video_to_cpu: map failed");
-      }
-      uint8_t* dst = static_cast<uint8_t*>(map.data);
-      const uint8_t* y = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 0));
-      const uint8_t* u = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 1));
-      const uint8_t* v = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 2));
-      const int y_stride = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0);
-      const int u_stride = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 1);
-      const int v_stride = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 2);
-      {
-        for (int r = 0; r < h; ++r) {
-          std::memcpy(dst + static_cast<size_t>(r) * static_cast<size_t>(w),
-                      y + static_cast<size_t>(r) * static_cast<size_t>(y_stride),
-                      static_cast<size_t>(w));
-        }
-        uint8_t* dst_u = dst + y_sz;
-        uint8_t* dst_v = dst + y_sz + u_sz;
-        const int uv_h = h / 2;
-        const int uv_w = w / 2;
-        for (int r = 0; r < uv_h; ++r) {
-          std::memcpy(dst_u + static_cast<size_t>(r) * static_cast<size_t>(uv_w),
-                      u + static_cast<size_t>(r) * static_cast<size_t>(u_stride),
-                      static_cast<size_t>(uv_w));
-          std::memcpy(dst_v + static_cast<size_t>(r) * static_cast<size_t>(uv_w),
-                      v + static_cast<size_t>(r) * static_cast<size_t>(v_stride),
-                      static_cast<size_t>(uv_w));
-        }
-      }
-      out.storage = std::move(storage);
-      out.shape = {h, w};
-      out.layout = simaai::neat::TensorLayout::HW;
-      out.strides_bytes = {static_cast<int64_t>(w), elem};
-      out.planes.push_back(make_plane_local(simaai::neat::PlaneRole::Y, h, w, w, 0, elem));
-      out.planes.push_back(make_plane_local(simaai::neat::PlaneRole::U, h / 2, w / 2, w / 2,
-                                            static_cast<int64_t>(y_sz), elem));
-      out.planes.push_back(make_plane_local(simaai::neat::PlaneRole::V, h / 2, w / 2, w / 2,
-                                            static_cast<int64_t>(y_sz + u_sz), elem));
-    } else {
-      const int channels = (fmt == GST_VIDEO_FORMAT_GRAY8) ? 1 : 3;
-      const size_t row_bytes = static_cast<size_t>(w) * static_cast<size_t>(channels);
-      const size_t total = row_bytes * static_cast<size_t>(h);
-      auto storage = simaai::neat::make_cpu_owned_storage(total);
-      auto map = storage->map(simaai::neat::MapMode::Write);
-      if (!map.data || map.size_bytes < total) {
-        gst_video_frame_unmap(&frame);
-        throw std::runtime_error("copy_video_to_cpu: map failed");
-      }
-      uint8_t* dst = static_cast<uint8_t*>(map.data);
-      const uint8_t* src = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 0));
-      const int src_stride = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0);
-      {
-        for (int r = 0; r < h; ++r) {
-          std::memcpy(dst + static_cast<size_t>(r) * row_bytes,
-                      src + static_cast<size_t>(r) * static_cast<size_t>(src_stride), row_bytes);
-        }
-      }
-      out.storage = std::move(storage);
-      if (channels == 1) {
-        out.shape = {h, w};
-        out.layout = simaai::neat::TensorLayout::HW;
-        out.strides_bytes = {static_cast<int64_t>(row_bytes), elem};
-      } else {
-        out.shape = {h, w, channels};
-        out.layout = simaai::neat::TensorLayout::HWC;
-        out.strides_bytes = {static_cast<int64_t>(row_bytes), static_cast<int64_t>(channels) * elem,
-                             elem};
-      }
-    }
-
-    gst_video_frame_unmap(&frame);
-    return out;
-  };
+                                              bool copy_output, bool keep_holder_for_tensor_copy,
+                                              bool preserve_framework_output = false) {
+  copy_output =
+      copy_output && !(preserve_framework_output &&
+                       pipeline_internal::buffer_has_dmabuf_memory(gst_sample_get_buffer(sample)));
   const auto normalize_format = [](const std::string& fmt) {
     std::string out;
     out.reserve(fmt.size());
@@ -1119,6 +911,8 @@ static Sample output_from_sample_stream_inner(GstSample* sample, const char* whe
         }
       }
       if (!copied) {
+        // Explicit Owned uses the adapter's authored planes/strides and the
+        // same DMA CPU START/END mapping authority as a retained app view.
         out.tensors = TensorList{neat.clone()};
         out.owned = true;
         if (!out.tensors.empty()) {
@@ -1199,29 +993,46 @@ static Sample output_from_sample_stream_inner(GstSample* sample, const char* whe
 Sample output_from_sample_stream(GstSample* sample, const char* where, bool copy_output,
                                  const std::optional<OutputTensorOverride>* override_opt,
                                  InputStream::State* st) {
+  const bool preserve_framework_output = st && st->opt.preserve_framework_output;
+  const auto materialize = [&](Sample out) {
+    // Project producer-authored wire semantics before publishing raw Samples.
+    // Both raw pull and TensorList convenience APIs must expose the same typed
+    // tensors; an owning copy below preserves this metadata with its storage.
+    tag_detection_format_in_sample(out);
+    // Only retained source storage belongs to the producer. Mark it before an
+    // owning copy replaces its storage; that copy can outlive the producer Run.
+    if (st && (!copy_output || preserve_framework_output)) {
+      pipeline_internal::mark_sample_producer_stream_lifetime(out, st->lifetime_token);
+    }
+    if (copy_output) {
+      pipeline_internal::materialize_owned_output(out, preserve_framework_output);
+    }
+    return out;
+  };
   const bool has_override =
       override_opt && override_opt->has_value() && !override_opt->value().outputs.empty();
-  if (auto tensor_set =
-          tensor_set_from_meta(sample, where, has_override ? false : copy_output, st)) {
+  if (auto tensor_set = tensor_set_from_meta(sample, where, st)) {
     Sample out = std::move(*tensor_set);
     if (has_override) {
-      out = apply_output_tensor_override(out, **override_opt, copy_output);
+      out = apply_output_tensor_override(out, **override_opt, false, preserve_framework_output);
     }
-    return out;
+    return materialize(std::move(out));
   }
-  if (auto bundle = bundle_from_sample_meta(sample, where, copy_output)) {
+  if (auto bundle = bundle_from_sample_meta(sample, where, false, preserve_framework_output)) {
     Sample out = std::move(*bundle);
     if (has_override) {
-      out = apply_output_tensor_override(out, **override_opt, copy_output);
+      out = apply_output_tensor_override(out, **override_opt, false, preserve_framework_output);
     }
-    return out;
+    return materialize(std::move(out));
   }
-  Sample out = output_from_sample_stream_inner(sample, where, has_override ? false : copy_output,
-                                               /*keep_holder_for_tensor_copy=*/has_override);
+  Sample out = output_from_sample_stream_inner(sample, where, false,
+                                               /*keep_holder_for_tensor_copy=*/has_override,
+                                               preserve_framework_output);
   if (has_override) {
-    out = apply_output_tensor_override(out, **override_opt, copy_output);
+    out = apply_output_tensor_override(out, **override_opt, false, preserve_framework_output);
   }
-  if (pipeline_internal::env_bool("SIMA_SAMPLE_FORCE_BUNDLE", false)) {
+  static const bool force_bundle = pipeline_internal::env_bool("SIMA_SAMPLE_FORCE_BUNDLE", false);
+  if (force_bundle) {
     if (!sample_is_multi_output(out)) {
       Sample forced;
       forced.kind = SampleKind::Bundle;
@@ -1235,10 +1046,10 @@ Sample output_from_sample_stream(GstSample* sample, const char* where, bool copy
       if (sample_debug_enabled()) {
         std::fprintf(stderr, "[SAMPLE] %s: forced bundle with 1 field\n", where);
       }
-      return forced;
+      return materialize(std::move(forced));
     }
   }
-  return out;
+  return materialize(std::move(out));
 }
 
 Sample output_from_sample_stream(GstSample* sample, const char* where, bool copy_output,
@@ -1258,7 +1069,8 @@ Sample sample_from_gst_envelope(GstSample* sample, const char* where, bool copy_
 }
 
 static std::optional<Sample> bundle_from_sample_meta(GstSample* sample, const char* where,
-                                                     bool copy_output) {
+                                                     bool copy_output,
+                                                     bool preserve_framework_output) {
   if (!sample)
     return std::nullopt;
   GstBuffer* buffer = gst_sample_get_buffer(sample);
@@ -1352,7 +1164,8 @@ static std::optional<Sample> bundle_from_sample_meta(GstSample* sample, const ch
     if (!field_sample)
       continue;
 
-    Sample field_out = output_from_sample_stream_inner(field_sample, where, copy_output, false);
+    Sample field_out = output_from_sample_stream_inner(field_sample, where, copy_output, false,
+                                                       preserve_framework_output);
     gst_sample_unref(field_sample);
 
     if (field_name && *field_name) {
@@ -1422,6 +1235,7 @@ static std::optional<Sample> bundle_from_sample_meta(GstSample* sample, const ch
       }
     }
 
+    out.owned = out.owned && field_out.owned;
     out.fields.emplace_back(std::move(field_out));
   }
 
@@ -1439,8 +1253,9 @@ static std::optional<Sample> bundle_from_sample_meta(GstSample* sample, const ch
   return out;
 }
 
-static std::optional<Sample> tensor_set_from_meta_slow(GstSample* sample, const char* where,
-                                                       bool copy_output) {
+static std::optional<Sample>
+tensor_set_from_meta_slow(GstSample* sample, const char* where,
+                          std::vector<std::uint64_t>* required_segment_extents) {
   if (!sample) {
     return std::nullopt;
   }
@@ -1448,8 +1263,7 @@ static std::optional<Sample> tensor_set_from_meta_slow(GstSample* sample, const 
   if (!buffer) {
     return std::nullopt;
   }
-  GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, kTensorSetMetaName);
-  if (!meta) {
+  if (!simaai::gst::tensor_buffer_has_canonical_meta(buffer)) {
     if (tensor_set_debug_enabled() || sample_debug_enabled()) {
       std::fprintf(stderr, "[tensor-set][debug] %s: tensor-set meta missing\n",
                    where ? where : "<unknown>");
@@ -1472,11 +1286,15 @@ static std::optional<Sample> tensor_set_from_meta_slow(GstSample* sample, const 
                    where ? where : "<unknown>",
                    tensor_buffer_err.empty() ? "<empty>" : tensor_buffer_err.c_str());
     }
-    return std::nullopt;
+    throw std::runtime_error(std::string(where ? where : "InputStream::pull") +
+                             ": invalid canonical TensorSet: " + tensor_buffer_err);
   }
   if (g_inputstream_decode_profile) {
     g_inputstream_decode_profile->slow_descriptor_ms +=
         inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - descriptor_start);
+  }
+  if (required_segment_extents) {
+    *required_segment_extents = std::move(tensor_buffer_view.required_segment_extents);
   }
 
   const auto base_start = InputStreamDecodeProfileClock::now();
@@ -1487,6 +1305,11 @@ static std::optional<Sample> tensor_set_from_meta_slow(GstSample* sample, const 
   }
   if (base.kind != SampleKind::TensorSet || base.tensors.empty()) {
     return std::nullopt;
+  }
+  // Descriptor selectors and physical names come from one Runtime admission.
+  // The generic caps-derived base must not replace them with memoryN labels.
+  if (base.tensors.front().storage) {
+    base.tensors.front().storage->sima_segments = std::move(tensor_buffer_view.segments);
   }
   const Tensor& base_tensor = base.tensors.front();
   if (tensor_set_debug_enabled()) {
@@ -1511,7 +1334,11 @@ static std::optional<Sample> tensor_set_from_meta_slow(GstSample* sample, const 
       }
     }
     GstMapInfo debug_map{};
-    if (debug_buffer && gst_buffer_map(debug_buffer, &debug_map, GST_MAP_READ)) {
+    // Mapping a mixed DMA carrier through GstBuffer can merge its memories and
+    // copy pixels just for diagnostics. Keep descriptor logging; tensor reads
+    // below use the selected memory's synchronized mapping instead.
+    if (debug_buffer && !pipeline_internal::buffer_has_dmabuf_memory(debug_buffer) &&
+        gst_buffer_map(debug_buffer, &debug_map, GST_MAP_READ)) {
       const std::size_t sample_count = std::min<std::size_t>(8U, debug_map.size);
       std::fprintf(stderr, "[tensor-set][debug]   buffer_head=");
       for (std::size_t bi = 0; bi < sample_count; ++bi) {
@@ -1527,7 +1354,7 @@ static std::optional<Sample> tensor_set_from_meta_slow(GstSample* sample, const 
 
   Sample out;
   out.kind = SampleKind::TensorSet;
-  out.owned = copy_output;
+  out.owned = false;
   out.caps_string = base.caps_string;
   out.payload_type = base.payload_type;
   out.media_type = base.media_type;
@@ -1569,8 +1396,10 @@ static std::optional<Sample> tensor_set_from_meta_slow(GstSample* sample, const 
           descriptor.logical_name.c_str(), descriptor.backend_name.c_str(),
           descriptor.segment_name.c_str(), has_quant ? 1 : 0, first_scale, first_zp);
     }
-    Tensor tensor = apply_tensor_set_descriptor(base_tensor, descriptor,
-                                                tensor_buffer_view.stage_key, copy_output);
+    Tensor tensor =
+        apply_tensor_set_descriptor(base_tensor, descriptor, tensor_buffer_view.stage_key);
+    pipeline_internal::apply_tessellation_caps(tensor, gst_sample_get_caps(sample),
+                                               descriptor.logical_index, descriptor.size_bytes);
     if (tensor_set_debug_enabled()) {
       std::fprintf(stderr,
                    "[tensor-set][debug]     tensor route logical=%d memory=%d slot=%d name=%s "
@@ -1618,7 +1447,7 @@ static std::optional<Sample> tensor_set_from_meta_slow(GstSample* sample, const 
   }
 
   pipeline_internal::record_tensor_packed_view_reuse(out.tensors.size(),
-                                                     unique_memory_indices.size(), copy_output);
+                                                     unique_memory_indices.size(), false);
   if (sample_debug_enabled()) {
     std::fprintf(stderr, "[SAMPLE] %s: tensor-set meta tensors=%zu\n", where,
                  tensor_buffer_view.tensors.size());
@@ -1696,7 +1525,7 @@ bool tensor_set_decode_hash_strv_field(const GstStructure* s, const char* field,
   return true;
 }
 
-bool read_tensor_set_output_decode_signature(GstSample* sample, bool copy_output,
+bool read_tensor_set_output_decode_signature(GstSample* sample,
                                              TensorSetOutputDecodeSignature* out) {
   if (!sample || !out) {
     return false;
@@ -1704,6 +1533,21 @@ bool read_tensor_set_output_decode_signature(GstSample* sample, bool copy_output
   GstBuffer* buffer = gst_sample_get_buffer(sample);
   if (!buffer) {
     return false;
+  }
+  std::string publication_error;
+  auto publication = simaai::gst::tensor_buffer_publication(buffer, &publication_error);
+  if (!publication_error.empty()) {
+    throw std::runtime_error("InputStream::pull: " + publication_error);
+  }
+  if (publication) {
+    TensorSetOutputDecodeSignature sig;
+    sig.publication = std::move(publication);
+    if (auto* caps = gst_sample_get_caps(sample)) {
+      sig.caps = {gst_caps_ref(caps), gst_caps_unref};
+    }
+    sig.memory_count = gst_buffer_n_memory(buffer);
+    *out = std::move(sig);
+    return true;
   }
   GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, kTensorSetMetaName);
   GstStructure* s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
@@ -1735,52 +1579,15 @@ bool read_tensor_set_output_decode_signature(GstSample* sample, bool copy_output
   sig.tensor_count = tensor_count;
   sig.descriptor_size = descriptor_size;
   sig.memory_count = gst_buffer_n_memory(buffer);
-  sig.copy_output = copy_output;
   sig.meta_hash = hash;
   if (GstCaps* caps = gst_sample_get_caps(sample)) {
-    if (gchar* caps_text = gst_caps_to_string(caps)) {
-      sig.caps_hash = g_str_hash(caps_text);
-      g_free(caps_text);
-    }
+    sig.caps = {gst_caps_ref(caps), gst_caps_unref};
   }
   if (const char* stage_key = gst_structure_get_string(s, SIMA_TENSOR_SET_META_FIELD_STAGE_KEY)) {
     sig.stage_key = stage_key;
   }
   *out = std::move(sig);
   return true;
-}
-
-bool tensor_set_output_decode_fast_key_matches(GstSample* sample, bool copy_output,
-                                               const TensorSetOutputDecodeSignature& cached) {
-  if (!inputstream_fast_static_decode_enabled()) {
-    return false;
-  }
-  if (!sample) {
-    return false;
-  }
-  GstBuffer* buffer = gst_sample_get_buffer(sample);
-  if (!buffer) {
-    return false;
-  }
-  GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, kTensorSetMetaName);
-  GstStructure* s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
-  if (!s) {
-    return false;
-  }
-  guint version = 0;
-  guint tensor_count = 0;
-  guint descriptor_size = 0;
-  gst_structure_get_uint(s, SIMA_TENSOR_SET_META_FIELD_VERSION, &version);
-  gst_structure_get_uint(s, SIMA_TENSOR_SET_META_FIELD_TENSOR_COUNT, &tensor_count);
-  gst_structure_get_uint(s, SIMA_TENSOR_SET_META_FIELD_DESCRIPTOR_SIZE, &descriptor_size);
-  if (version != SIMA_TENSOR_SET_META_VERSION || tensor_count != cached.tensor_count ||
-      descriptor_size != cached.descriptor_size ||
-      gst_buffer_n_memory(buffer) != cached.memory_count || copy_output != cached.copy_output) {
-    return false;
-  }
-  const char* stage_key = gst_structure_get_string(s, SIMA_TENSOR_SET_META_FIELD_STAGE_KEY);
-  const std::string_view stage_view = stage_key ? std::string_view(stage_key) : std::string_view();
-  return stage_view == cached.stage_key;
 }
 
 void clear_dynamic_sample_fields_for_decode_template(Sample* sample) {
@@ -1796,6 +1603,10 @@ void clear_dynamic_sample_fields_for_decode_template(Sample* sample) {
   sample->stream_id.clear();
   sample->stream_label.clear();
   sample->segment_name.clear();
+  // These envelope identities are current-frame facts, not descriptor-template facts.
+  // Both full and minimal projection must restore them from this frame's authority.
+  sample->output_index = -1;
+  sample->logical_output_index = -1;
   sample->route_slot = -1;
   sample->attributes.clear();
 }
@@ -1899,11 +1710,77 @@ instantiate_tensor_set_from_cached_decode(GstSample* sample, const char* where,
     return std::nullopt;
   }
 
+  std::vector<Segment> current_runtime_segments;
+  if (cache.signature.publication) {
+    std::string error;
+    if (!simaai::gst::tensor_buffer_validate_publication_storage(
+            gst_sample_get_buffer(sample), cache.signature.publication, &error)) {
+      throw std::runtime_error("InputStream::pull: compact current storage: " + error);
+    }
+    // Frozen publication identity proves required spans, not current capacity.
+    // Refresh once per carrier without rebuilding every logical descriptor.
+    const auto binding = pipeline_internal::tensor_buffer_current_segments(
+        gst_sample_get_buffer(sample), cache.runtime_segments, &current_runtime_segments, &error);
+    if (binding == pipeline_internal::TensorBufferBindingResult::IncompatibleCarrierCount) {
+      // The publication admits referenced carriers, not an exact count of
+      // unused current children. Rebuild the value-only plan on a count change.
+      return std::nullopt;
+    }
+    if (binding != pipeline_internal::TensorBufferBindingResult::Current) {
+      throw std::runtime_error("InputStream::pull: compact current binding: " + error);
+    }
+  } else {
+    // Legacy descriptor equality proves metadata compatibility, not this
+    // frame's physical binding or capacity. Let Runtime resolve and validate
+    // the current segments; never reuse first-frame bounds or duplicate its
+    // checked physical-span arithmetic in Core.
+    simaai::scheduler::client::TensorBufferView current_view;
+    std::string error;
+    if (!simaai::scheduler::client::tensor_buffer_create_view(sample, &current_view, &error)) {
+      throw std::runtime_error("InputStream::pull: legacy current storage: " + error);
+    }
+    if (current_view.tensors().size() != cache.tensor_templates.size()) {
+      return std::nullopt;
+    }
+    for (std::size_t i = 0; i < current_view.tensors().size(); ++i) {
+      const auto& current = current_view.tensors()[i];
+      const auto& cached = cache.tensor_templates[i].route;
+      if (current.logical_index != cached.logical_index ||
+          current.physical_index != cached.physical_index ||
+          current.memory_index != cached.memory_index ||
+          current.byte_offset != cached.physical_byte_offset ||
+          current.segment_name != cached.segment_name) {
+        // Current named-segment resolution changed. A full decode publishes
+        // the new binding instead of applying an old template to another slot.
+        return std::nullopt;
+      }
+    }
+    current_runtime_segments.reserve(current_view.segment_count());
+    for (std::size_t i = 0; i < current_view.segment_count(); ++i) {
+      current_runtime_segments.push_back(
+          Segment{std::move(current_view.segment_name(i)), current_view.segment_size(i)});
+    }
+    if (pipeline_internal::tensor_buffer_current_segments(
+            gst_sample_get_buffer(sample), current_runtime_segments, &current_runtime_segments,
+            &error) != pipeline_internal::TensorBufferBindingResult::Current) {
+      throw std::runtime_error("InputStream::pull: legacy current binding: " + error);
+    }
+  }
+  if (cache.required_segment_extents.size() != current_runtime_segments.size()) {
+    return std::nullopt;
+  }
+  for (std::size_t i = 0; i < current_runtime_segments.size(); ++i) {
+    if (cache.required_segment_extents[i] > current_runtime_segments[i].size_bytes) {
+      throw std::runtime_error(
+          "InputStream::pull: cached tensor exceeds current visible carrier span");
+    }
+  }
+
   std::shared_ptr<simaai::neat::Storage> base_storage;
   try {
     const auto make_storage_start = InputStreamDecodeProfileClock::now();
-    base_storage =
-        pipeline_internal::make_gst_sample_storage_with_segments(sample, cache.runtime_segments);
+    base_storage = pipeline_internal::make_gst_sample_storage_with_segments(
+        sample, std::move(current_runtime_segments));
     if (g_inputstream_decode_profile) {
       g_inputstream_decode_profile->fast_make_storage_ms +=
           inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - make_storage_start);
@@ -1927,7 +1804,7 @@ instantiate_tensor_set_from_cached_decode(GstSample* sample, const char* where,
   }
   clear_dynamic_sample_fields_for_decode_template(&out);
   const auto sample_meta_start = InputStreamDecodeProfileClock::now();
-  if (inputstream_fast_minimal_output_meta_enabled()) {
+  if (!cache.signature.publication && inputstream_fast_minimal_output_meta_enabled()) {
     fill_output_meta_minimal_from_sample(sample, &out);
   } else {
     fill_output_meta_from_sample(sample, &out);
@@ -1946,9 +1823,20 @@ instantiate_tensor_set_from_cached_decode(GstSample* sample, const char* where,
   std::size_t unique_memory_count = 0U;
   bool multiple_memory_indices = false;
 
-  const bool single_memory_buffer = cache.signature.memory_count == 1U;
+  const bool single_carrier =
+      cache.signature.memory_count == 1U && base_storage->sima_segments.size() == 1U;
+  const bool refresh_preprocess =
+      cache.signature.publication || !inputstream_fast_static_preprocess_meta_enabled();
+  const auto current_preprocess = refresh_preprocess
+                                      ? read_simaai_preprocess_meta(gst_sample_get_buffer(sample))
+                                      : std::optional<PreprocessRuntimeMeta>{};
   const auto tensor_loop_start = InputStreamDecodeProfileClock::now();
   for (Tensor& tensor : out.tensors) {
+    if (refresh_preprocess) {
+      // Static descriptor identity does not freeze current geometry/ROI facts.
+      // Assign absence too: a later frame must not inherit earlier facts.
+      tensor.semantic.preprocess = current_preprocess;
+    }
     tensor.storage = base_storage;
     tensor.device = base_storage->device;
     tensor.read_only = true;
@@ -1957,7 +1845,7 @@ instantiate_tensor_set_from_cached_decode(GstSample* sample, const char* where,
     // N logical tensor views.  Reuse the one current-sample storage and the
     // cached per-tensor byte_offset/shape/stride metadata instead of creating
     // six per-memory Storage objects and re-querying segment tables every frame.
-    if (!single_memory_buffer && tensor.route.memory_index > 0) {
+    if (!single_carrier && tensor.route.memory_index >= 0) {
       try {
         const auto tensor_view_start = InputStreamDecodeProfileClock::now();
         Tensor memory_view = pipeline_internal::tensor_view_from_sample_memory(
@@ -2013,49 +1901,22 @@ instantiate_tensor_set_from_cached_decode(GstSample* sample, const char* where,
 }
 
 static std::optional<Sample> tensor_set_from_meta(GstSample* sample, const char* where,
-                                                  bool copy_output, InputStream::State* st) {
-  if (copy_output || !st || tensor_set_debug_enabled() || sample_debug_enabled() ||
-      sample_bytes_enabled()) {
-    return tensor_set_from_meta_slow(sample, where, copy_output);
-  }
-
-  {
-    const auto cache_lock_start = InputStreamDecodeProfileClock::now();
-    std::lock_guard<std::mutex> lock(st->output_decode_mu);
-    if (g_inputstream_decode_profile) {
-      g_inputstream_decode_profile->tensor_cache_lock_ms +=
-          inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - cache_lock_start);
-    }
-    if (st->tensor_set_output_decode_cache.valid &&
-        tensor_set_output_decode_fast_key_matches(sample, copy_output,
-                                                  st->tensor_set_output_decode_cache.signature)) {
-      const auto instantiate_start = InputStreamDecodeProfileClock::now();
-      if (auto fast = instantiate_tensor_set_from_cached_decode(
-              sample, where, st->tensor_set_output_decode_cache)) {
-        if (g_inputstream_decode_profile) {
-          g_inputstream_decode_profile->tensor_cache_instantiate_ms +=
-              inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() -
-                                            instantiate_start);
-        }
-        return fast;
-      }
-      if (g_inputstream_decode_profile) {
-        g_inputstream_decode_profile->tensor_cache_instantiate_ms +=
-            inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - instantiate_start);
-      }
-      st->tensor_set_output_decode_cache.valid = false;
-    }
+                                                  InputStream::State* st) {
+  // Descriptor decoding only creates current-frame views. Public ownership is
+  // applied once, after logical output projection, by output_from_sample_stream.
+  if (!st || tensor_set_debug_enabled() || sample_debug_enabled() || sample_bytes_enabled()) {
+    return tensor_set_from_meta_slow(sample, where);
   }
 
   TensorSetOutputDecodeSignature sig;
   const auto sig_start = InputStreamDecodeProfileClock::now();
-  if (!read_tensor_set_output_decode_signature(sample, copy_output, &sig)) {
+  if (!read_tensor_set_output_decode_signature(sample, &sig)) {
     if (g_inputstream_decode_profile) {
       g_inputstream_decode_profile->tensor_sig_ms +=
           inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - sig_start);
     }
     const auto slow_start = InputStreamDecodeProfileClock::now();
-    auto slow = tensor_set_from_meta_slow(sample, where, copy_output);
+    auto slow = tensor_set_from_meta_slow(sample, where);
     if (g_inputstream_decode_profile) {
       g_inputstream_decode_profile->tensor_slow_ms +=
           inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - slow_start);
@@ -2095,7 +1956,8 @@ static std::optional<Sample> tensor_set_from_meta(GstSample* sample, const char*
   }
 
   const auto slow_start = InputStreamDecodeProfileClock::now();
-  auto slow = tensor_set_from_meta_slow(sample, where, copy_output);
+  std::vector<std::uint64_t> required_segment_extents;
+  auto slow = tensor_set_from_meta_slow(sample, where, &required_segment_extents);
   if (g_inputstream_decode_profile) {
     g_inputstream_decode_profile->tensor_slow_ms +=
         inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - slow_start);
@@ -2106,6 +1968,7 @@ static std::optional<Sample> tensor_set_from_meta(GstSample* sample, const char*
 
   CachedTensorSetOutputDecode cache;
   cache.valid = true;
+  cache.required_segment_extents = std::move(required_segment_extents);
   cache.signature = std::move(sig);
   cache.sample_template = *slow;
   clear_dynamic_sample_fields_for_decode_template(&cache.sample_template);
@@ -2147,7 +2010,6 @@ Sample decode_sample_from_inputstream_state(InputStream::State& st, GstSample* s
   const auto envelope_start = InputStreamDecodeProfileClock::now();
   Sample out =
       sample_from_gst_envelope(sample, where, st.opt.copy_output, &st.opt.output_override, &st);
-  pipeline_internal::mark_sample_producer_stream_lifetime(out, st.lifetime_token);
   if (g_inputstream_decode_profile) {
     g_inputstream_decode_profile->envelope_ms +=
         inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - envelope_start);

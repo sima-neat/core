@@ -49,9 +49,9 @@ std::string session_build_decorate_with_error_code(const std::string& code,
                                                            const std::string& message,
                                                            const std::string& hint,
                                                            const std::string& pipeline) {
-  GraphReport rep = pipeline_internal::error_util::make_report(code, message, pipeline, hint);
-  throw NeatError(session_build_decorate_with_error_code(rep.error_code, rep.repro_note),
-                  std::move(rep));
+  // The shared helper formats the message before moving the report. Formatting
+  // and moving it in separate constructor arguments can otherwise erase what().
+  pipeline_internal::error_util::throw_session_error(code, message, pipeline, hint);
 }
 
 void session_build_drain_bus_into_diag(GstElement* pipeline, const std::shared_ptr<DiagCtx>& diag) {

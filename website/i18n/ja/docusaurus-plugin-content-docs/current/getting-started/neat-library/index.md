@@ -1,15 +1,15 @@
 ---
 title: "Neatライブラリ"
-description: "DevKitまたはNeat SDKでSiMa.ai Neatライブラリをインストール・更新する"
+description: "DevKitまたはPalette SDKでSiMa.ai Neatライブラリをインストール・更新する"
 sidebar_position: 1
 ---
 
 Neatライブラリは、Modalix向けのモデル実行とアプリケーション開発に使用するC++およびPython APIです。
 
-:::tip Neat SDKを使用している場合、このセクションは省略できます
-Neat SDKコンテナにはNeatライブラリがインストール済みです。セットアップ時にDevKitをペアリングすると、対応するNeatライブラリと付属のPyNeat環境もDevKitへ自動的にインストールされます。DevKitをペアリングしたかどうかにかかわらず、Neat SDKをインストール済みであればNeatライブラリも利用できるため、このセクションを省略して先へ進めます。
+:::tip Palette SDKを使用している場合、このセクションは省略できます
+Palette SDKコンテナにはNeatライブラリがインストール済みです。セットアップ時にDevKitをペアリングすると、対応するNeatライブラリと付属のPyNeat環境もDevKitへ自動的にインストールされます。DevKitをペアリングしたかどうかにかかわらず、Palette SDKをインストール済みであればNeatライブラリも利用できるため、このセクションを省略して先へ進めます。
 
-SDKとは別にNeatライブラリのみを更新する場合、またはNeat SDKを使わずにDevKitや通常のホストへ直接セットアップする場合にだけ、このセクションを使用してください。
+SDKとは別にNeatライブラリのみを更新する場合、またはPalette SDKを使わずにDevKitや通常のホストへ直接セットアップする場合にだけ、このセクションを使用してください。
 :::
 
 SDKコンテナを再インストールせず、互換性のある新しいバージョンが必要な場合は、Neatライブラリだけを更新できます。サポートされる組み合わせについては、[互換性ガイド](/getting-started/compatibility/)を参照してください。

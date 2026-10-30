@@ -335,6 +335,8 @@ fragment = neat.genai.graphs.vision_language(model, options, "vlm")
 
 對於 Qwen3 或 Gemma 4 E2B/E4B 等推理模型，設定 `GenerationRequest.enable_thinking` 以啟用推理功能。完整的結果將推理過程保留在 `GenerationResult.reasoning` 中，最終答案則保留在 `GenerationResult.text` 中；串流的 `TokenSample` 物件同樣使用 `reasoning` 和 `text`。
 
+對於 GPT-OSS，`GenerationRequest.reasoning_effort` 可設為 `low`（預設）、`medium` 或 `high`；其他值會被拒絕。`enable_thinking` 控制是否傳回推理內容。
+
 這些規則可讓 Neat 在請求出現錯誤時及早失敗，並顯示明確的錯誤訊息，而不是將模糊的提示傳送到執行階段。
 
 ## 後續步驟

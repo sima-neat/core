@@ -1,10 +1,10 @@
 ---
-title: "開発環境のインストール"
-description: "Neat SDKコンテナをインストールしてセットアップする"
+title: "SDK のインストール"
+description: "Palette SDKコンテナをインストールしてセットアップする"
 sidebar_position: 2
 ---
 
-最新のNeat開発環境（以下、Neat SDK）をインストールします。Neat SDKはホストマシン上でコンテナとして動作します。
+最新のPalette SDKをインストールします。Palette SDKはホストマシン上でコンテナとして動作します。
 
 ## 前提条件
 
@@ -17,28 +17,40 @@ sidebar_position: 2
 
 後でDevKit Syncを使用するには、次の項目も必要です。
 
-- Neat SDKと互換性のあるソフトウェアを実行するDevKit。詳しくは[互換性ガイド](/getting-started/compatibility/)を参照してください。
+- Palette SDKと互換性のあるソフトウェアを実行するDevKit。詳しくは[互換性ガイド](/getting-started/compatibility/)を参照してください。
 - NFSトラフィックが許可された同一ネットワーク上のホストマシンとDevKit。
 - DevKitのIPアドレス。
 
 ## インストール
 
-現在のNeat SDK 2.1リリースチャネルをインストールします。
+現在のPalette SDK %%release.sdk_series%%リリースチャネルをインストールします。
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@release-2.1
+sima-cli neat install sdk@%%release.sdk_channel%%
 </ShellCommand>
 
-初回インストールではNeat SDKコンテナイメージをダウンロードするため、数分かかることがあります。ダウンロード後、インストーラーがSDKのセットアップを開始し、Modalix DevKitとペアリングするか、対応するModel CompilerをSDK内にインストールするかを確認します。
+初回インストールではPalette SDKコンテナイメージをダウンロードするため、数分かかることがあります。ダウンロード後、インストーラーがSDKのセットアップを開始し、Modalix DevKitとペアリングするか、対応するModel CompilerをSDK内にインストールするかを確認します。
 
 DevKitとのペアリングを選んだ場合は、表示されたプロンプトにDevKitのIPアドレスを入力します。セットアップ処理はSDKワークスペースを構成し、SDKコンテナを起動してDevKit Syncを設定します。ペアリングを省略してもSDKワークスペースは作成され、後からペアリングできます。
 
-`release-2.1`パッケージは、2.1系の最新Neat SDKパッチリリースを追跡します。現在のリリースはNeat SDK 2.1.3.1で、DevKitソフトウェア2.1.3と互換性があります。
+`%%release.sdk_channel%%`パッケージは、%%release.sdk_series%%系の最新Palette SDKパッチリリースを追跡します。現在のリリースはPalette SDK %%release.sdk%%で、DevKitソフトウェア%%release.platform%%と互換性があります。
 
 セットアップ中、`sima-cli`は対応するModel CompilerをSDK内にインストールするか確認します。モデルを自分でコンパイルまたは量子化する場合は承認してください。別のバージョンを選択する必要はありません。コンパイル済みモデルパッケージだけを実行する場合は省略できます。後からインストールする場合、特定のパッチを固定する場合、またはスタンドアロンホストを使用する場合は、[Model Compilerのインストール](/getting-started/dev-environment/install-model-compiler/)と[互換性ガイド](/getting-started/compatibility/)を参照してください。
 
-:::note 以前のSDKリリースでは従来の2段階インストールを使用します
-イメージの取得とセットアップに個別のコマンドが必要な以前のSDKリリースについては、[2段階SDKインストール](/reference/two-step-sdk-installation/)を参照してください。
+### 特定の SDK バージョンをインストールする {#install-a-specific-sdk-version}
+
+SDK 2.1.3.0 以降では、公開済みの `v<version>` タグを使用して、以前のパッチリリースを含む特定のバージョンをインストールできます。たとえば、ホストで次のコマンドを実行します。
+
+<ShellCommand prompt="host">
+sima-cli neat install sdk@v2.1.3.0
+</ShellCommand>
+
+`v` プレフィックスは必須です。特定のバージョンタグに `release-<full-version>` を使用しないでください。`release-<series>` チャネルは、そのシリーズの最新の公開リリースを追跡します。同じ SDK パッケージを選択する場合、どちらも同じインストールおよび SDK セットアップ手順を実行します。
+
+公開済みのタグは [SDK リリース](https://github.com/sima-neat/sdk/releases) で確認し、[互換性ガイド](/getting-started/compatibility/) に従って DevKit ソフトウェアと互換性のあるバージョンを選択してください。
+
+:::note 従来の2段階インストール
+SDK 2.0.0、2.1.2.0、2.1.2.1 では、イメージの取得とセットアップに個別のコマンドが必要です。これらのリリースに限り、[2段階SDKインストール](/reference/two-step-sdk-installation/)を参照してください。
 :::
 
 インストール後にSDK設定を変更するには、[SDKの構成](/getting-started/dev-environment/configure-sdk/)を参照してください。制限されたネットワーク環境では、[オフラインインストール](/getting-started/dev-environment/offline-installation/)を参照してください。
@@ -49,7 +61,7 @@ DevKitとのペアリングを選んだ場合は、表示されたプロンプ�
 
 ### SDKシェルを使用する
 
-次のコマンドでNeat SDKシェルを開きます。
+次のコマンドでPalette SDKシェルを開きます。
 
 <ShellCommand prompt="host">
 sima-cli sdk neat
@@ -63,17 +75,20 @@ Neat InsightはSDK内から提供され、ブラウザで開くことができ�
 neat
 </ShellCommand>
 
-コマンド出力の**Web Access**セクションには、Insightとブラウザ版VS CodeのローカルURLおよびリモートURLが表示されます。ローカルアクセスとはSDKを実行しているマシンと同じマシンのブラウザで開くことで、リモートアクセスとは別のマシンから開くことです。ブラウザとSDKが同じホストにある場合は、ホストのネットワークIPが変わっても利用できるローカル`127.0.0.1` URLを推奨します。リモートアクセスには`NFS_SERVER_HOST_IP`から生成されたURLを使用します。VS CodeのURLには設定済みアクセストークンが含まれ、構成済みワークスペースが開きます。詳しくは[Insight](/tools/insight/)を参照してください。
+`neat` の出力の **Web Access** セクションには、Insight とブラウザ版 VS Code のローカルおよびリモート URL が表示されます。SDK ホストでブラウザを使用する場合は、ローカルの `127.0.0.1` URL を開いてください。別のコンピューターからは、`NFS_SERVER_HOST_IP` に基づくリモート URL を使用します。VS Code の URL は設定済みワークスペースを開きます。インストールされているサーバーに対して `neat` が表示する認証情報を使用してください。[SDK の Web アクセス](/reference/environment-variables/)と [Insight](/tools/insight/)を参照してください。
 
 ### VS Codeを使用する
 
-SDK Code UIを通じてブラウザからVS Codeを利用できます。SDKのインストール完了時に、`sima-cli`が次のような`codeUI` URLを表示します。
+SDK シェル内で `neat` を実行し、SDK ホストのブラウザで **VS Code (local)** の URL を開いてください。別のコンピューターからは **VS Code (remote)** を使用します。code-server を含むイメージでは、`neat` が **VS Code password** も表示します。
 
-<ShellCommand prompt="host">
-codeUI      | https://192.168.76.4:10000/?tkn=gA5CS...&folder=/workspace
-</ShellCommand>
+```text
+VS Code (local)    https://127.0.0.1:10000/?folder=/workspace
+VS Code password   <password shown by neat>
+```
 
-ブラウザでURLを開き、SDKワークスペース内で作業します。SDKには、ブラウザ版Code UI用のCodexとClaude Codeの拡張機能がプリインストールされています。
+code-server のサインイン画面で、表示されたパスワードを入力してください。パスワードは URL には含まれません。
+
+従来の OpenVSCode イメージでは、代わりにトークン付き URL を使用します。`neat` が表示する URL を開いてください。SDK には、ブラウザ版 Code UI 用の Codex と Claude Code の拡張機能がプリインストールされています。
 
 ブラウザ版ではなくネイティブVS Codeも利用できます。[Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)を使用して、VS CodeをSDKコンテナへ接続してください。
 
@@ -84,18 +99,18 @@ codeUI      | https://192.168.76.4:10000/?tkn=gA5CS...&folder=/workspace
 現在のSDKパッケージを再インストールまたはアップグレードするには、ホストから上記のインストールコマンドを再実行します。
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@release-2.1
+sima-cli neat install sdk@%%release.sdk_channel%%
 </ShellCommand>
 
-既存のNeat SDKコンテナ内にあるNeatライブラリを更新するには、コンテナシェルからNeat CLIを実行します。
+既存のPalette SDKコンテナ内にあるNeatライブラリを更新するには、コンテナシェルからNeat CLIを実行します。
 
 <ShellCommand prompt="sdk">
 neat update
 </ShellCommand>
 
-このコマンドは、現在のNeat SDKにインストールされているNeatライブラリのコンポーネントを更新します。コンテナレベルの変更が必要な場合に、コンテナイメージ全体のアップグレードを置き換えるものではありません。
+このコマンドは、現在のPalette SDKにインストールされているNeatライブラリのコンポーネントを更新します。コンテナレベルの変更が必要な場合に、コンテナイメージ全体のアップグレードを置き換えるものではありません。
 
-後でNeat SDKコンテナを削除または再作成した場合は、新しいコンテナ内でもう一度`neat update`を実行してください。
+後でPalette SDKコンテナを削除または再作成した場合は、新しいコンテナ内でもう一度`neat update`を実行してください。
 
 ## アンインストール
 

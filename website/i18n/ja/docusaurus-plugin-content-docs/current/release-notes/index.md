@@ -1,6 +1,6 @@
 ---
 title: "リリースノート"
-description: "Neat SDK、Neat Library、Neat Examples、sima-cli、Insight、Model Compiler、および LLiMa のリリースノート"
+description: "Palette SDK、Neat Library、Neat Examples、sima-cli、Insight、Model Compiler、および LLiMa のリリースノート"
 sidebar_position: 1
 ---
 
@@ -13,9 +13,9 @@ SiMa.aiソフトウェアスイート全体での変更を追跡します。
 <div class="overview-link-columns overview-link-columns-single">
   <section class="overview-link-panel overview-link-panel-reference">
     <h2>リリースノート</h2>
-    <p>Neat SDK、Neat Library、Neat Examples、sima-cli、Insight、Model Compiler、およびLLiMaの各バージョンにおける変更点。</p>
+    <p>Palette SDK、Neat Library、Neat Examples、sima-cli、Insight、Model Compiler、およびLLiMaの各バージョンにおける変更点。</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="/release-notes/neat-development-environment/"><strong>Neat SDK</strong><span>開発環境とプラットフォームの変更。</span></a></li>
+      <li><a class="overview-link-card" href="/release-notes/neat-development-environment/"><strong>Palette SDK</strong><span>開発環境とプラットフォームの変更。</span></a></li>
       <li><a class="overview-link-card" href="/release-notes/neat/"><strong>Neat Library</strong><span>ライブラリ API とランタイムの変更。</span></a></li>
       <li><a class="overview-link-card" href="/release-notes/neat-examples/"><strong>Neat Examples</strong><span>サンプルアプリケーションの変更点と修正点。</span></a></li>
       <li><a class="overview-link-card" href="/release-notes/sima-cli/"><strong>sima-cli</strong><span>CLI のインストール、SDK の設定、アップデート、および DevKit ワークフローの変更。</span></a></li>

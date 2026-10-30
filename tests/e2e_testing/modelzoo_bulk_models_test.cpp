@@ -185,9 +185,9 @@ int main(int argc, char** argv) {
     }
 
     simaai::neat::gst_init_once();
-    if (!simaai::neat::element_exists("neatprocesscvu") ||
+    if (!simaai::neat::element_exists("neatkernelrunner") ||
         !simaai::neat::element_exists("neatprocessmla")) {
-      return skip_long_test("missing SimaAI plugins (neatprocesscvu/mla)");
+      return skip_long_test("missing SimaAI plugins (neatkernelrunner/mla)");
     }
 
     const fs::path root = find_repo_root();

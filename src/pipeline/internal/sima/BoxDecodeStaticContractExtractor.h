@@ -69,7 +69,23 @@ struct BoxDecodeTensorStaticContract {
   BoxDecodeSourceStorageKind source_storage_kind =
       BoxDecodeSourceStorageKind::Unknown; ///< Source byte layout for kernel access.
   BoxDecodeTensorRole role = BoxDecodeTensorRole::Unknown; ///< Semantic SuperPoint tensor role.
+  /// Explicit linear byte strides in input_shape axis order; empty for packed storage.
+  std::vector<std::int64_t> stride_bytes;
 };
+
+/// Canonical linear HWC storage facts. Computes addressed span, not allocation capacity.
+struct BoxDecodeLinearStorage {
+  std::vector<std::int64_t> stride_bytes;
+  std::uint64_t span_bytes = 0;
+};
+
+/// Normalize declared logical axes/strides without touching or copying the payload.
+/// Empty strides mean compact row-major in the supplied shape, as for public Tensor.
+/// Numerical layout support and nonoverlap remain Kernels admission responsibilities.
+std::optional<BoxDecodeLinearStorage>
+boxdecode_linear_storage(const std::vector<std::int64_t>& shape,
+                         const std::vector<std::int64_t>& stride_bytes, const std::string& layout,
+                         std::size_t scalar_bytes);
 
 /// Description of one physical input buffer feeding the box-decode stage.
 struct BoxDecodePhysicalInputStaticContract {
@@ -140,6 +156,8 @@ struct ModelManagedRouteFlags {
   bool include_pre_stage =
       false; ///< Synthesize at least one pre-stage even if individually disabled.
   bool boxdecode_selected = false; ///< Indicates a box-decode terminal is part of the route.
+  bool terminal_consumer_owns_tensor_tail =
+      false; ///< Registered terminal consumes its tensor transforms from producer memory.
 };
 
 /// Derive the model-managed route flags from a fully-built `BoxDecodeStaticContract`.
@@ -150,11 +168,17 @@ model_route_flags_from_boxdecode_contract(const BoxDecodeStaticContract& contrac
 ModelManagedRouteFlags
 model_route_flags_from_boxdecode_semantics(const ModelBoxdecodeSemantics& semantics);
 
+/// Combine planner-owned pre-route fields with exact MPK-owned BoxDecode terminal fields.
+ModelManagedRouteFlags
+reconcile_exact_boxdecode_route_flags(const ModelManagedRouteFlags& planner_flags,
+                                      const ModelManagedRouteFlags& exact_boxdecode_flags);
+
 /**
  * @brief Resolve route flags by inspecting the MPK contract.
  *
  * @param contract       Parsed MPK contract.
- * @param terminal_stage Optional explicit terminal stage; defaults to the auto-detected one.
+ * @param terminal_stage Exact authored terminal stage for a model-owned route, or null for an
+ *                       external/synthesized BoxDecode whose selected lineages end at true leaves.
  * @param error_message  Optional out-parameter populated on failure.
  * @return Resolved flags, or `std::nullopt` if the MPK lacks the required metadata.
  */

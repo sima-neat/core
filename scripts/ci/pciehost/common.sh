@@ -21,7 +21,7 @@ CARD_USER="${SIMAPCIE_USER:-sima}"
 CARD_SSH_KEY="${SIMAPCIE_SSH_KEY:-${HOME}/.ssh/sima_neat_pcie_ed25519}"
 CARD_ID="${SIMAPCIE_CARD_ID:-0}"
 QUEUE="${SIMAPCIE_QUEUE:-0}"
-STRESS_QUEUES="${SIMAPCIE_STRESS_QUEUES:-0 1 2 3}"
+STRESS_QUEUES="${SIMAPCIE_STRESS_QUEUES:-0 1 2 3 4 5}"
 SYNC_ITERATIONS="${SIMAPCIE_SYNC_ITERATIONS:-50}"
 TEST_ITERATIONS="${SIMAPCIE_TEST_ITERATIONS:-1000}"
 STRESS_ITERATIONS="${SIMAPCIE_STRESS_ITERATIONS:-${TEST_ITERATIONS}}"
@@ -188,11 +188,8 @@ cleanup_host_pcie_device() {
 
   if command -v fuser >/dev/null 2>&1 &&
     run_host_sudo_if_available fuser "${dev}" >/dev/null 2>&1; then
-    echo "Host PCIe device still busy after known-process cleanup; killing remaining owners: ${dev}"
-    run_host_sudo_if_available fuser -k -TERM "${dev}" || true
-    sleep 1
-    if run_host_sudo_if_available fuser "${dev}" >/dev/null 2>&1; then
-      run_host_sudo_if_available fuser -k "${dev}" || true
-    fi
+    # The management daemon legitimately holds this device open for GenAI.
+    echo "Host PCIe device owners remain after known-process cleanup; leaving them running: ${dev}"
+    run_host_sudo_if_available fuser -v "${dev}" || true
   fi
 }

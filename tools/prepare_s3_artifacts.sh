@@ -111,12 +111,10 @@ mkdir -p "${core_extract_dir}"
 mkdir -p "${dev_extract_dir}"
 dpkg-deb -x "${CORE_DEBS[0]}" "${core_extract_dir}"
 dpkg-deb -x "${DEV_DEBS[0]}" "${dev_extract_dir}"
-for required_cli in usr/bin/fix_devkit_runtime.sh usr/bin/neat; do
-  if [[ ! -x "${core_extract_dir}/${required_cli}" ]]; then
-    echo "Core DEB missing executable ${required_cli}." >&2
-    exit 1
-  fi
-done
+if [[ ! -x "${core_extract_dir}/usr/bin/neat" ]]; then
+  echo "Core DEB missing executable usr/bin/neat." >&2
+  exit 1
+fi
 for required_dev_file in usr/include/neat.h usr/lib/cmake/SimaNeat/SimaNeatConfig.cmake usr/lib/libsima_neat.so; do
   if [[ ! -e "${dev_extract_dir}/${required_dev_file}" ]]; then
     echo "Dev DEB missing ${required_dev_file}." >&2

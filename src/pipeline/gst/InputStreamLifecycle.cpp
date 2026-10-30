@@ -2,7 +2,6 @@
 
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
-#include "pipeline/internal/CpuVisibleSample.h"
 #include "pipeline/internal/GstErrorNormalizer.h"
 
 namespace simaai::neat {
@@ -38,11 +37,13 @@ void release_input_stream_resources_once(InputStream::State& state) {
     gst_object_unref(state.appsink);
     state.appsink = nullptr;
   }
+  // Under the teardown lock, as stop() releases it: acquire_pipeline_ref() must not race this.
+  std::lock_guard<std::mutex> lock(state.pipeline_mu);
   if (state.pipeline) {
     if (!state.teardown_started.exchange(true)) {
       GstElement* pipeline = state.pipeline;
       state.pipeline = nullptr;
-      pipeline_internal::stop_and_unref_no_flush(pipeline, state.opt.prefer_synchronous_teardown);
+      pipeline_internal::stop_and_unref_no_flush(pipeline, state.opt.teardown_policy);
     } else {
       state.pipeline = nullptr;
     }
@@ -97,6 +98,7 @@ InputStream InputStream::create(GstElement* pipeline, GstElement* appsrc, GstEle
     throw std::runtime_error(msg.str());
   }
   state->alloc_bytes = spec.required_bytes_actual;
+
   return InputStream(std::move(state));
 }
 
@@ -215,10 +217,30 @@ std::shared_ptr<DiagCtx> InputStream::diag_ctx() const {
   return state->diag;
 }
 
+std::optional<pipeline_internal::InputStreamTeardownPolicy>
+InputStream::effective_teardown_policy() const noexcept {
+  const auto state = std::atomic_load_explicit(&state_, std::memory_order_acquire);
+  if (!state)
+    return std::nullopt;
+  // This field is fixed by create(); close may release State, not change its
+  // policy. Retaining the snapshot follows diag_ctx()'s existing lifetime rule.
+  return state->opt.teardown_policy;
+}
+
 GstElement* InputStream::pipeline_handle() const {
   if (!state_)
     return nullptr;
   return state_->pipeline;
+}
+
+GstElement* InputStream::acquire_pipeline_ref() const {
+  const auto state = std::atomic_load_explicit(&state_, std::memory_order_acquire);
+  if (!state)
+    return nullptr;
+  std::lock_guard<std::mutex> lock(state->pipeline_mu);
+  if (!state->pipeline || state->teardown_started.load())
+    return nullptr;
+  return GST_ELEMENT(gst_object_ref(state->pipeline));
 }
 
 void InputStream::set_on_caps_change(std::function<void(const SampleSpec&, const SampleSpec&)> cb) {
@@ -390,9 +412,6 @@ void InputStream::start(std::function<void(Sample)> on_output) {
         if (timings)
           t_decode_start = std::chrono::steady_clock::now();
         Sample out = decode_sample_from_inputstream_state(*st, sample, "InputStream::start");
-        if (st->opt.prepare_output_cpu_visible) {
-          (void)pipeline_internal::prepare_sample_for_cpu_read(out);
-        }
         if (pipeline_or_graph_debug_enabled()) {
           const char* kind = "Unknown";
           if (out.kind == SampleKind::TensorSet)
@@ -519,7 +538,7 @@ void InputStream::start(std::function<void(Sample)> on_output) {
       if (st->pipeline && !st->teardown_started.exchange(true)) {
         GstElement* pipeline = st->pipeline;
         st->pipeline = nullptr;
-        pipeline_internal::stop_and_unref_no_flush(pipeline, st->opt.prefer_synchronous_teardown);
+        pipeline_internal::stop_and_unref_no_flush(pipeline, st->opt.teardown_policy);
       }
     }
     st->worker_done.store(true, std::memory_order_release);
@@ -627,7 +646,8 @@ void InputStream::stop() {
   // that event as a runtime restart request and race the state change.  Keep
   // the legacy pre-flush for deferred/appsrc teardown paths.
   const bool stop_flush =
-      inputstream_stop_flush_enabled() && !state_->opt.prefer_synchronous_teardown;
+      inputstream_stop_flush_enabled() &&
+      state_->opt.teardown_policy == pipeline_internal::InputStreamTeardownPolicy::Deferred;
   if (stop_flush && pipeline_ref) {
     if (stop_trace_enabled()) {
       std::fprintf(stderr, "[STOP] InputStream::stop flush state=%p pipeline=%p\n",
@@ -704,7 +724,7 @@ void InputStream::stop() {
     if (state_->pipeline && !state_->teardown_started.exchange(true)) {
       GstElement* pipeline = state_->pipeline;
       state_->pipeline = nullptr;
-      pipeline_internal::stop_and_unref_no_flush(pipeline, state_->opt.prefer_synchronous_teardown);
+      pipeline_internal::stop_and_unref_no_flush(pipeline, state_->opt.teardown_policy);
     }
   }
   if (state_->worker.joinable()) {

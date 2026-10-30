@@ -1,6 +1,7 @@
 #include "pipeline/internal/sima/PluginContractSubsets.h"
 
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
+#include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/internal/sima/ProcessCvuFamily.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
@@ -1195,6 +1196,8 @@ logical_input_from_boxdecode_static_contract(const BoxDecodeStaticContract& cont
       default_boxdecode_backend_name(contract, index),
       default_boxdecode_tensorbuffer_segment_name(contract, index), tensor.source_byte_offset);
   logical.size_bytes = tensor.source_size_bytes;
+  if (!tensor.stride_bytes.empty())
+    logical.stride_bytes = tensor.stride_bytes;
   if (index < contract.dq_scale.size() && index < contract.dq_zp.size()) {
     QuantStaticSpec quant;
     quant.granularity = QuantGranularity::PerTensor;
@@ -2205,7 +2208,10 @@ void validate_boxdecode_contract_subset(const BoxDecodeContractSubset& subset,
           std::string(plugin_contract_field_key_name(PluginContractFieldKey::SliceGeometry)) +
           "' for stage '" + stage_name + "'");
     }
-    if (subset.quant_needed) {
+    const bool needs_quant = box_decode_type_uses_per_port_dtype(subset.decode_type)
+                                 ? normalize_dtype_token(logical.dtype) == "INT8"
+                                 : subset.quant_needed;
+    if (needs_quant) {
       if (!logical.quant.has_value() || logical.quant->scales.empty() ||
           logical.quant->zero_points.empty()) {
         throw std::invalid_argument(
@@ -2262,7 +2268,7 @@ build_quanttess_runtime_config_from_subset(const QuantTessContractSubset& subset
   CompiledProcessCvuRuntimeConfig runtime;
   runtime.graph_family = "quanttess";
   runtime.graph_name = "quantizetessellate";
-  runtime.graph_id = 226;
+
   runtime.default_input_name = "input_tensor";
   runtime.runtime_input_names = {"input_tensor"};
   runtime.runtime_output_names = {"output_tensor"};
@@ -2287,7 +2293,7 @@ build_quanttess_runtime_config_from_subset(const QuantTessContractSubset& subset
       throw std::invalid_argument(
           "quanttess runtime config could not synthesize typed input tensor");
     }
-    runtime.input_tensors = {input_desc};
+    runtime.input_tensors = {{input_desc, normalize_dtype_token(subset.input_dtype)}};
   }
   runtime.input_dtype = normalize_dtype_token(subset.input_dtype);
   runtime.output_dtype = "INT8";
@@ -2323,7 +2329,7 @@ build_quanttess_runtime_config_from_subset(const QuantTessContractSubset& subset
       throw std::invalid_argument("quanttess runtime config could not size typed output tensor");
     }
     output_desc.storage.nbytes = output_storage_bytes;
-    runtime.output_tensors = {output_desc};
+    runtime.output_tensors = {{output_desc, runtime.output_dtype}};
   }
   runtime.primary_output_transport_kind = ProcessCvuOutputTransportKind::Packed;
   runtime.primary_output_semantic_kind = ProcessCvuOutputSemanticKind::QuantTessTensor;
@@ -2409,7 +2415,7 @@ CompiledProcessCvuRuntimeConfig build_tessellate_runtime_config_from_subsets(
   CompiledProcessCvuRuntimeConfig runtime;
   runtime.graph_family = "tessellate";
   runtime.graph_name = "tessellate";
-  runtime.graph_id = 2;
+
   runtime.default_input_name = "input_tensor";
   runtime.runtime_input_names = {"input_tensor"};
   runtime.runtime_output_names = {"output_tensor"};
@@ -2445,7 +2451,7 @@ CompiledProcessCvuRuntimeConfig build_tessellate_runtime_config_from_subsets(
       throw std::invalid_argument(
           "tessellate runtime config could not synthesize typed input tensor");
     }
-    runtime.input_tensors = {input_desc};
+    runtime.input_tensors = {{input_desc, cast_input_dtype}};
   }
   const auto semantic_output_shape = cast_subset.input_shape;
   {
@@ -2479,7 +2485,7 @@ CompiledProcessCvuRuntimeConfig build_tessellate_runtime_config_from_subsets(
       throw std::invalid_argument(msg.str());
     }
     output_desc.storage.nbytes = packed_output_bytes;
-    runtime.output_tensors = {output_desc};
+    runtime.output_tensors = {{output_desc, frame_type}};
   }
   runtime.primary_output_transport_kind = ProcessCvuOutputTransportKind::Packed;
   runtime.primary_output_semantic_kind = ProcessCvuOutputSemanticKind::TessellatedImage;
@@ -2541,8 +2547,7 @@ build_quantize_runtime_config_from_subset(const QuantizeContractSubset& subset,
   CompiledProcessCvuRuntimeConfig runtime;
   runtime.graph_family = "quantize";
   runtime.graph_name = "quantize";
-  runtime.graph_id =
-      222; /* SIMA_GRAPH_QUANTIZE — graph 220 is header-only with no kernel impl in cvu-sw */
+
   runtime.default_input_name = "input_tensor";
   runtime.runtime_input_names = {"input_tensor"};
   runtime.runtime_output_names = {"output_tensor"};
@@ -2565,8 +2570,8 @@ build_quantize_runtime_config_from_subset(const QuantizeContractSubset& subset,
         !build_tensor_dense_desc_local(shape_int, output_dtype, &output_desc)) {
       throw std::invalid_argument("quantize runtime config could not synthesize typed tensors");
     }
-    runtime.input_tensors = {input_desc};
-    runtime.output_tensors = {output_desc};
+    runtime.input_tensors = {{input_desc, input_dtype}};
+    runtime.output_tensors = {{output_desc, output_dtype}};
   }
   runtime.input_dtype = input_dtype;
   runtime.output_dtype = output_dtype;
@@ -2615,7 +2620,7 @@ CompiledProcessCvuRuntimeConfig build_detessellate_runtime_config_from_subsets(
   CompiledProcessCvuRuntimeConfig runtime;
   runtime.graph_family = "detessellate";
   runtime.graph_name = "detessellate";
-  runtime.graph_id = 7;
+
   runtime.batch_size = 0;
   runtime.byte_align = 1;
   runtime.tessellate = 1;
@@ -2714,7 +2719,7 @@ CompiledProcessCvuRuntimeConfig build_detessellate_runtime_config_from_subsets(
       apply_tiled_channel_encoding_local(&input_desc, subset.align_c16 || subset.cblock,
                                          /*cblock=*/false);
       input_desc.storage.nbytes = subset.input_transport_size_bytes;
-      runtime.input_tensors.push_back(input_desc);
+      runtime.input_tensors.emplace_back(input_desc, frame_type);
     }
     {
       std::vector<int> slice_shape_int(subset.slice_shape.begin(), subset.slice_shape.end());
@@ -2728,7 +2733,7 @@ CompiledProcessCvuRuntimeConfig build_detessellate_runtime_config_from_subsets(
         throw std::invalid_argument(
             "detessellate runtime config could not synthesize typed output tensor");
       }
-      runtime.output_tensors.push_back(output_desc);
+      runtime.output_tensors.emplace_back(output_desc, frame_type);
     }
     runtime.runtime_output_logical_shapes.emplace_back(subset.frame_shape.begin(),
                                                        subset.frame_shape.end());
@@ -2751,7 +2756,7 @@ CompiledProcessCvuRuntimeConfig build_dequantize_runtime_config_from_subsets(
   CompiledProcessCvuRuntimeConfig runtime;
   runtime.graph_family = "dequantize";
   runtime.graph_name = "dequantize";
-  runtime.graph_id = 6;
+
   runtime.batch_size = 0;
   runtime.byte_align = 1;
   runtime.default_input_name = "input_tensor";
@@ -2824,7 +2829,7 @@ CompiledProcessCvuRuntimeConfig build_dequantize_runtime_config_from_subsets(
         throw std::invalid_argument(
             "dequantize runtime config could not synthesize typed input tensor");
       }
-      runtime.input_tensors.push_back(input_desc);
+      runtime.input_tensors.emplace_back(input_desc, input_dtype);
     }
     const auto canonical_output_shape = canonical_value_transform_shape_public(
         "dequantize", subset.input_shape, subset.output_shape, subset.input_shape);
@@ -2836,7 +2841,7 @@ CompiledProcessCvuRuntimeConfig build_dequantize_runtime_config_from_subsets(
       throw std::invalid_argument(
           "dequantize runtime config could not synthesize typed output tensor");
     }
-    runtime.output_tensors.push_back(output_desc);
+    runtime.output_tensors.emplace_back(output_desc, output_dtype);
     runtime.runtime_output_logical_index_list.push_back(static_cast<int>(i));
     runtime.runtime_output_output_slot_list.push_back(static_cast<int>(i));
     runtime.runtime_output_physical_index_list.push_back(static_cast<int>(i));
@@ -2868,7 +2873,7 @@ CompiledProcessCvuRuntimeConfig build_detessdequant_runtime_config_from_subset(
   CompiledProcessCvuRuntimeConfig runtime;
   runtime.graph_family = "detessdequant";
   runtime.graph_name = "detessdequant";
-  runtime.graph_id = 8;
+
   runtime.batch_size = 0;
   runtime.byte_align = 1;
   runtime.tessellate = 1;
@@ -2961,7 +2966,7 @@ CompiledProcessCvuRuntimeConfig build_detessdequant_runtime_config_from_subset(
     // projection produced by the shared descriptor contract, with batch carried separately.
     runtime.input_shapes.emplace_back(head.per_head_input_shape.begin(),
                                       head.per_head_input_shape.end());
-    runtime.input_tensors.push_back(tensor_contract.input);
+    runtime.input_tensors.emplace_back(tensor_contract.input, head.frame_type);
     runtime.slice_shapes.push_back(tensor_contract.tile_shape);
     runtime.dq_scale_list.push_back(head.per_head_quant_params.scales.front());
     runtime.dq_zp_list.push_back(
@@ -2974,7 +2979,7 @@ CompiledProcessCvuRuntimeConfig build_detessdequant_runtime_config_from_subset(
     runtime.output_shapes.push_back(output_shape_int);
     runtime.runtime_output_logical_shapes.emplace_back(head.frame_shape.begin(),
                                                        head.frame_shape.end());
-    runtime.output_tensors.push_back(tensor_contract.output);
+    runtime.output_tensors.emplace_back(tensor_contract.output, output_dtype);
     runtime.runtime_output_logical_index_list.push_back(static_cast<int>(i));
     runtime.runtime_output_output_slot_list.push_back(static_cast<int>(i));
     runtime.runtime_output_physical_index_list.push_back(static_cast<int>(i));

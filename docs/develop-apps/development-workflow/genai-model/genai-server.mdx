@@ -152,6 +152,8 @@ For VLM requests, an OpenAI chat `image_url` content part must contain a base64
 data URI such as `data:image/jpeg;base64,...`. Image decoding requires a Neat
 build with OpenCV support.
 
+Prompts that leave no room in the compiled context return `context_length_exceeded` (HTTP 400, or an SSE error if streaming has begun). Reaching the context or output-token limit returns `finish_reason: "length"`; normal completion returns `"stop"`. Conversation history is preserved.
+
 ## Ollama-compatible requests
 
 Use `/api/chat` for message history or `/api/generate` for a prompt:
@@ -221,6 +223,15 @@ returns reasoning in top-level `thinking` and the answer in `response`.
 Reasoning fields are omitted when empty. They are output-only: incoming
 `reasoning_content` or `thinking` fields are not replayed as conversation
 history.
+
+### Reasoning effort
+
+For GPT-OSS, set `reasoning_effort` to `low` (default), `medium` or `high`;
+other values return HTTP 400. `enable_thinking` controls whether reasoning is
+returned.
+
+`reasoning_effort` can also be set in `chat_template_kwargs`, whose value
+overrides the top-level field.
 
 ## Audio requests
 

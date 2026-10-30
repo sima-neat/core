@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import shlex
 import subprocess
 import tempfile
@@ -28,127 +29,76 @@ def shell_function(name: str) -> str:
     return text[start : text.index("\n}\n", start) + 2]
 
 
-def run_sync(
-    artifact: dict[str, str] | str | None,
-    consumer_base: str = "2.1.3",
-    enabled: str = "ON",
-    update_status: int = 0,
-    sdk_platform_version: str | None = "2.1.3",
-) -> tuple[subprocess.CompletedProcess[str], list[str]]:
-    with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        artifact_dir = root / "artifact"
-        artifact_dir.mkdir()
-        if artifact is not None:
-            contents = json.dumps(artifact) if isinstance(artifact, dict) else artifact
-            (artifact_dir / "internals-manifest.json").write_text(
-                contents, encoding="utf-8"
-            )
-        consumer = root / "manifest.json"
-        consumer.write_text(
-            json.dumps({"platform-version": consumer_base}), encoding="utf-8"
-        )
-        sdk_release = root / "sdk-release"
-        if sdk_platform_version is not None:
-            sdk_release.write_text(
-                f"Platform Version = {sdk_platform_version}\n", encoding="utf-8"
-            )
-        log = root / "sysroot.log"
-        script = f"""
-set -euo pipefail
-id() {{ echo 0; }}
-sysroot() {{
-  printf '%s\n' "$*" >> {shlex.quote(str(log))}
-  [[ "$1" != update ]] || return {update_status}
-}}
-{shell_function("run_privileged")}
-{shell_function("sync_sysroot_from_internals_manifest")}
-ELXR_SDK=ON
-ELXR_SDK_RELEASE_FILE={shlex.quote(str(sdk_release))}
-NEAT_SYNC_SYSROOT={shlex.quote(enabled)}
-NEAT_DEPS_MANIFEST={shlex.quote(str(consumer))}
-sync_sysroot_from_internals_manifest {shlex.quote(str(artifact_dir))}
-"""
-        result = subprocess.run(
-            ["bash", "-c", script], check=False, text=True, capture_output=True
-        )
-        calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
-        return result, calls
 
 
-def run_preserve(contents: bytes) -> tuple[subprocess.CompletedProcess[str], bytes]:
-    with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        artifact_dir = root / "artifact"
-        artifact_dir.mkdir()
-        (artifact_dir / "internals-manifest.json").write_bytes(contents)
-        retained = root / "retained" / "internals-manifest.json"
-        script = f"""
-set -e
-{shell_function("preserve_internals_artifact_manifest")}
-NEAT_INTERNALS_ARTIFACT_MANIFEST={shlex.quote(str(retained))}
-preserve_internals_artifact_manifest {shlex.quote(str(artifact_dir))}
-"""
-        result = subprocess.run(
-            ["bash", "-c", script], check=False, text=True, capture_output=True
-        )
-        return result, retained.read_bytes() if retained.exists() else b""
 
 
 class InternalsPackageBoundaryTest(unittest.TestCase):
-    def test_dist_preflight_only_receives_staged_debs(self) -> None:
-        for os_name, have_deb, validator_status in (
-            ("Darwin", False, 0), ("Linux", False, 0),
-            ("Linux", True, 0), ("Linux", True, 9),
-        ):
-            with self.subTest(os=os_name, deb=have_deb, status=validator_status):
-                with tempfile.TemporaryDirectory() as directory:
-                    root = Path(directory)
-                    (root / "tools").mkdir()
-                    log = root / "validated.txt"
-                    (root / "tools/install_neat_framework.sh").write_text(
-                        "validate_bundle_elf_cohort() {\n"
-                        f'  printf "%s\\n" "${{DEBS[@]}}" > {shlex.quote(str(log))}\n'
-                        f"  return {validator_status}\n"
-                        "}\n"
-                    )
-                    if have_deb:
-                        (root / "fixture with spaces.deb").write_bytes(b"fixture")
-                    script = f"""
-set -euo pipefail
-{shell_function("stage_package_artifacts_to_dist")}
-OS_NAME={os_name}
-SKIP_DIST=OFF
-BUILD_ALL=ON
-NEAT_INTERNALS_DEB_DIR=internals
-NEAT_LLIMA_DEB_DIR=llima
-NEAT_PACKAGE_INSTALL_SCRIPT=install_neat_framework.sh
-NEAT_INSTALL_MANIFEST=install-manifest.json
-REPO_ROOT={shlex.quote(str(root))}
-stage_package_artifacts_to_dist
-"""
-                    result = subprocess.run(["bash", "-c", script], cwd=root,
-                                            text=True, capture_output=True)
-                    self.assertEqual(result.returncode, validator_status, result.stderr)
-                    self.assertEqual(log.exists(), have_deb)
-                    if have_deb:
-                        self.assertEqual(log.read_text().splitlines(),
-                                         ["dist/fixture with spaces.deb"])
-
-    def test_internals_is_located_without_a_derived_version(self) -> None:
+    def test_scheduler_frontend_is_located_without_a_derived_version(self) -> None:
         text = cmake()
-        self.assertIn("find_package(NeatInternals CONFIG REQUIRED)", text)
-        self.assertNotIn(
-            "find_package(NeatInternals ${SIMANEAT_PLATFORM_VERSION}", text
+        self.assertIn("find_package(SimaScheduler CONFIG REQUIRED COMPONENTS frontend)", text)
+        exported = (ROOT / "cmake/SimaNeatConfig.cmake.in").read_text()
+        self.assertIn("find_dependency(SimaScheduler CONFIG COMPONENTS frontend)", exported)
+        for contents in (text, exported):
+            self.assertNotIn("SimaScheduler ${SIMANEAT_PLATFORM_VERSION}", contents)
+            for lower in ("SimaRunner", "SimaKernels", "SimaCodecs", "NeatInternals"):
+                self.assertNotIn("find_package(" + lower, contents)
+                self.assertNotIn("find_dependency(" + lower, contents)
+
+
+    def test_internals_abi_headers_have_one_package_owner(self) -> None:
+        text = cmake()
+        start = text.index("  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/")
+        install_headers = text[start : text.index("\n)", start)]
+        for header in (
+            "SimaPluginStaticManifestAbi.h",
+            "SimaTensorSetMetaAbi.h",
+        ):
+            with self.subTest(header=header):
+                self.assertTrue((ROOT / "include/gst" / header).is_file())
+                self.assertIn(f'PATTERN "{header}" EXCLUDE', install_headers)
+        self.assertFalse((ROOT / "include/gst/SimaaiGstErrors.h").exists())
+        self.assertIn('PATTERN "SimaaiGstErrors.h" EXCLUDE', install_headers)
+        manifest = json.loads((ROOT / "deps/manifest.json").read_text())
+        subprocess.run(["dpkg", "--compare-versions", manifest["package-version"],
+                        "ge", "0.6.0"], check=True)
+        self.assertFalse((ROOT / "include/gst/SimaCvuCapabilityAbi.h").exists())
+        self.assertIn(
+            "#include <simaai/runtime/gstreamer/abi/SimaPluginStaticManifestAbi.h>",
+            (ROOT / "include/gst/SimaPluginStaticManifestAbi.h").read_text(),
         )
-        exported_config = (ROOT / "cmake/SimaNeatConfig.cmake.in").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("find_dependency(NeatInternals CONFIG REQUIRED)", exported_config)
-        self.assertNotIn(
-            "find_dependency(NeatInternals @SIMANEAT_PLATFORM_VERSION@",
-            exported_config,
-        )
+        self.assertNotIn('"neat-internals-dev"', text)
+
+    def test_client_headers_have_no_adhoc_sdk_fallback(self) -> None:
+        # The old empty-cache workaround belonged to removed Core header
+        # discovery. Producer frontend usage now owns every support include.
+        text = cmake()
+        self.assertIn("find_package(SimaScheduler CONFIG REQUIRED COMPONENTS frontend)", text)
+        for removed in ("find_path(SIMANEAT_NEAT_", "find_library(SIMANEAT_NEAT_",
+                        "../internals/include", "../internals/gst_plugins/include",
+                        "NeatInternals::"):
+            self.assertNotIn(removed, text)
+
+
+    def test_actual_header_install_leaves_scheduler_contracts_to_scheduler(self) -> None:
+        text = cmake()
+        start = text.rfind("install(", 0, text.index("DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/"))
+        block = text[start:text.index("\n)", start) + 3]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CMakeLists.txt").write_text(
+                "cmake_minimum_required(VERSION 3.18)\nproject(HeaderOwnership NONE)\n"
+                'set(CMAKE_INSTALL_INCLUDEDIR "include")\n'
+                f'set(CMAKE_CURRENT_SOURCE_DIR "{ROOT}")\n' + block)
+            subprocess.run(["cmake", "-S", str(root), "-B", str(root / "build")],
+                           check=True, capture_output=True)
+            subprocess.run(["cmake", "--install", str(root / "build"), "--prefix",
+                            str(root / "installed"), "--component", "dev"],
+                           check=True, capture_output=True)
+            installed = root / "installed/include"
+            self.assertTrue((installed / "neat.h").is_file())
+            for name in ("SimaaiGstErrors.h", "SimaTensorSetMetaAbi.h"):
+                self.assertFalse((installed / "gst" / name).exists(), name)
 
     def test_no_manually_constructed_internals_version_ranges(self) -> None:
         text = cmake()
@@ -161,8 +111,9 @@ stage_package_artifacts_to_dist
             "neat-internals-dev (<<",
         ):
             self.assertNotIn(removed, text, removed)
-        for kept in ('"neat-runtime"', '"neat-gst-plugins"', '"neat-internals-dev"'):
+        for kept in ('"simaai-scheduler"',):
             self.assertIn(kept, text, kept)
+        self.assertNotIn('"simaai-kernels-dev"', text)
 
     def test_llima_is_consumed_without_a_version_policy(self) -> None:
         text = cmake()
@@ -184,10 +135,79 @@ stage_package_artifacts_to_dist
         self.assertIn("find_dependency(SimaLMM CONFIG REQUIRED)", exported_config)
         self.assertNotIn("@SIMANEAT_PLATFORM_VERSION@", exported_config)
 
+    def test_explicit_llima_artifact_refreshes_packaging_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            artifact = root / "artifact"
+            cache = root / "cache"
+            deps = root / "deps"
+            sysroot = root / "sysroot"
+            artifact.mkdir()
+            cache.mkdir()
+            deps.mkdir()
+            for component in ("core", "dev", "cli"):
+                (artifact / f"sima-lmm-0.4.0+local-Linux-{component}.deb").touch()
+                (cache / f"sima-lmm-0.4.0+stale-Linux-{component}.deb").touch()
+
+            policy = {'platform-version': '3.0.0', 'sdk': {'channel': 'develop'},
+                      'elxr_version': '3.0.0_master_B2372', 'sysroot-version': '3.0.0~pre2372'}
+            (artifact / 'llima-package-manifest.json').write_text(json.dumps(policy))
+            (artifact / 'metadata.json').write_text(json.dumps({'resources-checksum': {
+                path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in artifact.iterdir()}}))
+
+            script = f"""
+set -euo pipefail
+REPO_ROOT={shlex.quote(str(ROOT))}
+python3() {{
+  if [[ "$1" == tools/build_dependencies.py && "$2" == sdk-policy ]]; then
+    printf '%s\\n' {shlex.quote(json.dumps(policy))}
+  else
+    command python3 "$@"
+  fi
+}}
+resolve_neat_llima_ref() {{
+  NEAT_LLIMA_REQUESTED_REF=local:latest
+}}
+ensure_llima_sdk_sysroot_deps() {{ :; }}
+modify_sysroot() {{ "$@"; }}
+dpkg-deb() {{
+  mkdir -p "$3/usr/lib/aarch64-linux-gnu/cmake/SimaLMM"
+  touch "$3/usr/lib/aarch64-linux-gnu/cmake/SimaLMM/SimaLMMConfig.cmake"
+  touch "$3/usr/lib/aarch64-linux-gnu/libsima_lmm_runtime.so"
+}}
+{shell_function("ensure_neat_llima")}
+NEAT_LLIMA_ARTIFACT_DIR={shlex.quote(str(artifact))}
+NEAT_LLIMA_DEB_DIR={shlex.quote(str(cache))}
+NEAT_DEPS_DIR={shlex.quote(str(deps))}
+SYSROOT={shlex.quote(str(sysroot))}
+NEAT_SYSROOT_LLIMA_RECORD=var/lib/sima-neat/llima.sha256
+ELXR_SDK=ON
+ensure_neat_llima
+"""
+            result = subprocess.run(
+                ["bash", "-c", script], check=False, text=True, capture_output=True
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                sorted(path.name for path in cache.glob("sima-lmm-*.deb")),
+                [
+                    "sima-lmm-0.4.0+local-Linux-cli.deb",
+                    "sima-lmm-0.4.0+local-Linux-core.deb",
+                    "sima-lmm-0.4.0+local-Linux-dev.deb",
+                ],
+            )
+
     def test_cmake_package_reports_core_release_identity(self) -> None:
         text = cmake()
         self.assertIn("VERSION ${SIMANEAT_PACKAGE_BASE_VERSION}", text)
         self.assertNotIn("VERSION ${SIMANEAT_PLATFORM_VERSION}", text)
+
+    def test_manifest_tracks_only_immediate_execution_dependencies(self) -> None:
+        manifest = json.loads((ROOT / "deps/manifest.json").read_text())
+        self.assertIn("scheduler", manifest)
+        self.assertIn("llima", manifest)  # GenAI intentionally bypasses vision execution.
+        for retired_or_transitive in ("internals", "runner", "kernels", "codecs"):
+            self.assertNotIn(retired_or_transitive, manifest)
 
     def test_manifest_has_no_platform_package_pin(self) -> None:
         manifest = json.loads((ROOT / "deps/manifest.json").read_text(encoding="utf-8"))
@@ -198,164 +218,129 @@ stage_package_artifacts_to_dist
         self.assertNotIn("SIMANEAT_MEMORY_DEV_PACKAGE_VERSION", text)
         self.assertNotIn("SIMANEAT_BUNDLED_MEMORY_DEV_DEBS", text)
         self.assertNotIn("simaai-memory-lib-dev (=", text)
-        self.assertIn('"simaai-memory-lib-dev"', text)
+        self.assertNotIn('"simaai-memory-lib-dev"', text)
 
-    def test_every_delivered_internals_package_is_forwarded(self) -> None:
+    def test_sdk_build_uses_the_selected_cross_compiler_headers(self) -> None:
         text = build_script()
-        self.assertIn('for file in "${NEAT_INTERNALS_DEB_DIR}"/*.deb; do', text)
-        for removed in (
-            '"${NEAT_INTERNALS_DEB_DIR}"/neat-*.deb',
-            "dist/simaai-common*.deb",
-            "'simaai-memory-lib_*.deb'",
-            "'libcamera_*.deb'",
-            "'neat-runtime_*.deb'",
-        ):
-            self.assertNotIn(removed, text, removed)
+        self.assertIn('${CXX:-aarch64-linux-gnu-g++}', text)
+        self.assertIn('for query in ("-dumpversion", "-dumpmachine"):', text)
+        self.assertIn('subprocess.check_output([*compiler, query]', text)
+        self.assertIn('-nostdinc++${cpp_header_flags}', text)
+        self.assertIn("usr/include/c++/${cross_gcc_major}", text)
+        self.assertNotIn("usr/include/c++/12", text)
 
-    def test_selected_internals_artifact_is_installed_before_build(self) -> None:
-        text = build_script()
-        start = text.index("ensure_neat_internals()")
-        end = text.index("\nensure_neat_llima()", start)
-        function = text[start:end]
-        self.assertNotIn("return 0", function[: function.index("fetch_neat_internals")])
-
-    def test_vulcan_build_uses_the_internals_sysroot_receipt(self) -> None:
-        text = build_script()
-        workflow = (ROOT / ".github/workflows/vulcan-ci.yml").read_text(
-            encoding="utf-8"
-        )
-        manifest = json.loads((ROOT / "deps/manifest.json").read_text(encoding="utf-8"))
-        sync = text.index('sync_sysroot_from_internals_manifest "${artifact_dir}"')
-        preserve = text.index(
-            'preserve_internals_artifact_manifest "${artifact_dir}"', sync
-        )
-        install = text.index('collect_plugin_files_from_debs "${artifact_dir}"', sync)
-        stage = text.index(
-            'cp -f "${NEAT_INTERNALS_ARTIFACT_MANIFEST}" '
-            "dist/internals-manifest.json"
-        )
-        metadata = text.index("generate_package_metadata_if_requested\n", stage)
-        ensure = text.index("ensure_neat_internals\n", text.index("main()"))
-        target_python = text.index("detect_elxr_target_python\n", ensure)
-
-        self.assertIn('[[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]] || return 0', text)
-        self.assertIn('-e NEAT_SYNC_SYSROOT="ON"', workflow)
-        self.assertIn(
-            'if [[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]]; then\n'
-            '    preserve_internals_artifact_manifest "${artifact_dir}"\n'
-            "  fi",
-            text,
-        )
-        self.assertIn(
-            'if [[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]]; then\n'
-            '    if [[ ! -f "${NEAT_INTERNALS_ARTIFACT_MANIFEST}" ]]; then',
-            text,
-        )
-        self.assertIn("internals-manifest.json", text)
-        self.assertIn('(?:~pre[0-9]+)?', text)
-        self.assertIn('sysroot update "${receipt}"', text)
-        self.assertIn("Using stable SDK sysroot", text)
-        self.assertIn("Internals artifact is missing internals-manifest.json", text)
-        self.assertIn("invalid sysroot-version", text)
-        self.assertIn("platform-version does not match the Internals receipt", text)
-        self.assertIn('dist/internals-manifest.json', text)
-        self.assertIn('resources-checksum', workflow)
-        self.assertNotIn("sysroot-version", manifest)
-        self.assertNotRegex(text, r"\b[0-9]+(?:\.[0-9]+){2}~pre[0-9]+\b")
-        self.assertNotRegex(workflow, r"\b[0-9]+(?:\.[0-9]+){2}~pre[0-9]+\b")
-        self.assertLess(sync, install)
-        self.assertLess(sync, preserve)
-        self.assertLess(preserve, install)
-        self.assertLess(stage, metadata)
-        self.assertLess(ensure, target_python)
-
-    def test_selected_internals_manifest_is_preserved_byte_for_byte(self) -> None:
-        contents = b'{"sysroot-version":"2.1.3~pre9999", "marker":"exact"}\n'
-        result, retained = run_preserve(contents)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(retained, contents)
-
-    def test_sysroot_receipt_behavior(self) -> None:
-        base = "2.1.3"
-        receipt = f"{base}~pre9999"
-        result, calls = run_sync({"sysroot-version": receipt}, base)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(calls, [f"update {receipt}", "status"])
-
-        result, calls = run_sync({"sysroot-version": base}, base)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(
-            "Using stable SDK sysroot 2.1.3 without updating it.", result.stdout
-        )
-        self.assertEqual(calls, [])
-
-        result, calls = run_sync(None, enabled="OFF")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(calls, [])
-
-        result, calls = run_sync({"sysroot-version": ""}, base)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(calls, [])
-
-    def test_stable_receipt_requires_a_matching_sdk(self) -> None:
-        base = "2.1.3"
-        for sdk_platform_version, actual in (("2.1.2", "2.1.2"), (None, "unknown")):
-            with self.subTest(sdk_platform_version=sdk_platform_version):
-                result, calls = run_sync(
-                    {"sysroot-version": base},
-                    base,
-                    sdk_platform_version=sdk_platform_version,
+    def test_customer_package_selection_preserves_runtime_and_public_dev(self) -> None:
+        for package in ("neat-internals-dev", "simaai-memory-lib-dev", "sima-lmm-dev",
+                        "sima-neat-dev", "neat-runtime", "neat-gst-plugins",
+                        "neat-ev74-firmware", "simaai-memory-lib", "sima-lmm-core", "sima-lmm-cli"):
+            with self.subTest(package=package):
+                result = subprocess.run(
+                    ["bash", "-c", f'dpkg-deb() {{ echo {shlex.quote(package)}; }}\n'
+                     + shell_function("is_customer_deb") + '\nis_customer_deb unused.deb'],
+                    text=True, capture_output=True,
                 )
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn(
-                    f"SDK platform {actual} does not match required stable platform {base}",
-                    result.stderr,
-                )
-                self.assertEqual(calls, [])
+                self.assertEqual(result.returncode, int(package in {
+                    "neat-internals-dev", "simaai-memory-lib-dev", "sima-lmm-dev"
+                }), result.stderr)
 
-    def test_invalid_sysroot_receipts_fail_closed(self) -> None:
-        base = "2.1.3"
-        receipt = f"{base}~pre9999"
-        cases = (
-            (None, base, "missing internals-manifest.json"),
-            ("{", base, "Cannot read Internals build receipt"),
-            ({}, base, "Cannot read Internals build receipt"),
-            (
-                {"sysroot-version": "latest"},
-                base,
-                "Cannot read Internals build receipt",
-            ),
-            (
-                {"sysroot-version": "|latest"},
-                base,
-                "Cannot read Internals build receipt",
-            ),
-            (
-                {"sysroot-version": "\nmalformed"},
-                base,
-                "Cannot read Internals build receipt",
-            ),
-            (
-                {"sysroot-version": receipt},
-                "2.1.4",
-                "Cannot read Internals build receipt",
-            ),
-        )
-        for artifact, consumer_base, message in cases:
-            with self.subTest(message=message):
-                result, calls = run_sync(artifact, consumer_base)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn(message, result.stderr)
-                self.assertEqual(calls, [])
 
-    def test_failed_sysroot_update_is_not_masked(self) -> None:
-        base = "2.1.3"
-        result, calls = run_sync(
-            {"sysroot-version": f"{base}~pre9999"}, base, update_status=23
-        )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Failed to update SDK sysroot", result.stderr)
-        self.assertEqual(calls, [f"update {base}~pre9999"])
+    def test_shared_package_discovery_is_scoped_and_hides_implementation_sdks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "FindPkgConfig.cmake").write_text("""
+set(PkgConfig_FOUND TRUE)
+function(pkg_check_modules prefix)
+  set(${prefix}_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/public" PARENT_SCOPE)
+  set(${prefix}_LIBRARY_DIRS "${CMAKE_SOURCE_DIR}/lib" PARENT_SCOPE)
+endfunction()
+""")
+            (root / "SimaSchedulerConfig.cmake").write_text("""
+foreach(component frontend)
+  if(NOT TARGET SimaScheduler::${component})
+    add_library(SimaScheduler::${component} INTERFACE IMPORTED)
+  endif()
+endforeach()
+""")
+            (root / "SimaRunnerConfig.cmake").write_text("set(SimaRunner_FOUND TRUE)\n")
+            (root / "nlohmann_jsonConfig.cmake").write_text("set(nlohmann_json_FOUND TRUE)\n")
+            kernels_config = root / "SimaKernelsConfig.cmake"
+            kernels_config.write_text("""
+if(NOT TARGET SimaKernels::executables)
+  add_library(SimaKernels::executables INTERFACE IMPORTED)
+endif()
+""")
+            (root / "SimaKernelsConfigVersion.cmake").write_text("""
+set(PACKAGE_VERSION "0.1.0")
+if(PACKAGE_FIND_VERSION VERSION_EQUAL PACKAGE_VERSION)
+  set(PACKAGE_VERSION_EXACT TRUE)
+  set(PACKAGE_VERSION_COMPATIBLE TRUE)
+endif()
+""")
+            (root / "SimaNeatTargets.cmake").write_text("""
+add_library(SimaNeat::sima_neat INTERFACE IMPORTED)
+add_library(SimaNeat::sima_neat_common INTERFACE IMPORTED)
+""")
+            (root / "CMakeLists.txt").write_text(f"""
+cmake_minimum_required(VERSION 3.18)
+project(CustomerPackage NONE)
+list(PREPEND CMAKE_MODULE_PATH "${{CMAKE_SOURCE_DIR}}")
+list(PREPEND CMAKE_PREFIX_PATH "${{CMAKE_SOURCE_DIR}}")
+set(CMAKE_DISABLE_FIND_PACKAGE_NeatInternals TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_SimaRunner TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_SimaKernels TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_SimaCodecs TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_SimaLMM TRUE)
+set(CMAKE_DISABLE_FIND_PACKAGE_ZLIB TRUE)
+set(SIMANEAT_CONFIG_WITH_LLIMA TRUE)
+include(CMakePackageConfigHelpers)
+configure_package_config_file("{ROOT}/cmake/SimaNeatConfig.cmake.in"
+  "${{CMAKE_SOURCE_DIR}}/SimaNeatConfig.cmake" INSTALL_DESTINATION .)
+add_subdirectory(first)
+add_subdirectory(second)
+""")
+            for name in ("first", "second"):
+                (root / name).mkdir()
+                (root / name / "CMakeLists.txt").write_text("""
+find_package(SimaNeat CONFIG REQUIRED)
+find_package(SimaNeat CONFIG REQUIRED)
+get_target_property(includes SimaNeat::sima_neat_common INTERFACE_INCLUDE_DIRECTORIES)
+if (NOT "${CMAKE_SOURCE_DIR}/public" IN_LIST includes)
+  message(FATAL_ERROR "Missing public dependency includes")
+endif()
+if (TARGET SimaNeat::sima_neat_static)
+  message(FATAL_ERROR "Static target leaked into shared discovery")
+endif()
+""")
+            result = subprocess.run(["cmake", "-S", str(root), "-B", str(root / "build")],
+                                    text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            runtime_config = root / "SimaSchedulerConfig.cmake"
+            saved = runtime_config.read_text()
+            runtime_config.write_text(saved.replace("foreach(component frontend)", "foreach(component missing)"))
+            missing = subprocess.run(["cmake", "-S", str(root), "-B", str(root / "missing-frontend")],
+                                     text=True, capture_output=True)
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("SimaScheduler::frontend", missing.stdout + missing.stderr)
+            runtime_config.write_text(saved)
+            (root / "FindZLIB.cmake").write_text("set(ZLIB_FOUND TRUE)\n")
+            (root / "SimaNeatStaticTargets.cmake").write_text("add_library(SimaNeat::sima_neat_static INTERFACE IMPORTED)\n")
+            top = root / "CMakeLists.txt"
+            top.write_text(top.read_text().replace("set(CMAKE_DISABLE_FIND_PACKAGE_ZLIB TRUE)", "")
+                           .replace("set(SIMANEAT_CONFIG_WITH_LLIMA TRUE)", "set(SIMANEAT_CONFIG_WITH_LLIMA FALSE)"))
+            child = root / "first/CMakeLists.txt"
+            child.write_text(child.read_text() + "\nfind_package(SimaNeat CONFIG REQUIRED COMPONENTS Static)\n"
+                             "if(NOT TARGET SimaNeat::sima_neat_static)\nmessage(FATAL_ERROR \"Missing explicit static target\")\nendif()\n")
+            static = subprocess.run(["cmake", "-S", str(root), "-B", str(root / "static-no-lower-dev")],
+                                    text=True, capture_output=True)
+            self.assertEqual(static.returncode, 0, static.stdout + static.stderr)
+
+
+
+
+
+
+
+
 
     def test_installer_has_no_bundled_memory_transaction(self) -> None:
         text = installer()

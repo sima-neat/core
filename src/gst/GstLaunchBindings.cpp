@@ -297,11 +297,14 @@ Analysis analyze(std::string_view launch) {
 
     if (launch[i] == '!' || launch[i] == ':') {
       result.has_topology_syntax = true;
+      result.has_nontrivial_topology_syntax |= launch[i] == ':';
+      const std::size_t begin = i;
       if (const auto end = caps_link_end(launch, i, &result.complete)) {
         i = *end;
       } else {
         ++i;
       }
+      result.links.push_back({begin, i});
       continue;
     }
 
@@ -318,6 +321,7 @@ Analysis analyze(std::string_view launch) {
 
     if (launch[i] == '(' || launch[i] == ')' || launch[i] == ';') {
       result.has_topology_syntax = true;
+      result.has_nontrivial_topology_syntax = true;
       ++i;
       continue;
     }

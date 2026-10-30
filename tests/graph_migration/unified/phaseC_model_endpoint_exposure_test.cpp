@@ -18,14 +18,15 @@
 namespace {
 
 sima_test::ModelArchiveFixture make_multi_ingress_model_fixture(const std::string& tag) {
-  return sima_test::make_model_archive_fixture(tag, {{"etc/phaseC_multi_ingress_mpk.json", R"json({
+  const auto fixture =
+      sima_test::make_model_archive_fixture(tag, {{"etc/phaseC_multi_ingress_mpk.json", R"json({
   "name": "phaseC_multi_ingress",
   "model_path": "phaseC_multi_ingress.onnx",
   "model_sdk_version": "2.0.0",
   "sequence": 1,
   "input_nodes": [
     { "name": "image_l",  "type": "buffer", "size": 64 },
-    { "name": "image_uv", "type": "buffer", "size": 32 }
+    { "name": "image_uv", "type": "buffer", "size": 64 }
   ],
   "plugins": [
     {
@@ -39,10 +40,11 @@ sima_test::ModelArchiveFixture make_multi_ingress_model_fixture(const std::strin
           "num_bits": 8,
           "rounding": "TONEAREST",
           "input_shapes": [[1, 4, 4, 1]],
-          "input_data_type": ["FP32"],
           "output_shapes": [[1, 4, 4, 1]],
-          "output_data_type": "INT8"
-        }
+          "output_data_type": "int8"
+        },
+        "desired_batch_size": 1,
+        "actual_batch_size": 1
       },
       "input_nodes": [
         { "name": "image_l", "size": 64, "logical_shape": [1, 4, 4, 1], "logical_dtype": "FP32" }
@@ -63,18 +65,19 @@ sima_test::ModelArchiveFixture make_multi_ingress_model_fixture(const std::strin
           "channel_params": [[255.0, -128]],
           "num_bits": 8,
           "rounding": "TONEAREST",
-          "input_shapes": [[1, 2, 4, 1]],
-          "input_data_type": ["FP32"],
-          "output_shapes": [[1, 2, 4, 1]],
-          "output_data_type": "INT8"
-        }
+          "input_shapes": [[1, 4, 4, 1]],
+          "output_shapes": [[1, 4, 4, 1]],
+          "output_data_type": "int8"
+        },
+        "desired_batch_size": 1,
+        "actual_batch_size": 1
       },
       "input_nodes": [
-        { "name": "image_uv", "size": 32, "logical_shape": [1, 2, 4, 1], "logical_dtype": "FP32" }
+        { "name": "image_uv", "size": 64, "logical_shape": [1, 4, 4, 1], "logical_dtype": "FP32" }
       ],
       "output_nodes": [
-        { "name": "quantize_uv", "type": "buffer", "size": 8,
-          "logical_shape": [1, 2, 4, 1], "logical_dtype": "INT8" }
+        { "name": "quantize_uv", "type": "buffer", "size": 16,
+          "logical_shape": [1, 4, 4, 1], "logical_dtype": "INT8" }
       ],
       "type": "sgpProcess"
     },
@@ -85,21 +88,21 @@ sima_test::ModelArchiveFixture make_multi_ingress_model_fixture(const std::strin
       "config_params": {
         "kernel": "pack_transform",
         "params": {
-          "input_shapes": [[1, 4, 4, 1], [1, 2, 4, 1]],
-          "input_data_type": ["INT8", "INT8"],
-          "output_shapes": [[1, 24]],
-          "data_type": ["INT8"]
-        }
+          "input_shapes": [[1, 4, 4, 1], [1, 4, 4, 1]],
+          "output_shapes": [[1, 32]]
+        },
+        "desired_batch_size": 1,
+        "actual_batch_size": 1
       },
       "input_nodes": [
         { "name": "quantize_l",  "size": 16,
           "logical_shape": [1, 4, 4, 1], "logical_dtype": "INT8" },
-        { "name": "quantize_uv", "size": 8,
-          "logical_shape": [1, 2, 4, 1], "logical_dtype": "INT8" }
+        { "name": "quantize_uv", "size": 16,
+          "logical_shape": [1, 4, 4, 1], "logical_dtype": "INT8" }
       ],
       "output_nodes": [
-        { "name": "MLA_0_ifm_pack_transform", "type": "buffer", "size": 24,
-          "logical_shape": [1, 24], "logical_dtype": "INT8" }
+        { "name": "MLA_0_ifm_pack_transform", "type": "buffer", "size": 32,
+          "logical_shape": [1, 32], "logical_dtype": "INT8" }
       ],
       "type": "sgpProcess"
     },
@@ -111,14 +114,12 @@ sima_test::ModelArchiveFixture make_multi_ingress_model_fixture(const std::strin
         "desired_batch_size": 1,
         "actual_batch_size": 1,
         "number_of_quads_to_user": 1,
-        "input_shapes": [[1, 24]],
-        "input_data_type": ["INT8"],
-        "output_shapes": [[1, 4, 4, 1]],
-        "data_type": ["INT8"]
+        "input_types": [{"scalar": "int8", "shape": [1, 32]}],
+        "output_types": [{"scalar": "int8", "shape": [1, 4, 4, 1]}]
       },
       "input_nodes": [
-        { "name": "MLA_0_ifm_pack_transform", "size": 24,
-          "logical_shape": [1, 24], "logical_dtype": "INT8" }
+        { "name": "MLA_0_ifm_pack_transform", "size": 32,
+          "logical_shape": [1, 32], "logical_dtype": "INT8" }
       ],
       "output_nodes": [
         { "name": "classes", "type": "buffer", "size": 16,
@@ -128,34 +129,18 @@ sima_test::ModelArchiveFixture make_multi_ingress_model_fixture(const std::strin
       "resources": { "executable": "stage0.elf" }
     }
   ]
-})json"},
-                                                     {"etc/pipeline_sequence.json", R"json({
-  "pipelines": [{
-    "sequence": [
-      {
-        "sequence_id": 1,
-        "name": "MLA_0",
-        "pluginId": "processmla",
-        "configPath": "0_process_mla.json",
-        "processor": "MLA",
-        "kernel": "infer",
-        "input": "MLA_0_ifm_pack_transform"
-      }
-    ]
-  }]
-})json"},
-                                                     {"etc/0_process_mla.json", R"json({
-  "node_name": "MLA_0",
-  "input_buffers": [{ "name": "MLA_0_ifm_pack_transform" }],
-  "input_format": ["EV81_INT8"],
-  "data_type": ["EV81_INT8"],
-  "input_width": [24],
-  "input_height": [1],
-  "input_depth": [1],
-  "output_width": [4],
-  "output_height": [4],
-  "output_depth": [1]
-})json"}});
+})json"}},
+                                            false);
+  // Each packed INT8 input occupies an aligned 16-byte component. Endpoint graph
+  // planning requires topology, but this test never executes MLA.
+  const auto share = std::filesystem::path(fixture.root_dir) / "share";
+  std::filesystem::create_directories(share);
+  sima_test::write_topology_elf(share / "stage0.elf", "data.ifm.b0", 32U, "data.ofm.b0", 16U);
+  const std::string archive = "tar -czf " + sima_test::model_archive_shell_quote(fixture.tar_path) +
+                              " -C " + sima_test::model_archive_shell_quote(fixture.root_dir) +
+                              " .";
+  require(std::system(archive.c_str()) == 0, "failed to archive endpoint topology fixture");
+  return fixture;
 }
 
 void require_contains_local(const std::string& haystack, const std::string& needle,
@@ -336,7 +321,7 @@ RUN_TEST("graph_migration_phaseC_model_endpoint_exposure_test", [] {
   linear_model.set_name("linear_model");
   ValidateOptions linear_validate_opt;
   linear_validate_opt.parse_launch = false;
-  const cv::Mat real_validate_input = cv::Mat::zeros(1, 96, CV_8UC1);
+  const cv::Mat real_validate_input = cv::Mat::zeros(1, 128, CV_8UC1);
   const GraphReport linear_report = linear_model.validate(linear_validate_opt, real_validate_input);
   require(linear_report.error_code.empty(),
           "linear model Graph with explicit Input/Output should validate, got " +

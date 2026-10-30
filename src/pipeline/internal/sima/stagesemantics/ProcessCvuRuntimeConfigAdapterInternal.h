@@ -28,6 +28,10 @@ struct CompiledProcessCvuRuntimeConfig {
   int win_half = -1;
   int max_iters = -1;
   int max_level = -1;
+  bool publish_error = false;
+  float error_threshold = -1.0f;
+  float min_eig_threshold = 0.0f;
+  bool require_convergence = false;
   int detect_new_features = -1;
   int fast_threshold = -1;
   int debug = 0;
@@ -64,8 +68,8 @@ struct CompiledProcessCvuRuntimeConfig {
   bool has_q_zp = false;
   std::int64_t q_zp = 0;
 
-  std::vector<sima_ev_tensor_desc> input_tensors;
-  std::vector<sima_ev_tensor_desc> output_tensors;
+  std::vector<AuthoredTensorDescriptor> input_tensors;
+  std::vector<AuthoredTensorDescriptor> output_tensors;
   std::vector<double> q_scale_list;
   std::vector<std::int64_t> q_zp_list;
   std::vector<double> dq_scale_list;
@@ -89,8 +93,6 @@ struct CompiledProcessCvuRuntimeConfig {
   std::string input_img_type;
   std::string output_img_type;
   std::string input_dtype;
-  // Explicit logical types: the legacy EV enum aliases signed/unsigned and BF16/INT16.
-  std::vector<std::string> runtime_input_dtype_list;
   std::string output_dtype;
   std::string out_dtype;
   std::string scaling_type;

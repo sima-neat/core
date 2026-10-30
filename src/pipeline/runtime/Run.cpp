@@ -7,7 +7,9 @@
 #include "pipeline/internal/Diagnostics.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
+#include "pipeline/internal/OutputQueueMemory.h"
 #include "pipeline/internal/TensorMath.h"
+#include "pipeline/internal/TensorUtil.h"
 
 #include <algorithm>
 #include <atomic>
@@ -31,7 +33,6 @@ namespace simaai::neat {
 using pipeline_internal::env_bool;
 
 namespace {
-using run_internal::force_copy_sample_if_zero_copy;
 using run_internal::queue_full;
 using run_internal::sample_has_zero_copy_tensor;
 
@@ -264,11 +265,9 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
     InputStream stream, const RunOptions& opt, const InputStreamOptions& stream_opt, RunMode mode,
     const std::optional<InputOptions>& tensor_input_opt_for_cv,
     pipeline_internal::InputRouteProcessorPtr input_route_processor,
-    std::shared_ptr<DecoderAdmissionReservation> decoder_admission,
     std::function<void()> after_pipeline_start_for_test) {
   auto st = std::make_shared<runtime::RunCore>();
   runtime::initialize_run_identity(*st);
-  st->decoder_admission = std::move(decoder_admission);
   RunCoreStartupGuard startup_guard(st);
   st->pipeline.stream = std::move(stream);
   st->opt = opt;
@@ -282,9 +281,9 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
   // The Balanced fallback is a public-output reliability valve. Graph-internal
   // appsinks are transport edges to downstream EV74/MLA routes, where cloning a
   // zero-copy tensor back to CPU violates the next segment's input contract.
-  st->pipeline.zero_copy_fallback_enabled = stream_opt.public_output_contract &&
-                                            (opt.preset == RunPreset::Balanced) &&
-                                            !stream_opt.copy_output;
+  st->pipeline.zero_copy_fallback_enabled =
+      stream_opt.public_output_contract && (opt.preset == RunPreset::Balanced) &&
+      !stream_opt.copy_output && opt.output_memory != OutputMemory::ZeroCopy;
   if (stream_opt.holder_loan_credits > 0) {
     st->holder_loan_gate =
         std::make_shared<pipeline_internal::HolderLoanGate>(stream_opt.holder_loan_credits);
@@ -300,7 +299,10 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
     st->diag_sysinfo = collect_system_info();
   }
   if (opt.power_monitor.enabled) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     st->power_monitor = std::make_unique<PowerMonitor>(opt.power_monitor);
+#pragma GCC diagnostic pop
     st->power_monitor->start();
   }
 
@@ -387,8 +389,15 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
       const int max =
           explicit_output ? st->pipeline.stream_opt.appsink_max_buffers : st->opt.queue_depth;
       const bool has_zero_copy_output = sample_has_zero_copy_tensor(out);
+      const auto memory = pipeline_internal::output_queue_memory_decision(
+          out, st->pipeline.stream_opt.copy_output,
+          st->pipeline.stream_opt.preserve_framework_output,
+          st->opt.output_memory == OutputMemory::ZeroCopy);
+      const bool strict_zero_copy = memory.strict_zero_copy;
+      const bool preserve_framework = memory.preserve_framework;
       if (!st->pipeline.copy_output_latched.load(std::memory_order_relaxed) &&
-          st->pipeline.zero_copy_fallback_enabled && has_zero_copy_output && max > 0 &&
+          st->pipeline.zero_copy_fallback_enabled && memory.permits_pressure_copy() &&
+          has_zero_copy_output && max > 0 &&
           static_cast<int>(st->pipeline.out_queue.size()) >= max) {
         st->pipeline.copy_output_latched.store(true, std::memory_order_relaxed);
         if (!st->pipeline.zero_copy_warned.exchange(true, std::memory_order_relaxed)) {
@@ -396,10 +405,19 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
                                "switching to copy-output mode.\n");
         }
       }
-      const bool copy_output = st->pipeline.copy_output_latched.load(std::memory_order_relaxed);
+      // A retained host sibling protects producer credits/Block semantics, not
+      // a foreign sibling from its normal copy policy. Materialize per payload.
+      const bool copy_output = memory.copy_when_latched(
+          st->pipeline.copy_output_latched.load(std::memory_order_relaxed));
       if (copy_output && has_zero_copy_output) {
-        force_copy_sample_if_zero_copy(out);
-        release_incoming_realtime_credits("async-output-copy");
+        // InputStream may already have materialized Owned into independent
+        // DMA-BUF storage. A GstSample holder alone does not imply a pool loan.
+        if (!out.owned) {
+          pipeline_internal::materialize_owned_output(
+              out, st->pipeline.stream_opt.preserve_framework_output);
+        }
+        if (out.owned)
+          release_incoming_realtime_credits("async-output-copy");
       }
       if (max > 0) {
         OverflowPolicy output_drop =
@@ -408,6 +426,7 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
                             : st->opt.overflow_policy;
         if (output_drop == OverflowPolicy::Block &&
             !st->pipeline.stream_opt.explicit_public_output_options && !copy_output &&
+            !preserve_framework && !strict_zero_copy &&
             pipeline_internal::env_bool("SIMA_PIPELINE_OUTPUT_DROP_ON_ZERO_COPY", true)) {
           output_drop = OverflowPolicy::KeepLatest;
         }
@@ -597,7 +616,6 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
       // close() timed out here and skipped teardown, leaving this the last user. Close the
       // stream directly; RunCore::close() latched `closed` on its way through.
       st->pipeline.stream.close();
-      st->decoder_admission.reset();
       st->stream_close_state.store(runtime::InputStreamCloseState::Closed,
                                    std::memory_order_release);
     }

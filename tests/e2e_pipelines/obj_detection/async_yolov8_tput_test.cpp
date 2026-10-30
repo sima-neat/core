@@ -11,6 +11,7 @@
 #include "e2e_pipelines/obj_detection/yolov8_test_utils.h"
 #include "gst/GstInit.h"
 #include "test_utils.h"
+#include "perf/process_cpu_metrics.h"
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
@@ -45,7 +46,11 @@ using sima_yolov8_test::step_log;
 struct AsyncTestConfig {
   int iters = 200;
   int warm = 200;
-  int inflight = 4;
+  // Keep one host circulation credit beyond the fixed four device slots so
+  // the next distinct input is ready while a completed output loan returns.
+  // This is queueing slack only; process-CVU/MLA and decode pools remain four.
+  int inflight = 5;
+  int queue_depth = 5;
   int excluded_preproc_dispatches = 5;
   int topk = 100;
   double min_fps = 350.0;
@@ -69,6 +74,7 @@ struct RunSummary {
   bool ok = false;
   int outputs = 0;
   double avg_fps = 0.0;
+  std::optional<sima_perf::ProcessCpuMetrics> process_cpu;
   std::string note;
   std::string diagnostics;
 };
@@ -314,7 +320,15 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
   require(!source_img.empty(), "Missing YOLOv8 input image");
 
   const cv::Mat img = maybe_resize_benchmark_input(source_img, cfg);
-  const simaai::neat::TensorList ev74_input = make_ev74_image_input(img);
+  const int input_pool_depth = std::max(1, cfg.inflight);
+  std::vector<simaai::neat::TensorList> ev74_inputs;
+  ev74_inputs.reserve(static_cast<std::size_t>(input_pool_depth));
+  for (int i = 0; i < input_pool_depth; ++i) {
+    // Every concurrently owned request needs a distinct DMA-BUF. Reusing one
+    // Tensor holder for all async credits aliases device ownership and turns a
+    // throughput test into a same-buffer synchronization-contention test.
+    ev74_inputs.emplace_back(make_ev74_image_input(img));
+  }
 
   simaai::neat::Model::Options model_opt;
   model_opt.preprocess.kind = simaai::neat::InputKind::Image;
@@ -330,7 +344,14 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
   }
   auto model = simaai::neat::Model(tar_gz, model_opt);
 
-  simaai::neat::Graph p;
+  // Keep the model-managed device-stage pools at their production contract
+  // depth while varying RunOptions::queue_depth below.  The latter controls
+  // graph ingress/edge credits; deriving the MLA pool from it would instead
+  // change a separate authority and is rejected by the model pipeline guard.
+  simaai::neat::GraphOptions graph_opt;
+  graph_opt.processmla.output_pool_buffers = 4;
+  graph_opt.async_queue_depth = std::max(1, cfg.queue_depth);
+  simaai::neat::Graph p(graph_opt);
 
   p.add(simaai::neat::nodes::Input());
   p.add(simaai::neat::nodes::groups::Preprocess(model));
@@ -349,7 +370,14 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
 
   step_log("async: before build");
   const auto build_start = std::chrono::steady_clock::now();
-  auto async = p.build(ev74_input);
+  simaai::neat::RunOptions run_opt;
+  run_opt.queue_depth = std::max(1, cfg.queue_depth);
+  std::cout << "ASYNC_TPUT_CONFIG inflight=" << std::max(1, cfg.inflight)
+            << " queue_depth=" << run_opt.queue_depth
+            << " async_queue_depth=" << graph_opt.async_queue_depth
+            << " device_pool_depth=" << graph_opt.processmla.output_pool_buffers
+            << " input_pool_depth=" << input_pool_depth << "\n";
+  auto async = p.build(ev74_inputs.front(), run_opt);
   const auto build_end = std::chrono::steady_clock::now();
   step_log("async: after build");
 
@@ -369,7 +397,7 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
     step_log("async: before warmup");
     const auto warmup_start = std::chrono::steady_clock::now();
     for (int i = 0; i < cfg.warm; ++i) {
-      (void)async.run(ev74_input, warm_timeout_ms);
+      (void)async.run(ev74_inputs[static_cast<std::size_t>(i % input_pool_depth)], warm_timeout_ms);
     }
     const auto warmup_end = std::chrono::steady_clock::now();
     if (profile.enabled) {
@@ -385,7 +413,7 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
 
   for (int i = 0; i < std::max(0, cfg.excluded_preproc_dispatches); ++i) {
     step_log("async: prime preproc dispatch");
-    if (!async.push(ev74_input)) {
+    if (!async.push(ev74_inputs[static_cast<std::size_t>(i % input_pool_depth)])) {
       res.ok = false;
       append_note(res.note, "primer_push_failed");
       res.diagnostics = maybe_collect_run_report(async, cfg.profile_emit_run_report);
@@ -452,9 +480,13 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
   auto measure_scope = async.start_measurement(measure_opt);
 
   const int seed = std::min(inflight, cfg.iters);
+  // CPU/frame and its separately reported FPS include all seed submissions.
+  // Preserve the existing throughput gate window for baseline comparability.
+  const sima_perf::ProcessCpuWindow process_window;
   for (; pushed_count < seed; ++pushed_count) {
     const auto push_start = std::chrono::steady_clock::now();
-    const bool pushed = async.push(ev74_input);
+    const bool pushed =
+        async.push(ev74_inputs[static_cast<std::size_t>(pushed_count % input_pool_depth)]);
     const auto push_end = std::chrono::steady_clock::now();
     if (profile.enabled) {
       const std::uint64_t ns = duration_ns(push_start, push_end);
@@ -475,7 +507,6 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
   const auto start = std::chrono::steady_clock::now();
   const auto push_loop_start = start;
   auto push_loop_end = start;
-  auto end = start;
 
   try {
     while (consumer_error.empty() && measured_count < cfg.iters) {
@@ -514,7 +545,8 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
 
       if (pushed_count < cfg.iters) {
         const auto push_start = std::chrono::steady_clock::now();
-        const bool pushed = async.push(ev74_input);
+        const bool pushed =
+            async.push(ev74_inputs[static_cast<std::size_t>(pushed_count % input_pool_depth)]);
         const auto push_end = std::chrono::steady_clock::now();
         if (profile.enabled) {
           const std::uint64_t ns = duration_ns(push_start, push_end);
@@ -537,13 +569,16 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
     consumer_error = e.what();
   }
 
+  // Every successful output has been released above. Keep EOS/reporting and
+  // verification outside this window; no per-frame CPU sampling is needed.
+  const auto process_cpu = process_window.finish(static_cast<std::uint64_t>(measured_count));
   push_loop_end = std::chrono::steady_clock::now();
   if (profile.enabled) {
     profile.push_loop_ms = ns_to_ms(duration_ns(push_loop_start, push_loop_end));
   }
 
   async.close_input();
-  end = std::chrono::steady_clock::now();
+  const auto end = std::chrono::steady_clock::now();
   if (profile.enabled) {
     profile.drain_wait_ms = ns_to_ms(duration_ns(push_loop_end, end));
   }
@@ -606,6 +641,12 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
     append_note(res.note, "profile_skip_extract=1");
   }
 
+  // Do not publish a CPU/frame result for incomplete or numerically failed work.
+  // A later FPS-gate failure still retains these valid measured-frame statistics.
+  if (res.ok && process_cpu.wall_seconds > 0.0) {
+    res.process_cpu = process_cpu;
+  }
+
   if (!res.ok) {
     const std::string last_err = async.last_error();
     if (!last_err.empty()) {
@@ -617,7 +658,8 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
     const std::uint64_t pull_calls = profile.pull_call.count.load(std::memory_order_relaxed);
     const std::uint64_t extract_calls =
         profile.extract_payload.count.load(std::memory_order_relaxed);
-    std::cout << "ASYNC_TPUT_PROFILE window inflight=" << inflight << " pushed=" << pushed_count
+    std::cout << "ASYNC_TPUT_PROFILE window inflight=" << inflight
+              << " queue_depth=" << run_opt.queue_depth << " pushed=" << pushed_count
               << " measured=" << measured_count << "\n";
     std::cout << "ASYNC_TPUT_PROFILE phases build_ms=" << profile.build_ms
               << " warmup_ms=" << profile.warmup_ms << " push_loop_ms=" << profile.push_loop_ms
@@ -669,6 +711,7 @@ int main(int argc, char** argv) {
     cfg.iters = std::max(1, env_int("SIMA_ASYNC_YOLOV8_ITERS", cfg.iters));
     cfg.warm = std::max(0, env_int("SIMA_ASYNC_YOLOV8_WARM", cfg.warm));
     cfg.inflight = std::max(1, env_int("SIMA_ASYNC_YOLOV8_INFLIGHT", cfg.inflight));
+    cfg.queue_depth = std::max(1, env_int("SIMA_ASYNC_YOLOV8_QUEUE_DEPTH", cfg.queue_depth));
     cfg.excluded_preproc_dispatches =
         std::max(0, env_int("SIMA_ASYNC_YOLOV8_EXCLUDE_PREPROC_DISPATCHES",
                             cfg.excluded_preproc_dispatches));
@@ -707,7 +750,21 @@ int main(int argc, char** argv) {
       res.ok = false;
     }
 
-    std::cout << "ASYNC_TPUT outputs=" << res.outputs << " avg_fps=" << res.avg_fps
+    std::cout << "ASYNC_TPUT outputs=" << res.outputs << " avg_fps=" << res.avg_fps;
+    if (res.process_cpu) {
+      const auto& cpu = *res.process_cpu;
+      std::cout << " cpu_window_fps=" << cpu.fps() << " cpu_window_wall_s=" << cpu.wall_seconds
+                << " process_user_us_per_frame=" << cpu.user_us_per_frame()
+                << " process_system_us_per_frame=" << cpu.system_us_per_frame()
+                << " process_cpu_us_per_frame=" << cpu.cpu_us_per_frame()
+                << " average_busy_cores=" << cpu.average_busy_cores();
+    }
+    std::cout << " cpu_window_complete=" << (res.process_cpu ? "1" : "0")
+              << " output_extraction_included="
+              << (!cfg.skip_boxdecode && !cfg.profile_skip_extract) << " output_validation="
+              << ((!cfg.skip_boxdecode && !cfg.profile_skip_extract && !cfg.profile_skip_validate)
+                      ? "post_window"
+                      : "disabled")
               << " decode_type=" << simaai::neat::box_decode_type_token(cfg.decode_type)
               << " ok=" << (res.ok ? "1" : "0") << " note=" << res.note << "\n";
     if (!res.diagnostics.empty()) {

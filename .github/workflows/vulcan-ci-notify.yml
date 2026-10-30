@@ -29,6 +29,7 @@ jobs:
       }}
     uses: sima-neat/.github/.github/workflows/vulcan-notify-slack.yml@main
     with:
+      analyze_failure: true
       channel_id: ${{ vars.SLACK_VULCAN_EVENT_CHANNEL_ID }}
       run_id: ${{ github.event.workflow_run.id }}
       repository: ${{ github.event.workflow_run.repository.full_name }}
@@ -41,4 +42,5 @@ jobs:
       actor: ${{ github.event.workflow_run.actor.login }}
       commit_message: ${{ github.event.workflow_run.head_commit.message || '' }}
     secrets:
+      openai_api_key: ${{ secrets.OPENAI_API_KEY }}
       slack_bot_token: ${{ secrets.SLACK_BOT_TOKEN }}

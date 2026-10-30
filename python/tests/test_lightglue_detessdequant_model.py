@@ -66,9 +66,9 @@ def _run_worker(model_path: Path, target: str, output_path: Path) -> dict[str, o
   model = pyneat.Model(str(model_path), options)
   input_shapes = [list(spec.shape) for spec in model.input_specs()]
   expected_inputs = [
-      [2, KEYPOINT_COUNT, POSITION_DIM],
+      [1, 2, KEYPOINT_COUNT, POSITION_DIM],
       [1, KEYPOINT_COUNT, DESCRIPTOR_DIM],
-      [2, KEYPOINT_COUNT, POSITION_DIM],
+      [1, 2, KEYPOINT_COUNT, POSITION_DIM],
       [1, KEYPOINT_COUNT, DESCRIPTOR_DIM],
   ]
   if input_shapes != expected_inputs:

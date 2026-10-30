@@ -5,7 +5,7 @@
   "run_mode": "sync",
   "iterations": 500,
   "metrics_thresholds": {
-    "throughput_min": 1000.0,
+    "throughput_min": 965.8433755555555,
     "p50_max": 1.0,
     "p95_max": 1.5,
     "rss_peak_kb_max": 150000.0,

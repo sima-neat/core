@@ -33,10 +33,8 @@ set(PYNEAT_BINDING_SOURCES
 )
 
 nanobind_add_module(_pyneat_core ${PYNEAT_BINDING_SOURCES})
-# Python bindings include public node headers whose layouts contain internal-only
-# fields when the core library is built with SIMA_NEAT_INTERNAL. Link through the
-# internal interface target so _pyneat_core sees the same compile definitions and
-# include paths as sima_neat, avoiding C++ ABI/layout mismatches.
+# Bindings use Core's private contract and diagnostics helpers. Public node
+# layouts are identical with or without the internal visibility define.
 target_link_libraries(_pyneat_core PRIVATE sima_neat_internal)
 target_include_directories(_pyneat_core PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -116,7 +114,9 @@ install(
 )
 
 install(
-  PROGRAMS ${PROJECT_SOURCE_DIR}/scripts/neat
+  PROGRAMS
+    ${PROJECT_SOURCE_DIR}/scripts/neat
+    ${PROJECT_SOURCE_DIR}/scripts/neat_pcie_status.py
   DESTINATION share/sima-neat/scripts
   COMPONENT extras
 )

@@ -18,6 +18,7 @@ struct RemoteStatus {
   int pid = -1;
   std::string message;
   std::string error_code;
+  std::size_t output_buffer_bytes = 0;
 };
 
 class RemoteStartError final : public std::runtime_error {

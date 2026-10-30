@@ -1,3 +1,4 @@
+#include "mpk_contract_test_utils.h"
 #include "pipeline/internal/sima/MpkContract.h"
 #include "test_main.h"
 
@@ -23,7 +24,6 @@ RUN_TEST(
     "unit_mpk_typed_tensor_object_contract_test", ([] {
       namespace fs = std::filesystem;
       using simaai::neat::pipeline_internal::sima::DTypeSource;
-      using simaai::neat::pipeline_internal::sima::load_mpk_contract_from_pack_root;
 
       const fs::path root = make_temp_pack_root("apu_output_types");
       const fs::path json_path = root / "mpk.json";
@@ -62,7 +62,7 @@ RUN_TEST(
       out.close();
 
       std::string error;
-      const auto contract = load_mpk_contract_from_pack_root(root.string(), &error);
+      const auto contract = load_test_mpk_contract(root.string(), &error);
       require(contract.has_value(), "typed-object mpk should parse successfully: " + error);
       require(contract->plugins.size() == 1U, "expected one parsed plugin");
       const auto& stage = contract->plugins.front();
@@ -117,7 +117,7 @@ RUN_TEST(
 
       std::string inferred_error;
       const auto inferred_contract =
-          load_mpk_contract_from_pack_root(inferred_root.string(), &inferred_error);
+          load_test_mpk_contract(inferred_root.string(), &inferred_error);
       require(inferred_contract.has_value(),
               "inferred-dtype mpk should parse successfully: " + inferred_error);
       require(inferred_contract->plugins.size() == 1U, "expected one inferred plugin");
@@ -171,7 +171,7 @@ RUN_TEST(
       semantic_alias_out.close();
       std::string semantic_alias_error;
       const auto semantic_alias_contract =
-          load_mpk_contract_from_pack_root(semantic_alias_root.string(), &semantic_alias_error);
+          load_test_mpk_contract(semantic_alias_root.string(), &semantic_alias_error);
       require(semantic_alias_contract.has_value(),
               "AFE semantic tensor decoration should resolve to its exact transport producer: " +
                   semantic_alias_error);
@@ -235,7 +235,7 @@ RUN_TEST(
       superpoint_out.close();
       std::string superpoint_error;
       const auto superpoint_contract =
-          load_mpk_contract_from_pack_root(superpoint_root.string(), &superpoint_error);
+          load_test_mpk_contract(superpoint_root.string(), &superpoint_error);
       require(superpoint_contract.has_value(),
               "SuperPoint schema-v1 mpk should parse successfully: " + superpoint_error);
       require(superpoint_contract->plugins.size() == 1U, "expected one parsed SuperPoint plugin");
@@ -286,7 +286,7 @@ RUN_TEST(
       malformed_sp_out.close();
       std::string malformed_sp_error;
       const auto malformed_sp_contract =
-          load_mpk_contract_from_pack_root(malformed_sp_root.string(), &malformed_sp_error);
+          load_test_mpk_contract(malformed_sp_root.string(), &malformed_sp_error);
       require(malformed_sp_contract.has_value(),
               "generic MPK loading should retain malformed SuperPoint metadata for the "
               "BoxDecode validator: " +

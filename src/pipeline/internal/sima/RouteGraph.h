@@ -93,14 +93,15 @@ struct RouteGraphEdge {
  * @brief Full route graph for one model.
  *
  * Contains nodes, edges, a topologically-ordered execution sequence, and the position of the
- * MLA stage in the plugin list (or -1 if no MLA present).
+ * first and terminal MLA stages in the plugin list (or -1 if none).
  */
 struct RouteGraph {
   std::string model_name;                   ///< Model name (from MPK).
   std::vector<RouteGraphNode> nodes;        ///< All stages.
   std::vector<RouteGraphEdge> edges;        ///< Tensor edges between stages.
   std::vector<std::size_t> execution_order; ///< Plugin indices in execution order.
-  int mla_plugin_index = -1;                ///< Index of the MLA stage; -1 if none.
+  int mla_plugin_index = -1;                ///< Index of the first MLA stage; -1 if none.
+  int last_mla_plugin_index = -1;           ///< Index of the terminal MLA stage; -1 if none.
 };
 
 /// Map a raw kernel-name string to its canonical `RouteGraphKernelKind`.

@@ -4,16 +4,18 @@
 #include "test_utils.h"
 
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <vector>
 
 namespace {
 
 std::string require_yolov9_tar() {
-  const std::string tar =
-      sima_test::resolve_modelzoo_tar("yolo_v9c_seg", sima_test::repo_root_for_modelzoo());
-  require(!tar.empty(), "missing yolo_v9c_seg tar; run sima-cli modelzoo get yolo_v9c_seg");
-  require(std::filesystem::exists(tar), "resolved yolo_v9c_seg tar does not exist: " + tar);
-  return tar;
+  // Metadata-only unit coverage: reuse the checked exact modelzoo manifest
+  // and existing topology fixture builder; no inference binary is executed.
+  static const auto fixture = sima_test::make_strict_model_archive_fixture(
+      "unit_model_output_spec_contract_test", {}, true, "yolo_v9c_seg", true);
+  return fixture.tar_path;
 }
 
 std::string shape_to_string(const std::vector<int64_t>& shape) {
@@ -32,6 +34,25 @@ std::string shape_to_string(const std::vector<int64_t>& shape) {
 RUN_TEST(
     "unit_model_output_spec_contract_test", ([] {
       using namespace simaai::neat;
+
+      {
+        const auto path = sima_test::test_model_archive_fixture_root_path() /
+                          "strict-seeds/nemotron_joiner_argmax_mpk.json";
+        std::ifstream input(path);
+        require(input.is_open(), "joiner compiler manifest fixture must be installed");
+        const std::string text((std::istreambuf_iterator<char>(input)),
+                               std::istreambuf_iterator<char>());
+        const auto fixture = sima_test::make_model_archive_fixture(
+            "joiner_cold_output_specs", {{"etc/joiner_argmax_mpk.json", text}}, true);
+        Model model(fixture.tar_path);
+        const auto specs = model.output_specs();
+        require(specs.size() == 1U &&
+                    specs.front().dtypes == std::vector<TensorDType>{TensorDType::Int32} &&
+                    specs.front().shape == std::vector<int64_t>({1, 1}) && specs.front().rank == 2,
+                "cold joiner output_specs must report the declared INT32 [1,1] egress");
+        require(model.info().output_topology.logical_outputs == 1U,
+                "cold joiner info must report one logical output");
+      }
 
       {
         const std::string tar = require_yolov9_tar();

@@ -133,18 +133,20 @@ SIMA_NEAT_VERBOSE_TOPICS=gstreamer \
 Для звітування про пропускну здатність/затримку/споживання енергії, надавайте перевагу експорту даних у форматі JSON, отриманих під час виконання графа:
 
 ```cpp
-RunOptions opt;
-opt.enable_board_power();        // graph-level power when supported by the board/SOM
-Run run = graph.build(opt);
+Run run = graph.build(RunOptions{});
 
-// run your normal push/pull loop inside a measurement window, then:
-auto report = run.start_measurement().stop();
-std::cout << report.to_text();
+TelemetryMonitor telemetry_monitor; // board power, temperatures, CPU usage, and memory
+telemetry_monitor.start();
+auto scope = run.start_measurement();
+// run your normal push/pull loop here, then:
+auto report = scope.stop();
+Telemetry telemetry = telemetry_monitor.stop();
+std::cout << report.to_text() << telemetry;
 ```
 
 Експортований модуль зберігає чітке визначення областей видимості:
 
-- `run.graph_metrics.throughput_fps` та `run.graph_metrics.power` – це заголовки на рівні графа.
+- `run.graph_metrics.throughput_fps` – це заголовок на рівні графа. `run.graph_metrics.power` заповнюється лише застарілим `RunOptions::enable_board_power()`; натомість використовуйте `TelemetryMonitor`.
 - `run.node_metrics[]` містить лише дані про затримку вузла/плагіна; інформація про енергоспоживання вузла/плагіна навмисно відсутня.
 - `latency_semantics` та `aggregation` показують, чи є значення змінами, обчисленими протягом усього часу роботи, чи змінами, виміряними протягом певного проміжку часу.
 - `plugin_metrics_unattributed[]` зберігає рядки з таблиць kernel/plugin, які не вдалося однозначно зіставити з жодним вузлом.
@@ -165,3 +167,17 @@ std::cout << report.to_text();
 | `tensor caps change not supported` | Зміна форми/типу тензора під час виконання | Підтримуйте стабільну форму/тип тензора (без повторного узгодження) |
 
 Для отримання інформації про структуровані помилки плагінів і корисні підказки, зверніться до розділу [Усунення несправностей.](/reference/troubleshooting), присвяченого усуненню несправностей.
+
+## Відновлення середовища виконання платформи
+
+На Platform 3.0.0 недоступність диспетчера є помилкою, яку потрібно дослідити, а не запитом на запуск застарілих служб. Core не ініціалізує пам’ять MLA й не скидає віддалені процесори у відповідь на помилку диспетчера. Застарілий код і сценарій відновлення видалено; використовуйте процедуру відновлення, схвалену для платформи.
+
+Якщо драйвер повідомляє про невідомий стан завершення, утримуйте його DMA-буфери та початкові позики з пулу. Закриття файлового дескриптора, зупинка застосунку або перезапуск служби не доводять, що апаратне забезпечення припинило доступ до пам’яті. Зберіть звіт про помилку й скористайтеся схваленою процедурою відновлення платформи перед повторною спробою.
+
+### Узгоджуйте пакети Core та Scheduler {#keep-core-and-scheduler-packages-matched}
+
+Встановлюйте Core разом із набором пакетів Scheduler, вибраним для цього випуску Core. Scheduler керує відповідними залежностями Runner, Kernels, Codecs та прошивки. Однакова версія публічного C++ ABI сама по собі не гарантує сумісності середовища виконання.
+
+Використовуйте опубліковані залежності, які вибирає `build.sh`, або передайте повний відповідний набір Scheduler DEB за допомогою `--scheduler PATH`. Див. [Локальні залежності](/develop-apps/contribute/build-test/local-dependencies/).
+
+Для оновлення плати встановіть повний комплект Core за інструкцією [Встановлення або оновлення Neat Library](/getting-started/neat-library/install-or-update/). Вибраний інсталятор Scheduler перевіряє набір пакетів і керує активацією прошивки. Якщо перевірка не проходить, отримайте відповідний комплект Core/Scheduler; не підміняйте записи встановлення й не встановлюйте примусово окремі несумісні пакети середовища виконання або прошивки.

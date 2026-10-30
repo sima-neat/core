@@ -70,11 +70,11 @@ struct GraphMetricsSummary {
   double elapsed_seconds = 0.0;
   double throughput_fps = 0.0;
   GraphMetricsCounters counters;
-  PowerSummary power;
+  PowerSummary power; ///< @deprecated Use `TelemetryMonitor` around the measured work.
 };
 
 struct GraphMetricsOptions {
-  bool include_power = true;
+  bool include_power = true; ///< @deprecated Use `TelemetryMonitor` for board telemetry.
 };
 
 struct GraphMetricsReport {

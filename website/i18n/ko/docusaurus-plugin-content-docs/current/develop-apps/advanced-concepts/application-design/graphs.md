@@ -676,14 +676,7 @@ run.save_json("/tmp/final.graph_run.json", export_opt)
 
 내보내기 기능은 현재 실행 중인 작업의 스냅샷을 생성합니다. 이 기능은 작업을 중지하지 않습니다. 유한한 작업량에 대한 최종 결과를 얻으려면 저장하기 전에 `run.close_input()`를 호출하여 출력을 정리하거나 `run.stop()`를 호출하십시오.
 
-보드 전력 텔레메트리 데이터를 포함하려면:
-
-```cpp
-neat::RunOptions opt;
-opt.enable_board_power(/*sample_interval_ms=*/100);
-
-neat::Run run = app.build(opt);
-```
+더 이상 사용되지 않는 `RunOptions::enable_board_power()`는 내보내기에 보드 전력을 추가합니다. 새 코드에서는 [`TelemetryMonitor`](/develop-apps/development-workflow/model#record-board-telemetry)로 보드 전력, 온도, CPU 사용률, 메모리를 기록하고, 그 `Telemetry`를 내보내기 결과 옆에 저장하십시오.
 
 JSON 스키마는 `sima.neat.graph_run` 버전 `1`입니다. 스키마는 `schemas/graph_run_v1.schema.json`에 위치하며, CI 검증기는 `tests/perf/tools/graph_run_schema.py`에 위치합니다.
 
@@ -733,6 +726,26 @@ neat::Graph app;
 app.add(neat::nodes::groups::RtspDecodedInput(source_opt));
 app.add(yolo);
 app.add(neat::nodes::Output("detections"));
+```
+
+RTSP 디코딩 그룹은 C++와 Python에서 동일한 디코더 제어 옵션을 제공합니다.
+
+| `RtspDecodedInputOptions` 필드 | 기본값 | 용도 |
+| --- | --- | --- |
+| `decoder_input_buffers` | `-1` | 압축 입력 버퍼 수입니다. 설정하지 않으면 런타임 기본값을 사용합니다. |
+| `num_buffers` | `-1` | 디코딩 출력 풀의 버퍼 수입니다. 설정하지 않으면 자동으로 크기를 정합니다. |
+| `decoder_tuning` | `""` | `throughput-low-latency`와 같은 선택적 디코더 프리셋입니다. |
+| `decoder_memory_opt` | `false` | 레거시 메모리 프리셋입니다. 명시적인 `decoder_tuning`이 우선합니다. |
+
+튜닝 프리셋을 사용해도 양수로 지정한 버퍼 수는 유지됩니다. 미설정 값으로는 `-1`을 사용합니다. 기존의 0 이하 값도 해당 속성을 설정하지 않습니다. `throughput-low-latency` 프리셋은 재정렬을 비활성화하므로 B 프레임의 표시 순서 재정렬이 없는 호환 스트림이 필요합니다. 입력 버퍼 수는 바이트 용량을 설정하지 않습니다. 이 제어 옵션은 이미 `SimaDecodeOptions`의 `input_buffers`, `num_buffers`, `decoder_tuning`, `memory_opt`로 제공됩니다.
+
+```python
+source = pyneat.RtspDecodedInputOptions()
+source.url = "rtsp://camera/stream"
+source.decoder_input_buffers = 2
+source.decoder_tuning = "throughput-low-latency"
+# Leave num_buffers at -1 to use automatic output sizing.
+app.add(pyneat.groups.rtsp_decoded_input(source))
 ```
 
 ### 앱 입력을 그래프가 소유한 UDP 출력으로 전달

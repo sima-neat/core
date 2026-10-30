@@ -7,10 +7,15 @@ self-hosted-runner:
     - elxr-sdk
     - modalix
     - pcie
+    - rtsp
+    - 3.0.0-pcie-test
     - vulcan-dev
     - vulcan-stg
     - vulcan-staging
     - vulcan-production
+    - ubuntu
+    - default
+    - amd64
 
 # Configuration variables in array of strings defined in your repository or
 # organization. `null` means disabling configuration variables check.

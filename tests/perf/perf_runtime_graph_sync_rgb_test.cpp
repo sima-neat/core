@@ -65,7 +65,10 @@ int main() {
     measure_opt.include_edge_latency = false;
     measure_opt.include_power = false;
     auto measure_scope = run.start_measurement(measure_opt);
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     simaai::neat::PowerMonitor power_monitor(sima_perf::power_options_from_env());
+#pragma GCC diagnostic pop
     power_monitor.start();
     const auto run_t0 = sima_perf::Clock::now();
     for (int i = 0; i < iterations; ++i) {

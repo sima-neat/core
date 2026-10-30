@@ -49,6 +49,9 @@ struct MlaStaticContract {
   std::vector<PhysicalBufferStaticSpec> physical_outputs; ///< Published physical outputs.
   std::vector<LogicalTensorStaticSpec> logical_outputs;   ///< Logical output specs.
   std::vector<QuantStaticSpec> output_quant;              ///< Per-output quant params, if any.
+  std::optional<::simaai::scheduler::client::AllocationPolicy> allocation_policy;
+  std::optional<std::size_t> reuse_input_pad;
+  std::shared_ptr<const ::simaai::scheduler::client::FrameLayout> frame_layout;
   // True when this MLA stage's compiled .elf expects N>1 distinct physical
   // input segments (native multi-IFM dispatch, e.g. data.ifm.persistent.input_00
   // / input_01 placeholders). Derived from the absence of an upstream

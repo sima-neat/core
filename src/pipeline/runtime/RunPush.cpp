@@ -82,6 +82,17 @@ bool input_options_expect_tensor_media(const std::optional<InputOptions>& opt) {
   return media == "application/vnd.simaai.tensor";
 }
 
+// Allocation preference suppresses implicit compatibility copies, not explicit
+// copy_input requests. A preference can still admit existing CPU storage.
+bool input_prefers_device_storage(const runtime::RunCore& core) {
+  if (core.pipeline.stream_opt.require_device_visible_input) {
+    return true;
+  }
+  const auto& options = core.pipeline.tensor_input_opt_for_cv;
+  return options.has_value() && (options->memory_policy == InputMemoryPolicy::Ev74 ||
+                                 options->memory_policy == InputMemoryPolicy::Dms0);
+}
+
 const runtime::PipelineSegmentPlan* graph_default_input_segment(const runtime::RunCore& core) {
   if (!core.graph_execution_) {
     return nullptr;
@@ -136,17 +147,7 @@ std::optional<InputOptions> graph_default_ingress_input(const runtime::RunCore& 
   if (!segment) {
     return std::nullopt;
   }
-  if (segment->boundary_hints.has_value() &&
-      index < segment->boundary_hints->ingress_inputs.size()) {
-    return segment->boundary_hints->ingress_inputs[index];
-  }
-  if (segment->boundary_hints.has_value() && !segment->boundary_hints->ingress_inputs.empty()) {
-    return segment->boundary_hints->ingress_inputs.front();
-  }
-  if (segment->input_complete) {
-    return simaai::neat::graph::input_opts_from_spec(segment->input_spec, segment->input_complete);
-  }
-  return std::nullopt;
+  return runtime::pipeline_segment_ingress_input(*segment, index);
 }
 
 std::optional<InputOptions> graph_ingress_input_for_endpoint(const runtime::RunCore& core,
@@ -156,17 +157,35 @@ std::optional<InputOptions> graph_ingress_input_for_endpoint(const runtime::RunC
   if (!segment) {
     return std::nullopt;
   }
-  if (segment->boundary_hints.has_value() &&
-      index < segment->boundary_hints->ingress_inputs.size()) {
-    return segment->boundary_hints->ingress_inputs[index];
+  return runtime::pipeline_segment_ingress_input(*segment, index);
+}
+
+const InputOptions& declared_linear_input(const runtime::RunCore& core) {
+  static const InputOptions unspecified;
+  return core.pipeline.tensor_input_opt_for_cv ? *core.pipeline.tensor_input_opt_for_cv
+                                               : unspecified;
+}
+
+void validate_original_images(const runtime::RunCore& core, const std::vector<cv::Mat>& inputs,
+                              const runtime::PipelineSegmentPlan* segment, const char* where) {
+  const auto route = segment && segment->boundary_hints
+                         ? segment->boundary_hints->input_route_processor
+                         : core.pipeline.input_route_processor;
+  if (route) {
+    route->validate_images(inputs, where);
+    return;
   }
-  if (segment->boundary_hints.has_value() && !segment->boundary_hints->ingress_inputs.empty()) {
-    return segment->boundary_hints->ingress_inputs.front();
+  const auto& first =
+      segment ? runtime::pipeline_segment_declared_ingress(*segment) : declared_linear_input(core);
+  if (first.payload_type != PayloadType::Tensor && inputs.size() != 1U)
+    pipeline_internal::error_util::throw_session_error(
+        error_codes::kInputShape,
+        std::string(where) + ": raw-image ingress requires exactly one image per inference item");
+  for (std::size_t i = 0; i < inputs.size(); ++i) {
+    const auto& options = segment ? runtime::pipeline_segment_declared_ingress(*segment, i) : first;
+    validate_public_input(inputs[i], options,
+                          segment ? segment->stream_options : core.pipeline.stream_opt, where);
   }
-  if (segment->input_complete) {
-    return simaai::neat::graph::input_opts_from_spec(segment->input_spec, segment->input_complete);
-  }
-  return std::nullopt;
 }
 
 std::string available_input_names(const runtime::RunCore& core) {
@@ -270,6 +289,11 @@ Sample stamp_public_graph_ingress_sample(runtime::RunCore& core, const Sample& i
 bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpoint& endpoint,
                                     std::string_view endpoint_name, const Sample& msgs,
                                     bool block) {
+  const auto* segment = graph_input_segment_for_endpoint(core, endpoint);
+  if (segment && segment->public_input_contract) {
+    for (const auto& msg : msgs)
+      pipeline_internal::validate_ordered_public_input(*segment->public_input_contract, msg);
+  }
   if (!core.graph_begin_public_push()) {
     return false;
   }
@@ -281,9 +305,18 @@ bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpo
   } public_push_guard{core};
 
   for (const auto& msg : msgs) {
+    if (segment) {
+      // Routed items have already been checked against their original source
+      // declaration. Do not apply that declaration to the transformed handoff.
+      const bool routed = segment->boundary_hints && segment->boundary_hints->input_route_processor;
+      static const InputOptions inferred;
+      validate_public_input(
+          msg, routed ? inferred : runtime::pipeline_segment_declared_ingress(*segment),
+          routed ? InputStreamOptions{} : segment->stream_options, "Run::push");
+    }
     enforce_public_sample_push_transferable(msg, "Run::push");
     Sample stamped = stamp_public_graph_ingress_sample(core, msg, endpoint_name);
-    if (pipeline_internal::env_bool("SIMA_SAMPLE_TIMING_DEBUG", false)) {
+    if (pipeline_internal::sample_timing_debug_enabled()) {
       std::fprintf(stderr,
                    "[SAMPLE_TIMING] graph_push_endpoint node=%zu port=%u has_port=%d "
                    "kind=%d frame_id=%lld pts_ns=%lld dts_ns=%lld duration_ns=%lld "
@@ -312,7 +345,7 @@ bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpo
 }
 
 #if defined(SIMA_WITH_OPENCV)
-std::optional<cv::Mat> try_materialize_image_sample(const Sample& msg) {
+std::optional<Sample> try_materialize_image_sample(const Sample& msg) {
   if (!sample_has_tensor_list(msg) || msg.tensors.size() != 1U) {
     return std::nullopt;
   }
@@ -320,15 +353,28 @@ std::optional<cv::Mat> try_materialize_image_sample(const Sample& msg) {
   if (!tensor.semantic.image.has_value()) {
     return std::nullopt;
   }
-  const auto fmt = tensor.semantic.image->format;
-  if (auto view = tensor.map_cv_mat_view(fmt); view.has_value()) {
-    return view->mat.clone();
-  }
-  try {
-    return tensor.to_cv_mat_copy(fmt);
-  } catch (const std::exception&) {
+  // Allocation preference does not authorize materializing existing DMA storage.
+  // Keep its holder path; explicit input copies are handled by InputStream.
+  if (pipeline_internal::tensor_has_dmabuf_memory(tensor)) {
     return std::nullopt;
   }
+  const auto fmt = tensor.semantic.image->format;
+  cv::Mat pixels;
+  if (auto view = tensor.map_cv_mat_view(fmt); view.has_value()) {
+    pixels = view->mat.clone();
+  } else {
+    try {
+      pixels = tensor.to_cv_mat_copy(fmt);
+    } catch (const std::exception&) {
+      return std::nullopt;
+    }
+  }
+  Sample snapshot = msg;
+  snapshot.owned = true;
+  snapshot.tensors.front() = Tensor::from_cv_mat_view(pixels, fmt);
+  snapshot.tensors.front().semantic = tensor.semantic;
+  snapshot.tensors.front().route = tensor.route;
+  return snapshot;
 }
 #endif
 
@@ -407,6 +453,10 @@ bool push_mat_to_core(runtime::RunCore& core, const cv::Mat& input, bool block) 
     throw std::runtime_error(decorate_with_error_code(
         error_codes::kRuntimePull, "Run::push: pipeline has no Input (push not supported)"));
   }
+  if (core.pipeline.public_input_contract)
+    pipeline_internal::validate_ordered_public_input(*core.pipeline.public_input_contract,
+                                                     Sample{});
+  validate_public_input(input, declared_linear_input(core), core.pipeline.stream_opt, "Run::push");
   auto* st = &core;
   {
     std::unique_lock<std::mutex> lock(st->pipeline.in_mu);
@@ -439,6 +489,18 @@ bool push_message_to_core(runtime::RunCore& core, const Sample& msg, bool block)
     throw std::runtime_error(decorate_with_error_code(
         error_codes::kRuntimePull, "Run::push: pipeline has no Input (push not supported)"));
   }
+  if (core.pipeline.public_input_contract && !core.pipeline.input_route_processor)
+    pipeline_internal::validate_ordered_public_input(*core.pipeline.public_input_contract, msg);
+  // The route already validates each original input. Its output is a different,
+  // possibly heterogeneous carrier, not another instance of the source geometry.
+  // Keep intrinsic span checks and the actual handoff storage limit.
+  if (core.pipeline.input_route_processor) {
+    InputStreamOptions handoff;
+    handoff.max_input_bytes = core.pipeline.stream_opt.max_input_bytes;
+    validate_public_input(msg, InputOptions{}, handoff, "Run::push");
+  } else {
+    validate_public_input(msg, declared_linear_input(core), core.pipeline.stream_opt, "Run::push");
+  }
   const bool timing = run_push_timing_enabled();
   const auto t0 =
       timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -465,7 +527,7 @@ bool push_message_to_core(runtime::RunCore& core, const Sample& msg, bool block)
     const bool force_copy = st->opt.advanced.copy_input;
     if (force_copy && !st->pipeline.stream_opt.require_device_visible_input) {
       run_internal::force_copy_sample_if_zero_copy(copy);
-    } else if (!st->pipeline.stream_opt.require_device_visible_input) {
+    } else if (!input_prefers_device_storage(*st)) {
       const std::size_t qsize = st->pipeline.in_queue.size();
       run_internal::maybe_force_copy_for_backpressure(
           copy, qsize, "queue_depth",
@@ -503,14 +565,19 @@ bool push_message_to_core(runtime::RunCore& core, const Sample& msg, bool block)
 }
 
 bool push_sample_to_core(runtime::RunCore& core, const Sample& msg, bool block) {
+  if (core.pipeline.public_input_contract && !core.pipeline.input_route_processor)
+    pipeline_internal::validate_ordered_public_input(*core.pipeline.public_input_contract, msg);
   if (core.push_sample_policy == runtime::PushSamplePolicy::PreserveSample) {
     return push_message_to_core(core, msg, block);
   }
-  if (!core.pipeline.stream_opt.require_device_visible_input &&
+  if (!input_prefers_device_storage(core) &&
       !input_options_expect_tensor_media(core.pipeline.tensor_input_opt_for_cv)) {
 #if defined(SIMA_WITH_OPENCV)
-    if (auto mat = try_materialize_image_sample(msg); mat.has_value()) {
-      return push_mat_to_core(core, *mat, block);
+    // Validate the original before a possible snapshot; the queue helper checks
+    // the new handoff. PreserveSample delegates directly to that helper instead.
+    validate_public_input(msg, declared_linear_input(core), core.pipeline.stream_opt, "Run::push");
+    if (auto snapshot = try_materialize_image_sample(msg); snapshot.has_value()) {
+      return push_message_to_core(core, *snapshot, block);
     }
 #endif
   }
@@ -518,6 +585,15 @@ bool push_sample_to_core(runtime::RunCore& core, const Sample& msg, bool block) 
 }
 
 } // namespace
+
+void run_internal::validate_original_images(const Run& run, const std::vector<cv::Mat>& inputs,
+                                            const char* where) {
+  const auto retained = run_internal::core(run);
+  if (!retained)
+    throw std::runtime_error(std::string(where) + ": stream is closed");
+  ::simaai::neat::validate_original_images(*retained, inputs,
+                                           graph_default_input_segment(*retained), where);
+}
 
 void Run::require_async_mode(const char* where) const {
   if (core_ && core_->mode == RunMode::Sync) {
@@ -538,6 +614,9 @@ bool Run::push_impl(const cv::Mat& input, bool block) {
         error_codes::kRuntimePull, "Run::push: pipeline has no Input (push not supported)"));
   }
   auto st = core_;
+  if (st->pipeline.public_input_contract)
+    pipeline_internal::validate_ordered_public_input(*st->pipeline.public_input_contract, Sample{});
+  validate_public_input(input, declared_linear_input(*st), st->pipeline.stream_opt, "Run::push");
   {
     std::unique_lock<std::mutex> lock(st->pipeline.in_mu);
     const InputQueueAdmission admission = admit_input_queue_locked(*st, st->pipeline, lock, block);
@@ -571,6 +650,9 @@ bool Run::push_impl(const simaai::neat::Tensor& input, bool block) {
         error_codes::kRuntimePull, "Run::push: pipeline has no Input (push not supported)"));
   }
   auto st = core_;
+  if (st->pipeline.public_input_contract)
+    pipeline_internal::validate_ordered_public_input(*st->pipeline.public_input_contract, input);
+  validate_public_input(input, declared_linear_input(*st), st->pipeline.stream_opt, "Run::push");
   {
     std::unique_lock<std::mutex> lock(st->pipeline.in_mu);
     const InputQueueAdmission admission = admit_input_queue_locked(*st, st->pipeline, lock, block);
@@ -587,7 +669,7 @@ bool Run::push_impl(const simaai::neat::Tensor& input, bool block) {
       item.tensor.read_only = false;
     } else {
       item.tensor = input;
-      if (!st->pipeline.stream_opt.require_device_visible_input) {
+      if (!input_prefers_device_storage(*st)) {
         const std::size_t qsize = st->pipeline.in_queue.size();
         run_internal::maybe_force_copy_for_backpressure(
             item.tensor, qsize, "queue_depth",
@@ -642,15 +724,22 @@ bool Run::push_message_impl(const Sample& msg, bool block) {
   return push_message_to_core(*core_, msg, block);
 }
 bool Run::push_sample_impl(const Sample& msg, bool block) {
+  if (core_ && core_->pipeline.public_input_contract && !core_->pipeline.input_route_processor)
+    pipeline_internal::validate_ordered_public_input(*core_->pipeline.public_input_contract, msg);
+  if (core_ && core_->graph_execution_)
+    return push_message_impl(msg, block);
   enforce_public_sample_push_transferable(msg, "Run::push");
   if (core_ && core_->push_sample_policy == runtime::PushSamplePolicy::PreserveSample) {
     return push_message_impl(msg, block);
   }
-  if (core_ && !core_->pipeline.stream_opt.require_device_visible_input &&
+  if (core_ && !input_prefers_device_storage(*core_) &&
       !input_options_expect_tensor_media(core_->pipeline.tensor_input_opt_for_cv)) {
 #if defined(SIMA_WITH_OPENCV)
-    if (auto mat = try_materialize_image_sample(msg); mat.has_value()) {
-      return push_impl(*mat, block);
+    // A materialized image is a different handoff, not a duplicate admission.
+    validate_public_input(msg, declared_linear_input(*core_), core_->pipeline.stream_opt,
+                          "Run::push");
+    if (auto snapshot = try_materialize_image_sample(msg); snapshot.has_value()) {
+      return push_message_impl(*snapshot, block);
     }
 #endif
   }
@@ -660,6 +749,9 @@ bool Run::push_sample_impl(const Sample& msg, bool block) {
 bool Run::push(const std::vector<cv::Mat>& inputs) {
   require_async_mode("Run::push");
   validate_image_inputs(inputs, "Run::push");
+  if (!core_)
+    throw std::runtime_error("Run::push: stream is closed");
+  validate_original_images(*core_, inputs, graph_default_input_segment(*core_), "Run::push");
   if (core_ && core_->graph_execution_) {
     TensorList tensors;
     tensors.reserve(inputs.size());
@@ -709,6 +801,8 @@ bool Run::push(std::string_view input_name, const std::vector<cv::Mat>& inputs) 
         decorate_with_error_code(error_codes::kRuntimePull, "Run::push(name): stream is closed"));
   }
   const runtime::Endpoint endpoint = named_input_endpoint_or_throw(*core_, input_name);
+  validate_original_images(*core_, inputs, graph_input_segment_for_endpoint(*core_, endpoint),
+                           "Run::push(name)");
   TensorList tensors;
   tensors.reserve(inputs.size());
   for (std::size_t i = 0; i < inputs.size(); ++i) {
@@ -738,6 +832,9 @@ bool Run::push(std::string_view input_name, const std::vector<cv::Mat>& inputs) 
 bool Run::try_push(const std::vector<cv::Mat>& inputs) {
   require_async_mode("Run::try_push");
   validate_image_inputs(inputs, "Run::try_push");
+  if (!core_)
+    throw std::runtime_error("Run::try_push: stream is closed");
+  validate_original_images(*core_, inputs, graph_default_input_segment(*core_), "Run::try_push");
   if (core_ && core_->graph_execution_) {
     TensorList tensors;
     tensors.reserve(inputs.size());
@@ -788,6 +885,8 @@ bool Run::try_push(std::string_view input_name, const std::vector<cv::Mat>& inpu
                                                       "Run::try_push(name): stream is closed"));
   }
   const runtime::Endpoint endpoint = named_input_endpoint_or_throw(*core_, input_name);
+  validate_original_images(*core_, inputs, graph_input_segment_for_endpoint(*core_, endpoint),
+                           "Run::try_push(name)");
   TensorList tensors;
   tensors.reserve(inputs.size());
   for (std::size_t i = 0; i < inputs.size(); ++i) {
@@ -947,6 +1046,12 @@ bool Run::push_holder(const std::shared_ptr<void>& holder) {
 bool Run::try_push_holder(const std::shared_ptr<void>& holder) {
   require_async_mode("Run::try_push_holder");
   return push_holder_impl(holder, false);
+}
+
+bool runtime::RunCore::push_pipeline_sample(const Sample& sample, bool block) {
+  if (pipeline.input_route_processor)
+    return push_samples(sample, block);
+  return push_sample_to_core(*this, sample, block);
 }
 
 bool runtime::RunCore::push_samples(const Sample& msgs, bool block) {

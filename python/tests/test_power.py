@@ -1,6 +1,8 @@
-"""Phase 6 slice (S9): pyneat.power board power telemetry submodule."""
+"""Phase 6 slice (S9): pyneat.power board power telemetry submodule (deprecated)."""
 
 from __future__ import annotations
+
+import pytest
 
 import pyneat
 
@@ -46,8 +48,17 @@ def test_detect_default_profile():
 
 
 def test_power_monitor_lifecycle_disabled():
-  # Default options are disabled (no I2C), so this is hardware-safe and deterministic.
-  monitor = pyneat.power.PowerMonitor()
+  # Default options are disabled (no Sentinel reads), so this is deterministic.
+  with pytest.warns(DeprecationWarning, match="PowerMonitor is deprecated; use pyneat.Telemetry"):
+    monitor = pyneat.power.PowerMonitor()
   assert monitor.running() is False
   summary = monitor.summary()
   assert isinstance(summary, pyneat.PowerSummary)
+
+
+def test_read_power_snapshot_is_deprecated():
+  with pytest.warns(DeprecationWarning, match=r"read_power_snapshot\(\) is deprecated"):
+    try:
+      pyneat.power.read_power_snapshot(pyneat.PowerMonitorOptions())
+    except RuntimeError:
+      pass  # Without Sentinel the deprecated call still warns before it fails.

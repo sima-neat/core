@@ -271,18 +271,50 @@ When you combine streams, preserve the matching key that the graph expects. `Com
 | Workload | Start with | Why |
 | --- | --- | --- |
 | First working app | default `RunOptions` | Prove correctness before tuning. |
-| Live camera or RTSP input | `RunPreset::Realtime`; `OutputOptions::Latest()` where output freshness matters | Fresh frames beat complete history. The realtime preset resolves to latest-frame overflow unless you override it. |
+| Live camera or RTSP input | `RunPreset::Realtime`; `OutputOptions::Latest()` where output freshness matters | Fresh frames beat complete history. The realtime preset resolves to latest-frame overflow unless you override it. Existing GStreamer queue defaults and explicit count-only limits are preserved. For a media-time limit, set the queue's `max-size-time` (nanoseconds) in a custom node's `backend_fragment()`. |
 | File or batch processing | `RunPreset::Reliable`; `OutputOptions::EveryFrame(...)` | Preserve every input and expose backpressure. The reliable preset resolves to blocking overflow unless you override it. |
 | Normal app serving | `RunPreset::Balanced` | Good default once the graph works. |
 | Jittery source needs bounded buffering | `queue_depth` | Increase only enough to absorb jitter. A deep queue can hide stale frames and delayed backpressure. |
 | App stores outputs after pull | `OutputMemory::Owned` | Keeps output lifetime independent of runtime buffers. |
-| App consumes outputs immediately | `OutputMemory::Auto` | Let Neat choose the right ownership path first. |
+| App consumes outputs without a transport copy | `OutputMemory::Auto` | Retains standard DMA-BUF outputs in sync and async runs; other storage follows the preset/mode policy. |
 | Default wait time should be explicit | `input_timeout_ms` | Sets the default timeout for build/run input-mode paths. Per-call timeouts still win. |
 | Seeded build should catch first-sample errors early | `startup_preflight = true` | Keeps seeded build honest. Disable only when first-sample failures can surface later through `pull(...)` or `last_error()`. |
 | Source buffer lifetime is short | `advanced.copy_input = true` | Protects input memory that may disappear after `push(...)`. |
 | Input size needs a guardrail | `advanced.max_input_bytes` | Rejects oversized input before it enters the graph. |
 | You need drop telemetry | `on_input_drop` | Counts overload and size-guard drops by stream and reason. |
 | You need build-time evidence | `run_export` | Writes a run snapshot when the run is built. |
+
+### Retain and release DMA-BUF outputs
+
+Native hardware decode writes directly into a DMA-BUF pool. The default file-input
+path preserves that storage: it does not insert a hidden `videoconvert` or request
+SystemMemory. Device consumers import the allocation, and `Tensor::map(MapMode::Read)` maps
+it for app reads without creating a pixel copy. A preprocessing operation can
+produce a different result allocation; that is computation, not a transport copy.
+
+With `OutputMemory::Auto` or `ZeroCopy`, retained DMA-BUF outputs keep their pool
+loans. A `Mapping` keeps its loan even after you release the Tensor. Release both
+when you finish reading so the producer can reuse its buffers. Queue pressure
+does not switch DMA-BUF outputs to copies or silently turn `Block` into dropping;
+explicit latest-frame/drop policies still apply.
+
+Use `OutputMemory::Owned` when the application keeps outputs on the CPU. Each pull
+copies the selected outputs into independent system memory, so a retained output
+holds neither the producer pool loan nor device (CMA) memory. Packed tensor heads
+share the copied carrier; their offsets, padded strides and numerical metadata are
+preserved. Retained and independent outputs both use `StorageKind::GstSample`;
+that storage kind identifies the carrier, not its ownership policy.
+`Sample::owned` identifies an independent output. Allocation failure is reported
+as a pull error. To pass an output into a separate graph with an EV74 input stage,
+call `tensor.cvu()` first: it returns tensors already in EV74 memory unchanged
+and copies other tensors into EV74 memory. `ZeroCopy` preserves the producer’s
+storage and does not guarantee EV74 accessibility.
+
+`Tensor::cpu()` copies a device tensor into host memory and returns a tensor that is
+already in host memory, such as an `Owned` output, without copying. Use `clone()` for
+an independent copy. Explicit software conversion and `advanced.copy_input` remain copy
+boundaries. `SIMA_OUTPUT_MEMORY_DEFAULT=owned` deliberately selects owned output
+for `Auto`; it does not override an explicit per-run choice.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -1043,40 +1075,43 @@ Use run export for evidence:
 - C++ `run_to_json(...)` and `save_run_json(...)` export a run after it has executed.
 - Python `run.json(...)` and `run.save_json(...)` export the same kind of evidence.
 
-Enable power telemetry on the `RunOptions` that builds the run:
+Record board power, temperatures, CPU usage, and memory over the same window with a
+[`TelemetryMonitor`](/develop-apps/development-workflow/model#record-board-telemetry):
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-simaai::neat::RunOptions options;
-options.enable_board_power(/*sample_interval_ms=*/100);
+simaai::neat::TelemetryMonitor telemetry_monitor;
+telemetry_monitor.start();
+auto scope = run.start_measurement();
 
-auto run = graph.build(options);
+// Push and pull here.
 
-simaai::neat::MeasureOptions measure_options;
-measure_options.include_power = true;
-auto scope = run.start_measurement(measure_options);
+simaai::neat::MeasureReport report = scope.stop();
+simaai::neat::Telemetry telemetry = telemetry_monitor.stop();
 ```
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 ```python
-options = pyneat.RunOptions()
-options.enable_board_power(sample_interval_ms=100)
+telemetry_monitor = pyneat.TelemetryMonitor()
+telemetry_monitor.start()
+scope = run.start_measurement()
 
-run = graph.build(options)
+# Push and pull here.
 
-measure_options = pyneat.MeasureOptions()
-measure_options.include_power = True
-scope = run.start_measurement(measure_options)
+report = scope.stop()
+telemetry = telemetry_monitor.stop()
 ```
 
 </CodeTab>
 </CodeTabs>
 
-Power data depends on board rail support and monitor configuration. Document the measurement setup with the numbers; do not make power numbers look portable when the rails are not.
+Telemetry comes from Sentinel, which samples the board every 2 s, so a measurement window shorter than about 2 s can have no samples. Document the measurement setup with the numbers; do not make power numbers look portable when the rails are not.
+
+`RunOptions::enable_board_power()`, `RunOptions::power_monitor`, and `MeasureOptions::include_power` are deprecated in favor of `TelemetryMonitor`. They keep working.
 
 Build-time export answers “what did Neat build?” After-run export answers “what happened while it ran?”
 

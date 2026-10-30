@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <optional>
@@ -151,8 +152,14 @@ inline std::string h265_parser_fragment() {
          "alignment=(string)au\"";
 }
 
-inline std::vector<EncodedFrame> extract_video_access_units(simaai::neat::SimaDecodeType type,
-                                                            int max_frames) {
+// Called once while the preparation parser still exists, never during timing.
+using AccessUnitObserver =
+    std::function<void(const simaai::neat::Run&, const std::filesystem::path&,
+                       const std::vector<EncodedFrame>&, const std::vector<std::string>&)>;
+
+inline std::vector<EncodedFrame>
+extract_video_access_units(simaai::neat::SimaDecodeType type, int max_frames,
+                           const AccessUnitObserver& observe = {}) {
   namespace fs = std::filesystem;
   const bool is_h264 = type == simaai::neat::SimaDecodeType::H264;
   const fs::path fixture = is_h264 ? h264_fixture_path() : h265_fixture_path();
@@ -182,6 +189,9 @@ inline std::vector<EncodedFrame> extract_video_access_units(simaai::neat::SimaDe
 
   std::vector<EncodedFrame> frames;
   frames.reserve(static_cast<std::size_t>(max_frames));
+  std::vector<std::string> emitted_caps;
+  if (observe)
+    emitted_caps.reserve(static_cast<std::size_t>(max_frames));
   while (static_cast<int>(frames.size()) < max_frames) {
     simaai::neat::Sample sample;
     simaai::neat::PullError error;
@@ -207,6 +217,8 @@ inline std::vector<EncodedFrame> extract_video_access_units(simaai::neat::SimaDe
     if (bytes.empty()) {
       throw std::runtime_error(codec + " fixture extraction produced empty AU");
     }
+    if (observe)
+      emitted_caps.push_back(sample.caps_string);
     std::string caps = sample.caps_string;
     if (caps.empty()) {
       caps = is_h264 ? "video/x-h264,parsed=(boolean)true,stream-format=(string)byte-stream,"
@@ -217,6 +229,8 @@ inline std::vector<EncodedFrame> extract_video_access_units(simaai::neat::SimaDe
     frames.push_back({std::move(bytes), std::move(caps)});
   }
 
+  if (observe)
+    observe(run, fixture, frames, emitted_caps);
   run.stop();
   if (frames.empty()) {
     throw std::runtime_error(codec + " fixture extraction produced no access units");
@@ -560,9 +574,9 @@ inline void emit_codec_metrics_json(const CodecPerfConfig& config, int iteration
             << "  \"measure_report\": {\n"
             << "    \"schema\": \"sima.neat.codec_perf_phase_report\",\n"
             << "    \"memory_path\": {\n"
-            << "      \"encoded_input\": \"plugin_input_pool_copy\",\n"
+            << "      \"encoded_input\": \"codec_input_pool_copy\",\n"
             << "      \"core_output\": \"zero_copy_gst_sample\",\n"
-            << "      \"daemon_zero_copy_output\": true\n"
+            << "      \"decoder_zero_copy_output\": true\n"
             << "    },\n"
             << "    \"throughput\": " << throughput_report.to_json(4);
   if (latency_report != nullptr) {
@@ -579,6 +593,7 @@ inline void emit_codec_metrics_json(const CodecPerfConfig& config, int iteration
 inline int run_codec_decode_perf(const CodecPerfConfig& config,
                                  const std::vector<EncodedFrame>& frames) {
   try {
+    sima_perf::ScopedStdoutToStderr progress_output;
     simaai::neat::gst_init_once();
     const int iterations = sima_perf::env_int("SIMA_PERF_ITERS", 1000);
     const int warmup_iterations = sima_perf::env_int("SIMA_PERF_CODEC_WARMUP_ITERS", 200, 0);
@@ -619,6 +634,7 @@ inline int run_codec_decode_perf(const CodecPerfConfig& config,
       metrics.output_drop_count += latency->report.counters.outputs_dropped;
     }
 
+    progress_output.restore();
     emit_codec_metrics_json(config, iterations, metrics, throughput.report,
                             latency.has_value() ? &latency->report : nullptr);
     return 0;

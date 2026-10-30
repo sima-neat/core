@@ -106,8 +106,7 @@ bool Quant::compile_node_contract(const ContractCompileInput& input, CompiledNod
     }
     node_helpers::ProcessCvuRuntimeConfigOptions runtime_options;
     runtime_options.graph_family = "quantize";
-    runtime_options.graph_id =
-        222; /* SIMA_GRAPH_QUANTIZE — graph 220 was a header-only stub with no kernel impl */
+
     runtime_options.input_dtype_default = "FP32";
     runtime_options.output_dtype_default = "EVXX_INT8";
     runtime_options.allow_shape_only_tensor_desc = true;
@@ -135,13 +134,10 @@ void Quant::apply_compiled_contract(const CompiledNodeContract&, std::string* er
 
 std::string Quant::backend_fragment(int node_index) const {
   std::ostringstream ss;
-  require_element("neatprocesscvu", "Quant::backend_fragment");
+  require_element("neatkernelrunner", "Quant::backend_fragment");
   const std::string name =
       opt_.element_name.empty() ? ("n" + std::to_string(node_index) + "_quant") : opt_.element_name;
-  ss << "neatprocesscvu name=" << name << " stage-id=" << name;
-  if (opt_.num_buffers > 0) {
-    ss << " num-buffers=" << opt_.num_buffers;
-  }
+  ss << "neatkernelrunner name=" << name;
   return ss.str();
 }
 

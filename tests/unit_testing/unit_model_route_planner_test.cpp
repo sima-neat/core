@@ -70,7 +70,8 @@ sima_test::ModelArchiveFixture make_bf16_mla_tess_fixture(const std::string& tag
   "output_depth": [6]
 })json"},
                                                       },
-                                                      true);
+                                                      true, "yolo_v9c_seg",
+                                                      /*include_executable_artifacts=*/true);
 }
 
 sima_test::ModelArchiveFixture make_quanttess_post_fixture(const std::string& tag) {
@@ -151,7 +152,8 @@ sima_test::ModelArchiveFixture make_quanttess_post_fixture(const std::string& ta
   "input_depth": [6]
 })json"},
                                                       },
-                                                      true);
+                                                      true, "yolo_v9c_seg",
+                                                      /*include_executable_artifacts=*/true);
 }
 
 sima_test::ModelArchiveFixture make_quant_no_post_fixture(const std::string& tag) {
@@ -232,7 +234,8 @@ sima_test::ModelArchiveFixture make_quant_no_post_fixture(const std::string& tag
   "input_depth": [6]
 })json"},
                                                       },
-                                                      true);
+                                                      true, "yolo_v9c_seg",
+                                                      /*include_executable_artifacts=*/true);
 }
 
 sima_test::ModelArchiveFixture make_ambiguous_tess_fixture(const std::string& tag) {
@@ -306,7 +309,8 @@ sima_test::ModelArchiveFixture make_ambiguous_tess_fixture(const std::string& ta
   "input_depth": [6]
 })json"},
                                                       },
-                                                      true);
+                                                      true, "yolo_v9c_seg",
+                                                      /*include_executable_artifacts=*/true);
 }
 
 sima_test::ModelArchiveFixture make_multi_ingress_cast_join_fixture(const std::string& tag) {
@@ -613,6 +617,10 @@ RoutePlannerFixtureResult route_plan_for_fixture(const sima_test::ModelArchiveFi
   opt.preprocess.kind = InputKind::Tensor;
   opt.preprocess.enable = AutoFlag::On;
   Model model(fixture.tar_path, opt);
+  for (const auto& warning : model.resolved_preprocess_plan().warnings) {
+    require(warning.rfind("route: ", 0U) != 0U,
+            "route-selection diagnostics must not be promoted to preprocess warnings");
+  }
 
   const auto& pack = ModelAccess::pack(model);
   const PreprocessCapabilities capabilities = inspect_preprocess_capabilities(pack);
@@ -630,6 +638,93 @@ std::filesystem::path core_root() {
 
 std::filesystem::path repo_root() {
   return core_root().parent_path();
+}
+
+sima_test::ModelArchiveFixture make_packed_post_fixture(const int batch) {
+  using nlohmann::json;
+  constexpr int head_count = 6;
+  const auto tensor = [](const std::string& name, int bytes) {
+    return json{{"name", name}, {"size", bytes}};
+  };
+  json plugins = json::array();
+  const auto append = [&](const std::string& name, const std::string& kernel, json inputs,
+                          json outputs, json params) {
+    plugins.push_back({{"name", name},
+                       {"sequence", plugins.size() + 1U},
+                       {"processor", "EV74"},
+                       {"type", "sgpProcess"},
+                       {"config_params",
+                        {{"desired_batch_size", batch},
+                         {"actual_batch_size", batch},
+                         {"kernel", kernel},
+                         {"params", params}}},
+                       {"input_nodes", inputs},
+                       {"output_nodes", outputs}});
+  };
+  append("quant", "quantization_transform", {tensor("image", batch * 768)},
+         {tensor("quant", batch * 192)},
+         {{"channel_params", {{2.0, -3}}},
+          {"num_bits", 8},
+          {"rounding", "TONEAREST"},
+          {"output_data_type", "int8"},
+          {"input_shapes", {{batch, 4, 16, 3}}},
+          {"output_shapes", {{batch, 4, 16, 3}}}});
+  plugins.push_back({{"name", "mla"},
+                     {"sequence", 2},
+                     {"processor", "MLA"},
+                     {"type", "sgpProcess"},
+                     {"config_params",
+                      {{"desired_batch_size", batch},
+                       {"actual_batch_size", batch},
+                       {"number_of_quads_to_user", 4}}},
+                     {"input_nodes", {tensor("quant", batch * 192)}},
+                     {"output_nodes", {tensor("packed", batch * head_count * 64)}},
+                     {"resources", {{"executable", "packed.elf"}}}});
+  json heads = json::array(), types = json::array(), shapes = json::array();
+  json dequant_outputs = json::array(), public_outputs = json::array();
+  for (int head = 0; head < head_count; ++head) {
+    heads.push_back(tensor("head" + std::to_string(head), batch * 64));
+    types.push_back("int8");
+    shapes.push_back({batch, 2, 2, 16});
+    dequant_outputs.push_back(tensor("dequant" + std::to_string(head), batch * 64));
+    public_outputs.push_back(tensor("out" + std::to_string(head), batch * 64));
+  }
+  append("unpack", "unpack_transform", {tensor("packed", batch * head_count * 64)}, heads,
+         {{"tensor_types", types},
+          {"tensor_shapes", shapes},
+          {"input_shapes", {{batch, head_count * 64}}},
+          {"output_shapes", shapes}});
+  for (int head = 0; head < head_count; ++head) {
+    const std::string suffix = std::to_string(head);
+    append("slice" + suffix, "slice_transform", {tensor("head" + suffix, batch * 64)},
+           {tensor("slice" + suffix, batch * 16)},
+           {{"begin", {0, 0, 0, 0}},
+            {"end", {batch, 2, 2, 4}},
+            {"input_shape", {batch, 2, 2, 16}},
+            {"output_shape", {batch, 2, 2, 4}},
+            {"input_shapes", {{batch, 2, 2, 16}}},
+            {"output_shapes", {{batch, 2, 2, 4}}}});
+    append("dequant" + suffix, "dequantization_transform", {tensor("slice" + suffix, batch * 16)},
+           {tensor("dequant" + suffix, batch * 64)},
+           {{"channel_params", {{2.0, -3}}},
+            {"input_data_type", "int8"},
+            {"input_shapes", {{batch, 2, 2, 4}}},
+            {"output_shapes", {{batch, 2, 2, 4}}}});
+  }
+  append("publish", "pass_through", dequant_outputs, public_outputs, json::object());
+  const json manifest{{"name", "packed_post"},
+                      {"model_sdk_version", "3.0.0"},
+                      {"input_nodes", {tensor("image", batch * 768)}},
+                      {"plugins", plugins}};
+  auto fixture = sima_test::make_model_archive_fixture("packed_post_b" + std::to_string(batch),
+                                                       {{"etc/packed_mpk.json", manifest.dump()}});
+  const auto executable = std::filesystem::path(fixture.root_dir) / "share/packed.elf";
+  sima_test::write_topology_elf(executable, batch == 1 ? "data.ifm.b0" : "data.ifm", 192,
+                                batch == 1 ? "data.ofm.b0" : "data.ofm", head_count * 64, batch);
+  const auto command = "tar -czf " + sima_test::model_archive_shell_quote(fixture.tar_path) +
+                       " -C " + sima_test::model_archive_shell_quote(fixture.root_dir) + " .";
+  require(std::system(command.c_str()) == 0, "packed post fixture must include its topology ELF");
+  return fixture;
 }
 
 std::filesystem::path bf16_ev74_model_path() {
@@ -667,6 +762,23 @@ RUN_TEST(
 
       static_assert(std::is_same_v<decltype(std::declval<const Model&>().preprocess()), Graph>);
       static_assert(std::is_same_v<decltype(std::declval<const Model&>().postprocess()), Graph>);
+
+      for (const int batch : {1, 4}) {
+        const auto fixture = make_packed_post_fixture(batch);
+        Model::Options options;
+        options.preprocess.kind = InputKind::Tensor;
+        options.processcvu.post_run_target = "A65";
+        Model model(fixture.tar_path, options);
+        const auto post = ModelAccess::build_public_postprocess_nodes(model);
+        require(post.size() == 1U && post.front()->kind() == "Dequant",
+                "packed MLA output must expose unpacked heads through one dequant region");
+        const auto outputs = model.output_specs();
+        require(outputs.size() == 6U, "packed postprocess must retain every unpacked head");
+        for (const auto& output : outputs) {
+          require(output.shape == std::vector<int64_t>({batch, 2, 2, 4}),
+                  "packed postprocess must retain each head's shape and compiled batch");
+        }
+      }
 
       {
         const auto fixture = make_bf16_mla_tess_fixture("model_route_bf16_mla_tess");

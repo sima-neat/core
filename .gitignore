@@ -52,6 +52,7 @@ tmp/
 tmp-*/
 sima-neat-*-extras/
 /install_neat_framework.sh
+/install_sentinel.sh
 core
 core/
 a.out
@@ -141,3 +142,6 @@ _work/
 docs/images/.DS_Store
 python/tests/_platform_version_generated.py
 generated/platform_version.h
+
+# Source-first native dependency builds and installed package stages
+/deps/backend/

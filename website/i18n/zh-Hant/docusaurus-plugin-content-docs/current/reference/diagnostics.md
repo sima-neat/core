@@ -133,18 +133,20 @@ SIMA_NEAT_VERBOSE_TOPICS=gstreamer \
 對於吞吐量／延遲／功耗報告，建議使用圖表執行結果的 JSON 匯出格式：
 
 ```cpp
-RunOptions opt;
-opt.enable_board_power();        // graph-level power when supported by the board/SOM
-Run run = graph.build(opt);
+Run run = graph.build(RunOptions{});
 
-// run your normal push/pull loop inside a measurement window, then:
-auto report = run.start_measurement().stop();
-std::cout << report.to_text();
+TelemetryMonitor telemetry_monitor; // board power, temperatures, CPU usage, and memory
+telemetry_monitor.start();
+auto scope = run.start_measurement();
+// run your normal push/pull loop here, then:
+auto report = scope.stop();
+Telemetry telemetry = telemetry_monitor.stop();
+std::cout << report.to_text() << telemetry;
 ```
 
 匯出的內容會明確指定範圍：
 
-- `run.graph_metrics.throughput_fps` 和 `run.graph_metrics.power` 是圖層級的標題。
+- `run.graph_metrics.throughput_fps` 是圖層級的標題。`run.graph_metrics.power` 僅由已棄用的 `RunOptions::enable_board_power()` 填入；請改用 `TelemetryMonitor`。
 - `run.node_metrics[]` 僅包含節點/外掛程式的延遲資訊；節點/外掛程式的耗電量資訊則刻意省略。
 - `latency_semantics` 和 `aggregation` 告訴您，這些值是代表整個執行期間的資料，還是代表特定時間窗口內的增量變化。
 - `plugin_metrics_unattributed[]` 會保留無法明確對應到單一節點的「核心/外掛」資料列。
@@ -164,3 +166,17 @@ std::cout << report.to_text();
 | `tensor caps change not supported` | 在執行階段變更張量形狀/資料類型 | 維持張量形狀/資料類型穩定（不重新協商） |
 
 如需了解結構化外掛程式錯誤和可操作的提示，請參閱[疑難排解](/reference/troubleshooting)（疑難排解）。
+
+## 平台執行階段復原
+
+在 Platform 3.0.0 上，分派器無法使用是需要調查的錯誤，不是啟動舊版服務的要求。Core 不會因分派器錯誤而初始化 MLA 記憶體或重設遠端處理器。舊版復原程式碼與指令碼已移除；請使用平台核准的復原程序。
+
+若驅動程式回報完成狀態不明，請持續保留其 DMA 緩衝區與原始集區借用權。關閉檔案描述元、停止應用程式或重新啟動服務，都不能證明硬體已停止存取記憶體。請收集失敗報告，並在重試前使用平台核准的復原程序。
+
+### 維持 Core 與 Scheduler 套件相符 {#keep-core-and-scheduler-packages-matched}
+
+請將 Core 與該 Core 版本選定的 Scheduler 套件組一起安裝。Scheduler 管理相符的 Runner、Kernels、Codecs 和韌體相依套件。僅公開 C++ ABI 相同，並不能確保執行階段相容。
+
+請使用 `build.sh` 選定的已發布相依套件，或以 `--scheduler PATH` 提供完整且相符的 Scheduler DEB 套件組。請參閱[本機相依套件](/develop-apps/contribute/build-test/local-dependencies/)。
+
+更新板子時，請依照[安裝或更新 Neat Library](/getting-started/neat-library/install-or-update/)安裝完整的 Core 套件組。選定的 Scheduler 安裝程式會驗證套件組並管理韌體啟用。如果驗證失敗，請取得相符的 Core/Scheduler 套件組；不要取代安裝記錄，也不要強制安裝個別不相容的執行階段或韌體套件。

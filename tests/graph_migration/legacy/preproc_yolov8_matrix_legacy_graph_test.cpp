@@ -88,6 +88,8 @@ std::string preprocess_color_format_name(simaai::neat::PreprocessColorFormat for
     return "NV12";
   case simaai::neat::PreprocessColorFormat::I420:
     return "I420";
+  case simaai::neat::PreprocessColorFormat::NV16:
+    return "NV16";
   case simaai::neat::PreprocessColorFormat::Auto:
     break;
   }
@@ -967,8 +969,8 @@ int main(int argc, char** argv) {
     if (!simaai::neat::element_exists("neatprocessmla")) {
       return skip_long_test("missing NEAT MLA plugin (neatprocessmla)");
     }
-    if (!simaai::neat::element_exists("neatprocesscvu")) {
-      return skip_long_test("missing NEAT CVU plugin (neatprocesscvu)");
+    if (!simaai::neat::element_exists("neatkernelrunner")) {
+      return skip_long_test("missing NEAT CVU plugin (neatkernelrunner)");
     }
 
     const CliArgs cli = parse_cli(argc, argv);

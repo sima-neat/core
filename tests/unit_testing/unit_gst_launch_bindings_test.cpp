@@ -24,6 +24,8 @@ RUN_TEST(
                                    "encoding-name=H264";
         const Analysis analysis = analyze(launch);
         require(analysis.complete, "ordinary assignments should analyze completely");
+        require(analysis.has_topology_syntax && !analysis.has_nontrivial_topology_syntax,
+                "ordinary links are topology syntax, not grouping or all-pad links");
         const auto names = explicit_name_bindings(analysis);
         require(names.size() == 4U, "expected four exact name assignments");
         require(names[0]->canonical_value == "plain", "unquoted name canonicalization failed");
@@ -41,6 +43,34 @@ RUN_TEST(
         require(rewritten_names.size() == 4U &&
                     rewritten_names[2]->canonical_value == "literal_renamed",
                 "rewritten single-quoted values must preserve canonical target semantics");
+      }
+
+      {
+        const std::string launch =
+            "filesrc location=/tmp/!queue ! application/x-test,field=(string)\"a\\!b\" ! "
+            "queue ! fakesink";
+        const auto analysis = analyze(launch);
+        require(analysis.complete && analysis.links.size() == 2U,
+                "opaque assignment/caps punctuation must not create extra links");
+        require(launch.substr(analysis.links[0].begin,
+                              analysis.links[0].end - analysis.links[0].begin) ==
+                    "! application/x-test,field=(string)\"a\\!b\" !",
+                "a caps link includes its entire body and both delimiters");
+        require(launch.substr(analysis.links[1].begin,
+                              analysis.links[1].end - analysis.links[1].begin) == "!",
+                "ordinary link span must be exact");
+        for (const auto literal :
+             {"identity name='source ! queue", "identity name=\"source ! queue"}) {
+          const auto unmatched = analyze(literal);
+          require(unmatched.complete && unmatched.links.size() == 1U,
+                  "literal unmatched quotes must not hide a link token");
+        }
+      }
+
+      for (const std::string path : {"/tmp/!queue", "https://host/!queue", "\\!queue"}) {
+        const auto analysis = analyze("filesrc location=" + path + " ! fakesink");
+        require(analysis.complete && analysis.links.size() == 1U,
+                "an unquoted assignment link character must remain part of its value");
       }
 
       {
@@ -80,6 +110,8 @@ RUN_TEST(
         const auto names = explicit_name_bindings(analysis);
         require(names.size() == 1U && names.front()->canonical_value == "real",
                 "URL, caps, and assignment values must not create false name bindings");
+        require(analysis.has_topology_syntax && !analysis.has_nontrivial_topology_syntax,
+                "caps features, typed fields and alternatives are not graph grouping syntax");
       }
 
       {
@@ -118,9 +150,23 @@ RUN_TEST(
         const auto names = explicit_name_bindings(analysis);
         require(analysis.complete,
                 "terminal caps at a bin or chain boundary are valid Gst launch syntax");
+        require(analysis.has_nontrivial_topology_syntax,
+                "bins and separate chains must remain distinguishable from ordinary links");
         require(names.size() == 2U && names[0]->canonical_value == "mysrc" &&
                     names[1]->canonical_value == "after_caps",
                 "terminal caps must not hide later chains or expose caps fields as element names");
+      }
+
+      {
+        const Analysis all_pads = analyze("fakesrc : fakesink");
+        require(all_pads.complete && all_pads.has_topology_syntax &&
+                    all_pads.has_nontrivial_topology_syntax,
+                "all-pad links must not be confused with ordinary single-pad links");
+        const Analysis property =
+            analyze("identity name=plain config=\"path(!;):value\" ! fakesink");
+        require(property.complete && property.has_topology_syntax &&
+                    !property.has_nontrivial_topology_syntax,
+                "topology-like punctuation inside property values must stay opaque");
       }
 
       {
@@ -237,6 +283,18 @@ RUN_TEST(
             input.push_back(kAlphabet[generator() % (sizeof(kAlphabet) - 1U)]);
           }
           const Analysis analysis = analyze(input);
+          std::size_t previous_link_end = 0U;
+          for (const auto& link : analysis.links) {
+            require(previous_link_end <= link.begin && link.begin < link.end &&
+                        link.end <= input.size(),
+                    "lexical links must remain ordered, nonempty and within the input");
+            for (const auto& assignment : analysis.assignments) {
+              require(link.end <= assignment.token_span.begin ||
+                          link.begin >= assignment.token_span.end,
+                      "lexical links must never overlap an assignment token");
+            }
+            previous_link_end = link.end;
+          }
           for (const auto& assignment : analysis.assignments) {
             require(assignment.token_span.begin <= assignment.value_span.begin &&
                         assignment.value_span.end <= assignment.token_span.end &&

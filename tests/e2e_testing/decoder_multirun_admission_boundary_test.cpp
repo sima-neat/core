@@ -189,29 +189,34 @@ simaai::neat::Sample pull_frames(simaai::neat::Run& run, const std::string& endp
   return first_sample;
 }
 
-void require_admitted_boundaries(const simaai::neat::Run& run, std::size_t expected_decoders,
-                                 const std::string& where) {
+void require_direct_decoder_boundaries(const simaai::neat::Run& run, std::size_t expected_decoders,
+                                       const std::string& where) {
   const auto core = simaai::neat::run_internal::core(run);
   require(core != nullptr, where + ": missing RunCore");
-  require(core->decoder_admission && core->decoder_admission->active(),
-          where + ": decoder graph started without an admission lease");
 
-  std::size_t admitted_decoders = 0;
+  std::size_t decoder_count = 0;
+  const auto inspect_pipeline = [&](const std::string& pipeline) {
+    const auto count = count_occurrences(pipeline, "neatdecoder name=");
+    require(count_occurrences(pipeline, "zero-copy-output=true") == count,
+            where + ": every decoder must request direct DMA-BUF output");
+    require(pipeline.find("admission-") == std::string::npos,
+            where + ": direct decoder must not require a daemon lease");
+    decoder_count += count;
+  };
   if (core->graph_execution_) {
     for (const auto& pipeline : core->graph_execution_->pipelines) {
       require(pipeline != nullptr, where + ": missing pipeline segment");
-      admitted_decoders +=
-          count_occurrences(pipeline->last_pipeline, "decoder-admission-required=true");
+      inspect_pipeline(pipeline->last_pipeline);
     }
   } else {
     const auto diag = core->pipeline.stream.diag_ctx();
     require(diag != nullptr, where + ": simple pipeline has no diagnostics");
-    admitted_decoders = count_occurrences(diag->pipeline_string, "decoder-admission-required=true");
+    inspect_pipeline(diag->pipeline_string);
   }
 
-  require(admitted_decoders == expected_decoders,
-          where + ": expected " + std::to_string(expected_decoders) + " admitted decoder(s), got " +
-              std::to_string(admitted_decoders));
+  require(decoder_count == expected_decoders,
+          where + ": expected " + std::to_string(expected_decoders) + " direct decoder(s), got " +
+              std::to_string(decoder_count));
 }
 
 double measure_throughput(const std::vector<simaai::neat::Run*>& runs,
@@ -397,7 +402,7 @@ double run_combined_graph(const std::vector<std::string>& urls, const std::vecto
   for (std::size_t i = 0; i < kStreamCount; ++i) {
     (void)pull_frames(run, output_name(i), "combined stream " + std::to_string(i));
   }
-  require_admitted_boundaries(run, kStreamCount, "combined graph");
+  require_direct_decoder_boundaries(run, kStreamCount, "combined graph");
   std::vector<simaai::neat::Run*> run_refs(kStreamCount, &run);
   std::vector<std::string> endpoints;
   for (std::size_t i = 0; i < kStreamCount; ++i) {
@@ -424,7 +429,7 @@ double run_independent_graphs(const std::vector<std::string>& urls, const std::v
 
   for (std::size_t i = 0; i < kStreamCount; ++i) {
     (void)pull_frames(runs[i], {}, "independent stream " + std::to_string(i));
-    require_admitted_boundaries(runs[i], 1U, "independent graph " + std::to_string(i));
+    require_direct_decoder_boundaries(runs[i], 1U, "independent graph " + std::to_string(i));
   }
   std::vector<simaai::neat::Run*> run_refs;
   std::vector<std::string> endpoints(kStreamCount);
@@ -445,7 +450,7 @@ void run_close_and_rebuild(const std::string& url, int fps) {
   simaai::neat::Graph graph = make_single_stream_graph(url, fps);
   simaai::neat::Run run = graph.build(run_options());
   (void)pull_frames(run, {}, "simple rebuild");
-  require_admitted_boundaries(run, 1U, "simple rebuild");
+  require_direct_decoder_boundaries(run, 1U, "simple rebuild");
   run.close();
 }
 
@@ -467,7 +472,7 @@ int main() {
     fps.reserve(kStreamCount);
     for (const auto& url : urls) {
       const int source_fps = sima_test::probe_rtsp_source_fps(url);
-      require(source_fps > 0, "decoder admission performance test could not probe source FPS");
+      require(source_fps > 0, "decoder multirun performance test could not probe source FPS");
       fps.push_back(source_fps);
     }
 

@@ -18,6 +18,34 @@ sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
 
+class CategoryKeyTests(unittest.TestCase):
+    def test_staging_uses_same_key_and_preserves_metadata_in_each_locale(self):
+        for locale in (None, "ko", "ja", "zh-Hant", "uk"):
+            with self.subTest(locale=locale), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source = root / "source"
+                target = root / "target"
+                folder = source / "peripherals"
+                folder.mkdir(parents=True)
+                (folder / "camera.md").write_text("# Camera\n", encoding="utf-8")
+                metadata = {"label": f"Peripherals {locale}", "position": 3}
+                (folder / "_category_.json").write_text(json.dumps(metadata), encoding="utf-8")
+                MODULE.stage_source_section(
+                    {"key": "sentinel", "category_keys": {"peripherals": "sentinel-peripherals"}},
+                    root, source, target, localized=locale is not None, locale=locale,
+                )
+                actual = json.loads((target / "peripherals" / "_category_.json").read_text())
+                self.assertEqual(actual, dict(metadata, key="sentinel-peripherals"))
+
+    def test_invalid_or_missing_directory_and_empty_key_fail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "peripherals").mkdir()
+            for entry in ({"../outside": "key"}, {"/outside": "key"}, {"missing": "key"}, {"peripherals": ""}):
+                with self.subTest(entry=entry), self.assertRaises(ValueError):
+                    MODULE.apply_category_keys(root, entry)
+
+
 class PromoteIndexFileTests(unittest.TestCase):
     def test_rewrites_inbound_markdown_and_html_links(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -677,6 +705,256 @@ class LocalizedAutodocTests(unittest.TestCase):
                 (destination / "cli.md").read_text(encoding="utf-8"),
             )
             self.assertFalse((destination / "commands").exists())
+
+
+class CategoryKeyTests(unittest.TestCase):
+    def stage(self, root: Path, source: dict, pages: dict) -> Path:
+        staging = root / "build/autodoc" / source["key"]
+        src_docs = staging / source["docs_subpath"]
+        for relative, text in pages.items():
+            path = src_docs / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        source = {"repo": "unused", "branch": "main", **source}
+        with mock.patch.object(MODULE, "acquire_source", return_value="main"):
+            ok, message = MODULE.process_source(source, root, root / "build", root / "docs")
+        self.assertTrue(ok, message)
+        return root / "docs" / source["mount"]
+
+    @staticmethod
+    def category(folder: Path) -> dict:
+        return json.loads((folder / "_category_.json").read_text(encoding="utf-8"))
+
+    def test_same_folder_name_in_two_sources_gets_distinct_keys(self):
+        # sima-cli's `peripherals` command group and Sentinel's `peripherals`
+        # guides both became a category labelled `peripherals`, which broke
+        # every localized docs build with a duplicate translation key.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cli = self.stage(
+                root,
+                {
+                    "key": "sima-cli",
+                    "docs_subpath": "docs/sima-cli",
+                    "mount": "tools/sima-cli",
+                    "group_commands": {"prefix": "sima-cli-", "root_stem": "sima-cli"},
+                },
+                {
+                    "index.md": "# sima-cli\n",
+                    "commands/sima-cli-peripherals.md": "# sima-cli peripherals\n",
+                    "commands/sima-cli-peripherals-list.md": "# list\n",
+                },
+            )
+            sentinel = self.stage(
+                root,
+                {"key": "sentinel", "docs_subpath": "docs", "mount": "tools/sentinel"},
+                {"README.md": "# Sentinel\n", "peripherals/camera.md": "# Camera\n"},
+            )
+
+            cli_category = self.category(cli / "peripherals")
+            self.assertEqual(cli_category["key"], "tools/sima-cli/peripherals")
+            self.assertEqual(cli_category["label"], "peripherals")
+            self.assertEqual(
+                self.category(sentinel / "peripherals"),
+                {"key": "tools/sentinel/peripherals"},
+            )
+            self.assertNotIn("key", self.category(cli))
+
+    def test_keeps_source_keys_and_skips_asset_folders(self):
+        with tempfile.TemporaryDirectory() as directory:
+            section = self.stage(
+                Path(directory),
+                {"key": "insight", "docs_subpath": "docs", "mount": "tools/insight"},
+                {
+                    "index.md": "# Insight\n",
+                    "observe/_category_.json": '{"label": "Observe", "key": "observe"}',
+                    "observe/viewer.md": "# Viewer\n",
+                    "images/screen.png": "png",
+                },
+            )
+
+            self.assertEqual(self.category(section / "observe")["key"], "observe")
+            self.assertFalse((section / "images/_category_.json").exists())
+
+    def test_rejects_category_metadata_it_cannot_key(self):
+        cases = {
+            "yaml without key": ("guides/_category_.yml", "label: Guides\n"),
+            "invalid json": ("guides/_category_.json", '{"label": "Guides",}'),
+        }
+        for name, (relative, text) in cases.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaises(MODULE.CategoryMetadataError) as caught:
+                    self.stage(
+                        Path(directory),
+                        {"key": "tool", "docs_subpath": "docs", "mount": "tools/tool"},
+                        {"index.md": "# Tool\n", "guides/setup.md": "# Setup\n", relative: text},
+                    )
+                self.assertIn("guides/_category_", str(caught.exception))
+
+    def test_keeps_sidebar_key_of_linked_index_doc(self):
+        index = '---\nsidebar_key: tool-guides\n---\n# Guides\n'
+        cases = {
+            "no metadata": {},
+            "json label": {"guides/_category_.json": '{"label": "Guides"}'},
+            "yaml label": {"guides/_category_.yml": "label: Guides\n"},
+        }
+        for name, metadata in cases.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                section = self.stage(
+                    Path(directory),
+                    {"key": "tool", "docs_subpath": "docs", "mount": "tools/tool"},
+                    {"index.md": "# Tool\n", "guides/index.md": index, **metadata},
+                )
+                category = section / "guides/_category_.json"
+                if category.exists():
+                    self.assertNotIn("key", self.category(section / "guides"))
+
+    def test_keeps_sidebar_key_of_explicitly_linked_doc(self):
+        cases = {
+            "file name": ("guides/02-setup.md", "tools/tool/guides/setup"),
+            "front matter id": ("guides/start.md", "tools/tool/guides/getting-started"),
+            "numbered directory": ("guides/01-basics/setup.md", "tools/tool/guides/basics/setup"),
+        }
+        for name, (relative, doc_id) in cases.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                link = json.dumps({"label": "Guides", "link": {"type": "doc", "id": doc_id}})
+                section = self.stage(
+                    Path(directory),
+                    {"key": "tool", "docs_subpath": "docs", "mount": "tools/tool"},
+                    {
+                        "index.md": "# Tool\n",
+                        "guides/index.md": "# Guides\n",
+                        relative: (
+                            "---\nid: getting-started\nsidebar_key: tool-guides\n---\n# Setup\n"
+                            if name == "front matter id"
+                            else "---\nsidebar_key: tool-guides\n---\n# Setup\n"
+                        ),
+                        "guides/_category_.json": link,
+                    },
+                )
+
+                self.assertNotIn("key", self.category(section / "guides"))
+
+    def test_resolves_linked_doc_like_docusaurus(self):
+        keyed = "---\nsidebar_key: tool-guides\n---\n# Doc\n"
+        plain = "# Doc\n"
+        cases = {
+            # name: (pages, whether the source's sidebar_key is kept)
+            "local id link": ({
+                "guides/_category_.json": '{"link": {"type": "doc", "id": "setup"}}',
+                "guides/setup.md": keyed,
+            }, True),
+            "full id link outside the folder": ({
+                "guides/_category_.json": (
+                    '{"link": {"type": "doc", "id": "tools/tool/shared/intro"}}'
+                ),
+                "guides/setup.md": plain,
+                "shared/intro.md": keyed,
+            }, True),
+            "first index candidate is linked": ({
+                "guides/index.md": plain,
+                "guides/readme.md": keyed,
+            }, False),
+            "empty json key falls back to the label": ({
+                "guides/_category_.json": '{"key": ""}',
+                "guides/index.md": keyed,
+            }, False),
+            "null json key is replaced": ({
+                "guides/_category_.json": '{"key": null}',
+                "guides/index.md": keyed,
+            }, False),
+            "link to a doc that keeps its number prefixes": ({
+                "guides/_category_.json": (
+                    '{"link": {"type": "doc", "id": "tools/tool/guides/01-basics/02-setup"}}'
+                ),
+                "guides/01-basics/02-setup.md": (
+                    "---\nparse_number_prefixes: false\nsidebar_key: tool-guides\n---\n# S\n"
+                ),
+            }, True),
+            "yaml block link": ({
+                "guides/_category_.yml": "label: G\nlink:\n  type: doc\n  id: setup\n",
+                "guides/setup.md": keyed,
+            }, True),
+            "yaml flow link": ({
+                "guides/_category_.yml": "link: {type: doc, id: setup}\n",
+                "guides/setup.md": keyed,
+            }, True),
+            "yaml key with a comment": ({
+                "guides/_category_.yml": "key: tool-guides # stable\n",
+                "guides/index.md": plain,
+            }, True),
+        }
+        for name, (pages, kept) in cases.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                section = self.stage(
+                    Path(directory),
+                    {"key": "tool", "docs_subpath": "docs", "mount": "tools/tool"},
+                    {"index.md": "# Tool\n", **pages},
+                )
+                category = section / "guides/_category_.json"
+                key = self.category(section / "guides").get("key") if category.exists() else None
+                self.assertEqual(key in (None, "tool-guides"), kept, key)
+                if not kept:
+                    self.assertEqual(key, "tools/tool/guides")
+
+    def test_rejects_empty_or_null_yaml_key(self):
+        for value in ('""', "null", ""):
+            with self.subTest(value), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaises(MODULE.CategoryMetadataError):
+                    self.stage(
+                        Path(directory),
+                        {"key": "tool", "docs_subpath": "docs", "mount": "tools/tool"},
+                        {
+                            "index.md": "# Tool\n",
+                            "guides/_category_.yml": f"key: {value}\n",
+                            "guides/index.md": "---\nsidebar_key: tool-guides\n---\n# Doc\n",
+                        },
+                    )
+
+    def test_yaml_scalar_reads_values_like_yaml(self):
+        cases = {
+            "key: plain\n": "plain",
+            'key: "quoted # not a comment"\n': "quoted # not a comment",
+            "key: 'single'\n": "single",
+            "key: value # comment\n": "value",
+            'key: ""\n': "",
+            "key: null\n": None,
+            "key: # comment\n": None,
+            "key: ~\n": None,
+            "key:\n": None,
+            "label: x\n": None,
+        }
+        for text, expected in cases.items():
+            with self.subTest(text):
+                self.assertEqual(MODULE.yaml_scalar(text, "key"), expected)
+
+    def test_keys_category_whose_explicit_link_bypasses_the_index_doc(self):
+        with tempfile.TemporaryDirectory() as directory:
+            section = self.stage(
+                Path(directory),
+                {"key": "tool", "docs_subpath": "docs", "mount": "tools/tool"},
+                {
+                    "index.md": "# Tool\n",
+                    "guides/index.md": "---\nsidebar_key: tool-guides\n---\n# Guides\n",
+                    "guides/_category_.json": '{"label": "Guides", "link": null}',
+                },
+            )
+
+            self.assertEqual(self.category(section / "guides")["key"], "tools/tool/guides")
+
+    def test_keeps_yaml_category_that_sets_a_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            section = self.stage(
+                Path(directory),
+                {"key": "tool", "docs_subpath": "docs", "mount": "tools/tool"},
+                {
+                    "index.md": "# Tool\n",
+                    "guides/setup.md": "# Setup\n",
+                    "guides/_category_.yml": "label: Guides\nkey: tool-guides\n",
+                },
+            )
+
+            self.assertFalse((section / "guides/_category_.json").exists())
 
 
 class NestedSourceMountTests(unittest.TestCase):

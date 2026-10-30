@@ -110,13 +110,12 @@ struct IngressTensorContract {
   std::string dtype;
   std::string layout; // routing/boundary projection only
   int rank = 0;
-  int batch = 1;
   int width = 0;  // routing/boundary projection only
   int height = 0; // routing/boundary projection only
   int depth = 0;  // routing/boundary projection only
   // Canonical tensor shape from the MPK contract (e.g. [10,1,1024,2] for a
   // batched MLA input). This is the source of truth for tensor-domain
-  // consumers. The batch/height/width/depth scalars above are derived
+  // consumers. The height/width/depth scalars above are derived
   // convenience for image-domain consumers and may not faithfully represent
   // ranks > 4 or non-image axis labellings — read logical_shape instead when
   // building TensorSpec or pushable Tensor shapes.
@@ -135,7 +134,6 @@ struct EgressTensorContract {
   std::string dtype;
   std::string layout; // routing/boundary projection only
   int rank = 0;
-  int batch = 1;
   int width = 0;  // routing/boundary projection only
   int height = 0; // routing/boundary projection only
   int depth = 0;  // routing/boundary projection only
@@ -302,6 +300,10 @@ struct RouteMaterializationPlan {
     bool quant_contract_required = false;
     bool include_pre_stage = false;
     bool boxdecode_selected = false;
+    // The selected terminal implementation consumes the compiler-authored
+    // tensor tail directly from producer memory. This is a capability fact,
+    // not a plugin-name test in ModelPack.
+    bool terminal_consumer_owns_tensor_tail = false;
   };
 
   bool use_preproc = false;

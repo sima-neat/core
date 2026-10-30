@@ -110,12 +110,18 @@ RUN_TEST("graph_migration_phaseA3_combine_helper_test", [] {
   }
 
   {
-    // Regression: process more than four ByFrame pairs while draining each joined bundle with a
-    // bounded pull. This keeps the terminal output moving and verifies that no frame is lost.
+    // Drain joined pairs through a real pipeline boundary, which must keep each
+    // bundle intact instead of submitting its fields as separate frames.
     constexpr int kPairs = 12;
     simaai::neat::Graph join = simaai::neat::graphs::Combine({"left", "right"}, "combined",
                                                              simaai::neat::CombinePolicy::ByFrame);
-    simaai::neat::Run run = join.build();
+    simaai::neat::Graph passthrough;
+    passthrough.add(simaai::neat::nodes::Input("combined"));
+    passthrough.custom("identity");
+    passthrough.add(simaai::neat::nodes::Output("out"));
+    simaai::neat::Graph app;
+    app.connect(join, passthrough);
+    simaai::neat::Run run = app.build();
 
     for (int frame = 0; frame < kPairs; ++frame) {
       require(run.push("left", simaai::neat::Sample{sample_with_frame(frame, "cam-left", 0x31)}),
@@ -124,7 +130,7 @@ RUN_TEST("graph_migration_phaseA3_combine_helper_test", [] {
       require(run.push("right", simaai::neat::Sample{sample_with_frame(frame, "cam-right", 0x32)}),
               "Drained Combine ByFrame right push failed at frame " + std::to_string(frame) + ": " +
                   run.last_error());
-      auto out = run.pull("combined", 5000);
+      auto out = run.pull("out", 5000);
       require(out.has_value(), "Drained Combine ByFrame pull timed out at frame " +
                                    std::to_string(frame) + ": " + run.last_error());
       require_bundle_fields(*out, "Drained Combine ByFrame");

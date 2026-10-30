@@ -5,7 +5,7 @@ sidebar_position: 0
 
 # 工具
 
-與 Neat 搭配使用的 SiMa.ai 工具包括：`sima-cli` 命令列、Insight、Sentinel，以及 Model Zoo。如需設定 SDK，請參閱 [Neat SDK](/getting-started/dev-environment/)。
+與 Neat 搭配使用的 SiMa.ai 工具包括：`sima-cli` 命令列、Insight、Sentinel，以及 Model Zoo。如需設定 SDK，請參閱 [Palette SDK](/getting-started/dev-environment/)。
 
 使用這些工具來安裝軟體、取得模型成品、檢查應用程式的行為，以及管理常見的 DevKit 工作流程。
 

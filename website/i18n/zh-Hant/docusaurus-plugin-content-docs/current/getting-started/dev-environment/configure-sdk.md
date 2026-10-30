@@ -1,6 +1,6 @@
 ---
 title: "設定 SDK"
-description: "安裝後，您可以變更 Neat SDK 工作區、DevKit 配對方式或設定選項。"
+description: "安裝後，您可以變更 Palette SDK 工作區、DevKit 配對方式或設定選項。"
 sidebar_position: 4
 ---
 
@@ -8,7 +8,7 @@ sidebar_position: 4
 SDK 安裝指令已經會下載 SDK 映像檔並進行設定。如果您需要變更 SDK 設定，例如工作區位置、DevKit 配對、SDK 擴充功能或其他設定選項，請使用此頁面。
 :::
 
-當您需要設定現有的 Neat SDK 容器時，請直接執行 `sima-cli sdk setup`。
+當您需要設定現有的 Palette SDK 容器時，請直接執行 `sima-cli sdk setup`。
 
 ## 使用 DevKit 配對功能進行設定
 

@@ -6,7 +6,7 @@ sidebar_position: 4
 
 :::note DevKit only — skip for SDK installs
 These steps set up PyNeat on a DevKit (or a bare host acting as a runtime). If
-you are working inside the Neat SDK, skip this page.
+you are working inside the Palette SDK, skip this page.
 :::
 
 :::tip PyNeat is already installed with Neat Library
@@ -23,17 +23,13 @@ matching Neat Library runtime is already installed.
 
 ## Download the Wheel
 
-<ShellCommand prompt="devkit">
-sima-cli neat install core -t pyneat
-</ShellCommand>
-
-To download the wheel for a specific Neat Library release, include the version.
-
-To install a specific version:
+Choose the wheel version that matches the Neat Library runtime already installed on the DevKit. For the current release:
 
 <ShellCommand prompt="devkit">
-sima-cli neat install core@v0.5.0 -t pyneat
+sima-cli neat install core@v%%release.core%% -t pyneat
 </ShellCommand>
+
+For another installed runtime version, replace the version tag with its matching published Core tag. Downloading the wheel does not update the runtime packages.
 
 ## Create a Python Environment
 

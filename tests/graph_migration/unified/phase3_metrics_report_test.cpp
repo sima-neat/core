@@ -10,6 +10,20 @@
 #include "test_main.h"
 #include "test_utils.h"
 
+namespace {
+
+/// Options with the deprecated graph-level power monitor, which this test still covers.
+simaai::neat::RunOptions deprecated_board_power_options() {
+  simaai::neat::RunOptions options;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+  options.enable_board_power();
+#pragma GCC diagnostic pop
+  return options;
+}
+
+} // namespace
+
 RUN_TEST("graph_migration_phase3_metrics_report_test", [] {
   simaai::neat::Graph input;
   input.add(simaai::neat::nodes::Input());
@@ -55,27 +69,10 @@ RUN_TEST("graph_migration_phase3_metrics_report_test", [] {
     simaai::neat::Graph power_app;
     power_app.connect(power_input, power_output);
 
-    simaai::neat::RunOptions power_opt;
-    power_opt.power_monitor.enabled = true;
-    power_opt.power_monitor.profile = simaai::neat::PowerMonitorProfile::Custom;
-    power_opt.power_monitor.sample_interval_ms = 10000;
-    power_opt.power_monitor.rails.push_back(simaai::neat::PowerRailConfig{
-        .name = "unit-test-invalid-rail",
-        .i2c_bus = 99,
-        .i2c_addr = 0x4f,
-        .page = 0,
-        .vout_exponent = -8,
-        .iout_exponent = -6,
-        .pout_exponent = -5,
-    });
-
+    simaai::neat::RunOptions power_opt = deprecated_board_power_options();
     simaai::neat::Run power_run = power_app.build(power_opt);
     const simaai::neat::PowerSummary power = simaai::neat::run_internal::power_summary(power_run);
     require(power.enabled, "RunOptions::power_monitor should start one graph-level monitor");
-    require(power.rails.size() == 1U,
-            "graph-level power monitor should retain caller-provided custom rail config");
-    require(power.rails.front().config.name == "unit-test-invalid-rail",
-            "power summary should expose the configured custom rail");
     simaai::neat::MeasureOptions measure_opt;
     measure_opt.duration_ms = 1;
     measure_opt.include_plugin_latency = false;
@@ -84,8 +81,6 @@ RUN_TEST("graph_migration_phase3_metrics_report_test", [] {
     const simaai::neat::MeasureReport measured = measure.stop();
     require(measured.power.enabled,
             "measurement report should use a measurement-local graph power monitor");
-    require(measured.power.rails.size() == 1U,
-            "measurement-local power monitor should retain caller-provided custom rail config");
     power_run.close();
   }
 

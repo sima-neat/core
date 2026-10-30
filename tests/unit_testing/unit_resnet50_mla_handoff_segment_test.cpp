@@ -5,8 +5,13 @@
 #include "nodes/groups/ModelGroups.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/sima/CompiledProcessCvuContractQuery.h"
+#include "pipeline/internal/sima/ContractRender.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
 #include "test_main.h"
 
+#include <algorithm>
+#include <cstdlib>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 
@@ -28,6 +33,28 @@ RUN_TEST(
       model_opt.inference_terminal.last_plugin_id = "processmla";
       Model model(tar_path, model_opt);
 
+      // These are the customer-facing stage APIs.  They must admit the strict
+      // physical plan internally; applications cannot and must not call the
+      // ModelPack preparation hook used below by lower-level tests.
+      (void)model.preprocess();
+      (void)model.inference();
+      (void)model.graph();
+
+      // ModelPack stage facts are materialized by the corresponding public
+      // fragment builder.  This test inspects both sides of the preproc -> MLA
+      // handoff, so materialize both fragments before querying either fact set.
+      // Building inference alone is intentionally not an eager request for the
+      // separately exposed preprocess fragment.
+      const auto preproc_nodes = internal::ModelAccess::build_public_preprocess_nodes(model);
+      require(!preproc_nodes.empty(),
+              "ResNet50 preprocess fragment should compile from the local MPK");
+      pipeline_internal::sima::ManifestBuildDiagnostics preproc_diagnostics;
+      const auto compiled_preproc =
+          compile_node_contracts(preproc_nodes, ContractCompileInput{}, &preproc_diagnostics);
+      require(preproc_diagnostics.errors.empty(),
+              "ResNet50 preprocess fragment contract compile failed");
+      require(!compiled_preproc.stages.empty(),
+              "ResNet50 preprocess fragment should emit a container stage");
       const auto infer_nodes = internal::ModelAccess::build_public_inference_nodes(model);
       require(!infer_nodes.empty(), "ResNet50 MLA-only fragment should compile from the local MPK");
 
@@ -53,35 +80,37 @@ RUN_TEST(
       require(mla_stage != nullptr, "ResNet50 MLA-only fragment should include an MLA stage");
 
       const auto& pack = internal::ModelAccess::pack(model);
-      const auto pre_stage_facts =
-          pack.stage_facts_for_model_stage(internal::ModelStage::Preprocess);
       const auto infer_stage_facts =
           pack.stage_facts_for_model_stage(internal::ModelStage::MlaOnly);
 
-      require(!pre_stage_facts.empty(),
-              "ResNet50 MLA-only route should retain preprocess stage facts");
       require(!infer_stage_facts.empty(), "ResNet50 MLA-only route should retain MLA stage facts");
 
-      const internal::ModelFragment::StageFacts* preproc_stage_fact = nullptr;
-      for (const auto& fact : pre_stage_facts) {
-        if (fact.processcvu_contract.has_value()) {
-          preproc_stage_fact = &fact;
-          break;
+      const CompiledNodeContract* preproc_stage = nullptr;
+      const auto visit_preproc_stage = [&](const auto& self,
+                                           const CompiledNodeContract& stage) -> void {
+        if (!preproc_stage && stage.processcvu.has_value()) {
+          preproc_stage = &stage;
         }
+        for (const auto& child : stage.child_stages) {
+          self(self, child);
+        }
+      };
+      for (const auto& stage : compiled_preproc.stages) {
+        visit_preproc_stage(visit_preproc_stage, stage);
       }
-      require(preproc_stage_fact != nullptr,
+      require(preproc_stage != nullptr,
               "ResNet50 should expose a canonical preproc processcvu stage fact");
-      require(preproc_stage_fact->processcvu_contract.has_value(),
+      require(preproc_stage->processcvu.has_value(),
               "ResNet50 preproc stage fact should cache a processcvu contract");
-      require(preproc_stage_fact->processcvu_preproc_single_output_handoff.value_or(false),
+      require(preproc_stage->processcvu->preproc_single_output_handoff,
               "ResNet50 preproc stage fact should mark strict single-output handoff");
 
       const auto handoff = pipeline_internal::sima::resolve_processcvu_single_handoff_output(
-          *preproc_stage_fact->processcvu_contract);
+          *preproc_stage->processcvu);
       require(handoff.has_value(),
               "ResNet50 preproc contract should resolve one canonical MLA handoff output");
-      require(handoff->segment_name == "output_tessellated_image",
-              "ResNet50 preproc handoff should preserve the tessellated MLA segment name");
+      require(!handoff->segment_name.empty() && handoff->size_bytes > 0U,
+              "ResNet50 preproc handoff should expose a concrete typed segment");
 
       const internal::ModelFragment::StageFacts* mla_stage_fact = nullptr;
       for (const auto& fact : infer_stage_facts) {
@@ -97,6 +126,25 @@ RUN_TEST(
               "ResNet50 MLA stage fact should expose one logical input");
       require(mla_stage_fact->mla_compiled->runtime_contract.physical_inputs.size() == 1U,
               "ResNet50 MLA stage fact should expose one physical input");
+      const auto& mla_runtime = mla_stage_fact->mla_compiled->runtime_contract;
+      require(mla_runtime.input_bindings.front().source_segment_name == handoff->segment_name,
+              "ResNet50 MLA input must bind the exact typed preproc segment; aliases must not "
+              "replace the compiler-authored transform name");
+      namespace client = simaai::scheduler::client;
+      auto manifest = render_manifest_from_compiled_contracts(compiled, {}, &diagnostics);
+      require(manifest && diagnostics.errors.empty(), "ResNet50 MLA-only route must render");
+      pipeline_internal::sima::finalize_pipeline_storage(*manifest);
+      const auto final_mla =
+          std::find_if(manifest->stages.begin(), manifest->stages.end(),
+                       [](const auto& stage) { return bool(stage.mla_program); });
+      require(final_mla != manifest->stages.end() && final_mla->frame_layout &&
+                  !final_mla->frame_layout->outputs.empty(),
+              "ResNet50 selected MLA route must finalize its owned output");
+      const auto& layout = *final_mla->frame_layout;
+      const auto& span = layout.outputs.front().span;
+      require(layout.allocations.at(span.allocation_index).policy ==
+                  client::AllocationPolicy::RequireDms,
+              "MLA-only output must use DMS when its EV74 egress is not selected");
       // The canonical handoff alias (output_tessellated_image) is no longer
       // surfaced verbatim in the MLA bindings/inputs; the bindings now carry the
       // upstream MPK transform name. The canonical handoff alias is still used

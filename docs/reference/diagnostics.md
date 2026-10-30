@@ -143,18 +143,21 @@ Recommended support bundle:
 For throughput/latency/power reporting, prefer the graph-run JSON export:
 
 ```cpp
-RunOptions opt;
-opt.enable_board_power();        // graph-level power when supported by the board/SOM
-Run run = graph.build(opt);
+Run run = graph.build(RunOptions{});
 
-// run your normal push/pull loop inside a measurement window, then:
-auto report = run.start_measurement().stop();
-std::cout << report.to_text();
+TelemetryMonitor telemetry_monitor; // board power, temperatures, CPU usage, and memory
+telemetry_monitor.start();
+auto scope = run.start_measurement();
+// run your normal push/pull loop here, then:
+auto report = scope.stop();
+Telemetry telemetry = telemetry_monitor.stop();
+std::cout << report.to_text() << telemetry;
 ```
 
 The export keeps scopes explicit:
 
-- `run.graph_metrics.throughput_fps` and `run.graph_metrics.power` are graph-level headlines.
+- `run.graph_metrics.throughput_fps` is the graph-level headline. `run.graph_metrics.power` is
+  filled only by the deprecated `RunOptions::enable_board_power()`; use `TelemetryMonitor` instead.
 - `run.node_metrics[]` contains node/plugin latency only; node/plugin power is intentionally absent.
 - `latency_semantics` and `aggregation` tell you whether values are run-lifetime or measured-window deltas.
 - `plugin_metrics_unattributed[]` preserves kernel/plugin rows that could not be mapped to exactly one node.
@@ -179,3 +182,23 @@ power-number validation.
 
 For structured plugin errors and actionable hints, see
 [Troubleshooting](/reference/troubleshooting).
+
+## Platform runtime recovery
+
+On Platform 3.0.0, an unavailable dispatcher is an error to investigate, not a
+request to start legacy services. Core does not initialize MLA memory or reset
+remote processors in response to a dispatcher error. The legacy recovery code
+and script have been removed; use the platform-approved recovery procedure.
+
+If a driver reports unknown completion, keep its DMA buffers and original pool
+loans retained. Closing a file descriptor, stopping the application, or restarting
+a service does not prove that hardware stopped accessing memory. Collect the
+failure report and use the platform-approved recovery procedure before retrying.
+
+### Keep Core and Scheduler packages matched {#keep-core-and-scheduler-packages-matched}
+
+Install Core with the Scheduler package set selected for that Core release. Scheduler owns the matching Runner, Kernels, Codecs, and firmware dependencies. A matching public C++ ABI alone does not establish runtime compatibility.
+
+Use the published dependencies selected by `build.sh`, or supply a complete matching Scheduler DEB set with `--scheduler PATH`. See [Local dependencies](/develop-apps/contribute/build-test/local-dependencies/).
+
+For board updates, install the complete Core bundle using [Install or Update Neat Library](/getting-started/neat-library/install-or-update/). The selected Scheduler installer validates the package set and manages firmware activation. If validation fails, obtain the matching Core/Scheduler bundle; do not replace receipts or force individual incompatible runtime or firmware packages.

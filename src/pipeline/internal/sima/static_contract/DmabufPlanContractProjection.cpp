@@ -1,0 +1,2535 @@
+#define SIMA_NEAT_INTERNAL 1
+#include "pipeline/internal/sima/static_contract/DmabufPlanContractProjection.h"
+#include "pipeline/internal/sima/static_contract/ModelStorageRequirements.h"
+#include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
+#include "pipeline/internal/sima/TensorSemanticsUtil.h"
+#include "pipeline/internal/sima/CanonicalStageIdentity.h"
+#include "pipeline/internal/sima/PluginContractSubsets.h"
+#include "pipeline/internal/sima/static_contract/TransformOperation.h"
+#include "pipeline/internal/sima/MpkContract.h"
+#include "pipeline/internal/sima/stagesemantics/ProcessCvuRuntimeConfigAdapterInternal.h"
+#include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemantics.h"
+#include "gst/SimaPluginStaticManifestAbi.h"
+
+#include <algorithm>
+#include <cctype>
+#include <iterator>
+#include <limits>
+#include <numeric>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+namespace simaai::neat::pipeline_internal::sima::static_contract {
+namespace {
+
+bool fail(std::string* error, std::string detail) {
+  if (error) {
+    *error = std::move(detail);
+  }
+  return false;
+}
+
+bool claim_input_sample(std::unordered_map<int, const BackendPortSpec*>& sources, const int source,
+                        const BackendPortSpec& port) {
+  const auto [found, inserted] = sources.emplace(source, &port);
+  const auto& first = *found->second;
+  return inserted ||
+         (first.value_id == port.value_id && first.logical_port_index == port.logical_port_index &&
+          first.batch_index != port.batch_index);
+}
+
+bool checked_add(const std::uint64_t lhs, const std::uint64_t rhs, std::uint64_t* result) {
+  if (!result || lhs > std::numeric_limits<std::uint64_t>::max() - rhs) {
+    return false;
+  }
+  *result = lhs + rhs;
+  return true;
+}
+
+std::optional<std::uint64_t> checked_align_up(const std::uint64_t value,
+                                              const std::uint64_t alignment) {
+  if (alignment == 0U || (alignment & (alignment - 1U)) != 0U) {
+    return std::nullopt;
+  }
+  const auto mask = alignment - 1U;
+  std::uint64_t rounded = 0U;
+  if (!checked_add(value, mask, &rounded)) {
+    return std::nullopt;
+  }
+  return rounded & ~mask;
+}
+
+bool exact_logical_tensor_span(const TensorShape& shape, std::span<const std::int64_t> stride_bytes,
+                               const std::string& dtype, std::uint64_t* span) {
+  if (!span || shape.empty() || dtype.empty() ||
+      (!stride_bytes.empty() && stride_bytes.size() != shape.size())) {
+    return false;
+  }
+  std::uint32_t ev_dtype = 0U;
+  if (!tensorsemantics::dtype_token_to_ev(dtype, &ev_dtype)) {
+    return false;
+  }
+  const int element_bytes = sima_ev_elem_size_bytes(ev_dtype);
+  if (element_bytes <= 0) {
+    return false;
+  }
+  std::uint64_t result = static_cast<std::uint64_t>(element_bytes);
+  if (stride_bytes.empty()) {
+    for (const auto dim : shape) {
+      if (dim <= 0 ||
+          static_cast<std::uint64_t>(dim) > std::numeric_limits<std::uint64_t>::max() / result) {
+        return false;
+      }
+      result *= static_cast<std::uint64_t>(dim);
+    }
+  } else {
+    for (std::size_t axis = 0; axis < shape.size(); ++axis) {
+      const auto dim = shape[axis];
+      const auto stride = stride_bytes[axis];
+      if (dim <= 0 || stride < 0 || (dim > 1 && stride == 0)) {
+        return false;
+      }
+      const auto extent = static_cast<std::uint64_t>(dim - 1);
+      const auto step = static_cast<std::uint64_t>(stride);
+      if (extent != 0U && step > std::numeric_limits<std::uint64_t>::max() / extent) {
+        return false;
+      }
+      if (!checked_add(result, extent * step, &result)) {
+        return false;
+      }
+    }
+  }
+  *span = result;
+  return true;
+}
+
+const OpSpec* producer_of(const ModelExecutionPlan& plan, const ValueId value_id) {
+  for (const auto& op : plan.ops()) {
+    if (std::find(op.outputs.begin(), op.outputs.end(), value_id) != op.outputs.end()) {
+      return &op;
+    }
+  }
+  return nullptr;
+}
+
+ValueId root_value_id(const ModelExecutionPlan& plan, const ValueId value_id) {
+  ValueId root = value_id;
+  for (std::size_t remaining = plan.values().size() + 1U; remaining > 0U; --remaining) {
+    const auto* value = plan.value(root);
+    if (!value || !value->read_expression.has_value()) {
+      return root;
+    }
+    root = value->read_expression->source_value_id;
+  }
+  return value_id;
+}
+
+bool project_carrier_span(const ModelExecutionPlan& plan, const ValueSpec& value,
+                          std::uint64_t offset, PhysicalBufferStaticSpec* physical,
+                          std::string* error) {
+  const auto* binding = value.storage_binding ? &*value.storage_binding : nullptr;
+  const auto* carrier = binding ? plan.carrier(binding->carrier_id) : nullptr;
+  std::uint64_t origin = 0;
+  if (!physical || !binding || !carrier || !checked_add(binding->byte_offset, offset, &origin) ||
+      origin > carrier->required_bytes || physical->size_bytes > carrier->required_bytes - origin ||
+      origin > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
+      !physical->required_alignment_bytes || origin % physical->required_alignment_bytes)
+    return fail(error, "physical port exceeds carrier '" + value.name + "'");
+  physical->model_carrier_id = binding->carrier_id;
+  physical->source_byte_offset = static_cast<std::int64_t>(origin);
+  return true;
+}
+
+bool is_external_carrier(const ModelExecutionPlan& plan, ValueId id) {
+  const auto* value = plan.value(id);
+  if (!value || !value->storage_binding)
+    return false;
+  return std::any_of(plan.model_inputs().begin(), plan.model_inputs().end(), [&](const auto input) {
+    const auto* root = plan.value(input);
+    return root && root->storage_binding &&
+           root->storage_binding->carrier_id == value->storage_binding->carrier_id;
+  });
+}
+
+std::vector<const ValueSpec*> read_views_consumed_after_mla(const ModelExecutionPlan& plan,
+                                                            const ValueId root_value_id) {
+  std::vector<const ValueSpec*> result;
+  std::unordered_set<ValueId> seen;
+  for (const auto& op : plan.ops()) {
+    if (op.kind == OpKind::Unpack || op.kind == OpKind::Slice) {
+      continue;
+    }
+    for (const auto input_id : op.inputs) {
+      const auto* value = plan.value(input_id);
+      if (!value || !value->read_expression.has_value() ||
+          value->read_expression->source_value_id != root_value_id ||
+          !seen.emplace(input_id).second) {
+        continue;
+      }
+      result.push_back(value);
+    }
+  }
+  return result;
+}
+
+struct PublicationTransportView {
+  TensorShape carrier_shape;
+  std::string carrier_dtype;
+  std::optional<std::string> carrier_layout;
+  std::uint64_t physical_span = 0U;
+};
+
+// A terminal MLA cut publishes the raw transport view, not the semantic value
+// produced by a removed Detess/Cast tail. In legacy packed-OFM manifests the
+// Unpack tensor type is the exact byte-carrier authority even when a typed
+// downstream Detess proves that ObjectDecode must interpret those bytes as
+// BF16. Trace only the address relations which preserve that carrier; never
+// let the downstream semantic dtype/layout change the producer catalogue.
+std::optional<PublicationTransportView>
+resolve_publication_transport_view(const ModelExecutionPlan& plan, const ValueSpec& value,
+                                   std::string* error) {
+  if (!value.logical_shape.has_value()) {
+    fail(error, "MLA publication view has no exact shape");
+    return std::nullopt;
+  }
+
+  std::string carrier_dtype = value.logical_dtype.value_or(std::string{});
+  std::optional<std::string> carrier_layout = value.logical_layout;
+  ValueId cursor = value.id;
+  std::unordered_set<ValueId> visited;
+  for (std::size_t remaining = plan.values().size() + 1U; remaining > 0U; --remaining) {
+    if (!visited.emplace(cursor).second) {
+      fail(error, "MLA publication address lineage contains a cycle");
+      return std::nullopt;
+    }
+    const auto* producer = producer_of(plan, cursor);
+    if (!producer) {
+      break;
+    }
+    const auto output = std::find(producer->outputs.begin(), producer->outputs.end(), cursor);
+    if (output == producer->outputs.end()) {
+      fail(error, "MLA publication address lineage lost its output identity");
+      return std::nullopt;
+    }
+    const auto output_index =
+        static_cast<std::size_t>(std::distance(producer->outputs.begin(), output));
+    if (producer->kind == OpKind::Unpack) {
+      const auto* unpack = std::get_if<UnpackOpConfig>(&producer->config);
+      if (!unpack || producer->inputs.size() != 1U ||
+          unpack->tensor_types.size() != producer->outputs.size() ||
+          output_index >= unpack->tensor_types.size() ||
+          unpack->tensor_types[output_index].empty()) {
+        fail(error, "packed OFM Unpack view has no exact carrier dtype");
+        return std::nullopt;
+      }
+      carrier_dtype = unpack->tensor_types[output_index];
+      // The flattened Unpack view does not author a physical HWC layout.
+      // Any HWC evidence propagated from a removed Detess belongs solely to
+      // the consumer contract.
+      carrier_layout.reset();
+      break;
+    }
+    if (producer->kind == OpKind::Slice || producer->kind == OpKind::Reshape) {
+      if (producer->inputs.size() != 1U || producer->outputs.size() != 1U || output_index != 0U) {
+        fail(error, "MLA publication address relation is ambiguous");
+        return std::nullopt;
+      }
+      cursor = producer->inputs.front();
+      continue;
+    }
+    if (producer->kind == OpKind::PassThrough) {
+      if (producer->inputs.size() != producer->outputs.size() ||
+          output_index >= producer->inputs.size()) {
+        fail(error, "MLA publication PassThrough relation is ambiguous");
+        return std::nullopt;
+      }
+      cursor = producer->inputs[output_index];
+      continue;
+    }
+    break;
+  }
+
+  std::span<const std::int64_t> strides;
+  if (value.read_expression.has_value()) {
+    strides = value.read_expression->stride_bytes;
+  } else if (value.storage_binding.has_value()) {
+    strides = value.storage_binding->stride_bytes;
+  }
+  const auto& carrier_shape =
+      value.storage_binding && !value.storage_binding->storage_shape.empty()
+          ? value.storage_binding->storage_shape
+      : value.read_expression && !value.read_expression->storage_shape.empty()
+          ? value.read_expression->storage_shape
+          : *value.logical_shape;
+  if (value.storage_binding && !value.storage_binding->storage_shape.empty()) {
+    std::uint64_t count = 1U;
+    for (const auto dimension : carrier_shape) {
+      if (dimension <= 0 || static_cast<std::uint64_t>(dimension) >
+                                std::numeric_limits<std::uint64_t>::max() / count) {
+        fail(error, "opaque storage geometry overflows");
+        return std::nullopt;
+      }
+      count *= static_cast<std::uint64_t>(dimension);
+    }
+    if (count != value.required_bytes) {
+      fail(error, "opaque storage geometry must describe bytes");
+      return std::nullopt;
+    }
+    carrier_dtype = "int8";
+    carrier_layout.reset();
+  }
+  std::uint64_t physical_span = 0U;
+  if (!exact_logical_tensor_span(carrier_shape, strides, carrier_dtype, &physical_span)) {
+    fail(error, "MLA publication carrier shape/stride/dtype is not exact");
+    return std::nullopt;
+  }
+  const auto* binding = value.storage_binding ? &*value.storage_binding : nullptr;
+  if (!binding || binding->physical_span != physical_span ||
+      binding->stride_bytes.size() != strides.size() ||
+      !std::equal(binding->stride_bytes.begin(), binding->stride_bytes.end(), strides.begin(),
+                  strides.end())) {
+    fail(error, "MLA publication carrier view disagrees with normalized storage");
+    return std::nullopt;
+  }
+  return PublicationTransportView{carrier_shape, std::move(carrier_dtype),
+                                  std::move(carrier_layout), physical_span};
+}
+
+bool has_terminal_read_publications(const ModelExecutionPlan& plan, const OpSpec& mla,
+                                    const std::span<const BackendPortSpec> outputs) {
+  if (plan.model_outputs().empty()) {
+    return false;
+  }
+  std::unordered_set<ValueId> roots;
+  for (const auto& port : outputs) {
+    if (!roots.emplace(root_value_id(plan, port.value_id)).second) {
+      return false;
+    }
+  }
+  std::unordered_set<ValueId> public_roots;
+  bool has_read_view = false;
+  for (const auto& output : plan.model_outputs()) {
+    const auto* value = plan.value(output.value_id);
+    if (!value || !value->logical_shape || !value->logical_dtype) {
+      return false;
+    }
+    has_read_view = has_read_view || value->read_expression.has_value();
+    public_roots.emplace(root_value_id(plan, output.value_id));
+  }
+  if (!has_read_view || roots != public_roots) {
+    return false;
+  }
+  // Storage policy does not decide logical output arity. A selected MLA-only
+  // fragment can retain its output group while a terminal Slice/identity/Reshape chain
+  // still publishes exactly the model's declared root-relative views.
+  for (const auto& op : plan.ops()) {
+    if (op.sequence <= mla.sequence) {
+      continue;
+    }
+    for (const auto id : op.outputs) {
+      const auto* value = plan.value(id);
+      if (!value || !value->read_expression || !roots.contains(root_value_id(plan, id))) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool project_terminal_mla_publications(const ModelExecutionPlan& plan,
+                                       const std::span<const BackendPortSpec> outputs,
+                                       MlaStaticContract* contract, std::string* error) {
+  if (!contract || outputs.empty() || plan.model_outputs().empty()) {
+    return fail(error, "terminal MLA publication has no exact output contract");
+  }
+
+  std::unordered_map<ValueId, std::size_t> port_for_root;
+  port_for_root.reserve(outputs.size());
+  for (std::size_t port_index = 0; port_index < outputs.size(); ++port_index) {
+    const auto& port = outputs[port_index];
+    const auto root = root_value_id(plan, port.value_id);
+    if (port.port_index != port_index || !port_for_root.emplace(root, port_index).second) {
+      return fail(error, "terminal MLA publication has an ambiguous physical output root");
+    }
+  }
+
+  contract->logical_outputs.clear();
+  contract->logical_outputs.reserve(plan.model_outputs().size());
+  for (std::size_t publication_index = 0; publication_index < plan.model_outputs().size();
+       ++publication_index) {
+    const auto& publication = plan.model_outputs()[publication_index];
+    const auto* value = plan.value(publication.value_id);
+    if (!value || publication.public_index != publication_index ||
+        publication_index > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
+        !value->logical_shape.has_value()) {
+      return fail(error, "terminal MLA publication has sparse or untyped public metadata");
+    }
+    const auto root = root_value_id(plan, publication.value_id);
+    const auto found = port_for_root.find(root);
+    if (found == port_for_root.end()) {
+      return fail(error, "terminal MLA public value does not map to an exact physical port");
+    }
+    const auto port_index = found->second;
+    const auto* root_value = plan.value(root);
+    if (!root_value) {
+      return fail(error, "terminal MLA physical output root is missing");
+    }
+
+    std::uint64_t byte_offset = 0U;
+    std::span<const std::int64_t> strides;
+    if (value->read_expression.has_value()) {
+      const auto& expression = *value->read_expression;
+      if (root_value_id(plan, expression.source_value_id) != root) {
+        return fail(error, "terminal MLA public read expression has a foreign root");
+      }
+      byte_offset = expression.byte_offset;
+      strides = std::span<const std::int64_t>(expression.stride_bytes);
+    } else if (value->storage_binding.has_value() &&
+               !value->storage_binding->stride_bytes.empty()) {
+      strides = std::span<const std::int64_t>(value->storage_binding->stride_bytes);
+    }
+
+    const auto transport = resolve_publication_transport_view(plan, *value, error);
+    if (byte_offset > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
+        !transport.has_value() || byte_offset > outputs[port_index].physical_extent_bytes ||
+        transport->physical_span > outputs[port_index].physical_extent_bytes - byte_offset) {
+      if (!transport.has_value()) {
+        return false;
+      }
+      return fail(error, "terminal MLA public view exceeds its physical output port");
+    }
+
+    const int logical_index = static_cast<int>(publication_index);
+    const int physical_index = static_cast<int>(port_index);
+    LogicalTensorStaticSpec logical;
+    logical.logical_index = logical_index;
+    logical.backend_output_index = physical_index;
+    logical.physical_index = physical_index;
+    logical.output_slot = logical_index;
+    logical.tensor_index = logical_index;
+    logical.byte_offset = static_cast<std::int64_t>(byte_offset);
+    logical.size_bytes = value->required_bytes;
+    logical.shape = transport->carrier_shape;
+    logical.stride_bytes.assign(strides.begin(), strides.end());
+    logical.dtype = transport->carrier_dtype;
+    logical.dtype_source = DTypeSource::InternalContract;
+    logical.logical_name = publication.name.empty() ? value->name : publication.name;
+    logical.backend_name = value->name;
+    logical.model_carrier_id = value->storage_binding->carrier_id;
+    logical.segment_name = root_value->name;
+    if (transport->carrier_layout.has_value()) {
+      logical.layout = *transport->carrier_layout;
+    }
+    contract->logical_outputs.push_back(std::move(logical));
+  }
+  return true;
+}
+
+struct PhysicalCvuCohortView {
+  const TransformOperationRule* rule = nullptr;
+  std::string implementation_id;
+  std::uint32_t batch_size = 0U;
+  std::vector<const PhysicalCommandMember*> members;
+};
+
+std::optional<PhysicalCvuCohortView> resolve_physical_cvu_cohort(
+    const ModelExecutionPlan& plan, const PhysicalExecutionPlan& physical_plan,
+    const std::span<const PhysicalCommandId> command_ids, std::string* error) {
+  if (command_ids.empty()) {
+    fail(error, "ProcessCVU projection references no physical command");
+    return std::nullopt;
+  }
+  PhysicalCvuCohortView result;
+  std::optional<PhysicalCohortId> cohort_id;
+  std::uint32_t maximum_members = 0U;
+  for (const auto command_id : command_ids) {
+    if (command_id >= physical_plan.commands.size()) {
+      fail(error, "ProcessCVU projection references a missing physical command");
+      return std::nullopt;
+    }
+    const auto& command = physical_plan.commands[command_id];
+    if (command.id != command_id || command.engine != PhysicalEngine::Cvu ||
+        command.implementation_id.empty() || command.members.empty() ||
+        command.maximum_members == 0U || command.members.size() > command.maximum_members ||
+        (cohort_id.has_value() && *cohort_id != command.cohort_id) ||
+        (!result.implementation_id.empty() &&
+         result.implementation_id != command.implementation_id) ||
+        (result.batch_size != 0U && result.batch_size != command.batch_size) ||
+        (maximum_members != 0U && maximum_members != command.maximum_members)) {
+      fail(error, "ProcessCVU projection references an incompatible physical cohort");
+      return std::nullopt;
+    }
+    cohort_id = command.cohort_id;
+    maximum_members = command.maximum_members;
+    result.batch_size = command.batch_size;
+    result.implementation_id = command.implementation_id;
+    for (const auto& member : command.members)
+      result.members.push_back(&member);
+  }
+
+  result.rule = transform_operation(result.implementation_id);
+  std::sort(result.members.begin(), result.members.end(),
+            [](const auto* left, const auto* right) { return left->ordinal < right->ordinal; });
+  if (result.members.empty() || !result.rule ||
+      std::adjacent_find(result.members.begin(), result.members.end(),
+                         [](const auto* left, const auto* right) {
+                           return left->ordinal == right->ordinal;
+                         }) != result.members.end() ||
+      result.rule->maximum_members != maximum_members || result.batch_size == 0U ||
+      result.batch_size > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
+    fail(error, "ProcessCVU physical cohort has no exact semantic transform rule");
+    return std::nullopt;
+  }
+
+  for (const auto* member : result.members) {
+    if (member->semantic_chain.size() + (member->pad_output_channels ? 1U : 0U) !=
+            result.rule->semantic_pattern_length() ||
+        (member->pad_output_channels &&
+         (result.rule->operation != "quanttess" || member->semantic_chain.size() != 1U)) ||
+        member->outer_inputs.size() != 1U || member->outer_outputs.size() != 1U ||
+        std::any_of(member->semantic_chain.begin(), member->semantic_chain.end(),
+                    [&](const auto op_id) {
+                      return op_id >= plan.ops().size() || plan.ops()[op_id].id != op_id;
+                    })) {
+      fail(error, "ProcessCVU physical cohort has no exact registered member chain");
+      return std::nullopt;
+    }
+    for (std::size_t index = 0; index < member->semantic_chain.size(); ++index) {
+      const auto& op = plan.ops()[member->semantic_chain[index]];
+      const auto expected = index == 0U ? result.rule->first : *result.rule->second;
+      if (op.kind != expected || op.processor != "EV74" || op.inputs.size() != 1U ||
+          op.outputs.size() != 1U ||
+          (index > 0U && !resolve_exact_private_ordered_relation_path(
+                             plan, member->semantic_chain[index - 1U], op.id))) {
+        fail(error, "ProcessCVU member chain is not one registered connected transform");
+        return std::nullopt;
+      }
+    }
+    const auto& first = plan.ops()[member->semantic_chain.front()];
+    const auto& last = plan.ops()[member->semantic_chain.back()];
+    if (member->outer_inputs.front() != first.inputs.front() ||
+        member->outer_outputs.front() != last.outputs.front()) {
+      fail(error, "ProcessCVU member outer bindings contradict its semantic chain");
+      return std::nullopt;
+    }
+  }
+  return result;
+}
+
+std::optional<ValueSpec> physical_sample_value(const ModelExecutionPlan& plan, const ValueId id,
+                                               std::uint32_t batch_index, std::uint32_t batch_count,
+                                               std::string* error) {
+  const auto* original = plan.value(id);
+  if (!original || !original->storage_binding || batch_count == 0U || batch_index >= batch_count) {
+    fail(error, "native MLA sample has no exact typed storage");
+    return std::nullopt;
+  }
+  auto value = *original;
+  if (batch_count == 1U) {
+    return value;
+  }
+  if (!value.logical_shape) {
+    fail(error, "native MLA sample has no logical shape");
+    return std::nullopt;
+  }
+  auto& shape = *value.logical_shape;
+  auto& binding = *value.storage_binding;
+  if (shape.empty() || shape.front() != batch_count || value.required_bytes % batch_count != 0U) {
+    fail(error, "native MLA sample count contradicts its semantic tensor");
+    return std::nullopt;
+  }
+  const auto& storage_shape =
+      !binding.storage_shape.empty() ? binding.storage_shape
+      : value.read_expression && !value.read_expression->storage_shape.empty()
+          ? value.read_expression->storage_shape
+          : shape;
+  std::uint64_t stride = 0U;
+  if (binding.stride_bytes.empty()) {
+    stride = value.required_bytes / batch_count;
+  } else {
+    if (storage_shape.empty() || storage_shape.front() != batch_count ||
+        binding.stride_bytes.size() != storage_shape.size() || binding.stride_bytes.front() <= 0) {
+      fail(error, "native MLA sample has no positive batch stride");
+      return std::nullopt;
+    }
+    stride = static_cast<std::uint64_t>(binding.stride_bytes.front());
+  }
+  if (stride == 0U || (batch_count - 1U) > binding.physical_span / stride) {
+    fail(error, "native MLA sample stride exceeds its carrier");
+    return std::nullopt;
+  }
+  auto sample_span = value.required_bytes / batch_count;
+  if (!binding.stride_bytes.empty()) {
+    std::uint64_t elements = 1U;
+    for (const auto dimension : storage_shape) {
+      if (dimension <= 0 || static_cast<std::uint64_t>(dimension) >
+                                std::numeric_limits<std::uint64_t>::max() / elements) {
+        fail(error, "native MLA sample storage shape overflows");
+        return std::nullopt;
+      }
+      elements *= static_cast<std::uint64_t>(dimension);
+    }
+    if (value.required_bytes % elements != 0U) {
+      fail(error, "native MLA sample has no exact storage element width");
+      return std::nullopt;
+    }
+    sample_span = value.required_bytes / elements;
+    for (std::size_t axis = 1U; axis < storage_shape.size(); ++axis) {
+      const auto steps = static_cast<std::uint64_t>(storage_shape[axis] - 1);
+      if (binding.stride_bytes[axis] <= 0 ||
+          steps > (std::numeric_limits<std::uint64_t>::max() - sample_span) /
+                      static_cast<std::uint64_t>(binding.stride_bytes[axis])) {
+        fail(error, "native MLA sample storage span overflows");
+        return std::nullopt;
+      }
+      sample_span += steps * static_cast<std::uint64_t>(binding.stride_bytes[axis]);
+    }
+  }
+  if (binding.channel_alignment > 1U) {
+    sample_span = stride;
+  }
+  const auto offset = batch_index * stride;
+  if (sample_span == 0U || sample_span > stride || offset > binding.physical_span ||
+      sample_span > binding.physical_span - offset ||
+      binding.byte_offset > std::numeric_limits<std::uint64_t>::max() - offset) {
+    fail(error, "native MLA sample spans overlap or overflow");
+    return std::nullopt;
+  }
+  binding.byte_offset += offset;
+  binding.physical_span = sample_span;
+  if (!binding.storage_shape.empty()) {
+    binding.storage_shape.front() = 1;
+  }
+  value.required_bytes /= batch_count;
+  shape.front() = 1;
+  value.name += ".batch." + std::to_string(batch_index);
+  if (value.read_expression) {
+    auto& expression = *value.read_expression;
+    if (expression.byte_offset > std::numeric_limits<std::uint64_t>::max() - offset) {
+      fail(error, "native MLA sample read offset overflows");
+      return std::nullopt;
+    }
+    expression.byte_offset += offset;
+    if (!expression.storage_shape.empty()) {
+      if (expression.storage_shape.front() != batch_count) {
+        fail(error, "native MLA sample transport shape has a conflicting batch");
+        return std::nullopt;
+      }
+      expression.storage_shape.front() = 1;
+    }
+  }
+  return value;
+}
+
+bool apply_processcvu_implementation_contract(ProcessCvuStagePayload* payload, std::string* error,
+                                              std::string_view operation = {}) {
+  if (!payload)
+    return fail(error, "ProcessCVU implementation projection is null");
+  if (!operation.empty()) {
+    if (canonical_transform_operation(payload->graph_name) != operation)
+      return fail(error, "ProcessCVU stage contradicts its selected semantic operation");
+    const auto expected_family =
+        stagesemantics::canonical_processcvu_graph_family(std::string(operation));
+    if (expected_family.empty() ||
+        stagesemantics::canonical_processcvu_graph_family(payload->graph_family) != expected_family)
+      return fail(error, "ProcessCVU family contradicts its selected semantic operation");
+  } else {
+    // A boundary alone proves no fused semantic chain. Fused transforms must
+    // enter through the physical-command projection, which checks that chain.
+    const auto name = canonical_transform_operation(payload->graph_name);
+    const auto* rule = transform_operation(name);
+    if (name != "preproc" && (!rule || rule->second.has_value()))
+      return fail(error, "boundary-only ProcessCVU projection does not support this operation; "
+                         "a fused operation requires its physical command");
+  }
+  return initialize_canonical_stage_contract(*payload, error);
+}
+
+std::vector<int> cvu_shape_from_tensor(const TensorShape& source) {
+  std::vector<int> result;
+  result.reserve(source.size());
+  for (const auto dim : source) {
+    if (dim <= 0 || dim > std::numeric_limits<int>::max()) {
+      return {};
+    }
+    result.push_back(static_cast<int>(dim));
+  }
+  return result;
+}
+
+std::vector<int> cvu_shape(const ValueSpec& value, const TensorShape& fallback = {}) {
+  return cvu_shape_from_tensor(value.logical_shape.has_value() ? *value.logical_shape : fallback);
+}
+
+std::string cvu_dtype(const ValueSpec& value, std::string fallback = {}) {
+  std::string dtype = value.logical_dtype.value_or(std::move(fallback));
+  std::transform(dtype.begin(), dtype.end(), dtype.begin(),
+                 [](const unsigned char c) { return static_cast<char>(std::toupper(c)); });
+  if (dtype == "FLOAT32")
+    return "FP32";
+  if (dtype == "FLOAT16")
+    return "FP16";
+  if (dtype == "BFLOAT16")
+    return "BF16";
+  return dtype;
+}
+
+bool build_cvu_dense_desc_with_geometry(const ValueSpec& value, const TensorShape& logical_shape,
+                                        const std::string& logical_layout,
+                                        const std::string& fallback_dtype,
+                                        sima_ev_tensor_desc* descriptor, std::string* error,
+                                        const bool singleton_axes = false) {
+  const auto shape = cvu_shape_from_tensor(logical_shape);
+  const auto dtype = cvu_dtype(value, fallback_dtype);
+  std::string detail;
+  const bool valid =
+      tensorsemantics::normalize_layout_token(logical_layout).empty()
+          ? tensorsemantics::build_generic_dense_tensor_desc(
+                shape, dtype, descriptor, &detail, "missing tensor descriptor",
+                "invalid tensor rank", "invalid tensor dimension", "invalid tensor dtype",
+                "invalid tensor stride")
+          : tensorsemantics::build_dense_tensor_desc(
+                shape, dtype, logical_layout, descriptor, &detail, "missing tensor descriptor",
+                "invalid tensor rank", "invalid tensor dimension", "invalid tensor dtype",
+                "invalid tensor stride");
+  if (!valid) {
+    return fail(error, "ProcessCVU could not author dense tensor descriptor: " + detail);
+  }
+
+  // A tensor descriptor describes the exact addressed view, not every byte in
+  // its backing carrier.  QMLA ports may have harmless tail padding (and, for
+  // multi-row outputs, an exact compiler-authored row pitch).  Keep that
+  // larger extent in the physical-buffer contract while authoring the CVU
+  // descriptor from the value's semantic bytes and storage strides.
+  std::uint64_t dense_span = 0U;
+  if (!exact_logical_tensor_span(logical_shape, {}, dtype, &dense_span) ||
+      dense_span != value.required_bytes) {
+    return fail(error, "ProcessCVU dense tensor bytes contradict its exact typed value");
+  }
+  std::span<const std::int64_t> authored_strides;
+  if (value.storage_binding && !value.storage_binding->stride_bytes.empty()) {
+    authored_strides = value.storage_binding->stride_bytes;
+    if (singleton_axes) {
+      // The caller proved the model's private address relation before choosing
+      // execution geometry. Preserve its dense byte order, not the rank of the
+      // public stride vector. Singleton-axis strides do not address more bytes.
+      if (!value.logical_shape || authored_strides.size() != value.logical_shape->size()) {
+        return fail(error, "ProcessCVU singleton publication has invalid public stride rank");
+      }
+      std::size_t execution_axis = 0U;
+      for (std::size_t axis = 0U; axis < authored_strides.size(); ++axis) {
+        if (authored_strides[axis] <= 0) {
+          return fail(error, "ProcessCVU singleton publication has invalid public strides");
+        }
+        if (value.logical_shape->at(axis) == 1)
+          continue;
+        while (execution_axis < logical_shape.size() && logical_shape[execution_axis] == 1)
+          ++execution_axis;
+        if (execution_axis == logical_shape.size() ||
+            logical_shape[execution_axis] != value.logical_shape->at(axis) ||
+            authored_strides[axis] != descriptor->layout.strided.strides_bytes[execution_axis]) {
+          return fail(error, "ProcessCVU singleton publication changes dense element addressing");
+        }
+        ++execution_axis;
+      }
+      authored_strides = {};
+    } else if (authored_strides.size() != descriptor->shape.rank) {
+      return fail(error, "ProcessCVU dense tensor storage stride rank is invalid");
+    }
+    for (std::size_t axis = 0; axis < authored_strides.size(); ++axis) {
+      if (authored_strides[axis] <= 0) {
+        return fail(error, "ProcessCVU dense tensor storage stride is invalid");
+      }
+      descriptor->layout.strided.strides_bytes[axis] = authored_strides[axis];
+    }
+  }
+  std::uint64_t addressed_span = 0U;
+  if (!exact_logical_tensor_span(logical_shape, authored_strides, dtype, &addressed_span) ||
+      addressed_span < dense_span ||
+      (value.storage_binding && addressed_span > value.storage_binding->physical_span)) {
+    return fail(error, "ProcessCVU dense tensor view exceeds its exact physical carrier");
+  }
+  descriptor->storage.nbytes = addressed_span;
+  return addressed_span != 0U;
+}
+
+// Publication authority is a compiler fact, not an equal-byte heuristic. In a
+// fused member the last scalar operation owns a new carrier; its output alone
+// cannot retain the private address view absorbed between the two operations.
+bool prove_singleton_publication(const ModelExecutionPlan& plan,
+                                 const PhysicalCommandMember& member,
+                                 const TensorShape& execution_shape, const ValueSpec& output,
+                                 std::string* error) {
+  if (member.semantic_chain.size() != 2U || !output.logical_shape || execution_shape.empty() ||
+      output.logical_shape->empty() ||
+      std::any_of(execution_shape.begin(), execution_shape.end(),
+                  [](auto dim) { return dim <= 0; }) ||
+      std::any_of(output.logical_shape->begin(), output.logical_shape->end(),
+                  [](auto dim) { return dim <= 0; }) ||
+      !plugin_contracts::unit_axis_shape_alias_public(execution_shape, *output.logical_shape)) {
+    return fail(error, "fused output publication is not an ordered singleton-axis view");
+  }
+  const auto& first = plan.ops()[member.semantic_chain.front()];
+  const auto& last = plan.ops()[member.semantic_chain.back()];
+  const auto* frame = plan.value(first.outputs.front());
+  const auto* scalar_input = plan.value(last.inputs.front());
+  if (!frame || !frame->logical_shape || *frame->logical_shape != execution_shape ||
+      !scalar_input || scalar_input->logical_shape != output.logical_shape ||
+      !resolve_exact_private_ordered_relation_path(plan, first.id, last.id)) {
+    return fail(error, "fused singleton publication has no exact private model-view authority");
+  }
+  return true;
+}
+
+bool build_cvu_dense_desc(const ValueSpec& value, const TensorShape& fallback_shape,
+                          const std::string& fallback_dtype, sima_ev_tensor_desc* descriptor,
+                          std::string* error) {
+  const TensorShape logical_shape =
+      value.logical_shape.has_value() ? *value.logical_shape : fallback_shape;
+  return build_cvu_dense_desc_with_geometry(value, logical_shape, value.logical_layout.value_or(""),
+                                            fallback_dtype, descriptor, error);
+}
+
+bool build_cvu_tiled_desc(const ValueSpec& value, const TensorShape& frame_shape,
+                          const TensorShape& raw_tile_shape, const std::string& frame_type,
+                          const bool align_c16, const bool cblock, sima_ev_tensor_desc* descriptor,
+                          std::string* error) {
+  const auto shape = !frame_shape.empty() ? cvu_shape_from_tensor(frame_shape) : cvu_shape(value);
+  std::vector<int> raw_tiles;
+  raw_tiles.reserve(raw_tile_shape.size());
+  for (const auto dim : raw_tile_shape) {
+    if (dim <= 0 || dim > std::numeric_limits<int>::max()) {
+      return fail(error, "ProcessCVU tiled descriptor has an invalid slice shape");
+    }
+    raw_tiles.push_back(static_cast<int>(dim));
+  }
+  std::vector<int> tiles;
+  std::string detail;
+  if (!tensorsemantics::normalize_tile_shape(
+          shape, raw_tiles, &tiles, &detail, "missing tile shape",
+          "tile rank is incompatible with frame rank", "invalid tile dimension")) {
+    return fail(error, "ProcessCVU could not normalize tiled tensor descriptor: " + detail);
+  }
+  const auto dtype = cvu_dtype(value, frame_type);
+  const auto layout = value.logical_layout.value_or("");
+  if (!tensorsemantics::build_tiled_tensor_desc(
+          shape, tiles, dtype, layout, 16U, descriptor, &detail, "missing tensor descriptor",
+          "invalid tensor rank", "invalid tensor dimension", "invalid tensor dtype",
+          "tile rank mismatch", "invalid tile dimension")) {
+    return fail(error, "ProcessCVU could not author tiled tensor descriptor: " + detail);
+  }
+  // A Tess/Detess frame supplies ordered trailing D/H/W/C semantics even
+  // when the outer carrier has no layout label (for example a rank-two W,C
+  // frame). Do not apply this default to arbitrary dense scalar tensors.
+  if (layout.empty() ||
+      (shape.size() < 3U && tensorsemantics::normalize_layout_token(layout) == "HWC")) {
+    // A short tiled frame is trailing W,C (or C), not a two-dimensional
+    // raw image. Retain explicit channel encoding for canonical admission.
+    tensorsemantics::fill_axis_semantics_from_shape_layout(shape, {},
+                                                           descriptor->shape.axis_semantics);
+  }
+  // Physical projection must retain the compiler's exact channel order.
+  // Merely clearing COMPACT erased both padded-HWC and CBlock16 into NONE,
+  // leaving a later executor unable to distinguish equal-sized allocations.
+  // Native admission may prove a particular blocked tile equivalent, but the
+  // planner must not make that assumption or lose the authored encoding.
+  if (tensorsemantics::find_shape_axis(descriptor->shape, SIMA_EV_AXIS_C) >= 0) {
+    descriptor->layout.tiled.flags = cblock      ? SIMA_EV_TILED_FLAG_CBLOCK16
+                                     : align_c16 ? SIMA_EV_TILED_FLAG_PADDED_HWC_C16
+                                                 : SIMA_EV_TILED_FLAG_COMPACT_CHANNELS;
+  }
+  descriptor->storage.nbytes =
+      value.storage_binding ? value.storage_binding->physical_span : value.required_bytes;
+  return descriptor->storage.nbytes != 0U;
+}
+
+std::optional<int> cvu_rounding_mode(const std::string& raw) {
+  std::string token = raw;
+  std::transform(token.begin(), token.end(), token.begin(),
+                 [](const unsigned char c) { return static_cast<char>(std::toupper(c)); });
+  if (token == "RT_ZERO" || token == "TOZERO")
+    return 0;
+  if (token == "RT_EVEN" || token == "TONEAREST")
+    return 1;
+  if (token == "RT_POSITVE_INFINITY" || token == "TOPOSITIVEINFINITY")
+    return 2;
+  if (token == "RT_NEGATIVE_INFINITY" || token == "TONEGATIVEINFINITY")
+    return 3;
+  return std::nullopt;
+}
+
+} // namespace
+
+std::optional<CompiledProcessCvuContract> build_dmabuf_plan_processcvu_command_contract(
+    const ModelExecutionPlan& plan, const PhysicalExecutionPlan& physical_plan,
+    const std::span<const PhysicalCommandId> command_ids, std::string* error) {
+  const auto cohort = resolve_physical_cvu_cohort(plan, physical_plan, command_ids, error);
+  if (!cohort) {
+    return std::nullopt;
+  }
+
+  stagesemantics::CompiledProcessCvuRuntimeConfig authored;
+  authored.graph_family =
+      stagesemantics::canonical_processcvu_graph_family(std::string(cohort->rule->operation));
+  authored.graph_name = cohort->rule->operation;
+  // Existing ProcessCVU ABI encodes the canonical 16-byte tile alignment as
+  // the sentinel value 1; the runtime-config adapter resolves 1 -> 16.
+  authored.byte_align = 1;
+  // These descriptors already cover each member's complete semantic tensor,
+  // including its batch axis and storage. The runtime field counts repeated
+  // descriptors, not semantic N; repeating N times would execute the full batch
+  // N times. Cohort grouping retains its own unchanged semantic batch authority.
+  authored.batch_size = 1;
+  authored.input_tensors.reserve(cohort->members.size());
+  authored.output_tensors.reserve(cohort->members.size());
+  authored.input_shapes.reserve(cohort->members.size());
+  authored.output_shapes.reserve(cohort->members.size());
+  authored.slice_shapes.reserve(cohort->members.size());
+  authored.runtime_input_names.reserve(cohort->members.size());
+  authored.runtime_output_names.reserve(cohort->members.size());
+  authored.physical_input_names.reserve(cohort->members.size());
+  authored.physical_output_names.reserve(cohort->members.size());
+  authored.published_output_names.reserve(cohort->members.size());
+  authored.runtime_output_logical_index_list.reserve(cohort->members.size());
+  authored.runtime_output_output_slot_list.reserve(cohort->members.size());
+  authored.runtime_output_physical_index_list.reserve(cohort->members.size());
+  authored.runtime_output_dtype_list.reserve(cohort->members.size());
+  authored.runtime_output_transport_kind_list.reserve(cohort->members.size());
+  authored.runtime_output_semantic_kind_list.reserve(cohort->members.size());
+  authored.runtime_output_logical_shapes.reserve(cohort->members.size());
+  authored.runtime_output_logical_layout_list.reserve(cohort->members.size());
+
+  std::optional<int> uniform_rounding;
+  bool detesscast_requires_lane_split = false;
+  std::vector<PublicationViewRelation> publication_relations;
+  publication_relations.reserve(cohort->members.size());
+  for (std::size_t index = 0; index < cohort->members.size(); ++index) {
+    const auto& member = *cohort->members[index];
+    const auto& first_op = plan.ops()[member.semantic_chain.front()];
+    const auto& last_op = plan.ops()[member.semantic_chain.back()];
+    const auto* input = plan.value(member.outer_inputs.front());
+    const auto* output = plan.value(member.outer_outputs.front());
+    if (!input || !output || !input->storage_binding || !output->storage_binding ||
+        !input->logical_shape || !input->logical_dtype || !output->logical_shape ||
+        !output->logical_dtype) {
+      fail(error, "ProcessCVU physical member has no exact typed outer values");
+      return std::nullopt;
+    }
+
+    const TessellateOpConfig* tess = nullptr;
+    const DetessellateOpConfig* detess = nullptr;
+    const QuantizeOpConfig* quant = nullptr;
+    const DequantizeOpConfig* dequant = nullptr;
+    const OpSpec* tess_op = nullptr;
+    for (const auto op_id : member.semantic_chain) {
+      const auto& op = plan.ops()[op_id];
+      if (op.kind == OpKind::Tessellate) {
+        tess = std::get_if<TessellateOpConfig>(&op.config);
+        tess_op = &op;
+      } else if (op.kind == OpKind::Detessellate) {
+        detess = std::get_if<DetessellateOpConfig>(&op.config);
+      } else if (op.kind == OpKind::Quantize) {
+        quant = std::get_if<QuantizeOpConfig>(&op.config);
+      } else if (op.kind == OpKind::Dequantize) {
+        dequant = std::get_if<DequantizeOpConfig>(&op.config);
+      }
+    }
+
+    std::optional<TessellateOpConfig> channel_padding;
+    if (member.pad_output_channels) {
+      if (!quant || tess || !output->storage_binding ||
+          output->storage_binding->channel_alignment != 16U ||
+          output->logical_shape->size() != 4U || cvu_dtype(*output, {}) != "INT8") {
+        fail(error, "padded Quantize requires exact INT8 NHWC storage");
+        return std::nullopt;
+      }
+      channel_padding =
+          TessellateOpConfig{{1, 1, 1, output->logical_shape->back()}, true, false, "int8"};
+      tess = &*channel_padding;
+      tess_op = &last_op;
+    }
+    TensorShape detess_execution_shape;
+    if (detess) {
+      detess_execution_shape = detess->frame_shape;
+      if (detess->frame_shape_semantics != DetessFrameShapeSemantics::Tensor &&
+          detess->frame_shape_semantics != DetessFrameShapeSemantics::LegacyMpk) {
+        fail(error, "Detess has unknown frame-shape semantics");
+        return std::nullopt;
+      }
+      if (detess_execution_shape.size() == 2U &&
+          detess->frame_shape_semantics == DetessFrameShapeSemantics::LegacyMpk) {
+        // Only the MPK decoder's explicit legacy provenance admits NC/HW
+        // interpretation. Typed Detess recipes already own their tensor axes;
+        // rank, kernel names and equal bytes cannot override that authority.
+        // Keep the existing ambiguity rejection and exact transport proof,
+        // using the addressed packed span rather than dense logical bytes.
+        MpkPluginIoContract geometry;
+        geometry.name = first_op.name;
+        geometry.batch_sz_model = first_op.batch_count;
+        geometry.frame_shape = detess->frame_shape;
+        geometry.frame_type = detess->frame_type;
+        geometry.has_align_c16 = geometry.has_cblock = true;
+        geometry.align_c16 = detess->align_c16;
+        geometry.cblock = detess->cblock;
+        geometry.input_tensors.resize(1U);
+        geometry.input_tensors.front().size_bytes = input->storage_binding->physical_span;
+        geometry.input_tensors.front().dtype = cvu_dtype(*input, detess->frame_type);
+        geometry.output_tensors.resize(1U);
+        geometry.output_tensors.front().size_bytes = output->required_bytes;
+        geometry.output_tensors.front().dtype = cvu_dtype(*output, {});
+        if (!resolve_detess_runtime_frame_shape(geometry, error))
+          return std::nullopt;
+        detess_execution_shape = detess_runtime_frame_shape(geometry);
+      }
+    }
+    sima_ev_tensor_desc input_descriptor{};
+    sima_ev_tensor_desc output_descriptor{};
+    auto publication_relation = PublicationViewRelation::Identity;
+    if (detess) {
+      if (!build_cvu_tiled_desc(*input, detess_execution_shape, detess->slice_shape,
+                                detess->frame_type, detess->align_c16, detess->cblock,
+                                &input_descriptor, error)) {
+        return std::nullopt;
+      }
+      authored.slice_shapes.push_back(cvu_shape_from_tensor(detess->slice_shape));
+      detesscast_requires_lane_split =
+          detesscast_requires_lane_split ||
+          (cvu_dtype(*input, detess->frame_type) == "BF16" && detess->align_c16 && detess->cblock &&
+           last_op.kind == OpKind::Cast);
+    } else {
+      const auto fallback =
+          first_op.input_shapes.empty() ? TensorShape{} : first_op.input_shapes.front();
+      if (!build_cvu_dense_desc(*input, fallback, {}, &input_descriptor, error)) {
+        return std::nullopt;
+      }
+    }
+    if (tess) {
+      publication_relation = PublicationViewRelation::PackedStorage;
+      TensorShape frame_shape;
+      if (tess_op && !tess_op->input_shapes.empty()) {
+        frame_shape = tess_op->input_shapes.front();
+      } else if (tess_op) {
+        const auto* frame = plan.value(tess_op->inputs.front());
+        if (frame && frame->logical_shape)
+          frame_shape = *frame->logical_shape;
+      }
+      if (!build_cvu_tiled_desc(*output, frame_shape, tess->slice_shape, tess->frame_type,
+                                tess->align_c16, tess->cblock, &output_descriptor, error)) {
+        return std::nullopt;
+      }
+      authored.slice_shapes.push_back(cvu_shape_from_tensor(tess->slice_shape));
+    } else {
+      const auto fallback =
+          last_op.output_shapes.empty() ? TensorShape{} : last_op.output_shapes.front();
+      // A fused Detess followed by a scalar conversion executes in the Detess
+      // frame geometry. An absorbed address-only rank view changes publication,
+      // not that execution geometry, for both Cast and Dequantize.
+      const bool fused_detess_scalar_geometry =
+          detess && member.semantic_chain.size() == 2U && first_op.kind == OpKind::Detessellate &&
+          (last_op.kind == OpKind::Cast || last_op.kind == OpKind::Dequantize);
+      if (fused_detess_scalar_geometry && detess->frame_shape != *output->logical_shape) {
+        if (!prove_singleton_publication(plan, member, detess->frame_shape, *output, error))
+          return std::nullopt;
+        publication_relation = PublicationViewRelation::SingletonAxes;
+      }
+      const bool detess_output_geometry =
+          fused_detess_scalar_geometry || (detess && last_op.kind == OpKind::Detessellate);
+      if (detess_output_geometry && detess_execution_shape != *output->logical_shape) {
+        if (!plugin_contracts::unit_axis_shape_alias_public(detess_execution_shape,
+                                                            *output->logical_shape)) {
+          fail(error, "normalized Detess geometry changes public element order");
+          return std::nullopt;
+        }
+        publication_relation = PublicationViewRelation::SingletonAxes;
+      }
+      const bool output_descriptor_built =
+          detess_output_geometry
+              ? build_cvu_dense_desc_with_geometry(
+                    *output, detess_execution_shape,
+                    detess_execution_shape.size() < 3U ? "" : "HWC", {}, &output_descriptor, error,
+                    publication_relation == PublicationViewRelation::SingletonAxes)
+              : build_cvu_dense_desc(*output, fallback, {}, &output_descriptor, error);
+      if (!output_descriptor_built) {
+        return std::nullopt;
+      }
+      if (fused_detess_scalar_geometry) {
+        // Detess and the fused scalar operation use the same proven frame.
+        // Preserve its authored axes, including explicit N, rather than infer
+        // a second potentially different layout from the public view's rank.
+        std::copy(std::begin(input_descriptor.shape.axis_semantics),
+                  std::end(input_descriptor.shape.axis_semantics),
+                  std::begin(output_descriptor.shape.axis_semantics));
+      }
+    }
+    if (detess && first_op.batch_count > 1U && input->storage_binding &&
+        !input->storage_binding->stride_bytes.empty() &&
+        input->storage_binding->stride_bytes.front() > 0 &&
+        std::uint64_t(input->storage_binding->stride_bytes.front()) >
+            input_descriptor.storage.nbytes / first_op.batch_count)
+      publication_relation = PublicationViewRelation::BatchSlices;
+    // MPK HWC annotations omit the leading N label. The semantic batch
+    // identifies that axis for both sides of a full-tensor transform.
+    for (auto* descriptor : {&input_descriptor, &output_descriptor}) {
+      const auto& shape = descriptor->shape;
+      if (first_op.batch_count > 1U && shape.rank == 4U && shape.sizes[0] == first_op.batch_count &&
+          shape.axis_semantics[0] == SIMA_EV_AXIS_D && shape.axis_semantics[1] == SIMA_EV_AXIS_H &&
+          shape.axis_semantics[2] == SIMA_EV_AXIS_W && shape.axis_semantics[3] == SIMA_EV_AXIS_C)
+        descriptor->shape.axis_semantics[0] = SIMA_EV_AXIS_N;
+    }
+    authored.input_tensors.emplace_back(
+        input_descriptor, cvu_dtype(*input, detess ? detess->frame_type : std::string{}));
+    authored.output_tensors.emplace_back(
+        output_descriptor, cvu_dtype(*output, tess ? tess->frame_type : std::string{}));
+    publication_relations.push_back(publication_relation);
+    authored.input_shapes.push_back(cvu_shape(*input));
+    authored.output_shapes.push_back(cvu_shape(*output));
+    authored.runtime_output_logical_shapes.push_back(cvu_shape(*output));
+
+    const auto input_name = "input_tensor_" + std::to_string(index);
+    // Canonical facts select published outputs by their runtime output names.
+    // Use the exact authored outer ValueSpec identity for every member rather
+    // than introducing a second, synthetic naming domain.
+    const auto& output_name = output->name;
+    authored.runtime_input_names.push_back(input_name);
+    authored.runtime_output_names.push_back(output_name);
+    authored.physical_input_names.push_back(input_name);
+    authored.physical_output_names.push_back(output_name);
+    authored.published_output_names.push_back(output->name);
+    authored.runtime_output_logical_index_list.push_back(static_cast<int>(index));
+    authored.runtime_output_output_slot_list.push_back(static_cast<int>(index));
+    authored.runtime_output_physical_index_list.push_back(static_cast<int>(index));
+    authored.runtime_output_dtype_list.push_back(cvu_dtype(*output));
+    authored.runtime_output_transport_kind_list.push_back(
+        tess ? ProcessCvuOutputTransportKind::Packed : ProcessCvuOutputTransportKind::Dense);
+    authored.runtime_output_semantic_kind_list.push_back(
+        tess && quant ? ProcessCvuOutputSemanticKind::QuantTessTensor
+        : tess        ? ProcessCvuOutputSemanticKind::TessellatedImage
+        : quant       ? ProcessCvuOutputSemanticKind::QuantizedTensor
+                      : ProcessCvuOutputSemanticKind::Tensor);
+    authored.runtime_output_logical_layout_list.push_back(output->logical_layout.value_or(""));
+
+    const auto append_qparams = [&](const std::vector<QuantizationSpec>& params) -> bool {
+      if (params.size() != 1U) {
+        return fail(error, "ProcessCVU quantized member requires exactly one scale/zero-point");
+      }
+      authored.q_scale_list.push_back(params.front().scale);
+      authored.q_zp_list.push_back(params.front().zero_point);
+      return true;
+    };
+    if (quant) {
+      const auto rounding = cvu_rounding_mode(quant->rounding);
+      if (!rounding || (uniform_rounding && *uniform_rounding != *rounding) ||
+          !append_qparams(quant->channel_params)) {
+        if (rounding && uniform_rounding && *uniform_rounding != *rounding) {
+          fail(error, "ProcessCVU grouped quantize members disagree on rounding mode");
+        }
+        return std::nullopt;
+      }
+      uniform_rounding = *rounding;
+    }
+    if (dequant && !append_qparams(dequant->channel_params)) {
+      return std::nullopt;
+    }
+  }
+
+  authored.default_input_name = authored.runtime_input_names.front();
+  authored.primary_output_name = authored.published_output_names.front();
+  authored.input_dtype = cvu_dtype(*plan.value(cohort->members.front()->outer_inputs.front()));
+  authored.output_dtype = cvu_dtype(*plan.value(cohort->members.front()->outer_outputs.front()));
+  authored.out_dtype = authored.output_dtype;
+  authored.round_off = uniform_rounding.value_or(0);
+  authored.tessellate = (!authored.slice_shapes.empty() ? 1 : 0);
+  authored.primary_output_transport_kind = authored.runtime_output_transport_kind_list.front();
+  authored.primary_output_semantic_kind = authored.runtime_output_semantic_kind_list.front();
+  if (!authored.q_scale_list.empty()) {
+    authored.has_q_scale = true;
+    authored.q_scale = authored.q_scale_list.front();
+    authored.has_q_zp = true;
+    authored.q_zp = authored.q_zp_list.front();
+  }
+  authored.opt_flags =
+      stagesemantics::processcvu_detesscast_optimized_flags(detesscast_requires_lane_split);
+
+  try {
+    auto compiled =
+        stagesemantics::build_processcvu_compiled_contract_from_runtime_config(authored);
+    if (compiled.runtime_contract.logical_outputs.size() != publication_relations.size()) {
+      fail(error, "fused output publication lost its exact member association");
+      return std::nullopt;
+    }
+    for (std::size_t index = 0; index < publication_relations.size(); ++index) {
+      if (compiled.runtime_contract.logical_outputs[index].backend_output_index !=
+          static_cast<int>(index)) {
+        fail(error, "fused output publication has a contradictory backend member identity");
+        return std::nullopt;
+      }
+      compiled.runtime_contract.logical_outputs[index].publication_relation =
+          publication_relations[index];
+    }
+    if (!apply_dmabuf_plan_processcvu_command_projection(
+            plan, physical_plan, command_ids, &compiled.payload, &compiled.runtime_contract,
+            &compiled.exposed_view, error)) {
+      return std::nullopt;
+    }
+    // Public output order is independent of the physical command member order.
+    const auto& public_outputs = plan.model_outputs();
+    if (cohort->batch_size == 1U && public_outputs.size() == cohort->members.size()) {
+      std::vector<LogicalTensorStaticSpec> logical_outputs;
+      std::vector<StageOutputRoute> output_order;
+      for (const auto& output : public_outputs) {
+        const auto member = std::find_if(
+            cohort->members.begin(), cohort->members.end(), [&](const auto* candidate) {
+              return candidate->outer_outputs.size() == 1U &&
+                     candidate->outer_outputs.front() == output.value_id;
+            });
+        if (member == cohort->members.end()) {
+          break;
+        }
+        const auto index = static_cast<int>(member - cohort->members.begin());
+        const auto& exposed = compiled.exposed_view;
+        const auto logical = std::find_if(
+            exposed.exposed_logical_outputs.begin(), exposed.exposed_logical_outputs.end(),
+            [&](const auto& value) { return value.logical_index == index; });
+        const auto route =
+            std::find_if(exposed.exposed_output_order.begin(), exposed.exposed_output_order.end(),
+                         [&](const auto& value) { return value.logical_output_index == index; });
+        if (logical == exposed.exposed_logical_outputs.end() ||
+            route == exposed.exposed_output_order.end()) {
+          break;
+        }
+        logical_outputs.push_back(*logical);
+        logical_outputs.back().output_slot = static_cast<int>(output_order.size());
+        output_order.push_back(*route);
+        output_order.back().output_slot = logical_outputs.back().output_slot;
+      }
+      if (!output_order.empty() && output_order.size() == public_outputs.size()) {
+        compiled.exposed_view.exposed_logical_outputs = std::move(logical_outputs);
+        compiled.exposed_view.exposed_output_order = std::move(output_order);
+        compiled.exposed_view.primary_output_name =
+            compiled.exposed_view.exposed_logical_outputs.front().logical_name;
+      }
+    }
+    return compiled;
+  } catch (const std::exception& ex) {
+    fail(error, std::string("ProcessCVU command contract assembly failed: ") + ex.what());
+    return std::nullopt;
+  }
+}
+
+std::optional<std::vector<PhysicalPortSource>>
+resolve_mla_input_physical_sources(const ModelExecutionPlan& plan,
+                                   const std::size_t mla_stage_index, std::string* error) {
+  const auto stage = plan.mla_stage(mla_stage_index);
+  const auto stage_inputs = plan.backend_ports(mla_stage_index, BackendPortDirection::Input);
+  if (!stage || stage_inputs.empty()) {
+    fail(error, "MLA physical input projection references a missing or empty exact stage");
+    return std::nullopt;
+  }
+
+  const auto imported = std::span<const ValueId>(plan.model_inputs());
+  std::vector<PhysicalPortSource> result;
+  result.reserve(stage_inputs.size());
+  std::unordered_map<int, const BackendPortSpec*> seen_sources;
+  for (std::size_t port_index = 0; port_index < stage_inputs.size(); ++port_index) {
+    const auto& port = stage_inputs[port_index];
+    if (port.port_index != port_index) {
+      fail(error, "MLA physical input projection has a sparse backend port order");
+      return std::nullopt;
+    }
+    const auto* value = plan.value(port.value_id);
+    if (!value) {
+      fail(error, "MLA physical input projection references a missing graph value");
+      return std::nullopt;
+    }
+
+    std::optional<int> source_physical_index;
+    const bool internal = !is_external_carrier(plan, port.value_id);
+    auto model_input = std::find(imported.begin(), imported.end(), port.value_id);
+    if (model_input == imported.end() && value->storage_binding) {
+      for (auto candidate = imported.begin(); candidate != imported.end(); ++candidate) {
+        const auto* root = plan.value(*candidate);
+        if (!root || !root->storage_binding ||
+            root->storage_binding->carrier_id != value->storage_binding->carrier_id ||
+            value->storage_binding->byte_offset < root->storage_binding->byte_offset) {
+          continue;
+        }
+        const auto relative =
+            value->storage_binding->byte_offset - root->storage_binding->byte_offset;
+        if (relative > root->storage_binding->physical_span ||
+            port.physical_extent_bytes > root->storage_binding->physical_span - relative) {
+          continue;
+        }
+        if (model_input != imported.end()) {
+          fail(error, "MLA imported view has ambiguous public carrier provenance");
+          return std::nullopt;
+        }
+        model_input = candidate;
+      }
+    }
+    if (model_input != imported.end()) {
+      const auto index = std::distance(imported.begin(), model_input);
+      if (index > std::numeric_limits<int>::max()) {
+        fail(error, "MLA model-input physical carrier index overflows int");
+        return std::nullopt;
+      }
+      source_physical_index = static_cast<int>(index);
+    } else if (internal) {
+      // The scoped carrier identity supplies its final span after packing.
+      source_physical_index = -1;
+    } else {
+      fail(error, "MLA external input has no exact public carrier provenance");
+      return std::nullopt;
+    }
+
+    if (!internal && !claim_input_sample(seen_sources, *source_physical_index, port)) {
+      fail(error, "MLA input projection aliases two IFM ports to one physical carrier");
+      return std::nullopt;
+    }
+    result.push_back(PhysicalPortSource{port.value_id, *source_physical_index});
+  }
+  if (error) {
+    error->clear();
+  }
+  return result;
+}
+
+MlaOutputCarrierPolicy select_mla_output_carrier_policy(const ModelExecutionPlan& plan,
+                                                        const PhysicalExecutionPlan& physical_plan,
+                                                        const std::size_t mla_stage_index,
+                                                        const ModelStorageRoute* route) {
+  const auto* stage = plan.mla_stage(mla_stage_index);
+  if (!stage || stage->key.op_id >= physical_plan.command_for_semantic_op.size()) {
+    return MlaOutputCarrierPolicy::SharedInputGroup;
+  }
+  const auto command_id = physical_plan.command_for_semantic_op[stage->key.op_id];
+  if (!command_id.has_value() || *command_id >= physical_plan.commands.size()) {
+    return MlaOutputCarrierPolicy::SharedInputGroup;
+  }
+  const auto& command = physical_plan.commands[*command_id];
+  const auto selected = [&](PhysicalCommandId id) {
+    return !route ||
+           std::find(route->commands.begin(), route->commands.end(), id) != route->commands.end();
+  };
+  if (command.engine != PhysicalEngine::Mla || !selected(command.id) ||
+      std::any_of(command.successors.begin(), command.successors.end(), selected) ||
+      command.outputs.empty()) {
+    return MlaOutputCarrierPolicy::SharedInputGroup;
+  }
+
+  std::vector<ValueId> physical_roots;
+  physical_roots.reserve(command.outputs.size());
+  for (const auto output : command.outputs) {
+    physical_roots.push_back(root_value_id(plan, output));
+  }
+  std::sort(physical_roots.begin(), physical_roots.end());
+  physical_roots.erase(std::unique(physical_roots.begin(), physical_roots.end()),
+                       physical_roots.end());
+
+  std::vector<ValueId> public_roots;
+  if (route)
+    for (const auto output : route->published_outputs)
+      public_roots.push_back(root_value_id(plan, output));
+  else
+    for (const auto& output : plan.model_outputs())
+      public_roots.push_back(root_value_id(plan, output.value_id));
+  std::sort(public_roots.begin(), public_roots.end());
+  public_roots.erase(std::unique(public_roots.begin(), public_roots.end()), public_roots.end());
+
+  // Exact equality is intentional.  A subset would detach storage while a
+  // hidden device consumer still addresses the shared group; a superset would
+  // make a different producer's public carrier appear to be owned by MLA.
+  if (physical_roots != public_roots) {
+    return MlaOutputCarrierPolicy::SharedInputGroup;
+  }
+
+  std::unordered_set<CarrierId> external_carriers;
+  for (const auto input_id : route ? route->imported_inputs : plan.model_inputs()) {
+    const auto* value = plan.value(root_value_id(plan, input_id));
+    if (value && value->storage_binding.has_value()) {
+      external_carriers.emplace(value->storage_binding->carrier_id);
+    }
+  }
+  std::unordered_set<CarrierId> output_carriers;
+  for (const auto root : physical_roots) {
+    const auto* value = plan.value(root);
+    if (!value || !value->storage_binding.has_value()) {
+      return MlaOutputCarrierPolicy::SharedInputGroup;
+    }
+    output_carriers.emplace(value->storage_binding->carrier_id);
+  }
+  const bool has_retained_internal_carrier =
+      std::any_of(physical_plan.commands.begin(), physical_plan.commands.end(),
+                  [&](const auto& physical_command) {
+                    if (!selected(physical_command.id))
+                      return false;
+                    const auto retained = [&](const ValueId id) {
+                      const auto* value = plan.value(root_value_id(plan, id));
+                      return value && value->storage_binding.has_value() &&
+                             !external_carriers.contains(value->storage_binding->carrier_id) &&
+                             !output_carriers.contains(value->storage_binding->carrier_id);
+                    };
+                    return std::any_of(physical_command.inputs.begin(),
+                                       physical_command.inputs.end(), retained) ||
+                           std::any_of(physical_command.outputs.begin(),
+                                       physical_command.outputs.end(), retained);
+                  });
+  return has_retained_internal_carrier ? MlaOutputCarrierPolicy::DetachedOutputGroup
+                                       : MlaOutputCarrierPolicy::SharedInputGroup;
+}
+
+std::vector<ValueId> detached_mla_output_roots(const ModelExecutionPlan& plan,
+                                               const PhysicalExecutionPlan& physical_plan,
+                                               const ModelStorageRoute* route) {
+  std::vector<ValueId> roots;
+  for (std::size_t stage_index = 0; stage_index < plan.mla_stage_count(); ++stage_index) {
+    if (select_mla_output_carrier_policy(plan, physical_plan, stage_index, route) !=
+        MlaOutputCarrierPolicy::DetachedOutputGroup) {
+      continue;
+    }
+    for (const auto& port : plan.backend_ports(stage_index, BackendPortDirection::Output)) {
+      roots.push_back(root_value_id(plan, port.value_id));
+    }
+  }
+  std::sort(roots.begin(), roots.end());
+  roots.erase(std::unique(roots.begin(), roots.end()), roots.end());
+  return roots;
+}
+
+bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
+                                           const PhysicalExecutionPlan& physical_plan,
+                                           const std::size_t mla_stage_index,
+                                           MlaStaticContract* contract,
+                                           std::span<const PhysicalPortSource> input_sources,
+                                           std::string* error) {
+  if (!contract) {
+    return fail(error, "MLA contract projection is null");
+  }
+  const auto* stage = plan.mla_stage(mla_stage_index);
+  const auto inputs = plan.backend_ports(mla_stage_index, BackendPortDirection::Input);
+  const auto outputs = plan.backend_ports(mla_stage_index, BackendPortDirection::Output);
+  if (!stage || inputs.empty() || outputs.empty()) {
+    return fail(error, "MLA projection requires one exact non-empty backend stage");
+  }
+  const auto output_carrier_policy =
+      select_mla_output_carrier_policy(plan, physical_plan, mla_stage_index);
+
+  const auto& mla = std::get<MlaOpConfig>(plan.ops()[stage->key.op_id].config);
+  const auto batch_count = mla.batch_count;
+  const auto validate = [&](const std::span<const BackendPortSpec> ports,
+                            const std::vector<PhysicalBufferStaticSpec>& physical,
+                            const char* kind) {
+    if (physical.size() > std::numeric_limits<std::size_t>::max() / batch_count ||
+        ports.size() != physical.size() * batch_count) {
+      return fail(error, std::string(kind) + " projection arity mismatch");
+    }
+    for (std::size_t index = 0; index < ports.size(); ++index) {
+      const auto& port = ports[index];
+      if (port.logical_index() >= physical.size()) {
+        return fail(error, "MLA sample references a missing MPK tensor");
+      }
+      const auto& projected = physical[port.logical_index()];
+      const auto* value = plan.value(port.value_id);
+      if (port.port_index != index ||
+          projected.physical_index != static_cast<int>(port.logical_index()) ||
+          projected.size_bytes != (value ? value->required_bytes : 0U) || !value ||
+          projected.segment_name.empty() || projected.segment_name != value->name) {
+        return fail(error, std::string(kind) + "[" + std::to_string(index) +
+                               "] differs from decoded MPK+ELF plan");
+      }
+    }
+    return true;
+  };
+
+  if (!validate(inputs, contract->physical_inputs, "IFM") ||
+      !validate(outputs, contract->dispatcher_physical_outputs, "OFM")) {
+    return false;
+  }
+
+  const auto original_logical_outputs = contract->logical_outputs;
+  const auto original_output_count = contract->dispatcher_physical_outputs.size();
+  const auto reordered = [](const auto& ports) {
+    return std::any_of(ports.begin(), ports.end(),
+                       [](const auto& port) { return port.port_index != port.logical_index(); });
+  };
+  if (batch_count > 1U || reordered(inputs) || reordered(outputs)) {
+    const auto expand_physical = [&](const auto& ports, const auto& original) {
+      std::vector<PhysicalBufferStaticSpec> expanded;
+      expanded.reserve(ports.size());
+      for (const auto& port : ports) {
+        auto physical = original[port.logical_index()];
+        physical.physical_index = static_cast<int>(port.port_index);
+        physical.allocator_index = physical.physical_index;
+        if (batch_count > 1U) {
+          physical.segment_name += ".batch." + std::to_string(port.batch_index);
+        }
+        expanded.push_back(std::move(physical));
+      }
+      return expanded;
+    };
+    contract->physical_inputs = expand_physical(inputs, contract->physical_inputs);
+    contract->dispatcher_physical_outputs =
+        expand_physical(outputs, contract->dispatcher_physical_outputs);
+    std::vector<TensorStaticSpec> logical_inputs;
+    for (const auto& port : inputs) {
+      const auto found = std::find_if(
+          contract->logical_inputs.begin(), contract->logical_inputs.end(), [&](const auto& value) {
+            return value.tensor_index == static_cast<int>(port.logical_index());
+          });
+      const auto* value = plan.value(port.value_id);
+      if (found == contract->logical_inputs.end() || !value ||
+          (batch_count > 1U && !value->logical_shape) ||
+          port.physical_extent_bytes >
+              static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+        return fail(error, "MLA sample has no exact logical input descriptor");
+      }
+      auto logical = *found;
+      logical.tensor_index = static_cast<int>(port.port_index);
+      if (batch_count > 1U) {
+        logical.shape = *value->logical_shape;
+        logical.shape.front() = 1;
+        logical.max_stride = static_cast<int>(port.physical_extent_bytes);
+      }
+      logical_inputs.push_back(std::move(logical));
+    }
+    contract->logical_inputs = std::move(logical_inputs);
+    contract->inputs = contract->logical_inputs;
+  }
+
+  // Alignment is an execution-plan property. The decoded legacy stage
+  // contract intentionally does not invent it; project the Core-owned value
+  // only after the MPK/ELF port identity has been reconciled exactly.
+  for (std::size_t index = 0; index < inputs.size(); ++index) {
+    contract->physical_inputs[index].size_bytes = inputs[index].physical_extent_bytes;
+    contract->physical_inputs[index].required_alignment_bytes =
+        inputs[index].required_alignment_bytes;
+  }
+  for (std::size_t index = 0; index < outputs.size(); ++index) {
+    contract->dispatcher_physical_outputs[index].size_bytes = outputs[index].physical_extent_bytes;
+    contract->dispatcher_physical_outputs[index].required_alignment_bytes =
+        outputs[index].required_alignment_bytes;
+  }
+
+  if (input_sources.size() != inputs.size()) {
+    return fail(error, "IFM projection has no complete physical carrier map");
+  }
+  std::unordered_map<int, const BackendPortSpec*> seen_input_sources;
+  contract->input_bindings.clear();
+  contract->input_bindings.reserve(inputs.size());
+  for (std::size_t index = 0; index < inputs.size(); ++index) {
+    const auto& port = inputs[index];
+    const auto& projected = input_sources[index];
+    auto& physical = contract->physical_inputs[index];
+    const bool external = is_external_carrier(plan, port.value_id);
+    if (projected.value_id != port.value_id ||
+        (external &&
+         (projected.source_physical_index < 0 ||
+          !claim_input_sample(seen_input_sources, projected.source_physical_index, port))))
+      return fail(error, "IFM projection has an invalid or aliased physical carrier");
+    physical.source_physical_index = projected.source_physical_index;
+    physical.address_source =
+        external ? PhysicalAddressSource::RuntimePhysicalBinding : PhysicalAddressSource::FrameSpan;
+    const auto* value = plan.value(port.value_id);
+    if (!value || !project_carrier_span(plan, *value, port.value_byte_offset, &physical, error))
+      return false;
+
+    TensorStaticSpec* logical_input = nullptr;
+    for (auto& candidate : contract->logical_inputs) {
+      if (candidate.tensor_index != static_cast<int>(index)) {
+        continue;
+      }
+      if (logical_input != nullptr) {
+        return fail(error, "IFM projection has ambiguous logical input metadata");
+      }
+      logical_input = &candidate;
+    }
+    if (!logical_input) {
+      return fail(error, "IFM projection has no logical input metadata");
+    }
+    logical_input->parent_carrier = false;
+    if (port.physical_extent_bytes > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+      return fail(error, "MLA transfer extent exceeds logical descriptor limits");
+    }
+    logical_input->max_stride = static_cast<int>(port.physical_extent_bytes);
+
+    InputBindingStaticSpec binding;
+    binding.sink_pad_index = 0;
+    binding.local_logical_input_index = static_cast<int>(index);
+    binding.src_logical_output_index = projected.source_physical_index;
+    binding.src_output_slot = projected.source_physical_index;
+    binding.src_physical_output_index = physical.source_physical_index;
+    binding.src_physical_size_bytes = port.physical_extent_bytes;
+    binding.src_physical_byte_offset = 0;
+    binding.required = true;
+    binding.cm_input_name = value->name;
+    if (batch_count > 1U)
+      binding.cm_input_name += ".batch." + std::to_string(port.batch_index);
+    binding.source_segment_name = binding.cm_input_name;
+    contract->input_bindings.push_back(std::move(binding));
+  }
+
+  // ProcessMLA always allocates/submits the real backend OFMs. For a packed
+  // 1/1 stage, Unpack and Slice have already lowered to immutable address/read
+  // expressions, so publish those logical views over the one physical OFM.
+  // No runtime unpack/slice job or materialization is introduced.
+  contract->physical_outputs.clear();
+  contract->logical_outputs.clear();
+  contract->physical_outputs.reserve(outputs.size());
+  for (std::size_t index = 0; index < outputs.size(); ++index) {
+    const auto& port = outputs[index];
+    const auto* value = plan.value(port.value_id);
+    if (!value || port.port_index != index ||
+        index > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+      return fail(error, "OFM projection has an invalid backend port");
+    }
+    const int slot = static_cast<int>(index);
+
+    PhysicalBufferStaticSpec physical;
+    physical.physical_index = slot;
+    physical.allocator_index = slot;
+    physical.source_physical_index = slot;
+    physical.size_bytes = port.physical_extent_bytes;
+    physical.source_byte_offset = 0;
+    physical.device_kind = DeviceKind::Mla;
+    physical.segment_name = value->name;
+    physical.required_alignment_bytes = port.required_alignment_bytes;
+    if (!project_carrier_span(plan, *value, port.value_byte_offset, &physical, error))
+      return false;
+    if (batch_count > 1U)
+      physical.segment_name += ".batch." + std::to_string(port.batch_index);
+    contract->physical_outputs.push_back(std::move(physical));
+  }
+
+  if (output_carrier_policy == MlaOutputCarrierPolicy::DetachedOutputGroup ||
+      (batch_count == 1U &&
+       has_terminal_read_publications(plan, plan.ops()[stage->key.op_id], outputs))) {
+    // A terminal publication chain has no materializing consumer for the old
+    // consumer-oriented read-view query to discover.  The model-output table
+    // is the ordered public authority; map each composed root-relative view
+    // back to one exact backend port instead of silently publishing raw OFMs.
+    if (!project_terminal_mla_publications(plan, outputs, contract, error)) {
+      return false;
+    }
+  } else if (batch_count > 1U) {
+    for (const auto& port : outputs) {
+      const auto value =
+          physical_sample_value(plan, port.value_id, port.batch_index, batch_count, error);
+      if (!value || !value->logical_dtype || !value->logical_shape || !value->storage_binding ||
+          value->storage_binding->physical_span > port.physical_extent_bytes) {
+        return fail(error, "MLA output sample has no bounded typed publication");
+      }
+      const auto slot = static_cast<int>(port.port_index);
+      LogicalTensorStaticSpec logical;
+      logical.logical_index = slot;
+      logical.backend_output_index = slot;
+      logical.physical_index = slot;
+      logical.output_slot = slot;
+      logical.tensor_index = slot;
+      logical.size_bytes = value->required_bytes;
+      logical.shape = *value->logical_shape;
+      logical.dtype = *value->logical_dtype;
+      logical.dtype_source = DTypeSource::InternalContract;
+      logical.stride_bytes = value->storage_binding->stride_bytes;
+      logical.layout = value->logical_layout.value_or("");
+      logical.logical_name = value->name;
+      logical.backend_name = value->name;
+      logical.model_carrier_id = value->storage_binding->carrier_id;
+      logical.segment_name = value->name;
+      contract->logical_outputs.push_back(std::move(logical));
+    }
+  } else {
+    std::vector<const ValueSpec*> packed_read_views;
+    if (outputs.size() == 1U) {
+      packed_read_views = read_views_consumed_after_mla(plan, outputs.front().value_id);
+    }
+    // One affine child is still a read expression.  Cardinality must not decide
+    // whether its root-relative offset/strides survive projection: a monolithic
+    // OFM followed by one Slice is just as much a logical view as an Unpack with
+    // many children.
+    if (!packed_read_views.empty()) {
+      contract->logical_outputs.reserve(packed_read_views.size());
+      for (std::size_t index = 0; index < packed_read_views.size(); ++index) {
+        const auto& value = *packed_read_views[index];
+        const auto& expression = *value.read_expression;
+        const auto* producer = producer_of(plan, value.id);
+        if (index > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
+            expression.byte_offset >
+                static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
+            !value.logical_shape.has_value() || !producer) {
+          return fail(error, "packed OFM read view cannot be represented in the static manifest");
+        }
+        const auto transport = resolve_publication_transport_view(plan, value, error);
+        if (expression.stride_bytes.empty() || !transport.has_value() ||
+            expression.byte_offset > outputs.front().physical_extent_bytes ||
+            transport->physical_span >
+                outputs.front().physical_extent_bytes - expression.byte_offset) {
+          if (!transport.has_value()) {
+            return false;
+          }
+          return fail(error, "packed OFM read view has no exact typed shape/stride contract");
+        }
+        const int slot = static_cast<int>(index);
+        LogicalTensorStaticSpec logical;
+        logical.logical_index = slot;
+        logical.backend_output_index = 0;
+        logical.physical_index = 0;
+        logical.output_slot = slot;
+        logical.tensor_index = slot;
+        logical.byte_offset = static_cast<std::int64_t>(expression.byte_offset);
+        logical.size_bytes = value.required_bytes;
+        logical.shape = transport->carrier_shape;
+        logical.stride_bytes = expression.stride_bytes;
+        logical.dtype = transport->carrier_dtype;
+        logical.dtype_source = DTypeSource::InternalContract;
+        logical.logical_name = value.name;
+        logical.backend_name = value.name;
+        logical.model_carrier_id = value.storage_binding->carrier_id;
+        logical.segment_name = plan.value(outputs.front().value_id)->name;
+        if (transport->carrier_layout) {
+          logical.layout = *transport->carrier_layout;
+        }
+        contract->logical_outputs.push_back(std::move(logical));
+      }
+    } else {
+      contract->logical_outputs.reserve(outputs.size());
+      for (std::size_t index = 0; index < outputs.size(); ++index) {
+        const auto& port = outputs[index];
+        const auto* value = plan.value(port.value_id);
+        const int slot = static_cast<int>(index);
+
+        LogicalTensorStaticSpec logical;
+        logical.logical_index = slot;
+        logical.backend_output_index = slot;
+        logical.physical_index = slot;
+        logical.output_slot = slot;
+        logical.tensor_index = slot;
+        logical.byte_offset = 0;
+        logical.logical_name = value->name;
+        logical.backend_name = value->name;
+        logical.model_carrier_id = value->storage_binding->carrier_id;
+        logical.segment_name = value->name;
+        std::uint64_t logical_span = 0U;
+        if (!value->logical_dtype || !value->logical_shape ||
+            !exact_logical_tensor_span(*value->logical_shape, {}, *value->logical_dtype,
+                                       &logical_span) ||
+            logical_span > port.physical_extent_bytes) {
+          return fail(error,
+                      "MLA OFM '" + value->name +
+                          "' has no exact typed logical output contract (dtype=" +
+                          value->logical_dtype.value_or("<missing>") + ", rank=" +
+                          std::to_string(value->logical_shape ? value->logical_shape->size() : 0U) +
+                          ", logical_span=" + std::to_string(logical_span) +
+                          ", physical_extent=" + std::to_string(port.physical_extent_bytes) + ")");
+        }
+        logical.size_bytes = logical_span;
+        logical.dtype = *value->logical_dtype;
+        logical.dtype_source = DTypeSource::InternalContract;
+        logical.shape = *value->logical_shape;
+        if (value->storage_binding && !value->storage_binding->stride_bytes.empty()) {
+          logical.stride_bytes = value->storage_binding->stride_bytes;
+        }
+        if (value->logical_layout) {
+          logical.layout = *value->logical_layout;
+        }
+        contract->logical_outputs.push_back(std::move(logical));
+      }
+    }
+  }
+
+  // Quantization belongs to logical tensors, including each sample of a batch.
+  // Packed views are not a one-to-one OFM mapping and retain their existing table.
+  std::vector<const LogicalTensorStaticSpec*> original_by_port(original_output_count, nullptr);
+  bool direct_outputs = original_logical_outputs.size() == original_output_count;
+  for (const auto& logical : original_logical_outputs) {
+    const auto index = static_cast<std::size_t>(logical.backend_output_index);
+    if (index >= original_by_port.size() || original_by_port[index]) {
+      direct_outputs = false;
+      break;
+    }
+    original_by_port[index] = &logical;
+  }
+  for (const auto& logical : contract->logical_outputs) {
+    const auto index = static_cast<std::size_t>(logical.backend_output_index);
+    if (index >= outputs.size()) {
+      direct_outputs = false;
+      break;
+    }
+    auto name = plan.value(outputs[index].value_id)->name;
+    if (batch_count > 1U) {
+      name += ".batch." + std::to_string(outputs[index].batch_index);
+    }
+    if (logical.backend_name != name) {
+      direct_outputs = false;
+      break;
+    }
+  }
+  if (direct_outputs) {
+    std::vector<QuantStaticSpec> projected_quant;
+    bool has_quant = false;
+    for (auto& logical : contract->logical_outputs) {
+      const auto& port = outputs[static_cast<std::size_t>(logical.backend_output_index)];
+      const auto* original = original_by_port[port.logical_index()];
+      const auto ordinal = static_cast<std::size_t>(original - original_logical_outputs.data());
+      logical.quant = original->quant;
+      if (!logical.quant && !contract->output_quant.empty()) {
+        const auto quant_index = contract->output_quant.size() == 1U ? 0U : ordinal;
+        if (quant_index < contract->output_quant.size()) {
+          logical.quant = contract->output_quant[quant_index];
+        }
+      }
+      has_quant = has_quant || logical.quant.has_value();
+      projected_quant.push_back(logical.quant.value_or(QuantStaticSpec{}));
+    }
+    if (has_quant) {
+      contract->output_quant = std::move(projected_quant);
+    }
+  }
+
+  std::vector<std::string> ifm_symbols;
+  std::vector<std::string> ofm_symbols;
+  ifm_symbols.reserve(inputs.size());
+  ofm_symbols.reserve(outputs.size());
+  for (const auto& port : inputs) {
+    ifm_symbols.push_back(port.elf_symbol);
+  }
+  for (const auto& port : outputs) {
+    ofm_symbols.push_back(port.elf_symbol);
+  }
+  contract->elf_ifm_symbol_names = std::move(ifm_symbols);
+  contract->elf_ofm_symbol_names = std::move(ofm_symbols);
+  contract->consumer_keeps_distinct_physical_inputs = inputs.size() > 1U;
+  if (error) {
+    error->clear();
+  }
+  return true;
+}
+
+bool apply_dmabuf_plan_processcvu_command_projection(
+    const ModelExecutionPlan& plan, const PhysicalExecutionPlan& physical_plan,
+    const std::span<const PhysicalCommandId> command_ids, ProcessCvuStagePayload* payload,
+    ::simaai::neat::CompiledRuntimeContract* runtime,
+    ::simaai::neat::CompiledExposedView* exposed_view, std::string* error) {
+  if (!payload || !runtime || !exposed_view || command_ids.empty()) {
+    return fail(error, "ProcessCVU command projection is null or references a missing command");
+  }
+  const auto cohort = resolve_physical_cvu_cohort(plan, physical_plan, command_ids, error);
+  if (!cohort) {
+    return false;
+  }
+
+  std::vector<ValueId> inputs;
+  std::vector<ValueId> outputs;
+  inputs.reserve(cohort->members.size());
+  outputs.reserve(cohort->members.size());
+  for (const auto* member : cohort->members) {
+    inputs.push_back(member->outer_inputs.front());
+    outputs.push_back(member->outer_outputs.front());
+  }
+  if (!apply_processcvu_implementation_contract(payload, error, cohort->rule->operation)) {
+    return false;
+  }
+  if (payload->maximum_members != cohort->rule->maximum_members ||
+      payload->graph_name != cohort->rule->operation) {
+    return fail(error, "ProcessCVU payload contradicts its physical implementation");
+  }
+  if (payload->input_tensors.size() != cohort->members.size() ||
+      payload->output_tensors.size() != cohort->members.size() ||
+      runtime->logical_inputs.size() != cohort->members.size() ||
+      runtime->input_bindings.size() != cohort->members.size() ||
+      runtime->logical_outputs.size() != cohort->members.size()) {
+    return fail(error, "ProcessCVU command cohort outputs disagree with its compiled "
+                       "runtime contract: plan=" +
+                           std::to_string(cohort->members.size()) +
+                           " runtime=" + std::to_string(runtime->logical_outputs.size()));
+  }
+
+  const DeviceKind input_device = runtime->physical_inputs.empty()
+                                      ? DeviceKind::Evxx
+                                      : runtime->physical_inputs.front().device_kind;
+  const std::uint64_t input_memory_flags =
+      runtime->physical_inputs.empty() ? 0U : runtime->physical_inputs.front().memory_flags;
+  const bool has_internal_input = std::any_of(inputs.begin(), inputs.end(), [&](ValueId input) {
+    return !is_external_carrier(plan, input);
+  });
+  const bool has_public_input = std::any_of(inputs.begin(), inputs.end(), [&](ValueId input) {
+    return is_external_carrier(plan, input);
+  });
+  std::vector<PhysicalBufferStaticSpec> physical_inputs;
+  physical_inputs.reserve(inputs.size());
+  for (std::size_t index = 0; index < inputs.size(); ++index) {
+    const auto* value = plan.value(inputs[index]);
+    const auto* binding = value && value->storage_binding ? &*value->storage_binding : nullptr;
+    const auto* carrier = binding ? plan.carrier(binding->carrier_id) : nullptr;
+    const bool internal = !is_external_carrier(plan, inputs[index]);
+    if (!value || !binding || !carrier ||
+        index > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
+        binding->physical_span == 0U || carrier->required_alignment_bytes == 0U ||
+        binding->byte_offset >
+            static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+      return fail(error, "ProcessCVU command input has no exact carrier");
+    }
+
+    // Public tensors select the current frame's physical binding table. Follow
+    // carrier provenance so an affine view of an external root stays external.
+    int source_index = -1;
+    std::uint64_t relative_offset = 0U;
+    if (!internal) {
+      for (std::size_t source = 0; source < plan.model_inputs().size(); ++source) {
+        const auto* root = plan.value(plan.model_inputs()[source]);
+        const auto* root_binding =
+            root && root->storage_binding ? &*root->storage_binding : nullptr;
+        if (!root_binding || root_binding->carrier_id != binding->carrier_id) {
+          continue;
+        }
+        if (source_index >= 0 ||
+            source > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
+            binding->byte_offset < root_binding->byte_offset) {
+          return fail(error, "ProcessCVU external input has ambiguous carrier provenance");
+        }
+        relative_offset = binding->byte_offset - root_binding->byte_offset;
+        if (relative_offset > root_binding->physical_span ||
+            binding->physical_span > root_binding->physical_span - relative_offset) {
+          return fail(error, "ProcessCVU external view exceeds its public source span");
+        }
+        source_index = static_cast<int>(source);
+      }
+      if (source_index < 0) {
+        return fail(error, "ProcessCVU external input has no public source");
+      }
+    }
+
+    const int logical_index = static_cast<int>(index);
+    const int physical_index = logical_index;
+    PhysicalBufferStaticSpec physical;
+    physical.physical_index = physical_index;
+    physical.allocator_index = physical_index;
+    physical.source_physical_index = internal ? 0 : source_index;
+    physical.size_bytes = binding->physical_span;
+    physical.source_byte_offset = static_cast<std::int64_t>(binding->byte_offset);
+    physical.address_source =
+        internal ? PhysicalAddressSource::FrameSpan : PhysicalAddressSource::RuntimePhysicalBinding;
+    physical.model_carrier_id = binding->carrier_id;
+    physical.device_kind = input_device;
+    physical.memory_flags = input_memory_flags;
+    physical.segment_name = "value_" + std::to_string(value->id);
+    physical.required_alignment_bytes = carrier->required_alignment_bytes;
+    physical_inputs.push_back(std::move(physical));
+
+    auto& logical = runtime->logical_inputs[index];
+    logical.logical_index = logical_index;
+    logical.backend_input_index = logical_index;
+    logical.physical_index = physical_index;
+    const bool offset_view = value->read_expression.has_value() ||
+                             binding->kind == StorageBindingKind::View ||
+                             binding->source_value_id.has_value() || binding->byte_offset != 0U;
+    // Tiled C16 lane layout is described by the tensor descriptor and graph225
+    // option flags. It is not a request to materialize/repack the input.
+    logical.materialization_kind =
+        offset_view ? TensorMaterializationKind::OffsetView : TensorMaterializationKind::Direct;
+    logical.byte_offset = 0;
+    logical.size_bytes = value->required_bytes;
+    logical.stride_bytes = binding->stride_bytes;
+    logical.logical_name = value->name;
+    logical.backend_name = value->name;
+    logical.segment_name = physical_inputs.back().segment_name;
+    if (value->logical_dtype) {
+      logical.dtype = *value->logical_dtype;
+    }
+    if (value->logical_shape) {
+      logical.shape = *value->logical_shape;
+    }
+    logical.layout = value->logical_layout.value_or("");
+    if (!binding->storage_shape.empty() ||
+        (value->read_expression && !value->read_expression->storage_shape.empty())) {
+      const auto transport = resolve_publication_transport_view(plan, *value, error);
+      if (!transport)
+        return false;
+      logical.shape = transport->carrier_shape;
+      logical.dtype = transport->carrier_dtype;
+      logical.layout = transport->carrier_layout.value_or("");
+    }
+    // Native MLA publishes one transport view per backend sample/port. A CVU
+    // consumer still executes one full-batch descriptor over the retained buffer.
+    // Match the producer's envelope without shrinking that descriptor or DMA
+    // span. CVU producers publish full batches and must not take this path.
+    if (internal) {
+      const auto root_id = root_value_id(plan, value->id);
+      const auto* producer = producer_of(plan, root_id);
+      const auto* mla = producer && producer->kind == OpKind::Mla
+                            ? std::get_if<MlaOpConfig>(&producer->config)
+                            : nullptr;
+      if (mla && mla->batch_count > 1U) {
+        const auto published = physical_sample_value(plan, root_id, 0U, mla->batch_count, error);
+        if (!published || !published->logical_shape || !published->logical_dtype ||
+            !published->storage_binding)
+          return fail(error, "batched CVU input has no exact MLA publication geometry");
+        logical.shape = *published->logical_shape;
+        logical.dtype = *published->logical_dtype;
+        logical.layout = published->logical_layout.value_or("");
+        logical.size_bytes = published->required_bytes;
+        // Retain an Unpack view's batch pitch when its sample uses implicit dense strides.
+        if (!published->storage_binding->stride_bytes.empty())
+          logical.stride_bytes = published->storage_binding->stride_bytes;
+        if (!published->storage_binding->storage_shape.empty() ||
+            (published->read_expression && !published->read_expression->storage_shape.empty())) {
+          const auto transport = resolve_publication_transport_view(plan, *published, error);
+          if (!transport)
+            return false;
+          logical.shape = transport->carrier_shape;
+          logical.dtype = transport->carrier_dtype;
+          logical.layout = transport->carrier_layout.value_or("");
+        }
+      }
+    }
+    const bool application_boundary_input = !internal;
+    if (application_boundary_input && logical.shape.size() == 4U && logical.shape.front() == 1) {
+      // Only NHWC has the batch-one HWC application shorthand. Higher-rank
+      // tensors retain every axis; execution geometry and storage stay unchanged.
+      logical.shape.erase(logical.shape.begin());
+      if (logical.stride_bytes.size() == logical.shape.size() + 1U) {
+        logical.stride_bytes.erase(logical.stride_bytes.begin());
+      }
+    }
+
+    auto& route = runtime->input_bindings[index];
+    // Homogeneous inputs use one pad; mixed sources retain their authored pads.
+    if (!has_internal_input || !has_public_input) {
+      route.sink_pad_index = 0;
+    }
+    route.local_logical_input_index = logical_index;
+    route.src_logical_output_index = internal ? logical_index : source_index;
+    route.src_output_slot = route.src_logical_output_index;
+    route.src_physical_output_index = physical_inputs.back().source_physical_index;
+    route.src_physical_size_bytes = binding->physical_span;
+    route.src_physical_byte_offset = 0;
+    route.required = true;
+    route.cm_input_name = value->name;
+    route.source_segment_name = logical.segment_name;
+  }
+  runtime->physical_inputs = std::move(physical_inputs);
+
+  const DeviceKind output_device = runtime->physical_outputs.empty()
+                                       ? DeviceKind::Evxx
+                                       : runtime->physical_outputs.front().device_kind;
+  const std::uint64_t output_memory_flags =
+      runtime->physical_outputs.empty() ? 0U : runtime->physical_outputs.front().memory_flags;
+  std::vector<PhysicalBufferStaticSpec> physical_outputs;
+  physical_outputs.reserve(outputs.size());
+  for (std::size_t index = 0; index < outputs.size(); ++index) {
+    const auto* value = plan.value(outputs[index]);
+    const auto* binding = value && value->storage_binding ? &*value->storage_binding : nullptr;
+    const auto* carrier = binding ? plan.carrier(binding->carrier_id) : nullptr;
+    if (!value || !binding || !carrier ||
+        index > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
+        binding->byte_offset >
+            static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
+        binding->byte_offset > carrier->required_bytes ||
+        binding->physical_span > carrier->required_bytes - binding->byte_offset ||
+        !binding->physical_span || !carrier->required_alignment_bytes)
+      return fail(error, "ProcessCVU command output has no exact carrier binding");
+    const int physical_index = static_cast<int>(index);
+    PhysicalBufferStaticSpec physical;
+    physical.physical_index = physical_index;
+    physical.allocator_index = physical_index;
+    physical.source_physical_index = physical_index;
+    physical.size_bytes = binding->physical_span;
+    physical.source_byte_offset = static_cast<std::int64_t>(binding->byte_offset);
+    physical.device_kind = output_device;
+    physical.memory_flags = output_memory_flags;
+    physical.segment_name = "value_" + std::to_string(value->id);
+    physical.required_alignment_bytes =
+        std::gcd<std::uint64_t>(carrier->required_alignment_bytes, binding->byte_offset);
+    physical.model_carrier_id = binding->carrier_id;
+    physical_outputs.push_back(std::move(physical));
+
+    auto& logical = runtime->logical_outputs[index];
+    logical.logical_index = static_cast<int>(index);
+    logical.backend_output_index = static_cast<int>(index);
+    logical.physical_index = physical_index;
+    logical.output_slot = static_cast<int>(index);
+    logical.tensor_index = static_cast<int>(index);
+    logical.byte_offset = 0;
+    logical.size_bytes = value->required_bytes;
+    logical.stride_bytes = binding->stride_bytes;
+    logical.logical_name = value->name;
+    logical.backend_name = value->name;
+    logical.model_carrier_id = binding->carrier_id;
+    logical.segment_name = physical_outputs[static_cast<std::size_t>(physical_index)].segment_name;
+    if (value->logical_dtype) {
+      logical.dtype = *value->logical_dtype;
+    }
+    if (value->logical_shape) {
+      logical.shape = *value->logical_shape;
+    }
+    logical.layout = value->logical_layout.value_or("");
+    logical.publication_relation = value->representation == ValueRepresentation::Tessellated
+                                       ? PublicationViewRelation::PackedStorage
+                                       : logical.publication_relation;
+  }
+  runtime->physical_outputs = std::move(physical_outputs);
+
+  for (auto& exposed : exposed_view->exposed_logical_outputs) {
+    const auto match =
+        std::find_if(runtime->logical_outputs.begin(), runtime->logical_outputs.end(),
+                     [&](const LogicalTensorStaticSpec& value) {
+                       return value.logical_index == exposed.logical_index;
+                     });
+    if (match == runtime->logical_outputs.end()) {
+      return fail(error, "ProcessCVU exposed output has no exact command output");
+    }
+    exposed = *match;
+  }
+  for (auto& route : exposed_view->exposed_output_order) {
+    if (route.logical_output_index < 0 ||
+        static_cast<std::size_t>(route.logical_output_index) >= runtime->logical_outputs.size()) {
+      return fail(error, "ProcessCVU exposed output order references a missing command output");
+    }
+    route.segment_name =
+        runtime->logical_outputs[static_cast<std::size_t>(route.logical_output_index)].segment_name;
+  }
+
+  runtime->consumer_keeps_distinct_physical_inputs = inputs.size() > 1U;
+  payload->dmabuf_plan_contract = true;
+  if (payload->runtime_output_physical_index_list.size() == outputs.size()) {
+    for (std::size_t index = 0; index < outputs.size(); ++index) {
+      payload->runtime_output_physical_index_list[index] =
+          runtime->logical_outputs[index].physical_index;
+    }
+  }
+  if (error) {
+    error->clear();
+  }
+  return true;
+}
+
+std::optional<std::vector<PhysicalCommandId>>
+resolve_model_managed_preproc_ingress_commands(const ModelExecutionPlan& plan,
+                                               const PhysicalExecutionPlan& physical_plan,
+                                               std::string* error) {
+  const auto mla_inputs = plan.backend_ports(0U, BackendPortDirection::Input);
+  const auto* first_mla = plan.mla_stage(0U);
+  if (!first_mla || mla_inputs.size() != 1U || plan.model_inputs().size() != 1U) {
+    fail(error,
+         "model-managed preproc absorption requires exactly one public input and one first-MLA "
+         "IFM");
+    return std::nullopt;
+  }
+
+  std::vector<OpId> reversed_ops;
+  ValueId cursor = mla_inputs.front().value_id;
+  for (std::size_t remaining = plan.ops().size() + 1U; remaining > 0U; --remaining) {
+    const auto* producer = producer_of(plan, cursor);
+    if (!producer || (producer->kind != OpKind::Cast && producer->kind != OpKind::Quantize &&
+                      producer->kind != OpKind::Tessellate)) {
+      break;
+    }
+    if (producer->inputs.size() != 1U || producer->outputs.size() != 1U ||
+        producer->outputs.front() != cursor) {
+      fail(error, "model-managed preproc absorption found a non-linear ingress transform");
+      return std::nullopt;
+    }
+    reversed_ops.push_back(producer->id);
+    cursor = producer->inputs.front();
+  }
+  if (reversed_ops.empty() || cursor != plan.model_inputs().front()) {
+    fail(error,
+         "model-managed preproc absorption has no exact transform chain from the public input "
+         "to the first MLA");
+    return std::nullopt;
+  }
+  std::reverse(reversed_ops.begin(), reversed_ops.end());
+
+  // Absorption is legal only for a private linear prefix. A published or
+  // side-consumed intermediate is an observable barrier and must keep its
+  // original physical command.
+  for (std::size_t index = 0; index < reversed_ops.size(); ++index) {
+    const auto& op = plan.ops()[reversed_ops[index]];
+    const ValueId output = op.outputs.front();
+    if (std::any_of(
+            plan.model_outputs().begin(), plan.model_outputs().end(),
+            [&](const ModelOutputSpec& published) { return published.value_id == output; })) {
+      fail(error, "model-managed preproc absorption crosses a published ingress value");
+      return std::nullopt;
+    }
+    const OpId expected_consumer =
+        index + 1U < reversed_ops.size() ? reversed_ops[index + 1U] : first_mla->key.op_id;
+    std::size_t consumers = 0U;
+    for (const auto& consumer : plan.ops()) {
+      if (std::find(consumer.inputs.begin(), consumer.inputs.end(), output) ==
+          consumer.inputs.end()) {
+        continue;
+      }
+      ++consumers;
+      if (consumer.id != expected_consumer) {
+        fail(error, "model-managed preproc absorption crosses an ingress fan-out or barrier");
+        return std::nullopt;
+      }
+    }
+    if (consumers != 1U) {
+      fail(error, "model-managed preproc absorption found an unconsumed ingress value");
+      return std::nullopt;
+    }
+  }
+
+  if (physical_plan.command_for_semantic_op.size() != plan.ops().size()) {
+    fail(error, "model-managed preproc absorption has no complete physical-command index");
+    return std::nullopt;
+  }
+  std::vector<PhysicalCommandId> commands;
+  for (const auto op_id : reversed_ops) {
+    const auto command_id = physical_plan.command_for_semantic_op[op_id];
+    if (!command_id || *command_id >= physical_plan.commands.size()) {
+      fail(error, "model-managed preproc absorption references an unlowered semantic op");
+      return std::nullopt;
+    }
+    if (commands.empty() || commands.back() != *command_id) {
+      commands.push_back(*command_id);
+    }
+  }
+
+  std::unordered_set<OpId> wanted_ops(reversed_ops.begin(), reversed_ops.end());
+  for (const auto command_id : commands) {
+    const auto& command = physical_plan.commands[command_id];
+    if (command.engine != PhysicalEngine::Cvu || command.role != PhysicalCommandRole::Ingress ||
+        command.members.size() != 1U || command.inputs.size() != 1U ||
+        command.outputs.size() != 1U || command.members.front().semantic_chain.empty()) {
+      fail(error,
+           "model-managed preproc absorption requires singleton strict CVU Ingress commands");
+      return std::nullopt;
+    }
+    for (const auto semantic : command.members.front().semantic_chain) {
+      if (wanted_ops.erase(semantic) != 1U) {
+        fail(error, "model-managed preproc absorption command contains an unrelated semantic op");
+        return std::nullopt;
+      }
+    }
+  }
+  if (!wanted_ops.empty()) {
+    fail(error, "model-managed preproc absorption does not cover its exact semantic prefix");
+    return std::nullopt;
+  }
+  if (error) {
+    error->clear();
+  }
+  return commands;
+}
+
+bool project_model_managed_preproc_contract(const ModelExecutionPlan& plan,
+                                            const PhysicalExecutionPlan& physical_plan,
+                                            ::simaai::neat::CompiledProcessCvuContract* contract,
+                                            std::vector<PhysicalCommandId>* absorbed_command_ids,
+                                            std::string* error) {
+  if (!contract || !absorbed_command_ids) {
+    return fail(error, "model-managed preproc projection received a null contract/output");
+  }
+  auto commands = resolve_model_managed_preproc_ingress_commands(plan, physical_plan, error);
+  if (!commands) {
+    return false;
+  }
+
+  const auto mla_inputs = plan.backend_ports(0U, BackendPortDirection::Input);
+  const auto* target = mla_inputs.size() == 1U ? plan.value(mla_inputs.front().value_id) : nullptr;
+  if (!target || !target->logical_dtype || !target->logical_shape || !target->storage_binding) {
+    return fail(error,
+                "model-managed preproc target has no exact typed first-MLA storage contract");
+  }
+
+  bool has_quant = false;
+  bool has_tess = false;
+  const QuantizeOpConfig* quant = nullptr;
+  const TessellateOpConfig* tess = nullptr;
+  const OpSpec* tess_op = nullptr;
+  for (const auto command_id : *commands) {
+    for (const auto op_id : physical_plan.commands[command_id].members.front().semantic_chain) {
+      const auto& op = plan.ops()[op_id];
+      if (op.kind == OpKind::Quantize) {
+        has_quant = true;
+        quant = std::get_if<QuantizeOpConfig>(&op.config);
+      } else if (op.kind == OpKind::Tessellate) {
+        has_tess = true;
+        tess = std::get_if<TessellateOpConfig>(&op.config);
+        tess_op = &op;
+      }
+    }
+  }
+  if ((contract->payload.tessellate == 1) != has_tess) {
+    return fail(error,
+                "model-managed preproc tessellation contradicts the absorbed ingress prefix");
+  }
+  if (has_tess && (!tess || contract->payload.slice_shapes.size() != 1U ||
+                   std::vector<std::int64_t>(contract->payload.slice_shapes.front().begin(),
+                                             contract->payload.slice_shapes.front().end()) !=
+                       tess->slice_shape)) {
+    return fail(error,
+                "model-managed preproc tile geometry contradicts the absorbed ingress prefix");
+  }
+  if (has_quant) {
+    std::string rounding = quant ? quant->rounding : std::string{};
+    std::transform(rounding.begin(), rounding.end(), rounding.begin(),
+                   [](const unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    const bool exact_rounding = rounding == "TONEAREST" || rounding == "RT_EVEN";
+    if (!quant || !exact_rounding || quant->channel_params.size() != 1U ||
+        !contract->payload.has_q_scale || !contract->payload.has_q_zp ||
+        contract->payload.q_scale != quant->channel_params.front().scale ||
+        contract->payload.q_zp != quant->channel_params.front().zero_point) {
+      return fail(error,
+                  "model-managed preproc quantization contradicts the absorbed ingress prefix");
+    }
+  } else if (contract->payload.has_q_scale || contract->payload.has_q_zp) {
+    return fail(error,
+                "model-managed preproc authors quantization without an absorbed quantize op");
+  }
+
+  // The graph-200 descriptor keeps both firmware-internal output identities
+  // (RGB and, when enabled, tessellated), but a model-managed preprocessor is
+  // explicitly a single-output handoff.  The immutable execution plan has no
+  // values named after those firmware pointers; its exact authority is the
+  // sole first-MLA port selected above.  Narrow the already-compiled contract
+  // to its authored primary output before the ordinary one-port projection so
+  // that the resolver maps that one output to the materialized MLA ingress
+  // rather than attempting to resolve an unexposed internal pointer by name.
+  auto& runtime = contract->runtime_contract;
+  const auto& primary_output_name = contract->payload.primary_output_name;
+  const auto selected = std::find_if(runtime.logical_outputs.begin(), runtime.logical_outputs.end(),
+                                     [&](const LogicalTensorStaticSpec& logical) {
+                                       return logical.logical_name == primary_output_name ||
+                                              logical.backend_name == primary_output_name ||
+                                              logical.segment_name == primary_output_name;
+                                     });
+  if (!contract->payload.preproc_single_output_handoff || primary_output_name.empty() ||
+      selected == runtime.logical_outputs.end() ||
+      std::find_if(std::next(selected), runtime.logical_outputs.end(),
+                   [&](const LogicalTensorStaticSpec& logical) {
+                     return logical.logical_name == primary_output_name ||
+                            logical.backend_name == primary_output_name ||
+                            logical.segment_name == primary_output_name;
+                   }) != runtime.logical_outputs.end() ||
+      selected->physical_index < 0 ||
+      static_cast<std::size_t>(selected->physical_index) >= runtime.physical_outputs.size()) {
+    return fail(error, "model-managed preproc primary output has no unique internal graph-200 "
+                       "identity");
+  }
+  LogicalTensorStaticSpec selected_logical = *selected;
+  PhysicalBufferStaticSpec selected_physical =
+      runtime.physical_outputs[static_cast<std::size_t>(selected->physical_index)];
+  if (has_tess && selected_logical.shape != *target->logical_shape) {
+    // The MPK's linear packed carrier and Preproc's image frame are different
+    // contracts. Author the packed view only after proving the exact absorbed
+    // Tess frame, scalar type, layout and storage span; equal bytes alone are
+    // not an image-geometry proof.
+    const auto* frame =
+        tess_op && tess_op->inputs.size() == 1U ? plan.value(tess_op->inputs.front()) : nullptr;
+    const TensorShape execution_shape = tess_op && !tess_op->input_shapes.empty()
+                                            ? tess_op->input_shapes.front()
+                                        : frame && frame->logical_shape ? *frame->logical_shape
+                                                                        : TensorShape{};
+    std::uint32_t authored_dtype = 0U, packed_dtype = 0U, frame_dtype = 0U, semantic_dtype = 0U;
+    if (!frame || !frame->logical_shape || execution_shape.empty() ||
+        selected_logical.shape.empty() ||
+        std::any_of(execution_shape.begin(), execution_shape.end(),
+                    [](auto dim) { return dim <= 0; }) ||
+        std::any_of(selected_logical.shape.begin(), selected_logical.shape.end(),
+                    [](auto dim) { return dim <= 0; }) ||
+        !plugin_contracts::unit_axis_shape_alias_public(execution_shape, *frame->logical_shape) ||
+        !plugin_contracts::unit_axis_shape_alias_public(execution_shape, selected_logical.shape))
+      return fail(error,
+                  "model-managed preproc frame geometry contradicts the absorbed Tess input");
+    if (target->representation != ValueRepresentation::Tessellated ||
+        target->logical_shape->empty() || target->logical_shape->size() > 2U ||
+        !frame->logical_dtype ||
+        !tensorsemantics::dtype_token_to_ev(*frame->logical_dtype, &semantic_dtype) ||
+        !tensorsemantics::dtype_token_to_ev(selected_logical.dtype, &authored_dtype) ||
+        !tensorsemantics::dtype_token_to_ev(*target->logical_dtype, &packed_dtype) ||
+        !tensorsemantics::dtype_token_to_ev(tess->frame_type, &frame_dtype) ||
+        authored_dtype != packed_dtype || frame_dtype != packed_dtype ||
+        semantic_dtype != packed_dtype ||
+        tensorsemantics::normalize_layout_token(*target->logical_layout).empty() ||
+        tensorsemantics::normalize_layout_token(selected_logical.layout) !=
+            tensorsemantics::normalize_layout_token(*target->logical_layout))
+      return fail(error, "model-managed preproc packed publication contradicts typed storage");
+    const auto& strides = target->storage_binding->stride_bytes;
+    std::uint64_t packed_bytes = 0U;
+    if (!exact_logical_tensor_span(*target->logical_shape, {}, *target->logical_dtype,
+                                   &packed_bytes) ||
+        packed_bytes != target->required_bytes ||
+        packed_bytes > target->storage_binding->physical_span ||
+        (!strides.empty() && strides.size() != target->logical_shape->size()))
+      return fail(error, "model-managed preproc packed publication has invalid scalar extent");
+    std::uint64_t stride = static_cast<std::uint64_t>(sima_ev_elem_size_bytes(packed_dtype));
+    for (std::size_t axis = target->logical_shape->size(); axis-- > 0U;) {
+      const auto dim = target->logical_shape->at(axis);
+      if (!strides.empty() && dim > 1 &&
+          (stride > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
+           strides[axis] != static_cast<std::int64_t>(stride)))
+        return fail(error, "model-managed preproc packed publication is not linear storage");
+      stride *= static_cast<std::uint64_t>(dim); // exact span above proved no overflow
+    }
+    selected_logical.shape = *target->logical_shape;
+    selected_logical.stride_bytes = strides;
+    selected_logical.publication_relation = PublicationViewRelation::PackedStorage;
+  }
+  selected_logical.logical_index = 0;
+  selected_logical.backend_output_index = 0;
+  selected_logical.physical_index = 0;
+  selected_logical.output_slot = 0;
+  selected_logical.tensor_index = 0;
+  selected_logical.byte_offset = 0;
+  selected_physical.physical_index = 0;
+  selected_physical.allocator_index = 0;
+  selected_physical.source_physical_index = 0;
+  selected_physical.source_byte_offset = 0;
+  runtime.logical_outputs = {selected_logical};
+  runtime.physical_outputs = {std::move(selected_physical)};
+  runtime.output_order = {
+      StageOutputRoute{0, 0, 0, primary_output_name, selected_logical.segment_name}};
+  const auto* target_carrier = plan.carrier(target->storage_binding->carrier_id);
+  if (!target_carrier || !target_carrier->required_alignment_bytes ||
+      !apply_processcvu_implementation_contract(&contract->payload, error))
+    return fail(error, "model-managed preproc target has no exact carrier contract");
+  auto& output_physical = runtime.physical_outputs.front();
+  output_physical.size_bytes = target->required_bytes;
+  output_physical.segment_name = target->name;
+  output_physical.required_alignment_bytes = std::gcd<std::uint64_t>(
+      target_carrier->required_alignment_bytes, target->storage_binding->byte_offset);
+  if (!project_carrier_span(plan, *target, 0, &output_physical, error))
+    return false;
+  runtime.logical_outputs.front().segment_name = target->name;
+  runtime.logical_outputs.front().model_carrier_id = target->storage_binding->carrier_id;
+  runtime.consumer_keeps_distinct_physical_inputs = false;
+  contract->payload.dmabuf_plan_contract = true;
+  CompiledExposedView exposed_view;
+  if (contract->runtime_contract.logical_outputs.size() != 1U ||
+      contract->runtime_contract.physical_outputs.size() != 1U ||
+      contract->runtime_contract.logical_inputs.size() != 1U ||
+      contract->runtime_contract.physical_inputs.size() != 1U ||
+      contract->runtime_contract.input_bindings.size() != 1U ||
+      contract->payload.input_tensors.size() != 1U) {
+    return fail(error, "model-managed preproc strict handoff must expose one input and one "
+                       "first-MLA carrier");
+  }
+
+  const auto& logical = contract->runtime_contract.logical_outputs.front();
+  if (tensorsemantics::normalize_layout_token(logical.layout).empty()) {
+    return fail(error, "model-managed preproc output has no explicit image layout");
+  }
+  if (has_tess) {
+    contract->runtime_contract.logical_outputs.front().size_bytes = target->required_bytes;
+    contract->runtime_contract.physical_outputs.front().size_bytes =
+        target->storage_binding->physical_span;
+  }
+  std::uint32_t logical_dtype = 0U;
+  std::uint32_t target_dtype = 0U;
+  if (!tensorsemantics::dtype_token_to_ev(logical.dtype, &logical_dtype) ||
+      !tensorsemantics::dtype_token_to_ev(*target->logical_dtype, &target_dtype) ||
+      logical_dtype != target_dtype || logical.shape != *target->logical_shape ||
+      (target->logical_layout && logical.layout != *target->logical_layout) ||
+      logical.size_bytes != target->required_bytes ||
+      contract->runtime_contract.physical_outputs.front().size_bytes !=
+          target->storage_binding->physical_span) {
+    const auto describe_shape = [](const auto& shape) {
+      std::string text = "[";
+      for (const auto dim : shape) {
+        if (text.size() > 1U) {
+          text += ",";
+        }
+        text += std::to_string(dim);
+      }
+      return text + "]";
+    };
+    return fail(error,
+                "model-managed preproc output contradicts the exact first-MLA tensor/carrier: "
+                "dtype=" +
+                    logical.dtype + "/" + *target->logical_dtype + " shape=" +
+                    describe_shape(logical.shape) + "/" + describe_shape(*target->logical_shape) +
+                    " layout=" + logical.layout + "/" + target->logical_layout.value_or("unknown") +
+                    " logical_bytes=" + std::to_string(logical.size_bytes) + "/" +
+                    std::to_string(target->required_bytes) + " physical_bytes=" +
+                    std::to_string(contract->runtime_contract.physical_outputs.front().size_bytes) +
+                    "/" + std::to_string(target->storage_binding->physical_span));
+  }
+
+  // Graph 200 has two firmware-internal output pointers, but the strict
+  // single-output mode binds exactly one of them to the selected carrier.
+  // Collapse every output-indexed typed field to that compiler-proved MLA
+  // ingress value.  Leaving both legacy internal descriptors here would make
+  // graph 200 look like a two-member transform even though it has one input
+  // and one selected output.
+  sima_ev_tensor_desc selected_output{};
+  if (has_tess) {
+    TensorShape frame_shape;
+    if (tess_op && !tess_op->input_shapes.empty()) {
+      frame_shape = tess_op->input_shapes.front();
+    } else if (tess_op && !tess_op->inputs.empty()) {
+      const auto* frame = plan.value(tess_op->inputs.front());
+      if (frame && frame->logical_shape) {
+        frame_shape = *frame->logical_shape;
+      }
+    }
+    if (!tess || frame_shape.empty() ||
+        !build_cvu_tiled_desc(*target, frame_shape, tess->slice_shape, tess->frame_type,
+                              tess->align_c16, tess->cblock, &selected_output, error)) {
+      return false;
+    }
+  } else if (!build_cvu_dense_desc_with_geometry(*target, *target->logical_shape, logical.layout,
+                                                 {}, &selected_output, error)) {
+    return false;
+  }
+
+  auto& payload = contract->payload;
+  payload.default_output_names = {payload.primary_output_name};
+  payload.output_tensors = {{selected_output, cvu_dtype(*target)}};
+  payload.output_shapes = {cvu_shape(*target)};
+  payload.runtime_output_logical_index_list = {0};
+  payload.runtime_output_output_slot_list = {0};
+  payload.runtime_output_physical_index_list = {0};
+  payload.runtime_output_dtype_list = {cvu_dtype(*target)};
+  payload.runtime_output_transport_kind_list = {has_tess ? ProcessCvuOutputTransportKind::Packed
+                                                         : ProcessCvuOutputTransportKind::Dense};
+  payload.runtime_output_semantic_kind_list = {ProcessCvuOutputSemanticKind::Image};
+  payload.runtime_output_logical_shapes = {cvu_shape(*target)};
+  payload.runtime_output_logical_layout_list = {logical.layout};
+  payload.num_in_tensor = 1;
+
+  // A public video input is still one concrete DMA-BUF carrier.  It has no
+  // producer stage in the model plan, so author its sole physical/logical
+  // selector explicitly instead of leaving sentinel -1 values that the
+  // strict binder must reject as ambiguous.
+  auto& physical_input = contract->runtime_contract.physical_inputs.front();
+  physical_input.physical_index = 0;
+  physical_input.allocator_index = 0;
+  physical_input.source_physical_index = 0;
+  physical_input.source_byte_offset = 0;
+  auto& logical_input = contract->runtime_contract.logical_inputs.front();
+  logical_input.logical_index = 0;
+  logical_input.backend_input_index = 0;
+  logical_input.physical_index = 0;
+  logical_input.byte_offset = 0;
+  auto& input_binding = contract->runtime_contract.input_bindings.front();
+  input_binding.sink_pad_index = 0;
+  input_binding.local_logical_input_index = 0;
+  input_binding.src_logical_output_index = 0;
+  input_binding.src_output_slot = 0;
+  input_binding.src_physical_output_index = 0;
+  input_binding.src_physical_size_bytes = physical_input.size_bytes;
+  input_binding.src_physical_byte_offset = 0;
+  input_binding.source_segment_name = physical_input.segment_name;
+
+  // Preserve the authored public name after resolving the compiler segment.
+  runtime.output_order = {
+      StageOutputRoute{0, 0, 0, primary_output_name, runtime.logical_outputs.front().segment_name}};
+  exposed_view.primary_output_name = primary_output_name;
+  exposed_view.exposed_logical_outputs = runtime.logical_outputs;
+  exposed_view.exposed_output_order = runtime.output_order;
+  contract->exposed_view = std::move(exposed_view);
+
+  contract->physical_command_role = PhysicalCommandRole::Ingress;
+  *absorbed_command_ids = std::move(*commands);
+  if (error) {
+    error->clear();
+  }
+  return true;
+}
+
+} // namespace simaai::neat::pipeline_internal::sima::static_contract

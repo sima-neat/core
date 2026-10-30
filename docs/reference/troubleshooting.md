@@ -138,12 +138,11 @@ opt.preprocess.preset = pyneat.NormalizePreset.COCO_YOLO
 ### 10. `No channel available (all candidate channel opens failed)`
 
 :::info Cause
-The EV74 dispatcher tried to schedule a kernel the loaded firmware doesn't implement — usually because `neat-runtime` and `neat-ev74-firmware` are **not the same build** (mismatched internals hash), e.g. a partial update.
+The execution request could not open a compatible EV74 channel. One possible cause is a mismatched Scheduler, Runner, Kernels, or firmware package set after a partial update.
 :::
 
 :::tip Fix
-Install the matched `neat-*` set (same hash) together; confirm runtime and firmware report the same hash. See [Compatibility → the version-matched set](/getting-started/compatibility#the-version-matched-set-firmware--runtime).
-*(Message originates in the EV74 dispatcher.)*
+Install the complete Core bundle with its selected Scheduler dependencies using [Install or Update Neat Library](/getting-started/neat-library/install-or-update/). Check [runtime package pairing](/reference/diagnostics/#keep-core-and-scheduler-packages-matched) rather than comparing unrelated component Git hashes or forcing individual firmware packages.
 :::
 
 ### 11. `frame=N rtsp_timeout`
@@ -156,14 +155,14 @@ An RTSP pull timed out — the URL is wrong or the stream isn't delivering frame
 Verify the RTSP URL is reachable and actively streaming; check transport (TCP vs UDP). See [Consume an RTSP Stream](/tutorials/consume-rtsp-stream).
 :::
 
-### 12. `CameraInput strict zero-copy requires external-buffer-mode`
+### 12. `Camera buffer is not one forwardable DMA-BUF and copying is disabled`
 
 :::info Cause
-`CameraInputOptions::allow_cpu_fallback` defaults to false, so Neat requires end-to-end SiMaAI/device zero-copy support. Either `libcamerasrc` does not advertise the generic `external-buffer-mode` property or the installed memory library cannot export its allocation as DMA-BUFs.
+`CameraInputOptions::allow_cpu_fallback` defaults to false, so Neat forwards the camera's own DMA-BUF and never copies. The camera stack delivered a frame that is not one DMA-BUF with its planes back to back (for example a plane per fd, or non-DMA-BUF memory).
 :::
 
 :::tip Fix
-Keep strict zero-copy when the coherent camera and memory packages are installed. If you must run against a camera stack without DMA-BUF export, opt into the compatibility bridge explicitly:
+Keep strict zero-copy with the platform `libcamera` package. If you must run against a camera stack that does not deliver each frame as one DMA-BUF, opt into the compatibility copy explicitly:
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -184,7 +183,7 @@ camera.allow_cpu_fallback = True
 </CodeTab>
 </CodeTabs>
 
-Adaptive mode still hands downstream CVU/MLA stages SiMaAI memory. It only copies at the camera bridge when the upstream camera buffer is not already usable by EV74.
+Adaptive mode still hands downstream CVU/MLA stages a DMA-BUF. It only copies, into a CMA DMA-BUF, when the camera frame is not one DMA-BUF with its planes back to back.
 :::
 
 ### 13. `misconfig.media_caps … libcamerasrc … not-negotiated (-4)`
@@ -235,7 +234,7 @@ python3 share/sima-neat/tutorials/023_run_mipi_camera_model/run_mipi_camera_mode
   --pull-timeout-ms 15000 --print-backend
 </ShellCommand>
 
-The production path should include `libcamerasrc`, `neatcamerabridge` when fallback is enabled, `neatprocesscvu`, `neatprocessmla`, and `appsink`. For BoxDecode routes, also confirm the `--decode` token and thresholds match the model archive.
+The production path should include `libcamerasrc`, `neatcamerabridge` when fallback is enabled, `neatkernelrunner`, `neatprocessmla`, and `appsink`. For BoxDecode routes, also confirm the `--decode` token and thresholds match the model archive.
 :::
 
 ### 16. Graph throughput is low, or live frames get dropped
@@ -439,15 +438,7 @@ read the message for specifics.
 | `build.pipeline_syntax` | A custom GStreamer fragment has invalid syntax. |
 | `build.parse_launch` | A `gst_parse_launch` failure could not be classified more specifically. |
 | `runtime.pull` | A pull failed without a more specific upstream/root-cause code. |
-| `infra.dispatcher_unavailable` | An accelerator dispatcher could not be acquired, including EV74 RPMsg channel exhaustion during build. No CPU fallback. |
+| `infra.dispatcher_unavailable` | An MLA/EV74/A65 dispatcher couldn't be acquired — firmware not loaded, missing license, or hardware fault. No CPU fallback. |
 
 This is a short troubleshooting map. Use the [complete error code catalog](/reference/error-codes)
 for every code and the C++/Python constant names.
-
-For an `EVXX/EV74 RPMsg capacity exhausted` startup error, close unused graph runs
-or stop competing workloads, then rebuild. Graphs sharing a dispatcher keep its
-channels until the last client closes. Acquisition waits up to 15 seconds by
-default, configurable with `SIMA_RPMSG_ACQUIRE_TIMEOUT_MS`. The retired
-`SIMA_RPCEVXX_IDLE_RELEASE_MS` setting warns and has no effect; idle graphs retain
-their reservations. Other reservation failures include their discovery,
-permission, or transport diagnostics.

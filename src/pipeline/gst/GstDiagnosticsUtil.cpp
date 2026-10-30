@@ -48,7 +48,8 @@ const char* state_name(GstState s) {
 }
 
 void log_appsink_pull_state(GstElement* appsink, GstSample* sample, const char* tag) {
-  if (!env_bool("SIMA_APPSINK_PULL_DEBUG", false))
+  static const bool enabled = env_bool("SIMA_APPSINK_PULL_DEBUG", false);
+  if (!enabled)
     return;
   if (!appsink || !sample)
     return;
@@ -73,7 +74,8 @@ void log_appsink_pull_state(GstElement* appsink, GstSample* sample, const char* 
 }
 
 void log_appsink_last_sample(GstElement* appsink, const char* tag) {
-  if (!env_bool("SIMA_APPSINK_LAST_SAMPLE_DEBUG", false))
+  static const bool enabled = env_bool("SIMA_APPSINK_LAST_SAMPLE_DEBUG", false);
+  if (!enabled)
     return;
   if (!appsink)
     return;
@@ -224,7 +226,9 @@ TeardownResult finish_teardown(GstElement* pipeline, GstStateChangeReturn begin_
   result.wait_result = wait_result;
   result.current = cur;
   result.pending = pend;
-  if (cur != GST_STATE_NULL) {
+  const bool stable_null =
+      cur == GST_STATE_NULL && (pend == GST_STATE_VOID_PENDING || pend == GST_STATE_NULL);
+  if (!stable_null) {
     result.status =
         begin_result == GST_STATE_CHANGE_FAILURE || wait_result == GST_STATE_CHANGE_FAILURE
             ? TeardownStatus::StateChangeFailure
@@ -303,7 +307,8 @@ void log_incomplete_element_states(GstElement* pipeline) {
   }
 }
 
-void warn_incomplete_teardown(GstElement* pipeline, const TeardownResult& result, int timeout_ms) {
+void warn_incomplete_teardown(GstElement* pipeline, const TeardownResult& result, int timeout_ms,
+                              bool defer_to_reaper = true) {
   const char* reason = result.status == TeardownStatus::StateChangeFailure
                            ? "teardown state change failed"
                            : "teardown timed out";
@@ -311,7 +316,9 @@ void warn_incomplete_teardown(GstElement* pipeline, const TeardownResult& result
             << "ms; begin_return=" << static_cast<int>(result.begin_result)
             << " wait_return=" << static_cast<int>(result.wait_result)
             << " current=" << state_name(result.current)
-            << " pending=" << state_name(result.pending) << "; deferring to reaper.\n";
+            << " pending=" << state_name(result.pending)
+            << (defer_to_reaper ? "; deferring to reaper.\n"
+                                : "; retaining ownership until NULL.\n");
   log_incomplete_element_states(pipeline);
 }
 
@@ -764,8 +771,9 @@ void throw_if_bus_error(GstElement* pipeline, const std::shared_ptr<DiagCtx>& di
   rep.error_code = diagnostic.error_code;
   rep.repro_note =
       render_diagnostic_body(diagnostic, ux::should_emit_gstreamer_for_current_context());
-  throw NeatError(pipeline_internal::error_util::decorate_error(rep.error_code, rep.repro_note),
-                  std::move(rep));
+  const std::string message =
+      pipeline_internal::error_util::decorate_error(rep.error_code, rep.repro_note);
+  throw NeatError(message, std::move(rep));
 }
 
 std::optional<GstSample*> try_pull_sample_sliced(GstElement* pipeline, GstElement* appsink,
@@ -775,7 +783,8 @@ std::optional<GstSample*> try_pull_sample_sliced(GstElement* pipeline, GstElemen
   if (!pipeline || !appsink)
     return std::nullopt;
 
-  const int slice_ms = std::max(10, std::atoi(env_str("SIMA_GST_POLL_SLICE_MS", "200").c_str()));
+  static const int slice_ms =
+      std::max(10, std::atoi(env_str("SIMA_GST_POLL_SLICE_MS", "200").c_str()));
 
   const bool infinite = (timeout_ms < 0);
   int remaining = timeout_ms;
@@ -866,7 +875,7 @@ void stop_and_unref(GstElement*& e) {
   enqueue_teardown(local, /*flush=*/true);
 }
 
-void stop_and_unref_no_flush(GstElement*& e, bool prefer_synchronous) {
+void stop_and_unref_no_flush(GstElement*& e, InputStreamTeardownPolicy policy) {
   if (!e)
     return;
 
@@ -878,16 +887,19 @@ void stop_and_unref_no_flush(GstElement*& e, bool prefer_synchronous) {
   // its configured RTSP TEARDOWN timeout during PAUSED -> READY. Account for
   // those waits before initiating NULL; after the transition starts, dynamic
   // rtspsrc children may already be disappearing.
+  const bool prefer_synchronous = policy != InputStreamTeardownPolicy::Deferred;
+  const bool must_reach_null = policy == InputStreamTeardownPolicy::MustReachNull;
   const int timeout_ms =
       prefer_synchronous ? effective_synchronous_teardown_timeout_ms(local, teardown_timeout_ms())
                          : teardown_timeout_ms();
 
   // Defer teardown to the reaper to avoid blocking in gst_element_set_state for
   // legacy push/appsrc paths.  Live/source pipelines (CameraInput/RTSP/etc.)
-  // prefer bounded synchronous NULL teardown so Run::close() does not return
-  // while source streaming threads can still touch downstream plugin/runtime
-  // state.  The env var remains an explicit escape hatch in both directions.
-  const bool defer_no_flush = env_bool("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", !prefer_synchronous);
+  // prefer a bounded synchronous NULL attempt before using the reaper. The env
+  // var remains an escape hatch for deferred and bounded-live teardown, but
+  // cannot bypass a driver's exact-once stop callback.
+  const bool defer_no_flush =
+      !must_reach_null && env_bool("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", !prefer_synchronous);
   if (defer_no_flush) {
     enqueue_teardown(local, /*flush=*/false);
     return;
@@ -909,10 +921,27 @@ void stop_and_unref_no_flush(GstElement*& e, bool prefer_synchronous) {
                                   .count();
       wait_timeout_ms = elapsed_ms >= timeout_ms ? 0 : timeout_ms - static_cast<int>(elapsed_ms);
     }
-    const TeardownResult result = finish_teardown(local, begin_result, wait_timeout_ms);
+    TeardownResult result = finish_teardown(local, begin_result, wait_timeout_ms);
     if (result.status == TeardownStatus::Complete)
       return;
-    warn_incomplete_teardown(local, result, timeout_ms);
+    warn_incomplete_teardown(local, result, timeout_ms, !must_reach_null);
+    if (must_reach_null) {
+      // Do not transfer driver-backed pipelines to the process-global reaper:
+      // their element stop callbacks own the submitted DMA jobs and runtime
+      // references. RunCore may bound its caller-visible wait by detaching the
+      // stop task, but that task retains RunCore/InputStream ownership until
+      // this transition completes, so waiting here cannot create a UAF.
+      GstStateChangeReturn retry_begin_result = begin_result;
+      const int retry_wait_ms = std::max(1, timeout_ms);
+      while (result.status != TeardownStatus::Complete) {
+        if (result.status == TeardownStatus::StateChangeFailure) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(10));
+          retry_begin_result = begin_teardown(local, /*flush=*/false);
+        }
+        result = finish_teardown(local, retry_begin_result, retry_wait_ms);
+      }
+      return;
+    }
   }
 
   enqueue_teardown(local, /*flush=*/false);

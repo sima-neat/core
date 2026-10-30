@@ -9,12 +9,16 @@ slug: /reference/environment-variables
 
 このページには、ランタイム、ビルダー、および SDK ツールで使用される環境変数がまとめられています。これらは主にデバッグ/診断用の設定であり、ほとんどのユーザーはトラブルシューティングを行う場合を除き、無視しても問題ありません。
 
-詳細なリストについては、[環境変数のリスト](./inventory) を参照してください。
+詳細なリストについては、[環境変数のリスト](/reference/environment-variables/inventory/) を参照してください。
 
 > 注：一部のパラメータは内部用またはテスト専用であり、変更される可能性があります。ここではそれらも含めて記載しています。
 > なぜなら、それらは現在のコード実行パスに存在しているからです。
 
 ## SDKのウェブアクセス
+
+Palette SDK 3.0 以降では、`sima-cli sdk setup` がコンテナー環境に `CODE_SERVER_PASSWORD` を設定します。`neat` を再実行してパスワードを確認し、code-server に求められたときに入力してください。URL にパスワードやトークンは含まれません。`neat --json` は `backend`、`auth`、`password`、`localUrl`、`remoteUrl` を持つ `codeUI` を追加します。この出力は認証情報として扱ってください。SDK ポートマップの公開ポート `codeUIHttps.host` はコンテナーポートより優先されます。
+
+インストールされた code-server 実行ファイルに基づいて動作を選択します。`CODE_SERVER_PASSWORD` を設定するだけでは従来の OpenVSCode の動作は変わりません。`CODE_SERVER_HTTPS_PORT` と `CODE_SERVER_WORKSPACE` は従来の変数より優先されます。`CODE_SERVER_WITHOUT_PASSWORD=1` の場合、`auth: "none"` を返し、パスワード値を省略します。従来の OpenVSCode イメージはトークン付き URL を維持します。
 
 - `NFS_SERVER_HOST_IP=<address>` — リモートを構築するために使用されるSDKホストのアドレス。
   Insightと、ブラウザベースの VS Code の URL。通常は、`sima-cli sdk setup`によって提供されます。
@@ -92,11 +96,10 @@ slug: /reference/environment-variables
 ## ディスパッチャー / ランタイム
 
 - `SIMA_DISPATCHER_TRACE=1` — ディスパッチャーの処理ステップを追跡します。
-- `SIMA_DISPATCHER_AUTO_RECOVER=0/1` — 自動復旧ディスパッチャー（デフォルトは有効）。
 - `SIMA_ASYNC_TPUT_DIAG=1` — 非同期スループット診断。
 - `SIMA_ASYNC_WARMUP=<n>` — 非同期ウォームアップフレーム。
-- `SIMA_PERF_POWER=1` — パフォーマンス測定のシナリオで、SOM PMICレールへの電力供給を有効にします。
-- `SIMA_PERF_POWER_INTERVAL_MS=<ms>` — 電力サンプリング間隔（デフォルトは100）。
+- `SIMA_PERF_POWER=1` — パフォーマンス測定のシナリオで、Sentinel からのボード電力の取得を有効にします。
+- `SIMA_PERF_POWER_INTERVAL_MS=<ms>` — 非推奨で、無視されます。Sentinel は 2 秒ごとにサンプリングします。
 - `SIMA_PULL_TIMEOUT_DIAG=0/1` — プル操作のタイムアウトに関するレポートを出力します（デフォルトは有効）。
 - `SIMA_STAGE_DEBUG=1` — StageRun のデバッグログ。
 
@@ -130,10 +133,11 @@ slug: /reference/environment-variables
 
 選択は、空き容量ではなく、書き込み可能性に基づいて行われます。`.tar.gz` は、展開後のサイズをどちらの方向にも制限しないため、デコード前に必要な容量を事前に知ることはできません。したがって、容量は、展開中および抽出前のマニフェストから、チャンクごとに適用されます。したがって、適切な NVMe は無条件で使用され、空き容量がない場合は、eMMC にフォールバックするのではなく、`output_storage_unavailable` で読み込みに失敗します。そのファイルシステムの空き容量、または `SIMA_MPK_EXTRACT_ROOT` が別の場所を指している場合が、その解決策です。
 - `SIMA_MPK_CLEANUP_EXTRACTED=0/1` — 通常終了時に、プロセスごとに抽出されたモデルアーカイブデータを削除します（デフォルトは`1`）。
-  クリーンアップが有効になっている場合、各プロセスは自身の `proc_<pid>` ルートに展開し、終了時にそれを削除します。クリーンアップが無効になっている場合、そのプロセスルートは検査のために保持され、古いルートのガベージコレクションから除外されます。別のプロセスによって自動的に検出または再利用されることはありません。不要になった場合は、手動で削除してください。
+  クリーンアップが有効になっている場合、各プロセスは一意のロック付き `proc_run_*` ルートに展開し、終了時にそれを削除します。クリーンアップが無効になっている場合、そのプロセスルートは検査のために保持され、古いルートのガベージコレクションから除外されます。別のプロセスによって自動的に検出または再利用されることはありません。不要になった場合は、手動で削除してください。
 
 `Model` は、`etc`、`lib`、および `share` を含む、すでに整理されたパッケージルートも受け入れます。そのディレクトリは、解凍またはコピーなしでそのまま使用されます。呼び出し元は、そのライフサイクルを管理し、モデルが使用されている間は変更しないようにする必要があります。`tar -xzf` によって生成されたフラットなディレクトリは、整理されたパッケージではなく、直接受け入れられません。
-- `SIMA_MPK_EXTRACT_GC_STALE_PROC=0/1` — 古い不要なものを削除`proc_*` 起動時に抽出するルート (デフォルト) `1`).
+- `SIMA_MPK_EXTRACT_GC_STALE_PROC=0/1` — 起動時に所有権ロックで未使用と確認された `proc_run_*` 展開ルートを削除します（デフォルトは `1`）。
+  従来の `proc_<pid>` ルートは、使用されていないことを確認してから手動で削除してください。
 - `SIMA_MODEL_TAR=<path>` — 例やテストで使用される、ベースモデルパックのパス。
   モデルごとの上書き設定（`SIMA_RESNET50_TAR`、`SIMA_YOLO_TAR`など）は、引き続き優先されます。
 - `SIMA_MPK_EXTRACT_MIN_FREE_BYTES=<bytes>` — ステージング時に確保しておく最小限の空き容量。
@@ -151,3 +155,23 @@ slug: /reference/environment-variables
 ## テスト / 内部フック
 
 - `SIMA_TENSOR_MAPFAIL_DEBUG=1` — テンソルのマッピング失敗をログに記録します。
+
+## カーネルメタデータの検証
+
+ProcessCVU ステージはデフォルトで Runtime の `neatkernelrunner` を通じて実行されます。古い ProcessCVU プラグインを選択するビルドオプションや環境変数はありません。
+
+- `SIMA_CORE_COMPACT_METADATA=1` — 機能の合意後、所有権管理された runner から appsink への直接エッジで、コンパクトな TensorSet と型付きの現在フレームのメタデータを許可します。互換性のない境界、デバッグ、フローのオブザーバーがないことが条件です。標準の所有権管理されたステージ／要素のタイミング記録は有効のままで、両方の表現をサポートします。表現できない拡張には従来の動的メタデータを維持します。
+
+コンパクトなエッジに従来形式専用のプローブを接続しないでください。機能の合意がない場合、Runtime は未知のコンシューマーとオブザーバーに対して従来のメタデータを保持します。実行には引き続き `neatkernelrunner` を使います。このメタデータオプションは、レイテンシやスループットを保証するものではありません。
+
+## パッケージと週次検証（テスト専用）
+
+- `SIMA_TEST_PACKAGE_INVENTORY=<absolute-path>` — 選択して検証した配布アーカイブから `tools/ci/verify_core_dist.py --write-package-inventory` で生成する、期待するパッケージ制御情報とペイロード識別情報です。インストール済み DevKit のパッケージインベントリテストで必要です。`dpkg` をプライベートプレフィックスへ向けるものでも、インストール結果レポートでもありません。
+- `SIMA_TEST_PLATFORM_BASELINE=<absolute-path>` — `tools/ci/verify_core_dist.py --capture-platform-baseline` で**インストール前**に取得した、ネイティブプラットフォームの存在・不在、パッケージ識別情報、OTA の利用可否と識別情報です。インストール済み DevKit のパッケージインベントリテストでは、選択したパッケージインベントリとともに必要です。インストール後の状態からこのベースラインを再生成しないでください。
+- `SIMA_RUN_MNIST_PREPROC_CHANNELS1=1` — 長時間の MNIST 前処理精度テストを有効にします。単にスキップを抑制するために設定せず、フィクスチャの検証後に `tools/ci/prepare_weekly_fixtures.py` から値を取得してください。ローカルランチャーは `--environment-json` を使い、CI は同じマッピングを `--github-env` で受け取ります。
+
+フィクスチャグループの選択とインストール済みパッケージのプロファイルについては、[テスト要件](../../develop-apps/contribute/build-test/test_requirements.md)を参照してください。
+
+## PCIe ホストとカードの状態
+
+`NEAT_PCIE_SSH_USER` はカードの SSH ユーザー（既定値 `sima`）を選択します。`NEAT_PCIE_SSH_KEY` は秘密キー（既定値 `~/.ssh/sima_neat_pcie_ed25519`）を選択します。既存の SSH 設定とエージェント認証も利用できます。`--offline` はインターネット経由の更新確認を省略しますが、ローカル SSH によるカードの読み取りは行います。PCIe ホストの状態表示ではアーティファクト更新を確認しません。ホストの更新には `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>` を使用してください。`neat update` は PCIe カードを更新しません。

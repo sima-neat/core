@@ -145,6 +145,12 @@ public:
     return InputRole::None;
   }
 
+  /// True for a source that produces frames in real time and cannot be paced by the graph.
+  /// Default: false.
+  virtual bool is_live_source() const {
+    return false;
+  }
+
   /// Whether this Node is configured by a JSON file. Used by legacy wiring paths; new framework
   /// builds don't rewrite JSON.
   virtual bool has_config_json() const {

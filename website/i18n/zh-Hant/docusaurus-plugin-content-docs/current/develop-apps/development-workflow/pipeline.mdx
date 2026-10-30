@@ -270,18 +270,39 @@ preview = run.pull("preview", timeout_ms=2000)
 | 工作負載 | 從這裡開始 | 原因 |
 |---|---|---|
 | 第一個可運作的應用程式 | 預設 `RunOptions` | 在調整之前，先驗證正確性。 |
-| 即時攝影機或 RTSP 輸入 | `RunPreset::Realtime`；`OutputOptions::Latest()`，如果輸出的新鮮度很重要 | 新的影格勝過完整的歷史記錄。即時預設設定會解析為最新影格溢出，除非您覆寫它。 |
+| 即時攝影機或 RTSP 輸入 | `RunPreset::Realtime`；`OutputOptions::Latest()`，如果輸出的新鮮度很重要 | 新的影格勝過完整的歷史記錄。即時預設設定會解析為最新影格溢出，除非您覆寫它。既有的 GStreamer 佇列預設值與明確設定的僅限緩衝區數量的限制會保持不變。若需要媒體時間限制，請在自訂節點的 `backend_fragment()` 中設定佇列的 `max-size-time`，單位為奈秒。 |
 | 檔案或批次處理 | `RunPreset::Reliable`；`OutputOptions::EveryFrame(...)` | 保留每個輸入並公開反壓。可靠預設設定會解析為阻塞溢出，除非您覆寫它。 |
 | 常見應用程式服務 | `RunPreset::Balanced` | 圖正常運作後，這是一個很好的預設值。 |
 | 抖動的來源需要有界緩衝 | `queue_depth` | 僅增加到足以吸收抖動。深度佇列可能會隱藏過時的影格和延遲的反壓。 |
 | 應用程式在拉取後儲存輸出 | `OutputMemory::Owned` | 使輸出生命週期與執行階段緩衝區無關。 |
-| 應用程式立即使用輸出 | `OutputMemory::Auto` | 讓 Neat 首先選擇正確的擁有權路徑。 |
+| 應用程式使用輸出時不進行傳輸複製 | `OutputMemory::Auto` | 同步與非同步執行均保留標準 DMA-BUF 輸出；其他儲存方式依預設組態／模式原則處理。 |
 | 預設等待時間應明確 | `input_timeout_ms` | 設定用於建立/執行輸入模式路徑的預設逾時。每次呼叫的逾時仍然優先。 |
 | 啟動時的建立應該及早捕獲第一個樣本的錯誤 | `startup_preflight = true` | 使啟動時的建立保持誠實。僅在第一個樣本的失敗可以稍後通過 `pull(...)` 或 `last_error()` 顯示時才禁用。 |
 | 來源緩衝區的生命週期很短 | `advanced.copy_input = true` | 保護輸入記憶體，該記憶體可能在 `push(...)` 之後消失。 |
 | 輸入大小需要一個保護欄 | `advanced.max_input_bytes` | 在輸入進入圖之前，拒絕過大的輸入。 |
 | 您需要丟棄遙測 | `on_input_drop` | 依資料流和原因計算超載和大小保護欄的丟棄次數。 |
 | 您需要建立時的證據 | `run_export` | 在建立執行時，寫入執行快照。 |
+
+### 保留與釋放 DMA-BUF 輸出
+
+原生硬體解碼會直接寫入 DMA-BUF 集區。預設的檔案輸入路徑會保留此儲存空間：它不會暗中插入 `videoconvert` 或要求 SystemMemory。裝置使用端會匯入該配置，`Tensor::map(MapMode::Read)` 則會對映它供應用程式讀取，無需複製像素。前處理作業可能產生另一個結果配置；這是計算，而非傳輸複製。
+
+使用 `OutputMemory::Auto` 或 `ZeroCopy` 時，保留的 DMA-BUF 輸出會持有集區借用權。即使您釋放 Tensor，`Mapping` 仍會保留其借用權。讀取完成後請釋放兩者，讓生產端能重複使用緩衝區。佇列壓力不會讓 DMA-BUF 輸出改成複製，也不會暗中將 `Block` 改成丟棄；明確的最新影格／丟棄原則仍然適用。
+
+應用程式要在 CPU 上保留輸出時，請使用 `OutputMemory::Owned`。每次拉取都會將
+選定的輸出複製到獨立的系統記憶體，因此保留的輸出既不持有產生端集區的借用，也
+不占用裝置（CMA）記憶體。封裝的張量輸出頭共用複製後的載體；其位移、填補步幅與
+數值中繼資料都會保留。保留式與獨立的輸出都使用 `StorageKind::GstSample`；該儲存
+種類識別的是載體，而非擁有權原則。`Sample::owned` 識別獨立輸出。分配失敗時會以
+拉取錯誤回報。若要將輸出傳入具有 EV74 輸入階段的獨立圖，請先呼叫 `tensor.cvu()`：
+已在 EV74 記憶體中的張量會原樣傳回，其他張量則會複製到 EV74 記憶體。
+`ZeroCopy` 會保留產生端的儲存空間，並不保證 EV74 可存取。
+
+`Tensor::cpu()` 會將裝置上的張量複製到主機記憶體；已在主機記憶體中的張量（例如 `Owned` 輸出）則直接傳回，不會複製。
+需要獨立副本時請使用 `clone()`。
+明確的軟體轉換與 `advanced.copy_input` 仍是複製邊界。
+`SIMA_OUTPUT_MEMORY_DEFAULT=owned` 會刻意替 `Auto` 選擇自有輸出；
+它不會覆寫每次執行的明確選擇。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -1040,40 +1061,42 @@ run.close()
 - C++ 的 `run_to_json(...)` 和 `save_run_json(...)` 會在執行完成後匯出執行結果。
 - Python 的 `run.json(...)` 和 `run.save_json(...)` 會匯出相同類型的證據。
 
-在用於建置執行的 `RunOptions` 中啟用電力遙測功能：
+使用 [`TelemetryMonitor`](/develop-apps/development-workflow/model#record-board-telemetry) 在同一個視窗內記錄板子電力、溫度、CPU 使用率與記憶體：
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-simaai::neat::RunOptions options;
-options.enable_board_power(/*sample_interval_ms=*/100);
+simaai::neat::TelemetryMonitor telemetry_monitor;
+telemetry_monitor.start();
+auto scope = run.start_measurement();
 
-auto run = graph.build(options);
+// Push and pull here.
 
-simaai::neat::MeasureOptions measure_options;
-measure_options.include_power = true;
-auto scope = run.start_measurement(measure_options);
+simaai::neat::MeasureReport report = scope.stop();
+simaai::neat::Telemetry telemetry = telemetry_monitor.stop();
 ```
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 ```python
-options = pyneat.RunOptions()
-options.enable_board_power(sample_interval_ms=100)
+telemetry_monitor = pyneat.TelemetryMonitor()
+telemetry_monitor.start()
+scope = run.start_measurement()
 
-run = graph.build(options)
+# Push and pull here.
 
-measure_options = pyneat.MeasureOptions()
-measure_options.include_power = True
-scope = run.start_measurement(measure_options)
+report = scope.stop()
+telemetry = telemetry_monitor.stop()
 ```
 
 </CodeTab>
 </CodeTabs>
 
-電力資料取決於板載電壓軌的支援和監控設定。使用數字記錄測量設置；當電壓軌未啟用時，請勿使電力資料看起來像是可攜帶的。
+遙測資料來自 Sentinel，它每 2 秒對板子取樣一次，因此短於約 2 秒的測量視窗可能沒有樣本。使用數字記錄測量設置；當電壓軌未啟用時，請勿使電力資料看起來像是可攜帶的。
+
+`RunOptions::enable_board_power()`、`RunOptions::power_monitor` 和 `MeasureOptions::include_power` 已棄用，請改用 `TelemetryMonitor`。它們仍可繼續運作。
 
 編譯時的匯出功能回答了「Neat 建置了什麼？」；執行完成後的匯出功能回答了「在執行過程中發生了什麼？」。
 

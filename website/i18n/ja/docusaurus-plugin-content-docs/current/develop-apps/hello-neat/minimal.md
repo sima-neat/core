@@ -14,7 +14,7 @@ mdx:
 
 最初の実行は意図的に小さくしています。簡単なアプリを作成し、ヘッダーまたはインポートが解決されてビルドできることを確認してから、DevKitで実行してランタイムの応答を確認します。完了したら、[アプリの実行](./run_an_app)に進み、小さなGraphアプリケーション内で実際のモデルを実行してください。
 
-:::note Neat SDKの前提条件
+:::note Palette SDKの前提条件
 SDK内からDevKit上のコマンド（`dk build/sima_neat_hello`や`dk hello_neat.py`など）を直接実行するには、先にDevKitのペアリングを設定します。
 
 **必須設定：** [DevKit Sync](/getting-started/dev-environment/devkit-sync/)
@@ -63,7 +63,7 @@ dk hello_neat.py
 </ShellCommand>
 
 :::note Pythonランタイムの場所
-Neat SDKコンテナ内からNeatインストーラーを実行した場合でも、`pyneat`はDevKitのランタイム側にインストールされます。
+Palette SDKコンテナ内からNeatインストーラーを実行した場合でも、`pyneat`はDevKitのランタイム側にインストールされます。
 
 `dk hello_neat.py`を実行すると、`dk`はペアリング済みDevKitの`pyneat`環境を使ってスクリプトを実行します。
 :::

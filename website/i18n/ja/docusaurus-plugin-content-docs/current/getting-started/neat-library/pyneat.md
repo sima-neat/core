@@ -5,7 +5,7 @@ sidebar_position: 4
 ---
 
 :::note DevKit のみ — SDK のインストール時にはスキップします。
-これらの手順は、PyNeat を DevKit (またはランタイムとして機能するホスト) にセットアップします。Neat SDK の中で作業している場合は、このページをスキップしてください。
+これらの手順は、PyNeat を DevKit (またはランタイムとして機能するホスト) にセットアップします。Palette SDK の中で作業している場合は、このページをスキップしてください。
 :::
 
 :::tip PyNeat は、Neat Library とともにすでにインストールされています。
@@ -18,17 +18,13 @@ PyNeat は、Neat Library と一緒にパッケージ化されており、Neat L
 
 ## ホイールをダウンロード
 
-<ShellCommand prompt="devkit">
-sima-cli neat install core -t pyneat
-</ShellCommand>
-
-特定の Neat Library リリースのホイールをダウンロードするには、バージョン番号を含めてください。
-
-特定のバージョンをインストールするには：
+DevKit にインストール済みの Neat Library ランタイムと同じバージョンのホイールを選択してください。現在のリリースでは次を実行します。
 
 <ShellCommand prompt="devkit">
-sima-cli neat install core@v0.5.0 -t pyneat
+sima-cli neat install core@v%%release.core%% -t pyneat
 </ShellCommand>
+
+別のランタイムバージョンを使用している場合は、対応する公開済み Core タグに置き換えてください。ホイールのダウンロードではランタイムパッケージは更新されません。
 
 ## Python環境の作成
 

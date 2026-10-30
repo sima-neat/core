@@ -12,7 +12,7 @@ slug: /develop-apps/contribute/
 <div class="overview-section-label">貢獻者說明會</div>
 
 **Neat Library** 是此儲存庫中的 C++/Python 函式庫和執行階段。
-它會載入模型封存檔，組成和驗證管線，在 Modalix 硬體上執行，並公開公用應用程式 API。Neat SDK 和 DevKit Sync 是周圍的開發工作流程。
+它會載入模型封存檔，組成和驗證管線，在 Modalix 硬體上執行，並公開公用應用程式 API。Palette SDK 和 DevKit Sync 是周圍的開發工作流程。
 
 在修改此儲存庫時，請針對有助於人類和代理協助開發的框架屬性進行最佳化：明確的 API、確定性行為、結構化的診斷、嚴格的驗證以及穩定的公用合約。
 
@@ -52,7 +52,6 @@ slug: /develop-apps/contribute/
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/develop-apps/contribute/mpk_contract/"><strong>MPK 合約</strong><span>了解模型封存檔的導入、驗證和安全規則。</span></a></li>
       <li><a class="overview-link-card" href="/develop-apps/contribute/sima_plugin_json_truth_map/"><strong>外掛程式 JSON 真實資料對應</strong><span>檢閱已凍結的 SIMA 外掛程式 JSON 合約映射。</span></a></li>
-      <li><a class="overview-link-card" href="/develop-apps/contribute/appcomplex_workspace_packaging/"><strong>AppComplex 包裝</strong><span>建立並安裝具有閘道功能的應用程式群組工作區服務套件。</span></a></li>
     </ul>
   </section>
 

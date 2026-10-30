@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sima.ai/schemas/neat/execution_plan/v1.json",
+  "title": "SiMa NEAT Execution Plan",
+  "description": "What one Model build executes: its graph nodes in pipeline order, where each node runs, and the tensors on the edges between them. Emitted by Model.execution_plan(). Version 1 permits additive memory.type values; consumers must allow unknown memory types.",
+  "type": "object",
+  "required": ["schema", "schema_version", "model", "nodes", "edges"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "sima.neat.execution_plan"},
+    "schema_version": {"const": 1},
+    "model": {
+      "type": "object",
+      "required": ["name", "batch"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "description": "Model package name."},
+        "batch": {"type": "integer", "minimum": 1, "description": "Frames per MLA invocation."},
+        "memory": {
+          "type": "object",
+          "description": "Planned owned memory per frame in flight; DMS includes explicitly authored DMS-then-CMA fallback.",
+          "required": ["per_frame_bytes", "type"],
+          "additionalProperties": false,
+          "properties": {
+            "per_frame_bytes": {"type": "integer", "minimum": 1, "description": "Sum of all owned allocation capacities for one frame, excluding pool depth and imported backing."},
+            "type": {"enum": ["CMA", "DMS", "HostCpu", "Mixed"]}
+          }
+        }
+      }
+    },
+    "nodes": {"type": "array", "items": {"$ref": "#/$defs/node"}},
+    "edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}}
+  },
+  "$defs": {
+    "node": {
+      "type": "object",
+      "required": ["id", "kind", "runs_on"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string"},
+        "kind": {"type": "string", "description": "Graph node kind, such as Input, Preproc, Quant, ModelFragment, Dequant, SimaBoxDecode, or Output."},
+        "runs_on": {"enum": ["A65", "EV74", "MLA"]},
+        "kernel": {"type": "string", "description": "Kernel an EV74 or A65 node executes."},
+        "settings": {
+          "type": "object",
+          "description": "Resolved settings of a Preproc or SimaBoxDecode node, named as in PreprocOptions and BoxDecodeOptions. Box-decode thresholds and top_k appear only when set; otherwise the decoder default applies."
+        }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "required": ["from", "to"],
+      "additionalProperties": false,
+      "properties": {
+        "from": {"type": "string"},
+        "to": {"type": "string"},
+        "tensors": {"type": "array", "items": {"$ref": "#/$defs/tensor"}}
+      }
+    },
+    "tensor": {
+      "type": "object",
+      "required": ["name", "shape", "dtype"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string"},
+        "shape": {"type": "array", "items": {"type": "integer"}, "minItems": 1, "description": "Batch-first shape."},
+        "dtype": {"type": "string"},
+        "quant": {
+          "type": "object",
+          "description": "Quantization parameters of an int8 or int16 tensor. A per-axis tensor lists one scale and zero_point per channel along axis.",
+          "required": ["scale", "zero_point"],
+          "additionalProperties": false,
+          "properties": {
+            "scale": {"oneOf": [{"type": "number"}, {"type": "array", "items": {"type": "number"}}]},
+            "zero_point": {"oneOf": [{"type": "integer"}, {"type": "array", "items": {"type": "integer"}}]},
+            "axis": {"type": "integer"}
+          }
+        }
+      }
+    }
+  }
+}

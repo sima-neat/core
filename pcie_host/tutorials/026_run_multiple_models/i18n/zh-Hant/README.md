@@ -12,7 +12,7 @@
 
 ## Concept
 
-一個 Modalix PCIe 卡會公開 0 到 3 號佇列。每個啟用的 `Model` 都會擁有一個佇列，因此可以透過將不同的 `ConnectionOptions.queue` 指派給每個實例，來讓獨立的模型同時執行。本教學使用 ResNet-50 於 0 號佇列，以及 YOLOv8s 於 1 號佇列，且不新增全域協調器。
+Modalix PCIe 卡提供 0 到 5 號協同處理佇列。每個啟用的 `Model` 都會擁有一個佇列，因此可以透過將不同的 `ConnectionOptions.queue` 指派給每個實例，來讓獨立的模型同時執行。本教學使用 ResNet-50 於 0 號佇列，以及 YOLOv8s 於 1 號佇列，且不新增全域協調器。
 
 ## Walkthrough
 

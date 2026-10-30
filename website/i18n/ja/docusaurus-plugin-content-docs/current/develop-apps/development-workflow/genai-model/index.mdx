@@ -7,7 +7,7 @@ slug: /develop-apps/development-workflow/genai-model
 
 # GenAIモデル
 
-Neatは、LLiMaで準備されたLLM、VLM、ASRモデルに対して、GenAI APIを使用します。これは、[`Model`](/develop-apps/development-workflow/model)の生成モデル版であり、デプロイされたモデルのディレクトリをロードし、リクエストを作成し、アプリケーション内で実行するか、HTTP経由で提供します。
+Neatは、LLiMaで準備されたLLM、VLM、ASRモデルに対して、GenAI APIを使用します。これは、[`Model`](/develop-apps/development-workflow/model)の生成モデル版であり、デプロイされたモデルのディレクトリをロードし、リクエストを作成し、アプリケーション内で実行するか、HTTP経由で提供します。Modalix PCIe カードに接続されたホストマシン上のアプリケーションには、[PCIe GenAI API](/develop-apps/development-workflow/genai-model/pcie-api) を使用してください。
 
 アプリケーションがモデルにテキストの生成、画像の質問への回答、ツールの呼び出し、またはオーディオの文字起こしを要求する場合に、これらのAPIを使用します。分類、検出、セグメンテーション、または埋め込みモデルなど、固定形状の識別モデルには、従来の`Model` APIを使用します。
 
@@ -16,7 +16,7 @@ Neatは、LLiMaで準備されたLLM、VLM、ASRモデルに対して、GenAI AP
 GenAIのパスは、Neatの他の部分と同じ高レベルの構造を持ちます。
 
 1. Modalix用のモデルアーティファクトを準備またはダウンロードします。
-2. モデルをターゲットに配置します。通常は`/media/nvme/llima/models/`の下に配置します。
+2. モデルをターゲット上（通常は `/media/nvme/llima/models/`）に配置します。PCIe で実行する場合は、ホストマシン上に保存します。
 3. C++またはPythonアプリケーションからモデルをロードします。
 4. リクエストを直接送信するか、`GenAIServer`を通じてモデルを公開します。
 5. 完全な結果を読み取るか、ストリーミングされた出力を消費します。
@@ -47,6 +47,7 @@ LLiMaは、GenAIモデルの準備、コマンドラインテスト、および�
 
 ## 次のステップ
 
+- [PCIe GenAI API](/develop-apps/development-workflow/genai-model/pcie-api) を使用してホストマシンからモデルを実行します。
 - 完全な HTTP サーバーの例については、[生成AIモデルを運用する](/tutorials/serve-genai-models) を参照してください。
 - プロセス内での実行例については、[Direct API を使用して LLM を実行します。](/tutorials/run-an-llm) を参照してください。
 - [LLiMa を搭載した生成AI](/genai-llima/) を使用して、モデルを準備し、ベンチマークテストを実施します。

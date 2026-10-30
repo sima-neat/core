@@ -27,6 +27,11 @@ struct Detess::ConfigHolder {
 };
 
 namespace {
+bool uses_processcvu(const std::shared_ptr<Detess::ConfigHolder>& holder) {
+  return holder && holder->compiled_contract &&
+         holder->compiled_contract->runtime_contract.plugin_kind == "processcvu";
+}
+
 std::shared_ptr<Detess::ConfigHolder> init_config_holder(const DetessOptions& opt,
                                                          std::string& config_path_out) {
   auto holder = std::make_shared<Detess::ConfigHolder>();
@@ -65,16 +70,11 @@ Detess::Detess(DetessOptions opt) : opt_(std::move(opt)) {
 }
 
 std::string Detess::backend_fragment(int node_index) const {
-  std::ostringstream ss;
-  require_element("neatdetess", "Detess::backend_fragment");
   const std::string name = opt_.element_name.empty()
                                ? ("n" + std::to_string(node_index) + "_detess")
                                : opt_.element_name;
-  ss << "neatdetess name=" << name << " stage-id=" << name;
-  if (opt_.num_buffers > 0 && element_property_exists("neatdetess", "num-buffers")) {
-    ss << " num-buffers=" << opt_.num_buffers;
-  }
-  return ss.str();
+  require_element("neatkernelrunner", "Detess::backend_fragment");
+  return "neatkernelrunner name=" + name;
 }
 
 std::vector<std::string> Detess::element_names(int node_index) const {
@@ -90,14 +90,14 @@ OutputSpec Detess::output_spec(const OutputSpec& input) const {
     out.depth = input.depth;
   }
   out.certainty = SpecCertainty::Hint;
-  out.note = "neatdetess";
+  out.note = "neatkernelrunner";
   return out;
 }
 
 NodeContractDefinition Detess::contract_definition() const {
   NodeContractDefinition def;
   def.node_kind = kind();
-  def.plugin_kind = "neatdetess";
+  def.plugin_kind = uses_processcvu(config_holder_) ? "processcvu" : "neatdetess";
 
   ContractPortSpec input;
   input.port_id = "input_tensor";
@@ -116,6 +116,11 @@ bool Detess::compile_node_contract(const ContractCompileInput& input, CompiledNo
   const std::string element_name = element_names(input.node_index).empty()
                                        ? std::string("detess")
                                        : element_names(input.node_index).front();
+  if (uses_processcvu(config_holder_)) {
+    return pipeline_internal::sima::stagesemantics::build_processcvu_node_contract(
+        kind(), element_name, element_name, contract_definition(),
+        *config_holder_->compiled_contract, out, err);
+  }
   if (config_holder_ && config_holder_->compiled_contract.has_value()) {
     pipeline_internal::sima::stagesemantics::TransportCanonicalFacts facts;
     facts.plugin_kind = "neatdetess";
@@ -132,14 +137,14 @@ bool Detess::compile_node_contract(const ContractCompileInput& input, CompiledNo
     return pipeline_internal::sima::stagesemantics::build_transport_node_contract(
         kind(), element_name, element_name, contract_definition(), compiled, out, err);
   }
-  pipeline_internal::sima::stagesemantics::TransportCanonicalFacts facts;
-  facts.plugin_kind = "neatdetess";
-  facts.kernel_kind = "detess";
-  facts.model_managed_stage = opt_.num_buffers_locked;
-  const auto compiled =
-      pipeline_internal::sima::stagesemantics::build_transport_compiled_contract_from_facts(facts);
-  return pipeline_internal::sima::stagesemantics::build_transport_node_contract(
-      kind(), element_name, element_name, contract_definition(), compiled, out, err);
+  // A logical shape alone cannot recover MLA tile sizes or physical encoding.
+  // The former transport-only element failed later with missing tile geometry;
+  // fail at graph construction instead of guessing storage from caps or JSON.
+  if (err) {
+    *err = "Detess requires a compiled tensor/tile contract; use DetessOptions(Model) "
+           "or provide compiled_contract. A config file is not an inference contract.";
+  }
+  return false;
 }
 
 void Detess::apply_compiled_contract(const CompiledNodeContract&, std::string* err) {

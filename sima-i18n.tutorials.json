@@ -3,7 +3,7 @@
   "sourcePatterns": ["tutorials/0*/README.md", "pcie_host/tutorials/0*/README.md"],
   "translationPath": "{sourceDirectory}/i18n/{locale}/{sourceBasename}",
   "manifest": "tutorials/i18n/translation-sources.json",
-  "canonicalTerms": ["Palette Neat Library", "Palette Neat", "Neat SDK", "Neat Library", "Neat Examples", "Model Compiler", "Model Zoo", "Modalix", "DevKit Sync", "DevKit", "PyNeat", "Insight", "Sentinel", "LLiMa", "Hugging Face", "SiMa.ai", "GStreamer", "Neat"],
+  "canonicalTerms": ["Palette SDK", "Neat Library", "Neat Examples", "Model Compiler", "Model Zoo", "Modalix", "DevKit Sync", "DevKit", "PyNeat", "Insight", "Sentinel", "LLiMa", "Hugging Face", "SiMa.ai", "GStreamer", "Neat"],
   "preservedHeadings": ["Metadata", "Concept", "Learning Process", "Walkthrough", "Run", "In Practice"],
   "preservedTableSections": ["Metadata"],
   "preservedLines": ["**Python:**", "**C++ (prebuilt):**", "**C++ (build from source):**"],

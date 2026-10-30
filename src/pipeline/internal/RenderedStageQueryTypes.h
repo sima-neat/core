@@ -43,6 +43,10 @@ struct PreprocOutputInfo {
   std::string primary_output_name;
   int primary_route_slot = -1;
   std::vector<std::string> output_memory_order;
+  // Exact selected carrier/member facts, never the aligned backing arena size.
+  std::uint64_t roi_slot_bytes = 0;
+  std::vector<std::int64_t> roi_member_shape;
+  std::vector<std::int64_t> roi_member_strides_bytes;
 };
 
 struct MlaOutputInfo {

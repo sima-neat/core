@@ -1,3 +1,4 @@
+#include "nodes/sima/internal/ImageTransformPolicy.h"
 /**
  * @file SessionBuildSource.cpp
  * @brief Graph source-mode build/run methods.
@@ -6,6 +7,7 @@
 #include "GraphDetail.h"
 #include "internal/GraphBuildInternal.h"
 #include "pipeline/internal/RtpJpegEndMarker.h"
+#include "pipeline/internal/TensorUtil.h"
 
 #include "gst/GstHelpers.h"
 #include "gst/GstInit.h"
@@ -13,10 +15,12 @@
 
 #include "builder/InputContractConfigurable.h"
 #include "builder/OutputSpec.h"
+#include "model/internal/ModelPack.h"
 #include "nodes/common/Queue.h"
 #include "nodes/io/Input.h"
 #include "nodes/sima/PCIeSrc.h"
 #include "nodes/sima/Preproc.h"
+#include "nodes/sima/SimaEncode.h"
 
 #include "pipeline/EncodedSampleUtil.h"
 #include "pipeline/ErrorCodes.h"
@@ -25,6 +29,7 @@
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/RealtimeLinkOptions.h"
+#include "pipeline/internal/sima/InternalEdgeContractResolver.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TerminalOutputContractQuery.h"
 #include "pipeline/internal/UxLogging.h"
@@ -387,6 +392,8 @@ derive_source_preprocess_meta_template(const std::vector<std::shared_ptr<Node>>&
     if (nodes[i]->input_role() != InputRole::None)
       break;
     if (const auto* preproc = dynamic_cast<const Preproc*>(nodes[i].get())) {
+      if (internal::ImageTransformAccess::policy(*preproc))
+        return std::nullopt;
       return source_meta_template_from_preproc(preproc->options(), source_spec);
     }
     if (nodes[i]->memory_contract() == MemoryContract::PreferDeviceZeroCopy) {
@@ -619,12 +626,8 @@ GstBuffer* source_sima_meta_preserve_existing(GstBuffer* buffer, SourceSimaMetaP
                                                                        : fallback_buffer_name);
   source_sima_meta_set_int_if_missing(s, "origin_output_slot", 0);
 
-  gint64 phys_addr = 0;
-  if (gst_buffer_n_memory(writable) > 0) {
-    phys_addr = static_cast<gint64>(
-        gst_simaai_segment_memory_get_phys_addr(gst_buffer_peek_memory(writable, 0)));
-  }
-  source_sima_meta_set_int64_if_missing(s, "buffer-id", phys_addr);
+  // Legacy envelope field only; memory authority is the retained GstMemory.
+  gst_structure_set(s, "buffer-id", G_TYPE_INT64, static_cast<gint64>(0), nullptr);
   source_sima_meta_set_int64_if_missing(s, "buffer-offset", 0);
   source_sima_meta_set_uint64_if_missing(
       s, "timestamp", static_cast<guint64>(timing.pts_ns.value_or(static_cast<std::uint64_t>(0))));
@@ -700,6 +703,11 @@ void source_sima_meta_probe_destroy(gpointer data) {
 }
 
 bool source_sima_meta_probe_required_for_node(const Node& node) {
+  // This preference selects encoder input allocation. Encoded output already
+  // owns its frame correlation and must not receive a new source frame ID.
+  if (dynamic_cast<const SimaEncode*>(&node)) {
+    return false;
+  }
   if (node.memory_contract() == MemoryContract::PreferDeviceZeroCopy) {
     return true;
   }
@@ -784,7 +792,7 @@ void attach_source_sima_meta_probes(GstElement* pipeline,
 PreparedSourcePipeline prepare_source_pipeline_from_nodes(
     const std::vector<std::shared_ptr<Node>>& nodes, const GraphOptions& sess_opt, RunMode mode,
     const RunOptions& opt, bool require_sink, bool public_output_contract,
-    std::string& last_pipeline, const char* where) {
+    std::string& last_pipeline, const char* where, std::size_t internal_edge_queue = 0) {
   const pipeline_internal::ScopedBuildTiming timing(
       "prepare_source_pipeline_from_nodes",
       std::string("where=") + (where ? where : "Graph::build(source)") + " nodes=" +
@@ -818,10 +826,10 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   stream_opt.public_output_contract = public_output_contract;
   graph_build_internal::apply_explicit_public_output_options(stream_opt, build_nodes);
   // Source-mode pipelines own live/producers such as MIPI/libcamera, RTSP, and
-  // other self-driven sources.  They must reach NULL before Run::close() returns;
-  // otherwise deferred no-flush teardown can race process/plugin destruction
-  // after the application has already observed successful outputs.
-  stream_opt.prefer_synchronous_teardown = true;
+  // other self-driven sources. Prefer a bounded transition to NULL rather than
+  // immediately handing them to the reaper; the legacy fallback remains
+  // available if a live source cannot complete that transition in its budget.
+  stream_opt.teardown_policy = pipeline_internal::InputStreamTeardownPolicy::BoundedPreferred;
   session_build_maybe_enable_rtsp_appsink_drop(stream_opt, build_nodes);
   const bool insert_queue2 = session_build_should_insert_async_queue2(mode, merged_opt);
 
@@ -831,11 +839,31 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   const NameTransform name_transform = make_name_transform(sess_opt);
   BuildResult br = build_pipeline_full(build_nodes, insert_boundaries, "mysink", insert_queue2,
                                        name_transform, &sess_opt);
+  if (graph_build_internal::explicit_public_terminal_output(stream_opt, build_nodes)) {
+    br.terminal_host_endpoint = session_build_public_output_endpoint_selector(build_nodes);
+  }
   maybe_compile_source_contracts(&br, build_nodes, sess_opt, where);
-  if (has_sink && stream_opt.public_output_contract && br.rendered_manifest.has_value()) {
-    const auto endpoint = session_build_public_output_endpoint_selector(build_nodes);
+  if (mode == RunMode::Sync) {
+    session_build_clamp_sync_kernel_runner_capacity(br);
+  }
+  if (br.diag) {
+    br.diag->pipeline_string = br.pipeline_string;
+  }
+  last_pipeline = br.pipeline_string;
+  session_build_enforce_mla_num_buffers(last_pipeline, where);
+  session_build_maybe_dump_pipeline_string(last_pipeline, where);
+
+  // --- 5. parse + probes ------------------------------------------------------------
+  // pipeline ownership is taken by the RAII handle immediately so any throw below
+  // tears the bin down via stack unwinding (no manual cleanup blocks needed).
+  session_build_prepare_stage_contracts(br, where);
+  if (has_sink && stream_opt.public_output_contract && br.prepared_manifest.has_value()) {
+    auto endpoint = session_build_public_output_endpoint_selector(build_nodes);
+    if (!endpoint.terminal_stage_key.empty())
+      endpoint.terminal_stage_key =
+          apply_name_transform(br.name_transform, endpoint.terminal_stage_key);
     std::string error;
-    auto override = build_public_terminal_output_override_with_fallback(*br.rendered_manifest,
+    auto override = build_public_terminal_output_override_with_fallback(*br.prepared_manifest,
                                                                         endpoint, &error);
     if (override.has_value()) {
       stream_opt.output_override = std::move(*override);
@@ -845,13 +873,9 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
     }
   }
   session_build_finalize_public_zero_copy_holder_loan_credits(stream_opt);
-  last_pipeline = br.pipeline_string;
-  session_build_enforce_mla_num_buffers(last_pipeline, where);
-  session_build_maybe_dump_pipeline_string(last_pipeline, where);
-
-  // --- 5. parse + probes ------------------------------------------------------------
-  // pipeline ownership is taken by the RAII handle immediately so any throw below
-  // tears the bin down via stack unwinding (no manual cleanup blocks needed).
+  session_build_tune_internal_zero_copy_holder_window(stream_opt, internal_edge_queue,
+                                                      !public_output_contract);
+  session_build_reserve_kernel_runner_outputs(br, stream_opt);
   pipeline_internal::GstPipelinePtr pipeline(session_build_parse_pipeline_or_throw(br, where));
   session_build_dump_pipeline_element_properties(pipeline.get());
   if (env_bool("SIMA_GST_ENFORCE_NAMES", false)) {
@@ -940,14 +964,17 @@ Graph::PreparedSource Graph::prepare_source_(RunMode mode, const RunOptions& opt
   };
 }
 
-SourceStreamBuildContext session_build_source_stream_internal(
-    const std::vector<std::shared_ptr<Node>>& nodes, const std::shared_ptr<void>& guard,
-    std::string& last_pipeline, const GraphOptions& sess_opt, const RunOptions& opt, RunMode mode,
-    bool require_sink, bool public_output_contract, const char* where) {
+SourceStreamBuildContext
+session_build_source_stream_internal(const std::vector<std::shared_ptr<Node>>& nodes,
+                                     const std::shared_ptr<void>& guard, std::string& last_pipeline,
+                                     const GraphOptions& sess_opt, const RunOptions& opt,
+                                     RunMode mode, bool require_sink, bool public_output_contract,
+                                     std::size_t internal_edge_queue, const char* where) {
   gst_init_once();
 
   PreparedSourcePipeline src = prepare_source_pipeline_from_nodes(
-      nodes, sess_opt, mode, opt, require_sink, public_output_contract, last_pipeline, where);
+      nodes, sess_opt, mode, opt, require_sink, public_output_contract, last_pipeline, where,
+      internal_edge_queue);
 
   const int snapshot_wait_override_ms = public_output_contract ? -1 : 0;
   set_state_or_throw(src.pipeline.get(), GST_STATE_PLAYING, where, src.diag,
@@ -1159,6 +1186,9 @@ void apply_name_transform_to_compiled_contract_stage(CompiledNodeContract* stage
   }
   stage->element_name = apply_name_transform(name_transform, stage->element_name);
   stage->logical_stage_id = apply_name_transform(name_transform, stage->logical_stage_id);
+  if (stage->kernel) {
+    apply_name_transform_to_runtime_contract(&stage->kernel->runtime_contract, name_transform);
+  }
   if (stage->processcvu) {
     apply_name_transform_to_runtime_contract(&stage->processcvu->runtime_contract, name_transform);
   }
@@ -1199,15 +1229,25 @@ void append_compiled_contracts(BuildResult* dst, const BuildResult& src,
 }
 
 void append_rendered_manifest(BuildResult* dst, const BuildResult& src,
-                              const NameTransform& local_name_transform) {
+                              const NameTransform& local_name_transform,
+                              std::size_t compile_node_offset, std::size_t compile_stage_offset) {
   if (!dst || !src.rendered_manifest.has_value()) {
     return;
   }
   if (!dst->rendered_manifest.has_value()) {
     dst->rendered_manifest = pipeline_internal::sima::SimaPluginStaticManifest{};
   }
-  for (auto stage : src.rendered_manifest->stages) {
+  auto component = *src.rendered_manifest;
+  pipeline_internal::sima::edgecontract::pin_local_producer_bindings(component);
+  for (auto& stage : component.stages) {
     apply_name_transform_to_fused_manifest_stage(&stage, local_name_transform);
+    if (stage.compile_node_index)
+      *stage.compile_node_index += compile_node_offset;
+    if (stage.compile_stage_index)
+      *stage.compile_stage_index += compile_stage_offset;
+    for (auto& binding : stage.input_bindings)
+      if (binding.src_stage_index >= 0)
+        binding.src_stage_index += static_cast<int>(compile_stage_offset);
     dst->rendered_manifest->stages.push_back(std::move(stage));
   }
 }
@@ -1238,8 +1278,20 @@ void append_model_source_paths(BuildResult* dst, const BuildResult& src) {
 
 void merge_fused_contract_build_result(BuildResult* dst, const BuildResult& src,
                                        const NameTransform& local_name_transform) {
+  const auto compile_node_offset =
+      dst->compiled_contracts ? dst->compiled_contracts->stages.size() : 0U;
+  const auto compile_stage_offset =
+      dst->rendered_manifest ? dst->rendered_manifest->stages.size() : 0U;
   append_compiled_contracts(dst, src, local_name_transform);
-  append_rendered_manifest(dst, src, local_name_transform);
+  append_rendered_manifest(dst, src, local_name_transform, compile_node_offset,
+                           compile_stage_offset);
+  if (dst->compiled_contracts && src.compiled_contracts) {
+    dst->compiled_contracts->model_storage_scopes = internal::append_model_storage_scopes(
+        dst->compiled_contracts->model_storage_scopes, src.compiled_contracts->model_storage_scopes,
+        compile_stage_offset);
+    if (dst->rendered_manifest)
+      dst->rendered_manifest->model_storage_scopes = dst->compiled_contracts->model_storage_scopes;
+  }
   append_manifest_diagnostics(dst, src);
   append_model_source_paths(dst, src);
 }
@@ -1286,9 +1338,9 @@ struct FusedRealtimePadProbeCtx {
 };
 
 std::vector<std::string> fused_realtime_probe_patterns() {
-  const std::string raw =
-      env_str("SIMA_FUSED_REALTIME_PAD_PROBE_ELEMENTS",
-              "latestmux,neatlatest,preproc,processcvu,processmla,mla,boxdecode,appsink");
+  const std::string raw = env_str(
+      "SIMA_FUSED_REALTIME_PAD_PROBE_ELEMENTS",
+      "latestmux,neatlatest,preproc,neatkernelrunner,processcvu,processmla,mla,boxdecode,appsink");
   std::vector<std::string> out;
   std::string cur;
   auto flush = [&]() {
@@ -1529,10 +1581,10 @@ struct FusedStageCounterProbeCtx {
 };
 
 std::vector<std::string> fused_stage_counter_patterns() {
-  const std::string raw =
-      env_str("SIMA_FUSED_STAGE_COUNTER_ELEMENTS",
-              "latestmux,neatlatest,processcvu,preproc,processmla,mla,boxdecode,objectdecode,"
-              "appsink");
+  const std::string raw = env_str("SIMA_FUSED_STAGE_COUNTER_ELEMENTS",
+                                  "latestmux,neatlatest,neatkernelrunner,processcvu,preproc,"
+                                  "processmla,mla,boxdecode,objectdecode,"
+                                  "appsink");
   std::vector<std::string> out;
   std::string cur;
   auto flush = [&]() {
@@ -1590,7 +1642,8 @@ fused_stage_counter_kind_for_pad(const std::string& elem_name, const std::string
     }
   }
 
-  if (factory.find("processcvu") != std::string::npos ||
+  if (factory.find("neatkernelrunner") != std::string::npos ||
+      factory.find("processcvu") != std::string::npos ||
       factory.find("preproc") != std::string::npos ||
       elem.find("processcvu") != std::string::npos || elem.find("preproc") != std::string::npos) {
     if (is_sink) {
@@ -1906,49 +1959,6 @@ Sample make_fused_encoded_output_sample(GstBuffer* buffer, GstCaps* caps,
     throw std::runtime_error("encoded H.264 caps are unavailable");
   }
 
-  if (copy_output) {
-    GstMapInfo map = GST_MAP_INFO_INIT;
-    if (!gst_buffer_map(buffer, &map, GST_MAP_READ)) {
-      throw std::runtime_error("failed to map encoded H.264 buffer");
-    }
-    std::vector<std::uint8_t> bytes;
-    try {
-      bytes.assign(map.data, map.data + map.size);
-    } catch (...) {
-      gst_buffer_unmap(buffer, &map);
-      throw;
-    }
-    gst_buffer_unmap(buffer, &map);
-    if (bytes.empty()) {
-      throw std::runtime_error("encoded H.264 buffer is empty");
-    }
-
-    gchar* caps_text = gst_caps_to_string(caps);
-    if (!caps_text || !*caps_text) {
-      if (caps_text) {
-        g_free(caps_text);
-      }
-      throw std::runtime_error("encoded H.264 caps are empty");
-    }
-    const std::string caps_string(caps_text);
-    g_free(caps_text);
-    const std::int64_t pts = GST_CLOCK_TIME_IS_VALID(GST_BUFFER_PTS(buffer))
-                                 ? static_cast<std::int64_t>(GST_BUFFER_PTS(buffer))
-                                 : -1;
-    const std::int64_t dts = GST_CLOCK_TIME_IS_VALID(GST_BUFFER_DTS(buffer))
-                                 ? static_cast<std::int64_t>(GST_BUFFER_DTS(buffer))
-                                 : -1;
-    const std::int64_t duration = GST_CLOCK_TIME_IS_VALID(GST_BUFFER_DURATION(buffer))
-                                      ? static_cast<std::int64_t>(GST_BUFFER_DURATION(buffer))
-                                      : -1;
-    Sample sample = make_encoded_sample(std::move(bytes), caps_string, pts, dts, duration);
-    const GstStructure* structure = gst_caps_get_structure(caps, 0);
-    const char* media_type = structure ? gst_structure_get_name(structure) : nullptr;
-    sample.media_type = media_type ? media_type : "";
-    sample.stream_id = stream_id;
-    return sample;
-  }
-
   GstSample* gst_sample = gst_sample_new(buffer, caps, nullptr, nullptr);
   if (!gst_sample) {
     throw std::runtime_error("failed to create encoded H.264 sample");
@@ -1962,19 +1972,12 @@ Sample make_fused_encoded_output_sample(GstBuffer* buffer, GstCaps* caps,
     auto holder = std::shared_ptr<void>(gst_sample_ref(gst_sample), [](void* value) {
       gst_sample_unref(static_cast<GstSample*>(value));
     });
-    struct EncodedMapState {
-      std::mutex mutex;
-      GstMapInfo info{};
-      bool mapped = false;
-    };
-    auto map_state = std::make_shared<EncodedMapState>();
-
     auto storage = std::make_shared<Storage>();
     storage->kind = StorageKind::GstSample;
     storage->device = {DeviceType::CPU, 0};
     storage->size_bytes = gst_buffer_get_size(buffer);
     storage->holder = holder;
-    storage->map_fn = [holder, map_state](MapMode mode) {
+    storage->map_fn = [holder](MapMode mode) {
       if (mode != MapMode::Read) {
         return Mapping{};
       }
@@ -1983,22 +1986,20 @@ Sample make_fused_encoded_output_sample(GstBuffer* buffer, GstCaps* caps,
       if (!retained_buffer) {
         return Mapping{};
       }
-      std::lock_guard<std::mutex> lock(map_state->mutex);
-      if (map_state->mapped || !gst_buffer_map(retained_buffer, &map_state->info, GST_MAP_READ)) {
+      // Fan-out branches map this shared storage concurrently; each mapping owns its info. Ref
+      // first, so a multi-memory buffer merges into a temporary memory, never in place.
+      auto info = std::make_shared<GstMapInfo>();
+      GstBuffer* buffer_ref = gst_buffer_ref(retained_buffer);
+      if (!gst_buffer_map(retained_buffer, info.get(), GST_MAP_READ)) {
+        gst_buffer_unref(buffer_ref);
         return Mapping{};
       }
-      map_state->mapped = true;
-      GstBuffer* buffer_ref = gst_buffer_ref(retained_buffer);
       Mapping mapping;
-      mapping.data = map_state->info.data;
-      mapping.size_bytes = map_state->info.size;
+      mapping.data = info->data;
+      mapping.size_bytes = info->size;
       mapping.keepalive = holder;
-      mapping.unmap = [buffer_ref, map_state]() {
-        std::lock_guard<std::mutex> unmap_lock(map_state->mutex);
-        if (map_state->mapped) {
-          gst_buffer_unmap(buffer_ref, &map_state->info);
-          map_state->mapped = false;
-        }
+      mapping.unmap = [buffer_ref, info]() {
+        gst_buffer_unmap(buffer_ref, info.get());
         gst_buffer_unref(buffer_ref);
       };
       return mapping;
@@ -2049,6 +2050,9 @@ Sample make_fused_encoded_output_sample(GstBuffer* buffer, GstCaps* caps,
                              ? static_cast<std::int64_t>(GST_BUFFER_DURATION(buffer))
                              : -1;
     sample.stream_id = stream_id;
+    if (copy_output) {
+      pipeline_internal::materialize_owned_output(sample);
+    }
     gst_sample_unref(gst_sample);
     return sample;
   } catch (...) {
@@ -2735,8 +2739,8 @@ std::string fused_consumer_segment_factory(const std::string& segment) {
 }
 
 bool is_fused_consumer_stage_factory(const std::string& factory) {
-  return factory == "neatprocesscvu" || factory == "neatprocessmla" ||
-         factory == "neatobjectdecode" || factory == "neatboxdecode";
+  return factory == "neatkernelrunner" || factory == "neatprocessmla" ||
+         factory == "neatobjectdecode";
 }
 
 bool fused_consumer_fragment_replaces_buffers(const std::string& fragment) {
@@ -2845,31 +2849,17 @@ fused_first_processcvu_element_name(const std::vector<std::shared_ptr<Node>>& co
     const std::string rendered_fragment =
         session_build_apply_fast_path_options_to_fragment(fragment.fragment, &options);
     for (const auto& segment : split_fused_consumer_segments(rendered_fragment)) {
-      if (fused_consumer_segment_factory(segment) != "neatprocesscvu") {
+      if (fused_consumer_segment_factory(segment) != "neatkernelrunner") {
         continue;
       }
-      // In the prepared-direct synchronous hot path ProcessCVU may defer
-      // unreffing its input list until after src push. Async completion cleans
-      // that list before finish_buffer(), so only async=true is a proven
-      // decoder-buffer release boundary. Sync chains retain terminal release.
-      const auto async = fused_consumer_segment_property_value(segment, "async");
-      if (!async || (*async != "true" && *async != "1")) {
-        return std::nullopt;
-      }
-      if (const auto buffers = fused_consumer_segment_property_value(segment, "num-buffers");
-          buffers) {
-        char* end = nullptr;
-        const unsigned long parsed = std::strtoul(buffers->c_str(), &end, 10);
-        if (end == buffers->c_str() || !end || *end != '\0' || parsed <= 1UL) {
-          return std::nullopt;
-        }
-      }
+      // Runtime releases input loans before publication, including the sync
+      // facade and one-slot execution. No per-frame property probing is needed.
       if (auto name = fused_consumer_segment_property_raw_value(segment, "name");
           name && !name->empty()) {
         return name;
       }
       // Framework nodes declare every concrete element name. A nameless
-      // ProcessCVU fragment is invalid for probe attachment, but retaining the
+      // runner fragment is invalid for probe attachment, but retaining the
       // single-name fallback keeps custom test nodes deterministic.
       if (fragment.element_names.size() == 1U && !fragment.element_names.front().empty()) {
         return fragment.element_names.front();
@@ -2882,38 +2872,17 @@ fused_first_processcvu_element_name(const std::vector<std::shared_ptr<Node>>& co
 
 struct FusedRawInputCreditProbeCtx {
   std::uint64_t mux_namespace = 0;
-  std::atomic<int> runtime_early_release_enabled{-1};
 };
 
-GstPadProbeReturn fused_raw_input_credit_probe(GstPad* pad, GstPadProbeInfo* info,
-                                               gpointer user_data) {
+GstPadProbeReturn fused_raw_input_credit_probe(GstPad*, GstPadProbeInfo* info, gpointer user_data) {
   auto* ctx = static_cast<FusedRawInputCreditProbeCtx*>(user_data);
   GstBuffer* buffer = info ? GST_PAD_PROBE_INFO_BUFFER(info) : nullptr;
   if (!ctx || ctx->mux_namespace == 0 || !buffer) {
     return GST_PAD_PROBE_OK;
   }
 
-  int enabled = ctx->runtime_early_release_enabled.load(std::memory_order_acquire);
-  if (enabled < 0) {
-    gboolean effective_async = FALSE;
-    gulong num_buffers = 0;
-    GstObject* parent = pad ? gst_pad_get_parent(pad) : nullptr;
-    if (parent) {
-      GObjectClass* object_class = G_OBJECT_GET_CLASS(parent);
-      if (g_object_class_find_property(object_class, "async") &&
-          g_object_class_find_property(object_class, "num-buffers")) {
-        g_object_get(G_OBJECT(parent), "async", &effective_async, "num-buffers", &num_buffers,
-                     nullptr);
-      }
-      gst_object_unref(parent);
-    }
-    enabled = effective_async == TRUE && num_buffers > 1UL ? 1 : 0;
-    ctx->runtime_early_release_enabled.store(enabled, std::memory_order_release);
-  }
-  if (enabled != 0) {
-    (void)pipeline_internal::release_latest_by_stream_mux_raw_input_credit_for_buffer(
-        buffer, ctx->mux_namespace);
-  }
+  (void)pipeline_internal::release_latest_by_stream_mux_raw_input_credit_for_buffer(
+      buffer, ctx->mux_namespace);
   return GST_PAD_PROBE_OK;
 }
 
@@ -3265,12 +3234,27 @@ BuildResult build_fused_realtime_source_pipeline(
     ss << " ! " << mux_name << ".sink_" << branch_index;
   }
 
-  br.diag->pipeline_string = ss.str();
+  br.diag->pipeline_string = session_build_propagate_terminal_consumer_lane_window(ss.str());
   br.pipeline_string = br.diag->pipeline_string;
+  session_build_initialize_kernel_runner_budget(&br, &sess_opt);
   return br;
 }
 
 namespace session_test {
+
+BuildResult compile_fused_realtime_contracts_for_test(
+    const std::vector<std::shared_ptr<Node>>& consumer_nodes,
+    const std::vector<std::vector<std::shared_ptr<Node>>>& branch_nodes,
+    const GraphOptions& options, const OutputSpec& ingress_spec) {
+  BuildResult result;
+  maybe_compile_fused_realtime_contracts(&result, consumer_nodes, branch_nodes, {}, options,
+                                         "fused contract test", ingress_spec);
+  return result;
+}
+
+bool source_sima_meta_probe_required_for_test(const Node& node) {
+  return source_sima_meta_probe_required_for_node(node);
+}
 
 Sample make_fused_encoded_output_sample_for_test(GstBuffer* buffer, GstCaps* caps,
                                                  const std::string& stream_id, bool copy_output) {
@@ -3418,8 +3402,8 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
     const runtime::FusedRealtimeIngress& ingress,
     const std::vector<std::shared_ptr<Node>>& consumer_nodes, const std::shared_ptr<void>& guard,
     std::string& last_pipeline, const GraphOptions& sess_opt, const RunOptions& opt, RunMode mode,
-    bool require_sink, bool public_output_contract, const char* where,
-    const runtime::FusedEncodedOutputDispatch& encoded_output_dispatch) {
+    bool require_sink, bool public_output_contract, std::size_t internal_edge_queue,
+    const char* where, const runtime::FusedEncodedOutputDispatch& encoded_output_dispatch) {
   gst_init_once();
   const pipeline_internal::ScopedBuildTiming timing(
       "prepare_fused_realtime_source_pipeline",
@@ -3467,7 +3451,7 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   InputStreamOptions stream_opt = session_build_make_stream_options(merged_opt, mode);
   stream_opt.public_output_contract = public_output_contract;
   graph_build_internal::apply_explicit_public_output_options(stream_opt, build_consumer_nodes);
-  stream_opt.prefer_synchronous_teardown = true;
+  stream_opt.teardown_policy = pipeline_internal::InputStreamTeardownPolicy::BoundedPreferred;
   session_build_maybe_enable_rtsp_appsink_drop(stream_opt, build_consumer_nodes,
                                                build_branch_nodes);
 
@@ -3498,20 +3482,33 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   maybe_compile_fused_realtime_contracts(&br, build_consumer_nodes, build_branch_nodes,
                                          branch_actual_indices, sess_opt, where,
                                          fused_ingress_spec);
-  if (has_sink && stream_opt.public_output_contract && br.rendered_manifest.has_value()) {
-    const auto endpoint = session_build_public_output_endpoint_selector(build_consumer_nodes);
+  if (mode == RunMode::Sync) {
+    session_build_clamp_sync_kernel_runner_capacity(br);
+  }
+  if (br.diag) {
+    br.diag->pipeline_string = br.pipeline_string;
+  }
+  last_pipeline = br.pipeline_string;
+  session_build_enforce_mla_num_buffers(last_pipeline, where);
+  session_build_maybe_dump_pipeline_string(last_pipeline, where);
+
+  session_build_prepare_stage_contracts(br, where);
+  if (has_sink && stream_opt.public_output_contract && br.prepared_manifest.has_value()) {
+    auto endpoint = session_build_public_output_endpoint_selector(build_consumer_nodes);
+    if (!endpoint.terminal_stage_key.empty())
+      endpoint.terminal_stage_key =
+          apply_name_transform(br.name_transform, endpoint.terminal_stage_key);
     std::string error;
-    auto override = build_public_terminal_output_override_with_fallback(*br.rendered_manifest,
+    auto override = build_public_terminal_output_override_with_fallback(*br.prepared_manifest,
                                                                         endpoint, &error);
     if (override.has_value()) {
       stream_opt.output_override = std::move(*override);
     }
   }
   session_build_finalize_public_zero_copy_holder_loan_credits(stream_opt);
-  last_pipeline = br.pipeline_string;
-  session_build_enforce_mla_num_buffers(last_pipeline, where);
-  session_build_maybe_dump_pipeline_string(last_pipeline, where);
-
+  session_build_tune_internal_zero_copy_holder_window(stream_opt, internal_edge_queue,
+                                                      !public_output_contract);
+  session_build_reserve_kernel_runner_outputs(br, stream_opt);
   pipeline_internal::GstPipelinePtr pipeline(session_build_parse_pipeline_or_throw(br, where));
   session_build_dump_pipeline_element_properties(pipeline.get());
   if (env_bool("SIMA_GST_ENFORCE_NAMES", false)) {

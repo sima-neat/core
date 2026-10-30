@@ -3,7 +3,7 @@
   "translationDir": "website/i18n/{locale}/docusaurus-plugin-content-docs/current",
   "manifest": "website/i18n/translation-sources.json",
   "excludedPrefixes": ["docs/compile-a-model/", "docs/doxygen/", "docs/genai-llima/", "docs/reference/cppapi/", "docs/tools/insight/", "docs/tools/sentinel/", "docs/tools/sima-cli/"],
-  "canonicalTerms": ["Palette Neat Library", "Palette Neat", "Neat SDK", "Neat Library", "Neat Examples", "Model Compiler", "Model Zoo", "Modalix", "DevKit Sync", "DevKit", "PyNeat", "Insight", "Sentinel", "LLiMa", "Hugging Face", "SiMa.ai", "GStreamer", "Neat"],
+  "canonicalTerms": ["%%release.core%%", "%%release.platform%%", "%%release.sdk%%", "%%release.sdk_channel%%", "%%release.sdk_series%%", "%%release.apps%%", "%%release.model_compiler%%", "%%release.insight%%", "%%release.sima_cli%%", "Palette SDK", "Neat Library", "Neat Examples", "Model Compiler", "Model Zoo", "Modalix", "DevKit Sync", "DevKit", "PyNeat", "Insight", "Sentinel", "LLiMa", "Hugging Face", "SiMa.ai", "GStreamer", "Neat"],
   "forbiddenNavigationLabels": ["Benchmark Your Model", "Build a Custom Data Graph", "Build Your First Graph", "Configure Model Options", "Graph", "Model", "PCIe Co-processing", "Plug a Model Into Your Pipeline", "Read Detection Boxes from Model Output", "Run / Inference", "Run a Graph", "Run Your First Model", "Tensor and Sample", "Troubleshooting", "Tune Throughput and Queue Depth"],
   "forbidUntranslatedImageAltText": true,
   "docusaurusAssetRoots": ["docs/images/"],

@@ -149,7 +149,9 @@ case simaai::neat::PullStatus::Error:
 - 端到端推送至輸出延遲和吞吐量；
 - 推送、拉取和丟棄樣本的執行階段計數器；
 - 在 `MeasureOptions` 中請求時，外掛程式/核心和邊緣計時；
-- 當執行期間啟用電源監測時，可選的電源遙測。
+- 來自已棄用的 `RunOptions::power_monitor` 的功耗（啟用時）。
+
+使用 [`TelemetryMonitor`](/develop-apps/development-workflow/model#record-board-telemetry) 在同一個視窗內記錄板子功耗、溫度、CPU 使用率與記憶體。
 
 除非問題是端到端應用程式成本，否則將設定、檔案下載、每幀記錄和報告匯出放在測量的熱迴圈之外。
 

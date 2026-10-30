@@ -131,6 +131,7 @@ const config = {
   baseUrl,
   onBrokenLinks: "throw",
   markdown: {
+    preprocessor: require("./release-data").preprocessor(require("./release-data").load()),
     format: "md",
     hooks: {
       onBrokenMarkdownLinks: "throw",
@@ -246,6 +247,7 @@ const config = {
     ],
   ],
   plugins: [
+    require.resolve("./release-data/plugin.js"),
     [
       "@docusaurus/plugin-client-redirects",
       {

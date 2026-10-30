@@ -91,7 +91,7 @@ run.close();
 
 ## 인라인 큐
 
-`RunOptions::overflow_policy`는 `Run` 입력의 큐를 제어합니다. 그래프 노드 사이의 큐를 제어하려면 구성된 `Queue`를 추가합니다.
+`RunOptions::overflow_policy`는 `Run` 입력 큐를 제어합니다. 그래프 노드 사이의 큐를 제어하려면 설정된 `Queue`를 추가합니다.
 
 ```cpp
 simaai::neat::QueueOptions queue;
@@ -107,7 +107,7 @@ queue.overflow_policy = pyneat.OverflowPolicy.KeepLatest
 graph.add(pyneat.nodes.queue(queue))
 ```
 
-`max_buffers`를 설정하지 않으면 기본 큐 제한이 사용됩니다. 양수 값으로 설정하면 버퍼 수가 유일한 용량 제한이 됩니다. `Block`은 공간이 생길 때까지 대기하고, `KeepLatest`는 대기 중인 가장 오래된 버퍼를 버리며, `DropIncoming`은 새 버퍼를 버립니다.
+`max_buffers`를 설정하지 않으면 기본 큐 제한을 사용합니다. 양수로 설정하면 버퍼 수가 유일한 용량 제한이 됩니다. `Block`은 빈 공간을 기다리고, `KeepLatest`는 대기 중인 가장 오래된 버퍼를 버리며, `DropIncoming`은 새 버퍼를 버립니다.
 
 ## 풀 타이밍
 
@@ -149,7 +149,9 @@ case simaai::neat::PullStatus::Error:
 - 전체 푸시-출력 지연 시간 및 처리량
 - 푸시, 풀, 삭제된 샘플에 대한 런타임 카운터
 - `MeasureOptions`에서 요청할 경우 플러그인/커널 및 에지 타이밍
-- 실행 시 전력 모니터링이 활성화된 경우 선택적 전력 텔레메트리
+- 더 이상 사용되지 않는 `RunOptions::power_monitor`를 활성화한 경우 이 모니터가 측정한 전력
+
+같은 구간의 보드 전력, 온도, CPU 사용률, 메모리는 [`TelemetryMonitor`](/develop-apps/development-workflow/model#record-board-telemetry)로 기록합니다.
 
 측정되는 핵심 루프 외부에서 설정, 파일 다운로드, 프레임별 로깅 및 보고서 내보내기를 수행하되, 질문이 전체 애플리케이션 비용에 관한 것이라면 예외입니다.
 

@@ -1,9 +1,11 @@
 #include "model/Model.h"
+#include "pipeline/Graph.h"
 #include "model_archive_fixture_utils.h"
 #include "pipeline/NeatError.h"
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <cstdlib>
 #include <unordered_map>
 
 namespace {
@@ -91,6 +93,26 @@ RUN_TEST(
         require(meta.at("labels") == "[\"cat\",\"dog\"]",
                 "Model::metadata should dump array values");
         require(meta.at("nested") == "{\"a\":1}", "Model::metadata should dump object values");
+
+        require(!model.infer_output_name().empty(),
+                "default inference naming must remain available without executable artifacts");
+        require(!model.input_specs().empty(),
+                "input metadata must remain available without executable artifacts");
+        const auto output_specs = model.output_specs();
+        require(output_specs.size() == 10U &&
+                    output_specs.front().shape == std::vector<int64_t>({1, 80, 80, 64}) &&
+                    output_specs.front().dtypes == std::vector<TensorDType>{TensorDType::Float32},
+                "selected postprocess metadata must retain exact MPK outputs without artifacts");
+        bool admission_rejected = false;
+        try {
+          (void)model.graph();
+        } catch (const std::exception& error) {
+          admission_rejected = true;
+          require_contains(std::string(error.what()), "missing-mla-executable",
+                           "execution admission must still fail closed without the MLA ELF");
+        }
+        require(admission_rejected,
+                "metadata-only construction must not make a missing MLA ELF executable");
       }
 
       {

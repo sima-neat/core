@@ -72,6 +72,8 @@ ImageSpec::PixelFormat pixel_format_from_gst(GstVideoFormat fmt) {
     return ImageSpec::PixelFormat::GRAY8;
   case GST_VIDEO_FORMAT_NV12:
     return ImageSpec::PixelFormat::NV12;
+  case GST_VIDEO_FORMAT_NV16:
+    return ImageSpec::PixelFormat::NV16;
   case GST_VIDEO_FORMAT_I420:
     return ImageSpec::PixelFormat::I420;
   default:
@@ -423,7 +425,7 @@ Tensor from_gst_video_sample(GstSample* sample, GstCaps* caps) {
   }
 
   // Planar YUV formats: represent as composite tensor with planes.
-  if (fmt == GST_VIDEO_FORMAT_NV12) {
+  if (fmt == GST_VIDEO_FORMAT_NV12 || fmt == GST_VIDEO_FORMAT_NV16) {
     // A convenient top-level (H,W) shape for dimensions; actual data accessed via planes.
     out.shape = {h, w};
     out.layout = simaai::neat::TensorLayout::HW;
@@ -440,7 +442,8 @@ Tensor from_gst_video_sample(GstSample* sample, GstCaps* caps) {
                                     : static_cast<int64_t>(GST_VIDEO_INFO_PLANE_OFFSET(&info, 1));
 
     out.planes.push_back(make_plane(PlaneRole::Y, h, w, y_stride, y_offset, elem));
-    out.planes.push_back(make_plane(PlaneRole::UV, h / 2, w, uv_stride, uv_offset, elem));
+    out.planes.push_back(make_plane(PlaneRole::UV, fmt == GST_VIDEO_FORMAT_NV16 ? h : h / 2, w,
+                                    uv_stride, uv_offset, elem));
     return out;
   }
 

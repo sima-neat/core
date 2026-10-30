@@ -12,7 +12,7 @@ options, and plugin-private configuration are not interchangeable with these typ
 | `card_host` | empty | Explicit SSH/SCP address. Empty derives `10.0.<card_id>.2`. |
 | `card_id` | `0` | Non-negative PCIe card/plugin index. |
 | `user` | `sima` | Passwordless SSH user used for card startup. |
-| `queue` | `0` | Physical co-processing queue, 0 through 3. |
+| `queue` | `0` | Physical co-processing queue, 0 through 5. |
 | `max_inflight` | `10` | Accepted requests not yet returned; `0` uses plugin-managed depth. |
 | `card_env` | empty | Additional card process environment assignments. |
 | `card_gst_debug` | empty | Optional card-side GStreamer diagnostics. |
@@ -22,8 +22,8 @@ Use default addressing for ordinary card 0 setups. Set `card_host` when manageme
 non-standard. Treat `card_env` and GStreamer fields as explicit diagnostics/configuration, not
 boilerplate to add to every application.
 
-One active `Model` owns one queue. A Modalix EV74 exposes queues 0 through 3, so do not assign the
-same queue to two active models.
+One active `Model` owns one queue. Co-processing supports queues 0 through 5; do not assign the
+same queue to two active models. Concurrent models share card compute and memory resources.
 
 ## Tensor Mode
 

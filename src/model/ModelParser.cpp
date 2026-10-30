@@ -193,23 +193,48 @@ void parse_mpk_mla_io(const pipeline_internal::sima::MpkContract& contract, Pars
   if (!out) {
     return;
   }
-  const auto* mla = pipeline_internal::sima::get_mla_stage_io_contract(contract);
-  if (!mla) {
+  const auto mla_stages = pipeline_internal::sima::get_mla_stage_io_contracts(contract);
+  if (mla_stages.empty()) {
     out->warnings.push_back("model-parser: MLA stage missing in MPK contract");
     return;
   }
 
-  auto mla_idx = pipeline_internal::sima::find_plugin_index_by_name_or_id(contract, mla->name);
-  if (!mla_idx.has_value() && !mla->plugin_id.empty()) {
-    mla_idx = pipeline_internal::sima::find_plugin_index_by_name_or_id(contract, mla->plugin_id);
-  }
-  if (mla_idx.has_value()) {
-    out->mla_plugin_index = static_cast<int>(*mla_idx);
+  const auto* first_mla = mla_stages.front();
+  const auto* last_mla = mla_stages.back();
+  out->mla_plugin_indices.clear();
+  out->mla_plugin_indices.reserve(mla_stages.size());
+  for (const auto* mla : mla_stages) {
+    auto index = pipeline_internal::sima::find_plugin_index_by_name_or_id(contract, mla->name);
+    if (!index.has_value() && !mla->plugin_id.empty()) {
+      index = pipeline_internal::sima::find_plugin_index_by_name_or_id(contract, mla->plugin_id);
+    }
+    if (index.has_value()) {
+      out->mla_plugin_indices.push_back(*index);
+    }
   }
 
-  out->outputs.physical.reserve(mla->output_tensors.size());
-  for (std::size_t i = 0; i < mla->output_tensors.size(); ++i) {
-    const auto& src = mla->output_tensors[i];
+  auto first_mla_idx =
+      pipeline_internal::sima::find_plugin_index_by_name_or_id(contract, first_mla->name);
+  if (!first_mla_idx.has_value() && !first_mla->plugin_id.empty()) {
+    first_mla_idx =
+        pipeline_internal::sima::find_plugin_index_by_name_or_id(contract, first_mla->plugin_id);
+  }
+  if (first_mla_idx.has_value()) {
+    out->mla_plugin_index = static_cast<int>(*first_mla_idx);
+  }
+  auto last_mla_idx =
+      pipeline_internal::sima::find_plugin_index_by_name_or_id(contract, last_mla->name);
+  if (!last_mla_idx.has_value() && !last_mla->plugin_id.empty()) {
+    last_mla_idx =
+        pipeline_internal::sima::find_plugin_index_by_name_or_id(contract, last_mla->plugin_id);
+  }
+  if (last_mla_idx.has_value()) {
+    out->last_mla_plugin_index = static_cast<int>(*last_mla_idx);
+  }
+
+  out->outputs.physical.reserve(last_mla->output_tensors.size());
+  for (std::size_t i = 0; i < last_mla->output_tensors.size(); ++i) {
+    const auto& src = last_mla->output_tensors[i];
     ParsedPhysicalOutput dst;
     dst.name = src.name.empty() ? ("mla_output_" + std::to_string(i)) : src.name;
     dst.dtype = src.dtype;
@@ -218,9 +243,9 @@ void parse_mpk_mla_io(const pipeline_internal::sima::MpkContract& contract, Pars
     out->outputs.physical.push_back(std::move(dst));
   }
 
-  out->outputs.logical.reserve(mla->output_tensors.size());
-  for (std::size_t i = 0; i < mla->output_tensors.size(); ++i) {
-    const auto& src = mla->output_tensors[i];
+  out->outputs.logical.reserve(last_mla->output_tensors.size());
+  for (std::size_t i = 0; i < last_mla->output_tensors.size(); ++i) {
+    const auto& src = last_mla->output_tensors[i];
     ParsedLogicalOutput dst;
     dst.name = src.name.empty() ? ("mla_output_" + std::to_string(i)) : src.name;
     dst.dtype = src.logical_dtype.empty() ? src.dtype : src.logical_dtype;
@@ -261,6 +286,13 @@ void parse_mpk_plugins(const pipeline_internal::sima::MpkContract& contract, Par
       mla_rank = rank_it->second;
     }
   }
+  std::size_t last_mla_rank = mla_rank;
+  if (out->last_mla_plugin_index >= 0) {
+    const auto rank_it = rank_by_index.find(static_cast<std::size_t>(out->last_mla_plugin_index));
+    if (rank_it != rank_by_index.end()) {
+      last_mla_rank = rank_it->second;
+    }
+  }
 
   out->plugins.reserve(out->execution_order.size());
   for (const std::size_t plugin_idx : out->execution_order) {
@@ -285,7 +317,7 @@ void parse_mpk_plugins(const pipeline_internal::sima::MpkContract& contract, Par
     dst.kind = kind;
     dst.sequence = src.sequence;
     dst.before_mla = rank < mla_rank;
-    dst.after_mla = rank > mla_rank;
+    dst.after_mla = rank > last_mla_rank;
     out->plugins.push_back(dst);
 
     const std::string canonical = kernel_kind_name(kind);
@@ -564,13 +596,17 @@ bool parse_model_semantics_from_pack(const ModelPack& pack, ModelSemantics* out)
     if (!logical_outputs.empty()) {
       out->mla_output_dtype_raw = canonical_dtype_for_signal(logical_outputs.front().dtype);
     }
-    const auto* mla = pipeline_internal::sima::get_mla_stage_io_contract(*maybe_contract);
-    if (mla) {
-      if (!mla->input_tensors.empty()) {
-        out->mla_input_dtype_raw = primary_tensor_dtype(mla->input_tensors);
+    const auto* first_mla =
+        pipeline_internal::sima::get_first_mla_stage_io_contract(*maybe_contract);
+    const auto* last_mla = pipeline_internal::sima::get_last_mla_stage_io_contract(*maybe_contract);
+    if (first_mla) {
+      if (!first_mla->input_tensors.empty()) {
+        out->mla_input_dtype_raw = primary_tensor_dtype(first_mla->input_tensors);
       }
-      if (!mla->output_tensors.empty() && out->mla_output_dtype_raw.empty()) {
-        out->mla_output_dtype_raw = primary_tensor_dtype(mla->output_tensors);
+    }
+    if (last_mla) {
+      if (!last_mla->output_tensors.empty() && out->mla_output_dtype_raw.empty()) {
+        out->mla_output_dtype_raw = primary_tensor_dtype(last_mla->output_tensors);
       }
     }
   }

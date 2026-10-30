@@ -56,7 +56,7 @@ finally:
 </CodeTab>
 </CodeTabs>
 
-C++에서는 차단되는 전경 서버를 위해 `serve()`를 사용합니다. C++ 또는 Python 애플리케이션이 서버 수명을 관리할 때는 `start()` 및 `stop()`을 사용합니다. 기본 호스트 또는 포트가 적절하지 않을 때는 `GenAIServerOptions`를 구성합니다.수신 대기를 시작하기 전에 서버는 등록된 각 모델에 대해 출력이 없는 워밍업 추론을 수행하므로, 첫 번째 클라이언트 요청이 전체 초기화 비용을 부담하지 않습니다. 워밍업은 생성된 텍스트나 성능 통계를 출력하지 않습니다. `stop()`을 호출하면 등록된 모든 모델이 제거되므로, 동일한 서버 객체를 다시 시작하기 전에 모델을 다시 추가해야 합니다.
+C++에서 블로킹 포그라운드 서버를 실행하려면 `serve()`를 사용합니다. C++ 또는 Python 앱에서 서버 수명을 관리하려면 `start()`와 `stop()`을 사용합니다. 기본 호스트나 포트가 적합하지 않으면 `GenAIServerOptions`를 설정합니다. 서버는 요청 수신 전에 등록된 각 모델에 대해 출력 없는 워밍업 추론을 수행하므로 첫 클라이언트 요청에서 전체 초기화 비용을 부담하지 않습니다. 워밍업은 생성된 텍스트나 성능 통계를 출력하지 않습니다. `stop()`을 호출하면 등록된 모든 모델도 제거되므로 같은 서버 객체를 다시 시작하기 전에 모델을 다시 추가해야 합니다.
 
 `GenAIServer`는 인증 또는 TLS 종료 기능을 제공하지 않으며, 모든 출처의 CORS 요청을 허용합니다. 신뢰할 수 있는 인터페이스에만 바인딩하거나 필요한 접근 제어 및 암호화를 제공하는 네트워크 계층 뒤에 배치합니다.
 
@@ -125,6 +125,8 @@ curl http://<modalix-ip>:9998/v1/chat/completions \
 
 VLM 요청의 경우 OpenAI 채팅 `image_url` 콘텐츠 부분에는 `data:image/jpeg;base64,...`와 같은 base64 데이터 URI가 포함되어야 합니다. 이미지 디코딩에는 OpenCV 지원이 있는 Neat 빌드가 필요합니다.
 
+컴파일된 컨텍스트에 응답할 공간이 없는 프롬프트는 `context_length_exceeded`를 반환합니다(HTTP 400 또는 스트리밍이 시작된 경우 SSE 오류). 컨텍스트 또는 출력 토큰 한도에 도달하면 `finish_reason: "length"`를 반환하고 정상적으로 완료되면 `"stop"`을 반환합니다. 대화 기록은 유지됩니다.
+
 ## Ollama 호환 요청
 
 메시지 기록에는 `/api/chat`를, 프롬프트에는 `/api/generate`를 사용하십시오.
@@ -181,6 +183,12 @@ curl http://<modalix-ip>:9998/api/chat \
 `/api/chat`은 `message.thinking`에 추론 과정을, `message.content`에 최종 답변을 반환합니다. `/api/generate`는 동일한 최상위 `think` 필드를 입력받아, 최상위 `thinking`에 추론 과정을, `response`에 답변을 반환합니다.
 
 추론 필드는 비어 있을 경우 생략됩니다. 이는 출력 전용 필드이며, 입력되는 `reasoning_content` 또는 `thinking` 필드는 대화 기록으로 다시 재생되지 않습니다.
+
+### 추론 수준
+
+GPT-OSS에서는 `reasoning_effort`를 `low`(기본값), `medium` 또는 `high`로 설정합니다. 다른 값은 HTTP 400을 반환합니다. `enable_thinking`은 추론 내용을 반환할지 제어합니다.
+
+`reasoning_effort`는 `chat_template_kwargs` 안에서도 지정할 수 있으며, 이 값이 최상위 필드보다 우선합니다.
 
 ## 오디오 요청
 

@@ -553,6 +553,25 @@ std::string readable_string_property(GObject* object, const char* property_name)
   return out;
 }
 
+// Caps the downstream peer accepts on `element`'s "src" pad, i.e. what the source was asked for.
+std::string requested_src_caps(GstElement* element) {
+  GstPad* pad = gst_element_get_static_pad(element, "src");
+  if (!pad)
+    return {};
+  GstCaps* caps = gst_pad_peer_query_caps(pad, nullptr);
+  gst_object_unref(pad);
+  if (!caps)
+    return {};
+  std::string out;
+  if (!gst_caps_is_any(caps) && !gst_caps_is_empty(caps)) {
+    gchar* text = gst_caps_to_string(caps);
+    out = truncate(text ? text : "", 512);
+    g_free(text);
+  }
+  gst_caps_unref(caps);
+  return out;
+}
+
 bool safe_production_reason(const std::string& reason) {
   if (reason.empty() || reason.size() > 240 || reason.find_first_of("\r\n=") != std::string::npos)
     return false;
@@ -658,6 +677,75 @@ std::string dimensions(const std::optional<int64_t>& width, const std::optional<
   if (!width.has_value() || !height.has_value() || *width <= 0 || *height <= 0)
     return {};
   return std::to_string(*width) + "x" + std::to_string(*height);
+}
+
+// The Runtime adapter already classified the failure. Keep its canonical
+// category/rule in raw details; this is public presentation, not revalidation.
+NormalizedDiagnostic kernel_runner_failure(RawGstError raw) {
+  const auto category = find_structured_detail(raw, {"runtime-category"}).value_or("");
+  const bool allocation_failed =
+      category == "execution_failed" &&
+      find_structured_detail(raw, {"runtime-phase"}) == "implementation_admission" &&
+      find_structured_detail(raw, {"kernel-rule"}) == "memory.allocation_failed";
+  const char* code = error_codes::kRuntimeElementFailed;
+  const char* title = "The kernel stage could not complete.";
+  const char* action = "Inspect the stage's Runtime diagnostic and underlying device cause.";
+  if (allocation_failed) {
+    code = error_codes::kMemoryAllocationFailed;
+    title = "The kernel stage could not allocate its required memory.";
+    action = "Check the reported allocation size and pool count; reduce retained buffers or "
+             "concurrent workloads, and verify available memory in the required allocation domain.";
+  } else if (category == "invalid_request") {
+    code = error_codes::kKernelRequest;
+    title = "The kernel request violates its operation contract.";
+    action = "Correct the reported tensor specification or parameter before preparing the stage.";
+  } else if (category == "unsupported_implementation" || category == "unsupported_target") {
+    code = error_codes::kKernelUnsupported;
+    title = "The selected implementation cannot execute this kernel request.";
+    action = "Use a supported implementation and format in a matched Runtime and firmware cohort.";
+  } else if (category == "invalid_binding") {
+    code = error_codes::kKernelBinding;
+    title = "A kernel buffer binding does not satisfy the prepared contract.";
+    action = "Check the reported buffer's span, alignment, access rights and retained ownership.";
+  } else if (category == "resource_busy") {
+    title = "A resource required by the kernel stage is unavailable.";
+    action = "Inspect the reported access or capacity cause; do not reuse buffers while ownership "
+             "or device completion is unresolved.";
+  } else if (category == "dependency_failed") {
+    code = error_codes::kKernelDependency;
+    title = "A dependency failed before the kernel could execute.";
+    action = "Inspect the failed dependency; its dependent outputs are not valid.";
+  } else if (category == "retirement_unknown") {
+    code = error_codes::kAcceleratorExecutionFailed;
+    title = "Device retirement could not be established.";
+    action =
+        "Retain affected buffers and stop new device work. Use external recovery that verifies "
+        "hardware quiescence before releasing memory or starting another execution domain.";
+  } else if (category == "execution_failed") {
+    code = error_codes::kAcceleratorExecutionFailed;
+    title = "The kernel execution failed.";
+    action = "Inspect the device cause and follow the documented retirement or recovery procedure.";
+  } else if (category == "timeout") {
+    code = error_codes::kOutputTimeout;
+    title = "The kernel did not complete within the observation timeout.";
+    action =
+        "A timeout is not retirement: retain buffers until completion or verified device recovery.";
+  }
+  auto out = base(std::move(raw), code,
+                  allocation_failed ? "neatkernelrunner.memory_allocation_failed"
+                                    : "neatkernelrunner." + category,
+                  title);
+  for (const auto* key : {"runtime-category", "runtime-phase", "runtime-field", "kernel-rule",
+                          "kernel-code", "operation-index"})
+    add_fact(out, key, find_structured_detail(out.raw, {key}).value_or(""));
+  // Access contention is not necessarily exhausted execution capacity. Preserve
+  // the provider cause without guessing from its category; serialization is
+  // failure-only, bounded and credential-redacted.
+  if (allocation_failed || category == "invalid_request" || category == "invalid_binding" ||
+      category == "resource_busy")
+    add_fact(out, "Reason", sanitize_gst_diagnostic_text(out.raw.message));
+  out.actions = {action};
+  return out;
 }
 
 NormalizedDiagnostic input_capacity(RawGstError raw) {
@@ -887,6 +975,27 @@ NormalizedDiagnostic camera_not_found(RawGstError raw) {
   return out;
 }
 
+// Keeps kMediaCaps, this failure's code before it got its own diagnostic.
+NormalizedDiagnostic camera_configuration_unsupported(RawGstError raw) {
+  NormalizedDiagnostic out =
+      base(std::move(raw), error_codes::kMediaCaps, "gstreamer.camera_configuration_unsupported",
+           "The camera cannot produce the requested resolution or format.");
+  add_fact(
+      out, "Camera",
+      find_detail(out.raw, {"source-identity", "source_identity", "camera-name"}).value_or(""));
+  add_fact(out, "Requested caps",
+           find_detail(out.raw, {"requested-caps", "requested_caps"}).value_or(""));
+  out.actions = {
+      "Request a resolution and pixel format the camera offers. libcamerasrc reports an "
+      "unsupported resolution and an unsupported format with this same error.",
+      "For a camera-to-model graph, capture at a supported resolution and let model-managed CVU "
+      "preprocessing resize it for inference.",
+      "For other graphs, capture at a supported resolution and add a VideoScale Node followed by "
+      "a CapsRaw caps filter.",
+  };
+  return out;
+}
+
 NormalizedDiagnostic invalid_h264(RawGstError raw) {
   NormalizedDiagnostic out =
       base(std::move(raw), error_codes::kInvalidH264Stream, "gstreamer.invalid_h264_stream",
@@ -939,6 +1048,7 @@ NormalizedDiagnostic memory_allocation_failed(RawGstError raw) {
                                   "gstreamer.memory_allocation_failed",
                                   "The pipeline could not allocate a required memory buffer.");
   add_fact(out, "Allocator", find_detail(out.raw, {"allocator"}).value_or(""));
+  add_fact(out, "Reason", sanitize_gst_diagnostic_text(out.raw.message));
   out.actions = {
       "Reduce memory use by lowering the number or resolution of simultaneous streams or by "
       "reducing buffer and queue depth.",
@@ -1141,6 +1251,9 @@ RawGstError parse_gst_error_message(GstMessage* message) {
           camera = readable_string_property(G_OBJECT(GST_MESSAGE_SRC(message)), "camera");
         if (!camera.empty())
           out.details.emplace("source-identity", std::move(camera));
+        std::string requested = requested_src_caps(GST_ELEMENT(GST_MESSAGE_SRC(message)));
+        if (!requested.empty())
+          out.details.emplace("requested-caps", std::move(requested));
       }
     }
   }
@@ -1211,6 +1324,10 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
         (accelerator_plugin_name(raw) || dispatcher_specific_context(raw))) ||
        (raw.code == GST_RESOURCE_ERROR_NOT_FOUND && dispatcher_specific_context(raw)));
 
+  if (find_structured_detail(raw, {"neat-diagnostic-id"}) == "neatkernelrunner.failure" &&
+      find_structured_detail(raw, {"runtime-category"}).has_value())
+    return kernel_runner_failure(std::move(raw));
+
   if (diagnostic_id == "neatprocesscvu.input_envelope_exceeded" ||
       contains_ci(text, "envelope violation")) {
     return input_capacity(std::move(raw));
@@ -1272,6 +1389,10 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
   if ((raw.factory_name == "libcamerasrc" || contains_ci(raw.factory_name, "camera")) &&
       contains_ci(text, "could not find a camera")) {
     return camera_not_found(std::move(raw));
+  }
+  // libcamerasrc fails negotiation when the camera does not offer the requested size or format.
+  if (raw.factory_name == "libcamerasrc" && contains_ci(text, "not-negotiated")) {
+    return camera_configuration_unsupported(std::move(raw));
   }
   if (raw.factory_name == "h264parse" && contains_ci(text, "no valid frames")) {
     return invalid_h264(std::move(raw));

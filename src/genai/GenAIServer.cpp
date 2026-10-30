@@ -56,6 +56,19 @@ void set_error(httplib::Response& res, const std::string& message, int status) {
   set_json(res, {{"error", {{"message", message}, {"type", "invalid_request_error"}}}}, status);
 }
 
+nlohmann::json generation_error(const std::exception& error) {
+  nlohmann::json body = {{"error", {{"message", error.what()}, {"type", "invalid_request_error"}}}};
+  if (dynamic_cast<const std::length_error*>(&error)) {
+    body["error"]["code"] = "context_length_exceeded";
+  }
+  return body;
+}
+
+void set_error(httplib::Response& res, const std::exception& error) {
+  set_json(res, generation_error(error),
+           dynamic_cast<const std::length_error*>(&error) ? 400 : 500);
+}
+
 std::optional<std::string> apply_tool_options(const nlohmann::json& body,
                                               GenerationRequest& request) {
   if (body.contains("tools")) {
@@ -209,6 +222,31 @@ bool request_enable_thinking(const nlohmann::json& body, bool ollama = false) {
         json_bool(body.at("chat_template_kwargs"), "enable_thinking", enable_thinking);
   }
   return enable_thinking;
+}
+
+// OpenAI exposes reasoning_effort at the top level; chat_template_kwargs wins,
+// matching how enable_thinking is read above.
+// Returns nullopt when either location holds a present but non-string value, so a
+// malformed request cannot silently run at the default effort.
+std::optional<std::string> request_reasoning_effort(const nlohmann::json& body,
+                                                    const std::string& default_value = "low") {
+  std::string effort = default_value;
+  if (body.contains("reasoning_effort")) {
+    if (!body.at("reasoning_effort").is_string()) {
+      return std::nullopt;
+    }
+    effort = body.at("reasoning_effort").get<std::string>();
+  }
+  if (body.contains("chat_template_kwargs") && body.at("chat_template_kwargs").is_object()) {
+    const auto& kwargs = body.at("chat_template_kwargs");
+    if (kwargs.contains("reasoning_effort")) {
+      if (!kwargs.at("reasoning_effort").is_string()) {
+        return std::nullopt;
+      }
+      effort = kwargs.at("reasoning_effort").get<std::string>();
+    }
+  }
+  return effort;
 }
 
 std::string choice_finish_reason(const std::string& finish_reason) {
@@ -1013,6 +1051,17 @@ struct GenAIServer::Impl {
     return true;
   }
 
+  bool require_reasoning_effort(const nlohmann::json& body, GenerationRequest& request,
+                                httplib::Response& res) const {
+    const auto effort = request_reasoning_effort(body);
+    if (!effort || !internal::valid_reasoning_effort(*effort)) {
+      set_error(res, "reasoning_effort must be 'low', 'medium' or 'high'", 400);
+      return false;
+    }
+    request.reasoning_effort = *effort;
+    return true;
+  }
+
   void handle_stop(const httplib::Request& req, httplib::Response& res) {
     set_cors(res);
     try {
@@ -1133,6 +1182,9 @@ struct GenAIServer::Impl {
       if (!require_thinking_capability(*model, request, res)) {
         return;
       }
+      if (!require_reasoning_effort(body, request, res)) {
+        return;
+      }
       request.messages = parse_chat_messages(body);
       if (const auto error = apply_tool_options(body, request)) {
         set_error(res, *error, 400);
@@ -1162,7 +1214,7 @@ struct GenAIServer::Impl {
                        {"usage", {{"completion_tokens", result.metrics.generated_tokens}}}});
       }
     } catch (const std::exception& e) {
-      set_error(res, e.what(), 500);
+      set_error(res, e);
     }
   }
 
@@ -1182,6 +1234,9 @@ struct GenAIServer::Impl {
       GenerationRequest request;
       request.enable_thinking = request_enable_thinking(body);
       if (!require_thinking_capability(*model, request, res)) {
+        return;
+      }
+      if (!require_reasoning_effort(body, request, res)) {
         return;
       }
       request.prompt = completion_prompt(body);
@@ -1205,7 +1260,7 @@ struct GenAIServer::Impl {
                        {"usage", {{"completion_tokens", result.metrics.generated_tokens}}}});
       }
     } catch (const std::exception& e) {
-      set_error(res, e.what(), 500);
+      set_error(res, e);
     }
   }
 
@@ -1225,6 +1280,9 @@ struct GenAIServer::Impl {
       GenerationRequest request;
       request.enable_thinking = request_enable_thinking(body, true);
       if (!require_thinking_capability(*model, request, res)) {
+        return;
+      }
+      if (!require_reasoning_effort(body, request, res)) {
         return;
       }
       request.messages = parse_chat_messages(body);
@@ -1250,7 +1308,7 @@ struct GenAIServer::Impl {
                        {"eval_count", result.metrics.generated_tokens}});
       }
     } catch (const std::exception& e) {
-      set_error(res, e.what(), 500);
+      set_error(res, e);
     }
   }
 
@@ -1283,6 +1341,9 @@ struct GenAIServer::Impl {
       if (!require_thinking_capability(*model, request, res)) {
         return;
       }
+      if (!require_reasoning_effort(body, request, res)) {
+        return;
+      }
       request.messages.push_back(std::move(message));
       if (!require_image_capability(*model, model_name, request, res)) {
         return;
@@ -1306,7 +1367,7 @@ struct GenAIServer::Impl {
         set_json(res, std::move(response));
       }
     } catch (const std::exception& e) {
-      set_error(res, e.what(), 500);
+      set_error(res, e);
     }
   }
 
@@ -1352,7 +1413,7 @@ struct GenAIServer::Impl {
                 chat_chunk(model_name, completion_id, created, "", "stop") + "data: [DONE]\n\n";
             write_sink(sink, done);
           } catch (const std::exception& e) {
-            const nlohmann::json error = {{"error", {{"message", e.what()}}}};
+            const auto error = generation_error(e);
             const std::string chunk = "data: " + error.dump() + "\n\ndata: [DONE]\n\n";
             write_sink(sink, chunk);
           }
@@ -1389,7 +1450,7 @@ struct GenAIServer::Impl {
             }
             write_sink(sink, completion_chunk(model_name, "", "stop") + "data: [DONE]\n\n");
           } catch (const std::exception& e) {
-            const nlohmann::json error = {{"error", {{"message", e.what()}}}};
+            const auto error = generation_error(e);
             write_sink(sink, "data: " + error.dump() + "\n\ndata: [DONE]\n\n");
           }
           sink.done();

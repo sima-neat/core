@@ -13,7 +13,7 @@ slug: /develop-apps/contribute/
 <div class="overview-section-label">Інструктаж для авторів</div>
 
 **Neat Library** — це бібліотека C++/Python і середовище виконання, що міститься в цьому репозиторії.
-Вона завантажує архіви моделей, створює та виконує перевірку конвеєрів, працює на апаратному забезпеченні Modalix і надає загальнодоступний API для програм. Neat SDK і DevKit Sync
+Вона завантажує архіви моделей, створює та виконує перевірку конвеєрів, працює на апаратному забезпеченні Modalix і надає загальнодоступний API для програм. Palette SDK і DevKit Sync
 є частиною навколишнього процесу розробки.
 
 Під час внесення змін до цього репозиторію оптимізуйте його для властивостей фреймворку, які полегшують розробку як для людей, так і для систем, що використовують штучний інтелект: чіткі API, детермінована поведінка, структурована діагностика, сувора перевірка та стабільні загальнодоступні інтерфейси.
@@ -54,7 +54,6 @@ slug: /develop-apps/contribute/
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/develop-apps/contribute/mpk_contract/"><strong>Контракт MPK</strong><span>Зрозумійте правила щодо завантаження, перевірки та безпеки даних в архіві моделі.</span></a></li>
       <li><a class="overview-link-card" href="/develop-apps/contribute/sima_plugin_json_truth_map/"><strong>Плагін «JSON Truth Map»</strong><span>Перегляньте заморожену JSON-схему контракту для плагіна SIMA.</span></a></li>
-      <li><a class="overview-link-card" href="/develop-apps/contribute/appcomplex_workspace_packaging/"><strong>Складна упаковка застосунків.</strong><span>Створіть і встановіть пакет служб для захищеного комплексного робочого середовища застосунку.</span></a></li>
     </ul>
   </section>
 

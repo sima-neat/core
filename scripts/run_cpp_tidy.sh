@@ -45,9 +45,6 @@ require_cmd() {
   fi
 }
 
-require_cmd cmake
-require_cmd clang-tidy
-require_cmd run-clang-tidy
 require_cmd rg
 require_cmd git
 
@@ -65,24 +62,16 @@ is_genai_source() {
 }
 
 configure_tidy_build() {
+  # Analysis consumes the explicitly selected Scheduler headers. It never
+  # discovers or links an ARM LLiMa runtime from an ambient SDK installation.
   local cmake_prefix_path="${CMAKE_PREFIX_PATH:-}"
-  local candidate
-
-  for candidate in \
-    "${SYSROOT:-}/usr" \
-    "${SDKTARGETSYSROOT:-}/usr" \
-    "/opt/toolchain/aarch64/modalix/usr"; do
-    [[ -n "$candidate" ]] || continue
-    if [[ -f "${candidate}/lib/aarch64-linux-gnu/cmake/SimaLMM/SimaLMMConfig.cmake" ]]; then
-      if [[ -n "$cmake_prefix_path" ]]; then
-        cmake_prefix_path="${cmake_prefix_path}:${candidate}"
-      else
-        cmake_prefix_path="${candidate}"
-      fi
-      if [[ -f "${candidate}/include/sima_lmm/chat.hpp" ]]; then
-        SIMANEAT_TIDY_HAS_SIMALMM=ON
-      fi
-    fi
+  local package config
+  for package in "${NEAT_SCHEDULER_PACKAGE_DIR:-}" "${NEAT_SCHEDULER_CLIENT_TEST_PACKAGE_DIR:-}"; do
+    [[ -n "$package" ]] || continue
+    [[ -d "$package" ]] || { echo "Missing analysis package: $package" >&2; return 1; }
+    while IFS= read -r config; do
+      cmake_prefix_path="${config%/*}${cmake_prefix_path:+:$cmake_prefix_path}"
+    done < <(find "$package" -type f -name '*Config.cmake')
   done
 
   # Keep clang-tidy analysis on the host toolchain even when SDK/cross env
@@ -94,6 +83,14 @@ configure_tidy_build() {
     -u CFLAGS \
     -u CXXFLAGS \
     -u LDFLAGS \
+    -u CPATH \
+    -u C_INCLUDE_PATH \
+    -u CPLUS_INCLUDE_PATH \
+    -u LIBRARY_PATH \
+    -u LD_LIBRARY_PATH \
+    -u LD_PRELOAD \
+    -u CMAKE_TOOLCHAIN_FILE \
+    -u OE_CMAKE_TOOLCHAIN_FILE \
     -u SYSROOT \
     -u SDKTARGETSYSROOT \
     -u PKG_CONFIG_SYSROOT_DIR \
@@ -104,11 +101,14 @@ configure_tidy_build() {
     -u OECORE_TARGET_SYSROOT \
     -u OECORE_NATIVE_SYSROOT \
     CMAKE_PREFIX_PATH="${cmake_prefix_path}" \
-    cmake -S "$root_dir" -B "$build_dir" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+    cmake -S "$root_dir" -B "$build_dir" -U 'SimaScheduler*_DIR' -U CMAKE_PREFIX_PATH \
+      -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
       -DSIMANEAT_CPP_TIDY=ON \
       -DSIMANEAT_STRICT_WARNINGS=ON \
       -DSIMANEAT_USE_EXPORTED_NEAT_INTERNALS=OFF \
-      -DSIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS=OFF
+      -DSIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS=OFF \
+      -DSIMANEAT_REQUIRE_LLIMA_ARTIFACTS=OFF \
+      -DCMAKE_DISABLE_FIND_PACKAGE_SimaLMM=TRUE
 }
 
 detect_jobs() {
@@ -182,8 +182,6 @@ is_tidy_scope_path() {
   esac
 }
 
-configure_tidy_build
-
 if [[ "$MODE" == "all" ]]; then
   mapfile -t all_files < <(rg --no-messages --no-config --files \
     -g '*.c' -g '*.cc' -g '*.cpp' -g '*.cxx' \
@@ -198,6 +196,20 @@ else
     all_files+=("$f")
   done
 fi
+
+if [[ ${#all_files[@]} -eq 0 ]]; then
+  echo "No C/C++ sources selected for clang-tidy (${MODE} mode)."
+  exit 0
+fi
+
+if [[ "${TIDY_INSTALL_DEPS:-0}" == "1" ]]; then
+  # Do not call the ordinary SDK-aware build driver from host analysis.
+  bash "$root_dir/scripts/ci/install_code_hygiene_deps.sh"
+fi
+require_cmd cmake
+require_cmd clang-tidy
+require_cmd run-clang-tidy
+configure_tidy_build
 
 declare -A gst_excluded=()
 if [ ${#all_files[@]} -gt 0 ]; then
@@ -218,7 +230,7 @@ done
 
 echo "clang-tidy mode: ${MODE}"
 if [[ "${SIMANEAT_TIDY_HAS_SIMALMM}" != "ON" ]]; then
-  echo "SimaLMM package not found; skipped ${skipped_genai} GenAI source file(s)."
+  echo "Host-only analysis excludes the LLiMa runtime; skipped ${skipped_genai} GenAI source file(s)."
 fi
 echo "clang-tidy file count: ${#files[@]}"
 if [ ${#files[@]} -eq 0 ]; then

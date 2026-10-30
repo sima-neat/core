@@ -11,3 +11,5 @@ permissions:
 jobs:
   pr-sanitization:
     uses: sima-neat/.github/.github/workflows/pr-sanitization.yml@main
+    with:
+      allowed_base_patterns: develop,release-*,integration/*,3.0.0-prep

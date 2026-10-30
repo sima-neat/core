@@ -17,6 +17,7 @@ import perf_schema as schema
 def parse_args() -> argparse.Namespace:
     repo_root = THIS_DIR.parents[3]
     parser = argparse.ArgumentParser(description="Validate perf result JSON schema")
+    parser.add_argument("--suite", choices=("core", "encoder"), default="core")
     parser.add_argument(
         "--results-dir",
         type=Path,
@@ -67,7 +68,7 @@ def main() -> int:
             return 1
         by_scenario[result.scenario_id] = result
 
-    expected = set(schema.expected_result_scenario_ids(args.include_long))
+    expected = set(schema.expected_result_scenario_ids(args.include_long, args.suite))
     present = set(by_scenario.keys())
     missing = sorted(expected - present)
     extra = sorted(present - expected)

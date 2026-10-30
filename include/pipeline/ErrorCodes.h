@@ -45,6 +45,15 @@ inline constexpr const char* kTensorDtypeMissing = "misconfig.tensor_dtype_missi
 /// A user-facing option is outside the range supported by the active input contract.
 inline constexpr const char* kOptionOutOfRange = "misconfig.option_out_of_range";
 
+/// A kernel's canonical semantic validator rejected the request.
+inline constexpr const char* kKernelRequest = "misconfig.kernel_request";
+/// A valid request requires an implementation or capability not admitted by the selected target.
+inline constexpr const char* kKernelUnsupported = "misconfig.kernel_unsupported";
+/// Actual storage does not satisfy a checked kernel's binding requirements.
+inline constexpr const char* kKernelBinding = "runtime.kernel_binding";
+/// A kernel did not execute because its producer/dependency failed.
+inline constexpr const char* kKernelDependency = "runtime.kernel_dependency";
+
 // ── Build / runtime classes ──────────────────────────────────────────────────────────────
 /// `gst_parse_launch` failed to parse the generated GStreamer pipeline string.
 inline constexpr const char* kParseLaunch = "build.parse_launch";

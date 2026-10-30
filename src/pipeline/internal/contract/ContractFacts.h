@@ -14,6 +14,10 @@
 namespace simaai::neat {
 
 struct CompiledNodeContract;
+struct CompiledProcessCvuContract;
+namespace internal {
+struct ModelFragmentCompileContext;
+}
 
 struct InputContractFacts {
   std::optional<InputContract> ingress_contract;
@@ -44,6 +48,7 @@ inline const std::vector<std::string>& default_preprocess_meta_required_fields()
 struct ContractCompileInput {
   std::string pipeline_label;
   int node_index = 0;
+  std::size_t node_occurrence_index = 0;
   // Optional render-time node indices for pipelines whose launch fragments are
   // materialized with non-local indices (for example fused branches embedded
   // after a shared consumer segment). When set, each entry maps the logical
@@ -52,6 +57,10 @@ struct ContractCompileInput {
   std::vector<int> node_indices;
   InputContractFacts ingress;
   const CompiledNodeContract* immediate_upstream = nullptr;
+  // Borrowed only during cold compilation. The typed preceding Preproc policy
+  // supplies initial geometry; actual frame metadata remains authoritative.
+  const CompiledProcessCvuContract* upstream_preprocess = nullptr;
+  std::shared_ptr<const internal::ModelFragmentCompileContext> model_fragments;
   bool strict = true;
   std::string processcvu_requested_run_target = "AUTO";
   ProcessCvuOptions processcvu;

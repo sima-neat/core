@@ -271,18 +271,28 @@ preview = run.pull("preview", timeout_ms=2000)
 | 業務量 | まず最初に | なぜ |
 | --- | --- | --- |
 | 最初の稼働アプリ | デフォルトの`RunOptions` | 調整を行う前に、正しさを確認してください。 |
-| ライブカメラまたはRTSP入力 | `RunPreset::Realtime`; `OutputOptions::Latest()`。出力の最新性が重要な場合に適用します。 | 最新のフレームを使用することで、過去のフレーム全体よりも優れた結果が得られます。リアルタイムプリセットは、ユーザーが設定を上書きしない限り、常に最新のフレームに更新されます。 |
+| ライブカメラまたはRTSP入力 | `RunPreset::Realtime`; `OutputOptions::Latest()`。出力の最新性が重要な場合に適用します。 | 最新のフレームを使用することで、過去のフレーム全体よりも優れた結果が得られます。リアルタイムプリセットは、ユーザーが設定を上書きしない限り、常に最新のフレームに更新されます。既存の GStreamer キューの既定値と、明示的に設定されたバッファー数のみの制限は維持されます。メディア時間を制限するには、カスタムノードの `backend_fragment()` でキューの `max-size-time` をナノ秒単位で設定してください。 |
 | ファイルまたはバッチ処理 | `RunPreset::Reliable`; `OutputOptions::EveryFrame(...)` | すべての入力を保持し、バックプレッシャーを有効にします。信頼性の高いプリセットは、オーバーフローをブロックするように設定されており、これを変更しない限り、その動作は変わりません。 |
 | 通常のアプリケーションの提供 | `RunPreset::Balanced` | グラフが正常に動作するようになれば、デフォルト設定で問題ありません。 |
 | 不安定なソースには、適切なバッファリングが必要です。 | `queue_depth` | ジッターを吸収できる最小限の量だけ増加させます。深いキューを使用すると、古いフレームや遅延したバックプレッシャーを隠すことができます。 |
 | プルリクエスト後にアプリストアにアップロードする | `OutputMemory::Owned` | 出力の有効期間を、ランタイムバッファーに依存させないようにします。 |
-| アプリケーションは、生成された結果を即座に利用します。 | `OutputMemory::Auto` | まず、Neat が最適な所有権の形態を選択させましょう。 |
+| アプリが転送時のコピーなしで出力を利用する | `OutputMemory::Auto` | 同期実行と非同期実行で標準 DMA-BUF 出力を保持します。それ以外のストレージにはプリセットとモードのポリシーを適用します。 |
 | デフォルトの待機時間は明確に指定する必要があります。 | `input_timeout_ms` | ビルド/実行の入力モードパスに対するデフォルトのタイムアウト値を設定します。ただし、個別の呼び出しに対するタイムアウト値の方が優先されます。 |
 | 初期ビルドで、最初のサンプルにおけるエラーを早期に検出できるようにする。 | `startup_preflight = true` | シードされたビルドの整合性を維持します。最初のサンプルでエラーが発生し、後で`pull(...)`または`last_error()`を通じてそのエラーが明らかになる可能性がある場合にのみ、機能を無効にしてください。 |
 | ソースバッファーの有効期間は短い。 | `advanced.copy_input = true` | `push(...)` の後に消える可能性がある入力メモリを保護します。 |
 | 入力サイズには、制限を設ける必要があります。 | `advanced.max_input_bytes` | グラフにデータが入力される前に、サイズが大きすぎる入力は拒否されます。 |
 | テレメトリーデータの送信を停止する必要があります。 | `on_input_drop` | ストリームと理由別に、オーバーロードとサイズ制限によるドロップ数を集計します。 |
 | ビルド時に証拠が必要になります。 | `run_export` | 実行が完了した時点で、実行のスナップショットを作成します。 |
+
+### DMA-BUF 出力の保持と解放
+
+ネイティブのハードウェアデコードは、DMA-BUF プールに直接書き込みます。デフォルトのファイル入力経路は、このストレージを保持し、隠れた `videoconvert` の挿入や SystemMemory の要求を行いません。デバイス側のコンシューマーは割り当てをインポートします。`Tensor::map(MapMode::Read)` は画素をコピーせずにアプリから読み取れるようマッピングします。前処理が別の結果領域を割り当てる場合、それは計算によるものであり、転送時のコピーではありません。
+
+`OutputMemory::Auto` または `ZeroCopy` で保持する DMA-BUF 出力は、プールから借りたバッファーを保持します。Tensor を解放しても、`Mapping` はその借用を保持します。読み取りが終わったら両方を解放し、生成側がバッファーを再利用できるようにしてください。キューの負荷によって DMA-BUF 出力がコピーに切り替わったり、`Block` が暗黙的に破棄へ変わったりすることはありません。明示した最新フレーム／破棄ポリシーは引き続き適用されます。
+
+アプリケーションが出力を CPU で保持する場合は `OutputMemory::Owned` を使います。pull のたびに選択した出力を独立したシステムメモリへコピーするため、保持した出力は生成元プールの借用もデバイス (CMA) メモリも保持しません。パックされたテンソルヘッドはコピー済みキャリアを共有し、オフセット、パディング付きストライド、数値メタデータが保持されます。保持型と独立型の出力は、どちらも `StorageKind::GstSample` を使います。このストレージ種別が示すのはキャリアであり、所有権ポリシーではありません。`Sample::owned` が独立した出力を識別します。割り当てに失敗すると、pull のエラーとして報告されます。EV74 入力ステージを持つ別のグラフへ出力を渡す場合は、先に `tensor.cvu()` を呼び出します。すでに EV74 メモリ上にあるテンソルはそのまま返し、それ以外のテンソルは EV74 メモリへコピーします。`ZeroCopy` は生成元のストレージを保持するため、EV74 からのアクセスを保証しません。
+
+`Tensor::cpu()` はデバイス上のテンソルをホストメモリにコピーし、`Owned` 出力のようにすでにホストメモリにあるテンソルはコピーせずにそのまま返します。独立したコピーには `clone()` を使います。明示的なソフトウェア変換と `advanced.copy_input` は引き続きコピー境界です。`SIMA_OUTPUT_MEMORY_DEFAULT=owned` は意図的に `Auto` に対して所有型出力を選択しますが、実行ごとの明示的な選択は上書きしません。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -1043,40 +1053,42 @@ run.close()
 - C++の`run_to_json(...)`と`save_run_json(...)`は、実行後にその結果をエクスポートします。
 - Pythonの`run.json(...)`と`run.save_json(...)`は、同じ種類の証拠をエクスポートします。
 
-実行に使用する`RunOptions`で、電力計測機能を有効にします。
+[`TelemetryMonitor`](/develop-apps/development-workflow/model#record-board-telemetry) を使用して、同じウィンドウにわたってボードの電力、温度、CPU 使用率、メモリを記録します。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-simaai::neat::RunOptions options;
-options.enable_board_power(/*sample_interval_ms=*/100);
+simaai::neat::TelemetryMonitor telemetry_monitor;
+telemetry_monitor.start();
+auto scope = run.start_measurement();
 
-auto run = graph.build(options);
+// Push and pull here.
 
-simaai::neat::MeasureOptions measure_options;
-measure_options.include_power = true;
-auto scope = run.start_measurement(measure_options);
+simaai::neat::MeasureReport report = scope.stop();
+simaai::neat::Telemetry telemetry = telemetry_monitor.stop();
 ```
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 ```python
-options = pyneat.RunOptions()
-options.enable_board_power(sample_interval_ms=100)
+telemetry_monitor = pyneat.TelemetryMonitor()
+telemetry_monitor.start()
+scope = run.start_measurement()
 
-run = graph.build(options)
+# Push and pull here.
 
-measure_options = pyneat.MeasureOptions()
-measure_options.include_power = True
-scope = run.start_measurement(measure_options)
+report = scope.stop()
+telemetry = telemetry_monitor.stop()
 ```
 
 </CodeTab>
 </CodeTabs>
 
-電力データは、ボードの電源レールとモニターの構成によって異なります。測定設定を数値で記録し、電源レールが接続されていない場合に、電力の数値がポータブルなものに見えないようにしてください。
+テレメトリは Sentinel から取得されます。Sentinel はボードを 2 秒ごとにサンプリングするため、約 2 秒より短い測定ウィンドウではサンプルが得られない場合があります。測定設定を数値で記録し、電源レールが接続されていない場合に、電力の数値がポータブルなものに見えないようにしてください。
+
+`RunOptions::enable_board_power()`、`RunOptions::power_monitor`、`MeasureOptions::include_power` は非推奨となり、`TelemetryMonitor` に置き換えられました。これらは引き続き動作します。
 
 ビルド時のエクスポートは、「Neat は何をビルドしたのか？」という問いに答えます。実行後のエクスポートは、「実行中に何が起こったのか？」という問いに答えます。
 

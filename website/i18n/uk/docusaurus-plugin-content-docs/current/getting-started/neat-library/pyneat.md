@@ -5,7 +5,7 @@ sidebar_position: 4
 ---
 
 :::note DevKit — лише для цього випадку; пропускайте під час встановлення SDK.
-Ці кроки встановлюють PyNeat на DevKit (або на звичайному хості, який виконує роль середовища виконання). Якщо ви працюєте в Neat SDK, пропустіть цю сторінку.
+Ці кроки встановлюють PyNeat на DevKit (або на звичайному хості, який виконує роль середовища виконання). Якщо ви працюєте в Palette SDK, пропустіть цю сторінку.
 :::
 
 :::tip PyNeat вже встановлено разом із Neat Library.
@@ -18,17 +18,13 @@ PyNeat постачається разом із Neat Library і встановл
 
 ## Завантажте Wheel.
 
-<ShellCommand prompt="devkit">
-sima-cli neat install core -t pyneat
-</ShellCommand>
-
-Щоб завантажити пакет для певної версії Neat Library, вкажіть номер версії.
-
-Щоб установити певну версію:
+Виберіть версію wheel, яка відповідає середовищу виконання Neat Library, уже встановленому на DevKit. Для поточного випуску:
 
 <ShellCommand prompt="devkit">
-sima-cli neat install core@v0.5.0 -t pyneat
+sima-cli neat install core@v%%release.core%% -t pyneat
 </ShellCommand>
+
+Якщо встановлено іншу версію середовища виконання, замініть тег версії відповідним опублікованим тегом Core. Завантаження wheel не оновлює пакети середовища виконання.
 
 ## Створіть середовище Python.
 

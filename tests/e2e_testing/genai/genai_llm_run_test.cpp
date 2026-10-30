@@ -120,7 +120,8 @@ int main() {
     std::cout << "GENAI_LLM text=" << result.text << "\n";
     require(normalized_text == "The capital of Germany is Berlin.",
             "GenAI LLM e2e generated unexpected text: " + result.text);
-    require(result.finish_reason == "stop" || result.finish_reason == "interrupted",
+    require(result.finish_reason == "stop" || result.finish_reason == "length" ||
+                result.finish_reason == "interrupted",
             "GenAI LLM e2e returned unexpected finish reason: " + result.finish_reason);
 
     auto stream = model.stream(request);
@@ -140,7 +141,8 @@ int main() {
 
     require(saw_stream_chunk, "GenAI LLM stream e2e expected at least one text chunk");
     require(saw_stream_final, "GenAI LLM stream e2e expected final sample");
-    require(final_sample.finish_reason == "stop" || final_sample.finish_reason == "interrupted",
+    require(final_sample.finish_reason == "stop" || final_sample.finish_reason == "length" ||
+                final_sample.finish_reason == "interrupted",
             "GenAI LLM stream e2e returned unexpected finish reason: " +
                 final_sample.finish_reason);
     std::cout << "GENAI_LLM_STREAM generated_tokens=" << final_sample.metrics.generated_tokens

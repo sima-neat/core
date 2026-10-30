@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -58,19 +59,26 @@ void atomic_add_max(std::atomic<std::uint64_t>& total, std::atomic<std::uint64_t
   }
 }
 
+// Checked for every routed frame; resolved once per process like InputStreamDebugFlags.
 bool realtime_link_diag_enabled() {
-  return pipeline_internal::env_bool("SIMA_GRAPH_REALTIME_LINK_DEBUG", false) ||
-         pipeline_internal::env_bool("SIMA_GRAPH_DIAG_ON_STOP", false);
+  static const bool enabled =
+      pipeline_internal::env_bool("SIMA_GRAPH_REALTIME_LINK_DEBUG", false) ||
+      pipeline_internal::env_bool("SIMA_GRAPH_DIAG_ON_STOP", false);
+  return enabled;
 }
 
 bool realtime_overwrite_debug_enabled() {
-  return pipeline_internal::env_bool("SIMA_GRAPH_REALTIME_OVERWRITE_DEBUG", false);
+  static const bool enabled =
+      pipeline_internal::env_bool("SIMA_GRAPH_REALTIME_OVERWRITE_DEBUG", false);
+  return enabled;
 }
 
 bool realtime_credit_probe_enabled() {
-  return pipeline_internal::env_bool("SIMA_GRAPH_REALTIME_CREDIT_PROBE", false) ||
-         pipeline_internal::env_bool("SIMA_GRAPH_REALTIME_CREDIT_DEBUG", false) ||
-         realtime_link_diag_enabled();
+  static const bool enabled =
+      pipeline_internal::env_bool("SIMA_GRAPH_REALTIME_CREDIT_PROBE", false) ||
+      pipeline_internal::env_bool("SIMA_GRAPH_REALTIME_CREDIT_DEBUG", false) ||
+      realtime_link_diag_enabled();
+  return enabled;
 }
 
 const char* target_kind_name(DownstreamTarget::Kind kind);
@@ -78,8 +86,11 @@ const char* target_kind_name(DownstreamTarget::Kind kind);
 void log_realtime_credit_probe_basic(const char* event, const DownstreamTarget& target,
                                      std::size_t edge_index, const std::string& stream_id,
                                      std::size_t extra_value = 0) {
-  const char* force = std::getenv("SIMA_GRAPH_REALTIME_CREDIT_PROBE_BASIC");
-  if (!force || !*force || std::strcmp(force, "0") == 0) {
+  static const bool enabled = [] {
+    const char* force = std::getenv("SIMA_GRAPH_REALTIME_CREDIT_PROBE_BASIC");
+    return force && *force && std::strcmp(force, "0") != 0;
+  }();
+  if (!enabled) {
     return;
   }
   std::fprintf(
@@ -449,7 +460,7 @@ bool RealtimeLatestLink::offer(simaai::neat::Sample&& sample, std::size_t edge_i
   if (!accepted) {
     return false;
   }
-  cv_.notify_one();
+  cv_->notify_one();
   return true;
 }
 
@@ -497,7 +508,7 @@ void RealtimeLatestLink::producer_done() {
     std::lock_guard<std::mutex> lock(mu_);
     finishing_ = true;
   }
-  cv_.notify_all();
+  cv_->notify_all();
 }
 
 void RealtimeLatestLink::start(DispatchFn dispatch, StopFn stop, ErrorFn error,
@@ -532,13 +543,19 @@ void RealtimeLatestLink::close() {
   }
   pipeline_internal::release_all_registered_realtime_frame_credits(credit_namespace_,
                                                                    "graph-realtime-close");
-  cv_.notify_all();
+  cv_->notify_all();
 }
 
 void RealtimeLatestLink::join() {
   if (worker_.joinable()) {
     worker_.join();
   }
+  // These callbacks retain RunCore, which owns this link. Release them only
+  // after its worker has finished; a failed join must retain the active owner.
+  dispatch_ = {};
+  stop_ = {};
+  error_ = {};
+  complete_ = {};
 }
 
 RealtimeLatestLink::Stats RealtimeLatestLink::stats() const {
@@ -613,7 +630,7 @@ RealtimeLatestLink::credit_lane_for_key_locked_(const std::string& key) {
     return it->second;
   }
   auto lane = pipeline_internal::make_realtime_frame_credit_lane(credit_limit_per_stream_,
-                                                                 [this] { cv_.notify_one(); });
+                                                                 [cv = cv_] { cv->notify_one(); });
   credit_lanes_.emplace(key, lane);
   configure_global_credit_limit_locked_();
   return lane;
@@ -665,7 +682,7 @@ void RealtimeLatestLink::configure_global_credit_limit_locked_() {
   }
   if (!global_credit_lane_) {
     global_credit_lane_ = pipeline_internal::make_realtime_frame_credit_lane(
-        credit_limit_global_, [this] { cv_.notify_one(); });
+        credit_limit_global_, [cv = cv_] { cv->notify_one(); });
     return;
   }
   if (global_credit_lane_->gate) {
@@ -691,8 +708,8 @@ void RealtimeLatestLink::run_() {
     std::string selected_key;
     {
       std::unique_lock<std::mutex> lock(mu_);
-      cv_.wait(lock,
-               [&] { return closed_ || finishing_ || (stop_ && stop_()) || !ready_.empty(); });
+      cv_->wait(lock,
+                [&] { return closed_ || finishing_ || (stop_ && stop_()) || !ready_.empty(); });
       if ((closed_ || (stop_ && stop_())) && ready_.empty()) {
         return;
       }
@@ -790,7 +807,7 @@ void RealtimeLatestLink::run_() {
       }
 
       if (!selected) {
-        cv_.wait_for(lock, std::chrono::milliseconds(5));
+        cv_->wait_for(lock, std::chrono::milliseconds(5));
         continue;
       }
     }
@@ -1195,13 +1212,13 @@ bool EdgeRouter::dispatch_to_targets(const std::vector<DownstreamTarget>& target
   (void)pipeline_internal::retain_realtime_frame_credits(realtime_credits, targets.size() - 1U,
                                                          "graph-fanout");
 
+  // Every branch but the last gets a copy; the last takes the routed Sample itself.
   bool ok = true;
-  for (const auto& target : targets) {
-    Sample sample_copy = sample;
-    ok = dispatch_to_target(target, std::move(sample_copy), options, callbacks, dispatch_options) &&
-         ok;
+  const auto last = std::prev(targets.end());
+  for (auto it = targets.begin(); it != last; ++it) {
+    ok = dispatch_to_target(*it, Sample{sample}, options, callbacks, dispatch_options) && ok;
   }
-  return ok;
+  return dispatch_to_target(*last, std::move(sample), options, callbacks, dispatch_options) && ok;
 }
 
 } // namespace simaai::neat::runtime

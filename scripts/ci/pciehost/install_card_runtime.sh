@@ -33,12 +33,60 @@ bash "\${REMOTE_INSTALLER}"
 REMOTE_BOOTSTRAP
 }
 
+if [[ -n "${SIMAPCIE_LOCAL_CORE_DIST:-}" ]]; then
+  metadata_sha256="$(sha256sum "${SIMAPCIE_LOCAL_CORE_DIST}/metadata-all.json")"
+  metadata_sha256="${metadata_sha256%% *}"
+  remote_dist="$(ssh_card 'mkdir -p "${HOME}/tmp"; mktemp -d "${HOME}/tmp/sima-neat-card-validation.XXXXXX"')"
+  [[ "${remote_dist}" =~ ^/[^[:space:]]*/sima-neat-card-validation\.[[:alnum:]]{6}$ ]] || {
+    echo 'ERROR: invalid PCIe card candidate directory' >&2
+    exit 1
+  }
+  cleanup_validation_candidate() {
+    ssh_card "rm -rf -- $(shell_quote "${remote_dist}")" || true
+  }
+  trap cleanup_validation_candidate EXIT
+  tar -C "${SIMAPCIE_LOCAL_CORE_DIST}" -cf - . | \
+    ssh_card "tar -xf - -C $(shell_quote "${remote_dist}")"
+  ssh_card \
+    "REMOTE_DIST=$(shell_quote "${remote_dist}") \
+     REMOTE_METADATA_SHA256=$(shell_quote "${metadata_sha256}") \
+     DEVKIT_PASSWORD=$(shell_quote "${DEVKIT_PASSWORD:-}") \
+     SUDO_PASSWORD=$(shell_quote "${DEVKIT_PASSWORD:-}") \
+     bash -s" <<REMOTE_LOCAL_INSTALL
+set -euo pipefail
+$(remote_sudo_wrapper_script)
+setup_remote_sudo_wrapper
+trap 'rm -rf "\${REMOTE_SUDO_WRAPPER_DIR:-}"' EXIT
+cd "\${REMOTE_DIST}"
+python3 - <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+
+metadata_bytes = Path('metadata-all.json').read_bytes()
+if hashlib.sha256(metadata_bytes).hexdigest() != os.environ['REMOTE_METADATA_SHA256']:
+    raise SystemExit('Transferred Core candidate metadata differs from verified input')
+metadata = json.loads(metadata_bytes)
+for name, expected in metadata['resources-checksum'].items():
+    path = Path(name)
+    if (path.name != name or path.is_symlink() or not path.is_file()
+            or hashlib.sha256(path.read_bytes()).hexdigest() != expected):
+        raise SystemExit('Transferred Core candidate resource differs: ' + name)
+PY
+export NEAT_INSTALLER_SENTINEL_REQUIRED=ON
+bash ./install_neat_framework.sh --local
+REMOTE_LOCAL_INSTALL
+  exit 0
+fi
+
 package_spec="core@${REF_NAME}:${SHORT_SHA}"
 if [[ -n "${SIMAPCIE_CARD_INSTALL_CMD:-}" ]]; then
   echo "Installing card runtime with SIMAPCIE_CARD_INSTALL_CMD"
   export VULCAN_ENV REF_NAME SHORT_SHA CARD_HOST CARD_USER package_spec
   export DEVKIT_PASSWORD="${DEVKIT_PASSWORD:-}"
   export SUDO_PASSWORD="${DEVKIT_PASSWORD:-}"
+  export NEAT_INSTALLER_SENTINEL_REQUIRED=ON
   bash -lc "${SIMAPCIE_CARD_INSTALL_CMD}"
   exit 0
 fi
@@ -76,6 +124,8 @@ echo "Using card installation directory ${card_install_dir}"
 export SIMA_CLI_CHECK_FOR_UPDATE=0
 export DEVKIT_PASSWORD="${REMOTE_DEVKIT_PASSWORD}"
 export SUDO_PASSWORD="${REMOTE_SUDO_PASSWORD}"
+# Benchmark telemetry is part of CI; fail when Sentinel cannot be installed.
+export NEAT_INSTALLER_SENTINEL_REQUIRED=ON
 setup_remote_sudo_wrapper() {
   local password="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
   if [[ -z "${password}" || ! -x /usr/bin/sudo ]]; then
@@ -103,5 +153,8 @@ SUDO_WRAPPER
 setup_remote_sudo_wrapper
 trap 'rm -rf "${REMOTE_SUDO_WRAPPER_DIR:-}" "${cleanup_card_install_dir:-}"' EXIT
 cd "${card_install_dir}"
-sima-cli install --neat --env "${REMOTE_VULCAN_ENV}" "${REMOTE_PACKAGE_SPEC}" -t all
+# PCIe cards expose the Modalix userspace as Debian to sima-cli. Let the
+# package installer perform the authoritative /etc/buildinfo and runtime
+# profile checks after bypassing that outer metadata classification.
+sima-cli install --neat --force --env "${REMOTE_VULCAN_ENV}" "${REMOTE_PACKAGE_SPEC}" -t all
 REMOTE_INSTALL

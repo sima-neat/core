@@ -133,18 +133,20 @@ SIMA_NEAT_VERBOSE_TOPICS=gstreamer \
 スループット、レイテンシー、電力に関するレポートを作成する際は、グラフ形式で出力される JSON 形式の使用を推奨します。
 
 ```cpp
-RunOptions opt;
-opt.enable_board_power();        // graph-level power when supported by the board/SOM
-Run run = graph.build(opt);
+Run run = graph.build(RunOptions{});
 
-// run your normal push/pull loop inside a measurement window, then:
-auto report = run.start_measurement().stop();
-std::cout << report.to_text();
+TelemetryMonitor telemetry_monitor; // board power, temperatures, CPU usage, and memory
+telemetry_monitor.start();
+auto scope = run.start_measurement();
+// run your normal push/pull loop here, then:
+auto report = scope.stop();
+Telemetry telemetry = telemetry_monitor.stop();
+std::cout << report.to_text() << telemetry;
 ```
 
 エクスポートは、スコープを明確に保ちます。
 
-- `run.graph_metrics.throughput_fps`と`run.graph_metrics.power`は、グラフ全体の主要な指標です。
+- `run.graph_metrics.throughput_fps`は、グラフ全体の主要な指標です。`run.graph_metrics.power`は、非推奨の`RunOptions::enable_board_power()`を使用した場合にのみ値が設定されます。代わりに`TelemetryMonitor`を使用してください。
 - `run.node_metrics[]` には、ノード/プラグインの遅延のみが含まれており、ノード/プラグインの消費電力は意図的に含まれていません。
 - `latency_semantics`と`aggregation`は、値がプログラム実行期間全体の値であるか、測定された特定の時間間隔における変化量であるかを示します。
 - `plugin_metrics_unattributed[]` は、正確に1つのノードにマッピングできなかったカーネル/プラグインの行を保持します。
@@ -165,3 +167,17 @@ std::cout << report.to_text();
 | `tensor caps change not supported` | ランタイムにおけるテンソルの形状/データ型の変更 | テンソルの形状/データ型を安定した状態に保つ（再ネゴシエーションなし） |
 
 構造化されたプラグインのエラーと、それに対する具体的な解決策については、[トラブルシューティング](/reference/troubleshooting) を参照してください。
+
+## プラットフォームのランタイム復旧
+
+Platform 3.0.0 では、利用できないディスパッチャーは調査すべきエラーです。従来のサービスを起動する要求ではありません。Core はディスパッチャーのエラーに応じて MLA メモリを初期化したり、リモートプロセッサーをリセットしたりしません。従来の復旧コードとスクリプトは削除されています。プラットフォームが承認する復旧手順を使用してください。
+
+ドライバーが完了状態を不明と報告した場合は、その DMA バッファーと元のプールからの借用を保持してください。ファイル記述子を閉じること、アプリケーションを停止すること、サービスを再起動することは、ハードウェアによるメモリアクセスが停止した証拠にはなりません。障害情報を収集し、再試行の前にプラットフォームが承認する復旧手順を実行してください。
+
+### Core と Scheduler のパッケージを一致させる {#keep-core-and-scheduler-packages-matched}
+
+その Core リリース向けに選択された Scheduler パッケージ一式とともに Core をインストールしてください。Scheduler が対応する Runner、Kernels、Codecs、ファームウェアの依存関係を管理します。公開 C++ ABI が同じだけでは、ランタイムの互換性は保証されません。
+
+`build.sh` が選択する公開済み依存関係を使用するか、`--scheduler PATH` で対応する完全な Scheduler DEB 一式を指定してください。[ローカル依存関係](/develop-apps/contribute/build-test/local-dependencies/)を参照してください。
+
+ボードを更新する場合は、[Neat Library のインストールまたは更新](/getting-started/neat-library/install-or-update/)に従って Core の完全なバンドルをインストールしてください。選択された Scheduler インストーラーがパッケージ一式を検証し、ファームウェアの有効化を管理します。検証に失敗した場合は、対応する Core/Scheduler バンドルを入手してください。記録を書き換えたり、互換性のないランタイムやファームウェアの個別パッケージを強制的にインストールしたりしないでください。

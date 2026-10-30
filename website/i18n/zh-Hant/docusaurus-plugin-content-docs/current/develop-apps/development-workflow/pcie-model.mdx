@@ -11,8 +11,10 @@ Neat PCIe 主機 API 允許主機上的應用程式將張量或影像傳送到�
 這是一個與直接在 DevKit 上執行的 Neat Library 不同的 API。
 公開的類型位於 `simaai::neat::pcie` C++ 命名空間和 `pyneatpcie` Python 套件中。
 
+LLM、VLM 與 ASR 模型請使用 [PCIe GenAI API](/develop-apps/development-workflow/genai-model/pcie-api)。
+
 :::note 安裝於主機。
-請在主機上安裝 `core/pciehost`，而不是在 Neat SDK 容器內或 Modalix PCIe 卡上。在使用本頁面之前，請參閱 [安裝 PCIe 主機](/getting-started/neat-library/pcie-host/)。
+請在主機上安裝 `core/pciehost`，而不是在 Palette SDK 容器內或 Modalix PCIe 卡上。在使用本頁面之前，請參閱 [安裝 PCIe 主機](/getting-started/neat-library/pcie-host/)。
 :::
 
 ## 協處理的運作方式
@@ -37,7 +39,7 @@ Neat PCIe 主機 API 允許主機上的應用程式將張量或影像傳送到�
 | `card_host` | 空 | 明確的 SSH/SCP 位址。如果為空，卡 `N` 會使用 `10.0.N.2`。 |
 | `card_id` | `0` | 傳遞給主機 PCIe 外掛程式的卡編號。 |
 | `user` | `sima` | 卡端 SSH 和 SCP 的使用者。 |
-| `queue` | `0` | 協處理佇列，範圍從 `0` 到 `3`。 |
+| `queue` | `0` | 協處理佇列，範圍從 `0` 到 `5`。 |
 | `max_inflight` | `10` | 最大允許的等待結果的輸入數量。 |
 
 對於佇列 0 上的 `10.0.0.2` 中的單張卡，請使用預設值。當卡使用不同的管理位址時，請明確設定 `card_host`。
@@ -403,8 +405,8 @@ target_link_libraries(pcie_model PRIVATE ${OpenCV_LIBS})
 
 ## 目前的範圍與限制
 
-- 一個 `pcie::Model` 擁有一個 PCIe 佇列。佇列範圍從 `0` 到 `3`。
-- Modalix EV74 最多支援四個並行的協同處理管線。
+- 一個 `pcie::Model` 擁有一個 PCIe 資料佇列。佇列範圍從 `0` 到 `5`。
+- 並行管線會共用卡上的運算資源與記憶體；有可用佇列並不保證有足夠的資源。
 - 請勿將兩個作用中的模型指派給同一個佇列。
 - 主機封裝和安裝在卡上的 Neat Library 必須來自相容的版本。
 - 在提交第一個有效負載之後，請保持輸入媒體類型和幾何形狀的穩定。後續的有效負載如果大於作用中的傳輸容量，則會被拒絕。

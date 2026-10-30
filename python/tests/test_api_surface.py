@@ -139,12 +139,6 @@ CAMERA_INPUT_OPTION_FIELDS = (
     "leaky_queue",
     "queue_depth",
     "allow_cpu_fallback",
-    "device",
-    "profile",
-    "zero_copy",
-    "output_buffer_count",
-    "frame_timeout_ms",
-    "capture_buffer_count",
 )
 
 
@@ -336,7 +330,8 @@ def test_run_export_api_surface():
 
   run_opt = pyneat.RunOptions()
   run_opt.run_export = auto_opt
-  run_opt.enable_board_power()
+  with pytest.warns(DeprecationWarning, match="enable_board_power.* use pyneat.TelemetryMonitor"):
+    run_opt.enable_board_power()
   assert not hasattr(run_opt, "enable_metrics")
   assert run_opt.power_monitor.enabled is True
   run_opt.disable_power_monitor()
@@ -374,6 +369,16 @@ def test_run_export_api_surface():
     pyneat.run_to_json(run, export_opt)
   with pytest.raises(Exception, match="Run has no runtime core"):
     pyneat.run_to_json(run, measure_report, export_opt)
+
+
+def test_execution_plan_api_surface():
+  assert hasattr(pyneat.Model, "execution_plan")
+  for owner in (pyneat.ModelRunner, pyneat.Graph, pyneat.Run):
+    assert not hasattr(owner, "execution_plan"), owner.__name__
+
+  plan = pyneat.ExecutionPlan()
+  assert plan.schema_version == 1
+  assert plan.to_json(-1) == "{}"
 
 
 def test_public_graph_connect_no_runtime_port_overload():
@@ -448,18 +453,73 @@ def test_benchmark_options_are_mutable():
   assert opt.original_height is None
   assert opt.resize_mode is None
   assert opt.include_plugin_latency is False
+  assert opt.min_duration_ms == 10000
+  assert opt.include_mla_layer_stats is False
+  assert opt.include_mla_stage_stats is False
+  assert opt.inputs == []
 
   opt.num_samples = 7
   opt.original_width = 1920
   opt.original_height = 1080
   opt.resize_mode = pyneat.ResizeMode.Letterbox
   opt.include_plugin_latency = True
+  opt.min_duration_ms = 0
+  opt.include_mla_layer_stats = True
+  opt.include_mla_stage_stats = True
 
   assert opt.num_samples == 7
   assert opt.original_width == 1920
   assert opt.original_height == 1080
   assert opt.resize_mode == pyneat.ResizeMode.Letterbox
   assert opt.include_plugin_latency is True
+  assert opt.min_duration_ms == 0
+  assert opt.include_mla_layer_stats is True
+  assert opt.include_mla_stage_stats is True
+
+
+def test_benchmark_options_hold_provided_inputs():
+  opt = pyneat.BenchmarkOptions()
+  image = pyneat.Tensor.from_numpy(np.zeros((720, 1280, 3), dtype=np.uint8), copy=True,
+                                   image_format=pyneat.PixelFormat.BGR,
+                                   memory=pyneat.TensorMemory.CPU)
+  features = pyneat.Tensor.from_numpy(np.ones((1, 256), dtype=np.float32), copy=True,
+                                      memory=pyneat.TensorMemory.CPU)
+
+  opt.inputs = [image, features]
+
+  assert [list(t.shape) for t in opt.inputs] == [[720, 1280, 3], [1, 256]]
+  # The getter returns a copy; assign a new list to change the inputs.
+  opt.inputs.append(image)
+  assert len(opt.inputs) == 2
+  opt.inputs = []
+  assert opt.inputs == []
+  with pytest.raises(TypeError):
+    opt.inputs = [np.zeros((4, 4, 3), dtype=np.uint8)]
+
+
+def test_benchmark_report_exposes_telemetry():
+  report = pyneat.BenchmarkReport()
+
+  for field in ("latency_ms", "latency_p50_ms", "latency_p95_ms", "latency_p99_ms", "fps",
+                "avg_power_watts", "energy_joules", "peak_power_watts", "throughput_duration_ms"):
+    assert getattr(report, field) == 0.0, field
+  assert report.throughput_samples == 0
+  assert report.input == ""
+
+  telemetry = report.telemetry
+  assert isinstance(telemetry, pyneat.Telemetry)
+  assert telemetry.status == ""
+  assert telemetry.samples == 0
+  assert telemetry.duration_ms == 0.0
+  for field in ("power_som_watts", "power_mla_watts", "die_temperature_max_c", "cpu_usage_pct",
+                "mla_memory_mib", "ev74_memory_mib", "linux_memory_used_mib"):
+    metric = getattr(telemetry, field)
+    assert isinstance(metric, pyneat.TelemetryStats), field
+    assert (metric.samples, metric.mean, metric.minimum, metric.maximum, metric.last) == (
+        0, 0.0, 0.0, 0.0, 0.0)
+  for field in ("power_rails_watts", "die_temperatures_c", "board_temperatures_c",
+                "cpu_cores_usage_pct"):
+    assert getattr(telemetry, field) == [], field
 
 
 def test_input_stage_option_structs_expose_expected_fields():
@@ -545,17 +605,7 @@ def test_camera_input_surface_is_exposed():
   opt = pyneat.CameraInputOptions()
   for field in CAMERA_INPUT_OPTION_FIELDS:
     assert hasattr(opt, field), field
-  assert opt.device == ""
-  assert not hasattr(opt, "backend")
-  assert not hasattr(pyneat, "CameraBackend")
-  assert not hasattr(pyneat.CameraProfile, "Raw")
-  assert opt.profile == pyneat.CameraProfile.Default
-  assert opt.zero_copy is None
-  assert not hasattr(opt, "fourcc")
-  assert not hasattr(pyneat, "CameraV4L2Options")
-  assert opt.output_buffer_count == 8
-  assert opt.frame_timeout_ms == 2000
-  assert opt.capture_buffer_count == 0
+  assert not hasattr(opt, "capture_buffer_count")
 
   opt.camera_name = "imx477 5-001a"
   opt.width = 1280
@@ -585,12 +635,31 @@ def test_camera_input_surface_is_exposed():
   with pytest.raises(ValueError, match="128-buffer provider limit"):
     pyneat.nodes.camera_input(opt, capture_buffer_count=129)
 
-  # The shared options field and the legacy keyword use the same validation.
-  opt.capture_buffer_count = 16
-  assert isinstance(pyneat.nodes.camera_input(opt), pyneat.Node)
-  opt.capture_buffer_count = 129
-  with pytest.raises(ValueError, match="128-buffer provider limit"):
-    pyneat.nodes.camera_input(opt)
+
+def test_usb_camera_input_surface_is_exposed():
+  assert isinstance(pyneat.usb_camera_ids(), list)
+
+  opt = pyneat.UsbCameraInputOptions()
+  assert opt.camera_name == ""
+  assert (opt.width, opt.height, opt.framerate_num, opt.framerate_den) == (1920, 1080, 30, 1)
+  assert opt.buffer_name == "camera" and not hasattr(opt, "allow_cpu_fallback")
+  assert not hasattr(opt, "output") and not hasattr(pyneat, "UsbCameraOutput")
+  assert not hasattr(pyneat.groups, "usb_camera_input")
+  assert {"device", "decoded_format"} <= set(dir(pyneat.UsbCameraInfo))
+  # A 4:2:2 camera's NV16 decode feeds Model preprocessing directly.
+  assert pyneat.PreprocessColorFormat.NV16 != pyneat.PreprocessColorFormat.NV12
+  # Options are validated before any camera is touched.
+  with pytest.raises(ValueError, match="requires camera_name"):
+    pyneat.nodes.usb_camera_input(opt)
+  with pytest.raises(ValueError, match="requires camera_name"):
+    pyneat.usb_camera_info(opt)
+  opt.camera_name = "/base/pci@7000000000-3.1:1.0-046d:08e5"
+  opt.width = 0
+  with pytest.raises(ValueError, match="nonzero width"):
+    pyneat.nodes.usb_camera_input(opt)
+  # The probe-once overload reuses usb_camera_info()'s result.
+  doc = pyneat.nodes.usb_camera_input.__doc__
+  assert "info:" in doc and "UsbCameraInfo" in doc
 
 
 def test_input_stage_option_struct_constructors_accept_expected_args():
@@ -817,12 +886,14 @@ def test_output_stage_node_and_group_factories_present_and_accept_expected_args(
 
   _assert_not_type_error(lambda: pyneat.nodes.udp_output())
   _assert_not_type_error(lambda: pyneat.nodes.udp_output(pyneat.UdpOutputOptions()))
-  _assert_not_type_error(lambda: pyneat.nodes.h264_encode_sima(1280, 720, 30))
-  _assert_not_type_error(
-      lambda: pyneat.nodes.h264_encode_sima(
-          1280, 720, 30, bitrate_kbps=2500, profile="main", level="4.1"
-      )
-  )
+  with pytest.warns(DeprecationWarning, match="h264_encode_sima is deprecated"):
+    _assert_not_type_error(lambda: pyneat.nodes.h264_encode_sima(1280, 720, 30))
+  with pytest.warns(DeprecationWarning, match="h264_encode_sima is deprecated"):
+    _assert_not_type_error(
+        lambda: pyneat.nodes.h264_encode_sima(
+            1280, 720, 30, bitrate_kbps=2500, profile="main", level="4.1"
+        )
+    )
   _assert_not_type_error(lambda: pyneat.nodes.h264_parse())
   _assert_not_type_error(lambda: pyneat.nodes.h264_parse(2))
   _assert_not_type_error(lambda: pyneat.nodes.h264_parse(pyneat.H264ParseOptions()))
@@ -994,7 +1065,7 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
   assert encoded.codec == pyneat.RtspCodec.H264
   assert encoded.latency_ms == 200
   assert encoded.tcp is True
-  assert encoded.drop_on_latency is False
+  assert encoded.drop_on_latency is True
   assert encoded.buffer_mode == ""
   assert encoded.insert_queue is True
   assert encoded.sync_mode is False
@@ -1042,7 +1113,7 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
 
   decoded = pyneat.RtspDecodedInputOptions()
   assert decoded.codec == pyneat.RtspCodec.H264
-  assert decoded.drop_on_latency is False
+  assert decoded.drop_on_latency is True
   assert decoded.buffer_mode == ""
   assert decoded.payload_type == -1
   assert decoded.mjpeg_payload_type == 26
@@ -1050,6 +1121,9 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
   assert decoded.dec_height == -1
   assert decoded.dec_fps == -1
   assert decoded.num_buffers == -1
+  assert decoded.decoder_input_buffers == -1
+  assert decoded.decoder_tuning == ""
+  assert decoded.decoder_memory_opt is False
   assert decoded.source_fps == -1
   assert decoded.use_videorate is False
   assert decoded.video_rate_fps == -1
@@ -1065,6 +1139,22 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
   h265_decoded_backend = h265_decoded_group.describe_backend().lower()
   assert "framerate=(fraction)30/1" in h265_decoded_backend
   assert "dec-fps=30" in h265_decoded_backend
+  assert "dec-ip-cnt=" not in h265_decoded_backend
+  assert "decoder-tuning=" not in h265_decoded_backend
+  decoded.decoder_input_buffers = 2
+  decoded.num_buffers = 4
+  decoded.decoder_memory_opt = True
+  for tuning in ("default", "auto", "low-memory", "throughput-low-latency"):
+    decoded.decoder_tuning = tuning
+    backend = pyneat.groups.rtsp_decoded_input(decoded).describe_backend().lower()
+    assert "dec-ip-cnt=2" in backend
+    assert "num-buffers=4" in backend
+    assert f"decoder-tuning={tuning}" in backend
+    assert "memory-opt=true" in backend
+  decoded.decoder_input_buffers = -1
+  decoded.num_buffers = -1
+  decoded.decoder_memory_opt = False
+  decoded.decoder_tuning = ""
   h265_decoded_spec = pyneat.groups.rtsp_decoded_output_spec(decoded)
   assert h265_decoded_spec.media_type == "video/x-raw"
   assert h265_decoded_spec.format == "NV12"
@@ -1260,8 +1350,12 @@ def test_graph_describe_backend_includes_detess_dequant_stage(tmp_path):
   graph.add(pyneat.nodes.detess_dequant(pyneat.DetessDequantOptions(model)))
   graph.add(pyneat.nodes.output())
 
-  text = graph.describe_backend().lower()
-  assert "detessdequant" in text
+  # A fused physical cohort need not use the logical operation as its element name.
+  assert "detessdequant" in graph.describe().lower()
+  info = model.info()
+  assert info.capabilities.has_post_detessellation
+  assert info.capabilities.has_post_dequantization
+  assert "neatkernelrunner" in graph.describe_backend().lower()
 
 
 def test_graph_describe_backend_includes_sima_box_decode_stage(tmp_path):
@@ -1341,9 +1435,12 @@ def test_sima_box_decode_runtime_dims_override_backend_config(tmp_path):
   graph.add(pyneat.nodes.output())
 
   backend = graph.describe_backend().lower()
+  # Numerical options are carried by typed admission, not GObject properties.
+  # Their effect is covered by the real-input geometry test and C++ admission
+  # tests; this API test owns constructor acceptance and logical identity.
+  assert "simaboxdecode" in graph.describe().lower()
   assert "boxdecode" in backend
-  assert "original-width=640" in backend
-  assert "original-height=360" in backend
+  assert backend == graph.describe_backend().lower()
 
 
 def test_graph_describe_backend_includes_explicit_h264_udp_output_chain():
@@ -1829,3 +1926,49 @@ def test_measurement_bool_overload_surface():
   _assert_not_type_error(lambda: pyneat.Run().start_measurement(True))
   _assert_not_type_error(lambda: pyneat.ModelRunner().start_measurement(False))
   _assert_not_type_error(lambda: pyneat.ModelRunner().start_measurement(True))
+
+@pytest.mark.parametrize('codec', [
+    pyneat.SimaEncodeType.H264,
+    pyneat.SimaEncodeType.H265,
+    pyneat.SimaEncodeType.MJPEG,
+])
+def test_sima_encode_and_sender_options(codec):
+  encode = pyneat.SimaEncodeOptions()
+  encode.type = codec
+  encode.fps = 30
+  assert not hasattr(encode, "width") and not hasattr(encode, "height")
+  assert pyneat.nodes.sima_encode() is not None
+  encode.num_buffers = 4
+  assert encode.bitrate_kbps is None and encode.quality is None
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.sima_encode(encode))
+  text = graph.describe_backend()
+  assert text.count('neatencoderinput') == 1
+  assert 'num-output-buffers=4' in text
+  assert 'enc-width=' not in text and 'enc-height=' not in text
+  sender = pyneat.VideoSenderOptions.from_raw(encode)
+  encode.fps = 60
+  assert sender.width == 0 and sender.height == 0
+  assert sender.fps == 30 and sender.is_raw_input()
+  assert not sender.is_encoded_input()
+  assert pyneat.SimaEncodeType.AVC == pyneat.SimaEncodeType.H264
+  assert pyneat.SimaEncodeType.HEVC == pyneat.SimaEncodeType.H265
+  if codec == pyneat.SimaEncodeType.MJPEG:
+    assert sender.rtp.payload_type == 26
+    assert 'enc-bitrate=' not in text
+    encode.gop_length = 0
+    with pytest.raises(ValueError, match='MJPEG'):
+      pyneat.nodes.sima_encode(encode)
+    sender.encoder.bitrate_kbps = 3000
+    with pytest.raises(ValueError, match='MJPEG'):
+      pyneat.groups.video_sender(sender)
+  else:
+    changed = pyneat.VideoSenderEncoderOptions()
+    changed.bitrate_kbps, changed.profile, changed.level = 3000, 'main', '4.1'
+    sender.encoder = changed
+    text = pyneat.groups.video_sender(sender).describe_backend()
+    assert 'enc-bitrate=3000' in text and 'enc-profile=main' in text
+    assert 'enc-level=4.1' in text and text.count('neatencoderinput') == 1
+    encode.quality = 80
+    with pytest.raises(ValueError, match='quality'):
+      pyneat.nodes.sima_encode(encode)

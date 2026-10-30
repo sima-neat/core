@@ -3,9 +3,9 @@
     "message": "Початок роботи",
     "description": "The label for category 'Getting Started' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Neat SDK": {
-    "message": "Neat SDK",
-    "description": "The label for category 'Neat SDK' in sidebar 'docs'"
+  "sidebar.docs.category.Palette SDK": {
+    "message": "Palette SDK",
+    "description": "The label for category 'Palette SDK' in sidebar 'docs'"
   },
   "sidebar.docs.category.Neat Library": {
     "message": "Neat Library",
@@ -131,7 +131,7 @@
     "message": "Довідник C++",
     "description": "The label for category 'C++ Reference' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Compilation": {
+  "sidebar.docs.category.reference/model-sdk-api/compilation": {
     "message": "Компіляція",
     "description": "The label for category 'Compilation' in sidebar 'docs'"
   },
@@ -139,7 +139,7 @@
     "message": "Змінні середовища",
     "description": "The label for category 'Environment Variables' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Execution & Analysis": {
+  "sidebar.docs.category.reference/model-sdk-api/execution-analysis": {
     "message": "Виконання та аналіз",
     "description": "The label for category 'Execution & Analysis' in sidebar 'docs'"
   },
@@ -151,7 +151,7 @@
     "message": "Model Compiler API",
     "description": "The label for category 'Model Compiler API' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Model Lifecycle": {
+  "sidebar.docs.category.reference/model-sdk-api/model-lifecycle": {
     "message": "Життєвий цикл моделі",
     "description": "The label for category 'Model Lifecycle' in sidebar 'docs'"
   },
@@ -159,9 +159,9 @@
     "message": "Модулі",
     "description": "The label for category 'Modules' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Neat SDK Networking Setup": {
-    "message": "Налаштування мережі Neat SDK",
-    "description": "The label for category 'Neat SDK Networking Setup' in sidebar 'docs'"
+  "sidebar.docs.category.tools/sima-cli/sdk-networking": {
+    "message": "Налаштування мережі Palette SDK",
+    "description": "The label for category 'Palette SDK Networking Setup' in sidebar 'docs'"
   },
   "sidebar.docs.category.Nodes": {
     "message": "Вузли",
@@ -179,15 +179,15 @@
     "message": "Налаштування хоста SDK",
     "description": "The label for category 'SDK Host Setup' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Transforms": {
+  "sidebar.docs.category.reference/model-sdk-api/transforms": {
     "message": "Перетворення",
     "description": "The label for category 'Transforms' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Types & Error Handling": {
+  "sidebar.docs.category.reference/model-sdk-api/types-error-handling": {
     "message": "Типи та обробка помилок",
     "description": "The label for category 'Types & Error Handling' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Versioned Public APIs": {
+  "sidebar.docs.category.reference/model-sdk-api/versioned-public-apis": {
     "message": "Версійні публічні API",
     "description": "The label for category 'Versioned Public APIs' in sidebar 'docs'"
   },
@@ -227,31 +227,31 @@
     "message": "Засіб перегляду",
     "description": "The label for category 'Viewer' in sidebar 'docs'"
   },
-  "sidebar.docs.category.appzoo": {
+  "sidebar.docs.category.tools/sima-cli/appzoo": {
     "message": "appzoo",
     "description": "The label for category 'appzoo' in sidebar 'docs'"
   },
-  "sidebar.docs.category.device": {
+  "sidebar.docs.category.tools/sima-cli/device": {
     "message": "device",
     "description": "The label for category 'device' in sidebar 'docs'"
   },
-  "sidebar.docs.category.mla": {
+  "sidebar.docs.category.tools/sima-cli/mla": {
     "message": "mla",
     "description": "The label for category 'mla' in sidebar 'docs'"
   },
-  "sidebar.docs.category.modelzoo": {
+  "sidebar.docs.category.tools/sima-cli/modelzoo": {
     "message": "modelzoo",
     "description": "The label for category 'modelzoo' in sidebar 'docs'"
   },
-  "sidebar.docs.category.neat": {
+  "sidebar.docs.category.tools/sima-cli/neat": {
     "message": "neat",
     "description": "The label for category 'neat' in sidebar 'docs'"
   },
-  "sidebar.docs.category.packages": {
+  "sidebar.docs.category.tools/sima-cli/packages": {
     "message": "packages",
     "description": "The label for category 'packages' in sidebar 'docs'"
   },
-  "sidebar.docs.category.playbooks": {
+  "sidebar.docs.category.tools/sima-cli/playbooks": {
     "message": "playbooks",
     "description": "The label for category 'playbooks' in sidebar 'docs'"
   },
@@ -259,7 +259,7 @@
     "message": "pyneat",
     "description": "The label for category 'pyneat' in sidebar 'docs'"
   },
-  "sidebar.docs.category.sdk": {
+  "sidebar.docs.category.tools/sima-cli/sdk": {
     "message": "sdk",
     "description": "The label for category 'sdk' in sidebar 'docs'"
   },
@@ -290,5 +290,25 @@
   "sidebar.docs.category.structs": {
     "message": "Структури",
     "description": "The label for category 'structs' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.tools/sima-cli/peripherals": {
+    "message": "peripherals",
+    "description": "The label for category 'peripherals' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.tools/sima-cli/guides": {
+    "message": "Посібники",
+    "description": "The label for category 'guides' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Sentinel": {
+    "message": "Sentinel",
+    "description": "The label for category 'Sentinel' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.tools/sentinel/panels": {
+    "message": "Панелі",
+    "description": "The label for category 'panels' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.tools/sentinel/peripherals": {
+    "message": "Периферійні пристрої",
+    "description": "The label for category 'peripherals' in sidebar 'docs'"
   }
 }

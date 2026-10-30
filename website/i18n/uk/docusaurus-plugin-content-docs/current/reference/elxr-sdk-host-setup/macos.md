@@ -1,10 +1,10 @@
 ---
 title: "Нотатки для хоста macOS"
-description: "Підготуйте хост macOS для Neat SDK та DevKit-Sync."
+description: "Підготуйте хост macOS для Palette SDK та DevKit-Sync."
 sidebar_position: 3
 ---
 
-Використовуйте цей посібник, якщо ваша хост-машина працює під керуванням macOS, і ви хочете запустити Neat, середовище розробки (далі Neat SDK) з DevKit-Sync.
+Використовуйте цей посібник, якщо ваша хост-машина працює під керуванням macOS, і ви хочете запустити Palette SDK з DevKit-Sync.
 
 ## Необхідні умови.
 
@@ -128,4 +128,4 @@ curl -k 'https://127.0.0.1:9900/api/ingest/stats?all=1&verbose=1'
 
 ## Наступний крок.
 
-Поверніться до [Neat SDK](/getting-started/dev-environment/) і продовжуйте встановлення/налаштування.
+Поверніться до [Palette SDK](/getting-started/dev-environment/) і продовжуйте встановлення/налаштування.

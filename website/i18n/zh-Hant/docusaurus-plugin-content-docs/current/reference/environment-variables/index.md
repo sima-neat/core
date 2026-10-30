@@ -9,12 +9,16 @@ slug: /reference/environment-variables
 
 本頁彙總了執行階段、建構工具和 SDK 工具所使用的環境變數。其中許多變數是除錯/診斷開關；大多數使用者可以忽略它們，除非需要進行疑難排解。
 
-如需完整的已偵測清單，請參閱 [環境變數清單](./inventory)。
+如需完整的已偵測清單，請參閱 [環境變數清單](/reference/environment-variables/inventory/)。
 
 > 注意：有些控制旋鈕是內部使用的或僅供測試，而且可能會變更。這些旋鈕已在此檔案中列出。
 > 因為它們目前會出現在程式碼執行路徑中。
 
 ## SDK 網路存取
+
+在 Palette SDK 3.0 或更新版本中，`sima-cli sdk setup` 會在容器環境中設定 `CODE_SERVER_PASSWORD`。再次執行 `neat` 即可查看密碼，並在 code-server 提示時輸入。URL 不包含密碼或權杖。`neat --json` 會新增包含 `backend`、`auth`、`password`、`localUrl` 和 `remoteUrl` 的 `codeUI`；請將此輸出視為含有認證資訊的資料。SDK 連接埠對應中的公開連接埠 `codeUIHttps.host` 優先於容器連接埠。
+
+此行為依已安裝的 code-server 執行檔選擇；僅設定 `CODE_SERVER_PASSWORD` 不會改變舊版 OpenVSCode 的行為。`CODE_SERVER_HTTPS_PORT` 和 `CODE_SERVER_WORKSPACE` 優先於對應的舊版變數。設定 `CODE_SERVER_WITHOUT_PASSWORD=1` 時會回報 `auth: "none"` 並省略密碼值。舊版 OpenVSCode 映像仍使用權杖 URL。
 
 - `NFS_SERVER_HOST_IP=<address>` — 用於建構遠端連線的 SDK 主機位址。
   Insight 和瀏覽器中的 VS Code URL。這通常由 `sima-cli sdk setup` 提供。
@@ -92,11 +96,10 @@ slug: /reference/environment-variables
 ## 分派器／執行階段
 
 - `SIMA_DISPATCHER_TRACE=1` — 追蹤分派器步驟。
-- `SIMA_DISPATCHER_AUTO_RECOVER=0/1` — 自動恢復分派器（預設為啟用）。
 - `SIMA_ASYNC_TPUT_DIAG=1` — 非同步吞吐量診斷。
 - `SIMA_ASYNC_WARMUP=<n>` — 非同步預熱幀。
-- `SIMA_PERF_POWER=1` — 在效能測試情境中啟用 SOM PMIC 供電軌道的監測。
-- `SIMA_PERF_POWER_INTERVAL_MS=<ms>` — 電力採樣間隔（預設值為 100）。
+- `SIMA_PERF_POWER=1` — 在效能測試情境中啟用從 Sentinel 擷取板子電力資料。
+- `SIMA_PERF_POWER_INTERVAL_MS=<ms>` — 已棄用且會被忽略；Sentinel 每 2 秒取樣一次。
 - `SIMA_PULL_TIMEOUT_DIAG=0/1` — 報告拉取逾時的情況（預設為啟用）。
 - `SIMA_STAGE_DEBUG=1` — StageRun 除錯日誌。
 
@@ -130,10 +133,11 @@ slug: /reference/environment-variables
 
 選擇的依據是可寫入性，而不是可用空間。`.tar.gz` 不限制其解壓縮後的大小，因此在解碼之前無法得知任何容量需求；空間會在解壓縮時以及從資訊清單中提取之前，針對每個區塊進行強制執行。因此，符合條件的 NVMe 將無條件地使用，如果沒有足夠的空間，則載入會失敗，並顯示 `output_storage_unavailable`，而不是回退到 eMMC。該檔案系統上的可用空間，或者 `SIMA_MPK_EXTRACT_ROOT` 指向其他位置，是解決方案。
 - `SIMA_MPK_CLEANUP_EXTRACTED=0/1` — 在正常退出時，刪除每個程序提取的模型檔案資料（預設為 `1`）。
-  啟用清理功能時，每個程序都會將內容解壓縮到其自己的 `proc_<pid>` 目錄中，並在程序結束時刪除該目錄。如果停用清理功能，則會保留該程序目錄以供檢查，並且不會將其納入過時目錄的垃圾回收機制中。該目錄不會被自動發現或由其他程序重複使用；當不再需要時，請手動刪除它。
+  啟用清理功能時，每個程序都會將內容解壓縮到各自唯一且有鎖定保護的 `proc_run_*` 目錄中，並在程序結束時刪除該目錄。如果停用清理功能，則會保留該程序目錄以供檢查，並且不會將其納入過時目錄的垃圾回收機制中。該目錄不會被自動發現或由其他程序重複使用；當不再需要時，請手動刪除它。
 
 `Model` 也可以接受一個已經組織好的套件根目錄，其中包含 `etc`、`lib` 和 `share`。該目錄將直接使用，無需解壓縮或複製；調用者擁有該目錄的生命週期，並且在使用模型時必須保持其不變。由 `tar -xzf` 產生的扁平目錄不是一個組織好的套件，因此不能直接使用。
-- `SIMA_MPK_EXTRACT_GC_STALE_PROC=0/1` — 移除過時的無效資料。`proc_*` 啟動時提取根目錄（預設值） `1`).
+- `SIMA_MPK_EXTRACT_GC_STALE_PROC=0/1` — 啟動時使用擁有權鎖定來移除已無人使用的 `proc_run_*` 解壓縮根目錄（預設為 `1`）。
+  舊版 `proc_<pid>` 根目錄必須在確認無人使用後手動移除。
 - `SIMA_MODEL_TAR=<path>` — 範例/測試所使用的基本模型套件路徑。
   針對特定模型的覆寫設定（例如 `SIMA_RESNET50_TAR`、`SIMA_YOLO_TAR` 等）仍然優先生效。
 - `SIMA_MPK_EXTRACT_MIN_FREE_BYTES=<bytes>` — 在準備和
@@ -151,3 +155,39 @@ slug: /reference/environment-variables
 ## 測試／內部鉤子
 
 - `SIMA_TENSOR_MAPFAIL_DEBUG=1` — 記錄張量映射失敗的情況。
+
+## 核心中繼資料驗證
+
+ProcessCVU 階段預設透過 Runtime 的 `neatkernelrunner` 執行。
+沒有任何建置選項或環境變數可選擇舊的 ProcessCVU 外掛程式。
+
+- `SIMA_CORE_COMPACT_METADATA=1` — 在能力協議完成後，允許於具擁有權的
+  runner 直連 appsink 邊界使用精簡 TensorSet 與具型別的目前影格中繼資料。
+  不可存在不相容的邊界、偵錯或流程觀察器。標準的具擁有權階段／元件計時仍然啟用，
+  並支援兩種表示法。無法表示的擴充仍保留舊式動態中繼資料。
+
+不要將只支援舊式格式的探查掛到精簡邊界上。未達成能力協議時，Runtime 會為未知
+使用者與觀察器保留舊式中繼資料；執行仍使用 `neatkernelrunner`。
+此中繼資料選項不保證延遲或吞吐量。
+
+## 套件與每週驗證（僅供測試）
+
+- `SIMA_TEST_PACKAGE_INVENTORY=<absolute-path>` — 由
+  `tools/ci/verify_core_dist.py --write-package-inventory` 根據選定且已驗證的
+  發行封存檔產生的預期套件控制資料與負載身分。已安裝 DevKit 的套件清單測試需要它。
+  它不會將 `dpkg` 重新導向私用前綴，也不是安裝結果報告。
+- `SIMA_TEST_PLATFORM_BASELINE=<absolute-path>` — 使用
+  `tools/ci/verify_core_dist.py --capture-platform-baseline` **在安裝前**擷取的
+  原生平台套件存在／不存在狀態、套件身分與 OTA 可用性／身分。已安裝 DevKit 的
+  套件清單測試需要它與所選套件清單。不要從安裝後狀態重新產生此基準。
+- `SIMA_RUN_MNIST_PREPROC_CHANNELS1=1` — 選擇執行長時間 MNIST 前處理準確度測試。
+  請在測試固定資料驗證後，從 `tools/ci/prepare_weekly_fixtures.py` 取得此值，
+  而不是只為避免略過而手動設定。本機啟動程式使用 `--environment-json`；
+  CI 則透過 `--github-env` 使用相同的對應資料。
+
+測試固定資料群組選擇與已安裝套件設定組合，請參閱
+[測試需求](../../develop-apps/contribute/build-test/test_requirements.md)。
+
+## PCIe 主機與卡片狀態
+
+`NEAT_PCIE_SSH_USER` 指定卡片的 SSH 使用者（預設為 `sima`）。`NEAT_PCIE_SSH_KEY` 指定私密金鑰（預設為 `~/.ssh/sima_neat_pcie_ed25519`），也可繼續使用既有 SSH 設定與代理程式驗證。`--offline` 會略過網際網路更新檢查，但仍透過本機 SSH 讀取已連接的卡片。PCIe 主機狀態不檢查成品更新；請使用 `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>` 更新主機套件。`neat update` 不會更新 PCIe 卡片。

@@ -6,8 +6,6 @@ sidebar_position: 2
 
 # 카메라 입력 노드
 
-다음 libcamera 가이드는 기본 백엔드를 설명합니다. Metoak SIMOR의 소유권 있는 원시 텐서는 아래 V4L2 절을 참조하세요.
-
 `CameraInput`은 libcamera와 GStreamer의 `libcamerasrc`를 통해 노출된 MIPI 카메라에 대한 소스 노드입니다. 프레임이 `run.push(...)` 대신 DevKit 카메라 스택에서 가져와야 할 때 소스에서 소유한 그래프의 시작 부분에 사용합니다.
 
 작업 가이드는 [MIPI 카메라를 사용하세요.](/develop-apps/advanced-concepts/mipi-camera-input)를 참조하십시오.
@@ -117,9 +115,9 @@ node = pyneat.nodes.camera_input(opt, capture_buffer_count=32)
 | `insert_queue` | `true` | 할당자 협상 및 제로 복사 검증 후에 작은 실시간 소스 큐를 삽입합니다. |
 | `leaky_queue` | `true` | 큐를 하류에서 누수되도록 만들어 실시간 그래프가 오래된 백로그보다 최신 프레임을 선호하도록 합니다. |
 | `queue_depth` | `2` | `insert_queue`가 참일 때, 대기열에 쌓을 수 있는 최대 버퍼 수입니다. |
-| `allow_cpu_fallback` | `false` | `false`인 경우 카메라/장치의 제로 복사 지원을 필수로 설정합니다. `true`로 설정하는 것은 SiMaAI 메모리에 대한 Neat의 비공개 적응형 브리지를 사용하도록 선택하는 것입니다. |
+| `allow_cpu_fallback` | `false` | `false`인 경우 카메라의 DMA-BUF를 전달하고, 복사가 필요한 프레임이 있으면 실패합니다. Neat의 비공개 브리지가 이러한 프레임을 CMA DMA-BUF로 복사하도록 허용하려는 경우에만 `true`로 설정합니다. |
 
-`capture_buffer_count`는 이제 `CameraInputOptions` 필드로도 제공됩니다. 0은 백엔드 기본값을 유지하고, 0이 아닌 값은 캡처 수를 재정의합니다. 기존 C++ 팩토리와 Python 키워드도 유지됩니다. libcamera의 상한은 128이며 원시 V4L2는 4–128개 버퍼가 필요합니다.
+`capture_buffer_count`는 `CameraInputOptions` 필드가 아닌, `CameraInputWithCaptureBuffers`에 전달되는 인자입니다. 기본값은 `0`이며, 이는 카메라 파이프라인 자체의 기본값을 유지합니다. 카메라 파이프라인은 자체 제한을 검증하며, Neat의 공급자는 최대 `128`까지 지원합니다.
 
 ## 입력 및 출력 계약
 
@@ -128,18 +126,20 @@ node = pyneat.nodes.camera_input(opt, capture_buffer_count=32)
 | 입력 역할: | 소스 노드. 이 그래프는 카메라에서 프레임을 가져옵니다. 앱에서 샘플을 이 노드로 보내지는 않습니다. |
 | 출력 미디어 유형: | `video/x-raw`. |
 | 출력 형식 | 요청된 형식은 일반적으로 `format`, 보통 `NV12`입니다. |
-| 메모리 계약 | 장치/SiMaAI 제로 복사 방식을 선호합니다. 폴백 기능이 활성화되면 OS/libcamera 버퍼가 후속 CVU/MLA 단계를 위해 SiMaAI 메모리로 조정됩니다. |
+| 메모리 계약 | 카메라 자체의 DMA-BUF가 복사 없이 다운스트림으로 전달됩니다. 폴백 기능이 활성화되면 하나의 DMA-BUF가 아닌 프레임은 후속 CVU/MLA 단계를 위해 CMA DMA-BUF로 복사됩니다. |
 | 요청된 옵션을 기반으로 정지된 힌트를 통해 기능 제한을 확정합니다. 런타임 기능 제한 협상은 여전히 카메라 스택에 따라 달라집니다. | |
 
 ## 제로 복사 및 대체
 
-`allow_cpu_fallback = false`는 기본값이며 엄격한 카메라/장치 제로 복사 방식을 요청합니다. 설치된 `libcamerasrc`가 일반적인 `external-buffer-mode` 속성을 노출하고 메모리 라이브러리가 카메라 할당을 DMA-BUF로 내보낼 수 없는 경우 빌드가 실행 가능한 오류와 함께 실패합니다.
+`allow_cpu_fallback = false`는 기본값이며 엄격한 제로 복사 방식을 요청합니다. 카메라는 각 프레임을 자체 DMA-BUF에 기록하고, 모든 다운스트림 단계는 그 동일한 메모리를 읽습니다. Neat는 카메라의 메모리를 소유하지 않으므로 `libcamerasrc` 속성이 필요하지 않습니다. 물리적으로 연속된 DMA-BUF는 모두 유효한 EV74 입력이며, Neat의 EV74 허용 검사는 해당 DMA-BUF가 CMA 힙 또는 카메라의 연속 캡처 할당자(`videobuf2_dma_contig`)에서 온 경우 이를 받아들입니다.
 
-Neat는 항상 자체 카메라 브리지를 capsfilter 바로 뒤, 라이브 큐 앞에 배치합니다. 브리지는 GStreamer의 다운스트림 `GST_QUERY_ALLOCATION`를 통해 표준 풀을 제안합니다. 풀은 유효성이 검사된 caps에서 평면 크기와 스트라이드를 파생시키고, 하나의 패킹된 SiMaAI 할당에서 할당하고, 평면당 하나의 DMA-BUF를 내보냅니다. `libcamerasrc`는 이러한 DMA-BUF를 ISP 캡처 큐로 가져옵니다. 브리지는 결과를 확인하고 엄격한 모드에서 복사 없이 동일한 패킹된 할당을 언래핑합니다.
+Neat는 항상 자체 카메라 브리지를 capsfilter 바로 뒤, 라이브 큐 앞에 배치합니다. 브리지는 `GST_QUERY_ALLOCATION`을 통해 소스에 `GstVideoMeta`를 첨부하도록 요청한 다음, 평면들이 하나의 DMA-BUF 안에 연속으로 배치된 각 프레임을 단일 메모리로 전달하며, 모든 소비자가 해제할 때까지 카메라의 버퍼를 유지합니다. 엄격한 모드에서는 이 방식으로 전달할 수 없는 프레임이 파이프라인을 실패시키고, 폴백이 활성화된 경우에는 대신 CMA DMA-BUF로 복사됩니다.
 
-다운스트림 소유자를 기반으로 `capture_buffer_count`를 카메라 팩토리에 전달합니다. 임시 인코더 또는 딥 비동기 ML 그래프는 32개의 버퍼가 필요할 수 있습니다. 낮은 대기 시간의 CV 그래프는 더 적은 버퍼를 사용하고 오래된 프레임을 삭제할 수 있습니다. 이 설정은 ISP 출력/애플리케이션 주기를 제어합니다. 커널의 개인 CSI-to-ISP RAW 전송 링을 확장하지 않으며 GStreamer의 `queue_depth` 삭제 정책과 독립적입니다.
+다운스트림 소유자를 기반으로 `capture_buffer_count`를 카메라 팩토리에 전달합니다. 임시 인코더 또는 딥 비동기 ML 그래프는 32개의 버퍼가 필요할 수 있습니다. 낮은 대기 시간의 CV 그래프는 더 적은 버퍼를 사용하고 오래된 프레임을 삭제할 수 있습니다. 이 설정은 ISP 출력/애플리케이션 주기를 제어합니다. 커널의 개인 CSI-to-ISP RAW 전송 링을 확장하지 않으며 GStreamer의 `queue_depth` 삭제 정책과 독립적입니다. Platform 3.0에서는 `libcamerasrc`에 `buffer-count` 속성이 없으므로 해당 플랫폼에서는 `capture_buffer_count`를 `0`으로 두십시오.
 
-카메라 스택이 제안된 할당자를 준수할 수 없는 경우 이미 존재하는 브리지가 복사할 수 있도록 `allow_cpu_fallback = true`를 명시적으로 설정합니다. 브리지는 업스트림에서 제공하는 경우 SiMaAI/EV74 버퍼를 통과시킵니다. 그렇지 않으면 카메라 프레임을 풀링된 SiMaAI 버퍼로 복사하고 다운스트림 단계에서 예상하는 메타데이터를 연결합니다. 이 개인 복사 풀은 `queue_depth`에 의해 제한되는 대신 필요에 따라 증가하므로 다운스트림의 누수 큐가 브리지가 먼저 중단되지 않고 오래된 프레임을 삭제할 수 있습니다.
+브리지는 카메라 자체의 버퍼를 전달하므로, 다운스트림 단계가 아직 보유하고 있는 각 프레임은 libcamera 캡처 링의 버퍼 하나를 묶어 둡니다(Platform 3.0에서 IMX477로 1080p NV12를 캡처할 때 8개 버퍼). 그만큼 많은 프레임을 보유하는 그래프는 프레임을 삭제하는 대신 캡처를 정지시키므로, 가져온 프레임은 즉시 해제하십시오.
+
+프레임이 평면들이 연속으로 배치된 하나의 DMA-BUF가 아닐 때 이미 존재하는 브리지가 복사할 수 있도록 `allow_cpu_fallback = true`를 명시적으로 설정합니다. 브리지는 그러한 DMA-BUF인 프레임은 계속 그대로 전달합니다. 그렇지 않으면 카메라 프레임을 비공개 풀의 CMA DMA-BUF로 복사하고 다운스트림 단계에서 예상하는 메타데이터를 연결합니다. 이 풀은 `queue_depth`에 의해 제한되는 대신 필요에 따라 최대 128개 버퍼까지 증가하므로 다운스트림의 누수 큐가 브리지가 먼저 중단되지 않고 오래된 프레임을 삭제할 수 있습니다.
 
 폴백 이름은 브리지가 OS/libcamera 버퍼를 허용할 수 있음을 의미합니다. 크기 조정, 색상 변환 또는 정규화를 CPU로 이동해야 한다는 의미는 아닙니다. 해당 경로를 지원하는 경우 모델에서 관리하는 CVU 전처리에서 이러한 작업을 수행하십시오.
 
@@ -167,71 +167,8 @@ CameraInput -> model.graph({include_input=false, include_output=true})
 | --- | --- |
 | `build.plugin_missing` | 런타임 플러그인 세트에서 `libcamerasrc` 또는 `neatcamerabridge`가 누락되었습니다. |
 | `misconfig.media_caps` / `not-negotiated` | 카메라가 요청된 형식, 해상도 또는 프레임 속도를 지원하지 않습니다. |
-| 엄격한 제로 복사 오류, | `allow_cpu_fallback`은 false이고 카메라 소스에서 SiMaAI 제로 복사 속성을 제공하지 않습니다. |
+| `misconfig.media_caps` / `gstreamer.camera_configuration_unsupported` | 카메라가 요청된 해상도 또는 픽셀 형식을 제공하지 않아 `libcamerasrc`의 협상이 실패했습니다. 지원되는 크기로 캡처하세요. 모델 그래프에서는 모델 전처리가 크기를 조정하도록 하고, 그 밖의 그래프에서는 `VideoScale` 다음에 `CapsRaw`를 사용하세요. |
+| 엄격한 제로 복사 오류, | `allow_cpu_fallback`은 false이고 카메라가 평면들이 연속으로 배치된 하나의 DMA-BUF가 아닌 프레임을 전달했습니다. |
 | 풀 타임아웃 | 카메라가 프레임을 전송하지 못했거나, 그래프에 역압력이 발생했거나, 카메라 스택이 스트리밍을 중단했습니다. |
 <<번역>>
 | 녹색, 보라색 또는 색조가 강한 프레임 | 프레임 형식 또는 모델의 색상 변환 전처리 과정에 오류가 있거나, 카메라 ISP/libcamera 출력에 이미 색조가 적용되어 있습니다. 먼저 `NV12` 캡처를 Neat에서 확인하십시오. |
-
-## 소유권이 있는 raw V4L2 캡처
-
-두 백엔드 모두 기존 `CameraInput(options)`(Python: `camera_input`)를 사용합니다. 다음 예제는 Linux 전용 Metoak SIMOR 원시 복사 프로필을 선택합니다. 실제 캡처 장치를 지정하세요. `/dev/video1`은 예시입니다. 다른 플랫폼에서는 미지원 오류가 발생합니다.
-
-```cpp
-#include <neat.h>
-namespace n = simaai::neat;
-
-n::CameraInputOptions camera;
-camera.device = "/dev/video1";
-camera.profile = n::CameraProfile::MetoakSimor;
-
-n::Graph capture;
-capture.add(n::nodes::CameraInput(camera));
-capture.add(n::nodes::Output());
-```
-
-```python
-import pyneat as neat
-
-camera = neat.CameraInputOptions()
-camera.device = "/dev/video1"
-camera.profile = neat.CameraProfile.MetoakSimor
-
-capture = neat.Graph()
-capture.add(neat.nodes.camera_input(camera))
-capture.add(neat.nodes.output())
-```
-
-`MetoakSimor`는 `zero_copy`가 설정되지 않으면 소유 복사 캡처를 사용합니다. 디큐된 각 MMAP 프레임은 카메라 버퍼를 **다시 큐에 넣기 전에** 독립적인 풀 시스템 메모리에 복사됩니다. 명시적 `zero_copy=false`도 같은 동작입니다. 이 프로필은 DMA-BUF 내보내기/가져오기를 지원하지 않으므로 `zero_copy=true`는 거부됩니다. 암묵적 폴백은 없습니다. `camera_name`과 `allow_cpu_fallback`은 libcamera 전용입니다. 장치 주기를 유지하며 `framerate_num`/`framerate_den`은 이 프로필을 설정하지 않습니다.
-
-출력은 유효한 행 패딩과 트레일러를 포함한 평탄한 UInt8 텐서 `[bytesused]`이며 디코딩된
-이미지가 아닙니다. 협상된 `fourcc`, `width`, `height`, `row-stride`, `sizeimage`는
-`Sample.caps_string`에서 읽습니다. 장치 프로토콜을 해석하기 전에 이미지 크기로 재구성하거나
-트레일러를 버리지 마세요. 전달 시각은 메타데이터이며 텐서 바이트에 포함되지 않습니다.
-
-`capture_buffer_count` 기본값은 8(4–128), `output_buffer_count`는 8(2–128),
-`frame_timeout_ms`는 2000(1–60000)입니다. 유지 중인 출력은 풀 슬롯을 점유합니다.
-풀이 가득 차면 출력을 해제해야 캡처가 재개됩니다. 유지 중인 텐서를 덮어쓰지 않습니다.
-큐를 사용하면 `queue_depth`는 양수이고 `output_buffer_count`보다 작아야 합니다.
-중지 시 풀 대기를 중단합니다.
-
-캡처 전에 BSP 지침에 따라 장치의 미디어 컨트롤러 링크와 패드 형식을 설정하세요. Neat는 미디어 그래프를 다시 쓰지 않습니다. 다른 캡처 클라이언트를 동시에 실행하지 마세요. 플랫폼과 USB 장치는 동일한 V4L2 MMAP 수명 주기를 사용합니다. 드라이버는 STREAMOFF 계약을 준수해야 합니다. 복사 모드도 잘못된 커널 DMA 종료를 안전하게 만들지는 못합니다. 종료 실패 시 자동으로 다시 열지 말고 장치를 복구하세요.
-
-ROS/SIMOR의 CPU 언패킹, 보정 및 ROS 게시 작업은 애플리케이션에 남습니다.
-기존 6개 입력을 별도 처리 그래프의 `MetoakDepth` graph 20에 공급할 수 있습니다.
-이 API는 SIMOR 처리를 추가하지 않으며 graph 21, 새 펌웨어 또는 기존 ROS 통합 변경이 필요하지 않습니다.
-
-시작 시 카메라 버퍼를 큐에 넣기 전에 출력 caps와 CPU 버퍼 풀을 준비합니다. 중지 시 프레임 및 풀 대기를 중단하고 캡처를 종료한 다음 출력 풀을 해제합니다. 이미 전달된 텐서는 중지 후에도 유효합니다. 캡처 종료 오류는 GStreamer 버스에 보고되며 해당 소스의 재시작을 차단합니다. 프로세스 종료는 장치 복구를 대신하지 않습니다.
-
-
-### 프로필 선택 및 호환성
-
-- `profile=Default`(기본값)는 항상 libcamera를 사용하며 `camera_name` 선택을 유지합니다. `profile=MetoakSimor` 없이 `device`를 지정하면 거부되며 Metoak을 암묵적으로 선택하지 않습니다.
-- `profile=MetoakSimor`는 내부적으로 소유 복사 방식 V4L2, `RAW8`, `BA81`, 1920×360 전송 크기를 선택합니다. 기존 NV12/1080 기본값을 대체하며 다른 충돌 형식이나 크기는 거부합니다. 모든 Metoak 카메라를 나타내는 프로필은 아닙니다.
-- SIMOR 프로필에서 `device`를 생략하면 미디어 토폴로지에 일치하는 엔드포인트가 정확히 하나 있어야 합니다. 누락, 모호한 경로 또는 혼합 센서 경로는 실패합니다. 검색 중 캡처 장치를 열지 않습니다. 프로필과 장치를 명시하면 검색하지 않습니다.
-- 픽셀 형식은 백엔드 선택기가 아닙니다. 일반 원시/Bayer 요청은 libcamera 경로를 유지하며 이 변경은 Bayer caps 협상을 추가하거나 검증하지 않습니다. 프로필이 전송 FourCC를 결정하며 공개 FourCC 옵션은 없습니다.
-- `MetoakSimor`에서 설정되지 않은 `zero_copy`는 false로 해석되며 명시적 true는 거부됩니다. libcamera에서는 미설정이 `allow_cpu_fallback`을 유지하고 false는 기존 복사 폴백을 허용하며 true는 제로 카피를 요구합니다. 모순된 설정은 거부됩니다.
-- 구현은 노드 생성 시 그래프 계약 전파 전에 한 번만 선택됩니다. 공개 backend 옵션은 없으며 실패 시 다른 구현으로 전환하지 않습니다. 검색은 미디어 링크나 패드 형식을 설정하지 않습니다.
-
-`device`가 없는 `MetoakSimor` 프로필만 미디어 컨트롤러를 검색합니다. 이러한 메타데이터 조회는 동기 커널 호출이며 실행 시간 상한이 보장되지 않습니다. 컨트롤러가 응답하지 않으면 `device`와 `profile=MetoakSimor`를 모두 지정하여 검색을 건너뛰세요.
-
-`CameraInput(options)`와 `CameraInputOptions`만 사용하십시오. V4L2 설정은 비공개입니다. 매니페스트와 SONAME은 Core ABI 5를 유지합니다. 이 미출시 통합에서 공개 옵션과 노드 레이아웃이 변경되었으므로 C++ 소비자를 다시 빌드하고 일치하는 Python wheel을 사용하십시오. 이전 ABI-5 바이너리를 새 헤더나 런타임과 혼합하지 마십시오.

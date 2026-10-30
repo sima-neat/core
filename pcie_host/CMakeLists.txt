@@ -25,15 +25,22 @@ endif()
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
+# Platform service API headers have one validated installed delivery owner.
+# A raw include-path cache entry must not bypass its provenance checks.
+if (SIMAPCIE_SVC_INCLUDE_DIR)
+  message(FATAL_ERROR "Install Scheduler's pcie_service_headers component; raw SIMAPCIE_SVC_INCLUDE_DIR is no longer accepted")
+endif()
+
 option(SIMAPCIE_BUILD_TESTS "Build PCIe host unit tests" ON)
 option(SIMAPCIE_BUILD_HARDWARE_TESTS "Build installable PCIe host hardware tests" OFF)
 option(SIMAPCIE_BUILD_EXAMPLES "Build PCIe host C++ examples" OFF)
 option(SIMAPCIE_BUILD_PYTHON "Build PCIe host Python bindings via nanobind" OFF)
 option(SIMAPCIE_BUILD_TUTORIALS "Build installable PCIe host tutorials" ON)
-set(SIMAPCIE_NEATPCIEHOST_PLUGIN "" CACHE FILEPATH
-  "Path to prebuilt libgstneatpciehost.so artifact to package")
-set(SIMAPCIE_NEATPCIEHOST_INCLUDE_DIR "" CACHE PATH
-  "Include directory supplied by the neatpciehost artifact/package")
+# The transport library, plugin and ABI headers are supplied by the installed
+# Scheduler host component. Core never repackages another producer's files.
+if(SIMAPCIE_NEATPCIEHOST_PLUGIN OR SIMAPCIE_NEATPCIEHOST_INCLUDE_DIR)
+  message(FATAL_ERROR "Install Scheduler's pcie_host component; standalone plugin/header artifacts are no longer accepted")
+endif()
 
 if (DEFINED COPROC_BUILD_TESTS)
   set(SIMAPCIE_BUILD_TESTS "${COPROC_BUILD_TESTS}")
@@ -49,6 +56,7 @@ get_filename_component(SIMA_NEAT_CORE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSO
 
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
+find_package(SimaScheduler CONFIG REQUIRED COMPONENTS pcie_host pcie_service_headers)
 find_package(ZLIB REQUIRED)
 find_package(nlohmann_json QUIET)
 if (NOT TARGET nlohmann_json::nlohmann_json)
@@ -65,6 +73,7 @@ pkg_check_modules(GST REQUIRED IMPORTED_TARGET
 set(SIMA_NEAT_PCIE_HOST_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/Model.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/HostPcieChannel.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/HostPcieOutputLayout.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/HostPcieTensorPayload.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/HostPcieTensorSetMeta.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/ModelArchiveSnapshot.cpp
@@ -74,7 +83,19 @@ set(SIMA_NEAT_PCIE_HOST_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/Runtime.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/SshRunner.cpp
   ${SIMA_NEAT_CORE_ROOT}/src/model/ModelArchiveLoader.cpp
+  ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/MlaElfIoTopology.cpp
   ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/MpkContract.cpp
+  ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/static_contract/AfePublicationLedger.cpp
+  ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/static_contract/KernelRegistry.cpp
+  ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/static_contract/ModelExecutionPlan.cpp
+  ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/static_contract/MpkDecoder.cpp
+  ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/static_contract/TvmHostModuleGraph.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/GenAIModel.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/ModelAssets.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/MediaStage.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/RemoteSession.cpp
+  ${SIMA_NEAT_CORE_ROOT}/src/genai/ModelDirectory.cpp
+  ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai/Service.cpp
 )
 
 add_library(sima_neat_pcie_host STATIC
@@ -82,6 +103,11 @@ add_library(sima_neat_pcie_host STATIC
 )
 
 target_compile_definitions(sima_neat_pcie_host PRIVATE SIMA_NEAT_INTERNAL=1)
+target_include_directories(sima_neat_pcie_host PRIVATE
+  ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
+target_include_directories(sima_neat_pcie_host PUBLIC $<BUILD_INTERFACE:${SIMA_NEAT_CORE_ROOT}/include>)
+target_link_libraries(sima_neat_pcie_host PRIVATE ${CMAKE_DL_LIBS}
+  SimaScheduler::pcie_service_headers)
 target_include_directories(sima_neat_pcie_host
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -92,32 +118,25 @@ target_include_directories(sima_neat_pcie_host
     ${SIMA_NEAT_CORE_ROOT}/src
     ${GST_INCLUDE_DIRS}
 )
+target_link_libraries(sima_neat_pcie_host PUBLIC nlohmann_json::nlohmann_json
+  PRIVATE SimaScheduler::pcie_host)
 target_compile_options(sima_neat_pcie_host PRIVATE ${GST_CFLAGS_OTHER})
 target_link_directories(sima_neat_pcie_host PRIVATE ${GST_LIBRARY_DIRS})
 target_link_libraries(sima_neat_pcie_host PRIVATE
   ${GST_LIBRARIES}
   Threads::Threads
   ZLIB::ZLIB
-  $<BUILD_INTERFACE:nlohmann_json::nlohmann_json>
 )
-if (NOT SIMAPCIE_NEATPCIEHOST_INCLUDE_DIR)
-  message(FATAL_ERROR
-    "SIMAPCIE_NEATPCIEHOST_INCLUDE_DIR is required and must contain "
-    "gst/SimaTensorSetMetaAbi.h")
-endif()
-if (NOT EXISTS "${SIMAPCIE_NEATPCIEHOST_INCLUDE_DIR}/gst/SimaTensorSetMetaAbi.h")
-  message(FATAL_ERROR
-    "missing gst/SimaTensorSetMetaAbi.h under SIMAPCIE_NEATPCIEHOST_INCLUDE_DIR: "
-    "${SIMAPCIE_NEATPCIEHOST_INCLUDE_DIR}")
-endif()
-target_include_directories(sima_neat_pcie_host PRIVATE
-  ${SIMAPCIE_NEATPCIEHOST_INCLUDE_DIR}
-)
+# ABI headers and generic wire contracts are supplied by Scheduler's native host
+# component. A separately acquired platform plugin is a runtime dependency only.
 
 install(TARGETS sima_neat_pcie_host
   EXPORT SimaPCIeHostTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Development
 )
+
+install(FILES ${SIMA_NEAT_CORE_ROOT}/include/genai/GenAIValueTypes.h
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/genai COMPONENT Development)
 
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/simaai/
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/simaai
@@ -125,9 +144,13 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/simaai/
 )
 
 install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/scripts/pcie-setup.sh
+  ${SIMA_NEAT_CORE_ROOT}/scripts/neat
   DESTINATION ${CMAKE_INSTALL_BINDIR}
   COMPONENT Runtime
 )
+install(FILES ${SIMA_NEAT_CORE_ROOT}/scripts/neat_pcie_status.py
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/sima-pcie-host
+  COMPONENT Runtime)
 
 set(SIMAPCIE_APPLICATION_SKILL_INSTALL_DIR
   ${CMAKE_INSTALL_DATADIR}/sima-pcie-host/skills/neat-pcie-application-builder)
@@ -176,37 +199,13 @@ install(
   COMPONENT Development
 )
 
-if (SIMAPCIE_NEATPCIEHOST_PLUGIN)
-  if (NOT EXISTS "${SIMAPCIE_NEATPCIEHOST_PLUGIN}")
-    message(FATAL_ERROR
-      "SIMAPCIE_NEATPCIEHOST_PLUGIN does not exist: ${SIMAPCIE_NEATPCIEHOST_PLUGIN}")
-  endif()
-
-  set(SIMAPCIE_HOST_PLUGIN_PRIVATE_DIR
-    "${CMAKE_INSTALL_LIBDIR}/sima-pcie-host/gst-plugins")
-  set(SIMAPCIE_GSTREAMER_PLUGIN_DIR
-    "${CMAKE_INSTALL_LIBDIR}/gstreamer-1.0")
-
-  install(FILES "${SIMAPCIE_NEATPCIEHOST_PLUGIN}"
-    DESTINATION "${SIMAPCIE_HOST_PLUGIN_PRIVATE_DIR}"
-    COMPONENT Runtime
-  )
-
-  install(CODE "
-    file(MAKE_DIRECTORY \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${SIMAPCIE_GSTREAMER_PLUGIN_DIR}\")
-    file(REMOVE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${SIMAPCIE_GSTREAMER_PLUGIN_DIR}/libgstneatpciehost.so\")
-    execute_process(
-      COMMAND \"${CMAKE_COMMAND}\" -E create_symlink
-              \"../sima-pcie-host/gst-plugins/libgstneatpciehost.so\"
-              \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${SIMAPCIE_GSTREAMER_PLUGIN_DIR}/libgstneatpciehost.so\"
-      RESULT_VARIABLE _simapcie_symlink_result)
-    if (NOT _simapcie_symlink_result EQUAL 0)
-      message(FATAL_ERROR \"failed to create libgstneatpciehost.so GStreamer symlink\")
-    endif()
-  " COMPONENT Runtime)
-endif()
 
 if (SIMAPCIE_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME pcie_host_delivery_contract
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_delivery.py")
+  add_test(NAME pcie_host_service_header_contract
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_service_header_contract.py")
   enable_testing()
 
   add_executable(unit_pcie_host_options_test
@@ -227,11 +226,10 @@ if (SIMAPCIE_BUILD_TESTS)
   add_executable(unit_pcie_host_tensor_test
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_tensor_test.cpp
   )
-  target_link_libraries(unit_pcie_host_tensor_test PRIVATE sima_neat_pcie_host)
+  target_link_libraries(unit_pcie_host_tensor_test PRIVATE sima_neat_pcie_host SimaScheduler::pcie_host)
   target_include_directories(unit_pcie_host_tensor_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${SIMA_NEAT_CORE_ROOT}/include
-    ${SIMAPCIE_NEATPCIEHOST_INCLUDE_DIR}
     ${GST_INCLUDE_DIRS}
   )
 
@@ -244,6 +242,14 @@ if (SIMAPCIE_BUILD_TESTS)
     ${SIMA_NEAT_CORE_ROOT}/src
   )
   target_link_libraries(unit_pcie_host_model_facts_test PRIVATE sima_neat_pcie_host)
+
+  add_executable(unit_pcie_host_output_layout_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_output_layout_test.cpp
+  )
+  target_include_directories(unit_pcie_host_output_layout_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(unit_pcie_host_output_layout_test PRIVATE
+    sima_neat_pcie_host SimaScheduler::pcie_host PkgConfig::GST)
+  add_test(NAME unit_pcie_host_output_layout_test COMMAND unit_pcie_host_output_layout_test)
 
   add_executable(unit_pcie_host_model_archive_snapshot_test
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_model_archive_snapshot_test.cpp
@@ -278,6 +284,29 @@ if (SIMAPCIE_BUILD_TESTS)
   target_link_libraries(unit_pcie_host_async_test_runner_test PRIVATE Threads::Threads)
   target_include_directories(unit_pcie_host_async_test_runner_test
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+
+  add_executable(unit_pcie_host_genai_values_test tests/unit_pcie_host_genai_values_test.cpp)
+  target_link_libraries(unit_pcie_host_genai_values_test PRIVATE sima_neat_pcie_host)
+  target_include_directories(unit_pcie_host_genai_values_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src ${SIMA_NEAT_CORE_ROOT}/src
+    ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
+  add_test(NAME unit_pcie_host_genai_values_test COMMAND unit_pcie_host_genai_values_test)
+
+  add_library(fake_genai_service SHARED tests/fake_genai_service.cpp)
+  target_link_libraries(fake_genai_service PRIVATE SimaScheduler::pcie_service_headers)
+  target_link_libraries(fake_genai_service PRIVATE Threads::Threads)
+  set_target_properties(fake_genai_service PROPERTIES OUTPUT_NAME simaaipcie
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/fake-genai-service)
+  target_link_libraries(unit_pcie_host_genai_values_test PRIVATE fake_genai_service)
+  set_tests_properties(unit_pcie_host_genai_values_test PROPERTIES TIMEOUT 20
+    ENVIRONMENT "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:fake_genai_service>")
+  add_executable(unit_pcie_host_genai_assets_test tests/unit_pcie_host_genai_assets_test.cpp)
+  target_include_directories(unit_pcie_host_genai_assets_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
+  target_link_libraries(unit_pcie_host_genai_assets_test PRIVATE sima_neat_pcie_host fake_genai_service)
+  add_test(NAME unit_pcie_host_genai_assets_test COMMAND unit_pcie_host_genai_assets_test)
+  set_tests_properties(unit_pcie_host_genai_assets_test PROPERTIES TIMEOUT 10
+    ENVIRONMENT "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:fake_genai_service>")
 
   add_test(NAME unit_pcie_host_options_test COMMAND unit_pcie_host_options_test)
   add_test(NAME unit_pcie_host_caps_test COMMAND unit_pcie_host_caps_test)
@@ -324,19 +353,30 @@ set(CPACK_COMPONENT_RUNTIME_DISPLAY_NAME "SiMa PCIe host runtime")
 set(CPACK_COMPONENT_DEVELOPMENT_DISPLAY_NAME "SiMa PCIe host development files")
 set(CPACK_COMPONENT_DEVELOPMENT_DEPENDS Runtime)
 
+set(SIMAPCIE_SCHEDULER_PACKAGE_VERSION "" CACHE STRING "Exact selected native Scheduler DEB version")
+set(_native_package_guard "message(FATAL_ERROR \"Native Core packaging requires its selected Scheduler DEB version\")")
+set(_scheduler_runtime "simaai-scheduler-pcie-host")
+set(_scheduler_dev "simaai-scheduler-pcie-host-dev")
+if(SIMAPCIE_SCHEDULER_PACKAGE_VERSION MATCHES "^[0-9][0-9A-Za-z.+:~-]*$")
+  set(_scheduler_runtime "simaai-scheduler-pcie-host (= ${SIMAPCIE_SCHEDULER_PACKAGE_VERSION})")
+  set(_scheduler_dev "simaai-scheduler-pcie-host-dev (= ${SIMAPCIE_SCHEDULER_PACKAGE_VERSION})")
+  set(_native_package_guard "")
+endif()
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/NativePackageGuard.cmake" "${_native_package_guard}\n")
+set(CPACK_PROJECT_CONFIG_FILE "${CMAKE_CURRENT_BINARY_DIR}/NativePackageGuard.cmake")
 set(CPACK_DEBIAN_RUNTIME_PACKAGE_NAME "sima-pcie-host")
 set(CPACK_DEBIAN_RUNTIME_PACKAGE_SECTION "libs")
 set(CPACK_DEBIAN_RUNTIME_PACKAGE_DEPENDS
-  "openssh-client, libgstreamer1.0-0, libgstreamer-plugins-base1.0-0, libglib2.0-0"
+  "${_scheduler_runtime}, libstdc++6, openssh-client, python3, iproute2, libgstreamer-plugins-base1.0-0, libglib2.0-0"
 )
 set(CPACK_DEBIAN_RUNTIME_PACKAGE_RECOMMENDS "sshpass")
 set(CPACK_DEBIAN_RUNTIME_DESCRIPTION
-  "Host-side NEAT PCIe runtime, including the neatpciehost GStreamer plugin.")
+  "Host-side NEAT PCIe API; GStreamer transport is provided by Scheduler.")
 
 set(CPACK_DEBIAN_DEVELOPMENT_PACKAGE_NAME "sima-pcie-host-dev")
 set(CPACK_DEBIAN_DEVELOPMENT_PACKAGE_SECTION "libdevel")
 set(CPACK_DEBIAN_DEVELOPMENT_PACKAGE_DEPENDS
-  "sima-pcie-host (= ${PROJECT_VERSION}), pkg-config, libgstreamer1.0-dev, libgstreamer-plugins-base1.0-dev, libglib2.0-dev, libopencv-dev, zlib1g-dev"
+  "sima-pcie-host (= ${PROJECT_VERSION}), ${_scheduler_dev}, pkg-config, libgstreamer1.0-dev, libgstreamer-plugins-base1.0-dev, libglib2.0-dev, libopencv-dev, zlib1g-dev, nlohmann-json3-dev"
 )
 set(CPACK_DEBIAN_DEVELOPMENT_DESCRIPTION
   "Headers, static library, and CMake package files for the NEAT PCIe host API.")

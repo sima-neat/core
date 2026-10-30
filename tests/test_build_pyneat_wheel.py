@@ -10,6 +10,8 @@ import zipfile
 from pathlib import Path
 
 from packaging.metadata import Metadata
+from packaging.requirements import Requirement
+import tomllib
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +24,49 @@ SPEC.loader.exec_module(MODULE)
 
 
 class BuildPyneatWheelTests(unittest.TestCase):
+    def assert_current_numpy_policy(self, requirements):
+        numpy = [item for item in requirements if item.name == "numpy"]
+        self.assertEqual(len(numpy), 2)
+        # C066 / upstream #1036 removes ceilings: Platform 3.0 ships NumPy 2.2.4.
+        # The approved integration retains Python-specific known minimums. These
+        # are metadata assertions, not NumPy runtime/ABI qualification.
+        for python, minimum, below_floor in (("3.9", "1.24", "1.23.5"),
+                                             ("3.12", "1.24", "1.23.5"),
+                                             ("3.13", "2.1", "2.0.2"),
+                                             ("3.14", "2.1", "2.0.2")):
+            with self.subTest(python=python):
+                self.assertTrue(all(item.marker is not None for item in numpy))
+                active = [item for item in numpy if
+                          item.marker.evaluate({"python_version": python})]
+                self.assertEqual(len(active), 1)
+                self.assertEqual(
+                    {(item.operator, item.version) for item in active[0].specifier},
+                    {(">=", minimum)},
+                    "retain the known floor without reintroducing a NumPy ceiling",
+                )
+                self.assertIn(minimum, active[0].specifier)
+                self.assertNotIn(below_floor, active[0].specifier)
+                self.assertIn("2.2.4", active[0].specifier)
+
+    def test_current_numpy_markers_resolve_and_survive_cp313_wheel(self):
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+        requirements = [Requirement(item) for item in project["dependencies"]]
+        self.assert_current_numpy_policy(requirements)
+        with tempfile.TemporaryDirectory() as directory:
+            extension = Path(directory) / "_pyneat_core.cpython-313-aarch64-linux-gnu.so"
+            extension.write_bytes(b"HOST_METADATA_FIXTURE_NOT_ELF")
+            wheel = MODULE.build_wheel(ROOT, extension, Path(directory) / "dist", "1.2.3",
+                                       "cp313", "cp313", "linux_aarch64")
+            with zipfile.ZipFile(wheel) as archive:
+                metadata = Metadata.from_email(archive.read("pyneat-1.2.3.dist-info/METADATA"), validate=True)
+                numpy = [item for item in metadata.requires_dist if item.name == "numpy"]
+                self.assertEqual(
+                    sorted(str(item) for item in numpy),
+                    sorted(str(item) for item in requirements if item.name == "numpy"),
+                    "wheel metadata must preserve complete NumPy specifiers and markers",
+                )
+                self.assert_current_numpy_policy(numpy)
+
     def test_packages_existing_extension_with_valid_record(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

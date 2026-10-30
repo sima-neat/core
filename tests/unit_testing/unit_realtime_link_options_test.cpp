@@ -8,15 +8,110 @@
 
 #include <gst/gst.h>
 
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
+#include <dlfcn.h>
 #include <iostream>
+#include <memory>
 #include <mutex>
+#include <new>
+#include <pthread.h>
 #include <stdexcept>
 #include <string>
+#include <system_error>
+#include <thread>
+#include <time.h>
+#include <type_traits>
 #include <vector>
+
+namespace {
+// Executable-local fault: std::thread allocates its state after start() has
+// installed all four callbacks. No production hook or device operation.
+thread_local bool fail_next_allocation = false;
+
+// Executable-local syscall observation: pause a real registry release after it
+// removed its entry but before a retained lane signals the link's condition.
+// No production hook, private-member access or freed-condition signal is needed.
+using ConditionFn = int (*)(pthread_cond_t*);
+ConditionFn real_condition_signal() {
+  static const auto fn = reinterpret_cast<ConditionFn>(dlsym(RTLD_NEXT, "pthread_cond_signal"));
+  return fn;
+}
+ConditionFn real_condition_destroy() {
+  static const auto fn = reinterpret_cast<ConditionFn>(dlsym(RTLD_NEXT, "pthread_cond_destroy"));
+  return fn;
+}
+struct LateWakeProbe {
+  unsigned pause_on = 0;
+  std::atomic<pthread_cond_t*> condition{nullptr};
+  std::atomic<bool> entered{false}, resume{false}, timed_out{false}, destroyed{false};
+  std::atomic<unsigned> signals{0}, actual_signals{0}, destroys{0};
+};
+static_assert(std::is_trivially_destructible_v<LateWakeProbe>);
+std::atomic<LateWakeProbe*> active_wake_probe{nullptr};
+thread_local LateWakeProbe* release_wake_probe = nullptr;
+} // namespace
+
+void* operator new(std::size_t bytes) {
+  if (fail_next_allocation) {
+    fail_next_allocation = false;
+    throw std::bad_alloc();
+  }
+  if (void* memory = std::malloc(bytes == 0 ? 1 : bytes)) {
+    return memory;
+  }
+  throw std::bad_alloc();
+}
+
+void operator delete(void* memory) noexcept {
+  std::free(memory);
+}
+
+void operator delete(void* memory, std::size_t) noexcept {
+  std::free(memory);
+}
+
+extern "C" int pthread_cond_signal(pthread_cond_t* condition) noexcept {
+  auto* probe = release_wake_probe;
+  if (probe) {
+    const auto ordinal = probe->signals.fetch_add(1) + 1;
+    if (ordinal == probe->pause_on) {
+      probe->condition.store(condition);
+      probe->entered.store(true);
+      for (unsigned attempt = 0; !probe->resume.load() && attempt < 2000; ++attempt) {
+        const timespec delay{0, 1000000};
+        (void)nanosleep(&delay, nullptr);
+      }
+      if (!probe->resume.load()) {
+        probe->timed_out.store(true);
+      }
+    }
+    // The negative control records the lifetime violation without invoking UB.
+    if (probe->condition.load() == condition && probe->destroyed.load()) {
+      return 0;
+    }
+    probe->actual_signals.fetch_add(1);
+  }
+  const auto signal = real_condition_signal();
+  if (!signal)
+    std::abort();
+  return signal(condition);
+}
+
+extern "C" int pthread_cond_destroy(pthread_cond_t* condition) noexcept {
+  if (auto* probe = active_wake_probe.load(); probe && probe->condition.load() == condition) {
+    probe->destroys.fetch_add(1);
+    probe->destroyed.store(true);
+  }
+  const auto destroy = real_condition_destroy();
+  if (!destroy)
+    std::abort();
+  return destroy(condition);
+}
 
 namespace {
 
@@ -237,12 +332,232 @@ void verify_asymmetric_fan_in_uses_strictest_caps() {
                                     /*use_explicit_link_stream_ids=*/true, {second_options});
 }
 
+void verify_callbacks_retained_until_join() {
+  using namespace simaai::neat;
+  runtime::DownstreamTarget target{runtime::DownstreamTarget::Kind::PipelineInput, 0U,
+                                   graph::kInvalidPort, 0U};
+  GraphLinkOptions options;
+  options.policy = GraphLinkPolicy::RealtimeLatestByStream;
+  runtime::RealtimeLatestLink link(target, options, "stream0");
+  std::array<std::shared_ptr<int>, 4> owners;
+  std::array<std::weak_ptr<int>, 4> observed;
+  for (std::size_t i = 0; i < owners.size(); ++i) {
+    owners[i] = std::make_shared<int>(static_cast<int>(i));
+    observed[i] = owners[i];
+  }
+  std::mutex mu;
+  std::condition_variable cv;
+  bool entered = false;
+  bool released = false;
+  bool timed_out = false;
+  bool joining = false;
+  bool joined = false;
+  bool self_join_rejected = false;
+  link.start(
+      [owner = owners[0], &link, &mu, &cv, &entered, &released, &timed_out,
+       &self_join_rejected](const runtime::DownstreamTarget&, Sample&&, std::size_t) {
+        try {
+          link.join();
+        } catch (const std::system_error&) {
+          self_join_rejected = true;
+        }
+        std::unique_lock lock(mu);
+        entered = true;
+        cv.notify_all();
+        timed_out = !cv.wait_for(lock, std::chrono::seconds(2), [&] { return released; });
+        return true;
+      },
+      [owner = owners[1]] { return false; }, [owner = owners[2]](const std::string&) {},
+      [owner = owners[3]] {});
+  owners = {};
+  require(link.offer(make_raw_holder_sample("stream0", 1), runtime::invalid_edge_index()),
+          "callback retirement: sample offer failed");
+  bool dispatched = false;
+  {
+    std::unique_lock lock(mu);
+    dispatched = cv.wait_for(lock, std::chrono::seconds(2), [&] { return entered; });
+  }
+  link.close();
+  std::thread joiner([&] {
+    {
+      std::lock_guard lock(mu);
+      joining = true;
+    }
+    cv.notify_all();
+    link.join();
+    {
+      std::lock_guard lock(mu);
+      joined = true;
+    }
+    cv.notify_all();
+  });
+  bool retained = false;
+  {
+    std::unique_lock lock(mu);
+    const bool join_started = cv.wait_for(lock, std::chrono::seconds(2), [&] { return joining; });
+    retained = join_started && !joined;
+    for (const auto& owner : observed) {
+      retained = retained && !owner.expired();
+    }
+    released = true;
+  }
+  cv.notify_all();
+  joiner.join();
+  require(dispatched && self_join_rejected && retained && !timed_out,
+          "callbacks must retain every owner after failed join and while dispatch is active");
+  for (const auto& owner : observed) {
+    require(owner.expired(), "joined realtime link retained a callback owner");
+  }
+  link.join();
+  link.close();
+  link.join();
+}
+
+void verify_late_credit_wake_outlives_link() {
+  using namespace simaai::neat;
+  namespace credits = pipeline_internal;
+  // A real frame owns one stream credit and one global companion credit.
+  // Exercise both retained-lane wake positions.
+  // Check the last wake first: the raw-this negative control then fails before
+  // another callback could dereference the destroyed link.
+  // Interposed destroy calls on other threads may have observed the probe
+  // before it was disarmed. Keep each once-used probe alive for the process.
+  static std::array<LateWakeProbe, 2> probes;
+  for (unsigned wake_ordinal : {2U, 1U}) {
+    runtime::DownstreamTarget target{runtime::DownstreamTarget::Kind::PipelineInput, 0U,
+                                     graph::kInvalidPort, 0U};
+    GraphLinkOptions options;
+    options.policy = GraphLinkPolicy::RealtimeLatestByStream;
+    options.max_inflight_per_stream = 1;
+    options.max_inflight_total = 1;
+    auto link = std::make_unique<runtime::RealtimeLatestLink>(target, options, "stream0");
+    std::mutex mu;
+    std::condition_variable cv;
+    std::vector<credits::RealtimeFrameCredit> held;
+    link->start(
+        [&](const runtime::DownstreamTarget&, Sample&& sample, std::size_t) {
+          {
+            std::lock_guard lock(mu);
+            held = credits::attached_realtime_frame_credits_from_sample(sample);
+          }
+          cv.notify_all();
+          return true;
+        },
+        [] { return false; }, [](const std::string&) {});
+    require(link->offer(make_raw_holder_sample("stream0", 1), runtime::invalid_edge_index()),
+            "late wake: sample offer failed");
+    {
+      std::unique_lock lock(mu);
+      require(cv.wait_for(lock, std::chrono::seconds(2), [&] { return !held.empty(); }),
+              "late wake: dispatch did not retain a frame credit");
+    }
+    require(held.size() == 1, "late wake: expected one registered frame identity");
+    require(held.front().graph_private && held.front().namespace_id != 0 &&
+                held.front().stream_id == "stream0" && held.front().frame_id == 1,
+            "late wake: expected the exact attached graph credit");
+    const auto before = link->stats();
+    // One primary registry entry retains both stream and global lane gates.
+    require(before.credit_registered == 1 && before.credit_inflight == 2,
+            "late wake: one registered identity must hold both lane gates");
+
+    auto& probe = probes[wake_ordinal - 1];
+    probe.pause_on = wake_ordinal;
+    bool released = false;
+    std::thread releaser([&] {
+      active_wake_probe.store(&probe);
+      release_wake_probe = &probe;
+      released = credits::release_registered_realtime_frame_credit(held.front(),
+                                                                   "unit-late-link-wake", true);
+      release_wake_probe = nullptr;
+    });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!probe.entered.load() && std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    const bool entered = probe.entered.load();
+    bool removed = false;
+    bool accounting = false;
+    bool destroyed_early = false;
+    if (entered) {
+      const auto pending = link->stats();
+      accounting = pending.credit_released_by_output == wake_ordinal &&
+                   pending.credit_inflight == 2 - wake_ordinal &&
+                   pending.credit_released_without_output == 0;
+      removed = !credits::release_registered_realtime_frame_credit(
+          held.front(), "unit-late-link-duplicate", true);
+      // close()/join() cannot find the removed registry entry, but its release
+      // thread still owns both lanes and has not called the selected real wake.
+      link.reset();
+      destroyed_early = probe.destroyed.load();
+    }
+    // Resume/join before any assertion, including timeout failures. If no wake
+    // was observed, keep the link alive until the release thread has returned.
+    probe.resume.store(true);
+    releaser.join();
+    link.reset();
+    active_wake_probe.store(nullptr);
+    require(entered && !probe.timed_out.load(), "late wake: interposition was not observed");
+    require(removed && accounting && released,
+            "late wake: registry removal or exact-once lane accounting failed");
+    require(!destroyed_early && probe.signals.load() == 2 && probe.actual_signals.load() == 2,
+            "retained credit lane signalled a condition destroyed with its link");
+    require(probe.destroys.load() == 1,
+            "late wake: retained condition was not destroyed exactly once after release");
+    require(!credits::release_registered_realtime_frame_credit(
+                held.front(), "unit-late-link-after-release", true),
+            "late wake: completed credit remained registered");
+  }
+}
+
+void verify_failed_thread_start_releases_callbacks() {
+  using namespace simaai::neat;
+  runtime::DownstreamTarget target{runtime::DownstreamTarget::Kind::PipelineInput, 0U,
+                                   graph::kInvalidPort, 0U};
+  runtime::RealtimeLatestLink link(target, GraphLinkOptions{}, "stream0");
+  auto owner = std::make_shared<int>(0);
+  const std::weak_ptr<int> observed = owner;
+  runtime::RealtimeLatestLink::DispatchFn dispatch =
+      [owner](const runtime::DownstreamTarget&, Sample&&, std::size_t) { return true; };
+  runtime::RealtimeLatestLink::StopFn stop = [owner] { return false; };
+  runtime::RealtimeLatestLink::ErrorFn error = [owner](const std::string&) {};
+  runtime::RealtimeLatestLink::CompleteFn complete = [owner] {};
+  owner.reset();
+  bool failed = false;
+  // All potentially allocating callback conversions are complete. Moving them
+  // into start() is noexcept; the next allocation belongs to std::thread.
+  fail_next_allocation = true;
+  try {
+    link.start(std::move(dispatch), std::move(stop), std::move(error), std::move(complete));
+  } catch (const std::bad_alloc&) {
+    failed = true;
+  }
+  const bool injected = !fail_next_allocation;
+  fail_next_allocation = false;
+  // Do not depend on the unspecified state of moved-from std::function objects.
+  dispatch = {};
+  stop = {};
+  error = {};
+  complete = {};
+  const bool retained_before_rollback = !observed.expired();
+  link.close();
+  link.join();
+  require(failed && injected && retained_before_rollback,
+          "thread-start failure must leave installed callbacks for terminal rollback");
+  require(observed.expired(), "no-thread rollback retained installed callback owners");
+  link.join();
+}
+
 } // namespace
 
 int main() {
   try {
+    require(real_condition_signal() && real_condition_destroy(),
+            "failed to resolve condition-variable syscall observation");
     simaai::neat::gst_init_once();
     ::unsetenv("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_GLOBAL");
+    verify_callbacks_retained_until_join();
+    verify_failed_thread_start_releases_callbacks();
+    verify_late_credit_wake_outlives_link();
 
     simaai::neat::GraphLinkOptions default_options;
     default_options.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;

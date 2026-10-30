@@ -8,6 +8,7 @@
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "test_main.h"
 
+#include <algorithm>
 #include <filesystem>
 
 namespace {
@@ -79,7 +80,8 @@ sima_test::ModelArchiveFixture make_quanttess_detessdequant_fixture(const std::s
   "input_depth": [6]
 })json"},
                                                       },
-                                                      true);
+                                                      true, "yolo_v9c_seg",
+                                                      /*include_topology_artifacts=*/true);
 }
 
 class ManualPostProbeNode final : public simaai::neat::Node,
@@ -115,65 +117,107 @@ private:
 
 } // namespace
 
-RUN_TEST("unit_model_route_retarget_helper_test", ([] {
-           using namespace simaai::neat;
+RUN_TEST(
+    "unit_model_route_retarget_helper_test", ([] {
+      using namespace simaai::neat;
 
-           const auto fixture =
-               make_quanttess_detessdequant_fixture("model_route_retarget_boxdecode");
+      const auto fixture = make_quanttess_detessdequant_fixture("model_route_retarget_boxdecode");
 
-           Model model(fixture.tar_path);
+      Model model(fixture.tar_path);
 
-           require(internal::ModelAccess::resolved_post_kind(model) ==
-                       internal::PostRouteStageKind::DetessDequant,
-                   "fixture should start on detessdequant route");
+      require(internal::ModelAccess::resolved_post_kind(model) ==
+                  internal::PostRouteStageKind::DetessDequant,
+              "fixture should start on detessdequant route");
 
-           const auto base_binding = internal::make_model_lineage_binding(
-               model, internal::ModelLineageStageRole::ManualPost,
-               internal::RequestedPostRouteKind::BoxDecode, "SimaBoxDecode");
-           auto probe_binding = std::make_shared<internal::ModelLineageBinding>(*base_binding);
-           probe_binding->base_options.decode_type = BoxDecodeType::YoloV8Seg;
+      const auto base_binding = internal::make_model_lineage_binding(
+          model, internal::ModelLineageStageRole::ManualPost,
+          internal::RequestedPostRouteKind::BoxDecode, "SimaBoxDecode");
+      auto probe_binding = std::make_shared<internal::ModelLineageBinding>(*base_binding);
+      probe_binding->base_options.decode_type = BoxDecodeType::YoloV8Seg;
 
-           bool changed = false;
-           std::string err;
-           auto effective = internal::build_effective_model_for_requested_post(
-               *base_binding, BoxDecodeType::YoloV8Seg, &changed, &err);
-           require(effective != nullptr, "retarget helper should produce an effective model");
-           require(err.empty(), "retarget helper should not emit an error");
-           require(changed, "retarget helper should report a changed model");
-           require(internal::ModelAccess::resolved_post_kind(*effective) ==
-                       internal::PostRouteStageKind::BoxDecode,
-                   "retargeted model should resolve to boxdecode");
+      bool changed = false;
+      std::string err;
+      auto effective = internal::build_effective_model_for_requested_post(
+          *base_binding, BoxDecodeType::YoloV8Seg, &changed, &err);
+      require(effective != nullptr, "retarget helper should produce an effective model");
+      require(err.empty(), "retarget helper should not emit an error");
+      require(changed, "retarget helper should report a changed model");
+      require(internal::ModelAccess::resolved_post_kind(*effective) ==
+                  internal::PostRouteStageKind::BoxDecode,
+              "retargeted model should resolve to boxdecode");
+      const auto effective_options = internal::ModelAccess::options(*effective);
+      require(effective_options.inference_terminal.mla_only,
+              "model-bound boxdecode should terminate the model fragment at the last MLA");
+      require(!effective_options.inference_terminal.last_stage_index.has_value() &&
+                  !effective_options.inference_terminal.last_stage_name.has_value() &&
+                  !effective_options.inference_terminal.last_plugin_id.has_value() &&
+                  !effective_options.inference_terminal.last_processor.has_value(),
+              "model-bound boxdecode should have one exact terminal authority");
 
-           const auto compiled =
-               internal::ModelAccess::build_boxdecode_stage_contract(*effective, false);
-           require(compiled.payload.decode_type == BoxDecodeType::YoloV8Seg,
-                   "explicit retarget should use the MPK-derived segmentation BoxDecode contract");
+      const auto compiled =
+          internal::ModelAccess::build_boxdecode_stage_contract(*effective, false);
+      require(compiled.payload.decode_type == BoxDecodeType::YoloV8Seg,
+              "explicit retarget should use the MPK-derived segmentation BoxDecode contract");
 
-           auto asserted_boxdecode = nodes::SimaBoxDecode(
-               *effective, BoxDecodeType::YoloV8Seg, 0.25, 0.45, 100, "retarget_boxdecode",
-               std::nullopt, std::nullopt, 1920, 1080, 0, 0, ResizeMode::Stretch);
-           const auto* asserted_before =
-               dynamic_cast<const SimaBoxDecode*>(asserted_boxdecode.get());
-           require(asserted_before != nullptr && asserted_before->backend_fragment(0).find(
-                                                     "resize-mode=stretch") != std::string::npos,
-                   "manual post node should emit its explicit resize assertion");
-           const auto retargeted = asserted_before->retargeted_for_model_internal(*effective);
-           const auto* asserted_after = dynamic_cast<const SimaBoxDecode*>(retargeted.get());
-           require(asserted_after != nullptr && asserted_after->backend_fragment(0).find(
-                                                    "resize-mode=stretch") != std::string::npos,
-                   "model retarget must preserve an explicit resize assertion");
+      auto asserted_boxdecode = nodes::SimaBoxDecode(
+          *effective, BoxDecodeType::YoloV8Seg, 0.25, 0.45, 100, "retarget_boxdecode", std::nullopt,
+          std::nullopt, 1920, 1080, 640, 640, ResizeMode::Stretch);
+      const auto* asserted_before = dynamic_cast<const SimaBoxDecode*>(asserted_boxdecode.get());
+      require(asserted_before != nullptr, "manual post must remain a BoxDecode Node");
+      const auto retargeted = asserted_before->retargeted_for_model_internal(*effective);
+      const auto* asserted_after = dynamic_cast<const SimaBoxDecode*>(retargeted.get());
+      require(asserted_after != nullptr, "retarget must preserve the BoxDecode Node");
+      // These are Node options, not serialized GStreamer properties. Compare
+      // both Nodes to the request so two equally wrong values cannot pass.
+      for (const auto* node : {asserted_before, asserted_after}) {
+        require(node->original_width_internal() == 1920 && node->original_height_internal() == 1080,
+                "retarget must preserve explicit original image dimensions");
+        require(node->model_width_internal() == 640 && node->model_height_internal() == 640,
+                "retarget must preserve explicit model dimensions");
+        require(node->resize_mode_override_internal() == ResizeMode::Stretch,
+                "retarget must preserve the explicit stretch assertion");
+        require(node->detection_threshold_internal() == 0.25 &&
+                    node->nms_iou_threshold_internal() == 0.45 && node->top_k_internal() == 100,
+                "retarget must preserve detection options");
+        const auto meta = node->preprocess_meta_requirement();
+        require(!meta || std::find(meta->required_fields.begin(), meta->required_fields.end(),
+                                   "preproc_resize_mode") == meta->required_fields.end(),
+                "explicit resize provenance must not require per-frame resize metadata");
+      }
 
-           std::vector<std::shared_ptr<Node>> nodes;
-           nodes.push_back(std::make_shared<ManualPostProbeNode>(probe_binding));
+      // Cover the route that exposed the product bug: the Model already selected BoxDecode,
+      // so no post-kind retarget was needed, but its infer fragment still rendered the MPK
+      // dequant/detess tail.  Materialization must still rebuild it with the exact last-MLA
+      // terminal rather than returning the untrimmed model.
+      Model::Options already_boxdecode_options;
+      already_boxdecode_options.decode_type = BoxDecodeType::YoloV8Seg;
+      Model already_boxdecode(fixture.tar_path, already_boxdecode_options);
+      require(internal::ModelAccess::resolved_post_kind(already_boxdecode) ==
+                  internal::PostRouteStageKind::BoxDecode,
+              "explicit decode type should preselect the boxdecode route");
+      const auto already_binding = internal::make_model_lineage_binding(
+          already_boxdecode, internal::ModelLineageStageRole::ManualPost,
+          internal::RequestedPostRouteKind::BoxDecode, "SimaBoxDecode");
+      changed = false;
+      err.clear();
+      auto already_effective = internal::build_effective_model_for_requested_post(
+          *already_binding, BoxDecodeType::YoloV8Seg, &changed, &err);
+      require(already_effective != nullptr && err.empty(),
+              "already-selected boxdecode route should materialize cleanly");
+      require(changed, "already-selected boxdecode route should still acquire the MLA terminal");
+      require(internal::ModelAccess::options(*already_effective).inference_terminal.mla_only,
+              "already-selected boxdecode route should stop before the MPK post tail");
 
-           bool threw_conflict = false;
-           try {
-             std::vector<std::shared_ptr<Node>> conflicting = nodes;
-             conflicting.push_back(std::make_shared<ManualPostProbeNode>(probe_binding));
-             (void)session_build_materialize_model_bound_nodes(conflicting, true);
-           } catch (const std::exception&) {
-             threw_conflict = true;
-           }
-           require(threw_conflict,
-                   "multiple manual post nodes on one model lineage should be rejected");
-         }));
+      std::vector<std::shared_ptr<Node>> nodes;
+      nodes.push_back(std::make_shared<ManualPostProbeNode>(probe_binding));
+
+      bool threw_conflict = false;
+      try {
+        std::vector<std::shared_ptr<Node>> conflicting = nodes;
+        conflicting.push_back(std::make_shared<ManualPostProbeNode>(probe_binding));
+        (void)session_build_materialize_model_bound_nodes(conflicting, true);
+      } catch (const std::exception&) {
+        threw_conflict = true;
+      }
+      require(threw_conflict, "multiple manual post nodes on one model lineage should be rejected");
+    }));

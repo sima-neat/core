@@ -174,6 +174,31 @@ def test_main_writes_completed_locale_manifest(tmp_path: Path, monkeypatch) -> N
     assert manifest == {"locales": ["ja"]}
 
 
+def test_cross_listed_tutorial_has_one_page_and_two_category_cards(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    module = _write_module(tmp_path, "029_run_genai_over_pcie")
+    for readme in (module / "README.md", module / "i18n/ja/README.md"):
+        text = readme.read_text(encoding="utf-8")
+        readme.write_text(text.replace("Models & Inference", "PCIe Co-Processing"), encoding="utf-8")
+    _write_locale_support(tmp_path, [module])
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["generate_tutorial_docs.py", "--repo-root", str(tmp_path)])
+
+    assert tutorial_docs.main() == 0
+    for root in (
+        tmp_path / "docs/develop-apps/tutorials",
+        tmp_path / "website/i18n/ja/docusaurus-plugin-content-docs/current/develop-apps/tutorials",
+    ):
+        pages = list(root.rglob("tutorial_029_run_genai_over_pcie.mdx"))
+        assert len(pages) == 1
+        assert pages[0].parent.name == "pcie"
+        for category in ("pcie", "genai"):
+            landing = (root / category / "index.md").read_text(encoding="utf-8")
+            assert 'href="/tutorials/run-genai-over-pcie"' in landing
+            assert landing.count('class="tutorial-card tutorial-difficulty-') == 1
+
+
 def test_rejects_partially_translated_locale(tmp_path: Path) -> None:
     first = _write_module(tmp_path, "001_run_a_model")
     second = _write_module(tmp_path, "002_run_another_model", localized=False)
@@ -239,3 +264,39 @@ def test_rejects_translation_that_changes_protected_structure(tmp_path: Path) ->
 
     with pytest.raises(ValueError, match="changed link targets"):
         tutorial_docs._validate_localized_readme(source, localized)
+
+
+@pytest.mark.parametrize(
+    "translated_rows",
+    [
+        "| --- | --- | `A` | 一 | `B` | 二 |\n",
+        "| --- | --- |\n| `A` | 一 | 追加 |\n| `B` | 二 |\n",
+    ],
+)
+def test_rejects_changed_translation_table_shape(
+    tmp_path: Path, translated_rows: str,
+) -> None:
+    source = tmp_path / "README.md"
+    localized = tmp_path / "ja.md"
+    source.write_text(
+        "| Code | Meaning |\n| --- | --- |\n| `A` | First |\n| `B` | Second |\n",
+        encoding="utf-8",
+    )
+    localized.write_text("| コード | 意味 |\n" + translated_rows, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="changed table shapes"):
+        tutorial_docs._validate_localized_readme(source, localized)
+
+
+def test_accepts_translated_table_with_escaped_pipe(tmp_path: Path) -> None:
+    source = tmp_path / "README.md"
+    localized = tmp_path / "ja.md"
+    source.write_text(
+        "| Code | Meaning |\n| --- | --- |\n| `A` | First \\| alternative |\n",
+        encoding="utf-8",
+    )
+    localized.write_text(
+        "| コード | 意味 |\n| --- | --- |\n| `A` | 一 \\| 代替 |\n",
+        encoding="utf-8",
+    )
+    tutorial_docs._validate_localized_readme(source, localized)

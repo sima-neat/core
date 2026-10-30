@@ -137,8 +137,10 @@ struct TrackDescriptorOptions : public VisualFrontendCommonOptions {
  * - outputs when `detect_new_features == 1` additionally include:
  *   - `output_features_name`, Int32 `[batch_size,1 + max_features*3]`
  *
- * The EV ABI always allocates the internal detected-features output; Neat only
- * publishes it when `detect_new_features != 0`.
+ * When `publish_error` is true, append Float32 `[batch_size,num_points,1]`
+ * residuals after the existing outputs. Disabled detection does not allocate a
+ * hidden feature output. Status reports solver/geometry validity by default;
+ * enable explicit quality thresholds to reject weak or inconsistent matches.
  */
 struct TrackKLTOptions {
   /// Input image width in pixels.
@@ -185,75 +187,52 @@ struct TrackKLTOptions {
   std::string output_status_name = "output_status";
   /// Optional published feature-list tensor name when `detect_new_features != 0`.
   std::string output_features_name = "output_features";
+  /// Append mean absolute photometric residuals at the returned coordinates.
+  bool publish_error = false;
+  /// Residual output name. Unevaluated residuals are positive infinity.
+  std::string output_error_name = "output_error";
+  /// Maximum mean absolute UInt8 intensity residual [0,255]; -1 disables filtering.
+  float error_threshold = -1.0f;
+  /// Minimum texture eigenvalue divided by window area and 255 squared; 0 disables.
+  float min_eig_threshold = 0.0f;
+  /// Require convergence of the final full-resolution solve, not every coarse level.
+  bool require_convergence = false;
 
   /// Human-readable, non-throwing summary for logs, diagnostics, and Python `repr`.
   std::string summary() const;
 };
 
 /**
- * @brief Metoak S315 SIMOR depth-map Node: I420->RGB + disparity->metric-depth/point-cloud,
- *        offloaded to the native `simor_depth_map` EV74 kernel (graph id 20).
+ * @brief Metoak S315 depth: separated I420, unsigned disparity and calibration
+ *        tensors to RGB, metric depth and XYZ, executed on EV74.
  *
- * Fixed six-input/three-output contract (batch 1; see the "Metoak EV74 support in Neat"
- * migration notes for the full rationale). Unlike the other native visual graphs above, this
- * one is not a feature/tracking kernel: `bf_mm_name`/`proj_name` are per-frame scalar
- * calibration inputs (not batched images), and it has three heterogeneous outputs rather than
- * one primary tensor.
- *
- * Tensor names currently must retain their canonical defaults; unsupported aliases fail
- * during contract compilation, before any device access.
- *
- * Public ABI (fixed geometry from `width`/`height`; disparity subpixel scale 32 is baked into
- * the kernel, not a parameter here):
- * - inputs:
- *   - `y_name`,      UInt8   `[height,width]`      -- I420 Y
- *   - `u_name`,      UInt8   `[height/2,width/2]`  -- I420 U
- *   - `v_name`,      UInt8   `[height/2,width/2]`  -- I420 V
- *   - `disp_name`,   UInt16  `[height,width]`      -- raw disparity
- *   - `bf_mm_name`,  Float32 `[1]`                 -- selected calibration BF (mm)
- *   - `proj_name`,   Float32 `[3]`                 -- {fx_fy, cx, cy}
- * - outputs:
- *   - `rgb_output_name`,    UInt8   `[height,width,3]` -- interleaved RGB
- *   - `depth_output_name`,  UInt16  `[height,width]`   -- millimeters, 0 = invalid (primary)
- *   - `points_output_name`, Float32 `[height,width,3]` -- interleaved XYZ meters, NaN = invalid
- *
- * `depth_output_name` is the primary output for `output_spec()`'s single-boundary description
- * only; all three outputs are always published together -- selecting one as primary must not
- * be read as hiding the other two.
+ * Batch one; even width 8..2048 and height 8..1536. Ordered inputs:
+ * UInt8 Y[H,W], U[H/2,W/2], V[H/2,W/2], UInt16 disparity[H,W],
+ * Float32 BF[1], projection[3] = {focal_length, cx, cy}. Disparity scale is 32.
+ * Ordered outputs: UInt8 RGB[H,W,3], UInt16 depth[H,W] in millimetres,
+ * Float32 XYZ[H,W,3] in metres. Zero disparity produces zero depth and NaN XYZ.
+ * Calibration is per-frame input, not a preparation-time constant.
+ * Camera capture and raw-frame unpacking remain application responsibilities.
  */
 struct MetoakDepthOptions {
-  /// Even input width in [8, 2048]; use native sensor geometry (640 for S315).
   int width = 0;
-  /// Even input height in [8, 1536]; use native sensor geometry (360 for S315).
   int height = 0;
-  /// EV graph debug level. Current native visual graphs accept values in `[0,2]`.
+  /// Retained for source compatibility; numerical execution has no debug parameter.
   int debug = 0;
-  /// Optional processcvu buffer override. `0` resolves to the async four-buffer default.
-  /// Sync builds apply their normal pool clamp; async builds require four buffers.
+  /// Stage execution depth override; zero uses the normal graph buffer policy.
   int num_buffers = 0;
-  /// Optional GStreamer/processcvu element name. Empty means Neat generates a stable name.
   std::string element_name;
-
-  /// I420 Y input tensor name.
+  /// Canonical port names, retained from the original C++ API.
   std::string y_name = "y_src";
-  /// I420 U input tensor name.
   std::string u_name = "u_src";
-  /// I420 V input tensor name.
   std::string v_name = "v_src";
-  /// Raw disparity input tensor name.
   std::string disp_name = "disp_src";
-  /// Per-frame calibrated BF (base * focal length, mm) input tensor name.
   std::string bf_mm_name = "bf_mm_src";
-  /// Per-frame projection `{fx_fy, cx, cy}` input tensor name.
   std::string proj_name = "proj_src";
-  /// RGB output tensor name.
   std::string rgb_output_name = "rgb_dst";
-  /// Metric depth output tensor name.
   std::string depth_output_name = "depth_dst";
-  /// XYZ point-cloud output tensor name.
   std::string points_output_name = "points_dst";
 
-  /// Human-readable, non-throwing summary for logs, diagnostics, and Python `repr`.
   std::string summary() const;
 };
 

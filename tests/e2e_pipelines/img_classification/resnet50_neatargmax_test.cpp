@@ -1,7 +1,11 @@
 #include "pipeline/Graph.h"
 #include "model/Model.h"
 #include "nodes/common/Output.h"
+#include "nodes/sima/SimaArgMax.h"
 #include "gst/GstHelpers.h"
+#include "model/internal/ModelInternal.h"
+#include "pipeline/internal/RenderedMlaContractQuery.h"
+#include "pipeline/internal/sima/InternalEdgeContractResolver.h"
 
 #include "asset_utils.h"
 #include "cli_utils.h"
@@ -83,17 +87,33 @@ static simaai::neat::Model make_resnet_model(const std::string& tar_gz, bool mla
   return simaai::neat::Model(tar_gz, opt);
 }
 
-static bool pipeline_has_fused_classifier_post(const std::string& pipeline) {
-  if (pipeline.find("detessdequant") != std::string::npos ||
-      pipeline.find("detess_dequant") != std::string::npos) {
-    return true;
+static bool has_classifier_post(
+    const simaai::neat::pipeline_internal::sima::SimaPluginStaticManifest& manifest) {
+  namespace contract = simaai::neat::pipeline_internal::sima;
+  namespace query = simaai::neat::pipeline_internal::rendered_stage_query;
+  for (std::size_t i = 0; i < manifest.stages.size(); ++i) {
+    const auto& stage = manifest.stages[i];
+    const bool detessdequant =
+        stage.payload_kind == contract::StagePayloadKind::DetessDequant ||
+        (stage.payload_kind == contract::StagePayloadKind::ProcessCvu &&
+         stage.processcvu.graph_family_enum == contract::ProcessCvuGraphFamily::DetessDequant);
+    if (!detessdequant || i + 1U != manifest.stages.size() || stage.logical_outputs.size() != 1U ||
+        stage.input_bindings.size() != 1U) {
+      continue;
+    }
+    const auto edge = contract::edgecontract::resolve_edge_contract_for_binding(manifest, i, 0U);
+    const auto& output = stage.logical_outputs.front();
+    if (edge && edge->producer_stage &&
+        edge->producer_stage->payload_kind == contract::StagePayloadKind::ProcessMla &&
+        edge->producer_logical_output &&
+        query::dtype_from_contract_token(edge->producer_logical_output->dtype) ==
+            simaai::neat::TensorDType::Int8 &&
+        query::dtype_from_contract_token(output.dtype) == simaai::neat::TensorDType::Float32 &&
+        output.size_bytes == 1000U * sizeof(float)) {
+      return true;
+    }
   }
-  const bool has_fused_processcvu = pipeline.find("! neatprocesscvu ") != std::string::npos;
-  const bool has_fused_stage_id = pipeline.find("stage-id=dequantize_") != std::string::npos ||
-                                  pipeline.find(" name=dequantize_") != std::string::npos ||
-                                  pipeline.find("stage-id=detessdequant_") != std::string::npos ||
-                                  pipeline.find(" name=detessdequant_") != std::string::npos;
-  return has_fused_processcvu && has_fused_stage_id;
+  return false;
 }
 
 static void add_mla_terminal_argmax_route(simaai::neat::Graph& graph,
@@ -108,7 +128,7 @@ static void add_mla_terminal_argmax_route(simaai::neat::Graph& graph,
   require(!infer.describe_backend(false).empty(),
           "argmax: model.inference() returned an empty Graph");
   graph.add(infer);
-  graph.custom("neatargmax name=neatargmax_1 axis=-1 keepdims=false num-threads=0 silent=true");
+  graph.add(simaai::neat::nodes::SimaArgMax());
   graph.add(simaai::neat::nodes::Output());
 }
 
@@ -153,7 +173,7 @@ static int top1_from_scores(const std::vector<float>& scores, const std::string&
   // than the best possible top-1 reduction.  Real application code commonly
   // materializes class indices for top-k display/thresholding, so use a stable
   // index sort here.  The argmax route replaces this CPU postprocess with the
-  // pipeline neatargmax stage, so include this work in the measured baseline.
+  // pipeline ArgMax stage, so include this work in the measured baseline.
   std::vector<int> indices(scores.size());
   std::iota(indices.begin(), indices.end(), 0);
   std::stable_sort(indices.begin(), indices.end(), [&](int a, int b) {
@@ -245,8 +265,8 @@ static BenchResult run_bench(simaai::neat::Graph& graph, const cv::Mat& rgb, int
 int main(int argc, char** argv) {
   try {
     try {
-      if (!simaai::neat::element_exists("neatargmax")) {
-        return skip_long_test("missing neatargmax plugin");
+      if (!simaai::neat::element_exists("neatkernelrunner")) {
+        return skip_long_test("missing neatkernelrunner plugin");
       }
     } catch (const std::exception& e) {
       const std::string msg = e.what();
@@ -362,19 +382,28 @@ int main(int argc, char** argv) {
       std::cout << "[argmax] pipeline:\n" << argmax_pipeline << "\n";
     }
 
-    const bool baseline_has_detess = pipeline_has_fused_classifier_post(baseline_pipeline);
-    require(baseline_has_detess,
-            "baseline pipeline is missing detessdequant stage; cannot validate replacement");
-
-    const bool argmax_has_detess = pipeline_has_fused_classifier_post(argmax_pipeline);
-    require(!argmax_has_detess,
-            "argmax pipeline still contains detessdequant; expected MLA terminal replacement");
+    // Inspect selected nodes, not cohort names or the full immutable model plan:
+    // terminal selection can intentionally omit postprocessing from that plan.
+    namespace query = simaai::neat::pipeline_internal::rendered_stage_query;
+    const auto baseline_manifest = query::rendered_manifest_from_nodes(
+        simaai::neat::internal::ModelAccess::build_public_route_nodes(baseline_model,
+                                                                      baseline_route_opt));
+    const auto replacement_manifest = query::rendered_manifest_from_nodes(
+        simaai::neat::internal::ModelAccess::build_public_inference_nodes(mla_model));
+    require(baseline_manifest && has_classifier_post(*baseline_manifest),
+            "baseline route lacks typed MLA-to-Float32 classifier postprocessing");
+    require(replacement_manifest && !replacement_manifest->stages.empty() &&
+                !has_classifier_post(*replacement_manifest) &&
+                replacement_manifest->stages.back().payload_kind ==
+                    simaai::neat::pipeline_internal::sima::StagePayloadKind::ProcessMla,
+            "argmax inference route must terminate at MLA without classifier postprocessing");
 
     const bool argmax_has_mla = argmax_pipeline.find("neatprocessmla") != std::string::npos ||
                                 argmax_pipeline.find("processmla") != std::string::npos;
     require(argmax_has_mla, "argmax pipeline missing MLA stage");
-    require(argmax_pipeline.find("neatargmax") != std::string::npos,
-            "argmax pipeline missing neatargmax stage");
+    require(argmax_pipeline.find("_argmax") != std::string::npos &&
+                argmax_pipeline.find("neatargmax ") == std::string::npos,
+            "argmax pipeline must use the public native-kernel Node");
 
     const BenchResult baseline =
         run_bench(baseline_graph, rgb, warmup, iters, "baseline", [](const auto& t) {

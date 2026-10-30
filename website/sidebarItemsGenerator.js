@@ -39,7 +39,25 @@ function replaceApiItems(items, apiItems) {
 }
 
 module.exports = async function sidebarItemsGenerator(args) {
-  const generatedItems = await args.defaultSidebarItemsGenerator(args);
+  const tutorialId = "develop-apps/tutorials/pcie/tutorial_029_run_genai_over_pcie";
+  const tutorial = args.docs.find((doc) => doc.id === tutorialId);
+  function crossLinkGenAI(items) {
+    return items.map((item) => {
+      if (item.type !== "category") return item;
+      const nested = crossLinkGenAI(item.items);
+      if (
+        tutorial &&
+        item.link?.type === "doc" &&
+        item.link.id === "develop-apps/tutorials/genai/index" &&
+        !nested.some((entry) => entry.id === tutorialId)
+      ) {
+        // A reference keeps the canonical page and breadcrumb under PCIe.
+        nested.push({type: "ref", id: tutorialId, label: tutorial.title});
+      }
+      return {...item, items: nested};
+    });
+  }
+  const generatedItems = crossLinkGenAI(await args.defaultSidebarItemsGenerator(args));
 
   try {
     const generatedApiSidebar = require(path.join(insightApiOutput, "sidebar.js"));

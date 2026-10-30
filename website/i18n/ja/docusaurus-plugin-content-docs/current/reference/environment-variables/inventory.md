@@ -170,7 +170,7 @@ sidebar_position: 2
 
 ## テスト／チュートリアル／ツールのみ（`src/`では使用されません）
 
-合計：60
+合計：59
 
 - `CMAKE_BUILD_PARALLEL_LEVEL`
 - `GITHUB_STEP_SUMMARY`
@@ -182,8 +182,7 @@ sidebar_position: 2
 - `SIMA_DECODER_COMPARE_MAX_ABS`
 - `SIMA_DECODER_COMPARE_PSNR_MIN`
 - `SIMA_DECODER_MIN_FRAMES`
-- `SIMA_DEC_IPC_PROTOCOL`
-- `SIMA_DISPATCHER_AUTO_RECOVER`
+- `SIMA_DISPATCHER_AUTO_RECOVER` — 従来のテスト専用設定です。現在のランタイムでは無視されます。
 - `SIMA_DUMP_PIPELINE_ON_FAIL`
 - `SIMA_FILE_READ_TEST_ALARM_S`
 - `SIMA_FILE_READ_TEST_WATCHDOG_S`
@@ -235,12 +234,8 @@ sidebar_position: 2
 
 ## シェル/CI のデフォルト設定とパススルー設定
 
-件数：67
+件数：63
 
-- `APP_COMPLEX_PKG_ARCH`
-- `APP_COMPLEX_PKG_BUILD_ROOT`
-- `APP_COMPLEX_PKG_OUT_DIR`
-- `APP_COMPLEX_PKG_VERSION`
 - `ARTIFACT_DIR`
 - `ASAN_OPTIONS`
 - `BASELINE_FILE`
@@ -307,7 +302,7 @@ sidebar_position: 2
 
 ## ユーザー向けのドキュメント一覧 `SIMA_*` (`docs/reference/environment-variables/index.md`)
 
-件数：61
+件数：60
 
 - `SIMA_ALLOW_GST_INIT`
 - `SIMA_ASYNC_TPUT_DIAG`
@@ -317,7 +312,6 @@ sidebar_position: 2
 - `SIMA_DEBUG_PROFILE`
 - `SIMA_DETESS_ASSERT_ON_ZERO`
 - `SIMA_DISABLE_SYNC_NUMBUFFERS_CVU_MLA`
-- `SIMA_DISPATCHER_AUTO_RECOVER`
 - `SIMA_DISPATCHER_TRACE`
 - `SIMA_GST_ALL_BUFFER_DEBUG`
 - `SIMA_GST_APPSINK_BUFFER_DEBUG`

@@ -135,7 +135,7 @@ model = pyneat.Model(model_path, options)
 | `decode_type` | 検出モデルに BoxDecode ステージをアタッチするには、Neat が必要です。 | `Unspecified`；検出された意図はデコードされませんでした。 |
 | `decode_type_option` | 検出ヘッドのテンソル順序には、特定のバリアントが必要です。 | `Auto`。モデル、契約、およびルートプランナーに判断を任せましょう。 |
 | `score_threshold` | デコード処理中に、信頼度の低い候補を排除したいと考えています。 | `0`：後で絞り込む前に、候補者を保持しておく。 |
-| `nms_iou_threshold` | デコード処理では、非最大値抑制を適用する必要があります。 | `0`；NMSが無効になっています。 |
+| `nms_iou_threshold` | デコード処理では、非最大値抑制を適用する必要があります。 | `0`；モデルにパッケージされた値を保持します。パッケージされた値がない場合、YOLO26はNMSをスキップし、その他のデコーダーは重なりのあるボックスをすべて抑制します。 |
 | `top_k` | 1回の出力あたりの検出件数に上限を設けたいのですね。 | `0`；上位K件の制限なし。 |
 | `num_classes` | クラスヘッドの深さは、例えば単一クラスのYOLO分割ヘッドのように、確実に推測することはできません。 | `0`。MPKメタデータまたは従来の推論を使用してください。 |
 
@@ -416,6 +416,42 @@ for warning in info.warnings:
 
 経路に関する警告を、最も重要な証拠として扱う。経路プランナーが何か異常なことを示している場合は、それを無視したり、都合の良いように解釈したりしないでください。まず、契約内容または設定を見直して修正してください。
 
+### モデルが実行する内容を確認する
+
+`execution_plan()` を使うと、モデルが実行するノード、各ノードが実行される場所、ノード間を流れるテンソルを確認できます。`Model::execution_plan(...)` は `build(...)` と同じ引数を受け取り、フレームを実行せずにモデルをビルドし、プランを読み取った後に閉じます。そのため、デバイスが必要です。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const simaai::neat::ExecutionPlan plan = model.execution_plan();
+std::cout << plan.to_json() << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+plan = model.execution_plan()
+print(plan.to_json())
+```
+
+</CodeTab>
+</CodeTabs>
+
+JSON には、モデルのグラフノードがパイプライン順に並び、連続する 2 つのノードの間に 1 つのエッジがあります。
+
+| フィールド | 意味 |
+| --- | --- |
+| `model` | モデル名、`batch`（MLA の 1 回の実行あたりのフレーム数）、`memory`（処理中の 1 フレームあたりのデバイスメモリ） |
+| `nodes[].kind` | ノードの種類。`Input`、`Preproc`、`Quant`、`ModelFragment`、`Dequant`、`SimaBoxDecode`、`Output` など |
+| `nodes[].runs_on` | ノードが実行される場所：`A65`（Arm コア）、`EV74`（ビジョンプロセッサ）、または `MLA` |
+| `nodes[].kernel` | `EV74` または `A65` のノードが実行するカーネル |
+| `nodes[].settings` | 解決済みの `Preproc` と `SimaBoxDecode` の設定。名前は `PreprocOptions` と `BoxDecodeOptions` と同じです |
+| `edges[].tensors` | あるノードから次のノードへのテンソル：バッチ先頭の `shape`、`dtype`、量子化テンソルの `quant`（`scale`、`zero_point`） |
+
+`SimaBoxDecode` の設定には、モデルまたはオプションで設定した場合にのみ、しきい値と `top_k` が表示されます。設定していない場合は、デコーダーの既定値が使われます。スキーマは `schemas/execution_plan_v1.schema.json` です。
+
 ## グラフ内のモデルを使用する
 
 一般的なパスの場合、公開されている入力と出力の間にモデルを直接追加します。
@@ -442,6 +478,10 @@ graph.add(pyneat.nodes.output("classes"))
 
 </CodeTab>
 </CodeTabs>
+
+モデルの画像入力に直接接続されたデフォルトの公開 `Input` は、その入力の画像の解釈と形式を継承します。ソースの形式を明示的に設定することもできます。その場合、グラフがモデルのコントラクトと照合します。ソースのメモリ、寸法、タイムスタンプ、キュー設定は変わりません。接続先が複数ある場合や曖昧な場合は、入力オプションを明示してください。
+
+この解釈は Graph の入力境界に適用されます。モデルを直接呼び出す場合は、引き続きモデルが宣言する画像またはテンソルのコントラクトを満たす入力が必要です。
 
 再利用可能なコード片や、明確なルーティング境界が必要な場合は、`model.graph(...)` を使用してください。
 
@@ -540,8 +580,9 @@ postprocess = model.fragment(pyneat.ModelStage.Postprocess)
 | MLA推論を非同期的に実行できるようにします。 | `advanced_execution.inference_async` | 継続的に処理を行うストリーミング型のワークロードに役立ちます。 |
 | 推論出力バッファリングを調整します。 | `advanced_execution.inference_output_buffers` | 測定の結果、出力バッファリングがボトルネックになっていることが判明した場合にのみ、値を増やしてください。 |
 | 出力キャッシュの同期を遅延させる | `advanced_execution.defer_output_cache_sync` | 高度な設定です。消費者とメモリの寿命について十分に理解している場合にのみ使用してください。 |
-| あらかじめ用意されたランナーを使用してください。 | `advanced_execution.prepared_runner` | 高度な経路探索実験。初期のコードには含めないでください。 |
-| 内部で挿入されるキューの深さを調整します。 | `advanced_execution.internal_queue_depth` | 高度な機能。キューの深さによってジッターが吸収され、アクセラレータの処理能力は増加しません。 |
+| 内部の同時処理数を調整する | `advanced_execution.internal_queue_depth` | 内部に挿入されるキューと数値演算 Runner の実行容量を制限します。MLA 出力バッファの設定は上書きしません。 |
+
+処理の重なりの制限、入力の寿命、フレームあたりの CPU 測定については、[キューを無制限に増やさずにフレーム処理を重ねる](/develop-apps/development-workflow/graph#overlap-frames-without-growing-queues-indefinitely)を参照してください。残されている `prepared_runner` フィールドはソース互換性のためのもので、選択可能な実行バックエンドではありません。デフォルトのままにしてください。廃止されたモードはグラフ構築時に失敗します。
 
 実験に最も適した、可能な限り狭い範囲で、高度な実行フィールドを設定してください。
 
@@ -670,9 +711,11 @@ runner = model.build([tensor], route_options=route)
 
 証拠や早期の不具合検出のために、毎回同じ条件でビルドを行うのではなく、必要に応じて特定の条件でビルドを行ってください。デフォルトのビルドで既に要件が満たされている場合は、サンプルをより簡潔に保ってください。
 
+画像入力では、シードは現在の形状とピクセル形式を指定し、`preprocess.input_max_width`、`input_max_height`、`input_max_depth` を置き換えません。たとえば、容量を 1920×1920 と指定して 640×640 のシードを使った場合、同じランナーで後続の 800×800 や 1920×1080 のフレームを受け入れます。容量を超えるフレームは拒否されます。上限を省略すると、シードなしのビルドと同じ解決済み容量が維持されます。
+
 ## モデルの実行を測定する
 
-`model.benchmark(...)` を使用して、迅速な合成モデルのベンチマークを実施してください。これにより、`input_specs()` から入力が生成され、主要なレイテンシー、スループット、およびオプションの電力に関する情報が返されます。モデルやランタイムの変更を比較するために使用し、実際の運用環境におけるスループットを主張するためには使用しないでください。
+`model.benchmark(...)` を使用して、迅速な合成モデルのベンチマークを実施してください。これにより、`input_specs()` から入力が生成され、主要なレイテンシー、スループット、電力、およびボードのテレメトリが返されます。モデルやランタイムの変更を比較するために使用し、実際の運用環境におけるスループットを主張するためには使用しないでください。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -728,7 +771,93 @@ report = model.benchmark(options)
 
 `original_width`と`original_height`を組み合わせて設定します。ベンチマークは引き続き、モデルの形状を持つ合成テンソルを生成します。これらのフィールドは、BoxDecodeメタデータに必要なソースジオメトリとリサイズ変換を提供します。これらを省略すると、ベンチマークは解決された前処理とモデル入力コントラクトからジオメトリを推測します。これらの実行ごとの値は、`ModelOptions`内の非推奨のBoxDecodeジオメトリヒントよりも優先されます。既存の`benchmark(num_samples)`の呼び出しは、同じ動作を維持します。
 
-`avg_power_watts`と`energy_joules`は、ボードの電力モニターがサンプルを生成した場合にのみ読み取ります。ボードまたはレール構成で電力テレメトリが利用できない場合、これらのフィールドはゼロのままになります。
+MLA のレイヤーごと、またはステージごとの時間も計測するには、`include_mla_layer_stats` または `include_mla_stage_stats` を設定します。結果を残すには、`report.save(path)` でレポートを YAML として書き出します。パスが `.json` で終わる場合は JSON として書き出します。両方の例は[モデルをベンチマークする](/tutorials/benchmark-your-model)を参照してください。
+
+### 独自の入力で測定する {#measure-with-your-own-inputs}
+
+検出やセグメンテーションのデコーダーのように、コストがデータに依存するモデルでは、合成入力では正しく測定できないことがあります。実際のデータで測定するには、`run()` に渡すテンソルをモデルの入力ごとに 1 つずつ `inputs` に設定します。ベンチマークは、これらをレイテンシーとスループットの両方の測定に使用します。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+cv::Mat image;
+cv::cvtColor(cv::imread("bus.jpg"), image, cv::COLOR_BGR2RGB);  // the format input_specs() reports
+
+simaai::neat::BenchmarkOptions options;
+options.inputs = simaai::neat::TensorList{
+    simaai::neat::Tensor::from_cv_mat(image, simaai::neat::ImageSpec::PixelFormat::RGB,
+                                      simaai::neat::TensorMemory::EV74)};
+
+simaai::neat::BenchmarkReport report = model.benchmark(options);
+std::cout << "input=" << report.input << " fps=" << report.fps << "\n";  // input=provided
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+image = cv2.cvtColor(cv2.imread("bus.jpg"), cv2.COLOR_BGR2RGB)  # the format input_specs() reports
+
+options = pyneat.BenchmarkOptions()
+options.inputs = [pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.RGB)]
+
+report = model.benchmark(options)
+print("input=", report.input, "fps=", report.fps)  # input= provided
+```
+
+</CodeTab>
+</CodeTabs>
+
+入力の数、形状、データ型がモデルと一致しない場合、`benchmark()` は開始前にエラーコード `misconfig.input_shape` の `NeatError` をスローします。ルートが変換できない色フォーマットは、`run()` と同様にパイプラインの構築時にエラーになります。画像を前処理するルートでは、画像のサイズは任意です。色フォーマットは `input_specs()` が示すものを使用してください。
+
+### 実行時間
+
+ベンチマークは、入力を 1 つずつ実行してレイテンシーを測定し、その後、別のスループット測定パスを実行します。各パスは、少なくとも `num_samples` 個の入力を測定し、かつ `min_duration_ms`（デフォルトは 10 秒）が経過するまで続きます。そのため、両方のパスは同じ規則で停止し、スループット測定パスの電力と温度の値は短時間のバーストではなく、複数のテレメトリサンプルにわたって取得されます。`latency_ms` はレイテンシー測定パスの平均レイテンシーで、`latency_p50_ms`、`latency_p95_ms`、`latency_p99_ms` はそのパーセンタイルです。`throughput_samples` と `throughput_duration_ms` は、スループット測定パスで測定した内容を示します。簡単なスモークテストでは、`min_duration_ms` を 0 に設定すると、各パスが `num_samples` 個の入力の後で停止します。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::BenchmarkOptions options;
+options.min_duration_ms = 0;
+simaai::neat::BenchmarkReport report = model.benchmark(options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.BenchmarkOptions()
+options.min_duration_ms = 0
+report = model.benchmark(options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+### 電力とボードのテレメトリ {#power-and-board-telemetry}
+
+電力とボードのテレメトリは、Neat インストーラーがボード上にセットアップする DevKit テレメトリデーモン [Sentinel](/tools/sentinel/) から取得します。ベンチマークはスループット測定の前後で [`TelemetryMonitor`](#record-board-telemetry) を使って記録します。測定開始後から、必要な出力がすべて完了して測定が停止するまでのサンプルを選択します。準備、モニターワーカーの join、最後の Sentinel 読み取りによって、測定対象ワークロードの時間は延長されません。サンプルのタイムスタンプが無効な場合や時計の不連続を検出した場合は、無関係な区間を選ぶのではなく、ベンチマークのテレメトリを利用不可にします。`report.telemetry` に概要が含まれます。
+
+| フィールド | 意味 |
+| --- | --- |
+| `avg_power_watts`, `peak_power_watts` | スループット測定パス中の SoM 電力の推定平均値と推定最大値です。 |
+| `energy_joules` | `num_samples` 個の入力の処理に必要なエネルギーです。平均電力に、測定したスループットで `num_samples` 個の入力を処理するのに必要な時間を掛けた値です。パスが長くなっても増加しません。 |
+| `telemetry.power_mla_watts`, `telemetry.power_rails_watts` | MLA レールの電力と、ボードが報告するすべてのレールの電力です。MLA レールのないボードでは、`samples == 0` として報告されます。 |
+| `telemetry.die_temperatures_c`, `telemetry.die_temperature_max_c` | MLA、APU、CVU、TOP の各サイトにあるオンダイセンサーの温度と、各サンプルにおけるそれらの最高温度です。 |
+| `telemetry.board_temperatures_c` | SoM の表面側と裏面側のセンサーの温度です。 |
+| `telemetry.cpu_usage_pct` | CPU 使用率です。各サンプルは直前の区間の平均であるため、`maximum` は最も負荷の高い区間を示します。 |
+| `telemetry.cpu_cores_usage_pct` | 各 CPU コアの使用率です（コア順）。全コアの平均である `cpu_usage_pct` が低いままでも、1 つのコアの高負荷がここに表れます。 |
+| `telemetry.mla_memory_mib` | MLA が保持するメモリ（MiB 単位）です。MLA のメモリプールのバッファと、MLA だけが使う共有バッファを含みます。モデルはロード時にこれを割り当てるため、他に何も実行していなければ、この値がモデルの MLA メモリです。 |
+| `telemetry.ev74_memory_mib` | EV74 が保持するメモリ（MiB 単位）です。たとえば、EV74 が MLA 向けに前処理する入力フレームが該当します。EV74 と MLA の両方が使う共有バッファは `mla_memory_mib` ではなくこちらに数えるため、2 つを足すとモデルのアクセラレーターメモリになります。ビデオデコーダーやカメラ ISP が生成したフレームはどちらにも含まれません。 |
+| `telemetry.linux_memory_used_mib` | ボード全体が使用しているメモリ（Linux の `MemTotal - MemAvailable`、MiB 単位）です。すべてのプロセスと EV74 のバッファを含むため、上の 2 つに加算しないでください。 |
+
+各メトリクスは `samples`、`mean`、`minimum`、`maximum`、`last` を報告し、`samples == 0` はボードがそのメトリクスを報告しなかったことを意味します。報告された 0 もサンプルとして数えられます。モデルが読み込まれていない場合、`mla_memory_mib` と `ev74_memory_mib` は `samples > 0` のまま 0 MiB を示します。Sentinel は 2 秒ごとにサンプリングするため、10 秒のパスでは約 5 個のサンプルが得られます。すべての値はボード全体のもので、実行中の他のプロセスも含みます。
+
+Sentinel が実行されていない場合、またはパスが短すぎてサンプルを収集できない場合でも、ベンチマークはレイテンシーと FPS を返します。電力フィールドはゼロのままになり、`telemetry.status` にその理由が示され（それ以外の場合は `"ok"`）、出力される概要には `Power: unavailable (<reason>)` と表示されます。
+
+### 独自のループを測定する
 
 入力ループを制御し、そのループを測定したい場合は、ランナー測定を使用してください。
 
@@ -765,6 +894,56 @@ runner.close()
 </CodeTabs>
 
 一度限りのスモークテストと、事前に起動させて再利用するテスト環境を比較しないでください。それらは異なる目的のために行われます。
+
+### ボードのテレメトリを記録する {#record-board-telemetry}
+
+`TelemetryMonitor` を使用すると、独自の推論ループなど、任意のウィンドウにわたって電力、温度、CPU 使用率、メモリを記録できます。これらは [Sentinel](/tools/sentinel/) から読み取られ、`report.telemetry` と同じ `Telemetry` サマリーとして返されます。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::TelemetryMonitor monitor;
+monitor.start();
+
+for (const auto& input : inputs) {
+  (void)runner.run(simaai::neat::TensorList{input}, /*timeout_ms=*/2000);
+}
+
+simaai::neat::Telemetry telemetry = monitor.stop();
+std::cout << telemetry;            // YAML
+telemetry.save("telemetry.json");  // .json writes JSON; other names write YAML
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+monitor = pyneat.TelemetryMonitor()
+monitor.start()
+
+for tensor in tensors:
+    runner.run([tensor], timeout_ms=2000)
+
+telemetry = monitor.stop()
+print(telemetry)                 # YAML
+print(telemetry.power_som_watts.mean)
+telemetry.save("telemetry.json") # .json writes JSON; other names write YAML
+```
+
+</CodeTab>
+</CodeTabs>
+
+モニターは既定で `/run/simaai-sentinel/api.sock` を読み取ります。別のパスにマウントした Sentinel の Unix ソケットを使う場合は、C++ では `TelemetryMonitor(socket_path)`、Python では `pyneat.TelemetryMonitor(socket_path="...")` にそのパスを渡してください。この指定はそのモニターの接続先だけを選び、`Model::benchmark()` を変更したり Sentinel を起動したりしません。構築時にはソケットへ接続しません。
+
+- `start()` は新しいウィンドウを開始します。その後に Sentinel が取得したサンプルだけが集計されます。Sentinel は 2 秒ごとにサンプリングするため、それより短いウィンドウではサンプルが 1 つもない場合があり、その場合は `status` がそのことを示します。
+- `read()` は、停止せずにその時点までのサマリーを返します。各測定値の `last` は最新の値で、`mean`、`minimum`、`maximum` はその時点までのウィンドウを対象とします。
+- `stop()` は最終的なサマリーを返します。再度呼び出しても同じ結果を返します。
+- サマリーは測定値ごとに 1 つのエントリだけを保持するため、ウィンドウがどれだけ長くてもメモリ使用量は変わりません。
+- 複数のモニタは、1 つのプロセス内でも複数のプロセスにまたがっても、互いに、また `Model::benchmark()` と同時に実行できます。
+- すべての値はボード全体のもので、Sentinel、モニタ自体、その他のプロセスを含みます。各電力値はサンプルごとに 1 回の 250 ms の読み取りから得られるため、読み取りの間に発生する短いスパイクは表れません。
+- Sentinel が実行されていない場合、モニタは警告を 1 回出力し、`status` が Sentinel のインストール方法または起動方法を説明します。Sentinel が応答するようになると、モニタはサンプルの集計を始めます。Sentinel の問題で例外をスローすることはありません。
+- Python では、`start()`、`read()`、`stop()` は待機中に GIL を解放します。
 
 ## 出力結果を解読する
 

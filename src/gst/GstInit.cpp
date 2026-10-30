@@ -1,15 +1,18 @@
+#include <simaai/scheduler/client/capabilities.h>
 // src/gst/GstInit.cpp
 #include "gst/GstInit.h"
 
 #include "gst/GstLatestByStreamMux.h"
 #include "gst/GstNeatMultipartJpegDemux.h"
 #include "gst/NeatCameraMemoryBridge.h"
-#include "gst/NeatV4L2CopySource.h"
 #include "gst/SimaTensorSetMetaAbi.h"
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/UxLogging.h"
 
+#include <simaai/scheduler/client/dma_memory.h>
+
+#include <gstsimaaitensorbuffer_meta.h>
 #include <gst/gst.h>
 #include <glib.h>
 
@@ -87,37 +90,6 @@ void glib_message_suppressor(const gchar* domain, GLogLevelFlags level, const gc
     return;
   }
   g_log_default_handler(domain, level, message, user_data);
-}
-
-gboolean sima_custom_meta_transform(GstBuffer* transbuf, GstCustomMeta* meta, GstBuffer* /*buffer*/,
-                                    GQuark type, gpointer /*data*/, gpointer user_data) {
-  if (!GST_META_TRANSFORM_IS_COPY(type) || !transbuf || !meta)
-    return TRUE;
-  const char* name = static_cast<const char*>(user_data);
-  if (!name || !*name)
-    return TRUE;
-  GstCustomMeta* out = gst_buffer_add_custom_meta(transbuf, name);
-  if (!out)
-    return FALSE;
-  GstStructure* src = gst_custom_meta_get_structure(meta);
-  GstStructure* dst = gst_custom_meta_get_structure(out);
-  if (src && dst) {
-    gst_structure_remove_all_fields(dst);
-    if (!gst_structure_has_name(dst, gst_structure_get_name(src))) {
-      gst_structure_set_name(dst, gst_structure_get_name(src));
-    }
-    gst_structure_foreach(
-        src,
-        [](GQuark field, const GValue* value, gpointer user_data_inner) -> gboolean {
-          auto* dst_inner = static_cast<GstStructure*>(user_data_inner);
-          if (!dst_inner || !value)
-            return TRUE;
-          gst_structure_id_set_value(dst_inner, field, value);
-          return TRUE;
-        },
-        dst);
-  }
-  return TRUE;
 }
 
 bool should_suppress_device_line(const std::string& line) {
@@ -1116,47 +1088,6 @@ void prepend_env_list(const char* key, const std::string& value) {
   g_setenv(key, merged.c_str(), TRUE);
 }
 
-void maybe_enable_dispatcher_watchdog() {
-  const gchar* env = g_getenv("SIMA_DISPATCHER_WATCHDOG");
-  if (env && *env)
-    return;
-
-  const char* helper_candidates[] = {
-      "/usr/libexec/sima-neat/dispatcher_watchdog",
-      "/usr/libexec/neat/dispatcher_watchdog",
-  };
-
-  std::string watchdog_path;
-  for (const char* path : helper_candidates) {
-    if (!path || !*path)
-      continue;
-    if (g_file_test(path, G_FILE_TEST_IS_EXECUTABLE)) {
-      watchdog_path = path;
-      break;
-    }
-  }
-  if (watchdog_path.empty()) {
-    std::string plugin_path = default_plugin_path();
-    if (!plugin_path.empty()) {
-      gchar* watchdog = g_build_filename(plugin_path.c_str(), "dispatcher_watchdog", nullptr);
-      if (watchdog && g_file_test(watchdog, G_FILE_TEST_IS_EXECUTABLE)) {
-        watchdog_path = watchdog;
-      }
-      if (watchdog)
-        g_free(watchdog);
-    }
-  }
-  if (watchdog_path.empty()) {
-    return;
-  }
-
-  g_setenv("SIMA_DISPATCHER_WATCHDOG", "1", FALSE);
-  const gchar* path_env = g_getenv("SIMA_DISPATCHER_WATCHDOG_PATH");
-  if (!path_env || !*path_env) {
-    g_setenv("SIMA_DISPATCHER_WATCHDOG_PATH", watchdog_path.c_str(), FALSE);
-  }
-}
-
 void validate_neat_factory_loaded(const char* factory, const char* plugin_dir) {
   GstElementFactory* f = gst_element_factory_find(factory);
   if (!f) {
@@ -1203,12 +1134,19 @@ void validate_neat_factory_loaded(const char* factory, const char* plugin_dir) {
 void validate_neat_startup_contract(const std::string& plugin_dir) {
   // Contract: Graph runtime must resolve and instantiate NEAT factories.
   // Legacy SIMAAI factories may still be discoverable in the process.
+  // Numerical nodes use the linked generic runner. A remaining legacy Node
+  // checks its own optional factory when that route is requested; requiring
+  // the retired BoxDecode module here would load an incompatible allocator ABI
+  // even for graphs that never decode detections.
   const char* required[] = {
-      "neatprocesscvu", "neatprocessmla", "neatboxdecode", "neatdequant", "neatdetess",
+      "neatprocessmla",
   };
   for (const char* factory : required) {
     validate_neat_factory_loaded(factory, plugin_dir.c_str());
   }
+  // The runner is registered directly from the linked Runtime DSO. It has no
+  // plugin filename when registered this way, unlike discovered external modules.
+  validate_neat_factory_loaded("neatkernelrunner", nullptr);
 }
 
 } // namespace
@@ -1222,6 +1160,7 @@ void gst_init_once() {
   std::int64_t post_init_us = 0;
   std::call_once(once, [&]() {
     did_init = true;
+
     const auto setup_start = pipeline_internal::build_timing_now();
     int argc = 0;
     char** argv = nullptr;
@@ -1364,8 +1303,6 @@ void gst_init_once() {
       enforce_third_party_allocator(third_party);
     }
 
-    maybe_enable_dispatcher_watchdog();
-
     if (!third_party.empty() && env_bool("SIMA_GST_WRAP_SCANNER", true)) {
       const gchar* scanner_env = g_getenv("GST_PLUGIN_SCANNER");
       if (!scanner_env || !*scanner_env) {
@@ -1393,35 +1330,20 @@ void gst_init_once() {
     }
     // Register custom metadata after gst_init to avoid GLib type init issues,
     // but before loading plugins to ensure transforms are wired.
-    if (!gst_meta_get_info("GstSimaMeta")) {
-      static const gchar* sima_meta_tags[] = {GST_META_TAG_MEMORY_STR, nullptr};
-      gst_meta_register_custom("GstSimaMeta", sima_meta_tags, sima_custom_meta_transform,
-                               const_cast<char*>("GstSimaMeta"), nullptr);
-    }
-    if (!gst_meta_get_info("GstSimaSampleMeta")) {
-      static const gchar* sima_sample_tags[] = {GST_META_TAG_MEMORY_STR, nullptr};
-      gst_meta_register_custom("GstSimaSampleMeta", sima_sample_tags, sima_custom_meta_transform,
-                               const_cast<char*>("GstSimaSampleMeta"), nullptr);
-    }
-    if (!gst_meta_get_info(SIMA_TENSOR_SET_META_NAME)) {
-      static const gchar* sima_tensor_set_tags[] = {GST_META_TAG_MEMORY_STR, nullptr};
-      gst_meta_register_custom(SIMA_TENSOR_SET_META_NAME, sima_tensor_set_tags,
-                               sima_custom_meta_transform,
-                               const_cast<char*>(SIMA_TENSOR_SET_META_NAME), nullptr);
+    if (!simaai::gst::tensor_buffer_register_meta()) {
+      throw std::runtime_error("Failed to register Neat tensor metadata");
     }
     if (!register_neat_camera_memory_bridge()) {
       throw std::runtime_error("Failed to register Neat private camera memory bridge");
     }
-#if defined(__linux__)
-    if (!register_neat_v4l2_copy_source()) {
-      throw std::runtime_error("Failed to register Neat private V4L2 copy source");
-    }
-#endif
     if (!register_neat_multipart_jpeg_demux()) {
       throw std::runtime_error("Failed to register Neat private multipart JPEG demuxer");
     }
     if (!register_latest_by_stream_mux()) {
       throw std::runtime_error("Failed to register Neat latest-by-stream mux");
+    }
+    if (!simaai::scheduler::client::register_kernel_runner()) {
+      throw std::runtime_error("Failed to register Runtime neatkernelrunner");
     }
     if (env_bool("SIMA_GST_SUPPRESS_JSON_WARNINGS", true)) {
       g_log_set_handler("Json",

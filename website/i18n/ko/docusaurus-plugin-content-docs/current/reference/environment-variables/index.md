@@ -9,13 +9,17 @@ slug: /reference/environment-variables
 
 이 페이지는 런타임, 빌더 및 SDK 도구에서 사용되는 환경 변수를 정리하여 보여줍니다. 대부분은 디버깅/진단용 설정이며, 대부분의 사용자는 문제 해결이 필요한 경우가 아니라면 무시해도 됩니다.
 
-전체 감지된 목록은 [환경 변수 목록](./inventory)에서 확인할 수 있습니다.
+전체 감지된 목록은 [환경 변수 목록](/reference/environment-variables/inventory/)에서 확인할 수 있습니다.
 
 > 참고: 일부 조정 가능한 매개변수는 내부용 또는 테스트용으로만 사용되며 변경될 수 있습니다. 여기에는 해당 매개변수가 포함되어 있습니다.
 
 > 현재 코드 경로에서 사용되고 있기 때문입니다.
 
 ## SDK 웹 액세스
+
+Palette SDK 3.0 이상에서는 `sima-cli sdk setup`이 컨테이너 환경에 `CODE_SERVER_PASSWORD`를 설정합니다. `neat`를 다시 실행하여 비밀번호를 확인하고 code-server에서 요청하면 입력하세요. URL에는 비밀번호나 토큰이 포함되지 않습니다. `neat --json`은 `backend`, `auth`, `password`, `localUrl`, `remoteUrl`을 포함하는 `codeUI`를 추가합니다. 이 출력은 인증 정보로 취급하세요. SDK 포트 맵의 공개 포트 `codeUIHttps.host`가 컨테이너 포트보다 우선합니다.
+
+설치된 code-server 실행 파일을 기준으로 동작을 선택합니다. `CODE_SERVER_PASSWORD`만 설정해도 기존 OpenVSCode 동작은 바뀌지 않습니다. `CODE_SERVER_HTTPS_PORT`와 `CODE_SERVER_WORKSPACE`는 기존 변수보다 우선합니다. `CODE_SERVER_WITHOUT_PASSWORD=1`이면 `auth: "none"`을 반환하고 비밀번호 값을 생략합니다. 기존 OpenVSCode 이미지는 토큰 URL을 유지합니다.
 
 - `NFS_SERVER_HOST_IP=<address>` — 원격 주소를 구성하는 데 사용되는 SDK 호스트 주소입니다.
   Insight 및 브라우저 기반 VS Code URL입니다. 일반적으로 `sima-cli sdk setup`에서 제공됩니다.
@@ -93,11 +97,10 @@ slug: /reference/environment-variables
 ## 디스패처 / 런타임
 
 - `SIMA_DISPATCHER_TRACE=1` — 디스패처 단계를 추적합니다.
-- `SIMA_DISPATCHER_AUTO_RECOVER=0/1` — 자동 복구 디스패처 (기본값: true).
 - `SIMA_ASYNC_TPUT_DIAG=1` — 비동기 처리량 진단.
 - `SIMA_ASYNC_WARMUP=<n>` — 비동기 워밍업 프레임.
-- `SIMA_PERF_POWER=1` — 성능 테스트 시 SOM PMIC 전원 레일 전력 소비량 측정 기능을 활성화합니다.
-- `SIMA_PERF_POWER_INTERVAL_MS=<ms>` — 전력 샘플링 간격(기본값: 100).
+- `SIMA_PERF_POWER=1` — 성능 테스트 시 Sentinel에서 보드 전력을 수집하는 기능을 활성화합니다.
+- `SIMA_PERF_POWER_INTERVAL_MS=<ms>` — 더 이상 사용되지 않으며 무시됩니다. Sentinel은 2초마다 샘플링합니다.
 - `SIMA_PULL_TIMEOUT_DIAG=0/1` — 풀 요청 시간 초과에 대한 보고서 (기본값: true).
 - `SIMA_STAGE_DEBUG=1` — 스테이지 실행 디버그 로그.
 
@@ -131,10 +134,11 @@ slug: /reference/environment-variables
 
 선택은 여유 공간이 아닌 쓰기 가능성에 따라 이루어집니다. `.tar.gz`는 압축 해제된 크기를 어느 방향으로든 제한하지 않으므로 디코딩하기 전에 알 수 있는 용량 요구 사항이 없습니다. 공간은 압축 해제하는 동안 각 청크별로 적용되고, 추출하기 전에 매니페스트에서 다시 적용됩니다. 따라서 적합한 NVMe는 조건 없이 사용되며, 공간이 없는 경우 `output_storage_unavailable` 오류와 함께 로드가 실패하고 eMMC로 대체되지 않습니다. 해당 파일 시스템의 여유 공간이 있거나 `SIMA_MPK_EXTRACT_ROOT`가 다른 위치를 가리키면 문제가 해결됩니다.
 - `SIMA_MPK_CLEANUP_EXTRACTED=0/1` — 정상 종료 시 프로세스별로 추출된 모델 아카이브 데이터를 삭제합니다(기본값: `1`).
-  정리 기능이 활성화되면 각 프로세스는 자체 `proc_<pid>` 루트 디렉터리에 압축을 풀고 종료 시 해당 디렉터리를 삭제합니다. 정리 기능이 비활성화되면 해당 프로세스 루트 디렉터리가 유지되어 검사할 수 있으며, 오래된 루트 디렉터리 정리에서 제외됩니다. 다른 프로세스에서 자동으로 검색하거나 재사용되지 않으므로 더 이상 필요하지 않을 때 수동으로 삭제해야 합니다.
+  정리 기능이 활성화되면 각 프로세스는 고유한 잠금 보호 `proc_run_*` 루트 디렉터리에 압축을 풀고 종료 시 해당 디렉터리를 삭제합니다. 정리 기능이 비활성화되면 해당 프로세스 루트 디렉터리가 유지되어 검사할 수 있으며, 오래된 루트 디렉터리 정리에서 제외됩니다. 다른 프로세스에서 자동으로 검색하거나 재사용되지 않으므로 더 이상 필요하지 않을 때 수동으로 삭제해야 합니다.
 
 `Model`은 `etc`, `lib` 및 `share`를 포함하는 이미 구성된 패키지 루트 디렉터리를 받을 수도 있습니다. 해당 디렉터리는 압축 해제 또는 복사 없이 그대로 사용되며, 호출자가 해당 디렉터리의 수명을 관리하고 모델이 사용되는 동안 변경되지 않도록 해야 합니다. `tar -xzf`로 생성된 단순 디렉터리는 구성된 패키지가 아니므로 직접 사용할 수 없습니다.
-- `SIMA_MPK_EXTRACT_GC_STALE_PROC=0/1` — 오래되고 쓸모없는 항목을 제거합니다.`proc_*` 시작 시 추출 루트 (기본값) `1`).
+- `SIMA_MPK_EXTRACT_GC_STALE_PROC=0/1` — 시작 시 소유권 잠금을 사용해 사용이 끝난 `proc_run_*` 추출 루트를 삭제합니다(기본값 `1`).
+  기존 `proc_<pid>` 루트는 사용 중이 아님을 확인한 후 수동으로 삭제해야 합니다.
 - `SIMA_MODEL_TAR=<path>` — 예제/테스트에서 사용되는 기본 모델 패키지 경로입니다.
   모델별 재정의(`SIMA_RESNET50_TAR`, `SIMA_YOLO_TAR` 등)는 여전히 우선 적용됩니다.
 - `SIMA_MPK_EXTRACT_MIN_FREE_BYTES=<bytes>` — 스테이징 중에 확보해 두는 최소 여유 공간
@@ -152,3 +156,42 @@ slug: /reference/environment-variables
 ## 테스트 / 내부 훅
 
 - `SIMA_TENSOR_MAPFAIL_DEBUG=1` — 텐서 매핑 실패를 기록합니다.
+
+## 커널 메타데이터 검증
+
+ProcessCVU 단계는 기본적으로 Runtime의 `neatkernelrunner`를 통해 실행됩니다.
+이전 ProcessCVU 플러그인을 선택하는 빌드 옵션이나 환경 변수는 없습니다.
+
+- `SIMA_CORE_COMPACT_METADATA=1` — 기능 지원이 확인된 후, 소유 출력의 직접적인
+  runner-to-appsink 연결에서 간결한 TensorSet 및 타입이 지정된 현재 프레임
+  메타데이터를 허용합니다. 호환되지 않는 경계, 디버그 또는 흐름 관찰자가 없어야 합니다.
+  소유 출력에 대한 표준 단계/요소 타이밍은 계속 활성화되며 두 표현을 모두 지원합니다.
+  표현할 수 없는 확장 정보는 기존 동적 메타데이터를 유지합니다.
+
+간결한 메타데이터 연결에 기존 표현만 지원하는 프로브를 연결하지 마세요. 기능 지원이
+확인되지 않으면 Runtime은 알 수 없는 소비자와 관찰자를 위해 기존 메타데이터를
+유지하지만, 실행은 계속 `neatkernelrunner`를 사용합니다. 이 메타데이터 옵션은
+지연 시간이나 처리량을 보장하지 않습니다.
+
+## 패키지 및 주간 검증(테스트 전용)
+
+- `SIMA_TEST_PACKAGE_INVENTORY=<absolute-path>` — 선택하고 검증한 배포 아카이브에서
+  `tools/ci/verify_core_dist.py --write-package-inventory`로 생성한 예상 패키지 제어
+  정보와 페이로드 식별 정보입니다. 설치된 DevKit 패키지 인벤토리 테스트에 필요합니다.
+  `dpkg`를 비공개 접두 경로로 리디렉션하지 않으며, 설치 결과 보고서도 아닙니다.
+- `SIMA_TEST_PLATFORM_BASELINE=<absolute-path>` — **설치 전에**
+  `tools/ci/verify_core_dist.py --capture-platform-baseline`으로 캡처한 네이티브 플랫폼
+  패키지의 존재/부재, 패키지 식별 정보 및 OTA 가용성/식별 정보입니다. 설치된 DevKit
+  패키지 인벤토리 테스트에는 선택한 패키지 인벤토리와 함께 이 기준 정보가 필요합니다.
+  설치 후의 상태에서 이 기준 정보를 다시 생성하지 마세요.
+- `SIMA_RUN_MNIST_PREPROC_CHANNELS1=1` — 장시간 MNIST 전처리 정확도 테스트를
+  명시적으로 활성화합니다. 건너뛰기를 막기 위해 임의로 설정하지 말고, 픽스처 검증 후
+  `tools/ci/prepare_weekly_fixtures.py`에서 이 값을 얻으세요. 로컬 실행기는
+  `--environment-json`을 사용하며, CI는 `--github-env`를 통해 같은 매핑을 사용합니다.
+
+픽스처 그룹 선택 및 설치된 패키지 프로파일은
+[테스트 요구 사항](../../develop-apps/contribute/build-test/test_requirements.md)을 참조하세요.
+
+## PCIe 호스트 및 카드 상태
+
+`NEAT_PCIE_SSH_USER`는 카드 SSH 사용자(기본값 `sima`)를 선택합니다. `NEAT_PCIE_SSH_KEY`는 개인 키(기본값 `~/.ssh/sima_neat_pcie_ed25519`)를 선택하며 기존 SSH 설정과 에이전트 인증도 사용할 수 있습니다. `--offline`은 인터넷 업데이트 확인을 생략하지만 로컬 SSH로 연결된 카드를 조회합니다. PCIe 호스트 상태에서는 아티팩트 업데이트를 확인하지 않습니다. 호스트 패키지를 업데이트하려면 `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>`를 사용하세요. `neat update`는 PCIe 카드를 업데이트하지 않습니다.

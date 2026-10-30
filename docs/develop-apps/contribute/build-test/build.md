@@ -17,39 +17,19 @@ For prebuilt package installation, see [Neat Library](/getting-started/neat-libr
 `build.sh` automatically detects the active environment:
 
 - Modalix DevKit native environment
-- Neat SDK environment (cross-compilation)
+- Palette SDK environment (cross-compilation)
 
 You can run the same `build.sh` commands in either environment.
 
 ### Cross Compilation Prerequisites
 
-Cross-compilation is typically faster than building directly on the DevKit, but you must transfer build artifacts to the DevKit afterward. You will need the Neat SDK for cross compilation.
-
-Install `sima-cli` first on the host machine, then install the SDK.
+Use the Palette SDK for cross-compilation. Follow [Install the SDK](/getting-started/dev-environment/install-the-environment/) to set it up on a supported Ubuntu, Windows/WSL, or macOS host, then open its shell:
 
 ```bash
-curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
-sima-cli install sdk
+sima-cli sdk neat
 ```
 
-When prompted by `sima-cli`, select the SDK option.
-
-Then start the SDK:
-
-```bash
-sima-cli sdk elxr
-```
-
-Then install `sima-cli` inside the SDK, then install the SDK patch.
-
-```bash
-curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
-source ~/.bash_profile
-sima-cli install tools/sdk-patch
-```
-
-- SDK installation is supported on Windows and Ubuntu.
-- If you are building natively on a Modalix DevKit, the SDK install/patch steps are not required.
+The SDK includes the toolchain and `sima-cli`. Core's `build.sh` prepares the matching Scheduler and LLiMa dependencies; see [Local dependencies](/develop-apps/contribute/build-test/local-dependencies/). In a paired SDK, `./build.sh --install` also deploys matching artifacts to the DevKit. Native DevKit builds do not require the SDK.
 
 ## Build Options
 
@@ -60,7 +40,7 @@ Supported `build.sh` options:
 - `--python`: Build Python bindings (`pyneat`) in addition to selected targets.
 - `--install-neat-internals`, `--install-deps`: Download and install deps artifacts before build.
 - `--doc`: Build docs only.
-- `--install`: After build/package, install generated artifacts into the current environment. In paired Neat SDK mode, this also deploys and installs matching artifacts on the paired DevKit.
+- `--install`: After build/package, install generated artifacts into the current environment. In paired Palette SDK mode, this also deploys and installs matching artifacts on the paired DevKit.
 - `--no-dist`: Skip distribution packaging.
 - `--clean`: Remove `build/` before configuring.
 - `--no-doc`: Skip docs build (even with `--all`).
@@ -201,3 +181,5 @@ cmake -LA -B build      # include advanced
 ```
 
 The top-level `CMakeLists.txt` is the source of truth for option names.
+
+Core inherits firmware and the exact sysroot from the selected Scheduler package receipt; it does not declare firmware separately. The receipt must match Core’s platform and SDK channel. CI retains that policy with the build artifacts and uses it to select the exact DevKit without fallback. Before installing LLiMa, Core checks its published firmware, platform and SDK channel against Scheduler and verifies the selected DEBs against the same publication. LLiMa does not publish an exact sysroot receipt, so this check establishes declared firmware compatibility, not identical sysroot inventories. For local `--llima PATH` builds, provide the root LLiMa distribution containing the core/dev/cli DEBs, `llima-package-manifest.json` and `metadata.json`. Missing or conflicting evidence stops the build. Rebuild and publish Kernels → Runner → Scheduler, and matching LLiMa, before rebuilding Core.

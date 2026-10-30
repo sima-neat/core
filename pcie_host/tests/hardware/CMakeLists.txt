@@ -29,6 +29,18 @@ simapcie_add_hardware_test(test_image_run test_image_run.cpp)
 simapcie_add_hardware_test(test_image_boxdecode_run test_image_boxdecode_run.cpp)
 simapcie_add_hardware_test(test_queue_blocker test_queue_blocker.cpp)
 simapcie_add_hardware_test(test_model_resilience test_model_resilience.cpp)
+simapcie_add_hardware_test(test_genai_run test_genai_run.cpp)
+
+install(PROGRAMS "${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/prepare_pcie_genai_models.sh"
+  DESTINATION "${SIMAPCIE_HARDWARE_TEST_INSTALL_DIR}"
+  COMPONENT PcieHostExtras)
+install(FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/images/people.jpg"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/assets/genai/audio.wav"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/assets/genai/audio_de.wav"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/assets/genai/audio_16k_mono_f32le.raw"
+  DESTINATION "${SIMAPCIE_HARDWARE_TEST_INSTALL_DIR}/genai-assets"
+  COMPONENT PcieHostExtras)
 
 install(PROGRAMS test_tensor_parallel_queues.sh
   DESTINATION "${SIMAPCIE_HARDWARE_TEST_INSTALL_DIR}"

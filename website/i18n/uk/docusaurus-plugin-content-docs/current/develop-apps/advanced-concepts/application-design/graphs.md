@@ -681,14 +681,7 @@ run.save_json("/tmp/final.graph_run.json", export_opt)
 
 Експортер робить знімок поточної сесії; він не зупиняє її. Якщо вам потрібні остаточні дані для завершеного набору завдань, викличте `run.close_input()` і очистіть вихідні дані, або викличте `run.stop()`, перш ніж зберегти.
 
-Щоб включити телеметрію живлення плати:
-
-```cpp
-neat::RunOptions opt;
-opt.enable_board_power(/*sample_interval_ms=*/100);
-
-neat::Run run = app.build(opt);
-```
+Застарілий `RunOptions::enable_board_power()` додає до експорту потужність плати. У новому коді записуйте потужність плати, температури, завантаження CPU та пам’ять за допомогою [`TelemetryMonitor`](/develop-apps/development-workflow/model#record-board-telemetry) і зберігайте його `Telemetry` поруч з експортом.
 
 Схема JSON має версію `sima.neat.graph_run` `1`. Схема розміщена за адресою `schemas/graph_run_v1.schema.json`, а інструмент перевірки CI – за адресою `tests/perf/tools/graph_run_schema.py`.
 
@@ -740,6 +733,29 @@ neat::Graph app;
 app.add(neat::nodes::groups::RtspDecodedInput(source_opt));
 app.add(yolo);
 app.add(neat::nodes::Output("detections"));
+```
+
+Група декодованого RTSP-входу надає однакові параметри керування декодером у C++ і Python:
+
+| Поле `RtspDecodedInputOptions` | Типове значення | Призначення |
+| --- | --- | --- |
+| `decoder_input_buffers` | `-1` | Кількість буферів стисненого входу; якщо не задано, діє типове значення середовища виконання. |
+| `num_buffers` | `-1` | Кількість буферів у пулі декодованого виходу; якщо не задано, розмір визначається автоматично. |
+| `decoder_tuning` | `""` | Необов’язковий профіль декодера, наприклад `throughput-low-latency`. |
+| `decoder_memory_opt` | `false` | Застарілий профіль пам’яті; явно заданий `decoder_tuning` має пріоритет. |
+
+Додатні перевизначення кількості діють і з профілем налаштування. Використовуйте `-1`, щоб не задавати кількість; попередні недодатні значення також залишають властивість незаданою.
+Профіль `throughput-low-latency` вимикає перевпорядкування й потребує сумісних потоків без перевпорядкування B-кадрів для показу. Кількість вхідних буферів не задає їхню місткість у байтах.
+Ці параметри вже є в `SimaDecodeOptions` як `input_buffers`,
+`num_buffers`, `decoder_tuning` та `memory_opt`.
+
+```python
+source = pyneat.RtspDecodedInputOptions()
+source.url = "rtsp://camera/stream"
+source.decoder_input_buffers = 2
+source.decoder_tuning = "throughput-low-latency"
+# Leave num_buffers at -1 to use automatic output sizing.
+app.add(pyneat.groups.rtsp_decoded_input(source))
 ```
 
 ### Вхідні дані програми для вихідного UDP-каналу, яким керує граф.

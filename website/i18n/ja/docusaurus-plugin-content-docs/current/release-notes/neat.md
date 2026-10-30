@@ -7,18 +7,30 @@ sidebar_position: 3
 
 SiMa.ai Neat Library のリリースノート。
 
-## 未リリース
+## 0.6.0
 
 ### 互換性のない変更
 
-- Core は C++ ABI 5、`libsima_neat.so.5` を使用します。公開テンソル、GenAI、グラフ接続、YOLOX セグメンテーション／ポーズのオプションのオブジェクトレイアウトが変更されました。対応する Core ヘッダーとランタイムパッケージで C++ アプリケーション、プラグイン、Python バインディングを再ビルドしてください。
+- テンソルモードの `Model::input_specs()` は、サイズ 1 のバッチ軸（`[1,H,W,C]`）を含め、MPK に記述されたランクを保持するようになりました。シード入力なしの `build()` の後も、バッチ 1 の HWC 入力を引き続き受け付けます。`compiled_batch_size()` はテンソル次元から推測せず、MLA に宣言されたバッチサイズを読み取ります。
+
+- モデル出力は、デバイス側の中間形状ではなく、MPK に記述された最終的な論理形状とレイアウトを公開します。たとえば、ResNet-50 のバッチ平坦化出力は、4 次元 HWC 形状ではなく、形状 `[1, 1000]` で論理レイアウトは不明です。Float32 テンソルの形式は `FP32` ではなく `EVXX_FLOAT32` の場合があります。値の解釈にはテンソルのデータ型と形状を使用し、バックエンドの形式タグから論理軸を推定しないでください。
+- Neat Library の C++ ABI は 6、共有ライブラリの SONAME は `libsima_neat.so.6` です。Tensor は特徴抽出器の意味メタデータを保持し、公開 GenAI リクエスト／結果型は ASR タスク、言語、プローブのメタデータを保持します。`GraphLinkOptions` にはリアルタイム受け入れの制限が含まれ、`BenchmarkOptions` と `BenchmarkReport` にはフィールドが追加されました。C++ アプリケーションとプラグインを再ビルドし、対応する Core のランタイムと開発パッケージをインストールしてください。 `SimaArgMaxOptions` に `axis` と `keepdims` が追加され、`SimaArgMax` のクラスレイアウトも変更されました。
 - リアルタイムのグラフ合成では、`GraphLinkOptions`、`Graph::connect()`、および`Graph::build()`が使用されます。プレビュー用の`RealtimeGraphLinkOptions`、`connect_realtime()`、`build_fused_realtime_sources()`/ `build_fused_realtime_source()`、および`RealtimeEveryFrameByStream` APIは削除されました。`realtime_every_frame_by_stream`を含む保存されたグラフは、サポートされているポリシーを使用して再作成する必要があります。詳細は[ライブフラグメントを接続する](/develop-apps/development-workflow/graph/#connect-live-fragments)を参照してください。
+
+- パッケージバージョンは **0.6.0** です。`Model::Options` と `BoxDecodeOptions` に `yolox_seg_pose.pose_classes` が追加されました。この公開レイアウトの追加には ABI 6 のコンシューマーが必要です。ABI 互換性のためのシンボリックリンクは使わないでください。`GraphOptions` には `kernel_runner_a65_workers` が追加されました。0.6.0 に更新する際は、対応するランタイムおよび開発パッケージに対して、アプリケーション、プラグイン、Python 拡張を再ビルドしてください。どちらも ABI 6 を使っているという理由だけで、プレビューのバイナリとリリースパッケージを混在させないでください。
 
 ### ランタイムの変更
 
+- `Model::benchmark()` は、電力レールを自身でサンプリングする代わりに、[Sentinel](/tools/sentinel/) からボードのテレメトリを読み取ります。レイテンシ測定パスとスループット測定パスは、それぞれ `num_samples` 個の入力を測定し、かつ `BenchmarkOptions::min_duration_ms`（デフォルトは 10 秒）以上が経過するまで実行されるようになったため、電力と温度の値は複数の Sentinel サンプルにわたって取得されます。従来の入力数ベースの計測にするには、`min_duration_ms` を 0 に設定してください。`BenchmarkReport` には、`latency_p50_ms`、`latency_p95_ms`、`latency_p99_ms`、`peak_power_watts`、`throughput_samples`、`throughput_duration_ms`、および、レール電力、ダイとボードの温度、CPU 使用率（全体とコアごと）、MLA・EV74 のメモリとボード全体の Linux メモリを含む `telemetry` が追加されました。`avg_power_watts` と `energy_joules` の意味は変わりません。`energy_joules` は `num_samples` 個の入力に対するエネルギーです。Sentinel を利用できない場合でもレイテンシーと FPS は報告され、`telemetry.status` にその理由が示されます。DevKit インストーラーは、`sima-cli neat install sentinel` で Sentinel をインストールします。実行中のバージョンが最新の本番ビルドでない場合はアップグレードします。詳細は[モデルの実行を測定する](/develop-apps/development-workflow/model#power-and-board-telemetry)を参照してください。
+- `enable_board_power()` で有効にする Run の電力テレメトリも Sentinel から読み取るようになりました。Core は I2C の電力モニターを開かなくなったため、同じレールに対する Sentinel の読み取りと干渉しなくなり、インストーラーも `sima` を `i2c` グループに追加しなくなりました。Sentinel は 2 秒ごとにサンプリングするため、約 2 秒より短い測定ウィンドウでは電力サンプルが得られない場合があります。レールは `mla` のように Sentinel のメトリクス名で命名され、電力のみを報告します。`sample_interval_ms`、`PowerMonitorProfile`、組み込みのレールテーブル、`PowerRailConfig` の I2C フィールド、`enable_modalix_som_power()`、`enable_modalix_dvt_power()`、および `modalix_som_power_monitor_options()` / `modalix_dvt_power_monitor_options()` は非推奨となり、無視されます。
+- `TelemetryMonitor` は、C++ と Python で、`start()` から `stop()` までの間のボードの電力、温度、CPU 使用率、メモリを Sentinel から記録します。`read()` はその時点までのサマリーを返し、`Telemetry` は YAML として出力でき、YAML または JSON として保存できます。`Model::benchmark()` は `BenchmarkReport::telemetry` にこれを使用します。`PowerMonitor`、`read_power_snapshot()`、`RunOptions::enable_board_power()`、`RunOptions::power_monitor`、および `MeasureOptions::include_power` は非推奨となり、`TelemetryMonitor` に置き換えられましたが、引き続き動作します。詳細は[ボードのテレメトリを記録する](/develop-apps/development-workflow/model#record-board-telemetry)を参照してください。
+- `BenchmarkOptions::inputs` を使うと、合成入力の代わりに独自のテンソルで `Model::benchmark()` を実行でき、`BenchmarkReport::input` にどちらを使用したかが記録されます。詳細は[独自の入力で測定する](/develop-apps/development-workflow/model#measure-with-your-own-inputs)を参照してください。
+- プラグインレイテンシは非推奨となり、今後削除されます。対象は `MeasureOptions::include_plugin_latency` と `plugin_latency_source`、`BenchmarkOptions::include_plugin_latency`、`start_measurement(bool)`、および `Model::benchmark(int, bool)` / `Model::benchmark(bool)` です。代わりに `start_measurement()` と `benchmark(num_samples)` を使用してください。
+- ハードウェアデコードは、直接のコーデックセッションと DMA-BUF 出力を使用します。Core はデコーダーデーモンの受け入れリースと `SIMA_DECODER_ADMISSION_REQUIRE` を使用しなくなりました。デコーダーのプールとチューニングのオプションは引き続き利用できます。
 - C++およびPythonでは、`SimaDecode`と`RtspDecodedInput`を通じて、ネイティブのH.265/HEVCデコードが利用可能です。`RtspEncodedInput`は、デコードせずに解析されたH.265アクセスユニットを提供します。H.265入力は、HEVC Mainプロファイル、8ビット、4:2:0を使用する必要があります。コーデックセレクターは、`H265`と`HEVC`の両方をサポートします。H.264セレクターも`AVC`をサポートします。`FormatTag` / `pyneat.Format`は、エンコードされたグラフの境界で同じエイリアスを受け入れ、`H264`と`H265`としてシリアライズします。
 - `VideoSender`は、エンコードされたH.264またはH.265を、`VideoSenderOptions::Passthrough(codec)` / `pyneat.VideoSenderOptions.passthrough(codec)`を通じて再エンコードせずに、UDP経由のRTPとして転送します。H.265はデフォルトでRTPペイロードタイプ98を使用します。H.264は96を維持します。`H264RtpUdpFromEncoded()`は、`Passthrough(RtspCodec::H264)`に置き換えられ、非推奨となりました。
-- 生の `VideoSender` 入力は、システムまたは SiMaAI メモリ内で NV12 であることが確定しており、インストール済みエンコーダーが `input-layout-aware=true` を通知する場合、フォーマット変換を自動的に省略するようになりました。他の生フォーマット、不明なメモリ/レイアウト、および信頼できるフォーマット契約を持たない入力では、従来どおり NV12 に変換します。`H264RtpUdpFromRaw(...)` C++ および Python API は変更されていません。
+- 生の `VideoSender` 入力は、インストール済みエンコーダーが `input-layout-aware=true` を通知する場合、互換性のある DMA ベースの NV12 についてフォーマット変換を自動的に省略します。それ以外の生入力は、既存のエンコーダー入力境界で最終的なエンコーダーストレージに準備します。`H264RtpUdpFromRaw(...)` C++ および Python API は変更されていません。
+- `InputMemoryPolicy::Auto` は、優先する割り当て先と必須の入力ストレージを区別します。デバイスを優先する経路は、呼び出し側が所有する `Tensor` と `Sample` のストレージを CPU 画像に変換せずに保持します。互換性のある DMA-BUF 入力はゼロコピーを維持します。既存の CPU 入力は、引き続きデバイス入力側で実体化が必要な場合があります。明示的な EV74/DMS0 入力要件は引き続き適用されます。
 - RTSP 入力は、`RtspEncodedInputOptions` と `RtspDecodedInputOptions` のコーデックに依存しない単一の `payload_type` フィールドで RTP ペイロードタイプを選択します。`-1` はコーデックのデフォルト（H.264/H.265 は 96、MJPEG は 26）を選択し、`0` はペイロードフィルタリングを無効にし、正の値は指定したペイロードを選択します。`RtspEncodedInputOptions::h264_payload_type` と `mjpeg_payload_type` は非推奨で、解決済みペイロードを変更する場合はランタイムで一度警告します。
 - 通常の`build()`は、適格なライブファンインに対して、自動的に融合されたローワーリングを選択するようになりました。直接エンコードされたH.264またはH.265 `VideoSender`ブランチは、デコードされたフレームのCPUコピーなしで、デコード前に融合されます。ソース、デコーダー、および送信者は、コーデックについて合意する必要があります。不一致のペアは、個別のパイプラインセグメントに留まります。ライブプレビューのために、そのエッジを`RealtimeLatestByStream`に設定すると、遅いビデオ受信機が古いアクセスユニットを置き換え、デコーダーブランチにバックプレッシャーをかけません。
 
@@ -27,12 +39,15 @@ SiMa.ai Neat Library のリリースノート。
 
 ### グラフの作成と検証
 
+- 新しい `SimaVoxelize`、`SimaPillarScatter`、`SimaBEVPoolPlan`、`SimaBEVPool` ノードは、PointPillars と BEVFusion のカーネルライブラリによる LiDAR 演算とカメラから BEV への演算を、INT8 または BF16 のテンソルで A65 または EV74 上で実行します。各ノードは選択したターゲット上で実行され、フォールバックはありません。[LiDAR と BEV のカーネルノード](/reference/lidar_bev_kernel_nodes)を参照してください。
+- 1 つのモデル画像入力に直接接続されたデフォルトの公開 `Input` は、その入力が宣言する画像形式を継承します。明示的な入力オプションが優先されます。曖昧な接続には明示的なオプションが必要です。これはサンプルの解釈を変更しますが、ペイロードのコピーは追加しません。
 - グラフの構成において、現在は1つのノードオブジェクトを1つの論理的な頂点として扱います。重複した挿入や重複するフラグメントのインポートはアトミックに失敗し、繰り返し行われる `connect()` 呼び出しでは、既存のノードを再利用してファンアウトを行います。
 - 実体化されたパイプラインセグメントは、`build()` の際に最終的な GStreamer 名を検証するようになりました。明示的な `validate()` 呼び出しは不要です。重複または欠落した名前は、切り捨てられたパイプラインを生成する代わりに、`misconfig.pipeline_shape` でエラーとなります。
 - カスタムフラグメントは、現在はすべての明示的な名前と、名前付きパッド参照を宣言とともに報告します。名前の衝突が発生した場合、自動的に名前が変更されるのではなく、拒否されます。
 
-| リリース | 互換性のある Neat SDK | 備考 |
+| リリース | 互換性のある Palette SDK | 備考 |
 |---|---|---|
+| 0.6.0 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
 | 0.5.0 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |
 | 0.4.0 | 2.1.3.0 | [Neat Library 0.4.0](https://github.com/sima-neat/core/releases/tag/v0.4.0) |
 | 0.3.0 | 2.1.2.3 | [Neat Library 0.3.0](https://github.com/sima-neat/core/releases/tag/v0.3.0) |

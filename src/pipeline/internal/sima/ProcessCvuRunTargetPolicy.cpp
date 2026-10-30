@@ -1,4 +1,6 @@
 #include "pipeline/internal/sima/ProcessCvuRunTargetPolicy.h"
+#include "pipeline/internal/sima/CanonicalStageIdentity.h"
+#include <simaai/scheduler/client/kernel.h>
 
 #include <algorithm>
 #include <cctype>
@@ -73,8 +75,20 @@ enum class ProcessCvuStageRole {
   Post,
 };
 
-ProcessCvuStageRole processcvu_stage_role(const ProcessCvuStagePayload& payload,
-                                          std::string_view stage_identity = {}) {
+ProcessCvuStageRole processcvu_stage_role(
+    const ProcessCvuStagePayload& payload, std::string_view stage_identity,
+    const std::optional<static_contract::PhysicalCommandRole> physical_command_role) {
+  if (physical_command_role.has_value()) {
+    switch (*physical_command_role) {
+    case static_contract::PhysicalCommandRole::Ingress:
+      return ProcessCvuStageRole::Pre;
+    case static_contract::PhysicalCommandRole::Egress:
+      return ProcessCvuStageRole::Post;
+    case static_contract::PhysicalCommandRole::Interstitial:
+    case static_contract::PhysicalCommandRole::NonCvu:
+      return ProcessCvuStageRole::Unknown;
+    }
+  }
   switch (payload.graph_family_enum) {
   case ProcessCvuGraphFamily::Preproc:
   case ProcessCvuGraphFamily::Quant:
@@ -114,6 +128,23 @@ ProcessCvuStageRole processcvu_stage_role(const ProcessCvuStagePayload& payload,
   return ProcessCvuStageRole::Unknown;
 }
 
+// Preserve established AUTO placement independently of compiled availability.
+// Newly available targets do not silently change the chosen executor.
+bool prefer_a65_terminal_post(const ProcessCvuStagePayload& payload) {
+  switch (payload.graph_family_enum) {
+  case ProcessCvuGraphFamily::Cast:
+  case ProcessCvuGraphFamily::Quant:
+  case ProcessCvuGraphFamily::QuantTess:
+  case ProcessCvuGraphFamily::CastTess:
+  case ProcessCvuGraphFamily::Dequant:
+  case ProcessCvuGraphFamily::DetessCast:
+  case ProcessCvuGraphFamily::DetessDequant:
+    return true;
+  default:
+    return false;
+  }
+}
+
 struct ExplicitProcessCvuTarget {
   std::string run_target;
   std::string source;
@@ -147,10 +178,9 @@ struct ExplicitProcessCvuTarget {
   throw std::invalid_argument(message);
 }
 
-std::optional<ExplicitProcessCvuTarget>
-explicit_prepost_target(const ProcessCvuStagePayload& payload, const ProcessCvuOptions& options,
-                        std::string_view stage_identity = {}) {
-  switch (processcvu_stage_role(payload, stage_identity)) {
+std::optional<ExplicitProcessCvuTarget> explicit_prepost_target(const ProcessCvuStageRole role,
+                                                                const ProcessCvuOptions& options) {
+  switch (role) {
   case ProcessCvuStageRole::Pre:
     if (explicit_run_target_token(options.pre_run_target)) {
       return ExplicitProcessCvuTarget{
@@ -189,113 +219,86 @@ const char* processcvu_resolved_exec_backend_token(ProcessCvuResolvedExecBackend
   }
 }
 
+ProcessCvuBackendCapabilities
+processcvu_backend_capabilities(const ProcessCvuStagePayload& payload) {
+  ProcessCvuBackendCapabilities caps;
+  // The installed Kernels package is the only source of implementation/target
+  // availability. Core owns only stage decomposition and placement preference.
+  auto name = canonical_transform_operation(payload.graph_name.empty() ? payload.graph_family
+                                                                       : payload.graph_name);
+  if (name == "feature_histogram")
+    name = "histogram";
+  else if (name == "grider_fast")
+    name = "fast";
+  else if (name == "track_descriptor")
+    name = "fast_brief";
+  else if (name == "track_klt")
+    name = "tracker";
+  const auto supports = [](std::string_view operation, ::simaai::scheduler::client::Target target) {
+    const auto* info = ::simaai::scheduler::client::find_kernel_operation(operation);
+    return info &&
+           std::find(info->targets.begin(), info->targets.end(), target) != info->targets.end();
+  };
+  caps.supports_ev74 = supports(name, ::simaai::scheduler::client::Target::EV74);
+  caps.supports_a65 = supports(name, ::simaai::scheduler::client::Target::A65);
+  if (name == "tracker" && payload.detect_new_features > 0) {
+    caps.supports_ev74 =
+        caps.supports_ev74 && supports("fast", ::simaai::scheduler::client::Target::EV74);
+    caps.supports_a65 =
+        caps.supports_a65 && supports("fast", ::simaai::scheduler::client::Target::A65);
+  }
+  // Preserve EV-preferred ingress and A65-preferred terminal-post placement.
+  caps.auto_run_target = caps.supports_ev74 ? "EV74" : "A65";
+  caps.auto_exec_backend =
+      caps.supports_ev74 ? ProcessCvuResolvedExecBackend::Evxx : ProcessCvuResolvedExecBackend::A65;
+  caps.reason = "installed_kernel_target_availability";
+
+  return caps;
+}
+
 ProcessCvuBackendCapabilities processcvu_backend_capabilities(const ProcessCvuStagePayload& payload,
                                                               std::string_view stage_identity) {
-  ProcessCvuBackendCapabilities caps;
-  caps.supports_ev74 = true;
-  caps.supports_a65 = false;
-  caps.auto_run_target = "AUTO";
-  caps.auto_exec_backend = ProcessCvuResolvedExecBackend::Evxx;
-  caps.reason = "generic_ev_default_policy";
-
-  const auto set_dual_backend_preference = [&caps](ProcessCvuResolvedExecBackend preferred,
-                                                   std::string reason) {
-    caps.supports_ev74 = true;
-    caps.supports_a65 = true;
-    caps.auto_exec_backend = preferred;
-    caps.auto_run_target = preferred == ProcessCvuResolvedExecBackend::A65 ? "A65" : "EV74";
-    caps.reason = std::move(reason);
-  };
-  const ProcessCvuStageRole role = processcvu_stage_role(payload, stage_identity);
-
-  switch (payload.graph_family_enum) {
-  case ProcessCvuGraphFamily::VisualFrontend:
-    caps.supports_ev74 = true;
-    caps.supports_a65 = false;
-    caps.auto_run_target = "EV74";
-    caps.auto_exec_backend = ProcessCvuResolvedExecBackend::Evxx;
-    caps.reason = "native_visual_ev74_only";
-    break;
-  case ProcessCvuGraphFamily::Cast:
-    set_dual_backend_preference(role == ProcessCvuStageRole::Post
-                                    ? ProcessCvuResolvedExecBackend::A65
-                                    : ProcessCvuResolvedExecBackend::Evxx,
-                                role == ProcessCvuStageRole::Post ? "a65_preferred_auto_post"
-                                                                  : "ev74_preferred_dual_backend");
-    break;
-  case ProcessCvuGraphFamily::Quant:
-    set_dual_backend_preference(ProcessCvuResolvedExecBackend::Evxx, "ev74_preferred_dual_backend");
-    break;
-  case ProcessCvuGraphFamily::QuantTess:
-    set_dual_backend_preference(ProcessCvuResolvedExecBackend::Evxx, "ev74_preferred_dual_backend");
-    break;
-  case ProcessCvuGraphFamily::CastTess:
-    set_dual_backend_preference(ProcessCvuResolvedExecBackend::Evxx, "ev74_preferred_dual_backend");
-    break;
-  case ProcessCvuGraphFamily::Dequant:
-    set_dual_backend_preference(ProcessCvuResolvedExecBackend::A65, "a65_preferred_auto_post");
-    break;
-  case ProcessCvuGraphFamily::DetessCast:
-    // Graph 225 (detesscast) was previously A65-only because the legacy EV74
-    // detesscast kernel produced accuracy-corrupt boxes on YOLOv8 BF16 mpk.
-    // The Phase 1 port replaced that body with the FLAT tile-walker kernel
-    // (ported from graph 227's d227 hot path, BF16->FP32 specialised), so
-    // detesscast now ships dual-backend. AUTO retains the established A65
-    // post-stage preference; explicit EV74 remains supported.
-    // NOTE: this flip is gated on the YOLOv8 BF16 inference smoke test from
-    // porting_kernels.md Phase 5.3 -- the code below reflects the post-port
-    // intent; if the matrix test regresses boxdecode accuracy the policy
-    // must revert to A65-only here.
-    set_dual_backend_preference(ProcessCvuResolvedExecBackend::A65, "a65_preferred_auto_post");
-    break;
-  case ProcessCvuGraphFamily::DetessDequant:
-    // Canonical pattern (matches cast/casttess/quantize/quanttess):
-    //  - EV74: detessdequant.cc::detessdequant_ev74() dispatches the OCL hot
-    //          path against libsima_detessdequant.a (7 specialized kernels:
-    //          int8/16/32 input × fp16/fp32 output × NHWC/NCHW formats, plus
-    //          large-tile variants).
-    //  - A65 : detessdequant.cc::detessdequant_a65() runs the scalar
-    //          reference using sima_ev_a65:: helpers.
-    // Top-level entry detessdequant() switches on cfg->hdr.run_target.
-    // Graph id 227 is the canonical detessdequant slot; the old
-    // standalone detessdequant_opt anti-pattern was retired because
-    // libsima_detessdequant already owns the OCL hot path.
-    // AUTO retains the established post-stage A65 preference. Keeping the
-    // preference here, next to backend availability, prevents a later role
-    // override from contradicting capability diagnostics.
-    set_dual_backend_preference(ProcessCvuResolvedExecBackend::A65, "a65_preferred_auto_post");
-    break;
-  default:
-    break;
+  ProcessCvuBackendCapabilities caps = processcvu_backend_capabilities(payload);
+  const auto role = processcvu_stage_role(payload, stage_identity, std::nullopt);
+  if (role == ProcessCvuStageRole::Post && caps.supports_a65 && prefer_a65_terminal_post(payload)) {
+    caps.auto_run_target = "A65";
+    caps.auto_exec_backend = ProcessCvuResolvedExecBackend::A65;
+    caps.reason = "a65_preferred_auto_post";
   }
   return caps;
 }
 
-ProcessCvuBackendCapabilities
-processcvu_backend_capabilities(const ProcessCvuStagePayload& payload) {
-  return processcvu_backend_capabilities(payload, {});
-}
-
-ProcessCvuBackendDecision
-resolve_processcvu_backend_decision(const ProcessCvuStagePayload& payload,
-                                    const ContractCompileInput& compile_input,
-                                    std::string_view stage_identity) {
+ProcessCvuBackendDecision resolve_processcvu_backend_decision(
+    const ProcessCvuStagePayload& payload, const ContractCompileInput& compile_input,
+    std::string_view stage_identity,
+    const std::optional<static_contract::PhysicalCommandRole> physical_command_role) {
   ProcessCvuBackendDecision decision;
+  const auto stage_role = processcvu_stage_role(payload, stage_identity, physical_command_role);
   std::string requested_source = "legacy_or_env";
   if (explicit_run_target_token(payload.requested_run_target)) {
     decision.requested_run_target =
         normalize_processcvu_run_target_token_no_env(payload.requested_run_target);
     requested_source = "payload_stage";
-  } else if (auto match =
-                 explicit_prepost_target(payload, compile_input.processcvu, stage_identity)) {
+  } else if (auto match = explicit_prepost_target(stage_role, compile_input.processcvu)) {
     decision.requested_run_target = match->run_target;
     requested_source = match->source;
+  } else if (physical_command_role.has_value()) {
+    decision.requested_run_target =
+        normalize_processcvu_run_target_token_no_env(compile_input.processcvu_requested_run_target);
+    requested_source = "coarse_request";
   } else {
     decision.requested_run_target =
         normalize_processcvu_run_target_token(compile_input.processcvu_requested_run_target);
   }
-  const ProcessCvuBackendCapabilities caps =
-      processcvu_backend_capabilities(payload, stage_identity);
+  const ProcessCvuBackendCapabilities caps = processcvu_backend_capabilities(payload);
+  if (!caps.supports_ev74 && !caps.supports_a65) {
+    throw std::invalid_argument(
+        "processcvu stage '" + std::string(stage_identity) +
+        "' requires unavailable Kernels operation '" +
+        std::string(canonical_transform_operation(
+            payload.graph_name.empty() ? payload.graph_family : payload.graph_name)) +
+        "'; refusing standalone fallback");
+  }
 
   if (decision.requested_run_target == "A65") {
     if (caps.supports_a65) {
@@ -321,21 +324,33 @@ resolve_processcvu_backend_decision(const ProcessCvuStagePayload& payload,
     return decision;
   }
 
-  decision.effective_run_target =
-      normalize_processcvu_run_target_token_no_env(caps.auto_run_target);
-  decision.resolved_exec_backend = caps.auto_exec_backend;
-  decision.reason = (caps.reason.empty() ? "auto_policy" : caps.reason) + ":" + requested_source;
+  if (stage_role == ProcessCvuStageRole::Post && caps.supports_a65 &&
+      prefer_a65_terminal_post(payload)) {
+    // AUTO should keep pre/adaptor stages on EV74, but post stages are CPU-facing
+    // in the common terminal route and the A65 reference path is measurably
+    // faster for YOLO INT8 post/dequant. Explicit per-stage/session/env targets
+    // above still win; this only changes the unresolved AUTO policy.
+    decision.effective_run_target = "A65";
+    decision.resolved_exec_backend = ProcessCvuResolvedExecBackend::A65;
+    decision.reason = "a65_preferred_auto_post:" + requested_source;
+  } else {
+    decision.effective_run_target =
+        normalize_processcvu_run_target_token_no_env(caps.auto_run_target);
+    decision.resolved_exec_backend = caps.auto_exec_backend;
+    decision.reason = (caps.reason.empty() ? "auto_policy" : caps.reason) + ":" + requested_source;
+  }
   return decision;
 }
 
-void resolve_processcvu_run_target(ProcessCvuStagePayload* payload,
-                                   const ContractCompileInput& compile_input,
-                                   std::string_view stage_identity) {
+void resolve_processcvu_run_target(
+    ProcessCvuStagePayload* payload, const ContractCompileInput& compile_input,
+    std::string_view stage_identity,
+    const std::optional<static_contract::PhysicalCommandRole> physical_command_role) {
   if (!payload) {
     return;
   }
-  const ProcessCvuBackendDecision decision =
-      resolve_processcvu_backend_decision(*payload, compile_input, stage_identity);
+  const ProcessCvuBackendDecision decision = resolve_processcvu_backend_decision(
+      *payload, compile_input, stage_identity, physical_command_role);
   payload->requested_run_target = decision.requested_run_target;
   payload->run_target = decision.effective_run_target;
   payload->resolved_exec_backend =

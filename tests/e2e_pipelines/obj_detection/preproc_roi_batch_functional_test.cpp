@@ -6,6 +6,7 @@
 #include "test_utils.h"
 
 #include <opencv2/core.hpp>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -24,414 +25,116 @@ namespace fs = std::filesystem;
 
 namespace {
 
-sima_test::ModelArchiveFixture
-make_roi_batch_preproc_fixture_from_config(const std::string& tag,
-                                           const std::string& preproc_config_json) {
-  return sima_test::make_model_archive_fixture(tag,
-                                               {
-                                                   {"etc/preproc_roi_batch_functional_mpk.json",
-                                                    R"json({
-  "name": "preproc_roi_batch_functional",
-  "model_path": "preproc_roi_batch_functional.onnx",
-  "model_sdk_version": "2.0.0",
-  "sequence": 1,
-  "input_nodes": [
-    {
-      "name": "images",
-      "type": "buffer",
-      "size": 9216,
-      "input_range": [0.0, 255.0],
-      "logical_shape": [1, 48, 64, 3],
-      "logical_dtype": "UINT8"
-    }
-  ],
-  "plugins": [
-    {
-      "name": "preproc_0",
-      "sequence": 1,
-      "processor": "EV74",
-      "config_params": {
-        "desired_batch_size": 1,
-        "actual_batch_size": 1,
-        "kernel": "preproc",
-        "params": {
-          "input_shapes": [[1, 48, 64, 3]],
-          "output_shapes": [[1, 48, 64, 3]],
-          "input_dtype": ["UINT8"],
-          "output_dtype": "BF16"
-        }
-      },
-      "input_nodes": [{"name": "images", "size": 9216}],
-      "output_nodes": [{
-        "name": "preproc_0",
-        "type": "buffer",
-        "size": 18432,
-        "logical_shape": [1, 48, 64, 3],
-        "logical_dtype": "BF16"
-      }],
-      "type": "sgpProcess",
-      "resources": {"executable": "kernel_name_tbd"}
-    },
-    {
-      "name": "mla_0",
-      "sequence": 2,
-      "processor": "MLA",
-      "config_params": {
-        "desired_batch_size": 1,
-        "actual_batch_size": 1,
-        "number_of_quads_to_user": 1,
-        "input_shapes": [[1, 48, 64, 3]],
-        "input_data_type": ["BF16"],
-        "output_shapes": [[1, 1, 1, 1]],
-        "data_type": ["BF16"]
-      },
-      "input_nodes": [{
-        "name": "preproc_0",
-        "size": 18432,
-        "logical_shape": [1, 48, 64, 3],
-        "logical_dtype": "BF16"
-      }],
-      "output_nodes": [{
-        "name": "mla_0",
-        "type": "buffer",
-        "size": 2,
-        "logical_shape": [1, 1, 1, 1],
-        "logical_dtype": "BF16"
-      }],
-      "type": "sgpProcess",
-      "resources": {"executable": "stage0.elf"}
-    }
-  ]
-})json"},
-                                                   {"etc/pipeline_sequence.json",
-                                                    R"json({
-  "pipelines": [{
-    "sequence": [
-      {
-        "sequence_id": 1,
-        "name": "preproc_0",
-        "pluginId": "processcvu",
-        "configPath": "0_preproc.json",
-        "processor": "CVU",
-        "kernel": "preproc",
-        "input": "decoder"
-      },
-      {
-        "sequence_id": 2,
-        "name": "mla_0",
-        "pluginId": "processmla",
-        "configPath": "0_process_mla.json",
-        "processor": "MLA",
-        "kernel": "infer",
-        "input": "preproc_0"
-      }
-    ]
-  }]
-})json"},
-                                                   {"etc/0_preproc.json", preproc_config_json},
-                                                   {"etc/0_process_mla.json",
-                                                    R"json({
-  "node_name": "mla_0",
-  "input_buffers": [{"name": "preproc_0"}],
-  "input_format": ["EV81_BFLOAT16"],
-  "data_type": ["EV81_BFLOAT16"],
-  "input_width": [64],
-  "input_height": [48],
-  "input_depth": [3],
-  "output_width": [1],
-  "output_height": [1],
-  "output_depth": [1]
-})json"},
-                                               },
-                                               true);
+sima_test::ModelArchiveFixture make_roi_batch_model_fixture(const std::string& tag,
+                                                            bool tessellated = false,
+                                                            bool quantized = false) {
+  using Json = nlohmann::json;
+  const Json frame_shape = {1, 48, 64, 3};
+  const std::string dtype = quantized ? "int8" : "bfloat16";
+  const std::size_t output_bytes = quantized ? 9216U : 18432U;
+  const std::string precision_name = quantized ? "quantize_0" : "cast_0";
+  const auto node = [&](const std::string& name, std::size_t bytes, const std::string& scalar,
+                        const Json& shape) {
+    return Json{{"name", name},
+                {"type", "buffer"},
+                {"size", bytes},
+                {"logical_shape", shape},
+                {"logical_dtype", scalar}};
+  };
+  Json precision_params = {{"input_shapes", Json::array({frame_shape})},
+                           {"output_shapes", Json::array({frame_shape})}};
+  if (quantized) {
+    precision_params.update({{"channel_params", {{32.0, -3}}},
+                             {"num_bits", 8},
+                             {"rounding", "TONEAREST"},
+                             {"output_data_type", "int8"}});
+  } else {
+    precision_params["out_dtype"] = "bfloat16";
+  }
+  // The compiler contract begins with FP32 tensors. Image/ROI resize and normalization
+  // come from Model::Options, not a fictitious MPK "preproc" operation or sidecar JSON.
+  Json plugins = Json::array(
+      {{{"name", precision_name},
+        {"sequence", 1},
+        {"processor", "EV74"},
+        {"type", "sgpProcess"},
+        {"config_params",
+         {{"desired_batch_size", 1},
+          {"actual_batch_size", 1},
+          {"kernel", quantized ? "quantization_transform" : "cast_transform"},
+          {"params", precision_params}}},
+        {"input_nodes", Json::array({node("images", 36864U, "float32", frame_shape)})},
+        {"output_nodes", Json::array({node(precision_name, output_bytes, dtype, frame_shape)})}}});
+  std::string mla_input = precision_name;
+  if (tessellated) {
+    mla_input = "tessellate_1";
+    plugins.push_back(
+        {{"name", mla_input},
+         {"sequence", 2},
+         {"processor", "EV74"},
+         {"type", "sgpProcess"},
+         {"config_params",
+          {{"desired_batch_size", 1},
+           {"actual_batch_size", 1},
+           {"kernel", "tessellation_transform"},
+           {"params",
+            {{"input_shapes", Json::array({frame_shape})},
+             {"output_shapes", {{1, output_bytes}}},
+             {"slice_shape", {16, 16, 3}},
+             {"align_c16", false},
+             {"cblock", false},
+             {"frame_type", dtype}}}}},
+         {"input_nodes", Json::array({node(precision_name, output_bytes, dtype, frame_shape)})},
+         {"output_nodes", Json::array({node(mla_input, output_bytes, dtype, frame_shape)})}});
+  }
+  plugins.push_back(
+      {{"name", "mla_0"},
+       {"sequence", plugins.size() + 1U},
+       {"processor", "MLA"},
+       {"type", "sgpProcess"},
+       {"resources", {{"executable", "stage0.elf"}}},
+       {"config_params",
+        {{"desired_batch_size", 1},
+         {"actual_batch_size", 1},
+         {"number_of_quads_to_user", 1},
+         {"input_types", {{{"scalar", dtype}, {"shape", frame_shape}}}},
+         {"output_types", {{{"scalar", "bfloat16"}, {"shape", {1, 1, 1, 1}}}}}}},
+       {"input_nodes", Json::array({node(mla_input, output_bytes, dtype, frame_shape)})},
+       {"output_nodes", Json::array({node("mla_0", 2U, "bfloat16", {1, 1, 1, 1})})}});
+  const Json mpk = {{"name", tag},
+                    {"model_path", "preproc_roi_batch_functional.onnx"},
+                    {"model_sdk_version", "2.0.0"},
+                    {"sequence", 1},
+                    {"input_nodes", Json::array({node("images", 36864U, "float32", frame_shape)})},
+                    {"plugins", std::move(plugins)}};
+  const auto fixture = sima_test::make_model_archive_fixture(
+      tag, {{"etc/preproc_roi_batch_functional_mpk.json", mpk.dump(2)}}, false);
+  // Only EV Preproc executes. The ELF declares the exact MLA planning topology.
+  const auto share = fs::path(fixture.root_dir) / "share";
+  fs::create_directories(share);
+  sima_test::write_topology_elf(share / "stage0.elf", "data.ifm.b0", output_bytes, "data.ofm.b0",
+                                2U);
+  const std::string archive = "tar -czf " + sima_test::model_archive_shell_quote(fixture.tar_path) +
+                              " -C " + sima_test::model_archive_shell_quote(fixture.root_dir) +
+                              " .";
+  require(std::system(archive.c_str()) == 0, "failed to archive ROI Preproc topology fixture");
+  return fixture;
 }
 
 sima_test::ModelArchiveFixture make_roi_batch_preproc_fixture() {
-  return make_roi_batch_preproc_fixture_from_config("preproc_roi_batch_functional",
-                                                    R"json({
-  "node_name": "preproc_0",
-  "graph_name": "preproc",
-  "input_width": 64,
-  "input_height": 48,
-  "input_img_type": "RGB",
-  "output_width": 64,
-  "output_height": 48,
-  "output_img_type": "RGB",
-  "normalize": true,
-  "channel_mean": [0.0, 0.0, 0.0],
-  "channel_stddev": [1.0, 1.0, 1.0],
-  "output_dtype": "BF16",
-  "tessellate": false,
-  "aspect_ratio": false,
-  "scaling_type": "BILINEAR"
-})json");
+  return make_roi_batch_model_fixture("preproc_roi_batch_functional");
 }
 
-sima_test::ModelArchiveFixture
-make_roi_batch_preproc_resize_fixture(const std::string& tag, const std::string& scaling_type,
-                                      bool aspect_ratio) {
-  std::ostringstream config;
-  config << R"json({
-  "node_name": "preproc_0",
-  "graph_name": "preproc",
-  "input_width": 64,
-  "input_height": 48,
-  "input_img_type": "RGB",
-  "output_width": 64,
-  "output_height": 48,
-  "output_img_type": "RGB",
-  "normalize": true,
-  "channel_mean": [0.0, 0.0, 0.0],
-  "channel_stddev": [1.0, 1.0, 1.0],
-  "output_dtype": "BF16",
-  "tessellate": false,
-  "aspect_ratio": )json"
-         << (aspect_ratio ? "true" : "false") << R"json(,
-  "scaling_type": ")json"
-         << scaling_type << R"json("
-})json";
-  return make_roi_batch_preproc_fixture_from_config(tag, config.str());
-}
-
-sima_test::ModelArchiveFixture
-make_roi_batch_preproc_letterbox_fixture(const std::string& scaling_type = "BILINEAR") {
-  return make_roi_batch_preproc_resize_fixture("preproc_roi_batch_letterbox_" + scaling_type,
-                                               scaling_type,
-                                               /*aspect_ratio=*/true);
-}
-
-sima_test::ModelArchiveFixture make_roi_batch_preproc_tess_route_fixture(
-    const std::string& tag, const std::string& adapter_name, const std::string& adapter_kernel,
-    const std::string& mla_input_dtype, std::size_t adapter_output_bytes,
-    const std::string& adapter_params_extra = "") {
-  std::ostringstream mpk;
-  mpk << R"json({
-  "name": ")json"
-      << tag << R"json(",
-  "model_path": "preproc_roi_batch_functional.onnx",
-  "model_sdk_version": "2.0.0",
-  "sequence": 1,
-  "input_nodes": [
-    {
-      "name": "images",
-      "type": "buffer",
-      "size": 9216,
-      "input_range": [0.0, 255.0],
-      "logical_shape": [1, 48, 64, 3],
-      "logical_dtype": "UINT8"
-    }
-  ],
-  "plugins": [
-    {
-      "name": "preproc_0",
-      "sequence": 1,
-      "processor": "EV74",
-      "config_params": {
-        "desired_batch_size": 1,
-        "actual_batch_size": 1,
-        "kernel": "preproc",
-        "params": {
-          "input_shapes": [[1, 48, 64, 3]],
-          "output_shapes": [[1, 48, 64, 3]],
-          "input_dtype": ["UINT8"],
-          "output_dtype": "BF16"
-        }
-      },
-      "input_nodes": [{"name": "images", "size": 9216}],
-      "output_nodes": [{
-        "name": "preproc_0",
-        "type": "buffer",
-        "size": 18432,
-        "logical_shape": [1, 48, 64, 3],
-        "logical_dtype": "BF16"
-      }],
-      "type": "sgpProcess",
-      "resources": {"executable": "kernel_name_tbd"}
-    },
-    {
-      "name": ")json"
-      << adapter_name << R"json(",
-      "sequence": 2,
-      "processor": "EV74",
-      "config_params": {
-        "desired_batch_size": 1,
-        "actual_batch_size": 1,
-        "kernel": ")json"
-      << adapter_kernel << R"json(",
-        "params": {
-          "input_shapes": [[1, 48, 64, 3]],
-          "output_shapes": [[1, 48, 64, 3]],
-          "input_dtype": ["BF16"],
-          "output_dtype": ")json"
-      << mla_input_dtype << R"json(",
-          "frame_type": ")json"
-      << mla_input_dtype << R"json(",
-          "align_c16": true,
-          "slice_shape": [16, 16, 3])json";
-  if (!adapter_params_extra.empty()) {
-    mpk << ",\n" << adapter_params_extra;
-  }
-  mpk << R"json(
-        }
-      },
-      "input_nodes": [{"name": "preproc_0", "size": 18432}],
-      "output_nodes": [{
-        "name": ")json"
-      << adapter_name << R"json(",
-        "type": "buffer",
-        "size": )json"
-      << adapter_output_bytes << R"json(,
-        "logical_shape": [1, 48, 64, 3],
-        "logical_dtype": ")json"
-      << mla_input_dtype << R"json("
-      }],
-      "type": "sgpProcess",
-      "resources": {"executable": "kernel_name_tbd"}
-    },
-    {
-      "name": "mla_0",
-      "sequence": 3,
-      "processor": "MLA",
-      "config_params": {
-        "desired_batch_size": 1,
-        "actual_batch_size": 1,
-        "number_of_quads_to_user": 1,
-        "input_shapes": [[1, 48, 64, 3]],
-        "input_data_type": [")json"
-      << mla_input_dtype << R"json("],
-        "output_shapes": [[1, 1, 1, 1]],
-        "data_type": ["BF16"]
-      },
-      "input_nodes": [{
-        "name": ")json"
-      << adapter_name << R"json(",
-        "size": )json"
-      << adapter_output_bytes << R"json(,
-        "logical_shape": [1, 48, 64, 3],
-        "logical_dtype": ")json"
-      << mla_input_dtype << R"json("
-      }],
-      "output_nodes": [{
-        "name": "mla_0",
-        "type": "buffer",
-        "size": 2,
-        "logical_shape": [1, 1, 1, 1],
-        "logical_dtype": "BF16"
-      }],
-      "type": "sgpProcess",
-      "resources": {"executable": "stage0.elf"}
-    }
-  ]
-})json";
-
-  std::ostringstream pipeline;
-  pipeline << R"json({
-  "pipelines": [{
-    "sequence": [
-      {
-        "sequence_id": 1,
-        "name": "preproc_0",
-        "pluginId": "processcvu",
-        "configPath": "0_preproc.json",
-        "processor": "CVU",
-        "kernel": "preproc",
-        "input": "decoder"
-      },
-      {
-        "sequence_id": 2,
-        "name": ")json"
-           << adapter_name << R"json(",
-        "pluginId": "processcvu",
-        "configPath": "1_tess.json",
-        "processor": "CVU",
-        "kernel": ")json"
-           << adapter_kernel << R"json(",
-        "input": "preproc_0"
-      },
-      {
-        "sequence_id": 3,
-        "name": "mla_0",
-        "pluginId": "processmla",
-        "configPath": "0_process_mla.json",
-        "processor": "MLA",
-        "kernel": "infer",
-        "input": ")json"
-           << adapter_name << R"json("
-      }
-    ]
-  }]
-})json";
-
-  std::ostringstream adapter_config;
-  adapter_config << R"json({
-  "node_name": ")json"
-                 << adapter_name << R"json(",
-  "graph_name": ")json"
-                 << adapter_kernel << R"json(",
-  "num_in_tensor": 1,
-  "input_shapes": [[1, 48, 64, 3]],
-  "slice_shape": [16, 16, 3],
-  "input_dtype": "BF16",
-  "output_dtype": ")json"
-                 << mla_input_dtype << R"json("
-})json";
-
-  std::ostringstream mla_config;
-  mla_config << R"json({
-  "node_name": "mla_0",
-  "input_buffers": [{"name": ")json"
-             << adapter_name << R"json("}],
-  "input_format": [")json"
-             << (mla_input_dtype == "INT8" ? "EV81_INT8" : "EV81_BFLOAT16") << R"json("],
-  "data_type": [")json"
-             << (mla_input_dtype == "INT8" ? "EV81_INT8" : "EV81_BFLOAT16") << R"json("],
-  "input_width": [64],
-  "input_height": [48],
-  "input_depth": [3],
-  "output_width": [1],
-  "output_height": [1],
-  "output_depth": [1]
-})json";
-
-  return sima_test::make_model_archive_fixture(
-      tag,
-      {
-          {"etc/preproc_roi_batch_functional_mpk.json", mpk.str()},
-          {"etc/pipeline_sequence.json", pipeline.str()},
-          {"etc/0_preproc.json",
-           R"json({
-  "node_name": "preproc_0",
-  "graph_name": "preproc",
-  "input_width": 64,
-  "input_height": 48,
-  "input_img_type": "RGB",
-  "output_width": 64,
-  "output_height": 48,
-  "output_img_type": "RGB",
-  "normalize": true,
-  "channel_mean": [0.0, 0.0, 0.0],
-  "channel_stddev": [1.0, 1.0, 1.0],
-  "output_dtype": "BF16",
-  "tessellate": false,
-  "aspect_ratio": false,
-  "scaling_type": "BILINEAR"
-})json"},
-          {"etc/1_tess.json", adapter_config.str()},
-          {"etc/0_process_mla.json", mla_config.str()},
-      },
-      true);
+sima_test::ModelArchiveFixture make_roi_batch_preproc_letterbox_fixture() {
+  return make_roi_batch_model_fixture("preproc_roi_batch_letterbox_BILINEAR");
 }
 
 sima_test::ModelArchiveFixture make_roi_batch_preproc_tess_bf16_fixture() {
-  return make_roi_batch_preproc_tess_route_fixture("preproc_roi_batch_tess_bf16_functional",
-                                                   "tessellate_1", "tessellate", "BF16", 18432);
+  return make_roi_batch_model_fixture("preproc_roi_batch_tess_bf16_functional", true);
 }
 
 sima_test::ModelArchiveFixture make_roi_batch_preproc_quanttess_int8_fixture() {
-  return make_roi_batch_preproc_tess_route_fixture("preproc_roi_batch_quanttess_int8_functional",
-                                                   "quanttess_1", "quanttess", "INT8", 9216,
-                                                   R"json(          "q_scale": 32.0,
-          "q_zp": -3)json");
+  return make_roi_batch_model_fixture("preproc_roi_batch_quanttess_int8_functional", true, true);
 }
 
 cv::Mat make_test_image(int width, int height, int seed) {
@@ -520,8 +223,12 @@ void require_output_traits(const simaai::neat::Tensor& tensor, const ExpectedOut
   require(meta.tessellate == expected.tessellate, label + ": tessellate metadata mismatch");
   require(meta.quantize == expected.quantize, label + ": quantize metadata mismatch");
   if (expected.tessellate) {
-    require(tensor.route.segment_name == "output_tessellated_image",
-            label + ": expected output_tessellated_image handoff");
+    require(tensor.route.name == "output_tessellated_image" &&
+                tensor.route.backend_name == "output_tessellated_image",
+            label + ": expected the selected tessellated logical/backend output");
+    require(!tensor.route.segment_name.empty() && tensor.route.memory_index >= 0 &&
+                tensor.route.physical_byte_offset >= 0,
+            label + ": selected output must retain a concrete physical view");
   }
 }
 
@@ -936,9 +643,8 @@ int main(int argc, char** argv) {
     };
     auto run_resize_type_case = [&](const std::string& label, const std::string& scaling_type) {
       run_checked(label, [&] {
-        const auto resize_fixture = make_roi_batch_preproc_resize_fixture(
-            "preproc_roi_batch_resize_" + scaling_type, scaling_type,
-            /*aspect_ratio=*/false);
+        const auto resize_fixture =
+            make_roi_batch_model_fixture("preproc_roi_batch_resize_" + scaling_type);
         simaai::neat::Model resize_model(
             resize_fixture.tar_path,
             make_roi_batch_resize_model_options(scaling_type, simaai::neat::ResizeMode::Stretch));

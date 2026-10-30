@@ -136,12 +136,11 @@ opt.preprocess.preset = pyneat.NormalizePreset.COCO_YOLO
 ### 10. `No channel available (all candidate channel opens failed)`
 
 :::info 원인
-EV74 디스패처는 로드된 펌웨어에서 구현되지 않은 커널을 예약하려고 시도했습니다. 이는 일반적으로 `neat-runtime`과 `neat-ev74-firmware`가 **동일한 빌드가 아니기** 때문입니다(내부 해시 불일치). 예를 들어, 부분 업데이트가 발생한 경우입니다.
+실행 요청이 호환되는 EV74 채널을 열지 못했습니다. 부분 업데이트로 인해 Scheduler, Runner, Kernels 또는 펌웨어 패키지 세트가 일치하지 않는 것이 한 가지 원인일 수 있습니다.
 :::
 
 :::tip 수정
-일치하는 `neat-*` 세트를 함께 설치합니다(동일한 해시 값). 런타임과 펌웨어가 동일한 해시 값을 보고하는지 확인합니다. [호환성 → 버전이 일치하는 세트](/getting-started/compatibility#the-version-matched-set-firmware--runtime)를 참조하십시오.
-*(이 메시지는 EV74 디스패처에서 보냅니다.)*
+[Neat Library 설치 또는 업데이트](/getting-started/neat-library/install-or-update/)에 따라 선택된 Scheduler 종속성과 전체 Core 번들을 설치하십시오. 서로 다른 구성 요소의 Git 해시를 비교하거나 개별 펌웨어 패키지를 강제로 설치하는 대신 [런타임 패키지 조합](/reference/diagnostics/#keep-core-and-scheduler-packages-matched)을 확인하십시오.
 :::
 
 ### 11. `frame=N rtsp_timeout`
@@ -154,14 +153,14 @@ RTSP 스트림 요청 시간이 초과되었습니다. URL이 잘못되었거나
 RTSP URL에 접속하여 스트리밍이 제대로 이루어지는지 확인하고, 전송 방식(TCP 또는 UDP)을 확인합니다. [RTSP 스트림을 사용합니다.](/tutorials/consume-rtsp-stream)을 참조하십시오.
 :::
 
-### 12. `CameraInput strict zero-copy requires external-buffer-mode`
+### 12. `Camera buffer is not one forwardable DMA-BUF and copying is disabled`
 
 :::info 원인
-`CameraInputOptions::allow_cpu_fallback`의 기본값은 false이므로, Neat는 시작부터 끝까지 SiMaAI/장치 제로 복사 지원을 필요로 합니다. `libcamerasrc`가 일반적인 `external-buffer-mode` 속성을 광고하지 않거나, 설치된 메모리 라이브러리가 메모리 할당을 DMA-BUF로 내보낼 수 없는 경우입니다.
+`CameraInputOptions::allow_cpu_fallback`의 기본값은 false이므로, Neat는 카메라 자체의 DMA-BUF를 그대로 전달하며 복사하지 않습니다. 카메라 스택이 평면들이 연속으로 배치된 하나의 DMA-BUF가 아닌 프레임(예: fd마다 평면이 하나씩 있는 경우 또는 DMA-BUF가 아닌 메모리)을 전달했습니다.
 :::
 
 :::tip 수정
-일관성 있는 카메라 및 메모리 패키지가 설치된 경우 엄격한 제로 복사 방식을 유지합니다. DMA-BUF 내보내기가 없는 카메라 스택에서 실행해야 하는 경우 호환성 브리지에 명시적으로 참여합니다.
+플랫폼 `libcamera` 패키지와 함께 엄격한 제로 복사 방식을 유지합니다. 각 프레임을 하나의 DMA-BUF로 전달하지 않는 카메라 스택에서 실행해야 하는 경우 호환성 복사를 명시적으로 선택합니다.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -182,7 +181,7 @@ camera.allow_cpu_fallback = True
 </CodeTab>
 </CodeTabs>
 
-적응형 모드에서는 다운스트림 CVU/MLA 단계에 SiMaAI 메모리가 계속 전달됩니다. 업스트림 카메라 버퍼가 EV74에서 아직 사용 가능하지 않은 경우에만 카메라 브리지에서 복사가 이루어집니다.
+적응형 모드에서도 다운스트림 CVU/MLA 단계에는 계속 DMA-BUF가 전달됩니다. 카메라 프레임이 평면들이 연속으로 배치된 하나의 DMA-BUF가 아닌 경우에만 CMA DMA-BUF로 복사가 이루어집니다.
 :::
 
 ### 13. `misconfig.media_caps … libcamerasrc … not-negotiated (-4)`
@@ -233,7 +232,7 @@ python3 share/sima-neat/tutorials/023_run_mipi_camera_model/run_mipi_camera_mode
   --pull-timeout-ms 15000 --print-backend
 </ShellCommand>
 
-프로덕션 경로는 폴백이 활성화된 경우 `libcamerasrc`, `neatcamerabridge`, `neatprocesscvu`, `neatprocessmla` 및 `appsink`를 포함해야 합니다. BoxDecode 경로의 경우, `--decode` 토큰과 임계값이 모델 아카이브와 일치하는지 확인하십시오.
+프로덕션 경로는 폴백이 활성화된 경우 `libcamerasrc`, `neatcamerabridge`, `neatkernelrunner`, `neatprocessmla` 및 `appsink`를 포함해야 합니다. BoxDecode 경로의 경우, `--decode` 토큰과 임계값이 모델 아카이브와 일치하는지 확인하십시오.
 :::
 
 ### 16. 그래프 처리량이 낮거나 실시간 프레임이 누락됩니다.
@@ -435,8 +434,6 @@ export SIMA_GST_DOT_DIR=/tmp     # writes .dot graphs on build/failure; default:
 | `build.pipeline_syntax` | 사용자 정의 GStreamer 구문이 올바르지 않습니다. |
 | `build.parse_launch` | `gst_parse_launch` 오류를 더 구체적으로 분류할 수 없습니다. |
 | `runtime.pull` | 더 구체적인 상위 수준 또는 근본 원인 코드가 없는 상태에서 풀(pull) 작업이 실패했습니다. |
-| `infra.dispatcher_unavailable` | 가속기 디스패처를 가져올 수 없습니다. 빌드 중 EV74 RPMsg 채널이 고갈된 경우도 포함됩니다. CPU로 대체할 수 없습니다. |
+| `infra.dispatcher_unavailable` | MLA/EV74/A65 디스패처를 가져올 수 없습니다. 펌웨어가 로드되지 않았거나, 라이선스가 없거나, 하드웨어 오류가 발생했습니다. CPU로 대체할 수 없습니다. |
 
 이것은 간단한 문제 해결 안내서입니다. 모든 코드와 C++/Python 상수 이름에 대해서는 [완전한 오류 코드 목록](/reference/error-codes)를 참조하십시오.
-
-`EVXX/EV74 RPMsg capacity exhausted` 시작 오류가 발생하면 사용하지 않는 그래프 실행을 종료하거나 경합하는 워크로드를 중지한 후 다시 빌드하십시오. 디스패처를 공유하는 그래프는 마지막 클라이언트가 종료될 때까지 해당 채널을 유지합니다. 획득은 기본적으로 최대 15초 동안 대기하며 `SIMA_RPMSG_ACQUIRE_TIMEOUT_MS`로 구성할 수 있습니다. 더 이상 사용되지 않는 `SIMA_RPCEVXX_IDLE_RELEASE_MS` 설정은 경고만 표시할 뿐 효과가 없으며, 유휴 그래프는 예약을 그대로 유지합니다. 그 밖의 예약 실패에는 검색, 권한 또는 전송 진단 정보가 함께 포함됩니다.

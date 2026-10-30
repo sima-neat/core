@@ -135,12 +135,11 @@ opt.preprocess.preset = pyneat.NormalizePreset.COCO_YOLO
 ### 10. `No channel available (all candidate channel opens failed)`
 
 :::info 原因
-EV74 派遣器嘗試排程一個內核，但已載入的韌體並未實作該內核——通常是因為 `neat-runtime` 和 `neat-ev74-firmware` **不是相同的版本**（內部雜湊值不符），例如部分更新。
+執行要求無法開啟相容的 EV74 通道。其中一個可能原因是部分更新後，Scheduler、Runner、Kernels 或韌體套件組不相符。
 :::
 
 :::tip 修復
-一起安裝匹配的 `neat-*` 套件（哈希值相同）；確認在執行階段和韌體中顯示的哈希值是否相同。請參閱 [相容性 → 版本相符的集合](/getting-started/compatibility#the-version-matched-set-firmware--runtime)。
-*（此訊息來自 EV74 派遣器。）*
+請依照[安裝或更新 Neat Library](/getting-started/neat-library/install-or-update/)安裝完整 Core 套件組與選定的 Scheduler 相依套件。請檢查[執行階段套件配對](/reference/diagnostics/#keep-core-and-scheduler-packages-matched)，而不是比較不同元件的 Git 雜湊值或強制安裝個別韌體套件。
 :::
 
 ### 11. `frame=N rtsp_timeout`
@@ -153,14 +152,14 @@ RTSP 拉取逾時——URL 錯誤或串流未傳輸影格。
 驗證 RTSP URL 是否可連線且正在積極地進行串流；檢查傳輸方式（TCP 或 UDP）。請參閱 [播放 RTSP 串流。](/tutorials/consume-rtsp-stream)。
 :::
 
-### 12. `CameraInput strict zero-copy requires external-buffer-mode`
+### 12. `Camera buffer is not one forwardable DMA-BUF and copying is disabled`
 
 :::info 原因
-`CameraInputOptions::allow_cpu_fallback` 預設為 false，因此 Neat 需要端到端 SiMaAI/裝置零拷貝支援。或者 `libcamerasrc` 沒有宣告通用的 `external-buffer-mode` 屬性，或者已安裝的記憶體函式庫無法將其設定匯出為 DMA-BUFs。
+`CameraInputOptions::allow_cpu_fallback` 預設為 false，因此 Neat 會直接轉送相機自身的 DMA-BUF，且從不複製。相機堆疊傳遞的影格並非各平面緊密相連的單一 DMA-BUF（例如每個 fd 一個平面，或非 DMA-BUF 記憶體）。
 :::
 
 :::tip 修復
-在安裝相容的相機和記憶體套件時，請務必維持嚴格的零複製。如果您必須在沒有 DMA-BUF 匯出的情況下使用相機堆疊，請明確選擇相容性橋接：
+請搭配平台的 `libcamera` 套件維持嚴格的零複製。如果您必須在無法將每個影格以單一 DMA-BUF 傳遞的相機堆疊上執行，請明確選擇相容性複製：
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -181,7 +180,7 @@ camera.allow_cpu_fallback = True
 </CodeTab>
 </CodeTabs>
 
-自適應模式仍然將下游的 CVU/MLA 階段的資料傳輸到 SiMaAI 記憶體。只有在上游相機緩衝區尚未被 EV74 使用時，才會在相機橋接器處進行複製。
+自適應模式仍然會將 DMA-BUF 交給下游的 CVU/MLA 階段。只有在相機影格並非各平面緊密相連的單一 DMA-BUF 時，才會複製到 CMA DMA-BUF 中。
 :::
 
 ### 13. `misconfig.media_caps … libcamerasrc … not-negotiated (-4)`
@@ -232,7 +231,7 @@ python3 share/sima-neat/tutorials/023_run_mipi_camera_model/run_mipi_camera_mode
   --pull-timeout-ms 15000 --print-backend
 </ShellCommand>
 
-生產流程應包含 `libcamerasrc`、`neatcamerabridge`（當啟用回退機制時）、`neatprocesscvu`、`neatprocessmla` 和 `appsink`。對於 BoxDecode 路由，還請確認 `--decode` 標記和閾值與模型封存檔相符。
+生產流程應包含 `libcamerasrc`、`neatcamerabridge`（當啟用回退機制時）、`neatkernelrunner`、`neatprocessmla` 和 `appsink`。對於 BoxDecode 路由，還請確認 `--decode` 標記和閾值與模型封存檔相符。
 :::
 
 ### 16. 圖的處理速度慢，或者即時影格會遺失。
@@ -434,8 +433,6 @@ export SIMA_GST_DOT_DIR=/tmp     # writes .dot graphs on build/failure; default:
 | 自訂的 GStreamer 片段的語法無效。| `build.pipeline_syntax` |
 | `build.parse_launch` | 由於無法更精確地分類，因此無法判斷 `gst_parse_launch` 失敗的原因。|
 | `runtime.pull` | 某次拉取操作失敗，但沒有提供更具體的上游/根本原因代碼。|
-| `infra.dispatcher_unavailable` | 無法取得加速器訊息分派器，包括建置期間 EV74 RPMsg 通道耗盡的情況。沒有 CPU 備援機制。|
+| `infra.dispatcher_unavailable` | 無法取得 MLA/EV74/A65 訊息分派器——可能是韌體未載入、缺少授權或硬體故障。沒有 CPU 備援機制。|
 
 這是一份簡短的疑難排解指南。請針對每個錯誤代碼以及 C++/Python 常數名稱，參考 [完整的錯誤碼目錄](/reference/error-codes)。
-
-若啟動時出現 `EVXX/EV74 RPMsg capacity exhausted` 錯誤，請關閉未使用的圖形執行或停止競用的工作負載，然後重新建置。共用同一訊息分派器的圖形會保留其通道，直到最後一個客戶端關閉為止。取得作業預設最多等待 15 秒，可透過 `SIMA_RPMSG_ACQUIRE_TIMEOUT_MS` 設定。已淘汰的 `SIMA_RPCEVXX_IDLE_RELEASE_MS` 設定只會發出警告且不具作用；閒置的圖形仍會保留其保留項目。其他保留失敗則會一併提供探索、權限或傳輸的診斷資訊。

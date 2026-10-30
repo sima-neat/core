@@ -678,14 +678,7 @@ run.save_json("/tmp/final.graph_run.json", export_opt)
 
 匯出者會擷取目前執行的狀態快照；它不會停止執行。如果您需要有限工作負載的最終數值，請在儲存之前呼叫 `run.close_input()` 並清空輸出，或呼叫 `run.stop()`。
 
-若要包含板卡功耗遙測資料：
-
-```cpp
-neat::RunOptions opt;
-opt.enable_board_power(/*sample_interval_ms=*/100);
-
-neat::Run run = app.build(opt);
-```
+已棄用的 `RunOptions::enable_board_power()` 會將板子功耗加入匯出內容。對於新程式碼，請使用 [`TelemetryMonitor`](/develop-apps/development-workflow/model#record-board-telemetry) 記錄板子功耗、溫度、CPU 使用率與記憶體，並將其 `Telemetry` 與匯出內容一併儲存。
 
 JSON 結構的 `sima.neat.graph_run` 版本為 `1`。該結構位於 `schemas/graph_run_v1.schema.json`，而 CI 驗證器則位於 `tests/perf/tools/graph_run_schema.py`。
 
@@ -735,6 +728,28 @@ neat::Graph app;
 app.add(neat::nodes::groups::RtspDecodedInput(source_opt));
 app.add(yolo);
 app.add(neat::nodes::Output("detections"));
+```
+
+RTSP 解碼群組在 C++ 與 Python 中提供相同的解碼器控制選項：
+
+| `RtspDecodedInputOptions` 欄位 | 預設值 | 用途 |
+| --- | --- | --- |
+| `decoder_input_buffers` | `-1` | 壓縮輸入緩衝區數量；不設定時採用執行階段預設值。 |
+| `num_buffers` | `-1` | 解碼輸出集區數量；不設定時自動決定大小。 |
+| `decoder_tuning` | `""` | 選用的解碼器預設組態，例如 `throughput-low-latency`。 |
+| `decoder_memory_opt` | `false` | 舊版記憶體預設組態；明確設定的 `decoder_tuning` 優先。 |
+
+即使使用調校預設組態，正值的數量覆寫仍然有效。使用 `-1` 表示未設定數量；舊版的非正值也會讓屬性維持未設定。`throughput-low-latency` 預設組態會停用重新排序，因此串流必須相容，且不能需要 B 影格顯示順序重排。輸入數量不會設定位元組容量。
+這些控制項已存在於 `SimaDecodeOptions` 中，名稱為 `input_buffers`、
+`num_buffers`、`decoder_tuning` 和 `memory_opt`。
+
+```python
+source = pyneat.RtspDecodedInputOptions()
+source.url = "rtsp://camera/stream"
+source.decoder_input_buffers = 2
+source.decoder_tuning = "throughput-low-latency"
+# Leave num_buffers at -1 to use automatic output sizing.
+app.add(pyneat.groups.rtsp_decoded_input(source))
 ```
 
 ### 應用程式輸入至由圖所擁有的 UDP 輸出

@@ -50,7 +50,26 @@ RUN_TEST(
       require(manifest_opt->stages.size() == 1U, "manifest should contain one stage");
 
       const auto rendered_info = rendered_stage_query::preproc_output_info_from_nodes(nodes);
+      require(compiled.stages.size() == 1U && compiled.stages.front().processcvu.has_value(),
+              "equivalence fixture must contain the selected compiled Preproc contract");
+      const auto readonly_info = rendered_stage_query::preproc_output_info_from_compiled_contract(
+          *compiled.stages.front().processcvu);
       const auto& stage = manifest_opt->stages.front();
+      require(readonly_info.primary_output_name == rendered_info.primary_output_name &&
+                  readonly_info.primary_route_slot == rendered_info.primary_route_slot &&
+                  readonly_info.output_memory_order == rendered_info.output_memory_order &&
+                  readonly_info.transport_kind == rendered_info.transport_kind &&
+                  readonly_info.semantic_kind == rendered_info.semantic_kind &&
+                  readonly_info.output_dtype == rendered_info.output_dtype &&
+                  readonly_info.logical_layout == rendered_info.logical_layout &&
+                  readonly_info.logical_dims.width == rendered_info.logical_dims.width &&
+                  readonly_info.logical_dims.height == rendered_info.logical_dims.height &&
+                  readonly_info.logical_dims.depth == rendered_info.logical_dims.depth &&
+                  readonly_info.roi_slot_bytes == rendered_info.roi_slot_bytes &&
+                  readonly_info.roi_member_shape == rendered_info.roi_member_shape &&
+                  readonly_info.roi_member_strides_bytes == rendered_info.roi_member_strides_bytes,
+              "read-only compiled projection must equal the existing rendered Preproc wire facts");
+
       require(rendered_info.primary_output_name == stage.processcvu.primary_output_name,
               "stage helper and rendered manifest should agree on primary output");
       require(rendered_info.primary_route_slot == 0,
@@ -66,7 +85,7 @@ RUN_TEST(
                   routed_output->logical_name == rendered_info.primary_output_name,
               "rendered manifest should preserve routed identity for the projected exposed output");
       require(
-          stage.logical_outputs.front().shape == std::vector<std::int64_t>({640, 640, 3}) &&
+          stage.logical_outputs.front().shape == std::vector<std::int64_t>({1, 640, 640, 3}) &&
               stage.logical_outputs.front().size_bytes == 640U * 640U * 3U,
           "rendered manifest should expose the preproc tessellated handoff with semantic shape");
       // The rendered manifest now stores per-output logical shapes instead of scalar
@@ -76,7 +95,8 @@ RUN_TEST(
       require(!stage.processcvu.runtime_output_logical_shapes.empty(),
               "rendered manifest should expose runtime output logical shapes");
       const auto& primary_shape = stage.processcvu.runtime_output_logical_shapes.front();
-      require(primary_shape.size() >= 2 && rendered_info.logical_dims.height == primary_shape[0] &&
-                  rendered_info.logical_dims.width == primary_shape[1],
+      require(primary_shape == std::vector<int>({1, 640, 640, 3}) &&
+                  rendered_info.logical_dims.height == 640 &&
+                  rendered_info.logical_dims.width == 640 && rendered_info.logical_dims.depth == 3,
               "stage helper and rendered manifest should agree on primary output width and height");
     }));

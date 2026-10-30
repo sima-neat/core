@@ -17,39 +17,19 @@ slug: /develop-apps/contribute/build
 `build.sh`는 활성 환경을 자동으로 감지합니다.
 
 - Modalix DevKit의 기본 환경
-- Neat SDK 환경(크로스 컴파일)
+- Palette SDK 환경(크로스 컴파일)
 
 두 환경 모두에서 동일한 `build.sh` 명령을 실행할 수 있습니다.
 
 ### 크로스 컴파일 필수 조건
 
-일반적으로 크로스 컴파일은 DevKit에서 직접 빌드하는 것보다 빠르지만, 그 후에는 빌드된 아티팩트를 DevKit로 전송해야 합니다. 크로스 컴파일을 위해서는 Neat SDK가 필요합니다.
-
-먼저 호스트 머신에 `sima-cli`를 설치한 다음 SDK를 설치하십시오.
+크로스 컴파일에는 Palette SDK를 사용합니다. [SDK 설치](/getting-started/dev-environment/install-the-environment/)에 따라 지원되는 Ubuntu, Windows/WSL 또는 macOS 호스트에 SDK를 설정한 다음 SDK 셸을 여십시오.
 
 ```bash
-curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
-sima-cli install sdk
+sima-cli sdk neat
 ```
 
-`sima-cli`에서 메시지가 표시되면 SDK 옵션을 선택합니다.
-
-그런 다음 SDK를 시작합니다.
-
-```bash
-sima-cli sdk elxr
-```
-
-그런 다음 SDK 내에 `sima-cli`를 설치하고, SDK 패치를 설치합니다.
-
-```bash
-curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
-source ~/.bash_profile
-sima-cli install tools/sdk-patch
-```
-
-- SDK 설치는 Windows 및 Ubuntu에서 지원됩니다.
-- Modalix DevKit에서 기본적으로 개발하는 경우 SDK 설치/패치 단계는 필요하지 않습니다.
+SDK에는 툴체인과 `sima-cli`가 포함되어 있습니다. Core의 `build.sh`가 일치하는 Scheduler 및 LLiMa 종속성을 준비합니다. [로컬 종속성](/develop-apps/contribute/build-test/local-dependencies/)을 참조하십시오. 페어링된 SDK에서는 `./build.sh --install`이 일치하는 아티팩트를 DevKit에도 배포합니다. DevKit의 네이티브 빌드에는 SDK가 필요하지 않습니다.
 
 ## 빌드 옵션
 
@@ -60,7 +40,7 @@ sima-cli install tools/sdk-patch
 - `--python`: 선택한 대상 외에 Python 바인딩(`pyneat`)을 구축합니다.
 - `--install-neat-internals`, `--install-deps`: 빌드하기 전에 필요한 아티팩트를 다운로드하여 설치합니다.
 - `--doc`: 문서만 빌드합니다.
-- `--install`: 빌드/패키징 후, 생성된 아티팩트를 현재 환경에 설치합니다. 페어링된 Neat SDK 모드에서는, 이와 함께 페어링된 DevKit에 해당 아티팩트를 배포하고 설치합니다.
+- `--install`: 빌드/패키징 후, 생성된 아티팩트를 현재 환경에 설치합니다. 페어링된 Palette SDK 모드에서는, 이와 함께 페어링된 DevKit에 해당 아티팩트를 배포하고 설치합니다.
 - `--no-dist`: 배포 패키지 생성을 건너
 - `--clean`: 설정을 진행하기 전에 `build/`를 제거하세요.
 - `--no-doc`: 문서 빌드 건너뛰기(`--all` 옵션이 활성화된 경우에도).
@@ -186,3 +166,5 @@ cmake -LA -B build      # include advanced
 ```
 
 최상위 수준의 `CMakeLists.txt` 파일은 옵션 이름에 대한 정확한 정보를 담고 있습니다.
+
+Core는 선택한 Scheduler 패키지 영수증에서 펌웨어와 정확한 sysroot를 상속하며 펌웨어를 별도로 선언하지 않습니다. 영수증의 플랫폼과 SDK 채널은 Core와 일치해야 합니다. CI는 이 정책을 빌드 산출물에 보관하고 대체 버전 없이 정확히 일치하는 DevKit을 선택합니다. LLiMa 설치 전에 게시된 펌웨어, 플랫폼, SDK 채널을 Scheduler와 비교하고 선택한 DEB가 같은 게시 산출물에 속하는지 검증합니다. LLiMa는 정확한 sysroot 영수증을 게시하지 않으므로 이 검사는 선언된 펌웨어 호환성을 확인하며 sysroot 목록의 동일성을 증명하지 않습니다. 로컬 `--llima PATH` 빌드에는 core/dev/cli DEB, `llima-package-manifest.json`, `metadata.json`이 포함된 LLiMa 배포 루트를 제공하세요. 증거가 없거나 일치하지 않으면 빌드가 중단됩니다. Core를 다시 빌드하기 전에 Kernels → Runner → Scheduler와 일치하는 LLiMa를 다시 빌드하고 게시하세요.

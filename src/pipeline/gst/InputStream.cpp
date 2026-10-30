@@ -16,7 +16,9 @@
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/TensorAdapters.h"
 #include "nodes/io/Input.h"
+#include <simaai/scheduler/client/dma_memory.h>
 
+#include <gst/allocators/gstdmabuf.h>
 #include <gst/gst.h>
 #include <gst/app/gstappsink.h>
 #include <gst/app/gstappsrc.h>
@@ -444,7 +446,9 @@ GstFlowReturn appsink_new_sample(GstAppSink* sink, gpointer user_data) {
   {
     std::unique_lock<std::mutex> lock(st->cb_mu);
     if (st->cb_queue_max > 0 && st->cb_queue.size() >= st->cb_queue_max) {
-      if (st->opt.explicit_public_output_options && !st->opt.appsink_drop) {
+      // appsink_drop already resolves both explicit Output and RunOptions.
+      // This intermediate queue must preserve a no-drop policy in either case.
+      if (!st->opt.appsink_drop) {
         st->cb_cv.wait(lock, [&] {
           return st->stop_requested.load() || st->cb_queue.size() < st->cb_queue_max;
         });
@@ -638,7 +642,9 @@ bool flush_pending_buffer(InputStream::State& st, const char* where) {
   std::chrono::steady_clock::time_point t_push_start{};
   if (timings)
     t_push_start = std::chrono::steady_clock::now();
+  auto observed = st.input_publication_measurement.observe(buf);
   GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(st.appsrc), buf);
+  observed.finish(ret);
   const auto t_push_end = std::chrono::steady_clock::now();
 
   if (timings) {
@@ -708,41 +714,119 @@ BuiltBuffer build_buffer_with_fill(
   if (!buf) {
     throw std::runtime_error(std::string(where) + ": failed to allocate GstBuffer");
   }
-
-  if (required_bytes > 0) {
-    if (required_bytes > st.alloc_bytes) {
-      if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
-        release_input_buffer(buf, (std::string(tag) + ":oversize").c_str());
-      }
-      std::ostringstream msg;
-      msg << where << ": input exceeds allocated buffer size" << " (required=" << required_bytes
-          << ", allocated=" << st.alloc_bytes << "). "
-          << "Fix: increase RunAdvancedOptions::max_input_bytes or "
-          << "Model::Options::preprocess.input_max_* limits.";
-      throw std::runtime_error(msg.str());
+  if (required_bytes > st.alloc_bytes) {
+    if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
+      release_input_buffer(buf, (std::string(tag) + ":oversize").c_str());
     }
+    std::ostringstream msg;
+    msg << where << ": input exceeds allocated buffer size" << " (required=" << required_bytes
+        << ", allocated=" << st.alloc_bytes << "). "
+        << "Fix: increase RunAdvancedOptions::max_input_bytes or "
+        << "Model::Options::preprocess.input_max_* limits.";
+    throw std::runtime_error(msg.str());
+  }
+
+  GstMemory* payload_memory =
+      gst_buffer_n_memory(buf) == 1U ? gst_buffer_peek_memory(buf, 0U) : nullptr;
+  const bool standard_dmabuf = payload_memory && gst_is_dmabuf_memory(payload_memory);
+
+  // A standard DMA-BUF pool already allocates the exact physical capacity.
+  // Resizing its GstBuffer shell is both unnecessary and incorrect: the shell
+  // is a pool lease, while the DMA-BUF allocation and its identity must remain
+  // stable until downstream returns it.  Non-DMA-BUF compatibility buffers
+  // retain their existing logical-size behavior.
+  if (!standard_dmabuf && required_bytes > 0) {
     gst_buffer_resize(buf, 0, required_bytes);
   }
 
   GstMapInfo mi{};
+  std::optional<::simaai::scheduler::client::dma::CpuMapping> dmabuf_mapping;
+  std::uint8_t* write_data = nullptr;
+  std::size_t write_size = 0U;
+  bool gst_mapped = false;
   std::chrono::steady_clock::time_point t_map_start{};
   if (record_timings)
     t_map_start = std::chrono::steady_clock::now();
-  if (!gst_buffer_map(buf, &mi, GST_MAP_WRITE)) {
-    if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
-      release_input_buffer(buf, (std::string(tag) + ":map_fail").c_str());
+
+  if (standard_dmabuf) {
+    if (!gst_buffer_is_writable(buf)) {
+      if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
+        release_input_buffer(buf, (std::string(tag) + ":nonwritable_dmabuf").c_str());
+      }
+      throw std::runtime_error(std::string(where) +
+                               ": DMA-BUF pool returned a shared buffer shell");
     }
-    throw std::runtime_error(std::string(where) + ": failed to map GstBuffer");
+    const std::size_t capacity = gst_buffer_get_size(buf);
+    const std::size_t payload_bytes = required_bytes != 0U ? required_bytes : capacity;
+    if (payload_bytes == 0U || payload_bytes > capacity) {
+      if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
+        release_input_buffer(buf, (std::string(tag) + ":dmabuf_span_fail").c_str());
+      }
+      throw std::runtime_error(std::string(where) +
+                               ": DMA-BUF pool returned an invalid payload span");
+    }
+    ::simaai::scheduler::client::dma::Error error;
+    auto view = ::simaai::scheduler::client::dma::DmaBufView::fromGstMemory(payload_memory, 0U,
+                                                                            payload_bytes, &error);
+    dmabuf_mapping =
+        view ? view->map(::simaai::scheduler::client::dma::CpuAccess::Write, &error) : std::nullopt;
+    if (!dmabuf_mapping) {
+      if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
+        release_input_buffer(buf, (std::string(tag) + ":dmabuf_map_fail").c_str());
+      }
+      throw std::runtime_error(std::string(where) +
+                               ": failed to begin DMA-BUF CPU write: " + error.message());
+    }
+    write_data = static_cast<std::uint8_t*>(dmabuf_mapping->data());
+    write_size = dmabuf_mapping->size();
+  } else {
+    if (!gst_buffer_map(buf, &mi, GST_MAP_WRITE)) {
+      if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
+        release_input_buffer(buf, (std::string(tag) + ":map_fail").c_str());
+      }
+      throw std::runtime_error(std::string(where) + ": failed to map GstBuffer");
+    }
+    gst_mapped = true;
+    write_data = static_cast<std::uint8_t*>(mi.data);
+    write_size = mi.size;
   }
   std::chrono::steady_clock::time_point t_map_end{};
   if (record_timings)
     t_map_end = std::chrono::steady_clock::now();
 
-  const size_t filled = fill(static_cast<uint8_t*>(mi.data), mi.size);
-  if (filled < mi.size) {
-    std::memset(static_cast<uint8_t*>(mi.data) + filled, 0, mi.size - filled);
+  try {
+    const size_t filled = fill(write_data, write_size);
+    if (filled < write_size) {
+      std::memset(write_data + filled, 0, write_size - filled);
+    }
+  } catch (...) {
+    if (gst_mapped) {
+      gst_buffer_unmap(buf, &mi);
+    } else if (dmabuf_mapping) {
+      ::simaai::scheduler::client::dma::Error ignored;
+      (void)dmabuf_mapping->finish(&ignored);
+      dmabuf_mapping.reset();
+    }
+    if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
+      release_input_buffer(buf, (std::string(tag) + ":fill_fail").c_str());
+    }
+    throw;
   }
-  gst_buffer_unmap(buf, &mi);
+  if (gst_mapped) {
+    gst_buffer_unmap(buf, &mi);
+  } else {
+    ::simaai::scheduler::client::dma::Error error;
+    if (!dmabuf_mapping->finish(&error)) {
+      // Drop the mapping (which makes one final best-effort END attempt)
+      // before returning the physical slot to its pool.
+      dmabuf_mapping.reset();
+      if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
+        release_input_buffer(buf, (std::string(tag) + ":dmabuf_sync_fail").c_str());
+      }
+      throw std::runtime_error(std::string(where) +
+                               ": failed to end DMA-BUF CPU write: " + error.message());
+    }
+  }
   std::chrono::steady_clock::time_point t_copy_end{};
   if (record_timings)
     t_copy_end = std::chrono::steady_clock::now();
@@ -924,7 +1008,9 @@ bool InputStream::push_with_fill(const char* where,
   }
   const size_t buf_bytes = gst_buffer_get_size(push_buf);
   log_push_refcount(where, push_buf);
+  auto observed = st->input_publication_measurement.observe(push_buf);
   GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(st->appsrc), push_buf);
+  observed.finish(ret);
   const auto t_push_end = std::chrono::steady_clock::now();
 
   if (timings) {
@@ -970,6 +1056,17 @@ bool InputStream::push_with_fill(const char* where,
       std::chrono::duration_cast<std::chrono::nanoseconds>(t_push_end.time_since_epoch()).count();
   st->last_push_ns.store(static_cast<std::int64_t>(push_ns), std::memory_order_relaxed);
   return true;
+}
+
+std::shared_ptr<pipeline_internal::InputPublicationMeasurement>
+InputStream::input_publication_measurement() noexcept {
+  auto state = std::atomic_load_explicit(&state_, std::memory_order_acquire);
+  if (!state)
+    return {};
+  auto* measurement = &state->input_publication_measurement;
+  // Cold alias only: a scope may outlive InputStream::close(). Close still
+  // releases stream resources through its existing teardown authority.
+  return {std::move(state), measurement};
 }
 
 } // namespace simaai::neat

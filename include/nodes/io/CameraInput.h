@@ -1,7 +1,7 @@
 /**
  * @file
  * @ingroup nodes_io
- * @brief Camera source with libcamera or owned raw V4L2 capture.
+ * @brief MIPI/libcamera camera source node wrapper.
  */
 #pragma once
 
@@ -16,18 +16,15 @@
 
 namespace simaai::neat {
 
-// Describe the camera's delivery contract, not its implementation backend.
-// Default preserves libcamera; MetoakSimor selects its owned-copy Linux path.
-enum class CameraProfile { Default, MetoakSimor };
-
 /**
- * @brief Options for CameraInput, a live camera source.
+ * @brief Options for CameraInput, a live libcamera/MIPI source.
  *
- * The public contract is deliberately camera/frame oriented. Neat's private
- * camera memory bridge negotiates its allocator with libcamerasrc and passes
- * EV74 SiMaAI buffers through. When fallback is enabled, OS/libcamera buffers
- * may instead be copied into pooled EV74 SiMaAI memory and stamped with
- * GstSimaMeta. Users do not expose an OsToSima node.
+ * The public contract is deliberately camera/frame oriented. libcamerasrc keeps
+ * its own capture buffers; Neat's private camera bridge forwards each frame's
+ * DMA-BUF downstream without copying; Neat's EV74 admission check accepts CMA
+ * and the camera's contiguous capture buffers. When fallback is enabled, a
+ * frame the bridge cannot forward as one DMA-BUF is copied into a CMA DMA-BUF
+ * instead. Users do not expose an OsToSima node.
  */
 struct CameraInputOptions {
   // Optional libcamera camera-name, e.g. "imx477 5-001a" from `cam -l`.
@@ -48,25 +45,12 @@ struct CameraInputOptions {
   bool leaky_queue = true;
   std::uint32_t queue_depth = 2;
 
-  // False (default): require strict camera/device zero-copy and fail if unavailable.
-  // True: permit Neat's private adaptive bridge to copy non-SiMaAI buffers into
-  // EV74 SiMaAI memory. This is an explicit compatibility escape hatch for
-  // camera stacks without DMA-BUF export support.
+  // False (default): strict zero-copy. The bridge forwards the camera's DMA-BUF
+  // and fails on any frame it would have to copy.
+  // True: permit Neat's private bridge to copy such frames into a CMA DMA-BUF.
+  // This is an explicit compatibility escape hatch for camera stacks that do
+  // not deliver each frame as one DMA-BUF.
   bool allow_cpu_fallback = false;
-
-  // Backend selection is private. A device path alone never selects raw capture.
-  // Only MetoakSimor selects V4L2 and chooses its qualified wire mode.
-  std::string device;
-  CameraProfile profile = CameraProfile::Default;
-  // Unset preserves libcamera's policy and selects owned-copy for MetoakSimor.
-  // False permits libcamera's CPU fallback; true requires zero-copy and is
-  // rejected for MetoakSimor, which does not support DMA-BUF export/import.
-  std::optional<bool> zero_copy;
-  // Owned-copy pool and frame-wait tuning for MetoakSimor.
-  std::uint32_t output_buffer_count = 8;
-  std::uint32_t frame_timeout_ms = 2000;
-  // Zero keeps the backend default. Nonzero applies to either capture backend.
-  std::uint32_t capture_buffer_count = 0;
 };
 
 class CameraInput final : public Node, public OutputSpecProvider {
@@ -80,10 +64,15 @@ public:
   InputRole input_role() const override {
     return InputRole::Source;
   }
+  bool is_live_source() const override {
+    return true;
+  }
   NodeCapsBehavior caps_behavior() const override {
     return NodeCapsBehavior::Static;
   }
-  MemoryContract memory_contract() const override;
+  MemoryContract memory_contract() const override {
+    return MemoryContract::PreferDeviceZeroCopy;
+  }
 
   std::string buffer_name_hint(int node_index) const override;
   std::string backend_fragment(int node_index) const override;
@@ -97,8 +86,6 @@ public:
 
 private:
   CameraInputOptions opt_;
-  // Resolved once, before graph contract propagation; never switch on failure.
-  std::shared_ptr<Node> raw_backend_;
 };
 
 } // namespace simaai::neat

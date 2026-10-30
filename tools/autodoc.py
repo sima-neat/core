@@ -28,6 +28,7 @@ import os
 import re
 import shutil
 import subprocess
+import textwrap
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
@@ -76,6 +77,10 @@ LOCALIZATION_REMEDIATION = (
 
 class SourceLocalizationError(RuntimeError):
     """A source-owned localization contract cannot be published safely."""
+
+
+class CategoryMetadataError(RuntimeError):
+    """An imported category folder cannot be given a unique translation key."""
 
 
 def run_git(args: List[str], cwd: Optional[Path] = None, env: Optional[Dict[str, str]] = None) -> None:
@@ -790,6 +795,156 @@ def write_category_json(dst_root: Path, label: str, position: int) -> None:
     )
 
 
+def yaml_scalar(text: str, field: str) -> Optional[str]:
+    """A top-level scalar of simple YAML, as YAML reads it; None when unset.
+
+    Handles quotes, trailing comments and `null`/`~`. Anything else (block
+    scalars, flow mappings) is out of scope for the metadata autodoc reads.
+    """
+    match = re.search(rf"^{re.escape(field)}[ \t]*:[ \t]*(.*)$", text, re.MULTILINE)
+    if not match:
+        return None
+    value = match.group(1).strip()
+    if value[:1] in ("'", '"'):
+        quoted = re.match(r"(['\"])(.*?)\1", value)
+        return quoted.group(2) if quoted else None
+    value = re.sub(r"(?:^|\s+)#.*$", "", value)
+    return None if value in ("", "null", "Null", "NULL", "~") else value
+
+
+def yaml_link(text: str) -> object:
+    """The top-level `link` of simple category YAML, in JSON form.
+
+    `...` when there is no `link`, a dict for a block or flow mapping, and
+    None for anything else (`null`, or a form autodoc does not read).
+    """
+    match = re.search(r"^link[ \t]*:[ \t]*(.*)$", text, re.MULTILINE)
+    if not match:
+        return ...
+    inline = re.sub(r"\s+#.*$", "", match.group(1)).strip()
+    if inline.startswith("{") and inline.endswith("}"):
+        pairs = (part.split(":", 1) for part in inline[1:-1].split(",") if ":" in part)
+        return {k.strip(): yaml_scalar(f"v: {v.strip()}", "v") for k, v in pairs}
+    if inline:
+        return None
+    block = re.match(r"((?:[ \t]+\S.*\n?)+)", text[match.end() + 1:])
+    if not block:
+        return None
+    return {
+        field: yaml_scalar(textwrap.dedent(block.group(1)), field) for field in ("type", "id")
+    }
+
+
+def frontmatter_field(doc: Path, field: str) -> Optional[str]:
+    """A scalar front matter value of a Markdown doc, or None when unset."""
+    frontmatter = FRONTMATTER_RE.match(doc.read_text(encoding="utf-8"))
+    return yaml_scalar(frontmatter.group(0), field) if frontmatter else None
+
+
+def strip_number_prefix(name: str) -> str:
+    """Docusaurus' default number prefix parser: `01-guides` -> `guides`."""
+    if re.match(r"^\d+[-_.]\d+", name):  # date or version, not a prefix
+        return name
+    match = re.match(r"^\d+\s*[-_.]+\s*([^-_.\s].*)$", name)
+    return match.group(1) if match else name
+
+
+def docusaurus_doc_id(doc: Path, docs_root: Path) -> str:
+    """Docusaurus doc id: number prefixes stripped from the directories, then
+    the front matter `id` or the file name without its number prefix. A doc
+    with `parse_number_prefixes: false` keeps its prefixes."""
+    keep = frontmatter_field(doc, "parse_number_prefixes") in ("false", "False", "FALSE")
+    strip = (lambda name: name) if keep else strip_number_prefix
+    directories = doc.parent.relative_to(docs_root).parts
+    local_id = frontmatter_field(doc, "id") or strip(doc.stem)
+    return "/".join([*(strip(part) for part in directories), local_id])
+
+
+def linked_doc_sidebar_key(
+    folder: Path, link: object, dst_section: Path, mount: str
+) -> Optional[str]:
+    """`sidebar_key` of the doc a category links to, if any.
+
+    Mirrors Docusaurus' generator. `link` is the metadata's `link` value, or
+    `...` when the metadata has no `link`: then the first doc in the folder
+    named `index`, `readme` or after the folder is linked. An explicit doc
+    link names a doc in the folder by its local id (the last id segment), or
+    any doc by its full id.
+    """
+    docs_root = dst_section
+    for _ in Path(mount).parts:
+        docs_root = docs_root.parent
+    children = sorted(p for p in folder.iterdir() if p.suffix in (".md", ".mdx"))
+    linked: Optional[Path] = None
+    if link is ...:
+        index_names = {"index", "readme", folder.name.lower()}
+        linked = next((doc for doc in children if doc.stem.lower() in index_names), None)
+    elif isinstance(link, dict) and link.get("type") == "doc" and link.get("id"):
+        link_id = link["id"]
+        linked = next(
+            (doc for doc in children
+             if docusaurus_doc_id(doc, docs_root).rsplit("/", 1)[-1] == link_id),
+            None,
+        ) or next(
+            (doc for doc in sorted(docs_root.rglob("*.md*"))
+             if doc.suffix in (".md", ".mdx") and docusaurus_doc_id(doc, docs_root) == link_id),
+            None,
+        )
+    return frontmatter_field(linked, "sidebar_key") if linked else None
+
+
+def assign_category_keys(dst_section: Path, mount: str) -> None:
+    """Give every category folder below an imported section a path-based key.
+
+    Docusaurus derives a category's translation key from its label, and a
+    localized build fails when two categories share one. Imported repositories
+    pick their folder names independently (sima-cli's `peripherals` command
+    group and Sentinel's `peripherals` guides), so key each folder by its path
+    under the mount. A key the source already set is kept, in the category
+    metadata or as the linked doc's `sidebar_key`. An empty or null metadata
+    `key` does not fall back to the doc in Docusaurus, so JSON gets the path
+    key and YAML is rejected.
+
+    Raises CategoryMetadataError for metadata it cannot key: invalid JSON, or a YAML
+    category file without a top-level `key` (autodoc has no YAML parser).
+    """
+    for folder in sorted(p for p in dst_section.rglob("*") if p.is_dir()):
+        if not any(folder.rglob("*.md")) and not any(folder.rglob("*.mdx")):
+            continue  # asset folder, not a sidebar category
+        relative = folder.relative_to(dst_section).as_posix()
+        yaml_files = sorted(folder.glob("_category_.y*ml"))
+        if yaml_files:
+            text = yaml_files[0].read_text(encoding="utf-8")
+            if yaml_scalar(text, "key") or (
+                not re.search(r"^key[ \t]*:", text, re.MULTILINE)
+                and linked_doc_sidebar_key(folder, yaml_link(text), dst_section, mount)
+            ):
+                continue
+            raise CategoryMetadataError(
+                f"{relative}/{yaml_files[0].name} has no top-level `key`; set "
+                f'`key: "{mount}/{relative}"` or ship _category_.json instead'
+            )
+        category_file = folder / "_category_.json"
+        try:
+            payload = (
+                json.loads(category_file.read_text(encoding="utf-8"))
+                if category_file.is_file()
+                else {}
+            )
+        except json.JSONDecodeError as exc:
+            raise CategoryMetadataError(
+                f"{relative}/_category_.json is not valid JSON: {exc}"
+            ) from exc
+        if payload.get("key"):
+            continue
+        if "key" not in payload and linked_doc_sidebar_key(
+            folder, payload.get("link", ...), dst_section, mount
+        ):
+            continue
+        payload["key"] = f"{mount}/{relative}"
+        category_file.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
 def set_frontmatter_field(text: str, field: str, value: str) -> str:
     """Insert or replace a scalar field in existing YAML frontmatter (no-op if none)."""
     match = FRONTMATTER_RE.match(text)
@@ -1135,6 +1290,27 @@ def write_root_index_file(
     return True
 
 
+def apply_category_keys(dst_section: Path, category_keys: Dict[str, str]) -> None:
+    """Disambiguate imported sidebar categories without changing their labels.
+
+    Keys are source-relative directory names and are shared by every locale.
+    Existing category metadata, including translated labels, is preserved.
+    """
+    for directory, key in category_keys.items():
+        relative = Path(directory)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(f"category_keys directory must stay within the source: {directory}")
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError(f"category_keys requires a non-empty key for {directory}")
+        folder = dst_section / relative
+        if not folder.is_dir():
+            raise ValueError(f"category_keys directory does not exist: {directory}")
+        metadata = folder / "_category_.json"
+        content = json.loads(metadata.read_text(encoding="utf-8")) if metadata.exists() else {}
+        content["key"] = key
+        metadata.write_text(json.dumps(content, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
 def stage_source_section(
     source: Dict,
     staging: Path,
@@ -1202,6 +1378,7 @@ def stage_source_section(
     group_commands = source.get("group_commands")
     if group_commands and run_group_commands:
         regroup_command_pages(dst_section, group_commands)
+    apply_category_keys(dst_section, source.get("category_keys", {}))
     return file_count
 
 
@@ -1282,6 +1459,12 @@ def process_source(
             dst_section,
             exclude_prefixes=excluded_prefixes,
         )
+        # Docusaurus reads category metadata only from the English tree.
+        try:
+            assign_category_keys(dst_section, mount)
+        except OSError as exc:
+            # A skip would publish this section unkeyed.
+            raise CategoryMetadataError(f"cannot write category keys: {exc}") from exc
     except OSError as exc:
         return False, f"copy failed: {exc}"
 
@@ -1397,6 +1580,7 @@ def main() -> int:
 
     skipped: List[str] = []
     localization_failures: List[str] = []
+    metadata_failures: List[str] = []
     successes: List[str] = []
     for source in sources:
         try:
@@ -1405,6 +1589,11 @@ def main() -> int:
             )
         except SourceLocalizationError as exc:
             localization_failures.append(f"{source['key']}: {exc}")
+            LOG.error("[%s] FAILED: %s", source["key"], exc)
+            continue
+        except CategoryMetadataError as exc:
+            # Skipping would publish the docs without this section.
+            metadata_failures.append(f"{source['key']}: {exc}")
             LOG.error("[%s] FAILED: %s", source["key"], exc)
             continue
         if ok:
@@ -1420,7 +1609,9 @@ def main() -> int:
         len(skipped),
         len(localization_failures),
     )
-    return 1 if localization_failures else 0
+    if metadata_failures:
+        LOG.error("%d category metadata failures", len(metadata_failures))
+    return 1 if localization_failures or metadata_failures else 0
 
 
 if __name__ == "__main__":

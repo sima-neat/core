@@ -15,7 +15,7 @@ contracts must stay stable for application developers.
 
 The **Neat Library** is the C++/Python library and runtime in this repository.
 It loads model archives, composes and validates pipelines, runs on Modalix
-hardware, and exposes the public application API. Neat SDK and DevKit Sync
+hardware, and exposes the public application API. Palette SDK and DevKit Sync
 are the surrounding development workflow.
 
 When changing this repository, optimize for framework properties that help both
@@ -58,7 +58,6 @@ structured diagnostics, strict validation, and stable public contracts.
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/develop-apps/contribute/mpk_contract/"><strong>MPK Contract</strong><span>Understand model archive ingestion, validation, and security rules.</span></a></li>
       <li><a class="overview-link-card" href="/develop-apps/contribute/sima_plugin_json_truth_map/"><strong>Plugin JSON Truth Map</strong><span>Review the frozen SIMA plugin JSON contract map.</span></a></li>
-      <li><a class="overview-link-card" href="/develop-apps/contribute/appcomplex_workspace_packaging/"><strong>AppComplex Packaging</strong><span>Build and install the gated appcomplex workspace service package.</span></a></li>
     </ul>
   </section>
 

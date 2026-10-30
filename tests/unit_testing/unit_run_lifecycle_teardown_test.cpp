@@ -2,11 +2,16 @@
 #define SIMA_NEAT_INTERNAL 1
 #endif
 
+#include "gst/GstInit.h"
+#include "nodes/common/Caps.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "pipeline/Graph.h"
-#include "pipeline/runtime/DecoderAdmission.h"
+#include "pipeline/NeatError.h"
+#include "pipeline/ErrorCodes.h"
 #include "pipeline/runtime/RunCore.h"
+#include "pipeline/runtime/GraphTransportLifecycle.h"
+#include "pipeline/graph/internal/GraphTestHooks.h"
 #include "runtime_test_utils.h"
 #include "test_main.h"
 #include "test_utils.h"
@@ -15,7 +20,6 @@
 #include <gst/gst.h>
 
 #include <algorithm>
-#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -30,31 +34,6 @@
 #include <vector>
 
 namespace {
-
-class CountingAdmissionBackend final : public simaai::neat::runtime::DecoderAdmissionBackend {
-public:
-  simaai::neat::pipeline_internal::DecoderAdmissionResult
-  admit(const std::vector<simaai::neat::pipeline_internal::DecoderAdmissionStreamRequest>&,
-        bool) override {
-    return {};
-  }
-
-  bool release(const std::array<std::uint8_t, 16>&, std::string* error) override {
-    release_count.fetch_add(1, std::memory_order_relaxed);
-    if (error) {
-      error->clear();
-    }
-    return true;
-  }
-
-  std::atomic<int> release_count{0};
-};
-
-std::shared_ptr<simaai::neat::runtime::DecoderAdmissionReservation>
-make_admission_reservation(const std::shared_ptr<CountingAdmissionBackend>& backend) {
-  return std::make_shared<simaai::neat::runtime::DecoderAdmissionReservation>(
-      backend, std::array<std::uint8_t, 16>{}, 1, 0);
-}
 
 class EnvVarGuard {
 public:
@@ -139,6 +118,78 @@ bool input_dequeued_after(simaai::neat::runtime::RunCore& core, std::uint64_t en
   return core.pipeline.in_queue.empty();
 }
 
+void graph_completion_propagates_before_locked_publication() {
+  using namespace simaai::neat;
+  auto core = runtime::RunCore::create_graph_compat();
+  auto& execution = core->graph_execution();
+  auto segment = std::make_unique<runtime::PipelineSegmentRuntime>();
+  constexpr graph::NodeId kOutput = 47;
+  segment->seg.node_ids = {kOutput};
+  execution.pipelines.push_back(std::move(segment));
+  auto sink = std::make_shared<runtime::GraphSinkQueue>();
+  sink->set_producer_count(1);
+  execution.sinks.emplace(kOutput, sink);
+  auto& transport = execution.pipelines.front()->transport;
+
+  // This is the actual RunCore producer-completion path, not a replacement implementation.
+  // Holding its publication mutex must not prevent downstream closure from reaching the sink.
+  std::unique_lock lock(transport.mu);
+  std::thread complete([&] { core->graph_pipeline_completed(0); });
+  runtime::RuntimeSinkQueueMsg message;
+  const bool received_sample = sink->pop(message, 2000);
+  const bool propagated = !received_sample && sink->closed();
+  const bool published_while_locked =
+      transport.completion_forwarded.load(std::memory_order_acquire);
+  lock.unlock();
+  complete.join();
+  require(propagated, "completion held the transport mutex across downstream propagation");
+  require(!published_while_locked, "completion publication bypassed the transport waiter mutex");
+  require(transport.completion_forwarded.load(std::memory_order_acquire),
+          "completion was not published after downstream closure");
+  core->close();
+}
+
+void stopped_source_construction_publishes_child_for_normal_teardown() {
+  using namespace simaai::neat;
+  EnvVarGuard synchronous("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", "0");
+  EnvVarGuard no_async("SIMA_GST_TEARDOWN_ASYNC", "0");
+  Graph graph;
+  graph.add(nodes::Custom("videotestsrc num-buffers=1 pattern=black ! "
+                          "video/x-raw,format=RGB,width=32,height=24,framerate=30/1",
+                          InputRole::Source));
+  graph.add(nodes::Output("output", OutputOptions::EveryFrame(2)));
+  RunOptions options;
+  options.queue_depth = 2;
+  const auto plan = runtime::compile_public_graph(graph, options, std::nullopt);
+  require(plan.pipeline_segments.size() == 1, "source ownership fixture must compile one segment");
+  auto parent = runtime::RunCore::create_graph_compat();
+  auto segment = std::make_unique<runtime::PipelineSegmentRuntime>();
+  segment->seg = plan.pipeline_segments.front();
+  parent->graph_execution().pipelines.push_back(std::move(segment));
+  auto& pipeline = *parent->graph_execution().pipelines.front();
+  std::weak_ptr<runtime::RunCore> observed;
+
+  runtime::construct_graph_source_pipeline(pipeline, [&] {
+    runtime::RunCoreStartOptions start;
+    start.run_options = options;
+    start.mode = RunMode::Async;
+    auto child = runtime::RunCore::start_pipeline_segment(pipeline.seg, std::move(start));
+    observed = child;
+    // As in a streaming callback during startup, stop is requested before the just-created
+    // child's ownership has been published. The normal parent close must still find it.
+    parent->graph_signal_stop();
+    return child;
+  });
+  require(parent->graph_stop_requested() && pipeline.transport.built.load() && pipeline.run_core,
+          "construction-time stop left a running child outside graph ownership");
+  auto child = observed.lock();
+  require(child && child == pipeline.run_core, "constructed child identity changed at publication");
+  parent->close();
+  require(child->closed.load() &&
+              child->stream_close_state.load() == runtime::InputStreamCloseState::Closed,
+          "normal graph teardown did not close the child created during stop");
+}
+
 template <class Predicate>
 bool wait_until(Predicate&& predicate, std::chrono::milliseconds timeout) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -151,7 +202,7 @@ bool wait_until(Predicate&& predicate, std::chrono::milliseconds timeout) {
   return predicate();
 }
 
-void failed_start_releases_admission(bool connected) {
+void failed_start_releases_runtime_guard(bool connected, bool realtime = false) {
   using namespace simaai::neat;
 
   Graph graph;
@@ -160,7 +211,11 @@ void failed_start_releases_admission(bool connected) {
     source.add(nodes::Input("image"));
     Graph sink("output");
     sink.add(nodes::Output("output", OutputOptions::EveryFrame(4)));
-    graph.connect(source, sink);
+    GraphLinkOptions link;
+    if (realtime) {
+      link.policy = GraphLinkPolicy::RealtimeLatestByStream;
+    }
+    graph.connect(source, sink, link);
   } else {
     graph.add(nodes::Input("image"));
     graph.add(nodes::Output("output", OutputOptions::EveryFrame(4)));
@@ -172,13 +227,15 @@ void failed_start_releases_admission(bool connected) {
   run_options.queue_depth = 4;
   runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(graph, run_options, seed_sample);
 
-  auto backend = std::make_shared<CountingAdmissionBackend>();
   runtime::RunCoreStartOptions start_options;
   start_options.run_options = run_options;
   start_options.mode = RunMode::Async;
   start_options.seed = seed_sample;
   start_options.graph_options = runtime::graph_runtime_options_from_run_options(run_options);
-  start_options.decoder_admission = make_admission_reservation(backend);
+  // Exercise the existing external-resource lifetime guard, not a decoder lease.
+  start_options.guard = std::make_shared<int>(0);
+  start_options.graph_verbose_guard = start_options.guard;
+  const std::weak_ptr<void> resource = start_options.guard;
   start_options.after_pipeline_start_for_test = [] {
     throw std::runtime_error("injected failure after pipeline start");
   };
@@ -186,16 +243,123 @@ void failed_start_releases_admission(bool connected) {
   bool threw = false;
   try {
     (void)runtime::RunCore::start(std::move(plan), std::move(start_options));
-  } catch (const std::exception& error) {
+  } catch (const NeatError& error) {
     threw = true;
     require(std::string(error.what()).find("injected failure after pipeline start") !=
                 std::string::npos,
-            "startup rollback should preserve the original failure");
+            "startup rollback should preserve the original failure; actual=" +
+                std::string(error.what()));
+    require(error.report().error_code == error_codes::kPipelineShape &&
+                error.report().repro_note.find("injected failure after pipeline start") !=
+                    std::string::npos &&
+                std::string(error.what()).find(error.report().error_code) != std::string::npos,
+            "startup rollback must preserve the same code and detail in its structured report");
   }
   require(threw, "startup failure injection did not throw");
-  require(wait_until([&] { return backend->release_count.load(std::memory_order_relaxed) == 1; },
-                     std::chrono::seconds(3)),
-          "failed startup did not release decoder admission after teardown");
+  require(wait_until([&] { return resource.expired(); }, std::chrono::seconds(3)),
+          "failed startup did not release its runtime resource guard after teardown");
+}
+
+void realtime_graph_close_releases_runtime() {
+  using namespace simaai::neat;
+  EnvVarGuard synchronous("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", "0");
+  EnvVarGuard no_async("SIMA_GST_TEARDOWN_ASYNC", "0");
+  const Tensor seed = make_color_tensor(32, 24, ImageSpec::PixelFormat::RGB, 0x37);
+  Graph source("image");
+  InputOptions input;
+  input.payload_type = PayloadType::Image;
+  input.format = FormatTag::RGB;
+  input.memory_policy = InputMemoryPolicy::SystemMemory;
+  source.add(nodes::Input("image", input));
+  Graph output("output");
+  output.add(nodes::Output("output", OutputOptions::EveryFrame(2)));
+  GraphLinkOptions link;
+  link.policy = GraphLinkPolicy::RealtimeLatestByStream;
+  Graph graph;
+  graph.connect(source, output, link);
+  Run run = graph.build();
+  const std::weak_ptr<const runtime::RunCore> observed = run_internal::core(run);
+  {
+    auto core = observed.lock();
+    require(core && !core->graph_execution_->realtime_links.empty(),
+            "lifetime regression must exercise the production realtime-link callbacks");
+  }
+  require(run.push("image", TensorList{seed}), "realtime lifetime: input was not accepted");
+  auto sample = run.pull("output", 2000);
+  require(sample.has_value(), "realtime lifetime: output was not delivered");
+  run.close();
+  run.close();
+  require(observed.expired(), "closed realtime graph retained its RunCore through callbacks");
+  require(!sample->tensors.empty() && sample->tensors.front().shape == seed.shape,
+          "closing the graph must preserve an already published sample");
+}
+
+// CPU-only lifecycle proof. This does not qualify accelerator retirement;
+// real device acceptance must additionally verify the provider's completed work.
+void lazy_failure_after_completed_run_closes_on_assertion(bool explicit_close) {
+  using namespace simaai::neat;
+  EnvVarGuard synchronous("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", "0");
+  EnvVarGuard no_async("SIMA_GST_TEARDOWN_ASYNC", "0");
+  const Tensor seed = make_color_tensor(32, 24, ImageSpec::PixelFormat::RGB, 0x37);
+  {
+    // A failed second graph must not make qualification forget work completed
+    // earlier in the same process (the original test runs ResNet before MNIST).
+    Run prior = sima_test::make_async_rgb_run(seed, 2, 2);
+    require(prior.try_push(TensorList{seed}), "prior CPU sub-run must accept work");
+    const auto output = prior.pull(2000);
+    require(output.has_value(), "prior CPU sub-run must complete before lazy rejection");
+    auto observed = run_internal::core(prior);
+    prior.close();
+    prior.close();
+    require(observed && observed->closed.load() &&
+                observed->stream_close_state.load() == runtime::InputStreamCloseState::Closed,
+            "prior sub-run was not synchronously closed");
+  }
+
+  Graph source("image");
+  InputOptions input;
+  input.payload_type = PayloadType::Image;
+  input.format = FormatTag::RGB;
+  input.memory_policy = InputMemoryPolicy::SystemMemory;
+  source.add(nodes::Input("image", input));
+  Graph output("output");
+  output.add(nodes::Output("output", OutputOptions::EveryFrame(2)));
+  Graph graph;
+  graph.connect(source, output);
+  std::shared_ptr<const runtime::RunCore> observed;
+  struct ClearHook {
+    ~ClearHook() {
+      session_test::clear_composition_failure_for_test();
+    }
+  } clear;
+  bool caught_assertion = false;
+  try {
+    Run run = graph.build(); // Deliberately no seed: compile on the first push.
+    observed = run_internal::core(run);
+    require(observed != nullptr, "lazy build must return its retained RunCore");
+    session_test::arm_composition_failure_for_test(
+        session_test::CompositionFailurePoint::PipelinePrepared);
+    const bool accepted = run.push("image", TensorList{seed});
+    const std::string diagnostic = run.last_error();
+    session_test::clear_composition_failure_for_test();
+    require(!accepted && diagnostic.find("injected Graph composition failure") != std::string::npos,
+            "first lazy push must expose the original preparation failure: " + diagnostic);
+    if (explicit_close) {
+      run.close();
+      run.close();
+    }
+    // Exercise actual Run stack unwinding, not merely a successful explicit close.
+    throw std::runtime_error("reviewed post-failure assertion");
+  } catch (const std::runtime_error& error) {
+    require(std::string(error.what()) == "reviewed post-failure assertion",
+            "unexpected lazy failure lifecycle diagnostic: " + std::string(error.what()));
+    caught_assertion = true;
+  }
+  require(caught_assertion && observed && observed->closed.load() &&
+              observed->stream_close_state.load() == runtime::InputStreamCloseState::Closed,
+          "destructor/assertion route must close the actual lazy RunCore");
+  require(observed->pipeline.stream.pipeline_handle() == nullptr,
+          "failed lazy RunCore must not retain a live pipeline");
 }
 
 void detached_stream_stop_retains_runtime_until_cleanup() {
@@ -209,8 +373,6 @@ void detached_stream_stop_retains_runtime_until_cleanup() {
   const Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x4B);
   Run run = sima_test::make_async_rgb_run(seed, 8, 8);
   auto core = std::const_pointer_cast<runtime::RunCore>(run_internal::core(run));
-  auto admission_backend = std::make_shared<CountingAdmissionBackend>();
-  core->decoder_admission = make_admission_reservation(admission_backend);
   GstElement* pipeline = core->pipeline.stream.pipeline_handle();
   require(pipeline != nullptr, "run lifecycle teardown: missing pipeline");
   GstElement* appsink = find_appsink(pipeline);
@@ -236,8 +398,6 @@ void detached_stream_stop_retains_runtime_until_cleanup() {
   // The run's handle is gone, yet the RunCore lives: cleanup was deferred, not inline.
   const bool runtime_retained_past_close = retained_core != nullptr;
   retained_core.reset();
-  require(admission_backend->release_count.load(std::memory_order_relaxed) == 0,
-          "detached stream stop released decoder admission before teardown completed");
 
   {
     std::lock_guard<std::mutex> lock(probe.mu);
@@ -256,8 +416,6 @@ void detached_stream_stop_retains_runtime_until_cleanup() {
   require(runtime_retained_past_close,
           "detached stream teardown must retain its RunCore until the blocked work exits");
   require(weak_core.expired(), "retained RunCore was not released after teardown completed");
-  require(admission_backend->release_count.load(std::memory_order_relaxed) == 1,
-          "detached stream stop did not release decoder admission after teardown completed");
 }
 
 void detached_stream_close_keeps_measurement_reads_safe() {
@@ -270,7 +428,7 @@ void detached_stream_close_keeps_measurement_reads_safe() {
 
   const Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x5C);
   Run run = sima_test::make_async_rgb_run(seed, 8, 8);
-  MeasureScope measurement = run.start_measurement(/*include_plugin_latency=*/false);
+  MeasureScope measurement = run.start_measurement();
   auto core = run_internal::core(run);
   GstElement* appsink = find_appsink(core->pipeline.stream.pipeline_handle());
   require(appsink != nullptr, "measurement teardown: missing appsink");
@@ -349,8 +507,6 @@ void input_thread_timeout_hands_off_stream_close() {
   const Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x6D);
   Run run = sima_test::make_async_rgb_run(seed, 8, 8);
   auto core = std::const_pointer_cast<runtime::RunCore>(run_internal::core(run));
-  auto admission_backend = std::make_shared<CountingAdmissionBackend>();
-  core->decoder_admission = make_admission_reservation(admission_backend);
 
   require(run.try_push(TensorList{seed}), "input thread handoff: warmup push failed");
   (void)run.pull(2000);
@@ -374,8 +530,6 @@ void input_thread_timeout_hands_off_stream_close() {
           "close ownership was not transferred to the detached input thread");
   require(core->pipeline.stream.can_push(),
           "RunCore closed the InputStream after handing ownership to the input thread");
-  require(admission_backend->release_count.load(std::memory_order_relaxed) == 0,
-          "detached input thread released decoder admission before it closed the stream");
 
   timing_lock.unlock();
 
@@ -392,8 +546,61 @@ void input_thread_timeout_hands_off_stream_close() {
   // Race-free only because the acquire load above pairs with the closer's release store.
   require(core->pipeline.stream.pipeline_handle() == nullptr,
           "InputStream close state reached Closed without releasing the GStreamer pipeline");
-  require(admission_backend->release_count.load(std::memory_order_relaxed) == 1,
-          "detached input thread did not release decoder admission after closing the stream");
+}
+
+void concurrent_stop_has_one_thread_owner() {
+  using namespace simaai::neat;
+
+  EnvVarGuard stream_stop_timeout("SIMA_PIPELINE_STREAM_STOP_TIMEOUT_MS", "0");
+  EnvVarGuard input_stop_timeout("SIMA_PIPELINE_INPUT_THREAD_STOP_TIMEOUT_MS", "50");
+
+  const Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x71);
+  Run run = sima_test::make_async_rgb_run(seed, 8, 8);
+  auto core = std::const_pointer_cast<runtime::RunCore>(run_internal::core(run));
+
+  require(run.try_push(TensorList{seed}), "concurrent stop: warmup push failed");
+  (void)run.pull(2000);
+
+  std::unique_lock<std::mutex> timing_lock(core->latency_mu);
+  const std::uint64_t enqueued_before = core->inputs_enqueued.load(std::memory_order_acquire);
+  require(run.try_push(TensorList{seed}), "concurrent stop: wedging push failed");
+  require(wait_until([&] { return input_dequeued_after(*core, enqueued_before); },
+                     std::chrono::seconds(3)),
+          "concurrent stop: input was not dequeued before teardown");
+
+  std::atomic<bool> start{false};
+  std::exception_ptr stop_errors[2];
+  std::thread stoppers[2];
+  for (std::size_t i = 0; i < 2; ++i) {
+    stoppers[i] = std::thread([&, i] {
+      while (!start.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+      }
+      try {
+        core->stop();
+      } catch (...) {
+        stop_errors[i] = std::current_exception();
+      }
+    });
+  }
+  start.store(true, std::memory_order_release);
+  for (auto& stopper : stoppers) {
+    stopper.join();
+  }
+  timing_lock.unlock();
+
+  for (const auto& error : stop_errors) {
+    if (error) {
+      std::rethrow_exception(error);
+    }
+  }
+  require(wait_until(
+              [&] {
+                return core->stream_close_state.load(std::memory_order_acquire) ==
+                       runtime::InputStreamCloseState::Closed;
+              },
+              std::chrono::seconds(3)),
+          "concurrent stop: detached input thread did not finish closing the stream");
 }
 
 // Same handoff under an active MeasureScope: a child that detaches closes its own stream
@@ -413,7 +620,7 @@ void composite_child_handoff_preserves_measurement_node_metrics() {
   graph.connect(source, sink);
 
   Run run = graph.build(TensorList{seed});
-  MeasureScope scope = run.start_measurement(/*include_plugin_latency=*/false);
+  MeasureScope scope = run.start_measurement();
   require(run.push("image", TensorList{seed}), "composite handoff: measured push failed");
   require(run.pull("output", 4000).has_value(), "composite handoff: measured pull failed");
 
@@ -432,11 +639,6 @@ void composite_child_handoff_preserves_measurement_node_metrics() {
     }
   }
   require(!children.empty(), "composite handoff: no built child pipelines");
-  auto admission_backend = std::make_shared<CountingAdmissionBackend>();
-  core->decoder_admission = make_admission_reservation(admission_backend);
-  for (auto& child : children) {
-    child->decoder_admission = core->decoder_admission;
-  }
   require(run.push("image", TensorList{seed}), "composite handoff: wedging push failed");
   require(wait_until(
               [&] {
@@ -457,14 +659,17 @@ void composite_child_handoff_preserves_measurement_node_metrics() {
         return child->stream_close_state.load(std::memory_order_acquire) ==
                runtime::InputStreamCloseState::InputThreadOwns;
       });
-  require(admission_backend->release_count.load(std::memory_order_relaxed) == 0,
-          "graph released decoder admission while a child pipeline was still shutting down");
   child_locks.clear();
 
   require(wait_until(
-              [&] { return admission_backend->release_count.load(std::memory_order_relaxed) == 1; },
+              [&] {
+                return std::all_of(children.begin(), children.end(), [](const auto& child) {
+                  return child->stream_close_state.load(std::memory_order_acquire) ==
+                         runtime::InputStreamCloseState::Closed;
+                });
+              },
               std::chrono::seconds(3)),
-          "graph child did not release decoder admission after detached teardown completed");
+          "graph child did not close its stream after detached teardown completed");
 
   const MeasureReport report = scope.stop();
   require(any_child_detached,
@@ -479,6 +684,23 @@ void composite_child_handoff_preserves_measurement_node_metrics() {
 
 RUN_TEST("unit_run_lifecycle_teardown_test", ([] {
            using namespace simaai::neat;
+
+           // CPU lifecycle is independent of the full-production MLA startup
+           // prerequisite. The isolated installed-startup consumers exercise
+           // that policy without this supported manual-initialization profile.
+           EnvVarGuard manual_init("SIMA_ALLOW_GST_INIT", "1");
+           gst_init(nullptr, nullptr);
+           gst_init_once();
+           // CTest can suppress initial system discovery. Load only Core's
+           // selected real system-plugin cohort after its path setup.
+           if (const char* paths = g_getenv("GST_PLUGIN_SYSTEM_PATH_1_0")) {
+             gchar** directories = g_strsplit(paths, G_SEARCHPATH_SEPARATOR_S, -1);
+             for (gchar** directory = directories; *directory; ++directory) {
+               if (**directory)
+                 gst_registry_scan_path(gst_registry_get(), *directory);
+             }
+             g_strfreev(directories);
+           }
 
            EnvVarGuard input_stop_1("SIMA_PIPELINE_INPUT_THREAD_STOP_TIMEOUT_MS", "200");
 
@@ -563,7 +785,14 @@ RUN_TEST("unit_run_lifecycle_teardown_test", ([] {
            detached_stream_stop_retains_runtime_until_cleanup();
            detached_stream_close_keeps_measurement_reads_safe();
            input_thread_timeout_hands_off_stream_close();
+           concurrent_stop_has_one_thread_owner();
            composite_child_handoff_preserves_measurement_node_metrics();
-           failed_start_releases_admission(false);
-           failed_start_releases_admission(true);
+           realtime_graph_close_releases_runtime();
+           failed_start_releases_runtime_guard(false);
+           failed_start_releases_runtime_guard(true);
+           failed_start_releases_runtime_guard(true, true);
+           graph_completion_propagates_before_locked_publication();
+           stopped_source_construction_publishes_child_for_normal_teardown();
+           lazy_failure_after_completed_run_closes_on_assertion(false);
+           lazy_failure_after_completed_run_closes_on_assertion(true);
          }));

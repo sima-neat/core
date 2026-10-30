@@ -9,6 +9,10 @@ slug: /develop-apps/contribute/release-checklist
 
 このドキュメントは、正式なリリースゲートポリシーです。
 
+## 最新ドキュメントのバージョン
+
+`deps/manifest.json` を更新した後、リリースに合わせて `website/release-data/current.json` を一度更新します。`npm --prefix website run sync:release-readmes` を実行し、具体的なバージョンを含む生成済み README コマンドをコミットします。`npm --prefix website run check:releases` と `./build.sh --doc` を実行して、トークン、過去のバージョンの例外、翻訳、レンダリングされたコマンドを検証します。互換性ページは具体的なバージョンを使って手動で管理します。過去のリリースノートのバージョンは固定したままにします。リリースデータだけの変更では、翻訳やソースハッシュの更新は不要です。各フィールドの管理責任とトークンの規則は `website/release-data/README.md` に記載されています。
+
 ## リリースをブロックする条件
 
 以下のすべての条件が満たされている場合にのみ、リリースが許可されます。

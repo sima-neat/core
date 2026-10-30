@@ -74,6 +74,10 @@ std::optional<BoxDecodeType> parse_box_decode_type_token(std::string_view token)
   if (lower == "yolov8") {
     return BoxDecodeType::YoloV8;
   }
+  if (lower == "yolov8-obb" || lower == "yolo8-obb" || lower == "yolo11-obb" ||
+      lower == "yolov11-obb") {
+    return BoxDecodeType::YoloV8Obb;
+  }
   if (lower == "yolov8-seg") {
     return BoxDecodeType::YoloV8Seg;
   }
@@ -97,6 +101,9 @@ std::optional<BoxDecodeType> parse_box_decode_type_token(std::string_view token)
   }
   if (lower == "yolo26-pose" || lower == "yolov26-pose") {
     return BoxDecodeType::YoloV26Pose;
+  }
+  if (lower == "yolo26-obb" || lower == "yolov26-obb") {
+    return BoxDecodeType::YoloV26Obb;
   }
   if (lower == "yolo26-seg" || lower == "yolov26-seg") {
     return BoxDecodeType::YoloV26Seg;
@@ -161,6 +168,11 @@ std::optional<SuperPointOutputFormat> parse_superpoint_output_format_token(std::
     return SuperPointOutputFormat::LegacyA65InterleavedV0;
   }
   return std::nullopt;
+}
+
+bool box_decode_type_uses_per_port_dtype(BoxDecodeType type) {
+  return type == BoxDecodeType::SuperPoint || type == BoxDecodeType::YoloXSegPose ||
+         box_decode_type_is_oriented(type);
 }
 
 bool is_box_decode_type_specified(BoxDecodeType type) {

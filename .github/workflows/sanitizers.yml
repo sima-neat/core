@@ -25,7 +25,7 @@ jobs:
           CXX: clang++
           SIMANEAT_STRICT_WARNINGS: "OFF"
         run: |
-          ./build.sh --all --clean --no-doc --${{ matrix.mode }}
+          ./build.sh --all --clean --no-doc --update-sysroot --${{ matrix.mode }}
 
       - name: Verify build artifacts
         run: |
@@ -130,8 +130,6 @@ jobs:
               rg -n '/build/tests/|/build/tutorials/' "${REBASE_FILES[@]}" >&2 || true
               exit 1
             fi
-
-            ./scripts/fix_devkit_runtime.sh
 
             SANITIZER_MODE="${MODE}" \
               bash scripts/ci/run_sanitizer_gate.sh --test-dir "${TEST_DIR}"

@@ -3,9 +3,11 @@
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -172,12 +174,103 @@ RUN_TEST(
     "unit_detection_types_boxdecode_payloads_test", ([] {
       using namespace simaai::neat;
 
+      {
+        // Independent byte golden: signed extents and raw angle must survive unchanged.
+        const std::array<std::uint32_t, 8> header{0x3156424f, 0x00200001, 96, 1, 2, 32, 32, 0};
+        const std::array<float, 6> values{-4.f, 12.f, -32.f, 48.f, .4f, .5f};
+        std::vector<std::uint8_t> bytes(96, 0);
+        std::memcpy(bytes.data(), header.data(), 32);
+        std::memcpy(bytes.data() + 32, values.data(), 24);
+        const std::int32_t cls = 9;
+        std::memcpy(bytes.data() + 56, &cls, 4);
+        const auto tensor = make_wire_tensor(bytes, kDetectionFormatBboxObbV1);
+        const auto decoded = decode_obb({tensor});
+        require(decoded.size() == 1 && decoded[0].geometry.shape == std::vector<int64_t>{1, 5} &&
+                    decoded[0].class_ids.dtype == TensorDType::Int32,
+                "OBB typed shape/dtype contract");
+        const auto geometry = tensor_float_values(decoded[0].geometry);
+        require(geometry == std::vector<float>({-4.f, 12.f, -32.f, 48.f, .4f}),
+                "OBB parser performed forbidden geometry mapping");
+        const auto fails = [](const Tensor& value) {
+          try {
+            (void)decode_obb_tensor(value);
+          } catch (const std::exception&) {
+            return true;
+          }
+          return false;
+        };
+        require(fails(make_wire_tensor(bytes, kDetectionFormatBbox)), "OBB accepted BBOX tag");
+        for (std::size_t offset : {0U, 4U, 6U, 8U, 12U, 16U, 20U, 24U, 28U, 60U, 64U}) {
+          auto corrupt = bytes;
+          corrupt[offset] ^= 0xff;
+          require(fails(make_wire_tensor(corrupt, kDetectionFormatBboxObbV1)),
+                  "OBB corrupt header/reserved/tail accepted");
+        }
+        for (std::int64_t length : {0, -1, 95, 97}) {
+          auto invalid_view = tensor;
+          invalid_view.shape = {length};
+          require(fails(invalid_view), "OBB decoded backing bytes beyond its declared extent");
+        }
+        auto trailing = bytes;
+        trailing.push_back(0);
+        require(fails(make_wire_tensor(trailing, kDetectionFormatBboxObbV1)),
+                "OBB appended logical bytes accepted");
+        bool raw_rejected = false;
+        try {
+          (void)parse_bbox_bytes(bytes, 64, 64, 4, false);
+        } catch (const std::exception&) {
+          raw_rejected = true;
+        }
+        require(raw_rejected, "legacy permissive parser accepted OBB magic");
+        bytes.resize(95);
+        require(fails(make_wire_tensor(bytes, kDetectionFormatBboxObbV1)),
+                "OBB truncation accepted");
+        bool rejected = false;
+        try {
+          (void)decode_bbox({tensor});
+        } catch (const std::exception&) {
+          rejected = true;
+        }
+        require(rejected, "legacy BBOX parser accepted oriented carrier");
+      }
+
       require(detection_format_is_bbox(kDetectionFormatBbox), "BBOX predicate failed");
       require(detection_format_is_pose(kDetectionFormatBboxPose), "pose predicate failed");
       require(detection_format_is_segmentation(kDetectionFormatBboxSegmentation),
               "segmentation predicate failed");
       require(detection_format_is_bbox_family(kDetectionFormatBboxPose),
               "pose should be BBOX-family");
+
+      // Coordinate + extent is a public wire boundary, not a signed-int32
+      // arithmetic contract. Positive overflow must remain a valid wide box;
+      // negative overflow keeps strict decoding's existing degenerate-box policy.
+      const std::array<RawBox, 2> extreme_boxes{{{.x = std::numeric_limits<int32_t>::max(),
+                                                  .y = std::numeric_limits<int32_t>::max(),
+                                                  .w = std::numeric_limits<int32_t>::max(),
+                                                  .h = std::numeric_limits<int32_t>::max(),
+                                                  .score = .75f,
+                                                  .cls = 1},
+                                                 {.x = std::numeric_limits<int32_t>::min(),
+                                                  .y = std::numeric_limits<int32_t>::min(),
+                                                  .w = std::numeric_limits<int32_t>::min(),
+                                                  .h = std::numeric_limits<int32_t>::min(),
+                                                  .score = .5f,
+                                                  .cls = 2}}};
+      std::vector<uint8_t> extreme_bytes(sizeof(uint32_t) + sizeof(extreme_boxes));
+      const uint32_t extreme_count = extreme_boxes.size();
+      std::memcpy(extreme_bytes.data(), &extreme_count, sizeof(extreme_count));
+      std::memcpy(extreme_bytes.data() + sizeof(extreme_count), extreme_boxes.data(),
+                  sizeof(extreme_boxes));
+      for (bool strict : {false, true}) {
+        const auto boxes = parse_bbox_bytes(extreme_bytes, 0, 0, 0, strict);
+        require(boxes.size() == (strict ? 2U : 1U),
+                "wide coordinate arithmetic changed degenerate-box policy");
+        require(boxes[0].x2 == 4294967296.0f && boxes[0].y2 == 4294967296.0f,
+                "positive coordinate sum overflowed int32");
+        if (strict)
+          require(boxes[1].x2 == -4294967296.0f && boxes[1].y2 == -4294967296.0f,
+                  "negative coordinate sum overflowed int32");
+      }
 
       const Tensor pose_tensor =
           make_wire_tensor(make_pose_payload(2, 2), kDetectionFormatBboxPose);

@@ -1,6 +1,17 @@
 #include "model/internal/ModelRouteRetarget.h"
 
 #include "model/internal/ModelInternal.h"
+#include "nodes/sima/Preproc.h"
+#include "nodes/sima/Quant.h"
+#include "nodes/sima/Tess.h"
+#include "nodes/sima/QuantTess.h"
+#include "nodes/sima/Cast.h"
+#include "nodes/sima/SimaBoxDecode.h"
+#include "nodes/sima/CastTess.h"
+#include "nodes/sima/Detess.h"
+#include "nodes/sima/DetessCast.h"
+#include "nodes/sima/DetessDequant.h"
+#include "nodes/sima/Dequant.h"
 
 namespace simaai::neat::internal {
 namespace {
@@ -14,7 +25,91 @@ Model::Options internal_retarget_model_options(Model::Options opt) {
   return opt;
 }
 
+bool has_exact_boxdecode_terminal(const Model::InferenceTerminalPolicy& terminal) {
+  return terminal.mla_only && !terminal.last_stage_index.has_value() &&
+         !terminal.last_stage_name.has_value() && !terminal.last_plugin_id.has_value() &&
+         !terminal.last_processor.has_value();
+}
+
+void select_exact_boxdecode_terminal(Model::Options* opt) {
+  if (!opt) {
+    return;
+  }
+  // A model-bound BoxDecode consumes the compiler-authored terminal MLA carrier directly.  Use
+  // the existing terminal policy to keep the model fragment and the BoxDecode source contract on
+  // that same boundary; rendering the MPK's dequant/detess tail as well would execute the
+  // conversion twice and hand BoxDecode bytes from a different contract.
+  opt->inference_terminal = {};
+  opt->inference_terminal.mla_only = true;
+}
+
 } // namespace
+
+const CompiledProcessCvuContract*
+node_model_processcvu_contract(const std::shared_ptr<Node>& node) {
+  if (const auto* typed = dynamic_cast<const Preproc*>(node.get())) {
+    return typed->options().compiled_contract.get();
+  }
+  if (const auto* typed = dynamic_cast<const Quant*>(node.get())) {
+    return typed->options().compiled_contract.get();
+  }
+  if (const auto* typed = dynamic_cast<const Tess*>(node.get())) {
+    return typed->options().compiled_contract.get();
+  }
+  if (const auto* typed = dynamic_cast<const QuantTess*>(node.get())) {
+    return typed->options().compiled_contract.get();
+  }
+  if (const auto* typed = dynamic_cast<const Cast*>(node.get())) {
+    return typed->options().compiled_contract.get();
+  }
+  if (const auto* typed = dynamic_cast<const CastTess*>(node.get())) {
+    return typed->options().compiled_contract.get();
+  }
+  if (const auto* typed = dynamic_cast<const Detess*>(node.get())) {
+    return typed->options().compiled_contract.get();
+  }
+  if (const auto* typed = dynamic_cast<const DetessCast*>(node.get())) {
+    return typed->options().compiled_contract.get();
+  }
+  if (const auto* typed = dynamic_cast<const DetessDequant*>(node.get())) {
+    return typed->options().compiled_contract.get();
+  }
+  if (const auto* typed = dynamic_cast<const Dequant*>(node.get())) {
+    return typed->options().processcvu_compiled_contract.get();
+  }
+  return nullptr;
+}
+
+const ModelLineageBinding* node_model_lineage_binding(const std::shared_ptr<Node>& node) {
+  if (!node) {
+    return nullptr;
+  }
+  if (const auto* pre = dynamic_cast<const Preproc*>(node.get())) {
+    return pre->options().model_lineage.get();
+  }
+  if (const auto* quant = dynamic_cast<const Quant*>(node.get())) {
+    return quant->options().model_lineage.get();
+  }
+  if (const auto* tess = dynamic_cast<const Tess*>(node.get())) {
+    return tess->options().model_lineage.get();
+  }
+  if (const auto* quanttess = dynamic_cast<const QuantTess*>(node.get())) {
+    return quanttess->options().model_lineage.get();
+  }
+  if (const auto* cast = dynamic_cast<const Cast*>(node.get())) {
+    return cast->options().model_lineage.get();
+  }
+  if (const auto* casttess = dynamic_cast<const CastTess*>(node.get())) {
+    return casttess->options().model_lineage.get();
+  }
+  if (const auto* box = dynamic_cast<const SimaBoxDecode*>(node.get())) {
+    return box->model_lineage_binding_internal().get();
+  }
+  if (const auto* provider = dynamic_cast<const ModelLineageProvider*>(node.get())) {
+    return provider->model_lineage_binding();
+  }
+  return nullptr;
+}
 
 RequestedPostRouteKind requested_post_route_from_stage_kind(PostRouteStageKind kind) {
   switch (kind) {
@@ -100,11 +195,18 @@ std::shared_ptr<Model> build_effective_model_for_requested_post(const ModelLinea
       requested_post_route_from_stage_kind(ModelAccess::resolved_post_kind(*model));
   const RequestedPostRouteKind requested = binding.requested_post;
   if (requested == RequestedPostRouteKind::Auto || requested == current) {
-    if (requested == RequestedPostRouteKind::BoxDecode &&
-        requested_decode_type != BoxDecodeType::Unspecified &&
-        base_opt.decode_type != requested_decode_type) {
+    const bool boxdecode_type_changed = requested == RequestedPostRouteKind::BoxDecode &&
+                                        requested_decode_type != BoxDecodeType::Unspecified &&
+                                        base_opt.decode_type != requested_decode_type;
+    const bool boxdecode_terminal_changed =
+        requested == RequestedPostRouteKind::BoxDecode &&
+        !has_exact_boxdecode_terminal(base_opt.inference_terminal);
+    if (boxdecode_type_changed || boxdecode_terminal_changed) {
       Model::Options opt = base_opt;
-      opt.decode_type = requested_decode_type;
+      if (boxdecode_type_changed) {
+        opt.decode_type = requested_decode_type;
+      }
+      select_exact_boxdecode_terminal(&opt);
       auto rebuilt = std::make_shared<Model>(ModelAccess::clone_with_options(*model, opt));
       if (changed) {
         *changed = true;
@@ -133,6 +235,7 @@ std::shared_ptr<Model> build_effective_model_for_requested_post(const ModelLinea
       }
       return nullptr;
     }
+    select_exact_boxdecode_terminal(&opt);
     break;
   case RequestedPostRouteKind::Auto:
   case RequestedPostRouteKind::Detess:
@@ -153,6 +256,13 @@ std::shared_ptr<Model> build_effective_model_for_requested_post(const ModelLinea
              requested_post_route_name(
                  requested_post_route_from_stage_kind(ModelAccess::resolved_post_kind(*rebuilt))) +
              "' instead of requested '" + requested_post_route_name(requested) + "'";
+    }
+    return nullptr;
+  }
+  if (requested == RequestedPostRouteKind::BoxDecode &&
+      !has_exact_boxdecode_terminal(ModelAccess::options(*rebuilt).inference_terminal)) {
+    if (err) {
+      *err = "retargeted boxdecode model did not preserve the terminal MLA boundary";
     }
     return nullptr;
   }

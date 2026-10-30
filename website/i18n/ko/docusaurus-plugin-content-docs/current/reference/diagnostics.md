@@ -133,18 +133,20 @@ SIMA_NEAT_VERBOSE_TOPICS=gstreamer \
 처리량/지연 시간/전력 보고를 위해 그래프 실행 JSON 내보내기를 사용하는 것이 좋습니다.
 
 ```cpp
-RunOptions opt;
-opt.enable_board_power();        // graph-level power when supported by the board/SOM
-Run run = graph.build(opt);
+Run run = graph.build(RunOptions{});
 
-// run your normal push/pull loop inside a measurement window, then:
-auto report = run.start_measurement().stop();
-std::cout << report.to_text();
+TelemetryMonitor telemetry_monitor; // board power, temperatures, CPU usage, and memory
+telemetry_monitor.start();
+auto scope = run.start_measurement();
+// run your normal push/pull loop here, then:
+auto report = scope.stop();
+Telemetry telemetry = telemetry_monitor.stop();
+std::cout << report.to_text() << telemetry;
 ```
 
 내보내기는 범위를 명확하게 유지합니다.
 
-- `run.graph_metrics.throughput_fps` 및 `run.graph_metrics.power`는 그래프 수준의 주요 지표입니다.
+- `run.graph_metrics.throughput_fps`는 그래프 수준의 주요 지표입니다. `run.graph_metrics.power`는 더 이상 사용되지 않는 `RunOptions::enable_board_power()`를 사용할 때만 채워집니다. 대신 `TelemetryMonitor`를 사용하십시오.
 - `run.node_metrics[]`에는 노드/플러그인의 지연 시간만 포함되며, 노드/플러그인의 전력 소비량은 의도적으로 포함되지 않습니다.
 - `latency_semantics`와 `aggregation`은 값이 프로그램 실행 기간 동안의 값인지, 아니면 특정 시간 간격 동안 측정된 값인지 알려줍니다.
 - `plugin_metrics_unattributed[]`는 정확히 하나의 노드에 매핑되지 않은 커널/플러그인 행을 보존합니다.
@@ -162,5 +164,18 @@ std::cout << report.to_text();
 | `caps_override is set; renegotiation disabled` | Caps 잠금 | `caps_override`를 제거하거나 입력된 Caps Lock 설정을 유지 |
 | `tensor caps change not supported` | 런타임 시 텐서의 형태/데이터 유형 변경 | 텐서의 형태/데이터 유형을 안정적으로 유지 (재협상 없음) |
 
-구조화된 플러그인 오류 및 문제 해결을 위한 팁은 다음을 참조하십시오.
-[문제 해결](/reference/troubleshooting).
+구조화된 플러그인 오류와 실행 가능한 힌트는 [문제 해결](/reference/troubleshooting)을 참조하십시오.
+
+## 플랫폼 런타임 복구
+
+Platform 3.0.0에서 사용할 수 없는 디스패처는 조사해야 할 오류입니다. 레거시 서비스를 시작하라는 요청이 아닙니다. Core는 디스패처 오류에 대응해 MLA 메모리를 초기화하거나 원격 프로세서를 재설정하지 않습니다. 레거시 복구 코드와 스크립트는 제거되었으므로 플랫폼에서 승인한 복구 절차를 사용합니다.
+
+드라이버가 완료 여부를 알 수 없다고 보고하면 DMA 버퍼와 원래 풀 대여를 유지해야 합니다. 파일 디스크립터를 닫거나 앱을 중지하거나 서비스를 다시 시작해도 하드웨어가 메모리 접근을 멈췄다는 증거가 되지 않습니다. 오류 보고서를 수집하고 다시 시도하기 전에 플랫폼에서 승인한 복구 절차를 사용합니다.
+
+### Core 및 Scheduler 패키지 일치 유지 {#keep-core-and-scheduler-packages-matched}
+
+해당 Core 릴리스용으로 선택된 Scheduler 패키지 세트와 함께 Core를 설치하십시오. Scheduler가 일치하는 Runner, Kernels, Codecs 및 펌웨어 종속성을 관리합니다. 공개 C++ ABI가 같다는 것만으로 런타임 호환성이 보장되지는 않습니다.
+
+`build.sh`가 선택하는 게시된 종속성을 사용하거나 `--scheduler PATH`로 일치하는 전체 Scheduler DEB 세트를 지정하십시오. [로컬 종속성](/develop-apps/contribute/build-test/local-dependencies/)을 참조하십시오.
+
+보드를 업데이트할 때는 [Neat Library 설치 또는 업데이트](/getting-started/neat-library/install-or-update/)에 따라 전체 Core 번들을 설치하십시오. 선택된 Scheduler 설치 프로그램이 패키지 세트를 검증하고 펌웨어 활성화를 관리합니다. 검증에 실패하면 일치하는 Core/Scheduler 번들을 구하십시오. 설치 기록을 바꾸거나 호환되지 않는 개별 런타임 또는 펌웨어 패키지를 강제로 설치하지 마십시오.

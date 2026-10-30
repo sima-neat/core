@@ -9,6 +9,7 @@ Release notes for the Model Compiler.
 
 | Release | Notes |
 | --- | --- |
+| 3.0.0 | [Model Compiler 3.0.0](https://github.com/sima-neat/model-compiler/releases/tag/v3.0.0) |
 | 2.1.3.1 | [Model Compiler 2.1.3.1](https://github.com/sima-neat/model-compiler/releases/tag/v2.1.3.1) |
 | 2.1.3 | [Model Compiler 2.1.3](https://github.com/sima-neat/model-compiler/releases/tag/v2.1.3) |
 | 2.1.2 | [Model Compiler 2.1.2](https://github.com/sima-neat/model-compiler/releases/tag/v2.1.2) |

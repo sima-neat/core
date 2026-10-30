@@ -69,6 +69,8 @@ std::vector<std::string> SimaRender::element_names(int node_index) const {
 }
 
 OutputSpec SimaRender::output_spec(const OutputSpec& input) const {
+  if (input.format == "BBOX_OBB_V1")
+    throw std::invalid_argument("SimaRender does not support BBOX_OBB_V1 oriented boxes");
   OutputSpec out = input;
   out.certainty = SpecCertainty::Hint;
   out.note = "neatrender";

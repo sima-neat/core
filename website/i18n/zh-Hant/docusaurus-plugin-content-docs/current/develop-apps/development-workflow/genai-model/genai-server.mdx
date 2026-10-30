@@ -127,6 +127,8 @@ curl http://<modalix-ip>:9998/v1/chat/completions \
 
 對於 VLM 請求，OpenAI 對話 `image_url` 內容部分必須包含一個 base64 資料 URI，例如 `data:image/jpeg;base64,...`。影像解碼需要一個具有 OpenCV 支援的 Neat 版本。
 
+若提示在已編譯的上下文中未留下回覆空間，會傳回 `context_length_exceeded`（HTTP 400；若串流已開始，則傳回 SSE 錯誤）。達到上下文或輸出詞元上限時，會傳回 `finish_reason: "length"`；正常完成則傳回 `"stop"`。對話記錄會保留。
+
 ## 與 Ollama 相容的請求
 
 使用 `/api/chat` 來處理訊息歷史記錄，或使用 `/api/generate` 來處理提示：
@@ -186,6 +188,12 @@ curl http://<modalix-ip>:9998/api/chat \
 `/api/chat` 會在 `message.thinking` 中回傳推理過程，並在 `message.content` 中回傳最終答案。`/api/generate` 接受相同的頂層 `think` 欄位，並在頂層 `thinking` 中回傳推理過程，以及在 `response` 中回傳答案。
 
 如果推理欄位為空，則會省略該欄位。這些欄位僅用於輸出：傳入的 `reasoning_content` 或 `thinking` 欄位不會作為對話歷史重現。
+
+### 推理程度
+
+對於 GPT-OSS，請將 `reasoning_effort` 設為 `low`（預設）、`medium` 或 `high`；其他值會傳回 HTTP 400。`enable_thinking` 控制是否傳回推理內容。
+
+`reasoning_effort` 也可在 `chat_template_kwargs` 中指定，其值優先於頂層欄位。
 
 ## 語音請求
 

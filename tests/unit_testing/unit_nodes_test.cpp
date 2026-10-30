@@ -10,12 +10,14 @@
 #include "nodes/common/ImageDecode.h"
 #include "nodes/io/RTSPInput.h"
 #include "nodes/io/CameraInput.h"
+#include "nodes/io/HttpSource.h"
 #include "nodes/rtp/H264Depacketize.h"
 #include "nodes/rtp/H265Depacketize.h"
 #include "nodes/sima/H264DecodeSima.h"
 #include "nodes/sima/H264EncodeSima.h"
 #include "nodes/sima/H264Parse.h"
 #include "nodes/sima/H264Packetize.h"
+#include "nodes/sima/PCIeSrc.h"
 #include "gst/GstHelpers.h"
 
 #include "test_utils.h"
@@ -100,6 +102,22 @@ int main() {
     require_contains(rtsp->backend_fragment(1), "rtspsrc name=n1_rtspsrc",
                      "RTSPInput name mismatch");
 
+    // Live sources declare it; the graph cannot pace them.
+    require(rtsp->is_live_source(), "RTSPInput must be a live source");
+    require(simaai::neat::nodes::CameraInput()->is_live_source(),
+            "CameraInput must be a live source");
+    require(simaai::neat::nodes::CameraInputWithCaptureBuffers({}, 0)->is_live_source(),
+            "CameraInput with capture buffers (Python camera_input) must be a live source");
+    require(simaai::neat::nodes::PCIeSrc()->is_live_source(), "PCIeSrc must be a live source");
+    simaai::neat::HttpSourceOptions http_opt;
+    http_opt.location = "http://example.test/stream.mjpg";
+    require(!simaai::neat::nodes::HttpSource(http_opt)->is_live_source(),
+            "HttpSource must not be live unless is_live is set");
+    http_opt.is_live = true;
+    require(simaai::neat::nodes::HttpSource(http_opt)->is_live_source(),
+            "HttpSource with is_live must be a live source");
+    require(!fs->is_live_source(), "FileInput must not be a live source");
+
     simaai::neat::CameraInputOptions cam_opt;
     require(!cam_opt.allow_cpu_fallback, "CameraInput must default to strict device zero-copy");
 
@@ -114,10 +132,7 @@ int main() {
 
     simaai::neat::CameraInputOptions fallback_cam_opt = cam_opt;
     fallback_cam_opt.allow_cpu_fallback = true;
-    // Keep checking the original factory signature after adding the V4L2 overload.
-    auto camera_factory =
-        static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::CameraInputOptions)>(
-            &simaai::neat::nodes::CameraInput);
+    auto camera_factory = &simaai::neat::nodes::CameraInput;
     auto cam = camera_factory(fallback_cam_opt);
     require_contains(cam->backend_fragment(0), "libcamerasrc name=n0_camera_src",
                      "CameraInput source missing");
@@ -132,21 +147,18 @@ int main() {
             "CameraInput bridge must negotiate allocation before the queue");
     require_contains(cam->backend_fragment(0), "copy-allowed=true",
                      "CameraInput fallback bridge should allow copies");
-    require(cam->backend_fragment(0).find("capture-min-buffers=") == std::string::npos,
-            "CameraInput default must not impose an application capture minimum");
     require(cam->backend_fragment(0).find("num-buffers=") == std::string::npos,
             "CameraInput queue depth must not cap the fallback copy pool");
-    if (simaai::neat::element_property_exists("libcamerasrc", "external-buffer-mode")) {
-      require_contains(cam->backend_fragment(0), "external-buffer-mode=preferred",
-                       "CameraInput fallback should prefer direct downstream capture");
-    }
+    // Neat never lends memory to the camera: no capture-pool negotiation knobs.
+    require(cam->backend_fragment(0).find("external-buffer-mode") == std::string::npos,
+            "CameraInput must not ask libcamerasrc to import Neat buffers");
+    require(cam->backend_fragment(0).find("capture-min-buffers=") == std::string::npos,
+            "CameraInput must not propose a capture pool");
 
     if (simaai::neat::element_property_exists("libcamerasrc", "buffer-count")) {
       auto deep_cam = simaai::neat::nodes::CameraInputWithCaptureBuffers(fallback_cam_opt, 32);
       require_contains(deep_cam->backend_fragment(2), "buffer-count=32",
                        "CameraInput capture queue depth was not applied to libcamerasrc");
-      require_contains(deep_cam->backend_fragment(2), "capture-min-buffers=32",
-                       "CameraInput bridge pool depth must follow application capture ownership");
       require(deep_cam->backend_fragment(2).find("num-buffers=") == std::string::npos,
               "CameraInput capture depth must not cap the fallback copy pool");
     }
@@ -158,15 +170,13 @@ int main() {
     require(deep_queue_cam->backend_fragment(3).find("num-buffers=") == std::string::npos,
             "CameraInput queue depth must remain independent of bridge preallocation");
 
-    if (simaai::neat::element_property_exists("libcamerasrc", "external-buffer-mode")) {
-      auto strict_cam = simaai::neat::nodes::CameraInput(cam_opt);
-      require_contains(strict_cam->backend_fragment(1), "external-buffer-mode=required",
-                       "CameraInput strict mode must require external DMA-BUF capture");
-      require_contains(strict_cam->backend_fragment(1), "neatcamerabridge name=n1_camera_bridge",
-                       "CameraInput strict bridge missing");
-      require_contains(strict_cam->backend_fragment(1), "copy-allowed=false",
-                       "CameraInput strict bridge must reject copies");
-    }
+    auto strict_cam = simaai::neat::nodes::CameraInput(cam_opt);
+    require(strict_cam->backend_fragment(1).find("external-buffer-mode") == std::string::npos,
+            "CameraInput strict mode must not depend on libcamerasrc importing Neat buffers");
+    require_contains(strict_cam->backend_fragment(1), "neatcamerabridge name=n1_camera_bridge",
+                     "CameraInput strict bridge missing");
+    require_contains(strict_cam->backend_fragment(1), "copy-allowed=false",
+                     "CameraInput strict bridge must reject copies");
     if (!simaai::neat::element_exists("neatcamerabridge")) {
       throw std::runtime_error("private neatcamerabridge factory not registered");
     }

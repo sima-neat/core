@@ -12,6 +12,13 @@ co-processing applications:
 - logs: `/var/log/sima-neat/pcie/qN.log`
 - host plugin: `neatpciehost`
 
+The 3.0 transport requires matching card and host packages. The card builder
+reports its compiled output capacity during readiness; the host sizes the PCIe
+buffers automatically before the first input. Returned tensors view the received
+raw buffer at the runtime-provided offsets, without an extra reorder copy.
+
+Direct LLM, VLM and ASR APIs use one Core worker per model.
+
 ## Public API
 
 Public headers install under:
@@ -34,6 +41,17 @@ package; applications compiling against this API use `sima-pcie-host-dev`.
 `pcie::Model` serializes only the restricted PCIe model-options schema before
 launching the card-side builder; no full NEAT core `Model`, `Run`, or `Graph`
 API is part of this package surface.
+
+The GenAI C++ API is `simaai/neat/pcie/genai/GenAIModel.h`; Python exposes
+`pyneatpcie.genai`. Pass a host model directory: absolute, or relative to the
+application's current working directory. Model files load as needed over PCIe;
+keep them readable and unchanged while the model is open. Use matching host/card
+GenAI packages. Callers supply explicit conversation history in each request.
+VLM requests accept in-memory RGB images; applications load image files themselves.
+Set `connection.card_id` to select the card; its default address is
+`10.0.<card_id>.2`. Set `connection.card_host` to override that address.
+For speculative decoding, pass the parent directory of a prepared target/draft
+pair. Both models load in one card session using their compiled configuration.
 
 ### Multi-model runtime
 
@@ -62,8 +80,12 @@ runtime.unload(model_id);
 A runtime represents one Modalix PCIe Card. Each loaded model still owns one
 physical PCIe queue; the runtime assigns queues automatically, beginning with
 the preferred `ConnectionOptions::queue`, and exposes only logical `ModelId`
-values. The Modalix EV74 supports at most four concurrent co-processing
-pipelines, using queues 0 through 3.
+values. Queues 0 through 5 are available. Concurrent pipelines share card
+compute and memory; available queues do not guarantee sufficient resources.
+
+For `max_inflight` values from 1 through 10, the host uses a 16-entry transport
+ring per queue. Larger values and plugin-managed depth (`0`) retain 256 entries.
+Transport entries also carry metadata and are distinct from logical in-flight requests.
 
 `load_models()` reserves all required queues and has batch semantics: if any
 model fails to load, every model created by that call is closed and its queue
@@ -139,7 +161,7 @@ struct ConnectionOptions {
   std::string card_host;      // Optional explicit card IP/host for SSH/SCP.
   int card_id = 0;            // PCIe card/plugin index; default host is 10.0.<card_id>.2.
   std::string user = "sima";
-  int queue = 0;              // Supported co-processing queue, 0..3.
+  int queue = 0;              // Supported co-processing queue, 0..5.
   int max_inflight = 10;
   std::string card_env;
   std::string card_gst_debug; // Optional card-side GST_DEBUG spec for pcie-pipeline-builder.
@@ -343,51 +365,71 @@ model.close();
 
 ## Build
 
-The host PCIe plugin is consumed as a prebuilt artifact from the internals repo.
-By default `build.sh` uses `../deps/manifest.json`, resolves the `internals`
-dependency with snap semantics, and downloads the matching Vulcan-hosted PCIe
-host tarball from the `internals` artifact tree when the local artifact is
-missing. For snap branch builds it tries the current core branch first, then
-falls back to `develop`; tag builds require the matching tag artifact. Automatic
-download reads `latest.tag`, verifies `pcie-host-artifact-<multiarch>.tar.gz`
-with its `.sha256`, and extracts it locally.
+Build on an Ubuntu 22.04 or Ubuntu 24.04 host, outside the Palette SDK.
+`build.sh` installs `build-essential`, uses the host's default C++20 compiler and
+acquires Scheduler's native PCIe host profile through sima-cli. It does not add a
+compiler repository or use the SDK's device toolchain. This profile supplies the
+prebuilt transport library, plugin and reviewed service headers. Platform
+implementation sources are build-only inputs to Scheduler CI and are not included
+in the delivered artifacts. The PCIe driver and Platform userspace library remain
+separately provisioned.
 
-Host artifacts are built separately for Ubuntu 22.04 and Ubuntu 24.04.
-`build.sh` reads `/etc/os-release` and selects the matching distro-qualified
-Vulcan package:
+PCIe host builds always include the GenAI APIs. They do not acquire the device
+Scheduler profile, Runner, Kernels or Codecs.
+
+`build.sh` follows the Scheduler policy in Core's `deps/manifest.json`, in the
+`production` publication environment by default. Branch `snap` first tries
+`latest` from the current Core branch, then reports and retries `develop:latest`
+only if resolution fails and Scheduler's published branch index confirms absence.
+Other lookup failures remain errors. Tag snaps and explicit
+branch/commit selectors remain strict. Acquisition downloads the selected
+immutable revision and verifies its publisher manifest and resource hashes
+before running the Scheduler staging helper. Download, verification and staging
+failures remain errors. Receipts record the branch actually selected; fallback
+never changes the distro or architecture profile.
+
+`build.sh` reads `/etc/os-release` and the Debian architecture to select one of
+these distro-qualified packages:
 
 ```text
-internals/pcie-host/ubuntu22/x86_64-linux-gnu
-internals/pcie-host/ubuntu22/aarch64-linux-gnu
-internals/pcie-host/ubuntu24/x86_64-linux-gnu
-internals/pcie-host/ubuntu24/aarch64-linux-gnu
+scheduler/pcie-host-ubuntu22-amd64
+scheduler/pcie-host-ubuntu22-arm64
+scheduler/pcie-host-ubuntu24-amd64
+scheduler/pcie-host-ubuntu24-arm64
 ```
 
 Other host distributions are rejected because the prebuilt plugin may depend
 on distribution-specific glibc, GLib, and GStreamer versions.
 
-The extracted/local layout is:
+The selected Scheduler helper validates and extracts its prebuilt packages and
+service headers into a private prefix. It does not build the Platform library,
+run package maintainer scripts, install a driver or start daemons.
+Core configures against that prefix's installed `SimaScheduler` package;
+it does not include headers from a sibling lower-layer checkout. To use a particular
+published revision, pass `--scheduler-spec <commit>`. Use
+`--scheduler-environment <name>` to select another publication environment.
 
-```text
-artifacts/x86_64-linux-gnu/libgstneatpciehost.so
-artifacts/x86_64-linux-gnu/include/gst/SimaTensorSetMetaAbi.h
-artifacts/aarch64-linux-gnu/libgstneatpciehost.so
-artifacts/aarch64-linux-gnu/include/gst/SimaTensorSetMetaAbi.h
-```
-
-`build.sh` detects the host multiarch with `dpkg-architecture`, copies the
-plugin and header into `build/artifacts/neatpciehost/<multiarch>/`, and passes
-those staged paths to CMake. CMake does not include headers from a sibling
-`internals` checkout.
+Run the following command from this checkout's `pcie_host` directory on the host
+to build tests and DEB packages:
 
 ```bash
-./build.sh --with-tests --no-deb
 ./build.sh --with-tests
 ```
+
+For a no-DEB build, use `./build.sh --with-tests --no-deb`. With that option,
+an explicit `SimaScheduler_DIR` can select an already installed native Scheduler
+profile instead of downloading a publication.
 
 `build.sh` installs its host build dependencies, including
 `nlohmann-json3-dev`, which provides `nlohmann/json.hpp`. Use
 the same build command on a fresh host and for subsequent rebuilds.
+
+Before installing the resulting packages on a PCIe host, provision the matching
+Platform host package through its official installer. The Neat installer verifies
+the installed Platform version, driver dependency, headers and userspace ABI.
+It installs only the Scheduler/Core package set and ordinary missing dependencies;
+it rejects transactions that would change Platform or the driver. A private
+build does not qualify PCIe hardware execution.
 
 `build.sh` writes the locally built packages and a copy of the installer into
 `dist/`:
@@ -438,9 +480,13 @@ The normal PCIe host package metadata includes the extras archive. To download
 and auto-extract only the tutorial bundle later without reinstalling the host
 packages, use the `extras` metadata variant:
 
+<!-- release-command:start -->
+
 ```bash
-sima-cli neat install core/pciehost/ubuntu24/amd64@v0.5.0 -t extras
+sima-cli neat install core/pciehost/ubuntu24/amd64@v0.6.0 -t extras
 ```
+
+<!-- release-command:end -->
 
 Install the locally built packages on the host with:
 
@@ -531,6 +577,42 @@ applications do not need the NEAT core or internals source tree;
 `find_package(SimaPCIeHost)` rediscovers the local GStreamer link flags with
 `pkg-config` and the zlib target through CMake.
 
+## GenAI hardware tests
+
+Prepare the same LLM, VLM and Whisper fixtures used by Core's direct API tests
+(already compiled models; no model compilation or package installation):
+
+```bash
+pcie_host/scripts/prepare_pcie_genai_models.sh
+```
+
+The default download directory is `$HOME/workspace/models_genai`. Override
+`SIMAPCIE_GENAI_MODELS_PATH` to use a different cache. Model names use the same
+`SIMA_TEST_LLIMA_TEXT_MODEL`, `SIMA_TEST_LLIMA_VLM_MODEL` and
+`SIMA_TEST_LLIMA_ASR_MODEL` variables as the standalone tests.
+
+With matching host/card packages and no other job using the card:
+
+```bash
+export SIMAPCIE_CARD_HOST=10.0.0.2
+export SIMAPCIE_USER=sima
+ctest --test-dir <extras>/lib/sima-pcie-host/tests -L genai -j1 --output-on-failure
+~/pyneatpcie/bin/python -m pytest -v -s pcie_host/python/tests/test_genai_hardware.py
+```
+
+Model assets use the platform's default card receive directory, `/tmp`; no
+receive-directory option is needed in C++ or Python. Remove any previous
+`card_receive_directory` assignments when updating applications.
+
+The extras contain the preparation script and image/audio fixtures. Python tests
+use repository fixtures by default; `SIMAPCIE_GENAI_TEST_ASSETS` can select the
+extras' `genai-assets` directory for both languages. Tests cover generation,
+streaming, capability checks, ASR transcription/translation and in-memory audio,
+reuse and explicit close; LLM tests also cover history and cancellation. Cached
+images are not supported by the PCIe API and are intentionally excluded. Missing
+models fail an enabled hardware run; Python skips card access when
+`SIMAPCIE_CARD_HOST` is unset. Concurrent mixed-model stress is separate.
+
 ## V1 Scope
 
 Implemented in the initial PCIe host package:
@@ -548,6 +630,43 @@ Validated on a Modalix PCIe Card:
 
 - tensor-set metadata attachment and transport
 - packaged C++ and Python tensor, image, and boxdecode routes
-- simultaneous execution across four PCIe queues
+- simultaneous execution across six PCIe queues (0–5)
 - YOLOv8n and EVO50 model variants
 - `mla_only` against the default route, single- and multi-input archives
+
+## Building packages in CI
+
+Vulcan CI builds Ubuntu 22.04 and 24.04 packages natively on both AMD64 and ARM64
+Ubuntu runners. Each job uses the matching `media` profile from the shared
+`069171140053.dkr.ecr.us-west-2.amazonaws.com/vulcan/ubuntu-build` image family. The image recipe SHA-256 is pinned;
+build, unit tests, and staged package/wheel smoke tests run in that container.
+Scheduler artifacts retain their existing manifest and environment selection.
+
+CI passes `--skip-deps`, which verifies all requested APT prerequisites and fails
+if any are missing. It never runs APT or silently repairs an incomplete image.
+Regular local builds still install prerequisites by default.
+
+Use `./build.sh --all --jobs 8` to set compilation parallelism. Without `--jobs`,
+`CMAKE_BUILD_PARALLEL_LEVEL` is used, falling back to two jobs. Values must be
+positive integers. CI uses `nproc` unless the `PCIE_HOST_BUILD_JOBS` repository or
+environment variable is set in GitHub Actions.
+
+### Qualify a shared image before adoption
+
+Vulcan publishes generic toolchain images without checking out Core. Core owns
+PCIe compatibility: run `qualify-ubuntu-build-images.yml` on the intended Core
+revision, supplying the candidate image recipe SHA-256. Pull requests that change
+the qualification workflow or validation script also run the four-target matrix
+using the default recipe pin, so initial adoption can be qualified before merge.
+All four targets must
+pass before changing the regular CI pin or merging the initial migration.
+The `scripts/ci/pciehost/validate_build_image.sh` entrypoint blocks APT and runs
+the full package build, CTest, delivery verification, a relocated C++ consumer,
+and installed-wheel imports. Logs are retained. Nanobind, sima-cli, and Scheduler
+artifacts remain normal build-time downloads; no device or Platform driver is
+installed. This qualification workflow does not publish Core packages.
+
+Before enabling the migration, deploy the Vulcan Ubuntu pool policy for Core,
+publish the four `media` images, and deploy the runner ECR pull policy and credential helper before runner
+registration. Job containers authenticate using the EC2 role. See Vulcan's `docs/ubuntu-build-images.md` for publication and
+other consumers such as SDK builds. Public C++ and Python APIs are unchanged.

@@ -232,7 +232,7 @@ inline std::optional<std::size_t> find_axis(const std::vector<TensorAxisSemantic
 /**
  * @brief Stamp axis-semantic bytes from `(shape, layout_token)` into a raw byte buffer.
  *
- * Handles 4-D leading-N tensors (when shape[0] == 1) for both CHW and HWC layouts. Falls back
+ * Handles explicit NHWC/NCHW batches and implicit singleton-N CHW/HWC tensors. Falls back
  * to a generic best-guess (C/W/H/D/N from fastest to slowest) for unrecognized layouts.
  */
 template <typename ShapeT>
@@ -247,9 +247,12 @@ inline void fill_axis_semantics_from_shape_layout(const std::vector<ShapeT>& sha
   }
   const std::uint32_t rank = static_cast<std::uint32_t>(shape.size());
   const std::string layout = normalize_layout_token(raw_layout);
-  const bool leading_batch = rank >= 4U && !shape.empty() &&
-                             shape.front() == static_cast<ShapeT>(1) &&
-                             (layout == "CHW" || layout == "HWC");
+  const std::string explicit_layout = upper_copy_ascii(raw_layout);
+  const bool leading_batch =
+      rank >= 4U && !shape.empty() && shape.front() > 0 &&
+      (shape.front() == static_cast<ShapeT>(1) ||
+       (rank == 4U && (explicit_layout == "NHWC" || explicit_layout == "NCHW"))) &&
+      (layout == "CHW" || layout == "HWC");
   if (layout == "CHW") {
     if (leading_batch) {
       semantics[0] = SIMA_EV_AXIS_N;
@@ -505,7 +508,8 @@ inline bool fill_dense_strides_contiguous(const sima_ev_shape_desc& shape,
  * @brief Map a dtype token (e.g., `"FP32"`, `"BF16"`, `"INT8"`) to its `SIMA_EV_DTYPE_*` value.
  *
  * Recognizes both the bare tokens (`"FP32"`, `"BF16"`, etc.) and the `EVXX_*` prefixed tokens.
- * `UINT8` is mapped to `INT8`. Returns false for unknown tokens.
+ * Unsigned integers use same-width signed storage; AuthoredTensorDescriptor retains
+ * numerical signedness. Returns false for unknown tokens.
  */
 inline bool dtype_token_to_ev(std::string raw_dtype, std::uint32_t* out_dtype) {
   if (!out_dtype) {
@@ -528,7 +532,7 @@ inline bool dtype_token_to_ev(std::string raw_dtype, std::uint32_t* out_dtype) {
     *out_dtype = SIMA_EV_DTYPE_INT32;
     return true;
   }
-  if (token == "INT16" || token == "EVXX_INT16") {
+  if (token == "INT16" || token == "EVXX_INT16" || token == "UINT16" || token == "EVXX_UINT16") {
     *out_dtype = SIMA_EV_DTYPE_INT16;
     return true;
   }
@@ -759,7 +763,8 @@ build_tiled_tensor_desc(const std::vector<int>& shape, const std::vector<int>& t
                                            dim_invalid_msg, dtype_invalid_msg,
                                            tile_rank_mismatch_msg, tile_dim_invalid_msg);
   }
-  if (!fill_shape_desc(shape, normalized_layout, &out->shape, error_detail, missing_output_msg,
+  // Preserve explicit batch/depth axes while validating the normalized layout above.
+  if (!fill_shape_desc(shape, layout_token, &out->shape, error_detail, missing_output_msg,
                        rank_invalid_msg, dim_invalid_msg)) {
     return false;
   }

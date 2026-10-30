@@ -1,4 +1,7 @@
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
+#include "pipeline/internal/contract/PluginCompiledContracts.h"
+#include "pipeline/internal/TensorBufferEnvelope.h"
+#include "pipeline/internal/sima/TensorSemanticsUtil.h"
 
 #include "pipeline/internal/TensorMath.h"
 #include "pipeline/internal/EnvUtil.h"
@@ -9,6 +12,9 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
+#include <stdexcept>
+#include <tuple>
 
 namespace simaai::neat::pipeline_internal::sima::specbuilders {
 namespace {
@@ -17,6 +23,43 @@ std::string upper_copy_local(std::string value) {
   std::transform(value.begin(), value.end(), value.begin(),
                  [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
   return value;
+}
+
+bool contract_error(std::string* error, std::string message) {
+  if (error)
+    *error = std::move(message);
+  return false;
+}
+
+const char* ingress_dtype_token(int dtype) {
+  switch (dtype) {
+  case SIMA_TENSOR_SET_DTYPE_UINT8_V1:
+    return "UINT8";
+  case SIMA_TENSOR_SET_DTYPE_INT8_V1:
+    return "INT8";
+  case SIMA_TENSOR_SET_DTYPE_UINT16_V1:
+    return "UINT16";
+  case SIMA_TENSOR_SET_DTYPE_INT16_V1:
+    return "INT16";
+  case SIMA_TENSOR_SET_DTYPE_BF16_V1:
+    return "BF16";
+  case SIMA_TENSOR_SET_DTYPE_INT32_V1:
+    return "INT32";
+  case SIMA_TENSOR_SET_DTYPE_FP32_V1:
+    return "FP32";
+  default:
+    return nullptr;
+  }
+}
+
+bool same_carrier(const PhysicalBufferStaticSpec& a, const PhysicalBufferStaticSpec& b) {
+  const auto identity = [](const auto& p) {
+    return std::tie(p.physical_index, p.allocator_index, p.source_physical_index, p.size_bytes,
+                    p.source_byte_offset, p.device_kind, p.memory_flags, p.segment_name_id,
+                    p.segment_name, p.required_alignment_bytes, p.address_source,
+                    p.model_carrier_id);
+  };
+  return identity(a) == identity(b);
 }
 
 bool detess_layout_debug_enabled_local() {
@@ -42,6 +85,10 @@ std::string join_shape_debug_local(const std::vector<std::int64_t>& shape) {
 
 std::uint64_t dtype_size_bytes_from_token(const std::string& raw_dtype) {
   const std::string token = upper_copy_local(raw_dtype);
+  if (token.find("INT64") != std::string::npos || token.find("FLOAT64") != std::string::npos ||
+      token.find("FP64") != std::string::npos) {
+    return 8U;
+  }
   if (token.find("BF16") != std::string::npos || token.find("FLOAT16") != std::string::npos ||
       token.find("FP16") != std::string::npos || token == "INT16" || token == "EVXX_INT16" ||
       token == "UINT16") {
@@ -150,7 +197,8 @@ LogicalTensorStaticSpec build_logical_output_static_spec(
 PhysicalBufferStaticSpec
 build_physical_buffer_static_spec(int physical_index, int allocator_index, std::uint64_t size_bytes,
                                   DeviceKind device_kind, const std::string& segment_name,
-                                  int source_physical_index, std::int64_t source_byte_offset) {
+                                  int source_physical_index, std::int64_t source_byte_offset,
+                                  std::uint64_t required_alignment_bytes) {
   PhysicalBufferStaticSpec physical;
   physical.physical_index = physical_index;
   physical.allocator_index = allocator_index;
@@ -159,6 +207,7 @@ build_physical_buffer_static_spec(int physical_index, int allocator_index, std::
   physical.segment_name = segment_name;
   physical.source_physical_index = source_physical_index;
   physical.source_byte_offset = source_byte_offset;
+  physical.required_alignment_bytes = required_alignment_bytes;
   return physical;
 }
 
@@ -191,6 +240,141 @@ StageOutputRoute build_output_route_static_spec(int output_slot, int logical_out
   route.cm_output_name = cm_output_name;
   route.segment_name = segment_name;
   return route;
+}
+
+bool build_ingress_runtime_contract(const pipeline_internal::TensorBufferView& view,
+                                    std::span<const Tensor> tensors, CompiledRuntimeContract* out,
+                                    std::string* error) {
+  if (!out || tensors.empty() || tensors.size() != view.tensors.size() ||
+      tensors.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+    return contract_error(error, "ingress projection requires matching bounded tensor metadata");
+  CompiledRuntimeContract result;
+  for (std::size_t i = 0; i < view.tensors.size(); ++i) {
+    const auto& descriptor = view.tensors[i];
+    const char* dtype = ingress_dtype_token(descriptor.dtype);
+    if (!dtype)
+      return contract_error(error,
+                            "ingress tensor " + std::to_string(i) + " has an unsupported dtype");
+    const int physical = descriptor.memory_index;
+    if (physical < 0 || static_cast<std::size_t>(physical) >= view.segments.size())
+      return contract_error(error, "ingress tensor has no current physical carrier");
+    const auto bytes = view.segments[physical].size_bytes;
+    if (descriptor.byte_offset < 0 || static_cast<std::uint64_t>(descriptor.byte_offset) >= bytes ||
+        !descriptor.size_bytes ||
+        descriptor.size_bytes > bytes - static_cast<std::uint64_t>(descriptor.byte_offset))
+      return contract_error(error, "ingress tensor offset exceeds its backing memory");
+
+    std::string layout;
+    switch (descriptor.layout) {
+    case SIMA_TENSOR_SET_LAYOUT_NCHW_V1:
+    case SIMA_TENSOR_SET_LAYOUT_CHW_V1:
+      layout = "CHW";
+      break;
+    case SIMA_TENSOR_SET_LAYOUT_NHWC_V1:
+    case SIMA_TENSOR_SET_LAYOUT_HWC_V1:
+      layout = "HWC";
+      break;
+    case SIMA_TENSOR_SET_LAYOUT_HW_V1:
+      layout = "HW";
+      break;
+    default:
+      break;
+    }
+    const auto& tensor = tensors[i];
+    if (!tensorsemantics::axis_semantics_match_rank(tensor.shape.size(), tensor.axis_semantics) ||
+        !tensorsemantics::layout_token_matches_axis_semantics(layout, tensor.axis_semantics))
+      return contract_error(error, "ingress layout conflicts with logical axis semantics");
+    const auto axes = tensorsemantics::layout_token_from_axis_semantics(tensor.axis_semantics);
+    if (!axes.empty())
+      layout = axes;
+    const auto name =
+        descriptor.logical_name.empty() ? "input_" + std::to_string(i) : descriptor.logical_name;
+    auto logical = build_logical_output_static_spec(
+        static_cast<int>(i), static_cast<int>(i), physical, static_cast<int>(i),
+        static_cast<int>(i), descriptor.shape, dtype, layout, name, name, name,
+        descriptor.byte_offset, descriptor.size_bytes);
+    logical.stride_bytes = descriptor.stride_bytes;
+    if (const auto& quant = tensor.semantic.quant) {
+      auto& value = logical.quant.emplace();
+      if (quant->axis >= 0) {
+        value.granularity = QuantGranularity::PerAxis;
+        value.axis = quant->axis;
+        value.scales.assign(quant->scales.begin(), quant->scales.end());
+        value.zero_points.assign(quant->zero_points.begin(), quant->zero_points.end());
+      } else {
+        value.scales = {quant->scale};
+        value.zero_points = {quant->zero_point};
+      }
+    }
+    result.logical_outputs.push_back(std::move(logical));
+    if (std::none_of(result.physical_outputs.begin(), result.physical_outputs.end(),
+                     [physical](const auto& value) { return value.physical_index == physical; }))
+      result.physical_outputs.push_back(
+          build_physical_buffer_static_spec(physical, physical, bytes, DeviceKind::Cpu, name));
+  }
+  *out = std::move(result);
+  if (error)
+    error->clear();
+  return true;
+}
+
+bool append_direct_kernel_input(CompiledRuntimeContract* runtime,
+                                const LogicalTensorStaticSpec& source,
+                                const PhysicalBufferStaticSpec& physical, std::size_t input_index,
+                                std::uint64_t required_bytes, bool ingress, std::string* error) {
+  if (!runtime || input_index > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
+      source.physical_index < 0 || source.physical_index != physical.physical_index)
+    return contract_error(error, "kernel input has no authored physical carrier");
+  if (source.byte_offset < 0)
+    return contract_error(error, "kernel input has a negative byte offset");
+  if (static_cast<std::uint64_t>(source.byte_offset) > physical.size_bytes ||
+      required_bytes > physical.size_bytes - static_cast<std::uint64_t>(source.byte_offset))
+    return contract_error(error, "input " + std::to_string(input_index) + " holds " +
+                                     std::to_string(physical.size_bytes) +
+                                     " bytes; the checked request reads " +
+                                     std::to_string(required_bytes));
+  // Publication bytes are the logical element count, not the physical
+  // footprint of a strided or tiled tensor. The checked executable supplies
+  // that footprint; do not reject legal padding by comparing it to logical
+  // bytes. Still reject a truncated authored logical view. Zero retains the
+  // existing unknown-extent convention for producer contracts.
+  std::uint64_t logical_bytes = dtype_size_bytes_from_token(source.dtype);
+  for (const auto dimension : source.shape) {
+    if (dimension <= 0 || static_cast<std::uint64_t>(dimension) >
+                              std::numeric_limits<std::uint64_t>::max() / logical_bytes)
+      return contract_error(error, "kernel input logical byte size is invalid or overflows");
+    logical_bytes *= static_cast<std::uint64_t>(dimension);
+  }
+  if (source.size_bytes && logical_bytes > source.size_bytes)
+    return contract_error(error, "input " + std::to_string(input_index) + " is " +
+                                     std::to_string(source.size_bytes) +
+                                     " logical bytes; the checked request reads " +
+                                     std::to_string(logical_bytes) + " logical bytes");
+  const auto index = static_cast<int>(input_index);
+  if (std::any_of(runtime->logical_inputs.begin(), runtime->logical_inputs.end(),
+                  [index](const auto& value) { return value.backend_input_index == index; }))
+    return contract_error(error, "kernel input index is already bound");
+  const auto existing = std::find_if(
+      runtime->physical_inputs.begin(), runtime->physical_inputs.end(),
+      [&](const auto& value) { return value.physical_index == physical.physical_index; });
+  if (existing != runtime->physical_inputs.end() && !same_carrier(*existing, physical))
+    return contract_error(error, "kernel inputs disagree on shared carrier authority");
+  auto logical = build_logical_input_static_spec(
+      index, index, source.physical_index, source.shape, source.dtype, source.layout,
+      source.logical_name, source.backend_name, source.segment_name, source.byte_offset,
+      source.size_bytes, TensorMaterializationKind::Direct, source.quant);
+  logical.stride_bytes = source.stride_bytes;
+  auto binding = build_input_binding_static_spec(
+      0, index, source.backend_name, source.segment_name, ingress ? -1 : source.logical_index,
+      ingress ? -1 : source.output_slot, ingress ? -1 : source.physical_index,
+      ingress ? 0 : physical.size_bytes, 0, true);
+  if (existing == runtime->physical_inputs.end())
+    runtime->physical_inputs.push_back(physical);
+  runtime->logical_inputs.push_back(std::move(logical));
+  runtime->input_bindings.push_back(std::move(binding));
+  if (error)
+    error->clear();
+  return true;
 }
 
 void finalize_logical_input_spec(LogicalInputStaticSpec* logical, std::size_t index,

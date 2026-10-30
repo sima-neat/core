@@ -12,7 +12,7 @@ slug: /develop-apps/contribute/
 <div class="overview-section-label">기고자 오리엔테이션</div>
 
 **Neat Library**는 이 저장소에 있는 C++/Python 라이브러리 및 런타임입니다.
-이 라이브러리는 모델 아카이브를 로드하고, 파이프라인을 구성하고 검증하며, Modalix 하드웨어에서 실행되고, 공개 애플리케이션 API를 제공합니다. Neat SDK 및 DevKit Sync는 관련된 개발 워크플로우입니다.
+이 라이브러리는 모델 아카이브를 로드하고, 파이프라인을 구성하고 검증하며, Modalix 하드웨어에서 실행되고, 공개 애플리케이션 API를 제공합니다. Palette SDK 및 DevKit Sync는 관련된 개발 워크플로우입니다.
 
 이 저장소를 변경할 때, 개발자와 에이전트 모두에게 도움이 되는 프레임워크 속성을 고려하여 최적화하세요. 여기에는 명시적인 API, 결정론적 동작, 구조화된 진단, 엄격한 검증, 안정적인 공개 계약 등이 포함됩니다.
 
@@ -52,7 +52,6 @@ slug: /develop-apps/contribute/
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/develop-apps/contribute/mpk_contract/"><strong>MPK 계약</strong><span>모델 아카이브 수집, 검증 및 보안 규칙을 이해합니다.</span></a></li>
       <li><a class="overview-link-card" href="/develop-apps/contribute/sima_plugin_json_truth_map/"><strong>플러그인 JSON 진실성 맵</strong><span>고정된 SIMA 플러그인 JSON 계약 맵을 검토하십시오.</span></a></li>
-      <li><a class="overview-link-card" href="/develop-apps/contribute/appcomplex_workspace_packaging/"><strong>앱 복합 패키징</strong><span>게이트된 앱 복합 작업 공간 서비스 패키지를 구축하고 설치합니다.</span></a></li>
     </ul>
   </section>
 

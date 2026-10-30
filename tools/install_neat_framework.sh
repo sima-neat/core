@@ -21,6 +21,8 @@ set -euo pipefail
 #   neat-install-packages folder for paired DevKit sync.
 # - In eLxr SDK mode, exposes the sysroot-installed neat command at
 #   /usr/local/bin/neat for convenient use inside the SDK container.
+# - In Modalix board mode, installs python3-venv with apt when python3 lacks
+#   ensurepip (Platform 3.0.0 images ship without it).
 # - On devices with writable /media/nvme, creates the venv at /media/nvme/pyneat and
 #   exposes it via $HOME/pyneat for consistent activation instructions.
 # - On devices without /media/nvme, creates the venv directly at $HOME/pyneat.
@@ -32,8 +34,14 @@ set -euo pipefail
 #   - neat-install-manifest.txt when installed from a packaged release
 #
 # Environment overrides:
+# - FORCE_INSTALL: set to 1 to skip platform compatibility checks and request the
+#   EV74 kernel-build compatibility override, including on a paired DevKit.
+#   Set by sima-cli neat install -f; other values do not force. Requires an
+#   override-aware firmware package; does not establish runtime compatibility.
+#   Firmware integrity, ownership, DMA safety, and package safeguards still apply.
 # - PYNEAT_VENV_DIR: Python virtualenv path
 # - SUDO_PASSWORD / DEVKIT_PASSWORD: sudo password (preferred non-interactive override)
+#   Also passed to the Sentinel installer.
 # - DEFAULT_SUDO_PASSWORD: fallback password (default: edgeai)
 # - SYSROOT: SDK sysroot path override (default: /opt/toolchain/aarch64/modalix)
 # - ELXR_SDK_RELEASE_FILE: SDK release metadata path (default: /etc/sdk-release)
@@ -41,7 +49,7 @@ set -euo pipefail
 # - NEAT_BUILDINFO_FILE: DevKit build metadata path (default: /etc/buildinfo)
 # - NEAT_PACKAGE_MANIFEST: package manifest filename/path (default: manifest.json)
 # - NEAT_INSTALLER_SKIP_PLATFORM_CHECK: ON/OFF (default: OFF) explicit escape hatch
-#   for development installs on nonstandard images.
+#   for development installs on nonstandard images; does not override EV74 checks.
 # - DEVKIT_SYNC_DEVKIT_IP: paired DevKit IP for SDK->DevKit artifact sync
 # - DEVKIT_DEPLOY_USER: DevKit SSH user (default: sima)
 # - DEVKIT_SYNC_REQUIRED: ON/OFF (default: ON) fail hard if paired DevKit sync fails
@@ -61,7 +69,11 @@ set -euo pipefail
 #   board installer refreshes APT metadata before installing local DEBs. AUTO
 #   refreshes only when /var/lib/apt/lists has no package index files.
 # - NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD: ON/OFF (default: ON) activate
-#   staged EV74 firmware and reset runtime state after board package replacement.
+#   staged EV74 firmware from the selected package set after board replacement
+#   and keep it selected across reboots.
+# - NEAT_INSTALLER_SENTINEL_REQUIRED: ON/OFF (default: OFF) fail the board
+#   install when Sentinel, the telemetry daemon Model::benchmark() reads,
+#   cannot be installed. OFF warns and continues; CI sets ON.
 
 SUDO_PASSWORD="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
 DEFAULT_SUDO_PASSWORD="${DEFAULT_SUDO_PASSWORD:-edgeai}"
@@ -75,18 +87,25 @@ NEAT_INSTALLER_ALLOW_DPKG_FALLBACK="${NEAT_INSTALLER_ALLOW_DPKG_FALLBACK:-OFF}"
 NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL="${NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL:-OFF}"
 NEAT_INSTALLER_APT_UPDATE="${NEAT_INSTALLER_APT_UPDATE:-AUTO}"
 NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD="${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD:-ON}"
+NEAT_INSTALLER_SENTINEL_REQUIRED="${NEAT_INSTALLER_SENTINEL_REQUIRED:-OFF}"
 ELXR_SDK_RELEASE_FILE="${ELXR_SDK_RELEASE_FILE:-/etc/sdk-release}"
 NEAT_OS_RELEASE_FILE="${NEAT_OS_RELEASE_FILE:-/etc/os-release}"
 NEAT_BUILDINFO_FILE="${NEAT_BUILDINFO_FILE:-/etc/buildinfo}"
 NEAT_PACKAGE_MANIFEST="${NEAT_PACKAGE_MANIFEST:-manifest.json}"
 NEAT_INSTALLER_SKIP_PLATFORM_CHECK="${NEAT_INSTALLER_SKIP_PLATFORM_CHECK:-OFF}"
 INSTALLER_SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")"
+# Installs the Sentinel telemetry daemon on boards; ships next to this installer.
+SENTINEL_INSTALLER_PATH="$(dirname "${INSTALLER_SCRIPT_PATH}")/install_sentinel.sh"
+SCHEDULER_PLATFORM_ADMISSION_PATH="$(dirname "${INSTALLER_SCRIPT_PATH}")/scheduler_platform_admission.py"
+BOARD_PLATFORM_ADMISSION_DIR=""
 GREEN=$'\033[0;32m'
 RESET=$'\033[0m'
+INSTALLER_START_DIR="${PWD}"
 INSTALLER_TMP_DIRS=()
 
 cleanup_installer_tmp_dirs() {
   local dir
+  cd -- "${INSTALLER_START_DIR}" 2>/dev/null || true
   for dir in "${INSTALLER_TMP_DIRS[@]}"; do
     [[ -n "${dir}" && ( -e "${dir}" || -L "${dir}" ) ]] && rm -rf -- "${dir}"
   done
@@ -101,6 +120,18 @@ Options:
   --local      Install only into the current environment from artifacts in cwd.
                Disables paired SDK->DevKit sync behavior.
   -h, --help   Show this help.
+
+Environment:
+  FORCE_INSTALL=1  Skip platform compatibility checks and request the EV74
+                   kernel-build compatibility override (also on a paired DevKit).
+                   Set automatically by sima-cli neat install core -f.
+                   Requires an override-aware firmware package. A mismatched
+                   runtime may be unsafe; force does not establish compatibility.
+                   Firmware integrity, ownership, DMA safety, and package
+                   dependency/removal checks still apply.
+
+Example:
+  FORCE_INSTALL=1 bash install_neat_framework.sh --local
 EOF
 }
 
@@ -161,6 +192,21 @@ relation_field_provides_exact_version() {
   return 1
 }
 
+relation_field_matches_version() {
+  local field="$1" expected_package="$2" installed_version="$3"
+  local relation
+  local pattern="^${expected_package} \((<<|<=|=|>=|>>) ([^[:space:]()]+)\)$"
+  while IFS= read -r relation; do
+    relation="$(printf '%s' "${relation}" |
+      sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]+/ /g')"
+    if [[ "${relation}" =~ ${pattern} ]] &&
+       dpkg --compare-versions "${installed_version}" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"; then
+      return 0
+    fi
+  done < <(printf '%s\n' "${field}" | tr ',' '\n')
+  return 1
+}
+
 find_verified_bundled_replacement() {
   local removed_package="$1"
   local installed_version="$2"
@@ -183,6 +229,102 @@ find_verified_bundled_replacement() {
   return 1
 }
 
+# Scheduler declares retirement of the monolithic runtime/plugin files. Runner
+# supplies execution in the same cohort, not ownership of Scheduler's old files.
+# Prove bounded retirement without claiming compatibility with the legacy API.
+find_verified_runner_retirement() {
+  local removed_package="$1" installed_version="$2"
+  shift 2
+  case "${removed_package}" in neat-runtime|neat-gst-plugins) ;; *) return 1 ;; esac
+  python3 - "$(resolve_package_manifest_path)" <<'PYRETIRE' || return 1
+import json, re, sys
+try:
+    with open(sys.argv[1]) as stream:
+        version = json.load(stream).get("platform-version", "")
+    raise SystemExit(0 if re.fullmatch(r"3[.]0[.][0-9]+", str(version)) else 1)
+except (OSError, ValueError):
+    raise SystemExit(1)
+PYRETIRE
+  dpkg --compare-versions "${installed_version}" lt '0.6.1~' || return 1
+  local deb field relations expected role runner="" scheduler="" admitted
+  local legacy_expected=""
+  expected="${removed_package} (<< 0.6.1~)"
+  # Preserve previously admitted local cohorts with the older, narrower bound.
+  if dpkg --compare-versions "${installed_version}" lt '0.6~'; then
+    legacy_expected="${removed_package} (<< 0.6~)"
+  fi
+  for deb in "$@"; do
+    [[ -f "${deb}" ]] || continue
+    role="$(dpkg-deb -f "${deb}" Package 2>/dev/null)"
+    case "${role}" in
+      simaai-runner)
+        [[ -z "${runner}" ]] || return 1
+        runner="${deb}"
+        continue
+        ;;
+      simaai-scheduler) ;;
+      *) continue ;;
+    esac
+    admitted=1
+    for field in Breaks Replaces; do
+      relations="$(dpkg-deb -f "${deb}" "${field}" 2>/dev/null | tr ',' '\n' |
+        sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]+/ /g')"
+      if ! grep -Fxq -- "${expected}" <<< "${relations}" &&
+         ! { [[ -n "${legacy_expected}" ]] && grep -Fxq -- "${legacy_expected}" <<< "${relations}"; }; then
+        admitted=0
+        break
+      fi
+    done
+    if [[ "${admitted}" == 1 ]]; then
+      [[ -z "${scheduler}" ]] || return 1
+      scheduler="${deb}"
+    fi
+  done
+  # The complete runtime still requires both real providers. Authenticated
+  # cohort and transaction admission separately bind exact dependencies and
+  # every transferred file; Runner need not retire an upper package to install.
+  if [[ "${removed_package}" == neat-runtime && -n "${runner}" && -n "${scheduler}" ]]; then
+    printf '%s + %s\n' "$(basename "${runner}")" "$(basename "${scheduler}")"
+    return 0
+  fi
+  if [[ "${removed_package}" == neat-gst-plugins && -n "${scheduler}" ]]; then
+    basename "${scheduler}"
+    return 0
+  fi
+  return 1
+}
+
+# Firmware replacement is retirement, not compatibility with the legacy image.
+# Admit only the selected authenticated native owner and its bounded relations;
+# Scheduler separately checks the full transaction and transferred file owners.
+find_verified_firmware_retirement() {
+  local removed_package="$1" installed_version="$2"
+  shift 2
+  [[ "${removed_package}" == neat-ev74-firmware ]] || return 1
+  local required_control deb replaces breaks conflicts identity archive_sha
+  required_control="$(required_board_firmware_control)" || return 1
+  [[ -n "${required_control}" ]] || return 1
+  for deb in "$@"; do
+    [[ -f "${deb}" ]] || continue
+    archive_sha="$(sha256sum "${deb}")" || return 1
+    printf -v identity '%s\t%s\t%s\t%s' \
+      "$(dpkg-deb -f "${deb}" Package)" "$(dpkg-deb -f "${deb}" Version)" \
+      "$(dpkg-deb -f "${deb}" Architecture)" "${archive_sha%% *}"
+    [[ "${identity}" == "${required_control}" ]] || continue
+    replaces="$(dpkg-deb -f "${deb}" Replaces)" || return 1
+    breaks="$(dpkg-deb -f "${deb}" Breaks)" || return 1
+    conflicts="$(dpkg-deb -f "${deb}" Conflicts)" || return 1
+    relation_field_matches_version "${replaces}" "${removed_package}" "${installed_version}" || return 1
+    if ! relation_field_matches_version "${breaks}" "${removed_package}" "${installed_version}" &&
+       ! relation_field_matches_version "${conflicts}" "${removed_package}" "${installed_version}"; then
+      return 1
+    fi
+    basename "${deb}"
+    return 0
+  done
+  return 1
+}
+
 verify_simulated_package_removals() {
   local simulation_log="$1"
   shift
@@ -195,7 +337,7 @@ verify_simulated_package_removals() {
   for package in "${removed_packages[@]}"; do
     package_name="${package%%:*}"
     case "${package_name}" in
-      sima-neat | sima-neat-dev)
+      sima-neat | sima-neat-dev | neat-internals-dev | sima-lmm-dev)
         continue
         ;;
       neat-libcamera | neat-libcamera-dev | neat-libcamera-tools)
@@ -214,6 +356,14 @@ verify_simulated_package_removals() {
         find_verified_bundled_replacement \
           "${package_name}" "${installed_version}" "${install_specs[@]}" || true
       )"
+    fi
+    if [[ -z "${replacement_deb}" && -n "${installed_version}" ]]; then
+      replacement_deb="$(find_verified_runner_retirement \
+        "${package_name}" "${installed_version}" "${install_specs[@]}" || true)"
+    fi
+    if [[ -z "${replacement_deb}" && -n "${installed_version}" ]]; then
+      replacement_deb="$(find_verified_firmware_retirement \
+        "${package_name}" "${installed_version}" "${install_specs[@]}" || true)"
     fi
     if [[ -n "${replacement_deb}" ]]; then
       verified_replacements+=(
@@ -382,25 +532,29 @@ run_sudo() {
   exit 1
 }
 
-configure_board_i2c_access() {
-  if ! getent group i2c >/dev/null 2>&1; then
-    if ! (run_sudo groupadd --system i2c); then
-      log "WARNING: Failed to create the i2c group; benchmark power telemetry may be unavailable."
-      return 0
-    fi
+require_sentinel_installer() {
+  if [[ ! -f "${SENTINEL_INSTALLER_PATH}" ]]; then
+    echo "Missing ${SENTINEL_INSTALLER_PATH}; it ships with this installer and installs the Sentinel telemetry daemon." >&2
+    return 1
   fi
+}
 
-  if id -nG sima 2>/dev/null | grep -qw i2c; then
-    log "sima is already in the i2c group; skipping."
+# Model::benchmark() reads board telemetry from the Sentinel daemon but runs
+# without it, so a failed Sentinel install only warns unless
+# NEAT_INSTALLER_SENTINEL_REQUIRED=ON. Run the script through bash because
+# downloads may drop its executable bit. Sentinel's installer reads the sudo
+# password from SUDO_PASSWORD, which may hold the DEVKIT_PASSWORD value.
+install_board_sentinel() {
+  if require_sentinel_installer &&
+    SUDO_PASSWORD="${SUDO_PASSWORD}" bash "${SENTINEL_INSTALLER_PATH}"; then
     return 0
   fi
 
-  if ! (run_sudo usermod -aG i2c sima); then
-    log "WARNING: Failed to add sima to the i2c group; benchmark power telemetry may be unavailable."
-    return 0
+  if [[ "${NEAT_INSTALLER_SENTINEL_REQUIRED}" == "ON" ]]; then
+    echo "Sentinel installation failed and NEAT_INSTALLER_SENTINEL_REQUIRED=ON." >&2
+    exit 1
   fi
-
-  log "Added sima to the i2c group; log out and back in before running benchmark power measurements."
+  log "WARNING: Sentinel is not installed. Model::benchmark() reports power and board telemetry as unavailable until you run 'sima-cli neat install sentinel'."
 }
 
 read_metadata_field() {
@@ -604,6 +758,10 @@ read_devkit_platform_version() {
 }
 
 ensure_platform_compatible() {
+  if [[ "${FORCE_INSTALL:-}" == "1" ]]; then
+    log "FORCE_INSTALL=1; skipping platform compatibility check. Package may not work on this platform."
+    return 0
+  fi
   if [[ "${NEAT_INSTALLER_SKIP_PLATFORM_CHECK}" == "ON" ]]; then
     log "NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON; skipping platform compatibility check."
     return 0
@@ -766,6 +924,80 @@ collect_wheel_files() {
   fi
 }
 
+# /tmp is RAM-backed on Modalix boards, so a copy left by a killed install is
+# gone after reboot. The disk-backed locations hold bundles /tmp has no room for.
+bundle_stage_parent_candidates() {
+  printf '%s\n' /tmp /data /media/nvme
+}
+
+create_bundle_stage_dir() {
+  local required_kb="$1"
+  local parent available_kb stage_dir
+  while IFS= read -r parent; do
+    [[ -n "${parent}" && -d "${parent}" && -w "${parent}" ]] || continue
+    available_kb="$(df -Pk "${parent}" 2>/dev/null | awk 'NR == 2 {print $4}')"
+    [[ "${available_kb}" =~ ^[0-9]+$ && "${available_kb}" -ge "${required_kb}" ]] || continue
+    stage_dir="$(mktemp -d "${parent}/sima-neat-install.XXXXXX" 2>/dev/null)" || continue
+    printf '%s\n' "${stage_dir}"
+    return 0
+  done < <(bundle_stage_parent_candidates)
+  return 1
+}
+
+# Path overrides given relative to the caller's directory must keep pointing
+# there after the installer moves into the fresh bundle directory.
+resolve_caller_relative_overrides() {
+  local name value
+  for name in PYNEAT_VENV_DIR SYSROOT ELXR_SDK_RELEASE_FILE NEAT_OS_RELEASE_FILE \
+      NEAT_BUILDINFO_FILE CODEX_HOME CLAUDE_HOME; do
+    value="${!name:-}"
+    [[ -n "${value}" && "${value}" != /* ]] || continue
+    printf -v "${name}" '%s' "${INSTALLER_START_DIR}/${value}"
+  done
+}
+
+# sima-cli downloads every Core bundle into the same directory, so files from
+# earlier installs can sit next to this one. Scheduler admission rejects any
+# .deb the install manifest does not list, so install from a fresh directory
+# that holds only this bundle.
+stage_bundle_in_fresh_dir() {
+  [[ -f "./${NEAT_INSTALL_MANIFEST}" ]] || return 0
+  local -a bundle_files=()
+  append_matching_files bundle_files "." '*'
+  bundle_files+=("./${NEAT_INSTALL_MANIFEST}")
+  if [[ -f ./resolved-deps-manifest.json ]]; then
+    bundle_files+=(./resolved-deps-manifest.json)
+  fi
+  # An absolute package manifest path still resolves after the directory change.
+  local package_manifest=""
+  if [[ "${NEAT_PACKAGE_MANIFEST}" != /* ]]; then
+    package_manifest="$(resolve_package_manifest_path)"
+    [[ -f "${package_manifest}" ]] || package_manifest=""
+  fi
+
+  local required_kb stage_dir
+  required_kb="$(du -ckL -- "${bundle_files[@]}" ${package_manifest:+"${package_manifest}"} |
+    awk 'END {print $1}')"
+  if ! stage_dir="$(create_bundle_stage_dir "${required_kb}")"; then
+    echo "No writable location has ${required_kb} KB free for a fresh copy of the install bundle." >&2
+    echo "Checked: $(bundle_stage_parent_candidates | paste -sd ' ' -)" >&2
+    exit 1
+  fi
+  INSTALLER_TMP_DIRS+=("${stage_dir}")
+  # mktemp creates an owner-only directory; APT's sandbox user reads local .deb files.
+  chmod 0755 "${stage_dir}"
+  cp -p -- "${bundle_files[@]}" "${stage_dir}/"
+  if [[ -n "${package_manifest}" ]]; then
+    # The fresh directory has none of the caller's subdirectories, so keep the
+    # package manifest at its file name.
+    NEAT_PACKAGE_MANIFEST="$(basename "${NEAT_PACKAGE_MANIFEST}")"
+    cp -p -- "${package_manifest}" "${stage_dir}/${NEAT_PACKAGE_MANIFEST}"
+  fi
+  resolve_caller_relative_overrides
+  log "Installing from a fresh copy of the bundle: ${stage_dir}"
+  cd -- "${stage_dir}"
+}
+
 collect_debs_in_install_order() {
   local search_dir="$1"
   local out_array_name="$2"
@@ -782,104 +1014,53 @@ sysroot_neat_install_packages_dir() {
   printf '%s\n' "$(sysroot_path)/neat-install-packages"
 }
 
-has_sima_lmm_sysroot_deps() {
-  local sysroot="$1"
-  [[ -f "${sysroot}/usr/include/eigen3/unsupported/Eigen/CXX11/Tensor" &&
-     -f "${sysroot}/usr/share/eigen3/cmake/Eigen3Config.cmake" &&
-     -f "${sysroot}/usr/include/fmt/core.h" &&
-     -f "${sysroot}/usr/lib/aarch64-linux-gnu/libfmt.so.9.1.0" &&
-     -f "${sysroot}/usr/include/spdlog/spdlog.h" &&
-     -f "${sysroot}/usr/lib/aarch64-linux-gnu/libspdlog.so.1.10.0" &&
-     -f "${sysroot}/usr/include/nlohmann/json.hpp" &&
-     -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlicommon.pc" &&
-     -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlidec.pc" &&
-     -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlienc.pc" &&
-     -f "${sysroot}/usr/include/httplib.h" &&
-     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.11" ]]
-}
-
 ensure_sima_lmm_sysroot_deps() {
   local sysroot="$1"
-
-  if ! compgen -G './sima-lmm-*.deb' >/dev/null 2>&1; then
-    return 0
+  # libsima_neat.so links cpp-httplib, which links brotli.
+  local -a dependencies=(
+    "usr/include/nlohmann/json.hpp:nlohmann-json3-dev"
+    "usr/lib/aarch64-linux-gnu/libbrotlicommon.so.1:libbrotli1:arm64"
+    "usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.18:libcpp-httplib0.18:arm64"
+  )
+  if compgen -G './sima-lmm-*.deb' >/dev/null 2>&1; then
+    dependencies+=(
+      "usr/lib/aarch64-linux-gnu/libfmt.so.10:libfmt10:arm64"
+      "usr/lib/aarch64-linux-gnu/libspdlog.so.1.15:libspdlog1.15:arm64"
+      "usr/lib/aarch64-linux-gnu/libfftw3.so.3:libfftw3-double3:arm64"
+      "usr/lib/aarch64-linux-gnu/libavcodec.so.61:libavcodec61:arm64"
+      "usr/lib/aarch64-linux-gnu/libavformat.so.61:libavformat61:arm64"
+      "usr/lib/aarch64-linux-gnu/libavutil.so.59:libavutil59:arm64"
+      "usr/lib/aarch64-linux-gnu/libswresample.so.5:libswresample5:arm64"
+    )
   fi
-  if ! command -v apt-get >/dev/null 2>&1; then
-    echo "apt-get is required to install SimaLMM SDK/sysroot dependencies." >&2
-    exit 1
-  fi
-
+  local dependency
   local -a missing_packages=()
-  if [[ ! -f "${sysroot}/usr/include/eigen3/unsupported/Eigen/CXX11/Tensor" ||
-        ! -f "${sysroot}/usr/share/eigen3/cmake/Eigen3Config.cmake" ]]; then
-    missing_packages+=("libeigen3-dev")
-  fi
-  if [[ ! -f "${sysroot}/usr/include/fmt/core.h" ]]; then
-    missing_packages+=("libfmt-dev:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/libfmt.so.9.1.0" ]]; then
-    missing_packages+=("libfmt9:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/include/spdlog/spdlog.h" ]]; then
-    missing_packages+=("libspdlog-dev:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/libspdlog.so.1.10.0" ]]; then
-    missing_packages+=("libspdlog1.10:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/include/nlohmann/json.hpp" ]]; then
-    missing_packages+=("nlohmann-json3-dev")
-  fi
-  if [[ ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlicommon.pc" ||
-        ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlidec.pc" ||
-        ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlienc.pc" ]]; then
-    missing_packages+=("libbrotli-dev:arm64")
-  fi
-  if [[ ! -f "${sysroot}/usr/include/httplib.h" ]]; then
-    missing_packages+=("libcpp-httplib-dev:arm64")
-  fi
-  if [[ ! -e "${sysroot}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.11" ]]; then
-    missing_packages+=("libcpp-httplib0.11:arm64")
-  fi
-
-  if [[ "${#missing_packages[@]}" -eq 0 ]]; then
-    return 0
-  fi
+  for dependency in "${dependencies[@]}"; do
+    [[ -e "${sysroot}/${dependency%%:*}" ]] || missing_packages+=("${dependency#*:}")
+  done
+  [[ "${#missing_packages[@]}" -gt 0 ]] || return 0
 
   local tmp_dir
-  tmp_dir="$(mktemp -d /tmp/sima-lmm-sysroot-deps-XXXXXX)"
-
-  log "Installing SimaLMM SDK/sysroot dependencies:"
-  printf '  %s\n' "${missing_packages[@]}"
-  if ! (
-    cd "${tmp_dir}"
-    apt-get download "${missing_packages[@]}"
-  ); then
+  tmp_dir="$(mktemp -d /tmp/neat-sysroot-deps-XXXXXX)"
+  log "Installing customer SDK dependencies: ${missing_packages[*]}"
+  if ! (cd "${tmp_dir}" && apt-get download "${missing_packages[@]}"); then
     rm -rf "${tmp_dir}"
-    echo "Failed to download SimaLMM SDK/sysroot dependencies." >&2
+    echo "Failed to download customer SDK dependencies." >&2
     exit 1
   fi
-
-  local -a downloaded_debs=()
-  mapfile -t downloaded_debs < <(find "${tmp_dir}" -maxdepth 1 -type f -name '*.deb' | sort)
-  if [[ "${#downloaded_debs[@]}" -lt 1 ]]; then
-    rm -rf "${tmp_dir}"
-    echo "Failed to download SimaLMM SDK/sysroot dependencies." >&2
-    exit 1
-  fi
-
   local dep_deb
-  for dep_deb in "${downloaded_debs[@]}"; do
-    log "Extracting $(basename "${dep_deb}") into ${sysroot}"
+  for dep_deb in "${tmp_dir}"/*.deb; do
     if ! dpkg-deb -x "${dep_deb}" "${sysroot}" 2>/dev/null; then
       run_sudo dpkg-deb -x "${dep_deb}" "${sysroot}"
     fi
   done
   rm -rf "${tmp_dir}"
-
-  if ! has_sima_lmm_sysroot_deps "${sysroot}"; then
-    echo "SimaLMM SDK/sysroot dependencies are still incomplete after install." >&2
-    exit 1
-  fi
+  for dependency in "${dependencies[@]}"; do
+    if [[ ! -e "${sysroot}/${dependency%%:*}" ]]; then
+      echo "Missing customer SDK dependency after install: ${dependency#*:}" >&2
+      exit 1
+    fi
+  done
 }
 
 ensure_sdk_neat_cli_symlink() {
@@ -912,7 +1093,10 @@ cache_install_artifacts_in_sysroot() {
     "${cache_dir}"/*.whl \
     "${cache_dir}/${NEAT_INSTALL_MANIFEST}" \
     "${cache_dir}/${NEAT_PACKAGE_MANIFEST}" \
-    "${cache_dir}"/install_neat_framework.sh
+    "${cache_dir}"/install_neat_framework.sh \
+    "${cache_dir}"/install_sentinel.sh \
+    "${cache_dir}"/scheduler_platform_admission.py \
+    "${cache_dir}"/resolved-deps-manifest.json
 
   local file
   for file in "${DEBS[@]}"; do
@@ -935,6 +1119,13 @@ cache_install_artifacts_in_sysroot() {
   fi
   run_sudo cp -f "${INSTALLER_SCRIPT_PATH}" "${cache_dir}/install_neat_framework.sh"
   run_sudo chmod 0755 "${cache_dir}/install_neat_framework.sh"
+  require_sentinel_installer || exit 1
+  run_sudo cp -f "${SENTINEL_INSTALLER_PATH}" "${cache_dir}/install_sentinel.sh"
+  run_sudo chmod 0755 "${cache_dir}/install_sentinel.sh"
+  run_sudo cp -f "${SCHEDULER_PLATFORM_ADMISSION_PATH}" "${cache_dir}/"
+  if [[ -f ./resolved-deps-manifest.json ]]; then
+    run_sudo cp -f ./resolved-deps-manifest.json "${cache_dir}/"
+  fi
 }
 
 collect_cached_devkit_deploy_files() {
@@ -957,6 +1148,7 @@ collect_cached_devkit_deploy_files() {
   collect_debs_in_install_order "${cache_dir}" CACHED_DEBS
   collect_wheel_files "${cache_dir}" CACHED_WHEELS
   local cached_installer="${cache_dir}/install_neat_framework.sh"
+  local cached_sentinel_installer="${cache_dir}/install_sentinel.sh"
   local cached_manifest="${cache_dir}/${NEAT_INSTALL_MANIFEST}"
   local cached_package_manifest="${cache_dir}/${NEAT_PACKAGE_MANIFEST}"
 
@@ -976,19 +1168,31 @@ collect_cached_devkit_deploy_files() {
     echo "No cached PyNeat wheel found for paired DevKit sync in: ${cache_dir}" >&2
     exit 1
   fi
-  if [[ ! -f "${cached_installer}" ]]; then
-    echo "Cached installer script not found for paired DevKit sync: ${cached_installer}" >&2
-    exit 1
-  fi
+  local script
+  for script in "${cached_installer}" "${cached_sentinel_installer}"; do
+    if [[ ! -f "${script}" ]]; then
+      echo "Cached installer script not found for paired DevKit sync: ${script}" >&2
+      exit 1
+    fi
+  done
 
   CACHED_DEPLOY_FILES=("${CACHED_DEBS[@]}" "${CACHED_WHEELS[@]}")
+  local admission_resource
+  for admission_resource in scheduler_platform_admission.py resolved-deps-manifest.json; do
+    if [[ -f "${cache_dir}/${admission_resource}" ]]; then
+      CACHED_DEPLOY_FILES+=("${cache_dir}/${admission_resource}")
+    elif [[ "${admission_resource}" == scheduler_platform_admission.py ]]; then
+      echo "Cached Platform admission delegate is missing." >&2
+      exit 1
+    fi
+  done
   if [[ -f "${cached_manifest}" ]]; then
     CACHED_DEPLOY_FILES+=("${cached_manifest}")
   fi
   if [[ -f "${cached_package_manifest}" ]]; then
     CACHED_DEPLOY_FILES+=("${cached_package_manifest}")
   fi
-  CACHED_DEPLOY_FILES+=("${cached_installer}")
+  CACHED_DEPLOY_FILES+=("${cached_installer}" "${cached_sentinel_installer}")
 }
 
 apt_package_database_is_healthy() {
@@ -1000,8 +1204,48 @@ apt_package_database_is_healthy() {
     return 0
   fi
 
+  # Keep the authoritative diagnostic in the install/CI log, not just a generic
+  # unhealthy-state message. The temporary capture itself is still removed.
+  cat "${apt_check_log}" >&2
   rm -f "${apt_check_log}"
+
+  # Observation only: admission still decides whether recovery is allowed.
+  # Preserve full pending/abnormal states and trigger fields without dumping
+  # the healthy package inventory or masking the original APT failure.
+  local dpkg_states
+  if dpkg_states="$(dpkg-query -W -f='${binary:Package}\t${Status}\t${db:Status-Abbrev}\t${Version}\t${Architecture}\t${Triggers-Pending}\t${Triggers-Awaited}\n')"; then
+    if ! printf '%s\n' "${dpkg_states}" | awk -F '\t' '
+      BEGIN { print "Package\tStatus\tStatus-Abbrev\tVersion\tArchitecture\tTriggers-Pending\tTriggers-Awaited" }
+      $2 != "" && $2 != "install ok installed" && $2 != "hold ok installed" &&
+          $2 !~ / (not-installed|config-files)$/ {
+        count++
+        if (count <= 100) print $0
+      }
+      END { printf "Incomplete dpkg records: %d; omitted: %d\n", count, (count > 100 ? count - 100 : 0) }
+    ' >&2; then
+      echo "Unable to format incomplete dpkg state; retaining the original APT failure." >&2
+    fi
+  else
+    echo "Unable to read incomplete dpkg state; retaining the original APT failure." >&2
+  fi
   return 1
+}
+
+# apt-get check validates dependencies, not completion of unpack/configure.
+# Scheduler owns pending-cohort eligibility. Only the intermediate recovery
+# check permits normal queued triggers; final installation must drain them.
+dpkg_package_database_is_configured() {
+  local states state
+  states="$(dpkg-query -W -f='${Status}\n')" || return 2
+  while IFS= read -r state; do
+    case "${state}" in
+      "install ok installed"|"hold ok installed"|*" not-installed"|*" config-files"|"") ;;
+      "install ok triggers-pending"|"install ok triggers-awaited")
+        [[ "${1:-}" == before-reinstall ]] || return 1
+        ;;
+      *) return 1 ;;
+    esac
+  done <<< "${states}"
 }
 
 apt_package_lists_are_populated() {
@@ -1050,26 +1294,18 @@ deb_package_is_installed() {
   dpkg-query -W -f='${db:Status-Abbrev}' "$1" 2>/dev/null | grep -q '^ii '
 }
 
-simaai_ota_command_path() {
-  command -v simaai-ota 2>/dev/null || true
-}
-
-verify_canonical_palette_and_ota_installation() {
-  local ota_path ota_owner
+verify_canonical_palette_installation() {
   if ! deb_package_is_installed simaai-palette-modalix; then
     echo "simaai-palette-modalix is not installed after the native Modalix transaction." >&2
     return 1
   fi
-  ota_path="$(simaai_ota_command_path)"
-  if [[ "${ota_path}" != "/usr/bin/simaai-ota" ]]; then
-    echo "Canonical simaai-ota is missing after the native Modalix transaction: ${ota_path:-<missing>}." >&2
-    return 1
-  fi
-  ota_owner="$(dpkg-query -S /usr/bin/simaai-ota 2>/dev/null || true)"
-  if [[ ! "${ota_owner}" =~ ^simaai-palette-modalix(:[^:[:space:]]+)?:[[:space:]] ]]; then
-    echo "/usr/bin/simaai-ota is not owned by simaai-palette-modalix: ${ota_owner:-<unowned>}." >&2
-    return 1
-  fi
+}
+
+# Preserve the native platform package identity across direct-runtime installs.
+# Palette 3 no longer promises an OTA executable; do not discover or invoke one.
+capture_direct_platform_identity() {
+  dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\t${Status}\n' \
+    simaai-palette-modalix
 }
 
 remove_installed_local_deb_packages() {
@@ -1098,6 +1334,28 @@ remove_installed_local_deb_packages() {
     return 0
   fi
 
+  if board_platform_admission_is_active || board_has_scheduler_cohort; then
+    local removal_simulation
+    removal_simulation="$(mktemp /tmp/sima-neat-removal-simulate-XXXXXX)"
+    INSTALLER_TMP_DIRS+=("${removal_simulation}")
+    run_sudo apt-get remove -y --simulate "${packages[@]}" >"${removal_simulation}" 2>&1 || return 1
+    verify_board_platform_plan "${removal_simulation}" || return 1
+    # Maintenance may remove the selected products, never unrelated dependents.
+    local removed selected
+    while read -r removed; do
+      [[ -n "${removed}" ]] || continue
+      removed="${removed%%:*}"
+      selected=0
+      for package in "${packages[@]}"; do
+        [[ "${package}" != "${removed}" ]] || selected=1
+      done
+      if [[ "${selected}" != 1 ]]; then
+        echo "Maintenance removal would remove unrelated package: ${removed}" >&2
+        return 1
+      fi
+    done < <(awk '$1 == "Remv" {print $2}' "${removal_simulation}")
+  fi
+
   log "Removing installed NEAT packages before retrying apt downgrade/repair:"
   printf '  %s\n' "${packages[@]}"
   if run_sudo apt-get remove -y "${packages[@]}"; then
@@ -1108,7 +1366,40 @@ remove_installed_local_deb_packages() {
   run_sudo dpkg --remove --force-depends "${packages[@]}"
 }
 
+board_runtime_is_legacy() {
+  python3 - "$(resolve_package_manifest_path)" "${NEAT_BUILDINFO_FILE}" <<'PYPROFILE'
+import json
+import re
+import sys
+from pathlib import Path
+
+try:
+    manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if not re.fullmatch(r"2[.]1[.][0-9]+", str(manifest.get("platform-version", ""))):
+        raise SystemExit(1)
+    fields = {}
+    for line in Path(sys.argv[2]).read_text(encoding="utf-8").splitlines():
+        if len(line) > 4096:
+            raise SystemExit(1)
+        key, separator, value = line.partition("=")
+        key = key.strip()
+        if separator and key in ("MACHINE", "DISTRO_VERSION"):
+            if key in fields:
+                raise SystemExit(1)
+            fields[key] = value.strip()
+    raise SystemExit(0 if fields.get("MACHINE") == "modalix" and re.fullmatch(
+        r"2[.]1[.][0-9]+([.~+_-][A-Za-z0-9_.+~-]+)?", fields.get("DISTRO_VERSION", "")
+    ) else 1)
+except (OSError, ValueError, AttributeError, TypeError):
+    raise SystemExit(1)
+PYPROFILE
+}
+
 stop_board_runtime_before_install() {
+  if ! board_runtime_is_legacy; then
+    log "Direct or unidentified profile: skipping legacy runtime lifecycle action."
+    return 0
+  fi
   if ! command -v systemctl >/dev/null 2>&1; then
     return 0
   fi
@@ -1117,7 +1408,6 @@ stop_board_runtime_before_install() {
   local svc
   for svc in \
       simaai-pipeline-manager.service \
-      simaai-appcomplex.service \
       rctd.service \
       encoder.service \
       decoder.service \
@@ -1127,80 +1417,109 @@ stop_board_runtime_before_install() {
       run_sudo systemctl reset-failed "${svc}" >/dev/null 2>&1 || true
     fi
   done
-
-  if [[ -x /usr/libexec/simaai-appcomplex/clean-stale-mlashmcomplex ]]; then
-    run_sudo /usr/libexec/simaai-appcomplex/clean-stale-mlashmcomplex || true
-  else
-    run_sudo pkill -TERM -x mlashmcomplex >/dev/null 2>&1 || true
-    sleep 0.5
-    run_sudo pkill -KILL -x mlashmcomplex >/dev/null 2>&1 || true
-  fi
-
-  run_sudo rm -f /tmp/mlactrl /dev/shm/mlashmdata
 }
 
 activate_board_runtime_after_install() {
-  if ! command -v systemctl >/dev/null 2>&1; then
+  if [[ "${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD}" != ON ]]; then
+    log "EV74 firmware activation skipped."
     return 0
   fi
 
-  # These files are recreated by simaai-appcomplex.service.  Remove stale IPC
-  # before the post-install MLA init/reset path so clients cannot observe an
-  # old dispatcher lifetime after package replacement.
-  run_sudo rm -f /tmp/mlactrl /dev/shm/mlashmdata
-  # Package configuration intentionally does not restart services.  Reload
-  # systemd here so the owned maintenance window starts services from the unit
-  # files that were just unpacked.
-  run_sudo systemctl daemon-reload || true
+  # Activate only a helper delivered by this transaction, never ambient firmware
+  # left behind by a previously installed runtime or a different cohort.
+  local helper=/usr/libexec/sima-neat-firmware/install.sh
+  local deb listing selected="" package version architecture installed expected owner staged
+  local required_control=""
+  required_control="$(required_board_firmware_control)" || return 1
+  if board_has_scheduler_cohort && [[ -z "${required_control}" ]]; then
+    log "EV74 firmware activation skipped: not required by the selected Scheduler cohort."
+    return 0
+  fi
+  local required_package="${required_control%%$'\t'*}"
+  for deb in "${DEBS[@]}"; do
+    if [[ -n "${required_control}" ]]; then
+      package="$(dpkg-deb -f "${deb}" Package)" || return 1
+      [[ "${package}" == "${required_package}" ]] || continue
+    else
+      if ! listing="$(dpkg-deb --fsys-tarfile "${deb}" | tar -tf -)"; then
+        echo "Cannot inspect selected DEB firmware payload: ${deb}" >&2
+        return 1
+      fi
+      grep -Fxq -e ".${helper}" -e "${helper#/}" \
+        -e ".${helper}/" -e "${helper#/}/" <<< "${listing}" || continue
+    fi
+    if [[ -n "${selected}" ]]; then
+      echo "Multiple selected DEBs own the EV74 activation helper." >&2
+      return 1
+    fi
+    selected="${deb}"
+  done
+  if [[ -z "${selected}" ]]; then
+    if [[ -n "${required_control}" ]]; then
+      echo "Required native EV74 firmware package does not deliver the activation helper." >&2
+      return 1
+    fi
+    log "EV74 firmware activation skipped: no selected package delivers the helper."
+    return 0
+  fi
 
-  if [[ "${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD}" == "ON" &&
-        -x /usr/libexec/sima-neat-firmware/install.sh ]]; then
-    log "Activating staged EV74 firmware and resetting runtime state."
-    run_sudo /usr/libexec/sima-neat-firmware/install.sh --activate
-  else
-    log "EV74 firmware activation skipped; starting simaai-appcomplex.service directly."
-    if systemctl cat simaai-appcomplex.service >/dev/null 2>&1; then
-      run_sudo systemctl restart simaai-appcomplex.service || true
+  package="$(dpkg-deb -f "${selected}" Package)" || return 1
+  version="$(dpkg-deb -f "${selected}" Version)" || return 1
+  architecture="$(dpkg-deb -f "${selected}" Architecture)" || return 1
+  [[ -n "${package}" && -n "${version}" && -n "${architecture}" ]] || return 1
+  if [[ -n "${required_control}" ]]; then
+    local selected_sha
+    selected_sha="$(sha256sum "${selected}")" || return 1
+    printf -v expected '%s\t%s\t%s\t%s' "${package}" "${version}" "${architecture}" "${selected_sha%% *}"
+    if [[ "${required_control}" != "${expected}" ]]; then
+      echo "Selected EV74 firmware differs from the authenticated Scheduler cohort." >&2
+      return 1
     fi
   fi
+  installed="$(dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\t${db:Status-Abbrev}' "${package}")" || return 1
+  printf -v expected '%s\t%s\t%s\tii ' "${package}" "${version}" "${architecture}"
+  owner="$(dpkg-query -S "${helper}")" || return 1
+  if [[ "${installed}" != "${expected}" ||
+        ( "${owner}" != "${package}: ${helper}" &&
+          "${owner}" != "${package}:${architecture}: ${helper}" ) ]]; then
+    echo "Installed EV74 activation helper is not owned by the exact configured selected package." >&2
+    return 1
+  fi
+
+  staged="$(mktemp -d /tmp/sima-neat-firmware-admission-XXXXXX)" || return 1
+  INSTALLER_TMP_DIRS+=("${staged}")
+  dpkg-deb -x "${selected}" "${staged}" || return 1
+  local packaged_helper="${staged}${helper}"
+  if [[ ! -f "${packaged_helper}" || ! -x "${packaged_helper}" || -L "${packaged_helper}" ||
+        ! -f "${helper}" || ! -x "${helper}" || -L "${helper}" ]] ||
+     ! cmp -s "${packaged_helper}" "${helper}" ||
+     [[ "$(stat -c '%a' "${packaged_helper}")" != "$(stat -c '%a' "${helper}")" ]]; then
+    echo "Installed EV74 activation helper does not match the selected executable payload." >&2
+    return 1
+  fi
+
+  local force_install=0
+  if [[ "${FORCE_INSTALL:-}" == "1" ]]; then
+    force_install=1
+  fi
+  log "Activating staged EV74 firmware from ${package} ${version}."
+  # Scope the normalized override to activation, after sudo environment filtering.
+  # Do not preserve unrelated caller variables or expand SKIP_PLATFORM_CHECK.
+  run_sudo env "FORCE_INSTALL=${force_install}" "${helper}" --activate || return $?
+
+  # --activate selects the native image only until reboot. The EV74 boots
+  # modalix-cvu-fw, which the loader finds in /lib/firmware/updates before the
+  # platform file; a dangling link falls back to the platform image.
+  local boot_link=/lib/firmware/updates/modalix-cvu-fw
+  run_sudo mkdir -p "${boot_link%/*}" || return $?
+  run_sudo ln -sfn /lib/firmware/sima-neat-native-cvu-fw "${boot_link}"
 }
-
-verify_board_runtime_services() {
-  local service="simaai-appcomplex.service"
-
-  if ! command -v systemctl >/dev/null 2>&1; then
-    return 0
-  fi
-
-  if ! systemctl list-unit-files "${service}" --no-legend 2>/dev/null | grep -q "^${service}[[:space:]]"; then
-    return 0
-  fi
-
-  # The Debian maintainer script is intentionally generated through debhelper,
-  # and deb-systemd-invoke treats service start failures as non-fatal so package
-  # transactions can still complete.  For this installer the runtime is not
-  # usable without the MLA shared-memory dispatcher, so make readiness explicit:
-  # try one start/restart if the unit is inactive, then fail with the unit status
-  # instead of leaving users with later "Connecting to server failed" errors.
-  if ! systemctl is-active --quiet "${service}"; then
-    log "${service} is not active after package install; attempting to start it once."
-    run_sudo systemctl start "${service}" || true
-    sleep 1
-  fi
-
-  if ! systemctl is-active --quiet "${service}"; then
-    echo "${service} is not active after NEAT package installation." >&2
-    run_sudo systemctl --no-pager --full status "${service}" >&2 || true
-    run_sudo journalctl -u "${service}" --no-pager -n 80 >&2 || true
-    run_sudo bash -c 'for f in /sys/class/remoteproc/remoteproc*/name /sys/class/remoteproc/remoteproc*/state; do [ -e "$f" ] && printf "%s: " "$f" && cat "$f"; done' >&2 || true
-    exit 1
-  fi
-
-  log "Verified ${service} is active."
-}
-
 
 restart_board_codec_services() {
+  if ! board_runtime_is_legacy; then
+    log "Direct or unidentified profile: skipping legacy runtime lifecycle action."
+    return 0
+  fi
   if ! command -v systemctl >/dev/null 2>&1; then
     return 0
   fi
@@ -1229,6 +1548,10 @@ restart_board_codec_services() {
 }
 
 verify_board_codec_services() {
+  if ! board_runtime_is_legacy; then
+    log "Direct or unidentified profile: skipping legacy runtime lifecycle action."
+    return 0
+  fi
   if ! command -v systemctl >/dev/null 2>&1; then
     return 0
   fi
@@ -1365,17 +1688,19 @@ verify_private_dispatcher_runtime() {
 }
 
 sima_neat_global_lib_dir() {
-  printf '%s\n' "/usr/lib"
+  local versioned_lib
+  versioned_lib="$(find_packaged_sima_neat_versioned_lib)" || return 1
+  dirname "${versioned_lib}"
 }
 
 find_packaged_sima_neat_versioned_lib() {
-  local lib_dir package_files candidate basename
+  local package_files candidate basename
   local -a matches=()
-  lib_dir="$(sima_neat_global_lib_dir)"
   package_files="$(dpkg-query -L sima-neat 2>/dev/null)" || return 1
 
+  # The installed package, not the host triplet or a guessed libdir, owns
+  # this location (lib, lib64 and multiarch layouts are all supported).
   while IFS= read -r candidate; do
-    [[ "$(dirname "${candidate}")" == "${lib_dir}" ]] || continue
     basename="$(basename "${candidate}")"
     if [[ "${basename}" =~ ^libsima_neat\.so\.[0-9]+\.[0-9]+(\.[0-9]+)*$ ]]; then
       matches+=("${candidate}")
@@ -1392,7 +1717,7 @@ find_packaged_sima_neat_versioned_lib() {
 find_packaged_sima_neat_soname_link() {
   local lib_dir package_files candidate basename
   local -a matches=()
-  lib_dir="$(sima_neat_global_lib_dir)"
+  lib_dir="$(sima_neat_global_lib_dir)" || return 1
   package_files="$(dpkg-query -L sima-neat 2>/dev/null)" || return 1
 
   while IFS= read -r candidate; do
@@ -1445,7 +1770,7 @@ quarantine_unowned_sima_neat_path() {
 quarantine_stale_unowned_sima_neat_soname_links() {
   local expected_soname_link="$1"
   local lib_dir candidate basename nullglob_was_set=0
-  lib_dir="$(sima_neat_global_lib_dir)"
+  lib_dir="$(sima_neat_global_lib_dir)" || return 1
 
   shopt -q nullglob && nullglob_was_set=1
   shopt -s nullglob
@@ -1556,15 +1881,25 @@ verify_global_sima_neat_lib_links() {
 }
 
 complete_board_install_after_packages() {
-  migrate_stale_global_dispatcher_libs
-  verify_private_dispatcher_runtime
+  local direct_platform_before="${1:-}" direct_platform_after
+  verify_board_platform_admission --installed || return 1
+  if board_runtime_is_legacy; then
+    migrate_stale_global_dispatcher_libs
+    verify_private_dispatcher_runtime
+  fi
   repair_global_sima_neat_lib_links
   verify_global_sima_neat_lib_links
-  verify_canonical_palette_and_ota_installation
-  activate_board_runtime_after_install
+  verify_canonical_palette_installation
+  activate_board_runtime_after_install || return $?
   restart_board_codec_services
   verify_board_codec_services
-  verify_board_runtime_services
+  if [[ -n "${direct_platform_before}" ]]; then
+    direct_platform_after="$(capture_direct_platform_identity)" || return 1
+    if [[ "${direct_platform_after}" != "${direct_platform_before}" ]]; then
+      echo "Native platform identity changed during direct-runtime installation." >&2
+      return 1
+    fi
+  fi
 }
 
 validate_ros2_sdk_native_host() {
@@ -1679,8 +2014,53 @@ install_ros2_sdk_tvm_runtime() {
   log "Installed the ROS2 SDK TVM runtime into ${target_lib}."
 }
 
+# Preserve the selected local archives and exact target versions for real reinstalls.
+collect_exact_deb_install_specs() {
+  local -n out_install_specs="$1"
+  out_install_specs=()
+  local -A seen_install_specs=()
+  local spec
+  for spec in "${DEBS[@]}"; do
+    [[ -n "${spec}" ]] || continue
+    if [[ -n "${seen_install_specs[${spec}]+x}" ]]; then
+      continue
+    fi
+    seen_install_specs["${spec}"]=1
+    out_install_specs+=("${spec}")
+  done
+
+  # APT's volatile local-file selection can ignore --reinstall when the
+  # installed version is identical. Explicit exact-version selections make
+  # reinstall apply while the accompanying DEBs supply the local archives.
+  local deb package version architecture package_key exact_spec
+  local -A selected_package_specs=()
+  for deb in "${DEBS[@]}"; do
+    package="$(dpkg-deb -f "${deb}" Package)" || return 1
+    version="$(dpkg-deb -f "${deb}" Version)" || return 1
+    architecture="$(dpkg-deb -f "${deb}" Architecture)" || return 1
+    if [[ -z "${package}" || -z "${version}" || -z "${architecture}" ]]; then
+      echo "Incomplete package identity in local DEB: ${deb}" >&2
+      return 1
+    fi
+    package_key="${package}"
+    [[ "${architecture}" == all ]] || package_key+=":${architecture}"
+    exact_spec="${package_key}=${version}"
+    if [[ -n "${selected_package_specs[${package_key}]+x}" &&
+          "${selected_package_specs[${package_key}]}" != "${exact_spec}" ]]; then
+      echo "Conflicting local DEB versions for ${package_key}." >&2
+      return 1
+    fi
+    selected_package_specs["${package_key}"]="${exact_spec}"
+    if [[ -z "${seen_install_specs[${exact_spec}]+x}" ]]; then
+      seen_install_specs["${exact_spec}"]=1
+      out_install_specs+=("${exact_spec}")
+    fi
+  done
+}
+
 install_debs_in_ros2_sdk() {
   local simulation_log
+  local -a install_specs=()
   local -a apt_install_args=(
     apt-get install -y --reinstall --no-remove --allow-downgrades
   )
@@ -1701,10 +2081,11 @@ install_debs_in_ros2_sdk() {
     exit 1
   fi
 
+  collect_exact_deb_install_specs install_specs || return 1
   simulation_log="$(mktemp /tmp/sima-neat-ros2-sdk-apt-simulation-XXXXXX)"
   INSTALLER_TMP_DIRS+=("${simulation_log}")
   log "Simulating native ROS2 SDK package installation with package removal disabled."
-  if ! run_sudo "${apt_install_args[@]}" --simulate "${DEBS[@]}" >"${simulation_log}" 2>&1; then
+  if ! run_sudo "${apt_install_args[@]}" --simulate "${install_specs[@]}" >"${simulation_log}" 2>&1; then
     cat "${simulation_log}" >&2
     echo "APT rejected the native ROS2 SDK package set; no packages were changed." >&2
     exit 1
@@ -1715,8 +2096,9 @@ install_debs_in_ros2_sdk() {
     grep '^Remv[[:space:]]' "${simulation_log}" >&2
     exit 1
   fi
+  verify_scheduler_transaction "${simulation_log}" || return 1
 
-  run_sudo "${apt_install_args[@]}" "${DEBS[@]}"
+  run_sudo "${apt_install_args[@]}" "${install_specs[@]}"
   install_ros2_sdk_tvm_runtime || exit 1
   if [[ -x /sbin/ldconfig ]]; then
     run_sudo /sbin/ldconfig
@@ -1732,31 +2114,129 @@ install_debs_in_ros2_sdk() {
   fi
 }
 
+# Scheduler owns provider classification and ELF compatibility. This thin
+# delegate authenticates its incoming installed tooling before executing it.
+prepare_board_platform_admission() {
+  if [[ -n "${BOARD_PLATFORM_ADMISSION_DIR}" ]]; then
+    verify_board_platform_admission
+    return $?
+  fi
+  if [[ ! -f "${SCHEDULER_PLATFORM_ADMISSION_PATH}" || -L "${SCHEDULER_PLATFORM_ADMISSION_PATH}" ]]; then
+    echo "Missing packaged Scheduler Platform admission delegate." >&2
+    return 1
+  fi
+  BOARD_PLATFORM_ADMISSION_DIR="$(mktemp -d /tmp/sima-neat-platform-admission-XXXXXX)"
+  INSTALLER_TMP_DIRS+=("${BOARD_PLATFORM_ADMISSION_DIR}")
+  python3 -B "${SCHEDULER_PLATFORM_ADMISSION_PATH}" preflight-if-declared --directory "$PWD" \
+    --prepare "${BOARD_PLATFORM_ADMISSION_DIR}/prepared" \
+    --output "${BOARD_PLATFORM_ADMISSION_DIR}/before.json"
+}
+
+board_platform_admission_is_active() {
+  [[ -n "${BOARD_PLATFORM_ADMISSION_DIR}" ]] || return 1
+  python3 - "${BOARD_PLATFORM_ADMISSION_DIR}/before.json" <<'PYACTIVE'
+import json, sys
+with open(sys.argv[1]) as stream:
+    raise SystemExit(0 if json.load(stream)['platform_packages'] else 1)
+PYACTIVE
+}
+
+board_has_scheduler_cohort() {
+  [[ -n "${BOARD_PLATFORM_ADMISSION_DIR}" ]] || return 1
+  python3 - "${BOARD_PLATFORM_ADMISSION_DIR}/before.json" <<'PYSPLIT'
+import json, sys
+with open(sys.argv[1]) as stream:
+    raise SystemExit(0 if json.load(stream).get('split_cohort') is True else 1)
+PYSPLIT
+}
+
+required_board_firmware_control() {
+  [[ -n "${BOARD_PLATFORM_ADMISSION_DIR}" ]] || return 0
+  # This declaration comes from the authenticated incoming Scheduler tooling.
+  # Scheduler owns EV/platform selection and firmware image/cohort validation.
+  python3 - "${BOARD_PLATFORM_ADMISSION_DIR}/before.json" <<'PYFIRMWARE'
+import json, sys
+with open(sys.argv[1]) as stream:
+    admission = json.load(stream)
+if admission.get('split_cohort') is True:
+    firmware = admission['firmware']
+    if not isinstance(firmware.get('required'), bool):
+        raise SystemExit('Invalid authenticated firmware requirement')
+    if firmware['required']:
+        control = firmware['debian_package']
+        print('\t'.join(control[key] for key in ('Package', 'Version', 'Architecture', 'deb_sha256')))
+    elif firmware['debian_package'] is not None:
+        raise SystemExit('Unexpected firmware package for a non-EV cohort')
+PYFIRMWARE
+}
+
+verify_board_platform_admission() {
+  [[ -n "${BOARD_PLATFORM_ADMISSION_DIR}" ]] || return 0
+  # APT supplies ordinary package dependencies. Scheduler admits protected
+  # providers before the transaction; full installed closure precedes activation.
+  local action=preflight-if-declared
+  if [[ "${1:-}" == --installed ]]; then
+    action=check-if-declared
+  fi
+  python3 -B "${SCHEDULER_PLATFORM_ADMISSION_PATH}" "${action}" --directory "$PWD" \
+    --baseline "${BOARD_PLATFORM_ADMISSION_DIR}/before.json" "$@" >/dev/null
+}
+
+verify_board_platform_plan() {
+  [[ -n "${BOARD_PLATFORM_ADMISSION_DIR}" ]] || return 0
+  python3 -B "${SCHEDULER_PLATFORM_ADMISSION_PATH}" verify-plan \
+    --baseline "${BOARD_PLATFORM_ADMISSION_DIR}/before.json" --simulation "$1"
+}
+
+verify_scheduler_transaction() {
+  local simulation="$1"
+  shift
+  local -a prepared_args=()
+  if [[ -n "${BOARD_PLATFORM_ADMISSION_DIR}" ]]; then
+    prepared_args=(--prepared-from "${BOARD_PLATFORM_ADMISSION_DIR}/before.json")
+  fi
+  python3 -B "${SCHEDULER_PLATFORM_ADMISSION_PATH}" transaction-if-declared \
+    --directory "$PWD" --simulation "${simulation}" "${prepared_args[@]}" "$@" >/dev/null
+}
+
 install_debs_on_board() {
   log "Detected Modalix board environment; installing DEBs with apt."
   printf '[install_neat_framework] DEB install set:\n'
   printf '  %s\n' "${DEBS[@]}"
+  prepare_board_platform_admission || return 1
+  local direct_platform_before=""
+  if ! board_runtime_is_legacy; then
+    direct_platform_before="$(capture_direct_platform_identity)" || return 1
+  fi
   refresh_apt_metadata_for_board_install
   stop_board_runtime_before_install
 
-  # Do not start a large package transaction from an unhealthy APT state.
+  # Only the authenticated split coordinator may admit continuation of its own
+  # incomplete product cohort. Scheduler distinguishes normal deferred triggers
+  # from unrelated unfinished package installation/configuration.
+  local repair_incomplete=0
   if ! apt_package_database_is_healthy; then
+    repair_incomplete=1
+  fi
+  if board_has_scheduler_cohort; then
+    local dpkg_state=0
+    dpkg_package_database_is_configured || dpkg_state=$?
+    case "${dpkg_state}" in
+      0) ;;
+      1) repair_incomplete=1 ;;
+      *) echo "Cannot read dpkg package states; refusing split-cohort installation." >&2; return 1 ;;
+    esac
+  elif [[ "${repair_incomplete}" == 1 ]]; then
     echo "APT package state is unhealthy; refusing to install the Neat package set." >&2
     echo "Repair the board package database first, then rerun this installer." >&2
     exit 1
   fi
+  if [[ "${repair_incomplete}" == 1 ]]; then
+    log "Incomplete package state: requiring exact split-cohort recovery and declared retirement admission."
+  fi
 
   local -a board_install_specs=()
-  local -A seen_install_specs=()
-  local spec
-  for spec in "${DEBS[@]}"; do
-    [[ -n "${spec}" ]] || continue
-    if [[ -n "${seen_install_specs[${spec}]+x}" ]]; then
-      continue
-    fi
-    seen_install_specs["${spec}"]=1
-    board_install_specs+=("${spec}")
-  done
+  collect_exact_deb_install_specs board_install_specs || return 1
 
   local -a board_heal_specs=()
   mapfile -t board_heal_specs < <(collect_board_heal_specs)
@@ -1766,10 +2246,42 @@ install_debs_on_board() {
     board_install_specs+=("${board_heal_specs[@]}")
   fi
 
+  # File ownership transitions must be declared by the packages' Breaks/Replaces
+  # metadata. Removal simulation alone cannot detect undeclared file collisions;
+  # keep dpkg's ownership rejection enabled for the real transaction.
   local -a apt_install_args=(
-    apt-get install -y --fix-broken --allow-downgrades --reinstall
-    -o Dpkg::Options::=--force-overwrite
+    apt-get install -y --fix-broken --allow-downgrades
   )
+  local -a transaction_admission_args=()
+  if [[ "${repair_incomplete}" == 1 ]]; then
+    # APT may retain broken predecessor packages unless retirement is explicit.
+    # Scheduler proposes current, configured identities; the existing Core and
+    # Platform guards must approve them before any removal selector is added.
+    local retirement_plan
+    retirement_plan="$(mktemp /tmp/sima-neat-retirements-XXXXXX)"
+    INSTALLER_TMP_DIRS+=("${retirement_plan}")
+    python3 -B "${SCHEDULER_PLATFORM_ADMISSION_PATH}" retirements --directory "$PWD" \
+      --prepared-from "${BOARD_PLATFORM_ADMISSION_DIR}/before.json" \
+      >"${retirement_plan}" || return 1
+    verify_board_platform_plan "${retirement_plan}" || return 1
+    verify_simulated_package_removals "${retirement_plan}" "${board_install_specs[@]}" || return 1
+    local -a retirement_names=()
+    mapfile -t retirement_names < <(awk '$1 == "Remv" {print $2}' "${retirement_plan}")
+    if [[ "${#retirement_names[@]}" == 0 ]]; then
+      apt_install_args+=(--no-remove)
+    else
+      local retired
+      for retired in "${retirement_names[@]}"; do
+        board_install_specs+=("${retired}-")
+      done
+    fi
+    # APT 3 cannot fetch a forced-reinstall archive for an already-unpacked
+    # same-version package. First resume only the producer-admitted full cohort;
+    # then perform a fresh strict reinstall before declaring installation done.
+    transaction_admission_args+=(--repair-incomplete --resume-incomplete)
+  else
+    apt_install_args+=(--reinstall)
+  fi
 
   local simulation_log
   simulation_log="$(mktemp /tmp/sima-neat-apt-simulate-XXXXXX)"
@@ -1780,15 +2292,48 @@ install_debs_on_board() {
     echo "APT cannot satisfy the bundled Neat package transaction." >&2
     exit 1
   fi
-  if ! verify_simulated_package_removals \
+  if ! verify_board_platform_plan "${simulation_log}" ||
+     ! verify_simulated_package_removals \
       "${simulation_log}" "${board_install_specs[@]}"; then
     exit 1
   fi
 
+  verify_scheduler_transaction "${simulation_log}" "${transaction_admission_args[@]}" || return 1
+
   if run_sudo "${apt_install_args[@]}" "${board_install_specs[@]}"; then
-    run_sudo apt-get check
-    complete_board_install_after_packages
-    return 0
+    if [[ "${repair_incomplete}" == 1 ]]; then
+      # Configuration is only preparation, not successful installation. Never
+      # reuse retirement selectors or the permissive resume admission for the
+      # final exact-byte reinstall of every selected package.
+      apt_package_database_is_healthy || return 1
+      dpkg_package_database_is_configured before-reinstall || return 1
+      verify_board_platform_admission || return 1
+      collect_exact_deb_install_specs board_install_specs || return 1
+      apt_install_args=(apt-get install -y --fix-broken --allow-downgrades --reinstall --no-remove)
+      log "Resumed package transaction; requiring a fresh strict full-cohort reinstall."
+      if ! run_sudo "${apt_install_args[@]}" --simulate "${board_install_specs[@]}" \
+          >"${simulation_log}" 2>&1; then
+        cat "${simulation_log}" >&2
+        echo "APT rejected the final recovery reinstall; installation is incomplete." >&2
+        return 1
+      fi
+      verify_board_platform_plan "${simulation_log}" || return 1
+      verify_simulated_package_removals "${simulation_log}" "${board_install_specs[@]}" || return 1
+      verify_scheduler_transaction "${simulation_log}" --repair-incomplete || return 1
+      if ! run_sudo "${apt_install_args[@]}" "${board_install_specs[@]}"; then
+        echo "Final recovery reinstall failed; refusing package removal or direct dpkg fallback." >&2
+        return 1
+      fi
+      dpkg_package_database_is_configured || return 1
+    fi
+    run_sudo apt-get check || return 1
+    complete_board_install_after_packages "${direct_platform_before}"
+    return $?
+  fi
+
+  if [[ "${repair_incomplete}" == 1 ]]; then
+    echo "Exact split-cohort recovery failed; refusing further package removal or direct dpkg fallback." >&2
+    return 1
   fi
 
   if [[ "${NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL}" != "ON" ]]; then
@@ -1798,10 +2343,25 @@ install_debs_on_board() {
   fi
 
   log "apt-get install failed; NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL=ON, removing installed NEAT packages represented by the local DEB set and retrying apt."
-  remove_installed_local_deb_packages
+  remove_installed_local_deb_packages || return 1
+  if board_platform_admission_is_active || board_has_scheduler_cohort; then
+    verify_board_platform_admission || return 1
+    # The first failed transaction/removal may have changed the package state.
+    # Do not reuse an earlier solver plan for a maintenance retry.
+    run_sudo "${apt_install_args[@]}" --simulate "${board_install_specs[@]}" \
+      >"${simulation_log}" 2>&1 || return 1
+    verify_board_platform_plan "${simulation_log}" || return 1
+    verify_simulated_package_removals "${simulation_log}" "${board_install_specs[@]}" || return 1
+    verify_scheduler_transaction "${simulation_log}" || return 1
+  fi
   if run_sudo "${apt_install_args[@]}" "${board_install_specs[@]}"; then
-    complete_board_install_after_packages
-    return 0
+    complete_board_install_after_packages "${direct_platform_before}"
+    return $?
+  fi
+
+  if board_has_scheduler_cohort; then
+    echo "Split-cohort APT retry failed; refusing direct dpkg installation without a valid transaction." >&2
+    return 1
   fi
 
   if [[ "${NEAT_INSTALLER_ALLOW_DPKG_FALLBACK}" != "ON" ]]; then
@@ -1811,9 +2371,10 @@ install_debs_on_board() {
     log "apt-get install failed; retrying with direct dpkg install of the local NEAT DEB set."
   fi
 
-  run_sudo dpkg -i --force-overwrite "${DEBS[@]}"
+  # Opting into maintenance fallback does not waive file ownership checks.
+  run_sudo dpkg -i "${DEBS[@]}"
   run_sudo apt-get check
-  complete_board_install_after_packages
+  complete_board_install_after_packages "${direct_platform_before}"
 }
 
 remove_stale_global_sima_lmm_pip_install() {
@@ -1827,13 +2388,44 @@ remove_stale_global_sima_lmm_pip_install() {
   fi
 }
 
+ensure_python_venv_support() {
+  python3 -c 'import ensurepip' >/dev/null 2>&1 && return 0
+
+  log "Python venv support (ensurepip) is missing; installing python3-venv with apt."
+  refresh_apt_metadata_for_board_install
+  if ! run_sudo apt-get install -y python3-venv; then
+    echo "Failed to install python3-venv. Run 'sudo apt-get update && sudo apt-get install -y python3-venv', then rerun this installer." >&2
+    exit 1
+  fi
+}
+
+prepare_python_venv() {
+  local venv_dir="$1"
+  local interpreter
+  # venv leaves existing interpreter symlinks untouched, even when their
+  # original SDK/system Python has gone away. Repair only dangling aliases;
+  # retain site-packages, configuration and working interpreter links.
+  for interpreter in "${venv_dir}/bin/python" "${venv_dir}/bin/python3" "${venv_dir}"/bin/python3.[0-9]*; do
+    if [[ -L "${interpreter}" && ! -e "${interpreter}" ]]; then
+      log "Removing dangling virtualenv interpreter link: ${interpreter}"
+      rm -- "${interpreter}"
+    fi
+  done
+  python3 -m venv --system-site-packages "${venv_dir}"
+  if ! "${venv_dir}/bin/python" -c 'import sys; assert sys.prefix != sys.base_prefix'; then
+    echo "Virtualenv interpreter is unusable after preparation: ${venv_dir}/bin/python" >&2
+    return 1
+  fi
+}
+
 install_python_environment() {
+  ensure_python_venv_support
   VENV_DIR="$(resolve_venv_dir)"
   ACTIVATE_PATH="$(activation_path_for_display "${VENV_DIR}")"
   remove_stale_global_sima_lmm_pip_install
   log_green "Preparing Python virtual environment at ${VENV_DIR}"
   mkdir -p "$(dirname "${VENV_DIR}")"
-  python3 -m venv --system-site-packages "${VENV_DIR}"
+  prepare_python_venv "${VENV_DIR}"
   ensure_home_pyneat_symlink "${VENV_DIR}"
   print_green_banner "${VENV_DIR}" "${ACTIVATE_PATH}"
   "${VENV_DIR}/bin/python" -m pip install --upgrade pip
@@ -2067,6 +2659,8 @@ deploy_artifacts_to_paired_devkit_if_configured() {
   remote_install_cmd="set -euo pipefail
 remote_dir=$(printf '%q' "${remote_dir}")
 installer_name=$(printf '%q' "${installer_basename}")
+export FORCE_INSTALL=$(printf '%q' "${FORCE_INSTALL:-0}")
+export NEAT_INSTALLER_SENTINEL_REQUIRED=$(printf '%q' "${NEAT_INSTALLER_SENTINEL_REQUIRED}")
 cleanup_remote_artifacts() {
   rm -rf \"\${remote_dir}\"
 }
@@ -2078,279 +2672,6 @@ NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON bash \"./\${installer_name}\" --local"
   run_ssh -t "${ssh_target}" "bash -lc $(printf '%q' "${remote_install_cmd}")"
 
   log_green "Paired DevKit sync completed: ${ssh_target}"
-}
-
-# Inspect selected package bytes before Python provisioning, sysroot writes or
-# board lifecycle changes. Never use installed libraries to fill a bundle gap.
-validate_bundle_elf_cohort() {
-  local tool
-  for tool in python3 dpkg-deb dpkg readelf; do
-    command -v "${tool}" >/dev/null 2>&1 || {
-      echo "${tool} is required for NEAT bundle preflight." >&2
-      return 1
-    }
-  done
-  python3 - "${1:-}" "${DEBS[@]}" <<'PY_COHORT'
-import functools
-import hashlib
-import os
-import posixpath
-from pathlib import Path
-import re
-import subprocess
-import sys
-import tempfile
-
-
-def run(*args):
-    return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT,
-                                   env={**os.environ, "LC_ALL": "C"})
-
-
-def fail(message):
-    raise ValueError(message)
-
-
-def digest_file(path):
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-packages = {}
-versions = {}
-providers = {}
-consumers = []
-files = {}
-owners = {}
-package_versions = {}
-package_architectures = {}
-replacements = {}
-loader_directories = []
-# These dependencies must never be satisfied by leftover SDK/board libraries.
-neat_name = re.compile(
-    r"^lib(?:neat|gstneat|gstsimaai|gstsimamm|sima_neat|sima_lmm|simaneet|"
-    r"simaaineat|commonutils|processcvu_testhooks|simaai_genboxdecode)"
-)
-expected_architecture = sys.argv[1] or None
-
-try:
-    with tempfile.TemporaryDirectory(prefix="neat-cohort-") as temp:
-        for index, argument in enumerate(sys.argv[2:]):
-            deb = Path(argument).resolve(strict=True)
-            package, version, architecture = [
-                run("dpkg-deb", "-f", str(deb), field).strip()
-                for field in ("Package", "Version", "Architecture")
-            ]
-            if architecture != "all":
-                if expected_architecture is None:
-                    expected_architecture = architecture
-                elif architecture != expected_architecture:
-                    fail(f"mixed/unexpected package architecture: {package} is {architecture}, expected {expected_architecture}")
-            if package in packages:
-                fail(f"duplicate package {package}: {packages[package]} and {deb}")
-            packages[package] = str(deb)
-            package_versions[package] = version
-            package_architectures[package] = architecture
-            replacements[package] = []
-            for entry in run("dpkg-deb", "-f", str(deb), "Replaces").strip().split(","):
-                if not entry.strip():
-                    continue
-                match = re.fullmatch(
-                    r"\s*([a-z0-9][a-z0-9+.-]+)(?::([a-z0-9-]+))?\s*"
-                    r"(?:\(\s*(<<|<=|=|>=|>>)\s*([^\s()]+)\s*\))?\s*", entry)
-                if not match:
-                    fail(f"unsupported Replaces entry in {package}: {entry}")
-                replacements[package].append(match.groups())
-            group = ("internals" if package.startswith("neat-") else
-                     "llima" if package.startswith("sima-lmm-") else
-                     "core" if package in ("sima-neat", "sima-neat-dev") else None)
-            if group:
-                previous = versions.setdefault(group, version)
-                if previous != version:
-                    fail(f"mixed {group} versions: {previous} and {version} ({package})")
-            root = Path(temp) / str(index)
-            subprocess.run(["dpkg-deb", "-x", str(deb), str(root)], check=True)
-            for directory, directories, names in os.walk(root, followlinks=False):
-                # os.walk lists directory symlinks separately from files. Record
-                # both without following links, including implicit parent dirs,
-                # so conflicting DEBs cannot redirect another package's payload.
-                for name in directories + names:
-                    path = Path(directory) / name
-                    relative = path.relative_to(root).as_posix()
-                    if path.is_symlink():
-                        identity = ("link", os.readlink(path))
-                    elif path.is_dir():
-                        identity = ("directory", "")
-                    elif path.is_file():
-                        identity = ("file", digest_file(path))
-                    else:
-                        continue
-                    if relative in files and files[relative] != identity:
-                        fail(f"conflicting payload path {relative} ({package})")
-                    files[relative] = identity
-                    owners.setdefault(relative, set()).add(package)
-                    if identity[0] != "file":
-                        continue
-                    # Debian loads these fragments through /etc/ld.so.conf.
-                    # Only package-declared directories count, never the builder's
-                    # cache or environment. Includes need a target-side audit.
-                    if re.fullmatch(r"etc/ld\.so\.conf\.d/[^/]+\.conf", relative):
-                        for line in path.read_text().splitlines():
-                            entry = line.split("#", 1)[0].strip()
-                            if not entry:
-                                continue
-                            if not entry.startswith("/") or len(entry.split()) != 1 or "$" in entry:
-                                fail(f"unsupported packaged loader configuration: {package}:{relative}: {entry}")
-                            loader_directories.append(posixpath.normpath(entry))
-                    with path.open("rb") as stream:
-                        if stream.read(4) != b"\x7fELF":
-                            continue
-                    header = run("readelf", "-h", str(path))
-                    machine = re.search(r"Machine:\s*(.*)", header).group(1).strip()
-                    expected = {"arm64": "AArch64", "amd64": "Advanced Micro Devices X86-64"}.get(architecture)
-                    if expected is None or machine != expected:
-                        fail(f"ELF architecture mismatch: {package}:{relative}: {architecture} / {machine}")
-                    dynamic = run("readelf", "-d", str(path))
-                    search_paths = {}
-                    for tag, value in re.findall(r"\((RPATH|RUNPATH)\).*?\[([^]]*)\]", dynamic):
-                        search_paths[tag] = []
-                        for entry in value.split(":"):
-                            origin_relative = (entry in ("$ORIGIN", "${ORIGIN}") or
-                                               entry.startswith(("$ORIGIN/", "${ORIGIN}/")))
-                            # Resolve against the ELF's installed location, never the
-                            # extraction directory or the builder's filesystem. Checking
-                            # the literal prefix alone misses $ORIGIN/../../tmp and
-                            # /usr/lib/../../tmp. Keep sibling private runtime paths valid.
-                            origin = "/" + posixpath.dirname(relative)
-                            expanded = (origin + entry[entry.index("}") + 1:]
-                                        if entry.startswith("${ORIGIN}") else
-                                        origin + entry[len("$ORIGIN"):]
-                                        if origin_relative else entry)
-                            normalized = "/" + posixpath.normpath(expanded).lstrip("/")
-                            runtime_roots = ("/lib", "/lib64", "/usr/lib", "/usr/lib64",
-                                             "/usr/local/lib", "/usr/local/lib64")
-                            in_runtime_root = any(
-                                normalized == root or normalized.startswith(root + "/")
-                                for root in runtime_roots)
-                            # $ORIGIN also supports packaged executables with adjacent
-                            # DSOs (for example under /usr/libexec); it cannot escape
-                            # that directory unless it reaches a system runtime root.
-                            adjacent = origin_relative and (
-                                normalized == origin or normalized.startswith(origin + "/"))
-                            if (not entry or "$" in expanded or
-                                (not entry.startswith("/") and not origin_relative) or
-                                not (in_runtime_root or adjacent)):
-                                fail(f"unsafe build/empty runtime search path in {package}:{relative}: {value}")
-                            search_paths[tag].append(normalized)
-                    soname = re.search(r"\(SONAME\).*?\[([^]]+)\]", dynamic)
-                    if soname:
-                        key = soname.group(1)
-                        old = providers.get(key)
-                        if old and old[0] != identity[1]:
-                            fail(f"different ELF providers for {key}: {old[1]} and {package}:{relative}")
-                        providers[key] = (identity[1], f"{package}:{relative}", relative)
-                    needed = re.findall(r"\(NEEDED\).*?\[([^]]+)\]", dynamic)
-                    # RUNPATH takes precedence over RPATH. Require every DSO to
-                    # locate its own direct cohort dependencies, independently of
-                    # an application's inherited RPATH or LD_LIBRARY_PATH.
-                    search = search_paths.get("RUNPATH", search_paths.get("RPATH", []))
-                    no_defaults = bool(re.search(r"\(FLAGS_1\).*\bNODEFLIB\b", dynamic))
-                    consumers.append((f"{package}:{relative}", needed, search, no_defaults))
-        def packaged_file(lookup):
-            # Follow only package-owned SONAME links, not host filesystem links.
-            lookup = lookup.lstrip("/")
-            visited = set()
-            while files.get(lookup, (None,))[0] == "link":
-                if lookup in visited:
-                    return None
-                visited.add(lookup)
-                target = files[lookup][1]
-                lookup = posixpath.normpath(target.lstrip("/") if target.startswith("/") else
-                                           posixpath.join(posixpath.dirname(lookup), target))
-                if lookup == ".." or lookup.startswith("../"):
-                    return None
-            return files.get(lookup)
-
-        @functools.lru_cache(maxsize=None)
-        def replaces(new, old):
-            for name, arch, operator, version in replacements[new]:
-                if name != old or arch not in (None, "any", package_architectures[old]):
-                    continue
-                if operator is None:
-                    return True
-                status = subprocess.run(
-                    ["dpkg", "--compare-versions", package_versions[old], operator, version],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE).returncode
-                if status not in (0, 1):
-                    fail(f"invalid Replaces version in {new}: {name} ({operator} {version})")
-                if status == 0:
-                    return True
-            return False
-
-        # Equal bytes do not grant dpkg ownership to two different packages.
-        # A selected owner must explicitly replace every other owner. Identical
-        # directory links can be shared just like real directories.
-        for relative, packages_owning_path in owners.items():
-            if len(packages_owning_path) <= 1 or packaged_file(relative) == ("directory", ""):
-                continue
-            if not any(all(other == owner or replaces(owner, other)
-                           for other in packages_owning_path) for owner in packages_owning_path):
-                fail(f"duplicate payload ownership {relative}: {', '.join(sorted(packages_owning_path))}; no matching Replaces declaration")
-
-        for soname, (digest, origin, relative) in providers.items():
-            lookup = posixpath.join(posixpath.dirname(relative), soname)
-            visited = set()
-            while files.get(lookup, (None,))[0] == "link":
-                if lookup in visited:
-                    fail(f"cyclic SONAME symlink for {origin}")
-                visited.add(lookup)
-                target = files[lookup][1]
-                lookup = posixpath.normpath(target.lstrip("/") if target.startswith("/") else posixpath.join(posixpath.dirname(lookup), target))
-                if lookup == ".." or lookup.startswith("../"):
-                    fail(f"SONAME symlink escapes package root for {origin}")
-            if files.get(lookup) != ("file", digest):
-                fail(f"missing or wrong packaged SONAME path {soname} for {origin}")
-        families = {name.split(".so", 1)[0] for name in providers}
-        multiarch = {"arm64": "aarch64-linux-gnu", "amd64": "x86_64-linux-gnu"}.get(expected_architecture)
-        defaults = ["/lib", "/usr/lib"]
-        if multiarch:
-            defaults = [f"/lib/{multiarch}", f"/usr/lib/{multiarch}"] + defaults
-
-        for consumer, needed, search, no_defaults in consumers:
-            for dependency in needed:
-                # The loader treats any slash as a pathname and bypasses its
-                # library search. Reject before family filtering, including
-                # dependencies linked by filename to a DSO without a SONAME.
-                if "/" in dependency:
-                    fail(f"{consumer} has pathname-valued DT_NEEDED {dependency}; relink with a SONAME and a package-relative runtime search path")
-                if not (neat_name.match(dependency) or dependency.split(".so", 1)[0] in families):
-                    continue
-                if dependency not in providers:
-                    fail(f"{consumer} requires {dependency}, but the selected bundle does not provide it; rebuild against the selected Internals/Core (do not add a compatibility symlink)")
-                directories = search + [d for d in loader_directories
-                                        if not no_defaults or d not in defaults]
-                if not no_defaults:
-                    directories += defaults
-                expected = ("file", providers[dependency][0])
-                for directory in directories:
-                    candidate = packaged_file(posixpath.join(directory, dependency))
-                    if candidate is not None:
-                        if candidate != expected:
-                            fail(f"{consumer} resolves {dependency} to a different packaged payload in {directory}")
-                        break
-                else:
-                    fail(f"{consumer} requires {dependency}, but its packaged provider is not reachable through its RUNPATH/RPATH, packaged ld.so.conf.d directories or default library directories; rebuild with the matching install RUNPATH")
-
-        if not packages:
-            fail("no DEB packages supplied")
-        print(f"Verified selected ELF cohort: {len(packages)} packages, {len(consumers)} ELFs, {len(providers)} SONAME providers. Platform dependencies still require target validation.")
-except (OSError, ValueError, subprocess.CalledProcessError) as error:
-    print(f"NEAT bundle preflight failed: {error}", file=sys.stderr)
-    sys.exit(1)
-PY_COHORT
 }
 
 install_for_environment() {
@@ -2368,11 +2689,13 @@ install_for_environment() {
       install_agent_skills_for_current_user "/usr/share/sima-neat/skills/sima-neat"
       ;;
     modalix-board)
-      # Preserve the established board ordering: provision PyNeat before the
-      # board-specific package recovery and runtime restart transaction.
+      # Sentinel comes first so a required Sentinel that fails to install
+      # leaves the installed Neat packages untouched. Then preserve the
+      # established board ordering: provision PyNeat before the board-specific
+      # package recovery and runtime restart transaction.
+      install_board_sentinel
       install_python_environment
       install_debs_on_board
-      configure_board_i2c_access
       install_agent_skills_for_current_user "/usr/share/sima-neat/skills/sima-neat"
       ;;
     *)
@@ -2388,6 +2711,7 @@ fi
 
 parse_args "$@"
 
+stage_bundle_in_fresh_dir
 collect_debs_in_install_order "." DEBS
 if [[ "${#DEBS[@]}" -lt 1 ]]; then
   echo "No required DEB files found in current directory." >&2
@@ -2397,6 +2721,4 @@ fi
 ENV_MODE="$(detect_env_mode)"
 log_green "Environment mode: ${ENV_MODE}"
 ensure_platform_compatible
-validate_single_sima_neat_package_pair
-validate_bundle_elf_cohort arm64
 install_for_environment

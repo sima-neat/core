@@ -15,6 +15,8 @@ ORIGINAL_WORKSPACE_ROOT="${SIMANEAT_ORIGINAL_WORKSPACE_ROOT:-${WORKSPACE_ROOT}}"
 SHADOW_BUILD_MODE="${SIMANEAT_SHADOW_BUILD:-auto}"
 SHADOW_BUILD_ACTIVE="${SIMANEAT_SHADOW_BUILD_ACTIVE:-OFF}"
 SOURCE_FS_TYPE=""
+# Relative --scheduler/--llima paths name folders from where build.sh was called.
+CALLER_DIR="${SIMANEAT_CALLER_DIR:-${PWD}}"
 cd "${REPO_ROOT}"
 
 # Defaults
@@ -37,26 +39,26 @@ SIMA_ENABLE_ASAN=OFF
 SIMA_ENABLE_UBSAN=OFF
 SIMA_ENABLE_TSAN=OFF
 SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS=OFF
-INSTALL_NEAT_INTERNALS=OFF
 INSTALL_NEAT_LLIMA=OFF
+SKIP_NEAT_LLIMA=OFF
 STRICT_WARNINGS="${SIMANEAT_STRICT_WARNINGS:-OFF}"
-NEAT_DEPS_MANIFEST="${NEAT_DEPS_MANIFEST:-${NEAT_INTERNALS_MANIFEST:-deps/manifest.json}}"
+NEAT_DEPS_MANIFEST="${NEAT_DEPS_MANIFEST:-deps/manifest.json}"
 NEAT_VULCAN_ENV="${NEAT_VULCAN_ENV:-production}"
 NEAT_VULCAN_BASE_URL="${NEAT_VULCAN_BASE_URL:-}"
-NEAT_INTERNALS_VULCAN_REPOSITORY="${NEAT_INTERNALS_VULCAN_REPOSITORY:-internals}"
 NEAT_LLIMA_VULCAN_REPOSITORY="${NEAT_LLIMA_VULCAN_REPOSITORY:-llima/debs}"
-NEAT_INTERNALS_RESOLVED_MANIFEST="${NEAT_INTERNALS_RESOLVED_MANIFEST:-${BUILD_DIR}/resolved_manifest.json}"
+NEAT_LLIMA_ARTIFACT_DIR="${NEAT_LLIMA_ARTIFACT_DIR:-}"
+NEAT_RESOLVED_MANIFEST="${NEAT_RESOLVED_MANIFEST:-${BUILD_DIR}/resolved_manifest.json}"
 NEAT_PACKAGE_BUILDINFO_JSON="${NEAT_PACKAGE_BUILDINFO_JSON:-${BUILD_DIR}/buildinfo.json}"
-NEAT_INTERNALS_DIR="${NEAT_INTERNALS_DIR:-deps}"
+NEAT_DEPS_DIR="${NEAT_DEPS_DIR:-deps}"
 NEAT_DEP_HEADERS_DIR="${REPO_ROOT}/deps/headers"
-NEAT_INTERNALS_PLUGIN_DIR="${NEAT_INTERNALS_DIR}/gst-plugins"
-NEAT_INTERNALS_DEB_DIR="${NEAT_INTERNALS_DEB_DIR:-${NEAT_INTERNALS_DIR}/debs}"
-NEAT_INTERNALS_ARTIFACT_MANIFEST="${NEAT_INTERNALS_DIR}/internals-manifest.json"
-NEAT_INTERNALS_RESOLVED_REF=""
-NEAT_INTERNALS_REQUESTED_REF=""
-NEAT_INTERNALS_SNAP_POLICY=OFF
-NEAT_INTERNALS_SNAP_TAG_POLICY=OFF
-NEAT_LLIMA_DEB_DIR="${NEAT_LLIMA_DEB_DIR:-${NEAT_INTERNALS_DIR}/llima-debs}"
+NEAT_BACKEND_DIR="${REPO_ROOT}/deps/backend"
+NEAT_BACKEND_DEB_DIR="${NEAT_BACKEND_DIR}/debs"
+NEAT_SCHEDULER_DEPS_DIR="${REPO_ROOT}/deps/scheduler"
+NEAT_SCHEDULER_ARTIFACT_DIR="${NEAT_SCHEDULER_ARTIFACT_DIR:-}"
+# Hashes of the LLiMa packages last unpacked into the SDK sysroot.
+NEAT_SYSROOT_LLIMA_RECORD="var/lib/sima-neat/llima.sha256"
+UPDATE_SYSROOT=OFF
+NEAT_LLIMA_DEB_DIR="${NEAT_LLIMA_DEB_DIR:-${NEAT_DEPS_DIR}/llima-debs}"
 NEAT_LLIMA_RESOLVED_REF=""
 NEAT_LLIMA_REQUESTED_REF=""
 NEAT_LLIMA_SNAP_POLICY=OFF
@@ -111,6 +113,8 @@ SYSTEM_DEPS_LINUX=(
   libglib2.0-dev
   libopencv-dev
   nlohmann-json3-dev
+  libcpp-httplib-dev
+  libyaml-cpp-dev
   clang
   clang-format
   ripgrep
@@ -131,6 +135,8 @@ SYSTEM_DEPS_MAC=(
   glib
   opencv
   nlohmann-json
+  cpp-httplib
+  yaml-cpp
 )
 
 SELECTED_SYSTEM_DEPS_LINUX=()
@@ -179,35 +185,22 @@ shadow_workspace_path() {
   printf '%s\n' "${SIMANEAT_SHADOW_ROOT:-/tmp/sima-neat-shadow-${key}}"
 }
 
+copy_shadow_source() {
+  local source="$1" destination="$2"
+  mkdir -p "${destination}"
+  tar -C "${source}" --exclude='./.git' --exclude='./build' \
+    --exclude='./build-*' --exclude='./dist' --exclude='./tmp' \
+    --exclude='./deps/backend' --exclude='./deps/scheduler' --exclude='./website/node_modules' \
+    --exclude='__pycache__' --exclude='.pytest_cache' -cf - . | tar -C "${destination}" -xf -
+}
+
 prepare_shadow_workspace() {
   local shadow_root="$1"
 
   rm -rf "${shadow_root}"
   mkdir -p "${shadow_root}"
 
-  tar -C "${ORIGINAL_WORKSPACE_ROOT}" \
-    --exclude="core/.git" \
-    --exclude="core/build" \
-    --exclude="core/build-*" \
-    --exclude="core/Testing" \
-    --exclude="core/dist" \
-    --exclude="core/tmp" \
-    --exclude="core/.pytest_cache" \
-    --exclude="core/.build-py" \
-    --exclude="core/__pycache__" \
-    --exclude="core/website/node_modules" \
-    --exclude="core/neat-internals/gst-plugins" \
-    --exclude="internals/.git" \
-    --exclude="internals/build" \
-    --exclude="internals/build-*" \
-    --exclude="internals/dist" \
-    --exclude="internals/tmp" \
-    -cf - \
-    core \
-    internals/core \
-    internals/gst_plugins \
-    internals/sima-ai-cvu-sw/graphs \
-    | tar -C "${shadow_root}" -xf -
+  copy_shadow_source "${REPO_ROOT}" "${shadow_root}/core"
 }
 
 maybe_reexec_from_shadow() {
@@ -248,6 +241,7 @@ maybe_reexec_from_shadow() {
     SIMANEAT_SHADOW_BUILD_ACTIVE=ON \
     SIMANEAT_ORIGINAL_SOURCE_DIR="${ORIGINAL_SOURCE_DIR}" \
     SIMANEAT_ORIGINAL_WORKSPACE_ROOT="${ORIGINAL_WORKSPACE_ROOT}" \
+    SIMANEAT_CALLER_DIR="${CALLER_DIR}" \
     bash "${shadow_root}/core/build.sh" "$@"
   )
   local rc=$?
@@ -274,8 +268,15 @@ Options:
   --fuzz         Build fuzz-enabled package artifacts (core + dev + extras + wheel)
   --asan-ubsan   Enable ASan+UBSan instrumentation for this build
   --tsan         Enable TSan instrumentation for this build
+  --scheduler PATH
+                 Use the Scheduler DEB folder at PATH instead of downloading it from Vulcan
+  --llima PATH   Use the LLiMa DEB folder at PATH instead of downloading it from Vulcan
+  --update-sysroot
+                 Update the SDK sysroot to the Scheduler set's pinned version first
+                 (runs sudo sysroot update). Without it, build.sh only warns on a mismatch.
   --install-neat-internals, --install-deps
-                 Download/install internals + LLiMa deps artifacts before build
+                 Prepare Scheduler dependencies and existing LLiMa dependencies
+  --no-llima     Build LLiMa-independent Core targets using the unavailable stubs
   --doc          Build only docs
   --install      After build/package, install artifacts into the current environment.
                  In paired eLxr SDK mode, also deploy/install on the paired DevKit.
@@ -296,6 +297,12 @@ Environment:
                  Manifest used to resolve Vulcan dependency artifacts.
   NEAT_VULCAN_ENV=production
                  Vulcan environment used for dependency artifact installs.
+  NEAT_SCHEDULER_ARTIFACT_DIR=/path/to/scheduler-debs
+                 Same as --scheduler. The folder holds the complete Scheduler set:
+                 simaai-scheduler, the simaai-runner and simaai-kernels-dev it was
+                 built with, and the firmware and Codecs packages it consumed.
+  NEAT_LLIMA_ARTIFACT_DIR=/path/to/llima/dist/debs
+                 Same as --llima.
   SIMA_CLI_BIN=sima-cli
                  sima-cli executable used for Vulcan installs and metadata generation.
   SIMANEAT_SCCACHE=auto|on|off
@@ -313,7 +320,102 @@ Examples:
   ./build.sh --fuzz
   ./build.sh --doc
   ./build.sh --all --clean
+  ./build.sh --scheduler ../scheduler-debs --llima ../llima/dist/debs
 USAGE
+}
+
+absolute_input_dir() {
+  local option="$1" path="$2" resolved
+  if [[ -z "${path}" ]] || ! resolved="$(cd "${CALLER_DIR}" && cd "${path}" 2>/dev/null && pwd -P)"; then
+    echo "ERROR: ${option} needs an existing directory: ${path}" >&2
+    return 1
+  fi
+  printf '%s\n' "${resolved}"
+}
+
+select_scheduler_set() {
+  # Core consumes one complete Scheduler set; Scheduler checks its lower packages.
+  local variable selected
+  for variable in "${!NEAT_KERNELS_@}" "${!NEAT_RUNNER_@}" "${!NEAT_SCHEDULER_@}" "${!NEAT_CODECS_@}"; do
+    if [[ "${variable}" == *_SOURCE || "${variable}" == *_PACKAGE_DIR ]] && [[ -n "${!variable}" ]]; then
+      echo "ERROR: ${variable} is not read by build.sh; pass a Scheduler DEB folder with --scheduler PATH." >&2
+      exit 1
+    fi
+  done
+
+  rm -rf -- "${NEAT_SCHEDULER_DEPS_DIR}"
+  mkdir -p "${NEAT_SCHEDULER_DEPS_DIR}"
+  if [[ -n "${NEAT_SCHEDULER_ARTIFACT_DIR}" ]]; then
+    local deb scheduler_deb=""
+    for deb in "${NEAT_SCHEDULER_ARTIFACT_DIR}"/*.deb; do
+      [[ -f "${deb}" && "$(dpkg-deb -f "${deb}" Package)" == simaai-scheduler ]] || continue
+      if [[ -n "${scheduler_deb}" ]]; then
+        echo "ERROR: More than one simaai-scheduler package in ${NEAT_SCHEDULER_ARTIFACT_DIR}" >&2
+        exit 1
+      fi
+      scheduler_deb="${deb}"
+    done
+    if [[ -z "${scheduler_deb}" ]]; then
+      echo "ERROR: No simaai-scheduler package in ${NEAT_SCHEDULER_ARTIFACT_DIR}" >&2
+      exit 1
+    fi
+    echo "Using local Scheduler packages: ${NEAT_SCHEDULER_ARTIFACT_DIR}"
+    # The coordinator shipped in this Scheduler package checks the whole folder.
+    dpkg-deb -x "${scheduler_deb}" "${NEAT_SCHEDULER_DEPS_DIR}/bootstrap"
+    selected="$(NEAT_SCHEDULER_PACKAGE_DIR="${NEAT_SCHEDULER_DEPS_DIR}/bootstrap" \
+      python3 tools/build_dependencies.py select --core "${REPO_ROOT}" --require \
+      --cohort-dir "${NEAT_SCHEDULER_ARTIFACT_DIR}" --output "${NEAT_SCHEDULER_DEPS_DIR}/local")"
+  else
+    require_sima_cli_neat_install
+    echo "Acquiring Scheduler packages from Vulcan."
+    selected="$(python3 tools/ci/acquire_scheduler.py --core "${REPO_ROOT}" \
+      --branch "$(current_core_branch)" --environment "${NEAT_VULCAN_ENV}" \
+      --cli "${SIMA_CLI_BIN}" --output "${NEAT_SCHEDULER_DEPS_DIR}/vulcan")"
+  fi
+  eval "${selected}"
+}
+
+select_and_normalize_local_artifact_paths() {
+  local variable_name artifact_dir
+  local selected
+  # Source documentation does not compile or package the runtime closure.
+  if [[ "${DOCS_ONLY}" != "ON" ]]; then
+    select_scheduler_set
+    local -a selection_args=(--require)
+    [[ "${INSTALL_DEPS_ONLY}" == "ON" ]] && selection_args+=(--headers-only)
+    selected="$(python3 tools/build_dependencies.py select --core "${REPO_ROOT}" "${selection_args[@]}")"
+    eval "${selected}"
+  fi
+
+  for variable_name in NEAT_LLIMA_ARTIFACT_DIR; do
+    artifact_dir="${!variable_name}"
+    if [[ -z "${artifact_dir}" ]]; then
+      continue
+    fi
+    if [[ ! -d "${artifact_dir}" ]]; then
+      echo "ERROR: Local artifact directory does not exist: ${artifact_dir}" >&2
+      exit 1
+    fi
+    printf -v "${variable_name}" '%s' "$(cd "${artifact_dir}" && pwd -P)"
+    export "${variable_name}"
+  done
+}
+
+modify_sysroot() {
+  "$@" 2>/dev/null || run_privileged "$@"
+}
+
+prepare_scheduler_sdk() {
+  # Check the sysroot version and fetch the Runner's platform archives. The
+  # selected set stays in deps/; nothing is installed into the sysroot.
+  if [[ "${DOCS_ONLY}" != "ON" && "${ELXR_SDK}" == "ON" &&
+        "${INSTALL_DEPS_ONLY}" != "ON" && -z "${NEAT_RUNNER_PLATFORM_RUNTIME_DEBS:-}" ]]; then
+    local sdk_exports
+    rm -rf -- "${NEAT_SCHEDULER_DEPS_DIR}/platform-debs"
+    sdk_exports="$(NEAT_UPDATE_SYSROOT="${UPDATE_SYSROOT}" SDK_PKG_LIST="${SDK_PKG_LIST:+${SDK_PKG_LIST},}nlohmann-json3-dev,libyaml-cpp-dev" \
+      bash scripts/ci/prepare_scheduler_sdk.sh "${NEAT_SCHEDULER_DEPS_DIR}/platform-debs")"
+    eval "${sdk_exports}"
+  fi
 }
 
 parse_args() {
@@ -329,7 +431,6 @@ parse_args() {
         BUILD_TUTORIALS=ON
         BUILD_DOCS=ON
         BUILD_PYTHON=ON
-        INSTALL_NEAT_INTERNALS=ON
         INSTALL_NEAT_LLIMA=ON
         BUILD_ALL=ON
         shift
@@ -347,7 +448,6 @@ parse_args() {
         BUILD_TUTORIALS=ON
         BUILD_DOCS=ON
         BUILD_PYTHON=ON
-        INSTALL_NEAT_INTERNALS=ON
         INSTALL_NEAT_LLIMA=ON
         shift
         ;;
@@ -362,7 +462,6 @@ parse_args() {
         BUILD_PYTHON=ON
         BUILD_ALL=ON
         BUILD_FUZZ=ON
-        INSTALL_NEAT_INTERNALS=ON
         INSTALL_NEAT_LLIMA=ON
         shift
         ;;
@@ -390,9 +489,24 @@ parse_args() {
         BUILD_TUTORIALS=OFF
         shift
         ;;
+      --scheduler)
+        NEAT_SCHEDULER_ARTIFACT_DIR="$(absolute_input_dir --scheduler "${2:-}")"
+        shift 2
+        ;;
+      --llima)
+        NEAT_LLIMA_ARTIFACT_DIR="$(absolute_input_dir --llima "${2:-}")"
+        shift 2
+        ;;
+      --update-sysroot)
+        UPDATE_SYSROOT=ON
+        shift
+        ;;
       --install-neat-internals|--install-deps)
-        INSTALL_NEAT_INTERNALS=ON
         INSTALL_NEAT_LLIMA=ON
+        shift
+        ;;
+      --no-llima)
+        SKIP_NEAT_LLIMA=ON
         shift
         ;;
       --example)
@@ -439,6 +553,10 @@ parse_args() {
 }
 
 validate_build_mode_combinations() {
+  if [[ "${SKIP_NEAT_LLIMA}" == "ON" ]]; then
+    INSTALL_NEAT_LLIMA=OFF
+  fi
+
   if [[ "${INSTALL_AFTER_BUILD}" == "ON" ]]; then
     SKIP_DIST=OFF
   fi
@@ -531,6 +649,16 @@ activate_elxr_build_env_if_needed() {
   echo "Activating eLxr build environment: source ${ELXR_INIT_SCRIPT} ${ELXR_MACHINE}"
   # shellcheck disable=SC1090
   source "${ELXR_INIT_SCRIPT}" "${ELXR_MACHINE}"
+  # The init script puts the sysroot headers first with -I, ahead of the
+  # Scheduler set's include directories in deps/. As -isystem, simaai/ comes
+  # after those but still before the sysroot's usr/include, which GCC searches
+  # last on its own; LLiMa needs the nlohmann-json copy in simaai/.
+  local variable
+  for variable in CFLAGS CXXFLAGS CPPFLAGS; do
+    printf -v "${variable}" '%s' "${!variable//" -I${SYSROOT}/usr/include/simaai"/" -isystem ${SYSROOT}/usr/include/simaai"}"
+    printf -v "${variable}" '%s' "${!variable//" -I${SYSROOT}/usr/include"/}"
+    export "${variable}"
+  done
   detect_elxr_wheel_platform
 }
 
@@ -589,6 +717,7 @@ select_system_deps() {
       curl
       doxygen
       graphviz
+      nlohmann-json3-dev
     )
     SELECTED_SYSTEM_DEPS_MAC=(
       cmake
@@ -596,10 +725,16 @@ select_system_deps() {
       git
       doxygen
       graphviz
+      nlohmann-json
     )
   else
     SELECTED_SYSTEM_DEPS_LINUX=("${SYSTEM_DEPS_LINUX[@]}")
     SELECTED_SYSTEM_DEPS_MAC=("${SYSTEM_DEPS_MAC[@]}")
+  fi
+
+  # libjpeg sampling for the short decoder accuracy fixtures.
+  if [[ "${BUILD_TESTS}" == "ON" ]]; then
+    SELECTED_SYSTEM_DEPS_LINUX+=(python3-pil)
   fi
 
   # Python runtime is required for docs helper scripts and wheel builds.
@@ -621,27 +756,52 @@ run_privileged() {
   fi
 
   if command -v sudo >/dev/null 2>&1; then
+    local -a sudo_env=()
+    if [[ -v SDK_APT_CHANNEL ]]; then
+      sudo_env+=("--preserve-env=SDK_APT_CHANNEL")
+    fi
     if sudo -n true 2>/dev/null; then
-      sudo -n "$@"
+      sudo -n "${sudo_env[@]}" "$@"
       return $?
     fi
 
     local sudo_pw="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
     if [[ -n "${sudo_pw}" ]]; then
       if printf '%s\n' "${sudo_pw}" | sudo -S -v >/dev/null 2>&1; then
-        printf '%s\n' "${sudo_pw}" | sudo -S "$@"
+        printf '%s\n' "${sudo_pw}" | sudo -S "${sudo_env[@]}" "$@"
         return $?
       fi
     fi
 
     # Fallback for local/dev environments where sudo requires a password.
     if [[ -t 0 && -t 1 ]]; then
-      sudo "$@"
+      sudo "${sudo_env[@]}" "$@"
       return $?
     fi
   fi
 
   return 1
+}
+
+ensure_core_yaml_sdk_deps() {
+  if [[ "${ELXR_SDK}" != "ON" || "${DOCS_ONLY}" == "ON" ]]; then
+    return
+  fi
+  if [[ -f "${SYSROOT}/usr/include/yaml-cpp/yaml.h" &&
+        -f "${SYSROOT}/usr/lib/aarch64-linux-gnu/pkgconfig/yaml-cpp.pc" &&
+        -e "${SYSROOT}/usr/lib/aarch64-linux-gnu/libyaml-cpp.so" ]]; then
+    return
+  fi
+  local yaml_stage
+  yaml_stage="$(mktemp -d /tmp/sima-neat-yaml-deps-XXXXXX)"
+  (cd "${yaml_stage}" && apt-get download libyaml-cpp-dev:arm64 libyaml-cpp0.8:arm64)
+  local yaml_deb
+  for yaml_deb in "${yaml_stage}"/*.deb; do
+    if ! dpkg-deb -x "${yaml_deb}" "${SYSROOT}" 2>/dev/null; then
+      run_privileged dpkg-deb -x "${yaml_deb}" "${SYSROOT}"
+    fi
+  done
+  rm -rf "${yaml_stage}"
 }
 
 ensure_llima_sdk_sysroot_deps() {
@@ -665,17 +825,13 @@ ensure_llima_sdk_sysroot_deps() {
         ! -f "${install_root}/usr/share/eigen3/cmake/Eigen3Config.cmake" ]]; then
     missing_packages+=("libeigen3-dev")
   fi
-  if [[ ! -f "${install_root}/usr/include/fmt/core.h" ]]; then
-    missing_packages+=("libfmt-dev:arm64")
+  if [[ ! -f "${install_root}/usr/include/fmt/core.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libfmt.so" ]]; then
+    missing_packages+=("libfmt-dev:arm64" "libfmt10:arm64")
   fi
-  if [[ ! -f "${install_root}/usr/lib/aarch64-linux-gnu/libfmt.so.9.1.0" ]]; then
-    missing_packages+=("libfmt9:arm64")
-  fi
-  if [[ ! -f "${install_root}/usr/include/spdlog/spdlog.h" ]]; then
-    missing_packages+=("libspdlog-dev:arm64")
-  fi
-  if [[ ! -f "${install_root}/usr/lib/aarch64-linux-gnu/libspdlog.so.1.10.0" ]]; then
-    missing_packages+=("libspdlog1.10:arm64")
+  if [[ ! -f "${install_root}/usr/include/spdlog/spdlog.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libspdlog.so" ]]; then
+    missing_packages+=("libspdlog-dev:arm64" "libspdlog1.15:arm64")
   fi
   if [[ ! -f "${install_root}/usr/include/nlohmann/json.hpp" ]]; then
     missing_packages+=("nlohmann-json3-dev")
@@ -685,11 +841,29 @@ ensure_llima_sdk_sysroot_deps() {
         ! -f "${install_root}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlienc.pc" ]]; then
     missing_packages+=("libbrotli-dev:arm64")
   fi
-  if [[ ! -f "${install_root}/usr/include/httplib.h" ]]; then
-    missing_packages+=("libcpp-httplib-dev:arm64")
+  if [[ ! -f "${install_root}/usr/include/httplib.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so" ]]; then
+    missing_packages+=("libcpp-httplib-dev:arm64" "libcpp-httplib0.18:arm64")
   fi
-  if [[ ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.11" ]]; then
-    missing_packages+=("libcpp-httplib0.11:arm64")
+  if [[ ! -f "${install_root}/usr/include/fftw3.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libfftw3.so" ]]; then
+    missing_packages+=("libfftw3-dev:arm64" "libfftw3-double3:arm64")
+  fi
+  if [[ ! -f "${install_root}/usr/include/aarch64-linux-gnu/libavcodec/avcodec.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libavcodec.so" ]]; then
+    missing_packages+=("libavcodec-dev:arm64" "libavcodec61:arm64")
+  fi
+  if [[ ! -f "${install_root}/usr/include/aarch64-linux-gnu/libavformat/avformat.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libavformat.so" ]]; then
+    missing_packages+=("libavformat-dev:arm64" "libavformat61:arm64")
+  fi
+  if [[ ! -f "${install_root}/usr/include/aarch64-linux-gnu/libavutil/avutil.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libavutil.so" ]]; then
+    missing_packages+=("libavutil-dev:arm64" "libavutil59:arm64")
+  fi
+  if [[ ! -f "${install_root}/usr/include/aarch64-linux-gnu/libswresample/swresample.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libswresample.so" ]]; then
+    missing_packages+=("libswresample-dev:arm64" "libswresample5:arm64")
   fi
 
   if (( ${#missing_packages[@]} == 0 )); then
@@ -727,9 +901,21 @@ ensure_llima_sdk_sysroot_deps() {
 
   if [[ ! -f "${install_root}/usr/include/eigen3/unsupported/Eigen/CXX11/Tensor" ||
         ! -f "${install_root}/usr/include/fmt/core.h" ||
-        ! -f "${install_root}/usr/lib/aarch64-linux-gnu/libfmt.so.9.1.0" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libfmt.so" ||
         ! -f "${install_root}/usr/include/spdlog/spdlog.h" ||
-        ! -f "${install_root}/usr/lib/aarch64-linux-gnu/libspdlog.so.1.10.0" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libspdlog.so" ||
+        ! -f "${install_root}/usr/include/httplib.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so" ||
+        ! -f "${install_root}/usr/include/fftw3.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libfftw3.so" ||
+        ! -f "${install_root}/usr/include/aarch64-linux-gnu/libavcodec/avcodec.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libavcodec.so" ||
+        ! -f "${install_root}/usr/include/aarch64-linux-gnu/libavformat/avformat.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libavformat.so" ||
+        ! -f "${install_root}/usr/include/aarch64-linux-gnu/libavutil/avutil.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libavutil.so" ||
+        ! -f "${install_root}/usr/include/aarch64-linux-gnu/libswresample/swresample.h" ||
+        ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libswresample.so" ||
         ! -f "${install_root}/usr/include/nlohmann/json.hpp" ]]; then
       echo "ERROR: LLiMa SDK sysroot dependencies are still incomplete after install." >&2
       rm -rf "${tmp_dir}"
@@ -902,42 +1088,6 @@ current_core_tag() {
   printf '\n'
 }
 
-resolve_neat_internals_ref() {
-  NEAT_INTERNALS_SNAP_TAG_POLICY=OFF
-  if [[ ! -f "${NEAT_DEPS_MANIFEST}" ]]; then
-    echo "ERROR: Missing manifest: ${NEAT_DEPS_MANIFEST}" >&2
-    return 1
-  fi
-
-  local manifest_spec
-  if ! manifest_spec="$(manifest_dependency_spec "internals" "${NEAT_DEPS_MANIFEST}")"; then
-    return 1
-  fi
-
-  local branch spec tag
-  if [[ "${manifest_spec}" == "__SNAP__" ]]; then
-    NEAT_INTERNALS_SNAP_POLICY=ON
-    tag="$(current_core_tag)"
-    if [[ -n "${tag}" ]]; then
-      NEAT_INTERNALS_SNAP_TAG_POLICY=ON
-      branch="${tag}"
-    else
-      branch="$(current_core_branch)"
-      if [[ -z "${branch}" || "${branch}" == "HEAD" ]]; then
-        echo "Could not determine current branch for internals snap; using develop." >&2
-        branch="develop"
-      fi
-    fi
-  elif [[ "${manifest_spec}" == *":"* ]]; then
-    branch="${manifest_spec%%:*}"
-    spec="${manifest_spec#*:}"
-  else
-    branch="${manifest_spec}"
-  fi
-  spec="${spec:-latest}"
-
-  NEAT_INTERNALS_REQUESTED_REF="${branch}:${spec}"
-}
 
 resolve_neat_llima_ref() {
   NEAT_LLIMA_SNAP_TAG_POLICY=OFF
@@ -976,212 +1126,9 @@ resolve_neat_llima_ref() {
   NEAT_LLIMA_REQUESTED_REF="${branch}:${spec}"
 }
 
-find_legacy_plugin_dir() {
-  # Support legacy tarball layouts where plugins were shipped directly as files.
-  local extract_dir="$1"
-  local extracted_plugin_dir="${extract_dir}"
 
-  if [[ -d "${extract_dir}/gst-plugins" ]]; then
-    printf '%s\n' "${extract_dir}/gst-plugins"
-    return 0
-  fi
 
-  local nested_plugin_dir
-  # Handle nested archives that tuck gst-plugins below one or more directories.
-  nested_plugin_dir="$(find "${extract_dir}" -mindepth 1 -maxdepth 4 -type d -name gst-plugins | head -n1 || true)"
-  if [[ -n "${nested_plugin_dir}" ]]; then
-    printf '%s\n' "${nested_plugin_dir}"
-    return 0
-  fi
 
-  # Support archives that contain a single top-level directory with the plugin files.
-  mapfile -t top_dirs < <(find "${extract_dir}" -mindepth 1 -maxdepth 1 -type d)
-  if [[ "${#top_dirs[@]}" -eq 1 ]]; then
-    extracted_plugin_dir="${top_dirs[0]}"
-  fi
-
-  printf '%s\n' "${extracted_plugin_dir}"
-}
-
-collect_plugin_files_from_debs() {
-  local extract_dir="$1"
-  local output_file="$2"
-  local deb_cache_dir="$3"
-  local install_root="${SYSROOT:-}"
-
-  # New artifact model: tarball contains one or more .deb files.
-  mapfile -t deb_files < <(find "${extract_dir}" -type f -name '*.deb' | sort)
-  if (( ${#deb_files[@]} == 0 )); then
-    return 1
-  fi
-
-  if ! command -v dpkg-deb >/dev/null 2>&1; then
-    echo "ERROR: dpkg-deb is required to extract .so files from neat-internals .deb packages." >&2
-    exit 1
-  fi
-
-  mkdir -p "${deb_cache_dir}"
-  rm -f "${deb_cache_dir}"/*.deb
-  local cached_deb
-  for cached_deb in "${deb_files[@]}"; do
-    cp -f "${cached_deb}" "${deb_cache_dir}/$(basename "${cached_deb}")"
-  done
-
-  if [[ "${ELXR_SDK}" == "ON" ]]; then
-    if [[ -z "${install_root}" ]]; then
-      echo "ERROR: eLxr SDK mode requires SYSROOT to be set before installing neat-internals .deb packages." >&2
-      exit 1
-    fi
-    if ! mkdir -p "${install_root}" 2>/dev/null; then
-      if ! run_privileged mkdir -p "${install_root}"; then
-        echo "ERROR: Unable to create SYSROOT directory: ${install_root}" >&2
-        exit 1
-      fi
-    fi
-    echo "Installing neat-internals .deb payloads into eLxr sysroot: ${install_root}"
-  else
-    if ! command -v dpkg >/dev/null 2>&1; then
-      echo "ERROR: dpkg is required to install neat-internals .deb packages." >&2
-      exit 1
-    fi
-    # Install packages into host system locations so runtime can resolve them globally.
-    echo "Installing neat-internals .deb packages into host system..."
-    if command -v apt >/dev/null 2>&1; then
-      mapfile -t deb_abs_files < <(for deb in "${deb_files[@]}"; do realpath "${deb}"; done)
-      # Use apt for local .deb install so dependency resolution happens automatically in CI.
-      if ! run_privileged apt install -y --allow-downgrades -o Dpkg::Options::=--force-overwrite "${deb_abs_files[@]}"; then
-        echo "ERROR: Failed to install neat-internals .deb packages via apt." >&2
-        exit 1
-      fi
-    else
-      if ! run_privileged dpkg -i "${deb_files[@]}"; then
-        echo "ERROR: Failed to install deps .deb packages." >&2
-        exit 1
-      fi
-    fi
-  fi
-
-  local deb_extract_root
-  # Also unpack each .deb into temp space to collect .so files for local mirror.
-  deb_extract_root="$(dirname "${output_file}")/deb-extract"
-  mkdir -p "${deb_extract_root}"
-
-  : > "${output_file}"
-
-  local deb_path
-  for deb_path in "${deb_files[@]}"; do
-    local deb_name
-    deb_name="$(basename "${deb_path}" .deb)"
-    local pkg_name
-    local pkg_version
-    pkg_name="$(dpkg-deb -f "${deb_path}" Package 2>/dev/null || true)"
-    pkg_version="$(dpkg-deb -f "${deb_path}" Version 2>/dev/null || true)"
-
-    local deb_extract_dir="${deb_extract_root}/${deb_name}"
-    mkdir -p "${deb_extract_dir}"
-    dpkg-deb -x "${deb_path}" "${deb_extract_dir}"
-
-    if [[ "${ELXR_SDK}" == "ON" ]]; then
-      if ! cp -a "${deb_extract_dir}/." "${install_root}/" 2>/dev/null; then
-        if ! run_privileged cp -a "${deb_extract_dir}/." "${install_root}/"; then
-          echo "ERROR: Failed to install ${deb_name}.deb into SYSROOT=${install_root}" >&2
-          exit 1
-        fi
-      fi
-    fi
-
-    if [[ -n "${pkg_name}" ]]; then
-      if [[ -n "${pkg_version}" ]]; then
-        echo "Installed package: ${pkg_name} (${pkg_version})"
-      else
-        echo "Installed package: ${pkg_name}"
-      fi
-    else
-      echo "Installed package from ${deb_name}.deb (unable to resolve package metadata)."
-    fi
-
-    if [[ "${ELXR_SDK}" == "ON" ]]; then
-      echo "SYSROOT library paths:"
-      local rel_path
-      local sysroot_path
-      local -a sysroot_paths=()
-      for rel_path in usr/lib usr/libexec; do
-        if [[ -d "${deb_extract_dir}/${rel_path}" ]]; then
-          while IFS= read -r sysroot_path; do
-            sysroot_paths+=("${sysroot_path}")
-          done < <(
-            find "${deb_extract_dir}/${rel_path}" -mindepth 1 -print |
-              sed "s|^${deb_extract_dir}|${install_root}|"
-          )
-        fi
-      done
-      if [[ "${#sysroot_paths[@]}" -eq 0 ]]; then
-        echo "  (no /usr/lib* or /usr/libexec paths reported)"
-      else
-        printf '  %s\n' "${sysroot_paths[@]}"
-      fi
-    else
-      echo "System library paths:"
-      # Print user-visible install destinations for quick verification/debugging.
-      if [[ -n "${pkg_name}" ]]; then
-        dpkg -L "${pkg_name}" 2>/dev/null | awk '
-          /^\/usr\/lib/ || /^\/usr\/libexec/ { print "  " $0; found=1 }
-          END { if (!found) print "  (no /usr/lib* or /usr/libexec paths reported)" }
-        '
-      else
-        echo "  (package name unavailable; unable to query dpkg -L)"
-      fi
-    fi
-
-    find "${deb_extract_dir}" \
-      \( -type f -o -type l \) \
-      \( -name '*.so' -o -name '*.so.*' \) \
-      -print >> "${output_file}"
-  done
-
-  return 0
-}
-
-collect_plugin_files_from_legacy_tar() {
-  # Backward compatibility: handle old tarballs containing plugin .so files.
-  local extract_dir="$1"
-  local output_file="$2"
-
-  local extracted_plugin_dir
-  extracted_plugin_dir="$(find_legacy_plugin_dir "${extract_dir}")"
-
-  find "${extracted_plugin_dir}" -maxdepth 1 -type f \
-    \( -name '*.so' -o -name '*.so.*' -o -name 'dispatcher_watchdog' \) \
-    -print > "${output_file}"
-}
-
-copy_plugins_to_neat_internals() {
-  # Mirror plugin binaries into repo-local neat-internals for source builds/tests.
-  local plugins_list_file="$1"
-
-  if [[ ! -s "${plugins_list_file}" ]]; then
-    echo "ERROR: Downloaded artifact does not contain extractable .so files." >&2
-    exit 1
-  fi
-
-  mkdir -p "${NEAT_INTERNALS_DIR}"
-  rm -rf "${NEAT_INTERNALS_PLUGIN_DIR}"
-  mkdir -p "${NEAT_INTERNALS_PLUGIN_DIR}"
-
-  declare -A plugin_by_name=()
-  local plugin_path
-  # Deduplicate by basename to avoid cp collisions from overlapping package payloads.
-  while IFS= read -r plugin_path; do
-    [[ -z "${plugin_path}" ]] && continue
-    plugin_by_name["$(basename "${plugin_path}")"]="${plugin_path}"
-  done < "${plugins_list_file}"
-
-  mapfile -t plugin_names < <(printf '%s\n' "${!plugin_by_name[@]}" | sort)
-  local plugin_name
-  for plugin_name in "${plugin_names[@]}"; do
-    cp -a "${plugin_by_name[${plugin_name}]}" "${NEAT_INTERNALS_PLUGIN_DIR}/${plugin_name}"
-  done
-}
 
 bootstrap_sima_cli_for_ci_if_needed() {
   case "${SIMANEAT_BOOTSTRAP_SIMA_CLI}" in
@@ -1228,68 +1175,6 @@ require_sima_cli_neat_install() {
   fi
 }
 
-fetch_neat_internals_vulcan_artifacts() {
-  local internals_ref="$1"
-  local output_dir="$2"
-
-  require_sima_cli_neat_install
-
-  local -a base_args=(neat install --env "${NEAT_VULCAN_ENV}")
-  if [[ -n "${NEAT_VULCAN_BASE_URL}" ]]; then
-    base_args+=(--base-url "${NEAT_VULCAN_BASE_URL}")
-  fi
-
-  local resolve_output resolved_ref
-  if ! resolve_output="$("${SIMA_CLI_BIN}" "${base_args[@]}" "${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" --json)"; then
-    if [[ "${NEAT_INTERNALS_SNAP_TAG_POLICY}" == "ON" ]]; then
-      echo "ERROR: Failed to resolve exact tag-snap internals Vulcan artifact: ${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" >&2
-      exit 1
-    fi
-    if [[ "${NEAT_INTERNALS_SNAP_POLICY}" != "ON" || "${internals_ref}" == "develop:latest" ]]; then
-      echo "ERROR: Failed to resolve internals Vulcan artifact: ${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" >&2
-      exit 1
-    fi
-
-    echo "No internals Vulcan artifact found for '${internals_ref}'; retrying develop:latest." >&2
-    internals_ref="develop:latest"
-    if ! resolve_output="$("${SIMA_CLI_BIN}" "${base_args[@]}" "${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" --json)"; then
-      echo "ERROR: Failed to resolve fallback internals Vulcan artifact: ${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" >&2
-      exit 1
-    fi
-  fi
-
-  resolved_ref="$(python3 - <<'PY' "${resolve_output}"
-import json
-import sys
-
-text = sys.argv[1]
-start = text.find("{")
-if start < 0:
-    raise SystemExit("missing JSON object in sima-cli neat install --json output")
-payload = json.loads(text[start:])
-ref = str(payload.get("ref", "")).strip()
-spec = str(payload.get("resolved_spec", "")).strip()
-if not ref or not spec:
-    raise SystemExit("sima-cli neat install --json did not return ref and resolved_spec")
-print(f"{ref}:{spec}")
-PY
-  )"
-  NEAT_INTERNALS_RESOLVED_REF="${resolved_ref}"
-
-  local -a install_args=(
-    "${base_args[@]}"
-    -d "${output_dir}"
-    "${NEAT_INTERNALS_VULCAN_REPOSITORY}@${resolved_ref}"
-  )
-
-  echo "Fetching neat-internals packages from Vulcan: ${NEAT_INTERNALS_VULCAN_REPOSITORY}@${resolved_ref}"
-  rm -rf "${output_dir}"
-  mkdir -p "${output_dir}"
-  if ! "${SIMA_CLI_BIN}" "${install_args[@]}"; then
-    echo "ERROR: Failed to fetch internals Vulcan artifact: ${NEAT_INTERNALS_VULCAN_REPOSITORY}@${resolved_ref}" >&2
-    exit 1
-  fi
-}
 
 fetch_neat_llima_vulcan_artifacts() {
   local llima_ref="$1"
@@ -1354,112 +1239,8 @@ PY
   fi
 }
 
-sync_sysroot_from_internals_manifest() {
-  local artifact_dir="$1"
-  [[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]] || return 0
 
-  if [[ "${ELXR_SDK}" != "ON" ]]; then
-    echo "ERROR: NEAT_SYNC_SYSROOT requires an eLxr SDK." >&2
-    exit 1
-  fi
 
-  local artifact_manifest="${artifact_dir}/internals-manifest.json"
-  if [[ ! -f "${artifact_manifest}" ]]; then
-    echo "ERROR: Internals artifact is missing internals-manifest.json." >&2
-    exit 1
-  fi
-
-  local receipt
-  if ! receipt="$(python3 -c '
-import json, re, sys
-artifact = json.load(open(sys.argv[1], encoding="utf-8"))
-consumer = json.load(open(sys.argv[2], encoding="utf-8"))
-receipt = artifact["sysroot-version"]
-consumer_base = consumer["platform-version"]
-if not isinstance(receipt, str) or (
-    receipt
-    and not re.fullmatch(r"[0-9]+(?:[.][0-9]+){2}(?:~pre[0-9]+)?", receipt)
-):
-    raise ValueError("invalid sysroot-version")
-if receipt and consumer_base != receipt.split("~pre", 1)[0]:
-    raise ValueError("platform-version does not match the Internals receipt")
-print(receipt)
-' "${artifact_manifest}" "${NEAT_DEPS_MANIFEST}")"; then
-    echo "ERROR: Cannot read Internals build receipt." >&2
-    exit 1
-  fi
-  if [[ -z "${receipt}" ]]; then
-    echo "Core is using the existing SDK sysroot."
-    return 0
-  fi
-
-  if [[ "${receipt}" == *"~pre"* ]]; then
-    echo "Updating SDK sysroot to Internals receipt ${receipt}"
-    if ! run_privileged sysroot update "${receipt}"; then
-      echo "ERROR: Failed to update SDK sysroot to ${receipt}." >&2
-      exit 1
-    fi
-    sysroot status
-    return 0
-  fi
-
-  local sdk_platform_version
-  sdk_platform_version="$(sed -nE \
-    's/^Platform Version[[:space:]]*=[[:space:]]*([^[:space:]]+).*$/\1/p' \
-    "${ELXR_SDK_RELEASE_FILE}" 2>/dev/null | head -n1 || true)"
-  if [[ "${sdk_platform_version}" != "${receipt}" ]]; then
-    echo "ERROR: SDK platform ${sdk_platform_version:-unknown} does not match required stable platform ${receipt}." >&2
-    exit 1
-  fi
-  echo "Using stable SDK sysroot ${sdk_platform_version} without updating it."
-}
-
-preserve_internals_artifact_manifest() {
-  local artifact_manifest="$1/internals-manifest.json"
-  if [[ ! -f "${artifact_manifest}" ]]; then
-    echo "ERROR: Internals artifact is missing internals-manifest.json." >&2
-    exit 1
-  fi
-
-  mkdir -p "$(dirname "${NEAT_INTERNALS_ARTIFACT_MANIFEST}")"
-  cp -f "${artifact_manifest}" "${NEAT_INTERNALS_ARTIFACT_MANIFEST}"
-}
-
-ensure_neat_internals() {
-  # Sync neat-internals from Vulcan package artifacts, then materialize plugins.
-  local internals_ref
-  if ! resolve_neat_internals_ref; then
-    exit 1
-  fi
-  internals_ref="${NEAT_INTERNALS_REQUESTED_REF}"
-  NEAT_INTERNALS_RESOLVED_REF="${internals_ref}"
-
-  local deb_cache_dir="${NEAT_INTERNALS_DEB_DIR}"
-
-  local tmp_dir
-  # Use an isolated temp workspace so partial failures do not pollute tree state.
-  tmp_dir="$(mktemp -d /tmp/sima-neat-internals-XXXXXX)"
-
-  local artifact_dir="${tmp_dir}/package"
-  local plugins_list_file="${tmp_dir}/plugin-files.list"
-
-  fetch_neat_internals_vulcan_artifacts "${internals_ref}" "${artifact_dir}"
-  internals_ref="${NEAT_INTERNALS_RESOLVED_REF:-${internals_ref}}"
-  sync_sysroot_from_internals_manifest "${artifact_dir}"
-  if [[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]]; then
-    preserve_internals_artifact_manifest "${artifact_dir}"
-  fi
-
-  if ! collect_plugin_files_from_debs "${artifact_dir}" "${plugins_list_file}" "${deb_cache_dir}"; then
-    echo "ERROR: Vulcan internals artifact did not contain .deb packages." >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-
-  copy_plugins_to_neat_internals "${plugins_list_file}"
-
-  rm -rf "${tmp_dir}"
-}
 
 ensure_neat_llima() {
   # Sync LLiMa packages from Vulcan artifacts. Only core/dev are installed into
@@ -1471,44 +1252,59 @@ ensure_neat_llima() {
   llima_ref="${NEAT_LLIMA_REQUESTED_REF}"
   NEAT_LLIMA_RESOLVED_REF="${llima_ref}"
 
-  local marker_file="${NEAT_INTERNALS_DIR}/.llima"
+  local marker_file="${NEAT_DEPS_DIR}/.llima"
   local deb_cache_dir="${NEAT_LLIMA_DEB_DIR}"
 
   local tmp_dir
   tmp_dir="$(mktemp -d /tmp/sima-neat-llima-XXXXXX)"
 
   local artifact_dir="${tmp_dir}/package"
-  local using_cached_debs=0
-  if [[ -f "${marker_file}" ]] &&
+  local using_deb_cache=0
+  if [[ -n "${NEAT_LLIMA_ARTIFACT_DIR}" ]]; then
+    artifact_dir="${NEAT_LLIMA_ARTIFACT_DIR}"
+    echo "Using local LLiMa packages: ${artifact_dir}"
+  elif [[ -f "${marker_file}" ]] &&
      [[ "$(tr -d '[:space:]' < "${marker_file}")" == "${llima_ref}" ]] &&
      compgen -G "${deb_cache_dir}/sima-lmm-*-Linux-core.deb" >/dev/null 2>&1 &&
      compgen -G "${deb_cache_dir}/sima-lmm-*-Linux-dev.deb" >/dev/null 2>&1 &&
      compgen -G "${deb_cache_dir}/sima-lmm-*-Linux-cli.deb" >/dev/null 2>&1; then
     echo "Using cached LLiMa debs (${llima_ref})."
     artifact_dir="${deb_cache_dir}"
-    using_cached_debs=1
+    using_deb_cache=1
   else
     fetch_neat_llima_vulcan_artifacts "${llima_ref}" "${artifact_dir}"
     llima_ref="${NEAT_LLIMA_RESOLVED_REF:-${llima_ref}}"
   fi
 
+  # Match check_llima's root-only publication inventory, not build-tree DEBs.
   local core_deb dev_deb cli_deb
-  core_deb="$(find "${artifact_dir}" -maxdepth 3 -type f -name 'sima-lmm-*-Linux-core.deb' | sort | head -n 1)"
-  dev_deb="$(find "${artifact_dir}" -maxdepth 3 -type f -name 'sima-lmm-*-Linux-dev.deb' | sort | head -n 1)"
-  cli_deb="$(find "${artifact_dir}" -maxdepth 3 -type f -name 'sima-lmm-*-Linux-cli.deb' | sort | head -n 1)"
+  core_deb="$(find "${artifact_dir}" -maxdepth 1 -type f -name 'sima-lmm-*-Linux-core.deb' | sort | head -n 1)"
+  dev_deb="$(find "${artifact_dir}" -maxdepth 1 -type f -name 'sima-lmm-*-Linux-dev.deb' | sort | head -n 1)"
+  cli_deb="$(find "${artifact_dir}" -maxdepth 1 -type f -name 'sima-lmm-*-Linux-cli.deb' | sort | head -n 1)"
   if [[ -z "${core_deb}" || -z "${dev_deb}" || -z "${cli_deb}" ]]; then
     echo "ERROR: Expected sima-lmm core/dev/cli debs were not found in Vulcan LLiMa artifact." >&2
-    find "${artifact_dir}" -maxdepth 3 -type f -name '*.deb' -printf '  %f\n' | sort >&2
+    find "${artifact_dir}" -maxdepth 1 -type f -name '*.deb' -printf '  %f\n' | sort >&2
     rm -rf "${tmp_dir}"
     exit 1
   fi
 
-  if [[ "${using_cached_debs}" != "1" ]]; then
+  # Compare the exact selected LLiMa publication with Scheduler before installation.
+  local scheduler_policy
+  scheduler_policy="$(python3 tools/build_dependencies.py sdk-policy --core "${REPO_ROOT}")"
+  local -a compatibility_args=(--policy-json "${scheduler_policy}" --llima-dir "${artifact_dir}")
+  if [[ -z "${NEAT_LLIMA_ARTIFACT_DIR}" && "${using_deb_cache}" != "1" ]]; then
+    compatibility_args+=(--llima-selector "${NEAT_LLIMA_RESOLVED_REF}"
+      --environment "${NEAT_VULCAN_ENV}" --cli "${SIMA_CLI_BIN}")
+  fi
+  python3 tools/ci/scheduler_sdk_policy.py "${compatibility_args[@]}"
+
+  if [[ "${using_deb_cache}" != "1" ]]; then
     mkdir -p "${deb_cache_dir}"
     rm -f "${deb_cache_dir}"/sima-lmm-*.deb
     cp -f "${core_deb}" "${deb_cache_dir}/$(basename "${core_deb}")"
     cp -f "${dev_deb}" "${deb_cache_dir}/$(basename "${dev_deb}")"
     cp -f "${cli_deb}" "${deb_cache_dir}/$(basename "${cli_deb}")"
+    cp -f "${artifact_dir}/llima-package-manifest.json" "${artifact_dir}/llima-policy-metadata.json" "${deb_cache_dir}/"
   fi
 
   local -a llima_debs=("${core_deb}" "${dev_deb}")
@@ -1527,19 +1323,27 @@ ensure_neat_llima() {
         exit 1
       fi
     fi
-    echo "Installing LLiMa .deb payloads into eLxr sysroot: ${install_root}"
     ensure_llima_sdk_sysroot_deps
-    local deb_path
-    for deb_path in "${llima_debs[@]}"; do
-      echo "  $(basename "${deb_path}")"
-      if ! dpkg-deb -x "${deb_path}" "${install_root}" 2>/dev/null; then
-        if ! run_privileged dpkg-deb -x "${deb_path}" "${install_root}"; then
-          echo "ERROR: Failed to install $(basename "${deb_path}") into SYSROOT=${install_root}" >&2
-          rm -rf "${tmp_dir}"
-          exit 1
+    # Skip the unpack when the sysroot already holds these exact packages.
+    local llima_record="${install_root}/${NEAT_SYSROOT_LLIMA_RECORD}"
+    sha256sum "${llima_debs[@]}" | cut -d ' ' -f 1 > "${tmp_dir}/llima.sha256"
+    if cmp -s "${tmp_dir}/llima.sha256" "${llima_record}"; then
+      echo "LLiMa packages already in eLxr sysroot: ${install_root}"
+    else
+      echo "Installing LLiMa .deb payloads into eLxr sysroot: ${install_root}"
+      local deb_path
+      for deb_path in "${llima_debs[@]}"; do
+        echo "  $(basename "${deb_path}")"
+        if ! dpkg-deb -x "${deb_path}" "${install_root}" 2>/dev/null; then
+          if ! run_privileged dpkg-deb -x "${deb_path}" "${install_root}"; then
+            echo "ERROR: Failed to install $(basename "${deb_path}") into SYSROOT=${install_root}" >&2
+            rm -rf "${tmp_dir}"
+            exit 1
+          fi
         fi
-      fi
-    done
+      done
+      modify_sysroot install -D -m 644 "${tmp_dir}/llima.sha256" "${llima_record}"
+    fi
   else
     if ! command -v dpkg >/dev/null 2>&1; then
       echo "ERROR: dpkg is required to install LLiMa .deb packages." >&2
@@ -1583,7 +1387,12 @@ ensure_neat_llima() {
     exit 1
   fi
 
-  printf '%s\n' "${llima_ref}" > "${marker_file}"
+  if [[ -n "${NEAT_LLIMA_ARTIFACT_DIR}" ]]; then
+    # Local packages are not the Vulcan ref; the next default build must download.
+    rm -f "${marker_file}"
+  else
+    printf '%s\n' "${llima_ref}" > "${marker_file}"
+  fi
   rm -rf "${tmp_dir}"
 }
 
@@ -1599,57 +1408,6 @@ copy_deb_usr_include_to_header_cache() {
   fi
 }
 
-ensure_neat_internals_headers() {
-  # Header-only bootstrap for x86 analysis jobs. Do not install arm64 runtime/plugin packages.
-  local internals_ref
-  if ! resolve_neat_internals_ref; then
-    exit 1
-  fi
-  internals_ref="${NEAT_INTERNALS_REQUESTED_REF}"
-  NEAT_INTERNALS_RESOLVED_REF="${internals_ref}"
-
-  local marker_file="${NEAT_DEP_HEADERS_DIR}/.internals_headers"
-
-  local tmp_dir
-  tmp_dir="$(mktemp -d /tmp/sima-neat-internals-headers-XXXXXX)"
-  local artifact_dir="${tmp_dir}/package"
-  local deb_extract_dir="${tmp_dir}/deb-extract"
-
-  if [[ -f "${marker_file}" ]] &&
-     [[ "$(tr -d '[:space:]' < "${marker_file}")" == "${internals_ref}" ]] &&
-     [[ -f "${NEAT_DEP_HEADERS_DIR}/usr/include/simaai/gstsimaaitensorbuffer.h" ]] &&
-     [[ -f "${NEAT_DEP_HEADERS_DIR}/usr/include/gst/SimaTensorSetMetaAbi.h" ]]; then
-    echo "Using cached neat-internals headers (${internals_ref})."
-    rm -rf "${tmp_dir}"
-    return 0
-  fi
-
-  fetch_neat_internals_vulcan_artifacts "${internals_ref}" "${artifact_dir}"
-  internals_ref="${NEAT_INTERNALS_RESOLVED_REF:-${internals_ref}}"
-
-  local dev_deb
-  dev_deb="$(find "${artifact_dir}" -type f -name 'neat-internals-dev_*.deb' | sort | head -n 1)"
-  if [[ -z "${dev_deb}" ]]; then
-    echo "ERROR: neat-internals-dev package was not found in Vulcan artifact ${internals_ref}" >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-
-  mkdir -p "${NEAT_INTERNALS_DEB_DIR}"
-  cp -f "${dev_deb}" "${NEAT_INTERNALS_DEB_DIR}/$(basename "${dev_deb}")"
-  copy_deb_usr_include_to_header_cache "${dev_deb}" "${deb_extract_dir}"
-
-  if [[ ! -f "${NEAT_DEP_HEADERS_DIR}/usr/include/simaai/gstsimaaitensorbuffer.h" ||
-        ! -f "${NEAT_DEP_HEADERS_DIR}/usr/include/gst/SimaTensorSetMetaAbi.h" ]]; then
-    echo "ERROR: neat-internals headers are incomplete under ${NEAT_DEP_HEADERS_DIR}" >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-
-  mkdir -p "${NEAT_DEP_HEADERS_DIR}"
-  printf '%s\n' "${internals_ref}" > "${marker_file}"
-  rm -rf "${tmp_dir}"
-}
 
 ensure_neat_llima_headers() {
   # Header-only bootstrap for x86 analysis jobs. GenAI tidy may still be skipped
@@ -1676,8 +1434,13 @@ ensure_neat_llima_headers() {
     return 0
   fi
 
-  fetch_neat_llima_vulcan_artifacts "${llima_ref}" "${artifact_dir}"
-  llima_ref="${NEAT_LLIMA_RESOLVED_REF:-${llima_ref}}"
+  if [[ -n "${NEAT_LLIMA_ARTIFACT_DIR}" ]]; then
+    artifact_dir="${NEAT_LLIMA_ARTIFACT_DIR}"
+    echo "Using local LLiMa headers: ${artifact_dir}"
+  else
+    fetch_neat_llima_vulcan_artifacts "${llima_ref}" "${artifact_dir}"
+    llima_ref="${NEAT_LLIMA_RESOLVED_REF:-${llima_ref}}"
+  fi
 
   local dev_deb
   dev_deb="$(find "${artifact_dir}" -maxdepth 3 -type f -name 'sima-lmm-*-Linux-dev.deb' | sort | head -n 1)"
@@ -1707,8 +1470,19 @@ ensure_dependency_headers() {
     echo "Skipping NEAT/LLiMa header artifact extraction on macOS."
     return 0
   fi
-  ensure_neat_internals_headers
-  ensure_neat_llima_headers
+  python3 tools/build_dependencies.py prepare --core "${REPO_ROOT}" \
+    --output "${NEAT_BACKEND_DIR}" --headers-only
+  mkdir -p "${NEAT_DEP_HEADERS_DIR}/usr"
+  cp -a "${NEAT_BACKEND_DIR}/headers/usr/include" "${NEAT_DEP_HEADERS_DIR}/usr/"
+  if [[ "${SKIP_NEAT_LLIMA}" != "ON" ]]; then
+    ensure_neat_llima_headers
+  fi
+}
+
+is_customer_deb() {
+  case "$(dpkg-deb -f "$1" Package)" in
+    neat-internals-dev|simaai-memory-lib-dev|sima-lmm-dev) return 1 ;;
+  esac
 }
 
 collect_install_artifact_files() {
@@ -1719,35 +1493,48 @@ collect_install_artifact_files() {
   local file
   local basename_file
 
-  for file in dist/*.deb ./*.deb; do
+  for file in dist/*.deb ./sima-neat-*.deb ./sima-neat_*.deb; do
     [[ -e "${file}" ]] || continue
+    is_customer_deb "${file}" || continue
+    basename_file="$(basename "${file}")"
+    if [[ "${SKIP_NEAT_LLIMA}" == "ON" && "${basename_file}" == sima-lmm-*.deb ]]; then
+      continue
+    fi
+    [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
+    seen_basenames["${basename_file}"]=1
+    out_files_ref+=("${file}")
+  done
+
+  for file in "${NEAT_BACKEND_DEB_DIR}"/*.deb; do
+    [[ -e "${file}" ]] || continue
+    is_customer_deb "${file}" || continue
     basename_file="$(basename "${file}")"
     [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
     seen_basenames["${basename_file}"]=1
     out_files_ref+=("${file}")
   done
 
-  for file in "${NEAT_INTERNALS_DEB_DIR}"/*.deb; do
-    [[ -e "${file}" ]] || continue
-    basename_file="$(basename "${file}")"
-    [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
-    seen_basenames["${basename_file}"]=1
-    out_files_ref+=("${file}")
-  done
-
-  for file in "${NEAT_LLIMA_DEB_DIR}"/sima-lmm-*.deb; do
-    [[ -e "${file}" ]] || continue
-    basename_file="$(basename "${file}")"
-    [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
-    seen_basenames["${basename_file}"]=1
-    out_files_ref+=("${file}")
-  done
+  if [[ "${SKIP_NEAT_LLIMA}" != "ON" ]]; then
+    for file in "${NEAT_LLIMA_DEB_DIR}"/sima-lmm-*.deb; do
+      [[ -e "${file}" ]] || continue
+      is_customer_deb "${file}" || continue
+      basename_file="$(basename "${file}")"
+      [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
+      seen_basenames["${basename_file}"]=1
+      out_files_ref+=("${file}")
+    done
+  fi
 
   for file in dist/*.whl; do
     [[ -e "${file}" ]] || continue
     basename_file="$(basename "${file}")"
     [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
     seen_basenames["${basename_file}"]=1
+    out_files_ref+=("${file}")
+  done
+
+  for file in dist/resolved-deps-manifest.json dist/neat-install-manifest.txt; do
+    [[ -f "${file}" ]] || continue
     out_files_ref+=("${file}")
   done
 
@@ -1895,7 +1682,7 @@ print_build_config() {
   echo "Build fuzz     : ${BUILD_FUZZ}"
   echo "Sanitizer mode : ${BUILD_SANITIZER_MODE:-none}"
   echo "Gate-only extras: ${SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS}"
-  echo "Neat internals : ${INSTALL_NEAT_INTERNALS}"
+  echo "Native backends: local Kernels → Runner"
   echo "Skip dist      : ${SKIP_DIST}"
   echo "Install after  : ${INSTALL_AFTER_BUILD}"
   echo "Skip docs      : ${SKIP_DOCS}"
@@ -1906,6 +1693,7 @@ print_build_config() {
   echo "sccache        : ${SIMANEAT_SCCACHE_ACTIVE:-OFF}"
   echo "eLxr SDK       : ${ELXR_SDK}"
   echo "Neat LLiMa     : ${INSTALL_NEAT_LLIMA}"
+  echo "Skip LLiMa     : ${SKIP_NEAT_LLIMA}"
   if [[ "${ELXR_SDK}" == "ON" ]]; then
     echo "eLxr SDK ver   : ${ELXR_SDK_VERSION}"
     echo "eLXr ver       : ${ELXR_VERSION}"
@@ -1928,11 +1716,13 @@ configure_cmake() {
     -U "SKBUILD_*"
     -S . -B "${BUILD_DIR}"
     -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
+    -DSIMANEAT_GUARDED_HARDWARE_TESTS="${NEAT_GUARDED_HARDWARE_TESTS:-OFF}"
     -DCMAKE_INSTALL_PREFIX=/usr/local
     -DSIMANEAT_BUILD_TESTS="${BUILD_TESTS}"
     -DSIMANEAT_BUILD_TUTORIALS="${BUILD_TUTORIALS}"
     -DSIMANEAT_BUILD_PYTHON="${BUILD_PYTHON}"
     -DSIMANEAT_BUILD_DOCS="${BUILD_DOCS}"
+    -DSIMANEAT_DOCS_ONLY_CONFIGURE="${DOCS_ONLY}"
     -DSIMANEAT_STRICT_WARNINGS="${STRICT_WARNINGS}"
     -DSIMA_ENABLE_ASAN="${SIMA_ENABLE_ASAN}"
     -DSIMA_ENABLE_UBSAN="${SIMA_ENABLE_UBSAN}"
@@ -1969,9 +1759,15 @@ configure_cmake() {
     # installed, so do not make those runtime libraries configure-time
     # requirements for docs-only builds.
     cmake_args+=(
-      -DSIMANEAT_DOCS_ONLY_CONFIGURE=ON
       -DSIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS=OFF
       -DSIMANEAT_REQUIRE_LLIMA_ARTIFACTS=OFF
+    )
+  fi
+
+  if [[ "${SKIP_NEAT_LLIMA}" == "ON" ]]; then
+    cmake_args+=(
+      -DSIMANEAT_REQUIRE_LLIMA_ARTIFACTS=OFF
+      -DCMAKE_DISABLE_FIND_PACKAGE_SimaLMM=TRUE
     )
   fi
 
@@ -1986,11 +1782,140 @@ configure_cmake() {
     export PKG_CONFIG_SYSROOT_DIR="${PKG_CONFIG_SYSROOT_DIR:-${SYSROOT}}"
     export PKG_CONFIG_LIBDIR="${PKG_CONFIG_LIBDIR:-$(IFS=:; echo "${pkgconfig_dirs[*]}")}"
     export PKG_CONFIG_EXECUTABLE="${pkg_config_executable}"
-    if [[ -d "${SYSROOT}/usr/include/c++/12" ]]; then
-      export CXXFLAGS="${CXXFLAGS:-} -isystem ${SYSROOT}/usr/include/c++/12"
+    local compiler_identity cross_gcc_major cross_target
+    # CMake accepts CXX as a quoted command with arguments, not just a filename.
+    # Query that same argv without evaluating shell substitutions or operators.
+    compiler_identity="$(python3 - "${CXX:-aarch64-linux-gnu-g++}" <<'PY'
+import shlex
+import subprocess
+import sys
+
+compiler = shlex.split(sys.argv[1])
+if not compiler:
+    raise SystemExit("ERROR: Empty CXX compiler command.")
+for query in ("-dumpversion", "-dumpmachine"):
+    print(subprocess.check_output([*compiler, query], text=True).strip())
+PY
+)"
+    cross_gcc_major="${compiler_identity%%$'\n'*}"
+    cross_gcc_major="${cross_gcc_major%%.*}"
+    cross_target="${compiler_identity#*$'\n'}"
+    if [[ ! "${cross_gcc_major}" =~ ^[0-9]+$ ]]; then
+      echo "ERROR: Cannot determine the cross compiler major version." >&2
+      exit 1
     fi
-    if [[ -d "${SYSROOT}/usr/include/aarch64-linux-gnu/c++/12" ]]; then
-      export CXXFLAGS="${CXXFLAGS:-} -isystem ${SYSROOT}/usr/include/aarch64-linux-gnu/c++/12"
+    if [[ ! "${cross_target}" =~ ^[A-Za-z0-9_-]+$ ]]; then
+      echo "ERROR: Cannot determine the cross compiler target." >&2
+      exit 1
+    fi
+    local cxx_headers="${SYSROOT}/usr/include/c++/${cross_gcc_major}"
+    local target_headers="${SYSROOT}/usr/include/${cross_target}"
+    if [[ ! -f "${cxx_headers}/vector" ||
+          ! -f "${target_headers}/c++/${cross_gcc_major}/bits/c++config.h" ||
+          ! -f "${SYSROOT}/usr/include/stdlib.h" ]]; then
+      echo "ERROR: Selected SDK lacks the ${cross_target} GCC ${cross_gcc_major} C++/C header cohort." >&2
+      exit 1
+    fi
+    # Select one SDK libstdc++ cohort. Otherwise #include_next in its C wrappers
+    # can reach the compiler's second wrapper (same guard) instead of target libc.
+    # Keep target libc after C++ wrappers and never borrow missing C++ headers.
+    local -a cpp_header_dirs=("${cxx_headers}" "${target_headers}/c++/${cross_gcc_major}")
+    [[ ! -d "${cxx_headers}/backward" ]] || cpp_header_dirs+=("${cxx_headers}/backward")
+    # GCC searches ${SYSROOT}/usr/include after these, so deps/ headers win.
+    cpp_header_dirs+=("${target_headers}")
+    local cpp_header_flags
+    printf -v cpp_header_flags ' -isystem %q' "${cpp_header_dirs[@]}"
+    export CXXFLAGS="${CXXFLAGS:-} -nostdinc++${cpp_header_flags}"
+    if [[ -f "${BUILD_DIR}/CMakeCache.txt" ]]; then
+      # CXXFLAGS only initializes a new cache. Preserve cached caller flags and
+      # add missing SDK policy in place; never silently retarget an old tree.
+      local cached_cxx_flags
+      cached_cxx_flags="$(python3 - "${BUILD_DIR}" "${SYSROOT}" \
+        "${CXX:-aarch64-linux-gnu-g++}" "${cross_gcc_major}" "${cpp_header_dirs[@]}" <<'PYSDKCACHE'
+from pathlib import Path
+import re
+import shlex
+import shutil
+import sys
+
+build, sysroot, command, major, *directories = sys.argv[1:]
+
+def reject(reason):
+    raise SystemExit(f"ERROR: {reason}; rerun build.sh with --clean to select the SDK/compiler safely.")
+
+cache = {}
+for line in (Path(build) / "CMakeCache.txt").read_text().splitlines():
+    match = re.fullmatch(r"([^#/:][^:]*):[^=]+=(.*)", line)
+    if match:
+        cache[match[1]] = match[2]
+if not cache.get("CMAKE_SYSROOT") or Path(cache["CMAKE_SYSROOT"]).resolve() != Path(sysroot).resolve():
+    reject("The cached CMake sysroot differs from the selected SDK")
+
+# CMAKE_CXX_COMPILER can be a normal (not cache) variable when supplied by a
+# preload/toolchain. CMake's generated compiler record remains authoritative.
+def scalar(text, key):
+    match = re.search(r'^set\(' + key + r' "((?:[^"\\]|\\.)*)"\)$', text, re.MULTILINE)
+    return re.sub(r'\\([\\"])', r'\1', match[1]) if match else None
+
+records = set()
+for path in Path(build).glob("CMakeFiles/*/CMakeCXXCompiler.cmake"):
+    text = path.read_text()
+    records.add(tuple(scalar(text, key) for key in
+                      ("CMAKE_CXX_COMPILER", "CMAKE_CXX_COMPILER_ARG1", "CMAKE_CXX_COMPILER_VERSION")))
+if len(records) != 1:
+    reject("Cannot identify the cached CMake C++ compiler")
+compiler, arguments, version = records.pop()
+if not compiler or arguments is None or not version:
+    reject("The cached CMake C++ compiler record is incomplete")
+selected = shlex.split(command)
+selected_path = shutil.which(selected[0])
+if (not selected_path or Path(compiler).resolve() != Path(selected_path).resolve()
+        or shlex.split(arguments) != selected[1:] or version.split(".")[0] != major):
+    reject("The cached CMake C++ compiler differs from the selected compiler")
+if cache.get("CMAKE_CXX_COMPILER") and Path(cache["CMAKE_CXX_COMPILER"]).resolve() != Path(compiler).resolve():
+    reject("The cached CMake C++ compiler authorities disagree")
+if "CMAKE_CXX_COMPILER_ARG1" in cache and shlex.split(cache["CMAKE_CXX_COMPILER_ARG1"]) != shlex.split(arguments):
+    reject("The cached CMake C++ compiler argument authorities disagree")
+if "CMAKE_CXX_FLAGS" not in cache:
+    reject("The cached CMake C++ flags are missing")
+
+flags = cache["CMAKE_CXX_FLAGS"]
+try:
+    tokens = shlex.split(flags)
+except ValueError:
+    reject("The cached CMake C++ flags cannot be parsed safely")
+# Inspect without reconstructing caller text, quoting or option order. Existing
+# -isystemDIR and -isystem DIR spellings both count as present.
+includes = []
+for index, token in enumerate(tokens):
+    if token == "-isystem" and index + 1 < len(tokens):
+        includes.append(tokens[index + 1])
+    elif token.startswith("-isystem"):
+        includes.append(token[len("-isystem"):])
+# Older non-clean configures could update CMAKE_SYSROOT while retaining flags
+# from the previous SDK. Reject only recognizable foreign libstdc++ cohorts;
+# unrelated caller include directories remain untouched.
+target = Path(directories[1]).parts[-3]
+for directory in includes:
+    cohort = re.fullmatch(r"(.*)/usr/include/(?:([^/]+)/)?c\+\+/([0-9]+)(?:/backward)?",
+                          str(Path(directory)))
+    if cohort and (Path(cohort[1] or "/").resolve() != Path(sysroot).resolve()
+                   or cohort[3] != major or cohort[2] not in (None, target)):
+        reject("The cached C++ header cohort differs from the selected SDK/compiler")
+missing = [] if "-nostdinc++" in tokens else ["-nostdinc++"]
+for directory in directories:
+    if directory not in includes:
+        missing.extend(("-isystem", directory))
+        includes.append(directory)
+if str(Path(sysroot) / "usr/include") in includes:
+    reject("The cached SDK header order searches the sysroot before the Scheduler set")
+ordered = list(dict.fromkeys(path for path in includes if path in directories))
+if ordered != directories:
+    reject("The cached SDK header order cannot be preserved by appending missing flags")
+print(flags + (" " + shlex.join(missing) if missing else ""))
+PYSDKCACHE
+)"
+      cmake_args+=("-DCMAKE_CXX_FLAGS=${cached_cxx_flags}")
     fi
 
     cmake_args+=(
@@ -2008,9 +1933,34 @@ configure_cmake() {
       -DPYNEAT_EXT_SUFFIX=".cpython-${ELXR_TARGET_PYTHON_VERSION/./}-$(elxr_ext_platform_triplet).so"
       -DSIMANEAT_CTEST_FOR_DEVKIT=ON
     )
+    # Let the linker find the selected set's own library dependencies.
+    local package_dir
+    for package_dir in "${NEAT_KERNELS_PACKAGE_DIR:-}" "${NEAT_RUNNER_PACKAGE_DIR:-}" \
+        "${NEAT_SCHEDULER_PACKAGE_DIR:-}" "${NEAT_CODECS_PACKAGE_DIR:-}"; do
+      if [[ -n "${package_dir}" && -d "${package_dir}/usr/lib/aarch64-linux-gnu" ]]; then
+        export LDFLAGS="-Wl,-rpath-link,${package_dir}/usr/lib/aarch64-linux-gnu ${LDFLAGS:-}"
+      fi
+    done
   fi
 
+  if [[ "${DOCS_ONLY}" != "ON" ]]; then
+    cmake_args=(-C "${NEAT_BACKEND_DIR}/dependencies.cmake" "${cmake_args[@]}")
+  fi
   cmake "${cmake_args[@]}"
+}
+
+ensure_fixture_python_dependencies() {
+  [[ "${BUILD_TESTS}" == "ON" ]] || return 0
+  local fixture_python
+  fixture_python="$(sed -n 's/^_Python3_EXECUTABLE:INTERNAL=//p' "${BUILD_DIR}/CMakeCache.txt")"
+  if [[ ! -x "${fixture_python}" ]]; then
+    echo "ERROR: Cannot find the configured fixture Python in ${BUILD_DIR}/CMakeCache.txt." >&2
+    return 1
+  fi
+  if ! "${fixture_python}" -c 'from PIL import Image' >/dev/null 2>&1; then
+    echo "Installing Pillow for fixture Python: ${fixture_python}"
+    "${fixture_python}" -m pip install 'Pillow>=10.0.0'
+  fi
 }
 
 build_docs_site() {
@@ -2153,11 +2103,32 @@ generate_package_buildinfo_json() {
   package_version="$(compute_neat_package_version)"
   platform_version="$(compute_neat_platform_version)"
 
-  # Best-effort cross-toolchain version string for the compatibility block.
-  local toolchain_version=""
-  local cxx_bin="${ELXR_CXX:-aarch64-linux-gnu-g++}"
-  if command -v "${cxx_bin}" >/dev/null 2>&1; then
-    toolchain_version="$("${cxx_bin}" --version 2>/dev/null | head -1 | sed 's/(.*) //')"
+  local phase="${1:?buildinfo phase is required}"
+  local -a selected_args=(--phase "${phase}" --python-enabled "${BUILD_PYTHON,,}"
+                          --sdk-release-file "${ELXR_SDK_RELEASE_FILE}")
+  if [[ "${ELXR_SDK}" == "ON" && -n "${SYSROOT:-}" ]]; then
+    selected_args+=(--sysroot "${SYSROOT}")
+    if [[ "${BUILD_PYTHON}" == "ON" && -n "${ELXR_TARGET_PYTHON_INCLUDE_DIR}" ]]; then
+      selected_args+=(--python-include-dir "${ELXR_TARGET_PYTHON_INCLUDE_DIR}")
+    fi
+  fi
+  if [[ -n "${NEAT_TARGET_SDK_RELEASE_FILE:-}" ]]; then
+    selected_args+=(--target-sdk-release-file "${NEAT_TARGET_SDK_RELEASE_FILE}")
+  fi
+  if [[ -n "${NEAT_BUILDINFO_TOOLCHAIN:-}" ]]; then
+    selected_args+=(--toolchain "${NEAT_BUILDINFO_TOOLCHAIN}")
+  fi
+  if [[ "${phase}" == "final" ]]; then
+    selected_args+=(--cmake-cache "${BUILD_DIR}/CMakeCache.txt")
+    if [[ "${BUILD_PYTHON}" == "ON" ]]; then
+      local -a extensions=()
+      mapfile -d '' -t extensions < <(find "${BUILD_DIR}/python" -maxdepth 1 -type f -name '_pyneat_core*.so' -print0)
+      if [[ "${#extensions[@]}" != "1" ]]; then
+        echo "ERROR: Final buildinfo requires exactly one built Python extension." >&2
+        return 1
+      fi
+      selected_args+=(--python-extension "${extensions[0]}")
+    fi
   fi
 
   python3 scripts/build/generate_package_buildinfo.py \
@@ -2167,9 +2138,18 @@ generate_package_buildinfo_json() {
     --package-version "${package_version}" \
     --platform-version "${platform_version}" \
     --vulcan-env "${NEAT_VULCAN_ENV}" \
-    --internals-ref "${NEAT_INTERNALS_RESOLVED_REF}" \
     --llima-ref "${NEAT_LLIMA_RESOLVED_REF}" \
-    --toolchain "${toolchain_version}"
+    "${selected_args[@]}"
+  if [[ -f "${NEAT_BACKEND_DIR}/resolved_manifest.json" ]]; then
+    python3 - "${output_path}" "${NEAT_BACKEND_DIR}/resolved_manifest.json" <<'PYINFO'
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+data = json.loads(path.read_text())
+data["native_dependencies"] = json.loads(Path(sys.argv[2]).read_text())
+path.write_text(json.dumps(data, indent=2) + "\n")
+PYINFO
+  fi
   echo "Generated package build info: ${output_path}"
 }
 
@@ -2191,35 +2171,23 @@ sync_compatibility_snapshot() {
   fi
 }
 
-write_resolved_neat_internals_manifest_if_needed() {
-  if [[ -z "${NEAT_INTERNALS_RESOLVED_REF}" && -z "${NEAT_LLIMA_RESOLVED_REF}" ]]; then
-    return 0
-  fi
-
-  local output_path="${NEAT_INTERNALS_RESOLVED_MANIFEST}"
+write_resolved_dependencies_manifest() {
+  local output_path="${NEAT_RESOLVED_MANIFEST}"
   mkdir -p "$(dirname "${output_path}")"
-  python3 - "${NEAT_DEPS_MANIFEST}" "${NEAT_INTERNALS_RESOLVED_REF}" "${NEAT_LLIMA_RESOLVED_REF}" "${output_path}" <<'PY'
-import json
-import sys
+  python3 - "${NEAT_DEPS_MANIFEST}" "${NEAT_BACKEND_DIR}/resolved_manifest.json" \
+    "${NEAT_LLIMA_RESOLVED_REF}" "${output_path}" <<'PYDEPS'
+import json, sys
 from pathlib import Path
-
-manifest_path = Path(sys.argv[1])
-internals_ref = sys.argv[2]
-llima_ref = sys.argv[3]
-output_path = Path(sys.argv[4])
-
-data = json.loads(manifest_path.read_text(encoding="utf-8"))
-platform_version = str(data.get("platform-version", "")).strip()
-if not platform_version:
-    raise SystemExit(f"Missing or empty 'platform-version' in {manifest_path}")
-
-if internals_ref:
-    data["internals"] = internals_ref
-if llima_ref:
-    data["llima"] = llima_ref
-output_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-PY
-  echo "Resolved deps manifest: ${output_path} (internals=${NEAT_INTERNALS_RESOLVED_REF:-<unchanged>}, llima=${NEAT_LLIMA_RESOLVED_REF:-<unchanged>})"
+data = json.loads(Path(sys.argv[1]).read_text())
+data.pop("internals", None)
+selected = Path(sys.argv[2])
+if selected.is_file():
+    data.update(json.loads(selected.read_text()))
+if sys.argv[3]:
+    data["llima"] = sys.argv[3]
+Path(sys.argv[4]).write_text(json.dumps(data, indent=2) + "\n")
+PYDEPS
+  echo "Resolved dependencies: ${output_path}"
 }
 
 build_python_wheel_if_requested() {
@@ -2293,6 +2261,16 @@ PY
 run_install_sanity_check() {
   echo
   echo "Running install sanity check..."
+  # Use the configured GNUInstallDirs layout, not a hard-coded lib directory.
+  # These checks install into isolated prefixes: reject absolute/escaping paths
+  # before invoking cmake --install so the sanity check cannot write globally.
+  local install_libdir=""
+  install_libdir="$(sed -n 's/^CMAKE_INSTALL_LIBDIR:[^=]*=//p' "${BUILD_DIR}/CMakeCache.txt")"
+  if [[ -z "${install_libdir}" || "${install_libdir}" == /* ||
+        "/${install_libdir}/" == *"/../"* || "${install_libdir}" == *$'\n'* ]]; then
+    echo "ERROR: install sanity check requires a relative CMAKE_INSTALL_LIBDIR inside its staging prefix." >&2
+    exit 1
+  fi
   # Fresh directory per run: the fixed path could hold artifacts left by a
   # previous build. Removed on success, kept on failure for inspection.
   local install_test_dir=""
@@ -2303,6 +2281,8 @@ run_install_sanity_check() {
   echo "Install sanity check directory: ${install_test_dir}"
   local core_install_dir="${install_test_dir}/core"
   local dev_install_dir="${install_test_dir}/dev"
+  local core_lib_dir="${core_install_dir}/${install_libdir}"
+  local dev_lib_dir="${dev_install_dir}/${install_libdir}"
 
   cmake --install "${BUILD_DIR}" --component core --prefix "${core_install_dir}"
   cmake --install "${BUILD_DIR}" --component dev --prefix "${dev_install_dir}"
@@ -2323,15 +2303,15 @@ run_install_sanity_check() {
     echo "Refusing to package a library without an explicit ABI contract."
     exit 1
   fi
-  mapfile -t core_real_libs < <(find "${core_install_dir}/lib" -maxdepth 1 -type f -name 'libsima_neat.so.*' | sort)
-  mapfile -t core_soname_links < <(find "${core_install_dir}/lib" -maxdepth 1 -type l -name 'libsima_neat.so.*' | sort)
+  mapfile -t core_real_libs < <(find "${core_lib_dir}" -maxdepth 1 -type f -name 'libsima_neat.so.*' | sort)
+  mapfile -t core_soname_links < <(find "${core_lib_dir}" -maxdepth 1 -type l -name 'libsima_neat.so.*' | sort)
   if [[ "${#core_real_libs[@]}" -lt 1 ]]; then
     echo
     echo "ERROR: versioned libsima_neat shared object missing from core install tree."
     echo "Refusing to package an incomplete core .deb."
     exit 1
   fi
-  if [[ ! -L "${core_install_dir}/lib/libsima_neat.so.${expected_abi}" ]]; then
+  if [[ ! -L "${core_lib_dir}/libsima_neat.so.${expected_abi}" ]]; then
     echo
     echo "ERROR: expected ABI ${expected_abi} SONAME link missing from core install tree."
     echo "Refusing to package a core .deb with a stale or missing public-library ABI."
@@ -2343,26 +2323,26 @@ run_install_sanity_check() {
     echo "Refusing to package an incomplete core .deb."
     exit 1
   fi
-  if [[ -e "${core_install_dir}/lib/libsima_neat.so" ||
-        -e "${core_install_dir}/lib/libsima_neat.a" ||
+  if [[ -e "${core_lib_dir}/libsima_neat.so" ||
+        -e "${core_lib_dir}/libsima_neat.a" ||
         -d "${core_install_dir}/include" ||
-        -d "${core_install_dir}/lib/cmake/SimaNeat" ]]; then
+        -d "${core_lib_dir}/cmake/SimaNeat" ]]; then
     echo
     echo "ERROR: core install tree contains development files."
     echo "Refusing to package an incorrectly split core .deb."
     exit 1
   fi
-  if [[ ! -L "${dev_install_dir}/lib/libsima_neat.so" ||
-        ! -f "${dev_install_dir}/lib/libsima_neat.a" ||
+  if [[ ! -L "${dev_lib_dir}/libsima_neat.so" ||
+        ! -f "${dev_lib_dir}/libsima_neat.a" ||
         ! -f "${dev_install_dir}/include/neat.h" ||
-        ! -f "${dev_install_dir}/lib/cmake/SimaNeat/SimaNeatConfig.cmake" ]]; then
+        ! -f "${dev_lib_dir}/cmake/SimaNeat/SimaNeatConfig.cmake" ]]; then
     echo
     echo "ERROR: dev install tree is missing headers, CMake config, libsima_neat.so linker symlink, or libsima_neat.a."
     echo "Refusing to package an incomplete dev .deb."
     exit 1
   fi
   local dev_link_target=""
-  dev_link_target="$(readlink "${dev_install_dir}/lib/libsima_neat.so")"
+  dev_link_target="$(readlink "${dev_lib_dir}/libsima_neat.so")"
   if [[ "$(basename "${dev_link_target}")" != "libsima_neat.so.${expected_abi}" ]]; then
     echo
     echo "ERROR: dev linker symlink targets '${dev_link_target}', expected ABI ${expected_abi}."
@@ -2387,7 +2367,7 @@ build_deb_if_requested() {
     echo
     echo "Building DEB packages (core + dev)..."
     # Remove stale debs so it's obvious what was generated
-    rm -f ./*.deb
+    rm -f ./sima-neat-*.deb ./sima-neat_*.deb
     cpack --config "${BUILD_DIR}/CPackConfig.cmake"
   fi
 }
@@ -2482,6 +2462,8 @@ stage_package_artifacts_to_dist() {
     dist/*.deb \
     dist/*-Linux-extras.tar.gz \
     "dist/${NEAT_PACKAGE_INSTALL_SCRIPT}" \
+    dist/install_sentinel.sh \
+    dist/scheduler_platform_admission.py \
     "dist/${NEAT_INSTALL_MANIFEST}" \
     dist/metadata*.json \
     dist/manifest.json \
@@ -2490,47 +2472,42 @@ stage_package_artifacts_to_dist() {
 
   local staged_any=OFF
   local file
-  for file in ./*.deb ./*extras.tar.gz; do
+  for file in ./sima-neat-*.deb ./sima-neat_*deb ./*extras.tar.gz; do
     [[ -e "${file}" ]] || continue
     mv -f "${file}" "dist/$(basename "${file}")"
     staged_any=ON
   done
-  for file in "${NEAT_INTERNALS_DEB_DIR}"/*.deb "${NEAT_LLIMA_DEB_DIR}"/*.deb; do
+  for file in "${NEAT_BACKEND_DEB_DIR}"/*.deb; do
     [[ -e "${file}" ]] || continue
+    is_customer_deb "${file}" || continue
     cp -f "${file}" "dist/$(basename "${file}")"
     staged_any=ON
   done
+  if [[ "${SKIP_NEAT_LLIMA}" != "ON" ]]; then
+    for file in "${NEAT_LLIMA_DEB_DIR}"/*.deb; do
+      [[ -e "${file}" ]] || continue
+      is_customer_deb "${file}" || continue
+      cp -f "${file}" "dist/$(basename "${file}")"
+      staged_any=ON
+    done
+  fi
 
-  if [[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]]; then
-    if [[ ! -f "${NEAT_INTERNALS_ARTIFACT_MANIFEST}" ]]; then
-      echo "ERROR: Missing selected Internals manifest: ${NEAT_INTERNALS_ARTIFACT_MANIFEST}" >&2
-      exit 1
-    fi
-    cp -f "${NEAT_INTERNALS_ARTIFACT_MANIFEST}" dist/internals-manifest.json
-    staged_any=ON
+  if [[ -f "${NEAT_BACKEND_DIR}/resolved_manifest.json" ]]; then
+    cp "${NEAT_BACKEND_DIR}/resolved_manifest.json" dist/resolved-deps-manifest.json
   fi
 
   if [[ -f "tools/install_neat_framework.sh" ]]; then
-    cp -f "tools/install_neat_framework.sh" "dist/install_neat_framework.sh"
-    chmod +x "dist/install_neat_framework.sh"
-    # A successful link against a reused SDK is not proof of bundle coherence.
-    # macOS skips DEB packaging; never pass an unmatched glob as an artifact.
-    local -a cohort_debs=()
-    for file in dist/*.deb; do
-      [[ -f "${file}" ]] || continue
-      cohort_debs+=("${file}")
-    done
-    if [[ "${#cohort_debs[@]}" -gt 0 ]]; then
-      bash -c 'source "$1"; shift; DEBS=("$@"); validate_bundle_elf_cohort' \
-        bash "${REPO_ROOT}/tools/install_neat_framework.sh" "${cohort_debs[@]}"
-    fi
+    # install_neat_framework.sh runs install_sentinel.sh from its own directory.
+    cp -f "tools/install_neat_framework.sh" "tools/install_sentinel.sh" \
+      "tools/scheduler_platform_admission.py" dist/
+    chmod +x "dist/install_neat_framework.sh" "dist/install_sentinel.sh"
     staged_any=ON
   fi
 
   if [[ "${staged_any}" == "ON" ]]; then
     echo
     echo "Moved package artifacts into dist/:"
-    ls -lh dist/*.deb dist/*.whl dist/*extras.tar.gz dist/install_neat_framework.sh dist/manifest.json 2>/dev/null || true
+    ls -lh dist/*.deb dist/*.whl dist/*extras.tar.gz dist/install_neat_framework.sh dist/install_sentinel.sh dist/manifest.json 2>/dev/null || true
   fi
 }
 
@@ -2763,6 +2740,7 @@ generate_package_metadata_if_requested() {
     --exclude ".deb" \
     --exclude ".tar.gz" \
     --exclude ".sh" \
+    --exclude ".py" \
     --exclude ".txt" \
     --exclude ".json" \
     --download-compatible-files-only \
@@ -2777,11 +2755,12 @@ generate_package_metadata_if_requested() {
     --exclude ".deb" \
     --exclude ".whl" \
     --exclude ".sh" \
+    --exclude ".py" \
     --exclude ".txt" \
     --exclude ".json" \
     --variant extras
 
-  WHEEL_BASENAME="$(basename "${wheel_path}")" python3 - <<'PY'
+  WHEEL_BASENAME="$(basename "${wheel_path}")" NEAT_BUILDINFO_JSON="${NEAT_PACKAGE_BUILDINFO_JSON}" python3 - <<'PY'
 import json
 import os
 from pathlib import Path
@@ -2789,10 +2768,17 @@ from pathlib import Path
 metadata_path = Path("dist/metadata-pyneat.json")
 metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
 wheel_name = os.environ["WHEEL_BASENAME"]
+buildinfo = json.loads(Path(os.environ["NEAT_BUILDINFO_JSON"]).read_text(encoding="utf-8"))
+pyneat = buildinfo["compatibility"]["pyneat"]
+if buildinfo.get("metadata_phase") != "final" or pyneat.get("status") != "observed":
+    raise SystemExit("Wheel installation instructions require final selected-target ABI metadata")
+wheel_tags = wheel_name.removesuffix(".whl").rsplit("-", 3)
+if len(wheel_tags) != 4 or wheel_tags[1:3] != [f"cp{pyneat['major']}{pyneat['minor']}", pyneat["abi_tag"]]:
+    raise SystemExit("Wheel tags contradict final selected-target ABI metadata")
 metadata.setdefault("installation", {})["post-message"] = (
     "[bold]PyNeat wheel downloaded.[/bold]\n"
     f"The PyNeat wheel has been downloaded to this directory: {wheel_name}\n"
-    "Install it into a Python 3.11 virtual environment with:\n"
+    f"Install it into a {pyneat['python_abi']} virtual environment with:\n"
     f"  pip install ./{wheel_name}\n\n"
     "PyNeat requires the matching Neat Library runtime packages on this system. "
     "If they are not already installed, run:\n"
@@ -2825,6 +2811,13 @@ PY
 
   echo "Built package metadata:"
   ls -lh dist/metadata.json dist/metadata-minimal.json dist/metadata-all.json dist/metadata-pyneat.json dist/metadata-extras.json
+  local -a verify_args=(--dist dist --expected-manifest "${NEAT_DEPS_MANIFEST}"
+    --expected-receipt "${NEAT_BACKEND_DIR}/resolved_manifest.json"
+    --expected-deb-dir "${NEAT_BACKEND_DEB_DIR}")
+  if [[ "${SKIP_NEAT_LLIMA}" != "ON" ]]; then
+    verify_args+=(--expected-deb-dir "${NEAT_LLIMA_DEB_DIR}")
+  fi
+  SIMA_CLI_BIN="${SIMA_CLI_BIN}" bash scripts/ci/verify_core_dist.sh "${verify_args[@]}"
 }
 
 print_artifact_summary() {
@@ -2948,6 +2941,7 @@ deploy_artifacts_to_devkit_if_requested() {
   local -a deploy_files=()
   collect_install_artifact_files deploy_files
   local installer_path="${REPO_ROOT}/tools/install_neat_framework.sh"
+  local sentinel_installer_path="${REPO_ROOT}/tools/install_sentinel.sh"
   local installer_basename
   installer_basename="$(basename "${installer_path}")"
 
@@ -2955,7 +2949,8 @@ deploy_artifacts_to_devkit_if_requested() {
     echo "No deployable .deb or .whl artifacts found."
     return 0
   fi
-  deploy_files+=("${installer_path}")
+  deploy_files+=("${installer_path}" "${sentinel_installer_path}" \
+    "${REPO_ROOT}/tools/scheduler_platform_admission.py")
 
   echo
   echo "Deploying artifacts to ${ssh_target}:${remote_dir}"
@@ -2983,24 +2978,37 @@ NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON bash \"./\${installer_name}\" --local"
 
 main() {
   # High-level pipeline:
-  # parse -> bootstrap deps -> sync internals -> configure/build -> package -> summary
+  # Resolve local dependencies once: Kernels -> Runner -> Core -> one install.
   parse_args "$@"
   maybe_reexec_from_shadow "$@"
+  select_and_normalize_local_artifact_paths
   validate_build_mode_combinations
   apply_sanitizer_build_profile
   detect_elxr_sdk
+  # SDK builds install LLiMa into the sysroot by default; --no-llima opts out.
+  if [[ "${ELXR_SDK}" == "ON" && "${DOCS_ONLY}" != "ON" &&
+        "${INSTALL_DEPS_ONLY}" != "ON" && "${SKIP_NEAT_LLIMA}" != "ON" ]]; then
+    INSTALL_NEAT_LLIMA=ON
+  fi
   select_system_deps
   install_system_deps
   ensure_node22_for_docs
   activate_elxr_build_env_if_needed
+  prepare_scheduler_sdk
+  ensure_core_yaml_sdk_deps
   detect_elxr_host_python
 
   if [[ "${INSTALL_DEPS_ONLY}" == "ON" ]]; then
     ensure_dependency_headers
   fi
 
-  if [[ "${OS_NAME}" != "Darwin" && "${INSTALL_NEAT_INTERNALS}" == "ON" ]]; then
-    ensure_neat_internals
+  if [[ "${INSTALL_DEPS_ONLY}" != "ON" && "${DOCS_ONLY}" != "ON" ]]; then
+    detect_build_jobs
+    local -a dependency_args=()
+    [[ "${DO_CLEAN}" == "ON" ]] && dependency_args+=(--clean)
+    [[ "${BUILD_TESTS}" == "ON" ]] && dependency_args+=(--client-test-support)
+    python3 tools/build_dependencies.py prepare --core "${REPO_ROOT}" \
+      --output "${NEAT_BACKEND_DIR}" --jobs "${BUILD_JOBS}" "${dependency_args[@]}"
   fi
   if [[ "${OS_NAME}" != "Darwin" && "${INSTALL_NEAT_LLIMA}" == "ON" ]]; then
     ensure_neat_llima
@@ -3023,11 +3031,18 @@ main() {
   generate_platform_version_artifacts
   print_build_config
   clean_build_dir_if_requested
-  write_resolved_neat_internals_manifest_if_needed
-  generate_package_buildinfo_json
+  write_resolved_dependencies_manifest
+  # CMake needs the install source path at configure time. This first document
+  # is provisional: never infer a target ABI from the Python running this script.
+  generate_package_buildinfo_json provisional
   configure_cmake
+  ensure_fixture_python_dependencies
   build_docs_only_if_requested
   build_targets
+  # Mandatory refresh from this configured build and its actual extension before
+  # normal-build install, packaging or compatibility-document consumers.
+  # The separate docs-only path exits earlier and may retain provisional data.
+  generate_package_buildinfo_json final
   copy_test_images
   build_docs_if_requested
   run_install_sanity_check
@@ -3040,6 +3055,12 @@ main() {
   write_dist_package_contract_manifest_fields
   write_install_manifest
   generate_package_metadata_if_requested
+  if [[ "${SKIP_DIST}" != "ON" && "${BUILD_ALL}" == "ON" ]]; then
+    local scheduler_policy
+    scheduler_policy="$(python3 tools/build_dependencies.py sdk-policy --core "${REPO_ROOT}")"
+    python3 tools/ci/scheduler_sdk_policy.py --policy-json "${scheduler_policy}" \
+      --output dist/scheduler-sdk-policy.json
+  fi
   print_artifact_summary
   install_artifacts_into_current_environment_if_requested
   deploy_artifacts_to_devkit_if_requested

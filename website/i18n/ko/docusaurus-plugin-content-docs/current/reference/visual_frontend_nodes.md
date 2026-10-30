@@ -1,249 +1,203 @@
 ---
-title: "EV74 시각적 프런트엔드 노드"
-description: "FeatureHistogram, GriderFast, TrackDescriptor, TrackKLT 및 MetoakDepth의 Neat Graph 사용법"
+title: "EV74 비주얼 프런트엔드 노드"
+description: "FeatureHistogram, GriderFast, TrackDescriptor, TrackKLT의 공개 Graph 계약"
 sidebar_position: 8
 ---
 
-# EV74 시각적 프런트엔드 노드
+# EV74 비주얼 프런트엔드 노드
 
-Neat은 EV74 시각적 프런트엔드 그래프를 일반 `Graph` 노드로 노출합니다. 공개 노드 팩토리와 옵션 구조체를 사용하고, 애플리케이션 코드에서 `processcvu`, ConfigManager 또는 디스패처 API를 직접 호출하지 마십시오.
+EV74 연산은 공개 `Graph` 노드 팩터리로 사용하세요. 서로 맞는 Core, Scheduler, Runner, Kernels 및 EV74 펌웨어 패키지를 설치해야 합니다. 기존 그래프 ID는 네이티브 펌웨어 호환성 검사 수단이 아니며 애플리케이션에 디스패처 ID는 필요하지 않습니다.
 
-| 노드 팩토리 | 그래프 이름 | 그래프 ID | 목적 |
-| --- | --- | ---: | --- |
-| `nodes::FeatureHistogram` / `pyneat.nodes.feature_histogram` | `feature_histogram` | 235 | 흑백 이미지 히스토그램 |
-| `nodes::GriderFast` / `pyneat.nodes.grider_fast` | `grider_fast` | 236 | 그리드 방식으로 분산된 FAST 특징 |
-| `nodes::TrackDescriptor` / `pyneat.nodes.track_descriptor` | `track_descriptor` | 237 | FAST 특징과 디스크립터 |
-| `nodes::TrackKLT` / `pyneat.nodes.track_klt` | `track_klt` | 238 | 피라미드 KLT 추적, 선택적으로 감지된 대체 특징 포함 |
-| `nodes::MetoakDepth` | `simor_depth_map` | 20 | I420 및 시차에서 RGB, 미터법 깊이, XYZ 생성 |
+품질 옵션은 기존 소스 사용 방식과 기본 출력 위치를 유지하지만 `TrackKLTOptions`의 C++ 레이아웃을 변경하므로 기존 C++ 바이너리와 ABI가 호환되지 않습니다. 일치하는 Core 버전에 맞춰 C++ 애플리케이션과 Python 확장을 다시 빌드하세요. v2 추적기 요청에는 서로 일치하는 Kernels, Runner, Scheduler, EV74 펌웨어 조합을 사용하세요. 기존 네이티브 v1 요청은 계속 지원되지만, 이것이 v2 요청과 이전 펌웨어의 호환성을 의미하지는 않습니다.
 
-그래프 ID는 문제 진단 및 펌웨어/패키지 일치 확인에 유용합니다. 애플리케이션 코드에서는 필수가 아닙니다.
+| 노드 팩터리 | 용도 |
+| --- | --- |
+| `nodes::FeatureHistogram` / `pyneat.nodes.feature_histogram` | 그레이스케일 히스토그램 |
+| `nodes::GriderFast` / `pyneat.nodes.grider_fast` | 격자에 분산된 FAST 특징점 |
+| `nodes::TrackDescriptor` / `pyneat.nodes.track_descriptor` | FAST 특징점과 BRIEF 기술자 |
+| `nodes::TrackKLT` / `pyneat.nodes.track_klt` | 피라미드 KLT 추적 및 선택적인 현재 프레임 특징 검출 |
 
 ## 텐서 계약
 
-특징 및 추적 텐서는 **논리적 배치 형태**를 사용합니다. `batch_size == B`인 경우, 흑백 이미지는 `[B,H,W]`이고, `[B*H,W]`는 아닙니다. 런타임은 모든 EV74 전송 패킹을 내부적으로 처리합니다.
+이미지 텐서의 논리적 형태는 `[B,H,W]`이며 `B`는 `batch_size`입니다. 배치를 이미지 높이에 합치지 마세요. 장치 입력은 별도 할당 또는 유효한 공유 저장소 뷰를 사용할 수 있습니다. CPU 복사 우회 방법은 필요하지 않습니다.
 
-| 노드 | 입력 | 공개 출력 |
+| 노드 | 입력 | 기본 공개 출력 |
 | --- | --- | --- |
-| `FeatureHistogram` | `input_image`: UInt8 `[B,H,W]` | `output_hist`: Int32 `[B,256]` |
-| `GriderFast` | `input_image`: UInt8 `[B,H,W]` | `output_features`: Int32 `[B,1 + max_features*3]` |
-| `TrackDescriptor` | `input_image`: UInt8 `[B,H,W]` | `output_features`: Int32 `[B,1 + max_features*3]`; `output_descriptors`: Int32 `[B,max_features,8]` |
-| `TrackKLT` | `prev_image`: UInt8 `[B,H,W]`; `cur_image`: UInt8 `[B,H,W]`; `input_points`: Int32 `[B,num_points,2]` | `output_points`: Float32 `[B,num_points,2]`; `output_status`: Int32 `[B,num_points,1]`; 그리고 `output_features`: Int32 `[B,1 + max_features*3]` (단, `detect_new_features != 0`인 경우에만) |
+| `FeatureHistogram` | UInt8 `[B,H,W]` | Int32 `[B,256]` |
+| `GriderFast` | UInt8 `[B,H,W]` | Int32 `[B,1+3*max_features]` |
+| `TrackDescriptor` | UInt8 `[B,H,W]` | Int32 `[B,1+3*max_features]`; Int32 `[B,max_features,8]` |
+| `TrackKLT` | UInt8 `[B,H,W]`; UInt8 `[B,H,W]`; Int32 `[B,num_points,2]` | Float32 `[B,num_points,2]`; Int32 `[B,num_points,1]` |
 
-특성 목록 텐서는 이 배치별 레이아웃을 사용합니다.
+배치 항목별 특징 형식은 `[count,x0,y0,score0,...]`입니다. 처음 `count`개 레코드만 읽으세요. 사용하지 않는 용량은 특징 목록이 아닙니다. TrackDescriptor는 `descriptor_words == 8`을 요구하며 기술자 각 행은 선택한 특징의 같은 행에 대응합니다.
 
-```text
-[count, x0, y0, score0, x1, y1, score1, ...]
-```
+## 격자 선택과 경계
 
-현재 디스크립터 그래프는 `descriptor_words == 8`을 필요로 합니다. 이를 변경하는 것은 EV74 ABI 변경 사항이며, 배포 전에 거부됩니다.
+`grid_x`와 `grid_y`는 전체 이미지를 셀로 나눕니다. 용량이 `K`, 셀 수가 `M`이면 셀마다 `K / M`개의 자리를 받고 행 우선 순서의 처음 `K % M`개 셀은 하나 더 받습니다. 셀마다 높은 점수를 선택하고 전체 결과는 점수 내림차순, 동점은 `(y,x)` 오름차순으로 정렬합니다. 빈 셀의 자리를 다른 셀에 넘기지 않습니다. `min_px_dist`는 셀 경계를 넘어 가까운 점을 억제하며 정확히 같은 거리는 허용합니다. 억제 후 후보를 보충하지 않으므로 결과가 `max_features`보다 적을 수 있습니다.
 
-## C++ 빠른 시작
+일반 FAST는 `x=3`, `y=3`, `x=W-4`, `y=H-4`의 중심을 포함합니다. TrackDescriptor는 완전한 31×31 BRIEF 패치가 필요하므로 각 가장자리에서 15픽셀 이상 떨어져야 합니다. 따라서 3번 행에 기술자가 없는 것은 의도된 동작입니다.
+
+## KLT 입력과 출력
+
+`TensorList`를 **이전 이미지, 현재 이미지, 입력 점** 순서로 전달하세요. 이 직접 공개 다중 입력 경로에서 비어 있지 않은 논리적 `route.name`은 설정된 위치와 일치해야 하며 목록을 재정렬하지 않습니다. 올바른 순서의 이름 없는 텐서도 유효합니다. 입력 누락, 이름 충돌, 잘못된 형식·형태 및 접근 불가능한 범위는 후속 프레임에서도 제출 전에 거부됩니다.
+
+호환되는 출력 텐서를 재사용할 때는 얕은 복사본을 만들고 새 공개 위치에 맞게 `route.name`만 바꾸거나 지우세요. 저장소, 오프셋 및 물리적 라우팅 메타데이터는 보존해야 합니다. 이 규칙은 내부 그래프 연결의 이름을 바꾸거나 명시적 모델 입력 경로 프로세서를 대체하지 않습니다.
+
+TrackKLT는 기본적으로 점과 상태를 출력합니다. `detect_new_features != 0`이면 **현재** 이미지에서 검출한 특징을 추가합니다. 검출을 끄면 숨겨진 특징 출력을 할당하지 않습니다. `publish_error = true`는 기존 출력 뒤에 Float32 `[B,num_points,1]`을 추가합니다. 검출을 끄면 인덱스 2, 켜면 인덱스 3입니다. 기존 출력 위치는 바뀌지 않습니다.
+
+### C++ 예제
+
+두 개의 `640×480` UInt8 이미지 벡터와 `64×2` Int32 초기 좌표를 제공하세요. 아래 각 입력은 독립적인 EV74 저장소를 사용하며 반환 순서는 점, 상태, 오차입니다.
 
 ```cpp
 #include <neat.h>
-
 #include <cstdint>
 #include <vector>
 
 using namespace simaai::neat;
 
-Tensor make_gray_batch(int width, int height, int batch) {
-  std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * height * batch);
-  // Fill pixels in batch-major order: b*height*width + y*width + x.
-  auto tensor = Tensor::from_vector(pixels, {batch, height, width}, TensorMemory::EV74);
-  tensor.layout = TensorLayout::HW;
-  tensor.axis_semantics = {TensorAxisSemantic::N, TensorAxisSemantic::H, TensorAxisSemantic::W};
-  tensor.route.name = "input_image";
-  tensor.route.segment_name = "input_image";
-  return tensor;
-}
-
-int main() {
-  constexpr int width = 320;
-  constexpr int height = 240;
-  constexpr int batch = 2;
-
-  Graph graph;
+TensorList track_pair(const std::vector<std::uint8_t>& previous,
+                     const std::vector<std::uint8_t>& current,
+                     const std::vector<std::int32_t>& xy) {
+  constexpr int width = 640, height = 480, count = 64;
+  auto image = [&](const auto& pixels, const char* name) {
+    auto tensor = Tensor::from_vector(pixels, {1, height, width}, TensorMemory::EV74);
+    tensor.layout = TensorLayout::HW;
+    tensor.axis_semantics = {TensorAxisSemantic::N, TensorAxisSemantic::H,
+                            TensorAxisSemantic::W};
+    tensor.route.name = name;
+    return tensor;
+  };
+  auto points = Tensor::from_vector(xy, {1, count, 2}, TensorMemory::EV74);
+  points.route.name = "input_points";
+  TensorList inputs{image(previous, "prev_image"), image(current, "cur_image"), points};
 
   InputOptions input;
   input.payload_type = PayloadType::Tensor;
   input.format = FormatTag::UINT8;
-  input.width = width;
-  input.height = height;
-  input.depth = 1;
-  input.max_width = width;
-  input.max_height = height * batch; // transport capacity; public tensor remains [B,H,W]
-  input.max_depth = 1;
+  input.width = input.max_width = width;
+  input.height = input.max_height = height;
+  input.depth = input.max_depth = 1;
   input.memory_policy = InputMemoryPolicy::Ev74;
-  input.buffer_name = "input_image";
+  input.buffer_name = "prev_image";
+  input.caps_override = "application/vnd.simaai.tensor, representation=(string)tensor-set, "
+                        "storage=(string)tensorbuffer";
 
-  graph.add(nodes::Input(input));
+  TrackKLTOptions klt;
+  klt.width = width;
+  klt.height = height;
+  klt.num_points = count;
+  klt.win_half = 7;
+  klt.max_level = 2;
+  klt.max_iters = 20;
+  klt.publish_error = true;
 
-  GriderFastOptions fast;
-  fast.width = width;
-  fast.height = height;
-  fast.batch_size = batch;
-  fast.max_features = 64;
-  fast.threshold = 30;
-  graph.add(nodes::GriderFast(fast));
-
-  graph.add(nodes::Output());
-
-  RunOptions run_opt;
-  run_opt.output_memory = OutputMemory::Owned;
-
-  Tensor image = make_gray_batch(width, height, batch);
-  Run run = graph.build({image}, run_opt);
-  TensorList outputs = run.run({image}, /*timeout_ms=*/30000);
-  run.close();
-}
-```
-
-## 세 개의 입력값을 받는 KLT
-
-`TrackKLT`는 텐서 세트(이전 이미지, 현재 이미지 및 입력 포인트)를 사용합니다. 옵션 필드와 일치하도록 경로 이름을 지정하십시오.
-
-```cpp
-TrackKLTOptions klt;
-klt.width = 320;
-klt.height = 240;
-klt.batch_size = 2;
-klt.num_points = 32;
-klt.max_features = 64;
-klt.detect_new_features = 1; // publish output_features as the third output
-
-graph.add(nodes::TrackKLT(klt));
-```
-
-`detect_new_features == 1` 실행 시 예상되는 공개 출력:
-
-```text
-output_points   Float32 [2,32,2]
-output_status   Int32   [2,32,1]
-output_features Int32   [2,193]
-```
-
-`detect_new_features == 0`가 활성화되면, Neat은 `output_points`와 `output_status`만 게시하며, EV에서 보이는 기능 버퍼는 내부 런타임 할당 상태로 유지됩니다.
-
-## 6개 입력을 사용하는 Metoak 깊이
-
-`MetoakDepth`는 `simor_depth_map`(그래프 20)을 사용하는 C++ 전용 노드입니다. 원시 SIMOR 카메라 프레임이 아니라 디코딩된 I420 평면, 원시 시차, 프레임별 보정을 입력으로 받습니다. 이 노드 앞에서 애플리케이션 또는 ROS 어댑터가 SIMOR를 언패킹하고 보정을 선택해야 합니다. Neat은 해당 어댑터를 대체하지 않습니다.
-
-짝수 `width`를 `[8,2048]`, 짝수 `height`를 `[8,1536]`으로 설정합니다. S315의 기본 깊이 해상도는 `640x360`입니다. 배치는 1로 고정되며 앞에 배치 차원이 없습니다. 아래의 표준 경로 이름과 입력 순서를 유지하십시오. 별칭은 계약 컴파일 중 거부됩니다.
-
-| 입력 경로 | 형식 | 형태 | 의미 |
-| --- | --- | --- | --- |
-| `y_src` | UInt8 | `[H,W]` | I420 Y |
-| `u_src` | UInt8 | `[H/2,W/2]` | I420 U |
-| `v_src` | UInt8 | `[H/2,W/2]` | I420 V |
-| `disp_src` | UInt16 | `[H,W]` | 원시 시차; 고정 서브픽셀 스케일 32 |
-| `bf_mm_src` | Float32 | `[1]` | 보정된 기준선 × 초점 거리(mm) |
-| `proj_src` | Float32 | `[3]` | 투영 `{fx_fy,cx,cy}` |
-
-| 출력 경로 | 형식 | 형태 | 의미 |
-| --- | --- | --- | --- |
-| `rgb_dst` | UInt8 | `[H,W,3]` | 인터리브 RGB |
-| `depth_dst` | UInt16 | `[H,W]` | 깊이(mm); 0은 유효하지 않음 |
-| `points_dst` | Float32 | `[H,W,3]` | 인터리브 XYZ(미터); NaN은 유효하지 않음 |
-
-세 출력은 항상 함께 게시됩니다. `depth_dst`는 기본 경계 설명이며 출력 선택기가 아닙니다. 보정 BF와 초점 거리는 양의 유한 값이어야 하고 주점 좌표는 유한 값이어야 합니다.
-
-입력 표와 일치하는 이름 지정 텐서 6개를 EV74 메모리에 준비하여 Graph를 구성합니다. 이 예제는 노드를 설정합니다. 실제 디코딩된 프레임 및 보정 텐서는 어댑터에서 제공하십시오.
-
-```cpp
-#include <neat.h>
-
-using namespace simaai::neat;
-
-// inputs contains the six named, decoded EV74 tensors from the table above.
-Run build_metoak_depth(const TensorList& inputs) {
   Graph graph;
-  InputOptions input;
-  input.payload_type = PayloadType::Tensor;
-  input.memory_policy = InputMemoryPolicy::Ev74;
-  input.caps_override =
-      "application/vnd.simaai.tensor, representation=(string)tensor-set, storage=(string)tensorbuffer";
   graph.add(nodes::Input(input));
-
-  MetoakDepthOptions depth;
-  depth.width = 640;
-  depth.height = 360;
-  graph.add(nodes::MetoakDepth(depth));
+  graph.add(nodes::TrackKLT(klt));
   graph.add(nodes::Output());
-
   RunOptions options;
   options.output_memory = OutputMemory::Owned;
-  return graph.build(inputs, options);
+  Run run = graph.build(inputs, options);
+  TensorList outputs;
+  try {
+    outputs = run.run(inputs, 30000);
+  } catch (...) {
+    run.close();
+    throw;
+  }
+  run.close();
+  return outputs;
 }
 ```
 
-그래프 20을 포함하는 일치하는 Internals 및 EV74 펌웨어에서만 이 Graph를 실행하십시오. 아래 특징/추적 검증 명령은 다른 네 그래프를 대상으로 하며 `MetoakDepth`는 포함하지 않습니다.
+## 품질 제어
 
-## Python 표면
+| 옵션 | 기본값 | 의미 |
+| --- | --- | --- |
+| `publish_error` | `false` | 최종 좌표의 평균 절대 밝기 잔차를 출력합니다. `output_error_name`의 기본값은 `output_error`입니다. |
+| `error_threshold` | `-1.0` | `-1`이면 비활성화하고, 그 외에는 `[0,255]`의 유한 임곗값입니다. 잔차가 임곗값보다 크면 거부하고 같으면 허용합니다. 오차를 출력하지 않아도 필터링할 수 있습니다. |
+| `min_eig_threshold` | `0.0` | `0`이면 비활성화하고, 그 외에는 유한한 양의 정규화 최소 고유값 임곗값으로 텍스처 조건을 검사합니다. |
+| `require_convergence` | `false` | 최종 원본 해상도 갱신에 수렴 조건을 요구합니다. false이면 반복 상한 도달만으로 실패로 처리하지 않습니다. |
 
-네 특징/추적 노드에는 C++ 옵션/팩토리 형식을 따르는 Python 바인딩이 있습니다. `MetoakDepth`에는 현재 Python 바인딩이 없습니다. 옵션 객체를 생성하고 공개 설정을 지정한 뒤 노드를 `Graph`에 추가하십시오.
+잔차는 밝기 차이이며 픽셀 변위나 신뢰도가 아닙니다. 반환 좌표에서 계산하며 `+inf`는 유효한 잔차를 계산하지 않았음을 나타냅니다. 텍스처 지표는 중앙 차분 기울기 행렬의 최소 고유값을 창 면적과 `255²`로 나눕니다. OpenCV 임곗값과 같은 척도가 아닙니다. 대표적인 보정 데이터로 임곗값을 정하고 올바른 추적의 유지율과 잘못된 추적의 거부율을 모두 검증하세요.
+
+좌표를 사용하기 전에 상태를 확인하세요. 계산 전의 무효 초기 점은 원래 좌표와 상태 0을 유지합니다. 계산한 유한 좌표가 이미지 밖에 있거나 품질 임곗값으로 후보가 거부되면 계산 좌표와 상태 0이 유지될 수 있습니다. 기본 상태는 해법·기하 유효성이며 실제 대응의 정확성을 보장하지 않습니다.
+
+## 움직임, 경계 및 고정 점 수
+
+개선 위치가 현재 이미지 타일을 벗어나면 타일을 다시 중심에 맞추고 읽습니다. ±4픽셀 탐색 범위로 조용히 제한하지 않습니다. 재로딩과 반복 횟수에는 상한이 있습니다. 경계 타일은 이미지 내부 DMA만 사용하고 가장자리 픽셀을 복제합니다. 이전의 피라미드 수준별 제외 영역은 제거하지만 임의의 움직임, 가림 또는 모호한 텍스처에서 추적을 보장하지는 않습니다.
+
+Core 초기 점은 여전히 Int32이며 결과는 Float32입니다. `num_points`는 그래프를 만들 때 고정됩니다. 사용하지 않는 자리는 `(-1,-1)` 같은 무효 좌표로 채우고 상태를 확인하세요. `(0,0)`은 유효한 가장자리 좌표이지 비활성 표시가 아닙니다. 두 이미지 피라미드는 호출마다 재구성하며 이전 프레임 피라미드 재사용을 의미하지 않습니다.
+
+## Python 옵션
+
+Python도 같은 옵션을 제공합니다. `Tensor.from_numpy(..., memory="ev74")`로 입력 텐서를 만들고 입력 순서 계약을 지키며 C++처럼 공개 노드를 구성하세요.
 
 ```python
-import numpy as np
 import pyneat
 
-width, height, batch = 320, 240, 2
-
-opt = pyneat.GriderFastOptions()
-opt.width = width
-opt.height = height
-opt.batch_size = batch
-opt.max_features = 64
-print(opt.summary())
-
-graph = pyneat.Graph()
-input_opt = pyneat.InputOptions()
-input_opt.payload_type = pyneat.PayloadType.Tensor
-input_opt.format = pyneat.Format.UINT8
-input_opt.width = width
-input_opt.height = height
-input_opt.max_width = width
-input_opt.max_height = height * batch
-input_opt.memory_policy = pyneat.InputMemoryPolicy.Ev74
-input_opt.buffer_name = "input_image"
-
-graph.add(pyneat.nodes.input(input_opt))
-graph.add(pyneat.nodes.grider_fast(opt))
-graph.add(pyneat.nodes.output())
-
-image_np = np.zeros((batch, height, width), dtype=np.uint8)
-image = pyneat.Tensor.from_numpy(image_np, memory="ev74")
-image.layout = pyneat.TensorLayout.HW
-# If setting route metadata from Python in a custom app, keep it aligned with
-# the option names used above.
+options = pyneat.TrackKLTOptions()
+options.width, options.height = 640, 480
+options.num_points = 64
+options.win_half, options.max_level, options.max_iters = 7, 2, 20
+options.publish_error = True
+options.error_threshold = -1.0
+options.min_eig_threshold = 0.0
+options.require_convergence = False
+node = pyneat.nodes.track_klt(options)
 ```
 
-## 안전 점검
+## 검증
 
-네 특징/추적 노드는 EV 디스패치 전에 그래프의 유효성을 검증합니다. 다음의 경우 유효성 검증에 실패합니다.
+설정된 포트 이름은 비어 있지 않고 고유해야 합니다. 잘못된 크기, 점 수, 창, 피라미드 수준, 기술자 크기 및 유한하지 않거나 범위를 벗어난 품질 매개변수는 거부됩니다. 검사를 우회하거나 값을 변환하려고 텐서 형식만 바꾸지 마세요.
 
-- 0 이하의 차원 또는 개수;
-- 지원되지 않는 배치 크기입니다.
-- `[0,255]` 범위를 벗어나는 임계값
-- 중복되거나 비어 있는 텐서 이름
-- `TrackDescriptorOptions.descriptor_words != 8`;
-- 잘못된 KLT 창, 레벨 및 감지 모드 값입니다.
-- 사전 배포 협상 중에 런타임 텐서의 크기가 부족합니다.
+## 정확성 테스트 실행
 
-이는 불법 버퍼가 EV74에 문제를 일으킬 수 있기 때문에 중요합니다. 검증 실패는 호스트 측 오류로 처리하고 Node 계약 경로를 우회하지 않도록 하십시오.
-
-## 빠른 검증 명령어
-
-빠른 고객 맞춤형 DevKit 게이트는 다음과 같습니다.
+DevKit에서 `CORE_TEST_DIR`를 설치된 Core 테스트 디렉터리 또는 네이티브 빌드의 테스트 디렉터리로 설정한 다음 실행하세요.
 
 ```bash
-ctest --test-dir /workspace/core_graph_changes/build/tests \
-  -R visual_frontend_ --output-on-failure
+ctest --test-dir "$CORE_TEST_DIR" \
+  -R '^(grider_fast|track_descriptor|track_klt)_ev_test$' --output-on-failure
 ```
 
-실행 중:
+각 등록 테스트는 해당 커널의 전체 사례를 실행합니다. GriderFast는 격자·거리와 FAST 경계, TrackDescriptor는 정확한 기술자 대응도, TrackKLT는 독립 입력, 프레임 재사용, 검증, 품질, 움직임, 경계 및 검출기를 확인합니다. 별도 빠른 프리셋은 히스토그램, 검출 없는 KLT 및 배치 거부 스모크 테스트로, 수치 검증을 대체하지 않습니다.
 
-- `320x240`, `batch_size=2`, `detect_new_features=1`를 사용하여 생성된 4개의 시각적 그래프.
-- 특정 KLT에 대한 탐지 방지 ABI 검사;
-- 불법적인 일괄 입력을 확인하는 사전 배송 검사 실패 시 발생하는 오류입니다.
-  EV74 이전에 거부되었습니다.
+## Metoak 깊이 (C++)
+
+`nodes::MetoakDepth`는 기존 `MetoakDepthOptions` API를 복원합니다.
+이름이 지정된 텐서 6개를 입력받아 RGB, 깊이, XYZ를 함께 공개합니다.
+이 노드는 카메라 캡처가 아닌 EV74 연산을 수행하므로 카메라 없이 합성 텐서를 사용할 수 있습니다.
+
+위의 배치 지원 노드와 달리 Metoak은 항상 배치 1이며 선행 배치 차원이 없습니다.
+`W`는 `[8,2048]`, `H`는 `[8,1536]` 범위의 짝수로 설정합니다.
+표준 라우트 이름을 유지하고 아래 순서로 입력을 전달하세요.
+
+| 텐서 | 자료형 | 형상 |
+| --- | --- | --- |
+| y_src | UInt8 | [H,W] |
+| u_src, v_src | UInt8 | [H/2,W/2] |
+| disp_src | UInt16 | [H,W] |
+| bf_mm_src | Float32 | [1] |
+| proj_src | Float32 | [3] |
+| rgb_dst | UInt8 | [H,W,3] |
+| depth_dst | UInt16 | [H,W] |
+| points_dst | Float32 | [H,W,3] |
+
+`y_src`, `u_src`, `v_src`는 개별 I420 평면입니다. 시차 배율은 32입니다.
+각 프레임에 양의 유한 값인 `bf_mm_src`(기선 × 초점 거리, mm)와
+`proj_src = {fx_fy, cx, cy}`를 전달합니다. `fx_fy`는 양수여야 하며 세 값 모두 유한해야 합니다.
+보정값은 프레임마다 변경할 수 있습니다.
+
+깊이는 mm 단위로 반올림하고 UInt16 상한에서 포화됩니다. XYZ는 반올림 전 깊이를 m 단위로 사용합니다.
+시차가 0이면 깊이는 0이고 XYZ는 NaN입니다. 기본 출력 설명이 깊이여도 세 출력 모두 사용할 수 있습니다.
+
+```cpp
+MetoakDepthOptions depth;
+depth.width = 640;
+depth.height = 360;
+graph.add(nodes::MetoakDepth(depth));
+```
+
+기존 `debug`, `num_buffers`, `element_name` 필드를 그대로 사용할 수 있습니다.
+`num_buffers = 0`은 그래프의 기본 용량을 사용하며 양수는 이 단계의 실행 용량을 지정합니다.
+복원된 공개 API는 C++이며 Python Metoak 팩토리는 추가하지 않습니다.

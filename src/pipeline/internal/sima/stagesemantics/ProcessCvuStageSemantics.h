@@ -100,11 +100,22 @@ struct ProcessCvuCanonicalCompileInputs {
 
 std::string canonical_processcvu_graph_family(const std::string& graph_family);
 
+// Canonical graph225 option policy shared by MPK-authored and physical-command
+// contract assembly. Raw firmware bits remain private to the implementation.
+std::uint32_t
+processcvu_detesscast_optimized_flags(bool requires_bf16_noncompact_c16_lane_split) noexcept;
+
 ProcessCvuCanonicalCompileInputs
 build_processcvu_compile_inputs_from_options(const ::simaai::neat::PreprocOptions& opt);
 
 CompiledProcessCvuContract
 build_processcvu_compiled_contract_from_options(const ::simaai::neat::PreprocOptions& opt);
+
+// Raw-image publication is projected directly from checked numerical planes;
+// normalization keeps the existing dense BF16 tensor contract.
+CompiledProcessCvuContract build_image_transform_compiled_contract_from_options(
+    const ::simaai::neat::PreprocOptions& opt,
+    std::shared_ptr<const ::simaai::neat::internal::ImageTransformPolicy> image_transform);
 
 CompiledProcessCvuContract
 build_processcvu_compiled_contract_from_facts(const ProcessCvuStagePayload& payload,
@@ -112,19 +123,6 @@ build_processcvu_compiled_contract_from_facts(const ProcessCvuStagePayload& payl
 
 CompiledProcessCvuContract
 build_processcvu_compiled_contract(const ProcessCvuCanonicalCompileInputs& inputs);
-
-CompiledProcessCvuContract build_processcvu_mpk_preadapter_compiled_contract_for_stage_kind(
-    const MpkContract& contract, ::simaai::neat::internal::ExecutionStageKind stage_kind,
-    const std::optional<std::string>& exact_stage_name_or_id = std::nullopt,
-    const std::optional<std::string>& canonical_handoff_segment_name = std::nullopt);
-CompiledProcessCvuContract build_processcvu_mpk_compiled_contract_for_stage_kind(
-    const MpkContract& contract, ::simaai::neat::internal::ExecutionStageKind stage_kind,
-    const std::optional<std::string>& exact_stage_name_or_id = std::nullopt,
-    const std::optional<std::string>& canonical_handoff_segment_name = std::nullopt,
-    const std::optional<bool>& preproc_single_output_handoff = std::nullopt,
-    const std::string& input_format = {}, int input_depth = 0, int max_input_width = 0,
-    int max_input_height = 0, bool normalize = false, const std::vector<float>& mean = {},
-    const std::vector<float>& stddev = {});
 
 std::string
 resolve_preproc_primary_output_name(const std::vector<std::string>& runtime_output_names,

@@ -169,7 +169,7 @@ SimaBoxDecode(const Model& model,
 
 ### デコードタイプとテンソルの契約
 
-`BoxDecodeType` は型付き API (`simaai::neat::BoxDecodeType` / `neat.BoxDecodeType`) であり、デコードステージでは常に明示的に設定する必要があります。 以下のランタイムコントラクトは、`internals/gst_plugins/genericboxdecode_v2/gstneatboxdecode.cpp` (`infer_num_classes`、`infer_yolo_decoupled_classes`、`infer_yolo_packed_classes`、`compute_required_output_size`) から派生します。
+`BoxDecodeType` は型付き API (`simaai::neat::BoxDecodeType` / `neat.BoxDecodeType`) であり、デコードステージでは常に明示的に設定する必要があります。 以下のランタイムコントラクトは、`internals/gst_plugins/neatobjectdecode/gstneatboxdecode.cpp` (`infer_num_classes`、`infer_yolo_decoupled_classes`、`infer_yolo_packed_classes`、`compute_required_output_size`) から派生します。
 
 主要なテンソルコントラクトルール：
 - `yolov5` 検出以外の YOLO ファミリーのデコードタイプ (`yolo`、`yolov5-seg`、`yolov7*`、`yolov8*`、`yolov9*`、`yolov10*`):

@@ -10,6 +10,35 @@ namespace simaai::neat::pipeline_internal {
 
 namespace {
 
+InputMemoryResolution
+resolve_memory_policy_from_first_downstream_node(const std::vector<std::shared_ptr<Node>>& nodes) {
+  if (nodes.size() <= 1U) {
+    return {};
+  }
+  for (std::size_t i = 1U; i < nodes.size(); ++i) {
+    const auto& node = nodes[i];
+    if (!node) {
+      continue;
+    }
+    const std::string kind = node->kind();
+    if (kind == "Cast") {
+      continue;
+    }
+    if (kind == "Preproc" || kind == "Quant" || kind == "Tess" || kind == "QuantTess" ||
+        kind == "CastTess") {
+      return {InputMemoryPolicy::Ev74, true};
+    }
+    if (kind == "ModelFragment") {
+      return {InputMemoryPolicy::Dms0, true};
+    }
+    if (node->memory_contract() == MemoryContract::PreferDeviceZeroCopy) {
+      return {InputMemoryPolicy::Ev74, false};
+    }
+    return {};
+  }
+  return {};
+}
+
 TensorCompatDims seed_compat_dims_from_spec(const SampleSpec& seed) {
   if (seed.media_type == "application/vnd.simaai.tensor" && !seed.shape.empty()) {
     return tensor_compat_dims_from_shape(seed.shape, seed.layout);
@@ -22,6 +51,18 @@ TensorCompatDims seed_compat_dims_from_spec(const SampleSpec& seed) {
 }
 
 } // namespace
+
+InputMemoryResolution resolve_input_memory(const InputOptions& options,
+                                           const std::vector<std::shared_ptr<Node>>& nodes) {
+  if (options.memory_policy != InputMemoryPolicy::Auto) {
+    return {options.memory_policy, options.memory_policy == InputMemoryPolicy::Ev74 ||
+                                       options.memory_policy == InputMemoryPolicy::Dms0};
+  }
+  if (!options.use_simaai_pool) {
+    return {};
+  }
+  return resolve_memory_policy_from_first_downstream_node(nodes);
+}
 
 InputOptions normalize_shape_bounds(const InputOptions& in) {
   InputOptions out = in;

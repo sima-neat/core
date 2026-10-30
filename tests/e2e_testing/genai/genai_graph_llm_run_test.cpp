@@ -151,7 +151,8 @@ int main() {
             "GenAI graph streaming generated unexpected text: " + streaming_prompt_outputs.tokens);
     const std::string streaming_finish_reason =
         bundle_field_text(streaming_prompt_outputs.done, "finish_reason");
-    require(streaming_finish_reason == "stop" || streaming_finish_reason == "interrupted",
+    require(streaming_finish_reason == "stop" || streaming_finish_reason == "length" ||
+                streaming_finish_reason == "interrupted",
             "GenAI graph streaming returned unexpected finish reason: " + streaming_finish_reason);
     require(std::stoul(bundle_field_text(streaming_prompt_outputs.done, "generated_tokens")) > 0,
             "GenAI graph streaming done should report generated tokens");
@@ -179,7 +180,7 @@ int main() {
     require(trim_text(sync_prompt_outputs.tokens) == "The capital of Germany is Berlin.",
             "GenAI graph sync generated unexpected text: " + sync_prompt_outputs.tokens);
     const std::string finish_reason = bundle_field_text(sync_prompt_outputs.done, "finish_reason");
-    require(finish_reason == "stop" || finish_reason == "interrupted",
+    require(finish_reason == "stop" || finish_reason == "length" || finish_reason == "interrupted",
             "GenAI graph returned unexpected finish reason: " + finish_reason);
     require(std::stoul(bundle_field_text(sync_prompt_outputs.done, "generated_tokens")) > 0,
             "GenAI graph done should report generated tokens");

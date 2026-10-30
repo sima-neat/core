@@ -8,6 +8,7 @@
 #include "pipeline/internal/TensorUtil.h"
 #include "nodes/io/Input.h"
 
+#include <gst/SimaTensorSetMetaAbi.h>
 #include <gst/gst.h>
 #include <gst/video/video.h>
 
@@ -246,6 +247,8 @@ std::size_t tensor_plane_bytes_tight(const simaai::neat::Plane& plane, TensorDTy
 }
 
 std::size_t tensor_bytes_tight(const simaai::neat::Tensor& input) {
+  if (input.has_tiled_storage())
+    return input.semantic.tess->storage_bytes;
   if (input.is_composite()) {
     std::size_t total = 0;
     for (const auto& plane : input.planes) {
@@ -253,15 +256,7 @@ std::size_t tensor_bytes_tight(const simaai::neat::Tensor& input) {
     }
     return total;
   }
-  if (!input.is_dense() || input.shape.empty())
-    return 0;
-  std::size_t total = dtype_bytes_for_copy(input.dtype);
-  for (const auto dim : input.shape) {
-    if (dim <= 0)
-      return 0;
-    total *= static_cast<std::size_t>(dim);
-  }
-  return total;
+  return input.dense_bytes_tight();
 }
 
 bool copy_tensor_payload_to(const simaai::neat::Tensor& tensor, uint8_t* dst, std::size_t dst_bytes,
@@ -278,8 +273,15 @@ bool copy_tensor_payload_to(const simaai::neat::Tensor& tensor, uint8_t* dst, st
       *err = "tensor copy: missing storage";
     return false;
   }
+  return copy_tensor_payload_to(tensor, tensor.map(simaai::neat::MapMode::Read), dst, dst_bytes,
+                                err);
+}
 
-  simaai::neat::Mapping mapping = tensor.map(simaai::neat::MapMode::Read);
+bool copy_tensor_payload_to(const simaai::neat::Tensor& tensor,
+                            const simaai::neat::Mapping& mapping, uint8_t* dst,
+                            std::size_t dst_bytes, std::string* err) {
+  if (dst_bytes == 0)
+    return true;
   if (!mapping.data) {
     if (err)
       *err = "tensor copy: map failed";
@@ -513,6 +515,10 @@ GstBuffer* make_zero_copy_view(GstBuffer* src, const SampleSpec& spec, std::stri
   gst_buffer_add_parent_buffer_meta(view, src);
   copy_custom_meta(view, src, "GstSimaMeta");
   copy_custom_meta(view, src, "GstSimaSampleMeta");
+  // This envelope shares the source memories, so its physical tensor
+  // descriptors remain exact. Preserve them rather than reconstructing the
+  // carrier layout later from logical Tensor routes.
+  copy_custom_meta(view, src, SIMA_TENSOR_SET_META_NAME);
   if (has_simaai_preprocess_meta(src)) {
     std::string copy_err;
     if (!copy_simaai_preprocess_meta(view, src, &copy_err)) {
@@ -574,7 +580,7 @@ bool ensure_writable_for_meta(GstBuffer** buffer, const SampleSpec& spec, const 
   return true;
 }
 
-bool resolve_encoded_payload_bytes(const simaai::neat::Tensor& tensor, const SampleSpec& spec,
+bool resolve_encoded_payload_bytes(const simaai::neat::Mapping& mapping, const SampleSpec& spec,
                                    std::size_t* out_bytes, std::string* err) {
   if (!out_bytes) {
     if (err)
@@ -586,7 +592,6 @@ bool resolve_encoded_payload_bytes(const simaai::neat::Tensor& tensor, const Sam
       *err = "encoded bytes: SampleSpec is not encoded";
     return false;
   }
-  simaai::neat::Mapping mapping = tensor.map(simaai::neat::MapMode::Read);
   if (!mapping.data) {
     if (err)
       *err = "encoded bytes: tensor map failed";
@@ -736,7 +741,7 @@ bool derive_field_spec(const Sample& field, SampleSpec* out, std::string* err) {
   }
 
   try {
-    SampleSpec spec = derive_tensor_spec_or_throw(t, opt, "GstDataAdapter::derive_field_spec");
+    SampleSpec spec = describe_tensor_spec_or_throw(t, opt, "GstDataAdapter::derive_field_spec");
     if (spec.caps_string.empty()) {
       if (err)
         *err = "field spec: empty caps_string";
@@ -853,18 +858,18 @@ bool attach_video_meta(GstBuffer** buffer, const SampleSpec& spec, std::string* 
   }
 
   const std::string fmt_name = upper_copy(spec.format);
-  if (fmt_name == "NV12") {
+  if (fmt_name == "NV12" || fmt_name == "NV16") {
     if (spec.planes.size() != 2) {
       if (err)
-        *err = "video meta: NV12 requires 2 planes";
+        *err = "video meta: " + fmt_name + " requires 2 planes";
       return false;
     }
     const PlaneInfo& y = spec.planes[0];
     const PlaneInfo& uv = spec.planes[1];
     if (y.width != spec.width || y.height != spec.height || uv.width != spec.width ||
-        uv.height != spec.height / 2) {
+        uv.height != (fmt_name == "NV16" ? spec.height : spec.height / 2)) {
       if (err)
-        *err = "video meta: NV12 plane dims mismatch";
+        *err = "video meta: " + fmt_name + " plane dims mismatch";
       return false;
     }
   } else if (fmt_name == "I420") {

@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <sstream>
@@ -26,7 +27,6 @@ namespace stagesemantics = pipeline_internal::sima::stagesemantics;
 
 struct NativeVisualSpec {
   std::string graph_name;
-  int graph_id = -1;
   std::vector<std::string> input_names;
   // Public/Neat logical tensor shapes.  Native EV74 visual kernels still receive
   // packed storage (for example B grayscale images as [B*H,W]), but users and
@@ -205,6 +205,14 @@ void require_track_klt_envelope(const TrackKLTOptions& opt) {
   require_positive(owner, "max_iters", opt.max_iters);
   require_range(owner, "max_level", opt.max_level, 0, kTrackerMaxLevel);
   require_range(owner, "detect_new_features", opt.detect_new_features, 0, 1);
+  if (!std::isfinite(opt.error_threshold) ||
+      (opt.error_threshold != -1.0f &&
+       (opt.error_threshold < 0.0f || opt.error_threshold > 255.0f))) {
+    throw std::runtime_error("TrackKLT: error_threshold must be -1 or finite in [0,255]");
+  }
+  if (!std::isfinite(opt.min_eig_threshold) || opt.min_eig_threshold < 0.0f) {
+    throw std::runtime_error("TrackKLT: min_eig_threshold must be finite and non-negative");
+  }
   require_range(owner, "fast_threshold", opt.fast_threshold, 0, 255);
   require_positive(owner, "max_features", opt.max_features);
   require_positive(owner, "grid_x", opt.grid_x);
@@ -253,53 +261,15 @@ void require_metoak_depth_envelope(const MetoakDepthOptions& opt) {
   constexpr const char* owner = "MetoakDepth";
   require_range(owner, "width", opt.width, 8, 2048);
   require_range(owner, "height", opt.height, 8, 1536);
-  if (opt.width % 2 != 0 || opt.height % 2 != 0) {
+  if (opt.width % 2 || opt.height % 2)
     throw std::runtime_error("MetoakDepth: width/height must be even (4:2:0 chroma)");
-  }
   require_range(owner, "debug", opt.debug, 0, 2);
   require_non_negative(owner, "num_buffers", opt.num_buffers);
-  require_non_empty(owner, "y_name", opt.y_name);
-  require_non_empty(owner, "u_name", opt.u_name);
-  require_non_empty(owner, "v_name", opt.v_name);
-  require_non_empty(owner, "disp_name", opt.disp_name);
-  require_non_empty(owner, "bf_mm_name", opt.bf_mm_name);
-  require_non_empty(owner, "proj_name", opt.proj_name);
-  require_non_empty(owner, "rgb_output_name", opt.rgb_output_name);
-  require_non_empty(owner, "depth_output_name", opt.depth_output_name);
-  require_non_empty(owner, "points_output_name", opt.points_output_name);
-  require_distinct(owner, {opt.y_name, opt.u_name, opt.v_name, opt.disp_name, opt.bf_mm_name,
-                           opt.proj_name, opt.rgb_output_name, opt.depth_output_name,
-                           opt.points_output_name});
-
   if (opt.y_name != "y_src" || opt.u_name != "u_src" || opt.v_name != "v_src" ||
       opt.disp_name != "disp_src" || opt.bf_mm_name != "bf_mm_src" || opt.proj_name != "proj_src" ||
       opt.rgb_output_name != "rgb_dst" || opt.depth_output_name != "depth_dst" ||
-      opt.points_output_name != "points_dst") {
-    throw std::runtime_error("MetoakDepth: graph 20 requires the canonical tensor names");
-  }
-
-  // Fixed six-input/three-output contract (migration doc section 2); batch is always 1, so
-  // buffer sizes are plain width*height products with no batch multiplier (unlike the
-  // FAST/KLT family above).
-  const auto luma_bytes = checked_mul_u64(owner, "luma_size", static_cast<std::uint64_t>(opt.width),
-                                          static_cast<std::uint64_t>(opt.height));
-  const auto chroma_bytes =
-      checked_mul_u64(owner, "chroma_size", static_cast<std::uint64_t>(opt.width) / 2ULL,
-                      static_cast<std::uint64_t>(opt.height) / 2ULL);
-  require_u32_buffer_bytes(owner, "y_src", luma_bytes);
-  require_u32_buffer_bytes(owner, "u_src", chroma_bytes);
-  require_u32_buffer_bytes(owner, "v_src", chroma_bytes);
-  require_u32_buffer_bytes(owner, "disp_src",
-                           checked_mul_u64(owner, "disp_src_size", luma_bytes, 2ULL));
-  require_u32_buffer_bytes(owner, "bf_mm_src", sizeof(float));
-  require_u32_buffer_bytes(owner, "proj_src", 3ULL * sizeof(float));
-  require_u32_buffer_bytes(owner, "rgb_dst",
-                           checked_mul_u64(owner, "rgb_dst_size", luma_bytes, 3ULL));
-  require_u32_buffer_bytes(owner, "depth_dst",
-                           checked_mul_u64(owner, "depth_dst_size", luma_bytes, 2ULL));
-  require_u32_buffer_bytes(
-      owner, "points_dst",
-      checked_mul_u64(owner, "points_dst_size", luma_bytes, 3ULL * sizeof(float)));
+      opt.points_output_name != "points_dst")
+    throw std::runtime_error("MetoakDepth: canonical tensor names are required");
 }
 
 std::string default_element_name(int node_index, const char* suffix) {
@@ -353,19 +323,15 @@ sima_ev_tensor_desc build_contract_tensor_desc(const std::vector<int>& shape,
                                                const char* owner) {
   sima_ev_tensor_desc desc{};
   std::string err;
-  // Graph 20 owns unsigned-16 arithmetic despite the legacy EV tag alias. Never
-  // admit UInt16 through the generic cast/conversion helpers based on byte width.
-  const std::string wire_dtype =
-      std::string(owner) == "simor_depth_map" && dtype == "UINT16" ? "INT16" : dtype;
   bool ok = false;
   if (layout.empty()) {
     ok = tensorsemantics::build_generic_dense_tensor_desc(
-        shape, wire_dtype, &desc, &err, "native_visual_tensor_output_missing",
+        shape, dtype, &desc, &err, "native_visual_tensor_output_missing",
         "native_visual_tensor_rank_invalid", "native_visual_tensor_dim_invalid",
         "native_visual_tensor_dtype_invalid", "native_visual_tensor_stride_output_missing");
   } else {
     ok = tensorsemantics::build_dense_tensor_desc(
-        shape, wire_dtype, layout, &desc, &err, "native_visual_tensor_output_missing",
+        shape, dtype, layout, &desc, &err, "native_visual_tensor_output_missing",
         "native_visual_tensor_rank_invalid", "native_visual_tensor_dim_invalid",
         "native_visual_tensor_dtype_invalid", "native_visual_tensor_stride_output_missing");
   }
@@ -401,7 +367,6 @@ RuntimeConfig make_runtime_base(const NativeVisualSpec& spec) {
   RuntimeConfig runtime;
   runtime.graph_family = spec.graph_name;
   runtime.graph_name = spec.graph_name;
-  runtime.graph_id = spec.graph_id;
   runtime.default_input_name = spec.input_names.front();
   runtime.runtime_input_names = spec.input_names;
   runtime.physical_input_names = spec.input_names;
@@ -419,7 +384,6 @@ RuntimeConfig make_runtime_base(const NativeVisualSpec& spec) {
   runtime.output_shapes = spec.output_shapes;
   runtime.runtime_output_logical_shapes = spec.output_shapes;
   runtime.input_dtype = spec.input_dtypes.front();
-  runtime.runtime_input_dtype_list = spec.input_dtypes;
   runtime.output_dtype = spec.output_dtypes.front();
   runtime.out_dtype = runtime.output_dtype;
   runtime.runtime_output_dtype_list = spec.output_dtypes;
@@ -441,15 +405,17 @@ RuntimeConfig make_runtime_base(const NativeVisualSpec& spec) {
 
   runtime.input_tensors.reserve(spec.input_names.size());
   for (std::size_t i = 0; i < spec.input_names.size(); ++i) {
-    runtime.input_tensors.push_back(
+    runtime.input_tensors.emplace_back(
         build_contract_tensor_desc(transport_input_shapes[i], spec.input_dtypes[i],
-                                   spec.input_layouts[i], spec.graph_name.c_str()));
+                                   spec.input_layouts[i], spec.graph_name.c_str()),
+        spec.input_dtypes[i]);
   }
   runtime.output_tensors.reserve(spec.runtime_output_names.size());
   for (std::size_t i = 0; i < spec.runtime_output_names.size(); ++i) {
-    runtime.output_tensors.push_back(
+    runtime.output_tensors.emplace_back(
         build_contract_tensor_desc(transport_output_shapes[i], spec.output_dtypes[i],
-                                   spec.output_layouts[i], spec.graph_name.c_str()));
+                                   spec.output_layouts[i], spec.graph_name.c_str()),
+        spec.output_dtypes[i]);
   }
   return runtime;
 }
@@ -482,8 +448,24 @@ bool compile_runtime_contract(const std::string& node_kind, const std::string& e
                               const RuntimeConfig& runtime, CompiledNodeContract* out,
                               std::string* err) {
   try {
-    const auto compiled =
-        stagesemantics::build_processcvu_compiled_contract_from_runtime_config(runtime);
+    auto compiled = stagesemantics::build_processcvu_compiled_contract_from_runtime_config(runtime);
+    if (runtime.graph_name == "track_klt") {
+      // The public status tensor retains [B,N,1]; the canonical tracker writes
+      // [B,N] into the very same dense storage. Author that view at the public
+      // semantic boundary, not by accepting a later inspection mismatch.
+      const auto authorize_status = [&runtime](auto& outputs) {
+        const int error_slot = runtime.detect_new_features != 0 ? 3 : 2;
+        for (auto& logical : outputs) {
+          if (logical.backend_output_index == 1 ||
+              (runtime.publish_error && logical.backend_output_index == error_slot)) {
+            logical.publication_relation =
+                pipeline_internal::sima::PublicationViewRelation::SingletonAxes;
+          }
+        }
+      };
+      authorize_status(compiled.runtime_contract.logical_outputs);
+      authorize_status(compiled.exposed_view.exposed_logical_outputs);
+    }
     return stagesemantics::build_processcvu_node_contract(node_kind, element_name, element_name,
                                                           definition, compiled, out, err);
   } catch (const std::exception& ex) {
@@ -494,13 +476,10 @@ bool compile_runtime_contract(const std::string& node_kind, const std::string& e
   }
 }
 
-std::string processcvu_backend_fragment(const std::string& element_name, int num_buffers) {
-  require_element("neatprocesscvu", "VisualFrontend::backend_fragment");
+std::string processcvu_backend_fragment(const std::string& element_name) {
+  require_element("neatkernelrunner", "VisualFrontend::backend_fragment");
   std::ostringstream ss;
-  ss << "neatprocesscvu name=" << element_name << " stage-id=" << element_name;
-  if (num_buffers > 0) {
-    ss << " num-buffers=" << num_buffers;
-  }
+  ss << "neatkernelrunner name=" << element_name;
   return ss.str();
 }
 
@@ -516,7 +495,7 @@ OutputSpec tensor_output_spec(const std::string& format, const std::vector<int>&
                    : (shape.size() == 2U ? "HW" : (shape.size() >= 3U ? "HWC" : std::string{}));
   out.memory = input.memory.empty() ? "SimaAI" : input.memory;
   out.certainty = SpecCertainty::Derived;
-  out.note = "neatprocesscvu";
+  out.note = "neatkernelrunner";
   out.byte_size = shape_bytes(shape, dtype);
   std::string layout_upper = out.layout;
   std::transform(layout_upper.begin(), layout_upper.end(), layout_upper.begin(),
@@ -558,7 +537,7 @@ NativeVisualSpec spec_from_options(const FeatureHistogramOptions& opt) {
                                static_cast<std::uint64_t>(opt.batch_size));
   NativeVisualSpec spec;
   spec.graph_name = "feature_histogram";
-  spec.graph_id = 235;
+
   spec.input_names = {opt.input_name};
   spec.input_shapes = {{opt.batch_size, opt.height, opt.width}};
   spec.transport_input_shapes = {
@@ -591,7 +570,7 @@ NativeVisualSpec spec_from_options(const GriderFastOptions& opt) {
                                                feature_list_ints("GriderFast", opt.max_features));
   NativeVisualSpec spec;
   spec.graph_name = "grider_fast";
-  spec.graph_id = 236;
+
   spec.input_names = {opt.input_name};
   spec.input_shapes = {{opt.batch_size, opt.height, opt.width}};
   spec.transport_input_shapes = {
@@ -636,7 +615,7 @@ NativeVisualSpec spec_from_options(const TrackDescriptorOptions& opt) {
                                         static_cast<std::uint64_t>(opt.max_features)));
   NativeVisualSpec spec;
   spec.graph_name = "track_descriptor";
-  spec.graph_id = 237;
+
   spec.input_names = {opt.input_name};
   spec.input_shapes = {{opt.batch_size, opt.height, opt.width}};
   spec.transport_input_shapes = {
@@ -664,9 +643,14 @@ NativeVisualSpec spec_from_options(const TrackKLTOptions& opt) {
   require_non_empty("TrackKLT", "output_points_name", opt.output_points_name);
   require_non_empty("TrackKLT", "output_status_name", opt.output_status_name);
   require_non_empty("TrackKLT", "output_features_name", opt.output_features_name);
-  require_distinct("TrackKLT",
-                   {opt.prev_image_name, opt.cur_image_name, opt.input_points_name,
-                    opt.output_points_name, opt.output_status_name, opt.output_features_name});
+  std::vector<std::string> port_names{opt.prev_image_name,    opt.cur_image_name,
+                                      opt.input_points_name,  opt.output_points_name,
+                                      opt.output_status_name, opt.output_features_name};
+  if (opt.publish_error) {
+    require_non_empty("TrackKLT", "output_error_name", opt.output_error_name);
+    port_names.push_back(opt.output_error_name);
+  }
+  require_distinct("TrackKLT", port_names);
   const auto feature_width = checked_shape_dim("TrackKLT", "feature_list_width",
                                                feature_list_ints("TrackKLT", opt.max_features));
   const auto point_rows = checked_shape_dim(
@@ -675,7 +659,7 @@ NativeVisualSpec spec_from_options(const TrackKLTOptions& opt) {
                       static_cast<std::uint64_t>(opt.num_points)));
   NativeVisualSpec spec;
   spec.graph_name = "track_klt";
-  spec.graph_id = 238;
+
   spec.input_names = {opt.prev_image_name, opt.cur_image_name, opt.input_points_name};
   spec.input_shapes = {{opt.batch_size, opt.height, opt.width},
                        {opt.batch_size, opt.height, opt.width},
@@ -686,20 +670,25 @@ NativeVisualSpec spec_from_options(const TrackKLTOptions& opt) {
       {point_rows, 2}};
   spec.input_dtypes = {"UINT8", "UINT8", "INT32"};
   spec.input_layouts = {"HW", "HW", "HW"};
-  spec.runtime_output_names = {opt.output_points_name, opt.output_status_name,
-                               opt.output_features_name};
-  spec.published_output_names =
-      opt.detect_new_features != 0
-          ? spec.runtime_output_names
-          : std::vector<std::string>{opt.output_points_name, opt.output_status_name};
-  spec.output_shapes = {{opt.batch_size, opt.num_points, 2},
-                        {opt.batch_size, opt.num_points, 1},
-                        {opt.batch_size, feature_width}};
-  spec.transport_output_shapes = {
-      {point_rows, 2}, {point_rows, 1}, {opt.batch_size, feature_width}};
-  spec.output_dtypes = {"FP32", "INT32", "INT32"};
-  spec.output_layouts = {"HW", "HW", "HW"};
-  spec.logical_output_layouts = {"HW", "HW", "HW"};
+  spec.runtime_output_names = {opt.output_points_name, opt.output_status_name};
+  spec.output_shapes = {{opt.batch_size, opt.num_points, 2}, {opt.batch_size, opt.num_points, 1}};
+  spec.transport_output_shapes = {{point_rows, 2}, {point_rows, 1}};
+  spec.output_dtypes = {"FP32", "INT32"};
+  if (opt.detect_new_features != 0) {
+    spec.runtime_output_names.push_back(opt.output_features_name);
+    spec.output_shapes.push_back({opt.batch_size, feature_width});
+    spec.transport_output_shapes.push_back({opt.batch_size, feature_width});
+    spec.output_dtypes.push_back("INT32");
+  }
+  if (opt.publish_error) {
+    spec.runtime_output_names.push_back(opt.output_error_name);
+    spec.output_shapes.push_back({opt.batch_size, opt.num_points, 1});
+    spec.transport_output_shapes.push_back({point_rows, 1});
+    spec.output_dtypes.push_back("FP32");
+  }
+  spec.published_output_names = spec.runtime_output_names;
+  spec.output_layouts.assign(spec.runtime_output_names.size(), "HW");
+  spec.logical_output_layouts = spec.output_layouts;
   spec.primary_output_name = opt.output_points_name;
   return spec;
 }
@@ -708,7 +697,6 @@ NativeVisualSpec spec_from_options(const MetoakDepthOptions& opt) {
   require_metoak_depth_envelope(opt);
   NativeVisualSpec spec;
   spec.graph_name = "simor_depth_map";
-  spec.graph_id = 20;
   spec.input_names = {opt.y_name,    opt.u_name,     opt.v_name,
                       opt.disp_name, opt.bf_mm_name, opt.proj_name};
   spec.input_shapes = {
@@ -719,12 +707,10 @@ NativeVisualSpec spec_from_options(const MetoakDepthOptions& opt) {
       {1},                             // bf_mm_src
       {3},                             // proj_src
   };
-  // No batch packing: SIMOR is a fixed batch-1 kernel (migration doc's explicit "keep batch 1"
-  // scope decision), so the public and transport shapes are identical.
+  // SIMOR is batch-one: public and transport shapes are identical.
   spec.transport_input_shapes = spec.input_shapes;
   spec.input_dtypes = {"UINT8", "UINT8", "UINT8", "UINT16", "FP32", "FP32"};
-  // bf_mm_src/proj_src are plain 1-D vectors, not HW-shaped images -- leave their layout empty
-  // (build_contract_tensor_desc() falls back to the generic dense-tensor builder for those).
+  // Calibration inputs are dense vectors, not images.
   spec.input_layouts = {"HW", "HW", "HW", "HW", "", ""};
   spec.runtime_output_names = {opt.rgb_output_name, opt.depth_output_name, opt.points_output_name};
   spec.published_output_names = spec.runtime_output_names;
@@ -737,9 +723,7 @@ NativeVisualSpec spec_from_options(const MetoakDepthOptions& opt) {
   spec.output_dtypes = {"UINT8", "UINT16", "FP32"};
   spec.output_layouts = {"HWC", "HW", "HWC"};
   spec.logical_output_layouts = spec.output_layouts;
-  // Primary output for output_spec()'s single-boundary description only -- rgb_dst and
-  // points_dst are still always published alongside it (migration doc section 4: "Selecting
-  // depth as the 'primary output' must not hide RGB or XYZ").
+  // The primary boundary description does not hide RGB or XYZ publication.
   spec.primary_output_name = opt.depth_output_name;
   return spec;
 }
@@ -790,6 +774,10 @@ RuntimeConfig make_runtime(const TrackKLTOptions& opt) {
   runtime.win_half = opt.win_half;
   runtime.max_iters = opt.max_iters;
   runtime.max_level = opt.max_level;
+  runtime.publish_error = opt.publish_error;
+  runtime.error_threshold = opt.error_threshold;
+  runtime.min_eig_threshold = opt.min_eig_threshold;
+  runtime.require_convergence = opt.require_convergence;
   runtime.detect_new_features = opt.detect_new_features;
   runtime.fast_threshold = opt.fast_threshold;
   runtime.max_features = opt.max_features;
@@ -802,21 +790,10 @@ RuntimeConfig make_runtime(const TrackKLTOptions& opt) {
 }
 
 RuntimeConfig make_runtime(const MetoakDepthOptions& opt) {
-  const auto spec = spec_from_options(opt);
-  auto runtime = make_runtime_base(spec);
-  for (std::size_t i = 0; i < runtime.input_tensors.size(); ++i) {
-    runtime.input_tensors[i].storage.nbytes =
-        shape_bytes(spec.input_shapes[i], spec.input_dtypes[i]);
-  }
-  for (std::size_t i = 0; i < runtime.output_tensors.size(); ++i) {
-    runtime.output_tensors[i].storage.nbytes =
-        shape_bytes(spec.output_shapes[i], spec.output_dtypes[i]);
-  }
+  auto runtime = make_runtime_base(spec_from_options(opt));
   runtime.width = opt.width;
   runtime.height = opt.height;
   runtime.debug = opt.debug;
-  // runtime.batch_size stays at CompiledProcessCvuRuntimeConfig's own default (1) -- MetoakDepth
-  // has no batch_size option (fixed batch-1 kernel).
   return runtime;
 }
 
@@ -826,11 +803,10 @@ FeatureHistogram::FeatureHistogram(FeatureHistogramOptions opt) : opt_(std::move
 GriderFast::GriderFast(GriderFastOptions opt) : opt_(std::move(opt)) {}
 TrackDescriptor::TrackDescriptor(TrackDescriptorOptions opt) : opt_(std::move(opt)) {}
 TrackKLT::TrackKLT(TrackKLTOptions opt) : opt_(std::move(opt)) {}
-MetoakDepth::MetoakDepth(MetoakDepthOptions opt) : opt_(std::move(opt)) {}
 
 std::string FeatureHistogramOptions::summary() const {
   std::ostringstream ss;
-  ss << "FeatureHistogramOptions(graph=feature_histogram,graph_id=235,";
+  ss << "FeatureHistogramOptions(graph=feature_histogram,";
   append_common_summary(ss, *this);
   ss << ",input=" << quoted_or_auto(input_name) << ",output=" << quoted_or_auto(output_name)
      << ",input_shape=[" << batch_size << "," << height << "," << width << "]" << ",output_shape=["
@@ -840,7 +816,7 @@ std::string FeatureHistogramOptions::summary() const {
 
 std::string GriderFastOptions::summary() const {
   std::ostringstream ss;
-  ss << "GriderFastOptions(graph=grider_fast,graph_id=236,";
+  ss << "GriderFastOptions(graph=grider_fast,";
   append_common_summary(ss, *this);
   append_fast_summary(ss, threshold, max_features, grid_x, grid_y, min_px_dist);
   ss << ",input=" << quoted_or_auto(input_name) << ",output=" << quoted_or_auto(output_name)
@@ -851,7 +827,7 @@ std::string GriderFastOptions::summary() const {
 
 std::string TrackDescriptorOptions::summary() const {
   std::ostringstream ss;
-  ss << "TrackDescriptorOptions(graph=track_descriptor,graph_id=237,";
+  ss << "TrackDescriptorOptions(graph=track_descriptor,";
   append_common_summary(ss, *this);
   append_fast_summary(ss, threshold, max_features, grid_x, grid_y, min_px_dist);
   ss << ",descriptor_words=" << descriptor_words << ",input=" << quoted_or_auto(input_name)
@@ -865,10 +841,12 @@ std::string TrackDescriptorOptions::summary() const {
 
 std::string TrackKLTOptions::summary() const {
   std::ostringstream ss;
-  ss << "TrackKLTOptions(graph=track_klt,graph_id=238,width=" << width << ",height=" << height
+  ss << "TrackKLTOptions(graph=track_klt,width=" << width << ",height=" << height
      << ",batch_size=" << batch_size << ",num_points=" << num_points << ",win_half=" << win_half
      << ",max_iters=" << max_iters << ",max_level=" << max_level
-     << ",detect_new_features=" << detect_new_features;
+     << ",detect_new_features=" << detect_new_features << ",publish_error=" << publish_error
+     << ",error_threshold=" << error_threshold << ",min_eig_threshold=" << min_eig_threshold
+     << ",require_convergence=" << require_convergence;
   append_fast_summary(ss, fast_threshold, max_features, grid_x, grid_y, min_px_dist);
   ss << ",debug=" << debug << ",num_buffers=" << num_buffers
      << ",element_name=" << quoted_or_auto(element_name)
@@ -887,22 +865,11 @@ std::string TrackKLTOptions::summary() const {
   } else {
     ss << ",published_feature_shape=<disabled>";
   }
+  if (publish_error) {
+    ss << ",output_error=" << quoted_or_auto(output_error_name) << ",published_error_shape=["
+       << batch_size << "," << num_points << ",1]";
+  }
   ss << ")";
-  return ss.str();
-}
-
-std::string MetoakDepthOptions::summary() const {
-  std::ostringstream ss;
-  ss << "MetoakDepthOptions(graph=simor_depth_map,graph_id=20,width=" << width
-     << ",height=" << height << ",debug=" << debug << ",num_buffers=" << num_buffers
-     << ",element_name=" << quoted_or_auto(element_name) << ",y=" << quoted_or_auto(y_name)
-     << ",u=" << quoted_or_auto(u_name) << ",v=" << quoted_or_auto(v_name)
-     << ",disp=" << quoted_or_auto(disp_name) << ",bf_mm=" << quoted_or_auto(bf_mm_name)
-     << ",proj=" << quoted_or_auto(proj_name) << ",rgb_output=" << quoted_or_auto(rgb_output_name)
-     << ",depth_output=" << quoted_or_auto(depth_output_name)
-     << ",points_output=" << quoted_or_auto(points_output_name) << ",luma_shape=[" << height << ","
-     << width << "],rgb_shape=[" << height << "," << width << ",3],points_shape=[" << height << ","
-     << width << ",3])";
   return ss.str();
 }
 
@@ -922,11 +889,6 @@ NodeContractDefinition TrackDescriptor::contract_definition() const {
 }
 
 NodeContractDefinition TrackKLT::contract_definition() const {
-  const auto spec = spec_from_options(opt_);
-  return make_contract_definition(kind(), spec.input_names, spec.published_output_names);
-}
-
-NodeContractDefinition MetoakDepth::contract_definition() const {
   const auto spec = spec_from_options(opt_);
   return make_contract_definition(kind(), spec.input_names, spec.published_output_names);
 }
@@ -955,15 +917,23 @@ bool TrackDescriptor::compile_node_contract(const ContractCompileInput& input,
 bool TrackKLT::compile_node_contract(const ContractCompileInput& input, CompiledNodeContract* out,
                                      std::string* err) const {
   const std::string name = element_names(input.node_index).front();
-  return compile_runtime_contract(kind(), name, contract_definition(), make_runtime(opt_), out,
-                                  err);
-}
-
-bool MetoakDepth::compile_node_contract(const ContractCompileInput& input,
-                                        CompiledNodeContract* out, std::string* err) const {
-  const std::string name = element_names(input.node_index).front();
-  return compile_runtime_contract(kind(), name, contract_definition(), make_runtime(opt_), out,
-                                  err);
+  if (!compile_runtime_contract(kind(), name, contract_definition(), make_runtime(opt_), out, err))
+    return false;
+  out->public_input_contract = pipeline_internal::OrderedPublicInputContract{{
+      {opt_.prev_image_name,
+       TensorDType::UInt8,
+       TensorLayout::HW,
+       {opt_.batch_size, opt_.height, opt_.width}},
+      {opt_.cur_image_name,
+       TensorDType::UInt8,
+       TensorLayout::HW,
+       {opt_.batch_size, opt_.height, opt_.width}},
+      {opt_.input_points_name,
+       TensorDType::Int32,
+       TensorLayout::HW,
+       {opt_.batch_size, opt_.num_points, 2}},
+  }};
+  return true;
 }
 
 void FeatureHistogram::apply_compiled_contract(const CompiledNodeContract&, std::string* err) {
@@ -982,34 +952,22 @@ void TrackKLT::apply_compiled_contract(const CompiledNodeContract&, std::string*
   if (err)
     err->clear();
 }
-void MetoakDepth::apply_compiled_contract(const CompiledNodeContract&, std::string* err) {
-  if (err)
-    err->clear();
-}
 
 std::string FeatureHistogram::backend_fragment(int node_index) const {
   const auto names = element_names(node_index);
-  return processcvu_backend_fragment(names.front(), opt_.num_buffers);
+  return processcvu_backend_fragment(names.front());
 }
 std::string GriderFast::backend_fragment(int node_index) const {
   const auto names = element_names(node_index);
-  return processcvu_backend_fragment(names.front(), opt_.num_buffers);
+  return processcvu_backend_fragment(names.front());
 }
 std::string TrackDescriptor::backend_fragment(int node_index) const {
   const auto names = element_names(node_index);
-  return processcvu_backend_fragment(names.front(), opt_.num_buffers);
+  return processcvu_backend_fragment(names.front());
 }
 std::string TrackKLT::backend_fragment(int node_index) const {
   const auto names = element_names(node_index);
-  return processcvu_backend_fragment(names.front(), opt_.num_buffers);
-}
-std::string MetoakDepth::backend_fragment(int node_index) const {
-  const auto names = element_names(node_index);
-  // Async Graph::build validates an explicit four-buffer processcvu contract
-  // before parsing. Resolve the automatic default here; sync builds can still
-  // apply their normal pool clamp, and explicit overrides remain observable.
-  const int num_buffers = opt_.num_buffers > 0 ? opt_.num_buffers : 4;
-  return processcvu_backend_fragment(names.front(), num_buffers);
+  return processcvu_backend_fragment(names.front());
 }
 
 std::vector<std::string> FeatureHistogram::element_names(int node_index) const {
@@ -1026,10 +984,6 @@ std::vector<std::string> TrackDescriptor::element_names(int node_index) const {
 }
 std::vector<std::string> TrackKLT::element_names(int node_index) const {
   return {opt_.element_name.empty() ? default_element_name(node_index, "track_klt")
-                                    : opt_.element_name};
-}
-std::vector<std::string> MetoakDepth::element_names(int node_index) const {
-  return {opt_.element_name.empty() ? default_element_name(node_index, "metoak_depth")
                                     : opt_.element_name};
 }
 
@@ -1049,13 +1003,58 @@ OutputSpec TrackKLT::output_spec(const OutputSpec& input) const {
   const auto spec = spec_from_options(opt_);
   return tensor_output_spec("TRACK_POINTS", spec.output_shapes.front(), "FP32", input, "HW");
 }
+
+MetoakDepth::MetoakDepth(MetoakDepthOptions opt) : opt_(std::move(opt)) {}
+
+std::string MetoakDepthOptions::summary() const {
+  std::ostringstream ss;
+  ss << "MetoakDepthOptions(graph=simor_depth_map,width=" << width << ",height=" << height
+     << ",debug=" << debug << ",num_buffers=" << num_buffers
+     << ",element_name=" << quoted_or_auto(element_name) << ",y=" << quoted_or_auto(y_name)
+     << ",u=" << quoted_or_auto(u_name) << ",v=" << quoted_or_auto(v_name)
+     << ",disp=" << quoted_or_auto(disp_name) << ",bf_mm=" << quoted_or_auto(bf_mm_name)
+     << ",proj=" << quoted_or_auto(proj_name) << ",rgb_output=" << quoted_or_auto(rgb_output_name)
+     << ",depth_output=" << quoted_or_auto(depth_output_name)
+     << ",points_output=" << quoted_or_auto(points_output_name) << ",luma_shape=[" << height << ","
+     << width << "],rgb_shape=[" << height << "," << width << ",3],points_shape=[" << height << ","
+     << width << ",3])";
+  return ss.str();
+}
+
+NodeContractDefinition MetoakDepth::contract_definition() const {
+  const auto spec = spec_from_options(opt_);
+  return make_contract_definition(kind(), spec.input_names, spec.published_output_names);
+}
+
+bool MetoakDepth::compile_node_contract(const ContractCompileInput& input,
+                                        CompiledNodeContract* out, std::string* err) const {
+  const std::string name = element_names(input.node_index).front();
+  if (!compile_runtime_contract(kind(), name, contract_definition(), make_runtime(opt_), out, err))
+    return false;
+  if (opt_.num_buffers > 0)
+    out->native_execution_capacity = static_cast<std::size_t>(opt_.num_buffers);
+  return true;
+}
+
+void MetoakDepth::apply_compiled_contract(const CompiledNodeContract&, std::string* err) {
+  if (err)
+    err->clear();
+}
+
+std::vector<std::string> MetoakDepth::element_names(int node_index) const {
+  return {opt_.element_name.empty() ? default_element_name(node_index, "metoak_depth")
+                                    : opt_.element_name};
+}
+
 OutputSpec MetoakDepth::output_spec(const OutputSpec& input) const {
-  // depth_dst is spec.output_shapes[1]/output_dtypes[1]/output_layouts[1] -- see
-  // spec_from_options()'s ordering (rgb_dst, depth_dst, points_dst) and primary_output_name
-  // doc comment above.
+  // Preserve the legacy primary depth boundary; all three tensors are published.
   const auto spec = spec_from_options(opt_);
   return tensor_output_spec("METOAK_DEPTH", spec.output_shapes[1], spec.output_dtypes[1], input,
                             spec.output_layouts[1]);
+}
+
+std::string MetoakDepth::backend_fragment(int node_index) const {
+  return processcvu_backend_fragment(element_names(node_index).front());
 }
 
 } // namespace simaai::neat

@@ -2,15 +2,22 @@
 #include "nodes/groups/UdpH264OutputGroup.h"
 #include "nodes/groups/UdpOutputGroupG.h"
 #include "nodes/io/UdpOutput.h"
+#include "nodes/io/internal/JpegRtpUdpSink.h"
 #include "nodes/rtp/H264CapsFixup.h"
 #include "nodes/sima/QuantTess.h"
+#include "jpeg_rtp_udp_sink_fixture.h"
 #include "test_main.h"
 #include "test_utils.h"
+
+#include <gst/gst.h>
 
 #include <nlohmann/json.hpp>
 
 #include <functional>
+#include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -53,6 +60,141 @@ RUN_TEST(
         require_contains(fragment, "port=5500", "UdpOutput port mismatch");
         require_contains(fragment, "sync=true", "UdpOutput sync mismatch");
         require_contains(fragment, "async=false", "UdpOutput async mismatch");
+        require_contains(fragment, "enable-last-sample=false",
+                         "UdpOutput must not retain its last packet: it pins the frame's memory");
+        require(node->element_names(7).empty(), "UdpOutput element_names contract should be empty");
+      }
+
+      // JpegRtpUdpSink fragment snapshot, element names, specialization, and parse against
+      // the element.
+      {
+        using simaai::neat::internal::JpegRtpUdpSink;
+        using simaai::neat::internal::JpegRtpUdpSinkOptions;
+        const JpegRtpUdpSink defaults{JpegRtpUdpSinkOptions{}};
+        require(defaults.kind() == "JpegRtpUdpSink",
+                "JpegRtpUdpSink kind is matched by name and must stay stable");
+        // Unspecialized, the node keeps a parser so an input without sized caps still
+        // negotiates.
+        require(defaults.input() == JpegRtpUdpSink::Input::ParseDimensions,
+                "JpegRtpUdpSink must default to parsing dimensions");
+        require(defaults.backend_fragment(3) ==
+                    "jpegparse name=n3_jpegparse disable-passthrough=true ! "
+                    "capsfilter name=n3_rtp_jpeg_dimensions "
+                    "caps=\"image/jpeg,width=(int)[8,2040,8],height=(int)[8,2040,8]\" ! "
+                    "neatjpegudpsink name=n3_jpegudp host=127.0.0.1 port=5000 pt=26 mtu=1400 "
+                    "timestamp-offset=0 sync=false async=false enable-last-sample=false",
+                "JpegRtpUdpSink default fragment mismatch");
+        require(defaults.element_names(3) == std::vector<std::string>{"n3_jpegparse",
+                                                                      "n3_rtp_jpeg_dimensions",
+                                                                      "n3_jpegudp"},
+                "JpegRtpUdpSink parsing element_names mismatch");
+
+        JpegRtpUdpSinkOptions opt;
+        opt.host = "10.0.0.5";
+        opt.port = 5600;
+        opt.payload_type = 27;
+        opt.mtu = 1200;
+        opt.sync = true;
+        opt.async = true;
+        const JpegRtpUdpSink node(opt, JpegRtpUdpSink::Input::SizedCaps);
+        const std::string fragment = node.backend_fragment(7);
+        require(fragment == "capsfilter name=n7_rtp_jpeg_dimensions "
+                            "caps=\"image/jpeg,width=(int)[8,2040,8],height=(int)[8,2040,8]\" ! "
+                            "neatjpegudpsink name=n7_jpegudp host=10.0.0.5 port=5600 pt=27 "
+                            "mtu=1200 timestamp-offset=0 sync=true async=true "
+                            "enable-last-sample=false",
+                "JpegRtpUdpSink sized fragment mismatch");
+        require(fragment ==
+                    JpegRtpUdpSink(opt, JpegRtpUdpSink::Input::SizedCaps).backend_fragment(7),
+                "JpegRtpUdpSink fragment must be deterministic");
+        require(node.element_names(7) ==
+                    std::vector<std::string>{"n7_rtp_jpeg_dimensions", "n7_jpegudp"},
+                "JpegRtpUdpSink sized element_names must name the fragment's element");
+
+        // Specialization: an input with known dimensions drops the parser; anything else
+        // keeps it. The node's options survive either way.
+        simaai::neat::OutputSpec sized;
+        sized.media_type = "image/jpeg";
+        sized.width = 1920;
+        sized.height = 1080;
+        sized.certainty = simaai::neat::SpecCertainty::Hint;
+        simaai::neat::OutputSpec unsized = sized;
+        unsized.width = 0;
+        unsized.height = 0;
+        const simaai::neat::internal::InputSpecSpecializationContext context;
+        for (const auto* source : {&defaults, &node}) {
+          for (const auto& [input, parse] : {std::pair{&sized, false}, std::pair{&unsized, true}}) {
+            const auto selected = source->specialize_for_input(*input, context);
+            const auto* sink = dynamic_cast<const JpegRtpUdpSink*>(selected.get());
+            require(sink != nullptr && sink->kind() == "JpegRtpUdpSink",
+                    "specialization must return a JpegRtpUdpSink");
+            require((sink->input() == JpegRtpUdpSink::Input::ParseDimensions) == parse,
+                    "specialization must parse exactly when the input has no dimensions");
+            require(sink->options().host == source->options().host &&
+                        sink->options().port == source->options().port &&
+                        sink->options().async == source->options().async,
+                    "specialization must keep the sink's options");
+            require((sink->backend_fragment(2).find("jpegparse") != std::string::npos) == parse,
+                    "specialized fragment must match its variant");
+          }
+        }
+        // RTP/JPEG carries sizes in multiples of 8 up to 2040: a sized input outside that fails
+        // the build with a clear error instead of a generic caps negotiation failure.
+        for (const auto& [width, height] : {std::pair{8, 8}, std::pair{2040, 2040}}) {
+          simaai::neat::OutputSpec edge = sized;
+          edge.width = width;
+          edge.height = height;
+          const auto* sink = dynamic_cast<const JpegRtpUdpSink*>(
+              defaults.specialize_for_input(edge, context).get());
+          require(sink != nullptr && sink->input() == JpegRtpUdpSink::Input::SizedCaps,
+                  "RTP/JPEG-representable sizes must specialize to the bare sink");
+        }
+        for (const auto& [width, height] : {std::pair{320, 180}, std::pair{2048, 1536}}) {
+          simaai::neat::OutputSpec bad = sized;
+          bad.width = width;
+          bad.height = height;
+          std::string message;
+          try {
+            (void)defaults.specialize_for_input(bad, context);
+          } catch (const std::invalid_argument& e) {
+            message = e.what();
+          }
+          require(message == "VideoSender MJPEG: RTP/JPEG carries widths and heights in "
+                             "multiples of 8 up to 2040 (got " +
+                                 std::to_string(width) + "x" + std::to_string(height) +
+                                 "); choose another camera mode.",
+                  "unrepresentable RTP/JPEG size must throw a clear invalid_argument, got: " +
+                      message);
+        }
+
+        const jpeg_rtp_udp_sink_fixture::RestoreRegistry restore_registry;
+        jpeg_rtp_udp_sink_fixture::set_factory_present(true);
+        for (const auto* variant : {&defaults, &node}) {
+          const std::string launch = variant->backend_fragment(7);
+          GError* error = nullptr;
+          GstElement* bin = gst_parse_launch(launch.c_str(), &error);
+          require(bin != nullptr && error == nullptr,
+                  std::string("JpegRtpUdpSink fragment must parse: ") +
+                      (error ? error->message : "no element"));
+          GstElement* sink = GST_IS_BIN(bin) ? gst_bin_get_by_name(GST_BIN(bin), "n7_jpegudp")
+                                             : GST_ELEMENT(gst_object_ref(bin));
+          require(sink != nullptr && std::string(GST_OBJECT_NAME(sink)) == "n7_jpegudp",
+                  "parsed JpegRtpUdpSink element must carry its element name");
+          gboolean last_sample = TRUE;
+          g_object_get(sink, "enable-last-sample", &last_sample, nullptr);
+          require(!last_sample, "JpegRtpUdpSink must not retain the frame's buffer");
+          for (const auto& name : variant->element_names(7)) {
+            GstElement* element =
+                GST_IS_BIN(bin) ? gst_bin_get_by_name(GST_BIN(bin), name.c_str()) : nullptr;
+            require(element != nullptr || (!GST_IS_BIN(bin) && name == "n7_jpegudp"),
+                    "element_names must name an element of the parsed fragment: " + name);
+            if (element) {
+              gst_object_unref(element);
+            }
+          }
+          gst_object_unref(sink);
+          gst_object_unref(bin);
+        }
       }
 
       // H264CapsFixup snapshot.
@@ -129,12 +271,12 @@ RUN_TEST(
         const std::string snapshot = graph_snapshot(group);
         require_contains(snapshot, "0) CustomNode",
                          "UdpOutputGroupG node[0] should be render custom node");
-        require_contains(snapshot, "1) H264EncodeSima",
-                         "UdpOutputGroupG node[1] should be H264EncodeSima");
-        require_contains(snapshot, "2) H264Parse", "UdpOutputGroupG node[2] should be H264Parse");
-        require_contains(snapshot, "3) H264Packetize",
-                         "UdpOutputGroupG node[3] should be H264Packetize");
-        require_contains(snapshot, "4) UdpOutput", "UdpOutputGroupG node[4] should be UdpOutput");
+        require_contains(snapshot, "1) VideoSenderRawIngress", "raw ingress missing");
+        require_contains(snapshot, "width=1280,height=720", "legacy geometry constraint lost");
+        require_contains(snapshot, "2) SimaEncode", "UdpOutputGroupG encoder missing");
+        require_contains(snapshot, "3) H264Parse", "UdpOutputGroupG parser missing");
+        require_contains(snapshot, "4) H264Packetize", "UdpOutputGroupG payloader missing");
+        require_contains(snapshot, "5) UdpOutput", "UdpOutputGroupG output missing");
         require_contains(snapshot, "simaai_sampledemux",
                          "UdpOutputGroupG render fragment missing sample demux");
         require_contains(snapshot, R"(config="/tmp/render_config.json")",
@@ -159,10 +301,11 @@ RUN_TEST(
 
         require(quant.kind() == "QuantTess", "QuantTess kind mismatch");
         const std::string fragment = quant.backend_fragment(6);
-        require_contains(fragment, "neatprocesscvu name=quant_test",
+        require_contains(fragment, "neatkernelrunner name=quant_test",
                          "QuantTess fragment name mismatch");
-        require_contains(fragment, "stage-id=quant_test", "QuantTess stage-id mismatch");
-        require_contains(fragment, "num-buffers=4", "QuantTess num-buffers mismatch");
+        require(fragment.find("stage-id=") == std::string::npos &&
+                    fragment.find("num-buffers=") == std::string::npos,
+                "QuantTess must keep placement and depth in its prepared stage");
         require(fragment.find("config=\"") == std::string::npos,
                 "QuantTess should not emit legacy config path in fragment");
 

@@ -5,7 +5,7 @@ sidebar_position: 0
 
 # Інструменти
 
-Інструменти SiMa.ai, які ви використовуєте разом із Neat: командний рядок `sima-cli`, Insight, Sentinel та Model Zoo. Щодо налаштування SDK, див. [Neat SDK](/getting-started/dev-environment/).
+Інструменти SiMa.ai, які ви використовуєте разом із Neat: командний рядок `sima-cli`, Insight, Sentinel та Model Zoo. Щодо налаштування SDK, див. [Palette SDK](/getting-started/dev-environment/).
 
 Використовуйте ці інструменти для встановлення програмного забезпечення, отримання артефактів моделей, перевірки поведінки програми та керування типовими робочими процесами DevKit.
 
