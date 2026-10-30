@@ -7,6 +7,7 @@
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "gst/GstInit.h"
+#include "gst/GstSampleAttributes.h"
 
 #include "test_utils.h"
 
@@ -131,6 +132,8 @@ static void check_selected_carrier_transfer(simaai::neat::Device target) {
   require(gst_buffer_add_parent_buffer_meta(buffer.get(), parent.get()) != nullptr,
           "producer loan fixture");
   add_sima_meta(buffer.get());
+  const SampleAttributes attributes{{"camera-header", "camera-A"}};
+  require(gst_internal::write_attributes(buffer.get(), attributes), "transfer attribute fixture");
   InputOptions options;
   options.preprocess_meta.emplace();
   options.preprocess_meta->enabled = true;
@@ -184,6 +187,14 @@ static void check_selected_carrier_transfer(simaai::neat::Device target) {
     const auto preprocess = read_simaai_preprocess_meta(destination);
     require(preprocess && preprocess->original_width == 1280 && preprocess->original_height == 720,
             "transfer lost preprocessing geometry");
+    SampleAttributes copied_attributes;
+    gst_internal::read_attributes(destination, &copied_attributes);
+    require(copied_attributes == attributes, "transfer lost per-frame attributes");
+    require(gst_internal::write_attributes(destination, {{"camera-header", "camera-B"}}),
+            "mutate transferred attributes");
+    SampleAttributes source_attributes;
+    gst_internal::read_attributes(buffer.get(), &source_attributes);
+    require(source_attributes == attributes, "transferred attributes alias the producer");
     check_transferred_lineage(copy);
   }
   {

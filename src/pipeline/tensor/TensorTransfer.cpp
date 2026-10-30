@@ -412,7 +412,7 @@ bool copy_gst_metadata(GstBuffer* dst, GstBuffer* src, std::string* error) {
     } else {
       auto* source_fields = gst_custom_meta_get_structure(legacy);
       for (const auto* name : {"frame-id", "input-seq", "orig-input-seq", "stream-id",
-                               "orig-stream-id", "timestamp"}) {
+                               "orig-stream-id", "timestamp", "attributes"}) {
         if (const auto* value = gst_structure_get_value(source_fields, name))
           gst_structure_set_value(fields, name, value);
       }
