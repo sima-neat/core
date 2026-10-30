@@ -3,6 +3,7 @@
 
 #include "builder/InputContractConfigurable.h"
 #include "model/internal/ModelInternal.h"
+#include "model/internal/ModelRouteRetarget.h"
 #include "model/internal/ModelManagedPreprocEnvelope.h"
 #include "model/internal/ModelPack.h"
 #include "gst/GstHelpers.h"

@@ -26,6 +26,7 @@ into the isolated discovery root, with a byte-for-byte check; its dependencies
 still resolve from the installed cohort through paths set before process launch.
 Cases prove:
 
+- Public numerical node options cross the Core library boundary unchanged.
 - Core registers the linked generic runner, resolves the exact MLA provider and
   admits a real canonical A65 BoxDecode request with no legacy numerical plugin.
 - Omitting the otherwise-present MLA provider gives the exact missing-factory error.
