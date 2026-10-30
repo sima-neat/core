@@ -42,6 +42,11 @@ The format is based on Keep a Changelog and follows semantic versioning.
 - BREAKING: The archive loader is now an internal `Model` implementation detail; public
   `mpk/*` headers and `pyneat.mpk` inspection/extraction bindings were removed.
 
+### Fixed
+- Public C++ options for Cast, CastTess, Quant, QuantTess, Tess and Preproc now
+  match Core’s internal layouts, fixing standalone-node crashes. Rebuild C++
+  consumers against matching headers; the unreleased 0.6.0 line remains ABI 6.
+
 ### Deprecated
 - `PowerMonitor`, `read_power_snapshot()`, `RunOptions::enable_board_power()`,
   `RunOptions::power_monitor`, and `MeasureOptions::include_power`; use `TelemetryMonitor`. They

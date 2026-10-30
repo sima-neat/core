@@ -129,6 +129,8 @@ curl http://<modalix-ip>:9998/v1/chat/completions \
 VLMリクエストの場合、OpenAIチャット `image_url` コンテンツの一部には、base64でエンコードされたデータURI（例：）が含まれている必要があります。 `data:image/jpeg;base64,...`画像デコードには、 Neat
 OpenCVに対応した状態でビルドします。
 
+コンパイル済みコンテキストに応答用の空きがないプロンプトには、`context_length_exceeded` を返します（HTTP 400、ストリーミング開始後は SSE エラー）。コンテキストまたは出力トークン数の上限に達した場合は `finish_reason: "length"`、正常に完了した場合は `"stop"` を返します。会話履歴は保持されます。
+
 ## Ollama互換のリクエスト
 
 使用 `/api/chat` メッセージ履歴または `/api/generate` プロンプトに対して：
