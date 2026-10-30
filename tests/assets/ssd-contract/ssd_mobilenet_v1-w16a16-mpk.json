@@ -1,0 +1,1321 @@
+{
+    "name": "ssd_mobilenet_v1_w16a16",
+    "model_path": "/opt/actions-runner/_work/_temp/ssd_mobilenet_v1-1iv7ygoo/graphs/ssd_mobilenet_v1_heads.onnx",
+    "model_checksum": "335dc16dcd4f0c96c7cc71daf424b75fb6423ef46918d8efeae85177cbcc7b46",
+    "sequence": 1,
+    "model_sdk_version": "3.0.0",
+    "input_nodes": [
+        {
+            "name": "images",
+            "type": "buffer",
+            "size": 1080000,
+            "input_range": [
+                0.0,
+                0.0
+            ]
+        }
+    ],
+    "plugins": [
+        {
+            "name": "cast_0",
+            "sequence": 1,
+            "processor": "EV74",
+            "config_params": {
+                "desired_batch_size": 1,
+                "actual_batch_size": 1,
+                "kernel": "cast_transform",
+                "params": {
+                    "in_dtype": "float32",
+                    "out_dtype": "bfloat16",
+                    "input_shapes": [
+                        [
+                            1,
+                            300,
+                            300,
+                            3
+                        ]
+                    ],
+                    "output_shapes": [
+                        [
+                            1,
+                            300,
+                            300,
+                            3
+                        ]
+                    ]
+                }
+            },
+            "input_nodes": [
+                {
+                    "name": "images",
+                    "size": 1080000
+                }
+            ],
+            "output_nodes": [
+                {
+                    "name": "cast_0",
+                    "type": "buffer",
+                    "size": 540000
+                }
+            ],
+            "type": "sgpProcess",
+            "resources": {
+                "executable": "kernel_name_tbd"
+            }
+        },
+        {
+            "name": "MLA_0",
+            "sequence": 2,
+            "processor": "MLA",
+            "config_params": {
+                "desired_batch_size": 1,
+                "actual_batch_size": 1,
+                "number_of_quads_to_user": 4
+            },
+            "input_nodes": [
+                {
+                    "name": "cast_0",
+                    "size": 540000
+                }
+            ],
+            "output_nodes": [
+                {
+                    "name": "MLA_0_0",
+                    "type": "buffer",
+                    "size": 11552
+                },
+                {
+                    "name": "MLA_0_1",
+                    "type": "buffer",
+                    "size": 4800
+                },
+                {
+                    "name": "MLA_0_2",
+                    "type": "buffer",
+                    "size": 1200
+                },
+                {
+                    "name": "MLA_0_3",
+                    "type": "buffer",
+                    "size": 432
+                },
+                {
+                    "name": "MLA_0_4",
+                    "type": "buffer",
+                    "size": 192
+                },
+                {
+                    "name": "MLA_0_5",
+                    "type": "buffer",
+                    "size": 48
+                },
+                {
+                    "name": "MLA_0_6",
+                    "type": "buffer",
+                    "size": 202160
+                },
+                {
+                    "name": "MLA_0_7",
+                    "type": "buffer",
+                    "size": 110400
+                },
+                {
+                    "name": "MLA_0_8",
+                    "type": "buffer",
+                    "size": 27600
+                },
+                {
+                    "name": "MLA_0_9",
+                    "type": "buffer",
+                    "size": 9936
+                },
+                {
+                    "name": "MLA_0_10",
+                    "type": "buffer",
+                    "size": 4416
+                },
+                {
+                    "name": "MLA_0_11",
+                    "type": "buffer",
+                    "size": 1104
+                }
+            ],
+            "type": "sgpProcess",
+            "resources": {
+                "executable": "ssd_mobilenet_v1_w16a16_stage1_mla.elf"
+            }
+        },
+        {
+            "name": "slice_MLA_0_unpack/tuple_get_item_0_slice_transform",
+            "sequence": 3,
+            "processor": "EV74",
+            "config_params": {
+                "desired_batch_size": 1,
+                "actual_batch_size": 1,
+                "kernel": "slice_transform",
+                "params": {
+                    "begin": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "end": [
+                        1,
+                        19,
+                        19,
+                        12
+                    ],
+                    "input_shape": [
+                        1,
+                        19,
+                        19,
+                        16
+                    ],
+                    "output_shape": [
+                        1,
+                        19,
+                        19,
+                        12
+                    ],
+                    "input_shapes": [
+                        [
+                            1,
+                            19,
+                            19,
+                            16
+                        ]
+                    ],
+                    "output_shapes": [
+                        [
+                            1,
+                            19,
+                            19,
+                            12
+                        ]
+                    ]
+                }
+            },
+            "input_nodes": [
+                {
+                    "name": "MLA_0_0",
+                    "size": 11552
+                }
+            ],
+            "output_nodes": [
+                {
+                    "name": "slice_MLA_0_unpack/tuple_get_item_0_slice_transform",
+                    "type": "buffer",
+                    "size": 8664
+                }
+            ],
+            "type": "sgpProcess",
+            "resources": {
+                "executable": "kernel_name_tbd"
+            }
+        },
+        {
+            "name": "cast_2",
+            "sequence": 4,
+            "processor": "EV74",
+            "config_params": {
+                "desired_batch_size": 1,
+                "actual_batch_size": 1,
+                "kernel": "cast_transform",
+                "params": {
+                    "in_dtype": "bfloat16",
+                    "out_dtype": "float32",
+                    "input_shapes": [
+                        [
+                            1,
+                            19,
+                            19,
+                            12
+                        ]
+                    ],
+                    "output_shapes": [
+                        [
+                            1,
+                            19,
+                            19,
+                            12
+                        ]
+                    ]
+                }
+            },
+            "input_nodes": [
+                {
+                    "name": "slice_MLA_0_unpack/tuple_get_item_0_slice_transform",
+                    "size": 8664
+                }
+            ],
+            "output_nodes": [
+                {
+                    "name": "cast_2/ssd_loc_0",
+                    "type": "buffer",
+                    "size": 17328
+                }
+            ],
+            "type": "sgpProcess",
+            "resources": {
+                "executable": "kernel_name_tbd"
+            }
+        },
+        {
+            "name": "cast_3",
+            "sequence": 5,
+            "processor": "EV74",
+            "config_params": {
+                "desired_batch_size": 1,
+                "actual_batch_size": 1,
+                "kernel": "cast_transform",
+                "params": {
+                    "in_dtype": "bfloat16",
+                    "out_dtype": "float32",
+                    "input_shapes": [
+                        [
+                            1,
+                            10,
+                            10,
+                            24
+                        ]
+                    ],
+                    "output_shapes": [
+                        [
+                            1,
+                            10,
+                            10,
+                            24
+                        ]
+                    ]
+                }
+            },
+            "input_nodes": [
+                {
+                    "name": "MLA_0_1",
+                    "size": 4800
+                }
+            ],
+            "output_nodes": [
+                {
+                    "name": "cast_3/ssd_loc_1",
+                    "type": "buffer",
+                    "size": 9600
+                }
+            ],
+            "type": "sgpProcess",
+            "resources": {
+                "executable": "kernel_name_tbd"
+            }
+        },
+        {
+            "name": "cast_4",
+            "sequence": 6,
+            "processor": "EV74",
+            "config_params": {
+                "desired_batch_size": 1,
+                "actual_batch_size": 1,
+                "kernel": "cast_transform",
+                "params": {
+                    "in_dtype": "bfloat16",
+                    "out_dtype": "float32",
+                    "input_shapes": [
+                        [
+                            1,
+                            5,
+                            5,
+                            24
+                        ]
+                    ],
+                    "output_shapes": [
+                        [
+                            1,
+                            5,
+                            5,
+                            24
+                        ]
+                    ]
+                }
+            },
+            "input_nodes": [
+                {
+                    "name": "MLA_0_2",
+                    "size": 1200
+                }
+            ],
+            "output_nodes": [
+                {
+                    "name": "cast_4/ssd_loc_2",
+                    "type": "buffer",
+                    "size": 2400
+                }
+            ],
+            "type": "sgpProcess",
+            "resources": {
+                "executable": "kernel_name_tbd"
+            }
+        },
+        {
+            "name": "cast_5",
+            "sequence": 7,
+            "processor": "EV74",
+            "config_params": {
+                "desired_batch_size": 1,
+                "actual_batch_size": 1,
+                "kernel": "cast_transform",
+                "params": {
+                    "in_dtype": "bfloat16",
+                    "out_dtype": "float32",
+                    "input_shapes": [
+                        [
+                            1,
+                            3,
+                            3,
+                            24
+                        ]
+                    ],
+                    "output_shapes": [
+                        [
+                            1,
+                            3,
+                            3,
+                            24
+                        ]
+                    ]
+                }
+            },
+            "input_nodes": [
+                {
+                    "name": "MLA_0_3",
+                    "size": 432
+                }
+            ],
+            "output_nodes": [
+                {
+                    "name": "cast_5/ssd_loc_3",
+                    "type": "buffer",
+                    "size": 864
+                }
+            ],
+            "type": "sgpProcess",
+            "resources": {
+                "executable": "kernel_name_tbd"
+            }
+        },
+        {
+            "name": "cast_6",
+            "sequence": 8,
+            "processor": "EV74",
+            "config_params": {
+                "desired_batch_size": 1,
+                "actual_batch_size": 1,
+                "kernel": "cast_transform",
+                "params": {
+                    "in_dtype": "bfloat16",
+                    "out_dtype": "float32",
+                    "input_shapes": [
+                        [
+                            1,
+                            2,
+                            2,
+                            24
+                        ]
+                    ],
+                    "output_shapes": [
+                        [
+                            1,
+                            2,
+                            2,
+                            24
+                        ]
+                    ]
+                }
+            },
+            "input_nodes": [
+                {
+                    "name": "MLA_0_4",
+                    "size": 192
+                }
+            ],
+            "output_nodes": [
+                {
+                    "name": "cast_6/ssd_loc_4",
+                    "type": "buffer",
+                    "size": 384
+                }
+            ],
+            "type": "sgpProcess",
+            "resources": {
+                "executable": "kernel_name_tbd"
+            }
+        },
+        {
+            "name": "cast_7",
+            "sequence": 9,
+            "processor": "EV74",
+            "config_params": {
+                "desired_batch_size": 1,
+                "actual_batch_size": 1,
+                "kernel": "cast_transform",
+                "params": {
+                    "in_dtype": "bfloat16",
+                    "out_dtype": "float32",
+                    "input_shapes": [
+                        [
+                            1,
+                            1,
+                            1,
+                            24
+                        ]
+                    ],
+                    "output_shapes": [
+                        [
+                            1,
+                            1,
+                            1,
+                            24
+                        ]
+                    ]
+                }
+            },
+            "input_nodes": [
+                {
+                    "name": "MLA_0_5",
+                    "size": 48
+                }
+            ],
+            "output_nodes": [
+                {
+                    "name": "cast_7/ssd_loc_5",
+                    "type": "buffer",
+                    "size": 96
+                }
+            ],
+            "type": "sgpProcess",
+            "resources": {
+                "executable": "kernel_name_tbd"
+            }
+        },
+        {
+            "name": "slice_MLA_0_unpack/tuple_get_item_6_slice_transform",
+            "sequence": 10,
+            "processor": "EV74",
+            "config_params": {
+                "desired_batch_size": 1,
+                "actual_batch_size": 1,
+                "kernel": "slice_transform",
+                "params": {
+                    "begin": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "end": [
+                        1,
+                        19,
+                        19,
+                        273
+                    ],
+                    "input_shape": [
+                        1,
+                        19,
+                        19,
+                        280
+                    ],
+                    "output_shape": [
+                        1,
+                        19,
+                        19,
+                        273
+                    ],
+                    "input_shapes": [
+                        [
+                            1,
+                            19,
+                            19,
+                            280
+                        ]
+                    ],
+                    "output_shapes": [
+                        [
+                            1,
+                            19,
+                            19,
+                            273
+                        ]
+                    ]
+                }
+            },
+            "input_nodes": [
+                {
+                    "name": "MLA_0_6",
+                    "size": 202160
+                }
+            ],
+            "output_nodes": [
+                {
+                    "name": "slice_MLA_0_unpack/tuple_get_item_6_slice_transform",
+                    "type": "buffer",
+                    "size": 197106
+                }
+            ],
+            "type": "sgpProcess",
+            "resources": {
+                "executable": "kernel_name_tbd"
+            }
+        },
+        {
+            "name": "cast_8",
+            "sequence": 11,
+            "processor": "EV74",
+            "config_params": {
+                "desired_batch_size": 1,
+                "actual_batch_size": 1,
+                "kernel": "cast_transform",
+                "params": {
+                    "in_dtype": "bfloat16",
+                    "out_dtype": "float32",
+                    "input_shapes": [
+                        [
+                            1,
+                            19,
+                            19,
+                            273
+                        ]
+                    ],
+                    "output_shapes": [
+                        [
+                            1,
+                            19,
+                            19,
+                            273
+                        ]
+                    ]
+                }
+            },
+            "input_nodes": [
+                {
+                    "name": "slice_MLA_0_unpack/tuple_get_item_6_slice_transform",
+                    "size": 197106
+                }
+            ],
+            "output_nodes": [
+                {
+                    "name": "cast_8/ssd_confidence_0",
+                    "type": "buffer",
+                    "size": 394212
+                }
+            ],
+            "type": "sgpProcess",
+            "resources": {
+                "executable": "kernel_name_tbd"
+            }
+        },
+        {
+            "name": "slice_MLA_0_unpack/tuple_get_item_7_slice_transform",
+            "sequence": 12,
+            "processor": "EV74",
+            "config_params": {
+                "desired_batch_size": 1,
+                "actual_batch_size": 1,
+                "kernel": "slice_transform",
+                "params": {
+                    "begin": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "end": [
+                        1,
+                        10,
+                        10,
+                        546
+                    ],
+                    "input_shape": [
+                        1,
+                        10,
+                        10,
+                        552
+                    ],
+                    "output_shape": [
+                        1,
+                        10,
+                        10,
+                        546
+                    ],
+                    "input_shapes": [
+                        [
+                            1,
+                            10,
+                            10,
+                            552
+                        ]
+                    ],
+                    "output_shapes": [
+                        [
+                            1,
+                            10,
+                            10,
+                            546
+                        ]
+                    ]
+                }
+            },
+            "input_nodes": [
+                {
+                    "name": "MLA_0_7",
+                    "size": 110400
+                }
+            ],
+            "output_nodes": [
+                {
+                    "name": "slice_MLA_0_unpack/tuple_get_item_7_slice_transform",
+                    "type": "buffer",
+                    "size": 109200
+                }
+            ],
+            "type": "sgpProcess",
+            "resources": {
+                "executable": "kernel_name_tbd"
+            }
+        },
+        {
+            "name": "cast_9",
+            "sequence": 13,
+            "processor": "EV74",
+            "config_params": {
+                "desired_batch_size": 1,
+                "actual_batch_size": 1,
+                "kernel": "cast_transform",
+                "params": {
+                    "in_dtype": "bfloat16",
+                    "out_dtype": "float32",
+                    "input_shapes": [
+                        [
+                            1,
+                            10,
+                            10,
+                            546
+                        ]
+                    ],
+                    "output_shapes": [
+                        [
+                            1,
+                            10,
+                            10,
+                            546
+                        ]
+                    ]
+                }
+            },
+            "input_nodes": [
+                {
+                    "name": "slice_MLA_0_unpack/tuple_get_item_7_slice_transform",
+                    "size": 109200
+                }
+            ],
+            "output_nodes": [
+                {
+                    "name": "cast_9/ssd_confidence_1",
+                    "type": "buffer",
+                    "size": 218400
+                }
+            ],
+            "type": "sgpProcess",
+            "resources": {
+                "executable": "kernel_name_tbd"
+            }
+        },
+        {
+            "name": "slice_MLA_0_unpack/tuple_get_item_8_slice_transform",
+            "sequence": 14,
+            "processor": "EV74",
+            "config_params": {
+                "desired_batch_size": 1,
+                "actual_batch_size": 1,
+                "kernel": "slice_transform",
+                "params": {
+                    "begin": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "end": [
+                        1,
+                        5,
+                        5,
+                        546
+                    ],
+                    "input_shape": [
+                        1,
+                        5,
+                        5,
+                        552
+                    ],
+                    "output_shape": [
+                        1,
+                        5,
+                        5,
+                        546
+                    ],
+                    "input_shapes": [
+                        [
+                            1,
+                            5,
+                            5,
+                            552
+                        ]
+                    ],
+                    "output_shapes": [
+                        [
+                            1,
+                            5,
+                            5,
+                            546
+                        ]
+                    ]
+                }
+            },
+            "input_nodes": [
+                {
+                    "name": "MLA_0_8",
+                    "size": 27600
+                }
+            ],
+            "output_nodes": [
+                {
+                    "name": "slice_MLA_0_unpack/tuple_get_item_8_slice_transform",
+                    "type": "buffer",
+                    "size": 27300
+                }
+            ],
+            "type": "sgpProcess",
+            "resources": {
+                "executable": "kernel_name_tbd"
+            }
+        },
+        {
+            "name": "cast_10",
+            "sequence": 15,
+            "processor": "EV74",
+            "config_params": {
+                "desired_batch_size": 1,
+                "actual_batch_size": 1,
+                "kernel": "cast_transform",
+                "params": {
+                    "in_dtype": "bfloat16",
+                    "out_dtype": "float32",
+                    "input_shapes": [
+                        [
+                            1,
+                            5,
+                            5,
+                            546
+                        ]
+                    ],
+                    "output_shapes": [
+                        [
+                            1,
+                            5,
+                            5,
+                            546
+                        ]
+                    ]
+                }
+            },
+            "input_nodes": [
+                {
+                    "name": "slice_MLA_0_unpack/tuple_get_item_8_slice_transform",
+                    "size": 27300
+                }
+            ],
+            "output_nodes": [
+                {
+                    "name": "cast_10/ssd_confidence_2",
+                    "type": "buffer",
+                    "size": 54600
+                }
+            ],
+            "type": "sgpProcess",
+            "resources": {
+                "executable": "kernel_name_tbd"
+            }
+        },
+        {
+            "name": "slice_MLA_0_unpack/tuple_get_item_9_slice_transform",
+            "sequence": 16,
+            "processor": "EV74",
+            "config_params": {
+                "desired_batch_size": 1,
+                "actual_batch_size": 1,
+                "kernel": "slice_transform",
+                "params": {
+                    "begin": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "end": [
+                        1,
+                        3,
+                        3,
+                        546
+                    ],
+                    "input_shape": [
+                        1,
+                        3,
+                        3,
+                        552
+                    ],
+                    "output_shape": [
+                        1,
+                        3,
+                        3,
+                        546
+                    ],
+                    "input_shapes": [
+                        [
+                            1,
+                            3,
+                            3,
+                            552
+                        ]
+                    ],
+                    "output_shapes": [
+                        [
+                            1,
+                            3,
+                            3,
+                            546
+                        ]
+                    ]
+                }
+            },
+            "input_nodes": [
+                {
+                    "name": "MLA_0_9",
+                    "size": 9936
+                }
+            ],
+            "output_nodes": [
+                {
+                    "name": "slice_MLA_0_unpack/tuple_get_item_9_slice_transform",
+                    "type": "buffer",
+                    "size": 9828
+                }
+            ],
+            "type": "sgpProcess",
+            "resources": {
+                "executable": "kernel_name_tbd"
+            }
+        },
+        {
+            "name": "cast_11",
+            "sequence": 17,
+            "processor": "EV74",
+            "config_params": {
+                "desired_batch_size": 1,
+                "actual_batch_size": 1,
+                "kernel": "cast_transform",
+                "params": {
+                    "in_dtype": "bfloat16",
+                    "out_dtype": "float32",
+                    "input_shapes": [
+                        [
+                            1,
+                            3,
+                            3,
+                            546
+                        ]
+                    ],
+                    "output_shapes": [
+                        [
+                            1,
+                            3,
+                            3,
+                            546
+                        ]
+                    ]
+                }
+            },
+            "input_nodes": [
+                {
+                    "name": "slice_MLA_0_unpack/tuple_get_item_9_slice_transform",
+                    "size": 9828
+                }
+            ],
+            "output_nodes": [
+                {
+                    "name": "cast_11/ssd_confidence_3",
+                    "type": "buffer",
+                    "size": 19656
+                }
+            ],
+            "type": "sgpProcess",
+            "resources": {
+                "executable": "kernel_name_tbd"
+            }
+        },
+        {
+            "name": "slice_MLA_0_unpack/tuple_get_item_10_slice_transform",
+            "sequence": 18,
+            "processor": "EV74",
+            "config_params": {
+                "desired_batch_size": 1,
+                "actual_batch_size": 1,
+                "kernel": "slice_transform",
+                "params": {
+                    "begin": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "end": [
+                        1,
+                        2,
+                        2,
+                        546
+                    ],
+                    "input_shape": [
+                        1,
+                        2,
+                        2,
+                        552
+                    ],
+                    "output_shape": [
+                        1,
+                        2,
+                        2,
+                        546
+                    ],
+                    "input_shapes": [
+                        [
+                            1,
+                            2,
+                            2,
+                            552
+                        ]
+                    ],
+                    "output_shapes": [
+                        [
+                            1,
+                            2,
+                            2,
+                            546
+                        ]
+                    ]
+                }
+            },
+            "input_nodes": [
+                {
+                    "name": "MLA_0_10",
+                    "size": 4416
+                }
+            ],
+            "output_nodes": [
+                {
+                    "name": "slice_MLA_0_unpack/tuple_get_item_10_slice_transform",
+                    "type": "buffer",
+                    "size": 4368
+                }
+            ],
+            "type": "sgpProcess",
+            "resources": {
+                "executable": "kernel_name_tbd"
+            }
+        },
+        {
+            "name": "cast_12",
+            "sequence": 19,
+            "processor": "EV74",
+            "config_params": {
+                "desired_batch_size": 1,
+                "actual_batch_size": 1,
+                "kernel": "cast_transform",
+                "params": {
+                    "in_dtype": "bfloat16",
+                    "out_dtype": "float32",
+                    "input_shapes": [
+                        [
+                            1,
+                            2,
+                            2,
+                            546
+                        ]
+                    ],
+                    "output_shapes": [
+                        [
+                            1,
+                            2,
+                            2,
+                            546
+                        ]
+                    ]
+                }
+            },
+            "input_nodes": [
+                {
+                    "name": "slice_MLA_0_unpack/tuple_get_item_10_slice_transform",
+                    "size": 4368
+                }
+            ],
+            "output_nodes": [
+                {
+                    "name": "cast_12/ssd_confidence_4",
+                    "type": "buffer",
+                    "size": 8736
+                }
+            ],
+            "type": "sgpProcess",
+            "resources": {
+                "executable": "kernel_name_tbd"
+            }
+        },
+        {
+            "name": "slice_MLA_0_unpack/tuple_get_item_11_slice_transform",
+            "sequence": 20,
+            "processor": "EV74",
+            "config_params": {
+                "desired_batch_size": 1,
+                "actual_batch_size": 1,
+                "kernel": "slice_transform",
+                "params": {
+                    "begin": [
+                        0,
+                        0,
+                        0,
+                        0
+                    ],
+                    "end": [
+                        1,
+                        1,
+                        1,
+                        546
+                    ],
+                    "input_shape": [
+                        1,
+                        1,
+                        1,
+                        552
+                    ],
+                    "output_shape": [
+                        1,
+                        1,
+                        1,
+                        546
+                    ],
+                    "input_shapes": [
+                        [
+                            1,
+                            1,
+                            1,
+                            552
+                        ]
+                    ],
+                    "output_shapes": [
+                        [
+                            1,
+                            1,
+                            1,
+                            546
+                        ]
+                    ]
+                }
+            },
+            "input_nodes": [
+                {
+                    "name": "MLA_0_11",
+                    "size": 1104
+                }
+            ],
+            "output_nodes": [
+                {
+                    "name": "slice_MLA_0_unpack/tuple_get_item_11_slice_transform",
+                    "type": "buffer",
+                    "size": 1092
+                }
+            ],
+            "type": "sgpProcess",
+            "resources": {
+                "executable": "kernel_name_tbd"
+            }
+        },
+        {
+            "name": "cast_13",
+            "sequence": 21,
+            "processor": "EV74",
+            "config_params": {
+                "desired_batch_size": 1,
+                "actual_batch_size": 1,
+                "kernel": "cast_transform",
+                "params": {
+                    "in_dtype": "bfloat16",
+                    "out_dtype": "float32",
+                    "input_shapes": [
+                        [
+                            1,
+                            1,
+                            1,
+                            546
+                        ]
+                    ],
+                    "output_shapes": [
+                        [
+                            1,
+                            1,
+                            1,
+                            546
+                        ]
+                    ]
+                }
+            },
+            "input_nodes": [
+                {
+                    "name": "slice_MLA_0_unpack/tuple_get_item_11_slice_transform",
+                    "size": 1092
+                }
+            ],
+            "output_nodes": [
+                {
+                    "name": "cast_13/ssd_confidence_5",
+                    "type": "buffer",
+                    "size": 2184
+                }
+            ],
+            "type": "sgpProcess",
+            "resources": {
+                "executable": "kernel_name_tbd"
+            }
+        },
+        {
+            "name": "PassThrough",
+            "sequence": 22,
+            "processor": "EV74",
+            "config_params": {
+                "desired_batch_size": 1,
+                "actual_batch_size": 1,
+                "kernel": "pass_through",
+                "params": {}
+            },
+            "input_nodes": [
+                {
+                    "name": "cast_2/ssd_loc_0",
+                    "size": 17328
+                },
+                {
+                    "name": "cast_3/ssd_loc_1",
+                    "size": 9600
+                },
+                {
+                    "name": "cast_4/ssd_loc_2",
+                    "size": 2400
+                },
+                {
+                    "name": "cast_5/ssd_loc_3",
+                    "size": 864
+                },
+                {
+                    "name": "cast_6/ssd_loc_4",
+                    "size": 384
+                },
+                {
+                    "name": "cast_7/ssd_loc_5",
+                    "size": 96
+                },
+                {
+                    "name": "cast_8/ssd_confidence_0",
+                    "size": 394212
+                },
+                {
+                    "name": "cast_9/ssd_confidence_1",
+                    "size": 218400
+                },
+                {
+                    "name": "cast_10/ssd_confidence_2",
+                    "size": 54600
+                },
+                {
+                    "name": "cast_11/ssd_confidence_3",
+                    "size": 19656
+                },
+                {
+                    "name": "cast_12/ssd_confidence_4",
+                    "size": 8736
+                },
+                {
+                    "name": "cast_13/ssd_confidence_5",
+                    "size": 2184
+                }
+            ],
+            "output_nodes": [
+                {
+                    "name": "pass_through_out_0",
+                    "type": "buffer",
+                    "size": 17328
+                },
+                {
+                    "name": "pass_through_out_1",
+                    "type": "buffer",
+                    "size": 9600
+                },
+                {
+                    "name": "pass_through_out_2",
+                    "type": "buffer",
+                    "size": 2400
+                },
+                {
+                    "name": "pass_through_out_3",
+                    "type": "buffer",
+                    "size": 864
+                },
+                {
+                    "name": "pass_through_out_4",
+                    "type": "buffer",
+                    "size": 384
+                },
+                {
+                    "name": "pass_through_out_5",
+                    "type": "buffer",
+                    "size": 96
+                },
+                {
+                    "name": "pass_through_out_6",
+                    "type": "buffer",
+                    "size": 394212
+                },
+                {
+                    "name": "pass_through_out_7",
+                    "type": "buffer",
+                    "size": 218400
+                },
+                {
+                    "name": "pass_through_out_8",
+                    "type": "buffer",
+                    "size": 54600
+                },
+                {
+                    "name": "pass_through_out_9",
+                    "type": "buffer",
+                    "size": 19656
+                },
+                {
+                    "name": "pass_through_out_10",
+                    "type": "buffer",
+                    "size": 8736
+                },
+                {
+                    "name": "pass_through_out_11",
+                    "type": "buffer",
+                    "size": 2184
+                }
+            ],
+            "type": "sgpProcess",
+            "resources": null
+        }
+    ]
+}

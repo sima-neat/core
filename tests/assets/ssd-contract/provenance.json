@@ -1,0 +1,41 @@
+{
+  "source_pr": "https://github.com/sima-neat/models/pull/495",
+  "catalog_revision": "f652af529bb2b5e9ea457b6ed9a361b17ceb20cf",
+  "compiled_source_revision": "bd3e0562b64e31a1137912388fb15b38624d2fbe",
+  "license": "Apache-2.0",
+  "scope": "Unmodified authoritative MPK JSON only; no model weights, ELF, sidecar JSON, or credentials. Model paths are compiler provenance, never accessed by this contract test.",
+  "fixtures": [
+    {
+      "path": "ssd_mobilenet_v1-w16a16-mpk.json",
+      "sha256": "669946699d5eb77ec282f59ae489fff84d301e85d3829eff40572af23b56923b",
+      "archive_sha256": "767e0c7d7e41e921343a0ff3c67ca6f3e5e01ac3da7638d805f47ffa3a738b6a",
+      "archive_size_bytes": 11035359,
+      "model_id": "ssd_mobilenet_v1",
+      "profile": "w16a16"
+    },
+    {
+      "path": "ssd_mobilenet_v1-w8a8-mpk.json",
+      "sha256": "12094886f415dbee6b31de4cf9728e720efca9e4209c9f2986af7284583f7204",
+      "archive_sha256": "a6904e2f40ec755ce07bdd81462ebb0d94b2c948feebaa0b3edf6e901a96ce8c",
+      "archive_size_bytes": 5933294,
+      "model_id": "ssd_mobilenet_v1",
+      "profile": "w8a8"
+    },
+    {
+      "path": "ssd_mobilenet_v2-w16a16-mpk.json",
+      "sha256": "c16b3d101ce6adaf1df9de63ed31c39a2a7594156dfe753d704803f185e4a53c",
+      "archive_sha256": "1905b94005b8787de30f74b1464affa914cf875d83eb6d27dcc18debdf911e90",
+      "archive_size_bytes": 26527890,
+      "model_id": "ssd_mobilenet_v2",
+      "profile": "w16a16"
+    },
+    {
+      "path": "ssd_mobilenet_v2-w8a8-mpk.json",
+      "sha256": "fc3f9004d027129b7b973d9a1edf42b1d80287745779a271c51698e62475c900",
+      "archive_sha256": "fce4846b6fcaf94f0f5962ebf807f2c40e8f17e2881edfb808e176d559995568",
+      "archive_size_bytes": 12910941,
+      "model_id": "ssd_mobilenet_v2",
+      "profile": "w8a8"
+    }
+  ]
+}

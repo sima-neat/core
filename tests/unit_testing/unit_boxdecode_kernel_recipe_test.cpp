@@ -33,6 +33,8 @@
 
 namespace test = simaai::scheduler::testing;
 namespace c = simaai::scheduler::client;
+void check_ssd_mpk_carrier_contracts();
+void check_ssd_model_carrier_contract(const std::string& archive);
 namespace {
 c::KernelInspection inspect(const c::KernelExecutable& value) {
   auto result = c::inspect_kernel(value);
@@ -633,6 +635,7 @@ void combined_execution(bool planar, int ingress_route = 0, bool gaps = false) {
   if (ingress_route) {
     TensorList tensors;
     CompiledNodeContract upstream;
+    upstream.element_name = upstream.logical_stage_id = "strided_head_producer";
     upstream.kernel.emplace();
     for (std::size_t i = 0; i < grouped.size(); ++i) {
       const auto& original = authored_inputs[grouped[i]];
@@ -1503,6 +1506,17 @@ void linear_metadata_contracts() {
 } // namespace
 int main(int argc, char** argv) {
   try {
+    if (argc == 3 && std::string(argv[1]) == "--ssd-model-carrier-contract") {
+      simaai::neat::gst_init_once();
+      check_ssd_model_carrier_contract(argv[2]);
+      return 0;
+    }
+    if (argc == 2 && std::string(argv[1]) == "--ssd-mpk-carrier-contract") {
+      gst_init(nullptr, nullptr);
+      check_ssd_mpk_carrier_contracts();
+      std::cout << "SSD_MPK_CARRIER_CONTRACT_PASS\n";
+      return 0;
+    }
     // Pure cold numerical recipe admission: no plugin init, Tensor allocation,
     // executable invocation, Graph/Model build, or accelerator/device access.
     if (argc == 2 && std::string(argv[1]) == "--yolo26-seg-identity-resize-contract") {
@@ -1536,6 +1550,7 @@ int main(int argc, char** argv) {
       return 0;
     }
     simaai::neat::gst_init_once();
+    check_ssd_mpk_carrier_contracts();
     dfl_oriented_contract_and_execution();
     oriented_publication_sample_bridge(BoxDecodeType::YoloV8Obb);
     oriented_source_geometry(BoxDecodeType::YoloV8Obb);

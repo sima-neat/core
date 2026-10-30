@@ -2173,7 +2173,8 @@ RUN_TEST(
       });
 
       MpkPluginIoContract slice_stage;
-      slice_stage.name = "slice_transform";
+      slice_stage.name = "slice_MLA_0_unpack/tuple_get_item_0_slice_transform";
+      slice_stage.plugin_id = slice_stage.name;
       slice_stage.sequence = 3;
       slice_stage.processor = "EV74";
       slice_stage.kernel = "slice_transform";
@@ -2208,7 +2209,7 @@ RUN_TEST(
           .dst_plugin_index = 2U,
           .dst_input_index = 0,
           .src_plugin = "MLA_0_ofm_unpack_transform",
-          .dst_plugin = "slice_transform",
+          .dst_plugin = "slice_MLA_0_unpack/tuple_get_item_0_slice_transform",
           .tensor_name = "score_head_dense",
       });
 

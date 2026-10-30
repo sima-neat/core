@@ -65,6 +65,7 @@ set_tests_properties(unit_boxdecode_publication_test PROPERTIES
 
 add_executable(unit_boxdecode_kernel_recipe_test
   unit_testing/unit_boxdecode_kernel_recipe_test.cpp
+  unit_testing/boxdecode_ssd_mpk_contract.cpp
   ${PROJECT_SOURCE_DIR}/src/pipeline/internal/sima/BoxDecodeGeometry.cpp
   ${PROJECT_SOURCE_DIR}/src/pipeline/internal/sima/BoxDecodeKernelRecipe.cpp
   ${PROJECT_SOURCE_DIR}/src/pipeline/internal/sima/BoxDecodePublication.cpp
@@ -2873,6 +2874,11 @@ install(
 install(
   FILES "${CMAKE_SOURCE_DIR}/tests/assets/preproc_dynamic/ilena_488.jpg"
   DESTINATION share/sima-neat/test-assets/tests/assets/preproc_dynamic
+  COMPONENT extras
+)
+install(
+  DIRECTORY "${CMAKE_SOURCE_DIR}/tests/assets/ssd-contract/"
+  DESTINATION share/sima-neat/test-assets/tests/assets/ssd-contract
   COMPONENT extras
 )
 
