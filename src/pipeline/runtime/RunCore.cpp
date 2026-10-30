@@ -1670,8 +1670,8 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
   const auto context_us = pipeline_internal::build_timing_us(context_start);
   InputStreamOptions build_stream_opt = ctx.stream_opt;
   build_stream_opt.compatible_output_names = segment.stream_options.compatible_output_names;
-  if (!build_stream_opt.compatible_output_names.empty())
-    build_stream_opt.output_placement = OutputPlacement::EV74Compatible;
+  build_stream_opt.output_placement = graph_build_internal::terminal_output_placement(
+      nodes, build_stream_opt.compatible_output_names);
   build_stream_opt.startup_preflight =
       opt.allow_startup_preflight && ctx.stream_opt.startup_preflight;
   build_stream_opt.allow_graph_internal_zero_copy_input =

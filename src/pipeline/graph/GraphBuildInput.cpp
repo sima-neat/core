@@ -1861,12 +1861,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
 
   BuildResult br = build_pipeline_full(build_nodes, insert_boundaries, "mysink", insert_queue2,
                                        name_transform, &sess_opt);
-  if (graph_build_internal::explicit_public_terminal_output(opt, build_nodes) ||
-      opt.output_placement == OutputPlacement::EV74Compatible) {
-    br.public_output_endpoint = public_output_endpoint_selector_local(build_nodes);
-  }
-  br.output_placement = opt.output_placement;
-  br.compatible_output_names = opt.compatible_output_names;
+  session_build_configure_output_storage(br, build_nodes, opt, opt.compatible_output_names);
   maybe_compile_build_result_contracts(
       &br, &build_nodes, sess_opt, input_contract_from_input(sample), seed_spec,
       contract_compile_sample_from_input(sample), "Graph::build(input)");
@@ -3000,6 +2995,18 @@ void session_build_maybe_enable_rtsp_appsink_drop(
 pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector
 session_build_public_output_endpoint_selector(const std::vector<std::shared_ptr<Node>>& nodes) {
   return public_output_endpoint_selector_local(nodes);
+}
+
+void session_build_configure_output_storage(BuildResult& build,
+                                            const std::vector<std::shared_ptr<Node>>& nodes,
+                                            const InputStreamOptions& stream_opt,
+                                            std::span<const std::string> compatible_output_names) {
+  if (graph_build_internal::explicit_public_terminal_output(stream_opt, nodes) ||
+      stream_opt.output_placement == OutputPlacement::EV74Compatible)
+    build.public_output_endpoint = public_output_endpoint_selector_local(nodes);
+  build.output_placement = stream_opt.output_placement;
+  build.compatible_output_names.assign(compatible_output_names.begin(),
+                                       compatible_output_names.end());
 }
 
 BuildInputContext

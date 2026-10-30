@@ -825,8 +825,7 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   RunOptions merged_opt = session_build_apply_run_defaults(requested_opt, sess_opt);
   InputStreamOptions stream_opt = session_build_make_stream_options(
       merged_opt, mode,
-      compatible_output_names.empty() ? graph_build_internal::terminal_output_placement(build_nodes)
-                                      : OutputPlacement::EV74Compatible);
+      graph_build_internal::terminal_output_placement(build_nodes, compatible_output_names));
   stream_opt.public_output_contract = public_output_contract;
   graph_build_internal::apply_explicit_public_output_options(stream_opt, build_nodes);
   // Source-mode pipelines own live/producers such as MIPI/libcamera, RTSP, and
@@ -843,12 +842,7 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   const NameTransform name_transform = make_name_transform(sess_opt);
   BuildResult br = build_pipeline_full(build_nodes, insert_boundaries, "mysink", insert_queue2,
                                        name_transform, &sess_opt);
-  if (graph_build_internal::explicit_public_terminal_output(stream_opt, build_nodes) ||
-      stream_opt.output_placement == OutputPlacement::EV74Compatible) {
-    br.public_output_endpoint = session_build_public_output_endpoint_selector(build_nodes);
-  }
-  br.output_placement = stream_opt.output_placement;
-  br.compatible_output_names.assign(compatible_output_names.begin(), compatible_output_names.end());
+  session_build_configure_output_storage(br, build_nodes, stream_opt, compatible_output_names);
   maybe_compile_source_contracts(&br, build_nodes, sess_opt, where);
   if (mode == RunMode::Sync) {
     session_build_clamp_sync_kernel_runner_capacity(br);
@@ -3455,11 +3449,10 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
 
   const RunOptions requested_opt = session_build_resolve_build_opt(mode, opt);
   RunOptions merged_opt = session_build_apply_run_defaults(requested_opt, sess_opt);
-  InputStreamOptions stream_opt = session_build_make_stream_options(
-      merged_opt, mode,
-      compatible_output_names.empty()
-          ? graph_build_internal::terminal_output_placement(build_consumer_nodes)
-          : OutputPlacement::EV74Compatible);
+  InputStreamOptions stream_opt =
+      session_build_make_stream_options(merged_opt, mode,
+                                        graph_build_internal::terminal_output_placement(
+                                            build_consumer_nodes, compatible_output_names));
   stream_opt.public_output_contract = public_output_contract;
   graph_build_internal::apply_explicit_public_output_options(stream_opt, build_consumer_nodes);
   stream_opt.teardown_policy = pipeline_internal::InputStreamTeardownPolicy::BoundedPreferred;
@@ -3490,12 +3483,9 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
                                                         build_branch_nodes, branch_actual_indices,
                                                         name_transform, "mysink", sess_opt,
                                                         /*enable_terminal_loans=*/has_sink);
-  if (stream_opt.output_placement == OutputPlacement::EV74Compatible) {
-    br.output_placement = OutputPlacement::EV74Compatible;
-    br.compatible_output_names.assign(compatible_output_names.begin(),
-                                      compatible_output_names.end());
-    br.public_output_endpoint = session_build_public_output_endpoint_selector(build_consumer_nodes);
-  }
+  if (stream_opt.output_placement == OutputPlacement::EV74Compatible)
+    session_build_configure_output_storage(br, build_consumer_nodes, stream_opt,
+                                           compatible_output_names);
   maybe_compile_fused_realtime_contracts(&br, build_consumer_nodes, build_branch_nodes,
                                          branch_actual_indices, sess_opt, where,
                                          fused_ingress_spec);

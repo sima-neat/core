@@ -96,44 +96,6 @@ void require_publication(const Tensor& tensor, bool compact,
           "output legacy metadata authority mismatch");
 }
 
-void qualify_output_placement(bool compact) {
-  for (const auto placement : {OutputPlacement::EV74Compatible, OutputPlacement::Auto}) {
-    GraphOptions graph_options;
-    graph_options.processcvu_requested_run_target = "A65";
-    Graph graph(graph_options);
-    InputOptions input_options;
-    input_options.payload_type = PayloadType::Tensor;
-    input_options.memory_policy = InputMemoryPolicy::SystemMemory;
-    graph.add(nodes::Input(input_options));
-    CastOptions cast_options;
-    cast_options.direction = CastDirection::Fp32ToBf16;
-    graph.add(nodes::Cast(cast_options));
-    OutputOptions output;
-    output.placement = placement;
-    graph.add(nodes::Output("features", output));
-    auto input = Tensor::from_vector(std::vector<float>(192, 1.5F), {8, 8, 3}, TensorMemory::CPU);
-    input.layout = TensorLayout::HWC;
-    RunOptions options;
-    options.output_memory = OutputMemory::ZeroCopy;
-    auto run = graph.build(TensorList{input}, options);
-    auto outputs = run.run(TensorList{input}, 5000);
-    require(outputs.size() == 1, "output placement count");
-    require_publication(outputs.front(), compact,
-                        placement == OutputPlacement::EV74Compatible
-                            ? simaai::scheduler::client::dma::HeapKind::Cma
-                            : simaai::scheduler::client::dma::HeapKind::MlaDms);
-    check(outputs.front(), 1.5F);
-    // Repeated pulls retain the planned storage and produce the same numbers.
-    outputs.clear();
-    outputs = run.run(TensorList{input}, 5000);
-    require_publication(outputs.front(), compact,
-                        placement == OutputPlacement::EV74Compatible
-                            ? simaai::scheduler::client::dma::HeapKind::Cma
-                            : simaai::scheduler::client::dma::HeapKind::MlaDms);
-    check(outputs.front(), 1.5F);
-  }
-}
-
 void qualify_named_output_placement(bool compact, bool shared, bool auto_owned = false) {
   GraphOptions policy;
   policy.processcvu_requested_run_target = "A65";
@@ -185,7 +147,7 @@ void qualify_named_output_placement(bool compact, bool shared, bool auto_owned =
   check(other.front(), 1.5F);
 }
 
-void qualify_two_cast_stages(bool compact, int a65_workers) {
+void qualify_two_cast_stages(bool compact, int a65_workers, OutputPlacement placement) {
   GraphOptions graph_options;
   graph_options.processcvu_requested_run_target = "A65";
   graph_options.kernel_runner_a65_workers = a65_workers;
@@ -206,6 +168,10 @@ void qualify_two_cast_stages(bool compact, int a65_workers) {
   output.sync = false;
   output.drop = false;
   output.max_buffers = 2;
+  output.placement = placement;
+  const auto heap = placement == OutputPlacement::EV74Compatible
+                        ? simaai::scheduler::client::dma::HeapKind::Cma
+                        : simaai::scheduler::client::dma::HeapKind::MlaDms;
   graph.add(nodes::Output(output));
   RunOptions options;
   options.output_memory = OutputMemory::ZeroCopy;
@@ -262,7 +228,7 @@ void qualify_two_cast_stages(bool compact, int a65_workers) {
     const auto tensors = tensors_from_sample(result);
     require(tensors.size() == 1, "two-stage Cast output count");
     check_output(tensors.front(), frame);
-    require_publication(tensors.front(), compact);
+    require_publication(tensors.front(), compact, heap);
     if (!held)
       held = result;
     check_output(tensors_from_sample(*held).front(), 0);
@@ -276,7 +242,7 @@ void qualify_two_cast_stages(bool compact, int a65_workers) {
   require(!run.running(), "two-stage Cast did not close");
   const auto retained = tensors_from_sample(*held);
   check_output(retained.front(), 0);
-  require_publication(retained.front(), compact);
+  require_publication(retained.front(), compact, heap);
 }
 
 struct MeasurementOptions {
@@ -478,7 +444,6 @@ int main(int argc, char** argv) {
     require(measurement.raw.empty() || measurement.samples > 0, "raw requires measurement samples");
     setenv("SIMA_CORE_COMPACT_METADATA", mode == "compact" ? "1" : "0", 1);
     setenv("SIMA_GST_RUN_INSERT_BOUNDARIES", "0", 1);
-    qualify_output_placement(mode == "compact");
     qualify_named_output_placement(mode == "compact", false);
     qualify_named_output_placement(mode == "compact", true);
     const char* output_default = std::getenv("SIMA_OUTPUT_MEMORY_DEFAULT");
@@ -641,7 +606,8 @@ int main(int argc, char** argv) {
     }
     // Restore this test's metadata mode after the compatibility repush.
     setenv("SIMA_CORE_COMPACT_METADATA", mode == "compact" ? "1" : "0", 1);
-    qualify_two_cast_stages(mode == "compact", a65_workers);
+    for (const auto placement : {OutputPlacement::Auto, OutputPlacement::EV74Compatible})
+      qualify_two_cast_stages(mode == "compact", a65_workers, placement);
     std::cout << "PASS public Core Cast: " << mode << ", a65_workers=" << a65_workers
               << ", actual math, public decode, held output\n";
     return 0;

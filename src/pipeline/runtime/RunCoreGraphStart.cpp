@@ -148,21 +148,29 @@ std::uint64_t edge_port_key(NodeId id, PortId port) {
   return (static_cast<std::uint64_t>(id) << 32) | static_cast<std::uint64_t>(port);
 }
 
-void configure_graph_public_output_loan_gate(const std::shared_ptr<RunCore>& core,
-                                             const GraphRuntimeOptions& graph_options,
-                                             RunMode mode) {
-  if (!core) {
-    return;
-  }
-
+void configure_graph_public_output_loan_gate(RunCore& core, const ExecutionGraphPlan& plan) {
   InputStreamOptions stream_opt =
-      simaai::neat::session_build_make_stream_options(graph_options.pipeline, mode);
+      simaai::neat::session_build_make_stream_options(core.graph_options.pipeline, core.mode);
+  const bool compatible_output = std::any_of(
+      plan.pipeline_segments.begin(), plan.pipeline_segments.end(), [](const auto& segment) {
+        return graph_build_internal::terminal_output_placement(segment.nodes) ==
+               OutputPlacement::EV74Compatible;
+      });
+  if (compatible_output) {
+    const auto retained = session_build_make_stream_options(core.graph_options.pipeline, core.mode,
+                                                            OutputPlacement::EV74Compatible);
+    // Reserve loans for compatible outputs without changing other outputs' ownership.
+    stream_opt.holder_loan_credits = retained.holder_loan_credits;
+    stream_opt.holder_loan_credits_auto = retained.holder_loan_credits_auto;
+    stream_opt.holder_loan_sample_window = retained.holder_loan_sample_window;
+    stream_opt.holder_loan_per_sample_arity = retained.holder_loan_per_sample_arity;
+  }
   stream_opt.public_output_contract = true;
   simaai::neat::session_build_finalize_public_zero_copy_holder_loan_credits(stream_opt);
 
-  core->pipeline.stream_opt = stream_opt;
-  core->pipeline.copy_output_latched.store(stream_opt.copy_output, std::memory_order_relaxed);
-  core->holder_loan_gate =
+  core.pipeline.stream_opt = stream_opt;
+  core.pipeline.copy_output_latched.store(stream_opt.copy_output, std::memory_order_relaxed);
+  core.holder_loan_gate =
       stream_opt.holder_loan_credits > 0
           ? std::make_shared<pipeline_internal::HolderLoanGate>(stream_opt.holder_loan_credits)
           : nullptr;
@@ -1536,26 +1544,9 @@ std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartO
   core->opt = opt.run_options;
   core->mode = opt.mode;
   core->graph_options = std::move(opt.graph_options);
-  configure_graph_public_output_loan_gate(core, core->graph_options, opt.mode);
+  configure_graph_public_output_loan_gate(*core, plan);
   core->graph_verbose_guard = std::move(opt.graph_verbose_guard);
   core->graph_execution().plan = std::move(plan);
-  bool compatible_output = false;
-  for (const auto& segment : core->graph_execution().plan.pipeline_segments)
-    compatible_output |= graph_build_internal::terminal_output_placement(segment.nodes) ==
-                         OutputPlacement::EV74Compatible;
-  if (compatible_output) {
-    const auto retained = session_build_make_stream_options(core->graph_options.pipeline, opt.mode,
-                                                            OutputPlacement::EV74Compatible);
-    if (!core->holder_loan_gate) {
-      core->pipeline.stream_opt.holder_loan_credits = retained.holder_loan_credits;
-      core->pipeline.stream_opt.holder_loan_credits_auto = retained.holder_loan_credits_auto;
-      core->pipeline.stream_opt.holder_loan_sample_window = retained.holder_loan_sample_window;
-      core->pipeline.stream_opt.holder_loan_per_sample_arity =
-          retained.holder_loan_per_sample_arity;
-      core->holder_loan_gate =
-          std::make_shared<pipeline_internal::HolderLoanGate>(retained.holder_loan_credits);
-    }
-  }
 
   try {
     auto step_start = pipeline_internal::build_timing_now();

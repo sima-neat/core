@@ -49,7 +49,10 @@ apply_explicit_public_output_options(InputStreamOptions& stream_opt,
 }
 
 static inline OutputPlacement
-terminal_output_placement(const std::vector<std::shared_ptr<Node>>& nodes) noexcept {
+terminal_output_placement(const std::vector<std::shared_ptr<Node>>& nodes,
+                          std::span<const std::string> compatible_output_names = {}) noexcept {
+  if (!compatible_output_names.empty())
+    return OutputPlacement::EV74Compatible;
   const auto* output = nodes.empty() ? nullptr : dynamic_cast<const Output*>(nodes.back().get());
   return output ? output->options().placement : OutputPlacement::Auto;
 }
@@ -104,6 +107,10 @@ void session_build_maybe_enable_rtsp_appsink_drop(
     const std::vector<std::vector<std::shared_ptr<Node>>>& branch_nodes);
 pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector
 session_build_public_output_endpoint_selector(const std::vector<std::shared_ptr<Node>>& nodes);
+void session_build_configure_output_storage(BuildResult& build,
+                                            const std::vector<std::shared_ptr<Node>>& nodes,
+                                            const InputStreamOptions& stream_opt,
+                                            std::span<const std::string> compatible_output_names);
 std::optional<OutputTensorOverride> build_public_terminal_output_override_with_fallback(
     const pipeline_internal::sima::SimaPluginStaticManifest& manifest,
     const pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector& endpoint,
