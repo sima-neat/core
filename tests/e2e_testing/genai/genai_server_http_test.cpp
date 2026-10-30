@@ -204,6 +204,40 @@ void request_text_completion(int port) {
   require(trim_text(text) == kExpectedText, "server text completion returned unexpected text");
 }
 
+void check_context_limits(int port, const fs::path& model_dir) {
+  const auto config = Json::parse(read_file(model_dir / "devkit/vlm_config.json"));
+  const auto window = config.at("pipeline_cfg").at("max_num_tokens").get<std::size_t>();
+  std::string oversized;
+  for (std::size_t i = 0; i <= window; ++i) {
+    oversized += " lorem ipsum";
+  }
+  for (const bool stream : {false, true}) {
+    auto client = make_client(port);
+    Json request = {{"model", "llm"},
+                    {"max_tokens", 1},
+                    {"stream", stream},
+                    {"messages", Json::array({{{"role", "user"}, {"content", oversized}}})}};
+    const auto rejected = client.Post("/v1/chat/completions", request.dump(), "application/json");
+    require(rejected != nullptr, "context-limit request failed");
+    require(rejected->status == (stream ? 200 : 400), "wrong context-limit HTTP status");
+    if (stream) {
+      require_contains(rejected->body, "\"code\":\"context_length_exceeded\"",
+                       "stream omitted context-limit error");
+      require_contains(rejected->body, "data: [DONE]", "context error did not finish stream");
+    } else {
+      const auto error = Json::parse(rejected->body).at("error");
+      require(error.at("code") == "context_length_exceeded", "wrong context-limit code");
+      require(error.at("type") == "invalid_request_error", "wrong context-limit error type");
+    }
+
+    request["messages"][0]["content"] = "What is the capital of Germany?";
+    const auto limited = client.Post("/v1/chat/completions", request.dump(), "application/json");
+    require(limited && limited->status == 200, "generation after context error failed");
+    require_contains(limited->body, "\"finish_reason\":\"length\"",
+                     "token limit was reported as a normal stop");
+  }
+}
+
 void reject_unsupported_thinking(int port) {
   const std::vector<std::pair<std::string, Json>> requests = {
       {"/v1/chat/completions",
@@ -340,6 +374,7 @@ int main(int argc, char** argv) {
     reject_unsupported_thinking(port);
     validate_lora_requests(port);
     request_text_completion(port);
+    check_context_limits(port, text_model_dir);
     request_image_completion(port, image_path);
     request_audio(port, audio_path, "/v1/audio/transcriptions", "transcribe", kExpectedAsrText,
                   "en");
