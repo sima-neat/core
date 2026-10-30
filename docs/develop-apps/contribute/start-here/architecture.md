@@ -990,6 +990,7 @@ when the execution view preserves the same addressed bytes. Tensor `Model::input
 and `output_specs()` retain the MPK-authored rank, including batch one. HWC input
 shorthand remains accepted for batch-one models; image preprocessing keeps its
 dynamic image contract.
+`Model::compiled_batch_size()` reads the MLA’s declared batch size; tensor rank does not identify a batch axis.
 
 ##### Direct runtime execution
 

@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -25,7 +26,8 @@ std::string require_yolov9_tar() {
   return fixture.tar_path;
 }
 
-sima_test::ModelArchiveFixture make_cast_ingress_fixture(const std::vector<int64_t>& shape) {
+sima_test::ModelArchiveFixture make_cast_ingress_fixture(const std::vector<int64_t>& shape,
+                                                         int64_t batch = 1) {
   auto mpk = nlohmann::json::parse(R"json({
   "name": "cast_ingress", "model_path": "cast.onnx", "model_sdk_version": "3.0.0",
   "input_nodes": [{"name": "input", "type": "buffer", "size": 192}],
@@ -49,27 +51,33 @@ sima_test::ModelArchiveFixture make_cast_ingress_fixture(const std::vector<int64
      "output_nodes": [{"name": "output", "type": "buffer", "size": 64}]}
   ]
 })json");
-  const int64_t batch = shape.size() == 4U ? shape.front() : 1;
+  int64_t elements = 1;
+  for (const auto dim : shape)
+    elements *= dim;
   auto& plugins = mpk["plugins"];
   plugins[0]["config_params"]["params"]["input_shapes"] = {shape};
   plugins[0]["config_params"]["params"]["output_shapes"] = {shape};
   plugins[1]["config_params"] = {{"desired_batch_size", batch}, {"actual_batch_size", batch}};
   plugins[2]["config_params"]["params"]["input_shapes"] = {{batch, 16}};
   plugins[2]["config_params"]["params"]["output_shapes"] = {{batch, 16}};
-  mpk["input_nodes"][0]["size"] = 192 * batch;
-  for (auto& plugin : plugins) {
-    for (const auto* side : {"input_nodes", "output_nodes"})
-      for (auto& tensor : plugin[side])
-        tensor["size"] = tensor["size"].get<int64_t>() * batch;
-  }
+  mpk["input_nodes"][0]["size"] = elements * 4;
+  plugins[0]["input_nodes"][0]["size"] = elements * 4;
+  plugins[0]["output_nodes"][0]["size"] = elements * 2;
+  plugins[1]["input_nodes"][0]["size"] = elements * 2;
+  plugins[1]["output_nodes"][0]["size"] = batch * 16 * 2;
+  plugins[2]["input_nodes"][0]["size"] = batch * 16 * 2;
+  plugins[2]["output_nodes"][0]["size"] = batch * 16 * 4;
   return sima_test::make_model_archive_fixture(
       "model_input_cast_rank" + std::to_string(shape.size()) + "_batch" + std::to_string(batch),
       {{"etc/cast_mpk.json", mpk.dump()}});
 }
 
 void check_tensor_shape_metadata() {
-  for (const auto& shape : {std::vector<int64_t>{4, 4, 3}, {1, 4, 4, 3}, {2, 4, 4, 3}}) {
-    const auto fixture = make_cast_ingress_fixture(shape);
+  const std::vector<std::pair<std::vector<int64_t>, int>> cases = {
+      {{4, 4, 3}, 1}, {{1, 4, 4, 3}, 1},     {{2, 4, 4, 3}, 2},
+      {{2, 24}, 2},   {{1, 3, 2, 4, 16}, 1}, {{2, 3, 2, 4, 16}, 2}};
+  for (const auto& [shape, batch] : cases) {
+    const auto fixture = make_cast_ingress_fixture(shape, batch);
     Model::Options options;
     options.preprocess.kind = InputKind::Tensor;
     Model model(fixture.tar_path, options);
@@ -77,16 +85,22 @@ void check_tensor_shape_metadata() {
     require(specs.size() == 1U && specs[0].shape == shape &&
                 specs[0].rank == static_cast<int>(shape.size()),
             "tensor input metadata must retain the authored rank, including batch one");
-    const std::vector<int64_t> hwc_shape{4, 4, 3};
-    InputGeometry hwc;
-    hwc.shape = hwc_shape;
-    hwc.layout = TensorLayout::HWC;
-    const bool batched = shape.size() == 4U && shape.front() > 1;
-    require(input_geometry_matches_logical_shape(hwc, specs[0].shape, TensorLayout::HWC) ==
-                !batched,
-            "HWC shorthand must remain valid only for a batch-one tensor contract");
-    require(model.compiled_batch_size() == (batched ? 2 : 1),
-            "metadata rank must not change the compiled batch size");
+    require(model.compiled_batch_size() == batch,
+            "compiled batch must come from MLA metadata, not tensor dimensions");
+    if (shape.size() == 3U || shape.size() == 4U) {
+      const std::vector<int64_t> hwc_shape{4, 4, 3};
+      InputGeometry hwc;
+      hwc.shape = hwc_shape;
+      hwc.layout = TensorLayout::HWC;
+      require(input_geometry_matches_logical_shape(hwc, specs[0].shape, TensorLayout::HWC) ==
+                  (batch == 1),
+              "HWC shorthand must remain valid only for a batch-one tensor contract");
+    }
+    if (shape.size() == 5U) {
+      const auto& mpk = *internal::ModelAccess::pack(model).mpk_contract();
+      require(mpk.plugins.front().input_tensors.front().logical_shape == shape,
+              "5D Cast boundary must retain the authored shape for caps negotiation");
+    }
   }
 }
 
@@ -446,8 +460,6 @@ void check_synthetic_tensor_contract_shapes() {
   for (const auto& shape :
        {std::vector<int64_t>{2, 1, 1, 192, 144}, {2, 1, 192, 144}, {1, 1, 192, 144}}) {
     contract.rank = static_cast<int>(shape.size());
-    // RoutePlanner projects batch from the fourth-last axis, losing leading axes at rank > 4.
-    contract.batch = static_cast<int>(shape[shape.size() - 4]);
     contract.logical_shape = shape;
     const auto tensor = internal::ModelAccess::make_dummy_input(options, &contract);
     std::string error;
@@ -462,6 +474,16 @@ void check_synthetic_tensor_contract_shapes() {
         describe_tensor_geometry_or_throw(tensor, options, "synthetic tensor input");
     require(input_geometry_matches_logical_shape(geometry, shape, TensorLayout::Unknown),
             "synthetic tensor must satisfy canonical input geometry");
+    if (shape.size() == 4U && shape.front() == 1) {
+      auto submitted = tensor;
+      submitted.shape.erase(submitted.shape.begin());
+      submitted.strides_bytes.erase(submitted.strides_bytes.begin());
+      submitted.axis_semantics.clear();
+      const auto seed_spec = describe_tensor_spec_or_throw(tensor, options, "seed");
+      const auto input_spec = describe_tensor_spec_or_throw(submitted, options, "HWC input");
+      require(seed_spec.shape == input_spec.shape && seed_spec.layout == input_spec.layout,
+              "unseeded build and batch-one HWC input must have identical runtime specs");
+    }
   }
 }
 
