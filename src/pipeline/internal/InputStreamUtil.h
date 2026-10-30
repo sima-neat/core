@@ -133,6 +133,9 @@ std::vector<int64_t> tensor_shape_from_compat_dims(int width, int height, int de
                                                    TensorLayout layout);
 TensorCompatDims tensor_compat_dims_from_shape(std::span<const int64_t> shape, TensorLayout layout);
 
+// Project only the batch-one alias authorized by the selected Model ingress.
+void project_model_input_spec(SampleSpec& spec, std::span<const std::int64_t> model_shape);
+
 CapKey capkey_from_spec(const SampleSpec& spec);
 std::string caps_string_from_spec(const SampleSpec& spec);
 

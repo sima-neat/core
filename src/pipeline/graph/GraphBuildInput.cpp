@@ -1842,8 +1842,8 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   require_input_appsrc(nodes, "Graph::build(input)", &src_node);
   const InputOptions normalized_input_opt =
       pipeline_internal::normalize_shape_bounds(src_node->options());
-  const SampleSpec seed_spec =
-      infer_input_spec(normalized_input_opt, sample, "Graph::build(input)");
+  SampleSpec seed_spec = infer_input_spec(normalized_input_opt, sample, "Graph::build(input)");
+  project_model_input_spec(seed_spec, opt.model_input_shape);
   InputOptions seeded_input_opt =
       pipeline_internal::complete_input_options_from_seed_spec(src_node->options(), seed_spec);
   std::vector<std::shared_ptr<Node>> build_nodes =

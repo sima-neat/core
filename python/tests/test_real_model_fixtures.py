@@ -748,7 +748,8 @@ def test_tensor_input_model_uses_quanttess_frontend_contract():
     assert "neatkernelrunner" in model.backend_fragment(pyneat.ModelStage.Preprocess).lower()
 
 
-def test_tensor_input_model_unseeded_build_accepts_hwc(monkeypatch):
+@pytest.mark.parametrize("as_sample", [False, True])
+def test_tensor_input_model_unseeded_build_accepts_hwc(monkeypatch, as_sample):
   monkeypatch.setenv("SIMA_INPUTSTREAM_PREFLIGHT_RUN", "1")
   model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"))
   image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
@@ -760,13 +761,25 @@ def test_tensor_input_model_unseeded_build_accepts_hwc(monkeypatch):
       pyneat.Tensor.from_numpy(values[None], copy=True, memory=pyneat.TensorMemory.EV74),
   ]
   assert list(inputs[1].shape) == list(model.input_specs()[0].shape)
+
+  def submitted(tensor):
+    return [_sample_from_tensor(tensor)] if as_sample else [tensor]
+
   results = []
   for seed in inputs:
     for seeded in (True, False):
-      runner = model.build([seed]) if seeded else model.build()
+      runner = model.build(submitted(seed)) if seeded else model.build()
       try:
         for tensor in inputs:
-          results.append([t.to_numpy(copy=True) for t in runner.run([tensor], timeout_ms=30000)])
+          output = runner.run(submitted(tensor), timeout_ms=30000)
+          tensors = _sample_tensors(output) if as_sample else output
+          results.append([t.to_numpy(copy=True) for t in tensors])
+        assert runner.push(submitted(inputs[1]))
+        results.append([t.to_numpy(copy=True) for t in _sample_tensors(runner.pull(30000))])
+        accepted = (runner.try_push_samples(_sample_from_tensor(inputs[1])) if as_sample
+                    else runner.try_push_tensors([inputs[1]]))
+        assert accepted
+        results.append([t.to_numpy(copy=True) for t in _sample_tensors(runner.pull(30000))])
       finally:
         runner.close()
   for result in results[1:]:

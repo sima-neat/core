@@ -2134,6 +2134,7 @@ bool InputStream::try_push_message(const Sample& msg) {
   const SampleTimingOverrides timing_override = sample_timing_overrides_from_sample(transport_msg);
   cache_preprocess_meta(*st, transport_msg, seq.input_seq, seq.orig_input_seq);
   SampleSpec spec = derive_sample_spec_or_throw(transport_msg);
+  project_model_input_spec(spec, st->opt.model_input_shape);
   const bool use_tensor_envelope_transport = spec.tensor_envelope_transport;
   // Compressed ingress is CPU-supported; only decoded/raw tensors need device visibility.
   // The set-complete guard still covers every field of a tensor envelope.

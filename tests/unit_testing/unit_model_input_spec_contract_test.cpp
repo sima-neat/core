@@ -1,6 +1,9 @@
 #include "model/Model.h"
+#include "pipeline/Graph.h"
 #include "model/internal/ModelInternal.h"
 #include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/runtime/ExecutionGraphPlan.h"
+#include "nodes/common/Output.h"
 #include "model_archive_fixture_utils.h"
 #include "test_main.h"
 #include "test_utils.h"
@@ -57,7 +60,11 @@ sima_test::ModelArchiveFixture make_cast_ingress_fixture(const std::vector<int64
   auto& plugins = mpk["plugins"];
   plugins[0]["config_params"]["params"]["input_shapes"] = {shape};
   plugins[0]["config_params"]["params"]["output_shapes"] = {shape};
-  plugins[1]["config_params"] = {{"desired_batch_size", batch}, {"actual_batch_size", batch}};
+  for (auto& plugin : plugins) {
+    plugin["config_params"]["desired_batch_size"] = batch;
+    plugin["config_params"]["actual_batch_size"] = batch;
+  }
+  plugins[1]["config_params"]["number_of_quads_to_user"] = 4;
   plugins[2]["config_params"]["params"]["input_shapes"] = {{batch, 16}};
   plugins[2]["config_params"]["params"]["output_shapes"] = {{batch, 16}};
   mpk["input_nodes"][0]["size"] = elements * 4;
@@ -102,6 +109,81 @@ void check_tensor_shape_metadata() {
               "5D Cast boundary must retain the authored shape for caps negotiation");
     }
   }
+}
+
+void check_model_input_projection() {
+  Model::Options options;
+  options.preprocess.kind = InputKind::Tensor;
+  Model model(require_yolov9_tar(), options);
+  Graph graph;
+  InputOptions input;
+  input.payload_type = PayloadType::Tensor;
+  graph.add(nodes::Input(input));
+  graph.add(model);
+  graph.add(nodes::Output());
+  const auto plan = runtime::compile_public_graph(graph, RunOptions{}, std::nullopt);
+  const auto shape = plan.pipeline_segments.front().stream_options.model_input_shape;
+  require(shape == std::vector<int64_t>({640, 640, 3}),
+          "direct Model ingress must select its batch-one wire contract");
+  auto tensor = Tensor::from_vector(std::vector<float>(640 * 640 * 3, 1.0F), {1, 640, 640, 3},
+                                    TensorMemory::CPU);
+  for (const auto axes :
+       {std::vector<TensorAxisSemantic>{},
+        std::vector<TensorAxisSemantic>(4, TensorAxisSemantic::Unknown),
+        std::vector<TensorAxisSemantic>{TensorAxisSemantic::N, TensorAxisSemantic::H,
+                                        TensorAxisSemantic::W, TensorAxisSemantic::C}}) {
+    tensor.axis_semantics = axes;
+    auto spec = describe_tensor_spec_or_throw(tensor, input, "Model projection");
+    project_model_input_spec(spec, shape);
+    require(spec.shape == shape && spec.required_bytes_actual == 640U * 640U * 3U * sizeof(float),
+            "Model projection must accept equivalent batch-one tensor annotations");
+    require(tensor.shape == std::vector<int64_t>({1, 640, 640, 3}) && tensor.axis_semantics == axes,
+            "Model projection must leave caller metadata untouched");
+  }
+  for (const auto& invalid_shape :
+       {std::vector<int64_t>{1, 3, 4, 4}, {2, 4, 4, 3}, {1, 1, 4, 4, 3}}) {
+    tensor.shape = invalid_shape;
+    tensor.axis_semantics.clear();
+    tensor.strides_bytes.clear();
+    tensor.storage = make_cpu_owned_storage(tensor.dense_bytes_tight());
+    auto spec = describe_tensor_spec_or_throw(tensor, input, "unmatched projection");
+    project_model_input_spec(spec, shape);
+    require(spec.shape == invalid_shape,
+            "Model projection must not reinterpret wrong shapes, batch two or rank five");
+  }
+  const auto cast_fixture = make_cast_ingress_fixture({1, 4, 4, 3});
+  sima_test::write_topology_elf(std::filesystem::path(cast_fixture.root_dir) / "share/model.elf",
+                                "data.ifm.b0", 96, "data.ofm.b0", 32);
+  const std::string archive = "tar -czf " +
+                              sima_test::model_archive_shell_quote(cast_fixture.tar_path) + " -C " +
+                              sima_test::model_archive_shell_quote(cast_fixture.root_dir) + " .";
+  require(std::system(archive.c_str()) == 0, "failed to archive Cast metadata fixture");
+  Model cast_model(cast_fixture.tar_path, options);
+  Graph cast;
+  cast.add(nodes::Input(input));
+  cast.add(cast_model.preprocess());
+  cast.add(nodes::Output());
+  const auto cast_plan = runtime::compile_public_graph(cast, RunOptions{}, std::nullopt);
+  require(cast_plan.pipeline_segments.front().stream_options.model_input_shape ==
+              std::vector<int64_t>({4, 4, 3}),
+          "Model Cast must select its checked shape even when the MPK omits a layout token");
+
+  Graph custom;
+  custom.add(nodes::Input(input));
+  custom.custom("identity");
+  custom.add(model);
+  custom.add(nodes::Output());
+  const auto custom_plan = runtime::compile_public_graph(custom, RunOptions{}, std::nullopt);
+  require(custom_plan.pipeline_segments.front().stream_options.model_input_shape.empty(),
+          "a custom consumer before a Model must preserve generic input rank");
+  Graph fanout;
+  auto source = nodes::Input("features", input);
+  fanout.connect(source, model);
+  fanout.connect(source, nodes::Output("copy"));
+  const auto fanout_plan = runtime::compile_public_graph(fanout, RunOptions{}, std::nullopt);
+  for (const auto& segment : fanout_plan.pipeline_segments)
+    require(segment.stream_options.model_input_shape.empty(),
+            "fanout must not infer an application shape from one Model consumer");
 }
 
 void check_ingress_memory_policy() {
@@ -487,9 +569,9 @@ void check_synthetic_tensor_contract_shapes() {
       unspecified.layout = TensorLayout::Unknown;
       const auto unspecified_spec =
           describe_tensor_spec_or_throw(unspecified, options, "unspecified NHWC input");
-      require(unspecified_spec.caps_key == seed_spec.caps_key &&
+      require(unspecified_spec.shape == shape &&
                   unspecified_spec.required_bytes_actual == seed_spec.required_bytes_actual,
-              "input_specs()-shaped tensors must negotiate like batch-one HWC inputs");
+              "generic unspecified tensors must retain their full rank and extent");
       require(unspecified.shape == shape && unspecified.storage == tensor.storage,
               "wire normalization must not reshape or copy the caller's tensor");
       unspecified.axis_semantics = {TensorAxisSemantic::N, TensorAxisSemantic::H,
@@ -510,6 +592,7 @@ RUN_TEST(
       check_synthetic_tensor_contract_shapes();
       check_ingress_memory_policy();
       check_tensor_shape_metadata();
+      check_model_input_projection();
 
       {
         const std::string tar = require_yolov9_tar();

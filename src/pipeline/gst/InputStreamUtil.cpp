@@ -1753,10 +1753,7 @@ InputGeometry describe_tensor_geometry_or_throw(const simaai::neat::Tensor& inpu
       throw std::invalid_argument(std::string(tag) + ": tensor input must be dense");
     }
     std::span<const int64_t> normalized_shape = input.shape;
-    // Unspecified layouts already use HWC geometry. Apply the same batch-one
-    // shorthand unless the caller supplied explicit axis semantics.
-    const bool allow_batch_one_shorthand =
-        input.layout != TensorLayout::Unknown || input.axis_semantics.empty();
+    const bool allow_batch_one_shorthand = input.layout != TensorLayout::Unknown;
     const size_t expected_rank = (input.layout == TensorLayout::HW) ? 2u : 3u;
     const bool has_explicit_leading_batch_axis =
         input.axis_semantics.size() == normalized_shape.size() && !input.axis_semantics.empty() &&
@@ -1892,6 +1889,17 @@ SampleSpec describe_tensor_spec_or_throw(const Tensor& input, const InputOptions
   spec.caps_key = capkey_from_spec(spec);
   spec.caps_string = caps_string_from_spec(spec);
   return spec;
+}
+
+void project_model_input_spec(SampleSpec& spec, std::span<const std::int64_t> model_shape) {
+  if (spec.kind != SampleMediaKind::Tensor || model_shape.size() != 3U || spec.shape.size() != 4U ||
+      spec.shape.front() != 1 ||
+      !std::equal(model_shape.begin(), model_shape.end(), spec.shape.begin() + 1)) {
+    return;
+  }
+  spec.shape.erase(spec.shape.begin());
+  spec.caps_key = capkey_from_spec(spec);
+  spec.caps_string = caps_string_from_spec(spec);
 }
 
 SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const InputOptions& opt,

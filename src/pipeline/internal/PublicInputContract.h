@@ -4,6 +4,7 @@
 #endif
 
 #include "nodes/io/Input.h"
+#include "model/internal/ModelRouteRetarget.h"
 #include "builder/NodeContractProvider.h"
 #include "pipeline/internal/contract/CompiledNodeContract.h"
 #include "pipeline/internal/contract/ContractFacts.h"
@@ -78,12 +79,9 @@ template <typename View> InputOptions public_input_options(const View& view, std
   return options;
 }
 
-// Only the direct, unambiguous consumer of an application Input can author
-// this policy. Internal links, fanouts and explicit model routes retain their
-// existing metadata authority. Compilation here is cold metadata work only.
+// Internal boundaries and fanouts have no single application-ingress owner.
 template <typename View>
-std::optional<OrderedPublicInputContract> ordered_public_input_contract(const View& view,
-                                                                        std::size_t vertex) {
+std::optional<std::size_t> direct_public_input_consumer(const View& view, std::size_t vertex) {
   if (!dynamic_cast<const Input*>(view.vertices.at(vertex).get()))
     return std::nullopt;
   std::optional<std::size_t> consumer;
@@ -96,6 +94,40 @@ std::optional<OrderedPublicInputContract> ordered_public_input_contract(const Vi
       consumer = edge.to;
     }
   }
+  return consumer;
+}
+
+// A Model-owned transform can authorize its batch-one wire alias. A custom
+// stage before the Model cannot assign meaning to the application's axes.
+template <typename View>
+std::vector<std::int64_t> public_model_input_shape(const View& view, std::size_t vertex) {
+  const auto consumer = direct_public_input_consumer(view, vertex);
+  if (!consumer)
+    return {};
+  const auto& node = view.vertices.at(*consumer);
+  const auto* lineage = internal::node_model_lineage_binding(node);
+  const auto* contract = internal::node_model_processcvu_contract(node);
+  if (!lineage || lineage->stage_role != internal::ModelLineageStageRole::Preprocess ||
+      node->kind() == "Preproc" || !contract ||
+      contract->runtime_contract.logical_inputs.size() != 1U)
+    return {};
+  const auto& input = contract->runtime_contract.logical_inputs.front();
+  // Some MPKs omit the layout token; their checked logical shape still owns the wire contract.
+  if (!input.layout.empty() && input.layout != "HWC" && input.layout != "NHWC" &&
+      input.layout != "CHW" && input.layout != "NCHW")
+    return {};
+  auto shape = input.shape;
+  if (shape.size() == 4U && shape.front() == 1)
+    shape.erase(shape.begin());
+  return shape.size() == 3U ? shape : std::vector<std::int64_t>{};
+}
+
+// Only the direct, unambiguous consumer of an application Input can author
+// this policy. Compilation here is cold metadata work only.
+template <typename View>
+std::optional<OrderedPublicInputContract> ordered_public_input_contract(const View& view,
+                                                                        std::size_t vertex) {
+  const auto consumer = direct_public_input_consumer(view, vertex);
   if (!consumer)
     return std::nullopt;
   for (const auto& fragment : view.fragments) {
