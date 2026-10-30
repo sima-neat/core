@@ -600,21 +600,8 @@ public_output_endpoint_selector_local(const std::vector<std::shared_ptr<Node>>& 
     break;
   }
 
-  const std::string label = nodes[static_cast<std::size_t>(output_index)]->user_label();
-  if (!label.empty()) {
-    selector.output_segment_name = label;
-    const bool numeric = std::all_of(label.begin(), label.end(),
-                                     [](unsigned char c) { return std::isdigit(c) != 0; });
-    if (numeric) {
-      try {
-        selector.route_slot = std::stoi(label);
-        selector.output_slot = selector.route_slot;
-      } catch (...) {
-        selector.route_slot = -1;
-        selector.output_slot = -1;
-      }
-    }
-  }
+  pipeline_internal::terminal_output_contract::set_output_selector(
+      selector, nodes[static_cast<std::size_t>(output_index)]->user_label());
   return selector;
 }
 
@@ -1879,6 +1866,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
     br.public_output_endpoint = public_output_endpoint_selector_local(build_nodes);
   }
   br.output_placement = opt.output_placement;
+  br.compatible_output_names = opt.compatible_output_names;
   maybe_compile_build_result_contracts(
       &br, &build_nodes, sess_opt, input_contract_from_input(sample), seed_spec,
       contract_compile_sample_from_input(sample), "Graph::build(input)");

@@ -826,7 +826,13 @@ struct StorageCompilation {
       throw std::invalid_argument(
           "OutputPlacement::EV74Compatible requires a resolved public tensor output.");
     const auto index = static_cast<std::size_t>(terminal - manifest.stages.data());
-    for (const auto& output : terminal->logical_outputs) {
+    auto publication = *terminal;
+    // An Output name may label the aggregate endpoint. A matching tensor/slot
+    // selector narrows placement using the same rules as publication.
+    if (terminal_output_contract::stage_public_outputs_match_endpoint(*terminal, *endpoint) &&
+        !terminal_output_contract::filter_publication_stage_for_endpoint(&publication, *endpoint))
+      throw std::invalid_argument("OutputPlacement::EV74Compatible has no selected tensor output.");
+    for (const auto& output : publication.logical_outputs) {
       auto& carrier = carriers.at(stages[index].outputs.at(output.physical_index));
       if (groups[group_root(carrier.group)].pinned)
         throw std::invalid_argument(
@@ -1101,15 +1107,24 @@ struct StorageCompilation {
 void finalize_pipeline_storage(
     SimaPluginStaticManifest& manifest,
     const terminal_output_contract::PublicOutputEndpointSelector* endpoint,
-    OutputPlacement placement) {
+    OutputPlacement placement, std::span<const std::string> compatible_output_names) {
   StorageCompilation storage(manifest);
   storage.collect_models();
   storage.collect_outputs();
   storage.collect_edges();
-  if (placement == OutputPlacement::EV74Compatible)
-    storage.require_public_cma(endpoint);
-  else
+  if (placement == OutputPlacement::EV74Compatible) {
+    if (compatible_output_names.empty())
+      storage.require_public_cma(endpoint);
+    else
+      for (const auto& name : compatible_output_names) {
+        auto selected =
+            endpoint ? *endpoint : terminal_output_contract::PublicOutputEndpointSelector{};
+        terminal_output_contract::set_output_selector(selected, name);
+        storage.require_public_cma(&selected);
+      }
+  } else {
     storage.select_terminal(endpoint);
+  }
   storage.pack_groups();
   storage.publish_layouts();
   storage.finalize_tvm_epochs();

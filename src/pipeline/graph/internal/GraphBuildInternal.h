@@ -180,19 +180,19 @@ struct SourceStreamBuildContext {
   InputStreamOptions stream_opt{};
 };
 
-SourceStreamBuildContext
-session_build_source_stream_internal(const std::vector<std::shared_ptr<Node>>& nodes,
-                                     const std::shared_ptr<void>& guard, std::string& last_pipeline,
-                                     const GraphOptions& sess_opt, const RunOptions& opt,
-                                     RunMode mode, bool require_sink, bool public_output_contract,
-                                     std::size_t internal_edge_queue, const char* where);
+SourceStreamBuildContext session_build_source_stream_internal(
+    const std::vector<std::shared_ptr<Node>>& nodes, const std::shared_ptr<void>& guard,
+    std::string& last_pipeline, const GraphOptions& sess_opt, const RunOptions& opt, RunMode mode,
+    bool require_sink, bool public_output_contract, std::size_t internal_edge_queue,
+    const char* where, std::span<const std::string> compatible_output_names = {});
 
 SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
     const runtime::FusedRealtimeIngress& ingress,
     const std::vector<std::shared_ptr<Node>>& consumer_nodes, const std::shared_ptr<void>& guard,
     std::string& last_pipeline, const GraphOptions& sess_opt, const RunOptions& opt, RunMode mode,
     bool require_sink, bool public_output_contract, std::size_t internal_edge_queue,
-    const char* where, const runtime::FusedEncodedOutputDispatch& encoded_output_dispatch = {});
+    const char* where, const runtime::FusedEncodedOutputDispatch& encoded_output_dispatch = {},
+    std::span<const std::string> compatible_output_names = {});
 
 void session_build_compile_contracts(BuildResult* build_result,
                                      const std::vector<std::shared_ptr<Node>>& source_nodes,

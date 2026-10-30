@@ -18,6 +18,8 @@
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 
 #include <algorithm>
+#include <set>
+#include <tuple>
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -320,29 +322,33 @@ bool route_stage_output(const std::shared_ptr<RunCore>& core, StageRuntime& st,
 
 // Output-only segments have no allocator. Follow forwarding stages to the
 // producer so shared backing satisfies every attached output endpoint.
-std::unordered_set<std::size_t> compatible_output_producers(const ExecutionGraphPlan& plan) {
+std::unordered_map<std::size_t, std::vector<std::string>>
+compatible_output_producers(const ExecutionGraphPlan& plan) {
   std::unordered_map<NodeId, std::size_t> segment_by_node;
   for (std::size_t i = 0; i < plan.pipeline_segments.size(); ++i)
     for (const auto node : plan.pipeline_segments[i].node_ids)
       segment_by_node.emplace(node, i);
-  std::vector<NodeId> pending;
+  using Pending = std::tuple<NodeId, PortId, std::string>;
+  std::vector<Pending> pending;
   for (const auto& sink : plan.pipeline_segments) {
     if (sink.boundary.direct_graph_sink && graph_build_internal::terminal_output_placement(
                                                sink.nodes) == OutputPlacement::EV74Compatible)
-      for (const auto edge : sink.input_edges)
-        pending.push_back(plan.edges.at(edge).from);
+      for (const auto index : sink.input_edges) {
+        const auto& edge = plan.edges.at(index);
+        pending.emplace_back(edge.from, edge.from_port, sink.nodes.back()->user_label());
+      }
   }
-  std::unordered_set<NodeId> visited;
-  std::unordered_set<std::size_t> required;
+  std::set<Pending> visited;
+  std::unordered_map<std::size_t, std::vector<std::string>> required;
   while (!pending.empty()) {
-    const auto node = pending.back();
+    auto [node, port, name] = std::move(pending.back());
     pending.pop_back();
-    if (!visited.insert(node).second)
+    if (!visited.emplace(node, port, name).second)
       continue;
     if (stage_forwards_payload(plan, node)) {
       for (const auto& edge : plan.edges)
         if (edge.to == node)
-          pending.push_back(edge.from);
+          pending.emplace_back(edge.from, edge.from_port, name);
       continue;
     }
     const auto producer = segment_by_node.find(node);
@@ -351,7 +357,9 @@ std::unordered_set<std::size_t> compatible_output_producers(const ExecutionGraph
       throw std::invalid_argument(
           "OutputPlacement::EV74Compatible requires a Core-allocated tensor output; "
           "use tensor.cvu() to copy imported or application-stage output.");
-    required.insert(plan.pipeline_segments[producer->second].id);
+    if (port != kInvalidPort && plan.port_names.at(port) != "out")
+      name = plan.port_names[port];
+    required[plan.pipeline_segments[producer->second].id].push_back(std::move(name));
   }
   return required;
 }
@@ -430,6 +438,8 @@ void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
     if (seg.boundary.graph_internal_output) {
       runtime->run_options.output_memory = simaai::neat::OutputMemory::ZeroCopy;
     }
+    if (const auto found = compatible_producers.find(seg.id); found != compatible_producers.end())
+      runtime->seg.stream_options.compatible_output_names = found->second;
     runtime->seg.nodes = runtime->nodes;
     runtime->seg.route_options = runtime->route_options;
     runtime->seg.run_options = runtime->run_options;

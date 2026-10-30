@@ -111,6 +111,7 @@ struct InputStreamOptions {
   // instead of being rewritten as public terminal outputs.
   bool public_output_contract = true;
   OutputPlacement output_placement = OutputPlacement::Auto;
+  std::vector<std::string> compatible_output_names;
   // True only when a terminal public Output Node supplied max_buffers/drop/sync.
   // Its queue policy owns every handoff after appsink; RunOptions remains the
   // input/general scheduling policy and must not replace this contract.

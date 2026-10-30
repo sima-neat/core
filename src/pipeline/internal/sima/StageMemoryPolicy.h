@@ -8,6 +8,9 @@
 #include "pipeline/internal/contract/ContractFacts.h"
 #include "nodes/common/Output.h"
 
+#include <span>
+#include <string>
+
 namespace simaai::neat::pipeline_internal::terminal_output_contract {
 struct PublicOutputEndpointSelector;
 }
@@ -27,6 +30,7 @@ std::uint32_t resolved_stage_device_access(const StageStaticSpec&);
 void finalize_pipeline_storage(
     SimaPluginStaticManifest& manifest,
     const terminal_output_contract::PublicOutputEndpointSelector* endpoint = nullptr,
-    OutputPlacement placement = OutputPlacement::Auto);
+    OutputPlacement placement = OutputPlacement::Auto,
+    std::span<const std::string> compatible_output_names = {});
 
 } // namespace simaai::neat::pipeline_internal::sima

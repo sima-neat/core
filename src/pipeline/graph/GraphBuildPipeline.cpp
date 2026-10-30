@@ -903,7 +903,8 @@ void prepare_stage_contracts(BuildResult& build, const char* where) {
       endpoint->terminal_stage_key =
           apply_name_transform(build.name_transform, endpoint->terminal_stage_key);
     pipeline_internal::sima::finalize_pipeline_storage(
-        *transformed_manifest, endpoint ? &*endpoint : nullptr, build.output_placement);
+        *transformed_manifest, endpoint ? &*endpoint : nullptr, build.output_placement,
+        build.compatible_output_names);
     if (build.compiled_contracts)
       build.compiled_contracts->model_storage_scopes.reset();
     if (build.rendered_manifest)

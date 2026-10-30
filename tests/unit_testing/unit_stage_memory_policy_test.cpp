@@ -52,6 +52,81 @@ void connect(si::StageStaticSpec& consumer, const std::string& producer) {
   consumer.input_bindings = {binding};
 }
 
+void check_selected_public_cma(const si::StageStaticSpec& original) {
+  namespace query = simaai::neat::pipeline_internal::terminal_output_contract;
+  auto producer = original;
+  for (int i = 0; i < 2; ++i) {
+    auto& logical = producer.logical_outputs.at(i);
+    logical.dtype = "BFLOAT16";
+    logical.shape = {16};
+    logical.output_slot = logical.tensor_index = i;
+    logical.logical_name = "head" + std::to_string(i);
+  }
+  const auto expected_auto =
+      producer.allocation_policy.value_or(client::AllocationPolicy::RequireDms);
+  query::PublicOutputEndpointSelector endpoint;
+  endpoint.terminal_stage_key = "producer";
+  endpoint.terminal_stage_key_required = true;
+  for (const auto* name : {"head0", "0"}) {
+    for (const bool forwarded : {false, true}) {
+      si::SimaPluginStaticManifest manifest;
+      manifest.stages = {producer};
+      auto selected = endpoint;
+      query::set_output_selector(selected, name);
+      const std::array<std::string, 1> names{name};
+      si::finalize_pipeline_storage(manifest, forwarded ? &endpoint : &selected,
+                                    simaai::neat::OutputPlacement::EV74Compatible,
+                                    forwarded ? std::span<const std::string>(names)
+                                              : std::span<const std::string>{});
+      const auto& layout = *manifest.stages.front().frame_layout;
+      const auto& first = layout.outputs.at(0).span;
+      const auto& second = layout.outputs.at(1).span;
+      require(layout.allocations.at(first.allocation_index).policy ==
+                      client::AllocationPolicy::RequireCma &&
+                  layout.allocations.at(second.allocation_index).policy == expected_auto,
+              "selecting one public head must preserve the other carrier's allocation policy");
+      std::string error;
+      const auto publication =
+          query::build_output_override_from_manifest(manifest, selected, &error);
+      require(publication && publication->outputs.size() == 1,
+              "placement and publication must select the same head: " + error);
+    }
+  }
+
+  // Aggregate endpoint names still request compatible storage for every tensor.
+  for (const auto* name : {"", "all_tensors"}) {
+    si::SimaPluginStaticManifest aggregate;
+    aggregate.stages = {producer};
+    auto selected = endpoint;
+    query::set_output_selector(selected, name);
+    si::finalize_pipeline_storage(aggregate, &selected,
+                                  simaai::neat::OutputPlacement::EV74Compatible);
+    const auto& layout = *aggregate.stages.front().frame_layout;
+    for (const auto& output : layout.outputs)
+      require(layout.allocations.at(output.span.allocation_index).policy ==
+                  client::AllocationPolicy::RequireCma,
+              "an aggregate compatible endpoint must cover every output carrier");
+  }
+
+  // Two logical heads in one physical carrier necessarily share placement.
+  auto recipe = std::make_shared<si::KernelStageRecipe>(*producer.native_kernel);
+  recipe->members.at(1).outputs.front() = {0, 32};
+  producer.native_kernel = std::move(recipe);
+  producer.physical_outputs.resize(1);
+  producer.physical_outputs.front().size_bytes = 64;
+  producer.logical_outputs.at(1).physical_index = 0;
+  producer.logical_outputs.at(1).byte_offset = 32;
+  si::SimaPluginStaticManifest shared;
+  shared.stages = {std::move(producer)};
+  query::set_output_selector(endpoint, "head0");
+  si::finalize_pipeline_storage(shared, &endpoint, simaai::neat::OutputPlacement::EV74Compatible);
+  const auto& layout = *shared.stages.front().frame_layout;
+  require(layout.outputs.size() == 1 &&
+              layout.allocations.at(layout.outputs.front().span.allocation_index).policy ==
+                  client::AllocationPolicy::RequireCma,
+          "selecting a packed view must retain CMA for its shared backing");
+}
+
 void check_independent_carriers(bool prefer_dms) {
   const std::array inputs{client::TensorSpec{{16}, client::DType::Float32}};
   const std::array outputs{client::TensorSpec{{16}, client::DType::BFloat16}};
@@ -85,6 +160,8 @@ void check_independent_carriers(bool prefer_dms) {
   ingress.sink_pad_index = 0;
   ingress.local_logical_input_index = 0;
   producer.input_bindings = {ingress};
+
+  check_selected_public_cma(producer);
 
   auto consumer = stage("ev", client::Hardware::EV74);
   connect(consumer, "producer");
