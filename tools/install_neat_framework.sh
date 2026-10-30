@@ -100,10 +100,12 @@ SCHEDULER_PLATFORM_ADMISSION_PATH="$(dirname "${INSTALLER_SCRIPT_PATH}")/schedul
 BOARD_PLATFORM_ADMISSION_DIR=""
 GREEN=$'\033[0;32m'
 RESET=$'\033[0m'
+INSTALLER_START_DIR="${PWD}"
 INSTALLER_TMP_DIRS=()
 
 cleanup_installer_tmp_dirs() {
   local dir
+  cd -- "${INSTALLER_START_DIR}" 2>/dev/null || true
   for dir in "${INSTALLER_TMP_DIRS[@]}"; do
     [[ -n "${dir}" && ( -e "${dir}" || -L "${dir}" ) ]] && rm -rf -- "${dir}"
   done
@@ -928,6 +930,63 @@ collect_debs_in_install_order() {
   local -n out_array="${out_array_name}"
   out_array=()
   append_matching_files "${out_array_name}" "${search_dir}" '*.deb'
+}
+
+# Disk-backed locations come before /tmp, which is RAM-backed on Modalix boards.
+bundle_stage_parent_candidates() {
+  printf '%s\n' /media/nvme "${TMPDIR:-}" /var/tmp /tmp "${INSTALLER_START_DIR}"
+}
+
+create_bundle_stage_dir() {
+  local required_kb="$1"
+  local parent available_kb stage_dir
+  while IFS= read -r parent; do
+    [[ -n "${parent}" && -d "${parent}" && -w "${parent}" ]] || continue
+    available_kb="$(df -Pk "${parent}" 2>/dev/null | awk 'NR == 2 {print $4}')"
+    [[ "${available_kb}" =~ ^[0-9]+$ && "${available_kb}" -ge "${required_kb}" ]] || continue
+    stage_dir="$(mktemp -d "${parent}/sima-neat-install.XXXXXX" 2>/dev/null)" || continue
+    printf '%s\n' "${stage_dir}"
+    return 0
+  done < <(bundle_stage_parent_candidates)
+  return 1
+}
+
+# sima-cli downloads every Core bundle into the same directory, so files from
+# earlier installs can sit next to this one. Scheduler admission rejects any
+# .deb the install manifest does not list, so install from a fresh directory
+# that holds only this bundle.
+stage_bundle_in_fresh_dir() {
+  [[ -f "./${NEAT_INSTALL_MANIFEST}" ]] || return 0
+  local -a bundle_files=()
+  append_matching_files bundle_files "." '*'
+  bundle_files+=("./${NEAT_INSTALL_MANIFEST}")
+  if [[ -f ./resolved-deps-manifest.json ]]; then
+    bundle_files+=(./resolved-deps-manifest.json)
+  fi
+  # An absolute package manifest path still resolves after the directory change.
+  local package_manifest=""
+  if [[ "${NEAT_PACKAGE_MANIFEST}" != /* ]]; then
+    package_manifest="$(resolve_package_manifest_path)"
+    [[ -f "${package_manifest}" ]] || package_manifest=""
+  fi
+
+  local required_kb stage_dir
+  required_kb="$(du -ckL -- "${bundle_files[@]}" ${package_manifest:+"${package_manifest}"} |
+    awk 'END {print $1}')"
+  if ! stage_dir="$(create_bundle_stage_dir "${required_kb}")"; then
+    echo "No writable location has ${required_kb} KB free for a fresh copy of the install bundle." >&2
+    echo "Checked: $(bundle_stage_parent_candidates | paste -sd ' ' -)" >&2
+    exit 1
+  fi
+  INSTALLER_TMP_DIRS+=("${stage_dir}")
+  # mktemp creates an owner-only directory; APT's sandbox user reads local .deb files.
+  chmod 0755 "${stage_dir}"
+  cp -p -- "${bundle_files[@]}" "${stage_dir}/"
+  if [[ -n "${package_manifest}" ]]; then
+    cp -p -- "${package_manifest}" "${stage_dir}/${NEAT_PACKAGE_MANIFEST}"
+  fi
+  log "Installing from a fresh copy of the bundle: ${stage_dir}"
+  cd -- "${stage_dir}"
 }
 
 sysroot_path() {
@@ -2635,6 +2694,7 @@ fi
 
 parse_args "$@"
 
+stage_bundle_in_fresh_dir
 collect_debs_in_install_order "." DEBS
 if [[ "${#DEBS[@]}" -lt 1 ]]; then
   echo "No required DEB files found in current directory." >&2
