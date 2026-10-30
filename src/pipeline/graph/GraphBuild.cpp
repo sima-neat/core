@@ -28,6 +28,7 @@
 #include "pipeline/internal/GstErrorNormalizer.h"
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/OutputTensorOverride.h"
+#include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/SimaaiMemory.h"
 #include "pipeline/internal/SimaaiGuard.h"
 #include "pipeline/internal/UxLogging.h"
@@ -2149,7 +2150,8 @@ SampleSpec infer_input_spec(const InputOptions& opt, const simaai::neat::Tensor&
 SampleSpec infer_input_spec(const InputOptions& opt, const Sample& sample, const char* where) {
   const char* tag = where ? where : "Graph::infer_input_spec";
   try {
-    SampleSpec spec = derive_sample_spec_or_throw(sample);
+    SampleSpec spec = derive_sample_spec_or_throw(
+        pipeline_internal::canonicalize_tensor_transport_sample(sample));
     const TensorCompatDims actual_dims = sample_shape_limits_dims(spec);
 
     const InputOptions normalized = pipeline_internal::normalize_shape_bounds(opt);

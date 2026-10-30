@@ -19,7 +19,6 @@
 #include <optional>
 #include <sstream>
 #include <stdexcept>
-#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -258,7 +257,6 @@ struct ParsedTensorShapeContract {
   bool valid = false;
   std::string layout;
   int rank = 0;
-  int batch = 1;
   int width = 0;
   int height = 0;
   int depth = 0;
@@ -281,37 +279,21 @@ ParsedTensorShapeContract parse_tensor_shape_contract(const std::vector<std::int
     return out;
   }
 
-  if (shape.size() >= 4U) {
-    out.batch = clamp_positive_dim(shape[shape.size() - 4U]);
+  if (shape.size() >= 3U) {
     out.height = clamp_positive_dim(shape[shape.size() - 3U]);
     out.width = clamp_positive_dim(shape[shape.size() - 2U]);
     out.depth = clamp_positive_dim(shape[shape.size() - 1U]);
-  } else if (shape.size() == 3U) {
-    out.batch = 1;
-    out.height = clamp_positive_dim(shape[0]);
-    out.width = clamp_positive_dim(shape[1]);
-    out.depth = clamp_positive_dim(shape[2]);
   } else if (shape.size() == 2U) {
-    out.batch = 1;
     out.height = clamp_positive_dim(shape[0]);
     out.width = clamp_positive_dim(shape[1]);
     out.depth = 1;
   } else {
-    out.batch = 1;
     out.height = 1;
     out.width = clamp_positive_dim(shape[0]);
     out.depth = 1;
   }
-  if (out.batch <= 0) {
-    out.batch = 1;
-  }
   out.valid = out.width > 0 && out.height > 0 && out.depth > 0;
   return out;
-}
-
-std::vector<std::int64_t>
-preferred_tensor_shape(const pipeline_internal::sima::MpkTensorContract& tensor) {
-  return tensor.logical_shape;
 }
 
 std::string preferred_tensor_dtype(const pipeline_internal::sima::MpkTensorContract& tensor) {
@@ -328,14 +310,12 @@ bool populate_tensor_contract_from_stage_tensor(
   if (!out) {
     return false;
   }
-  auto shape = preferred_tensor_shape(tensor);
-  if constexpr (std::is_same_v<ContractT, EgressTensorContract>) {
-    // Image routing uses normalized dimensions, but public output metadata
-    // must retain the authored tensor rank, including a singleton batch.
-    if (tensor.shape_semantics == pipeline_internal::sima::MpkShapeSemantics::Geometry &&
-        !tensor.mpk_shape.empty()) {
-      shape = tensor.mpk_shape;
-    }
+  auto shape = tensor.logical_shape;
+  // Tensor boundary metadata retains authored rank; image routing uses normalized dimensions.
+  if (!media_type_is_video_raw(media_type) &&
+      tensor.shape_semantics == pipeline_internal::sima::MpkShapeSemantics::Geometry &&
+      !tensor.mpk_shape.empty()) {
+    shape = tensor.mpk_shape;
   }
   const auto parsed_shape = parse_tensor_shape_contract(shape);
   if (!parsed_shape.valid) {
@@ -346,13 +326,10 @@ bool populate_tensor_contract_from_stage_tensor(
   out->dtype = preferred_tensor_dtype(tensor);
   out->layout = parsed_shape.layout;
   out->rank = parsed_shape.rank;
-  out->batch = parsed_shape.batch;
   out->width = parsed_shape.width;
   out->height = parsed_shape.height;
   out->depth = parsed_shape.depth;
-  // Phase 4a: preserve the canonical shape vector so tensor-domain consumers
-  // can read it directly without reconstructing from the (batch,h,w,d) scalars
-  // + a layout token.
+  // Tensor consumers use the complete shape; H/W/C fields serve image routing.
   out->logical_shape = shape;
   out->source_tensor_name = tensor.name;
   out->source_stage = source_stage;
@@ -552,20 +529,8 @@ derive_ingress_contracts_from_mpk_contract(const pipeline_internal::sima::MpkCon
         }
       }
     } else {
-      const auto shape = preferred_tensor_shape(ingress);
-      const auto parsed_shape = parse_tensor_shape_contract(shape);
-      ingress_contract.valid = parsed_shape.valid;
-      ingress_contract.media_type = "application/vnd.simaai.tensor";
-      ingress_contract.dtype = preferred_tensor_dtype(ingress);
-      ingress_contract.layout = parsed_shape.layout;
-      ingress_contract.rank = parsed_shape.rank;
-      ingress_contract.batch = parsed_shape.batch;
-      ingress_contract.width = parsed_shape.width;
-      ingress_contract.height = parsed_shape.height;
-      ingress_contract.depth = parsed_shape.depth;
-      // Phase 4a: preserve canonical shape vector.
-      ingress_contract.logical_shape = shape;
-      ingress_contract.source_stage = "session_ingress";
+      (void)populate_tensor_contract_from_stage_tensor(ingress, "application/vnd.simaai.tensor",
+                                                       "session_ingress", &ingress_contract);
     }
 
     out.push_back(std::move(ingress_contract));
@@ -714,7 +679,6 @@ IngressTensorContract make_single_ingress_contract_from_semantics(const ModelSem
   ingress.media_type = "application/vnd.simaai.tensor";
   ingress.dtype = canonical_dtype_for_signal(semantics.mla_input_dtype_raw);
   ingress.rank = 4;
-  ingress.batch = 1;
   ingress.width = semantics.mla_input_dims.width;
   ingress.height = semantics.mla_input_dims.height;
   ingress.depth = semantics.mla_input_dims.depth;

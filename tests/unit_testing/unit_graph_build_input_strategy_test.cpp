@@ -109,6 +109,38 @@ void require_tensor_sample_outputs(const simaai::neat::Sample& outputs, const st
   require(has_single_tensor, where + ": expected single-tensor sample output");
 }
 
+void check_generic_rank_four_input() {
+  using namespace simaai::neat;
+  const std::vector<int64_t> shape{1, 2, 3, 4};
+  auto tensor = Tensor::from_vector(std::vector<float>(24, 2.0F), shape, TensorMemory::CPU);
+  for (const bool envelope : {false, true}) {
+    InputOptions input;
+    input.payload_type = PayloadType::Tensor;
+    input.memory_policy = InputMemoryPolicy::SystemMemory;
+    Graph graph;
+    graph.add(nodes::Input(input));
+    graph.custom("capsfilter caps=\"application/vnd.simaai.tensor,rank=(int)4,dim0=(int)1,"
+                 "dim1=(int)2,dim2=(int)3,dim3=(int)4\"");
+    graph.add(nodes::Output());
+    auto sample = [&] { return sample_from_tensors(TensorList{tensor}); };
+    auto run = envelope ? graph.build(sample()) : graph.build(TensorList{tensor});
+    for (const bool annotated : {false, true, false}) {
+      tensor.axis_semantics = annotated
+                                  ? std::vector<TensorAxisSemantic>(4, TensorAxisSemantic::Unknown)
+                                  : std::vector<TensorAxisSemantic>{};
+      std::string error;
+      require(tensor.validate(&error), "generic tensor must be valid: " + error);
+      const bool received =
+          envelope ? !run.run(sample(), 2000).empty() : !run.run(TensorList{tensor}, 2000).empty();
+      require(received, "generic rank-four input must accept equivalent annotations");
+    }
+    require(envelope ? run.try_push(sample()) : run.try_push(TensorList{tensor}),
+            "generic try_push must use the same rank contract");
+    require(run.pull(2000).has_value(), "generic try_push output missing");
+    run.close();
+  }
+}
+
 } // namespace
 
 RUN_TEST(
@@ -116,6 +148,7 @@ RUN_TEST(
       using namespace simaai::neat;
 
       const ScopedEnvVar preflight("SIMA_INPUTSTREAM_PREFLIGHT_RUN", "1");
+      check_generic_rank_four_input();
 
       cv::Mat mat_seed(48, 64, CV_8UC3, cv::Scalar(20, 80, 140));
       Tensor tensor_seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x63);

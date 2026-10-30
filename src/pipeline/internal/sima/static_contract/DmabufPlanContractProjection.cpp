@@ -1984,12 +1984,9 @@ bool apply_dmabuf_plan_processcvu_command_projection(
       }
     }
     const bool application_boundary_input = !internal;
-    if (application_boundary_input && logical.shape.size() >= 4U && logical.shape.front() == 1) {
-      // ModelExecutionPlan retains AFE's explicit N=1 semantic axis.  Neat's
-      // frame-at-a-time application tensor/caps boundary is intentionally
-      // unbatched, while the CVU descriptor still uses the original op shape.
-      // Project only the wire-facing logical view; storage bytes and payload
-      // descriptor geometry remain unchanged.
+    if (application_boundary_input && logical.shape.size() == 4U && logical.shape.front() == 1) {
+      // Only NHWC has the batch-one HWC application shorthand. Higher-rank
+      // tensors retain every axis; execution geometry and storage stay unchanged.
       logical.shape.erase(logical.shape.begin());
       if (logical.stride_bytes.size() == logical.shape.size() + 1U) {
         logical.stride_bytes.erase(logical.stride_bytes.begin());

@@ -1343,8 +1343,8 @@ std::string ingress_tensor_contract_debug_string(const internal::IngressTensorCo
       << ",media=" << (ingress.media_type.empty() ? "<empty>" : ingress.media_type)
       << ",dtype=" << (ingress.dtype.empty() ? "<empty>" : ingress.dtype)
       << ",layout=" << (ingress.layout.empty() ? "<empty>" : ingress.layout)
-      << ",rank=" << ingress.rank << ",batch=" << ingress.batch << ",w=" << ingress.width
-      << ",h=" << ingress.height << ",d=" << ingress.depth
+      << ",rank=" << ingress.rank << ",w=" << ingress.width << ",h=" << ingress.height
+      << ",d=" << ingress.depth
       << ",src_stage=" << (ingress.source_stage.empty() ? "<empty>" : ingress.source_stage)
       << ",dst_plugin_index=" << ingress.dst_plugin_index
       << ",dst_input_index=" << ingress.dst_input_index << "}";
@@ -1560,13 +1560,7 @@ bool populate_spec_from_route_contract(const ContractT& contract, TensorSpec* sp
     spec->dtypes = {dtype_from_format(contract.dtype)};
   }
 
-  // Phase 4a: the contract carries the canonical shape vector from the MPK
-  // (e.g. [10,1,1024,2] for a batched MLA input). Copy it verbatim — this is
-  // the source of truth for tensor-domain consumers. We deliberately do NOT
-  // permute dims based on a layout token: the layout string is advisory
-  // metadata only, not a permutation key, and trying to reconstruct a shape
-  // vector from (batch,h,w,d) scalars is lossy for rank > 4 and ambiguous
-  // when the layout token is missing or unrecognised.
+  // Preserve tensor axes; image-routing H/W/C fields cannot recover arbitrary ranks.
   if (!contract.logical_shape.empty()) {
     spec->shape = contract.logical_shape;
     spec->rank = static_cast<int>(spec->shape.size());
@@ -1849,8 +1843,11 @@ Tensor make_dummy_tensor(const simaai::neat::InputOptions& opt,
       t.shape = contract->logical_shape;
       if (t.shape.size() == 4U) {
         t.layout = TensorLayout::HWC;
-        t.axis_semantics = {TensorAxisSemantic::N, TensorAxisSemantic::H, TensorAxisSemantic::W,
-                            TensorAxisSemantic::C};
+        // Match ordinary HWC submissions: normalize a singleton N at the runtime boundary.
+        if (t.shape.front() > 1) {
+          t.axis_semantics = {TensorAxisSemantic::N, TensorAxisSemantic::H, TensorAxisSemantic::W,
+                              TensorAxisSemantic::C};
+        }
       }
     } else {
       const int w = (opt.width > 0) ? opt.width : opt.max_width;
@@ -3295,7 +3292,6 @@ make_direct_mla_fallback_ingress_contract(const internal::PreprocessPlannerResul
   ingress.media_type = "application/vnd.simaai.tensor";
   ingress.dtype = normalize_processcvu_dtype_token(plan.modelpack_format, plan.modelpack_format);
   ingress.rank = 0;
-  ingress.batch = 1;
   ingress.width = plan.modelpack_max_width;
   ingress.height = plan.modelpack_max_height;
   ingress.depth = plan.modelpack_max_depth;
@@ -6625,15 +6621,14 @@ Graph Model::graph(Model::RouteOptions opt) const {
 }
 
 int Model::compiled_batch_size() const {
-  const auto ingress_contracts =
-      normalized_ingress_contracts(impl_->preprocess_plan.session_route_plan);
-  int batch = 1;
-  for (const auto& ingress : ingress_contracts) {
-    if (ingress.batch > batch) {
-      batch = ingress.batch;
+  if (const auto& contract = impl_->pack.mpk_contract()) {
+    for (const auto& stage : contract->plugins) {
+      if (upper_copy(stage.processor) == "MLA") {
+        return std::max(1, stage.batch_sz_model > 0 ? stage.batch_sz_model : stage.batch_size);
+      }
     }
   }
-  return batch;
+  return 1;
 }
 
 std::vector<TensorSpec> Model::input_specs() const {
@@ -6669,37 +6664,29 @@ std::vector<TensorSpec> Model::input_specs() const {
       return specs;
     }
 
-    const InputOptions opt = impl_->pack.input_appsrc_options(true);
-    if (spec.shape.empty()) {
-      const auto& mla_contract = impl_->preprocess_plan.resolved_plan.mla_contract;
-      const stages::TensorDims mla_dims{mla_contract.width, mla_contract.height,
-                                        mla_contract.depth};
-      if (!mla_contract.format.empty()) {
-        spec.dtypes = {dtype_from_format(mla_contract.format)};
+    // A route without a selected consumer still describes the MPK's public inputs.
+    // H/W/C convenience dimensions cannot recover their authored rank.
+    if (const auto& contract = impl_->pack.mpk_contract()) {
+      for (const auto& tensor : contract->ingress_tensors) {
+        TensorSpec ingress_spec;
+        ingress_spec.shape =
+            tensor.shape_semantics == pipeline_internal::sima::MpkShapeSemantics::Geometry &&
+                    !tensor.mpk_shape.empty()
+                ? tensor.mpk_shape
+                : tensor.logical_shape;
+        if (!ingress_spec.shape.empty()) {
+          ingress_spec.rank = static_cast<int>(ingress_spec.shape.size());
+        }
+        const auto& dtype = tensor.logical_dtype.empty() ? tensor.dtype : tensor.logical_dtype;
+        if (require_fp32_boundary) {
+          ingress_spec.dtypes = {TensorDType::Float32};
+        } else if (!dtype.empty()) {
+          ingress_spec.dtypes = {dtype_from_format(dtype)};
+        }
+        specs.push_back(std::move(ingress_spec));
       }
-      int d = (mla_dims.depth > 0) ? mla_dims.depth : 0;
-      if (d <= 0)
-        d = (opt.depth > 0) ? opt.depth : opt.max_depth;
-      if (d <= 0)
-        d = 3;
-      if (mla_dims.width > 0 && mla_dims.height > 0 && d > 0) {
-        spec.shape = {mla_dims.height, mla_dims.width, d};
-      } else {
-        spec.shape = {-1, -1, d > 0 ? d : -1};
-      }
     }
-    if (spec.dtypes.empty()) {
-      spec.dtypes = {dtype_from_format(opt.format)};
-    }
-    if (require_fp32_boundary) {
-      spec.dtypes = {TensorDType::Float32};
-    }
-    if (spec.shape.empty()) {
-      int d = (opt.depth > 0) ? opt.depth : opt.max_depth;
-      if (d <= 0)
-        d = 3;
-      spec.shape = {-1, -1, d};
-    }
+    return specs;
   } else {
     spec.dtypes = {TensorDType::UInt8};
     const InputOptions opt = impl_->pack.input_appsrc_options(false);

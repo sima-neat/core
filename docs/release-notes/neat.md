@@ -11,6 +11,8 @@ Release notes for the SiMa.ai Neat Library.
 
 ### Breaking changes
 
+- Tensor-mode `Model::input_specs()` now preserves the MPK-authored rank, including a singleton batch axis (`[1,H,W,C]`). Batch-one HWC inputs remain accepted, including after unseeded `build()`. `compiled_batch_size()` reads the MLA’s declared batch size rather than inferring it from tensor dimensions.
+
 - Model outputs now expose the terminal logical shape and layout authored in the
   MPK, rather than an intermediate device shape. For example, the ResNet-50
   batch-flatten output has shape `[1, 1000]` and unknown logical layout, not a

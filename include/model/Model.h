@@ -546,7 +546,9 @@ public:
   simaai::neat::Graph graph(RouteOptions opt) const;
 
   // ── Introspection ────────────────────────────────────────────────────────────────────────
-  /// Returns the expected input tensor specs (one per ingress port for multi-input models).
+  /// Returns one spec per ingress port. Tensor shapes retain the MPK-authored rank,
+  /// including a singleton batch axis; batch-one HWC shorthand remains accepted.
+  /// Image preprocessing inputs describe the dynamic image contract instead.
   std::vector<TensorSpec> input_specs() const;
   /// Returns the produced output tensor specs (multiple for multi-head models).
   std::vector<TensorSpec> output_specs() const;
@@ -554,8 +556,8 @@ public:
    * @brief Returns the batch size the model was compiled with.
    *
    * Defaults to 1 when the model is not batched. Callers that drive multiple logical inferences
-   * per push/pull cycle should use this to size their input batches. The same value is prepended
-   * to `input_specs()[i].shape` when batch > 1.
+   * per push/pull cycle should use this to size their input batches. Tensor `input_specs()`
+   * already include any MPK-authored batch axis, including batch one.
    */
   int compiled_batch_size() const;
   /// Returns the full resolved preprocess plan (intent-driven; richer than
