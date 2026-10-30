@@ -93,6 +93,8 @@ struct RtspDecodedInputOptions {
   std::string decoder_tuning;      ///< Optional native decoder tuning ("low-memory",
                                    ///< "throughput-low-latency", ...).
   bool decoder_memory_opt = false; ///< If true, enable the decoder memory-optimized path.
+  int reconnect_timeout_ms = 0;    ///< Source inactivity/attempt window; zero disables recovery.
+  int reconnect_attempts = -1;     ///< Retries per outage; -1 means unlimited.
 };
 
 /**

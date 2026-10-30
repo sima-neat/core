@@ -38,10 +38,14 @@ def main(argv: list[str]) -> int:
         default=-1,
         help="Known source cadence; omitted means probe the RTSP stream",
     )
+    ap.add_argument("--reconnect-timeout-ms", type=int, default=0, help="Enable reconnect after source inactivity (0 disables it)")
+    ap.add_argument("--reconnect-attempts", type=int, default=-1, help="Retries per outage (-1 means unlimited)")
     ap.add_argument("--frames", type=int, default=5, help="Frames to pull")
     args = ap.parse_args(argv[1:])
     if args.source_fps != -1 and args.source_fps <= 0:
         ap.error("--source-fps must be positive")
+    if args.reconnect_timeout_ms > 0 and args.source_fps == -1:
+        ap.error("--source-fps is required with reconnect so an offline source does not need probing")
     source_fps = args.source_fps
     if source_fps == -1:
         # Imported here so supplying --source-fps does not require OpenCV.
@@ -62,6 +66,8 @@ def main(argv: list[str]) -> int:
     }[args.codec]
     rtsp_opt.source_fps = source_fps
     rtsp_opt.tcp = True
+    rtsp_opt.reconnect_timeout_ms = args.reconnect_timeout_ms
+    rtsp_opt.reconnect_attempts = args.reconnect_attempts
     # END STEP
 
     # STEP compose-graph
@@ -73,13 +79,23 @@ def main(argv: list[str]) -> int:
     # END STEP
 
     # STEP pull-frames
-    for i in range(args.frames):
-        frame_sample = run.pull(timeout_ms=5000)
-        if frame_sample is None or not frame_sample.tensors:
-            print(f"frame={i} rtsp_timeout")
-            break
-        frame_tensor = frame_sample.tensors[0]
-        print(f"frame={i} shape={list(frame_tensor.shape)}")
+    i = 0
+    try:
+        while i < args.frames:
+            status, frame_sample, error = run.pull_status(timeout_ms=5000)
+            if status == pyneat.PullStatus.Timeout:
+                print(f"frame={i} rtsp_timeout", flush=True)
+                if args.reconnect_timeout_ms > 0:
+                    continue
+                return 1
+            if status != pyneat.PullStatus.Ok:
+                print(error.message, file=sys.stderr)
+                return 1
+            frame_tensor = frame_sample.tensors[0]
+            print(f"frame={i} shape={list(frame_tensor.shape)}", flush=True)
+            i += 1
+    finally:
+        run.close()
     # END STEP
     # END CORE LOGIC
     return 0

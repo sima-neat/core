@@ -134,6 +134,7 @@ struct RunCoreStartOptions {
   std::shared_ptr<void> graph_verbose_guard;
   PushSamplePolicy push_sample_policy = PushSamplePolicy::PublicCompatibility;
   FusedEncodedOutputDispatch fused_encoded_output_dispatch;
+  FusedEncodedOutputCloseDispatch fused_encoded_output_close;
   std::function<void()> after_pipeline_start_for_test;
 };
 

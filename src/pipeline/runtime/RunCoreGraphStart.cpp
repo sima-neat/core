@@ -961,6 +961,18 @@ void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
     start_opt.last_pipeline = &rt.last_pipeline;
     start_opt.push_sample_policy = PushSamplePolicy::PreserveSample;
     const std::weak_ptr<RunCore> weak_core = core;
+    start_opt.fused_encoded_output_close =
+        [weak_core](const FusedRealtimeIngressBranch::EncodedOutput& output,
+                    const PullError& error) {
+          if (const auto locked = weak_core.lock()) {
+            auto& execution = locked->graph_execution();
+            const auto sink = execution.sinks.find(output.sink_node);
+            if (sink != execution.sinks.end() && sink->second) {
+              locked->graph_mark_downstream_close_provenance(output.sink_node, &error);
+              sink->second->producer_done();
+            }
+          }
+        };
     start_opt.fused_encoded_output_dispatch =
         [weak_core](const FusedRealtimeIngressBranch::EncodedOutput& output, Sample&& sample,
                     std::string* error) {
@@ -1133,11 +1145,14 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
             return;
           }
           if (pull_status == PullStatus::Closed) {
+            const bool reconnect_exhausted = pull_error.code == error_codes::kRtspConnectionFailed;
             if (pipe.seg.boundary.source_like) {
               core->graph_pipeline_completed(i, std::move(pull_error));
             } else {
               core->graph_pipeline_completed(i);
             }
+            if (pipe.run_core && reconnect_exhausted)
+              pipe.run_core->stop();
             return;
           }
           if (simaai::neat::graph::graph_debug_enabled()) {

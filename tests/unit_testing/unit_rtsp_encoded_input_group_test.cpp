@@ -847,8 +847,31 @@ void check_invalid_codec_errors() {
 
 } // namespace
 
+void test_reconnect_options() {
+  using namespace simaai::neat;
+  nodes::groups::RtspDecodedInputOptions decoded;
+  require(decoded.reconnect_timeout_ms == 0 && decoded.reconnect_attempts == -1,
+          "RTSP reconnect must be disabled by default");
+  decoded.reconnect_timeout_ms = 10000;
+  decoded.reconnect_attempts = 3;
+  const auto encoded = nodes::groups::encoded_options_from_decoded(decoded, 30);
+  require(encoded.reconnect_timeout_ms == 10000 && encoded.reconnect_attempts == 3,
+          "decoded source lost reconnect settings");
+  auto node = nodes::RTSPInput("rtsp://example/camera", 200, true, true, "", 10000, 3);
+  auto* source = dynamic_cast<RTSPInput*>(node.get());
+  require(source && source->reconnect_timeout_ms() == 10000 && source->reconnect_attempts() == 3,
+          "direct RTSP factory lost reconnect settings");
+  require_throws_with([] { RTSPInput("rtsp://example/camera", 200, true, true, "", -1, -1); },
+                      "reconnect_timeout_ms", "negative reconnect timeout");
+  for (int attempts : {0, -2})
+    require_throws_with(
+        [attempts] { RTSPInput("rtsp://example/camera", 200, true, true, "", 1, attempts); },
+        "reconnect_attempts", "invalid reconnect attempts");
+}
+
 int main() {
   try {
+    test_reconnect_options();
     check_rtp_jpeg_depacketize_node();
     check_drop_on_latency_default();
     check_h264_encoded_group();

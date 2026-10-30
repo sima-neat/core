@@ -1,3 +1,4 @@
+#include "pipeline/internal/RtspReconnect.h"
 #include "InputStreamInternal.h"
 
 #include "pipeline/ErrorCodes.h"
@@ -136,6 +137,14 @@ bool InputStream::running() const {
 
 bool InputStream::reached_eos() const {
   return state_ && state_->eos_seen.load();
+}
+
+std::optional<PullError> InputStream::source_close_detail() const {
+  GstElement* pipeline = acquire_pipeline_ref();
+  auto detail = pipeline_internal::rtsp_reconnect_close_detail(pipeline);
+  if (pipeline)
+    gst_object_unref(pipeline);
+  return detail;
 }
 
 std::string InputStream::last_error() const {
@@ -571,6 +580,10 @@ void InputStream::stop() {
   }
   state_->stop_started.store(true);
   state_->stop_requested.store(true);
+  if (GstElement* pipeline = acquire_pipeline_ref()) {
+    pipeline_internal::stop_rtsp_reconnect(pipeline);
+    gst_object_unref(pipeline);
+  }
   state_->teardown_on_exit.store(false);
   state_->running.store(false);
   GstElement* pipeline_ref = nullptr;
@@ -819,6 +832,7 @@ void InputStream::drain_before_teardown(int timeout_ms) {
   if (timeout_ms <= 0)
     return;
 
+  pipeline_internal::stop_rtsp_reconnect(state_->pipeline);
   // Best-effort EOS to let downstream elements flush gracefully.
   if (state_->appsrc) {
     try {

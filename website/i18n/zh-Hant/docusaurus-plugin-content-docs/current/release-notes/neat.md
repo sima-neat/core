@@ -25,6 +25,9 @@ SiMa.ai Neat Library 的版本資訊。
 - `BenchmarkOptions::inputs` 可讓 `Model::benchmark()` 改用您自己的張量而非合成輸入執行，`BenchmarkReport::input` 會記錄使用了哪一種。請參閱[使用自己的輸入進行測量](/develop-apps/development-workflow/model#measure-with-your-own-inputs)。
 - 外掛程式延遲已棄用，並將被移除。涵蓋 `MeasureOptions::include_plugin_latency` 與 `plugin_latency_source`、`BenchmarkOptions::include_plugin_latency`、`start_measurement(bool)`，以及 `Model::benchmark(int, bool)` / `Model::benchmark(bool)`。請改用 `start_measurement()` 與 `benchmark(num_samples)`。
 - 硬體解碼使用直接編解碼器工作階段與 DMA-BUF 輸出。Core 不再使用解碼器常駐程式接納租約或 `SIMA_DECODER_ADMISSION_REQUIRE`。解碼器集區與調校選項仍可使用。
+- RTSP 輸入可透過 C++ 與 Python 的 `reconnect_timeout_ms` 和
+  `reconnect_attempts` 選擇啟用重新連線，也支援啟動時離線的攝影機。
+  Python `Run.pull_status()` 提供原生狀態、樣本及診斷資訊。
 - C++ 和 Python 可透過 `SimaDecode` 與 `RtspDecodedInput` 使用原生 H.265/HEVC 解碼。`RtspEncodedInput` 無需解碼即可提供已剖析的 H.265 存取單元。H.265 輸入必須使用 HEVC Main 設定檔、8 位元、4:2:0。編解碼器選擇器接受 `H265` 和 `HEVC`；H.264 選擇器也接受 `AVC`。`FormatTag` / `pyneat.Format` 在編碼資料的圖邊界接受相同別名，並仍序列化為 `H264` 和 `H265`。
 - `VideoSender` 透過 `VideoSenderOptions::Passthrough(codec)` / `pyneat.VideoSenderOptions.passthrough(codec)`，將已編碼的 H.264 或 H.265 以 RTP over UDP 轉送，全程不重新編碼。H.265 預設使用 RTP 負載類型 98；H.264 維持 96。`H264RtpUdpFromEncoded()` 已棄用，請改用 `Passthrough(RtspCodec::H264)`。
 - 若原始 `VideoSender` 輸入是相容的 DMA 支援 NV12，且已安裝的編碼器宣告 `input-layout-aware=true`，現在會自動省略格式轉換。既有的編碼器輸入邊界會在最終編碼器儲存空間中準備其他原始輸入。`H264RtpUdpFromRaw(...)` C++ 與 Python API 維持不變。

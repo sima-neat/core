@@ -25,6 +25,9 @@ SiMa.ai Neat Library のリリースノート。
 - `BenchmarkOptions::inputs` を使うと、合成入力の代わりに独自のテンソルで `Model::benchmark()` を実行でき、`BenchmarkReport::input` にどちらを使用したかが記録されます。詳細は[独自の入力で測定する](/develop-apps/development-workflow/model#measure-with-your-own-inputs)を参照してください。
 - プラグインレイテンシは非推奨となり、今後削除されます。対象は `MeasureOptions::include_plugin_latency` と `plugin_latency_source`、`BenchmarkOptions::include_plugin_latency`、`start_measurement(bool)`、および `Model::benchmark(int, bool)` / `Model::benchmark(bool)` です。代わりに `start_measurement()` と `benchmark(num_samples)` を使用してください。
 - ハードウェアデコードは、直接のコーデックセッションと DMA-BUF 出力を使用します。Core はデコーダーデーモンの受け入れリースと `SIMA_DECODER_ADMISSION_REQUIRE` を使用しなくなりました。デコーダーのプールとチューニングのオプションは引き続き利用できます。
+- RTSP 入力は `reconnect_timeout_ms` と `reconnect_attempts` による
+  オプトインの再接続に対応し、起動時にオフラインのカメラも対象です。
+  Python の `Run.pull_status()` はネイティブのステータス、サンプルと診断を返します。
 - C++およびPythonでは、`SimaDecode`と`RtspDecodedInput`を通じて、ネイティブのH.265/HEVCデコードが利用可能です。`RtspEncodedInput`は、デコードせずに解析されたH.265アクセスユニットを提供します。H.265入力は、HEVC Mainプロファイル、8ビット、4:2:0を使用する必要があります。コーデックセレクターは、`H265`と`HEVC`の両方をサポートします。H.264セレクターも`AVC`をサポートします。`FormatTag` / `pyneat.Format`は、エンコードされたグラフの境界で同じエイリアスを受け入れ、`H264`と`H265`としてシリアライズします。
 - `VideoSender`は、エンコードされたH.264またはH.265を、`VideoSenderOptions::Passthrough(codec)` / `pyneat.VideoSenderOptions.passthrough(codec)`を通じて再エンコードせずに、UDP経由のRTPとして転送します。H.265はデフォルトでRTPペイロードタイプ98を使用します。H.264は96を維持します。`H264RtpUdpFromEncoded()`は、`Passthrough(RtspCodec::H264)`に置き換えられ、非推奨となりました。
 - 生の `VideoSender` 入力は、インストール済みエンコーダーが `input-layout-aware=true` を通知する場合、互換性のある DMA ベースの NV12 についてフォーマット変換を自動的に省略します。それ以外の生入力は、既存のエンコーダー入力境界で最終的なエンコーダーストレージに準備します。`H264RtpUdpFromRaw(...)` C++ および Python API は変更されていません。

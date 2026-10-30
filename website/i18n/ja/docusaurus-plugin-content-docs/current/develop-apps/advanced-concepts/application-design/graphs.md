@@ -733,6 +733,8 @@ RTSP デコード入力グループは、C++ と Python で同じデコーダー
 
 | `RtspDecodedInputOptions` フィールド | デフォルト | 用途 |
 | --- | --- | --- |
+| `reconnect_timeout_ms` | `0` | ソースの無通信／接続試行の待機時間。正の値で再接続を有効にします。 |
+| `reconnect_attempts` | `-1` | 障害ごとの再試行回数。`-1` は無制限、正の値は上限です。 |
 | `decoder_input_buffers` | `-1` | 圧縮入力バッファー数。未設定ならランタイムのデフォルトを使用します。 |
 | `num_buffers` | `-1` | デコード出力プール数。未設定なら自動設定します。 |
 | `decoder_tuning` | `""` | `throughput-low-latency` などの任意のデコーダープリセット。 |
@@ -748,6 +750,16 @@ source.decoder_tuning = "throughput-low-latency"
 # Leave num_buffers at -1 to use automatic output sizing.
 app.add(pyneat.groups.rtsp_decoded_input(source))
 ```
+
+C++ では `reconnect_timeout_ms = 10'000` と `reconnect_attempts = -1`、
+Python では `source.reconnect_timeout_ms = 10_000` と `source.reconnect_attempts = -1`
+を指定すると、ソースから10秒間データが届かない場合に自動再接続します。
+`RtspEncodedInputOptions` と直接の RTSP ファクトリでも同じ設定を使用できます。
+起動時にオフラインのカメラも対象です。デコーダーや下流の契約が必要とする
+既存の caps／FPS 設定を指定してください。再試行中の pull はクローズせず
+タイムアウトします。上限に達すると、そのソースだけが
+`io.rtsp_connection_failed` でクローズされ、正常なソースは継続します。
+明示的な終了で再試行を中止します。コーデックと caps は引き続きグラフの契約に従います。
 
 ### アプリケーションからの入力と、グラフが所有する UDP 出力
 

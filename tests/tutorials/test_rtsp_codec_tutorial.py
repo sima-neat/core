@@ -115,3 +115,60 @@ def test_rtsp_codec_tutorial(codec: str) -> None:
     )
     assert "rtsp_timeout" not in result.stdout
     assert len(re.findall(r"^frame=\d+ shape=", result.stdout, re.MULTILINE)) == 10
+
+
+def test_rtsp_tutorial_reconnect_continues_after_timeout(monkeypatch, capsys):
+    from enum import Enum
+    from types import SimpleNamespace
+
+    class Status(Enum):
+        Ok = 0
+        Timeout = 1
+        Closed = 2
+        Error = 3
+
+    frame = SimpleNamespace(tensors=[SimpleNamespace(shape=[720, 1280])])
+    replies = iter([Status.Timeout, Status.Ok, Status.Timeout, Status.Ok])
+    configured = []
+    closed = []
+
+    class Run:
+        def pull_status(self, timeout_ms):
+            return next(replies), frame, SimpleNamespace(message="")
+
+        def close(self):
+            closed.append(True)
+
+    class Graph:
+        def add(self, node):
+            pass
+
+        def build(self, options):
+            return Run()
+
+    fake = SimpleNamespace(
+        PullStatus=Status,
+        Graph=Graph,
+        RunOptions=SimpleNamespace,
+        RtspDecodedInputOptions=SimpleNamespace,
+        RtspCodec=SimpleNamespace(H264=0, AVC=0, H265=1, HEVC=1),
+        groups=SimpleNamespace(rtsp_decoded_input=lambda options: configured.append(options)),
+        nodes=SimpleNamespace(output=lambda: None),
+    )
+    monkeypatch.setitem(sys.modules, "pyneat", fake)
+    spec = importlib.util.spec_from_file_location("rtsp_tutorial_reconnect", TUTORIAL)
+    assert spec is not None and spec.loader is not None
+    tutorial = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tutorial)
+    assert tutorial.main([
+        str(TUTORIAL), "--url", "rtsp://example/camera", "--source-fps", "30",
+        "--reconnect-timeout-ms", "10000", "--reconnect-attempts", "3", "--frames", "2",
+    ]) == 0
+    assert configured[0].reconnect_timeout_ms == 10000
+    assert configured[0].reconnect_attempts == 3
+    assert closed == [True]
+    assert capsys.readouterr().out.count("shape=") == 2
+    with pytest.raises(SystemExit) as error:
+        tutorial.main([str(TUTORIAL), "--url", "rtsp://example/camera",
+                       "--reconnect-timeout-ms", "10000"])
+    assert error.value.code == 2

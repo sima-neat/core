@@ -39,11 +39,17 @@
 
 ### 디코딩된 프레임을 가져옵니다. {#step-pull-frames}
 
-실행 중인 상태에서 루프를 반복하고 `pull(...)` 타임아웃과 함께. 성공적인 각 풀 요청은 다음을 반환합니다. `Sample` 텐서가 하나의 디코딩된 프레임인 경우입니다. 이 튜토리얼에서는 기본 NV12 출력을 사용하며, 이는 논리적으로 표현됩니다. `[H, W]` Y 및 UV 평면 메타데이터가 포함된 텐서입니다. 아무것도 반환하지 않거나 빈 텐서를 반환하는 요청은 다음을 출력합니다. `frame=N rtsp_timeout` 그리고 루프를 중단합니다. 이는 일반적으로 URL이 잘못되었거나 스트림이 제대로 전송되지 않음을 의미합니다. 타임아웃은 중단된 스트림으로 인해 프로그램이 멈추는 것을 방지합니다.
+C++의 상태 반환 `pull(...)` 또는 Python의 `pull_status(...)`로 프레임,
+시간 초과, 닫힘과 오류를 구분합니다. 성공한 샘플에는 Y/UV 평면 메타데이터가
+있는 논리 `[H, W]` NV12 프레임이 들어 있습니다. 예제는 형태를 출력하고
+요청한 프레임 수에 도달하면 종료합니다.
 
-**C++:** 프레임이 추출됩니다. `tensors_from_sample(*sample, true)`; 루프는 데이터를 읽기 전에 빈 목록인지 확인합니다. `shape`.
-
-**Python:** 첫 번째 항목에서 프레임을 읽어옵니다. `sample.tensors` 모양을 인쇄하기 전에.
+재연결은 기본적으로 비활성화됩니다. `--reconnect-timeout-ms 10000`을 설정하면
+소스 데이터가 10초간 없을 때 재시도합니다. `--reconnect-attempts -1`은 무제한이며
+양수는 장애별 상한입니다. 재연결 중에는 pull 시간 초과 후에도 계속 실행하고,
+닫힘이나 오류가 발생하면 종료합니다. 재연결 시 `--source-fps`를 제공하여 시작 시
+오프라인인 카메라에 OpenCV FPS 탐색을 수행하지 않도록 하세요.
+기존 caps 요구사항은 그대로 적용됩니다.
 
 ## Run
 
@@ -59,6 +65,8 @@
 python3 share/sima-neat/tutorials/018_consume_rtsp_stream/consume_rtsp_stream.py \
   --url rtsp://host:port/stream --source-fps 30 --frames 5
 ```
+
+두 언어의 명령에 `--reconnect-timeout-ms 10000 --reconnect-attempts -1`을 추가하면 자동 재연결합니다. 오프라인으로 시작한 소스도 나중에 참여하며 복구 후에도 프레임 카운터가 이어집니다.
 
 H.265의 경우:
 
@@ -90,7 +98,7 @@ frame=3 shape=[720, 1280]
 frame=4 shape=[720, 1280]
 ```
 
-스트림에 연결할 수 없는 경우 대신 `frame=0 rtsp_timeout`가 표시됩니다. 이 장의 C++ 소스 코드를 사용자 지정 `CMakeLists.txt`와 함께 자신의 프로젝트에 통합하려면 (추가 폴더는 필요하지 않음), 랜딩 페이지의 [튜토리얼 실행 방법](/tutorials#compile-a-copy-yourself)을 참조하십시오.
+재연결이 비활성화된 상태에서 스트림에 연결할 수 없으면 진단과 함께 종료합니다. 이 장의 C++ 소스 코드를 사용자 지정 `CMakeLists.txt`와 함께 자신의 프로젝트에 통합하려면 (추가 폴더는 필요하지 않음), 랜딩 페이지의 [튜토리얼 실행 방법](/tutorials#compile-a-copy-yourself)을 참조하십시오.
 
 ## 소스 파일
 - C++: `tutorials/018_consume_rtsp_stream/consume_rtsp_stream.cpp`

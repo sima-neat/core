@@ -2488,6 +2488,11 @@ if (NOT rtsp_pull_frame_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST rtsp_pull_frame_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
 endif()
 
+add_pipeline_test(rtsp_reconnect_test e2e_testing/rtsp_reconnect_test.cpp)
+set_property(TEST rtsp_reconnect_test APPEND PROPERTY LABELS "e2e;rtsp;regression;lifecycle")
+set_property(TEST rtsp_reconnect_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
+set_tests_properties(rtsp_reconnect_test PROPERTIES TIMEOUT 90)
+
 add_pipeline_test(
   rtsp_encoded_boundary_caps_test
   e2e_testing/rtsp_encoded_boundary_caps_test.cpp

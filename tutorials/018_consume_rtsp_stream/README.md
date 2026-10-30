@@ -49,11 +49,17 @@ Build a `Graph` with just two stages: the `RtspDecodedInput` fragment (the sourc
 
 ### Pull decoded frames {#step-pull-frames}
 
-With the run live, loop and `pull(...)` with a timeout. Each successful pull yields a `Sample` whose tensor is one decoded frame. The tutorial uses the default NV12 output, represented as a logical `[H, W]` tensor with Y and UV plane metadata. A pull that returns nothing (or an empty tensor) prints `frame=N rtsp_timeout` and breaks the loop — that usually means the URL is wrong or the stream is not delivering. The timeout is what keeps a dead stream from hanging the program.
+Use C++ status-aware `pull(...)` or Python `pull_status(...)` to distinguish
+frames, timeouts, closure and errors. Successful samples contain an NV12 frame
+as a logical `[H, W]` tensor with Y and UV plane metadata. The examples print
+its shape and stop after the requested number of frames.
 
-**C++:** A frame is extracted with `tensors_from_sample(*sample, true)`; the loop checks for an empty list before reading `shape`.
-
-**Python:** A frame is read from the first entry in `sample.tensors` before printing its shape.
+Reconnect is disabled by default. Set `--reconnect-timeout-ms 10000` to retry
+after ten seconds without source data. `--reconnect-attempts -1` retries
+indefinitely; a positive value limits retries per outage. While reconnecting,
+the examples continue across pull timeouts. Closure or error ends the example.
+Supply `--source-fps` with reconnect so an initially offline camera does not
+need the tutorial's OpenCV FPS probe. Existing caps requirements still apply.
 
 ## Run
 
@@ -73,6 +79,10 @@ probes each source and supplies its detected FPS to the RTSP group.
 python3 share/sima-neat/tutorials/018_consume_rtsp_stream/consume_rtsp_stream.py \
   --url rtsp://host:port/stream --source-fps 30 --frames 5
 ```
+
+For automatic reconnect, add `--reconnect-timeout-ms 10000 --reconnect-attempts -1`
+to either language's command. The source can start
+offline and join later; the frame counter continues after recovery.
 
 For H.265:
 
@@ -104,7 +114,7 @@ frame=3 shape=[720, 1280]
 frame=4 shape=[720, 1280]
 ```
 
-If the stream is unreachable you will instead see `frame=0 rtsp_timeout`. To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
+With reconnect disabled, an unreachable stream ends the example with a diagnostic. To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/018_consume_rtsp_stream/consume_rtsp_stream.cpp`

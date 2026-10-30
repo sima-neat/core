@@ -51,6 +51,8 @@ struct RtspEncodedInputOptions {
   /// default, `0` disables payload filtering, `> 0` selects an exact RTP
   /// payload. Takes precedence over the deprecated per-codec fields above.
   int payload_type = -1;
+  int reconnect_timeout_ms = 0; ///< Source inactivity/attempt window; zero disables recovery.
+  int reconnect_attempts = -1;  ///< Retries per outage; -1 means unlimited.
 };
 
 /**

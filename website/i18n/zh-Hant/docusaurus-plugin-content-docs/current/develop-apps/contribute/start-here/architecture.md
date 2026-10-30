@@ -655,6 +655,7 @@ GStreamer 域/程式碼僅用於除錯。在 `NeatError` 建立時，會添加�
 `GraphReport.bus` 是外掛程式/執行階段錯誤詳細資訊的真實來源。
 對於建置（輸入）流程，`GraphReport.build_adaptation` 會記錄已解析的形狀原則/功能、種子/最大限制的來源、位元組保護的來源以及應用/跳過的調整動作。
 對於非拋出型執行階段拉取，`PullError.code` 使用相同的分類法。
+Python 的 `Run.pull_status(...)` 提供與 C++ 結構化 pull 多載相同的狀態、樣本及 `PullError`，也支援具名輸出。
 輸入串流工作程式失敗會保留類型化的錯誤程式碼並報告到
 工作程式執行緒邊界，因此 `Run::pull()` 和 Python 例外翻譯器
 會顯示相同的 `NeatError`。
@@ -927,6 +928,10 @@ simaai::neat::Graph graph;
 graph.add(simaai::neat::nodes::groups::RtspDecodedInput(source));
 graph.add(simaai::neat::nodes::Output());
 ```
+
+選擇啟用的 RTSP 復原僅管理來源／解封裝／剖析器區段。每個管線的一個控制器
+會在 EOS 關閉圖佇列前，重試已斷線或啟動時離線的來源。解碼器集區、共用推論、
+串流識別及仍有效的緩衝區借用保持不變；管線釋放前會先停止重試。
 
 內部：
 

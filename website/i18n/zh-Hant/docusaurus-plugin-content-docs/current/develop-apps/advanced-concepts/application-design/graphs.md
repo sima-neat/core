@@ -734,6 +734,8 @@ RTSP 解碼群組在 C++ 與 Python 中提供相同的解碼器控制選項：
 
 | `RtspDecodedInputOptions` 欄位 | 預設值 | 用途 |
 | --- | --- | --- |
+| `reconnect_timeout_ms` | `0` | 來源無資料／連線嘗試的等待時間；正值啟用重新連線。 |
+| `reconnect_attempts` | `-1` | 每次故障的重試次數；`-1` 表示不限次數，正值設定上限。 |
 | `decoder_input_buffers` | `-1` | 壓縮輸入緩衝區數量；不設定時採用執行階段預設值。 |
 | `num_buffers` | `-1` | 解碼輸出集區數量；不設定時自動決定大小。 |
 | `decoder_tuning` | `""` | 選用的解碼器預設組態，例如 `throughput-low-latency`。 |
@@ -751,6 +753,14 @@ source.decoder_tuning = "throughput-low-latency"
 # Leave num_buffers at -1 to use automatic output sizing.
 app.add(pyneat.groups.rtsp_decoded_input(source))
 ```
+
+在 C++ 設定 `reconnect_timeout_ms = 10'000`、`reconnect_attempts = -1`，
+或在 Python 設定 `source.reconnect_timeout_ms = 10_000`、`source.reconnect_attempts = -1`，
+即可在來源十秒沒有資料後自動重新連線。`RtspEncodedInputOptions` 與直接 RTSP
+工廠也使用相同選項。啟動時離線的攝影機也會重試；請提供解碼器或下游契約
+所需的既有 caps／FPS 設定。重試期間，pull 會逾時而不會關閉。
+次數用盡後，僅該來源以 `io.rtsp_connection_failed` 關閉，其他正常來源繼續執行。
+明確結束應用程式會取消重試。編解碼器與 caps 仍須符合圖的宣告契約。
 
 ### 應用程式輸入至由圖所擁有的 UDP 輸出
 

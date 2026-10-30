@@ -1,3 +1,4 @@
+#include "pipeline/internal/RtspReconnect.h"
 // src/pipeline/internal/GstDiagnosticsUtil.cpp
 #include "pipeline/internal/GstDiagnosticsUtil.h"
 #include "pipeline/internal/ErrorUtil.h"
@@ -192,6 +193,7 @@ TeardownReaperState& teardown_reaper_state() {
 GstStateChangeReturn begin_teardown(GstElement* pipeline, bool flush) {
   if (!pipeline)
     return GST_STATE_CHANGE_SUCCESS;
+  stop_rtsp_reconnect(pipeline);
   if (flush) {
     gst_element_send_event(pipeline, gst_event_new_flush_start());
     gst_element_send_event(pipeline, gst_event_new_flush_stop(TRUE));

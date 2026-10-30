@@ -48,11 +48,15 @@ H.265 串流必須使用 HEVC Main 設定檔、8 位元、4:2:0 輸入。
 
 ### 擷取已解碼的影格 {#step-pull-frames}
 
-在程式執行時，迴圈會不斷重複。 `pull(...)` 搭配逾時設定。每次成功的提取都會產生一個 `Sample` 其張量是一個已解碼的影格。本教學使用預設的 NV12 輸出，以邏輯方式呈現。 `[H, W]` 帶有 Y 和 UV 平面中繼資料的張量。一個不會傳回任何內容（或傳回一個空的張量）的指令會顯示 `frame=N rtsp_timeout` 並終止迴圈——這通常表示 URL 錯誤或串流未正常運作。逾時設定可防止死掉的串流導致程式當機。
+使用 C++ 的狀態式 `pull(...)` 或 Python 的 `pull_status(...)`，區分影格、
+逾時、關閉與錯誤。成功的樣本包含帶有 Y／UV 平面中繼資料的邏輯 `[H, W]`
+NV12 影格。範例會印出形狀，取得指定影格數後結束。
 
-**C++：** 提取一個影格 `tensors_from_sample(*sample, true)`；迴圈會在讀取資料之前檢查清單是否為空。 `shape`。
-
-**Python：** 從第一個條目中讀取一個影格。 `sample.tensors` 在列印其形狀之前。
+預設不重新連線。設定 `--reconnect-timeout-ms 10000`，即可在來源十秒沒有資料後
+重試。`--reconnect-attempts -1` 表示不限次數，正值則限制每次故障的重試次數。
+重新連線期間，範例在 pull 逾時後繼續執行；關閉或錯誤時結束。
+啟用重新連線時請提供 `--source-fps`，避免對啟動時離線的攝影機執行 OpenCV FPS
+探測。既有 caps 要求仍然適用。
 
 ## Run
 
@@ -68,6 +72,8 @@ H.265 串流必須使用 HEVC Main 設定檔、8 位元、4:2:0 輸入。
 python3 share/sima-neat/tutorials/018_consume_rtsp_stream/consume_rtsp_stream.py \
   --url rtsp://host:port/stream --source-fps 30 --frames 5
 ```
+
+在任一語言的命令加上 `--reconnect-timeout-ms 10000 --reconnect-attempts -1` 即可自動重新連線。來源可以先離線、稍後再加入；復原後影格計數會繼續。
 
 針對 H.265：
 
@@ -99,7 +105,7 @@ frame=3 shape=[720, 1280]
 frame=4 shape=[720, 1280]
 ```
 
-如果無法存取串流，您將會看到 `frame=0 rtsp_timeout`。若要將本章的 C++ 原始程式碼整合到您自己的專案中，並使用自訂的 `CMakeLists.txt`（無需額外的資料夾），請參閱登陸頁面上的 [如何執行教學](/tutorials#compile-a-copy-yourself)。
+停用重新連線時，無法連線的串流會顯示診斷並結束範例。若要將本章的 C++ 原始程式碼整合到您自己的專案中，並使用自訂的 `CMakeLists.txt`（無需額外的資料夾），請參閱登陸頁面上的 [如何執行教學](/tutorials#compile-a-copy-yourself)。
 
 ## 原始程式碼檔案
 - C++：`tutorials/018_consume_rtsp_stream/consume_rtsp_stream.cpp`

@@ -1,3 +1,4 @@
+#include "pipeline/internal/RtspReconnect.h"
 /**
  * @file SessionBuildPipeline.cpp
  * @brief Shared pipeline state-change helpers for Graph build paths.
@@ -350,6 +351,8 @@ void set_state_or_throw(GstElement* pipeline, GstState target, const char* where
     session_build_throw_session_error_simple(error_codes::kPipelineShape,
                                              std::string(where) + ": pipeline is null");
   }
+  if (target == GST_STATE_PLAYING && pipeline_internal::start_rtsp_reconnect(pipeline))
+    snapshot_wait_override_ms = 0;
   debug_dump_neatdecoder_elements(pipeline, target, where);
 
   while (true) {

@@ -1074,6 +1074,8 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
   assert encoded.payload_type == -1
   assert encoded.auto_caps_from_stream is True
   assert encoded.source_fps == -1
+  assert encoded.reconnect_timeout_ms == 0
+  assert encoded.reconnect_attempts == -1
 
   encoded.url = "rtsp://example.local/avc"
   encoded.codec = pyneat.RtspCodec.AVC
@@ -1112,6 +1114,8 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
   assert h265_spec.format == "H265"
 
   decoded = pyneat.RtspDecodedInputOptions()
+  assert decoded.reconnect_timeout_ms == 0
+  assert decoded.reconnect_attempts == -1
   assert decoded.codec == pyneat.RtspCodec.H264
   assert decoded.drop_on_latency is True
   assert decoded.buffer_mode == ""
@@ -1972,3 +1976,21 @@ def test_sima_encode_and_sender_options(codec):
     encode.quality = 80
     with pytest.raises(ValueError, match='quality'):
       pyneat.nodes.sima_encode(encode)
+
+
+def test_rtsp_reconnect_configuration():
+  for options, factory in (
+      (pyneat.RtspEncodedInputOptions(), pyneat.groups.rtsp_encoded_input),
+      (pyneat.RtspDecodedInputOptions(), pyneat.groups.rtsp_decoded_input),
+  ):
+    options.url = "rtsp://example/camera"
+    options.reconnect_timeout_ms = 10000
+    options.reconnect_attempts = 3
+    assert isinstance(factory(options), pyneat.Graph)
+    options.reconnect_timeout_ms = -1
+    with pytest.raises(ValueError, match="reconnect_timeout_ms"):
+      factory(options)
+  assert pyneat.nodes.rtsp_input("rtsp://example/camera", reconnect_timeout_ms=10000,
+                                reconnect_attempts=2) is not None
+  with pytest.raises(ValueError, match="reconnect_attempts"):
+    pyneat.nodes.rtsp_input("rtsp://example/camera", reconnect_attempts=0)

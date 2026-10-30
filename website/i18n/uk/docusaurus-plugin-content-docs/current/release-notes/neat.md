@@ -25,6 +25,9 @@ sidebar_position: 3
 - `BenchmarkOptions::inputs` запускає `Model::benchmark()` на ваших власних тензорах замість синтетичних, а `BenchmarkReport::input` записує, які вхідні дані використано. Див. [Вимірювання з власними вхідними даними](/develop-apps/development-workflow/model#measure-with-your-own-inputs).
 - Затримка плагінів застаріла й буде вилучена. Це стосується `MeasureOptions::include_plugin_latency` і `plugin_latency_source`, `BenchmarkOptions::include_plugin_latency`, `start_measurement(bool)` та `Model::benchmark(int, bool)` / `Model::benchmark(bool)`. Натомість використовуйте `start_measurement()` і `benchmark(num_samples)`.
 - Апаратне декодування використовує прямі сеанси кодека та DMA-BUF вихід. Core більше не використовує оренди допуску демона декодера або `SIMA_DECODER_ADMISSION_REQUIRE`. Параметри пулу та налаштування декодера залишаються доступними.
+- RTSP-входи підтримують опційне перепідключення, зокрема камер, недоступних
+  під час запуску, через `reconnect_timeout_ms` і `reconnect_attempts` у C++ та Python.
+  Python `Run.pull_status()` повертає нативні статус, зразок і діагностику.
 - Підтримка апаратного декодування H.265/HEVC реалізована за допомогою `SimaDecode` і
   `RtspDecodedInput` реалізовано мовами C++ і Python. `RtspEncodedInput` надає розпарсені блоки доступу H.265 без їх декодування. Вхідні дані H.265 повинні використовувати профіль HEVC Main, 8 біт, 4:2:0. Селектори кодеків приймають як `H265`, так і `HEVC`; селектори H.264 також приймають `AVC`. `FormatTag` / `pyneat.Format` приймають однакові псевдоніми на межах кодованого графа і все ще серіалізуються як `H264` і `H265`.
 - `VideoSender` передає кодоване відео у форматах H.264 або H.265 як RTP через UDP без

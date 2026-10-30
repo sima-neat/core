@@ -78,8 +78,9 @@ ResolvedH264Caps resolve_h264_caps(const RtspEncodedInputOptions& opt) {
 
 void add_source_and_optional_queue(std::vector<std::shared_ptr<simaai::neat::Node>>& nodes,
                                    const RtspEncodedInputOptions& opt, bool insert_queue) {
-  nodes.push_back(
-      nodes::RTSPInput(opt.url, opt.latency_ms, opt.tcp, opt.drop_on_latency, opt.buffer_mode));
+  nodes.push_back(nodes::RTSPInput(opt.url, opt.latency_ms, opt.tcp, opt.drop_on_latency,
+                                   opt.buffer_mode, opt.reconnect_timeout_ms,
+                                   opt.reconnect_attempts));
   if (insert_queue) {
     nodes.push_back(nodes::Queue());
   }

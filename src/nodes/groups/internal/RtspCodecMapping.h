@@ -105,6 +105,8 @@ inline RtspEncodedInputOptions encoded_options_from_decoded(const RtspDecodedInp
   out.tcp = opt.tcp;
   out.drop_on_latency = opt.drop_on_latency;
   out.buffer_mode = opt.buffer_mode;
+  out.reconnect_timeout_ms = opt.reconnect_timeout_ms;
+  out.reconnect_attempts = opt.reconnect_attempts;
   out.insert_queue = opt.insert_queue;
   out.sync_mode = opt.sync_mode;
   out.payload_type = opt.payload_type;

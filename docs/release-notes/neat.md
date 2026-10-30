@@ -76,6 +76,9 @@ Release notes for the SiMa.ai Neat Library.
 - Hardware decode uses direct codec sessions and DMA-BUF output. Core no longer
   uses decoder-daemon admission leases or `SIMA_DECODER_ADMISSION_REQUIRE`.
   Decoder pool and tuning options remain available.
+- RTSP inputs support opt-in reconnect, including initially offline cameras,
+  through `reconnect_timeout_ms` and `reconnect_attempts` in C++ and Python.
+  Python `Run.pull_status()` exposes native status, sample and diagnostics.
 - Native H.265/HEVC decode is available through `SimaDecode` and
   `RtspDecodedInput` in C++ and Python. `RtspEncodedInput` provides parsed H.265
   access units without decoding them. H.265 inputs must use HEVC Main profile,

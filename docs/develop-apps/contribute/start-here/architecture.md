@@ -876,6 +876,7 @@ once when the `NeatError` is constructed.
 `GraphReport.bus` is the source of truth for plugin/runtime error details.
 For build(input) flows, `GraphReport.build_adaptation` records the resolved shape policy/capability, origins for seed/max limits, byte-guard origin, and applied/skipped adaptation actions.
 For non-throwing runtime pulls, `PullError.code` uses the same taxonomy.
+Python `Run.pull_status(...)` exposes the same status, sample and `PullError` as the C++ structured pull overloads, including for named outputs.
 Input-stream worker failures retain the typed error code and report across the
 worker-thread boundary, so `Run::pull()` and the Python exception translator
 surface the same `NeatError`.
@@ -1228,6 +1229,11 @@ simaai::neat::Graph graph;
 graph.add(simaai::neat::nodes::groups::RtspDecodedInput(source));
 graph.add(simaai::neat::nodes::Output());
 ```
+
+Opt-in RTSP recovery owns only the source/depay/parser prefix. One controller
+per pipeline retries disconnected or initially offline sources before EOS can
+close graph queues. Decoder pools, shared inference, stream identity and live
+buffer loans remain in place; retries stop before pipeline teardown.
 
 Internally:
 

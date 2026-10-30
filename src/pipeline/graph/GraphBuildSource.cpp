@@ -18,6 +18,8 @@
 #include "model/internal/ModelPack.h"
 #include "nodes/common/Queue.h"
 #include "nodes/io/Input.h"
+#include "nodes/io/RTSPInput.h"
+#include "pipeline/internal/RtspReconnect.h"
 #include "nodes/sima/PCIeSrc.h"
 #include "nodes/sima/Preproc.h"
 #include "nodes/sima/SimaEncode.h"
@@ -87,6 +89,52 @@ struct PreparedSourcePipeline {
   bool has_sink = false;
   NameTransform name_transform{};
 };
+
+void prepare_rtsp_reconnect(BuildResult& br, const std::vector<std::shared_ptr<Node>>& nodes,
+                            const std::vector<int>* indices = nullptr) {
+  const auto report_for = [&](std::size_t i) -> const NodeReport& {
+    const int index = indices ? indices->at(i) : static_cast<int>(i);
+    for (const auto& report : br.diag->node_reports)
+      if (report.index == index)
+        return report;
+    throw std::runtime_error("RTSP reconnect: source report missing");
+  };
+  for (std::size_t i = 0; i < nodes.size(); ++i) {
+    const auto* source = dynamic_cast<const RTSPInput*>(nodes[i].get());
+    if (!source || source->reconnect_timeout_ms() == 0)
+      continue;
+    std::size_t end = i;
+    while (end + 1 < nodes.size()) {
+      const auto& kind = nodes[end + 1]->kind();
+      if (kind != "Queue" && kind != "Caps" && kind != "H264Depacketize" &&
+          kind != "H265Depacketize" && kind != "RTPJpegDepacketize" && kind != "JpegParse" &&
+          kind != "H264CapsFixup" && kind != "EncodedCapsFixup")
+        break;
+      ++end;
+    }
+    const auto& first = report_for(i);
+    const auto& last = report_for(end);
+    pipeline_internal::RtspReconnectSource settings;
+    settings.source_name = first.elements.front();
+    settings.boundary_name = last.elements.back();
+    settings.bin_name = settings.source_name + "_reconnect";
+    settings.timeout_ms = source->reconnect_timeout_ms();
+    settings.attempts = source->reconnect_attempts();
+    const auto begin = br.pipeline_string.find(first.backend_fragment);
+    const auto finish = br.pipeline_string.find(last.backend_fragment, begin);
+    if (begin == std::string::npos || finish == std::string::npos)
+      throw std::runtime_error("RTSP reconnect: source fragment missing");
+    br.pipeline_string.insert(finish + last.backend_fragment.size(), " )");
+    br.pipeline_string.insert(begin, "bin.( name=" + settings.bin_name + " ");
+    br.framework_name_origins.push_back(LaunchNameOrigin{
+        .kind = LaunchNameOrigin::Kind::RtspHelper,
+        .name = settings.bin_name,
+        .role = "RTSP reconnect source",
+    });
+    br.rtsp_reconnect_sources.push_back(std::move(settings));
+  }
+  br.diag->pipeline_string = br.pipeline_string;
+}
 
 InputContract input_contract_from_fused_ingress_spec(const OutputSpec& spec);
 
@@ -843,6 +891,7 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
     br.terminal_host_endpoint = session_build_public_output_endpoint_selector(build_nodes);
   }
   maybe_compile_source_contracts(&br, build_nodes, sess_opt, where);
+  prepare_rtsp_reconnect(br, build_nodes);
   if (mode == RunMode::Sync) {
     session_build_clamp_sync_kernel_runner_capacity(br);
   }
@@ -914,6 +963,8 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
     session_build_configure_appsink_allocation_preference(sink.get(), build_nodes);
   }
 
+  pipeline_internal::attach_rtsp_reconnect(pipeline.get(), br.rtsp_reconnect_sources, br.diag);
+
   // --- 7. drive to PAUSED -----------------------------------------------------------
   // On failure both `pipeline` and `sink` RAII handles unwind, no manual cleanup.
   //
@@ -926,7 +977,8 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   // Use a non-blocking snapshot for graph-internal sources; set_state itself is
   // still bounded by the normal state-change timeout and bus errors are still
   // drained immediately after the call.
-  const int snapshot_wait_override_ms = public_output_contract ? -1 : 0;
+  const int snapshot_wait_override_ms =
+      public_output_contract && br.rtsp_reconnect_sources.empty() ? -1 : 0;
   set_state_or_throw(pipeline.get(), GST_STATE_PAUSED, where, br.diag, snapshot_wait_override_ms);
 
   return PreparedSourcePipeline{
@@ -3403,7 +3455,8 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
     const std::vector<std::shared_ptr<Node>>& consumer_nodes, const std::shared_ptr<void>& guard,
     std::string& last_pipeline, const GraphOptions& sess_opt, const RunOptions& opt, RunMode mode,
     bool require_sink, bool public_output_contract, std::size_t internal_edge_queue,
-    const char* where, const runtime::FusedEncodedOutputDispatch& encoded_output_dispatch) {
+    const char* where, const runtime::FusedEncodedOutputDispatch& encoded_output_dispatch,
+    const runtime::FusedEncodedOutputCloseDispatch& encoded_output_close) {
   gst_init_once();
   const pipeline_internal::ScopedBuildTiming timing(
       "prepare_fused_realtime_source_pipeline",
@@ -3479,6 +3532,18 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
                                                         build_branch_nodes, branch_actual_indices,
                                                         name_transform, "mysink", sess_opt,
                                                         /*enable_terminal_loans=*/has_sink);
+  for (std::size_t i = 0; i < build_branch_nodes.size(); ++i) {
+    const auto first_source = br.rtsp_reconnect_sources.size();
+    prepare_rtsp_reconnect(br, build_branch_nodes[i], &branch_actual_indices[i]);
+    if (encoded_output_close && ingress.branches[i].encoded_output) {
+      const auto output = *ingress.branches[i].encoded_output;
+      for (auto j = first_source; j < br.rtsp_reconnect_sources.size(); ++j)
+        br.rtsp_reconnect_sources[j].on_exhausted = [encoded_output_close,
+                                                     output](const PullError& error) {
+          encoded_output_close(output, error);
+        };
+    }
+  }
   maybe_compile_fused_realtime_contracts(&br, build_consumer_nodes, build_branch_nodes,
                                          branch_actual_indices, sess_opt, where,
                                          fused_ingress_spec);
@@ -3652,7 +3717,9 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
     session_build_configure_appsink_allocation_preference(sink.get(), build_consumer_nodes);
   }
 
-  const int snapshot_wait_override_ms = public_output_contract ? -1 : 0;
+  pipeline_internal::attach_rtsp_reconnect(pipeline.get(), br.rtsp_reconnect_sources, br.diag);
+  const int snapshot_wait_override_ms =
+      public_output_contract && br.rtsp_reconnect_sources.empty() ? -1 : 0;
   set_state_or_throw(pipeline.get(), GST_STATE_PAUSED, where, br.diag, snapshot_wait_override_ms);
   set_state_or_throw(pipeline.get(), GST_STATE_PLAYING, where, br.diag, snapshot_wait_override_ms);
 

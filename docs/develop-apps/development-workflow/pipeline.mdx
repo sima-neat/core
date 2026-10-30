@@ -559,9 +559,9 @@ run.close();
 
 ```python
 import threading
+import pyneat
 
 run = graph.build(options)
-producer_done = threading.Event()
 
 def producer() -> None:
     try:
@@ -572,18 +572,20 @@ def producer() -> None:
             if not run.try_push("image", [sample]):
                 count_local_drop(sample.stream_id)
     finally:
-        producer_done.set()
         run.close_input()
 
 def consumer() -> None:
     while True:
-        timeout_ms = -1 if producer_done.is_set() else 100
-        output = run.pull("detections", timeout_ms=timeout_ms)
-        if output is None:
-            if producer_done.is_set():
-                break
+        status, output, error = run.pull_status("detections", timeout_ms=100)
+        if status == pyneat.PullStatus.Ok:
+            handle_output(output)
+        elif status == pyneat.PullStatus.Timeout:
             continue
-        handle_output(output)
+        elif status == pyneat.PullStatus.Closed:
+            return
+        else:
+            record_runtime_error(error)
+            return
 
 producer_thread = threading.Thread(target=producer)
 consumer_thread = threading.Thread(target=consumer)
@@ -597,7 +599,7 @@ run.close()
 </CodeTab>
 </CodeTabs>
 
-In C++, use the status-aware `pull(...)` overload when timeout, end-of-stream, and errors must be handled differently. In Python, `pull(...)` returns `None` when no sample is returned for that call, so pair it with your own producer/shutdown state.
+Use C++ status-aware `pull(...)` or Python `pull_status(...)` to distinguish `Ok`, `Timeout`, `Closed` and `Error`. Python returns `(status, sample, error)`; `sample` is populated on `Ok`, and `error` carries the Core diagnostics. The convenience `pull(...)` returns `None` on timeout or closure.
 
 ## Close, drain, or stop deliberately
 

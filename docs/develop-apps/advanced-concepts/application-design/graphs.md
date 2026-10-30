@@ -769,6 +769,8 @@ The RTSP decoded group exposes the same decoder controls in C++ and Python:
 
 | `RtspDecodedInputOptions` field | Default | Purpose |
 | --- | --- | --- |
+| `reconnect_timeout_ms` | `0` | Source inactivity/attempt window; positive values enable reconnect. |
+| `reconnect_attempts` | `-1` | Retries per outage; `-1` means unlimited, positive values set a limit. |
 | `decoder_input_buffers` | `-1` | Compressed-input buffer count; leave unset for the runtime default. |
 | `num_buffers` | `-1` | Decoded-output pool count; leave unset for automatic sizing. |
 | `decoder_tuning` | `""` | Optional decoder preset, such as `throughput-low-latency`. |
@@ -789,6 +791,16 @@ source.decoder_tuning = "throughput-low-latency"
 # Leave num_buffers at -1 to use automatic output sizing.
 app.add(pyneat.groups.rtsp_decoded_input(source))
 ```
+
+Set `reconnect_timeout_ms = 10'000` and `reconnect_attempts = -1` in C++,
+or `source.reconnect_timeout_ms = 10_000` and `source.reconnect_attempts = -1`
+in Python, to retry automatically after ten seconds without source data.
+The same options apply to `RtspEncodedInputOptions` and the direct RTSP factory.
+Recovery includes initially offline cameras; supply existing caps/FPS settings
+when the decoder or downstream contract requires them. While retrying, output
+pulls time out rather than close. Exhausting the budget closes that source with
+`io.rtsp_connection_failed`; healthy sources continue. Explicit shutdown cancels
+retries. Codec and caps must still satisfy the graph's declared contract.
 
 ### App input to graph-owned UDP output
 

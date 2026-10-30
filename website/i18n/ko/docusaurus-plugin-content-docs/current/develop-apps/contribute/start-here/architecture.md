@@ -648,6 +648,7 @@ GStreamer 오류는 하나의 내부 파서, 분류기 및 렌더러를 거칩�
 `GraphReport.repro_note`는 사람이 읽을 수 있는 요약입니다. 프로덕션 렌더링에는 일반 언어로 된 원인, 관련 있는 관찰/예상 값, 구체적인 사용자 작업 및 안정적인 진단 ID가 포함됩니다. 원시 플러그인 문자열, 소스 위치 및 GStreamer 도메인/코드는 디버깅 전용입니다. 괄호로 묶인 공개 코드는 `NeatError`가 생성될 때 한 번 추가됩니다. `GraphReport.bus`는 플러그인/런타임 오류 세부 정보의 단일 진실 공급원입니다.
 
 빌드(입력) 흐름의 경우 `GraphReport.build_adaptation`은 해결된 모양 정책/기능, 시드/최대 제한에 대한 원본, 바이트 가드 원본 및 적용/건너뛴 조정 작업을 기록합니다. 오류가 발생하지 않는 런타임 풀의 경우 `PullError.code`는 동일한 분류 체계를 사용합니다. 입력 스트림 작업자 오류는 유형이 지정된 오류 코드를 유지하고 작업자 스레드 경계를 통해 보고되므로 `Run::pull()` 및 Python 예외 변환기는 동일한 `NeatError`를 표시합니다.
+Python의 `Run.pull_status(...)`은 이름이 지정된 출력을 포함하여 C++의 구조화된 pull 오버로드와 동일한 상태, 샘플 및 `PullError`를 제공합니다.
 
 지원 분류 순서는 다음과 같습니다.
 1. `error_code`로 분류
@@ -885,6 +886,11 @@ simaai::neat::Graph graph;
 graph.add(simaai::neat::nodes::groups::RtspDecodedInput(source));
 graph.add(simaai::neat::nodes::Output());
 ```
+
+선택적으로 활성화하는 RTSP 복구는 소스/역패킷화/파서 구간만 관리합니다.
+파이프라인당 하나의 컨트롤러가 EOS로 그래프 큐가 닫히기 전에 연결이 끊기거나
+시작 시 오프라인인 소스를 재시도합니다. 디코더 풀, 공유 추론, 스트림 식별자와
+유효한 버퍼 대여는 유지되며 파이프라인 해제 전에 재시도를 중지합니다.
 
 내부적으로:
 

@@ -550,9 +550,9 @@ run.close();
 
 ```python
 import threading
+import pyneat
 
 run = graph.build(options)
-producer_done = threading.Event()
 
 def producer() -> None:
     try:
@@ -563,18 +563,20 @@ def producer() -> None:
             if not run.try_push("image", [sample]):
                 count_local_drop(sample.stream_id)
     finally:
-        producer_done.set()
         run.close_input()
 
 def consumer() -> None:
     while True:
-        timeout_ms = -1 if producer_done.is_set() else 100
-        output = run.pull("detections", timeout_ms=timeout_ms)
-        if output is None:
-            if producer_done.is_set():
-                break
+        status, output, error = run.pull_status("detections", timeout_ms=100)
+        if status == pyneat.PullStatus.Ok:
+            handle_output(output)
+        elif status == pyneat.PullStatus.Timeout:
             continue
-        handle_output(output)
+        elif status == pyneat.PullStatus.Closed:
+            return
+        else:
+            record_runtime_error(error)
+            return
 
 producer_thread = threading.Thread(target=producer)
 consumer_thread = threading.Thread(target=consumer)
@@ -588,7 +590,7 @@ run.close()
 </CodeTab>
 </CodeTabs>
 
-C++에서는 시간 초과, 스트림 종료, 오류가 발생할 때 각각 다르게 처리해야 하는 경우 상태를 인식하는 `pull(...)` 오버로드를 사용합니다. Python에서는 해당 호출에 대해 샘플이 반환되지 않으면 `pull(...)`이 `None`을 반환하므로, 자체 프로듀서/종료 상태와 함께 사용하십시오.
+`Ok`, `Timeout`, `Closed`, `Error`를 구분하려면 C++의 상태 기반 `pull(...)` 또는 Python의 `pull_status(...)`를 사용하세요. Python은 `(status, sample, error)`를 반환합니다. `Ok`일 때 `sample`에 결과가 채워지고, `error`에는 Core 진단 정보가 담깁니다. 편의 API인 `pull(...)`은 시간 초과 또는 종료 시 `None`을 반환합니다.
 
 ## 닫거나, 배수하거나, 의도적으로 작동을 중단합니다.
 

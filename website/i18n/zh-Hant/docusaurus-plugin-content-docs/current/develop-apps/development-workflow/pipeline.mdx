@@ -547,9 +547,9 @@ run.close();
 
 ```python
 import threading
+import pyneat
 
 run = graph.build(options)
-producer_done = threading.Event()
 
 def producer() -> None:
     try:
@@ -560,18 +560,20 @@ def producer() -> None:
             if not run.try_push("image", [sample]):
                 count_local_drop(sample.stream_id)
     finally:
-        producer_done.set()
         run.close_input()
 
 def consumer() -> None:
     while True:
-        timeout_ms = -1 if producer_done.is_set() else 100
-        output = run.pull("detections", timeout_ms=timeout_ms)
-        if output is None:
-            if producer_done.is_set():
-                break
+        status, output, error = run.pull_status("detections", timeout_ms=100)
+        if status == pyneat.PullStatus.Ok:
+            handle_output(output)
+        elif status == pyneat.PullStatus.Timeout:
             continue
-        handle_output(output)
+        elif status == pyneat.PullStatus.Closed:
+            return
+        else:
+            record_runtime_error(error)
+            return
 
 producer_thread = threading.Thread(target=producer)
 consumer_thread = threading.Thread(target=consumer)
@@ -585,7 +587,7 @@ run.close()
 </CodeTab>
 </CodeTabs>
 
-在 C++ 中，當需要以不同方式處理逾時、串流結束和錯誤時，請使用具有狀態意識的 `pull(...)` 超載。在 Python 中，如果某次呼叫沒有傳回任何樣本，則 `pull(...)` 會傳回 `None`，因此請將其與您自己的產生器/關閉狀態配對。
+若要區分 `Ok`、`Timeout`、`Closed` 和 `Error`，請使用 C++ 的狀態式 `pull(...)` 或 Python 的 `pull_status(...)`。Python 傳回 `(status, sample, error)`；`Ok` 時，`sample` 會包含結果，`error` 則提供 Core 診斷資訊。便利 API `pull(...)` 在逾時或關閉時會傳回 `None`。
 
 ## 有意地關閉、清空或停止
 

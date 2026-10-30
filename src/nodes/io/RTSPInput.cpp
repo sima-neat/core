@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -10,8 +11,18 @@ namespace simaai::neat {
 
 RTSPInput::RTSPInput(std::string url, int latency_ms, bool tcp, bool drop_on_latency,
                      std::string buffer_mode)
+    : RTSPInput(std::move(url), latency_ms, tcp, drop_on_latency, std::move(buffer_mode), 0, -1) {}
+
+RTSPInput::RTSPInput(std::string url, int latency_ms, bool tcp, bool drop_on_latency,
+                     std::string buffer_mode, int reconnect_timeout_ms, int reconnect_attempts)
     : url_(std::move(url)), latency_ms_(latency_ms), tcp_(tcp), drop_on_latency_(drop_on_latency),
-      buffer_mode_(std::move(buffer_mode)) {}
+      buffer_mode_(std::move(buffer_mode)), reconnect_timeout_ms_(reconnect_timeout_ms),
+      reconnect_attempts_(reconnect_attempts) {
+  if (reconnect_timeout_ms < 0)
+    throw std::invalid_argument("RTSPInput: reconnect_timeout_ms must be nonnegative");
+  if (reconnect_attempts != -1 && reconnect_attempts <= 0)
+    throw std::invalid_argument("RTSPInput: reconnect_attempts must be -1 or positive");
+}
 
 std::string RTSPInput::backend_fragment(int node_index) const {
   const std::string el = "n" + std::to_string(node_index) + "_rtspsrc";
@@ -39,6 +50,14 @@ std::shared_ptr<simaai::neat::Node> RTSPInput(std::string url, int latency_ms, b
                                               bool drop_on_latency, std::string buffer_mode) {
   return std::make_shared<simaai::neat::RTSPInput>(std::move(url), latency_ms, tcp, drop_on_latency,
                                                    std::move(buffer_mode));
+}
+
+std::shared_ptr<simaai::neat::Node> RTSPInput(std::string url, int latency_ms, bool tcp,
+                                              bool drop_on_latency, std::string buffer_mode,
+                                              int reconnect_timeout_ms, int reconnect_attempts) {
+  return std::make_shared<simaai::neat::RTSPInput>(std::move(url), latency_ms, tcp, drop_on_latency,
+                                                   std::move(buffer_mode), reconnect_timeout_ms,
+                                                   reconnect_attempts);
 }
 
 } // namespace simaai::neat::nodes

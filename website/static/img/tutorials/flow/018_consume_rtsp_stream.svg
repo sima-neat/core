@@ -47,15 +47,15 @@
 <g id="code2" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 3 · Pull frames</text>
 <text x="76" y="248" class="fmono fln">1</text>
-<text x="104" y="248" class="fmono fcode" xml:space="preserve">for i in range(args.frames):</text>
+<text x="104" y="248" class="fmono fcode" xml:space="preserve">i = 0</text>
 <text x="76" y="274" class="fmono fln">2</text>
-<text x="104" y="274" class="fmono fcode" xml:space="preserve">    frame_sample = run.pull(timeout_ms=5000)</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">try:</text>
 <text x="76" y="300" class="fmono fln">3</text>
-<text x="104" y="300" class="fmono fcode" xml:space="preserve">    if frame_sample is None or not frame_sa…</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">    while i &lt; args.frames:</text>
 <text x="76" y="326" class="fmono fln">4</text>
-<text x="104" y="326" class="fmono fcode" xml:space="preserve">        print(f&quot;frame={i} rtsp_timeout&quot;)</text>
+<text x="104" y="326" class="fmono fcode" xml:space="preserve">        status, frame_sample, error = run.p…</text>
 <text x="76" y="352" class="fmono fln">5</text>
-<text x="104" y="352" class="fmono fcode" xml:space="preserve">        break</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">        if status == pyneat.PullStatus.Time…</text>
 </g>
 </g>
 <g filter="url(#fsh)">

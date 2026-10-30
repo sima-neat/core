@@ -30,6 +30,9 @@ public:
   /// Construct with an RTSP URL plus optional jitter-buffer / transport tuning.
   RTSPInput(std::string url, int latency_ms = 200, bool tcp = true, bool drop_on_latency = true,
             std::string buffer_mode = "");
+  /// Configure automatic recovery; zero timeout disables it.
+  RTSPInput(std::string url, int latency_ms, bool tcp, bool drop_on_latency,
+            std::string buffer_mode, int reconnect_timeout_ms, int reconnect_attempts);
 
   /// Type label for this Node kind.
   std::string kind() const override {
@@ -78,12 +81,21 @@ public:
     return buffer_mode_;
   }
 
+  int reconnect_timeout_ms() const {
+    return reconnect_timeout_ms_;
+  }
+  int reconnect_attempts() const {
+    return reconnect_attempts_;
+  }
+
 private:
   std::string url_;
   int latency_ms_ = 200;
   bool tcp_ = true;
   bool drop_on_latency_ = true;
   std::string buffer_mode_;
+  int reconnect_timeout_ms_ = 0;
+  int reconnect_attempts_ = -1;
 };
 
 } // namespace simaai::neat
@@ -93,4 +105,8 @@ namespace simaai::neat::nodes {
 std::shared_ptr<simaai::neat::Node> RTSPInput(std::string url, int latency_ms = 200,
                                               bool tcp = true, bool drop_on_latency = true,
                                               std::string buffer_mode = "");
+/// RTSP source with opt-in automatic recovery.
+std::shared_ptr<simaai::neat::Node> RTSPInput(std::string url, int latency_ms, bool tcp,
+                                              bool drop_on_latency, std::string buffer_mode,
+                                              int reconnect_timeout_ms, int reconnect_attempts);
 } // namespace simaai::neat::nodes

@@ -73,6 +73,11 @@ int main(int argc, char** argv) {
     get_arg(argc, argv, "--codec", codec_name);
     const int frames = parse_int_arg(argc, argv, "--frames", 5);
     int source_fps = parse_int_arg(argc, argv, "--source-fps", -1);
+    const int reconnect_timeout_ms = parse_int_arg(argc, argv, "--reconnect-timeout-ms", 0);
+    const int reconnect_attempts = parse_int_arg(argc, argv, "--reconnect-attempts", -1);
+    if (reconnect_timeout_ms > 0 && source_fps == -1)
+      throw std::invalid_argument(
+          "--source-fps is required with reconnect to avoid probing an offline source");
     if (source_fps != -1 && source_fps <= 0) {
       throw std::invalid_argument("--source-fps must be positive");
     }
@@ -88,6 +93,8 @@ int main(int argc, char** argv) {
     rtsp_opt.codec = parse_codec(codec_name);
     rtsp_opt.source_fps = source_fps;
     rtsp_opt.tcp = true;
+    rtsp_opt.reconnect_timeout_ms = reconnect_timeout_ms;
+    rtsp_opt.reconnect_attempts = reconnect_attempts;
     // END STEP
 
     // STEP compose-graph
@@ -99,19 +106,26 @@ int main(int argc, char** argv) {
     // END STEP
 
     // STEP pull-frames
-    for (int i = 0; i < frames; ++i) {
-      auto sample = run.pull(/*timeout_ms=*/5000);
-      if (!sample.has_value() || simaai::neat::tensors_from_sample(*sample, true).empty()) {
-        std::cout << "frame=" << i << " rtsp_timeout\n";
-        break;
+    for (int i = 0; i < frames;) {
+      simaai::neat::Sample sample;
+      simaai::neat::PullError error;
+      const auto status = run.pull(5000, sample, &error);
+      if (status == simaai::neat::PullStatus::Timeout) {
+        std::cout << "frame=" << i << " rtsp_timeout\n" << std::flush;
+        if (reconnect_timeout_ms > 0)
+          continue;
+        return 1;
       }
-      const auto tensors = simaai::neat::tensors_from_sample(*sample, true);
+      if (status != simaai::neat::PullStatus::Ok)
+        throw std::runtime_error(error.message);
+      const auto tensors = simaai::neat::tensors_from_sample(sample, true);
       const auto& shape = tensors.front().shape;
       std::cout << "frame=" << i << " shape=[";
       for (std::size_t d = 0; d < shape.size(); ++d) {
         std::cout << shape[d] << (d + 1 < shape.size() ? ", " : "");
       }
-      std::cout << "]\n";
+      std::cout << "]\n" << std::flush;
+      ++i;
     }
     // END STEP
     // END CORE LOGIC

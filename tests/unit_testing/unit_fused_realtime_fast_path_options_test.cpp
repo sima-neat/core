@@ -1049,6 +1049,8 @@ RUN_TEST(
       for (int stream = 0; stream < 2; ++stream) {
         simaai::neat::nodes::groups::RtspEncodedInputOptions source_options;
         source_options.url = "rtsp://example.test/stream" + std::to_string(stream);
+        source_options.reconnect_timeout_ms = 10000;
+        source_options.reconnect_attempts = 3;
         // Exercise the public defaults: queues remain enabled and H.264 caps
         // are repaired from stream metadata (with a complete fallback).
         source_options.fallback_h264_fps = 20;
@@ -1097,6 +1099,11 @@ RUN_TEST(
       }
       require(encoded_fused_segment != nullptr,
               "ordinary encoded fan-out topology must be eligible for automatic fusion");
+      for (const auto& branch : encoded_fused_segment->fused_realtime_ingress->branches) {
+        const auto* rtsp = dynamic_cast<const simaai::neat::RTSPInput*>(branch.nodes.front().get());
+        require(rtsp && rtsp->reconnect_timeout_ms() == 10000 && rtsp->reconnect_attempts() == 3,
+                "fused source must preserve its retry policy");
+      }
       require(encoded_fused_segment->fused_realtime_ingress->branches.size() == 2U,
               "encoded fused topology must preserve both streams");
       require(encoded_fanout_plan.named_outputs.find("detector_frame") ==
