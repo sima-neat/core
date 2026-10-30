@@ -2082,8 +2082,7 @@ simaai::neat::Tensor tensor_from_cv_mat(const cv::Mat& mat, const InputOptions& 
         throw std::runtime_error(tag + ": unable to determine dense byte size for device tensor");
       }
       std::vector<Segment> segments{{"ifm0", device_bytes}};
-      return pipeline_internal::transfer_to_device(out, target, &segments,
-                                                   /*required_segment_names=*/nullptr);
+      return pipeline_internal::transfer_to_device(out, target, &segments);
     }
     return out;
   }

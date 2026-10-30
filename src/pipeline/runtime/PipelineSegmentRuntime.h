@@ -48,6 +48,13 @@ namespace runtime {
 
 struct RunCore;
 
+// When exhausted loan credits first kept a queued output from being delivered, and whether
+// that stall has been reported. Cleared when an output is delivered.
+struct LoanStall {
+  std::optional<std::chrono::steady_clock::time_point> since;
+  bool warned = false;
+};
+
 struct RuntimePipelineQueueMsg {
   Sample sample;
   std::size_t edge_index = static_cast<std::size_t>(-1);
@@ -206,11 +213,13 @@ struct PipelineSegmentRuntime {
   std::deque<InputItem> in_queue;
   std::deque<Sample> out_queue;
   std::deque<std::chrono::steady_clock::time_point> pending_times;
-  // Guarded by out_mu: when exhausted loan credits first blocked the queued output, and
-  // whether that stall has been reported.
-  std::optional<std::chrono::steady_clock::time_point> loan_stalled_since;
-  bool loan_stall_warned = false;
+  // Guarded by out_mu.
+  LoanStall loan_stall;
+  // How long a loan stall lasts before it is reported, for this core's segment and graph
+  // outputs.
   std::chrono::steady_clock::duration loan_stall_warn_after = std::chrono::seconds(5);
+  // Names this segment in loan-stall reports; empty when the core is the app's own Run.
+  std::string loan_stall_label;
 
   bool supports_push = false;
   bool supports_pull = false;

@@ -7693,7 +7693,7 @@ Tensor materialize_dense_ingress_tail(Tensor tensor, const std::size_t required_
       std::memset(bytes + logical_bytes, 0, required_storage_bytes - logical_bytes);
     }
     if (tensor.device.type == DeviceType::SIMA_MLA || tensor.device.type == DeviceType::SIMA_CVU) {
-      carrier = pipeline_internal::transfer_to_device(carrier, tensor.device, nullptr, nullptr);
+      carrier = pipeline_internal::transfer_to_device(carrier, tensor.device, nullptr);
     }
   }
   carrier.read_only = tensor.read_only;
