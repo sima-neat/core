@@ -827,8 +827,7 @@ struct StorageCompilation {
           "OutputPlacement::EV74Compatible requires a resolved public tensor output.");
     const auto index = static_cast<std::size_t>(terminal - manifest.stages.data());
     auto publication = *terminal;
-    // An Output name may label the aggregate endpoint. A matching tensor/slot
-    // selector narrows placement using the same rules as publication.
+    // An explicit producer-port selector narrows placement and publication together.
     if (terminal_output_contract::stage_public_outputs_match_endpoint(*terminal, *endpoint) &&
         !terminal_output_contract::filter_publication_stage_for_endpoint(&publication, *endpoint))
       throw std::invalid_argument("stage '" + terminal->element_name +

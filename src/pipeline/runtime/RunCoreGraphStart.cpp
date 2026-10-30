@@ -5,6 +5,7 @@
 #include "builder/OutputSpec.h"
 #include "gst/GstInit.h"
 #include "nodes/common/Output.h"
+#include "nodes/common/Queue.h"
 #include "nodes/io/Input.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/GraphReport.h"
@@ -329,8 +330,15 @@ bool route_stage_output(const std::shared_ptr<RunCore>& core, StageRuntime& st,
                                     router_callbacks, dispatch_options);
 }
 
-// Output-only segments have no allocator. Follow forwarding stages to the
-// producer so shared backing satisfies every attached output endpoint.
+bool forwards_storage(const PipelineSegmentPlan& segment) {
+  return !segment.input_edges.empty() && !segment.nodes.empty() &&
+         std::all_of(segment.nodes.begin(), segment.nodes.end(), [](const auto& node) {
+           return dynamic_cast<const Queue*>(node.get()) || dynamic_cast<const Output*>(node.get());
+         });
+}
+
+// Queues and Output endpoints have no allocator. Follow their input edges to
+// the producer so shared backing satisfies every attached output endpoint.
 std::unordered_map<std::size_t, std::vector<std::string>>
 compatible_output_producers(const ExecutionGraphPlan& plan) {
   std::unordered_map<NodeId, std::size_t> segment_by_node;
@@ -340,8 +348,8 @@ compatible_output_producers(const ExecutionGraphPlan& plan) {
   using Pending = std::tuple<NodeId, PortId, std::string>;
   std::vector<Pending> pending;
   for (const auto& sink : plan.pipeline_segments) {
-    if (sink.boundary.direct_graph_sink && graph_build_internal::terminal_output_placement(
-                                               sink.nodes) == OutputPlacement::EV74Compatible)
+    if (forwards_storage(sink) && graph_build_internal::terminal_output_placement(sink.nodes) ==
+                                      OutputPlacement::EV74Compatible)
       for (const auto index : sink.input_edges) {
         const auto& edge = plan.edges.at(index);
         pending.emplace_back(edge.from, edge.from_port, sink.nodes.back()->user_label());
@@ -371,6 +379,14 @@ compatible_output_producers(const ExecutionGraphPlan& plan) {
           error_codes::kPipelineShape,
           "Output '" + name + "': EV74Compatible requires a Core-allocated tensor output.",
           "Use tensor.cvu() to copy imported or application-stage output.");
+    const auto& segment = plan.pipeline_segments[producer->second];
+    if (forwards_storage(segment)) {
+      for (const auto index : segment.input_edges) {
+        const auto& edge = plan.edges.at(index);
+        pending.emplace_back(edge.from, edge.from_port, name);
+      }
+      continue;
+    }
     // Output labels identify sinks; only a named producer port selects a tensor.
     const auto selector = port != kInvalidPort && plan.port_names.at(port) != "out"
                               ? plan.port_names[port]
@@ -396,6 +412,21 @@ void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
     sess_opt.verbose.progress = false;
 
     std::vector<std::shared_ptr<simaai::neat::Node>> nodes = seg.nodes;
+    const bool forwarded_placement =
+        forwards_storage(seg) && graph_build_internal::terminal_output_placement(seg.nodes) ==
+                                     OutputPlacement::EV74Compatible;
+    if (forwarded_placement) {
+      // Placement was assigned upstream. Keep the queue, but do not ask this
+      // allocator-free fragment to plan storage again. The public sink retains
+      // its original options in the graph plan.
+      for (auto& node : nodes) {
+        if (const auto* output = dynamic_cast<const Output*>(node.get())) {
+          auto options = output->options();
+          options.placement = OutputPlacement::Auto;
+          node = nodes::Output(output->user_label(), options);
+        }
+      }
+    }
     bool injected_input = false;
     bool injected_output = false;
 
@@ -451,7 +482,7 @@ void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
     runtime->nodes = std::move(nodes);
     runtime->route_options = sess_opt;
     runtime->run_options = core->graph_options.pipeline;
-    if (seg.boundary.graph_internal_output) {
+    if (seg.boundary.graph_internal_output || forwarded_placement) {
       runtime->run_options.output_memory = simaai::neat::OutputMemory::ZeroCopy;
     }
     if (const auto found = compatible_producers.find(seg.id); found != compatible_producers.end())

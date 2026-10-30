@@ -3,6 +3,7 @@
 #include "nodes/sima/DetessDequant.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/graph/internal/GraphTestHooks.h"
+#include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "pipeline/graph/GraphDetail.h"
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
@@ -163,6 +164,33 @@ RUN_TEST(
       const auto open_nodes = internal::ModelAccess::build_public_route_nodes(model, output_route);
       require(!dynamic_cast<const Output*>(open_nodes.back().get()),
               "output options must not close an open model fragment");
+
+      // A public endpoint label must not select a model head, even when it
+      // looks like a slot or matches an actual producer output name.
+      for (const auto* name : {"features", "0", "detessdequant_0"}) {
+        Graph graph;
+        graph.add(model);
+        OutputOptions placement;
+        placement.placement = OutputPlacement::EV74Compatible;
+        graph.add(nodes::Output(name, placement));
+        const auto plan = runtime::compile_public_graph(graph, {});
+        require(plan.pipeline_segments.size() == 1, "model route should remain a linear fragment");
+        const auto& nodes = plan.pipeline_segments.front().nodes;
+        const auto endpoint = session_build_public_output_endpoint_selector(nodes);
+        si::ManifestBuildDiagnostics diagnostics;
+        auto contracts = compile_node_contracts(nodes, {}, &diagnostics);
+        auto manifest = render_manifest_from_compiled_contracts(contracts, {}, &diagnostics);
+        require(manifest && diagnostics.errors.empty(), "named model output must compile");
+        const auto failure = si::prepare_kernel_stage_recipes(&*manifest, {}, {}, {}, {});
+        require(!failure, failure ? failure->field + ": " + failure->message : "");
+        si::finalize_pipeline_storage(*manifest, &endpoint, placement.placement);
+        const auto& layout = *manifest->stages.back().frame_layout;
+        require(!layout.outputs.empty(), "model fixture must publish outputs");
+        for (const auto& binding : layout.outputs)
+          require(layout.allocations.at(binding.span.allocation_index).policy ==
+                      client::AllocationPolicy::RequireCma,
+                  "endpoint labels must preserve compatible placement of all model outputs");
+      }
 
       const auto memory_fixture = sima_test::make_strict_model_archive_fixture(
           "model_fragment_memory", {}, true, "yolo_v9c_seg", true);

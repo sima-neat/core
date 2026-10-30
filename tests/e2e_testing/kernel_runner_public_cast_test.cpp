@@ -98,39 +98,44 @@ void require_publication(const Tensor& tensor, bool compact,
 
 void qualify_queued_output_placement() {
   for (const auto placement : {OutputPlacement::Auto, OutputPlacement::EV74Compatible}) {
-    GraphOptions policy;
-    policy.processcvu_requested_run_target = "A65";
-    Graph graph(policy);
-    InputOptions ingress;
-    ingress.payload_type = PayloadType::Tensor;
-    ingress.memory_policy = InputMemoryPolicy::SystemMemory;
-    graph.add(nodes::Input(ingress));
-    CastOptions cast;
-    cast.direction = CastDirection::Fp32ToBf16;
-    graph.add(nodes::Cast(cast));
-    graph.add(nodes::Queue(QueueOptions{.max_buffers = 2}));
-    graph.add(nodes::Queue());
-    OutputOptions output;
-    output.placement = placement;
-    graph.add(nodes::Output("features", output));
-    auto input = Tensor::from_vector(std::vector<float>(192, 1.5F), {8, 8, 3}, TensorMemory::CPU);
-    input.layout = TensorLayout::HWC;
-    RunOptions options;
-    options.output_memory = OutputMemory::ZeroCopy;
-    auto run = graph.build(TensorList{input}, options);
-    const auto result = run.run(TensorList{input}, 5000);
-    require(result.size() == 1, "queued Cast output count");
-    const auto heap = placement == OutputPlacement::EV74Compatible
-                          ? simaai::scheduler::client::dma::HeapKind::Cma
-                          : simaai::scheduler::client::dma::HeapKind::MlaDms;
-    // Compact publication requires a direct appsink edge; queues retain full metadata.
-    require_publication(result.front(), false, heap);
-    run.close();
-    check(result.front(), 1.5F);
+    for (const auto* name : {"features", "0", "output_tensor_0"}) {
+      GraphOptions policy;
+      policy.processcvu_requested_run_target = "A65";
+      Graph graph(policy);
+      InputOptions ingress;
+      ingress.payload_type = PayloadType::Tensor;
+      ingress.memory_policy = InputMemoryPolicy::SystemMemory;
+      graph.add(nodes::Input(ingress));
+      CastOptions cast;
+      cast.direction = CastDirection::Fp32ToBf16;
+      graph.add(nodes::Cast(cast));
+      graph.add(nodes::Queue(QueueOptions{.max_buffers = 2}));
+      graph.add(nodes::Queue());
+      OutputOptions output;
+      output.placement = placement;
+      graph.add(nodes::Output(name, output));
+      auto input = Tensor::from_vector(std::vector<float>(192, 1.5F), {8, 8, 3}, TensorMemory::CPU);
+      input.layout = TensorLayout::HWC;
+      RunOptions options;
+      options.output_memory = OutputMemory::ZeroCopy;
+      auto run = graph.build(TensorList{input, input}, options);
+      const auto result = run.run(TensorList{input, input}, 5000);
+      require(result.size() == 2, "endpoint label must not select a tensor from the bundle");
+      const auto heap = placement == OutputPlacement::EV74Compatible
+                            ? simaai::scheduler::client::dma::HeapKind::Cma
+                            : simaai::scheduler::client::dma::HeapKind::MlaDms;
+      // Compact publication requires a direct appsink edge; queues retain full metadata.
+      for (const auto& tensor : result)
+        require_publication(tensor, false, heap);
+      run.close();
+      for (const auto& tensor : result)
+        check(tensor, 1.5F);
+    }
   }
 }
 
-void qualify_named_output_placement(bool compact, bool shared, bool auto_owned = false) {
+void qualify_named_output_placement(bool compact, bool shared, bool auto_owned = false,
+                                    int queue_fragments = 0) {
   GraphOptions policy;
   policy.processcvu_requested_run_target = "A65";
   Graph graph(policy);
@@ -145,7 +150,15 @@ void qualify_named_output_placement(bool compact, bool shared, bool auto_owned =
   OutputOptions compatible;
   compatible.placement = OutputPlacement::EV74Compatible;
   graph.connect(source, features);
-  graph.connect(features, nodes::Output("features", compatible));
+  auto terminal = features;
+  for (int i = 0; i < queue_fragments; ++i) {
+    auto queue = nodes::Queue();
+    graph.connect(terminal, queue);
+    terminal = std::move(queue);
+  }
+  graph.connect(terminal, nodes::Output("features", compatible));
+  if (queue_fragments == 2)
+    graph.connect(terminal, nodes::Output("queued_other"));
   if (shared) {
     graph.connect(features, nodes::Output("other"));
   } else {
@@ -163,7 +176,14 @@ void qualify_named_output_placement(bool compact, bool shared, bool auto_owned =
   const auto output = run.pull_tensors("features", 5000);
   const auto other = run.pull_tensors("other", 5000);
   require(output.size() == 1 && other.size() == 1, "named output counts");
-  require_publication(output.front(), compact, simaai::scheduler::client::dma::HeapKind::Cma);
+  require_publication(output.front(), compact && queue_fragments == 0,
+                      simaai::scheduler::client::dma::HeapKind::Cma);
+  if (queue_fragments == 2) {
+    const auto queued = run.pull_tensors("queued_other", 5000);
+    require(queued.size() == 1, "queued fan-out output count");
+    require_publication(queued.front(), false, simaai::scheduler::client::dma::HeapKind::Cma);
+    check(queued.front(), 1.5F);
+  }
   if (auto_owned) {
     const auto& storage = other.front().storage;
     require(storage && storage->kind == StorageKind::GstSample && storage->holder,
@@ -538,6 +558,8 @@ int main(int argc, char** argv) {
     qualify_queued_output_placement();
     qualify_named_output_placement(mode == "compact", false);
     qualify_named_output_placement(mode == "compact", true);
+    for (const int queues : {1, 2})
+      qualify_named_output_placement(mode == "compact", true, false, queues);
     for (const auto combine : {CombinePolicy::None, CombinePolicy::ByFrame, CombinePolicy::ByPts})
       qualify_bundle_output_placement(mode == "compact", combine);
     const char* output_default = std::getenv("SIMA_OUTPUT_MEMORY_DEFAULT");
@@ -545,6 +567,7 @@ int main(int argc, char** argv) {
         output_default ? std::optional<std::string>(output_default) : std::nullopt;
     setenv("SIMA_OUTPUT_MEMORY_DEFAULT", "owned", 1);
     qualify_named_output_placement(mode == "compact", false, true);
+    qualify_named_output_placement(mode == "compact", true, true, 1);
     if (saved_default)
       setenv("SIMA_OUTPUT_MEMORY_DEFAULT", saved_default->c_str(), 1);
     else

@@ -604,8 +604,7 @@ public_output_endpoint_selector_local(const std::vector<std::shared_ptr<Node>>& 
     break;
   }
 
-  pipeline_internal::terminal_output_contract::set_output_selector(
-      selector, nodes[static_cast<std::size_t>(output_index)]->user_label());
+  // Output labels name endpoints. Tensor selection comes from producer ports.
   return selector;
 }
 

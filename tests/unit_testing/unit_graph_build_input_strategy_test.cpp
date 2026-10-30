@@ -2,6 +2,7 @@
 #define SIMA_NEAT_INTERNAL 1
 #endif
 #include "nodes/common/Output.h"
+#include "nodes/common/Queue.h"
 #include "nodes/io/Input.h"
 #include "pipeline/Graph.h"
 #include "pipeline/ErrorCodes.h"
@@ -149,7 +150,7 @@ RUN_TEST(
         require(rejected, "CMA and Owned are contradictory output requirements");
       }
 
-      {
+      for (const bool queued : {false, true}) {
         Graph graph;
         InputOptions input;
         input.payload_type = PayloadType::Tensor;
@@ -157,7 +158,12 @@ RUN_TEST(
         const auto source = nodes::Input("input", input);
         OutputOptions output;
         output.placement = OutputPlacement::EV74Compatible;
-        graph.connect(source, nodes::Output("imported", output));
+        auto terminal = source;
+        if (queued) {
+          terminal = nodes::Queue();
+          graph.connect(source, terminal);
+        }
+        graph.connect(terminal, nodes::Output("imported", output));
         graph.connect(source, nodes::Output("other"));
         const auto tensor =
             Tensor::from_vector(std::vector<float>(16, 1.0F), {16}, TensorMemory::CPU);
