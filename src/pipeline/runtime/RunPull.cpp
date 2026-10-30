@@ -179,12 +179,12 @@ PullStatus pull_graph_output_with_public_loan(runtime::RunCore& core,
         label + ": " +
         (loan_error.empty() ? std::string("zero-copy output loan unavailable") : loan_error) +
         "; release older zero-copy outputs and retry";
-    warn_if_graph_output_loan_stalled(core, node_id, message);
     if (!core.graph_restore_reserved_sink_front(node_id, std::move(*queued))) {
       pipeline_internal::error_util::set_pull_error(
           err, error_codes::kRuntimePull, message + " (failed to restore graph output queue)");
       return PullStatus::Error;
     }
+    warn_if_graph_output_loan_stalled(core, node_id, message);
     if (timeout_ms == 0) {
       pipeline_internal::error_util::set_pull_error(err, error_codes::kRuntimePull, message);
       return PullStatus::Timeout;

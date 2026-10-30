@@ -774,6 +774,8 @@ void require_child_holder_window_uses_parent_policy() {
       auto plan = runtime::compile_public_graph(graph, options,
                                                 source ? std::nullopt : std::optional{seed});
       require(plan.pipeline_segments.size() == 1, "holder policy fixture requires one segment");
+      const std::string segment_label =
+          "graph segment " + std::to_string(plan.pipeline_segments.front().id);
       // Exercise the actual graph-owned source and seeded child startup paths,
       // not start_pipeline_segment called with hand-authored child options.
       plan.linear_compat = false;
@@ -799,6 +801,8 @@ void require_child_holder_window_uses_parent_policy() {
                   stream.holder_loan_credits ==
                       expected * std::max(1, stream.holder_loan_per_sample_arity),
               "child used the default edge queue instead of its parent's retention policy");
+      require(child->pipeline.loan_stall_label == segment_label,
+              "loan-stall reports must name the source and seeded segment alike");
       parent->close();
       require(child->closed.load(), "parent did not normally close its child");
     }
@@ -1114,6 +1118,8 @@ void require_graph_output_loan_stall_warns_once_per_stall() {
   auto sink = std::make_shared<runtime::GraphSinkQueue>();
   core->graph_execution_->sinks[kSinkNode] = sink;
   core->pipeline.loan_stall_warn_after = std::chrono::milliseconds(100);
+  // ZeroCopy output: the app keeps the loaned sample instead of an owned copy.
+  core->pipeline.stream_opt.copy_output = false;
   core->holder_loan_gate = std::make_shared<pipeline_internal::HolderLoanGate>(1);
   for (const int id : {1, 2, 3}) {
     sink->push(runtime::RuntimeSinkQueueMsg{make_legacy_device_gst_sample(id)});
@@ -1121,7 +1127,7 @@ void require_graph_output_loan_stall_warns_once_per_stall() {
   CapturedStderr captured;
   PullError error;
   Sample held;
-  require(core->pull(0, held, &error) == PullStatus::Ok,
+  require(core->pull(0, held, &error) == PullStatus::Ok && core->holder_loan_gate->inflight() == 1,
           "first graph output must take the only loan");
 
   Sample blocked;
