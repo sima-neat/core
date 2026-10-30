@@ -1652,6 +1652,7 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
         std::move(opt.after_pipeline_start_for_test));
     core->push_sample_policy = opt.push_sample_policy;
     core->pipeline.public_input_contract = public_contract;
+    core->pipeline.loan_stall_label = "graph segment " + std::to_string(segment.id);
     const auto start_single_us = pipeline_internal::build_timing_us(start_single_start);
     pipeline_internal::emit_build_timing(
         "RunCore::start_pipeline_segment",
@@ -1699,6 +1700,7 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
       std::move(opt.input_route_processor), std::move(opt.after_pipeline_start_for_test));
   core->push_sample_policy = opt.push_sample_policy;
   core->pipeline.public_input_contract = public_contract;
+  core->pipeline.loan_stall_label = "graph segment " + std::to_string(segment.id);
   const auto start_single_us = pipeline_internal::build_timing_us(start_single_start);
   pipeline_internal::emit_build_timing("RunCore::start_pipeline_segment",
                                        {{"materialize_nodes", materialize_us},

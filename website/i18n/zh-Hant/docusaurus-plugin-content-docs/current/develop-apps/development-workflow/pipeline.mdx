@@ -299,7 +299,8 @@ preview = run.pull("preview", timeout_ms=2000)
 `ModelRouteOptions` 或 C++ 的 `Model::RouteOptions` 設定 `route.output.placement`；
 相同的 `output` 選項也控制緩衝、丟棄與時脈同步。Core 會直接在 CMA 分配選定的輸出，
 不變更執行目標，也不在拉取時複製。擁有權請使用 `Auto` 或 `ZeroCopy`；`Owned` 與匯入儲存空間的
-重新配置會遭拒。若要明確複製現有張量，請使用 `tensor.cvu()`。
+重新配置會遭拒。若要處理現有張量，請使用 `tensor.cvu()`：已在 EV74 記憶體中的張量會原樣傳回，
+其他張量則會複製到 EV74 記憶體。`ZeroCopy` 會保留產生端的儲存空間，並不保證 EV74 可存取。
 
 `Tensor::cpu()` 會將裝置上的張量複製到主機記憶體；已在主機記憶體中的張量（例如 `Owned` 輸出）則直接傳回，不會複製。
 需要獨立副本時請使用 `clone()`。

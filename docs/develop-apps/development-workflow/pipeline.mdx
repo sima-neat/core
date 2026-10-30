@@ -312,7 +312,9 @@ in C++; the same `output` options control buffering, dropping and clock sync.
 Core allocates the selected output directly in CMA without changing execution targets
 or copying at pull.
 Use `Auto` or `ZeroCopy` ownership; `Owned` and relocation of imported backing are
-rejected. For an explicit copy of an existing tensor, use `tensor.cvu()`.
+rejected. For an existing tensor, `tensor.cvu()` returns tensors already in EV74 memory unchanged
+and copies other tensors into EV74 memory. `ZeroCopy` preserves the producer’s
+storage and does not guarantee EV74 accessibility.
 
 `Tensor::cpu()` copies a device tensor into host memory and returns a tensor that is
 already in host memory, such as an `Owned` output, without copying. Use `clone()` for

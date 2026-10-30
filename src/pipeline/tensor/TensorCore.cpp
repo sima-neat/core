@@ -546,7 +546,7 @@ Tensor Tensor::to(Device target) const {
   case DeviceType::SIMA_CVU:
     return cvu();
   case DeviceType::SIMA_MLA:
-    return simaai::neat::pipeline_internal::transfer_to_device(*this, target, nullptr, nullptr);
+    return simaai::neat::pipeline_internal::transfer_to_device(*this, target, nullptr);
   case DeviceType::SIMA_APU:
   case DeviceType::UNKNOWN:
     break;
@@ -569,7 +569,7 @@ Tensor Tensor::cvu() const {
   if (device.type == DeviceType::SIMA_CVU)
     return *this;
   return simaai::neat::pipeline_internal::transfer_to_device(*this, {DeviceType::SIMA_CVU, 0},
-                                                             nullptr, nullptr);
+                                                             nullptr);
 }
 
 Tensor Tensor::mla(bool force) const {
@@ -582,13 +582,13 @@ Tensor Tensor::mla(bool force) const {
   if (!force) {
     try {
       return simaai::neat::pipeline_internal::transfer_to_device(*this, {DeviceType::SIMA_CVU, 0},
-                                                                 nullptr, nullptr);
+                                                                 nullptr);
     } catch (const std::exception&) {
       // Fall back to MLA (DMS0).
     }
   }
   return simaai::neat::pipeline_internal::transfer_to_device(*this, {DeviceType::SIMA_MLA, 0},
-                                                             nullptr, nullptr);
+                                                             nullptr);
 }
 
 Tensor Tensor::to_cpu_if_needed() const {
@@ -1090,12 +1090,10 @@ Tensor make_dense_tensor_from_bytes(const void* data, std::size_t bytes, TensorD
 
   std::vector<Segment> segments{{"ifm0", bytes}};
   if (memory == TensorMemory::EV74) {
-    return pipeline_internal::transfer_to_device(tmp, Device{DeviceType::SIMA_CVU, 0}, &segments,
-                                                 /*required_segment_names=*/nullptr);
+    return pipeline_internal::transfer_to_device(tmp, Device{DeviceType::SIMA_CVU, 0}, &segments);
   }
   if (memory == TensorMemory::MLA) {
-    return pipeline_internal::transfer_to_device(tmp, Device{DeviceType::SIMA_MLA, 0}, &segments,
-                                                 /*required_segment_names=*/nullptr);
+    return pipeline_internal::transfer_to_device(tmp, Device{DeviceType::SIMA_MLA, 0}, &segments);
   }
   throw std::invalid_argument("Tensor::from_vector: unsupported TensorMemory placement");
 }

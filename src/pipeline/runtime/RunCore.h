@@ -276,6 +276,9 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
   GraphRuntimeOptions graph_options;
   PushSamplePolicy push_sample_policy = PushSamplePolicy::PublicCompatibility;
   pipeline_internal::HolderLoanGatePtr holder_loan_gate;
+  // Loan stalls of public graph outputs, by output node.
+  std::mutex graph_loan_stall_mu;
+  std::unordered_map<simaai::neat::graph::NodeId, LoanStall> graph_loan_stalls;
   std::shared_ptr<simaai::neat::graph::GraphRunStats> graph_stats;
 
   std::uint64_t latency_count = 0;

@@ -7,15 +7,18 @@
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "gst/GstInit.h"
+#include "gst/GstSampleAttributes.h"
 
 #include "test_utils.h"
 
 #include <gst/gst.h>
 #include <gst/allocators/gstdmabuf.h>
+#include <gstsimaaitensorbuffer_meta.h>
 
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -30,14 +33,208 @@ static void add_sima_meta(GstBuffer* buffer) {
   require(s != nullptr, "missing GstSimaMeta structure");
   gst_structure_set(s, "buffer-id", G_TYPE_INT64, static_cast<gint64>(42), "buffer-name",
                     G_TYPE_STRING, "unit-test", "frame-id", G_TYPE_INT64, static_cast<gint64>(7),
-                    "stream-id", G_TYPE_STRING, "0", "timestamp", G_TYPE_UINT64,
+                    "input-seq", G_TYPE_INT64, gint64(8), "orig-input-seq", G_TYPE_INT64, gint64(9),
+                    "stream-id", G_TYPE_STRING, "camera-A", "timestamp", G_TYPE_UINT64,
                     static_cast<guint64>(123), "pcie-buffer-id", G_TYPE_INT64,
                     static_cast<gint64>(99), nullptr);
+}
+
+static void check_transferred_lineage(const simaai::neat::Tensor& tensor, int64_t frame_id = 7) {
+  using namespace simaai::neat;
+  using namespace simaai::neat::pipeline_internal;
+  auto* buffer = gst_sample_get_buffer(static_cast<GstSample*>(tensor.storage->holder.get()));
+  auto* meta = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
+  require(meta != nullptr, "transfer lost frame metadata");
+  for (const auto* name : {"buffer-id", "buffer-name", "buffer-offset", "pcie-buffer-id"})
+    require(!gst_structure_has_field(gst_custom_meta_get_structure(meta), name),
+            "transfer retained producer allocation identity");
+  std::string error;
+  auto ingress = sample_to_gst_envelope_holder(sample_from_tensors({tensor}), &error, true);
+  require(ingress != nullptr, "transferred tensor cannot reenter a graph: " + error);
+  const auto restored = sample_from_gst_envelope(static_cast<GstSample*>(ingress.get()),
+                                                 "transfer regression", false, nullptr);
+  require(restored.frame_id == frame_id && restored.input_seq == 8 &&
+              restored.orig_input_seq == 9 && restored.stream_id == "camera-A",
+          "tensor-only graph reentry lost frame lineage");
+}
+
+static void check_compact_transfer_metadata(const simaai::neat::Tensor& source) {
+  using namespace simaai::gst;
+  auto* buffer = gst_sample_get_buffer(static_cast<GstSample*>(source.storage->holder.get()));
+  const auto bytes = source.dense_bytes_tight();
+  TensorBufferPublishContract contract;
+  contract.stage_key = "transfer-metadata-test";
+  contract.physical_outputs = {{0, bytes, "tensor"}};
+  TensorBufferPublishLogicalOutput output;
+  output.logical_index = output.physical_index = output.memory_index = 0;
+  output.backend_output_index = output.route_slot = 0;
+  output.logical_name = output.segment_name = "tensor";
+  output.size_bytes = bytes;
+  output.dtype = SIMA_TENSOR_SET_DTYPE_UINT8_V1;
+  output.shape = source.shape;
+  output.stride_bytes = source.strides_bytes;
+  contract.logical_outputs = {output};
+  TensorBufferPreparedMetaTemplate prepared;
+  std::string error;
+  require(tensor_buffer_prepare_meta_template_from_contract(contract, {{0, 0, bytes}}, &prepared,
+                                                            &error),
+          error);
+  const auto publication = tensor_buffer_freeze_publication(prepared, &error);
+  require(publication && tensor_buffer_attach_publication(buffer, publication, &error), error);
+  TensorBufferFrameMetadata frame;
+  frame.buffer_id = 42;
+  frame.frame_id = 7;
+  frame.input_sequence = 8;
+  frame.original_sequence = 9;
+  frame.stream_id = "camera-A";
+  require(tensor_buffer_attach_frame_metadata(buffer, frame, &error), error);
+  check_transferred_lineage(source.mla(true));
+  TensorBufferSourceValues timing;
+  timing.present = TensorBufferSourceValues::FrameIdValid | TensorBufferSourceValues::FrameId |
+                   TensorBufferSourceValues::PtsValid | TensorBufferSourceValues::Offset;
+  timing.offset = 81;
+  timing.valid = TensorBufferSourceValues::FrameIdValid;
+  timing.frame_id = 17;
+  require(tensor_buffer_attach_frame_metadata(buffer, frame, timing, &error), error);
+  const auto transferred = source.mla(true);
+  check_transferred_lineage(transferred, 17);
+  TensorBufferSourceValues restored;
+  auto* transferred_buffer =
+      gst_sample_get_buffer(static_cast<GstSample*>(transferred.storage->holder.get()));
+  require(tensor_buffer_read_source_values(transferred_buffer, &restored, &error), error);
+  require(restored.present == timing.present && restored.valid == timing.valid &&
+              restored.offset == timing.offset,
+          "transfer changed source timing presence or validity");
+  add_sima_meta(buffer); // Competing authorities must fail without leaking the retained source.
+  const auto references = GST_MINI_OBJECT_REFCOUNT_VALUE(buffer);
+  bool rejected = false;
+  try {
+    (void)source.mla(true);
+  } catch (const std::runtime_error& exception) {
+    rejected = std::string(exception.what()).find("transfer: compact frame metadata:") == 0;
+  }
+  require(GST_MINI_OBJECT_REFCOUNT_VALUE(buffer) == references,
+          "failed metadata transfer leaked its source buffer reference");
+  require(rejected, "transfer did not report the compact metadata error");
+}
+
+static void check_selected_carrier_transfer(simaai::neat::Device target) {
+  using namespace simaai::neat;
+  using namespace simaai::neat::pipeline_internal;
+  bool released = false;
+  auto buffer = std::shared_ptr<GstBuffer>(gst_buffer_new(), gst_buffer_unref);
+  gst_buffer_append_memory(buffer.get(), gst_allocator_alloc(nullptr, 32, nullptr));
+  gst_buffer_append_memory(buffer.get(), gst_allocator_alloc(nullptr, 128, nullptr));
+  gst_mini_object_weak_ref(
+      GST_MINI_OBJECT(buffer.get()),
+      [](gpointer flag, GstMiniObject*) { *static_cast<bool*>(flag) = true; }, &released);
+  auto parent = std::shared_ptr<GstBuffer>(gst_buffer_new(), gst_buffer_unref);
+  require(gst_buffer_add_parent_buffer_meta(buffer.get(), parent.get()) != nullptr,
+          "producer loan fixture");
+  add_sima_meta(buffer.get());
+  const SampleAttributes attributes{{"camera-header", "camera-A"}};
+  require(gst_internal::write_attributes(buffer.get(), attributes), "transfer attribute fixture");
+  InputOptions options;
+  options.preprocess_meta.emplace();
+  options.preprocess_meta->enabled = true;
+  options.preprocess_meta->target_width = options.preprocess_meta->target_height = 640;
+  options.preprocess_meta->resize_mode = "letterbox";
+  require(apply_simaai_preprocess_meta_template(buffer.get(), options, 1280, 720),
+          "transfer preprocess fixture");
+  GST_BUFFER_PTS(buffer.get()) = 1234;
+  auto sample = std::shared_ptr<GstSample>(gst_sample_new(buffer.get(), nullptr, nullptr, nullptr),
+                                           gst_sample_unref);
+  Tensor source;
+  source.storage = make_gst_sample_storage(sample.get());
+  source = tensor_view_from_sample_memory(source, 1);
+  source.storage->sima_segments = {{"small", 32}, {"selected", 128}};
+  source.dtype = TensorDType::UInt8;
+  source.layout = TensorLayout::HW;
+  source.shape = {4, 16};
+  source.strides_bytes = {24, 1};
+  source.byte_offset = 8;
+  source.route.physical_byte_offset = 8;
+  source.route.stage_key = "encoder";
+  source.route.name = "features";
+  source.route.logical_index = 7;
+  source.route.physical_index = 17;
+  source.route.memory_index = 1;
+  source.route.segment_name = "selected";
+  {
+    auto mapping = source.storage->map(MapMode::Write);
+    require(mapping.data && mapping.size_bytes >= 128, "selected carrier map");
+    for (unsigned i = 0; i < 128; ++i)
+      static_cast<std::uint8_t*>(mapping.data)[i] = static_cast<std::uint8_t>(i);
+  }
+  const auto transfer = [&](const Tensor& tensor) {
+    return target.type == DeviceType::CPU ? transfer_to_cpu(tensor) : tensor.to(target);
+  };
+  auto copy = transfer(source);
+  require(copy.byte_offset == 0 && copy.strides_bytes == std::vector<int64_t>({16, 1}),
+          "transfer must pack the selected strided view");
+  require(copy.route.memory_index == 0 && copy.route.physical_byte_offset == 0 &&
+              copy.route.physical_index == 17 && copy.route.logical_index == 7 &&
+              copy.route.stage_key == "encoder" && copy.route.name == "features",
+          "transfer must rebase storage selection and preserve logical provenance");
+  if (target.type != DeviceType::CPU) {
+    require(copy.storage->sima_segments.size() == 1 &&
+                copy.storage->sima_segments[0].size_bytes == 64,
+            "transfer retained unrelated producer segments");
+    auto* destination = gst_sample_get_buffer(static_cast<GstSample*>(copy.storage->holder.get()));
+    require(gst_buffer_get_parent_buffer_meta(destination) == nullptr,
+            "transfer retained the producer loan");
+    require(GST_BUFFER_PTS(destination) == 1234, "transfer lost presentation time");
+    const auto preprocess = read_simaai_preprocess_meta(destination);
+    require(preprocess && preprocess->original_width == 1280 && preprocess->original_height == 720,
+            "transfer lost preprocessing geometry");
+    SampleAttributes copied_attributes;
+    gst_internal::read_attributes(destination, &copied_attributes);
+    require(copied_attributes == attributes, "transfer lost per-frame attributes");
+    require(gst_internal::write_attributes(destination, {{"camera-header", "camera-B"}}),
+            "mutate transferred attributes");
+    SampleAttributes source_attributes;
+    gst_internal::read_attributes(buffer.get(), &source_attributes);
+    require(source_attributes == attributes, "transferred attributes alias the producer");
+    check_transferred_lineage(copy);
+  }
+  {
+    Tensor tiled = source;
+    tiled.dtype = TensorDType::BFloat16;
+    tiled.shape = {1, 1, 1, 9};
+    tiled.strides_bytes.clear();
+    TessSpec tess;
+    tess.format = "MLA_TILED_BF16_PAD16";
+    tess.slice_shape = {1, 1, 1, 16};
+    tess.axes = {0, 1, 2, 3};
+    tess.storage_bytes = 32;
+    tiled.semantic.tess = tess;
+    const auto transferred = transfer(tiled);
+    require(transferred.has_tiled_storage() && transferred.strides_bytes.empty() &&
+                transferred.semantic.tess->storage_bytes == 32,
+            "transfer lost the padded tiled layout");
+    const auto bytes = transferred.copy_payload_bytes();
+    require(bytes.size() == 32, "transfer truncated tile padding");
+    for (unsigned i = 0; i < bytes.size(); ++i)
+      require(bytes[i] == 8 + i, "transfer changed tiled payload or padding");
+  }
+  source = {};
+  sample.reset();
+  buffer.reset();
+  require(released, "transfer retained its producer");
+  const auto bytes = copy.copy_dense_bytes_tight();
+  require(bytes.size() == 64, "transferred payload length");
+  for (unsigned row = 0; row < 4; ++row)
+    for (unsigned col = 0; col < 16; ++col)
+      require(bytes[row * 16 + col] == 8 + row * 24 + col, "transferred payload mismatch");
 }
 
 int main() {
   try {
     simaai::neat::gst_init_once();
+
+    check_selected_carrier_transfer({simaai::neat::DeviceType::SIMA_CVU, 0});
+    check_selected_carrier_transfer({simaai::neat::DeviceType::SIMA_MLA, 0});
+    check_selected_carrier_transfer({simaai::neat::DeviceType::CPU, 0});
 
     std::vector<simaai::neat::Segment> segments = {
         {"seg0", 64},
@@ -55,7 +252,13 @@ int main() {
     seed.read_only = false;
 
     simaai::neat::Tensor t_ev74 = simaai::neat::pipeline_internal::transfer_to_device(
-        seed, {simaai::neat::DeviceType::SIMA_CVU, 0}, &segments, nullptr);
+        seed, {simaai::neat::DeviceType::SIMA_CVU, 0}, &segments);
+    require(t_ev74.storage->sima_segments.size() == 2U &&
+                t_ev74.storage->sima_segments[0].name == "seg0" &&
+                t_ev74.storage->sima_segments[0].size_bytes == 64U &&
+                t_ev74.storage->sima_segments[1].name == "seg1" &&
+                t_ev74.storage->sima_segments[1].size_bytes == 32U,
+            "transfer lost the explicit destination segment layout");
     auto* ev74_sample = static_cast<GstSample*>(t_ev74.storage->holder.get());
     GstBuffer* ev74_buf = ev74_sample ? gst_sample_get_buffer(ev74_sample) : nullptr;
     require(ev74_buf != nullptr, "missing EV74 DMA-BUF");
@@ -67,7 +270,7 @@ int main() {
     require(t_ev74.device.id == 0, "EV74 device id mismatch");
 
     simaai::neat::Tensor t_dms = simaai::neat::pipeline_internal::transfer_to_device(
-        seed, {simaai::neat::DeviceType::SIMA_MLA, 0}, &segments, nullptr);
+        seed, {simaai::neat::DeviceType::SIMA_MLA, 0}, &segments);
     require(t_dms.device.type == simaai::neat::DeviceType::SIMA_MLA, "DMS0 device mismatch");
     require(t_dms.device.id == 0, "DMS0 device id mismatch");
 
@@ -124,25 +327,13 @@ int main() {
     GstBuffer* out_buf =
         simaai::neat::pipeline_internal::buffer_from_tensor_holder(dms_copy.storage->holder);
     require(out_buf != nullptr, "missing output GstBuffer");
-    GstCustomMeta* out_meta = gst_buffer_get_custom_meta(out_buf, "GstSimaMeta");
-    require(out_meta != nullptr, "missing GstSimaMeta on transfer");
-    GstStructure* meta_s = gst_custom_meta_get_structure(out_meta);
-    require(meta_s != nullptr, "missing meta structure");
-    gint64 out_id = 0;
-    gst_structure_get_int64(meta_s, "buffer-id", &out_id);
-    require(out_id == 42, "meta buffer-id mismatch");
-    const gchar* out_name = gst_structure_get_string(meta_s, "buffer-name");
-    require(out_name && std::string(out_name) == "unit-test", "meta buffer-name mismatch");
-
+    check_transferred_lineage(dms_copy);
     require(gst_buffer_n_memory(out_buf) == 1U &&
                 gst_is_dmabuf_memory(gst_buffer_peek_memory(out_buf, 0U)),
             "MLA transfer must preserve standard DMA-BUF storage");
-    require(dms_copy.storage->sima_segments.size() == 2U &&
-                dms_copy.storage->sima_segments[0].name == "seg0" &&
-                dms_copy.storage->sima_segments[0].size_bytes == 64U &&
-                dms_copy.storage->sima_segments[1].name == "seg1" &&
-                dms_copy.storage->sima_segments[1].size_bytes == 32U,
-            "MLA transfer lost logical segment metadata");
+    require(dms_copy.storage->sima_segments.size() == 1U &&
+                dms_copy.storage->sima_segments[0].size_bytes == 96U,
+            "implicit transfer must describe only the copied payload");
     gst_buffer_unref(out_buf);
 
     simaai::neat::Tensor dms_copy2 = t_ev74.mla(true);
@@ -159,7 +350,7 @@ int main() {
         simaai::neat::TensorMemory::CPU);
     std::vector<simaai::neat::Segment> direct_segments{{"ifm0", direct_data.size()}};
     auto direct = simaai::neat::pipeline_internal::transfer_to_device(
-        direct_cpu, {simaai::neat::DeviceType::SIMA_CVU, 0}, &direct_segments, nullptr);
+        direct_cpu, {simaai::neat::DeviceType::SIMA_CVU, 0}, &direct_segments);
     require(direct.device.type == simaai::neat::DeviceType::SIMA_CVU,
             "direct EV74 device mismatch");
     require(direct.storage && direct.storage->sima_segments.size() == 1U,
@@ -184,7 +375,7 @@ int main() {
         simaai::neat::TensorMemory::CPU);
     std::vector<simaai::neat::Segment> direct_segments_1{{"ifm0", direct_data_1.size()}};
     auto direct_1 = simaai::neat::pipeline_internal::transfer_to_device(
-        direct_cpu_1, {simaai::neat::DeviceType::SIMA_CVU, 0}, &direct_segments_1, nullptr);
+        direct_cpu_1, {simaai::neat::DeviceType::SIMA_CVU, 0}, &direct_segments_1);
     direct.route.name = "image_l";
     direct.route.backend_name = "input_tensor";
     direct.route.segment_name = "input_tensor";
@@ -264,7 +455,7 @@ int main() {
       simaai::neat::TensorList distinct;
       for (guint i = 0U; i <= gst_buffer_get_max_memory(); ++i) {
         distinct.push_back(simaai::neat::pipeline_internal::transfer_to_device(
-            direct_cpu, {simaai::neat::DeviceType::SIMA_CVU, 0}, &direct_segments, nullptr));
+            direct_cpu, {simaai::neat::DeviceType::SIMA_CVU, 0}, &direct_segments));
       }
       auto rejected_input = simaai::neat::sample_from_tensors(distinct);
       rejected_input.payload_type = simaai::neat::PayloadType::Tensor;
@@ -362,6 +553,8 @@ int main() {
                   gst_buffer_get_parent_buffer_meta(retained_buffer) != nullptr,
               "retained envelope lost its DMA allocation or producer lease");
     }
+
+    check_compact_transfer_metadata(mla_pref);
 
     std::cout << "[OK] tensor_device_placement_test passed\n";
     return 0;
