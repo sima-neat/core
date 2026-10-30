@@ -35,9 +35,115 @@ static void add_sima_meta(GstBuffer* buffer) {
                     static_cast<gint64>(99), nullptr);
 }
 
+static void check_selected_carrier_transfer(simaai::neat::Device target) {
+  using namespace simaai::neat;
+  using namespace simaai::neat::pipeline_internal;
+  bool released = false;
+  auto buffer = std::shared_ptr<GstBuffer>(gst_buffer_new(), gst_buffer_unref);
+  gst_buffer_append_memory(buffer.get(), gst_allocator_alloc(nullptr, 32, nullptr));
+  gst_buffer_append_memory(buffer.get(), gst_allocator_alloc(nullptr, 128, nullptr));
+  gst_mini_object_weak_ref(
+      GST_MINI_OBJECT(buffer.get()),
+      [](gpointer flag, GstMiniObject*) { *static_cast<bool*>(flag) = true; }, &released);
+  auto parent = std::shared_ptr<GstBuffer>(gst_buffer_new(), gst_buffer_unref);
+  require(gst_buffer_add_parent_buffer_meta(buffer.get(), parent.get()) != nullptr,
+          "producer loan fixture");
+  add_sima_meta(buffer.get());
+  InputOptions options;
+  options.preprocess_meta.emplace();
+  options.preprocess_meta->enabled = true;
+  options.preprocess_meta->target_width = options.preprocess_meta->target_height = 640;
+  options.preprocess_meta->resize_mode = "letterbox";
+  require(apply_simaai_preprocess_meta_template(buffer.get(), options, 1280, 720),
+          "transfer preprocess fixture");
+  GST_BUFFER_PTS(buffer.get()) = 1234;
+  auto sample = std::shared_ptr<GstSample>(gst_sample_new(buffer.get(), nullptr, nullptr, nullptr),
+                                           gst_sample_unref);
+  Tensor source;
+  source.storage = make_gst_sample_storage(sample.get());
+  source = tensor_view_from_sample_memory(source, 1);
+  source.storage->sima_segments = {{"small", 32}, {"selected", 128}};
+  source.dtype = TensorDType::UInt8;
+  source.layout = TensorLayout::HW;
+  source.shape = {4, 16};
+  source.strides_bytes = {24, 1};
+  source.byte_offset = 8;
+  source.route.physical_byte_offset = 8;
+  source.route.stage_key = "encoder";
+  source.route.name = "features";
+  source.route.logical_index = 7;
+  source.route.physical_index = 17;
+  source.route.memory_index = 1;
+  source.route.segment_name = "selected";
+  {
+    auto mapping = source.storage->map(MapMode::Write);
+    require(mapping.data && mapping.size_bytes >= 128, "selected carrier map");
+    for (unsigned i = 0; i < 128; ++i)
+      static_cast<std::uint8_t*>(mapping.data)[i] = static_cast<std::uint8_t>(i);
+  }
+  const auto transfer = [&](const Tensor& tensor) {
+    return target.type == DeviceType::CPU ? transfer_to_cpu(tensor) : tensor.to(target);
+  };
+  auto copy = transfer(source);
+  require(copy.byte_offset == 0 && copy.strides_bytes == std::vector<int64_t>({16, 1}),
+          "transfer must pack the selected strided view");
+  require(copy.route.memory_index == 0 && copy.route.physical_byte_offset == 0 &&
+              copy.route.physical_index == 17 && copy.route.logical_index == 7 &&
+              copy.route.stage_key == "encoder" && copy.route.name == "features",
+          "transfer must rebase storage selection and preserve logical provenance");
+  if (target.type != DeviceType::CPU) {
+    require(copy.storage->sima_segments.size() == 1 &&
+                copy.storage->sima_segments[0].size_bytes == 64,
+            "transfer retained unrelated producer segments");
+    auto* destination = gst_sample_get_buffer(static_cast<GstSample*>(copy.storage->holder.get()));
+    require(gst_buffer_get_parent_buffer_meta(destination) == nullptr,
+            "transfer retained the producer loan");
+    require(GST_BUFFER_PTS(destination) == 1234, "transfer lost presentation time");
+    const auto preprocess = read_simaai_preprocess_meta(destination);
+    require(preprocess && preprocess->original_width == 1280 && preprocess->original_height == 720,
+            "transfer lost preprocessing geometry");
+    std::string error;
+    auto ingress = sample_to_gst_envelope_holder(sample_from_tensors({copy}), &error, true);
+    require(ingress != nullptr, "transferred tensor cannot reenter a graph: " + error);
+  }
+  {
+    Tensor tiled = source;
+    tiled.dtype = TensorDType::BFloat16;
+    tiled.shape = {1, 1, 1, 9};
+    tiled.strides_bytes.clear();
+    TessSpec tess;
+    tess.format = "MLA_TILED_BF16_PAD16";
+    tess.slice_shape = {1, 1, 1, 16};
+    tess.axes = {0, 1, 2, 3};
+    tess.storage_bytes = 32;
+    tiled.semantic.tess = tess;
+    const auto transferred = transfer(tiled);
+    require(transferred.has_tiled_storage() && transferred.strides_bytes.empty() &&
+                transferred.semantic.tess->storage_bytes == 32,
+            "transfer lost the padded tiled layout");
+    const auto bytes = transferred.copy_payload_bytes();
+    require(bytes.size() == 32, "transfer truncated tile padding");
+    for (unsigned i = 0; i < bytes.size(); ++i)
+      require(bytes[i] == 8 + i, "transfer changed tiled payload or padding");
+  }
+  source = {};
+  sample.reset();
+  buffer.reset();
+  require(released, "transfer retained its producer");
+  const auto bytes = copy.copy_dense_bytes_tight();
+  require(bytes.size() == 64, "transferred payload length");
+  for (unsigned row = 0; row < 4; ++row)
+    for (unsigned col = 0; col < 16; ++col)
+      require(bytes[row * 16 + col] == 8 + row * 24 + col, "transferred payload mismatch");
+}
+
 int main() {
   try {
     simaai::neat::gst_init_once();
+
+    check_selected_carrier_transfer({simaai::neat::DeviceType::SIMA_CVU, 0});
+    check_selected_carrier_transfer({simaai::neat::DeviceType::SIMA_MLA, 0});
+    check_selected_carrier_transfer({simaai::neat::DeviceType::CPU, 0});
 
     std::vector<simaai::neat::Segment> segments = {
         {"seg0", 64},
@@ -56,6 +162,12 @@ int main() {
 
     simaai::neat::Tensor t_ev74 = simaai::neat::pipeline_internal::transfer_to_device(
         seed, {simaai::neat::DeviceType::SIMA_CVU, 0}, &segments, nullptr);
+    require(t_ev74.storage->sima_segments.size() == 2U &&
+                t_ev74.storage->sima_segments[0].name == "seg0" &&
+                t_ev74.storage->sima_segments[0].size_bytes == 64U &&
+                t_ev74.storage->sima_segments[1].name == "seg1" &&
+                t_ev74.storage->sima_segments[1].size_bytes == 32U,
+            "transfer lost the explicit destination segment layout");
     auto* ev74_sample = static_cast<GstSample*>(t_ev74.storage->holder.get());
     GstBuffer* ev74_buf = ev74_sample ? gst_sample_get_buffer(ev74_sample) : nullptr;
     require(ev74_buf != nullptr, "missing EV74 DMA-BUF");
@@ -124,25 +236,14 @@ int main() {
     GstBuffer* out_buf =
         simaai::neat::pipeline_internal::buffer_from_tensor_holder(dms_copy.storage->holder);
     require(out_buf != nullptr, "missing output GstBuffer");
-    GstCustomMeta* out_meta = gst_buffer_get_custom_meta(out_buf, "GstSimaMeta");
-    require(out_meta != nullptr, "missing GstSimaMeta on transfer");
-    GstStructure* meta_s = gst_custom_meta_get_structure(out_meta);
-    require(meta_s != nullptr, "missing meta structure");
-    gint64 out_id = 0;
-    gst_structure_get_int64(meta_s, "buffer-id", &out_id);
-    require(out_id == 42, "meta buffer-id mismatch");
-    const gchar* out_name = gst_structure_get_string(meta_s, "buffer-name");
-    require(out_name && std::string(out_name) == "unit-test", "meta buffer-name mismatch");
-
+    require(gst_buffer_get_custom_meta(out_buf, "GstSimaMeta") == nullptr,
+            "transfer must not retain the producer's allocation identity");
     require(gst_buffer_n_memory(out_buf) == 1U &&
                 gst_is_dmabuf_memory(gst_buffer_peek_memory(out_buf, 0U)),
             "MLA transfer must preserve standard DMA-BUF storage");
-    require(dms_copy.storage->sima_segments.size() == 2U &&
-                dms_copy.storage->sima_segments[0].name == "seg0" &&
-                dms_copy.storage->sima_segments[0].size_bytes == 64U &&
-                dms_copy.storage->sima_segments[1].name == "seg1" &&
-                dms_copy.storage->sima_segments[1].size_bytes == 32U,
-            "MLA transfer lost logical segment metadata");
+    require(dms_copy.storage->sima_segments.size() == 1U &&
+                dms_copy.storage->sima_segments[0].size_bytes == 96U,
+            "implicit transfer must describe only the copied payload");
     gst_buffer_unref(out_buf);
 
     simaai::neat::Tensor dms_copy2 = t_ev74.mla(true);

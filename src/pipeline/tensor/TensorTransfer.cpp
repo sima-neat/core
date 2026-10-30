@@ -24,14 +24,14 @@
  *  - If required_segments is provided, it is used as the destination segment layout.
  *  - Else if required_segment_names is provided, we reuse the segment layout from src.storage
  *    and validate the required names exist.
- *  - Else if src.storage already has segment layout, reuse it.
- *  - Else allocate a single default segment: {"tensor", payload_bytes}.
+ *  - Else allocate one segment for the selected payload: {"tensor", payload_bytes}.
  *
  */
 
 #include "pipeline/internal/TensorTransfer.h"
 
 #include "pipeline/internal/GstDataAdapter.h"
+#include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/TensorMath.h"
@@ -368,8 +368,6 @@ std::vector<Segment> resolve_segments(const Tensor& src,
       throw std::runtime_error("transfer: required segment names but no segment layout");
     }
     segments = src.storage->sima_segments;
-  } else if (src.storage && !src.storage->sima_segments.empty()) {
-    segments = src.storage->sima_segments;
   }
 
   if (segments.empty()) {
@@ -414,15 +412,15 @@ std::uint64_t target_flags_from_device(const Device& target) {
   return 0;
 }
 
-/** Copy “lightweight” buffer metadata/timestamps/flags from src to dst when available. */
-void copy_gst_metadata(GstBuffer* dst, GstBuffer* src) {
-  if (!dst || !src)
-    return;
-  const GstBufferCopyFlags flags = static_cast<GstBufferCopyFlags>(
-      GST_BUFFER_COPY_METADATA | GST_BUFFER_COPY_TIMESTAMPS | GST_BUFFER_COPY_FLAGS);
-  gst_buffer_copy_into(dst, src, flags, 0, -1);
-  copy_custom_meta(dst, src, "GstSimaMeta");
-  copy_custom_meta(dst, src, "GstSimaSampleMeta");
+// A new allocation must not inherit producer bindings, layout or parent-buffer loans.
+bool copy_gst_metadata(GstBuffer* dst, GstBuffer* src, std::string* error) {
+  const auto flags =
+      static_cast<GstBufferCopyFlags>(GST_BUFFER_COPY_TIMESTAMPS | GST_BUFFER_COPY_FLAGS);
+  if (!gst_buffer_copy_into(dst, src, flags, 0, -1)) {
+    *error = "failed to copy buffer timing";
+    return false;
+  }
+  return !has_simaai_preprocess_meta(src) || copy_simaai_preprocess_meta(dst, src, error);
 }
 
 /**
@@ -449,6 +447,8 @@ Tensor finalize_transfer_tensor(const Tensor& src, const std::shared_ptr<Storage
   out.device = storage->device;
   out.read_only = false;
   out.byte_offset = 0;
+  out.route.memory_index = 0;
+  out.route.physical_byte_offset = 0;
 
   // Dense: ensure contiguous strides.
   out.strides_bytes =
@@ -529,8 +529,13 @@ Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
     std::string holder_error;
     GstBuffer* src_buffer = buffer_from_holder_if_gstsample(src, &holder_error);
     if (src_buffer) {
-      copy_gst_metadata(dst, src_buffer);
+      std::string metadata_error;
+      const bool copied_metadata = copy_gst_metadata(dst, src_buffer, &metadata_error);
       gst_buffer_unref(src_buffer);
+      if (!copied_metadata) {
+        gst_buffer_unref(dst);
+        throw std::runtime_error("transfer: " + metadata_error);
+      }
     }
   }
 
