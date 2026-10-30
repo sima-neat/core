@@ -40,8 +40,6 @@ GenAI calls LLiMa directly, not through Runner or a Scheduler GenAI adapter. MLA
 a separate, default-off pass: Core calls Scheduler's client, and Runner runs the installed `mla-rt`
 command-line tool. It requires an idle DevKit with no other MLA work.
 
-GenAI checks context limits using the already-tokenized prompt and preserves conversation history. Runtime `FULL` signals become the `length` finish reason.
-
 ---
 
 ## GStreamer interface ownership
@@ -404,7 +402,7 @@ between implementation options.
 - **Detess logical rank and runtime geometry are separate.** Preserve the MPK-authored `frame_shape`; accept rank-2 NC/HW interpretations only when byte spans identify one unambiguous geometry. Fused DetessDequant carries both descriptors through one per-frame contract: tile rank determines kernel rank, leading batch dimensions stay separate, and semantic axes, byte spans, strides and explicit tiled-storage encoding remain authoritative. Core forwards these canonical typed contracts through Scheduler; Kernels validates the selected operation and encoding. Do not reconstruct a ProcessCVU prepared request across the DSO boundary.
 - **Numerical backend policy has one authority.** The checked capability owns supported targets and AUTO preference. Explicit stage or session targets either run on the requested supported backend or fail; later role-based overrides must not contradict that decision.
 - **Public APIs stay stable.** Public headers under `include/*` are installed and supported.
-  Prefer additive changes and deprecation paths over breaking signatures.
+  Prefer additive changes and deprecation paths over breaking signatures. Internal visibility defines must not change public object layouts; keep opaque implementation handles unconditional.
 - **Concurrency must be bounded and observable.** Streaming-thread work should be lightweight;
   probe-side diagnostics need atomics or equivalent thread-safe handling; teardown must not hang.
 
