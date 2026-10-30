@@ -19,7 +19,6 @@
 #include <optional>
 #include <sstream>
 #include <stdexcept>
-#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -329,13 +328,11 @@ bool populate_tensor_contract_from_stage_tensor(
     return false;
   }
   auto shape = preferred_tensor_shape(tensor);
-  if constexpr (std::is_same_v<ContractT, EgressTensorContract>) {
-    // Image routing uses normalized dimensions, but public output metadata
-    // must retain the authored tensor rank, including a singleton batch.
-    if (tensor.shape_semantics == pipeline_internal::sima::MpkShapeSemantics::Geometry &&
-        !tensor.mpk_shape.empty()) {
-      shape = tensor.mpk_shape;
-    }
+  // Tensor boundary metadata retains authored rank; image routing uses normalized dimensions.
+  if (media_type != "video/x-raw" &&
+      tensor.shape_semantics == pipeline_internal::sima::MpkShapeSemantics::Geometry &&
+      !tensor.mpk_shape.empty()) {
+    shape = tensor.mpk_shape;
   }
   const auto parsed_shape = parse_tensor_shape_contract(shape);
   if (!parsed_shape.valid) {

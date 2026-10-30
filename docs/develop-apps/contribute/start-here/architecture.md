@@ -986,8 +986,10 @@ intermediate copy.
 Multiple MLA OFMs may be logical views of one allocation. Descriptors sharing an allocation retain its parent segment; logical/backend names preserve port identity, and allocation-local spans preserve each view. Publication describes the finalized `FrameLayout` without reconstructing packed outputs.
 
 Core may simplify singleton batch dimensions in internal conversion descriptors
-when the execution view preserves the same addressed bytes. Model tensor shapes,
-batch routing, and public APIs remain unchanged.
+when the execution view preserves the same addressed bytes. Tensor `Model::input_specs()`
+and `output_specs()` retain the MPK-authored rank, including batch one. HWC input
+shorthand remains accepted for batch-one models; image preprocessing keeps its
+dynamic image contract.
 
 ##### Direct runtime execution
 

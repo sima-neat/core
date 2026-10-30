@@ -5,6 +5,8 @@
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <nlohmann/json.hpp>
+
 #include <cstring>
 #include <cstdint>
 #include <filesystem>
@@ -23,9 +25,8 @@ std::string require_yolov9_tar() {
   return fixture.tar_path;
 }
 
-void check_ingress_memory_policy() {
-  const auto cast_fixture = sima_test::make_model_archive_fixture("model_input_memory_cast",
-                                                                  {{"etc/cast_mpk.json", R"json({
+sima_test::ModelArchiveFixture make_cast_ingress_fixture(const std::vector<int64_t>& shape) {
+  auto mpk = nlohmann::json::parse(R"json({
   "name": "cast_ingress", "model_path": "cast.onnx", "model_sdk_version": "3.0.0",
   "input_nodes": [{"name": "input", "type": "buffer", "size": 192}],
   "plugins": [
@@ -47,7 +48,50 @@ void check_ingress_memory_policy() {
      "input_nodes": [{"name": "MLA_0", "size": 32}],
      "output_nodes": [{"name": "output", "type": "buffer", "size": 64}]}
   ]
-})json"}});
+})json");
+  const int64_t batch = shape.size() == 4U ? shape.front() : 1;
+  auto& plugins = mpk["plugins"];
+  plugins[0]["config_params"]["params"]["input_shapes"] = {shape};
+  plugins[0]["config_params"]["params"]["output_shapes"] = {shape};
+  plugins[1]["config_params"] = {{"desired_batch_size", batch}, {"actual_batch_size", batch}};
+  plugins[2]["config_params"]["params"]["input_shapes"] = {{batch, 16}};
+  plugins[2]["config_params"]["params"]["output_shapes"] = {{batch, 16}};
+  mpk["input_nodes"][0]["size"] = 192 * batch;
+  for (auto& plugin : plugins) {
+    for (const auto* side : {"input_nodes", "output_nodes"})
+      for (auto& tensor : plugin[side])
+        tensor["size"] = tensor["size"].get<int64_t>() * batch;
+  }
+  return sima_test::make_model_archive_fixture(
+      "model_input_cast_rank" + std::to_string(shape.size()) + "_batch" + std::to_string(batch),
+      {{"etc/cast_mpk.json", mpk.dump()}});
+}
+
+void check_tensor_shape_metadata() {
+  for (const auto& shape : {std::vector<int64_t>{4, 4, 3}, {1, 4, 4, 3}, {2, 4, 4, 3}}) {
+    const auto fixture = make_cast_ingress_fixture(shape);
+    Model::Options options;
+    options.preprocess.kind = InputKind::Tensor;
+    Model model(fixture.tar_path, options);
+    const auto specs = model.input_specs();
+    require(specs.size() == 1U && specs[0].shape == shape &&
+                specs[0].rank == static_cast<int>(shape.size()),
+            "tensor input metadata must retain the authored rank, including batch one");
+    const std::vector<int64_t> hwc_shape{4, 4, 3};
+    InputGeometry hwc;
+    hwc.shape = hwc_shape;
+    hwc.layout = TensorLayout::HWC;
+    const bool batched = shape.size() == 4U && shape.front() > 1;
+    require(input_geometry_matches_logical_shape(hwc, specs[0].shape, TensorLayout::HWC) ==
+                !batched,
+            "HWC shorthand must remain valid only for a batch-one tensor contract");
+    require(model.compiled_batch_size() == (batched ? 2 : 1),
+            "metadata rank must not change the compiled batch size");
+  }
+}
+
+void check_ingress_memory_policy() {
+  const auto cast_fixture = make_cast_ingress_fixture({1, 4, 4, 3});
   for (const auto& path : {cast_fixture.tar_path, require_yolov9_tar()}) {
     for (const auto* target : {"AUTO", "EV74", "A65"}) {
       const auto expected =
@@ -429,6 +473,7 @@ RUN_TEST(
       check_synthetic_image_inputs();
       check_synthetic_tensor_contract_shapes();
       check_ingress_memory_policy();
+      check_tensor_shape_metadata();
 
       {
         const std::string tar = require_yolov9_tar();
@@ -437,13 +482,24 @@ RUN_TEST(
         require(specs.size() == 1U, "Model::input_specs should expose one yolov9 input");
         const TensorSpec& spec = specs.front();
 
-        require(spec.rank == 3, "Model::input_specs rank should be 3 for yolov9 tensor ingress");
-        require(spec.shape == std::vector<int64_t>({640, 640, 3}),
+        require(spec.rank == 4, "Model::input_specs must retain the authored yolov9 batch axis");
+        require(spec.shape == std::vector<int64_t>({1, 640, 640, 3}),
                 "Model::input_specs should expose yolov9 Model boundary tensor ingress shape");
         require(!spec.dtypes.empty() && spec.dtypes[0] == TensorDType::Float32,
                 "Model::input_specs should expose yolov9 Model boundary ingress dtype");
         require(!spec.image_format.has_value(),
                 "Tensor ingress Model::input_specs should not expose image_format");
+      }
+
+      {
+        Model::Options options;
+        options.preprocess.kind = InputKind::Image;
+        Model model(require_yolov9_tar(), options);
+        const auto specs = model.input_specs();
+        require(specs.size() == 1U && specs[0].rank == 3 &&
+                    specs[0].shape == std::vector<int64_t>({-1, -1, 3}) &&
+                    specs[0].image_format.has_value(),
+                "image preprocessing must retain its dynamic HWC input contract");
       }
 
       {
@@ -510,9 +566,9 @@ RUN_TEST(
         const auto specs = model.input_specs();
         require(specs.size() == 2U,
                 "Model::input_specs should expose both ordered ingress tensors");
-        require(specs[0].shape == std::vector<int64_t>({4, 4, 1}),
+        require(specs[0].shape == std::vector<int64_t>({1, 4, 4, 1}),
                 "first ingress spec should expose image_l geometry");
-        require(specs[1].shape == std::vector<int64_t>({2, 4, 1}),
+        require(specs[1].shape == std::vector<int64_t>({1, 2, 4, 1}),
                 "second ingress spec should expose image_uv geometry");
         require(!specs[0].dtypes.empty() && specs[0].dtypes[0] == TensorDType::Float32,
                 "multi-ingress input_specs should preserve ingress dtype");
