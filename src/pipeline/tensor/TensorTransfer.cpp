@@ -37,12 +37,14 @@
 #include <simaai/scheduler/client/dma_memory.h>
 
 #include <gst/gst.h>
+#include <gstsimaaitensorbuffer_meta.h>
 
 #include <cstdint>
 #include <cstring>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -381,10 +383,69 @@ bool copy_gst_metadata(GstBuffer* dst, GstBuffer* src, std::string* error) {
     return false;
   }
   try {
-    const auto preprocess = read_simaai_preprocess_meta(src);
-    if (!preprocess || write_simaai_preprocess_meta(dst, *preprocess))
+    using namespace simaai::gst;
+    const auto* frame = tensor_buffer_frame_metadata(src, error);
+    if (!error->empty()) {
+      *error = "compact frame metadata: " + *error;
+      return false;
+    }
+    auto* legacy = gst_buffer_get_custom_meta(src, "GstSimaMeta");
+    if (!frame && !legacy)
       return true;
-    *error = "failed to write preprocessing metadata";
+    auto* metadata = gst_buffer_add_custom_meta(dst, "GstSimaMeta");
+    if (!metadata) {
+      *error = "failed to copy frame metadata";
+      return false;
+    }
+    auto* fields = gst_custom_meta_get_structure(metadata);
+    if (frame) {
+      gst_structure_set(fields, "frame-id", G_TYPE_INT64, gint64(frame->frame_id), "stream-id",
+                        G_TYPE_STRING, frame->stream_id.c_str(), "timestamp", G_TYPE_UINT64,
+                        guint64(frame->timestamp), nullptr);
+      if (frame->input_sequence)
+        gst_structure_set(fields, "input-seq", G_TYPE_INT64, gint64(*frame->input_sequence),
+                          nullptr);
+      if (frame->original_sequence)
+        gst_structure_set(fields, "orig-input-seq", G_TYPE_INT64, gint64(*frame->original_sequence),
+                          nullptr);
+      tensor_buffer_write_preprocess_facts(fields, frame->preprocess, true);
+    } else {
+      auto* source_fields = gst_custom_meta_get_structure(legacy);
+      for (const auto* name : {"frame-id", "input-seq", "orig-input-seq", "stream-id",
+                               "orig-stream-id", "timestamp"}) {
+        if (const auto* value = gst_structure_get_value(source_fields, name))
+          gst_structure_set_value(fields, name, value);
+      }
+      const auto preprocess = read_simaai_preprocess_meta(src);
+      if (preprocess && !write_simaai_preprocess_meta(dst, *preprocess)) {
+        *error = "failed to write preprocessing metadata";
+        return false;
+      }
+    }
+    // Source timing is independent of the producing stage's frame and allocation IDs.
+    TensorBufferSourceValues source;
+    if (!tensor_buffer_read_source_values(src, &source, error))
+      return false;
+    using Values = TensorBufferSourceValues;
+    for (const auto& [flag, name] : {std::pair{Values::FrameIdValid, "sample-frame-id-valid"},
+                                     {Values::PtsValid, "sample-pts-valid"},
+                                     {Values::DtsValid, "sample-dts-valid"},
+                                     {Values::DurationValid, "sample-duration-valid"}}) {
+      if (source.has(flag))
+        gst_structure_set(fields, name, G_TYPE_BOOLEAN, gboolean(source.is_valid(flag)), nullptr);
+    }
+    if (source.has(Values::FrameId))
+      gst_structure_set(fields, "sample-frame-id", G_TYPE_INT64, gint64(source.frame_id), nullptr);
+    for (const auto& [flag, name, value] :
+         {std::tuple{Values::Pts, "sample-pts-ns", source.pts_ns},
+          {Values::Dts, "sample-dts-ns", source.dts_ns},
+          {Values::Duration, "sample-duration-ns", source.duration_ns},
+          {Values::Offset, "sample-offset", source.offset},
+          {Values::OffsetEnd, "sample-offset-end", source.offset_end}}) {
+      if (source.has(flag))
+        gst_structure_set(fields, name, G_TYPE_UINT64, guint64(value), nullptr);
+    }
+    return true;
   } catch (const std::exception& exception) {
     *error = exception.what();
   }

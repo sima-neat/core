@@ -32,12 +32,32 @@ static void add_sima_meta(GstBuffer* buffer) {
   require(s != nullptr, "missing GstSimaMeta structure");
   gst_structure_set(s, "buffer-id", G_TYPE_INT64, static_cast<gint64>(42), "buffer-name",
                     G_TYPE_STRING, "unit-test", "frame-id", G_TYPE_INT64, static_cast<gint64>(7),
-                    "stream-id", G_TYPE_STRING, "0", "timestamp", G_TYPE_UINT64,
+                    "input-seq", G_TYPE_INT64, gint64(8), "orig-input-seq", G_TYPE_INT64, gint64(9),
+                    "stream-id", G_TYPE_STRING, "camera-A", "timestamp", G_TYPE_UINT64,
                     static_cast<guint64>(123), "pcie-buffer-id", G_TYPE_INT64,
                     static_cast<gint64>(99), nullptr);
 }
 
-static void check_transfer_metadata_failure(const simaai::neat::Tensor& source) {
+static void check_transferred_lineage(const simaai::neat::Tensor& tensor, int64_t frame_id = 7) {
+  using namespace simaai::neat;
+  using namespace simaai::neat::pipeline_internal;
+  auto* buffer = gst_sample_get_buffer(static_cast<GstSample*>(tensor.storage->holder.get()));
+  auto* meta = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
+  require(meta != nullptr, "transfer lost frame metadata");
+  for (const auto* name : {"buffer-id", "buffer-name", "buffer-offset", "pcie-buffer-id"})
+    require(!gst_structure_has_field(gst_custom_meta_get_structure(meta), name),
+            "transfer retained producer allocation identity");
+  std::string error;
+  auto ingress = sample_to_gst_envelope_holder(sample_from_tensors({tensor}), &error, true);
+  require(ingress != nullptr, "transferred tensor cannot reenter a graph: " + error);
+  const auto restored = sample_from_gst_envelope(static_cast<GstSample*>(ingress.get()),
+                                                 "transfer regression", false, nullptr);
+  require(restored.frame_id == frame_id && restored.input_seq == 8 &&
+              restored.orig_input_seq == 9 && restored.stream_id == "camera-A",
+          "tensor-only graph reentry lost frame lineage");
+}
+
+static void check_compact_transfer_metadata(const simaai::neat::Tensor& source) {
   using namespace simaai::gst;
   auto* buffer = gst_sample_get_buffer(static_cast<GstSample*>(source.storage->holder.get()));
   const auto bytes = source.dense_bytes_tight();
@@ -60,7 +80,30 @@ static void check_transfer_metadata_failure(const simaai::neat::Tensor& source) 
           error);
   const auto publication = tensor_buffer_freeze_publication(prepared, &error);
   require(publication && tensor_buffer_attach_publication(buffer, publication, &error), error);
-  require(tensor_buffer_attach_frame_metadata(buffer, TensorBufferFrameMetadata{}, &error), error);
+  TensorBufferFrameMetadata frame;
+  frame.buffer_id = 42;
+  frame.frame_id = 7;
+  frame.input_sequence = 8;
+  frame.original_sequence = 9;
+  frame.stream_id = "camera-A";
+  require(tensor_buffer_attach_frame_metadata(buffer, frame, &error), error);
+  check_transferred_lineage(source.mla(true));
+  TensorBufferSourceValues timing;
+  timing.present = TensorBufferSourceValues::FrameIdValid | TensorBufferSourceValues::FrameId |
+                   TensorBufferSourceValues::PtsValid | TensorBufferSourceValues::Offset;
+  timing.offset = 81;
+  timing.valid = TensorBufferSourceValues::FrameIdValid;
+  timing.frame_id = 17;
+  require(tensor_buffer_attach_frame_metadata(buffer, frame, timing, &error), error);
+  const auto transferred = source.mla(true);
+  check_transferred_lineage(transferred, 17);
+  TensorBufferSourceValues restored;
+  auto* transferred_buffer =
+      gst_sample_get_buffer(static_cast<GstSample*>(transferred.storage->holder.get()));
+  require(tensor_buffer_read_source_values(transferred_buffer, &restored, &error), error);
+  require(restored.present == timing.present && restored.valid == timing.valid &&
+              restored.offset == timing.offset,
+          "transfer changed source timing presence or validity");
   add_sima_meta(buffer); // Competing authorities must fail without leaking the retained source.
   const auto references = GST_MINI_OBJECT_REFCOUNT_VALUE(buffer);
   bool rejected = false;
@@ -141,13 +184,7 @@ static void check_selected_carrier_transfer(simaai::neat::Device target) {
     const auto preprocess = read_simaai_preprocess_meta(destination);
     require(preprocess && preprocess->original_width == 1280 && preprocess->original_height == 720,
             "transfer lost preprocessing geometry");
-    auto* metadata = gst_buffer_get_custom_meta(destination, "GstSimaMeta");
-    require(metadata &&
-                !gst_structure_has_field(gst_custom_meta_get_structure(metadata), "buffer-id"),
-            "transfer copied the producer buffer-id with preprocessing metadata");
-    std::string error;
-    auto ingress = sample_to_gst_envelope_holder(sample_from_tensors({copy}), &error, true);
-    require(ingress != nullptr, "transferred tensor cannot reenter a graph: " + error);
+    check_transferred_lineage(copy);
   }
   {
     Tensor tiled = source;
@@ -279,8 +316,7 @@ int main() {
     GstBuffer* out_buf =
         simaai::neat::pipeline_internal::buffer_from_tensor_holder(dms_copy.storage->holder);
     require(out_buf != nullptr, "missing output GstBuffer");
-    require(gst_buffer_get_custom_meta(out_buf, "GstSimaMeta") == nullptr,
-            "transfer must not retain the producer's allocation identity");
+    check_transferred_lineage(dms_copy);
     require(gst_buffer_n_memory(out_buf) == 1U &&
                 gst_is_dmabuf_memory(gst_buffer_peek_memory(out_buf, 0U)),
             "MLA transfer must preserve standard DMA-BUF storage");
@@ -507,7 +543,7 @@ int main() {
               "retained envelope lost its DMA allocation or producer lease");
     }
 
-    check_transfer_metadata_failure(mla_pref);
+    check_compact_transfer_metadata(mla_pref);
 
     std::cout << "[OK] tensor_device_placement_test passed\n";
     return 0;
