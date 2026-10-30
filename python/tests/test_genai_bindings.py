@@ -232,7 +232,7 @@ def _make_request():
 
 
 def _assert_finish_reason(value):
-  assert value in ("stop", "interrupted")
+  assert value in ("stop", "length", "interrupted")
 
 
 def _assert_asr_metadata(result, expected_language="en"):
