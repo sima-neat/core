@@ -306,7 +306,8 @@ preserved. Retained and independent outputs both use `StorageKind::GstSample`;
 that storage kind identifies the carrier, not its ownership policy.
 `Sample::owned` identifies an independent output. Allocation failure is reported
 as a pull error. To pass an output into a separate graph with an EV74 input stage,
-copy it explicitly with `tensor.cvu()` first. `ZeroCopy` preserves the producer’s
+call `tensor.cvu()` first: it returns tensors already in EV74 memory unchanged
+and copies other tensors into EV74 memory. `ZeroCopy` preserves the producer’s
 storage and does not guarantee EV74 accessibility.
 
 `Tensor::cpu()` copies a device tensor into host memory and returns a tensor that is
