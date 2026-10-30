@@ -412,8 +412,9 @@ void test_graph_scoped_encoded_output_owned_copy_releases_source() {
               captured.duration_ns == static_cast<std::int64_t>(kDuration),
           "owned encoded Output should preserve timing");
   require(captured.tensors.size() == 1U && captured.tensors.front().storage &&
-              simaai::neat::pipeline_internal::sample_has_dmabuf_memory(captured),
-          "owned encoded Output must copy into independent DMA-BUF storage");
+              captured.tensors.front().device.type == simaai::neat::DeviceType::CPU &&
+              !simaai::neat::pipeline_internal::sample_has_dmabuf_memory(captured),
+          "owned encoded Output must copy into independent system memory");
 
   gst_buffer_unref(source);
   gst_caps_unref(caps);

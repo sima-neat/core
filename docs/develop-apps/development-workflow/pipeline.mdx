@@ -298,16 +298,20 @@ when you finish reading so the producer can reuse its buffers. Queue pressure
 does not switch DMA-BUF outputs to copies or silently turn `Block` into dropping;
 explicit latest-frame/drop policies still apply.
 
-Use `OutputMemory::Owned` for an independent DMA-BUF copy that can enter another
-graph without a second staging copy. Packed tensor heads share the copied carrier;
-their offsets, padded strides and numerical metadata are preserved. The copy does
-not retain the producer pool loan. Both retained and independent DMA-BUF outputs
-use `StorageKind::GstSample`; that storage kind identifies the carrier, not its
-ownership policy. `Sample::owned` identifies an independent output.
-Allocation failure is reported rather than
-silently falling back to host memory.
+Use `OutputMemory::Owned` when the application keeps outputs on the CPU. Each pull
+copies the selected outputs into independent system memory, so a retained output
+holds neither the producer pool loan nor device (CMA) memory. Packed tensor heads
+share the copied carrier; their offsets, padded strides and numerical metadata are
+preserved. Retained and independent outputs both use `StorageKind::GstSample`;
+that storage kind identifies the carrier, not its ownership policy.
+`Sample::owned` identifies an independent output. Allocation failure is reported
+as a pull error. To pass an output into a graph that starts with a device stage
+such as `Preproc`, use `ZeroCopy`, or copy the tensor to the device with
+`Tensor::to(...)` first.
 
-Use `Tensor::cpu()` or `clone()` for an independent host-memory copy. Explicit software conversion and `advanced.copy_input` remain copy
+`Tensor::cpu()` copies a device tensor into host memory and returns a tensor that is
+already in host memory, such as an `Owned` output, without copying. Use `clone()` for
+an independent copy. Explicit software conversion and `advanced.copy_input` remain copy
 boundaries. `SIMA_OUTPUT_MEMORY_DEFAULT=owned` deliberately selects owned output
 for `Auto`; it does not override an explicit per-run choice.
 

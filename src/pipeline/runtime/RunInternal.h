@@ -121,6 +121,20 @@ inline bool sample_has_zero_copy_tensor(const Sample& sample) {
   return false;
 }
 
+// A Bundle's own owned flag does not describe its fields, so check every leaf. A borrowed leaf
+// still references the producer's buffer; an owned GstSample leaf is already a copy.
+inline bool sample_has_borrowed_zero_copy_tensor(const Sample& sample) {
+  if (sample.kind == SampleKind::Bundle) {
+    return std::any_of(sample.fields.begin(), sample.fields.end(),
+                       sample_has_borrowed_zero_copy_tensor);
+  }
+  if (sample.owned)
+    return false;
+  if (sample.tensor && tensor_is_zero_copy(*sample.tensor))
+    return true;
+  return std::any_of(sample.tensors.begin(), sample.tensors.end(), tensor_is_zero_copy);
+}
+
 inline void maybe_force_copy_for_backpressure(Sample& sample, std::size_t qsize, const char* where,
                                               bool debug_enabled) {
   if (!sample_has_zero_copy_tensor(sample) || pipeline_internal::sample_has_dmabuf_memory(sample))

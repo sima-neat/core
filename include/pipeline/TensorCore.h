@@ -75,7 +75,7 @@ struct Device {
  * default — framework allocated, framework frees. `CpuExternal` wraps a foreign pointer
  * (cv::Mat data, NumPy array, mmap'd file). `GstSample` carries a reference to a GStreamer
  * sample. That sample may retain a producer pool loan (`Auto`/`ZeroCopy`) or own an independent
- * DMA-BUF allocation (`Owned`); the storage kind alone does not distinguish them.
+ * system-memory copy (`Owned`); the storage kind alone does not distinguish them.
  * `DeviceHandle` lives in accelerator memory (e.g., MLA scratchpad) and
  * requires an explicit transfer for CPU access.
  * @ingroup tensors

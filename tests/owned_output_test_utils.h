@@ -90,11 +90,17 @@ inline void require_owned_test_binding_bounds(const simaai::neat::Tensor& tensor
   }
 }
 
+// Owned outputs are application CPU memory from GStreamer's builtin system
+// allocator, so they can never alias a producer or device allocation.
+inline bool is_system_memory(GstMemory* memory) {
+  return memory && memory->allocator &&
+         g_strcmp0(G_OBJECT_TYPE_NAME(memory->allocator), "GstAllocatorSysmem") == 0;
+}
+
 // StorageKind describes the carrier, not whether it borrows a producer pool.
 // Check the public Owned policy separately from actual backing independence.
-inline GstBuffer* require_dma_owned_output(const simaai::neat::Sample& sample,
-                                           const std::vector<DmaBufBackingIdentity>& producer_ids,
-                                           const std::string& context) {
+inline GstBuffer* require_owned_output(const simaai::neat::Sample& sample,
+                                       const std::string& context) {
   namespace neat = simaai::neat;
   namespace internal = neat::pipeline_internal;
   require(sample.owned, context + ": sample is not Owned");
@@ -108,7 +114,7 @@ inline GstBuffer* require_dma_owned_output(const simaai::neat::Sample& sample,
   for (const auto& tensor : tensors) {
     require(tensor.storage && tensor.storage->kind == neat::StorageKind::GstSample &&
                 tensor.storage->holder,
-            context + ": Owned output is not an independent DMA carrier");
+            context + ": Owned output is not an independent GstSample carrier");
     auto* holder = static_cast<GstSample*>(tensor.storage->holder.get());
     require(GST_IS_SAMPLE(holder), context + ": Owned holder is not a GstSample");
     auto* buffer = gst_sample_get_buffer(holder);
@@ -132,13 +138,11 @@ inline GstBuffer* require_dma_owned_output(const simaai::neat::Sample& sample,
     std::size_t live_extent = 0;
     for (guint i = begin; i < end; ++i) {
       auto* memory = gst_buffer_peek_memory(buffer, i);
-      const auto span = dmabuf_span(memory);
-      require(span.length <= std::numeric_limits<std::size_t>::max() - live_extent,
+      require(is_system_memory(memory), context + ": Owned output is not system memory");
+      const std::size_t length = gst_memory_get_sizes(memory, nullptr, nullptr);
+      require(length <= std::numeric_limits<std::size_t>::max() - live_extent,
               context + ": selected live carrier extent overflow");
-      live_extent += span.length;
-      const auto identity = span.backing;
-      require(std::find(producer_ids.begin(), producer_ids.end(), identity) == producer_ids.end(),
-              context + ": Owned output reuses a producer allocation");
+      live_extent += length;
     }
     require_owned_test_binding_bounds(tensor, live_extent, context);
   }
@@ -164,17 +168,28 @@ inline std::vector<std::vector<std::uint8_t>> read_dma_carrier(GstBuffer* buffer
   return bytes;
 }
 
+// Owned outputs are already CPU memory, so cpu() may return them unchanged;
+// clone() still creates CpuOwned storage.
 inline void require_explicit_host_copy(const simaai::neat::Sample& sample,
                                        const std::string& context) {
   namespace neat = simaai::neat;
   for (const auto& tensor : neat::tensors_from_sample(sample, true)) {
     const auto expected =
         tensor.is_nv12() ? tensor.copy_nv12_contiguous() : tensor.copy_payload_bytes();
-    for (const auto& host : {tensor.cpu(), tensor.clone()}) {
-      require(host.storage && host.storage->kind == neat::StorageKind::CpuOwned &&
-                  host.device.type == neat::DeviceType::CPU,
-              context + ": explicit cpu()/clone() did not produce CPU-owned storage");
-      const auto actual = host.is_nv12() ? host.copy_nv12_contiguous() : host.copy_payload_bytes();
+    const auto host = tensor.cpu();
+    const auto copy = tensor.clone();
+    require(host.storage && host.device.type == neat::DeviceType::CPU,
+            context + ": explicit cpu() did not produce CPU storage");
+    if (host.is_dense() && host.is_contiguous() && !host.has_tiled_storage()) {
+      require(host.data_ptr<std::uint8_t>() != nullptr,
+              context + ": cpu() output has no data pointer");
+    }
+    require(copy.storage && copy.storage->kind == neat::StorageKind::CpuOwned &&
+                copy.device.type == neat::DeviceType::CPU,
+            context + ": explicit clone() did not produce CPU-owned storage");
+    for (const auto& result : {host, copy}) {
+      const auto actual =
+          result.is_nv12() ? result.copy_nv12_contiguous() : result.copy_payload_bytes();
       require(actual == expected, context + ": explicit host copy changed the payload");
     }
   }
@@ -354,11 +369,7 @@ public:
                               observation.pts == static_cast<GstClockTime>(sample.pts_ns);
                      });
     require(it != state_->observations.end(), context + ": no matching terminal producer frame");
-    std::vector<DmaBufBackingIdentity> all_ids;
-    for (const auto& observation : state_->observations) {
-      all_ids.insert(all_ids.end(), observation.identities.begin(), observation.identities.end());
-    }
-    (void)require_dma_owned_output(sample, all_ids, context);
+    (void)require_owned_output(sample, context);
     // Compare each selected physical payload; enclosing-envelope equality would
     // require copying unselected siblings and forbid valid separate carriers.
     std::vector<std::pair<GstBuffer*, guint>> inspected;
@@ -374,18 +385,12 @@ public:
           continue;
         }
         inspected.push_back(binding);
-        namespace dma = simaai::scheduler::client::dma;
-        dma::Error error;
-        auto view = dma::DmaBufView::fromGstMemory(gst_buffer_peek_memory(buffer, index), &error);
-        require(view.has_value(),
-                context + ": invalid Owned selected DMA view: " + error.message());
-        auto mapping = view->map(dma::CpuAccess::Read, &error);
-        require(mapping && mapping->data() && mapping->size() == view->length(),
-                context + ": Owned selected DMA read failed: " + error.message());
-        const auto* begin_bytes = static_cast<const std::uint8_t*>(mapping->data());
-        const std::vector<std::uint8_t> actual(begin_bytes, begin_bytes + mapping->size());
-        require(mapping->finish(&error),
-                context + ": Owned DMA read retirement: " + error.message());
+        auto* memory = gst_buffer_peek_memory(buffer, index);
+        GstMapInfo mapping = GST_MAP_INFO_INIT;
+        require(gst_memory_map(memory, &mapping, GST_MAP_READ) && mapping.data,
+                context + ": Owned selected memory read failed");
+        const std::vector<std::uint8_t> actual(mapping.data, mapping.data + mapping.size);
+        gst_memory_unmap(memory, &mapping);
         require(std::find(it->bytes.begin(), it->bytes.end(), actual) != it->bytes.end(),
                 context + ": selected independent carrier differs from current producer bytes");
       }
