@@ -61,12 +61,12 @@ class VulcanCiDocsOnlyTests(unittest.TestCase):
         self.assertIn("--output dist/scheduler-sdk-policy.json", (ROOT / "build.sh").read_text())
 
     def test_devkit_guard_requires_actual_selected_firmware_without_fallback(self) -> None:
-        expected_firmware = "3.0.0_master_B1234"
+        expected_firmware = "3.0.0_master_B2501"
         guard = yaml.safe_load(job_block("test-devkit-shard"))["steps"][0]
         script = guard["run"].split("<<'PYFIRMWARE'\n", 1)[1].rsplit("\nPYFIRMWARE", 1)[0]
         for firmware, fallback, accepted in (
             (expected_firmware, "false", True),
-            ("3.0.0_master_B5678", "false", False),
+            ("3.0.0_master_B2499", "false", False),
             (expected_firmware, "true", False),
             ("", "false", False),
         ):
@@ -96,7 +96,7 @@ class VulcanCiDocsOnlyTests(unittest.TestCase):
         guard = devkit["steps"][0]
         self.assertEqual(guard["name"], "Verify selected DevKit firmware")
         self.assertEqual(guard["env"]["EXPECTED_ELXR_VERSION"],
-                         "${{ needs.resolve-test-runner.outputs.elxr_version }}")
+                         "${{ needs.resolve-test-runner.outputs.devkit_firmware }}")
         # Human-readable runner labels must not change the resolved publisher
         # environment, SDK selection, or artifact-acquisition environment.
         self.assertEqual(devkit["env"]["VULCAN_ENV"], "${{ " + env + " }}")
