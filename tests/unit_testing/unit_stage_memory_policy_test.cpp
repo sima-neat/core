@@ -58,6 +58,7 @@ void check_selected_public_cma(const si::StageStaticSpec& original) {
   for (int i = 0; i < 2; ++i) {
     auto& logical = producer.logical_outputs.at(i);
     logical.dtype = "BFLOAT16";
+    logical.dtype_source = si::DTypeSource::InternalContract;
     logical.shape = {16};
     logical.output_slot = logical.tensor_index = i;
     logical.logical_name = "head" + std::to_string(i);
@@ -110,7 +111,7 @@ void check_selected_public_cma(const si::StageStaticSpec& original) {
 
   // Two logical heads in one physical carrier necessarily share placement.
   auto recipe = std::make_shared<si::KernelStageRecipe>(*producer.native_kernel);
-  recipe->members.at(1).outputs.front() = {0, 32};
+  recipe->members.at(1).outputs.front() = {1, 32};
   producer.native_kernel = std::move(recipe);
   producer.physical_outputs.resize(1);
   producer.physical_outputs.front().size_bytes = 64;
@@ -121,7 +122,8 @@ void check_selected_public_cma(const si::StageStaticSpec& original) {
   query::set_output_selector(endpoint, "head0");
   si::finalize_pipeline_storage(shared, &endpoint, simaai::neat::OutputPlacement::EV74Compatible);
   const auto& layout = *shared.stages.front().frame_layout;
-  require(layout.outputs.size() == 1 &&
+  require(layout.outputs.size() == 2 &&
+              layout.outputs[0].span.allocation_index == layout.outputs[1].span.allocation_index &&
               layout.allocations.at(layout.outputs.front().span.allocation_index).policy ==
                   client::AllocationPolicy::RequireCma,
           "selecting a packed view must retain CMA for its shared backing");
