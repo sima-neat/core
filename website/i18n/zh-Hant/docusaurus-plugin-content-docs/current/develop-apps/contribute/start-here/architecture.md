@@ -723,7 +723,7 @@ Core 透過已安裝的 Scheduler 用戶端傳遞不可變的 `StageRequest`。�
 （或 `Auto` 搭配 `use_simaai_pool=false`）保留借用的主機檢視；明確的 DMS 放置不變。
 這不會變更公開 `from_cv_mat_view()` API，也不會讓借用的主機儲存空間變成裝置相容。
 
-`Tensor` 裝置傳輸明確執行快取同步複製。共用輸入保留各 DMA-BUF、已檢查檢視與產生端借用；配置 CPU 欄位不會複製 DMA 同層欄位。`DirectMemory`、`PhysicalBinding` 與 `KnownFrameSpan` 是輸入表示方式。重用依據解析後的儲存身分及輸入配置群組，包含別名；標籤本身不授予擁有權。
+`Tensor` 跨裝置複製使用獨立儲存空間存放選取的檢視，並同步快取。共用輸入保留各 DMA-BUF、已檢查檢視與產生端借用；配置 CPU 欄位不會複製 DMA 同層欄位。`DirectMemory`、`PhysicalBinding` 與 `KnownFrameSpan` 是輸入表示方式。重用依據解析後的儲存身分及輸入配置群組，包含別名；標籤本身不授予擁有權。
 
 不實體化且採元件形式的 Pack，會在載體配置之前確立生產端配置。
 可寫入的生產端輸出占據共用父載體中的最終元件範圍；
