@@ -16,9 +16,6 @@
 #include "builder/NodeContractProvider.h"
 #include "builder/Node.h"
 #include "builder/OutputSpec.h"
-#ifdef SIMA_NEAT_INTERNAL
-#include "model/internal/ModelRouteRetarget.h"
-#endif
 
 #include <nlohmann/json.hpp>
 
@@ -33,8 +30,9 @@ namespace simaai::neat {
 class Model;
 struct CompiledProcessCvuContract;
 namespace internal {
+struct ModelLineageBinding;
 struct ImageTransformAccess;
-}
+} // namespace internal
 
 /**
  * @brief Construction options for a `Preproc` Node.
@@ -97,11 +95,9 @@ struct PreprocOptions {
   int num_buffers_model = 0;           ///< Buffer count derived from the bound model.
   bool num_buffers_locked = false;     ///< If true, planner won't override `num_buffers`.
   bool model_managed_contract = false; ///< If true, the model owns the node contract resolution.
-#ifdef SIMA_NEAT_INTERNAL
   std::shared_ptr<const CompiledProcessCvuContract>
       compiled_contract; ///< Exact projected graph-200/arena contract for strict model routes.
-  std::shared_ptr<const simaai::neat::internal::ModelLineageBinding> model_lineage;
-#endif
+  std::shared_ptr<const internal::ModelLineageBinding> model_lineage; ///< @internal
 
   /// Replace the input image shape (H, W, C).
   void set_input_shape(std::vector<int> shape) {
