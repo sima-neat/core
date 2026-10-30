@@ -16,6 +16,7 @@
 #include "builder/InputContractConfigurable.h"
 #include "builder/internal/InputSpecSpecialization.h"
 #include "builder/OutputSpec.h"
+#include "nodes/common/Queue.h"
 #include "nodes/io/Input.h"
 #include "nodes/io/RTSPInput.h"
 #include "nodes/groups/internal/VideoSenderRawIngress.h"
@@ -585,7 +586,8 @@ public_output_endpoint_selector_local(const std::vector<std::shared_ptr<Node>>& 
 
   for (int i = output_index - 1; i >= 0; --i) {
     const auto& upstream = nodes[static_cast<std::size_t>(i)];
-    if (!upstream || upstream->kind() == "Output") {
+    // Queues preserve the upstream allocation and tensor publication.
+    if (!upstream || upstream->kind() == "Output" || dynamic_cast<const Queue*>(upstream.get())) {
       continue;
     }
     selector.terminal_node_kind = upstream->kind();
