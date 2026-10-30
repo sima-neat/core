@@ -256,6 +256,8 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
                                          RuntimeSinkQueueMsg&& msg);
   bool graph_release_sink_restore_reservation(simaai::neat::graph::NodeId node_id);
   std::optional<Sample> graph_pull(simaai::neat::graph::NodeId node_id, int timeout_ms);
+  // Releases realtime credits and applies Owned copying to a sample leaving a graph sink.
+  void graph_finish_sink_pull(Sample& sample);
 
   RunOptions opt;
   RunMode mode = RunMode::Async;

@@ -1,4 +1,5 @@
 #include "tensor_output_contract_fixtures.h"
+#include "owned_output_test_utils.h"
 #include <simaai/scheduler/testing/segment_allocator.h>
 #include "runtime_segment_allocator_fixture.h"
 #include "test_main.h"
@@ -684,8 +685,8 @@ void shared_runtime_view_keeps_visible_bounds() {
         require(selected_memory(owned.tensors[0], "shared Owned") ==
                     selected_memory(owned.tensors[1], "shared Owned"),
                 "shared Owned: logical aliases did not deduplicate their selected carrier");
-        require(gst_is_dmabuf_memory(selected_memory(owned.tensors[0], "shared Owned")),
-                "shared Owned: selected destination is not DMA-BUF memory");
+        require(sima_test::is_system_memory(selected_memory(owned.tensors[0], "shared Owned")),
+                "shared Owned: selected destination is not system memory");
         for (std::size_t i = 0; i != owned.tensors.size(); ++i) {
           const auto& tensor = owned.tensors[i];
           require_equal(tensor.storage->size_bytes, 32U, "shared Owned: current carrier extent");

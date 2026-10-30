@@ -7,7 +7,9 @@
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "pipeline/runtime/RunInternal.h"
 #include "graph/internal/GraphRunState.h"
+#include "graph/nodes/JoinBundle.h"
 #include "dmabuf_test_utils.h"
+#include "owned_output_test_utils.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorUtil.h"
@@ -18,6 +20,7 @@
 #include "test_main.h"
 #include "test_utils.h"
 #include "nodes/common/Output.h"
+#include "nodes/common/Queue.h"
 #include "nodes/common/Caps.h"
 #include "graphs/Fragments.h"
 #include "nodes/io/CameraInput.h"
@@ -31,6 +34,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -846,6 +850,200 @@ void require_terminal_transport_defers_public_loans() {
           "the actual graph worker must defer terminal loan admission to the public pull");
 }
 
+// Starts an Owned graph whose source segment also feeds a second branch, so the segment
+// forwards zero-copy samples and Owned must copy them at the public pull.
+std::shared_ptr<simaai::neat::runtime::RunCore> start_owned_branching_graph() {
+  using namespace simaai::neat;
+  gst_init(nullptr, nullptr);
+  Graph source("source");
+  source.add(nodes::Input("image"));
+  source.add(nodes::Queue());
+  Graph frames("frames");
+  frames.add(nodes::Output("frames", OutputOptions::EveryFrame(1)));
+  Graph other("other");
+  other.add(nodes::Output("other", OutputOptions::Latest()));
+  Graph graph;
+  graph.connect(source, frames);
+  graph.connect(source, other);
+  RunOptions options;
+  options.queue_depth = 1;
+  options.output_memory = OutputMemory::Owned;
+  const auto seed =
+      sample_from_tensors({make_color_tensor(32, 24, ImageSpec::PixelFormat::RGB, 0x29)});
+  auto plan = runtime::compile_public_graph(graph, options, seed);
+  runtime::RunCoreStartOptions start;
+  start.run_options = options;
+  start.graph_options = runtime::graph_runtime_options_from_run_options(options);
+  start.mode = RunMode::Async;
+  start.allow_startup_preflight = false;
+  start.seed = seed;
+  return runtime::RunCore::start(std::move(plan), std::move(start));
+}
+
+// A zero-copy segment's appsink emits borrowed samples that reference its CMA buffer.
+simaai::neat::Sample borrowed_cma_sample(int frame_id) {
+  GstBuffer* buffer = sima_test::allocate_cma_dmabuf(64);
+  auto sample = sample_from_buffer(buffer);
+  gst_buffer_unref(buffer);
+  sample.frame_id = frame_id;
+  sample.owned = false;
+  return sample;
+}
+
+// The producer frame is CMA DMA-BUF; an Owned copy is system memory.
+bool holds_system_memory_copy(const simaai::neat::Tensor& tensor) {
+  GstBuffer* buffer = simaai::neat::pipeline_internal::buffer_from_tensor_holder(
+      tensor.storage ? tensor.storage->holder : nullptr);
+  const bool copied = buffer && gst_buffer_n_memory(buffer) == 1 &&
+                      sima_test::is_system_memory(gst_buffer_peek_memory(buffer, 0));
+  if (buffer) {
+    gst_buffer_unref(buffer);
+  }
+  return copied;
+}
+
+// A decoder-like segment feeding a branch is forced to zero-copy transport, so Owned must copy
+// at the public pull. Otherwise each retained output keeps the segment's loan and the source stops.
+void require_owned_internal_output_releases_producer_loans() {
+  using namespace simaai::neat;
+  auto parent = start_owned_branching_graph();
+  std::shared_ptr<runtime::RunCore> producer;
+  for (const auto& pipe : parent->graph_execution().pipelines) {
+    if (pipe && pipe->seg.boundary.graph_internal_output) {
+      producer = pipe->run_core;
+    }
+  }
+  require(producer && producer->holder_loan_gate,
+          "the branching segment must forward zero-copy outputs under a loan gate");
+
+  const int retained_count = producer->holder_loan_gate->credit_limit() + 2;
+  std::vector<Sample> retained;
+  for (int id = 0; id < retained_count; ++id) {
+    auto produced = borrowed_cma_sample(id);
+    {
+      std::lock_guard lock(producer->pipeline.out_mu);
+      producer->pipeline.out_queue.push_back(std::move(produced));
+    }
+    producer->pipeline.out_cv.notify_all();
+    Sample output;
+    PullError error;
+    const PullStatus status = parent->pull_named_output("frames", 1000, output, &error);
+    if (status != PullStatus::Ok) {
+      parent->close();
+      require(false, "Owned output " + std::to_string(id) +
+                         " stalled while earlier outputs were retained: " + error.message);
+    }
+    require(output.owned && holds_system_memory_copy(output.tensors.front()),
+            "Owned output must be an independent copy");
+    retained.push_back(std::move(output));
+  }
+  // The other branch's Latest queue still holds the newest frame; drain it before counting.
+  for (Sample dropped; parent->pull_named_output("other", 0, dropped, nullptr) == PullStatus::Ok;) {
+  }
+  const int producer_loans = producer->holder_loan_gate->inflight();
+  parent->close();
+  require(producer_loans == 0, "retained Owned outputs must not hold producer loans");
+}
+
+// The public pull must find borrowed producer buffers wherever a sample keeps them: in the
+// fields of a Combine bundle, under an outer Bundle that keeps the default owned flag, and in
+// a single-Tensor sample. An output that is already an Owned copy is not copied again.
+void require_owned_pull_copies_every_borrowed_tensor() {
+  using namespace simaai::neat;
+  auto parent = start_owned_branching_graph();
+
+  graph::nodes::JoinBundleOptions join_options;
+  join_options.inputs = {"left", "right"};
+  graph::nodes::JoinBundle join(join_options);
+  graph::StagePorts ports;
+  ports.in = {{"left", 0}, {"right", 1}};
+  ports.out = {{"bundle", 2}};
+  join.set_ports(ports);
+  std::vector<graph::StageOutMsg> joined;
+  join.on_input(graph::StageMsg{0, borrowed_cma_sample(7)}, joined);
+  join.on_input(graph::StageMsg{1, borrowed_cma_sample(7)}, joined);
+  require(joined.size() == 1 && !joined.front().sample.owned,
+          "Combine must not mark a bundle of borrowed fields as owned");
+
+  // make_bundle_sample() leaves the outer Bundle's owned flag at its default.
+  Sample nested;
+  nested.kind = SampleKind::Bundle;
+  nested.fields.push_back(std::move(joined.front().sample));
+  parent->graph_finish_sink_pull(nested);
+  const Sample& bundle = nested.fields.front();
+  require(bundle.owned && bundle.fields.size() == 2 &&
+              holds_system_memory_copy(bundle.fields[0].tensors.front()) &&
+              holds_system_memory_copy(bundle.fields[1].tensors.front()),
+          "Owned must copy every borrowed field of a nested Combine bundle");
+
+  Sample single = pipeline_internal::collapse_single_tensor_sample(borrowed_cma_sample(8));
+  require(single.kind == SampleKind::Tensor, "fixture must be a single-Tensor sample");
+  parent->graph_finish_sink_pull(single);
+  require(single.owned && holds_system_memory_copy(*single.tensor),
+          "Owned must copy a borrowed single-Tensor sample");
+
+  const auto copy = single.tensor->storage;
+  parent->graph_finish_sink_pull(single);
+  parent->close();
+  require(single.tensor->storage == copy, "Owned must not copy an output that is already a copy");
+}
+
+// Owned outputs are CPU memory. A graph whose input must be device-visible, as
+// Preproc, Quant, Tess and model fragments require, rejects them until
+// Tensor::to() copies them to the device.
+void require_owned_output_reenters_device_input_through_to() {
+  using namespace simaai::neat;
+  const std::vector<std::int64_t> shape{2, 3};
+  const std::vector<float> values{1, 2, 3, 4, 5, 6};
+  const auto build = [&](InputMemoryPolicy memory, OutputMemory output_memory) {
+    InputOptions input;
+    input.payload_type = PayloadType::Tensor;
+    input.memory_policy = memory;
+    Graph graph;
+    graph.add(nodes::Input(input));
+    graph.add(nodes::Output(OutputOptions::EveryFrame(4)));
+    RunOptions options;
+    options.output_memory = output_memory;
+    return graph.build(TensorList{Tensor::from_vector(values, shape)}, options);
+  };
+
+  auto producer = build(InputMemoryPolicy::SystemMemory, OutputMemory::Owned);
+  require(producer.push(TensorList{Tensor::from_vector(values, shape, TensorMemory::CPU)}),
+          "Owned producer push");
+  const auto produced = producer.pull(5000);
+  producer.close();
+  require(produced && produced->owned && produced->tensors.size() == 1 &&
+              produced->tensors[0].device.type == DeviceType::CPU,
+          "producer must publish one Owned CPU tensor");
+  const Tensor owned = produced->tensors[0];
+
+  auto rejecting = build(InputMemoryPolicy::Ev74, OutputMemory::Auto);
+  std::string error = "accepted";
+  try {
+    if (!rejecting.push(TensorList{owned})) {
+      error = "push returned false";
+    } else if (!rejecting.pull(2000)) {
+      error = "no output and no error";
+    }
+  } catch (const std::exception& failure) {
+    error = failure.what();
+  }
+  rejecting.close();
+  require(error.find("device-visible") != std::string::npos,
+          "device-visible input must reject an Owned CPU tensor, got: " + error);
+
+  auto accepting = build(InputMemoryPolicy::Ev74, OutputMemory::Auto);
+  require(accepting.push(TensorList{owned.to({DeviceType::SIMA_CVU, 0})}),
+          "device-visible input must accept an Owned tensor copied with Tensor::to");
+  const auto delivered = accepting.pull(5000);
+  accepting.close();
+  require(delivered && delivered->tensors.size() == 1, "device-visible graph produced no output");
+  const auto bytes = delivered->tensors[0].copy_dense_bytes_tight();
+  require(bytes.size() == values.size() * sizeof(float) &&
+              std::memcmp(bytes.data(), values.data(), bytes.size()) == 0,
+          "Tensor::to changed the Owned payload");
+}
+
 void require_loan_stall_warns_once_per_stall() {
   using namespace simaai::neat;
   struct CapturedStderr {
@@ -903,6 +1101,9 @@ RUN_TEST(
       require_output_policy_matrix();
       require_dmabuf_loans_and_pressure_preserve_storage();
       require_loan_stall_warns_once_per_stall();
+      require_owned_internal_output_releases_producer_loans();
+      require_owned_pull_copies_every_borrowed_tensor();
+      require_owned_output_reenters_device_input_through_to();
       require_device_preferred_input_ownership();
       require_cpu_admissible_input_preserves_dmabuf_images();
       {

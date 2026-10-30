@@ -67,7 +67,7 @@ void unselected_dma_sibling_is_never_mapped() {
   require_equal(tensor.byte_offset, 8, "CPU subset: logical offset");
   require_equal(tensor.storage->sima_segments.size(), 1U, "CPU subset: segment count");
   require_equal(tensor.storage->sima_segments[0].name, "arena1", "CPU subset: segment name");
-  (void)sima_test::require_dma_owned_output(output, {}, "CPU subset independent output");
+  (void)sima_test::require_owned_output(output, "CPU subset independent output");
   require_payload(tensor, input.seed, 1, 8, 16, "CPU subset");
 }
 
@@ -196,7 +196,7 @@ void admitted_binding_survives_projection(bool route_identity_only, bool compact
           require_equal(tensor.storage->sima_segments[0].name,
                         admitted.segment_name(head->memory_index),
                         context + ": selected physical segment name");
-          (void)sima_test::require_dma_owned_output(output, {}, context);
+          (void)sima_test::require_owned_output(output, context);
         }
         require_payload(tensor, input.seed, packed ? 0 : 1, head->byte_offset, 16, context);
       }
@@ -339,7 +339,7 @@ void copied_cpu_does_not_keep_retained_dma_loan() {
   require(gate->inflight() == 0 && gate->released() == static_cast<std::uint64_t>(acquired) &&
               gate->overrelease() == 0,
           "final retained head did not return source loan exactly once");
-  (void)sima_test::require_dma_owned_output(copied_cpu, {}, "held copied CPU output");
+  (void)sima_test::require_owned_output(copied_cpu, "held copied CPU output");
   require_payload(copied_cpu.tensors[0], input.seed, 1, 8, 16, "copied CPU after producer release");
 }
 
@@ -370,18 +370,29 @@ void aliases_across_envelopes_copy_checked_span_once(bool different_span) {
   require(stats.tensor_copy_count == (different_span ? 2U : 1U) &&
               stats.tensor_copy_bytes == (different_span ? 96U : 64U),
           "DMA alias dedup ignored checked backing identity+offset+length");
-  const auto first_span = sima_test::dmabuf_span(selected_memory(output.tensors[0], "first alias"));
-  const auto second_span =
-      sima_test::dmabuf_span(selected_memory(output.tensors[1], "second alias"));
-  require((first_span == second_span) == !different_span,
+  // Aliases of one checked span share one copied memory; different spans do not.
+  require((selected_memory(output.tensors[0], "first alias") ==
+           selected_memory(output.tensors[1], "second alias")) == !different_span,
           "alias output merged different spans or lost shared span");
-  require(first_span.backing != input.dma_spans[0].backing &&
-              second_span.backing != input.dma_spans[0].backing,
-          "Owned alias output reused producer backing");
-  (void)sima_test::require_dma_owned_output(output, {input.dma_spans[0].backing},
-                                            "separate valid Owned carriers");
+  (void)sima_test::require_owned_output(output, "separate valid Owned carriers");
   require_payload(output.tensors[0], input.seed, 0, 0, 16, "first alias");
   require_payload(output.tensors[1], input.seed, 0, different_span ? 32 : 16, 16, "second alias");
+  // A shared copy is attached to both envelopes. Both aliases must still map for
+  // writing, see the same bytes, and a Mapping must keep the copy alive.
+  for (const auto mode : {neat::MapMode::Write, neat::MapMode::ReadWrite}) {
+    for (const auto& tensor : output.tensors) {
+      require(tensor.map(mode).data != nullptr, "Owned alias refused a write map");
+    }
+  }
+  require((output.tensors[0].storage->data == output.tensors[1].storage->data) == !different_span,
+          "Owned aliases do not share their copied bytes");
+  auto kept = output.tensors[1].map(neat::MapMode::ReadWrite);
+  auto* byte = static_cast<std::uint8_t*>(kept.data);
+  *byte = static_cast<std::uint8_t>(~*byte);
+  const auto written = *byte;
+  output = {};
+  require(*static_cast<const std::uint8_t*>(kept.data) == written,
+          "Owned Mapping did not keep its copy alive");
 }
 void broadcast_stride_publication_preserves_aliasing() {
   auto publication = contract();
@@ -429,8 +440,7 @@ void broadcast_stride_publication_preserves_aliasing() {
     }
   }
   require(logical == expected, "broadcast logical rows no longer alias the same physical elements");
-  (void)sima_test::require_dma_owned_output(output, {input.dma_spans[0].backing},
-                                            "independent broadcast carrier");
+  (void)sima_test::require_owned_output(output, "independent broadcast carrier");
 }
 void whole_fragmented_encoded_policy(bool all_dma) {
   auto input = frame(contract(true), {true, all_dma}, 67);
@@ -465,8 +475,7 @@ void whole_fragmented_encoded_policy(bool all_dma) {
                   static_cast<std::uint8_t>(input.seed + i),
               "whole encoded copy lost a fragment byte");
     }
-    (void)sima_test::require_dma_owned_output(output, {input.dma_spans[0].backing},
-                                              "whole mixed independent payload");
+    (void)sima_test::require_owned_output(output, "whole mixed independent payload");
   }
 }
 
@@ -520,7 +529,7 @@ void whole_multimemory_nv12_preserves_global_planes() {
       require(static_cast<const std::uint8_t*>(mapping.data)[i] == i + 1,
               "whole NV12 physical payload or padding changed");
     }
-    (void)sima_test::require_dma_owned_output(output, {}, "whole NV12 independent output");
+    (void)sima_test::require_owned_output(output, "whole NV12 independent output");
   }
 }
 
@@ -528,7 +537,7 @@ void counterfeit_owned_helper_rejects_bad_metadata() {
   auto input = frame(contract(), {true}, 71);
   auto owned = neat::output_from_sample_stream(input.sample.get(), "valid Owned helper control",
                                                true, nullptr, nullptr);
-  (void)sima_test::require_dma_owned_output(owned, {input.dma_spans[0].backing}, "valid control");
+  (void)sima_test::require_owned_output(owned, "valid control");
   for (int defect = 0; defect != 3; ++defect) {
     auto counterfeit = owned;
     if (defect == 0) {
@@ -539,7 +548,7 @@ void counterfeit_owned_helper_rejects_bad_metadata() {
     }
     bool rejected = false;
     try {
-      (void)sima_test::require_dma_owned_output(counterfeit, {}, "counterfeit Owned metadata");
+      (void)sima_test::require_owned_output(counterfeit, "counterfeit Owned metadata");
     } catch (const std::runtime_error&) {
       rejected = true;
     }

@@ -1286,24 +1286,44 @@ namespace {
 
 using OwnedBuffer = std::unique_ptr<GstBuffer, decltype(&gst_buffer_unref)>;
 
-dma_client::DmaBufMemory copy_output_storage(const std::shared_ptr<Storage>& source,
-                                             GstSample* whole_sample = nullptr) {
-  dma_client::Error error;
-  dma_client::HeapAllocator allocator;
+struct GstMemoryUnref {
+  void operator()(GstMemory* memory) const {
+    gst_memory_unref(memory);
+  }
+};
+using OwnedMemory = std::unique_ptr<GstMemory, GstMemoryUnref>;
+
+// An Owned copy lives in Core-allocated CPU memory, outside CMA, so retained
+// outputs leave device memory to the running pipeline. The envelope's GstMemory
+// wraps the same bytes and keeps that allocation alive.
+struct OwnedCopy {
+  OwnedMemory memory;
+  std::uint8_t* data = nullptr;
+};
+
+void release_owned_copy_holder(gpointer holder) {
+  delete static_cast<std::shared_ptr<void>*>(holder);
+}
+
+OwnedCopy copy_output_storage(const std::shared_ptr<Storage>& source,
+                              GstSample* whole_sample = nullptr) {
+  // Throws std::bad_alloc on failure, which the pull reports as an error.
+  auto backing = make_cpu_owned_storage(source->size_bytes);
+  auto* data = static_cast<std::uint8_t*>(backing->data);
   // A zero-length logical tensor still needs a valid transport allocation.
-  auto memory = allocator.allocate(dma_client::HeapKind::Cma,
-                                   std::max<std::size_t>(source->size_bytes, 1U), &error);
-  if (!memory) {
-    throw std::runtime_error("Owned output allocation failed: " + error.message());
+  const gsize wrapped_size = std::max<std::size_t>(source->size_bytes, 1U);
+  auto holder = std::make_unique<std::shared_ptr<void>>(backing->holder);
+  OwnedCopy copy{
+      OwnedMemory(gst_memory_new_wrapped(static_cast<GstMemoryFlags>(0), data, wrapped_size, 0,
+                                         wrapped_size, holder.get(), release_owned_copy_holder)),
+      data};
+  if (!copy.memory) {
+    throw std::runtime_error("Owned output: cannot wrap system memory");
   }
-  auto view = dma_client::DmaBufView::fromMemory(*memory, &error);
-  auto output = view ? view->map(dma_client::CpuAccess::Write, &error) : std::nullopt;
-  if (!output) {
-    throw std::runtime_error("Owned output mapping failed: " + error.message());
-  }
+  holder.release();
   // A whole-buffer view (for example a fragmented encoded access unit) needs
   // contiguous owned storage. Copy fragments directly, without GstBuffer's
-  // implicit merge/staging allocation or an unsynchronized DMA-BUF map.
+  // implicit merge/staging allocation.
   auto* buffer = whole_sample ? gst_sample_get_buffer(whole_sample) : nullptr;
   const guint count = buffer ? gst_buffer_n_memory(buffer) : 1U;
   std::size_t offset = 0;
@@ -1318,20 +1338,16 @@ dma_client::DmaBufMemory copy_output_storage(const std::shared_ptr<Storage>& sou
       throw std::runtime_error("Owned output: cannot map complete source storage");
     }
     if (part->size_bytes) {
-      std::memcpy(static_cast<unsigned char*>(output->data()) + offset, input.data,
-                  part->size_bytes);
+      std::memcpy(data + offset, input.data, part->size_bytes);
     }
     offset += part->size_bytes;
   }
   if (offset != source->size_bytes) {
     throw std::runtime_error("Owned output: inconsistent source extent");
   }
-  if (!output->finish(&error)) {
-    throw std::runtime_error("Owned output synchronization failed: " + error.message());
-  }
   ++g_tensor_copy_count;
   g_tensor_copy_bytes.fetch_add(source->size_bytes, std::memory_order_relaxed);
-  return std::move(*memory);
+  return copy;
 }
 
 // A plan belongs to one output operation. It retains source authority until all
@@ -1378,7 +1394,7 @@ private:
     std::vector<SpanKey> spans;
     std::shared_ptr<Storage> source;
     GstSample* whole_sample = nullptr;
-    dma_client::DmaBufMemory destination;
+    OwnedCopy destination;
   };
 
   struct EnvelopeSlot {
@@ -1719,7 +1735,7 @@ private:
     }
     for (const auto& slot : envelope.slots) {
       gst_buffer_append_memory(destination.get(),
-                               gst_memory_ref(carriers_[slot.carrier].destination.gstMemory()));
+                               gst_memory_ref(carriers_[slot.carrier].destination.memory.get()));
       envelope.segments.push_back(slot.segment);
     }
     auto* source = envelope.source_sample ? gst_sample_get_buffer(envelope.source_sample) : nullptr;
@@ -1757,7 +1773,20 @@ private:
     auto storage = make_gst_sample_memory_storage(
         static_cast<GstSample*>(envelope.destination.get()), index, index, envelope.destination);
     storage->sima_segments = envelope.segments;
-    storage->device = {DeviceType::SIMA_CVU, 0};
+    storage->device = {DeviceType::CPU, 0};
+    // Map the copy's own address instead of through GStreamer. A copy shared by
+    // several slots is attached to several buffers, and GStreamer refuses write
+    // maps of shared memory.
+    void* data = carriers_[slot->carrier].destination.data;
+    const std::size_t size = storage->size_bytes;
+    storage->data = data;
+    storage->map_fn = [holder = storage->holder, data, size](MapMode /*mode*/) {
+      Mapping mapping;
+      mapping.data = data;
+      mapping.size_bytes = size;
+      mapping.keepalive = holder;
+      return mapping;
+    };
     tensor.storage = std::move(storage);
     tensor.device = tensor.storage->device;
     tensor.read_only = false;
