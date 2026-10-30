@@ -7,6 +7,8 @@ The format is based on Keep a Changelog and follows semantic versioning.
 ## [Unreleased]
 
 ### Added
+- `OutputOptions::placement` can request EV74-compatible output storage for direct handoff
+  between graphs. `Model::RouteOptions::output` also exposes output buffering, dropping and sync.
 - Release hygiene framework for Phase 1 (governance docs, CI policy scripts, release-gate workflow).
 - `TelemetryMonitor` records board power, temperatures, CPU usage, and memory from Sentinel over
   a window the caller chooses, in C++ and Python. `Telemetry::save()` writes YAML or JSON, and a
@@ -24,6 +26,7 @@ The format is based on Keep a Changelog and follows semantic versioning.
 - Build/config naming consistency updates.
 - BREAKING: The unreleased 0.6.0 line uses public C++ ABI 6 (`libsima_neat.so.6`).
   In addition to the tensor, GenAI, graph-link and benchmark layout changes,
+  `OutputOptions` and `Model::RouteOptions` gained output configuration fields,
   `SimaArgMaxOptions` gained `axis` and `keepdims`, and the `SimaArgMax` class layout
   changed. Rebuild downstream C++ consumers and Python extensions against matching
   headers and libraries, including when updating between ABI 6 previews. Do not

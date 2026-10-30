@@ -5,6 +5,7 @@
 #include "builder/OutputSpec.h"
 #include "gst/GstInit.h"
 #include "nodes/common/Output.h"
+#include "nodes/common/Queue.h"
 #include "nodes/io/Input.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/GraphReport.h"
@@ -18,6 +19,8 @@
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 
 #include <algorithm>
+#include <set>
+#include <tuple>
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -146,21 +149,30 @@ std::uint64_t edge_port_key(NodeId id, PortId port) {
   return (static_cast<std::uint64_t>(id) << 32) | static_cast<std::uint64_t>(port);
 }
 
-void configure_graph_public_output_loan_gate(const std::shared_ptr<RunCore>& core,
-                                             const GraphRuntimeOptions& graph_options,
-                                             RunMode mode) {
-  if (!core) {
-    return;
-  }
-
+void configure_graph_public_output_loan_gate(RunCore& core, const ExecutionGraphPlan& plan) {
   InputStreamOptions stream_opt =
-      simaai::neat::session_build_make_stream_options(graph_options.pipeline, mode);
+      simaai::neat::session_build_make_stream_options(core.graph_options.pipeline, core.mode);
+  const auto compatible_output = std::find_if(
+      plan.pipeline_segments.begin(), plan.pipeline_segments.end(), [](const auto& segment) {
+        return graph_build_internal::terminal_output_placement(segment.nodes) ==
+               OutputPlacement::EV74Compatible;
+      });
+  if (compatible_output != plan.pipeline_segments.end()) {
+    const auto retained = session_build_make_stream_options(
+        core.graph_options.pipeline, core.mode, OutputPlacement::EV74Compatible,
+        compatible_output->nodes.back()->user_label());
+    // Reserve loans for compatible outputs without changing other outputs' ownership.
+    stream_opt.holder_loan_credits = retained.holder_loan_credits;
+    stream_opt.holder_loan_credits_auto = retained.holder_loan_credits_auto;
+    stream_opt.holder_loan_sample_window = retained.holder_loan_sample_window;
+    stream_opt.holder_loan_per_sample_arity = retained.holder_loan_per_sample_arity;
+  }
   stream_opt.public_output_contract = true;
   simaai::neat::session_build_finalize_public_zero_copy_holder_loan_credits(stream_opt);
 
-  core->pipeline.stream_opt = stream_opt;
-  core->pipeline.copy_output_latched.store(stream_opt.copy_output, std::memory_order_relaxed);
-  core->holder_loan_gate =
+  core.pipeline.stream_opt = stream_opt;
+  core.pipeline.copy_output_latched.store(stream_opt.copy_output, std::memory_order_relaxed);
+  core.holder_loan_gate =
       stream_opt.holder_loan_credits > 0
           ? std::make_shared<pipeline_internal::HolderLoanGate>(stream_opt.holder_loan_credits)
           : nullptr;
@@ -271,9 +283,14 @@ EdgeRouterCallbacks make_edge_router_callbacks(const std::shared_ptr<RunCore>& c
   callbacks.sanitize_pipeline_input = [core](std::size_t index, Sample& sample) {
     core->graph_sanitize_pipeline_input(index, sample);
   };
-  callbacks.prepare_sink_sample = [core](NodeId, Sample& sample, std::size_t qsize,
+  callbacks.prepare_sink_sample = [core](NodeId sink, Sample& sample, std::size_t qsize,
                                          std::size_t diag_id) {
-    if (core->opt.output_memory != OutputMemory::ZeroCopy) {
+    const auto found = core->graph_execution().sinks.find(sink);
+    const auto* output = found == core->graph_execution().sinks.end() || !found->second
+                             ? nullptr
+                             : found->second->output_options();
+    if (core->opt.output_memory != OutputMemory::ZeroCopy &&
+        (!output || output->placement == OutputPlacement::Auto)) {
       simaai::neat::graph::maybe_force_copy_for_backpressure(
           sample, qsize, "sink_queue", diag_id,
           core->opt.output_memory == OutputMemory::Auto &&
@@ -313,9 +330,76 @@ bool route_stage_output(const std::shared_ptr<RunCore>& core, StageRuntime& st,
                                     router_callbacks, dispatch_options);
 }
 
+bool forwards_storage(const PipelineSegmentPlan& segment) {
+  return !segment.input_edges.empty() && !segment.nodes.empty() &&
+         std::all_of(segment.nodes.begin(), segment.nodes.end(), [](const auto& node) {
+           return dynamic_cast<const Queue*>(node.get()) || dynamic_cast<const Output*>(node.get());
+         });
+}
+
+// Queues and Output endpoints have no allocator. Follow their input edges to
+// the producer so shared backing satisfies every attached output endpoint.
+std::unordered_map<std::size_t, std::vector<std::string>>
+compatible_output_producers(const ExecutionGraphPlan& plan) {
+  std::unordered_map<NodeId, std::size_t> segment_by_node;
+  for (std::size_t i = 0; i < plan.pipeline_segments.size(); ++i)
+    for (const auto node : plan.pipeline_segments[i].node_ids)
+      segment_by_node.emplace(node, i);
+  using Pending = std::tuple<NodeId, PortId, std::string>;
+  std::vector<Pending> pending;
+  for (const auto& sink : plan.pipeline_segments) {
+    if (forwards_storage(sink) && graph_build_internal::terminal_output_placement(sink.nodes) ==
+                                      OutputPlacement::EV74Compatible)
+      for (const auto index : sink.input_edges) {
+        const auto& edge = plan.edges.at(index);
+        pending.emplace_back(edge.from, edge.from_port, sink.nodes.back()->user_label());
+      }
+  }
+  std::set<Pending> visited;
+  std::unordered_map<std::size_t, std::vector<std::string>> required;
+  while (!pending.empty()) {
+    auto [node, port, name] = std::move(pending.back());
+    pending.pop_back();
+    if (!visited.emplace(node, port, name).second)
+      continue;
+    const bool bundle =
+        std::any_of(plan.stage_nodes.begin(), plan.stage_nodes.end(), [&](const auto& stage) {
+          return stage.node_id == node && stage.node && stage.node->kind() == "JoinBundle";
+        });
+    if (stage_forwards_payload(plan, node) || bundle) {
+      for (const auto& edge : plan.edges)
+        if (edge.to == node)
+          pending.emplace_back(edge.from, edge.from_port, name);
+      continue;
+    }
+    const auto producer = segment_by_node.find(node);
+    if (producer == segment_by_node.end() ||
+        plan.pipeline_segments[producer->second].boundary.direct_graph_source)
+      session_build_throw_session_error_simple(
+          error_codes::kPipelineShape,
+          "Output '" + name + "': EV74Compatible requires a Core-allocated tensor output.",
+          "Use tensor.cvu() to copy imported or application-stage output.");
+    const auto& segment = plan.pipeline_segments[producer->second];
+    if (forwards_storage(segment)) {
+      for (const auto index : segment.input_edges) {
+        const auto& edge = plan.edges.at(index);
+        pending.emplace_back(edge.from, edge.from_port, name);
+      }
+      continue;
+    }
+    // Output labels identify sinks; only a named producer port selects a tensor.
+    const auto selector = port != kInvalidPort && plan.port_names.at(port) != "out"
+                              ? plan.port_names[port]
+                              : std::string{};
+    required[plan.pipeline_segments[producer->second].id].push_back(selector);
+  }
+  return required;
+}
+
 void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
   ExecutionGraphRuntime& execution = core->graph_execution();
   execution.pipelines.reserve(execution.plan.pipeline_segments.size());
+  const auto compatible_producers = compatible_output_producers(execution.plan);
   for (const auto& seg : execution.plan.pipeline_segments) {
     if (seg.consumed_by_fused_realtime_ingress) {
       continue;
@@ -328,6 +412,21 @@ void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
     sess_opt.verbose.progress = false;
 
     std::vector<std::shared_ptr<simaai::neat::Node>> nodes = seg.nodes;
+    const bool forwarded_placement =
+        forwards_storage(seg) && graph_build_internal::terminal_output_placement(seg.nodes) ==
+                                     OutputPlacement::EV74Compatible;
+    if (forwarded_placement) {
+      // Placement was assigned upstream. Keep the queue, but do not ask this
+      // allocator-free fragment to plan storage again. The public sink retains
+      // its original options in the graph plan.
+      for (auto& node : nodes) {
+        if (const auto* output = dynamic_cast<const Output*>(node.get())) {
+          auto options = output->options();
+          options.placement = OutputPlacement::Auto;
+          node = nodes::Output(output->user_label(), options);
+        }
+      }
+    }
     bool injected_input = false;
     bool injected_output = false;
 
@@ -358,7 +457,10 @@ void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
     }
 
     if (seg.boundary.needs_output && !simaai::neat::graph::has_output_appsink(seg.nodes)) {
-      nodes.push_back(simaai::neat::nodes::Output());
+      OutputOptions output;
+      if (compatible_producers.contains(seg.id))
+        output.placement = OutputPlacement::EV74Compatible;
+      nodes.push_back(simaai::neat::nodes::Output(output));
       injected_output = true;
     }
 
@@ -380,9 +482,11 @@ void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
     runtime->nodes = std::move(nodes);
     runtime->route_options = sess_opt;
     runtime->run_options = core->graph_options.pipeline;
-    if (seg.boundary.graph_internal_output) {
+    if (seg.boundary.graph_internal_output || forwarded_placement) {
       runtime->run_options.output_memory = simaai::neat::OutputMemory::ZeroCopy;
     }
+    if (const auto found = compatible_producers.find(seg.id); found != compatible_producers.end())
+      runtime->seg.stream_options.compatible_output_names = found->second;
     runtime->seg.nodes = runtime->nodes;
     runtime->seg.route_options = runtime->route_options;
     runtime->seg.run_options = runtime->run_options;
@@ -1479,7 +1583,7 @@ std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartO
   core->opt = opt.run_options;
   core->mode = opt.mode;
   core->graph_options = std::move(opt.graph_options);
-  configure_graph_public_output_loan_gate(core, core->graph_options, opt.mode);
+  configure_graph_public_output_loan_gate(*core, plan);
   core->graph_verbose_guard = std::move(opt.graph_verbose_guard);
   core->graph_execution().plan = std::move(plan);
 

@@ -71,7 +71,9 @@ RUN_TEST(
       input_opt.height = 16;
       input_opt.memory_policy = InputMemoryPolicy::Ev74;
       const auto input_node = nodes::Input(input_opt);
-      const auto output_a = nodes::Output("out_a");
+      OutputOptions output_options = OutputOptions::Latest();
+      output_options.placement = OutputPlacement::EV74Compatible;
+      const auto output_a = nodes::Output("out_a", output_options);
       const auto output_b = nodes::Output("out_b");
       input_graph.connect(input_node, output_a);
       input_graph.connect(input_node, output_b);
@@ -85,6 +87,8 @@ RUN_TEST(
               io_case("deprecated_simaai_pool_omitted",
                       "deprecated input pool flag should not be serialized"));
 
+      require_contains(saved_memory_policy_json, "\"placement\":1",
+                       "explicit output placement must be serialized");
       const Graph loaded_input = Graph::load(memory_policy_path);
       const std::string memory_policy_roundtrip_path =
           tmp_json_path("graph_io_memory_policy_roundtrip.json");
@@ -92,6 +96,33 @@ RUN_TEST(
       require_contains(
           read_text(memory_policy_roundtrip_path), "\"memory_policy\":1",
           io_case("memory_policy_roundtrip", "input memory policy should survive save/load"));
+
+      require_contains(read_text(memory_policy_roundtrip_path), "\"placement\":1",
+                       "explicit output placement must survive graph save/load");
+      require_contains(read_text(memory_policy_roundtrip_path), "\"placement\":0",
+                       "another output must keep its independent Auto placement");
+
+      const auto reject_bad_placement = [&](const std::string& json) {
+        for (const std::string placement :
+             {"-1", "2", "1.9", "-0.9", "1e30", "true", "null", "\"1\""}) {
+          auto invalid = json;
+          const std::string key = "\"placement\":1";
+          invalid.replace(invalid.find(key), key.size(), "\"placement\":" + placement);
+          const auto path = tmp_json_path("invalid_output_placement.json");
+          write_text(path, invalid);
+          require_neat_error([&]() { (void)Graph::load(path); }, error_codes::kIoParse,
+                             "unknown Output placement", "unknown Output placement");
+        }
+      };
+      reject_bad_placement(saved_memory_policy_json);
+      auto missing_placement = saved_memory_policy_json;
+      const std::string placement_field = ",\"placement\":1";
+      missing_placement.erase(missing_placement.find(placement_field), placement_field.size());
+      const auto missing_path = tmp_json_path("graph_io_missing_placement.json");
+      write_text(missing_path, missing_placement);
+      Graph::load(missing_path).save(memory_policy_roundtrip_path);
+      require(read_text(memory_policy_roundtrip_path).find("\"placement\":1") == std::string::npos,
+              "missing placement must retain Auto");
 
       std::string legacy_memory_policy_json = saved_memory_policy_json;
       const std::string memory_policy_key = "\"memory_policy\":1";
@@ -226,6 +257,11 @@ RUN_TEST(
       superpoint_options_json.insert(root_end, model_fragment);
       const std::string superpoint_options_path = tmp_json_path("graph_io_superpoint_options.json");
       write_text(superpoint_options_path, superpoint_options_json);
+
+      auto nested_placement = superpoint_options_json;
+      nested_placement.insert(nested_placement.find("\"stage_role\""),
+                              "\"route_options\":{\"output\":{\"placement\":1}},");
+      reject_bad_placement(nested_placement);
 
       // Serialized class IDs cannot be silently dropped or truncated into another gate.
       for (const std::string bad_gate :

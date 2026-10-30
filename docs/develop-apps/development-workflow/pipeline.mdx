@@ -305,8 +305,14 @@ share the copied carrier; their offsets, padded strides and numerical metadata a
 preserved. Retained and independent outputs both use `StorageKind::GstSample`;
 that storage kind identifies the carrier, not its ownership policy.
 `Sample::owned` identifies an independent output. Allocation failure is reported
-as a pull error. To pass an output into a separate graph with an EV74 input stage,
-call `tensor.cvu()` first: it returns tensors already in EV74 memory unchanged
+as a pull error. For handoff to a separate EV74 graph, set the producer's `OutputOptions::placement`
+to `OutputPlacement::EV74Compatible`. For `model.build()`, set
+`route.output.placement` through `ModelRouteOptions` in Python or `Model::RouteOptions`
+in C++; the same `output` options control buffering, dropping and clock sync.
+Core allocates the selected output directly in CMA without changing execution targets
+or copying at pull.
+Use `Auto` or `ZeroCopy` ownership; `Owned` and relocation of imported backing are
+rejected. For an existing tensor, `tensor.cvu()` returns tensors already in EV74 memory unchanged
 and copies other tensors into EV74 memory. `ZeroCopy` preserves the producer’s
 storage and does not guarantee EV74 accessibility.
 

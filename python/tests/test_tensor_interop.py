@@ -5,6 +5,23 @@ import numpy as np
 import pyneat as pn
 
 
+def test_output_placement_options():
+  options = pn.OutputOptions.latest()
+  assert options.placement == pn.OutputPlacement.Auto
+  options.placement = pn.OutputPlacement.EV74Compatible
+  route = pn.ModelRouteOptions()
+  assert route.output.placement == pn.OutputPlacement.Auto
+  route.output = options
+  assert route.output.placement == pn.OutputPlacement.EV74Compatible
+  assert route.output.max_buffers == 1 and route.output.drop
+  route.output.max_buffers = 7
+  route.output.placement = pn.OutputPlacement.Auto
+  assert route.output.max_buffers == 7
+  assert route.output.placement == pn.OutputPlacement.Auto
+  assert options.max_buffers == 1
+  assert options.placement == pn.OutputPlacement.EV74Compatible
+
+
 def test_tensor_from_numpy_cpu_zero_copy_roundtrip():
   arr = np.arange(12, dtype=np.float32).reshape(3, 4)
   tensor = pn.Tensor.from_numpy(arr, copy=False, memory=pn.TensorMemory.CPU)

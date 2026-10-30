@@ -41,6 +41,18 @@
 #include <vector>
 
 namespace simaai::neat::runtime {
+
+bool stage_forwards_payload(const ExecutionGraphPlan& plan, graph::NodeId node_id) {
+  for (const auto& stage : plan.stage_nodes) {
+    if (stage.node_id != node_id || !stage.node) {
+      continue;
+    }
+    const std::string kind = stage.node->kind();
+    return kind == "FanOut" || kind == "StreamScheduler";
+  }
+  return false;
+}
+
 namespace {
 
 std::string graph_node_label(const graph::Graph& graph, graph::NodeId id) {
@@ -3054,17 +3066,6 @@ const InputOptions* ingress_options_for_segment_edge(const ExecutionGraphPlan& p
   return nullptr;
 }
 
-bool is_shape_passthrough_stage(const ExecutionGraphPlan& plan, graph::NodeId node_id) {
-  for (const auto& stage : plan.stage_nodes) {
-    if (stage.node_id != node_id || !stage.node) {
-      continue;
-    }
-    const std::string kind = stage.node->kind();
-    return kind == "FanOut" || kind == "StreamScheduler";
-  }
-  return false;
-}
-
 void collect_static_ingress_specs(const ExecutionGraphPlan& plan, std::size_t edge_index,
                                   std::unordered_set<std::size_t>* visited,
                                   std::vector<const OutputSpec*>* specs) {
@@ -3073,7 +3074,7 @@ void collect_static_ingress_specs(const ExecutionGraphPlan& plan, std::size_t ed
     return;
   }
   const EdgePlan& edge = plan.edges[edge_index];
-  if (is_shape_passthrough_stage(plan, edge.from)) {
+  if (stage_forwards_payload(plan, edge.from)) {
     for (std::size_t i = 0; i < plan.edges.size(); ++i) {
       if (plan.edges[i].to == edge.from) {
         collect_static_ingress_specs(plan, i, visited, specs);

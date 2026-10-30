@@ -19,6 +19,7 @@
 #pragma once
 
 #include "model/PreprocessPlan.h"
+#include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "pipeline/BoxDecodeType.h"
 #include "pipeline/ExecutionPlan.h"
@@ -492,6 +493,8 @@ public:
     /// Preferred jargon-free execution surface; overlaid over Model::Options.advanced_execution
     /// (route wins) and folded into the legacy fields at Graph build time. No-op when unset.
     AdvancedExecutionOptions advanced_execution;
+
+    OutputOptions output; ///< Options for the generated public Output node, when included.
   };
 
   /**

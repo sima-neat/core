@@ -6,6 +6,7 @@
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cctype>
 #include <cstdint>
 #include <limits>
@@ -484,6 +485,8 @@ bool stage_outputs_match_endpoint(const StageStaticSpec& stage,
   return false;
 }
 
+} // namespace
+
 bool filter_publication_stage_for_endpoint(StageStaticSpec* publication,
                                            const PublicOutputEndpointSelector& endpoint,
                                            std::string* error_message) {
@@ -551,7 +554,16 @@ bool filter_publication_stage_for_endpoint(StageStaticSpec* publication,
   return true;
 }
 
-} // namespace
+void set_output_selector(PublicOutputEndpointSelector& endpoint, const std::string& name) {
+  endpoint.output_segment_name = name;
+  endpoint.output_slot = endpoint.route_slot = -1;
+  if (name.empty() || !std::isdigit(static_cast<unsigned char>(name.front())))
+    return;
+  int slot = -1;
+  const auto result = std::from_chars(name.data(), name.data() + name.size(), slot);
+  if (result.ec == std::errc{} && result.ptr == name.data() + name.size())
+    endpoint.output_slot = endpoint.route_slot = slot;
+}
 
 bool stage_public_outputs_match_endpoint(const sima::StageStaticSpec& stage,
                                          const PublicOutputEndpointSelector& endpoint) {

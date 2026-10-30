@@ -75,7 +75,9 @@ void require_prepared_runners(Run& run, unsigned expected) {
           "every Cast stage must retain its prepared Scheduler stage");
 }
 
-void require_publication(const Tensor& tensor, bool compact) {
+void require_publication(const Tensor& tensor, bool compact,
+                         simaai::scheduler::client::dma::HeapKind expected =
+                             simaai::scheduler::client::dma::HeapKind::MlaDms) {
   const auto& storage = tensor.storage;
   require(storage && storage->kind == StorageKind::GstSample && storage->holder,
           "output lost zero-copy GstSample owner");
@@ -83,8 +85,8 @@ void require_publication(const Tensor& tensor, bool compact) {
   namespace dma = simaai::scheduler::client::dma;
   require(gst_buffer_n_memory(buffer) == 1, "A65 Cast output lost its single carrier");
   const auto backing = dma::DmaBufMemory::retain(gst_buffer_peek_memory(buffer, 0));
-  require(backing && backing->knownHeapKind() == dma::HeapKind::MlaDms,
-          "A65-only Cast output must use required DMS");
+  require(backing && backing->knownHeapKind() == expected,
+          "Cast output did not use its planned heap");
   std::string error;
   const auto publication = simaai::gst::tensor_buffer_publication(buffer, &error);
   require(error.empty() && bool(publication) == compact, "output publication mode mismatch");
@@ -94,7 +96,169 @@ void require_publication(const Tensor& tensor, bool compact) {
           "output legacy metadata authority mismatch");
 }
 
-void qualify_two_cast_stages(bool compact, int a65_workers) {
+void qualify_queued_output_placement() {
+  for (const auto placement : {OutputPlacement::Auto, OutputPlacement::EV74Compatible}) {
+    for (const auto* name : {"features", "0", "output_tensor_0"}) {
+      GraphOptions policy;
+      policy.processcvu_requested_run_target = "A65";
+      Graph graph(policy);
+      InputOptions ingress;
+      ingress.payload_type = PayloadType::Tensor;
+      ingress.memory_policy = InputMemoryPolicy::SystemMemory;
+      graph.add(nodes::Input(ingress));
+      CastOptions cast;
+      cast.direction = CastDirection::Fp32ToBf16;
+      graph.add(nodes::Cast(cast));
+      graph.add(nodes::Queue(QueueOptions{.max_buffers = 2}));
+      graph.add(nodes::Queue());
+      OutputOptions output;
+      output.placement = placement;
+      graph.add(nodes::Output(name, output));
+      auto input = Tensor::from_vector(std::vector<float>(192, 1.5F), {8, 8, 3}, TensorMemory::CPU);
+      input.layout = TensorLayout::HWC;
+      RunOptions options;
+      options.output_memory = OutputMemory::ZeroCopy;
+      auto run = graph.build(TensorList{input, input}, options);
+      const auto result = run.run(TensorList{input, input}, 5000);
+      require(result.size() == 2, "endpoint label must not select a tensor from the bundle");
+      const auto heap = placement == OutputPlacement::EV74Compatible
+                            ? simaai::scheduler::client::dma::HeapKind::Cma
+                            : simaai::scheduler::client::dma::HeapKind::MlaDms;
+      // Compact publication requires a direct appsink edge; queues retain full metadata.
+      for (const auto& tensor : result)
+        require_publication(tensor, false, heap);
+      run.close();
+      for (const auto& tensor : result)
+        check(tensor, 1.5F);
+    }
+  }
+}
+
+void qualify_named_output_placement(bool compact, bool shared, bool auto_owned = false,
+                                    int queue_fragments = 0) {
+  GraphOptions policy;
+  policy.processcvu_requested_run_target = "A65";
+  Graph graph(policy);
+  InputOptions ingress;
+  ingress.payload_type = PayloadType::Tensor;
+  ingress.memory_policy = InputMemoryPolicy::SystemMemory;
+  const auto source = nodes::Input("image", ingress);
+  CastOptions cast;
+  cast.direction = CastDirection::Fp32ToBf16;
+  cast.element_name = "features_cast";
+  const auto features = nodes::Cast(cast);
+  OutputOptions compatible;
+  compatible.placement = OutputPlacement::EV74Compatible;
+  graph.connect(source, features);
+  auto terminal = features;
+  for (int i = 0; i < queue_fragments; ++i) {
+    auto queue = nodes::Queue();
+    graph.connect(terminal, queue);
+    terminal = std::move(queue);
+  }
+  graph.connect(terminal, nodes::Output("features", compatible));
+  if (queue_fragments == 2)
+    graph.connect(terminal, nodes::Output("queued_other"));
+  if (shared) {
+    graph.connect(features, nodes::Output("other"));
+  } else {
+    cast.element_name = "other_cast";
+    const auto other = nodes::Cast(cast);
+    graph.connect(source, other);
+    graph.connect(other, nodes::Output("other"));
+  }
+  auto input = Tensor::from_vector(std::vector<float>(192, 1.5F), {8, 8, 3}, TensorMemory::CPU);
+  input.layout = TensorLayout::HWC;
+  RunOptions options;
+  options.output_memory = auto_owned ? OutputMemory::Auto : OutputMemory::ZeroCopy;
+  auto run = graph.build(TensorList{input}, options);
+  require(run.push("image", TensorList{input}), "named input push");
+  const auto output = run.pull_tensors("features", 5000);
+  const auto other = run.pull_tensors("other", 5000);
+  require(output.size() == 1 && other.size() == 1, "named output counts");
+  require_publication(output.front(), compact && queue_fragments == 0,
+                      simaai::scheduler::client::dma::HeapKind::Cma);
+  if (queue_fragments == 2) {
+    const auto queued = run.pull_tensors("queued_other", 5000);
+    require(queued.size() == 1, "queued fan-out output count");
+    require_publication(queued.front(), false, simaai::scheduler::client::dma::HeapKind::Cma);
+    check(queued.front(), 1.5F);
+  }
+  if (auto_owned) {
+    const auto& storage = other.front().storage;
+    require(storage && storage->kind == StorageKind::GstSample && storage->holder,
+            "Owned output lost its independent sample");
+    auto* buffer = gst_sample_get_buffer(static_cast<GstSample*>(storage->holder.get()));
+    require(
+        !simaai::scheduler::client::dma::DmaBufMemory::retain(gst_buffer_peek_memory(buffer, 0)),
+        "Auto's owned default must still copy the other output into system memory");
+  } else {
+    require_publication(other.front(), compact,
+                        shared ? simaai::scheduler::client::dma::HeapKind::Cma
+                               : simaai::scheduler::client::dma::HeapKind::MlaDms);
+  }
+  check(output.front(), 1.5F);
+  check(other.front(), 1.5F);
+}
+
+void qualify_bundle_output_placement(bool compact, CombinePolicy combine) {
+  GraphOptions policy;
+  policy.processcvu_requested_run_target = "A65";
+  Graph graph(policy);
+  InputOptions ingress;
+  ingress.payload_type = PayloadType::Tensor;
+  ingress.memory_policy = InputMemoryPolicy::SystemMemory;
+  const auto source = nodes::Input("image", ingress);
+  CastOptions cast;
+  cast.direction = CastDirection::Fp32ToBf16;
+  cast.element_name = "first_cast";
+  const auto first = nodes::Cast(cast);
+  OutputOptions compatible;
+  compatible.placement = OutputPlacement::EV74Compatible;
+  compatible.combine_policy = combine;
+  // A sink label matching a tensor slot must not select only that tensor.
+  const auto output = nodes::Output("0", compatible);
+  if (combine == CombinePolicy::None) {
+    graph.connect(source, first);
+    graph.connect(first, output);
+    graph.connect(first, nodes::Output("other"));
+  } else {
+    for (const auto* name : {"left", "right"}) {
+      Graph branch(policy);
+      branch.add(nodes::Input(std::string(name) + "_input", ingress));
+      cast.element_name = std::string(name) + "_cast";
+      branch.add(nodes::Cast(cast));
+      branch.add(nodes::Output(name));
+      graph.connect(source, branch);
+      graph.connect(branch, output);
+      if (std::string(name) == "left")
+        graph.connect(branch, nodes::Output("other"));
+    }
+  }
+  TensorList inputs;
+  for (int i = 0; i < 2; ++i) {
+    auto tensor = Tensor::from_vector(std::vector<float>(192, 1.5F), {8, 8, 3}, TensorMemory::CPU);
+    tensor.layout = TensorLayout::HWC;
+    inputs.push_back(std::move(tensor));
+  }
+  RunOptions options;
+  options.output_memory = OutputMemory::ZeroCopy;
+  auto run = graph.build(inputs, options);
+  auto sample = sample_from_tensors(inputs);
+  sample.frame_id = 7;
+  sample.pts_ns = 7000;
+  require(run.push("image", sample), "bundle input push");
+  const auto tensors = run.pull_tensors("0", 5000);
+  const auto other = run.pull_tensors("other", 5000);
+  require(tensors.size() == (combine == CombinePolicy::None ? 2U : 4U) && other.size() == 2U,
+          "aggregate Output must preserve every tensor regardless of its label");
+  for (const auto& tensor : tensors) {
+    require_publication(tensor, compact, simaai::scheduler::client::dma::HeapKind::Cma);
+    check(tensor, 1.5F);
+  }
+}
+
+void qualify_two_cast_stages(bool compact, int a65_workers, OutputPlacement placement) {
   GraphOptions graph_options;
   graph_options.processcvu_requested_run_target = "A65";
   graph_options.kernel_runner_a65_workers = a65_workers;
@@ -115,6 +279,10 @@ void qualify_two_cast_stages(bool compact, int a65_workers) {
   output.sync = false;
   output.drop = false;
   output.max_buffers = 2;
+  output.placement = placement;
+  const auto heap = placement == OutputPlacement::EV74Compatible
+                        ? simaai::scheduler::client::dma::HeapKind::Cma
+                        : simaai::scheduler::client::dma::HeapKind::MlaDms;
   graph.add(nodes::Output(output));
   RunOptions options;
   options.output_memory = OutputMemory::ZeroCopy;
@@ -171,7 +339,7 @@ void qualify_two_cast_stages(bool compact, int a65_workers) {
     const auto tensors = tensors_from_sample(result);
     require(tensors.size() == 1, "two-stage Cast output count");
     check_output(tensors.front(), frame);
-    require_publication(tensors.front(), compact);
+    require_publication(tensors.front(), compact, heap);
     if (!held)
       held = result;
     check_output(tensors_from_sample(*held).front(), 0);
@@ -185,7 +353,7 @@ void qualify_two_cast_stages(bool compact, int a65_workers) {
   require(!run.running(), "two-stage Cast did not close");
   const auto retained = tensors_from_sample(*held);
   check_output(retained.front(), 0);
-  require_publication(retained.front(), compact);
+  require_publication(retained.front(), compact, heap);
 }
 
 struct MeasurementOptions {
@@ -387,6 +555,23 @@ int main(int argc, char** argv) {
     require(measurement.raw.empty() || measurement.samples > 0, "raw requires measurement samples");
     setenv("SIMA_CORE_COMPACT_METADATA", mode == "compact" ? "1" : "0", 1);
     setenv("SIMA_GST_RUN_INSERT_BOUNDARIES", "0", 1);
+    qualify_queued_output_placement();
+    qualify_named_output_placement(mode == "compact", false);
+    qualify_named_output_placement(mode == "compact", true);
+    for (const int queues : {1, 2})
+      qualify_named_output_placement(mode == "compact", true, false, queues);
+    for (const auto combine : {CombinePolicy::None, CombinePolicy::ByFrame, CombinePolicy::ByPts})
+      qualify_bundle_output_placement(mode == "compact", combine);
+    const char* output_default = std::getenv("SIMA_OUTPUT_MEMORY_DEFAULT");
+    const std::optional<std::string> saved_default =
+        output_default ? std::optional<std::string>(output_default) : std::nullopt;
+    setenv("SIMA_OUTPUT_MEMORY_DEFAULT", "owned", 1);
+    qualify_named_output_placement(mode == "compact", false, true);
+    qualify_named_output_placement(mode == "compact", true, true, 1);
+    if (saved_default)
+      setenv("SIMA_OUTPUT_MEMORY_DEFAULT", saved_default->c_str(), 1);
+    else
+      unsetenv("SIMA_OUTPUT_MEMORY_DEFAULT");
     GraphOptions graph_options;
     graph_options.processcvu_requested_run_target = "A65";
     graph_options.kernel_runner_a65_workers = a65_workers;
@@ -538,7 +723,8 @@ int main(int argc, char** argv) {
     }
     // Restore this test's metadata mode after the compatibility repush.
     setenv("SIMA_CORE_COMPACT_METADATA", mode == "compact" ? "1" : "0", 1);
-    qualify_two_cast_stages(mode == "compact", a65_workers);
+    for (const auto placement : {OutputPlacement::Auto, OutputPlacement::EV74Compatible})
+      qualify_two_cast_stages(mode == "compact", a65_workers, placement);
     std::cout << "PASS public Core Cast: " << mode << ", a65_workers=" << a65_workers
               << ", actual math, public decode, held output\n";
     return 0;

@@ -154,6 +154,7 @@ using simaai::neat::MeasureScope;
 using simaai::neat::NeatError;
 using simaai::neat::NodeLatencySummary;
 using simaai::neat::OutputMemory;
+using simaai::neat::OutputPlacement;
 using simaai::neat::PowerFieldSummary;
 using simaai::neat::PowerMonitorOptions;
 using simaai::neat::PowerMonitorProfile;
@@ -1493,6 +1494,10 @@ NB_MODULE(_pyneat_core, m) {
       .value("Auto", OutputMemory::Auto)
       .value("ZeroCopy", OutputMemory::ZeroCopy)
       .value("Owned", OutputMemory::Owned);
+
+  nb::enum_<OutputPlacement>(m, "OutputPlacement")
+      .value("Auto", OutputPlacement::Auto)
+      .value("EV74Compatible", OutputPlacement::EV74Compatible);
 
   nb::enum_<SampleKind>(m, "SampleKind")
       .value("Tensor", SampleKind::Tensor)
@@ -3377,6 +3382,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("drop", &simaai::neat::OutputOptions::drop)
       .def_rw("sync", &simaai::neat::OutputOptions::sync)
       .def_rw("combine_policy", &simaai::neat::OutputOptions::combine_policy)
+      .def_rw("placement", &simaai::neat::OutputOptions::placement)
       .def_static("latest", &simaai::neat::OutputOptions::Latest)
       .def_static("every_frame", &simaai::neat::OutputOptions::EveryFrame, "max_buffers"_a = 30)
       .def_static("clocked", &simaai::neat::OutputOptions::Clocked, "max_buffers"_a = 1);
@@ -4715,6 +4721,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("include_input", &simaai::neat::Model::RouteOptions::include_input)
       .def_rw("include_output", &simaai::neat::Model::RouteOptions::include_output)
       .def_rw("expose_all_outputs", &simaai::neat::Model::RouteOptions::expose_all_outputs)
+      .def_rw("output", &simaai::neat::Model::RouteOptions::output)
       .def_rw("upstream_name", &simaai::neat::Model::RouteOptions::upstream_name)
       .def_rw("name_suffix", &simaai::neat::Model::RouteOptions::name_suffix)
       .def_rw("buffer_name", &simaai::neat::Model::RouteOptions::buffer_name)

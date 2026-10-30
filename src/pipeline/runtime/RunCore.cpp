@@ -1559,12 +1559,20 @@ std::optional<Sample> RunCore::graph_pull(simaai::neat::graph::NodeId node_id, i
     return std::nullopt;
   }
   Sample out = std::move(queued->sample);
-  graph_finish_sink_pull(out);
+  graph_finish_sink_pull(out, node_id);
   return out;
 }
 
-void RunCore::graph_finish_sink_pull(Sample& sample) {
+void RunCore::graph_finish_sink_pull(Sample& sample, graph::NodeId sink) {
   pipeline_internal::release_realtime_frame_credits_for_sample(sample, "graph-sink-pull");
+  if (graph_execution_) {
+    const auto found = graph_execution_->sinks.find(sink);
+    const auto* output = found == graph_execution_->sinks.end() || !found->second
+                             ? nullptr
+                             : found->second->output_options();
+    if (output && output->placement == OutputPlacement::EV74Compatible)
+      return;
+  }
   // Graph-internal segments forward their outputs zero-copy, so Owned copies them here to
   // release the producer pool buffer and its loan before the app holds the sample.
   const bool owned_output =
@@ -1631,11 +1639,11 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
                   *segment.fused_realtime_ingress, nodes, opt.guard, last_pipeline, route_options,
                   opt.run_options, opt.mode, opt.require_sink, public_output_contract,
                   opt.graph_options.edge_queue, "RunCore::start(plan/fused-realtime)",
-                  opt.fused_encoded_output_dispatch)
+                  opt.fused_encoded_output_dispatch, segment.stream_options.compatible_output_names)
             : session_build_source_stream_internal(
                   nodes, opt.guard, last_pipeline, route_options, opt.run_options, opt.mode,
                   opt.require_sink, public_output_contract, opt.graph_options.edge_queue,
-                  "RunCore::start(plan/source)");
+                  "RunCore::start(plan/source)", segment.stream_options.compatible_output_names);
     const auto source_us = pipeline_internal::build_timing_us(source_start);
     const auto start_single_start = pipeline_internal::build_timing_now();
     auto core = RunCore::start_single_pipeline(
@@ -1662,6 +1670,9 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
       nodes, route_options, opt.mode, opt.run_options, public_output_contract);
   const auto context_us = pipeline_internal::build_timing_us(context_start);
   InputStreamOptions build_stream_opt = ctx.stream_opt;
+  build_stream_opt.compatible_output_names = segment.stream_options.compatible_output_names;
+  build_stream_opt.output_placement = graph_build_internal::terminal_output_placement(
+      nodes, build_stream_opt.compatible_output_names);
   build_stream_opt.startup_preflight =
       opt.allow_startup_preflight && ctx.stream_opt.startup_preflight;
   build_stream_opt.allow_graph_internal_zero_copy_input =

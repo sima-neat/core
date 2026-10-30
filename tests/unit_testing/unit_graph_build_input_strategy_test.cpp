@@ -2,9 +2,13 @@
 #define SIMA_NEAT_INTERNAL 1
 #endif
 #include "nodes/common/Output.h"
+#include "nodes/common/Queue.h"
 #include "nodes/io/Input.h"
 #include "pipeline/Graph.h"
+#include "pipeline/ErrorCodes.h"
+#include "pipeline/NeatError.h"
 #include "pipeline/graph/internal/GraphTestHooks.h"
+#include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "test_main.h"
@@ -124,6 +128,48 @@ RUN_TEST(
       RunOptions run_opt;
       run_opt.queue_depth = 4;
       run_opt.overflow_policy = OverflowPolicy::Block;
+
+      for (const auto mode : {RunMode::Sync, RunMode::Async}) {
+        const ScopedEnvVar owned_default("SIMA_OUTPUT_MEMORY_DEFAULT", "owned");
+        auto placement_options = run_opt;
+        const auto stream = session_build_make_stream_options(placement_options, mode,
+                                                              OutputPlacement::EV74Compatible);
+        require(!stream.copy_output && stream.preserve_framework_output &&
+                    stream.output_placement == OutputPlacement::EV74Compatible,
+                "explicit CMA must retain its output despite the Auto ownership fallback");
+        placement_options.output_memory = OutputMemory::Owned;
+        bool rejected = false;
+        try {
+          (void)session_build_make_stream_options(placement_options, mode,
+                                                  OutputPlacement::EV74Compatible, "features");
+        } catch (const NeatError& error) {
+          rejected = error.report().error_code == error_codes::kPipelineShape &&
+                     std::string(error.what()).find("Output 'features'") != std::string::npos &&
+                     std::string(error.what()).find("incompatible") != std::string::npos;
+        }
+        require(rejected, "CMA and Owned are contradictory output requirements");
+      }
+
+      for (const bool queued : {false, true}) {
+        Graph graph;
+        InputOptions input;
+        input.payload_type = PayloadType::Tensor;
+        input.memory_policy = InputMemoryPolicy::SystemMemory;
+        const auto source = nodes::Input("input", input);
+        OutputOptions output;
+        output.placement = OutputPlacement::EV74Compatible;
+        auto terminal = source;
+        if (queued) {
+          terminal = nodes::Queue();
+          graph.connect(source, terminal);
+        }
+        graph.connect(terminal, nodes::Output("imported", output));
+        graph.connect(source, nodes::Output("other"));
+        const auto tensor =
+            Tensor::from_vector(std::vector<float>(16, 1.0F), {16}, TensorMemory::CPU);
+        require_neat_error([&]() { (void)graph.build(TensorList{tensor}); },
+                           error_codes::kPipelineShape, "Output 'imported'", "Output 'imported'");
+      }
 
       // Sync build path parity for Mat/Tensor/Sample.
       {

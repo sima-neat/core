@@ -707,6 +707,12 @@ NormalizedDiagnostic kernel_runner_failure(RawGstError raw) {
     code = error_codes::kKernelBinding;
     title = "A kernel buffer binding does not satisfy the prepared contract.";
     action = "Check the reported buffer's span, alignment, access rights and retained ownership.";
+    if (find_structured_detail(raw, {"runtime-field"}) == "storage.hardware") {
+      title = "Buffer memory is not accessible to the selected device.";
+      action = "Use tensor.cvu() to explicitly copy this input into CMA, or set "
+               "OutputOptions::placement = OutputPlacement::EV74Compatible when building the "
+               "producing graph to allocate compatible output directly.";
+    }
   } else if (category == "resource_busy") {
     title = "A resource required by the kernel stage is unavailable.";
     action = "Inspect the reported access or capacity cause; do not reuse buffers while ownership "

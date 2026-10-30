@@ -792,7 +792,8 @@ void attach_source_sima_meta_probes(GstElement* pipeline,
 PreparedSourcePipeline prepare_source_pipeline_from_nodes(
     const std::vector<std::shared_ptr<Node>>& nodes, const GraphOptions& sess_opt, RunMode mode,
     const RunOptions& opt, bool require_sink, bool public_output_contract,
-    std::string& last_pipeline, const char* where, std::size_t internal_edge_queue = 0) {
+    std::string& last_pipeline, const char* where, std::size_t internal_edge_queue = 0,
+    std::span<const std::string> compatible_output_names = {}) {
   const pipeline_internal::ScopedBuildTiming timing(
       "prepare_source_pipeline_from_nodes",
       std::string("where=") + (where ? where : "Graph::build(source)") + " nodes=" +
@@ -822,7 +823,9 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   // --- 3. option resolution ---------------------------------------------------------
   const RunOptions requested_opt = session_build_resolve_build_opt(mode, opt);
   RunOptions merged_opt = session_build_apply_run_defaults(requested_opt, sess_opt);
-  InputStreamOptions stream_opt = session_build_make_stream_options(merged_opt, mode);
+  InputStreamOptions stream_opt = session_build_make_stream_options(
+      merged_opt, mode,
+      graph_build_internal::terminal_output_placement(build_nodes, compatible_output_names));
   stream_opt.public_output_contract = public_output_contract;
   graph_build_internal::apply_explicit_public_output_options(stream_opt, build_nodes);
   // Source-mode pipelines own live/producers such as MIPI/libcamera, RTSP, and
@@ -839,9 +842,7 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   const NameTransform name_transform = make_name_transform(sess_opt);
   BuildResult br = build_pipeline_full(build_nodes, insert_boundaries, "mysink", insert_queue2,
                                        name_transform, &sess_opt);
-  if (graph_build_internal::explicit_public_terminal_output(stream_opt, build_nodes)) {
-    br.terminal_host_endpoint = session_build_public_output_endpoint_selector(build_nodes);
-  }
+  session_build_configure_output_storage(br, build_nodes, stream_opt, compatible_output_names);
   maybe_compile_source_contracts(&br, build_nodes, sess_opt, where);
   if (mode == RunMode::Sync) {
     session_build_clamp_sync_kernel_runner_capacity(br);
@@ -964,17 +965,16 @@ Graph::PreparedSource Graph::prepare_source_(RunMode mode, const RunOptions& opt
   };
 }
 
-SourceStreamBuildContext
-session_build_source_stream_internal(const std::vector<std::shared_ptr<Node>>& nodes,
-                                     const std::shared_ptr<void>& guard, std::string& last_pipeline,
-                                     const GraphOptions& sess_opt, const RunOptions& opt,
-                                     RunMode mode, bool require_sink, bool public_output_contract,
-                                     std::size_t internal_edge_queue, const char* where) {
+SourceStreamBuildContext session_build_source_stream_internal(
+    const std::vector<std::shared_ptr<Node>>& nodes, const std::shared_ptr<void>& guard,
+    std::string& last_pipeline, const GraphOptions& sess_opt, const RunOptions& opt, RunMode mode,
+    bool require_sink, bool public_output_contract, std::size_t internal_edge_queue,
+    const char* where, std::span<const std::string> compatible_output_names) {
   gst_init_once();
 
   PreparedSourcePipeline src = prepare_source_pipeline_from_nodes(
       nodes, sess_opt, mode, opt, require_sink, public_output_contract, last_pipeline, where,
-      internal_edge_queue);
+      internal_edge_queue, compatible_output_names);
 
   const int snapshot_wait_override_ms = public_output_contract ? -1 : 0;
   set_state_or_throw(src.pipeline.get(), GST_STATE_PLAYING, where, src.diag,
@@ -3403,7 +3403,8 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
     const std::vector<std::shared_ptr<Node>>& consumer_nodes, const std::shared_ptr<void>& guard,
     std::string& last_pipeline, const GraphOptions& sess_opt, const RunOptions& opt, RunMode mode,
     bool require_sink, bool public_output_contract, std::size_t internal_edge_queue,
-    const char* where, const runtime::FusedEncodedOutputDispatch& encoded_output_dispatch) {
+    const char* where, const runtime::FusedEncodedOutputDispatch& encoded_output_dispatch,
+    std::span<const std::string> compatible_output_names) {
   gst_init_once();
   const pipeline_internal::ScopedBuildTiming timing(
       "prepare_fused_realtime_source_pipeline",
@@ -3448,7 +3449,10 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
 
   const RunOptions requested_opt = session_build_resolve_build_opt(mode, opt);
   RunOptions merged_opt = session_build_apply_run_defaults(requested_opt, sess_opt);
-  InputStreamOptions stream_opt = session_build_make_stream_options(merged_opt, mode);
+  InputStreamOptions stream_opt =
+      session_build_make_stream_options(merged_opt, mode,
+                                        graph_build_internal::terminal_output_placement(
+                                            build_consumer_nodes, compatible_output_names));
   stream_opt.public_output_contract = public_output_contract;
   graph_build_internal::apply_explicit_public_output_options(stream_opt, build_consumer_nodes);
   stream_opt.teardown_policy = pipeline_internal::InputStreamTeardownPolicy::BoundedPreferred;
@@ -3479,6 +3483,9 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
                                                         build_branch_nodes, branch_actual_indices,
                                                         name_transform, "mysink", sess_opt,
                                                         /*enable_terminal_loans=*/has_sink);
+  if (stream_opt.output_placement == OutputPlacement::EV74Compatible)
+    session_build_configure_output_storage(br, build_consumer_nodes, stream_opt,
+                                           compatible_output_names);
   maybe_compile_fused_realtime_contracts(&br, build_consumer_nodes, build_branch_nodes,
                                          branch_actual_indices, sess_opt, where,
                                          fused_ingress_spec);

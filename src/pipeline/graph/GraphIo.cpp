@@ -721,7 +721,8 @@ void write_output_options_json(std::ostream& oss, const OutputOptions& opt) {
   oss << "{\"max_buffers\":" << opt.max_buffers << ","
       << "\"drop\":" << (opt.drop ? "true" : "false") << ","
       << "\"sync\":" << (opt.sync ? "true" : "false") << "," << "\"combine_policy\":\""
-      << combine_policy_name(opt.combine_policy) << "\"}";
+      << combine_policy_name(opt.combine_policy)
+      << "\",\"placement\":" << static_cast<int>(opt.placement) << "}";
 }
 
 OutputOptions parse_output_options(const JsonValue::JsonObject& obj) {
@@ -729,6 +730,13 @@ OutputOptions parse_output_options(const JsonValue::JsonObject& obj) {
   opt.max_buffers = int_field(obj, "max_buffers", opt.max_buffers);
   opt.drop = bool_field(obj, "drop", opt.drop);
   opt.sync = bool_field(obj, "sync", opt.sync);
+  if (const auto* placement = object_field(obj, "placement")) {
+    if (placement->type != JsonValue::Type::Number ||
+        (placement->num != static_cast<int>(OutputPlacement::Auto) &&
+         placement->num != static_cast<int>(OutputPlacement::EV74Compatible)))
+      throw_io_error(error_codes::kIoParse, "Graph::load", "", "unknown Output placement");
+    opt.placement = static_cast<OutputPlacement>(static_cast<int>(placement->num));
+  }
   opt.combine_policy = parse_combine_policy(
       string_field(obj, "combine_policy", combine_policy_name(opt.combine_policy)));
   return opt;
@@ -1017,7 +1025,10 @@ void write_model_route_options_json(std::ostream& oss,
   oss << ",\"prepared_runner\":";
   write_prepared_runner_options_json(oss, opt.prepared_runner);
   oss << ",\"async_queue_depth\":" << opt.async_queue_depth
-      << ",\"expose_all_outputs\":" << (opt.expose_all_outputs ? "true" : "false") << "}";
+      << ",\"expose_all_outputs\":" << (opt.expose_all_outputs ? "true" : "false")
+      << ",\"output\":";
+  write_output_options_json(oss, opt.output);
+  oss << "}";
 }
 
 Model::RouteOptions parse_model_route_options_json(const JsonValue::JsonObject& obj) {
@@ -1041,6 +1052,9 @@ Model::RouteOptions parse_model_route_options_json(const JsonValue::JsonObject& 
   }
   opt.async_queue_depth = int_field(obj, "async_queue_depth", opt.async_queue_depth);
   opt.expose_all_outputs = bool_field(obj, "expose_all_outputs", opt.expose_all_outputs);
+  if (const auto* output = object_field(obj, "output");
+      output && output->type == JsonValue::Type::Object && output->obj)
+    opt.output = parse_output_options(*output->obj);
   return opt;
 }
 
@@ -1818,6 +1832,7 @@ Graph Graph::load(const std::string& path) {
           provenance.model_route.prepared_runner = route_options.prepared_runner;
           provenance.model_route.async_queue_depth = route_options.async_queue_depth;
           provenance.model_route.expose_all_outputs = route_options.expose_all_outputs;
+          provenance.model_route.output = route_options.output;
         }
 
         graph.attach_fragment_boundary_hints_(static_cast<std::size_t>(start_i),

@@ -896,14 +896,21 @@ void prepare_stage_contracts(BuildResult& build, const char* where) {
                                    !env_str("SIMA_GST_ELEMENT_BUFFER_DEBUG", "").empty();
     // This candidate comes from the typed public endpoint. Scheduler proves
     // the actual stopped stage-to-appsink edge during cohort admission.
-    auto terminal_host = build.terminal_host_endpoint;
-    if (terminal_observer)
-      terminal_host.reset();
-    else if (terminal_host && !terminal_host->terminal_stage_key.empty())
-      terminal_host->terminal_stage_key =
-          apply_name_transform(build.name_transform, terminal_host->terminal_stage_key);
-    pipeline_internal::sima::finalize_pipeline_storage(*transformed_manifest,
-                                                       terminal_host ? &*terminal_host : nullptr);
+    auto endpoint = build.public_output_endpoint;
+    if (terminal_observer && build.output_placement == OutputPlacement::Auto)
+      endpoint.reset();
+    else if (endpoint && !endpoint->terminal_stage_key.empty())
+      endpoint->terminal_stage_key =
+          apply_name_transform(build.name_transform, endpoint->terminal_stage_key);
+    try {
+      pipeline_internal::sima::finalize_pipeline_storage(
+          *transformed_manifest, endpoint ? &*endpoint : nullptr, build.output_placement,
+          build.compatible_output_names);
+    } catch (const std::invalid_argument& error) {
+      session_build_throw_session_error_simple(
+          error_codes::kPipelineShape, "Output '" + build.public_output_name + "': " + error.what(),
+          "", pipeline_string);
+    }
     if (build.compiled_contracts)
       build.compiled_contracts->model_storage_scopes.reset();
     if (build.rendered_manifest)
@@ -919,6 +926,13 @@ void prepare_stage_contracts(BuildResult& build, const char* where) {
     }
   }
 
+  if (build.output_placement == OutputPlacement::EV74Compatible &&
+      (!transformed_manifest || transformed_manifest->stages.empty()))
+    session_build_throw_session_error_simple(
+        error_codes::kPipelineShape,
+        "Output '" + build.public_output_name +
+            "': EV74Compatible requires a Core-allocated tensor output.",
+        "Use tensor.cvu() to copy externally allocated output.", pipeline_string);
   build.prepared_manifest = std::move(transformed_manifest);
 }
 

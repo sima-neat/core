@@ -16,6 +16,7 @@
 #include "builder/InputContractConfigurable.h"
 #include "builder/internal/InputSpecSpecialization.h"
 #include "builder/OutputSpec.h"
+#include "nodes/common/Queue.h"
 #include "nodes/io/Input.h"
 #include "nodes/io/RTSPInput.h"
 #include "nodes/groups/internal/VideoSenderRawIngress.h"
@@ -495,7 +496,17 @@ struct OutputMemoryResolution {
 // NOTE: this governs the PUBLIC output boundary only. Internal stage-chaining
 // defaults (StageRun ZeroCopy forces, Model ingress-branch sub-runs) deliberately
 // stay ZeroCopy to preserve packed tensor topology and must NOT be routed here.
-OutputMemoryResolution resolve_output_memory(const RunOptions& opt, RunMode mode) {
+OutputMemoryResolution resolve_output_memory(const RunOptions& opt, RunMode mode,
+                                             OutputPlacement placement,
+                                             const std::string& output_name) {
+  if (placement == OutputPlacement::EV74Compatible) {
+    if (opt.output_memory == OutputMemory::Owned)
+      session_build_throw_session_error_simple(
+          error_codes::kPipelineShape,
+          "Output '" + output_name + "': EV74Compatible is incompatible with OutputMemory::Owned.",
+          "Use Auto or ZeroCopy to retain CMA output storage.");
+    return {true, true};
+  }
   bool zero_copy;
   bool preserve_framework = false;
   switch (opt.output_memory) {
@@ -575,7 +586,8 @@ public_output_endpoint_selector_local(const std::vector<std::shared_ptr<Node>>& 
 
   for (int i = output_index - 1; i >= 0; --i) {
     const auto& upstream = nodes[static_cast<std::size_t>(i)];
-    if (!upstream || upstream->kind() == "Output") {
+    // Queues preserve the upstream allocation and tensor publication.
+    if (!upstream || upstream->kind() == "Output" || dynamic_cast<const Queue*>(upstream.get())) {
       continue;
     }
     selector.terminal_node_kind = upstream->kind();
@@ -592,21 +604,7 @@ public_output_endpoint_selector_local(const std::vector<std::shared_ptr<Node>>& 
     break;
   }
 
-  const std::string label = nodes[static_cast<std::size_t>(output_index)]->user_label();
-  if (!label.empty()) {
-    selector.output_segment_name = label;
-    const bool numeric = std::all_of(label.begin(), label.end(),
-                                     [](unsigned char c) { return std::isdigit(c) != 0; });
-    if (numeric) {
-      try {
-        selector.route_slot = std::stoi(label);
-        selector.output_slot = selector.route_slot;
-      } catch (...) {
-        selector.route_slot = -1;
-        selector.output_slot = -1;
-      }
-    }
-  }
+  // Output labels name endpoints. Tensor selection comes from producer ports.
   return selector;
 }
 
@@ -1022,12 +1020,15 @@ void maybe_apply_public_terminal_output_override(const BuildResult& build_result
   }
 }
 
-InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
+InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode,
+                                       OutputPlacement placement, const std::string& output_name) {
   InputStreamOptions stream_opt;
+  stream_opt.output_placement = placement;
   const int queue_depth = (opt.queue_depth > 0) ? opt.queue_depth : 0;
   // Single source of truth for public-output memory kind (mode-aware Auto +
   // reversible env override). See resolve_output_memory().
-  const OutputMemoryResolution output_mem = resolve_output_memory(opt, mode);
+  const OutputMemoryResolution output_mem =
+      resolve_output_memory(opt, mode, placement, output_name);
   stream_opt.appsink_sync = false;
   stream_opt.appsink_drop = (opt.overflow_policy != OverflowPolicy::Block);
   stream_opt.appsink_max_buffers = queue_depth;
@@ -1425,7 +1426,9 @@ BuildInputContext prepare_build_input_context(const std::vector<std::shared_ptr<
   enforce_push_run_mode(nodes, "Graph::build(input)");
   require_input_appsrc(nodes, "Graph::build(input)", &ctx.src_node);
 
-  ctx.stream_opt = make_stream_options(ctx.merged_opt, ctx.mode);
+  ctx.stream_opt = make_stream_options(ctx.merged_opt, ctx.mode,
+                                       graph_build_internal::terminal_output_placement(nodes),
+                                       nodes.empty() ? std::string{} : nodes.back()->user_label());
   ctx.stream_opt.public_output_contract = public_output_contract;
   graph_build_internal::apply_explicit_public_output_options(ctx.stream_opt, nodes);
   maybe_enable_rtsp_appsink_drop(ctx.stream_opt, nodes);
@@ -1863,9 +1866,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
 
   BuildResult br = build_pipeline_full(build_nodes, insert_boundaries, "mysink", insert_queue2,
                                        name_transform, &sess_opt);
-  if (graph_build_internal::explicit_public_terminal_output(opt, build_nodes)) {
-    br.terminal_host_endpoint = public_output_endpoint_selector_local(build_nodes);
-  }
+  session_build_configure_output_storage(br, build_nodes, opt, opt.compatible_output_names);
   maybe_compile_build_result_contracts(
       &br, &build_nodes, sess_opt, input_contract_from_input(sample), seed_spec,
       contract_compile_sample_from_input(sample), "Graph::build(input)");
@@ -2932,8 +2933,10 @@ bool session_build_should_insert_async_queue2(RunMode mode, const RunOptions& op
   return should_insert_async_queue2(mode, opt);
 }
 
-InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunMode mode) {
-  return make_stream_options(opt, mode);
+InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunMode mode,
+                                                     OutputPlacement placement,
+                                                     const std::string& output_name) {
+  return make_stream_options(opt, mode, placement, output_name);
 }
 
 void session_build_finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt) {
@@ -2998,6 +3001,19 @@ void session_build_maybe_enable_rtsp_appsink_drop(
 pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector
 session_build_public_output_endpoint_selector(const std::vector<std::shared_ptr<Node>>& nodes) {
   return public_output_endpoint_selector_local(nodes);
+}
+
+void session_build_configure_output_storage(BuildResult& build,
+                                            const std::vector<std::shared_ptr<Node>>& nodes,
+                                            const InputStreamOptions& stream_opt,
+                                            std::span<const std::string> compatible_output_names) {
+  if (graph_build_internal::explicit_public_terminal_output(stream_opt, nodes) ||
+      stream_opt.output_placement == OutputPlacement::EV74Compatible)
+    build.public_output_endpoint = public_output_endpoint_selector_local(nodes);
+  build.output_placement = stream_opt.output_placement;
+  build.public_output_name = nodes.empty() ? std::string{} : nodes.back()->user_label();
+  build.compatible_output_names.assign(compatible_output_names.begin(),
+                                       compatible_output_names.end());
 }
 
 BuildInputContext
