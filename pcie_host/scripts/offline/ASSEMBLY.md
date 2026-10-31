@@ -74,6 +74,13 @@ Prepare a JSON spec with exactly `host` and `card` targets. Each target requires
 | `architecture` | `amd64` or `arm64` for host, `arm64` for card |
 | `os_id`, `os_version` | Expected `/etc/os-release` ID and VERSION_ID |
 
+For release metadata with a plain version such as `0.6.0`, the assembler reads
+`usr/share/sima-neat/buildinfo.json` from the hash-verified Core runtime DEB.
+The receipt must identify the same release tag/version and exact source revision.
+Clean Git builds use `git_sha`; CI source archives without `.git` use their
+recorded `ci_requested_git_sha`. Missing, dirty, conflicting, or duplicate
+receipts stop assembly before any collection container starts.
+
 Host support is Ubuntu 22.04/24.04 on AMD64/ARM64. Choose a clean,
 provisioned Platform 3.0 baseline image for the actual card; record its firmware
 provenance separately. Plain Debian ARM64 is useful for tooling integration tests
