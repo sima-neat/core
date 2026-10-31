@@ -2942,6 +2942,10 @@ void apply_public_fragment_metadata(
       hints.input_route_processor = ingress_hints.input_route_processor;
       hints.tensor_mode = ingress_hints.tensor_mode;
       hints.bundled_fan_in = ingress_hints.bundled_fan_in;
+      if (ingress_vertex < end && segment.boundary.needs_input && hints.bundled_fan_in &&
+          hints.input_route_processor)
+        segment.stream_options.model_input_shape =
+            hints.input_route_processor->model_input_shape(view.vertices[ingress_vertex]);
     } else {
       hints.ingress_inputs.clear();
       hints.ingress_endpoint_names.clear();
@@ -3277,7 +3281,8 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
   // not later while a device session is being prepared.
   std::vector<std::pair<std::size_t, std::vector<std::int64_t>>> model_input_shapes;
   for (std::size_t vertex = 0; vertex < view.vertices.size(); ++vertex) {
-    auto shape = pipeline_internal::public_model_input_shape(view, vertex);
+    auto shape = pipeline_internal::public_model_input_shape(view, vertex,
+                                                             public_graph.input_route_processor_);
     if (!shape.empty())
       model_input_shapes.emplace_back(vertex, std::move(shape));
   }

@@ -557,6 +557,7 @@ set(UNIT_TESTS
   unit_linear_input_measurement_test
   unit_model_infer_output_name_test
   unit_model_input_spec_contract_test
+  unit_model_input_wire_contract_test
   unit_model_ingress_tail_padding_test
   unit_model_output_spec_contract_test
   unit_post_region_materialization_test
