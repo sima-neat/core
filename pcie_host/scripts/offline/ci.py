@@ -43,11 +43,15 @@ def download(bucket, key, path, optional=False):
 
 def metadata_identity(data, sha, ref, distro=None, arch=None):
     # Native host metadata carries the full identity. Shared card metadata uses
-    # a version suffix; its authenticated S3 key binds the source ref/commit.
+    # a version suffix or the exact release tag version; its authenticated S3
+    # key binds the source ref/commit in both cases.
     if distro:
         matches = data.get('commit') == sha and data.get('branch') == ref
     else:
-        matches = (str(data.get('version', '')).endswith('.' + sha[:12])
+        version = str(data.get('version', ''))
+        release = (re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:[.-][0-9A-Za-z][0-9A-Za-z.-]*)?', ref)
+                   and version == ref[1:])
+        matches = ((version.endswith('.' + sha[:12]) or release)
                    and data.get('commit', sha) == sha and data.get('branch', ref) == ref)
     if not matches:
         raise ValueError('publication is not from the selected CI commit/ref')
