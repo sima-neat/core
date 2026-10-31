@@ -14,6 +14,13 @@ struct InputRouteProcessor {
   // guarantee is made for failures after this metadata-only phase.
   virtual void validate_images(const std::vector<cv::Mat>& inputs, const char* where) const = 0;
 
+  // Cold, optional wire policy for the route's representative input. The caller
+  // supplies the actual consumer so a later Model cannot authorize an earlier
+  // custom stage. This never changes the retained Tensor's logical descriptor.
+  virtual std::vector<std::int64_t> model_input_shape(const std::shared_ptr<Node>&) const {
+    return {};
+  }
+
   virtual Sample seed_tensors(const TensorList& inputs, const char* where) const {
     return process_tensors(inputs, where);
   }
