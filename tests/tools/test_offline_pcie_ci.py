@@ -22,10 +22,10 @@ SHA = 'a' * 40
 INPUTS = {'host': 'b' * 64, 'card': 'c' * 64}
 
 
-def source(ref='develop'):
+def source(ref='develop', event='push'):
     return dict(repository={'full_name': 'sima-neat/core'},
                 head_repository={'full_name': 'sima-neat/core'},
-                path='.github/workflows/vulcan-ci.yml', event='push',
+                path='.github/workflows/vulcan-ci.yml', event=event,
                 status='completed', conclusion='success', head_sha=SHA,
                 head_branch=ref, id=123)
 
@@ -36,14 +36,16 @@ def jobs():
 
 
 @pytest.mark.parametrize('ref', ['develop', 'main', 'release-0.6'])
-def test_allowed_branch(ref):
-    assert resolver.eligible(source(ref), jobs())['sha'] == SHA
+@pytest.mark.parametrize('event', ['push', 'workflow_dispatch'])
+def test_allowed_branch(ref, event):
+    assert resolver.eligible(source(ref, event), jobs())['sha'] == SHA
 
 
-def test_tag_requires_exact_commit():
-    assert resolver.eligible(source('v0.6'), jobs()) is None
-    assert resolver.eligible(source('v0.6'), jobs(), 'd' * 40) is None
-    assert resolver.eligible(source('v0.6'), jobs(), SHA)
+@pytest.mark.parametrize('event', ['push', 'workflow_dispatch'])
+def test_tag_requires_exact_commit(event):
+    assert resolver.eligible(source('v0.6', event), jobs()) is None
+    assert resolver.eligible(source('v0.6', event), jobs(), 'd' * 40) is None
+    assert resolver.eligible(source('v0.6', event), jobs(), SHA)
 
 
 def test_tag_listener_skips_gated_publication_but_preserves_older_tags_and_manual_retry():
@@ -59,21 +61,25 @@ def test_tag_listener_skips_gated_publication_but_preserves_older_tags_and_manua
 
 
 @pytest.mark.parametrize('field,value', [
+    ('repository', {'full_name': 'fork/core'}),
     ('head_repository', {'full_name': 'fork/core'}), ('event', 'pull_request'),
+    ('event', 'workflow_call'), ('event', 'schedule'),
     ('conclusion', 'failure'), ('status', 'in_progress'),
     ('path', '.github/workflows/other.yml'), ('head_branch', 'develop\nenabled=true'),
 ])
-def test_untrusted_or_incomplete_run_rejected(field, value):
-    run = source()
+@pytest.mark.parametrize('event', ['push', 'workflow_dispatch'])
+def test_untrusted_or_incomplete_run_rejected(field, value, event):
+    run = source(event=event)
     run[field] = value
     assert resolver.eligible(run, jobs()) is None
 
 
-def test_skipped_or_missing_publications_rejected():
-    assert resolver.eligible(source(), []) is None
+@pytest.mark.parametrize('event', ['push', 'workflow_dispatch'])
+def test_skipped_or_missing_publications_rejected(event):
+    assert resolver.eligible(source(event=event), []) is None
     rows = jobs()
     rows[0]['conclusion'] = 'skipped'
-    assert resolver.eligible(source(), rows) is None
+    assert resolver.eligible(source(event=event), rows) is None
 
 
 def metadata():
@@ -173,12 +179,13 @@ def test_shared_card_publication_version_identity():
         ci.metadata_identity(data, SHA, 'develop')
 
 
-def test_validation_branch_opt_in_does_not_admit_other_branches_or_forks():
+@pytest.mark.parametrize('event', ['push', 'workflow_dispatch'])
+def test_validation_branch_opt_in_does_not_admit_other_branches_or_forks(event):
     ref = 'codex/offline-pcie-discovery'
-    assert resolver.eligible(source(ref), jobs()) is None
-    assert resolver.eligible(source(ref), jobs(), validation_ref=ref)
-    assert resolver.eligible(source('other'), jobs(), validation_ref=ref) is None
-    run = source(ref)
+    assert resolver.eligible(source(ref, event), jobs()) is None
+    assert resolver.eligible(source(ref, event), jobs(), validation_ref=ref)
+    assert resolver.eligible(source('other', event), jobs(), validation_ref=ref) is None
+    run = source(ref, event)
     run['head_repository'] = {'full_name': 'fork/core'}
     assert resolver.eligible(run, jobs(), validation_ref=ref) is None
 
@@ -273,13 +280,20 @@ def test_cloudfront_invalidation_encodes_s3_branch_keys(tmp_path):
     ('push', 'refs/tags/v0.7.0-rc.1', 'standard', False, '', False, False, True, True),
     ('push', 'refs/heads/v0.6.0', 'standard', False, '', False, False, True, False),
     ('push', 'refs/tags/nightly', 'standard', False, '', False, False, True, False),
-    ('workflow_dispatch', 'refs/tags/v0.6.0', 'standard', False, '', False, False, True, False),
+    ('workflow_dispatch', 'refs/tags/v0.6.0', 'standard', False, '', False, False, True, True),
+    ('workflow_dispatch', 'refs/tags/v0.6.0', 'standard', True, '', False, False, True, False),
+    ('workflow_dispatch', 'refs/tags/v0.6.0', 'fuzz', False, '', False, False, True, False),
+    ('workflow_dispatch', 'refs/tags/v0.6.0', 'standard', False, '123', False, False, True, False),
+    ('workflow_dispatch', 'refs/tags/v0.6.0', 'standard', False, '', True, False, True, False),
+    ('workflow_dispatch', 'refs/tags/v0.6.0', 'standard', False, '', False, True, True, False),
+    ('workflow_dispatch', 'refs/tags/v0.6.0', 'standard', False, '', False, False, False, False),
     ('push', 'refs/tags/v0.6.0', 'standard', True, '', False, False, True, False),
     ('push', 'refs/tags/v0.6.0', 'standard', False, '', True, False, True, False),
     ('push', 'refs/tags/v0.6.0', 'standard', False, '', False, True, True, False),
     ('push', 'refs/tags/v0.6.0', 'standard', False, '', False, False, False, False),
     ('pull_request', 'refs/heads/develop', 'standard', False, '', False, False, True, False),
-    ('workflow_dispatch', 'refs/heads/develop', 'standard', False, '', False, False, True, False),
+    ('workflow_dispatch', 'refs/heads/develop', 'standard', False, '', False, False, True, True),
+    ('workflow_dispatch', 'refs/heads/main', 'standard', False, '', False, False, True, False),
     ('push', 'refs/heads/main', 'standard', False, '', False, False, True, False),
     ('push', 'refs/heads/develop', 'fuzz', False, '', False, False, True, False),
     ('push', 'refs/heads/develop', 'standard', True, '', False, False, True, False),
