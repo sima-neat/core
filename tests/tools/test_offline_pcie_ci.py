@@ -179,6 +179,52 @@ def test_shared_card_publication_version_identity():
         ci.metadata_identity(data, SHA, 'develop')
 
 
+@pytest.mark.parametrize('ref', ['v0.6.0', 'v0.7.0-rc.1'])
+def test_shared_card_release_version_uses_commit_scoped_publication(ref):
+    data = metadata()
+    del data['commit'], data['branch']
+    data['version'] = ref[1:]
+    ci.metadata_identity(data, SHA, ref)
+    for field, value in [('commit', 'b' * 40), ('branch', 'develop'),
+                         ('version', '0.5.0')]:
+        with pytest.raises(ValueError, match='selected CI'):
+            ci.metadata_identity({**data, field: value}, SHA, ref)
+
+
+@pytest.mark.parametrize('ref', ['develop', 'release-0.6', 'nightly', '0.6.0'])
+def test_plain_release_version_cannot_identify_branch_publication(ref):
+    data = metadata()
+    del data['commit'], data['branch']
+    data['version'] = '0.6.0'
+    with pytest.raises(ValueError, match='selected CI'):
+        ci.metadata_identity(data, SHA, ref)
+
+
+@pytest.mark.parametrize('core', [False, True])
+def test_release_source_metadata_is_read_from_selected_commit_key(tmp_path, core):
+    import json
+    args = SimpleNamespace(ref='v0.6.0', sha=SHA, bucket='bucket',
+                           distro='ubuntu22', arch='amd64', core=core)
+    card = metadata()
+    del card['commit'], card['branch']
+    card['version'] = '0.6.0'
+    host = metadata()
+    host['branch'] = args.ref
+
+    def download(bucket, key, path):
+        expected = ci.prefix(args.ref, SHA)
+        assert key.startswith(expected + '/')
+        assert key.endswith('/metadata.json')
+        data = host if '/pciehost/' in key else card
+        path.write_text(json.dumps(data))
+
+    with patch.object(ci, 'download', side_effect=download):
+        records, paths, inputs = ci.source_metadata(args, tmp_path)
+    expected_roles = {'card'} if core else {'card', 'host'}
+    assert set(records) == set(paths) == set(inputs) == expected_roles
+    assert records['card'] == card
+
+
 @pytest.mark.parametrize('event', ['push', 'workflow_dispatch'])
 def test_validation_branch_opt_in_does_not_admit_other_branches_or_forks(event):
     ref = 'codex/offline-pcie-discovery'
