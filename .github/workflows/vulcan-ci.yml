@@ -197,6 +197,7 @@ jobs:
             tests/tools/test_offline_core.py \
             tests/tools/test_offline_pcie_discovery.py \
             tests/tools/test_offline_pcie_assembly.py \
+            tests/tools/test_offline_release_identity.py \
             tests/tools/test_offline_pcie_ci.py \
             tests/tools/test_offline_pcie_install.py \
             tests/tools/test_offline_pcie_host_process.py \
