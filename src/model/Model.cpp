@@ -31,6 +31,7 @@
 #include "pipeline/internal/RenderedMlaContractQuery.h"
 #include "pipeline/internal/SelectedStageBoundary.h"
 #include "pipeline/internal/InputRouteProcessor.h"
+#include "pipeline/internal/PublicInputContract.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorTransfer.h"
 #include "pipeline/internal/TensorUtil.h"
@@ -3359,6 +3360,40 @@ public:
       }
       branch_runners_.resize(ingress_contracts_.size());
     }
+  }
+
+  std::vector<std::int64_t>
+  model_input_shape(const std::shared_ptr<Node>& consumer) const override {
+    if (!is_fan_in_route_ || direct_tensor_set_ingress_ || ingress_contracts_.empty() ||
+        source_options_.empty() || source_options_.front().payload_type != PayloadType::Tensor ||
+        !consumer || consumer->kind() == "Preproc")
+      return {};
+    const auto* lineage = internal::node_model_lineage_binding(consumer);
+    const auto* compiled = internal::node_model_processcvu_contract(consumer);
+    if (!lineage || lineage->stage_role != internal::ModelLineageStageRole::Preprocess ||
+        lineage->source_path != internal::ModelAccess::source_path(model_) || !compiled)
+      return {};
+    const auto& mpk = internal::ModelAccess::pack(model_).mpk_contract();
+    const auto& ingress = ingress_contracts_.front();
+    if (!mpk || ingress.dst_plugin_index >= mpk->plugins.size() || ingress.dst_input_index < 0)
+      return {};
+    const auto& inputs = mpk->plugins[ingress.dst_plugin_index].input_tensors;
+    if (static_cast<std::size_t>(ingress.dst_input_index) >= inputs.size())
+      return {};
+    const auto& authored = inputs[static_cast<std::size_t>(ingress.dst_input_index)];
+    const auto& name = authored.name.empty() ? authored.segment_name : authored.name;
+    if (name != ingress.source_tensor_name || authored.mpk_shape != ingress.logical_shape)
+      return {};
+    const pipeline_internal::sima::LogicalInputStaticSpec* selected = nullptr;
+    for (const auto& input : compiled->runtime_contract.logical_inputs) {
+      if (input.logical_name != name && input.backend_name != name && input.segment_name != name)
+        continue;
+      if (selected)
+        return {};
+      selected = &input;
+    }
+    return selected ? pipeline_internal::model_input_wire_shape(authored, *selected)
+                    : std::vector<std::int64_t>{};
   }
 
   void validate_images(const std::vector<cv::Mat>& inputs, const char* where) const override {
