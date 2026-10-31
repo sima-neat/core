@@ -34,7 +34,8 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
   const auto* upstream = compiled_runtime_contract_from_stage(upstream_stage);
   const auto upstream_id = upstream_stage && !upstream_stage->logical_stage_id.empty()
                                ? upstream_stage->logical_stage_id
-                               : upstream_stage ? upstream_stage->element_name : std::string();
+                           : upstream_stage ? upstream_stage->element_name
+                                            : std::string();
   if (upstream && upstream_id.empty())
     throw std::invalid_argument("SimaBoxDecode: upstream carrier has no stage identity");
   TensorBufferView ingress;
@@ -61,7 +62,8 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
       throw std::invalid_argument("SimaBoxDecode: missing authored head input binding");
     si::PhysicalBufferStaticSpec physical;
     if (upstream) {
-      if (!binding->src_stage_id.empty() && binding->src_stage_id != upstream_stage->logical_stage_id &&
+      if (!binding->src_stage_id.empty() &&
+          binding->src_stage_id != upstream_stage->logical_stage_id &&
           binding->src_stage_id != upstream_stage->element_name)
         throw std::invalid_argument("SimaBoxDecode: conflicting upstream carrier identity");
       const auto source =
@@ -238,7 +240,7 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
     geometry.model_height = static_cast<int>(padded_height);
   }
   if ((geometry.model_width <= 0 || geometry.model_height <= 0) &&
-      compiled.payload.decode_type == BoxDecodeType::Ssd) {
+      box_decode_type_is_ssd_family(compiled.payload.decode_type)) {
     if (const auto* recipe =
             si::stagesemantics::find_ssd_recipe_descriptor(compiled.payload.ssd_recipe_id)) {
       geometry.model_width = recipe->model_width;

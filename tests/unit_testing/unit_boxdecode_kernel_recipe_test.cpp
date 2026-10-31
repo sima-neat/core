@@ -211,6 +211,18 @@ void families() {
       input(ssd, fixture.dims[i], fixture.dims[i], fixture.anchors[i] * 4);
     for (std::size_t i = 0; i < fixture.dims.size(); ++i)
       input(ssd, fixture.dims[i], fixture.dims[i], fixture.anchors[i] * fixture.classes);
+    const bool source_policy = fixture.id == stagesemantics::SsdRecipeId::SsdMobile300V1 ||
+                               fixture.id == stagesemantics::SsdRecipeId::SsdLiteMobile320V1;
+    require(uses_source_multiclass_ssd_policy(ssd.payload) == source_policy,
+            "SSD source policy selected the wrong prepared signature");
+    auto different_classes = ssd.payload;
+    different_classes.num_classes = 81;
+    require(!uses_source_multiclass_ssd_policy(different_classes),
+            "non-91-class SSD must preserve the legacy policy");
+    auto other_family = ssd.payload;
+    other_family.decode_type = BoxDecodeType::YoloV26;
+    require(!uses_source_multiclass_ssd_policy(other_family),
+            "SSD recipe fields must not alter another family");
     const auto compiled =
         check(ssd, {fixture.side, fixture.side, fixture.side, fixture.side, ResizeMode::Stretch});
     const auto native =

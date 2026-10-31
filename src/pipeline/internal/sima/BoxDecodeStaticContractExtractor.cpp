@@ -822,7 +822,7 @@ std::optional<BoxDecodeScoreActivation> resolve_boxdecode_score_activation_from_
     // declared probability domain is caught above and rejected by the family override.
     return BoxDecodeScoreActivation::Sigmoid;
   }
-  if (decode_type == BoxDecodeType::Ssd) {
+  if (box_decode_type_is_ssd_family(decode_type)) {
     // SSD confidence heads are class logits decoded with a softmax over the class dimension
     // (background included). The activation is implied by the decode type, so raw/manual-wired SSD
     // loc/conf tensors resolve without needing special class_logit tensor names (this matches the

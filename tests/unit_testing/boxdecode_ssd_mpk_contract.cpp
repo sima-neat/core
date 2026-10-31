@@ -2,6 +2,7 @@
 #include "model/Model.h"
 #include "model/internal/ModelInternal.h"
 #include "nodes/io/Input.h"
+#include "nodes/sima/SimaBoxDecode.h"
 #include "nodes/common/Output.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
@@ -58,7 +59,8 @@ constexpr std::array<std::uint64_t, 12> kBf16Bytes{11552,  4800,   1200,  432,  
                                                    202160, 110400, 27600, 9936, 4416, 1104};
 
 ps::BoxDecodeStaticContract extract(const ps::MpkContract& mpk, bool integer,
-                                    const std::string& context) {
+                                    const std::string& context,
+                                    BoxDecodeType type = BoxDecodeType::Ssd) {
   std::string error;
   const auto flags = ps::resolve_model_managed_boxdecode_route_flags_from_mpk(mpk, nullptr, &error);
   require(flags.has_value(), context + ": route facts: " + error);
@@ -66,9 +68,8 @@ ps::BoxDecodeStaticContract extract(const ps::MpkContract& mpk, bool integer,
           context + ": linear padded heads must not become tessellated or change dtype");
   const auto contract = ps::build_boxdecode_static_contract_from_mpk(mpk, *flags, &error);
   require(contract.has_value(), context + ": BoxDecode extraction: " + error);
-  return semantics::finalize_boxdecode_static_contract(*contract, BoxDecodeType::Ssd, std::nullopt,
-                                                       flags, BoxDecodeTypeOption::Auto, .2, .6,
-                                                       100, 0, {});
+  return semantics::finalize_boxdecode_static_contract(
+      *contract, type, std::nullopt, flags, BoxDecodeTypeOption::Auto, .2, .6, 100, 0, {});
 }
 
 void check_one(const std::string& model, bool integer, bool permuted = false,
@@ -91,6 +92,9 @@ void check_one(const std::string& model, bool integer, bool permuted = false,
             name + ": unexpected authoritative root extent at " + std::to_string(i));
 
   const auto extracted = extract(mpk, integer, name);
+  require(ps::uses_source_multiclass_ssd_policy(
+              semantics::build_boxdecode_compiled_contract(extracted).payload),
+          name + ": real V1/V2 MPK must select the shared source numerical policy");
   require(extracted.ssd_recipe_id == semantics::SsdRecipeId::SsdMobile300V1 &&
               extracted.tensors.size() == 12,
           name + ": wrong resolved SSD signature");
@@ -339,7 +343,8 @@ void check_ssd_mpk_carrier_contracts() {
 // caller supplies an authentic SSD MPK with its actual ELF; missing artifacts
 // are errors, not skips. This compiles/places the public Model route without
 // constructing a Run or invoking any numerical member or MLA executable.
-void check_ssd_model_carrier_contract(const std::string& archive) {
+void check_ssd_model_carrier_contract_case(const std::string& archive, BoxDecodeType type,
+                                           bool manual_route) {
   Model::Options options;
   options.preprocess.kind = InputKind::Image;
   options.preprocess.enable = AutoFlag::On;
@@ -349,11 +354,35 @@ void check_ssd_model_carrier_contract(const std::string& archive) {
   options.preprocess.normalize.mean = {.5f, .5f, .5f};
   options.preprocess.normalize.stddev = {.5f, .5f, .5f};
   options.preprocess.normalize.has_explicit_stats = true;
-  options.decode_type = BoxDecodeType::Ssd;
+  options.decode_type = type;
   options.score_threshold = .2f;
   options.nms_iou_threshold = .6f;
   options.top_k = 100;
   Model model(archive, options);
+  const auto contract = internal::ModelAccess::build_boxdecode_stage_contract(model, false);
+  require(contract.payload.decode_type == type && contract.payload.num_classes == 91,
+          "authentic Model stage silently changed its requested numerical policy");
+  const auto manual = nodes::SimaBoxDecode(model, BoxDecodeType::Ssd, .2, .6, 100);
+  const auto* manual_box = dynamic_cast<const SimaBoxDecode*>(manual.get());
+  require(manual_box && manual_box->decode_type_internal() == BoxDecodeType::Ssd,
+          "manual Model constructor lost the stable SSD family");
+  {
+    auto narrowed = options;
+    narrowed.num_classes = 90;
+    bool narrowing_rejected = false;
+    try {
+      Model invalid(archive, narrowed);
+      (void)internal::ModelAccess::build_boxdecode_stage_contract(invalid, false);
+    } catch (const std::exception& error) {
+      const std::string diagnostic = error.what();
+      require(diagnostic.find("requires exactly 91 classes encoded by the confidence heads") !=
+                      std::string::npos &&
+                  diagnostic.find("num_classes=90") != std::string::npos,
+              "class narrowing failed for an unrelated reason: " + diagnostic);
+      narrowing_rejected = true;
+    }
+    require(narrowing_rejected, "authentic multiclass Model accepted 90 encoded classes");
+  }
   auto input = model.input_appsrc_options(false);
   input.width = 1280;
   input.height = 720;
@@ -363,11 +392,30 @@ void check_ssd_model_carrier_contract(const std::string& archive) {
   nodes.insert(nodes.end(), route.begin(), route.end());
   nodes.push_back(nodes::Output());
   nodes = session_build_materialize_model_bound_nodes(nodes, false);
+  if (manual_route) {
+    std::size_t replaced = 0;
+    for (auto& node : nodes) {
+      if (dynamic_cast<const SimaBoxDecode*>(node.get())) {
+        node = manual;
+        ++replaced;
+      }
+    }
+    require(replaced == 1, "manual route must replace exactly one materialized BoxDecode stage");
+  }
   session_build_apply_derived_input_contracts(&nodes);
   auto build = build_pipeline_full(nodes, false, "mysink", false, {});
   session_build_compile_contracts(&build, nodes, ContractCompileInput{}, "ssd_carrier_test",
                                   &nodes);
   require(build.manifest_diagnostics.errors.empty(), "real SSD Model contract compilation failed");
+  std::size_t decoded_nodes = 0;
+  for (const auto& node : nodes) {
+    if (const auto* decoder = dynamic_cast<const SimaBoxDecode*>(node.get())) {
+      require(decoder->decode_type_internal() == (manual_route ? BoxDecodeType::Ssd : type),
+              "compiled Model route changed the stable SSD family");
+      ++decoded_nodes;
+    }
+  }
+  require(decoded_nodes == 1, "compiled detector route must contain exactly one BoxDecode");
   session_build_prepare_stage_contracts(build, "ssd_carrier_test");
   require(bool(build.prepared_manifest), "real SSD Model placement missing");
   const auto& stages = build.prepared_manifest->stages;
@@ -440,4 +488,9 @@ void check_ssd_model_carrier_contract(const std::string& archive) {
   require(!failure, "real SSD placed Scheduler admission: " +
                         (failure ? failure->field + ": " + failure->message : std::string()));
   std::cout << "SSD_MODEL_PACKED_CARRIER_PASS_NO_RUN_NO_MEMBER_SUBMISSION\n";
+}
+
+void check_ssd_model_carrier_contract(const std::string& archive) {
+  for (bool manual : {false, true})
+    check_ssd_model_carrier_contract_case(archive, BoxDecodeType::Ssd, manual);
 }
