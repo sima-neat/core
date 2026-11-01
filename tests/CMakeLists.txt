@@ -205,8 +205,6 @@ set(SIMA_TEST_MODEL_ARCHIVE_FIXTURE_ROOT "${CMAKE_BINARY_DIR}/test-assets/model-
 set(SIMA_TEST_MODEL_ARCHIVE_FIXTURE_MANIFEST "${CMAKE_BINARY_DIR}/test-assets/model-archive/fixtures_manifest.json")
 set(SIMA_TEST_DECODER_FIXTURE "${CMAKE_SOURCE_DIR}/tests/assets/decoder/dynamic_caps.h264")
 set(SIMA_TEST_CODEC_PERF_FIXTURE_ROOT "${CMAKE_BINARY_DIR}/test-assets/codec-perf")
-set(SIMA_TEST_SSD_REGISTRY_FIXTURE_ROOT "${SIMA_TEST_MODEL_ARCHIVE_FIXTURE_ROOT}/registry/ssd-contract")
-set(SIMA_TEST_MODEL_REGISTRY_CACHE "${CMAKE_BINARY_DIR}/model-registry-cache")
 
 add_custom_target(prepare_test_fixtures ALL
   COMMAND ${Python3_EXECUTABLE}
@@ -221,16 +219,10 @@ add_custom_target(prepare_test_fixtures ALL
   COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/make_decoder_dynamic_fixture.py
     --output ${SIMA_TEST_DECODER_FIXTURE}
-  COMMAND ${Python3_EXECUTABLE}
-    ${CMAKE_CURRENT_SOURCE_DIR}/tools/prepare_registry_mpk_fixtures.py
-    --fixtures ${CMAKE_CURRENT_SOURCE_DIR}/assets/ssd-contract/fixtures.json
-    --root ${SIMA_TEST_SSD_REGISTRY_FIXTURE_ROOT}
-    --cache ${SIMA_TEST_MODEL_REGISTRY_CACHE}
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
   COMMENT "Preparing deterministic test fixtures"
   VERBATIM
 )
-add_dependencies(unit_boxdecode_kernel_recipe_test prepare_test_fixtures)
 
 add_custom_target(prepare_perf_codec_fixtures
   COMMAND ${Python3_EXECUTABLE}
@@ -2889,6 +2881,12 @@ install(
   DESTINATION share/sima-neat/test-assets/tests/assets/preproc_dynamic
   COMPONENT extras
 )
+install(
+  DIRECTORY "${CMAKE_SOURCE_DIR}/tests/assets/ssd-contract/"
+  DESTINATION share/sima-neat/test-assets/tests/assets/ssd-contract
+  COMPONENT extras
+)
+
 # Model-archive, decoder, and codec perf fixtures used by installed tests.
 # Keep install/package jobs self-contained too. Some CI/CD paths package or
 # install the test extras without explicitly building an individual test
@@ -2921,18 +2919,6 @@ if (NOT _sima_decoder_fixture_rv EQUAL 0)
 endif()
 execute_process(
   COMMAND \"${Python3_EXECUTABLE}\"
-          \"${CMAKE_CURRENT_SOURCE_DIR}/tools/prepare_registry_mpk_fixtures.py\"
-          --fixtures \"${CMAKE_CURRENT_SOURCE_DIR}/assets/ssd-contract/fixtures.json\"
-          --root \"${SIMA_TEST_SSD_REGISTRY_FIXTURE_ROOT}\"
-          --cache \"${SIMA_TEST_MODEL_REGISTRY_CACHE}\"
-  WORKING_DIRECTORY \"${CMAKE_SOURCE_DIR}\"
-  RESULT_VARIABLE _sima_registry_fixture_rv
-)
-if (NOT _sima_registry_fixture_rv EQUAL 0)
-  message(FATAL_ERROR \"failed to prepare registry MPK test fixtures\")
-endif()
-execute_process(
-  COMMAND \"${Python3_EXECUTABLE}\"
           \"${CMAKE_CURRENT_SOURCE_DIR}/perf/tools/prepare_codec_perf_fixtures.py\"
           --output-dir \"${SIMA_TEST_CODEC_PERF_FIXTURE_ROOT}\"
   WORKING_DIRECTORY \"${CMAKE_SOURCE_DIR}\"
@@ -2948,7 +2934,6 @@ install(
   DIRECTORY "${CMAKE_BINARY_DIR}/test-assets/model-archive/"
   DESTINATION lib/sima-neat/test-assets/model-archive
   COMPONENT extras
-  PATTERN "*.lock" EXCLUDE
 )
 install(
   DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets/model-archive/strict-seeds/"
