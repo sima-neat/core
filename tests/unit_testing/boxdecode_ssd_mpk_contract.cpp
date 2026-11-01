@@ -46,7 +46,7 @@ void require(bool condition, const std::string& message) {
     throw std::runtime_error(message);
 }
 
-// Independent expectations from the four registry MPKs, not the production SSD
+// Independent expectations from the V1/V2 registry MPKs, not the production SSD
 // recipe table. BF16 is linear HWC with C8-aligned pitch, NOT twice INT8 C16.
 constexpr std::array<int, 6> kSides{19, 10, 5, 3, 2, 1};
 constexpr std::array<int, 12> kLogicalChannels{12,  24,  24,  24,  24,  24,
@@ -126,8 +126,8 @@ ps::BoxDecodeStaticContract extract(const ps::MpkContract& mpk, bool integer,
 void check_one(const std::string& model, bool integer, bool permuted = false,
                std::size_t prefix = 0, const SsdCarrierGolden& golden = kTf300Golden) {
   const auto name = model + (integer ? "-w8a8" : "-w16a16");
-  const auto path =
-      sima_test::test_shared_asset_path("tests/assets/ssd-contract/" + name + "-mpk.json");
+  const auto path = sima_test::test_model_archive_fixture_root_path() / "registry" /
+                    "ssd-contract" / (name + "-mpk.json");
   std::string error;
   const auto loaded = ps::static_contract::MpkDecoder::load(path, &error);
   require(loaded.has_value(), name + ": actual MPK load: " + error);

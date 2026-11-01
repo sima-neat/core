@@ -206,6 +206,7 @@ jobs:
             tests/tools/test_pcie_build_options.py \
             tests/tools/test_required_test_coverage.py \
             tests/tools/test_ci_weekly_preparation.py \
+            tests/tools/test_registry_mpk_fixtures.py \
             tests/tools/test_devkit_sharding.py \
             tests/tools/test_install_test_dependencies.py \
             tests/tools/test_docs_native_prerequisites.py \
