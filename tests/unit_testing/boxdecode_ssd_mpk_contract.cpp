@@ -58,6 +58,57 @@ constexpr std::array<std::uint64_t, 12> kInt8Bytes{5776,   3200,  800,   288,  1
 constexpr std::array<std::uint64_t, 12> kBf16Bytes{11552,  4800,   1200,  432,  192,  48,
                                                    202160, 110400, 27600, 9936, 4416, 1104};
 
+// Independent TV320 expectations from the V3 compiler 3.0.0 MPK manifests.
+// Do not derive these values from Core's production recipe descriptor.
+constexpr std::array<int, 6> kTv320Sides{20, 10, 5, 3, 2, 1};
+constexpr std::array<int, 12> kTv320LogicalChannels{24,  24,  24,  24,  24,  24,
+                                                    546, 546, 546, 546, 546, 546};
+constexpr std::array<int, 12> kTv320Int8Pitch{32, 32, 32, 32, 32, 32, 560, 560, 560, 560, 560, 560};
+constexpr std::array<int, 12> kTv320Bf16Pitch{24, 24, 24, 24, 24, 24, 552, 552, 552, 552, 552, 552};
+constexpr std::array<std::uint64_t, 12> kTv320Int8Bytes{12800,  3200,  800,   288,  128,  32,
+                                                        224000, 56000, 14000, 5040, 2240, 560};
+constexpr std::array<std::uint64_t, 12> kTv320Bf16Bytes{19200,  4800,   1200,  432,  192,  48,
+                                                        441600, 110400, 27600, 9936, 4416, 1104};
+
+struct SsdCarrierGolden {
+  const std::array<int, 6>& sides;
+  const std::array<int, 12>& logical_channels;
+  const std::array<int, 12>& int8_pitch;
+  const std::array<int, 12>& bf16_pitch;
+  const std::array<std::uint64_t, 12>& int8_bytes;
+  const std::array<std::uint64_t, 12>& bf16_bytes;
+  semantics::SsdRecipeId recipe_id;
+  int input_side;
+};
+
+constexpr SsdCarrierGolden kTf300Golden{kSides,
+                                        kLogicalChannels,
+                                        kInt8Pitch,
+                                        kBf16Pitch,
+                                        kInt8Bytes,
+                                        kBf16Bytes,
+                                        semantics::SsdRecipeId::SsdMobile300V1,
+                                        300};
+constexpr SsdCarrierGolden kTv320Golden{kTv320Sides,
+                                        kTv320LogicalChannels,
+                                        kTv320Int8Pitch,
+                                        kTv320Bf16Pitch,
+                                        kTv320Int8Bytes,
+                                        kTv320Bf16Bytes,
+                                        semantics::SsdRecipeId::SsdLiteMobile320V1,
+                                        320};
+
+const SsdCarrierGolden& carrier_golden(semantics::SsdRecipeId recipe) {
+  switch (recipe) {
+  case semantics::SsdRecipeId::SsdMobile300V1:
+    return kTf300Golden;
+  case semantics::SsdRecipeId::SsdLiteMobile320V1:
+    return kTv320Golden;
+  default:
+    throw std::runtime_error("no independent carrier golden for the admitted SSD recipe");
+  }
+}
+
 ps::BoxDecodeStaticContract extract(const ps::MpkContract& mpk, bool integer,
                                     const std::string& context,
                                     BoxDecodeType type = BoxDecodeType::Ssd) {
@@ -73,7 +124,7 @@ ps::BoxDecodeStaticContract extract(const ps::MpkContract& mpk, bool integer,
 }
 
 void check_one(const std::string& model, bool integer, bool permuted = false,
-               std::size_t prefix = 0) {
+               std::size_t prefix = 0, const SsdCarrierGolden& golden = kTf300Golden) {
   const auto name = model + (integer ? "-w8a8" : "-w16a16");
   const auto path =
       sima_test::test_shared_asset_path("tests/assets/ssd-contract/" + name + "-mpk.json");
@@ -83,8 +134,8 @@ void check_one(const std::string& model, bool integer, bool permuted = false,
   const auto& mpk = loaded->contract;
   const auto* mla = ps::get_mla_stage_io_contract(mpk);
   require(mla && mla->output_tensors.size() == 12, name + ": expected twelve MLA roots");
-  const auto& pitch = integer ? kInt8Pitch : kBf16Pitch;
-  const auto& bytes = integer ? kInt8Bytes : kBf16Bytes;
+  const auto& pitch = integer ? golden.int8_pitch : golden.bf16_pitch;
+  const auto& bytes = integer ? golden.int8_bytes : golden.bf16_bytes;
   const std::int64_t scalar = integer ? 1 : 2;
   const auto expected_dtype = integer ? client::DType::Int8 : client::DType::BFloat16;
   for (std::size_t i = 0; i < bytes.size(); ++i)
@@ -94,9 +145,8 @@ void check_one(const std::string& model, bool integer, bool permuted = false,
   const auto extracted = extract(mpk, integer, name);
   require(ps::uses_source_multiclass_ssd_policy(
               semantics::build_boxdecode_compiled_contract(extracted).payload),
-          name + ": real V1/V2 MPK must select the shared source numerical policy");
-  require(extracted.ssd_recipe_id == semantics::SsdRecipeId::SsdMobile300V1 &&
-              extracted.tensors.size() == 12,
+          name + ": real MPK must select the shared source numerical policy");
+  require(extracted.ssd_recipe_id == golden.recipe_id && extracted.tensors.size() == 12,
           name + ": wrong resolved SSD signature");
 
   // The compiler's slice names contain "unpack", but their typed kernel is
@@ -112,13 +162,13 @@ void check_one(const std::string& model, bool integer, bool permuted = false,
   const auto renamed_contract = extract(renamed, integer, name + " renamed slices");
   for (std::size_t i = 0; i < bytes.size(); ++i) {
     const auto& head = extracted.tensors[i];
-    const int side = kSides[i % kSides.size()];
+    const int side = golden.sides[i % golden.sides.size()];
     require(head.source_physical_index == static_cast<int>(i) && head.source_byte_offset == 0 &&
                 head.source_size_bytes == bytes[i],
             name + ": lost distinct root/extent/relative offset at " + std::to_string(i));
     require(head.source_storage_kind == ps::BoxDecodeSourceStorageKind::DenseHwcPhysical &&
                 head.input_shape == std::vector<int>({side, side, pitch[i]}) &&
-                head.slice_shape == std::vector<int>({side, side, kLogicalChannels[i]}),
+                head.slice_shape == std::vector<int>({side, side, golden.logical_channels[i]}),
             name + ": physical pitch or semantic shape changed at " + std::to_string(i));
     const auto& control = renamed_contract.tensors[i];
     require(control.source_size_bytes == head.source_size_bytes &&
@@ -170,8 +220,10 @@ void check_one(const std::string& model, bool integer, bool permuted = false,
   const auto expect_rejected = [&](const auto& changed, const auto& changed_context,
                                    const std::string& expected) {
     try {
-      (void)ps::compile_boxdecode_kernel(
-          changed, changed_context, {300, 300, 300, 300, ResizeMode::Stretch}, ResizeMode::Stretch);
+      (void)ps::compile_boxdecode_kernel(changed, changed_context,
+                                         {golden.input_side, golden.input_side, golden.input_side,
+                                          golden.input_side, ResizeMode::Stretch},
+                                         ResizeMode::Stretch);
     } catch (const std::invalid_argument& error) {
       require(std::string(error.what()).find(expected) != std::string::npos,
               name + ": wrong rejection: " + error.what());
@@ -197,8 +249,11 @@ void check_one(const std::string& model, bool integer, bool permuted = false,
   auto ambiguous_context = context;
   ambiguous_context.immediate_upstream = &ambiguous;
   expect_rejected(compiled, ambiguous_context, "ambiguous upstream physical carrier");
-  auto native = ps::compile_boxdecode_kernel(
-      compiled, context, {300, 300, 300, 300, ResizeMode::Stretch}, ResizeMode::Stretch);
+  auto native =
+      ps::compile_boxdecode_kernel(compiled, context,
+                                   {golden.input_side, golden.input_side, golden.input_side,
+                                    golden.input_side, ResizeMode::Stretch},
+                                   ResizeMode::Stretch);
   for (const auto& binding : native.runtime_contract.input_bindings)
     require(binding.src_stage_id == producer.logical_stage_id && binding.src_stage_index == -1,
             name + ": admission lost the actual producer behind a Slice alias");
@@ -217,18 +272,19 @@ void check_one(const std::string& model, bool integer, bool permuted = false,
     require(ports[i].source == client::TensorStagePortSource::Input && ports[i].tensor == i &&
                 ports[i].byte_offset == 0,
             name + ": native port lost its distinct root at " + std::to_string(i));
-    const auto side = kSides[i % kSides.size()];
+    const auto side = golden.sides[i % golden.sides.size()];
     require(specs[i].dtype == expected_dtype &&
-                specs[i].shape == std::vector<std::int64_t>({side, side, kLogicalChannels[i]}),
+                specs[i].shape ==
+                    std::vector<std::int64_t>({side, side, golden.logical_channels[i]}),
             name + ": native dtype or logical shape changed at " + std::to_string(i));
-    if (pitch[i] != kLogicalChannels[i]) {
+    if (pitch[i] != golden.logical_channels[i]) {
       const auto* strided = std::get_if<client::Strided>(&specs[i].layout);
       require(strided && strided->strides_bytes ==
                              std::array<std::int64_t, 6>{side * pitch[i] * scalar,
                                                          pitch[i] * scalar, scalar, 0, 0, 0},
               name + ": padded HWC pitch was discarded at " + std::to_string(i));
     }
-    const auto span = ((side * side - 1) * pitch[i] + kLogicalChannels[i]) * scalar;
+    const auto span = ((side * side - 1) * pitch[i] + golden.logical_channels[i]) * scalar;
     // Native dense-HWC readers retain the complete physical pixel pitch,
     // including the final pixel's padding. The last logical element alone is
     // not their storage contract (for example BF16 head 0: 11544 vs 11552).
@@ -337,6 +393,8 @@ void check_ssd_mpk_carrier_contracts() {
       check_one(model, integer);
   check_one("ssd_mobilenet_v1", true, true);
   check_one("ssd_mobilenet_v2", false, true, 64);
+  for (const bool integer : {false, true})
+    check_one("ssd_mobilenet_v3", integer, false, 0, kTv320Golden);
 }
 
 // Optional artifact-backed branch of the existing strict test executable. The
@@ -434,11 +492,14 @@ void check_ssd_model_carrier_contract_case(const std::string& archive, BoxDecode
   require(published.allocations.size() == 1 && published.outputs.size() == 12 &&
               consumed.inputs.size() == 12,
           "real SSD Model must pack twelve MLA roots into one published allocation");
+  require(ps::uses_source_multiclass_ssd_policy(contract.payload),
+          "authentic SSD Model must select the source numerical policy");
+  const auto& golden = carrier_golden(contract.payload.ssd_recipe_id);
   const bool integer = consumer->logical_inputs.front().dtype == "INT8";
-  const auto& bytes = integer ? kInt8Bytes : kBf16Bytes;
+  const auto& bytes = integer ? golden.int8_bytes : golden.bf16_bytes;
   constexpr std::array<std::size_t, 12> int8_offsets{
       180224, 196608, 204800, 212992, 217088, 221184, 0, 106496, 163840, 188416, 200704, 208896};
-  if (integer)
+  if (integer && golden.recipe_id == semantics::SsdRecipeId::SsdMobile300V1)
     require(published.allocations.front().size_bytes == 225280,
             "actual SSD INT8 packed arena size changed");
   std::set<std::size_t> offsets;
@@ -454,7 +515,7 @@ void check_ssd_model_carrier_contract_case(const std::string& archive, BoxDecode
             "real SSD head " + std::to_string(i) + " did not use its published MLA span");
     require(source->span.allocation_index == 0 && offsets.insert(source->span.byte_offset).second,
             "real SSD independent heads alias or use an unpublished allocation");
-    if (integer)
+    if (integer && golden.recipe_id == semantics::SsdRecipeId::SsdMobile300V1)
       require(source->span.byte_offset == int8_offsets[i],
               "real SSD physical-to-packed projection changed at " + std::to_string(i));
   }
@@ -483,10 +544,25 @@ void check_ssd_model_carrier_contract_case(const std::string& archive, BoxDecode
     member.resolve_factory = {};
   std::cout << "SSD_STATIC_SEED_CAPACITY_ONLY_NOT_DYNAMIC_QUALIFICATION\n";
   request.program = std::move(program);
+  std::cerr << "SSD_COLD_STEP before-probe-construction route=" << manual_route << std::endl;
   test::RouteProbe probe;
+  std::cerr << "SSD_COLD_STEP before-positive-prepare route=" << manual_route << std::endl;
   const auto failure = probe.prepare(request);
+  std::cerr << "SSD_COLD_STEP after-positive-prepare route=" << manual_route << std::endl;
   require(!failure, "real SSD placed Scheduler admission: " +
                         (failure ? failure->field + ": " + failure->message : std::string()));
+  // Keep the real recipe's authored capacity check enabled for both families.
+  // Shrink only the final head's span, not its enclosing producer allocation.
+  auto short_layout = std::make_shared<client::FrameLayout>(consumed);
+  auto& last = std::get<client::KnownFrameSpan>(short_layout->inputs.back().source);
+  last.span.size_bytes = bytes.back() - 1;
+  request.layout = std::move(short_layout);
+  test::RouteProbe short_probe;
+  const auto rejected = short_probe.prepare(request);
+  require(rejected && rejected->field == "input.routing" &&
+              rejected->message.find("kernel input exceeds authored carrier span") !=
+                  std::string::npos,
+          "real SSD one-byte-short input no longer fails closed");
   std::cout << "SSD_MODEL_PACKED_CARRIER_PASS_NO_RUN_NO_MEMBER_SUBMISSION\n";
 }
 

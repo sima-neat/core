@@ -24,6 +24,9 @@
 #include <iostream>
 #include <simaai/scheduler/client/kernel.h>
 #include <array>
+#include <atomic>
+#include <cstdio>
+#include <cstdlib>
 #include <bit>
 #include <cmath>
 #include <cstring>
@@ -36,6 +39,24 @@ namespace c = simaai::scheduler::client;
 void check_ssd_mpk_carrier_contracts();
 void check_ssd_model_carrier_contract(const std::string& archive);
 namespace {
+std::atomic<bool> ssd_artifact_completed{false};
+
+// A dependency may terminate the process without returning through main. An
+// exit status of zero is not evidence that both artifact routes were checked.
+void require_ssd_artifact_completion() noexcept {
+  if (ssd_artifact_completed.load(std::memory_order_acquire))
+    return;
+  constexpr char message[] = "SSD_ARTIFACT_INCOMPLETE_EXIT_REJECTED\n";
+  (void)std::fwrite(message, 1, sizeof(message) - 1, stderr);
+  (void)std::fflush(stderr);
+  std::_Exit(EXIT_FAILURE);
+}
+
+void arm_ssd_artifact_completion_guard() {
+  if (std::atexit(require_ssd_artifact_completion) != 0)
+    throw std::runtime_error("could not register SSD artifact completion guard");
+}
+
 c::KernelInspection inspect(const c::KernelExecutable& value) {
   auto result = c::inspect_kernel(value);
   if (const auto* error = std::get_if<c::Error>(&result))
@@ -1518,9 +1539,15 @@ void linear_metadata_contracts() {
 } // namespace
 int main(int argc, char** argv) {
   try {
+    if (argc == 2 && std::string(argv[1]) == "--ssd-completion-guard-negative") {
+      arm_ssd_artifact_completion_guard();
+      std::exit(EXIT_SUCCESS); // Must be converted to failure by the guard.
+    }
     if (argc == 3 && std::string(argv[1]) == "--ssd-model-carrier-contract") {
+      arm_ssd_artifact_completion_guard();
       simaai::neat::gst_init_once();
       check_ssd_model_carrier_contract(argv[2]);
+      ssd_artifact_completed.store(true, std::memory_order_release);
       return 0;
     }
     if (argc == 2 && std::string(argv[1]) == "--ssd-mpk-carrier-contract") {

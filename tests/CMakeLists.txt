@@ -77,6 +77,10 @@ target_include_directories(unit_boxdecode_kernel_recipe_test PRIVATE ${PROJECT_S
 simaneat_add_test(NAME unit_boxdecode_kernel_recipe_test COMMAND unit_boxdecode_kernel_recipe_test)
 set_tests_properties(unit_boxdecode_kernel_recipe_test PROPERTIES
   TIMEOUT 30 LABELS "strict;unit;contracts")
+simaneat_add_test(NAME unit_ssd_artifact_completion_guard_test
+  COMMAND unit_boxdecode_kernel_recipe_test --ssd-completion-guard-negative)
+set_tests_properties(unit_ssd_artifact_completion_guard_test PROPERTIES
+  WILL_FAIL TRUE TIMEOUT 30 LABELS "strict;unit;contracts")
 
 add_executable(unit_boxdecode_public_input_binding_test
   unit_testing/unit_boxdecode_public_input_binding_test.cpp)
@@ -187,6 +191,7 @@ foreach(_target IN LISTS PIPELINESESSION_TEST_TARGETS)
   simaneat_append_ctest_env(${_target})
 endforeach()
 simaneat_append_ctest_env(unit_kernel_runner_capacity_policy_test)
+simaneat_append_ctest_env(unit_ssd_artifact_completion_guard_test)
 # ------------------------------------------------------------------------------
 # Test blacklist (by executable name)
 # ------------------------------------------------------------------------------

@@ -36,6 +36,29 @@
       "archive_size_bytes": 12910941,
       "model_id": "ssd_mobilenet_v2",
       "profile": "w8a8"
+    },
+    {
+      "path": "ssd_mobilenet_v3-w16a16-mpk.json",
+      "sha256": "76fb84af4bef42345207cc8e4d33a049334b042ca7aa8a44af050caafd37faa7",
+      "archive_sha256": "ade7e02ec8f80ccdee21778edf67ccbe94c0c6ef7f5a28bf6e9c16780211a264",
+      "archive_size_bytes": 6261350,
+      "model_id": "ssd_mobilenet_v3",
+      "profile": "w16a16",
+      "model_sdk_version": "3.0.0",
+      "manifest_member": "ssd_mobilenet_v3_w16a16_mpk.json",
+      "compilation_campaign": "ssd-finish-20261030-r1"
+    },
+    {
+      "path": "ssd_mobilenet_v3-w8a8-mpk.json",
+      "sha256": "0fc5ccde19eacd87d2f043a13b190731cb44e68fe9cbb0fccd51faf8339d0eb4",
+      "archive_sha256": "88db76f39ae426630cd90321a2fe70afc3128c127c3b82ead90b5b9807935204",
+      "archive_size_bytes": 3614924,
+      "model_id": "ssd_mobilenet_v3",
+      "profile": "w8a8",
+      "model_sdk_version": "3.0.0",
+      "manifest_member": "ssd_mobilenet_v3_w8a8_mpk.json",
+      "compilation_campaign": "ssd-finish-20261030-r1"
     }
-  ]
+  ],
+  "fixture_provenance_note": "Top-level catalog_revision and compiled_source_revision retain the original V1/V2 provenance. V3 entries identify their separate Model Compiler 3.0.0 compilation campaign and immutable archive/member digests."
 }
