@@ -27,6 +27,9 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <cerrno>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <bit>
 #include <cmath>
 #include <cstring>
@@ -55,6 +58,54 @@ void require_ssd_artifact_completion() noexcept {
 void arm_ssd_artifact_completion_guard() {
   if (std::atexit(require_ssd_artifact_completion) != 0)
     throw std::runtime_error("could not register SSD artifact completion guard");
+}
+
+void check_ssd_artifact_completion_guard(const char* executable) {
+  int descriptors[2];
+  if (::pipe(descriptors) != 0)
+    throw std::runtime_error("completion guard pipe failed");
+  const auto child = ::fork();
+  if (child < 0) {
+    ::close(descriptors[0]);
+    ::close(descriptors[1]);
+    throw std::runtime_error("completion guard fork failed");
+  }
+  if (child == 0) {
+    ::close(descriptors[0]);
+    if (::dup2(descriptors[1], STDERR_FILENO) < 0)
+      ::_exit(127);
+    ::close(descriptors[1]);
+    ::execl(executable, executable, "--ssd-completion-guard-negative", nullptr);
+    ::_exit(127);
+  }
+  ::close(descriptors[1]);
+  std::string diagnostic;
+  bool oversized = false;
+  char bytes[512];
+  ssize_t count;
+  while ((count = ::read(descriptors[0], bytes, sizeof(bytes))) != 0) {
+    if (count < 0) {
+      if (errno == EINTR)
+        continue;
+      break;
+    }
+    if (diagnostic.size() + std::size_t(count) <= 16384)
+      diagnostic.append(bytes, std::size_t(count));
+    else
+      oversized = true;
+  }
+  const auto read_error = count < 0;
+  ::close(descriptors[0]);
+  int status = 0;
+  pid_t waited;
+  do {
+    waited = ::waitpid(child, &status, 0);
+  } while (waited < 0 && errno == EINTR);
+  if (read_error || oversized || waited != child || !WIFEXITED(status) ||
+      WEXITSTATUS(status) != EXIT_FAILURE ||
+      diagnostic.find("SSD_ARTIFACT_INCOMPLETE_EXIT_REJECTED\n") == std::string::npos)
+    throw std::runtime_error("premature zero exit was not rejected with its completion diagnostic");
+  std::cout << "SSD_ARTIFACT_COMPLETION_GUARD_NEGATIVE_PASS\n";
 }
 
 c::KernelInspection inspect(const c::KernelExecutable& value) {
@@ -1539,6 +1590,10 @@ void linear_metadata_contracts() {
 } // namespace
 int main(int argc, char** argv) {
   try {
+    if (argc == 2 && std::string(argv[1]) == "--ssd-completion-guard-test") {
+      check_ssd_artifact_completion_guard(argv[0]);
+      return 0;
+    }
     if (argc == 2 && std::string(argv[1]) == "--ssd-completion-guard-negative") {
       arm_ssd_artifact_completion_guard();
       std::exit(EXIT_SUCCESS); // Must be converted to failure by the guard.

@@ -78,9 +78,9 @@ simaneat_add_test(NAME unit_boxdecode_kernel_recipe_test COMMAND unit_boxdecode_
 set_tests_properties(unit_boxdecode_kernel_recipe_test PROPERTIES
   TIMEOUT 30 LABELS "strict;unit;contracts")
 simaneat_add_test(NAME unit_ssd_artifact_completion_guard_test
-  COMMAND unit_boxdecode_kernel_recipe_test --ssd-completion-guard-negative)
+  COMMAND unit_boxdecode_kernel_recipe_test --ssd-completion-guard-test)
 set_tests_properties(unit_ssd_artifact_completion_guard_test PROPERTIES
-  WILL_FAIL TRUE TIMEOUT 30 LABELS "strict;unit;contracts")
+  TIMEOUT 30 LABELS "strict;unit;contracts")
 
 add_executable(unit_boxdecode_public_input_binding_test
   unit_testing/unit_boxdecode_public_input_binding_test.cpp)
