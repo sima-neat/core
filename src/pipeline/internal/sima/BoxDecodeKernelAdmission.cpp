@@ -30,8 +30,14 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
   // the capacity of a shared carrier or identify its GstMemory slot.
   auto admitted = compiled;
   auto& runtime = admitted.runtime_contract;
-  const auto* upstream =
-      compiled_runtime_contract_from_stage(last_effective_child_stage(input.immediate_upstream));
+  const auto* upstream_stage = last_effective_child_stage(input.immediate_upstream);
+  const auto* upstream = compiled_runtime_contract_from_stage(upstream_stage);
+  const auto upstream_id = upstream_stage && !upstream_stage->logical_stage_id.empty()
+                               ? upstream_stage->logical_stage_id
+                           : upstream_stage ? upstream_stage->element_name
+                                            : std::string();
+  if (upstream && upstream_id.empty())
+    throw std::invalid_argument("SimaBoxDecode: upstream carrier has no stage identity");
   TensorBufferView ingress;
   std::shared_ptr<void> ingress_holder;
   if (!upstream && input.ingress.ingress_sample) {
@@ -56,6 +62,10 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
       throw std::invalid_argument("SimaBoxDecode: missing authored head input binding");
     si::PhysicalBufferStaticSpec physical;
     if (upstream) {
+      if (!binding->src_stage_id.empty() &&
+          binding->src_stage_id != upstream_stage->logical_stage_id &&
+          binding->src_stage_id != upstream_stage->element_name)
+        throw std::invalid_argument("SimaBoxDecode: conflicting upstream carrier identity");
       const auto source =
           std::find_if(upstream->physical_outputs.begin(), upstream->physical_outputs.end(),
                        [&](const auto& value) {
@@ -64,8 +74,21 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
       if (source == upstream->physical_outputs.end())
         throw std::invalid_argument(
             "SimaBoxDecode: head has no authoritative upstream physical carrier");
+      if (std::count_if(upstream->physical_outputs.begin(), upstream->physical_outputs.end(),
+                        [&](const auto& value) {
+                          return value.physical_index == binding->src_physical_output_index;
+                        }) != 1)
+        throw std::invalid_argument("SimaBoxDecode: ambiguous upstream physical carrier");
       physical = *source;
       physical.physical_index = logical.physical_index;
+      // The head can retain an authored Slice alias that the producer does not
+      // publish. Preserve its numerical view, but bind the imported carrier to
+      // the actual compiled producer. Placement can then project this physical
+      // port into its final allocation and offset instead of treating the port
+      // ordinal as an external GstMemory index. Compile-stage indices are not
+      // final manifest indices, so retain the stable producer identity only.
+      binding->src_stage_id = upstream_id;
+      binding->src_stage_index = -1;
       binding->src_physical_size_bytes = source->size_bytes;
       // Bind the complete carrier; the native port applies the logical
       // tensor offset exactly once, including packed multi-head carriers.
@@ -217,7 +240,7 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
     geometry.model_height = static_cast<int>(padded_height);
   }
   if ((geometry.model_width <= 0 || geometry.model_height <= 0) &&
-      compiled.payload.decode_type == BoxDecodeType::Ssd) {
+      box_decode_type_is_ssd_family(compiled.payload.decode_type)) {
     if (const auto* recipe =
             si::stagesemantics::find_ssd_recipe_descriptor(compiled.payload.ssd_recipe_id)) {
       geometry.model_width = recipe->model_width;

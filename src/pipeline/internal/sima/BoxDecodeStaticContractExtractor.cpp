@@ -822,7 +822,7 @@ std::optional<BoxDecodeScoreActivation> resolve_boxdecode_score_activation_from_
     // declared probability domain is caught above and rejected by the family override.
     return BoxDecodeScoreActivation::Sigmoid;
   }
-  if (decode_type == BoxDecodeType::Ssd) {
+  if (box_decode_type_is_ssd_family(decode_type)) {
     // SSD confidence heads are class logits decoded with a softmax over the class dimension
     // (background included). The activation is implied by the decode type, so raw/manual-wired SSD
     // loc/conf tensors resolve without needing special class_logit tensor names (this matches the
@@ -2127,8 +2127,15 @@ std::optional<BoxDecodeTensorLineageFactsLocal> collect_boxdecode_tensor_lineage
     }
 
     const std::string stage_token = lower_copy_local(stage_identity_token_local(stage));
-    const bool unpack_stage = stage_token.find("unpack") != std::string::npos;
-    const bool slice_stage = stage_token.find("slice") != std::string::npos;
+    const std::string kernel = lower_copy_local(stage.kernel);
+    const bool typed_slice = kernel == "slice" || kernel == "slice_transform";
+    // Compiler display names retain producer provenance (for example
+    // slice_MLA_0_unpack/tuple_get_item_0_slice_transform). The typed Slice
+    // reads the padded input carrier; its compact output is not an Unpack
+    // source. Keep the legacy label fallback only when it cannot contradict
+    // this explicit operation identity.
+    const bool unpack_stage = !typed_slice && stage_token.find("unpack") != std::string::npos;
+    const bool slice_stage = typed_slice || stage_token.find("slice") != std::string::npos;
     const bool value_only_stage =
         !stage_is_detess_like_local(stage) &&
         (stage_is_dequant_like_local(stage) || stage_token.find("cast") != std::string::npos);

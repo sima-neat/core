@@ -2007,6 +2007,15 @@ geometry, conflicting activation, invalid class selection, a non-Stretch resize,
 frame fails before pipeline startup. Recipe discovery is compile-time only and adds no per-frame
 work.
 
+For SSD-Mobile-300-v1 and SSDlite-Mobile-320-v1 with exactly 91 encoded classes,
+`BoxDecodeType::Ssd` retains foreground anchor/class pairs and applies classwise
+floating-point NMS before publishing the existing INT32 BBOX format. MobileNet
+V1 and V2 share the TF300 decoding contract; the TorchVision V3 export uses the
+separate SSDlite320 contract. SSDlite considers up to 300 threshold-qualified
+candidates per class before NMS. Other prepared SSD signatures and class counts
+retain their existing numerical policy. No additional public decoder type is
+needed. Custom priors or box-coder scales are not inferred from tensor shapes.
+
 ---
 
 ## RTSP server mode

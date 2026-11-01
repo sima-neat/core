@@ -25,6 +25,10 @@ struct BoxDecodeKernelRecipeResult {
   CompiledKernelContract compiled;
   std::size_t decode_member = 0;
 };
+// Source numerical policy for the two verified 91-class export contracts.
+// Other prepared SSD signatures retain their existing provider policy.
+bool uses_source_multiclass_ssd_policy(const BoxDecodeStagePayload&);
+
 // Cold lowering only: immutable numerical admission, explicit format transforms
 // and Core wire publication. No input bytes, device connection or per-frame math.
 // Geometry must come from node/preprocess contracts, never guessed from heads.

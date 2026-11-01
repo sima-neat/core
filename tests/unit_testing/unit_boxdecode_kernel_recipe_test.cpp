@@ -24,6 +24,12 @@
 #include <iostream>
 #include <simaai/scheduler/client/kernel.h>
 #include <array>
+#include <atomic>
+#include <cstdio>
+#include <cstdlib>
+#include <cerrno>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <bit>
 #include <cmath>
 #include <cstring>
@@ -33,7 +39,75 @@
 
 namespace test = simaai::scheduler::testing;
 namespace c = simaai::scheduler::client;
+void check_ssd_mpk_carrier_contracts();
+void check_ssd_model_carrier_contract(const std::string& archive);
 namespace {
+std::atomic<bool> ssd_artifact_completed{false};
+
+// A dependency may terminate the process without returning through main. An
+// exit status of zero is not evidence that both artifact routes were checked.
+void require_ssd_artifact_completion() noexcept {
+  if (ssd_artifact_completed.load(std::memory_order_acquire))
+    return;
+  constexpr char message[] = "SSD_ARTIFACT_INCOMPLETE_EXIT_REJECTED\n";
+  (void)std::fwrite(message, 1, sizeof(message) - 1, stderr);
+  (void)std::fflush(stderr);
+  std::_Exit(EXIT_FAILURE);
+}
+
+void arm_ssd_artifact_completion_guard() {
+  if (std::atexit(require_ssd_artifact_completion) != 0)
+    throw std::runtime_error("could not register SSD artifact completion guard");
+}
+
+void check_ssd_artifact_completion_guard(const char* executable) {
+  int descriptors[2];
+  if (::pipe(descriptors) != 0)
+    throw std::runtime_error("completion guard pipe failed");
+  const auto child = ::fork();
+  if (child < 0) {
+    ::close(descriptors[0]);
+    ::close(descriptors[1]);
+    throw std::runtime_error("completion guard fork failed");
+  }
+  if (child == 0) {
+    ::close(descriptors[0]);
+    if (::dup2(descriptors[1], STDERR_FILENO) < 0)
+      ::_exit(127);
+    ::close(descriptors[1]);
+    ::execl(executable, executable, "--ssd-completion-guard-negative", nullptr);
+    ::_exit(127);
+  }
+  ::close(descriptors[1]);
+  std::string diagnostic;
+  bool oversized = false;
+  char bytes[512];
+  ssize_t count;
+  while ((count = ::read(descriptors[0], bytes, sizeof(bytes))) != 0) {
+    if (count < 0) {
+      if (errno == EINTR)
+        continue;
+      break;
+    }
+    if (diagnostic.size() + std::size_t(count) <= 16384)
+      diagnostic.append(bytes, std::size_t(count));
+    else
+      oversized = true;
+  }
+  const auto read_error = count < 0;
+  ::close(descriptors[0]);
+  int status = 0;
+  pid_t waited;
+  do {
+    waited = ::waitpid(child, &status, 0);
+  } while (waited < 0 && errno == EINTR);
+  if (read_error || oversized || waited != child || !WIFEXITED(status) ||
+      WEXITSTATUS(status) != EXIT_FAILURE ||
+      diagnostic.find("SSD_ARTIFACT_INCOMPLETE_EXIT_REJECTED\n") == std::string::npos)
+    throw std::runtime_error("premature zero exit was not rejected with its completion diagnostic");
+  std::cout << "SSD_ARTIFACT_COMPLETION_GUARD_NEGATIVE_PASS\n";
+}
+
 c::KernelInspection inspect(const c::KernelExecutable& value) {
   auto result = c::inspect_kernel(value);
   if (const auto* error = std::get_if<c::Error>(&result))
@@ -209,6 +283,18 @@ void families() {
       input(ssd, fixture.dims[i], fixture.dims[i], fixture.anchors[i] * 4);
     for (std::size_t i = 0; i < fixture.dims.size(); ++i)
       input(ssd, fixture.dims[i], fixture.dims[i], fixture.anchors[i] * fixture.classes);
+    const bool source_policy = fixture.id == stagesemantics::SsdRecipeId::SsdMobile300V1 ||
+                               fixture.id == stagesemantics::SsdRecipeId::SsdLiteMobile320V1;
+    require(uses_source_multiclass_ssd_policy(ssd.payload) == source_policy,
+            "SSD source policy selected the wrong prepared signature");
+    auto different_classes = ssd.payload;
+    different_classes.num_classes = 81;
+    require(!uses_source_multiclass_ssd_policy(different_classes),
+            "non-91-class SSD must preserve the legacy policy");
+    auto other_family = ssd.payload;
+    other_family.decode_type = BoxDecodeType::YoloV26;
+    require(!uses_source_multiclass_ssd_policy(other_family),
+            "SSD recipe fields must not alter another family");
     const auto compiled =
         check(ssd, {fixture.side, fixture.side, fixture.side, fixture.side, ResizeMode::Stretch});
     const auto native =
@@ -633,6 +719,7 @@ void combined_execution(bool planar, int ingress_route = 0, bool gaps = false) {
   if (ingress_route) {
     TensorList tensors;
     CompiledNodeContract upstream;
+    upstream.element_name = upstream.logical_stage_id = "strided_head_producer";
     upstream.kernel.emplace();
     for (std::size_t i = 0; i < grouped.size(); ++i) {
       const auto& original = authored_inputs[grouped[i]];
@@ -1503,6 +1590,27 @@ void linear_metadata_contracts() {
 } // namespace
 int main(int argc, char** argv) {
   try {
+    if (argc == 2 && std::string(argv[1]) == "--ssd-completion-guard-test") {
+      check_ssd_artifact_completion_guard(argv[0]);
+      return 0;
+    }
+    if (argc == 2 && std::string(argv[1]) == "--ssd-completion-guard-negative") {
+      arm_ssd_artifact_completion_guard();
+      std::exit(EXIT_SUCCESS); // Must be converted to failure by the guard.
+    }
+    if (argc == 3 && std::string(argv[1]) == "--ssd-model-carrier-contract") {
+      arm_ssd_artifact_completion_guard();
+      simaai::neat::gst_init_once();
+      check_ssd_model_carrier_contract(argv[2]);
+      ssd_artifact_completed.store(true, std::memory_order_release);
+      return 0;
+    }
+    if (argc == 2 && std::string(argv[1]) == "--ssd-mpk-carrier-contract") {
+      gst_init(nullptr, nullptr);
+      check_ssd_mpk_carrier_contracts();
+      std::cout << "SSD_MPK_CARRIER_CONTRACT_PASS\n";
+      return 0;
+    }
     // Pure cold numerical recipe admission: no plugin init, Tensor allocation,
     // executable invocation, Graph/Model build, or accelerator/device access.
     if (argc == 2 && std::string(argv[1]) == "--yolo26-seg-identity-resize-contract") {
@@ -1536,6 +1644,7 @@ int main(int argc, char** argv) {
       return 0;
     }
     simaai::neat::gst_init_once();
+    check_ssd_mpk_carrier_contracts();
     dfl_oriented_contract_and_execution();
     oriented_publication_sample_bridge(BoxDecodeType::YoloV8Obb);
     oriented_source_geometry(BoxDecodeType::YoloV8Obb);

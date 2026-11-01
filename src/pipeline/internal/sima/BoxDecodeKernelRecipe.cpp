@@ -305,6 +305,13 @@ const QuantStaticSpec& quantization(const LogicalInputStaticSpec& input) {
 }
 } // namespace
 
+bool uses_source_multiclass_ssd_policy(const BoxDecodeStagePayload& payload) {
+  using stagesemantics::SsdRecipeId;
+  return payload.decode_type == BoxDecodeType::Ssd && payload.num_classes == 91 &&
+         (payload.ssd_recipe_id == SsdRecipeId::SsdMobile300V1 ||
+          payload.ssd_recipe_id == SsdRecipeId::SsdLiteMobile320V1);
+}
+
 BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeContract& source,
                                                      const BoxDecodeGeometryOptions& geometry) {
   const auto& p = source.payload;
@@ -408,7 +415,8 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
                ? BoxDecodeWireFormat::FeaturePointsV1
                : BoxDecodeWireFormat::LegacyFeaturePointsV0;
   } else {
-    const auto selected_profile = profile(p.decode_type);
+    const auto selected_profile =
+        uses_source_multiclass_ssd_policy(p) ? "ssd_multiclass_v1" : profile(p.decode_type);
     const auto selected_task = task(p.decode_type);
     int model_width = geometry.model_width, model_height = geometry.model_height;
     const bool rcnn = selected_profile == "rcnn_proposals_v1";
@@ -449,7 +457,7 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
       invalid("score activation must be resolved");
     }
     const bool combined = selected_profile == "yolov5_v1" || selected_profile == "yolov7_v1";
-    const bool ssd = selected_profile == "ssd_v1";
+    const bool ssd = box_decode_type_is_ssd_family(p.decode_type);
     const bool decoded = selected_profile == "decoded_v1";
     const bool x = selected_profile == "yolox_v1";
     const bool center = selected_profile == "centernet_v1";
