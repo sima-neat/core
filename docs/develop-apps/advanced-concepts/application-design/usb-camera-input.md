@@ -22,7 +22,7 @@ Most webcams send 4:2:2 JPEGs, which decode to NV16. `usb_camera_info()` reports
 - MJPEG capture with 4:2:0 or 4:2:2 chroma sampling.
 - The exact width, height and frame rate the camera lists for MJPEG. Neat does not scale or pick a nearby mode.
 
-H.264-only cameras, raw YUYV/NV12 capture, depth or IR streams, and camera controls such as exposure are not part of this path.
+H.264-only cameras, raw NV12 capture, depth or IR streams, and camera controls such as exposure are not part of this path.
 
 ## Find the camera ID
 
@@ -210,3 +210,36 @@ Webcams often pad frames past the JPEG end marker, and some frames arrive incomp
 | `sent no usable MJPEG frame` | The camera sends JPEGs Neat cannot decode, such as 4:4:4 sampling, or no frames at all. |
 | `is no longer /dev/videoN` | The camera was unplugged, moved or renumbered after the Graph was created. Call `UsbCameraInput` again. |
 | `is not at '/dev/videoN' as its UsbCameraInfo says` | The camera was unplugged, moved or renumbered after `usb_camera_info`, or the info is for another camera. Call `usb_camera_info` again and pass the new info. |
+
+## Explicit YUYV capture
+
+The additive `UsbCameraFormat::YUYV` overload selects packed raw capture; existing calls default to MJPEG. This path requires matching YUYV Kernels/firmware, Scheduler, Codecs and Core artifacts. Hardware qualification is still required; the API alone does not establish camera throughput.
+
+Select an exact advertised YUYV mode with even width. Capture and inference preserve rational rates and permit odd source heights. The initial H.264 viewer requires even dimensions and an integer frame rate; it rejects unsupported rates rather than rounding. Probe once and reuse the checked result:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const auto info = neat::usb_camera_info(camera, neat::UsbCameraFormat::YUYV);
+auto source = neat::nodes::UsbCameraInput(camera, info);
+auto preproc = neat::nodes::Preproc(neat::PreprocOptions(model), info.color);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+info = pyneat.usb_camera_info(camera, pyneat.UsbCameraFormat.YUYV)
+source = pyneat.nodes.usb_camera_input(camera, info)
+preproc = pyneat.nodes.preproc(pyneat.PreprocOptions(model), info.color)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Set the model preprocessing input to `PreprocessColorFormat::YUYV` (`pyneat.PreprocessColorFormat.YUYV`). Connect this explicit Preproc to `model.inference()` and `model.postprocess()`. The packed image is `UInt8`, HWC storage with two bytes per pixel; GStreamer calls it `YUY2`. Preserve its row pitch and byte offset. Pass the resolved `info.color` so BT.601/709 and full/limited range reach the kernel.
+
+For viewing, branch before preprocessing and apply `RealtimeLatestByStream` before `ColorConvert`. Select NV12 with `ImageSurfaceLayout::EncoderNv12`, copy `info.color`, set output siting to horizontal `Cosited` / vertical `Centered`, and use `ColorConvert(options, info.colorimetry)`. Follow it with `VideoSender(options, EncoderInputPolicy::RequireDirect)` using H.264. Strict ingress rejects incompatible storage and does not allocate a CPU conversion fallback. Color signaling preserves primaries, transfer, matrix and range. The existing compressed-output copy and Insight transport remain.
+
+There is no additional userspace raw-frame copy between completed capture and device consumers. USB-driver payload assembly and compressed network copies are separate. Driver corruption flags and visible short spans are rejected; DMA-BUF import can expose a full slot without the original `bytesused`, so truncated-payload detection still requires driver qualification.

@@ -2933,6 +2933,14 @@ std::uint64_t checked_preproc_packed_output_size_bytes(const ProcessCvuStagePayl
   if (checked_payload.resolved_exec_backend.empty()) {
     checked_payload.resolved_exec_backend = "EVXX";
   }
+  // This inspection determines output storage only, before a caller attaches
+  // negotiated camera color to Preproc. Color does not alter layout/capacity.
+  // Do not persist this placeholder: executable preparation still requires the
+  // explicit input_color on the original payload and validates source caps.
+  if ((upper_copy(checked_payload.input_img_type) == "YUYV" ||
+       upper_copy(checked_payload.input_img_type) == "YUY2") &&
+      !checked_payload.input_color)
+    checked_payload.input_color = ImageColorOptions{};
   auto policy = kernel_lowering::PreprocFrameAdapter::check_policy(checked_payload);
   if (const auto* failure = std::get_if<::simaai::scheduler::client::Error>(&policy)) {
     throw std::invalid_argument("processcvu Preproc storage: " + failure->field + ": " +

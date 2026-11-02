@@ -280,6 +280,7 @@ enum class ProcessCvuOutputSemanticKind : std::uint8_t {
  * parallel arrays indexed by output number.
  */
 struct ProcessCvuStagePayload {
+  std::optional<::simaai::neat::ImageColorOptions> input_color;
   std::shared_ptr<const ::simaai::neat::internal::ImageTransformPolicy> image_transform;
   // Cold stage-local temporal authority; zero means unknown, never a default rate.
   int image_fps_num = 0;

@@ -1690,3 +1690,7 @@ JSON 保留 `sima.neat.status.v1`，並新增 `components.pcieHost`、`component
 PyNeat 和 PyNeatPCIe 狀態會列出每個偵測到的安裝版本及其虛擬環境路徑。不同環境會顯示為多個環境，而非版本衝突。對於虛擬環境以外的套件，輸出會改為顯示套件目錄。狀態查詢只讀取套件中繼資料，不會匯入原生模組。
 
 JSON 中的每個 Python 項目會新增 `installations` 陣列。每筆記錄包含 `version`、`environment` 和 `path`（套件目錄）。在虛擬環境以外，`environment` 為 `null`。若安裝版本不同，摘要的 `version` 為 `null`；僅有多個安裝不會設定 `error`。指向同一安裝的符號連結路徑只會列出一次。
+
+### 明確選擇原始 USB 擷取
+
+`UsbCameraFormat::YUYV` 選擇既有 V4L2 來源的獨立原始分支。`neatcapturepool` 提供支援 video-meta 的 CMA 池，並記錄攝影機寫入而不掃描像素。Core 將 YUY2 作為具有實際步距與偏移的 UInt8 HWC2 傳遞。模型 Preproc 需要明確的協商色彩資訊。獨立的最新影格檢視路徑以 EV ColorConvert 產生 EncoderNv12，再交給明確啟用色彩訊號的嚴格直接 H.264 編碼。既有 MJPEG 預設行為與分離壓縮輸出所有權的複製維持不變。擷取／推論允許有理數影格率，初期嚴格檢視器會明確拒絕分數影格率。核心／韌體與所有消費套件需協同驗證；此契約本身不代表已測得零複製或延遲結果。

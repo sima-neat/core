@@ -217,6 +217,8 @@ int Tensor::channels() const {
       return 3;
     case ImageSpec::PixelFormat::GRAY8:
       return 1;
+    case ImageSpec::PixelFormat::YUYV:
+      return 2;
     case ImageSpec::PixelFormat::NV16:
     case ImageSpec::PixelFormat::NV12:
     case ImageSpec::PixelFormat::I420:

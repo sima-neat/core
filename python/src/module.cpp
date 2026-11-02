@@ -401,6 +401,8 @@ const char* pixel_format_name(ImageSpec::PixelFormat fmt) {
     return "GRAY8";
   case ImageSpec::PixelFormat::NV12:
     return "NV12";
+  case ImageSpec::PixelFormat::YUYV:
+    return "YUY2";
   case ImageSpec::PixelFormat::NV16:
     return "NV16";
   case ImageSpec::PixelFormat::I420:
@@ -1548,6 +1550,7 @@ NB_MODULE(_pyneat_core, m) {
       .value("GRAY8", ImageSpec::PixelFormat::GRAY8)
       .value("NV12", ImageSpec::PixelFormat::NV12)
       .value("I420", ImageSpec::PixelFormat::I420)
+      .value("YUYV", ImageSpec::PixelFormat::YUYV)
       .value("NV16", ImageSpec::PixelFormat::NV16)
       .value("UNKNOWN", ImageSpec::PixelFormat::UNKNOWN);
   m.attr("Memory") = m.attr("TensorMemory");
@@ -3426,9 +3429,27 @@ NB_MODULE(_pyneat_core, m) {
       .def_ro("decoded_format", &simaai::neat::UsbCameraInfo::decoded_format);
   m.def("usb_camera_ids", &simaai::neat::usb_camera_ids);
   // Checking the camera reads a frame; let other Python threads run meanwhile.
-  m.def("usb_camera_info", &simaai::neat::usb_camera_info, "options"_a,
-        nb::call_guard<nb::gil_scoped_release>());
+  nb::enum_<simaai::neat::UsbCameraFormat>(m, "UsbCameraFormat")
+      .value("MJPEG", simaai::neat::UsbCameraFormat::MJPEG)
+      .value("YUYV", simaai::neat::UsbCameraFormat::YUYV);
+  nb::class_<simaai::neat::UsbCameraCaptureInfo>(m, "UsbCameraCaptureInfo")
+      .def_ro("camera", &simaai::neat::UsbCameraCaptureInfo::camera)
+      .def_ro("options", &simaai::neat::UsbCameraCaptureInfo::options)
+      .def_ro("format", &simaai::neat::UsbCameraCaptureInfo::format)
+      .def_ro("row_stride", &simaai::neat::UsbCameraCaptureInfo::row_stride)
+      .def_ro("storage_bytes", &simaai::neat::UsbCameraCaptureInfo::storage_bytes)
+      .def_ro("color", &simaai::neat::UsbCameraCaptureInfo::color)
+      .def_ro("colorimetry", &simaai::neat::UsbCameraCaptureInfo::colorimetry);
+  m.def(
+      "usb_camera_info",
+      nb::overload_cast<const simaai::neat::UsbCameraInputOptions&>(&simaai::neat::usb_camera_info),
+      "options"_a, nb::call_guard<nb::gil_scoped_release>());
 
+  m.def(
+      "usb_camera_info",
+      nb::overload_cast<const simaai::neat::UsbCameraInputOptions&, simaai::neat::UsbCameraFormat>(
+          &simaai::neat::usb_camera_info),
+      "options"_a, "format"_a, nb::call_guard<nb::gil_scoped_release>());
   nb::module_ graphs_mod = m.def_submodule("graphs", "Reusable public Graph fragment helpers");
   graphs_mod.def("branch", &simaai::neat::graphs::Branch, "input"_a, "outputs"_a);
   graphs_mod.def("combine", &simaai::neat::graphs::Combine, "inputs"_a, "output"_a,
@@ -4052,6 +4073,9 @@ NB_MODULE(_pyneat_core, m) {
       .value("MJPEG", simaai::neat::SimaEncodeType::MJPEG);
   m.attr("SimaEncodeType").attr("AVC") = m.attr("SimaEncodeType").attr("H264");
   m.attr("SimaEncodeType").attr("HEVC") = m.attr("SimaEncodeType").attr("H265");
+  nb::enum_<simaai::neat::EncoderInputPolicy>(m, "EncoderInputPolicy")
+      .value("Compatible", simaai::neat::EncoderInputPolicy::Compatible)
+      .value("RequireDirect", simaai::neat::EncoderInputPolicy::RequireDirect);
   nb::class_<simaai::neat::SimaEncodeOptions>(m, "SimaEncodeOptions")
       .def(nb::init<>())
       .def_rw("type", &simaai::neat::SimaEncodeOptions::type)
@@ -4180,6 +4204,11 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::module_ nodes_mod = m.def_submodule("nodes", "Node factory helpers");
   nodes_mod.def(
+      "sima_encode",
+      nb::overload_cast<simaai::neat::SimaEncodeOptions, simaai::neat::EncoderInputPolicy>(
+          &simaai::neat::nodes::SimaEncode),
+      "options"_a, "input_policy"_a);
+  nodes_mod.def(
       "queue", static_cast<std::shared_ptr<simaai::neat::Node> (*)()>(&simaai::neat::nodes::Queue));
   nodes_mod.def("queue",
                 static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::QueueOptions)>(
@@ -4209,6 +4238,16 @@ NB_MODULE(_pyneat_core, m) {
       },
       "options"_a = simaai::neat::CameraInputOptions{}, "capture_buffer_count"_a = 0U);
   // Opening the camera reads a frame; let other Python threads run meanwhile.
+  nodes_mod.def(
+      "usb_camera_input",
+      nb::overload_cast<simaai::neat::UsbCameraInputOptions, simaai::neat::UsbCameraFormat>(
+          &simaai::neat::nodes::UsbCameraInput),
+      "options"_a, "format"_a, nb::call_guard<nb::gil_scoped_release>());
+  nodes_mod.def("usb_camera_input",
+                nb::overload_cast<simaai::neat::UsbCameraInputOptions,
+                                  const simaai::neat::UsbCameraCaptureInfo&>(
+                    &simaai::neat::nodes::UsbCameraInput),
+                "options"_a, "info"_a);
   nodes_mod.def(
       "usb_camera_input",
       static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::UsbCameraInputOptions)>(
@@ -4329,7 +4368,15 @@ NB_MODULE(_pyneat_core, m) {
   groups_mod.def("rtsp_decoded_input", &simaai::neat::nodes::groups::RtspDecodedInput, "options"_a);
   groups_mod.def("udp_h264_output_group", &simaai::neat::nodes::groups::UdpH264OutputGroup,
                  "options"_a);
-  groups_mod.def("video_sender", &simaai::neat::nodes::groups::VideoSender, "options"_a);
+  groups_mod.def("video_sender",
+                 nb::overload_cast<const simaai::neat::nodes::groups::VideoSenderOptions&,
+                                   simaai::neat::EncoderInputPolicy>(
+                     &simaai::neat::nodes::groups::VideoSender),
+                 "options"_a, "input_policy"_a);
+  groups_mod.def("video_sender",
+                 nb::overload_cast<const simaai::neat::nodes::groups::VideoSenderOptions&>(
+                     &simaai::neat::nodes::groups::VideoSender),
+                 "options"_a);
   groups_mod.def("mla", &simaai::neat::nodes::groups::MLA, "model"_a);
   groups_mod.def("image_input_output_spec", &simaai::neat::nodes::groups::ImageInputGroupOutputSpec,
                  "options"_a);
@@ -4485,6 +4532,7 @@ NB_MODULE(_pyneat_core, m) {
       .value("GRAY8", simaai::neat::PreprocessColorFormat::GRAY8)
       .value("NV12", simaai::neat::PreprocessColorFormat::NV12)
       .value("I420", simaai::neat::PreprocessColorFormat::I420)
+      .value("YUYV", simaai::neat::PreprocessColorFormat::YUYV)
       .value("NV16", simaai::neat::PreprocessColorFormat::NV16);
 
   nb::enum_<simaai::neat::NormalizePreset>(m, "NormalizePreset")
@@ -5362,12 +5410,20 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("color", &simaai::neat::ResizeOptions::color)
       .def_rw("surface", &simaai::neat::ResizeOptions::surface)
       .def_rw("element_name", &simaai::neat::ResizeOptions::element_name);
+  nodes_mod.def("preproc",
+                nb::overload_cast<simaai::neat::PreprocOptions, simaai::neat::ImageColorOptions>(
+                    &simaai::neat::nodes::Preproc),
+                "options"_a, "input_color"_a);
   nb::class_<simaai::neat::ColorConvertOptions>(m, "ColorConvertOptions")
       .def(nb::init<>())
       .def_rw("output_format", &simaai::neat::ColorConvertOptions::output_format)
       .def_rw("color", &simaai::neat::ColorConvertOptions::color)
       .def_rw("surface", &simaai::neat::ColorConvertOptions::surface)
       .def_rw("element_name", &simaai::neat::ColorConvertOptions::element_name);
+  nodes_mod.def("color_convert",
+                nb::overload_cast<simaai::neat::ColorConvertOptions, std::string>(
+                    &simaai::neat::nodes::ColorConvert),
+                "options"_a, "input_colorimetry"_a);
   nb::class_<simaai::neat::NormalizationOptions>(m, "NormalizationOptions")
       .def(nb::init<>())
       .def_rw("mean", &simaai::neat::NormalizationOptions::mean)
@@ -5462,11 +5518,14 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("num_buffers_locked", &simaai::neat::DetessDequantOptions::num_buffers_locked);
 
   nodes_mod.def("resize", &simaai::neat::nodes::Resize, "options"_a);
-  nodes_mod.def("color_convert", &simaai::neat::nodes::ColorConvert,
-                "options"_a = simaai::neat::ColorConvertOptions{});
+  nodes_mod.def(
+      "color_convert",
+      nb::overload_cast<simaai::neat::ColorConvertOptions>(&simaai::neat::nodes::ColorConvert),
+      "options"_a = simaai::neat::ColorConvertOptions{});
   nodes_mod.def("normalization", &simaai::neat::nodes::Normalization,
                 "options"_a = simaai::neat::NormalizationOptions{});
-  nodes_mod.def("preproc", &simaai::neat::nodes::Preproc,
+  nodes_mod.def("preproc",
+                nb::overload_cast<simaai::neat::PreprocOptions>(&simaai::neat::nodes::Preproc),
                 "options"_a = simaai::neat::PreprocOptions{});
   nodes_mod.def("quant_tess", &simaai::neat::nodes::QuantTess,
                 "options"_a = simaai::neat::QuantTessOptions{});
@@ -5497,8 +5556,10 @@ NB_MODULE(_pyneat_core, m) {
       "sima_allocator_type"_a = 2, "out_format"_a = "NV12", "decoder_name"_a = "",
       "raw_output"_a = false, "next_element"_a = "", "dec_width"_a = -1, "dec_height"_a = -1,
       "dec_fps"_a = -1, "num_buffers"_a = -1);
-  nodes_mod.def("sima_encode", &simaai::neat::nodes::SimaEncode,
-                "options"_a = simaai::neat::SimaEncodeOptions{});
+  nodes_mod.def(
+      "sima_encode",
+      nb::overload_cast<simaai::neat::SimaEncodeOptions>(&simaai::neat::nodes::SimaEncode),
+      "options"_a = simaai::neat::SimaEncodeOptions{});
   nodes_mod.def("sima_decode", &simaai::neat::nodes::SimaDecode,
                 "options"_a = simaai::neat::SimaDecodeOptions{});
   nodes_mod.def(

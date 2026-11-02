@@ -22,7 +22,7 @@ USB camera -> UsbCameraInput (JPEG) -+-> VideoSender passthrough (MJPEG)
 - Захоплення MJPEG із субдискретизацією кольоровості 4:2:0 або 4:2:2.
 - Точні ширина, висота й частота кадрів, які камера пропонує для MJPEG. Neat не масштабує зображення й не підбирає найближчий режим.
 
-Камери лише з H.264, захоплення нестисненого YUYV/NV12, потоки глибини чи ІЧ і керування камерою, як-от експозиція, до цього шляху не входять.
+Камери лише з H.264, захоплення нестисненого NV12, потоки глибини чи ІЧ і керування камерою, як-от експозиція, до цього шляху не входять.
 
 ## Пошук ідентифікатора камери
 
@@ -210,3 +210,36 @@ graph.connect(source, pyneat.groups.video_sender(sender), video_link)
 | `sent no usable MJPEG frame` | Камера надсилає JPEG, які Neat не може декодувати, наприклад із субдискретизацією 4:4:4, або не надсилає кадрів зовсім. |
 | `is no longer /dev/videoN` | Після створення графа камеру від’єднали, перенесли або її номер змінився. Знову викличте `UsbCameraInput`. |
 | `is not at '/dev/videoN' as its UsbCameraInfo says` | Після виклику `usb_camera_info` камеру від’єднали, перенесли або її номер змінився, або ця інформація стосується іншої камери. Знову викличте `usb_camera_info` і передайте нову інформацію. |
+
+## Явний вибір захоплення YUYV
+
+Додане перевантаження `UsbCameraFormat::YUYV` вибирає упаковане нестиснене захоплення; наявні виклики залишають MJPEG. Цей шлях потребує узгоджених YUYV Kernels/прошивки, Scheduler, Codecs і Core. Перевірка на обладнанні ще потрібна; сам API не доводить пропускну здатність камери.
+
+Виберіть точний оголошений режим YUYV з парною шириною. Захоплення та висновування зберігають раціональну частоту кадрів і допускають непарну висоту джерела. Початковий переглядач H.264 потребує парних розмірів та цілої частоти кадрів; непідтримувані частоти відхиляються без округлення. Перевірте один раз і повторно використайте результат:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const auto info = neat::usb_camera_info(camera, neat::UsbCameraFormat::YUYV);
+auto source = neat::nodes::UsbCameraInput(camera, info);
+auto preproc = neat::nodes::Preproc(neat::PreprocOptions(model), info.color);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+info = pyneat.usb_camera_info(camera, pyneat.UsbCameraFormat.YUYV)
+source = pyneat.nodes.usb_camera_input(camera, info)
+preproc = pyneat.nodes.preproc(pyneat.PreprocOptions(model), info.color)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Задайте вхід передобробки моделі `PreprocessColorFormat::YUYV` (`pyneat.PreprocessColorFormat.YUYV`) і під’єднайте цей явний Preproc до `model.inference()` та `model.postprocess()`. Упаковане зображення має сховище `UInt8` HWC з двома байтами на піксель; у GStreamer це `YUY2`. Зберігайте крок рядка та байтове зміщення. Передайте визначений `info.color`, щоб ядро отримало BT.601/709 та повний/обмежений діапазон.
+
+Гілку перегляду відокремте перед передобробкою, застосувавши `RealtimeLatestByStream` перед `ColorConvert`. Виберіть NV12 з `ImageSurfaceLayout::EncoderNv12`, скопіюйте `info.color`, задайте положення вихідної кольоровості горизонтально `Cosited` / вертикально `Centered` та використайте `ColorConvert(options, info.colorimetry)`. Далі під’єднайте `VideoSender(options, EncoderInputPolicy::RequireDirect)` з H.264. Строгий вхід відхиляє несумісне сховище та не створює резервний пул CPU-перетворення. Сигналізація кольору зберігає первинні кольори, передавальну характеристику, матрицю й діапазон. Наявна копія стисненого виходу та транспорт Insight залишаються.
+
+Між завершеним захопленням і споживачами на пристрої немає додаткової копії нестисненого кадру в просторі користувача. Складання даних драйвером USB і копії стиснених мережевих даних рахуються окремо. Прапорці пошкодження та видимі короткі області відхиляються; DMA-BUF import може показувати весь слот без початкового `bytesused`, тому виявлення обрізаного навантаження ще потребує перевірки драйвера.

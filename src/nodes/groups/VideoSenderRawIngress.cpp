@@ -68,16 +68,17 @@ public:
     }
     geometry << ",framerate=" << config_.fps << "/1";
     const std::string caps = "video/x-raw,format=NV12" + geometry.str();
+    const std::string direct_property = config_.require_direct ? " require-direct=true" : "";
 
     if (variant_ == IngressVariant::DirectNv12) {
-      return "neatencoderinput name=" + names[1] + " ! capsfilter name=" + names[2] + " caps=\"" +
-             caps + "\"";
+      return "neatencoderinput name=" + names[1] + direct_property +
+             " ! capsfilter name=" + names[2] + " caps=\"" + caps + "\"";
     }
 
     const std::string input_caps = "video/x-raw" + geometry.str();
     return "capsfilter name=" + names[0] + " caps=\"" + input_caps +
-           "\" ! neatencoderinput name=" + names[1] + " ! capsfilter name=" + names[2] +
-           " caps=\"" + caps + "\"";
+           "\" ! neatencoderinput name=" + names[1] + direct_property +
+           " ! capsfilter name=" + names[2] + " caps=\"" + caps + "\"";
   }
 
   std::vector<std::string> element_names(int node_index) const override {
@@ -119,6 +120,14 @@ public:
       const simaai::neat::internal::InputSpecSpecializationContext& context) const override {
     const bool layout_aware = context.capability(kNeatEncoderInputLayoutAwareCapability);
     const bool direct = can_encode_nv12_direct(input, layout_aware);
+    if (config_.require_direct && input.media_type == "video/x-raw" && input.format != "NV12")
+      throw std::invalid_argument(
+          "Strict encoder ingress requires EncoderNv12 output from ColorConvert");
+    if (config_.require_direct && input.fps_num > 0 &&
+        (input.fps_den <= 0 ||
+         std::int64_t(input.fps_num) != std::int64_t(config_.fps) * input.fps_den))
+      throw std::invalid_argument("Strict encoder ingress requires an exact integer frame rate; "
+                                  "fractional viewing is not supported");
     return std::make_shared<VideoSenderRawIngressNode>(
         config_, direct ? IngressVariant::DirectNv12 : IngressVariant::ConvertToNv12);
   }

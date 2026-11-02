@@ -27,6 +27,8 @@ static std::string image_format_name(simaai::neat::ImageSpec::PixelFormat fmt) {
     return "GRAY8";
   case simaai::neat::ImageSpec::PixelFormat::NV12:
     return "NV12";
+  case simaai::neat::ImageSpec::PixelFormat::YUYV:
+    return "YUY2";
   case simaai::neat::ImageSpec::PixelFormat::NV16:
     return "NV16";
   case simaai::neat::ImageSpec::PixelFormat::I420:

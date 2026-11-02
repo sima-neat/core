@@ -853,6 +853,13 @@ bool Tensor::validate(std::string* err) const {
       return false;
     };
 
+    if (fmt == ImageSpec::PixelFormat::YUYV &&
+        (dtype != TensorDType::UInt8 || layout != TensorLayout::HWC || shape.size() != 3 ||
+         shape[0] <= 0 || shape[1] <= 0 || (shape[1] & 1) || shape[2] != 2 ||
+         shape[1] > INT64_MAX / 2 || !planes.empty() ||
+         (!strides_bytes.empty() && (strides_bytes.size() != 3 || strides_bytes[1] != 2 ||
+                                     strides_bytes[2] != 1 || strides_bytes[0] < shape[1] * 2))))
+      return fail("YUYV requires UInt8 HWC2 packed storage with even width");
     if (fmt == ImageSpec::PixelFormat::NV12 || fmt == ImageSpec::PixelFormat::NV16) {
       if (!has_role(PlaneRole::Y) || !has_role(PlaneRole::UV)) {
         return fail("NV12/NV16 tensor missing Y/UV planes");

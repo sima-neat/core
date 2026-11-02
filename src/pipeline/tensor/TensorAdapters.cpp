@@ -72,6 +72,8 @@ ImageSpec::PixelFormat pixel_format_from_gst(GstVideoFormat fmt) {
     return ImageSpec::PixelFormat::GRAY8;
   case GST_VIDEO_FORMAT_NV12:
     return ImageSpec::PixelFormat::NV12;
+  case GST_VIDEO_FORMAT_YUY2:
+    return simaai::neat::ImageSpec::PixelFormat::YUYV;
   case GST_VIDEO_FORMAT_NV16:
     return ImageSpec::PixelFormat::NV16;
   case GST_VIDEO_FORMAT_I420:
@@ -419,6 +421,8 @@ Tensor from_gst_video_sample(GstSample* sample, GstCaps* caps) {
 
   ImageSpec image;
   image.format = pixel;
+  if (const auto* color = gst_structure_get_string(gst_caps_get_structure(caps, 0), "colorimetry"))
+    image.color_space = color;
   out.semantic.image = image;
   if (const auto preprocess = read_simaai_preprocess_meta(buffer); preprocess.has_value()) {
     out.semantic.preprocess = *preprocess;
@@ -473,8 +477,13 @@ Tensor from_gst_video_sample(GstSample* sample, GstCaps* caps) {
   }
 
   // Packed formats: represent as dense HWC/HW tensor with row stride.
-  if (fmt == GST_VIDEO_FORMAT_RGB || fmt == GST_VIDEO_FORMAT_BGR || fmt == GST_VIDEO_FORMAT_GRAY8) {
-    const int channels = (fmt == GST_VIDEO_FORMAT_GRAY8) ? 1 : 3;
+  if (fmt == GST_VIDEO_FORMAT_RGB || fmt == GST_VIDEO_FORMAT_BGR || fmt == GST_VIDEO_FORMAT_GRAY8 ||
+      fmt == GST_VIDEO_FORMAT_YUY2) {
+    const int channels = fmt == GST_VIDEO_FORMAT_GRAY8 ? 1 : fmt == GST_VIDEO_FORMAT_YUY2 ? 2 : 3;
+    out.byte_offset =
+        vmeta ? static_cast<int64_t>(vmeta->offset[0]) : static_cast<int64_t>(info.offset[0]);
+    if (fmt == GST_VIDEO_FORMAT_YUY2 && (w <= 0 || (w & 1) || h <= 0))
+      throw std::runtime_error("from_gst_sample: YUYV requires positive dimensions and even width");
     const int64_t elem = 1;
     const int64_t row_stride = vmeta ? static_cast<int64_t>(vmeta->stride[0])
                                      : static_cast<int64_t>(GST_VIDEO_INFO_PLANE_STRIDE(&info, 0));

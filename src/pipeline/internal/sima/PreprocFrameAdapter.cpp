@@ -70,6 +70,8 @@ std::string format_name(GstVideoFormat format) {
     return "gray";
   case GST_VIDEO_FORMAT_NV12:
     return "nv12";
+  case GST_VIDEO_FORMAT_YUY2:
+    return "yuyv";
   case GST_VIDEO_FORMAT_NV16:
     return "nv16";
   case GST_VIDEO_FORMAT_I420:
@@ -84,7 +86,9 @@ std::size_t planes(GstVideoFormat format) {
              : (format == GST_VIDEO_FORMAT_NV12 || format == GST_VIDEO_FORMAT_NV16 ? 2 : 1);
 }
 std::size_t channels(GstVideoFormat format) {
-  return format == GST_VIDEO_FORMAT_RGB || format == GST_VIDEO_FORMAT_BGR ? 3 : 1;
+  return format == GST_VIDEO_FORMAT_RGB || format == GST_VIDEO_FORMAT_BGR ? 3
+         : format == GST_VIDEO_FORMAT_YUY2                                ? 2
+                                                                          : 1;
 }
 std::int64_t axis(const sima_ev_tensor_desc& desc, std::uint8_t semantic) {
   for (std::size_t i = 0; i < desc.shape.rank; ++i)
@@ -392,6 +396,8 @@ Result<Rectangle> PreprocFrameAdapter::destination(std::int64_t source_w, std::i
 }
 Result<PreprocFrameAdapter::Geometry>
 PreprocFrameAdapter::describe_geometry(Geometry geometry, std::size_t width, std::size_t height) {
+  if (geometry.format == GST_VIDEO_FORMAT_YUY2 && (width & 1U))
+    return invalid("input.geometry", "YUYV requires even width");
   GstVideoInfo info;
   gst_video_info_init(&info);
   if (!gst_video_info_set_format(&info, geometry.format, width, height))
@@ -436,6 +442,8 @@ PreprocFrameAdapter::check_policy(const ProcessCvuStagePayload& prepared) {
   auto format = upper(cfg.input_img_type);
   if (format == "GRAY")
     format = "GRAY8";
+  if (format == "YUYV")
+    format = "YUY2";
   if (format == "IYUV")
     format = "I420";
   policy->envelope.format = gst_video_format_from_string(format.c_str());
@@ -505,6 +513,21 @@ PreprocFrameAdapter::check_policy(const ProcessCvuStagePayload& prepared) {
         strides->strides_bytes[0] = previous[0] * shape[0];
       }
     }
+  }
+  if (cfg.image_transform && !cfg.image_transform->colorimetry.empty()) {
+    GstVideoColorimetry color{};
+    const auto& authored = cfg.image_transform->color;
+    if (!gst_video_colorimetry_from_string(&color, cfg.image_transform->colorimetry.c_str()) ||
+        color.primaries == GST_VIDEO_COLOR_PRIMARIES_UNKNOWN ||
+        color.transfer == GST_VIDEO_TRANSFER_UNKNOWN ||
+        color.matrix != (authored.matrix == ImageColorMatrix::Bt601
+                             ? GST_VIDEO_COLOR_MATRIX_BT601
+                             : GST_VIDEO_COLOR_MATRIX_BT709) ||
+        color.range != (authored.range == ImageYuvRange::Full ? GST_VIDEO_COLOR_RANGE_0_255
+                                                              : GST_VIDEO_COLOR_RANGE_16_235))
+      return invalid(
+          "input.colorimetry",
+          "explicit color metadata must agree with image policy and declare primaries/transfer");
   }
   if (cfg.image_transform) {
     if (cfg.batch_size != 1 || cfg.output_shapes.empty() || cfg.output_shapes[0].size() < 2)
@@ -688,9 +711,10 @@ Status PreprocFrameAdapter::admitted(const VariantPreparer& preparer) {
 }
 
 Result<std::vector<TensorSpec>> PreprocFrameAdapter::input_specs(const Geometry& geometry) const {
-  if (geometry.width == 0 || geometry.height == 0 || geometry.batch == 0 ||
-      geometry.width > policy_->envelope.width || geometry.height > policy_->envelope.height ||
-      geometry.format != policy_->envelope.format || geometry.batch > policy_->envelope.batch)
+  if ((geometry.format == GST_VIDEO_FORMAT_YUY2 && (geometry.width & 1U)) || geometry.width == 0 ||
+      geometry.height == 0 || geometry.batch == 0 || geometry.width > policy_->envelope.width ||
+      geometry.height > policy_->envelope.height || geometry.format != policy_->envelope.format ||
+      geometry.batch > policy_->envelope.batch)
     return invalid("input.geometry", "image exceeds its prepared capacity/format envelope");
   std::vector<TensorSpec> result;
   for (std::size_t i = 0; i < planes(geometry.format); ++i) {
@@ -758,10 +782,25 @@ Result<std::vector<Parameter>> PreprocFrameAdapter::static_parameters() const {
   result.push_back({"interpolation", interpolation_value});
   result.push_back({"input_format", input_format});
   result.push_back({"output_format", output_format_value});
+  const auto* input_color = cfg.image_transform ? &cfg.image_transform->color
+                            : cfg.input_color   ? &*cfg.input_color
+                                                : nullptr;
+  if (policy_->envelope.format == GST_VIDEO_FORMAT_YUY2 && !input_color)
+    return invalid(
+        "input.color",
+        "YUYV requires explicit input color; pass usb_camera_info(...).color to Preproc");
+  if (cfg.input_color && policy_->envelope.format != GST_VIDEO_FORMAT_YUY2)
+    return invalid("input.color", "explicit model input color is supported only for YUYV");
+  if (input_color) {
+    const bool limited_rgb = policy_->envelope.format == GST_VIDEO_FORMAT_YUY2 &&
+                             (output_format_value == "rgb" || output_format_value == "bgr") &&
+                             input_color->range == ImageYuvRange::Limited;
+    result.push_back({"color_matrix", input_color->matrix == ImageColorMatrix::Bt601
+                                          ? (limited_rgb ? "bt601_limited" : "bt601_full")
+                                          : (limited_rgb ? "bt709_limited" : "bt709_full")});
+  }
   if (cfg.image_transform) {
     const auto& p = *cfg.image_transform;
-    result.push_back(
-        {"color_matrix", p.color.matrix == ImageColorMatrix::Bt601 ? "bt601_full" : "bt709_full"});
     if (output_format_value == "nv12" || output_format_value == "i420" ||
         output_format_value == "nv16") {
       result.push_back({"yuv_range", p.color.range == ImageYuvRange::Full ? "full" : "limited"});
@@ -922,13 +961,27 @@ Result<GstVideoInfo> PreprocFrameAdapter::parse_caps(const GstCaps* caps) const 
        std::size_t(info.height) != policy_->initial_geometry.height))
     return invalid("input.caps",
                    "ColorConvert/Normalization dimensions are fixed per run; reprepare");
-  if (policy_->prepared->image_transform) {
+  const auto* input_color = policy_->prepared->image_transform
+                                ? &policy_->prepared->image_transform->color
+                            : policy_->prepared->input_color ? &*policy_->prepared->input_color
+                                                             : nullptr;
+  if (input_color) {
     const auto* structure = gst_caps_get_structure(caps, 0);
     if (const auto* mode = gst_structure_get_string(structure, "interlace-mode");
         mode && std::string_view(mode) != "progressive")
       return invalid("input.caps", "image frontends require progressive video");
-    if (planes(info.finfo->format) > 1) {
-      const auto& authored = policy_->prepared->image_transform->color;
+    if (planes(info.finfo->format) > 1 || info.finfo->format == GST_VIDEO_FORMAT_YUY2) {
+      const auto& authored = *input_color;
+      if (policy_->prepared->image_transform &&
+          !policy_->prepared->image_transform->colorimetry.empty()) {
+        GstVideoColorimetry expected{};
+        gst_video_colorimetry_from_string(&expected,
+                                          policy_->prepared->image_transform->colorimetry.c_str());
+        if (!gst_structure_has_field(structure, "colorimetry") ||
+            !gst_video_colorimetry_is_equal(&expected, &info.colorimetry))
+          return invalid("input.colorimetry",
+                         "source color metadata differs from authored interpretation");
+      }
       if (const auto* text = gst_structure_get_string(structure, "colorimetry")) {
         GstVideoColorimetry color{};
         if (!gst_video_colorimetry_from_string(&color, text))
@@ -1046,7 +1099,8 @@ PreprocFrameAdapter::bind(GstBuffer* buffer, BindingWriter& binding, GstStructur
     geometry.frame_bytes = row_stride * height;
   }
   if (auto* video = gst_buffer_get_video_meta(buffer)) {
-    if (policy_->prepared->image_transform && (video->flags & GST_VIDEO_FRAME_FLAG_INTERLACED))
+    if ((policy_->prepared->image_transform || geometry.format == GST_VIDEO_FORMAT_YUY2) &&
+        (video->flags & GST_VIDEO_FRAME_FLAG_INTERLACED))
       return invalid("input.video-meta", "image frontends require progressive video");
     if (video->format != geometry.format || video->n_planes != planes(geometry.format))
       return invalid("input.video-meta", "plane format differs from negotiated caps");
@@ -1069,8 +1123,14 @@ PreprocFrameAdapter::bind(GstBuffer* buffer, BindingWriter& binding, GstStructur
           i && geometry.format != GST_VIDEO_FORMAT_NV16 ? geometry.height / 2 : geometry.height;
       if (rows && geometry.strides[i] > (SIZE_MAX - geometry.offsets[i]) / rows)
         return invalid("input.video-meta", "plane span overflow");
-      geometry.frame_bytes =
-          std::max(geometry.frame_bytes, geometry.offsets[i] + geometry.strides[i] * rows);
+      auto end = geometry.offsets[i] + geometry.strides[i] * rows;
+      if (geometry.format == GST_VIDEO_FORMAT_YUY2) {
+        if (!rows || !geometry.width || geometry.width > SIZE_MAX / 2 ||
+            geometry.strides[i] < geometry.width * 2)
+          return invalid("input.video-meta", "invalid YUYV active row extent");
+        end = geometry.offsets[i] + geometry.strides[i] * (rows - 1) + geometry.width * 2;
+      }
+      geometry.frame_bytes = std::max(geometry.frame_bytes, end);
     }
   }
   if (policy_->prepared->image_transform && !policy_->prepared->image_transform->dynamic_input() &&

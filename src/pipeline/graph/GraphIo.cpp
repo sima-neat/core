@@ -523,7 +523,8 @@ void write_video_sender_raw_ingress_json(std::ostream& out, const Node* node) {
     return;
   }
   out << "\"video_sender_raw_ingress\":{\"width\":" << config->width
-      << ",\"height\":" << config->height << ",\"fps\":" << config->fps << "},";
+      << ",\"height\":" << config->height << ",\"fps\":" << config->fps
+      << ",\"require_direct\":" << (config->require_direct ? "true" : "false") << "},";
 }
 
 std::optional<nodes::groups::internal::VideoSenderRawIngressConfig>
@@ -544,6 +545,7 @@ parse_video_sender_raw_ingress_json(const JsonValue::JsonObject& node, const std
       .height = int_field(*value->obj, "height", -1),
       .fps = int_field(*value->obj, "fps", -1),
       .fallback_element_names = {},
+      .require_direct = bool_field(*value->obj, "require_direct", false),
   };
   const bool valid_geometry =
       (config.width == 0 && config.height == 0) || (config.width > 0 && config.height > 0);

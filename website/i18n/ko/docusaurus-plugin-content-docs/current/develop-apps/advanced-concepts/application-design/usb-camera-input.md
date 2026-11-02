@@ -22,7 +22,7 @@ USB camera -> UsbCameraInput (JPEG) -+-> VideoSender passthrough (MJPEG)
 - 4:2:0 또는 4:2:2 크로마 샘플링의 MJPEG 캡처.
 - 카메라가 MJPEG용으로 제공하는 정확한 너비, 높이, 프레임 속도. Neat는 크기를 조정하거나 가까운 모드를 고르지 않습니다.
 
-H.264 전용 카메라, 원시 YUYV/NV12 캡처, 깊이 또는 IR 스트림, 노출 같은 카메라 제어는 이 경로에 포함되지 않습니다.
+H.264 전용 카메라, 원시 NV12 캡처, 깊이 또는 IR 스트림, 노출 같은 카메라 제어는 이 경로에 포함되지 않습니다.
 
 ## 카메라 ID 찾기
 
@@ -210,3 +210,36 @@ graph.connect(source, pyneat.groups.video_sender(sender), video_link)
 | `sent no usable MJPEG frame` | 카메라가 Neat가 디코딩할 수 없는 JPEG(예: 4:4:4 샘플링)를 보내거나 프레임을 전혀 보내지 않습니다. |
 | `is no longer /dev/videoN` | 그래프를 만든 뒤 카메라를 뽑았거나 옮겼거나 번호가 바뀌었습니다. `UsbCameraInput`을 다시 호출하세요. |
 | `is not at '/dev/videoN' as its UsbCameraInfo says` | `usb_camera_info`를 호출한 뒤 카메라를 뽑았거나 옮겼거나 번호가 바뀌었거나, 정보가 다른 카메라의 것입니다. `usb_camera_info`를 다시 호출하고 새 정보를 전달하세요. |
+
+## YUYV 캡처 명시적 선택
+
+추가된 `UsbCameraFormat::YUYV` 오버로드로 패킹된 원시 캡처를 선택합니다. 기존 호출은 MJPEG를 유지합니다. 이 경로에는 서로 일치하는 YUYV Kernels/펌웨어, Scheduler, Codecs, Core가 필요합니다. 하드웨어 검증이 아직 필요하며 API만으로 카메라 처리량이 보장되지는 않습니다.
+
+카메라가 제공하는 정확한 YUYV 모드에서 짝수 너비를 선택하세요. 캡처와 추론은 유리수 프레임 속도와 홀수 입력 높이를 지원합니다. 초기 H.264 뷰어는 짝수 크기와 정수 프레임 속도를 요구하며 지원하지 않는 속도를 반올림하지 않고 거부합니다. 한 번 확인한 결과를 재사용하세요.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const auto info = neat::usb_camera_info(camera, neat::UsbCameraFormat::YUYV);
+auto source = neat::nodes::UsbCameraInput(camera, info);
+auto preproc = neat::nodes::Preproc(neat::PreprocOptions(model), info.color);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+info = pyneat.usb_camera_info(camera, pyneat.UsbCameraFormat.YUYV)
+source = pyneat.nodes.usb_camera_input(camera, info)
+preproc = pyneat.nodes.preproc(pyneat.PreprocOptions(model), info.color)
+```
+
+</CodeTab>
+</CodeTabs>
+
+모델 전처리 입력을 `PreprocessColorFormat::YUYV` (`pyneat.PreprocessColorFormat.YUYV`)로 설정하고 명시적 Preproc을 `model.inference()` 및 `model.postprocess()`에 연결합니다. 패킹된 이미지는 픽셀당 2바이트의 `UInt8` HWC이며 GStreamer 이름은 `YUY2`입니다. 행 피치와 바이트 오프셋을 보존하세요. 해석된 `info.color`를 전달하면 BT.601/709와 전체/제한 범위가 커널에 전달됩니다.
+
+뷰어 분기는 전처리 전에 두고 `ColorConvert` 전에 `RealtimeLatestByStream`을 적용합니다. NV12와 `ImageSurfaceLayout::EncoderNv12`를 선택하고 `info.color`를 복사한 다음 출력 크로마 위치를 수평 `Cosited` / 수직 `Centered`로 설정하여 `ColorConvert(options, info.colorimetry)`를 사용합니다. 이어서 H.264의 `VideoSender(options, EncoderInputPolicy::RequireDirect)`를 연결합니다. 엄격한 입력은 호환되지 않는 저장소를 거부하며 CPU 변환 대체 풀을 할당하지 않습니다. 색 신호는 원색, 전달 특성, 행렬, 범위를 보존합니다. 기존 압축 출력 복사와 Insight 전송은 유지됩니다.
+
+완료된 캡처에서 장치 소비자까지 사용자 공간의 원시 프레임 추가 복사는 없습니다. USB 드라이버의 페이로드 조립과 압축 네트워크 복사는 별개입니다. 손상 플래그와 확인 가능한 짧은 범위는 거부되지만 DMA-BUF import에서는 원래 `bytesused` 없이 전체 슬롯이 보일 수 있으므로 잘린 페이로드 검출은 드라이버 검증이 필요합니다.

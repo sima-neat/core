@@ -1117,6 +1117,8 @@ ImageSpec::PixelFormat pixel_format_from_string(const std::string& fmt) {
     return ImageSpec::PixelFormat::GRAY8;
   if (up == "NV12")
     return ImageSpec::PixelFormat::NV12;
+  if (up == "YUY2" || up == "YUYV")
+    return ImageSpec::PixelFormat::YUYV;
   if (up == "NV16")
     return ImageSpec::PixelFormat::NV16;
   if (up == "I420")
@@ -1947,7 +1949,9 @@ Tensor make_dummy_tensor(const simaai::neat::InputOptions& opt,
     return t;
   }
 
-  const int depth = (pix == ImageSpec::PixelFormat::GRAY8) ? 1 : 3;
+  const int depth = pix == ImageSpec::PixelFormat::GRAY8  ? 1
+                    : pix == ImageSpec::PixelFormat::YUYV ? 2
+                                                          : 3;
   t.shape = (depth == 1) ? std::vector<int64_t>{h, w} : std::vector<int64_t>{h, w, depth};
   t.axis_semantics =
       (depth == 1) ? std::vector<TensorAxisSemantic>{TensorAxisSemantic::H, TensorAxisSemantic::W}
