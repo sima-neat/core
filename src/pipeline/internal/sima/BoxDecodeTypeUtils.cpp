@@ -123,6 +123,9 @@ std::optional<BoxDecodeType> parse_box_decode_type_token(std::string_view token)
   if (lower == "yolox-seg-pose" || lower == "yolox_seg_pose") {
     return BoxDecodeType::YoloXSegPose;
   }
+  if (lower == "detr-focal" || lower == "detr_focal") {
+    return BoxDecodeType::DetrFocal;
+  }
   if (lower == "detr") {
     return BoxDecodeType::Detr;
   }

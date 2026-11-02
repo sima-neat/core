@@ -85,6 +85,7 @@ enum class BoxDecodeType : std::int32_t {
   YoloV26Obb = 25,   ///< YOLO26 oriented boxes: raw radians, grouped FP32 heads, no NMS.
   YoloXSegPose = 24, ///< YOLOX packed export carrying box, mask and keypoint heads together.
   YoloV8Obb = 26,    ///< YOLOv8/YOLO11 oriented boxes: DFL and angle logits, rotated Fast-NMS.
+  DetrFocal = 27, ///< Normalized cxcywh + class logits; sigmoid global query/class top-K, no NMS.
 };
 
 /**
@@ -188,6 +189,8 @@ constexpr const char* box_decode_type_token(BoxDecodeType type) {
     return "yolox-seg-pose";
   case BoxDecodeType::Detr:
     return "detr";
+  case BoxDecodeType::DetrFocal:
+    return "detr-focal";
   case BoxDecodeType::EffDet:
     return "effdet";
   case BoxDecodeType::RcnnStage1:
@@ -255,6 +258,7 @@ constexpr bool box_decode_type_is_yolo_family(BoxDecodeType type) {
   case BoxDecodeType::Ssd:
   case BoxDecodeType::SuperPoint:
   case BoxDecodeType::Detr:
+  case BoxDecodeType::DetrFocal:
   case BoxDecodeType::EffDet:
   case BoxDecodeType::RcnnStage1:
   case BoxDecodeType::Centernet:
@@ -299,6 +303,7 @@ constexpr bool box_decode_type_is_segmentation(BoxDecodeType type) {
   case BoxDecodeType::Ssd:
   case BoxDecodeType::SuperPoint:
   case BoxDecodeType::Detr:
+  case BoxDecodeType::DetrFocal:
   case BoxDecodeType::EffDet:
   case BoxDecodeType::RcnnStage1:
   case BoxDecodeType::Centernet:
@@ -335,6 +340,7 @@ constexpr bool box_decode_type_is_pose(BoxDecodeType type) {
   case BoxDecodeType::Ssd:
   case BoxDecodeType::SuperPoint:
   case BoxDecodeType::Detr:
+  case BoxDecodeType::DetrFocal:
   case BoxDecodeType::EffDet:
   case BoxDecodeType::RcnnStage1:
   case BoxDecodeType::Centernet:
@@ -404,6 +410,10 @@ constexpr const char* box_decode_type_contract_summary(BoxDecodeType type) {
   case BoxDecodeType::YoloV9Seg:
   case BoxDecodeType::YoloV10Seg:
     return "YOLO-seg contract: same class-depth rules as YOLO plus segmentation decode path.";
+  case BoxDecodeType::DetrFocal:
+    return "Focal-query contract: [normalized cxcywh, class logits], depths 4 and num_classes, "
+           "same query grid; sigmoid global pair top-K, no background or NMS, stretch resize. "
+           "Published BBOX coordinates are clipped and rounded to integer pixels.";
   case BoxDecodeType::Detr:
     return "DETR contract: class channels inferred from max depth across heads; max depth must be "
            ">4.";
