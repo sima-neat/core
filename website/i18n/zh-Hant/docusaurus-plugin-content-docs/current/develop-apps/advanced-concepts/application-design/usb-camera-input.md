@@ -22,7 +22,7 @@ USB camera -> UsbCameraInput (JPEG) -+-> VideoSender passthrough (MJPEG)
 - 4:2:0 或 4:2:2 色度取樣的 MJPEG 擷取。
 - 攝影機為 MJPEG 列出的確切寬度、高度與影格率。Neat 不會縮放，也不會挑選相近的模式。
 
-僅支援 H.264 的攝影機、未壓縮的 YUYV/NV12 擷取、深度或紅外線串流，以及曝光等攝影機控制，都不在此路徑的範圍內。
+僅支援 H.264 的攝影機、未壓縮的 NV12 擷取、深度或紅外線串流，以及曝光等攝影機控制，都不在此路徑的範圍內。
 
 ## 找出攝影機 ID
 
@@ -210,3 +210,36 @@ graph.connect(source, pyneat.groups.video_sender(sender), video_link)
 | `sent no usable MJPEG frame` | 攝影機傳送 Neat 無法解碼的 JPEG（例如 4:4:4 取樣），或完全沒有傳送影格。 |
 | `is no longer /dev/videoN` | 建立圖之後，攝影機被拔除、移動或重新編號。請再次呼叫 `UsbCameraInput`。 |
 | `is not at '/dev/videoN' as its UsbCameraInfo says` | 呼叫 `usb_camera_info` 之後，攝影機被拔除、移動或重新編號，或該資訊屬於另一台攝影機。請再次呼叫 `usb_camera_info` 並傳入新的資訊。 |
+
+## 明確選擇 YUYV 擷取
+
+新增的 `UsbCameraFormat::YUYV` 多載可選擇封裝的原始擷取；既有呼叫仍預設為 MJPEG。此路徑需要相符的 YUYV Kernels／韌體、Scheduler、Codecs 與 Core 成品。仍須進行硬體驗證，API 本身不能證明攝影機的處理量。
+
+請選擇攝影機列出的確切 YUYV 模式，寬度必須為偶數。擷取與推論保留有理數影格率，並允許奇數輸入高度。初期 H.264 檢視器要求偶數尺寸與整數影格率；不支援的影格率會遭拒絕，而非四捨五入。探測一次並重用檢查結果：
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const auto info = neat::usb_camera_info(camera, neat::UsbCameraFormat::YUYV);
+auto source = neat::nodes::UsbCameraInput(camera, info);
+auto preproc = neat::nodes::Preproc(neat::PreprocOptions(model), info.color);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+info = pyneat.usb_camera_info(camera, pyneat.UsbCameraFormat.YUYV)
+source = pyneat.nodes.usb_camera_input(camera, info)
+preproc = pyneat.nodes.preproc(pyneat.PreprocOptions(model), info.color)
+```
+
+</CodeTab>
+</CodeTabs>
+
+將模型前處理輸入設為 `PreprocessColorFormat::YUYV`（`pyneat.PreprocessColorFormat.YUYV`），並將此明確的 Preproc 連至 `model.inference()` 和 `model.postprocess()`。封裝影像使用每像素兩位元組的 `UInt8` HWC 儲存；GStreamer 稱其為 `YUY2`。請保留列間距與位元組偏移，並傳入已解析的 `info.color`，讓 BT.601/709 與完整／有限範圍傳至核心。
+
+檢視分支應在前處理之前分流，並在 `ColorConvert` 前套用 `RealtimeLatestByStream`。選擇 NV12 與 `ImageSurfaceLayout::EncoderNv12`，複製 `info.color`，將輸出色度位置設為水平 `Cosited`／垂直 `Centered`，使用 `ColorConvert(options, info.colorimetry)`。接著串接使用 H.264 的 `VideoSender(options, EncoderInputPolicy::RequireDirect)`。嚴格輸入會拒絕不相容的儲存配置，不會配置 CPU 轉換備援池。色彩訊號保留原色、傳遞特性、矩陣與範圍。既有壓縮輸出複製與 Insight 傳輸維持不變。
+
+從已完成擷取到裝置消費端之間，沒有額外的使用者空間原始影格複製。USB 驅動程式組合酬載與壓縮網路複製另計。損壞旗標與可見範圍不足會遭拒絕；DMA-BUF import 可能只暴露整個儲存槽而不含原始 `bytesused`，因此截斷酬載偵測仍需驅動程式驗證。

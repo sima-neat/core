@@ -1693,6 +1693,63 @@ void crop_geometry_dynamic_cache() {
       << "Crop exact window, actual-frame geometry, immutable cache and affine authority PASS\n";
 }
 
+void yuyv_color_and_storage_contract() {
+  auto cfg = config();
+  cfg->input_img_type = "YUY2";
+  auto desc = cfg->input_tensors[0].descriptor();
+  desc.shape.sizes[0] = 3;
+  desc.shape.sizes[1] = 6;
+  desc.shape.sizes[2] = 2;
+  desc.layout.strided.strides_bytes[0] = 12;
+  desc.layout.strided.strides_bytes[1] = 2;
+  cfg->input_tensors[0] = cfg->input_tensors[0].with_geometry(desc);
+  probe::Options options;
+  options.capture = preproc_capture();
+  require(std::holds_alternative<rt::Error>(PreprocProbe::create(cfg, options)),
+          "YUYV must not implicitly assume input color");
+  cfg->input_color = simaai::neat::ImageColorOptions{};
+  cfg->input_color->matrix = simaai::neat::ImageColorMatrix::Bt709;
+  cfg->input_color->range = simaai::neat::ImageYuvRange::Limited;
+  auto stage = take(PreprocProbe::create(cfg, options));
+  auto* caps = gst_caps_from_string("video/x-raw,format=YUY2,width=6,height=3,framerate=30000/"
+                                    "1001,colorimetry=bt709,chroma-site=jpeg");
+  okay(stage->accepts_caps(caps));
+  gst_caps_set_simple(caps, "colorimetry", G_TYPE_STRING, "bt601", nullptr);
+  require(stage->accepts_caps(caps).has_value(), "YUYV accepted conflicting matrix");
+  gst_caps_unref(caps);
+  const auto frame = [](std::size_t bytes) {
+    auto* buffer = gst_buffer_new_allocate(nullptr, bytes, nullptr);
+    gsize offsets[GST_VIDEO_MAX_PLANES] = {7};
+    gint strides[GST_VIDEO_MAX_PLANES] = {20};
+    require(gst_buffer_add_video_meta_full(buffer, GST_VIDEO_FRAME_FLAG_NONE, GST_VIDEO_FORMAT_YUY2,
+                                           6, 3, 1, offsets, strides),
+            "YUYV fixture meta");
+    return buffer;
+  };
+  auto* published = gst_structure_new_empty("test");
+  auto* input = frame(59);
+  // Default test storage rebases each span; keep the carrier-relative offset.
+  struct ExactStorage final : Storage {
+    std::shared_ptr<Owner> owner = std::make_shared<Owner>(59, 0x100000);
+    rt::Result<probe::Buffer> resolve(GstBuffer*, GstMemory*, std::size_t offset,
+                                      std::size_t length, probe::Access) const override {
+      return probe::Buffer{owner, offset, length};
+    }
+  } storage;
+  probe::Binding binding;
+  okay(stage->bind(input, storage, binding, published));
+  require(binding.inputs.size() == 1 && binding.inputs[0].offset_bytes == 7 &&
+              binding.inputs[0].length_bytes == 52,
+          "YUYV active extent/offset lost");
+  gst_buffer_unref(input);
+  input = frame(58);
+  probe::Binding short_binding;
+  require(stage->bind(input, Storage{}, short_binding, published).has_value(),
+          "YUYV truncated final active row accepted");
+  gst_buffer_unref(input);
+  gst_structure_free(published);
+}
+
 void image_frontend_metadata_and_bounds() {
   auto cfg = config();
   auto policy = std::make_shared<simaai::neat::internal::ImageTransformPolicy>();
@@ -1847,6 +1904,7 @@ int main(int argc, char** argv) {
   try {
     geometry_descriptor_compatibility();
     crop_geometry_dynamic_cache();
+    yuyv_color_and_storage_contract();
     image_frontend_metadata_and_bounds();
     image_frontend_input_rejections();
     cold_generic_preparation();

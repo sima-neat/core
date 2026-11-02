@@ -2298,6 +2298,9 @@ PyNeat and PyNeatPCIe status lists each detected installation with its version a
 
 Each Python entry in JSON adds an `installations` array. Each record contains `version`, `environment`, and `path` (the package directory). `environment` is `null` outside a virtual environment. The summary `version` is `null` when installed versions differ; multiple installations alone do not set `error`. Symlinked paths to the same installation are listed once.
 
+### Explicit raw USB capture
+
+`UsbCameraFormat::YUYV` selects a separate raw branch of the existing V4L2 source. `neatcapturepool` offers a video-meta-aware CMA pool and records camera writes without scanning pixels. Core carries YUY2 as packed UInt8 HWC2 with authoritative stride/offset. Model Preproc needs explicit negotiated color. A separate latest-frame viewer invokes EV ColorConvert into EncoderNv12, then strict direct H.264 encoding with opt-in color signaling. Existing MJPEG defaults and compressed-output ownership-detaching copies remain. Fractional rates are admitted for capture/inference and explicitly rejected by the initial strict viewer. Kernel/firmware and all consuming packages require coordinated qualification; this contract does not establish measured zero-copy or latency results.
 
 ## Crop geometry ownership {#crop-geometry-ownership}
 

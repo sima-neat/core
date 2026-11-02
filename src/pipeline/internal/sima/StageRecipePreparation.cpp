@@ -2008,6 +2008,8 @@ apply_kernel_publication_views(const StageStaticSpec& stage,
       color.matrix = payload.image_transform->color.matrix == ImageColorMatrix::Bt601
                          ? GST_VIDEO_COLOR_MATRIX_BT601
                          : GST_VIDEO_COLOR_MATRIX_BT709;
+      if (!payload.image_transform->colorimetry.empty())
+        gst_video_colorimetry_from_string(&color, payload.image_transform->colorimetry.c_str());
       gchar* name = gst_video_colorimetry_to_string(&color);
       if (name) {
         gst_caps_set_simple(source, "colorimetry", G_TYPE_STRING, name, nullptr);

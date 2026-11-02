@@ -22,7 +22,7 @@ USB camera -> UsbCameraInput (JPEG) -+-> VideoSender passthrough (MJPEG)
 - 4:2:0または4:2:2のクロマサンプリングによるMJPEGキャプチャー。
 - カメラがMJPEG用に提示する正確な幅、高さ、フレームレート。Neatはスケーリングや近いモードの選択を行いません。
 
-H.264専用カメラ、非圧縮のYUYV/NV12キャプチャー、深度やIRのストリーム、露出などのカメラ制御は、この経路の対象外です。
+H.264専用カメラ、非圧縮のNV12キャプチャー、深度やIRのストリーム、露出などのカメラ制御は、この経路の対象外です。
 
 ## カメラIDを調べる
 
@@ -210,3 +210,36 @@ Webカメラは、JPEGの終了マーカーの後にバイトを付け足すこ�
 | `sent no usable MJPEG frame` | NeatがデコードできないJPEG（4:4:4サンプリングなど）をカメラが送っているか、フレームがまったく届いていません。 |
 | `is no longer /dev/videoN` | グラフの作成後に、カメラが抜かれたか、移動されたか、番号が変わりました。`UsbCameraInput` をもう一度呼び出してください。 |
 | `is not at '/dev/videoN' as its UsbCameraInfo says` | `usb_camera_info` の呼び出し後に、カメラが抜かれたか、移動されたか、番号が変わったか、またはその情報が別のカメラのものです。`usb_camera_info` をもう一度呼び出し、新しい情報を渡してください。 |
+
+## YUYVキャプチャーの明示的な選択
+
+追加の `UsbCameraFormat::YUYV` オーバーロードでパック形式の非圧縮キャプチャーを選択します。既存の呼び出しはMJPEGのままです。この経路には、対応するYUYV Kernels／ファームウェア、Scheduler、Codecs、Coreが必要です。ハードウェア検証はまだ必要で、APIだけではカメラの性能は保証されません。
+
+カメラが提示する正確なYUYVモードを、偶数幅で選びます。キャプチャーと推論は有理数のフレームレートと奇数の入力高さを扱えます。初期のH.264ビューアーは偶数の幅・高さと整数のフレームレートを要求し、未対応のレートは丸めずに拒否します。一度確認した結果を再利用します。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const auto info = neat::usb_camera_info(camera, neat::UsbCameraFormat::YUYV);
+auto source = neat::nodes::UsbCameraInput(camera, info);
+auto preproc = neat::nodes::Preproc(neat::PreprocOptions(model), info.color);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+info = pyneat.usb_camera_info(camera, pyneat.UsbCameraFormat.YUYV)
+source = pyneat.nodes.usb_camera_input(camera, info)
+preproc = pyneat.nodes.preproc(pyneat.PreprocOptions(model), info.color)
+```
+
+</CodeTab>
+</CodeTabs>
+
+モデルの前処理入力を `PreprocessColorFormat::YUYV`（`pyneat.PreprocessColorFormat.YUYV`）に設定し、このPreprocを `model.inference()` と `model.postprocess()` に接続します。パック画像は1画素2バイトの `UInt8` HWCで、GStreamer名は `YUY2` です。行ピッチとバイトオフセットを保持し、解決済みの `info.color` でBT.601/709とフル／リミテッドレンジをカーネルに渡します。
+
+表示用の分岐は前処理の前に置き、`ColorConvert` の前で `RealtimeLatestByStream` を適用します。NV12と `ImageSurfaceLayout::EncoderNv12` を選び、`info.color` をコピーし、出力色度位置を水平 `Cosited`／垂直 `Centered` に設定して `ColorConvert(options, info.colorimetry)` を使います。その後にH.264の `VideoSender(options, EncoderInputPolicy::RequireDirect)` を接続します。厳格な入力は不適合なメモリーを拒否し、CPU変換用の代替プールを確保しません。色信号は原色、伝達特性、行列、レンジを保持します。既存の圧縮出力コピーとInsight転送は維持されます。
+
+完了済みキャプチャーからデバイス消費側まで、追加のユーザー空間の生画像コピーはありません。USBドライバーのペイロード組み立てと圧縮ネットワークコピーは別です。破損フラグや見えている短い領域は拒否されますが、DMA-BUF importでは元の `bytesused` なしにスロット全体が見える場合があるため、欠損検出にはドライバーの検証が必要です。

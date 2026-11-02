@@ -222,7 +222,7 @@ inline FormatTag format_tag_from_string(const std::string& value) {
     return FormatTag::NV12;
   if (up == "I420" || up == "YUV420")
     return FormatTag::I420;
-  if (up == "YUYV")
+  if (up == "YUYV" || up == "YUY2")
     return FormatTag::YUYV;
   if (up == "ENCODED")
     return FormatTag::ENCODED;

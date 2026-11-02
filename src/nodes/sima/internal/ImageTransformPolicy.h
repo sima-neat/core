@@ -10,6 +10,7 @@ enum class ImageTransformMode { Resize, ColorConvert, Normalization };
 struct ImageTransformPolicy {
   ImageTransformMode mode = ImageTransformMode::Resize;
   ImageColorOptions color;
+  std::string colorimetry;
   ImageSurfaceLayout surface = ImageSurfaceLayout::Native;
   int max_input_width = 0;
   int max_input_height = 0;
@@ -23,6 +24,7 @@ struct ImageTransformPolicy {
 };
 struct ImageTransformAccess {
   static const ImageTransformPolicy* policy(const Preproc&);
+  static void set_colorimetry(Preproc&, std::string);
   static void set_policy(Preproc&, std::shared_ptr<const ImageTransformPolicy>);
 };
 } // namespace internal
