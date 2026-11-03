@@ -70,7 +70,7 @@ def resource_name(name, digest):
     suffix = '.tar.gz'
     if not name.endswith(suffix):
         raise ValueError('offline resources must be tar.gz archives')
-    return name[:-len(suffix)] + '-' + digest[:12] + suffix
+    return name[:-len(suffix)] + '-' + digest[:8] + suffix
 
 
 def archive_resource(data, name):
@@ -218,7 +218,7 @@ def core_identity(data, args, inputs, minimal):
     metadata_identity(data, args.sha, args.ref)
     resources = data['resources']
     extras = [name for name in resources
-              if re.search(r'-Linux-extras(?:-[0-9a-f]{12})?\.tar\.gz$', name)]
+              if re.search(r'-Linux-extras(?:-[0-9a-f]{8})?\.tar\.gz$', name)]
     if (archive_resource(data, assemble.CORE_ARCHIVE_NAME) is None
             or (resources != [archive_resource(data, assemble.CORE_ARCHIVE_NAME)] if minimal else
                 len(resources) != 2 or len(extras) != 1)

@@ -285,7 +285,7 @@ including duplicates shared between the host and card trees.
 
 ## Offline publication layout
 
-Publish `neat-pcie-offline-installer-<sha12>.tar.gz` and `metadata-offline.json` beside
+Publish `neat-pcie-offline-installer-<sha8>.tar.gz` and `metadata-offline.json` beside
 the online `metadata.json` under the matching commit-scoped
 `core/{ref}/{revision}/pciehost/{distro}/{architecture}/` folder. Each bundle targets
 one Ubuntu release (22.04 or 24.04) and one host architecture (amd64 or arm64),
@@ -350,7 +350,7 @@ that policy; a new source policy requires a reviewed matching build input. It do
 DEBs are rejected, preserving the separate system-provisioning contract.
 
 Each job validates both targets in fresh containers with `--network=none` before
-uploading resources with a 12-character SHA-256 suffix before `.tar.gz` and staging metadata under
+uploading resources with a 8-character SHA-256 suffix before `.tar.gz` and staging metadata under
 `staging/{source-input-hash}/`. An aggregate job checks all four PCIe variants and
 both standalone Core profiles, verifies uploaded checksums, and rechecks the
 source publications before replacing final metadata and invalidating its cache.

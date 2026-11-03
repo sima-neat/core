@@ -625,9 +625,9 @@ def test_different_card_snapshots_across_variants_publish_nothing(tmp_path):
 
 
 @pytest.mark.parametrize('name,expected', [
-    ('neat-core-offline-installer.tar.gz', 'neat-core-offline-installer-abcdef012345.tar.gz'),
-    ('neat-pcie-offline-installer.tar.gz', 'neat-pcie-offline-installer-abcdef012345.tar.gz'),
-    ('sima-neat-0.6.0-Linux-extras.tar.gz', 'sima-neat-0.6.0-Linux-extras-abcdef012345.tar.gz'),
+    ('neat-core-offline-installer.tar.gz', 'neat-core-offline-installer-abcdef01.tar.gz'),
+    ('neat-pcie-offline-installer.tar.gz', 'neat-pcie-offline-installer-abcdef01.tar.gz'),
+    ('sima-neat-0.6.0-Linux-extras.tar.gz', 'sima-neat-0.6.0-Linux-extras-abcdef01.tar.gz'),
 ])
 def test_resource_name_has_short_hash_before_archive_extension(name, expected):
     assert ci.resource_name(name, 'abcdef012345' + '0'*52) == expected
