@@ -39,6 +39,11 @@ bool copy_tensor_payload_to(const simaai::neat::Tensor& tensor,
                             const simaai::neat::Mapping& mapping, uint8_t* dst,
                             std::size_t dst_bytes, std::string* err);
 
+// Raw video retains carrier-relative plane offsets in GstVideoMeta. A packed
+// Tensor mapping already starts at byte_offset; preserve that placement in dst.
+bool copy_video_payload_to(const Tensor& tensor, const Mapping& mapping, uint8_t* dst,
+                           std::size_t dst_bytes, std::string* err);
+
 bool canonicalize_sample_spec(SampleSpec* spec, std::string* err);
 
 bool derive_field_spec(const Sample& field, SampleSpec* out, std::string* err);

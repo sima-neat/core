@@ -8,6 +8,7 @@
 #include <simaai/scheduler/client/frame_layout.h>
 
 #include "model/internal/ModelPack.h"
+#include "pipeline/FormatSpec.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/sima/InternalEdgeContractResolver.h"
@@ -1969,8 +1970,10 @@ apply_kernel_publication_views(const StageStaticSpec& stage,
   GstCaps* sink = nullptr;
   if (image) {
     sink = gst_caps_new_empty_simple("video/x-raw");
-    if (!payload.input_img_type.empty())
-      gst_caps_set_simple(sink, "format", G_TYPE_STRING, payload.input_img_type.c_str(), nullptr);
+    if (!payload.input_img_type.empty()) {
+      const auto format = normalize_caps_format_for_media("video/x-raw", payload.input_img_type);
+      gst_caps_set_simple(sink, "format", G_TYPE_STRING, format.c_str(), nullptr);
+    }
   } else if (producer_caps) {
     // One logical input can read multiple MLA sample views in a tensor-set.
     sink = gst_caps_copy(producer_caps);

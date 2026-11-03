@@ -2304,6 +2304,8 @@ Each Python entry in JSON adds an `installations` array. Each record contains `v
 
 Segmented graph handoffs preserve packed HWC2 offsets, pitch and active extent, including frames without final-row padding. Raw caps retain colorimetry, chroma siting, interlace mode and pixel aspect ratio; these fields participate in caps identity and non-geometry renegotiation checks. Model-bound postprocessor retargeting preserves explicitly authored Preproc input color when rebuilding the numerical route.
 
+Explicit raw-video copies retain carrier-relative pixel placement and metadata offsets, zeroing any prefix outside the mapped image view. The shared-buffer path is unchanged. Public `YUYV` and `YUY2` aliases both publish GStreamer `YUY2` caps and preprocessing contracts; the public format enum retains its `YUYV` spelling.
+
 ## Crop geometry ownership {#crop-geometry-ownership}
 
 Core resolves Crop from actual source dimensions into a checked virtual resize size and center-window offset. Kernels evaluates that window directly using the original source filter support; no intermediate image or CPU crop is inserted. The final dimensions remain MPK-owned. Preproc publishes the actual model-to-original edge affine, distinct from half-pixel sample-center coordinates. Supported detection recipes consume that authority after model-space selection; missing or conflicting geometry is rejected.
