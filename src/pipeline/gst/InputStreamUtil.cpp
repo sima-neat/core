@@ -1753,12 +1753,12 @@ InputGeometry describe_tensor_geometry_or_throw(const simaai::neat::Tensor& inpu
       throw std::invalid_argument(std::string(tag) + ": tensor input must be dense");
     }
     std::span<const int64_t> normalized_shape = input.shape;
-    const bool layout_is_explicit = input.layout != TensorLayout::Unknown;
+    const bool allow_batch_one_shorthand = input.layout != TensorLayout::Unknown;
     const size_t expected_rank = (input.layout == TensorLayout::HW) ? 2u : 3u;
     const bool has_explicit_leading_batch_axis =
         input.axis_semantics.size() == normalized_shape.size() && !input.axis_semantics.empty() &&
         input.axis_semantics.front() == TensorAxisSemantic::N;
-    if (layout_is_explicit && normalized_shape.size() == expected_rank + 1 &&
+    if (allow_batch_one_shorthand && normalized_shape.size() == expected_rank + 1 &&
         !has_explicit_leading_batch_axis) {
       const int64_t batch = normalized_shape.front();
       if (batch <= 0) {
@@ -1889,6 +1889,17 @@ SampleSpec describe_tensor_spec_or_throw(const Tensor& input, const InputOptions
   spec.caps_key = capkey_from_spec(spec);
   spec.caps_string = caps_string_from_spec(spec);
   return spec;
+}
+
+void project_model_input_spec(SampleSpec& spec, std::span<const std::int64_t> model_shape) {
+  if (spec.kind != SampleMediaKind::Tensor || model_shape.size() != 3U || spec.shape.size() != 4U ||
+      spec.shape.front() != 1 ||
+      !std::equal(model_shape.begin(), model_shape.end(), spec.shape.begin() + 1)) {
+    return;
+  }
+  spec.shape.erase(spec.shape.begin());
+  spec.caps_key = capkey_from_spec(spec);
+  spec.caps_string = caps_string_from_spec(spec);
 }
 
 SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const InputOptions& opt,
@@ -2079,8 +2090,7 @@ simaai::neat::Tensor tensor_from_cv_mat(const cv::Mat& mat, const InputOptions& 
         throw std::runtime_error(tag + ": unable to determine dense byte size for device tensor");
       }
       std::vector<Segment> segments{{"ifm0", device_bytes}};
-      return pipeline_internal::transfer_to_device(out, target, &segments,
-                                                   /*required_segment_names=*/nullptr);
+      return pipeline_internal::transfer_to_device(out, target, &segments);
     }
     return out;
   }
@@ -2944,7 +2954,7 @@ void restore_sample_timing_from_gst_buffer(GstBuffer* buffer, Sample* out) {
     return;
   }
 
-  const bool debug_timing = pipeline_internal::env_bool("SIMA_SAMPLE_TIMING_DEBUG", false);
+  const bool debug_timing = pipeline_internal::sample_timing_debug_enabled();
   const GstClockTime pts = GST_BUFFER_PTS(buffer);
   const GstClockTime dts = GST_BUFFER_DTS(buffer);
   const GstClockTime dur = GST_BUFFER_DURATION(buffer);
@@ -3006,7 +3016,7 @@ void restore_sample_timing_from_gst_buffer(GstBuffer* buffer, Sample* out) {
 
 bool write_simaai_preprocess_meta(GstBuffer* buffer, const PreprocessRuntimeMeta& meta) {
 #if SIMA_HAS_SIMAAI_POOL
-  const bool trace = pipeline_internal::env_bool("SIMA_PREPROC_META_TRACE", false);
+  const bool trace = pipeline_internal::preproc_meta_trace_enabled();
   if (!buffer)
     return false;
   if (const auto perm_error = validate_axis_perm_vector_local(meta.axis_perm, "preproc_axis_perm");

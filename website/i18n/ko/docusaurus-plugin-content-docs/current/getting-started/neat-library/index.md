@@ -1,15 +1,15 @@
 ---
 title: "Neat 라이브러리"
-description: "DevKit 또는 Neat SDK에서 SiMa.ai Neat 라이브러리 설치 및 업데이트"
+description: "DevKit 또는 Palette SDK에서 SiMa.ai Neat 라이브러리 설치 및 업데이트"
 sidebar_position: 1
 ---
 
 Neat 라이브러리는 Modalix용 모델 실행과 애플리케이션 개발을 위한 C++ 및 Python API입니다.
 
-:::tip Neat SDK를 사용 중이라면 이 섹션을 건너뛸 수 있습니다
-Neat SDK 컨테이너에는 Neat 라이브러리가 기본으로 설치되어 있습니다. 설정 중 DevKit을 페어링하면 호환되는 Neat 라이브러리와 PyNeat 환경도 DevKit에 자동으로 설치됩니다. DevKit 페어링 여부와 관계없이 Neat SDK를 설치했다면 이미 Neat 라이브러리가 준비되어 있으므로 이 섹션을 건너뛰고 바로 시작할 수 있습니다.
+:::tip Palette SDK를 사용 중이라면 이 섹션을 건너뛸 수 있습니다
+Palette SDK 컨테이너에는 Neat 라이브러리가 기본으로 설치되어 있습니다. 설정 중 DevKit을 페어링하면 호환되는 Neat 라이브러리와 PyNeat 환경도 DevKit에 자동으로 설치됩니다. DevKit 페어링 여부와 관계없이 Palette SDK를 설치했다면 이미 Neat 라이브러리가 준비되어 있으므로 이 섹션을 건너뛰고 바로 시작할 수 있습니다.
 
-SDK와 별도로 Neat 라이브러리만 업데이트하거나, Neat SDK 없이 DevKit 또는 일반 호스트에 직접 설치하려는 경우에만 이 섹션을 사용하십시오.
+SDK와 별도로 Neat 라이브러리만 업데이트하거나, Palette SDK 없이 DevKit 또는 일반 호스트에 직접 설치하려는 경우에만 이 섹션을 사용하십시오.
 :::
 
 SDK 컨테이너를 다시 설치하지 않고도 호환되는 최신 버전이 필요할 때 Neat 라이브러리를 독립적으로 업데이트할 수 있습니다. 지원되는 조합은 [호환성 가이드](/getting-started/compatibility/)를 참조하십시오.

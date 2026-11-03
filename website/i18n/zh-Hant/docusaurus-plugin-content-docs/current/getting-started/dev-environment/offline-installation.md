@@ -23,7 +23,7 @@ sidebar_position: 6
 
 | 套件 | 用途 | 供應狀態 |
 | --- | --- | --- |
-| Neat SDK | 設定 SDK 開發環境。 | SDK 2.1.3.0 或更新版本 |
+| Palette SDK | 設定 SDK 開發環境。 | SDK 2.1.3.0 或更新版本 |
 | Model Compiler | 在 SDK 中或獨立主機上安裝 Model Compiler。 | Model Compiler 2.1.3 或更新版本 |
 
 ## 開始之前
@@ -37,7 +37,7 @@ sidebar_position: 6
 請選擇適用於**目標主機**的套件。
 請將所有套件檔案保存在一起，包括指令碼、中繼資料、檢查碼和相依項目。
 
-## 安裝 Neat SDK {#download-the-sdk-offline-package}
+## 安裝 Palette SDK {#download-the-sdk-offline-package}
 
 ### 1. 下載套件
 
@@ -104,7 +104,7 @@ sima-cli neat install model-compiler/arm64@v%%release.model_compiler%% -t offlin
 
 選擇一個安裝位置。
 
-**在 Neat SDK 中：**
+**在 Palette SDK 中：**
 
 1. 將下載的完整目錄複製到主機工作區，此工作區對應至 SDK 容器中的 `/workspace`。
 2. 開啟 SDK shell。

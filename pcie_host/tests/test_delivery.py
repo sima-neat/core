@@ -483,7 +483,10 @@ GENAI_CMAKE_ARGS=()
                     argv = ['acquire_scheduler.py', '--cli', 'test-cli', '--branch', 'feature/native',
                             '--spec', 'latest', '--environment', 'production', '--distro', distro,
                             '--arch', arch, '--output', str(root)]
-                    with patch.object(acquisition, 'CORE', core), \
+                    # This fixture models a branch checkout, regardless of the
+                    # release tag inherited from the CI environment or Git.
+                    with patch('scheduler_dependency.current_core_tag', return_value=''), \
+                         patch.object(acquisition, 'CORE', core), \
                          patch.object(sys, 'argv', argv), patch.object(sys, 'stdout', io.StringIO()), \
                          patch('scheduler_dependency.acquire', side_effect=acquire) as transport:
                         acquisition.main()

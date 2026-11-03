@@ -1,10 +1,10 @@
 ---
 title: "macOS 主機注意事項"
-description: "準備一部 macOS 主機，以便使用 Neat SDK 和 DevKit-Sync。"
+description: "準備一部 macOS 主機，以便使用 Palette SDK 和 DevKit-Sync。"
 sidebar_position: 3
 ---
 
-當您的主機是 macOS，並且您想執行 Neat SDK，請參考本指南，並搭配使用 DevKit-Sync。
+當您的主機是 macOS，並且您想執行 Palette SDK，請參考本指南，並搭配使用 DevKit-Sync。
 
 ## 先決條件
 
@@ -126,4 +126,4 @@ curl -k 'https://127.0.0.1:9900/api/ingest/stats?all=1&verbose=1'
 
 ## 下一步
 
-傳回 [Neat SDK](/getting-started/dev-environment/)，繼續進行安裝/設定。
+傳回 [Palette SDK](/getting-started/dev-environment/)，繼續進行安裝/設定。

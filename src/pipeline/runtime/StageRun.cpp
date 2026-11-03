@@ -1650,8 +1650,7 @@ make_device_packed_preproc_source_batch_tensor(const std::vector<cv::Mat>& input
   }
   std::vector<Segment> segments{{"ifm0", device_bytes}};
   simaai::neat::Tensor device = pipeline_internal::transfer_to_device(
-      cpu, simaai::neat::Device{simaai::neat::DeviceType::SIMA_CVU, 0}, &segments,
-      /*required_segment_names=*/nullptr);
+      cpu, simaai::neat::Device{simaai::neat::DeviceType::SIMA_CVU, 0}, &segments);
   device.semantic.preprocess = runtime_meta;
   if (GstBuffer* buf = tensor_holder_buffer(device)) {
     (void)write_simaai_preprocess_meta(buf, runtime_meta);
@@ -2342,7 +2341,9 @@ TensorList split_preproc_roi_output_impl(const simaai::neat::Tensor& batched,
       batched.route.physical_byte_offset >
           std::numeric_limits<int64_t>::max() - slot_bytes * roi_capacity ||
       static_cast<std::uint64_t>(batched.byte_offset + slot_bytes * roi_capacity) >
-          batched.storage->size_bytes) {
+          batched.storage->size_bytes ||
+      (batched.has_tiled_storage() && static_cast<std::uint64_t>(slot_bytes * roi_capacity) >
+                                          batched.semantic.tess->storage_bytes)) {
     throw std::runtime_error("Preproc ROI-list: exact output slots exceed the selected storage");
   }
 
@@ -2361,7 +2362,13 @@ TensorList split_preproc_roi_output_impl(const simaai::neat::Tensor& batched,
         throw std::runtime_error("Preproc ROI-list: missing coherent output member shape");
       }
       view.shape = info.roi_member_shape;
-      view.strides_bytes = info.roi_member_strides_bytes;
+      if (view.has_tiled_storage()) {
+        // This view describes one compiled ROI slot, not the full batch extent.
+        view.semantic.tess->storage_bytes = static_cast<std::size_t>(slot_bytes);
+        view.strides_bytes.clear();
+      } else {
+        view.strides_bytes = info.roi_member_strides_bytes;
+      }
     }
     // The public view is one member, even when the producer published R members.
     sima_ev_shape_desc member_shape{};

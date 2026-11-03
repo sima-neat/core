@@ -2,6 +2,7 @@
 
 #include "RunCore.h"
 #include "pipeline/internal/SampleUtil.h"
+#include "pipeline/internal/TensorUtil.h"
 
 namespace simaai::neat {
 
@@ -119,6 +120,19 @@ inline bool sample_has_zero_copy_tensor(const Sample& sample) {
       return true;
   }
   return false;
+}
+
+// Sample::owned only says no Run lends the buffer; an app-wrapped pool buffer or a device tensor
+// carries it too. Owned output promises an independent system-memory copy, so check every
+// GStreamer-backed leaf for a copy that Owned output already made.
+inline bool sample_needs_owned_copy(const Sample& sample) {
+  const auto needs_copy = [](const simaai::neat::Tensor& tensor) {
+    return tensor_is_zero_copy(tensor) && !pipeline_internal::tensor_is_owned_copy(tensor);
+  };
+  if (sample.tensor && needs_copy(*sample.tensor))
+    return true;
+  return std::any_of(sample.tensors.begin(), sample.tensors.end(), needs_copy) ||
+         std::any_of(sample.fields.begin(), sample.fields.end(), sample_needs_owned_copy);
 }
 
 inline void maybe_force_copy_for_backpressure(Sample& sample, std::size_t qsize, const char* where,

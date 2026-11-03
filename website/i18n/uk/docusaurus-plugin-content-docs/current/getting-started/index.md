@@ -1,22 +1,22 @@
 ---
-title: "Palette Neat"
+title: "Palette SDK"
 sidebar_position: 1
 ---
 
-# Palette Neat
+# Palette SDK
 
-Palette Neat — це набір інструментів SiMa.ai для розробки програмного забезпечення, призначений для створення програм штучного інтелекту на платформі Modalix. Він містить середовище розробки, бібліотеку середовища виконання, інструменти для роботи з моделями та робочий процес DevKit для перевірки. Разом ці компоненти підтримують повний цикл розробки: підготовка моделі, створення програми та перевірка результату на апаратному забезпеченні Modalix.
+Palette SDK — це набір інструментів SiMa.ai для розробки програмного забезпечення, призначений для створення програм штучного інтелекту на платформі Modalix. Він містить середовище розробки, бібліотеку середовища виконання, інструменти для роботи з моделями та робочий процес DevKit для перевірки. Разом ці компоненти підтримують повний цикл розробки: підготовка моделі, створення програми та перевірка результату на апаратному забезпеченні Modalix.
 
-Використовуйте цей огляд, щоб зрозуміти основні частини Palette Neat і вибрати відповідну конфігурацію, процес підготовки моделі або шлях розробки програми.
+Використовуйте цей огляд, щоб зрозуміти основні частини Palette SDK і вибрати відповідну конфігурацію, процес підготовки моделі або шлях розробки програми.
 
-![Набір програмного забезпечення Palette Neat, що демонструє Neat SDK, Neat Library, Model Compiler, LLiMa та Modalix DevKit.](@site/../docs/images/neat-software-stack-animated.svg)
+![Набір програмного забезпечення Palette SDK, що демонструє Palette SDK, Neat Library, Model Compiler, LLiMa та Modalix DevKit.](@site/../docs/images/neat-software-stack-animated.svg)
 
 <div class="overview-section-label">Шлях розробника</div>
 
-:::tip Якщо ви вперше користуєтеся Palette Neat.
-Існує два способи розробки програмних застосунків із використанням Palette Neat:
+:::tip Якщо ви вперше користуєтеся Palette SDK.
+Існує два способи розробки програмних застосунків із використанням Palette SDK:
 
-- **[Використовуйте Neat SDK.](/getting-started/dev-environment/)**, якщо вам потрібне більш продуктивне середовище розробки.
+- **[Використовуйте Palette SDK.](/getting-started/dev-environment/)**, якщо вам потрібне більш продуктивне середовище розробки.
   особливо, якщо ви плануєте компілювати моделі або виконувати крос-компіляцію великих обсягів коду C++.
 - **[Розробляйте безпосередньо на DevKit.](/getting-started/neat-library/)**, коли вам потрібно менше рухомих частин у середовищі розробки, особливо якщо ви не займаєтеся роботою з компіляції моделей.
 
@@ -34,7 +34,7 @@ Palette Neat — це набір інструментів SiMa.ai для роз�
 | Запит | Де виконувати |
 | --- | --- |
 | `host$` | На вашій власній машині, поза межами SDK. |
-| `sdk$` | В оболонці контейнера Neat SDK. |
+| `sdk$` | В оболонці контейнера Palette SDK. |
 | `devkit$` | На Modalix DevKit. |
 | `pcie-host$` | На хості з картою Modalix PCIe. |
 
@@ -43,9 +43,9 @@ Palette Neat — це набір інструментів SiMa.ai для роз�
 <div class="overview-link-columns">
   <section class="overview-link-panel overview-link-panel-start">
     <h2>Почніть тут.</h2>
-    <p>Підготуйте ваш хост, Neat SDK, та DevKit для локальної розробки та апаратної перевірки.</p>
+    <p>Підготуйте ваш хост, Palette SDK, та DevKit для локальної розробки та апаратної перевірки.</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="/getting-started/dev-environment/"><strong>Neat SDK</strong><span>Використовуйте SDK для створення високопродуктивного робочого процесу на основі хоста, компіляції моделей, створення збірок C++ та перевірки за допомогою DevKit.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/"><strong>Palette SDK</strong><span>Використовуйте SDK для створення високопродуктивного робочого процесу на основі хоста, компіляції моделей, створення збірок C++ та перевірки за допомогою DevKit.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/neat-library/"><strong>Neat Library</strong><span>Встановіть середовище виконання та PyNeat безпосередньо, коли вам потрібно менше компонентів для створення прототипів застосунків на DevKit.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/compatibility/"><strong>Посібник зі сумісності</strong><span>Довідник із сумісних версій.</span></a></li>
     </ul>

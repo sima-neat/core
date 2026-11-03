@@ -18,7 +18,7 @@ For the exhaustive detected list, see [Environment Variable Inventory](/referenc
 
 ## SDK web access
 
-For Neat SDK 3.0 or above, `sima-cli sdk setup` supplies `CODE_SERVER_PASSWORD` in the container environment. Run `neat` again to retrieve it and enter it when code-server prompts you. URLs contain no password or token. `neat --json` adds `codeUI` with `backend`, `auth`, `password`, `localUrl`, and `remoteUrl`; treat this output as credential-bearing. The published `codeUIHttps.host` port from the SDK port map takes precedence over the container port.
+For Palette SDK 3.0 or above, `sima-cli sdk setup` supplies `CODE_SERVER_PASSWORD` in the container environment. Run `neat` again to retrieve it and enter it when code-server prompts you. URLs contain no password or token. `neat --json` adds `codeUI` with `backend`, `auth`, `password`, `localUrl`, and `remoteUrl`; treat this output as credential-bearing. The published `codeUIHttps.host` port from the SDK port map takes precedence over the container port.
 
 The installed code-server executable selects this behavior; merely setting `CODE_SERVER_PASSWORD` does not change legacy OpenVSCode behavior. `CODE_SERVER_HTTPS_PORT` and `CODE_SERVER_WORKSPACE` override their legacy equivalents. `CODE_SERVER_WITHOUT_PASSWORD=1` reports `auth: "none"` and omits the password value. Legacy OpenVSCode images retain token URLs.
 

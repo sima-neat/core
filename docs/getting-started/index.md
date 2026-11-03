@@ -1,27 +1,27 @@
 ---
-title: Palette Neat
+title: Palette SDK
 sidebar_position: 1
 ---
 
-# Palette Neat
+# Palette SDK
 
-Palette Neat is the SiMa.ai software development toolkit for building AI
+Palette SDK is the SiMa.ai software development toolkit for building AI
 applications on Modalix. It includes the development environment, runtime
 library, model tooling, and DevKit validation workflow. Together, these
 components support the full development path: prepare a model, build an
 application, and validate the result on Modalix hardware.
 
-Use this overview to understand the main parts of Palette Neat and choose the
+Use this overview to understand the main parts of Palette SDK and choose the
 right setup, model preparation, or application development path.
 
-![Palette Neat software stack showing the Neat SDK, Neat Library, Model Compiler, LLiMa, and Modalix DevKit](../images/neat-software-stack-animated.svg)
+![Palette SDK software stack showing the development environment, Neat Library, Model Compiler, LLiMa, and Modalix DevKit](../images/neat-software-stack-animated.svg)
 
 <div class="overview-section-label">Developer journey</div>
 
-:::tip If you are new to Palette Neat
-There are two supported ways to develop applications with Palette Neat:
+:::tip If you are new to Palette SDK
+There are two supported ways to develop applications with Palette SDK:
 
-- **[Use the Neat SDK](/getting-started/dev-environment/)** when you want a more performant development environment,
+- **[Use the Palette SDK](/getting-started/dev-environment/)** when you want a more performant development environment,
   especially if you plan to compile models, or cross-compile large scale C++ code.
 - **[Develop directly on the DevKit](/getting-started/neat-library/)** when you want fewer moving parts with the development environment, especially when you are not doing model compilation work.
 
@@ -45,7 +45,7 @@ to type them:
 | Prompt | Run it |
 | --- | --- |
 | `host$` | On your own machine, outside the SDK. |
-| `sdk$` | Inside the Neat SDK container shell. |
+| `sdk$` | Inside the Palette SDK container shell. |
 | `devkit$` | On the Modalix DevKit. |
 | `pcie-host$` | On the host machine holding the Modalix PCIe card. |
 
@@ -55,9 +55,9 @@ the same way in either place.
 <div class="overview-link-columns">
   <section class="overview-link-panel overview-link-panel-start">
     <h2>Start Here</h2>
-    <p>Prepare your host machine, Neat SDK, and DevKit for local development and hardware validation.</p>
+    <p>Prepare your host machine, Palette SDK, and DevKit for local development and hardware validation.</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="/getting-started/dev-environment/"><strong>Neat SDK</strong><span>Use the SDK for a high performance host-based workflow, model compilation, C++ builds, and DevKit validation.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/"><strong>Palette SDK</strong><span>Use the SDK for a high performance host-based workflow, model compilation, C++ builds, and DevKit validation.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/neat-library/"><strong>Neat Library</strong><span>Install runtime and PyNeat directly when you want fewer moving parts to prototype apps on a DevKit.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/compatibility/"><strong>Compatibility Guide</strong><span>Reference guide for supported version combinations.</span></a></li>
     </ul>

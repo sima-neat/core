@@ -11,6 +11,8 @@ SiMa.ai Neat Library의 릴리스 노트입니다.
 
 ### 호환성이 깨지는 변경 사항
 
+- 텐서 모드의 `Model::input_specs()`는 이제 크기 1인 배치 축(`[1,H,W,C]`)을 포함해 MPK에 정의된 랭크를 유지합니다. 시드 입력 없이 `build()`를 호출한 뒤에도 배치 1의 HWC 입력을 계속 허용합니다. `compiled_batch_size()`는 텐서 차원에서 추론하는 대신 MLA에 선언된 배치 크기를 읽습니다.
+
 - 모델 출력은 이제 중간 장치 형상 대신 MPK에 작성된 최종 논리 형상과 레이아웃을 제공합니다. 예를 들어 ResNet-50의 배치 평탄화 출력은 4차원 HWC 형상 대신 `[1, 1000]` 형상과 알 수 없는 논리 레이아웃을 가집니다. Float32 텐서 형식은 `FP32` 대신 `EVXX_FLOAT32`일 수 있습니다. 값은 텐서의 dtype과 형상으로 해석하며 백엔드 형식 태그에서 논리 축을 추론하지 않습니다.
 - Neat Library C++ ABI는 이제 버전 6이며, 공유 라이브러리의 SONAME은 `libsima_neat.so.6`입니다. 텐서는 이제 특징 추출기의 의미 메타데이터를 포함하고, 공개 GenAI 요청/결과 유형은 ASR 작업, 언어 및 프로브 메타데이터를 포함하며, `GraphLinkOptions`에는 실시간 허용 한도가 포함되며, `BenchmarkOptions`와 `BenchmarkReport`에 필드가 추가되었습니다. C++ 애플리케이션과 플러그인을 다시 빌드하고 해당 Core 런타임 및 개발 패키지를 설치합니다. `SimaArgMaxOptions`에 `axis`와 `keepdims`가 추가되었으며, `SimaArgMax` 클래스 레이아웃도 변경되었습니다.
 - 실시간 그래프 구성은 이제 `GraphLinkOptions`, `Graph::connect()` 및 `Graph::build()`를 사용합니다. 미리보기 API인 `RealtimeGraphLinkOptions`, `connect_realtime()`, `build_fused_realtime_sources()` / `build_fused_realtime_source()` 및 `RealtimeEveryFrameByStream`은 제거되었습니다. `realtime_every_frame_by_stream`을 포함하는 저장된 그래프는 지원되는 정책으로 다시 생성해야 합니다. 자세한 내용은 [라이브 프래그먼트 연결](/develop-apps/development-workflow/graph/#connect-live-fragments)을 참조하십시오.
@@ -37,12 +39,13 @@ SiMa.ai Neat Library의 릴리스 노트입니다.
 
 ### 그래프 구성 및 검증
 
+- 새 `SimaVoxelize`, `SimaPillarScatter`, `SimaBEVPoolPlan`, `SimaBEVPool` 노드는 PointPillars와 BEVFusion의 커널 라이브러리 LiDAR 연산과 카메라-BEV 연산을 INT8 또는 BF16 텐서로 A65 또는 EV74에서 실행합니다. 각 노드는 선택한 대상에서 실행되며 대체 실행은 없습니다. [LiDAR 및 BEV 커널 노드](/reference/lidar_bev_kernel_nodes)를 참조하세요.
 - 기본 공개 `Input`이 한 모델의 이미지 입력에 직접 연결되면 선언된 이미지 형식을 상속합니다. 명시적 입력 옵션은 계속 기준이며 모호한 연결에는 명시적 옵션이 필요합니다. 페이로드 복사 없이 샘플 해석만 변경됩니다.
 - 그래프 구성은 이제 하나의 노드 객체를 하나의 논리적 정점으로 처리합니다. 중복 삽입 및 겹치는 조각 가져오기는 원자적으로 실패하며, 반복적인 `connect()` 호출은 기존 노드를 재사용하여 분기 처리를 수행합니다.
 - 이제 모든 구체화된 파이프라인 세그먼트는 `build()` 중에 최종 GStreamer 이름을 검증합니다. 명시적인 `validate()` 호출은 필요하지 않습니다. 중복되거나 누락된 이름은 `misconfig.pipeline_shape`와 함께 실패하며, 잘린 파이프라인을 생성하지 않습니다.
 - 사용자 지정 프래그먼트는 이제 모든 명시적 이름을 보고하고, 선언과 함께 이름이 지정된 패드 참조도 변환합니다. 이름 충돌은 자동으로 이름을 바꾸는 대신 거부됩니다.
 
-| 릴리스 | 호환되는 Neat SDK | 참고 사항 |
+| 릴리스 | 호환되는 Palette SDK | 참고 사항 |
 | --- | --- | --- |
 | 0.6.0 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
 | 0.5.0 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |

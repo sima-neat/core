@@ -54,7 +54,7 @@ sidebar_position: 4
 
 새로운 사용자를 위한 단계별 안내:
 
-- [Neat SDK](/getting-started/dev-environment/) — Neat SDK를 설치하고, DevKit와 페어링한 후, `dk`가 설치된 하드웨어에서 실행합니다.
+- [Palette SDK](/getting-started/dev-environment/) — Palette SDK를 설치하고, DevKit와 페어링한 후, `dk`가 설치된 하드웨어에서 실행합니다.
 - [구축하다](/develop-apps/contribute/build) — 소스 코드를 사용하여 Neat을 빌드합니다. `build.sh`를 사용합니다(기여자 워크플로).
 - [안녕하세요 Neat!](/develop-apps/hello-neat/minimal) — 설치된 라이브러리와 연결되는 최소한의 CMake 애플리케이션입니다.
 - [튜토리얼](/tutorials) — “첫 번째 모델”부터 “실제 파이프라인”까지 단계별로 안내하는 튜토리얼입니다.

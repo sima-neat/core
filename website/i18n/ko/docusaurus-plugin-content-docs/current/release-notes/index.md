@@ -1,6 +1,6 @@
 ---
 title: "릴리스 노트"
-description: "Neat SDK, Neat Library, Neat Examples, sima-cli, Insight, Model Compiler, LLiMa에 대한 릴리스 노트"
+description: "Palette SDK, Neat Library, Neat Examples, sima-cli, Insight, Model Compiler, LLiMa에 대한 릴리스 노트"
 sidebar_position: 1
 ---
 
@@ -13,9 +13,9 @@ SiMa.ai 소프트웨어 스택 전반에 걸쳐 변경 사항을 추적합니다
 <div class="overview-link-columns overview-link-columns-single">
   <section class="overview-link-panel overview-link-panel-reference">
     <h2>릴리스 노트</h2>
-    <p>Neat SDK, Neat Library, Neat Examples, sima-cli, Insight, Model Compiler, LLiMa의 릴리스별 변경 사항.</p>
+    <p>Palette SDK, Neat Library, Neat Examples, sima-cli, Insight, Model Compiler, LLiMa의 릴리스별 변경 사항.</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="/release-notes/neat-development-environment/"><strong>Neat SDK</strong><span>개발 환경 및 플랫폼 변경 사항.</span></a></li>
+      <li><a class="overview-link-card" href="/release-notes/neat-development-environment/"><strong>Palette SDK</strong><span>개발 환경 및 플랫폼 변경 사항.</span></a></li>
       <li><a class="overview-link-card" href="/release-notes/neat/"><strong>Neat Library</strong><span>라이브러리 API 및 런타임 변경 사항.</span></a></li>
       <li><a class="overview-link-card" href="/release-notes/neat-examples/"><strong>Neat Examples</strong><span>예제 애플리케이션의 변경 사항 및 수정 사항.</span></a></li>
       <li><a class="overview-link-card" href="/release-notes/sima-cli/"><strong>sima-cli</strong><span>CLI 설치, SDK 설정, 업데이트 및 DevKit 워크플로 변경 사항.</span></a></li>

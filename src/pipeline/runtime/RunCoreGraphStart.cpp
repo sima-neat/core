@@ -12,6 +12,7 @@
 #include "pipeline/PowerTelemetry.h"
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/GstDiagnosticsUtil.h"
 #include "pipeline/internal/PipelineBuild.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
@@ -1380,6 +1381,59 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
   });
 }
 
+// A segment that ends in its own sink (VideoSender's udpsink) has no pull thread, and the pull
+// is where segment bus errors surface. Without this watch an element error there pauses the
+// segment's streaming thread, its appsrc fills, and the graph stalls without reporting it. The
+// watch reuses the unused pull_thread slot, so graph stop joins it like a pull thread.
+void start_sink_segment_bus_watch(const std::shared_ptr<RunCore>& core, std::size_t i) {
+  auto& pipe = *core->graph_execution().pipelines[i];
+  pipe.transport.pull_thread = std::thread([core, i]() {
+    auto& pipe = *core->graph_execution().pipelines[i];
+    struct DoneGuard {
+      std::atomic<bool>& flag;
+      ~DoneGuard() {
+        flag.store(true);
+      }
+    } done_guard{pipe.transport.pull_done};
+    std::shared_ptr<RunCore> run_core;
+    {
+      std::unique_lock<std::mutex> lock(pipe.transport.mu);
+      pipe.transport.cv.wait(lock, [&] {
+        return pipe.transport.built.load(std::memory_order_acquire) ||
+               pipe.transport.completion_forwarded.load(std::memory_order_acquire) ||
+               core->graph_stop_requested();
+      });
+      run_core = pipe.run_core;
+    }
+    // Child stop() runs before graph_signal_stop() and releases the pipeline under its
+    // teardown lock, so only a reference taken under that lock is safe to poll.
+    GstElement* pipeline = run_core ? run_core->pipeline.stream.acquire_pipeline_ref() : nullptr;
+    if (!pipeline) {
+      return;
+    }
+    if (core->graph_stop_requested()) {
+      gst_object_unref(pipeline);
+      return;
+    }
+    const auto diag = run_core->pipeline.stream.diag_ctx();
+    while (true) {
+      const bool last_check =
+          core->graph_stop_requested() || pipe.transport.push_done.load(std::memory_order_acquire);
+      try {
+        pipeline_internal::throw_if_bus_error(pipeline, diag, "GraphRun: sink segment");
+      } catch (const NeatError& e) {
+        core->graph_request_stop(e);
+        break;
+      }
+      if (last_check) {
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    gst_object_unref(pipeline);
+  });
+}
+
 void start_pipeline_threads(const std::shared_ptr<RunCore>& core) {
   ExecutionGraphRuntime& execution = core->graph_execution();
   for (std::size_t i = 0; i < execution.pipelines.size(); ++i) {
@@ -1387,6 +1441,8 @@ void start_pipeline_threads(const std::shared_ptr<RunCore>& core) {
     build_source_pipeline_if_needed(core, rt);
     if (rt.transport.has_output) {
       start_pipeline_pull_thread(core, i);
+    } else if (rt.transport.has_input) {
+      start_sink_segment_bus_watch(core, i);
     }
     if (rt.transport.has_input) {
       start_pipeline_push_thread(core, i);

@@ -157,97 +157,192 @@ RUN_TEST(
                 "ROI dense image projection must preserve authored CHW member semantics");
       }
 
-      for (const int capacity : {2, 3}) {
-        // Same packed slot extents as the INT8 ROI fixture, but an aligned arena
-        // with tail bytes and a nonzero selected-view offset. Arena/R is wrong.
-        constexpr std::size_t slot = 9216U;
-        constexpr std::size_t base = 128U;
-        const std::size_t arena = (base + slot * capacity + 4095U) & ~std::size_t{4095U};
-        auto owner = simaai::neat::make_cpu_owned_storage(arena);
-        std::weak_ptr<void> lifetime = owner->holder;
-        {
-          auto map = owner->map(simaai::neat::MapMode::Write);
-          auto* bytes = static_cast<std::uint8_t*>(map.data);
-          for (std::size_t i = 0; i < arena; ++i) {
-            bytes[i] = static_cast<std::uint8_t>(i % 251U);
-          }
-        }
-        simaai::neat::Tensor packed;
-        packed.storage = owner;
-        packed.dtype = simaai::neat::TensorDType::Int8;
-        packed.layout = simaai::neat::TensorLayout::HWC;
-        packed.shape = {capacity, 48, 64, 3};
-        packed.strides_bytes = {slot, 192, 3, 1};
-        packed.byte_offset = base;
-        packed.route.physical_byte_offset = base;
-        packed.route.memory_index = 0;
-        packed.route.logical_index = 1;
-        packed.route.route_slot = 1;
-        packed.route.name = "selected";
-        packed.route.backend_name = "backend_selected";
-        packed.route.segment_name = "actual_arena";
-        simaai::neat::stages::PreprocOutputInfo packed_info;
-        packed_info.transport_kind = simaai::neat::stages::PreprocOutputTransportKind::Packed;
-        packed_info.roi_slot_bytes = slot;
-        packed_info.roi_member_shape = {1, 48, 64, 3};
-        packed_info.roi_member_strides_bytes = {slot, 192, 3, 1};
-        packed_info.primary_output_name = "selected";
-        packed_info.primary_route_slot = 1;
+      for (const auto dtype :
+           {simaai::neat::TensorDType::Int8, simaai::neat::TensorDType::BFloat16}) {
+        for (const std::string format : {"", "COMPACT", "PAD16"}) {
+          for (const int capacity : {1, 2, 3}) {
+            // Keep physical tile padding separate from the aligned arena tail.
+            // The empty format retains the original unannotated packed fixture.
+            const bool tiled = !format.empty();
+            const std::int64_t scalar = dtype == simaai::neat::TensorDType::BFloat16 ? 2 : 1;
+            const std::size_t logical_slot = 9216U * scalar;
+            const std::size_t slot = 48U * 64U * (format == "PAD16" ? 16U : 3U) * scalar;
+            constexpr std::size_t base = 128U;
+            const std::size_t arena = (base + slot * capacity + 4095U) & ~std::size_t{4095U};
+            auto owner = simaai::neat::make_cpu_owned_storage(arena);
+            std::weak_ptr<void> lifetime = owner->holder;
+            {
+              auto map = owner->map(simaai::neat::MapMode::Write);
+              auto* bytes = static_cast<std::uint8_t*>(map.data);
+              for (std::size_t i = 0; i < arena; ++i) {
+                bytes[i] = static_cast<std::uint8_t>(i % 251U);
+              }
+            }
+            simaai::neat::Tensor packed;
+            packed.storage = owner;
+            packed.dtype = dtype;
+            packed.layout = simaai::neat::TensorLayout::HWC;
+            packed.shape = {capacity, 48, 64, 3};
+            packed.strides_bytes = {static_cast<std::int64_t>(slot), 192 * scalar, 3 * scalar,
+                                    scalar};
+            if (tiled) {
+              packed.semantic.tess.emplace();
+              packed.semantic.tess->format =
+                  std::string("MLA_TILED_") + (scalar == 2 ? "BF16_" : "INT8_") + format;
+              packed.semantic.tess->slice_shape = {1, 16, 16, 3};
+              packed.semantic.tess->axes = {-1, 1, 2, 3};
+              packed.semantic.tess->storage_bytes = slot * capacity;
+              packed.strides_bytes.clear();
+            }
+            packed.byte_offset = base;
+            packed.route.physical_byte_offset = base;
+            packed.route.memory_index = 0;
+            packed.route.logical_index = 1;
+            packed.route.route_slot = 1;
+            packed.route.name = "selected";
+            packed.route.backend_name = "backend_selected";
+            packed.route.segment_name = "actual_arena";
+            simaai::neat::stages::PreprocOutputInfo packed_info;
+            packed_info.transport_kind = simaai::neat::stages::PreprocOutputTransportKind::Packed;
+            packed_info.roi_slot_bytes = slot;
+            packed_info.roi_member_shape = {1, 48, 64, 3};
+            packed_info.roi_member_strides_bytes = {static_cast<std::int64_t>(slot), 192 * scalar,
+                                                    3 * scalar, scalar};
+            packed_info.primary_output_name = "selected";
+            packed_info.primary_route_slot = 1;
 
-        // Two logical tensors on memory 0 must not be reselected by memory index.
-        simaai::neat::Sample sample;
-        auto other = packed;
-        other.route.name = "other";
-        other.route.backend_name = "backend_other";
-        other.route.logical_index = 0;
-        other.route.route_slot = 0;
-        other.byte_offset = 0;
-        sample.tensors = {other, packed};
-        auto selected =
-            simaai::neat::stages::internal::select_preproc_output_for_stage(sample, packed_info);
-        require(selected.byte_offset == base && selected.route.name == "selected" &&
-                    selected.route.segment_name == "actual_arena" && selected.storage == owner,
-                "ROI selection must retain the logical view and owner, not memory0");
-        auto packed_meta = meta;
-        packed_meta.roi_capacity = capacity;
-        packed_meta.roi_valid_count = capacity;
-        auto views = simaai::neat::stages::internal::split_preproc_roi_output_for_stage(
-            selected, packed_meta, capacity, packed_info);
-        for (int i = 0; i < capacity; ++i) {
-          const auto& view = views[static_cast<std::size_t>(i)];
-          require(view.shape == packed_info.roi_member_shape &&
-                      view.strides_bytes == packed_info.roi_member_strides_bytes &&
-                      view.axis_semantics == std::vector<simaai::neat::TensorAxisSemantic>(
-                                                 {simaai::neat::TensorAxisSemantic::N,
-                                                  simaai::neat::TensorAxisSemantic::H,
-                                                  simaai::neat::TensorAxisSemantic::W,
-                                                  simaai::neat::TensorAxisSemantic::C}),
-                  "ROI packed view must have coherent one-member semantics");
-          require(view.byte_offset == static_cast<std::int64_t>(base + i * slot) &&
-                      view.route.physical_byte_offset == view.byte_offset,
-                  "ROI packed slot must exclude arena tail bytes");
-          const auto payload = view.copy_payload_bytes();
-          require(payload.size() == slot, "ROI packed member byte count mismatch");
-          for (std::size_t b = 0; b < slot; ++b) {
-            require(payload[b] == (base + i * slot + b) % 251U,
-                    "ROI packed member payload mismatch");
+            // Two logical tensors on memory 0 must not be reselected by memory index.
+            simaai::neat::Sample sample;
+            auto other = packed;
+            other.route.name = "other";
+            other.route.backend_name = "backend_other";
+            other.route.logical_index = 0;
+            other.route.route_slot = 0;
+            other.byte_offset = 0;
+            sample.tensors = {other, packed};
+            auto selected = simaai::neat::stages::internal::select_preproc_output_for_stage(
+                sample, packed_info);
+            require(selected.byte_offset == base && selected.route.name == "selected" &&
+                        selected.route.segment_name == "actual_arena" && selected.storage == owner,
+                    "ROI selection must retain the logical view and owner, not memory0");
+            auto packed_meta = meta;
+            packed_meta.roi_capacity = capacity;
+            packed_meta.roi_valid_count = capacity;
+            auto views = simaai::neat::stages::internal::split_preproc_roi_output_for_stage(
+                selected, packed_meta, capacity, packed_info);
+            for (int i = 0; i < capacity; ++i) {
+              const auto& view = views[static_cast<std::size_t>(i)];
+              require(view.shape == packed_info.roi_member_shape &&
+                          (tiled ? view.strides_bytes.empty()
+                                 : view.strides_bytes == packed_info.roi_member_strides_bytes) &&
+                          view.axis_semantics == std::vector<simaai::neat::TensorAxisSemantic>(
+                                                     {simaai::neat::TensorAxisSemantic::N,
+                                                      simaai::neat::TensorAxisSemantic::H,
+                                                      simaai::neat::TensorAxisSemantic::W,
+                                                      simaai::neat::TensorAxisSemantic::C}),
+                      "ROI packed view must have coherent one-member semantics");
+              require(view.byte_offset == static_cast<std::int64_t>(base + i * slot) &&
+                          view.route.physical_byte_offset == view.byte_offset,
+                      "ROI packed slot must exclude arena tail bytes");
+              require(view.storage == owner && view.dtype == dtype &&
+                          view.route.name == selected.route.name &&
+                          view.route.segment_name == selected.route.segment_name,
+                      "ROI member must retain its selected storage, dtype and route");
+              if (tiled) {
+                require(view.semantic.tess->storage_bytes == slot &&
+                            selected.semantic.tess->storage_bytes == slot * capacity &&
+                            view.semantic.tess->format == selected.semantic.tess->format &&
+                            view.semantic.tess->axes == selected.semantic.tess->axes &&
+                            view.semantic.tess->slice_shape == selected.semantic.tess->slice_shape,
+                        "ROI member must narrow only its tiled extent, not the parent's metadata");
+                std::string validation;
+                require(view.validate(&validation), "ROI tiled member is invalid: " + validation);
+                const auto clone = view.clone();
+                require(clone.has_tiled_storage() && clone.dtype == view.dtype &&
+                            clone.shape == view.shape &&
+                            clone.semantic.tess->storage_bytes == slot &&
+                            clone.semantic.tess->format == view.semantic.tess->format &&
+                            clone.semantic.tess->axes == view.semantic.tess->axes &&
+                            clone.semantic.tess->slice_shape == view.semantic.tess->slice_shape &&
+                            clone.copy_payload_bytes() == view.copy_payload_bytes(),
+                        "ROI tiled clone must retain one member's metadata and payload");
+              }
+              const auto payload = view.copy_payload_bytes();
+              require(payload.size() == slot, "ROI packed member byte count mismatch");
+              for (std::size_t b = 0; b < slot; ++b) {
+                require(payload[b] == (base + i * slot + b) % 251U,
+                        "ROI packed member payload mismatch");
+              }
+            }
+            if (capacity > 1) {
+              auto partial = packed_meta;
+              partial.roi_valid_count = capacity - 1;
+              const auto partial_views =
+                  simaai::neat::stages::internal::split_preproc_roi_output_for_stage(
+                      selected, partial, capacity, packed_info);
+              require(partial_views.size() == static_cast<std::size_t>(capacity - 1) &&
+                          partial_views.back().byte_offset ==
+                              static_cast<std::int64_t>(base + (capacity - 2) * slot) &&
+                          partial_views.back().copy_payload_bytes() ==
+                              views[capacity - 2].copy_payload_bytes(),
+                      "ROI partial results must retain the full-capacity slot spacing");
+            }
+            if (!tiled) {
+              auto legacy = selected;
+              legacy.semantic.tess.emplace();
+              legacy.semantic.tess->format =
+                  scalar == 2 ? "MLA_TILED_BF16_COMPACT" : "MLA_TILED_INT8_COMPACT";
+              legacy.semantic.tess->slice_shape = {1, 16, 16, 3};
+              const auto legacy_views =
+                  simaai::neat::stages::internal::split_preproc_roi_output_for_stage(
+                      legacy, packed_meta, capacity, packed_info);
+              require(!legacy_views.front().has_tiled_storage() &&
+                          legacy_views.front().strides_bytes ==
+                              packed_info.roi_member_strides_bytes &&
+                          legacy_views.front().copy_payload_bytes() ==
+                              views.front().copy_payload_bytes(),
+                      "ROI format-only metadata must preserve legacy strides and payload");
+            }
+            if (format == "PAD16") {
+              auto short_parent = selected;
+              short_parent.semantic.tess->storage_bytes = logical_slot * capacity;
+              std::string validation;
+              require(short_parent.validate(&validation),
+                      "ROI parent-span negative fixture must be valid: " + validation);
+              for (const int valid_count : {1, capacity}) {
+                auto partial = packed_meta;
+                partial.roi_valid_count = valid_count;
+                bool rejected = false;
+                try {
+                  (void)simaai::neat::stages::internal::split_preproc_roi_output_for_stage(
+                      short_parent, partial, capacity, packed_info);
+                } catch (const std::exception& e) {
+                  rejected = true;
+                  require(std::string(e.what()).find(
+                              "exact output slots exceed the selected storage") !=
+                              std::string::npos,
+                          std::string("ROI parent-span rejection: ") + e.what());
+                }
+                require(rejected, "ROI slots must not escape their parent's declared tiled extent");
+              }
+            }
+            auto survivor = views.back();
+            views.clear();
+            sample.tensors.clear();
+            selected = {};
+            packed = {};
+            other = {};
+            owner.reset();
+            require(!lifetime.expired(), "ROI surviving sibling must retain allocation");
+            auto retained_map = survivor.map_read();
+            survivor = {};
+            require(!lifetime.expired() && retained_map.data != nullptr &&
+                        static_cast<const std::uint8_t*>(retained_map.data)[0] ==
+                            (base + (capacity - 1) * slot) % 251U,
+                    "ROI mapping must remain valid after all tensor views are released");
+            retained_map = {};
+            require(lifetime.expired(), "ROI final Mapping release must release allocation");
           }
         }
-        auto survivor = views.back();
-        views.clear();
-        sample.tensors.clear();
-        selected = {};
-        packed = {};
-        other = {};
-        owner.reset();
-        require(!lifetime.expired(), "ROI surviving sibling must retain allocation");
-        auto retained_map = survivor.map_read();
-        survivor = {};
-        require(!lifetime.expired() && retained_map.data != nullptr &&
-                    static_cast<const std::uint8_t*>(retained_map.data)[0] ==
-                        (base + (capacity - 1) * slot) % 251U,
-                "ROI mapping must remain valid after all tensor views are released");
-        retained_map = {};
-        require(lifetime.expired(), "ROI final Mapping release must release allocation");
       }
     }));

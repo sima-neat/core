@@ -256,6 +256,8 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
                                          RuntimeSinkQueueMsg&& msg);
   bool graph_release_sink_restore_reservation(simaai::neat::graph::NodeId node_id);
   std::optional<Sample> graph_pull(simaai::neat::graph::NodeId node_id, int timeout_ms);
+  // Releases realtime credits and applies Owned copying to a sample leaving a graph sink.
+  void graph_finish_sink_pull(Sample& sample);
 
   RunOptions opt;
   RunMode mode = RunMode::Async;
@@ -274,6 +276,9 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
   GraphRuntimeOptions graph_options;
   PushSamplePolicy push_sample_policy = PushSamplePolicy::PublicCompatibility;
   pipeline_internal::HolderLoanGatePtr holder_loan_gate;
+  // Loan stalls of public graph outputs, by output node.
+  std::mutex graph_loan_stall_mu;
+  std::unordered_map<simaai::neat::graph::NodeId, LoanStall> graph_loan_stalls;
   std::shared_ptr<simaai::neat::graph::GraphRunStats> graph_stats;
 
   std::uint64_t latency_count = 0;

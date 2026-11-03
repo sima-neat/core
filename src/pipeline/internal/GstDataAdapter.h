@@ -33,6 +33,11 @@ std::size_t tensor_bytes_tight(const simaai::neat::Tensor& input);
 
 bool copy_tensor_payload_to(const simaai::neat::Tensor& tensor, uint8_t* dst, std::size_t dst_bytes,
                             std::string* err);
+// Copy from a Read mapping of `tensor` the caller already holds, so sizing and copying an
+// encoded payload share one CPU mapping. `dst` must hold `dst_bytes`.
+bool copy_tensor_payload_to(const simaai::neat::Tensor& tensor,
+                            const simaai::neat::Mapping& mapping, uint8_t* dst,
+                            std::size_t dst_bytes, std::string* err);
 
 bool canonicalize_sample_spec(SampleSpec* spec, std::string* err);
 
@@ -54,7 +59,8 @@ void copy_custom_meta(GstBuffer* dst, GstBuffer* src, const char* meta_name);
 
 bool validate_buffer_video_meta(GstBuffer* buffer, const SampleSpec& spec, std::string* err);
 
-bool resolve_encoded_payload_bytes(const simaai::neat::Tensor& tensor, const SampleSpec& spec,
+// Payload bytes of an encoded Sample: the spec's size, else the whole Read mapping of its tensor.
+bool resolve_encoded_payload_bytes(const simaai::neat::Mapping& mapping, const SampleSpec& spec,
                                    std::size_t* out_bytes, std::string* err);
 
 bool attach_video_meta(GstBuffer** buffer, const SampleSpec& spec, std::string* err);

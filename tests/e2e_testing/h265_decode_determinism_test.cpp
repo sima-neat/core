@@ -188,7 +188,7 @@ FrameSignature make_signature(const simaai::neat::Sample& sample, const std::str
   require(tensors.size() == 1U, context + ": expected one decoded tensor");
   const simaai::neat::Tensor& tensor = tensors.front();
   require(tensor.storage != nullptr, context + ": decoded tensor has no storage");
-  (void)sima_test::require_dma_owned_output(sample, {}, context);
+  (void)sima_test::require_owned_output(sample, context);
   require(tensor.dtype == simaai::neat::TensorDType::UInt8,
           context + ": decoded tensor is not UInt8");
   require(tensor.width() == kWidth, context + ": decoded width mismatch");

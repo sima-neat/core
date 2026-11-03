@@ -1,6 +1,6 @@
 # Scheduler 및 LLiMa 의존성으로 Core 빌드
 
-Core는 Scheduler와 LLiMa라는 두 가지 의존성을 기반으로 빌드합니다. Neat SDK의 Core
+Core는 Scheduler와 LLiMa라는 두 가지 의존성을 기반으로 빌드합니다. Palette SDK의 Core
 체크아웃에서 `build.sh`를 실행합니다.
 
 ```bash

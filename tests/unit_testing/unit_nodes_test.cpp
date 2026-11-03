@@ -10,12 +10,14 @@
 #include "nodes/common/ImageDecode.h"
 #include "nodes/io/RTSPInput.h"
 #include "nodes/io/CameraInput.h"
+#include "nodes/io/HttpSource.h"
 #include "nodes/rtp/H264Depacketize.h"
 #include "nodes/rtp/H265Depacketize.h"
 #include "nodes/sima/H264DecodeSima.h"
 #include "nodes/sima/H264EncodeSima.h"
 #include "nodes/sima/H264Parse.h"
 #include "nodes/sima/H264Packetize.h"
+#include "nodes/sima/PCIeSrc.h"
 #include "gst/GstHelpers.h"
 
 #include "test_utils.h"
@@ -99,6 +101,22 @@ int main() {
     auto rtsp = simaai::neat::nodes::RTSPInput("rtsp://example", 200, true);
     require_contains(rtsp->backend_fragment(1), "rtspsrc name=n1_rtspsrc",
                      "RTSPInput name mismatch");
+
+    // Live sources declare it; the graph cannot pace them.
+    require(rtsp->is_live_source(), "RTSPInput must be a live source");
+    require(simaai::neat::nodes::CameraInput()->is_live_source(),
+            "CameraInput must be a live source");
+    require(simaai::neat::nodes::CameraInputWithCaptureBuffers({}, 0)->is_live_source(),
+            "CameraInput with capture buffers (Python camera_input) must be a live source");
+    require(simaai::neat::nodes::PCIeSrc()->is_live_source(), "PCIeSrc must be a live source");
+    simaai::neat::HttpSourceOptions http_opt;
+    http_opt.location = "http://example.test/stream.mjpg";
+    require(!simaai::neat::nodes::HttpSource(http_opt)->is_live_source(),
+            "HttpSource must not be live unless is_live is set");
+    http_opt.is_live = true;
+    require(simaai::neat::nodes::HttpSource(http_opt)->is_live_source(),
+            "HttpSource with is_live must be a live source");
+    require(!fs->is_live_source(), "FileInput must not be a live source");
 
     simaai::neat::CameraInputOptions cam_opt;
     require(!cam_opt.allow_cpu_fallback, "CameraInput must default to strict device zero-copy");

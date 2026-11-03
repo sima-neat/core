@@ -25,7 +25,6 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
-#include <mutex>
 #include <stdexcept>
 #include <unordered_map>
 #include <vector>
@@ -345,7 +344,8 @@ simaai::neat::Mapping map_tensor_storage_raw(const simaai::neat::Tensor& tensor,
 }
 
 bool holder_debug_enabled() {
-  return env_bool("SIMA_INPUTSTREAM_HOLDER_DEBUG", false);
+  static const bool enabled = env_bool("SIMA_INPUTSTREAM_HOLDER_DEBUG", false);
+  return enabled;
 }
 
 bool tensor_map_debug_enabled() {
@@ -442,6 +442,8 @@ void update_mem_flags(GstMemory* mem, SimaaiMemoryInfo* info) {
 }
 
 std::size_t dense_tensor_physical_span_bytes(const simaai::neat::Tensor& tensor) {
+  if (tensor.has_tiled_storage())
+    return tensor.semantic.tess->storage_bytes;
   if (!tensor.is_dense()) {
     return 0U;
   }
@@ -703,14 +705,8 @@ std::shared_ptr<simaai::neat::Storage> make_gst_sample_memory_storage(
     }
   }
 
-  struct GstMemoryMapState {
-    GstMapInfo info{};
-    bool mapped = false;
-    std::mutex mu;
-  };
-  auto map_state = std::make_shared<GstMemoryMapState>();
   auto holder = storage->holder;
-  storage->map_fn = [holder, map_state, memory_index](simaai::neat::MapMode mode) {
+  storage->map_fn = [holder, memory_index](simaai::neat::MapMode mode) {
     GstSample* s = static_cast<GstSample*>(holder.get());
     GstBuffer* b = s ? gst_sample_get_buffer(s) : nullptr;
     if (!b)
@@ -719,36 +715,29 @@ std::shared_ptr<simaai::neat::Storage> make_gst_sample_memory_storage(
     if (!mem)
       return simaai::neat::Mapping{};
 
-    std::lock_guard<std::mutex> lock(map_state->mu);
-    if (map_state->mapped) {
-      return simaai::neat::Mapping{};
-    }
-
     GstMapFlags flags = GST_MAP_READ;
     if (mode == simaai::neat::MapMode::Write) {
       flags = GST_MAP_WRITE;
     } else if (mode == simaai::neat::MapMode::ReadWrite) {
       flags = static_cast<GstMapFlags>(GST_MAP_READ | GST_MAP_WRITE);
     }
+    // Every Sample copy shares this storage, so fan-out branches map it concurrently. Each
+    // mapping owns its GstMapInfo; GStreamer's memory lock refuses conflicting write maps.
+    auto info = std::make_shared<GstMapInfo>();
     ++g_gst_memory_map_calls;
-    if (!gst_memory_map(mem, &map_state->info, flags)) {
+    if (!gst_memory_map(mem, info.get(), flags)) {
       return simaai::neat::Mapping{};
     }
-    map_state->mapped = true;
     GstBuffer* buffer_ref = gst_buffer_ref(b);
 
     simaai::neat::Mapping mapping;
-    mapping.data = map_state->info.data;
-    mapping.size_bytes = map_state->info.size;
+    mapping.data = info->data;
+    mapping.size_bytes = info->size;
     mapping.keepalive = holder;
-    mapping.unmap = [buffer_ref, map_state, memory_index]() {
-      std::lock_guard<std::mutex> lock(map_state->mu);
-      if (map_state->mapped) {
-        GstMemory* mapped_mem = gst_buffer_peek_memory(buffer_ref, memory_index);
-        if (mapped_mem) {
-          gst_memory_unmap(mapped_mem, &map_state->info);
-        }
-        map_state->mapped = false;
+    mapping.unmap = [buffer_ref, info, memory_index]() {
+      GstMemory* mapped_mem = gst_buffer_peek_memory(buffer_ref, memory_index);
+      if (mapped_mem) {
+        gst_memory_unmap(mapped_mem, info.get());
       }
       gst_buffer_unref(buffer_ref);
     };
@@ -782,12 +771,6 @@ make_gst_sample_storage_impl(GstSample* sample,
 
   log_holder("make_storage", sample, buffer);
   auto holder = make_sample_holder(sample);
-  struct GstMapState {
-    GstMapInfo info{};
-    bool mapped = false;
-    std::mutex mu;
-  };
-  auto map_state = std::make_shared<GstMapState>();
 
   auto storage = std::make_shared<simaai::neat::Storage>();
   storage->kind = simaai::neat::StorageKind::GstSample;
@@ -820,37 +803,37 @@ make_gst_sample_storage_impl(GstSample* sample,
 
   const std::uint64_t mem_flags = mem_info.mem_flags;
   const std::uint64_t target_flags = mem_info.target_flags;
-  storage->map_fn = [holder, map_state, mem_flags, target_flags](simaai::neat::MapMode mode) {
+  storage->map_fn = [holder, mem_flags, target_flags](simaai::neat::MapMode mode) {
     GstSample* s = static_cast<GstSample*>(holder.get());
     GstBuffer* b = s ? gst_sample_get_buffer(s) : nullptr;
     if (!b)
       return simaai::neat::Mapping{};
 
-    std::lock_guard<std::mutex> lock(map_state->mu);
-    if (map_state->mapped) {
-      return simaai::neat::Mapping{};
-    }
     GstMapFlags flags = GST_MAP_READ;
     if (mode == simaai::neat::MapMode::Write) {
       flags = GST_MAP_WRITE;
     } else if (mode == simaai::neat::MapMode::ReadWrite) {
       flags = static_cast<GstMapFlags>(GST_MAP_READ | GST_MAP_WRITE);
     }
-    if (!gst_buffer_map(b, &map_state->info, flags)) {
+    // Concurrent mappings of the shared storage each own their GstMapInfo (see above). A read map
+    // refs first: mapping a writable multi-memory buffer merges its memories in place, racing
+    // other branches; mapping it read-only merges into a temporary memory instead.
+    auto info = std::make_shared<GstMapInfo>();
+    const bool read_only = mode == simaai::neat::MapMode::Read;
+    GstBuffer* buffer_ref = read_only ? gst_buffer_ref(b) : nullptr;
+    if (!gst_buffer_map(b, info.get(), flags)) {
+      if (buffer_ref)
+        gst_buffer_unref(buffer_ref);
       return simaai::neat::Mapping{};
     }
-    map_state->mapped = true;
-    GstBuffer* buffer_ref = gst_buffer_ref(b);
+    if (!buffer_ref)
+      buffer_ref = gst_buffer_ref(b);
 
     simaai::neat::Mapping mapping;
-    mapping.data = map_state->info.data;
-    mapping.size_bytes = map_state->info.size;
-    mapping.unmap = [buffer_ref, map_state]() {
-      std::lock_guard<std::mutex> lock(map_state->mu);
-      if (map_state->mapped) {
-        gst_buffer_unmap(buffer_ref, &map_state->info);
-        map_state->mapped = false;
-      }
+    mapping.data = info->data;
+    mapping.size_bytes = info->size;
+    mapping.unmap = [buffer_ref, info]() {
+      gst_buffer_unmap(buffer_ref, info.get());
       gst_buffer_unref(buffer_ref);
     };
     return mapping;
@@ -1235,6 +1218,7 @@ simaai::neat::Mapping map_tensor_view(const simaai::neat::Tensor& tensor,
 // observable logical extent. No geometry is cached across mutable Tensor views.
 simaai::neat::Mapping map_dense_tensor_read(const simaai::neat::Tensor& tensor) {
   if (!tensor.storage || tensor.byte_offset < 0 || !tensor.is_dense() ||
+      tensor.has_tiled_storage() ||
       (!tensor.strides_bytes.empty() && tensor.strides_bytes.size() != tensor.shape.size())) {
     return {};
   }
@@ -1302,24 +1286,60 @@ namespace {
 
 using OwnedBuffer = std::unique_ptr<GstBuffer, decltype(&gst_buffer_unref)>;
 
-dma_client::DmaBufMemory copy_output_storage(const std::shared_ptr<Storage>& source,
-                                             GstSample* whole_sample = nullptr) {
-  dma_client::Error error;
-  dma_client::HeapAllocator allocator;
+struct GstMemoryUnref {
+  void operator()(GstMemory* memory) const {
+    gst_memory_unref(memory);
+  }
+};
+using OwnedMemory = std::unique_ptr<GstMemory, GstMemoryUnref>;
+
+// An Owned copy lives in Core-allocated CPU memory, outside CMA, so retained
+// outputs leave device memory to the running pipeline. The envelope's GstMemory
+// wraps the same bytes and keeps that allocation alive.
+struct OwnedCopy {
+  OwnedMemory memory;
+  std::uint8_t* data = nullptr;
+};
+
+// Maps an Owned copy at its own address. Its type identifies the copy, so a later
+// Owned pull can tell it apart from a pool buffer or device tensor.
+struct OwnedCopyMapper {
+  std::shared_ptr<void> holder;
+  void* data;
+  std::size_t size;
+
+  Mapping operator()(MapMode /*mode*/) const {
+    Mapping mapping;
+    mapping.data = data;
+    mapping.size_bytes = size;
+    mapping.keepalive = holder;
+    return mapping;
+  }
+};
+
+void release_owned_copy_holder(gpointer holder) {
+  delete static_cast<std::shared_ptr<void>*>(holder);
+}
+
+OwnedCopy copy_output_storage(const std::shared_ptr<Storage>& source,
+                              GstSample* whole_sample = nullptr) {
+  // Throws std::bad_alloc on failure, which the pull reports as an error.
+  auto backing = make_cpu_owned_storage(source->size_bytes);
+  auto* data = static_cast<std::uint8_t*>(backing->data);
   // A zero-length logical tensor still needs a valid transport allocation.
-  auto memory = allocator.allocate(dma_client::HeapKind::Cma,
-                                   std::max<std::size_t>(source->size_bytes, 1U), &error);
-  if (!memory) {
-    throw std::runtime_error("Owned output allocation failed: " + error.message());
+  const gsize wrapped_size = std::max<std::size_t>(source->size_bytes, 1U);
+  auto holder = std::make_unique<std::shared_ptr<void>>(backing->holder);
+  OwnedCopy copy{
+      OwnedMemory(gst_memory_new_wrapped(static_cast<GstMemoryFlags>(0), data, wrapped_size, 0,
+                                         wrapped_size, holder.get(), release_owned_copy_holder)),
+      data};
+  if (!copy.memory) {
+    throw std::runtime_error("Owned output: cannot wrap system memory");
   }
-  auto view = dma_client::DmaBufView::fromMemory(*memory, &error);
-  auto output = view ? view->map(dma_client::CpuAccess::Write, &error) : std::nullopt;
-  if (!output) {
-    throw std::runtime_error("Owned output mapping failed: " + error.message());
-  }
+  holder.release();
   // A whole-buffer view (for example a fragmented encoded access unit) needs
   // contiguous owned storage. Copy fragments directly, without GstBuffer's
-  // implicit merge/staging allocation or an unsynchronized DMA-BUF map.
+  // implicit merge/staging allocation.
   auto* buffer = whole_sample ? gst_sample_get_buffer(whole_sample) : nullptr;
   const guint count = buffer ? gst_buffer_n_memory(buffer) : 1U;
   std::size_t offset = 0;
@@ -1334,20 +1354,16 @@ dma_client::DmaBufMemory copy_output_storage(const std::shared_ptr<Storage>& sou
       throw std::runtime_error("Owned output: cannot map complete source storage");
     }
     if (part->size_bytes) {
-      std::memcpy(static_cast<unsigned char*>(output->data()) + offset, input.data,
-                  part->size_bytes);
+      std::memcpy(data + offset, input.data, part->size_bytes);
     }
     offset += part->size_bytes;
   }
   if (offset != source->size_bytes) {
     throw std::runtime_error("Owned output: inconsistent source extent");
   }
-  if (!output->finish(&error)) {
-    throw std::runtime_error("Owned output synchronization failed: " + error.message());
-  }
   ++g_tensor_copy_count;
   g_tensor_copy_bytes.fetch_add(source->size_bytes, std::memory_order_relaxed);
-  return std::move(*memory);
+  return copy;
 }
 
 // A plan belongs to one output operation. It retains source authority until all
@@ -1394,7 +1410,7 @@ private:
     std::vector<SpanKey> spans;
     std::shared_ptr<Storage> source;
     GstSample* whole_sample = nullptr;
-    dma_client::DmaBufMemory destination;
+    OwnedCopy destination;
   };
 
   struct EnvelopeSlot {
@@ -1430,6 +1446,8 @@ private:
   };
 
   static std::size_t checked_span(const Tensor& tensor, std::size_t element) {
+    if (tensor.has_tiled_storage())
+      return tensor.semantic.tess->storage_bytes;
     const auto& shape = tensor.shape;
     const auto& strides = tensor.strides_bytes;
     if (shape.empty() && !is_bound_dense_scalar(tensor)) {
@@ -1733,7 +1751,7 @@ private:
     }
     for (const auto& slot : envelope.slots) {
       gst_buffer_append_memory(destination.get(),
-                               gst_memory_ref(carriers_[slot.carrier].destination.gstMemory()));
+                               gst_memory_ref(carriers_[slot.carrier].destination.memory.get()));
       envelope.segments.push_back(slot.segment);
     }
     auto* source = envelope.source_sample ? gst_sample_get_buffer(envelope.source_sample) : nullptr;
@@ -1771,7 +1789,14 @@ private:
     auto storage = make_gst_sample_memory_storage(
         static_cast<GstSample*>(envelope.destination.get()), index, index, envelope.destination);
     storage->sima_segments = envelope.segments;
-    storage->device = {DeviceType::SIMA_CVU, 0};
+    storage->device = {DeviceType::CPU, 0};
+    // Map the copy's own address instead of through GStreamer. A copy shared by
+    // several slots is attached to several buffers, and GStreamer refuses write
+    // maps of shared memory.
+    void* data = carriers_[slot->carrier].destination.data;
+    const std::size_t size = storage->size_bytes;
+    storage->data = data;
+    storage->map_fn = OwnedCopyMapper{storage->holder, data, size};
     tensor.storage = std::move(storage);
     tensor.device = tensor.storage->device;
     tensor.read_only = false;
@@ -1787,6 +1812,10 @@ private:
 };
 
 } // namespace
+
+bool tensor_is_owned_copy(const Tensor& tensor) {
+  return tensor.storage && tensor.storage->map_fn.target<OwnedCopyMapper>() != nullptr;
+}
 
 void materialize_owned_output(Sample& sample, bool preserve_framework) {
   OwnedOutputMaterializer(preserve_framework).apply(sample);

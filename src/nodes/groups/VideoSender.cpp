@@ -1,7 +1,9 @@
 #include "nodes/groups/VideoSender.h"
 
+#include "gst/GstHelpers.h"
 #include "nodes/groups/internal/VideoSenderRawIngress.h"
 #include "nodes/io/UdpOutput.h"
+#include "nodes/io/internal/JpegRtpUdpSink.h"
 #include "nodes/sima/internal/SimaEncode.h"
 #include "nodes/common/JpegParse.h"
 #include "nodes/sima/H264EncodeSima.h"
@@ -231,7 +233,21 @@ simaai::neat::Graph VideoSender(const VideoSenderOptions& opt) {
     nodes.push_back(simaai::neat::internal::SimaEncodeAccess::prepared_input(std::move(encode)));
   }
 
-  if (opt.codec_ == RtspCodec::MJPEG) {
+  // A Scheduler with neatjpegudpsink reads the JPEG headers, packetizes and sends in one sink;
+  // older ones keep jpegparse ! rtpjpegpay ! udpsink. The registry decides, so equal
+  // environments build equal graphs.
+  const bool jpeg_rtp_udp_sink =
+      opt.codec_ == RtspCodec::MJPEG &&
+      simaai::neat::element_exists(simaai::neat::internal::kJpegRtpUdpSinkFactory);
+  if (jpeg_rtp_udp_sink) {
+    simaai::neat::internal::JpegRtpUdpSinkOptions sink_opt;
+    sink_opt.host = opt.host;
+    sink_opt.port = opt.video_port();
+    sink_opt.payload_type = opt.rtp.payload_type;
+    sink_opt.sync = opt.sync;
+    sink_opt.async = opt.async;
+    nodes.push_back(std::make_shared<simaai::neat::internal::JpegRtpUdpSink>(sink_opt));
+  } else if (opt.codec_ == RtspCodec::MJPEG) {
     nodes.push_back(nodes::JpegParse());
     nodes.push_back(std::make_shared<JpegPacketizeNode>(opt.rtp.payload_type));
   } else if (opt.codec_ == RtspCodec::H265) {
@@ -245,12 +261,14 @@ simaai::neat::Graph VideoSender(const VideoSenderOptions& opt) {
                              simaai::neat::H264Packetize::ConfigInterval(opt.rtp.config_interval)));
   }
 
-  simaai::neat::UdpOutputOptions udp_opt;
-  udp_opt.host = opt.host;
-  udp_opt.port = opt.video_port();
-  udp_opt.sync = opt.sync;
-  udp_opt.async = opt.async;
-  nodes.push_back(nodes::UdpOutput(udp_opt));
+  if (!jpeg_rtp_udp_sink) {
+    simaai::neat::UdpOutputOptions udp_opt;
+    udp_opt.host = opt.host;
+    udp_opt.port = opt.video_port();
+    udp_opt.sync = opt.sync;
+    udp_opt.async = opt.async;
+    nodes.push_back(nodes::UdpOutput(udp_opt));
+  }
 
   simaai::neat::Graph graph("video_sender");
   for (auto& node : nodes) {

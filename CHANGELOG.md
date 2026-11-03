@@ -14,6 +14,10 @@ The format is based on Keep a Changelog and follows semantic versioning.
   Memory is reported as MLA memory and EV74 memory, which add up, and board-wide Linux memory.
   EV74 memory needs a Sentinel that reports `ev74_mem_allocated_mb`; older daemons leave it at
   `samples == 0`.
+- `SimaVoxelize`, `SimaPillarScatter`, `SimaBEVPoolPlan` and `SimaBEVPool` run the kernels-library
+  LiDAR and camera-to-BEV operations of PointPillars and BEVFusion on A65 or EV74, with INT8 or
+  BF16 tensors, in C++ and Python (`pyneat.nodes.sima_voxelize` and so on). Each runs on the
+  selected target with no fallback. See `docs/reference/lidar_bev_kernel_nodes.md`.
 
 ### Changed
 - Canonical naming contract docs and migration guidance.
@@ -37,6 +41,11 @@ The format is based on Keep a Changelog and follows semantic versioning.
   `.tar`, and bare `.gz` inputs are rejected before tar inspection.
 - BREAKING: The archive loader is now an internal `Model` implementation detail; public
   `mpk/*` headers and `pyneat.mpk` inspection/extraction bindings were removed.
+
+### Fixed
+- Public C++ options for Cast, CastTess, Quant, QuantTess, Tess and Preproc now
+  match Core’s internal layouts, fixing standalone-node crashes. Rebuild C++
+  consumers against matching headers; the unreleased 0.6.0 line remains ABI 6.
 
 ### Deprecated
 - `PowerMonitor`, `read_power_snapshot()`, `RunOptions::enable_board_power()`,

@@ -1,10 +1,10 @@
 ---
 title: Ubuntu Host Notes
-description: Prepare an Ubuntu host for Neat SDK and DevKit-Sync
+description: Prepare an Ubuntu host for Palette SDK and DevKit-Sync
 sidebar_position: 1
 ---
 
-Use this guide when your host machine is Ubuntu and you want to run Neat SDK
+Use this guide when your host machine is Ubuntu and you want to run Palette SDK
 with DevKit-Sync.
 
 ## Prerequisites
@@ -89,4 +89,4 @@ host NFS export created by `sima-cli sdk setup --devkit`.
 
 ## Next step
 
-Return to [Neat SDK](/getting-started/dev-environment/) and continue with install/setup.
+Return to [Palette SDK](/getting-started/dev-environment/) and continue with install/setup.

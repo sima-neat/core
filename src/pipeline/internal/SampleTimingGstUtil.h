@@ -20,7 +20,7 @@ static inline bool apply_to_buffer_header(GstBuffer* buffer, const SampleTimingO
     return false;
   }
 
-  const bool debug_timing = pipeline_internal::env_bool("SIMA_SAMPLE_TIMING_DEBUG", false);
+  const bool debug_timing = pipeline_internal::sample_timing_debug_enabled();
   const GstClockTime before_pts = GST_BUFFER_PTS(buffer);
   const GstClockTime before_dts = GST_BUFFER_DTS(buffer);
   const GstClockTime before_dur = GST_BUFFER_DURATION(buffer);

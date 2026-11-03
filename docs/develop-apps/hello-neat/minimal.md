@@ -14,7 +14,7 @@ After installation, start here to confirm your Neat setup is wired correctly.
 
 This page keeps the first run intentionally small: create a tiny app, confirm the headers/imports resolve and it builds, and run it on the DevKit to confirm the runtime responds. Once this works, continue to [Run an App](./run_an_app.md) to run a real model inside a small Graph application.
 
-:::note Neat SDK Prerequisite
+:::note Palette SDK Prerequisite
 To run commands on the DevKit directly from inside the SDK (for example, `dk build/sima_neat_hello` or `dk hello_neat.py`), set up DevKit pairing first.
 
 **Required setup:** [DevKit Sync](/getting-started/dev-environment/devkit-sync/)
@@ -63,7 +63,7 @@ dk hello_neat.py
 </ShellCommand>
 
 :::note Python Runtime Location
-`pyneat` is installed on the DevKit runtime side, even if you run the Neat installer from inside the Neat SDK container.
+`pyneat` is installed on the DevKit runtime side, even if you run the Neat installer from inside the Palette SDK container.
 
 When you run `dk hello_neat.py`, `dk` executes the script on the paired DevKit using the DevKit `pyneat` environment.
 :::

@@ -1,6 +1,6 @@
 ---
 title: Configure SDK
-description: Change Neat SDK workspace, DevKit pairing, or setup options after installation
+description: Change Palette SDK workspace, DevKit pairing, or setup options after installation
 sidebar_position: 4
 ---
 

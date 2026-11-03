@@ -111,7 +111,7 @@ SiMa.ai Neat handles the underlying hardware and runtime complexity.
 ## Describe your application. <span className="agentic-heading-highlight">An agent with Neat skills develops it.</span>
 
 SiMa.ai Neat supports agentic application development out of the box through
-skills included with the Neat SDK. These skills give coding agents the context
+skills included with the Palette SDK. These skills give coding agents the context
 to use the public Python and C++ APIs, follow established application patterns,
 and work with the Modalix development and validation workflow.
 
@@ -120,7 +120,7 @@ Modalix DevKit, inspect results and diagnostics, and refine the implementation.
 Traditional development remains a parallel path for direct control through the
 same APIs. Both produce standard, inspectable SiMa.ai Neat applications, so you
 can review or modify agent-developed code and move between the two workflows as
-the application evolves. See [Set up the Neat SDK](/getting-started/dev-environment/) to enable agentic
+the application evolves. See [Set up the Palette SDK](/getting-started/dev-environment/) to enable agentic
 development.
 
 <div className="overview-workflow-image agentic-visual-desktop">
@@ -140,13 +140,13 @@ development.
 Before building applications, complete the Getting Started setup:
 
 - **Install for the deployment model** — for a Modalix DevKit, install the Neat
-  Library in the Neat SDK or directly on the device. For PCIe co-processing,
+  Library in the Palette SDK or directly on the device. For PCIe co-processing,
   install `core/pciehost` on the host machine and a compatible Neat Library on the
   Modalix PCIe Card.
 - **Model artifact** — use a precompiled model from the Model Zoo or compile your own model into a Modalix-ready archive.
 - **Runtime target** — run native applications on the DevKit, or build and run a
   co-processing application directly on the host machine. Pair and sync the DevKit
-  when cross-compiling native C++ applications in the Neat SDK.
+  when cross-compiling native C++ applications in the Palette SDK.
 
 The Hello Neat! pages help you run your first inference, the Development Workflow pages explain the main concepts in more detail, and the tutorials show how to apply them to real application patterns.
 

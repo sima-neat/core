@@ -1,5 +1,6 @@
 #include "RunCore.h"
 #include "GraphTransportLifecycle.h"
+#include "RunInternal.h"
 
 #include "ExecutionGraphPlan.h"
 #include "gst/GstInit.h"
@@ -13,6 +14,7 @@
 #include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorTransfer.h"
+#include "pipeline/internal/TensorUtil.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 
 #include <algorithm>
@@ -1166,7 +1168,7 @@ void RunCore::graph_sanitize_pipeline_input(std::size_t index, Sample& sample) {
   const int64_t prev_frame = sample.frame_id;
   sample = simaai::neat::pipeline_internal::canonicalize_tensor_transport_sample(sample);
   copy_encoded_pipeline_input_to_cpu_if_needed(pipe, sample);
-  if (simaai::neat::pipeline_internal::env_bool("SIMA_SAMPLE_TIMING_DEBUG", false)) {
+  if (simaai::neat::pipeline_internal::sample_timing_debug_enabled()) {
     std::fprintf(stderr,
                  "[SAMPLE_TIMING] graph_sanitize seg=%zu before_frame=%lld after_frame=%lld "
                  "before_pts=%lld after_pts=%lld before_dts=%lld after_dts=%lld "
@@ -1557,8 +1559,19 @@ std::optional<Sample> RunCore::graph_pull(simaai::neat::graph::NodeId node_id, i
     return std::nullopt;
   }
   Sample out = std::move(queued->sample);
-  pipeline_internal::release_realtime_frame_credits_for_sample(out, "graph-sink-pull");
+  graph_finish_sink_pull(out);
   return out;
+}
+
+void RunCore::graph_finish_sink_pull(Sample& sample) {
+  pipeline_internal::release_realtime_frame_credits_for_sample(sample, "graph-sink-pull");
+  // Graph-internal segments forward their outputs zero-copy, so Owned copies them here to
+  // release the producer pool buffer and its loan before the app holds the sample.
+  const bool owned_output =
+      pipeline.stream_opt.copy_output && !pipeline.stream_opt.preserve_framework_output;
+  if (owned_output && run_internal::sample_needs_owned_copy(sample)) {
+    pipeline_internal::materialize_owned_output(sample);
+  }
 }
 
 std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPlan& segment,
@@ -1631,6 +1644,7 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
         std::move(opt.after_pipeline_start_for_test));
     core->push_sample_policy = opt.push_sample_policy;
     core->pipeline.public_input_contract = public_contract;
+    core->pipeline.loan_stall_label = "graph segment " + std::to_string(segment.id);
     const auto start_single_us = pipeline_internal::build_timing_us(start_single_start);
     pipeline_internal::emit_build_timing(
         "RunCore::start_pipeline_segment",
@@ -1648,10 +1662,12 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
       nodes, route_options, opt.mode, opt.run_options, public_output_contract);
   const auto context_us = pipeline_internal::build_timing_us(context_start);
   InputStreamOptions build_stream_opt = ctx.stream_opt;
+  build_stream_opt.model_input_shape = segment.stream_options.model_input_shape;
   build_stream_opt.startup_preflight =
       opt.allow_startup_preflight && ctx.stream_opt.startup_preflight;
   build_stream_opt.allow_graph_internal_zero_copy_input =
       segment.boundary.needs_input && !segment.input_edges.empty();
+  build_stream_opt.copy_encoded_input = segment_copies_encoded_input(segment);
   session_build_tune_internal_zero_copy_holder_window(
       build_stream_opt, opt.graph_options.edge_queue, segment.boundary.graph_internal_output);
   InputStream stream;
@@ -1674,6 +1690,7 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
       std::move(opt.input_route_processor), std::move(opt.after_pipeline_start_for_test));
   core->push_sample_policy = opt.push_sample_policy;
   core->pipeline.public_input_contract = public_contract;
+  core->pipeline.loan_stall_label = "graph segment " + std::to_string(segment.id);
   const auto start_single_us = pipeline_internal::build_timing_us(start_single_start);
   pipeline_internal::emit_build_timing("RunCore::start_pipeline_segment",
                                        {{"materialize_nodes", materialize_us},

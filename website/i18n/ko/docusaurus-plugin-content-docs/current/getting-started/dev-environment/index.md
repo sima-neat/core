@@ -1,10 +1,10 @@
 ---
-title: "Neat SDK"
-description: "빠르고 효율적인 에이전트 기반 Neat 애플리케이션 개발을 위해 Neat SDK를 설정하세요."
+title: "Palette SDK"
+description: "빠르고 효율적인 에이전트 기반 Neat 애플리케이션 개발을 위해 Palette SDK를 설정하세요."
 sidebar_position: 1
 ---
 
-Neat SDK는 대규모 Neat 애플리케이션을 구축하고 Modalix DevKit에서 이를 검증하기 위한 권장 호스트 측 작업 공간입니다. 이 환경은 빌드 도구, 모델 도구, 하드웨어 연결, 그리고 에이전트가 사용할 수 있는 소스 컨텍스트를 하나의 컨테이너화된 워크플로로 통합합니다.
+Palette SDK는 대규모 Neat 애플리케이션을 구축하고 Modalix DevKit에서 이를 검증하기 위한 권장 호스트 측 작업 공간입니다. 이 환경은 빌드 도구, 모델 도구, 하드웨어 연결, 그리고 에이전트가 사용할 수 있는 소스 컨텍스트를 하나의 컨테이너화된 워크플로로 통합합니다.
 
 SDK는 세 곳을 연결합니다.
 
@@ -72,7 +72,7 @@ LLiMa를 사용하여 GenAI 모델을 컴파일하는 작업은 기본 SDK보다
 | Docker Engine을 통해 Ubuntu 22.04 및 24.04 | `x86_64` | 예 | 예 |
 | WSL 및 Docker Engine을 통해 Windows 11 | `x86_64` | 예 | 예 |
 | Docker Engine을 통해 Ubuntu 22.04 및 24.04 | `arm64` | 예 | Model Compiler 2.1.2 이상 |
-| Colima를 통해 macOS 15.5 이상 | `arm64` | 예 | Model Compiler 2.1.2 이상; Neat SDK 내부에 설치 |
+| Colima를 통해 macOS 15.5 이상 | `arm64` | 예 | Model Compiler 2.1.2 이상; Palette SDK 내부에 설치 |
 
 :::note 아키텍처 이름
 `arm64`와 `aarch64`는 동일한 64비트 Arm 아키텍처입니다. macOS에서는 `arm64`로, Linux에서는 `aarch64`로 보고됩니다. 마찬가지로 `x86_64`와 `amd64`는 동일한 아키텍처입니다. 호스트(또는 SDK 내부)에서 `uname -m`을 실행하여 어떤 아키텍처를 사용하는지 확인하십시오. Model Compiler 설치 명령어는 `arm64`와 `amd64`를 사용합니다. 자세한 내용은 [Model Compiler를 설치합니다.](/getting-started/dev-environment/install-model-compiler/)를 참조하십시오.

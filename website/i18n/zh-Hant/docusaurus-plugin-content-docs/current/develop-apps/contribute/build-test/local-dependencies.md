@@ -1,6 +1,6 @@
 # 使用 Scheduler 與 LLiMa 相依項目建置 Core
 
-Core 會針對兩個相依項目建置：Scheduler 與 LLiMa。在 Neat SDK 中，從 Core 原始碼目錄執行
+Core 會針對兩個相依項目建置：Scheduler 與 LLiMa。在 Palette SDK 中，從 Core 原始碼目錄執行
 `build.sh`：
 
 ```bash

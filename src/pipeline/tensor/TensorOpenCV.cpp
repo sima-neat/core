@@ -256,13 +256,11 @@ Tensor from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt, TensorMemory 
   std::vector<Segment> segments{{"ifm0", bytes}};
   if (memory == TensorMemory::EV74) {
     return pipeline_internal::transfer_to_device(cpu_view, Device{DeviceType::SIMA_CVU, 0},
-                                                 &segments,
-                                                 /*required_segment_names=*/nullptr);
+                                                 &segments);
   }
   if (memory == TensorMemory::MLA) {
     return pipeline_internal::transfer_to_device(cpu_view, Device{DeviceType::SIMA_MLA, 0},
-                                                 &segments,
-                                                 /*required_segment_names=*/nullptr);
+                                                 &segments);
   }
   throw std::invalid_argument("from_cv_mat: unsupported TensorMemory placement");
 }

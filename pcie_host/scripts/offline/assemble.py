@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import tarfile
+import tempfile
 
 HERE = Path(__file__).resolve().parent
 ARCHIVE_NAME = 'neat-pcie-offline-installer.tar.gz'
@@ -66,6 +67,47 @@ def core_extras(source):
     return name, digest
 
 
+def release_source_revision(directory, metadata):
+    """Read release provenance from the already hash-verified Core DEB."""
+    packages = [name for name in metadata['resources']
+                if name.startswith('sima-neat-') and name.endswith('-Linux-core.deb')]
+    if len(packages) != 1:
+        raise ValueError('release publication requires exactly one Core runtime DEB')
+    receipts = []
+    with tempfile.TemporaryFile() as stream:
+        subprocess.run(['dpkg-deb', '--fsys-tarfile', str(directory / packages[0])],
+                       stdout=stream, check=True, timeout=60)
+        stream.seek(0)
+        with tarfile.open(fileobj=stream) as archive:
+            for member in archive:
+                if member.name.removeprefix('./') != 'usr/share/sima-neat/buildinfo.json':
+                    continue
+                # The receipt includes full dependency inventories (several MiB).
+                if not member.isfile() or member.size > 16 * 1024 * 1024:
+                    raise ValueError('Core source receipt must be a bounded regular file')
+                with archive.extractfile(member) as source:
+                    receipts.append(json.load(source))
+    if len(receipts) != 1:
+        raise ValueError('missing or duplicate Core source receipt')
+    receipt = receipts[0]
+    build = receipt.get('build', {})
+    version = str(metadata.get('version', ''))
+    if (receipt.get('version') != version or build.get('repository') != 'sima-neat/core'
+            or build.get('git_ref_type') != 'tag' or build.get('git_ref') != 'v' + version):
+        raise ValueError('Core release source receipt differs from publication')
+    if build.get('source_status') == 'clean' and build.get('git_dirty') is False:
+        revision = build.get('git_sha', '')
+    elif (build.get('source_status') == 'unavailable' and build.get('git_dirty') is None
+          and not build.get('git_sha')):
+        # Vulcan source archives omit .git; CI still records its exact input SHA.
+        revision = build.get('ci_requested_git_sha', '')
+    else:
+        raise ValueError('Core release source receipt is dirty or unverified')
+    if not isinstance(revision, str) or not re.fullmatch(r'[0-9a-f]{40}', revision):
+        raise ValueError('Core release source receipt lacks an immutable revision')
+    return revision
+
+
 def assemble(spec, output):
     core = spec.get('scope') == 'core'
     roles = ('card',) if core else ('host', 'card')
@@ -99,7 +141,9 @@ def assemble(spec, output):
         row = spec['targets'][target]
         identity = str(data.get('commit', '')) + ' ' + str(data.get('version', ''))
         if row['core_revision'] not in identity:
-            raise ValueError('Core revision is absent from publication identity')
+            if (target != 'card' or data.get('commit')
+                    or not release_source_revision(Path(row['publication']), data).startswith(row['core_revision'])):
+                raise ValueError('Core revision differs from publication source receipt')
     output.mkdir(parents=True)
     for target in roles:
         row = spec['targets'][target]

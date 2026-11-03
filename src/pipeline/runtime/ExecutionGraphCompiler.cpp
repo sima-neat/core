@@ -12,6 +12,7 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "nodes/io/UdpOutput.h"
+#include "nodes/io/internal/JpegRtpUdpSink.h"
 #include "nodes/rtp/H264Depacketize.h"
 #include "nodes/rtp/H265Depacketize.h"
 #include "nodes/sima/PCIeSrc.h"
@@ -24,6 +25,7 @@
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/PublicInputContract.h"
+#include "pipeline/internal/SampleUtil.h"
 
 #include <algorithm>
 #include <cctype>
@@ -1887,26 +1889,41 @@ std::optional<PcieDecodeFusionMatch> match_pcie_decode_fusion_branch(
 }
 
 std::optional<SimaDecodeType> encoded_video_sender_codec(const PipelineSegmentPlan& segment) {
-  if (segment.nodes.size() != 3U) {
-    return std::nullopt;
-  }
-  if (!segment.nodes[0] || !segment.nodes[1] || !segment.nodes[2] ||
-      segment.nodes[2]->kind() != "UdpOutput") {
+  const auto& nodes = segment.nodes;
+  if (nodes.empty() || nodes.size() > 3U ||
+      std::any_of(nodes.begin(), nodes.end(), [](const auto& node) { return !node; })) {
     return std::nullopt;
   }
 
-  const auto* udp_output = dynamic_cast<const simaai::neat::UdpOutput*>(segment.nodes[2].get());
   // Absorbing an asynchronous GstBaseSink into the live detector pipeline
   // changes its state domain: that sink can hold the shared pipeline in PAUSED
   // while waiting for preroll from every encoded branch. Keep this public
   // topology segmented rather than coupling video egress to decoder startup.
-  if (!udp_output || udp_output->options().async) {
+  const simaai::neat::Node& sink = *nodes.back();
+  const auto* jpeg_rtp_udp_sink =
+      dynamic_cast<const simaai::neat::internal::JpegRtpUdpSink*>(&sink);
+  if (const auto* udp_output = dynamic_cast<const simaai::neat::UdpOutput*>(&sink)) {
+    if (udp_output->options().async) {
+      return std::nullopt;
+    }
+  } else if (!jpeg_rtp_udp_sink || jpeg_rtp_udp_sink->options().async) {
     return std::nullopt;
   }
-  if (segment.nodes[0]->kind() == "H264Parse" && segment.nodes[1]->kind() == "H264Packetize") {
+  // MJPEG fuses only onto this sink: it parses JPEG itself (VideoSender may omit JpegParse)
+  // and reads the capture slot once. The stock jpegparse ! rtpjpegpay ! udpsink chain reads
+  // the uncached CMA slot several times and runs slower fused than on its segmented copy.
+  if (nodes.size() < 3U) {
+    return jpeg_rtp_udp_sink && (nodes.size() == 1U || nodes[0]->kind() == "JpegParse")
+               ? std::optional(SimaDecodeType::MJPEG)
+               : std::nullopt;
+  }
+  if (jpeg_rtp_udp_sink) {
+    return std::nullopt;
+  }
+  if (nodes[0]->kind() == "H264Parse" && nodes[1]->kind() == "H264Packetize") {
     return SimaDecodeType::H264;
   }
-  if (segment.nodes[0]->kind() == "H265Parse" && segment.nodes[1]->kind() == "H265Packetize") {
+  if (nodes[0]->kind() == "H265Parse" && nodes[1]->kind() == "H265Packetize") {
     return SimaDecodeType::H265;
   }
   return std::nullopt;
@@ -1922,6 +1939,11 @@ std::optional<SimaDecodeType> encoded_source_codec(const PipelineSegmentPlan& so
         return dynamic_cast<const simaai::neat::H265Depacketize*>(node.get()) != nullptr;
       })) {
     return SimaDecodeType::H265;
+  }
+  // A USB camera's JPEG capture. Other MJPEG sources (HTTP, files) stay segmented.
+  if (!source.nodes.empty() && source.nodes.back() &&
+      source.nodes.back()->kind() == "UsbCameraInput") {
+    return SimaDecodeType::MJPEG;
   }
   return std::nullopt;
 }
@@ -2479,8 +2501,8 @@ private:
   bool leaky_sink_ = false;
 };
 
-// Lowers live RTSP source -> generated FanOut -> {SimaDecode chain, async=false encoded
-// VideoSender} into one source pipeline with a tee, whatever link follows the decoder.
+// Lowers live RTSP or USB camera source -> generated FanOut -> {SimaDecode chain, async=false
+// encoded VideoSender} into one source pipeline with a tee, whatever link follows the decoder.
 // Runs after realtime fusion and only claims FanOuts that fusion left segmented.
 void fuse_encoded_video_sender_fanouts(const graph::Graph& graph, ExecutionGraphPlan* plan) {
   if (!plan) {
@@ -2920,6 +2942,10 @@ void apply_public_fragment_metadata(
       hints.input_route_processor = ingress_hints.input_route_processor;
       hints.tensor_mode = ingress_hints.tensor_mode;
       hints.bundled_fan_in = ingress_hints.bundled_fan_in;
+      if (ingress_vertex < end && segment.boundary.needs_input && hints.bundled_fan_in &&
+          hints.input_route_processor)
+        segment.stream_options.model_input_shape =
+            hints.input_route_processor->model_input_shape(view.vertices[ingress_vertex]);
     } else {
       hints.ingress_inputs.clear();
       hints.ingress_endpoint_names.clear();
@@ -3253,6 +3279,13 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
   // Snapshot explicitly authored public boundary policy before deriving any
   // representative media geometry. Wrong ordered members fail synchronously,
   // not later while a device session is being prepared.
+  std::vector<std::pair<std::size_t, std::vector<std::int64_t>>> model_input_shapes;
+  for (std::size_t vertex = 0; vertex < view.vertices.size(); ++vertex) {
+    auto shape = pipeline_internal::public_model_input_shape(view, vertex,
+                                                             public_graph.input_route_processor_);
+    if (!shape.empty())
+      model_input_shapes.emplace_back(vertex, std::move(shape));
+  }
   std::vector<std::pair<std::size_t, pipeline_internal::OrderedPublicInputContract>> ordered_inputs;
   if (!public_graph.input_route_processor_) {
     for (std::size_t vertex = 0; vertex < view.vertices.size(); ++vertex) {
@@ -3264,8 +3297,15 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
   if (view.linear && seed && ordered_inputs.size() == 1U)
     pipeline_internal::validate_ordered_public_input(ordered_inputs.front().second, *seed);
 
-  const auto attach_ordered_inputs = [&](ExecutionGraphPlan* plan,
-                                         const std::vector<graph::NodeId>& runtime_nodes) {
+  const auto attach_public_input_policies = [&](ExecutionGraphPlan* plan,
+                                                const std::vector<graph::NodeId>& runtime_nodes) {
+    for (const auto& [vertex, shape] : model_input_shapes) {
+      for (const auto& endpoint : plan->input_endpoints) {
+        if (vertex < runtime_nodes.size() && endpoint.node == runtime_nodes[vertex] &&
+            endpoint.segment < plan->pipeline_segments.size())
+          plan->pipeline_segments[endpoint.segment].stream_options.model_input_shape = shape;
+      }
+    }
     for (const auto& [vertex, contract] : ordered_inputs) {
       if (vertex >= runtime_nodes.size())
         continue;
@@ -3282,7 +3322,10 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
 
   std::optional<SampleSpec> seed_spec;
   if (seed.has_value()) {
-    seed_spec = derive_sample_spec_or_throw(*seed);
+    seed_spec =
+        derive_sample_spec_or_throw(pipeline_internal::canonicalize_tensor_transport_sample(*seed));
+    if (view.linear && model_input_shapes.size() == 1U)
+      project_model_input_spec(*seed_spec, model_input_shapes.front().second);
   }
 
   auto prune_to_public_interface = [&](ExecutionGraphPlan* plan) {
@@ -3344,7 +3387,7 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
     map_explicit_public_vertex_endpoints(runtime_node_for_vertex, view.vertices, &plan);
     prune_to_public_interface(&plan);
     attach_public_graph_view(view, runtime_node_for_vertex, &plan);
-    attach_ordered_inputs(&plan, runtime_node_for_vertex);
+    attach_public_input_policies(&plan, runtime_node_for_vertex);
     const auto metadata_us = pipeline_internal::build_timing_us(metadata_start);
     pipeline_internal::emit_build_timing(
         "compile_public_graph",
@@ -3399,7 +3442,7 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
   }
   prune_to_public_interface(&plan);
   attach_public_graph_view(view, runtime_node_for_vertex, &plan);
-  attach_ordered_inputs(&plan, runtime_node_for_vertex);
+  attach_public_input_policies(&plan, runtime_node_for_vertex);
   const auto metadata_us = pipeline_internal::build_timing_us(metadata_start);
   pipeline_internal::emit_build_timing(
       "compile_public_graph",

@@ -11,6 +11,8 @@ Release notes for the SiMa.ai Neat Library.
 
 ### Breaking changes
 
+- Tensor-mode `Model::input_specs()` now preserves the MPK-authored rank, including a singleton batch axis (`[1,H,W,C]`). Batch-one HWC inputs remain accepted, including after unseeded `build()`. `compiled_batch_size()` reads the MLA’s declared batch size rather than inferring it from tensor dimensions.
+
 - Model outputs now expose the terminal logical shape and layout authored in the
   MPK, rather than an intermediate device shape. For example, the ResNet-50
   batch-flatten output has shape `[1, 1000]` and unknown logical layout, not a
@@ -115,6 +117,11 @@ Release notes for the SiMa.ai Neat Library.
 
 ### Graph construction and validation
 
+- New `SimaVoxelize`, `SimaPillarScatter`, `SimaBEVPoolPlan`, and `SimaBEVPool` nodes run the
+  kernels-library LiDAR and camera-to-BEV operations of PointPillars and BEVFusion
+  on A65 or EV74, with INT8 or BF16 tensors. Each runs on the target you select,
+  with no fallback. See
+  [LiDAR and BEV kernel nodes](/reference/lidar_bev_kernel_nodes).
 - A default public `Input` directly connected to one model image ingress now
   inherits its declared image format. Explicit input options remain authoritative;
   ambiguous connections require explicit options. This changes sample
@@ -128,7 +135,7 @@ Release notes for the SiMa.ai Neat Library.
 - Custom fragments now report all explicit names and transform named-pad references together with
   declarations. Name collisions are rejected rather than auto-renamed.
 
-| Release | Compatible Neat SDK | Notes |
+| Release | Compatible Palette SDK | Notes |
 | --- | --- | --- |
 | 0.6.0 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
 | 0.5.0 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |

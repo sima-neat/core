@@ -1,10 +1,10 @@
 ---
 title: "Windows 호스트 관련 정보"
-description: "Windows 11 호스트를 Neat SDK 및 DevKit-Sync에 맞게 준비합니다."
+description: "Windows 11 호스트를 Palette SDK 및 DevKit-Sync에 맞게 준비합니다."
 sidebar_position: 2
 ---
 
-호스트 머신이 Windows 11이고 DevKit-Sync를 사용하여 Neat SDK를 실행하려는 경우 이 가이드를 참조하십시오.
+호스트 머신이 Windows 11이고 DevKit-Sync를 사용하여 Palette SDK를 실행하려는 경우 이 가이드를 참조하십시오.
 
 ## 필수 조건
 
@@ -15,7 +15,7 @@ sidebar_position: 2
 
 ## WSL에서 시작하세요.
 
-WSL Linux 배포판 내에서 Neat SDK 명령을 실행하세요. PowerShell 또는 명령 프롬프트에서 실행하지 마세요. 여기에는 `sima-cli neat install sdk@%%release.sdk_channel%%`이 포함됩니다.
+WSL Linux 배포판 내에서 Palette SDK 명령을 실행하세요. PowerShell 또는 명령 프롬프트에서 실행하지 마세요. 여기에는 `sima-cli neat install sdk@%%release.sdk_channel%%`이 포함됩니다.
 
 ## WSL 네트워크 모드
 
@@ -66,7 +66,7 @@ sima-cli sdk setup --devkit <devkit-ip>
 ```
 
 :::note Windows에서 직접 링크를 통해 Insight에 접근
-Windows의 직접 네트워크 공유 기능을 사용하면 Windows 방화벽 및 WSL 포트 전달 동작으로 인해 네트워크의 다른 장치에서 Neat Insight 웹 인터페이스에 접근하지 못할 수 있습니다. 이 경우 Windows Neat SDK 호스트에서 Insight를 직접 열어 사용합니다. 예를 들어 `https://localhost:9900`에서 열 수 있습니다.
+Windows의 직접 네트워크 공유 기능을 사용하면 Windows 방화벽 및 WSL 포트 전달 동작으로 인해 네트워크의 다른 장치에서 Neat Insight 웹 인터페이스에 접근하지 못할 수 있습니다. 이 경우 Windows Palette SDK 호스트에서 Insight를 직접 열어 사용합니다. 예를 들어 `https://localhost:9900`에서 열 수 있습니다.
 :::
 
 ## NFS 방화벽 규칙 (PowerShell)
@@ -84,4 +84,4 @@ NFS 서버/클라이언트 설정에 필요한 추가 포트를 추가하세요.
 
 ## 다음 단계
 
-[Neat SDK](/getting-started/dev-environment/)로 돌아가서 설치/설정 작업을 계속하십시오.
+[Palette SDK](/getting-started/dev-environment/)로 돌아가서 설치/설정 작업을 계속하십시오.

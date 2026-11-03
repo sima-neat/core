@@ -125,6 +125,8 @@ curl http://<modalix-ip>:9998/v1/chat/completions \
 
 VLM 요청의 경우 OpenAI 채팅 `image_url` 콘텐츠 부분에는 `data:image/jpeg;base64,...`와 같은 base64 데이터 URI가 포함되어야 합니다. 이미지 디코딩에는 OpenCV 지원이 있는 Neat 빌드가 필요합니다.
 
+컴파일된 컨텍스트에 응답할 공간이 없는 프롬프트는 `context_length_exceeded`를 반환합니다(HTTP 400 또는 스트리밍이 시작된 경우 SSE 오류). 컨텍스트 또는 출력 토큰 한도에 도달하면 `finish_reason: "length"`를 반환하고 정상적으로 완료되면 `"stop"`을 반환합니다. 대화 기록은 유지됩니다.
+
 ## Ollama 호환 요청
 
 메시지 기록에는 `/api/chat`를, 프롬프트에는 `/api/generate`를 사용하십시오.

@@ -57,7 +57,7 @@ The word "Neat" is used for two related but separate concerns:
 - **Neat Library:** the C++/Python library and runtime in this repository. It loads model
   packs, composes pipelines, validates contracts, runs on Modalix hardware, and exposes the
   public API.
-- **Neat SDK / environment:** the containerized development workflow around the framework,
+- **Palette SDK / environment:** the containerized development workflow around the framework,
   including DevKit Sync, shared workspaces, and agent tooling.
 
 When changing this repository, optimize for framework properties that support both humans and
@@ -402,7 +402,7 @@ between implementation options.
 - **Detess logical rank and runtime geometry are separate.** Preserve the MPK-authored `frame_shape`; accept rank-2 NC/HW interpretations only when byte spans identify one unambiguous geometry. Fused DetessDequant carries both descriptors through one per-frame contract: tile rank determines kernel rank, leading batch dimensions stay separate, and semantic axes, byte spans, strides and explicit tiled-storage encoding remain authoritative. Core forwards these canonical typed contracts through Scheduler; Kernels validates the selected operation and encoding. Do not reconstruct a ProcessCVU prepared request across the DSO boundary.
 - **Numerical backend policy has one authority.** The checked capability owns supported targets and AUTO preference. Explicit stage or session targets either run on the requested supported backend or fail; later role-based overrides must not contradict that decision.
 - **Public APIs stay stable.** Public headers under `include/*` are installed and supported.
-  Prefer additive changes and deprecation paths over breaking signatures.
+  Prefer additive changes and deprecation paths over breaking signatures. Internal visibility defines must not change public object layouts; keep opaque implementation handles unconditional.
 - **Concurrency must be bounded and observable.** Streaming-thread work should be lightweight;
   probe-side diagnostics need atomics or equivalent thread-safe handling; teardown must not hang.
 
@@ -646,8 +646,10 @@ without enabling verbose GStreamer diagnostics.
 
 `FrameSpan` offsets are local to their allocation and buffer group, not global graph addresses. Identical offsets in different groups do not overlap. BoxDecode and ArgMax keep head-relative tensor offsets separate from storage offsets. Direct-memory and runtime physical-binding inputs retain their addressing mode.
 
-Core lowers Preproc, transforms and vision stages, including ArgMax, BoxDecode
-and SuperPoint, to canonical requests and explicit tensor-port mappings.
+Core lowers Preproc, transforms and vision stages, including ArgMax, BoxDecode,
+SuperPoint and the LiDAR/BEV kernel nodes (SimaVoxelize, SimaPillarScatter,
+SimaBEVPoolPlan and SimaBEVPool), to canonical requests and explicit tensor-port
+mappings.
 Scheduler's generic tensor-stage engine owns GStreamer binding and publication;
 Runner owns dependencies, asynchronous execution and execution-time buffer lifetime. Core imports carrier
 capacities from the upstream allocation contract or ingress storage, never from
@@ -660,6 +662,8 @@ numerical work must not publish stale results.
 The immutable kernel recipe retains the producer-authored tensor wire format after the typed node contract is lowered. Cold publication applies that format to both fresh and cached caps; it never infers semantics from a kernel name or byte shape. The public OBB tensor remains dense, rank-one UInt8 with `BBOX_OBB_V1` semantics.
 
 InputStream projects the authored format onto each returned tensor before publishing a Sample, including owned-copy and cached-metadata paths. Raw `Sample.tensors` and the `TensorList` convenience API therefore carry the same detection semantics.
+
+For checked MLA-tiled numerical outputs, Core attaches physical layout to each logical output only when its shape and dtype match the checked producer. InputStream decodes this immutable caps metadata when initializing its decode cache, then retains it in cached Tensor templates. Raw-byte aliases and INT8 cell tiles whose bytes already match dense NHWC remain unchanged. `TessSpec::storage_bytes` distinguishes explicit tiled storage from legacy format-only annotations. `copy_payload_bytes()` and `clone()` preserve stored bytes, padding and layout; dense copies, typed access and DLPack reject explicit tiled storage. Layout-aware graph consumers receive the checked layout without a hidden conversion.
 
 Image-size changes select immutable, resource-compatible prepared BoxDecode variants
 before binding. They do not mutate an operation used by an in-flight frame. RCNN
@@ -774,6 +778,16 @@ Examples:
 Each Node must produce:
 - `backend_fragment(index)` -- the GStreamer fragment for this node at a given index
 - `element_names(index)` -- deterministic element names owned by this node (for diagnostics and enforcement)
+
+The LiDAR/BEV nodes keep options, port descriptions and pure numerical request
+construction in `nodes/`. Their existing `NodeContractProvider` compilation hooks
+are implemented in `pipeline/internal/sima/LidarBevNodeContracts.cpp`. That compiler
+passes the operation name to Scheduler's existing `check_kernel(...)` API and uses
+the normal stage recipe and `FrameLayout` execution path. `StaticSpecBuilders.cpp`
+shares metadata-only ingress projection and direct-input binding with `SimaArgMax`;
+these helpers neither prepare nor schedule kernels. The LiDAR/BEV node files do not
+include pipeline-private implementation headers. This split adds no per-frame work
+or payload copies.
 
 Standalone `Cast` compiles typed views into a canonical `cast` request checked by Kernels. Logical identities, strides and tensor-relative offsets remain explicit. Semantic compilation reconciles ordered MLA input ports before packing; rendering preserves the checked contracts. Execution capacity defaults to four asynchronously and one synchronously, with separate output carriers for retention. Subset or reordered TensorSets use parent-retaining metadata envelopes without changing the held publication or payload.
 
@@ -950,7 +964,7 @@ Explicit `SystemMemory` (or `use_simaai_pool=false` with `Auto`) retains a borro
 host view; explicit DMS placement remains unchanged. This does not change the
 public `from_cv_mat_view()` API or make borrowed host storage device-compatible.
 
-`Tensor` device transfers perform explicit cache-synchronized copies. Shared ingress retains each DMA-BUF, checked view and producer loan; packing a CPU field does not copy DMA-backed siblings. `DirectMemory`, `PhysicalBinding` and `KnownFrameSpan` are input representations. Reuse follows resolved backing identity and the input allocation group, including aliases; no tag alone grants ownership.
+`Tensor` copies between devices use independent storage for the selected view and synchronize caches. Shared ingress retains each DMA-BUF, checked view and producer loan; packing a CPU field does not copy DMA-backed siblings. `DirectMemory`, `PhysicalBinding` and `KnownFrameSpan` are input representations. Reuse follows resolved backing identity and the input allocation group, including aliases; no tag alone grants ownership.
 
 A non-materializing, component-form Pack establishes producer placement before
 carrier allocation. Writable producer outputs occupy their final component
@@ -983,8 +997,11 @@ intermediate copy.
 Multiple MLA OFMs may be logical views of one allocation. Descriptors sharing an allocation retain its parent segment; logical/backend names preserve port identity, and allocation-local spans preserve each view. Publication describes the finalized `FrameLayout` without reconstructing packed outputs.
 
 Core may simplify singleton batch dimensions in internal conversion descriptors
-when the execution view preserves the same addressed bytes. Model tensor shapes,
-batch routing, and public APIs remain unchanged.
+when the execution view preserves the same addressed bytes. Tensor `Model::input_specs()`
+and `output_specs()` retain the MPK-authored rank, including batch one. HWC input
+shorthand remains accepted for batch-one models; image preprocessing keeps its
+dynamic image contract.
+`Model::compiled_batch_size()` reads the MLA’s declared batch size; tensor rank does not identify a batch axis.
 
 ##### Direct runtime execution
 
@@ -1362,9 +1379,10 @@ recognition requires Runtime to certify the selected carrier, allocation generat
 and span; a host allocator name or a retained sibling is not sufficient. CPU-only
 storage remains CPU storage, not a DMA-BUF.
 
-`OutputMemory::Owned` materializes public outputs into independent CMA DMA-BUF
-storage after logical output projection. Each physical carrier is copied once
-per pull, preserving head offsets, padded strides, planes and numerical metadata.
+`OutputMemory::Owned` materializes public outputs into independent system memory
+that Core allocates and wraps as GStreamer memory, after logical output
+projection. Each physical carrier is copied once per pull, preserving head
+offsets, padded strides, planes and numerical metadata.
 Only carriers needed by the selected outputs are materialized. In mixed Auto
 output, copying an unretained CPU-backed head does not copy its retained framework
 siblings.
@@ -1374,13 +1392,17 @@ Copied envelopes contain only selected carriers. Their `memory_index` selectors
 and segment tables are remapped together; `physical_index` and physical offsets
 continue to identify the producing stage's contract, not destination slot order.
 The new carrier retains no producer pool loan or parent-buffer metadata. Its
-`StorageKind::GstSample` identifies a GStreamer carrier, not a borrowed pool loan;
-`Sample::owned` distinguishes independent output from retained producer output. Runtime
-owns allocation and CPU cache synchronization; Core owns Sample/Tensor projection.
-Reentry to another graph retains these carriers without another staging copy.
-`Auto`/`ZeroCopy` retain compatible DMA-BUF outputs; explicit `.cpu()` and `.clone()`
-continue to create host-memory copies. Allocation errors do not select a hidden
-CPU-memory fallback.
+`StorageKind::GstSample` identifies a GStreamer carrier, not a borrowed pool loan.
+`Sample::owned` only marks storage that no Run's producer lends; an app-wrapped pool
+buffer or a device tensor carries it too. The public pull therefore recognizes an
+Owned copy by its storage and copies every other GStreamer-backed tensor. Core
+owns the allocation and the Sample/Tensor projection. Owned outputs are application
+CPU memory and never use CMA, so retained outputs cannot exhaust device memory. A
+device-visible input rejects them like any CPU tensor; callers use `ZeroCopy` or an
+explicit `Tensor::to(...)` copy. `Auto`/`ZeroCopy` retain compatible DMA-BUF
+outputs. `.clone()` creates a host-memory copy; `.cpu()` copies only a tensor it
+cannot map on the CPU and returns an Owned output unchanged.
+An allocation failure is a pull error.
 
 Core can select a CPU-only pool for a fresh native tensor arena only at an exact,
 typed public terminal. Every member and physical region must be CPU-only, with no
@@ -1649,6 +1671,23 @@ separately control downstream latency and frame-drop policy. The optional
 compatibility-copy pool grows on demand up to 128 buffers and is not capped by that queue depth,
 so a leaky queue can apply its drop policy without the upstream bridge
 stalling first.
+
+`nodes::UsbCameraInput` is `v4l2src io-mode=dmabuf-import`, a JPEG capsfilter,
+`neatcapturepool`, an `identity` that drops frames the driver flags as corrupted,
+and an optional queue. `neatcapturepool` answers the camera's allocation query
+with CMA DMA-BUFs, so the camera captures each encoded JPEG frame into memory
+that `neatdecoder` reads in place, with no copy between capture and decode. The
+frames can feed both `VideoSender` passthrough (MJPEG) and `SimaDecode` (MJPEG),
+which decodes to the camera's native layout, NV12 for 4:2:0 and NV16 for 4:2:2.
+
+An MJPEG `VideoSender` is the internal `JpegRtpUdpSink` (`neatjpegudpsink`) alone
+when that factory is registered, and `JpegParse`, `JpegPacketize` (`rtpjpegpay`) and
+`UdpOutput` otherwise. `VideoSender` checks the registry when the Graph is
+constructed. The sink reads each frame's JPEG headers itself but its caps require
+width and height, so `JpegRtpUdpSink` is an input-spec specializer: an input whose
+spec carries dimensions renders the bare sink, and any other input keeps a
+`jpegparse` inside the node's fragment. A segment that ends in either sink copies its
+encoded input rather than holding the producer's capture buffer and loan.
 
 ### Teardown
 

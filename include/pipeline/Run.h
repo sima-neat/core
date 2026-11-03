@@ -89,8 +89,9 @@ enum class RunPreset {
  * framework payloads are not copied to relieve queue pressure.
  * Retained tensors and their mappings hold producer-buffer loans; release them
  * to allow the pool to progress. `Owned` explicitly copies into independent
- * framework-owned DMA-BUF storage, without retaining the producer pool loan.
- * Explicit CPU conversion remains available through Tensor::cpu().
+ * framework-owned system memory, without retaining the producer pool loan or
+ * using device (CMA) memory. Explicit CPU conversion remains available through
+ * Tensor::cpu().
  * An explicit owned environment override also applies
  * to `Auto`, but never overrides an explicit per-run choice.
  * @ingroup pipeline

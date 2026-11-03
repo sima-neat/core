@@ -13,7 +13,11 @@ sysroot_version=$(python3 tools/ci/scheduler_sdk_policy.py --policy-json "$polic
 # SDK images may set SDK_PKG_LIST with whitespace and empty entries.
 pkg_list=$(tr -d '[:space:]' <<< "${SDK_PKG_LIST:-}" | sed 's/,,*/,/g; s/^,//; s/,$//')
 update_command="sudo env SDK_PKG_LIST=$pkg_list sysroot update $sysroot_version"
-if [[ "${NEAT_UPDATE_SYSROOT:-OFF}" == ON ]]; then
+if [[ "$sysroot_version" != *~* ]]; then
+  # Official releases must already be present in the SDK cache, even when the
+  # caller requested --update-sysroot. Never route these through daily overlays.
+  python3 tools/ci/scheduler_sdk_policy.py --policy-json "$policy" --check-release-sdk >&2
+elif [[ "${NEAT_UPDATE_SYSROOT:-OFF}" == ON ]]; then
   setup_env=("SDK_PKG_LIST=$pkg_list" "SYSROOT=/opt/toolchain/aarch64/modalix")
   if [[ $(id -u) == 0 ]]; then
     env "${setup_env[@]}" sysroot update "$sysroot_version" >&2
@@ -58,14 +62,18 @@ for provider in platform_provider_contracts(receipt(runner, 'SimaRunner')).value
     print(f"{deb['Package']}:{deb['Architecture']}={deb['Version']}")
 PY
 )
-if [[ "$sysroot_version" == *~pre* ]]; then
+apt_trust=trusted=yes
+if [[ "$sysroot_version" != *~* ]]; then
+  repository=https://repo.sima.ai/elxr/deb/release
+  apt_trust=signed-by=/etc/apt/trusted.gpg.d/simaai.gpg
+elif [[ "$sysroot_version" == *~pre* ]]; then
   repository=${SYSROOT_PRE_RELEASE_REPOSITORY:-https://debian.neat.sima.ai/pre-release}
 else
   repository=${SYSROOT_DAILY_REPOSITORY:-https://debian.neat.sima.ai/daily}
 fi
 apt_dir="$package_dir/apt"
 mkdir -p "$apt_dir/lists/partial" "$apt_dir/empty" "$package_dir/downloads"
-echo "deb [arch=arm64 trusted=yes] $repository agate non-free" > "$apt_dir/sources.list"
+echo "deb [arch=arm64 $apt_trust] $repository agate non-free" > "$apt_dir/sources.list"
 cat > "$apt_dir/apt.conf" <<EOF
 Dir::Etc::sourcelist "$apt_dir/sources.list";
 Dir::Etc::sourceparts "$apt_dir/empty";

@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import yaml
 
@@ -50,6 +51,38 @@ class VulcanCiDocsOnlyTests(unittest.TestCase):
         self.assertEqual(devkit["runs-on"]["group"],
                          "${{ needs.resolve-test-runner.outputs.modalix_runner_group }}")
 
+    def test_devkit_target_uses_dependency_sdk_policy(self) -> None:
+        resolver = yaml.safe_load(job_block("resolve-test-runner"))
+        dependencies = json.loads((ROOT / "deps/manifest.json").read_text())
+        self.assertEqual(resolver["with"]["manifest_artifact"], "neat-core-dist")
+        self.assertEqual(resolver["with"]["manifest_path"], "scheduler-sdk-policy.json")
+        self.assertNotIn("elxr_version", dependencies)
+        self.assertEqual(dependencies["scheduler"], {"policy": "snap"})
+        self.assertIn("--output dist/scheduler-sdk-policy.json", (ROOT / "build.sh").read_text())
+
+    def test_devkit_guard_requires_actual_selected_firmware_without_fallback(self) -> None:
+        expected_firmware = "3.0.0_master_B2501"
+        guard = yaml.safe_load(job_block("test-devkit-shard"))["steps"][0]
+        script = guard["run"].split("<<'PYFIRMWARE'\n", 1)[1].rsplit("\nPYFIRMWARE", 1)[0]
+        for firmware, fallback, accepted in (
+            (expected_firmware, "false", True),
+            ("3.0.0_master_B2499", "false", False),
+            (expected_firmware, "true", False),
+            ("", "false", False),
+        ):
+            with self.subTest(firmware=firmware, fallback=fallback), \
+                    mock.patch.dict(os.environ, {
+                        "EXPECTED_ELXR_VERSION": expected_firmware,
+                        "VERSION_FALLBACK": fallback, "RUNNER_NAME": "fixture",
+                    }), \
+                    mock.patch.object(Path, "is_file", return_value=True), \
+                    mock.patch.object(Path, "read_text", return_value=f"SIMA_BUILD_VERSION={firmware}\n"):
+                if accepted:
+                    exec(compile(script, "devkit-firmware-guard", "exec"), {})
+                else:
+                    with self.assertRaises(SystemExit):
+                        exec(compile(script, "devkit-firmware-guard", "exec"), {})
+
     def test_devkit_labels_preserve_capabilities_and_artifact_environment(self) -> None:
         devkit = yaml.safe_load(job_block("test-devkit-shard"))
         env = "needs.resolve-vulcan-config.outputs.vulcan_env"
@@ -63,7 +96,7 @@ class VulcanCiDocsOnlyTests(unittest.TestCase):
         guard = devkit["steps"][0]
         self.assertEqual(guard["name"], "Verify selected DevKit firmware")
         self.assertEqual(guard["env"]["EXPECTED_ELXR_VERSION"],
-                         "${{ needs.resolve-test-runner.outputs.elxr_version }}")
+                         "${{ needs.resolve-test-runner.outputs.devkit_firmware }}")
         # Human-readable runner labels must not change the resolved publisher
         # environment, SDK selection, or artifact-acquisition environment.
         self.assertEqual(devkit["env"]["VULCAN_ENV"], "${{ " + env + " }}")

@@ -20,12 +20,17 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
 namespace simaai::neat {
 struct CompiledRuntimeContract;
+struct Tensor;
+namespace pipeline_internal {
+struct TensorBufferView;
 }
+} // namespace simaai::neat
 
 namespace simaai::neat::pipeline_internal::sima::specbuilders {
 
@@ -86,6 +91,27 @@ InputBindingStaticSpec build_input_binding_static_spec(
 StageOutputRoute build_output_route_static_spec(int output_slot, int logical_output_index,
                                                 int tensor_index, const std::string& cm_output_name,
                                                 const std::string& segment_name);
+
+// Project an already admitted current-storage envelope, not historical Tensor
+// route provenance. Logical tensor bytes remain separate from carrier capacities.
+// Public tensors supply logical axes and full quantization only. Resolution of
+// Sample/Gst storage and operation-specific admission stay with the caller.
+// On validation failure, out is unchanged. No payload access occurs here.
+bool build_ingress_runtime_contract(const pipeline_internal::TensorBufferView& view,
+                                    std::span<const Tensor> tensors, CompiledRuntimeContract* out,
+                                    std::string* error);
+
+// Add one checked direct input using the existing logical/physical/binding types.
+// required_bytes is the checked source view's physical footprint, not logical
+// publication bytes (strided/tiled padding may make them differ).
+// The logical view owns its byte offset; a member binding this whole input uses
+// port offset zero (a nonzero port offset is an additional intra-view offset).
+// Root ingress has no upstream producer coordinates. Validation failures leave
+// runtime unchanged; physical carriers are retained once by authored identity.
+bool append_direct_kernel_input(CompiledRuntimeContract* runtime,
+                                const LogicalTensorStaticSpec& source,
+                                const PhysicalBufferStaticSpec& physical, std::size_t input_index,
+                                std::uint64_t required_bytes, bool ingress, std::string* error);
 
 /**
  * @brief Finalize a `LogicalInputStaticSpec` after all physical inputs are known.

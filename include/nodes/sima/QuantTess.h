@@ -15,9 +15,6 @@
 #include "builder/NodeContractConfigurable.h"
 #include "builder/NodeContractProvider.h"
 #include "builder/Node.h"
-#ifdef SIMA_NEAT_INTERNAL
-#include "model/internal/ModelRouteRetarget.h"
-#endif
 
 #include <nlohmann/json.hpp>
 
@@ -29,6 +26,9 @@
 namespace simaai::neat {
 class Model;
 struct CompiledProcessCvuContract;
+namespace internal {
+struct ModelLineageBinding;
+}
 
 /**
  * @brief Construction options for a `QuantTess` Node.
@@ -50,9 +50,7 @@ struct QuantTessOptions {
   int num_buffers = 0;   ///< Override for the element's buffer pool size; 0 = use default/model.
   int num_buffers_model = 0;       ///< Buffer count derived from the bound model.
   bool num_buffers_locked = false; ///< If true, planner won't override `num_buffers`.
-#ifdef SIMA_NEAT_INTERNAL
-  std::shared_ptr<const simaai::neat::internal::ModelLineageBinding> model_lineage;
-#endif
+  std::shared_ptr<const internal::ModelLineageBinding> model_lineage; ///< @internal
 };
 
 /**

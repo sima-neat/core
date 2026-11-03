@@ -129,9 +129,10 @@ def test_cli_reports_one_result_and_log_location(monkeypatch, fails):
     progress = Progress(console)
     monkeypatch.setattr(core_install, 'Progress', lambda **kwargs: progress)
     monkeypatch.setattr(sys, 'argv', ['install.py', '--check'])
-    def install(root, phase, devkit_only, reporter):
+    def install(root, phase, devkit_only, reporter, recreate_venv):
         assert phase == 'preflight'
         assert not devkit_only
+        assert not recreate_venv
         assert reporter is progress
         with reporter.step('Checking SDK compatibility'):
             reporter.log.write('internal report\n')
@@ -148,7 +149,8 @@ def test_cli_reports_one_result_and_log_location(monkeypatch, fails):
         core_install.main()
         assert console.getvalue().count('completed successfully') == 1
     assert progress.log.closed
-    assert 'internal report' not in console.getvalue()
+    # Failed operations print a bounded log tail; successful operations stay quiet.
+    assert ('internal report' in console.getvalue()) is fails
     assert 'internal report' in progress.path.read_text()
 
 

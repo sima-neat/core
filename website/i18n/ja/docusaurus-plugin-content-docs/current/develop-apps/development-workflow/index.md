@@ -54,7 +54,7 @@ sidebar_position: 4
 
 新規ユーザー向けの段階的な導入手順：
 
-- [Neat SDK](/getting-started/dev-environment/) — Neat SDK をインストールし、DevKit とペアリングし、`dk` を搭載したハードウェアで実行します。
+- [Palette SDK](/getting-started/dev-environment/) — Palette SDK をインストールし、DevKit とペアリングし、`dk` を搭載したハードウェアで実行します。
 - [構築する](/develop-apps/contribute/build) — ソースコードから Neat を `build.sh` を使用してビルドします（開発者向けワークフロー）。
 - [こんにちは、Neat！](/develop-apps/hello-neat/minimal) — インストールされたライブラリにリンクする、最小限の CMake アプリケーション。
 - [チュートリアル](/tutorials) —「最初のモデル」から「本番環境のパイプライン」までを段階的に解説する一連のチュートリアル。

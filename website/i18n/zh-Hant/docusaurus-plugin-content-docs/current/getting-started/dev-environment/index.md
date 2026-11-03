@@ -1,10 +1,10 @@
 ---
-title: "Neat SDK"
-description: "設定 Neat SDK，以便快速開發已準備好用於部署的 Neat 應用程式。"
+title: "Palette SDK"
+description: "設定 Palette SDK，以便快速開發已準備好用於部署的 Neat 應用程式。"
 sidebar_position: 1
 ---
 
-Neat SDK 是建構大型 Neat 應用程式並在 Modalix DevKit 上驗證它們的建議主機端工作區。它將建置工具、模型工具、硬體連接和已準備好的代理程式原始碼環境整合到一個容器化的工作流程中。
+Palette SDK 是建構大型 Neat 應用程式並在 Modalix DevKit 上驗證它們的建議主機端工作區。它將建置工具、模型工具、硬體連接和已準備好的代理程式原始碼環境整合到一個容器化的工作流程中。
 
 SDK 將三個地點連接起來：
 
@@ -73,7 +73,7 @@ Model Compiler 會在 SDK 設定期間提供。若要稍後安裝，請指定特
 | 透過 Docker Engine 的 Ubuntu 22.04 和 24.04 | `x86_64` | 是 | 是 |
 | 透過 WSL 和 Docker Engine 的 Windows 11 | `x86_64` | 是 | 是 |
 | 透過 Docker Engine 的 Ubuntu 22.04 和 24.04 | `arm64` | 是 | Model Compiler 2.1.2 或更高版本 |
-| 透過 Colima 的 macOS 15.5 或更高版本 | `arm64` | 是 | Model Compiler 2.1.2 或更高版本；請在 Neat SDK 內安裝。 |
+| 透過 Colima 的 macOS 15.5 或更高版本 | `arm64` | 是 | Model Compiler 2.1.2 或更高版本；請在 Palette SDK 內安裝。 |
 
 :::note 架構名稱
 `arm64` 和 `aarch64` 實際上是相同的 64 位元 Arm 架構——macOS 會將其報告為 `arm64`，而 Linux 會將其報告為 `aarch64`。同樣地，`x86_64` 和 `amd64` 也是相同的架構。在您的主機上（或在 SDK 內部）執行 `uname -m`，以查看您使用的是哪一種。Model Compiler 的安裝指令使用 `arm64` 和 `amd64`——請參閱 [安裝 Model Compiler](/getting-started/dev-environment/install-model-compiler/)。

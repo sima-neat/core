@@ -46,6 +46,7 @@
 #include "nodes/groups/RtspEncodedInput.h"
 #include "nodes/groups/VideoInputGroup.h"
 #include "nodes/io/CameraInput.h"
+#include "nodes/io/UsbCameraInput.h"
 #include "nodes/io/Input.h"
 #include "nodes/io/MetadataSender.h"
 #include "nodes/io/UdpOutput.h"
@@ -64,6 +65,10 @@
 #include "nodes/io/StillImageInput.h"
 #include "nodes/sima/SimaRender.h"
 #include "nodes/sima/SimaArgMax.h"
+#include "nodes/sima/SimaBEVPool.h"
+#include "nodes/sima/SimaBEVPoolPlan.h"
+#include "nodes/sima/SimaPillarScatter.h"
+#include "nodes/sima/SimaVoxelize.h"
 #include "nodes/sima/Cast.h"
 #include "nodes/sima/CastTess.h"
 #include "nodes/sima/Dequant.h"
@@ -667,6 +672,8 @@ void delete_dlpack_managed(DLManagedTensor* managed) {
 }
 
 PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
+  if (input.has_tiled_storage())
+    throw std::runtime_error("__dlpack__: tiled storage requires explicit detessellation");
   const Tensor source_pin = input;
   Tensor tensor = source_pin;
   if (tensor.device.type != DeviceType::CPU) {
@@ -1591,7 +1598,9 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<>())
       .def_rw("slice_shape", &simaai::neat::TessSpec::slice_shape)
       .def("set_slice_shape", &simaai::neat::TessSpec::set_slice_shape, "shape"_a)
-      .def_rw("format", &simaai::neat::TessSpec::format);
+      .def_rw("format", &simaai::neat::TessSpec::format)
+      .def_rw("axes", &simaai::neat::TessSpec::axes)
+      .def_rw("storage_bytes", &simaai::neat::TessSpec::storage_bytes);
 
   nb::class_<simaai::neat::DetectionSpec>(
       m, "DetectionSpec",
@@ -1745,6 +1754,7 @@ NB_MODULE(_pyneat_core, m) {
       .def("is_composite", &simaai::neat::Tensor::is_composite)
       .def("has_axis_semantics", &simaai::neat::Tensor::has_axis_semantics)
       .def("axis_semantics_match_shape", &simaai::neat::Tensor::axis_semantics_match_shape)
+      .def("has_tiled_storage", &simaai::neat::Tensor::has_tiled_storage)
       .def("is_contiguous", &simaai::neat::Tensor::is_contiguous)
       .def("has_plane", &simaai::neat::Tensor::has_plane, "role"_a)
       .def("contiguous", &simaai::neat::Tensor::contiguous)
@@ -1968,14 +1978,6 @@ NB_MODULE(_pyneat_core, m) {
                                                  duration_ns);
       },
       "data"_a, "caps_string"_a, "pts_ns"_a = -1, "dts_ns"_a = -1, "duration_ns"_a = -1);
-
-  m.def(
-      "jpeg_output_format",
-      [](nb::bytes jpeg) {
-        return simaai::neat::jpeg_output_format(
-            {reinterpret_cast<const uint8_t*>(jpeg.c_str()), jpeg.size()});
-      },
-      "jpeg"_a, "Native SimaDecode output format for a JPEG frame: Format.NV12 or Format.NV16.");
 
   m.def(
       "decode_bbox",
@@ -3408,6 +3410,25 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("queue_depth", &simaai::neat::CameraInputOptions::queue_depth)
       .def_rw("allow_cpu_fallback", &simaai::neat::CameraInputOptions::allow_cpu_fallback);
 
+  nb::class_<simaai::neat::UsbCameraInputOptions>(m, "UsbCameraInputOptions")
+      .def(nb::init<>())
+      .def_rw("camera_name", &simaai::neat::UsbCameraInputOptions::camera_name)
+      .def_rw("width", &simaai::neat::UsbCameraInputOptions::width)
+      .def_rw("height", &simaai::neat::UsbCameraInputOptions::height)
+      .def_rw("framerate_num", &simaai::neat::UsbCameraInputOptions::framerate_num)
+      .def_rw("framerate_den", &simaai::neat::UsbCameraInputOptions::framerate_den)
+      .def_rw("buffer_name", &simaai::neat::UsbCameraInputOptions::buffer_name)
+      .def_rw("insert_queue", &simaai::neat::UsbCameraInputOptions::insert_queue)
+      .def_rw("leaky_queue", &simaai::neat::UsbCameraInputOptions::leaky_queue)
+      .def_rw("queue_depth", &simaai::neat::UsbCameraInputOptions::queue_depth);
+  nb::class_<simaai::neat::UsbCameraInfo>(m, "UsbCameraInfo")
+      .def_ro("device", &simaai::neat::UsbCameraInfo::device)
+      .def_ro("decoded_format", &simaai::neat::UsbCameraInfo::decoded_format);
+  m.def("usb_camera_ids", &simaai::neat::usb_camera_ids);
+  // Checking the camera reads a frame; let other Python threads run meanwhile.
+  m.def("usb_camera_info", &simaai::neat::usb_camera_info, "options"_a,
+        nb::call_guard<nb::gil_scoped_release>());
+
   nb::module_ graphs_mod = m.def_submodule("graphs", "Reusable public Graph fragment helpers");
   graphs_mod.def("branch", &simaai::neat::graphs::Branch, "input"_a, "outputs"_a);
   graphs_mod.def("combine", &simaai::neat::graphs::Combine, "inputs"_a, "output"_a,
@@ -3962,6 +3983,69 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit)
       .def_rw("axis", &simaai::neat::SimaArgMaxOptions::axis)
       .def_rw("keepdims", &simaai::neat::SimaArgMaxOptions::keepdims);
+  // Kernels-library LiDAR/BEV Nodes: one named kernels request each, on an explicit target.
+  nb::enum_<simaai::neat::SimaKernelTarget>(m, "SimaKernelTarget")
+      .value("A65", simaai::neat::SimaKernelTarget::A65)
+      .value("EV74", simaai::neat::SimaKernelTarget::EV74);
+  nb::enum_<simaai::neat::SimaQuantRounding>(m, "SimaQuantRounding")
+      .value("NearestEven", simaai::neat::SimaQuantRounding::NearestEven)
+      .value("TowardZero", simaai::neat::SimaQuantRounding::TowardZero)
+      .value("TowardPositive", simaai::neat::SimaQuantRounding::TowardPositive)
+      .value("TowardNegative", simaai::neat::SimaQuantRounding::TowardNegative);
+  nb::enum_<simaai::neat::SimaBEVPoolPlanFormat>(m, "SimaBEVPoolPlanFormat")
+      .value("V1", simaai::neat::SimaBEVPoolPlanFormat::V1)
+      .value("V2", simaai::neat::SimaBEVPoolPlanFormat::V2);
+  nb::class_<simaai::neat::SimaKernelQuantization>(m, "SimaKernelQuantization")
+      .def(nb::init<>())
+      .def_rw("multiplier", &simaai::neat::SimaKernelQuantization::multiplier)
+      .def_rw("zero_point", &simaai::neat::SimaKernelQuantization::zero_point)
+      .def_rw("rounding", &simaai::neat::SimaKernelQuantization::rounding);
+  nb::class_<simaai::neat::SimaVoxelizeOptions>(m, "SimaVoxelizeOptions")
+      .def(nb::init<>())
+      .def_rw("voxel_size", &simaai::neat::SimaVoxelizeOptions::voxel_size)
+      .def_rw("point_cloud_range", &simaai::neat::SimaVoxelizeOptions::point_cloud_range)
+      .def_rw("quantization", &simaai::neat::SimaVoxelizeOptions::quantization)
+      .def_rw("max_pillars", &simaai::neat::SimaVoxelizeOptions::max_pillars)
+      .def_rw("max_points_per_pillar", &simaai::neat::SimaVoxelizeOptions::max_points_per_pillar)
+      .def_rw("output_dtype", &simaai::neat::SimaVoxelizeOptions::output_dtype)
+      .def_rw("target", &simaai::neat::SimaVoxelizeOptions::target);
+  nb::class_<simaai::neat::SimaPillarScatterOptions>(m, "SimaPillarScatterOptions")
+      .def(nb::init<>())
+      .def_rw("rows", &simaai::neat::SimaPillarScatterOptions::rows)
+      .def_rw("columns", &simaai::neat::SimaPillarScatterOptions::columns)
+      .def_rw("zero_point", &simaai::neat::SimaPillarScatterOptions::zero_point)
+      .def_rw("target", &simaai::neat::SimaPillarScatterOptions::target);
+  nb::class_<simaai::neat::SimaBEVPoolPlanOptions>(m, "SimaBEVPoolPlanOptions")
+      .def(nb::init<>())
+      .def_rw("xs", &simaai::neat::SimaBEVPoolPlanOptions::xs)
+      .def_rw("ys", &simaai::neat::SimaBEVPoolPlanOptions::ys)
+      .def_rw("ds", &simaai::neat::SimaBEVPoolPlanOptions::ds)
+      .def_rw("bx", &simaai::neat::SimaBEVPoolPlanOptions::bx)
+      .def_rw("dx", &simaai::neat::SimaBEVPoolPlanOptions::dx)
+      .def_rw("nx", &simaai::neat::SimaBEVPoolPlanOptions::nx)
+      .def_rw("format", &simaai::neat::SimaBEVPoolPlanOptions::format)
+      .def_rw("context_channels", &simaai::neat::SimaBEVPoolPlanOptions::context_channels)
+      .def_rw("input_dtype", &simaai::neat::SimaBEVPoolPlanOptions::input_dtype)
+      .def_rw("workers", &simaai::neat::SimaBEVPoolPlanOptions::workers)
+      .def_rw("tile_h", &simaai::neat::SimaBEVPoolPlanOptions::tile_h)
+      .def_rw("tile_w", &simaai::neat::SimaBEVPoolPlanOptions::tile_w)
+      .def_rw("cache_plan", &simaai::neat::SimaBEVPoolPlanOptions::cache_plan)
+      .def_rw("plan_capacity_bytes", &simaai::neat::SimaBEVPoolPlanOptions::plan_capacity_bytes)
+      .def_rw("target", &simaai::neat::SimaBEVPoolPlanOptions::target);
+  nb::enum_<simaai::neat::SimaBEVPoolStorage>(m, "SimaBEVPoolStorage")
+      .value("ChannelsLast", simaai::neat::SimaBEVPoolStorage::ChannelsLast)
+      .value("Contiguous", simaai::neat::SimaBEVPoolStorage::Contiguous);
+  nb::class_<simaai::neat::SimaBEVPoolOptions>(m, "SimaBEVPoolOptions")
+      .def(nb::init<>())
+      .def_rw("cells", &simaai::neat::SimaBEVPoolOptions::cells)
+      .def_rw("depth_zero_point", &simaai::neat::SimaBEVPoolOptions::depth_zero_point)
+      .def_rw("context_zero_point", &simaai::neat::SimaBEVPoolOptions::context_zero_point)
+      .def_rw("plan_format", &simaai::neat::SimaBEVPoolOptions::plan_format)
+      .def_rw("quantization", &simaai::neat::SimaBEVPoolOptions::quantization)
+      .def_rw("input_storage", &simaai::neat::SimaBEVPoolOptions::input_storage)
+      .def_rw("output_storage", &simaai::neat::SimaBEVPoolOptions::output_storage)
+      .def_rw("output_dtype", &simaai::neat::SimaBEVPoolOptions::output_dtype)
+      .def_rw("target", &simaai::neat::SimaBEVPoolOptions::target);
   nb::enum_<simaai::neat::SimaEncodeType>(m, "SimaEncodeType")
       .value("H264", simaai::neat::SimaEncodeType::H264)
       .value("H265", simaai::neat::SimaEncodeType::H265)
@@ -4102,7 +4186,7 @@ NB_MODULE(_pyneat_core, m) {
                     &simaai::neat::nodes::Queue),
                 "options"_a);
   nodes_mod.def("rtsp_input", &simaai::neat::nodes::RTSPInput, "url"_a, "latency_ms"_a = 200,
-                "tcp"_a = true, "drop_on_latency"_a = false, "buffer_mode"_a = "");
+                "tcp"_a = true, "drop_on_latency"_a = true, "buffer_mode"_a = "");
   nodes_mod.def("h264_depacketize", &simaai::neat::nodes::H264Depacketize, "payload_type"_a = 96,
                 "h264_parse_config_interval"_a = -1, "h264_fps"_a = -1, "h264_width"_a = -1,
                 "h264_height"_a = -1, "enforce_h264_caps"_a = true);
@@ -4124,6 +4208,18 @@ NB_MODULE(_pyneat_core, m) {
                                                                   capture_buffer_count);
       },
       "options"_a = simaai::neat::CameraInputOptions{}, "capture_buffer_count"_a = 0U);
+  // Opening the camera reads a frame; let other Python threads run meanwhile.
+  nodes_mod.def(
+      "usb_camera_input",
+      static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::UsbCameraInputOptions)>(
+          &simaai::neat::nodes::UsbCameraInput),
+      "options"_a, nb::call_guard<nb::gil_scoped_release>());
+  // Reuses usb_camera_info()'s result: checks sysfs only, without opening the camera.
+  nodes_mod.def("usb_camera_input",
+                static_cast<std::shared_ptr<simaai::neat::Node> (*)(
+                    simaai::neat::UsbCameraInputOptions, const simaai::neat::UsbCameraInfo&)>(
+                    &simaai::neat::nodes::UsbCameraInput),
+                "options"_a, "info"_a, nb::call_guard<nb::gil_scoped_release>());
   nodes_mod.def("output",
                 static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::OutputOptions)>(
                     &simaai::neat::nodes::Output),
@@ -4200,6 +4296,10 @@ NB_MODULE(_pyneat_core, m) {
                 "options"_a = simaai::neat::SimaRenderOptions{});
   nodes_mod.def("sima_argmax", &simaai::neat::nodes::SimaArgMax,
                 "options"_a = simaai::neat::SimaArgMaxOptions{});
+  nodes_mod.def("sima_voxelize", &simaai::neat::nodes::SimaVoxelize, "options"_a);
+  nodes_mod.def("sima_pillar_scatter", &simaai::neat::nodes::SimaPillarScatter, "options"_a);
+  nodes_mod.def("sima_bev_pool_plan", &simaai::neat::nodes::SimaBEVPoolPlan, "options"_a);
+  nodes_mod.def("sima_bev_pool", &simaai::neat::nodes::SimaBEVPool, "options"_a);
   nodes_mod.def("cast", &simaai::neat::nodes::Cast, "options"_a = simaai::neat::CastOptions{});
   nodes_mod.def("cast_tess", &simaai::neat::nodes::CastTess,
                 "options"_a = simaai::neat::CastTessOptions{});

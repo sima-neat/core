@@ -1,14 +1,22 @@
 #include "model/Model.h"
+#include "pipeline/Graph.h"
 #include "model/internal/ModelInternal.h"
 #include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/internal/InputRouteProcessor.h"
+#include "pipeline/runtime/ExecutionGraphPlan.h"
+#include "nodes/common/Output.h"
 #include "model_archive_fixture_utils.h"
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <nlohmann/json.hpp>
+
 #include <cstring>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -23,6 +31,234 @@ std::string require_yolov9_tar() {
   return fixture.tar_path;
 }
 
+sima_test::ModelArchiveFixture make_cast_ingress_fixture(const std::vector<int64_t>& shape,
+                                                         int64_t batch = 1) {
+  auto mpk = nlohmann::json::parse(R"json({
+  "name": "cast_ingress", "model_path": "cast.onnx", "model_sdk_version": "3.0.0",
+  "input_nodes": [{"name": "input", "type": "buffer", "size": 192}],
+  "plugins": [
+    {"name": "cast_0", "processor": "EV74", "sequence": 1, "type": "sgpProcess",
+     "config_params": {"kernel": "cast_transform", "params": {
+       "in_dtype": "float32", "out_dtype": "bfloat16",
+       "input_shapes": [[1,4,4,3]], "output_shapes": [[1,4,4,3]]}},
+     "input_nodes": [{"name": "input", "size": 192}],
+     "output_nodes": [{"name": "cast_0", "type": "buffer", "size": 96}]},
+    {"name": "MLA_0", "processor": "MLA", "sequence": 2, "type": "sgpProcess",
+     "config_params": {"desired_batch_size": 1, "actual_batch_size": 1},
+     "input_nodes": [{"name": "cast_0", "size": 96}],
+     "output_nodes": [{"name": "MLA_0", "type": "buffer", "size": 32}],
+     "resources": {"executable": "model.elf"}},
+    {"name": "cast_1", "processor": "EV74", "sequence": 3, "type": "sgpProcess",
+     "config_params": {"kernel": "cast_transform", "params": {
+       "in_dtype": "bfloat16", "out_dtype": "float32",
+       "input_shapes": [[1,16]], "output_shapes": [[1,16]]}},
+     "input_nodes": [{"name": "MLA_0", "size": 32}],
+     "output_nodes": [{"name": "output", "type": "buffer", "size": 64}]}
+  ]
+})json");
+  int64_t elements = 1;
+  for (const auto dim : shape)
+    elements *= dim;
+  auto& plugins = mpk["plugins"];
+  plugins[0]["config_params"]["params"]["input_shapes"] = {shape};
+  plugins[0]["config_params"]["params"]["output_shapes"] = {shape};
+  for (auto& plugin : plugins) {
+    plugin["config_params"]["desired_batch_size"] = batch;
+    plugin["config_params"]["actual_batch_size"] = batch;
+  }
+  plugins[1]["config_params"]["number_of_quads_to_user"] = 4;
+  plugins[2]["config_params"]["params"]["input_shapes"] = {{batch, 16}};
+  plugins[2]["config_params"]["params"]["output_shapes"] = {{batch, 16}};
+  mpk["input_nodes"][0]["size"] = elements * 4;
+  plugins[0]["input_nodes"][0]["size"] = elements * 4;
+  plugins[0]["output_nodes"][0]["size"] = elements * 2;
+  plugins[1]["input_nodes"][0]["size"] = elements * 2;
+  plugins[1]["output_nodes"][0]["size"] = batch * 16 * 2;
+  plugins[2]["input_nodes"][0]["size"] = batch * 16 * 2;
+  plugins[2]["output_nodes"][0]["size"] = batch * 16 * 4;
+  return sima_test::make_model_archive_fixture(
+      "model_input_cast_rank" + std::to_string(shape.size()) + "_batch" + std::to_string(batch),
+      {{"etc/cast_mpk.json", mpk.dump()}});
+}
+
+void check_tensor_shape_metadata() {
+  const std::vector<std::pair<std::vector<int64_t>, int>> cases = {
+      {{4, 4, 3}, 1}, {{1, 4, 4, 3}, 1},     {{2, 4, 4, 3}, 2},
+      {{2, 24}, 2},   {{1, 3, 2, 4, 16}, 1}, {{2, 3, 2, 4, 16}, 2}};
+  for (const auto& [shape, batch] : cases) {
+    const auto fixture = make_cast_ingress_fixture(shape, batch);
+    Model::Options options;
+    options.preprocess.kind = InputKind::Tensor;
+    Model model(fixture.tar_path, options);
+    const auto specs = model.input_specs();
+    require(specs.size() == 1U && specs[0].shape == shape &&
+                specs[0].rank == static_cast<int>(shape.size()),
+            "tensor input metadata must retain the authored rank, including batch one");
+    require(model.compiled_batch_size() == batch,
+            "compiled batch must come from MLA metadata, not tensor dimensions");
+    if (shape.size() == 3U || shape.size() == 4U) {
+      const std::vector<int64_t> hwc_shape{4, 4, 3};
+      InputGeometry hwc;
+      hwc.shape = hwc_shape;
+      hwc.layout = TensorLayout::HWC;
+      require(input_geometry_matches_logical_shape(hwc, specs[0].shape, TensorLayout::HWC) ==
+                  (batch == 1),
+              "HWC shorthand must remain valid only for a batch-one tensor contract");
+    }
+    if (shape.size() == 5U) {
+      const auto& mpk = *internal::ModelAccess::pack(model).mpk_contract();
+      require(mpk.plugins.front().input_tensors.front().logical_shape == shape,
+              "5D Cast boundary must retain the authored shape for caps negotiation");
+    }
+  }
+}
+
+void check_model_input_projection() {
+  Model::Options options;
+  options.preprocess.kind = InputKind::Tensor;
+  Model model(require_yolov9_tar(), options);
+  Graph graph;
+  InputOptions input;
+  input.payload_type = PayloadType::Tensor;
+  graph.add(nodes::Input(input));
+  graph.add(model);
+  graph.add(nodes::Output());
+  const auto plan = runtime::compile_public_graph(graph, RunOptions{}, std::nullopt);
+  const auto shape = plan.pipeline_segments.front().stream_options.model_input_shape;
+  require(shape == std::vector<int64_t>({640, 640, 3}),
+          "direct Model ingress must select its batch-one wire contract");
+  auto tensor = Tensor::from_vector(std::vector<float>(640 * 640 * 3, 1.0F), {1, 640, 640, 3},
+                                    TensorMemory::CPU);
+  for (const auto axes :
+       {std::vector<TensorAxisSemantic>{},
+        std::vector<TensorAxisSemantic>(4, TensorAxisSemantic::Unknown),
+        std::vector<TensorAxisSemantic>{TensorAxisSemantic::N, TensorAxisSemantic::H,
+                                        TensorAxisSemantic::W, TensorAxisSemantic::C}}) {
+    tensor.axis_semantics = axes;
+    auto spec = describe_tensor_spec_or_throw(tensor, input, "Model projection");
+    project_model_input_spec(spec, shape);
+    require(spec.shape == shape && spec.required_bytes_actual == 640U * 640U * 3U * sizeof(float),
+            "Model projection must accept equivalent batch-one tensor annotations");
+    require(tensor.shape == std::vector<int64_t>({1, 640, 640, 3}) && tensor.axis_semantics == axes,
+            "Model projection must leave caller metadata untouched");
+  }
+  for (const auto& invalid_shape :
+       {std::vector<int64_t>{1, 3, 4, 4}, {2, 4, 4, 3}, {1, 1, 4, 4, 3}}) {
+    tensor.shape = invalid_shape;
+    tensor.axis_semantics.clear();
+    tensor.strides_bytes.clear();
+    tensor.storage = make_cpu_owned_storage(tensor.dense_bytes_tight());
+    auto spec = describe_tensor_spec_or_throw(tensor, input, "unmatched projection");
+    project_model_input_spec(spec, shape);
+    require(spec.shape == invalid_shape,
+            "Model projection must not reinterpret wrong shapes, batch two or rank five");
+  }
+  const auto cast_fixture = make_cast_ingress_fixture({1, 4, 4, 3});
+  sima_test::write_topology_elf(std::filesystem::path(cast_fixture.root_dir) / "share/model.elf",
+                                "data.ifm.b0", 96, "data.ofm.b0", 32);
+  const std::string archive = "tar -czf " +
+                              sima_test::model_archive_shell_quote(cast_fixture.tar_path) + " -C " +
+                              sima_test::model_archive_shell_quote(cast_fixture.root_dir) + " .";
+  require(std::system(archive.c_str()) == 0, "failed to archive Cast metadata fixture");
+  Model cast_model(cast_fixture.tar_path, options);
+  Graph cast;
+  cast.add(nodes::Input(input));
+  cast.add(cast_model.preprocess());
+  cast.add(nodes::Output());
+  const auto cast_plan = runtime::compile_public_graph(cast, RunOptions{}, std::nullopt);
+  require(cast_plan.pipeline_segments.front().stream_options.model_input_shape ==
+              std::vector<int64_t>({4, 4, 3}),
+          "Model Cast must select its checked shape even when the MPK omits a layout token");
+
+  Graph custom;
+  custom.add(nodes::Input(input));
+  custom.custom("identity");
+  custom.add(model);
+  custom.add(nodes::Output());
+  const auto custom_plan = runtime::compile_public_graph(custom, RunOptions{}, std::nullopt);
+  require(custom_plan.pipeline_segments.front().stream_options.model_input_shape.empty(),
+          "a custom consumer before a Model must preserve generic input rank");
+  Graph fanout;
+  auto source = nodes::Input("features", input);
+  fanout.connect(source, model);
+  fanout.connect(source, nodes::Output("copy"));
+  const auto fanout_plan = runtime::compile_public_graph(fanout, RunOptions{}, std::nullopt);
+  for (const auto& segment : fanout_plan.pipeline_segments)
+    require(segment.stream_options.model_input_shape.empty(),
+            "fanout must not infer an application shape from one Model consumer");
+}
+
+void check_model_projection_keeps_tensor_views() {
+  InputOptions input;
+  input.payload_type = PayloadType::Tensor;
+  for (const auto layout : {TensorLayout::HWC, TensorLayout::CHW}) {
+    const std::vector<int64_t> wire_shape =
+        layout == TensorLayout::HWC ? std::vector<int64_t>{2, 3, 4} : std::vector<int64_t>{4, 2, 3};
+    Tensor tensor;
+    tensor.dtype = TensorDType::Float32;
+    tensor.shape = {1, wire_shape[0], wire_shape[1], wire_shape[2]};
+    tensor.strides_bytes = {4096, 64, 16, 4};
+    tensor.byte_offset = 16;
+    tensor.storage = make_cpu_owned_storage(512);
+    const auto original = tensor;
+    auto seed = describe_tensor_spec_or_throw(tensor, input, "unknown model seed");
+    const auto view_bytes = seed.tensor_view_bytes_actual;
+    const auto required_bytes = seed.required_bytes_actual;
+    project_model_input_spec(seed, wire_shape);
+    require(seed.shape == wire_shape, "batch-one model seed must select its checked wire shape");
+    for (const bool explicit_batch : {false, true}) {
+      tensor.layout = layout;
+      tensor.axis_semantics = std::vector<TensorAxisSemantic>(4, TensorAxisSemantic::Unknown);
+      if (explicit_batch)
+        tensor.axis_semantics =
+            layout == TensorLayout::HWC
+                ? std::vector<TensorAxisSemantic>{TensorAxisSemantic::N, TensorAxisSemantic::H,
+                                                  TensorAxisSemantic::W, TensorAxisSemantic::C}
+                : std::vector<TensorAxisSemantic>{TensorAxisSemantic::N, TensorAxisSemantic::C,
+                                                  TensorAxisSemantic::H, TensorAxisSemantic::W};
+      auto pushed = describe_tensor_spec_or_throw(tensor, input, "annotated model push");
+      project_model_input_spec(pushed, wire_shape);
+      require(pushed.caps_key == seed.caps_key && pushed.tensor_view_bytes_actual == view_bytes &&
+                  pushed.required_bytes_actual == required_bytes,
+              "seed and push must share caps without changing the original view extent");
+      require(tensor.shape == original.shape && tensor.strides_bytes == original.strides_bytes &&
+                  tensor.byte_offset == original.byte_offset && tensor.storage == original.storage,
+              "model wire projection must not reshape, compact or replace a padded ROI");
+    }
+    tensor.shape = wire_shape;
+    tensor.strides_bytes.erase(tensor.strides_bytes.begin());
+    tensor.axis_semantics.clear();
+    tensor.layout = TensorLayout::Unknown;
+    auto shorthand = describe_tensor_spec_or_throw(tensor, input, "legacy model shorthand");
+    project_model_input_spec(shorthand, wire_shape);
+    require(shorthand.caps_key == seed.caps_key,
+            "legacy rank-three and authored rank-four seeds must retain the same wire contract");
+  }
+}
+
+void check_ingress_memory_policy() {
+  const auto cast_fixture = make_cast_ingress_fixture({1, 4, 4, 3});
+  for (const auto& path : {cast_fixture.tar_path, require_yolov9_tar()}) {
+    for (const auto* target : {"AUTO", "EV74", "A65"}) {
+      const auto expected =
+          std::string(target) == "A65" ? InputMemoryPolicy::Dms0 : InputMemoryPolicy::Ev74;
+      for (const bool advanced : {false, true}) {
+        Model::Options options;
+        options.preprocess.kind = InputKind::Tensor;
+        if (advanced)
+          options.advanced_execution.preprocess_target = target;
+        else
+          options.processcvu.pre_run_target = target;
+        Model model(path, options);
+        require(model.input_appsrc_options(true).memory_policy == expected,
+                "ingress memory must follow the selected Cast/Quant executor");
+        require(model.input_appsrc_options_list(true).front().memory_policy == expected,
+                "ordered ingress memory must follow the selected executor");
+      }
+    }
+  }
+}
+
 sima_test::ModelArchiveFixture make_evo_style_multi_ingress_fixture(const std::string& tag) {
   return sima_test::make_model_archive_fixture(tag, {
                                                         {"etc/evo_style_multi_ingress_mpk.json",
@@ -33,7 +269,7 @@ sima_test::ModelArchiveFixture make_evo_style_multi_ingress_fixture(const std::s
   "sequence": 1,
   "input_nodes": [
     { "name": "image_l",  "type": "buffer", "size": 64 },
-    { "name": "image_uv", "type": "buffer", "size": 32 }
+    { "name": "image_uv", "type": "buffer", "size": 64 }
   ],
   "plugins": [
     {
@@ -41,15 +277,16 @@ sima_test::ModelArchiveFixture make_evo_style_multi_ingress_fixture(const std::s
       "sequence": 1,
       "processor": "EV74",
       "config_params": {
+        "desired_batch_size": 1,
+        "actual_batch_size": 1,
         "kernel": "quantization_transform",
         "params": {
           "channel_params": [[255.0, -128]],
           "num_bits": 8,
           "rounding": "TONEAREST",
           "input_shapes": [[1, 4, 4, 1]],
-          "input_data_type": ["FP32"],
           "output_shapes": [[1, 4, 4, 1]],
-          "output_data_type": "INT8"
+          "output_data_type": "int8"
         }
       },
       "input_nodes": [
@@ -65,22 +302,23 @@ sima_test::ModelArchiveFixture make_evo_style_multi_ingress_fixture(const std::s
       "sequence": 2,
       "processor": "EV74",
       "config_params": {
+        "desired_batch_size": 1,
+        "actual_batch_size": 1,
         "kernel": "quantization_transform",
         "params": {
           "channel_params": [[255.0, -128]],
           "num_bits": 8,
           "rounding": "TONEAREST",
-          "input_shapes": [[1, 2, 4, 1]],
-          "input_data_type": ["FP32"],
-          "output_shapes": [[1, 2, 4, 1]],
-          "output_data_type": "INT8"
+          "input_shapes": [[1, 2, 8, 1]],
+          "output_shapes": [[1, 2, 8, 1]],
+          "output_data_type": "int8"
         }
       },
       "input_nodes": [
-        { "name": "image_uv", "size": 32 }
+        { "name": "image_uv", "size": 64 }
       ],
       "output_nodes": [
-        { "name": "quantize_1", "type": "buffer", "size": 8 }
+        { "name": "quantize_1", "type": "buffer", "size": 16 }
       ],
       "type": "sgpProcess"
     },
@@ -89,20 +327,20 @@ sima_test::ModelArchiveFixture make_evo_style_multi_ingress_fixture(const std::s
       "sequence": 3,
       "processor": "EV74",
       "config_params": {
+        "desired_batch_size": 1,
+        "actual_batch_size": 1,
         "kernel": "pack_transform",
         "params": {
-          "input_shapes": [[1, 4, 4, 1], [1, 2, 4, 1]],
-          "input_data_type": ["INT8", "INT8"],
-          "output_shapes": [[1, 24]],
-          "data_type": ["INT8"]
+          "input_shapes": [[1, 4, 4, 1], [1, 2, 8, 1]],
+          "output_shapes": [[1, 32]]
         }
       },
       "input_nodes": [
         { "name": "quantize_0", "size": 16 },
-        { "name": "quantize_1", "size": 8 }
+        { "name": "quantize_1", "size": 16 }
       ],
       "output_nodes": [
-        { "name": "MLA_0_ifm_pack_transform", "type": "buffer", "size": 24 }
+        { "name": "MLA_0_ifm_pack_transform", "type": "buffer", "size": 32 }
       ],
       "type": "sgpProcess"
     },
@@ -116,10 +354,10 @@ sima_test::ModelArchiveFixture make_evo_style_multi_ingress_fixture(const std::s
         "number_of_quads_to_user": 1
       },
       "input_nodes": [
-        { "name": "MLA_0_ifm_pack_transform", "size": 24 }
+        { "name": "MLA_0_ifm_pack_transform", "size": 32 }
       ],
       "output_nodes": [
-        { "name": "MLA_0", "type": "buffer", "size": 24 }
+        { "name": "MLA_0", "type": "buffer", "size": 32 }
       ],
       "type": "sgpProcess",
       "resources": { "executable": "stage0.elf" }
@@ -129,20 +367,22 @@ sima_test::ModelArchiveFixture make_evo_style_multi_ingress_fixture(const std::s
       "sequence": 5,
       "processor": "EV74",
       "config_params": {
+        "desired_batch_size": 1,
+        "actual_batch_size": 1,
         "kernel": "unpack_transform",
         "params": {
-          "tensor_types": ["INT8", "INT8"],
-          "tensor_shapes": [[1, 4, 4, 1], [1, 2, 4, 1]],
-          "input_shapes": [[1, 24]],
-          "output_shapes": [[1, 4, 4, 1], [1, 2, 4, 1]]
+          "tensor_types": ["int8", "int8"],
+          "tensor_shapes": [[1, 4, 4, 1], [1, 2, 8, 1]],
+          "input_shapes": [[1, 32]],
+          "output_shapes": [[1, 4, 4, 1], [1, 2, 8, 1]]
         }
       },
       "input_nodes": [
-        { "name": "MLA_0", "size": 24 }
+        { "name": "MLA_0", "size": 32 }
       ],
       "output_nodes": [
         { "name": "MLA_0_ofm_unpack_transform_0", "type": "buffer", "size": 16 },
-        { "name": "MLA_0_ofm_unpack_transform_1", "type": "buffer", "size": 8 }
+        { "name": "MLA_0_ofm_unpack_transform_1", "type": "buffer", "size": 16 }
       ],
       "type": "sgpProcess"
     },
@@ -151,11 +391,12 @@ sima_test::ModelArchiveFixture make_evo_style_multi_ingress_fixture(const std::s
       "sequence": 6,
       "processor": "EV74",
       "config_params": {
+        "desired_batch_size": 1,
+        "actual_batch_size": 1,
         "kernel": "dequantization_transform",
         "params": {
           "channel_params": [[1.0, -128]],
-          "input_data_type": "INT8",
-          "output_data_type": "FP32",
+          "input_data_type": "int8",
           "input_shapes": [[1, 4, 4, 1]],
           "output_shapes": [[1, 4, 4, 1]]
         }
@@ -173,20 +414,21 @@ sima_test::ModelArchiveFixture make_evo_style_multi_ingress_fixture(const std::s
       "sequence": 7,
       "processor": "EV74",
       "config_params": {
+        "desired_batch_size": 1,
+        "actual_batch_size": 1,
         "kernel": "dequantization_transform",
         "params": {
           "channel_params": [[1.0, -128]],
-          "input_data_type": "INT8",
-          "output_data_type": "FP32",
-          "input_shapes": [[1, 2, 4, 1]],
-          "output_shapes": [[1, 2, 4, 1]]
+          "input_data_type": "int8",
+          "input_shapes": [[1, 2, 8, 1]],
+          "output_shapes": [[1, 2, 8, 1]]
         }
       },
       "input_nodes": [
-        { "name": "MLA_0_ofm_unpack_transform_1", "size": 8 }
+        { "name": "MLA_0_ofm_unpack_transform_1", "size": 16 }
       ],
       "output_nodes": [
-        { "name": "dequantize_1/output_uv", "type": "buffer", "size": 32 }
+        { "name": "dequantize_1/output_uv", "type": "buffer", "size": 64 }
       ],
       "type": "sgpProcess"
     },
@@ -195,21 +437,18 @@ sima_test::ModelArchiveFixture make_evo_style_multi_ingress_fixture(const std::s
       "sequence": 8,
       "processor": "EV74",
       "config_params": {
+        "desired_batch_size": 1,
+        "actual_batch_size": 1,
         "kernel": "pass_through",
-        "params": {
-          "input_shapes": [[1, 4, 4, 1], [1, 2, 4, 1]],
-          "input_data_type": ["FP32", "FP32"],
-          "output_shapes": [[1, 4, 4, 1], [1, 2, 4, 1]],
-          "data_type": ["FP32", "FP32"]
-        }
+        "params": {}
       },
       "input_nodes": [
         { "name": "dequantize_0/output_l", "size": 64 },
-        { "name": "dequantize_1/output_uv", "size": 32 }
+        { "name": "dequantize_1/output_uv", "size": 64 }
       ],
       "output_nodes": [
         { "name": "pass_through_out_0", "type": "buffer", "size": 64 },
-        { "name": "pass_through_out_1", "type": "buffer", "size": 32 }
+        { "name": "pass_through_out_1", "type": "buffer", "size": 64 }
       ],
       "type": "sgpProcess"
     }
@@ -241,6 +480,81 @@ sima_test::ModelArchiveFixture make_evo_style_multi_ingress_fixture(const std::s
   "output_depth": [1]
 })json"},
                                                     });
+}
+
+void check_multi_ingress_wire_projection() {
+  for (const bool reverse_public_order : {false, true}) {
+    const auto fixture = make_evo_style_multi_ingress_fixture(
+        reverse_public_order ? "model_wire_reversed_inputs" : "model_wire_ordered_inputs");
+    const auto manifest_path =
+        std::filesystem::path(fixture.root_dir) / "etc/evo_style_multi_ingress_mpk.json";
+    if (reverse_public_order) {
+      auto manifest = nlohmann::json::parse(std::ifstream(manifest_path));
+      std::swap(manifest["input_nodes"][0], manifest["input_nodes"][1]);
+      sima_test::write_text_file(manifest_path, manifest.dump());
+    }
+    sima_test::write_topology_elf(std::filesystem::path(fixture.root_dir) / "share/stage0.elf",
+                                  "data.ifm.b0", 32U, "data.ofm.b0", 32U);
+    const std::string archive = "tar -czf " +
+                                sima_test::model_archive_shell_quote(fixture.tar_path) + " -C " +
+                                sima_test::model_archive_shell_quote(fixture.root_dir) + " .";
+    require(std::system(archive.c_str()) == 0, "failed to archive multi-ingress wire fixture");
+    Model::Options options;
+    options.preprocess.kind = InputKind::Tensor;
+    Model model(fixture.tar_path, options);
+    const std::vector<int64_t> wire_shape{reverse_public_order ? 2 : 4,
+                                          reverse_public_order ? 8 : 4, 1};
+    const auto authored = model.input_specs().front().shape;
+    require(authored == std::vector<int64_t>({1, wire_shape[0], wire_shape[1], wire_shape[2]}),
+            "wire projection must not alter authored input_specs or public input order");
+    runtime::FragmentBoundaryHints hints;
+    auto fragment = internal::ModelAccess::build_graph_fragment(
+        model, {.include_input = true, .include_output = true}, &hints);
+    require(hints.bundled_fan_in && hints.input_route_processor,
+            "multi-input wire test requires the real bundled Model route");
+    const auto nodes = internal::ModelAccess::build_public_preprocess_nodes(model);
+    require(!nodes.empty() &&
+                hints.input_route_processor->model_input_shape(nodes.front()) == wire_shape,
+            "bundled wire shape must follow public slot zero, not internal execution order");
+    const auto plan = runtime::compile_public_graph(fragment, RunOptions{}, std::nullopt);
+    require(plan.pipeline_segments.front().stream_options.model_input_shape == wire_shape,
+            "unseeded Model graph must retain its bundled wire projection");
+
+    InputOptions input;
+    input.payload_type = PayloadType::Tensor;
+
+    Graph custom;
+    custom.add(nodes::Input(input));
+    custom.custom("identity");
+    custom.add(model);
+    custom.add(nodes::Output());
+    const auto custom_plan = runtime::compile_public_graph(custom, RunOptions{}, std::nullopt);
+    require(custom_plan.pipeline_segments.front().stream_options.model_input_shape.empty(),
+            "custom stages before a bundled Model must preserve generic input rank");
+
+    Graph left;
+    left.add(nodes::Input("image_l", input));
+    Graph right;
+    right.add(nodes::Input("image_uv", input));
+    Graph separate;
+    separate.connect(left, model);
+    separate.connect(right, model);
+    separate.connect(model, nodes::Output());
+    const auto separate_plan = runtime::compile_public_graph(separate, RunOptions{}, std::nullopt);
+    std::size_t public_sources = 0;
+    bool projected = false;
+    for (const auto& segment : separate_plan.pipeline_segments) {
+      projected |= segment.stream_options.model_input_shape == wire_shape;
+      if (segment.boundary.direct_graph_source) {
+        ++public_sources;
+        require(segment.stream_options.model_input_shape.empty(),
+                "separate public inputs must not inherit the joined representative tensor shape");
+      }
+    }
+    require(projected, "connected lazy Model preparation must retain its bundled wire projection");
+    require(public_sources == 2U,
+            "split input regression must exercise both public source segments");
+  }
 }
 
 Tensor make_route_tensor(int logical_index, int physical_index, int route_slot, int memory_index,
@@ -339,12 +653,76 @@ void check_synthetic_image_inputs() {
           "tensor-mode synthetic input changed");
 }
 
+void check_synthetic_tensor_contract_shapes() {
+  InputOptions options;
+  options.payload_type = PayloadType::Tensor;
+  options.format = FormatTag::FP32;
+  options.width = 192;
+  options.height = 1;
+  options.depth = 144;
+  internal::IngressTensorContract contract;
+  contract.valid = true;
+  contract.ingress_index = 0;
+  contract.media_type = "application/vnd.simaai.tensor";
+  contract.height = 1;
+  contract.width = 192;
+  contract.depth = 144;
+  for (const auto& shape :
+       {std::vector<int64_t>{2, 1, 1, 192, 144}, {2, 1, 192, 144}, {1, 1, 192, 144}}) {
+    contract.rank = static_cast<int>(shape.size());
+    contract.logical_shape = shape;
+    const auto tensor = internal::ModelAccess::make_dummy_input(options, &contract);
+    std::string error;
+    require(tensor.validate(&error), "synthetic tensor input: " + error);
+    require(
+        tensor.dtype == TensorDType::Float32 && tensor.planes.empty() && tensor.shape == shape &&
+            tensor.storage->size_bytes == std::size_t(shape.front()) * 192U * 144U * sizeof(float),
+        "synthetic tensor must retain every canonical axis and its full storage");
+    require(tensor.layout == (shape.size() == 4U ? TensorLayout::HWC : TensorLayout::Unknown),
+            "synthetic tensor layout must match its canonical rank");
+    const auto geometry =
+        describe_tensor_geometry_or_throw(tensor, options, "synthetic tensor input");
+    require(input_geometry_matches_logical_shape(geometry, shape, TensorLayout::Unknown),
+            "synthetic tensor must satisfy canonical input geometry");
+    if (shape.size() == 4U && shape.front() == 1) {
+      auto submitted = tensor;
+      submitted.shape.erase(submitted.shape.begin());
+      submitted.strides_bytes.erase(submitted.strides_bytes.begin());
+      submitted.axis_semantics.clear();
+      const auto seed_spec = describe_tensor_spec_or_throw(tensor, options, "seed");
+      const auto input_spec = describe_tensor_spec_or_throw(submitted, options, "HWC input");
+      require(seed_spec.shape == input_spec.shape && seed_spec.layout == input_spec.layout,
+              "unseeded build and batch-one HWC input must have identical runtime specs");
+      auto unspecified = tensor;
+      unspecified.layout = TensorLayout::Unknown;
+      const auto unspecified_spec =
+          describe_tensor_spec_or_throw(unspecified, options, "unspecified NHWC input");
+      require(unspecified_spec.shape == shape &&
+                  unspecified_spec.required_bytes_actual == seed_spec.required_bytes_actual,
+              "generic unspecified tensors must retain their full rank and extent");
+      require(unspecified.shape == shape && unspecified.storage == tensor.storage,
+              "wire normalization must not reshape or copy the caller's tensor");
+      unspecified.axis_semantics = {TensorAxisSemantic::N, TensorAxisSemantic::H,
+                                    TensorAxisSemantic::W, TensorAxisSemantic::C};
+      require(describe_tensor_spec_or_throw(unspecified, options, "explicit batch axis").shape ==
+                  shape,
+              "an explicit batch axis must remain in the wire contract");
+    }
+  }
+}
+
 } // namespace
 
 RUN_TEST(
     "unit_model_input_spec_contract_test", ([] {
       using namespace simaai::neat;
       check_synthetic_image_inputs();
+      check_synthetic_tensor_contract_shapes();
+      check_ingress_memory_policy();
+      check_tensor_shape_metadata();
+      check_model_input_projection();
+      check_model_projection_keeps_tensor_views();
+      check_multi_ingress_wire_projection();
 
       {
         const std::string tar = require_yolov9_tar();
@@ -353,13 +731,24 @@ RUN_TEST(
         require(specs.size() == 1U, "Model::input_specs should expose one yolov9 input");
         const TensorSpec& spec = specs.front();
 
-        require(spec.rank == 3, "Model::input_specs rank should be 3 for yolov9 tensor ingress");
-        require(spec.shape == std::vector<int64_t>({640, 640, 3}),
+        require(spec.rank == 4, "Model::input_specs must retain the authored yolov9 batch axis");
+        require(spec.shape == std::vector<int64_t>({1, 640, 640, 3}),
                 "Model::input_specs should expose yolov9 Model boundary tensor ingress shape");
         require(!spec.dtypes.empty() && spec.dtypes[0] == TensorDType::Float32,
                 "Model::input_specs should expose yolov9 Model boundary ingress dtype");
         require(!spec.image_format.has_value(),
                 "Tensor ingress Model::input_specs should not expose image_format");
+      }
+
+      {
+        Model::Options options;
+        options.preprocess.kind = InputKind::Image;
+        Model model(require_yolov9_tar(), options);
+        const auto specs = model.input_specs();
+        require(specs.size() == 1U && specs[0].rank == 3 &&
+                    specs[0].shape == std::vector<int64_t>({-1, -1, 3}) &&
+                    specs[0].image_format.has_value(),
+                "image preprocessing must retain its dynamic HWC input contract");
       }
 
       {
@@ -426,9 +815,9 @@ RUN_TEST(
         const auto specs = model.input_specs();
         require(specs.size() == 2U,
                 "Model::input_specs should expose both ordered ingress tensors");
-        require(specs[0].shape == std::vector<int64_t>({4, 4, 1}),
+        require(specs[0].shape == std::vector<int64_t>({1, 4, 4, 1}),
                 "first ingress spec should expose image_l geometry");
-        require(specs[1].shape == std::vector<int64_t>({2, 4, 1}),
+        require(specs[1].shape == std::vector<int64_t>({1, 2, 8, 1}),
                 "second ingress spec should expose image_uv geometry");
         require(!specs[0].dtypes.empty() && specs[0].dtypes[0] == TensorDType::Float32,
                 "multi-ingress input_specs should preserve ingress dtype");

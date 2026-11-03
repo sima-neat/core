@@ -71,8 +71,9 @@ void policy_matrix(int selected_case) {
               any_retained |= retained;
               auto* selected = selected_memory(tensor, context);
               auto* producer = gst_buffer_peek_memory(input.buffer.get(), mixed ? i : 0);
-              require(gst_is_dmabuf_memory(selected) == (source_dma || !retained),
-                      context + ": selected payload DMA classification");
+              require(retained ? gst_is_dmabuf_memory(selected) == source_dma
+                               : sima_test::is_system_memory(selected),
+                      context + ": selected payload memory classification");
               if (retained) {
                 require(selected == producer, context + ": replaced retained producer memory");
                 if (source_dma) {
@@ -83,11 +84,6 @@ void policy_matrix(int selected_case) {
                 require(selected != producer &&
                             !gst_buffer_get_parent_buffer_meta(selected_buffer(tensor, context)),
                         context + ": copied payload retains producer memory/parent");
-                if (source_dma) {
-                  require(sima_test::dmabuf_identity(selected) !=
-                              sima_test::dmabuf_identity(producer),
-                          context + ": copied payload aliases producer DMA allocation");
-                }
               }
               const auto offset = i == 0 ? 0 : mixed ? 8 : 16;
               require(tensor.byte_offset == offset && tensor.route.physical_byte_offset == offset &&

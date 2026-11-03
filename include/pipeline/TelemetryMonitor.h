@@ -56,7 +56,7 @@ struct Telemetry {
   int sample_interval_ms = 0;     ///< Time between Sentinel samples.
   int samples = 0;                ///< Sentinel samples counted in the window.
   double duration_ms = 0.0;       ///< Window length so far, or up to `stop()`.
-  TelemetryStats power_som_watts; ///< Total SoM input power.
+  TelemetryStats power_som_watts; ///< Estimated total SoM power.
   TelemetryStats power_mla_watts; ///< MLA rail power; not reported on boards without that rail.
   std::vector<TelemetryStats> power_rails_watts;  ///< Every power rail the board reports.
   std::vector<TelemetryStats> die_temperatures_c; ///< Die sensors at the MLA, APU, CVU, and TOP.

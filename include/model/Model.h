@@ -120,11 +120,11 @@ struct BenchmarkReport {
   double latency_p95_ms = 0.0;
   double latency_p99_ms = 0.0;
   double fps = 0.0;
-  double avg_power_watts = 0.0; ///< Mean SoM power over the throughput window.
-  /// Energy to process `num_samples` inputs: `avg_power_watts` multiplied by the time the
-  /// measured throughput needs for `num_samples` inputs.
+  double avg_power_watts = 0.0; ///< Estimated mean SoM power over the throughput window.
+  /// Estimated energy to process `num_samples` inputs: `avg_power_watts` multiplied by the
+  /// time the measured throughput needs for `num_samples` inputs.
   double energy_joules = 0.0;
-  double peak_power_watts = 0.0;       ///< Highest SoM power sample in the throughput window.
+  double peak_power_watts = 0.0;       ///< Estimated highest SoM power sample in the window.
   int throughput_samples = 0;          ///< Inputs measured by the throughput pass.
   double throughput_duration_ms = 0.0; ///< Length of the throughput window.
   Telemetry telemetry;                 ///< Board telemetry for the throughput window.
@@ -546,7 +546,9 @@ public:
   simaai::neat::Graph graph(RouteOptions opt) const;
 
   // ── Introspection ────────────────────────────────────────────────────────────────────────
-  /// Returns the expected input tensor specs (one per ingress port for multi-input models).
+  /// Returns one spec per ingress port. Tensor shapes retain the MPK-authored rank,
+  /// including a singleton batch axis; batch-one HWC shorthand remains accepted.
+  /// Image preprocessing inputs describe the dynamic image contract instead.
   std::vector<TensorSpec> input_specs() const;
   /// Returns the produced output tensor specs (multiple for multi-head models).
   std::vector<TensorSpec> output_specs() const;
@@ -554,8 +556,8 @@ public:
    * @brief Returns the batch size the model was compiled with.
    *
    * Defaults to 1 when the model is not batched. Callers that drive multiple logical inferences
-   * per push/pull cycle should use this to size their input batches. The same value is prepended
-   * to `input_specs()[i].shape` when batch > 1.
+   * per push/pull cycle should use this to size their input batches. Tensor `input_specs()`
+   * already include any MPK-authored batch axis, including batch one.
    */
   int compiled_batch_size() const;
   /// Returns the full resolved preprocess plan (intent-driven; richer than

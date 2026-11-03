@@ -966,6 +966,9 @@ struct StorageCompilation {
             throw std::invalid_argument("memory placement: incomplete physical input route");
           const auto pad = static_cast<std::size_t>(binding->sink_pad_index);
           const auto& route = input_route(index, *binding, *physical);
+          // Preserve the resolved edge after build-local model provenance is discarded.
+          if (route.producer)
+            binding->src_stage_index = static_cast<int>(*route.producer);
           const auto owner = route.carrier;
           client::FrameInputBinding input;
           input.view_offset = static_cast<std::size_t>(logical.byte_offset);

@@ -394,6 +394,17 @@ inline bool env_truthy(const char* key) {
   return true;
 }
 
+// Trace knobs read on every frame are resolved once per process, like InputStreamDebugFlags.
+inline bool sample_timing_debug_enabled() {
+  static const bool enabled = env_bool("SIMA_SAMPLE_TIMING_DEBUG", false);
+  return enabled;
+}
+
+inline bool preproc_meta_trace_enabled() {
+  static const bool enabled = env_bool("SIMA_PREPROC_META_TRACE", false);
+  return enabled;
+}
+
 inline bool multi_io_bundled_appsrc_enabled() {
   return env_truthy("SIMA_NEAT_MULTI_IO_BUNDLED_APPSRC");
 }

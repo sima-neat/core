@@ -5,7 +5,7 @@ sidebar_position: 4
 ---
 
 :::note DevKit만 해당 — SDK 설치 시에는 건너
-이 단계를 통해 PyNeat을 DevKit (또는 런타임 역할을 하는 독립적인 호스트)에 설정합니다. Neat SDK 내에서 작업 중인 경우 이 페이지를 건너뛰십시오.
+이 단계를 통해 PyNeat을 DevKit (또는 런타임 역할을 하는 독립적인 호스트)에 설정합니다. Palette SDK 내에서 작업 중인 경우 이 페이지를 건너뛰십시오.
 :::
 
 :::tip PyNeat은 이미 Neat Library와 함께 설치되어 있습니다.

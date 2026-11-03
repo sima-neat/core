@@ -23,7 +23,7 @@ For runtime packages, see [PCIe host offline installation](/getting-started/neat
 
 | Package | Use | Availability |
 | --- | --- | --- |
-| Neat SDK | Set up the SDK development environment. | SDK 2.1.3.0 or later |
+| Palette SDK | Set up the SDK development environment. | SDK 2.1.3.0 or later |
 | Model Compiler | Install Model Compiler in the SDK or on a standalone host. | Model Compiler 2.1.3 or later |
 
 ## Before you start
@@ -37,7 +37,7 @@ The download computer and the target host can have different processor architect
 Select the package for the **target host**.
 Keep all package files together, including scripts, metadata, checksums, and dependencies.
 
-## Install the Neat SDK {#download-the-sdk-offline-package}
+## Install the Palette SDK {#download-the-sdk-offline-package}
 
 ### 1. Download the package
 
@@ -104,7 +104,7 @@ sima-cli neat install model-compiler/arm64@v%%release.model_compiler%% -t offlin
 
 Choose one installation location.
 
-**In the Neat SDK:**
+**In the Palette SDK:**
 
 1. Copy the complete downloaded directory to the host workspace mapped to `/workspace` in the SDK container.
 2. Open the SDK shell.

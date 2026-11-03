@@ -4,9 +4,9 @@ description: "Neat Libraryのランタイム、C++ファイル、GStreamerコン
 sidebar_position: 2
 ---
 
-このページを使用して、Palette Neat Library をインストールまたは更新してください。
+このページを使用して、Neat Library をインストールまたは更新してください。
 
-:::tip Neat SDK 内の Neat Library
+:::tip Palette SDK 内の Neat Library
 `sima-cli sdk setup` の際に DevKit をペアリングすると、SDK は、DevKit 上の `~/pyneat` に、同梱されている Neat Library とバンドルされた PyNeat 環境を自動的にインストールします。
 :::
 
@@ -21,7 +21,7 @@ Neatアプリケーションをビルドまたは実行する環境から、イ�
 
 | 環境 | 使用する場面 |
 |---|---|
-| Neat SDK | 新しい SDK バージョンをインストールせずに、Neat SDK 内の Neat Library をアップグレードしたい場合。 |
+| Palette SDK | 新しい SDK バージョンをインストールせずに、Palette SDK 内の Neat Library をアップグレードしたい場合。 |
 | ROS2 SDK | コンテナのシステムパスにインストールされた Neat ヘッダーとライブラリを使用して、ARM64 上で ROS 2 アプリケーションをネイティブにコンパイルしたい場合。 |
 | DevKit | デバイスにランタイムを直接インストールまたは更新したい場合。 |
 
@@ -64,7 +64,7 @@ sima-cli login
 curl -fsS https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh -o /dev/null && echo "artifacts reachable"
 </ShellCommand>
 
-「`artifacts reachable`」と表示される場合、ホストにアクセスできる状態です。タイムアウト、接続拒否、または「ホストを解決できません」などの`curl`エラーは、外部へのアクセスがブロックされていることを意味します。ホストのネットワーク、プロキシ、またはファイアウォールを確認してください（[Neat SDK ネットワーク機能](/tools/sima-cli/sdk-networking/)および[ホスト設定に関する注意事項](/reference/elxr-sdk-host-setup/ubuntu)を参照）。または、マシンがSiMa.aiサービスに直接アクセスできない場合は、[オフラインでのインストール](#offline-installation)を使用してください。
+「`artifacts reachable`」と表示される場合、ホストにアクセスできる状態です。タイムアウト、接続拒否、または「ホストを解決できません」などの`curl`エラーは、外部へのアクセスがブロックされていることを意味します。ホストのネットワーク、プロキシ、またはファイアウォールを確認してください（[Palette SDK ネットワーク機能](/tools/sima-cli/sdk-networking/)および[ホスト設定に関する注意事項](/reference/elxr-sdk-host-setup/ubuntu)を参照）。または、マシンがSiMa.aiサービスに直接アクセスできない場合は、[オフラインでのインストール](#offline-installation)を使用してください。
 
 ## Neat Library をインストールします。
 
@@ -74,10 +74,10 @@ curl -fsS https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh -o /dev/null && e
 
 インストーラーを実行する前に、作業ディレクトリを選択してください。DevKitでは、ルートファイルシステムがいっぱいにならないように、`/media/nvme`にインストールしてください。SDKコンテナー内では、`$HOME/neat`のようなコンテナーローカルのパスを使用してください。
 
-環境を選択し、次に手順を順番に実行します。C++アプリケーションをクロスコンパイルするために、**Neat SDK**コンテナにインストールします。ARM64でネイティブにコンパイルするために、**ROS2 SDK**にインストールします。そのDebianパッケージは、**Neat**のクロスコンパイルsysrootではなく、**`/usr`**にインストールされます。**DevKit**にインストールして、そこでランタイムをセットアップします。これにより、**PyNeat**も**`~/pyneat`**にプロビジョニングされます。インストーラーコマンドは、どの環境でも同じです。
+環境を選択し、次に手順を順番に実行します。C++アプリケーションをクロスコンパイルするために、**Palette SDK**コンテナにインストールします。ARM64でネイティブにコンパイルするために、**ROS2 SDK**にインストールします。そのDebianパッケージは、**Neat**のクロスコンパイルsysrootではなく、**`/usr`**にインストールされます。**DevKit**にインストールして、そこでランタイムをセットアップします。これにより、**PyNeat**も**`~/pyneat`**にプロビジョニングされます。インストーラーコマンドは、どの環境でも同じです。
 
 <CodeTabs>
-<CodeTab label="Neat SDK" lang="bash">
+<CodeTab label="Palette SDK" lang="bash">
 
 `$HOME/neat` のような、コンテナローカルのインストールディレクトリを準備してください。
 
@@ -149,7 +149,7 @@ DevKit SyncとペアになったSDKコンテナ内でインストーラーを実
 
 もしソースコードからビルドしたい場合は、以下の[構築する](/develop-apps/contribute/build)ガイドに従ってください。
 
-SDK のセットアップと DevKit Sync の初期設定については、[Neat SDK](/getting-started/dev-environment/) を参照してください。
+SDK のセットアップと DevKit Sync の初期設定については、[Palette SDK](/getting-started/dev-environment/) を参照してください。
 
 ## オフラインでのインストール {#offline-installation}
 
@@ -181,7 +181,7 @@ sima-cli neat install core/offline@v%%release.core%% -t minimal --download-only
 
 ### 2. パッケージをインストールする
 
-1. ダウンロードしたファイルを Modalix DevKit または Neat SDK ワークスペースにコピーしてください。
+1. ダウンロードしたファイルを Modalix DevKit または Palette SDK ワークスペースにコピーしてください。
 2. そのディレクトリでターミナルを開いてください。SDK にインストールする場合は、SDK シェルを使用してください。
 3. インストーラーのアーカイブを展開してください：
 

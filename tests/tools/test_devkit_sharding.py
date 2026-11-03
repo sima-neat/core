@@ -180,6 +180,11 @@ def test_workflow_guards_and_reruns():
     assert "'genai-python'" in steps['Run Python GenAI E2E tests from installed extras']['if']
     assert "'genai-python'" in steps['Prepare GenAI models']['if']
     assert "'python-tutorials'" not in steps['Prepare GenAI models']['if']
+    # Every E2E worker must discover the same canonical selection.
+    e2e = steps['Run E2E Tests'], steps['Run E2E Tests (partition 2)']
+    assert e2e[0]['env'] == e2e[1]['env']
+    shard_0 = e2e[0]['run'].replace('--index 0', '--index 1')
+    assert shard_0.replace('e2e-0', 'e2e-1').replace('e2e-tail-0', 'e2e-tail-1') == e2e[1]['run']
     upload = steps['Upload selected coverage and outcomes']['with']
     assert upload['overwrite'] is True and 'github.run_attempt' not in upload['name']
     assert '${{ matrix.plan_id }}' in upload['name']

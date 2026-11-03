@@ -239,3 +239,14 @@ def test_remote_policy_uses_selected_immutable_llima_commit(tmp_path, monkeypatc
     policy.main()
     assert calls == [('llima', 'develop', 'a' * 40, r'llima-package-manifest\.json')]
     assert json.loads((tmp_path / 'scheduler-policy.json').read_text()) == receipt()
+
+
+def test_release_scheduler_accepts_matching_llima_without_duplicate_sysroot_pin(tmp_path):
+    selected = receipt('3.0.0_master_B2499', '3.0.0')
+    selected['sdk'] = {'channel': 'develop', 'sysroot-version': '3.0.0'}
+    fixture(tmp_path, {'elxr_version': selected['elxr_version']})
+    policy.check_llima(selected, tmp_path)
+    fixture(tmp_path, {'elxr_version': selected['elxr_version'],
+                       'sdk': {'channel': 'develop', 'sysroot-version': '3.0.1'}})
+    with pytest.raises(ValueError, match='LLiMa sdk differs'):
+        policy.check_llima(selected, tmp_path)

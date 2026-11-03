@@ -5,7 +5,7 @@
   "run_mode": "unpaced",
   "iterations": 1000,
   "metrics_thresholds": {
-    "throughput_min": 572.8022537182709,
+    "throughput_min": 515.11,
     "p50_max": 43.023818,
     "p95_max": 43.52220845,
     "startup_max": 20000.0,

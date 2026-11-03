@@ -9,7 +9,6 @@
 #include "test_main.h"
 #include "owned_output_test_utils.h"
 
-#include <array>
 #include <cstring>
 
 namespace {
@@ -30,7 +29,6 @@ template <class Action> void require_rejected(Action action, const std::string& 
 void exercise(bool dma_source, bool compact) {
   bool released = false;
   auto buffer = std::shared_ptr<GstBuffer>(gst_buffer_new(), gst_buffer_unref);
-  std::array<sima_test::DmaBufBackingIdentity, 2> source_ids{};
   for (unsigned i = 0; i < 2; ++i) {
     auto allocation =
         std::shared_ptr<GstBuffer>(dma_source ? sima_test::allocate_cma_dmabuf(64)
@@ -48,8 +46,6 @@ void exercise(bool dma_source, bool compact) {
         static_cast<unsigned char*>(map.data)[j] = static_cast<unsigned char>(j + 64 * i);
     }
     auto* memory = gst_buffer_peek_memory(allocation.get(), 0);
-    if (dma_source)
-      source_ids[i] = sima_test::dmabuf_identity(memory);
     gst_buffer_append_memory(buffer.get(), gst_memory_ref(memory));
   }
   TensorBufferPublishContract contract;
@@ -115,32 +111,24 @@ void exercise(bool dma_source, bool compact) {
   require(gst_buffer_n_memory(output) == 2, "preserve physical memory slots");
   for (unsigned i = 0; i < 2; ++i) {
     auto* memory = gst_buffer_peek_memory(output, i);
-    require(gst_is_dmabuf_memory(memory), "Owned output must be real DMA-BUF storage");
-    if (dma_source)
-      require(sima_test::dmabuf_identity(memory) != source_ids[i],
-              "Owned must not reuse producer allocation");
+    require(sima_test::is_system_memory(memory), "Owned output must be system memory");
+    require(memory != gst_buffer_peek_memory(buffer.get(), i),
+            "Owned must not reuse producer allocation");
   }
-  (void)sima_test::require_dma_owned_output(
-      owned,
-      dma_source
-          ? std::vector<sima_test::DmaBufBackingIdentity>(source_ids.begin(), source_ids.end())
-          : std::vector<sima_test::DmaBufBackingIdentity>{},
-      "independent Owned control");
+  (void)sima_test::require_owned_output(owned, "independent Owned control");
   {
     auto not_owned = owned;
     not_owned.owned = false;
-    require_rejected([&] { sima_test::require_dma_owned_output(not_owned, {}, "not Owned"); },
+    require_rejected([&] { sima_test::require_owned_output(not_owned, "not Owned"); },
                      "Owned flag control");
-    auto borrowed = sample_from_gst_envelope(source.get(), "borrowed control", false, nullptr);
-    borrowed.owned = true; // A flag alone must not disguise a producer allocation.
-    require_rejected(
-        [&] {
-          sima_test::require_dma_owned_output(
-              borrowed,
-              std::vector<sima_test::DmaBufBackingIdentity>(source_ids.begin(), source_ids.end()),
-              "claimed Owned producer");
-        },
-        "borrowed carrier control");
+    // A borrowed CPU producer is system memory too; the release check below
+    // proves independence for that source.
+    if (dma_source) {
+      auto borrowed = sample_from_gst_envelope(source.get(), "borrowed control", false, nullptr);
+      borrowed.owned = true; // A flag alone must not disguise a producer allocation.
+      require_rejected([&] { sima_test::require_owned_output(borrowed, "claimed Owned producer"); },
+                       "borrowed carrier control");
+    }
     // An independent backing allocation still must not retain a producer parent.
     auto parent_buffer = std::shared_ptr<GstBuffer>(gst_buffer_new(), gst_buffer_unref);
     gst_buffer_append_memory(parent_buffer.get(),
@@ -154,7 +142,7 @@ void exercise(bool dma_source, bool compact) {
     parent_owned.tensor.emplace();
     parent_owned.tensor->storage = make_gst_sample_storage(parent_sample.get());
     parent_owned.owned = true;
-    require_rejected([&] { sima_test::require_dma_owned_output(parent_owned, {}, "Owned parent"); },
+    require_rejected([&] { sima_test::require_owned_output(parent_owned, "Owned parent"); },
                      "producer parent control");
   }
   // Drop every producer reference, including metadata. The output must not pin
@@ -193,9 +181,13 @@ void exercise(bool dma_source, bool compact) {
   require(bool(reentry), "reentry: " + error);
   auto* input = gst_sample_get_buffer(static_cast<GstSample*>(reentry.get()));
   require(gst_buffer_n_memory(input) == 2, "reentry carrier count");
+  const auto root = [](GstMemory* memory) {
+    while (memory && memory->parent)
+      memory = memory->parent;
+    return memory;
+  };
   for (unsigned i = 0; i < 2; ++i)
-    require(sima_test::dmabuf_span(gst_buffer_peek_memory(input, i)) ==
-                sima_test::dmabuf_span(gst_buffer_peek_memory(output, i)),
+    require(root(gst_buffer_peek_memory(input, i)) == root(gst_buffer_peek_memory(output, i)),
             "reentry must not copy again");
   require(snapshot_tensor_io_stats().tensor_copy_count == before.tensor_copy_count,
           "no reentry staging copy");
@@ -203,7 +195,7 @@ void exercise(bool dma_source, bool compact) {
   auto retained = sample_from_gst_envelope(static_cast<GstSample*>(reentry.get()), "retain output",
                                            false, nullptr);
   materialize_owned_output(retained, true);
-  require(!retained.owned, "Auto must retain existing DMA-BUFs");
+  require(retained.owned, "Auto copies CPU memory that no framework pool certified");
 }
 void exercise_packed_runtime_whole() {
   // The installed Runtime allocator admits one synchronized ownership root for
@@ -284,7 +276,7 @@ void exercise_packed_runtime_whole() {
               owned.tensor->planes.size() == 2U && owned.tensor->planes[1].byte_offset == 16 &&
               owned.tensor->planes[1].strides_bytes == std::vector<int64_t>({4, 1}),
           "preserve packed Runtime plane offsets, strides and physical provenance");
-  (void)sima_test::require_dma_owned_output(owned, {}, "packed Runtime independent output");
+  (void)sima_test::require_owned_output(owned, "packed Runtime independent output");
   tensor.storage.reset();
   source.reset();
   buffer.reset();

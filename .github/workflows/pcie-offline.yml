@@ -21,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       source_run_id:
-        description: Successful Vulcan CI push run to assemble (develop/main/release-* or tag)
+        description: Successful Vulcan CI push or manual run to assemble (develop/main/release-* or tag)
         required: true
         type: string
 

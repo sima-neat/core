@@ -1,10 +1,10 @@
 ---
 title: "Нотатки щодо хоста Ubuntu."
-description: "Підготуйте хост Ubuntu для Neat SDK та DevKit-Sync."
+description: "Підготуйте хост Ubuntu для Palette SDK та DevKit-Sync."
 sidebar_position: 1
 ---
 
-Використовуйте цей посібник, якщо ваша хост-машина працює під управлінням Ubuntu, і ви хочете запустити Neat SDK з DevKit-Sync.
+Використовуйте цей посібник, якщо ваша хост-машина працює під управлінням Ubuntu, і ви хочете запустити Palette SDK з DevKit-Sync.
 
 ## Необхідні умови.
 
@@ -81,4 +81,4 @@ sudo nmcli connection up "<connection-name>"
 
 ## Наступний крок.
 
-Поверніться до [Neat SDK](/getting-started/dev-environment/) і продовжуйте встановлення/налаштування.
+Поверніться до [Palette SDK](/getting-started/dev-environment/) і продовжуйте встановлення/налаштування.

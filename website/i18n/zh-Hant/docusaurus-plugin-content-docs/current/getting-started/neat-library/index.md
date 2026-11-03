@@ -1,15 +1,15 @@
 ---
 title: "Neat 程式庫"
-description: "在 DevKit 或 Neat SDK 中安裝或更新 SiMa.ai Neat 程式庫"
+description: "在 DevKit 或 Palette SDK 中安裝或更新 SiMa.ai Neat 程式庫"
 sidebar_position: 1
 ---
 
 Neat 程式庫提供 C++ 與 Python API，用於在 Modalix 上執行模型及建置應用程式。
 
-:::tip 若您使用 Neat SDK，可以略過本節
-Neat SDK 容器已預先安裝 Neat 程式庫。在設定期間配對 DevKit 時，系統也會自動在 DevKit 上安裝相容的 Neat 程式庫與隨附的 PyNeat 環境。只要已安裝 Neat SDK，無論是否配對 DevKit，您都已具備 Neat 程式庫，可以略過本節直接開始使用。
+:::tip 若您使用 Palette SDK，可以略過本節
+Palette SDK 容器已預先安裝 Neat 程式庫。在設定期間配對 DevKit 時，系統也會自動在 DevKit 上安裝相容的 Neat 程式庫與隨附的 PyNeat 環境。只要已安裝 Palette SDK，無論是否配對 DevKit，您都已具備 Neat 程式庫，可以略過本節直接開始使用。
 
-只有在需要獨立更新 Neat 程式庫，或不使用 Neat SDK、直接在 DevKit 或一般主機上設定時，才需要使用本節。
+只有在需要獨立更新 Neat 程式庫，或不使用 Palette SDK、直接在 DevKit 或一般主機上設定時，才需要使用本節。
 :::
 
 若需要較新的相容版本，可以獨立更新 Neat 程式庫，而不必重新安裝 SDK 容器。支援的版本組合請參閱[相容性指南](/getting-started/compatibility/)。

@@ -36,7 +36,7 @@ Core owns only its source scope, locale terminology, and output layout in
 structural validation are implemented by the `sima-neat/i18n` repository; do
 not add a second translation engine under `website/scripts/`.
 
-- Keep product names (`Palette Neat`, `Neat SDK`, `Neat Library`, `Modalix`,
+- Keep product names (`Palette SDK`, `Palette SDK`, `Neat Library`, `Modalix`,
   `DevKit`, `PyNeat`, `Insight`, and `LLiMa`) in English.
 - Keep API symbols, commands, paths, environment variables, filenames, literal
   output, and error messages unchanged.

@@ -1,10 +1,10 @@
 ---
 title: "安裝 SDK"
-description: "安裝並設定 Neat SDK 容器"
+description: "安裝並設定 Palette SDK 容器"
 sidebar_position: 2
 ---
 
-安裝最新的 Neat SDK。它會以容器形式在主機上執行。
+安裝最新的 Palette SDK。它會以容器形式在主機上執行。
 
 ## 必要條件
 
@@ -17,23 +17,23 @@ sidebar_position: 2
 
 若稍後要使用 DevKit Sync，還需要：
 
-- 執行與 Neat SDK 相容軟體的 DevKit。詳情請參閱[相容性指南](/getting-started/compatibility/)。
+- 執行與 Palette SDK 相容軟體的 DevKit。詳情請參閱[相容性指南](/getting-started/compatibility/)。
 - 位於同一個網路且允許 NFS 流量的主機與 DevKit。
 - DevKit IP 位址。
 
 ## 安裝
 
-安裝目前的 Neat SDK %%release.sdk_series%% 發行通道：
+安裝目前的 Palette SDK %%release.sdk_series%% 發行通道：
 
 <ShellCommand prompt="host">
 sima-cli neat install sdk@%%release.sdk_channel%%
 </ShellCommand>
 
-首次安裝可能需要數分鐘，因為必須下載 Neat SDK 容器映像。下載完成後，安裝程式會開始設定 SDK，並詢問是否要與 Modalix DevKit 配對，以及是否要在 SDK 中安裝相容的 Model Compiler。
+首次安裝可能需要數分鐘，因為必須下載 Palette SDK 容器映像。下載完成後，安裝程式會開始設定 SDK，並詢問是否要與 Modalix DevKit 配對，以及是否要在 SDK 中安裝相容的 Model Compiler。
 
 若選擇與 DevKit 配對，請在提示時輸入 DevKit IP 位址。設定流程會設定 SDK 工作區、啟動 SDK 容器並設定 DevKit Sync。若略過配對，系統仍會建立 SDK 工作區，之後也可以再進行配對。
 
-`%%release.sdk_channel%%` 套件會追蹤 %%release.sdk_series%% 系列最新的 Neat SDK 修補程式版本。目前版本為 Neat SDK %%release.sdk%%，與 DevKit 軟體 %%release.platform%% 相容。
+`%%release.sdk_channel%%` 套件會追蹤 %%release.sdk_series%% 系列最新的 Palette SDK 修補程式版本。目前版本為 Palette SDK %%release.sdk%%，與 DevKit 軟體 %%release.platform%% 相容。
 
 設定期間，`sima-cli` 也會詢問是否要在 SDK 中安裝相容的 Model Compiler。若您會自行編譯或量化模型，請接受提示；不需要另外選擇版本。若只執行預先編譯的模型套件，則可略過。若要稍後安裝、固定特定修補版本或使用獨立主機，請參閱[安裝 Model Compiler](/getting-started/dev-environment/install-model-compiler/)及[相容性指南](/getting-started/compatibility/)。
 
@@ -61,7 +61,7 @@ SDK 2.0.0、2.1.2.0 和 2.1.2.1 需要分別執行映像提取與設定命令。
 
 ### 使用 SDK Shell
 
-使用下列命令開啟 Neat SDK shell：
+使用下列命令開啟 Palette SDK shell：
 
 <ShellCommand prompt="host">
 sima-cli sdk neat
@@ -102,15 +102,15 @@ VS Code password   <password shown by neat>
 sima-cli neat install sdk@%%release.sdk_channel%%
 </ShellCommand>
 
-若要更新現有 Neat SDK 容器內的 Neat 程式庫，請從容器 shell 執行 Neat CLI：
+若要更新現有 Palette SDK 容器內的 Neat 程式庫，請從容器 shell 執行 Neat CLI：
 
 <ShellCommand prompt="sdk">
 neat update
 </ShellCommand>
 
-這會更新目前 Neat SDK 中已安裝的 Neat 程式庫元件。若需要容器層級變更，這無法取代完整的容器映像升級。
+這會更新目前 Palette SDK 中已安裝的 Neat 程式庫元件。若需要容器層級變更，這無法取代完整的容器映像升級。
 
-若稍後刪除或重新建立 Neat SDK 容器，請在新容器內再次執行 `neat update`。
+若稍後刪除或重新建立 Palette SDK 容器，請在新容器內再次執行 `neat update`。
 
 ## 解除安裝
 

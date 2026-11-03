@@ -17,13 +17,13 @@ slug: /develop-apps/contribute/build
 `build.sh` 會自動偵測目前使用的環境：
 
 - Modalix DevKit 原生環境
-- Neat SDK 環境（跨平台編譯）
+- Palette SDK 環境（跨平台編譯）
 
 您可以在任一環境中執行相同的 `build.sh` 指令。
 
 ### 跨平台編譯的先決條件
 
-跨平台編譯請使用 Neat SDK。依照[安裝 SDK](/getting-started/dev-environment/install-the-environment/)在支援的 Ubuntu、Windows/WSL 或 macOS 主機上完成設定，然後開啟 SDK shell：
+跨平台編譯請使用 Palette SDK。依照[安裝 SDK](/getting-started/dev-environment/install-the-environment/)在支援的 Ubuntu、Windows/WSL 或 macOS 主機上完成設定，然後開啟 SDK shell：
 
 ```bash
 sima-cli sdk neat
@@ -40,7 +40,7 @@ SDK 包含工具鏈與 `sima-cli`。Core 的 `build.sh` 會準備相符的 Sched
 - `--python`：除了選定的目標之外，還建置 Python 繫結 (`pyneat`)。
 - `--install-neat-internals`、`--install-deps`：在建置之前下載並安裝依賴項成品。
 - `--doc`：僅建置檔案。
-- `--install`：在建置/封裝後，將產生的成品安裝到目前的環境中。在配對的 Neat SDK 模式下，這也會部署並安裝配對的 DevKit 上的相應成品。
+- `--install`：在建置/封裝後，將產生的成品安裝到目前的環境中。在配對的 Palette SDK 模式下，這也會部署並安裝配對的 DevKit 上的相應成品。
 - `--no-dist`：跳過發布封裝。
 - `--clean`：在設定之前移除 `build/`。
 - `--no-doc`：跳過檔案建置（即使使用 `--all`）。

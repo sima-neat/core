@@ -17,13 +17,13 @@ slug: /develop-apps/contribute/build
 `build.sh`는 활성 환경을 자동으로 감지합니다.
 
 - Modalix DevKit의 기본 환경
-- Neat SDK 환경(크로스 컴파일)
+- Palette SDK 환경(크로스 컴파일)
 
 두 환경 모두에서 동일한 `build.sh` 명령을 실행할 수 있습니다.
 
 ### 크로스 컴파일 필수 조건
 
-크로스 컴파일에는 Neat SDK를 사용합니다. [SDK 설치](/getting-started/dev-environment/install-the-environment/)에 따라 지원되는 Ubuntu, Windows/WSL 또는 macOS 호스트에 SDK를 설정한 다음 SDK 셸을 여십시오.
+크로스 컴파일에는 Palette SDK를 사용합니다. [SDK 설치](/getting-started/dev-environment/install-the-environment/)에 따라 지원되는 Ubuntu, Windows/WSL 또는 macOS 호스트에 SDK를 설정한 다음 SDK 셸을 여십시오.
 
 ```bash
 sima-cli sdk neat
@@ -40,7 +40,7 @@ SDK에는 툴체인과 `sima-cli`가 포함되어 있습니다. Core의 `build.s
 - `--python`: 선택한 대상 외에 Python 바인딩(`pyneat`)을 구축합니다.
 - `--install-neat-internals`, `--install-deps`: 빌드하기 전에 필요한 아티팩트를 다운로드하여 설치합니다.
 - `--doc`: 문서만 빌드합니다.
-- `--install`: 빌드/패키징 후, 생성된 아티팩트를 현재 환경에 설치합니다. 페어링된 Neat SDK 모드에서는, 이와 함께 페어링된 DevKit에 해당 아티팩트를 배포하고 설치합니다.
+- `--install`: 빌드/패키징 후, 생성된 아티팩트를 현재 환경에 설치합니다. 페어링된 Palette SDK 모드에서는, 이와 함께 페어링된 DevKit에 해당 아티팩트를 배포하고 설치합니다.
 - `--no-dist`: 배포 패키지 생성을 건너
 - `--clean`: 설정을 진행하기 전에 `build/`를 제거하세요.
 - `--no-doc`: 문서 빌드 건너뛰기(`--all` 옵션이 활성화된 경우에도).

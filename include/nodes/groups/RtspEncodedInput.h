@@ -28,14 +28,14 @@ struct RtspEncodedInputOptions {
   std::string url;                   ///< `rtsp://` URL to consume.
   RtspCodec codec = RtspCodec::H264; ///< Encoded RTSP path to build.
 
-  int latency_ms = 200;         ///< Jitter-buffer latency in milliseconds.
-  bool tcp = true;              ///< If true, request the RTSP TCP transport.
-  bool drop_on_latency = false; ///< If true, ask `rtspsrc` to drop late buffers.
-  std::string buffer_mode;      ///< Optional `rtspsrc` buffer-mode value; empty = default.
-  bool insert_queue = true;     ///< Insert queues around depacketize/parse.
-  bool sync_mode = false;       ///< If true, sink elements run in sync (real-time) mode.
-  int h264_payload_type = 96;   ///< Deprecated; use `payload_type`. RTP payload type for H.264.
-  int mjpeg_payload_type = 26;  ///< Deprecated; use `payload_type`. RTP payload type for MJPEG.
+  int latency_ms = 200;        ///< Jitter-buffer latency in milliseconds.
+  bool tcp = true;             ///< If true, request the RTSP TCP transport.
+  bool drop_on_latency = true; ///< Ask `rtspsrc` to drop late buffers instead of stalling.
+  std::string buffer_mode;     ///< Optional `rtspsrc` buffer-mode value; empty = default.
+  bool insert_queue = true;    ///< Insert queues around depacketize/parse.
+  bool sync_mode = false;      ///< If true, sink elements run in sync (real-time) mode.
+  int h264_payload_type = 96;  ///< Deprecated; use `payload_type`. RTP payload type for H.264.
+  int mjpeg_payload_type = 26; ///< Deprecated; use `payload_type`. RTP payload type for MJPEG.
   int h264_parse_config_interval =
       -1;               ///< SPS/PPS reinjection interval for H.264 parser (-1 = default).
   int h264_fps = -1;    ///< Expected H.264 FPS injected into parser caps (-1 = unspecified).

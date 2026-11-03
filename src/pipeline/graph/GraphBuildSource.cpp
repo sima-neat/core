@@ -1972,19 +1972,12 @@ Sample make_fused_encoded_output_sample(GstBuffer* buffer, GstCaps* caps,
     auto holder = std::shared_ptr<void>(gst_sample_ref(gst_sample), [](void* value) {
       gst_sample_unref(static_cast<GstSample*>(value));
     });
-    struct EncodedMapState {
-      std::mutex mutex;
-      GstMapInfo info{};
-      bool mapped = false;
-    };
-    auto map_state = std::make_shared<EncodedMapState>();
-
     auto storage = std::make_shared<Storage>();
     storage->kind = StorageKind::GstSample;
     storage->device = {DeviceType::CPU, 0};
     storage->size_bytes = gst_buffer_get_size(buffer);
     storage->holder = holder;
-    storage->map_fn = [holder, map_state](MapMode mode) {
+    storage->map_fn = [holder](MapMode mode) {
       if (mode != MapMode::Read) {
         return Mapping{};
       }
@@ -1993,22 +1986,20 @@ Sample make_fused_encoded_output_sample(GstBuffer* buffer, GstCaps* caps,
       if (!retained_buffer) {
         return Mapping{};
       }
-      std::lock_guard<std::mutex> lock(map_state->mutex);
-      if (map_state->mapped || !gst_buffer_map(retained_buffer, &map_state->info, GST_MAP_READ)) {
+      // Fan-out branches map this shared storage concurrently; each mapping owns its info. Ref
+      // first, so a multi-memory buffer merges into a temporary memory, never in place.
+      auto info = std::make_shared<GstMapInfo>();
+      GstBuffer* buffer_ref = gst_buffer_ref(retained_buffer);
+      if (!gst_buffer_map(retained_buffer, info.get(), GST_MAP_READ)) {
+        gst_buffer_unref(buffer_ref);
         return Mapping{};
       }
-      map_state->mapped = true;
-      GstBuffer* buffer_ref = gst_buffer_ref(retained_buffer);
       Mapping mapping;
-      mapping.data = map_state->info.data;
-      mapping.size_bytes = map_state->info.size;
+      mapping.data = info->data;
+      mapping.size_bytes = info->size;
       mapping.keepalive = holder;
-      mapping.unmap = [buffer_ref, map_state]() {
-        std::lock_guard<std::mutex> unmap_lock(map_state->mutex);
-        if (map_state->mapped) {
-          gst_buffer_unmap(buffer_ref, &map_state->info);
-          map_state->mapped = false;
-        }
+      mapping.unmap = [buffer_ref, info]() {
+        gst_buffer_unmap(buffer_ref, info.get());
         gst_buffer_unref(buffer_ref);
       };
       return mapping;

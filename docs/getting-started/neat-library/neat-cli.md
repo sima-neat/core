@@ -30,7 +30,7 @@ Example output from a legacy installation:
 
 ```text
 Neat Environment
-  Mode               Neat SDK
+  Mode               Palette SDK
   Sysroot            /opt/toolchain/aarch64/modalix
   Update check       online
 

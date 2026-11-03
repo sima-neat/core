@@ -67,9 +67,7 @@ int main(int argc, char** argv) {
   try {
     require(argc == 3, "usage: model_seeded_input_capacity_test <repo-root> <mode>");
     const std::string mode = argv[2];
-    // Seedless build uses a CPU dummy; exercise its real device-visible inputs below.
-    const sima_test::ScopedEnvVar preflight("SIMA_INPUTSTREAM_PREFLIGHT_RUN",
-                                            mode == "unseeded" ? "0" : "1");
+    const sima_test::ScopedEnvVar preflight("SIMA_INPUTSTREAM_PREFLIGHT_RUN", "1");
     const auto path = sima_test::resolve_yolov8s_tar(std::filesystem::path(argv[1]));
     require(!path.empty(), "missing model archive; set SIMA_MODEL_TAR or install yolo_v8s");
 
@@ -90,7 +88,6 @@ int main(int argc, char** argv) {
             "unseeded model capacity must match the requested or default bounds");
 
     RunOptions run_options;
-    run_options.preset = RunPreset::Realtime;
 
     if (mode == "oversize_width" || mode == "oversize_height") {
       const bool width = mode == "oversize_width";
@@ -132,6 +129,16 @@ int main(int argc, char** argv) {
       check_runner(runner, seed, TensorList{image(1280, 720)}, TensorList{image(320, 240)},
                    TensorList{image(max_width, max_height)}, TensorList{image(640, max_height + 2)},
                    "height");
+    }
+    if (mode == "unseeded") {
+      options.processcvu.pre_run_target = "A65";
+      Model overridden(path, options);
+      Model::RouteOptions route;
+      route.processcvu.pre_run_target = "EV74";
+      auto runner = overridden.build(route, run_options);
+      require(!runner.run(TensorList{image(640, 640)}, 30000).empty(),
+              "a valid route override must supersede the unsupported model default");
+      runner.close();
     }
     std::cout << "[OK] seeded input capacity: " << mode << '\n';
     return 0;

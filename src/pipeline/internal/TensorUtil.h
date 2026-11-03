@@ -89,6 +89,9 @@ simaai::neat::Mapping map_dense_tensor_read(const simaai::neat::Tensor& tensor);
 // and certified framework terminal host carriers, selected per tensor span.
 void materialize_owned_output(Sample& sample, bool preserve_framework = false);
 
+// True when the tensor's storage is a copy made by materialize_owned_output.
+bool tensor_is_owned_copy(const simaai::neat::Tensor& tensor);
+
 // Copy a specific GstBuffer memory index into an owned simaai::neat::Tensor.
 simaai::neat::Tensor copy_tensor_from_sample_memory(const simaai::neat::Tensor& ref,
                                                     int memory_index, bool keep_holder = true);

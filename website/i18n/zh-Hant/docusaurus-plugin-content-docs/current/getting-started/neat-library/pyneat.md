@@ -5,7 +5,7 @@ sidebar_position: 4
 ---
 
 :::note 僅限於 DevKit，跳過 SDK 安裝。
-這些步驟會在 DevKit（或作為執行階段的主機）上設定 PyNeat。如果您正在 Neat SDK 內工作，請跳過此頁面。
+這些步驟會在 DevKit（或作為執行階段的主機）上設定 PyNeat。如果您正在 Palette SDK 內工作，請跳過此頁面。
 :::
 
 :::tip PyNeat 已經與 Neat Library 一起安裝好了。

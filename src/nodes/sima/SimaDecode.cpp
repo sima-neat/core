@@ -1,4 +1,5 @@
 #include "nodes/sima/SimaDecode.h"
+#include "nodes/sima/internal/JpegOutputFormat.h"
 
 #include "gst/GstHelpers.h"
 
@@ -97,7 +98,7 @@ void append_decoder_properties(std::ostringstream& ss, const SimaDecodeOptions& 
 
 } // namespace
 
-FormatTag jpeg_output_format(std::span<const std::uint8_t> jpeg) {
+FormatTag internal::jpeg_output_format(std::span<const std::uint8_t> jpeg) {
   if (jpeg.size() < 4 || jpeg[0] != 0xff || jpeg[1] != 0xd8) {
     throw std::invalid_argument("jpeg_output_format: data is not a JPEG");
   }

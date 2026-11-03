@@ -316,7 +316,7 @@ bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpo
     }
     enforce_public_sample_push_transferable(msg, "Run::push");
     Sample stamped = stamp_public_graph_ingress_sample(core, msg, endpoint_name);
-    if (pipeline_internal::env_bool("SIMA_SAMPLE_TIMING_DEBUG", false)) {
+    if (pipeline_internal::sample_timing_debug_enabled()) {
       std::fprintf(stderr,
                    "[SAMPLE_TIMING] graph_push_endpoint node=%zu port=%u has_port=%d "
                    "kind=%d frame_id=%lld pts_ns=%lld dts_ns=%lld duration_ns=%lld "

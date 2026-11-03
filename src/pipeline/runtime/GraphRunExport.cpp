@@ -10,6 +10,7 @@
 #include "nodes/io/RTSPInput.h"
 #include "nodes/io/StillImageInput.h"
 #include "nodes/io/UdpOutput.h"
+#include "nodes/io/internal/JpegRtpUdpSink.h"
 #include "nodes/sima/Cast.h"
 #include "nodes/sima/CastTess.h"
 #include "nodes/sima/Preproc.h"
@@ -686,6 +687,19 @@ json source_to_json(const std::shared_ptr<Node>& node) {
   return nullptr;
 }
 
+json udp_sink_to_json(const std::string& host, int port, bool sync, bool async) {
+  json j;
+  j["kind"] = "udp";
+  j["uri"] = "udp://" + host + ":" + std::to_string(port);
+  j["details"] = {
+      {"host", host},
+      {"port", port},
+      {"sync", sync},
+      {"async", async},
+  };
+  return j;
+}
+
 json sink_to_json(const std::shared_ptr<Node>& node) {
   if (!node) {
     return nullptr;
@@ -704,16 +718,11 @@ json sink_to_json(const std::shared_ptr<Node>& node) {
   }
   if (auto* udp = dynamic_cast<UdpOutput*>(node.get())) {
     const UdpOutputOptions& opt = udp->options();
-    json j;
-    j["kind"] = "udp";
-    j["uri"] = "udp://" + opt.host + ":" + std::to_string(opt.port);
-    j["details"] = {
-        {"host", opt.host},
-        {"port", opt.port},
-        {"sync", opt.sync},
-        {"async", opt.async},
-    };
-    return j;
+    return udp_sink_to_json(opt.host, opt.port, opt.sync, opt.async);
+  }
+  if (auto* jpeg = dynamic_cast<internal::JpegRtpUdpSink*>(node.get())) {
+    const internal::JpegRtpUdpSinkOptions& opt = jpeg->options();
+    return udp_sink_to_json(opt.host, opt.port, opt.sync, opt.async);
   }
   return nullptr;
 }

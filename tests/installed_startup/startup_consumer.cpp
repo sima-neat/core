@@ -1,6 +1,12 @@
 // Installed-header consumer. Cold startup/admission only: no pipeline, model,
 // allocator allocation, numerical submission, or device retirement claim.
 #include <gst/GstInit.h>
+#include <nodes/sima/Cast.h>
+#include <nodes/sima/CastTess.h>
+#include <nodes/sima/Preproc.h>
+#include <nodes/sima/Quant.h>
+#include <nodes/sima/QuantTess.h>
+#include <nodes/sima/Tess.h>
 #include <simaai/scheduler/client/kernel.h>
 #include <gst/gst.h>
 
@@ -25,6 +31,29 @@ namespace k = simaai::scheduler::client;
 void require(bool value, const std::string& message) {
   if (!value)
     throw std::runtime_error(message);
+}
+
+template <class Node, class Options> void check_public_node_options() {
+  // This consumer has no SIMA_NEAT_INTERNAL definition. Construction crosses
+  // into Core, which must see the same option and node layouts as the caller.
+  Options options;
+  options.element_name = "public_options";
+  options.num_buffers = 4;
+  Node node(options);
+  const auto& observed = node.options();
+  require(observed.element_name == options.element_name && observed.num_buffers == 4 &&
+              !observed.compiled_contract && !observed.model_lineage,
+          node.kind() + ": public options changed across the Core boundary");
+}
+
+void check_public_node_options() {
+  using namespace simaai::neat;
+  check_public_node_options<Cast, CastOptions>();
+  check_public_node_options<CastTess, CastTessOptions>();
+  check_public_node_options<Preproc, PreprocOptions>();
+  check_public_node_options<Quant, QuantOptions>();
+  check_public_node_options<QuantTess, QuantTessOptions>();
+  check_public_node_options<Tess, TessOptions>();
 }
 
 class IsolatedRegistry {
@@ -198,6 +227,7 @@ int main(int argc, char** argv) {
     require_factory("neatprocessmla", &registry.mla_provider());
     require_absent("neatobjectdecode");
     require_absent("neatprocesscvu");
+    check_public_node_options();
     check_real_boxdecode();
     std::cout << "[OK] public Core startup and real canonical BoxDecode admission without legacy "
                  "plugins\n";

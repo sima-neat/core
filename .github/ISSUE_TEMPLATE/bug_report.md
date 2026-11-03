@@ -28,7 +28,7 @@ Describe the expected result and how it differs from the observed behavior.
 - Neat Core version, commit, or package reference:
 - C++ or Python API; compiler or Python/pyneat version, if applicable:
 - Host/target OS and architecture; hardware platform, if applicable:
-- Neat SDK/platform version, if applicable:
+- Palette SDK/platform version, if applicable:
 - Scheduler and LLiMa package versions, if relevant and known:
 - GStreamer version, if relevant:
 

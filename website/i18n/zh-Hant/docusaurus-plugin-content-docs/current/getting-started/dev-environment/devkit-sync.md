@@ -8,11 +8,11 @@ sidebar_position: 3
 在安裝 SDK 時，設定 DevKit Sync 是可選的，而且安裝程式已經會提示您進行設定。請將此頁面作為參考，以了解 DevKit Sync 的運作方式，或者當您稍後想要將 SDK 配對變更為不同的 DevKit 時。
 :::
 
-DevKit Sync 將 Neat SDK與同一個網路上的 Modalix DevKit 連接起來。它會在主機、Neat SDK 容器和 DevKit 之間公開一個共享的工作空間，並且提供 `dk` 輔助工具，以便在硬體上執行透過 SDK 建立的指令。
+DevKit Sync 將 Palette SDK與同一個網路上的 Modalix DevKit 連接起來。它會在主機、Palette SDK 容器和 DevKit 之間公開一個共享的工作空間，並且提供 `dk` 輔助工具，以便在硬體上執行透過 SDK 建立的指令。
 
 ![主機、容器與 DevKit 之間的工作區對應關係](@site/../docs/images/elxr-sdk-workspaces.svg)
 
-相同的工作區會掛載到 Neat SDK 容器和 DevKit 中，作為 `/workspace`，因此，您可以從每個環境中查看建置成品、日誌、追蹤資料和模型檔案。
+相同的工作區會掛載到 Palette SDK 容器和 DevKit 中，作為 `/workspace`，因此，您可以從每個環境中查看建置成品、日誌、追蹤資料和模型檔案。
 
 ## 設定 DevKit Sync
 
@@ -24,7 +24,7 @@ sima-cli sdk setup --devkit {devkit-ip}
 
 設定期間：
 
-- 如果有多個 SDK 映像檔，請選擇已安裝的 Neat SDK %%release.sdk%% 映像檔。
+- 如果有多個 SDK 映像檔，請選擇已安裝的 Palette SDK %%release.sdk%% 映像檔。
 - 除非您需要不同的路徑，否則請接受預設的 `/workspace` DevKit 掛載路徑。
 - 當系統提示設定主機上的 NFS 伺服器時，請輸入主機管理員密碼。
 - 當系統提示時，請輸入 DevKit 使用者的憑證。預設使用者為 `sima`，預設密碼為 `edgeai`。
@@ -53,9 +53,9 @@ dk status
 
 ## 從 SDK 更新配對設定
 
-當 Neat SDK 已經安裝完成，且您需要配對不同的 DevKit，或是在您的 DevKit IP 位址變更後，需要更新配對資訊時，請按照以下步驟操作。
+當 Palette SDK 已經安裝完成，且您需要配對不同的 DevKit，或是在您的 DevKit IP 位址變更後，需要更新配對資訊時，請按照以下步驟操作。
 
-從 Neat SDK 容器內部執行：
+從 Palette SDK 容器內部執行：
 
 <ShellCommand prompt="sdk">
 source devkit.sh {devkit-ip}
@@ -71,32 +71,32 @@ source devkit.sh 192.168.91.221
 
 ## 在沒有 DevKit Sync 的情況下設定 SDK
 
-如果無法從 Neat SDK 主機存取 DevKit，您仍然可以設定 SDK 工作區，而無需進行配對：
+如果無法從 Palette SDK 主機存取 DevKit，您仍然可以設定 SDK 工作區，而無需進行配對：
 
 <ShellCommand prompt="host">
 sima-cli sdk setup
 </ShellCommand>
 
-您仍然可以在 Neat SDK 容器中建立二進位檔案，但您必須手動將它們傳輸到 DevKit 中進行測試。請確保 DevKit 正在執行相容的 Neat Library 版本。
+您仍然可以在 Palette SDK 容器中建立二進位檔案，但您必須手動將它們傳輸到 DevKit 中進行測試。請確保 DevKit 正在執行相容的 Neat Library 版本。
 
 ## 使用 DevKit Sync 進行檔案共享
 
 DevKit Sync 將三個環境連接起來：
 
 1. 主機
-2. Neat SDK 容器
+2. Palette SDK 容器
 3. DevKit
 
 `sima-cli sdk setup --devkit {devkit-ip}` 會設定 NFS，以便在所有三個環境中都能使用相同的工作區：
 
 - 主機工作區資料夾透過主機 NFS 進行匯出。
-- 此資料夾會掛載到 Neat SDK 容器中，作為 `/workspace`。
+- 此資料夾會掛載到 Palette SDK 容器中，作為 `/workspace`。
 - 相同內容會透過 NFS 出現在 DevKit 上，作為 `/workspace`。
 - 掛載的資料夾名稱預設為 `/workspace`，並且可以在設定期間進行更改。
 
 此設定提供一個直接的流程，用於處理建置後的成品：
 
-- 在 Neat SDK 中產生的成品，無需額外的部署步驟，即可立即在 DevKit 上查看。
+- 在 Palette SDK 中產生的成品，無需額外的部署步驟，即可立即在 DevKit 上查看。
 - 代理程式可以存取日誌、輸出、追蹤以及應用程式在 DevKit 上執行期間產生的其他暫時檔案。
 - 開發人員和代理程式可以從同一個工作區環境中檢視相同的檔案。
 

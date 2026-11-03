@@ -165,6 +165,31 @@ def validate_layering(root):
                 raise ValueError(f"{relative}: restricted runtime-config adapter include")
 
 
+def validate_descriptive_node_includes(root, sources):
+    """Follow repository headers, rejecting pipeline implementation dependencies.
+
+    Public value types (for example TensorDType) retain their installed paths.
+    This checks the BEV frontends introduced here, not unrelated legacy Nodes.
+    Actual compiler dependency files supplement this source-level guard.
+    """
+    pending = [root / source for source in sources]
+    visited = set()
+    include = re.compile(r'^\s*#\s*include\s*[<"]([^">]+)[">]', re.MULTILINE)
+    private_pipeline = (root / "src/pipeline").resolve()
+    while pending:
+        path = pending.pop().resolve()
+        if path.is_relative_to(private_pipeline):
+            raise ValueError(f"{path}: descriptive Node depends on pipeline implementation")
+        if path in visited:
+            continue
+        visited.add(path)
+        for name in include.findall(path.read_text()):
+            for candidate in (path.parent / name, root / "include" / name, root / "src" / name):
+                if candidate.is_file():
+                    pending.append(candidate)
+                    break
+
+
 def validate_renderer_startup(text):
     """Source contract only: device execution is qualified by the real fixture."""
     if '#include "gst/GstInit.h"' not in text:
@@ -185,6 +210,40 @@ def validate_renderer_startup(text):
 class KernelRunnerDefaultContract(unittest.TestCase):
     def test_unique_layering_boundaries(self):
         validate_layering(ROOT)
+
+    def test_bev_nodes_have_no_pipeline_implementation_dependency(self):
+        validate_descriptive_node_includes(ROOT, (
+            "src/nodes/sima/SimaVoxelize.cpp",
+            "src/nodes/sima/SimaPillarScatter.cpp",
+            "src/nodes/sima/SimaBEVPoolPlan.cpp",
+            "src/nodes/sima/SimaBEVPool.cpp",
+            "src/nodes/sima/internal/LidarBevKernelRequests.cpp",
+            "src/nodes/sima/internal/KernelNodeDescription.cpp",
+        ))
+
+    def test_descriptive_node_boundary_rejects_direct_and_indirect_includes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            node = root / "src/nodes/probe.cpp"
+            helper = root / "src/nodes/helper.h"
+            private = root / "src/pipeline/internal/Compile.h"
+            public = root / "include/pipeline/TensorTypes.h"
+            for path in (node, helper, private, public):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+            for header in ('"pipeline/internal/Compile.h"',
+                           '<pipeline/internal/Compile.h>',
+                           '"../pipeline/internal/Compile.h"'):
+                for indirect in (False, True):
+                    node.write_text('#include "helper.h"\n' if indirect else '#include ' + header)
+                    helper.write_text('#include ' + header)
+                    with self.subTest(header=header, indirect=indirect), self.assertRaisesRegex(
+                            ValueError, "descriptive Node depends on pipeline implementation"):
+                        validate_descriptive_node_includes(root, ("src/nodes/probe.cpp",))
+            # Public data vocabulary remains usable; include cycles terminate.
+            node.write_text('#include "helper.h"\n')
+            helper.write_text('#include "helper.h"\n#include "pipeline/TensorTypes.h"\n')
+            validate_descriptive_node_includes(root, ("src/nodes/probe.cpp",))
 
     def test_client_boundary_rejects_each_lower_header(self):
         with tempfile.TemporaryDirectory() as temporary:

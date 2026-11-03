@@ -11,6 +11,8 @@ SiMa.ai Neat Library 的版本資訊。
 
 ### 破壞性變更
 
+- 張量模式的 `Model::input_specs()` 現在保留 MPK 定義的秩，包括單元素批次軸（`[1,H,W,C]`）。批次為 1 的 HWC 輸入仍受支援，包括未提供初始輸入而呼叫 `build()` 之後。`compiled_batch_size()` 讀取 MLA 宣告的批次大小，不再從張量維度推斷。
+
 - 模型輸出現在呈現 MPK 中定義的最終邏輯形狀與佈局，而非中間裝置形狀。例如，ResNet-50 的批次展平輸出形狀為 `[1, 1000]`，邏輯佈局未知，而不是四維 HWC 形狀。其 Float32 張量格式可能是 `EVXX_FLOAT32` 而非 `FP32`。請依張量的 dtype 與形狀解讀數值，不要從後端格式標籤推斷邏輯軸。
 - Neat Library 的 C++ ABI 現在為 6，共用函式庫 SONAME 為 `libsima_neat.so.6`。張量現在攜帶特徵擷取器語意中繼資料，公開的 GenAI 請求／結果型別攜帶 ASR 任務、語言與探測中繼資料，`GraphLinkOptions` 包含即時接納限制，而 `BenchmarkOptions` 與 `BenchmarkReport` 新增了欄位。請重新建置 C++ 應用程式與外掛程式，並安裝相符的 Core 執行階段與開發套件。 `SimaArgMaxOptions` 新增了 `axis` 與 `keepdims`，`SimaArgMax` 的類別佈局也已變更。
 - 即時圖組合現在使用 `GraphLinkOptions`、`Graph::connect()` 和 `Graph::build()`。預覽版 API `RealtimeGraphLinkOptions`、`connect_realtime()`、`build_fused_realtime_sources()` / `build_fused_realtime_source()` 和 `RealtimeEveryFrameByStream` 已移除。包含 `realtime_every_frame_by_stream` 的已儲存圖必須使用受支援的原則重新建立；請參閱[連接即時片段](/develop-apps/development-workflow/graph/#connect-live-fragments)。
@@ -37,12 +39,13 @@ SiMa.ai Neat Library 的版本資訊。
 
 ### 圖的建構與驗證
 
+- 新的 `SimaVoxelize`、`SimaPillarScatter`、`SimaBEVPoolPlan` 與 `SimaBEVPool` 節點會以 INT8 或 BF16 張量在 A65 或 EV74 上執行 PointPillars 與 BEVFusion 的核心函式庫 LiDAR 運算以及相機轉 BEV 運算。每個節點都在您選擇的目標上執行，不會退回其他目標。請參閱 [LiDAR 與 BEV 核心節點](/reference/lidar_bev_kernel_nodes)。
 - 預設的公開 `Input` 直接連接至單一模型影像輸入時，現在會繼承其宣告的影像格式。明確的輸入選項仍具決定權；有歧義的連接必須使用明確選項。這會改變樣本的解讀方式，而不新增負載複製。
 - 圖組合現在會將一個節點物件視為一個邏輯頂點。重複插入與重疊的片段匯入會以不可分割的方式失敗，而重複呼叫 `connect()` 時會重複使用既有節點進行扇出。
 - 每個具體化的管線區段現在都會在 `build()` 期間驗證最終的 GStreamer 名稱，不需另外明確呼叫 `validate()`。名稱重複或遺漏時會以 `misconfig.pipeline_shape` 失敗，而不會產生截斷的管線。
 - 自訂片段現在會報告所有明確名稱，並連同宣告一起轉換具名 pad 參照。名稱衝突會直接遭到拒絕，不會自動重新命名。
 
-| 版本 | 相容的 Neat SDK | 備註 |
+| 版本 | 相容的 Palette SDK | 備註 |
 |---|---|---|
 | 0.6.0 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
 | 0.5.0 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |

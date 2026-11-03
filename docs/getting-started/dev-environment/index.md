@@ -1,10 +1,10 @@
 ---
-title: Neat SDK
-description: Set up the Neat SDK for fast, agent-ready Neat application development
+title: Palette SDK
+description: Set up the Palette SDK for fast, agent-ready Neat application development
 sidebar_position: 1
 ---
 
-The Neat SDK is the recommended host-side workspace for building large scale
+The Palette SDK is the recommended host-side workspace for building large scale
 Neat applications and validating them on a Modalix DevKit. It brings the build
 tools, model tools, hardware connection, and agent-ready source context into one
 containerized workflow.
@@ -101,7 +101,7 @@ See [GenAI setup](/genai-llima/setup/) for the full requirements.
 | Ubuntu 22.04 and 24.04 through Docker Engine | `x86_64` | Yes | Yes |
 | Windows 11 through WSL and Docker Engine | `x86_64` | Yes | Yes |
 | Ubuntu 22.04 and 24.04 through Docker Engine | `arm64` | Yes | Model Compiler 2.1.2 and later |
-| macOS 15.5 or above through Colima | `arm64` | Yes | Model Compiler 2.1.2 and later; install it inside the Neat SDK |
+| macOS 15.5 or above through Colima | `arm64` | Yes | Model Compiler 2.1.2 and later; install it inside the Palette SDK |
 
 :::note Architecture names
 `arm64` and `aarch64` are the same 64-bit Arm architecture — macOS reports it as

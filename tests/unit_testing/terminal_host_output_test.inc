@@ -279,8 +279,8 @@ void terminal_host_output_lifetime(bool dma_denied = false) {
   const auto acquired = gate->inflight();
   require(acquired > 0, "host loan was not acquired");
   if (dma_denied) {
-    // Separate device-denied case group. It does not qualify the positive
-    // Owned/mixed-copy assertions below, which remain mandatory with real DMA.
+    // Separate device-denied case group. Owned copies use system memory, so a
+    // DMA denial no longer makes them fail.
     for (std::size_t queued : {0U, 1U}) {
       auto item = output;
       internal::reset_tensor_io_stats();
@@ -289,34 +289,14 @@ void terminal_host_output_lifetime(bool dma_denied = false) {
                   internal::snapshot_tensor_io_stats().tensor_copy_count == 0,
               "host-only pressure must not allocate DMA");
     }
-    auto mixed_negative = mixed;
-    bool mixed_rejected = false;
-    try {
-      neat::graph::maybe_force_copy_for_backpressure(mixed_negative, 1, "mixed-host-test", 0, true);
-    } catch (const std::runtime_error& failure) {
-      mixed_rejected =
-          std::string_view(failure.what()).starts_with("Owned output allocation failed:");
-    }
-    require(
-        mixed_rejected && mixed_negative.owned == mixed.owned &&
-            mixed_negative.tensors.front().storage == tensor.storage &&
-            mixed_negative.tensors.back().storage == foreign_output.tensors.front().storage &&
-            internal::tensor_has_certified_terminal_host_memory(mixed_negative.tensors.front()) &&
-            gate->inflight() == acquired && lane->gate->inflight() == 1,
-        "denied mixed pressure copy changed selected host/foreign storage or credits");
-    auto owned_negative = output;
-    bool rejected = false;
-    try {
-      internal::materialize_owned_output(owned_negative, false);
-    } catch (const std::runtime_error& error) {
-      rejected = std::string_view(error.what()).starts_with("Owned output allocation failed:");
-    }
-    require(rejected && !owned_negative.owned &&
-                internal::sample_has_certified_terminal_host_memory(owned_negative),
-            "denied Owned allocation must fail without a host fallback");
     internal::release_realtime_frame_credits_for_sample(mixed, "test-denied-explicit-pull");
     require(lane->gate->inflight() == 0 && lane->released_by_output.load() == 1,
             "device-denied fixture credit release");
+    auto owned = output;
+    internal::materialize_owned_output(owned, false);
+    require(owned.owned && !internal::tensor_has_dmabuf_memory(owned.tensors.front()),
+            "Owned must copy into system memory while DMA is denied");
+    oracle(owned.tensors.front(), "DMA-denied Owned");
   } else {
     // Both queue sizes exercise the same graph queue helper without changing its threshold.
     for (std::size_t queued : {0U, 1U}) {
@@ -340,7 +320,7 @@ void terminal_host_output_lifetime(bool dma_denied = false) {
     internal::materialize_owned_output(mixed, true);
     require(!mixed.owned && internal::snapshot_tensor_io_stats().tensor_copy_count == 1 &&
                 internal::tensor_has_certified_terminal_host_memory(mixed.tensors.front()) &&
-                internal::tensor_has_dmabuf_memory(mixed.tensors.back()),
+                !internal::tensor_has_dmabuf_memory(mixed.tensors.back()),
             "mixed Auto must retain host and copy only foreign CPU");
     require(gate->inflight() == acquired && lane->gate->inflight() == 1 &&
                 lane->released_by_output.load() == 0,
@@ -351,9 +331,9 @@ void terminal_host_output_lifetime(bool dma_denied = false) {
             "registered mixed output credit did not release once");
     auto owned = output;
     internal::materialize_owned_output(owned, false);
-    require(owned.owned && internal::tensor_has_dmabuf_memory(owned.tensors.front()) &&
+    require(owned.owned && !internal::tensor_has_dmabuf_memory(owned.tensors.front()) &&
                 !internal::tensor_has_certified_terminal_host_memory(owned.tensors.front()),
-            "Owned did not allocate independent DMA storage");
+            "Owned did not copy into system memory");
     oracle(owned.tensors.front(), "explicit Owned");
   }
   // Exercise the actual asynchronous Run callback with real host output. A

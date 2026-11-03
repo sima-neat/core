@@ -424,7 +424,7 @@ void run_owned_sync(const std::string& model_path,
       auto output = graph.run(simaai::neat::Sample{access_units[frame]}, options);
       auto sample = output.front();
       const std::string context = "explicit Owned sync frame " + std::to_string(frame);
-      sima_test::require_valid_dma_owned_resnet50_output(sample, context);
+      sima_test::require_valid_owned_resnet50_output(sample, context);
       ownership.verify(sample, context);
       scores.push_back(
           simaai::neat::tensors_from_sample(sample, true).front().copy_payload_bytes());
@@ -445,7 +445,7 @@ void run_owned_sync(const std::string& model_path,
   ownership.require_released(access_units.size(), "owned_sync");
   for (std::size_t frame = 0; frame < retained.size(); ++frame) {
     const std::string context = "retained Owned sync frame " + std::to_string(frame);
-    sima_test::require_valid_dma_owned_resnet50_output(retained[frame], context);
+    sima_test::require_valid_owned_resnet50_output(retained[frame], context);
     require(simaai::neat::tensors_from_sample(retained[frame], true).front().copy_payload_bytes() ==
                 scores[frame],
             context + ": scores changed after producer stop/destruction");

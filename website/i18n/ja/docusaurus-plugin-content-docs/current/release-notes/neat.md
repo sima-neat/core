@@ -11,6 +11,8 @@ SiMa.ai Neat Library のリリースノート。
 
 ### 互換性のない変更
 
+- テンソルモードの `Model::input_specs()` は、サイズ 1 のバッチ軸（`[1,H,W,C]`）を含め、MPK に記述されたランクを保持するようになりました。シード入力なしの `build()` の後も、バッチ 1 の HWC 入力を引き続き受け付けます。`compiled_batch_size()` はテンソル次元から推測せず、MLA に宣言されたバッチサイズを読み取ります。
+
 - モデル出力は、デバイス側の中間形状ではなく、MPK に記述された最終的な論理形状とレイアウトを公開します。たとえば、ResNet-50 のバッチ平坦化出力は、4 次元 HWC 形状ではなく、形状 `[1, 1000]` で論理レイアウトは不明です。Float32 テンソルの形式は `FP32` ではなく `EVXX_FLOAT32` の場合があります。値の解釈にはテンソルのデータ型と形状を使用し、バックエンドの形式タグから論理軸を推定しないでください。
 - Neat Library の C++ ABI は 6、共有ライブラリの SONAME は `libsima_neat.so.6` です。Tensor は特徴抽出器の意味メタデータを保持し、公開 GenAI リクエスト／結果型は ASR タスク、言語、プローブのメタデータを保持します。`GraphLinkOptions` にはリアルタイム受け入れの制限が含まれ、`BenchmarkOptions` と `BenchmarkReport` にはフィールドが追加されました。C++ アプリケーションとプラグインを再ビルドし、対応する Core のランタイムと開発パッケージをインストールしてください。 `SimaArgMaxOptions` に `axis` と `keepdims` が追加され、`SimaArgMax` のクラスレイアウトも変更されました。
 - リアルタイムのグラフ合成では、`GraphLinkOptions`、`Graph::connect()`、および`Graph::build()`が使用されます。プレビュー用の`RealtimeGraphLinkOptions`、`connect_realtime()`、`build_fused_realtime_sources()`/ `build_fused_realtime_source()`、および`RealtimeEveryFrameByStream` APIは削除されました。`realtime_every_frame_by_stream`を含む保存されたグラフは、サポートされているポリシーを使用して再作成する必要があります。詳細は[ライブフラグメントを接続する](/develop-apps/development-workflow/graph/#connect-live-fragments)を参照してください。
@@ -37,12 +39,13 @@ SiMa.ai Neat Library のリリースノート。
 
 ### グラフの作成と検証
 
+- 新しい `SimaVoxelize`、`SimaPillarScatter`、`SimaBEVPoolPlan`、`SimaBEVPool` ノードは、PointPillars と BEVFusion のカーネルライブラリによる LiDAR 演算とカメラから BEV への演算を、INT8 または BF16 のテンソルで A65 または EV74 上で実行します。各ノードは選択したターゲット上で実行され、フォールバックはありません。[LiDAR と BEV のカーネルノード](/reference/lidar_bev_kernel_nodes)を参照してください。
 - 1 つのモデル画像入力に直接接続されたデフォルトの公開 `Input` は、その入力が宣言する画像形式を継承します。明示的な入力オプションが優先されます。曖昧な接続には明示的なオプションが必要です。これはサンプルの解釈を変更しますが、ペイロードのコピーは追加しません。
 - グラフの構成において、現在は1つのノードオブジェクトを1つの論理的な頂点として扱います。重複した挿入や重複するフラグメントのインポートはアトミックに失敗し、繰り返し行われる `connect()` 呼び出しでは、既存のノードを再利用してファンアウトを行います。
 - 実体化されたパイプラインセグメントは、`build()` の際に最終的な GStreamer 名を検証するようになりました。明示的な `validate()` 呼び出しは不要です。重複または欠落した名前は、切り捨てられたパイプラインを生成する代わりに、`misconfig.pipeline_shape` でエラーとなります。
 - カスタムフラグメントは、現在はすべての明示的な名前と、名前付きパッド参照を宣言とともに報告します。名前の衝突が発生した場合、自動的に名前が変更されるのではなく、拒否されます。
 
-| リリース | 互換性のある Neat SDK | 備考 |
+| リリース | 互換性のある Palette SDK | 備考 |
 |---|---|---|
 | 0.6.0 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
 | 0.5.0 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |

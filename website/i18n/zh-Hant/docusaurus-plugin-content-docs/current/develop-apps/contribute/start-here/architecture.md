@@ -46,7 +46,7 @@ Core `0.6.0` 包含此檔案擁有權移轉。請一併升級相符的 Core/Sche
 「Neat」一詞用於描述兩個相關但獨立的概念：
 
 - **Neat Library：** 本儲存庫中的 C++/Python 函式庫和執行階段。它載入模型套件、組成管線、驗證合約、在 Modalix 硬體上執行，並公開 API。
-- **Neat SDK / 環境：** 圍繞框架的容器化開發工作流程，包括 DevKit Sync、共享工作區和代理工具。
+- **Palette SDK / 環境：** 圍繞框架的容器化開發工作流程，包括 DevKit Sync、共享工作區和代理工具。
 
 在修改此儲存庫時，請針對支援人和代理的框架屬性進行最佳化：明確的 API、確定性行為、結構化的診斷、嚴格的驗證和穩定的公共合約。
 
@@ -300,7 +300,7 @@ model archive on disk -> Model -> Graph fragments/Nodes -> Graph -> Run
 - **MPK 合約是模型的事實來源。** 核心路由、dtype、形狀、量化和階段決策必須來自 `mpk.json` / `*_mpk.json`。每個階段的 JSON 檔案都是外掛程式專用的。
 - **Detess 邏輯秩與執行階段幾何分開處理。** 保留 MPK 撰寫的 `frame_shape`；只有位元組範圍能識別唯一幾何時，才接受秩 2 的 NC/HW 解釋。融合 DetessDequant 透過同一個逐影格合約攜帶兩個描述元：tile 秩決定核心秩，前導批次維度維持分離，語意軸、位元組範圍、步幅與明確的分塊儲存編碼仍具權威。Core 透過 Scheduler 轉送這些標準具型別合約；Kernels 驗證所選操作與編碼。不要在 DSO 邊界重建 ProcessCVU 預備請求。
 - **數值後端原則只有一個權威。** 已檢查能力擁有支援目標與 AUTO 偏好。明確指定的階段或工作階段目標只能在要求且受支援的後端執行，否則失敗；後續依角色覆寫不得違背此決定。
-- **公開 API 應保持穩定。** `include/*` 下的公開標頭會安裝並受到支援。優先採用增量變更和棄用路徑，避免破壞簽章的變更。
+- **公開 API 應保持穩定。** `include/*` 下的公開標頭會安裝並受到支援。優先採用增量變更和棄用路徑，避免破壞簽章的變更。控制內部可見性的定義不得改變公開物件的記憶體布局；不透明的實作控制代碼必須無條件保留。
 - **並行性必須受到限制且可觀察。** 串流執行緒的工作應盡可能輕量；探測端診斷需要原子操作或等效的執行緒安全處理；關閉時不應發生死鎖。
 
 ---
@@ -453,7 +453,8 @@ Scheduler 在準備階段依此關係檢查每個輸出綁定，包括 dtype、�
 
 `FrameSpan` 位移屬於個別配置與緩衝群組，不是整張圖的全域位址。不同群組中的相同位移不會重疊。BoxDecode 和 ArgMax 將輸出頭相對張量位移與儲存位移分開。直接記憶體輸入與執行階段實體繫結輸入維持原有定址方式。
 
-Core 將 Preproc、轉換與視覺階段，包括 ArgMax、BoxDecode 與 SuperPoint，降階為
+Core 將 Preproc、轉換與視覺階段，包括 ArgMax、BoxDecode、SuperPoint 與 LiDAR/BEV 核心節點（SimaVoxelize、SimaPillarScatter、
+SimaBEVPoolPlan 與 SimaBEVPool），降階為
 標準要求與明確張量埠對應。Scheduler 的一般化張量階段引擎擁有 GStreamer 綁定與
 發布；Runner 擁有相依、非同步執行與執行期間緩衝區生命週期。
 Core 從上游分配契約或輸入儲存空間匯入載體容量，絕不只根據邏輯形狀推斷。
@@ -463,6 +464,8 @@ BoxDecode 與 SuperPoint 數值輸出保持私用；相依的 Core 線路序列�
 不可變的核心配方會在具型別節點契約轉換後，保留生產者定義的張量傳輸格式。冷路徑發布會將此格式套用至新建與快取的 caps，絕不從核心名稱或位元組形狀推斷語意。公開 OBB 張量維持為具有 `BBOX_OBB_V1` 語意的密集一維 UInt8。
 
 InputStream 會在發布 Sample 之前，將定義的格式投射至每個傳回的張量，包括自有複本與快取中繼資料路徑。因此，原始 `Sample.tensors` 與 `TensorList` 便利 API 具有相同的偵測語意。
+
+對於已驗證的 MLA 圖塊數值輸出，Core 僅在形狀和 dtype 與已驗證的產生端一致時，才將實體配置附加到各邏輯輸出。InputStream 會在初始化解碼快取時解析這些不可變的 caps 中繼資料，然後保留在快取的 Tensor 範本中。原始位元組別名，以及位元組排列已符合密集 NHWC 的 INT8 儲存格圖塊，均維持不變。`TessSpec::storage_bytes` 區分明確的圖塊儲存與舊有僅標示格式的註記。`copy_payload_bytes()` 和 `clone()` 保留儲存位元組、填補與配置；密集複製、具型別存取與 DLPack 則拒絕明確的圖塊儲存。支援此配置的圖消費端會接收已驗證的配置，不會執行隱藏轉換。
 
 影像尺寸變更會在綁定前選擇不可變且資源相容的已準備 BoxDecode 變體，
 不會修改在途影格使用中的操作。RCNN 第 1 階段保留逐層 top-K 計數加 FP16 提案群組。
@@ -563,6 +566,14 @@ SDK／程式庫憑證與實際連結檢查優先於套件寬鬆的最低版本�
 每個節點都必須產生：
 - `backend_fragment(index)` -- 在特定索引處，此節點的 GStreamer 片段
 - `element_names(index)` -- 此節點所擁有的確定性元素名稱（用於診斷和強制執行）
+
+LiDAR/BEV 節點將選項、埠描述與無副作用的數值要求建構保留在 `nodes/`。
+既有的 `NodeContractProvider` 編譯掛鉤則在
+`pipeline/internal/sima/LidarBevNodeContracts.cpp` 中實作。此編譯器將運算名稱傳給
+Scheduler 既有的 `check_kernel(...)` API，並使用一般的階段執行配方與 `FrameLayout`
+執行路徑。`StaticSpecBuilders.cpp` 與 `SimaArgMax` 共用僅處理中繼資料的輸入投影及
+直接輸入繫結；這些輔助函式不會準備或排程核心。LiDAR/BEV 節點檔案不會包含管線
+私有實作標頭。此分工不會新增逐影格工作或承載資料複製。
 
 獨立的 `Cast` 將具型別檢視編譯成由 Kernels 檢查的標準 `cast` 要求。邏輯身分、步幅與張量相對位移保持明確。語意編譯在配置前調整有序 MLA 輸入埠；呈現過程保留已檢查合約。執行容量預設為非同步 4、同步 1，並以獨立輸出載體支援保留。子集或重新排序的 TensorSet 使用保留父物件的中繼資料封套，不修改已持有的發布資訊與承載資料。
 
@@ -723,7 +734,7 @@ Core 透過已安裝的 Scheduler 用戶端傳遞不可變的 `StageRequest`。�
 （或 `Auto` 搭配 `use_simaai_pool=false`）保留借用的主機檢視；明確的 DMS 放置不變。
 這不會變更公開 `from_cv_mat_view()` API，也不會讓借用的主機儲存空間變成裝置相容。
 
-`Tensor` 裝置傳輸明確執行快取同步複製。共用輸入保留各 DMA-BUF、已檢查檢視與產生端借用；配置 CPU 欄位不會複製 DMA 同層欄位。`DirectMemory`、`PhysicalBinding` 與 `KnownFrameSpan` 是輸入表示方式。重用依據解析後的儲存身分及輸入配置群組，包含別名；標籤本身不授予擁有權。
+`Tensor` 跨裝置複製使用獨立儲存空間存放選取的檢視，並同步快取。共用輸入保留各 DMA-BUF、已檢查檢視與產生端借用；配置 CPU 欄位不會複製 DMA 同層欄位。`DirectMemory`、`PhysicalBinding` 與 `KnownFrameSpan` 是輸入表示方式。重用依據解析後的儲存身分及輸入配置群組，包含別名；標籤本身不授予擁有權。
 
 不實體化且採元件形式的 Pack，會在載體配置之前確立生產端配置。
 可寫入的生產端輸出占據共用父載體中的最終元件範圍；
@@ -751,7 +762,9 @@ ProcessMLA 在每個方向仍只提交一個實體連接埠；
 多個 MLA OFM 可以是同一配置的邏輯檢視。共用配置的描述元保留父區段；邏輯／後端名稱維持埠身分，配置內範圍維持各檢視。發布資訊描述最終 `FrameLayout`，不再重建封裝輸出。
 
 當執行檢視保留相同的定址位元組時，Core 可以簡化內部轉換描述元中的單元素批次維度。
-模型張量形狀、批次路由與公開 API 維持不變。
+張量的 `Model::input_specs()` 與 `output_specs()` 保留 MPK 定義的秩，包括批次為 1 的軸。
+批次為 1 的模型仍接受省略批次軸的 HWC 輸入；影像前處理維持動態影像合約。
+`Model::compiled_batch_size()` 讀取 MLA 宣告的批次大小；張量的秩不能用來判定批次軸。
 
 ##### 直接執行階段執行
 
@@ -1019,17 +1032,19 @@ BoxDecode 執行個體各有獨立有界幾何快取，因此準備另一個階�
 
 在公開輸出上，`OutputMemory::Auto` 在同步與非同步模式都會保留實際的標準 DMA-BUF 負載，以及經框架認證的僅限 CPU 終端輸出集區。其他以 CPU 記憶體承載的負載仍遵循預設組態／模式原則。明確的 `Owned` 與僅適用 Auto 的自有輸出環境覆寫保留其複製語意。混合輸出封套依每個選定負載決定原則，而不是依其他欄位的記憶體型別。DMA 辨識使用 `GstDmaBufMemory`。辨識僅限 CPU 的集區時，Runtime 必須認證選定載體、配置世代與範圍；僅有主機配置器名稱或保留的同層欄位並不足夠。僅限 CPU 的儲存仍是 CPU 儲存，不是 DMA-BUF。
 
-`OutputMemory::Owned` 在邏輯輸出投影後，將公開輸出具體化至獨立的 CMA DMA-BUF
-儲存空間。每次拉取中，各實體載體只複製一次，保留輸出頭位移、填補步幅、平面與
+`OutputMemory::Owned` 在邏輯輸出投影後，將公開輸出具體化至由 Core
+配置並包裝為 GStreamer 記憶體的獨立系統記憶體。每次拉取中，各實體載體只複製一次，保留輸出頭位移、填補步幅、平面與
 數值中繼資料。僅具體化所選輸出需要的載體。混合 Auto 輸出中，複製未保留的 CPU 記憶體輸出頭，不會複製其保留的框架同層輸出頭。複製規劃與別名去重僅屬於該次輸出操作；
 分配身分與已檢查檢視範圍都必須相符，才能共用副本。複製後的封套僅含選定載體。
 其 `memory_index` 選擇器與區段表會一起重新對應；`physical_index` 與實體位移仍識別
 產生階段的契約，而非目的槽位順序。新載體不保留產生端集區借用或父緩衝區中繼資料。
-其 `StorageKind::GstSample` 識別 GStreamer 載體，而非借用的集區；`Sample::owned`
-區分獨立輸出與保留的產生端輸出。Runtime 擁有分配與 CPU 快取同步；Core 擁有
-Sample/Tensor 投影。重新進入另一個圖時會保留這些載體，不做另一份暫存複製。
-`Auto`/`ZeroCopy` 保留相容的 DMA-BUF 輸出；明確的 `.cpu()` 與 `.clone()` 仍產生
-主機記憶體副本。分配錯誤不會選擇隱藏的 CPU 記憶體備援。
+其 `StorageKind::GstSample` 識別 GStreamer 載體，而非借用的集區。`Sample::owned`
+只表示沒有任何 Run 的產生端借出該儲存空間；應用程式包裝的集區緩衝區或裝置張量也帶有此標記。
+因此公開拉取會依儲存空間辨識 Owned 副本，並複製其他所有以 GStreamer 為基礎的張量。Core 擁有分配與 Sample/Tensor 投影。Owned 輸出是
+應用程式的 CPU 記憶體，絕不使用 CMA，因此保留的輸出不會耗盡裝置記憶體。裝置可見的
+輸入會像拒絕其他 CPU 張量一樣拒絕它們；呼叫端應使用 `ZeroCopy` 或明確的
+`Tensor::to(...)` 複製。`Auto`/`ZeroCopy` 保留相容的 DMA-BUF 輸出。`.clone()`
+會產生主機記憶體副本；`.cpu()` 只複製無法在 CPU 上對應的張量，Owned 輸出則原樣傳回。分配錯誤會成為拉取錯誤。
 
 Core 只能在明確識別且具有型別的公開終端，為新的原生張量區域選擇僅限 CPU 的集區。所有成員與實體區域都必須僅限 CPU，且不得有別名、匯出要求或下游裝置消費者。不會重新解讀明確指定的配置要求。Scheduler 會獨立驗證停止中的終端連線，並擁有容量受限的集區。選定的僅限 CPU 配置若失敗，會回報錯誤，不會退回其他儲存領域。保留的張量與開啟的映射可在 Run 關閉後繼續維持集區世代的存續；最後一個公開借用釋放前，生產者額度會持續保留。DMA 配置既有的存取完成處理與快取同步不變。
 
@@ -1209,6 +1224,10 @@ Caps 協商是自動的；失敗會在早期（驗證/預滾動）或在執行�
 `CameraInput` 會在其相機 caps 之後，並在任何即時佇列之前，立即放置 `neatcamerabridge`。 Neat 從不擁有相機記憶體：任何實體連續的 DMA-BUF 都是有效的 EV74 輸入，且當其來自 CMA 堆積或相機的連續捕獲分配器（`videobuf2_dma_contig`）時，Neat 的 EV74 准入檢查會予以接受。 在協商期間，橋接器只會透過上游的 `GST_QUERY_ALLOCATION` 請求 `GstVideoMeta`；`libcamerasrc` 會保留其自身的捕獲緩衝區。 橋接器會將各平面在單一 DMA-BUF 中緊密相連的每個幀作為單一記憶體轉送，並保留生產端的緩衝區，直到每個消費端將其釋放。 嚴格模式會拒絕任何無法以此方式轉送的幀；以 CPU 複製到 CMA DMA-BUF 仍然是一種明確的相容性後備方案。
 
 面向應用程式的捕獲深度與核心的私有 CSI 到 ISP RAW 傳輸環以及後續的 GStreamer 佇列都是獨立的。 可選的 `capture_buffer_count` 參數，用於 `CameraInputWithCaptureBuffers`，用於控制在 ISP 輸出、libcamera 和應用程式之間保留的緩衝區（在 Platform 3.0 上，`libcamerasrc` 沒有 `buffer-count`，因此它必須保持為 `0`）。 `queue_depth` 和 `leaky_queue` 分別控制下游延遲和幀丟棄策略。 可選的相容性複製池會按需增長至最多 128 個緩衝區，並且不受該佇列深度的限制，因此，漏洩佇列可以應用其丟棄策略，而無需首先使上游橋接器停頓。
+
+`nodes::UsbCameraInput` 由 `v4l2src io-mode=dmabuf-import`、JPEG capsfilter、`neatcapturepool`、會捨棄驅動程式標示為損毀之影格的 `identity`，以及可選的佇列組成。`neatcapturepool` 以 CMA DMA-BUF 回應攝影機的配置查詢，因此攝影機會把每個已編碼的 JPEG 影格擷取到 `neatdecoder` 就地讀取的記憶體中，從擷取到解碼之間不會複製。這些影格可同時供給 `VideoSender` 直通（MJPEG）與 `SimaDecode`（MJPEG）；解碼器會解碼為攝影機原生的排列方式，4:2:0 為 NV12，4:2:2 為 NV16。
+
+若該工廠已註冊，MJPEG `VideoSender` 僅由內部 `JpegRtpUdpSink`（`neatjpegudpsink`）組成，否則由 `JpegParse`、`JpegPacketize`（`rtpjpegpay`）與 `UdpOutput` 組成。`VideoSender` 會在建構圖時檢查登錄表。此輸出端會自行讀取每個影格的 JPEG 標頭，但其 caps 需要寬度與高度，因此 `JpegRtpUdpSink` 是依輸入規格特化的節點：規格帶有尺寸的輸入只會產生該輸出端本身，其他輸入則在節點的 Graph 片段中保留 `jpegparse`。以任一輸出端結尾的區段會複製其已編碼輸入，而不是保留產生端的擷取緩衝區與借用。
 
 ### 拆解
 
