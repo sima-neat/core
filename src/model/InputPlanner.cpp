@@ -106,7 +106,6 @@ bool resolve_step_enabled(AutoFlag flag, bool default_when_auto) {
   return default_when_auto;
 }
 
-constexpr char kModelNormalizeAdvisoryPrefix[] = "preprocess.normalize=Auto";
 constexpr char kModelNormalizeAmbiguousMessage[] =
     "preprocess.normalize=Auto left Off: MPK ingress tensors declare different or partially "
     "missing input_range values, so the image ingress range is ambiguous; set "
@@ -114,11 +113,38 @@ constexpr char kModelNormalizeAmbiguousMessage[] =
 
 std::string model_normalize_resolved_message(const NormalizeSpec& normalize) {
   std::ostringstream msg;
-  msg << kModelNormalizeAdvisoryPrefix
-      << " resolved On from model input_range (mean=" << normalize.mean[0]
-      << ", stddev=" << normalize.stddev[0]
+  msg << "preprocess.normalize=Auto resolved On from model input_range (mean="
+      << normalize.mean[0] << ", stddev=" << normalize.stddev[0]
       << "); set preprocess.normalize.enable=Off to feed raw pixels.";
   return msg.str();
+}
+
+bool input_range_is_valid(const std::vector<double>& input_range) {
+  return input_range.size() == 2U && std::isfinite(input_range[0]) &&
+         std::isfinite(input_range[1]) && input_range[1] > input_range[0];
+}
+
+std::string input_range_text(const std::vector<double>& input_range) {
+  std::ostringstream msg;
+  msg << "[";
+  for (std::size_t i = 0; i < input_range.size(); ++i) {
+    msg << (i ? ", " : "") << input_range[i];
+  }
+  msg << "]";
+  return msg.str();
+}
+
+RequirementIssue invalid_model_input_range_issue(const std::string& input_range) {
+  RequirementIssue issue;
+  issue.op = RequiredPreprocessOp::Normalize;
+  issue.severity = RequirementSeverity::Warning;
+  issue.source = RequirementSource::MlaContract;
+  issue.code = "PREPROC_REQ_WARN_MODEL_INPUT_RANGE_INVALID";
+  issue.reason = "MPK ingress input_range " + input_range +
+                 " is not a finite [low, high] range with high > low, so normalize=Auto cannot "
+                 "derive stats from it and stays Off.";
+  issue.fix_hint = "Fix input_range in the model pack, or set preprocess.normalize explicitly.";
+  return issue;
 }
 
 bool derive_unit_pixel_normalization_from_input_range(const std::vector<double>& input_range,
@@ -577,21 +603,32 @@ PreprocessCapabilities inspect_preprocess_capabilities(const ModelPack& pack) {
   std::vector<std::vector<double>> ingress_ranges;
   ingress_ranges.reserve(contract.ingress_tensors.size());
   for (const auto& ingress : contract.ingress_tensors) {
+    // A missing input_range declares nothing; a declared one that cannot describe a numeric
+    // domain is a contract defect and must be reported rather than treated as missing.
+    if (!ingress.input_range.empty() && !input_range_is_valid(ingress.input_range) &&
+        out.invalid_model_input_range.empty()) {
+      out.invalid_model_input_range = input_range_text(ingress.input_range);
+    }
     ingress_ranges.push_back(ingress.input_range);
   }
   const std::vector<double> shared_range =
-      select_shared_input_range(ingress_ranges, &out.model_input_range_ambiguous);
+      out.invalid_model_input_range.empty()
+          ? select_shared_input_range(ingress_ranges, &out.model_input_range_ambiguous)
+          : std::vector<double>{};
   std::array<float, 3> mean{};
   std::array<float, 3> stddev{};
-  if (!shared_range.empty() &&
-      derive_unit_pixel_normalization_from_input_range(shared_range, &mean, &stddev)) {
-    // input_range [0, 255] maps every pixel onto itself: no normalization needed.
-    const bool identity =
-        std::fabs(mean[0]) < 1e-6f && std::fabs(stddev[0] * 255.0f - 1.0f) < 1e-4f;
-    if (!identity) {
-      out.has_model_input_normalization = true;
-      out.model_input_mean = mean;
-      out.model_input_stddev = stddev;
+  if (!shared_range.empty()) {
+    if (!derive_unit_pixel_normalization_from_input_range(shared_range, &mean, &stddev)) {
+      out.invalid_model_input_range = input_range_text(shared_range);
+    } else {
+      // input_range [0, 255] maps every pixel onto itself: no normalization needed.
+      const bool identity =
+          std::fabs(mean[0]) < 1e-6f && std::fabs(stddev[0] * 255.0f - 1.0f) < 1e-4f;
+      if (!identity) {
+        out.has_model_input_normalization = true;
+        out.model_input_mean = mean;
+        out.model_input_stddev = stddev;
+      }
     }
   }
   const auto* mla_stage = pipeline_internal::sima::get_first_mla_stage_io_contract(contract);
@@ -684,7 +721,8 @@ PreprocessCapabilities inspect_preprocess_capabilities(const ModelPack& pack) {
 }
 
 PreprocessPlannerResult plan_preprocess(const Model::Options& options,
-                                        const PreprocessCapabilities& capabilities) {
+                                        const PreprocessCapabilities& capabilities,
+                                        const PreprocessRouteContext& route) {
   PreprocessPlannerResult out;
   out.resolved_plan.requested = options.preprocess;
   PreprocessOptions effective = options.preprocess;
@@ -830,23 +868,31 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
   }
 
   // MPK input_range is the numeric domain the MLA expects at ingress, while image
-  // input reaches the CVU preproc as [0, 255] pixels.  When normalize is left at
-  // Auto with no stats or preset, follow the model contract instead of feeding raw
-  // pixels; explicit Off still wins.  See "Preprocess normalization from MPK
-  // input_range" in docs/develop-apps/contribute/start-here/architecture.md.
+  // input reaches the CVU preproc as [0, 255] pixels.  When the selected route feeds
+  // images through preproc and normalize is left at Auto with no stats or preset
+  // (from simple options or a transform list), follow the model contract instead of
+  // feeding raw pixels; explicit Off still wins.  Resolving here keeps enabled, the
+  // graph family and the normalize stats consistent.  See "Preprocess normalization
+  // from MPK input_range" in docs/develop-apps/contribute/start-here/architecture.md.
   const bool normalize_left_auto =
       effective.normalize.enable == AutoFlag::Auto && !normalize_requested_or_preset;
-  const bool image_preproc_route = kind == InputKind::Image && effective.enable != AutoFlag::Off &&
-                                   (enabled || effective.kind == InputKind::Image);
-  if (normalize_left_auto && image_preproc_route && capabilities.has_model_input_normalization) {
-    enabled = true;
-    normalize_enabled = true;
-    effective.normalize.mean = capabilities.model_input_mean;
-    effective.normalize.stddev = capabilities.model_input_stddev;
-    out.resolved_plan.warnings.push_back(model_normalize_resolved_message(effective.normalize));
-  } else if (normalize_left_auto && image_preproc_route &&
-             capabilities.model_input_range_ambiguous) {
-    out.resolved_plan.warnings.push_back(kModelNormalizeAmbiguousMessage);
+  const bool image_preproc_route = route.image_preproc_selected && kind == InputKind::Image &&
+                                   options.preprocess.enable != AutoFlag::Off;
+  if (normalize_left_auto && image_preproc_route) {
+    if (capabilities.has_model_input_normalization) {
+      enabled = true;
+      normalize_enabled = true;
+      effective.normalize.mean = capabilities.model_input_mean;
+      effective.normalize.stddev = capabilities.model_input_stddev;
+      out.resolved_plan.warnings.push_back(model_normalize_resolved_message(effective.normalize));
+    } else if (!capabilities.invalid_model_input_range.empty()) {
+      const RequirementIssue issue =
+          invalid_model_input_range_issue(capabilities.invalid_model_input_range);
+      out.requirement_issues.push_back(issue);
+      out.resolved_plan.warnings.push_back(requirement_issue_message(issue));
+    } else if (capabilities.model_input_range_ambiguous) {
+      out.resolved_plan.warnings.push_back(kModelNormalizeAmbiguousMessage);
+    }
   }
 
   if (normalize_enabled) {
@@ -1066,41 +1112,6 @@ std::string requirement_issue_message(const RequirementIssue& issue) {
     oss << " fix=" << issue.fix_hint;
   }
   return oss.str();
-}
-
-void apply_auto_route_input_normalization(const Model::Options& options,
-                                          const PreprocessCapabilities& capabilities,
-                                          bool image_preproc_selected,
-                                          PreprocessPlannerResult* plan) {
-  if (!plan || !image_preproc_selected) {
-    return;
-  }
-  const PreprocessOptions& requested = options.preprocess;
-  if (requested.enable == AutoFlag::Off || requested.normalize.enable != AutoFlag::Auto ||
-      requested.normalize.has_explicit_stats || requested.preset != NormalizePreset::None ||
-      !requested.transforms.empty()) {
-    return;
-  }
-  NormalizeSpec& normalize = plan->resolved_plan.effective.normalize;
-  if (normalize.enable == AutoFlag::On) {
-    return;
-  }
-  for (const auto& warning : plan->resolved_plan.warnings) {
-    if (warning.rfind(kModelNormalizeAdvisoryPrefix, 0) == 0) {
-      return; // plan_preprocess() already applied the input_range rule.
-    }
-  }
-  if (capabilities.has_model_input_normalization) {
-    normalize.enable = AutoFlag::On;
-    normalize.mean = capabilities.model_input_mean;
-    normalize.stddev = capabilities.model_input_stddev;
-    plan->normalize = true;
-    plan->mean.assign(normalize.mean.begin(), normalize.mean.end());
-    plan->stddev.assign(normalize.stddev.begin(), normalize.stddev.end());
-    plan->resolved_plan.warnings.push_back(model_normalize_resolved_message(normalize));
-  } else if (capabilities.model_input_range_ambiguous) {
-    plan->resolved_plan.warnings.push_back(kModelNormalizeAmbiguousMessage);
-  }
 }
 
 } // namespace simaai::neat::internal

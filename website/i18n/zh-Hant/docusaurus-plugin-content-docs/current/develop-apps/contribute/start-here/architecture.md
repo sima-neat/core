@@ -323,12 +323,14 @@ input Sample/Tensor
 
 ### 依 MPK `input_range` 進行前處理正規化
 
-模型輸入的 MPK `input_range` 是前處理合約的一部分。影像輸入會以 `[0, 255]` 像素進入 CVU 前處理，前處理會計算 `(pixel / 255 - mean) / stddev`。當 `preprocess.normalize.enable` 為 `Auto`，且未設定明確的統計值或預設組合時，`plan_preprocess()` 會依該範圍決定正規化方式；若路由規劃自動選擇影像前處理階段，則由 `apply_auto_route_input_normalization()` 套用相同規則：
+模型輸入的 MPK `input_range` 是前處理合約的一部分。影像輸入會以 `[0, 255]` 像素進入 CVU 前處理，前處理會計算 `(pixel / 255 - mean) / stddev`。當 `preprocess.normalize.enable` 為 `Auto`，且未設定明確的統計值或預設組合時，一旦路由選擇將影像前處理階段排在最前面，就會依該範圍決定正規化方式；即使 MPK 階段順序在沒有前處理要求的情況下選擇了該階段，也是如此。接著 `build_preprocess_plan()` 會以選定的路由再次呼叫 `plan_preprocess()`，因此已解析計畫中的啟用旗標、圖系列與核心，以及正規化統計值會保持一致：
 
 - 有限範圍 `[lo, hi]`（`hi > lo`）會以 `mean = -lo / (hi - lo)` 與 `stddev = 1 / (hi - lo)` 啟用正規化。
 - `[0, 255]` 為恆等對應，因此正規化維持停用。
 - 只有在所有輸入張量宣告相同的值時才會使用該範圍。若範圍不同或部分缺少，正規化會維持停用，並記錄規劃器警告。
-- 明確的 `On` 或 `Off`、明確的 `mean`/`stddev`，以及預設組合一律優先於此規則。張量輸入不受影響。
+- 若宣告的範圍不是滿足 `hi > lo` 的有限 `[lo, hi]`（例如 `[1, 1]` 或順序顛倒的範圍），正規化會維持停用，並發出 `PREPROC_REQ_WARN_MODEL_INPUT_RANGE_INVALID` 合約警告。未宣告範圍則不會發出警告。
+- 此規則依據實際生效的正規化意圖，因此將 `Normalize` 轉換保留為 `Auto` 的轉換清單，或不含 `Normalize` 轉換的轉換清單，也會套用此規則。
+- 明確的 `On` 或 `Off`（於簡易選項或轉換中設定）、明確的 `mean`/`stddev`、預設組合，以及 `preprocess.enable=Off` 一律優先於此規則。張量輸入不受影響。
 
 ---
 

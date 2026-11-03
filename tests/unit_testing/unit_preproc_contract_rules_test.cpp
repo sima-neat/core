@@ -320,6 +320,47 @@ void require_auto_normalize_from_range(const std::string& tag, const std::string
   }
 }
 
+// InputKind::Auto: the MPK stage order selects the image preproc route on its own.
+void require_mpk_selected_route_normalizes(const std::string& tag,
+                                           const std::vector<simaai::neat::Transform>& transforms) {
+  using namespace simaai::neat;
+  const auto fixture = make_preproc_fixture(tag);
+  Model::Options model_opt;
+  model_opt.preprocess.transforms = transforms;
+  Model model(fixture.tar_path, model_opt);
+
+  require(model.preprocess_requirements().has_preproc_stage,
+          tag + ": MPK-selected route must report an enabled preprocessing stage");
+  const ResolvedPreprocessPlan plan = model.resolved_preprocess_plan();
+  require(plan.enabled && plan.graph_family == PreprocessGraphFamily::Preproc &&
+              plan.graph_kernel == "preproc",
+          tag + ": resolved graph must agree with the selected Preproc route");
+  require(plan.effective.normalize.enable == AutoFlag::On &&
+              plan.effective.normalize.mean[0] == 0.0f &&
+              plan.effective.normalize.stddev[0] == 1.0f,
+          tag + ": resolved plan must report normalization derived from input_range [0, 1]");
+  PreprocOptions opt(model);
+  require(opt.normalize && opt.channel_mean.size() == 3U && opt.channel_mean[0] == 0.0f &&
+              opt.channel_stddev.size() == 3U && opt.channel_stddev[0] == 1.0f,
+          tag + ": Preproc stage must apply normalization derived from input_range [0, 1]");
+}
+
+void require_invalid_range_reported(const std::string& tag, const std::string& input_range) {
+  using namespace simaai::neat;
+  const auto fixture = make_preproc_fixture(tag, input_range);
+  Model model(fixture.tar_path, Model::Options{});
+  const ResolvedPreprocessPlan plan = model.resolved_preprocess_plan();
+  const std::string label = "input_range " + input_range;
+  require(plan.effective.normalize.enable == AutoFlag::Off,
+          label + ": invalid input_range must not enable normalization");
+  bool reported = false;
+  for (const auto& warning : plan.warnings) {
+    reported = reported ||
+               warning.find("PREPROC_REQ_WARN_MODEL_INPUT_RANGE_INVALID") != std::string::npos;
+  }
+  require(reported, label + ": invalid input_range must raise a contract diagnostic");
+}
+
 } // namespace
 
 RUN_TEST(
@@ -524,6 +565,21 @@ RUN_TEST(
       require_auto_normalize_from_range("preproc_range_symmetric", "[-1.0, 1.0]", true, 0.5f, 0.5f);
       require_auto_normalize_from_range("preproc_range_raw_pixels", "[0.0, 255.0]", false, 0.0f,
                                         1.0f);
+
+      // Default options and an Auto-kind Normalize(Auto) transform list on the MPK-selected
+      // Preproc route resolve the same plan as the explicit Image kind above.
+      require_mpk_selected_route_normalizes("preproc_route_default_options", {});
+      {
+        Transform normalize_auto;
+        normalize_auto.type = TransformType::Normalize;
+        require_mpk_selected_route_normalizes("preproc_route_normalize_transform",
+                                              {normalize_auto});
+      }
+
+      // A declared but unusable input_range is a contract defect, not a missing range.
+      require_invalid_range_reported("preproc_range_degenerate", "[1.0, 1.0]");
+      require_invalid_range_reported("preproc_range_reversed", "[2.0, 1.0]");
+      require_invalid_range_reported("preproc_range_single_bound", "[1.0]");
 
       {
         const auto fixture = make_preproc_fixture("preproc_dynamic_capacity_rebind");

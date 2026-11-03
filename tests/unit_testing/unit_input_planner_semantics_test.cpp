@@ -17,11 +17,11 @@ using simaai::neat::PreprocessGraphFamily;
 using simaai::neat::ResizeMode;
 using simaai::neat::Transform;
 using simaai::neat::TransformType;
-using simaai::neat::internal::apply_auto_route_input_normalization;
 using simaai::neat::internal::GraphFamilyCapabilities;
 using simaai::neat::internal::plan_preprocess;
 using simaai::neat::internal::PreprocessCapabilities;
 using simaai::neat::internal::PreprocessPlannerResult;
+using simaai::neat::internal::PreprocessRouteContext;
 using simaai::neat::internal::select_shared_input_range;
 
 GraphFamilyCapabilities all_ops_family(bool available) {
@@ -321,103 +321,186 @@ RUN_TEST("unit_input_planner_semantics_test", ([] {
                      "planner: should not warn normalize off without model/preset expectation");
            }
 
-           // normalize=Auto follows the model input_range for image input.
+           // normalize=Auto follows the model input_range once route selection picks the
+           // image preproc stage, from simple options or from a transform list.
            {
              PreprocessCapabilities model_caps = all_caps();
              model_caps.has_model_input_normalization = true;
              model_caps.model_input_mean = {0.0f, 0.0f, 0.0f};
              model_caps.model_input_stddev = {1.0f, 1.0f, 1.0f};
+             PreprocessRouteContext image_route;
+             image_route.image_preproc_selected = true;
 
-             Model::Options opt;
-             opt.preprocess.kind = InputKind::Image;
-             const PreprocessPlannerResult out = plan_preprocess(opt, model_caps);
-             require(out.resolved_plan.enabled,
-                     "planner: model-driven normalize should enable image preprocess");
-             require(out.resolved_plan.effective.normalize.enable == AutoFlag::On,
-                     "planner: normalize=Auto should resolve On from model input_range");
-             require(out.normalize, "planner: planner result should report normalize on");
-             require(out.resolved_plan.effective.normalize.mean[0] == 0.0f &&
-                         out.resolved_plan.effective.normalize.stddev[0] == 1.0f,
-                     "planner: model-driven normalize should use input_range stats");
-             require(has_warning(out, "normalize=Auto resolved On from model input_range"),
-                     "planner: model-driven normalize should be reported");
+             const auto require_model_normalized = [](const PreprocessPlannerResult& out,
+                                                      const std::string& label) {
+               const auto& rp = out.resolved_plan;
+               require(rp.enabled && rp.graph_family == PreprocessGraphFamily::Preproc &&
+                           rp.graph_kernel == "preproc" && out.include_preprocess_stage,
+                       label + ": resolved graph must report the enabled preproc stage");
+               require(rp.resolved_kind == InputKind::Image,
+                       label + ": resolved kind must be Image");
+               require(rp.effective.normalize.enable == AutoFlag::On && out.normalize,
+                       label + ": normalize=Auto must resolve On from model input_range");
+               require(rp.effective.normalize.mean[0] == 0.0f &&
+                           rp.effective.normalize.stddev[0] == 1.0f && out.mean.size() == 3U &&
+                           out.mean[0] == 0.0f && out.stddev.size() == 3U &&
+                           out.stddev[0] == 1.0f,
+                       label + ": normalize stats must come from input_range");
+               size_t reports = 0;
+               for (const auto& warn : rp.warnings) {
+                 reports += warn.find("resolved On from model input_range") != std::string::npos;
+               }
+               require(reports == 1U, label + ": model-driven normalize must be reported once");
+             };
+             const auto require_normalize_off = [](const PreprocessPlannerResult& out,
+                                                   const std::string& label) {
+               require(out.resolved_plan.effective.normalize.enable == AutoFlag::Off &&
+                           !out.normalize,
+                       label + ": normalize must stay Off");
+               require(!has_warning(out, "resolved On from model input_range"),
+                       label + ": must not report model-driven normalize");
+             };
 
-             Model::Options off_opt = opt;
+             // Before route selection nothing is resolved from input_range.
+             Model::Options default_opt;
+             const PreprocessPlannerResult unrouted = plan_preprocess(default_opt, model_caps);
+             require(!unrouted.resolved_plan.enabled &&
+                         unrouted.resolved_plan.graph_family == PreprocessGraphFamily::Disabled,
+                     "planner: default options without a route must not enable preprocess");
+             require_normalize_off(unrouted, "planner: default options without a route");
+
+             Model::Options image_opt;
+             image_opt.preprocess.kind = InputKind::Image;
+             require_normalize_off(plan_preprocess(image_opt, model_caps),
+                                   "planner: explicit Image without a route");
+
+             // Default options on an MPK-selected image preproc route, with the explicit
+             // Image kind as positive control.
+             require_model_normalized(plan_preprocess(default_opt, model_caps, image_route),
+                                      "route: default options");
+             require_model_normalized(plan_preprocess(image_opt, model_caps, image_route),
+                                      "route: explicit Image");
+
+             Model::Options resize_opt;
+             resize_opt.preprocess.resize.width = 640;
+             resize_opt.preprocess.resize.height = 640;
+             require_model_normalized(plan_preprocess(resize_opt, model_caps, image_route),
+                                      "route: simple resize options");
+
+             // Transform lists: the effective Normalize intent decides, not the list itself.
+             Transform normalize_auto;
+             normalize_auto.type = TransformType::Normalize;
+             Model::Options transform_opt;
+             transform_opt.preprocess.transforms = {normalize_auto};
+             require_model_normalized(plan_preprocess(transform_opt, model_caps, image_route),
+                                      "route: Auto kind + Normalize(Auto) transform");
+             Model::Options transform_image_opt = transform_opt;
+             transform_image_opt.preprocess.kind = InputKind::Image;
+             require_model_normalized(plan_preprocess(transform_image_opt, model_caps, image_route),
+                                      "route: Image kind + Normalize(Auto) transform");
+
+             Transform resize_only;
+             resize_only.type = TransformType::Resize;
+             resize_only.resize.width = 640;
+             resize_only.resize.height = 640;
+             Model::Options resize_transform_opt;
+             resize_transform_opt.preprocess.transforms = {resize_only};
+             require_model_normalized(
+                 plan_preprocess(resize_transform_opt, model_caps, image_route),
+                 "route: transform list without Normalize");
+
+             Transform normalize_off = normalize_auto;
+             normalize_off.normalize.enable = AutoFlag::Off;
+             Model::Options transform_off_opt;
+             transform_off_opt.preprocess.transforms = {normalize_off};
+             require_normalize_off(plan_preprocess(transform_off_opt, model_caps, image_route),
+                                   "route: Normalize(Off) transform");
+
+             Transform normalize_stats = normalize_auto;
+             normalize_stats.normalize.mean = {0.5f, 0.5f, 0.5f};
+             normalize_stats.normalize.stddev = {0.25f, 0.25f, 0.25f};
+             normalize_stats.normalize.has_explicit_stats = true;
+             Model::Options transform_stats_opt;
+             transform_stats_opt.preprocess.transforms = {normalize_stats};
+             const PreprocessPlannerResult transform_stats_out =
+                 plan_preprocess(transform_stats_opt, model_caps, image_route);
+             require(transform_stats_out.resolved_plan.effective.normalize.mean[0] == 0.5f &&
+                         transform_stats_out.resolved_plan.effective.normalize.stddev[0] == 0.25f,
+                     "route: explicit transform normalize stats must win over input_range");
+
+             // Explicit simple options win over the model contract.
+             Model::Options off_opt;
              off_opt.preprocess.normalize.enable = AutoFlag::Off;
-             const PreprocessPlannerResult off_out = plan_preprocess(off_opt, model_caps);
-             require(off_out.resolved_plan.effective.normalize.enable == AutoFlag::Off,
-                     "planner: explicit normalize Off must win over model input_range");
+             require_normalize_off(plan_preprocess(off_opt, model_caps, image_route),
+                                   "route: explicit normalize Off");
 
-             Model::Options stats_opt = opt;
+             Model::Options stats_opt;
              stats_opt.preprocess.normalize.mean = {0.5f, 0.5f, 0.5f};
              stats_opt.preprocess.normalize.stddev = {0.25f, 0.25f, 0.25f};
              stats_opt.preprocess.normalize.has_explicit_stats = true;
-             const PreprocessPlannerResult stats_out = plan_preprocess(stats_opt, model_caps);
+             const PreprocessPlannerResult stats_out =
+                 plan_preprocess(stats_opt, model_caps, image_route);
              require(stats_out.resolved_plan.effective.normalize.mean[0] == 0.5f &&
                          stats_out.resolved_plan.effective.normalize.stddev[0] == 0.25f,
-                     "planner: explicit normalize stats must win over model input_range");
+                     "route: explicit normalize stats must win over input_range");
 
-             Model::Options default_opt;
-             const PreprocessPlannerResult default_out = plan_preprocess(default_opt, model_caps);
-             require(!default_out.resolved_plan.enabled,
-                     "planner: all-default options must not enable preprocess from input_range");
+             Model::Options preset_opt;
+             preset_opt.preprocess.preset = NormalizePreset::ImageNet;
+             const PreprocessPlannerResult preset_out =
+                 plan_preprocess(preset_opt, model_caps, image_route);
+             require(preset_out.resolved_plan.effective.normalize.mean[0] == 0.485f,
+                     "route: preset stats must win over input_range");
+
+             Model::Options disabled_opt;
+             disabled_opt.preprocess.enable = AutoFlag::Off;
+             const PreprocessPlannerResult disabled_out =
+                 plan_preprocess(disabled_opt, model_caps, image_route);
+             require(!disabled_out.resolved_plan.enabled,
+                     "route: explicit preprocess.enable=Off must stay disabled");
+             require_normalize_off(disabled_out, "route: explicit preprocess.enable=Off");
+             Model::Options disabled_transform_opt = transform_opt;
+             disabled_transform_opt.preprocess.enable = AutoFlag::Off;
+             require_normalize_off(plan_preprocess(disabled_transform_opt, model_caps, image_route),
+                                   "route: preprocess.enable=Off with transforms");
 
              Model::Options tensor_opt;
              tensor_opt.preprocess.kind = InputKind::Tensor;
-             const PreprocessPlannerResult tensor_out = plan_preprocess(tensor_opt, model_caps);
-             require(tensor_out.resolved_plan.effective.normalize.enable == AutoFlag::Off,
-                     "planner: tensor input must not pick up model-driven normalize");
+             require_normalize_off(plan_preprocess(tensor_opt, model_caps, image_route),
+                                   "route: tensor input");
 
+             // Models without a usable range keep raw pixels; problems are reported.
              PreprocessCapabilities no_range_caps = model_caps;
              no_range_caps.has_model_input_normalization = false;
-             const PreprocessPlannerResult no_range_out = plan_preprocess(opt, no_range_caps);
-             require(no_range_out.resolved_plan.effective.normalize.enable == AutoFlag::Off,
-                     "planner: models without a normalizing input_range keep normalize Off");
+             const PreprocessPlannerResult no_range_out =
+                 plan_preprocess(default_opt, no_range_caps, image_route);
+             require_normalize_off(no_range_out, "route: missing or identity input_range");
+             require(no_range_out.requirement_issues.empty() &&
+                         !has_warning(no_range_out, "input_range"),
+                     "route: a missing input_range is not a contract issue");
 
              PreprocessCapabilities ambiguous_caps = no_range_caps;
              ambiguous_caps.model_input_range_ambiguous = true;
-             const PreprocessPlannerResult ambiguous_out = plan_preprocess(opt, ambiguous_caps);
-             require(ambiguous_out.resolved_plan.effective.normalize.enable == AutoFlag::Off,
-                     "planner: ambiguous multi-ingress input_range keeps normalize Off");
+             const PreprocessPlannerResult ambiguous_out =
+                 plan_preprocess(default_opt, ambiguous_caps, image_route);
+             require_normalize_off(ambiguous_out, "route: ambiguous multi-ingress input_range");
              require(has_warning(ambiguous_out, "image ingress range is ambiguous"),
-                     "planner: ambiguous multi-ingress input_range must be reported");
+                     "route: ambiguous multi-ingress input_range must be reported");
 
-             // Default options: route planning may auto-select the MPK image preproc stage.
-             Model::Options auto_opt;
-             PreprocessPlannerResult auto_plan = plan_preprocess(auto_opt, model_caps);
-             require(auto_plan.resolved_plan.effective.normalize.enable == AutoFlag::Off,
-                     "planner: default options leave normalize to route planning");
-             PreprocessPlannerResult not_selected = auto_plan;
-             apply_auto_route_input_normalization(auto_opt, model_caps, false, &not_selected);
-             require(not_selected.resolved_plan.effective.normalize.enable == AutoFlag::Off,
-                     "route: no image preproc stage selected keeps normalize Off");
-             apply_auto_route_input_normalization(auto_opt, model_caps, true, &auto_plan);
-             require(auto_plan.resolved_plan.effective.normalize.enable == AutoFlag::On &&
-                         auto_plan.normalize && auto_plan.mean.size() == 3U &&
-                         auto_plan.mean[0] == 0.0f && auto_plan.stddev[0] == 1.0f,
-                     "route: auto-selected image preproc must apply MPK input_range stats");
-             require(has_warning(auto_plan, "resolved On from model input_range"),
-                     "route: auto-selected image preproc normalization must be reported");
-
-             Model::Options auto_off_opt;
-             auto_off_opt.preprocess.normalize.enable = AutoFlag::Off;
-             PreprocessPlannerResult auto_off_plan = plan_preprocess(auto_off_opt, model_caps);
-             apply_auto_route_input_normalization(auto_off_opt, model_caps, true, &auto_off_plan);
-             require(auto_off_plan.resolved_plan.effective.normalize.enable == AutoFlag::Off &&
-                         !auto_off_plan.normalize,
-                     "route: explicit normalize Off must win on auto-selected image preproc");
-
-             PreprocessPlannerResult planned = plan_preprocess(opt, model_caps);
-             const size_t planned_warnings = planned.resolved_plan.warnings.size();
-             apply_auto_route_input_normalization(opt, model_caps, true, &planned);
-             require(planned.resolved_plan.warnings.size() == planned_warnings,
-                     "route: input_range rule already applied by the planner must not repeat");
-
-             PreprocessPlannerResult auto_ambiguous = plan_preprocess(auto_opt, ambiguous_caps);
-             apply_auto_route_input_normalization(auto_opt, ambiguous_caps, true, &auto_ambiguous);
-             require(auto_ambiguous.resolved_plan.effective.normalize.enable == AutoFlag::Off &&
-                         has_warning(auto_ambiguous, "image ingress range is ambiguous"),
-                     "route: ambiguous input_range on auto-selected image preproc stays Off");
+             PreprocessCapabilities invalid_caps = no_range_caps;
+             invalid_caps.invalid_model_input_range = "[1, 1]";
+             const PreprocessPlannerResult invalid_out =
+                 plan_preprocess(default_opt, invalid_caps, image_route);
+             require_normalize_off(invalid_out, "route: invalid input_range");
+             require(invalid_out.requirement_issues.size() == 1U &&
+                         invalid_out.requirement_issues.front().code ==
+                             "PREPROC_REQ_WARN_MODEL_INPUT_RANGE_INVALID" &&
+                         invalid_out.requirement_issues.front().source ==
+                             simaai::neat::internal::RequirementSource::MlaContract,
+                     "route: invalid input_range must raise a contract diagnostic");
+             require(has_warning(invalid_out, "input_range [1, 1]"),
+                     "route: invalid input_range diagnostic must name the declared range");
+             require(plan_preprocess(off_opt, invalid_caps, image_route).requirement_issues.empty(),
+                     "route: explicit normalize does not depend on the invalid input_range");
 
              require_shared_input_range_selection();
            }
