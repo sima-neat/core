@@ -113,8 +113,8 @@ constexpr char kModelNormalizeAmbiguousMessage[] =
 
 std::string model_normalize_resolved_message(const NormalizeSpec& normalize) {
   std::ostringstream msg;
-  msg << "preprocess.normalize=Auto resolved On from model input_range (mean="
-      << normalize.mean[0] << ", stddev=" << normalize.stddev[0]
+  msg << "preprocess.normalize=Auto resolved On from model input_range (mean=" << normalize.mean[0]
+      << ", stddev=" << normalize.stddev[0]
       << "); set preprocess.normalize.enable=Off to feed raw pixels.";
   return msg.str();
 }

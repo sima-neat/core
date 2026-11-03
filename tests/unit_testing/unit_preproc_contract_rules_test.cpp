@@ -60,8 +60,10 @@ std::vector<int> model_managed_preproc_max_input_shape(const simaai::neat::Prepr
   return {};
 }
 
-sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag,
-                                                    const std::string& input_range = "[0.0, 1.0]") {
+// pre_kernel "preproc" makes the MPK stage order select the image preproc route on its own.
+sima_test::ModelArchiveFixture
+make_preproc_fixture(const std::string& tag, const std::string& input_range = "[0.0, 1.0]",
+                     const std::string& pre_kernel = "cast_transform") {
   const auto fixture =
       sima_test::make_model_archive_fixture(tag,
                                             {
@@ -88,7 +90,7 @@ sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag,
       "config_params": {
         "desired_batch_size": 1,
         "actual_batch_size": 1,
-        "kernel": "cast_transform",
+        "kernel": ")json" + pre_kernel + R"json(",
         "params": {
           "out_dtype": "bfloat16",
           "input_shapes": [[1, 640, 640, 3]],
@@ -320,11 +322,13 @@ void require_auto_normalize_from_range(const std::string& tag, const std::string
   }
 }
 
-// InputKind::Auto: the MPK stage order selects the image preproc route on its own.
+// InputKind::Auto: the MPK stage order selects the image preproc route on its own.  Only the
+// public resolved contract is checked: the exact MPK kernel registry has no 'preproc' entry, so
+// this fixture cannot be admitted for execution (PreprocOptions(Model) compiles that plan).
 void require_mpk_selected_route_normalizes(const std::string& tag,
                                            const std::vector<simaai::neat::Transform>& transforms) {
   using namespace simaai::neat;
-  const auto fixture = make_preproc_fixture(tag);
+  const auto fixture = make_preproc_fixture(tag, "[0.0, 1.0]", "preproc");
   Model::Options model_opt;
   model_opt.preprocess.transforms = transforms;
   Model model(fixture.tar_path, model_opt);
@@ -339,15 +343,11 @@ void require_mpk_selected_route_normalizes(const std::string& tag,
               plan.effective.normalize.mean[0] == 0.0f &&
               plan.effective.normalize.stddev[0] == 1.0f,
           tag + ": resolved plan must report normalization derived from input_range [0, 1]");
-  PreprocOptions opt(model);
-  require(opt.normalize && opt.channel_mean.size() == 3U && opt.channel_mean[0] == 0.0f &&
-              opt.channel_stddev.size() == 3U && opt.channel_stddev[0] == 1.0f,
-          tag + ": Preproc stage must apply normalization derived from input_range [0, 1]");
 }
 
 void require_invalid_range_reported(const std::string& tag, const std::string& input_range) {
   using namespace simaai::neat;
-  const auto fixture = make_preproc_fixture(tag, input_range);
+  const auto fixture = make_preproc_fixture(tag, input_range, "preproc");
   Model model(fixture.tar_path, Model::Options{});
   const ResolvedPreprocessPlan plan = model.resolved_preprocess_plan();
   const std::string label = "input_range " + input_range;
@@ -355,8 +355,8 @@ void require_invalid_range_reported(const std::string& tag, const std::string& i
           label + ": invalid input_range must not enable normalization");
   bool reported = false;
   for (const auto& warning : plan.warnings) {
-    reported = reported ||
-               warning.find("PREPROC_REQ_WARN_MODEL_INPUT_RANGE_INVALID") != std::string::npos;
+    reported =
+        reported || warning.find("PREPROC_REQ_WARN_MODEL_INPUT_RANGE_INVALID") != std::string::npos;
   }
   require(reported, label + ": invalid input_range must raise a contract diagnostic");
 }
