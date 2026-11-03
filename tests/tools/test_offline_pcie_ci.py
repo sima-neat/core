@@ -497,3 +497,128 @@ def test_invalid_card_pin_is_rejected_before_docker(tmp_path, field, value):
         with pytest.raises(ValueError, match='invalid pinned card baseline'):
             ci.pull_baseline(SimpleNamespace(sha=SHA, work=tmp_path), 'card', {})
         docker.assert_not_called()
+
+
+@pytest.mark.parametrize('core', [False, True])
+def test_republished_inputs_rebuild_and_promote_staged_metadata(tmp_path, core):
+    import json
+    args = SimpleNamespace(core=core, ref='develop', sha=SHA, bucket='bucket',
+                           distro='ubuntu22', arch='amd64')
+    inputs = {'card': 'c'*64} if core else INPUTS
+    old_inputs = {**inputs, 'card': 'e'*64}
+    names = ci.metadata_names(args)
+    objects = {}
+    for filename in names:
+        if core:
+            name = ci.assemble.CORE_ARCHIVE_NAME
+            resources = {name: 'd'*64}
+            if filename == 'metadata.json':
+                resources['sima-neat-1-Linux-extras.tar.gz'] = 'f'*64
+            data = {'version': '0.6.0+develop.'+SHA[:12], 'resources': list(resources),
+                    'resources-checksum': resources, 'installation': {'script': ''},
+                    'artifact': {'type': 'offline', 'repository': 'core',
+                                 'package_path': 'offline', 'distro': 'elxr26', 'arches': ['arm64']}}
+        else:
+            data = metadata()
+        data['source_metadata_sha256'] = old_inputs
+        objects[ci.artifact_prefix(args)+'/'+filename] = json.dumps(data)
+
+    def download(bucket, key, path, optional=False):
+        if key not in objects:
+            return False
+        path.write_text(objects[key])
+        return True
+
+    with patch.object(ci, 'download', side_effect=download), patch.object(ci, 'verify_uploaded') as verify:
+        # Previously published metadata is structurally valid but has older LLiMa inputs.
+        assert ci.existing(args, tmp_path, inputs) is None
+        verify.assert_not_called()
+        # A staged generation is eligible only after it matches current inputs.
+        for filename in names:
+            data = json.loads(objects[ci.artifact_prefix(args)+'/'+filename])
+            data['source_metadata_sha256'] = inputs
+            data['resources'] = [ci.resource_name(name, digest)
+                                 for name, digest in data['resources-checksum'].items()]
+            data['resources-checksum'] = {ci.resource_name(name, digest): digest
+                                          for name, digest in data['resources-checksum'].items()}
+            objects[ci.staging_prefix(args, inputs)+'/'+filename] = json.dumps(data)
+        ready = ci.existing(args, tmp_path, inputs)
+        assert set(ready) == set(names)
+        assert all(path.name.endswith('.pending') for path in ready.values())
+        assert verify.call_count == (3 if core else 1)
+        # Old downloaded metadata still names its original bytes.
+        assert json.loads(objects[ci.artifact_prefix(args)+'/'+names[0]])['source_metadata_sha256'] == old_inputs
+
+
+def test_changed_inputs_do_not_hide_invalid_publication(tmp_path):
+    import json
+    args = SimpleNamespace(core=False, ref='develop', sha=SHA, bucket='bucket',
+                           distro='ubuntu22', arch='amd64')
+    data = metadata()
+    data['source_metadata_sha256'] = {**INPUTS, 'card': 'e'*64}
+    data['installation']['script'] = 'unexpected.sh'
+    def download(bucket, key, path, optional=False):
+        path.write_text(json.dumps(data))
+        return True
+    with patch.object(ci, 'download', side_effect=download):
+        with pytest.raises(ValueError, match='differs'):
+            ci.existing(args, tmp_path, INPUTS)
+
+
+def test_generation_staging_isolated_when_dependency_changes():
+    args = SimpleNamespace(core=False, ref='develop', sha=SHA, distro='ubuntu22', arch='amd64')
+    assert ci.staging_prefix(args, INPUTS) != ci.staging_prefix(args, {**INPUTS, 'card': 'e'*64})
+    assert ci.staging_prefix(args, INPUTS) == ci.staging_prefix(args, dict(reversed(list(INPUTS.items()))))
+
+
+def test_promotion_replaces_metadata_only_after_rechecking_sources(tmp_path):
+    args = SimpleNamespace(work=tmp_path/'publish', ref='develop', sha=SHA,
+                           bucket='bucket', kms='', distribution='')
+    def existing(args, work, inputs):
+        return {name: work/(name+'.pending') for name in ci.metadata_names(args)}
+    with patch.object(ci, 'source_metadata', return_value=({}, {}, INPUTS)) as source, \
+         patch.object(ci, 'existing', side_effect=existing), patch.object(ci, 'put') as put:
+        ci.publish(args)
+    assert source.call_count == 10
+    assert put.call_count == 6
+    assert all(not call.kwargs.get('immutable', False) for call in put.call_args_list)
+
+
+def test_online_republication_during_promotion_publishes_nothing(tmp_path):
+    args = SimpleNamespace(work=tmp_path/'publish', ref='develop', sha=SHA,
+                           bucket='bucket', kms='', distribution='')
+    changed = {**INPUTS, 'card': 'e'*64}
+    def source(args, work):
+        return {}, {}, changed if work.name.startswith('source-recheck') else INPUTS
+    with patch.object(ci, 'source_metadata', side_effect=source), \
+         patch.object(ci, 'existing', return_value={'metadata-offline.json': tmp_path/'metadata-offline.json.pending'}), \
+         patch.object(ci, 'put') as put:
+        with pytest.raises(ValueError, match='changed before offline promotion'):
+            ci.publish(args)
+        put.assert_not_called()
+
+
+def test_matching_publication_with_corrupt_archive_still_fails(tmp_path):
+    import json
+    args = SimpleNamespace(core=False, ref='develop', sha=SHA, bucket='bucket',
+                           distro='ubuntu22', arch='amd64')
+    def download(bucket, key, path, optional=False):
+        path.write_text(json.dumps(metadata()))
+        return True
+    with patch.object(ci, 'download', side_effect=download), \
+         patch.object(ci, 'verify_uploaded', side_effect=ValueError('uploaded object checksum differs')):
+        with pytest.raises(ValueError, match='checksum'):
+            ci.existing(args, tmp_path, INPUTS)
+
+
+def test_different_card_snapshots_across_variants_publish_nothing(tmp_path):
+    args = SimpleNamespace(work=tmp_path/'publish', ref='develop', sha=SHA,
+                           bucket='bucket', kms='', distribution='')
+    def source(args, work):
+        return {}, {}, {**INPUTS, 'card': 'e'*64} if args.core else INPUTS
+    with patch.object(ci, 'source_metadata', side_effect=source), \
+         patch.object(ci, 'existing', return_value={'metadata-offline.json': tmp_path/'metadata-offline.json.pending'}), \
+         patch.object(ci, 'put') as put:
+        with pytest.raises(ValueError, match='changed across offline variants'):
+            ci.publish(args)
+        put.assert_not_called()

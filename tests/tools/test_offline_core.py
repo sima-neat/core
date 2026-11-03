@@ -428,7 +428,7 @@ def test_core_build_uses_only_card_baseline_and_stages_root_variant(tmp_path):
         assert config['targets']['card']['image'] == 'sha256:' + 'd'*64
         for filename, resources in (('metadata.json', [assemble.CORE_ARCHIVE_NAME, 'sima-neat-1-Linux-extras.tar.gz']),
                                     ('metadata-minimal.json', [assemble.CORE_ARCHIVE_NAME])):
-            (root.parent/filename).write_text(json.dumps({'resources': resources}))
+            (root.parent/filename).write_text(json.dumps({'resources': resources, 'resources-checksum': {name: 'b'*64 for name in resources}}))
         (root.parent/assemble.CORE_ARCHIVE_NAME).write_text('validated bundle')
     with patch.object(ci, 'source_metadata', return_value=(
              {'card': {'resources-checksum': {}, 'selectable-resources': [{'resource': 'sima-neat-1-Linux-extras.tar.gz', 'checksum': baseline['sha256']}]}}, {'card': ('core-key', pub)}, {'card': 'c'*64})), \
@@ -441,10 +441,10 @@ def test_core_build_uses_only_card_baseline_and_stages_root_variant(tmp_path):
          patch.object(ci, 'put') as put:
         ci.build(args)
     assert [call.args[1] for call in put.call_args_list] == [
-        'core/develop/'+'a'*12+'/offline/'+assemble.CORE_ARCHIVE_NAME,
-        'core/develop/'+'a'*12+'/offline/sima-neat-1-Linux-extras.tar.gz',
-        'core/develop/'+'a'*12+'/offline/metadata.json.pending',
-        'core/develop/'+'a'*12+'/offline/metadata-minimal.json.pending']
+        'core/develop/'+'a'*12+'/offline/'+'b'*64+'-'+assemble.CORE_ARCHIVE_NAME,
+        'core/develop/'+'a'*12+'/offline/'+'b'*64+'-sima-neat-1-Linux-extras.tar.gz',
+        ci.staging_prefix(args, {'card': 'c'*64})+'/metadata.json',
+        ci.staging_prefix(args, {'card': 'c'*64})+'/metadata-minimal.json']
 
 
 def core_metadata(minimal=False, archive_hash='d'*64):
@@ -495,7 +495,7 @@ def test_all_profiles_verified_before_any_metadata_is_published(tmp_path):
     base = 'core/codex%2Foffline/'+'a'*12+'/offline/'
     assert base+'metadata.json' in keys
     assert base+'metadata-minimal.json' in keys
-    assert all(call.kwargs['immutable'] for call in put.call_args_list)
+    assert all(not call.kwargs.get('immutable', False) for call in put.call_args_list)
     assert '/'+base.replace('%2F','%252F')+'metadata-minimal.json' in run.call_args.args
 
 

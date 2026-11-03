@@ -13,11 +13,11 @@ using Neat before upgrading. Allow root access and sufficient free disk space.
 
 To discard an environment and install from scratch, explicitly run `./install.sh --recreate-venv` (standalone Core) or `sudo python3 -B install.py --recreate-venv` (PCIe). This removes packages and files in the selected environment without backup. In the SDK, the option applies to the paired DevKit, not SDK host Python. Save required files first. Preflight and verification-only commands never recreate environments.
 
-Copy `neat-core-offline-installer.tar.gz` to the DevKit, verify its SHA-256
+Copy `<sha256>-neat-core-offline-installer.tar.gz` to the DevKit, verify its SHA-256
 against `offline/metadata.json` or `offline/metadata-minimal.json`, then run:
 
 ```sh
-tar -xzf neat-core-offline-installer.tar.gz
+tar -xzf *neat-core-offline-installer.tar.gz
 cd neat-core-offline
 ./install.sh --check
 ./install.sh
@@ -87,7 +87,7 @@ extras archive to a directory of your choice for tutorials and tests.
 ## Building and publication
 
 The PCIe Offline Bundles workflow builds this standalone archive alongside the
-four PCIe variants from the same immutable Core publication. All five builds
+four PCIe variants from the same authenticated Core publication snapshot. All five builds
 must pass before any new offline metadata is exposed. The standalone artifact
 is published in Core's `offline/` subdirectory. `metadata.json` includes the
 runtime bundle and the separate tutorials/tests extras archive;

@@ -185,8 +185,10 @@ sima-cli neat install core/offline@v%%release.core%% -t minimal --download-only
 2. そのディレクトリでターミナルを開いてください。SDK にインストールする場合は、SDK シェルを使用してください。
 3. インストーラーのアーカイブを展開してください：
 
+ダウンロードしたアーカイブ名には SHA-256 のプレフィックスが付く場合があります。展開前に、このディレクトリには選択したインストーラーアーカイブだけを置いてください。
+
 <ShellCommand prompt="sdk|devkit">
-tar -xzf neat-core-offline-installer.tar.gz
+tar -xzf *neat-core-offline-installer.tar.gz
 </ShellCommand>
 
 4. 展開したディレクトリに移動してください：

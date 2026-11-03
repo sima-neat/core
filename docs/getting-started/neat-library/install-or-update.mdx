@@ -236,8 +236,10 @@ sima-cli neat install core/offline@v%%release.core%% -t minimal --download-only
 2. Open a terminal in that directory. For SDK installation, use the SDK shell.
 3. Extract the installer archive:
 
+The downloaded archive may have a SHA-256 filename prefix. Keep only the selected installer archive in this directory before extracting it.
+
 <ShellCommand prompt="sdk|devkit">
-tar -xzf neat-core-offline-installer.tar.gz
+tar -xzf *neat-core-offline-installer.tar.gz
 </ShellCommand>
 
 4. Go to the extracted directory:
