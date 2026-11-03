@@ -441,8 +441,8 @@ def test_core_build_uses_only_card_baseline_and_stages_root_variant(tmp_path):
          patch.object(ci, 'put') as put:
         ci.build(args)
     assert [call.args[1] for call in put.call_args_list] == [
-        'core/develop/'+'a'*12+'/offline/'+'b'*64+'-'+assemble.CORE_ARCHIVE_NAME,
-        'core/develop/'+'a'*12+'/offline/'+'b'*64+'-sima-neat-1-Linux-extras.tar.gz',
+        'core/develop/'+'a'*12+'/offline/neat-core-offline-installer-'+'b'*12+'.tar.gz',
+        'core/develop/'+'a'*12+'/offline/sima-neat-1-Linux-extras-'+'b'*12+'.tar.gz',
         ci.staging_prefix(args, {'card': 'c'*64})+'/metadata.json',
         ci.staging_prefix(args, {'card': 'c'*64})+'/metadata-minimal.json']
 

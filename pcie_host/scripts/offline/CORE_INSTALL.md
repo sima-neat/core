@@ -13,11 +13,11 @@ using Neat before upgrading. Allow root access and sufficient free disk space.
 
 To discard an environment and install from scratch, explicitly run `./install.sh --recreate-venv` (standalone Core) or `sudo python3 -B install.py --recreate-venv` (PCIe). This removes packages and files in the selected environment without backup. In the SDK, the option applies to the paired DevKit, not SDK host Python. Save required files first. Preflight and verification-only commands never recreate environments.
 
-Copy `<sha256>-neat-core-offline-installer.tar.gz` to the DevKit, verify its SHA-256
+Copy `neat-core-offline-installer-<sha12>.tar.gz` to the DevKit, verify its SHA-256
 against `offline/metadata.json` or `offline/metadata-minimal.json`, then run:
 
 ```sh
-tar -xzf *neat-core-offline-installer.tar.gz
+tar -xzf neat-core-offline-installer*.tar.gz
 cd neat-core-offline
 ./install.sh --check
 ./install.sh

@@ -197,10 +197,10 @@ sima-cli neat install core/offline@v%%release.core%% -t minimal --download-only
 2. 해당 디렉터리에서 터미널을 여세요. SDK에 설치하려면 SDK 셸을 사용하세요.
 3. 설치 프로그램 아카이브의 압축을 푸세요:
 
-다운로드한 아카이브 파일명에는 SHA-256 접두사가 붙을 수 있습니다. 압축을 풀기 전에 이 디렉터리에는 선택한 설치 아카이브만 두세요.
+다운로드한 아카이브 파일명에는 `.tar.gz` 앞에 SHA-256의 처음 12자가 붙을 수 있습니다. 압축을 풀기 전에 이 디렉터리에는 선택한 설치 아카이브만 두세요.
 
 <ShellCommand prompt="sdk|devkit">
-tar -xzf *neat-core-offline-installer.tar.gz
+tar -xzf neat-core-offline-installer*.tar.gz
 </ShellCommand>
 
 4. 압축을 푼 디렉터리로 이동하세요:

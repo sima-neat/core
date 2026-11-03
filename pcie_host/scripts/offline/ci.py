@@ -67,7 +67,10 @@ def metadata_identity(data, sha, ref, distro=None, arch=None):
 
 
 def resource_name(name, digest):
-    return digest + '-' + name
+    suffix = '.tar.gz'
+    if not name.endswith(suffix):
+        raise ValueError('offline resources must be tar.gz archives')
+    return name[:-len(suffix)] + '-' + digest[:12] + suffix
 
 
 def archive_resource(data, name):
@@ -112,6 +115,15 @@ def put(bucket, key, path, kms, immutable=False):
         command += ['--if-none-match', '*']
     run(*command)
     verify_uploaded(bucket, key, digest)
+
+
+def put_resource(bucket, key, path, kms):
+    try:
+        put(bucket, key, path, kms, immutable=True)
+    except subprocess.CalledProcessError:
+        # A previous run may already have uploaded the same resource. Compare
+        # the full digest: a short-hash collision must fail rather than overwrite.
+        verify_uploaded(bucket, key, assemble.sha(path))
 
 
 def is_core(args):
@@ -205,7 +217,8 @@ def metadata_names(args):
 def core_identity(data, args, inputs, minimal):
     metadata_identity(data, args.sha, args.ref)
     resources = data['resources']
-    extras = [name for name in resources if name.endswith('-Linux-extras.tar.gz')]
+    extras = [name for name in resources
+              if re.search(r'-Linux-extras(?:-[0-9a-f]{12})?\.tar\.gz$', name)]
     if (archive_resource(data, assemble.CORE_ARCHIVE_NAME) is None
             or (resources != [archive_resource(data, assemble.CORE_ARCHIVE_NAME)] if minimal else
                 len(resources) != 2 or len(extras) != 1)
@@ -317,8 +330,8 @@ def build(args):
     # and both Core profiles before exposing any new metadata.
     resources = set().union(*(set(data['resources']) for data in documents.values()))
     for name in sorted(resources):
-        # The digest prefix preserves resources referenced by older metadata.
-        put(args.bucket, base+'/'+name, resource_files[name], args.kms)
+        # Never replace bytes if two full digests share the short filename hash.
+        put_resource(args.bucket, base+'/'+name, resource_files[name], args.kms)
     for filename in documents:
         put(args.bucket, staging_prefix(args, inputs)+'/'+filename, args.work/filename, args.kms)
 

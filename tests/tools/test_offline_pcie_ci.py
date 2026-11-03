@@ -622,3 +622,34 @@ def test_different_card_snapshots_across_variants_publish_nothing(tmp_path):
         with pytest.raises(ValueError, match='changed across offline variants'):
             ci.publish(args)
         put.assert_not_called()
+
+
+@pytest.mark.parametrize('name,expected', [
+    ('neat-core-offline-installer.tar.gz', 'neat-core-offline-installer-abcdef012345.tar.gz'),
+    ('neat-pcie-offline-installer.tar.gz', 'neat-pcie-offline-installer-abcdef012345.tar.gz'),
+    ('sima-neat-0.6.0-Linux-extras.tar.gz', 'sima-neat-0.6.0-Linux-extras-abcdef012345.tar.gz'),
+])
+def test_resource_name_has_short_hash_before_archive_extension(name, expected):
+    assert ci.resource_name(name, 'abcdef012345' + '0'*52) == expected
+
+
+def test_resource_upload_does_not_overwrite_short_hash_collision(tmp_path):
+    import subprocess
+    path = tmp_path/'bundle.tar.gz'
+    path.write_bytes(b'new bundle')
+    with patch.object(ci, 'put', side_effect=subprocess.CalledProcessError(1, 'aws')) as put, \
+         patch.object(ci, 'verify_uploaded', side_effect=ValueError('uploaded object checksum differs')) as verify:
+        with pytest.raises(ValueError, match='checksum differs'):
+            ci.put_resource('bucket', 'bundle-short.tar.gz', path, '')
+    assert put.call_args.kwargs == {'immutable': True}
+    verify.assert_called_once_with('bucket', 'bundle-short.tar.gz', ci.assemble.sha(path))
+
+
+def test_resource_upload_reuses_existing_full_digest(tmp_path):
+    import subprocess
+    path = tmp_path/'bundle.tar.gz'
+    path.write_bytes(b'same bundle')
+    with patch.object(ci, 'put', side_effect=subprocess.CalledProcessError(1, 'aws')), \
+         patch.object(ci, 'verify_uploaded') as verify:
+        ci.put_resource('bucket', 'bundle-short.tar.gz', path, '')
+    verify.assert_called_once_with('bucket', 'bundle-short.tar.gz', ci.assemble.sha(path))

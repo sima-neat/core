@@ -285,7 +285,7 @@ including duplicates shared between the host and card trees.
 
 ## Offline publication layout
 
-Publish `<sha256>-neat-pcie-offline-installer.tar.gz` and `metadata-offline.json` beside
+Publish `neat-pcie-offline-installer-<sha12>.tar.gz` and `metadata-offline.json` beside
 the online `metadata.json` under the matching commit-scoped
 `core/{ref}/{revision}/pciehost/{distro}/{architecture}/` folder. Each bundle targets
 one Ubuntu release (22.04 or 24.04) and one host architecture (amd64 or arm64),
@@ -350,7 +350,7 @@ that policy; a new source policy requires a reviewed matching build input. It do
 DEBs are rejected, preserving the separate system-provisioning contract.
 
 Each job validates both targets in fresh containers with `--network=none` before
-uploading checksum-prefixed resources and staging metadata under
+uploading resources with a 12-character SHA-256 suffix before `.tar.gz` and staging metadata under
 `staging/{source-input-hash}/`. An aggregate job checks all four PCIe variants and
 both standalone Core profiles, verifies uploaded checksums, and rechecks the
 source publications before replacing final metadata and invalidating its cache.
@@ -361,7 +361,10 @@ Rebuilding the same Core commit with changed dependencies, including LLiMa,
 rebuilds offline bundles instead of rejecting the existing publication. Unchanged
 inputs reuse verified bundles. Older metadata continues to reference unchanged
 resource objects, including extras; new uploads do not overwrite those objects.
-Legacy archive names remain readable. Invalid identities, malformed metadata,
+Legacy archive names remain readable. Full SHA-256 checksums remain in metadata
+and S3 checksum verification. Resource uploads use conditional creation; an
+existing short-hash filename is reused only if its full checksum matches, so a
+short-hash collision fails without overwriting the existing object. Invalid identities, malformed metadata,
 and resource checksum mismatches still fail. Metadata updates are individual S3
 writes, not an atomic transaction across all six documents. The publish job is
 serialized per ref/commit, and interrupted promotion can be retried.
