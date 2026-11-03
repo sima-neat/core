@@ -343,7 +343,7 @@ int source_meta_channels_from_format(const std::string& format, int fallback = -
   const std::string up = source_meta_upper_copy(format);
   if (up == "GRAY" || up == "GRAY8")
     return 1;
-  if (up == "RGB" || up == "BGR" || up == "NV12" || up == "I420" || up == "YUYV")
+  if (up == "RGB" || up == "BGR" || up == "NV12" || up == "I420" || up == "YUYV" || up == "YUY2")
     return 3;
   return fallback;
 }

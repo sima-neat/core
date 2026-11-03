@@ -404,7 +404,7 @@ json build_preproc_json(const PreprocOptions& opt) {
       {
           {"name", "format"},
           {"type", "string"},
-          {"values", "GRAY, RGB, BGR, I420, NV12"},
+          {"values", "GRAY, RGB, BGR, I420, NV12, NV16, YUY2"},
           {"json_field", "input_img_type"},
       },
   });

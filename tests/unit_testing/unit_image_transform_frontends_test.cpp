@@ -306,7 +306,8 @@ void yuyv_input_boundary_chain() {
     pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
     const auto compiled = compile_node_contracts({source, transform}, compile_input, &diagnostics);
     require(compiled.fully_renderable && diagnostics.errors.empty(),
-            "packed Input must compose with ColorConvert");
+            "packed Input must compose with ColorConvert" +
+                (diagnostics.errors.empty() ? std::string{} : ": " + diagnostics.errors.front()));
     const auto manifest =
         render_manifest_from_compiled_contracts(compiled, compile_input, &diagnostics);
     require(manifest && manifest->stages.size() == 1 && diagnostics.errors.empty(),

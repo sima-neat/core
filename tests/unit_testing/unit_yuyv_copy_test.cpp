@@ -1,4 +1,5 @@
 #include "pipeline/FormatSpec.h"
+#include "model/internal/ModelFormat.h"
 #include "pipeline/internal/GstDataAdapter.h"
 #include <gst/video/video.h>
 #include <algorithm>
@@ -66,6 +67,9 @@ void copies() {
   }
 }
 void aliases() {
+  require(internal::preprocess_color_format_name(PreprocessColorFormat::YUYV) == "YUY2" &&
+              internal::image_format_name(ImageType::YUYV) == "YUY2",
+          "model format resolution must preserve packed input");
   for (const auto* alias : {"YUYV", "YUY2", "yuyv", "yuy2"}) {
     const auto normalized = normalize_caps_format_for_media("video/x-raw", alias);
     require(normalized == "YUY2", "raw caps must canonicalize packed aliases");

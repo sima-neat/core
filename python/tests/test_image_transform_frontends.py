@@ -80,7 +80,7 @@ def test_decoded_group_byte_estimates_follow_spatial_overrides(group):
         (pyneat.Format.I420, 8, 6, 72),
         (pyneat.Format.NV16, -1, 5, 80),
         (pyneat.Format.Auto, -1, 5, 0),
-        (pyneat.Format.YUYV, 8, 6, 0),
+        (pyneat.Format.YUYV, 8, 6, 96),
     ):
         options.output_caps.format = format_
         options.output_caps.width, options.output_caps.height = width, height

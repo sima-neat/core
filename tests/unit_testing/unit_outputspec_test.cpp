@@ -132,7 +132,7 @@ void check_group_byte_estimates() {
           Override{FormatTag::Auto, -1, 12, 144}, Override{FormatTag::RGB, 8, 6, 144},
           Override{FormatTag::BGR, 8, 6, 144}, Override{FormatTag::GRAY8, 8, 6, 48},
           Override{FormatTag::I420, 8, 6, 72}, Override{FormatTag::NV16, -1, 5, 80},
-          Override{FormatTag::Auto, -1, 5, 0}, Override{FormatTag::YUYV, 8, 6, 0}}) {
+          Override{FormatTag::Auto, -1, 5, 0}, Override{FormatTag::YUYV, 8, 6, 96}}) {
       auto changed = options;
       changed.output_caps.enable = true;
       changed.output_caps.format = c.format;
