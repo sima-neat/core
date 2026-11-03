@@ -6,6 +6,7 @@
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
+#include "pipeline/internal/sima/SchedulerStageIntegration.h"
 #include "gst/GstInit.h"
 #include "gst/GstSampleAttributes.h"
 
@@ -15,6 +16,7 @@
 #include <gst/allocators/gstdmabuf.h>
 #include <gstsimaaitensorbuffer_meta.h>
 
+#include <algorithm>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -37,6 +39,128 @@ static void add_sima_meta(GstBuffer* buffer) {
                     "stream-id", G_TYPE_STRING, "camera-A", "timestamp", G_TYPE_UINT64,
                     static_cast<guint64>(123), "pcie-buffer-id", G_TYPE_INT64,
                     static_cast<gint64>(99), nullptr);
+}
+
+static simaai::scheduler::client::dma::DmaBufIdentity
+transfer_identity(const simaai::neat::Tensor& tensor) {
+  namespace dma = simaai::scheduler::client::dma;
+  auto* buffer = gst_sample_get_buffer(static_cast<GstSample*>(tensor.storage->holder.get()));
+  auto view = dma::DmaBufView::fromGstMemory(gst_buffer_peek_memory(buffer, 0));
+  auto identity = view ? view->identity() : std::nullopt;
+  require(identity.has_value(), "transfer has no DMA allocation identity");
+  return *identity;
+}
+
+static void check_transfer_reuse(simaai::neat::TensorMemory memory) {
+  using namespace simaai::neat;
+  std::vector<std::uint8_t> payload(32781U, 17);
+  const auto make_tensor = [&] {
+    return Tensor::from_vector(payload, {static_cast<std::int64_t>(payload.size())}, memory);
+  };
+
+  auto retained = make_tensor();
+  const auto retained_identity = transfer_identity(retained);
+  auto released = make_tensor();
+  const auto reusable_identity = transfer_identity(released);
+  require(reusable_identity != retained_identity, "live transfers share an allocation");
+  auto* buffer = gst_sample_get_buffer(static_cast<GstSample*>(released.storage->holder.get()));
+  add_sima_meta(buffer);
+  GST_BUFFER_PTS(buffer) = 123;
+  released = {};
+
+  for (std::uint8_t value = 1; value <= 8; ++value) {
+    std::fill(payload.begin(), payload.end(), value);
+    auto next = make_tensor();
+    require(transfer_identity(next) == reusable_identity,
+            "repeated transfers must reuse a released DMA allocation");
+    require(next.copy_payload_bytes() == payload, "reused transfer has stale payload");
+    auto* next_buffer = gst_sample_get_buffer(static_cast<GstSample*>(next.storage->holder.get()));
+    require(!gst_buffer_get_custom_meta(next_buffer, "GstSimaMeta") &&
+                GST_BUFFER_PTS(next_buffer) == GST_CLOCK_TIME_NONE,
+            "reused transfer retained the previous frame's metadata");
+  }
+  require(retained.copy_payload_bytes() == std::vector<std::uint8_t>(payload.size(), 17),
+          "reusing a released transfer changed a retained tensor");
+
+  const std::vector<Segment> segments{{"tensor", payload.size()}};
+  auto source = Tensor::from_vector(std::vector<std::uint8_t>(17, 23), {17}, TensorMemory::CPU);
+  {
+    auto padded = pipeline_internal::transfer_to_device(source, retained.device, &segments);
+    require(transfer_identity(padded) == reusable_identity,
+            "padded transfer did not reuse storage");
+    auto mapping = padded.map_read();
+    const auto* bytes = static_cast<const std::uint8_t*>(mapping.data);
+    require(mapping.size_bytes == payload.size() &&
+                std::all_of(bytes + 17, bytes + mapping.size_bytes,
+                            [](auto value) { return value == 0; }),
+            "reused transfer exposed stale bytes beyond its payload");
+  }
+
+  // More live tensors than cached slots must succeed without waiting for one
+  // of these same callers to release a tensor. The test timeout catches a wait.
+  TensorList held;
+  for (std::uint8_t value = 0; value < 40; ++value) {
+    std::fill(payload.begin(), payload.end(), value);
+    held.push_back(make_tensor());
+  }
+  for (std::size_t i = 0; i < held.size(); ++i)
+    require(held[i].copy_payload_bytes() == std::vector<std::uint8_t>(payload.size(), i),
+            "pool exhaustion overwrote a live tensor");
+
+  require(retained.copy_payload_bytes() == std::vector<std::uint8_t>(32781U, 17),
+          "cache eviction invalidated a retained tensor");
+
+  // The reported CenterPoint input is 46 MB. An application-held input plus
+  // the graph's previous input must leave room to reuse the next transfer.
+  payload.resize(1U * 40000U * 32U * 9U * sizeof(float));
+  auto application_input = make_tensor();
+  auto graph_input = make_tensor();
+  auto next_input = make_tensor();
+  const auto next_identity = transfer_identity(next_input);
+  next_input = {};
+  require(transfer_identity(make_tensor()) == next_identity,
+          "large input transfers stopped reusing storage with two live inputs");
+
+  // Preparing another graph must reclaim idle cache storage, without touching
+  // live inputs. Observe destruction rather than relying on heap usage counters.
+  bool released_memory = false;
+  auto spare = make_tensor();
+  auto* spare_buffer = gst_sample_get_buffer(static_cast<GstSample*>(spare.storage->holder.get()));
+  auto* spare_memory = GST_MINI_OBJECT(gst_buffer_peek_memory(spare_buffer, 0));
+  auto destroyed = +[](gpointer value, GstMiniObject*) { *static_cast<bool*>(value) = true; };
+  gst_mini_object_weak_ref(spare_memory, destroyed, &released_memory);
+  spare = {};
+  const bool was_cached = !released_memory;
+  auto* pipeline = gst_pipeline_new(nullptr);
+  auto failure = pipeline_internal::sima::prepare_and_attach_stages(pipeline, {}, 1);
+  gst_object_unref(pipeline);
+  if (!released_memory)
+    gst_mini_object_weak_unref(spare_memory, destroyed, &released_memory);
+  require(!failure && was_cached && released_memory,
+          "graph preparation did not reclaim transfer cache");
+  require(application_input.copy_payload_bytes() == payload &&
+              graph_input.copy_payload_bytes() == payload,
+          "reclaiming transfer cache changed a live input");
+}
+
+static void check_mixed_transfer_sizes() {
+  using namespace simaai::neat;
+  TensorList sources;
+  std::vector<simaai::scheduler::client::dma::DmaBufIdentity> identities;
+  for (const auto mib : {40, 41}) {
+    const std::size_t bytes = mib * 1024U * 1024U;
+    sources.push_back(Tensor::from_vector(std::vector<std::uint8_t>(bytes, mib),
+                                          {static_cast<std::int64_t>(bytes)}, TensorMemory::CPU));
+    identities.push_back(transfer_identity(sources.back().cvu()));
+  }
+  for (int repeat = 0; repeat < 3; ++repeat)
+    for (std::size_t i = 0; i < sources.size(); ++i) {
+      auto transferred = sources[i].cvu();
+      require(transfer_identity(transferred) == identities[i],
+              "alternating input sizes evicted reusable storage");
+      require(transferred.copy_payload_bytes() == sources[i].copy_payload_bytes(),
+              "mixed-size transfer corrupted payload");
+    }
 }
 
 static void check_transferred_lineage(const simaai::neat::Tensor& tensor, int64_t frame_id = 7) {
@@ -231,6 +355,9 @@ static void check_selected_carrier_transfer(simaai::neat::Device target) {
 int main() {
   try {
     simaai::neat::gst_init_once();
+    check_transfer_reuse(simaai::neat::TensorMemory::EV74);
+    check_transfer_reuse(simaai::neat::TensorMemory::MLA);
+    check_mixed_transfer_sizes();
 
     check_selected_carrier_transfer({simaai::neat::DeviceType::SIMA_CVU, 0});
     check_selected_carrier_transfer({simaai::neat::DeviceType::SIMA_MLA, 0});

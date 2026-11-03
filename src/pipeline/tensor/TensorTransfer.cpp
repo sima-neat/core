@@ -39,9 +39,15 @@
 #include <gst/gst.h>
 #include <gstsimaaitensorbuffer_meta.h>
 
+#include <algorithm>
+#include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include <iterator>
+#include <list>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -60,6 +66,109 @@ using simaai::neat::Segment;
 using simaai::neat::Storage;
 using simaai::neat::StorageKind;
 using simaai::neat::Tensor;
+
+namespace dma = ::simaai::scheduler::client::dma;
+
+class TransferPoolCache {
+  using Pool = std::shared_ptr<GstBufferPool>;
+  struct Entry {
+    dma::HeapKind heap;
+    std::size_t bytes;
+    Pool pool;
+  };
+  static constexpr std::size_t max_bytes = 256U * 1024U * 1024U;
+  static constexpr std::size_t max_buffers = 32U;
+
+public:
+  GstBuffer* acquire(dma::HeapKind heap, std::size_t bytes, dma::Error* error) {
+    if (bytes > max_bytes)
+      return dma::allocateDmaBufBuffer(heap, bytes, {}, error);
+
+    std::array<Pool, max_buffers> candidates;
+    std::size_t count = 0;
+    {
+      std::lock_guard lock(mutex_);
+      for (const auto& entry : pools_)
+        if (entry.heap == heap && entry.bytes == bytes)
+          candidates[count++] = entry.pool;
+    }
+    GstBufferPoolAcquireParams params{};
+    params.flags = GST_BUFFER_POOL_ACQUIRE_FLAG_DONTWAIT;
+    for (std::size_t i = 0; i < count; ++i) {
+      GstBuffer* buffer = nullptr;
+      if (gst_buffer_pool_acquire_buffer(candidates[i].get(), &buffer, &params) == GST_FLOW_OK) {
+        std::lock_guard lock(mutex_);
+        auto entry = std::find_if(pools_.begin(), pools_.end(),
+                                  [&](const auto& value) { return value.pool == candidates[i]; });
+        if (entry != pools_.end())
+          pools_.splice(pools_.begin(), pools_, entry);
+        return buffer;
+      }
+      gst_clear_buffer(&buffer);
+    }
+
+    // One slot per pool makes the cache budget actual storage. Busy slots never
+    // block a transfer; Scheduler still owns buffer reset and loan retirement.
+    Pool pool(dma::createDmaBufPool(heap, bytes, 1U, 1U, {}, error), [](GstBufferPool* value) {
+      if (value) {
+        gst_buffer_pool_set_active(value, FALSE);
+        gst_object_unref(value);
+      }
+    });
+    if (!pool)
+      return nullptr;
+    GstBuffer* buffer = nullptr;
+    if (gst_buffer_pool_acquire_buffer(pool.get(), &buffer, &params) != GST_FLOW_OK) {
+      gst_clear_buffer(&buffer);
+      *error = {EIO, "acquire new transfer buffer"};
+      return nullptr;
+    }
+    std::unique_ptr<GstBuffer, decltype(&gst_buffer_unref)> acquired(buffer, gst_buffer_unref);
+    std::list<Entry> evicted;
+    {
+      std::lock_guard lock(mutex_);
+      while (!pools_.empty() &&
+             (pools_.size() >= max_buffers || cached_bytes_ > max_bytes - bytes)) {
+        cached_bytes_ -= pools_.back().bytes;
+        evicted.splice(evicted.end(), pools_, std::prev(pools_.end()));
+      }
+      pools_.push_front({heap, bytes, std::move(pool)});
+      cached_bytes_ += bytes;
+    }
+    // Evicted pools release their idle storage outside the cache lock. Live
+    // tensors retain their buffers until the last consumer releases them.
+    return acquired.release();
+  }
+
+  void clear() {
+    std::list<Entry> evicted;
+    {
+      std::lock_guard lock(mutex_);
+      evicted.swap(pools_);
+      cached_bytes_ = 0;
+    }
+  }
+
+private:
+  std::mutex mutex_;
+  std::list<Entry> pools_;
+  std::size_t cached_bytes_ = 0;
+};
+
+TransferPoolCache& transfer_pool_cache() {
+  static TransferPoolCache cache;
+  return cache;
+}
+
+GstBuffer* acquire_transfer_buffer(dma::HeapKind heap, std::size_t bytes, dma::Error* error) {
+  auto& cache = transfer_pool_cache();
+  GstBuffer* buffer = cache.acquire(heap, bytes, error);
+  if (!buffer && (error->code == ENOMEM || error->code == ENOSPC)) {
+    cache.clear();
+    buffer = cache.acquire(heap, bytes, error);
+  }
+  return buffer;
+}
 
 //==============================================================================
 // Composite packing helpers
@@ -509,7 +618,8 @@ std::shared_ptr<Storage> make_driver_dmabuf_storage(GstSample* sample, const Dev
 }
 
 Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
-                                 std::uint64_t target_flags, const std::vector<Segment>& segments) {
+                                 std::uint64_t target_flags, const std::vector<Segment>& segments,
+                                 std::size_t payload_bytes) {
   using ::simaai::scheduler::client::dma::CpuAccess;
   using ::simaai::scheduler::client::dma::DmaBufView;
   using ::simaai::scheduler::client::dma::Error;
@@ -518,8 +628,7 @@ Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
   const std::size_t allocation_bytes = segment_total_bytes(segments);
   const HeapKind heap = target.type == DeviceType::SIMA_MLA ? HeapKind::MlaDms : HeapKind::Cma;
   Error error;
-  GstBuffer* dst =
-      ::simaai::scheduler::client::dma::allocateDmaBufBuffer(heap, allocation_bytes, {}, &error);
+  GstBuffer* dst = acquire_transfer_buffer(heap, allocation_bytes, &error);
   if (!dst) {
     throw std::runtime_error("transfer: standard DMA-BUF allocation failed: " + error.message());
   }
@@ -548,6 +657,11 @@ Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
     (void)mapping->finish();
     gst_buffer_unref(dst);
     throw std::runtime_error("transfer: standard DMA-BUF payload copy failed");
+  }
+  // Preserve freshly allocated padding when reusing a larger carrier.
+  if (allocation_bytes > payload_bytes) {
+    std::memset(static_cast<std::uint8_t*>(mapping->data()) + payload_bytes, 0,
+                allocation_bytes - payload_bytes);
   }
   if (!mapping->finish(&error)) {
     gst_buffer_unref(dst);
@@ -588,6 +702,10 @@ Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
 // Public API
 //==============================================================================
 
+void clear_tensor_transfer_cache() {
+  transfer_pool_cache().clear();
+}
+
 Tensor transfer_to_device(const Tensor& src, const Device& target,
                           const std::vector<Segment>* required_segments) {
   const std::uint64_t target_flags = target_flags_from_device(target);
@@ -621,7 +739,7 @@ Tensor transfer_to_device(const Tensor& src, const Device& target,
 
   const std::vector<Segment> segments = resolve_segments(required_segments, payload_bytes);
 
-  return transfer_to_driver_dmabuf(src, target, target_flags, segments);
+  return transfer_to_driver_dmabuf(src, target, target_flags, segments, payload_bytes);
 }
 
 Tensor transfer_to_cpu(const Tensor& src) {

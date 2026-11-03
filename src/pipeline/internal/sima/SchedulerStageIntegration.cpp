@@ -1,6 +1,7 @@
 #include "pipeline/internal/sima/SchedulerStageIntegration.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StageRecipePreparation.h"
+#include "pipeline/internal/TensorTransfer.h"
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -160,6 +161,7 @@ rt::Status prepare_and_attach_stages(GstElement* pipeline,
   options.ev74_device_lanes = kernel_runner_ev_device_lanes(attachments);
   // Scheduler owns stopped-topology checks, storage/session selection, fresh
   // factory admission and all-or-nothing context/coherency publication.
+  clear_tensor_transfer_cache();
   return gs::prepare_and_attach_stages(pipeline, attachments, options, terminal_host);
 }
 } // namespace simaai::neat::pipeline_internal::sima

@@ -900,6 +900,9 @@ add_pipeline_test(
   neat_tensor_device_placement_test
   ${CMAKE_CURRENT_SOURCE_DIR}/neat_tensor_device_placement_test.cpp
 )
+if(TEST neat_tensor_device_placement_test)
+  set_tests_properties(neat_tensor_device_placement_test PROPERTIES TIMEOUT 30)
+endif()
 
 foreach(test unit_appsrcimage_test unit_image_group_runtime_test unit_pipeline_io_test neat_tensor_device_placement_test)
   if (NOT test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
