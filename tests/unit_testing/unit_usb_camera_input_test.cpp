@@ -340,6 +340,20 @@ void check_from_info() {
 
 void check_yuyv_pipeline() {
   auto opt = mjpeg_options();
+  simaai::neat::UsbCameraCaptureInfo cached;
+  cached.options = opt;
+  cached.camera.decoded_format = FormatTag::YUYV;
+  require_throws<std::invalid_argument>(
+      [&] { (void)simaai::neat::nodes::UsbCameraInput(opt, cached.camera); }, "capture info format",
+      "raw info must not silently select legacy MJPEG capture");
+  require_throws<std::invalid_argument>(
+      [&] { (void)simaai::neat::nodes::UsbCameraInput(opt, cached); }, "capture info format",
+      "MJPEG selection must reject raw capture info");
+  cached.format = simaai::neat::UsbCameraFormat::YUYV;
+  cached.camera.decoded_format = FormatTag::NV16;
+  require_throws<std::invalid_argument>(
+      [&] { (void)simaai::neat::nodes::UsbCameraInput(opt, cached); }, "capture info format",
+      "YUYV selection must reject decoded MJPEG capture info");
   opt.width = 642;
   opt.height = 481;
   uvc::ResolvedCamera camera{"/dev/video9", FormatTag::YUYV};
