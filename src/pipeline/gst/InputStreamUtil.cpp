@@ -1306,6 +1306,15 @@ CapKey capkey_from_spec(const SampleSpec& spec) {
     key.fps_n = spec.fps_n;
     key.fps_d = spec.fps_d;
     key.video = spec.video;
+    // GStreamer defines omitted interlace mode and pixel aspect ratio as
+    // progressive and 1/1. Explicitly spelling those defaults is not a caps
+    // change. Color and chroma siting remain unspecified until supplied.
+    if (key.video.interlace_mode.empty())
+      key.video.interlace_mode = "progressive";
+    if (key.video.par_n == 0) {
+      key.video.par_n = 1;
+      key.video.par_d = 1;
+    }
   } else if (spec.kind == SampleMediaKind::Tensor) {
     key.dtype = spec.dtype;
     key.layout = spec.layout;

@@ -10,6 +10,7 @@
 #include "nodes/io/UsbCameraInput.h"
 #include "nodes/sima/SimaEncode.h"
 #include <gst/video/video.h>
+#include <gstsimaaitensorbuffer_meta.h>
 #include <iostream>
 #include <stdexcept>
 #include <type_traits>
@@ -19,6 +20,38 @@ namespace {
 void require(bool value, const char* message) {
   if (!value)
     throw std::runtime_error(message);
+}
+void raw_caps_defaults() {
+  SampleSpec implicit;
+  implicit.kind = SampleMediaKind::RawVideo;
+  implicit.media_type = "video/x-raw";
+  implicit.format = "NV12";
+  implicit.width = 18;
+  implicit.height = 10;
+  GstCaps* caps = gst_caps_from_string(caps_string_from_spec(implicit).c_str());
+  GstVideoInfo info{};
+  require(gst_video_info_from_caps(&info, caps) &&
+              GST_VIDEO_INFO_INTERLACE_MODE(&info) == GST_VIDEO_INTERLACE_MODE_PROGRESSIVE &&
+              info.par_n == 1 && info.par_d == 1,
+          "fixture must follow GStreamer's raw-video defaults");
+  gst_caps_unref(caps);
+  auto explicit_defaults = implicit;
+  explicit_defaults.video.interlace_mode = "progressive";
+  explicit_defaults.video.par_n = explicit_defaults.video.par_d = 1;
+  require(capkey_from_spec(implicit) == capkey_from_spec(explicit_defaults),
+          "spelling GStreamer defaults must not trigger renegotiation");
+  auto changed = explicit_defaults;
+  changed.video.colorimetry = "bt709";
+  require(capkey_from_spec(implicit) != capkey_from_spec(changed),
+          "unspecified color must not be guessed");
+  changed = explicit_defaults;
+  changed.video.interlace_mode = "interleaved";
+  require(capkey_from_spec(implicit) != capkey_from_spec(changed),
+          "interlaced input is not the progressive default");
+  changed = explicit_defaults;
+  changed.video.par_n = 2;
+  require(capkey_from_spec(implicit) != capkey_from_spec(changed),
+          "non-square pixels must retain distinct caps identity");
 }
 void packed_view(bool copy_input, int extra_capacity = 0) {
   constexpr int width = 6, height = 3, pitch = 20, offset = 7;
@@ -212,6 +245,8 @@ void packed_view(bool copy_input, int extra_capacity = 0) {
 int main(int argc, char** argv) {
   gst_init(&argc, &argv);
   try {
+    require(simaai::gst::tensor_buffer_register_meta(), "register Scheduler transport metadata");
+    raw_caps_defaults();
     // Old function-pointer forms remain unambiguous with explicit signatures.
     [[maybe_unused]] auto old_source =
         static_cast<std::shared_ptr<Node> (*)(UsbCameraInputOptions)>(&nodes::UsbCameraInput);
