@@ -16,12 +16,47 @@
 #include <gstsimaaitensorbuffer_meta.h>
 
 #include <algorithm>
+#include <cerrno>
+#include <chrono>
+#include <condition_variable>
+#include <cstdarg>
 #include <cstring>
+#include <dlfcn.h>
+#include <future>
 #include <iostream>
+#include <linux/dma-heap.h>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <sys/ioctl.h>
 #include <vector>
+
+namespace {
+thread_local bool fail_pool_creation = false;
+std::mutex allocation_mutex;
+std::condition_variable allocation_changed;
+bool allocation_entered = false, pool_ready = false;
+} // namespace
+
+extern "C" int ioctl(int fd, unsigned long request, ...) noexcept {
+  va_list args;
+  va_start(args, request);
+  void* argument = va_arg(args, void*);
+  va_end(args);
+  if (fail_pool_creation && request == DMA_HEAP_IOCTL_ALLOC) {
+    fail_pool_creation = false;
+    std::unique_lock lock(allocation_mutex);
+    allocation_entered = true;
+    allocation_changed.notify_all();
+    allocation_changed.wait_for(lock, std::chrono::seconds(5), [] { return pool_ready; });
+    errno = ENOMEM;
+    return -1;
+  }
+  using Ioctl = int (*)(int, unsigned long, ...);
+  static const auto real_ioctl = reinterpret_cast<Ioctl>(dlsym(RTLD_NEXT, "ioctl"));
+  return real_ioctl(fd, request, argument);
+}
 
 static void add_sima_meta(GstBuffer* buffer) {
   if (!gst_meta_get_info("GstSimaMeta")) {
@@ -48,6 +83,37 @@ transfer_identity(const simaai::neat::Tensor& tensor) {
   auto identity = view ? view->identity() : std::nullopt;
   require(identity.has_value(), "transfer has no DMA allocation identity");
   return *identity;
+}
+
+static void check_concurrent_pool_creation(simaai::neat::TensorMemory memory) {
+  using namespace simaai::neat;
+  const std::vector<std::uint8_t> payload(12349, 37);
+  const auto transfer = [&] {
+    return Tensor::from_vector(payload, {static_cast<std::int64_t>(payload.size())}, memory);
+  };
+  allocation_entered = pool_ready = false;
+  auto competing = std::async(std::launch::async, [&] {
+    fail_pool_creation = true;
+    return transfer();
+  });
+  {
+    std::unique_lock lock(allocation_mutex);
+    require(allocation_changed.wait_for(lock, std::chrono::seconds(5),
+                                        [] { return allocation_entered; }),
+            "concurrent transfer did not reach heap allocation");
+  }
+  // Publish a pool and release its slot before the competing creation fails.
+  auto first = transfer();
+  const auto reusable = transfer_identity(first);
+  first = {};
+  {
+    std::lock_guard lock(allocation_mutex);
+    pool_ready = true;
+  }
+  allocation_changed.notify_all();
+  auto recovered = competing.get();
+  require(transfer_identity(recovered) == reusable && recovered.copy_payload_bytes() == payload,
+          "failed concurrent pool creation did not reuse the available slot");
 }
 
 static void check_transfer_reuse(simaai::neat::TensorMemory memory) {
@@ -332,6 +398,8 @@ static void check_selected_carrier_transfer(simaai::neat::Device target) {
 int main() {
   try {
     simaai::neat::gst_init_once();
+    check_concurrent_pool_creation(simaai::neat::TensorMemory::EV74);
+    check_concurrent_pool_creation(simaai::neat::TensorMemory::MLA);
     check_transfer_reuse(simaai::neat::TensorMemory::EV74);
     check_transfer_reuse(simaai::neat::TensorMemory::MLA);
     check_mixed_transfer_sizes();

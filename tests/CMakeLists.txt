@@ -902,6 +902,8 @@ add_pipeline_test(
 )
 if(TEST neat_tensor_device_placement_test)
   set_tests_properties(neat_tensor_device_placement_test PROPERTIES TIMEOUT 30)
+  target_link_libraries(neat_tensor_device_placement_test PRIVATE ${CMAKE_DL_LIBS})
+  target_link_options(neat_tensor_device_placement_test PRIVATE -Wl,--export-dynamic-symbol=ioctl)
 endif()
 
 foreach(test unit_appsrcimage_test unit_image_group_runtime_test unit_pipeline_io_test neat_tensor_device_placement_test)

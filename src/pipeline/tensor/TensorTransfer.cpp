@@ -88,17 +88,21 @@ GstBuffer* acquire_transfer_buffer(dma::HeapKind heap, std::size_t bytes, dma::E
         gst_object_unref(value);
       }
     });
-    if (!created)
-      return nullptr;
     std::lock_guard lock(mutex);
-    pool = pools.emplace(key, created).first->second;
+    if (created)
+      pool = pools.emplace(key, created).first->second;
+    else if (auto it = pools.find(key); it != pools.end())
+      pool = it->second;
   }
+  if (!pool)
+    return nullptr;
   GstBuffer* buffer = nullptr;
   if (gst_buffer_pool_acquire_buffer(pool.get(), &buffer, nullptr) != GST_FLOW_OK) {
     gst_clear_buffer(&buffer);
     *error = {EIO, "acquire transfer buffer"};
     return nullptr;
   }
+  *error = {};
   return buffer;
 }
 
