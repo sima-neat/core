@@ -43,6 +43,23 @@ template <class F> void rejects(F fn) {
   require(rejected, "invalid image frontend request accepted");
 }
 void contracts() {
+  {
+    ColorConvertOptions options;
+    options.output_format = ImageFormat::NV12;
+    options.surface = ImageSurfaceLayout::EncoderNv12;
+    options.color.matrix = ImageColorMatrix::Bt709;
+    options.color.range = ImageYuvRange::Limited;
+    auto explicit_color = nodes::ColorConvert(options, "bt709");
+    const auto* policy = internal::ImageTransformAccess::policy(preproc(explicit_color));
+    require(policy->colorimetry == "bt709" && policy->color.matrix == ImageColorMatrix::Bt709 &&
+                policy->color.range == ImageYuvRange::Limited &&
+                policy->surface == ImageSurfaceLayout::EncoderNv12,
+            "explicit source color must retain the encoder surface and numerical policy");
+    auto implicit_color = nodes::ColorConvert(options);
+    require(internal::ImageTransformAccess::policy(preproc(implicit_color))->colorimetry.empty(),
+            "legacy ColorConvert must not acquire another node's source color");
+    rejects([&] { nodes::ColorConvert(options, ""); });
+  }
   for (const auto format : {ImageFormat::RGB, ImageFormat::BGR, ImageFormat::GRAY8,
                             ImageFormat::NV12, ImageFormat::I420, ImageFormat::NV16}) {
     ColorConvertOptions options;

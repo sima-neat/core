@@ -141,6 +141,16 @@ void validate_options(const UsbCameraInputOptions& opt) {
                                 std::to_string(kMaxCaptureBuffers) + " buffers");
 }
 
+void validate_capture_info_format(UsbCameraFormat format, const UsbCameraInfo& info) {
+  const bool matches = format == UsbCameraFormat::YUYV ? info.decoded_format == FormatTag::YUYV
+                                                       : info.decoded_format == FormatTag::NV12 ||
+                                                             info.decoded_format == FormatTag::NV16;
+  if (!matches)
+    throw std::invalid_argument(
+        "UsbCameraInput: capture info format does not match the selected mode; "
+        "pass the complete UsbCameraCaptureInfo returned by usb_camera_info");
+}
+
 } // namespace
 
 namespace internal::uvc {
@@ -192,6 +202,7 @@ std::shared_ptr<simaai::neat::Node> UsbCameraInput(simaai::neat::UsbCameraInputO
 std::shared_ptr<simaai::neat::Node> UsbCameraInput(simaai::neat::UsbCameraInputOptions opt,
                                                    const simaai::neat::UsbCameraInfo& info) {
   validate_options(opt);
+  validate_capture_info_format(UsbCameraFormat::MJPEG, info);
   return internal::uvc::camera_node(opt, internal::uvc::camera_from_info(opt.camera_name, info));
 }
 
@@ -205,6 +216,7 @@ std::shared_ptr<Node> UsbCameraInput(UsbCameraInputOptions opt, const UsbCameraC
   const auto& checked = info.options;
   if (info.format != UsbCameraFormat::MJPEG && info.format != UsbCameraFormat::YUYV)
     throw std::invalid_argument("UsbCameraInput: unsupported capture format");
+  validate_capture_info_format(info.format, info.camera);
   if (opt.camera_name != checked.camera_name || opt.width != checked.width ||
       opt.height != checked.height || opt.framerate_num != checked.framerate_num ||
       opt.framerate_den != checked.framerate_den)

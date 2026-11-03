@@ -42,15 +42,6 @@ struct Preproc::PreprocConfigHolder {
 const internal::ImageTransformPolicy* internal::ImageTransformAccess::policy(const Preproc& node) {
   return node.config_holder_ ? node.config_holder_->image_transform.get() : nullptr;
 }
-void internal::ImageTransformAccess::set_colorimetry(Preproc& node, std::string colorimetry) {
-  if (!node.config_holder_ || !node.config_holder_->image_transform ||
-      node.config_holder_->has_config)
-    throw std::logic_error("Color metadata must be authored before materialization");
-  auto policy =
-      std::make_shared<internal::ImageTransformPolicy>(*node.config_holder_->image_transform);
-  policy->colorimetry = std::move(colorimetry);
-  node.config_holder_->image_transform = std::move(policy);
-}
 void internal::ImageTransformAccess::set_policy(
     Preproc& node, std::shared_ptr<const internal::ImageTransformPolicy> policy) {
   if (!node.config_holder_ || node.config_holder_->has_config ||
@@ -975,6 +966,17 @@ std::shared_ptr<Node> image_node(PreprocOptions options, internal::ImageTransfor
       *node, std::make_shared<const internal::ImageTransformPolicy>(std::move(policy)));
   return node;
 }
+std::shared_ptr<Node> color_convert_node(ColorConvertOptions options,
+                                         std::string colorimetry = {}) {
+  auto opt = image_options(options.element_name);
+  opt.output_img_type = image_format_name(options.output_format);
+  internal::ImageTransformPolicy policy;
+  policy.mode = internal::ImageTransformMode::ColorConvert;
+  policy.color = options.color;
+  policy.colorimetry = std::move(colorimetry);
+  policy.surface = options.surface;
+  return image_node(std::move(opt), std::move(policy));
+}
 } // namespace
 
 std::shared_ptr<Node> Resize(ResizeOptions options) {
@@ -1020,20 +1022,11 @@ std::shared_ptr<Node> Resize(ResizeOptions options) {
 std::shared_ptr<Node> ColorConvert(ColorConvertOptions options, std::string input_colorimetry) {
   if (input_colorimetry.empty())
     throw std::invalid_argument("ColorConvert requires explicit source colorimetry");
-  auto node = ColorConvert(std::move(options));
-  internal::ImageTransformAccess::set_colorimetry(*static_cast<simaai::neat::Preproc*>(node.get()),
-                                                  std::move(input_colorimetry));
-  return node;
+  return color_convert_node(std::move(options), std::move(input_colorimetry));
 }
 
 std::shared_ptr<Node> ColorConvert(ColorConvertOptions options) {
-  auto opt = image_options(options.element_name);
-  opt.output_img_type = image_format_name(options.output_format);
-  internal::ImageTransformPolicy policy;
-  policy.mode = internal::ImageTransformMode::ColorConvert;
-  policy.color = options.color;
-  policy.surface = options.surface;
-  return image_node(std::move(opt), std::move(policy));
+  return color_convert_node(std::move(options));
 }
 
 std::shared_ptr<Node> Normalization(NormalizationOptions options) {
