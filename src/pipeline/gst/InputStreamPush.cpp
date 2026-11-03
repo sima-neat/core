@@ -626,14 +626,19 @@ make_prepare_for_mat_spec(const SampleSpec& spec, const cv::Mat& contiguous, siz
   return {};
 }
 
-std::function<size_t(uint8_t*, size_t)>
-make_tensor_copy_fill(const simaai::neat::Tensor& input, size_t input_bytes, const char* where) {
-  return [&input, input_bytes, where](uint8_t* dst, size_t dst_bytes) -> size_t {
+std::function<size_t(uint8_t*, size_t)> make_tensor_copy_fill(const simaai::neat::Tensor& input,
+                                                              size_t input_bytes, bool raw_video,
+                                                              const char* where) {
+  return [&input, input_bytes, raw_video, where](uint8_t* dst, size_t dst_bytes) -> size_t {
     const size_t copy_bytes = std::min(input_bytes, dst_bytes);
     if (!input.storage || copy_bytes == 0)
       return 0;
     std::string copy_err;
-    if (!pipeline_internal::copy_tensor_payload_to(input, dst, copy_bytes, &copy_err)) {
+    const bool copied =
+        raw_video ? pipeline_internal::copy_video_payload_to(input, input.map(MapMode::Read), dst,
+                                                             copy_bytes, &copy_err)
+                  : pipeline_internal::copy_tensor_payload_to(input, dst, copy_bytes, &copy_err);
+    if (!copied) {
       const char* tag = where ? where : "InputStream::try_push";
       throw std::runtime_error(std::string(tag) + ": " +
                                (copy_err.empty() ? std::string("tensor copy failed") : copy_err));
@@ -2314,7 +2319,8 @@ bool InputStream::try_push_message(const Sample& msg) {
   // Device-visibility guard already enforced set-completely at the top of
   // try_push_message (covers this copy path too).
 
-  const auto fill = make_tensor_copy_fill(input, input_bytes, "InputStream::try_push_message");
+  const auto fill = make_tensor_copy_fill(
+      input, input_bytes, spec.kind == SampleMediaKind::RawVideo, "InputStream::try_push_message");
   const std::function<void(GstBuffer**)> copy_prepare = make_copy_prepare_with_attributes(
       prepare, meta.attributes, "InputStream::try_push_message(copy)");
 

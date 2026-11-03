@@ -635,6 +635,7 @@ set(UNIT_TESTS
   unit_sima_boxdecode_node_fragment_test
   unit_sima_decode_test
   unit_usb_camera_input_test
+  unit_yuyv_copy_test
   unit_yuyv_transport_test
   unit_decoder_admission_test
   unit_kernel200_envelope_guard_test

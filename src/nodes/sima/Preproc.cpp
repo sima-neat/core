@@ -471,6 +471,7 @@ Preproc::Preproc(PreprocOptions opt, ImageColorOptions input_color) : Preproc(st
 }
 
 Preproc::Preproc(PreprocOptions opt) : opt_(std::move(opt)) {
+  opt_.input_img_type = normalize_caps_format_for_media("video/x-raw", opt_.input_img_type);
   if (opt_.num_buffers_locked) {
     if (opt_.num_buffers != opt_.num_buffers_model) {
       throw std::runtime_error("Preproc: num_buffers override is not allowed; must match model.");
@@ -576,9 +577,7 @@ void Preproc::materialize_config_from_input_contract(const InputContract& contra
     if (contract.media_type != "video/x-raw" ||
         (!contract.dtype.empty() && upper_copy(contract.dtype) != "UINT8"))
       throw std::invalid_argument("Image transforms require UInt8 raw-video input");
-    auto format = upper_copy(contract.format);
-    if (format == "YUYV")
-      format = "YUY2";
+    auto format = normalize_caps_format_for_media("video/x-raw", upper_copy(contract.format));
     if (format == "GRAY")
       format = "GRAY8";
     if (format != "RGB" && format != "BGR" && format != "GRAY8" && format != "GRAY" &&
@@ -630,7 +629,8 @@ void Preproc::materialize_config_from_input_contract(const InputContract& contra
       throw std::invalid_argument("EncoderNv12 surface requires NV12 output");
   }
   opt_.set_input_shape(compact_shape({contract.height, contract.width, 0}));
-  std::string contract_format = upper_copy(contract.format);
+  std::string contract_format =
+      normalize_caps_format_for_media("video/x-raw", upper_copy(contract.format));
   if (internal::ImageTransformAccess::policy(*this) && contract_format == "GRAY")
     contract_format = "GRAY8";
   if (!opt_.model_managed_contract || opt_.input_img_type.empty()) {

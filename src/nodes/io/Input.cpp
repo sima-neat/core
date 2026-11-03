@@ -137,6 +137,8 @@ OutputSpec Input::output_spec(const OutputSpec& input) const {
     }
   }
   out.format = !opt_.format.empty() ? opt_.format.str() : input.format;
+  if (out.media_type == "video/x-raw")
+    out.format = normalize_caps_format_for_media(out.media_type, std::move(out.format));
   out.width = opt_.width > 0 ? opt_.width : input.width;
   out.height = opt_.height > 0 ? opt_.height : input.height;
   out.depth = opt_.depth > 0 ? opt_.depth : input.depth;
@@ -156,6 +158,10 @@ OutputSpec Input::output_spec(const OutputSpec& input) const {
       out.layout = "HWC";
       if (out.depth <= 0)
         out.depth = 3;
+    } else if (out.format == "YUY2") {
+      out.layout = "HWC";
+      if (out.depth <= 0)
+        out.depth = 2;
     } else if (out.format == "GRAY8") {
       out.layout = "HW";
       if (out.depth <= 0)

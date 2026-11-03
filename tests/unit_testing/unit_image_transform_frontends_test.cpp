@@ -257,6 +257,68 @@ void planar_image_boundary_chain() {
           "NV16 image chain failed canonical rendering");
 }
 
+void yuyv_input_boundary_chain() {
+  for (const auto* alias : {"YUYV", "YUY2"}) {
+    InputOptions options;
+    options.payload_type = PayloadType::Image;
+    options.format = alias;
+    options.width = 18;
+    options.height = 10;
+    auto source = std::make_shared<Input>(options);
+    auto* caps = gst_caps_from_string(source->caps_string().c_str());
+    GstVideoInfo info{};
+    require(caps && gst_video_info_from_caps(&info, caps) &&
+                GST_VIDEO_INFO_FORMAT(&info) == GST_VIDEO_FORMAT_YUY2,
+            "public packed Input must publish valid GStreamer caps");
+    gst_caps_unref(caps);
+    const auto boundary = source->output_spec({});
+    require(boundary.format == "YUY2" && boundary.layout == "HWC" && boundary.depth == 2 &&
+                boundary.byte_size == 18U * 10U * 2U,
+            "packed Input boundary must infer HWC2 and use canonical caps format");
+    ColorConvertOptions convert;
+    convert.output_format = ImageFormat::NV12;
+    convert.surface = ImageSurfaceLayout::EncoderNv12;
+    convert.color.matrix = ImageColorMatrix::Bt709;
+    convert.color.range = ImageYuvRange::Limited;
+    convert.color.output_siting = {ImageChromaSiting::Cosited, ImageChromaSiting::Centered};
+    auto transform = nodes::ColorConvert(convert, "bt709");
+    auto& p = preproc(transform);
+    // Repeated graph contract walks must consider the two public aliases equal.
+    auto upstream = boundary;
+    for (const auto* token : {alias, "YUYV", "YUY2"}) {
+      upstream.format = token;
+      const auto out = p.output_spec(upstream);
+      InputContract contract;
+      contract.media_type = upstream.media_type;
+      contract.format = token;
+      contract.dtype = upstream.dtype;
+      contract.width = upstream.width;
+      contract.height = upstream.height;
+      contract.depth = upstream.depth;
+      std::string error;
+      p.apply_input_contract(contract, &error);
+      require(error.empty(),
+              "equivalent packed alias must survive repeated contract application: " + error);
+      require(out.format == "NV12" && p.options().input_img_type == "YUY2",
+              "preprocessing must persist the normalized input format");
+    }
+    ContractCompileInput compile_input;
+    pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
+    const auto compiled = compile_node_contracts({source, transform}, compile_input, &diagnostics);
+    require(compiled.fully_renderable && diagnostics.errors.empty(),
+            "packed Input must compose with ColorConvert");
+    const auto manifest =
+        render_manifest_from_compiled_contracts(compiled, compile_input, &diagnostics);
+    require(manifest && manifest->stages.size() == 1 && diagnostics.errors.empty(),
+            "packed Input conversion must render through the canonical path");
+  }
+  PreprocOptions explicit_options;
+  explicit_options.input_img_type = "YUYV";
+  Preproc explicit_preproc(explicit_options);
+  require(explicit_preproc.options().input_img_type == "YUY2",
+          "explicit Preproc format must use the same normalization");
+}
+
 void yuv_video_meta_envelopes() {
   for (const auto* format : {"NV12", "I420", "NV16"}) {
     const bool nv16 = std::string_view(format) == "NV16";
@@ -401,6 +463,7 @@ RUN_TEST("image transform frontends", [] {
   gst_init(nullptr, nullptr);
   contracts();
   planar_image_boundary_chain();
+  yuyv_input_boundary_chain();
   nv16_sample();
   yuv_video_meta_envelopes();
 })

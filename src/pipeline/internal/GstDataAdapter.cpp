@@ -325,6 +325,27 @@ bool copy_tensor_payload_to(const simaai::neat::Tensor& tensor,
   return true;
 }
 
+bool copy_video_payload_to(const Tensor& tensor, const Mapping& mapping, uint8_t* dst,
+                           std::size_t dst_bytes, std::string* err) {
+  if ((!dst && dst_bytes) || tensor.byte_offset < 0 ||
+      static_cast<std::uint64_t>(tensor.byte_offset) > dst_bytes ||
+      (tensor.is_composite() && tensor.byte_offset != 0)) {
+    if (err)
+      *err = "video copy: invalid destination or offset";
+    return false;
+  }
+  if (!dst_bytes)
+    return true;
+  const auto offset = static_cast<std::size_t>(tensor.byte_offset);
+  if (!copy_tensor_payload_to(tensor, mapping, dst + offset, dst_bytes - offset, err))
+    return false;
+  // Bytes before the selected image are not part of its mapping authority.
+  // Initialize them without reading outside the source view.
+  if (offset)
+    std::memset(dst, 0, offset);
+  return true;
+}
+
 bool canonicalize_sample_spec(SampleSpec* spec, std::string* err) {
   if (!spec) {
     if (err)
@@ -694,7 +715,12 @@ GstBuffer* build_copy_buffer_from_tensor(const simaai::neat::Tensor& tensor, con
       return nullptr;
     }
     std::string copy_err;
-    if (!copy_tensor_payload_to(tensor, static_cast<uint8_t*>(map.data), bytes, &copy_err)) {
+    const bool copied =
+        spec.kind == SampleMediaKind::RawVideo
+            ? copy_video_payload_to(tensor, tensor.map(MapMode::Read),
+                                    static_cast<uint8_t*>(map.data), bytes, &copy_err)
+            : copy_tensor_payload_to(tensor, static_cast<uint8_t*>(map.data), bytes, &copy_err);
+    if (!copied) {
       gst_buffer_unmap(buf, &map);
       gst_buffer_unref(buf);
       if (err)
