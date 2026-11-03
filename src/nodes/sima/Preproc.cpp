@@ -42,6 +42,9 @@ struct Preproc::PreprocConfigHolder {
 const internal::ImageTransformPolicy* internal::ImageTransformAccess::policy(const Preproc& node) {
   return node.config_holder_ ? node.config_holder_->image_transform.get() : nullptr;
 }
+std::optional<ImageColorOptions> internal::ImageTransformAccess::input_color(const Preproc& node) {
+  return node.config_holder_ ? node.config_holder_->input_color : std::nullopt;
+}
 void internal::ImageTransformAccess::set_policy(
     Preproc& node, std::shared_ptr<const internal::ImageTransformPolicy> policy) {
   if (!node.config_holder_ || node.config_holder_->has_config ||

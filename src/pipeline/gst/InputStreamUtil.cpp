@@ -863,6 +863,8 @@ const char* fmt_from_tensor_image(const simaai::neat::Tensor& input) {
     return "GRAY8";
   case simaai::neat::ImageSpec::PixelFormat::NV12:
     return "NV12";
+  case simaai::neat::ImageSpec::PixelFormat::YUYV:
+    return "YUY2";
   case simaai::neat::ImageSpec::PixelFormat::NV16:
     return "NV16";
   case simaai::neat::ImageSpec::PixelFormat::I420:
@@ -1303,6 +1305,7 @@ CapKey capkey_from_spec(const SampleSpec& spec) {
     key.height = spec.height;
     key.fps_n = spec.fps_n;
     key.fps_d = spec.fps_d;
+    key.video = spec.video;
   } else if (spec.kind == SampleMediaKind::Tensor) {
     key.dtype = spec.dtype;
     key.layout = spec.layout;
@@ -1313,6 +1316,55 @@ CapKey capkey_from_spec(const SampleSpec& spec) {
   }
   return key;
 }
+
+namespace {
+void apply_video_interpretation(GstCaps* caps, const RawVideoInterpretation& video) {
+  if (!video.colorimetry.empty())
+    gst_caps_set_simple(caps, "colorimetry", G_TYPE_STRING, video.colorimetry.c_str(), nullptr);
+  if (!video.chroma_site.empty())
+    gst_caps_set_simple(caps, "chroma-site", G_TYPE_STRING, video.chroma_site.c_str(), nullptr);
+  if (!video.interlace_mode.empty())
+    gst_caps_set_simple(caps, "interlace-mode", G_TYPE_STRING, video.interlace_mode.c_str(),
+                        nullptr);
+  if (video.par_n > 0 && video.par_d > 0)
+    gst_caps_set_simple(caps, "pixel-aspect-ratio", GST_TYPE_FRACTION, video.par_n, video.par_d,
+                        nullptr);
+}
+void read_video_interpretation(SampleSpec& spec, const GstCaps* caps) {
+  if (!caps || !gst_caps_is_fixed(caps))
+    throw std::invalid_argument("Raw video interpretation requires fixed caps");
+  const auto* structure = gst_caps_get_structure(caps, 0);
+  if (!gst_structure_has_name(structure, "video/x-raw"))
+    throw std::invalid_argument("Raw video interpretation requires video/x-raw caps");
+  const auto read = [&](const char* field, std::string& value) {
+    if (!gst_structure_has_field(structure, field))
+      return;
+    const auto* text = gst_structure_get_string(structure, field);
+    if (!text || !*text)
+      throw std::invalid_argument(std::string("Invalid raw video ") + field);
+    value = text;
+  };
+  read("colorimetry", spec.video.colorimetry);
+  read("chroma-site", spec.video.chroma_site);
+  read("interlace-mode", spec.video.interlace_mode);
+  if (gst_structure_has_field(structure, "pixel-aspect-ratio") &&
+      (!gst_structure_get_fraction(structure, "pixel-aspect-ratio", &spec.video.par_n,
+                                   &spec.video.par_d) ||
+       spec.video.par_n <= 0 || spec.video.par_d <= 0))
+    throw std::invalid_argument("Invalid raw video pixel-aspect-ratio");
+}
+void read_tensor_video_interpretation(SampleSpec& spec, const Tensor& input) {
+  if (spec.kind != SampleMediaKind::RawVideo)
+    return;
+  if (input.semantic.image)
+    spec.video.colorimetry = input.semantic.image->color_space;
+  if (input.storage && input.storage->kind == StorageKind::GstSample && input.storage->holder) {
+    auto* sample = static_cast<GstSample*>(input.storage->holder.get());
+    if (const auto* caps = gst_sample_get_caps(sample))
+      read_video_interpretation(spec, caps);
+  }
+}
+} // namespace
 
 std::string caps_string_from_spec(const SampleSpec& spec) {
   if (spec.kind == SampleMediaKind::Encoded) {
@@ -1335,6 +1387,24 @@ std::string caps_string_from_spec(const SampleSpec& spec) {
       }
       oss << ",framerate=" << spec.fps_n << "/" << spec.fps_d;
     }
+    const auto append = [&](const char* field, const std::string& value) {
+      if (value.empty())
+        return;
+      // Use GStreamer's string escaping without constructing/parsing a caps
+      // object on every frame. The object cache uses the same interpretation.
+      GValue text = G_VALUE_INIT;
+      g_value_init(&text, G_TYPE_STRING);
+      g_value_set_static_string(&text, value.c_str());
+      gchar* escaped = gst_value_serialize(&text);
+      oss << ',' << field << "=(string)" << escaped;
+      g_free(escaped);
+      g_value_unset(&text);
+    };
+    append("colorimetry", spec.video.colorimetry);
+    append("chroma-site", spec.video.chroma_site);
+    append("interlace-mode", spec.video.interlace_mode);
+    if (spec.video.par_n > 0 && spec.video.par_d > 0)
+      oss << ",pixel-aspect-ratio=" << spec.video.par_n << '/' << spec.video.par_d;
     return oss.str();
   }
 
@@ -1406,6 +1476,11 @@ std::size_t CapKeyHash::operator()(const CapKey& key) const {
     seed = hash_combine(seed, std::hash<int>{}(key.height));
     seed = hash_combine(seed, std::hash<int>{}(key.fps_n));
     seed = hash_combine(seed, std::hash<int>{}(key.fps_d));
+    seed = hash_combine(seed, hash_string(key.video.colorimetry));
+    seed = hash_combine(seed, hash_string(key.video.chroma_site));
+    seed = hash_combine(seed, hash_string(key.video.interlace_mode));
+    seed = hash_combine(seed, std::hash<int>{}(key.video.par_n));
+    seed = hash_combine(seed, std::hash<int>{}(key.video.par_d));
     break;
   case SampleMediaKind::Tensor:
     seed = hash_combine(seed, std::hash<int>{}(static_cast<int>(key.dtype)));
@@ -1516,12 +1591,14 @@ InputGeometry describe_tensor_geometry_or_throw(const simaai::neat::Tensor& inpu
       fmt = semantic_fmt;
     if (fmt == "GRAY")
       fmt = "GRAY8";
+    if (fmt == "YUYV")
+      fmt = "YUY2";
     if (fmt.empty()) {
       throw std::invalid_argument(std::string(tag) +
                                   ": simaai::neat::Tensor video input missing format");
     }
     if (fmt != "RGB" && fmt != "BGR" && fmt != "GRAY8" && fmt != "NV12" && fmt != "NV16" &&
-        fmt != "I420") {
+        fmt != "I420" && fmt != "YUY2") {
       throw std::invalid_argument(std::string(tag) +
                                   ": unsupported video format: " + std::string(fmt));
     }
@@ -1569,7 +1646,33 @@ InputGeometry describe_tensor_geometry_or_throw(const simaai::neat::Tensor& inpu
     int h = shape_dim(input.shape, static_cast<size_t>(packed_h_index));
     int w = shape_dim(input.shape, static_cast<size_t>(packed_w_index));
 
-    if (fmt == "NV12" || fmt == "NV16" || fmt == "I420") {
+    if (fmt == "YUY2") {
+      if (input.is_composite() || input.layout != TensorLayout::HWC || input.shape.size() != 3 ||
+          input.shape[2] != 2 || h <= 0 || w <= 0 || (w & 1))
+        throw std::invalid_argument(std::string(tag) + ": YUYV requires even-width packed HWC2");
+      const std::size_t row = std::size_t(w) * 2;
+      const auto stride = input.strides_bytes.empty() ? std::int64_t(row) : input.strides_bytes[0];
+      if (stride < std::int64_t(row) || stride > std::numeric_limits<gint>::max() ||
+          (!input.strides_bytes.empty() &&
+           (input.strides_bytes.size() != 3 || input.strides_bytes[1] != 2 ||
+            input.strides_bytes[2] != 1)))
+        throw std::invalid_argument(std::string(tag) + ": invalid YUYV packed strides");
+      std::size_t span = 0, end = 0;
+      if (!pipeline_internal::safe_mul(std::size_t(stride), std::size_t(h - 1), &span) ||
+          !pipeline_internal::safe_add(span, row, &span) ||
+          !pipeline_internal::safe_add(std::size_t(input.byte_offset), span, &end) ||
+          (input.storage && input.storage->size_bytes && end > input.storage->size_bytes))
+        throw std::invalid_argument(std::string(tag) + ": YUYV active extent exceeds storage");
+      spec.width = w;
+      spec.height = h;
+      spec.depth = 2;
+      spec.planes.push_back({PlaneRole::Unknown, w, h, stride, input.byte_offset, span});
+      // Retain the original GstBuffer view, including its allocation tail. A
+      // frame need not contain the last row's inactive padding.
+      spec.required_bytes_actual = input.storage && input.storage->kind == StorageKind::GstSample
+                                       ? input.storage->size_bytes
+                                       : end;
+    } else if (fmt == "NV12" || fmt == "NV16" || fmt == "I420") {
       if (input.byte_offset != 0) {
         throw std::invalid_argument(std::string(tag) +
                                     ": composite tensor must have byte_offset == 0");
@@ -1739,7 +1842,7 @@ InputGeometry describe_tensor_geometry_or_throw(const simaai::neat::Tensor& inpu
       spec.required_bytes_actual = bytes;
     }
 
-    if (input.storage && input.storage->size_bytes > 0) {
+    if (fmt != "YUY2" && input.storage && input.storage->size_bytes > 0) {
       if (static_cast<size_t>(input.byte_offset) > input.storage->size_bytes ||
           spec.required_bytes_actual >
               input.storage->size_bytes - static_cast<size_t>(input.byte_offset)) {
@@ -1886,6 +1989,7 @@ SampleSpec describe_tensor_spec_or_throw(const Tensor& input, const InputOptions
   spec.required_bytes_actual = geometry.required_bytes_actual;
   spec.fps_n = opt.fps_n;
   spec.fps_d = opt.fps_d;
+  read_tensor_video_interpretation(spec, input);
   spec.caps_key = capkey_from_spec(spec);
   spec.caps_string = caps_string_from_spec(spec);
   return spec;
@@ -2210,6 +2314,24 @@ void validate_public_input(const Sample& input, const InputOptions& opt,
   visit(visit, input);
 }
 
+namespace {
+SampleSpec sample_tensor_spec(const Sample& sample, const Tensor& tensor, const InputOptions& opt) {
+  auto spec = derive_tensor_spec_or_throw(tensor, opt, "SampleSpec");
+  // GstSample caps are authoritative when retained. Public CPU-backed samples
+  // may instead carry their interpretation in Sample::caps_string.
+  if (spec.kind == SampleMediaKind::RawVideo && !sample.caps_string.empty() &&
+      (!tensor.storage || tensor.storage->kind != StorageKind::GstSample ||
+       !tensor.storage->holder)) {
+    auto caps = std::unique_ptr<GstCaps, decltype(&gst_caps_unref)>(
+        gst_caps_from_string(sample.caps_string.c_str()), gst_caps_unref);
+    read_video_interpretation(spec, caps.get());
+    spec.caps_key = capkey_from_spec(spec);
+    spec.caps_string = caps_string_from_spec(spec);
+  }
+  return spec;
+}
+} // namespace
+
 SampleSpec derive_sample_spec_or_throw(const Sample& sample) {
   if (sample.kind == SampleKind::Tensor && sample.tensor.has_value()) {
     if (sample_uses_single_tensor_envelope_transport(sample)) {
@@ -2270,7 +2392,7 @@ SampleSpec derive_sample_spec_or_throw(const Sample& sample) {
     } else if (!sample.format.empty()) {
       opt.format = sample.format;
     }
-    return derive_tensor_spec_or_throw(input, opt, "SampleSpec");
+    return sample_tensor_spec(sample, input, opt);
   }
 
   if (sample_has_tensor_list(sample)) {
@@ -2396,7 +2518,7 @@ SampleSpec derive_sample_spec_or_throw(const Sample& sample) {
     } else if (!sample.format.empty()) {
       opt.format = sample.format;
     }
-    return derive_tensor_spec_or_throw(input, opt, "SampleSpec");
+    return sample_tensor_spec(sample, input, opt);
   }
   if (sample.kind == SampleKind::Bundle) {
     if (sample.fields.empty()) {
@@ -2459,6 +2581,7 @@ GstCaps* caps_from_spec(const SampleSpec& spec) {
       }
       gst_caps_set_simple(caps, "framerate", GST_TYPE_FRACTION, spec.fps_n, spec.fps_d, nullptr);
     }
+    apply_video_interpretation(caps, spec.video);
   } else if (spec.media_type == "application/vnd.simaai.tensor") {
     const std::vector<int64_t>& tensor_shape = spec.shape;
     if (spec.format.empty() || tensor_shape.empty()) {

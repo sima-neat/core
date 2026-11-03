@@ -24,6 +24,7 @@ struct ImageTransformPolicy {
 };
 struct ImageTransformAccess {
   static const ImageTransformPolicy* policy(const Preproc&);
+  static std::optional<ImageColorOptions> input_color(const Preproc&);
   static void set_policy(Preproc&, std::shared_ptr<const ImageTransformPolicy>);
 };
 } // namespace internal

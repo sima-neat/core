@@ -83,6 +83,17 @@ struct PlaneInfo {
   size_t size_bytes = 0;
 };
 
+// Interpretation travels with raw pixels across segmented graph edges. Empty
+// fields mean unspecified; never replace them with guessed color defaults.
+struct RawVideoInterpretation {
+  std::string colorimetry;
+  std::string chroma_site;
+  std::string interlace_mode;
+  int par_n = 0;
+  int par_d = 1;
+  bool operator==(const RawVideoInterpretation&) const = default;
+};
+
 struct CapKey {
   SampleMediaKind kind = SampleMediaKind::Tensor;
   std::string media_type;
@@ -91,6 +102,7 @@ struct CapKey {
   int height = -1;
   int fps_n = 0;
   int fps_d = 1;
+  RawVideoInterpretation video;
   TensorDType dtype = TensorDType::UInt8;
   TensorLayout layout = TensorLayout::Unknown;
   std::vector<int64_t> shape;
@@ -103,7 +115,8 @@ struct CapKey {
     switch (kind) {
     case SampleMediaKind::RawVideo:
       return media_type == other.media_type && format == other.format && width == other.width &&
-             height == other.height && fps_n == other.fps_n && fps_d == other.fps_d;
+             height == other.height && fps_n == other.fps_n && fps_d == other.fps_d &&
+             video == other.video;
     case SampleMediaKind::Tensor:
       return dtype == other.dtype && shape == other.shape &&
              tensor_envelope_transport == other.tensor_envelope_transport;
@@ -153,6 +166,7 @@ struct SampleSpec {
   bool tensor_envelope_transport = false;
   int fps_n = 0;
   int fps_d = 1;
+  RawVideoInterpretation video;
   std::vector<PlaneInfo> planes;
   // Selected tensor view bytes; required_bytes_actual may instead describe a
   // larger TensorBuffer carrier transported without a copy.
