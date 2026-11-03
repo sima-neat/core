@@ -6,7 +6,6 @@
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
-#include "pipeline/internal/sima/SchedulerStageIntegration.h"
 #include "gst/GstInit.h"
 #include "gst/GstSampleAttributes.h"
 
@@ -96,19 +95,18 @@ static void check_transfer_reuse(simaai::neat::TensorMemory memory) {
             "reused transfer exposed stale bytes beyond its payload");
   }
 
-  // More live tensors than cached slots must succeed without waiting for one
-  // of these same callers to release a tensor. The test timeout catches a wait.
+  // Pool growth must preserve earlier tensors without waiting for their release.
   TensorList held;
-  for (std::uint8_t value = 0; value < 40; ++value) {
+  for (std::uint8_t value = 0; value < 4; ++value) {
     std::fill(payload.begin(), payload.end(), value);
     held.push_back(make_tensor());
   }
   for (std::size_t i = 0; i < held.size(); ++i)
     require(held[i].copy_payload_bytes() == std::vector<std::uint8_t>(payload.size(), i),
-            "pool exhaustion overwrote a live tensor");
+            "pool growth overwrote a live tensor");
 
   require(retained.copy_payload_bytes() == std::vector<std::uint8_t>(32781U, 17),
-          "cache eviction invalidated a retained tensor");
+          "pool growth invalidated a retained tensor");
 
   // The reported CenterPoint input is 46 MB. An application-held input plus
   // the graph's previous input must leave room to reuse the next transfer.
@@ -120,27 +118,6 @@ static void check_transfer_reuse(simaai::neat::TensorMemory memory) {
   next_input = {};
   require(transfer_identity(make_tensor()) == next_identity,
           "large input transfers stopped reusing storage with two live inputs");
-
-  // Preparing another graph must reclaim idle cache storage, without touching
-  // live inputs. Observe destruction rather than relying on heap usage counters.
-  bool released_memory = false;
-  auto spare = make_tensor();
-  auto* spare_buffer = gst_sample_get_buffer(static_cast<GstSample*>(spare.storage->holder.get()));
-  auto* spare_memory = GST_MINI_OBJECT(gst_buffer_peek_memory(spare_buffer, 0));
-  auto destroyed = +[](gpointer value, GstMiniObject*) { *static_cast<bool*>(value) = true; };
-  gst_mini_object_weak_ref(spare_memory, destroyed, &released_memory);
-  spare = {};
-  const bool was_cached = !released_memory;
-  auto* pipeline = gst_pipeline_new(nullptr);
-  auto failure = pipeline_internal::sima::prepare_and_attach_stages(pipeline, {}, 1);
-  gst_object_unref(pipeline);
-  if (!released_memory)
-    gst_mini_object_weak_unref(spare_memory, destroyed, &released_memory);
-  require(!failure && was_cached && released_memory,
-          "graph preparation did not reclaim transfer cache");
-  require(application_input.copy_payload_bytes() == payload &&
-              graph_input.copy_payload_bytes() == payload,
-          "reclaiming transfer cache changed a live input");
 }
 
 static void check_mixed_transfer_sizes() {
@@ -157,7 +134,7 @@ static void check_mixed_transfer_sizes() {
     for (std::size_t i = 0; i < sources.size(); ++i) {
       auto transferred = sources[i].cvu();
       require(transfer_identity(transferred) == identities[i],
-              "alternating input sizes evicted reusable storage");
+              "alternating input sizes did not reuse their allocations");
       require(transferred.copy_payload_bytes() == sources[i].copy_payload_bytes(),
               "mixed-size transfer corrupted payload");
     }

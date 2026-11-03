@@ -932,10 +932,9 @@ requires packing. Explicit CPU memory and Owned outputs remain supported;
 required device allocations fail rather than silently falling back to CPU
 memory. Applications do not select a memory backend or initialize GStreamer.
 
-Tensor transfers reuse bounded storage by heap and byte capacity. Live tensors
-retain ownership when entries are evicted or the cache is cleared before graph
-preparation. CPU access reuses Runner's mapping while each access acquires and
-releases its ticket.
+Tensor transfers reuse pools by heap and byte capacity. Pools grow while tensors
+remain in use and retain released buffers until process exit. CPU access reuses
+Runner's mapping while each access acquires and releases its ticket.
 
 Input allocation preference and runtime admission are separate decisions. Core
 resolves both from the declared `Input` and its executable downstream route at
