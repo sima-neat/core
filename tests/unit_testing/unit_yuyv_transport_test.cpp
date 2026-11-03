@@ -1,4 +1,10 @@
 #include "pipeline/Tensor.h"
+#include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/internal/InputStream.h"
+#include "pipeline/internal/GstDataAdapter.h"
+#include "nodes/io/Input.h"
+#include <gst/app/gstappsrc.h>
+#include <gst/app/gstappsink.h>
 #include "pipeline/TensorAdapters.h"
 #include "pipeline/FormatSpec.h"
 #include "nodes/io/UsbCameraInput.h"
@@ -23,8 +29,9 @@ void packed_view() {
   require(gst_buffer_add_video_meta_full(buffer, GST_VIDEO_FRAME_FLAG_NONE, GST_VIDEO_FORMAT_YUY2,
                                          width, height, 1, offsets, strides),
           "video meta");
-  GstCaps* caps = gst_caps_from_string("video/x-raw,format=YUY2,width=6,height=3,framerate=30000/"
-                                       "1001,colorimetry=bt709,chroma-site=jpeg");
+  GstCaps* caps = gst_caps_from_string(
+      "video/x-raw,format=YUY2,width=6,height=3,framerate=30000/"
+      "1001,colorimetry=bt709,chroma-site=jpeg,interlace-mode=progressive,pixel-aspect-ratio=1/1");
   GstSample* sample = gst_sample_new(buffer, caps, nullptr, nullptr);
   Tensor tensor = from_gst_sample(sample);
   gst_sample_unref(sample);
@@ -41,6 +48,126 @@ void packed_view() {
   require(tensor.semantic.image->color_space == "bt709", "preserve color metadata");
   std::string error;
   require(tensor.validate(&error), error.c_str());
+  auto message = sample_from_tensors(TensorList{tensor});
+  auto spec = derive_sample_spec_or_throw(message);
+  require(spec.format == "YUY2" && spec.depth == 2 && spec.required_bytes_actual == extent,
+          "graph handoff must accept packed YUYV active extent");
+  require(spec.planes.size() == 1 && spec.planes[0].offset_bytes == offset &&
+              spec.planes[0].stride_bytes == pitch && spec.planes[0].size_bytes == extent - offset,
+          "graph handoff must preserve offset/pitch without requiring final row padding");
+  require(spec.video.colorimetry == "bt709" && spec.video.chroma_site == "jpeg" &&
+              spec.video.interlace_mode == "progressive" && spec.video.par_n == 1 &&
+              spec.video.par_d == 1,
+          "graph handoff must retain raw interpretation");
+  GstCaps* rebuilt = caps_from_spec(spec);
+  const auto* fields = gst_caps_get_structure(rebuilt, 0);
+  require(std::string(gst_structure_get_string(fields, "colorimetry")) == "bt709" &&
+              std::string(gst_structure_get_string(fields, "chroma-site")) == "jpeg",
+          "rebuilt raw caps must retain color");
+  GstCaps* serialized = gst_caps_from_string(spec.caps_string.c_str());
+  require(gst_caps_is_equal(rebuilt, serialized), "caps string and object must agree");
+  gst_caps_unref(serialized);
+  auto changed = spec;
+  changed.video.colorimetry = "bt601";
+  changed.caps_key = capkey_from_spec(changed);
+  changed.caps_string = caps_string_from_spec(changed);
+  require(changed.caps_key != spec.caps_key, "color changes must invalidate the caps key");
+  GstCaps* changed_caps = caps_from_spec(changed);
+  require(std::string(gst_structure_get_string(gst_caps_get_structure(changed_caps, 0),
+                                               "colorimetry")) == "bt601",
+          "global caps cache must not alias different color interpretations");
+  gst_caps_unref(changed_caps);
+  for (int field = 0; field < 3; ++field) {
+    auto other = spec;
+    if (field == 0)
+      other.video.chroma_site = "mpeg2";
+    if (field == 1)
+      other.video.interlace_mode = "interleaved";
+    if (field == 2)
+      other.video.par_n = 2;
+    require(capkey_from_spec(other) != spec.caps_key, "raw interpretation is caps identity");
+  }
+  // Exercise the actual segmented-graph InputStream handoff with a labeled
+  // system-memory fixture. This proves retained storage, not device admission.
+  GstElement* pipeline = gst_pipeline_new("yuyv-handoff");
+  GstElement* source = GST_ELEMENT(
+      g_object_new(GST_TYPE_APP_SRC, "format", GST_FORMAT_TIME, "is-live", TRUE, nullptr));
+  GstElement* sink = GST_ELEMENT(
+      g_object_new(GST_TYPE_APP_SINK, "sync", FALSE, "enable-last-sample", FALSE, nullptr));
+  gst_bin_add_many(GST_BIN(pipeline), source, sink, nullptr);
+  require(gst_element_link(source, sink), "link handoff fixture");
+  gst_object_ref(source);
+  gst_object_ref(sink);
+  gst_app_src_set_caps(GST_APP_SRC(source), rebuilt);
+  gst_caps_unref(rebuilt);
+  InputOptions input;
+  input.memory_policy = InputMemoryPolicy::SystemMemory;
+  InputStreamOptions options;
+  options.copy_input = false;
+  options.require_device_visible_input = false;
+  options.allow_graph_internal_zero_copy_input = true;
+  options.teardown_policy = pipeline_internal::InputStreamTeardownPolicy::MustReachNull;
+  auto stream = InputStream::create(pipeline, source, sink, spec, input, options, {}, nullptr);
+  auto* retained = static_cast<GstSample*>(tensor.storage->holder.get());
+  auto* original = gst_sample_get_buffer(retained);
+  auto* memory = gst_buffer_peek_memory(original, 0);
+  require(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
+          "start handoff fixture");
+  require(stream.try_push_message(message), "push YUYV across graph boundary");
+  auto* received = gst_app_sink_try_pull_sample(GST_APP_SINK(sink), GST_SECOND);
+  require(received, "pull YUYV after graph boundary");
+  auto* received_buffer = gst_sample_get_buffer(received);
+  auto* received_meta = gst_buffer_get_video_meta(received_buffer);
+  require(gst_buffer_peek_memory(received_buffer, 0) == memory &&
+              gst_buffer_get_size(received_buffer) == extent && received_meta &&
+              received_meta->offset[0] == offset && received_meta->stride[0] == pitch,
+          "graph handoff must retain the same allocation and authoritative layout");
+  const auto roundtrip = from_gst_sample(received);
+  require(roundtrip.semantic.image->color_space == "bt709", "color survives actual appsrc");
+  gst_sample_unref(received);
+  auto* new_caps = gst_caps_copy(gst_sample_get_caps(retained));
+  gst_caps_set_simple(new_caps, "colorimetry", G_TYPE_STRING, "bt601", nullptr);
+  auto* new_sample = gst_sample_new(original, new_caps, nullptr, nullptr);
+  auto new_message = sample_from_tensors(TensorList{from_gst_sample(new_sample)});
+  gst_sample_unref(new_sample);
+  bool color_rejected = false;
+  try {
+    (void)stream.try_push_message(new_message);
+  } catch (const std::exception&) {
+    color_rejected = true;
+  }
+  require(color_rejected, "static graph must reject color changes instead of reusing cached caps");
+  new_caps = gst_caps_make_writable(new_caps);
+  gst_caps_set_simple(new_caps, "colorimetry", G_TYPE_INT, 123, nullptr);
+  new_sample = gst_sample_new(original, new_caps, nullptr, nullptr);
+  bool malformed_rejected = false;
+  try {
+    (void)derive_sample_spec_or_throw(sample_from_tensors(TensorList{from_gst_sample(new_sample)}));
+  } catch (const std::invalid_argument&) {
+    malformed_rejected = true;
+  }
+  require(malformed_rejected, "wrong-typed color must not disappear into defaults");
+  gst_sample_unref(new_sample);
+  gst_caps_unref(new_caps);
+  stream.close();
+  auto reject_geometry = [&](const Tensor& bad) {
+    bool rejected = false;
+    try {
+      (void)derive_sample_spec_or_throw(sample_from_tensors(TensorList{bad}));
+    } catch (const std::invalid_argument&) {
+      rejected = true;
+    }
+    require(rejected, "malformed YUYV must fail graph admission");
+  };
+  auto bad = tensor;
+  bad.shape[1] = 5;
+  reject_geometry(bad);
+  bad = tensor;
+  bad.byte_offset = offset + 1;
+  reject_geometry(bad);
+  bad = tensor;
+  bad.strides_bytes[1] = 3;
+  reject_geometry(bad);
   tensor.shape[1] = 5;
   require(!tensor.validate(&error), "odd width must fail");
   tensor.shape[1] = width;

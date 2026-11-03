@@ -4,6 +4,9 @@
 #include "model_archive_fixture_utils.h"
 #include "nodes/groups/ModelGroups.h"
 #include "nodes/sima/SimaBoxDecode.h"
+#include "nodes/sima/Preproc.h"
+#include "nodes/sima/internal/ImageTransformPolicy.h"
+#include "pipeline/internal/contract/CompiledNodeContract.h"
 #include "pipeline/BoxDecodeType.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "test_main.h"
@@ -207,6 +210,42 @@ RUN_TEST(
       require(changed, "already-selected boxdecode route should still acquire the MLA terminal");
       require(internal::ModelAccess::options(*already_effective).inference_terminal.mla_only,
               "already-selected boxdecode route should stop before the MPK post tail");
+
+      // A manual post request reconstructs model preprocessing. Preserve the
+      // camera interpretation supplied outside Model::Options on that route.
+      Model::Options raw_options;
+      raw_options.preprocess.kind = InputKind::Image;
+      raw_options.preprocess.enable = AutoFlag::On;
+      raw_options.preprocess.color_convert.input_format = PreprocessColorFormat::YUYV;
+      raw_options.preprocess.input_max_width = 1280;
+      raw_options.preprocess.input_max_height = 720;
+      raw_options.decode_type = BoxDecodeType::YoloV8Seg;
+      Model raw_model(fixture.tar_path, raw_options);
+      ImageColorOptions raw_color;
+      raw_color.matrix = ImageColorMatrix::Bt709;
+      raw_color.range = ImageYuvRange::Limited;
+      auto authored = nodes::Preproc(PreprocOptions(raw_model), raw_color);
+      const auto raw_binding = internal::make_model_lineage_binding(
+          raw_model, internal::ModelLineageStageRole::ManualPost,
+          internal::RequestedPostRouteKind::BoxDecode, "SimaBoxDecode");
+      const auto rebuilt_nodes = session_build_materialize_model_bound_nodes(
+          {authored, std::make_shared<ManualPostProbeNode>(raw_binding)}, true);
+      const auto rebuilt_pre =
+          std::find_if(rebuilt_nodes.begin(), rebuilt_nodes.end(),
+                       [](const auto& node) { return dynamic_cast<const Preproc*>(node.get()); });
+      require(rebuilt_pre != rebuilt_nodes.end() && rebuilt_pre->get() != authored.get(),
+              "regression must exercise actual preprocessing replacement");
+      const auto* pre = static_cast<const Preproc*>(rebuilt_pre->get());
+      const auto color = internal::ImageTransformAccess::input_color(*pre);
+      require(color && color->matrix == ImageColorMatrix::Bt709 &&
+                  color->range == ImageYuvRange::Limited &&
+                  color->input_siting == raw_color.input_siting,
+              "model retarget lost negotiated YUYV interpretation");
+      CompiledNodeContract raw_compiled;
+      require(pre->compile_node_contract({}, &raw_compiled, &err), err);
+      require(raw_compiled.processcvu && raw_compiled.processcvu->payload.input_color &&
+                  raw_compiled.processcvu->payload.input_color->range == ImageYuvRange::Limited,
+              "retargeted executable contract must carry the authored color");
 
       std::vector<std::shared_ptr<Node>> nodes;
       nodes.push_back(std::make_shared<ManualPostProbeNode>(probe_binding));
