@@ -4190,6 +4190,14 @@ internal::PreprocessPlannerResult build_preprocess_plan(const std::string& tar_g
   if (route.ambiguous) {
     session_route_plan.diagnostics.push_back("route-ambiguous=" + route.ambiguity_reason);
   }
+  if (route_uses_image_ingress(session_route_plan)) {
+    // Route selection can pick the image preproc stage on its own (default options with
+    // an MPK preproc stage).  Re-plan with that route so normalize=Auto resolves once,
+    // together with enabled and the graph family/kernel.
+    internal::PreprocessRouteContext route_context;
+    route_context.image_preproc_selected = true;
+    plan = internal::plan_preprocess(options, capabilities, route_context);
+  }
   plan.session_route_plan = session_route_plan;
   populate_effective_model_managed_contract_fields(&plan, capability_pack);
 

@@ -428,6 +428,17 @@ Preprocessing and postprocessing are explicit framework stages/options. A format
 required preprocessing metadata, unavailable selected hardware transport, invalid model archive or MPK contract, or caps negotiation
 failure should surface as an actionable structured error rather than a hidden runtime correction.
 
+### Preprocess normalization from MPK `input_range`
+
+The MPK `input_range` of the model ingress is part of the preprocessing contract. Image input reaches the CVU preproc as `[0, 255]` pixels, and the preproc computes `(pixel / 255 - mean) / stddev`. When `preprocess.normalize.enable` is `Auto` and no explicit stats or preset are set, normalization is resolved from that range once route selection has placed the image preproc stage first, including when the MPK stage order selects it without a preprocess request. `build_preprocess_plan()` then calls `plan_preprocess()` again with the selected route, so the enabled flag, graph family and kernel, and normalize stats in the resolved plan agree:
+
+- A finite range `[lo, hi]` with `hi > lo` enables normalization with `mean = -lo / (hi - lo)` and `stddev = 1 / (hi - lo)`.
+- `[0, 255]` is the identity mapping, so normalization stays off.
+- The range is used only when every ingress tensor declares the same value. Differing or partially missing ranges leave normalization off and log a planner warning.
+- A declared range that is not a finite `[lo, hi]` with `hi > lo`, such as `[1, 1]` or a reversed range, leaves normalization off and raises the `PREPROC_REQ_WARN_MODEL_INPUT_RANGE_INVALID` contract warning. A missing range is not a warning.
+- The rule reads the effective normalize intent, so a transform list with a `Normalize` transform left at `Auto`, or with no `Normalize` transform, follows it too.
+- Explicit `On` or `Off` (in simple options or a transform), explicit `mean`/`stddev`, presets, and `preprocess.enable=Off` always override this rule. Tensor input is unaffected.
+
 ### Public execution plan
 
 `Model::execution_plan(...)` returns what `build(...)` with the same arguments runs: the Model's

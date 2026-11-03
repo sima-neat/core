@@ -60,11 +60,14 @@ std::vector<int> model_managed_preproc_max_input_shape(const simaai::neat::Prepr
   return {};
 }
 
-sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag) {
-  const auto fixture = sima_test::make_model_archive_fixture(tag,
-                                                             {
-                                                                 {"etc/test_model_mpk.json",
-                                                                  R"json({
+// pre_kernel "preproc" makes the MPK stage order select the image preproc route on its own.
+sima_test::ModelArchiveFixture
+make_preproc_fixture(const std::string& tag, const std::string& input_range = "[0.0, 1.0]",
+                     const std::string& pre_kernel = "cast_transform") {
+  const auto fixture =
+      sima_test::make_model_archive_fixture(tag,
+                                            {
+                                                {"etc/test_model_mpk.json", std::string(R"json({
   "name": "preproc_contract_model",
   "model_path": "preproc_contract_model.onnx",
   "model_sdk_version": "2.0.0",
@@ -74,7 +77,7 @@ sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag) {
       "name": "images",
       "type": "buffer",
       "size": 4915200,
-      "input_range": [0.0, 1.0],
+      "input_range": )json") + input_range + R"json(,
       "logical_shape": [1, 640, 640, 3],
       "logical_dtype": "FP32"
     }
@@ -87,7 +90,7 @@ sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag) {
       "config_params": {
         "desired_batch_size": 1,
         "actual_batch_size": 1,
-        "kernel": "cast_transform",
+        "kernel": ")json" + pre_kernel + R"json(",
         "params": {
           "out_dtype": "bfloat16",
           "input_shapes": [[1, 640, 640, 3]],
@@ -134,8 +137,8 @@ sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag) {
     }
   ]
 })json"},
-                                                                 {"etc/pipeline_sequence.json",
-                                                                  R"json({
+                                                {"etc/pipeline_sequence.json",
+                                                 R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -159,8 +162,8 @@ sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag) {
     ]
   }]
 })json"},
-                                                                 {"etc/0_preproc.json",
-                                                                  R"json({
+                                                {"etc/0_preproc.json",
+                                                 R"json({
   "node_name": "preproc_0",
   "graph_name": "preproc",
   "input_width": 1280,
@@ -175,8 +178,8 @@ sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag) {
   "output_dtype": "BF16",
   "tessellate": false
 })json"},
-                                                                 {"etc/0_process_mla.json",
-                                                                  R"json({
+                                                {"etc/0_process_mla.json",
+                                                 R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "preproc_0"}],
   "data_type": ["EV81_BFLOAT16"],
@@ -184,8 +187,8 @@ sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag) {
   "output_height": [80],
   "output_depth": [6]
 })json"},
-                                                             },
-                                                             false);
+                                            },
+                                            false);
   // Image preprocessing comes from Model::Options; the MPK describes its tensor target.
   // Planning needs the declared MLA topology, not an executable MLA program.
   const auto share = std::filesystem::path(fixture.root_dir) / "share";
@@ -300,6 +303,64 @@ std::vector<int> shape3(int h, int w, int c) {
   return out;
 }
 
+void require_auto_normalize_from_range(const std::string& tag, const std::string& input_range,
+                                       bool normalize, float mean, float stddev) {
+  using namespace simaai::neat;
+  const auto fixture = make_preproc_fixture(tag, input_range);
+  Model::Options model_opt;
+  model_opt.preprocess.kind = InputKind::Image;
+  model_opt.preprocess.enable = AutoFlag::On;
+  model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::RGB;
+  Model model(fixture.tar_path, model_opt);
+  PreprocOptions opt(model);
+  const std::string label = "input_range " + input_range;
+  require(opt.normalize == normalize, label + ": unexpected normalize resolution");
+  if (normalize) {
+    require(opt.channel_mean.size() == 3U && opt.channel_mean[0] == mean &&
+                opt.channel_stddev.size() == 3U && opt.channel_stddev[0] == stddev,
+            label + ": normalize stats must be derived from the full range");
+  }
+}
+
+// InputKind::Auto: the MPK stage order selects the image preproc route on its own.  Only the
+// public resolved contract is checked: the exact MPK kernel registry has no 'preproc' entry, so
+// this fixture cannot be admitted for execution (PreprocOptions(Model) compiles that plan).
+void require_mpk_selected_route_normalizes(const std::string& tag,
+                                           const std::vector<simaai::neat::Transform>& transforms) {
+  using namespace simaai::neat;
+  const auto fixture = make_preproc_fixture(tag, "[0.0, 1.0]", "preproc");
+  Model::Options model_opt;
+  model_opt.preprocess.transforms = transforms;
+  Model model(fixture.tar_path, model_opt);
+
+  require(model.preprocess_requirements().has_preproc_stage,
+          tag + ": MPK-selected route must report an enabled preprocessing stage");
+  const ResolvedPreprocessPlan plan = model.resolved_preprocess_plan();
+  require(plan.enabled && plan.graph_family == PreprocessGraphFamily::Preproc &&
+              plan.graph_kernel == "preproc",
+          tag + ": resolved graph must agree with the selected Preproc route");
+  require(plan.effective.normalize.enable == AutoFlag::On &&
+              plan.effective.normalize.mean[0] == 0.0f &&
+              plan.effective.normalize.stddev[0] == 1.0f,
+          tag + ": resolved plan must report normalization derived from input_range [0, 1]");
+}
+
+void require_invalid_range_reported(const std::string& tag, const std::string& input_range) {
+  using namespace simaai::neat;
+  const auto fixture = make_preproc_fixture(tag, input_range, "preproc");
+  Model model(fixture.tar_path, Model::Options{});
+  const ResolvedPreprocessPlan plan = model.resolved_preprocess_plan();
+  const std::string label = "input_range " + input_range;
+  require(plan.effective.normalize.enable == AutoFlag::Off,
+          label + ": invalid input_range must not enable normalization");
+  bool reported = false;
+  for (const auto& warning : plan.warnings) {
+    reported =
+        reported || warning.find("PREPROC_REQ_WARN_MODEL_INPUT_RANGE_INVALID") != std::string::npos;
+  }
+  require(reported, label + ": invalid input_range must raise a contract diagnostic");
+}
+
 } // namespace
 
 RUN_TEST(
@@ -362,9 +423,12 @@ RUN_TEST(
                 "PreprocOptions(Model) should expose model-managed output shape");
         require(!opt.output_dtype.empty(),
                 "PreprocOptions(Model) should expose model-managed output dtype");
-        require(!opt.normalize,
-                "PreprocOptions(Model) should derive normalize from the resolved preprocess plan, "
-                "not from legacy graph defaults");
+        require(opt.normalize,
+                "PreprocOptions(Model) should resolve normalize=Auto On from the MPK input_range");
+        require(opt.channel_mean.size() == 3U && opt.channel_mean[0] == 0.0f &&
+                    opt.channel_stddev.size() == 3U && opt.channel_stddev[0] == 1.0f,
+                "PreprocOptions(Model) should take normalize stats from input_range [0, 1]");
+
 #ifdef SIMA_NEAT_INTERNAL
         require(opt.compiled_contract != nullptr,
                 "model must retain its admitted preproc contract");
@@ -494,6 +558,28 @@ RUN_TEST(
         require_not_contains(
             frag, "config=", "model-managed Preproc fragment must not emit a legacy config path");
       }
+
+      // normalize=Auto honours every finite MPK input_range; [0, 255] keeps raw pixels.
+      require_auto_normalize_from_range("preproc_range_half", "[0.0, 0.5]", true, 0.0f, 2.0f);
+      require_auto_normalize_from_range("preproc_range_shifted", "[1.0, 2.0]", true, -1.0f, 1.0f);
+      require_auto_normalize_from_range("preproc_range_symmetric", "[-1.0, 1.0]", true, 0.5f, 0.5f);
+      require_auto_normalize_from_range("preproc_range_raw_pixels", "[0.0, 255.0]", false, 0.0f,
+                                        1.0f);
+
+      // Default options and an Auto-kind Normalize(Auto) transform list on the MPK-selected
+      // Preproc route resolve the same plan as the explicit Image kind above.
+      require_mpk_selected_route_normalizes("preproc_route_default_options", {});
+      {
+        Transform normalize_auto;
+        normalize_auto.type = TransformType::Normalize;
+        require_mpk_selected_route_normalizes("preproc_route_normalize_transform",
+                                              {normalize_auto});
+      }
+
+      // A declared but unusable input_range is a contract defect, not a missing range.
+      require_invalid_range_reported("preproc_range_degenerate", "[1.0, 1.0]");
+      require_invalid_range_reported("preproc_range_reversed", "[2.0, 1.0]");
+      require_invalid_range_reported("preproc_range_single_bound", "[1.0]");
 
       {
         const auto fixture = make_preproc_fixture("preproc_dynamic_capacity_rebind");
