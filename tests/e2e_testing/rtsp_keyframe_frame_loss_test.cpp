@@ -68,32 +68,49 @@ neat::Sample pull_frame(neat::Run& run, const std::string& output) {
   neat::Sample frame;
   neat::PullError error;
   const neat::PullStatus status = run.pull(output, kPullTimeoutMs, frame, &error);
-  require(status == neat::PullStatus::Ok, "pull failed: " + error.message);
+  require(status == neat::PullStatus::Ok, "pull from " + output + " failed: " + error.message);
   require(frame.pts_ns >= 0, "decoded frame has no timestamp");
   return frame;
+}
+
+// Each output has its own queue, so either one can lose frames without the other.
+struct OutputTimeline {
+  std::string name;
+  std::int64_t previous_pts_ns = -1;
+  int lost = 0;
+};
+
+int pull_and_count_frames_advanced(neat::Run& run, OutputTimeline& output) {
+  const std::int64_t pts_ns = pull_frame(run, output.name).pts_ns;
+  const int advanced = static_cast<int>(std::lround((pts_ns - output.previous_pts_ns) / kFrameNs));
+  require(advanced > 0, output.name + " left the stream out of order");
+  if (advanced > 1) {
+    std::cerr << "[rtsp_keyframe_frame_loss] " << output.name << " lost " << advanced - 1
+              << " frames between pts " << output.previous_pts_ns << " and " << pts_ns << " ns\n";
+  }
+  output.lost += advanced - 1;
+  output.previous_pts_ns = pts_ns;
+  return advanced;
 }
 
 // The consumer is slower than a burst of frames and faster than the stream, so
 // it keeps up unless the decoder releases frames faster than the stream's rate.
 int frames_lost(neat::Run& run) {
-  std::int64_t previous_pts_ns = -1;
+  OutputTimeline frames{"frames_out"};
+  OutputTimeline copy{"copy_out"};
   for (int n = 0; n < kWarmupFrames; ++n) {
-    previous_pts_ns = pull_frame(run, "frames_out").pts_ns;
-    pull_frame(run, "copy_out");
+    frames.previous_pts_ns = pull_frame(run, frames.name).pts_ns;
+    copy.previous_pts_ns = pull_frame(run, copy.name).pts_ns;
   }
 
-  int lost = 0;
   for (int n = 0; n < kKeyframes * kKeyframeInterval;) {
     std::this_thread::sleep_for(kConsumerTime);
-    const std::int64_t pts_ns = pull_frame(run, "frames_out").pts_ns;
-    pull_frame(run, "copy_out");
-    const int advanced = static_cast<int>(std::lround((pts_ns - previous_pts_ns) / kFrameNs));
-    require(advanced > 0, "decoded frames left the stream out of order");
-    lost += advanced - 1;
-    n += advanced;
-    previous_pts_ns = pts_ns;
+    n += pull_and_count_frames_advanced(run, frames);
+    pull_and_count_frames_advanced(run, copy);
   }
-  return lost;
+  std::cout << "[rtsp_keyframe_frame_loss] frames_out lost " << frames.lost << ", copy_out lost "
+            << copy.lost << "\n";
+  return frames.lost + copy.lost;
 }
 
 } // namespace
