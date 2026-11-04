@@ -3445,14 +3445,16 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
         throw std::runtime_error("preprocess.enable=Off requires an MLA stage in the MPK");
       }
       const auto mla_index = pipeline_internal::sima::find_plugin_index_by_name_or_id(
-          contract, !mla->name.empty() ? mla->name : mla->plugin_id).value();
+                                 contract, !mla->name.empty() ? mla->name : mla->plugin_id)
+                                 .value();
       out.ingress_contracts.clear();
       for (const auto& input :
            pipeline_internal::sima::get_mla_boundary_physical_inputs_contract(contract)) {
         IngressTensorContract ingress;
-        if (!populate_tensor_contract_from_stage_tensor(
-                input, "application/vnd.simaai.tensor", mla->name, &ingress)) {
-          throw std::runtime_error("preprocess.enable=Off: invalid MLA input shape for " + input.name);
+        if (!populate_tensor_contract_from_stage_tensor(input, "application/vnd.simaai.tensor",
+                                                        mla->name, &ingress)) {
+          throw std::runtime_error("preprocess.enable=Off: invalid MLA input shape for " +
+                                   input.name);
         }
         ingress.ingress_index = static_cast<int>(out.ingress_contracts.size());
         ingress.dst_plugin_index = mla_index;
