@@ -15,6 +15,8 @@ Each stage has one immutable `FrameLayout`: a list of `FrameAllocation` objects,
 
 Views share a root carrier. Allocation indices belong to a buffer group: offset zero in two different groups does not mean the buffers overlap. Imported backing keeps its exporter, checked offsets, plane geometry and producer loans.
 
+`inference_terminal.mla_only` preserves compiler-proven tensor views within packed MLA outputs, including dtype, shape, strides and shared backing. Such outputs return separate tensors instead of one raw `UInt8` carrier; channel padding stays in storage without an unpack or dequantization pass.
+
 With bound storage, a dense numeric `Tensor` with shape `{}` is a rank-zero
 scalar: its dense size is one `dtype` element. It differs from a zero-extent shape
 such as `{0,256}`, whose dense size is zero. Tight byte copies and `clone()`

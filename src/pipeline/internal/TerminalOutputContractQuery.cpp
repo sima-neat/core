@@ -208,12 +208,6 @@ const PhysicalBufferStaticSpec* physical_for_logical(const StageStaticSpec& stag
   return nullptr;
 }
 
-bool logical_name_looks_like_boundary_view(const LogicalTensorStaticSpec& logical) {
-  return is_boundary_view_token(logical.logical_name) ||
-         is_boundary_view_token(logical.backend_name) ||
-         is_boundary_view_token(logical.segment_name);
-}
-
 bool logical_outputs_are_producer_local(const StageStaticSpec& stage) {
   if (stage.logical_outputs.empty() || stage.physical_outputs.empty()) {
     return false;
@@ -239,15 +233,6 @@ bool logical_outputs_are_producer_local(const StageStaticSpec& stage) {
     }
     const auto offset = static_cast<std::uint64_t>(logical.byte_offset);
     if (offset > physical->size_bytes || span > physical->size_bytes - offset) {
-      return false;
-    }
-
-    // A boundary/view name on a non-view terminal producer is evidence that a
-    // downstream edge contract leaked into public publication.  Do not use it
-    // as the user-visible terminal contract; synthesize the raw producer bytes
-    // instead.
-    if (logical_name_looks_like_boundary_view(logical) &&
-        classify_stage_for_publication(stage) != StagePublicationRole::BoundaryView) {
       return false;
     }
 

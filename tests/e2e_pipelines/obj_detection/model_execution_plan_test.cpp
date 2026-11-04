@@ -1,4 +1,8 @@
 #include "model/Model.h"
+#include "pipeline/Graph.h"
+#include "nodes/io/Input.h"
+#include "nodes/common/Output.h"
+#include "pipeline/internal/RenderedMlaContractQuery.h"
 #include "pipeline/ExecutionPlan.h"
 #include "model/internal/ModelInternal.h"
 #include "pipeline/runtime/ExecutionPlanAssembly.h"
@@ -271,6 +275,52 @@ int main(int argc, char** argv) {
 
     require(simaai::neat::ExecutionPlan{}.to_json(-1) == "{}",
             "a default ExecutionPlan should be empty");
+
+    {
+      using namespace simaai::neat;
+      const auto archive =
+          sima_test::writable_asset_tmp_dir(sima_test::default_asset_root(), "sima-neat-models") /
+          "yolo26n-det-int8-b1.tar.gz";
+      require(sima_test::download_file(
+                  "https://docs.sima.ai/pkg_downloads/SDK" + sima_test::modelzoo_version() +
+                      "/models/modalix/yolo26-detection/yolo26n-det-int8-b1.tar.gz",
+                  archive),
+              "failed to obtain the existing YOLO26n INT8 e2e fixture");
+      Model::Options options;
+      options.inference_terminal.mla_only = true;
+      Model native_model(archive.string(), options);
+      const auto native_seed = ev74_seed(native_model);
+      Graph graph;
+      graph.add(nodes::Input());
+      graph.add(native_model.preprocess());
+      graph.add(native_model.inference());
+      graph.add(nodes::Output());
+      RunOptions run_options;
+      run_options.output_memory = OutputMemory::ZeroCopy;
+      auto run = graph.build(native_seed, run_options);
+      const auto core = run_internal::core(run);
+      const auto diag = core->pipeline.stream.diag_ctx();
+      require(diag && diag->build_plan && diag->build_plan->rendered_manifest,
+              "MLA-only runner must retain its prepared plan");
+      const auto* mla = pipeline_internal::rendered_stage_query::find_mla_stage(
+          *diag->build_plan->rendered_manifest);
+      require(mla && mla->logical_outputs.size() > 1,
+              "real-model regression requires multiple native MLA views");
+      const auto outputs = run.run(native_seed, 30000);
+      require(outputs.size() == mla->logical_outputs.size(),
+              "MLA-only output must preserve every typed view instead of the raw carrier");
+      for (std::size_t i = 0; i < outputs.size(); ++i) {
+        const auto& expected = mla->logical_outputs[i];
+        require(outputs[i].dtype ==
+                        pipeline_internal::rendered_stage_query::dtype_from_contract_token(
+                            expected.dtype) &&
+                    outputs[i].shape == expected.shape &&
+                    (expected.stride_bytes.empty() ||
+                     outputs[i].strides_bytes == expected.stride_bytes),
+                "MLA-only output must preserve its native dtype, shape and padded strides");
+      }
+      run.close();
+    }
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] model_execution_plan_test: " << e.what() << "\n";
     return 1;
