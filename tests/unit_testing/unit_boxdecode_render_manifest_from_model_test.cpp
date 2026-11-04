@@ -9,11 +9,14 @@
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/contract/CompiledNodeContractQuery.h"
 #include "pipeline/internal/sima/ContractRender.h"
+#include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StageMemoryPolicy.h"
 #include "pipeline/internal/TerminalOutputContractQuery.h"
+#include "pipeline/runtime/ExecutionPlanAssembly.h"
 #include "test_main.h"
 #include "support/cold_contract_gst_init.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <optional>
 
@@ -237,6 +240,44 @@ RUN_TEST(
       const auto* rendered_box =
           find_first_rendered_boxdecode_stage(*manifest_opt, boxdecode_stage->element_name);
       require(rendered_box != nullptr, "rendered manifest should contain a boxdecode stage");
+      pipeline_internal::SegmentBuildPlan build;
+      build.rendered_manifest = *manifest_opt;
+      for (std::size_t i = 0; i < nodes.size(); ++i) {
+        NodeReport report;
+        report.index = static_cast<int>(i);
+        report.kind = nodes[i]->kind();
+        report.elements = nodes[i]->element_names(static_cast<int>(i));
+        build.node_reports.push_back(std::move(report));
+      }
+      const auto plan = nlohmann::json::parse(
+          internal::ExecutionPlanAccess::make(build, model.info().model_name).to_json());
+      const auto box =
+          std::find_if(plan.at("nodes").begin(), plan.at("nodes").end(),
+                       [](const auto& node) { return node.at("kind") == "SimaBoxDecode"; });
+      require(box != plan.at("nodes").end() && box->contains("settings"),
+              "execution-plan JSON must retain native BoxDecode settings");
+      require(box->at("settings") == nlohmann::json{{"decode_type", "yolov8-seg"},
+                                                    {"num_classes", 80},
+                                                    {"detection_threshold", 0.25},
+                                                    {"nms_iou_threshold", 0.45},
+                                                    {"top_k", 100}},
+              "execution-plan JSON must report the resolved BoxDecode settings exactly");
+      {
+        // Exercise omission in the report serializer without changing numerical requests.
+        auto defaults = build;
+        auto& stage = defaults.rendered_manifest->stages.back();
+        auto recipe =
+            std::make_shared<pipeline_internal::sima::KernelStageRecipe>(*stage.native_kernel);
+        recipe->boxdecode_settings->detection_threshold = 0;
+        recipe->boxdecode_settings->nms_iou_threshold = 0;
+        recipe->boxdecode_settings->topk = 0;
+        stage.native_kernel = std::move(recipe);
+        const auto omitted = nlohmann::json::parse(
+            internal::ExecutionPlanAccess::make(defaults, model.info().model_name).to_json());
+        require(omitted.at("nodes").back().at("settings") ==
+                    nlohmann::json{{"decode_type", "yolov8-seg"}, {"num_classes", 80}},
+                "execution-plan JSON must preserve default-field omission");
+      }
       CompiledPipelineContracts nested;
       nested.fully_renderable = true;
       nested.model_storage_scopes = compiled.model_storage_scopes;
