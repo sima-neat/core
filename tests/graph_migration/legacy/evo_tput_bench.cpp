@@ -316,7 +316,6 @@ int main(int argc, char** argv) {
   }
   try {
     neat::Model::Options opt;
-    opt.preprocess.kind = neat::InputKind::Tensor;
     // A compiler-authored full ModelExecutionPlan may consume the public FP32
     // tensor directly (RF-DETR is the qualification case). NONE means exactly
     // that application boundary: do not invent a second pre/post adapter

@@ -516,8 +516,6 @@ RUN_TEST(
         }
 
         Model::Options bf16_opt;
-        bf16_opt.preprocess.kind = InputKind::Tensor;
-        bf16_opt.preprocess.enable = AutoFlag::On;
         Model bf16_model(bf16_path.string(), bf16_opt);
         tested_bf16 = true;
 

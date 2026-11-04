@@ -51,8 +51,6 @@ int main() {
   std::cout << "[cpp] processcvu pre/post target=" << run_target << "\n";
 
   neat::Model::Options opt;
-  opt.preprocess.kind = neat::InputKind::Tensor;
-  opt.preprocess.enable = neat::AutoFlag::Off;
   opt.processcvu.pre_run_target = run_target;
   opt.processcvu.post_run_target = run_target;
 

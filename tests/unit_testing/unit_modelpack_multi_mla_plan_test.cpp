@@ -899,8 +899,6 @@ RUN_TEST(
                   singleton_capability.egress_contracts.front().source_stage == "APU_1",
               "terminal A65 must retain its output contract without becoming a CVU adapter");
       simaai::neat::Model::Options singleton_options;
-      singleton_options.preprocess.kind = simaai::neat::InputKind::Tensor;
-      singleton_options.preprocess.enable = simaai::neat::AutoFlag::Off;
       const simaai::neat::Model singleton_public_model(singleton_package.string(),
                                                        singleton_options);
       const auto singleton_output_specs = singleton_public_model.output_specs();
@@ -1251,8 +1249,6 @@ RUN_TEST(
       if (const char* real_package = std::getenv("SIMANEAT_AFE21_MULTI_MLA_PACKAGE");
           real_package != nullptr && *real_package != '\0') {
         simaai::neat::Model::Options public_options;
-        public_options.preprocess.kind = simaai::neat::InputKind::Tensor;
-        public_options.preprocess.enable = simaai::neat::AutoFlag::Off;
         public_options.cleanup_extracted_model_data = false;
         simaai::neat::Model public_model(real_package, public_options);
         require(public_model.resolved_preprocess_plan().warnings.empty(),

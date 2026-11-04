@@ -80,7 +80,8 @@ Start with default `ModelOptions`. Add options only when the model contract or i
 | Goal | Options to use | Notes |
 | --- | --- | --- |
 | Send decoded image input | `preprocess.kind`, `preprocess.preset`, and specific preprocess fields such as resize, color, layout, normalize, quantize, or tessellate | Use this when your app sends pixels and Neat should adapt them to the model contract. |
-| Send model-shaped tensor input | `preprocess.kind = Tensor`; set `preprocess.enable = Off` only when the tensor already satisfies the model contract | Use this when your app already owns preprocessing. |
+| Supply tensors matching the model's public inputs | Leave preprocessing options unset | Preserves required Cast/Quant/Tess adapters, including for resized, normalized FP32 inputs. |
+| Supply native MLA input tensors | `preprocess.enable = Off` | Skips all external preprocessing, including `transforms`; the caller supplies MLA's required dtype and layout. |
 | Decode detection output | `decode_type`, `decode_type_option`, `score_threshold`, `nms_iou_threshold`, `top_k`, `num_classes` | Detection models need explicit decode intent. |
 | Keep extracted model files for inspection | `cleanup_extracted_model_data = false` | Useful while debugging. Leave the default for normal runs. |
 | Run several model routes in one process | `name_suffix` and graph element-name prefix/suffix | Keeps generated names and diagnostics readable. |
@@ -176,34 +177,26 @@ Do not use `boxdecode_original_width` or `boxdecode_original_height` in new exam
 
 ### Raw tensor input
 
-Use this pattern when your app already creates tensors in the shape, dtype, and layout the compiled model expects.
+Use defaults when supplying tensors matching `model.input_specs()`. Neat retains the MPK's required tensor adapters.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-simaai::neat::Model::Options options;
-options.preprocess.kind = simaai::neat::InputKind::Tensor;
-options.preprocess.enable = simaai::neat::AutoFlag::Off;
-
-simaai::neat::Model model(model_path, options);
+simaai::neat::Model model(model_path);
 ```
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 ```python
-options = pyneat.ModelOptions()
-options.preprocess.kind = pyneat.InputKind.Tensor
-options.preprocess.enable = pyneat.AutoFlag.Off
-
-model = pyneat.Model(model_path, options)
+model = pyneat.Model(model_path)
 ```
 
 </CodeTab>
 </CodeTabs>
 
-If your tensor is not already model-shaped, do not force this path. Let preprocessing do the adaptation, or fix the tensor creation code.
+Set `preprocess.enable = Off` only when supplying native MLA-ready tensors. Inspect `input_specs()` after setting it: dtype and layout can differ from the default route. Operations compiled into the model remain part of inference.
 
 ### Preprocess field guide
 
@@ -212,7 +205,7 @@ If your tensor is not already model-shaped, do not force this path. Let preproce
 | Need | Field |
 | --- | --- |
 | Choose image or tensor input | `preprocess.kind` |
-| Disable preprocess for already-shaped tensors | `preprocess.enable = Off` |
+| Bypass external preprocessing for native MLA-ready tensors | `preprocess.enable = Off` |
 | Bound dynamic image input | `preprocess.input_max_width`, `preprocess.input_max_height`, `preprocess.input_max_depth` |
 | Resize, crop, or letterbox | `preprocess.resize` |
 | Convert RGB, BGR, NV12, I420, or grayscale | `preprocess.color_convert` |

@@ -240,7 +240,6 @@ RUN_TEST(
       {
         const auto decoded = make_decoded_yolo_fixture();
         Model::Options options;
-        options.preprocess.kind = InputKind::Tensor;
         options.decode_type = BoxDecodeType::Yolo;
         options.decode_type_option = BoxDecodeTypeOption::GroupedByRoleProbability;
         options.num_classes = 80;
@@ -260,12 +259,6 @@ RUN_TEST(
       const std::string tar_path = fixture.tar_path;
 
       Model::Options base_opt;
-      // This test renders an infer+BoxDecode fragment. Keep ingress as an
-      // already-prepared tensor so it does not claim graph-200 absorption
-      // without a compiler-authored physical graph-200 plan.
-      base_opt.preprocess.kind = InputKind::Tensor;
-      base_opt.preprocess.enable = AutoFlag::Off;
-
       Model default_model(tar_path, base_opt);
       sima_test::require_exact_yolo_v9c_seg_parsed_contract(
           internal::ModelAccess::pack(default_model));
@@ -299,8 +292,6 @@ RUN_TEST(
       // preproc metadata. Complete dimensions plus the explicit resize policy are the established
       // provenance contract for this route and must discharge that bucket.
       Model::Options external_opt = model_opt;
-      external_opt.preprocess.kind = InputKind::Tensor;
-      external_opt.preprocess.enable = AutoFlag::Off;
       Model external_model(tar_path, external_opt);
       auto external_node = simaai::neat::nodes::SimaBoxDecode(
           external_model, BoxDecodeType::YoloV8Seg, 0.25, 0.45, 100, "", std::nullopt, std::nullopt,

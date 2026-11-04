@@ -112,8 +112,6 @@ void check_output(const Sample& sample, int frame) {
 void check_retained_outputs(bool stop_with_outputs_held) {
   const auto fixture = make_fixture();
   Model::Options model_options;
-  model_options.preprocess.kind = InputKind::Tensor;
-  model_options.preprocess.enable = AutoFlag::On;
   model_options.processcvu.pre_run_target = "EV74";
   model_options.processcvu.post_run_target = "EV74";
   Model model(fixture.tar_path, model_options);

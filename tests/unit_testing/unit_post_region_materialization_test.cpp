@@ -54,7 +54,6 @@ RUN_TEST(
             }
 
             Model::Options opt;
-            opt.preprocess.kind = InputKind::Tensor;
             Model model(model_path.string(), opt);
 
             const auto& pack = ModelAccess::pack(model);
@@ -158,8 +157,6 @@ RUN_TEST(
         }
 
         Model::Options opt;
-        opt.preprocess.kind = InputKind::Tensor;
-        opt.preprocess.enable = AutoFlag::On;
         Model model(model_path.string(), opt);
         const auto& pack = ModelAccess::pack(model);
         const auto& mpk_opt = pack.mpk_contract();
@@ -201,8 +198,6 @@ RUN_TEST(
       check_packed_processcvu_payload(int8_mlatess_model_path(), "dequantize", 6);
       if (std::filesystem::exists(int8_model_path())) {
         Model::Options opt;
-        opt.preprocess.kind = InputKind::Tensor;
-        opt.preprocess.enable = AutoFlag::On;
         Model model(int8_model_path().string(), opt);
 
         const auto post = ModelAccess::build_postprocess_nodes(model, false);
@@ -222,8 +217,6 @@ RUN_TEST(
 
       if (std::filesystem::exists(bf16_int8_model_path())) {
         Model::Options opt;
-        opt.preprocess.kind = InputKind::Tensor;
-        opt.preprocess.enable = AutoFlag::On;
         Model model(bf16_int8_model_path().string(), opt);
 
         const auto post = ModelAccess::build_postprocess_nodes(model, false);
@@ -317,8 +310,6 @@ RUN_TEST(
         }
 
         Model::Options opt;
-        opt.preprocess.kind = InputKind::Tensor;
-        opt.preprocess.enable = AutoFlag::On;
         Model model(model_path.string(), opt);
         const auto& pack = ModelAccess::pack(model);
         const auto& mpk_opt = pack.mpk_contract();
@@ -353,8 +344,6 @@ RUN_TEST(
       check_routed_input_addressing(int8_mlatess_model_path(), "dequantize");
       if (std::filesystem::exists(int8_model_path())) {
         Model::Options opt;
-        opt.preprocess.kind = InputKind::Tensor;
-        opt.preprocess.enable = AutoFlag::On;
         Model model(int8_model_path().string(), opt);
         const auto& pack = ModelAccess::pack(model);
         const auto& mpk_opt = pack.mpk_contract();
@@ -394,8 +383,6 @@ RUN_TEST(
         }
 
         Model::Options opt;
-        opt.preprocess.kind = InputKind::Tensor;
-        opt.preprocess.enable = AutoFlag::On;
         Model model(model_path.string(), opt);
 
         const auto& pack = ModelAccess::pack(model);
@@ -466,8 +453,6 @@ RUN_TEST(
             }
 
             Model::Options opt;
-            opt.preprocess.kind = InputKind::Tensor;
-            opt.preprocess.enable = AutoFlag::On;
             Model model(model_path.string(), opt);
 
             const auto quant_opt = ModelAccess::build_quant_stage_options(model, false);

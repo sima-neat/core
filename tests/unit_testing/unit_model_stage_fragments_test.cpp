@@ -151,7 +151,6 @@ RUN_TEST(
           "model_fragment_memory", {}, true, "yolo_v9c_seg", true);
       for (const auto* target : {"EV74", "A65"}) {
         Model::Options options;
-        options.preprocess.kind = InputKind::Tensor;
         options.processcvu.pre_run_target = std::string(target) == "EV74" ? "A65" : "EV74";
         Model overridden(memory_fixture.tar_path, options);
         for (const bool advanced : {false, true}) {

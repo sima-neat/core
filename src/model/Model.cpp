@@ -3332,10 +3332,15 @@ public:
       if (mla_contract) {
         // Rank-two ingress convenience dimensions do not retain the MLA batch count.
         direct_mla_batch_size_ = mla_contract->payload.batch_size;
+        // Off can expose MLA ports that previously had an internal producer.
+        const bool native_mla_inputs =
+            internal::ModelAccess::options(model_).preprocess.enable == AutoFlag::Off;
         for (const auto& input : mla_contract->runtime_contract.physical_inputs) {
-          if (input.source_physical_index < 0 || input.source_byte_offset < 0 ||
-              static_cast<std::size_t>(input.source_physical_index) >=
-                  direct_input_storage_bytes_.size()) {
+          const int source_index = native_mla_inputs && input.source_physical_index < 0
+                                       ? input.physical_index
+                                       : input.source_physical_index;
+          if (source_index < 0 || input.source_byte_offset < 0 ||
+              static_cast<std::size_t>(source_index) >= direct_input_storage_bytes_.size()) {
             throw std::runtime_error("direct MLA input has no exact public storage source");
           }
           const auto offset = static_cast<std::uint64_t>(input.source_byte_offset);
@@ -3343,7 +3348,7 @@ public:
               input.size_bytes > std::numeric_limits<std::size_t>::max() - offset) {
             throw std::runtime_error("direct MLA input storage extent overflows");
           }
-          auto& bytes = direct_input_storage_bytes_[input.source_physical_index];
+          auto& bytes = direct_input_storage_bytes_[source_index];
           bytes = std::max(bytes, static_cast<std::size_t>(offset + input.size_bytes));
         }
       }

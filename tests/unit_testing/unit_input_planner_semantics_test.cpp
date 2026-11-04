@@ -92,7 +92,7 @@ RUN_TEST("unit_input_planner_semantics_test", ([] {
                      "planner: transform resize height should override simple flags");
            }
 
-           // preprocess.enable=Off + transforms => warn + apply transforms.
+           // Master Off also disables explicitly requested transforms.
            {
              Model::Options opt;
              opt.preprocess.kind = InputKind::Image;
@@ -107,12 +107,13 @@ RUN_TEST("unit_input_planner_semantics_test", ([] {
              opt.preprocess.transforms.push_back(t);
 
              const PreprocessPlannerResult out = plan_preprocess(opt, caps);
-             require(out.resolved_plan.enabled,
-                     "planner: transforms should keep preprocess enabled");
-             require(has_warning(out, "enable=Off with non-empty transforms"),
-                     "planner: expected enable-off transform warning");
-             require(out.resolved_plan.effective.normalize.enable == AutoFlag::On,
-                     "planner: normalize should stay enabled from transforms");
+             require(!out.resolved_plan.enabled && !out.include_preprocess_stage,
+                     "planner: master Off must disable transforms");
+             require(has_warning(out, "ignoring preprocess.transforms"),
+                     "planner: ignored transforms should be reported");
+             require(out.resolved_plan.effective.normalize.enable == AutoFlag::Off &&
+                         out.resolved_plan.resolved_kind == InputKind::Tensor,
+                     "planner: master Off must leave native tensor input without normalization");
            }
 
            // COCO_YOLO preset expansion defaults.

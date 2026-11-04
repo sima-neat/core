@@ -85,15 +85,6 @@ simaai::neat::pipeline_internal::sima::MpkContract load_yolov8_bf16_contract() {
 
 simaai::neat::Model::Options int8_model_options() {
   simaai::neat::Model::Options opt;
-  opt.preprocess.kind = simaai::neat::InputKind::Tensor;
-  opt.preprocess.enable = simaai::neat::AutoFlag::Auto;
-  opt.preprocess.resize.enable = simaai::neat::AutoFlag::Off;
-  opt.preprocess.color_convert.enable = simaai::neat::AutoFlag::Off;
-  opt.preprocess.layout_convert.enable = simaai::neat::AutoFlag::Off;
-  opt.preprocess.normalize.enable = simaai::neat::AutoFlag::Off;
-  opt.preprocess.quantize.enable = simaai::neat::AutoFlag::Auto;
-  opt.preprocess.tessellate.enable = simaai::neat::AutoFlag::Auto;
-  opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::Auto;
   opt.upstream_name = "decoder";
   return opt;
 }

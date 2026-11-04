@@ -80,7 +80,8 @@ outputs = model.output_specs()
 | 目標 | 利用可能なオプション | 備考 |
 | --- | --- | --- |
 | デコードされた画像を送信 | `preprocess.kind`、`preprocess.preset`、および、リサイズ、カラー、レイアウト、正規化、量子化、またはテッセレーションなどの特定のプリプロセスフィールド。 | アプリがピクセルデータを送信する場合にこれを使用し、Neat がそれらをモデル契約に適合するように調整します。 |
-| モデルの形状に合わせたテンソルを入力として送信 | `preprocess.kind = Tensor`; テンソルがすでにモデルの要件を満たしている場合にのみ、`preprocess.enable = Off` を設定します。 | アプリですでに前処理機能が実装されている場合は、これを使用してください。 |
+| モデルの公開入力に一致するテンソルを渡す | 前処理オプションを未設定にします。 | リサイズ・正規化済みのFP32入力にも必要なCast/Quant/Tessアダプターを維持します。 |
+| ネイティブMLA入力テンソルを渡す | `preprocess.enable = Off` | `transforms`を含むすべての外部前処理を省略します。呼び出し側がMLAに必要なデータ型とレイアウトを提供します。 |
 | 検出結果を解析する。 | `decode_type`, `decode_type_option`, `score_threshold`, `nms_iou_threshold`, `top_k`, `num_classes` | 検出モデルには、明確なデコード意図が必要です。 |
 | 抽出したモデルファイルを保管し、必要に応じて確認できるようにします。 | `cleanup_extracted_model_data = false` | デバッグ時に役立ちます。通常の使用時には、デフォルト設定のままにしておいてください。 |
 | 1つのプロセスで複数のモデルのルートを実行する | `name_suffix`と、グラフ要素名のプレフィックス／サフィックス | 生成された名前と診断結果を読みやすく表示します。 |
@@ -176,34 +177,26 @@ model = pyneat.Model(model_path, options)
 
 ### 生のテンソル入力
 
-コンパイルされたモデルが期待する形状、データ型、およびレイアウトでテンソルをすでに作成している場合は、このパターンを使用してください。
+`model.input_specs()`に一致するテンソルを渡す場合はデフォルトを使います。NeatはMPKに必要なテンソルアダプターを維持します。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-simaai::neat::Model::Options options;
-options.preprocess.kind = simaai::neat::InputKind::Tensor;
-options.preprocess.enable = simaai::neat::AutoFlag::Off;
-
-simaai::neat::Model model(model_path, options);
+simaai::neat::Model model(model_path);
 ```
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 ```python
-options = pyneat.ModelOptions()
-options.preprocess.kind = pyneat.InputKind.Tensor
-options.preprocess.enable = pyneat.AutoFlag.Off
-
-model = pyneat.Model(model_path, options)
+model = pyneat.Model(model_path)
 ```
 
 </CodeTab>
 </CodeTabs>
 
-テンソルがモデルに適した形状になっていない場合は、無理にこの方法を使用しないでください。前処理で形状を調整するか、テンソル作成コードを修正してください。
+ネイティブMLA用のテンソルを渡す場合にのみ`preprocess.enable = Off`を設定します。設定後に`input_specs()`を確認してください。データ型やレイアウトはデフォルト経路と異なる場合があります。モデルにコンパイルされた演算は推論の一部として残ります。
 
 ### フィールドガイドの準備
 
@@ -212,7 +205,7 @@ model = pyneat.Model(model_path, options)
 | 必要です | フィールド |
 | --- | --- |
 | 画像またはテンソルを入力として選択してください。 | `preprocess.kind` |
-| すでに形状が決定されているテンソルに対して、前処理を無効にする。 | `preprocess.enable = Off` |
+| ネイティブMLA用テンソルの外部前処理を省略する | `preprocess.enable = Off` |
 | 動的な画像の入力を制限する | `preprocess.input_max_width`, `preprocess.input_max_height`, `preprocess.input_max_depth` |
 | サイズ変更、トリミング、またはレターボックス表示 | `preprocess.resize` |
 | RGB、BGR、NV12、I420、またはグレースケールに変換します。 | `preprocess.color_convert` |

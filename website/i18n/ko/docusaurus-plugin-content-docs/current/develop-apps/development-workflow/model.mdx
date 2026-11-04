@@ -80,7 +80,8 @@ outputs = model.output_specs()
 | 목표 | 사용할 옵션 | 참고 사항 |
 |---|---|---|
 | 디코딩된 이미지 입력을 전송 | `preprocess.kind`, `preprocess.preset` 및 크기 조정, 색상, 레이아웃, 정규화, 양자화 또는 테셀레이션과 같은 특정 전처리 필드 | 애플리케이션에서 픽셀을 전송하고 Neat가 이를 모델 계약에 맞게 조정해야 할 때 사용하세요. |
-| 모델 모양의 텐서 입력을 전송 | `preprocess.kind = Tensor`; 텐서가 이미 모델 계약을 충족하는 경우에만 `preprocess.enable = Off`를 설정하세요. | 애플리케이션에서 이미 전처리를 수행하는 경우에 사용하세요. |
+| 모델의 공개 입력에 맞는 텐서 제공 | 전처리 옵션을 설정하지 않습니다. | 크기 조정과 정규화를 마친 FP32 입력에도 필요한 Cast/Quant/Tess 어댑터를 유지합니다. |
+| 네이티브 MLA 입력 텐서 제공 | `preprocess.enable = Off` | `transforms`를 포함한 모든 외부 전처리를 생략합니다. 호출자가 MLA에 필요한 데이터 유형과 레이아웃을 제공합니다. |
 | 감지 출력을 디코딩 | `decode_type`, `decode_type_option`, `score_threshold`, `nms_iou_threshold`, `top_k`, `num_classes` | 감지 모델은 명시적인 디코딩 의도가 필요합니다. |
 | 추출된 모델 파일을 검사를 위해 보관 | `cleanup_extracted_model_data = false` | 디버깅 중에 유용합니다. 일반 실행에서는 기본값을 유지하세요. |
 | 하나의 프로세스에서 여러 모델 경로 실행 | `name_suffix` 및 그래프 요소 이름 접두사/접미사 | 생성된 이름과 진단 정보를 읽기 쉽게 유지합니다. |
@@ -176,34 +177,26 @@ model = pyneat.Model(model_path, options)
 
 ### 원시 텐서 입력
 
-앱에서 이미 컴파일된 모델에서 예상하는 형태, 데이터 유형 및 레이아웃으로 텐서를 생성하는 경우 이 패턴을 사용하십시오.
+`model.input_specs()`에 맞는 텐서를 제공할 때는 기본값을 사용하세요. Neat은 MPK에 필요한 텐서 어댑터를 유지합니다.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-simaai::neat::Model::Options options;
-options.preprocess.kind = simaai::neat::InputKind::Tensor;
-options.preprocess.enable = simaai::neat::AutoFlag::Off;
-
-simaai::neat::Model model(model_path, options);
+simaai::neat::Model model(model_path);
 ```
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 ```python
-options = pyneat.ModelOptions()
-options.preprocess.kind = pyneat.InputKind.Tensor
-options.preprocess.enable = pyneat.AutoFlag.Off
-
-model = pyneat.Model(model_path, options)
+model = pyneat.Model(model_path)
 ```
 
 </CodeTab>
 </CodeTabs>
 
-텐서가 아직 모델에 적합한 형태로 되어 있지 않다면, 이 단계를 강제로 적용하지 마세요. 전처리 과정을 통해 텐서를 조정하거나, 텐서 생성 코드를 수정하세요.
+네이티브 MLA용 텐서를 제공할 때만 `preprocess.enable = Off`를 설정하세요. 설정 후 `input_specs()`를 확인하세요. 데이터 유형과 레이아웃이 기본 경로와 다를 수 있습니다. 모델에 컴파일된 연산은 추론의 일부로 남습니다.
 
 ### 전처리 필드 가이드
 
@@ -212,7 +205,7 @@ model = pyneat.Model(model_path, options)
 | 필요 | 필드 |
 |---|---|
 | 이미지 또는 텐서 입력 선택 | `preprocess.kind` |
-| 이미 형태가 지정된 텐서에 대한 전처리 비활성화 | `preprocess.enable = Off` |
+| 네이티브 MLA용 텐서의 외부 전처리 생략 | `preprocess.enable = Off` |
 | 동적 이미지 입력 제한 | `preprocess.input_max_width`, `preprocess.input_max_height`, `preprocess.input_max_depth` |
 | 크기 조정, 자르기 또는 레터박스 적용 | `preprocess.resize` |
 | RGB, BGR, NV12, I420 또는 흑백으로 변환 | `preprocess.color_convert` |

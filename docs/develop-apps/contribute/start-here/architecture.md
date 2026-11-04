@@ -332,6 +332,8 @@ The canonical "production path" for this repo is:
 **input -> preprocess -> MLA -> postprocess**. The source of truth lives in:
 `tests/e2e_pipelines/obj_detection/sync_yolov8_test.cpp`.
 
+`preprocess.enable = Off` bypasses external preprocessing and exposes native MLA inputs. Default tensor routes retain the MPK's required adapters; compiled-in operations remain part of inference.
+
 When this test changes, update README + Architecture to keep docs aligned.
 
 ### Mental model (business logic &lt;-&gt; pipeline glue)
