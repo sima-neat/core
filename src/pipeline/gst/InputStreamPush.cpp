@@ -1802,9 +1802,7 @@ HolderFastPathResult try_push_message_holder_fastpath(
   }
 
   const int max_inflight = holder_max_inflight();
-  const std::int64_t inflight = st.work.pending();
-  const bool holder_blocked =
-      (max_inflight > 0 && inflight >= static_cast<std::int64_t>(max_inflight));
+  const bool holder_blocked = max_inflight > 0 && st.work.pending() >= max_inflight;
   if (holder_blocked) {
     out.holder_failed = true;
     out.holder_fail_reason = "holder inflight limit";

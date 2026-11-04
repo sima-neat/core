@@ -69,9 +69,9 @@ private:
 };
 
 // RAII rollback also covers an exception after admission but before appsrc accepts.
-class InputPushGuard {
+template <class Work> class InputPushGuard {
 public:
-  explicit InputPushGuard(InputStreamWork& work) : work_(work) {
+  explicit InputPushGuard(Work& work) : work_(work) {
     work_.begin();
   }
   InputPushGuard(const InputPushGuard&) = delete;
@@ -83,7 +83,7 @@ public:
   bool accepted = false;
 
 private:
-  InputStreamWork& work_;
+  Work& work_;
 };
 
 } // namespace simaai::neat::pipeline_internal

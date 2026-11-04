@@ -100,24 +100,8 @@ InputStream InputStream::create(GstElement* pipeline, GstElement* appsrc, GstEle
   state->alloc_bytes = spec.required_bytes_actual;
 
   InputStream stream(state);
-  if (state->appsink) {
-    GstPad* terminal_pad = gst_element_get_static_pad(state->appsink, "sink");
-    if (!terminal_pad)
-      throw std::runtime_error("InputStream::create: appsink has no sink pad");
-    // Retire at arrival, before appsink or a callback queue can discard output.
-    // The weak reference avoids a State -> pipeline -> probe -> State cycle.
-    gst_pad_add_probe(
-        terminal_pad, GST_PAD_PROBE_TYPE_BUFFER,
-        +[](GstPad*, GstPadProbeInfo*, gpointer data) -> GstPadProbeReturn {
-          auto state = static_cast<std::weak_ptr<State>*>(data)->lock();
-          if (state)
-            state->work.complete();
-          return GST_PAD_PROBE_OK;
-        },
-        new std::weak_ptr<State>(state),
-        +[](gpointer data) { delete static_cast<std::weak_ptr<State>*>(data); });
-    gst_object_unref(terminal_pad);
-  }
+  if (state->appsrc && state->appsink)
+    state->work.observe(state->appsrc, state->appsink);
   return stream;
 }
 
