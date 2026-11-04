@@ -20,6 +20,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -216,6 +217,17 @@ int main(int argc, char** argv) {
   std::cout.setf(std::ios::unitbuf);
   std::cerr.setf(std::ios::unitbuf);
 
+  std::string mla_tar_gz;
+  sima_test::get_arg(argc, argv, "--mla-model", mla_tar_gz);
+  if (const char* staged = std::getenv("SIMA_TEST_MLA_ONLY_MODEL"); mla_tar_gz.empty() && staged) {
+    mla_tar_gz = staged;
+  }
+  if (mla_tar_gz.empty() || !fs::exists(mla_tar_gz)) {
+    std::cerr << "Supply the local YOLO26n INT8 e2e fixture through --mla-model <path> or "
+                 "SIMA_TEST_MLA_ONLY_MODEL.\n";
+    return 3;
+  }
+
   std::string tar_gz;
   sima_test::get_arg(argc, argv, "--model", tar_gz);
   if (tar_gz.empty()) {
@@ -278,17 +290,9 @@ int main(int argc, char** argv) {
 
     {
       using namespace simaai::neat;
-      const auto archive =
-          sima_test::writable_asset_tmp_dir(sima_test::default_asset_root(), "sima-neat-models") /
-          "yolo26n-det-int8-b1.tar.gz";
-      require(sima_test::download_file(
-                  "https://docs.sima.ai/pkg_downloads/SDK" + sima_test::modelzoo_version() +
-                      "/models/modalix/yolo26-detection/yolo26n-det-int8-b1.tar.gz",
-                  archive),
-              "failed to obtain the existing YOLO26n INT8 e2e fixture");
       Model::Options options;
       options.inference_terminal.mla_only = true;
-      Model native_model(archive.string(), options);
+      Model native_model(mla_tar_gz, options);
       const auto native_seed = ev74_seed(native_model);
       Graph graph;
       graph.add(nodes::Input());
