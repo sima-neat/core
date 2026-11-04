@@ -775,7 +775,7 @@ maybe_infer_float_yolov8_score_activation_from_sample_values_local(
 std::optional<BoxDecodeScoreActivation> resolve_boxdecode_score_activation_from_sample_local(
     const TensorList& tensors, BoxDecodeType decode_type,
     const std::optional<InputContract>& input_contract, std::string* error_message) {
-  if (decode_type == BoxDecodeType::RcnnStage1)
+  if (decode_type == BoxDecodeType::RcnnStage1 || decode_type == BoxDecodeType::DetrFocal)
     return BoxDecodeScoreActivation::Sigmoid;
   if (decode_type == BoxDecodeType::SuperPoint) {
     // Detector-logit normalization is part of the explicit SuperPoint profile,

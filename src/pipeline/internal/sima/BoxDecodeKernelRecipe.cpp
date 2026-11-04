@@ -250,6 +250,8 @@ std::string_view profile(BoxDecodeType type) {
     return "efficientdet_v1";
   case BoxDecodeType::Detr:
     return "detr_v1";
+  case BoxDecodeType::DetrFocal:
+    return "detr_focal_v1";
   case BoxDecodeType::Centernet:
     return "centernet_v1";
   case BoxDecodeType::Ssd:
@@ -458,6 +460,12 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
     const bool masks = selected_task == "segmentation" || seg_pose;
     int keypoints = 17;
     const auto option = p.decode_type_option.value_or(BoxDecodeTypeOption::Auto);
+    if (selected_profile == "detr_focal_v1" && option != BoxDecodeTypeOption::Auto &&
+        option != BoxDecodeTypeOption::InterleavedByHead &&
+        option != BoxDecodeTypeOption::InterleavedByHeadLogit &&
+        option != BoxDecodeTypeOption::GroupedByRole &&
+        option != BoxDecodeTypeOption::GroupedByRoleLogit)
+      invalid("focal queries require a two-tensor logit head layout");
     const bool split_extents = decoded && (option == BoxDecodeTypeOption::Split3Interleaved ||
                                            option == BoxDecodeTypeOption::Split3Grouped);
     const std::size_t per_head = (combined ? 1 : 2) +
@@ -562,6 +570,10 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
         if (hwc(runtime.logical_inputs[boxes].shape, runtime.logical_inputs[boxes].layout)[2] != 4)
           std::swap(boxes, scores);
       }
+      if (selected_profile == "detr_focal_v1" &&
+          (count != 2 || logical_depth(boxes) != 4 || logical_depth(scores) != p.num_classes))
+        invalid(
+            "focal queries require exactly [normalized cxcywh, class logits] without background");
       channels[boxes] = combined ? 3 * (p.num_classes + 5)
                         : center ? 2
                         : dfl    ? 64
