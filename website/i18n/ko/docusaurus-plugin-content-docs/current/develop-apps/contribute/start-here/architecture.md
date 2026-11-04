@@ -691,6 +691,8 @@ Core는 설치된 Scheduler 클라이언트로 불변 `StageRequest`를 전달�
 
 장치 전송과 InputStream 할당은 표준 DMA-BUF 메모리와 결정된 CMA/DMS 배치를 사용합니다. 공유 TensorSet 엔벨로프는 CPU 형제 필드에 패킹이 필요해도 각 소스 메모리, 부모 버퍼, 기존 대여 크레딧을 유지합니다. 명시적 CPU 메모리와 Owned 출력도 지원됩니다. 필수 장치 할당은 CPU 메모리로 조용히 대체되지 않고 실패합니다. 앱은 메모리 백엔드를 선택하거나 GStreamer를 초기화하지 않습니다.
 
+텐서 전송은 힙과 바이트 용량별로 풀을 재사용합니다. 텐서가 사용 중이면 풀을 확장하고, 반환된 버퍼는 프로세스가 종료될 때까지 유지합니다. CPU 접근은 Runner의 매핑을 재사용하며, 각 접근마다 티켓을 획득하고 해제합니다.
+
 입력 할당 선호와 런타임 허용 여부는 별개의 결정입니다. Core는 빌드 시 선언된 `Input`과 실행 가능한 하위 경로로 둘 다 결정하며 `Auto`를 명시적 장치 요구사항으로 바꾸지 않습니다. `PreferDeviceZeroCopy`는 기존 CPU 입력을 거부하지 않으면서 장치 할당을 선호합니다. 명시적인 EV74/DMS0 정책과 장치 전용 경로는 장치에서 보이는 입력 검사를 유지합니다. 장치 선호 경로는 호출자 소유 `Tensor`와 `Sample` 저장을 CPU 이미지 왕복 없이 전달합니다. 호환 DMA-BUF 입력은 제로카피를 유지합니다. CPU 입력은 `neatencoderinput`과 같은 기존 장치 입력 경계에서 실체화가 필요할 수 있습니다.
 
 `try_compile_dmabuf_plan()`은 저장 공간을 선택하지 않고 MPK와 정확한 MLA/TVM 아티팩트를 검증합니다. 오프라인 `neat-dmabuf-plan-audit`는 `--mpk <mpk.json>`과 반복 가능한 `--mla-artifact <stage-id> <manifest-executable> <resolved-file>` 세 항목을 받으며 `--elf`는 명확한 단일 MLA 단계를 처리합니다. 공통 계획기를 사용하지만 장치 할당이나 어댑터 팩터리를 만들지 않습니다. 버전이 있는 JSON은 사유 코드, 위치 및 기본 파일명을 유지합니다. `source_digest`는 불변 모델 정보를, `plan_digest`는 기본 실행 대상의 최종 레이아웃을 식별합니다. 실패 시 레거시 실행기를 선택하지 않습니다.
