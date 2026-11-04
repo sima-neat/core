@@ -8085,12 +8085,11 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
     return *compiled;
   }
 
-  if (!pipeline_internal::sima::is_box_decode_type_specified(opt.decode_type) ||
-      opt.decode_type == BoxDecodeType::Yolo) {
+  if (!pipeline_internal::sima::is_box_decode_type_specified(opt.decode_type)) {
     throw std::runtime_error(
         "Model-managed boxdecode stage requires a canonical compiled contract. The MPK did not "
-        "declare a concrete BoxDecode decode_type; set Model::Options.decode_type to a versioned "
-        "family such as BoxDecodeType::YoloV8.");
+        "declare a concrete BoxDecode decode_type; set Model::Options.decode_type to match the "
+        "exported heads, such as YoloV8 for raw DFL or Yolo for decoded model-pixel cx/cy/w/h.");
   }
 
   const auto& mpk = pack.mpk_contract();
