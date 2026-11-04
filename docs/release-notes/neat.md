@@ -32,8 +32,6 @@ Release notes for the SiMa.ai Neat Library.
 
 ### Runtime changes
 
-- Model-managed BoxDecode now accepts `BoxDecodeType::Yolo` for decoded pixel-space `cx,cy,w,h` heads, including older YOLOv6 surgery packs. Raw-distance exports continue to use `YoloV6`.
-
 - `Model::benchmark()` reads board telemetry from [Sentinel](/tools/sentinel/)
   instead of sampling power rails itself. The latency and throughput passes now
   each run until they have measured `num_samples` inputs and at least

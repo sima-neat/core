@@ -43,7 +43,6 @@ The format is based on Keep a Changelog and follows semantic versioning.
   `mpk/*` headers and `pyneat.mpk` inspection/extraction bindings were removed.
 
 ### Fixed
-- Allow model-managed `BoxDecodeType::Yolo` for decoded pixel-space heads, including legacy YOLOv6 surgery packs (#1272).
 - Public C++ options for Cast, CastTess, Quant, QuantTess, Tess and Preproc now
   match Core’s internal layouts, fixing standalone-node crashes. Rebuild C++
   consumers against matching headers; the unreleased 0.6.0 line remains ABI 6.
