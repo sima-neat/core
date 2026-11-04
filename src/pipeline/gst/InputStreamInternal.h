@@ -4,6 +4,7 @@
 #endif
 
 #include "pipeline/internal/InputStream.h"
+#include "pipeline/internal/InputStreamWork.h"
 #include "pipeline/internal/InputPublicationMeasurement.h"
 #include "pipeline/internal/InputStreamUtil.h"
 
@@ -167,8 +168,7 @@ struct InputStream::State {
   std::atomic<std::uint64_t> push_ns{0};
   std::atomic<std::uint64_t> pull_wait_ns{0};
   std::atomic<std::uint64_t> decode_ns{0};
-  std::atomic<std::int64_t> last_push_ns{0};
-  std::atomic<std::int64_t> inflight{0};
+  pipeline_internal::InputStreamWork work;
   std::atomic<std::int64_t> next_input_seq{0};
   pipeline_internal::InputPublicationMeasurement input_publication_measurement;
   std::mutex preprocess_meta_mu;

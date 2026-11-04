@@ -961,7 +961,9 @@ bool push_holder_buffer_with_appsrc(InputStream::State& st, GstBuffer* buffer, c
   }
   auto observed = st.input_publication_measurement.observe(buffer);
   publication_guard.release();
+  pipeline_internal::InputPushGuard pending(st.work);
   GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(st.appsrc), buffer);
+  pending.accepted = ret == GST_FLOW_OK;
   observed.finish(ret);
   if (holder_debug_enabled()) {
     std::fprintf(stderr, "[HOLDER] push_holder_buffer_with_appsrc after_push where=%s ret=%d\n",
@@ -1002,7 +1004,6 @@ bool push_holder_buffer_with_appsrc(InputStream::State& st, GstBuffer* buffer, c
     }
     return handle_appsrc_push_fail(st, fail_where, ret);
   }
-  st.inflight.fetch_add(1, std::memory_order_relaxed);
   return true;
 }
 
@@ -1183,7 +1184,9 @@ bool push_holder_sample_with_appsrc(InputStream::State& st, GstSample* sample, G
     pipeline_internal::attach_zero_copy_loans_to_gst_buffer(buffer, *fail_msg);
   }
   auto observed = st.input_publication_measurement.observe(buffer);
+  pipeline_internal::InputPushGuard pending(st.work);
   GstFlowReturn ret = gst_app_src_push_sample(GST_APP_SRC(st.appsrc), sample);
+  pending.accepted = ret == GST_FLOW_OK;
   observed.finish(ret);
   if (holder_debug_enabled()) {
     std::fprintf(stderr, "[HOLDER] push_holder_sample_with_appsrc after_push where=%s ret=%d\n",
@@ -1223,7 +1226,6 @@ bool push_holder_sample_with_appsrc(InputStream::State& st, GstSample* sample, G
     }
     return handle_appsrc_push_fail(st, fail_where, ret);
   }
-  st.inflight.fetch_add(1, std::memory_order_relaxed);
   return true;
 }
 
@@ -1722,7 +1724,9 @@ bool try_push_message_encoded(InputStream::State& st, const Sample& msg,
     t_push_start = std::chrono::steady_clock::now();
   log_push_refcount("InputStream::try_push_message(encoded)", buf);
   auto observed = st.input_publication_measurement.observe(buf);
+  pipeline_internal::InputPushGuard pending(st.work);
   GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(st.appsrc), buf);
+  pending.accepted = ret == GST_FLOW_OK;
   observed.finish(ret);
   const auto t_push_end = std::chrono::steady_clock::now();
 
@@ -1762,10 +1766,6 @@ bool try_push_message_encoded(InputStream::State& st, const Sample& msg,
     handle_appsrc_push_fail(st, where, ret);
     return false;
   }
-  st.inflight.fetch_add(1, std::memory_order_relaxed);
-  const auto push_ns =
-      std::chrono::duration_cast<std::chrono::nanoseconds>(t_push_end.time_since_epoch()).count();
-  st.last_push_ns.store(static_cast<std::int64_t>(push_ns), std::memory_order_relaxed);
   return true;
 }
 
@@ -1802,7 +1802,7 @@ HolderFastPathResult try_push_message_holder_fastpath(
   }
 
   const int max_inflight = holder_max_inflight();
-  const std::int64_t inflight = st.inflight.load(std::memory_order_relaxed);
+  const std::int64_t inflight = st.work.pending();
   const bool holder_blocked =
       (max_inflight > 0 && inflight >= static_cast<std::int64_t>(max_inflight));
   if (holder_blocked) {

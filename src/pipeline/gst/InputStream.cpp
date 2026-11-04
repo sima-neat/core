@@ -643,7 +643,9 @@ bool flush_pending_buffer(InputStream::State& st, const char* where) {
   if (timings)
     t_push_start = std::chrono::steady_clock::now();
   auto observed = st.input_publication_measurement.observe(buf);
+  pipeline_internal::InputPushGuard pending(st.work);
   GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(st.appsrc), buf);
+  pending.accepted = ret == GST_FLOW_OK;
   observed.finish(ret);
   const auto t_push_end = std::chrono::steady_clock::now();
 
@@ -664,10 +666,6 @@ bool flush_pending_buffer(InputStream::State& st, const char* where) {
     handle_appsrc_push_fail(st, "flush_pending_buffer", ret);
     return false;
   }
-  st.inflight.fetch_add(1, std::memory_order_relaxed);
-  const auto push_ns =
-      std::chrono::duration_cast<std::chrono::nanoseconds>(t_push_end.time_since_epoch()).count();
-  st.last_push_ns.store(static_cast<std::int64_t>(push_ns), std::memory_order_relaxed);
   return true;
 }
 
@@ -1009,7 +1007,9 @@ bool InputStream::push_with_fill(const char* where,
   const size_t buf_bytes = gst_buffer_get_size(push_buf);
   log_push_refcount(where, push_buf);
   auto observed = st->input_publication_measurement.observe(push_buf);
+  pipeline_internal::InputPushGuard pending(st->work);
   GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(st->appsrc), push_buf);
+  pending.accepted = ret == GST_FLOW_OK;
   observed.finish(ret);
   const auto t_push_end = std::chrono::steady_clock::now();
 
@@ -1051,10 +1051,6 @@ bool InputStream::push_with_fill(const char* where,
     handle_appsrc_push_fail(*st, where ? where : "push_with_fill", ret);
     return false;
   }
-  st->inflight.fetch_add(1, std::memory_order_relaxed);
-  const auto push_ns =
-      std::chrono::duration_cast<std::chrono::nanoseconds>(t_push_end.time_since_epoch()).count();
-  st->last_push_ns.store(static_cast<std::int64_t>(push_ns), std::memory_order_relaxed);
   return true;
 }
 
