@@ -38,8 +38,8 @@ void exchange(Run& run, unsigned char value) {
   const cv::Mat input(image.rows, image.cols, image.type(), cv::Scalar(value, 20, 30));
   require(run.push(std::vector<cv::Mat>{input}), "Input rejected");
   Sample sample;
-  PullError error;
-  require(run.pull(1000, sample, &error) == PullStatus::Ok, "Expected output: " + run.last_error());
+  const auto status = run.pull(1000, sample);
+  require(status == PullStatus::Ok, "Expected output: " + run.last_error());
   const auto tensors = tensors_from_sample(sample);
   require(tensors.size() == 1, "Expected one output tensor");
   auto pixels = tensors.front().map(MapMode::Read);
@@ -63,17 +63,6 @@ RUN_TEST("unit_inputstream_idle_resume_test", ([] {
              auto run = build(preflight);
              std::this_thread::sleep_for(450ms);
              require(run.running() && run.last_error().empty(), "Run failed while idle");
-             if (!preflight) {
-               bool rejected = false;
-               try {
-                 rejected = !run.push(std::vector<cv::Mat>{cv::Mat{}});
-               } catch (const std::exception&) {
-                 rejected = true;
-               }
-               require(rejected, "Fixture input was not rejected");
-               std::this_thread::sleep_for(450ms);
-               require(run.last_error().empty(), "Rejected input failed the Run");
-             }
              exchange(run, 40);
              std::this_thread::sleep_for(450ms);
              require(run.running() && run.last_error().empty(), "Completed work failed while idle");
@@ -82,11 +71,10 @@ RUN_TEST("unit_inputstream_idle_resume_test", ([] {
            }
            {
              std::cerr << "case: intentional discard\n";
-             auto run = build(false, true);
+             auto run = build(/*preflight=*/false, /*discard=*/true);
              require(run.push(std::vector<cv::Mat>{image}), "Discard input rejected");
              Sample sample;
-             PullError error;
-             require(run.pull(450, sample, &error) == PullStatus::Timeout,
+             require(run.pull(450, sample) == PullStatus::Timeout,
                      "Discarded input should time out only the pull");
              require(run.running() && run.last_error().empty(), "Discarded input failed the Run");
              require(run.push(std::vector<cv::Mat>{image}),

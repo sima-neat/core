@@ -9,12 +9,6 @@ sidebar_position: 3
 Runtime `SIMA_*` variables referenced by code are classified into four buckets to reduce configuration sprawl.
 Each variable appears exactly once in the lists below.
 
-## Totals
-
-- `Retired in this pass`: 6
-- `Framework knob` (promote to typed API options): 34
-- `Keep as-is` (developer diagnostics / platform setup): 67
-
 ## Retired in this pass
 
 These were scaffolding, no-op, or legacy override paths and have now been removed from runtime code.

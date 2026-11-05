@@ -167,8 +167,6 @@ sidebar_position: 2
 
 ## Тільки для тестування / навчання / використання як інструмент (не використовується в `src/`).
 
-Кількість: 59
-
 - `CMAKE_BUILD_PARALLEL_LEVEL`
 - `GITHUB_STEP_SUMMARY`
 - `HOME`
@@ -230,8 +228,6 @@ sidebar_position: 2
 - `SIMA_YOLO_TAR`
 
 ## Налаштування оболонки / безперервної інтеграції та передавання параметрів.
-
-Кількість: 63
 
 - `ARTIFACT_DIR`
 - `ASAN_OPTIONS`

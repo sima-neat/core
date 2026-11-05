@@ -167,8 +167,6 @@ sidebar_position: 2
 
 ## 테스트 / 튜토리얼 / 도구 전용 ( `src/`에서 사용되지 않음)
 
-개수: 59
-
 - `CMAKE_BUILD_PARALLEL_LEVEL`
 - `GITHUB_STEP_SUMMARY`
 - `HOME`
@@ -230,8 +228,6 @@ sidebar_position: 2
 - `SIMA_YOLO_TAR`
 
 ## 셸/CI 기본 설정 및 전달 설정
-
-개수: 63
 
 - `ARTIFACT_DIR`
 - `ASAN_OPTIONS`

@@ -167,8 +167,6 @@ sidebar_position: 2
 
 ## 僅供測試／教學／工具使用（`src/` 不會使用此功能）。
 
-數量：59
-
 - `CMAKE_BUILD_PARALLEL_LEVEL`
 - `GITHUB_STEP_SUMMARY`
 - `HOME`
@@ -230,8 +228,6 @@ sidebar_position: 2
 - `SIMA_YOLO_TAR`
 
 ## Shell/CI 預設值與參數傳遞
-
-數量：63
 
 - `ARTIFACT_DIR`
 - `ASAN_OPTIONS`

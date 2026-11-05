@@ -167,8 +167,6 @@ sidebar_position: 2
 
 ## テスト／チュートリアル／ツールのみ（`src/`では使用されません）
 
-合計：59
-
 - `CMAKE_BUILD_PARALLEL_LEVEL`
 - `GITHUB_STEP_SUMMARY`
 - `HOME`
@@ -230,8 +228,6 @@ sidebar_position: 2
 - `SIMA_YOLO_TAR`
 
 ## シェル/CI のデフォルト設定とパススルー設定
-
-件数：63
 
 - `ARTIFACT_DIR`
 - `ASAN_OPTIONS`

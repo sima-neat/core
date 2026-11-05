@@ -167,8 +167,6 @@ This is the full environment-variable inventory detected from source, tests, tut
 
 ## Test / Tutorial / Tool Only (not used by `src/`)
 
-Count: 59
-
 - `CMAKE_BUILD_PARALLEL_LEVEL`
 - `GITHUB_STEP_SUMMARY`
 - `HOME`
@@ -230,8 +228,6 @@ Count: 59
 - `SIMA_YOLO_TAR`
 
 ## Shell / CI Defaults and Pass-through
-
-Count: 63
 
 - `ARTIFACT_DIR`
 - `ASAN_OPTIONS`
