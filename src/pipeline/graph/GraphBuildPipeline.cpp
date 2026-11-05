@@ -926,12 +926,11 @@ void prepare_stage_contracts(BuildResult& build, const char* where) {
     }
   }
 
-  if (build.output_placement == OutputPlacement::EV74Compatible &&
+  if (build.output_placement == OutputPlacement::EV74 &&
       (!transformed_manifest || transformed_manifest->stages.empty()))
     session_build_throw_session_error_simple(
         error_codes::kPipelineShape,
-        "Output '" + build.public_output_name +
-            "': EV74Compatible requires a Core-allocated tensor output.",
+        "Output '" + build.public_output_name + "': EV74 requires a Core-allocated tensor output.",
         "Use tensor.cvu() to copy externally allocated output.", pipeline_string);
   build.prepared_manifest = std::move(transformed_manifest);
 }

@@ -197,6 +197,7 @@ jobs:
             tests/tools/test_offline_core.py \
             tests/tools/test_offline_pcie_discovery.py \
             tests/tools/test_offline_pcie_assembly.py \
+            tests/tools/test_offline_release_identity.py \
             tests/tools/test_offline_pcie_ci.py \
             tests/tools/test_offline_pcie_install.py \
             tests/tools/test_offline_pcie_host_process.py \
@@ -2133,7 +2134,7 @@ jobs:
   publish-offline-develop:
     name: Publish develop and release offline bundles
     # Call from this branch: workflow_run requires a listener on the default branch.
-    if: ${{ always() && github.event_name == 'push' && (github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v')) && !inputs.validation_only && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && needs.documentation-localization.result == 'success' && needs.code-hygiene.result == 'success' && needs.promote-latest-tag.result == 'success' }}
+    if: ${{ always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v')) && !inputs.validation_only && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && needs.documentation-localization.result == 'success' && needs.code-hygiene.result == 'success' && needs.promote-latest-tag.result == 'success' }}
     needs:
       - build-tooling-tests
       - documentation-localization

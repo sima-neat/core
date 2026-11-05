@@ -1570,7 +1570,7 @@ void RunCore::graph_finish_sink_pull(Sample& sample, graph::NodeId sink) {
     const auto* output = found == graph_execution_->sinks.end() || !found->second
                              ? nullptr
                              : found->second->output_options();
-    if (output && output->placement == OutputPlacement::EV74Compatible)
+    if (output && output->placement == OutputPlacement::EV74)
       return;
   }
   // Graph-internal segments forward their outputs zero-copy, so Owned copies them here to
@@ -1673,6 +1673,7 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
   build_stream_opt.compatible_output_names = segment.stream_options.compatible_output_names;
   build_stream_opt.output_placement = graph_build_internal::terminal_output_placement(
       nodes, build_stream_opt.compatible_output_names);
+  build_stream_opt.model_input_shape = segment.stream_options.model_input_shape;
   build_stream_opt.startup_preflight =
       opt.allow_startup_preflight && ctx.stream_opt.startup_preflight;
   build_stream_opt.allow_graph_internal_zero_copy_input =

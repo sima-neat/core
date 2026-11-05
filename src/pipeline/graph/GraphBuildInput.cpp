@@ -499,11 +499,11 @@ struct OutputMemoryResolution {
 OutputMemoryResolution resolve_output_memory(const RunOptions& opt, RunMode mode,
                                              OutputPlacement placement,
                                              const std::string& output_name) {
-  if (placement == OutputPlacement::EV74Compatible) {
+  if (placement == OutputPlacement::EV74) {
     if (opt.output_memory == OutputMemory::Owned)
       session_build_throw_session_error_simple(
           error_codes::kPipelineShape,
-          "Output '" + output_name + "': EV74Compatible is incompatible with OutputMemory::Owned.",
+          "Output '" + output_name + "': EV74 is incompatible with OutputMemory::Owned.",
           "Use Auto or ZeroCopy to retain CMA output storage.");
     return {true, true};
   }
@@ -1845,8 +1845,8 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   require_input_appsrc(nodes, "Graph::build(input)", &src_node);
   const InputOptions normalized_input_opt =
       pipeline_internal::normalize_shape_bounds(src_node->options());
-  const SampleSpec seed_spec =
-      infer_input_spec(normalized_input_opt, sample, "Graph::build(input)");
+  SampleSpec seed_spec = infer_input_spec(normalized_input_opt, sample, "Graph::build(input)");
+  project_model_input_spec(seed_spec, opt.model_input_shape);
   InputOptions seeded_input_opt =
       pipeline_internal::complete_input_options_from_seed_spec(src_node->options(), seed_spec);
   std::vector<std::shared_ptr<Node>> build_nodes =
@@ -3008,7 +3008,7 @@ void session_build_configure_output_storage(BuildResult& build,
                                             const InputStreamOptions& stream_opt,
                                             std::span<const std::string> compatible_output_names) {
   if (graph_build_internal::explicit_public_terminal_output(stream_opt, nodes) ||
-      stream_opt.output_placement == OutputPlacement::EV74Compatible)
+      stream_opt.output_placement == OutputPlacement::EV74)
     build.public_output_endpoint = public_output_endpoint_selector_local(nodes);
   build.output_placement = stream_opt.output_placement;
   build.public_output_name = nodes.empty() ? std::string{} : nodes.back()->user_label();

@@ -306,7 +306,7 @@ preserved. Retained and independent outputs both use `StorageKind::GstSample`;
 that storage kind identifies the carrier, not its ownership policy.
 `Sample::owned` identifies an independent output. Allocation failure is reported
 as a pull error. For handoff to a separate EV74 graph, set the producer's `OutputOptions::placement`
-to `OutputPlacement::EV74Compatible`. For `model.build()`, set
+to `OutputPlacement::EV74`. For `model.build()`, set
 `route.output.placement` through `ModelRouteOptions` in Python or `Model::RouteOptions`
 in C++; the same `output` options control buffering, dropping and clock sync.
 Core allocates the selected output directly in CMA without changing execution targets

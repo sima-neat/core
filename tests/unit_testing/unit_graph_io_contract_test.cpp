@@ -72,7 +72,7 @@ RUN_TEST(
       input_opt.memory_policy = InputMemoryPolicy::Ev74;
       const auto input_node = nodes::Input(input_opt);
       OutputOptions output_options = OutputOptions::Latest();
-      output_options.placement = OutputPlacement::EV74Compatible;
+      output_options.placement = OutputPlacement::EV74;
       const auto output_a = nodes::Output("out_a", output_options);
       const auto output_b = nodes::Output("out_b");
       input_graph.connect(input_node, output_a);

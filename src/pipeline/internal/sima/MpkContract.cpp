@@ -1945,7 +1945,8 @@ void derive_logical_output_contracts(MpkContract* contract) {
   }
 
   auto normalize_shape = [](std::vector<std::int64_t> shape) {
-    if (shape.size() >= 4U && shape.front() == 1) {
+    // Only NHWC has the runtime's batch-one HWC shorthand; retain higher-rank axes.
+    if (shape.size() == 4U && shape.front() == 1) {
       shape.erase(shape.begin());
     }
     return shape;
@@ -2184,7 +2185,8 @@ void derive_logical_input_contracts(MpkContract* contract) {
   }
 
   auto normalize_shape = [](std::vector<std::int64_t> shape) {
-    if (shape.size() >= 4U && shape.front() == 1) {
+    // Only NHWC has the runtime's batch-one HWC shorthand; retain higher-rank axes.
+    if (shape.size() == 4U && shape.front() == 1) {
       shape.erase(shape.begin());
     }
     return shape;

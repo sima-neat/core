@@ -19,6 +19,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace cv {
 class Mat;
@@ -130,6 +131,8 @@ struct InputStreamOptions {
   ResolvedShapeLimits shape_limits{};
   ByteGuardOrigin byte_guard_origin = ByteGuardOrigin::Unset;
   bool allow_ingress_cvu_format_renegotiation = false;
+  // Canonical wire shape selected by a directly bound Model tensor ingress.
+  std::vector<std::int64_t> model_input_shape;
   std::optional<OutputTensorOverride> output_override;
   std::function<void(const InputDropInfo&)> on_input_drop;
 };

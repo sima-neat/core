@@ -123,8 +123,7 @@ RUN_TEST(
         require_code(diagnostic, error_codes::kKernelBinding);
         const auto text = render_diagnostic_body(diagnostic, false);
         require_contains(text, "tensor.cvu()", "missing explicit transfer guidance");
-        require_contains(text, "OutputPlacement::EV74Compatible",
-                         "missing producer allocation guidance");
+        require_contains(text, "OutputPlacement::EV74", "missing producer allocation guidance");
         require_contains(text, "explicitly copy", "transfer guidance must disclose the copy");
       }
 

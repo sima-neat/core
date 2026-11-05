@@ -22,10 +22,10 @@ SHA = 'a' * 40
 INPUTS = {'host': 'b' * 64, 'card': 'c' * 64}
 
 
-def source(ref='develop'):
+def source(ref='develop', event='push'):
     return dict(repository={'full_name': 'sima-neat/core'},
                 head_repository={'full_name': 'sima-neat/core'},
-                path='.github/workflows/vulcan-ci.yml', event='push',
+                path='.github/workflows/vulcan-ci.yml', event=event,
                 status='completed', conclusion='success', head_sha=SHA,
                 head_branch=ref, id=123)
 
@@ -36,14 +36,16 @@ def jobs():
 
 
 @pytest.mark.parametrize('ref', ['develop', 'main', 'release-0.6'])
-def test_allowed_branch(ref):
-    assert resolver.eligible(source(ref), jobs())['sha'] == SHA
+@pytest.mark.parametrize('event', ['push', 'workflow_dispatch'])
+def test_allowed_branch(ref, event):
+    assert resolver.eligible(source(ref, event), jobs())['sha'] == SHA
 
 
-def test_tag_requires_exact_commit():
-    assert resolver.eligible(source('v0.6'), jobs()) is None
-    assert resolver.eligible(source('v0.6'), jobs(), 'd' * 40) is None
-    assert resolver.eligible(source('v0.6'), jobs(), SHA)
+@pytest.mark.parametrize('event', ['push', 'workflow_dispatch'])
+def test_tag_requires_exact_commit(event):
+    assert resolver.eligible(source('v0.6', event), jobs()) is None
+    assert resolver.eligible(source('v0.6', event), jobs(), 'd' * 40) is None
+    assert resolver.eligible(source('v0.6', event), jobs(), SHA)
 
 
 def test_tag_listener_skips_gated_publication_but_preserves_older_tags_and_manual_retry():
@@ -59,21 +61,25 @@ def test_tag_listener_skips_gated_publication_but_preserves_older_tags_and_manua
 
 
 @pytest.mark.parametrize('field,value', [
+    ('repository', {'full_name': 'fork/core'}),
     ('head_repository', {'full_name': 'fork/core'}), ('event', 'pull_request'),
+    ('event', 'workflow_call'), ('event', 'schedule'),
     ('conclusion', 'failure'), ('status', 'in_progress'),
     ('path', '.github/workflows/other.yml'), ('head_branch', 'develop\nenabled=true'),
 ])
-def test_untrusted_or_incomplete_run_rejected(field, value):
-    run = source()
+@pytest.mark.parametrize('event', ['push', 'workflow_dispatch'])
+def test_untrusted_or_incomplete_run_rejected(field, value, event):
+    run = source(event=event)
     run[field] = value
     assert resolver.eligible(run, jobs()) is None
 
 
-def test_skipped_or_missing_publications_rejected():
-    assert resolver.eligible(source(), []) is None
+@pytest.mark.parametrize('event', ['push', 'workflow_dispatch'])
+def test_skipped_or_missing_publications_rejected(event):
+    assert resolver.eligible(source(event=event), []) is None
     rows = jobs()
     rows[0]['conclusion'] = 'skipped'
-    assert resolver.eligible(source(), rows) is None
+    assert resolver.eligible(source(event=event), rows) is None
 
 
 def metadata():
@@ -173,12 +179,59 @@ def test_shared_card_publication_version_identity():
         ci.metadata_identity(data, SHA, 'develop')
 
 
-def test_validation_branch_opt_in_does_not_admit_other_branches_or_forks():
+@pytest.mark.parametrize('ref', ['v0.6.0', 'v0.7.0-rc.1'])
+def test_shared_card_release_version_uses_commit_scoped_publication(ref):
+    data = metadata()
+    del data['commit'], data['branch']
+    data['version'] = ref[1:]
+    ci.metadata_identity(data, SHA, ref)
+    for field, value in [('commit', 'b' * 40), ('branch', 'develop'),
+                         ('version', '0.5.0')]:
+        with pytest.raises(ValueError, match='selected CI'):
+            ci.metadata_identity({**data, field: value}, SHA, ref)
+
+
+@pytest.mark.parametrize('ref', ['develop', 'release-0.6', 'nightly', '0.6.0'])
+def test_plain_release_version_cannot_identify_branch_publication(ref):
+    data = metadata()
+    del data['commit'], data['branch']
+    data['version'] = '0.6.0'
+    with pytest.raises(ValueError, match='selected CI'):
+        ci.metadata_identity(data, SHA, ref)
+
+
+@pytest.mark.parametrize('core', [False, True])
+def test_release_source_metadata_is_read_from_selected_commit_key(tmp_path, core):
+    import json
+    args = SimpleNamespace(ref='v0.6.0', sha=SHA, bucket='bucket',
+                           distro='ubuntu22', arch='amd64', core=core)
+    card = metadata()
+    del card['commit'], card['branch']
+    card['version'] = '0.6.0'
+    host = metadata()
+    host['branch'] = args.ref
+
+    def download(bucket, key, path):
+        expected = ci.prefix(args.ref, SHA)
+        assert key.startswith(expected + '/')
+        assert key.endswith('/metadata.json')
+        data = host if '/pciehost/' in key else card
+        path.write_text(json.dumps(data))
+
+    with patch.object(ci, 'download', side_effect=download):
+        records, paths, inputs = ci.source_metadata(args, tmp_path)
+    expected_roles = {'card'} if core else {'card', 'host'}
+    assert set(records) == set(paths) == set(inputs) == expected_roles
+    assert records['card'] == card
+
+
+@pytest.mark.parametrize('event', ['push', 'workflow_dispatch'])
+def test_validation_branch_opt_in_does_not_admit_other_branches_or_forks(event):
     ref = 'codex/offline-pcie-discovery'
-    assert resolver.eligible(source(ref), jobs()) is None
-    assert resolver.eligible(source(ref), jobs(), validation_ref=ref)
-    assert resolver.eligible(source('other'), jobs(), validation_ref=ref) is None
-    run = source(ref)
+    assert resolver.eligible(source(ref, event), jobs()) is None
+    assert resolver.eligible(source(ref, event), jobs(), validation_ref=ref)
+    assert resolver.eligible(source('other', event), jobs(), validation_ref=ref) is None
+    run = source(ref, event)
     run['head_repository'] = {'full_name': 'fork/core'}
     assert resolver.eligible(run, jobs(), validation_ref=ref) is None
 
@@ -273,13 +326,20 @@ def test_cloudfront_invalidation_encodes_s3_branch_keys(tmp_path):
     ('push', 'refs/tags/v0.7.0-rc.1', 'standard', False, '', False, False, True, True),
     ('push', 'refs/heads/v0.6.0', 'standard', False, '', False, False, True, False),
     ('push', 'refs/tags/nightly', 'standard', False, '', False, False, True, False),
-    ('workflow_dispatch', 'refs/tags/v0.6.0', 'standard', False, '', False, False, True, False),
+    ('workflow_dispatch', 'refs/tags/v0.6.0', 'standard', False, '', False, False, True, True),
+    ('workflow_dispatch', 'refs/tags/v0.6.0', 'standard', True, '', False, False, True, False),
+    ('workflow_dispatch', 'refs/tags/v0.6.0', 'fuzz', False, '', False, False, True, False),
+    ('workflow_dispatch', 'refs/tags/v0.6.0', 'standard', False, '123', False, False, True, False),
+    ('workflow_dispatch', 'refs/tags/v0.6.0', 'standard', False, '', True, False, True, False),
+    ('workflow_dispatch', 'refs/tags/v0.6.0', 'standard', False, '', False, True, True, False),
+    ('workflow_dispatch', 'refs/tags/v0.6.0', 'standard', False, '', False, False, False, False),
     ('push', 'refs/tags/v0.6.0', 'standard', True, '', False, False, True, False),
     ('push', 'refs/tags/v0.6.0', 'standard', False, '', True, False, True, False),
     ('push', 'refs/tags/v0.6.0', 'standard', False, '', False, True, True, False),
     ('push', 'refs/tags/v0.6.0', 'standard', False, '', False, False, False, False),
     ('pull_request', 'refs/heads/develop', 'standard', False, '', False, False, True, False),
-    ('workflow_dispatch', 'refs/heads/develop', 'standard', False, '', False, False, True, False),
+    ('workflow_dispatch', 'refs/heads/develop', 'standard', False, '', False, False, True, True),
+    ('workflow_dispatch', 'refs/heads/main', 'standard', False, '', False, False, True, False),
     ('push', 'refs/heads/main', 'standard', False, '', False, False, True, False),
     ('push', 'refs/heads/develop', 'fuzz', False, '', False, False, True, False),
     ('push', 'refs/heads/develop', 'standard', True, '', False, False, True, False),
@@ -437,3 +497,159 @@ def test_invalid_card_pin_is_rejected_before_docker(tmp_path, field, value):
         with pytest.raises(ValueError, match='invalid pinned card baseline'):
             ci.pull_baseline(SimpleNamespace(sha=SHA, work=tmp_path), 'card', {})
         docker.assert_not_called()
+
+
+@pytest.mark.parametrize('core', [False, True])
+def test_republished_inputs_rebuild_and_promote_staged_metadata(tmp_path, core):
+    import json
+    args = SimpleNamespace(core=core, ref='develop', sha=SHA, bucket='bucket',
+                           distro='ubuntu22', arch='amd64')
+    inputs = {'card': 'c'*64} if core else INPUTS
+    old_inputs = {**inputs, 'card': 'e'*64}
+    names = ci.metadata_names(args)
+    objects = {}
+    for filename in names:
+        if core:
+            name = ci.assemble.CORE_ARCHIVE_NAME
+            resources = {name: 'd'*64}
+            if filename == 'metadata.json':
+                resources['sima-neat-1-Linux-extras.tar.gz'] = 'f'*64
+            data = {'version': '0.6.0+develop.'+SHA[:12], 'resources': list(resources),
+                    'resources-checksum': resources, 'installation': {'script': ''},
+                    'artifact': {'type': 'offline', 'repository': 'core',
+                                 'package_path': 'offline', 'distro': 'elxr26', 'arches': ['arm64']}}
+        else:
+            data = metadata()
+        data['source_metadata_sha256'] = old_inputs
+        objects[ci.artifact_prefix(args)+'/'+filename] = json.dumps(data)
+
+    def download(bucket, key, path, optional=False):
+        if key not in objects:
+            return False
+        path.write_text(objects[key])
+        return True
+
+    with patch.object(ci, 'download', side_effect=download), patch.object(ci, 'verify_uploaded') as verify:
+        # Previously published metadata is structurally valid but has older LLiMa inputs.
+        assert ci.existing(args, tmp_path, inputs) is None
+        verify.assert_not_called()
+        # A staged generation is eligible only after it matches current inputs.
+        for filename in names:
+            data = json.loads(objects[ci.artifact_prefix(args)+'/'+filename])
+            data['source_metadata_sha256'] = inputs
+            data['resources'] = [ci.resource_name(name, digest)
+                                 for name, digest in data['resources-checksum'].items()]
+            data['resources-checksum'] = {ci.resource_name(name, digest): digest
+                                          for name, digest in data['resources-checksum'].items()}
+            objects[ci.staging_prefix(args, inputs)+'/'+filename] = json.dumps(data)
+        ready = ci.existing(args, tmp_path, inputs)
+        assert set(ready) == set(names)
+        assert all(path.name.endswith('.pending') for path in ready.values())
+        assert verify.call_count == (3 if core else 1)
+        # Old downloaded metadata still names its original bytes.
+        assert json.loads(objects[ci.artifact_prefix(args)+'/'+names[0]])['source_metadata_sha256'] == old_inputs
+
+
+def test_changed_inputs_do_not_hide_invalid_publication(tmp_path):
+    import json
+    args = SimpleNamespace(core=False, ref='develop', sha=SHA, bucket='bucket',
+                           distro='ubuntu22', arch='amd64')
+    data = metadata()
+    data['source_metadata_sha256'] = {**INPUTS, 'card': 'e'*64}
+    data['installation']['script'] = 'unexpected.sh'
+    def download(bucket, key, path, optional=False):
+        path.write_text(json.dumps(data))
+        return True
+    with patch.object(ci, 'download', side_effect=download):
+        with pytest.raises(ValueError, match='differs'):
+            ci.existing(args, tmp_path, INPUTS)
+
+
+def test_generation_staging_isolated_when_dependency_changes():
+    args = SimpleNamespace(core=False, ref='develop', sha=SHA, distro='ubuntu22', arch='amd64')
+    assert ci.staging_prefix(args, INPUTS) != ci.staging_prefix(args, {**INPUTS, 'card': 'e'*64})
+    assert ci.staging_prefix(args, INPUTS) == ci.staging_prefix(args, dict(reversed(list(INPUTS.items()))))
+
+
+def test_promotion_replaces_metadata_only_after_rechecking_sources(tmp_path):
+    args = SimpleNamespace(work=tmp_path/'publish', ref='develop', sha=SHA,
+                           bucket='bucket', kms='', distribution='')
+    def existing(args, work, inputs):
+        return {name: work/(name+'.pending') for name in ci.metadata_names(args)}
+    with patch.object(ci, 'source_metadata', return_value=({}, {}, INPUTS)) as source, \
+         patch.object(ci, 'existing', side_effect=existing), patch.object(ci, 'put') as put:
+        ci.publish(args)
+    assert source.call_count == 10
+    assert put.call_count == 6
+    assert all(not call.kwargs.get('immutable', False) for call in put.call_args_list)
+
+
+def test_online_republication_during_promotion_publishes_nothing(tmp_path):
+    args = SimpleNamespace(work=tmp_path/'publish', ref='develop', sha=SHA,
+                           bucket='bucket', kms='', distribution='')
+    changed = {**INPUTS, 'card': 'e'*64}
+    def source(args, work):
+        return {}, {}, changed if work.name.startswith('source-recheck') else INPUTS
+    with patch.object(ci, 'source_metadata', side_effect=source), \
+         patch.object(ci, 'existing', return_value={'metadata-offline.json': tmp_path/'metadata-offline.json.pending'}), \
+         patch.object(ci, 'put') as put:
+        with pytest.raises(ValueError, match='changed before offline promotion'):
+            ci.publish(args)
+        put.assert_not_called()
+
+
+def test_matching_publication_with_corrupt_archive_still_fails(tmp_path):
+    import json
+    args = SimpleNamespace(core=False, ref='develop', sha=SHA, bucket='bucket',
+                           distro='ubuntu22', arch='amd64')
+    def download(bucket, key, path, optional=False):
+        path.write_text(json.dumps(metadata()))
+        return True
+    with patch.object(ci, 'download', side_effect=download), \
+         patch.object(ci, 'verify_uploaded', side_effect=ValueError('uploaded object checksum differs')):
+        with pytest.raises(ValueError, match='checksum'):
+            ci.existing(args, tmp_path, INPUTS)
+
+
+def test_different_card_snapshots_across_variants_publish_nothing(tmp_path):
+    args = SimpleNamespace(work=tmp_path/'publish', ref='develop', sha=SHA,
+                           bucket='bucket', kms='', distribution='')
+    def source(args, work):
+        return {}, {}, {**INPUTS, 'card': 'e'*64} if args.core else INPUTS
+    with patch.object(ci, 'source_metadata', side_effect=source), \
+         patch.object(ci, 'existing', return_value={'metadata-offline.json': tmp_path/'metadata-offline.json.pending'}), \
+         patch.object(ci, 'put') as put:
+        with pytest.raises(ValueError, match='changed across offline variants'):
+            ci.publish(args)
+        put.assert_not_called()
+
+
+@pytest.mark.parametrize('name,expected', [
+    ('neat-core-offline-installer.tar.gz', 'neat-core-offline-installer-abcdef01.tar.gz'),
+    ('neat-pcie-offline-installer.tar.gz', 'neat-pcie-offline-installer-abcdef01.tar.gz'),
+    ('sima-neat-0.6.0-Linux-extras.tar.gz', 'sima-neat-0.6.0-Linux-extras-abcdef01.tar.gz'),
+])
+def test_resource_name_has_short_hash_before_archive_extension(name, expected):
+    assert ci.resource_name(name, 'abcdef012345' + '0'*52) == expected
+
+
+def test_resource_upload_does_not_overwrite_short_hash_collision(tmp_path):
+    import subprocess
+    path = tmp_path/'bundle.tar.gz'
+    path.write_bytes(b'new bundle')
+    with patch.object(ci, 'put', side_effect=subprocess.CalledProcessError(1, 'aws')) as put, \
+         patch.object(ci, 'verify_uploaded', side_effect=ValueError('uploaded object checksum differs')) as verify:
+        with pytest.raises(ValueError, match='checksum differs'):
+            ci.put_resource('bucket', 'bundle-short.tar.gz', path, '')
+    assert put.call_args.kwargs == {'immutable': True}
+    verify.assert_called_once_with('bucket', 'bundle-short.tar.gz', ci.assemble.sha(path))
+
+
+def test_resource_upload_reuses_existing_full_digest(tmp_path):
+    import subprocess
+    path = tmp_path/'bundle.tar.gz'
+    path.write_bytes(b'same bundle')
+    with patch.object(ci, 'put', side_effect=subprocess.CalledProcessError(1, 'aws')), \
+         patch.object(ci, 'verify_uploaded') as verify:
+        ci.put_resource('bucket', 'bundle-short.tar.gz', path, '')
+    verify.assert_called_once_with('bucket', 'bundle-short.tar.gz', ci.assemble.sha(path))

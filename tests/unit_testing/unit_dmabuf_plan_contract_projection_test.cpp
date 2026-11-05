@@ -34,7 +34,9 @@ sc::PhysicalExecutionPlan physical_for(const sc::ModelExecutionPlan& plan) {
   return std::move(*physical);
 }
 
-void test_cvu_whole_batch_projection(bool input_tail_padding = false) {
+void test_cvu_whole_batch_projection(bool input_tail_padding = false, bool rank_five = false) {
+  const sc::TensorShape shape =
+      rank_five ? sc::TensorShape{1, 2, 1, 1, 7} : sc::TensorShape{2, 1, 1, 7};
   sc::ModelExecutionPlanData data;
   data.contract_version = "2.1.0";
   data.model_inputs = {0U};
@@ -44,8 +46,8 @@ void test_cvu_whole_batch_projection(bool input_tail_padding = false) {
     tensor.name = id == 0U ? "input" : "output";
     tensor.required_bytes = id == 0U ? 56U : 28U;
     tensor.logical_dtype = id == 0U ? "float32" : "bfloat16";
-    tensor.logical_shape = sc::TensorShape{2, 1, 1, 7};
-    tensor.logical_layout = "HWC";
+    tensor.logical_shape = shape;
+    tensor.logical_layout = rank_five ? "" : "HWC";
     if (id == 0U && input_tail_padding) {
       sc::StorageBinding storage;
       storage.kind = sc::StorageBindingKind::External;
@@ -58,7 +60,8 @@ void test_cvu_whole_batch_projection(bool input_tail_padding = false) {
       sc::StorageBinding storage;
       storage.carrier_id = id;
       storage.physical_span = 30U;
-      storage.stride_bytes = {16, 14, 14, 2};
+      storage.stride_bytes = rank_five ? std::vector<std::int64_t>{32, 16, 14, 14, 2}
+                                       : std::vector<std::int64_t>{16, 14, 14, 2};
       tensor.storage_binding = storage;
     }
     data.values.push_back(std::move(tensor));
@@ -67,12 +70,12 @@ void test_cvu_whole_batch_projection(bool input_tail_padding = false) {
   cast.id = 0U;
   cast.sequence = 1U;
   cast.name = "cast";
-  cast.batch_count = 2U;
+  cast.batch_count = rank_five ? 1U : 2U;
   cast.kind = sc::OpKind::Cast;
   cast.processor = "EV74";
   cast.inputs = {0U};
   cast.outputs = {1U};
-  cast.input_shapes = {{2, 1, 1, 7}};
+  cast.input_shapes = {shape};
   cast.output_shapes = cast.input_shapes;
   cast.config = sc::CastOpConfig{"bfloat16"};
   data.ops = {cast};
@@ -87,7 +90,7 @@ void test_cvu_whole_batch_projection(bool input_tail_padding = false) {
       sc::build_dmabuf_plan_processcvu_command_contract(*plan, *physical, commands, &error);
   require(contract.has_value(), "whole-batch contract compiles: " + error);
   require(plan->model_inputs().size() == 1U && plan->model_outputs().size() == 1U &&
-              plan->value(1U)->logical_shape == sc::TensorShape({2, 1, 1, 7}),
+              plan->value(1U)->logical_shape == shape,
           "physical samples do not change public semantic tensors");
   require(contract->payload.batch_size == 1 && contract->payload.input_tensors.size() == 1U &&
               contract->payload.output_tensors.size() == 1U,
@@ -95,9 +98,14 @@ void test_cvu_whole_batch_projection(bool input_tail_padding = false) {
   const auto& input = contract->payload.input_tensors.front().descriptor();
   const auto& output = contract->payload.output_tensors.front().descriptor();
   const auto& runtime = contract->runtime_contract;
-  require(input.shape.sizes[0] == 2 && output.shape.sizes[0] == 2 && input.storage.nbytes == 56U &&
+  require(runtime.logical_inputs.front().shape == shape,
+          "application caps preserve non-NHWC axes, including a leading unit axis");
+  const auto varying_axis = rank_five ? 1U : 0U;
+  require(input.shape.sizes[varying_axis] == 2 && output.shape.sizes[varying_axis] == 2 &&
+              input.storage.nbytes == 56U &&
               runtime.physical_inputs.front().size_bytes == (input_tail_padding ? 64U : 56U) &&
-              output.storage.nbytes == 30U && output.layout.strided.strides_bytes[0] == 16U &&
+              output.storage.nbytes == 30U &&
+              output.layout.strided.strides_bytes[varying_axis] == 16U &&
               runtime.physical_inputs.size() == 1U && runtime.physical_outputs.size() == 1U &&
               runtime.physical_inputs.front().source_physical_index == 0 &&
               runtime.physical_inputs.front().source_byte_offset == 0U &&
@@ -1920,6 +1928,7 @@ RUN_TEST(
       gst_init(nullptr, nullptr);
       test_cvu_whole_batch_projection();
       test_cvu_whole_batch_projection(true);
+      test_cvu_whole_batch_projection(false, true);
       test_batched_backend_ports();
       test_cast_preproc_absorption_uses_explicit_image_layout();
       test_casttess_hwc_execution_view();

@@ -155,11 +155,11 @@ void configure_graph_public_output_loan_gate(RunCore& core, const ExecutionGraph
   const auto compatible_output = std::find_if(
       plan.pipeline_segments.begin(), plan.pipeline_segments.end(), [](const auto& segment) {
         return graph_build_internal::terminal_output_placement(segment.nodes) ==
-               OutputPlacement::EV74Compatible;
+               OutputPlacement::EV74;
       });
   if (compatible_output != plan.pipeline_segments.end()) {
     const auto retained = session_build_make_stream_options(
-        core.graph_options.pipeline, core.mode, OutputPlacement::EV74Compatible,
+        core.graph_options.pipeline, core.mode, OutputPlacement::EV74,
         compatible_output->nodes.back()->user_label());
     // Reserve loans for compatible outputs without changing other outputs' ownership.
     stream_opt.holder_loan_credits = retained.holder_loan_credits;
@@ -348,8 +348,8 @@ compatible_output_producers(const ExecutionGraphPlan& plan) {
   using Pending = std::tuple<NodeId, PortId, std::string>;
   std::vector<Pending> pending;
   for (const auto& sink : plan.pipeline_segments) {
-    if (forwards_storage(sink) && graph_build_internal::terminal_output_placement(sink.nodes) ==
-                                      OutputPlacement::EV74Compatible)
+    if (forwards_storage(sink) &&
+        graph_build_internal::terminal_output_placement(sink.nodes) == OutputPlacement::EV74)
       for (const auto index : sink.input_edges) {
         const auto& edge = plan.edges.at(index);
         pending.emplace_back(edge.from, edge.from_port, sink.nodes.back()->user_label());
@@ -377,7 +377,7 @@ compatible_output_producers(const ExecutionGraphPlan& plan) {
         plan.pipeline_segments[producer->second].boundary.direct_graph_source)
       session_build_throw_session_error_simple(
           error_codes::kPipelineShape,
-          "Output '" + name + "': EV74Compatible requires a Core-allocated tensor output.",
+          "Output '" + name + "': EV74 requires a Core-allocated tensor output.",
           "Use tensor.cvu() to copy imported or application-stage output.");
     const auto& segment = plan.pipeline_segments[producer->second];
     if (forwards_storage(segment)) {
@@ -413,8 +413,8 @@ void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
 
     std::vector<std::shared_ptr<simaai::neat::Node>> nodes = seg.nodes;
     const bool forwarded_placement =
-        forwards_storage(seg) && graph_build_internal::terminal_output_placement(seg.nodes) ==
-                                     OutputPlacement::EV74Compatible;
+        forwards_storage(seg) &&
+        graph_build_internal::terminal_output_placement(seg.nodes) == OutputPlacement::EV74;
     if (forwarded_placement) {
       // Placement was assigned upstream. Keep the queue, but do not ask this
       // allocator-free fragment to plan storage again. The public sink retains
@@ -459,7 +459,7 @@ void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
     if (seg.boundary.needs_output && !simaai::neat::graph::has_output_appsink(seg.nodes)) {
       OutputOptions output;
       if (compatible_producers.contains(seg.id))
-        output.placement = OutputPlacement::EV74Compatible;
+        output.placement = OutputPlacement::EV74;
       nodes.push_back(simaai::neat::nodes::Output(output));
       injected_output = true;
     }

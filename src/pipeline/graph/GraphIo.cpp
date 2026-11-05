@@ -733,7 +733,7 @@ OutputOptions parse_output_options(const JsonValue::JsonObject& obj) {
   if (const auto* placement = object_field(obj, "placement")) {
     if (placement->type != JsonValue::Type::Number ||
         (placement->num != static_cast<int>(OutputPlacement::Auto) &&
-         placement->num != static_cast<int>(OutputPlacement::EV74Compatible)))
+         placement->num != static_cast<int>(OutputPlacement::EV74)))
       throw_io_error(error_codes::kIoParse, "Graph::load", "", "unknown Output placement");
     opt.placement = static_cast<OutputPlacement>(static_cast<int>(placement->num));
   }

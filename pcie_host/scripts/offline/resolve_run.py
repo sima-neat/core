@@ -23,7 +23,7 @@ def eligible(run, jobs, tag_sha=None, validation_ref=None, skip_gated_publicatio
     if (run.get('repository', {}).get('full_name') != REPOSITORY
             or run.get('head_repository', {}).get('full_name') != REPOSITORY
             or run.get('path') != '.github/workflows/vulcan-ci.yml'
-            or run.get('event') != 'push'):
+            or run.get('event') not in ('push', 'workflow_dispatch')):
         return None
     # New release tags publish from the gated parent. Retain the listener for
     # older tags without that caller, and leave explicit manual retries enabled.

@@ -250,7 +250,7 @@ Core has one build-local planning flow:
 4. Choose heaps and pack with the shared physical-DAG lifetime proof.
 5. Finalize stage-local `FrameLayout` objects and publication; render once without repairing placement.
 
-Any EV74 access or explicit `OutputOptions::placement = OutputPlacement::EV74Compatible` export requires CMA; owned MLA/A65-only carriers use DMS. Qualified fresh A65 public terminals may use HostCpu. Imported backing, offsets, geometry and producer loans remain pinned. Fan-out includes every consumer, and views share their root carrier.
+Any EV74 access or explicit `OutputOptions::placement = OutputPlacement::EV74` export requires CMA; owned MLA/A65-only carriers use DMS. Qualified fresh A65 public terminals may use HostCpu. Imported backing, offsets, geometry and producer loans remain pinned. Fan-out includes every consumer, and views share their root carrier.
 
 `AllocationPolicy::PreferDmsThenCma` explicitly permits eligible owned DMS allocations to fall back to CMA on capacity failure. It does not select Linux system memory. Pool boundaries, Queue boundaries, independent invocations and retained outputs constrain lifetime reuse.
 
@@ -932,6 +932,10 @@ requires packing. Explicit CPU memory and Owned outputs remain supported;
 required device allocations fail rather than silently falling back to CPU
 memory. Applications do not select a memory backend or initialize GStreamer.
 
+Tensor transfers reuse pools by heap and byte capacity. Pools grow while tensors
+remain in use and retain released buffers until process exit. CPU access reuses
+Runner's mapping while each access acquires and releases its ticket.
+
 Input allocation preference and runtime admission are separate decisions. Core
 resolves both from the declared `Input` and its executable downstream route at
 build time; it does not rewrite `Auto` into an explicit device requirement.
@@ -986,8 +990,11 @@ intermediate copy.
 Multiple MLA OFMs may be logical views of one allocation. Descriptors sharing an allocation retain its parent segment; logical/backend names preserve port identity, and allocation-local spans preserve each view. Publication describes the finalized `FrameLayout` without reconstructing packed outputs.
 
 Core may simplify singleton batch dimensions in internal conversion descriptors
-when the execution view preserves the same addressed bytes. Model tensor shapes,
-batch routing, and public APIs remain unchanged.
+when the execution view preserves the same addressed bytes. Tensor `Model::input_specs()`
+and `output_specs()` retain the MPK-authored rank, including batch one. HWC input
+shorthand remains accepted for batch-one models; image preprocessing keeps its
+dynamic image contract.
+`Model::compiled_batch_size()` reads the MLA’s declared batch size; tensor rank does not identify a batch axis.
 
 ##### Direct runtime execution
 
@@ -2245,11 +2252,13 @@ Core reuses shared backing memory slots while retaining producer leases and skip
 
 ## Offline Core delivery
 
-Standalone Core and PCIe offline bundles use the same immutable Core publication, dependency collector, checksum verification, and platform admission lifecycle. DevKit installation uses an isolated network namespace; SDK sysroot installation uses file-only APT methods. Both use a shared installation lock. CI validates packages and Python imports against a pristine provisioned baseline with networking disabled, then exposes offline metadata only after the standalone bundle and all four PCIe variants pass.
+Standalone Core and PCIe offline bundles use the same authenticated Core publication snapshot, dependency collector, checksum verification, and platform admission lifecycle. DevKit installation uses an isolated network namespace; SDK sysroot installation uses file-only APT methods. Both use a shared installation lock. CI validates packages and Python imports against a pristine provisioned baseline with networking disabled, then exposes offline metadata only after the standalone bundle and all four PCIe variants pass.
 
 PCIe offline installation discovers all cards before SSH setup. It bundles and invokes the existing online `pcie-setup.sh` unchanged as the invoking user, supplying each discovered address through `--hosts`. Discovery and direct-route checks precede setup; strict SSH verification on the PCI-owned interface follows setup. Host-key enrollment follows the shared script's existing behavior. Automatic enrollment uses `~/.ssh/known_hosts`; custom trust files must be provisioned beforehand. Preflight-only mode never provisions SSH. No package installation starts until SSH setup and all host/card preflight checks pass.
 
 Standalone Core publishes `offline/metadata.json` with the runtime bundle and extras, and `offline/metadata-minimal.json` with only the runtime bundle.
+
+Rebuilding the same Core commit with changed dependencies (including LLiMa) rebuilds the offline bundles. CI stages metadata by source-input hashes and uses resource filenames with a 8-character SHA-256 suffix before `.tar.gz`, preserving downloads referenced by earlier metadata. After all five variants pass and source hashes are rechecked, CI replaces the download metadata and invalidates its cache. Unchanged inputs reuse verified bundles; malformed metadata and checksum failures still stop publication.
 
 The installer accepts only the Neat eLxr SDK or a provisioned Modalix DevKit. It checks `/etc/sdk-release` or `/etc/buildinfo` against the package manifest bundled in the archive; downloaded publication metadata is not required. Other environments and incompatible Platform versions are rejected before installation. In the SDK, Core is copied into `/opt/toolchain/aarch64/modalix`. If `DEVKIT_SYNC_DEVKIT_IP` is configured, the same offline bundle is transferred over SSH to the paired DevKit. Both environments must pass preflight before installation begins. On a DevKit, installation runs locally.
 

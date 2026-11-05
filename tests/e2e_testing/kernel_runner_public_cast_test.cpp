@@ -97,7 +97,7 @@ void require_publication(const Tensor& tensor, bool compact,
 }
 
 void qualify_queued_output_placement() {
-  for (const auto placement : {OutputPlacement::Auto, OutputPlacement::EV74Compatible}) {
+  for (const auto placement : {OutputPlacement::Auto, OutputPlacement::EV74}) {
     for (const auto* name : {"features", "0", "output_tensor_0"}) {
       GraphOptions policy;
       policy.processcvu_requested_run_target = "A65";
@@ -121,7 +121,7 @@ void qualify_queued_output_placement() {
       auto run = graph.build(TensorList{input, input}, options);
       const auto result = run.run(TensorList{input, input}, 5000);
       require(result.size() == 2, "endpoint label must not select a tensor from the bundle");
-      const auto heap = placement == OutputPlacement::EV74Compatible
+      const auto heap = placement == OutputPlacement::EV74
                             ? simaai::scheduler::client::dma::HeapKind::Cma
                             : simaai::scheduler::client::dma::HeapKind::MlaDms;
       // Compact publication requires a direct appsink edge; queues retain full metadata.
@@ -148,7 +148,7 @@ void qualify_named_output_placement(bool compact, bool shared, bool auto_owned =
   cast.element_name = "features_cast";
   const auto features = nodes::Cast(cast);
   OutputOptions compatible;
-  compatible.placement = OutputPlacement::EV74Compatible;
+  compatible.placement = OutputPlacement::EV74;
   graph.connect(source, features);
   auto terminal = features;
   for (int i = 0; i < queue_fragments; ++i) {
@@ -214,7 +214,7 @@ void qualify_bundle_output_placement(bool compact, CombinePolicy combine) {
   cast.element_name = "first_cast";
   const auto first = nodes::Cast(cast);
   OutputOptions compatible;
-  compatible.placement = OutputPlacement::EV74Compatible;
+  compatible.placement = OutputPlacement::EV74;
   compatible.combine_policy = combine;
   // A sink label matching a tensor slot must not select only that tensor.
   const auto output = nodes::Output("0", compatible);
@@ -280,7 +280,7 @@ void qualify_two_cast_stages(bool compact, int a65_workers, OutputPlacement plac
   output.drop = false;
   output.max_buffers = 2;
   output.placement = placement;
-  const auto heap = placement == OutputPlacement::EV74Compatible
+  const auto heap = placement == OutputPlacement::EV74
                         ? simaai::scheduler::client::dma::HeapKind::Cma
                         : simaai::scheduler::client::dma::HeapKind::MlaDms;
   graph.add(nodes::Output(output));
@@ -723,7 +723,7 @@ int main(int argc, char** argv) {
     }
     // Restore this test's metadata mode after the compatibility repush.
     setenv("SIMA_CORE_COMPACT_METADATA", mode == "compact" ? "1" : "0", 1);
-    for (const auto placement : {OutputPlacement::Auto, OutputPlacement::EV74Compatible})
+    for (const auto placement : {OutputPlacement::Auto, OutputPlacement::EV74})
       qualify_two_cast_stages(mode == "compact", a65_workers, placement);
     std::cout << "PASS public Core Cast: " << mode << ", a65_workers=" << a65_workers
               << ", actual math, public decode, held output\n";

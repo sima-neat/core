@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build offline variants from authenticated, immutable Vulcan publications."""
+"""Build offline variants from authenticated Vulcan publication snapshots."""
 import argparse
 import base64
 import hashlib
@@ -43,11 +43,15 @@ def download(bucket, key, path, optional=False):
 
 def metadata_identity(data, sha, ref, distro=None, arch=None):
     # Native host metadata carries the full identity. Shared card metadata uses
-    # a version suffix; its authenticated S3 key binds the source ref/commit.
+    # a version suffix or the exact release tag version; its authenticated S3
+    # key binds the source ref/commit in both cases.
     if distro:
         matches = data.get('commit') == sha and data.get('branch') == ref
     else:
-        matches = (str(data.get('version', '')).endswith('.' + sha[:12])
+        version = str(data.get('version', ''))
+        release = (re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:[.-][0-9A-Za-z][0-9A-Za-z.-]*)?', ref)
+                   and version == ref[1:])
+        matches = ((version.endswith('.' + sha[:12]) or release)
                    and data.get('commit', sha) == sha and data.get('branch', ref) == ref)
     if not matches:
         raise ValueError('publication is not from the selected CI commit/ref')
@@ -62,9 +66,27 @@ def metadata_identity(data, sha, ref, distro=None, arch=None):
             raise ValueError('unsafe publication resource or checksum')
 
 
+def resource_name(name, digest):
+    suffix = '.tar.gz'
+    if not name.endswith(suffix):
+        raise ValueError('offline resources must be tar.gz archives')
+    return name[:-len(suffix)] + '-' + digest[:8] + suffix
+
+
+def archive_resource(data, name):
+    return next((resource for resource in data['resources']
+                 if resource == name or resource == resource_name(
+                     name, data['resources-checksum'][resource])), None)
+
+
+def staging_prefix(args, inputs):
+    generation = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
+    return artifact_prefix(args) + '/staging/' + generation
+
+
 def offline_identity(data, sha, ref, distro, arch, inputs):
     metadata_identity(data, sha, ref, distro, arch)
-    if (data['resources'] != [assemble.ARCHIVE_NAME]
+    if (data['resources'] != [archive_resource(data, assemble.ARCHIVE_NAME)]
             or data.get('installation', {}).get('script') != ''
             or data.get('artifact', {}).get('type') != 'offline'
             or data['artifact'].get('package_path') != f'pciehost/{distro}/{arch}'
@@ -93,6 +115,15 @@ def put(bucket, key, path, kms, immutable=False):
         command += ['--if-none-match', '*']
     run(*command)
     verify_uploaded(bucket, key, digest)
+
+
+def put_resource(bucket, key, path, kms):
+    try:
+        put(bucket, key, path, kms, immutable=True)
+    except subprocess.CalledProcessError:
+        # A previous run may already have uploaded the same resource. Compare
+        # the full digest: a short-hash collision must fail rather than overwrite.
+        verify_uploaded(bucket, key, assemble.sha(path))
 
 
 def is_core(args):
@@ -186,9 +217,10 @@ def metadata_names(args):
 def core_identity(data, args, inputs, minimal):
     metadata_identity(data, args.sha, args.ref)
     resources = data['resources']
-    extras = [name for name in resources if name.endswith('-Linux-extras.tar.gz')]
-    if (assemble.CORE_ARCHIVE_NAME not in resources
-            or (resources != [assemble.CORE_ARCHIVE_NAME] if minimal else
+    extras = [name for name in resources
+              if re.search(r'-Linux-extras(?:-[0-9a-f]{8})?\.tar\.gz$', name)]
+    if (archive_resource(data, assemble.CORE_ARCHIVE_NAME) is None
+            or (resources != [archive_resource(data, assemble.CORE_ARCHIVE_NAME)] if minimal else
                 len(resources) != 2 or len(extras) != 1)
             or data.get('installation', {}).get('script') != ''
             or data.get('artifact') != {'type': 'offline', 'repository': 'core',
@@ -203,13 +235,22 @@ def existing(args, work, inputs, pending=True):
     for filename in metadata_names(args):
         for suffix in ('', '.pending') if pending else ('',):
             path = work/(filename+suffix)
-            if not download(args.bucket, base+'/'+filename+suffix, path, optional=True):
+            key = (staging_prefix(args, inputs) if suffix else base) + '/' + filename
+            if not download(args.bucket, key, path, optional=True):
                 continue
             data = json.loads(path.read_text())
+            recorded_inputs = data.get('source_metadata_sha256')
+            if (not isinstance(recorded_inputs, dict) or set(recorded_inputs) != set(inputs)
+                    or any(not re.fullmatch(r'[0-9a-f]{64}', str(value))
+                           for value in recorded_inputs.values())):
+                raise ValueError('offline publication lacks valid source metadata hashes')
             if is_core(args):
-                core_identity(data, args, inputs, filename == 'metadata-minimal.json')
+                core_identity(data, args, recorded_inputs, filename == 'metadata-minimal.json')
             else:
-                offline_identity(data, args.sha, args.ref, args.distro, args.arch, inputs)
+                offline_identity(data, args.sha, args.ref, args.distro, args.arch, recorded_inputs)
+            if data.get('source_metadata_sha256') != inputs:
+                print('Source publications changed; rebuilding ' + base, flush=True)
+                continue
             for name, digest in data['resources-checksum'].items():
                 verify_uploaded(args.bucket, base+'/'+name, digest)
             ready[filename], documents[filename] = path, data
@@ -219,7 +260,9 @@ def existing(args, work, inputs, pending=True):
             return None  # Interrupted staging is safe to rebuild before publication.
         raise ValueError('incomplete offline publication; refusing replacement')
     if is_core(args) and ready:
-        name = assemble.CORE_ARCHIVE_NAME
+        name = archive_resource(documents['metadata.json'], assemble.CORE_ARCHIVE_NAME)
+        if archive_resource(documents['metadata-minimal.json'], assemble.CORE_ARCHIVE_NAME) != name:
+            raise ValueError('Core offline profiles refer to different runtime archives')
         if documents['metadata.json']['resources-checksum'][name] != documents['metadata-minimal.json']['resources-checksum'][name]:
             raise ValueError('Core offline profiles refer to different runtime archives')
     return ready or None
@@ -264,10 +307,17 @@ def build(args):
     (args.work/'spec.json').write_text(json.dumps(spec, indent=2)+'\n')
     root = args.work/('neat-core-offline' if is_core(args) else 'neat-offline')
     assemble.assemble(spec, root)
-    documents = {}
+    documents, resource_files = {}, {}
     for filename in metadata_names(args):
         path = args.work/filename
         metadata = json.loads(path.read_text())
+        if not args.validation_only:
+            resource_files.update({resource_name(name, digest): args.work/name
+                                   for name, digest in metadata['resources-checksum'].items()})
+            metadata['resources'] = [resource_name(name, metadata['resources-checksum'][name])
+                                     for name in metadata['resources']]
+            metadata['resources-checksum'] = {resource_name(name, digest): digest
+                                              for name, digest in metadata['resources-checksum'].items()}
         metadata.update(source_metadata_sha256=inputs, installer_revision=args.installer_revision,
                         source_run_id=args.run_id)
         path.write_text(json.dumps(metadata, indent=2)+'\n')
@@ -280,20 +330,22 @@ def build(args):
     # and both Core profiles before exposing any new metadata.
     resources = set().union(*(set(data['resources']) for data in documents.values()))
     for name in sorted(resources):
-        put(args.bucket, base+'/'+name, args.work/name, args.kms)
+        # Never replace bytes if two full digests share the short filename hash.
+        put_resource(args.bucket, base+'/'+name, resource_files[name], args.kms)
     for filename in documents:
-        put(args.bucket, base+'/'+filename+'.pending', args.work/filename, args.kms)
+        put(args.bucket, staging_prefix(args, inputs)+'/'+filename, args.work/filename, args.kms)
 
 
 def publish(args):
     args.work.mkdir(parents=True, exist_ok=False)
-    ready = []
+    ready, snapshots = [], []
     args.core = False
     for distro, arch in TUPLES:
         args.distro, args.arch = distro, arch
         work = args.work/(distro+'-'+arch)
         work.mkdir()
         _, _, inputs = source_metadata(args, work)
+        snapshots.append((False, distro, arch, inputs))
         path = existing(args, work, inputs)
         if path is None:
             raise ValueError('missing validated offline tuple: '+distro+'/'+arch)
@@ -302,15 +354,27 @@ def publish(args):
     work = args.work/'core'
     work.mkdir()
     _, _, inputs = source_metadata(args, work)
+    snapshots.append((True, None, None, inputs))
     path = existing(args, work, inputs)
     if path is None:
         raise ValueError('missing validated standalone Core bundle')
     ready.extend((artifact_prefix(args), filename, record) for filename, record in path.items())
+    # Online publications can be replaced while assembly is running. Recheck
+    # every snapshot before exposing any replacement offline metadata.
+    for index, (core, distro, arch, expected) in enumerate(snapshots):
+        if expected.get('card') != inputs.get('card'):
+            raise ValueError('Core publication changed across offline variants; retry assembly')
+        args.core, args.distro, args.arch = core, distro, arch
+        check = args.work/('source-recheck-' + str(index))
+        check.mkdir()
+        _, _, current = source_metadata(args, check)
+        if current != expected:
+            raise ValueError('source publication changed before offline promotion; retry assembly')
     # Complete every read/check before publishing any new metadata.
     for base, filename, path in ready:
         if path.name == filename:
             continue
-        put(args.bucket, base+'/'+filename, path, args.kms, immutable=True)
+        put(args.bucket, base+'/'+filename, path, args.kms)
     if args.distribution:
         run('aws', 'cloudfront', 'create-invalidation', '--distribution-id', args.distribution,
             '--paths', *['/'+quote(base, safe='/')+'/'+filename for base, filename, _ in ready])

@@ -52,7 +52,7 @@ static inline OutputPlacement
 terminal_output_placement(const std::vector<std::shared_ptr<Node>>& nodes,
                           std::span<const std::string> compatible_output_names = {}) noexcept {
   if (!compatible_output_names.empty())
-    return OutputPlacement::EV74Compatible;
+    return OutputPlacement::EV74;
   const auto* output = nodes.empty() ? nullptr : dynamic_cast<const Output*>(nodes.back().get());
   return output ? output->options().placement : OutputPlacement::Auto;
 }

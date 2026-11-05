@@ -1497,7 +1497,7 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::enum_<OutputPlacement>(m, "OutputPlacement")
       .value("Auto", OutputPlacement::Auto)
-      .value("EV74Compatible", OutputPlacement::EV74Compatible);
+      .value("EV74", OutputPlacement::EV74);
 
   nb::enum_<SampleKind>(m, "SampleKind")
       .value("Tensor", SampleKind::Tensor)

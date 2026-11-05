@@ -75,10 +75,9 @@ void check_selected_public_cma(const si::StageStaticSpec& original) {
       auto selected = endpoint;
       query::set_output_selector(selected, name);
       const std::array<std::string, 1> names{name};
-      si::finalize_pipeline_storage(manifest, forwarded ? &endpoint : &selected,
-                                    simaai::neat::OutputPlacement::EV74Compatible,
-                                    forwarded ? std::span<const std::string>(names)
-                                              : std::span<const std::string>{});
+      si::finalize_pipeline_storage(
+          manifest, forwarded ? &endpoint : &selected, simaai::neat::OutputPlacement::EV74,
+          forwarded ? std::span<const std::string>(names) : std::span<const std::string>{});
       const auto& layout = *manifest.stages.front().frame_layout;
       const auto& first = layout.outputs.at(0).span;
       const auto& second = layout.outputs.at(1).span;
@@ -100,8 +99,7 @@ void check_selected_public_cma(const si::StageStaticSpec& original) {
     aggregate.stages = {producer};
     auto selected = endpoint;
     query::set_output_selector(selected, name);
-    si::finalize_pipeline_storage(aggregate, &selected,
-                                  simaai::neat::OutputPlacement::EV74Compatible);
+    si::finalize_pipeline_storage(aggregate, &selected, simaai::neat::OutputPlacement::EV74);
     const auto& layout = *aggregate.stages.front().frame_layout;
     for (const auto& output : layout.outputs)
       require(layout.allocations.at(output.span.allocation_index).policy ==
@@ -120,7 +118,7 @@ void check_selected_public_cma(const si::StageStaticSpec& original) {
   si::SimaPluginStaticManifest shared;
   shared.stages = {std::move(producer)};
   query::set_output_selector(endpoint, "head0");
-  si::finalize_pipeline_storage(shared, &endpoint, simaai::neat::OutputPlacement::EV74Compatible);
+  si::finalize_pipeline_storage(shared, &endpoint, simaai::neat::OutputPlacement::EV74);
   const auto& layout = *shared.stages.front().frame_layout;
   require(layout.outputs.size() == 2 &&
               layout.outputs[0].span.allocation_index == layout.outputs[1].span.allocation_index &&
@@ -316,7 +314,7 @@ void check_public_cma() {
   simaai::neat::pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector endpoint;
   endpoint.terminal_stage_key = "tensor";
   endpoint.terminal_stage_key_required = true;
-  si::finalize_pipeline_storage(source, &endpoint, simaai::neat::OutputPlacement::EV74Compatible);
+  si::finalize_pipeline_storage(source, &endpoint, simaai::neat::OutputPlacement::EV74);
   const auto& terminal = source.stages.back();
   const auto& layout = *terminal.frame_layout;
   require(layout.allocations.at(layout.outputs.front().span.allocation_index).policy ==
@@ -375,8 +373,7 @@ void check_memory_placement() {
   endpoint.terminal_stage_key_required = true;
   bool rejected = false;
   try {
-    si::finalize_pipeline_storage(explicit_import, &endpoint,
-                                  simaai::neat::OutputPlacement::EV74Compatible);
+    si::finalize_pipeline_storage(explicit_import, &endpoint, simaai::neat::OutputPlacement::EV74);
   } catch (const std::invalid_argument& error) {
     rejected = std::string(error.what()).find("imported backing") != std::string::npos;
   }

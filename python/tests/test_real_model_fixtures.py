@@ -738,7 +738,7 @@ def test_tensor_input_model_uses_quanttess_frontend_contract():
     info = model.info()
 
     assert input_spec.dtypes == [pyneat.TensorDType.Float32]
-    assert list(input_spec.shape) == [640, 640, 3]
+    assert list(input_spec.shape) == [1, 640, 640, 3]
     assert appsrc.payload_type == pyneat.PayloadType.Tensor
     assert appsrc.format == pyneat.Format.FP32
     # Image preprocessing is disabled; the authored tensor frontend remains active.
@@ -746,6 +746,46 @@ def test_tensor_input_model_uses_quanttess_frontend_contract():
     assert info.needs.pre_quantization and info.needs.pre_tessellation
     assert info.capabilities.has_pre_quantization and info.capabilities.has_pre_tessellation
     assert "neatkernelrunner" in model.backend_fragment(pyneat.ModelStage.Preprocess).lower()
+
+
+@pytest.mark.parametrize("as_sample", [False, True])
+def test_tensor_input_model_unseeded_build_accepts_hwc(monkeypatch, as_sample):
+  monkeypatch.setenv("SIMA_INPUTSTREAM_PREFLIGHT_RUN", "1")
+  model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"))
+  image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
+  image_model = _image_input_model(_env_path("SIMA_YOLO_TAR"))
+  values = _cpu_quanttess_input(image_model, image)
+  inputs = [
+      pyneat.Tensor.from_numpy(values, copy=True, memory=pyneat.TensorMemory.EV74,
+                              layout=pyneat.TensorLayout.HWC),
+      pyneat.Tensor.from_numpy(values[None], copy=True, memory=pyneat.TensorMemory.EV74),
+  ]
+  assert list(inputs[1].shape) == list(model.input_specs()[0].shape)
+
+  def submitted(tensor):
+    return [_sample_from_tensor(tensor)] if as_sample else [tensor]
+
+  results = []
+  for seed in inputs:
+    for seeded in (True, False):
+      runner = model.build(submitted(seed)) if seeded else model.build()
+      try:
+        for tensor in inputs:
+          output = runner.run(submitted(tensor), timeout_ms=30000)
+          tensors = _sample_tensors(output) if as_sample else output
+          results.append([t.to_numpy(copy=True) for t in tensors])
+        assert runner.push(submitted(inputs[1]))
+        results.append([t.to_numpy(copy=True) for t in _sample_tensors(runner.pull(30000))])
+        accepted = (runner.try_push_samples(_sample_from_tensor(inputs[1])) if as_sample
+                    else runner.try_push_tensors([inputs[1]]))
+        assert accepted
+        results.append([t.to_numpy(copy=True) for t in _sample_tensors(runner.pull(30000))])
+      finally:
+        runner.close()
+  for result in results[1:]:
+    assert len(result) == len(results[0]) > 0
+    for actual, expected in zip(result, results[0]):
+      np.testing.assert_array_equal(actual, expected)
 
 
 def test_cpu_quanttess_input_matches_letterboxed_fp32_tensor_contract():

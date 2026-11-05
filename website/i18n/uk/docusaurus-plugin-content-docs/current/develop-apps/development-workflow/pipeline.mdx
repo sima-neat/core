@@ -298,7 +298,7 @@ preview = run.pull("preview", timeout_ms=2000)
 незалежні виходи використовують `StorageKind::GstSample`; цей тип сховища
 визначає носій, а не політику володіння. `Sample::owned` позначає незалежний
 вихід. Помилка виділення повідомляється як помилка отримання. Для передачі в окремий граф EV74 задайте виробнику
-`OutputOptions::placement` значення `OutputPlacement::EV74Compatible`. Для `model.build()`
+`OutputOptions::placement` значення `OutputPlacement::EV74`. Для `model.build()`
 задайте `route.output.placement` через `ModelRouteOptions` у Python або `Model::RouteOptions`
 у C++; ті самі параметри `output` керують буферизацією, відкиданням і синхронізацією з годинником.
 Core виділяє вибраний вихід безпосередньо в CMA без зміни виконавців або копіювання під час отримання.

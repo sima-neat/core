@@ -20,8 +20,8 @@ namespace simaai::neat {
 
 /// Allocation placement for public tensor outputs, independent of execution target.
 enum class OutputPlacement {
-  Auto = 0,       ///< Core chooses storage from the graph's consumers.
-  EV74Compatible, ///< Allocate outputs accessible to a separate EV74 graph.
+  Auto = 0, ///< Core chooses storage from the graph's consumers.
+  EV74,     ///< Allocate outputs accessible to a separate EV74 graph.
 };
 
 /**

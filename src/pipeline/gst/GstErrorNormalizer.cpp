@@ -710,7 +710,7 @@ NormalizedDiagnostic kernel_runner_failure(RawGstError raw) {
     if (find_structured_detail(raw, {"runtime-field"}) == "storage.hardware") {
       title = "Buffer memory is not accessible to the selected device.";
       action = "Use tensor.cvu() to explicitly copy this input into CMA, or set "
-               "OutputOptions::placement = OutputPlacement::EV74Compatible when building the "
+               "OutputOptions::placement = OutputPlacement::EV74 when building the "
                "producing graph to allocate compatible output directly.";
     }
   } else if (category == "resource_busy") {

@@ -152,13 +152,12 @@ RUN_TEST(
       output_route.include_output = true;
       output_route.output = OutputOptions::Latest();
       output_route.output.sync = true;
-      output_route.output.placement = OutputPlacement::EV74Compatible;
+      output_route.output.placement = OutputPlacement::EV74;
       const auto output_nodes =
           internal::ModelAccess::build_public_route_nodes(model, output_route);
       const auto* output = dynamic_cast<const Output*>(output_nodes.back().get());
       require(output && output->options().max_buffers == 1 && output->options().drop &&
-                  output->options().sync &&
-                  output->options().placement == OutputPlacement::EV74Compatible,
+                  output->options().sync && output->options().placement == OutputPlacement::EV74,
               "model routes must forward all OutputOptions to their generated Output");
       output_route.include_output = false;
       const auto open_nodes = internal::ModelAccess::build_public_route_nodes(model, output_route);
@@ -171,7 +170,7 @@ RUN_TEST(
         Graph graph;
         graph.add(model);
         OutputOptions placement;
-        placement.placement = OutputPlacement::EV74Compatible;
+        placement.placement = OutputPlacement::EV74;
         graph.add(nodes::Output(name, placement));
         const auto plan = runtime::compile_public_graph(graph, {});
         require(plan.pipeline_segments.size() == 1, "model route should remain a linear fragment");

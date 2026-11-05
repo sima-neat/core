@@ -3483,7 +3483,7 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
                                                         build_branch_nodes, branch_actual_indices,
                                                         name_transform, "mysink", sess_opt,
                                                         /*enable_terminal_loans=*/has_sink);
-  if (stream_opt.output_placement == OutputPlacement::EV74Compatible)
+  if (stream_opt.output_placement == OutputPlacement::EV74)
     session_build_configure_output_storage(br, build_consumer_nodes, stream_opt,
                                            compatible_output_names);
   maybe_compile_fused_realtime_contracts(&br, build_consumer_nodes, build_branch_nodes,
