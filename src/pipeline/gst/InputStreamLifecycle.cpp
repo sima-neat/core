@@ -100,8 +100,23 @@ InputStream InputStream::create(GstElement* pipeline, GstElement* appsrc, GstEle
   state->alloc_bytes = spec.required_bytes_actual;
 
   InputStream stream(state);
-  if (state->appsrc && state->appsink)
-    state->work.observe(state->appsrc, state->appsink);
+  if (opt.output_idle_timeout_ms > 0 && appsrc && appsink) {
+    GstPad* pad = gst_element_get_static_pad(appsink, "sink");
+    if (!pad)
+      throw std::runtime_error("InputStream::create: appsink has no sink pad");
+    // Observe arrival before appsink/callback queue dropping, even if push has
+    // not returned yet. A weak reference avoids a pipeline/State ownership cycle.
+    gst_pad_add_probe(
+        pad, GST_PAD_PROBE_TYPE_BUFFER,
+        +[](GstPad*, GstPadProbeInfo*, gpointer data) -> GstPadProbeReturn {
+          if (auto st = static_cast<std::weak_ptr<State>*>(data)->lock())
+            st->observe_terminal_output();
+          return GST_PAD_PROBE_OK;
+        },
+        new std::weak_ptr<State>(state),
+        +[](gpointer data) { delete static_cast<std::weak_ptr<State>*>(data); });
+    gst_object_unref(pad);
+  }
   return stream;
 }
 
@@ -289,9 +304,11 @@ void InputStream::start(std::function<void(Sample)> on_output) {
   st->worker = std::thread([st]() {
     const int worker_poll_ms = (st->opt.worker_poll_ms > 0) ? st->opt.worker_poll_ms
                                                             : inputstream_worker_poll_ms_default();
-    const int timeout_ms = st->opt.timeout_ms;
+    const bool legacy_timeout = st->opt.output_idle_timeout_ms < 0;
+    const int timeout_ms = legacy_timeout ? st->opt.timeout_ms : st->opt.output_idle_timeout_ms;
     const bool timings = st->timing_enabled;
     auto cb = st->callback;
+    std::int64_t last_output_ns = 0;
     try {
       if (st->use_callbacks && st->appsink) {
         st->cb_handlers = GstAppSinkCallbacks{
@@ -368,23 +385,38 @@ void InputStream::start(std::function<void(Sample)> on_output) {
             st->stop_requested.store(true);
             break;
           }
-          if (st->work.timed_out(timeout_ms)) {
-            if (inputstream_dot_on_timeout_enabled()) {
-              pipeline_internal::maybe_dump_dot(st->pipeline, "inputstream_timeout");
+          if (timeout_ms > 0) {
+            const std::int64_t last_push_ns = legacy_timeout
+                                                  ? st->last_push_ns.load(std::memory_order_relaxed)
+                                                  : st->first_accepted_ns.load();
+            if (last_push_ns > 0) {
+              const auto now_tp = std::chrono::steady_clock::now();
+              const std::int64_t now_ns = static_cast<std::int64_t>(
+                  std::chrono::duration_cast<std::chrono::nanoseconds>(now_tp.time_since_epoch())
+                      .count());
+              const std::int64_t output_ns =
+                  legacy_timeout ? last_output_ns : st->terminal_output_ns.load();
+              const std::int64_t last_activity_ns = std::max(output_ns, last_push_ns);
+              const std::int64_t timeout_ns = static_cast<std::int64_t>(timeout_ms) * 1000000;
+              if (now_ns - last_activity_ns > timeout_ns) {
+                if (inputstream_dot_on_timeout_enabled()) {
+                  pipeline_internal::maybe_dump_dot(st->pipeline, "inputstream_timeout");
+                }
+                const std::string timeout_message =
+                    "No output arrived within the configured output-silence interval.\n\n"
+                    "How to fix:\n"
+                    "- Verify that the source is still producing frames.\n"
+                    "- Increase the timeout or set output_idle_timeout_ms=0 for expected "
+                    "pauses.\n\n"
+                    "Diagnostic ID: runtime.output_timeout";
+                GraphReport report = st->diag ? st->diag->snapshot_basic() : GraphReport{};
+                report.error_code = error_codes::kOutputTimeout;
+                report.repro_note = timeout_message;
+                set_stream_error(*st, report.error_code, timeout_message, std::move(report));
+                st->stop_requested.store(true);
+                break;
+              }
             }
-            const std::string timeout_message =
-                "Submitted input did not produce output before the input-stream timeout "
-                "expired.\n\n"
-                "How to fix:\n"
-                "- Inspect the graph diagnostics for stalled processing.\n"
-                "- Increase the timeout if processing legitimately takes longer.\n\n"
-                "Diagnostic ID: runtime.output_timeout";
-            GraphReport report = st->diag ? st->diag->snapshot_basic() : GraphReport{};
-            report.error_code = error_codes::kOutputTimeout;
-            report.repro_note = timeout_message;
-            set_stream_error(*st, report.error_code, timeout_message, std::move(report));
-            st->stop_requested.store(true);
-            break;
           }
           continue;
         }
@@ -394,6 +426,10 @@ void InputStream::start(std::function<void(Sample)> on_output) {
                   std::chrono::duration_cast<std::chrono::nanoseconds>(t_wait_end - t_wait_start)
                       .count()),
               std::memory_order_relaxed);
+        }
+        const std::int64_t inflight = st->inflight.load(std::memory_order_relaxed);
+        if (inflight > 0) {
+          st->inflight.fetch_sub(1, std::memory_order_relaxed);
         }
         std::chrono::steady_clock::time_point t_decode_start{};
         if (timings)
@@ -469,6 +505,14 @@ void InputStream::start(std::function<void(Sample)> on_output) {
                                              .count()),
               std::memory_order_relaxed);
           st->pull_count.fetch_add(1, std::memory_order_relaxed);
+          last_output_ns = static_cast<std::int64_t>(
+              std::chrono::duration_cast<std::chrono::nanoseconds>(t_decode_end.time_since_epoch())
+                  .count());
+        } else {
+          const auto now_tp = std::chrono::steady_clock::now();
+          last_output_ns = static_cast<std::int64_t>(
+              std::chrono::duration_cast<std::chrono::nanoseconds>(now_tp.time_since_epoch())
+                  .count());
         }
         if (cb)
           cb(std::move(out));

@@ -4,7 +4,6 @@
 #endif
 
 #include "pipeline/internal/InputStream.h"
-#include "pipeline/internal/InputStreamWatchdog.h"
 #include "pipeline/internal/InputPublicationMeasurement.h"
 #include "pipeline/internal/InputStreamUtil.h"
 
@@ -168,7 +167,32 @@ struct InputStream::State {
   std::atomic<std::uint64_t> push_ns{0};
   std::atomic<std::uint64_t> pull_wait_ns{0};
   std::atomic<std::uint64_t> decode_ns{0};
-  pipeline_internal::InputStreamWatchdog work;
+  std::atomic<std::int64_t> last_push_ns{0};
+  std::atomic<std::int64_t> inflight{0};
+  // Separate from the consumption-based holder limit and the legacy activity clock.
+  std::atomic<std::int64_t> first_accepted_ns{0};
+  std::atomic<std::int64_t> terminal_output_ns{0};
+
+  static std::int64_t monotonic_ns() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+  }
+  std::int64_t output_submission_time() const {
+    // Build-time preflight is synchronous and must not arm the returned Run.
+    return opt.output_idle_timeout_ms > 0 && running.load() ? monotonic_ns() : 0;
+  }
+  void accept_output_submission(std::int64_t started_ns) {
+    std::int64_t empty = 0;
+    if (started_ns > 0)
+      first_accepted_ns.compare_exchange_strong(empty, started_ns);
+  }
+  void observe_terminal_output() {
+    const auto now = monotonic_ns();
+    auto previous = terminal_output_ns.load();
+    while (previous < now && !terminal_output_ns.compare_exchange_weak(previous, now)) {
+    }
+  }
   std::atomic<std::int64_t> next_input_seq{0};
   pipeline_internal::InputPublicationMeasurement input_publication_measurement;
   std::mutex preprocess_meta_mu;

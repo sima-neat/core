@@ -1,326 +1,168 @@
-#include "gst/GstInit.h"
-#include "internal/InputStream.h"
+#include "pipeline/Graph.h"
+#include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
-#include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/gst/InputStreamInternal.h"
 #include "test_main.h"
 
-#include <gst/gst.h>
 #include <opencv2/core.hpp>
 
-#include <atomic>
 #include <chrono>
-#include <condition_variable>
-#include <memory>
-#include <mutex>
-#include <functional>
-#include <string>
 #include <thread>
+#include <vector>
 
 namespace {
 using namespace simaai::neat;
 using namespace std::chrono_literals;
+const cv::Mat image(24, 32, CV_8UC3, cv::Scalar(10, 20, 30));
 
-bool wait_until(const std::function<bool()>& predicate, int timeout_ms = 2000) {
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-  while (!predicate() && std::chrono::steady_clock::now() < deadline) {
-    std::this_thread::sleep_for(1ms);
-  }
-  return predicate();
+Run build(int output_timeout, bool discard = false, bool preflight = false, bool latest = false) {
+  InputOptions input;
+  input.format = FormatTag::RGB;
+  input.width = input.max_width = image.cols;
+  input.height = input.max_height = image.rows;
+  input.depth = input.max_depth = 3;
+  input.memory_policy = InputMemoryPolicy::SystemMemory;
+  Graph graph;
+  graph.add(nodes::Input(input));
+  if (discard)
+    graph.custom("valve drop=true");
+  graph.add(nodes::Output(latest ? OutputOptions::Latest() : OutputOptions::EveryFrame(8)));
+  RunOptions options;
+  options.input_timeout_ms = 200;
+  options.output_idle_timeout_ms = output_timeout;
+  options.output_memory = OutputMemory::Owned;
+  options.startup_preflight = preflight;
+  return graph.build(std::vector<cv::Mat>{image}, options);
 }
 
-struct BlockingGate {
-  std::mutex mutex;
-  std::condition_variable changed;
-  bool blocked = false;
-  bool entered = false;
-  GstPad* pad = nullptr;
-  gulong probe = 0;
+void exchange(Run& run) {
+  require(run.push(std::vector<cv::Mat>{image}), "Input rejected");
+  Sample sample;
+  PullError error;
+  require(run.pull(1000, sample, &error) == PullStatus::Ok, "Expected output: " + run.last_error());
+  const auto tensors = tensors_from_sample(sample);
+  require(tensors.size() == 1, "Expected one output tensor");
+  auto pixels = tensors.front().map(MapMode::Read);
+  require(pixels.data && pixels.size_bytes >= 3 &&
+              static_cast<const unsigned char*>(pixels.data)[0] == 10,
+          "Output changed");
+}
 
-  void install(GstElement* element) {
-    pad = gst_element_get_static_pad(element, "sink");
-    probe = gst_pad_add_probe(
-        pad, GST_PAD_PROBE_TYPE_BUFFER,
-        +[](GstPad*, GstPadProbeInfo*, gpointer data) -> GstPadProbeReturn {
-          auto& gate = *static_cast<BlockingGate*>(data);
-          std::unique_lock<std::mutex> lock(gate.mutex);
-          gate.entered = true;
-          gate.changed.notify_all();
-          gate.changed.wait(lock, [&] { return !gate.blocked; });
-          return GST_PAD_PROBE_OK;
-        },
-        this, nullptr);
-  }
+void close(Run& run) {
+  const auto start = std::chrono::steady_clock::now();
+  run.close();
+  require(std::chrono::steady_clock::now() - start < 2s, "Close was not bounded");
+}
 
-  void block() {
-    std::lock_guard<std::mutex> lock(mutex);
-    entered = false;
-    blocked = true;
-  }
-
-  void release() {
-    std::lock_guard<std::mutex> lock(mutex);
-    blocked = false;
-    changed.notify_all();
-  }
-
-  void wait_for_entry() {
-    std::unique_lock<std::mutex> lock(mutex);
-    require(changed.wait_for(lock, 1s, [&] { return entered; }), "Gate was not reached");
-  }
-
-  ~BlockingGate() {
-    release();
-    if (pad) {
-      gst_pad_remove_probe(pad, probe);
-      gst_object_unref(pad);
-    }
-  }
-};
-
-struct Fixture {
-  std::atomic<int> outputs{0};
-  std::atomic<int> arrivals{0};
-  GstPad* arrival_pad = nullptr;
-  gulong arrival_probe = 0;
-  BlockingGate blocker;
-  InputStream stream;
-  GstElement* gate = nullptr;
-  cv::Mat image{48, 64, CV_8UC3, cv::Scalar(10, 20, 30)};
-
-  explicit Fixture(bool drop = false, const std::string& middle = "",
-                   const char* block_name = "gate") {
-    GError* error = nullptr;
-    const std::string description =
-        "appsrc name=mysrc is-live=true format=time block=true max-bytes=0 "
-        "caps=video/x-raw,format=RGB,width=64,height=48,framerate=0/1 ! " +
-        middle +
-        "identity name=gate ! appsink name=mysink sync=false async=false "
-        "max-buffers=4 drop=false";
-    GstElement* pipeline = gst_parse_launch(description.c_str(), &error);
-    if (error) {
-      const std::string message = error->message;
-      g_error_free(error);
-      throw std::runtime_error(message);
-    }
-    require(pipeline != nullptr, "Failed to build idle test pipeline");
-    auto* source = gst_bin_get_by_name(GST_BIN(pipeline), "mysrc");
-    auto* sink = gst_bin_get_by_name(GST_BIN(pipeline), "mysink");
-    gate = gst_bin_get_by_name(GST_BIN(pipeline), block_name);
-    if (drop) {
-      g_object_set(sink, "drop", TRUE, "max-buffers", 1U, nullptr);
-      arrival_pad = gst_element_get_static_pad(sink, "sink");
-      arrival_probe = gst_pad_add_probe(
-          arrival_pad, GST_PAD_PROBE_TYPE_BUFFER,
-          +[](GstPad*, GstPadProbeInfo*, gpointer data) -> GstPadProbeReturn {
-            static_cast<std::atomic<int>*>(data)->fetch_add(1);
-            return GST_PAD_PROBE_OK;
-          },
-          &arrivals, nullptr);
-    }
-    InputOptions input;
-    input.format = FormatTag::RGB;
-    input.width = 64;
-    input.height = 48;
-    input.depth = 3;
-    input.memory_policy = InputMemoryPolicy::SystemMemory;
-    input.pool_max_buffers = 64;
-    const auto tensor = tensor_from_cv_mat(image, input, "idle test");
-    const auto spec = derive_tensor_spec_or_throw(tensor, input, "idle test");
-    InputStreamOptions options;
-    options.timeout_ms = 200;
-    options.worker_poll_ms = 2;
-    options.appsink_max_buffers = drop ? 1 : 4;
-    options.appsink_drop = drop;
-    require(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
-            "Failed to start idle test pipeline");
-    stream = InputStream::create(pipeline, source, sink, spec, input, options, {}, nullptr);
-    blocker.install(gate);
-  }
-
-  ~Fixture() {
-    blocker.release();
-    if (arrival_pad) {
-      gst_pad_remove_probe(arrival_pad, arrival_probe);
-      gst_object_unref(arrival_pad);
-    }
-    stream.close();
-    if (gate) {
-      gst_object_unref(gate);
-    }
-  }
-
-  void start() {
-    stream.start([this](Sample) { outputs.fetch_add(1); });
-  }
-
-  void send_and_wait() {
-    const int expected = outputs.load() + 1;
-    require(stream.try_push(image), "Input rejected after idle");
-    require(wait_until([&] { return outputs.load() == expected; }),
-            "Expected exactly one output after input");
-    require(stream.last_error().empty(), stream.last_error());
-  }
-
-  void idle() {
-    std::this_thread::sleep_for(450ms); // More than twice the worker timeout.
-    require(stream.last_error().empty(), "Idle graph failed: " + stream.last_error());
-    require(stream.running(), "Idle worker stopped");
-  }
-};
+void require_timeout(Run& run) {
+  const auto deadline = std::chrono::steady_clock::now() + 1s;
+  while (run.last_error().empty() && std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(10ms);
+  require(run.last_error().find("runtime.output_timeout") != std::string::npos,
+          "Expected output-silence failure: " + run.last_error());
+}
 } // namespace
 
 RUN_TEST("unit_inputstream_idle_timeout_test", ([] {
-           gst_init_once();
-           {
-             std::cerr << "case: idle and fast outputs\n";
-             Fixture test;
-             test.start();
-             test.idle(); // No input has ever been submitted.
-             for (int i = 0; i < 3; ++i) {
-               test.send_and_wait();
-               test.idle(); // Completed work must disarm the watchdog.
-             }
-             // Exercise fast completion racing the return from appsrc's push call.
-             for (int i = 0; i < 500; ++i) {
-               test.send_and_wait();
-             }
-             test.idle();
-             test.send_and_wait();
-           }
-           {
-             std::cerr << "case: synchronous pull retirement\n";
-             Fixture test;
-             test.stream.push(test.image);
-             (void)test.stream.pull(1000); // The seeded/preflight sync path also retires work.
-             test.stream.push(test.image);
-             test.stream.pull_and_discard(1000);
-             const auto empty_pull_started = std::chrono::steady_clock::now();
-             bool empty_pull_failed = false;
-             try {
-               (void)test.stream.pull(20);
-             } catch (const std::runtime_error&) {
-               empty_pull_failed = true;
-             }
-             require(empty_pull_failed, "Explicit empty pull must still time out");
-             require(std::chrono::steady_clock::now() - empty_pull_started < 1s,
-                     "Explicit pull wait became unbounded");
-             test.start();
-             test.idle();
-             test.send_and_wait();
-             test.idle();
-           }
-           {
-             std::cerr << "case: dropping appsink\n";
-             Fixture test(true);
-             // The polling appsink may replace completed output before a pull.
-             // Such results must not leave phantom outstanding work behind.
-             for (int i = 0; i < 2; ++i)
-               test.stream.push(test.image);
-             require(wait_until([&] { return test.arrivals.load() == 2; }),
-                     "Burst did not reach the dropping appsink");
-             test.stream.pull_and_discard(1000);
-             test.start();
-             test.idle();
-             test.send_and_wait();
-             test.idle();
-           }
-           for (const char* policy : {"no", "downstream", "upstream"}) {
-             std::cerr << "case: queue policy=" << policy << '\n';
-             Fixture test(false, std::string("queue max-size-buffers=1 max-size-bytes=0 ") +
-                                     "max-size-time=0 leaky=" + policy + " ! ");
-             test.start();
-             test.blocker.block();
-             test.stream.push(test.image);
-             test.blocker.wait_for_entry();
-             for (int i = 1; i < 20; ++i)
-               test.stream.push(test.image);
-             std::this_thread::sleep_for(30ms);
-             test.blocker.release();
-             require(wait_until([&] { return test.outputs.load() >= 2; }),
-                     "Queue survivors failed to arrive");
-             test.idle();
-             const int survivors = test.outputs.load();
-             require(policy == std::string("no") ? survivors == 20 : survivors < 20,
-                     "Queue fixture did not exercise the requested overflow policy");
-             test.send_and_wait();
-             test.idle();
-           }
-           {
-             std::cerr << "case: queue admission after idle before worker startup\n";
-             Fixture test(false, "queue leaky=downstream max-size-buffers=4 "
-                                 "min-threshold-buffers=2 ! ");
+           require(RunOptions{}.output_idle_timeout_ms == -1, "Default must remain legacy");
+           // Exercise the fast-output race deterministically without depending on scheduling.
+           InputStream::State state;
+           state.opt.output_idle_timeout_ms = 200;
+           state.running = true;
+           const auto submitted = state.output_submission_time();
+           state.observe_terminal_output();
+           state.accept_output_submission(submitted);
+           const auto first = state.first_accepted_ns.load();
+           require(first == submitted && state.terminal_output_ns >= first,
+                   "Output before push return was lost");
+           state.accept_output_submission(InputStream::State::monotonic_ns());
+           require(state.first_accepted_ns == first, "Further input extended the deadline");
+
+           for (int timeout : {0, 200, -1}) {
+             std::cerr << "case: output_idle_timeout_ms=" << timeout << '\n';
+             auto run = build(timeout);
              std::this_thread::sleep_for(450ms);
-             test.stream.push(test.image);
-             std::this_thread::sleep_for(30ms);
-             test.start();
-             std::this_thread::sleep_for(50ms);
-             require(test.stream.last_error().empty(), "New queue work inherited an idle deadline");
-             test.stream.push(test.image);
-             require(wait_until([&] { return test.outputs.load() >= 1; }),
-                     "Queue did not release work after its threshold was met");
-           }
-           {
-             std::cerr << "case: valve discards are not stalled work\n";
-             Fixture test(false, "valve name=discard ! ");
-             std::shared_ptr<GstElement> valve(
-                 gst_bin_get_by_name(GST_BIN(test.stream.pipeline_handle()), "discard"),
-                 gst_object_unref);
-             test.start();
-             test.send_and_wait();
-             g_object_set(valve.get(), "drop", TRUE, nullptr);
-             for (int i = 0; i < 20; ++i)
-               test.stream.push(test.image);
-             test.idle();
-             require(test.outputs.load() == 1, "Valve failed to discard the burst");
-             g_object_set(valve.get(), "drop", FALSE, nullptr);
-             test.send_and_wait();
-             test.idle();
-           }
-           for (const std::string middle : {"", "queue leaky=downstream max-size-buffers=1 ! ",
-                                            "queue leaky=upstream max-size-buffers=1 ! "}) {
-             std::cerr << "case: stalled output after " << middle << '\n';
-             Fixture test(false, middle);
-             test.start();
-             test.send_and_wait();
-             test.blocker.block();
-             test.stream.push(test.image);
-             test.blocker.wait_for_entry(); // Accepted work really is blocked, not discarded.
-             const auto started = std::chrono::steady_clock::now();
-             // Keep feeding beyond the deadline. The old last-push rule could
-             // hide this stall forever as long as more input kept arriving.
-             while (test.stream.last_error().empty() &&
-                    std::chrono::steady_clock::now() - started < 700ms) {
-               std::this_thread::sleep_for(20ms);
-               if (!test.stream.last_error().empty())
-                 break;
-               try {
-                 (void)test.stream.try_push(test.image);
-               } catch (const std::runtime_error&) {
-                 require(!test.stream.last_error().empty(),
-                         "Push failed without a recorded stream error");
-               }
+             require(run.last_error().empty(), "Unsubmitted run was armed");
+             Sample sample;
+             PullError error;
+             const auto start = std::chrono::steady_clock::now();
+             require(run.pull(40, sample, &error) == PullStatus::Timeout,
+                     "Explicit empty pull must time out");
+             const auto waited = std::chrono::steady_clock::now() - start;
+             require(waited >= 30ms && waited < 500ms && run.last_error().empty(),
+                     "Pull timeout changed or permanently failed the Run");
+             exchange(run);
+             std::this_thread::sleep_for(450ms);
+             if (timeout == 0) {
+               exchange(run); // Explicitly unlimited producer idle.
+             } else {
+               require_timeout(run); // Legacy still fails after producer inactivity.
              }
-             require(!test.stream.last_error().empty(),
-                     "Continued input indefinitely postponed the stalled-output timeout");
-             require(test.stream.last_error().find("runtime.output_timeout") != std::string::npos,
-                     "Expected structured output timeout");
-             require(std::chrono::steady_clock::now() - started < 1s,
-                     "Stall detection exceeded its bounded deadline");
+             close(run);
            }
            {
-             std::cerr << "case: stall before dropping queue\n";
-             Fixture test(false,
-                          "identity name=early ! queue leaky=downstream "
-                          "max-size-buffers=1 ! ",
-                          "early");
-             test.start();
-             test.send_and_wait();
-             test.blocker.block();
-             test.stream.push(test.image);
-             test.blocker.wait_for_entry();
-             require(wait_until([&] { return !test.stream.last_error().empty(); }, 1000),
-                     "Empty dropping queue masked an upstream stall");
-             require(test.stream.last_error().find("runtime.output_timeout") != std::string::npos,
-                     "Expected upstream output timeout");
+             std::cerr << "case: preflight, rejection and output progress\n";
+             auto run = build(200, false, true);
+             std::this_thread::sleep_for(450ms);
+             require(run.last_error().empty(), "Preflight armed the output timer");
+             bool rejected = false;
+             try {
+               rejected = !run.push(std::vector<cv::Mat>{cv::Mat{}});
+             } catch (const std::exception&) {
+               rejected = true;
+             }
+             require(rejected, "Fixture input was not rejected");
+             std::this_thread::sleep_for(450ms);
+             require(run.last_error().empty(), "Rejected input armed the timer");
+             for (int i = 0; i < 5; ++i) {
+               exchange(run);
+               std::this_thread::sleep_for(100ms);
+             }
+             require(run.last_error().empty(), "Output progress failed to refresh the timer");
+             require_timeout(run);
+             close(run);
+           }
+           {
+             std::cerr << "case: explicit duration independent of input timeout\n";
+             auto run = build(600);
+             const auto start = std::chrono::steady_clock::now();
+             exchange(run);
+             std::this_thread::sleep_for(300ms);
+             require(run.last_error().empty(), "Input timeout overrode the output deadline");
+             require_timeout(run);
+             require(std::chrono::steady_clock::now() - start >= 600ms,
+                     "Output deadline fired too early");
+             close(run);
+           }
+           {
+             std::cerr << "case: unconsumed latest outputs still count as progress\n";
+             auto run = build(200, false, false, true);
+             for (int i = 0; i < 6; ++i) {
+               require(run.push(std::vector<cv::Mat>{image}), "Latest input rejected");
+               std::this_thread::sleep_for(100ms);
+             }
+             require(run.last_error().empty(), "Output dropping hid terminal progress");
+             require_timeout(run);
+             close(run);
+           }
+           for (int timeout : {0, 200, -1}) {
+             std::cerr << "case: intentional discard, timeout=" << timeout << '\n';
+             auto run = build(timeout, true);
+             const auto until = std::chrono::steady_clock::now() + 650ms;
+             while (run.last_error().empty() && std::chrono::steady_clock::now() < until) {
+               try {
+                 require(run.push(std::vector<cv::Mat>{image}), "Discard input rejected");
+               } catch (const std::exception&) {
+                 if (timeout <= 0)
+                   throw;
+                 break; // The background failure can race this submission.
+               }
+               std::this_thread::sleep_for(30ms);
+             }
+             if (timeout > 0)
+               require_timeout(run); // Silence includes intentional discard, despite new input.
+             else
+               require(run.last_error().empty(), "Disabled or legacy behavior changed");
+             close(run);
            }
          }));

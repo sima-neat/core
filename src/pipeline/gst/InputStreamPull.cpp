@@ -2061,6 +2061,10 @@ Sample InputStream::pull(int timeout_ms) {
     throw std::runtime_error("InputStream::pull: timeout waiting for output");
   }
   GstSample* sample = sample_opt.value();
+  const std::int64_t inflight = state_->inflight.load(std::memory_order_relaxed);
+  if (inflight > 0) {
+    state_->inflight.fetch_sub(1, std::memory_order_relaxed);
+  }
   const bool decode_profile_enabled = inputstream_decode_profile_enabled();
   std::chrono::steady_clock::time_point t_decode_start{};
   if (timings || decode_profile_enabled)
@@ -2211,6 +2215,10 @@ void InputStream::pull_and_discard(int timeout_ms) {
   }
 
   GstSample* sample = sample_opt.value();
+  const std::int64_t inflight = state_->inflight.load(std::memory_order_relaxed);
+  if (inflight > 0) {
+    state_->inflight.fetch_sub(1, std::memory_order_relaxed);
+  }
   const bool pool_dbg = pipeline_internal::env_bool("SIMA_INPUTSTREAM_POOL_DEBUG", false);
   const bool weak_dbg = pipeline_internal::env_bool("SIMA_INPUTSTREAM_WEAKREF_DEBUG", false);
   GstBuffer* buf = gst_sample_get_buffer(sample);
