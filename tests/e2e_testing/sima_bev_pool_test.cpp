@@ -47,14 +47,26 @@ neat::TensorList inputs(const ref::BEVPoolCase& c, const neat::Tensor* retained_
 void check(const neat::TensorList& output, const ref::BEVPoolCase& c, const std::string& what) {
   bt::require(output.size() == 1, what + ": one bev");
   const auto& o = c.options;
-  // The public bev is logical [1,nZ*C,nX,nY], whatever its byte order.
-  const std::vector<std::int64_t> shape{1, o.cells[2] * c.channels, o.cells[0], o.cells[1]};
+  // A channels-last bev publishes NHWC [1,nX,nY,nZ*C] and a contiguous one
+  // [1,nZ*C,nX,nY]; the references are in the latter order.
+  const std::int64_t k = o.cells[2] * std::int64_t(c.channels), nx = o.cells[0], ny = o.cells[1];
+  const bool nhwc = o.output_storage == Storage::ChannelsLast;
+  const auto shape =
+      nhwc ? std::vector<std::int64_t>{1, nx, ny, k} : std::vector<std::int64_t>{1, k, nx, ny};
+  const auto in_published_order = [&](const auto& logical) {
+    return nhwc ? ref::to_channels_last(logical, 1, k, nx, ny) : logical;
+  };
+  // The runtime tensor describes the bytes as the node contract does: a dense
+  // HWC tensor, so NumPy, DLPack and dense copies read them in published order.
+  if (nhwc)
+    bt::require(output[0].layout == neat::TensorLayout::HWC && output[0].is_dense(),
+                what + ": a channels-last bev is a dense HWC tensor");
   if (o.output_dtype == neat::TensorDType::BFloat16)
     bt::expect_bytes(bt::values<std::uint16_t>(output[0], neat::TensorDType::BFloat16, shape, what),
-                     ref::bev_pool_bf16(c), what + " BF16 bev");
+                     in_published_order(ref::bev_pool_bf16(c)), what + " BF16 bev");
   else
     bt::expect_bytes(bt::values<std::int8_t>(output[0], neat::TensorDType::Int8, shape, what),
-                     wide(c) ? ref::bev_pool_bf16_to_int8(c) : ref::bev_pool(c),
+                     in_published_order(wide(c) ? ref::bev_pool_bf16_to_int8(c) : ref::bev_pool(c)),
                      what + " INT8 bev");
 }
 
@@ -123,7 +135,7 @@ void retained_outputs(bool with_consumer) {
     pipeline.add(neat::nodes::SimaBEVPool(c.options));
     if (with_consumer) {
       neat::SimaArgMaxOptions argmax;
-      argmax.axis = 1;
+      argmax.axis = 3; // the channels of the published NHWC bev
       pipeline.add(neat::nodes::SimaArgMax(argmax));
     }
     pipeline.add(neat::nodes::Output());
@@ -134,8 +146,8 @@ void retained_outputs(bool with_consumer) {
         check(output, expected, what);
         return;
       }
-      // The producer stores NHWC but publishes logical NCHW with strides.
-      // ArgMax must consume that authority rather than reinterpret the bytes.
+      // The producer publishes its NHWC bytes as NHWC; ArgMax reduces their
+      // channel axis, giving each cell's index as over the NCHW reference.
       const auto channels = std::size_t(c.options.cells[2]) * c.channels;
       const auto cells = std::size_t(c.options.cells[0]) * c.options.cells[1];
       std::vector<std::int32_t> indices;

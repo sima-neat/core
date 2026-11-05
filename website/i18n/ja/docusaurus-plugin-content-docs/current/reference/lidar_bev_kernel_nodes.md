@@ -74,7 +74,7 @@ Python では同じオプション型と、`pyneat.nodes.sima_voxelize`、
 | `SimaVoxelize` | FP32 `points` `[N,4]`（x、y、z、時刻オフセット）、INT32 `point_count` `[1]` | INT8 または BF16 の `decorated` `[1,M,T,10]`、(row, column) 形式の INT32 `coordinates` `[M,2]`、INT32 `count` `[1]` |
 | `SimaPillarScatter` | INT8 または BF16 の `features` `[M,C]`、INT32 `coordinates` `[M,2]`、INT32 `count` `[1]` | `features` と同じ型の `canvas` `[1,H,W,C]` |
 | `SimaBEVPoolPlan` | FP32 `camera2lidar`、`camera_intrinsics`、`img_aug_matrix` `[N,4,4]`、FP32 `lidar_aug_matrix` `[4,4]` | UINT8 `plan` `[P]` |
-| `SimaBEVPool` | INT8 または BF16 の `depth`、同じ型の `context`、UINT8 `plan` `[P]` | INT8 または BF16 の `bev` `[1,nZ*C,nX,nY]` |
+| `SimaBEVPool` | INT8 または BF16 の `depth`、同じ型の `context`、UINT8 `plan` `[P]` | INT8 または BF16 の `bev` `[1,nX,nY,nZ*C]`（`ChannelsLast`）または `[1,nZ*C,nX,nY]`（`Contiguous`） |
 
 - **SimaVoxelize** は先頭の `point_count` 個の点だけを読み取ります。`max_pillars`（`M`）と
   `max_points_per_pillar`（`T`）は固定の容量で、それを超える点とピラーは破棄されます。
@@ -94,10 +94,11 @@ Python では同じオプション型と、`pyneat.nodes.sima_voxelize`、
   プランの `format` を、INT8 入力の場合は `quantization.multiplier` に
   `depth_scale * context_scale / output_scale` を設定します。既定の
   `SimaBEVPoolStorage::ChannelsLast` では、入力はカメラモデルが出力するとおり
-  `[N,fH,fW,D]` と `[N,fH,fW,C]` で渡されます。出力はチャネルラストのストライドを持つ
-  論理形状 `[1,nZ*C,nX,nY]` として公開されるため、そのバイトは NHWC
-  `[1,nX,nY,nZ*C]` です。`SimaBEVPoolStorage::Contiguous` は `[N,D,fH,fW]` と
-  `[N,C,fH,fW]` の入力と、密な出力を使用します。
+  `[N,fH,fW,D]` と `[N,fH,fW,C]` で渡されます。出力は密な NHWC `[1,nX,nY,nZ*C]`
+  テンソルで、BEV モデルはこれをそのまま入力として受け取ります。チャネルの縮約は
+  軸 3 で行います（例: `SimaArgMax`）。`SimaBEVPoolStorage::Contiguous` は
+  `[N,D,fH,fW]` と `[N,C,fH,fW]` の入力と、密な NCHW `[1,nZ*C,nX,nY]` の出力を
+  使用します。
 
 ### 論理軸と物理ストレージ
 
@@ -113,9 +114,10 @@ CHW 入力が必要で、HWC タグは拒否されます。
 タグのない `ChannelsLast` 入力では、互換性のため、密な入力を NHWC、非密な入力を
 チャネルラストのストライドを持つ論理 NCHW として扱います。大きさ 1 の軸によって
 論理 NCHW ビューも密になる場合は、`Tensor.layout = TensorLayout::CHW` を明示して
-ください。この場合、ストライドだけでは論理軸を判別できません。Pool の出力は
-CHW の論理軸と `output_storage` に対応するストライドを持ちます。レイアウトを
-変えるためにノードがペイロードを転置またはコピーすることはありません。
+ください。この場合、ストライドだけでは論理軸を判別できません。Pool の出力は密で、
+`ChannelsLast` では HWC `[1,nX,nY,nZ*C]`、`Contiguous` では CHW `[1,nZ*C,nX,nY]`
+です。ノードは自身が書き込んだバイトをそのまま記述し、レイアウトを変えるために
+それらを転置またはコピーすることはありません。
 
 ### 量子化メタデータ
 

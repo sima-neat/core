@@ -270,9 +270,11 @@ void bev_pool_request() {
               strides(plan.inputs[1]) == std::vector<std::int64_t>{96, 1, 48, 16},
           "bev_pool context is logical [N,C,fH,fW] with channels-last strides");
   require(plan.outputs[0].shape == std::vector<std::int64_t>{1, 16, 4, 4} &&
-              strides(plan.outputs[0]) == std::vector<std::int64_t>{256, 1, 64, 16} &&
-              plan.published[0].stride_bytes == std::vector<std::int64_t>{256, 1, 64, 16},
-          "bev_pool bev is channels-last [1,nZ*C,nX,nY]");
+              strides(plan.outputs[0]) == std::vector<std::int64_t>{256, 1, 64, 16},
+          "bev_pool requests a channels-last [1,nZ*C,nX,nY] bev");
+  require(plan.published[0].shape == std::vector<std::int64_t>{1, 4, 4, 16} &&
+              plan.published[0].stride_bytes.empty() && plan.published[0].layout == "NHWC",
+          "bev_pool publishes the same bytes as dense NHWC [1,nX,nY,nZ*C]");
   require(scalar<std::int64_t>(plan, "depth_zero_point") == -128 &&
               scalar<std::int64_t>(plan, "context_zero_point") == -5 &&
               scalar<std::int64_t>(plan, "plan_format") == 1 &&
@@ -293,8 +295,10 @@ void bev_pool_request() {
   plan = kr::bev_pool_request(opt, nchw);
   require(std::holds_alternative<rt::Contiguous>(plan.inputs[0].layout) &&
               std::holds_alternative<rt::Contiguous>(plan.outputs[0].layout) &&
-              plan.published[0].stride_bytes.empty(),
-          "bev_pool contiguous storage");
+              plan.published[0].stride_bytes.empty() &&
+              plan.published[0].shape == std::vector<std::int64_t>{1, 16, 4, 4} &&
+              plan.published[0].layout == "CHW",
+          "bev_pool contiguous storage publishes dense CHW [1,nZ*C,nX,nY]");
   opt.cells[2] = 2;
   plan = kr::bev_pool_request(opt, nchw);
   require(plan.outputs[0].shape == std::vector<std::int64_t>{1, 32, 4, 4},
@@ -336,8 +340,11 @@ void bev_pool_logical_axes() {
     require(checked_chw.inputs[0].shape == logical.shape &&
                 checked_chw.inputs == checked_hwc.inputs,
             "tagged CHW and HWC must describe the same singleton geometry");
-    require(checked_chw.published[0].layout == "CHW",
-            "Pool output publishes logical CHW authority independently of storage");
+    require(checked_chw.published[0].layout == "NHWC" &&
+                checked_chw.published[0].shape ==
+                    std::vector<std::int64_t>{1, options.cells[0], options.cells[1],
+                                              options.cells[2] * channels},
+            "channels-last Pool output publishes NHWC whatever the input tags");
   }
   auto depth = fact({2, 1, 2, 3}, rt::DType::Int8);
   depth.layout = "CHW";
@@ -555,7 +562,9 @@ void bf16_requests() {
               strides(plan.inputs[1]) == std::vector<std::int64_t>{192, 2, 96, 32} &&
               plan.outputs[0].dtype == rt::DType::BFloat16 &&
               strides(plan.outputs[0]) == std::vector<std::int64_t>{512, 2, 128, 32} &&
-              plan.published[0].stride_bytes == std::vector<std::int64_t>{512, 2, 128, 32} &&
+              plan.published[0].stride_bytes.empty() &&
+              plan.published[0].shape == std::vector<std::int64_t>{1, 4, 4, 16} &&
+              plan.published[0].layout == "NHWC" &&
               scalar<std::int64_t>(plan, "depth_zero_point") == 0 &&
               scalar<double>(plan, "quantization_multiplier") == 1.0,
           "SimaBEVPool BF16 request");

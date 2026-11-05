@@ -428,10 +428,25 @@ void ingress_contracts() {
                         Tensor::from_vector(b.plan, {static_cast<std::int64_t>(b.plan.size())},
                                             TensorMemory::CPU)});
     const auto& bev = compiled.kernel->runtime_contract.logical_outputs.front();
-    require(bev.shape == std::vector<std::int64_t>{1, 16, 4, 4} &&
-                bev.stride_bytes == std::vector<std::int64_t>{256, 1, 64, 16} &&
+    require(bev.shape == std::vector<std::int64_t>{1, 4, 4, 16} && bev.stride_bytes.empty() &&
+                bev.layout == "NHWC" &&
                 compiled.kernel->recipe->target == kr::kernel_target(target),
-            "SimaBEVPool stage publishes channels-last bev on the selected target");
+            "SimaBEVPool stage publishes a dense NHWC bev on the selected target");
+    // A downstream reduction sees the same NHWC metadata: ArgMax over axis 3,
+    // the channels, takes [1,nX,nY,nZ*C].
+    ContractCompileInput downstream;
+    downstream.immediate_upstream = &compiled;
+    SimaArgMaxOptions options;
+    options.axis = 3;
+    CompiledNodeContract argmax;
+    std::string diagnostic;
+    require(SimaArgMax(options).compile_node_contract(downstream, &argmax, &diagnostic),
+            "ArgMax must reduce the NHWC bev's channels: " + diagnostic);
+    const auto inspected = rt::inspect_kernel(argmax.kernel->recipe->members.front().executable);
+    require(std::holds_alternative<rt::KernelInspection>(inspected) &&
+                std::get<rt::KernelInspection>(inspected).inputs().front().shape ==
+                    std::vector<std::int64_t>{1, 4, 4, 16},
+            "ArgMax consumes the published NHWC bev shape");
   }
 
   // BF16 stage contracts.
@@ -540,9 +555,9 @@ void ingress_contracts() {
     const auto& bev = compiled.kernel->runtime_contract.logical_outputs.front();
     const bool wide = output == TensorDType::BFloat16;
     require(bev.dtype == (wide ? "BF16" : "INT8") &&
-                bev.stride_bytes == (wide ? std::vector<std::int64_t>{512, 2, 128, 32}
-                                          : std::vector<std::int64_t>{256, 1, 64, 16}),
-            "SimaBEVPool BF16 stage publishes its bev dtype and strides");
+                bev.shape == std::vector<std::int64_t>{1, 4, 4, 16} && bev.stride_bytes.empty() &&
+                bev.layout == "NHWC",
+            "SimaBEVPool BF16 stage publishes a dense NHWC bev of its dtype");
   }
 
   // Structural failures surface the Node's own diagnostic, before admission.

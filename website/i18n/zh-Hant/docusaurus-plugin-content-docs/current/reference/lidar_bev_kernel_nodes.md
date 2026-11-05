@@ -71,7 +71,7 @@ Python 提供相同的選項型別，以及 `pyneat.nodes.sima_voxelize`、
 | `SimaVoxelize` | FP32 `points` `[N,4]`（x、y、z、時間位移）；INT32 `point_count` `[1]` | INT8 或 BF16 `decorated` `[1,M,T,10]`；以 (row, column) 表示的 INT32 `coordinates` `[M,2]`；INT32 `count` `[1]` |
 | `SimaPillarScatter` | INT8 或 BF16 `features` `[M,C]`；INT32 `coordinates` `[M,2]`；INT32 `count` `[1]` | 與 `features` 型別相同的 `canvas` `[1,H,W,C]` |
 | `SimaBEVPoolPlan` | FP32 `camera2lidar`、`camera_intrinsics` 與 `img_aug_matrix` `[N,4,4]`；FP32 `lidar_aug_matrix` `[4,4]` | UINT8 `plan` `[P]` |
-| `SimaBEVPool` | INT8 或 BF16 `depth`；型別相同的 `context`；UINT8 `plan` `[P]` | INT8 或 BF16 `bev` `[1,nZ*C,nX,nY]` |
+| `SimaBEVPool` | INT8 或 BF16 `depth`；型別相同的 `context`；UINT8 `plan` `[P]` | INT8 或 BF16 `bev` `[1,nX,nY,nZ*C]`（`ChannelsLast`）或 `[1,nZ*C,nX,nY]`（`Contiguous`） |
 
 - **SimaVoxelize** 只讀取前 `point_count` 個點。`max_pillars`（`M`）與
   `max_points_per_pillar`（`T`）是固定容量，超出的點與柱體會被捨棄。未使用的列存放量化
@@ -87,9 +87,9 @@ Python 提供相同的選項型別，以及 `pyneat.nodes.sima_voxelize`、
   請將 `cells` 設為計畫的 `nx`、`plan_format` 設為計畫的 `format`，並將
   INT8 輸入時將 `quantization.multiplier` 設為 `depth_scale * context_scale / output_scale`。使用預設的
   `SimaBEVPoolStorage::ChannelsLast` 時，輸入會以相機模型產生的 `[N,fH,fW,D]` 與
-  `[N,fH,fW,C]` 形式傳入。輸出會以帶有通道在後步幅的邏輯形狀 `[1,nZ*C,nX,nY]` 發布，
-  因此其位元組為 NHWC `[1,nX,nY,nZ*C]`。`SimaBEVPoolStorage::Contiguous` 使用
-  `[N,D,fH,fW]` 與 `[N,C,fH,fW]` 輸入以及密集輸出。
+  `[N,fH,fW,C]` 形式傳入。輸出為密集的 NHWC `[1,nX,nY,nZ*C]` 張量，BEV 模型可直接將其
+  作為輸入；請在軸 3 上縮減其通道，例如使用 `SimaArgMax`。`SimaBEVPoolStorage::Contiguous`
+  使用 `[N,D,fH,fW]` 與 `[N,C,fH,fW]` 輸入以及密集的 NCHW `[1,nZ*C,nX,nY]` 輸出。
 
 ### 邏輯軸與實體儲存順序
 
@@ -104,8 +104,8 @@ HWC 輸入必須密集，CHW 輸入則必須具有通道在後的步幅。在 `C
 未標記的 `ChannelsLast` 輸入沿用相容規則：密集 NHWC，或具有通道在後步幅的非密集
 邏輯 NCHW。如果大小為 1 的維度讓邏輯 NCHW 檢視也呈密集排列，請明確設定
 `Tensor.layout = TensorLayout::CHW`。這種情況無法只靠步幅辨識邏輯軸。Pool 輸出
-帶有 CHW 邏輯軸與符合 `output_storage` 的步幅；節點不會為了改變排列而轉置或
-複製承載資料。
+為密集排列：`ChannelsLast` 為 HWC `[1,nX,nY,nZ*C]`，`Contiguous` 為 CHW
+`[1,nZ*C,nX,nY]`。節點描述其寫入的位元組，不會為了改變排列而轉置或複製這些位元組。
 
 ### 量化中繼資料
 

@@ -592,11 +592,14 @@ KernelRequestPlan bev_pool_request(const SimaBEVPoolOptions& opt,
   rt::TensorSpec bev{{logical.begin(), logical.end()}, dtype};
   PublishedOutput published{"bev", {logical.begin(), logical.end()}, {}, "CHW", false, {}};
   if (opt.output_storage == SimaBEVPoolStorage::ChannelsLast) {
+    // The kernel's request keeps its canonical [1,nZ*C,nX,nY] with channels-last
+    // strides; the same bytes publish as dense NHWC [1,nX,nY,nZ*C].
     const auto strides = channels_last_strides(logical, scalar_bytes(dtype), node);
     rt::Strided layout;
     std::copy(strides.begin(), strides.end(), layout.strides_bytes.begin());
     bev.layout = layout;
-    published.stride_bytes.assign(strides.begin(), strides.end());
+    published.shape = {1, nx, ny, k};
+    published.layout = "NHWC";
   }
 
   KernelRequestPlan plan;

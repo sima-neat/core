@@ -20,6 +20,12 @@ The format is based on Keep a Changelog and follows semantic versioning.
   selected target with no fallback. See `docs/reference/lidar_bev_kernel_nodes.md`.
 
 ### Changed
+- BREAKING: `SimaBEVPool` with the default `SimaBEVPoolStorage::ChannelsLast` output now
+  publishes dense NHWC `[1,nX,nY,nZ*C]` (HWC layout) instead of logical `[1,nZ*C,nX,nY]`
+  with channels-last strides. The stored bytes are unchanged, so a BEV model consumes the
+  output without rewriting its metadata. Code that reads the output's shape, indexes it
+  through NumPy or DLPack, or reduces its channels must use the new order: for example
+  `SimaArgMaxOptions::axis = 3` instead of 1. `SimaBEVPoolStorage::Contiguous` is unchanged.
 - Canonical naming contract docs and migration guidance.
 - Build/config naming consistency updates.
 - BREAKING: The unreleased 0.6.0 line uses public C++ ABI 6 (`libsima_neat.so.6`).

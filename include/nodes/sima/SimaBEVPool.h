@@ -33,8 +33,8 @@ enum class SimaBEVPoolStorage {
   /// with channels-last strides, including singleton dimensions. Without a layout
   /// tag, dense inputs keep the NHWC convention; tag ambiguous logical NCHW views CHW.
   /// Canonical Tensor.axis_semantics is equivalent; it must agree with any layout tag.
-  /// The output has CHW logical axes `[1,nZ*C,nX,nY]` with channels-last byte strides,
-  /// so its bytes are NHWC `[1,nX,nY,nZ*C]`.
+  /// The output is a dense NHWC `[1,nX,nY,nZ*C]` tensor (HWC layout), the input of a
+  /// BEV model; its channels are axis 3.
   ChannelsLast,
   /// Logical order. Inputs arrive as `[N,D,fH,fW]` and `[N,C,fH,fW]`; the output is a
   /// dense CHW `[1,nZ*C,nX,nY]` tensor. An explicit HWC input layout is rejected.
