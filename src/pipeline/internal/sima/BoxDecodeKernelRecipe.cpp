@@ -768,6 +768,8 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
   metrics->regions.push_back(
       {"Run", "boxdecode_backend_wall_v2", decode_member, decode_member + 1});
   build.recipe->metrics = std::move(metrics);
+  build.recipe->boxdecode_settings = KernelStageRecipe::BoxDecodeSettings{
+      p.decode_type, p.num_classes, p.detection_threshold, p.nms_iou_threshold, p.topk};
   build.recipe->output_format =
       wire == BoxDecodeWireFormat::FeaturePointsV1         ? kFeatureFormatPointsV1
       : wire == BoxDecodeWireFormat::LegacyFeaturePointsV0 ? kFeatureFormatLegacyA65V0
