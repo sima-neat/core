@@ -731,7 +731,7 @@ graph.add(pyneat.nodes.sima_encode(encode))
 ```
 
 編碼開始時會從輸入影格取得解析度。編碼器不會縮放影格；要編碼不同解析度，請開始新的執行。
-輸入尺寸必須為正偶數，最大為 3840x2160。
+輸入尺寸必須為正偶數。
 `nodes::SimaEncode()` 與 `pyneat.nodes.sima_encode()` 使用預設 H.264 設定。
 不要在編碼器選項中重複輸入尺寸。`fps` 設定串流節奏與速率控制，但不控制輸入提交速度。
 H.264/H.265 支援 `bitrate_kbps`（預設 4000）、`rate_control`（`vbr` 或 `cbr`）、
