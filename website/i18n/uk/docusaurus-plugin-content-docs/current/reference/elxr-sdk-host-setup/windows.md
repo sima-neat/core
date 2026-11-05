@@ -10,7 +10,7 @@ sidebar_position: 2
 
 - Windows 11, хост.
 - [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) встановлено та працює.
-- Docker Engine встановлено всередині WSL.
+- Docker Engine версії 20.10.10 або новішої встановлено всередині WSL. Перевірте версію командою `docker --version`.
 - `sima-cli` встановлено в середовищі WSL.
 
 ## Почніть з WSL.

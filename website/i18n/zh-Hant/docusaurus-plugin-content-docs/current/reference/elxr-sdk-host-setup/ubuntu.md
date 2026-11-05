@@ -9,7 +9,7 @@ sidebar_position: 1
 ## 先決條件
 
 - Ubuntu 22.04 或 24.04 主機。
-- Docker Engine 已安裝並正常運作。
+- Docker Engine 20.10.10 或更新版本已安裝並正常運作。可使用 `docker --version` 檢查版本。
 - 已在主機上安裝了 `sima-cli`。
 - Modalix 和 DevKit 可以在同一個網路中互相連線。
 
