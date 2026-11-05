@@ -241,14 +241,6 @@ struct RunOptions {
    * pushing thread; keep it short.
    */
   std::function<void(const struct InputDropInfo&)> on_input_drop;
-  /**
-   * @brief Background output-silence timeout for app-fed asynchronous runs (ms).
-   * -1 preserves legacy behavior; 0 disables it; >0 arms on the first accepted
-   * submission, then refreshes only on terminal output. Producer pauses and
-   * intentional drops can therefore time out. Preflight does not arm it.
-   * Explicit pull deadlines and input_timeout_ms are unchanged.
-   */
-  int output_idle_timeout_ms = -1;
 };
 
 /**

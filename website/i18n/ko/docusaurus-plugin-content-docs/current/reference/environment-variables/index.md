@@ -109,7 +109,6 @@ Palette SDK 3.0 이상에서는 `sima-cli sdk setup`이 컨테이너 환경에 `
 - `SIMA_INPUTSTREAM_DEBUG=1` — 자세한 InputStream 로그.
 - `SIMA_INPUTSTREAM_WARN=1` — InputStream 이벤트에 대한 경고.
 - `SIMA_INPUTSTREAM_POLL_MS=<ms>` — InputStream 폴링 간격(기본값: 50ms).
-- `SIMA_INPUTSTREAM_DOT_ON_TIMEOUT=1` — 시간 초과 시 DOT 데이터를 덤프합니다.
 - `SIMA_INPUTSTREAM_META_DEBUG=1` — GstSimaMeta 세부 정보를 기록합니다.
 - `SIMA_INPUTSTREAM_ALLOC_DEBUG=1` — 할당 디버그.
 - `SIMA_INPUTSTREAM_PUSH_TIMING=1` — 푸시 타이밍 로그.

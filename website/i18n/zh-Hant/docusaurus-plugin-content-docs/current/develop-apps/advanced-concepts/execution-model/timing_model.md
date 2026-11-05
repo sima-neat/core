@@ -113,6 +113,8 @@ graph.add(pyneat.nodes.queue(queue))
 
 `Run::pull(...)` 從輸出邊界傳回下一個可用的 `Sample`。
 
+應用程式可以暫停提交輸入，之後繼續使用同一個 `Run`；僅因沒有輸出並不會使其失敗。有限的 `pull()` 逾時會結束該次等待，但不會停止 Run。`RunOptions::input_timeout_ms` 仍控制輸入模式 `Graph::run()` 和支援的建置時預檢的輸出等待時間。需要偵測停滯的應用程式應為尚未完成的工作設定期限。
+
 當逾時和 EOS 可以共享相同的「無樣本」路徑時，請使用方便的超載：
 
 ```cpp

@@ -108,7 +108,6 @@ slug: /reference/environment-variables
 - `SIMA_INPUTSTREAM_DEBUG=1` — детальне ведення журналів для класу InputStream.
 - `SIMA_INPUTSTREAM_WARN=1` — попередження щодо подій, що виникають під час роботи з класом InputStream.
 - `SIMA_INPUTSTREAM_POLL_MS=<ms>` — інтервал опитування InputStream (за замовчуванням 50 мс).
-- `SIMA_INPUTSTREAM_DOT_ON_TIMEOUT=1` — вивести дані DOT у разі перевищення часу очікування.
 - `SIMA_INPUTSTREAM_META_DEBUG=1` — виводити в журнал деталі GstSimaMeta.
 - `SIMA_INPUTSTREAM_ALLOC_DEBUG=1` — налагодження виділення пам’яті.
 - `SIMA_INPUTSTREAM_PUSH_TIMING=1` — журнали фіксують час виконання операції push.

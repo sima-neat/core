@@ -1060,7 +1060,6 @@ InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
   stream_opt.on_input_drop = opt.on_input_drop;
   stream_opt.enable_timings = true;
   stream_opt.timeout_ms = resolved_input_timeout_ms(opt);
-  stream_opt.output_idle_timeout_ms = opt.output_idle_timeout_ms;
   stream_opt.startup_preflight = opt.startup_preflight;
   stream_opt.worker_poll_ms = preset_default_worker_poll_ms(opt.preset);
   return stream_opt;
@@ -2320,9 +2319,7 @@ bool run_options_equal_for_cache_local(const RunOptions& a, const RunOptions& b)
   };
   return a.preset == b.preset && a.queue_depth == b.queue_depth &&
          a.overflow_policy == b.overflow_policy && a.output_memory == b.output_memory &&
-         a.input_timeout_ms == b.input_timeout_ms &&
-         a.output_idle_timeout_ms == b.output_idle_timeout_ms &&
-         a.startup_preflight == b.startup_preflight &&
+         a.input_timeout_ms == b.input_timeout_ms && a.startup_preflight == b.startup_preflight &&
          a.advanced.copy_input == b.advanced.copy_input &&
          a.advanced.max_input_bytes == b.advanced.max_input_bytes &&
          a.advanced.sync_num_buffers_override == b.advanced.sync_num_buffers_override &&

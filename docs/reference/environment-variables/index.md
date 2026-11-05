@@ -113,7 +113,6 @@ Legacy per-variable debug toggles still work and override profile defaults when 
 - `SIMA_INPUTSTREAM_DEBUG=1` — verbose InputStream logs.
 - `SIMA_INPUTSTREAM_WARN=1` — warnings on InputStream events.
 - `SIMA_INPUTSTREAM_POLL_MS=<ms>` — InputStream poll slice (default 50).
-- `SIMA_INPUTSTREAM_DOT_ON_TIMEOUT=1` — dump DOT on timeout.
 - `SIMA_INPUTSTREAM_META_DEBUG=1` — log GstSimaMeta details.
 - `SIMA_INPUTSTREAM_ALLOC_DEBUG=1` — allocation debug.
 - `SIMA_INPUTSTREAM_PUSH_TIMING=1` — push timing logs.

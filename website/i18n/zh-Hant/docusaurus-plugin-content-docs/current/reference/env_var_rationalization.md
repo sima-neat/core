@@ -10,9 +10,7 @@ sidebar_position: 3
 
 ## 總計
 
-- 執行階段 `SIMA_*` 找到的變數位於 `src/` + `include/`: 148
 - `Retired in this pass`: 6
-- `Unify`（合併為較少的偵錯設定檔）：47
 - `Framework knob`（升級為類型化的 API 選項）：34
 - `Keep as-is`（開發者診斷／平台設定）：67
 
@@ -60,7 +58,6 @@ sidebar_position: 3
 - SIMA_GST_PAD_LINK_DEBUG
 - SIMA_INPUTSTREAM_ALLOC_DEBUG
 - SIMA_INPUTSTREAM_DEBUG
-- SIMA_INPUTSTREAM_DOT_ON_TIMEOUT
 - SIMA_INPUTSTREAM_EOS_DEBUG
 - SIMA_INPUTSTREAM_HOLDER_DEBUG
 - SIMA_INPUTSTREAM_META_DEBUG

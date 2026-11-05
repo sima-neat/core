@@ -11,9 +11,7 @@ sidebar_position: 3
 
 ## Усього
 
-- Знайдено 148 змінних середовища виконання в `SIMA_*`, `src/` + `include/`.
 - `Retired in this pass`: 6
-- `Unify` (об’єднати в меншу кількість профілів налагодження): 47
 - `Framework knob` (перехід до API з чітко визначеними типами даних): 34
 - `Keep as-is` (діагностика для розробників / налаштування платформи): 67
 
@@ -61,7 +59,6 @@ sidebar_position: 3
 - SIMA_GST_PAD_LINK_DEBUG
 - SIMA_INPUTSTREAM_ALLOC_DEBUG
 - SIMA_INPUTSTREAM_DEBUG
-- SIMA_INPUTSTREAM_DOT_ON_TIMEOUT
 - SIMA_INPUTSTREAM_EOS_DEBUG
 - SIMA_INPUTSTREAM_HOLDER_DEBUG
 - SIMA_INPUTSTREAM_META_DEBUG

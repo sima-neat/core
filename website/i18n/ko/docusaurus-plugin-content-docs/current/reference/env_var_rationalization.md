@@ -10,9 +10,7 @@ sidebar_position: 3
 
 ## 합계
 
-- `SIMA_*`에서 런타임 변수 148개 발견 (`src/` + `include/`).
 - `Retired in this pass`: 6
-- `Unify` (디버그 프로필 수를 줄임): 47
 - `Framework knob` (타입이 지정된 API 옵션으로 승격): 34
 - `Keep as-is` (개발자 진단 / 플랫폼 설정): 67
 
@@ -60,7 +58,6 @@ sidebar_position: 3
 - SIMA_GST_PAD_LINK_DEBUG
 - SIMA_INPUTSTREAM_ALLOC_DEBUG
 - SIMA_INPUTSTREAM_DEBUG
-- SIMA_INPUTSTREAM_DOT_ON_TIMEOUT
 - SIMA_INPUTSTREAM_EOS_DEBUG
 - SIMA_INPUTSTREAM_HOLDER_DEBUG
 - SIMA_INPUTSTREAM_META_DEBUG

@@ -113,6 +113,8 @@ Leave `max_buffers` unset to use the default queue limits. Setting it to a posit
 
 `Run::pull(...)` returns the next available `Sample` from an output boundary.
 
+Your application can pause submissions and resume the same `Run`; output silence alone does not fail it. A finite `pull()` timeout ends that wait without stopping the Run. `RunOptions::input_timeout_ms` still controls output waits for input-mode `Graph::run()` and supported build-time preflight. Applications that need stall detection should set deadlines for pending work.
+
 Use the convenience overload when timeout and EOS can share the same “no sample” path:
 
 ```cpp

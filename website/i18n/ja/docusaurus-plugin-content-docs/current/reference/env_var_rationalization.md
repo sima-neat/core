@@ -11,9 +11,7 @@ sidebar_position: 3
 
 ## 合計
 
-- `SIMA_*`で検出されたランタイム変数：`src/` + `include/`：148
 - `Retired in this pass`: 6
-- `Unify`（デバッグプロファイルをより少なくまとめる）：47
 - `Framework knob`（型付き API オプションに昇格）：34
 - `Keep as-is`（開発者向け診断ツール／プラットフォーム設定）：67
 
@@ -61,7 +59,6 @@ sidebar_position: 3
 - SIMA_GST_PAD_LINK_DEBUG
 - SIMA_INPUTSTREAM_ALLOC_DEBUG
 - SIMA_INPUTSTREAM_DEBUG
-- SIMA_INPUTSTREAM_DOT_ON_TIMEOUT
 - SIMA_INPUTSTREAM_EOS_DEBUG
 - SIMA_INPUTSTREAM_HOLDER_DEBUG
 - SIMA_INPUTSTREAM_META_DEBUG

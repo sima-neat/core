@@ -81,7 +81,6 @@ struct InputStreamOptions {
   };
 
   int timeout_ms = 10000;
-  int output_idle_timeout_ms = -1;
   int worker_poll_ms = 0;
   bool appsink_sync = true;
   bool appsink_drop = false;

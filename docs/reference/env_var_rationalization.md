@@ -11,9 +11,7 @@ Each variable appears exactly once in the lists below.
 
 ## Totals
 
-- Runtime `SIMA_*` variables found in `src/` + `include/`: 148
 - `Retired in this pass`: 6
-- `Unify` (collapse into fewer debug profiles): 47
 - `Framework knob` (promote to typed API options): 34
 - `Keep as-is` (developer diagnostics / platform setup): 67
 
@@ -61,7 +59,6 @@ This is now implemented via `SIMA_DEBUG_PROFILE` + `SIMA_DEBUG_LEVEL` as a defau
 - SIMA_GST_PAD_LINK_DEBUG
 - SIMA_INPUTSTREAM_ALLOC_DEBUG
 - SIMA_INPUTSTREAM_DEBUG
-- SIMA_INPUTSTREAM_DOT_ON_TIMEOUT
 - SIMA_INPUTSTREAM_EOS_DEBUG
 - SIMA_INPUTSTREAM_HOLDER_DEBUG
 - SIMA_INPUTSTREAM_META_DEBUG

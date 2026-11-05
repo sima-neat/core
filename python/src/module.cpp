@@ -2593,7 +2593,6 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("overflow_policy", &RunOptions::overflow_policy)
       .def_rw("output_memory", &RunOptions::output_memory)
       .def_rw("input_timeout_ms", &RunOptions::input_timeout_ms)
-      .def_rw("output_idle_timeout_ms", &RunOptions::output_idle_timeout_ms)
       .def_rw("startup_preflight", &RunOptions::startup_preflight)
       .def_rw("advanced", &RunOptions::advanced)
       .def_rw("power_monitor", &RunOptions::power_monitor)
