@@ -2505,6 +2505,17 @@ if (NOT rtsp_encoded_boundary_caps_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_tests_properties(rtsp_encoded_boundary_caps_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
+add_pipeline_test(
+  rtsp_keyframe_frame_loss_test
+  e2e_testing/rtsp_keyframe_frame_loss_test.cpp
+  ARGS --image ${CMAKE_SOURCE_DIR}/test.jpg
+)
+
+if (NOT rtsp_keyframe_frame_loss_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST rtsp_keyframe_frame_loss_test APPEND PROPERTY LABELS "e2e;rtsp")
+  set_property(TEST rtsp_keyframe_frame_loss_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
+endif()
+
 add_pipeline_test_long(
   codec_runtime_stream_test
   e2e_testing/codec_runtime_stream_test.cpp
@@ -2986,6 +2997,7 @@ set(SIMANEAT_DECODER_MEDIA_E2E_TESTS
   resnet50_modelpack_jpeg
   resnet50_modelpack_rtsp
   rtsp_encoded_boundary_caps_test
+  rtsp_keyframe_frame_loss_test
   rtsp_pull_frame_test
 )
 foreach(_simaneat_decoder_media_test IN LISTS SIMANEAT_DECODER_MEDIA_E2E_TESTS)
