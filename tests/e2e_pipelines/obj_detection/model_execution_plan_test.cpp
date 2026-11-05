@@ -222,8 +222,20 @@ int main(int argc, char** argv) {
   if (const char* staged = std::getenv("SIMA_TEST_MLA_ONLY_MODEL"); mla_tar_gz.empty() && staged) {
     mla_tar_gz = staged;
   }
+  if (mla_tar_gz.empty()) {
+    const auto archive =
+        sima_test::writable_asset_tmp_dir(sima_test::default_asset_root(), "sima-neat-models") /
+        "yolo26n-det-int8-b1.tar.gz";
+    const sima_test::ScopedFileLock lock(archive.string() + ".lock");
+    if (sima_test::download_file("https://docs.sima.ai/pkg_downloads/SDK" +
+                                     sima_test::modelzoo_version() +
+                                     "/models/modalix/yolo26-detection/yolo26n-det-int8-b1.tar.gz",
+                                 archive)) {
+      mla_tar_gz = archive.string();
+    }
+  }
   if (mla_tar_gz.empty() || !fs::exists(mla_tar_gz)) {
-    std::cerr << "Supply the local YOLO26n INT8 e2e fixture through --mla-model <path> or "
+    std::cerr << "Failed to resolve the YOLO26n INT8 e2e fixture. Supply --mla-model <path> or "
                  "SIMA_TEST_MLA_ONLY_MODEL.\n";
     return 3;
   }
