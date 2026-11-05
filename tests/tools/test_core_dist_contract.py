@@ -532,7 +532,7 @@ def provider_fixture(tmp_path, architecture='arm64'):
     base_controls = fixture(root)
     actual_control = verifier.control
 
-    def package(name, arch='arm64', version='1', payload_suffix=''):
+    def package(name, arch='arm64', version='1'):
         source = tmp_path / ('producer-' + name)
         (source / 'DEBIAN').mkdir(parents=True, exist_ok=True)
         (source / 'DEBIAN/control').write_text(
@@ -540,7 +540,7 @@ def provider_fixture(tmp_path, architecture='arm64'):
             'Maintainer: Fixture <fixture@example.invalid>\nDescription: provider control fixture\n')
         payload = source / 'usr/share' / name
         payload.mkdir(parents=True, exist_ok=True)
-        (payload / 'identity').write_text(name + ':' + version + payload_suffix)
+        (payload / 'identity').write_text(name + ':' + version)
         target = root / (name + '.deb')
         subprocess.run(['dpkg-deb', '--build', '--root-owner-group', str(source), str(target)],
                        check=True, capture_output=True)
@@ -654,10 +654,10 @@ def test_required_firmware_distribution_cannot_be_incomplete_or_substituted(tmp_
     (lambda r, p: (r / 'fixture-renderer-dev.deb').unlink(), 'provider control'),
     (lambda r, p: p('fixture-backend', version='2'), 'provider control'),
     (lambda r, p: p('fixture-backend', arch='amd64'), 'architecture'),
-    (lambda r, p: p('fixture-backend', payload_suffix='changed'), 'archive differs'),
+    (lambda r, p: (r / 'fixture-backend.deb').write_bytes((r / 'fixture-backend.deb').read_bytes() + b'changed'), 'archive differs'),
     (lambda r, p: p('fixture-unrecorded'), 'Foreign DEB'),
     (lambda r, p: shutil.copy2(r / 'fixture-backend.deb', r / 'fixture-duplicate.deb'), 'Duplicate DEB package role'),
-    (lambda r, p: p('fixture-renderer', payload_suffix='changed'), 'archive differs'),
+    (lambda r, p: (r / 'fixture-renderer.deb').write_bytes((r / 'fixture-renderer.deb').read_bytes() + b'changed'), 'archive differs'),
 ])
 def test_rejects_unconsumed_or_changed_provider_archives(tmp_path, mutation, diagnostic):
     root, controls, package = provider_fixture(tmp_path)
