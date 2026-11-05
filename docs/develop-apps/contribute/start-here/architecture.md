@@ -332,8 +332,6 @@ The canonical "production path" for this repo is:
 **input -> preprocess -> MLA -> postprocess**. The source of truth lives in:
 `tests/e2e_pipelines/obj_detection/sync_yolov8_test.cpp`.
 
-`Model` retains MPK-required Cast/Quant/Tess adapters even with `preprocess.enable = Off`; application tensors must match the public input contract, not necessarily the native MLA contract.
-
 When this test changes, update README + Architecture to keep docs aligned.
 
 ### Mental model (business logic &lt;-&gt; pipeline glue)

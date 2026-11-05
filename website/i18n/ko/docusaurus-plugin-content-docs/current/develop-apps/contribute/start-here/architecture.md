@@ -257,8 +257,6 @@ Runner는 메모리 소유권과 동기화 권한을 유지합니다. Core는 �
 이 저장소의 표준 "프로덕션 경로"는 다음과 같습니다.
 **입력 -> 전처리 -> MLA -> 후처리**. 단일 진실 공급원은 `tests/e2e_pipelines/obj_detection/sync_yolov8_test.cpp`입니다.
 
-`Model`은 `preprocess.enable = Off`에서도 MPK에 필요한 Cast/Quant/Tess 어댑터를 유지합니다. 애플리케이션 텐서는 네이티브 MLA 계약이 아니라 공개 입력 계약에 맞아야 합니다.
-
 이 테스트가 변경되면 README + 아키텍처를 업데이트하여 문서가 일관되게 유지되도록 합니다.
 
 ### 정신적 모델(비즈니스 로직 <-> 파이프라인 연결)

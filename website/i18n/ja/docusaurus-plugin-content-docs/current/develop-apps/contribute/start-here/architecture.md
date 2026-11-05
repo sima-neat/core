@@ -171,8 +171,6 @@ Scheduler は `neatdecoder`、`neatencoder` とその GStreamer アダプター�
 **入力 → 前処理 → MLA → 後処理**。 正確な情報源は次の場所にあります。
 `tests/e2e_pipelines/obj_detection/sync_yolov8_test.cpp`.
 
-`Model`は`preprocess.enable = Off`でもMPKに必要なCast/Quant/Tessアダプターを維持します。アプリケーションのテンソルは、必ずしもネイティブMLA契約ではなく、公開入力契約に合わせる必要があります。
-
 このテストが変更された場合は、READMEとアーキテクチャを更新して、ドキュメントの一貫性を保ってください。
 
 ### メンタルモデル（ビジネスロジックとパイプラインの連携）
