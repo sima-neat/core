@@ -640,7 +640,8 @@ bool flush_pending_buffer(InputStream::State& st, const char* where) {
   auto observed = st.input_publication_measurement.observe(buf);
   GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(st.appsrc), buf);
   observed.finish(ret);
-  const auto t_push_end = std::chrono::steady_clock::now();
+  const auto t_push_end =
+      timings ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
 
   if (timings) {
     st.push_count.fetch_add(1, std::memory_order_relaxed);
@@ -1003,7 +1004,8 @@ bool InputStream::push_with_fill(const char* where,
   auto observed = st->input_publication_measurement.observe(push_buf);
   GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(st->appsrc), push_buf);
   observed.finish(ret);
-  const auto t_push_end = std::chrono::steady_clock::now();
+  const auto t_push_end = (timings || push_timing) ? std::chrono::steady_clock::now()
+                                                   : std::chrono::steady_clock::time_point{};
 
   if (timings) {
     st->push_count.fetch_add(1, std::memory_order_relaxed);

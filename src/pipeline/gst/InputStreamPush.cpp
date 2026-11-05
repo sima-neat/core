@@ -1724,7 +1724,8 @@ bool try_push_message_encoded(InputStream::State& st, const Sample& msg,
   auto observed = st.input_publication_measurement.observe(buf);
   GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(st.appsrc), buf);
   observed.finish(ret);
-  const auto t_push_end = std::chrono::steady_clock::now();
+  const auto t_push_end =
+      timings ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
 
   if (timings) {
     st.push_count.fetch_add(1, std::memory_order_relaxed);

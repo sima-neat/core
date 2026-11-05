@@ -15,7 +15,7 @@ using namespace simaai::neat;
 using namespace std::chrono_literals;
 const cv::Mat image(24, 32, CV_8UC3, cv::Scalar(10, 20, 30));
 
-Run build(bool preflight, bool discard = false) {
+Run build(bool preflight, const char* stage = nullptr) {
   InputOptions input;
   input.format = FormatTag::RGB;
   input.width = input.max_width = image.cols;
@@ -24,8 +24,8 @@ Run build(bool preflight, bool discard = false) {
   input.memory_policy = InputMemoryPolicy::SystemMemory;
   Graph graph;
   graph.add(nodes::Input(input));
-  if (discard)
-    graph.custom("valve drop=true");
+  if (stage)
+    graph.custom(stage);
   graph.add(nodes::Output(OutputOptions::EveryFrame(8)));
   RunOptions options;
   options.input_timeout_ms = 200;
@@ -34,9 +34,7 @@ Run build(bool preflight, bool discard = false) {
   return graph.build(std::vector<cv::Mat>{image}, options);
 }
 
-void exchange(Run& run, unsigned char value) {
-  const cv::Mat input(image.rows, image.cols, image.type(), cv::Scalar(value, 20, 30));
-  require(run.push(std::vector<cv::Mat>{input}), "Input rejected");
+void expect_output(Run& run, const cv::Mat& input) {
   Sample sample;
   const auto status = run.pull(1000, sample);
   require(status == PullStatus::Ok, "Expected output: " + run.last_error());
@@ -47,6 +45,12 @@ void exchange(Run& run, unsigned char value) {
   require(pixels.data && pixels.size_bytes >= bytes &&
               std::memcmp(pixels.data, input.data, bytes) == 0,
           "Output changed");
+}
+
+void exchange(Run& run, unsigned char value) {
+  const cv::Mat input(image.rows, image.cols, image.type(), cv::Scalar(value, 20, 30));
+  require(run.push(std::vector<cv::Mat>{input}), "Input rejected");
+  expect_output(run, input);
 }
 
 void close(Run& run) {
@@ -70,8 +74,22 @@ RUN_TEST("unit_inputstream_idle_resume_test", ([] {
              close(run);
            }
            {
+             std::cerr << "case: delayed output after pull timeout\n";
+             auto run = build(/*preflight=*/false, "identity sleep-time=500000");
+             const cv::Mat first(image.rows, image.cols, image.type(), cv::Scalar(40, 20, 30));
+             require(run.push(std::vector<cv::Mat>{first}), "Delayed input rejected");
+             Sample sample;
+             require(run.pull(50, sample) == PullStatus::Timeout,
+                     "Delayed input should time out the first pull");
+             require(run.running() && run.last_error().empty(), "Pull timeout failed the Run");
+             expect_output(run, first);
+             exchange(run, 80);
+             require(run.pull(0, sample) == PullStatus::Timeout, "Unexpected duplicate output");
+             close(run);
+           }
+           {
              std::cerr << "case: intentional discard\n";
-             auto run = build(/*preflight=*/false, /*discard=*/true);
+             auto run = build(/*preflight=*/false, "valve drop=true");
              require(run.push(std::vector<cv::Mat>{image}), "Discard input rejected");
              Sample sample;
              require(run.pull(450, sample) == PullStatus::Timeout,
