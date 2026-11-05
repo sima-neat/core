@@ -2427,15 +2427,21 @@ Sample run_sync_cached_input(const std::vector<std::shared_ptr<Node>>& nodes,
           run_cache ? static_cast<void*>(std::addressof(run_cache->runner)) : nullptr, max_buffers,
           timeout_ms, run_cache && run_cache->sync_prefill_warmed ? 1 : 0);
     }
-    if (max_buffers > 1) {
-      const bool allow_startup_lag = !run_cache->sync_prefill_warmed;
-      Sample out =
-          run_sync_prefill(run_cache->runner, input, timeout_ms, max_buffers, allow_startup_lag);
+    try {
+      if (max_buffers > 1) {
+        const bool allow_startup_lag = !run_cache->sync_prefill_warmed;
+        Sample out =
+            run_sync_prefill(run_cache->runner, input, timeout_ms, max_buffers, allow_startup_lag);
+        run_cache->sync_prefill_warmed = true;
+        return out;
+      }
       run_cache->sync_prefill_warmed = true;
-      return out;
+      return run_sync_once_typed(run_cache->runner, input, timeout_ms);
+    } catch (...) {
+      // A failed call may still produce output; it must not satisfy the next call.
+      run_cache.reset();
+      throw;
     }
-    run_cache->sync_prefill_warmed = true;
-    return run_sync_once_typed(run_cache->runner, input, timeout_ms);
   };
 
   try {

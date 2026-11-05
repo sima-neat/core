@@ -7,6 +7,7 @@
 #include <chrono>
 #include <sstream>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -78,4 +79,30 @@ RUN_TEST("pull_timeout_regression_test", [] {
   }
 
   run.stop();
+
+  Graph delayed;
+  delayed.add(nodes::Input(input_opt));
+  delayed.custom("identity sleep-time=500000");
+  delayed.add(nodes::Output(OutputOptions::EveryFrame()));
+  RunOptions delayed_opt;
+  delayed_opt.preset = RunPreset::Realtime;
+  delayed_opt.output_memory = OutputMemory::Owned;
+  delayed_opt.startup_preflight = false;
+  delayed_opt.input_timeout_ms = 100;
+  delayed_opt.advanced.sync_num_buffers_override = 1;
+
+  const auto expect_run_timeout = [&](uint8_t value) {
+    try {
+      (void)delayed.run(TensorList{make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, value)},
+                        delayed_opt);
+    } catch (const std::exception& error) {
+      require_contains(error.what(), "status=Timeout", "Graph::run failed without a pull timeout");
+      return;
+    }
+    throw std::runtime_error("Graph::run returned late output from the preceding timed-out call");
+  };
+  expect_run_timeout(0x40);
+  // Give an uncancelled first output time to arrive before the next input.
+  std::this_thread::sleep_for(std::chrono::milliseconds(650));
+  expect_run_timeout(0x80);
 });

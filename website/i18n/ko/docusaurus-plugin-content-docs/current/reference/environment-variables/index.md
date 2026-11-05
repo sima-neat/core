@@ -71,10 +71,11 @@ Palette SDK 3.0 이상에서는 `sima-cli sdk setup`이 컨테이너 환경에 `
 - `SIMA_GST_POLL_SLICE_MS=<ms>` — 앱 싱크 풀 요청에 대한 폴링 간격(기본값: 200).
 - 선호하는 API 설정:
   - `ValidateOptions.preroll_timeout_ms` — validate() 함수의 프리롤 제한 시간입니다.
-  - `RunOptions.input_timeout_ms` — build()/run() 입력 모드 풀(pull) 작업 시간 제한.
+  - `RunOptions.input_timeout_ms` — 입력 모드 `Graph::run()`과 지원되는 시드 기반 빌드 사전 검증의 출력 대기 시간.
+  - `Run::run(..., timeout_ms)` / `Model::run(..., timeout_ms)` — 호출별 출력 대기 시간. `Run::pull(-1)`과 마찬가지로 `-1`은 무제한입니다.
 - 기존 방식의 환경 변수(옵션을 전달할 수 없는 경우에만 사용):
   - `SIMA_GST_VALIDATE_TIMEOUT_MS=<ms>` — validate() 함수 실행 시간 제한(기본값: 2000/10000).
-  - `SIMA_GST_RUN_INPUT_TIMEOUT_MS=<ms>` — run() 함수 입력 시간 초과(기본값: 10000).
+  - `SIMA_GST_RUN_INPUT_TIMEOUT_MS=<ms>` — 위 `Graph::run()` / 사전 검증 출력 대기의 대체 설정(기본값: 10000).
 
 ## 진단 및 프로브
 
