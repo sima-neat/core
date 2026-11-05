@@ -331,9 +331,8 @@ void run_case(const Layout& layout, bool device_allocator, bool require_device,
     } catch (const std::exception& error) {
       const std::string message = error.what();
       rejected = message.find("CPU-backed") != std::string::npos &&
-                 message.find("TensorMemory::EV74") != std::string::npos &&
                  message.find("tensor.cvu()") != std::string::npos &&
-                 message.find("OutputPlacement::EV74") != std::string::npos;
+                 message.find("OutputOptions.placement to EV74") != std::string::npos;
     }
     require(rejected, "flag-off device ingress must reject CPU storage with actionable guidance");
     require(!fixture.pull(0), "rejected CPU input must not reach appsink");

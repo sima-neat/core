@@ -709,9 +709,10 @@ NormalizedDiagnostic kernel_runner_failure(RawGstError raw) {
     action = "Check the reported buffer's span, alignment, access rights and retained ownership.";
     if (find_structured_detail(raw, {"runtime-field"}) == "storage.hardware") {
       title = "Buffer memory is not accessible to the selected device.";
-      action = "Create the input with TensorMemory::EV74, or explicitly copy it with tensor.cvu(). "
-               "If it comes from another graph, set OutputOptions::placement = "
-               "OutputPlacement::EV74 on that graph's Output node.";
+      action = "Copy the input with tensor.cvu(). If the input comes from another graph, set that "
+               "graph's OutputOptions.placement to EV74 before building it. The graph will "
+               "allocate its output in EV74-accessible memory, allowing the tensor to be passed "
+               "directly without an extra copy.";
     }
   } else if (category == "resource_busy") {
     title = "A resource required by the kernel stage is unavailable.";
