@@ -122,6 +122,7 @@ RUN_TEST(
         const auto diagnostic = classify_gst_error(std::move(raw));
         require_code(diagnostic, error_codes::kKernelBinding);
         const auto text = render_diagnostic_body(diagnostic, false);
+        require_contains(text, "TensorMemory::EV74", "missing input creation guidance");
         require_contains(text, "tensor.cvu()", "missing explicit transfer guidance");
         require_contains(text, "OutputPlacement::EV74", "missing producer allocation guidance");
         require_contains(text, "explicitly copy", "transfer guidance must disclose the copy");
