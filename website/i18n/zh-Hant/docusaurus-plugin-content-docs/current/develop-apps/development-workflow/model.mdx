@@ -81,7 +81,6 @@ outputs = model.output_specs()
 |---|---|---|
 | 傳送已解碼的影像輸入 | `preprocess.kind`、`preprocess.preset` 以及特定的預處理欄位，例如調整大小、顏色、佈局、正規化、量化或鑲嵌 | 當您的應用程式傳送像素，且 Neat 應將其調整為模型合約時，請使用此選項。 |
 | 提供符合模型公開輸入的張量 | 不設定前處理選項 | 保留所需的 Cast/Quant/Tess 轉接器，包括已調整大小及正規化的 FP32 輸入。 |
-| 提供原生 MLA 輸入張量 | `preprocess.enable = Off` | 略過所有外部前處理，包括 `transforms`；呼叫端須提供 MLA 所需的資料類型和佈局。 |
 | 解碼偵測輸出 | `decode_type`、`decode_type_option`、`score_threshold`、`nms_iou_threshold`、`top_k`、`num_classes` | 偵測模型需要明確的解碼意圖。 |
 | 保留提取的模型檔案以供檢查 | `cleanup_extracted_model_data = false` | 在偵錯時很有用。對於正常執行，請保留預設值。 |
 | 在一個程序中執行多個模型路徑 | `name_suffix` 和圖元素名稱的前綴/後綴 | 使生成的名稱和診斷資訊更易於閱讀。 |
@@ -196,7 +195,7 @@ model = pyneat.Model(model_path)
 </CodeTab>
 </CodeTabs>
 
-僅在提供原生 MLA 張量時設定 `preprocess.enable = Off`。設定後請檢查 `input_specs()`：資料類型和佈局可能與預設路徑不同。已編譯進模型的運算仍屬於推論的一部分。
+既有的 `preprocess.enable = Off` 設定不會選擇僅執行 MLA，也不會移除 MPK 所需的 Cast/Quant/Tess 轉接器。非空的 `preprocess.transforms` 清單優先於 `Off`。
 
 ### 預處理欄位指南
 
@@ -205,7 +204,7 @@ model = pyneat.Model(model_path)
 | 需求 | 欄位 |
 |---|---|
 | 選擇圖像或張量輸入 | `preprocess.kind` |
-| 略過原生 MLA 張量的外部前處理 | `preprocess.enable = Off` |
+| 既有前處理控制（保留 MPK 所需的轉接器） | `preprocess.enable` |
 | 限制動態圖像輸入 | `preprocess.input_max_width`、`preprocess.input_max_height`、`preprocess.input_max_depth` |
 | 調整大小、裁剪或使用信箱格式 | `preprocess.resize` |
 | 轉換 RGB、BGR、NV12、I420 或灰度 | `preprocess.color_convert` |

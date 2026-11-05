@@ -244,7 +244,7 @@ Runner 保留記憶體擁有權與同步權威。Core 不新增編碼器執行�
 
 此儲存庫的標準「生產路徑」為：**輸入 -> 預處理 -> MLA -> 後處理**。權威來源位於：`tests/e2e_pipelines/obj_detection/sync_yolov8_test.cpp`。
 
-`preprocess.enable = Off` 會略過外部前處理並公開原生 MLA 輸入。預設張量路徑會保留 MPK 所需的轉接器；已編譯的運算仍屬於推論的一部分。
+即使設定 `preprocess.enable = Off`，`Model` 仍會保留 MPK 所需的 Cast/Quant/Tess 轉接器；應用程式張量必須符合公開輸入契約，而不一定是原生 MLA 契約。
 
 當此測試發生更改時，請更新 README + 架構，以保持檔案的一致性。
 

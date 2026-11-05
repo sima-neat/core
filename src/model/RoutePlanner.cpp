@@ -3432,38 +3432,7 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
   out.boxdecode_selected = user_requested_boxdecode(options);
 
   const bool use_ordered_pre_ops = have_capability && !capability->ordered_pre_ops.empty();
-  if (options.preprocess.enable == AutoFlag::Off) {
-    out.use_preproc = false;
-    out.preproc_context.pre_cast_needed = false;
-    if (use_ordered_pre_ops) {
-      if (!pack || !pack->mpk_contract()) {
-        throw std::runtime_error("preprocess.enable=Off requires the MPK MLA input contract");
-      }
-      const auto& contract = *pack->mpk_contract();
-      const auto* mla = pipeline_internal::sima::get_first_mla_stage_io_contract(contract);
-      if (!mla) {
-        throw std::runtime_error("preprocess.enable=Off requires an MLA stage in the MPK");
-      }
-      const auto mla_index = pipeline_internal::sima::find_plugin_index_by_name_or_id(
-                                 contract, !mla->name.empty() ? mla->name : mla->plugin_id)
-                                 .value();
-      out.ingress_contracts.clear();
-      for (const auto& input :
-           pipeline_internal::sima::get_mla_boundary_physical_inputs_contract(contract)) {
-        IngressTensorContract ingress;
-        if (!populate_tensor_contract_from_stage_tensor(input, "application/vnd.simaai.tensor",
-                                                        mla->name, &ingress)) {
-          throw std::runtime_error("preprocess.enable=Off: invalid MLA input shape for " +
-                                   input.name);
-        }
-        ingress.ingress_index = static_cast<int>(out.ingress_contracts.size());
-        ingress.dst_plugin_index = mla_index;
-        ingress.dst_input_index = ingress.ingress_index;
-        out.ingress_contracts.push_back(std::move(ingress));
-      }
-    }
-    out.diagnostics.push_back("session-route: preprocess=Off -> native MLA inputs");
-  } else if (use_ordered_pre_ops) {
+  if (use_ordered_pre_ops) {
     std::vector<SessionPreStageOp> desired_pre_chain;
     desired_pre_chain.reserve(capability->ordered_pre_ops.size());
     bool ordered_pre_has_preproc = false;

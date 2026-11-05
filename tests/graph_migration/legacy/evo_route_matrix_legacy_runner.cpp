@@ -66,6 +66,8 @@ int main(int argc, char** argv) {
 
   try {
     Model::Options opt;
+    opt.preprocess.kind = InputKind::Tensor;
+    opt.preprocess.enable = AutoFlag::On;
     opt.processcvu.pre_run_target = pre;
     opt.processcvu.post_run_target = post;
     opt.cleanup_extracted_model_data = true;

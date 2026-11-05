@@ -232,7 +232,8 @@ struct Transform {
  */
 struct PreprocessOptions {
   InputKind kind = InputKind::Auto; ///< Whether inputs are images or pre-shaped tensors.
-  AutoFlag enable = AutoFlag::Auto; ///< Master switch — set `Off` to skip preprocess entirely.
+  AutoFlag enable = AutoFlag::Auto; ///< Legacy preprocessing control; `Off` retains MPK-required
+                                    ///< adapters and does not select MLA-only execution.
 
   int input_max_width = 0;  ///< Input-width capacity; `0` uses the image default (1920 px).
   int input_max_height = 0; ///< Input-height capacity; `0` uses the image default (1080 px).

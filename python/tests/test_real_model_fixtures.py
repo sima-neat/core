@@ -101,6 +101,8 @@ def _tensor_input_model(
     top_k: int = 0,
 ) -> pyneat.Model:
   opt = pyneat.ModelOptions()
+  opt.preprocess.kind = pyneat.InputKind.Tensor
+  opt.preprocess.enable = pyneat.AutoFlag.Off
   opt.decode_type = decode_type
   opt.top_k = top_k
   return pyneat.Model(str(model_tar), opt)

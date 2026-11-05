@@ -81,7 +81,6 @@ outputs = model.output_specs()
 | --- | --- | --- |
 | デコードされた画像を送信 | `preprocess.kind`、`preprocess.preset`、および、リサイズ、カラー、レイアウト、正規化、量子化、またはテッセレーションなどの特定のプリプロセスフィールド。 | アプリがピクセルデータを送信する場合にこれを使用し、Neat がそれらをモデル契約に適合するように調整します。 |
 | モデルの公開入力に一致するテンソルを渡す | 前処理オプションを未設定にします。 | リサイズ・正規化済みのFP32入力にも必要なCast/Quant/Tessアダプターを維持します。 |
-| ネイティブMLA入力テンソルを渡す | `preprocess.enable = Off` | `transforms`を含むすべての外部前処理を省略します。呼び出し側がMLAに必要なデータ型とレイアウトを提供します。 |
 | 検出結果を解析する。 | `decode_type`, `decode_type_option`, `score_threshold`, `nms_iou_threshold`, `top_k`, `num_classes` | 検出モデルには、明確なデコード意図が必要です。 |
 | 抽出したモデルファイルを保管し、必要に応じて確認できるようにします。 | `cleanup_extracted_model_data = false` | デバッグ時に役立ちます。通常の使用時には、デフォルト設定のままにしておいてください。 |
 | 1つのプロセスで複数のモデルのルートを実行する | `name_suffix`と、グラフ要素名のプレフィックス／サフィックス | 生成された名前と診断結果を読みやすく表示します。 |
@@ -196,7 +195,7 @@ model = pyneat.Model(model_path)
 </CodeTab>
 </CodeTabs>
 
-ネイティブMLA用のテンソルを渡す場合にのみ`preprocess.enable = Off`を設定します。設定後に`input_specs()`を確認してください。データ型やレイアウトはデフォルト経路と異なる場合があります。モデルにコンパイルされた演算は推論の一部として残ります。
+従来の`preprocess.enable = Off`設定は、MLAのみの実行を選択したり、MPKに必要なCast/Quant/Tessアダプターを削除したりしません。空でない`preprocess.transforms`リストは`Off`より優先されます。
 
 ### フィールドガイドの準備
 
@@ -205,7 +204,7 @@ model = pyneat.Model(model_path)
 | 必要です | フィールド |
 | --- | --- |
 | 画像またはテンソルを入力として選択してください。 | `preprocess.kind` |
-| ネイティブMLA用テンソルの外部前処理を省略する | `preprocess.enable = Off` |
+| 従来の前処理制御（MPKに必要なアダプターは維持） | `preprocess.enable` |
 | 動的な画像の入力を制限する | `preprocess.input_max_width`, `preprocess.input_max_height`, `preprocess.input_max_depth` |
 | サイズ変更、トリミング、またはレターボックス表示 | `preprocess.resize` |
 | RGB、BGR、NV12、I420、またはグレースケールに変換します。 | `preprocess.color_convert` |

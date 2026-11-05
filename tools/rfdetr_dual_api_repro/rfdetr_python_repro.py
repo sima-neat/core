@@ -26,6 +26,8 @@ def main() -> int:
   print(f"[python] processcvu pre/post target={run_target}", flush=True)
 
   opt = pyneat.ModelOptions()
+  opt.preprocess.kind = pyneat.InputKind.Tensor
+  opt.preprocess.enable = pyneat.AutoFlag.Off
   opt.processcvu.pre_run_target = run_target
   opt.processcvu.post_run_target = run_target
 

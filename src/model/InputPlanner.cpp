@@ -712,8 +712,9 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
   validate_layout_convert_spec(effective.layout_convert);
 
   if (effective.enable == AutoFlag::Off && has_transforms) {
-    out.resolved_plan.warnings.push_back("preprocess.enable=Off: ignoring preprocess.transforms; "
-                                         "input must match the MLA contract.");
+    out.resolved_plan.warnings.push_back(
+        "preprocess.enable=Off with non-empty transforms: transforms are applied.");
+    effective.enable = AutoFlag::On;
   }
 
   bool resize_enabled = resolve_step_enabled(
@@ -731,7 +732,7 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
   bool normalize_enabled =
       resolve_step_enabled(effective.normalize.enable, normalize_requested_or_preset);
 
-  InputKind kind = effective.enable == AutoFlag::Off ? InputKind::Tensor : effective.kind;
+  InputKind kind = effective.kind;
   if (kind == InputKind::Auto) {
     const bool image_like = resize_enabled || color_enabled || layout_enabled ||
                             normalize_enabled || effective.preset != NormalizePreset::None;

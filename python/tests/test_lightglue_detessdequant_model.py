@@ -59,6 +59,7 @@ def _run_worker(model_path: Path, target: str, output_path: Path) -> dict[str, o
   import pyneat
 
   options = pyneat.ModelOptions()
+  options.preprocess.kind = pyneat.InputKind.Tensor
   if target != "AUTO":
     options.processcvu.post_run_target = target
 

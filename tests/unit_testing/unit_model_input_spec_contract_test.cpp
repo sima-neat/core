@@ -88,6 +88,7 @@ void check_tensor_shape_metadata() {
   for (const auto& [shape, batch] : cases) {
     const auto fixture = make_cast_ingress_fixture(shape, batch);
     Model::Options options;
+    options.preprocess.kind = InputKind::Tensor;
     Model model(fixture.tar_path, options);
     const auto specs = model.input_specs();
     require(specs.size() == 1U && specs[0].shape == shape &&
@@ -114,6 +115,7 @@ void check_tensor_shape_metadata() {
 
 void check_model_input_projection() {
   Model::Options options;
+  options.preprocess.kind = InputKind::Tensor;
   Model model(require_yolov9_tar(), options);
   Graph graph;
   InputOptions input;
@@ -242,6 +244,7 @@ void check_ingress_memory_policy() {
           std::string(target) == "A65" ? InputMemoryPolicy::Dms0 : InputMemoryPolicy::Ev74;
       for (const bool advanced : {false, true}) {
         Model::Options options;
+        options.preprocess.kind = InputKind::Tensor;
         if (advanced)
           options.advanced_execution.preprocess_target = target;
         else
@@ -497,6 +500,7 @@ void check_multi_ingress_wire_projection() {
                                 sima_test::model_archive_shell_quote(fixture.root_dir) + " .";
     require(std::system(archive.c_str()) == 0, "failed to archive multi-ingress wire fixture");
     Model::Options options;
+    options.preprocess.kind = InputKind::Tensor;
     Model model(fixture.tar_path, options);
     const std::vector<int64_t> wire_shape{reverse_public_order ? 2 : 4,
                                           reverse_public_order ? 8 : 4, 1};

@@ -614,6 +614,8 @@ RoutePlannerFixtureResult route_plan_for_fixture(const sima_test::ModelArchiveFi
   using namespace simaai::neat::internal;
 
   Model::Options opt;
+  opt.preprocess.kind = InputKind::Tensor;
+  opt.preprocess.enable = AutoFlag::On;
   Model model(fixture.tar_path, opt);
   for (const auto& warning : model.resolved_preprocess_plan().warnings) {
     require(warning.rfind("route: ", 0U) != 0U,
@@ -764,6 +766,7 @@ RUN_TEST(
       for (const int batch : {1, 4}) {
         const auto fixture = make_packed_post_fixture(batch);
         Model::Options options;
+        options.preprocess.kind = InputKind::Tensor;
         options.processcvu.post_run_target = "A65";
         Model model(fixture.tar_path, options);
         const auto post = ModelAccess::build_public_postprocess_nodes(model);
@@ -779,7 +782,9 @@ RUN_TEST(
 
       {
         const auto fixture = make_bf16_mla_tess_fixture("model_route_bf16_mla_tess");
-        Model model(fixture.tar_path);
+        Model::Options options;
+        options.preprocess.enable = AutoFlag::Off;
+        Model model(fixture.tar_path, options);
 
         const auto pre = ModelAccess::build_public_preprocess_nodes(model);
         const auto post = ModelAccess::build_public_postprocess_nodes(model);
@@ -789,31 +794,13 @@ RUN_TEST(
         const std::string pre_kind = pre.front() ? pre.front()->kind() : "";
         const std::string post_kind = post.front() ? post.front()->kind() : "";
         require(pre_kind == "QuantTess",
-                "strict MPK route should select QuantTess preprocess stage");
+                "preprocess Off must preserve MPK-required Quant/Tess adapters");
         require(post_kind == "DetessDequant",
                 "strict MPK route should select DetessDequant postprocess stage");
 
         const TensorSpec in_spec = model.input_specs().front();
         require(!in_spec.dtypes.empty() && in_spec.dtypes[0] == TensorDType::Float32,
-                "strict MPK route input spec should expose FP32 host ingress dtype");
-
-        Model::Options native_options;
-        native_options.preprocess.kind = InputKind::Image;
-        native_options.preprocess.enable = AutoFlag::Off;
-        Model native_model(fixture.tar_path, native_options);
-        require(ModelAccess::build_public_preprocess_nodes(native_model).empty() &&
-                    !native_model.info().selection.include_preprocess_stage,
-                "master Off must omit the external preprocessing route, including Image input");
-        const auto native_inputs = native_model.input_specs();
-        require(native_inputs.size() == 1U &&
-                    native_inputs[0].dtypes == std::vector<TensorDType>{TensorDType::Int8} &&
-                    native_inputs[0].shape == std::vector<int64_t>({640, 640, 3}),
-                "master Off must expose the native MLA input, not the skipped FP32 Quant input");
-        const auto native_post = ModelAccess::build_public_postprocess_nodes(native_model);
-        require(!native_post.empty() && native_post.front()->kind() == post_kind,
-                "master Off must preserve output conversion");
-        Graph native_route;
-        ModelAccess::configure_session_input_route(native_route, native_model, {});
+                "preprocess Off must preserve the public FP32 input contract");
       }
 
       {
@@ -910,7 +897,14 @@ RUN_TEST(
         const auto fixture =
             make_multi_ingress_cast_join_fixture("model_route_multi_ingress_cast_join");
         Model::Options opt;
+        opt.preprocess.kind = InputKind::Tensor;
+        opt.preprocess.enable = AutoFlag::Off;
         Model model(fixture.tar_path, opt);
+
+        for (const auto& input : model.input_specs()) {
+          require(input.dtypes == std::vector<TensorDType>{TensorDType::Float32},
+                  "preprocess Off must preserve FP32 inputs to the Cast adapters");
+        }
 
         const auto& pack = ModelAccess::pack(model);
         const PreprocessCapabilities capabilities = inspect_preprocess_capabilities(pack);
@@ -961,14 +955,6 @@ RUN_TEST(
         require(route_plan.ingress_regions[1].op_kind ==
                     pipeline_internal::sima::RouteGraphKernelKind::PassThrough,
                 "fanin join region should preserve pass-through join kind");
-
-        opt.preprocess.enable = AutoFlag::Off;
-        Model native_model(fixture.tar_path, opt);
-        const auto native_inputs = native_model.input_specs();
-        require(ModelAccess::build_public_preprocess_nodes(native_model).empty() &&
-                    native_inputs.size() == 1U &&
-                    native_inputs[0].dtypes == std::vector<TensorDType>{TensorDType::BFloat16},
-                "master Off must expose the packed native BF16 input without Cast/Pack stages");
       }
 
       {
@@ -1000,6 +986,8 @@ RUN_TEST(
                 "single MLA public BF16 route should not request BF16->FP32 post cast");
 
         Model::Options opt;
+        opt.preprocess.kind = InputKind::Tensor;
+        opt.preprocess.enable = AutoFlag::On;
         Model model(fixture.tar_path, opt);
         const auto input_specs = model.input_specs();
         require(input_specs.size() == 1U, "single MLA public BF16 route should expose one input");
@@ -1089,6 +1077,8 @@ RUN_TEST(
             }
 
             Model::Options opt;
+            opt.preprocess.kind = InputKind::Tensor;
+            opt.preprocess.enable = AutoFlag::On;
             Model model(model_path.string(), opt);
 
             const auto& pack = ModelAccess::pack(model);
@@ -1161,6 +1151,8 @@ RUN_TEST(
 
       if (std::filesystem::exists(evo_bf16_mlatess_model_path())) {
         Model::Options opt;
+        opt.preprocess.kind = InputKind::Tensor;
+        opt.preprocess.enable = AutoFlag::On;
         Model model(evo_bf16_mlatess_model_path().string(), opt);
 
         const auto& pack = ModelAccess::pack(model);
@@ -1208,6 +1200,8 @@ RUN_TEST(
 
       if (std::filesystem::exists(evo_int8_ev74tess_model_path())) {
         Model::Options opt;
+        opt.preprocess.kind = InputKind::Tensor;
+        opt.preprocess.enable = AutoFlag::On;
         Model model(evo_int8_ev74tess_model_path().string(), opt);
 
         const auto& pack = ModelAccess::pack(model);

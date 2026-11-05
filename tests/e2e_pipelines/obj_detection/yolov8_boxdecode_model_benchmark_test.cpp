@@ -15,6 +15,14 @@ namespace {
 
 simaai::neat::Model::Options boxdecode_model_options() {
   simaai::neat::Model::Options options;
+  options.preprocess.kind = simaai::neat::InputKind::Tensor;
+  options.preprocess.enable = simaai::neat::AutoFlag::Auto;
+  options.preprocess.resize.enable = simaai::neat::AutoFlag::Off;
+  options.preprocess.color_convert.enable = simaai::neat::AutoFlag::Off;
+  options.preprocess.layout_convert.enable = simaai::neat::AutoFlag::Off;
+  options.preprocess.normalize.enable = simaai::neat::AutoFlag::Off;
+  options.preprocess.quantize.enable = simaai::neat::AutoFlag::Auto;
+  options.preprocess.tessellate.enable = simaai::neat::AutoFlag::Auto;
   options.decode_type = simaai::neat::BoxDecodeType::YoloV8;
   options.score_threshold = 0.52F;
   options.nms_iou_threshold = 0.5F;

@@ -2249,6 +2249,14 @@ simaai::neat::Model::Options default_model_options() {
 
 simaai::neat::Model::Options canonical_model_options(BoxDecodeRunMode boxdecode_mode) {
   simaai::neat::Model::Options opt;
+  opt.preprocess.kind = simaai::neat::InputKind::Tensor;
+  opt.preprocess.enable = simaai::neat::AutoFlag::Auto;
+  opt.preprocess.resize.enable = simaai::neat::AutoFlag::Off;
+  opt.preprocess.color_convert.enable = simaai::neat::AutoFlag::Off;
+  opt.preprocess.layout_convert.enable = simaai::neat::AutoFlag::Off;
+  opt.preprocess.normalize.enable = simaai::neat::AutoFlag::Off;
+  opt.preprocess.quantize.enable = simaai::neat::AutoFlag::Auto;
+  opt.preprocess.tessellate.enable = simaai::neat::AutoFlag::Auto;
   if (boxdecode_mode == BoxDecodeRunMode::Model) {
     // Force the model route itself to terminate in the NEAT boxdecode plugin.
     opt.decode_type = simaai::neat::BoxDecodeType::YoloV8;
