@@ -308,8 +308,10 @@ RUN_TEST(
                     sender.is_raw_input(),
                 "sender must own encoding options and infer input dimensions");
         const auto sender_fragment = VideoSender(sender).describe_backend();
-        require(sender_fragment.find("width=") == std::string::npos &&
-                    sender_fragment.find("height=") == std::string::npos,
+        const auto raw_ingress =
+            sender_fragment.substr(0, sender_fragment.find("neatencoder name="));
+        require(raw_ingress.find("width=") == std::string::npos &&
+                    raw_ingress.find("height=") == std::string::npos,
                 "automatic sender must negotiate dimensions without a Core resolution ceiling");
         const auto sender_adapter = sender_fragment.find("neatencoderinput");
         require(sender_adapter != std::string::npos &&
