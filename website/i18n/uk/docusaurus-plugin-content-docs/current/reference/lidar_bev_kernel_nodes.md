@@ -73,7 +73,7 @@ Python надає ті самі типи параметрів і фабрики 
 | `SimaVoxelize` | FP32 `points` `[N,4]` (x, y, z, часовий зсув); INT32 `point_count` `[1]` | INT8 або BF16 `decorated` `[1,M,T,10]`; INT32 `coordinates` `[M,2]` як (row, column); INT32 `count` `[1]` |
 | `SimaPillarScatter` | INT8 або BF16 `features` `[M,C]`; INT32 `coordinates` `[M,2]`; INT32 `count` `[1]` | `canvas` `[1,H,W,C]` того самого типу, що й `features` |
 | `SimaBEVPoolPlan` | FP32 `camera2lidar`, `camera_intrinsics` і `img_aug_matrix` `[N,4,4]`; FP32 `lidar_aug_matrix` `[4,4]` | UINT8 `plan` `[P]` |
-| `SimaBEVPool` | INT8 або BF16 `depth`; `context` того самого типу; UINT8 `plan` `[P]` | INT8 або BF16 `bev` `[1,nZ*C,nX,nY]` |
+| `SimaBEVPool` | INT8 або BF16 `depth`; `context` того самого типу; UINT8 `plan` `[P]` | INT8 або BF16 `bev`, щільний NHWC `[1,nX,nY,nZ*C]` |
 
 - **SimaVoxelize** читає лише перші `point_count` точок. `max_pillars` (`M`) і
   `max_points_per_pillar` (`T`) — фіксовані місткості; точки й стовпці понад них
@@ -91,11 +91,11 @@ Python надає ті самі типи параметрів і фабрики 
 - **SimaBEVPool** підсумовує `depth x context` за точками плану кожної комірки й квантує суму за
   допомогою `quantization`. Задайте `cells` рівним `nx` плану, `plan_format` — `format`
   плану, а для входів INT8 `quantization.multiplier` — `depth_scale * context_scale / output_scale`. З
-  типовим `SimaBEVPoolStorage::ChannelsLast` входи надходять як `[N,fH,fW,D]` і `[N,fH,fW,C]`,
-  як їх створюють моделі камер. Вихід публікується як логічний `[1,nZ*C,nX,nY]` із кроками
-  «канали останніми», тож його байти мають розміщення NHWC `[1,nX,nY,nZ*C]`.
-  `SimaBEVPoolStorage::Contiguous` використовує входи `[N,D,fH,fW]` і `[N,C,fH,fW]` та щільний
-  вихід.
+  типовим `input_storage = SimaBEVPoolStorage::ChannelsLast` входи надходять як `[N,fH,fW,D]` і
+  `[N,fH,fW,C]`, як їх створюють моделі камер; `SimaBEVPoolStorage::Contiguous` приймає входи
+  `[N,D,fH,fW]` і `[N,C,fH,fW]`. Вихід завжди щільний тензор NHWC `[1,nX,nY,nZ*C]`, який модель
+  BEV безпосередньо приймає як вхід; редукцію його каналів виконуйте за віссю 3, наприклад
+  за допомогою `SimaArgMax`.
 
 ### Логічні осі та фізичне розміщення
 
@@ -112,8 +112,9 @@ Python надає ті самі типи параметрів і фабрики 
 NHWC або нещільний логічний NCHW із кроками «канали останніми». Якщо виміри
 розміру 1 роблять логічне подання NCHW також щільним, явно задайте
 `Tensor.layout = TensorLayout::CHW`. У цьому випадку самі кроки не визначають
-логічні осі. Виходи Pool мають логічні осі CHW і кроки відповідно до
-`output_storage`; вузол не транспонує й не копіює дані для зміни розміщення.
+логічні осі. Вихід Pool — перевірений ядром тензор, щільний HWC `[1,nX,nY,nZ*C]`,
+незалежно від розміщення входів. Вузол описує записані ним байти й не транспонує та
+не копіює їх для зміни розміщення.
 
 ### Метадані квантування
 

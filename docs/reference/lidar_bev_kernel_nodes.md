@@ -74,7 +74,7 @@ checked when the graph is built.
 | `SimaVoxelize` | FP32 `points` `[N,4]` (x, y, z, time offset); INT32 `point_count` `[1]` | INT8 or BF16 `decorated` `[1,M,T,10]`; INT32 `coordinates` `[M,2]` as (row, column); INT32 `count` `[1]` |
 | `SimaPillarScatter` | INT8 or BF16 `features` `[M,C]`; INT32 `coordinates` `[M,2]`; INT32 `count` `[1]` | `canvas` `[1,H,W,C]` of the same type as `features` |
 | `SimaBEVPoolPlan` | FP32 `camera2lidar`, `camera_intrinsics`, and `img_aug_matrix` `[N,4,4]`; FP32 `lidar_aug_matrix` `[4,4]` | UINT8 `plan` `[P]` |
-| `SimaBEVPool` | INT8 or BF16 `depth`; `context` of the same type; UINT8 `plan` `[P]` | INT8 or BF16 `bev` `[1,nZ*C,nX,nY]` |
+| `SimaBEVPool` | INT8 or BF16 `depth`; `context` of the same type; UINT8 `plan` `[P]` | INT8 or BF16 `bev`, dense NHWC `[1,nX,nY,nZ*C]` |
 
 - **SimaVoxelize** reads only the first `point_count` points. `max_pillars` (`M`) and
   `max_points_per_pillar` (`T`) are fixed capacities; points and pillars beyond them
@@ -93,11 +93,11 @@ checked when the graph is built.
   sum with `quantization`. Set `cells` to the plan's `nx`, `plan_format` to the
   plan's `format`, and, for INT8 inputs, `quantization.multiplier` to
   `depth_scale * context_scale / output_scale`. With the default
-  `SimaBEVPoolStorage::ChannelsLast`, inputs arrive as `[N,fH,fW,D]` and `[N,fH,fW,C]`,
-  as camera models produce them. The output is published as logical
-  `[1,nZ*C,nX,nY]` with channels-last strides, so its bytes are NHWC
-  `[1,nX,nY,nZ*C]`. `SimaBEVPoolStorage::Contiguous` uses `[N,D,fH,fW]` and
-  `[N,C,fH,fW]` inputs and a dense output.
+  `input_storage = SimaBEVPoolStorage::ChannelsLast`, inputs arrive as `[N,fH,fW,D]`
+  and `[N,fH,fW,C]`, as camera models produce them; `SimaBEVPoolStorage::Contiguous`
+  takes `[N,D,fH,fW]` and `[N,C,fH,fW]` inputs. The output is always a dense NHWC
+  `[1,nX,nY,nZ*C]` tensor, which a BEV model takes as its input directly; reduce its
+  channels on axis 3, for example with `SimaArgMax`.
 
 ### Logical axes and physical storage
 
@@ -113,9 +113,10 @@ when both annotations are present, they must agree.
 For untagged `ChannelsLast` inputs, the compatibility convention is dense NHWC
 or non-dense logical NCHW with channels-last strides. If singleton dimensions
 make a logical NCHW view also dense, set `Tensor.layout = TensorLayout::CHW`
-explicitly. Strides alone cannot identify the logical axes in that case. Pool
-outputs carry CHW logical axes and the strides for `output_storage`; the node
-does not transpose or copy payload bytes to change layouts.
+explicitly. Strides alone cannot identify the logical axes in that case. The
+Pool output is the kernel's checked tensor, dense HWC `[1,nX,nY,nZ*C]`, whatever
+the input storage. The node describes the bytes it wrote and does not transpose
+or copy them to change layouts.
 
 ### Quantization metadata
 

@@ -251,6 +251,13 @@ void bev_pool_plan_request() {
       "camera_intrinsics must be [N,4,4] with the same N", "bev_pool_plan camera mismatch");
 }
 
+bool has_parameter(const kr::KernelRequestPlan& plan, const std::string& name) {
+  for (const auto& p : plan.parameters)
+    if (p.name == name)
+      return true;
+  return false;
+}
+
 void bev_pool_request() {
   auto opt = ref::bev_pool_case().options;
   // Dense NHWC camera outputs [N,fH,fW,D] / [N,fH,fW,C].
@@ -269,10 +276,13 @@ void bev_pool_request() {
   require(plan.inputs[1].shape == std::vector<std::int64_t>{2, 16, 2, 3} &&
               strides(plan.inputs[1]) == std::vector<std::int64_t>{96, 1, 48, 16},
           "bev_pool context is logical [N,C,fH,fW] with channels-last strides");
-  require(plan.outputs[0].shape == std::vector<std::int64_t>{1, 16, 4, 4} &&
-              strides(plan.outputs[0]) == std::vector<std::int64_t>{256, 1, 64, 16} &&
-              plan.published[0].stride_bytes == std::vector<std::int64_t>{256, 1, 64, 16},
-          "bev_pool bev is channels-last [1,nZ*C,nX,nY]");
+  require(plan.outputs[0].shape == std::vector<std::int64_t>{1, 4, 4, 16} &&
+              std::holds_alternative<rt::Contiguous>(plan.outputs[0].layout) &&
+              !has_parameter(plan, "bev_axes"),
+          "bev_pool requests a Contiguous NHWC [1,nX,nY,nZ*C] bev");
+  require(plan.published[0].shape == plan.outputs[0].shape &&
+              plan.published[0].stride_bytes.empty() && plan.published[0].layout == "NHWC",
+          "bev_pool publishes its checked NHWC bev unchanged");
   require(scalar<std::int64_t>(plan, "depth_zero_point") == -128 &&
               scalar<std::int64_t>(plan, "context_zero_point") == -5 &&
               scalar<std::int64_t>(plan, "plan_format") == 1 &&
@@ -287,17 +297,19 @@ void bev_pool_request() {
   const auto same = kr::bev_pool_request(opt, strided);
   require(same.inputs == plan.inputs, "bev_pool accepts channels-last strided producers");
 
-  opt.input_storage = opt.output_storage = SimaBEVPoolStorage::Contiguous;
+  opt.input_storage = SimaBEVPoolStorage::Contiguous;
   const std::array nchw{fact({2, 2, 2, 3}, rt::DType::Int8), fact({2, 16, 2, 3}, rt::DType::Int8),
                         fact({228}, rt::DType::UInt8)};
   plan = kr::bev_pool_request(opt, nchw);
   require(std::holds_alternative<rt::Contiguous>(plan.inputs[0].layout) &&
               std::holds_alternative<rt::Contiguous>(plan.outputs[0].layout) &&
-              plan.published[0].stride_bytes.empty(),
-          "bev_pool contiguous storage");
+              plan.outputs[0].shape == std::vector<std::int64_t>{1, 4, 4, 16} &&
+              plan.published[0].shape == plan.outputs[0].shape &&
+              plan.published[0].stride_bytes.empty() && plan.published[0].layout == "NHWC",
+          "bev_pool contiguous inputs still produce the dense NHWC bev");
   opt.cells[2] = 2;
   plan = kr::bev_pool_request(opt, nchw);
-  require(plan.outputs[0].shape == std::vector<std::int64_t>{1, 32, 4, 4},
+  require(plan.outputs[0].shape == std::vector<std::int64_t>{1, 4, 4, 32},
           "bev_pool output channels are nZ * C");
   require_throws(
       [&] {
@@ -336,8 +348,11 @@ void bev_pool_logical_axes() {
     require(checked_chw.inputs[0].shape == logical.shape &&
                 checked_chw.inputs == checked_hwc.inputs,
             "tagged CHW and HWC must describe the same singleton geometry");
-    require(checked_chw.published[0].layout == "CHW",
-            "Pool output publishes logical CHW authority independently of storage");
+    require(checked_chw.published[0].layout == "NHWC" &&
+                checked_chw.published[0].shape ==
+                    std::vector<std::int64_t>{1, options.cells[0], options.cells[1],
+                                              options.cells[2] * channels},
+            "Pool output publishes NHWC whatever the input tags");
   }
   auto depth = fact({2, 1, 2, 3}, rt::DType::Int8);
   depth.layout = "CHW";
@@ -435,12 +450,9 @@ void checked_extent_boundaries() {
   }
 
   pool = ref::bev_pool_case().options;
-  for (const bool input : {false, true}) {
-    auto invalid = pool;
-    (input ? invalid.input_storage : invalid.output_storage) = static_cast<SimaBEVPoolStorage>(-1);
-    require_throws([&] { kr::validate(invalid); }, "must be Contiguous or ChannelsLast",
-                   "unknown storage is not silently interpreted as a supported layout");
-  }
+  pool.input_storage = static_cast<SimaBEVPoolStorage>(-1);
+  require_throws([&] { kr::validate(pool); }, "must be Contiguous or ChannelsLast",
+                 "unknown storage is not silently interpreted as a supported layout");
 }
 
 // --------------------------------------------------------------------------
@@ -459,13 +471,6 @@ void dtype_tokens() {
   for (const auto dtype : {rt::DType::Float32, rt::DType::BFloat16, rt::DType::Int8,
                            rt::DType::UInt8, rt::DType::Int16, rt::DType::Int32, rt::DType::UInt16})
     require(kr::dtype_from_token(kr::dtype_token(dtype), "T") == dtype, "dtype token round trip");
-}
-
-bool has_parameter(const kr::KernelRequestPlan& plan, const std::string& name) {
-  for (const auto& p : plan.parameters)
-    if (p.name == name)
-      return true;
-  return false;
 }
 
 std::vector<std::int64_t> strides(const rt::TensorSpec& spec) {
@@ -554,15 +559,19 @@ void bf16_requests() {
               strides(plan.inputs[0]) == std::vector<std::int64_t>{24, 2, 12, 4} &&
               strides(plan.inputs[1]) == std::vector<std::int64_t>{192, 2, 96, 32} &&
               plan.outputs[0].dtype == rt::DType::BFloat16 &&
-              strides(plan.outputs[0]) == std::vector<std::int64_t>{512, 2, 128, 32} &&
-              plan.published[0].stride_bytes == std::vector<std::int64_t>{512, 2, 128, 32} &&
+              plan.outputs[0].shape == std::vector<std::int64_t>{1, 4, 4, 16} &&
+              std::holds_alternative<rt::Contiguous>(plan.outputs[0].layout) &&
+              plan.published[0].stride_bytes.empty() &&
+              plan.published[0].shape == plan.outputs[0].shape &&
+              plan.published[0].layout == "NHWC" &&
               scalar<std::int64_t>(plan, "depth_zero_point") == 0 &&
               scalar<double>(plan, "quantization_multiplier") == 1.0,
           "SimaBEVPool BF16 request");
   pool.output_dtype = TensorDType::Int8;
   plan = kr::bev_pool_request(pool, bf);
   require(plan.outputs[0].dtype == rt::DType::Int8 &&
-              strides(plan.outputs[0]) == std::vector<std::int64_t>{256, 1, 64, 16},
+              plan.outputs[0].shape == std::vector<std::int64_t>{1, 4, 4, 16} &&
+              std::holds_alternative<rt::Contiguous>(plan.outputs[0].layout),
           "SimaBEVPool BF16 inputs with an INT8 bev");
 }
 
