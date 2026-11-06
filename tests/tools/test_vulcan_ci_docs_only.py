@@ -5,6 +5,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +16,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/vulcan-ci.yml"
+sys.path.insert(0, str(ROOT / "tools/ci"))
+import scheduler_dependency
 
 
 def job_block(name: str) -> str:
@@ -57,8 +60,47 @@ class VulcanCiDocsOnlyTests(unittest.TestCase):
         self.assertEqual(resolver["with"]["manifest_artifact"], "neat-core-dist")
         self.assertEqual(resolver["with"]["manifest_path"], "scheduler-sdk-policy.json")
         self.assertNotIn("elxr_version", dependencies)
-        self.assertEqual(dependencies["scheduler"], {"policy": "snap"})
+        self.assertNotIn("sysroot-version", dependencies)
         self.assertIn("--output dist/scheduler-sdk-policy.json", (ROOT / "build.sh").read_text())
+
+    def test_scheduler_policy_supports_snap_and_explicit_pins(self) -> None:
+        # Selection may change without moving SDK/firmware identity into Core's
+        # manifest. Both device and native acquisition use this shared policy.
+        for policy, expected in (
+            ({"policy": "snap"}, ("feature/core", "latest")),
+            ({"branch": "feature/cohort", "spec": "a" * 40}, ("feature/cohort", "a" * 40)),
+        ):
+            for profile in ("", "pcie-host-ubuntu24-amd64"):
+                with self.subTest(policy=policy, profile=profile), tempfile.TemporaryDirectory() as temp:
+                    root = Path(temp)
+                    (root / "deps").mkdir()
+                    (root / "deps/manifest.json").write_text(json.dumps({"scheduler": policy}))
+                    output = root / "selected"
+                    with mock.patch.object(scheduler_dependency, "current_core_tag", return_value=""), \
+                            mock.patch.object(scheduler_dependency, "acquire", return_value={}) as transport:
+                        scheduler_dependency.acquire_scheduler(
+                            "sima-cli", root, "feature/core", None, "production", output,
+                            package_path=profile)
+                    transport.assert_called_once_with(
+                        "sima-cli", "scheduler", *expected, "production", output, package_path=profile)
+
+    def test_explicit_scheduler_pin_never_falls_back_to_develop(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "deps").mkdir()
+            (root / "deps/manifest.json").write_text(json.dumps({
+                "scheduler": {"branch": "feature/cohort", "spec": "a" * 40}}))
+            for profile in ("", "pcie-host-ubuntu24-amd64"):
+                with self.subTest(profile=profile), \
+                        mock.patch.object(scheduler_dependency, "acquire", side_effect=
+                            scheduler_dependency.PublicationResolutionError(1, ["fixture"])) as transport, \
+                        mock.patch.object(scheduler_dependency, "branch_is_unpublished") as fallback:
+                    with self.assertRaises(scheduler_dependency.PublicationResolutionError):
+                        scheduler_dependency.acquire_scheduler(
+                            "sima-cli", root, "feature/core", None, "production", root / "selected",
+                            package_path=profile)
+                    self.assertEqual(transport.call_count, 1)
+                    fallback.assert_not_called()
 
     def test_devkit_guard_requires_actual_selected_firmware_without_fallback(self) -> None:
         expected_firmware = "3.0.0_master_B2501"
