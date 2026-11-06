@@ -10,8 +10,6 @@ sidebar_position: 2
 
 ## ランタイム / ライブラリ (`src/`)
 
-件数：153
-
 - `GST_PLUGIN_PATH`
 - `GST_PLUGIN_PATH_1_0`
 - `GST_PLUGIN_SCANNER`
@@ -109,7 +107,6 @@ sidebar_position: 2
 - `SIMA_INPUTSTREAM_ALLOC_DEBUG`
 - `SIMA_INPUTSTREAM_CB_STOP_TIMEOUT_MS`
 - `SIMA_INPUTSTREAM_DEBUG`
-- `SIMA_INPUTSTREAM_DOT_ON_TIMEOUT`
 - `SIMA_INPUTSTREAM_DROP_HOLDER_AFTER_PUSH`
 - `SIMA_INPUTSTREAM_ELASTIC_MAX_MB`
 - `SIMA_INPUTSTREAM_EOS_DEBUG`
@@ -169,8 +166,6 @@ sidebar_position: 2
 - `TMPDIR`
 
 ## テスト／チュートリアル／ツールのみ（`src/`では使用されません）
-
-合計：59
 
 - `CMAKE_BUILD_PARALLEL_LEVEL`
 - `GITHUB_STEP_SUMMARY`
@@ -233,8 +228,6 @@ sidebar_position: 2
 - `SIMA_YOLO_TAR`
 
 ## シェル/CI のデフォルト設定とパススルー設定
-
-件数：63
 
 - `ARTIFACT_DIR`
 - `ASAN_OPTIONS`
@@ -302,8 +295,6 @@ sidebar_position: 2
 
 ## ユーザー向けのドキュメント一覧 `SIMA_*` (`docs/reference/environment-variables/index.md`)
 
-件数：60
-
 - `SIMA_ALLOW_GST_INIT`
 - `SIMA_ASYNC_TPUT_DIAG`
 - `SIMA_ASYNC_WARMUP`
@@ -341,7 +332,6 @@ sidebar_position: 2
 - `SIMA_H264_SPS_FIXUP_STREAM`
 - `SIMA_INPUTSTREAM_ALLOC_DEBUG`
 - `SIMA_INPUTSTREAM_DEBUG`
-- `SIMA_INPUTSTREAM_DOT_ON_TIMEOUT`
 - `SIMA_INPUTSTREAM_META_DEBUG`
 - `SIMA_INPUTSTREAM_POLL_MS`
 - `SIMA_INPUTSTREAM_PREFLIGHT_RUN`

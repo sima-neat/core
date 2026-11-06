@@ -1282,6 +1282,8 @@ uploaded per frame.
 * `pull(...)` dequeues `Sample` outputs from the appsink
 * `try_push(...)` is non-blocking (returns false if the queue is full)
 
+An idle `Run` remains usable; operation deadlines bound waits, not pauses between submissions.
+
 This supports fully async pipelines (producer/consumer split) as well as
 one-shot flows (`Graph::run(...)`).
 

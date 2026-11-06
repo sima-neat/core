@@ -86,7 +86,6 @@ struct InputStreamDebugFlags {
   bool appsink_drop_last_debug = pipeline_internal::env_bool("SIMA_APPSINK_DROP_LAST_DEBUG", false);
   bool inputstream_meta_debug = pipeline_internal::env_bool("SIMA_INPUTSTREAM_META_DEBUG", false);
   bool inputstream_pool_debug = pipeline_internal::env_bool("SIMA_INPUTSTREAM_POOL_DEBUG", false);
-  bool dot_on_timeout = pipeline_internal::env_bool("SIMA_INPUTSTREAM_DOT_ON_TIMEOUT", false);
   bool use_appsink_callbacks =
       pipeline_internal::env_bool("SIMA_INPUTSTREAM_USE_APPSINK_CALLBACKS", false);
   bool stop_unblock = pipeline_internal::env_bool("SIMA_INPUTSTREAM_STOP_UNBLOCK", true);
@@ -176,10 +175,6 @@ bool inputstream_meta_debug_enabled() {
 
 bool inputstream_pool_debug_enabled() {
   return inputstream_debug_flags().inputstream_pool_debug;
-}
-
-bool inputstream_dot_on_timeout_enabled() {
-  return inputstream_debug_flags().dot_on_timeout;
 }
 
 bool inputstream_use_appsink_callbacks_enabled() {
@@ -645,7 +640,8 @@ bool flush_pending_buffer(InputStream::State& st, const char* where) {
   auto observed = st.input_publication_measurement.observe(buf);
   GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(st.appsrc), buf);
   observed.finish(ret);
-  const auto t_push_end = std::chrono::steady_clock::now();
+  const auto t_push_end =
+      timings ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
 
   if (timings) {
     st.push_count.fetch_add(1, std::memory_order_relaxed);
@@ -665,9 +661,6 @@ bool flush_pending_buffer(InputStream::State& st, const char* where) {
     return false;
   }
   st.inflight.fetch_add(1, std::memory_order_relaxed);
-  const auto push_ns =
-      std::chrono::duration_cast<std::chrono::nanoseconds>(t_push_end.time_since_epoch()).count();
-  st.last_push_ns.store(static_cast<std::int64_t>(push_ns), std::memory_order_relaxed);
   return true;
 }
 
@@ -1011,7 +1004,8 @@ bool InputStream::push_with_fill(const char* where,
   auto observed = st->input_publication_measurement.observe(push_buf);
   GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(st->appsrc), push_buf);
   observed.finish(ret);
-  const auto t_push_end = std::chrono::steady_clock::now();
+  const auto t_push_end = (timings || push_timing) ? std::chrono::steady_clock::now()
+                                                   : std::chrono::steady_clock::time_point{};
 
   if (timings) {
     st->push_count.fetch_add(1, std::memory_order_relaxed);
@@ -1052,9 +1046,6 @@ bool InputStream::push_with_fill(const char* where,
     return false;
   }
   st->inflight.fetch_add(1, std::memory_order_relaxed);
-  const auto push_ns =
-      std::chrono::duration_cast<std::chrono::nanoseconds>(t_push_end.time_since_epoch()).count();
-  st->last_push_ns.store(static_cast<std::int64_t>(push_ns), std::memory_order_relaxed);
   return true;
 }
 

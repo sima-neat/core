@@ -537,6 +537,7 @@ set(UNIT_TESTS
   unit_element_timing_metadata_test
   unit_preproc_contract_rules_test
   unit_inputstream_stop_flush_test
+  unit_inputstream_idle_resume_test
   unit_core_render_retirement_contract_test
   unit_inputstream_stop_timeout_detach_test
   unit_inputappsrc_stop_race_test
@@ -693,6 +694,21 @@ foreach(test ${UNIT_TESTS})
     set_property(TEST ${test} APPEND PROPERTY LABELS "unit")
   endif()
 endforeach()
+
+# The delivery-mode flag is cached; exercise the same contract in separate processes.
+if (TARGET unit_inputstream_idle_resume_test)
+  set_tests_properties(unit_inputstream_idle_resume_test PROPERTIES
+    TIMEOUT 30)
+  set_property(TEST unit_inputstream_idle_resume_test APPEND PROPERTY ENVIRONMENT
+    "SIMA_INPUTSTREAM_USE_APPSINK_CALLBACKS=0" "SIMA_INPUTSTREAM_PREFLIGHT_RUN=")
+  simaneat_add_test(NAME unit_inputstream_idle_resume_callbacks_test
+    COMMAND unit_inputstream_idle_resume_test)
+  simaneat_append_ctest_env(unit_inputstream_idle_resume_callbacks_test)
+  set_tests_properties(unit_inputstream_idle_resume_callbacks_test PROPERTIES
+    TIMEOUT 30 LABELS "strict;unit;gstreamer")
+  set_property(TEST unit_inputstream_idle_resume_callbacks_test APPEND PROPERTY ENVIRONMENT
+    "SIMA_INPUTSTREAM_USE_APPSINK_CALLBACKS=1" "SIMA_INPUTSTREAM_PREFLIGHT_RUN=")
+endif()
 
 # Keep host dispatch evidence separate from the real DMA allocation requirement.
 if (TARGET unit_inputstream_cpu_gst_copy_test)
