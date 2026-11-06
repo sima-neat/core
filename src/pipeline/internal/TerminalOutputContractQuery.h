@@ -39,6 +39,11 @@ struct PublicOutputEndpointSelector {
 
 StagePublicationRole classify_stage_for_publication(const sima::StageStaticSpec& stage);
 
+void set_output_selector(PublicOutputEndpointSelector& endpoint, const std::string& name);
+bool filter_publication_stage_for_endpoint(sima::StageStaticSpec* publication,
+                                           const PublicOutputEndpointSelector& endpoint,
+                                           std::string* error_message = nullptr);
+
 bool stage_public_outputs_match_endpoint(const sima::StageStaticSpec& stage,
                                          const PublicOutputEndpointSelector& endpoint);
 

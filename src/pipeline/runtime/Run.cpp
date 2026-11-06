@@ -283,7 +283,8 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
   // zero-copy tensor back to CPU violates the next segment's input contract.
   st->pipeline.zero_copy_fallback_enabled =
       stream_opt.public_output_contract && (opt.preset == RunPreset::Balanced) &&
-      !stream_opt.copy_output && opt.output_memory != OutputMemory::ZeroCopy;
+      stream_opt.output_placement == OutputPlacement::Auto && !stream_opt.copy_output &&
+      opt.output_memory != OutputMemory::ZeroCopy;
   if (stream_opt.holder_loan_credits > 0) {
     st->holder_loan_gate =
         std::make_shared<pipeline_internal::HolderLoanGate>(stream_opt.holder_loan_credits);

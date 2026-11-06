@@ -352,10 +352,11 @@ bool sample_has_cpu_backed_tensor_for_device_push(const simaai::neat::Sample& sa
 // tensor reaches a device-visible route. Reused by the raw-path guard and the
 // tensor-envelope failure path so both surface identical guidance.
 const char* device_visible_push_guard_message() {
-  return "CPU-backed Tensor pushed into a device-visible EV74/DMS route. Create the Tensor "
-         "with TensorMemory::EV74 (or TensorMemory::MLA for DMS routes) so the copy is owned by "
-         "Tensor creation, or set SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY=1 to allow the slow "
-         "compatibility copy in runner.push().";
+  return "CPU-backed Tensor pushed into a device-visible EV74/DMS route. Copy the input with "
+         "tensor.cvu(). If the input comes from another graph, set that graph's "
+         "OutputOptions.placement to EV74 before building it. The graph will allocate its output "
+         "in EV74-accessible memory, allowing the tensor to be passed directly without an extra "
+         "copy.";
 }
 
 // Shared fail-fast guard. Throws the actionable message when the route demands

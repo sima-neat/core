@@ -57,6 +57,7 @@ struct ModelRouteOptionsProvenance {
   PreparedRunnerOptions prepared_runner;
   int async_queue_depth = 0;
   bool expose_all_outputs = false;
+  OutputOptions output;
 };
 
 struct Provenance {
@@ -440,6 +441,9 @@ struct RuntimeCompileOptions {
 
 ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& graph, const RunOptions& opt,
                                         std::optional<Sample> seed);
+
+// Built-in routing stages preserve tensor storage and shape.
+bool stage_forwards_payload(const ExecutionGraphPlan& plan, graph::NodeId node);
 
 // Reject statically known connected-source shapes that exceed a downstream ingress capacity.
 void validate_static_connected_input_capacities(const ExecutionGraphPlan& plan);
