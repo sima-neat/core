@@ -251,6 +251,13 @@ void bev_pool_plan_request() {
       "camera_intrinsics must be [N,4,4] with the same N", "bev_pool_plan camera mismatch");
 }
 
+bool has_parameter(const kr::KernelRequestPlan& plan, const std::string& name) {
+  for (const auto& p : plan.parameters)
+    if (p.name == name)
+      return true;
+  return false;
+}
+
 void bev_pool_request() {
   auto opt = ref::bev_pool_case().options;
   // Dense NHWC camera outputs [N,fH,fW,D] / [N,fH,fW,C].
@@ -269,12 +276,13 @@ void bev_pool_request() {
   require(plan.inputs[1].shape == std::vector<std::int64_t>{2, 16, 2, 3} &&
               strides(plan.inputs[1]) == std::vector<std::int64_t>{96, 1, 48, 16},
           "bev_pool context is logical [N,C,fH,fW] with channels-last strides");
-  require(plan.outputs[0].shape == std::vector<std::int64_t>{1, 16, 4, 4} &&
-              strides(plan.outputs[0]) == std::vector<std::int64_t>{256, 1, 64, 16},
-          "bev_pool requests a channels-last [1,nZ*C,nX,nY] bev");
-  require(plan.published[0].shape == std::vector<std::int64_t>{1, 4, 4, 16} &&
+  require(plan.outputs[0].shape == std::vector<std::int64_t>{1, 4, 4, 16} &&
+              std::holds_alternative<rt::Contiguous>(plan.outputs[0].layout) &&
+              scalar<std::string>(plan, "bev_axes") == "channels_last",
+          "bev_pool requests a Contiguous NHWC [1,nX,nY,nZ*C] bev by its axes");
+  require(plan.published[0].shape == plan.outputs[0].shape &&
               plan.published[0].stride_bytes.empty() && plan.published[0].layout == "NHWC",
-          "bev_pool publishes the same bytes as dense NHWC [1,nX,nY,nZ*C]");
+          "bev_pool publishes its checked NHWC bev unchanged");
   require(scalar<std::int64_t>(plan, "depth_zero_point") == -128 &&
               scalar<std::int64_t>(plan, "context_zero_point") == -5 &&
               scalar<std::int64_t>(plan, "plan_format") == 1 &&
@@ -297,7 +305,7 @@ void bev_pool_request() {
               std::holds_alternative<rt::Contiguous>(plan.outputs[0].layout) &&
               plan.published[0].stride_bytes.empty() &&
               plan.published[0].shape == std::vector<std::int64_t>{1, 16, 4, 4} &&
-              plan.published[0].layout == "CHW",
+              plan.published[0].layout == "CHW" && !has_parameter(plan, "bev_axes"),
           "bev_pool contiguous storage publishes dense CHW [1,nZ*C,nX,nY]");
   opt.cells[2] = 2;
   plan = kr::bev_pool_request(opt, nchw);
@@ -466,13 +474,6 @@ void dtype_tokens() {
   for (const auto dtype : {rt::DType::Float32, rt::DType::BFloat16, rt::DType::Int8,
                            rt::DType::UInt8, rt::DType::Int16, rt::DType::Int32, rt::DType::UInt16})
     require(kr::dtype_from_token(kr::dtype_token(dtype), "T") == dtype, "dtype token round trip");
-}
-
-bool has_parameter(const kr::KernelRequestPlan& plan, const std::string& name) {
-  for (const auto& p : plan.parameters)
-    if (p.name == name)
-      return true;
-  return false;
 }
 
 std::vector<std::int64_t> strides(const rt::TensorSpec& spec) {

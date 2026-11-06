@@ -591,14 +591,13 @@ KernelRequestPlan bev_pool_request(const SimaBEVPoolOptions& opt,
   checked_tensor_bytes(logical, dtype, node);
   rt::TensorSpec bev{{logical.begin(), logical.end()}, dtype};
   PublishedOutput published{"bev", {logical.begin(), logical.end()}, {}, "CHW", false, {}};
-  if (opt.output_storage == SimaBEVPoolStorage::ChannelsLast) {
-    // The kernel's request keeps its canonical [1,nZ*C,nX,nY] with channels-last
-    // strides; the same bytes publish as dense NHWC [1,nX,nY,nZ*C].
-    const auto strides = channels_last_strides(logical, scalar_bytes(dtype), node);
-    rt::Strided layout;
-    std::copy(strides.begin(), strides.end(), layout.strides_bytes.begin());
-    bev.layout = layout;
-    published.shape = {1, nx, ny, k};
+  const bool nhwc = opt.output_storage == SimaBEVPoolStorage::ChannelsLast;
+  if (nhwc) {
+    // bev_axes = channels_last names the kernel's dense channels-last bev in
+    // NHWC order, so the request and the publication are one Contiguous
+    // [1,nX,nY,nZ*C].
+    bev.shape = {1, nx, ny, k};
+    published.shape = bev.shape;
     published.layout = "NHWC";
   }
 
@@ -611,6 +610,8 @@ KernelRequestPlan bev_pool_request(const SimaBEVPoolOptions& opt,
   plan.parameters.push_back(
       {"context_zero_point", static_cast<std::int64_t>(opt.context_zero_point)});
   plan.parameters.push_back({"plan_format", static_cast<std::int64_t>(opt.plan_format)});
+  if (nhwc)
+    plan.parameters.push_back({"bev_axes", "channels_last"});
   append_quantization(plan.parameters, opt.quantization);
   // An INT8 sum of codes is real only through both input scales; BF16 sums are
   // real already. Without both scales the output scale is unknown.

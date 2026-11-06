@@ -679,8 +679,10 @@ void semantic_contracts() {
     require(strides && strides->strides_bytes[0] == 96 && strides->strides_bytes[1] == 1 &&
                 strides->strides_bytes[2] == 48 && strides->strides_bytes[3] == 16,
             "Pool must retain the context's physical channels-last strides");
-    require(compiled.kernel->runtime_contract.logical_outputs.front().layout == "CHW",
-            "Pool publishes logical CHW authority");
+    const auto& bev = compiled.kernel->runtime_contract.logical_outputs.front();
+    require(bev.layout == "NHWC" && view.outputs()[0].shape == bev.shape &&
+                std::holds_alternative<rt::Contiguous>(view.outputs()[0].layout),
+            "Pool requests and publishes one Contiguous NHWC bev");
   };
   // Public coarse layout and explicit per-axis semantics are both existing
   // sources of logical authority; neither changes the physical strides.
