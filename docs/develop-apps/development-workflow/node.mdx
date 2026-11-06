@@ -784,7 +784,7 @@ graph.add(pyneat.nodes.sima_encode(encode))
 
 Resolution is taken from the input frames when encoding starts. The encoder does
 not resize them. Start a new run to encode a different resolution.
-Input dimensions must be positive and even, up to 3840x2160.
+Input dimensions must be positive and even.
 `nodes::SimaEncode()` and `pyneat.nodes.sima_encode()` use the default H.264 settings.
 Do not repeat input dimensions in encoder options. `fps` configures stream cadence and rate control; it does not pace input.
 H.264/H.265 support `bitrate_kbps` (default 4000), `rate_control` (`vbr` or `cbr`),

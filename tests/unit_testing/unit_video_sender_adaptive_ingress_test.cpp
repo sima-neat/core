@@ -379,11 +379,10 @@ RUN_TEST(
                          "v1 load must preserve the transformed converter name");
         require_contains(backend, "name=saved_n0_nv12_caps_instance",
                          "v1 load must preserve the transformed NV12 caps name");
-        require_contains(
-            backend,
-            automatic ? "format=NV12,width=(int)[2,3840,2],height=(int)[2,2160,2],framerate=30/1"
-                      : "format=NV12,width=1280,height=720,framerate=30/1",
-            "save/load must preserve automatic or fixed input geometry");
+        require_contains(backend,
+                         automatic ? "format=NV12,framerate=30/1"
+                                   : "format=NV12,width=1280,height=720,framerate=30/1",
+                         "save/load must preserve automatic or fixed input geometry");
         require(count_substrings(backend, "neatencoderinput name=") == 1U,
                 "unknown loaded graph should retain one safe converter");
       }

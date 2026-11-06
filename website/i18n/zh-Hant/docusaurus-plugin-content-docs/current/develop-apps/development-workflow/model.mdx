@@ -80,7 +80,7 @@ outputs = model.output_specs()
 | 目標 | 使用的選項 | 備註 |
 |---|---|---|
 | 傳送已解碼的影像輸入 | `preprocess.kind`、`preprocess.preset` 以及特定的預處理欄位，例如調整大小、顏色、佈局、正規化、量化或鑲嵌 | 當您的應用程式傳送像素，且 Neat 應將其調整為模型合約時，請使用此選項。 |
-| 傳送模型形狀的張量輸入 | `preprocess.kind = Tensor`；僅在張量已滿足模型合約時，設定 `preprocess.enable = Off` | 當您的應用程式已經擁有預處理時，請使用此選項。 |
+| 提供符合模型公開輸入的張量 | 不設定前處理選項 | 保留所需的 Cast/Quant/Tess 轉接器，包括已調整大小及正規化的 FP32 輸入。 |
 | 解碼偵測輸出 | `decode_type`、`decode_type_option`、`score_threshold`、`nms_iou_threshold`、`top_k`、`num_classes` | 偵測模型需要明確的解碼意圖。 |
 | 保留提取的模型檔案以供檢查 | `cleanup_extracted_model_data = false` | 在偵錯時很有用。對於正常執行，請保留預設值。 |
 | 在一個程序中執行多個模型路徑 | `name_suffix` 和圖元素名稱的前綴/後綴 | 使生成的名稱和診斷資訊更易於閱讀。 |
@@ -176,34 +176,26 @@ model = pyneat.Model(model_path, options)
 
 ### 原始張量輸入
 
-如果您的應用程式已經以編譯模型所預期的形狀、資料類型和佈局方式建立張量，請使用此模式。
+提供符合 `model.input_specs()` 的張量時，使用預設值。Neat 會保留 MPK 所需的張量轉接器。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-simaai::neat::Model::Options options;
-options.preprocess.kind = simaai::neat::InputKind::Tensor;
-options.preprocess.enable = simaai::neat::AutoFlag::Off;
-
-simaai::neat::Model model(model_path, options);
+simaai::neat::Model model(model_path);
 ```
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 ```python
-options = pyneat.ModelOptions()
-options.preprocess.kind = pyneat.InputKind.Tensor
-options.preprocess.enable = pyneat.AutoFlag.Off
-
-model = pyneat.Model(model_path, options)
+model = pyneat.Model(model_path)
 ```
 
 </CodeTab>
 </CodeTabs>
 
-如果您的張量尚未調整為模型所需的形狀，請不要強行使用此方法。讓預處理程序執行調整，或修改張量建立程式碼。
+既有的 `preprocess.enable = Off` 設定不會選擇僅執行 MLA，也不會移除 MPK 所需的 Cast/Quant/Tess 轉接器。非空的 `preprocess.transforms` 清單優先於 `Off`。
 
 ### 預處理欄位指南
 
@@ -212,7 +204,7 @@ model = pyneat.Model(model_path, options)
 | 需求 | 欄位 |
 |---|---|
 | 選擇圖像或張量輸入 | `preprocess.kind` |
-| 對於已調整形狀的張量，停用預處理 | `preprocess.enable = Off` |
+| 既有前處理控制（保留 MPK 所需的轉接器） | `preprocess.enable` |
 | 限制動態圖像輸入 | `preprocess.input_max_width`、`preprocess.input_max_height`、`preprocess.input_max_depth` |
 | 調整大小、裁剪或使用信箱格式 | `preprocess.resize` |
 | 轉換 RGB、BGR、NV12、I420 或灰度 | `preprocess.color_convert` |

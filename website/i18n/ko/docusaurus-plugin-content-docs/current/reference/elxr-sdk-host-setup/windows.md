@@ -10,7 +10,7 @@ sidebar_position: 2
 
 - Windows 11 호스트.
 - [WSL](https://learn.microsoft.com/en-us/windows/wsl/install)이 설치되었고 정상적으로 작동합니다.
-- WSL 내부에 설치된 Docker 엔진입니다.
+- WSL 내부에 설치된 Docker 엔진 20.10.10 이상입니다. 버전은 `docker --version`으로 확인할 수 있습니다.
 - `sima-cli`가 WSL 내부에 설치되었습니다.
 
 ## WSL에서 시작하세요.
