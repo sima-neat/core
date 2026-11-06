@@ -581,6 +581,36 @@
       "line": "VS Code (local)    https://127.0.0.1:10000/?folder=/workspace",
       "count": 1,
       "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "docs/reference/elxr-sdk-host-setup/windows.md",
+      "line": "- Docker Engine 20.10.10 or later, installed inside WSL. Check the version with `docker --version`.",
+      "count": 1,
+      "reason": "Minimum supported Docker Engine version, independent of Neat releases"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/reference/elxr-sdk-host-setup/windows.md",
+      "line": "- WSL 내부에 설치된 Docker 엔진 20.10.10 이상입니다. 버전은 `docker --version`으로 확인할 수 있습니다.",
+      "count": 1,
+      "reason": "Minimum supported Docker Engine version, independent of Neat releases"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/reference/elxr-sdk-host-setup/windows.md",
+      "line": "- WSL内にインストールされたDocker Engine 20.10.10 以降。バージョンは `docker --version` で確認できます。",
+      "count": 1,
+      "reason": "Minimum supported Docker Engine version, independent of Neat releases"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/reference/elxr-sdk-host-setup/windows.md",
+      "line": "- Docker Engine 20.10.10 或更新版本安裝在 WSL 內部。可使用 `docker --version` 檢查版本。",
+      "count": 1,
+      "reason": "Minimum supported Docker Engine version, independent of Neat releases"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/reference/elxr-sdk-host-setup/windows.md",
+      "line": "- Docker Engine версії 20.10.10 або новішої встановлено всередині WSL. Перевірте версію командою `docker --version`.",
+      "count": 1,
+      "reason": "Minimum supported Docker Engine version, independent of Neat releases"
     }
   ],
   "readmes": [
