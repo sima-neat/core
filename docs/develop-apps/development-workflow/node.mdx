@@ -134,6 +134,9 @@ The aliases select identical decoder paths: `H264` equals `AVC`, and `H265`
 equals `HEVC`. The same aliases are available through `RtspCodec` and
 `FormatTag` in C++ and Python.
 
+H.264 input must use 8-bit, 4:2:0 chroma and progressive frames. High 10, High 4:2:2,
+and interlaced bitstreams are not supported.
+
 H.265 input must use the HEVC Main profile with 8-bit, 4:2:0 chroma. Direct
 elementary-stream input must be parsed, Annex-B byte-stream, and access-unit
 aligned. Its parameter sets (VPS, SPS, and PPS) must reach the decoder before
