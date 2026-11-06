@@ -1,6 +1,7 @@
 {
   "scheduler": {
-    "policy": "snap"
+    "branch": "codex/release-deb-version",
+    "spec": "2d339b75c7d3c5a8105f68111f0b184a63c55ed2"
   },
   "llima": {
     "policy": "snap"
