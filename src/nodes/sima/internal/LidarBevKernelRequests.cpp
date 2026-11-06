@@ -313,8 +313,8 @@ void validate(const SimaBEVPoolOptions& opt) {
   const auto valid_storage = [](SimaBEVPoolStorage storage) {
     return storage == SimaBEVPoolStorage::Contiguous || storage == SimaBEVPoolStorage::ChannelsLast;
   };
-  if (!valid_storage(opt.input_storage) || !valid_storage(opt.output_storage))
-    fail("SimaBEVPool", "input_storage and output_storage must be Contiguous or ChannelsLast");
+  if (!valid_storage(opt.input_storage))
+    fail("SimaBEVPool", "input_storage must be Contiguous or ChannelsLast");
   narrow_dtype(opt.output_dtype, "SimaBEVPool", "output_dtype");
 }
 
@@ -587,19 +587,12 @@ KernelRequestPlan bev_pool_request(const SimaBEVPoolOptions& opt,
   const auto channels = context.shape[1];
   const auto k = checked_extent_mul(nz, channels, node);
   const auto dtype = narrow_dtype(opt.output_dtype, node, "output_dtype");
-  const std::array<std::int64_t, 4> logical{1, k, nx, ny};
+  // The kernel's bev is logical NHWC [1,nX,nY,nZ*C]; its dense Contiguous form is
+  // requested and published unchanged.
+  const std::array<std::int64_t, 4> logical{1, nx, ny, k};
   checked_tensor_bytes(logical, dtype, node);
   rt::TensorSpec bev{{logical.begin(), logical.end()}, dtype};
-  PublishedOutput published{"bev", {logical.begin(), logical.end()}, {}, "CHW", false, {}};
-  const bool nhwc = opt.output_storage == SimaBEVPoolStorage::ChannelsLast;
-  if (nhwc) {
-    // bev_axes = channels_last names the kernel's dense channels-last bev in
-    // NHWC order, so the request and the publication are one Contiguous
-    // [1,nX,nY,nZ*C].
-    bev.shape = {1, nx, ny, k};
-    published.shape = bev.shape;
-    published.layout = "NHWC";
-  }
+  PublishedOutput published{"bev", {logical.begin(), logical.end()}, {}, "NHWC", false, {}};
 
   KernelRequestPlan plan;
   plan.operation = "bev_pool";
@@ -610,8 +603,6 @@ KernelRequestPlan bev_pool_request(const SimaBEVPoolOptions& opt,
   plan.parameters.push_back(
       {"context_zero_point", static_cast<std::int64_t>(opt.context_zero_point)});
   plan.parameters.push_back({"plan_format", static_cast<std::int64_t>(opt.plan_format)});
-  if (nhwc)
-    plan.parameters.push_back({"bev_axes", "channels_last"});
   append_quantization(plan.parameters, opt.quantization);
   // An INT8 sum of codes is real only through both input scales; BF16 sums are
   // real already. Without both scales the output scale is unknown.

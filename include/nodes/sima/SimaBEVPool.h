@@ -23,7 +23,7 @@
 namespace simaai::neat {
 
 /**
- * @brief Byte order of a SimaBEVPool depth, context or BEV tensor.
+ * @brief Byte order of SimaBEVPool's depth and context inputs.
  *
  * @ingroup nodes_sima
  */
@@ -33,11 +33,9 @@ enum class SimaBEVPoolStorage {
   /// with channels-last strides, including singleton dimensions. Without a layout
   /// tag, dense inputs keep the NHWC convention; tag ambiguous logical NCHW views CHW.
   /// Canonical Tensor.axis_semantics is equivalent; it must agree with any layout tag.
-  /// The output is a dense NHWC `[1,nX,nY,nZ*C]` tensor (HWC layout), the input of a
-  /// BEV model; its channels are axis 3.
   ChannelsLast,
-  /// Logical order. Inputs arrive as `[N,D,fH,fW]` and `[N,C,fH,fW]`; the output is a
-  /// dense CHW `[1,nZ*C,nX,nY]` tensor. An explicit HWC input layout is rejected.
+  /// Logical order. Inputs arrive as `[N,D,fH,fW]` and `[N,C,fH,fW]`. An explicit HWC
+  /// input layout is rejected.
   Contiguous,
 };
 
@@ -46,7 +44,9 @@ enum class SimaBEVPoolStorage {
  *
  * The input Sample holds three tensors, in order: `depth`, `context` (both INT8 or both
  * BF16, layout per `input_storage`) and the UINT8 `plan` `[P]` produced by
- * `SimaBEVPoolPlan` for the same frustum and grid. The output Sample holds one `bev` tensor.
+ * `SimaBEVPoolPlan` for the same frustum and grid. The output Sample holds one `bev` tensor:
+ * a dense NHWC `[1,nX,nY,nZ*C]` tensor (HWC layout), the input of a BEV model, with its
+ * channels on axis 3.
  * Per-channel quantization metadata is unsupported and rejected rather than discarded.
  *
  * BF16 inputs need zero points of 0. Their sums are binary32, in the plan's point order.
@@ -66,9 +66,8 @@ struct SimaBEVPoolOptions {
   /// `multiplier = depth_scale * context_scale / output_scale`; for BF16 inputs,
   /// `1 / output_scale`. A BF16 `bev` needs the identity.
   SimaKernelQuantization quantization;
-  SimaBEVPoolStorage input_storage = SimaBEVPoolStorage::ChannelsLast;  ///< depth/context order.
-  SimaBEVPoolStorage output_storage = SimaBEVPoolStorage::ChannelsLast; ///< bev byte order.
-  TensorDType output_dtype = TensorDType::Int8;                         ///< bev element type.
+  SimaBEVPoolStorage input_storage = SimaBEVPoolStorage::ChannelsLast; ///< depth/context order.
+  TensorDType output_dtype = TensorDType::Int8;                        ///< bev element type.
   /// Execution target; no fallback.
   SimaKernelTarget target = SimaKernelTarget::A65;
 };

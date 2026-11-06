@@ -4043,7 +4043,6 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("plan_format", &simaai::neat::SimaBEVPoolOptions::plan_format)
       .def_rw("quantization", &simaai::neat::SimaBEVPoolOptions::quantization)
       .def_rw("input_storage", &simaai::neat::SimaBEVPoolOptions::input_storage)
-      .def_rw("output_storage", &simaai::neat::SimaBEVPoolOptions::output_storage)
       .def_rw("output_dtype", &simaai::neat::SimaBEVPoolOptions::output_dtype)
       .def_rw("target", &simaai::neat::SimaBEVPoolOptions::target);
   nb::enum_<simaai::neat::SimaEncodeType>(m, "SimaEncodeType")

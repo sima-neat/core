@@ -73,7 +73,7 @@ Python에서도 같은 옵션 형식과 `pyneat.nodes.sima_voxelize`,
 | `SimaVoxelize` | FP32 `points` `[N,4]`(x, y, z, 시간 오프셋), INT32 `point_count` `[1]` | INT8 또는 BF16 `decorated` `[1,M,T,10]`, (row, column) 형식의 INT32 `coordinates` `[M,2]`, INT32 `count` `[1]` |
 | `SimaPillarScatter` | INT8 또는 BF16 `features` `[M,C]`, INT32 `coordinates` `[M,2]`, INT32 `count` `[1]` | `features`와 같은 형식의 `canvas` `[1,H,W,C]` |
 | `SimaBEVPoolPlan` | FP32 `camera2lidar`, `camera_intrinsics`, `img_aug_matrix` `[N,4,4]`, FP32 `lidar_aug_matrix` `[4,4]` | UINT8 `plan` `[P]` |
-| `SimaBEVPool` | INT8 또는 BF16 `depth`, 같은 형식의 `context`, UINT8 `plan` `[P]` | INT8 또는 BF16 `bev` `[1,nX,nY,nZ*C]`(`ChannelsLast`) 또는 `[1,nZ*C,nX,nY]`(`Contiguous`) |
+| `SimaBEVPool` | INT8 또는 BF16 `depth`, 같은 형식의 `context`, UINT8 `plan` `[P]` | INT8 또는 BF16 `bev`, 조밀한 NHWC `[1,nX,nY,nZ*C]` |
 
 - **SimaVoxelize**는 처음 `point_count`개의 점만 읽습니다. `max_pillars`(`M`)와
   `max_points_per_pillar`(`T`)는 고정 용량이며, 이를 넘는 점과 필러는 버려집니다.
@@ -92,11 +92,11 @@ Python에서도 같은 옵션 형식과 `pyneat.nodes.sima_voxelize`,
   `quantization`으로 양자화합니다. `cells`는 계획의 `nx`로, `plan_format`은 계획의
   `format`으로, INT8 입력이면 `quantization.multiplier`를
   `depth_scale * context_scale / output_scale`로 설정합니다. 기본값인
-  `SimaBEVPoolStorage::ChannelsLast`에서는 입력이 카메라 모델이 출력하는 그대로
-  `[N,fH,fW,D]`와 `[N,fH,fW,C]`로 들어옵니다. 출력은 조밀한 NHWC `[1,nX,nY,nZ*C]`
-  텐서이며, BEV 모델이 이를 입력으로 바로 받습니다. 채널은 축 3에서 축소합니다(예:
-  `SimaArgMax`). `SimaBEVPoolStorage::Contiguous`는 `[N,D,fH,fW]`와 `[N,C,fH,fW]`
-  입력과 조밀한 NCHW `[1,nZ*C,nX,nY]` 출력을 사용합니다.
+  `input_storage = SimaBEVPoolStorage::ChannelsLast`에서는 입력이 카메라 모델이 출력하는 그대로
+  `[N,fH,fW,D]`와 `[N,fH,fW,C]`로 들어오며, `SimaBEVPoolStorage::Contiguous`는
+  `[N,D,fH,fW]`와 `[N,C,fH,fW]` 입력을 받습니다. 출력은 항상 조밀한 NHWC
+  `[1,nX,nY,nZ*C]` 텐서이며, BEV 모델이 이를 입력으로 바로 받습니다. 채널은 축 3에서
+  축소합니다(예: `SimaArgMax`).
 
 ### 논리 축과 물리 저장 순서
 
@@ -113,8 +113,8 @@ HWC 태그는 거부합니다.
 태그가 없는 `ChannelsLast` 입력은 호환성을 위해 조밀한 NHWC 또는 채널이 마지막인
 스트라이드를 가진 비조밀 논리 NCHW로 해석합니다. 크기가 1인 차원 때문에 논리 NCHW
 뷰도 조밀해지는 경우 `Tensor.layout = TensorLayout::CHW`를 명시하세요. 이 경우
-스트라이드만으로 논리 축을 식별할 수 없습니다. Pool 출력은 조밀하며,
-`ChannelsLast`에서는 HWC `[1,nX,nY,nZ*C]`, `Contiguous`에서는 CHW `[1,nZ*C,nX,nY]`입니다.
+스트라이드만으로 논리 축을 식별할 수 없습니다. Pool 출력은 입력 저장 순서와 관계없이
+커널이 검사한 텐서, 즉 조밀한 HWC `[1,nX,nY,nZ*C]`입니다.
 노드는 자신이 쓴 바이트를 그대로 기술하며, 레이아웃 변경을 위해 이를 전치하거나
 복사하지 않습니다.
 
