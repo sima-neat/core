@@ -4428,6 +4428,22 @@ struct Model::Impl {
   mutable InputKey sync_key{};
   mutable Runner sync_runner{};
 
+  template <typename Inputs> auto run_sync(Model& model, const Inputs& inputs, int timeout_ms) {
+    std::lock_guard<std::mutex> lock(sync_mu);
+    if (!sync_ready) {
+      sync_runner = model.build(inputs);
+      sync_ready = true;
+    }
+    try {
+      return sync_runner.run(inputs, timeout_ms);
+    } catch (...) {
+      // A timed-out submission may still complete; do not reuse it for the next call.
+      sync_ready = false;
+      sync_runner = Runner{};
+      throw;
+    }
+  }
+
   Impl(const std::string& tar_gz, Options opt)
       : source_path(tar_gz), options(std::move(opt)),
         preprocess_plan(build_preprocess_plan_with_verbosity(tar_gz, options)),
@@ -7567,24 +7583,14 @@ simaai::neat::TensorList Model::run(const std::vector<Tensor>& inputs, int timeo
   if (inputs.empty()) {
     throw std::runtime_error("Model::run: empty input list");
   }
-  std::lock_guard<std::mutex> lock(impl_->sync_mu);
-  if (!impl_->sync_ready) {
-    impl_->sync_runner = build(inputs);
-    impl_->sync_ready = true;
-  }
-  return impl_->sync_runner.run(inputs, timeout_ms);
+  return impl_->run_sync(*this, inputs, timeout_ms);
 }
 
 simaai::neat::Sample Model::run(const simaai::neat::Sample& inputs, int timeout_ms) {
   if (inputs.empty()) {
     throw std::runtime_error("Model::run: empty sample list");
   }
-  std::lock_guard<std::mutex> lock(impl_->sync_mu);
-  if (!impl_->sync_ready) {
-    impl_->sync_runner = build(inputs);
-    impl_->sync_ready = true;
-  }
-  return impl_->sync_runner.run(inputs, timeout_ms);
+  return impl_->run_sync(*this, inputs, timeout_ms);
 }
 
 #if defined(SIMA_WITH_OPENCV)
@@ -7592,12 +7598,7 @@ simaai::neat::TensorList Model::run(const std::vector<cv::Mat>& inputs, int time
   if (inputs.empty()) {
     throw std::runtime_error("Model::run: empty image list");
   }
-  std::lock_guard<std::mutex> lock(impl_->sync_mu);
-  if (!impl_->sync_ready) {
-    impl_->sync_runner = build(inputs);
-    impl_->sync_ready = true;
-  }
-  return impl_->sync_runner.run(inputs, timeout_ms);
+  return impl_->run_sync(*this, inputs, timeout_ms);
 }
 #endif
 

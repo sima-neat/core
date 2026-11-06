@@ -2232,10 +2232,12 @@ bool is_run_timeout_exception(const std::exception& e) {
          msg.find("timeout waiting for output") != std::string_view::npos;
 }
 
-template <typename InputT>
-Sample run_sync_prefill_typed(Run& runner, const InputT& input, int timeout_ms, int count,
+template <typename CachePtrT, typename InputT>
+Sample run_sync_prefill_typed(CachePtrT& run_cache, const InputT& input, int timeout_ms, int count,
                               bool allow_startup_lag) {
+  Run& runner = run_cache->runner;
   Sample out;
+  bool timed_out = false;
   bool saw_output = false;
   std::string last_timeout;
   int startup_lag_budget = allow_startup_lag ? std::max(1, count * 3) : 0;
@@ -2249,6 +2251,7 @@ Sample run_sync_prefill_typed(Run& runner, const InputT& input, int timeout_ms, 
       if (!is_run_timeout_exception(e)) {
         throw;
       }
+      timed_out = true;
       last_timeout = e.what();
     }
 
@@ -2281,22 +2284,13 @@ Sample run_sync_prefill_typed(Run& runner, const InputT& input, int timeout_ms, 
                                              "Inspect the attached GraphReport diagnostics.");
   }
 
+  if (timed_out) {
+    // Prefill may succeed with other submissions still unresolved.
+    run_cache.reset();
+  } else {
+    run_cache->sync_prefill_warmed = true;
+  }
   return out;
-}
-
-Sample run_sync_prefill(Run& runner, const cv::Mat& input, int timeout_ms, int count,
-                        bool allow_startup_lag) {
-  return run_sync_prefill_typed(runner, input, timeout_ms, count, allow_startup_lag);
-}
-
-Sample run_sync_prefill(Run& runner, const simaai::neat::Tensor& input, int timeout_ms, int count,
-                        bool allow_startup_lag) {
-  return run_sync_prefill_typed(runner, input, timeout_ms, count, allow_startup_lag);
-}
-
-Sample run_sync_prefill(Run& runner, const Sample& input, int timeout_ms, int count,
-                        bool allow_startup_lag) {
-  return run_sync_prefill_typed(runner, input, timeout_ms, count, allow_startup_lag);
 }
 
 bool run_options_equal_for_cache_local(const RunOptions& a, const RunOptions& b) {
@@ -2430,10 +2424,7 @@ Sample run_sync_cached_input(const std::vector<std::shared_ptr<Node>>& nodes,
     try {
       if (max_buffers > 1) {
         const bool allow_startup_lag = !run_cache->sync_prefill_warmed;
-        Sample out =
-            run_sync_prefill(run_cache->runner, input, timeout_ms, max_buffers, allow_startup_lag);
-        run_cache->sync_prefill_warmed = true;
-        return out;
+        return run_sync_prefill_typed(run_cache, input, timeout_ms, max_buffers, allow_startup_lag);
       }
       run_cache->sync_prefill_warmed = true;
       return run_sync_once_typed(run_cache->runner, input, timeout_ms);
@@ -2498,6 +2489,21 @@ Sample run_sync_cached_input(const std::vector<std::shared_ptr<Node>>& nodes,
 } // namespace
 
 namespace session_test {
+
+Sample run_sync_prefill_for_test(Run& runner, const Tensor& input, int timeout_ms, int count,
+                                 bool warmed) {
+  struct Cache {
+    Run runner;
+    bool sync_prefill_warmed = false;
+  };
+  auto cache = std::make_unique<Cache>();
+  cache->runner = std::move(runner);
+  Sample output = run_sync_prefill_typed(cache, input, timeout_ms, count, !warmed);
+  if (cache) {
+    runner = std::move(cache->runner);
+  }
+  return output;
+}
 
 std::vector<std::string> sync_cache_rebuild_events_for_test(bool fail_build) {
   struct Probe {
