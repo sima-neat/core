@@ -40,7 +40,6 @@ slug: /develop-apps/contribute/release-checklist
    - 必要に応じて、`package-version` と `platform-version` が `deps/manifest.json` に更新されていること
    - `modelzoo-version` が、`platform-version` と異なる場合に、検証済みの Model Zoo リリースを明示的に選択すること。省略された場合、Model Zoo の解決はデフォルトで `platform-version` になります。
    - 公開されている C++ 型のレイアウトまたはエクスポートされたバイナリコントラクトが互換性のない方法で変更された場合は、`abi-version` を `deps/manifest.json` でインクリメントすること。すべての C++ アプリケーションと Python バインディングは、その ABI に対して再構築されます。
-   - `CHANGELOG.md` に `## [x.y.z]` のエントリがあること
    - リリース/タグの本文にリリースノートが準備されていること
 
 リリースフローに「既知のクラッシャー」リストは許可されません。クラッシュ回帰が発生した場合、修正されるまでリリースはブロックされます。

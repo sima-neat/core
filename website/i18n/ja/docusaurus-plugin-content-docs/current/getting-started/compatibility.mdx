@@ -25,7 +25,7 @@ Palette SDK には、いくつかのバージョン管理されたコンポー�
 
 各Palette SDKリリースシリーズは、特定のDevKitソフトウェアバージョンを対象としています。SDKのパッチリビジョンでは、新しいDevKitイメージを必要とせずに、ツールに関する修正が追加される場合があります。たとえば、2.1.3.0を含むPalette SDK 2.1.3.xリリースは、DevKitソフトウェア2.1.3と互換性があります。
 
-SDKを再インストールせずに、より新しい互換性のあるNeat Libraryをインストールすることもできます。ただし、以下の表に示すペアリングを使用する必要があります。たとえば、Neat Library 0.6.0とPalette SDK 3.0.0.0を組み合わせて使用します。
+SDKを再インストールせずに、より新しい互換性のあるNeat Libraryをインストールすることもできます。ただし、以下の表に示すペアリングを使用する必要があります。たとえば、Neat Library 0.6.1とPalette SDK 3.0.0.1を組み合わせて使用します。
 
 :::note
 このページに記載されているバージョンは、サポート対象のバージョン組み合わせです。
@@ -58,11 +58,12 @@ DevKit のファームウェアの確認と更新の手順については、[フ
 | **2.1.3.0** | WSL を介した Windows 11、Ubuntu 22.04 または 24.04、Apple Silicon 搭載の最新 macOS | **2.1.3** |
 | **2.1.3.1** | WSL を介した Windows 11、Ubuntu 22.04 または 24.04、Apple Silicon 搭載の最新 macOS | **2.1.3** |
 | **3.0.0.0** | WSL を介した Windows 11、Ubuntu 22.04 または 24.04、Apple Silicon 搭載の最新 macOS | **3.0.0** |
+| **3.0.0.1** | WSL を介した Windows 11、Ubuntu 22.04 または 24.04、Apple Silicon 搭載の最新 macOS | **3.0.0** |
 
-DevKit ソフトウェアと互換性のある特定の SDK バージョンをインストールしてください。たとえば、DevKit ソフトウェア 3.0.0 用の Palette SDK 3.0.0.0 をホストからインストールするには、次のコマンドを実行します。
+DevKit ソフトウェアと互換性のある特定の SDK バージョンをインストールしてください。たとえば、DevKit ソフトウェア 3.0.0 用の Palette SDK 3.0.0.1 をホストからインストールするには、次のコマンドを実行します。
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@v3.0.0.0
+sima-cli neat install sdk@v3.0.0.1
 </ShellCommand>
 
 [特定の SDK バージョンをインストールする](/getting-started/dev-environment/install-the-environment/#install-a-specific-sdk-version)で、特定のタグとリリースチャネルについて確認してください。
@@ -80,16 +81,17 @@ sima-cli neat install sdk@v3.0.0.0
 | **0.3.0** | **2.1.2.3** | **2.1.2** | 最新の 0.3 バージョン。 |
 | **0.4.0** | **2.1.3.0** | **2.1.3** | サポート対象のリリース。 |
 | **0.5.0** | **2.1.3.1** | **2.1.3** | サポート対象のリリース。 |
-| **0.6.0** | **3.0.0.0** | **3.0.0** | 現在のリリース。 |
+| **0.6.0** | **3.0.0.0** | **3.0.0** | サポート対象のリリース。 |
+| **0.6.1** | **3.0.0.1** | **3.0.0** | 現在のリリース。 |
 
 DevKitのソフトウェアバージョンは重要です。なぜなら、デバイス上のランタイム、ファームウェア、およびシステムパッケージが、互いに対応したセットとしてインストールされるからです。異なるファームウェアバージョン間でコンポーネントを混在させると、アプリケーションのビルド時に予期しない動作が発生する可能性があります。
 
 通常、これらのコマンドは初回セットアップ時に実行する必要はありません。SDKが互換性のあるNeat Libraryを自動的にインストールします。特定のNeat Libraryバージョンを、互換性のあるPalette SDK内から、またはDevKit上で直接指定する場合にのみ使用してください。
 
-Neat Library 0.6.0の場合：
+Neat Library 0.6.1の場合：
 
 <ShellCommand prompt="sdk|devkit">
-sima-cli neat install core@v0.6.0
+sima-cli neat install core@v0.6.1
 </ShellCommand>
 
 Neat Library 0.1.0 の変更点：
@@ -108,11 +110,12 @@ Neat アプリのバージョンは、Neat Library のバージョンとは独�
 | [**0.5.0**](https://github.com/sima-neat/apps/releases/tag/v0.5.0) | **0.4.0** |
 | [**0.5.1**](https://github.com/sima-neat/apps/releases/tag/v0.5.1) | **0.5.0** |
 | [**0.6.0**](https://github.com/sima-neat/apps/releases/tag/v0.6.0) | **0.6.0** |
+| [**0.6.1**](https://github.com/sima-neat/apps/releases/tag/v0.6.1) | **0.6.1** |
 
-互換性のある Palette SDK または DevKit から、Apps 0.5.0 をインストールしてください。
+互換性のある Palette SDK または DevKit から、Apps 0.6.1 をインストールしてください。
 
 <ShellCommand prompt="sdk|devkit">
-sima-cli neat install apps@v0.5.0
+sima-cli neat install apps@v0.6.1
 </ShellCommand>
 
 ## Model Compiler
@@ -135,6 +138,7 @@ SDKのインストール/設定中に、設定プロセスでは、環境で利�
 | **2.1.3** | **2.1.3.0** | Ubuntu 24.04 `x86_64` / `aarch64` | Apple Silicon は、Palette SDK をインストールすることでサポートされます。 |
 | **2.1.3.1** | **2.1.3.1** | Ubuntu 24.04 `x86_64` / `aarch64` | Apple Silicon は、Palette SDK をインストールすることでサポートされます。 |
 | **3.0.0** | **3.0.0.0** | Ubuntu 24.04 `x86_64` / `aarch64` | Apple Silicon は、Palette SDK をインストールすることでサポートされます。 |
+| **3.0.0.1** | **3.0.0.1** | Ubuntu 24.04 `x86_64` / `aarch64` | Apple Silicon は、Palette SDK をインストールすることでサポートされます。 |
 
 「ホスト環境」列は、スタンドアロンの Model Compiler のインストールに適用されます。たとえば、Ubuntu 22.04 ホストを使用しているお客様は、Palette SDK 2.1.3.0 内にインストールすることで、Model Compiler 2.1.3 を引き続き使用できます。これは、Palette SDK が互換性のある Ubuntu 24.04 ベースのコンテナ環境を提供するためです。
 
@@ -153,17 +157,17 @@ neat
 ```text
 Neat Environment
   Mode               Palette SDK
-  SDK Version        3.0.0_Palette_SDK_neat_v3.0.0.0
+  SDK Version        3.0.0_Palette_SDK_neat_v3.0.0.1
   Platform Version   3.0.0
   Sysroot            /opt/toolchain/aarch64/modalix
   Update check       online
 
 Components
-  Neat core              0.6.0 channel=release env=prod latest=0.6.0
-  PyNeat                 0.6.0
-  neat-runtime           0.6.0
-  neat-gst-plugins       0.6.0
-  neat-llima             0.6.0
+  Neat core              0.6.1 channel=release env=prod latest=0.6.1
+  PyNeat                 0.6.1
+  neat-runtime           0.6.1
+  neat-gst-plugins       0.6.1
+  neat-llima             0.6.1
   neat-insight           0.0.9 channel=release status=Running venv=/opt/neat-insight/venv
   Model Compiler         not installed
 
