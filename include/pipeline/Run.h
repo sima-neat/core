@@ -170,10 +170,11 @@ struct RunOptions {
   OutputMemory output_memory =
       OutputMemory::Auto; ///< Whether output tensors are zero-copy or owned.
   /**
-   * @brief Default pull timeout for `build()`/`run()` input-mode paths, in milliseconds.
+   * @brief Output-wait timeout for input-mode `Graph::run()` and supported seeded build preflight.
    *
-   * `-1` keeps framework defaults (and legacy env-var fallback). Override per-call by
-   * passing an explicit `timeout_ms` to the relevant `pull()` or `run()` overload.
+   * In milliseconds; `-1` selects framework defaults (and legacy env-var fallback).
+   * `Run::run()` and `Model::run()` use their per-call `timeout_ms` instead; `-1` means
+   * unlimited, as in `Run::pull(-1)`.
    */
   int input_timeout_ms = -1;
   /**

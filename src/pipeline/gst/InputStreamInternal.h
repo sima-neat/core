@@ -167,7 +167,6 @@ struct InputStream::State {
   std::atomic<std::uint64_t> push_ns{0};
   std::atomic<std::uint64_t> pull_wait_ns{0};
   std::atomic<std::uint64_t> decode_ns{0};
-  std::atomic<std::int64_t> last_push_ns{0};
   std::atomic<std::int64_t> inflight{0};
   std::atomic<std::int64_t> next_input_seq{0};
   pipeline_internal::InputPublicationMeasurement input_publication_measurement;
@@ -251,7 +250,6 @@ bool appsink_cb_debug_enabled();
 bool appsink_drop_last_debug_enabled();
 bool inputstream_meta_debug_enabled();
 bool inputstream_pool_debug_enabled();
-bool inputstream_dot_on_timeout_enabled();
 bool inputstream_use_appsink_callbacks_enabled();
 bool inputstream_stop_unblock_enabled();
 bool inputstream_stop_flush_enabled();

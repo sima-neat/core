@@ -3,6 +3,7 @@
 #error "Internal header. Not part of the public API."
 #endif
 
+#include <optional>
 #include <string>
 #include <simaai/scheduler/client/stage.h>
 #include <simaai/scheduler/client/metrics.h>
@@ -38,6 +39,15 @@ struct KernelStageRecipe {
   std::vector<PhysicalBufferStaticSpec> private_buffers;
   // Optional cold semantic boundaries. No numerical ABI or per-frame metadata is changed.
   std::shared_ptr<const ::simaai::scheduler::client::StageMetrics> metrics;
+  // Inspection only; not part of the Scheduler program or numerical request.
+  struct BoxDecodeSettings {
+    BoxDecodeType decode_type = BoxDecodeType::Unspecified;
+    int num_classes = 0;
+    double detection_threshold = 0;
+    double nms_iou_threshold = 0;
+    int topk = 0;
+  };
+  std::optional<BoxDecodeSettings> boxdecode_settings;
 };
 // Transfer immutable factories into a fresh request. Scheduler instantiates them
 // only after validating the entire stopped cohort and resource budgets.

@@ -932,6 +932,10 @@ requires packing. Explicit CPU memory and Owned outputs remain supported;
 required device allocations fail rather than silently falling back to CPU
 memory. Applications do not select a memory backend or initialize GStreamer.
 
+Tensor transfers reuse pools by heap and byte capacity. Pools grow while tensors
+remain in use and retain released buffers until process exit. CPU access reuses
+Runner's mapping while each access acquires and releases its ticket.
+
 Input allocation preference and runtime admission are separate decisions. Core
 resolves both from the declared `Input` and its executable downstream route at
 build time; it does not rewrite `Auto` into an explicit device requirement.
@@ -1277,6 +1281,8 @@ uploaded per frame.
 * `push(...)` enqueues inputs (blocking or dropping based on `RunOptions::overflow_policy`)
 * `pull(...)` dequeues `Sample` outputs from the appsink
 * `try_push(...)` is non-blocking (returns false if the queue is full)
+
+An idle `Run` remains usable; operation deadlines bound waits, not pauses between submissions.
 
 This supports fully async pipelines (producer/consumer split) as well as
 one-shot flows (`Graph::run(...)`).
@@ -2248,11 +2254,13 @@ Core reuses shared backing memory slots while retaining producer leases and skip
 
 ## Offline Core delivery
 
-Standalone Core and PCIe offline bundles use the same immutable Core publication, dependency collector, checksum verification, and platform admission lifecycle. DevKit installation uses an isolated network namespace; SDK sysroot installation uses file-only APT methods. Both use a shared installation lock. CI validates packages and Python imports against a pristine provisioned baseline with networking disabled, then exposes offline metadata only after the standalone bundle and all four PCIe variants pass.
+Standalone Core and PCIe offline bundles use the same authenticated Core publication snapshot, dependency collector, checksum verification, and platform admission lifecycle. DevKit installation uses an isolated network namespace; SDK sysroot installation uses file-only APT methods. Both use a shared installation lock. CI validates packages and Python imports against a pristine provisioned baseline with networking disabled, then exposes offline metadata only after the standalone bundle and all four PCIe variants pass.
 
 PCIe offline installation discovers all cards before SSH setup. It bundles and invokes the existing online `pcie-setup.sh` unchanged as the invoking user, supplying each discovered address through `--hosts`. Discovery and direct-route checks precede setup; strict SSH verification on the PCI-owned interface follows setup. Host-key enrollment follows the shared script's existing behavior. Automatic enrollment uses `~/.ssh/known_hosts`; custom trust files must be provisioned beforehand. Preflight-only mode never provisions SSH. No package installation starts until SSH setup and all host/card preflight checks pass.
 
 Standalone Core publishes `offline/metadata.json` with the runtime bundle and extras, and `offline/metadata-minimal.json` with only the runtime bundle.
+
+Rebuilding the same Core commit with changed dependencies (including LLiMa) rebuilds the offline bundles. CI stages metadata by source-input hashes and uses resource filenames with a 8-character SHA-256 suffix before `.tar.gz`, preserving downloads referenced by earlier metadata. After all five variants pass and source hashes are rechecked, CI replaces the download metadata and invalidates its cache. Unchanged inputs reuse verified bundles; malformed metadata and checksum failures still stop publication.
 
 The installer accepts only the Neat eLxr SDK or a provisioned Modalix DevKit. It checks `/etc/sdk-release` or `/etc/buildinfo` against the package manifest bundled in the archive; downloaded publication metadata is not required. Other environments and incompatible Platform versions are rejected before installation. In the SDK, Core is copied into `/opt/toolchain/aarch64/modalix`. If `DEVKIT_SYNC_DEVKIT_IP` is configured, the same offline bundle is transferred over SSH to the paired DevKit. Both environments must pass preflight before installation begins. On a DevKit, installation runs locally.
 

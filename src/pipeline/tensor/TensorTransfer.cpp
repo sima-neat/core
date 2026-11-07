@@ -39,9 +39,12 @@
 #include <gst/gst.h>
 #include <gstsimaaitensorbuffer_meta.h>
 
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -60,6 +63,48 @@ using simaai::neat::Segment;
 using simaai::neat::Storage;
 using simaai::neat::StorageKind;
 using simaai::neat::Tensor;
+
+namespace dma = ::simaai::scheduler::client::dma;
+
+GstBuffer* acquire_transfer_buffer(dma::HeapKind heap, std::size_t bytes, dma::Error* error) {
+  if (bytes > G_MAXUINT)
+    return dma::allocateDmaBufBuffer(heap, bytes, {}, error);
+  using Pool = std::shared_ptr<GstBufferPool>;
+  static std::mutex mutex;
+  static std::map<std::pair<dma::HeapKind, std::size_t>, Pool> pools;
+  const auto key = std::make_pair(heap, bytes);
+  Pool pool;
+  {
+    std::lock_guard lock(mutex);
+    if (auto it = pools.find(key); it != pools.end())
+      pool = it->second;
+  }
+  if (!pool) {
+    // A zero maximum lets the pool grow while callers retain earlier tensors.
+    // Allocate outside the cache lock so unrelated transfers can proceed.
+    Pool created(dma::createDmaBufPool(heap, bytes, 1U, 0U, {}, error), [](GstBufferPool* value) {
+      if (value) {
+        gst_buffer_pool_set_active(value, FALSE);
+        gst_object_unref(value);
+      }
+    });
+    std::lock_guard lock(mutex);
+    if (created)
+      pool = pools.emplace(key, created).first->second;
+    else if (auto it = pools.find(key); it != pools.end())
+      pool = it->second;
+  }
+  if (!pool)
+    return nullptr;
+  GstBuffer* buffer = nullptr;
+  if (gst_buffer_pool_acquire_buffer(pool.get(), &buffer, nullptr) != GST_FLOW_OK) {
+    gst_clear_buffer(&buffer);
+    *error = {EIO, "acquire transfer buffer"};
+    return nullptr;
+  }
+  *error = {};
+  return buffer;
+}
 
 //==============================================================================
 // Composite packing helpers
@@ -509,7 +554,8 @@ std::shared_ptr<Storage> make_driver_dmabuf_storage(GstSample* sample, const Dev
 }
 
 Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
-                                 std::uint64_t target_flags, const std::vector<Segment>& segments) {
+                                 std::uint64_t target_flags, const std::vector<Segment>& segments,
+                                 std::size_t payload_bytes) {
   using ::simaai::scheduler::client::dma::CpuAccess;
   using ::simaai::scheduler::client::dma::DmaBufView;
   using ::simaai::scheduler::client::dma::Error;
@@ -518,8 +564,7 @@ Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
   const std::size_t allocation_bytes = segment_total_bytes(segments);
   const HeapKind heap = target.type == DeviceType::SIMA_MLA ? HeapKind::MlaDms : HeapKind::Cma;
   Error error;
-  GstBuffer* dst =
-      ::simaai::scheduler::client::dma::allocateDmaBufBuffer(heap, allocation_bytes, {}, &error);
+  GstBuffer* dst = acquire_transfer_buffer(heap, allocation_bytes, &error);
   if (!dst) {
     throw std::runtime_error("transfer: standard DMA-BUF allocation failed: " + error.message());
   }
@@ -548,6 +593,11 @@ Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
     (void)mapping->finish();
     gst_buffer_unref(dst);
     throw std::runtime_error("transfer: standard DMA-BUF payload copy failed");
+  }
+  // Preserve freshly allocated padding when reusing a larger carrier.
+  if (allocation_bytes > payload_bytes) {
+    std::memset(static_cast<std::uint8_t*>(mapping->data()) + payload_bytes, 0,
+                allocation_bytes - payload_bytes);
   }
   if (!mapping->finish(&error)) {
     gst_buffer_unref(dst);
@@ -621,7 +671,7 @@ Tensor transfer_to_device(const Tensor& src, const Device& target,
 
   const std::vector<Segment> segments = resolve_segments(required_segments, payload_bytes);
 
-  return transfer_to_driver_dmabuf(src, target, target_flags, segments);
+  return transfer_to_driver_dmabuf(src, target, target_flags, segments, payload_bytes);
 }
 
 Tensor transfer_to_cpu(const Tensor& src) {

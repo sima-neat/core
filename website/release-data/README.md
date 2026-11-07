@@ -1,6 +1,6 @@
-# Rolling documentation releases
+# Documentation releases and dependency requirements
 
-`current.json` is the committed documentation release snapshot (schema version 1).
+`current.json` is the committed documentation release and dependency snapshot (schema version 1).
 Each scalar has a `value`, an accountable `owner`, and a `source` explaining its
 provenance. Values have no `v` prefix. Core and platform must exactly match
 `package-version` and `platform-version` in `deps/manifest.json`. The SDK release
@@ -18,6 +18,14 @@ The validated snapshot is embedded in the preprocessor's cache identity, so a
 release-data-only edit invalidates compiled pages. Restart a running dev server
 after changing release data.
 
+Minimum requirements live separately under `dependencies`. For example,
+`dependencies.docker.minimum` defines Docker Engine's minimum version with its
+`value`, `owner`, and `source`. Use `%%dependency.docker.minimum%%` in prerequisite
+text, including every translation. Change the shared value only when the supported
+minimum changes; a Neat release update does not change it. The same resolver,
+cache invalidation, translation parity checks, and rendered-output checks apply
+to release and dependency tokens.
+
 The Algolia record generator also uses the shared resolver, through
 `website/scripts/resolve-release-sources.js`, before extracting search text.
 It batches token-bearing source documents per locale and fails on invalid tokens
@@ -29,8 +37,9 @@ versions throughout its prose, commands, tables, links, and CLI examples.
 tokens there. Review and update supported version combinations separately during
 each release. Updating release data never changes the compatibility page.
 
-Historical release notes, firmware-family examples, minimum-version requirements,
-and version-specific migration instructions also stay literal. `policy.json`
+Historical release notes, firmware-family examples, and version-specific migration
+instructions stay literal. Shared dependency minimums use dependency tokens;
+other fixed historical requirements may remain literal. `policy.json`
 designates rolling pages and exact-line, counted exceptions with reasons.
 Exceptions include network addresses, which resemble versions. Do not allowlist
 a whole directory or a version globally.

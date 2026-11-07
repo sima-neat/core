@@ -70,10 +70,11 @@ slug: /reference/environment-variables
 - `SIMA_GST_POLL_SLICE_MS=<ms>` — інтервал опитування для отримання даних з appsink (за замовчуванням 200 мс).
 - Рекомендовані параметри API:
   - `ValidateOptions.preroll_timeout_ms` — час очікування перед початком відтворення в функції validate().
-  - `RunOptions.input_timeout_ms` — час очікування для отримання даних у режимі введення під час виконання команд build() або run().
+  - `RunOptions.input_timeout_ms` — очікування виходу для `Graph::run()` у вхідному режимі та підтримуваної попередньої перевірки побудови з початковими даними.
+  - `Run::run(..., timeout_ms)` / `Model::run(..., timeout_ms)` — очікування виходу для окремого виклику; `-1` означає відсутність обмеження, як у `Run::pull(-1)`.
 - Застарілі змінні середовища, що використовуються як резервний варіант (використовуйте лише тоді, коли неможливо передати параметри):
   - `SIMA_GST_VALIDATE_TIMEOUT_MS=<ms>` — час очікування для функції validate() (за замовчуванням 2000/10000).
-  - `SIMA_GST_RUN_INPUT_TIMEOUT_MS=<ms>` — час очікування вхідних даних для функції run() (за замовчуванням 10000 мс).
+  - `SIMA_GST_RUN_INPUT_TIMEOUT_MS=<ms>` — резервне значення для наведених вище очікувань виходу `Graph::run()` / попередньої перевірки (за замовчуванням 10000 мс).
 
 ## Діагностика + зонди
 
@@ -108,7 +109,6 @@ slug: /reference/environment-variables
 - `SIMA_INPUTSTREAM_DEBUG=1` — детальне ведення журналів для класу InputStream.
 - `SIMA_INPUTSTREAM_WARN=1` — попередження щодо подій, що виникають під час роботи з класом InputStream.
 - `SIMA_INPUTSTREAM_POLL_MS=<ms>` — інтервал опитування InputStream (за замовчуванням 50 мс).
-- `SIMA_INPUTSTREAM_DOT_ON_TIMEOUT=1` — вивести дані DOT у разі перевищення часу очікування.
 - `SIMA_INPUTSTREAM_META_DEBUG=1` — виводити в журнал деталі GstSimaMeta.
 - `SIMA_INPUTSTREAM_ALLOC_DEBUG=1` — налагодження виділення пам’яті.
 - `SIMA_INPUTSTREAM_PUSH_TIMING=1` — журнали фіксують час виконання операції push.

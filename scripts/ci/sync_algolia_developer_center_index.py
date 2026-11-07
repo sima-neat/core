@@ -184,7 +184,7 @@ def resolve_release_sources(sources: dict[str, str]) -> dict[str, str]:
     Batch token-bearing documents per locale so indexing does not spawn a
     process per page. Plain Markdown keeps its existing Python-only path.
     """
-    selected = {name: text for name, text in sources.items() if re.search(r"%{1,2}release\b", text, re.I)}
+    selected = {name: text for name, text in sources.items() if re.search(r"%{1,2}(?:release|dependency)\b", text, re.I)}
     if not selected:
         return sources
     resolver = Path(__file__).resolve().parents[2] / "website/scripts/resolve-release-sources.js"

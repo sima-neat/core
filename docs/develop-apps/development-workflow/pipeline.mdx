@@ -277,7 +277,7 @@ When you combine streams, preserve the matching key that the graph expects. `Com
 | Jittery source needs bounded buffering | `queue_depth` | Increase only enough to absorb jitter. A deep queue can hide stale frames and delayed backpressure. |
 | App stores outputs after pull | `OutputMemory::Owned` | Keeps output lifetime independent of runtime buffers. |
 | App consumes outputs without a transport copy | `OutputMemory::Auto` | Retains standard DMA-BUF outputs in sync and async runs; other storage follows the preset/mode policy. |
-| Default wait time should be explicit | `input_timeout_ms` | Sets the default timeout for build/run input-mode paths. Per-call timeouts still win. |
+| Default wait time should be explicit | `input_timeout_ms` | Bounds input-mode `Graph::run()` and supported seeded build preflight. `Run::run()`, `Model::run()` and `pull()` use their per-call timeouts (`-1`: unlimited). |
 | Seeded build should catch first-sample errors early | `startup_preflight = true` | Keeps seeded build honest. Disable only when first-sample failures can surface later through `pull(...)` or `last_error()`. |
 | Source buffer lifetime is short | `advanced.copy_input = true` | Protects input memory that may disappear after `push(...)`. |
 | Input size needs a guardrail | `advanced.max_input_bytes` | Rejects oversized input before it enters the graph. |
