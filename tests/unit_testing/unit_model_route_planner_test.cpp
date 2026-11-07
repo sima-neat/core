@@ -782,7 +782,9 @@ RUN_TEST(
 
       {
         const auto fixture = make_bf16_mla_tess_fixture("model_route_bf16_mla_tess");
-        Model model(fixture.tar_path);
+        Model::Options options;
+        options.preprocess.enable = AutoFlag::Off;
+        Model model(fixture.tar_path, options);
 
         const auto pre = ModelAccess::build_public_preprocess_nodes(model);
         const auto post = ModelAccess::build_public_postprocess_nodes(model);
@@ -792,13 +794,13 @@ RUN_TEST(
         const std::string pre_kind = pre.front() ? pre.front()->kind() : "";
         const std::string post_kind = post.front() ? post.front()->kind() : "";
         require(pre_kind == "QuantTess",
-                "strict MPK route should select QuantTess preprocess stage");
+                "preprocess Off must preserve MPK-required Quant/Tess adapters");
         require(post_kind == "DetessDequant",
                 "strict MPK route should select DetessDequant postprocess stage");
 
         const TensorSpec in_spec = model.input_specs().front();
         require(!in_spec.dtypes.empty() && in_spec.dtypes[0] == TensorDType::Float32,
-                "strict MPK route input spec should expose FP32 host ingress dtype");
+                "preprocess Off must preserve the public FP32 input contract");
       }
 
       {
@@ -896,8 +898,13 @@ RUN_TEST(
             make_multi_ingress_cast_join_fixture("model_route_multi_ingress_cast_join");
         Model::Options opt;
         opt.preprocess.kind = InputKind::Tensor;
-        opt.preprocess.enable = AutoFlag::On;
+        opt.preprocess.enable = AutoFlag::Off;
         Model model(fixture.tar_path, opt);
+
+        for (const auto& input : model.input_specs()) {
+          require(input.dtypes == std::vector<TensorDType>{TensorDType::Float32},
+                  "preprocess Off must preserve FP32 inputs to the Cast adapters");
+        }
 
         const auto& pack = ModelAccess::pack(model);
         const PreprocessCapabilities capabilities = inspect_preprocess_capabilities(pack);

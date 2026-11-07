@@ -80,7 +80,7 @@ outputs = model.output_specs()
 | Мета | Варіанти використання | Примітки |
 | --- | --- | --- |
 | Надсилайте декодоване зображення. | `preprocess.kind`, `preprocess.preset` та конкретні поля попередньої обробки, такі як зміна розміру, колір, макет, нормалізація, квантування або теселяція. | Використовуйте це, коли ваш застосунок надсилає пікселі, і Neat має адаптувати їх до моделі контракту. |
-| Надсилайте тензорні дані, що мають форму, відповідну моделі. | `preprocess.kind = Tensor`; активуйте `preprocess.enable = Off` лише тоді, коли тензор вже відповідає вимогам моделі. | Використовуйте це, якщо ваша програма вже виконує попередню обробку даних. |
+| Передати тензори, що відповідають публічним входам моделі | Залиште параметри попередньої обробки незаданими. | Зберігає потрібні адаптери Cast/Quant/Tess, зокрема для вже масштабованих і нормалізованих входів FP32. |
 | Розшифруйте результати виявлення. | `decode_type`, `decode_type_option`, `score_threshold`, `nms_iou_threshold`, `top_k`, `num_classes` | Моделі виявлення потребують чітко визначеного наміру декодування. |
 | Зберігайте отримані файли моделі для подальшого перегляду. | `cleanup_extracted_model_data = false` | Корисно під час налагодження. Залиште значення за замовчуванням для звичайного запуску. |
 | Запустіть декілька моделей маршрутів в одному процесі. | `name_suffix` та префікс/суфікс назви елемента графа. | Забезпечує читабельність згенерованих назв і результатів діагностики. |
@@ -176,34 +176,26 @@ model = pyneat.Model(model_path, options)
 
 ### Необроблений тензорний вхід.
 
-Використовуйте цей шаблон, якщо ваша програма вже створює тензори потрібної форми, типу даних і розміщення, які очікує скомпільована модель.
+Використовуйте стандартні налаштування для тензорів, що відповідають `model.input_specs()`. Neat зберігає потрібні MPK тензорні адаптери.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-simaai::neat::Model::Options options;
-options.preprocess.kind = simaai::neat::InputKind::Tensor;
-options.preprocess.enable = simaai::neat::AutoFlag::Off;
-
-simaai::neat::Model model(model_path, options);
+simaai::neat::Model model(model_path);
 ```
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 ```python
-options = pyneat.ModelOptions()
-options.preprocess.kind = pyneat.InputKind.Tensor
-options.preprocess.enable = pyneat.AutoFlag.Off
-
-model = pyneat.Model(model_path, options)
+model = pyneat.Model(model_path)
 ```
 
 </CodeTab>
 </CodeTabs>
 
-Якщо ваш тензор ще не має форми, необхідної для моделі, не намагайтеся примусово змінити його. Дозвольте попередній обробці виконати адаптацію або відкоригуйте код, що створює тензор.
+Наявний параметр `preprocess.enable = Off` не вибирає виконання лише на MLA й не видаляє потрібні MPK адаптери Cast/Quant/Tess. Непорожній список `preprocess.transforms` має пріоритет над `Off`.
 
 ### Підготуйте польовий довідник.
 
@@ -212,7 +204,7 @@ model = pyneat.Model(model_path, options)
 | Потрібно | Поле |
 | --- | --- |
 | Оберіть зображення або тензор як вхідні дані. | `preprocess.kind` |
-| Вимкніть попередню обробку для тензорів, які вже мають задану форму. | `preprocess.enable = Off` |
+| Наявний перемикач попередньої обробки (потрібні MPK адаптери залишаються) | `preprocess.enable` |
 | Зв’язаний динамічний вхід для зображень. | `preprocess.input_max_width`, `preprocess.input_max_height`, `preprocess.input_max_depth` |
 | Змініть розмір, обріжте або додайте чорні смуги зверху та знизу. | `preprocess.resize` |
 | Перетворіть зображення у форматі RGB, BGR, NV12, I420 або відтінків сірого. | `preprocess.color_convert` |

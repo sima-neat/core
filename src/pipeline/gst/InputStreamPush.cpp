@@ -1724,7 +1724,8 @@ bool try_push_message_encoded(InputStream::State& st, const Sample& msg,
   auto observed = st.input_publication_measurement.observe(buf);
   GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(st.appsrc), buf);
   observed.finish(ret);
-  const auto t_push_end = std::chrono::steady_clock::now();
+  const auto t_push_end =
+      timings ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
 
   if (timings) {
     st.push_count.fetch_add(1, std::memory_order_relaxed);
@@ -1763,9 +1764,6 @@ bool try_push_message_encoded(InputStream::State& st, const Sample& msg,
     return false;
   }
   st.inflight.fetch_add(1, std::memory_order_relaxed);
-  const auto push_ns =
-      std::chrono::duration_cast<std::chrono::nanoseconds>(t_push_end.time_since_epoch()).count();
-  st.last_push_ns.store(static_cast<std::int64_t>(push_ns), std::memory_order_relaxed);
   return true;
 }
 

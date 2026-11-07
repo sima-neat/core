@@ -1,4 +1,8 @@
 #include "model/Model.h"
+#include "pipeline/Graph.h"
+#include "nodes/io/Input.h"
+#include "nodes/common/Output.h"
+#include "pipeline/internal/RenderedMlaContractQuery.h"
 #include "pipeline/ExecutionPlan.h"
 #include "model/internal/ModelInternal.h"
 #include "pipeline/runtime/ExecutionPlanAssembly.h"
@@ -16,6 +20,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -212,6 +217,29 @@ int main(int argc, char** argv) {
   std::cout.setf(std::ios::unitbuf);
   std::cerr.setf(std::ios::unitbuf);
 
+  std::string mla_tar_gz;
+  sima_test::get_arg(argc, argv, "--mla-model", mla_tar_gz);
+  if (const char* staged = std::getenv("SIMA_TEST_MLA_ONLY_MODEL"); mla_tar_gz.empty() && staged) {
+    mla_tar_gz = staged;
+  }
+  if (mla_tar_gz.empty()) {
+    const auto archive =
+        sima_test::writable_asset_tmp_dir(sima_test::default_asset_root(), "sima-neat-models") /
+        "yolo26n-det-int8-b1.tar.gz";
+    const sima_test::ScopedFileLock lock(archive.string() + ".lock");
+    if (sima_test::download_file("https://docs.sima.ai/pkg_downloads/SDK" +
+                                     sima_test::modelzoo_version() +
+                                     "/models/modalix/yolo26-detection/yolo26n-det-int8-b1.tar.gz",
+                                 archive)) {
+      mla_tar_gz = archive.string();
+    }
+  }
+  if (mla_tar_gz.empty() || !fs::exists(mla_tar_gz)) {
+    std::cerr << "Failed to resolve the YOLO26n INT8 e2e fixture. Supply --mla-model <path> or "
+                 "SIMA_TEST_MLA_ONLY_MODEL.\n";
+    return 3;
+  }
+
   std::string tar_gz;
   sima_test::get_arg(argc, argv, "--model", tar_gz);
   if (tar_gz.empty()) {
@@ -271,6 +299,44 @@ int main(int argc, char** argv) {
 
     require(simaai::neat::ExecutionPlan{}.to_json(-1) == "{}",
             "a default ExecutionPlan should be empty");
+
+    {
+      using namespace simaai::neat;
+      Model::Options options;
+      options.inference_terminal.mla_only = true;
+      Model native_model(mla_tar_gz, options);
+      const auto native_seed = ev74_seed(native_model);
+      Graph graph;
+      graph.add(nodes::Input());
+      graph.add(native_model.preprocess());
+      graph.add(native_model.inference());
+      graph.add(nodes::Output());
+      RunOptions run_options;
+      run_options.output_memory = OutputMemory::ZeroCopy;
+      auto run = graph.build(native_seed, run_options);
+      const auto core = run_internal::core(run);
+      const auto diag = core->pipeline.stream.diag_ctx();
+      require(diag && diag->build_plan && diag->build_plan->rendered_manifest,
+              "MLA-only runner must retain its prepared plan");
+      const auto* mla = pipeline_internal::rendered_stage_query::find_mla_stage(
+          *diag->build_plan->rendered_manifest);
+      require(mla && mla->logical_outputs.size() > 1,
+              "real-model regression requires multiple native MLA views");
+      const auto outputs = run.run(native_seed, 30000);
+      require(outputs.size() == mla->logical_outputs.size(),
+              "MLA-only output must preserve every typed view instead of the raw carrier");
+      for (std::size_t i = 0; i < outputs.size(); ++i) {
+        const auto& expected = mla->logical_outputs[i];
+        require(outputs[i].dtype ==
+                        pipeline_internal::rendered_stage_query::dtype_from_contract_token(
+                            expected.dtype) &&
+                    outputs[i].shape == expected.shape &&
+                    (expected.stride_bytes.empty() ||
+                     outputs[i].strides_bytes == expected.stride_bytes),
+                "MLA-only output must preserve its native dtype, shape and padded strides");
+      }
+      run.close();
+    }
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] model_execution_plan_test: " << e.what() << "\n";
     return 1;

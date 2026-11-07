@@ -29,11 +29,11 @@ public:
                                      IngressVariant variant = IngressVariant::ConvertToNv12)
       : config_(std::move(config)), variant_(variant) {
     const bool automatic = config_.width == 0 && config_.height == 0;
-    const bool fixed = config_.width > 0 && config_.width <= 3840 && config_.width % 2 == 0 &&
-                       config_.height > 0 && config_.height <= 2160 && config_.height % 2 == 0;
+    const bool fixed = config_.width > 0 && config_.width % 2 == 0 && config_.height > 0 &&
+                       config_.height % 2 == 0;
     if ((!automatic && !fixed) || config_.fps <= 0) {
       throw std::invalid_argument("Encoder input requires automatic dimensions or even dimensions "
-                                  "within 3840x2160, and positive fps");
+                                  "and positive fps");
     }
     if (!config_.fallback_element_names.empty() && config_.fallback_element_names.size() != 3U) {
       throw std::invalid_argument(
@@ -63,8 +63,6 @@ public:
     std::ostringstream geometry;
     if (config_.width > 0 && config_.height > 0) {
       geometry << ",width=" << config_.width << ",height=" << config_.height;
-    } else {
-      geometry << ",width=(int)[2,3840,2],height=(int)[2,2160,2]";
     }
     geometry << ",framerate=" << config_.fps << "/1";
     const std::string caps = "video/x-raw,format=NV12" + geometry.str();

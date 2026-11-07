@@ -537,6 +537,7 @@ set(UNIT_TESTS
   unit_element_timing_metadata_test
   unit_preproc_contract_rules_test
   unit_inputstream_stop_flush_test
+  unit_inputstream_idle_resume_test
   unit_core_render_retirement_contract_test
   unit_inputstream_stop_timeout_detach_test
   unit_inputappsrc_stop_race_test
@@ -693,6 +694,21 @@ foreach(test ${UNIT_TESTS})
     set_property(TEST ${test} APPEND PROPERTY LABELS "unit")
   endif()
 endforeach()
+
+# The delivery-mode flag is cached; exercise the same contract in separate processes.
+if (TARGET unit_inputstream_idle_resume_test)
+  set_tests_properties(unit_inputstream_idle_resume_test PROPERTIES
+    TIMEOUT 30)
+  set_property(TEST unit_inputstream_idle_resume_test APPEND PROPERTY ENVIRONMENT
+    "SIMA_INPUTSTREAM_USE_APPSINK_CALLBACKS=0" "SIMA_INPUTSTREAM_PREFLIGHT_RUN=")
+  simaneat_add_test(NAME unit_inputstream_idle_resume_callbacks_test
+    COMMAND unit_inputstream_idle_resume_test)
+  simaneat_append_ctest_env(unit_inputstream_idle_resume_callbacks_test)
+  set_tests_properties(unit_inputstream_idle_resume_callbacks_test PROPERTIES
+    TIMEOUT 30 LABELS "strict;unit;gstreamer")
+  set_property(TEST unit_inputstream_idle_resume_callbacks_test APPEND PROPERTY ENVIRONMENT
+    "SIMA_INPUTSTREAM_USE_APPSINK_CALLBACKS=1" "SIMA_INPUTSTREAM_PREFLIGHT_RUN=")
+endif()
 
 # Keep host dispatch evidence separate from the real DMA allocation requirement.
 if (TARGET unit_inputstream_cpu_gst_copy_test)
@@ -900,6 +916,11 @@ add_pipeline_test(
   neat_tensor_device_placement_test
   ${CMAKE_CURRENT_SOURCE_DIR}/neat_tensor_device_placement_test.cpp
 )
+if(TEST neat_tensor_device_placement_test)
+  set_tests_properties(neat_tensor_device_placement_test PROPERTIES TIMEOUT 30)
+  target_link_libraries(neat_tensor_device_placement_test PRIVATE ${CMAKE_DL_LIBS})
+  target_link_options(neat_tensor_device_placement_test PRIVATE -Wl,--export-dynamic-symbol=ioctl)
+endif()
 
 foreach(test unit_appsrcimage_test unit_image_group_runtime_test unit_pipeline_io_test neat_tensor_device_placement_test)
   if (NOT test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
@@ -2500,6 +2521,17 @@ if (NOT rtsp_encoded_boundary_caps_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_tests_properties(rtsp_encoded_boundary_caps_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
+add_pipeline_test(
+  rtsp_keyframe_frame_loss_test
+  e2e_testing/rtsp_keyframe_frame_loss_test.cpp
+  ARGS --image ${CMAKE_SOURCE_DIR}/test.jpg
+)
+
+if (NOT rtsp_keyframe_frame_loss_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST rtsp_keyframe_frame_loss_test APPEND PROPERTY LABELS "e2e;rtsp")
+  set_property(TEST rtsp_keyframe_frame_loss_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
+endif()
+
 add_pipeline_test_long(
   codec_runtime_stream_test
   e2e_testing/codec_runtime_stream_test.cpp
@@ -2981,6 +3013,7 @@ set(SIMANEAT_DECODER_MEDIA_E2E_TESTS
   resnet50_modelpack_jpeg
   resnet50_modelpack_rtsp
   rtsp_encoded_boundary_caps_test
+  rtsp_keyframe_frame_loss_test
   rtsp_pull_frame_test
 )
 foreach(_simaneat_decoder_media_test IN LISTS SIMANEAT_DECODER_MEDIA_E2E_TESTS)

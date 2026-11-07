@@ -70,10 +70,11 @@ slug: /reference/environment-variables
 - `SIMA_GST_POLL_SLICE_MS=<ms>` — 用於應用程式接收器（app sink）拉取資料時的輪詢間隔（預設值為 200）。
 - 偏好的 API 設定選項：
   - `ValidateOptions.preroll_timeout_ms` — validate() 預先載入逾時。
-  - `RunOptions.input_timeout_ms` — build()/run() 輸入模式逾時。
+  - `RunOptions.input_timeout_ms` — 輸入模式 `Graph::run()` 和支援的帶初始輸入建置預檢的輸出等待時間。
+  - `Run::run(..., timeout_ms)` / `Model::run(..., timeout_ms)` — 各次呼叫的輸出等待時間；`-1` 表示無限等待，與 `Run::pull(-1)` 相同。
 - 舊版備援環境變數（僅在無法傳遞選項時使用）：
   - `SIMA_GST_VALIDATE_TIMEOUT_MS=<ms>` — validate() 超時時間（預設值為 2000/10000）。
-  - `SIMA_GST_RUN_INPUT_TIMEOUT_MS=<ms>` — run() 函數的輸入逾時時間（預設為 10000）。
+  - `SIMA_GST_RUN_INPUT_TIMEOUT_MS=<ms>` — 上述 `Graph::run()`／預檢輸出等待的備援設定（預設為 10000）。
 
 ## 診斷工具與探測器
 
@@ -108,7 +109,6 @@ slug: /reference/environment-variables
 - `SIMA_INPUTSTREAM_DEBUG=1` ——詳細的 InputStream 日誌。
 - `SIMA_INPUTSTREAM_WARN=1` ——關於 InputStream 事件的警告。
 - `SIMA_INPUTSTREAM_POLL_MS=<ms>` — 輸入串流輪詢間隔（預設值為 50 毫秒）。
-- `SIMA_INPUTSTREAM_DOT_ON_TIMEOUT=1` — 在逾時時輸出 DOT 資訊。
 - `SIMA_INPUTSTREAM_META_DEBUG=1` — 記錄 GstSimaMeta 的詳細資訊。
 - `SIMA_INPUTSTREAM_ALLOC_DEBUG=1` — 設定除錯。
 - `SIMA_INPUTSTREAM_PUSH_TIMING=1` — 推送時間記錄。

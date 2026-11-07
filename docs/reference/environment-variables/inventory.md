@@ -10,8 +10,6 @@ This is the full environment-variable inventory detected from source, tests, tut
 
 ## Runtime / Library (`src/`)
 
-Count: 153
-
 - `GST_PLUGIN_PATH`
 - `GST_PLUGIN_PATH_1_0`
 - `GST_PLUGIN_SCANNER`
@@ -109,7 +107,6 @@ Count: 153
 - `SIMA_INPUTSTREAM_ALLOC_DEBUG`
 - `SIMA_INPUTSTREAM_CB_STOP_TIMEOUT_MS`
 - `SIMA_INPUTSTREAM_DEBUG`
-- `SIMA_INPUTSTREAM_DOT_ON_TIMEOUT`
 - `SIMA_INPUTSTREAM_DROP_HOLDER_AFTER_PUSH`
 - `SIMA_INPUTSTREAM_ELASTIC_MAX_MB`
 - `SIMA_INPUTSTREAM_EOS_DEBUG`
@@ -169,8 +166,6 @@ Count: 153
 - `TMPDIR`
 
 ## Test / Tutorial / Tool Only (not used by `src/`)
-
-Count: 59
 
 - `CMAKE_BUILD_PARALLEL_LEVEL`
 - `GITHUB_STEP_SUMMARY`
@@ -233,8 +228,6 @@ Count: 59
 - `SIMA_YOLO_TAR`
 
 ## Shell / CI Defaults and Pass-through
-
-Count: 63
 
 - `ARTIFACT_DIR`
 - `ASAN_OPTIONS`
@@ -302,8 +295,6 @@ Count: 63
 
 ## User-Facing `SIMA_*` Docs List (`docs/reference/environment-variables/index.md`)
 
-Count: 60
-
 - `SIMA_ALLOW_GST_INIT`
 - `SIMA_ASYNC_TPUT_DIAG`
 - `SIMA_ASYNC_WARMUP`
@@ -341,7 +332,6 @@ Count: 60
 - `SIMA_H264_SPS_FIXUP_STREAM`
 - `SIMA_INPUTSTREAM_ALLOC_DEBUG`
 - `SIMA_INPUTSTREAM_DEBUG`
-- `SIMA_INPUTSTREAM_DOT_ON_TIMEOUT`
 - `SIMA_INPUTSTREAM_META_DEBUG`
 - `SIMA_INPUTSTREAM_POLL_MS`
 - `SIMA_INPUTSTREAM_PREFLIGHT_RUN`

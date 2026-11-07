@@ -19,6 +19,8 @@ struct BuildResult;
 struct OutputSpec;
 struct GraphLinkOptions;
 class Node;
+class Run;
+struct Tensor;
 struct Sample;
 struct InputOptions;
 namespace pipeline_internal {
@@ -56,6 +58,9 @@ void clear_composition_failure_for_test() noexcept;
 void maybe_throw_composition_failure_for_test(CompositionFailurePoint point);
 
 std::vector<std::string> sync_cache_rebuild_events_for_test(bool fail_build);
+Sample run_sync_prefill_for_test(Run& runner, const Tensor& input, int timeout_ms, int count,
+                                 bool warmed = false);
+
 pipeline_internal::InputMemoryResolution
 resolve_input_memory_for_test(const InputOptions& options,
                               const std::vector<std::shared_ptr<Node>>& nodes);

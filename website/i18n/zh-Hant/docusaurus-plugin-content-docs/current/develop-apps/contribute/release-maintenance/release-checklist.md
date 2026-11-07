@@ -40,7 +40,6 @@ slug: /develop-apps/contribute/release-checklist
    - `package-version` 和 `platform-version` 在 `deps/manifest.json` 中更新（如果需要）
    - `modelzoo-version` 顯式選擇經過驗證的 Model Zoo 發布版本，當其與 `platform-version` 不同時；如果省略，Model Zoo 解析將預設為 `platform-version`
    - `abi-version` 在 `deps/manifest.json` 中，每當公共 C++ 類型佈局或導出二進制合約以不兼容的方式更改時，都會遞增；所有 C++ 應用程式和 Python 綁定都會針對該 ABI 進行重新建置
-   - `CHANGELOG.md` 具有 `## [x.y.z]` 條目
    - 在發布/標籤主體中準備了版本資訊。
 
 在發布流程中不允許存在「已知崩潰」列表。任何崩潰回歸都會阻止發布，直到修復為止。
