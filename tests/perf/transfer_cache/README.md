@@ -184,3 +184,24 @@ credentials or compiled binaries are included. Temporary build/linkage logs and
 the exploratory pilot remain under `/workspace/tmp/dma-retention-pr1321/perf` in
 the shared SDK workspace. These are local benchmark observations, not full
 fleet, sustained production-load, or application-level qualification.
+
+## Fresh-board follow-up: platform blocked
+
+On November 7, the user selected `10.252.126.2` (MAC `68:e1:54:06:8b:58`)
+for a fresh comparison of all three versions. This is a different board from the
+historical measurements above. Its eLxr 12 system has GLIBC 2.36 and lacks the
+required DMA kernel capabilities. An isolated SDK userspace ran Python 3.13.5,
+NumPy 2.2.4 and the final Core binaries, without replacing board OS libraries.
+
+The final revision's four focused device tests reached driver admission, then
+failed: CMA CPU access reports `closed owned platform capability unavailable`
+(`ENOTSUP`), and `/dev/dma_heap/simaai,dms` is absent. These are platform blockers,
+not completed cache correctness or performance results. **No timed calls were
+completed on this board.** Its SSH endpoint subsequently became unreachable,
+before baseline/old-candidate smoke tests could run.
+
+[Raw preflight evidence](results/newboard-preflight.json) records the device,
+exact test failures, final Core hash, and prepared recovery-image checksums.
+The complete eLxr 3.0 B2501 netboot set was downloaded, SHA-256 verified and
+prepared locally. No reflash has occurred; eMMC reflash approval and restored
+access are pending before repeating the device tests and balanced benchmarks.

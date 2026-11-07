@@ -146,11 +146,15 @@ owners. The placement test additionally checks backing identity, payload and
 exact carrier lengths while growing and shrinking within page and 64 KiB
 classes, with another tensor still held.
 
-The final revision builds with GCC14. Its device rerun is **pending**: the SDK
-container was recreated during validation, removing its authorized SSH key.
-The partial timing probe is retained in the local lab and is excluded from the
-completed historical benchmark results. No final performance conclusion is
-claimed until same-device access is restored.
+The final revision builds with GCC14. The SDK container was recreated during
+validation, removing access to the original board. The user selected a fresh
+board at `10.252.126.2`; its older kernel rejects CMA CPU admission (`ENOTSUP`)
+and has no DMS heap. All four final tests are therefore platform blocked there,
+and no timing calls completed. See the [fresh-board preflight report](../perf/transfer_cache/README.md#fresh-board-follow-up-platform-blocked).
+A compatible recovery image is prepared; reflash approval and restored SSH access
+are pending. The partial timing probe from the earlier capacity-class candidate
+remains local and is excluded from completed historical benchmark results.
+No final performance conclusion is claimed.
 
 [The paired performance report](../perf/transfer_cache/README.md) retains the
 initial exact-size cache's 3.85× slowdown. The revised comparison is pending.

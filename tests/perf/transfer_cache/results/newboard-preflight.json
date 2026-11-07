@@ -1,0 +1,65 @@
+{
+  "date": "2026-11-07",
+  "target": "10.252.126.2",
+  "hostname": "modalix",
+  "mac": "68:e1:54:06:8b:58",
+  "kernel": "6.18.3-modalix #4837 SMP PREEMPT Wed Aug 19 18:44:13 UTC 2026",
+  "os": "eLxr 12 (aria), GLIBC 2.36",
+  "isolated_runtime": {
+    "python": "3.13.5",
+    "numpy": "2.2.4",
+    "method": "Private SDK userspace in chroot; board OS libraries unchanged",
+    "root": "/home/sima/dma-benchmark-root",
+    "workspace": "/home/sima/dma-benchmark-workspace"
+  },
+  "core_commit": "4b53b5b2ccf3fdfa9dac58198f5f7afe0ad04d60",
+  "core_sha256": "c6f30442aa1efc68ea76269cef3908cc8161fd8c238f5a6079853194a95d9121",
+  "completed_timing_calls": 0,
+  "tests": [
+    {
+      "test": "neat_tensor_device_placement_test",
+      "result": "blocked_by_platform",
+      "exit_code": 1,
+      "output": "START neat_tensor_device_placement_test\n\n(neat_tensor_device_placement_test:227116): GStreamer-WARNING **: 08:27:52.383: External plugin loader failed. This most likely means that the plugin loader helper binary was not found or could not be run. You might need to set the GST_PLUGIN_SCANNER environment variable if your setup is unusual. This should normally not be required though.\nFontconfig error: Cannot load default config file: No such file: (null)\n\n** (neat_tensor_device_placement_test:227116): WARNING **: 08:28:05.618: DMA-BUF pool allocation failed: DMA_HEAP_IOCTL_ALLOC from linux,cma: Cannot allocate memory: Cannot allocate memory\n[FAIL] transfer: standard DMA-BUF map failed: prepare CPU access: closed owned platform capability unavailable: Operation not supported\nRESULT neat_tensor_device_placement_test 1"
+    },
+    {
+      "test": "tensor_transfer_memory_lifecycle_cma_test",
+      "result": "blocked_by_platform",
+      "exit_code": 1,
+      "output": "START tensor_transfer_memory_lifecycle_cma_test\n\n(tensor_transfer_memory_lifecycle_cma_test:227147): GStreamer-WARNING **: 08:28:06.527: External plugin loader failed. This most likely means that the plugin loader helper binary was not found or could not be run. You might need to set the GST_PLUGIN_SCANNER environment variable if your setup is unusual. This should normally not be required though.\nFAIL: transfer: standard DMA-BUF map failed: prepare CPU access: closed owned platform capability unavailable: Operation not supported\nRESULT tensor_transfer_memory_lifecycle_cma_test 1"
+    },
+    {
+      "test": "tensor_transfer_memory_lifecycle_dms_test",
+      "result": "blocked_by_platform",
+      "exit_code": 1,
+      "output": "START tensor_transfer_memory_lifecycle_dms_test\n\n(tensor_transfer_memory_lifecycle_dms_test:227168): GStreamer-WARNING **: 08:28:07.487: External plugin loader failed. This most likely means that the plugin loader helper binary was not found or could not be run. You might need to set the GST_PLUGIN_SCANNER environment variable if your setup is unusual. This should normally not be required though.\n\n** (tensor_transfer_memory_lifecycle_dms_test:227168): WARNING **: 08:28:07.541: DMA-BUF pool allocation failed: open /dev/dma_heap/simaai,dms: No such file or directory: No such file or directory\nFAIL: transfer: standard DMA-BUF allocation failed: open /dev/dma_heap/simaai,dms: No such file or directory: No such file or directory\nRESULT tensor_transfer_memory_lifecycle_dms_test 1"
+    },
+    {
+      "test": "tensor_transfer_memory_lifecycle_mixed_test",
+      "result": "blocked_by_platform",
+      "exit_code": 1,
+      "output": "START tensor_transfer_memory_lifecycle_mixed_test\n\n(tensor_transfer_memory_lifecycle_mixed_test:227189): GStreamer-WARNING **: 08:28:08.444: External plugin loader failed. This most likely means that the plugin loader helper binary was not found or could not be run. You might need to set the GST_PLUGIN_SCANNER environment variable if your setup is unusual. This should normally not be required though.\nFAIL: transfer: standard DMA-BUF map failed: prepare CPU access: closed owned platform capability unavailable: Operation not supported\nRESULT tensor_transfer_memory_lifecycle_mixed_test 1"
+    }
+  ],
+  "recovery_image_prepared": {
+    "version": "3.0.0_release_master_B2501",
+    "artifacts": [
+      {
+        "url": "https://artifacts.neat.sima.ai/daily-platform-images/3.0.0_release_master_B2501/artifacts/minimal/modalix-tftp-boot-minimal.tar.gz",
+        "size": 323947843,
+        "sha256": "f1d02f481c1be444f59a03b8443fc7510a708877e53433f7924f28dfd40b343e"
+      },
+      {
+        "url": "https://artifacts.neat.sima.ai/daily-platform-images/3.0.0_release_master_B2501/artifacts/palette/elxr-palette-modalix-3.0.0-agate-arm64.img.gz",
+        "size": 1676771491,
+        "sha256": "977116abc6de222bd8c51931f98f89c8a5451131211f6ef67f5d6eedc8cbc41f"
+      },
+      {
+        "url": "https://artifacts.neat.sima.ai/daily-platform-images/3.0.0_release_master_B2501/artifacts/minimal/troot_blob.be",
+        "size": 7720416,
+        "sha256": "b650fd3b703b8b6040f64399a2a030165a4435cd3221dbae741764ac456c815c"
+      }
+    ]
+  },
+  "status": "Requires compatible DMA kernel. Connection lost before baseline/old-candidate smoke. Reflash approval and restored access pending; no reflash performed."
+}
