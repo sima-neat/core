@@ -114,3 +114,13 @@ The committed CTest environment was not modified.
 The workload deliberately avoids exhausting the device. It does not qualify
 sustained inference throughput, full package installation, or performance for
 working sets larger than the cache budget.
+
+## Matched performance follow-up
+
+[The paired performance report](../perf/transfer_cache/README.md) compares the
+final PR #1274 code with PR #1322 on the same DevKit. Warm fixed-size transfers
+and model-zoo inference substitutes show no material regression in those tests.
+A cyclic six-size working set just above the cache budget is about 3.85 times
+slower because it repeatedly allocates instead of reusing. The report includes
+raw samples, a cache-only control, confidence intervals, and reproduction tools;
+the cache budget therefore remains an explicit performance/memory tradeoff.
