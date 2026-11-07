@@ -31,7 +31,7 @@ jobs:
     needs:
       - resolve-vulcan-config
     runs-on: ubuntu-latest
-    environment: ${{ vars.VULCAN_ENV || 'production' }}
+    environment: ${{ (vars.VULCAN_ENV || 'production') == 'production' && 'prod' || (vars.VULCAN_ENV || 'production') }}
 
     steps:
       - name: Configure compiler-cache cleanup credentials
