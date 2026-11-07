@@ -62,7 +62,7 @@ DmaStats dma_stats() {
     if (!dma)
       continue;
     check(bytes > 0, "DMA exporter did not expose allocation size in fdinfo");
-    struct stat status{};
+    struct stat status {};
     check(::stat(entry.path().c_str(), &status) == 0, "cannot identify DMA backing object");
     if (seen.emplace(status.st_dev, status.st_ino).second)
       total += bytes;
@@ -110,9 +110,7 @@ void run(bool dms) {
         "fdinfo does not account for live DMA allocations; cannot validate retention");
 
   // Warm one size, then verify sequential same-size work stabilizes.
-  {
-    auto warm = transfer(mib, dms, 9);
-  }
+  { auto warm = transfer(mib, dms, 9); }
   const auto baseline = dma_bytes();
   for (int i = 0; i < 32; ++i) {
     auto tensor = transfer(mib, dms, 9);
