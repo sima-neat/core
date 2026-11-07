@@ -161,6 +161,36 @@ static void check_transfer_reuse(simaai::neat::TensorMemory memory) {
             "reused transfer exposed stale bytes beyond its payload");
   }
 
+  // Grow and shrink logical spans within page and 64 KiB capacity classes.
+  // Reusing the backing must not expose slack or overwrite a held sibling.
+  for (const std::size_t capacity : {4096U, 65536U, 131072U}) {
+    const auto create = [&](std::size_t bytes, std::uint8_t value) {
+      return Tensor::from_vector(std::vector<std::uint8_t>(bytes, value),
+                                 {static_cast<std::int64_t>(bytes)}, memory);
+    };
+    const auto low = capacity > 65536U ? capacity - 65535U : capacity - 123U;
+    auto sibling = create(low, 91);
+    auto warm = create(low, 92);
+    const auto identity = transfer_identity(warm);
+    require(identity != transfer_identity(sibling), "capacity class reused a live sibling");
+    warm = {};
+    for (const auto bytes : {capacity, low, capacity - 1U, low + 1U}) {
+      auto resized = create(bytes, 93);
+      const auto resized_identity = transfer_identity(resized);
+      require(resized_identity.device == identity.device &&
+                  resized_identity.inode == identity.inode,
+              "changing logical span discarded the pooled allocation");
+      auto* resized_buffer =
+          gst_sample_get_buffer(static_cast<GstSample*>(resized.storage->holder.get()));
+      require(resized.storage->size_bytes == bytes && gst_buffer_get_size(resized_buffer) == bytes,
+              "capacity slack leaked into the tensor carrier");
+      require(resized.copy_payload_bytes() == std::vector<std::uint8_t>(bytes, 93),
+              "resized pooled transfer corrupted payload");
+    }
+    require(sibling.copy_payload_bytes() == std::vector<std::uint8_t>(low, 91),
+            "resizing a pooled buffer corrupted a held sibling");
+  }
+
   // Pool growth must preserve earlier tensors without waiting for their release.
   TensorList held;
   for (std::uint8_t value = 0; value < 4; ++value) {
