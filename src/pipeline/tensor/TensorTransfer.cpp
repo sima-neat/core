@@ -77,10 +77,12 @@ namespace dma = ::simaai::scheduler::client::dma;
 class TransferBufferCache {
   static constexpr std::size_t max_bytes = 256U * 1024U * 1024U;
   static constexpr std::size_t max_pools = 128U;
+  // Nearby crop sizes share storage without charging six almost-identical
+  // allocations against the byte budget. Logical spans stay exact.
+  static constexpr std::size_t class_quantum = 64U * 1024U;
   using Pool = std::shared_ptr<GstBufferPool>;
   struct Entry {
     dma::HeapKind heap;
-    std::size_t bytes;
     std::size_t capacity;
     Pool pool;
   };
@@ -104,7 +106,7 @@ class TransferBufferCache {
     return buffer;
   }
 
-  GstBuffer* reuse(dma::HeapKind heap, std::size_t bytes) {
+  GstBuffer* reuse(dma::HeapKind heap, std::size_t capacity) {
     struct Unref {
       void operator()(GstBufferPool* pool) const {
         gst_object_unref(pool);
@@ -117,7 +119,7 @@ class TransferBufferCache {
     {
       std::lock_guard lock(mutex_);
       for (const auto& entry : pools_)
-        if (entry.heap == heap && entry.bytes == bytes)
+        if (entry.heap == heap && entry.capacity == capacity)
           candidates[count++].reset(GST_BUFFER_POOL(gst_object_ref(entry.pool.get())));
     }
     for (std::size_t i = 0; i < count; ++i) {
@@ -150,20 +152,23 @@ class TransferBufferCache {
 
 public:
   GstBuffer* acquire(dma::HeapKind heap, std::size_t bytes, dma::Error* error) {
-    if (auto* buffer = reuse(heap, bytes)) {
-      *error = {};
-      return buffer;
-    }
     const auto page = static_cast<std::size_t>(::getpagesize());
+    const auto quantum = bytes <= class_quantum ? page : std::max(page, class_quantum);
     const bool cacheable = bytes > 0 && bytes <= max_bytes;
-    const auto capacity = cacheable ? ((bytes + page - 1) / page) * page : 0;
+    const auto capacity = cacheable ? ((bytes + quantum - 1) / quantum) * quantum : 0;
+    if (cacheable) {
+      if (auto* buffer = reuse(heap, capacity)) {
+        *error = {};
+        return buffer;
+      }
+    }
     Pool created;
     GstBuffer* buffer = nullptr;
     for (int attempt = 0; attempt < 2; ++attempt) {
       if (cacheable) {
         // Allocate outside the cache lock; finite one-slot pools also work with
         // Scheduler versions that do not support max_buffers=0.
-        created = Pool(dma::createDmaBufPool(heap, bytes, 1U, 1U, {}, error), retire);
+        created = Pool(dma::createDmaBufPool(heap, capacity, 1U, 1U, {}, error), retire);
         if (created) {
           buffer = take(created.get());
           if (!buffer)
@@ -176,7 +181,7 @@ public:
         break;
       // A racing transfer may have published a usable slot while allocation
       // failed. Preserve that fast recovery before draining the idle cache.
-      if (auto* available = reuse(heap, bytes)) {
+      if (auto* available = reuse(heap, capacity)) {
         *error = {};
         return available;
       }
@@ -193,7 +198,7 @@ public:
         // Publish only after borrowing the new slot, so another thread cannot
         // take it first. Count loaned slots too: this conservatively bounds all
         // retained cache capacity, including the eventual concurrency high-water.
-        pools_.push_front({heap, bytes, capacity, std::move(created)});
+        pools_.push_front({heap, capacity, std::move(created)});
         capacity_ += capacity;
         while (capacity_ > max_bytes || pools_.size() > max_pools) {
           auto oldest = std::prev(pools_.end());
@@ -675,8 +680,8 @@ Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
     throw std::runtime_error("transfer: standard DMA-BUF allocation failed: " + error.message());
   }
 
-  auto view =
-      DmaBufView::fromGstMemory(gst_buffer_peek_memory(dst, 0U), 0U, allocation_bytes, &error);
+  auto view = DmaBufView::fromGstMemory(gst_buffer_peek_memory(dst, 0U), 0U,
+                                        gst_buffer_get_size(dst), &error);
   if (!view) {
     gst_buffer_unref(dst);
     throw std::runtime_error("transfer: standard DMA-BUF view failed: " + error.message());
@@ -708,6 +713,18 @@ Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
   if (!mapping->finish(&error)) {
     gst_buffer_unref(dst);
     throw std::runtime_error("transfer: standard DMA-BUF CPU sync failed: " + error.message());
+  }
+
+  // Reuse one write-access plan for the full private capacity, regardless of
+  // logical length. Release its owners before resizing so GstMemory stays
+  // writable and no child memory/producer lease is substituted.
+  mapping.reset();
+  view.reset();
+  if (gst_buffer_get_size(dst) != allocation_bytes)
+    gst_buffer_resize(dst, 0, static_cast<gssize>(allocation_bytes));
+  if (gst_buffer_get_size(dst) != allocation_bytes) {
+    gst_buffer_unref(dst);
+    throw std::runtime_error("transfer: resize DMA-BUF to requested carrier span failed");
   }
 
   if (src.storage && src.storage->kind == StorageKind::GstSample) {

@@ -1,6 +1,7 @@
 # DMA transfer-cache performance comparison
 
-On `modalix-065848`, PR #1322 did not show a material regression on the measured
+The initial exact-size version of PR #1322 (`27bb2b15`) on
+`modalix-065848` did not show a material regression on the measured
 warm fixed-size workloads. It **did** make a cyclic working set just above the
 256 MiB cache budget about **3.85 times slower**. The memory bound trades reuse
 for fresh allocation when the working set cannot fit; it is not universally

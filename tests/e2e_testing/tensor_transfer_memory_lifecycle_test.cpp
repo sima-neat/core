@@ -26,6 +26,7 @@ constexpr std::size_t mib = 1024U * 1024U;
 // Acceptance bounds for the documented process-wide transfer cache.
 constexpr std::size_t cache_byte_limit = 256U * mib;
 constexpr std::size_t idle_allocation_limit = 128U;
+thread_local std::size_t heap_allocations = 0;
 thread_local int fail_heap_allocations = 0;
 thread_local int injected_failures = 0;
 thread_local bool capture_retry = false;
@@ -93,7 +94,7 @@ Tensor transfer(std::size_t bytes, bool dms, unsigned char pattern) {
 void verify(const Tensor& tensor, unsigned char pattern) {
   auto read = tensor.map_read();
   const auto bytes = tensor.dense_bytes_tight();
-  check(read.data && read.size_bytes >= bytes, "cannot read retained tensor");
+  check(read.data && read.size_bytes == bytes, "retained tensor exposes the wrong byte span");
   const auto* data = static_cast<const unsigned char*>(read.data);
   for (std::size_t i = 0; i < bytes; ++i) {
     if (data[i] != pattern)
@@ -119,14 +120,14 @@ void run(bool dms) {
   const auto fixed = dma_bytes();
   check(fixed <= baseline + 4096U, "fixed-size sequential transfers did not stabilize");
 
-  // Only one transient tensor is live. Page-distinct sizes prevent allocator
-  // page rounding from hiding exact-size cache growth. Total demand is bounded.
-  for (std::size_t i = 1; i <= 96; ++i) {
+  // Only one transient tensor is live. Distinct capacity classes cumulatively
+  // exceed the budget, so rounding cannot hide unbounded cache growth.
+  for (std::size_t i = 1; i <= 32; ++i) {
     {
-      auto tensor = transfer(4U * mib + i * 4096U, dms, 17);
+      auto tensor = transfer(i * mib + 4096U, dms, 17);
       verify(tensor, 17);
     }
-    if (i % 16 == 0)
+    if (i % 8 == 0)
       std::cout << "sizes=" << i << " dma_bytes=" << dma_bytes() << std::endl;
   }
   for (unsigned char i = 0; i < held.size(); ++i)
@@ -141,6 +142,24 @@ void run(bool dms) {
             << " held_tensor_integrity=passed live_tensors=0" << std::endl;
   check(final <= initial + cache_byte_limit,
         "idle DMA retention exceeded the shared 256 MiB cache budget");
+
+  // Six nearby sizes used to consume six exact-size pools and thrash the
+  // byte budget. They share one capacity class; no heap allocation is allowed
+  // after warming it, even when the requested logical length changes.
+  {
+    auto warm = transfer(46080000U, dms, 19);
+    verify(warm, 19);
+  }
+  const auto warmed_allocations = heap_allocations;
+  for (std::size_t i = 0; i < 60; ++i) {
+    const auto bytes = 46080000U + (i % 6U) * 4096U;
+    auto tensor = transfer(bytes, dms, static_cast<unsigned char>(i));
+    verify(tensor, static_cast<unsigned char>(i));
+    check(tensor.storage->size_bytes == bytes, "capacity slack leaked into tensor storage");
+  }
+  check(heap_allocations == warmed_allocations,
+        "nearby transfer sizes still allocate after warming a capacity class");
+  std::cout << "nearby_size_reuse=passed warm_heap_allocations=0" << std::endl;
 
   // Allocation-pressure recovery must actually drop idle allocations before
   // retrying. Keep an outstanding tensor across both cache flush and failure.
@@ -171,16 +190,19 @@ void run(bool dms) {
   retained = {};
   std::cout << "allocation_pressure_retry=passed persistent_failure=passed" << std::endl;
 
-  // Small allocations must not leave an unbounded number of pool objects/FDs.
-  for (std::size_t i = 0; i < 256; ++i) {
-    auto tensor = transfer(4096U + i * 16U, dms, 53);
-    verify(tensor, 53);
-  }
+  // Force more live small buffers than the entry bound, independent of size
+  // bucketing. Releasing them must retain at most 128 actual allocations.
+  std::vector<Tensor> small_burst;
+  for (std::size_t i = 0; i < 256; ++i)
+    small_burst.push_back(transfer(4096U, dms, static_cast<unsigned char>(i)));
+  for (std::size_t i = 0; i < small_burst.size(); ++i)
+    verify(small_burst[i], static_cast<unsigned char>(i));
+  small_burst.clear();
   const auto small = dma_stats();
   std::cout << "small_idle_bytes=" << small.bytes << " small_idle_allocations=" << small.allocations
             << std::endl;
   check(small.allocations <= idle_allocation_limit,
-        "idle DMA pool count exceeded 128 after small-size churn");
+        "idle DMA pool count exceeded 128 after a small-buffer burst");
 
   // Reuse and retire slots concurrently. Every worker keeps a tensor alive
   // while other workers can evict its pool; exceptions propagate to the test.
@@ -229,6 +251,7 @@ extern "C" int ioctl(int fd, unsigned long request, ...) noexcept {
   void* argument = va_arg(args, void*);
   va_end(args);
   if (request == DMA_HEAP_IOCTL_ALLOC) {
+    ++heap_allocations;
     if (capture_retry) {
       try {
         retry_dma_bytes = dma_bytes();
@@ -259,8 +282,8 @@ int main(int argc, char** argv) {
       const auto initial = dma_bytes();
       auto cma = transfer(mib, false, 61);
       auto dms = transfer(mib, true, 67);
-      for (std::size_t i = 1; i <= 96; ++i) {
-        auto tensor = transfer(4U * mib + i * 4096U, i % 2 == 0, 71);
+      for (std::size_t i = 1; i <= 32; ++i) {
+        auto tensor = transfer(i * mib + 4096U, i % 2 == 0, 71);
         verify(tensor, 71);
       }
       verify(cma, 61);

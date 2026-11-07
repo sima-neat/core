@@ -9,13 +9,16 @@ The normal device E2E lane selects their `e2e` label. Each case has an
 
 ## Policy under test
 
-Core retains at most 256 MiB of page-rounded transfer capacity and 128 one-buffer
+Core retains at most 256 MiB of rounded transfer capacity and 128 one-buffer
 pools across both heaps. Loaned slots count toward these limits while cached.
 Retiring a pool releases its idle buffer immediately; a loan stays valid and is
 freed on final return. A transfer never waits for an earlier tensor. Requests
 larger than the byte budget bypass the cache. Allocation failure with `ENOMEM`
 drains the cache and retries at most once, after checking for a concurrently
-returned compatible slot.
+returned compatible slot. Requests up to 64 KiB round to a system page; larger
+cached requests round to 64 KiB (or a system page if larger). Tensors expose only
+the requested carrier length. Nearby lengths can therefore reuse one backing
+allocation without spending the budget on almost-identical buffers.
 
 The initial investigation used a provisional 32 MiB growth allowance. The final
 policy uses 256 MiB to preserve the existing 46 MB input reuse and alternating
@@ -28,21 +31,25 @@ Each single-heap case:
 
 1. Holds four distinct 1 MiB payloads, warms a fifth allocation, and checks that
    32 same-size transfers stabilize within one page of the warm baseline.
-2. Transfers 96 distinct capacities, `4 MiB + i * 4 KiB` for `i=1..96`, with at
-   most one transient tensor live. This cumulatively requests 402.1875 MiB.
+2. Transfers 32 distinct capacity classes, `i * MiB + 4 KiB` for `i=1..32`,
+   with at most one transient tensor live. Rounded capacity totals 530 MiB.
 3. Checks the four held payloads, releases all tensors, and requires final DMA
    bytes to fit the 256 MiB budget.
-4. Injects one real `DMA_HEAP_IOCTL_ALLOC` failure and measures DMA bytes at the
+4. Warms the 46,080,000-byte capacity class, then cycles 60 times through
+   `46,080,000 + i * 4,096` bytes for `i=0..5`. Requires **zero DMA heap calls**
+   after warm-up, exact storage/mapping lengths, and correct changing payloads.
+5. Injects one real `DMA_HEAP_IOCTL_ALLOC` failure and measures DMA bytes at the
    retry: only the retained 3 MiB tensor may remain, within one MiB of rounding.
    Two consecutive injected failures must propagate after the bounded retry.
    The retained tensor must remain readable in both cases.
-5. Churns 256 small distinct sizes and requires at most 128 idle DMA allocations.
-6. Runs four concurrent workers through distinct-size transfers while each keeps
+6. Holds and verifies 256 simultaneous 4 KiB tensors, then releases them and
+   requires at most 128 idle DMA allocations.
+7. Runs four concurrent workers through distinct-size transfers while each keeps
    a tensor alive, checking payload integrity and both final cache bounds.
-7. Holds 72 simultaneous 4 MiB tensors (288 MiB), checks their payloads, then
+8. Holds 72 simultaneous 4 MiB tensors (288 MiB), checks their payloads, then
    releases them and requires the idle cache to fit both limits.
 
-The mixed-heap case alternates the 96 capacities between CMA and DMS, with one
+The mixed-heap case alternates the 32 capacity classes between CMA and DMS, with one
 protected tensor per heap, and requires their combined idle bytes to fit the
 same 256 MiB budget.
 
@@ -86,11 +93,14 @@ not qualification of a complete Debian package installation.
 
 Core's reviewed source `896551a25d4ca1772c804980864b127f17fb5ec1` has the same tree
 as the PR base `80073726`; the baseline uses its original transfer implementation.
-The final source and test files were copied byte-for-byte from the PR worktree
+The original fix source and test files were copied byte-for-byte from the PR worktree
 into the shared SDK build tree and built with GCC14. GenAI was disabled through
 the existing `SIMANEAT_REQUIRE_LLIMA_ARTIFACTS=OFF` option.
 
-| Workload | Original cache | Bounded cache |
+The original exact-size test (before capacity classes) used 96 nearby sizes,
+`4 MiB + i * 4 KiB` for `i=1..96`. Its historical results were:
+
+| Workload | Original cache | Initial bounded cache |
 | --- | ---: | ---: |
 | CMA, after 96 sizes and all tensors released | 426,967,040 bytes (fails) | 268,001,280 bytes (passes) |
 | DMS, after 96 sizes and all tensors released | 426,967,040 bytes (fails) | 268,001,280 bytes (passes) |
@@ -115,12 +125,35 @@ The workload deliberately avoids exhausting the device. It does not qualify
 sustained inference throughput, full package installation, or performance for
 working sets larger than the cache budget.
 
-## Matched performance follow-up
+## Capacity-class revision
 
-[The paired performance report](../perf/transfer_cache/README.md) compares the
-final PR #1274 code with PR #1322 on the same DevKit. Warm fixed-size transfers
-and model-zoo inference substitutes show no material regression in those tests.
-A cyclic six-size working set just above the cache budget is about 3.85 times
-slower because it repeatedly allocates instead of reusing. The report includes
-raw samples, a cache-only control, confidence intervals, and reproduction tools;
-the cache budget therefore remains an explicit performance/memory tradeoff.
+The revised churn test uses distinct classes so quantization cannot hide cache
+growth. The initial capacity-class candidate passed all four focused tests on
+the same DevKit:
+
+| Check | CMA | DMS / mixed |
+| --- | ---: | ---: |
+| After 32 classes, no live tensors | 264,830,976 bytes | 264,830,976 bytes |
+| Nearby six-size cycle after warm-up | 0 heap calls | 0 heap calls (DMS) |
+| 256 small held tensors, after release | 128 allocations / 524,288 bytes | Same (DMS) |
+| 72 large held tensors, after release | 64 allocations / 268,435,456 bytes | Same (DMS) |
+
+Both heaps passed pressure recovery, persistent-error propagation, concurrent
+eviction and held-payload checks. A timing probe still showed extra access-plan
+cost when changing logical lengths. The final revision uses one full-capacity
+write plan and trims the buffer after finishing access and releasing its mapping
+owners. The placement test additionally checks backing identity, payload and
+exact carrier lengths while growing and shrinking within page and 64 KiB
+classes, with another tensor still held.
+
+The final revision builds with GCC14. Its device rerun is **pending**: the SDK
+container was recreated during validation, removing its authorized SSH key.
+The partial timing probe is retained in the local lab and is excluded from the
+completed historical benchmark results. No final performance conclusion is
+claimed until same-device access is restored.
+
+[The paired performance report](../perf/transfer_cache/README.md) retains the
+initial exact-size cache's 3.85× slowdown. The revised comparison is pending.
+Capacity classes address that nearby-size regression without raising either
+cache bound. Arbitrary classes or concurrency beyond a finite budget can still
+require repeated allocations; this is not a promise of universal cache hits.
