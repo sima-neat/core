@@ -4,7 +4,7 @@ Compare Core shared libraries on one idle Modalix DevKit with identical
 Scheduler/Runner providers. The harness uses public Tensor APIs and verifies
 payloads outside timing. Results qualify the measured workload and runtime
 cohort; they do not qualify a complete package installation or arbitrary cache
-working sets. Store release measurements and historical reports in PR evidence.
+working sets. Keep release summaries and historical reports in PR evidence.
 
 ## Build
 

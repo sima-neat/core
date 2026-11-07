@@ -218,7 +218,8 @@ void run(bool dms) {
         std::vector<Tensor> protected_tensors;
         for (std::size_t slot = 1; slot <= 4; ++slot)
           protected_tensors.push_back(
-              transfer(16U * mib + (worker * 4U + slot) * 65536U, dms, pattern));
+              transfer(16U * mib + (worker * 4U + slot) * 65536U, dms,
+                       static_cast<unsigned char>(127U + worker * 4U + slot)));
         phase.arrive_and_wait();
         // 128 distinct classes cumulatively exceed 1.5 GiB, while all 16
         // protected tensors stay alive. Workers cannot finish early and return
@@ -227,8 +228,8 @@ void run(bool dms) {
           auto tensor = transfer(8U * mib + (worker * 32U + i) * 65536U, dms, pattern);
           verify(tensor, pattern);
         }
-        for (const auto& tensor : protected_tensors)
-          verify(tensor, pattern);
+        for (std::size_t slot = 0; slot < protected_tensors.size(); ++slot)
+          verify(protected_tensors[slot], static_cast<unsigned char>(128U + worker * 4U + slot));
         phase.arrive_and_wait();
       } catch (...) {
         phase.arrive_and_drop();
