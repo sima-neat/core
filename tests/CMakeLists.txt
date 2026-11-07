@@ -922,6 +922,21 @@ if(TEST neat_tensor_device_placement_test)
   target_link_options(neat_tensor_device_placement_test PRIVATE -Wl,--export-dynamic-symbol=ioctl)
 endif()
 
+add_pipeline_test_strict(unit_tensor_transfer_exception_test
+  SOURCES unit_testing/unit_tensor_transfer_exception_test.cpp
+  LOCK_ACCELERATOR)
+if(TARGET unit_tensor_transfer_exception_test)
+  target_link_libraries(unit_tensor_transfer_exception_test PRIVATE ${CMAKE_DL_LIBS})
+  target_link_options(unit_tensor_transfer_exception_test PRIVATE
+    -Wl,--export-dynamic-symbol=gst_sample_new
+    -Wl,--export-dynamic-symbol=gst_buffer_pool_acquire_buffer
+    -Wl,--export-dynamic-symbol=gst_buffer_pool_set_active
+    -Wl,--export-dynamic-symbol=_Znwm)
+  set_tests_properties(unit_tensor_transfer_exception_test PROPERTIES
+    LABELS "strict;unit;tensor;dmabuf;memory;regression"
+    TIMEOUT 30)
+endif()
+
 foreach(heap cma dms mixed)
   set(test tensor_transfer_memory_lifecycle_${heap}_test)
   add_pipeline_test_strict(${test}

@@ -48,6 +48,7 @@
 #include <list>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -193,13 +194,22 @@ public:
       return nullptr;
     std::unique_ptr<GstBuffer, decltype(&gst_buffer_unref)> lease(buffer, gst_buffer_unref);
     if (created) {
+      std::list<Entry> staged;
+      try {
+        staged.push_front({heap, capacity, std::move(created)});
+      } catch (const std::bad_alloc&) {
+        // Cache admission is optional: the borrowed slot remains valid after
+        // its pool is retired, and is freed on final return instead of cached.
+        *error = {};
+        return lease.release();
+      }
       std::list<Entry> retired;
       {
         std::lock_guard lock(mutex_);
         // Publish only after borrowing the new slot, so another thread cannot
         // take it first. Count loaned slots too: this conservatively bounds all
         // retained cache capacity, including the eventual concurrency high-water.
-        pools_.push_front({heap, capacity, std::move(created)});
+        pools_.splice(pools_.begin(), staged);
         capacity_ += capacity;
         while (capacity_ > max_bytes || pools_.size() > max_pools) {
           auto oldest = std::prev(pools_.end());
@@ -672,38 +682,30 @@ Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
   using ::simaai::scheduler::client::dma::DmaBufView;
   using ::simaai::scheduler::client::dma::Error;
   using ::simaai::scheduler::client::dma::HeapKind;
+  using OwnedBuffer = std::unique_ptr<GstBuffer, decltype(&gst_buffer_unref)>;
+  using OwnedSample = std::unique_ptr<GstSample, decltype(&gst_sample_unref)>;
 
   const std::size_t allocation_bytes = segment_total_bytes(segments);
   const HeapKind heap = target.type == DeviceType::SIMA_MLA ? HeapKind::MlaDms : HeapKind::Cma;
   Error error;
-  GstBuffer* dst = acquire_transfer_buffer(heap, allocation_bytes, &error);
+  OwnedBuffer dst(acquire_transfer_buffer(heap, allocation_bytes, &error), gst_buffer_unref);
   if (!dst) {
     throw std::runtime_error("transfer: standard DMA-BUF allocation failed: " + error.message());
   }
 
-  auto view = DmaBufView::fromGstMemory(gst_buffer_peek_memory(dst, 0U), 0U,
-                                        gst_buffer_get_size(dst), &error);
+  auto view = DmaBufView::fromGstMemory(gst_buffer_peek_memory(dst.get(), 0U), 0U,
+                                        gst_buffer_get_size(dst.get()), &error);
   if (!view) {
-    gst_buffer_unref(dst);
     throw std::runtime_error("transfer: standard DMA-BUF view failed: " + error.message());
   }
   auto mapping = view->map(CpuAccess::Write, &error);
   if (!mapping) {
-    gst_buffer_unref(dst);
     throw std::runtime_error("transfer: standard DMA-BUF map failed: " + error.message());
   }
 
-  bool copied = false;
-  try {
-    copied = copy_tensor_payload(src, static_cast<std::uint8_t*>(mapping->data()), mapping->size());
-  } catch (...) {
-    (void)mapping->finish();
-    gst_buffer_unref(dst);
-    throw;
-  }
+  const bool copied =
+      copy_tensor_payload(src, static_cast<std::uint8_t*>(mapping->data()), mapping->size());
   if (!copied) {
-    (void)mapping->finish();
-    gst_buffer_unref(dst);
     throw std::runtime_error("transfer: standard DMA-BUF payload copy failed");
   }
   // Preserve freshly allocated padding when reusing a larger carrier.
@@ -712,7 +714,6 @@ Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
                 allocation_bytes - payload_bytes);
   }
   if (!mapping->finish(&error)) {
-    gst_buffer_unref(dst);
     throw std::runtime_error("transfer: standard DMA-BUF CPU sync failed: " + error.message());
   }
 
@@ -721,35 +722,31 @@ Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
   // writable and no child memory/producer lease is substituted.
   mapping.reset();
   view.reset();
-  if (gst_buffer_get_size(dst) != allocation_bytes)
-    gst_buffer_resize(dst, 0, static_cast<gssize>(allocation_bytes));
-  if (gst_buffer_get_size(dst) != allocation_bytes) {
-    gst_buffer_unref(dst);
+  if (gst_buffer_get_size(dst.get()) != allocation_bytes)
+    gst_buffer_resize(dst.get(), 0, static_cast<gssize>(allocation_bytes));
+  if (gst_buffer_get_size(dst.get()) != allocation_bytes) {
     throw std::runtime_error("transfer: resize DMA-BUF to requested carrier span failed");
   }
 
   if (src.storage && src.storage->kind == StorageKind::GstSample) {
     std::string holder_error;
-    GstBuffer* src_buffer = buffer_from_holder_if_gstsample(src, &holder_error);
+    OwnedBuffer src_buffer(buffer_from_holder_if_gstsample(src, &holder_error), gst_buffer_unref);
     if (src_buffer) {
       std::string metadata_error;
-      const bool copied_metadata = copy_gst_metadata(dst, src_buffer, &metadata_error);
-      gst_buffer_unref(src_buffer);
+      const bool copied_metadata = copy_gst_metadata(dst.get(), src_buffer.get(), &metadata_error);
       if (!copied_metadata) {
-        gst_buffer_unref(dst);
         throw std::runtime_error("transfer: " + metadata_error);
       }
     }
   }
 
-  GstSample* sample = gst_sample_new(dst, nullptr, nullptr, nullptr);
+  OwnedSample sample(gst_sample_new(dst.get(), nullptr, nullptr, nullptr), gst_sample_unref);
   if (!sample) {
-    gst_buffer_unref(dst);
     throw std::runtime_error("transfer: failed to wrap standard DMA-BUF sample");
   }
-  gst_buffer_unref(dst);
-  auto storage = make_driver_dmabuf_storage(sample, target, target_flags);
-  gst_sample_unref(sample);
+  dst.reset();
+  auto storage = make_driver_dmabuf_storage(sample.get(), target, target_flags);
+  sample.reset();
   if (!storage) {
     throw std::runtime_error("transfer: failed to create standard DMA-BUF storage");
   }
