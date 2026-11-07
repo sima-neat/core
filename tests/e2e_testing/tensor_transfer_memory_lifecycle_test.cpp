@@ -5,6 +5,7 @@
 #include <linux/dma-heap.h>
 #include <dlfcn.h>
 
+#include <barrier>
 #include <cerrno>
 #include <cstdarg>
 
@@ -204,18 +205,35 @@ void run(bool dms) {
   check(small.allocations <= idle_allocation_limit,
         "idle DMA pool count exceeded 128 after a small-buffer burst");
 
-  // Reuse and retire slots concurrently. Every worker keeps a tensor alive
-  // while other workers can evict its pool; exceptions propagate to the test.
+  // Hold 16 distinct active classes totaling 264.5 MiB across four workers.
+  // This exceeds the shared budget before churn starts, forcing eviction of
+  // borrowed pools rather than just the preceding phase's idle small buffers.
+  // Keep every loan alive until all workers finish their concurrent churn.
+  std::barrier phase(4);
   std::vector<std::future<void>> workers;
   for (std::size_t worker = 0; worker < 4; ++worker) {
-    workers.push_back(std::async(std::launch::async, [dms, worker] {
-      const auto pattern = static_cast<unsigned char>(79U + worker);
-      auto protected_tensor = transfer(4U * mib, dms, pattern);
-      for (std::size_t i = 1; i <= 64; ++i) {
-        auto tensor = transfer(mib / 4U + (worker * 64U + i) * 4096U, dms, pattern);
-        verify(tensor, pattern);
+    workers.push_back(std::async(std::launch::async, [dms, worker, &phase] {
+      try {
+        const auto pattern = static_cast<unsigned char>(79U + worker);
+        std::vector<Tensor> protected_tensors;
+        for (std::size_t slot = 1; slot <= 4; ++slot)
+          protected_tensors.push_back(
+              transfer(16U * mib + (worker * 4U + slot) * 65536U, dms, pattern));
+        phase.arrive_and_wait();
+        // 128 distinct classes cumulatively exceed 1.5 GiB, while all 16
+        // protected tensors stay alive. Workers cannot finish early and return
+        // their protected buffers to the cache before their peers exercise it.
+        for (std::size_t i = 1; i <= 32; ++i) {
+          auto tensor = transfer(8U * mib + (worker * 32U + i) * 65536U, dms, pattern);
+          verify(tensor, pattern);
+        }
+        for (const auto& tensor : protected_tensors)
+          verify(tensor, pattern);
+        phase.arrive_and_wait();
+      } catch (...) {
+        phase.arrive_and_drop();
+        throw;
       }
-      verify(protected_tensor, pattern);
     }));
   }
   for (auto& worker : workers)

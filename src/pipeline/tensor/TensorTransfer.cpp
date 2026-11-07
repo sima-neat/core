@@ -80,7 +80,15 @@ class TransferBufferCache {
   // Nearby crop sizes share storage without charging six almost-identical
   // allocations against the byte budget. Logical spans stay exact.
   static constexpr std::size_t class_quantum = 64U * 1024U;
-  using Pool = std::shared_ptr<GstBufferPool>;
+  struct Retire {
+    void operator()(GstBufferPool* pool) const {
+      if (pool) {
+        gst_buffer_pool_set_active(pool, FALSE);
+        gst_object_unref(pool);
+      }
+    }
+  };
+  using Pool = std::unique_ptr<GstBufferPool, Retire>;
   struct Entry {
     dma::HeapKind heap;
     std::size_t capacity;
@@ -89,13 +97,6 @@ class TransferBufferCache {
   std::mutex mutex_;
   std::list<Entry> pools_; // Most recently acquired first; shared across heaps.
   std::size_t capacity_ = 0;
-
-  static void retire(GstBufferPool* pool) {
-    if (pool) {
-      gst_buffer_pool_set_active(pool, FALSE);
-      gst_object_unref(pool);
-    }
-  }
 
   static GstBuffer* take(GstBufferPool* pool) {
     GstBufferPoolAcquireParams params{};
@@ -168,7 +169,7 @@ public:
       if (cacheable) {
         // Allocate outside the cache lock; finite one-slot pools also work with
         // Scheduler versions that do not support max_buffers=0.
-        created = Pool(dma::createDmaBufPool(heap, capacity, 1U, 1U, {}, error), retire);
+        created = Pool(dma::createDmaBufPool(heap, capacity, 1U, 1U, {}, error));
         if (created) {
           buffer = take(created.get());
           if (!buffer)
