@@ -922,6 +922,21 @@ if(TEST neat_tensor_device_placement_test)
   target_link_options(neat_tensor_device_placement_test PRIVATE -Wl,--export-dynamic-symbol=ioctl)
 endif()
 
+foreach(heap cma dms mixed)
+  set(test tensor_transfer_memory_lifecycle_${heap}_test)
+  add_pipeline_test_strict(${test}
+    SOURCES e2e_testing/tensor_transfer_memory_lifecycle_test.cpp
+    ARGS ${heap}
+    LOCK_ACCELERATOR)
+  if (TEST ${test})
+    target_link_libraries(${test} PRIVATE ${CMAKE_DL_LIBS})
+    target_link_options(${test} PRIVATE -Wl,--export-dynamic-symbol=ioctl)
+    set_tests_properties(${test} PROPERTIES
+      LABELS "strict;e2e;tensor;dmabuf;memory;regression"
+      TIMEOUT 60)
+  endif()
+endforeach()
+
 foreach(test unit_appsrcimage_test unit_image_group_runtime_test unit_pipeline_io_test neat_tensor_device_placement_test)
   if (NOT test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST ${test} APPEND PROPERTY LABELS "unit")

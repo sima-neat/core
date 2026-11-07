@@ -932,8 +932,16 @@ requires packing. Explicit CPU memory and Owned outputs remain supported;
 required device allocations fail rather than silently falling back to CPU
 memory. Applications do not select a memory backend or initialize GStreamer.
 
-Tensor transfers reuse pools by heap and byte capacity. Pools grow while tensors
-remain in use and retain released buffers until process exit. CPU access reuses
+Tensor transfers reuse one-buffer pools by heap and exact byte capacity. A
+process-wide LRU cache shared by CMA and DMS retains at most 128 pools and
+256 MiB of page-rounded capacity, counting borrowed slots as well as idle slots.
+A busy pool never waits for an earlier tensor: transfers allocate another slot.
+Eviction deactivates the oldest pool; an idle buffer is released immediately,
+while an outstanding tensor keeps its allocation until its final reference is
+released. Transfers larger than the byte budget are allocated without caching.
+On DMA allocation failure (`ENOMEM`), Core first checks for a concurrently
+returned slot, then drains cached pools and retries allocation at most once.
+Persistent allocation errors remain visible to the caller. CPU access reuses
 Runner's mapping while each access acquires and releases its ticket.
 
 Input allocation preference and runtime admission are separate decisions. Core

@@ -39,10 +39,13 @@
 #include <gst/gst.h>
 #include <gstsimaaitensorbuffer_meta.h>
 
+#include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
-#include <map>
+#include <iterator>
+#include <list>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -50,6 +53,8 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+
+#include <unistd.h>
 
 namespace simaai::neat::pipeline_internal {
 namespace {
@@ -66,44 +71,145 @@ using simaai::neat::Tensor;
 
 namespace dma = ::simaai::scheduler::client::dma;
 
-GstBuffer* acquire_transfer_buffer(dma::HeapKind heap, std::size_t bytes, dma::Error* error) {
-  if (bytes > G_MAXUINT)
-    return dma::allocateDmaBufBuffer(heap, bytes, {}, error);
+// One allocation per pool makes capacity accounting independent of the number
+// of outstanding tensors. Evicted pools stop caching, but their borrowed buffer
+// remains valid until its final GStreamer reference is released.
+class TransferBufferCache {
+  static constexpr std::size_t max_bytes = 256U * 1024U * 1024U;
+  static constexpr std::size_t max_pools = 128U;
   using Pool = std::shared_ptr<GstBufferPool>;
-  static std::mutex mutex;
-  static std::map<std::pair<dma::HeapKind, std::size_t>, Pool> pools;
-  const auto key = std::make_pair(heap, bytes);
-  Pool pool;
-  {
-    std::lock_guard lock(mutex);
-    if (auto it = pools.find(key); it != pools.end())
-      pool = it->second;
+  struct Entry {
+    dma::HeapKind heap;
+    std::size_t bytes;
+    std::size_t capacity;
+    Pool pool;
+  };
+  std::mutex mutex_;
+  std::list<Entry> pools_; // Most recently acquired first; shared across heaps.
+  std::size_t capacity_ = 0;
+
+  static void retire(GstBufferPool* pool) {
+    if (pool) {
+      gst_buffer_pool_set_active(pool, FALSE);
+      gst_object_unref(pool);
+    }
   }
-  if (!pool) {
-    // A zero maximum lets the pool grow while callers retain earlier tensors.
-    // Allocate outside the cache lock so unrelated transfers can proceed.
-    Pool created(dma::createDmaBufPool(heap, bytes, 1U, 0U, {}, error), [](GstBufferPool* value) {
-      if (value) {
-        gst_buffer_pool_set_active(value, FALSE);
-        gst_object_unref(value);
+
+  static GstBuffer* take(GstBufferPool* pool) {
+    GstBufferPoolAcquireParams params{};
+    params.flags = GST_BUFFER_POOL_ACQUIRE_FLAG_DONTWAIT;
+    GstBuffer* buffer = nullptr;
+    if (gst_buffer_pool_acquire_buffer(pool, &buffer, &params) != GST_FLOW_OK)
+      gst_clear_buffer(&buffer);
+    return buffer;
+  }
+
+  GstBuffer* reuse(dma::HeapKind heap, std::size_t bytes) {
+    struct Unref {
+      void operator()(GstBufferPool* pool) const {
+        gst_object_unref(pool);
       }
-    });
-    std::lock_guard lock(mutex);
-    if (created)
-      pool = pools.emplace(key, created).first->second;
-    else if (auto it = pools.find(key); it != pools.end())
-      pool = it->second;
-  }
-  if (!pool)
+    };
+    // Borrow GObject references, not cache owners: eviction can still deactivate
+    // and drain these pools immediately while another transfer inspects them.
+    std::array<std::unique_ptr<GstBufferPool, Unref>, max_pools> candidates;
+    std::size_t count = 0;
+    {
+      std::lock_guard lock(mutex_);
+      for (const auto& entry : pools_)
+        if (entry.heap == heap && entry.bytes == bytes)
+          candidates[count++].reset(GST_BUFFER_POOL(gst_object_ref(entry.pool.get())));
+    }
+    for (std::size_t i = 0; i < count; ++i) {
+      // Never wait for a caller to release an earlier tensor. Even a replacement
+      // allocation after Scheduler retires a slot runs outside the cache lock.
+      if (auto* buffer = take(candidates[i].get())) {
+        std::lock_guard lock(mutex_);
+        const auto it = std::find_if(pools_.begin(), pools_.end(), [&](const Entry& entry) {
+          return entry.pool.get() == candidates[i].get();
+        });
+        if (it != pools_.end())
+          pools_.splice(pools_.begin(), pools_, it);
+        return buffer;
+      }
+    }
     return nullptr;
-  GstBuffer* buffer = nullptr;
-  if (gst_buffer_pool_acquire_buffer(pool.get(), &buffer, nullptr) != GST_FLOW_OK) {
-    gst_clear_buffer(&buffer);
-    *error = {EIO, "acquire transfer buffer"};
-    return nullptr;
   }
-  *error = {};
-  return buffer;
+
+  bool clear() {
+    std::list<Entry> retired;
+    {
+      std::lock_guard lock(mutex_);
+      retired.splice(retired.begin(), pools_);
+      capacity_ = 0;
+    }
+    // Deactivate/free outside the cache lock. Each pool has at most one buffer:
+    // either idle and released here, or borrowed and released on final return.
+    return !retired.empty();
+  }
+
+public:
+  GstBuffer* acquire(dma::HeapKind heap, std::size_t bytes, dma::Error* error) {
+    if (auto* buffer = reuse(heap, bytes)) {
+      *error = {};
+      return buffer;
+    }
+    const auto page = static_cast<std::size_t>(::getpagesize());
+    const bool cacheable = bytes > 0 && bytes <= max_bytes;
+    const auto capacity = cacheable ? ((bytes + page - 1) / page) * page : 0;
+    Pool created;
+    GstBuffer* buffer = nullptr;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      if (cacheable) {
+        // Allocate outside the cache lock; finite one-slot pools also work with
+        // Scheduler versions that do not support max_buffers=0.
+        created = Pool(dma::createDmaBufPool(heap, bytes, 1U, 1U, {}, error), retire);
+        if (created) {
+          buffer = take(created.get());
+          if (!buffer)
+            *error = {EIO, "acquire transfer buffer"};
+        }
+      } else {
+        buffer = dma::allocateDmaBufBuffer(heap, bytes, {}, error);
+      }
+      if (buffer)
+        break;
+      // A racing transfer may have published a usable slot while allocation
+      // failed. Preserve that fast recovery before draining the idle cache.
+      if (auto* available = reuse(heap, bytes)) {
+        *error = {};
+        return available;
+      }
+      if (attempt != 0 || error->code != ENOMEM || !clear())
+        return nullptr;
+    }
+    if (!buffer)
+      return nullptr;
+    std::unique_ptr<GstBuffer, decltype(&gst_buffer_unref)> lease(buffer, gst_buffer_unref);
+    if (created) {
+      std::list<Entry> retired;
+      {
+        std::lock_guard lock(mutex_);
+        // Publish only after borrowing the new slot, so another thread cannot
+        // take it first. Count loaned slots too: this conservatively bounds all
+        // retained cache capacity, including the eventual concurrency high-water.
+        pools_.push_front({heap, bytes, capacity, std::move(created)});
+        capacity_ += capacity;
+        while (capacity_ > max_bytes || pools_.size() > max_pools) {
+          auto oldest = std::prev(pools_.end());
+          capacity_ -= oldest->capacity;
+          retired.splice(retired.end(), pools_, oldest);
+        }
+      }
+    }
+    *error = {};
+    return lease.release();
+  }
+};
+
+GstBuffer* acquire_transfer_buffer(dma::HeapKind heap, std::size_t bytes, dma::Error* error) {
+  static TransferBufferCache cache;
+  return cache.acquire(heap, bytes, error);
 }
 
 //==============================================================================
