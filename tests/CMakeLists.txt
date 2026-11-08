@@ -922,6 +922,36 @@ if(TEST neat_tensor_device_placement_test)
   target_link_options(neat_tensor_device_placement_test PRIVATE -Wl,--export-dynamic-symbol=ioctl)
 endif()
 
+add_pipeline_test_strict(unit_tensor_transfer_exception_test
+  SOURCES unit_testing/unit_tensor_transfer_exception_test.cpp
+  LOCK_ACCELERATOR)
+if(TARGET unit_tensor_transfer_exception_test)
+  target_link_libraries(unit_tensor_transfer_exception_test PRIVATE ${CMAKE_DL_LIBS})
+  target_link_options(unit_tensor_transfer_exception_test PRIVATE
+    -Wl,--export-dynamic-symbol=gst_sample_new
+    -Wl,--export-dynamic-symbol=gst_buffer_pool_acquire_buffer
+    -Wl,--export-dynamic-symbol=gst_buffer_pool_set_active
+    -Wl,--export-dynamic-symbol=_Znwm)
+  set_tests_properties(unit_tensor_transfer_exception_test PROPERTIES
+    LABELS "strict;unit;tensor;dmabuf;memory;regression"
+    TIMEOUT 30)
+endif()
+
+foreach(heap cma dms mixed)
+  set(test tensor_transfer_memory_lifecycle_${heap}_test)
+  add_pipeline_test_strict(${test}
+    SOURCES e2e_testing/tensor_transfer_memory_lifecycle_test.cpp
+    ARGS ${heap}
+    LOCK_ACCELERATOR)
+  if (TEST ${test})
+    target_link_libraries(${test} PRIVATE ${CMAKE_DL_LIBS})
+    target_link_options(${test} PRIVATE -Wl,--export-dynamic-symbol=ioctl)
+    set_tests_properties(${test} PROPERTIES
+      LABELS "strict;e2e;tensor;dmabuf;memory;regression"
+      TIMEOUT 60)
+  endif()
+endforeach()
+
 foreach(test unit_appsrcimage_test unit_image_group_runtime_test unit_pipeline_io_test neat_tensor_device_placement_test)
   if (NOT test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST ${test} APPEND PROPERTY LABELS "unit")
