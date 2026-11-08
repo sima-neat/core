@@ -28,6 +28,9 @@ RunStats runtime::RunCore::stats() const {
 }
 
 InputStreamStats runtime::RunCore::input_stats() const {
+  if (dataflow_) {
+    return dataflow_->input_stats();
+  }
   return pipeline.stream.stats();
 }
 

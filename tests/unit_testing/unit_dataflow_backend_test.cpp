@@ -1,0 +1,557 @@
+// The Dataflow backend behind Core's Run (H0 C3), on the public API only: every Run here is built
+// with RunOptions::backend = RunBackend::Dataflow, so the test does not depend on
+// SIMA_NEAT_BACKEND, and no runtime type is named (libsima_neat.so hides the runtime's symbols).
+//
+// Covers: an undeclared input bound by its first push and enforced; a declared input with a
+// dynamic axis; a push outside the declared shape rejected at push; the H1 and H0c build errors;
+// the holder push error; explicit Dataflow on a sync run; try_push accounting under KeepLatest,
+// DropIncoming and Block; a blocking push that never drops under DropIncoming and KeepLatest;
+// close_input cancelling a parked push; stop unblocking a pending pull; pull timeouts -1/0/t;
+// identity (frame_id, stream_id, pts_ns, input_seq) round trip; NV12 planes; DMA-heap tensors;
+// Owned output; a pulled tensor outliving its Run; named endpoints.
+
+#include "nodes/common/Output.h"
+#include "nodes/common/Queue.h"
+#include "nodes/io/Input.h"
+#include "pipeline/ErrorCodes.h"
+#include "pipeline/Graph.h"
+#include "pipeline/NeatError.h"
+#include "test_main.h"
+#include "test_utils.h"
+
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <cstring>
+#include <functional>
+#include <future>
+#include <memory>
+#include <optional>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include <opencv2/core.hpp>
+
+namespace {
+
+using namespace simaai::neat;
+using Clock = std::chrono::steady_clock;
+
+RunOptions dataflow(int queue_depth = 4, OverflowPolicy policy = OverflowPolicy::Block) {
+  RunOptions opt;
+  opt.backend = RunBackend::Dataflow;
+  opt.queue_depth = queue_depth;
+  opt.overflow_policy = policy;
+  return opt;
+}
+
+std::int64_t ms_since(Clock::time_point t0) {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
+}
+
+// An RGB tensor whose bytes encode `tag` and their position, so a pull can be checked exactly.
+Tensor rgb(int w, int h, std::uint8_t tag) {
+  Tensor t = make_color_tensor(w, h, ImageSpec::PixelFormat::RGB, tag);
+  auto map = t.storage->map(MapMode::Write);
+  auto* bytes = static_cast<std::uint8_t*>(map.data);
+  for (std::size_t i = 0; i < map.size_bytes; ++i) {
+    bytes[i] = static_cast<std::uint8_t>(tag + i * 7U);
+  }
+  return t;
+}
+
+std::vector<std::uint8_t> bytes_of(const Tensor& t) {
+  return t.copy_dense_bytes_tight();
+}
+
+Sample tagged(int frame_id, const std::string& stream, std::int64_t pts, std::uint8_t tag) {
+  Sample s;
+  s.kind = SampleKind::Tensor;
+  s.tensor = rgb(32, 24, tag);
+  s.frame_id = frame_id;
+  s.stream_id = stream;
+  s.pts_ns = pts;
+  return s;
+}
+
+Graph input_output(InputOptions in = {}, OutputOptions out = {}) {
+  Graph g;
+  g.add(nodes::Input(in));
+  g.add(nodes::Output(out));
+  return g;
+}
+
+Tensor pulled_tensor(Run& run, int timeout_ms, const std::string& what) {
+  Sample s;
+  PullError err;
+  const PullStatus st = run.pull(timeout_ms, s, &err);
+  require(st == PullStatus::Ok,
+          what + ": pull status " + std::to_string(static_cast<int>(st)) + " " + err.message);
+  const TensorList tensors = tensors_from_sample(s);
+  require(tensors.size() == 1U, what + ": one tensor expected");
+  return tensors.front();
+}
+
+std::uint64_t dropped_while(Run& run, const std::function<void()>& fn) {
+  MeasureScope scope = run.start_measurement();
+  fn();
+  return scope.stop().counters.inputs_dropped;
+}
+
+void undeclared_input_bound_by_first_push() {
+  Graph g = input_output();
+  Run run = g.build(dataflow()); // seedless: the first push binds the input
+  {
+    Sample s;
+    PullError err;
+    require(run.pull(30, s, &err) == PullStatus::Timeout, "pull before any push times out");
+  }
+  const Tensor a = rgb(32, 24, 0x10);
+  require(run.push(TensorList{a}), "first push binds and publishes");
+  const Tensor out = pulled_tensor(run, 2000, "first push");
+  require(out.shape == a.shape && out.dtype == TensorDType::UInt8, "shape and dtype kept");
+  require(bytes_of(out) == bytes_of(a), "bytes kept");
+  require(out.storage->kind == StorageKind::CpuExternal && out.read_only,
+          "a pulled tensor is a read-only lease on the slot");
+  require(out.semantic.image && out.semantic.image->format == ImageSpec::PixelFormat::RGB,
+          "image format kept");
+  // The binding is enforced from now on.
+  require_neat_error([&] { (void)run.push(TensorList{rgb(40, 24, 1)}); }, error_codes::kInputShape,
+                     "out of bounds");
+  require_neat_error(
+      [&] {
+        (void)run.push(TensorList{
+            Tensor::from_vector(std::vector<float>(6, 1.0F), {2, 3}, TensorMemory::CPU)});
+      },
+      error_codes::kInputShape);
+  require(run.push(TensorList{rgb(32, 24, 0x20)}), "a fitting push still passes");
+  require(bytes_of(pulled_tensor(run, 2000, "second push")) == bytes_of(rgb(32, 24, 0x20)),
+          "second push bytes");
+  run.close();
+}
+
+void declared_input_with_dynamic_axis() {
+  InputOptions in;
+  in.payload_type = PayloadType::Image;
+  in.format = FormatTag::RGB;
+  in.memory_policy = InputMemoryPolicy::SystemMemory;
+  in.max_width = 96;
+  in.max_height = 64;
+  Graph g = input_output(in);
+  Run run = g.build(TensorList{rgb(64, 48, 1)}, dataflow());
+  for (const auto& [w, h] : std::vector<std::pair<int, int>>{{64, 48}, {32, 16}, {96, 64}}) {
+    const Tensor t = rgb(w, h, static_cast<std::uint8_t>(w));
+    require(run.push(TensorList{t}), "dynamic-axis push " + std::to_string(w));
+    const Tensor out = pulled_tensor(run, 2000, "dynamic axis");
+    require(out.shape == t.shape && bytes_of(out) == bytes_of(t), "dynamic axis round trip");
+  }
+  // Above the declared bound: rejected at push, nothing published.
+  bool rejected = false;
+  try {
+    (void)run.push(TensorList{rgb(100, 48, 2)});
+  } catch (const NeatError& e) {
+    rejected = e.report().error_code == error_codes::kInputCapacity ||
+               e.report().error_code == error_codes::kInputShape;
+  }
+  require(rejected, "a push above max_width is rejected with a structured error");
+  Sample s;
+  PullError err;
+  require(run.pull(0, s, &err) == PullStatus::Timeout, "the rejected push published nothing");
+  run.close();
+}
+
+void push_outside_declared_shape_rejected() {
+  InputOptions in;
+  in.payload_type = PayloadType::Image;
+  in.format = FormatTag::RGB;
+  in.width = 64;
+  in.height = 48;
+  in.depth = 3;
+  Graph g = input_output(in);
+  Run run = g.build(dataflow()); // declared: bound at build, no seed needed
+  require(run.push(TensorList{rgb(64, 48, 3)}), "declared shape passes");
+  (void)pulled_tensor(run, 2000, "declared");
+  bool rejected = false;
+  try {
+    (void)run.push(TensorList{rgb(32, 24, 3)});
+  } catch (const NeatError& e) {
+    rejected = e.report().error_code == error_codes::kInputShape ||
+               e.report().error_code == error_codes::kInputCapacity;
+  }
+  require(rejected, "a push outside the declared shape is rejected at push");
+  run.close();
+}
+
+void build_errors() {
+  // H1: any node besides Input and Output.
+  {
+    Graph g;
+    g.add(nodes::Input());
+    g.add(nodes::Queue());
+    g.add(nodes::Output());
+    require_neat_error([&] { (void)g.build(dataflow()); }, error_codes::kPipelineShape,
+                       "not supported before H1");
+  }
+  // H0c: fan-out to two outputs.
+  {
+    Graph g;
+    g.add(nodes::Input("image"));
+    g.add(nodes::Output("a"));
+    g.add(nodes::Output("b"));
+    g.connect("image", "a");
+    g.connect("image", "b");
+    require_neat_error([&] { (void)g.build(dataflow()); }, error_codes::kPipelineShape, "H0c");
+  }
+  // H0c: two inputs.
+  {
+    Graph g;
+    g.add(nodes::Input("left"));
+    g.add(nodes::Input("right"));
+    g.add(nodes::Output("out"));
+    g.connect("left", "out");
+    require_neat_error([&] { (void)g.build(dataflow()); }, error_codes::kPipelineShape, "H0c");
+  }
+  // A graph with no Input.
+  {
+    Graph g;
+    g.add(nodes::Output());
+    require_neat_error([&] { (void)g.build(dataflow()); }, error_codes::kPipelineShape,
+                       "RunBackend::Dataflow");
+  }
+  // A synchronous run (Graph::run) on Dataflow: loud, not a fallback.
+  {
+    Graph g = input_output();
+    require_neat_error([&] { (void)g.run(TensorList{rgb(8, 8, 1)}, dataflow()); },
+                       error_codes::kPipelineShape, "Graph::run");
+  }
+  // Device memory and records: not on this backend yet.
+  {
+    InputOptions in;
+    in.memory_policy = InputMemoryPolicy::Ev74;
+    Graph g = input_output(in);
+    require_neat_error([&] { (void)g.build(dataflow()); }, error_codes::kInputShape, "H0b");
+  }
+  {
+    Graph g = input_output();
+    Run run = g.build(dataflow());
+    require_neat_error([&] { (void)run.push(TensorList{rgb(8, 8, 1), rgb(8, 8, 2)}); },
+                       error_codes::kInputShape, "record");
+    run.close();
+  }
+}
+
+void holder_push_is_an_error() {
+  Graph g = input_output();
+  Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow());
+  const auto holder = std::make_shared<int>(1);
+  require_neat_error([&] { (void)run.push_holder(holder); }, error_codes::kPipelineShape,
+                     "holders");
+  require_neat_error([&] { (void)run.try_push_holder(holder); }, error_codes::kPipelineShape,
+                     "holders");
+  run.close();
+}
+
+void try_push_accounting() {
+  OutputOptions out;
+  out.max_buffers = 1; // the link's depth
+  // DropIncoming: the first is queued, the rest are dropped and counted.
+  {
+    Graph g = input_output({}, out);
+    Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow(1, OverflowPolicy::DropIncoming));
+    std::vector<bool> accepted;
+    const auto dropped = dropped_while(run, [&] {
+      for (int i = 0; i < 5; ++i)
+        accepted.push_back(run.try_push(TensorList{rgb(8, 8, static_cast<std::uint8_t>(i))}));
+    });
+    require(accepted == std::vector<bool>{true, false, false, false, false},
+            "DropIncoming: the first try_push is accepted, the rest refused");
+    require(dropped == 4U, "DropIncoming: four drops counted, got " + std::to_string(dropped));
+    require(bytes_of(pulled_tensor(run, 1000, "DropIncoming")) == bytes_of(rgb(8, 8, 0)),
+            "DropIncoming keeps the oldest");
+    run.close();
+  }
+  // KeepLatest: every try_push is accepted; each one past the first evicts and counts a drop.
+  {
+    Graph g = input_output({}, out);
+    Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow(1, OverflowPolicy::KeepLatest));
+    bool all = true;
+    const auto dropped = dropped_while(run, [&] {
+      for (int i = 0; i < 5; ++i)
+        all = run.try_push(TensorList{rgb(8, 8, static_cast<std::uint8_t>(i))}) && all;
+    });
+    require(all, "KeepLatest: try_push never refuses");
+    require(dropped == 4U, "KeepLatest: four drops counted, got " + std::to_string(dropped));
+    require(bytes_of(pulled_tensor(run, 1000, "KeepLatest")) == bytes_of(rgb(8, 8, 4)),
+            "KeepLatest keeps the newest");
+    run.close();
+  }
+  // Block: refused when full, nothing dropped.
+  {
+    Graph g = input_output({}, out);
+    Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow(1, OverflowPolicy::Block));
+    std::vector<bool> accepted;
+    const auto dropped = dropped_while(run, [&] {
+      for (int i = 0; i < 3; ++i)
+        accepted.push_back(run.try_push(TensorList{rgb(8, 8, static_cast<std::uint8_t>(i))}));
+    });
+    require(accepted == std::vector<bool>{true, false, false}, "Block: refused when full");
+    require(dropped == 0U, "Block: no drop counted");
+    run.close();
+  }
+}
+
+void blocking_push_never_drops() {
+  for (const OverflowPolicy policy : {OverflowPolicy::DropIncoming, OverflowPolicy::KeepLatest}) {
+    OutputOptions out;
+    out.max_buffers = 1;
+    Graph g = input_output({}, out);
+    Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow(1, policy));
+    constexpr int kFrames = 40;
+    std::atomic<bool> push_failed{false};
+    std::uint64_t dropped = 0;
+    {
+      MeasureScope scope = run.start_measurement();
+      std::thread pusher([&] {
+        for (int i = 0; i < kFrames; ++i) {
+          Sample s = tagged(i, "", -1, static_cast<std::uint8_t>(i));
+          s.tensor = rgb(8, 8, static_cast<std::uint8_t>(i));
+          if (!run.push(Sample{s}))
+            push_failed = true;
+        }
+      });
+      for (int i = 0; i < kFrames; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(i % 4 == 0 ? 5 : 0));
+        Sample s;
+        PullError err;
+        require(run.pull(5000, s, &err) == PullStatus::Ok, "blocking push: every frame arrives");
+        require(s.frame_id == i, "blocking push: in order, frame " + std::to_string(i));
+      }
+      pusher.join();
+      dropped = scope.stop().counters.inputs_dropped;
+    }
+    require(!push_failed, "blocking push never returns false on a live run");
+    require(dropped == 0U, "blocking push never drops, whatever the policy");
+    run.close();
+  }
+}
+
+void close_input_cancels_a_parked_push() {
+  OutputOptions out;
+  out.max_buffers = 1;
+  Graph g = input_output({}, out);
+  Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow(1));
+  require(run.push(TensorList{rgb(8, 8, 1)}), "the first push fills the link");
+  auto parked = std::async(std::launch::async, [&] { return run.push(TensorList{rgb(8, 8, 2)}); });
+  require(parked.wait_for(std::chrono::milliseconds(150)) == std::future_status::timeout,
+          "the second push parks on the full link");
+  const auto t0 = Clock::now();
+  run.close_input();
+  require(parked.wait_for(std::chrono::seconds(1)) == std::future_status::ready,
+          "close_input wakes the parked push");
+  require(!parked.get(), "the cancelled push returns false");
+  require(ms_since(t0) < 1000, "close_input does not wait behind the parked push");
+  require(bytes_of(pulled_tensor(run, 1000, "queued")) == bytes_of(rgb(8, 8, 1)),
+          "what was queued stays pullable");
+  Sample s;
+  PullError err;
+  require(run.pull(1000, s, &err) == PullStatus::Closed, "then the output is closed");
+  require(!run.push(TensorList{rgb(8, 8, 3)}), "a push after close_input is refused");
+  run.close();
+}
+
+void stop_unblocks_pull_and_refuses_push() {
+  Graph g = input_output();
+  Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow());
+  auto pending = std::async(std::launch::async, [&] {
+    Sample s;
+    PullError err;
+    return run.pull(5000, s, &err);
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  run.stop();
+  require(pending.wait_for(std::chrono::seconds(1)) == std::future_status::ready,
+          "a pending pull unblocks within 1 s of stop");
+  require(pending.get() == PullStatus::Closed, "the pending pull reports Closed");
+  require(!run.running(), "not running after stop");
+  bool refused = false;
+  try {
+    refused = !run.push(TensorList{rgb(8, 8, 2)});
+  } catch (const std::exception& e) {
+    refused = std::string(e.what()).find("stopped") != std::string::npos;
+  }
+  require(refused, "a push after stop is refused");
+  run.close();
+  run.close();
+}
+
+void pull_timeouts() {
+  Graph g = input_output();
+  Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow());
+  Sample s;
+  PullError err;
+  auto t0 = Clock::now();
+  require(run.pull(0, s, &err) == PullStatus::Timeout, "pull(0) polls");
+  require(ms_since(t0) < 50, "pull(0) does not wait");
+  t0 = Clock::now();
+  require(run.pull(120, s, &err) == PullStatus::Timeout, "pull(120) times out");
+  const auto waited = ms_since(t0);
+  require(waited >= 110 && waited < 700,
+          "pull(120) waits about 120 ms, got " + std::to_string(waited));
+  require(err.code == error_codes::kRuntimePull, "a timeout carries runtime.pull");
+  require(run.last_error().empty(), "a timeout is not latched");
+  auto forever = std::async(std::launch::async, [&] {
+    Sample out;
+    PullError e;
+    return run.pull(-1, out, &e);
+  });
+  require(forever.wait_for(std::chrono::milliseconds(200)) == std::future_status::timeout,
+          "pull(-1) waits");
+  require(run.push(TensorList{rgb(8, 8, 9)}), "push wakes pull(-1)");
+  require(forever.wait_for(std::chrono::seconds(2)) == std::future_status::ready &&
+              forever.get() == PullStatus::Ok,
+          "pull(-1) returns the pushed frame");
+  run.close();
+}
+
+void identity_round_trip_and_names() {
+  Graph in_graph;
+  in_graph.add(nodes::Input("image"));
+  Graph out_graph;
+  out_graph.add(nodes::Output("classes"));
+  Graph g;
+  g.connect(in_graph, out_graph);
+  Run run = g.build(dataflow());
+  require(run.input_names() == std::vector<std::string>{"image"} &&
+              run.output_names() == std::vector<std::string>{"classes"},
+          "endpoint names");
+  require(run.push("image", Sample{tagged(7, "cam-a", 1234, 1)}), "named push");
+  require(run.push("image", Sample{tagged(8, "", -1, 2)}), "named push, no identity");
+  require(run.push(Sample{tagged(-1, "cam-b", 99, 3)}), "default push");
+  const auto first = run.pull("classes", 2000);
+  const auto second = run.pull("classes", 2000);
+  const auto third = run.pull(2000);
+  require(first && second && third, "three outputs");
+  require(first->frame_id == 7 && first->stream_id == "cam-a" && first->pts_ns == 1234,
+          "frame_id, stream_id and pts_ns round trip");
+  require(second->frame_id == 8 && second->stream_id == "image" && second->pts_ns == -1,
+          "an empty stream_id becomes the endpoint's name on a connected graph");
+  require(third->frame_id == -1 && third->stream_id == "cam-b", "frame_id -1 stays unset");
+  require(first->input_seq == 0 && second->input_seq == 1 && third->input_seq == 2,
+          "input_seq is contiguous per Run");
+  require(first->kind == SampleKind::TensorSet && first->payload_tag == "RGB" &&
+              first->media_type == "video/x-raw",
+          "the pulled Sample's shape and tags");
+  bool unknown = false;
+  try {
+    (void)run.push("nope", TensorList{rgb(32, 24, 1)});
+  } catch (const std::exception& e) {
+    unknown = std::string(e.what()).find("unknown input") != std::string::npos;
+  }
+  require(unknown, "an unknown input name is refused with Core's text");
+  run.close();
+}
+
+void nv12_planes_round_trip() {
+  InputOptions in;
+  in.payload_type = PayloadType::Image;
+  in.format = FormatTag::NV12;
+  in.width = 64;
+  in.height = 48;
+  Graph g = input_output(in);
+  Run run = g.build(dataflow());
+  Tensor t = make_nv12_tensor(64, 48, 0x22);
+  {
+    auto map = t.storage->map(MapMode::Write);
+    auto* bytes = static_cast<std::uint8_t*>(map.data);
+    for (std::size_t i = 0; i < map.size_bytes; ++i)
+      bytes[i] = static_cast<std::uint8_t>(i * 13U);
+  }
+  require(run.push(TensorList{t}), "NV12 push");
+  const Tensor out = pulled_tensor(run, 2000, "NV12");
+  require(out.is_nv12() && out.planes.size() == 2U, "NV12 planes restored");
+  require(out.copy_nv12_contiguous() == t.copy_nv12_contiguous(), "NV12 bytes kept");
+  run.close();
+}
+
+void dma_heap_tensor_is_copied() {
+  // Core's default tensor: a DMA-BUF from the heap. Mappable, so the push copies it.
+  const Tensor t =
+      Tensor::from_vector(std::vector<float>{1.0F, 2.0F, 3.0F, 4.0F}, {4}, TensorMemory::EV74);
+  Graph g = input_output();
+  Run run = g.build(dataflow());
+  require(run.push(TensorList{t}), "DMA-heap push");
+  const Tensor out = pulled_tensor(run, 2000, "DMA-heap");
+  require(out.dtype == TensorDType::Float32 && out.shape == std::vector<std::int64_t>{4},
+          "dtype and shape");
+  require(bytes_of(out) == bytes_of(t), "DMA-heap bytes copied");
+  run.close();
+}
+
+void owned_output_and_lease_lifetime() {
+  {
+    RunOptions opt = dataflow();
+    opt.output_memory = OutputMemory::Owned;
+    Graph g = input_output();
+    Run run = g.build(TensorList{rgb(8, 8, 1)}, opt);
+    require(run.push(TensorList{rgb(8, 8, 5)}), "push");
+    const Tensor out = pulled_tensor(run, 2000, "Owned");
+    require(out.storage->kind == StorageKind::CpuOwned, "Owned output is a CPU copy");
+    run.close();
+  }
+  Tensor kept;
+  {
+    Graph g = input_output();
+    Run run = g.build(TensorList{rgb(16, 8, 1)}, dataflow());
+    require(run.push(TensorList{rgb(16, 8, 6)}), "push");
+    kept = pulled_tensor(run, 2000, "lease");
+    run.close();
+  }
+  require(bytes_of(kept) == bytes_of(rgb(16, 8, 6)), "a pulled tensor outlives its Run");
+}
+
+void mat_and_bundle_pushes() {
+  InputOptions in;
+  in.payload_type = PayloadType::Image;
+  in.format = FormatTag::BGR;
+  Graph g = input_output(in);
+  const cv::Mat mat(24, 32, CV_8UC3, cv::Scalar(3, 5, 7));
+  Run run = g.build(std::vector<cv::Mat>{mat}, dataflow());
+  require(run.push(std::vector<cv::Mat>{mat}), "cv::Mat push");
+  const Tensor out = pulled_tensor(run, 2000, "cv::Mat");
+  require(out.shape == std::vector<std::int64_t>{24, 32, 3}, "cv::Mat shape");
+  Sample bundle;
+  for (int i = 0; i < 3; ++i) {
+    Sample field;
+    field.kind = SampleKind::Tensor;
+    field.tensor = Tensor::from_cv_mat_view(mat, ImageSpec::PixelFormat::BGR);
+    field.frame_id = 100 + i;
+    bundle.push_back(std::move(field));
+  }
+  require(run.push(bundle), "a Bundle is pushed one item per field");
+  for (int i = 0; i < 3; ++i) {
+    const auto s = run.pull(2000);
+    require(s && s->frame_id == 100 + i, "bundle field " + std::to_string(i));
+  }
+  run.close();
+}
+
+} // namespace
+
+RUN_TEST("unit_dataflow_backend_test", ([] {
+           undeclared_input_bound_by_first_push();
+           declared_input_with_dynamic_axis();
+           push_outside_declared_shape_rejected();
+           build_errors();
+           holder_push_is_an_error();
+           try_push_accounting();
+           blocking_push_never_drops();
+           close_input_cancels_a_parked_push();
+           stop_unblocks_pull_and_refuses_push();
+           pull_timeouts();
+           identity_round_trip_and_names();
+           nv12_planes_round_trip();
+           dma_heap_tensor_is_copied();
+           owned_output_and_lease_lifetime();
+           mat_and_bundle_pushes();
+         }));

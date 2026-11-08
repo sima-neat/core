@@ -77,6 +77,7 @@ struct ExecutionGraphPlan;
 struct FragmentBoundaryHints;
 struct FragmentPlan;
 struct Provenance;
+struct DataflowGraphAccess;
 ExecutionGraphPlan compile_public_graph(const Graph& graph, const RunOptions& opt,
                                         std::optional<Sample> seed = std::nullopt);
 } // namespace runtime
@@ -470,6 +471,9 @@ private:
   friend runtime::ExecutionGraphPlan runtime::compile_public_graph(const Graph& graph,
                                                                    const RunOptions& opt,
                                                                    std::optional<Sample> seed);
+  // The Dataflow backend's compiler (src/pipeline/runtime/DataflowGraphCompiler.cpp) reads the
+  // same composition view to qualify and lower Input -> Output graphs.
+  friend struct runtime::DataflowGraphAccess;
 #endif
 
   /// Drop the built pipeline (if any) and any cached runner. Tears down GStreamer

@@ -1295,6 +1295,15 @@ uploaded per frame.
 * `pull(...)` dequeues `Sample` outputs from the appsink
 * `try_push(...)` is non-blocking (returns false if the queue is full)
 
+`RunOptions::backend` selects the runtime behind the same `Run` surface. On the Neat
+Dataflow backend (an opt-in build with `SIMANEAT_DATAFLOW_SOURCE_DIR`, for graphs of one
+public `Input` connected to one public `Output`), the graph is one Feed, one Fetch and
+one link: `push` copies the tensor into a pool slot on the calling thread and waits for
+room without dropping, `try_push` applies the overflow policy, and `pull` returns a
+read-only `CpuExternal` tensor that leases the slot until its last copy is released. The
+input's shape is bound by its declaration, its seed or its first push, and enforced from
+then on. `push_holder` and multi-tensor (record) items are GStreamer-only for now.
+
 An idle `Run` remains usable; operation deadlines bound waits, not pauses between submissions.
 
 This supports fully async pipelines (producer/consumer split) as well as
@@ -2057,6 +2066,14 @@ The runtime supports environment-driven debugging knobs:
 * `SIMA_GST_TEARDOWN_TIMEOUT_MS` -- wait for NULL state (ms)
 * `SIMA_GST_TEARDOWN_REAPER_MS` -- reaper retry interval (ms)
 * `SIMA_GST_TEARDOWN_ASYNC` -- skip wait, defer to reaper
+* `SIMA_NEAT_BACKEND` -- `dataflow` makes `RunBackend::Auto` (the default
+  `RunOptions::backend`) build qualifying graphs on the Neat Dataflow runtime; unset,
+  `auto` or `gstreamer` keep GStreamer. Read at every `Graph::build()`. Only builds
+  configured with `SIMANEAT_DATAFLOW_SOURCE_DIR` carry the Dataflow runtime, and only a
+  graph of one public `Input` connected to one public `Output` qualifies; any other
+  graph stays on GStreamer. When set, each `Graph::build()` prints the runtime it took
+  and why to stderr. An explicit `RunBackend::Dataflow` does not read the variable and
+  fails the build instead of falling back.
 
 These knobs are intentionally outside the public API so you can turn them on in CI or in the field without recompiling.
 There are additional low-level debug flags in `src/pipeline/internal/*` (input stream

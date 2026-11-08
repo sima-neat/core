@@ -449,6 +449,9 @@ void maybe_log_push_rejection(const runtime::RunCore& core,
 }
 
 bool push_mat_to_core(runtime::RunCore& core, const cv::Mat& input, bool block) {
+  if (core.dataflow_) {
+    return core.dataflow_->push(std::nullopt, std::vector<cv::Mat>{input}, block, "Run::push");
+  }
   if (!core.pipeline.supports_push) {
     throw std::runtime_error(decorate_with_error_code(
         error_codes::kRuntimePull, "Run::push: pipeline has no Input (push not supported)"));
@@ -482,6 +485,9 @@ bool push_mat_to_core(runtime::RunCore& core, const cv::Mat& input, bool block) 
 }
 
 bool push_message_to_core(runtime::RunCore& core, const Sample& msg, bool block) {
+  if (core.dataflow_) {
+    return core.dataflow_->push(std::nullopt, msg, block, "Run::push");
+  }
   if (core.graph_execution_) {
     return core.push_samples(Sample{msg}, block);
   }
@@ -688,6 +694,10 @@ bool Run::push_holder_impl(const std::shared_ptr<void>& holder, bool block) {
     throw std::runtime_error(
         decorate_with_error_code(error_codes::kRuntimePull, "Run::push_holder: stream is closed"));
   }
+  if (core_->dataflow_) {
+    return core_->dataflow_->push_holder(holder, block,
+                                         block ? "Run::push_holder" : "Run::try_push_holder");
+  }
   if (!core_->pipeline.supports_push) {
     throw std::runtime_error(decorate_with_error_code(
         error_codes::kRuntimePull, "Run::push_holder: pipeline has no Input (push not supported)"));
@@ -751,6 +761,9 @@ bool Run::push(const std::vector<cv::Mat>& inputs) {
   validate_image_inputs(inputs, "Run::push");
   if (!core_)
     throw std::runtime_error("Run::push: stream is closed");
+  if (core_->dataflow_) {
+    return core_->dataflow_->push(std::nullopt, inputs, true, "Run::push");
+  }
   validate_original_images(*core_, inputs, graph_default_input_segment(*core_), "Run::push");
   if (core_ && core_->graph_execution_) {
     TensorList tensors;
@@ -800,6 +813,9 @@ bool Run::push(std::string_view input_name, const std::vector<cv::Mat>& inputs) 
     throw std::runtime_error(
         decorate_with_error_code(error_codes::kRuntimePull, "Run::push(name): stream is closed"));
   }
+  if (core_->dataflow_) {
+    return core_->dataflow_->push(input_name, inputs, true, "Run::push(name)");
+  }
   const runtime::Endpoint endpoint = named_input_endpoint_or_throw(*core_, input_name);
   validate_original_images(*core_, inputs, graph_input_segment_for_endpoint(*core_, endpoint),
                            "Run::push(name)");
@@ -834,6 +850,9 @@ bool Run::try_push(const std::vector<cv::Mat>& inputs) {
   validate_image_inputs(inputs, "Run::try_push");
   if (!core_)
     throw std::runtime_error("Run::try_push: stream is closed");
+  if (core_->dataflow_) {
+    return core_->dataflow_->push(std::nullopt, inputs, false, "Run::try_push");
+  }
   validate_original_images(*core_, inputs, graph_default_input_segment(*core_), "Run::try_push");
   if (core_ && core_->graph_execution_) {
     TensorList tensors;
@@ -884,6 +903,9 @@ bool Run::try_push(std::string_view input_name, const std::vector<cv::Mat>& inpu
     throw std::runtime_error(decorate_with_error_code(error_codes::kRuntimePull,
                                                       "Run::try_push(name): stream is closed"));
   }
+  if (core_->dataflow_) {
+    return core_->dataflow_->push(input_name, inputs, false, "Run::try_push(name)");
+  }
   const runtime::Endpoint endpoint = named_input_endpoint_or_throw(*core_, input_name);
   validate_original_images(*core_, inputs, graph_input_segment_for_endpoint(*core_, endpoint),
                            "Run::try_push(name)");
@@ -918,6 +940,9 @@ bool Run::push(const TensorList& inputs) {
   if (inputs.empty()) {
     throw std::runtime_error(
         decorate_with_error_code(error_codes::kRuntimePull, "Run::push: empty tensor list"));
+  }
+  if (core_ && core_->dataflow_) {
+    return core_->dataflow_->push(std::nullopt, inputs, true, "Run::push");
   }
   if (core_ && core_->graph_execution_) {
     if (auto route = graph_default_input_route_processor(*core_)) {
@@ -956,6 +981,9 @@ bool Run::push(std::string_view input_name, const TensorList& inputs) {
     throw std::runtime_error(
         decorate_with_error_code(error_codes::kRuntimePull, "Run::push(name): stream is closed"));
   }
+  if (core_->dataflow_) {
+    return core_->dataflow_->push(input_name, inputs, true, "Run::push(name)");
+  }
   const runtime::Endpoint endpoint = named_input_endpoint_or_throw(*core_, input_name);
   if (auto route = graph_input_route_processor_for_endpoint(*core_, endpoint)) {
     return push_graph_samples_to_endpoint(*core_, endpoint, input_name,
@@ -980,6 +1008,9 @@ bool Run::try_push(const TensorList& inputs) {
   if (inputs.empty()) {
     throw std::runtime_error(
         decorate_with_error_code(error_codes::kRuntimePull, "Run::try_push: empty tensor list"));
+  }
+  if (core_ && core_->dataflow_) {
+    return core_->dataflow_->push(std::nullopt, inputs, false, "Run::try_push");
   }
   if (core_ && core_->graph_execution_) {
     if (auto route = graph_default_input_route_processor(*core_)) {
@@ -1017,6 +1048,9 @@ bool Run::try_push(std::string_view input_name, const TensorList& inputs) {
   if (!core_) {
     throw std::runtime_error(decorate_with_error_code(error_codes::kRuntimePull,
                                                       "Run::try_push(name): stream is closed"));
+  }
+  if (core_->dataflow_) {
+    return core_->dataflow_->push(input_name, inputs, false, "Run::try_push(name)");
   }
   const runtime::Endpoint endpoint = named_input_endpoint_or_throw(*core_, input_name);
   if (auto route = graph_input_route_processor_for_endpoint(*core_, endpoint)) {
@@ -1064,6 +1098,9 @@ bool runtime::RunCore::push_samples(const Sample& msgs, bool block) {
     throw std::runtime_error(
         decorate_with_error_code(error_codes::kRuntimePull, "Run::push: empty sample list"));
   }
+  if (dataflow_) {
+    return dataflow_->push(std::nullopt, msgs, block, block ? "Run::push" : "Run::try_push");
+  }
   if (graph_execution_) {
     const auto& endpoint = graph_execution_->plan.default_input;
     if (!endpoint.has_value()) {
@@ -1098,6 +1135,10 @@ bool runtime::RunCore::push_named_samples(std::string_view input_name, const Sam
     throw std::runtime_error(
         decorate_with_error_code(error_codes::kRuntimePull, "Run::push(name): empty sample list"));
   }
+  if (dataflow_) {
+    return dataflow_->push(input_name, msgs, block,
+                           block ? "Run::push(name)" : "Run::try_push(name)");
+  }
   const runtime::Endpoint endpoint = named_input_endpoint_or_throw(*this, input_name);
   return push_graph_samples_to_endpoint(*this, endpoint, input_name, msgs, block);
 }
@@ -1107,6 +1148,9 @@ bool Run::push(const Sample& msgs) {
   if (msgs.empty()) {
     throw std::runtime_error(
         decorate_with_error_code(error_codes::kRuntimePull, "Run::push: empty sample list"));
+  }
+  if (core_ && core_->dataflow_) {
+    return core_->dataflow_->push(std::nullopt, msgs, true, "Run::push");
   }
   if (core_ && core_->graph_execution_) {
     if (auto route = graph_default_input_route_processor(*core_)) {
@@ -1136,6 +1180,9 @@ bool Run::push(std::string_view input_name, const Sample& msgs) {
     throw std::runtime_error(
         decorate_with_error_code(error_codes::kRuntimePull, "Run::push(name): stream is closed"));
   }
+  if (core_->dataflow_) {
+    return core_->dataflow_->push(input_name, msgs, true, "Run::push(name)");
+  }
   const runtime::Endpoint endpoint = named_input_endpoint_or_throw(*core_, input_name);
   if (auto route = graph_input_route_processor_for_endpoint(*core_, endpoint)) {
     return push_graph_samples_to_endpoint(*core_, endpoint, input_name,
@@ -1150,6 +1197,9 @@ bool Run::try_push(const Sample& msgs) {
   if (msgs.empty()) {
     throw std::runtime_error(
         decorate_with_error_code(error_codes::kRuntimePull, "Run::try_push: empty sample list"));
+  }
+  if (core_ && core_->dataflow_) {
+    return core_->dataflow_->push(std::nullopt, msgs, false, "Run::try_push");
   }
   if (core_ && core_->graph_execution_) {
     if (auto route = graph_default_input_route_processor(*core_)) {
@@ -1178,6 +1228,9 @@ bool Run::try_push(std::string_view input_name, const Sample& msgs) {
   if (!core_) {
     throw std::runtime_error(decorate_with_error_code(error_codes::kRuntimePull,
                                                       "Run::try_push(name): stream is closed"));
+  }
+  if (core_->dataflow_) {
+    return core_->dataflow_->push(input_name, msgs, false, "Run::try_push(name)");
   }
   const runtime::Endpoint endpoint = named_input_endpoint_or_throw(*core_, input_name);
   if (auto route = graph_input_route_processor_for_endpoint(*core_, endpoint)) {

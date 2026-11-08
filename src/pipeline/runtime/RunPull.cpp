@@ -520,6 +520,9 @@ bool runtime::RunCore::attach_public_output_loan(Sample& sample, std::string* er
 
 PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err,
                                   bool acquire_output_loan) {
+  if (dataflow_) {
+    return dataflow_->pull(std::nullopt, timeout_ms, out, err);
+  }
   const auto pull_started_at = std::chrono::steady_clock::now();
   pipeline_internal::error_util::set_pull_error(err, "", "");
   const auto set_terminal_error = [&](const std::string& code, const std::string& message) {
@@ -816,6 +819,9 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err,
 
 PullStatus runtime::RunCore::pull_named_output(std::string_view output_name, int timeout_ms,
                                                Sample& out, PullError* err) {
+  if (dataflow_) {
+    return dataflow_->pull(output_name, timeout_ms, out, err);
+  }
   pipeline_internal::error_util::set_pull_error(err, "", "");
   const auto set_terminal_error = [&](const std::string& code, const std::string& message) {
     pipeline_internal::error_util::set_pull_error(err, code, message);
@@ -1055,7 +1061,7 @@ void Run::enqueue_run_images(const std::vector<cv::Mat>& inputs) {
     throw std::runtime_error(
         decorate_with_error_code(error_codes::kRuntimePull, "Run::run: stream is closed"));
   }
-  if (st->graph_execution_) {
+  if (st->dataflow_ || st->graph_execution_) {
     if (!push(inputs)) {
       throw_push_returned_false("Run::run", last_error());
     }
@@ -1101,7 +1107,7 @@ void Run::enqueue_run_tensors(const TensorList& inputs) {
     throw std::runtime_error(
         decorate_with_error_code(error_codes::kRuntimePull, "Run::run: empty tensor list"));
   }
-  if (core_ && core_->graph_execution_) {
+  if (core_ && (core_->dataflow_ || core_->graph_execution_)) {
     if (!push(inputs)) {
       throw_push_returned_false("Run::run", last_error());
     }
@@ -1128,7 +1134,7 @@ void Run::enqueue_run_samples(const Sample& inputs) {
     throw std::runtime_error(
         decorate_with_error_code(error_codes::kRuntimePull, "Run::run: empty sample list"));
   }
-  if (core_ && core_->graph_execution_) {
+  if (core_ && (core_->dataflow_ || core_->graph_execution_)) {
     if (!push(inputs)) {
       throw_push_returned_false("Run::run", last_error());
     }

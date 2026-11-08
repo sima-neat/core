@@ -755,6 +755,14 @@ Core が所有する Preproc のフレームアダプターは、動的な画像
 * `pull(...)` は、appsink からの `Sample` 出力をキューから取り出します。
 * `try_push(...)` はノンブロッキング処理であり（キューが一杯の場合は false を返します）。
 
+`RunOptions::backend` は、同じ `Run` インターフェースの背後で動作するランタイムを選択します。Neat
+Dataflow バックエンド（`SIMANEAT_DATAFLOW_SOURCE_DIR` で有効にするビルドで、公開 `Input` 1 つが公開
+`Output` 1 つに接続されたグラフが対象）では、グラフは Feed 1 つ、Fetch 1 つ、リンク 1 つになります。
+`push` は呼び出し元のスレッドでテンソルをプールのスロットにコピーし、破棄せずに空きを待ちます。
+`try_push` はオーバーフローポリシーを適用し、`pull` は最後のコピーが解放されるまでスロットを借用する
+読み取り専用の `CpuExternal` テンソルを返します。入力の形状は宣言、シード、または最初の push で決まり、
+それ以降は強制されます。`push_holder` と複数テンソル（レコード）の項目は、当面 GStreamer 専用です。
+
 アイドル状態の `Run` は引き続き使用できます。操作の期限は待機時間を制限し、入力の送信間の一時停止には適用されません。
 
 これは、完全に非同期のパイプライン（プロデューサー/コンシューマー分割）と、
@@ -1168,6 +1176,13 @@ SSDモデルパックは、正確な術後の頭部コントラクトのプラ�
 * `SIMA_GST_TEARDOWN_TIMEOUT_MS` - NULL状態になるまで待機する時間（ミリ秒）
 * `SIMA_GST_TEARDOWN_REAPER_MS` - reaper の再試行間隔（ミリ秒）
 * `SIMA_GST_TEARDOWN_ASYNC` -- 待機をスキップし、後処理を reaper に委ねる。
+* `SIMA_NEAT_BACKEND` -- `dataflow` にすると、`RunBackend::Auto`（`RunOptions::backend` の既定値）は
+  条件を満たすグラフを Neat Dataflow ランタイムでビルドします。未設定、`auto`、`gstreamer` の場合は
+  GStreamer のままです。`Graph::build()` のたびに読み取られます。Dataflow ランタイムを含むのは
+  `SIMANEAT_DATAFLOW_SOURCE_DIR` を指定して構成したビルドだけで、条件を満たすのは公開 `Input` 1 つが
+  公開 `Output` 1 つに接続されたグラフだけです。それ以外のグラフは GStreamer のままです。設定されている
+  場合、各 `Graph::build()` は選択したランタイムとその理由を stderr に出力します。明示的な
+  `RunBackend::Dataflow` はこの変数を読まず、フォールバックせずにビルドを失敗させます。
 
 これらの設定項目は、意図的に公開 API の外に配置されているため、再コンパイルすることなく、CI 環境や実際の運用環境で有効にすることができます。
 

@@ -38,6 +38,7 @@
 #include "pipeline/internal/SyncBuild.h"
 #include "pipeline/internal/TerminalOutputContractQuery.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
+#include "pipeline/runtime/DataflowGraphCompiler.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/RunCore.h"
 
@@ -2311,7 +2312,7 @@ bool run_options_equal_for_cache_local(const RunOptions& a, const RunOptions& b)
     }
     return true;
   };
-  return a.preset == b.preset && a.queue_depth == b.queue_depth &&
+  return a.preset == b.preset && a.backend == b.backend && a.queue_depth == b.queue_depth &&
          a.overflow_policy == b.overflow_policy && a.output_memory == b.output_memory &&
          a.input_timeout_ms == b.input_timeout_ms && a.startup_preflight == b.startup_preflight &&
          a.advanced.copy_input == b.advanced.copy_input &&
@@ -2693,6 +2694,11 @@ Run Graph::build(const Sample& inputs, const RunOptions& opt) {
 
 Run Graph::build_seeded_internal(const std::vector<cv::Mat>& inputs, RunMode mode,
                                  const RunOptions& opt) {
+  // RunOptions::backend: before gst_init_once(), so a Run on Dataflow never initializes GStreamer.
+  if (auto core =
+          runtime::DataflowGraphAccess::build(*this, opt, mode, inputs, "Graph::build(inputs)")) {
+    return Run(std::move(core));
+  }
   const pipeline_internal::ScopedBuildTiming timing(
       "Graph::build", "kind=cv::Mat inputs=" + std::to_string(inputs.size()));
   pipeline_internal::ux::ScopedVerboseContext verbose_ctx(opt_.verbose);
@@ -2761,6 +2767,11 @@ Run Graph::build_seeded_internal(const std::vector<cv::Mat>& inputs, RunMode mod
 }
 
 Run Graph::build_seeded_internal(const TensorList& inputs, RunMode mode, const RunOptions& opt) {
+  // RunOptions::backend: before gst_init_once(), so a Run on Dataflow never initializes GStreamer.
+  if (auto core =
+          runtime::DataflowGraphAccess::build(*this, opt, mode, inputs, "Graph::build(inputs)")) {
+    return Run(std::move(core));
+  }
   const pipeline_internal::ScopedBuildTiming timing(
       "Graph::build", "kind=TensorList inputs=" + std::to_string(inputs.size()));
   pipeline_internal::ux::ScopedVerboseContext verbose_ctx(opt_.verbose);
@@ -2819,6 +2830,11 @@ Run Graph::build_seeded_internal(const TensorList& inputs, RunMode mode, const R
 }
 
 Run Graph::build_seeded_internal(const Sample& inputs, RunMode mode, const RunOptions& opt) {
+  // RunOptions::backend: before gst_init_once(), so a Run on Dataflow never initializes GStreamer.
+  if (auto core =
+          runtime::DataflowGraphAccess::build(*this, opt, mode, inputs, "Graph::build(inputs)")) {
+    return Run(std::move(core));
+  }
   const pipeline_internal::ScopedBuildTiming timing(
       "Graph::build", "kind=Sample inputs=" + std::to_string(inputs.size()));
   pipeline_internal::ux::ScopedVerboseContext verbose_ctx(opt_.verbose);

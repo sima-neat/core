@@ -33,6 +33,7 @@
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TerminalOutputContractQuery.h"
 #include "pipeline/internal/UxLogging.h"
+#include "pipeline/runtime/DataflowGraphCompiler.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/RunCore.h"
 
@@ -3739,6 +3740,10 @@ Run Graph::build(const RunOptions& opt) {
 }
 
 Run Graph::build_source_internal_(const RunOptions& opt) {
+  // RunOptions::backend: before gst_init_once(), so a Run on Dataflow never initializes GStreamer.
+  if (auto core = runtime::DataflowGraphAccess::build(*this, opt, RunMode::Async, "Graph::build")) {
+    return Run(std::move(core));
+  }
   const pipeline_internal::ScopedBuildTiming timing("Graph::build", "kind=no_input");
   pipeline_internal::ux::ScopedVerboseContext verbose_ctx(opt_.verbose);
   pipeline_internal::ux::ProgressReporter progress(opt_.verbose, 4);

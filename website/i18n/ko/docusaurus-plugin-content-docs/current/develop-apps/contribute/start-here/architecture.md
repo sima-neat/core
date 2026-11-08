@@ -922,6 +922,14 @@ Core 소유 Preproc 프레임 어댑터는 동적 이미지/ROI 형상과 메타
 * `pull(...)`은 앱싱크에서 `Sample` 출력을 큐에서 제거합니다.
 * `try_push(...)`는 차단되지 않습니다(큐가 가득 차면 false를 반환합니다).
 
+`RunOptions::backend`는 동일한 `Run` 인터페이스 뒤에서 실행할 런타임을 선택합니다. Neat Dataflow
+백엔드(`SIMANEAT_DATAFLOW_SOURCE_DIR`로 선택하는 빌드, 공개 `Input` 하나가 공개 `Output` 하나에 연결된
+그래프)에서 그래프는 Feed 하나, Fetch 하나, 링크 하나입니다. `push`는 호출한 스레드에서 텐서를 풀 슬롯에
+복사하고 버리지 않고 공간을 기다리며, `try_push`는 오버플로 정책을 적용하고, `pull`은 마지막 복사본이
+해제될 때까지 슬롯을 빌려 쓰는 읽기 전용 `CpuExternal` 텐서를 반환합니다. 입력의 형태는 선언, 시드 또는
+첫 번째 push로 정해지고 이후 강제됩니다. `push_holder`와 다중 텐서(레코드) 항목은 당분간 GStreamer
+전용입니다.
+
 유휴 상태의 `Run`은 계속 사용할 수 있습니다. 작업 기한은 대기 시간을 제한하며 입력 제출 사이의 일시 중지에는 적용되지 않습니다.
 
 이를 통해 완전한 비동기 파이프라인(생산자/소비자 분할)뿐만 아니라 단일 실행 흐름(`Graph::run(...)`)도 지원합니다.
@@ -1469,6 +1477,13 @@ SSD 모델 패키지는 그래프 컴파일 중에 정확한 수술 후 헤드 �
 * `SIMA_GST_TEARDOWN_TIMEOUT_MS` -- NULL 상태까지 대기(ms)
 * `SIMA_GST_TEARDOWN_REAPER_MS` -- 리퍼 재시도 간격(ms)
 * `SIMA_GST_TEARDOWN_ASYNC` -- 대기 건너뛰기, 리퍼에 위임
+* `SIMA_NEAT_BACKEND` -- `dataflow`이면 `RunBackend::Auto`(기본 `RunOptions::backend`)가 조건을
+  충족하는 그래프를 Neat Dataflow 런타임으로 빌드합니다. 설정하지 않거나 `auto` 또는 `gstreamer`이면
+  GStreamer를 유지합니다. `Graph::build()`를 호출할 때마다 읽습니다. `SIMANEAT_DATAFLOW_SOURCE_DIR`로
+  구성한 빌드에만 Dataflow 런타임이 포함되며, 공개 `Input` 하나가 공개 `Output` 하나에 연결된 그래프만
+  조건을 충족합니다. 그 밖의 그래프는 GStreamer에 남습니다. 설정되어 있으면 각 `Graph::build()`가 선택한
+  런타임과 그 이유를 stderr에 출력합니다. 명시적인 `RunBackend::Dataflow`는 이 변수를 읽지 않으며,
+  대체 실행 없이 빌드를 실패시킵니다.
 
 이러한 설정은 의도적으로 공개 API 외부에 있으므로 재컴파일하지 않고 CI 환경이나 실제 환경에서 활성화할 수 있습니다.
 `src/pipeline/internal/*`에는 추가적인 저수준 디버그 플래그가 있습니다(입력 스트림 로깅, 샘플 덤프, 풀 디버그). 깊이 있는 진단이 필요하지 않은 경우 사용자에게 제공되는 문서에는 이러한 플래그를 포함하지 마십시오.

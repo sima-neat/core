@@ -1915,7 +1915,8 @@ remove_installed_local_deb_packages
     ('lib64', 'lib/x86_64-linux-gnu/neat/runtime', 'lib/x86_64-linux-gnu/neat/gst-plugins'),
     ('lib/core', 'support/runtime', 'plugins/frontend'),
 ])
-@pytest.mark.parametrize('legacy_abi', ['5', '7'])
+# An older and a newer ABI than the manifest's (7 on feature/neat-dataflow, H0 C3's bump).
+@pytest.mark.parametrize('legacy_abi', ['5', '8'])
 def test_actual_core_install_rpath_is_relative_and_shared_only(tmp_path, libdir, runtime_dir, plugin_dir, legacy_abi):
     """Compile the production target properties; static clients own their path.
 

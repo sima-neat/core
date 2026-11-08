@@ -39,6 +39,10 @@ runtime::RunCore::~RunCore() {
 }
 
 void runtime::RunCore::close_input() {
+  if (dataflow_) {
+    dataflow_->close_input();
+    return;
+  }
   auto* st = this;
   {
     std::lock_guard<std::mutex> lock(st->pipeline.in_mu);
@@ -62,6 +66,11 @@ void runtime::RunCore::stop() {
   }
   stop_started = true;
 
+  if (dataflow_) {
+    stop_requested.store(true);
+    dataflow_->stop();
+    return;
+  }
   if (graph_execution_) {
     stop_graph();
     return;
@@ -258,6 +267,12 @@ void runtime::RunCore::close() {
     return;
   if (closed_wall_at.time_since_epoch().count() == 0) {
     closed_wall_at = std::chrono::system_clock::now();
+  }
+  if (dataflow_) {
+    // No stream, threads or graph to tear down: stop releases the Session's calls, and the
+    // Session itself goes with this RunCore.
+    stop();
+    return;
   }
   if (stop_trace_enabled()) {
     std::fprintf(stderr, "[STOP] Run::close begin\n");

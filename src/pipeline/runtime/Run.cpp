@@ -637,10 +637,13 @@ Run Run::create(InputStream stream, const RunOptions& opt, const InputStreamOpti
 }
 
 bool runtime::RunCore::valid() const noexcept {
-  return graph_execution_ || static_cast<bool>(pipeline.stream);
+  return dataflow_ || graph_execution_ || static_cast<bool>(pipeline.stream);
 }
 
 bool runtime::RunCore::can_push() const {
+  if (dataflow_) {
+    return true;
+  }
   if (graph_execution_) {
     return graph_execution_->plan.default_input.has_value();
   }
@@ -648,6 +651,9 @@ bool runtime::RunCore::can_push() const {
 }
 
 bool runtime::RunCore::can_pull() const {
+  if (dataflow_) {
+    return true;
+  }
   if (graph_execution_) {
     return graph_execution_->plan.default_output.has_value();
   }
@@ -655,6 +661,9 @@ bool runtime::RunCore::can_pull() const {
 }
 
 bool runtime::RunCore::running() const {
+  if (dataflow_) {
+    return dataflow_->running();
+  }
   if (graph_execution_) {
     return !graph_stop_requested();
   }
@@ -665,6 +674,9 @@ bool runtime::RunCore::running() const {
 }
 
 std::vector<std::string> runtime::RunCore::input_names() const {
+  if (dataflow_) {
+    return dataflow_->input_names();
+  }
   std::vector<std::string> names;
   if (!graph_execution_) {
     return names;
@@ -678,6 +690,9 @@ std::vector<std::string> runtime::RunCore::input_names() const {
 }
 
 std::vector<std::string> runtime::RunCore::output_names() const {
+  if (dataflow_) {
+    return dataflow_->output_names();
+  }
   std::vector<std::string> names;
   if (!graph_execution_) {
     return names;
@@ -694,6 +709,8 @@ std::string runtime::RunCore::last_error() const {
   std::lock_guard<std::mutex> lock(error_mu);
   if (!error.empty())
     return error;
+  if (dataflow_)
+    return dataflow_->last_error();
   if (graph_execution_)
     return {};
   return pipeline.stream.last_error();
@@ -705,6 +722,8 @@ std::optional<PullError> runtime::RunCore::last_error_detail() const {
     if (terminal_error_detail.has_value())
       return terminal_error_detail;
   }
+  if (dataflow_)
+    return dataflow_->last_error_detail();
   if (graph_execution_)
     return std::nullopt;
   return pipeline.stream.last_error_detail();
@@ -724,7 +743,7 @@ runtime::RunCore::wait_for_report_bearing_error(std::chrono::milliseconds timeou
 }
 
 std::string runtime::RunCore::diagnostics_summary() const {
-  if (graph_execution_)
+  if (dataflow_ || graph_execution_)
     return last_error();
   return pipeline.stream.diagnostics_summary();
 }

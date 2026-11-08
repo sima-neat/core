@@ -714,6 +714,16 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
   set_property(TEST unit_dataflow_runtime_link_test APPEND PROPERTY LABELS "unit;dataflow")
 endif()
 
+# The Dataflow backend behind Core's Run, on the public API only (RunBackend::Dataflow): the test
+# links libsima_neat.so alone and names no runtime type.
+if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
+    NOT unit_dataflow_backend_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_pipeline_test(unit_dataflow_backend_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_backend_test.cpp
+  )
+  set_property(TEST unit_dataflow_backend_test APPEND PROPERTY LABELS "unit;dataflow")
+endif()
+
 # The delivery-mode flag is cached; exercise the same contract in separate processes.
 if (TARGET unit_inputstream_idle_resume_test)
   set_tests_properties(unit_inputstream_idle_resume_test PROPERTIES

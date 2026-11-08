@@ -965,6 +965,13 @@ graph.add(simaai::neat::nodes::Output());
 * `pull(...)` 從應用程式接收器中取出 `Sample` 輸出
 * `try_push(...)` 是非阻塞的（如果佇列已滿，則傳回 false）
 
+`RunOptions::backend` 用於在相同的 `Run` 介面之後選擇執行環境。在 Neat Dataflow 後端（以
+`SIMANEAT_DATAFLOW_SOURCE_DIR` 選用的建構，適用於由一個公開 `Input` 連接到一個公開 `Output` 的圖）上，
+圖由一個 Feed、一個 Fetch 與一條連結組成：`push` 在呼叫端執行緒上將張量複製到池的槽位，並在不丟棄的情況下
+等待空間；`try_push` 套用溢位策略；`pull` 傳回唯讀的 `CpuExternal` 張量，該張量會租用槽位，直到最後一個
+副本被釋放。輸入的形狀由其宣告、種子或第一次 push 決定，之後即強制套用。`push_holder` 與多張量（記錄）
+項目目前仍僅支援 GStreamer。
+
 閒置的 `Run` 仍可繼續使用；操作期限限制的是等待時間，而非提交輸入之間的暫停。
 
 這支援完全非同步的管線（生產者/消費者分離），以及單次流程（`Graph::run(...)`）。
@@ -1532,6 +1539,12 @@ SSD 模型封包會在圖編譯期間，針對私有登錄中的精確術後頭�
 * `SIMA_GST_TEARDOWN_TIMEOUT_MS` – 等待 NULL 狀態（毫秒）
 * `SIMA_GST_TEARDOWN_REAPER_MS` – reaper 重試間隔（毫秒）
 * `SIMA_GST_TEARDOWN_ASYNC` – 跳過等待，延遲到 reaper
+* `SIMA_NEAT_BACKEND` – 設為 `dataflow` 時，`RunBackend::Auto`（`RunOptions::backend` 的預設值）會在
+  Neat Dataflow 執行環境上建構符合條件的圖；未設定或設為 `auto`、`gstreamer` 時維持使用 GStreamer。每次
+  `Graph::build()` 都會讀取。只有以 `SIMANEAT_DATAFLOW_SOURCE_DIR` 設定的建構才包含 Dataflow 執行環境，
+  且只有由一個公開 `Input` 連接到一個公開 `Output` 的圖符合條件；其他圖仍使用 GStreamer。設定此變數時，
+  每次 `Graph::build()` 都會將所選的執行環境及原因輸出到 stderr。明確指定的 `RunBackend::Dataflow` 不讀取
+  此變數，無法支援時會讓建構失敗，而不是改用 GStreamer。
 
 這些控制項有意地設計在公開 API 之外，因此您可以在 CI 或現場環境中啟用它們，而無需重新編譯。
 在 `src/pipeline/internal/*` 中有額外的低階偵錯旗標（輸入資料流記錄、樣本轉儲、池偵錯）。除非您需要深入的診斷，否則請將這些內容排除在使用者檔案之外。
