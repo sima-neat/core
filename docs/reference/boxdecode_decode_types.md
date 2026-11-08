@@ -356,7 +356,7 @@ feeds the same control.
 
 | API enum | Backend token | Typical model family |
 | --- | --- | --- |
-| `BoxDecodeType::Yolo` | `yolo` | Generic YOLO-style heads |
+| `BoxDecodeType::Yolo` | `yolo` | Decoded `cx,cy,w,h` in model pixels |
 | `BoxDecodeType::YoloV5` | `yolov5` | YOLOv5 detection |
 | `BoxDecodeType::YoloV5Seg` | `yolov5-seg` | YOLOv5 segmentation |
 | `BoxDecodeType::YoloV7` | `yolov7` | YOLOv7 detection |
@@ -391,8 +391,7 @@ the already validated head geometry.
 
 ## Choosing the right type
 
-- If you are using a SiMa-provided or SiMa-compiled model pack, choose the `BoxDecodeType` that matches the model family and leave `decode_type_option` as `Auto`.
-- If your detections are missing or all scores are unexpectedly low, first verify that the decode family matches the exported model head. YOLOX, YOLOv6, and YOLO26 use raw/logit-style heads and should not be treated like probability-only YOLO heads.
+- Choose by the exported head contract: `YoloV6` expects raw l/t/r/b distances and class logits. For YOLOv6 packs with in-graph box decoding, use `Yolo`; for grouped `[bbox_0..2, class_prob_0..2]` outputs, set `decode_type_option=GroupedByRoleProbability` and `num_classes` to the trained class count.
 - If boxes are shifted or scaled incorrectly, check the image resize policy. Use `resize_mode_override` only when your graph does not have an upstream `Preproc` stage writing resize metadata.
 - If you are authoring a custom model pack, ensure the archive describes the detection heads accurately: tensor order, logical shape, physical storage, dtype/quantization, score domain, class count, and any sliced outputs. Application code should not need to compensate for these details.
 

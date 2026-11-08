@@ -15,12 +15,48 @@
 #include <gst/allocators/gstdmabuf.h>
 #include <gstsimaaitensorbuffer_meta.h>
 
+#include <algorithm>
+#include <cerrno>
+#include <chrono>
+#include <condition_variable>
+#include <cstdarg>
 #include <cstring>
+#include <dlfcn.h>
+#include <future>
 #include <iostream>
+#include <linux/dma-heap.h>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <sys/ioctl.h>
 #include <vector>
+
+namespace {
+thread_local bool fail_pool_creation = false;
+std::mutex allocation_mutex;
+std::condition_variable allocation_changed;
+bool allocation_entered = false, pool_ready = false;
+} // namespace
+
+extern "C" int ioctl(int fd, unsigned long request, ...) noexcept {
+  va_list args;
+  va_start(args, request);
+  void* argument = va_arg(args, void*);
+  va_end(args);
+  if (fail_pool_creation && request == DMA_HEAP_IOCTL_ALLOC) {
+    fail_pool_creation = false;
+    std::unique_lock lock(allocation_mutex);
+    allocation_entered = true;
+    allocation_changed.notify_all();
+    allocation_changed.wait_for(lock, std::chrono::seconds(5), [] { return pool_ready; });
+    errno = ENOMEM;
+    return -1;
+  }
+  using Ioctl = int (*)(int, unsigned long, ...);
+  static const auto real_ioctl = reinterpret_cast<Ioctl>(dlsym(RTLD_NEXT, "ioctl"));
+  return real_ioctl(fd, request, argument);
+}
 
 static void add_sima_meta(GstBuffer* buffer) {
   if (!gst_meta_get_info("GstSimaMeta")) {
@@ -37,6 +73,167 @@ static void add_sima_meta(GstBuffer* buffer) {
                     "stream-id", G_TYPE_STRING, "camera-A", "timestamp", G_TYPE_UINT64,
                     static_cast<guint64>(123), "pcie-buffer-id", G_TYPE_INT64,
                     static_cast<gint64>(99), nullptr);
+}
+
+static simaai::scheduler::client::dma::DmaBufIdentity
+transfer_identity(const simaai::neat::Tensor& tensor) {
+  namespace dma = simaai::scheduler::client::dma;
+  auto* buffer = gst_sample_get_buffer(static_cast<GstSample*>(tensor.storage->holder.get()));
+  auto view = dma::DmaBufView::fromGstMemory(gst_buffer_peek_memory(buffer, 0));
+  auto identity = view ? view->identity() : std::nullopt;
+  require(identity.has_value(), "transfer has no DMA allocation identity");
+  return *identity;
+}
+
+static void check_concurrent_pool_creation(simaai::neat::TensorMemory memory) {
+  using namespace simaai::neat;
+  const std::vector<std::uint8_t> payload(12349, 37);
+  const auto transfer = [&] {
+    return Tensor::from_vector(payload, {static_cast<std::int64_t>(payload.size())}, memory);
+  };
+  allocation_entered = pool_ready = false;
+  auto competing = std::async(std::launch::async, [&] {
+    fail_pool_creation = true;
+    return transfer();
+  });
+  {
+    std::unique_lock lock(allocation_mutex);
+    require(allocation_changed.wait_for(lock, std::chrono::seconds(5),
+                                        [] { return allocation_entered; }),
+            "concurrent transfer did not reach heap allocation");
+  }
+  // Publish a pool and release its slot before the competing creation fails.
+  auto first = transfer();
+  const auto reusable = transfer_identity(first);
+  first = {};
+  {
+    std::lock_guard lock(allocation_mutex);
+    pool_ready = true;
+  }
+  allocation_changed.notify_all();
+  auto recovered = competing.get();
+  require(transfer_identity(recovered) == reusable && recovered.copy_payload_bytes() == payload,
+          "failed concurrent pool creation did not reuse the available slot");
+}
+
+static void check_transfer_reuse(simaai::neat::TensorMemory memory) {
+  using namespace simaai::neat;
+  std::vector<std::uint8_t> payload(32781U, 17);
+  const auto make_tensor = [&] {
+    return Tensor::from_vector(payload, {static_cast<std::int64_t>(payload.size())}, memory);
+  };
+
+  auto retained = make_tensor();
+  const auto retained_identity = transfer_identity(retained);
+  auto released = make_tensor();
+  const auto reusable_identity = transfer_identity(released);
+  require(reusable_identity != retained_identity, "live transfers share an allocation");
+  auto* buffer = gst_sample_get_buffer(static_cast<GstSample*>(released.storage->holder.get()));
+  add_sima_meta(buffer);
+  GST_BUFFER_PTS(buffer) = 123;
+  released = {};
+
+  for (std::uint8_t value = 1; value <= 8; ++value) {
+    std::fill(payload.begin(), payload.end(), value);
+    auto next = make_tensor();
+    require(transfer_identity(next) == reusable_identity,
+            "repeated transfers must reuse a released DMA allocation");
+    require(next.copy_payload_bytes() == payload, "reused transfer has stale payload");
+    auto* next_buffer = gst_sample_get_buffer(static_cast<GstSample*>(next.storage->holder.get()));
+    require(!gst_buffer_get_custom_meta(next_buffer, "GstSimaMeta") &&
+                GST_BUFFER_PTS(next_buffer) == GST_CLOCK_TIME_NONE,
+            "reused transfer retained the previous frame's metadata");
+  }
+  require(retained.copy_payload_bytes() == std::vector<std::uint8_t>(payload.size(), 17),
+          "reusing a released transfer changed a retained tensor");
+
+  const std::vector<Segment> segments{{"tensor", payload.size()}};
+  auto source = Tensor::from_vector(std::vector<std::uint8_t>(17, 23), {17}, TensorMemory::CPU);
+  {
+    auto padded = pipeline_internal::transfer_to_device(source, retained.device, &segments);
+    require(transfer_identity(padded) == reusable_identity,
+            "padded transfer did not reuse storage");
+    auto mapping = padded.map_read();
+    const auto* bytes = static_cast<const std::uint8_t*>(mapping.data);
+    require(mapping.size_bytes == payload.size() &&
+                std::all_of(bytes + 17, bytes + mapping.size_bytes,
+                            [](auto value) { return value == 0; }),
+            "reused transfer exposed stale bytes beyond its payload");
+  }
+
+  // Grow and shrink logical spans within page and 64 KiB capacity classes.
+  // Reusing the backing must not expose slack or overwrite a held sibling.
+  for (const std::size_t capacity : {4096U, 65536U, 131072U}) {
+    const auto create = [&](std::size_t bytes, std::uint8_t value) {
+      return Tensor::from_vector(std::vector<std::uint8_t>(bytes, value),
+                                 {static_cast<std::int64_t>(bytes)}, memory);
+    };
+    const auto low = capacity > 65536U ? capacity - 65535U : capacity - 123U;
+    auto sibling = create(low, 91);
+    auto warm = create(low, 92);
+    const auto identity = transfer_identity(warm);
+    require(identity != transfer_identity(sibling), "capacity class reused a live sibling");
+    warm = {};
+    for (const auto bytes : {capacity, low, capacity - 1U, low + 1U}) {
+      auto resized = create(bytes, 93);
+      const auto resized_identity = transfer_identity(resized);
+      require(resized_identity.device == identity.device &&
+                  resized_identity.inode == identity.inode,
+              "changing logical span discarded the pooled allocation");
+      auto* resized_buffer =
+          gst_sample_get_buffer(static_cast<GstSample*>(resized.storage->holder.get()));
+      require(resized.storage->size_bytes == bytes && gst_buffer_get_size(resized_buffer) == bytes,
+              "capacity slack leaked into the tensor carrier");
+      require(resized.copy_payload_bytes() == std::vector<std::uint8_t>(bytes, 93),
+              "resized pooled transfer corrupted payload");
+    }
+    require(sibling.copy_payload_bytes() == std::vector<std::uint8_t>(low, 91),
+            "resizing a pooled buffer corrupted a held sibling");
+  }
+
+  // Pool growth must preserve earlier tensors without waiting for their release.
+  TensorList held;
+  for (std::uint8_t value = 0; value < 4; ++value) {
+    std::fill(payload.begin(), payload.end(), value);
+    held.push_back(make_tensor());
+  }
+  for (std::size_t i = 0; i < held.size(); ++i)
+    require(held[i].copy_payload_bytes() == std::vector<std::uint8_t>(payload.size(), i),
+            "pool growth overwrote a live tensor");
+
+  require(retained.copy_payload_bytes() == std::vector<std::uint8_t>(32781U, 17),
+          "pool growth invalidated a retained tensor");
+
+  // The reported CenterPoint input is 46 MB. An application-held input plus
+  // the graph's previous input must leave room to reuse the next transfer.
+  payload.resize(1U * 40000U * 32U * 9U * sizeof(float));
+  auto application_input = make_tensor();
+  auto graph_input = make_tensor();
+  auto next_input = make_tensor();
+  const auto next_identity = transfer_identity(next_input);
+  next_input = {};
+  require(transfer_identity(make_tensor()) == next_identity,
+          "large input transfers stopped reusing storage with two live inputs");
+}
+
+static void check_mixed_transfer_sizes() {
+  using namespace simaai::neat;
+  TensorList sources;
+  std::vector<simaai::scheduler::client::dma::DmaBufIdentity> identities;
+  for (const auto mib : {40, 41}) {
+    const std::size_t bytes = mib * 1024U * 1024U;
+    sources.push_back(Tensor::from_vector(std::vector<std::uint8_t>(bytes, mib),
+                                          {static_cast<std::int64_t>(bytes)}, TensorMemory::CPU));
+    identities.push_back(transfer_identity(sources.back().cvu()));
+  }
+  for (int repeat = 0; repeat < 3; ++repeat)
+    for (std::size_t i = 0; i < sources.size(); ++i) {
+      auto transferred = sources[i].cvu();
+      require(transfer_identity(transferred) == identities[i],
+              "alternating input sizes did not reuse their allocations");
+      require(transferred.copy_payload_bytes() == sources[i].copy_payload_bytes(),
+              "mixed-size transfer corrupted payload");
+    }
 }
 
 static void check_transferred_lineage(const simaai::neat::Tensor& tensor, int64_t frame_id = 7) {
@@ -231,6 +428,11 @@ static void check_selected_carrier_transfer(simaai::neat::Device target) {
 int main() {
   try {
     simaai::neat::gst_init_once();
+    check_concurrent_pool_creation(simaai::neat::TensorMemory::EV74);
+    check_concurrent_pool_creation(simaai::neat::TensorMemory::MLA);
+    check_transfer_reuse(simaai::neat::TensorMemory::EV74);
+    check_transfer_reuse(simaai::neat::TensorMemory::MLA);
+    check_mixed_transfer_sizes();
 
     check_selected_carrier_transfer({simaai::neat::DeviceType::SIMA_CVU, 0});
     check_selected_carrier_transfer({simaai::neat::DeviceType::SIMA_MLA, 0});

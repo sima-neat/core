@@ -9,7 +9,7 @@ import * as runtime from 'react/jsx-runtime';
 import React from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 const require = createRequire(import.meta.url);
-const {load, validate, resolve, preprocessor, root} = require('./index.js');
+const {load, validate, resolve, preprocessor, tokenForKey, root} = require('./index.js');
 const {check} = require('../scripts/check-release-docs.js');
 const data = JSON.parse(fs.readFileSync(path.join(root, 'website/release-data/current.json')));
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'deps/manifest.json')));
@@ -19,6 +19,14 @@ test('validates schema, all required fields, safe scalar values, ownership, and 
   assert.equal(validate(data, manifest).core, manifest['package-version']);
   for (const mutate of [
     d => { d.schemaVersion = 2; },
+    d => { delete d.dependencies; },
+    d => { delete d.dependencies.docker.minimum; },
+    d => { d.dependencies.docker.minimum.value = '<script>'; },
+    d => { d.dependencies.docker.minimum.value = '20.10.10\n'; },
+    d => { d.dependencies.docker.minimum.value = 20; },
+    d => { d.dependencies.docker.minimum.owner = ''; },
+    d => { d.dependencies.docker.minimum.source = ''; },
+    d => { d.dependencies.docker.extra = {}; },
     d => { delete d.releases.insight; },
     d => { d.releases.core.value = '9.9.9'; },
     d => { d.releases.platform.value = '9.9.9'; },
@@ -32,20 +40,20 @@ test('validates schema, all required fields, safe scalar values, ownership, and 
 });
 
 test('unknown, malformed, and incomplete tokens fail with file context', () => {
-  for (const token of ['%%release.missing%%', '%%release.CORE%%', '%%release.core%', '%release.core%%', '%%release.core', '%%release.%%']) {
+  for (const token of ['%%release.missing%%', '%%release.CORE%%', '%%release.core%', '%release.core%%', '%%release.core', '%%release.%%', '%%dependency.unknown.minimum%%', '%%dependency.docker.unknown%%', '%%dependency.Docker.minimum%%', '%%dependency.docker.minimum%', '%dependency.docker.minimum%%', '%%dependency.docker.minimum', '%%dependency.docker%%']) {
     assert.throws(() => resolve(`First line\n${token}`, values, 'example.mdx'), /example.mdx:2:/);
   }
 });
 
 test('preprocessor renders prose, inline/fenced code, links, tables and MDX children', async () => {
   const {default: gfm} = await import('remark-gfm');
-  const content = `Current %%release.core%%.\n\n\`core@v%%release.core%%\`\n\n\`\`\`bash\nsima-cli neat install core@v%%release.core%%\n\`\`\`\n\n[Apps](https://example.com/v%%release.apps%%)\n\n| SDK |\n| --- |\n| %%release.sdk%% |\n\n<ShellCommand>\nsima-cli neat install sdk@%%release.sdk_channel%%\n</ShellCommand>`;
+  const content = `Docker %%dependency.docker.minimum%%. Current %%release.core%%.\n\n\`core@v%%release.core%%\`\n\n\`\`\`bash\nsima-cli neat install core@v%%release.core%%\n\`\`\`\n\n[Apps](https://example.com/v%%release.apps%%)\n\n| SDK |\n| --- |\n| %%release.sdk%% |\n\n<ShellCommand>\nsima-cli neat install sdk@%%release.sdk_channel%%\n</ShellCommand>`;
   const compiled = await evaluate(preprocessor(values)({fileContent: content, filePath: 'fixture.mdx'}), {...runtime, remarkPlugins: [gfm]});
   const html = renderToStaticMarkup(React.createElement(compiled.default, {components: {
     ShellCommand: ({children}) => React.createElement('pre', {'data-command': true}, children),
   }}));
-  for (const expected of [`Current ${values.core}`, `core@v${values.core}`, `https://example.com/v${values.apps}`, `<td>${values.sdk}</td>`, `sima-cli neat install sdk@${values.sdk_channel}`]) assert.ok(html.includes(expected), expected);
-  assert.ok(!html.includes('%%release'));
+  for (const expected of [`Docker ${values["dependency.docker.minimum"]}`, `Current ${values.core}`, `core@v${values.core}`, `https://example.com/v${values.apps}`, `<td>${values.sdk}</td>`, `sima-cli neat install sdk@${values.sdk_channel}`]) assert.ok(html.includes(expected), expected);
+  assert.ok(!/%%(?:release|dependency)/.test(html));
 });
 
 test('release-only changes invalidate preprocessing and update every locale without source/hash edits', () => {
@@ -83,7 +91,7 @@ function fixture(t) {
   const put = (file, text) => { fs.mkdirSync(path.dirname(path.join(dir, file)), {recursive: true}); fs.writeFileSync(path.join(dir, file), text); };
   put('website/release-data/current.json', JSON.stringify(data));
   put('deps/manifest.json', JSON.stringify(manifest));
-  put('sima-i18n.config.json', JSON.stringify({locales: {ja: {}}, canonicalTerms: Object.keys(values).map(key => `%%release.${key}%%`)}));
+  put('sima-i18n.config.json', JSON.stringify({locales: {ja: {}}, canonicalTerms: Object.keys(values).map(tokenForKey)}));
   put('website/release-data/policy.json', JSON.stringify({rollingPaths: ['docs/example.md'], literalExceptions: [], readmes: [{path: 'README.md', template: 'install core@v%%release.core%%'}]}));
   put('docs/example.md', 'Install %%release.core%%');
   put('website/i18n/ja/docusaurus-plugin-content-docs/current/example.md', 'インストール %%release.core%%');
@@ -134,6 +142,8 @@ test('rendered output checker rejects unresolved tokens and stale commands', t =
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'release-html-'));
   t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
   const examples = [
+    ['reference/elxr-sdk-host-setup/windows', values['dependency.docker.minimum']],
+    ['reference/elxr-sdk-host-setup/ubuntu', values['dependency.docker.minimum']],
     ['getting-started/neat-library/pcie-host', `sima-cli neat install core/pciehost/ubuntu24/amd64@v${values.core}`],
     ['getting-started/dev-environment/install-the-environment', `sima-cli neat install sdk@${values.sdk_channel}`],
     ['getting-started/dev-environment/offline-installation', `sima-cli neat install sdk@v${values.sdk} -t offline-amd64`],
@@ -147,8 +157,12 @@ test('rendered output checker rejects unresolved tokens and stale commands', t =
   checkRendered(dir, ['en']);
   const target = path.join(dir, examples[0][0] + '.html');
   fs.writeFileSync(target, '<pre>%%release.core%%</pre>');
-  assert.throws(() => checkRendered(dir, ['en']), /unresolved release token/);
-  fs.writeFileSync(target, '<pre>core@v0.0.1</pre>');
+  assert.throws(() => checkRendered(dir, ['en']), /unresolved release\/dependency token/);
+  for (const token of ['%%dependency.docker.minimum%%', '%25%25dependency.docker.minimum%25%25', '&#37;&#37;dependency.docker.minimum&#37;&#37;']) {
+    fs.writeFileSync(target, `<pre>${token}</pre>`);
+    assert.throws(() => checkRendered(dir, ['en']), /unresolved release\/dependency token/);
+  }
+  fs.writeFileSync(target, '<pre>0.0.1</pre>');
   assert.throws(() => checkRendered(dir, ['en']), /expected concrete release example/);
 });
 
@@ -175,4 +189,43 @@ test('translation validation catches a missing repeated release token', t => {
   const {dir, put} = fixture(t);
   put('docs/example.md', 'Install %%release.core%%; current: %%release.core%%');
   assert.throws(() => check(dir), /release-token count for core differs/);
+});
+
+
+test('dependency-only changes update all host guides and translations and invalidate preprocessing', () => {
+  const updated = structuredClone(data);
+  updated.dependencies.docker.minimum.value = '28.0.1';
+  const next = validate(updated, manifest);
+  assert.notEqual(preprocessor(values).toString(), preprocessor(next).toString());
+  for (const locale of ['en', 'ko', 'ja', 'zh-Hant', 'uk']) {
+    const base = locale === 'en' ? 'docs' : `website/i18n/${locale}/docusaurus-plugin-content-docs/current`;
+    for (const host of ['windows', 'ubuntu']) {
+      const file = `${base}/reference/elxr-sdk-host-setup/${host}.md`;
+      const source = fs.readFileSync(path.join(root, file), 'utf8');
+      assert.ok(source.includes('%%dependency.docker.minimum%%'), file);
+      const rendered = resolve(source, next, file);
+      assert.ok(rendered.includes('28.0.1'), file);
+      assert.ok(!rendered.includes(values['dependency.docker.minimum']), file);
+      assert.ok(!rendered.includes('%%dependency'), file);
+      assert.ok(preprocessor(next)({fileContent: source, filePath: file}).includes('28.0.1'));
+    }
+  }
+});
+
+test('dependency tokens require localization protection, matching sets and matching counts', t => {
+  const {dir, put} = fixture(t);
+  const source = 'Docker %%dependency.docker.minimum%%';
+  const target = 'website/i18n/ja/docusaurus-plugin-content-docs/current/example.md';
+  put('docs/example.md', source);
+  put(target, source);
+  check(dir);
+  put(target, 'Docker');
+  assert.throws(() => check(dir), /release-token set differs/);
+  put(target, `${source} %%dependency.docker.minimum%%`);
+  assert.throws(() => check(dir), /release-token count for dependency.docker.minimum differs/);
+  put(target, source);
+  const config = JSON.parse(fs.readFileSync(path.join(dir, 'sima-i18n.config.json')));
+  config.canonicalTerms = config.canonicalTerms.filter(token => token !== '%%dependency.docker.minimum%%');
+  put('sima-i18n.config.json', JSON.stringify(config));
+  assert.throws(() => check(dir), /protect %%dependency.docker.minimum%%/);
 });

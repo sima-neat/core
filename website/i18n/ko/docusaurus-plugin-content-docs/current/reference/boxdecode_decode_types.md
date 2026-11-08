@@ -299,7 +299,7 @@ MPK는 텐서 계약과 디코딩 계열 정보를 제공합니다. 필터링 �
 
 | API 열거형 | 백엔드 토큰 | 일반적인 모델 제품군 |
 | --- | --- | --- |
-| `BoxDecodeType::Yolo` | `yolo` | 일반적인 YOLO 스타일 헤드 |
+| `BoxDecodeType::Yolo` | `yolo` | 모델 픽셀 단위로 디코딩된 `cx,cy,w,h` |
 | `BoxDecodeType::YoloV5` | `yolov5` | YOLOv5 감지 |
 | `BoxDecodeType::YoloV5Seg` | `yolov5-seg` | YOLOv5 분할 |
 | `BoxDecodeType::YoloV7` | `yolov7` | YOLOv7 감지 |
@@ -329,8 +329,7 @@ MPK는 텐서 계약과 디코딩 계열 정보를 제공합니다. 필터링 �
 
 ## 올바른 유형을 선택하세요.
 
-- SiMa에서 제공하거나 SiMa에서 컴파일한 모델 팩을 사용하는 경우, 모델 제품군과 일치하는 `BoxDecodeType`을 선택하고 `decode_type_option`을 `Auto`로 설정하십시오.
-- 탐지 결과가 누락되거나 모든 점수가 예상보다 낮게 나오는 경우, 먼저 디코딩 모델이 내보낸 모델 헤드와 일치하는지 확인하십시오. YOLOX, YOLOv6 및 YOLO26은 원시/로짓 스타일 헤드를 사용하므로 확률 기반 YOLO 헤드와 동일하게 처리해서는 안 됩니다.
+- 내보낸 헤드 계약에 따라 선택합니다. `YoloV6`는 원시 l/t/r/b 거리와 클래스 로짓을 요구합니다. 그래프 안에서 박스를 디코딩한 YOLOv6 패키지에는 `Yolo`를 사용합니다. `[bbox_0..2, class_prob_0..2]` 순서로 묶인 출력에는 `decode_type_option=GroupedByRoleProbability`와 학습된 클래스 수에 맞는 `num_classes`를 설정합니다.
 - 경계 상자가 잘못 이동하거나 크기가 조정된 경우 이미지 크기 조정 정책을 확인하십시오. `resize_mode_override`는 그래프에 크기 조정 메타데이터를 기록하는 상위 `Preproc` 단계가 없을 때만 사용하십시오.
 - 사용자 지정 모델 패키지를 제작하는 경우, 아카이브에 감지 헤드에 대한 정확한 정보(텐서 순서, 논리적 형태, 물리적 저장 방식, dtype/양자화, 점수 범위, 클래스 수, 슬라이싱된 출력 등)가 명확하게 설명되어 있는지 확인하십시오. 애플리케이션 코드는 이러한 세부 사항을 보정할 필요가 없습니다.
 

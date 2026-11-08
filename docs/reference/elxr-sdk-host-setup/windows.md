@@ -11,7 +11,7 @@ SDK with DevKit-Sync.
 
 - Windows 11 host.
 - [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) installed and working.
-- Docker Engine installed inside WSL.
+- Docker Engine %%dependency.docker.minimum%% or later, installed inside WSL. Check the version with `docker --version`.
 - `sima-cli` installed inside WSL.
 
 ## Start from WSL

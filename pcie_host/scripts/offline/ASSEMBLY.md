@@ -285,8 +285,8 @@ including duplicates shared between the host and card trees.
 
 ## Offline publication layout
 
-Publish `neat-pcie-offline-installer.tar.gz` and `metadata-offline.json` beside
-the online `metadata.json` under the matching immutable
+Publish `neat-pcie-offline-installer-<sha8>.tar.gz` and `metadata-offline.json` beside
+the online `metadata.json` under the matching commit-scoped
 `core/{ref}/{revision}/pciehost/{distro}/{architecture}/` folder. Each bundle targets
 one Ubuntu release (22.04 or 24.04) and one host architecture (amd64 or arm64),
 and includes the ARM64 card payload. The offline metadata references the archive
@@ -350,14 +350,24 @@ that policy; a new source policy requires a reviewed matching build input. It do
 DEBs are rejected, preserving the separate system-provisioning contract.
 
 Each job validates both targets in fresh containers with `--network=none` before
-uploading its archive and `metadata-offline.json.pending`. An aggregate job checks
-all four source metadata digests and uploaded archive checksums before exposing
-`metadata-offline.json` in each matching online package directory and invalidating
-the metadata cache. Metadata has an empty install script. Failed validation never
-publishes ready metadata. Existing completed publications are verified and reused;
-changed source metadata or archive bytes fail instead of silently replacing a
-release. Partial final publication can be retried safely; completed tuples are
-retained and missing final metadata is created conditionally.
+uploading resources with a 8-character SHA-256 suffix before `.tar.gz` and staging metadata under
+`staging/{source-input-hash}/`. An aggregate job checks all four PCIe variants and
+both standalone Core profiles, verifies uploaded checksums, and rechecks the
+source publications before replacing final metadata and invalidating its cache.
+All variants must refer to the same card publication snapshot. Metadata retains
+an empty install script. Failed validation never publishes ready metadata.
+
+Rebuilding the same Core commit with changed dependencies, including LLiMa,
+rebuilds offline bundles instead of rejecting the existing publication. Unchanged
+inputs reuse verified bundles. Older metadata continues to reference unchanged
+resource objects, including extras; new uploads do not overwrite those objects.
+Legacy archive names remain readable. Full SHA-256 checksums remain in metadata
+and S3 checksum verification. Resource uploads use conditional creation; an
+existing short-hash filename is reused only if its full checksum matches, so a
+short-hash collision fails without overwriting the existing object. Invalid identities, malformed metadata,
+and resource checksum mismatches still fail. Metadata updates are individual S3
+writes, not an atomic transaction across all six documents. The publish job is
+serialized per ref/commit, and interrupted promotion can be retried.
 
 The bundle records the binary `core_revision` separately from `installer_revision`
 (the trusted workflow checkout), plus source run and metadata hashes in publication
@@ -401,7 +411,7 @@ same repository and branch. Other source CI jobs may still be queued/running;
 a failed or cancelled source run is rejected. Automatic release-branch publication
 continues to require complete successful CI. Without `offline_publish=true`, the
 manual entry point remains validation-only. Completed offline publications are
-verified and reused on rerun rather than replaced.
+verified and reused when source inputs match, or rebuilt and replaced when dependencies change.
 
 ## Clean-host SSH bootstrap regression
 

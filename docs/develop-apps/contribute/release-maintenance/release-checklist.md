@@ -49,7 +49,6 @@ A release is blocked unless all conditions below are true:
    - `abi-version` in `deps/manifest.json` is incremented whenever a public C++ type layout or
      exported binary contract changes incompatibly; all C++ applications and Python bindings are
      rebuilt against that ABI
-   - `CHANGELOG.md` has `## [x.y.z]` entry
    - release notes prepared in the release/tag body
 
 No "known crashers" list is allowed in release flow. Any crash regression blocks release until fixed.

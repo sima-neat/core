@@ -130,6 +130,38 @@ CompiledProcessCvuContract make_preproc_contract() {
   return compiled;
 }
 
+void check_batched_mla_input_carrier() {
+  // Batch ports are views of one application input, not separate public tensors.
+  const auto mla = make_mla_contract();
+  auto batched_mla = mla;
+  batched_mla.payload.batch_size = 6;
+  batched_mla.runtime_contract.physical_inputs.clear();
+  batched_mla.runtime_contract.logical_inputs.clear();
+  batched_mla.runtime_contract.elf_ifm_symbol_names.clear();
+  for (const auto carrier : {7U, 9U}) {
+    for (int batch = 0; batch < 6; ++batch) {
+      auto physical = mla.runtime_contract.physical_inputs.front();
+      physical.physical_index =
+          static_cast<int>(batched_mla.runtime_contract.physical_inputs.size());
+      physical.model_carrier_id = carrier;
+      physical.size_bytes = 128;
+      physical.source_byte_offset = (carrier == 7U ? 128 : 2048) + ((batch + 3) % 6) * 128;
+      auto logical = mla.runtime_contract.logical_inputs.front();
+      logical.logical_index = physical.physical_index;
+      logical.physical_index = physical.physical_index;
+      batched_mla.runtime_contract.elf_ifm_symbol_names.push_back(
+          "input" + std::to_string(physical.physical_index));
+      batched_mla.runtime_contract.physical_inputs.push_back(std::move(physical));
+      batched_mla.runtime_contract.logical_inputs.push_back(std::move(logical));
+    }
+  }
+  const auto batched_input = query::mla_input_tensor_info_from_compiled_contract(batched_mla);
+  require(batched_input.logical_shape == std::vector<std::int64_t>({6, 2, 3, 4}) &&
+              batched_input.span_byte_offset == 128 && batched_input.span_size_bytes == 768 &&
+              batched_input.logical_dtype == "INT8",
+          "MLA input query must cover every batch view of the first carrier only");
+}
+
 } // namespace
 
 RUN_TEST("unit_stage_metadata_query_test", ([] {
@@ -145,6 +177,8 @@ RUN_TEST("unit_stage_metadata_query_test", ([] {
            require(query::primary_input_buffer_name_from_runtime_contract(mla.runtime_contract) ==
                        "authored_source",
                    "compiled input binding must supply the authored wire label");
+
+           check_batched_mla_input_carrier();
 
            // Retain MLA layout/dtype/size projection coverage using typed authority, not the
            // retired top-level/nested configuration-JSON precedence rules.

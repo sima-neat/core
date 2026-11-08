@@ -4,7 +4,21 @@ const fs = require("node:fs");
 const path = require("node:path");
 const root = path.resolve(__dirname, "../..");
 const keys = ["core", "platform", "sdk", "sdk_channel", "sdk_series", "apps", "model_compiler", "insight", "sima_cli"];
-const tokenPattern = /%%release\.([a-z][a-z0-9_]*)%%/g;
+const tokenPattern = /%%(release\.[a-z][a-z0-9_]*|dependency\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*)%%/g;
+const versionPattern = /^\d+\.\d+\.\d+(?:\.\d+)?(?:-[a-zA-Z0-9]+(?:[.-][a-zA-Z0-9]+)*)?$/;
+
+function tokenForKey(key) {
+  return `%%${key.startsWith("dependency.") ? key : `release.${key}`}%%`;
+}
+
+function validateEntry(entry, key, pattern = versionPattern) {
+  if (!entry || typeof entry.value !== "string" || !pattern.test(entry.value) || entry.value.trim() !== entry.value ||
+      typeof entry.owner !== "string" || !entry.owner.trim() ||
+      typeof entry.source !== "string" || !entry.source.trim()) {
+    throw new Error(`release-data/current.json: malformed ${key}; provide a valid value, owner, and source`);
+  }
+  return entry.value;
+}
 
 function validate(data, manifest) {
   if (!data || data.schemaVersion !== 1 || !data.releases || typeof data.releases !== "object") {
@@ -15,16 +29,16 @@ function validate(data, manifest) {
   }
   const values = {};
   for (const key of keys) {
-    const entry = data.releases[key];
     const pattern = key === "sdk_channel" ? /^release-\d+\.\d+$/
-      : key === "sdk_series" ? /^\d+\.\d+$/ : /^\d+\.\d+\.\d+(?:\.\d+)?(?:-[a-zA-Z0-9]+(?:[.-][a-zA-Z0-9]+)*)?$/;
-    if (!entry || typeof entry.value !== "string" || !pattern.test(entry.value) || entry.value.trim() !== entry.value ||
-        typeof entry.owner !== "string" || !entry.owner.trim() ||
-        typeof entry.source !== "string" || !entry.source.trim()) {
-      throw new Error(`release-data/current.json: malformed ${key}; provide a valid value, owner, and source`);
-    }
-    values[key] = entry.value;
+      : key === "sdk_series" ? /^\d+\.\d+$/ : versionPattern;
+    values[key] = validateEntry(data.releases[key], key, pattern);
   }
+  if (!data.dependencies || Object.keys(data.dependencies).join() !== "docker" ||
+      !data.dependencies.docker || Object.keys(data.dependencies.docker).join() !== "minimum") {
+    throw new Error("release-data/current.json: expected dependencies.docker.minimum");
+  }
+  values["dependency.docker.minimum"] = validateEntry(data.dependencies.docker.minimum, "dependencies.docker.minimum");
+
   for (const [key, field] of [["core", "package-version"], ["platform", "platform-version"]]) {
     if (values[key] !== manifest[field]) {
       throw new Error(`release-data/current.json: ${key}=${values[key]} differs from deps/manifest.json ${field}=${manifest[field]}`);
@@ -44,21 +58,22 @@ function load(repoRoot = root) {
 }
 
 function resolve(content, values, file = "document") {
-  const result = content.replace(/%%release\.([a-z][a-z0-9_]*)%%/g, (token, key, offset) => {
+  const result = content.replace(/%%(release\.[a-z][a-z0-9_]*|dependency\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*)%%/g, (token, name, offset) => {
+    const key = name.startsWith("release.") ? name.slice(8) : name;
     if (!Object.hasOwn(values, key)) {
-      throw new Error(`${file}:${content.slice(0, offset).split("\n").length}: unknown release key ${key}`);
+      throw new Error(`${file}:${content.slice(0, offset).split("\n").length}: unknown ${name.startsWith("release.") ? "release" : "dependency"} key ${key}`);
     }
     return values[key];
   });
-  const leftover = /%{1,2}release\b/i.exec(result);
+  const leftover = /%{1,2}(?:release|dependency)\b/i.exec(result);
   if (leftover) {
-    throw new Error(`${file}:${result.slice(0, leftover.index).split("\n").length}: malformed or unresolved release token near ${result.slice(leftover.index, leftover.index + 60)}`);
+    throw new Error(`${file}:${result.slice(0, leftover.index).split("\n").length}: malformed or unresolved release/dependency token near ${result.slice(leftover.index, leftover.index + 60)}`);
   }
   return result;
 }
 
 function tokens(content) {
-  return [...new Set([...content.matchAll(tokenPattern)].map(match => match[1]))].sort();
+  return [...new Set([...content.matchAll(tokenPattern)].map(match => match[1].startsWith("release.") ? match[1].slice(8) : match[1]))].sort();
 }
 
 // Embed the validated snapshot in the function's source. Docusaurus hashes the
@@ -68,4 +83,4 @@ function preprocessor(values) {
   return new Function("input", `return (${resolve.toString()})(input.fileContent, ${JSON.stringify(values)}, input.filePath);`);
 }
 
-module.exports = {load, validate, resolve, tokens, preprocessor, root};
+module.exports = {load, validate, resolve, tokens, tokenForKey, preprocessor, root};

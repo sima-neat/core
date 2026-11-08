@@ -2,7 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const {load, resolve, tokens, root} = require("../release-data");
+const {load, resolve, tokens, tokenForKey, root} = require("../release-data");
 const literalPattern = /(?<![\w.])v?\d+\.\d+\.\d+(?:\.\d+)?(?:-[\w.-]+)?|release-\d+\.\d+/;
 
 function walk(directory) {
@@ -19,8 +19,8 @@ function check(repoRoot = root, {writeReadmes = false} = {}) {
   const read = file => fs.readFileSync(path.join(repoRoot, file), "utf8");
   const errors = [];
   for (const key of Object.keys(values)) {
-    if (!config.canonicalTerms?.includes(`%%release.${key}%%`)) {
-      errors.push(`sima-i18n.config.json: protect %%release.${key}%% in canonicalTerms`);
+    if (!config.canonicalTerms?.includes(tokenForKey(key))) {
+      errors.push(`sima-i18n.config.json: protect ${tokenForKey(key)} in canonicalTerms`);
     }
   }
   const inspect = (file, source) => {
@@ -53,7 +53,7 @@ function check(repoRoot = root, {writeReadmes = false} = {}) {
         errors.push(`${translated}: release-token set differs from ${file}; expected ${tokens(source).join(", ")}; got ${tokens(target).join(", ")}`);
       } else {
         for (const key of tokens(source)) {
-          const token = `%%release.${key}%%`;
+          const token = tokenForKey(key);
           if (source.split(token).length !== target.split(token).length) {
             errors.push(`${translated}: release-token count for ${key} differs from ${file}`);
           }
@@ -73,7 +73,7 @@ function check(repoRoot = root, {writeReadmes = false} = {}) {
         if (!literalPattern.test(line)) return;
         const key = JSON.stringify([file, line]);
         if ((remaining.get(key) || 0) > 0) remaining.set(key, remaining.get(key) - 1);
-        else errors.push(`${file}:${index + 1}: literal release pin in rolling documentation; use a release token or document an exact historical exception`);
+        else errors.push(`${file}:${index + 1}: literal release pin in rolling documentation; use a release/dependency token or document an exact historical exception`);
       });
     }
   }
@@ -95,7 +95,7 @@ function check(repoRoot = root, {writeReadmes = false} = {}) {
     } else if (matches[0][0] !== block) {
       errors.push(`${entry.path}: release command is stale; run npm --prefix website run sync:release-readmes`);
     }
-    if (/%{1,2}release\b/i.test(content)) errors.push(`${entry.path}: GitHub README must contain concrete versions, not tokens`);
+    if (/%{1,2}(?:release|dependency)\b/i.test(content)) errors.push(`${entry.path}: GitHub README must contain concrete versions, not tokens`);
   }
   if (errors.length) throw new Error(errors.join("\n"));
   return values;
