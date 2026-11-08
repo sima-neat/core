@@ -513,6 +513,48 @@ target_compile_definitions(sima_neat_objects PRIVATE
   SIMANEAT_GIT_SHA="${GIT_HASH}"
 )
 
+# ------------------------------------------------------------------------------
+# Neat Dataflow runtime (opt-in, feature/neat-dataflow)
+# ------------------------------------------------------------------------------
+# Empty: no runtime in the build. Set: the runtime's source tree builds here with
+# Core's compiler and flags, and its objects are embedded in sima_neat and
+# sima_neat_static with hidden visibility: libsima_neat.so exports none of its
+# symbols. The runtime's own library and headers are not installed (its directory
+# is EXCLUDE_FROM_ALL, so Core's install skips its install rules) and nothing of
+# it enters an export set.
+set(SIMANEAT_DATAFLOW_SOURCE_DIR "" CACHE PATH
+  "Neat Dataflow runtime source tree; empty builds Core without the Dataflow runtime")
+
+# A function scope keeps these settings to the runtime's directory: its own tests,
+# benchmarks and test hooks stay off, and Core's sanitizer and strict-warning
+# options, inherited from this directory, decide its instrumentation and -Werror.
+function(simaneat_add_dataflow_runtime source_dir)
+  set(BUILD_TESTING OFF)
+  set(DATAFLOW_BENCH OFF)
+  set(DATAFLOW_TEST_HOOKS OFF)
+  set(DATAFLOW_WERROR OFF)
+  set(DATAFLOW_SANITIZE "")
+  add_subdirectory("${source_dir}" "${CMAKE_BINARY_DIR}/dataflow" EXCLUDE_FROM_ALL)
+endfunction()
+
+if (SIMANEAT_DATAFLOW_SOURCE_DIR)
+  # The runtime's project enables C, and its toolchain module searches PATH for
+  # gcc-14 when no C compiler is selected yet: on a cross build that is the host
+  # compiler. Select C here the standard way (CC or CMAKE_C_COMPILER), as for C++.
+  enable_language(C)
+  simaneat_add_dataflow_runtime("${SIMANEAT_DATAFLOW_SOURCE_DIR}")
+  set_target_properties(dataflow_core PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON)
+  # Usage requirements only; the archive itself is never linked. The objects go
+  # into both libraries directly: an OBJECT library does not forward them, and
+  # linking the archive would add it to the SimaNeatStaticTargets export.
+  target_link_libraries(sima_neat_objects PRIVATE dataflow::core)
+  target_sources(sima_neat PRIVATE $<TARGET_OBJECTS:dataflow_core>)
+  target_sources(sima_neat_static PRIVATE $<TARGET_OBJECTS:dataflow_core>)
+  target_compile_definitions(sima_neat_objects PRIVATE SIMANEAT_WITH_DATAFLOW=1)
+endif()
+
 option(SIMANEAT_ENABLE_EDGE_LTTNG_TRACEPOINTS
   "Emit framework-owned sima_neat_edge LTTng tracepoints from the graph runtime. Requires the SDK trace provider/library to export sima_neat_edge:message."
   OFF)

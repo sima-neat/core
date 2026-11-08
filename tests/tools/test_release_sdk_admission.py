@@ -23,7 +23,8 @@ def test_inherit_official_scheduler_pin_without_duplicate_core_firmware():
     for version in ('3.0.0~pre2499', '3.0.1', ''):
         with pytest.raises(ValueError):
             policy.validate(dict(selected, **{'sysroot-version': version}), core)
-    assert core['scheduler'] == {'policy': 'snap'}
+    # Snap, or an explicit published Scheduler set; either way the firmware is that set's.
+    assert core['scheduler'] == {'policy': 'snap'} or set(core['scheduler']) == {'branch', 'spec'}
     assert 'elxr_version' not in core
 
 

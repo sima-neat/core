@@ -695,6 +695,25 @@ foreach(test ${UNIT_TESTS})
   endif()
 endforeach()
 
+# The embedded Neat Dataflow runtime (SIMANEAT_DATAFLOW_SOURCE_DIR). libsima_neat.so hides the
+# runtime's symbols, so the test links them from sima_neat_static, which holds the same objects.
+# Headers and definitions come from dataflow_core's usage requirements without linking its archive:
+# that would be a second copy of the runtime.
+if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
+    NOT unit_dataflow_runtime_link_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_pipeline_test(unit_dataflow_runtime_link_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_runtime_link_test.cpp
+  )
+  target_include_directories(unit_dataflow_runtime_link_test PRIVATE
+    $<TARGET_PROPERTY:dataflow_core,INTERFACE_INCLUDE_DIRECTORIES>)
+  target_compile_definitions(unit_dataflow_runtime_link_test PRIVATE
+    $<TARGET_PROPERTY:dataflow_core,INTERFACE_COMPILE_DEFINITIONS>)
+  target_compile_options(unit_dataflow_runtime_link_test PRIVATE
+    $<TARGET_PROPERTY:dataflow_core,INTERFACE_COMPILE_OPTIONS>)
+  target_link_libraries(unit_dataflow_runtime_link_test PRIVATE sima_neat_static)
+  set_property(TEST unit_dataflow_runtime_link_test APPEND PROPERTY LABELS "unit;dataflow")
+endif()
+
 # The delivery-mode flag is cached; exercise the same contract in separate processes.
 if (TARGET unit_inputstream_idle_resume_test)
   set_tests_properties(unit_inputstream_idle_resume_test PROPERTIES

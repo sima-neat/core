@@ -1,6 +1,7 @@
 {
   "scheduler": {
-    "policy": "snap"
+    "branch": "develop",
+    "spec": "45543b5e6cdc"
   },
   "llima": {
     "policy": "snap"
