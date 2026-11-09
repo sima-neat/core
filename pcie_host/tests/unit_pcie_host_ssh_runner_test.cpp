@@ -3,6 +3,7 @@
 #include "RemoteRuntime.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <iostream>
 #include <stdexcept>
@@ -91,6 +92,10 @@ void test_windows_argument_quoting() {
 
 void test_host_platform() {
   require(pcie_internal::host_process_id() > 0, "host process ID must be positive");
+  std::array<unsigned char, 32> random{};
+  pcie_internal::host_secure_random(random.data(), random.size());
+  require(std::any_of(random.begin(), random.end(), [](const unsigned char byte) { return byte; }),
+          "secure host randomness unexpectedly returned only zero bytes");
   require(pcie_internal::host_path_string(std::filesystem::path("path") / "file") ==
               (std::filesystem::path("path") / "file").string(),
           "host path conversion changed an ASCII path");

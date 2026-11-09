@@ -1,17 +1,21 @@
 #include "HostPlatform.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cctype>
 #include <cstdlib>
+#include <fstream>
 #include <iomanip>
+#include <limits>
 #include <random>
 #include <sstream>
 #include <stdexcept>
 #include <system_error>
 
 #ifdef _WIN32
+#include <bcrypt.h>
 #include <process.h>
 #include <windows.h>
 #else
@@ -130,6 +134,35 @@ std::uint64_t host_process_id() {
   return static_cast<std::uint64_t>(_getpid());
 #else
   return static_cast<std::uint64_t>(getpid());
+#endif
+}
+
+void host_secure_random(unsigned char* buffer, std::size_t size) {
+  if (!buffer && size != 0) {
+    throw std::invalid_argument("random output buffer must not be null");
+  }
+  if (size == 0) {
+    return;
+  }
+#ifdef _WIN32
+  while (size > 0) {
+    const auto chunk = static_cast<ULONG>(
+        std::min(size, static_cast<std::size_t>(std::numeric_limits<ULONG>::max())));
+    const NTSTATUS status =
+        BCryptGenRandom(nullptr, buffer, chunk, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+    if (status != 0) {
+      throw std::runtime_error("BCryptGenRandom failed with NTSTATUS " +
+                               std::to_string(static_cast<unsigned long>(status)));
+    }
+    buffer += chunk;
+    size -= chunk;
+  }
+#else
+  std::ifstream random("/dev/urandom", std::ios::binary);
+  if (size > static_cast<std::size_t>(std::numeric_limits<std::streamsize>::max()) ||
+      !random.read(reinterpret_cast<char*>(buffer), static_cast<std::streamsize>(size))) {
+    throw std::runtime_error("failed to read secure host randomness");
+  }
 #endif
 }
 

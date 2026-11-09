@@ -137,6 +137,9 @@ target_link_libraries(sima_neat_pcie_host PRIVATE
   Threads::Threads
   ZLIB::ZLIB
 )
+if (WIN32)
+  target_link_libraries(sima_neat_pcie_host PRIVATE bcrypt)
+endif()
 # ABI headers and generic wire contracts are supplied by Scheduler's native host
 # component. A separately acquired platform plugin is a runtime dependency only.
 

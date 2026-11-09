@@ -3,8 +3,7 @@
 #include "SshRunner.h"
 #include "Protocol.h"
 #include <algorithm>
-#include <cstdlib>
-#include <fstream>
+#include <array>
 #include <iomanip>
 #include <sstream>
 
@@ -12,6 +11,7 @@ namespace simaai::neat::pcie::genai::internal {
 using Runner = simaai::neat::pcie::internal::SshRunner;
 using simaai::neat::pcie::internal::host_home_directory;
 using simaai::neat::pcie::internal::host_path_string;
+using simaai::neat::pcie::internal::host_secure_random;
 using simaai::neat::pcie::internal::open_ssh_executable;
 RemoteSession::RemoteSession(ConnectionOptions options) : options_(std::move(options)) {
   if (options_.card_host.empty())
@@ -24,10 +24,8 @@ RemoteSession::RemoteSession(ConnectionOptions options) : options_(std::move(opt
       options_.user.find(':') != std::string::npos || options_.startup_timeout_ms <= 0 ||
       options_.request_timeout_ms <= 0)
     throw std::invalid_argument("Invalid GenAI connection options");
-  std::ifstream random("/dev/urandom", std::ios::binary);
-  unsigned char bytes[12];
-  if (!random.read(reinterpret_cast<char*>(bytes), sizeof(bytes)))
-    throw std::runtime_error("Cannot create session identity");
+  std::array<unsigned char, 12> bytes{};
+  host_secure_random(bytes.data(), bytes.size());
   std::ostringstream out;
   for (auto b : bytes)
     out << std::hex << std::setw(2) << std::setfill('0') << unsigned(b);
