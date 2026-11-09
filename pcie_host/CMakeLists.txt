@@ -79,6 +79,7 @@ else()
 endif()
 
 set(SIMA_NEAT_PCIE_HOST_SOURCES
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/HostPlatform.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/Model.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/HostPcieChannel.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/HostPcieOutputLayout.cpp

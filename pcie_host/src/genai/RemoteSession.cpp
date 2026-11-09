@@ -1,4 +1,5 @@
 #include "genai/RemoteSession.h"
+#include "HostPlatform.h"
 #include "SshRunner.h"
 #include "Protocol.h"
 #include <algorithm>
@@ -9,6 +10,9 @@
 
 namespace simaai::neat::pcie::genai::internal {
 using Runner = simaai::neat::pcie::internal::SshRunner;
+using simaai::neat::pcie::internal::host_home_directory;
+using simaai::neat::pcie::internal::host_path_string;
+using simaai::neat::pcie::internal::open_ssh_executable;
 RemoteSession::RemoteSession(ConnectionOptions options) : options_(std::move(options)) {
   if (options_.card_host.empty())
     options_.card_host = "10.0." + std::to_string(options_.card_id) + ".2";
@@ -36,13 +40,14 @@ RemoteSession::~RemoteSession() {
   }
 }
 std::vector<std::string> RemoteSession::ssh(const std::string& script) const {
-  std::vector<std::string> args{"ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-p", "22"};
+  std::vector<std::string> args{
+      open_ssh_executable("ssh"), "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-p", "22"};
   std::string key = options_.ssh_key;
   if (key.empty()) {
-    if (const char* home = std::getenv("HOME")) {
-      auto candidate = std::filesystem::path(home) / ".ssh/sima_neat_pcie_ed25519";
+    if (const auto home = host_home_directory(); home.has_value()) {
+      auto candidate = *home / ".ssh/sima_neat_pcie_ed25519";
       if (std::filesystem::exists(candidate))
-        key = candidate.string();
+        key = host_path_string(candidate);
     }
   }
   if (!key.empty()) {

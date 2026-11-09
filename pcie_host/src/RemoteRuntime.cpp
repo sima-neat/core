@@ -1,5 +1,6 @@
 #include "RemoteRuntime.h"
 
+#include "HostPlatform.h"
 #include "SshRunner.h"
 
 #include <algorithm>
@@ -16,8 +17,6 @@
 #include <thread>
 #include <utility>
 
-#include <unistd.h>
-
 namespace fs = std::filesystem;
 
 namespace simaai::neat::pcie::internal {
@@ -32,16 +31,16 @@ constexpr const char* kDefaultIdentityFile = ".ssh/sima_neat_pcie_ed25519";
 constexpr const char* kDefaultMlashmCtrlIoTimeout = "MLASHM_CTRL_IO_TIMEOUT_MS=5000";
 
 std::optional<std::string> default_identity_file() {
-  const char* home = std::getenv("HOME");
-  if (!home || !*home) {
+  const auto home = host_home_directory();
+  if (!home.has_value()) {
     return std::nullopt;
   }
-  std::filesystem::path path = std::filesystem::path(home) / kDefaultIdentityFile;
+  std::filesystem::path path = *home / kDefaultIdentityFile;
   std::error_code ec;
   if (!std::filesystem::exists(path, ec)) {
     return std::nullopt;
   }
-  return path.string();
+  return host_path_string(path);
 }
 
 std::string derive_card_host(const ConnectionOptions& opt) {
@@ -152,8 +151,8 @@ std::string RemoteRuntime::unique_remote_upload_path(const std::string& local_pa
     throw std::invalid_argument("local upload path must have a filename");
   }
   const auto timestamp = std::chrono::steady_clock::now().time_since_epoch().count();
-  return std::string(kRemoteModelDir) + "/sima-neat-pcie-" +
-         std::to_string(static_cast<long long>(getpid())) + "-" + std::to_string(timestamp) + "-" +
+  return std::string(kRemoteModelDir) + "/sima-neat-pcie-" + std::to_string(host_process_id()) +
+         "-" + std::to_string(timestamp) + "-" +
          std::to_string(sequence.fetch_add(1, std::memory_order_relaxed)) + "-" + filename;
 }
 
@@ -238,7 +237,7 @@ void RemoteRuntime::remove_upload(const std::string& remote_path) const {
 
 std::vector<std::string> RemoteRuntime::ssh_base() const {
   std::vector<std::string> cmd;
-  cmd.push_back("ssh");
+  cmd.push_back(open_ssh_executable("ssh"));
   cmd.insert(cmd.end(), {"-p", std::to_string(kSshPort)});
   if (const auto identity = default_identity_file(); identity.has_value()) {
     cmd.insert(cmd.end(), {"-i", *identity});
@@ -251,7 +250,7 @@ std::vector<std::string> RemoteRuntime::ssh_base() const {
 
 std::vector<std::string> RemoteRuntime::scp_base() const {
   std::vector<std::string> cmd;
-  cmd.push_back("scp");
+  cmd.push_back(open_ssh_executable("scp"));
   cmd.insert(cmd.end(), {"-P", std::to_string(kSshPort)});
   if (const auto identity = default_identity_file(); identity.has_value()) {
     cmd.insert(cmd.end(), {"-i", *identity});

@@ -1,3 +1,4 @@
+#include "HostPlatform.h"
 #include "SshRunner.h"
 #include "RemoteRuntime.h"
 
@@ -88,6 +89,21 @@ void test_windows_argument_quoting() {
           "trailing backslash escaping mismatch");
 }
 
+void test_host_platform() {
+  require(pcie_internal::host_process_id() > 0, "host process ID must be positive");
+  require(pcie_internal::host_path_string(std::filesystem::path("path") / "file") ==
+              (std::filesystem::path("path") / "file").string(),
+          "host path conversion changed an ASCII path");
+#ifdef _WIN32
+  const auto ssh = pcie_internal::open_ssh_executable("ssh");
+  require(ssh.size() >= std::string("ssh.exe").size() &&
+              ssh.substr(ssh.size() - std::string("ssh.exe").size()) == "ssh.exe",
+          "Windows OpenSSH command must name ssh.exe");
+#else
+  require(pcie_internal::open_ssh_executable("ssh") == "ssh", "POSIX OpenSSH command name changed");
+#endif
+}
+
 void test_start_failure_cleanup_classification() {
   for (const int exit_code : {9, 10, 11, 12, 14, 15, 16}) {
     require(pcie_internal::RemoteRuntime::start_failure_cleanup_safe(exit_code, false),
@@ -136,6 +152,7 @@ int main(const int argc, char** argv) {
       throw std::runtime_error("shell escape mismatch");
     }
     test_windows_argument_quoting();
+    test_host_platform();
     test_command_runner(argv[0]);
     const std::string first =
         pcie_internal::RemoteRuntime::unique_remote_upload_path("/first/model.tar.gz");
