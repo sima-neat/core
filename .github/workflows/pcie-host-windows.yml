@@ -1,0 +1,110 @@
+name: Core native Windows PCIe host
+on:
+  workflow_call:
+    inputs:
+      scheduler_run_id:
+        description: Scheduler Actions run containing the exact Windows candidate
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      scheduler_run_id:
+        description: Scheduler Actions run containing scheduler-native-windows-amd64
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: core-native-windows-pcie-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - run: python3 pcie_host/tests/test_windows_ci.py
+      - run: python3 -m py_compile scripts/ci/pciehost/build_windows.py
+      - run: git diff --check
+  native:
+    name: Native Windows amd64 cohort
+    needs: contracts
+    if: github.repository == 'sima-neat/core' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'sima-neat/core')
+    environment: production
+    runs-on: [self-hosted, Windows, X64, pcie-windows-build, default]
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GSTREAMER_ROOT_X86_64: ${{ vars.GSTREAMER_ROOT_X86_64 }}
+      SIMA_WINDOWS_CMAKE_PREFIX_PATH: ${{ vars.SIMA_WINDOWS_CMAKE_PREFIX_PATH }}
+      SIMA_WINDOWS_PLATFORM_RUNTIME_DIR: ${{ vars.SIMA_WINDOWS_PLATFORM_RUNTIME_DIR }}
+      SIMA_WINDOWS_PYTHON_WHEELHOUSE: ${{ vars.SIMA_WINDOWS_PYTHON_WHEELHOUSE }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Mint read-only Scheduler artifact token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.NEAT_RELEASES_APP_ID }}
+          private-key: ${{ secrets.NEAT_RELEASES_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: scheduler
+          permission-actions: read
+          permission-contents: read
+      - name: Download exact Scheduler Windows candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: scheduler-native-windows-amd64
+          path: ${{ runner.temp }}/scheduler-windows-candidate
+          repository: sima-neat/scheduler
+          run-id: ${{ inputs.scheduler_run_id }}
+          github-token: ${{ steps.app-token.outputs.token }}
+      - name: Build, test, package, install, and remove Core cohort
+        shell: pwsh
+        env:
+          SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $installation = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $installation) { throw "Visual Studio x64 C++ tools are unavailable" }
+          Import-Module (Join-Path $installation "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
+          Enter-VsDevShell -VsInstallPath $installation -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64"
+          foreach ($name in @(
+            "GSTREAMER_ROOT_X86_64",
+            "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR",
+            "SIMA_WINDOWS_PYTHON_WHEELHOUSE"
+          )) {
+            if (-not (Get-Item "env:$name").Value) { throw "Required producer variable is unset: $name" }
+          }
+          $arguments = @(
+            "scripts/ci/pciehost/build_windows.py",
+            "--branch", $env:SOURCE_BRANCH,
+            "--gstreamer-root", $env:GSTREAMER_ROOT_X86_64,
+            "--platform-runtime", $env:SIMA_WINDOWS_PLATFORM_RUNTIME_DIR,
+            "--python-wheelhouse", $env:SIMA_WINDOWS_PYTHON_WHEELHOUSE,
+            "--scheduler-candidate", "$env:RUNNER_TEMP\scheduler-windows-candidate",
+            "--work", "$env:RUNNER_TEMP\core-windows-build",
+            "--output", "$env:RUNNER_TEMP\core-windows-dist"
+          )
+          if ($env:SIMA_WINDOWS_CMAKE_PREFIX_PATH) {
+            foreach ($prefix in $env:SIMA_WINDOWS_CMAKE_PREFIX_PATH.Split(";")) {
+              if ($prefix) { $arguments += @("--dependency-prefix", $prefix) }
+            }
+          }
+          & python @arguments
+          if ($LASTEXITCODE -ne 0) { throw "Windows Core producer failed: $LASTEXITCODE" }
+      - name: Retain Core Windows cohort and evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: core-pciehost-windows-amd64
+          path: ${{ runner.temp }}/core-windows-dist/*
+          if-no-files-found: error
+          retention-days: 7

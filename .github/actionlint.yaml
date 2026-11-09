@@ -9,6 +9,7 @@ self-hosted-runner:
     - pcie
     - rtsp
     - 3.0.0-pcie-test
+    - pcie-windows-build
     - vulcan-dev
     - vulcan-stg
     - vulcan-staging

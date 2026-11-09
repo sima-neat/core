@@ -420,6 +420,33 @@ places both owner-produced MSIs in the same manifest so customers do not manage
 the repository boundary. The Platform driver, host DLLs and daemon remain a
 separate Platform prerequisite.
 
+### Windows package CI
+
+The Windows producer is `.github/workflows/pcie-host-windows.yml`. Its required
+`scheduler_run_id` selects the exact `scheduler-native-windows-amd64` artifact
+from Scheduler CI; it never resolves an unqualified latest Scheduler build. The
+restricted `pcie-windows-build` runner supplies the supported MSVC, WiX v3,
+GStreamer, Platform runtime, CMake dependencies and a pinned Python dependency
+wheelhouse.
+
+`scripts/ci/pciehost/build_windows.py` verifies every Scheduler resource against
+its published metadata, installs that MSI, builds Core and the Python extension,
+runs the non-hardware CTest suite, and verifies all generated PE files are x64.
+It then tests a relocated CMake consumer, creates the Core MSI and wheel, installs
+the exact Core MSI, builds an installed consumer, loads the genuine Scheduler
+plug-in, repeats the ordered Scheduler-to-Core MSI installation, and imports the
+wheel from a fresh virtual environment using only the pinned wheelhouse. Cleanup
+removes the wheel, Core MSI and Scheduler MSI and fails if their shared
+installation root remains. The retained dependency receipt hashes the Platform
+runtime DLLs and records the GStreamer and CMake dependency inputs used by Core.
+
+The retained `core-pciehost-windows-amd64` artifact is the complete ordered
+cohort: Scheduler MSI, Core MSI, optional `pyneatpcie` wheel, checksum metadata,
+producer receipts and installer logs. It remains marked as not hardware-qualified.
+A separate Windows 11 runner attached directly to a Modalix card must consume
+this same artifact for inference, lifecycle, recovery and performance gates
+before release promotion.
+
 `build.sh` follows the Scheduler policy in Core's `deps/manifest.json`, in the
 `production` publication environment by default. Branch `snap` first tries
 `latest` from the current Core branch, then reports and retries `develop:latest`
