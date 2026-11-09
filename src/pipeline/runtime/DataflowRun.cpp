@@ -9,7 +9,9 @@
 //             push(kNoDeadline).
 //   try_push  alloc(Acquire::Fail) + copy + push(passed deadline): the link's policy applies;
 //             DroppedIncoming is false and a drop, DroppedOldest true and a drop, a full Block link
-//             false and no drop (unit_run_overflow_policy_parity_test.cpp:129-163).
+//             false and no drop (unit_run_overflow_policy_parity_test.cpp:129-163). A full link is
+//             answered by alloc itself (the runtime's FR14, A3), before any slot or copy, and
+//             counted by the runtime as that push: alloc_refused maps it to the same outcome.
 //   pull      -1 is kNoDeadline, 0 a passed deadline (a poll), t > 0 now + t ms. The pulled Tensor
 //             is CpuExternal over the pool slot, its holder the Message, read-only.
 //   close_input  Session::close_input(kNoDeadline): cancels a parked push, keeps what is queued.
@@ -668,7 +670,7 @@ private:
     df::Result<df::WriteLoan> allocated =
         bound->session.alloc(bound->feed, block ? df::Acquire::Block : df::Acquire::Fail);
     if (const df::Error* error = df::failure(allocated)) {
-      return refused(*error, block, where);
+      return alloc_refused(*error, block, where);
     }
     df::WriteLoan loan = std::get<df::WriteLoan>(std::move(allocated));
     const df::Extent extent = copy_into(bound->binding, tensor, loan.bytes(), where);
@@ -694,7 +696,7 @@ private:
     df::Result<df::WriteLoan> allocated =
         bound.session.alloc(bound.feed, block ? df::Acquire::Block : df::Acquire::Fail);
     if (const df::Error* error = df::failure(allocated)) {
-      return refused(*error, block, where);
+      return alloc_refused(*error, block, where);
     }
     df::WriteLoan loan = std::get<df::WriteLoan>(std::move(allocated));
     const std::span<std::byte> slot = loan.bytes();
@@ -1032,6 +1034,22 @@ private:
     h = rows;
     w = cols;
     return true;
+  }
+
+  // The slot the Session refused. Under Acquire::Fail (try_push), Backpressure is the runtime's
+  // FR14: every link of the Feed full, so the push would be refused, and alloc refused it before
+  // any slot or copy, counted by the runtime as that push counts it (a full Block link's FR2, a
+  // DropIncoming link's drop). Core does what it does when the push refused: false, and on
+  // DropIncoming its input drop (published()'s DroppedIncoming). KeepLatest and the terminal drop
+  // are DropOldest links, which never refuse. Every other refusal, FR7 included, is refused()'s.
+  bool alloc_refused(const df::Error& error, bool block, const char* where) {
+    if (!block && error.code == df::ErrorCode::Backpressure) {
+      if (!config_.terminal_drop && config_.link_policy == OverflowPolicy::DropIncoming) {
+        core_.inputs_dropped.fetch_add(1, std::memory_order_relaxed);
+      }
+      return false;
+    }
+    return refused(error, block, where);
   }
 
   // A push the Session refused: false, a drop where Core counts one, or Core's error.

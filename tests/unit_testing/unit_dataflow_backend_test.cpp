@@ -10,7 +10,8 @@
 // KeepLatest; close_input cancelling a parked push; stop unblocking a pending pull; pull timeouts
 // -1/0/t; identity (frame_id, stream_id, pts_ns, input_seq) round trip; NV12 planes; DMA-heap
 // tensors; Owned output; a pulled tensor outliving its Run; named endpoints; the push-time checks
-// of a tensor that repeats an accepted geometry, back for any change they read (C7a).
+// of a tensor that repeats an accepted geometry, back for any change they read (C7a); a try_push
+// refused by a full link reading none of its tensor's bytes (C7c).
 
 #include "nodes/common/Output.h"
 #include "nodes/common/Queue.h"
@@ -378,6 +379,44 @@ void try_push_accounting() {
   }
 }
 
+// A try_push that the full link refuses is refused before its tensor is read: the runtime's alloc
+// answers a full link itself (scheduler-dataflow A3), so no slot is taken and nothing is copied.
+// The tensor's storage counts its maps: each accepted try_push maps it for the copy, a refused one
+// does not, and the refusals' outcome and drop count are try_push's as before (try_push_accounting).
+void refused_try_push_reads_no_byte() {
+  OutputOptions out;
+  out.max_buffers = 1; // the link holds queue_depth 1 + max_buffers 1 = 2
+  for (const OverflowPolicy policy : {OverflowPolicy::DropIncoming, OverflowPolicy::Block}) {
+    Graph g = input_output({}, out);
+    Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow(1, policy));
+    Tensor t = rgb(8, 8, 9);
+    const auto maps = std::make_shared<std::atomic<int>>(0);
+    auto counted = std::make_shared<TensorBuffer>(*t.storage);
+    counted->map_fn = [plain = t.storage, maps](MapMode mode) {
+      maps->fetch_add(1);
+      return plain->map(mode);
+    };
+    t.storage = counted;
+    require(run.try_push(TensorList{t}) && run.try_push(TensorList{t}),
+            "two accepted try_push fill the link");
+    const int accepted_maps = maps->load();
+    require(accepted_maps >= 2, "an accepted try_push reads its tensor for the copy");
+    const auto dropped = dropped_while(run, [&] {
+      for (int i = 0; i < 3; ++i) {
+        require(!run.try_push(TensorList{t}), "refused on the full link");
+      }
+    });
+    require(maps->load() == accepted_maps,
+            "a refused try_push reads no byte of its tensor, got " +
+                std::to_string(maps->load() - accepted_maps) + " maps");
+    require(dropped == (policy == OverflowPolicy::DropIncoming ? 3U : 0U),
+            "the drops counted as before, got " + std::to_string(dropped));
+    require(bytes_of(pulled_tensor(run, 1000, "refused")) == bytes_of(rgb(8, 8, 9)),
+            "what was accepted is intact");
+    run.close();
+  }
+}
+
 void blocking_push_never_drops() {
   for (const OverflowPolicy policy : {OverflowPolicy::DropIncoming, OverflowPolicy::KeepLatest}) {
     OutputOptions out;
@@ -674,6 +713,7 @@ RUN_TEST("unit_dataflow_backend_test", ([] {
            holder_push_is_an_error();
            link_depth_is_queue_depth_plus_max_buffers();
            try_push_accounting();
+           refused_try_push_reads_no_byte();
            blocking_push_never_drops();
            close_input_cancels_a_parked_push();
            stop_unblocks_pull_and_refuses_push();
