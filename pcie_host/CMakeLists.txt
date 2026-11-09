@@ -234,6 +234,9 @@ if (SIMAPCIE_BUILD_TESTS)
   add_test(NAME pcie_host_cmake_package_contract
     COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cmake_package_contract.py")
+  add_test(NAME pcie_host_python_tutorial_contract
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_python_tutorial_contract.py")
   if(NOT WIN32)
     add_test(NAME pcie_host_delivery_contract
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_delivery.py")
