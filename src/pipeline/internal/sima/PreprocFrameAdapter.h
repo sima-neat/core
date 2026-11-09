@@ -9,7 +9,9 @@
 #include <mutex>
 #include <simaai/scheduler/client/frame_adapter.h>
 namespace simaai::neat::pipeline_internal::sima::kernel_lowering {
-using namespace ::simaai::scheduler::client;
+// Scheduler names are qualified (rt::, CanonicalKernelLowering.h), never brought in by a
+// using-directive: unqualified, Result, Status and TensorSpec would name simaai::neat's own types
+// in a TU that also includes pipeline/Result.h, InputStreamUtil.h or model/Model.h.
 namespace gstreamer = ::simaai::scheduler::client;
 // Core-owned image geometry, caps and metadata policy. Numerical validation
 // and ROI filtering remain in kernel-owned generic preparation.
@@ -17,26 +19,27 @@ class PreprocFrameAdapter : public gstreamer::TensorStageFrameAdapter {
 public:
   // Immutable numerical/image policy; contains no admission, session or cache.
   struct CheckedPolicy;
-  static Result<std::shared_ptr<const CheckedPolicy>>
+  static rt::Result<std::shared_ptr<const CheckedPolicy>>
       check_policy(std::shared_ptr<const ProcessCvuStagePayload>);
-  static Result<std::shared_ptr<const CheckedPolicy>> check_policy(const ProcessCvuStagePayload&);
-  static Result<std::shared_ptr<PreprocFrameAdapter>>
+  static rt::Result<std::shared_ptr<const CheckedPolicy>>
+  check_policy(const ProcessCvuStagePayload&);
+  static rt::Result<std::shared_ptr<PreprocFrameAdapter>>
       instantiate(std::shared_ptr<const CheckedPolicy>);
-  static const KernelExecutable& checked_executable(const CheckedPolicy&);
+  static const rt::KernelExecutable& checked_executable(const CheckedPolicy&);
   static std::shared_ptr<const gstreamer::TensorStageImagePublication>
   checked_image_publication(const CheckedPolicy&);
   // Initial immutable facts from the same checked policy as runtime publication.
   // This cold query opens no session and retains no frame or adapter state.
-  static Result<simaai::gst::TensorBufferPreprocessFactsOwner>
+  static rt::Result<simaai::gst::TensorBufferPreprocessFactsOwner>
       checked_initial_preprocess_facts(std::shared_ptr<const CheckedPolicy>);
   // Check the complete initial image recipe before opening the graph's device.
-  static Result<std::shared_ptr<PreprocFrameAdapter>>
+  static rt::Result<std::shared_ptr<PreprocFrameAdapter>>
       check(std::shared_ptr<const ProcessCvuStagePayload>);
-  const KernelExecutable& initial_executable() const;
-  Status admitted(const VariantPreparer&) override;
-  Status check_caps(const GstCaps*) const;
+  const rt::KernelExecutable& initial_executable() const;
+  rt::Status admitted(const rt::VariantPreparer&) override;
+  rt::Status check_caps(const GstCaps*) const;
   // Negotiation queries validate without changing the active frame geometry.
-  Status accepts_caps(const GstCaps*) const;
+  rt::Status accepts_caps(const GstCaps*) const;
   // Fields replaced (or cleared) by this publisher, never extension metadata.
   static bool owns_publication_field(GQuark) noexcept;
   bool replaces_publication_field(GQuark field) const noexcept override {
@@ -44,8 +47,8 @@ public:
   }
   // Scheduler supplies a borrowed writer over the existing frame binding and
   // current producer loans. Geometry caching retains neither writer nor buffer.
-  Status
-  bind(GstBuffer*, BindingWriter&, GstStructure* output_metadata, bool fresh_metadata = false,
+  rt::Status
+  bind(GstBuffer*, rt::BindingWriter&, GstStructure* output_metadata, bool fresh_metadata = false,
        simaai::gst::TensorBufferPreprocessFactsOwner* compact_facts = nullptr) const override;
 
 private:
@@ -57,23 +60,24 @@ private:
   };
   explicit PreprocFrameAdapter(std::shared_ptr<const CheckedPolicy>);
   struct IntegerList;
-  static Result<IntegerList> integer_list(const GstStructure*, const char*, std::size_t,
-                                          bool optional = false);
+  static rt::Result<IntegerList> integer_list(const GstStructure*, const char*, std::size_t,
+                                              bool optional = false);
   enum class PaddingPlacement { Center, TopLeft, TopRight, BottomLeft, BottomRight };
-  static Result<Geometry> describe_geometry(Geometry, std::size_t width, std::size_t height);
-  Result<std::array<std::int64_t, 4>> destination(std::int64_t source_width,
-                                                  std::int64_t source_height, std::int64_t width,
-                                                  std::int64_t height) const;
-  Result<GstVideoInfo> parse_caps(const GstCaps*) const;
-  Result<std::vector<TensorSpec>> input_specs(const Geometry&) const;
+  static rt::Result<Geometry> describe_geometry(Geometry, std::size_t width, std::size_t height);
+  rt::Result<std::array<std::int64_t, 4>> destination(std::int64_t source_width,
+                                                      std::int64_t source_height,
+                                                      std::int64_t width,
+                                                      std::int64_t height) const;
+  rt::Result<GstVideoInfo> parse_caps(const GstCaps*) const;
+  rt::Result<std::vector<rt::TensorSpec>> input_specs(const Geometry&) const;
   // Slot order belongs to the bound geometry capability, not the frame metadata.
   enum GeometryField { SourceRoi, SourceRois, Destination, Padding, GeometryFieldCount };
-  using GeometryParameters = std::array<std::optional<ParameterValue>, GeometryFieldCount>;
-  Result<std::vector<Parameter>> static_parameters() const;
-  Result<GeometryParameters> parameters(const Geometry&, const GstStructure*,
-                                        const IntegerList* checked_indices = nullptr) const;
+  using GeometryParameters = std::array<std::optional<rt::ParameterValue>, GeometryFieldCount>;
+  rt::Result<std::vector<rt::Parameter>> static_parameters() const;
+  rt::Result<GeometryParameters> parameters(const Geometry&, const GstStructure*,
+                                            const IntegerList* checked_indices = nullptr) const;
   std::shared_ptr<const CheckedPolicy> policy_;
-  VariantPreparer preparer_;
+  rt::VariantPreparer preparer_;
   std::atomic<bool> preparation_started_{false};
   // Canonical packed geometry changes on CAPS, not on each frame. VideoMeta
   // and ROI overrides are applied to a local copy and never poison this base.
@@ -85,12 +89,12 @@ private:
     }
   };
   using Publication = simaai::gst::TensorBufferPreprocessFactsOwner;
-  Result<Publication> prepare_publication(const Geometry&, const KernelExecutable&,
-                                          const GstStructure*) const;
+  rt::Result<Publication> prepare_publication(const Geometry&, const rt::KernelExecutable&,
+                                              const GstStructure*) const;
   struct Variant {
     Geometry geometry;
     std::unique_ptr<GstStructure, StructureFree> signature;
-    PreparedSelection operation;
+    rt::PreparedSelection operation;
     Publication publication;
   };
   // A current/previous pair prevents alternating image/ROI signatures from

@@ -6,6 +6,7 @@
 #include <simaai/scheduler/client/video_layout.h>
 
 namespace simaai::neat::pipeline_internal::sima::kernel_lowering {
+using namespace ::simaai::scheduler::client;
 struct PreprocFrameAdapter::CheckedPolicy {
   std::shared_ptr<const ProcessCvuStagePayload> prepared;
   KernelExecutable initial_executable;
@@ -32,14 +33,13 @@ PreprocFrameAdapter::checked_image_publication(const CheckedPolicy& policy) {
   return policy.image_publication;
 }
 
-Result<simaai::gst::TensorBufferPreprocessFactsOwner>
+rt::Result<simaai::gst::TensorBufferPreprocessFactsOwner>
 PreprocFrameAdapter::checked_initial_preprocess_facts(std::shared_ptr<const CheckedPolicy> policy) {
   PreprocFrameAdapter adapter(std::move(policy));
   return adapter.prepare_publication(adapter.policy_->initial_geometry,
                                      adapter.policy_->initial_executable, nullptr);
 }
 
-using namespace ::simaai::scheduler::client;
 namespace {
 
 Error invalid(const char* field, std::string message) {
@@ -319,10 +319,9 @@ struct PreprocFrameAdapter::IntegerList {
                  : 0;
   }
 };
-Result<PreprocFrameAdapter::IntegerList> PreprocFrameAdapter::integer_list(const GstStructure* meta,
-                                                                           const char* name,
-                                                                           std::size_t count,
-                                                                           bool optional) {
+rt::Result<PreprocFrameAdapter::IntegerList>
+PreprocFrameAdapter::integer_list(const GstStructure* meta, const char* name, std::size_t count,
+                                  bool optional) {
   const GValue* value = meta ? gst_structure_get_value(meta, name) : nullptr;
   if (!value) {
     if (optional || count == 0)
@@ -352,8 +351,8 @@ bool PreprocFrameAdapter::owns_publication_field(GQuark field) noexcept {
   return std::binary_search(owned.begin(), owned.end(), field);
 }
 
-Result<Rectangle> PreprocFrameAdapter::destination(std::int64_t source_w, std::int64_t source_h,
-                                                   std::int64_t w, std::int64_t h) const {
+rt::Result<Rectangle> PreprocFrameAdapter::destination(std::int64_t source_w, std::int64_t source_h,
+                                                       std::int64_t w, std::int64_t h) const {
   const auto& cfg = *policy_->prepared;
   if (source_w <= 0 || source_h <= 0)
     return invalid("source_roi", "ROI dimensions must be positive");
@@ -390,7 +389,7 @@ Result<Rectangle> PreprocFrameAdapter::destination(std::int64_t source_w, std::i
                             : 0);
   return Rectangle{x, y, scaled_w, scaled_h};
 }
-Result<PreprocFrameAdapter::Geometry>
+rt::Result<PreprocFrameAdapter::Geometry>
 PreprocFrameAdapter::describe_geometry(Geometry geometry, std::size_t width, std::size_t height) {
   GstVideoInfo info;
   gst_video_info_init(&info);
@@ -406,14 +405,14 @@ PreprocFrameAdapter::describe_geometry(Geometry geometry, std::size_t width, std
   return geometry;
 }
 
-Result<std::shared_ptr<const PreprocFrameAdapter::CheckedPolicy>>
+rt::Result<std::shared_ptr<const PreprocFrameAdapter::CheckedPolicy>>
 PreprocFrameAdapter::check_policy(std::shared_ptr<const ProcessCvuStagePayload> prepared) {
   if (!prepared)
     return invalid("stage.contract", "Preproc requires owned Core model policy");
   return check_policy(*prepared);
 }
 
-Result<std::shared_ptr<const PreprocFrameAdapter::CheckedPolicy>>
+rt::Result<std::shared_ptr<const PreprocFrameAdapter::CheckedPolicy>>
 PreprocFrameAdapter::check_policy(const ProcessCvuStagePayload& prepared) {
   // Snapshot application values once; mutable caller aliases cannot change a
   // previously checked recipe or later execution instances.
@@ -651,7 +650,7 @@ PreprocFrameAdapter::check_policy(const ProcessCvuStagePayload& prepared) {
   return std::shared_ptr<const CheckedPolicy>(std::move(policy));
 }
 
-Result<std::shared_ptr<PreprocFrameAdapter>>
+rt::Result<std::shared_ptr<PreprocFrameAdapter>>
 PreprocFrameAdapter::instantiate(std::shared_ptr<const CheckedPolicy> policy) {
   if (!policy || !policy->initial_executable || !policy->geometry_variant)
     return invalid("preproc.policy", "checked immutable image policy is required");
@@ -661,7 +660,7 @@ PreprocFrameAdapter::instantiate(std::shared_ptr<const CheckedPolicy> policy) {
   return result;
 }
 
-Result<std::shared_ptr<PreprocFrameAdapter>>
+rt::Result<std::shared_ptr<PreprocFrameAdapter>>
 PreprocFrameAdapter::check(std::shared_ptr<const ProcessCvuStagePayload> prepared) {
   auto checked = check_policy(std::move(prepared));
   if (const auto* failure = std::get_if<Error>(&checked))
@@ -687,7 +686,8 @@ Status PreprocFrameAdapter::admitted(const VariantPreparer& preparer) {
   return {};
 }
 
-Result<std::vector<TensorSpec>> PreprocFrameAdapter::input_specs(const Geometry& geometry) const {
+rt::Result<std::vector<TensorSpec>>
+PreprocFrameAdapter::input_specs(const Geometry& geometry) const {
   if (geometry.width == 0 || geometry.height == 0 || geometry.batch == 0 ||
       geometry.width > policy_->envelope.width || geometry.height > policy_->envelope.height ||
       geometry.format != policy_->envelope.format || geometry.batch > policy_->envelope.batch)
@@ -714,7 +714,7 @@ Result<std::vector<TensorSpec>> PreprocFrameAdapter::input_specs(const Geometry&
   return result;
 }
 
-Result<std::vector<Parameter>> PreprocFrameAdapter::static_parameters() const {
+rt::Result<std::vector<Parameter>> PreprocFrameAdapter::static_parameters() const {
   const auto& cfg = *policy_->prepared;
   const auto dims = policy_->output.shape;
   if (dims.size() < 3)
@@ -814,7 +814,7 @@ Result<std::vector<Parameter>> PreprocFrameAdapter::static_parameters() const {
   return result;
 }
 
-Result<PreprocFrameAdapter::GeometryParameters>
+rt::Result<PreprocFrameAdapter::GeometryParameters>
 PreprocFrameAdapter::parameters(const Geometry& geometry, const GstStructure* meta,
                                 const IntegerList* checked_indices) const {
   const auto& cfg = *policy_->prepared;
@@ -908,7 +908,7 @@ PreprocFrameAdapter::parameters(const Geometry& geometry, const GstStructure* me
   return result;
 }
 
-Result<GstVideoInfo> PreprocFrameAdapter::parse_caps(const GstCaps* caps) const {
+rt::Result<GstVideoInfo> PreprocFrameAdapter::parse_caps(const GstCaps* caps) const {
   GstVideoInfo info;
   gst_video_info_init(&info);
   if (!caps || !gst_caps_is_fixed(caps) || !gst_video_info_from_caps(&info, caps))
@@ -1235,7 +1235,7 @@ PreprocFrameAdapter::bind(GstBuffer* buffer, BindingWriter& binding, GstStructur
   return binding.select(operation);
 }
 
-Result<PreprocFrameAdapter::Publication>
+rt::Result<PreprocFrameAdapter::Publication>
 PreprocFrameAdapter::prepare_publication(const Geometry& geometry,
                                          const KernelExecutable& executable,
                                          const GstStructure* source) const {

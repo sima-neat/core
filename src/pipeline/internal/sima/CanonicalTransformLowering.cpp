@@ -28,7 +28,7 @@ constexpr std::array families{Family{"cast", Family::None},
                               Family{"tess", Family::Tess},
                               Family{"detess", Family::None}};
 
-Result<DType> dtype(std::string_view meaning, std::uint32_t wire) {
+rt::Result<DType> dtype(std::string_view meaning, std::uint32_t wire) {
   if (const auto scalar = scalar_from_model_descriptor(meaning, wire))
     return *scalar;
   return Error{ErrorCode::InvalidRequest, "dtype",
@@ -36,8 +36,8 @@ Result<DType> dtype(std::string_view meaning, std::uint32_t wire) {
                    "', wire=" + std::to_string(wire)};
 }
 
-Result<TensorSpec> tensor(const sima_ev_tensor_desc& desc, DType scalar,
-                          bool blocked_bf16 = false) {
+rt::Result<TensorSpec> tensor(const sima_ev_tensor_desc& desc, DType scalar,
+                              bool blocked_bf16 = false) {
   if (desc.shape.rank == 0 || desc.shape.rank > std::size(desc.shape.sizes))
     return invalid("shape.rank", "legacy tensor rank must be in [1,6]");
   TensorSpec result{std::vector<std::int64_t>(desc.shape.rank), scalar};
@@ -149,19 +149,19 @@ Result<TensorSpec> tensor(const sima_ev_tensor_desc& desc, DType scalar,
 
 } // namespace
 
-Result<TensorSpec> tensor_spec_from_model_descriptor(const sima_ev_tensor_desc& descriptor,
-                                                     std::string_view meaning) {
+rt::Result<TensorSpec> tensor_spec_from_model_descriptor(const sima_ev_tensor_desc& descriptor,
+                                                         std::string_view meaning) {
   auto scalar = dtype(meaning, descriptor.dtype);
   if (const auto* error = std::get_if<Error>(&scalar))
     return *error;
   return tensor(descriptor, std::get<DType>(scalar));
 }
 
-Result<TensorSpec> tensor_spec_from_model_descriptor(const AuthoredTensorDescriptor& authored) {
+rt::Result<TensorSpec> tensor_spec_from_model_descriptor(const AuthoredTensorDescriptor& authored) {
   return tensor(authored.descriptor(), authored.scalar());
 }
 
-Result<std::shared_ptr<KernelStageRecipe>> check_transform_stage(const StageStaticSpec& stage) {
+rt::Result<std::shared_ptr<KernelStageRecipe>> check_transform_stage(const StageStaticSpec& stage) {
   const auto& cfg = stage.processcvu;
   const auto family = std::find_if(families.begin(), families.end(), [&](const Family& f) {
     return f.canonical == canonical_transform_operation(cfg.graph_name);

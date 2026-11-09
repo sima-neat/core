@@ -14,7 +14,7 @@ bool visual_family(std::string_view name) {
   return name == "feature_histogram" || name == "grider_fast" || name == "track_descriptor" ||
          name == "track_klt" || name == "simor_depth_map";
 }
-Result<std::shared_ptr<KernelStageRecipe>> check_visual_stage(const StageStaticSpec& stage) {
+rt::Result<std::shared_ptr<KernelStageRecipe>> check_visual_stage(const StageStaticSpec& stage) {
   const auto& cfg = stage.processcvu;
   if (cfg.resolved_exec_backend == "A65")
     return Error{ErrorCode::UnsupportedTarget, "target", "visual kernels are EV74-only"};
@@ -30,7 +30,7 @@ Result<std::shared_ptr<KernelStageRecipe>> check_visual_stage(const StageStaticS
     std::vector<std::size_t> inputs, outputs, dependencies;
   };
   std::optional<Error> failure;
-  const auto append = [&](Result<KernelExecutable> checked, VisualMember member) {
+  const auto append = [&](rt::Result<KernelExecutable> checked, VisualMember member) {
     if (failure)
       return;
     if (const auto* error = std::get_if<Error>(&checked)) {
