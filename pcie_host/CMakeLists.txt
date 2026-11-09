@@ -68,7 +68,7 @@ if (NOT TARGET nlohmann_json::nlohmann_json)
     "Missing nlohmann_json development package (Ubuntu package: "
     "nlohmann-json3-dev)")
 endif()
-pkg_check_modules(GST REQUIRED IMPORTED_TARGET
+pkg_check_modules(SIMAPCIE_GST REQUIRED IMPORTED_TARGET
   gstreamer-1.0
   gstreamer-app-1.0
   glib-2.0
@@ -133,12 +133,12 @@ target_include_directories(sima_neat_pcie_host
     ${SIMA_NEAT_CORE_ROOT}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${SIMA_NEAT_CORE_ROOT}/src
-    ${GST_INCLUDE_DIRS}
+    ${SIMAPCIE_GST_INCLUDE_DIRS}
 )
 target_link_libraries(sima_neat_pcie_host PUBLIC nlohmann_json::nlohmann_json
   PRIVATE SimaScheduler::pcie_host)
 target_link_libraries(sima_neat_pcie_host PRIVATE
-  PkgConfig::GST
+  PkgConfig::SIMAPCIE_GST
   Threads::Threads
   ZLIB::ZLIB
 )
@@ -231,6 +231,9 @@ if (SIMAPCIE_BUILD_TESTS)
   add_test(NAME pcie_host_python_wheel_contract
     COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/python/tests/test_wheel_metadata.py")
+  add_test(NAME pcie_host_cmake_package_contract
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cmake_package_contract.py")
   if(NOT WIN32)
     add_test(NAME pcie_host_delivery_contract
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_delivery.py")
@@ -251,7 +254,7 @@ if (SIMAPCIE_BUILD_TESTS)
   target_link_libraries(unit_pcie_host_caps_test PRIVATE sima_neat_pcie_host)
   target_include_directories(unit_pcie_host_caps_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${GST_INCLUDE_DIRS}
+    ${SIMAPCIE_GST_INCLUDE_DIRS}
   )
 
   add_executable(unit_pcie_host_tensor_test
@@ -261,7 +264,7 @@ if (SIMAPCIE_BUILD_TESTS)
   target_include_directories(unit_pcie_host_tensor_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${SIMA_NEAT_CORE_ROOT}/include
-    ${GST_INCLUDE_DIRS}
+    ${SIMAPCIE_GST_INCLUDE_DIRS}
   )
 
   add_executable(unit_pcie_host_model_facts_test
@@ -279,7 +282,7 @@ if (SIMAPCIE_BUILD_TESTS)
   )
   target_include_directories(unit_pcie_host_output_layout_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   target_link_libraries(unit_pcie_host_output_layout_test PRIVATE
-    sima_neat_pcie_host SimaScheduler::pcie_host PkgConfig::GST)
+    sima_neat_pcie_host SimaScheduler::pcie_host PkgConfig::SIMAPCIE_GST)
   add_test(NAME unit_pcie_host_output_layout_test COMMAND unit_pcie_host_output_layout_test)
 
   add_executable(unit_pcie_host_model_archive_snapshot_test
@@ -297,6 +300,13 @@ if (SIMAPCIE_BUILD_TESTS)
     ${SIMA_NEAT_CORE_ROOT}/tests
   )
   target_link_libraries(unit_pcie_host_lifecycle_test PRIVATE sima_neat_pcie_host)
+
+  add_executable(unit_pcie_pipeline_lifecycle_test
+    ${SIMA_NEAT_CORE_ROOT}/tests/unit_testing/unit_pcie_pipeline_lifecycle_test.cpp
+  )
+  target_include_directories(unit_pcie_pipeline_lifecycle_test PRIVATE
+    ${SIMA_NEAT_CORE_ROOT}
+  )
 
   add_executable(unit_pcie_host_runtime_test
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_runtime_test.cpp
@@ -349,6 +359,7 @@ if (SIMAPCIE_BUILD_TESTS)
   add_test(NAME unit_pcie_host_model_archive_snapshot_test
     COMMAND unit_pcie_host_model_archive_snapshot_test)
   add_test(NAME unit_pcie_host_lifecycle_test COMMAND unit_pcie_host_lifecycle_test)
+  add_test(NAME unit_pcie_pipeline_lifecycle_test COMMAND unit_pcie_pipeline_lifecycle_test)
   add_test(NAME unit_pcie_host_runtime_test COMMAND unit_pcie_host_runtime_test)
   add_test(NAME unit_pcie_host_ssh_runner_test COMMAND unit_pcie_host_ssh_runner_test)
   add_test(NAME unit_pcie_host_async_test_runner_test COMMAND unit_pcie_host_async_test_runner_test)

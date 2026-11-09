@@ -433,6 +433,11 @@ GENAI_CMAKE_ARGS=()
         self.assertIn(
             'set(SIMAPCIE_SCHEDULER_CONFIG_COMPONENTS pcie_host pcie_service_headers)', source)
         self.assertIn('@SIMAPCIE_SCHEDULER_CONFIG_COMPONENTS@', config)
+        self.assertIn('PkgConfig::SIMAPCIE_GST', source)
+        self.assertIn('pkg_check_modules(SIMAPCIE_GST REQUIRED IMPORTED_TARGET GLOBAL', config)
+        self.assertLess(
+            config.index('pkg_check_modules(SIMAPCIE_GST'),
+            config.index('include("${CMAKE_CURRENT_LIST_DIR}/SimaPCIeHostTargets.cmake")'))
         self.assertNotIn('libstdc++6 (>= 14)', source)
 
     def test_default_native_compiler_reaches_required_scheduler_component(self):
