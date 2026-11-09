@@ -42,6 +42,24 @@ class WindowsMetadataTests(unittest.TestCase):
     self.assertEqual(result["resources"], [msi.name])
     self.assertNotIn("python", result["installation"])
 
+  def test_scheduler_and_core_are_one_ordered_native_cohort(self):
+    with tempfile.TemporaryDirectory() as temporary:
+      root = Path(temporary)
+      scheduler = root / "simaai-scheduler-pcie-host-0.6.1-win64.msi"
+      core = root / "sima-pcie-host-0.6.1-win64.msi"
+      scheduler.write_bytes(b"scheduler")
+      core.write_bytes(b"core")
+      result = MODULE.metadata(
+          core, None, "0.6.1", "develop", "a" * 40, scheduler, "0.6.1")
+
+    self.assertEqual(result["resources"], [scheduler.name, core.name])
+    self.assertEqual(
+        [package["owner"] for package in result["installation"]["native-packages"]],
+        ["scheduler", "core"],
+    )
+    self.assertNotIn("msi", result["installation"])
+    self.assertEqual(set(result["resources-checksum"]), {scheduler.name, core.name})
+
 
 if __name__ == "__main__":
   unittest.main()
