@@ -22,3 +22,22 @@ def test_wheel_declares_image_dependencies(tmp_path):
 
   assert "Requires-Dist: numpy\n" in metadata
   assert "Requires-Dist: opencv-python\n" in metadata
+
+
+def test_wheel_platform_tag_uses_interpreter_platform(monkeypatch, tmp_path):
+  script = Path(__file__).parents[1] / "build_wheel.py"
+  spec = importlib.util.spec_from_file_location("build_pyneatpcie_wheel_platform", script)
+  module = importlib.util.module_from_spec(spec)
+  assert spec.loader is not None
+  spec.loader.exec_module(module)
+
+  monkeypatch.setattr(module.sysconfig, "get_platform", lambda: "win-amd64")
+  assert module.wheel_platform_tag() == "win_amd64"
+
+  stage = tmp_path / "stage"
+  package = stage / "pyneatpcie"
+  package.mkdir(parents=True)
+  (package / "__init__.py").write_text("", encoding="utf-8")
+
+  wheel = module.write_wheel(stage, tmp_path / "dist", "1.2.3")
+  assert wheel.name.endswith("-win_amd64.whl")

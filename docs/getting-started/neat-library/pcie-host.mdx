@@ -29,8 +29,10 @@ The Neat PCIe host package supports the following validated host platforms:
 | --- | --- | --- |
 | Ubuntu 22.04 | x86_64 | Supported |
 | Ubuntu 24.04 | x86_64 | Supported |
+| Windows 11 | x86_64 | Native preview; vision inference only |
 
-Arm64 host builds have not yet been validated. Windows 11 is not supported.
+Arm64 host builds have not yet been validated. The Windows preview does not
+support the PCIe GenAI transport.
 
 ## Online installation prerequisites
 
@@ -89,6 +91,40 @@ source ~/pyneatpcie/bin/activate
 python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 gst-inspect-1.0 neatpciehost
 </ShellCommand>
+
+## Install the Windows 11 native preview
+
+The Windows preview is a native Visual Studio build of the `pcie::Model` vision
+API. It does not support `pcie::genai::GenAIModel`. Install the matching x64
+GStreamer MSVC runtime and the SiMa PCIe driver first. Then install the supplied
+Scheduler PCIe-host ZIP and Neat PCIe-host ZIP into the same
+`C:\Program Files\SimaPCIeHost` root. Install the separately supplied
+`win_amd64` wheel into a venv:
+
+```powershell
+py -3 -m venv pyneatpcie
+$wheel = Get-ChildItem .\pyneatpcie-*-win_amd64.whl | Select-Object -First 1
+if (-not $wheel) { throw "No PyNeatPCIe Windows wheel was found" }
+.\pyneatpcie\Scripts\python.exe -m pip install $wheel.FullName
+.\pyneatpcie\Scripts\python.exe -m pip check
+```
+
+The Python package discovers DLLs under the default install root and the default
+x64 GStreamer location before importing its extension. For another install root,
+set `SIMA_PCIE_HOST_LIBRARY_PATH` to the directories containing the PCIe host and
+GStreamer DLLs.
+
+Verify the installed wheel and plugin from outside the source/build tree:
+
+```powershell
+$venv = (Resolve-Path .\pyneatpcie).Path
+$root = "C:\Program Files\SimaPCIeHost"
+$gst = "C:\Program Files\gstreamer\1.0\msvc_x86_64\bin\gst-inspect-1.0.exe"
+$env:PATH = "$root\bin;$(Split-Path $gst);$env:PATH"
+Set-Location $env:TEMP
+& "$venv\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
+& $gst "$root\bin\gstreamer-1.0\gstneatpciehost.dll"
+```
 
 ## Troubleshooting
 

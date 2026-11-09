@@ -6,8 +6,8 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
-import platform
 import sys
+import sysconfig
 import zipfile
 from pathlib import Path
 
@@ -29,14 +29,7 @@ def wheel_abi_tag() -> str:
 
 
 def wheel_platform_tag() -> str:
-  machine = platform.machine().lower()
-  if machine in {"x86_64", "amd64"}:
-    machine = "x86_64"
-  elif machine in {"aarch64", "arm64"}:
-    machine = "aarch64"
-  else:
-    machine = machine.replace("-", "_")
-  return f"linux_{machine}"
+  return sysconfig.get_platform().replace("-", "_").replace(".", "_")
 
 
 def record_hash(data: bytes) -> str:

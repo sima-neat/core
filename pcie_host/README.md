@@ -52,6 +52,10 @@ Set `connection.card_id` to select the card; its default address is
 `10.0.<card_id>.2`. Set `connection.card_host` to override that address.
 For speculative decoding, pass the parent directory of a prepared target/draft
 pair. Both models load in one card session using their compiled configuration.
+GenAI transport is currently available on Linux hosts only. The native Windows
+preview supports `pcie::Model` vision inference; its GenAI symbols are present
+for source compatibility, but constructing a GenAI model reports that the
+Windows provider exposes vision queues only.
 
 ### Multi-model runtime
 
@@ -144,10 +148,10 @@ Useful variants:
 pcie-setup.sh --hosts "10.0.0.2 10.0.1.2"
 pcie-setup.sh --range 0-3
 pcie-setup.sh --key ~/.ssh/sima_neat_pcie_ed25519
-pcie-setup.sh --password '<bootstrap-password>'
 ```
 
-Password/`sshpass` is only a bootstrap path for installing the key. Runtime
+When password bootstrap is required, let `pcie-setup.sh` prompt interactively;
+do not put the password in a command argument. Runtime
 PCIe model APIs use passwordless SSH. If `~/.ssh/sima_neat_pcie_ed25519` exists,
 the PCIe host automatically passes it to `ssh`/`scp`; otherwise it falls back to
 the user's normal SSH configuration.
@@ -381,8 +385,9 @@ implementation sources are build-only inputs to Scheduler CI and are not include
 in the delivered artifacts. The PCIe driver and Platform userspace library remain
 separately provisioned.
 
-PCIe host builds always include the GenAI APIs. They do not acquire the device
-Scheduler profile, Runner, Kernels or Codecs.
+Linux PCIe host builds include the GenAI APIs and transport. Native Windows
+builds expose the same API types but currently support vision inference only.
+Neither build acquires the device Scheduler profile, Runner, Kernels or Codecs.
 
 `build.sh` follows the Scheduler policy in Core's `deps/manifest.json`, in the
 `production` publication environment by default. Branch `snap` first tries

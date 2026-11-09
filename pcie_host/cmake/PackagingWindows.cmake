@@ -1,4 +1,5 @@
-# The initial native Windows delivery is one runtime/development ZIP.
+# Native libraries and headers ship in one ZIP. Python ships as a separately
+# tagged wheel built from the PcieHostPython install component.
 set(CPACK_GENERATOR "ZIP")
 set(CPACK_PACKAGE_NAME "sima-pcie-host")
 set(CPACK_PACKAGE_VENDOR "SiMa.ai")

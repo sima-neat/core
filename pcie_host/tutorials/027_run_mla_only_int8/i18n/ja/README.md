@@ -47,9 +47,7 @@ PCIeホストパッケージをインストールし、[チュートリアルの
 
 このチュートリアルは、MLAの入出力を直接扱うようにコンパイルされたModel ZooのYOLO26n INT8アーカイブを実行します。抽出したPCIeエクストラのルートにダウンロードします。
 
-```bash
-sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.3/models/modalix/yolo26-detection/yolo26n-det-int8-b1.tar.gz
-```
+現在のPlatform 3.0 Model Zooリリースで公開されているダウンロードURLを使用してください。アーティファクトURLはリリース固有です。以前のPlatform用モデルで置き換えないでください。
 
 その他のアーカイブは、Model SDKの`tessellate_parameters`で`enable_mla=True`を指定し、すべての入力に`HWC`のDRAMレイアウト、すべての出力に`HWC16`を指定してコンパイルされていれば条件を満たします。Model Zooの`yolo_v8s`ビルドのように代わりにCVUでテッセレーションを行うアーカイブは、`mla_only`を有効にすると拒否されます。
 
