@@ -3282,23 +3282,3 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR)
     set_property(TEST ${_h0_test}_dataflow APPEND PROPERTY LABELS "dataflow")
   endforeach()
 endif()
-
-# TSan: every test labelled `dataflow` (the <name>_dataflow entries above, the twins, the torture
-# and differential tests, C1's and C3's tests) runs with sanitizers/tsan-dataflow.supp appended to
-# TSAN_OPTIONS (ENVIRONMENT_MODIFICATION, CTest 3.22+; the lane's own options stay in front). Its
-# entries are reports caused by the Dataflow runtime's inline-asm atomics, which TSan does not
-# instrument; each entry gives its reason and evidence. The copy in the build tree's tests/ is
-# installed with the extras and rebased with the tests' paths.
-if (SIMANEAT_DATAFLOW_SOURCE_DIR AND SIMA_ENABLE_TSAN)
-  set(_h0_tsan_supp ${CMAKE_CURRENT_BINARY_DIR}/sanitizers/tsan-dataflow.supp)
-  configure_file(${CMAKE_CURRENT_SOURCE_DIR}/sanitizers/tsan-dataflow.supp ${_h0_tsan_supp}
-    COPYONLY)
-  get_property(_h0_tests DIRECTORY PROPERTY TESTS)
-  foreach(_h0_test IN LISTS _h0_tests)
-    get_test_property(${_h0_test} LABELS _h0_labels)
-    if ("dataflow" IN_LIST _h0_labels)
-      set_property(TEST ${_h0_test} APPEND PROPERTY ENVIRONMENT_MODIFICATION
-        "TSAN_OPTIONS=path_list_append:suppressions=${_h0_tsan_supp}")
-    endif()
-  endforeach()
-endif()
