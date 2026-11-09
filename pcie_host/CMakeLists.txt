@@ -228,6 +228,9 @@ install(
 
 if (SIMAPCIE_BUILD_TESTS)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME pcie_host_python_wheel_contract
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/python/tests/test_wheel_metadata.py")
   if(NOT WIN32)
     add_test(NAME pcie_host_delivery_contract
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_delivery.py")

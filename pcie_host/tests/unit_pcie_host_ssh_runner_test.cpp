@@ -99,6 +99,10 @@ void test_host_platform() {
   require(pcie_internal::host_path_string(std::filesystem::path("path") / "file") ==
               (std::filesystem::path("path") / "file").string(),
           "host path conversion changed an ASCII path");
+  const std::string unicode_path = "customer models \xCE\xB4/model archive.tar.gz";
+  require(pcie_internal::host_path_string(pcie_internal::host_path_from_string(unicode_path)) ==
+              unicode_path,
+          "host path conversion did not preserve a UTF-8 path");
 #ifdef _WIN32
   const auto ssh = pcie_internal::open_ssh_executable("ssh");
   require(ssh.size() >= std::string("ssh.exe").size() &&

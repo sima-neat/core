@@ -102,6 +102,17 @@ std::optional<std::filesystem::path> host_home_directory() {
   return std::filesystem::path(home);
 }
 
+std::filesystem::path host_path_from_string(const std::string& path) {
+#ifdef _WIN32
+  std::u8string utf8;
+  utf8.assign(reinterpret_cast<const char8_t*>(path.data()),
+              reinterpret_cast<const char8_t*>(path.data() + path.size()));
+  return std::filesystem::path(utf8);
+#else
+  return std::filesystem::path(path);
+#endif
+}
+
 std::string host_path_string(const std::filesystem::path& path) {
 #ifdef _WIN32
   const auto utf8 = path.u8string();

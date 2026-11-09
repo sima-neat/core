@@ -27,6 +27,7 @@ private:
 };
 
 std::optional<std::filesystem::path> host_home_directory();
+std::filesystem::path host_path_from_string(const std::string& path);
 std::string host_path_string(const std::filesystem::path& path);
 std::string open_ssh_executable(const char* command);
 std::uint64_t host_process_id();
