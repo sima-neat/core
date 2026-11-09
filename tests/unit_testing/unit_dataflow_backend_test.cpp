@@ -9,7 +9,8 @@
 // under KeepLatest, DropIncoming and Block; a blocking push that never drops under DropIncoming and
 // KeepLatest; close_input cancelling a parked push; stop unblocking a pending pull; pull timeouts
 // -1/0/t; identity (frame_id, stream_id, pts_ns, input_seq) round trip; NV12 planes; DMA-heap
-// tensors; Owned output; a pulled tensor outliving its Run; named endpoints.
+// tensors; Owned output; a pulled tensor outliving its Run; named endpoints; the push-time checks
+// of a tensor that repeats an accepted geometry, back for any change they read (C7a).
 
 #include "nodes/common/Output.h"
 #include "nodes/common/Queue.h"
@@ -552,6 +553,55 @@ void nv12_planes_round_trip() {
   run.close();
 }
 
+// A push whose tensor repeats the geometry of an accepted one may skip the push-time checks (C7a);
+// a change in anything they read brings them back, with the same refusal as on any push.
+void repeated_geometry_is_rechecked_on_change() {
+  Graph g = input_output();
+  Run run = g.build(dataflow()); // the first push binds
+  for (int i = 0; i < 3; ++i) {
+    const Tensor t = rgb(32, 24, static_cast<std::uint8_t>(0x30 + i));
+    require(run.push(TensorList{t}), "repeated geometry push " + std::to_string(i));
+    require(bytes_of(pulled_tensor(run, 2000, "repeated geometry")) == bytes_of(t),
+            "repeated geometry bytes " + std::to_string(i));
+  }
+  const auto refused = [&](const Tensor& t, const std::string& fragment) {
+    require_neat_error([&] { (void)run.push(TensorList{t}); }, error_codes::kInputShape, fragment);
+    Sample s;
+    PullError err;
+    require(run.pull(0, s, &err) == PullStatus::Timeout, "a refused push publishes nothing");
+  };
+  {
+    // The same metadata over a storage one byte short.
+    Tensor t = rgb(32, 24, 0x40);
+    t.storage = make_cpu_owned_storage(t.storage->size_bytes - 1U);
+    refused(t, "storage too small");
+  }
+  {
+    // A byte offset into a storage large enough for it.
+    Tensor t = rgb(32, 24, 0x41);
+    t.storage = make_cpu_owned_storage(t.storage->size_bytes + 3U);
+    t.byte_offset = 3;
+    refused(t, "byte_offset");
+  }
+  {
+    // A row stride below the row's bytes.
+    Tensor t = rgb(32, 24, 0x42);
+    t.strides_bytes = {32 * 3 - 3, 3, 1};
+    refused(t, "stride");
+  }
+  {
+    // Another image format.
+    Tensor t = rgb(32, 24, 0x43);
+    t.semantic.image->format = ImageSpec::PixelFormat::BGR;
+    require_neat_error([&] { (void)run.push(TensorList{t}); }, error_codes::kInputShape);
+  }
+  const Tensor t = rgb(32, 24, 0x44);
+  require(run.push(TensorList{t}), "the accepted geometry still passes after the refusals");
+  require(bytes_of(pulled_tensor(run, 2000, "after refusals")) == bytes_of(t),
+          "bytes after the refusals");
+  run.close();
+}
+
 void dma_heap_tensor_is_copied() {
   // Core's default tensor: a DMA-BUF from the heap. Mappable, so the push copies it.
   const Tensor t =
@@ -630,6 +680,7 @@ RUN_TEST("unit_dataflow_backend_test", ([] {
            pull_timeouts();
            identity_round_trip_and_names();
            nv12_planes_round_trip();
+           repeated_geometry_is_rechecked_on_change();
            dma_heap_tensor_is_copied();
            owned_output_and_lease_lifetime();
            mat_and_bundle_pushes();

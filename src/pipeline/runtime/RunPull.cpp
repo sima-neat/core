@@ -882,12 +882,14 @@ PullStatus runtime::RunCore::pull_named_output(std::string_view output_name, int
 }
 
 std::optional<Sample> runtime::RunCore::pull_optional(int timeout_ms) {
-  Sample out;
+  // The Sample is pulled where it is returned (one return object): a Sample is about 1.5 KB.
+  std::optional<Sample> out(std::in_place);
   PullError err;
-  const PullStatus status = pull(timeout_ms, out, &err);
+  const PullStatus status = pull(timeout_ms, *out, &err);
   if (status == PullStatus::Ok) {
     return out;
   }
+  out.reset();
   if (status == PullStatus::Error) {
     if (err.report.has_value()) {
       GraphReport rep = std::move(*err.report);
@@ -918,7 +920,7 @@ std::optional<Sample> runtime::RunCore::pull_optional(int timeout_ms) {
                                "inspect the attached GraphReport diagnostics for root cause.");
     throw std::runtime_error(decorate_with_error_code(error_codes::kRuntimePull, msg));
   }
-  return std::nullopt;
+  return out;
 }
 
 void Run::require_async_pull_mode(const char* where) const {

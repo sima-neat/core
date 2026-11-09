@@ -152,7 +152,16 @@ Mapping map_cpu_storage_read(const Tensor& tensor) {
        tensor.storage->kind != StorageKind::CpuExternal)) {
     return {};
   }
-  Mapping mapping = tensor.storage->map(MapMode::Read);
+  // TensorBuffer::map without its keepalive (a copy of the holder, for a Mapping that outlives the
+  // storage): this one ends inside the push.
+  const TensorBuffer& storage = *tensor.storage;
+  Mapping mapping;
+  if (storage.map_fn) {
+    mapping = storage.map_fn(MapMode::Read);
+  } else {
+    mapping.data = storage.data;
+    mapping.size_bytes = storage.size_bytes;
+  }
   const auto offset = static_cast<std::size_t>(tensor.byte_offset);
   if (!mapping.data || offset > mapping.size_bytes) {
     return {};
@@ -214,6 +223,75 @@ bool cpu_plane_rows(const Tensor& tensor, const Mapping& mapping, PlaneRole role
   out.stride = stride;
   return true;
 }
+
+// What validate_public_input and dataflow_binding_mismatch read from a leaf tensor
+// (InputStreamUtil.cpp validate_declared_tensor_storage, describe_tensor_geometry_or_throw,
+// validate_public_geometry; DataflowGraphCompiler.cpp dataflow_binding_mismatch), plus the rest of
+// its image spec. Both are pure functions of these fields and of the Run's InputOptions and
+// InputStreamOptions, which never change: a tensor whose geometry equals one that passed both
+// passes both. Only CPU storage and no Semantic beyond an image spec are kept, so a tensor with
+// anything else is always checked in full.
+struct LeafGeometry {
+  StorageKind kind = StorageKind::Unknown;
+  std::size_t storage_bytes = 0;
+  TensorDType dtype = TensorDType::UInt8;
+  TensorLayout layout = TensorLayout::Unknown;
+  std::int64_t byte_offset = 0;
+  Device device{};
+  std::vector<std::int64_t> shape;
+  std::vector<std::int64_t> strides_bytes;
+  std::vector<TensorAxisSemantic> axis_semantics;
+  std::vector<Plane> planes;
+  std::optional<ImageSpec> image;
+
+  static bool keepable(const Tensor& t) noexcept {
+    const Semantic& s = t.semantic;
+    return t.storage &&
+           (t.storage->kind == StorageKind::CpuOwned ||
+            t.storage->kind == StorageKind::CpuExternal) &&
+           !s.audio && !s.tokens && !s.text && !s.byte_stream && !s.tess && !s.encoded &&
+           !s.quant && !s.detection && !s.feature && !s.preprocess;
+  }
+
+  static LeafGeometry of(const Tensor& t) {
+    LeafGeometry g;
+    g.kind = t.storage->kind;
+    g.storage_bytes = t.storage->size_bytes;
+    g.dtype = t.dtype;
+    g.layout = t.layout;
+    g.byte_offset = t.byte_offset;
+    g.device = t.device;
+    g.shape = t.shape;
+    g.strides_bytes = t.strides_bytes;
+    g.axis_semantics = t.axis_semantics;
+    g.planes = t.planes;
+    g.image = t.semantic.image;
+    return g;
+  }
+
+  bool matches(const Tensor& t) const noexcept {
+    if (!keepable(t) || t.storage->kind != kind || t.storage->size_bytes != storage_bytes ||
+        t.dtype != dtype || t.layout != layout || t.byte_offset != byte_offset ||
+        t.device.type != device.type || t.device.id != device.id || t.shape != shape ||
+        t.strides_bytes != strides_bytes || t.axis_semantics != axis_semantics ||
+        t.planes.size() != planes.size() || t.semantic.image.has_value() != image.has_value()) {
+      return false;
+    }
+    if (image && (t.semantic.image->format != image->format ||
+                  t.semantic.image->color_space != image->color_space)) {
+      return false;
+    }
+    for (std::size_t i = 0; i < planes.size(); ++i) {
+      const Plane& a = t.planes[i];
+      const Plane& b = planes[i];
+      if (a.role != b.role || a.byte_offset != b.byte_offset || a.shape != b.shape ||
+          a.strides_bytes != b.strides_bytes) {
+        return false;
+      }
+    }
+    return true;
+  }
+};
 
 df::Extent extent_of(const std::vector<std::int64_t>& shape) {
   df::Extent extent;
@@ -349,7 +427,11 @@ public:
     if (status != PullStatus::Ok) {
       return status;
     }
-    out = make_sample(bound->binding, std::move(message));
+    // The caller's list buffer is reused: Run::pull(int, Sample&, PullError*) with one Sample
+    // allocates no list per pull.
+    TensorList tensors = std::move(out.tensors);
+    tensors.clear();
+    out = make_sample(bound->binding, std::move(message), std::move(tensors));
     count_pulled();
     return PullStatus::Ok;
   }
@@ -362,7 +444,7 @@ public:
     if (status != PullStatus::Ok) {
       return status;
     }
-    out = make_tensors(bound->binding, std::move(message));
+    fill_tensors(bound->binding, std::move(message), out);
     count_pulled();
     return PullStatus::Ok;
   }
@@ -542,10 +624,17 @@ private:
     if (allocation) {
       require_pushable(*allocation, where);
     }
-    validate_public_input(tensors.front(), config_.input, stream_options_, where);
-    for (const Tensor& tensor : tensors) {
-      if (tensor.storage && tensor.storage->kind == StorageKind::GstSample) {
-        enforce_transferable(sample_from_tensors(TensorList{tensor}), where);
+    // A leaf with the geometry of the first leaf that passed every check below passes them again
+    // (LeafGeometry): they are skipped for it.
+    const LeafGeometry* known =
+        tensors.size() == 1U ? validated_leaf_.load(std::memory_order_acquire) : nullptr;
+    const bool validated = known && known->matches(tensors.front());
+    if (!validated) {
+      validate_public_input(tensors.front(), config_.input, stream_options_, where);
+      for (const Tensor& tensor : tensors) {
+        if (tensor.storage && tensor.storage->kind == StorageKind::GstSample) {
+          enforce_transferable(sample_from_tensors(TensorList{tensor}), where);
+        }
       }
     }
     Bound* bound = bound_.load(std::memory_order_acquire);
@@ -567,8 +656,11 @@ private:
       return push_record(*bound, tensors, stamp, block, where);
     }
     const Tensor& tensor = tensors.front();
-    if (const std::string why = dataflow_binding_mismatch(bound->binding, tensor); !why.empty()) {
-      throw_input_shape(std::string(where) + ": " + why);
+    if (!validated) {
+      if (const std::string why = dataflow_binding_mismatch(bound->binding, tensor); !why.empty()) {
+        throw_input_shape(std::string(where) + ": " + why);
+      }
+      remember_validated_leaf(tensor);
     }
     if (allocation) {
       return push_allocated(*bound, tensor, *allocation, stamp, block, where);
@@ -581,6 +673,19 @@ private:
     df::WriteLoan loan = std::get<df::WriteLoan>(std::move(allocated));
     const df::Extent extent = copy_into(bound->binding, tensor, loan.bytes(), where);
     return settle(publish(*bound, std::move(loan), stamp, extent, block), block, where);
+  }
+
+  // The first leaf that passed validate_public_input and the binding check, kept once (later
+  // pushes read it without a lock).
+  void remember_validated_leaf(const Tensor& tensor) {
+    if (validated_leaf_.load(std::memory_order_acquire) || !LeafGeometry::keepable(tensor)) {
+      return;
+    }
+    std::lock_guard<std::mutex> lock(mu_);
+    if (!validated_leaf_storage_) {
+      validated_leaf_storage_ = std::make_unique<LeafGeometry>(LeafGeometry::of(tensor));
+      validated_leaf_.store(validated_leaf_storage_.get(), std::memory_order_release);
+    }
   }
 
   // A record: every field copied at its offset in one slot, one Extent per field.
@@ -718,6 +823,16 @@ private:
     return bound_.load(std::memory_order_acquire);
   }
 
+  // error_util::set_pull_error(err, "", ""), without building its arguments: no code, no message,
+  // no report.
+  static void clear_pull_error(PullError* err) {
+    if (err) {
+      err->code.clear();
+      err->message.clear();
+      err->report.reset();
+    }
+  }
+
   // A pull that found nothing in time. pull(0) is a non-blocking poll and leaves the error empty,
   // as GStreamer's Run does (RunPull.cpp:660-664): pull_samples() drains with it, and "nothing
   // more right now" must not read as a stall (unit_run_api_matrix_test's poll contract).
@@ -729,12 +844,14 @@ private:
     return PullStatus::Timeout;
   }
 
-  // The next message of the output, or why there is none (both pull verbs).
+  // The next message of the output, or why there is none (both pull verbs). The call's name for
+  // messages is built only when a message needs it.
   PullStatus take(std::optional<std::string_view> output, int timeout_ms, PullError* err,
                   df::Message& message, Bound*& bound) {
-    error_util::set_pull_error(err, "", "");
-    const std::string where =
-        output ? "Run::pull(\"" + std::string(*output) + "\")" : std::string("Run::pull");
+    clear_pull_error(err);
+    const auto where = [&output] {
+      return output ? "Run::pull(\"" + std::string(*output) + "\")" : std::string("Run::pull");
+    };
     if (output) {
       if (output->empty()) {
         error_util::set_pull_error(err, error_codes::kRuntimePull,
@@ -745,7 +862,7 @@ private:
           config_.output_names.end()) {
         error_util::set_pull_error(
             err, error_codes::kRuntimePull,
-            where + ": unknown output. Available outputs: " + names_text(config_.output_names));
+            where() + ": unknown output. Available outputs: " + names_text(config_.output_names));
         return PullStatus::Error;
       }
     }
@@ -756,10 +873,10 @@ private:
       // Nothing was pushed yet: a pull waits for the first push in Core (WORKER.md 18.1).
       if (stopped_.load(std::memory_order_acquire) ||
           input_closed_.load(std::memory_order_acquire)) {
-        error_util::set_pull_error(err, error_codes::kRuntimePull, where + ": stream closed");
+        error_util::set_pull_error(err, error_codes::kRuntimePull, where() + ": stream closed");
         return PullStatus::Closed;
       }
-      return timed_out(timeout_ms, where, err);
+      return timed_out(timeout_ms, where(), err);
     }
 
     df::Result<df::Message> pulled = bound->session.pull(bound->fetch, deadline);
@@ -767,10 +884,10 @@ private:
       const pipeline_internal::DataflowErrorMapping mapping =
           pipeline_internal::map_dataflow_error(*error);
       if (mapping.status == PullStatus::Timeout) {
-        return timed_out(timeout_ms, where, err);
+        return timed_out(timeout_ms, where(), err);
       }
       if (mapping.status == PullStatus::Closed) {
-        error_util::set_pull_error(err, error_codes::kRuntimePull, where + ": stream closed");
+        error_util::set_pull_error(err, error_codes::kRuntimePull, where() + ": stream closed");
         // Closed and drained after close_input: the Run stops itself, as the GStreamer Run does
         // at its end of stream (RunPull.cpp:798-810).
         if (input_closed_.load(std::memory_order_acquire) &&
@@ -779,7 +896,7 @@ private:
         }
         return PullStatus::Closed;
       }
-      const std::string text = pipeline_internal::dataflow_error_text(*error, where);
+      const std::string text = pipeline_internal::dataflow_error_text(*error, where());
       error_util::set_pull_error(err, mapping.code, text,
                                  error_util::make_report(mapping.code, text));
       if (mapping.terminal) {
@@ -967,12 +1084,13 @@ private:
     core_.outputs_ready.fetch_add(1, std::memory_order_relaxed);
   }
 
-  // A dense tensor over `bytes` of a pulled message, with the Core metadata the binding kept.
-  static Tensor dense_tensor(TensorDType dtype, TensorLayout layout,
-                             const std::vector<TensorAxisSemantic>& axis_semantics,
-                             const Semantic& semantic, std::span<const std::byte> bytes,
-                             const df::Extent& extent, std::shared_ptr<void> holder) {
-    Tensor tensor;
+  // A dense tensor over `bytes` of a pulled message, with the Core metadata the binding kept,
+  // written into `tensor` (a default Tensor, built where it is returned: a Tensor is about 1 KB,
+  // and building it elsewhere and moving it costs as much as building it).
+  static void fill_dense(Tensor& tensor, TensorDType dtype, TensorLayout layout,
+                         const std::vector<TensorAxisSemantic>& axis_semantics,
+                         const Semantic& semantic, std::span<const std::byte> bytes,
+                         const df::Extent& extent, std::shared_ptr<void> holder) {
     tensor.storage = make_cpu_external_storage(const_cast<std::byte*>(bytes.data()), bytes.size(),
                                                std::move(holder), true);
     tensor.dtype = dtype;
@@ -982,17 +1100,27 @@ private:
     tensor.semantic = semantic;
     tensor.read_only = true;
     tensor.shape.assign(extent.dims.begin(), extent.dims.begin() + extent.rank);
+  }
+
+  static Tensor dense_tensor(TensorDType dtype, TensorLayout layout,
+                             const std::vector<TensorAxisSemantic>& axis_semantics,
+                             const Semantic& semantic, std::span<const std::byte> bytes,
+                             const df::Extent& extent, std::shared_ptr<void> holder) {
+    Tensor tensor;
+    fill_dense(tensor, dtype, layout, axis_semantics, semantic, bytes, extent, std::move(holder));
     return tensor;
   }
 
-  // The leaf tensor of a pulled message (dense or planar), over its slot (`holder` keeps it).
-  static Tensor leaf_tensor(const DataflowInputBinding& binding, std::span<const std::byte> bytes,
-                            const df::Extent& extent, std::shared_ptr<void> holder) {
+  // The leaf tensor of a pulled message (dense or planar), over its slot (`holder` keeps it),
+  // written into `tensor` (a default Tensor).
+  static void fill_leaf(Tensor& tensor, const DataflowInputBinding& binding,
+                        std::span<const std::byte> bytes, const df::Extent& extent,
+                        std::shared_ptr<void> holder) {
     if (binding.planes == DataflowInputBinding::Planes::None) {
-      return dense_tensor(binding.dtype, binding.layout, binding.axis_semantics, binding.semantic,
-                          bytes, extent, std::move(holder));
+      fill_dense(tensor, binding.dtype, binding.layout, binding.axis_semantics, binding.semantic,
+                 bytes, extent, std::move(holder));
+      return;
     }
-    Tensor tensor;
     tensor.storage = make_cpu_external_storage(const_cast<std::byte*>(bytes.data()), bytes.size(),
                                                std::move(holder), true);
     tensor.dtype = binding.dtype;
@@ -1008,22 +1136,20 @@ private:
     tensor.layout = TensorLayout::HW;
     tensor.strides_bytes = {planar.plane[0].stride_bytes, 1};
     const auto plane = [&](PlaneRole role, std::size_t p, std::int64_t rows, std::int64_t cols) {
-      Plane out;
+      Plane& out = tensor.planes.emplace_back();
       out.role = role;
       out.shape = {rows, cols};
       out.strides_bytes = {planar.plane[p].stride_bytes, 1};
       out.byte_offset = planar.plane[p].offset_bytes;
-      return out;
     };
     tensor.planes.reserve(binding.planes == DataflowInputBinding::Planes::Nv12 ? 2U : 3U);
-    tensor.planes.push_back(plane(PlaneRole::Y, 0, h, w));
+    plane(PlaneRole::Y, 0, h, w);
     if (binding.planes == DataflowInputBinding::Planes::Nv12) {
-      tensor.planes.push_back(plane(PlaneRole::UV, 1, h / 2, w));
+      plane(PlaneRole::UV, 1, h / 2, w);
     } else {
-      tensor.planes.push_back(plane(PlaneRole::U, 1, h / 2, w / 2));
-      tensor.planes.push_back(plane(PlaneRole::V, 2, h / 2, w / 2));
+      plane(PlaneRole::U, 1, h / 2, w / 2);
+      plane(PlaneRole::V, 2, h / 2, w / 2);
     }
-    return tensor;
   }
 
   // An independent CPU copy of `bytes` (OutputMemory::Owned): the slot returns to the pool when
@@ -1059,14 +1185,17 @@ private:
 
   // The pulled Sample, shaped as the GStreamer Input -> Output Run returns it
   // (InputStreamPull.cpp:830-884): a TensorSet of the item's tensors, media type and payload tag
-  // from the first tensor, identity from the stamp (SampleProjection).
-  Sample make_sample(const DataflowInputBinding& binding, df::Message message) const {
+  // from the first tensor, identity from the stamp (SampleProjection). `tensors` (empty) lends its
+  // buffer to the Sample's list.
+  Sample make_sample(const DataflowInputBinding& binding, df::Message message,
+                     TensorList tensors) const {
     Stamp stamp;
     core_stamp(message.stamp(), streams_, stamp);
     const bool owned = config_.run.output_memory == OutputMemory::Owned;
     Sample out;
     out.kind = SampleKind::TensorSet;
     out.owned = owned;
+    out.tensors = std::move(tensors);
     const Semantic& first =
         binding.is_record() ? binding.fields.front().semantic : binding.semantic;
     const bool image = first.image.has_value();
@@ -1082,30 +1211,33 @@ private:
     } else {
       const std::span<const std::byte> bytes = message.bytes();
       const df::Extent extent = message.extent();
+      Tensor& tensor = out.tensors.emplace_back();
       if (owned) {
         // OutputMemory::Owned: an independent CPU copy; the slot returns to the pool now.
-        Tensor tensor = leaf_tensor(binding, bytes, extent, nullptr);
+        fill_leaf(tensor, binding, bytes, extent, nullptr);
         tensor.storage = owned_copy(bytes);
-        out.tensors.push_back(std::move(tensor));
       } else {
         // A lease on the slot: the Message is the holder, released with the last copy of the
         // tensor.
         auto holder = std::make_shared<df::Message>(std::move(message));
-        out.tensors.push_back(leaf_tensor(binding, holder->bytes(), extent, holder));
+        const std::span<const std::byte> leased = holder->bytes();
+        fill_leaf(tensor, binding, leased, extent, std::move(holder));
       }
     }
     pipeline_internal::apply_pulled_stamp(stamp, out);
     return out;
   }
 
-  // The pulled tensors (Run::pull(milliseconds)): one for a leaf, the fields in schema order for a
-  // record, every one carrying the message's Stamp. One allocation holds the message and the
-  // envelope they share; the list, and each tensor's storage and shape, are the only others.
-  TensorList make_tensors(const DataflowInputBinding& binding, df::Message message) const {
+  // The pulled tensors (Run::pull(milliseconds)) into `out`: one for a leaf, the fields in schema
+  // order for a record, every one carrying the message's Stamp. One allocation holds the message
+  // and the envelope they share; the list (unless `out` has room), and each tensor's storage and
+  // shape, are the only others. A leaf is built in its place in the list.
+  void fill_tensors(const DataflowInputBinding& binding, df::Message message,
+                    TensorList& out) const {
     const bool owned = config_.run.output_memory == OutputMemory::Owned;
     auto pulled = std::make_shared<PulledMessage>(std::move(message));
     core_stamp(pulled->message.stamp(), streams_, pulled->envelope.stamp);
-    const std::shared_ptr<const TensorEnvelope> envelope(pulled, &pulled->envelope);
+    std::shared_ptr<const TensorEnvelope> envelope(pulled, &pulled->envelope);
     if (binding.is_record()) {
       std::shared_ptr<void> holder(pulled, &pulled->message);
       TensorList fields = record_fields(binding, pulled->message, holder, owned);
@@ -1115,21 +1247,22 @@ private:
       if (owned) {
         pulled->message = df::Message{}; // the copies are made: the slot returns to the pool
       }
-      return fields;
+      out = std::move(fields);
+      return;
     }
     const std::span<const std::byte> bytes = pulled->message.bytes();
     const df::Extent extent = pulled->message.extent();
-    TensorList out(1);
-    Tensor& leaf = out.front();
+    out.clear();
+    Tensor& leaf = out.emplace_back();
     if (owned) {
-      leaf = leaf_tensor(binding, bytes, extent, nullptr);
+      fill_leaf(leaf, binding, bytes, extent, nullptr);
       leaf.storage = owned_copy(bytes);
       pulled->message = df::Message{};
     } else {
-      leaf = leaf_tensor(binding, bytes, extent, std::shared_ptr<void>(pulled, &pulled->message));
+      df::Message* const leased = &pulled->message;
+      fill_leaf(leaf, binding, bytes, extent, std::shared_ptr<void>(std::move(pulled), leased));
     }
-    leaf.envelope = envelope;
-    return out;
+    leaf.envelope = std::move(envelope);
   }
 
   RunCore& core_;
@@ -1145,6 +1278,10 @@ private:
   std::atomic<bool> input_closed_{false};
   std::atomic<bool> stopped_{false};
   std::atomic<std::uint64_t> polls_{0};
+
+  // The validated leaf geometry: written once under mu_, read lock-free (release/acquire).
+  std::unique_ptr<LeafGeometry> validated_leaf_storage_;
+  std::atomic<const LeafGeometry*> validated_leaf_{nullptr};
 
   mutable std::mutex error_mu_;
   std::optional<PullError> last_error_;
