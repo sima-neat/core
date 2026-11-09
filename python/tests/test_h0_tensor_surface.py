@@ -8,7 +8,9 @@ values; records (``Tensor.record``, ``is_record``, ``fields``, ``field_names``, 
 ``Graph.input``/``Graph.output``; ``Run.pull_result`` (``PullResult``: four outcomes, a list of
 Tensors carrying the item's Stamp, a pushed list's first stamp, records as their fields);
 ``Run(tensors)``; ``Run.on_output`` (thread, order, exclusive output, a raising callback, teardown
-while a callback needs the GIL); the deprecated ``Run.pull`` (once per call site); ``Run.alloc``
+while a callback needs the GIL); the deprecated ``Run.pull`` and
+``Run.pull_tensors`` (once per call site; the C++ runtime's one-time stderr line never reaches
+Python); ``Run.alloc``
 with ``Tensor.copy_from`` and its commit; and the GIL released by every blocking call.
 """
 
@@ -312,6 +314,65 @@ def test_pull_is_deprecated_once_per_call_site(backend):
     assert _pull(run, "out", 5000) is None  # end of stream: still None on the Sample form
   finally:
     run.close()
+
+
+def test_pull_tensors_is_deprecated_once_per_call_site(backend, capfd):
+  run = _named_graph().build(_options(backend))
+  try:
+    for tag in range(4):
+      assert run.push([_rgb(8, 8, tag)])
+    with warnings.catch_warnings(record=True) as caught:
+      warnings.simplefilter("default")
+      pulled = []
+      for _ in range(2):
+        pulled.append(run.pull_tensors("out", 5000))  # one call site, called twice
+      pulled.append(run.pull_tensors(5000))  # a second call site
+    deprecations = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+    assert len(deprecations) == 2, [str(w.message) for w in caught]
+    assert all("Run.pull_tensors()" in str(w.message) for w in deprecations)
+    assert all("pull_result" in str(w.message) for w in deprecations)
+    assert all(w.filename == __file__ for w in deprecations)
+    # Unchanged: a list of Tensors per item.
+    assert [[_bytes(t) for t in ts] for ts in pulled] == [
+        [_rgb_array(8, 8, tag).tobytes()] for tag in range(3)]
+
+    with warnings.catch_warnings():
+      warnings.simplefilter("error", DeprecationWarning)
+      with pytest.raises(DeprecationWarning):
+        run.pull_tensors("out", 5000)
+    # The warning is raised before the pull: the fourth output is still there.
+    last = run.pull_result("out", 5000)
+    assert last.ok and _bytes(last.value()[0]) == _rgb_array(8, 8, 3).tobytes()
+    with warnings.catch_warnings():
+      warnings.simplefilter("ignore", DeprecationWarning)
+      assert run.pull_tensors("out", 0) == []  # timeout: still an empty list
+  finally:
+    run.close()
+  # The C++ runtime's one-time "[WARN] Run::... is deprecated" line is for C++ callers.
+  assert "[WARN] Run::" not in capfd.readouterr().err
+
+
+def test_python_never_sees_the_cpp_deprecation_line(backend, capfd):
+  run = _named_graph().build(_options(backend))
+  try:
+    for tag in range(3):
+      assert run.push([_rgb(8, 8, tag)])
+    with warnings.catch_warnings(record=True) as caught:
+      warnings.simplefilter("always")
+      first = run.pull("out", 5000)
+      second = run.pull_tensors("out", 5000)
+      third = run.pull_samples("out", 5000)
+    deprecations = [str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)]
+    # Run.pull (C6) and Run.pull_tensors (C5) warn; Run.pull_samples does not (it is the only
+    # Python Sample pull without a deprecation: Sample.attributes readers need it).
+    assert len(deprecations) == 2, deprecations
+    assert "Run.pull()" in deprecations[0] and "Run.pull_tensors()" in deprecations[1]
+    assert _bytes(pn.to_tensor(first)) == _rgb_array(8, 8, 0).tobytes()
+    assert [_bytes(t) for t in second] == [_rgb_array(8, 8, 1).tobytes()]
+    assert _bytes(pn.to_tensor(third)) == _rgb_array(8, 8, 2).tobytes()
+  finally:
+    run.close()
+  assert "[WARN] Run::" not in capfd.readouterr().err
 
 
 def test_blocking_pull_releases_the_gil(backend):

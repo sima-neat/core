@@ -7187,7 +7187,7 @@ bool Model::Runner::push(const std::vector<cv::Mat>& inputs) {
     }
     return run_.push(tensors);
   }
-  return run_.push(inputs);
+  return run_internal::push_mats(run_, inputs);
 }
 #endif
 
@@ -7208,7 +7208,7 @@ bool Model::Runner::try_push(const simaai::neat::Sample& inputs) {
 }
 
 simaai::neat::Sample Model::Runner::pull(int timeout_ms) {
-  auto output = run_.pull(timeout_ms);
+  auto output = run_internal::pull_optional(run_, timeout_ms);
   return output.has_value() ? std::move(*output) : simaai::neat::Sample{};
 }
 

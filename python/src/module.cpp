@@ -1517,6 +1517,20 @@ void warn_run_pull_deprecated() {
   }
 }
 
+// Run.pull_tensors(...): kept one release with a DeprecationWarning (H0 C5), raised as Run.pull's
+// is. Like every binding of a deprecated C++ Run form, it calls run_internal:: so the C++
+// runtime's one-time stderr warning (meant for C++ callers) never reaches Python.
+void warn_run_pull_tensors_deprecated() {
+  if (PyErr_WarnEx(PyExc_DeprecationWarning,
+                   "Run.pull_tensors() is deprecated; use Run.pull_result(name, timeout_ms), "
+                   "which returns a PullResult (status, error, value(): a list of Tensors; "
+                   "Tensor.leaves() flattens a record). Run.pull_tensors will be removed in the "
+                   "next release.",
+                   1) != 0) {
+    throw nb::python_error();
+  }
+}
+
 // Tensor.copy_from(source): fill a writable dense Tensor (for example one from Run.alloc) with the
 // bytes of `source`, tightly packed at this Tensor's current shape.
 void tensor_copy_from(const Tensor& self, const nb::object& source) {
@@ -3411,7 +3425,7 @@ NB_MODULE(_pyneat_core, m) {
           [](Run& run, std::string name, int timeout_ms) {
             warn_run_pull_deprecated();
             nb::gil_scoped_release release;
-            return run.pull(name, timeout_ms);
+            return simaai::neat::run_internal::pull_optional(run, name, timeout_ms);
           },
           "name"_a, "timeout_ms"_a = -1,
           "Deprecated: returns Sample | None (None on timeout or end of stream). Emits a "
@@ -3421,7 +3435,7 @@ NB_MODULE(_pyneat_core, m) {
           [](Run& run, int timeout_ms) {
             warn_run_pull_deprecated();
             nb::gil_scoped_release release;
-            return run.pull(timeout_ms);
+            return simaai::neat::run_internal::pull_optional(run, timeout_ms);
           },
           "timeout_ms"_a = -1,
           "Deprecated: returns Sample | None (None on timeout or end of stream). Emits a "
@@ -3489,19 +3503,35 @@ NB_MODULE(_pyneat_core, m) {
       .def(
           "pull_tensors",
           [](Run& run, std::string name, int timeout_ms) {
-            return run.pull_tensors(name, timeout_ms);
+            warn_run_pull_tensors_deprecated();
+            nb::gil_scoped_release release;
+            return simaai::neat::run_internal::pull_tensors(run, name, timeout_ms);
           },
-          "name"_a, "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
-      .def("pull_tensors", static_cast<TensorList (Run::*)(int)>(&Run::pull_tensors),
-           "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
+          "name"_a, "timeout_ms"_a = -1,
+          "Deprecated: returns a list of Tensors (empty on timeout or end of stream). Emits a "
+          "DeprecationWarning (its replacement is Run.pull_result).")
+      .def(
+          "pull_tensors",
+          [](Run& run, int timeout_ms) {
+            warn_run_pull_tensors_deprecated();
+            nb::gil_scoped_release release;
+            return simaai::neat::run_internal::pull_tensors(run, timeout_ms);
+          },
+          "timeout_ms"_a = -1,
+          "Deprecated: returns a list of Tensors (empty on timeout or end of stream). Emits a "
+          "DeprecationWarning (its replacement is Run.pull_result).")
       .def(
           "pull_samples",
           [](Run& run, std::string name, int timeout_ms) {
-            return run.pull_samples(name, timeout_ms);
+            return simaai::neat::run_internal::pull_samples(run, name, timeout_ms);
           },
           "name"_a, "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
-      .def("pull_samples", static_cast<Sample (Run::*)(int)>(&Run::pull_samples),
-           "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
+      .def(
+          "pull_samples",
+          [](Run& run, int timeout_ms) {
+            return simaai::neat::run_internal::pull_samples(run, timeout_ms);
+          },
+          "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
       .def(
           "run",
           [](Run& run, nb::object input, int timeout_ms, bool copy,

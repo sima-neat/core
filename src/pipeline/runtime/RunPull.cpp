@@ -11,6 +11,7 @@
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/SampleUtil.h"
+#include "pipeline/runtime/RunDeprecation.h"
 
 #include <gst/gst.h>
 
@@ -928,7 +929,7 @@ void Run::require_async_pull_mode(const char* where) const {
   }
 }
 
-std::optional<Sample> Run::pull(int timeout_ms) {
+std::optional<Sample> Run::pull_optional_impl(int timeout_ms) {
   require_async_pull_mode("Run::pull");
   if (core_ && run_internal::output_delivered_to_callback(*core_, std::nullopt)) {
     throw std::runtime_error(decorate_with_error_code(
@@ -938,7 +939,7 @@ std::optional<Sample> Run::pull(int timeout_ms) {
   return core_ ? core_->pull_optional(timeout_ms) : std::nullopt;
 }
 
-std::optional<Sample> Run::pull(std::string_view output_name, int timeout_ms) {
+std::optional<Sample> Run::pull_optional_impl(std::string_view output_name, int timeout_ms) {
   require_async_pull_mode("Run::pull(name)");
   Sample out;
   PullError err;
@@ -952,7 +953,7 @@ std::optional<Sample> Run::pull(std::string_view output_name, int timeout_ms) {
   return std::nullopt;
 }
 
-TensorList Run::pull_tensors(int timeout_ms) {
+TensorList Run::pull_tensors_impl(int timeout_ms) {
   require_async_pull_mode("Run::pull_tensors");
   Sample out;
   PullError err;
@@ -966,7 +967,7 @@ TensorList Run::pull_tensors(int timeout_ms) {
   throw_pull_failure_with_context("Run::pull_tensors", status, std::move(err), last_error());
 }
 
-TensorList Run::pull_tensors(std::string_view output_name, int timeout_ms) {
+TensorList Run::pull_tensors_impl(std::string_view output_name, int timeout_ms) {
   require_async_pull_mode("Run::pull_tensors(name)");
   Sample out;
   PullError err;
@@ -980,7 +981,7 @@ TensorList Run::pull_tensors(std::string_view output_name, int timeout_ms) {
   throw_pull_failure_with_context("Run::pull_tensors(name)", status, std::move(err), last_error());
 }
 
-Sample Run::pull_samples(int timeout_ms) {
+Sample Run::pull_samples_impl(int timeout_ms) {
   require_async_pull_mode("Run::pull_samples");
   Sample out;
   auto start = std::chrono::steady_clock::now();
@@ -1012,7 +1013,7 @@ Sample Run::pull_samples(int timeout_ms) {
   }
 }
 
-Sample Run::pull_samples(std::string_view output_name, int timeout_ms) {
+Sample Run::pull_samples_impl(std::string_view output_name, int timeout_ms) {
   require_async_pull_mode("Run::pull_samples(name)");
   Sample out;
   auto start = std::chrono::steady_clock::now();
@@ -1043,6 +1044,63 @@ Sample Run::pull_samples(std::string_view output_name, int timeout_ms) {
     throw_pull_failure_with_context("Run::pull_samples(name)", status, std::move(err),
                                     last_error());
   }
+}
+
+// The deprecated pull forms (Run.h): the warning, then the body above. Core's own calls take
+// run_internal:: (below) and never warn.
+std::optional<Sample> Run::pull(int timeout_ms) {
+  runtime::warn_deprecated_once(runtime::DeprecatedRunApi::PullOptional);
+  return pull_optional_impl(timeout_ms);
+}
+
+std::optional<Sample> Run::pull(std::string_view output_name, int timeout_ms) {
+  runtime::warn_deprecated_once(runtime::DeprecatedRunApi::PullOptionalNamed);
+  return pull_optional_impl(output_name, timeout_ms);
+}
+
+TensorList Run::pull_tensors(int timeout_ms) {
+  runtime::warn_deprecated_once(runtime::DeprecatedRunApi::PullTensors);
+  return pull_tensors_impl(timeout_ms);
+}
+
+TensorList Run::pull_tensors(std::string_view output_name, int timeout_ms) {
+  runtime::warn_deprecated_once(runtime::DeprecatedRunApi::PullTensorsNamed);
+  return pull_tensors_impl(output_name, timeout_ms);
+}
+
+Sample Run::pull_samples(int timeout_ms) {
+  runtime::warn_deprecated_once(runtime::DeprecatedRunApi::PullSamples);
+  return pull_samples_impl(timeout_ms);
+}
+
+Sample Run::pull_samples(std::string_view output_name, int timeout_ms) {
+  runtime::warn_deprecated_once(runtime::DeprecatedRunApi::PullSamplesNamed);
+  return pull_samples_impl(output_name, timeout_ms);
+}
+
+std::optional<Sample> run_internal::pull_optional(Run& run, int timeout_ms) {
+  return run.pull_optional_impl(timeout_ms);
+}
+
+std::optional<Sample> run_internal::pull_optional(Run& run, std::string_view output_name,
+                                                  int timeout_ms) {
+  return run.pull_optional_impl(output_name, timeout_ms);
+}
+
+TensorList run_internal::pull_tensors(Run& run, int timeout_ms) {
+  return run.pull_tensors_impl(timeout_ms);
+}
+
+TensorList run_internal::pull_tensors(Run& run, std::string_view output_name, int timeout_ms) {
+  return run.pull_tensors_impl(output_name, timeout_ms);
+}
+
+Sample run_internal::pull_samples(Run& run, int timeout_ms) {
+  return run.pull_samples_impl(timeout_ms);
+}
+
+Sample run_internal::pull_samples(Run& run, std::string_view output_name, int timeout_ms) {
+  return run.pull_samples_impl(output_name, timeout_ms);
 }
 
 TensorList Run::pull_tensors_strict(int timeout_ms) {
@@ -1080,7 +1138,7 @@ void Run::enqueue_run_images(const std::vector<cv::Mat>& inputs) {
         decorate_with_error_code(error_codes::kRuntimePull, "Run::run: stream is closed"));
   }
   if (st->dataflow_ || st->graph_execution_) {
-    if (!push(inputs)) {
+    if (!push_mats_impl(inputs)) {
       throw_push_returned_false("Run::run", last_error());
     }
     return;

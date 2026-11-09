@@ -64,6 +64,15 @@ std::shared_ptr<runtime::RunCore> release_core(Run& run);
 std::shared_ptr<const runtime::RunCore> core(const Run& run);
 MeasureScope start_measurement_on_core(std::shared_ptr<runtime::RunCore> core,
                                        const MeasureOptions& opt);
+// Core's own calls of Run's deprecated forms (Model::Runner, the stage runner, the Python module):
+// the same behavior without the deprecation warning, which is for the application's own calls.
+bool push_mats(Run& run, const std::vector<cv::Mat>& inputs);
+std::optional<Sample> pull_optional(Run& run, int timeout_ms);
+std::optional<Sample> pull_optional(Run& run, std::string_view output_name, int timeout_ms);
+TensorList pull_tensors(Run& run, int timeout_ms);
+TensorList pull_tensors(Run& run, std::string_view output_name, int timeout_ms);
+Sample pull_samples(Run& run, int timeout_ms);
+Sample pull_samples(Run& run, std::string_view output_name, int timeout_ms);
 } // namespace run_internal
 #endif
 
@@ -635,7 +644,7 @@ private:
  * @code
  *   auto run = graph.build(TensorList{input});
  *   run.push(TensorList{another_input});
- *   auto sample = run.pull(/ * timeout_ms = * / 100);
+ *   auto out = run.pull(std::chrono::milliseconds(100));  // Result<TensorList>
  * @endcode
  *
  * **Thread safety**: `push()` from one thread and `pull()` from another is safe. **Multiple
@@ -677,13 +686,22 @@ public:
   /**
    * @brief Push `cv::Mat` inputs into the pipeline. Multi-input models accept one Mat per ingress.
    * @return `true` on success; behavior on full queue is governed by `RunOptions::overflow_policy`.
+   * @deprecated Use `push(TensorList{Tensor::from_cv_mat(mat, format, memory)})`. The first call
+   * in a process writes a one-line warning to stderr.
    */
+  [[deprecated("use push(TensorList{Tensor::from_cv_mat(mat, format, memory)})")]]
   bool push(const std::vector<cv::Mat>& inputs);
   /// Push `cv::Mat` inputs into a named graph ingress. Use for multi-input graphs.
+  /// @deprecated Use `push(input_name, TensorList{Tensor::from_cv_mat(mat, format, memory)})`.
+  [[deprecated("use push(input_name, TensorList{Tensor::from_cv_mat(mat, format, memory)})")]]
   bool push(std::string_view input_name, const std::vector<cv::Mat>& inputs);
   /// Non-blocking variant of `push`; returns `false` immediately if the queue is full.
+  /// @deprecated Use `try_push(TensorList{Tensor::from_cv_mat(mat, format, memory)})`.
+  [[deprecated("use try_push(TensorList{Tensor::from_cv_mat(mat, format, memory)})")]]
   bool try_push(const std::vector<cv::Mat>& inputs);
   /// Non-blocking named-ingress variant.
+  /// @deprecated Use `try_push(input_name, TensorList{Tensor::from_cv_mat(mat, format, memory)})`.
+  [[deprecated("use try_push(input_name, TensorList{Tensor::from_cv_mat(mat, format, memory)})")]]
   bool try_push(std::string_view input_name, const std::vector<cv::Mat>& inputs);
   /**
    * @brief Push `Tensor` inputs (one per ingress port).
@@ -737,17 +755,41 @@ public:
    */
   PullStatus pull(std::string_view output_name, int timeout_ms, Sample& out,
                   PullError* err = nullptr);
-  /// Convenience pull returning an optional `Sample` (empty on timeout/closed; throws on error).
+  /**
+   * @brief Convenience pull returning an optional `Sample` (empty on timeout/closed; throws on
+   * error).
+   * @deprecated Use `pull(std::chrono::milliseconds)`, which returns a `Result<TensorList>` with
+   * the outcome; for the Sample's metadata, `pull(int, Sample&, PullError*)`. The first call in a
+   * process writes a one-line warning to stderr.
+   */
+  [[deprecated("use pull(std::chrono::milliseconds) -> Result<TensorList>; for Sample metadata, "
+               "pull(int, Sample&, PullError*)")]]
   std::optional<Sample> pull(int timeout_ms = -1);
   /// Convenience named-output pull (empty on timeout/closed; throws on error).
+  /// @deprecated Use `pull(output_name, std::chrono::milliseconds)`; for the Sample's metadata,
+  /// `pull(output_name, int, Sample&, PullError*)`.
+  [[deprecated("use pull(output_name, std::chrono::milliseconds) -> Result<TensorList>; for Sample "
+               "metadata, pull(output_name, int, Sample&, PullError*)")]]
   std::optional<Sample> pull(std::string_view output_name, int timeout_ms = -1);
   /// Pull and unpack the next sample as a `TensorList`.
+  /// @deprecated Use `pull(std::chrono::milliseconds)`; `Tensor::leaves()` flattens a record.
+  [[deprecated("use pull(std::chrono::milliseconds) -> Result<TensorList>")]]
   TensorList pull_tensors(int timeout_ms = -1);
   /// Pull and unpack from a named graph output as a `TensorList`.
+  /// @deprecated Use `pull(output_name, std::chrono::milliseconds)`.
+  [[deprecated("use pull(output_name, std::chrono::milliseconds) -> Result<TensorList>")]]
   TensorList pull_tensors(std::string_view output_name, int timeout_ms = -1);
   /// Pull the next sample as a `Sample` (preserves per-sample metadata).
+  /// @deprecated Use `pull(std::chrono::milliseconds)` per item; for the Sample's metadata,
+  /// `pull(int, Sample&, PullError*)`.
+  [[deprecated("use pull(std::chrono::milliseconds) per item; for Sample metadata, "
+               "pull(int, Sample&, PullError*)")]]
   Sample pull_samples(int timeout_ms = -1);
   /// Pull samples from a named graph output (preserves per-sample metadata).
+  /// @deprecated Use `pull(output_name, std::chrono::milliseconds)` per item; for the Sample's
+  /// metadata, `pull(output_name, int, Sample&, PullError*)`.
+  [[deprecated("use pull(output_name, std::chrono::milliseconds) per item; for Sample metadata, "
+               "pull(output_name, int, Sample&, PullError*)")]]
   Sample pull_samples(std::string_view output_name, int timeout_ms = -1);
   /// One-shot synchronous push+pull from `cv::Mat` inputs.
   TensorList run(const std::vector<cv::Mat>& inputs, int timeout_ms = -1);
@@ -825,6 +867,15 @@ private:
 #ifdef SIMA_NEAT_INTERNAL
   friend std::shared_ptr<runtime::RunCore> run_internal::release_core(Run& run);
   friend std::shared_ptr<const runtime::RunCore> run_internal::core(const Run& run);
+  friend bool run_internal::push_mats(Run& run, const std::vector<cv::Mat>& inputs);
+  friend std::optional<Sample> run_internal::pull_optional(Run& run, int timeout_ms);
+  friend std::optional<Sample> run_internal::pull_optional(Run& run, std::string_view output_name,
+                                                           int timeout_ms);
+  friend TensorList run_internal::pull_tensors(Run& run, int timeout_ms);
+  friend TensorList run_internal::pull_tensors(Run& run, std::string_view output_name,
+                                               int timeout_ms);
+  friend Sample run_internal::pull_samples(Run& run, int timeout_ms);
+  friend Sample run_internal::pull_samples(Run& run, std::string_view output_name, int timeout_ms);
 #endif
   std::shared_ptr<runtime::RunCore> core_;
 
@@ -841,6 +892,17 @@ private:
   bool push_holder_impl(const std::shared_ptr<void>& holder, bool block);
   bool push_message_impl(const Sample& msg, bool block);
   bool push_sample_impl(const Sample& msg, bool block);
+  // The deprecated forms' bodies, without their warning (RunDeprecation.h).
+  bool push_mats_impl(const std::vector<cv::Mat>& inputs);
+  bool push_mats_impl(std::string_view input_name, const std::vector<cv::Mat>& inputs);
+  bool try_push_mats_impl(const std::vector<cv::Mat>& inputs);
+  bool try_push_mats_impl(std::string_view input_name, const std::vector<cv::Mat>& inputs);
+  std::optional<Sample> pull_optional_impl(int timeout_ms);
+  std::optional<Sample> pull_optional_impl(std::string_view output_name, int timeout_ms);
+  TensorList pull_tensors_impl(int timeout_ms);
+  TensorList pull_tensors_impl(std::string_view output_name, int timeout_ms);
+  Sample pull_samples_impl(int timeout_ms);
+  Sample pull_samples_impl(std::string_view output_name, int timeout_ms);
   static Run create(InputStream stream, const RunOptions& opt,
                     const struct InputStreamOptions& stream_opt, RunMode mode = RunMode::Async,
                     const std::optional<InputOptions>& tensor_input_opt_for_cv = std::nullopt,

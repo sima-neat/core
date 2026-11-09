@@ -728,8 +728,10 @@ endif()
 # test, registered once for GStreamer and, with the runtime in the build, once more with
 # SIMA_NEAT_BACKEND=dataflow (label `dataflow`); the test reads the variable and requests that
 # backend explicitly (RunOptions::backend), so a Run the Dataflow backend cannot take fails.
+# H0 C5: unit_run_deprecation_test, the deprecated Run forms' one-time warnings, registered the
+# same way so each process checks "once per process" on its own backend.
 foreach(_c2_test unit_run_verb_resolution_test unit_run_tensor_surface_test
-        unit_graph_header_no_gstreamer_test)
+        unit_graph_header_no_gstreamer_test unit_run_deprecation_test)
   if (NOT _c2_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     add_pipeline_test(${_c2_test} ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/${_c2_test}.cpp)
     set_property(TEST ${_c2_test} APPEND PROPERTY LABELS "unit")

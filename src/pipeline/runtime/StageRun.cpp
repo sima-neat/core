@@ -2173,7 +2173,7 @@ Sample push_and_pull_tensor_preferring_holder(Run& runner, const simaai::neat::T
         throw std::runtime_error(std::string(stage_name ? stage_name : "StageRun") +
                                  ": push_holder failed");
       }
-      auto out = runner.pull(timeout_ms);
+      auto out = run_internal::pull_optional(runner, timeout_ms);
       if (!out.has_value()) {
         throw std::runtime_error(std::string(stage_name ? stage_name : "StageRun") +
                                  ": timeout waiting for output after push_holder");

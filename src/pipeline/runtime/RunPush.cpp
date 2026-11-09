@@ -9,6 +9,7 @@
 #include "pipeline/internal/SampleProjection.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/runtime/RunAllocation.h"
+#include "pipeline/runtime/RunDeprecation.h"
 
 #include <algorithm>
 #include <atomic>
@@ -915,7 +916,7 @@ bool Run::push_sample_impl(const Sample& msg, bool block) {
   return push_message_impl(msg, block);
 }
 
-bool Run::push(const std::vector<cv::Mat>& inputs) {
+bool Run::push_mats_impl(const std::vector<cv::Mat>& inputs) {
   require_async_mode("Run::push");
   validate_image_inputs(inputs, "Run::push");
   if (!core_)
@@ -965,7 +966,7 @@ bool Run::push(const std::vector<cv::Mat>& inputs) {
                            true);
 }
 
-bool Run::push(std::string_view input_name, const std::vector<cv::Mat>& inputs) {
+bool Run::push_mats_impl(std::string_view input_name, const std::vector<cv::Mat>& inputs) {
   require_async_mode("Run::push(name)");
   validate_image_inputs(inputs, "Run::push(name)");
   if (!core_) {
@@ -1004,7 +1005,7 @@ bool Run::push(std::string_view input_name, const std::vector<cv::Mat>& inputs) 
                                         true);
 }
 
-bool Run::try_push(const std::vector<cv::Mat>& inputs) {
+bool Run::try_push_mats_impl(const std::vector<cv::Mat>& inputs) {
   require_async_mode("Run::try_push");
   validate_image_inputs(inputs, "Run::try_push");
   if (!core_)
@@ -1055,7 +1056,7 @@ bool Run::try_push(const std::vector<cv::Mat>& inputs) {
                            false);
 }
 
-bool Run::try_push(std::string_view input_name, const std::vector<cv::Mat>& inputs) {
+bool Run::try_push_mats_impl(std::string_view input_name, const std::vector<cv::Mat>& inputs) {
   require_async_mode("Run::try_push(name)");
   validate_image_inputs(inputs, "Run::try_push(name)");
   if (!core_) {
@@ -1092,6 +1093,32 @@ bool Run::try_push(std::string_view input_name, const std::vector<cv::Mat>& inpu
                       : sample_from_tensors(tensors);
   return push_graph_samples_to_endpoint(*core_, endpoint, input_name, Sample{std::move(sample)},
                                         false);
+}
+
+// The deprecated cv::Mat forms (Run.h): the warning, then the body above. Core's own calls take
+// run_internal::push_mats or the *_impl members and never warn.
+bool Run::push(const std::vector<cv::Mat>& inputs) {
+  runtime::warn_deprecated_once(runtime::DeprecatedRunApi::PushMats);
+  return push_mats_impl(inputs);
+}
+
+bool Run::push(std::string_view input_name, const std::vector<cv::Mat>& inputs) {
+  runtime::warn_deprecated_once(runtime::DeprecatedRunApi::PushMatsNamed);
+  return push_mats_impl(input_name, inputs);
+}
+
+bool Run::try_push(const std::vector<cv::Mat>& inputs) {
+  runtime::warn_deprecated_once(runtime::DeprecatedRunApi::TryPushMats);
+  return try_push_mats_impl(inputs);
+}
+
+bool Run::try_push(std::string_view input_name, const std::vector<cv::Mat>& inputs) {
+  runtime::warn_deprecated_once(runtime::DeprecatedRunApi::TryPushMatsNamed);
+  return try_push_mats_impl(input_name, inputs);
+}
+
+bool run_internal::push_mats(Run& run, const std::vector<cv::Mat>& inputs) {
+  return run.push_mats_impl(inputs);
 }
 
 bool Run::push(const TensorList& inputs) {

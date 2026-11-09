@@ -222,6 +222,10 @@ if (SIMANEAT_STRICT_WARNINGS)
     add_compile_options(-Wno-missing-field-initializers -Wno-unused-parameter -Wno-unused-but-set-variable)
     add_compile_options(-Wno-sign-compare -Wno-unused-function -Wno-switch)
     add_compile_options(-Wno-unused-variable -Wno-reorder -Wno-misleading-indentation)
+    # Deprecated API (Run.h's [[deprecated]] forms, kept one release) stays a visible warning in
+    # Core's own targets, never an error: Core's tests keep exercising the deprecated forms until
+    # they are removed. Directory scope, as -Werror itself; not exported to consumers.
+    add_compile_options(-Wno-error=deprecated-declarations)
     if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND NOT SIMANEAT_CPP_TIDY)
       add_compile_options(-Wno-restrict)
     endif()
