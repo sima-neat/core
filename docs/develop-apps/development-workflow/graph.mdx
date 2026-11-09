@@ -569,6 +569,34 @@ auto classes = run.pull();
 
 If more than one input or output is available, an unnamed `push(...)` or `pull()` fails and lists the available endpoint names instead of guessing which one you intended.
 
+### Declare endpoints by value and push Tensors
+
+`Graph::input(name)` and `Graph::output(name, value)` declare the same public endpoints without writing the boundary nodes yourself. The Tensor verbs of `Run` push one Tensor and pull a `Result<Tensor>`:
+
+```cpp
+using namespace std::chrono_literals;
+
+simaai::neat::Graph graph;
+auto image = graph.input("image");      // the first push sets its shape
+graph.output("out", image);
+auto run = graph.build();
+
+run.push("image", image_tensor);
+auto result = run.pull("out", 100ms);   // Ok, Timeout, Closed, or Error
+if (result) {
+  const auto& stamp = result->stamp();  // stream_name, seq, frame_id, source_time
+} else if (result.status() == simaai::neat::PullStatus::Closed) {
+  // the input was closed and every output was pulled
+}
+```
+
+- `graph.input("points", {-1, 4}, simaai::neat::TensorDType::Float32, {256, 4})` declares a tensor input: `-1` marks a dynamic axis and the last argument bounds it. A push outside the declaration fails with `misconfig.input_shape`. `run.alloc("points")` returns a writable Tensor of the bound shape; pushing it is its commit, once.
+- A pushed Tensor's stamp proposes `stream_name`, `frame_id`, `source_time`, and `flags` (`tensor.with_stamp(stamp)`). The runtime writes `seq` and `publish_time`.
+- `simaai::neat::Tensor::record({a, b})` pushes several tensors as one item. The pulled Tensor is then a record: `result->fields()`, `(*result)["0"]`, `result->leaves()`.
+- `run.on_output("out", callback)` delivers every output Tensor to the callback on a thread the `Run` owns, instead of `pull`. `run(tensor)` pushes and waits for the output.
+- The integer-timeout overloads keep their meaning: `pull(100)` and `pull("out", 100)` return `std::optional<Sample>`.
+- `pipeline/Graph.h` no longer needs GStreamer's headers. It still includes `<gst/gst.h>` unless `SIMA_NEAT_GRAPH_NO_GSTREAMER` is defined before it; a later release drops that include, so include `<gst/gst.h>` yourself where you use GStreamer.
+
 ## Connect live fragments
 
 Use [`GraphLinkOptions`](/reference/{lsa}/structs/simaai-neat-graphlinkoptions) when a connection needs a runtime policy or explicit raw-frame admission limits.
@@ -634,7 +662,7 @@ Both C++ and Python expose these fields on `GraphLinkOptions`, which is passed t
 
 :::caution Upgrade preview applications and saved graphs
 
-This version adds admission fields to `GraphLinkOptions`. The current Neat Library C++ ABI and shared-library SONAME are 6. Rebuild C++ applications and plugins against the matching Core package. Do not mix binaries built for an earlier `libsima_neat` SONAME with `libsima_neat.so.6`.
+This version adds admission fields to `GraphLinkOptions`. The current Neat Library C++ ABI and shared-library SONAME are 7. Rebuild C++ applications and plugins against the matching Core package. Do not mix binaries built for an earlier `libsima_neat` SONAME with `libsima_neat.so.7`.
 
 Migrate preview source code as follows:
 

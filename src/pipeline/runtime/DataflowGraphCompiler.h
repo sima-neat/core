@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -57,8 +58,23 @@ struct __attribute__((visibility("hidden"))) DataflowGraphAccess {
 
 #if defined(SIMANEAT_WITH_DATAFLOW)
 
+// One field of a record binding: the Core metadata of a dense field, and where it lives in the
+// record's slot (port_spec.h's field_offset and field_extent_offset, resolved once at binding).
+struct DataflowFieldBinding {
+  TensorDType dtype = TensorDType::UInt8;
+  TensorLayout layout = TensorLayout::Unknown;
+  std::vector<TensorAxisSemantic> axis_semantics;
+  Semantic semantic{};
+  std::size_t rank = 0;
+  std::size_t offset = 0;        ///< the field's bytes, from the slot start
+  std::size_t extent_offset = 0; ///< the field's Extent in the record header
+};
+
 // Core's side of the bound input: the port spec a pushed tensor must fit, and the Core metadata
 // (dtype, layout, semantic, planes) the runtime does not carry, restored on every pulled tensor.
+// A leaf binds a TensorSpec; a record (an item of several tensors: TensorList, TensorSet, a
+// positional Tensor::record) a RecordSchema with positional field names "0", "1", ... and one
+// DataflowFieldBinding per field.
 struct DataflowInputBinding {
   enum class Planes { None, Nv12, I420 };
   pipeline_internal::df::PortSpec spec;
@@ -68,16 +84,31 @@ struct DataflowInputBinding {
   Semantic semantic{};
   Planes planes = Planes::None;
   std::size_t rank = 0; ///< Core rank: the spec's for a dense tensor, 2 ({H, W}) for planes
-  std::string text;     ///< the spec as one line, for messages
+  std::vector<DataflowFieldBinding> fields; ///< a record's fields; empty for a leaf
+  std::string text;                         ///< the spec as one line, for messages
+  bool is_record() const noexcept {
+    return !fields.empty();
+  }
 };
 
 // The input's binding from its declaration and, when given, a tensor (a seed or the first push).
-// nullopt with `why` set when this backend cannot carry it.
+// nullopt with `why` set when this backend cannot carry it. A declared shape (InputOptions::shape)
+// binds from the declaration alone; each of its dynamic axes needs a bound (max_shape).
 std::optional<DataflowInputBinding> bind_dataflow_input(const InputOptions& declared,
                                                         const Tensor* tensor, std::string* why);
 
+// A record binding from the tensors of one item (2 or more): every field dense, bound by its
+// tensor (dtype and shape fixed). nullopt with `why` set when this backend cannot carry it.
+std::optional<DataflowInputBinding> bind_dataflow_record(const InputOptions& declared,
+                                                         std::span<const Tensor> fields,
+                                                         std::string* why);
+
 // "" when `tensor` fits `binding`; otherwise why it does not.
 std::string dataflow_binding_mismatch(const DataflowInputBinding& binding, const Tensor& tensor);
+
+// "" when the item's `fields` fit the record `binding`; otherwise why they do not.
+std::string dataflow_record_mismatch(const DataflowInputBinding& binding,
+                                     std::span<const Tensor> fields);
 
 // The one-Feed, one-Fetch Net for `binding`, compiled. Throws NeatError on a compile error.
 struct DataflowNet {

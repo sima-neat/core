@@ -258,8 +258,10 @@ void runtime::RunCore::stop() {
 }
 
 void Run::stop() {
-  if (core_)
+  if (core_) {
     core_->stop();
+    core_->stop_output_callbacks();
+  }
 }
 
 void runtime::RunCore::close() {
@@ -442,6 +444,12 @@ void runtime::RunCore::close() {
 void Run::close() {
   if (!core_)
     return;
+  // on_output deliveries pull from the core: stop it (which ends their pulls) and wait for them
+  // before close() tears it down. Without a callback, close() keeps its own order.
+  if (core_->output_callbacks_active.load(std::memory_order_acquire)) {
+    core_->stop();
+    core_->stop_output_callbacks();
+  }
   core_->close();
   core_.reset();
 }

@@ -927,8 +927,10 @@ Core 소유 Preproc 프레임 어댑터는 동적 이미지/ROI 형상과 메타
 그래프)에서 그래프는 Feed 하나, Fetch 하나, 링크 하나입니다. `push`는 호출한 스레드에서 텐서를 풀 슬롯에
 복사하고 버리지 않고 공간을 기다리며, `try_push`는 오버플로 정책을 적용하고, `pull`은 마지막 복사본이
 해제될 때까지 슬롯을 빌려 쓰는 읽기 전용 `CpuExternal` 텐서를 반환합니다. 입력의 형태는 선언, 시드 또는
-첫 번째 push로 정해지고 이후 강제됩니다. `push_holder`와 다중 텐서(레코드) 항목은 당분간 GStreamer
-전용입니다.
+첫 번째 push로 정해지고 이후 강제됩니다. `push_holder`는 GStreamer 전용이며, 여러 텐서로 된 항목은
+필드 이름이 위치 기반인 레코드 포트에 바인딩됩니다.
+
+Tensor 동사는 두 런타임 모두에서 동작합니다. `push(tensor)`와 `push(name, tensor)`는 항목 하나(리프 또는 위치 기반 레코드 `Tensor::record`)를 push합니다. `std::chrono::milliseconds` 타임아웃을 받는 `pull(name, timeout)`은 `Result<Tensor>`를 반환하며, 그 상태는 네 가지 `PullStatus` 결과 중 하나입니다. `int` 오버로드는 계속 `std::optional<Sample>`을 반환합니다. `run(tensor)`는 push한 뒤 출력을 기다리고, `on_output(name, callback)`은 `Run`이 소유한 스레드에서 출력을 콜백에 전달하며(이후 해당 출력은 pull할 수 없습니다), `alloc(name)`은 `Graph::input(name, shape, dtype)`으로 선언된 입력에 대해 쓰기 가능한 Tensor를 빌려줍니다. Dataflow 런타임에서는 복사 없이 게시되는 풀 슬롯이고, GStreamer에서는 CPU 메모리입니다. 카운터는 계속 `start_measurement()`로 얻으며, `Run`에는 공개 `stats()`가 없습니다. pull된 Tensor는 `Tensor::envelope`에 `Stamp`를 담습니다. 런타임은 `seq`와 `publish_time`을 기록하고, push된 Tensor는 `stream_name`, `frame_id`, `source_time`, `flags`를 제안합니다. `Sample` 인터페이스는 이를 투영한 것입니다(`to_sample`, `to_tensor`): `input_seq = seq - 1`, `orig_input_seq = input_seq`이며, `pts_ns`는 `source_time`에서 옵니다. push된 `input_seq`나 `orig_input_seq`는 스탬프에 필드가 없어 Dataflow 런타임에서는 전달되지 않으며, GStreamer는 `publish_time`을 기록하지 않습니다.
 
 유휴 상태의 `Run`은 계속 사용할 수 있습니다. 작업 기한은 대기 시간을 제한하며 입력 제출 사이의 일시 중지에는 적용되지 않습니다.
 

@@ -497,6 +497,12 @@ PullStatus Run::pull(int timeout_ms, Sample& out, PullError* err) {
                                                   "Run::pull: stream is closed");
     return PullStatus::Closed;
   }
+  if (run_internal::output_delivered_to_callback(*core_, std::nullopt)) {
+    pipeline_internal::error_util::set_pull_error(
+        err, error_codes::kRuntimePull,
+        "Run::pull: the output is delivered to on_output; it cannot be pulled");
+    return PullStatus::Error;
+  }
   return core_->pull(timeout_ms, out, err);
 }
 
@@ -510,6 +516,13 @@ PullStatus Run::pull(std::string_view output_name, int timeout_ms, Sample& out, 
     pipeline_internal::error_util::set_pull_error(err, error_codes::kRuntimePull,
                                                   "Run::pull(name): stream is closed");
     return PullStatus::Closed;
+  }
+  if (run_internal::output_delivered_to_callback(*core_, output_name)) {
+    pipeline_internal::error_util::set_pull_error(
+        err, error_codes::kRuntimePull,
+        "Run::pull(\"" + std::string(output_name) +
+            "\"): the output is delivered to on_output; it cannot be pulled");
+    return PullStatus::Error;
   }
   return core_->pull_named_output(output_name, timeout_ms, out, err);
 }
@@ -917,6 +930,11 @@ void Run::require_async_pull_mode(const char* where) const {
 
 std::optional<Sample> Run::pull(int timeout_ms) {
   require_async_pull_mode("Run::pull");
+  if (core_ && run_internal::output_delivered_to_callback(*core_, std::nullopt)) {
+    throw std::runtime_error(decorate_with_error_code(
+        error_codes::kRuntimePull,
+        "Run::pull: the output is delivered to on_output; it cannot be pulled"));
+  }
   return core_ ? core_->pull_optional(timeout_ms) : std::nullopt;
 }
 

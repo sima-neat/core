@@ -969,8 +969,10 @@ graph.add(simaai::neat::nodes::Output());
 `SIMANEAT_DATAFLOW_SOURCE_DIR` 選用的建構，適用於由一個公開 `Input` 連接到一個公開 `Output` 的圖）上，
 圖由一個 Feed、一個 Fetch 與一條連結組成：`push` 在呼叫端執行緒上將張量複製到池的槽位，並在不丟棄的情況下
 等待空間；`try_push` 套用溢位策略；`pull` 傳回唯讀的 `CpuExternal` 張量，該張量會租用槽位，直到最後一個
-副本被釋放。輸入的形狀由其宣告、種子或第一次 push 決定，之後即強制套用。`push_holder` 與多張量（記錄）
-項目目前仍僅支援 GStreamer。
+副本被釋放。輸入的形狀由其宣告、種子或第一次 push 決定，之後即強制套用。`push_holder` 僅支援 GStreamer；
+由多個張量組成的項目會繫結到欄位名稱依位置命名的記錄連接埠。
+
+Tensor 動詞在兩種執行環境上皆可使用。`push(tensor)` 與 `push(name, tensor)` 會 push 一個項目（葉節點，或依位置命名的記錄 `Tensor::record`）。採用 `std::chrono::milliseconds` 逾時的 `pull(name, timeout)` 會傳回 `Result<Tensor>`，其狀態為四種 `PullStatus` 結果之一；`int` 多載仍傳回 `std::optional<Sample>`。`run(tensor)` 會 push 並等待輸出；`on_output(name, callback)` 會在 `Run` 擁有的執行緒上將輸出傳遞給回呼（之後該輸出無法再 pull）；`alloc(name)` 會為以 `Graph::input(name, shape, dtype)` 宣告的輸入出借可寫入的 Tensor：在 Dataflow 執行環境上是無需複製即可發布的池槽位，在 GStreamer 上是 CPU 記憶體。計數器仍透過 `start_measurement()` 取得，`Run` 沒有公開的 `stats()`。pull 到的 Tensor 會在 `Tensor::envelope` 中帶有其 `Stamp`：執行環境寫入 `seq` 與 `publish_time`，被 push 的 Tensor 則提議 `stream_name`、`frame_id`、`source_time` 與 `flags`。`Sample` 介面是它的投影（`to_sample`、`to_tensor`）：`input_seq = seq - 1`、`orig_input_seq = input_seq`，`pts_ns` 取自 `source_time`。被 push 的 `input_seq` 或 `orig_input_seq` 在戳記中沒有對應欄位，因此不會在 Dataflow 執行環境上傳遞，而 GStreamer 不會記錄 `publish_time`。
 
 閒置的 `Run` 仍可繼續使用；操作期限限制的是等待時間，而非提交輸入之間的暫停。
 

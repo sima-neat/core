@@ -226,8 +226,8 @@ int main() {
                 "Graph::build(Tensor) should not exist; use TensorList");
   static_assert(!has_run_single_input<Graph, Tensor>::value,
                 "Graph::run(Tensor) should not exist; use TensorList");
-  static_assert(!has_push_single_input<Run, Tensor>::value,
-                "Run::push(Tensor) should not exist; use TensorList");
+  static_assert(has_push_single_input<Run, Tensor>::value,
+                "Run::push(const Tensor&) is the Tensor verb (H0 C2); push(TensorList) remains");
   static_assert(!has_run_single_input<Run, Tensor>::value,
                 "Run::run(Tensor) should not exist; use TensorList");
   static_assert(!has_run_single_input<simaai::neat::Model, Tensor>::value,

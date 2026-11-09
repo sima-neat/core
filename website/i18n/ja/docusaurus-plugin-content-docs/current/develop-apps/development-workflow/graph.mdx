@@ -533,6 +533,34 @@ auto classes = run.pull();
 
 複数の入力または出力が利用可能な場合、名前のない`push(...)`または`pull()`が失敗し、ユーザーが意図したものを推測する代わりに、利用可能なエンドポイント名を一覧表示します。
 
+### 値でエンドポイントを宣言し、Tensor を push する
+
+`Graph::input(name)` と `Graph::output(name, value)` は、境界ノードを自分で記述せずに同じ公開エンドポイントを宣言します。`Run` の Tensor 動詞は Tensor を 1 つ push し、`Result<Tensor>` を pull します。
+
+```cpp
+using namespace std::chrono_literals;
+
+simaai::neat::Graph graph;
+auto image = graph.input("image");      // 最初の push で形状が決まります
+graph.output("out", image);
+auto run = graph.build();
+
+run.push("image", image_tensor);
+auto result = run.pull("out", 100ms);   // Ok、Timeout、Closed、または Error
+if (result) {
+  const auto& stamp = result->stamp();  // stream_name、seq、frame_id、source_time
+} else if (result.status() == simaai::neat::PullStatus::Closed) {
+  // 入力が閉じられ、すべての出力が pull されました
+}
+```
+
+- `graph.input("points", {-1, 4}, simaai::neat::TensorDType::Float32, {256, 4})` はテンソル入力を宣言します。`-1` は動的な軸を表し、最後の引数がその上限を定めます。宣言から外れる push は `misconfig.input_shape` で失敗します。`run.alloc("points")` は上限の形状を持つ書き込み可能な Tensor を返します。それを push することがコミットであり、一度だけ行えます。
+- push される Tensor のスタンプは `stream_name`、`frame_id`、`source_time`、`flags` を提案します（`tensor.with_stamp(stamp)`）。`seq` と `publish_time` はランタイムが書き込みます。
+- `simaai::neat::Tensor::record({a, b})` は複数のテンソルを 1 つの項目として push します。pull される Tensor はレコードになります：`result->fields()`、`(*result)["0"]`、`result->leaves()`。
+- `run.on_output("out", callback)` は、`pull` の代わりに、`Run` が所有するスレッド上ですべての出力 Tensor をコールバックに渡します。`run(tensor)` は push して出力を待ちます。
+- 整数タイムアウトのオーバーロードは意味が変わりません：`pull(100)` と `pull("out", 100)` は `std::optional<Sample>` を返します。
+- `pipeline/Graph.h` は GStreamer のヘッダーを必要としなくなりました。その前に `SIMA_NEAT_GRAPH_NO_GSTREAMER` を定義しない限り、引き続き `<gst/gst.h>` をインクルードします。このインクルードは今後のリリースで削除されるため、GStreamer を使用する箇所では `<gst/gst.h>` を自分でインクルードしてください。
+
 ## ライブフラグメントを接続する
 
 ランタイムポリシーまたは明示的な生フレームの許容制限が必要な接続には、[`GraphLinkOptions`](/reference/{lsa}/structs/simaai-neat-graphlinkoptions) を使用します。
@@ -598,7 +626,7 @@ C++とPythonの両方で、これらのフィールドは`GraphLinkOptions`で�
 
 :::caution プレビュー版アプリケーションと保存済みのグラフを更新します。
 
-このバージョンでは、`GraphLinkOptions` に入力フィールドが追加されました。現在の Neat Library の C++ ABI と共有ライブラリの SONAME は 6 です。対応するコアパッケージに対して、C++ アプリケーションとプラグインを再ビルドしてください。以前の `libsima_neat` SONAME でビルドされたバイナリと、`libsima_neat.so.6` を混在させないでください。
+このバージョンでは、`GraphLinkOptions` に入力フィールドが追加されました。現在の Neat Library の C++ ABI と共有ライブラリの SONAME は 7 です。対応するコアパッケージに対して、C++ アプリケーションとプラグインを再ビルドしてください。以前の `libsima_neat` SONAME でビルドされたバイナリと、`libsima_neat.so.7` を混在させないでください。
 
 プレビューのソースコードを以下のように移行してください。
 

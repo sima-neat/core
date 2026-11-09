@@ -3,21 +3,29 @@
 #error "Internal header. Not part of the public API."
 #endif
 
-// Compatibility projection between Core's Sample identity fields and the per-message context the
-// Neat Dataflow runtime keeps in its Stamp (H0 plan 3.5; APPLICATION_MODEL.md 2.1). Internal in
-// this step: the Dataflow backend uses it on push and pull. It does not depend on the runtime's
-// types, so the public Stamp of the new surface can reuse it.
+// Compatibility projection between Core's Sample and a Tensor with its Stamp (H0 plan 3.5;
+// APPLICATION_MODEL.md 2.1). Runtime-independent: both backends use it, the public
+// to_tensor / to_sample (pipeline/GraphOptions.h) are built on it, and the
+// Dataflow backend converts between this Stamp and the runtime's at its own boundary.
 //
-// Push (Sample -> stamp): frame_id -> frame_id (-1 is unset), stream_id -> stream (interned per
-// Run), pts_ns -> source_time (-1 is unset). input_seq, orig_input_seq, dts_ns, duration_ns,
-// stream_label, port_name and attributes have no place in the stamp and are not carried.
-// Pull (stamp -> Sample): frame_id, stream_id and pts_ns back; input_seq = seq - 1 (the runtime's
-// publish sequence is 1-based and contiguous per input; Core's own counter starts at 0);
-// orig_input_seq = frame_id when set, else input_seq.
+// Field meanings are develop's, on both backends (APPLICATION_MODEL.md decision 2):
+//   Sample -> Stamp (what a push proposes): stream_id -> stream_name; frame_id -> frame_id (-1 is
+//     unset); pts_ns -> source_time on ClockId::SensorLocal (-1 is unset).
+//   Stamp -> Sample (a pulled message): stream_name -> stream_id, frame_id, source_time -> pts_ns
+//     (any clock; -1 when unset); input_seq = seq - 1 (seq is 1-based and contiguous per input,
+//     Core's counter 0-based); orig_input_seq = input_seq, as develop gives when the push carried
+//     no orig_input_seq. A pushed input_seq or orig_input_seq has no field in the stamp: the
+//     Dataflow backend cannot carry it (reported, c2.md 4).
+//   Tensor -> Sample: a leaf is a TensorSet of one tensor (what push(TensorList{t}) makes); a
+//     positional record (field names "0", "1", ...) a TensorSet of its fields; a record with other
+//     names a Bundle of one field Sample each, in schema order.
+//   Sample -> Tensor: Tensor or TensorSet of one tensor -> a leaf; TensorSet of several -> a
+//     positional record; Bundle -> a record of its fields, positional.
 
 #include "pipeline/GraphOptions.h"
 
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -27,15 +35,7 @@
 
 namespace simaai::neat::pipeline_internal {
 
-// The runtime-independent fields of a Dataflow stamp that the projection reads and writes.
-struct ProjectedStamp {
-  std::uint32_t stream = 0;                   ///< per-Run stream id; 0 is unassigned
-  std::uint64_t seq = 0;                      ///< publish sequence, 1-based; 0 is unpublished
-  std::int64_t frame_id = -1;                 ///< author's correlation key; -1 is unset
-  std::optional<std::int64_t> source_time_ns; ///< Sample::pts_ns
-};
-
-// Core's string stream_id against the runtime's numeric StreamId: interned per Run. Id 0 stays
+// Core's string stream_id against a numeric stream id: interned per Run. Id 0 stays
 // "unassigned"; the empty name maps to the Run's default stream. Pushes intern, pulls resolve;
 // both may run on different threads.
 class StreamNames {
@@ -61,11 +61,38 @@ private:
   std::vector<std::string> names_; // index = id; names_[0] is the unassigned id
 };
 
-/// The stamp fields a push proposes for `sample` (seq is the runtime's, left 0).
-ProjectedStamp project_push_identity(const Sample& sample, StreamNames& streams);
+/// The stamp fields a push of `sample` proposes (stream_name, frame_id, source_time).
+Stamp stamp_from_sample(const Sample& sample);
 
-/// Writes the identity fields of a pulled `stamp` into `out`.
-void apply_pulled_identity(const ProjectedStamp& stamp, const StreamNames& streams, Sample& out);
+/// Writes the identity of a pulled `stamp` into `out`: stream_id, frame_id, pts_ns, input_seq,
+/// orig_input_seq.
+void apply_pulled_stamp(const Stamp& stamp, Sample& out);
+
+/// Writes what a pushed Tensor's stamp proposes into `out` (and into a Bundle's fields): frame_id
+/// when set, stream_id when the name is set, pts_ns when source_time is set. Fields it does not
+/// set keep their values.
+void apply_stamp_proposals(const Stamp& stamp, Sample& out);
+
+/// The stamp of a pulled Sample: its identity as Stamp fields, `stream` the id of its name in
+/// `streams` (0 without), `seq` = input_seq + 1 (0 when unset). No publish_time: the Sample has
+/// none.
+Stamp stamp_of_pulled_sample(const Sample& sample, StreamNames* streams);
+
+/// True iff `tensor` is a record whose field names are "0", "1", ... in order.
+bool is_positional_record(const Tensor& tensor) noexcept;
+
+/// The tensors one push of `input` carries: a leaf is itself; a positional record its fields (a
+/// record of one field: that field). Throws NeatError (misconfig.input_shape) for a record with
+/// other names or a field that is itself a record (not supported before H1).
+TensorList tensor_push_items(const Tensor& input, const char* where);
+
+/// A positional record of `fields` (names "0", "1", ...) carrying `stamp`; every field carries it
+/// too, through one envelope shared by all of them.
+Tensor make_positional_record(std::vector<Tensor> fields, const Stamp& stamp);
+
+/// The Tensor of a pulled Sample (see the header comment), carrying `stamp`. nullopt when the
+/// Sample carries no tensor.
+std::optional<Tensor> tensor_from_pulled_sample(const Sample& sample, const Stamp& stamp);
 
 /// The payload tag of an image format ("RGB", "NV12", ...), as a pulled Sample's payload_tag
 /// carries it; empty for UNKNOWN.

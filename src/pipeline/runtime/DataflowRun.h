@@ -47,9 +47,19 @@ public:
                     bool block, const char* where) = 0;
   // GStreamer holders do not exist on this backend: always throws.
   virtual bool push_holder(const std::shared_ptr<void>& holder, bool block, const char* where) = 0;
+  // Run::push(const Tensor&): a leaf, or a positional record; the Tensor's stamp proposes the
+  // message's stream, frame_id, source_time and flags. A Tensor from this Run's alloc() is
+  // published without a copy.
+  virtual bool push(std::optional<std::string_view> input, const Tensor& tensor, bool block,
+                    const char* where) = 0;
 
   virtual PullStatus pull(std::optional<std::string_view> output, int timeout_ms, Sample& out,
                           PullError* err) = 0;
+  // Run::pull(milliseconds): the Tensor, with its envelope (stamp; a record's fields).
+  virtual PullStatus pull(std::optional<std::string_view> output, int timeout_ms, Tensor& out,
+                          PullError* err) = 0;
+  // Run::alloc(name): a writable Tensor over a slot of the input's pool (RunAllocation.h).
+  virtual Tensor alloc(std::string_view input, const char* where) = 0;
 
   virtual void close_input() = 0;
   virtual void stop() = 0;
@@ -74,16 +84,18 @@ struct DataflowRunConfig {
   /// OutputOptions::drop: the terminal queue drops its oldest message for every push, blocking
   /// or not (appsink drop=true); otherwise link_policy applies to try_push only.
   bool terminal_drop = false;
-  std::vector<std::string> input_names;  ///< Graph::inputs(), sorted
+  std::uint32_t feed_loans = 1;         ///< Feed::Options::loans: 2 when Run::alloc can hold a slot
+  std::vector<std::string> input_names; ///< Graph::inputs(), sorted
   std::vector<std::string> output_names; ///< Graph::outputs(), sorted
   std::string default_stream;            ///< Sample::stream_id when a push carries none
   std::string label;                     ///< the graph, for messages
 };
 
-// Builds the Run state. A seed binds the input's spec now; without one, a declared image input
-// binds now and anything else binds at the first push. Throws NeatError on a compile error.
+// Builds the Run state. A seed binds the input's spec now (one tensor: a leaf; several: a
+// record); without one, a declared image or a declared shape binds now and anything else binds at
+// the first push. Throws NeatError on a compile error.
 std::unique_ptr<DataflowRunState> make_dataflow_run_state(RunCore& core, DataflowRunConfig config,
-                                                          const Tensor* seed);
+                                                          const TensorList& seed);
 
 #pragma GCC visibility pop
 

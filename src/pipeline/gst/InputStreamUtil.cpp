@@ -2130,6 +2130,48 @@ void validate_public_geometry(const InputGeometry& geometry, const InputOptions&
             ", max_input_bytes=" + std::to_string(stream.max_input_bytes) + ")",
         {}, "Increase the declared input byte capacity.");
 }
+std::string declared_dims_text(const std::vector<std::int64_t>& dims) {
+  std::string out = "[";
+  for (std::size_t i = 0; i < dims.size(); ++i) {
+    out += (i == 0 ? "" : ", ") + (dims[i] < 0 ? std::string("-1") : std::to_string(dims[i]));
+  }
+  return out + "]";
+}
+
+// InputOptions::shape and dtype (Graph::input(name, shape, dtype)): rank, every fixed size, every
+// dynamic size within its bound, and the dtype. Nothing is checked when no shape is declared.
+void validate_declared_shape(const std::vector<std::int64_t>& actual, TensorDType dtype,
+                             const InputOptions& opt, const char* where) {
+  if (opt.shape.empty()) {
+    return;
+  }
+  const auto reject = [&](const std::string& why) {
+    std::string declared = declared_dims_text(opt.shape) + " " + fmt_from_dtype(opt.dtype);
+    if (!opt.max_shape.empty()) {
+      declared += " (max_shape " + declared_dims_text(opt.max_shape) + ")";
+    }
+    pipeline_internal::error_util::throw_session_error(
+        error_codes::kInputShape,
+        std::string(where) + ": " + why + "; the input is declared as " + declared, {},
+        "Push a tensor that fits Graph::input's shape and dtype, or declare the input with "
+        "Graph::input(name) to let the first push set it.");
+  };
+  if (dtype != opt.dtype) {
+    reject(std::string("dtype ") + fmt_from_dtype(dtype) + " differs");
+  }
+  if (actual.size() != opt.shape.size()) {
+    reject("a tensor of rank " + std::to_string(actual.size()) + " " + declared_dims_text(actual));
+  }
+  for (std::size_t i = 0; i < actual.size(); ++i) {
+    const std::int64_t declared = opt.shape[i];
+    const std::int64_t bound = opt.max_shape.empty() ? -1 : opt.max_shape[i];
+    if (declared > 0 ? actual[i] != declared : (bound > 0 && actual[i] > bound) || actual[i] < 1) {
+      reject("axis " + std::to_string(i) + " of " + declared_dims_text(actual) +
+             (declared > 0 ? " is not the declared size" : " is outside its bound"));
+    }
+  }
+}
+
 template <class Describe>
 void validate_public_metadata(Describe describe, const InputOptions& opt,
                               const InputStreamOptions& stream, const char* where) {
@@ -2145,16 +2187,63 @@ void validate_public_metadata(Describe describe, const InputOptions& opt,
 
 void validate_public_input(const cv::Mat& input, const InputOptions& opt,
                            const InputStreamOptions& stream, const char* where) {
+  if (!opt.shape.empty()) {
+    TensorDType dtype = TensorDType::UInt8;
+    switch (input.depth()) {
+    case CV_8S:
+      dtype = TensorDType::Int8;
+      break;
+    case CV_16U:
+      dtype = TensorDType::UInt16;
+      break;
+    case CV_16S:
+      dtype = TensorDType::Int16;
+      break;
+    case CV_32S:
+      dtype = TensorDType::Int32;
+      break;
+    case CV_32F:
+      dtype = TensorDType::Float32;
+      break;
+    case CV_64F:
+      dtype = TensorDType::Float64;
+      break;
+    default:
+      break;
+    }
+    std::vector<std::int64_t> dims{input.rows, input.cols};
+    if (opt.shape.size() != 2U || input.channels() != 1) {
+      dims.push_back(input.channels());
+    }
+    validate_declared_shape(dims, dtype, opt, where);
+  }
   validate_public_metadata([&] { return describe_mat_geometry_or_throw(input, opt, where); }, opt,
                            stream, where);
 }
 void validate_public_input(const Tensor& input, const InputOptions& opt,
                            const InputStreamOptions& stream, const char* where) {
+  if (!opt.shape.empty()) {
+    if (input.is_composite()) {
+      pipeline_internal::error_util::throw_session_error(
+          error_codes::kInputShape,
+          std::string(where) + ": a composite (planar) tensor where a dense tensor of shape " +
+              declared_dims_text(opt.shape) + " is declared");
+    }
+    validate_declared_shape(input.shape, input.dtype, opt, where);
+  }
   validate_public_metadata([&] { return describe_tensor_geometry_or_throw(input, opt, where); },
                            opt, stream, where);
 }
 void validate_public_input(const Sample& input, const InputOptions& opt,
                            const InputStreamOptions& stream, const char* where) {
+  // A declared shape (InputOptions::shape) describes one tensor: an item of several is refused.
+  if (!opt.shape.empty() && ((sample_has_tensor_list(input) && input.tensors.size() > 1U) ||
+                             (input.kind == SampleKind::Bundle && input.fields.size() > 1U))) {
+    pipeline_internal::error_util::throw_session_error(
+        error_codes::kInputShape, std::string(where) +
+                                      ": an item of several tensors where one tensor of shape " +
+                                      declared_dims_text(opt.shape) + " is declared");
+  }
   // Match tensors_from_sample's representative order without copying its list:
   // tensor list, single Tensor, then Bundle fields. The declaration describes
   // one envelope, not every independently typed/strided member inside it.

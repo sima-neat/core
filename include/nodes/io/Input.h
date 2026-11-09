@@ -124,6 +124,17 @@ struct InputOptions {
   /// Optional preprocess runtime metadata template used to annotate `GstSimaMeta`
   /// with geometry/affine context for downstream plugins (e.g. box decode).
   std::optional<PreprocessMetaTemplate> preprocess_meta;
+
+  /// Declared tensor shape, one size per axis, `-1` for a dynamic axis (what
+  /// `Graph::input(name, shape, dtype)` sets). Empty: no shape is declared. A push whose tensor
+  /// has another rank, another size on a fixed axis, a size above `max_shape` on a dynamic axis,
+  /// or another dtype than `dtype` is rejected at push with `misconfig.input_shape`.
+  std::vector<std::int64_t> shape;
+  /// Upper bound of each dynamic axis of `shape` (same rank; the size itself on a fixed axis).
+  /// Empty: the dynamic axes are unbounded. `Run::alloc` needs every axis fixed or bounded.
+  std::vector<std::int64_t> max_shape;
+  /// Element type of the declared `shape`; ignored when `shape` is empty.
+  TensorDType dtype = TensorDType::UInt8;
 };
 
 /// Resolve the internal caps media type requested by public `InputOptions`.

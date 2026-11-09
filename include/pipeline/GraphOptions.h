@@ -879,5 +879,26 @@ const Tensor& require_single_tensor(const Sample& sample, const char* where = nu
 TensorList tensors_from_sample(const Sample& sample, bool require_nonempty = true);
 /// Construct a TensorSet sample from a list of tensors.
 Sample sample_from_tensors(const TensorList& tensors);
+/**
+ * @brief The Tensor a Sample projects to (the compatibility projection between the two surfaces).
+ *
+ * A Tensor, or a TensorSet of one tensor, is a leaf; a TensorSet of several tensors is a
+ * positional record (field names `"0"`, `"1"`, ...); a Bundle is a record of its fields, named by
+ * their `port_name`s when each has a distinct one, else positional. The stamp carries `stream_id`
+ * as `stream_name`, `frame_id`, `pts_ns` as `source_time` (`ClockId::SensorLocal`) and
+ * `input_seq + 1` as `seq`; its numeric `stream` is 0 outside a Run.
+ * @throws NeatError (`misconfig.input_shape`) when the Sample carries no tensor.
+ */
+Tensor to_tensor(const Sample& sample);
+/**
+ * @brief The Sample a Tensor projects to; the inverse of `to_tensor`.
+ *
+ * A leaf is a TensorSet of one tensor, a positional record a TensorSet of its fields, a record
+ * with other names a Bundle of its fields (each field's name in `port_name`). Identity comes from
+ * the stamp: `stream_id`, `frame_id`, `pts_ns`, `input_seq = seq - 1` and
+ * `orig_input_seq = input_seq`; `media_type`, `payload_type` and `payload_tag` from the first
+ * tensor's semantic. Fields without a counterpart keep their defaults.
+ */
+Sample to_sample(const Tensor& tensor);
 
 } // namespace simaai::neat

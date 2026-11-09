@@ -536,6 +536,34 @@ auto classes = run.pull();
 
 Якщо доступно більше одного вхідного або вихідного каналу, то неіменований канал `push(...)` або `pull()` не працює і натомість відображає список доступних імен кінцевих точок, замість того, щоб намагатися вгадати, який саме канал ви мали на увазі.
 
+### Оголошення кінцевих точок за значенням і push тензорів
+
+`Graph::input(name)` і `Graph::output(name, value)` оголошують ті самі публічні кінцеві точки без того, щоб записувати граничні вузли самостійно. Дієслова Tensor у `Run` виконують push одного Tensor і pull `Result<Tensor>`:
+
+```cpp
+using namespace std::chrono_literals;
+
+simaai::neat::Graph graph;
+auto image = graph.input("image");      // форму визначає перший push
+graph.output("out", image);
+auto run = graph.build();
+
+run.push("image", image_tensor);
+auto result = run.pull("out", 100ms);   // Ok, Timeout, Closed або Error
+if (result) {
+  const auto& stamp = result->stamp();  // stream_name, seq, frame_id, source_time
+} else if (result.status() == simaai::neat::PullStatus::Closed) {
+  // вхід закрито, і всі виходи отримано через pull
+}
+```
+
+- `graph.input("points", {-1, 4}, simaai::neat::TensorDType::Float32, {256, 4})` оголошує тензорний вхід: `-1` позначає динамічну вісь, а останній аргумент задає її межу. Push поза оголошенням завершується помилкою `misconfig.input_shape`. `run.alloc("points")` повертає доступний для запису Tensor граничної форми; push цього тензора є його фіксацією і виконується лише один раз.
+- Штамп тензора, що передається через push, пропонує `stream_name`, `frame_id`, `source_time` і `flags` (`tensor.with_stamp(stamp)`). `seq` і `publish_time` записує середовище виконання.
+- `simaai::neat::Tensor::record({a, b})` передає кілька тензорів як один елемент. Отриманий через pull Tensor тоді є записом: `result->fields()`, `(*result)["0"]`, `result->leaves()`.
+- `run.on_output("out", callback)` передає кожен вихідний Tensor у функцію зворотного виклику в потоці, яким володіє `Run`, замість `pull`. `run(tensor)` виконує push і чекає на вихід.
+- Перевантаження з цілочисельним тайм-аутом зберігають своє значення: `pull(100)` і `pull("out", 100)` повертають `std::optional<Sample>`.
+- `pipeline/Graph.h` більше не потребує заголовків GStreamer. Він і далі включає `<gst/gst.h>`, якщо перед ним не визначено `SIMA_NEAT_GRAPH_NO_GSTREAMER`; наступний випуск прибере це включення, тож там, де ви використовуєте GStreamer, включайте `<gst/gst.h>` самостійно.
+
 ## З’єднайте фрагменти в реальному часі.
 
 Використовуйте [`GraphLinkOptions`](/reference/{lsa}/structs/simaai-neat-graphlinkoptions), коли для з’єднання потрібна політика середовища виконання або чіткі обмеження на обробку необроблених кадрів.
@@ -601,7 +629,7 @@ Fusion — це внутрішнє рішення компілятора, а н�
 
 :::caution Оновіть програми для попереднього перегляду та збережені графи.
 
-У цій версії до `GraphLinkOptions` додано поля для визначення параметрів. Поточний ABI C++ та ім’я спільної бібліотеки (SONAME) для Neat Library – 6. Перезберіть програми та плагіни C++, використовуючи відповідний пакет Core. Не змішуйте бінарні файли, створені для попередньої версії `libsima_neat` SONAME, з `libsima_neat.so.6`.
+У цій версії до `GraphLinkOptions` додано поля для визначення параметрів. Поточний ABI C++ та ім’я спільної бібліотеки (SONAME) для Neat Library – 7. Перезберіть програми та плагіни C++, використовуючи відповідний пакет Core. Не змішуйте бінарні файли, створені для попередньої версії `libsima_neat` SONAME, з `libsima_neat.so.7`.
 
 Перенесіть вихідний код попередньої версії таким чином:
 

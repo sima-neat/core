@@ -724,6 +724,25 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
   set_property(TEST unit_dataflow_backend_test APPEND PROPERTY LABELS "unit;dataflow")
 endif()
 
+# H0 C2: Run's Tensor verbs, Graph::input/output and records, on both backends. One executable per
+# test, registered once for GStreamer and, with the runtime in the build, once more with
+# SIMA_NEAT_BACKEND=dataflow (label `dataflow`); the test reads the variable and requests that
+# backend explicitly (RunOptions::backend), so a Run the Dataflow backend cannot take fails.
+foreach(_c2_test unit_run_verb_resolution_test unit_run_tensor_surface_test
+        unit_graph_header_no_gstreamer_test)
+  if (NOT _c2_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    add_pipeline_test(${_c2_test} ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/${_c2_test}.cpp)
+    set_property(TEST ${_c2_test} APPEND PROPERTY LABELS "unit")
+    if (SIMANEAT_DATAFLOW_SOURCE_DIR)
+      simaneat_add_test(NAME ${_c2_test}_dataflow COMMAND ${_c2_test})
+      simaneat_append_ctest_env(${_c2_test}_dataflow)
+      set_property(TEST ${_c2_test}_dataflow APPEND PROPERTY ENVIRONMENT
+        "SIMA_NEAT_BACKEND=dataflow")
+      set_property(TEST ${_c2_test}_dataflow APPEND PROPERTY LABELS "strict;unit;dataflow")
+    endif()
+  endif()
+endforeach()
+
 # The delivery-mode flag is cached; exercise the same contract in separate processes.
 if (TARGET unit_inputstream_idle_resume_test)
   set_tests_properties(unit_inputstream_idle_resume_test PROPERTIES

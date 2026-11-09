@@ -4,7 +4,8 @@
 //
 // Covers: an undeclared input bound by its first push and enforced; a declared input with a
 // dynamic axis; a push outside the declared shape rejected at push; the H1 and H0c build errors;
-// the holder push error; explicit Dataflow on a sync run; try_push accounting under KeepLatest,
+// the holder push error; explicit Dataflow on a sync run; a record bound by its first push (C2);
+// try_push accounting under KeepLatest,
 // DropIncoming and Block; a blocking push that never drops under DropIncoming and KeepLatest;
 // close_input cancelling a parked push; stop unblocking a pending pull; pull timeouts -1/0/t;
 // identity (frame_id, stream_id, pts_ns, input_seq) round trip; NV12 planes; DMA-heap tensors;
@@ -225,18 +226,23 @@ void build_errors() {
     require_neat_error([&] { (void)g.run(TensorList{rgb(8, 8, 1)}, dataflow()); },
                        error_codes::kPipelineShape, "Graph::run");
   }
-  // Device memory and records: not on this backend yet.
+  // Device memory: not on this backend yet.
   {
     InputOptions in;
     in.memory_policy = InputMemoryPolicy::Ev74;
     Graph g = input_output(in);
     require_neat_error([&] { (void)g.build(dataflow()); }, error_codes::kInputShape, "H0b");
   }
+  // Records (an item of several tensors) bind a record port since C2; the binding is enforced.
   {
     Graph g = input_output();
     Run run = g.build(dataflow());
-    require_neat_error([&] { (void)run.push(TensorList{rgb(8, 8, 1), rgb(8, 8, 2)}); },
-                       error_codes::kInputShape, "record");
+    require(run.push(TensorList{rgb(8, 8, 1), rgb(8, 8, 2)}), "a record push");
+    const auto s = run.pull(2000);
+    require(s && s->tensors.size() == 2U && bytes_of(s->tensors[1]) == bytes_of(rgb(8, 8, 2)),
+            "the record's tensors");
+    require_neat_error([&] { (void)run.push(TensorList{rgb(8, 8, 1)}); }, error_codes::kInputShape,
+                       "record");
     run.close();
   }
 }

@@ -672,7 +672,24 @@ void write_input_options_json(std::ostream& oss, const InputOptions& opt) {
       << "\"memory_policy\":" << static_cast<int>(effective_input_memory_policy(opt)) << ","
       << "\"pool_min_buffers\":" << opt.pool_min_buffers << ","
       << "\"pool_max_buffers\":" << opt.pool_max_buffers << "," << "\"buffer_name\":\""
-      << json_escape(opt.buffer_name) << "\"}";
+      << json_escape(opt.buffer_name) << "\"";
+  // A declared shape (Graph::input(name, shape, dtype)); absent when none is declared, so the
+  // JSON of every other Input is unchanged.
+  if (!opt.shape.empty()) {
+    const auto write_dims = [&](const char* key, const std::vector<std::int64_t>& dims) {
+      oss << ",\"" << key << "\":[";
+      for (std::size_t i = 0; i < dims.size(); ++i) {
+        oss << (i == 0 ? "" : ",") << dims[i];
+      }
+      oss << "]";
+    };
+    write_dims("shape", opt.shape);
+    if (!opt.max_shape.empty()) {
+      write_dims("max_shape", opt.max_shape);
+    }
+    oss << ",\"dtype\":" << static_cast<int>(opt.dtype);
+  }
+  oss << "}";
 }
 
 InputOptions parse_input_options(const JsonValue::JsonObject& obj) {
@@ -714,6 +731,13 @@ InputOptions parse_input_options(const JsonValue::JsonObject& obj) {
   opt.pool_min_buffers = int_field(obj, "pool_min_buffers", opt.pool_min_buffers);
   opt.pool_max_buffers = int_field(obj, "pool_max_buffers", opt.pool_max_buffers);
   opt.buffer_name = string_field(obj, "buffer_name", opt.buffer_name);
+  for (const int dim : int_array_field(obj, "shape")) {
+    opt.shape.push_back(dim);
+  }
+  for (const int dim : int_array_field(obj, "max_shape")) {
+    opt.max_shape.push_back(dim);
+  }
+  opt.dtype = static_cast<TensorDType>(int_field(obj, "dtype", static_cast<int>(opt.dtype)));
   return opt;
 }
 

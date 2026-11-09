@@ -552,6 +552,34 @@ auto classes = run.pull();
 
 如果有多個輸入或輸出可用，未命名的 `push(...)` 或 `pull()` 將會失敗，並列出可用的端點名稱，而不是猜測您想要使用哪個。
 
+### 以值宣告端點並 push Tensor
+
+`Graph::input(name)` 與 `Graph::output(name, value)` 可宣告相同的公開端點，而不必自行撰寫邊界節點。`Run` 的 Tensor 動詞會 push 一個 Tensor，並 pull 一個 `Result<Tensor>`：
+
+```cpp
+using namespace std::chrono_literals;
+
+simaai::neat::Graph graph;
+auto image = graph.input("image");      // 第一次 push 決定其形狀
+graph.output("out", image);
+auto run = graph.build();
+
+run.push("image", image_tensor);
+auto result = run.pull("out", 100ms);   // Ok、Timeout、Closed 或 Error
+if (result) {
+  const auto& stamp = result->stamp();  // stream_name、seq、frame_id、source_time
+} else if (result.status() == simaai::neat::PullStatus::Closed) {
+  // 輸入已關閉，且所有輸出都已 pull
+}
+```
+
+- `graph.input("points", {-1, 4}, simaai::neat::TensorDType::Float32, {256, 4})` 宣告一個張量輸入：`-1` 表示動態軸，最後一個引數為其上限。超出宣告的 push 會以 `misconfig.input_shape` 失敗。`run.alloc("points")` 會傳回具有上限形狀的可寫入 Tensor；push 它即為提交，且僅能一次。
+- 被 push 的 Tensor 的戳記會提議 `stream_name`、`frame_id`、`source_time` 與 `flags`（`tensor.with_stamp(stamp)`）。`seq` 與 `publish_time` 由執行環境寫入。
+- `simaai::neat::Tensor::record({a, b})` 會將多個張量作為一個項目 push。此時 pull 到的 Tensor 是一筆記錄：`result->fields()`、`(*result)["0"]`、`result->leaves()`。
+- `run.on_output("out", callback)` 會在 `Run` 所擁有的執行緒上，將每個輸出 Tensor 傳遞給回呼，取代 `pull`。`run(tensor)` 會 push 並等待輸出。
+- 整數逾時的多載維持原有意義：`pull(100)` 與 `pull("out", 100)` 傳回 `std::optional<Sample>`。
+- `pipeline/Graph.h` 不再需要 GStreamer 的標頭。除非在它之前定義 `SIMA_NEAT_GRAPH_NO_GSTREAMER`，否則它仍會包含 `<gst/gst.h>`；之後的版本會移除此包含，因此在使用 GStreamer 的地方請自行包含 `<gst/gst.h>`。
+
 ## 連接即時片段
 
 當連接需要執行階段原則或明確的原始影格傳輸限制時，請使用 [`GraphLinkOptions`](/reference/{lsa}/structs/simaai-neat-graphlinkoptions)。
@@ -617,7 +645,7 @@ C++ 和 Python 都會在 `GraphLinkOptions` 上公開這些欄位，該欄位會
 
 :::caution 升級預覽應用程式和已儲存的圖。
 
-這個版本在 `GraphLinkOptions` 中新增了許可欄位。目前的 Neat Library C++ ABI 和共享函式庫 SONAME 為 6。請重新建置 C++ 應用程式和外掛程式，使其與對應的核心套件相容。請勿將為較早版本的 `libsima_neat` SONAME 建置的二進位檔與 `libsima_neat.so.6` 混合使用。
+這個版本在 `GraphLinkOptions` 中新增了許可欄位。目前的 Neat Library C++ ABI 和共享函式庫 SONAME 為 7。請重新建置 C++ 應用程式和外掛程式，使其與對應的核心套件相容。請勿將為較早版本的 `libsima_neat` SONAME 建置的二進位檔與 `libsima_neat.so.7` 混合使用。
 
 請按照以下方式遷移預覽原始程式碼：
 

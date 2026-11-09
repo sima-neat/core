@@ -17,6 +17,8 @@
  *   - `Plane` — per-plane info for composite formats (NV12 = Y + UV, I420 = Y + U + V).
  *   - `Semantic` — discriminated union of "what this tensor means" (image, audio, tess, etc.).
  *   - `TensorRouteMeta` — routing metadata used by multi-output models.
+ *   - `Stamp` / `TimePoint` — the context a Tensor carries (stream, sequence, frame id, times).
+ *   - `TensorEnvelope` — a Tensor's stamp and, for a record, its named fields.
  *   - `Device` / `DeviceType` — where the tensor lives (CPU/CVU/MLA/APU).
  *
  * @see "Tensors: hiding the memory mess" (§0.10 of the design deep dive)
@@ -32,6 +34,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <stdexcept>
 #include <string_view>
@@ -635,6 +638,83 @@ struct TensorRouteMeta {
 };
 
 /**
+ * @brief Which clock a `TimePoint` was read from.
+ *
+ * Different clocks are different domains: compare two `TimePoint`s only when their clocks are
+ * equal. `SensorLocal` is a source's own media time or counter (for example `Sample::pts_ns`),
+ * never this host's clock.
+ * @ingroup tensors
+ */
+enum class ClockId : std::uint16_t {
+  None = 0,        ///< No time: the TimePoint is unset.
+  Monotonic = 1,   ///< `CLOCK_MONOTONIC` of this host.
+  Tai = 2,         ///< `CLOCK_TAI`, PTP-disciplined when a grandmaster is present.
+  SensorLocal = 3, ///< A source's own media time or counter.
+};
+
+/// A time in nanoseconds on one clock (`ClockId`); unset when `clock` is `ClockId::None`.
+struct TimePoint {
+  std::int64_t ns = 0;           ///< Nanoseconds on `clock`.
+  ClockId clock = ClockId::None; ///< The clock `ns` was read from.
+
+  /// True iff the time is set.
+  constexpr bool valid() const noexcept {
+    return clock != ClockId::None;
+  }
+  friend constexpr bool operator==(const TimePoint&, const TimePoint&) = default;
+};
+
+/// Conditions a `Stamp` can carry (a bit set).
+enum class StampFlags : std::uint16_t {
+  None = 0,
+  Discontinuity = 1U << 0U, ///< The stream restarted or skipped before this message.
+  Gap = 1U << 1U,           ///< Data is known to be missing before this message.
+  EndOfStream = 1U << 2U,   ///< The last message of its stream.
+  Degraded = 1U << 3U,      ///< Produced under a degraded condition.
+};
+
+/// The union of two flag sets.
+constexpr StampFlags operator|(StampFlags a, StampFlags b) noexcept {
+  return static_cast<StampFlags>(static_cast<std::uint16_t>(a) | static_cast<std::uint16_t>(b));
+}
+/// The intersection of two flag sets; compare with `StampFlags::None` to test a flag.
+constexpr StampFlags operator&(StampFlags a, StampFlags b) noexcept {
+  return static_cast<StampFlags>(static_cast<std::uint16_t>(a) & static_cast<std::uint16_t>(b));
+}
+
+/**
+ * @brief The context a Tensor carries: which stream, which publication, which frame, when.
+ *
+ * The runtime writes `seq` and `publish_time` when it publishes a message; the application only
+ * proposes `stream_name`, `frame_id`, `source_time` and `flags`, on the Tensor it pushes
+ * (`Tensor::with_stamp`). A Tensor that never went through a Run has the default Stamp.
+ * @see Tensor::stamp
+ * @ingroup tensors
+ */
+struct Stamp {
+  static constexpr std::uint16_t kVersion = 1; ///< The layout version of this struct.
+
+  std::uint32_t stream = 0;   ///< The stream's id within its Run; 0: unassigned. Compare ids
+                              ///< only within one Run; `stream_name` identifies a stream anywhere.
+  std::string stream_name;    ///< The stream's name (`Sample::stream_id`).
+  std::uint64_t seq = 0;      ///< Publication sequence of the input, from 1; 0: not published.
+  std::int64_t frame_id = -1; ///< The application's correlation key; -1: unset.
+  TimePoint source_time{};    ///< Capture or media time, proposed by the application.
+  TimePoint publish_time{};   ///< When the runtime published the message; unset when the
+                              ///< runtime records none.
+  StampFlags flags = StampFlags::None; ///< Conditions proposed by the application.
+  std::uint16_t version = kVersion;    ///< `kVersion` of the producer.
+};
+
+/// Position of a field in a record Tensor (`Tensor::operator[](FieldId)`): `FieldId{0}` is the
+/// first field.
+struct FieldId {
+  std::uint16_t value = 0; ///< The field's position.
+};
+
+struct TensorEnvelope;
+
+/**
  * @brief Universal tensor type — a labeled box of numbers that flows between Nodes.
  *
  * A `Tensor` is the framework's fundamental data type. It carries:
@@ -649,6 +729,12 @@ struct TensorRouteMeta {
  * etc.).
  *   - **Planes** — for composite formats (NV12, I420), per-plane sub-region records.
  *   - **Route metadata** — for multi-output models, identifies which output this tensor is.
+ *   - **Envelope** — the `Stamp` a Run gave it and, for a record, its named fields (`stamp()`,
+ *     `is_record()`, `operator[]`, `fields()`, `leaves()`).
+ *
+ * A Tensor is a *leaf* (one payload) or a *record* (an ordered set of named fields, each a
+ * Tensor, sharing one Stamp). `Tensor::record(fields)` builds a positional record, whose field
+ * names are `"0"`, `"1"`, ...
  *
  * Tensors are **shared_ptr-friendly** for storage but **value types** for the metadata. Cheap
  * to copy by value (the storage is reference-counted).
@@ -684,6 +770,32 @@ struct Tensor {
       planes; ///< Per-plane sub-region records for composite formats (empty for dense tensors).
   bool read_only = true;   ///< If true, framework refuses mutable `data_ptr<T>()` access.
   TensorRouteMeta route{}; ///< Routing metadata (output identity in multi-output models).
+  /// The stamp and, for a record, the fields (`stamp()`, `fields()`); shared and immutable.
+  /// Empty for a Tensor that never went through a Run's `pull(timeout)`: `stamp()` is then the
+  /// default Stamp.
+  std::shared_ptr<const TensorEnvelope> envelope;
+
+  /// The context this Tensor carries; the default Stamp when it has no envelope.
+  const Stamp& stamp() const noexcept;
+  /// A copy of this Tensor carrying `value` as its stamp (a record keeps its fields). What a push
+  /// reads from it: `stream_name`, `frame_id`, `source_time` and `flags`.
+  Tensor with_stamp(Stamp value) const;
+
+  /// True iff this Tensor is a record (it has fields).
+  bool is_record() const noexcept;
+  /// The record field named `name`; throws `std::out_of_range` when there is none.
+  const Tensor& operator[](std::string_view name) const;
+  /// The record field at position `id`; throws `std::out_of_range` when there is none.
+  const Tensor& operator[](FieldId id) const;
+  /// The record's fields in schema order; empty for a leaf.
+  std::span<const Tensor> fields() const noexcept;
+  /// The record's field names in schema order; empty for a leaf.
+  std::span<const std::string> field_names() const noexcept;
+  /// Every leaf, depth first: `{*this}` for a leaf, the fields' leaves for a record.
+  std::vector<Tensor> leaves() const;
+  /// A positional record of `fields` (names `"0"`, `"1"`, ...); throws `std::invalid_argument`
+  /// when `fields` is empty.
+  static Tensor record(std::vector<Tensor> fields);
 
   /// True when an explicit physical tile description requires detessellation.
   /// `is_dense()` continues to mean single-plane, not numerical storage order.
@@ -930,6 +1042,20 @@ public:
                             TensorMemory memory = TensorMemory::EV74);
   static Tensor from_vector(const std::vector<int32_t>& data, std::vector<int64_t> shape,
                             TensorMemory memory = TensorMemory::EV74);
+};
+
+/**
+ * @brief What a Tensor carries besides its payload: its `Stamp` and, for a record, its fields.
+ *
+ * Shared by every copy of the Tensor and immutable once shared. A record's fields are Tensors in
+ * schema order, `names` the schema (one unique name per field).
+ * @see Tensor::envelope
+ * @ingroup tensors
+ */
+struct TensorEnvelope {
+  Stamp stamp;                    ///< The Tensor's context.
+  std::vector<Tensor> fields;     ///< A record's fields in schema order; empty for a leaf.
+  std::vector<std::string> names; ///< A record's field names, one per field.
 };
 
 } // namespace simaai::neat

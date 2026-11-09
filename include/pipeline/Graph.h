@@ -55,7 +55,12 @@
 #include <vector>
 
 #include <opencv2/core/mat.hpp>
+// No declaration in this header uses GStreamer. Define SIMA_NEAT_GRAPH_NO_GSTREAMER to include it
+// without GStreamer's headers; a later release removes this include unconditionally, so code that
+// uses GStreamer should include <gst/gst.h> itself.
+#ifndef SIMA_NEAT_GRAPH_NO_GSTREAMER
 #include <gst/gst.h>
+#endif
 
 namespace simaai::neat {
 namespace internal {
@@ -195,6 +200,55 @@ public:
   std::vector<std::string> inputs() const;
   /// Return public logical output endpoint names declared by this Graph.
   std::vector<std::string> outputs() const;
+
+  // ── Inputs and outputs by name ───────────────────────────────────────────────────────────
+  /**
+   * @brief A value of this Graph: what `input()` returns and `output()` publishes.
+   *
+   * A Handle names the producer of a value, not the value itself; using one Handle twice is a
+   * fan-out. It belongs to the Graph that made it: passing it to another Graph is an error.
+   */
+  class Handle {
+  public:
+    /// An empty Handle; `output()` rejects it.
+    Handle() = default;
+    /// True iff this Handle refers to a value of a Graph.
+    explicit operator bool() const noexcept {
+      return static_cast<bool>(node_);
+    }
+
+  private:
+    friend class Graph;
+    std::shared_ptr<Node> node_;
+    std::uint64_t graph_id_ = 0;
+  };
+
+  /**
+   * @brief Declare an application input named `name`; its spec is set by the first push.
+   *
+   * Equivalent to adding `nodes::Input(name)`, without linking it to the previous Node. Feed it
+   * with `Run::push(name, tensor)` (or `push(tensor)` when it is the only input).
+   */
+  Handle input(std::string name);
+  /**
+   * @brief Declare an application input named `name` with a tensor shape and dtype.
+   *
+   * A tensor input (`PayloadType::Tensor`): `shape` has one size per axis and `-1` for a dynamic
+   * axis; `max_shape`, when given, bounds each dynamic axis (same rank). A push of a tensor outside
+   * the declaration is rejected at push with `misconfig.input_shape`. `Run::alloc(name)` needs
+   * every axis fixed or bounded, and so does the Dataflow backend, which sizes its input pool at
+   * build.
+   * @throws NeatError (`misconfig.input_shape`) on an empty or inconsistent declaration.
+   */
+  Handle input(std::string name, std::vector<std::int64_t> shape,
+               TensorDType dtype = TensorDType::UInt8, std::vector<std::int64_t> max_shape = {});
+  /**
+   * @brief Publish `value` as the application output named `name` (`Run::pull(name, ...)`).
+   *
+   * Equivalent to connecting the value's producer to `nodes::Output(name)`.
+   * @throws NeatError (`misconfig.pipeline_shape`) when `value` is empty or from another Graph.
+   */
+  void output(std::string name, Handle value);
 
   // ── Core: add Nodes / Graph fragments ───────────────────────────────────────────────────
   /**

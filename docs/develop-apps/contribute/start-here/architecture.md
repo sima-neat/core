@@ -1302,7 +1302,25 @@ one link: `push` copies the tensor into a pool slot on the calling thread and wa
 room without dropping, `try_push` applies the overflow policy, and `pull` returns a
 read-only `CpuExternal` tensor that leases the slot until its last copy is released. The
 input's shape is bound by its declaration, its seed or its first push, and enforced from
-then on. `push_holder` and multi-tensor (record) items are GStreamer-only for now.
+then on. `push_holder` is GStreamer-only; an item of several tensors binds a record port whose
+fields are named by position.
+
+The Tensor verbs work on both runtimes. `push(tensor)` and `push(name, tensor)` push one
+item: a leaf, or a positional record (`Tensor::record`). `pull(name, timeout)` with a
+`std::chrono::milliseconds` timeout returns `Result<Tensor>`, whose status is one of the
+four `PullStatus` outcomes; the `int` overloads keep returning `std::optional<Sample>`.
+`run(tensor)` pushes and waits for the output, `on_output(name, callback)` delivers an
+output to a callback on a thread the `Run` owns (the output can then not be pulled), and
+`alloc(name)` lends a writable Tensor for an input declared with
+`Graph::input(name, shape, dtype)`: a pool slot published without a copy on the Dataflow
+runtime, CPU memory on GStreamer. Counters stay with `start_measurement()`; `Run` has no
+public `stats()`. A pulled Tensor carries its `Stamp` in `Tensor::envelope`: the runtime
+writes `seq` and `publish_time`, and the pushed Tensor proposes `stream_name`,
+`frame_id`, `source_time` and `flags`. The `Sample` surface is a projection of it
+(`to_sample`, `to_tensor`): `input_seq = seq - 1`, `orig_input_seq = input_seq`, and
+`pts_ns` from `source_time`. A pushed `input_seq` or `orig_input_seq` has no field in
+the stamp and is not carried on the Dataflow runtime, and GStreamer records no
+`publish_time`.
 
 An idle `Run` remains usable; operation deadlines bound waits, not pauses between submissions.
 

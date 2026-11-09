@@ -761,7 +761,10 @@ Dataflow バックエンド（`SIMANEAT_DATAFLOW_SOURCE_DIR` で有効にする�
 `push` は呼び出し元のスレッドでテンソルをプールのスロットにコピーし、破棄せずに空きを待ちます。
 `try_push` はオーバーフローポリシーを適用し、`pull` は最後のコピーが解放されるまでスロットを借用する
 読み取り専用の `CpuExternal` テンソルを返します。入力の形状は宣言、シード、または最初の push で決まり、
-それ以降は強制されます。`push_holder` と複数テンソル（レコード）の項目は、当面 GStreamer 専用です。
+それ以降は強制されます。`push_holder` は GStreamer 専用で、複数のテンソルからなる項目は、
+フィールド名が位置ベースのレコードポートにバインドされます。
+
+Tensor 動詞は両方のランタイムで動作します。`push(tensor)` と `push(name, tensor)` は 1 つの項目（リーフ、または位置ベースのレコード `Tensor::record`）を push します。`std::chrono::milliseconds` のタイムアウトを取る `pull(name, timeout)` は `Result<Tensor>` を返し、そのステータスは 4 つの `PullStatus` の結果のいずれかです。`int` のオーバーロードは引き続き `std::optional<Sample>` を返します。`run(tensor)` は push して出力を待ち、`on_output(name, callback)` は `Run` が所有するスレッド上で出力をコールバックに渡し（その出力は pull できなくなります）、`alloc(name)` は `Graph::input(name, shape, dtype)` で宣言された入力に書き込み可能な Tensor を貸し出します。Dataflow ランタイムではコピーなしで公開されるプールのスロット、GStreamer では CPU メモリです。カウンターは引き続き `start_measurement()` で取得し、`Run` に公開の `stats()` はありません。pull された Tensor は `Tensor::envelope` に `Stamp` を持ちます。ランタイムが `seq` と `publish_time` を書き込み、push される Tensor が `stream_name`、`frame_id`、`source_time`、`flags` を提案します。`Sample` のインターフェースはその射影です（`to_sample`、`to_tensor`）：`input_seq = seq - 1`、`orig_input_seq = input_seq` で、`pts_ns` は `source_time` から得られます。push された `input_seq` や `orig_input_seq` にはスタンプ上のフィールドがないため Dataflow ランタイムでは伝達されず、GStreamer は `publish_time` を記録しません。
 
 アイドル状態の `Run` は引き続き使用できます。操作の期限は待機時間を制限し、入力の送信間の一時停止には適用されません。
 

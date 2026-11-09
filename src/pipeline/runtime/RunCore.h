@@ -11,6 +11,7 @@
 #include "pipeline/GraphOptions.h"
 #include "pipeline/Run.h"
 #include "pipeline/internal/HolderLoanGate.h"
+#include "pipeline/internal/SampleProjection.h"
 
 #include <atomic>
 #include <chrono>
@@ -37,6 +38,7 @@ namespace simaai::neat::runtime {
 
 struct ExecutionGraphPlan;
 struct PipelineSegmentPlan;
+struct OutputCallbacks; // RunTensor.cpp: the Run::on_output deliveries
 
 enum class GraphSampleTimingKeyKind { OrigInputSeq, InputSeq, FrameId };
 
@@ -349,6 +351,16 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
   // Set when Graph::build put this Run on the Neat Dataflow runtime (RunOptions::backend). Then
   // `pipeline` and `graph_execution_` stay empty, and every public entry branches to it first.
   std::unique_ptr<DataflowRunState> dataflow_;
+
+  // Run::on_output (RunTensor.cpp): the delivery threads, and the flag every public pull reads
+  // first (an output with a callback is not pulled by the application).
+  void stop_output_callbacks() noexcept;
+  std::mutex output_callbacks_mu;
+  std::shared_ptr<OutputCallbacks> output_callbacks;
+  std::atomic<bool> output_callbacks_active{false};
+  // Stamp::stream of the Tensors the GStreamer backend's pull(milliseconds) returns: stream names
+  // interned per Run (the Dataflow backend interns in its Run state).
+  pipeline_internal::StreamNames tensor_streams{std::string{}};
 };
 
 void initialize_run_identity(RunCore& core);

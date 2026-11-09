@@ -13,6 +13,10 @@ void validate_original_images(const Run& run, const std::vector<cv::Mat>& inputs
 
 RunStats stats(const Run& run);
 InputStreamStats input_stats(const Run& run);
+// True when Run::on_output delivers `output` (nullopt: the default output): the application's
+// pulls of it are refused (RunTensor.cpp).
+bool output_delivered_to_callback(const runtime::RunCore& core,
+                                  std::optional<std::string_view> output);
 RunDiagSnapshot diag_snapshot(const Run& run);
 PowerSummary power_summary(const Run& run);
 
