@@ -1,7 +1,8 @@
-// Differential test (H0 3.10, part C4): one fixed input sequence through the same graph on both
-// backends (RunBackend::GStreamer and RunBackend::Dataflow, requested explicitly, in one process),
-// with and without frame_id / stream_id / pts_ns set and with copy_input on and off; the pulled
-// items are compared field by field and byte by byte. SIMA_NEAT_BACKEND does not matter here.
+// Differential test (H0 3.10, parts C4, C2b): one fixed input sequence through the same graph on
+// both backends (RunBackend::GStreamer and RunBackend::Dataflow, requested explicitly, in one
+// process), with and without frame_id / stream_id / pts_ns set and with copy_input on and off; the
+// pulled items are compared field by field and byte by byte. SIMA_NEAT_BACKEND does not matter
+// here.
 //
 // Compared (APPLICATION_MODEL.md 1.2: what applications read, plus what they echo):
 //   the pull status; Sample::kind and its payload slots (tensor / tensors / fields, and how many);
@@ -9,10 +10,10 @@
 //   frame_id (C0: -1 for push(TensorList) on GStreamer, so input_seq is the sequence key);
 //   stream_id; input_seq; pts_ns when InputOptions::do_timestamp is false; orig_input_seq for the
 //   items that push none; media_type and payload_tag (C3 shapes the Dataflow Sample as
-//   GStreamer's); on the new surface (Run::pull(milliseconds) -> Result<Tensor>): is_record, the
-//   leaf's dtype, shape, format and bytes, Stamp::frame_id, Stamp::stream_name, Stamp::seq, and
-//   Stamp::source_time (ns and clock) when do_timestamp is false; the Closed status after
-//   close_input and the drained queue.
+//   GStreamer's); on the new surface (Run::pull(milliseconds) -> Result<TensorList>): the list's
+//   size, each tensor's dtype, shape, format and bytes, Stamp::frame_id, Stamp::stream_name,
+//   Stamp::seq, and Stamp::source_time (ns and clock) when do_timestamp is false; the Closed status
+//   after close_input and the drained queue.
 // Excluded explicitly, each with its reason (never silently); the Dataflow side is still checked
 // to hold the documented "not carried" value, and both values are printed:
 //   - pts_ns / Stamp::source_time when do_timestamp is true: GStreamer's appsrc stamps running time
@@ -62,7 +63,9 @@ using namespace std::chrono_literals;
 constexpr int kMaxW = 96;
 constexpr int kMaxH = 64;
 
-enum class Verb { List, Sample, Tensor };
+// List: push(TensorList{t}); Stamped: push({t.with_stamp(...)}) (the same list verb, its tensor
+// carrying a stamp proposal when the item sets one); Sample: push(Sample).
+enum class Verb { List, Sample, Stamped };
 
 // One item of the fixed sequence.
 struct Item {
@@ -77,14 +80,14 @@ struct Item {
 
 std::vector<Item> sequence(bool vary_shapes) {
   std::vector<Item> items = {
-      {Verb::List, 64, 48, -1, "", -1, -1},             // no identity at all
-      {Verb::Sample, 32, 16, 11, "cam-a", 1001000, -1}, // all three set
-      {Verb::Sample, 96, 64, -1, "", -1, -1},           // a Sample with none set
-      {Verb::Tensor, 64, 48, 13, "cam-b", 3003000, -1}, // the new verb, with a stamp proposal
-      {Verb::Sample, 48, 32, 14, "", -1, -1},           // frame_id only
-      {Verb::Sample, 96, 64, -1, "cam-a", -1, 500},     // stream only, and an orig_input_seq
-      {Verb::Tensor, 16, 8, -1, "", -1, -1},            // the new verb, no stamp
-      {Verb::Sample, 64, 48, -1, "", 7007000, -1},      // pts only
+      {Verb::List, 64, 48, -1, "", -1, -1},              // no identity at all
+      {Verb::Sample, 32, 16, 11, "cam-a", 1001000, -1},  // all three set
+      {Verb::Sample, 96, 64, -1, "", -1, -1},            // a Sample with none set
+      {Verb::Stamped, 64, 48, 13, "cam-b", 3003000, -1}, // a list whose tensor proposes a stamp
+      {Verb::Sample, 48, 32, 14, "", -1, -1},            // frame_id only
+      {Verb::Sample, 96, 64, -1, "cam-a", -1, 500},      // stream only, and an orig_input_seq
+      {Verb::Stamped, 16, 8, -1, "", -1, -1},            // push({t}), no stamp
+      {Verb::Sample, 64, 48, -1, "", 7007000, -1},       // pts only
   };
   if (!vary_shapes) {
     for (Item& item : items) {
@@ -112,7 +115,7 @@ struct Variant {
   bool vary_shapes; // shapes within the declared bounds, else 64x48 throughout
   bool copy_input;
   bool do_timestamp;
-  bool new_pull; // Run::pull(milliseconds) -> Result<Tensor>, else Run::pull(int, Sample&)
+  bool new_pull; // Run::pull(milliseconds) -> Result<TensorList>, else Run::pull(int, Sample&)
 };
 
 struct TensorObs {
@@ -135,7 +138,7 @@ struct Observed {
   std::string stream_id, stream_label, media_type, payload_tag, caps_string;
   std::size_t attributes = 0;
   // New surface.
-  bool is_record = false;
+  std::size_t list_size = 0;
   Stamp stamp;
   // Both.
   std::vector<TensorObs> leaves;
@@ -199,7 +202,7 @@ bool push_item(Run& run, const Variant& v, const Item& item, const Tensor& t) {
     s.orig_input_seq = item.orig_seq;
     return v.connected ? run.push("image", Sample{s}) : run.push(Sample{s});
   }
-  case Verb::Tensor: {
+  case Verb::Stamped: {
     Stamp proposal;
     proposal.frame_id = item.frame_id;
     proposal.stream_name = item.stream;
@@ -208,7 +211,7 @@ bool push_item(Run& run, const Variant& v, const Item& item, const Tensor& t) {
     }
     const Tensor stamped =
         item.frame_id >= 0 || !item.stream.empty() || item.pts_ns >= 0 ? t.with_stamp(proposal) : t;
-    return v.connected ? run.push("image", stamped) : run.push(stamped);
+    return v.connected ? run.push("image", {stamped}) : run.push({stamped});
   }
   }
   return false;
@@ -217,17 +220,18 @@ bool push_item(Run& run, const Variant& v, const Item& item, const Tensor& t) {
 Observed pull_one(Run& run, const Variant& v) {
   Observed o;
   if (v.new_pull) {
-    Result<Tensor> r = v.connected ? run.pull("out", 5000ms) : run.pull(5000ms);
+    Result<TensorList> r = v.connected ? run.pull("out", 5000ms) : run.pull(5000ms);
     o.status = r.status();
     if (!r.ok()) {
       o.error = r.error().message;
       return o;
     }
-    const Tensor& t = *r;
-    o.is_record = t.is_record();
-    o.stamp = t.stamp();
-    for (const Tensor& leaf : t.leaves()) {
-      o.leaves.push_back(observe(leaf));
+    o.list_size = r->size();
+    if (!r->empty()) {
+      o.stamp = r->front().stamp();
+    }
+    for (const Tensor& t : *r) {
+      o.leaves.push_back(observe(t));
     }
     return o;
   }
@@ -283,7 +287,7 @@ Outcome run_variant(const Variant& v, RunBackend backend) {
     }
     run.close_input();
     if (v.new_pull) {
-      Result<Tensor> r = v.connected ? run.pull("out", 5000ms) : run.pull(5000ms);
+      Result<TensorList> r = v.connected ? run.pull("out", 5000ms) : run.pull(5000ms);
       out.final_status = r.status();
       out.final_error = r.ok() ? std::string{} : r.error().message;
     } else {
@@ -366,9 +370,9 @@ void print_row(const char* backend, std::size_t i, const Observed& o, bool new_p
     return;
   }
   if (new_pull) {
-    std::cout << " record=" << o.is_record << " frame_id=" << o.stamp.frame_id << " stream_name='"
-              << o.stamp.stream_name << "' stream=" << o.stamp.stream << " seq=" << o.stamp.seq
-              << " source_time=" << o.stamp.source_time.ns << "/"
+    std::cout << " list_size=" << o.list_size << " frame_id=" << o.stamp.frame_id
+              << " stream_name='" << o.stamp.stream_name << "' stream=" << o.stamp.stream
+              << " seq=" << o.stamp.seq << " source_time=" << o.stamp.source_time.ns << "/"
               << static_cast<int>(o.stamp.source_time.clock)
               << " publish_time_valid=" << o.stamp.publish_time.valid()
               << " flags=" << static_cast<int>(o.stamp.flags);
@@ -422,7 +426,7 @@ void compare(const Variant& v, const Outcome& gst, const Outcome& df, Comparison
     }
     const bool proposes_time = item.pts_ns >= 0;
     if (v.new_pull) {
-      c.equal<int>(i, "is_record", g.is_record, d.is_record);
+      c.equal<std::size_t>(i, "list size", g.list_size, d.list_size);
       c.equal<std::int64_t>(i, "Stamp::frame_id", g.stamp.frame_id, d.stamp.frame_id);
       c.equal<std::int64_t>(i, "Stamp::frame_id vs pushed", item.frame_id, d.stamp.frame_id);
       c.equal<std::string>(i, "Stamp::stream_name", g.stamp.stream_name, d.stamp.stream_name);

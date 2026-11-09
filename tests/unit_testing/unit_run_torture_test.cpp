@@ -412,9 +412,10 @@ void lease_outlives_run(int) {
         require(out.size() == 1U, "lease: old pull " + std::to_string(i));
         old_verb.push_back(out.front());
       } else {
-        Result<Tensor> r = run.pull(3000ms);
-        require(r.ok(), "lease: new pull " + std::to_string(i) + ": " + r.error().message);
-        new_verb.push_back(*r);
+        Result<TensorList> r = run.pull(3000ms);
+        require(r.ok() && r->size() == 1U,
+                "lease: new pull " + std::to_string(i) + ": " + r.error().message);
+        new_verb.push_back(r->front());
       }
     }
     run.close();

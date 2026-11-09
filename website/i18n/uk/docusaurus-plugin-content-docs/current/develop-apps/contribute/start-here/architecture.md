@@ -839,21 +839,23 @@ Dataflow (збірка з `SIMANEAT_DATAFLOW_SOURCE_DIR`, графи з одно
 `push` і надалі перевіряється. `push_holder` працює лише з GStreamer; елемент із кількох тензорів прив'язує порт
 запису з позиційними назвами полів.
 
-Дієслова Tensor працюють в обох середовищах виконання. `push(tensor)` і `push(name, tensor)`
-передають один елемент: лист або позиційний запис (`Tensor::record`). `pull(name, timeout)` із
-тайм-аутом `std::chrono::milliseconds` повертає `Result<Tensor>`, стан якого — один із чотирьох
+Дієслова TensorList працюють в обох середовищах виконання; окрім `alloc`, жодне дієслово `Run` не
+приймає й не повертає окремий Tensor. `push(list)` і `push(name, list)` передають один елемент:
+один тензор є листом, кілька — позиційним записом, а штамп першого тензора пропонує `stream_name`,
+`frame_id`, `source_time` і `flags` елемента. `pull(name, timeout)` із тайм-аутом
+`std::chrono::milliseconds` повертає `Result<TensorList>`, стан якого — один із чотирьох
 результатів `PullStatus`; перевантаження з `int` і далі повертають `std::optional<Sample>`.
-`run(tensor)` виконує push і чекає на вихід, `on_output(name, callback)` передає вихід у функцію
-зворотного виклику в потоці, яким володіє `Run` (тоді цей вихід не можна отримати через pull), а
-`alloc(name)` надає доступний для запису Tensor для входу, оголошеного через
-`Graph::input(name, shape, dtype)`: слот пулу, що публікується без копіювання в середовищі Dataflow,
-і пам'ять CPU в GStreamer. Лічильники й далі надає `start_measurement()`; публічного `stats()` у
-`Run` немає. Отриманий через pull Tensor містить свій `Stamp` у `Tensor::envelope`: середовище
-виконання записує `seq` і `publish_time`, а тензор, що передається через push, пропонує
-`stream_name`, `frame_id`, `source_time` і `flags`. Інтерфейс `Sample` є його проєкцією
-(`to_sample`, `to_tensor`): `input_seq = seq - 1`, `orig_input_seq = input_seq`, а `pts_ns` береться
-з `source_time`. Переданий через push `input_seq` або `orig_input_seq` не має поля в штампі й не
-передається в середовищі Dataflow, а GStreamer не записує `publish_time`.
+`run(list)` виконує push і чекає на вихід, `on_output(name, callback)` передає кожен вихідний
+елемент як `TensorList` у функцію зворотного виклику в потоці, яким володіє `Run` (тоді цей вихід
+не можна отримати через pull), а `alloc(name)` надає доступний для запису Tensor для входу,
+оголошеного через `Graph::input(name, shape, dtype)`, і `push(name, {tensor})` фіксує його: слот
+пулу, що публікується без копіювання в середовищі Dataflow, і пам'ять CPU в GStreamer. Лічильники
+й далі надає `start_measurement()`; публічного `stats()` у `Run` немає. Кожен отриманий через pull
+тензор містить `Stamp` елемента в `Tensor::envelope`; середовище виконання записує `seq` і
+`publish_time`. Інтерфейс `Sample` є його проєкцією (`to_sample`, `to_tensor`):
+`input_seq = seq - 1`, `orig_input_seq = input_seq`, а `pts_ns` береться з `source_time`.
+Переданий через push `input_seq` або `orig_input_seq` не має поля в штампі й не передається в
+середовищі Dataflow, а GStreamer не записує `publish_time`.
 
 Під час простою `Run` залишається придатним до роботи; терміни операцій обмежують очікування, а не паузи між поданнями даних.
 

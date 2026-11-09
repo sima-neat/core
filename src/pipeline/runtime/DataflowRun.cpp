@@ -20,10 +20,11 @@
 // An item is one tensor (a leaf: a TensorSpec port) or several (a record: a RecordSchema port with
 // positional field names, H0 plan 3.5). The first item binds which, as it binds the shape.
 //
-// The Tensor verbs (Run::push(const Tensor&), pull(milliseconds), alloc): a pushed Tensor's stamp
-// proposes the message's stream, frame_id, source_time and flags; a pulled Tensor carries the
-// message's Stamp in its envelope. alloc() lends a pool slot as a writable Tensor; a push of it
-// into this Run publishes the slot itself, without a copy (RunAllocation.h).
+// The TensorList verbs (Run::push(TensorList), pull(milliseconds) -> Result<TensorList>, alloc): a
+// pushed list's first tensor's stamp proposes the message's stream, frame_id, source_time and
+// flags; every pulled tensor carries the message's Stamp in its envelope. alloc() lends a pool slot
+// as a writable Tensor; a blocking push of it alone in a list into this Run publishes the slot
+// itself, without a copy (RunAllocation.h).
 #if defined(SIMANEAT_WITH_DATAFLOW)
 
 #include "pipeline/runtime/DataflowRun.h"
@@ -139,6 +140,81 @@ void core_stamp(const df::Stamp& in, const pipeline_internal::StreamNames& strea
   out.version = Stamp::kVersion;
 }
 
+// A CPU tensor's bytes for the copy into a slot, through its storage's own map, with its
+// byte_offset applied: no allocation for CPU storage. Tensor::map (map_tensor_storage_raw) also
+// wraps the storage and the mapping's guard in one keepalive, so that a Mapping may outlive the
+// Tensor; the push copies while its caller holds the Tensor, so the storage's map is enough. Only
+// CpuOwned and CpuExternal storage (whatever their map_fn does, a Run::alloc tensor's included);
+// any other kind gives an empty Mapping and is read through the Tensor.
+Mapping map_cpu_storage_read(const Tensor& tensor) {
+  if (!tensor.storage || tensor.byte_offset < 0 ||
+      (tensor.storage->kind != StorageKind::CpuOwned &&
+       tensor.storage->kind != StorageKind::CpuExternal)) {
+    return {};
+  }
+  Mapping mapping = tensor.storage->map(MapMode::Read);
+  const auto offset = static_cast<std::size_t>(tensor.byte_offset);
+  if (!mapping.data || offset > mapping.size_bytes) {
+    return {};
+  }
+  mapping.data = static_cast<std::uint8_t*>(mapping.data) + offset;
+  mapping.size_bytes -= offset;
+  return mapping;
+}
+
+// Tensor::copy_dense_bytes_tight_to, without its Mapping's allocation for a contiguous CPU tensor.
+bool copy_dense_into(const Tensor& tensor, std::uint8_t* dst, std::size_t dst_size) {
+  if (tensor.is_dense() && !tensor.has_tiled_storage() && !tensor.shape.empty() &&
+      tensor.is_contiguous()) {
+    const std::size_t bytes = tensor.dense_bytes_tight();
+    if (bytes != 0U && dst_size >= bytes) {
+      const Mapping mapping = map_cpu_storage_read(tensor);
+      if (mapping.data && mapping.size_bytes >= bytes) {
+        std::memcpy(dst, mapping.data, bytes);
+        return true;
+      }
+    }
+  }
+  return tensor.copy_dense_bytes_tight_to(dst, dst_size);
+}
+
+// One plane of a CPU NV12 or I420 tensor: its rows as Tensor::map_nv12_read / map_i420_read give
+// them, read through map_cpu_storage_read. False unless the plane exists with a {rows, cols} shape,
+// a row stride of at least `cols` bytes (element stride 1 if given) and every row inside `mapping`.
+struct PlaneRows {
+  const std::uint8_t* data = nullptr;
+  std::int64_t stride = 0;
+};
+
+bool cpu_plane_rows(const Tensor& tensor, const Mapping& mapping, PlaneRole role, std::int64_t rows,
+                    std::int64_t cols, PlaneRows& out) {
+  const Plane* plane = tensor.try_plane(role);
+  if (!plane || plane->shape.size() < 2U || plane->shape[0] != rows || plane->shape[1] != cols ||
+      plane->byte_offset < 0 ||
+      (plane->strides_bytes.size() > 1U && plane->strides_bytes[1] != 1)) {
+    return false;
+  }
+  const std::int64_t stride = plane->strides_bytes.empty() ? cols : plane->strides_bytes[0];
+  if (rows <= 0 || cols <= 0 || stride < cols) {
+    return false;
+  }
+  // end = offset + stride * (rows - 1) + cols, without overflow (all terms are positive).
+  const auto size = static_cast<std::uint64_t>(mapping.size_bytes);
+  const auto offset = static_cast<std::uint64_t>(plane->byte_offset);
+  const auto ustride = static_cast<std::uint64_t>(stride);
+  const auto span_rows = static_cast<std::uint64_t>(rows - 1);
+  if (offset > size || (span_rows != 0U && ustride > (size - offset) / span_rows)) {
+    return false;
+  }
+  const std::uint64_t end = offset + ustride * span_rows + static_cast<std::uint64_t>(cols);
+  if (end > size) {
+    return false;
+  }
+  out.data = static_cast<const std::uint8_t*>(mapping.data) + offset;
+  out.stride = stride;
+  return true;
+}
+
 df::Extent extent_of(const std::vector<std::int64_t>& shape) {
   df::Extent extent;
   extent.rank = static_cast<std::uint8_t>(shape.size());
@@ -160,8 +236,8 @@ struct Bound {
 };
 
 // What the tensors of one pulled message keep alive, in one allocation: the message (the lease on
-// its slot) and the envelope every leaf of it shares (its Stamp). The tensors' storage holder and
-// envelope are aliases into it; it holds no Tensor, so nothing points back at it.
+// its slot) and the envelope every tensor of it shares (its Stamp). The tensors' storage holder
+// and envelope are aliases into it; it holds no Tensor, so nothing points back at it.
 struct PulledMessage {
   explicit PulledMessage(df::Message m) : message(std::move(m)) {}
   df::Message message;
@@ -207,8 +283,13 @@ public:
     if (inputs.empty()) {
       throw_input_shape(std::string(where) + ": an empty tensor list");
     }
-    // A TensorList carries no identity: the default stream, no frame_id.
-    return push_item(inputs, Stamp{}, block, where);
+    // The first tensor's stamp proposes the item's identity; a tensor without a stamp proposes
+    // nothing (the default stream, no frame_id), as develop's TensorList push.
+    const Stamp& proposal = inputs.front().stamp();
+    if (std::optional<TensorList> fields = pipeline_internal::list_record_fields(inputs, where)) {
+      return push_item(*fields, proposal, block, where);
+    }
+    return push_item(inputs, proposal, block, where, /*commit_allocation=*/block);
   }
 
   bool push(std::optional<std::string_view> input, const Sample& msgs, bool block,
@@ -260,17 +341,6 @@ public:
         "RunBackend::GStreamer.");
   }
 
-  bool push(std::optional<std::string_view> input, const Tensor& tensor, bool block,
-            const char* where) override {
-    check_input_name(input, where);
-    if (!tensor.is_record()) {
-      return push_item(std::span<const Tensor>(&tensor, 1), tensor.stamp(), block, where,
-                       /*commit_allocation=*/true);
-    }
-    const TensorList items = pipeline_internal::tensor_push_items(tensor, where);
-    return push_item(items, tensor.stamp(), block, where);
-  }
-
   PullStatus pull(std::optional<std::string_view> output, int timeout_ms, Sample& out,
                   PullError* err) override {
     df::Message message;
@@ -284,7 +354,7 @@ public:
     return PullStatus::Ok;
   }
 
-  PullStatus pull(std::optional<std::string_view> output, int timeout_ms, Tensor& out,
+  PullStatus pull(std::optional<std::string_view> output, int timeout_ms, TensorList& out,
                   PullError* err) override {
     df::Message message;
     Bound* bound = nullptr;
@@ -292,7 +362,7 @@ public:
     if (status != PullStatus::Ok) {
       return status;
     }
-    out = make_tensor(bound->binding, std::move(message));
+    out = make_tensors(bound->binding, std::move(message));
     count_pulled();
     return PullStatus::Ok;
   }
@@ -455,8 +525,9 @@ private:
   }
 
   // One item: Core's checks, the binding (the first item binds it), then the slot. With
-  // `commit_allocation` (push(const Tensor&) only), a Tensor from this Run's alloc() is published
-  // as its slot; every other verb copies it like any CPU tensor, as the GStreamer backend does.
+  // `commit_allocation` (the blocking TensorList push only), a Tensor from this Run's alloc() alone
+  // in the list is published as its slot; every other verb copies it like any CPU tensor, as the
+  // GStreamer backend does.
   bool push_item(std::span<const Tensor> tensors, const Stamp& proposal, bool block,
                  const char* where, bool commit_allocation = false) {
     // Core's own push-time checks and texts first (RunPush.cpp:655, InputStreamUtil.cpp:2146-2190):
@@ -528,7 +599,7 @@ private:
       const DataflowFieldBinding& field = bound.binding.fields[i];
       extents[i] = extent_of(fields[i].shape);
       if (field.offset > slot.size() ||
-          !fields[i].copy_dense_bytes_tight_to(dst + field.offset, slot.size() - field.offset)) {
+          !copy_dense_into(fields[i], dst + field.offset, slot.size() - field.offset)) {
         throw_input_shape(std::string(where) + ": the bytes of field " + std::to_string(i) +
                           " could not be read for the copy (Dataflow backend)");
       }
@@ -747,7 +818,7 @@ private:
       for (std::size_t i = 0; i < tensor.shape.size(); ++i) {
         extent.dims[i] = tensor.shape[i];
       }
-      if (!tensor.copy_dense_bytes_tight_to(dst, slot.size())) {
+      if (!copy_dense_into(tensor, dst, slot.size())) {
         throw_input_shape(std::string(where) +
                           ": the tensor's bytes could not be read for the copy (Dataflow backend)");
       }
@@ -765,33 +836,85 @@ private:
     };
     std::int64_t h = 0;
     std::int64_t w = 0;
-    if (binding.planes == DataflowInputBinding::Planes::Nv12) {
-      auto mapped = tensor.map_nv12_read();
-      if (!mapped) {
-        throw_input_shape(std::string(where) + ": the NV12 tensor could not be mapped");
+    // A CPU tensor's planes are copied without a Mapping allocation (copy_cpu_planes); any other
+    // tensor is mapped through Tensor::map_nv12_read / map_i420_read.
+    if (!copy_cpu_planes(binding, tensor, copy_rows, h, w)) {
+      if (binding.planes == DataflowInputBinding::Planes::Nv12) {
+        auto mapped = tensor.map_nv12_read();
+        if (!mapped) {
+          throw_input_shape(std::string(where) + ": the NV12 tensor could not be mapped");
+        }
+        const Nv12View& v = mapped->view;
+        h = v.height;
+        w = v.width;
+        copy_rows(0, v.y, v.y_stride, h, w);
+        copy_rows(1, v.uv, v.uv_stride, h / 2, w);
+      } else {
+        auto mapped = tensor.map_i420_read();
+        if (!mapped) {
+          throw_input_shape(std::string(where) + ": the I420 tensor could not be mapped");
+        }
+        const I420View& v = mapped->view;
+        h = v.height;
+        w = v.width;
+        copy_rows(0, v.y, v.y_stride, h, w);
+        copy_rows(1, v.u, v.u_stride, h / 2, w / 2);
+        copy_rows(2, v.v, v.v_stride, h / 2, w / 2);
       }
-      const Nv12View& v = mapped->view;
-      h = v.height;
-      w = v.width;
-      copy_rows(0, v.y, v.y_stride, h, w);
-      copy_rows(1, v.uv, v.uv_stride, h / 2, w);
-    } else {
-      auto mapped = tensor.map_i420_read();
-      if (!mapped) {
-        throw_input_shape(std::string(where) + ": the I420 tensor could not be mapped");
-      }
-      const I420View& v = mapped->view;
-      h = v.height;
-      w = v.width;
-      copy_rows(0, v.y, v.y_stride, h, w);
-      copy_rows(1, v.u, v.u_stride, h / 2, w / 2);
-      copy_rows(2, v.v, v.v_stride, h / 2, w / 2);
     }
     extent.rank = 3;
     extent.dims[0] = h;
     extent.dims[1] = w;
     extent.dims[2] = 3;
     return extent;
+  }
+
+  // The planes of a CPU NV12 or I420 tensor into the slot (copy_rows), at the geometry
+  // map_nv12_read / map_i420_read give a well-formed one (the Y plane's {h, w}, both even), read
+  // through map_cpu_storage_read. False, with nothing copied, for any other tensor: the caller
+  // then maps it through the Tensor, which reports what is wrong with it.
+  template <class CopyRows>
+  static bool copy_cpu_planes(const DataflowInputBinding& binding, const Tensor& tensor,
+                              const CopyRows& copy_rows, std::int64_t& h, std::int64_t& w) {
+    const bool nv12 = binding.planes == DataflowInputBinding::Planes::Nv12;
+    if (tensor.dtype != TensorDType::UInt8 || !(nv12 ? tensor.is_nv12() : tensor.is_i420())) {
+      return false;
+    }
+    const Plane* y_plane = tensor.try_plane(PlaneRole::Y);
+    if (!y_plane || y_plane->shape.size() < 2U) {
+      return false;
+    }
+    const std::int64_t rows = y_plane->shape[0];
+    const std::int64_t cols = y_plane->shape[1];
+    if (rows <= 0 || cols <= 0 || rows % 2 != 0 || cols % 2 != 0) {
+      return false;
+    }
+    const Mapping mapping = map_cpu_storage_read(tensor);
+    if (!mapping.data) {
+      return false;
+    }
+    std::array<PlaneRows, 3> planes{};
+    if (!cpu_plane_rows(tensor, mapping, PlaneRole::Y, rows, cols, planes[0])) {
+      return false;
+    }
+    if (nv12) {
+      if (!cpu_plane_rows(tensor, mapping, PlaneRole::UV, rows / 2, cols, planes[1])) {
+        return false;
+      }
+      copy_rows(0, planes[0].data, planes[0].stride, rows, cols);
+      copy_rows(1, planes[1].data, planes[1].stride, rows / 2, cols);
+    } else {
+      if (!cpu_plane_rows(tensor, mapping, PlaneRole::U, rows / 2, cols / 2, planes[1]) ||
+          !cpu_plane_rows(tensor, mapping, PlaneRole::V, rows / 2, cols / 2, planes[2])) {
+        return false;
+      }
+      copy_rows(0, planes[0].data, planes[0].stride, rows, cols);
+      copy_rows(1, planes[1].data, planes[1].stride, rows / 2, cols / 2);
+      copy_rows(2, planes[2].data, planes[2].stride, rows / 2, cols / 2);
+    }
+    h = rows;
+    w = cols;
+    return true;
   }
 
   // A push the Session refused: false, a drop where Core counts one, or Core's error.
@@ -975,46 +1098,37 @@ private:
     return out;
   }
 
-  // The pulled Tensor (Run::pull(milliseconds)): a leaf, or a positional record of the item's
-  // tensors, carrying the message's Stamp. One allocation holds the message and the leaves'
-  // envelope; the leaf's storage and shape are the only others (a record adds its fields and its
-  // own envelope).
-  Tensor make_tensor(const DataflowInputBinding& binding, df::Message message) const {
+  // The pulled tensors (Run::pull(milliseconds)): one for a leaf, the fields in schema order for a
+  // record, every one carrying the message's Stamp. One allocation holds the message and the
+  // envelope they share; the list, and each tensor's storage and shape, are the only others.
+  TensorList make_tensors(const DataflowInputBinding& binding, df::Message message) const {
     const bool owned = config_.run.output_memory == OutputMemory::Owned;
     auto pulled = std::make_shared<PulledMessage>(std::move(message));
     core_stamp(pulled->message.stamp(), streams_, pulled->envelope.stamp);
-    const std::shared_ptr<const TensorEnvelope> leaf_envelope(pulled, &pulled->envelope);
+    const std::shared_ptr<const TensorEnvelope> envelope(pulled, &pulled->envelope);
     if (binding.is_record()) {
       std::shared_ptr<void> holder(pulled, &pulled->message);
-      std::vector<Tensor> fields = record_fields(binding, pulled->message, holder, owned);
+      TensorList fields = record_fields(binding, pulled->message, holder, owned);
       for (Tensor& field : fields) {
-        field.envelope = leaf_envelope;
+        field.envelope = envelope;
       }
-      auto envelope = std::make_shared<TensorEnvelope>();
-      envelope->stamp = pulled->envelope.stamp;
-      envelope->names.reserve(fields.size());
-      for (std::size_t i = 0; i < fields.size(); ++i) {
-        envelope->names.push_back(std::to_string(i));
-      }
-      envelope->fields = std::move(fields);
       if (owned) {
         pulled->message = df::Message{}; // the copies are made: the slot returns to the pool
       }
-      Tensor out;
-      out.envelope = std::move(envelope);
-      return out;
+      return fields;
     }
     const std::span<const std::byte> bytes = pulled->message.bytes();
     const df::Extent extent = pulled->message.extent();
-    Tensor out;
+    TensorList out(1);
+    Tensor& leaf = out.front();
     if (owned) {
-      out = leaf_tensor(binding, bytes, extent, nullptr);
-      out.storage = owned_copy(bytes);
+      leaf = leaf_tensor(binding, bytes, extent, nullptr);
+      leaf.storage = owned_copy(bytes);
       pulled->message = df::Message{};
     } else {
-      out = leaf_tensor(binding, bytes, extent, std::shared_ptr<void>(pulled, &pulled->message));
+      leaf = leaf_tensor(binding, bytes, extent, std::shared_ptr<void>(pulled, &pulled->message));
     }
-    out.envelope = leaf_envelope;
+    leaf.envelope = envelope;
     return out;
   }
 

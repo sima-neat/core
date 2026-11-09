@@ -685,11 +685,24 @@ public:
   bool try_push(const std::vector<cv::Mat>& inputs);
   /// Non-blocking named-ingress variant.
   bool try_push(std::string_view input_name, const std::vector<cv::Mat>& inputs);
-  /// Push `Tensor` inputs (one per ingress port).
+  /**
+   * @brief Push `Tensor` inputs (one per ingress port).
+   *
+   * The list is one item: one tensor is a leaf, several are a positional record (`run.push({t})`,
+   * `run.push({a, b})`). The first tensor's stamp proposes the item's `stream_name`, `frame_id`,
+   * `source_time` and `flags` (`Tensor::with_stamp`; a pulled tensor carries its stamp); a tensor
+   * without a stamp proposes nothing, and the runtime writes `seq` and `publish_time`. A list of
+   * one positional record (`Tensor::record`) pushes the record's fields; a record inside a list of
+   * several tensors is refused (`misconfig.input_shape`). A list of one Tensor from this Run's
+   * `alloc(name)` commits it (see `alloc`).
+   * @return `true` once queued; `false` when the input is closed or the Run stopped.
+   */
   bool push(const TensorList& inputs);
-  /// Push `Tensor` inputs into a named graph ingress. Use for multi-input graphs.
+  /// Push `Tensor` inputs into a named graph ingress. Use for multi-input graphs. Otherwise as
+  /// `push(const TensorList&)`.
   bool push(std::string_view input_name, const TensorList& inputs);
-  /// Non-blocking variant.
+  /// Non-blocking variant. The list's stamp and records as `push(const TensorList&)`; a Tensor from
+  /// `alloc(name)` is read like any CPU tensor (a copy) and stays writable: `push` commits it.
   bool try_push(const TensorList& inputs);
   /// Non-blocking named-ingress variant.
   bool try_push(std::string_view input_name, const TensorList& inputs);
@@ -743,40 +756,30 @@ public:
   /// One-shot synchronous push+pull from `Sample` inputs.
   Sample run(const Sample& inputs, int timeout_ms = -1);
 
-  // ── Tensor verbs ─────────────────────────────────────────────────────────────────────────
+  // ── TensorList verbs ───────────────────────────────────────────────────────────────────────────
+  // Core's Tensor surface is TensorList-only: push a TensorList (above), pull a
+  // Result<TensorList>; no verb takes or returns a single Tensor but alloc().
   /**
-   * @brief Push one Tensor into the Run's single input; waits for room.
-   *
-   * A leaf is one tensor; a positional record (`Tensor::record`) is one item of several tensors
-   * (a record of one field is pushed as that field). The pushed Tensor's stamp proposes the
-   * message's `stream_name`, `frame_id`, `source_time` and `flags` (`Tensor::with_stamp`); the
-   * runtime writes `seq` and `publish_time`. A Tensor from `alloc(name)` is published without a
-   * copy where the backend can (see `alloc`).
-   * @return `true` once queued; `false` when the input is closed or the Run stopped.
-   */
-  bool push(const Tensor& input);
-  /// Push one Tensor into the input named `input_name`; otherwise as `push(const Tensor&)`.
-  bool push(std::string_view input_name, const Tensor& input);
-  /**
-   * @brief Pull the next output Tensor of the Run's single output, as a `Result`.
+   * @brief Pull the next output item of the Run's single output as a `TensorList`, in a `Result`.
    *
    * `timeout` 0 polls, a positive timeout waits up to it, a negative one (or one too large to
-   * add to the current time) waits without limit. The Result is `Ok` with the Tensor (its
-   * `stamp()` filled), `Timeout`, `Closed` once the input was closed and everything was pulled,
-   * or `Error` with the code and message (`Result::error()`). An item of several tensors is a
-   * positional record.
+   * add to the current time) waits without limit. The Result is `Ok` with the item's tensors,
+   * `Timeout`, `Closed` once the input was closed and everything was pulled, or `Error` with the
+   * code and message (`Result::error()`). The list holds one tensor for a leaf and one per field,
+   * in order, for an item of several tensors (a positional record); every tensor of it carries
+   * the item's `stamp()`.
    */
-  Result<Tensor> pull(std::chrono::milliseconds timeout);
+  Result<TensorList> pull(std::chrono::milliseconds timeout);
   /// Pull from the output named `output_name`; otherwise as `pull(std::chrono::milliseconds)`.
-  Result<Tensor> pull(std::string_view output_name, std::chrono::milliseconds timeout);
+  Result<TensorList> pull(std::string_view output_name, std::chrono::milliseconds timeout);
   /**
    * @brief Push `input` and wait for its output: `push(input)` then `pull` without limit.
-   * @throws NeatError when the push is refused or the pull ends without a Tensor.
+   * @throws NeatError when the push is refused or the pull ends without an item.
    */
-  Tensor operator()(const Tensor& input);
+  TensorList operator()(const TensorList& input);
   /**
-   * @brief Deliver every Tensor of the single output to `callback`, in order, on a thread the
-   * Run owns, instead of `pull`.
+   * @brief Deliver every item of the single output to `callback` as a `TensorList` (as `pull`
+   * returns it), in order, on a thread the Run owns, instead of `pull`.
    *
    * Delivery ends when the output closes, at `stop()`/`close()` (which wait for the callback in
    * progress), or at the first error (then `last_error()` says which; an exception thrown by the
@@ -784,20 +787,21 @@ public:
    * `PullStatus::Error`. One callback per output.
    * @throws NeatError for an unknown output, or one that already has a callback.
    */
-  void on_output(std::function<void(Tensor)> callback);
+  void on_output(std::function<void(TensorList)> callback);
   /// Deliver the output named `output_name` to `callback`; otherwise as `on_output(callback)`.
-  void on_output(std::string_view output_name, std::function<void(Tensor)> callback);
+  void on_output(std::string_view output_name, std::function<void(TensorList)> callback);
   /**
-   * @brief A writable Tensor for the input named `input_name`, to fill and then `push`.
+   * @brief A writable Tensor for the input named `input_name`, to fill and then push in a list.
    *
    * The input must be declared with a shape whose every axis is fixed or bounded
    * (`Graph::input(name, shape, dtype, max_shape)`); the Tensor has the declared dtype and the
-   * bound shape (lower `shape` on a dynamic axis before the push to push less). Pushing it with
-   * `push(name, tensor)` into this Run is its commit: it is pushed once, and after the push it is
-   * empty (`map()` gives no data); release its Mappings first. A push the Run refuses leaves it
-   * writable; any other push (another Run, the TensorList or Sample verbs) reads it like a CPU
-   * tensor. On the Dataflow backend it is a slot of the input's pool, published without a copy
-   * (dropping it unpushed returns the slot); on the GStreamer backend it is CPU memory.
+   * bound shape (lower `shape` on a dynamic axis before the push to push less). Pushing it alone
+   * in a list into this Run (`run.push(name, {tensor})`, or `run.push({tensor})`) is its commit: it
+   * is pushed once, and after the push it is empty (`map()` gives no data); release its Mappings
+   * first. A push the Run refuses leaves it writable; any other push (another Run, `try_push`, a
+   * list of several tensors, the Sample verbs) reads it like a CPU tensor. On the Dataflow backend
+   * it is a slot of the input's pool, published without a copy (dropping it unpushed returns the
+   * slot); on the GStreamer backend it is CPU memory.
    * @throws NeatError for an unknown or undeclared input, or a stopped Run.
    */
   Tensor alloc(std::string_view input_name);

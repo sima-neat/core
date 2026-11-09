@@ -9,17 +9,17 @@
 // recognises DmaBufStorageMapper): no registry, no lookup on the push of any other Tensor.
 //
 // State, under `mu`:
-//   writable  the application may map and write it; push(const Tensor&) into the Run that
-//             allocated it takes it
+//   writable  the application may map and write it; a blocking push of it alone in a TensorList
+//             (push({t}), push(name, {t})) into the Run that allocated it takes it
 //   pushing   that push is publishing it (a second push of it fails)
 //   pushed    published: the application's storage is emptied (data null, size 0; map() gives no
-//             data), and a second push(const Tensor&) fails with misconfig.input_shape
+//             data), and a second such push fails with misconfig.input_shape
 // That push requires no live Mapping of it (`maps` == 0), so nothing the application still holds
-// can write a published message. Any other push (another Run; the TensorList and Sample verbs)
-// reads it as any CPU Tensor. A push the Run refuses (stopped, closed input) returns it to
-// writable. Dropping it unpushed releases `backing`: the Dataflow backend's slot goes back to
-// its pool (or to the runtime's retirement list when its Run is gone), the GStreamer backend's
-// memory is freed.
+// can write a published message. Any other push (another Run; try_push; a list of several
+// tensors; the Sample verbs) reads it as any CPU Tensor. A push the Run refuses (stopped, closed
+// input) returns it to writable. Dropping it unpushed releases `backing`: the Dataflow backend's
+// slot goes back to its pool (or to the runtime's retirement list when its Run is gone), the
+// GStreamer backend's memory is freed.
 
 #include "nodes/io/Input.h"
 #include "pipeline/TensorCore.h"

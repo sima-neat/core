@@ -559,9 +559,9 @@ auto classes = run.pull();
 
 둘 이상의 입력 또는 출력이 사용 가능한 경우, 이름이 지정되지 않은 `push(...)` 또는 `pull()` 작업이 실패하고, 사용자가 의도한 엔드포인트를 추측하는 대신 사용 가능한 엔드포인트 이름을 나열합니다.
 
-### 값으로 엔드포인트를 선언하고 Tensor를 push하기
+### 값으로 엔드포인트를 선언하고 텐서 리스트를 push하기
 
-`Graph::input(name)`과 `Graph::output(name, value)`는 경계 노드를 직접 작성하지 않고도 동일한 공개 엔드포인트를 선언합니다. `Run`의 Tensor 동사는 Tensor 하나를 push하고 `Result<Tensor>`를 pull합니다.
+`Graph::input(name)`과 `Graph::output(name, value)`는 경계 노드를 직접 작성하지 않고도 동일한 공개 엔드포인트를 선언합니다. `Run`은 `TensorList`를 push하고 `Result<TensorList>`를 pull합니다. 단일 `Tensor`를 받거나 반환하는 `Run` 동사는 없습니다.
 
 ```cpp
 using namespace std::chrono_literals;
@@ -571,19 +571,19 @@ auto image = graph.input("image");      // 첫 번째 push가 형태를 정합�
 graph.output("out", image);
 auto run = graph.build();
 
-run.push("image", image_tensor);
+run.push("image", {image_tensor});
 auto result = run.pull("out", 100ms);   // Ok, Timeout, Closed 또는 Error
 if (result) {
-  const auto& stamp = result->stamp();  // stream_name, seq, frame_id, source_time
+  const auto& stamp = result->front().stamp();  // stream_name, seq, frame_id, source_time
 } else if (result.status() == simaai::neat::PullStatus::Closed) {
   // 입력이 닫혔고 모든 출력을 pull했습니다
 }
 ```
 
-- `graph.input("points", {-1, 4}, simaai::neat::TensorDType::Float32, {256, 4})`는 텐서 입력을 선언합니다. `-1`은 동적 축을 나타내고 마지막 인수가 그 상한을 정합니다. 선언을 벗어나는 push는 `misconfig.input_shape`로 실패합니다. `run.alloc("points")`는 상한 형태의 쓰기 가능한 Tensor를 반환하며, 이를 push하는 것이 커밋이고 한 번만 가능합니다.
-- push된 Tensor의 스탬프는 `stream_name`, `frame_id`, `source_time`, `flags`를 제안합니다(`tensor.with_stamp(stamp)`). `seq`와 `publish_time`은 런타임이 기록합니다.
-- `simaai::neat::Tensor::record({a, b})`는 여러 텐서를 하나의 항목으로 push합니다. 이때 pull된 Tensor는 레코드입니다: `result->fields()`, `(*result)["0"]`, `result->leaves()`.
-- `run.on_output("out", callback)`은 `pull` 대신 `Run`이 소유한 스레드에서 모든 출력 Tensor를 콜백에 전달합니다. `run(tensor)`는 push하고 출력을 기다립니다.
+- `graph.input("points", {-1, 4}, simaai::neat::TensorDType::Float32, {256, 4})`는 텐서 입력을 선언합니다. `-1`은 동적 축을 나타내고 마지막 인수가 그 상한을 정합니다. 선언을 벗어나는 push는 `misconfig.input_shape`로 실패합니다. `run.alloc("points")`는 상한 형태의 쓰기 가능한 Tensor를 반환하며, 이를 리스트에 단독으로 담아 push하는 것(`run.push("points", {tensor})`)이 커밋이고 한 번만 가능합니다.
+- 리스트 하나가 항목 하나입니다. 첫 번째 텐서의 스탬프가 항목의 `stream_name`, `frame_id`, `source_time`, `flags`를 제안합니다(`tensor.with_stamp(stamp)`). `seq`와 `publish_time`은 런타임이 기록합니다.
+- 여러 텐서로 된 리스트(`run.push({a, b})`)는 위치 기반 레코드입니다. pull된 리스트는 그 텐서들을 순서대로 담으며, 각 텐서는 항목의 스탬프를 가집니다.
+- `run.on_output("out", callback)`은 `pull` 대신 `Run`이 소유한 스레드에서 모든 출력 항목을 `TensorList`로 콜백에 전달합니다. `run({tensor})`는 push하고 출력을 기다립니다.
 - 정수 타임아웃 오버로드는 의미가 그대로입니다: `pull(100)`과 `pull("out", 100)`은 `std::optional<Sample>`을 반환합니다.
 - `pipeline/Graph.h`는 더 이상 GStreamer 헤더가 필요하지 않습니다. 그보다 먼저 `SIMA_NEAT_GRAPH_NO_GSTREAMER`를 정의하지 않으면 여전히 `<gst/gst.h>`를 포함합니다. 이후 릴리스에서 이 포함이 제거되므로, GStreamer를 사용하는 곳에서는 `<gst/gst.h>`를 직접 포함하십시오.
 

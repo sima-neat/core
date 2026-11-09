@@ -1,14 +1,17 @@
-// The Tensor surface of H0 (part C2) on the public API, on the backend SIMA_NEAT_BACKEND names
-// (dataflow: RunBackend::Dataflow, requested explicitly; otherwise RunBackend::GStreamer). The same
-// executable is registered once per backend (tests/CMakeLists.txt).
+// The TensorList surface of H0 (parts C2, C2b: Core's Tensor surface is TensorList-only) on the
+// public API, on the backend SIMA_NEAT_BACKEND names (dataflow: RunBackend::Dataflow, requested
+// explicitly; otherwise RunBackend::GStreamer). The same executable is registered once per backend
+// (tests/CMakeLists.txt).
 //
 // Covers: Graph::input/output graphs (named endpoints, a Handle from another Graph); stamp fields
-// after pull, and the projection of a pulled stamp onto the old Sample (orig_input_seq as develop
-// gives it); positional record push and pull through both surfaces; the four Result outcomes and
-// operator(); on_output (order, exclusive output, end at close, a throwing callback); a declared
-// input enforced at push; alloc() and its misuse (pushed twice, still mapped, pushed into another
-// Run, dropped unpushed, pushed after stop, undeclared input, a bounded dynamic axis); counters
-// through MeasureScope (H0's stats()).
+// after pull (proposed by a list's first tensor, push and try_push), and the projection of a
+// pulled stamp onto the old Sample (orig_input_seq as develop gives it); positional records (a list
+// of several tensors, a list of one Tensor::record) pushed and pulled through both surfaces; the
+// four Result outcomes and operator(); on_output (order, exclusive output, end at close, a throwing
+// callback); a declared input enforced at push; alloc() and its misuse (pushed twice, still mapped,
+// pushed into another Run, read like a CPU tensor by try_push, a list of two and a Sample, dropped
+// unpushed, pushed after stop, undeclared input, a bounded dynamic axis); counters through
+// MeasureScope (H0's stats()).
 
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
@@ -120,14 +123,17 @@ void graph_input_output() {
   require(run.input_names() == std::vector<std::string>{"image"} &&
               run.output_names() == std::vector<std::string>{"out"},
           "the Run's endpoint names");
-  require(run.push("image", rgb(32, 24, 1)), "named push");
-  require(run.push(rgb(32, 24, 2)), "unnamed push into the only input");
-  const Result<Tensor> a = run.pull("out", 2000ms);
-  const Result<Tensor> b = run.pull(2000ms);
+  require(run.push("image", {rgb(32, 24, 1)}), "named push");
+  require(run.push({rgb(32, 24, 2)}), "unnamed push into the only input");
+  const Result<TensorList> a = run.pull("out", 2000ms);
+  const Result<TensorList> b = run.pull(2000ms);
   require(a.ok() && b.ok(), "two outputs");
-  require(bytes_of(*a) == bytes_of(rgb(32, 24, 1)) && bytes_of(*b) == bytes_of(rgb(32, 24, 2)),
+  require(a->size() == 1U && b->size() == 1U, "a leaf is pulled as a list of one");
+  require(bytes_of(a->front()) == bytes_of(rgb(32, 24, 1)) &&
+              bytes_of(b->front()) == bytes_of(rgb(32, 24, 2)),
           "payloads round trip in order");
-  require(a->shape == std::vector<std::int64_t>{24, 32, 3} && !a->is_record(), "a leaf");
+  require(a->front().shape == std::vector<std::int64_t>{24, 32, 3} && !a->front().is_record(),
+          "a leaf");
   run.close();
 
   Graph other;
@@ -146,8 +152,8 @@ void stamp_after_pull() {
   Run run = g.build(options());
   Stamp flagged = proposal(7, "cam-a", 1234);
   flagged.flags = StampFlags::Discontinuity;
-  require(run.push("image", rgb(16, 8, 1).with_stamp(flagged)), "stamped push");
-  require(run.push("image", rgb(16, 8, 2)), "unstamped push");
+  require(run.push("image", {rgb(16, 8, 1).with_stamp(flagged)}), "stamped push");
+  require(run.push("image", {rgb(16, 8, 2)}), "unstamped push");
   Sample old;
   old.kind = SampleKind::Tensor;
   old.tensor = rgb(16, 8, 3);
@@ -155,13 +161,13 @@ void stamp_after_pull() {
   old.stream_id = "cam-b";
   require(run.push("image", old), "a Sample push");
 
-  const Result<Tensor> first = run.pull("out", 2000ms);
-  const Result<Tensor> second = run.pull("out", 2000ms);
-  const Result<Tensor> third = run.pull("out", 2000ms);
+  const Result<TensorList> first = run.pull("out", 2000ms);
+  const Result<TensorList> second = run.pull("out", 2000ms);
+  const Result<TensorList> third = run.pull("out", 2000ms);
   require(first.ok() && second.ok() && third.ok(), "three outputs");
-  const Stamp& s1 = first->stamp();
-  const Stamp& s2 = second->stamp();
-  const Stamp& s3 = third->stamp();
+  const Stamp& s1 = first->front().stamp();
+  const Stamp& s2 = second->front().stamp();
+  const Stamp& s3 = third->front().stamp();
   require(s1.frame_id == 7 && s1.stream_name == "cam-a", "frame_id and stream_name proposed");
   require(s2.frame_id == -1 && s2.stream_name == "image",
           "an unstamped push: no frame_id; the endpoint's stream");
@@ -184,11 +190,11 @@ void stamp_after_pull() {
 
   // The old surface's view of the same messages (to_sample, and a pulled Sample): develop's
   // meanings, orig_input_seq = input_seq when no orig_input_seq was pushed, frame_id or not.
-  const Sample projected = to_sample(*first);
+  const Sample projected = to_sample(first->front());
   require(projected.frame_id == 7 && projected.stream_id == "cam-a" && projected.input_seq == 0 &&
               projected.orig_input_seq == 0,
           "to_sample: identity");
-  require(run.push("image", rgb(16, 8, 4).with_stamp(proposal(11))), "push for the old pull");
+  require(run.push("image", {rgb(16, 8, 4).with_stamp(proposal(11))}), "push for the old pull");
   const std::optional<Sample> pulled = run.pull("out", 2000);
   require(pulled && pulled->frame_id == 11 && pulled->input_seq == 3 &&
               pulled->orig_input_seq == pulled->input_seq,
@@ -196,6 +202,13 @@ void stamp_after_pull() {
   const Tensor back = to_tensor(*pulled);
   require(back.stamp().frame_id == 11 && back.stamp().seq == 4 && back.stamp().stream == 0,
           "to_tensor: the stamp of a Sample outside a Run");
+  // try_push proposes the list's stamp too.
+  require(run.try_push("image", {rgb(16, 8, 5).with_stamp(proposal(12, "cam-c"))}),
+          "a stamped try_push");
+  const Result<TensorList> tried = run.pull("out", 2000ms);
+  require(tried.ok() && tried->front().stamp().frame_id == 12 &&
+              tried->front().stamp().stream_name == "cam-c",
+          "try_push carried frame_id and stream_name");
   run.close();
 }
 
@@ -212,40 +225,68 @@ void positional_records() {
   require(record.is_record() && record.fields().size() == 2U &&
               record.field_names()[1] == std::string("1"),
           "Tensor::record is positional");
-  require(run.push(record.with_stamp(proposal(3))), "record push (Tensor verb)");
-  require(run.push(TensorList{floats(iota(2, 7), {2}), floats(iota(2, 30), {2})}),
-          "record push (list verb)");
-
-  const Result<Tensor> r = run.pull(2000ms);
-  require(r.ok() && r->is_record() && r->fields().size() == 2U, "a record is pulled");
-  require(r->field_names()[0] == std::string("0") && r->field_names()[1] == std::string("1"),
-          "positional field names");
-  require(bytes_of((*r)["1"]) == bytes_of(floats(iota(2, 20), {2})) &&
-              bytes_of((*r)[FieldId{0}]) == bytes_of(floats(iota(2, 5), {2})),
+  require(bytes_of(record["1"]) == bytes_of(floats(iota(2, 20), {2})) &&
+              bytes_of(record[FieldId{0}]) == bytes_of(floats(iota(2, 5), {2})),
           "fields by name and by position");
-  require(r->stamp().frame_id == 3 && (*r)["0"].stamp().frame_id == 3,
-          "the record and its fields carry the stamp");
-  require(r->leaves().size() == 2U && r->leaves()[1].shape == std::vector<std::int64_t>{2},
+  require(record.leaves().size() == 2U && record.leaves()[1].shape == std::vector<std::int64_t>{2},
           "leaves()");
   bool missing = false;
   try {
-    (void)(*r)["2"];
+    (void)record["2"];
   } catch (const std::out_of_range&) {
     missing = true;
   }
   require(missing, "an unknown field is out_of_range");
 
+  require(run.push({record.with_stamp(proposal(3))}), "a list of one record pushes its fields");
+  require(run.push({floats(iota(2, 7), {2}).with_stamp(proposal(4)), floats(iota(2, 30), {2})}),
+          "a list of two tensors is a record; its first tensor's stamp");
+  require(run.push(TensorList{floats(iota(2, 8), {2}), floats(iota(2, 40), {2})}),
+          "a record without a stamp");
+
+  const Result<TensorList> r = run.pull(2000ms);
+  require(r.ok() && r->size() == 2U, "a record is pulled as a list of its fields");
+  require(bytes_of((*r)[1]) == bytes_of(floats(iota(2, 20), {2})) &&
+              bytes_of((*r)[0]) == bytes_of(floats(iota(2, 5), {2})),
+          "the fields in order");
+  require((*r)[0].stamp().frame_id == 3 && (*r)[1].stamp().frame_id == 3 && !(*r)[0].is_record() &&
+              (*r)[1].shape == std::vector<std::int64_t>{2},
+          "every field carries the stamp of the record");
+  const Result<TensorList> listed = run.pull(2000ms);
+  require(listed.ok() && listed->size() == 2U && (*listed)[0].stamp().frame_id == 4 &&
+              (*listed)[1].stamp().frame_id == 4 &&
+              bytes_of((*listed)[1]) == bytes_of(floats(iota(2, 30), {2})),
+          "the list's first tensor proposed the record's stamp");
+
   const std::optional<Sample> old = run.pull(2000);
   require(old && old->kind == SampleKind::TensorSet && old->tensors.size() == 2U &&
-              bytes_of(old->tensors[1]) == bytes_of(floats(iota(2, 30), {2})),
+              bytes_of(old->tensors[1]) == bytes_of(floats(iota(2, 40), {2})),
           "the old pull: a TensorSet of the record's tensors");
+  // An unstamped list proposes no identity: its frame_id is whatever the backend gives a push that
+  // carries none, the same as for a Sample push without identity (the control below; on an image
+  // graph both are -1, unit_run_verb_resolution_test). Printed to stderr (GStreamer's stdio filter
+  // reorders stdout).
+  {
+    Sample control;
+    control.kind = SampleKind::TensorSet;
+    control.tensors = {floats(iota(2, 9), {2}), floats(iota(2, 50), {2})};
+    require(run.push(control), "a Sample push without identity (the control)");
+    const std::optional<Sample> pulled = run.pull(2000);
+    require(pulled && pulled->tensors.size() == 2U, "the control's output");
+    std::cerr << "[INFO] old pull frame_id: unstamped list push " << old->frame_id
+              << ", Sample push without identity " << pulled->frame_id << "\n";
+    require((old->frame_id < 0) == (pulled->frame_id < 0),
+            "an unstamped list push gets the frame_id of a push without identity");
+  }
 
   auto envelope = std::make_shared<TensorEnvelope>();
   envelope->fields = {a, b};
   envelope->names = {"boxes", "scores"};
   Tensor named;
   named.envelope = envelope;
-  require_neat_error([&] { (void)run.push(named); }, error_codes::kInputShape, "named fields");
+  require_neat_error([&] { (void)run.push({named}); }, error_codes::kInputShape, "named fields");
+  require_neat_error([&] { (void)run.push({record, a}); }, error_codes::kInputShape,
+                     "inside a list");
   run.close();
 
   if (on_dataflow()) {
@@ -254,15 +295,15 @@ void positional_records() {
     Run mixed = h.build(options());
     const Tensor u8 =
         Tensor::from_vector(std::vector<std::uint8_t>{1, 2, 3, 4, 5, 6}, {2, 3}, TensorMemory::CPU);
-    require(mixed.push(Tensor::record({floats(iota(4, 0), {4}), u8})), "mixed record push");
-    const Result<Tensor> m = mixed.pull(2000ms);
-    require(m.ok() && m->is_record() && (*m)["1"].dtype == TensorDType::UInt8 &&
-                (*m)["1"].shape == std::vector<std::int64_t>{2, 3} &&
-                bytes_of((*m)["1"]) == bytes_of(u8) &&
-                bytes_of((*m)["0"]) == bytes_of(floats(iota(4, 0), {4})),
+    require(mixed.push({floats(iota(4, 0), {4}), u8}), "mixed record push");
+    const Result<TensorList> m = mixed.pull(2000ms);
+    require(m.ok() && m->size() == 2U && (*m)[1].dtype == TensorDType::UInt8 &&
+                (*m)[1].shape == std::vector<std::int64_t>{2, 3} &&
+                bytes_of((*m)[1]) == bytes_of(u8) &&
+                bytes_of((*m)[0]) == bytes_of(floats(iota(4, 0), {4})),
             "fields of different shapes and dtypes");
-    require_neat_error([&] { (void)mixed.push(floats(iota(4, 0), {4})); }, error_codes::kInputShape,
-                       "record");
+    require_neat_error([&] { (void)mixed.push({floats(iota(4, 0), {4})}); },
+                       error_codes::kInputShape, "record");
     mixed.close();
   }
 }
@@ -270,11 +311,11 @@ void positional_records() {
 void result_outcomes() {
   Graph g = named_graph();
   Run run = g.build(options());
-  const Result<Tensor> none;
+  const Result<TensorList> none;
   require(!none.ok() && none.status() == PullStatus::Error, "a default Result is an Error");
 
   const auto t0 = std::chrono::steady_clock::now();
-  const Result<Tensor> timeout = run.pull("out", 30ms);
+  const Result<TensorList> timeout = run.pull("out", 30ms);
   require(timeout.status() == PullStatus::Timeout && !timeout,
           "Timeout before any push, status " + std::to_string(static_cast<int>(timeout.status())));
   const auto waited =
@@ -288,20 +329,21 @@ void result_outcomes() {
   }
   require_neat_error([&] { (void)timeout.value(); }, error_codes::kRuntimePull, "Timeout");
 
-  const Result<Tensor> error = run.pull("nope", 30ms);
+  const Result<TensorList> error = run.pull("nope", 30ms);
   require(error.status() == PullStatus::Error && error.error().code == error_codes::kRuntimePull &&
               error.error().message.find("unknown output") != std::string::npos,
           "Error for an unknown output");
 
-  const Tensor y = run(rgb(8, 8, 5));
-  require(bytes_of(y) == bytes_of(rgb(8, 8, 5)), "operator(): push, then the output");
+  const TensorList y = run({rgb(8, 8, 5)});
+  require(y.size() == 1U && bytes_of(y.front()) == bytes_of(rgb(8, 8, 5)),
+          "operator(): push, then the output");
 
-  require(run.push(rgb(8, 8, 6)), "push before close_input");
+  require(run.push({rgb(8, 8, 6)}), "push before close_input");
   run.close_input();
-  const Result<Tensor> last = run.pull("out", 2000ms);
-  require(last.ok() && bytes_of(*last) == bytes_of(rgb(8, 8, 6)),
+  const Result<TensorList> last = run.pull("out", 2000ms);
+  require(last.ok() && bytes_of(last->front()) == bytes_of(rgb(8, 8, 6)),
           "queued output after close_input");
-  const Result<Tensor> closed = run.pull("out", 2000ms);
+  const Result<TensorList> closed = run.pull("out", 2000ms);
   require(closed.status() == PullStatus::Closed,
           "Closed after the last output, status " +
               std::to_string(static_cast<int>(closed.status())));
@@ -315,17 +357,17 @@ void on_output_callbacks() {
   std::mutex mu;
   std::condition_variable cv;
   std::vector<std::int64_t> seen;
-  run.on_output("out", [&](Tensor t) {
+  run.on_output("out", [&](TensorList t) {
     std::lock_guard<std::mutex> lock(mu);
-    seen.push_back(t.stamp().frame_id);
+    seen.push_back(t.size() == 1U ? t.front().stamp().frame_id : -2);
     cv.notify_all();
   });
-  require_neat_error([&] { run.on_output("out", [](Tensor) {}); }, error_codes::kPipelineShape,
+  require_neat_error([&] { run.on_output("out", [](TensorList) {}); }, error_codes::kPipelineShape,
                      "already");
-  require_neat_error([&] { run.on_output("nope", [](Tensor) {}); }, error_codes::kRuntimePull,
+  require_neat_error([&] { run.on_output("nope", [](TensorList) {}); }, error_codes::kRuntimePull,
                      "unknown output");
   for (int i = 0; i < 5; ++i) {
-    require(run.push(rgb(8, 8, static_cast<std::uint8_t>(i)).with_stamp(proposal(100 + i))),
+    require(run.push({rgb(8, 8, static_cast<std::uint8_t>(i)).with_stamp(proposal(100 + i))}),
             "push " + std::to_string(i));
   }
   {
@@ -352,11 +394,11 @@ void on_output_callbacks() {
   Graph g2 = named_graph();
   Run run2 = g2.build(options());
   std::atomic<int> calls{0};
-  run2.on_output([&](Tensor) {
+  run2.on_output([&](TensorList) {
     ++calls;
     throw std::runtime_error("boom");
   });
-  require(run2.push(rgb(8, 8, 1)) && run2.push(rgb(8, 8, 2)), "pushes");
+  require(run2.push({rgb(8, 8, 1)}) && run2.push({rgb(8, 8, 2)}), "pushes");
   const auto deadline = std::chrono::steady_clock::now() + 5s;
   while (run2.last_error().find("boom") == std::string::npos &&
          std::chrono::steady_clock::now() < deadline) {
@@ -376,22 +418,24 @@ void declared_input_enforced_and_alloc() {
   Run run = g.build(options());
 
   // Enforced at push, on both backends.
-  require_neat_error([&] { (void)run.push("x", floats(iota(36, 0), {4, 9})); },
+  require_neat_error([&] { (void)run.push("x", {floats(iota(36, 0), {4, 9})}); },
                      error_codes::kInputShape, "not the declared size");
-  require_neat_error([&] { (void)run.push("x", floats(iota(32, 0), {32})); },
+  require_neat_error([&] { (void)run.push("x", {floats(iota(32, 0), {32})}); },
                      error_codes::kInputShape, "rank");
   require_neat_error(
       [&] {
-        (void)run.push(
-            "x", Tensor::from_vector(std::vector<std::int32_t>(32, 1), {4, 8}, TensorMemory::CPU));
+        (void)run.push("x", {Tensor::from_vector(std::vector<std::int32_t>(32, 1), {4, 8},
+                                                 TensorMemory::CPU)});
       },
       error_codes::kInputShape, "dtype");
-  require(run.push("x", floats(iota(32, 0), {4, 8})), "a fitting push");
-  const Result<Tensor> fitting = run.pull("y", 2000ms);
-  require(fitting.ok() && bytes_of(*fitting) == bytes_of(floats(iota(32, 0), {4, 8})),
-          "the fitting push round trips");
+  require(run.push("x", {floats(iota(32, 0), {4, 8})}), "a fitting push");
+  {
+    const Result<TensorList> fitting = run.pull("y", 2000ms);
+    require(fitting.ok() && bytes_of(fitting->front()) == bytes_of(floats(iota(32, 0), {4, 8})),
+            "the fitting push round trips");
+  }
 
-  // alloc: the declared shape, writable; pushing it is its commit.
+  // alloc: the declared shape, writable; pushing it alone in a list is its commit.
   Tensor t = run.alloc("x");
   require(t.dtype == TensorDType::Float32 && t.shape == std::vector<std::int64_t>{4, 8} &&
               !t.read_only,
@@ -401,14 +445,16 @@ void declared_input_enforced_and_alloc() {
     require(map.data != nullptr && map.size_bytes >= 32U * sizeof(float), "mapped for write");
     const std::vector<float> values = iota(32, 100);
     std::memcpy(map.data, values.data(), 32U * sizeof(float));
-    require_neat_error([&] { (void)run.push("x", t); }, error_codes::kInputShape, "still mapped");
+    require_neat_error([&] { (void)run.push("x", {t}); }, error_codes::kInputShape, "still mapped");
   }
-  require(run.push("x", t), "push the allocated tensor");
+  require(run.push("x", {t}), "push the allocated tensor");
   require(t.map_read().data == nullptr, "after the push the tensor is empty");
-  require_neat_error([&] { (void)run.push("x", t); }, error_codes::kInputShape, "pushed already");
-  const Result<Tensor> out = run.pull("y", 2000ms);
-  require(out.ok() && bytes_of(*out) == bytes_of(floats(iota(32, 100), {4, 8})),
-          "the allocated tensor's bytes arrive");
+  require_neat_error([&] { (void)run.push("x", {t}); }, error_codes::kInputShape, "pushed already");
+  {
+    const Result<TensorList> out = run.pull("y", 2000ms);
+    require(out.ok() && bytes_of(out->front()) == bytes_of(floats(iota(32, 100), {4, 8})),
+            "the allocated tensor's bytes arrive");
+  }
 
   // Dropped unpushed, many times over: every slot comes back (on Dataflow the pool is a few
   // slots; alloc would wait forever otherwise).
@@ -426,42 +472,67 @@ void declared_input_enforced_and_alloc() {
   drops.get();
 
   // Pushed into another Run: that Run reads it like any CPU tensor; it stays this Run's to push.
-  Graph g2;
-  const auto x2 = g2.input("x", {4, 8}, TensorDType::Float32);
-  g2.output("y", x2);
-  Run other = g2.build(options());
-  Tensor shared = run.alloc("x");
   {
-    Mapping map = shared.map_write();
-    const std::vector<float> values = iota(32, 500);
-    std::memcpy(map.data, values.data(), 32U * sizeof(float));
+    Graph g2;
+    const auto x2 = g2.input("x", {4, 8}, TensorDType::Float32);
+    g2.output("y", x2);
+    Run other = g2.build(options());
+    Tensor shared = run.alloc("x");
+    {
+      Mapping map = shared.map_write();
+      const std::vector<float> values = iota(32, 500);
+      std::memcpy(map.data, values.data(), 32U * sizeof(float));
+    }
+    require(other.push("x", {shared}), "push into another Run");
+    {
+      const Result<TensorList> copied = other.pull("y", 2000ms);
+      require(copied.ok() && bytes_of(copied->front()) == bytes_of(floats(iota(32, 500), {4, 8})),
+              "the other Run's output");
+    }
+    require(run.push("x", {shared}), "then into its own Run");
+    const Result<TensorList> own = run.pull("y", 2000ms);
+    require(own.ok() && bytes_of(own->front()) == bytes_of(floats(iota(32, 500), {4, 8})),
+            "its own output");
+    other.close();
   }
-  require(other.push("x", shared), "push into another Run");
-  const Result<Tensor> copied = other.pull("y", 2000ms);
-  require(copied.ok() && bytes_of(*copied) == bytes_of(floats(iota(32, 500), {4, 8})),
-          "the other Run's output");
-  require(run.push("x", shared), "then into its own Run");
-  const Result<Tensor> own = run.pull("y", 2000ms);
-  require(own.ok() && bytes_of(*own) == bytes_of(floats(iota(32, 500), {4, 8})), "its own output");
-  other.close();
 
-  // The list verb reads it like any CPU tensor; push(name, tensor) remains its commit.
-  Tensor listed = run.alloc("x");
+  // Every other push reads it like any CPU tensor and leaves it writable: try_push, a Sample, and a
+  // list of two (refused here by the declaration before anything is read); then push({t}) commits.
   {
-    Mapping map = listed.map_write();
-    const std::vector<float> values = iota(32, 900);
-    std::memcpy(map.data, values.data(), 32U * sizeof(float));
+    Tensor listed = run.alloc("x");
+    {
+      Mapping map = listed.map_write();
+      const std::vector<float> values = iota(32, 900);
+      std::memcpy(map.data, values.data(), 32U * sizeof(float));
+    }
+    require_neat_error([&] { (void)run.push("x", {listed, listed}); }, error_codes::kInputShape,
+                       "tensors");
+    require(listed.map_read().data != nullptr, "a refused list of two leaves it writable");
+    require(run.try_push("x", {listed}), "try_push pushes a copy");
+    {
+      const Result<TensorList> tried = run.pull("y", 2000ms);
+      require(tried.ok() && bytes_of(tried->front()) == bytes_of(floats(iota(32, 900), {4, 8})),
+              "try_push's output");
+    }
+    require(listed.map_read().data != nullptr, "try_push leaves it writable");
+    Sample sample;
+    sample.kind = SampleKind::Tensor;
+    sample.tensor = listed;
+    require(run.push("x", sample), "a Sample push pushes a copy");
+    {
+      const Result<TensorList> sampled = run.pull("y", 2000ms);
+      require(sampled.ok() && bytes_of(sampled->front()) == bytes_of(floats(iota(32, 900), {4, 8})),
+              "the Sample push's output");
+    }
+    sample = Sample{};
+    require(listed.map_read().data != nullptr, "a Sample push leaves it writable");
+    require(run.push("x", {listed}), "then push({t}) commits it");
+    const Result<TensorList> committed = run.pull("y", 2000ms);
+    require(committed.ok() &&
+                bytes_of(committed->front()) == bytes_of(floats(iota(32, 900), {4, 8})),
+            "the committed output");
+    require(listed.map_read().data == nullptr, "committed: empty");
   }
-  require(run.push("x", TensorList{listed}), "the list verb pushes a copy");
-  const Result<Tensor> listed_out = run.pull("y", 2000ms);
-  require(listed_out.ok() && bytes_of(*listed_out) == bytes_of(floats(iota(32, 900), {4, 8})),
-          "the list verb's output");
-  require(listed.map_read().data != nullptr, "the list verb leaves it writable");
-  require(run.push("x", listed), "then push(tensor) commits it");
-  const Result<Tensor> committed = run.pull("y", 2000ms);
-  require(committed.ok() && bytes_of(*committed) == bytes_of(floats(iota(32, 900), {4, 8})),
-          "the committed output");
-  require(listed.map_read().data == nullptr, "committed: empty");
 
   // Errors: an undeclared input, an unknown one.
   Graph g3 = named_graph();
@@ -480,7 +551,7 @@ void declared_input_enforced_and_alloc() {
   // Pushed after stop: refused, and the tensor stays writable; dropped after its Run is gone.
   Tensor late = run.alloc("x");
   run.stop();
-  require(!run.push("x", late), "a push after stop is refused");
+  require(!run.push("x", {late}), "a push after stop is refused");
   require(late.map_read().data != nullptr, "a refused push leaves it writable");
   run.close();
   late = Tensor{};
@@ -499,12 +570,13 @@ void bounded_dynamic_axis() {
     const std::vector<float> values = iota(12, 1);
     std::memcpy(map.data, values.data(), 12U * sizeof(float));
   }
-  require(run.push("v", t), "push 3 of 10 rows");
-  const Result<Tensor> out = run.pull("w", 2000ms);
-  require(out.ok() && out->shape == std::vector<std::int64_t>{3, 4} &&
-              bytes_of(*out) == bytes_of(floats(iota(12, 1), {3, 4})),
+  require(run.push({t}), "push 3 of 10 rows (unnamed, the only input: commits it too)");
+  require(t.map_read().data == nullptr, "committed by the unnamed push: empty");
+  const Result<TensorList> out = run.pull("w", 2000ms);
+  require(out.ok() && out->front().shape == std::vector<std::int64_t>{3, 4} &&
+              bytes_of(out->front()) == bytes_of(floats(iota(12, 1), {3, 4})),
           "the pushed extent arrives");
-  require_neat_error([&] { (void)run.push("v", floats(iota(44, 0), {11, 4})); },
+  require_neat_error([&] { (void)run.push("v", {floats(iota(44, 0), {11, 4})}); },
                      error_codes::kInputShape, "outside its bound");
   run.close();
 
@@ -533,7 +605,7 @@ void statistics() {
   measure.warmup_ms = 0;
   MeasureScope scope = run.start_measurement(measure);
   for (int i = 0; i < 3; ++i) {
-    require(run.push(rgb(8, 8, static_cast<std::uint8_t>(i))), "push");
+    require(run.push({rgb(8, 8, static_cast<std::uint8_t>(i))}), "push");
   }
   for (int i = 0; i < 3; ++i) {
     require(run.pull("out", 2000ms).ok(), "pull");

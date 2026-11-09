@@ -126,6 +126,25 @@ TensorList tensor_push_items(const Tensor& input, const char* where) {
   return TensorList(fields.begin(), fields.end());
 }
 
+std::optional<TensorList> list_record_fields(const TensorList& inputs, const char* where) {
+  if (inputs.size() == 1U) {
+    if (!inputs.front().is_record()) {
+      return std::nullopt;
+    }
+    return tensor_push_items(inputs.front(), where);
+  }
+  for (const Tensor& tensor : inputs) {
+    if (tensor.is_record()) {
+      error_util::throw_session_error(error_codes::kInputShape,
+                                      std::string(where) +
+                                          ": a record inside a list of several tensors is not "
+                                          "supported before H1; push the record alone, or its "
+                                          "fields as the list");
+    }
+  }
+  return std::nullopt;
+}
+
 namespace {
 
 Tensor make_record(std::vector<Tensor> fields, std::vector<std::string> names, const Stamp& stamp) {
@@ -209,6 +228,28 @@ std::optional<Tensor> tensor_from_pulled_sample(const Sample& sample, const Stam
     return leaf_with_stamp(*sample.tensor, stamp);
   }
   return std::nullopt;
+}
+
+std::optional<TensorList> tensors_from_pulled_sample(const Sample& sample, const Stamp& stamp) {
+  if (sample.kind != SampleKind::Bundle && sample_has_tensor_list(sample)) {
+    // The common case, without a record envelope: every tensor shares one leaf envelope.
+    auto envelope = std::make_shared<TensorEnvelope>();
+    envelope->stamp = stamp;
+    TensorList out(sample.tensors);
+    for (Tensor& tensor : out) {
+      tensor.envelope = envelope;
+    }
+    return out;
+  }
+  std::optional<Tensor> item = tensor_from_pulled_sample(sample, stamp);
+  if (!item) {
+    return std::nullopt;
+  }
+  if (!item->is_record()) {
+    return TensorList{std::move(*item)};
+  }
+  const auto fields = item->fields();
+  return TensorList(fields.begin(), fields.end());
 }
 
 const char* pixel_format_token(ImageSpec::PixelFormat format) noexcept {

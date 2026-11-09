@@ -86,6 +86,12 @@ bool is_positional_record(const Tensor& tensor) noexcept;
 /// other names or a field that is itself a record (not supported before H1).
 TensorList tensor_push_items(const Tensor& input, const char* where);
 
+/// The records of a list push (Run::push / try_push of a TensorList, both backends): a list of one
+/// positional record pushes the record's fields (tensor_push_items, which refuses named fields and
+/// record fields); nullopt for any other list, which is pushed as it is. A record inside a list of
+/// several tensors throws NeatError (misconfig.input_shape): records do not nest before H1.
+std::optional<TensorList> list_record_fields(const TensorList& inputs, const char* where);
+
 /// A positional record of `fields` (names "0", "1", ...) carrying `stamp`; every field carries it
 /// too, through one envelope shared by all of them.
 Tensor make_positional_record(std::vector<Tensor> fields, const Stamp& stamp);
@@ -93,6 +99,11 @@ Tensor make_positional_record(std::vector<Tensor> fields, const Stamp& stamp);
 /// The Tensor of a pulled Sample (see the header comment), carrying `stamp`. nullopt when the
 /// Sample carries no tensor.
 std::optional<Tensor> tensor_from_pulled_sample(const Sample& sample, const Stamp& stamp);
+
+/// The tensors of a pulled Sample as Run::pull(milliseconds) returns them: one for a leaf, the
+/// fields in order for a record (tensor_from_pulled_sample's), every one carrying `stamp`. nullopt
+/// when the Sample carries no tensor.
+std::optional<TensorList> tensors_from_pulled_sample(const Sample& sample, const Stamp& stamp);
 
 /// The payload tag of an image format ("RGB", "NV12", ...), as a pulled Sample's payload_tag
 /// carries it; empty for UNKNOWN.

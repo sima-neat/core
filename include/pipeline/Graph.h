@@ -227,7 +227,7 @@ public:
    * @brief Declare an application input named `name`; its spec is set by the first push.
    *
    * Equivalent to adding `nodes::Input(name)`, without linking it to the previous Node. Feed it
-   * with `Run::push(name, tensor)` (or `push(tensor)` when it is the only input).
+   * with `Run::push(name, {tensor})` (or `push({tensor})` when it is the only input).
    */
   Handle input(std::string name);
   /**

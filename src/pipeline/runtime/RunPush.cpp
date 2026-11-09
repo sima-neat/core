@@ -592,10 +592,14 @@ bool push_sample_to_core(runtime::RunCore& core, const Sample& msg, bool block) 
   return push_message_to_core(core, msg, block);
 }
 
-// ---- Tensor verbs on the GStreamer backend (H0 plan 3.3, 3.5) -----------------------------------
-// push(const Tensor&) is push(TensorList) of the Tensor's items (tensor_push_items), each step and
-// text as that overload has it, plus what the Tensor's stamp proposes written into the Sample it
-// builds (apply_stamp_proposals): frame_id, stream_id, pts_ns.
+// ---- The TensorList verbs (H0 plan 3.3, 3.5) ----------------------------------------------------
+// push(TensorList) and try_push(TensorList), named or not, on either backend. On GStreamer the
+// list goes through exactly the steps and texts develop's TensorList verbs have (route processor,
+// tensor-media rule, sample_from_tensors[_for_input], push_samples /
+// push_graph_samples_to_endpoint / the input queue), plus what the first tensor's stamp proposes
+// written into the Sample it builds (apply_stamp_proposals: frame_id, stream_id, pts_ns). A tensor
+// without a stamp proposes nothing, so a list of such tensors is pushed exactly as develop pushes
+// it.
 
 bool push_tensor_message(runtime::RunCore& core, const Sample& msg, bool block) {
   enforce_public_sample_push_transferable(msg, "Run::push");
@@ -656,25 +660,32 @@ bool push_tensor_items(runtime::RunCore& core, std::optional<std::string_view> i
   return push_tensor_message(core, stamped(sample_from_tensors(items)), block);
 }
 
-bool push_tensor_on_core(runtime::RunCore& core, std::optional<std::string_view> input_name,
-                         const Tensor& input, const char* where) {
+// One TensorList push or try_push (`block`), the list already checked non-empty. A list of one
+// positional record pushes the record's fields with its stamp; a list of one Tensor from this Run's
+// alloc() is committed by push (RunAllocation.h); try_push reads it like any CPU tensor.
+bool push_tensor_list(runtime::RunCore& core, std::optional<std::string_view> input_name,
+                      const TensorList& inputs, bool block, const char* where) {
   if (core.dataflow_) {
-    return core.dataflow_->push(input_name, input, true, where);
+    return core.dataflow_->push(input_name, inputs, block, where);
   }
-  std::shared_ptr<runtime::RunAllocation> allocation = runtime::allocation_of(input, core);
+  if (std::optional<TensorList> fields = pipeline_internal::list_record_fields(inputs, where)) {
+    return push_tensor_items(core, input_name, *fields, inputs.front().stamp(), block, where);
+  }
+  std::shared_ptr<runtime::RunAllocation> allocation =
+      block && inputs.size() == 1U ? runtime::allocation_of(inputs.front(), core) : nullptr;
   if (!allocation) {
-    return push_tensor_items(core, input_name, pipeline_internal::tensor_push_items(input, where),
-                             input.stamp(), true, where);
+    return push_tensor_items(core, input_name, inputs, inputs.front().stamp(), block, where);
   }
   // A Tensor from this Run's alloc(): pushed once. The Run receives the allocation's own CPU
   // storage, and the application's storage is emptied when the push queues it.
+  const Tensor& input = inputs.front();
   runtime::begin_allocated_push(*allocation, where);
   bool queued = false;
   try {
     Tensor pushed = input;
     pushed.storage = std::static_pointer_cast<TensorBuffer>(allocation->backing);
-    queued = push_tensor_items(core, input_name, TensorList{std::move(pushed)}, input.stamp(), true,
-                               where);
+    queued = push_tensor_items(core, input_name, TensorList{std::move(pushed)}, input.stamp(),
+                               block, where);
   } catch (...) {
     runtime::end_allocated_push(*allocation, false);
     throw;
@@ -1089,34 +1100,11 @@ bool Run::push(const TensorList& inputs) {
     throw std::runtime_error(
         decorate_with_error_code(error_codes::kRuntimePull, "Run::push: empty tensor list"));
   }
-  if (core_ && core_->dataflow_) {
-    return core_->dataflow_->push(std::nullopt, inputs, true, "Run::push");
+  if (!core_) {
+    throw std::runtime_error(
+        decorate_with_error_code(error_codes::kRuntimePull, "Run::push: stream is closed"));
   }
-  if (core_ && core_->graph_execution_) {
-    if (auto route = graph_default_input_route_processor(*core_)) {
-      return core_->push_samples(Sample{route->process_tensors(inputs, "Run::push")}, true);
-    }
-    const std::optional<InputOptions> input_opt = graph_default_ingress_input(*core_);
-    if (!input_options_expect_tensor_media(input_opt) && inputs.size() != 1U) {
-      throw std::runtime_error(decorate_with_error_code(
-          error_codes::kRuntimePull,
-          "Run::push: raw-image graph ingress supports exactly one tensor per inference item"));
-    }
-    Sample sample = input_opt.has_value()
-                        ? pipeline_internal::sample_from_tensors_for_input(inputs, *input_opt)
-                        : sample_from_tensors(inputs);
-    return core_->push_samples(Sample{std::move(sample)}, true);
-  }
-  if (core_ && core_->pipeline.input_route_processor) {
-    return push_message_impl(
-        core_->pipeline.input_route_processor->process_tensors(inputs, "Run::push"), true);
-  }
-  if (core_ && core_->pipeline.tensor_input_opt_for_cv.has_value()) {
-    return push_message_impl(pipeline_internal::sample_from_tensors_for_input(
-                                 inputs, *core_->pipeline.tensor_input_opt_for_cv),
-                             true);
-  }
-  return push_message_impl(sample_from_tensors(inputs), true);
+  return push_tensor_list(*core_, std::nullopt, inputs, true, "Run::push");
 }
 
 bool Run::push(std::string_view input_name, const TensorList& inputs) {
@@ -1129,26 +1117,7 @@ bool Run::push(std::string_view input_name, const TensorList& inputs) {
     throw std::runtime_error(
         decorate_with_error_code(error_codes::kRuntimePull, "Run::push(name): stream is closed"));
   }
-  if (core_->dataflow_) {
-    return core_->dataflow_->push(input_name, inputs, true, "Run::push(name)");
-  }
-  const runtime::Endpoint endpoint = named_input_endpoint_or_throw(*core_, input_name);
-  if (auto route = graph_input_route_processor_for_endpoint(*core_, endpoint)) {
-    return push_graph_samples_to_endpoint(*core_, endpoint, input_name,
-                                          Sample{route->process_tensors(inputs, "Run::push(name)")},
-                                          true);
-  }
-  const std::optional<InputOptions> input_opt = graph_ingress_input_for_endpoint(*core_, endpoint);
-  if (!input_options_expect_tensor_media(input_opt) && inputs.size() != 1U) {
-    throw std::runtime_error(decorate_with_error_code(
-        error_codes::kRuntimePull,
-        "Run::push(name): raw-image graph ingress supports exactly one tensor per inference item"));
-  }
-  Sample sample = input_opt.has_value()
-                      ? pipeline_internal::sample_from_tensors_for_input(inputs, *input_opt)
-                      : sample_from_tensors(inputs);
-  return push_graph_samples_to_endpoint(*core_, endpoint, input_name, Sample{std::move(sample)},
-                                        true);
+  return push_tensor_list(*core_, input_name, inputs, true, "Run::push(name)");
 }
 
 bool Run::try_push(const TensorList& inputs) {
@@ -1157,34 +1126,12 @@ bool Run::try_push(const TensorList& inputs) {
     throw std::runtime_error(
         decorate_with_error_code(error_codes::kRuntimePull, "Run::try_push: empty tensor list"));
   }
-  if (core_ && core_->dataflow_) {
-    return core_->dataflow_->push(std::nullopt, inputs, false, "Run::try_push");
+  if (!core_) {
+    // develop's text for this case (its push_message_impl), kept.
+    throw std::runtime_error(
+        decorate_with_error_code(error_codes::kRuntimePull, "Run::push: stream is closed"));
   }
-  if (core_ && core_->graph_execution_) {
-    if (auto route = graph_default_input_route_processor(*core_)) {
-      return core_->push_samples(Sample{route->process_tensors(inputs, "Run::try_push")}, false);
-    }
-    const std::optional<InputOptions> input_opt = graph_default_ingress_input(*core_);
-    if (!input_options_expect_tensor_media(input_opt) && inputs.size() != 1U) {
-      throw std::runtime_error(decorate_with_error_code(
-          error_codes::kRuntimePull,
-          "Run::try_push: raw-image graph ingress supports exactly one tensor per inference item"));
-    }
-    Sample sample = input_opt.has_value()
-                        ? pipeline_internal::sample_from_tensors_for_input(inputs, *input_opt)
-                        : sample_from_tensors(inputs);
-    return core_->push_samples(Sample{std::move(sample)}, false);
-  }
-  if (core_ && core_->pipeline.input_route_processor) {
-    return push_message_impl(
-        core_->pipeline.input_route_processor->process_tensors(inputs, "Run::try_push"), false);
-  }
-  if (core_ && core_->pipeline.tensor_input_opt_for_cv.has_value()) {
-    return push_message_impl(pipeline_internal::sample_from_tensors_for_input(
-                                 inputs, *core_->pipeline.tensor_input_opt_for_cv),
-                             false);
-  }
-  return push_message_impl(sample_from_tensors(inputs), false);
+  return push_tensor_list(*core_, std::nullopt, inputs, false, "Run::try_push");
 }
 
 bool Run::try_push(std::string_view input_name, const TensorList& inputs) {
@@ -1197,27 +1144,7 @@ bool Run::try_push(std::string_view input_name, const TensorList& inputs) {
     throw std::runtime_error(decorate_with_error_code(error_codes::kRuntimePull,
                                                       "Run::try_push(name): stream is closed"));
   }
-  if (core_->dataflow_) {
-    return core_->dataflow_->push(input_name, inputs, false, "Run::try_push(name)");
-  }
-  const runtime::Endpoint endpoint = named_input_endpoint_or_throw(*core_, input_name);
-  if (auto route = graph_input_route_processor_for_endpoint(*core_, endpoint)) {
-    return push_graph_samples_to_endpoint(
-        *core_, endpoint, input_name, Sample{route->process_tensors(inputs, "Run::try_push(name)")},
-        false);
-  }
-  const std::optional<InputOptions> input_opt = graph_ingress_input_for_endpoint(*core_, endpoint);
-  if (!input_options_expect_tensor_media(input_opt) && inputs.size() != 1U) {
-    throw std::runtime_error(decorate_with_error_code(
-        error_codes::kRuntimePull,
-        "Run::try_push(name): raw-image graph ingress supports exactly one tensor per inference "
-        "item"));
-  }
-  Sample sample = input_opt.has_value()
-                      ? pipeline_internal::sample_from_tensors_for_input(inputs, *input_opt)
-                      : sample_from_tensors(inputs);
-  return push_graph_samples_to_endpoint(*core_, endpoint, input_name, Sample{std::move(sample)},
-                                        false);
+  return push_tensor_list(*core_, input_name, inputs, false, "Run::try_push(name)");
 }
 
 bool Run::push_holder(const std::shared_ptr<void>& holder) {
@@ -1387,24 +1314,6 @@ bool Run::try_push(std::string_view input_name, const Sample& msgs) {
         false);
   }
   return core_->push_named_samples(input_name, msgs, false);
-}
-
-bool Run::push(const Tensor& input) {
-  require_async_mode("Run::push");
-  if (!core_) {
-    throw std::runtime_error(
-        decorate_with_error_code(error_codes::kRuntimePull, "Run::push: stream is closed"));
-  }
-  return push_tensor_on_core(*core_, std::nullopt, input, "Run::push");
-}
-
-bool Run::push(std::string_view input_name, const Tensor& input) {
-  require_async_mode("Run::push(name)");
-  if (!core_) {
-    throw std::runtime_error(
-        decorate_with_error_code(error_codes::kRuntimePull, "Run::push(name): stream is closed"));
-  }
-  return push_tensor_on_core(*core_, input_name, input, "Run::push(name)");
 }
 
 Tensor Run::alloc(std::string_view input_name) {

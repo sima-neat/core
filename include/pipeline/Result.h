@@ -10,7 +10,7 @@
  * @code
  *   auto r = run.pull("out", std::chrono::milliseconds(100));
  *   if (r) {
- *     use(*r);                                   // the Tensor
+ *     use(*r);                                   // the TensorList
  *   } else if (r.status() == PullStatus::Closed) {
  *     // end of stream
  *   } else if (r.status() == PullStatus::Error) {

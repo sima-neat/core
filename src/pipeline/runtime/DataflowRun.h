@@ -39,6 +39,10 @@ public:
 
   // `input` is the named endpoint of push(name, ...); nullopt for the unnamed push. `block`: push
   // (waits for room, never drops) or try_push (applies the overflow policy). Return as Run's.
+  // A TensorList is one item (a leaf, or a positional record); its first tensor's stamp proposes
+  // the message's stream, frame_id, source_time and flags; a list of one positional record pushes
+  // the record's fields. With `block`, a list of one Tensor from this Run's alloc() publishes its
+  // slot without a copy (RunAllocation.h); try_push copies it like any CPU tensor.
   virtual bool push(std::optional<std::string_view> input, const TensorList& inputs, bool block,
                     const char* where) = 0;
   virtual bool push(std::optional<std::string_view> input, const Sample& inputs, bool block,
@@ -47,16 +51,12 @@ public:
                     bool block, const char* where) = 0;
   // GStreamer holders do not exist on this backend: always throws.
   virtual bool push_holder(const std::shared_ptr<void>& holder, bool block, const char* where) = 0;
-  // Run::push(const Tensor&): a leaf, or a positional record; the Tensor's stamp proposes the
-  // message's stream, frame_id, source_time and flags. A Tensor from this Run's alloc() is
-  // published without a copy.
-  virtual bool push(std::optional<std::string_view> input, const Tensor& tensor, bool block,
-                    const char* where) = 0;
 
   virtual PullStatus pull(std::optional<std::string_view> output, int timeout_ms, Sample& out,
                           PullError* err) = 0;
-  // Run::pull(milliseconds): the Tensor, with its envelope (stamp; a record's fields).
-  virtual PullStatus pull(std::optional<std::string_view> output, int timeout_ms, Tensor& out,
+  // Run::pull(milliseconds): the item's tensors (one for a leaf, one per field of a record), each
+  // carrying the message's stamp in its envelope.
+  virtual PullStatus pull(std::optional<std::string_view> output, int timeout_ms, TensorList& out,
                           PullError* err) = 0;
   // Run::alloc(name): a writable Tensor over a slot of the input's pool (RunAllocation.h).
   virtual Tensor alloc(std::string_view input, const char* where) = 0;

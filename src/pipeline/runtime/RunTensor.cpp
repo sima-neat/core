@@ -1,12 +1,12 @@
-// Run's Tensor verbs (H0 plan 3.3): pull(milliseconds) -> Result<Tensor>, operator()(Tensor),
-// on_output, and the allocation behind alloc() (RunAllocation.h). H0's stats() has no public Run
-// method (plan 3.3; unit_graph_api_surface_test keeps Run::stats() private): MeasureScope's
-// MeasureReport carries the counters, which the Dataflow backend fills from its SessionReport.
-// push(const Tensor&) and alloc() themselves are in RunPush.cpp, beside push(TensorList), whose
-// steps they share.
+// Run's TensorList verbs (H0 plan 3.3; Core's Tensor surface is TensorList-only):
+// pull(milliseconds) -> Result<TensorList>, operator()(TensorList) -> TensorList, on_output with a
+// TensorList callback, and the allocation behind alloc() (RunAllocation.h). H0's stats() has no
+// public Run method (plan 3.3; unit_graph_api_surface_test keeps Run::stats() private):
+// MeasureScope's MeasureReport carries the counters, which the Dataflow backend fills from its
+// SessionReport. The TensorList push and alloc() themselves are in RunPush.cpp.
 //
-// Both backends: on Dataflow the Run state builds the Tensor from the message (DataflowRun.cpp);
-// on GStreamer the pulled Sample projects to it (SampleProjection.h), with a stream id interned
+// Both backends: on Dataflow the Run state builds the tensors from the message (DataflowRun.cpp);
+// on GStreamer the pulled Sample projects to them (SampleProjection.h), with a stream id interned
 // per Run.
 
 #include "pipeline/Run.h"
@@ -227,10 +227,10 @@ bool delivered_to_callback(const runtime::RunCore& core, std::optional<std::stri
                      [&](const auto& delivery) { return delivery->output == output; });
 }
 
-// One pull of a Tensor, on either backend, without the callback check (the delivery thread uses
-// it too).
-PullStatus pull_tensor_on_core(runtime::RunCore& core, std::optional<std::string_view> output,
-                               int timeout_ms, Tensor& out, PullError* err) {
+// One pull of an item's tensors, on either backend, without the callback check (the delivery
+// thread uses it too).
+PullStatus pull_tensors_on_core(runtime::RunCore& core, std::optional<std::string_view> output,
+                                int timeout_ms, TensorList& out, PullError* err) {
   if (core.dataflow_) {
     return core.dataflow_->pull(output, timeout_ms, out, err);
   }
@@ -241,38 +241,38 @@ PullStatus pull_tensor_on_core(runtime::RunCore& core, std::optional<std::string
     return status;
   }
   const Stamp stamp = pipeline_internal::stamp_of_pulled_sample(sample, &core.tensor_streams);
-  std::optional<Tensor> tensor = pipeline_internal::tensor_from_pulled_sample(sample, stamp);
-  if (!tensor) {
+  std::optional<TensorList> tensors = pipeline_internal::tensors_from_pulled_sample(sample, stamp);
+  if (!tensors) {
     error_util::set_pull_error(err, error_codes::kRuntimePull,
                                "Run::pull: the output item carries no tensor");
     return PullStatus::Error;
   }
-  out = std::move(*tensor);
+  out = std::move(*tensors);
   return PullStatus::Ok;
 }
 
-Result<Tensor> pull_result(runtime::RunCore* core, std::optional<std::string_view> output,
-                           std::chrono::milliseconds timeout) {
+Result<TensorList> pull_result(runtime::RunCore* core, std::optional<std::string_view> output,
+                               std::chrono::milliseconds timeout) {
   const std::string where =
       output ? "Run::pull(\"" + std::string(*output) + "\")" : std::string("Run::pull");
   PullError err;
   if (!core) {
     err.code = error_codes::kRuntimePull;
     err.message = where + ": stream is closed";
-    return Result<Tensor>::failure(PullStatus::Closed, std::move(err));
+    return Result<TensorList>::failure(PullStatus::Closed, std::move(err));
   }
   if (delivered_to_callback(*core, output)) {
     err.code = error_codes::kRuntimePull;
     err.message = where + ": the output is delivered to on_output; it cannot be pulled";
-    return Result<Tensor>::failure(PullStatus::Error, std::move(err));
+    return Result<TensorList>::failure(PullStatus::Error, std::move(err));
   }
-  Tensor tensor;
+  TensorList tensors;
   const PullStatus status =
-      pull_tensor_on_core(*core, output, timeout_ms_of(timeout), tensor, &err);
+      pull_tensors_on_core(*core, output, timeout_ms_of(timeout), tensors, &err);
   if (status == PullStatus::Ok) {
-    return Result<Tensor>::success(std::move(tensor));
+    return Result<TensorList>::success(std::move(tensors));
   }
-  return Result<Tensor>::failure(status, std::move(err));
+  return Result<TensorList>::failure(status, std::move(err));
 }
 
 // The delivery thread of one on_output callback. It holds the Run's core, so the core outlives it
@@ -280,15 +280,15 @@ Result<Tensor> pull_result(runtime::RunCore* core, std::optional<std::string_vie
 void deliver(std::shared_ptr<runtime::RunCore> core,
              std::shared_ptr<runtime::OutputCallbacks> callbacks,
              std::shared_ptr<runtime::OutputDelivery> delivery,
-             std::function<void(Tensor)> callback) {
+             std::function<void(TensorList)> callback) {
   // Each pull is bounded, so a stop that did not end a pull still ends the loop in this time.
   constexpr int kPullQuantumMs = 100;
   const std::optional<std::string_view> output =
       delivery->name ? std::optional<std::string_view>(*delivery->name) : std::nullopt;
   while (!callbacks->stop.load(std::memory_order_acquire)) {
-    Tensor tensor;
+    TensorList tensors;
     PullError err;
-    const PullStatus status = pull_tensor_on_core(*core, output, kPullQuantumMs, tensor, &err);
+    const PullStatus status = pull_tensors_on_core(*core, output, kPullQuantumMs, tensors, &err);
     if (status == PullStatus::Timeout) {
       continue;
     }
@@ -302,7 +302,7 @@ void deliver(std::shared_ptr<runtime::RunCore> core,
       break;
     }
     try {
-      callback(std::move(tensor));
+      callback(std::move(tensors));
     } catch (const std::exception& e) {
       PullError failure;
       failure.code = error_codes::kRuntimePull;
@@ -326,7 +326,7 @@ void deliver(std::shared_ptr<runtime::RunCore> core,
 
 void register_output_callback(const std::shared_ptr<runtime::RunCore>& core,
                               std::optional<std::string_view> name,
-                              std::function<void(Tensor)> callback, const char* where) {
+                              std::function<void(TensorList)> callback, const char* where) {
   if (!core) {
     error_util::throw_session_error(error_codes::kRuntimePull,
                                     std::string(where) + ": stream is closed");
@@ -429,17 +429,17 @@ void runtime::RunCore::stop_output_callbacks() noexcept {
   }
 }
 
-Result<Tensor> Run::pull(std::chrono::milliseconds timeout) {
+Result<TensorList> Run::pull(std::chrono::milliseconds timeout) {
   require_async_pull_mode("Run::pull");
   return pull_result(core_.get(), std::nullopt, timeout);
 }
 
-Result<Tensor> Run::pull(std::string_view output_name, std::chrono::milliseconds timeout) {
+Result<TensorList> Run::pull(std::string_view output_name, std::chrono::milliseconds timeout) {
   require_async_pull_mode("Run::pull(name)");
   return pull_result(core_.get(), output_name, timeout);
 }
 
-Tensor Run::operator()(const Tensor& input) {
+TensorList Run::operator()(const TensorList& input) {
   if (!push(input)) {
     error_util::throw_session_error(
         error_codes::kRuntimePull,
@@ -448,12 +448,12 @@ Tensor Run::operator()(const Tensor& input) {
   return pull(std::chrono::milliseconds(-1)).value();
 }
 
-void Run::on_output(std::function<void(Tensor)> callback) {
+void Run::on_output(std::function<void(TensorList)> callback) {
   require_async_pull_mode("Run::on_output");
   register_output_callback(core_, std::nullopt, std::move(callback), "Run::on_output");
 }
 
-void Run::on_output(std::string_view output_name, std::function<void(Tensor)> callback) {
+void Run::on_output(std::string_view output_name, std::function<void(TensorList)> callback) {
   require_async_pull_mode("Run::on_output(name)");
   register_output_callback(core_, output_name, std::move(callback), "Run::on_output");
 }
