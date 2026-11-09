@@ -1,9 +1,12 @@
 #include "SshRunner.h"
 #include "RemoteRuntime.h"
 
+#include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <stdexcept>
+#include <string_view>
+#include <thread>
 
 namespace pcie_internal = simaai::neat::pcie::internal;
 
@@ -16,6 +19,7 @@ void require(const bool condition, const std::string& message) {
 }
 
 void test_child_cleanup_shell() {
+#ifndef _WIN32
   const std::string cleanup = pcie_internal::RemoteRuntime::child_cleanup_shell_function();
   const auto normal = pcie_internal::SshRunner::run(
       {"/bin/bash", "-c",
@@ -44,6 +48,44 @@ void test_child_cleanup_shell() {
       5);
   require(preserves_owner.exit_code == 0 && !preserves_owner.timed_out,
           "launched-child cleanup affected the existing owner");
+#endif
+}
+
+void test_command_runner(const std::string& executable) {
+  const auto ok = pcie_internal::SshRunner::run({executable, "--emit", "hello"}, 2);
+  require(ok.exit_code == 0 && ok.output == "hello\n", "expected child output capture");
+
+  const auto bad = pcie_internal::SshRunner::run({executable, "--exit", "7"}, 2);
+  require(bad.exit_code == 7, "expected child exit code 7");
+
+  const auto round_trip = pcie_internal::SshRunner::run(
+      {executable, "--echo-args", "two words", "quote\"inside", "C:\\path with space\\"}, 2);
+  require(round_trip.exit_code == 0 &&
+              round_trip.output == "ARG=two words\nARG=quote\"inside\nARG=C:\\path with space\\\n",
+          "command arguments did not round-trip exactly: " + round_trip.output);
+
+  const auto flood = pcie_internal::SshRunner::run({executable, "--emit-bytes", "131072"}, 2);
+  require(flood.exit_code == 0 && flood.output.size() == 131072 &&
+              std::all_of(flood.output.begin(), flood.output.end(),
+                          [](const char byte) { return byte == 'x'; }),
+          "large child output was truncated or corrupted");
+
+  const auto timed = pcie_internal::SshRunner::run_for({executable, "--sleep-ms", "2000"},
+                                                       std::chrono::milliseconds(50));
+  require(timed.timed_out && timed.exit_code == 124,
+          "expected bounded command timeout and timeout exit code");
+}
+
+void test_windows_argument_quoting() {
+  using Runner = pcie_internal::SshRunner;
+  require(Runner::windows_quote_argument("plain") == "plain", "plain argument was quoted");
+  require(Runner::windows_quote_argument("") == "\"\"", "empty argument quoting mismatch");
+  require(Runner::windows_quote_argument("two words") == "\"two words\"",
+          "spaced argument quoting mismatch");
+  require(Runner::windows_quote_argument("quote\"inside") == "\"quote\\\"inside\"",
+          "embedded quote escaping mismatch");
+  require(Runner::windows_quote_argument("C:\\path with space\\") == "\"C:\\path with space\\\\\"",
+          "trailing backslash escaping mismatch");
 }
 
 void test_start_failure_cleanup_classification() {
@@ -65,25 +107,36 @@ void test_start_failure_cleanup_classification() {
 
 } // namespace
 
-int main() {
+int main(const int argc, char** argv) {
+  if (argc >= 2 && std::string_view(argv[1]) == "--emit" && argc == 3) {
+    std::cout << argv[2] << "\n";
+    return 0;
+  }
+  if (argc >= 2 && std::string_view(argv[1]) == "--exit" && argc == 3) {
+    return std::stoi(argv[2]);
+  }
+  if (argc >= 2 && std::string_view(argv[1]) == "--echo-args") {
+    for (int index = 2; index < argc; ++index) {
+      std::cout << "ARG=" << argv[index] << "\n";
+    }
+    return 0;
+  }
+  if (argc >= 2 && std::string_view(argv[1]) == "--emit-bytes" && argc == 3) {
+    std::cout << std::string(static_cast<std::size_t>(std::stoul(argv[2])), 'x');
+    return 0;
+  }
+  if (argc >= 2 && std::string_view(argv[1]) == "--sleep-ms" && argc == 3) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(std::stoi(argv[2])));
+    return 0;
+  }
+
   try {
     const std::string escaped = pcie_internal::SshRunner::shell_escape("ab'cd");
     if (escaped != "'ab'\\''cd'") {
       throw std::runtime_error("shell escape mismatch");
     }
-    const auto ok = pcie_internal::SshRunner::run({"/bin/sh", "-c", "echo hello"}, 2);
-    if (ok.exit_code != 0 || ok.output.find("hello") == std::string::npos) {
-      throw std::runtime_error("expected echo command to succeed");
-    }
-    const auto bad = pcie_internal::SshRunner::run({"/bin/sh", "-c", "exit 7"}, 2);
-    if (bad.exit_code != 7) {
-      throw std::runtime_error("expected exit code 7");
-    }
-    const auto timed =
-        pcie_internal::SshRunner::run_for({"/bin/sleep", "2"}, std::chrono::milliseconds(50));
-    if (!timed.timed_out) {
-      throw std::runtime_error("expected millisecond command timeout");
-    }
+    test_windows_argument_quoting();
+    test_command_runner(argv[0]);
     const std::string first =
         pcie_internal::RemoteRuntime::unique_remote_upload_path("/first/model.tar.gz");
     const std::string second =

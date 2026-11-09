@@ -70,6 +70,14 @@ pkg_check_modules(GST REQUIRED IMPORTED_TARGET
   glib-2.0
 )
 
+if (WIN32)
+  set(SIMAPCIE_PROCESS_RUNNER_SOURCE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/SshRunnerWindows.cpp)
+else()
+  set(SIMAPCIE_PROCESS_RUNNER_SOURCE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/SshRunnerPosix.cpp)
+endif()
+
 set(SIMA_NEAT_PCIE_HOST_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/Model.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/HostPcieChannel.cpp
@@ -82,6 +90,7 @@ set(SIMA_NEAT_PCIE_HOST_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/RemoteRuntime.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/Runtime.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/SshRunner.cpp
+  ${SIMAPCIE_PROCESS_RUNNER_SOURCE}
   ${SIMA_NEAT_CORE_ROOT}/src/model/ModelArchiveLoader.cpp
   ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/MlaElfIoTopology.cpp
   ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/MpkContract.cpp
