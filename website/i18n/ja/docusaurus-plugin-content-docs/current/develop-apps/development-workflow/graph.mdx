@@ -561,6 +561,32 @@ if (result) {
 - 整数タイムアウトのオーバーロードは意味が変わりません：`pull(100)` と `pull("out", 100)` は `std::optional<Sample>` を返します。
 - `pipeline/Graph.h` は GStreamer のヘッダーを必要としなくなりました。その前に `SIMA_NEAT_GRAPH_NO_GSTREAMER` を定義しない限り、引き続き `<gst/gst.h>` をインクルードします。このインクルードは今後のリリースで削除されるため、GStreamer を使用する箇所では `<gst/gst.h>` を自分でインクルードしてください。
 
+Python では、同じ動詞が Python のリストを受け取り、返します。
+
+```python
+import pyneat as pn
+
+graph = pn.Graph()
+image = graph.input("image")              # 最初の push が形状を決めます
+graph.output("out", image)
+run = graph.build()
+
+run.push("image", [image_tensor])         # 1 つの項目。最初のテンソルのスタンプが提案されます
+result = run.pull_result("out", 100)      # PullResult：Ok、Timeout、Closed、または Error
+if result:
+    stamp = result.value()[0].stamp       # 凍結された Stamp：stream_name、seq、frame_id など
+elif result.status == pn.PullStatus.Closed:
+    pass                                  # 入力が閉じられ、すべての出力を pull しました
+else:
+    print(result.error.code, result.error.message)
+```
+
+- `run.pull(...)` は引き続き `Sample` または `None` を返し、呼び出し箇所ごとに 1 回 `DeprecationWarning` を出すようになりました。`Sample` 形式を削除するリリースで `PullResult` を返すようになるため、`run.pull_result(...)` に移行してください。
+- `run.push(...)`、`run.try_push(...)`、`run([tensor])` は C++ と同様にリストを受け取り、単一の Tensor は拒否されます。
+- `run.on_output("out", callback)` は `Run` が所有するスレッド上で、GIL を保持したまま各項目のリストを渡して `callback(tensors)` を呼び出します。`run.stop()`、`run.close()`、および `Run` への最後の参照の破棄は、実行中のコールバックを待つ間 GIL を解放します。コールバックが例外を送出すると配信は終了し、例外は `sys.unraisablehook` で報告され、`run.last_error()` がそれを示します。プロセスは動作し続けます。
+- `run.alloc("points")` は上限の形状の書き込み可能な Tensor を返します。`tensor.copy_from(array)` で埋めてから、`run.push("points", [tensor])` で push してください。これがコミットです。
+- `pn.Tensor.record([a, b])`、`tensor.with_stamp(pn.Stamp(frame_id=7))`、`tensor["0"]`、`tensor[0]`、`tensor.fields()`、`tensor.leaves()` は C++ のレコードアクセサーに対応し、`pn.to_tensor(sample)` と `pn.to_sample(tensor)` は射影です。`RunOptions.backend` には `pn.RunBackend.Auto`、`GStreamer`、`Dataflow` を指定します。
+
 ## ライブフラグメントを接続する
 
 ランタイムポリシーまたは明示的な生フレームの許容制限が必要な接続には、[`GraphLinkOptions`](/reference/{lsa}/structs/simaai-neat-graphlinkoptions) を使用します。

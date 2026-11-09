@@ -974,6 +974,8 @@ graph.add(simaai::neat::nodes::Output());
 
 TensorList 動詞在兩種執行環境上皆可使用；除了 `alloc` 之外，沒有任何 `Run` 動詞接受或傳回單一 Tensor。`push(list)` 與 `push(name, list)` 會 push 一個項目：一個張量為葉節點，多個張量為依位置命名的記錄，且第一個張量的戳記會提議該項目的 `stream_name`、`frame_id`、`source_time` 與 `flags`。採用 `std::chrono::milliseconds` 逾時的 `pull(name, timeout)` 會傳回 `Result<TensorList>`，其狀態為四種 `PullStatus` 結果之一；`int` 多載仍傳回 `std::optional<Sample>`。`run(list)` 會 push 並等待輸出；`on_output(name, callback)` 會在 `Run` 擁有的執行緒上將每個輸出項目以 `TensorList` 傳遞給回呼（之後該輸出無法再 pull）；`alloc(name)` 會為以 `Graph::input(name, shape, dtype)` 宣告的輸入出借可寫入的 Tensor，並以 `push(name, {tensor})` 提交：在 Dataflow 執行環境上是無需複製即可發布的池槽位，在 GStreamer 上是 CPU 記憶體。計數器仍透過 `start_measurement()` 取得，`Run` 沒有公開的 `stats()`。每個 pull 到的張量都會在 `Tensor::envelope` 中帶有該項目的 `Stamp`；執行環境寫入 `seq` 與 `publish_time`。`Sample` 介面是它的投影（`to_sample`、`to_tensor`）：`input_seq = seq - 1`、`orig_input_seq = input_seq`，`pts_ns` 取自 `source_time`。被 push 的 `input_seq` 或 `orig_input_seq` 在戳記中沒有對應欄位，因此不會在 Dataflow 執行環境上傳遞，而 GStreamer 不會記錄 `publish_time`。
 
+Python 繫結（`python/src/module.cpp`）以 Python 清單提供相同的動詞：`Run.push`、`Run.try_push` 與 `Run(tensors)` 接受清單，`Run.pull_result(name, timeout_ms)` 會傳回 `PullResult`（`Result<TensorList>`，其 `value()` 為清單），而 `Run.pull` 在一個版本內仍傳回 `Sample | None` 並發出 `DeprecationWarning`。它也提供 `RunOptions.backend`、`Stamp`（凍結的值）、記錄存取子、`Graph.input`/`Graph.output`、`Run.alloc`（以 `Tensor.copy_from` 填入）以及 `to_tensor`/`to_sample` 投影。`Run.on_output` 會在 `Run` 的傳遞執行緒上執行 Python 回呼，由該執行緒取得 GIL；所有會等待該執行緒的繫結都會先釋放 GIL：`stop`、`close`、`close_input`、Python `Run` 的釋放（弱參照回呼會在 nanobind 銷毀它之前將其關閉），以及直譯器結束（`atexit` 掛鉤會在終結之前停止這類 `Run`）。回呼擲出的例外會交給 `sys.unraisablehook`，並如同 C++ 例外一樣結束傳遞（`last_error()`）。
+
 閒置的 `Run` 仍可繼續使用；操作期限限制的是等待時間，而非提交輸入之間的暫停。
 
 這支援完全非同步的管線（生產者/消費者分離），以及單次流程（`Graph::run(...)`）。

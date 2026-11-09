@@ -85,6 +85,7 @@
 #include "pipeline/Graph.h"
 #include "pipeline/GraphMetrics.h"
 #include "pipeline/NeatError.h"
+#include "pipeline/Result.h"
 #include "pipeline/GraphOptions.h"
 #include "pipeline/RunExport.h"
 #include "pipeline/StageRun.h"
@@ -102,10 +103,13 @@
 #include <opencv2/core.hpp>
 #endif
 
+#include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -1309,6 +1313,287 @@ void reject_single_tensor_or_sample(const nb::object& input, const char* where) 
   }
 }
 
+// ── Run.on_output: a Python callback on the Run's delivery thread ─────────────────────────────
+//
+// The C++ Run calls the callback on a thread it owns. The wrapper takes the GIL there
+// (PyGILState_Ensure), and every binding that can wait for that thread (stop, close, close_input,
+// the release of the Python Run, interpreter exit) releases the GIL first, so the thread can
+// always get it. A Python exception raised by the callback is reported through sys.unraisablehook
+// and rethrown as a C++ exception, which ends the delivery: Run.last_error() then reads
+// "Run::on_output: the callback threw: <type>: <message>". Nothing in this path terminates the
+// process.
+
+bool python_is_finalizing() noexcept {
+#if PY_VERSION_HEX >= 0x030D0000
+  return Py_IsFinalizing() != 0;
+#else
+  return _Py_IsFinalizing() != 0;
+#endif
+}
+
+struct PyOutputCallbackState {
+  std::atomic<bool> closed{false}; // set before the Run is torn down: deliver nothing more
+  nb::object fn;                   // read and released only with the GIL held
+  std::string where;
+
+  PyOutputCallbackState() = default;
+  PyOutputCallbackState(const PyOutputCallbackState&) = delete;
+  PyOutputCallbackState& operator=(const PyOutputCallbackState&) = delete;
+  ~PyOutputCallbackState() {
+    if (!fn.is_valid()) {
+      return;
+    }
+    if (!Py_IsInitialized() || python_is_finalizing()) {
+      (void)fn.release(); // the interpreter is going away: leak the reference, take no GIL
+      return;
+    }
+    nb::gil_scoped_acquire gil;
+    fn.reset();
+  }
+};
+
+std::string python_error_summary(const nb::python_error& e) {
+  try {
+    nb::handle value = e.value();
+    if (!value.is_valid()) {
+      return "a Python exception";
+    }
+    std::string type_name = nb::cast<std::string>(nb::handle(value.type()).attr("__name__"));
+    std::string text = nb::cast<std::string>(nb::str(value));
+    return text.empty() ? type_name : type_name + ": " + text;
+  } catch (...) {
+    return "a Python exception";
+  }
+}
+
+struct PyOutputCallback {
+  std::shared_ptr<PyOutputCallbackState> state;
+
+  void operator()(TensorList tensors) const {
+    if (state->closed.load(std::memory_order_acquire) || python_is_finalizing()) {
+      return;
+    }
+    nb::gil_scoped_acquire gil;
+    if (state->closed.load(std::memory_order_acquire)) {
+      return; // the Run was released while this thread waited for the GIL
+    }
+    std::string failure;
+    try {
+      state->fn(nb::cast(std::move(tensors))); // a list of Tensors
+      return;
+    } catch (nb::python_error& e) {
+      failure = python_error_summary(e);
+      e.discard_as_unraisable(state->where.c_str());
+    }
+    throw std::runtime_error(failure);
+  }
+};
+
+// The Python Runs that have a Python callback, so that their delivery threads are ended without
+// the GIL before the C++ Run is destroyed: when the Python object is released (a weak reference
+// whose callback nanobind runs before it destroys the C++ object, nb_type.cpp inst_dealloc) and at
+// interpreter exit (an atexit hook, which runs before finalization). Guarded by the GIL. Never
+// destroyed: the hook empties it while the interpreter is alive.
+struct PyCallbackRun {
+  nb::object weakref; // to the Python Run, with the release callback
+  Run* run = nullptr; // the C++ Run inside it, valid while the Python object lives
+  std::vector<std::shared_ptr<PyOutputCallbackState>> states;
+};
+
+std::vector<PyCallbackRun>& python_callback_runs() {
+  static auto* runs = new std::vector<PyCallbackRun>();
+  return *runs;
+}
+
+void close_states(const PyCallbackRun& entry) {
+  for (const auto& state : entry.states) {
+    state->closed.store(true, std::memory_order_release);
+  }
+}
+
+// The weak reference's callback: the Python Run is being released; its C++ Run is still intact.
+void python_run_released(nb::handle weakref) {
+  auto& runs = python_callback_runs();
+  auto it = std::find_if(runs.begin(), runs.end(),
+                         [&](const PyCallbackRun& e) { return e.weakref.ptr() == weakref.ptr(); });
+  if (it == runs.end()) {
+    return;
+  }
+  PyCallbackRun entry = std::move(*it);
+  runs.erase(it);
+  close_states(entry);
+  try {
+    nb::gil_scoped_release release;
+    entry.run->close(); // joins the delivery threads, which no longer need the GIL
+  } catch (const std::exception&) {
+    // Teardown never throws into the interpreter; the C++ destructor closes again.
+  }
+}
+
+void stop_python_callback_runs_at_exit() {
+  auto& runs = python_callback_runs();
+  std::vector<std::pair<nb::object, Run*>> alive;
+  for (const auto& entry : runs) {
+    close_states(entry);
+    nb::object obj = entry.weakref();
+    if (obj.is_valid() && !obj.is_none()) {
+      alive.emplace_back(std::move(obj), entry.run);
+    }
+  }
+  {
+    nb::gil_scoped_release release;
+    for (auto& item : alive) {
+      try {
+        item.second->stop();
+      } catch (const std::exception&) {
+      }
+    }
+  }
+  alive.clear();
+  runs.clear();
+}
+
+void register_python_on_output(Run& run, const std::optional<std::string>& name, nb::callable fn) {
+  auto state = std::make_shared<PyOutputCallbackState>();
+  state->fn = std::move(fn);
+  state->where =
+      name ? "Run.on_output(\"" + *name + "\") callback" : std::string("Run.on_output callback");
+  std::function<void(TensorList)> callback = PyOutputCallback{state};
+  if (name) {
+    run.on_output(*name, std::move(callback));
+  } else {
+    run.on_output(std::move(callback));
+  }
+  auto& runs = python_callback_runs();
+  for (auto& entry : runs) {
+    if (entry.run == &run) {
+      entry.states.push_back(std::move(state));
+      return;
+    }
+  }
+  nb::object self = nb::find(run);
+  if (!self.is_valid()) {
+    PyErr_Clear();
+    return; // not a Python-owned Run: nothing to release from Python
+  }
+  nb::object on_release =
+      nb::cpp_function([](nb::handle weakref) { python_run_released(weakref); });
+  PyObject* weakref = PyWeakref_NewRef(self.ptr(), on_release.ptr());
+  if (!weakref) {
+    throw nb::python_error();
+  }
+  PyCallbackRun entry;
+  entry.weakref = nb::steal(weakref);
+  entry.run = &run;
+  entry.states.push_back(std::move(state));
+  runs.push_back(std::move(entry));
+}
+
+const char* pull_status_name(PullStatus status) {
+  switch (status) {
+  case PullStatus::Ok:
+    return "Ok";
+  case PullStatus::Timeout:
+    return "Timeout";
+  case PullStatus::Closed:
+    return "Closed";
+  case PullStatus::Error:
+    return "Error";
+  }
+  return "Error";
+}
+
+// Run.pull(...) -> Sample | None: kept one release with a DeprecationWarning (plan D6). Raised
+// with the GIL held, attributed to the caller's line (stacklevel 1 from a C function), so the
+// default warning filters show it once per call site.
+void warn_run_pull_deprecated() {
+  if (PyErr_WarnEx(PyExc_DeprecationWarning,
+                   "Run.pull() returning Sample | None is deprecated; use "
+                   "Run.pull_result(name, timeout_ms), which returns a PullResult (status, error, "
+                   "value(): a list of Tensors). Run.pull will return a PullResult in the release "
+                   "that removes the Sample form.",
+                   1) != 0) {
+    throw nb::python_error();
+  }
+}
+
+// Tensor.copy_from(source): fill a writable dense Tensor (for example one from Run.alloc) with the
+// bytes of `source`, tightly packed at this Tensor's current shape.
+void tensor_copy_from(const Tensor& self, const nb::object& source) {
+  if (self.read_only) {
+    throw std::invalid_argument("Tensor.copy_from: this Tensor is read-only");
+  }
+  if (!self.is_dense() || !self.is_contiguous()) {
+    throw std::invalid_argument("Tensor.copy_from: this Tensor is not dense and contiguous");
+  }
+  Tensor src = tensor_from_python_input(source, false, std::nullopt, std::nullopt, std::nullopt,
+                                        TensorMemory::CPU);
+  if (src.dtype != self.dtype) {
+    throw std::invalid_argument("Tensor.copy_from: the source's dtype differs from this Tensor's");
+  }
+  const std::size_t need = self.dense_bytes_tight();
+  if (src.dense_bytes_tight() != need) {
+    throw std::invalid_argument("Tensor.copy_from: the source has " +
+                                std::to_string(src.dense_bytes_tight()) +
+                                " bytes; this Tensor's shape holds " + std::to_string(need));
+  }
+  bool copied = false;
+  {
+    nb::gil_scoped_release release;
+    simaai::neat::Mapping dst = self.map_write();
+    copied = dst.data != nullptr && dst.size_bytes >= need &&
+             src.copy_dense_bytes_tight_to(static_cast<uint8_t*>(dst.data), need);
+  }
+  if (!copied) {
+    throw std::runtime_error("Tensor.copy_from: the Tensor could not be mapped for writing (it "
+                             "may have been pushed already)");
+  }
+}
+
+std::string time_point_repr(const simaai::neat::TimePoint& t) {
+  const char* clock = "None_";
+  switch (t.clock) {
+  case simaai::neat::ClockId::None:
+    clock = "None_";
+    break;
+  case simaai::neat::ClockId::Monotonic:
+    clock = "Monotonic";
+    break;
+  case simaai::neat::ClockId::Tai:
+    clock = "Tai";
+    break;
+  case simaai::neat::ClockId::SensorLocal:
+    clock = "SensorLocal";
+    break;
+  }
+  return "TimePoint(ns=" + std::to_string(t.ns) + ", clock=ClockId." + clock + ")";
+}
+
+std::size_t hash_combine(std::size_t seed, std::size_t value) {
+  return seed ^ (value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U));
+}
+
+std::size_t time_point_hash(const simaai::neat::TimePoint& t) {
+  return hash_combine(std::hash<std::int64_t>{}(t.ns), static_cast<std::size_t>(t.clock));
+}
+
+bool stamps_equal(const simaai::neat::Stamp& a, const simaai::neat::Stamp& b) {
+  return a.stream == b.stream && a.stream_name == b.stream_name && a.seq == b.seq &&
+         a.frame_id == b.frame_id && a.source_time == b.source_time &&
+         a.publish_time == b.publish_time && a.flags == b.flags && a.version == b.version;
+}
+
+std::size_t stamp_hash(const simaai::neat::Stamp& s) {
+  std::size_t h = std::hash<std::uint32_t>{}(s.stream);
+  h = hash_combine(h, std::hash<std::string>{}(s.stream_name));
+  h = hash_combine(h, std::hash<std::uint64_t>{}(s.seq));
+  h = hash_combine(h, std::hash<std::int64_t>{}(s.frame_id));
+  h = hash_combine(h, time_point_hash(s.source_time));
+  h = hash_combine(h, time_point_hash(s.publish_time));
+  h = hash_combine(h, static_cast<std::size_t>(s.flags));
+  return hash_combine(h, static_cast<std::size_t>(s.version));
+}
+
 nb::bytes tensor_dense_bytes(const Tensor& t) {
   std::vector<uint8_t> data = t.copy_dense_bytes_tight();
   return nb::bytes(reinterpret_cast<const char*>(data.data()), data.size());
@@ -1410,6 +1695,10 @@ NB_MODULE(_pyneat_core, m) {
 #endif
   m.attr("__version__") = PYNEAT_VERSION;
   m.attr("_HAS_NATIVE_BUILD_OBJECT_OVERLOADS") = true;
+  // Run.on_output: end the delivery threads of Runs with a Python callback, without the GIL,
+  // before the interpreter finalizes (atexit runs first).
+  nb::module_::import_("atexit").attr("register")(
+      nb::cpp_function([]() { stop_python_callback_runs_at_exit(); }));
 
   nb::enum_<TensorDType>(m, "TensorDType")
       .value("UInt8", TensorDType::UInt8)
@@ -1488,6 +1777,16 @@ NB_MODULE(_pyneat_core, m) {
       .value("Realtime", RunPreset::Realtime)
       .value("Balanced", RunPreset::Balanced)
       .value("Reliable", RunPreset::Reliable);
+
+  nb::enum_<simaai::neat::RunBackend>(
+      m, "RunBackend",
+      "Which runtime executes a Run built by Graph.build() (RunOptions.backend). Auto takes "
+      "Dataflow when SIMA_NEAT_BACKEND=dataflow is set, the build has the Dataflow runtime and the "
+      "graph qualifies (one Input connected to one Output), else GStreamer. An explicit Dataflow "
+      "that cannot be honored fails Graph.build() with NeatError; it never falls back.")
+      .value("Auto", simaai::neat::RunBackend::Auto)
+      .value("GStreamer", simaai::neat::RunBackend::GStreamer)
+      .value("Dataflow", simaai::neat::RunBackend::Dataflow);
 
   nb::enum_<OutputMemory>(m, "OutputMemory")
       .value("Auto", OutputMemory::Auto)
@@ -1736,6 +2035,120 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("backend_name", &simaai::neat::TensorRouteMeta::backend_name)
       .def_rw("segment_name", &simaai::neat::TensorRouteMeta::segment_name);
 
+  // H0: the context a Tensor carries (C++ Stamp, TimePoint, ClockId, StampFlags). Stamp and
+  // TimePoint are frozen value types: read-only attributes, equality, hash, and replace().
+  nb::enum_<simaai::neat::ClockId>(
+      m, "ClockId",
+      "Which clock a TimePoint was read from; compare two TimePoints only on equal clocks.")
+      .value("None_", simaai::neat::ClockId::None, "No time: the TimePoint is unset.")
+      .value("Monotonic", simaai::neat::ClockId::Monotonic, "CLOCK_MONOTONIC of this host.")
+      .value("Tai", simaai::neat::ClockId::Tai, "CLOCK_TAI.")
+      .value("SensorLocal", simaai::neat::ClockId::SensorLocal,
+             "A source's own media time or counter (for example Sample.pts_ns).");
+
+  nb::enum_<simaai::neat::StampFlags>(m, "StampFlags", nb::is_flag(),
+                                      "Conditions a Stamp can carry (combine with |).")
+      .value("None_", simaai::neat::StampFlags::None)
+      .value("Discontinuity", simaai::neat::StampFlags::Discontinuity)
+      .value("Gap", simaai::neat::StampFlags::Gap)
+      .value("EndOfStream", simaai::neat::StampFlags::EndOfStream)
+      .value("Degraded", simaai::neat::StampFlags::Degraded);
+
+  nb::class_<simaai::neat::TimePoint>(
+      m, "TimePoint", "A time in nanoseconds on one clock; unset when clock is ClockId.None_.")
+      .def(
+          "__init__",
+          [](simaai::neat::TimePoint* self, std::int64_t ns, simaai::neat::ClockId clock) {
+            new (self) simaai::neat::TimePoint{ns, clock};
+          },
+          "ns"_a = 0, "clock"_a = simaai::neat::ClockId::None)
+      .def_ro("ns", &simaai::neat::TimePoint::ns)
+      .def_ro("clock", &simaai::neat::TimePoint::clock)
+      .def("valid", &simaai::neat::TimePoint::valid, "True iff the time is set.")
+      .def("__eq__",
+           [](const simaai::neat::TimePoint& a, nb::handle b) {
+             return nb::isinstance<simaai::neat::TimePoint>(b) &&
+                    a == nb::cast<const simaai::neat::TimePoint&>(b);
+           })
+      .def("__hash__", [](const simaai::neat::TimePoint& t) { return time_point_hash(t); })
+      .def("__repr__", [](const simaai::neat::TimePoint& t) { return time_point_repr(t); });
+
+  nb::class_<simaai::neat::Stamp>(
+      m, "Stamp",
+      "The context a Tensor carries: which stream, which publication, which frame, when.\n\n"
+      "A frozen value. The runtime writes seq and publish_time; a pushed Tensor proposes "
+      "stream_name, frame_id, source_time and flags (Tensor.with_stamp). stream is the stream's "
+      "id within its Run (0: unassigned); stream_name identifies a stream anywhere.")
+      .def(
+          "__init__",
+          [](simaai::neat::Stamp* self, std::string stream_name, std::int64_t frame_id,
+             simaai::neat::TimePoint source_time, simaai::neat::StampFlags flags,
+             std::uint32_t stream, std::uint64_t seq, simaai::neat::TimePoint publish_time) {
+            auto* s = new (self) simaai::neat::Stamp();
+            s->stream = stream;
+            s->stream_name = std::move(stream_name);
+            s->seq = seq;
+            s->frame_id = frame_id;
+            s->source_time = source_time;
+            s->publish_time = publish_time;
+            s->flags = flags;
+          },
+          nb::kw_only(), "stream_name"_a = std::string(), "frame_id"_a = std::int64_t{-1},
+          "source_time"_a = simaai::neat::TimePoint{}, "flags"_a = simaai::neat::StampFlags::None,
+          "stream"_a = std::uint32_t{0}, "seq"_a = std::uint64_t{0},
+          "publish_time"_a = simaai::neat::TimePoint{})
+      .def_ro("stream", &simaai::neat::Stamp::stream)
+      .def_ro("stream_name", &simaai::neat::Stamp::stream_name)
+      .def_ro("seq", &simaai::neat::Stamp::seq)
+      .def_ro("frame_id", &simaai::neat::Stamp::frame_id)
+      .def_ro("source_time", &simaai::neat::Stamp::source_time)
+      .def_ro("publish_time", &simaai::neat::Stamp::publish_time)
+      .def_ro("flags", &simaai::neat::Stamp::flags)
+      .def_ro("version", &simaai::neat::Stamp::version)
+      .def(
+          "replace",
+          [](const simaai::neat::Stamp& self, nb::kwargs changes) {
+            simaai::neat::Stamp out = self;
+            for (auto [key_h, value] : changes) {
+              const std::string key = nb::cast<std::string>(key_h);
+              if (key == "stream_name") {
+                out.stream_name = nb::cast<std::string>(value);
+              } else if (key == "frame_id") {
+                out.frame_id = nb::cast<std::int64_t>(value);
+              } else if (key == "source_time") {
+                out.source_time = nb::cast<simaai::neat::TimePoint>(value);
+              } else if (key == "flags") {
+                out.flags = nb::cast<simaai::neat::StampFlags>(value);
+              } else if (key == "stream") {
+                out.stream = nb::cast<std::uint32_t>(value);
+              } else if (key == "seq") {
+                out.seq = nb::cast<std::uint64_t>(value);
+              } else if (key == "publish_time") {
+                out.publish_time = nb::cast<simaai::neat::TimePoint>(value);
+              } else {
+                throw nb::type_error(("Stamp.replace: no field named '" + key + "'").c_str());
+              }
+            }
+            return out;
+          },
+          "changes"_a, "A copy with the given fields changed (like dataclasses.replace).")
+      .def("__eq__",
+           [](const simaai::neat::Stamp& a, nb::handle b) {
+             return nb::isinstance<simaai::neat::Stamp>(b) &&
+                    stamps_equal(a, nb::cast<const simaai::neat::Stamp&>(b));
+           })
+      .def("__hash__", [](const simaai::neat::Stamp& s) { return stamp_hash(s); })
+      .def("__repr__", [](const simaai::neat::Stamp& s) {
+        const std::string name =
+            nb::cast<std::string>(nb::repr(nb::str(s.stream_name.c_str(), s.stream_name.size())));
+        const std::string flags = nb::cast<std::string>(nb::str(nb::cast(s.flags)));
+        return "Stamp(stream=" + std::to_string(s.stream) + ", stream_name=" + name +
+               ", seq=" + std::to_string(s.seq) + ", frame_id=" + std::to_string(s.frame_id) +
+               ", source_time=" + time_point_repr(s.source_time) +
+               ", publish_time=" + time_point_repr(s.publish_time) + ", flags=" + flags +
+               ", version=" + std::to_string(s.version) + ")";
+      });
+
   nb::class_<simaai::neat::Tensor>(m, "Tensor")
       .def(nb::init<>())
       .def_rw("dtype", &simaai::neat::Tensor::dtype)
@@ -1750,6 +2163,76 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("read_only", &simaai::neat::Tensor::read_only)
       .def_rw("route", &simaai::neat::Tensor::route)
       .def_prop_ro("storage", [](const simaai::neat::Tensor& t) { return t.storage; })
+      // H0 envelope: the Stamp and, for a record, its fields.
+      .def_prop_ro(
+          "stamp", [](const simaai::neat::Tensor& t) { return t.stamp(); },
+          "The context this Tensor carries (a frozen Stamp): filled on the Tensors of "
+          "Run.pull_result and on_output; the default Stamp on a Tensor that never went through a "
+          "Run.")
+      .def("with_stamp", &simaai::neat::Tensor::with_stamp, "stamp"_a,
+           "A copy of this Tensor carrying `stamp` (a record keeps its fields). A push reads its "
+           "stream_name, frame_id, source_time and flags.")
+      .def("is_record", &simaai::neat::Tensor::is_record,
+           "True iff this Tensor is a record (it has fields).")
+      .def(
+          "fields",
+          [](const simaai::neat::Tensor& t) {
+            const auto fields = t.fields();
+            return std::vector<simaai::neat::Tensor>(fields.begin(), fields.end());
+          },
+          "The record's fields in schema order; empty for a leaf.")
+      .def(
+          "field_names",
+          [](const simaai::neat::Tensor& t) {
+            const auto names = t.field_names();
+            return std::vector<std::string>(names.begin(), names.end());
+          },
+          "The record's field names in schema order (\"0\", \"1\", ... for a positional record); "
+          "empty for a leaf.")
+      .def("leaves", &simaai::neat::Tensor::leaves,
+           "Every leaf, depth first: [self] for a leaf, the fields' leaves for a record.")
+      .def(
+          "__getitem__",
+          [](const simaai::neat::Tensor& t, const std::string& name) -> simaai::neat::Tensor {
+            try {
+              return t[std::string_view(name)];
+            } catch (const std::out_of_range& e) {
+              throw nb::key_error(e.what());
+            }
+          },
+          "name"_a, "The record field named `name` (KeyError when there is none).")
+      .def(
+          "__getitem__",
+          [](const simaai::neat::Tensor& t, Py_ssize_t index) -> simaai::neat::Tensor {
+            const auto n = static_cast<Py_ssize_t>(t.fields().size());
+            if (index < 0) {
+              index += n;
+            }
+            if (index < 0 || index >= n ||
+                index > static_cast<Py_ssize_t>(std::numeric_limits<std::uint16_t>::max())) {
+              throw nb::index_error(t.is_record() ? "Tensor field index out of range"
+                                                  : "Tensor is not a record (it has no fields)");
+            }
+            return t[simaai::neat::FieldId{static_cast<std::uint16_t>(index)}];
+          },
+          "index"_a, "The record field at position `index` (negative counts from the end).")
+      .def("__iter__",
+           [](const simaai::neat::Tensor&) -> nb::object {
+             throw nb::type_error(
+                 "Tensor is not iterable; use fields(), field_names() or leaves()");
+           })
+      .def_static(
+          "record",
+          [](std::vector<simaai::neat::Tensor> fields) {
+            return simaai::neat::Tensor::record(std::move(fields));
+          },
+          "fields"_a,
+          "A positional record of `fields` (names \"0\", \"1\", ...): pushed as one item. "
+          "ValueError when `fields` is empty.")
+      .def("copy_from", &tensor_copy_from, "source"_a,
+           "Fill this writable dense Tensor (for example one from Run.alloc) with the bytes of "
+           "`source` (a Tensor or any object implementing __dlpack__), tightly packed at this "
+           "Tensor's current shape; dtype and byte count must match.")
       .def("is_dense", &simaai::neat::Tensor::is_dense)
       .def("is_composite", &simaai::neat::Tensor::is_composite)
       .def("has_axis_semantics", &simaai::neat::Tensor::has_axis_semantics)
@@ -1895,6 +2378,39 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("code", &PullError::code)
       .def_rw("report", &PullError::report);
 
+  // H0: what Run.pull_result returns (C++ Result<TensorList>, the value of Run::pull(name, ms)).
+  nb::class_<simaai::neat::Result<TensorList>>(
+      m, "PullResult",
+      "A pulled item, or why there is none: what Run.pull_result returns (C++ "
+      "Result<TensorList>).\n\n"
+      "status is one of the four PullStatus outcomes: Ok with the item's list of Tensors "
+      "(value()), Timeout, Closed (the input was closed and every output pulled) or Error. error "
+      "carries the code (a pipeline/ErrorCodes.h family such as runtime.pull) and the message of "
+      "every outcome but Ok. bool(result) is result.ok.")
+      .def_prop_ro("status", &simaai::neat::Result<TensorList>::status)
+      .def_prop_ro("ok", &simaai::neat::Result<TensorList>::ok)
+      .def("__bool__", &simaai::neat::Result<TensorList>::ok)
+      .def_prop_ro(
+          "error", [](const simaai::neat::Result<TensorList>& r) { return r.error(); },
+          "Why there is no value (code, message); empty for Ok.")
+      .def(
+          "value", [](const simaai::neat::Result<TensorList>& r) { return r.value(); },
+          "The item's list of Tensors (each carrying the item's Stamp); raises NeatError "
+          "(error_code = the result's code, runtime.pull by default) when there is none.")
+      .def("__repr__", [](const simaai::neat::Result<TensorList>& r) {
+        std::string out =
+            std::string("PullResult(status=PullStatus.") + pull_status_name(r.status());
+        if (!r.ok()) {
+          out += ", code=" +
+                 nb::cast<std::string>(
+                     nb::repr(nb::str(r.error().code.c_str(), r.error().code.size()))) +
+                 ", message=" +
+                 nb::cast<std::string>(
+                     nb::repr(nb::str(r.error().message.c_str(), r.error().message.size())));
+        }
+        return out + ")";
+      });
+
   // Per-frame attributes must behave like a live mapping, not a snapshot: users expect
   // `sample.attributes["k"] = "v"` to reach the C++ Sample. A plain def_rw over std::map
   // would convert through a temporary dict and silently drop item assignment, so the map is
@@ -1965,6 +2481,16 @@ NB_MODULE(_pyneat_core, m) {
       .def("to_text", &sample_to_text_for_python);
 
   m.def("make_tensor_sample", &simaai::neat::make_tensor_sample, "port_name"_a, "tensor"_a);
+  m.def(
+      "to_tensor", [](const Sample& sample) { return simaai::neat::to_tensor(sample); }, "sample"_a,
+      "The Tensor view of a Sample (H0 projection): a leaf, or a positional record of a "
+      "TensorSet's tensors; frame_id, stream_id and pts_ns become the stamp's frame_id, "
+      "stream_name and source_time.");
+  m.def(
+      "to_sample", [](const Tensor& tensor) { return simaai::neat::to_sample(tensor); }, "tensor"_a,
+      "The Sample view of a Tensor (H0 projection): a leaf or a positional record becomes a "
+      "TensorSet; the stamp gives frame_id, stream_id, pts_ns, input_seq = seq - 1 and "
+      "orig_input_seq = input_seq.");
   m.def("make_text_sample", &make_text_sample_for_python, "port_name"_a, "text"_a);
   // Phase 6 (plan slice): encoded-media sample construction (parity with make_tensor_sample). The
   // friendly Sample.from_encoded(...) wrapper is added in _wrappers.py. caps_to_codec is deferred.
@@ -2599,6 +3125,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("run_export", &RunOptions::run_export)
       .def_rw("graph_run_export", &RunOptions::graph_run_export)
       .def_rw("on_input_drop", &RunOptions::on_input_drop)
+      .def_rw("backend", &RunOptions::backend,
+              "Runtime that executes this Run (RunBackend); Auto by default.")
       .def(
           "enable_board_power",
           [](RunOptions& self, int sample_interval_ms) -> RunOptions& {
@@ -2796,7 +3324,9 @@ NB_MODULE(_pyneat_core, m) {
   const auto run_start_measurement_bool =
       static_cast<MeasureScope (Run::*)(bool)>(&Run::start_measurement);
 #pragma GCC diagnostic pop
-  nb::class_<Run>(m, "Run")
+  // Weak-referenceable: a Run with a Python on_output callback is closed (without the GIL) by a
+  // weak reference's callback before nanobind destroys it (register_python_on_output).
+  nb::class_<Run>(m, "Run", nb::is_weak_referenceable())
       .def(nb::init<>())
       .def("__bool__", [](const Run& run) { return static_cast<bool>(run); })
       .def("can_push", &Run::can_push)
@@ -2875,13 +3405,87 @@ NB_MODULE(_pyneat_core, m) {
             return run.try_push(tensor_batch_from_python_input(input, copy, layout, image_format));
           },
           "input"_a, "copy"_a = false, "layout"_a = nb::none(), "image_format"_a = nb::none())
-      .def("close_input", &Run::close_input)
+      .def("close_input", &Run::close_input, nb::call_guard<nb::gil_scoped_release>())
       .def(
           "pull",
-          [](Run& run, std::string name, int timeout_ms) { return run.pull(name, timeout_ms); },
-          "name"_a, "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
-      .def("pull", static_cast<std::optional<Sample> (Run::*)(int)>(&Run::pull),
-           "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
+          [](Run& run, std::string name, int timeout_ms) {
+            warn_run_pull_deprecated();
+            nb::gil_scoped_release release;
+            return run.pull(name, timeout_ms);
+          },
+          "name"_a, "timeout_ms"_a = -1,
+          "Deprecated: returns Sample | None (None on timeout or end of stream). Emits a "
+          "DeprecationWarning (its replacement is Run.pull_result).")
+      .def(
+          "pull",
+          [](Run& run, int timeout_ms) {
+            warn_run_pull_deprecated();
+            nb::gil_scoped_release release;
+            return run.pull(timeout_ms);
+          },
+          "timeout_ms"_a = -1,
+          "Deprecated: returns Sample | None (None on timeout or end of stream). Emits a "
+          "DeprecationWarning (its replacement is Run.pull_result).")
+      .def(
+          "pull_result",
+          [](Run& run, std::string name, std::int64_t timeout_ms) {
+            return run.pull(name, std::chrono::milliseconds(timeout_ms));
+          },
+          "name"_a, "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>(),
+          "Pull the next item of the output named `name` as a PullResult: Ok with a list of "
+          "Tensors (a record comes back as its fields, in order), each carrying the item's Stamp; "
+          "Timeout; Closed; or Error with code and message. timeout_ms 0 polls, a positive value "
+          "waits up to it, a negative one waits without limit. The GIL is released while it "
+          "waits. Replaces Run.pull, which returns Sample | None.")
+      .def(
+          "pull_result",
+          [](Run& run, std::int64_t timeout_ms) {
+            return run.pull(std::chrono::milliseconds(timeout_ms));
+          },
+          "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>(),
+          "Pull from the Run's only output; otherwise as pull_result(name, timeout_ms).")
+      .def(
+          "__call__",
+          [](Run& run, nb::object input, bool copy, std::optional<TensorLayout> layout,
+             std::optional<ImageSpec::PixelFormat> image_format) {
+            reject_single_tensor_or_sample(input, "Run(tensors)");
+            auto tensors = tensor_batch_from_python_input(input, copy, layout, image_format);
+            nb::gil_scoped_release release;
+            return run(tensors);
+          },
+          "input"_a, "copy"_a = false, "layout"_a = nb::none(), "image_format"_a = nb::none(),
+          "Push a list of tensors (one item) and wait for its output, a list of Tensors: "
+          "push(tensors) then pull_result() without limit. Raises NeatError when the push is "
+          "refused or the pull ends without an item. The GIL is released while it waits.")
+      .def(
+          "on_output",
+          [](Run& run, std::string name, nb::callable callback) {
+            register_python_on_output(run, name, std::move(callback));
+          },
+          "name"_a, "callback"_a,
+          "Deliver every item of the output named `name` to callback(tensors), a list of "
+          "Tensors as pull_result gives it, in order, on a thread the Run owns, instead of pull. "
+          "The callback runs with the GIL held; stop(), close() and the release of the Run "
+          "release the GIL and wait for a callback in progress. A callback that raises ends the "
+          "delivery: the exception goes to sys.unraisablehook and last_error() reports it; the "
+          "process keeps running. The output can then not be pulled. One callback per output.")
+      .def(
+          "on_output",
+          [](Run& run, nb::callable callback) {
+            register_python_on_output(run, std::nullopt, std::move(callback));
+          },
+          "callback"_a, "Deliver the Run's only output; otherwise as on_output(name, callback).")
+      .def(
+          "alloc", [](Run& run, std::string name) { return run.alloc(name); }, "name"_a,
+          nb::call_guard<nb::gil_scoped_release>(),
+          "A writable Tensor for the input named `name`, declared by Graph.input(name, shape, "
+          "dtype, max_shape) with every axis fixed or bounded, of the declared dtype and bound "
+          "shape: fill it (Tensor.copy_from), then push it alone in a list, push(name, [tensor]): "
+          "that blocking push is its commit, once (it is empty afterwards; release its views "
+          "first). Other pushes (try_push, a list of several tensors, another Run) copy it and "
+          "leave it writable. On the Dataflow backend it is a slot of the input's pool, published "
+          "without a copy (alloc waits for a free slot, with the GIL released; dropping the "
+          "Tensor returns it); on GStreamer it is CPU memory.")
       .def(
           "pull_tensors",
           [](Run& run, std::string name, int timeout_ms) {
@@ -3012,8 +3616,8 @@ NB_MODULE(_pyneat_core, m) {
             }
           },
           "report"_a, "path"_a, "options"_a = GraphRunExportOptions{})
-      .def("stop", &Run::stop)
-      .def("close", &Run::close);
+      .def("stop", &Run::stop, nb::call_guard<nb::gil_scoped_release>())
+      .def("close", &Run::close, nb::call_guard<nb::gil_scoped_release>());
 
   m.def(
       "run_to_json",
@@ -3125,6 +3729,35 @@ NB_MODULE(_pyneat_core, m) {
       .def_prop_ro("name", &Graph::name)
       .def("inputs", &Graph::inputs)
       .def("outputs", &Graph::outputs)
+      .def(
+          "input",
+          [](Graph& self, std::string name, std::optional<std::vector<std::int64_t>> shape,
+             std::optional<TensorDType> dtype,
+             std::optional<std::vector<std::int64_t>> max_shape) -> Graph::Handle {
+            if (!shape) {
+              if (dtype || max_shape) {
+                throw nb::value_error("Graph.input: dtype and max_shape need a shape");
+              }
+              return self.input(std::move(name));
+            }
+            return self.input(std::move(name), std::move(*shape),
+                              dtype.value_or(TensorDType::UInt8),
+                              max_shape.value_or(std::vector<std::int64_t>{}));
+          },
+          "name"_a, "shape"_a = nb::none(), "dtype"_a = nb::none(), "max_shape"_a = nb::none(),
+          "Declare an application input named `name` and return its Graph.Handle. Without a shape "
+          "its spec is set by the first push. With `shape` (one size per axis, -1 for a dynamic "
+          "axis), `dtype` (default TensorDType.UInt8) and optional `max_shape` (bounds, same "
+          "rank) it is a tensor input: a push outside the declaration is rejected with "
+          "misconfig.input_shape, and Run.alloc(name) needs every axis fixed or bounded.")
+      .def(
+          "output",
+          [](Graph& self, std::string name, const Graph::Handle& value) {
+            self.output(std::move(name), value);
+          },
+          "name"_a, "value"_a,
+          "Publish `value` (a Graph.Handle of this Graph) as the application output named `name` "
+          "(Run.pull_result(name, ...)).")
       .def(
           "add",
           [](Graph& self, const std::shared_ptr<simaai::neat::Node>& node) -> Graph& {
@@ -3282,6 +3915,14 @@ NB_MODULE(_pyneat_core, m) {
       .def_static("load", &Graph::load, "path"_a)
       .def_prop_ro("last_pipeline", &Graph::last_pipeline);
 
+  nb::class_<Graph::Handle>(
+      m.attr("Graph"), "Handle",
+      "A value of a Graph: what Graph.input returns and Graph.output publishes. It names the "
+      "producer of a value; using one Handle twice is a fan-out. It belongs to the Graph that "
+      "made it.")
+      .def(nb::init<>(), "An empty Handle; Graph.output rejects it.")
+      .def("__bool__", [](const Graph::Handle& h) { return static_cast<bool>(h); });
+
   nb::class_<simaai::neat::OutputSpec>(m, "OutputSpec")
       .def(nb::init<>())
       .def_rw("payload_type", &simaai::neat::OutputSpec::payload_type)
@@ -3363,7 +4004,14 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("pool_max_buffers", &simaai::neat::InputOptions::pool_max_buffers)
       .def_rw("memory_policy", &simaai::neat::InputOptions::memory_policy)
       .def_rw("buffer_name", &simaai::neat::InputOptions::buffer_name)
-      .def_rw("preprocess_meta", &simaai::neat::InputOptions::preprocess_meta);
+      .def_rw("preprocess_meta", &simaai::neat::InputOptions::preprocess_meta)
+      .def_rw("shape", &simaai::neat::InputOptions::shape,
+              "Declared tensor shape, one size per axis, -1 for a dynamic axis (what "
+              "Graph.input(name, shape, ...) sets); empty: none declared.")
+      .def_rw("max_shape", &simaai::neat::InputOptions::max_shape,
+              "Upper bound of each dynamic axis of shape (same rank); empty: unbounded.")
+      .def_rw("dtype", &simaai::neat::InputOptions::dtype,
+              "Element type of the declared shape; ignored when shape is empty.");
 
   nb::enum_<simaai::neat::CombinePolicy>(m, "CombinePolicy")
       .value("None_", simaai::neat::CombinePolicy::None)

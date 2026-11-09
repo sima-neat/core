@@ -857,6 +857,18 @@ Dataflow (збірка з `SIMANEAT_DATAFLOW_SOURCE_DIR`, графи з одно
 Переданий через push `input_seq` або `orig_input_seq` не має поля в штампі й не передається в
 середовищі Dataflow, а GStreamer не записує `publish_time`.
 
+Прив'язка Python (`python/src/module.cpp`) надає ті самі дієслова на списках Python: `Run.push`,
+`Run.try_push` і `Run(tensors)` приймають список, `Run.pull_result(name, timeout_ms)` повертає
+`PullResult` (`Result<TensorList>`, чий `value()` є списком), а `Run.pull` протягом одного випуску
+й далі повертає `Sample | None` з `DeprecationWarning`. Вона також надає `RunOptions.backend`,
+`Stamp` (незмінне значення), засоби доступу до записів, `Graph.input`/`Graph.output`, `Run.alloc`
+(заповнюється через `Tensor.copy_from`) і проєкцію `to_tensor`/`to_sample`. `Run.on_output`
+виконує колбек Python у потоці доставки `Run`, який захоплює GIL; кожна прив'язка, що чекає на цей
+потік, спочатку звільняє GIL: `stop`, `close`, `close_input`, звільнення Python-об'єкта `Run`
+(колбек слабкого посилання закриває його до того, як nanobind його знищить) і завершення
+інтерпретатора (хук `atexit` зупиняє такі `Run` до фіналізації). Виняток, кинутий колбеком,
+потрапляє до `sys.unraisablehook` і завершує доставку так само, як виняток C++ (`last_error()`).
+
 Під час простою `Run` залишається придатним до роботи; терміни операцій обмежують очікування, а не паузи між поданнями даних.
 
 Це підтримує повністю асинхронні конвеєри (розділення на виробника/споживача), а також одноразові обчислення (`Graph::run(...)`).

@@ -564,6 +564,32 @@ if (result) {
 - Перевантаження з цілочисельним тайм-аутом зберігають своє значення: `pull(100)` і `pull("out", 100)` повертають `std::optional<Sample>`.
 - `pipeline/Graph.h` більше не потребує заголовків GStreamer. Він і далі включає `<gst/gst.h>`, якщо перед ним не визначено `SIMA_NEAT_GRAPH_NO_GSTREAMER`; наступний випуск прибере це включення, тож там, де ви використовуєте GStreamer, включайте `<gst/gst.h>` самостійно.
 
+У Python ті самі дієслова приймають і повертають списки Python:
+
+```python
+import pyneat as pn
+
+graph = pn.Graph()
+image = graph.input("image")              # перший push задає його форму
+graph.output("out", image)
+run = graph.build()
+
+run.push("image", [image_tensor])         # один елемент; пропонується штамп першого тензора
+result = run.pull_result("out", 100)      # PullResult: Ok, Timeout, Closed або Error
+if result:
+    stamp = result.value()[0].stamp       # незмінний Stamp: stream_name, seq, frame_id, ...
+elif result.status == pn.PullStatus.Closed:
+    pass                                  # вхід закрито, і всі виходи отримано через pull
+else:
+    print(result.error.code, result.error.message)
+```
+
+- `run.pull(...)` і далі повертає `Sample` або `None`, а тепер ще й видає `DeprecationWarning` один раз для кожного місця виклику. У випуску, який прибере форму `Sample`, він повертатиме `PullResult`, тож переходьте на `run.pull_result(...)`.
+- `run.push(...)`, `run.try_push(...)` і `run([tensor])` приймають список, як у C++; окремий Tensor відхиляється.
+- `run.on_output("out", callback)` викликає `callback(tensors)` зі списком кожного елемента в потоці, яким володіє `Run`, утримуючи GIL. `run.stop()`, `run.close()` і відпускання останнього посилання на `Run` звільняють GIL, поки чекають на колбек, що виконується. Якщо колбек кидає виняток, доставка завершується, виняток повідомляється через `sys.unraisablehook`, а `run.last_error()` його називає; процес продовжує працювати.
+- `run.alloc("points")` повертає Tensor межової форми, доступний для запису; заповніть його через `tensor.copy_from(array)`, а потім передайте через `run.push("points", [tensor])`: це його фіксація.
+- `pn.Tensor.record([a, b])`, `tensor.with_stamp(pn.Stamp(frame_id=7))`, `tensor["0"]`, `tensor[0]`, `tensor.fields()` і `tensor.leaves()` відповідають засобам доступу до записів у C++; `pn.to_tensor(sample)` і `pn.to_sample(tensor)` є проєкцією. `RunOptions.backend` приймає `pn.RunBackend.Auto`, `GStreamer` або `Dataflow`.
+
 ## З’єднайте фрагменти в реальному часі.
 
 Використовуйте [`GraphLinkOptions`](/reference/{lsa}/structs/simaai-neat-graphlinkoptions), коли для з’єднання потрібна політика середовища виконання або чіткі обмеження на обробку необроблених кадрів.

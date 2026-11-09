@@ -1323,6 +1323,18 @@ surface is a projection of it (`to_sample`, `to_tensor`): `input_seq = seq - 1`,
 `orig_input_seq` has no field in the stamp and is not carried on the Dataflow runtime, and
 GStreamer records no `publish_time`.
 
+The Python binding (`python/src/module.cpp`) exposes the same verbs on Python lists: `Run.push`,
+`Run.try_push` and `Run(tensors)` take a list, `Run.pull_result(name, timeout_ms)` returns a
+`PullResult` (`Result<TensorList>`, whose `value()` is a list), and `Run.pull` keeps returning
+`Sample | None` for one release with a `DeprecationWarning`. It also exposes `RunOptions.backend`,
+the `Stamp` (a frozen value), the record accessors, `Graph.input`/`Graph.output`, `Run.alloc`
+(filled with `Tensor.copy_from`) and the `to_tensor`/`to_sample` projection. `Run.on_output` runs
+the Python callback on the Run's delivery thread, which takes the GIL; every binding that waits for
+that thread releases the GIL first: `stop`, `close`, `close_input`, the release of the Python `Run`
+(a weak-reference callback closes it before nanobind destroys it), and interpreter exit (an `atexit`
+hook stops such Runs before finalization). An exception raised by the callback goes to
+`sys.unraisablehook` and ends the delivery as a C++ exception does (`last_error()`).
+
 An idle `Run` remains usable; operation deadlines bound waits, not pauses between submissions.
 
 This supports fully async pipelines (producer/consumer split) as well as

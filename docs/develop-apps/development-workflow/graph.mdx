@@ -597,6 +597,32 @@ if (result) {
 - The integer-timeout overloads keep their meaning: `pull(100)` and `pull("out", 100)` return `std::optional<Sample>`.
 - `pipeline/Graph.h` no longer needs GStreamer's headers. It still includes `<gst/gst.h>` unless `SIMA_NEAT_GRAPH_NO_GSTREAMER` is defined before it; a later release drops that include, so include `<gst/gst.h>` yourself where you use GStreamer.
 
+In Python, the same verbs take and return Python lists:
+
+```python
+import pyneat as pn
+
+graph = pn.Graph()
+image = graph.input("image")              # the first push sets its shape
+graph.output("out", image)
+run = graph.build()
+
+run.push("image", [image_tensor])         # one item; its first tensor's stamp is proposed
+result = run.pull_result("out", 100)      # a PullResult: Ok, Timeout, Closed, or Error
+if result:
+    stamp = result.value()[0].stamp       # a frozen Stamp: stream_name, seq, frame_id, ...
+elif result.status == pn.PullStatus.Closed:
+    pass                                  # the input was closed and every output was pulled
+else:
+    print(result.error.code, result.error.message)
+```
+
+- `run.pull(...)` still returns a `Sample` or `None`, and now emits a `DeprecationWarning` once per call site. It will return a `PullResult` in the release that removes the `Sample` form, so move to `run.pull_result(...)`.
+- `run.push(...)`, `run.try_push(...)`, and `run([tensor])` take a list, as in C++; a single Tensor is refused.
+- `run.on_output("out", callback)` calls `callback(tensors)` with each item's list on a thread the `Run` owns, with the GIL held. `run.stop()`, `run.close()`, and dropping the last reference to the `Run` release the GIL while they wait for a callback in progress. If the callback raises, delivery ends, the exception is reported through `sys.unraisablehook`, and `run.last_error()` names it; the process keeps running.
+- `run.alloc("points")` returns a writable Tensor of the bound shape; fill it with `tensor.copy_from(array)`, then push it with `run.push("points", [tensor])`, its commit.
+- `pn.Tensor.record([a, b])`, `tensor.with_stamp(pn.Stamp(frame_id=7))`, `tensor["0"]`, `tensor[0]`, `tensor.fields()`, and `tensor.leaves()` mirror the C++ record accessors; `pn.to_tensor(sample)` and `pn.to_sample(tensor)` are the projection. `RunOptions.backend` takes `pn.RunBackend.Auto`, `GStreamer`, or `Dataflow`.
+
 ## Connect live fragments
 
 Use [`GraphLinkOptions`](/reference/{lsa}/structs/simaai-neat-graphlinkoptions) when a connection needs a runtime policy or explicit raw-frame admission limits.

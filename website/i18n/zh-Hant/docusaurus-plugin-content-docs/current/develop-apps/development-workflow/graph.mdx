@@ -580,6 +580,32 @@ if (result) {
 - 整數逾時的多載維持原有意義：`pull(100)` 與 `pull("out", 100)` 傳回 `std::optional<Sample>`。
 - `pipeline/Graph.h` 不再需要 GStreamer 的標頭。除非在它之前定義 `SIMA_NEAT_GRAPH_NO_GSTREAMER`，否則它仍會包含 `<gst/gst.h>`；之後的版本會移除此包含，因此在使用 GStreamer 的地方請自行包含 `<gst/gst.h>`。
 
+在 Python 中，相同的動詞接受並傳回 Python 清單：
+
+```python
+import pyneat as pn
+
+graph = pn.Graph()
+image = graph.input("image")              # 第一次 push 決定其形狀
+graph.output("out", image)
+run = graph.build()
+
+run.push("image", [image_tensor])         # 一個項目；提議第一個張量的戳記
+result = run.pull_result("out", 100)      # PullResult：Ok、Timeout、Closed 或 Error
+if result:
+    stamp = result.value()[0].stamp       # 凍結的 Stamp：stream_name、seq、frame_id 等
+elif result.status == pn.PullStatus.Closed:
+    pass                                  # 輸入已關閉，且所有輸出都已 pull
+else:
+    print(result.error.code, result.error.message)
+```
+
+- `run.pull(...)` 仍傳回 `Sample` 或 `None`，且現在每個呼叫位置會發出一次 `DeprecationWarning`。在移除 `Sample` 形式的版本中，它將改為傳回 `PullResult`，因此請改用 `run.pull_result(...)`。
+- `run.push(...)`、`run.try_push(...)` 與 `run([tensor])` 與 C++ 一樣接受清單；單一 Tensor 會被拒絕。
+- `run.on_output("out", callback)` 會在 `Run` 擁有的執行緒上，於持有 GIL 的情況下以每個項目的清單呼叫 `callback(tensors)`。`run.stop()`、`run.close()`，以及捨棄對 `Run` 的最後一個參照，都會在等待進行中的回呼時釋放 GIL。若回呼擲出例外，傳遞即結束，例外會透過 `sys.unraisablehook` 回報，且 `run.last_error()` 會指出它；處理程序會繼續執行。
+- `run.alloc("points")` 會傳回上限形狀的可寫入 Tensor；先以 `tensor.copy_from(array)` 填入，再以 `run.push("points", [tensor])` push，這就是它的提交。
+- `pn.Tensor.record([a, b])`、`tensor.with_stamp(pn.Stamp(frame_id=7))`、`tensor["0"]`、`tensor[0]`、`tensor.fields()` 與 `tensor.leaves()` 對應 C++ 的記錄存取子；`pn.to_tensor(sample)` 與 `pn.to_sample(tensor)` 是投影。`RunOptions.backend` 可設為 `pn.RunBackend.Auto`、`GStreamer` 或 `Dataflow`。
+
 ## 連接即時片段
 
 當連接需要執行階段原則或明確的原始影格傳輸限制時，請使用 [`GraphLinkOptions`](/reference/{lsa}/structs/simaai-neat-graphlinkoptions)。
