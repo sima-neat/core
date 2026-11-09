@@ -1,12 +1,23 @@
-# Native libraries and headers ship in one ZIP. Python ships as a separately
-# tagged wheel built from the PcieHostPython install component.
-set(CPACK_GENERATOR "ZIP")
+# Windows Installer owns native libraries, headers, CMake package files and
+# Neat runtime assets. Python remains a separately owned wheel.
+set(CPACK_GENERATOR "WIX")
 set(CPACK_PACKAGE_NAME "sima-pcie-host")
+set(SIMAPCIE_WIX_INSTALL_DIRECTORY "SimaPCIeHost" CACHE STRING
+  "Windows Installer destination folder below Program Files")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "${SIMAPCIE_WIX_INSTALL_DIRECTORY}")
 set(CPACK_PACKAGE_VENDOR "SiMa.ai")
 set(CPACK_PACKAGE_CONTACT "support@sima.ai")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Host-side NEAT PCIe coprocessor runtime")
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
-set(CPACK_ARCHIVE_COMPONENT_INSTALL ON)
+configure_file("${SIMA_NEAT_CORE_ROOT}/LICENSE"
+  "${CMAKE_CURRENT_BINARY_DIR}/LICENSE.txt" COPYONLY)
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_BINARY_DIR}/LICENSE.txt")
+set(CPACK_WIX_VERSION 3)
+set(CPACK_WIX_ARCHITECTURE x64)
+set(CPACK_WIX_INSTALL_SCOPE perMachine)
+set(CPACK_WIX_UPGRADE_GUID "1A974787-A106-46EB-A5E7-36FD0F66519E")
+set(CPACK_WIX_CMAKE_PACKAGE_REGISTRY "SimaPCIeHost")
+set(CPACK_WIX_COMPONENT_INSTALL ON)
 set(CPACK_COMPONENTS_GROUPING ALL_COMPONENTS_IN_ONE)
 set(CPACK_COMPONENTS_ALL Runtime Development)
 set(CPACK_COMPONENT_RUNTIME_DISPLAY_NAME "SiMa PCIe host runtime")

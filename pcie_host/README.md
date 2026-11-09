@@ -389,6 +389,35 @@ Linux PCIe host builds include the GenAI APIs and transport. Native Windows
 builds expose the same API types but currently support vision inference only.
 Neither build acquires the device Scheduler profile, Runner, Kernels or Codecs.
 
+### Windows package
+
+The native Windows build produces a WiX v3 MSI. Windows Installer owns the
+installed C++ headers, libraries, CMake package files and Core runtime assets;
+Python remains a separate wheel owned by the application's Python environment.
+Release metadata connects those two artifacts to one customer command:
+
+```powershell
+sima-cli neat install core/pciehost/windows/amd64@3.0 `
+  --python-executable .\.venv\Scripts\python.exe
+```
+
+Omit `--python-executable` for a native-only installation. The CLI verifies the
+artifact checksums, invokes Windows Installer, and then invokes pip through the
+exact Python executable supplied by the customer. Repeating the command uses
+Windows Installer's upgrade/repair behavior and skips the pip step when the
+requested `pyneatpcie` version already imports successfully.
+
+Build the MSI from a configured native Windows build directory with `cpack`.
+Use `scripts/create_windows_metadata.py` to create the matching sima-cli
+metadata for the MSI and optional wheel. The default per-machine destination is
+`C:\Program Files\SimaPCIeHost`; a packaging test can set
+`SIMAPCIE_WIX_INSTALL_DIRECTORY` to an isolated directory at configure time.
+
+This Core MSI is a component artifact. The customer release still needs the
+matching Scheduler channel and `neatpciehost` plugin from Scheduler's release
+assembly; Core does not copy or repackage Scheduler-owned files. The Platform
+driver, host DLLs and daemon remain a separate Platform prerequisite.
+
 `build.sh` follows the Scheduler policy in Core's `deps/manifest.json`, in the
 `production` publication environment by default. Branch `snap` first tries
 `latest` from the current Core branch, then reports and retries `develop:latest`
