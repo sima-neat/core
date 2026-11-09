@@ -391,13 +391,12 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
   config.output_names = endpoint_names(view, q.output, graph.outputs());
 
   // GStreamer stamps an empty stream_id with the input's public name, or "default" when it has none
-  // (RunPush.cpp:225-264), on its graph path, which a connected or named graph takes; a plain
-  // linear Run leaves it empty.
+  // (RunPush.cpp:225-264), on its graph path, which a connected or named graph takes; on a plain
+  // linear Run its ingress meta stamps "0" (InputStreamUtil.cpp:2703, 3720).
   const bool graph_path =
       !view.linear || !config.input_names.empty() || !config.output_names.empty();
-  if (graph_path) {
-    config.default_stream = config.input_names.empty() ? "default" : config.input_names.front();
-  }
+  config.default_stream =
+      graph_path ? (config.input_names.empty() ? "default" : config.input_names.front()) : "0";
   config.label = view.name;
   return config;
 }

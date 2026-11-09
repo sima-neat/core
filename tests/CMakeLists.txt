@@ -743,6 +743,40 @@ foreach(_c2_test unit_run_verb_resolution_test unit_run_tensor_surface_test
   endif()
 endforeach()
 
+# H0 C4: H0's torture list on the public API (stop during a blocked push, stop during a pending
+# pull, close_input with queued messages, two pushers, a lease outliving the Run), registered per
+# backend as the C2 tests are. Subject of the sanitizer runs.
+if (NOT unit_run_torture_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_pipeline_test(unit_run_torture_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_run_torture_test.cpp)
+  set_tests_properties(unit_run_torture_test PROPERTIES TIMEOUT 300)
+  set_property(TEST unit_run_torture_test APPEND PROPERTY LABELS "unit")
+  if (SIMANEAT_DATAFLOW_SOURCE_DIR)
+    simaneat_add_test(NAME unit_run_torture_test_dataflow COMMAND unit_run_torture_test)
+    simaneat_append_ctest_env(unit_run_torture_test_dataflow)
+    set_property(TEST unit_run_torture_test_dataflow APPEND PROPERTY ENVIRONMENT
+      "SIMA_NEAT_BACKEND=dataflow")
+    set_tests_properties(unit_run_torture_test_dataflow PROPERTIES TIMEOUT 300)
+    set_property(TEST unit_run_torture_test_dataflow APPEND PROPERTY LABELS "strict;unit;dataflow")
+  endif()
+endif()
+
+# H0 C4, with the runtime in the build: the Dataflow twins of the GStreamer-internal tests of
+# plan D12 (public API only, RunBackend::Dataflow requested explicitly; see the exclusions at the
+# end of this file), and the differential test, which builds the same graph on both backends in
+# one process.
+if (SIMANEAT_DATAFLOW_SOURCE_DIR)
+  foreach(_c4_test unit_dataflow_twin_overflow_policy_test
+          unit_dataflow_twin_lifecycle_teardown_test unit_dataflow_twin_api_matrix_test
+          unit_run_backend_differential_test)
+    if (NOT _c4_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+      add_pipeline_test(${_c4_test} ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/${_c4_test}.cpp)
+      set_tests_properties(${_c4_test} PROPERTIES TIMEOUT 300)
+      set_property(TEST ${_c4_test} APPEND PROPERTY LABELS "unit;dataflow")
+    endif()
+  endforeach()
+endif()
+
 # The delivery-mode flag is cached; exercise the same contract in separate processes.
 if (TARGET unit_inputstream_idle_resume_test)
   set_tests_properties(unit_inputstream_idle_resume_test PROPERTIES
@@ -3171,3 +3205,61 @@ endforeach()
 
 # Native recipe assertions use the same public executable vocabulary as Core.
 target_link_libraries(unit_sima_plugins_test PRIVATE SimaScheduler::frontend)
+
+# ------------------------------------------------------------------------------
+# H0 C4: the H0-scope tests a second time, on the Dataflow backend
+# ------------------------------------------------------------------------------
+# Each test below is registered once more as <name>_dataflow, with the original's properties plus
+# SIMA_NEAT_BACKEND=dataflow and the label `dataflow`. RunBackend::Auto, the default, then takes
+# the Dataflow backend for every Run whose graph qualifies (one Input to one Output) and keeps the
+# others on GStreamer (architecture.md, "Environment / configuration knobs"). Tests that set
+# RunOptions::backend themselves (C3's unit_dataflow_backend_test asks for Dataflow; C1's
+# unit_dataflow_runtime_link_test uses the runtime directly) run the same under either entry.
+# Not registered on Dataflow (plan D12): these assert GStreamer internals; each one's contracts are
+# checked on Dataflow by its twin on the public API (registered above, label `dataflow`):
+#   unit_run_overflow_policy_parity_test -> unit_dataflow_twin_overflow_policy_test
+#     (PushPath::Holder pushes a GStreamer buffer holder; the Runner block parks RunCore's input
+#     worker on latency_mu and reads pipeline.in_queue)
+#   unit_run_lifecycle_teardown_test     -> unit_dataflow_twin_lifecycle_teardown_test
+#     (pipeline_handle(), appsink pad probes, RunCore::stream_close_state, RunCore::start
+#     failure injection)
+#   unit_run_api_matrix_test             -> unit_dataflow_twin_api_matrix_test
+#     (posts a GStreamer bus error and an EOS event into pipeline_handle())
+# Not registered on Dataflow, pending a decision (agent-work/core-h0/c4.md, finding F1):
+#   async_stream_test pushes queue_depth (50) frames before its first pull, with Output
+#   max_buffers = 8. On GStreamer a blocking push waits only when Core's input queue (queue_depth),
+#   appsrc and appsink are all full; on Dataflow the one link's depth is the Output's max_buffers
+#   (DataflowGraphCompiler.cpp, derive_config), so its ninth push parks for ever.
+# perf_runtime_graph_async_rgb_test has no ctest entry to duplicate (PERF_TARGETS are run
+# directly).
+if (SIMANEAT_DATAFLOW_SOURCE_DIR)
+  foreach(_h0_test
+      graph_migration_phase1_graph_api_surface_test
+      graph_migration_phaseA0_endpoint_semantics_test
+      graph_migration_phase3_lifecycle_backpressure_test
+      graph_migration_phase3_public_graph_branching_test
+      graph_migration_phase4_named_endpoint_api_test
+      gst_data_adapter_runtime_regression_test
+      unit_pipeline_internal_build_test
+      unit_public_output_appsink_contract_test
+      unit_graph_api_surface_test
+      pull_timeout_regression_test
+      unit_error_code_taxonomy_test
+      stress_run_async_pressure_test
+      unit_dataflow_runtime_link_test
+      unit_dataflow_backend_test)
+    if (NOT TEST ${_h0_test})
+      continue()
+    endif()
+    simaneat_add_test(NAME ${_h0_test}_dataflow COMMAND ${_h0_test})
+    foreach(_h0_prop LABELS ENVIRONMENT TIMEOUT SKIP_RETURN_CODE RESOURCE_LOCK)
+      get_test_property(${_h0_test} ${_h0_prop} _h0_value)
+      if (_h0_value)
+        set_property(TEST ${_h0_test}_dataflow PROPERTY ${_h0_prop} "${_h0_value}")
+      endif()
+    endforeach()
+    set_property(TEST ${_h0_test}_dataflow APPEND PROPERTY ENVIRONMENT
+      "SIMA_NEAT_BACKEND=dataflow")
+    set_property(TEST ${_h0_test}_dataflow APPEND PROPERTY LABELS "dataflow")
+  endforeach()
+endif()

@@ -546,6 +546,14 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR)
   set_target_properties(dataflow_core PROPERTIES
     CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN ON)
+  # Core's TSan lane (simaneat_configure_sanitizers) compiles the runtime with
+  # -fsanitize=thread, and GCC then warns (-Wtsan) that TSan does not model
+  # atomic_thread_fence. The runtime's fences order only atomic accesses, and its
+  # own TSan builds silence the same warning (DATAFLOW_SANITIZE=thread, which Core
+  # does not set). Scoped to the runtime's target; no Core TU is affected.
+  if (SIMA_ENABLE_TSAN AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_compile_options(dataflow_core PRIVATE -Wno-tsan)
+  endif()
   # Usage requirements only; the archive itself is never linked. The objects go
   # into both libraries directly: an OBJECT library does not forward them, and
   # linking the archive would add it to the SimaNeatStaticTargets export.

@@ -647,6 +647,17 @@ private:
     return bound_.load(std::memory_order_acquire);
   }
 
+  // A pull that found nothing in time. pull(0) is a non-blocking poll and leaves the error empty,
+  // as GStreamer's Run does (RunPull.cpp:660-664): pull_samples() drains with it, and "nothing
+  // more right now" must not read as a stall (unit_run_api_matrix_test's poll contract).
+  static PullStatus timed_out(int timeout_ms, const std::string& where, PullError* err) {
+    if (timeout_ms != 0) {
+      error_util::set_pull_error(err, error_codes::kRuntimePull,
+                                 where + ": timeout waiting for output");
+    }
+    return PullStatus::Timeout;
+  }
+
   // The next message of the output, or why there is none (both pull verbs).
   PullStatus take(std::optional<std::string_view> output, int timeout_ms, PullError* err,
                   df::Message& message, Bound*& bound) {
@@ -677,9 +688,7 @@ private:
         error_util::set_pull_error(err, error_codes::kRuntimePull, where + ": stream closed");
         return PullStatus::Closed;
       }
-      error_util::set_pull_error(err, error_codes::kRuntimePull,
-                                 where + ": timeout waiting for output");
-      return PullStatus::Timeout;
+      return timed_out(timeout_ms, where, err);
     }
 
     df::Result<df::Message> pulled = bound->session.pull(bound->fetch, deadline);
@@ -687,9 +696,7 @@ private:
       const pipeline_internal::DataflowErrorMapping mapping =
           pipeline_internal::map_dataflow_error(*error);
       if (mapping.status == PullStatus::Timeout) {
-        error_util::set_pull_error(err, error_codes::kRuntimePull,
-                                   where + ": timeout waiting for output");
-        return PullStatus::Timeout;
+        return timed_out(timeout_ms, where, err);
       }
       if (mapping.status == PullStatus::Closed) {
         error_util::set_pull_error(err, error_codes::kRuntimePull, where + ": stream closed");
