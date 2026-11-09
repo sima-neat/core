@@ -74,9 +74,9 @@ int main() {
   neat::Tensor image = /* create or load an image tensor */;
   run.push("image", neat::TensorList{image});
 
-  std::optional<neat::Sample> result = run.pull("classes", /*timeout_ms=*/1000);
+  neat::Result<neat::TensorList> result = run.pull("classes", std::chrono::milliseconds(1000));
   if (result) {
-    // Consume result->tensors, result->detections, or other Sample metadata.
+    // Consume *result: the output's tensors, each carrying the item's stamp().
   }
 
   run.stop();
@@ -109,7 +109,7 @@ run = app.build()
 image = ...  # Create or load a tensor-compatible object.
 run.push("image", [image])
 
-result = run.pull("classes", timeout_ms=1000)
+result = run.pull_result("classes", timeout_ms=1000).value()
 run.stop()
 ```
 
@@ -124,7 +124,7 @@ A built `Run` accepts the same public payload types used elsewhere in Neat:
 |---|---|
 | `TensorList` | You are passing tensors and do not need extra sample metadata. |
 | `Sample` | You need timestamps, `frame_id`, `stream_id`, text/audio/video metadata, detections, or EOS. |
-| `std::vector<cv::Mat>` | You want image convenience input from OpenCV. |
+| `Tensor::from_cv_mat(...)` in a `TensorList` | You have OpenCV images: wrap each one, stating its pixel format. |
 
 Common C++ calls:
 
@@ -135,21 +135,25 @@ run.push("image", neat::TensorList{image});
 run.push(sample);
 run.push("image", sample);
 
-auto out = run.pull(/*timeout_ms=*/1000);
-auto named = run.pull("classes", /*timeout_ms=*/1000);
+using namespace std::chrono_literals;
+auto out = run.pull(1000ms);                  // Result<TensorList>
+auto named = run.pull("classes", 1000ms);
 
-neat::TensorList tensors = run.pull_tensors("classes", 1000);
-neat::Sample sample_out = run.pull_samples("classes", 1000);
+neat::TensorList tensors = run.pull("classes", 1000ms).value();
+
+neat::Sample sample_out;                      // the Sample, with its metadata
+neat::PullStatus status = run.pull("classes", 1000, sample_out);
 ```
 
-Use `pull(...)` when timeout/closed should return an empty `std::optional`. Use `pull_tensors(...)`
-or `pull_samples(...)` when you want a typed convenience helper that throws on timeout/error.
+`pull(timeout)` returns a `Result<TensorList>`: test it for `Ok`, `Timeout`, `Closed`, or `Error`, or
+call `value()`, which throws when there is no output. Use `pull(name, timeout_ms, sample)` with a
+`Sample&` when you need the `Sample` itself, with its metadata.
 
 For finite app-pushed streams, close input and drain before collecting final metrics:
 
 ```cpp
 run.close_input();
-while (auto out = run.pull("classes", 1000)) {
+while (auto out = run.pull("classes", std::chrono::milliseconds(1000))) {
   // Drain remaining output.
 }
 run.stop();
@@ -249,12 +253,12 @@ app.add(neat::nodes::Output());
 
 neat::Run run = app.build();
 run.push(neat::TensorList{image});
-auto result = run.pull(1000);
+auto result = run.pull(std::chrono::milliseconds(1000));
 ```
 
 This is convenient for quick scripts and tests. For nontrivial applications, prefer names.
 
-If a graph has multiple possible inputs or outputs, unnamed `push(...)` or `pull()` fails closed and
+If a graph has multiple possible inputs or outputs, unnamed `push(...)` or `pull(...)` fails closed and
 reports the available names. That failure is intentional: Neat should not guess which camera, tensor,
 or output head you meant.
 
@@ -509,7 +513,7 @@ app.connect(right, pair);
 neat::Run run = app.build();
 run.push("left", left_sample_with_frame_id_42);
 run.push("right", right_sample_with_frame_id_42);
-auto stereo = run.pull("stereo", 1000);
+auto stereo = run.pull("stereo", std::chrono::milliseconds(1000));
 ```
 
 Python:
@@ -560,7 +564,7 @@ Use `nodes::Output(...)` when application code should pull results:
 
 ```cpp
 app.add(neat::nodes::Output("detections"));
-auto out = run.pull("detections", 1000);
+auto out = run.pull("detections", std::chrono::milliseconds(1000));
 ```
 
 ### Graph-owned output sink
@@ -677,7 +681,7 @@ Use post-run export after the workload has run or drained:
 ```cpp
 neat::Run run = app.build();
 run.push("image", neat::TensorList{image});
-auto out = run.pull("classes", 1000);
+auto out = run.pull("classes", std::chrono::milliseconds(1000));
 
 neat::RunExportOptions export_opt;
 export_opt.label = "after_smoke_test";
@@ -694,7 +698,7 @@ Python:
 ```python
 run = app.build()
 run.push("image", [image])
-out = run.pull("classes", timeout_ms=1000)
+out = run.pull_result("classes", timeout_ms=1000).value()
 
 export_opt = pyneat.RunExportOptions()
 export_opt.label = "after_smoke_test"
@@ -829,7 +833,7 @@ app.add(genai_fragment);
 
 neat::Run run = app.build();
 run.push("prompt", prompt_sample);
-auto token = run.pull("tokens", 1000);
+auto token = run.pull("tokens", std::chrono::milliseconds(1000));
 ```
 
 The exact GenAI fragment factory and sample helper names depend on the installed GenAI package. The
@@ -937,7 +941,7 @@ Before executable pipeline construction, `Graph::build()` normalizes boundaries:
 | Boundary declaration | Materialized when... | Elided when... |
 |---|---|---|
 | `nodes::Input("name")` | no upstream graph is connected to it, so it must be a public `Run::push("name", ...)` endpoint | an upstream graph feeds it, so it is only an internal fragment parameter |
-| `nodes::Output("name")` | no downstream graph consumes it, so it must be a public `Run::pull("name")` endpoint | a downstream graph consumes it, so it is only an internal fragment return value |
+| `nodes::Output("name")` | no downstream graph consumes it, so it must be a public `Run::pull("name", ...)` endpoint | a downstream graph consumes it, so it is only an internal fragment return value |
 
 Elided does not mean forgotten. The compiler keeps provenance so `describe()`, validation errors,
 metrics, and run export JSON can still refer back to the user-facing endpoint name.
@@ -974,7 +978,7 @@ auto graph_outputs = app.outputs();
 // Build/run
 neat::Run run = app.build();
 run.push("image", neat::TensorList{image});
-auto out = run.pull("classes", 1000);
+auto out = run.pull("classes", std::chrono::milliseconds(1000));
 
 // Runtime endpoint inspection
 auto run_inputs = run.input_names();
@@ -1000,7 +1004,7 @@ print(app.outputs())
 
 run = app.build()
 run.push("image", [image])
-out = run.pull("classes", timeout_ms=1000)
+out = run.pull_result("classes", timeout_ms=1000).value()
 
 print(run.input_names())
 print(run.output_names())

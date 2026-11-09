@@ -211,7 +211,7 @@ run = graph.build()
 try:
     run.push("image", [tensor])
     run.close_input()
-    outputs = run.pull_tensors("detections", timeout_ms=2000)
+    outputs = run.pull_result("detections", timeout_ms=2000).value()
 finally:
     run.close()
 ```
@@ -223,14 +223,14 @@ finally:
 neat::Run run = graph.build();
 run.push("image", neat::TensorList{input});
 run.close_input();
-neat::TensorList outputs = run.pull_tensors("detections", /*timeout_ms=*/2000);
+neat::TensorList outputs = run.pull("detections", std::chrono::milliseconds(2000)).value();
 run.close();
 ```
 
 </CodeTab>
 </CodeTabs>
 
-`build()` 將公開的圖轉換為單一可執行的執行階段圖，同時保留您的節點名稱。然後，您將輸入 `push` 到具名輸入中，當不再有輸入時，呼叫 `close_input()`，並從具名輸出中以逾時方式 `pull` 結果。`pull_tensors` 會傳回一個 `TensorList`，其形狀與 `Model.run` 會產生的形狀相同——這裡是封裝後的 YOLOv8 `BBOX` 輸出。
+`build()` 將公開的圖轉換為單一可執行的執行階段圖，同時保留您的節點名稱。然後，您將輸入 `push` 到具名輸入中，當不再有輸入時，呼叫 `close_input()`，並從具名輸出中以逾時方式 `pull` 結果。`pull` 會傳回 `Result<TensorList>`（Python：`pull_result` 會傳回 `PullResult`），其 `value()` 即為 `TensorList`，形狀與 `Model.run` 會產生的形狀相同——這裡是封裝後的 YOLOv8 `BBOX` 輸出。若沒有收到輸出（逾時、串流已關閉或發生錯誤），`value()` 會擲回例外。
 
 ### 7. 解碼框
 
@@ -342,7 +342,7 @@ def main() -> int:
     try:
         run.push("image", [tensor])
         run.close_input()
-        outputs = run.pull_tensors("detections", timeout_ms=2000)
+        outputs = run.pull_result("detections", timeout_ms=2000).value()
     finally:
         run.close()
 
@@ -451,7 +451,7 @@ int main() {
   neat::Run run = graph.build();
   run.push("image", neat::TensorList{input});
   run.close_input();
-  neat::TensorList outputs = run.pull_tensors("detections", /*timeout_ms=*/2000);
+  neat::TensorList outputs = run.pull("detections", std::chrono::milliseconds(2000)).value();
   run.close();
 
   neat::TensorList decoded = neat::decode_bbox(outputs);
@@ -502,7 +502,7 @@ dk build/sima_neat_app
 這些 API 直接對應到該結構：
 
 - `Graph` 包含應用程式流程；`graph.add(...)` 依序附加每個步驟。
-- 具命名的輸入和輸出會成為執行階段端點：`run.push("image", ...)` 和 `run.pull_tensors("detections")`。
+- 具命名的輸入和輸出會成為執行階段端點：`run.push("image", ...)` 和 `run.pull("detections", ...)`（Python：`run.pull_result("detections", ...)`）。
 - `Model` 是與您直接使用 `Model.run` 呼叫的相同片段；在這裡，它作為應用程式內的一個節點執行。
 
 ## 後續步驟

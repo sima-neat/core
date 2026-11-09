@@ -3,11 +3,14 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace genai = simaai::neat::genai;
 
@@ -52,14 +55,16 @@ simaai::neat::Sample make_image_sample(const std::filesystem::path& image_path) 
                                                  simaai::neat::TensorMemory::CPU));
 }
 
-std::string sample_text(const simaai::neat::Sample& sample) {
-  if (sample.kind == simaai::neat::SampleKind::Tensor && sample.tensor.has_value()) {
-    return sample.tensor->to_text();
+// The next item of `output` within `timeout`: its tensors, or nothing on a Timeout or once the
+// output is Closed. value() throws on an Error.
+std::optional<simaai::neat::TensorList> poll(simaai::neat::Run& run, const char* output,
+                                             std::chrono::milliseconds timeout) {
+  auto result = run.pull(output, timeout);
+  if (result.status() == simaai::neat::PullStatus::Timeout ||
+      result.status() == simaai::neat::PullStatus::Closed) {
+    return std::nullopt;
   }
-  if (sample.kind == simaai::neat::SampleKind::TensorSet && sample.tensors.size() == 1U) {
-    return sample.tensors.front().to_text();
-  }
-  return {};
+  return std::move(result).value();
 }
 
 int main(int argc, char** argv) {
@@ -98,16 +103,16 @@ int main(int argc, char** argv) {
     // STEP pull-results
     std::cout << "assistant: ";
     for (int i = 0; i < 256; ++i) {
-      if (auto token = run.pull("tokens", 250)) {
-        std::cout << sample_text(*token) << std::flush;
+      if (auto token = poll(run, "tokens", std::chrono::milliseconds(250))) {
+        std::cout << token->front().to_text() << std::flush;
         continue;
       }
-      if (auto done = run.pull("done", 10)) {
+      if (auto done = poll(run, "done", std::chrono::milliseconds(10))) {
         (void)done;
         break;
       }
-      if (auto error = run.pull("error", 10)) {
-        throw std::runtime_error(sample_text(*error));
+      if (auto error = poll(run, "error", std::chrono::milliseconds(10))) {
+        throw std::runtime_error(error->front().to_text());
       }
     }
     std::cout << "\n";

@@ -39,9 +39,9 @@
 
 在每次配對成功推送後，我們會從指定的輸出 `"combined"` 提取一次。每次成功的提取都會傳回執行階段在兩個輸入都傳遞了該幀之後發出的 bundle。在產生資料的同時進行提取，可以防止受限的輸出佇列填滿，並將反壓傳播到輸入端。兩個範例都會驗證每個 bundle 是否包含兩個已合併的欄位，然後呼叫 `close()` 以乾淨地結束執行。預期的 bundle 數量等於 `streams * frames`，證明沒有遺漏任何配對。
 
-**C++：**`run.pull("combined", timeout_ms)` 傳回一個可選的 bundle；我們讀取 `bundle.stream_id` 和 `bundle.fields.size()`，並驗證每個 bundle 是否具有兩個欄位。
+**C++：**`run.pull("combined", timeout).value()` 以 `TensorList` 傳回 bundle 的欄位，逾時時會擲回例外；我們從第一個欄位的 `stamp()` 讀取串流名稱，從 `bundle.size()` 讀取欄位數量，並驗證每個 bundle 是否具有兩個欄位。
 
-**Python：**`run.pull("combined", 2000)` 傳回 bundle 或 `None`；如果發生逾時，該範例會立即失敗，並驗證每個 bundle 的欄位數量。
+**Python：**`run.pull_result("combined", 2000).value()` 以列表傳回 bundle 的欄位，逾時時會引發例外，因此範例會立即失敗；它會驗證每個 bundle 的欄位數量。
 
 ## Run
 

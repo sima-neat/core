@@ -275,7 +275,7 @@ Then use the exact endpoint name:
 
 ```python
 run.push("image", [tensor])
-sample = run.pull("detections", timeout_ms=2000)
+outputs = run.pull_result("detections", timeout_ms=2000).value()
 ```
 
 `Graph("name")` is a diagnostic label. It does not create an endpoint. Endpoints come from `nodes.input("name")` and `nodes.output("name")`.

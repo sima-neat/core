@@ -17,7 +17,7 @@ Bundle several named tensors into one `Sample` and push it as a single inference
 
 Many real applications carry more than one input per inference event. Neat represents this as a **bundle sample**: a single `Sample` whose `fields` list holds multiple named tensor payloads, each addressable by a `port_name`. The runtime keeps the named fields together as one logical event, so `left` and `right` (or image and metadata) stay aligned through the pipeline.
 
-This chapter builds a tensor-in/tensor-out graph, bundles two named float tensors, pushes the bundle through, and reads the named fields back out. By the end you will have constructed a multi-field sample and confirmed both fields survived the round trip with their port names intact.
+This chapter builds a tensor-in/tensor-out graph, bundles two named float tensors, pushes the bundle through, and reads the fields back out. By the end you will have constructed a multi-field sample and confirmed both fields survived the round trip, in order.
 
 ### Configure a tensor input {#step-configure-tensor-input}
 
@@ -37,15 +37,15 @@ Now assemble the multi-input event. Each input gets a name via `make_tensor_samp
 
 **C++:** `make_bundle_sample({...})` wraps the named fields into one `Sample` whose `kind` is `Bundle`.
 
-**Python:** The list of named samples is passed directly to `push(...)`; pyneat builds the bundle envelope for you.
+**Python:** The list of named samples is passed directly to `run(...)`; pyneat builds the bundle envelope for you.
 
 ### Push the bundle and read it back {#step-push-and-read}
 
-Finally, send the bundle through and inspect the result. The output is itself a bundle `Sample`, so we read `out.fields` rather than treating it as a single tensor — `out.fields.size()` should be `2`, and each field carries the `port_name` and a tensor payload.
+Finally, send the bundle through and inspect the result. The output is itself a bundle `Sample`, so we read `out.fields` rather than treating it as a single tensor — `out.fields.size()` should be `2`, and each field carries a tensor payload. The fields' `port_name` does not come back yet: it is empty.
 
 **C++:** `run.run(Sample{bundle}, timeout_ms)` returns one `Sample`. Because the logical result has multiple fields, that returned `Sample` is itself a `Bundle` — so we check `out.kind == SampleKind::Bundle` and iterate `out.fields`, not `front()` (which would mean "first field inside the bundle").
 
-**Python:** `run.push(fields)` then `run.pull(timeout_ms=...)` returns the output sample; iterate `out.fields` and read each `field.port_name` and `field.tensor`.
+**Python:** `run.run(fields, timeout_ms=...)` pushes the named samples and returns the output sample, as in C++; Python does not expose the fields' `port_name` yet (it is empty), so the example prints each field's tensor shape by position.
 
 ## Run
 
@@ -74,12 +74,12 @@ Expected output (C++):
 
 ```text
 bundle_fields=2
-  field=left has_tensor=yes
-  field=right has_tensor=yes
+  field=bundle has_tensor=yes
+  field=bundle has_tensor=yes
 [OK] 010_feed_multi_input_model
 ```
 
-(The Python build prints the same field count with `port=left has_tensor=True` lines.) To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
+(The C++ build labels a field by its `port_name`, else its `stream_label`, else its position, so with `SIMA_NEAT_BACKEND=dataflow` the labels read `field_0` and `field_1`. The Python build prints `bundle_fields=2`, `field=0 shape=[48, 64, 3]`, and `field=1 shape=[48, 64, 3]`.) To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
 
 ## In Practice
 

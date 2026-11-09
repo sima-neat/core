@@ -11,7 +11,7 @@
 
 ## Concept
 
-Read back from `run.pull()` or `model.run()` safely. Every run returns a `Sample` — a small sum type that may be a tensor, a bundle of named fields, or both — so you classify it before touching the payload.
+Read back from `run.run()` or `model.run()` safely. Every run returns a `Sample` — a small sum type that may be a tensor, a bundle of named fields, or both — so you classify it before touching the payload.
 
 ## Walkthrough
 

@@ -39,9 +39,9 @@ Now we drive the workload. For every frame and every stream we synthesize a smal
 
 Immediately after each matching pair is pushed, we pull once from the named output `"combined"`. Each successful pull returns the bundle that the runtime emitted after both inputs delivered that frame. Draining as we produce prevents the bounded output queue from filling and propagating backpressure to the input side. Both examples verify that every bundle contains the two joined fields, then call `close()` to tear the run down cleanly. The expected bundle count equals `streams * frames`, proving no pairing was dropped.
 
-**C++:** `run.pull("combined", timeout_ms)` returns an optional bundle; we read `bundle.stream_id` and `bundle.fields.size()` and verify that each bundle has two fields.
+**C++:** `run.pull("combined", timeout).value()` returns the bundle's fields as a `TensorList` and throws on a timeout; we read the stream name from the first field's `stamp()` and the field count from `bundle.size()`, and verify that each bundle has two fields.
 
-**Python:** `run.pull("combined", 2000)` returns the bundle or `None`; the example fails immediately on a timeout and verifies each bundle's field count.
+**Python:** `run.pull_result("combined", 2000).value()` returns the bundle's fields as a list and raises on a timeout, so the example fails immediately; it verifies each bundle's field count.
 
 ## Run
 

@@ -127,15 +127,15 @@ def main(argv: list[str]) -> int:
 
   # STEP pull-output
   for i in range(args.frames):
-    sample = run.pull(timeout_ms=args.pull_timeout_ms)
-    if sample is None:
+    result = run.pull_result(timeout_ms=args.pull_timeout_ms)
+    if result.status in (pyneat.PullStatus.Timeout, pyneat.PullStatus.Closed):
       msg = f"frame={i} output_timeout timeout_ms={args.pull_timeout_ms}"
       last_error = run.last_error()
       if last_error:
         msg += f" last_error={last_error}"
       print(msg)
       return 2
-    tensors = list(sample.tensors)
+    tensors = result.value()  # value() raises on an Error
     print(f"frame={i} tensors={len(tensors)}", end="")
     if tensors:
       print(f" first_shape={list(tensors[0].shape)}", end="")

@@ -71,9 +71,9 @@ int main() {
   neat::Tensor image = /* create or load an image tensor */;
   run.push("image", neat::TensorList{image});
 
-  std::optional<neat::Sample> result = run.pull("classes", /*timeout_ms=*/1000);
+  neat::Result<neat::TensorList> result = run.pull("classes", std::chrono::milliseconds(1000));
   if (result) {
-    // Consume result->tensors, result->detections, or other Sample metadata.
+    // Consume *result: the output's tensors, each carrying the item's stamp().
   }
 
   run.stop();
@@ -106,7 +106,7 @@ run = app.build()
 image = ...  # Create or load a tensor-compatible object.
 run.push("image", [image])
 
-result = run.pull("classes", timeout_ms=1000)
+result = run.pull_result("classes", timeout_ms=1000).value()
 run.stop()
 ```
 
@@ -120,7 +120,7 @@ Python 的 `Run.push(...)` 函式需要一個類似批次（batch）的序列。
 |---|---|
 | `TensorList` | 當您傳遞張量且不需要額外的樣本中繼資料時。 |
 | `Sample` | 當您需要時間戳、`frame_id`、`stream_id`、文字/音訊/視訊中繼資料、檢測結果或 EOS（序列結束）時。 |
-| `std::vector<cv::Mat>` | 當您想要從 OpenCV 取得方便的影像輸入時。 |
+| 放入 `TensorList` 的 `Tensor::from_cv_mat(...)` | 您有 OpenCV 影像時：逐一包裝每張影像，並指定其像素格式。 |
 
 常見的 C++ 呼叫：
 
@@ -131,20 +131,23 @@ run.push("image", neat::TensorList{image});
 run.push(sample);
 run.push("image", sample);
 
-auto out = run.pull(/*timeout_ms=*/1000);
-auto named = run.pull("classes", /*timeout_ms=*/1000);
+using namespace std::chrono_literals;
+auto out = run.pull(1000ms);                  // Result<TensorList>
+auto named = run.pull("classes", 1000ms);
 
-neat::TensorList tensors = run.pull_tensors("classes", 1000);
-neat::Sample sample_out = run.pull_samples("classes", 1000);
+neat::TensorList tensors = run.pull("classes", 1000ms).value();
+
+neat::Sample sample_out;                      // the Sample, with its metadata
+neat::PullStatus status = run.pull("classes", 1000, sample_out);
 ```
 
-當逾時或關閉時，應回傳一個空的 `std::optional`，此時請使用 `pull(...)`。當您需要一個帶有類型且在逾時或發生錯誤時會引發異常的便利輔助函式時，請使用 `pull_tensors(...)` 或 `pull_samples(...)`。
+`pull(timeout)` 會傳回 `Result<TensorList>`：檢查它是 `Ok`、`Timeout`、`Closed` 還是 `Error`，或呼叫 `value()`，在沒有輸出時它會擲回例外。當您需要 `Sample` 本身及其中繼資料時，請搭配 `Sample&` 使用 `pull(name, timeout_ms, sample)`。
 
 對於有限的應用程式推送串流，在收集最終指標之前，請先關閉輸入並清空緩衝：
 
 ```cpp
 run.close_input();
-while (auto out = run.pull("classes", 1000)) {
+while (auto out = run.pull("classes", std::chrono::milliseconds(1000))) {
   // Drain remaining output.
 }
 run.stop();
@@ -240,12 +243,12 @@ app.add(neat::nodes::Output());
 
 neat::Run run = app.build();
 run.push(neat::TensorList{image});
-auto result = run.pull(1000);
+auto result = run.pull(std::chrono::milliseconds(1000));
 ```
 
 這對於快速的腳本和測試非常方便。對於非簡單的應用程式，建議使用名稱。
 
-如果一個圖有許多可能的輸入或輸出，未命名的 `push(...)` 或 `pull()` 會導致錯誤，並
+如果一個圖有許多可能的輸入或輸出，未命名的 `push(...)` 或 `pull(...)` 會導致錯誤，並
 回報可用的名稱。這種錯誤是故意的：Neat 不應該猜測您指的是哪個攝影機、張量或輸出層。
 
 ## 模型是圖的片段
@@ -493,7 +496,7 @@ app.connect(right, pair);
 neat::Run run = app.build();
 run.push("left", left_sample_with_frame_id_42);
 run.push("right", right_sample_with_frame_id_42);
-auto stereo = run.pull("stereo", 1000);
+auto stereo = run.pull("stereo", std::chrono::milliseconds(1000));
 ```
 
 Python：
@@ -542,7 +545,7 @@ app.add(neat::nodes::groups::RtspDecodedInput(opt));
 
 ```cpp
 app.add(neat::nodes::Output("detections"));
-auto out = run.pull("detections", 1000);
+auto out = run.pull("detections", std::chrono::milliseconds(1000));
 ```
 
 ### 圖所擁有的輸出節點
@@ -650,7 +653,7 @@ run = app.build(opt)
 ```cpp
 neat::Run run = app.build();
 run.push("image", neat::TensorList{image});
-auto out = run.pull("classes", 1000);
+auto out = run.pull("classes", std::chrono::milliseconds(1000));
 
 neat::RunExportOptions export_opt;
 export_opt.label = "after_smoke_test";
@@ -667,7 +670,7 @@ Python：
 ```python
 run = app.build()
 run.push("image", [image])
-out = run.pull("classes", timeout_ms=1000)
+out = run.pull_result("classes", timeout_ms=1000).value()
 
 export_opt = pyneat.RunExportOptions()
 export_opt.label = "after_smoke_test"
@@ -790,7 +793,7 @@ app.add(genai_fragment);
 
 neat::Run run = app.build();
 run.push("prompt", prompt_sample);
-auto token = run.pull("tokens", 1000);
+auto token = run.pull("tokens", std::chrono::milliseconds(1000));
 ```
 
 精確的 GenAI 程式碼片段工廠和範例輔助函式的名稱取決於已安裝的 GenAI 套件。圖的規則相同：新增或連接公用程式碼片段，然後使用具名稱的 `Run::push(...)` 和 `Run::pull(...)`。
@@ -893,7 +896,7 @@ app.build()
 | 邊界宣告 | 何時實體化 | 何時省略 |
 |---|---|---|
 | `nodes::Input("name")` | 沒有上游圖與其連接，因此它必須是公開的 `Run::push("name", ...)` 端點 | 有上游圖向其提供資料，因此它僅僅是一個內部片段參數 |
-| `nodes::Output("name")` | 沒有下游圖使用它，因此它必須是公開的 `Run::pull("name")` 端點 | 有下游圖使用它，因此它僅僅是一個內部片段的回傳值 |
+| `nodes::Output("name")` | 沒有下游圖使用它，因此它必須是公開的 `Run::pull("name", ...)` 端點 | 有下游圖使用它，因此它僅僅是一個內部片段的回傳值 |
 
 省略並不意味著被遺忘。編譯器會保留來源資訊，因此 `describe()`、驗證錯誤、
 指標和執行階段匯出 JSON 仍然可以參考使用者介面的端點名稱。
@@ -928,7 +931,7 @@ auto graph_outputs = app.outputs();
 // Build/run
 neat::Run run = app.build();
 run.push("image", neat::TensorList{image});
-auto out = run.pull("classes", 1000);
+auto out = run.pull("classes", std::chrono::milliseconds(1000));
 
 // Runtime endpoint inspection
 auto run_inputs = run.input_names();
@@ -954,7 +957,7 @@ print(app.outputs())
 
 run = app.build()
 run.push("image", [image])
-out = run.pull("classes", timeout_ms=1000)
+out = run.pull_result("classes", timeout_ms=1000).value()
 
 print(run.input_names())
 print(run.output_names())

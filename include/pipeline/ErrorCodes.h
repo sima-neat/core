@@ -63,7 +63,7 @@ inline constexpr const char* kPipelineSyntax = "build.pipeline_syntax";
 inline constexpr const char* kPluginMissing = "build.plugin_missing";
 /// A GStreamer element property is unknown or invalid.
 inline constexpr const char* kPropertyInvalid = "build.property_invalid";
-/// `Run::pull()` encountered a runtime-side error (downstream EOS, bus error, or appsink failure).
+/// A `Run::pull(...)` hit a runtime-side error (downstream EOS, bus error, or appsink failure).
 inline constexpr const char* kRuntimePull = "runtime.pull";
 /// A pipeline element stopped processing for a reason that has no more-specific classification.
 inline constexpr const char* kRuntimeElementFailed = "runtime.element_failed";

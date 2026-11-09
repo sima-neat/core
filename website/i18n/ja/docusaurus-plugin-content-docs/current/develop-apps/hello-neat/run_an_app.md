@@ -211,7 +211,7 @@ run = graph.build()
 try:
     run.push("image", [tensor])
     run.close_input()
-    outputs = run.pull_tensors("detections", timeout_ms=2000)
+    outputs = run.pull_result("detections", timeout_ms=2000).value()
 finally:
     run.close()
 ```
@@ -223,14 +223,14 @@ finally:
 neat::Run run = graph.build();
 run.push("image", neat::TensorList{input});
 run.close_input();
-neat::TensorList outputs = run.pull_tensors("detections", /*timeout_ms=*/2000);
+neat::TensorList outputs = run.pull("detections", std::chrono::milliseconds(2000)).value();
 run.close();
 ```
 
 </CodeTab>
 </CodeTabs>
 
-`build()` は、公開されているグラフを、ノード名を保持したまま、実行可能なランタイムグラフに変換します。次に、入力データを名前付きの入力に`push`し、それ以上の入力が不要になったら`close_input()`を呼び、タイムアウトを設定して、名前付きの出力から結果を`pull`します。`pull_tensors`は、`TensorList`を返します。これは、`Model.run`が生成するのと同じ形状のテンソルであり、ここでは、パックされたYOLOv8の`BBOX`出力です。
+`build()` は、公開されているグラフを、ノード名を保持したまま、実行可能なランタイムグラフに変換します。次に、入力データを名前付きの入力に`push`し、それ以上の入力が不要になったら`close_input()`を呼び、タイムアウトを設定して、名前付きの出力から結果を`pull`します。`pull`は`Result<TensorList>`を返し（Python: `pull_result`は`PullResult`を返します）、その`value()`が`TensorList`です。これは、`Model.run`が生成するのと同じ形状のテンソルであり、ここでは、パックされたYOLOv8の`BBOX`出力です。出力が届かなかった場合（タイムアウト、ストリームのクローズ、またはエラー）、`value()`は例外をスローします。
 
 ### 7. バウンディングボックスをデコード
 
@@ -342,7 +342,7 @@ def main() -> int:
     try:
         run.push("image", [tensor])
         run.close_input()
-        outputs = run.pull_tensors("detections", timeout_ms=2000)
+        outputs = run.pull_result("detections", timeout_ms=2000).value()
     finally:
         run.close()
 
@@ -451,7 +451,7 @@ int main() {
   neat::Run run = graph.build();
   run.push("image", neat::TensorList{input});
   run.close_input();
-  neat::TensorList outputs = run.pull_tensors("detections", /*timeout_ms=*/2000);
+  neat::TensorList outputs = run.pull("detections", std::chrono::milliseconds(2000)).value();
   run.close();
 
   neat::TensorList decoded = neat::decode_bbox(outputs);
@@ -502,7 +502,7 @@ dk build/sima_neat_app
 API は、その構造に直接対応しています。
 
 - `Graph` はアプリケーションのフローを保持し、`graph.add(...)` は各ステップを順番に追加します。
-- 名前付きの入力と出力は、ランタイムのエンドポイントになります: `run.push("image", ...)` と `run.pull_tensors("detections")`。
+- 名前付きの入力と出力は、ランタイムのエンドポイントになります: `run.push("image", ...)` と `run.pull("detections", ...)`（Python: `run.pull_result("detections", ...)`）。
 - `Model` は、`Model.run` を使用して直接呼び出すのと同じフラグメントであり、ここではアプリケーション内の 1 つのノードとして実行されます。
 
 ## 次のステップ

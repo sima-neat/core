@@ -393,7 +393,7 @@ route.add(simaai::neat::nodes::Output("classes"));
 ```cpp
 auto run = route.build();
 run.push("image", simaai::neat::TensorList{image_tensor});
-auto classes = run.pull("classes");
+auto classes = run.pull("classes", std::chrono::milliseconds(-1));  // -1: no time limit
 ```
 
 더 큰 애플리케이션 내에서 사용:
@@ -661,9 +661,9 @@ run = graph.build()
 
 #### 고급: 이미지 또는 비디오 출력을 텐서에 맞게 조정
 
-일반적인 모델 또는 그래프 출력의 경우, 여기에서 중단하십시오. `nodes::Output`을 사용하십시오. 페이로드가 텐서만이고 전체 `Sample` 봉투가 필요하지 않은 경우 `pull_tensors(...)`를 사용하여 가져오십시오.
+일반적인 모델 또는 그래프 출력의 경우, 여기에서 중단하십시오. `nodes::Output`을 사용하십시오. 페이로드가 텐서만이고 전체 `Sample` 봉투가 필요하지 않은 경우 텐서를 반환하는 `pull(timeout)`을 사용하여 가져오십시오.
 
-이미지 또는 비디오 출력을 변환, 크기 조정 또는 프레임 속도 조절하여 애플리케이션이 가져오기 전에 CPU 친화적인 `UInt8` 텐서로 만들어야 하는 경우에만 `Graph::add_output_tensor(...)`를 사용하십시오. 이 헬퍼는 어댑터 경로를 삽입하고 이름이 없는 출력을 만듭니다. 하나의 출력으로, `run.pull_tensors(...)`를 사용하여 가져옵니다.
+이미지 또는 비디오 출력을 변환, 크기 조정 또는 프레임 속도 조절하여 애플리케이션이 가져오기 전에 CPU 친화적인 `UInt8` 텐서로 만들어야 하는 경우에만 `Graph::add_output_tensor(...)`를 사용하십시오. 이 헬퍼는 어댑터 경로를 삽입하고 이름이 없는 출력을 만듭니다. 하나의 출력으로, `run.pull(timeout)`을 사용하여 가져옵니다.
 
 `OutputTensorOptions`는 `format`, `target_width`, `target_height` 및 `target_fps`를 제어합니다. `dtype`을 `UInt8`로 유지하십시오. 현재 공개 경로는 다른 dtype을 거부합니다. 대부분의 모델 출력에는 이 헬퍼가 필요하지 않습니다.
 
@@ -672,7 +672,7 @@ run = graph.build()
 - 소스가 파일, 카메라 또는 RTSP인 경우: `nodes::groups`에서 미리 빌드된 입력 그룹을 사용하십시오.
 - 소스가 애플리케이션에서 생성된 텐서/프레임인 경우: `nodes::Input`을 사용하십시오.
 - 출력 소비자가 스트림/프레임/타임스탬프 메타데이터를 필요로 하는 경우: `nodes::Output`을 사용하고 `Sample` 객체를 가져옵니다.
-- 출력이 모델 또는 텐서 페이로드인 경우: `nodes::Output`을 사용하고 전체 `Sample`이 필요하지 않은 경우 `pull_tensors(...)`를 사용하여 텐서를 가져옵니다.
+- 출력이 모델 또는 텐서 페이로드인 경우: `nodes::Output`을 사용하고 전체 `Sample`이 필요하지 않은 경우 `pull(timeout)`을 사용하여 텐서를 가져옵니다.
 - 출력이 크기 조정, 재구성 또는 프레임 속도 조절을 해야 하는 이미지 또는 비디오인 경우: 고급 `add_output_tensor(...)` 어댑터를 사용하십시오.
 - 재사용 가능한 번들이 필요한 경우: 노드에서 `Graph` 조각을 만들고 다른 빌딩 블록과 마찬가지로 추가/연결하십시오.
 

@@ -20,7 +20,7 @@ The Neat framework's pipelines run on GStreamer. Almost all of what's visible to
 | `gst_pipeline_set_state()` | `Graph::run()` / `Run::start()` |
 | Bus messages | `GraphReport::bus_messages` |
 | `appsrc` push API | `Run::push()` (only on Nodes with `InputRole::Push`) |
-| `appsink` pull API | `Run::pull()` |
+| `appsink` pull API | `Run::pull(timeout)` |
 | Per-element timing | `MeasureReport` from `Run::start_measurement()` |
 
 The application never writes a launch string directly, never names elements directly, and never touches the GStreamer C API. Everything goes through Nodes.

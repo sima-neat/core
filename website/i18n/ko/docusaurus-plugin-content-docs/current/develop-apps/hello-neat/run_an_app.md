@@ -211,7 +211,7 @@ run = graph.build()
 try:
     run.push("image", [tensor])
     run.close_input()
-    outputs = run.pull_tensors("detections", timeout_ms=2000)
+    outputs = run.pull_result("detections", timeout_ms=2000).value()
 finally:
     run.close()
 ```
@@ -223,14 +223,14 @@ finally:
 neat::Run run = graph.build();
 run.push("image", neat::TensorList{input});
 run.close_input();
-neat::TensorList outputs = run.pull_tensors("detections", /*timeout_ms=*/2000);
+neat::TensorList outputs = run.pull("detections", std::chrono::milliseconds(2000)).value();
 run.close();
 ```
 
 </CodeTab>
 </CodeTabs>
 
-`build()`는 공개 그래프를 단일 실행 가능한 런타임 그래프로 축소하여 노드 이름을 보존합니다. 그런 다음 명명된 입력에 입력을 `push`하고, 더 이상 입력이 들어오지 않을 때 `close_input()`를 호출하고, 타임아웃과 함께 명명된 출력에서 결과를 `pull`합니다. `pull_tensors`는 `TensorList`를 반환합니다. 이는 `Model.run`이 생성했을 것과 동일한 형태이며, 여기에는 패킹된 YOLOv8 `BBOX` 출력이 포함됩니다.
+`build()`는 공개 그래프를 단일 실행 가능한 런타임 그래프로 축소하여 노드 이름을 보존합니다. 그런 다음 명명된 입력에 입력을 `push`하고, 더 이상 입력이 들어오지 않을 때 `close_input()`를 호출하고, 타임아웃과 함께 명명된 출력에서 결과를 `pull`합니다. `pull`은 `Result<TensorList>`를 반환하며(Python: `pull_result`는 `PullResult`를 반환), 그 `value()`가 `TensorList`입니다. 이는 `Model.run`이 생성했을 것과 동일한 형태이며, 여기에는 패킹된 YOLOv8 `BBOX` 출력이 포함됩니다. 출력이 도착하지 않은 경우(타임아웃, 닫힌 스트림 또는 오류) `value()`는 예외를 발생시킵니다.
 
 ### 7. 박스 디코딩
 
@@ -342,7 +342,7 @@ def main() -> int:
     try:
         run.push("image", [tensor])
         run.close_input()
-        outputs = run.pull_tensors("detections", timeout_ms=2000)
+        outputs = run.pull_result("detections", timeout_ms=2000).value()
     finally:
         run.close()
 
@@ -451,7 +451,7 @@ int main() {
   neat::Run run = graph.build();
   run.push("image", neat::TensorList{input});
   run.close_input();
-  neat::TensorList outputs = run.pull_tensors("detections", /*timeout_ms=*/2000);
+  neat::TensorList outputs = run.pull("detections", std::chrono::milliseconds(2000)).value();
   run.close();
 
   neat::TensorList decoded = neat::decode_bbox(outputs);
@@ -502,7 +502,7 @@ dk build/sima_neat_app
 API는 해당 구조에 직접적으로 매핑됩니다.
 
 - `Graph`는 애플리케이션 흐름을 포함하고, `graph.add(...)`는 각 단계를 순서대로 추가합니다.
-- 명명된 입력 및 출력은 런타임 엔드포인트가 됩니다: `run.push("image", ...)` 및 `run.pull_tensors("detections")`.
+- 명명된 입력 및 출력은 런타임 엔드포인트가 됩니다: `run.push("image", ...)` 및 `run.pull("detections", ...)`(Python: `run.pull_result("detections", ...)`).
 - `Model`은 `Model.run`을 사용하여 직접 호출할 수 있는 동일한 조각이며, 여기서는 애플리케이션 내의 하나의 노드로 실행됩니다.
 
 ## 다음 단계

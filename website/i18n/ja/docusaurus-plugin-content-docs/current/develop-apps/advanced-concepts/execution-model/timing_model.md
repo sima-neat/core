@@ -56,13 +56,13 @@ auto run = graph.build();
 while (have_more_inputs()) {
   run.push("image", simaai::neat::TensorList{next_tensor()});
 
-  if (auto out = run.pull("classes", /*timeout_ms=*/0)) {
+  if (auto out = run.pull("classes", std::chrono::milliseconds(0))) {
     consume(*out);
   }
 }
 
 run.close_input();
-while (auto out = run.pull("classes", /*timeout_ms=*/1000)) {
+while (auto out = run.pull("classes", std::chrono::milliseconds(1000))) {
   consume(*out);
 }
 run.close();
@@ -111,19 +111,19 @@ graph.add(pyneat.nodes.queue(queue))
 
 ## プルタイミング
 
-`Run::pull(...)` は、出力境界から次の利用可能な `Sample` を返します。
+`Run::pull(timeout)` は、出力境界の次の利用可能な出力を `Result<TensorList>` として返します。後述の構造化ステータスオーバーロードは、代わりに `Sample` を埋めます。
 
-アプリケーションは入力の送信を一時停止し、同じ `Run` で再開できます。出力がないだけで失敗することはありません。有限の `pull()` タイムアウトはその待機を終了しますが、Run は停止しません。`RunOptions::input_timeout_ms` は、入力モードの `Graph::run()` と、シードを渡すビルドの対応する事前検証での出力待機時間を制御します。`Run::run()` と `Model::run()` は呼び出しごとのタイムアウトを使用し、`pull(-1)` と同様に `-1` は無制限です。処理の停滞を検出する必要がある場合は、未完了の処理に期限を設定してください。
+アプリケーションは入力の送信を一時停止し、同じ `Run` で再開できます。出力がないだけで失敗することはありません。有限の `pull(...)` タイムアウトはその待機を終了しますが、Run は停止しません。`RunOptions::input_timeout_ms` は、入力モードの `Graph::run()` と、シードを渡すビルドの対応する事前検証での出力待機時間を制御します。`Run::run()` と `Model::run()` は呼び出しごとのタイムアウトを使用し、`pull(timeout)` で負のタイムアウトが無制限を意味するのと同様に、`-1` は無制限です。処理の停滞を検出する必要がある場合は、未完了の処理に期限を設定してください。
 
-タイムアウトと EOS が同じ「サンプルなし」パスを共有できる場合は、便利なオーバーロードを使用します。
+タイムアウトと EOS が同じ「出力なし」パスを共有できる場合は、`Result` を判定します。必要に応じて、その `status()` で両者を区別できます。
 
 ```cpp
-if (auto sample = run.pull("classes", /*timeout_ms=*/1000)) {
-  consume(*sample);
+if (auto out = run.pull("classes", std::chrono::milliseconds(1000))) {
+  consume(*out);
 }
 ```
 
-タイムアウト、クローズ、エラーが発生した場合に、それぞれ異なる処理を行う必要がある場合は、構造化されたステータスオーバーロードを使用してください。
+タイムアウト、クローズ、エラーをそれぞれ異なる方法で処理する必要があり、`Sample` そのものが必要な場合は、構造化されたステータスオーバーロードを使用してください。
 
 ```cpp
 simaai::neat::Sample sample;

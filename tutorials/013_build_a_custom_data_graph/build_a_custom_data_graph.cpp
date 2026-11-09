@@ -5,6 +5,7 @@
 
 #include "neat.h"
 
+#include <chrono>
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
@@ -82,15 +83,18 @@ int main() {
     }
     // END STEP
     // STEP pull-and-verify
-    auto out = run.pull("out", /*timeout_ms=*/2000);
+    // The pulled tensors carry the item's Stamp: the pushed stream_id, frame_id and pts_ns
+    // come back as its stream_name, frame_id and source_time.
+    auto out = run.pull("out", std::chrono::milliseconds(2000));
     run.close();
     // END STEP
     // END CORE LOGIC
 
-    if (!out.has_value())
-      throw std::runtime_error("graph produced no output");
-    std::cout << "stream=" << out->stream_id << " frame=" << out->frame_id
-              << " pts_ns=" << out->pts_ns << "\n";
+    if (!out)
+      throw std::runtime_error("graph produced no output: " + out.error().message);
+    const simaai::neat::Stamp& stamp = out->front().stamp();
+    std::cout << "stream=" << stamp.stream_name << " frame=" << stamp.frame_id
+              << " pts_ns=" << stamp.source_time.ns << "\n";
     std::cout << "[OK] 013_build_a_custom_data_graph\n";
     return 0;
   } catch (const std::exception& e) {

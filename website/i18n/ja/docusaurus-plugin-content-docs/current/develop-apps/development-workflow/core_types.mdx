@@ -23,8 +23,10 @@ Neat は、ランタイムデータを次の 2 つのパブリック型を使用
 | メタデータを使用してモデルを実行 | `model.run(sample)` | `model.run([sample])` | `Sample` |
 | `Run` にテンソルをプッシュ | `run.push(TensorList{tensor})` | `run.push([tensor])` | `bool` |
 | `Run` にサンプルをプッシュ | `run.push(sample)` | `run.push([sample])` | `bool` |
-| テンソルのみの出力を取得 | `run.pull_tensors(...)` | `run.pull_tensors(...)` | `TensorList` / Python のリストのようなテンソルコレクション |
-| メタデータを保持した出力を取得 | `run.pull(...)` または `run.pull_samples(...)` | `run.pull(...)` または `run.pull_samples(...)` | `Sample` |
+| テンソル出力を取得 | `run.pull(timeout)` | `run.pull_result(timeout_ms)` | `Result<TensorList>` / `PullResult`。`value()` はテンソルのリスト |
+| メタデータを保持した出力を取得 | `run.pull(timeout_ms, sample)` | `run.pull_samples(...)` | `PullStatus`（`sample` を埋める） / `Sample` |
+
+Python には、項目ごとのメタデータを取得する非推奨ではない pull がまだありません。`run.pull(...)` は 1 つの `Sample` を返しますが非推奨であり、`run.pull_samples(...)` は利用可能なすべての項目を 1 つの `Sample` にまとめて取り出します。
 
 Python では、モデルまたはグラフの入力を常にリストまたはタプルとして渡します。`[tensor]` は「1 つの入力」を意味します。バッチ次元は作成されません。
 
@@ -150,17 +152,19 @@ auto outputs = model.run(
     /*timeout_ms=*/2000);
 ```
 
-OpenCVのサポートを組み込んでNeatを構築すると、`Model`、`Graph`、および`Run`も、`std::vector<cv::Mat>`の便利なオーバーロードを公開します。各入力に対して1つの`cv::Mat`を渡します。
+OpenCVのサポートを組み込んでNeatを構築すると、`Model`と`Graph`も、`std::vector<cv::Mat>`の便利なオーバーロードを公開します。各入力に対して1つの`cv::Mat`を渡します。`Run`は`TensorList`を受け取ります。画像は`Tensor::from_cv_mat(...)`でラップし、ピクセル形式とメモリを指定します。
 
 ```cpp
 auto model_outputs = model.run(std::vector<cv::Mat>{image});
 auto graph_outputs = graph.run(std::vector<cv::Mat>{image});
 
 auto run = graph.build();
-run.push("image", std::vector<cv::Mat>{image});
+run.push("image", simaai::neat::TensorList{simaai::neat::Tensor::from_cv_mat(
+                      image, simaai::neat::ImageSpec::PixelFormat::BGR,
+                      simaai::neat::TensorMemory::EV74)});
 ```
 
-例でピクセル形式、メモリ、または有効期間を明示的に指定する必要がある場合は、`Tensor::from_cv_mat(...)` を使用してください。グラフ/モデルのオプションですでに入力の仕様が記述されている場合は、OpenCV の便利なオーバーロードを使用します。
+例でピクセル形式、メモリ、または有効期間を明示的に指定する必要がある場合は、`Tensor::from_cv_mat(...)` を使用してください。グラフ/モデルのオプションですでに入力の仕様が記述されている場合は、`Model` と `Graph` の OpenCV の便利なオーバーロードを使用します。
 
 ## テンソルの仕様を確認する
 
@@ -312,16 +316,17 @@ run.push("image", [sample])
 
 マルチストリームのグラフに`stream_id`がない場合、ストリームごとの公平なスループットを報告できません。調整を行う前に、各ストリームに名前を付けてください。
 
-### 取得したサンプルを読み込む
+### 取得した出力を読み込む
+
+`run.pull_result(...)` は出力のテンソル（バンドルの場合はそのフィールドを順番に並べたもの）を返します。各テンソルは項目の `stamp` を持ち、その `stream_name` と `frame_id` は `Sample` の `stream_id` と `frame_id` に対応します。
 
 ```python
-sample = run.pull("detections", timeout_ms=2000)
+result = run.pull_result("detections", timeout_ms=2000)
 
-if sample is not None:
-    print(sample.kind, sample.stream_id, sample.frame_id)
-    if sample.kind == pyneat.SampleKind.TensorSet:
-        for tensor in sample.tensors:
-            print(tensor.shape, tensor.dtype)
+if result:
+    for tensor in result.value():
+        stamp = tensor.stamp
+        print(stamp.stream_name, stamp.frame_id, tensor.shape, tensor.dtype)
 ```
 
 ## ペイロードファミリーについて

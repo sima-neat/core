@@ -60,6 +60,8 @@ sample.attributes["image-index"] = "42"     # reaches the Sample
 sample.attributes = {"image-time": "..."}   # replaces the whole map
 ```
 
+Python 目前還沒有未棄用的逐項中繼資料路徑：這樣的 `sample` 來自已棄用的 `Run.pull`，而其替代方案 `Run.pull_result` 傳回的張量不含 `attributes`。
+
 ## 標頭規則
 
 已設定的清單是一個**允許清單**。一個空的清單會完全停用擷取功能，並保持現有的拓撲結構和行為不變。

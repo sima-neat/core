@@ -404,7 +404,7 @@ route.add(simaai::neat::nodes::Output("classes"));
 ```cpp
 auto run = route.build();
 run.push("image", simaai::neat::TensorList{image_tensor});
-auto classes = run.pull("classes");
+auto classes = run.pull("classes", std::chrono::milliseconds(-1));  // -1: no time limit
 ```
 
 用於較大型的應用程式中：
@@ -672,9 +672,9 @@ run = graph.build()
 
 #### 進階：將影像或影片輸出調整為張量
 
-對於一般模型或圖的輸出，請在此停止：使用 `nodes::Output`。如果有效載體僅包含張量，並且您不需要完整的 `Sample` 封包，請使用 `pull_tensors(...)` 提取。
+對於一般模型或圖的輸出，請在此停止：使用 `nodes::Output`。如果有效載體僅包含張量，並且您不需要完整的 `Sample` 封包，請使用 `pull(timeout)` 提取，它會傳回其張量。
 
-僅當影像或視訊輸出必須在應用程式提取之前轉換、縮放或調整幀率，以轉換為適合 CPU 的 `UInt8` 張量時，才使用 `Graph::add_output_tensor(...)`。此輔助函式會插入配接器路徑並建立一個未命名的輸出。對於單一輸出，請使用 `run.pull_tensors(...)` 提取。
+僅當影像或視訊輸出必須在應用程式提取之前轉換、縮放或調整幀率，以轉換為適合 CPU 的 `UInt8` 張量時，才使用 `Graph::add_output_tensor(...)`。此輔助函式會插入配接器路徑並建立一個未命名的輸出。對於單一輸出，請使用 `run.pull(timeout)` 提取。
 
 `OutputTensorOptions` 控制 `format`、`target_width`、`target_height` 和 `target_fps`。將 `dtype` 保持為 `UInt8`；目前的公開路徑會拒絕其他 dtype。大多數模型輸出都不需要此輔助函式。
 
@@ -683,7 +683,7 @@ run = graph.build()
 - 來源可以是檔案、攝影機或 RTSP：請使用 `nodes::groups` 中的預先建置的輸入群組。
 - 來源是應用程式產生的張量/框架：請使用 `nodes::Input`。
 - 輸出消費者需求串流/影格/時間戳記中繼資料：使用 `nodes::Output` 並提取 `Sample` 物件。
-- 輸出是一個模型或張量：當您不需要完整的 `Sample` 時，請使用 `nodes::Output`，並使用 `pull_tensors(...)` 來提取張量。
+- 輸出是一個模型或張量：當您不需要完整的 `Sample` 時，請使用 `nodes::Output`，並使用 `pull(timeout)` 來提取張量。
 - 輸出內容為影像或影片，在擷取之前必須調整大小、重新格式化或調整幀率：請使用進階的 `add_output_tensor(...)` 轉接器。
 - 需要一個可重複使用的模組：從節點建立一個 `Graph` 片段，然後像其他任何建構模組一樣，將其新增或連接。
 

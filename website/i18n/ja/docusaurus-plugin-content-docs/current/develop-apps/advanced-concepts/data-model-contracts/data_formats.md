@@ -108,7 +108,7 @@ H.264とH.265には、それぞれ専用の`H264`と`H265`タグがあります�
 
 ## 高度な画像/ビデオ出力アダプター
 
-通常のモデル出力には、`nodes.output(...)`を使用し、`pull_tensors(...)`でテンソルを取得します。画像またはビデオ出力をCPUで扱いやすい`UInt8`テンソルに変換、サイズ変更、またはレート調整する必要がある場合にのみ、`OutputTensorOptions`を使用します。
+通常のモデル出力には、`nodes.output(...)`を使用し、`pull(timeout)`（Python: `pull_result(timeout_ms)`）でテンソルを取得します。画像またはビデオ出力をCPUで扱いやすい`UInt8`テンソルに変換、サイズ変更、またはレート調整する必要がある場合にのみ、`OutputTensorOptions`を使用します。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">

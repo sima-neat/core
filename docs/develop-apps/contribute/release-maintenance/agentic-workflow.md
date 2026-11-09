@@ -24,7 +24,7 @@ An AI agent generating code against an unfamiliar API typically needs:
 9. **Stable identifiers** — same Nodes + same options ⇒ same element names ⇒ same launch string ⇒ stable test fixtures.
 10. **Model archives as data, not code** — the model is a bundle the framework loads, not a header the agent has to compile against.
 11. **Composable building blocks** — Nodes, Models, and reusable Graph fragments snap together; the agent doesn't have to know which combinations the framework "supports" because the planner answers that at build time.
-12. **Loud build-time validation** — failures surface from `Graph::build()`, not at the first `pull()`. An agent's iteration loop needs the error pointed at the right line.
+12. **Loud build-time validation** — failures surface from `Graph::build()`, not at the first `pull(...)`. An agent's iteration loop needs the error pointed at the right line.
 13. **Structured `GraphReport`** — programmatic access to what the build did, so the agent can verify its own work.
 14. **Progressive disclosure** — `Model` is the simple path, `Graph::add()` is the next, custom Nodes are the deep path. An agent hits the simple path first.
 15. **Versioned MPK contracts** — a model archive carries enough metadata that an agent generating code against it doesn't need to consult external docs.

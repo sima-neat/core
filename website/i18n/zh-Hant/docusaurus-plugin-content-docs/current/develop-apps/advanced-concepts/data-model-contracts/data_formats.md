@@ -108,7 +108,7 @@ H.264 和 H.265 具有專用的 `H264` 和 `H265` 標籤。在輸入邊界上設
 
 ## 進階影像/影片輸出配接器
 
-對於一般的模型輸出，請使用 `nodes.output(...)` 並使用 `pull_tensors(...)` 提取張量。僅當影像或影片輸出必須轉換、調整大小或調整速率為適合 CPU 的 `UInt8` 張量時，才使用 `OutputTensorOptions`，然後再由應用程式提取。
+對於一般的模型輸出，請使用 `nodes.output(...)` 並使用 `pull(timeout)`（Python：`pull_result(timeout_ms)`）提取張量。僅當影像或影片輸出必須轉換、調整大小或調整速率為適合 CPU 的 `UInt8` 張量時，才使用 `OutputTensorOptions`，然後再由應用程式提取。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">

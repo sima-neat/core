@@ -524,7 +524,7 @@ auto image_sample =
 image_sample.frame_id = 0;
 run.push("image_input", image_sample);
 
-auto inputs = run.pull("render_inputs");
+auto inputs = run.pull("render_inputs", std::chrono::milliseconds(-1));  // -1: no time limit
 ```
 
 可執行範例會在 `render_inputs` 處停止，其中包含對應的 `original_image` 和 `bbox` 值。後續的渲染或輸出節點可以消耗該組合結果，然後將渲染後的影像儲存到檔案中、顯示它，或將其傳送到其他位置。
@@ -533,24 +533,24 @@ auto inputs = run.pull("render_inputs");
 
 在建立 `Graph` 之後，使用相同的端點名稱來傳送資料和讀取結果。
 
-當圖有多个公共輸入或輸出時，將端點名稱傳遞給 `push()` 或 `pull()`：
+當圖有多个公共輸入或輸出時，將端點名稱傳遞給 `push(...)` 或 `pull(...)`：
 
 ```cpp
 run.push("image", simaai::neat::TensorList{image_tensor});
 run.push("metadata", simaai::neat::TensorList{metadata_tensor});
 
-auto classes = run.pull("classes");
-auto preview = run.pull("preview");
+auto classes = run.pull("classes", std::chrono::milliseconds(-1));  // -1: no time limit
+auto preview = run.pull("preview", std::chrono::milliseconds(-1));
 ```
 
 對於一個只有一個公開輸入或輸出的圖，在執行階段時，名稱是可選的：
 
 ```cpp
 run.push(simaai::neat::TensorList{image_tensor});
-auto classes = run.pull();
+auto classes = run.pull(std::chrono::milliseconds(-1));
 ```
 
-如果有多個輸入或輸出可用，未命名的 `push(...)` 或 `pull()` 將會失敗，並列出可用的端點名稱，而不是猜測您想要使用哪個。
+如果有多個輸入或輸出可用，未命名的 `push(...)` 或 `pull(...)` 將會失敗，並列出可用的端點名稱，而不是猜測您想要使用哪個。
 
 ### 以值宣告端點並 push 張量清單
 
@@ -577,7 +577,7 @@ if (result) {
 - 一個清單即為一個項目。第一個張量的戳記會提議該項目的 `stream_name`、`frame_id`、`source_time` 與 `flags`（`tensor.with_stamp(stamp)`）；`seq` 與 `publish_time` 由執行環境寫入。
 - 含有多個張量的清單（`run.push({a, b})`）是一筆依位置命名的記錄。pull 到的清單依序包含這些張量，且每個張量都帶有該項目的戳記。
 - `run.on_output("out", callback)` 會在 `Run` 所擁有的執行緒上，將每個輸出項目以 `TensorList` 傳遞給回呼，取代 `pull`。`run({tensor})` 會 push 並等待輸出。
-- 整數逾時的多載維持原有意義：`pull(100)` 與 `pull("out", 100)` 傳回 `std::optional<Sample>`。
+- 傳回 `std::optional<Sample>` 的整數逾時 pull，即 `pull(100)` 與 `pull("out", 100)`，已經棄用，`pull_tensors`、`pull_samples` 與 `cv::Mat` push 也一樣；每一種在每個處理程序中只會警告一次。`pull(100, sample)` 與 `pull("out", 100, sample)` 會填入 `Sample` 並予以保留：它們是取得其中繼資料的途徑。
 - `pipeline/Graph.h` 不再需要 GStreamer 的標頭。除非在它之前定義 `SIMA_NEAT_GRAPH_NO_GSTREAMER`，否則它仍會包含 `<gst/gst.h>`；之後的版本會移除此包含，因此在使用 GStreamer 的地方請自行包含 `<gst/gst.h>`。
 
 在 Python 中，相同的動詞接受並傳回 Python 清單：
@@ -600,7 +600,7 @@ else:
     print(result.error.code, result.error.message)
 ```
 
-- `run.pull(...)` 仍傳回 `Sample` 或 `None`，且現在每個呼叫位置會發出一次 `DeprecationWarning`。在移除 `Sample` 形式的版本中，它將改為傳回 `PullResult`，因此請改用 `run.pull_result(...)`。
+- `run.pull(...)` 仍傳回 `Sample` 或 `None`，`run.pull_tensors(...)` 則傳回列表；兩者都會在每個呼叫位置發出一次 `DeprecationWarning`。在移除 `Sample` 形式的版本中，`run.pull(...)` 將改為傳回 `PullResult`，因此請改用 `run.pull_result(...)`。
 - `run.push(...)`、`run.try_push(...)` 與 `run([tensor])` 與 C++ 一樣接受清單；單一 Tensor 會被拒絕。
 - `run.on_output("out", callback)` 會在 `Run` 擁有的執行緒上，於持有 GIL 的情況下以每個項目的清單呼叫 `callback(tensors)`。`run.stop()`、`run.close()`，以及捨棄對 `Run` 的最後一個參照，都會在等待進行中的回呼時釋放 GIL。若回呼擲出例外，傳遞即結束，例外會透過 `sys.unraisablehook` 回報，且 `run.last_error()` 會指出它；處理程序會繼續執行。
 - `run.alloc("points")` 會傳回上限形狀的可寫入 Tensor；先以 `tensor.copy_from(array)` 填入，再以 `run.push("points", [tensor])` push，這就是它的提交。
@@ -723,10 +723,10 @@ simaai::neat::Graph make_classifier(simaai::neat::Model& model) {
 單獨使用：
 
 ```cpp
-auto classifier_route = make_classifier(model);      // create the classifier fragment
-auto run = classifier_route.build();                 // build it as a standalone application
-run.push("image", simaai::neat::TensorList{image});  // send data to its named input
-auto classes = run.pull("classes");                  // read from its named output
+auto classifier_route = make_classifier(model);                     // create the classifier fragment
+auto run = classifier_route.build();                                // build it as a standalone application
+run.push("image", simaai::neat::TensorList{image});                 // send data to its named input
+auto classes = run.pull("classes", std::chrono::milliseconds(-1));  // read from its named output
 ```
 
 在較大的應用程式中使用：
@@ -827,7 +827,7 @@ nodes::Output("out");     // acceptable for small tests, but unclear in applicat
 - 使用具名稱的 `Input` 和 `Output` 節點來宣告片段的公開合約。
 - 對於簡單的鏈，請使用 `add()`。
 - 對於明確的拓撲和片段組合，請使用 `connect()`。
-- 對於多輸入或多輸出應用程式，請使用具名稱的 `run.push("name", ...)` 和 `run.pull("name")`。
+- 對於多輸入或多輸出應用程式，請使用具名稱的 `run.push("name", ...)` 和 `run.pull("name", ...)`。
 - 宣告您的應用程式所需的 [節點](/develop-apps/development-workflow/node)、[節點群組](/develop-apps/development-workflow/node#pre-built-node-groups)、參數和連接；讓 Neat 處理低階的執行階段細節。
 
 ## 參閱

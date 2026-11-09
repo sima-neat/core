@@ -127,7 +127,7 @@ graph.add(neat::nodes::CameraInput(camera));
 graph.add(model.graph(route));
 
 neat::Run run = graph.build();
-std::optional<neat::Sample> output = run.pull(/*timeout_ms=*/5000);
+neat::TensorList output = run.pull(std::chrono::milliseconds(5000)).value();
 ```
 
 </CodeTab>
@@ -176,7 +176,7 @@ graph.add(pyneat.nodes.camera_input(camera))
 graph.add(model.graph(route))
 
 run = graph.build()
-output = run.pull(timeout_ms=5000)
+output = run.pull_result(timeout_ms=5000).value()
 ```
 
 </CodeTab>

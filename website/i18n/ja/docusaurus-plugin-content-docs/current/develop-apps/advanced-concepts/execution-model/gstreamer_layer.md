@@ -20,7 +20,7 @@ Neat フレームワークのパイプラインは、GStreamer 上で実行さ�
 | `gst_pipeline_set_state()` | `Graph::run()` / `Run::start()` |
 | バスメッセージ | `GraphReport::bus_messages` |
 | `appsrc` プッシュ API | `Run::push()`（`InputRole::Push` を持つノードのみ） |
-| `appsink` プル API | `Run::pull()` |
+| `appsink` プル API | `Run::pull(timeout)` |
 | 要素ごとのタイミング | `Run::start_measurement()` からの `MeasureReport` |
 
 アプリケーションは、起動文字列を直接記述したり、要素を直接指定したり、GStreamer C API に直接アクセスしたりすることはありません。すべてはノードを介して行われます。

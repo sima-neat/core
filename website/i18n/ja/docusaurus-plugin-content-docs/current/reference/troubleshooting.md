@@ -272,7 +272,7 @@ print("outputs:", run.output_names())
 
 ```python
 run.push("image", [tensor])
-sample = run.pull("detections", timeout_ms=2000)
+outputs = run.pull_result("detections", timeout_ms=2000).value()
 ```
 
 `Graph("name")` は診断ラベルです。エンドポイントを作成するものではありません。エンドポイントは、`nodes.input("name")` と `nodes.output("name")` から生成されます。

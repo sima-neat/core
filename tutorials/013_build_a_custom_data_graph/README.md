@@ -41,7 +41,7 @@ Add two nodes. `Input("image")` declares a push endpoint named `image`; `Output(
 
 ### Pull the output and verify metadata {#step-pull-and-verify}
 
-`pull("out", ...)` retrieves the result from the named output endpoint with a timeout, after which we `close()` the run. Because there is no transform between input and output, a correct pipeline returns the same logical sample — so reading back `stream_id`, `frame_id`, and `pts_ns` and seeing the values we pushed confirms the runtime preserved per-sample metadata through traversal. That guarantee is what lets downstream stages trust frame identity and timestamps.
+`pull("out", ...)` (Python: `pull_result("out", ...)`) retrieves the result from the named output endpoint with a timeout, after which we `close()` the run. Because there is no transform between input and output, a correct pipeline returns the same logical sample, and every pulled tensor carries its stamp — so reading back the stamp's `stream_name`, `frame_id`, and `source_time` and seeing the `stream_id`, `frame_id`, and `pts_ns` we pushed confirms the runtime preserved per-sample metadata through traversal. That guarantee is what lets downstream stages trust frame identity and timestamps.
 
 ## Run
 

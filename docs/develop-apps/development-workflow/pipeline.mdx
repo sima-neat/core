@@ -50,11 +50,12 @@ Use `graph.run()` for a source-to-sink job where the graph owns both input and o
 auto run = graph.build();
 
 while (running && run.can_pull()) {
-  auto sample = run.pull("detections", /*timeout_ms=*/1000);
-  if (!sample) {
+  auto output = run.pull("detections", std::chrono::milliseconds(1000));
+  if (output.status() == simaai::neat::PullStatus::Timeout ||
+      output.status() == simaai::neat::PullStatus::Closed) {
     continue;
   }
-  handle(*sample);
+  handle(output.value());  // value() throws NeatError on an Error
 }
 
 run.close();
@@ -68,10 +69,10 @@ run = graph.build()
 
 try:
     while running and run.can_pull():
-        sample = run.pull("detections", timeout_ms=1000)
-        if sample is None:
+        result = run.pull_result("detections", timeout_ms=1000)
+        if result.status in (pyneat.PullStatus.Timeout, pyneat.PullStatus.Closed):
             continue
-        handle(sample)
+        handle(result.value())  # value() raises NeatError on an Error
 finally:
     run.close()
 ```
@@ -124,11 +125,14 @@ Use `Graph.build(...)` when your application owns the loop.
 ```cpp
 auto run = graph.build();
 
-run.push("image", std::vector<cv::Mat>{frame});
-simaai::neat::TensorList outputs = run.pull_tensors("classes", /*timeout_ms=*/2000);
+auto tensor = simaai::neat::Tensor::from_cv_mat(frame, simaai::neat::ImageSpec::PixelFormat::BGR,
+                                                simaai::neat::TensorMemory::EV74);
+run.push("image", simaai::neat::TensorList{tensor});
+simaai::neat::TensorList outputs =
+    run.pull("classes", std::chrono::milliseconds(2000)).value();
 
 run.close_input();
-while (auto sample = run.pull(/*timeout_ms=*/100)) {
+while (auto output = run.pull(std::chrono::milliseconds(100))) {
   // Drain remaining output after end-of-input.
 }
 run.close();
@@ -141,12 +145,12 @@ run.close();
 run = graph.build()
 
 run.push("image", [tensor])
-outputs = run.pull_tensors("classes", timeout_ms=2000)
+outputs = run.pull_result("classes", timeout_ms=2000).value()
 
 run.close_input()
 while True:
-    sample = run.pull(timeout_ms=100)
-    if sample is None:
+    result = run.pull_result(timeout_ms=100)
+    if not result:
         break
 run.close()
 ```
@@ -244,8 +248,8 @@ For multi-input graphs, push one named endpoint at a time, or push an unnamed li
 run.push("left", simaai::neat::TensorList{left_tensor});
 run.push("right", simaai::neat::TensorList{right_tensor});
 
-auto boxes = run.pull_tensors("detections", /*timeout_ms=*/2000);
-auto preview = run.pull("preview", /*timeout_ms=*/2000);
+auto boxes = run.pull("detections", std::chrono::milliseconds(2000)).value();
+auto preview = run.pull("preview", std::chrono::milliseconds(2000));
 ```
 
 </CodeTab>
@@ -255,8 +259,8 @@ auto preview = run.pull("preview", /*timeout_ms=*/2000);
 run.push("left", [left_tensor])
 run.push("right", [right_tensor])
 
-boxes = run.pull_tensors("detections", timeout_ms=2000)
-preview = run.pull("preview", timeout_ms=2000)
+boxes = run.pull_result("detections", timeout_ms=2000).value()
+preview = run.pull_result("preview", timeout_ms=2000)
 ```
 
 </CodeTab>
@@ -277,7 +281,7 @@ When you combine streams, preserve the matching key that the graph expects. `Com
 | Jittery source needs bounded buffering | `queue_depth` | Increase only enough to absorb jitter. A deep queue can hide stale frames and delayed backpressure. |
 | App stores outputs after pull | `OutputMemory::Owned` | Keeps output lifetime independent of runtime buffers. |
 | App consumes outputs without a transport copy | `OutputMemory::Auto` | Retains standard DMA-BUF outputs in sync and async runs; other storage follows the preset/mode policy. |
-| Default wait time should be explicit | `input_timeout_ms` | Bounds input-mode `Graph::run()` and supported seeded build preflight. `Run::run()`, `Model::run()` and `pull()` use their per-call timeouts (`-1`: unlimited). |
+| Default wait time should be explicit | `input_timeout_ms` | Bounds input-mode `Graph::run()` and supported seeded build preflight. `Run::run()`, `Model::run()` and `pull(...)` use their per-call timeouts (`-1`: unlimited). |
 | Seeded build should catch first-sample errors early | `startup_preflight = true` | Keeps seeded build honest. Disable only when first-sample failures can surface later through `pull(...)` or `last_error()`. |
 | Source buffer lifetime is short | `advanced.copy_input = true` | Protects input memory that may disappear after `push(...)`. |
 | Input size needs a guardrail | `advanced.max_input_bytes` | Rejects oversized input before it enters the graph. |
@@ -579,12 +583,12 @@ def producer() -> None:
 def consumer() -> None:
     while True:
         timeout_ms = -1 if producer_done.is_set() else 100
-        output = run.pull("detections", timeout_ms=timeout_ms)
-        if output is None:
+        result = run.pull_result("detections", timeout_ms=timeout_ms)
+        if result.status in (pyneat.PullStatus.Timeout, pyneat.PullStatus.Closed):
             if producer_done.is_set():
                 break
             continue
-        handle_output(output)
+        handle_output(result.value())  # value() raises NeatError on an Error
 
 producer_thread = threading.Thread(target=producer)
 consumer_thread = threading.Thread(target=consumer)
@@ -598,7 +602,7 @@ run.close()
 </CodeTab>
 </CodeTabs>
 
-In C++, use the status-aware `pull(...)` overload when timeout, end-of-stream, and errors must be handled differently. In Python, `pull(...)` returns `None` when no sample is returned for that call, so pair it with your own producer/shutdown state.
+In C++, use the status-aware `pull(...)` overload when timeout, end-of-stream, and errors must be handled differently. In Python, `pull_result(...)` returns a `PullResult` whose `status` separates timeout, end-of-stream, and error; pair it with your own producer/shutdown state.
 
 ## Close, drain, or stop deliberately
 
@@ -724,14 +728,14 @@ while (running) {
     }
   }
 
-  while (auto output = run.pull("detections", /*timeout_ms=*/0)) {
-    count_output_by_stream(output->stream_id);
+  while (auto output = run.pull("detections", std::chrono::milliseconds(0))) {
+    count_output_by_stream(output->front().stamp().stream_name);
   }
 }
 
 run.close_input();
-while (auto output = run.pull("detections", /*timeout_ms=*/1000)) {
-  count_output_by_stream(output->stream_id);
+while (auto output = run.pull("detections", std::chrono::milliseconds(1000))) {
+  count_output_by_stream(output->front().stamp().stream_name);
 }
 run.close();
 ```
@@ -760,17 +764,17 @@ while running:
             local_drop_count[camera.id] += 1
 
     while True:
-        output = run.pull("detections", timeout_ms=0)
-        if output is None:
+        result = run.pull_result("detections", timeout_ms=0)
+        if not result:
             break
-        count_output_by_stream(output.stream_id)
+        count_output_by_stream(result.value()[0].stamp.stream_name)
 
 run.close_input()
 while True:
-    output = run.pull("detections", timeout_ms=1000)
-    if output is None:
+    result = run.pull_result("detections", timeout_ms=1000)
+    if not result:
         break
-    count_output_by_stream(output.stream_id)
+    count_output_by_stream(result.value()[0].stamp.stream_name)
 run.close()
 ```
 
@@ -825,8 +829,8 @@ while (running) {
   }
 
   for (std::size_t lane_index = 0; lane_index < lanes.size(); ++lane_index) {
-    while (auto output = lanes[lane_index].pull("detections", /*timeout_ms=*/0)) {
-      count_output(lane_index, output->stream_id);
+    while (auto output = lanes[lane_index].pull("detections", std::chrono::milliseconds(0))) {
+      count_output(lane_index, output->front().stamp().stream_name);
     }
   }
 }
@@ -871,10 +875,10 @@ while running:
 
     for lane_index, lane in enumerate(lanes):
         while True:
-            output = lane.pull("detections", timeout_ms=0)
-            if output is None:
+            result = lane.pull_result("detections", timeout_ms=0)
+            if not result:
                 break
-            count_output(lane_index, output.stream_id)
+            count_output(lane_index, result.value()[0].stamp.stream_name)
 ```
 
 </CodeTab>
@@ -967,7 +971,7 @@ Aggregate FPS can look great while one stream starves. Per-stream metrics catch 
 
 ### Throughput loop shape
 
-Use this shape for an app-pushed graph. Replace `next_inputs()` with your input source. Keep the loop boring: bounded in-flight work, continuous pulls, and no report export inside the hot path.
+Use this shape for an app-pushed graph. Replace `next_inputs()` with your input source: a `TensorList` in C++, a list in Python. Keep the loop boring: bounded in-flight work, continuous pulls, and no report export inside the hot path.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -977,7 +981,7 @@ auto run = graph.build(options);
 
 for (int i = 0; i < warmup_frames; ++i) {
   run.push(next_inputs());
-  (void)run.pull(/*timeout_ms=*/5000);
+  (void)run.pull(std::chrono::milliseconds(5000));
 }
 
 auto measurement = run.start_measurement();
@@ -991,12 +995,10 @@ while (in_flight < max_in_flight && has_input()) {
 }
 
 while (has_input() || in_flight > 0) {
-  auto output = run.pull(/*timeout_ms=*/1000);
-  if (output) {
+  if (auto output = run.pull(std::chrono::milliseconds(1000))) {
     ++outputs_seen;
     --in_flight;
-    output.reset();  // Do not pin runtime-backed buffers longer than needed.
-  }
+  }  // `output` ends here: do not pin runtime-backed buffers longer than needed.
 
   while (has_input() && in_flight < max_in_flight) {
     if (!run.try_push(next_inputs())) {
@@ -1008,7 +1010,7 @@ while (has_input() || in_flight > 0) {
 }
 
 run.close_input();
-while (auto output = run.pull(/*timeout_ms=*/1000)) {
+while (auto output = run.pull(std::chrono::milliseconds(1000))) {
   ++outputs_seen;
 }
 
@@ -1025,7 +1027,7 @@ run = graph.build(options)
 
 for _ in range(warmup_frames):
     run.push(next_inputs())
-    run.pull(timeout_ms=5000)
+    run.pull_result(timeout_ms=5000)
 
 measurement = run.start_measurement()
 
@@ -1036,11 +1038,11 @@ while in_flight < max_in_flight and has_input():
         in_flight += 1
 
 while has_input() or in_flight > 0:
-    output = run.pull(timeout_ms=1000)
-    if output is not None:
+    result = run.pull_result(timeout_ms=1000)
+    if result:
         outputs_seen += 1
         in_flight -= 1
-        del output  # Do not pin runtime-backed buffers longer than needed.
+    del result  # Do not pin runtime-backed buffers longer than needed.
 
     while has_input() and in_flight < max_in_flight:
         if not run.try_push(next_inputs()):
@@ -1049,10 +1051,7 @@ while has_input() or in_flight > 0:
         in_flight += 1
 
 run.close_input()
-while True:
-    output = run.pull(timeout_ms=1000)
-    if output is None:
-        break
+while run.pull_result(timeout_ms=1000):
     outputs_seen += 1
 
 report = measurement.stop()
@@ -1243,9 +1242,13 @@ run = graph.build()
 print("inputs:", run.input_names())
 print("outputs:", run.output_names())
 
-sample = run.pull("classes", timeout_ms=1000)
-if sample is None:
-    print("no output before timeout or end of stream")
+result = run.pull_result("classes", timeout_ms=1000)
+if result.status == pyneat.PullStatus.Timeout:
+    print("no output before the timeout")
+elif result.status == pyneat.PullStatus.Closed:
+    print("end of stream")
+elif result.status == pyneat.PullStatus.Error:
+    print(result.error.code, result.error.message)
 ```
 
 </CodeTab>

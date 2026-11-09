@@ -6,9 +6,10 @@
  * `Run` is what a `Graph` becomes when built. It owns the running GStreamer pipeline,
  * its internal threads (typically 5–15: one per element thread boundary, plus dispatcher
  * workers, plus a bus watcher), and its bounded queues. Application code interacts with a
- * Run by `push()`-ing inputs and `pull()`-ing outputs — or `run()` for a push+pull
- * convenience call on an existing runner. Use `Graph::run(...)` when you want one-shot
- * graph execution without owning a long-lived runner.
+ * Run by pushing `TensorList` inputs (`push`) and pulling outputs (`pull(timeout)`, a
+ * `Result<TensorList>`) — or `run()` for a push+pull convenience call on an existing runner.
+ * Use `Graph::run(...)` when you want one-shot graph execution without owning a long-lived
+ * runner.
  *
  * This header also defines:
  *   - `OverflowPolicy` — how `push()` behaves when the input queue is full.
@@ -202,7 +203,7 @@ struct RunOptions {
    *
    * In milliseconds; `-1` selects framework defaults (and legacy env-var fallback).
    * `Run::run()` and `Model::run()` use their per-call `timeout_ms` instead; `-1` means
-   * unlimited, as in `Run::pull(-1)`.
+   * unlimited, as a negative timeout does in `Run::pull(std::chrono::milliseconds)`.
    */
   int input_timeout_ms = -1;
   /**
@@ -216,7 +217,7 @@ struct RunOptions {
    *
    * Set to `false` for latency-sensitive callers that only want the seed for caps/shape
    * adaptation and are prepared to observe first-sample errors through `Run::last_error()` or
-   * `pull()`.
+   * the first `pull(timeout)`.
    */
   bool startup_preflight = true;
   RunAdvancedOptions advanced{}; ///< Advanced tuning (rarely needed).
@@ -638,8 +639,9 @@ private:
  *
  * A `Run` is what `Graph::build()` returns. It owns the live GStreamer pipeline plus its
  * internal worker threads (typically 5–15 per Run, including streaming threads, dispatcher
- * pool threads, and a bus watcher). Application code drives the Run by `push()`-ing inputs
- * and `pull()`-ing outputs (or `run()` for one-shot synchronous use).
+ * pool threads, and a bus watcher). Application code drives the Run by pushing `TensorList`
+ * inputs (`push`) and pulling outputs (`pull(timeout)`, a `Result<TensorList>`), or by `run()`
+ * for one-shot synchronous use.
  *
  * @code
  *   auto run = graph.build(TensorList{input});
@@ -647,7 +649,7 @@ private:
  *   auto out = run.pull(std::chrono::milliseconds(100));  // Result<TensorList>
  * @endcode
  *
- * **Thread safety**: `push()` from one thread and `pull()` from another is safe. **Multiple
+ * **Thread safety**: `push` from one thread and `pull` from another is safe. **Multiple
  * threads `push`-ing the same Run concurrently is NOT safe** — serialize push from one thread
  * or use external synchronization.
  *
@@ -741,6 +743,10 @@ public:
   void close_input();
   /**
    * @brief Pull the next output sample with a structured status return.
+   *
+   * The form for a `Sample`'s metadata (`attributes`, `caps_string`, `dts_ns`, `duration_ns`,
+   * Bundle field names), which the `Result<TensorList>` of `pull(std::chrono::milliseconds)` does
+   * not carry.
    * @param timeout_ms Wait up to this many ms; `-1` waits forever; `0` is non-blocking.
    * @param out  Filled with the next sample on `Ok`.
    * @param err  Optional out-parameter populated on `Error` with a structured `PullError`.
@@ -750,8 +756,8 @@ public:
   /**
    * @brief Pull from a named graph output with structured status.
    *
-   * Use this when a graph has multiple terminal outputs. `pull()` without a name remains the
-   * default-output convenience API for the common single-output case.
+   * Use this when a graph has multiple terminal outputs; `pull(int, Sample&, PullError*)` without
+   * a name reads the single output.
    */
   PullStatus pull(std::string_view output_name, int timeout_ms, Sample& out,
                   PullError* err = nullptr);

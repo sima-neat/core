@@ -50,11 +50,12 @@ sidebar_label: "Запустіть граф."
 auto run = graph.build();
 
 while (running && run.can_pull()) {
-  auto sample = run.pull("detections", /*timeout_ms=*/1000);
-  if (!sample) {
+  auto output = run.pull("detections", std::chrono::milliseconds(1000));
+  if (output.status() == simaai::neat::PullStatus::Timeout ||
+      output.status() == simaai::neat::PullStatus::Closed) {
     continue;
   }
-  handle(*sample);
+  handle(output.value());  // value() throws NeatError on an Error
 }
 
 run.close();
@@ -68,10 +69,10 @@ run = graph.build()
 
 try:
     while running and run.can_pull():
-        sample = run.pull("detections", timeout_ms=1000)
-        if sample is None:
+        result = run.pull_result("detections", timeout_ms=1000)
+        if result.status in (pyneat.PullStatus.Timeout, pyneat.PullStatus.Closed):
             continue
-        handle(sample)
+        handle(result.value())  # value() raises NeatError on an Error
 finally:
     run.close()
 ```
@@ -124,11 +125,14 @@ outputs = graph.run([tensor])
 ```cpp
 auto run = graph.build();
 
-run.push("image", std::vector<cv::Mat>{frame});
-simaai::neat::TensorList outputs = run.pull_tensors("classes", /*timeout_ms=*/2000);
+auto tensor = simaai::neat::Tensor::from_cv_mat(frame, simaai::neat::ImageSpec::PixelFormat::BGR,
+                                                simaai::neat::TensorMemory::EV74);
+run.push("image", simaai::neat::TensorList{tensor});
+simaai::neat::TensorList outputs =
+    run.pull("classes", std::chrono::milliseconds(2000)).value();
 
 run.close_input();
-while (auto sample = run.pull(/*timeout_ms=*/100)) {
+while (auto output = run.pull(std::chrono::milliseconds(100))) {
   // Drain remaining output after end-of-input.
 }
 run.close();
@@ -141,12 +145,12 @@ run.close();
 run = graph.build()
 
 run.push("image", [tensor])
-outputs = run.pull_tensors("classes", timeout_ms=2000)
+outputs = run.pull_result("classes", timeout_ms=2000).value()
 
 run.close_input()
 while True:
-    sample = run.pull(timeout_ms=100)
-    if sample is None:
+    result = run.pull_result(timeout_ms=100)
+    if not result:
         break
 run.close()
 ```
@@ -244,8 +248,8 @@ print("outputs:", run.output_names())
 run.push("left", simaai::neat::TensorList{left_tensor});
 run.push("right", simaai::neat::TensorList{right_tensor});
 
-auto boxes = run.pull_tensors("detections", /*timeout_ms=*/2000);
-auto preview = run.pull("preview", /*timeout_ms=*/2000);
+auto boxes = run.pull("detections", std::chrono::milliseconds(2000)).value();
+auto preview = run.pull("preview", std::chrono::milliseconds(2000));
 ```
 
 </CodeTab>
@@ -255,8 +259,8 @@ auto preview = run.pull("preview", /*timeout_ms=*/2000);
 run.push("left", [left_tensor])
 run.push("right", [right_tensor])
 
-boxes = run.pull_tensors("detections", timeout_ms=2000)
-preview = run.pull("preview", timeout_ms=2000)
+boxes = run.pull_result("detections", timeout_ms=2000).value()
+preview = run.pull_result("preview", timeout_ms=2000)
 ```
 
 </CodeTab>
@@ -277,7 +281,7 @@ preview = run.pull("preview", timeout_ms=2000)
 | Нестабільному джерелу потрібен буфер обмеженого розміру. | `queue_depth` | Збільшуйте лише до необхідного рівня, щоб компенсувати коливання. Велика черга може приховати застарілі кадри та затримки зворотного зв’язку. |
 | Магазини застосунків відображають результати після оновлення. | `OutputMemory::Owned` | Забезпечує незалежність часу існування вихідних даних від буферів середовища виконання. |
 | Застосунок використовує виходи без транспортного копіювання | `OutputMemory::Auto` | Зберігає стандартні DMA-BUF виходи в синхронних і асинхронних запусках; для іншого сховища діє політика профілю/режиму. |
-| Час очікування за замовчуванням має бути чітко визначений. | `input_timeout_ms` | Обмежує очікування для `Graph::run()` у вхідному режимі та підтримуваної попередньої перевірки побудови з початковими даними. `Run::run()`, `Model::run()` і `pull()` використовують тайм-аут окремого виклику (`-1`: без обмеження). |
+| Час очікування за замовчуванням має бути чітко визначений. | `input_timeout_ms` | Обмежує очікування для `Graph::run()` у вхідному режимі та підтримуваної попередньої перевірки побудови з початковими даними. `Run::run()`, `Model::run()` і `pull(...)` використовують тайм-аут окремого виклику (`-1`: без обмеження). |
 | Під час початкового збирання проєкту слід виявляти перші помилки на ранніх етапах. | `startup_preflight = true` | Забезпечує коректність збірки на основі початкових даних. Відключайте лише тоді, коли первинні зразки можуть виявити помилки пізніше за допомогою `pull(...)` або `last_error()`. |
 | Термін дії вихідного буфера обмежений. | `advanced.copy_input = true` | Захищає вхідні дані в пам’яті, які можуть бути втрачені після виконання операції `push(...)`. |
 | Необхідно встановити обмеження для вхідних даних. | `advanced.max_input_bytes` | Відхиляє занадто великі вхідні дані, перш ніж вони будуть оброблені графом. |
@@ -571,12 +575,12 @@ def producer() -> None:
 def consumer() -> None:
     while True:
         timeout_ms = -1 if producer_done.is_set() else 100
-        output = run.pull("detections", timeout_ms=timeout_ms)
-        if output is None:
+        result = run.pull_result("detections", timeout_ms=timeout_ms)
+        if result.status in (pyneat.PullStatus.Timeout, pyneat.PullStatus.Closed):
             if producer_done.is_set():
                 break
             continue
-        handle_output(output)
+        handle_output(result.value())  # value() raises NeatError on an Error
 
 producer_thread = threading.Thread(target=producer)
 consumer_thread = threading.Thread(target=consumer)
@@ -590,7 +594,7 @@ run.close()
 </CodeTab>
 </CodeTabs>
 
-У C++ використовуйте перевантажену версію `pull(...)`, яка враховує стан, коли час очікування, кінець потоку та помилки мають оброблятися по-різному. У Python функція `pull(...)` повертає `None`, якщо під час виклику не повертається жоден зразок, тому поєднуйте її зі своїм власним станом генератора/завершення.
+У C++ використовуйте перевантажену версію `pull(...)`, яка враховує стан, коли час очікування, кінець потоку та помилки мають оброблятися по-різному. У Python функція `pull_result(...)` повертає `PullResult`, чий `status` розрізняє тайм-аут, кінець потоку та помилку; поєднуйте її зі своїм власним станом генератора/завершення.
 
 ## Закрийте, злийте або зупиніть навмисно.
 
@@ -716,14 +720,14 @@ while (running) {
     }
   }
 
-  while (auto output = run.pull("detections", /*timeout_ms=*/0)) {
-    count_output_by_stream(output->stream_id);
+  while (auto output = run.pull("detections", std::chrono::milliseconds(0))) {
+    count_output_by_stream(output->front().stamp().stream_name);
   }
 }
 
 run.close_input();
-while (auto output = run.pull("detections", /*timeout_ms=*/1000)) {
-  count_output_by_stream(output->stream_id);
+while (auto output = run.pull("detections", std::chrono::milliseconds(1000))) {
+  count_output_by_stream(output->front().stamp().stream_name);
 }
 run.close();
 ```
@@ -752,17 +756,17 @@ while running:
             local_drop_count[camera.id] += 1
 
     while True:
-        output = run.pull("detections", timeout_ms=0)
-        if output is None:
+        result = run.pull_result("detections", timeout_ms=0)
+        if not result:
             break
-        count_output_by_stream(output.stream_id)
+        count_output_by_stream(result.value()[0].stamp.stream_name)
 
 run.close_input()
 while True:
-    output = run.pull("detections", timeout_ms=1000)
-    if output is None:
+    result = run.pull_result("detections", timeout_ms=1000)
+    if not result:
         break
-    count_output_by_stream(output.stream_id)
+    count_output_by_stream(result.value()[0].stamp.stream_name)
 run.close()
 ```
 
@@ -817,8 +821,8 @@ while (running) {
   }
 
   for (std::size_t lane_index = 0; lane_index < lanes.size(); ++lane_index) {
-    while (auto output = lanes[lane_index].pull("detections", /*timeout_ms=*/0)) {
-      count_output(lane_index, output->stream_id);
+    while (auto output = lanes[lane_index].pull("detections", std::chrono::milliseconds(0))) {
+      count_output(lane_index, output->front().stamp().stream_name);
     }
   }
 }
@@ -863,10 +867,10 @@ while running:
 
     for lane_index, lane in enumerate(lanes):
         while True:
-            output = lane.pull("detections", timeout_ms=0)
-            if output is None:
+            result = lane.pull_result("detections", timeout_ms=0)
+            if not result:
                 break
-            count_output(lane_index, output.stream_id)
+            count_output(lane_index, result.value()[0].stamp.stream_name)
 ```
 
 </CodeTab>
@@ -959,7 +963,7 @@ graph = pyneat.Graph("detector", graph_options)
 
 ### Форма циклу обробки даних.
 
-Використовуйте цю форму для графа, який надсилається застосунком. Замініть `next_inputs()` на ваше джерело вхідних даних. Зробіть цикл монотонним: обмежте обсяг роботи, що виконується, забезпечте безперервне отримання даних і не передбачайте експорт звітів у межах основного циклу.
+Використовуйте цю форму для графа, який надсилається застосунком. Замініть `next_inputs()` на ваше джерело вхідних даних: `TensorList` у C++, список у Python. Зробіть цикл монотонним: обмежте обсяг роботи, що виконується, забезпечте безперервне отримання даних і не передбачайте експорт звітів у межах основного циклу.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -969,7 +973,7 @@ auto run = graph.build(options);
 
 for (int i = 0; i < warmup_frames; ++i) {
   run.push(next_inputs());
-  (void)run.pull(/*timeout_ms=*/5000);
+  (void)run.pull(std::chrono::milliseconds(5000));
 }
 
 auto measurement = run.start_measurement();
@@ -983,12 +987,10 @@ while (in_flight < max_in_flight && has_input()) {
 }
 
 while (has_input() || in_flight > 0) {
-  auto output = run.pull(/*timeout_ms=*/1000);
-  if (output) {
+  if (auto output = run.pull(std::chrono::milliseconds(1000))) {
     ++outputs_seen;
     --in_flight;
-    output.reset();  // Do not pin runtime-backed buffers longer than needed.
-  }
+  }  // `output` ends here: do not pin runtime-backed buffers longer than needed.
 
   while (has_input() && in_flight < max_in_flight) {
     if (!run.try_push(next_inputs())) {
@@ -1000,7 +1002,7 @@ while (has_input() || in_flight > 0) {
 }
 
 run.close_input();
-while (auto output = run.pull(/*timeout_ms=*/1000)) {
+while (auto output = run.pull(std::chrono::milliseconds(1000))) {
   ++outputs_seen;
 }
 
@@ -1017,7 +1019,7 @@ run = graph.build(options)
 
 for _ in range(warmup_frames):
     run.push(next_inputs())
-    run.pull(timeout_ms=5000)
+    run.pull_result(timeout_ms=5000)
 
 measurement = run.start_measurement()
 
@@ -1028,11 +1030,11 @@ while in_flight < max_in_flight and has_input():
         in_flight += 1
 
 while has_input() or in_flight > 0:
-    output = run.pull(timeout_ms=1000)
-    if output is not None:
+    result = run.pull_result(timeout_ms=1000)
+    if result:
         outputs_seen += 1
         in_flight -= 1
-        del output  # Do not pin runtime-backed buffers longer than needed.
+    del result  # Do not pin runtime-backed buffers longer than needed.
 
     while has_input() and in_flight < max_in_flight:
         if not run.try_push(next_inputs()):
@@ -1041,10 +1043,7 @@ while has_input() or in_flight > 0:
         in_flight += 1
 
 run.close_input()
-while True:
-    output = run.pull(timeout_ms=1000)
-    if output is None:
-        break
+while run.pull_result(timeout_ms=1000):
     outputs_seen += 1
 
 report = measurement.stop()
@@ -1234,9 +1233,13 @@ run = graph.build()
 print("inputs:", run.input_names())
 print("outputs:", run.output_names())
 
-sample = run.pull("classes", timeout_ms=1000)
-if sample is None:
-    print("no output before timeout or end of stream")
+result = run.pull_result("classes", timeout_ms=1000)
+if result.status == pyneat.PullStatus.Timeout:
+    print("no output before the timeout")
+elif result.status == pyneat.PullStatus.Closed:
+    print("end of stream")
+elif result.status == pyneat.PullStatus.Error:
+    print(result.error.code, result.error.message)
 ```
 
 </CodeTab>

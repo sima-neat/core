@@ -508,7 +508,7 @@ auto image_sample =
 image_sample.frame_id = 0;
 run.push("image_input", image_sample);
 
-auto inputs = run.pull("render_inputs");
+auto inputs = run.pull("render_inputs", std::chrono::milliseconds(-1));  // -1: no time limit
 ```
 
 Наведений приклад програми зупиняється на етапі `render_inputs`, де містяться відповідні значення `original_image` та `bbox`. Подальший вузол обробки або виведення може використати цей об’єднаний результат, а потім зберегти відтворене зображення у файл, відобразити його або надіслати в інше місце.
@@ -517,24 +517,24 @@ auto inputs = run.pull("render_inputs");
 
 Після створення `Graph`, ті самі імена кінцевих точок використовуються для надсилання даних і отримання результатів.
 
-Якщо граф має кілька загальнодоступних входів або виходів, передайте ім’я кінцевої точки до `push()` або `pull()`:
+Якщо граф має кілька загальнодоступних входів або виходів, передайте ім’я кінцевої точки до `push(...)` або `pull(...)`:
 
 ```cpp
 run.push("image", simaai::neat::TensorList{image_tensor});
 run.push("metadata", simaai::neat::TensorList{metadata_tensor});
 
-auto classes = run.pull("classes");
-auto preview = run.pull("preview");
+auto classes = run.pull("classes", std::chrono::milliseconds(-1));  // -1: no time limit
+auto preview = run.pull("preview", std::chrono::milliseconds(-1));
 ```
 
 Для графа, який має рівно один загальнодоступний вхід або вихід, назва є необов’язковою під час виконання:
 
 ```cpp
 run.push(simaai::neat::TensorList{image_tensor});
-auto classes = run.pull();
+auto classes = run.pull(std::chrono::milliseconds(-1));
 ```
 
-Якщо доступно більше одного вхідного або вихідного каналу, то неіменований канал `push(...)` або `pull()` не працює і натомість відображає список доступних імен кінцевих точок, замість того, щоб намагатися вгадати, який саме канал ви мали на увазі.
+Якщо доступно більше одного вхідного або вихідного каналу, то неіменований канал `push(...)` або `pull(...)` не працює і натомість відображає список доступних імен кінцевих точок, замість того, щоб намагатися вгадати, який саме канал ви мали на увазі.
 
 ### Оголошення кінцевих точок за значенням і push списків тензорів
 
@@ -561,7 +561,7 @@ if (result) {
 - Список є одним елементом. Штамп його першого тензора пропонує `stream_name`, `frame_id`, `source_time` і `flags` елемента (`tensor.with_stamp(stamp)`); `seq` і `publish_time` записує середовище виконання.
 - Список із кількох тензорів, `run.push({a, b})`, є позиційним записом. Отриманий через pull список містить його тензори по порядку, і кожен несе штамп елемента.
 - `run.on_output("out", callback)` передає кожен вихідний елемент як `TensorList` у функцію зворотного виклику в потоці, яким володіє `Run`, замість `pull`. `run({tensor})` виконує push і чекає на вихід.
-- Перевантаження з цілочисельним тайм-аутом зберігають своє значення: `pull(100)` і `pull("out", 100)` повертають `std::optional<Sample>`.
+- Перевантаження pull з цілочисельним тайм-аутом, що повертають `std::optional<Sample>`, — `pull(100)` і `pull("out", 100)` — застаріли, як і `pull_tensors`, `pull_samples` та push-форми з `cv::Mat`; кожне з них попереджає один раз за процес. `pull(100, sample)` і `pull("out", 100, sample)` заповнюють `Sample` і залишаються: це шлях до його метаданих.
 - `pipeline/Graph.h` більше не потребує заголовків GStreamer. Він і далі включає `<gst/gst.h>`, якщо перед ним не визначено `SIMA_NEAT_GRAPH_NO_GSTREAMER`; наступний випуск прибере це включення, тож там, де ви використовуєте GStreamer, включайте `<gst/gst.h>` самостійно.
 
 У Python ті самі дієслова приймають і повертають списки Python:
@@ -584,7 +584,7 @@ else:
     print(result.error.code, result.error.message)
 ```
 
-- `run.pull(...)` і далі повертає `Sample` або `None`, а тепер ще й видає `DeprecationWarning` один раз для кожного місця виклику. У випуску, який прибере форму `Sample`, він повертатиме `PullResult`, тож переходьте на `run.pull_result(...)`.
+- `run.pull(...)` і далі повертає `Sample` або `None`, а `run.pull_tensors(...)` — список; обидва видають `DeprecationWarning` один раз для кожного місця виклику. У випуску, який прибере форму `Sample`, `run.pull(...)` повертатиме `PullResult`, тож переходьте на `run.pull_result(...)`.
 - `run.push(...)`, `run.try_push(...)` і `run([tensor])` приймають список, як у C++; окремий Tensor відхиляється.
 - `run.on_output("out", callback)` викликає `callback(tensors)` зі списком кожного елемента в потоці, яким володіє `Run`, утримуючи GIL. `run.stop()`, `run.close()` і відпускання останнього посилання на `Run` звільняють GIL, поки чекають на колбек, що виконується. Якщо колбек кидає виняток, доставка завершується, виняток повідомляється через `sys.unraisablehook`, а `run.last_error()` його називає; процес продовжує працювати.
 - `run.alloc("points")` повертає Tensor межової форми, доступний для запису; заповніть його через `tensor.copy_from(array)`, а потім передайте через `run.push("points", [tensor])`: це його фіксація.
@@ -707,10 +707,10 @@ simaai::neat::Graph make_classifier(simaai::neat::Model& model) {
 Використовуйте самостійно:
 
 ```cpp
-auto classifier_route = make_classifier(model);      // create the classifier fragment
-auto run = classifier_route.build();                 // build it as a standalone application
-run.push("image", simaai::neat::TensorList{image});  // send data to its named input
-auto classes = run.pull("classes");                  // read from its named output
+auto classifier_route = make_classifier(model);                     // create the classifier fragment
+auto run = classifier_route.build();                                // build it as a standalone application
+run.push("image", simaai::neat::TensorList{image});                 // send data to its named input
+auto classes = run.pull("classes", std::chrono::milliseconds(-1));  // read from its named output
 ```
 
 Використовуйте всередині більшої програми:
@@ -811,7 +811,7 @@ nodes::Output("out");     // acceptable for small tests, but unclear in applicat
 - Використовуйте іменовані вузли `Input` та `Output`, щоб оголосити загальнодоступний інтерфейс фрагмента.
 - Використовуйте `add()` для створення прямої послідовності.
 - Використовуйте `connect()` для явного визначення топології та композиції фрагментів.
-- Використовуйте іменовані параметри `run.push("name", ...)` та `run.pull("name")` для програм із кількома вхідними або вихідними даними.
+- Використовуйте іменовані параметри `run.push("name", ...)` та `run.pull("name", ...)` для програм із кількома вхідними або вихідними даними.
 - Оголосіть параметри, з’єднання та [вузли](/develop-apps/development-workflow/node), [групи вузлів](/develop-apps/development-workflow/node#pre-built-node-groups), необхідні для вашої програми; дозвольте Neat обробляти деталі низькорівневого середовища виконання.
 
 ## Див. також

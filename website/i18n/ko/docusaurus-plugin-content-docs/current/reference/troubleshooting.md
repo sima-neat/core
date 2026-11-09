@@ -273,7 +273,7 @@ print("outputs:", run.output_names())
 
 ```python
 run.push("image", [tensor])
-sample = run.pull("detections", timeout_ms=2000)
+outputs = run.pull_result("detections", timeout_ms=2000).value()
 ```
 
 `Graph("name")`은 진단 레이블입니다. 엔드포인트를 생성하지 않습니다. 엔드포인트는 `nodes.input("name")` 및 `nodes.output("name")`에서 생성됩니다.

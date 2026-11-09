@@ -20,7 +20,7 @@ slug: /develop-apps/advanced-concepts/gstreamer_layer
 | `gst_pipeline_set_state()` | `Graph::run()` / `Run::start()` |
 | Повідомлення в автобусі. | `GraphReport::bus_messages` |
 | `appsrc` API для надсилання даних | `Run::push()` (лише для вузлів із `InputRole::Push`) |
-| `appsink`: API для отримання даних. | `Run::pull()` |
+| `appsink`: API для отримання даних. | `Run::pull(timeout)` |
 | Час обробки для кожного елемента. | `MeasureReport` від `Run::start_measurement()`. |
 
 Програма ніколи не записує рядок запуску безпосередньо, ніколи не називає елементи безпосередньо і ніколи не звертається до GStreamer C API. Усе відбувається через вузли.

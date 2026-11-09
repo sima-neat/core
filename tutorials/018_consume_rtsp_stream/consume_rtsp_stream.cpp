@@ -12,6 +12,7 @@
 
 #include <opencv2/videoio.hpp>
 
+#include <chrono>
 #include <cmath>
 #include <exception>
 #include <iostream>
@@ -100,13 +101,13 @@ int main(int argc, char** argv) {
 
     // STEP pull-frames
     for (int i = 0; i < frames; ++i) {
-      auto sample = run.pull(/*timeout_ms=*/5000);
-      if (!sample.has_value() || simaai::neat::tensors_from_sample(*sample, true).empty()) {
+      auto frame = run.pull(std::chrono::milliseconds(5000));
+      if (frame.status() == simaai::neat::PullStatus::Timeout ||
+          frame.status() == simaai::neat::PullStatus::Closed) {
         std::cout << "frame=" << i << " rtsp_timeout\n";
         break;
       }
-      const auto tensors = simaai::neat::tensors_from_sample(*sample, true);
-      const auto& shape = tensors.front().shape;
+      const auto& shape = frame.value().front().shape; // value() throws on an Error
       std::cout << "frame=" << i << " shape=[";
       for (std::size_t d = 0; d < shape.size(); ++d) {
         std::cout << shape[d] << (d + 1 < shape.size() ? ", " : "");

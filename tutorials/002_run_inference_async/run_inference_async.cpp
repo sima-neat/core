@@ -11,6 +11,7 @@
 #include <opencv2/imgproc.hpp>
 
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <exception>
 #include <filesystem>
@@ -66,10 +67,16 @@ simaai::neat::Model::Options build_options(int size) {
   return opt;
 }
 
-int top1_from_output(const simaai::neat::Sample& out) {
-  if (simaai::neat::tensors_from_sample(out, true).empty())
+// The RGB frame as a Tensor in EV74 memory, ready to push in a TensorList.
+simaai::neat::Tensor frame_tensor(const cv::Mat& rgb) {
+  return simaai::neat::Tensor::from_cv_mat(rgb, simaai::neat::ImageSpec::PixelFormat::RGB,
+                                           simaai::neat::TensorMemory::EV74);
+}
+
+int top1_from_output(const simaai::neat::TensorList& out) {
+  if (out.empty())
     throw std::runtime_error("no tensor output");
-  const simaai::neat::Mapping m = simaai::neat::tensors_from_sample(out, true).front().map_read();
+  const simaai::neat::Mapping m = out.front().map_read();
   const size_t n = m.size_bytes / sizeof(float);
   const float* p = reinterpret_cast<const float*>(m.data);
   int best = 0;
@@ -112,7 +119,7 @@ int main(int argc, char** argv) {
     simaai::neat::Graph graph;
     graph.add(model.graph(route_opt));
 
-    auto run = graph.build(std::vector<cv::Mat>{frames.front()});
+    auto run = graph.build(simaai::neat::TensorList{frame_tensor(frames.front())});
     // END STEP
 
     // STEP push-frames
@@ -120,7 +127,7 @@ int main(int argc, char** argv) {
     std::atomic<bool> producer_done{false};
     std::thread producer([&]() {
       for (const cv::Mat& f : frames) {
-        run.push(std::vector<cv::Mat>{f});
+        run.push(simaai::neat::TensorList{frame_tensor(f)});
         pushed.fetch_add(1, std::memory_order_relaxed);
       }
       run.close_input();
@@ -131,13 +138,15 @@ int main(int argc, char** argv) {
     // STEP pull-results
     int pulled = 0;
     while (pulled < n) {
-      auto out = run.pull(/*timeout_ms=*/2000);
-      if (!out.has_value()) {
+      // Timeout or Closed: no output yet. value() returns the item's tensors (throws on an Error).
+      auto out = run.pull(std::chrono::milliseconds(2000));
+      if (out.status() == simaai::neat::PullStatus::Timeout ||
+          out.status() == simaai::neat::PullStatus::Closed) {
         if (producer_done.load())
           break;
         continue;
       }
-      std::cout << "top1=" << top1_from_output(*out) << "\n";
+      std::cout << "top1=" << top1_from_output(out.value()) << "\n";
       ++pulled;
     }
     producer.join();

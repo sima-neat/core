@@ -85,7 +85,7 @@ graph.add(neat::nodes::UsbCameraInput(camera));
 graph.add(neat::nodes::Output());
 
 neat::Run run = graph.build();
-std::optional<neat::Sample> frame = run.pull(/*timeout_ms=*/5000);
+neat::TensorList frame = run.pull(std::chrono::milliseconds(5000)).value();
 ```
 
 </CodeTab>
@@ -107,7 +107,7 @@ graph.add(pyneat.nodes.usb_camera_input(camera))
 graph.add(pyneat.nodes.output())
 
 run = graph.build()
-frame = run.pull(timeout_ms=5000)
+frame = run.pull_result(timeout_ms=5000).value()
 ```
 
 </CodeTab>

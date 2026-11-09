@@ -60,6 +60,8 @@ sample.attributes["image-index"] = "42"     # reaches the Sample
 sample.attributes = {"image-time": "..."}   # replaces the whole map
 ```
 
+Python에는 아직 사용 중단되지 않은 항목별 메타데이터 경로가 없습니다. 이러한 `sample`은 사용 중단된 `Run.pull`에서 얻으며, 그 대체 API인 `Run.pull_result`는 `attributes` 없이 Tensor를 반환합니다.
+
 ## 헤더 규칙
 
 구성된 목록은 **허용 목록**입니다. 빈 목록은 캡처를 완전히 비활성화하고 기존 토폴로지와 동작을 변경하지 않습니다.

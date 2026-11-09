@@ -98,10 +98,10 @@ How `build`/`run`, execution modes, the push/pull surface, and `RunOptions` fit 
 ### Push/pull API
 
 `Run` exposes:
-- `push(...)` / `try_push(...)` for inputs (`cv::Mat`, `Tensor`, or `Sample`).
-- `pull(...)`, `pull_tensor(...)`, `pull_tensor_or_throw(...)` for outputs.
+- `push(...)` / `try_push(...)` for inputs (a `TensorList` or a `Sample`; wrap a `cv::Mat` with `Tensor::from_cv_mat(...)`).
+- `pull(timeout)` for outputs: a `Result<TensorList>` (Python: `pull_result(timeout_ms)`).
 
-If you need output metadata (timestamps, stream ids), use `pull()` to get a `Sample`. If you only need the tensor payload, use `pull_tensor()`.
+Each pulled tensor carries the item's stamp (stream name, frame id, source time). If you need the full output `Sample` with its metadata, use `pull(timeout_ms, sample)`.
 
 ### RunOptions (simple API)
 
@@ -130,19 +130,19 @@ simaai::neat::TelemetryMonitor telemetry_monitor;
 telemetry_monitor.start();
 auto scope = run.start_measurement();
 run.push(inputs);
-(void)run.pull_tensors(5000);
+(void)run.pull(std::chrono::milliseconds(5000));
 auto report = scope.stop();
 simaai::neat::Telemetry telemetry = telemetry_monitor.stop();
 std::cout << telemetry; // YAML summary
 ```
 
 ```python
-run = graph.build(tensor, run_opt)
+run = graph.build([tensor], run_opt)
 telemetry_monitor = neat.TelemetryMonitor()
 telemetry_monitor.start()
 scope = run.start_measurement()
-run.push(tensor)
-_ = run.pull_tensors(5000)
+run.push([tensor])
+_ = run.pull_result(timeout_ms=5000)
 report = scope.stop()
 telemetry = telemetry_monitor.stop()
 print(telemetry)  # YAML summary

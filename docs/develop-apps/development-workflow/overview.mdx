@@ -151,10 +151,12 @@ graph.add(model);
 graph.add(simaai::neat::nodes::Output("classes"));
 
 cv::Mat frame = /* your frame */;
+auto tensor = simaai::neat::Tensor::from_cv_mat(
+    frame, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74);
 
 auto run = graph.build();
-run.push("image", std::vector<cv::Mat>{frame});
-auto out = run.pull("classes", /*timeout_ms=*/1000);
+run.push("image", simaai::neat::TensorList{tensor});
+auto out = run.pull("classes", std::chrono::milliseconds(1000)).value();
 ```
 
 </CodeTab>
@@ -176,7 +178,7 @@ tensor = pyneat.Tensor.from_numpy(
 
 run = graph.build()
 run.push("image", [tensor])
-out = run.pull("classes", timeout_ms=1000)
+out = run.pull_result("classes", timeout_ms=1000).value()
 ```
 
 </CodeTab>
@@ -198,9 +200,8 @@ on purpose.
 | `Graph::run(Sample)` | `Sample` | `graph.run([sample])` returns a `Sample` | Use for sample-backed graph input. |
 | `Run::run(TensorList)` or `Run::run(std::vector<cv::Mat>)` | `TensorList` | `run.run([tensor])` returns a tensor list | Reusable request/response on a live `Run`. |
 | `Run::run(Sample)` | `Sample` | `run.run([sample])` returns a `Sample` | Use for bundles, stream IDs, frame IDs, or metadata. |
-| `Run::pull(...)` | `std::optional<Sample>` | `Sample` or `None` | `None` means no sample arrived before timeout or the output is closed. |
-| `Run::pull_tensors(...)` | `TensorList` | Tensor list | Use when you only want tensor payloads. |
-| `Run::pull_samples(...)` | `Sample` | `Sample` | Use when absence is exceptional and you want strict sample output. |
+| `Run::pull(timeout)` | `Result<TensorList>` | `run.pull_result(timeout_ms)` returns a `PullResult` | `Ok` with the output tensors, or `Timeout`, `Closed`, or `Error` with the reason. |
+| `Run::pull(timeout_ms, sample)` | `PullStatus`, filling `sample` | `run.pull(...)` returns a `Sample` or `None`, deprecated | Use when you need the output `Sample` and its metadata. |
 
 ## Learn the concepts
 

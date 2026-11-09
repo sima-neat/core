@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Push a Bundle Sample containing two named tensor fields and read them back.
+"""Push a Bundle Sample containing two named tensor fields and read the two fields back.
 
 Usage:
   python3 feed_multi_input_model.py [--width 64] [--height 48]
@@ -58,19 +58,21 @@ def main(argv: list[str]) -> int:
   # END STEP
 
   # STEP push-and-read
-  if not run.push(fields):
-    raise RuntimeError(f"push failed: {run.last_error()}")
-  out = run.pull(timeout_ms=1000)
-  if out is None:
-    raise RuntimeError("graph produced no output")
+  # run() pushes the bundle and returns the output Sample, a Bundle of the two fields in order,
+  # as Run::run(Sample) does in C++. Python does not expose the fields' port_name yet (it comes
+  # back empty), so the fields are printed by position.
+  out = run.run(fields, timeout_ms=1000)
   # END STEP
   # END CORE LOGIC
 
-  if not out.fields and out.tensor is None and not out.tensors:
-    raise RuntimeError("graph output has no payload")
+  if out.kind != pyneat.SampleKind.Bundle or len(out.fields) != 2:
+    raise RuntimeError("expected a two-field bundle output")
   print(f"bundle_fields={len(out.fields)}")
-  for field in out.fields:
-    print(f"  port={field.port_name} has_tensor={field.tensor is not None}")
+  for i, field in enumerate(out.fields):
+    tensors = [field.tensor] if field.tensor is not None else list(field.tensors)
+    if not tensors:
+      raise RuntimeError(f"field {i} has no tensor")
+    print(f"  field={i} shape={list(tensors[0].shape)}")
   return 0
 
 

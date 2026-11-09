@@ -20,7 +20,7 @@ Neat 框架的管線在 GStreamer 上運行。應用程式可見的幾乎所有�
 | `gst_pipeline_set_state()` | `Graph::run()` / `Run::start()` |
 | 匯流排訊息 | `GraphReport::bus_messages` |
 | `appsrc` 推送 API | `Run::push()`（僅適用於具有 `InputRole::Push` 的節點） |
-| `appsink` 拉取 API | `Run::pull()` |
+| `appsink` 拉取 API | `Run::pull(timeout)` |
 | 每個元素的定時 | 從 `Run::start_measurement()` 獲得的 `MeasureReport` |
 
 應用程式永遠不會直接編寫啟動字串，永遠不會直接命名元素，也不會觸及 GStreamer C API。所有內容都透過節點進行。

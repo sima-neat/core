@@ -23,8 +23,10 @@ Neat переміщує дані в середовищі виконання, в�
 | Запустіть модель із метаданими. | `model.run(sample)` | `model.run([sample])` | `Sample` |
 | Передавайте тензори в `Run`. | `run.push(TensorList{tensor})` | `run.push([tensor])` | `bool` |
 | Завантажте зразки в `Run`. | `run.push(sample)` | `run.push([sample])` | `bool` |
-| Отримайте лише тензорний вихід. | `run.pull_tensors(...)` | `run.pull_tensors(...)` | `TensorList` / Колекція тензорів, що нагадує список Python. |
-| Отримайте вихідні дані, зберігаючи метадані. | `run.pull(...)` або `run.pull_samples(...)` | `run.pull(...)` або `run.pull_samples(...)` | `Sample` |
+| Отримайте тензорний вихід. | `run.pull(timeout)` | `run.pull_result(timeout_ms)` | `Result<TensorList>` / `PullResult`; `value()` — це список тензорів |
+| Отримайте вихідні дані, зберігаючи метадані. | `run.pull(timeout_ms, sample)` | `run.pull_samples(...)` | `PullStatus` із заповненням `sample` / `Sample` |
+
+У Python ще немає незастарілого способу отримати метадані окремого елемента: `run.pull(...)` повертає один `Sample`, але застарів, а `run.pull_samples(...)` вибирає всі доступні елементи в один `Sample`.
 
 У Python завжди передавайте вхідні дані моделі або графа у вигляді списку або кортежу. `[tensor]` означає «один вхідний тензор». Це не створює розмірність пакета (batch).
 
@@ -150,17 +152,19 @@ auto outputs = model.run(
     /*timeout_ms=*/2000);
 ```
 
-Коли Neat збирається з підтримкою OpenCV, `Model`, `Graph` і `Run` також надають зручні перевантаження для `std::vector<cv::Mat>`. Передавайте по одному `cv::Mat` для кожного вхідного потоку:
+Коли Neat збирається з підтримкою OpenCV, `Model` і `Graph` також надають зручні перевантаження для `std::vector<cv::Mat>`. Передавайте по одному `cv::Mat` для кожного вхідного потоку. `Run` приймає `TensorList`: обгорніть зображення через `Tensor::from_cv_mat(...)`, указавши його формат пікселів і пам’ять.
 
 ```cpp
 auto model_outputs = model.run(std::vector<cv::Mat>{image});
 auto graph_outputs = graph.run(std::vector<cv::Mat>{image});
 
 auto run = graph.build();
-run.push("image", std::vector<cv::Mat>{image});
+run.push("image", simaai::neat::TensorList{simaai::neat::Tensor::from_cv_mat(
+                      image, simaai::neat::ImageSpec::PixelFormat::BGR,
+                      simaai::neat::TensorMemory::EV74)});
 ```
 
-Віддавайте перевагу використанню `Tensor::from_cv_mat(...)`, коли в прикладі необхідно явно вказати формат пікселів, обсяг пам’яті або час існування. Використовуйте зручну перевантажену версію OpenCV, коли параметри графа/моделі вже описують структуру вхідних даних.
+Віддавайте перевагу використанню `Tensor::from_cv_mat(...)`, коли в прикладі необхідно явно вказати формат пікселів, обсяг пам’яті або час існування. Використовуйте зручні перевантаження OpenCV для `Model` і `Graph`, коли параметри графа/моделі вже описують структуру вхідних даних.
 
 ## Читайте про тензорні скорочення.
 
@@ -312,16 +316,17 @@ run.push("image", [sample])
 
 Якщо в багатопотоковому графі немає `stream_id`, він не зможе відображати справедливу пропускну здатність для кожного потоку. Присвойте кожному потоку назву, перш ніж налаштовувати його.
 
-### Зчитано отримані зразки.
+### Зчитайте отримані виходи.
+
+`run.pull_result(...)` повертає тензори виходу (поля набору — по порядку); кожен містить `stamp` елемента, чиї `stream_name` і `frame_id` відповідають `stream_id` і `frame_id` зразка `Sample`.
 
 ```python
-sample = run.pull("detections", timeout_ms=2000)
+result = run.pull_result("detections", timeout_ms=2000)
 
-if sample is not None:
-    print(sample.kind, sample.stream_id, sample.frame_id)
-    if sample.kind == pyneat.SampleKind.TensorSet:
-        for tensor in sample.tensors:
-            print(tensor.shape, tensor.dtype)
+if result:
+    for tensor in result.value():
+        stamp = tensor.stamp
+        print(stamp.stream_name, stamp.frame_id, tensor.shape, tensor.dtype)
 ```
 
 ## Зрозумійте різні типи корисних даних.

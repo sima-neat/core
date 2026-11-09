@@ -50,14 +50,17 @@ def main(argv: list[str]) -> int:
     raise RuntimeError(f"push failed: {run.last_error()}")
   # END STEP
   # STEP pull-and-verify
-  out = run.pull("out", 2000)
+  # The pulled tensors carry the item's Stamp: the pushed stream_id, frame_id and pts_ns
+  # come back as its stream_name, frame_id and source_time.
+  result = run.pull_result("out", 2000)
   run.close()
-  if out is None:
-    raise RuntimeError("graph produced no output")
+  if not result:
+    raise RuntimeError(f"graph produced no output: {result.error.message}")
+  stamp = result.value()[0].stamp
   # END STEP
   # END CORE LOGIC
 
-  print(f"stream_id={out.stream_id} frame_id={out.frame_id} pts_ns={out.pts_ns}")
+  print(f"stream_id={stamp.stream_name} frame_id={stamp.frame_id} pts_ns={stamp.source_time.ns}")
   return 0
 
 

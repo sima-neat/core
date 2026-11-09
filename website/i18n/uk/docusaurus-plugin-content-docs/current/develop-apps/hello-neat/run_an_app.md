@@ -210,7 +210,7 @@ run = graph.build()
 try:
     run.push("image", [tensor])
     run.close_input()
-    outputs = run.pull_tensors("detections", timeout_ms=2000)
+    outputs = run.pull_result("detections", timeout_ms=2000).value()
 finally:
     run.close()
 ```
@@ -222,14 +222,14 @@ finally:
 neat::Run run = graph.build();
 run.push("image", neat::TensorList{input});
 run.close_input();
-neat::TensorList outputs = run.pull_tensors("detections", /*timeout_ms=*/2000);
+neat::TensorList outputs = run.pull("detections", std::chrono::milliseconds(2000)).value();
 run.close();
 ```
 
 </CodeTab>
 </CodeTabs>
 
-`build()` перетворює загальнодоступний граф в один виконуваний граф для середовища виконання, зберігаючи назви ваших вузлів. Потім ви `push` вхідні дані в іменовані вхідні дані, викликаєте `close_input()`, коли більше не надходить вхідних даних, і `pull` результати з іменованих вихідних даних із заданим часом очікування. `pull_tensors` повертає `TensorList` — тензор зі структурою, яку б створив `Model.run` — тут це об’єднаний вихід YOLOv8 `BBOX`.
+`build()` перетворює загальнодоступний граф в один виконуваний граф для середовища виконання, зберігаючи назви ваших вузлів. Потім ви `push` вхідні дані в іменовані вхідні дані, викликаєте `close_input()`, коли більше не надходить вхідних даних, і `pull` результати з іменованих вихідних даних із заданим часом очікування. `pull` повертає `Result<TensorList>` (Python: `pull_result` повертає `PullResult`), а його `value()` — це `TensorList` зі структурою, яку б створив `Model.run`; тут це об’єднаний вихід YOLOv8 `BBOX`. `value()` генерує виняток, якщо вихід не надійшов: через тайм-аут, закритий потік або помилку.
 
 ### 7. Розшифруйте вміст коробок.
 
@@ -341,7 +341,7 @@ def main() -> int:
     try:
         run.push("image", [tensor])
         run.close_input()
-        outputs = run.pull_tensors("detections", timeout_ms=2000)
+        outputs = run.pull_result("detections", timeout_ms=2000).value()
     finally:
         run.close()
 
@@ -450,7 +450,7 @@ int main() {
   neat::Run run = graph.build();
   run.push("image", neat::TensorList{input});
   run.close_input();
-  neat::TensorList outputs = run.pull_tensors("detections", /*timeout_ms=*/2000);
+  neat::TensorList outputs = run.pull("detections", std::chrono::milliseconds(2000)).value();
   run.close();
 
   neat::TensorList decoded = neat::decode_bbox(outputs);
@@ -501,7 +501,7 @@ dk build/sima_neat_app
 Інтерфейси прикладного програмування (API) безпосередньо відображаються на цю структуру:
 
 - `Graph` містить схему взаємодії застосунку; `graph.add(...)` додає кожен крок у відповідному порядку.
-- Вказані вхідні та вихідні дані стають кінцевими точками середовища виконання: `run.push("image", ...)` і `run.pull_tensors("detections")`.
+- Вказані вхідні та вихідні дані стають кінцевими точками середовища виконання: `run.push("image", ...)` і `run.pull("detections", ...)` (Python: `run.pull_result("detections", ...)`).
 - `Model` — це той самий фрагмент, який ви б викликали безпосередньо за допомогою `Model.run`; тут він виконується як один вузол усередині програми.
 
 ## Наступні кроки

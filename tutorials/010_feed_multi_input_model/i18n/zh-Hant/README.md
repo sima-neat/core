@@ -17,7 +17,7 @@
 
 許多實際應用程式在每次推論事件中會處理多個輸入。Neat 將其表示為一個「組合樣本」（bundle sample）：一個單一的 `Sample`，其 `fields` 列表包含多個具名稱的張量有效載體，每個有效載體都可以透過一個 `port_name` 來存取。執行階段將具名稱的欄位組合在一起，作為一個邏輯事件，因此 `left` 和 `right`（或影像和中繼資料）在整個管線中保持對齊。
 
-本章將建立一個張量輸入/張量輸出的圖，將兩個具名稱的浮點張量組合在一起，將組合推送到管線中，然後讀取具名稱的欄位。在本章結束時，您將建立一個多欄位樣本，並確認兩個欄位都已完整地通過了整個流程，且其連接埠名稱保持不變。
+本章將建立一個張量輸入/張量輸出的圖，將兩個具名稱的浮點張量組合在一起，將組合推送到管線中，然後讀取欄位。在本章結束時，您將建立一個多欄位樣本，並確認兩個欄位都已依序完整地通過了整個流程。
 
 ### 設定張量輸入 {#step-configure-tensor-input}
 
@@ -37,15 +37,15 @@
 
 **C++：** `make_bundle_sample({...})` 將具名稱的欄位包裝到一個 `Sample` 中，其 `kind` 為 `Bundle`。
 
-**Python：** 具名稱的樣本列表會直接傳遞到 `push(...)`；pyneat 會為您建立組合封套。
+**Python：** 具名稱的樣本列表會直接傳遞到 `run(...)`；pyneat 會為您建立組合封套。
 
 ### 推送組合並讀取它 {#step-push-and-read}
 
-最後，將組合推送到管線中並檢查結果。輸出本身也是一個組合 `Sample`，因此我們讀取 `out.fields`，而不是將其視為單一的張量——`out.fields.size()` 應該是 `2`，並且每個欄位都包含 `port_name` 和一個張量有效載體。
+最後，將組合推送到管線中並檢查結果。輸出本身也是一個組合 `Sample`，因此我們讀取 `out.fields`，而不是將其視為單一的張量——`out.fields.size()` 應該是 `2`，並且每個欄位都包含一個張量有效載體。欄位的 `port_name` 目前還不會傳回：它是空的。
 
 **C++：**`run.run(Sample{bundle}, timeout_ms)` 會傳回一個 `Sample`。由於邏輯結果具有多個欄位，因此傳回的 `Sample` 本身就是一個 `Bundle`，因此我們檢查 `out.kind == SampleKind::Bundle` 並迭代 `out.fields`，而不是 `front()`（這會表示「bundle 內的第一個欄位」）。
 
-**Python：**`run.push(fields)`，然後 `run.pull(timeout_ms=...)` 會傳回輸出樣本；迭代 `out.fields` 並讀取每個 `field.port_name` 和 `field.tensor`。
+**Python：**`run.run(fields, timeout_ms=...)` 會推送具名稱的樣本並傳回輸出樣本，與 C++ 相同；Python 目前尚未提供欄位的 `port_name`（它是空的），因此範例會依位置輸出每個欄位的張量形狀。
 
 ## Run
 
@@ -74,12 +74,12 @@ python3 share/sima-neat/tutorials/010_feed_multi_input_model/feed_multi_input_mo
 
 ```text
 bundle_fields=2
-  field=left has_tensor=yes
-  field=right has_tensor=yes
+  field=bundle has_tensor=yes
+  field=bundle has_tensor=yes
 [OK] 010_feed_multi_input_model
 ```
 
-（Python 建置會以 `port=left has_tensor=True` 行的形式輸出相同的欄位計數。）若要將本章的 C++ 原始碼整合到您自己的專案中，並使用自訂的 `CMakeLists.txt`（不需要額外的資料夾），請參閱登陸頁面上的 [如何執行教學](/tutorials#compile-a-copy-yourself)。
+（C++ 建置會以欄位的 `port_name` 標示欄位，若無則用 `stream_label`，再無則用位置，因此在 `SIMA_NEAT_BACKEND=dataflow` 下標籤會是 `field_0` 與 `field_1`。Python 建置會輸出 `bundle_fields=2`、`field=0 shape=[48, 64, 3]` 與 `field=1 shape=[48, 64, 3]`。）若要將本章的 C++ 原始碼整合到您自己的專案中，並使用自訂的 `CMakeLists.txt`（不需要額外的資料夾），請參閱登陸頁面上的 [如何執行教學](/tutorials#compile-a-copy-yourself)。
 
 ## In Practice
 

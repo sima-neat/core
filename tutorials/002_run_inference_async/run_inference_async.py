@@ -23,14 +23,6 @@ import numpy as np
 import cv2
 
 
-def first_tensor(sample):
-  if sample.tensor is not None:
-    return sample.tensor
-  if sample.kind == pyneat.SampleKind.TensorSet and sample.tensors:
-    return sample.tensors[0]
-  raise RuntimeError("no tensor output")
-
-
 def build_options(size: int) -> pyneat.ModelOptions:
   opt = pyneat.ModelOptions()
   opt.preprocess.kind = pyneat.InputKind.Image
@@ -90,12 +82,13 @@ def main(argv: list[str]) -> int:
   # STEP pull-results
   pulled = 0
   while True:
-    sample = run.pull(timeout_ms=2000)
-    if sample is None:
+    # Timeout or Closed: no output yet. value() is the item's tensors (raises on an Error).
+    result = run.pull_result(timeout_ms=2000)
+    if result.status in (pyneat.PullStatus.Timeout, pyneat.PullStatus.Closed):
       if not thread.is_alive():
         break
       continue
-    top1 = int(np.argmax(first_tensor(sample).to_numpy().reshape(-1)))
+    top1 = int(np.argmax(result.value()[0].to_numpy().reshape(-1)))
     print(f"top1={top1}")
     pulled += 1
   # END STEP

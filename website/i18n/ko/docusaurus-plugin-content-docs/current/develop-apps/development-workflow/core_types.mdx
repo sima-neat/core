@@ -23,8 +23,10 @@ Neat는 런타임 데이터를 다음 두 가지 공개 유형으로 처리합�
 | 메타데이터와 함께 모델 실행 | `model.run(sample)` | `model.run([sample])` | `Sample` |
 | `Run`에 텐서 푸시 | `run.push(TensorList{tensor})` | `run.push([tensor])` | `bool` |
 | `Run`에 샘플 푸시 | `run.push(sample)` | `run.push([sample])` | `bool` |
-| 텐서 전용 출력 가져오기 | `run.pull_tensors(...)` | `run.pull_tensors(...)` | `TensorList` / Python 리스트와 유사한 텐서 컬렉션 |
-| 메타데이터를 유지하는 출력 가져오기 | `run.pull(...)` 또는 `run.pull_samples(...)` | `run.pull(...)` 또는 `run.pull_samples(...)` | `Sample` |
+| 텐서 출력 가져오기 | `run.pull(timeout)` | `run.pull_result(timeout_ms)` | `Result<TensorList>` / `PullResult`; `value()`는 텐서 리스트입니다 |
+| 메타데이터를 유지하는 출력 가져오기 | `run.pull(timeout_ms, sample)` | `run.pull_samples(...)` | `sample`을 채우는 `PullStatus` / `Sample` |
+
+Python에는 아직 사용 중단되지 않은 항목별 메타데이터 pull이 없습니다. `run.pull(...)`은 `Sample` 하나를 반환하지만 사용 중단되었고, `run.pull_samples(...)`는 사용 가능한 모든 항목을 하나의 `Sample`로 모두 가져옵니다.
 
 Python에서는 항상 모델 또는 그래프 입력을 리스트 또는 튜플로 전달합니다. `[tensor]`는 "하나의 입력"을 의미합니다. 배치 차원을 생성하지 않습니다.
 
@@ -150,17 +152,19 @@ auto outputs = model.run(
     /*timeout_ms=*/2000);
 ```
 
-Neat가 OpenCV 지원을 포함하여 빌드되면, `Model`, `Graph` 및 `Run`도 `std::vector<cv::Mat>`에 대한 편리한 오버로드를 제공합니다. 각 입력에 대해 하나의 `cv::Mat`를 전달합니다.
+Neat가 OpenCV 지원을 포함하여 빌드되면, `Model`과 `Graph`도 `std::vector<cv::Mat>`에 대한 편리한 오버로드를 제공합니다. 각 입력에 대해 하나의 `cv::Mat`를 전달합니다. `Run`은 `TensorList`를 받으므로 `Tensor::from_cv_mat(...)`로 이미지를 감싸고 픽셀 형식과 메모리를 명시합니다.
 
 ```cpp
 auto model_outputs = model.run(std::vector<cv::Mat>{image});
 auto graph_outputs = graph.run(std::vector<cv::Mat>{image});
 
 auto run = graph.build();
-run.push("image", std::vector<cv::Mat>{image});
+run.push("image", simaai::neat::TensorList{simaai::neat::Tensor::from_cv_mat(
+                      image, simaai::neat::ImageSpec::PixelFormat::BGR,
+                      simaai::neat::TensorMemory::EV74)});
 ```
 
-예제에서 픽셀 형식, 메모리 또는 수명을 명시적으로 지정해야 하는 경우 `Tensor::from_cv_mat(...)`을 사용하는 것이 좋습니다. 그래프/모델 옵션에서 이미 입력 계약을 설명하는 경우 OpenCV의 편리한 오버로드를 사용하십시오.
+예제에서 픽셀 형식, 메모리 또는 수명을 명시적으로 지정해야 하는 경우 `Tensor::from_cv_mat(...)`을 사용하는 것이 좋습니다. 그래프/모델 옵션에서 이미 입력 계약을 설명하는 경우 `Model`과 `Graph`의 OpenCV 편리한 오버로드를 사용하십시오.
 
 ## 텐서 계약 확인
 
@@ -312,16 +316,17 @@ run.push("image", [sample])
 
 다중 스트림 그래프에 `stream_id`가 없으면 각 스트림별 공정한 처리량을 보고할 수 없습니다. 각 스트림을 조정하기 전에 이름을 지정하십시오.
 
-### 추출된 샘플 읽기
+### 가져온 출력 읽기
+
+`run.pull_result(...)`는 출력의 텐서(번들의 경우 필드 순서대로)를 반환합니다. 각 텐서는 항목의 `stamp`를 담으며, 그 `stream_name`과 `frame_id`는 `Sample`의 `stream_id`와 `frame_id`입니다.
 
 ```python
-sample = run.pull("detections", timeout_ms=2000)
+result = run.pull_result("detections", timeout_ms=2000)
 
-if sample is not None:
-    print(sample.kind, sample.stream_id, sample.frame_id)
-    if sample.kind == pyneat.SampleKind.TensorSet:
-        for tensor in sample.tensors:
-            print(tensor.shape, tensor.dtype)
+if result:
+    for tensor in result.value():
+        stamp = tensor.stamp
+        print(stamp.stream_name, stamp.frame_id, tensor.shape, tensor.dtype)
 ```
 
 ## 페이로드 유형 이해

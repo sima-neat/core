@@ -277,7 +277,7 @@ public:
    * model route boundary hints. `Graph("name")` is only a label/debug name and does not create an
    * endpoint. All overloads lower through the same
    * ExecutionGraphPlan/RunCore path, preserving named endpoints for diagnostics, save/load,
-   * visualization, and named `Run::push()` / `Run::pull()`.
+   * visualization, and named `Run::push(name, ...)` / `Run::pull(name, ...)`.
    * Passing a Node already present in this Graph reuses its vertex, which supports fan-out without
    * duplicating the logical Node.
    */
@@ -446,8 +446,8 @@ public:
    * or `StillImageInput` — no `push()` from user code needed). Push pipelines should prefer
    * `build(inputs, ...)` so caps can be derived from the actual input.
    * Final launch-name integrity is always checked. Input-dependent connected segments may be
-   * materialized later, so their structured build error can surface on the first `push()` or
-   * `pull()` instead of this call.
+   * materialized later, so their structured build error can surface on the first `push(...)` or
+   * `pull(...)` instead of this call.
    */
   Run build(const RunOptions& opt = {});
   /**

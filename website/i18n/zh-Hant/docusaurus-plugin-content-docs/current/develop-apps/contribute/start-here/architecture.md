@@ -237,7 +237,7 @@ Runner 保留記憶體擁有權與同步權威。Core 不新增編碼器執行�
 - **解碼/導入：** 檔案或 RTSP -> 拆分/多工/解析 -> 解碼 -> 轉換/caps -> appsink -> C++ 消費者
 - **驗證：** 建置 + 解析 + 預滾動（暫停）以儘早捕獲協商問題
 - **提供 RTSP：** 使用 `appsrc` 將合成幀推送到 RTSP 伺服器管線
-- **影像/影片張量適配器：** 影像/影片/RTSP -> 解碼 -> 轉換/縮放 -> `add_output_tensor(...)` -> `Run::pull_tensors()`
+- **影像/影片張量適配器：** 影像/影片/RTSP -> 解碼 -> 轉換/縮放 -> `add_output_tensor(...)` -> `Run::pull(timeout)`
 - **教學：** 從 [教學指南](/tutorials) 開始，以獲得可執行的、有序的學習路徑
 
 ### 標準生產管線（權威來源）
@@ -656,7 +656,7 @@ GStreamer 域/程式碼僅用於除錯。在 `NeatError` 建立時，會添加�
 對於建置（輸入）流程，`GraphReport.build_adaptation` 會記錄已解析的形狀原則/功能、種子/最大限制的來源、位元組保護的來源以及應用/跳過的調整動作。
 對於非拋出型執行階段拉取，`PullError.code` 使用相同的分類法。
 輸入串流工作程式失敗會保留類型化的錯誤程式碼並報告到
-工作程式執行緒邊界，因此 `Run::pull()` 和 Python 例外翻譯器
+工作程式執行緒邊界，因此 `Run::pull(...)`（透過 `Result::value()`）和 Python 例外翻譯器
 會顯示相同的 `NeatError`。
 
 支援優先順序是：
@@ -962,7 +962,7 @@ graph.add(simaai::neat::nodes::Output());
 `Run` 擁有輸入/輸出佇列和一個輸入執行緒：
 
 * `push(...)` 將輸入排入佇列（根據 `RunOptions::overflow_policy` 進行阻塞或丟棄）
-* `pull(...)` 從應用程式接收器中取出 `Sample` 輸出
+* `pull(...)` 從應用程式接收器中取出輸出：`Result<TensorList>`，或由 `pull(timeout_ms, sample)` 取得的 `Sample`
 * `try_push(...)` 是非阻塞的（如果佇列已滿，則傳回 false）
 
 `RunOptions::backend` 用於在相同的 `Run` 介面之後選擇執行環境。在 Neat Dataflow 後端（以
@@ -972,9 +972,11 @@ graph.add(simaai::neat::nodes::Output());
 副本被釋放。輸入的形狀由其宣告、種子或第一次 push 決定，之後即強制套用。`push_holder` 僅支援 GStreamer；
 由多個張量組成的項目會繫結到欄位名稱依位置命名的記錄連接埠。
 
-TensorList 動詞在兩種執行環境上皆可使用；除了 `alloc` 之外，沒有任何 `Run` 動詞接受或傳回單一 Tensor。`push(list)` 與 `push(name, list)` 會 push 一個項目：一個張量為葉節點，多個張量為依位置命名的記錄，且第一個張量的戳記會提議該項目的 `stream_name`、`frame_id`、`source_time` 與 `flags`。採用 `std::chrono::milliseconds` 逾時的 `pull(name, timeout)` 會傳回 `Result<TensorList>`，其狀態為四種 `PullStatus` 結果之一；`int` 多載仍傳回 `std::optional<Sample>`。`run(list)` 會 push 並等待輸出；`on_output(name, callback)` 會在 `Run` 擁有的執行緒上將每個輸出項目以 `TensorList` 傳遞給回呼（之後該輸出無法再 pull）；`alloc(name)` 會為以 `Graph::input(name, shape, dtype)` 宣告的輸入出借可寫入的 Tensor，並以 `push(name, {tensor})` 提交：在 Dataflow 執行環境上是無需複製即可發布的池槽位，在 GStreamer 上是 CPU 記憶體。計數器仍透過 `start_measurement()` 取得，`Run` 沒有公開的 `stats()`。每個 pull 到的張量都會在 `Tensor::envelope` 中帶有該項目的 `Stamp`；執行環境寫入 `seq` 與 `publish_time`。`Sample` 介面是它的投影（`to_sample`、`to_tensor`）：`input_seq = seq - 1`、`orig_input_seq = input_seq`，`pts_ns` 取自 `source_time`。被 push 的 `input_seq` 或 `orig_input_seq` 在戳記中沒有對應欄位，因此不會在 Dataflow 執行環境上傳遞，而 GStreamer 不會記錄 `publish_time`。
+TensorList 動詞在兩種執行環境上皆可使用；除了 `alloc` 之外，沒有任何 `Run` 動詞接受或傳回單一 Tensor。`push(list)` 與 `push(name, list)` 會 push 一個項目：一個張量為葉節點，多個張量為依位置命名的記錄，且第一個張量的戳記會提議該項目的 `stream_name`、`frame_id`、`source_time` 與 `flags`。採用 `std::chrono::milliseconds` 逾時的 `pull(name, timeout)` 會傳回 `Result<TensorList>`，其狀態為四種 `PullStatus` 結果之一；`pull(timeout_ms, sample)` 及其具名形式會填入 `Sample`。`run(list)` 會 push 並等待輸出；`on_output(name, callback)` 會在 `Run` 擁有的執行緒上將每個輸出項目以 `TensorList` 傳遞給回呼（之後該輸出無法再 pull）；`alloc(name)` 會為以 `Graph::input(name, shape, dtype)` 宣告的輸入出借可寫入的 Tensor，並以 `push(name, {tensor})` 提交：在 Dataflow 執行環境上是無需複製即可發布的池槽位，在 GStreamer 上是 CPU 記憶體。計數器仍透過 `start_measurement()` 取得，`Run` 沒有公開的 `stats()`。每個 pull 到的張量都會在 `Tensor::envelope` 中帶有該項目的 `Stamp`；執行環境寫入 `seq` 與 `publish_time`。`Sample` 介面是它的投影（`to_sample`、`to_tensor`）：`input_seq = seq - 1`、`orig_input_seq = input_seq`，`pts_ns` 取自 `source_time`。被 push 的 `input_seq` 或 `orig_input_seq` 在戳記中沒有對應欄位，因此不會在 Dataflow 執行環境上傳遞，而 GStreamer 不會記錄 `publish_time`。
 
-Python 繫結（`python/src/module.cpp`）以 Python 清單提供相同的動詞：`Run.push`、`Run.try_push` 與 `Run(tensors)` 接受清單，`Run.pull_result(name, timeout_ms)` 會傳回 `PullResult`（`Result<TensorList>`，其 `value()` 為清單），而 `Run.pull` 在一個版本內仍傳回 `Sample | None` 並發出 `DeprecationWarning`。它也提供 `RunOptions.backend`、`Stamp`（凍結的值）、記錄存取子、`Graph.input`/`Graph.output`、`Run.alloc`（以 `Tensor.copy_from` 填入）以及 `to_tensor`/`to_sample` 投影。`Run.on_output` 會在 `Run` 的傳遞執行緒上執行 Python 回呼，由該執行緒取得 GIL；所有會等待該執行緒的繫結都會先釋放 GIL：`stop`、`close`、`close_input`、Python `Run` 的釋放（弱參照回呼會在 nanobind 銷毀它之前將其關閉），以及直譯器結束（`atexit` 掛鉤會在終結之前停止這類 `Run`）。回呼擲出的例外會交給 `sys.unraisablehook`，並如同 C++ 例外一樣結束傳遞（`last_error()`）。
+被 TensorList 動詞取代的 `Run` 形式已標示為 `[[deprecated]]`，並在一個版本內仍可運作：四個 `cv::Mat` `push`/`try_push` 多載、傳回 `std::optional<Sample>` 的 `int` pull、`pull_tensors` 與 `pull_samples`。每個屬性都會指出其替代方案，且每種形式在一個處理程序中第一次被呼叫時，會向 stderr 寫入一行 `[WARN] Run::<form> is deprecated`；Core 自身的呼叫端使用不會發出警告的內部進入點。請以 `TensorList{Tensor::from_cv_mat(mat, format, memory)}` push OpenCV 影像，並以 `pull(timeout)` 進行 pull。`pull(timeout_ms, sample, error)` 及其具名形式並未棄用：它們是取得 `Sample` 中繼資料（`attributes`、`caps_string`、`dts_ns`、`duration_ns`、Bundle 欄位名稱）的途徑，而 `Result<TensorList>` 不攜帶這些資料。在 `SIMANEAT_STRICT_WARNINGS` 下，`-Wno-error=deprecated-declarations` 可避免這些警告使 Core 自身的目標建置失敗。
+
+Python 繫結（`python/src/module.cpp`）以 Python 清單提供相同的動詞：`Run.push`、`Run.try_push` 與 `Run(tensors)` 接受清單，`Run.pull_result(name, timeout_ms)` 會傳回 `PullResult`（`Result<TensorList>`，其 `value()` 為清單），而 `Run.pull` 在一個版本內仍傳回 `Sample | None` 並發出 `DeprecationWarning`；`Run.pull_tensors` 也會發出警告。它也提供 `RunOptions.backend`、`Stamp`（凍結的值）、記錄存取子、`Graph.input`/`Graph.output`、`Run.alloc`（以 `Tensor.copy_from` 填入）以及 `to_tensor`/`to_sample` 投影。`Run.on_output` 會在 `Run` 的傳遞執行緒上執行 Python 回呼，由該執行緒取得 GIL；所有會等待該執行緒的繫結都會先釋放 GIL：`stop`、`close`、`close_input`、Python `Run` 的釋放（弱參照回呼會在 nanobind 銷毀它之前將其關閉），以及直譯器結束（`atexit` 掛鉤會在終結之前停止這類 `Run`）。回呼擲出的例外會交給 `sys.unraisablehook`，並如同 C++ 例外一樣結束傳遞（`last_error()`）。
 
 閒置的 `Run` 仍可繼續使用；操作期限限制的是等待時間，而非提交輸入之間的暫停。
 
@@ -1436,12 +1438,14 @@ SSD 效能設定組合要求後端 p99 不超過 0.7 ms、階段 p99 不超過 0
 
 ## 輸出處理
 
-`Run::pull()` 會產生一個 `Sample`，其中可能包含：
+`Run::pull(timeout)` 會產生一個 `Result<TensorList>`：該項目的張量（Bundle 的欄位依序排列），每個張量都攜帶該項目的 `Stamp`。以機器學習為中心的流程請使用它。
+
+`Run::pull(timeout_ms, sample)` 會填入一個 `Sample`，其中可能包含：
 
 * 一個 `Tensor` 有效載體（`SampleKind::Tensor`）
 * 一個包含多個輸出的集合（`SampleKind::Bundle`）
 
-在您希望使用張量負載而非完整的 `Sample` 封包時，對於以機器學習為中心的流程，請使用 `Run::pull_tensors(...)`。
+當您需要包含中繼資料的完整 `Sample` 封包，而非張量負載時，請使用它。
 
 ---
 
@@ -1480,7 +1484,7 @@ SSD 效能設定組合要求後端 p99 不超過 0.7 ms、階段 p99 不超過 0
 
 名稱完整性是 `build()` 的一部分，並且不依賴於先前的 `validate()` 呼叫。名稱在一個已實體的管線區段中是唯一的，因為框架查找使用遞迴簡短名稱。單獨解析的連接區段可以使用相同的名稱。框架會拒絕衝突，而不是重新命名它們，因為名稱可以參與填充和路由表達式。
 
-取決於輸入的連接區段可以在第一個輸入上實體化。因此，它們的建置失敗會在第一次 `push()` 或 `pull()` 上報告，並保留原始的 `GraphReport`。
+取決於輸入的連接區段可以在第一個輸入上實體化。因此，它們的建置失敗會在第一次 `push(...)` 或 `pull(...)` 上報告，並保留原始的 `GraphReport`。
 
 ---
 

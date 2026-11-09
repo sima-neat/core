@@ -74,11 +74,11 @@ def main(argv: list[str]) -> int:
 
     # STEP pull-frames
     for i in range(args.frames):
-        frame_sample = run.pull(timeout_ms=5000)
-        if frame_sample is None or not frame_sample.tensors:
+        result = run.pull_result(timeout_ms=5000)
+        if result.status in (pyneat.PullStatus.Timeout, pyneat.PullStatus.Closed):
             print(f"frame={i} rtsp_timeout")
             break
-        frame_tensor = frame_sample.tensors[0]
+        frame_tensor = result.value()[0]  # value() raises on an Error
         print(f"frame={i} shape={list(frame_tensor.shape)}")
     # END STEP
     # END CORE LOGIC

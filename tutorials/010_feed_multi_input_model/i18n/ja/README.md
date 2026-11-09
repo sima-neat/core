@@ -17,7 +17,7 @@
 
 多くの実際のアプリケーションでは、1回の推論処理で複数の入力を使用します。 Neat これを**バンドルサンプル**として表現します。これは単一のものです。 `Sample` 誰の `fields` リストには複数の名前付きテンソルペイロードが含まれており、それぞれにアドレスが割り当てられています。 `port_name`ランタイムは、指定されたフィールドをまとめて1つの論理的なイベントとして保持します。 `left` そして `right` (または画像とメタデータ) がパイプライン全体を通して整合性を保ちます。
 
-この章では、テンソルを入力として受け取り、テンソルを出力するグラフを構築し、2つの名前付きの浮動小数点テンソルをまとめて、パイプラインを通して処理し、名前付きフィールドを読み出します。最終的には、複数のフィールドを持つサンプルを構築し、両方のフィールドがポート名を含めて変更されずに処理されたことを確認します。
+この章では、テンソルを入力として受け取り、テンソルを出力するグラフを構築し、2つの名前付きの浮動小数点テンソルをまとめて、パイプラインを通して処理し、フィールドを読み出します。最終的には、複数のフィールドを持つサンプルを構築し、両方のフィールドが順序どおりに往復処理されたことを確認します。
 
 ### テンソル入力の設定 {#step-configure-tensor-input}
 
@@ -35,15 +35,15 @@
 
 それでは、複数の入力をまとめてイベントを作成します。各入力には、次のように名前が付けられます。 `make_tensor_sample(port_name, tensor)`そして、それらの名前付きフィールドは、モデルがポートを通じて扱う対象となります。 `left` ～で満たされています `1.0` そして `right` ～とともに `2.0` そのため、移動中にそれらを区別することができます。
 
-**C++:** `make_bundle_sample({...})` 指定されたフィールドをまとめて処理します。 `Sample` 誰の `kind` は `Bundle`**Python:** 名前付きのサンプルの一覧が、直接渡されます。 `push(...)`; pyneat が、バンドルをまとめる処理を行います。
+**C++:** `make_bundle_sample({...})` 指定されたフィールドをまとめて処理します。 `Sample` 誰の `kind` は `Bundle`**Python:** 名前付きサンプルの一覧を `run(...)` に直接渡すと、pyneat がバンドルのエンベロープを作成します。
 
 ### バンドルをプッシュし、その内容を読み出します。 {#step-push-and-read}
 
-最後に、バンドルを送信して結果を確認します。出力自体もバンドルです。 `Sample`なので、私たちは読みました。 `out.fields` 単一のテンソルとして扱うのではなく、 `out.fields.size()` ～すべきである `2`、そして各フィールドは次のような情報を含みます。 `port_name` およびテンソルペイロード。
+最後に、バンドルを送信して結果を確認します。出力自体もバンドルの `Sample` なので、単一のテンソルとして扱わずに `out.fields` を読み取ります。`out.fields.size()` は `2` になり、各フィールドにはテンソルペイロードが含まれます。フィールドの `port_name` はまだ戻らず、空です。
 
 **C++:** `run.run(Sample{bundle}, timeout_ms)` 1つを返します `Sample`論理的な結果には複数のフィールドがあるため、返された `Sample` それ自体が `Bundle` — そこで確認します `out.kind == SampleKind::Bundle` そして繰り返す `out.fields`ではありません `front()` （これは「バンドル内の最初のフィールド」という意味になります）。
 
-**Python:** `run.push(fields)` それから `run.pull(timeout_ms=...)` 出力サンプルを返します。反復処理を行います。 `out.fields` そして、それぞれを読みます `field.port_name` そして `field.tensor`.
+**Python:** `run.run(fields, timeout_ms=...)` は名前付きのサンプルをプッシュし、C++ と同様に出力サンプルを返します。Python はフィールドの `port_name` をまだ公開していない（空です）ため、この例では各フィールドのテンソルの形状を位置順に出力します。
 
 ## Run
 
@@ -72,12 +72,12 @@ python3 share/sima-neat/tutorials/010_feed_multi_input_model/feed_multi_input_mo
 
 ```text
 bundle_fields=2
-  field=left has_tensor=yes
-  field=right has_tensor=yes
+  field=bundle has_tensor=yes
+  field=bundle has_tensor=yes
 [OK] 010_feed_multi_input_model
 ```
 
-（Pythonのビルドでは、`port=left has_tensor=True` の行と同じフィールド数が表示されます。）この章のC++ソースコードをカスタムの `CMakeLists.txt` を使って独自のプロジェクトに組み込むには（追加のフォルダーは不要です）、ランディングページの[チュートリアルの実行方法](/tutorials#compile-a-copy-yourself)を参照してください。
+（C++ のビルドはフィールドを `port_name`、なければ `stream_label`、それもなければ位置で表示するため、`SIMA_NEAT_BACKEND=dataflow` ではラベルが `field_0` と `field_1` になります。Python のビルドは `bundle_fields=2`、`field=0 shape=[48, 64, 3]`、`field=1 shape=[48, 64, 3]` を出力します。）この章のC++ソースコードをカスタムの `CMakeLists.txt` を使って独自のプロジェクトに組み込むには（追加のフォルダーは不要です）、ランディングページの[チュートリアルの実行方法](/tutorials#compile-a-copy-yourself)を参照してください。
 
 ## In Practice
 

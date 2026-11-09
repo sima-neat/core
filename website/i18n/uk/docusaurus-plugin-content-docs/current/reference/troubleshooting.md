@@ -272,7 +272,7 @@ print("outputs:", run.output_names())
 
 ```python
 run.push("image", [tensor])
-sample = run.pull("detections", timeout_ms=2000)
+outputs = run.pull_result("detections", timeout_ms=2000).value()
 ```
 
 `Graph("name")` — це діагностична мітка. Вона не створює кінцеву точку. Кінцеві точки визначаються на основі `nodes.input("name")` та `nodes.output("name")`.

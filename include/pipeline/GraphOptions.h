@@ -4,14 +4,14 @@
  * @brief Graph/Run options, the `Sample` type, pull-status enums, and verbosity controls.
  *
  * Defines the option structs the framework consumes at construction/build time and the
- * `Sample` type that flows out of `Run::pull()`. Key types here:
+ * `Sample` type that the structured `Run::pull(timeout_ms, sample)` fills. Key types here:
  *   - `VerboseOptions` / `VerbosityLevel` — diagnostic verbosity controls (per topic).
  *   - `GraphOptions` — per-Graph knobs (callback timeout, naming, processor preference).
  *   - `RtspServerOptions` / `ValidateOptions` / `OutputTensorOptions` — option packs for specific
  * calls.
  *   - `RunMode` — internal Async vs Sync runtime timing mode.
- *   - `Sample` / `SampleKind` — the typed payload `pull()` returns; can be a Tensor, a
- *     TensorSet (multiple physical outputs), or a Bundle (recursive multi-logical-output).
+ *   - `Sample` / `SampleKind` — the typed payload `pull(timeout_ms, sample)` fills: a Tensor,
+ *     a TensorSet (multiple physical outputs), or a Bundle (recursive multi-logical-output).
  *   - `PullStatus` / `PullError` — structured pull results.
  *
  * @see Graph, Run, Tensor
@@ -467,7 +467,7 @@ enum class SampleKind {
 };
 
 /**
- * @brief Result status of `Run::pull()`.
+ * @brief Outcome of a `Run::pull(...)`: `Result::status()`, or the structured pull's return.
  * @ingroup pipeline
  */
 enum class PullStatus {
@@ -478,7 +478,8 @@ enum class PullStatus {
 };
 
 /**
- * @brief Structured error returned by `Run::pull()` when status is `Error`.
+ * @brief Structured error of a `Run::pull(...)`: `Result::error()`, or the structured pull's `err`
+ *        when status is `Error`.
  *
  * The `code` field is a machine-triage value from `pipeline/ErrorCodes.h`. The `message` is a
  * human-readable string (typically prefixed with `[code]`). The optional `report` carries the
@@ -510,7 +511,8 @@ struct PullError {
 using SampleAttributes = std::map<std::string, std::string>;
 
 /**
- * @brief Typed payload returned by `Run::pull()` and consumed by `Run::push()`.
+ * @brief Typed payload with per-buffer metadata: filled by the structured
+ *        `Run::pull(timeout_ms, sample)` and consumed by `Run::push(sample)`.
  *
  * A Sample is a tagged union: depending on `kind`, exactly one of `tensor`, `tensors`, or
  * `fields` is meaningful. Includes per-buffer metadata: stream/port labels, timestamps,

@@ -541,7 +541,7 @@ auto image_sample =
 image_sample.frame_id = 0;
 run.push("image_input", image_sample);
 
-auto inputs = run.pull("render_inputs");
+auto inputs = run.pull("render_inputs", std::chrono::milliseconds(-1));  // -1: no time limit
 ```
 
 The executable example stops at `render_inputs`, which contains the matching `original_image` and `bbox` values. A downstream render or output node can consume that combined result, then save the rendered image to a file, display it, or send it elsewhere.
@@ -550,24 +550,24 @@ The executable example stops at `render_inputs`, which contains the matching `or
 
 After a `Graph` is built, the same endpoint names are used to send data in and read results out.
 
-When a Graph has multiple public inputs or outputs, pass the endpoint name to `push()` or `pull()`:
+When a Graph has multiple public inputs or outputs, pass the endpoint name to `push(...)` or `pull(...)`:
 
 ```cpp
 run.push("image", simaai::neat::TensorList{image_tensor});
 run.push("metadata", simaai::neat::TensorList{metadata_tensor});
 
-auto classes = run.pull("classes");
-auto preview = run.pull("preview");
+auto classes = run.pull("classes", std::chrono::milliseconds(-1));  // -1: no time limit
+auto preview = run.pull("preview", std::chrono::milliseconds(-1));
 ```
 
 For a Graph with exactly one public input or output, the name is optional at runtime:
 
 ```cpp
 run.push(simaai::neat::TensorList{image_tensor});
-auto classes = run.pull();
+auto classes = run.pull(std::chrono::milliseconds(-1));
 ```
 
-If more than one input or output is available, an unnamed `push(...)` or `pull()` fails and lists the available endpoint names instead of guessing which one you intended.
+If more than one input or output is available, an unnamed `push(...)` or `pull(...)` fails and lists the available endpoint names instead of guessing which one you intended.
 
 ### Declare endpoints by value and push tensor lists
 
@@ -594,7 +594,7 @@ if (result) {
 - A list is one item. Its first tensor's stamp proposes the item's `stream_name`, `frame_id`, `source_time`, and `flags` (`tensor.with_stamp(stamp)`); the runtime writes `seq` and `publish_time`.
 - A list of several tensors, `run.push({a, b})`, is a positional record. The pulled list holds its tensors in order, and each carries the item's stamp.
 - `run.on_output("out", callback)` delivers every output item as a `TensorList` to the callback on a thread the `Run` owns, instead of `pull`. `run({tensor})` pushes and waits for the output.
-- The integer-timeout overloads keep their meaning: `pull(100)` and `pull("out", 100)` return `std::optional<Sample>`.
+- The integer-timeout pulls that return `std::optional<Sample>`, `pull(100)` and `pull("out", 100)`, are deprecated, as are `pull_tensors`, `pull_samples`, and the `cv::Mat` pushes; each warns once per process. `pull(100, sample)` and `pull("out", 100, sample)` fill a `Sample` and stay: they are the path to its metadata.
 - `pipeline/Graph.h` no longer needs GStreamer's headers. It still includes `<gst/gst.h>` unless `SIMA_NEAT_GRAPH_NO_GSTREAMER` is defined before it; a later release drops that include, so include `<gst/gst.h>` yourself where you use GStreamer.
 
 In Python, the same verbs take and return Python lists:
@@ -617,7 +617,7 @@ else:
     print(result.error.code, result.error.message)
 ```
 
-- `run.pull(...)` still returns a `Sample` or `None`, and now emits a `DeprecationWarning` once per call site. It will return a `PullResult` in the release that removes the `Sample` form, so move to `run.pull_result(...)`.
+- `run.pull(...)` still returns a `Sample` or `None`, and `run.pull_tensors(...)` a list; both emit a `DeprecationWarning` once per call site. `run.pull(...)` will return a `PullResult` in the release that removes the `Sample` form, so move to `run.pull_result(...)`.
 - `run.push(...)`, `run.try_push(...)`, and `run([tensor])` take a list, as in C++; a single Tensor is refused.
 - `run.on_output("out", callback)` calls `callback(tensors)` with each item's list on a thread the `Run` owns, with the GIL held. `run.stop()`, `run.close()`, and dropping the last reference to the `Run` release the GIL while they wait for a callback in progress. If the callback raises, delivery ends, the exception is reported through `sys.unraisablehook`, and `run.last_error()` names it; the process keeps running.
 - `run.alloc("points")` returns a writable Tensor of the bound shape; fill it with `tensor.copy_from(array)`, then push it with `run.push("points", [tensor])`, its commit.
@@ -740,10 +740,10 @@ simaai::neat::Graph make_classifier(simaai::neat::Model& model) {
 Use by itself:
 
 ```cpp
-auto classifier_route = make_classifier(model);      // create the classifier fragment
-auto run = classifier_route.build();                 // build it as a standalone application
-run.push("image", simaai::neat::TensorList{image});  // send data to its named input
-auto classes = run.pull("classes");                  // read from its named output
+auto classifier_route = make_classifier(model);                     // create the classifier fragment
+auto run = classifier_route.build();                                // build it as a standalone application
+run.push("image", simaai::neat::TensorList{image});                 // send data to its named input
+auto classes = run.pull("classes", std::chrono::milliseconds(-1));  // read from its named output
 ```
 
 Use inside a larger app:
@@ -844,7 +844,7 @@ If a fragment contains several unnamed outputs, Neat assigns deterministic suffi
 - Use named `Input` and `Output` nodes to declare the public contract of a fragment.
 - Use `add()` for a straight chain.
 - Use `connect()` for explicit topology and fragment composition.
-- Use named `run.push("name", ...)` and `run.pull("name")` for multi-input or multi-output apps.
+- Use named `run.push("name", ...)` and `run.pull("name", ...)` for multi-input or multi-output apps.
 - Declare the [nodes](/develop-apps/development-workflow/node), [node groups](/develop-apps/development-workflow/node#pre-built-node-groups), parameters, and connections your application needs; let Neat handle the low-level runtime details.
 
 ## See also

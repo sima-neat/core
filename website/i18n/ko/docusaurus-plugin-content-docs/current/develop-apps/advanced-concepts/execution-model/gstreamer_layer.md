@@ -20,7 +20,7 @@ Neat 프레임워크의 파이프라인은 GStreamer 위에서 실행됩니다. 
 | `gst_pipeline_set_state()` | `Graph::run()` / `Run::start()` |
 | 버스 메시지 | `GraphReport::bus_messages` |
 | `appsrc` 푸시 API | `Run::push()` ( `InputRole::Push`가 있는 노드에서만) |
-| `appsink` 풀 API | `Run::pull()` |
+| `appsink` 풀 API | `Run::pull(timeout)` |
 | 요소별 타이밍 | `Run::start_measurement()`에서 `MeasureReport` |
 
 애플리케이션은 런처 문자열을 직접 작성하거나, 요소를 직접 지정하거나, GStreamer C API에 직접 액세스하지 않습니다. 모든 것은 노드를 통해 이루어집니다.

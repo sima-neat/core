@@ -211,7 +211,7 @@ run = graph.build()
 try:
     run.push("image", [tensor])
     run.close_input()
-    outputs = run.pull_tensors("detections", timeout_ms=2000)
+    outputs = run.pull_result("detections", timeout_ms=2000).value()
 finally:
     run.close()
 ```
@@ -223,14 +223,14 @@ finally:
 neat::Run run = graph.build();
 run.push("image", neat::TensorList{input});
 run.close_input();
-neat::TensorList outputs = run.pull_tensors("detections", /*timeout_ms=*/2000);
+neat::TensorList outputs = run.pull("detections", std::chrono::milliseconds(2000)).value();
 run.close();
 ```
 
 </CodeTab>
 </CodeTabs>
 
-`build()` lowers the public graph into one executable runtime graph, preserving your node names. You then `push` inputs into named inputs, call `close_input()` when no more input is coming, and `pull` results from named outputs with a timeout. `pull_tensors` returns a `TensorList` — the same shape `Model.run` would have produced — here the packed YOLOv8 `BBOX` output.
+`build()` lowers the public graph into one executable runtime graph, preserving your node names. You then `push` inputs into named inputs, call `close_input()` when no more input is coming, and `pull` results from named outputs with a timeout. `pull` returns a `Result<TensorList>` (Python: `pull_result` returns a `PullResult`), and its `value()` is the `TensorList` — the same shape `Model.run` would have produced — here the packed YOLOv8 `BBOX` output. `value()` throws when no output arrived: a timeout, a closed stream, or an error.
 
 ### 7. Decode the boxes
 
@@ -342,7 +342,7 @@ def main() -> int:
     try:
         run.push("image", [tensor])
         run.close_input()
-        outputs = run.pull_tensors("detections", timeout_ms=2000)
+        outputs = run.pull_result("detections", timeout_ms=2000).value()
     finally:
         run.close()
 
@@ -451,7 +451,7 @@ int main() {
   neat::Run run = graph.build();
   run.push("image", neat::TensorList{input});
   run.close_input();
-  neat::TensorList outputs = run.pull_tensors("detections", /*timeout_ms=*/2000);
+  neat::TensorList outputs = run.pull("detections", std::chrono::milliseconds(2000)).value();
   run.close();
 
   neat::TensorList decoded = neat::decode_bbox(outputs);
@@ -502,7 +502,7 @@ You should see one line per detection, then:
 The APIs map directly to that shape:
 
 - `Graph` holds the application flow; `graph.add(...)` appends each step in order.
-- The named input and output become the runtime endpoints: `run.push("image", ...)` and `run.pull_tensors("detections")`.
+- The named input and output become the runtime endpoints: `run.push("image", ...)` and `run.pull("detections", ...)` (Python: `run.pull_result("detections", ...)`).
 - `Model` is the same fragment you would call directly with `Model.run`; here it runs as one node inside the app.
 
 ## Next steps

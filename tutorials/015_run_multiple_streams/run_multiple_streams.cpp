@@ -5,6 +5,7 @@
 
 #include "neat.h"
 
+#include <chrono>
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
@@ -111,19 +112,19 @@ int main(int argc, char** argv) {
         // END STEP
 
         // STEP pull-bundles
-        auto maybe_bundle = run.pull("combined", /*timeout_ms=*/2000);
-        if (!maybe_bundle.has_value()) {
-          throw std::runtime_error("timed out waiting for combined output: " + run.last_error());
-        }
-        const auto& bundle = *maybe_bundle;
-        const int fields = static_cast<int>(bundle.fields.size());
+        // value() throws on a Timeout, Closed or Error. The bundle comes back as its fields, in
+        // order, each carrying the bundle's Stamp.
+        const simaai::neat::TensorList bundle =
+            run.pull("combined", std::chrono::milliseconds(2000)).value();
+        const int fields = static_cast<int>(bundle.size());
         if (fields != 2)
           throw std::runtime_error("joined bundle should contain two fields");
         if (first_fields < 0)
           first_fields = fields;
         ++received;
         if (received <= 4) {
-          std::cout << "bundle stream=" << bundle.stream_id << " fields=" << fields << "\n";
+          std::cout << "bundle stream=" << bundle.front().stamp().stream_name
+                    << " fields=" << fields << "\n";
         }
         // END STEP
       }

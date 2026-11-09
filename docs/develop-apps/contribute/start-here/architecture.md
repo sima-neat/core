@@ -323,7 +323,7 @@ rebuilt binary consumers; existing source entry points remain available.
 - **Decode / ingest:** file or RTSP -> depay/demux/parse -> decode -> convert/caps -> appsink -> C++ consumer
 - **Validate:** build + parse + preroll (PAUSED) to catch negotiation issues early
 - **Serve RTSP:** push synthetic frames into an RTSP server pipeline using `appsrc`
-- **Image/video tensor adapter:** image/video/RTSP -> decode -> convert/scale -> `add_output_tensor(...)` -> `Run::pull_tensors()`
+- **Image/video tensor adapter:** image/video/RTSP -> decode -> convert/scale -> `add_output_tensor(...)` -> `Run::pull(timeout)`
 - **Tutorials:** start at [Tutorials](/tutorials) for a runnable, ordered learning path
 
 ### Canonical production pipeline (source of truth)
@@ -877,8 +877,8 @@ once when the `NeatError` is constructed.
 For build(input) flows, `GraphReport.build_adaptation` records the resolved shape policy/capability, origins for seed/max limits, byte-guard origin, and applied/skipped adaptation actions.
 For non-throwing runtime pulls, `PullError.code` uses the same taxonomy.
 Input-stream worker failures retain the typed error code and report across the
-worker-thread boundary, so `Run::pull()` and the Python exception translator
-surface the same `NeatError`.
+worker-thread boundary, so `Run::pull(...)` (through `Result::value()`) and the Python
+exception translator surface the same `NeatError`.
 
 Support triage order is:
 1. bucket by `error_code`
@@ -1292,7 +1292,7 @@ uploaded per frame.
 `Run` owns input/output queues and an input thread:
 
 * `push(...)` enqueues inputs (blocking or dropping based on `RunOptions::overflow_policy`)
-* `pull(...)` dequeues `Sample` outputs from the appsink
+* `pull(...)` dequeues outputs from the appsink: a `Result<TensorList>`, or a `Sample` from `pull(timeout_ms, sample)`
 * `try_push(...)` is non-blocking (returns false if the queue is full)
 
 `RunOptions::backend` selects the runtime behind the same `Run` surface. On the Neat
@@ -1310,7 +1310,7 @@ except `alloc`. `push(list)` and `push(name, list)` push one item: one tensor is
 several are a positional record, and the first tensor's stamp proposes the item's
 `stream_name`, `frame_id`, `source_time` and `flags`. `pull(name, timeout)` with a
 `std::chrono::milliseconds` timeout returns `Result<TensorList>`, whose status is one of the
-four `PullStatus` outcomes; the `int` overloads keep returning `std::optional<Sample>`.
+four `PullStatus` outcomes; `pull(timeout_ms, sample)` and its named form fill a `Sample`.
 `run(list)` pushes and waits for the output, `on_output(name, callback)` delivers each
 output item as a `TensorList` to a callback on a thread the `Run` owns (the output can then
 not be pulled), and `alloc(name)` lends a writable Tensor for an input declared with
@@ -1323,12 +1323,25 @@ surface is a projection of it (`to_sample`, `to_tensor`): `input_seq = seq - 1`,
 `orig_input_seq` has no field in the stamp and is not carried on the Dataflow runtime, and
 GStreamer records no `publish_time`.
 
+The `Run` forms the TensorList verbs replace are `[[deprecated]]` and keep working for one
+release: the four `cv::Mat` `push`/`try_push` overloads, the `int` pulls that return
+`std::optional<Sample>`, `pull_tensors` and `pull_samples`. Each attribute names its
+replacement, and the first call of each form in a process writes one
+`[WARN] Run::<form> is deprecated` line to stderr; Core's own callers use non-warning internal
+entries. Push an OpenCV image as `TensorList{Tensor::from_cv_mat(mat, format, memory)}` and
+pull with `pull(timeout)`. `pull(timeout_ms, sample, error)` and its named form are not
+deprecated: they are the path to a `Sample`'s metadata (`attributes`, `caps_string`, `dts_ns`,
+`duration_ns`, Bundle field names), which `Result<TensorList>` does not carry. Under
+`SIMANEAT_STRICT_WARNINGS`, `-Wno-error=deprecated-declarations` keeps those warnings from
+failing Core's own targets.
+
 The Python binding (`python/src/module.cpp`) exposes the same verbs on Python lists: `Run.push`,
 `Run.try_push` and `Run(tensors)` take a list, `Run.pull_result(name, timeout_ms)` returns a
 `PullResult` (`Result<TensorList>`, whose `value()` is a list), and `Run.pull` keeps returning
-`Sample | None` for one release with a `DeprecationWarning`. It also exposes `RunOptions.backend`,
-the `Stamp` (a frozen value), the record accessors, `Graph.input`/`Graph.output`, `Run.alloc`
-(filled with `Tensor.copy_from`) and the `to_tensor`/`to_sample` projection. `Run.on_output` runs
+`Sample | None` for one release with a `DeprecationWarning`; `Run.pull_tensors` warns too. It
+also exposes `RunOptions.backend`, the `Stamp` (a frozen value), the record accessors,
+`Graph.input`/`Graph.output`, `Run.alloc` (filled with `Tensor.copy_from`) and the
+`to_tensor`/`to_sample` projection. `Run.on_output` runs
 the Python callback on the Run's delivery thread, which takes the GIL; every binding that waits for
 that thread releases the GIL first: `stop`, `close`, `close_input`, the release of the Python `Run`
 (a weak-reference callback closes it before nanobind destroys it), and interpreter exit (an `atexit`
@@ -1969,12 +1982,14 @@ If enabled, the runtime can emit DOT graphs via `gst_debug_bin_to_dot_file_with_
 
 ## Output handling
 
-`Run::pull()` yields a `Sample`, which may carry:
+`Run::pull(timeout)` yields a `Result<TensorList>`: the item's tensors (a bundle's fields, in order), each carrying the item's `Stamp`. Use it for ML-centric flows.
+
+`Run::pull(timeout_ms, sample)` fills a `Sample`, which may carry:
 
 * a `Tensor` payload (`SampleKind::Tensor`)
 * a bundle of multiple outputs (`SampleKind::Bundle`)
 
-Use `Run::pull_tensors(...)` for ML-centric flows when you want tensor payloads instead of the full `Sample` envelope.
+Use it when you need the full `Sample` envelope with its metadata instead of the tensor payloads.
 
 ---
 
@@ -2018,7 +2033,7 @@ names. Separately parsed connected segments may reuse the same name. The framewo
 collisions instead of renaming them because names can participate in pad and routing expressions.
 
 Input-dependent connected segments can materialize on the first input. Their build failure is
-therefore reported on the first `push()` or `pull()`, with the original `GraphReport` preserved.
+therefore reported on the first `push(...)` or `pull(...)`, with the original `GraphReport` preserved.
 
 ---
 

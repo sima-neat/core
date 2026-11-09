@@ -13,12 +13,13 @@ def load_rgb_image(path: str) -> np.ndarray:
     return np.asarray(cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB))
 
 
-def sample_text(sample) -> str:
-    if sample.kind == neat.SampleKind.Tensor and sample.tensor is not None:
-        return sample.tensor.to_text()
-    if sample.kind == neat.SampleKind.TensorSet and len(sample.tensors) == 1:
-        return sample.tensors[0].to_text()
-    return ""
+def poll(run, output: str, timeout_ms: int):
+    """The next item of `output` within `timeout_ms`: its tensors, or None on a Timeout or once the
+    output is Closed. value() raises on an Error."""
+    result = run.pull_result(output, timeout_ms)
+    if result.status in (neat.PullStatus.Timeout, neat.PullStatus.Closed):
+        return None
+    return result.value()
 
 
 def main() -> int:
@@ -62,16 +63,16 @@ def main() -> int:
     # STEP pull-results
     print("assistant: ", end="", flush=True)
     for _ in range(256):
-        token = run.pull("tokens", 250)
+        token = poll(run, "tokens", 250)
         if token is not None:
-            print(sample_text(token), end="", flush=True)
+            print(token[0].to_text(), end="", flush=True)
             continue
-        done = run.pull("done", 10)
+        done = poll(run, "done", 10)
         if done is not None:
             break
-        error = run.pull("error", 10)
+        error = poll(run, "error", 10)
         if error is not None:
-            raise RuntimeError(sample_text(error))
+            raise RuntimeError(error[0].to_text())
     print()
     run.close()
     # END STEP

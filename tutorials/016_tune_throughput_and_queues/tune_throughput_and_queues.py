@@ -65,9 +65,14 @@ def main(argv: list[str]) -> int:
     run.try_push([tensor])
   run.close_input()
 
+  # Drain until Timeout or Closed; an Error is a failure.
   pulled = 0
-  while run.pull(timeout_ms=1000) is not None:
+  result = run.pull_result(timeout_ms=1000)
+  while result:
     pulled += 1
+    result = run.pull_result(timeout_ms=1000)
+  if result.status == pyneat.PullStatus.Error:
+    raise RuntimeError(f"pull failed: {result.error.message}")
   measured = scope.stop()
   if measured.counters.inputs_enqueued <= 0 or pulled <= 0:
     raise RuntimeError("throughput run produced no measured inputs/outputs")

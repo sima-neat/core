@@ -108,7 +108,7 @@ H.264 및 H.265는 각각 전용 `H264` 및 `H265` 태그를 가지고 있습니
 
 ## 고급 이미지/비디오 출력 어댑터
 
-일반적인 모델 출력의 경우, `nodes.output(...)`를 사용하고 `pull_tensors(...)`를 사용하여 텐서를 가져옵니다. 이미지 또는 비디오 출력을 CPU 친화적인 `UInt8` 텐서로 변환, 크기 조정 또는 비율 조정해야 하는 경우에만 `OutputTensorOptions`를 사용합니다. 그런 다음 앱에서 텐서를 가져옵니다.
+일반적인 모델 출력의 경우, `nodes.output(...)`를 사용하고 `pull(timeout)`(Python: `pull_result(timeout_ms)`)을 사용하여 텐서를 가져옵니다. 이미지 또는 비디오 출력을 CPU 친화적인 `UInt8` 텐서로 변환, 크기 조정 또는 비율 조정해야 하는 경우에만 `OutputTensorOptions`를 사용합니다. 그런 다음 앱에서 텐서를 가져옵니다.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">

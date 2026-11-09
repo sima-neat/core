@@ -98,10 +98,10 @@ tensor_rank=3
 ### API push/pull
 
 `Run` надає доступ до:
-- `push(...)` / `try_push(...)` для вхідних даних (`cv::Mat`, `Tensor` або `Sample`).
-- `pull(...)`, `pull_tensor(...)`, `pull_tensor_or_throw(...)` для вихідних даних.
+- `push(...)` / `try_push(...)` для вхідних даних (`TensorList` або `Sample`; обгорніть `cv::Mat` за допомогою `Tensor::from_cv_mat(...)`).
+- `pull(timeout)` для вихідних даних: `Result<TensorList>` (Python: `pull_result(timeout_ms)`).
 
-Якщо вам потрібні метадані вихідних даних (мітки часу, ідентифікатори потоків), використовуйте `pull()`, щоб отримати `Sample`. Якщо вам потрібен лише корисний вміст тензора, використовуйте `pull_tensor()`.
+Кожен отриманий тензор містить штамп елемента (назву потоку, ідентифікатор кадру, час джерела). Якщо вам потрібен повний вихідний `Sample` з його метаданими, використовуйте `pull(timeout_ms, sample)`.
 
 ### Параметри виконання (простий API)
 
@@ -130,19 +130,19 @@ simaai::neat::TelemetryMonitor telemetry_monitor;
 telemetry_monitor.start();
 auto scope = run.start_measurement();
 run.push(inputs);
-(void)run.pull_tensors(5000);
+(void)run.pull(std::chrono::milliseconds(5000));
 auto report = scope.stop();
 simaai::neat::Telemetry telemetry = telemetry_monitor.stop();
 std::cout << telemetry; // YAML summary
 ```
 
 ```python
-run = graph.build(tensor, run_opt)
+run = graph.build([tensor], run_opt)
 telemetry_monitor = neat.TelemetryMonitor()
 telemetry_monitor.start()
 scope = run.start_measurement()
-run.push(tensor)
-_ = run.pull_tensors(5000)
+run.push([tensor])
+_ = run.pull_result(timeout_ms=5000)
 report = scope.stop()
 telemetry = telemetry_monitor.stop()
 print(telemetry)  # YAML summary

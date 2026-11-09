@@ -7,6 +7,7 @@
 
 #include <opencv2/core.hpp>
 
+#include <chrono>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -62,6 +63,10 @@ int main(int argc, char** argv) {
     graph.add(simaai::neat::nodes::Input(in));
     graph.add(simaai::neat::nodes::Output());
 
+    // The frame as a Tensor: RGB pixels in EV74 memory, pushed in a TensorList.
+    const simaai::neat::Tensor frame = simaai::neat::Tensor::from_cv_mat(
+        rgb, simaai::neat::ImageSpec::PixelFormat::RGB, simaai::neat::TensorMemory::EV74);
+
     // CORE LOGIC
     // RunOptions controls how the async runner buffers and drops frames.
     // STEP configure-run-options
@@ -70,7 +75,7 @@ int main(int argc, char** argv) {
     opt.overflow_policy = parse_drop_policy(argc, argv);
     opt.output_memory = simaai::neat::OutputMemory::Owned;
 
-    auto run = graph.build(std::vector<cv::Mat>{rgb}, opt);
+    auto run = graph.build(simaai::neat::TensorList{frame}, opt);
     // END STEP
 
     // STEP push-workload
@@ -79,12 +84,18 @@ int main(int argc, char** argv) {
     measure_opt.title = "tutorial 016 throughput";
     auto scope = run.start_measurement(measure_opt);
     for (int i = 0; i < iters; ++i)
-      (void)run.try_push(std::vector<cv::Mat>{rgb});
+      (void)run.try_push(simaai::neat::TensorList{frame});
     run.close_input();
 
+    // Drain until Timeout or Closed; an Error is a failure.
     int pulled = 0;
-    while (run.pull(/*timeout_ms=*/1000).has_value())
+    auto out = run.pull(std::chrono::milliseconds(1000));
+    while (out) {
       ++pulled;
+      out = run.pull(std::chrono::milliseconds(1000));
+    }
+    if (out.status() == simaai::neat::PullStatus::Error)
+      throw std::runtime_error("pull failed: " + out.error().message);
     const auto measured = scope.stop();
     if (measured.counters.inputs_enqueued <= 0 || pulled <= 0)
       throw std::runtime_error("throughput run produced no measured inputs/outputs");

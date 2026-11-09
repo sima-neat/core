@@ -98,10 +98,10 @@ tensor_rank=3
 ### 푸시/풀 API
 
 `Run`은 다음을 제공합니다.
-- 입력용: `push(...)` / `try_push(...)` (`cv::Mat`, `Tensor`, 또는 `Sample`).
-- 출력용: `pull(...)`, `pull_tensor(...)`, `pull_tensor_or_throw(...)`.
+- 입력용: `push(...)` / `try_push(...)` (`TensorList` 또는 `Sample`; `cv::Mat`은 `Tensor::from_cv_mat(...)`로 감쌉니다).
+- 출력용: `pull(timeout)`, 즉 `Result<TensorList>` (Python: `pull_result(timeout_ms)`).
 
-출력 메타데이터(타임스탬프, 스트림 ID)가 필요한 경우 `pull()`을 사용하여 `Sample`을 가져옵니다. 텐서 페이로드만 필요한 경우 `pull_tensor()`를 사용합니다.
+pull된 각 텐서는 항목의 스탬프(스트림 이름, 프레임 ID, 소스 시간)를 담습니다. 메타데이터를 포함한 전체 출력 `Sample`이 필요한 경우 `pull(timeout_ms, sample)`을 사용합니다.
 
 ### RunOptions (간단한 API)
 
@@ -130,19 +130,19 @@ simaai::neat::TelemetryMonitor telemetry_monitor;
 telemetry_monitor.start();
 auto scope = run.start_measurement();
 run.push(inputs);
-(void)run.pull_tensors(5000);
+(void)run.pull(std::chrono::milliseconds(5000));
 auto report = scope.stop();
 simaai::neat::Telemetry telemetry = telemetry_monitor.stop();
 std::cout << telemetry; // YAML summary
 ```
 
 ```python
-run = graph.build(tensor, run_opt)
+run = graph.build([tensor], run_opt)
 telemetry_monitor = neat.TelemetryMonitor()
 telemetry_monitor.start()
 scope = run.start_measurement()
-run.push(tensor)
-_ = run.pull_tensors(5000)
+run.push([tensor])
+_ = run.pull_result(timeout_ms=5000)
 report = scope.stop()
 telemetry = telemetry_monitor.stop()
 print(telemetry)  # YAML summary

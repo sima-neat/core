@@ -61,6 +61,8 @@ sample.attributes["image-index"] = "42"     # reaches the Sample
 sample.attributes = {"image-time": "..."}   # replaces the whole map
 ```
 
+Python には、項目ごとのメタデータを取得する非推奨ではない方法がまだありません。このような `sample` は非推奨の `Run.pull` から取得するものであり、その後継である `Run.pull_result` は `attributes` を持たない Tensor を返します。
+
 ## ヘッダーのルール
 
 設定されたリストは**許可リスト**です。空のリストは、キャプチャを完全に無効にし、既存のトポロジーと動作を変更しません。

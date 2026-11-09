@@ -249,7 +249,7 @@ Runner는 메모리 소유권과 동기화 권한을 유지합니다. Core는 �
 - **디코딩/수집:** 파일 또는 RTSP -> 디페이/디멀티플렉스/파싱 -> 디코딩 -> 변환/캡스 -> appsink -> C++ 소비자
 - **검증:** 빌드 + 파싱 + 프리롤(PAUSED)을 통해 초기 협상 문제를 감지
 - **RTSP 제공:** `appsrc`를 사용하여 합성 프레임을 RTSP 서버 파이프라인으로 푸시
-- **이미지/비디오 텐서 어댑터:** 이미지/비디오/RTSP -> 디코딩 -> 변환/스케일 -> `add_output_tensor(...)` -> `Run::pull_tensors()`
+- **이미지/비디오 텐서 어댑터:** 이미지/비디오/RTSP -> 디코딩 -> 변환/스케일 -> `add_output_tensor(...)` -> `Run::pull(timeout)`
 - **튜토리얼:** [튜토리얼](/tutorials)에서 실행 가능한 순서대로 학습 경로를 시작합니다.
 
 ### 표준 프로덕션 파이프라인(단일 진실 공급원)
@@ -647,7 +647,7 @@ GStreamer 오류는 하나의 내부 파서, 분류기 및 렌더러를 거칩�
 
 `GraphReport.repro_note`는 사람이 읽을 수 있는 요약입니다. 프로덕션 렌더링에는 일반 언어로 된 원인, 관련 있는 관찰/예상 값, 구체적인 사용자 작업 및 안정적인 진단 ID가 포함됩니다. 원시 플러그인 문자열, 소스 위치 및 GStreamer 도메인/코드는 디버깅 전용입니다. 괄호로 묶인 공개 코드는 `NeatError`가 생성될 때 한 번 추가됩니다. `GraphReport.bus`는 플러그인/런타임 오류 세부 정보의 단일 진실 공급원입니다.
 
-빌드(입력) 흐름의 경우 `GraphReport.build_adaptation`은 해결된 모양 정책/기능, 시드/최대 제한에 대한 원본, 바이트 가드 원본 및 적용/건너뛴 조정 작업을 기록합니다. 오류가 발생하지 않는 런타임 풀의 경우 `PullError.code`는 동일한 분류 체계를 사용합니다. 입력 스트림 작업자 오류는 유형이 지정된 오류 코드를 유지하고 작업자 스레드 경계를 통해 보고되므로 `Run::pull()` 및 Python 예외 변환기는 동일한 `NeatError`를 표시합니다.
+빌드(입력) 흐름의 경우 `GraphReport.build_adaptation`은 해결된 모양 정책/기능, 시드/최대 제한에 대한 원본, 바이트 가드 원본 및 적용/건너뛴 조정 작업을 기록합니다. 오류가 발생하지 않는 런타임 풀의 경우 `PullError.code`는 동일한 분류 체계를 사용합니다. 입력 스트림 작업자 오류는 유형이 지정된 오류 코드를 유지하고 작업자 스레드 경계를 통해 보고되므로 `Run::pull(...)`(`Result::value()`를 통해) 및 Python 예외 변환기는 동일한 `NeatError`를 표시합니다.
 
 지원 분류 순서는 다음과 같습니다.
 1. `error_code`로 분류
@@ -919,7 +919,7 @@ Core 소유 Preproc 프레임 어댑터는 동적 이미지/ROI 형상과 메타
 `Run`은 입력/출력 큐와 입력 스레드를 소유합니다.
 
 * `push(...)`는 입력 큐에 입력을 추가합니다(`RunOptions::overflow_policy`에 따라 차단하거나 삭제).
-* `pull(...)`은 앱싱크에서 `Sample` 출력을 큐에서 제거합니다.
+* `pull(...)`은 앱싱크에서 출력을 큐에서 제거합니다: `Result<TensorList>`, 또는 `pull(timeout_ms, sample)`의 경우 `Sample`입니다.
 * `try_push(...)`는 차단되지 않습니다(큐가 가득 차면 false를 반환합니다).
 
 `RunOptions::backend`는 동일한 `Run` 인터페이스 뒤에서 실행할 런타임을 선택합니다. Neat Dataflow
@@ -930,9 +930,11 @@ Core 소유 Preproc 프레임 어댑터는 동적 이미지/ROI 형상과 메타
 첫 번째 push로 정해지고 이후 강제됩니다. `push_holder`는 GStreamer 전용이며, 여러 텐서로 된 항목은
 필드 이름이 위치 기반인 레코드 포트에 바인딩됩니다.
 
-TensorList 동사는 두 런타임 모두에서 동작하며, `alloc`을 제외하면 단일 Tensor를 받거나 반환하는 `Run` 동사는 없습니다. `push(list)`와 `push(name, list)`는 항목 하나를 push합니다. 텐서가 하나이면 리프, 여러 개이면 위치 기반 레코드이며, 첫 번째 텐서의 스탬프가 항목의 `stream_name`, `frame_id`, `source_time`, `flags`를 제안합니다. `std::chrono::milliseconds` 타임아웃을 받는 `pull(name, timeout)`은 `Result<TensorList>`를 반환하며, 그 상태는 네 가지 `PullStatus` 결과 중 하나입니다. `int` 오버로드는 계속 `std::optional<Sample>`을 반환합니다. `run(list)`는 push한 뒤 출력을 기다리고, `on_output(name, callback)`은 `Run`이 소유한 스레드에서 각 출력 항목을 `TensorList`로 콜백에 전달하며(이후 해당 출력은 pull할 수 없습니다), `alloc(name)`은 `Graph::input(name, shape, dtype)`으로 선언된 입력에 대해 쓰기 가능한 Tensor를 빌려주고 이는 `push(name, {tensor})`로 커밋됩니다. Dataflow 런타임에서는 복사 없이 게시되는 풀 슬롯이고, GStreamer에서는 CPU 메모리입니다. 카운터는 계속 `start_measurement()`로 얻으며, `Run`에는 공개 `stats()`가 없습니다. pull된 모든 텐서는 `Tensor::envelope`에 항목의 `Stamp`를 담으며, 런타임은 `seq`와 `publish_time`을 기록합니다. `Sample` 인터페이스는 이를 투영한 것입니다(`to_sample`, `to_tensor`): `input_seq = seq - 1`, `orig_input_seq = input_seq`이며, `pts_ns`는 `source_time`에서 옵니다. push된 `input_seq`나 `orig_input_seq`는 스탬프에 필드가 없어 Dataflow 런타임에서는 전달되지 않으며, GStreamer는 `publish_time`을 기록하지 않습니다.
+TensorList 동사는 두 런타임 모두에서 동작하며, `alloc`을 제외하면 단일 Tensor를 받거나 반환하는 `Run` 동사는 없습니다. `push(list)`와 `push(name, list)`는 항목 하나를 push합니다. 텐서가 하나이면 리프, 여러 개이면 위치 기반 레코드이며, 첫 번째 텐서의 스탬프가 항목의 `stream_name`, `frame_id`, `source_time`, `flags`를 제안합니다. `std::chrono::milliseconds` 타임아웃을 받는 `pull(name, timeout)`은 `Result<TensorList>`를 반환하며, 그 상태는 네 가지 `PullStatus` 결과 중 하나입니다. `pull(timeout_ms, sample)`과 그 이름 지정 형식은 `Sample`을 채웁니다. `run(list)`는 push한 뒤 출력을 기다리고, `on_output(name, callback)`은 `Run`이 소유한 스레드에서 각 출력 항목을 `TensorList`로 콜백에 전달하며(이후 해당 출력은 pull할 수 없습니다), `alloc(name)`은 `Graph::input(name, shape, dtype)`으로 선언된 입력에 대해 쓰기 가능한 Tensor를 빌려주고 이는 `push(name, {tensor})`로 커밋됩니다. Dataflow 런타임에서는 복사 없이 게시되는 풀 슬롯이고, GStreamer에서는 CPU 메모리입니다. 카운터는 계속 `start_measurement()`로 얻으며, `Run`에는 공개 `stats()`가 없습니다. pull된 모든 텐서는 `Tensor::envelope`에 항목의 `Stamp`를 담으며, 런타임은 `seq`와 `publish_time`을 기록합니다. `Sample` 인터페이스는 이를 투영한 것입니다(`to_sample`, `to_tensor`): `input_seq = seq - 1`, `orig_input_seq = input_seq`이며, `pts_ns`는 `source_time`에서 옵니다. push된 `input_seq`나 `orig_input_seq`는 스탬프에 필드가 없어 Dataflow 런타임에서는 전달되지 않으며, GStreamer는 `publish_time`을 기록하지 않습니다.
 
-Python 바인딩(`python/src/module.cpp`)은 같은 동사를 Python 리스트로 제공합니다. `Run.push`, `Run.try_push`, `Run(tensors)`는 리스트를 받고, `Run.pull_result(name, timeout_ms)`는 `PullResult`(`Result<TensorList>`, `value()`는 리스트)를 반환하며, `Run.pull`은 한 릴리스 동안 `DeprecationWarning`과 함께 계속 `Sample | None`을 반환합니다. 또한 `RunOptions.backend`, `Stamp`(고정된 값), 레코드 접근자, `Graph.input`/`Graph.output`, `Run.alloc`(`Tensor.copy_from`으로 채움), `to_tensor`/`to_sample` 투영을 제공합니다. `Run.on_output`은 Python 콜백을 `Run`의 전달 스레드에서 실행하며, 이 스레드가 GIL을 획득합니다. 그 스레드를 기다리는 모든 바인딩은 먼저 GIL을 해제합니다: `stop`, `close`, `close_input`, Python `Run`의 해제(약한 참조 콜백이 nanobind가 객체를 파괴하기 전에 닫습니다), 그리고 인터프리터 종료(`atexit` 훅이 종료 처리 전에 이러한 `Run`을 중지합니다). 콜백에서 발생한 예외는 `sys.unraisablehook`으로 전달되며, C++ 예외와 마찬가지로 전달을 끝냅니다(`last_error()`).
+TensorList 동사가 대체하는 `Run` 형식은 `[[deprecated]]`이며 한 릴리스 동안 계속 동작합니다: 네 가지 `cv::Mat` `push`/`try_push` 오버로드, `std::optional<Sample>`을 반환하는 `int` pull, `pull_tensors`와 `pull_samples`입니다. 각 속성은 대체 API를 명시하며, 프로세스에서 각 형식을 처음 호출하면 stderr에 `[WARN] Run::<form> is deprecated` 줄이 한 번 기록됩니다. Core 자체 호출자는 경고하지 않는 내부 진입점을 사용합니다. OpenCV 이미지는 `TensorList{Tensor::from_cv_mat(mat, format, memory)}`로 push하고 `pull(timeout)`으로 pull합니다. `pull(timeout_ms, sample, error)`와 그 이름 지정 형식은 사용 중단되지 않았습니다. 이들은 `Result<TensorList>`가 담지 않는 `Sample`의 메타데이터(`attributes`, `caps_string`, `dts_ns`, `duration_ns`, Bundle 필드 이름)에 접근하는 경로입니다. `SIMANEAT_STRICT_WARNINGS`에서는 `-Wno-error=deprecated-declarations`가 이러한 경고로 인해 Core 자체 대상이 실패하지 않도록 합니다.
+
+Python 바인딩(`python/src/module.cpp`)은 같은 동사를 Python 리스트로 제공합니다. `Run.push`, `Run.try_push`, `Run(tensors)`는 리스트를 받고, `Run.pull_result(name, timeout_ms)`는 `PullResult`(`Result<TensorList>`, `value()`는 리스트)를 반환하며, `Run.pull`은 한 릴리스 동안 `DeprecationWarning`과 함께 계속 `Sample | None`을 반환하며, `Run.pull_tensors`도 경고합니다. 또한 `RunOptions.backend`, `Stamp`(고정된 값), 레코드 접근자, `Graph.input`/`Graph.output`, `Run.alloc`(`Tensor.copy_from`으로 채움), `to_tensor`/`to_sample` 투영을 제공합니다. `Run.on_output`은 Python 콜백을 `Run`의 전달 스레드에서 실행하며, 이 스레드가 GIL을 획득합니다. 그 스레드를 기다리는 모든 바인딩은 먼저 GIL을 해제합니다: `stop`, `close`, `close_input`, Python `Run`의 해제(약한 참조 콜백이 nanobind가 객체를 파괴하기 전에 닫습니다), 그리고 인터프리터 종료(`atexit` 훅이 종료 처리 전에 이러한 `Run`을 중지합니다). 콜백에서 발생한 예외는 `sys.unraisablehook`으로 전달되며, C++ 예외와 마찬가지로 전달을 끝냅니다(`last_error()`).
 
 유휴 상태의 `Run`은 계속 사용할 수 있습니다. 작업 기한은 대기 시간을 제한하며 입력 제출 사이의 일시 중지에는 적용되지 않습니다.
 
@@ -1374,12 +1376,14 @@ SSD 성능 프로파일은 백엔드 p99 최대 0.7ms, 단계 p99 최대 0.93ms,
 
 ## 출력 처리
 
-`Run::pull()`은 `Sample`을 반환하며, 여기에는 다음이 포함될 수 있습니다.
+`Run::pull(timeout)`은 `Result<TensorList>`를 반환합니다: 항목의 텐서(번들의 경우 필드 순서대로)이며, 각각 항목의 `Stamp`를 담습니다. ML 중심 워크플로에 사용합니다.
+
+`Run::pull(timeout_ms, sample)`은 `Sample`을 채우며, 여기에는 다음이 포함될 수 있습니다.
 
 * `Tensor` 페이로드 (`SampleKind::Tensor`)
 * 여러 출력의 번들 (`SampleKind::Bundle`)
 
-텐서 페이로드를 사용하고 전체 `Sample` 엔벨로프를 사용하지 않으려는 경우, ML 중심 워크플로에 대해 `Run::pull_tensors(...)`를 사용합니다.
+텐서 페이로드 대신 메타데이터를 포함한 전체 `Sample` 엔벨로프가 필요한 경우 이를 사용합니다.
 
 ---
 
@@ -1418,7 +1422,7 @@ SSD 성능 프로파일은 백엔드 p99 최대 0.7ms, 단계 p99 최대 0.93ms,
 
 이름의 무결성은 `build()`의 일부이며, 이전 `validate()` 호출에 의존하지 않습니다. 이름은 재귀적 짧은 이름을 사용하는 프레임워크 조회 때문에 하나의 구체화된 파이프라인 세그먼트 내에서 고유합니다. 별도로 구문 분석된 연결된 세그먼트는 동일한 이름을 재사용할 수 있습니다. 프레임워크는 이름이 패드 및 라우팅 표현식에 참여할 수 있기 때문에 이름을 변경하는 대신 충돌을 거부합니다.
 
-입력에 따라 연결된 세그먼트는 첫 번째 입력에서 구체화될 수 있습니다. 따라서 빌드 실패는 첫 번째 `push()` 또는 `pull()`에서 보고되며, 원래 `GraphReport`가 보존됩니다.
+입력에 따라 연결된 세그먼트는 첫 번째 입력에서 구체화될 수 있습니다. 따라서 빌드 실패는 첫 번째 `push(...)` 또는 `pull(...)`에서 보고되며, 원래 `GraphReport`가 보존됩니다.
 
 ---
 

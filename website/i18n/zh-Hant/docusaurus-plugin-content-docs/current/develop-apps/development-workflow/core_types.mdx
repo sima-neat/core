@@ -23,8 +23,10 @@ Neat 使用兩種公開類型來處理執行階段資料：
 | 使用中繼資料執行模型 | `model.run(sample)` | `model.run([sample])` | `Sample` |
 | 將張量推送到 `Run` 中 | `run.push(TensorList{tensor})` | `run.push([tensor])` | `bool` |
 | 將樣本推送到 `Run` 中 | `run.push(sample)` | `run.push([sample])` | `bool` |
-| 提取僅包含張量的輸出 | `run.pull_tensors(...)` | `run.pull_tensors(...)` | `TensorList` / 類似 Python 列表的張量集合 |
-| 提取保留中繼資料的輸出 | `run.pull(...)` 或 `run.pull_samples(...)` | `run.pull(...)` 或 `run.pull_samples(...)` | `Sample` |
+| 提取張量輸出 | `run.pull(timeout)` | `run.pull_result(timeout_ms)` | `Result<TensorList>` / `PullResult`；`value()` 為張量列表 |
+| 提取保留中繼資料的輸出 | `run.pull(timeout_ms, sample)` | `run.pull_samples(...)` | `PullStatus`，並填入 `sample` / `Sample` |
+
+Python 目前還沒有未棄用的逐項中繼資料提取方式：`run.pull(...)` 會傳回一個 `Sample` 但已棄用，而 `run.pull_samples(...)` 會將所有可用的項目一次取出並合併為一個 `Sample`。
 
 在 Python 中，始終將模型或圖的輸入作為列表或元組傳遞。`[tensor]` 表示「一個輸入」。它不會建立批次維度。
 
@@ -151,17 +153,19 @@ auto outputs = model.run(
     /*timeout_ms=*/2000);
 ```
 
-當 Neat 搭配 OpenCV 支援進行建構時，`Model`、`Graph` 和 `Run` 也會提供 `std::vector<cv::Mat>` 的便利超載。針對每個輸入，傳遞一個 `cv::Mat`：
+當 Neat 搭配 OpenCV 支援進行建置時，`Model` 和 `Graph` 也會提供 `std::vector<cv::Mat>` 的便利超載。針對每個輸入，傳遞一個 `cv::Mat`。`Run` 接受 `TensorList`：請以 `Tensor::from_cv_mat(...)` 包裝影像，並指定其像素格式和記憶體。
 
 ```cpp
 auto model_outputs = model.run(std::vector<cv::Mat>{image});
 auto graph_outputs = graph.run(std::vector<cv::Mat>{image});
 
 auto run = graph.build();
-run.push("image", std::vector<cv::Mat>{image});
+run.push("image", simaai::neat::TensorList{simaai::neat::Tensor::from_cv_mat(
+                      image, simaai::neat::ImageSpec::PixelFormat::BGR,
+                      simaai::neat::TensorMemory::EV74)});
 ```
 
-當範例必須明確說明像素格式、記憶體或生命週期時，請優先使用 `Tensor::from_cv_mat(...)`。如果圖/模型的選項已經描述了輸入合約，則使用 OpenCV 提供的便利超載。
+當範例必須明確說明像素格式、記憶體或生命週期時，請優先使用 `Tensor::from_cv_mat(...)`。如果圖/模型的選項已經描述了輸入合約，則使用 `Model` 和 `Graph` 的 OpenCV 便利超載。
 
 ## 檢視張量合約
 
@@ -313,16 +317,17 @@ run.push("image", [sample])
 
 如果一個多串流圖中沒有 `stream_id`，它就無法報告每個串流的公平吞吐量。在調整每個串流之前，請先為其命名。
 
-### 讀取提取的樣本
+### 讀取提取的輸出
+
+`run.pull_result(...)` 會傳回輸出的張量（Bundle 的欄位依序排列）；每個張量都攜帶該項目的 `stamp`，其 `stream_name` 和 `frame_id` 即為 `Sample` 的 `stream_id` 和 `frame_id`。
 
 ```python
-sample = run.pull("detections", timeout_ms=2000)
+result = run.pull_result("detections", timeout_ms=2000)
 
-if sample is not None:
-    print(sample.kind, sample.stream_id, sample.frame_id)
-    if sample.kind == pyneat.SampleKind.TensorSet:
-        for tensor in sample.tensors:
-            print(tensor.shape, tensor.dtype)
+if result:
+    for tensor in result.value():
+        stamp = tensor.stamp
+        print(stamp.stream_name, stamp.frame_id, tensor.shape, tensor.dtype)
 ```
 
 ## 了解酬載類型

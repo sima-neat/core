@@ -49,11 +49,12 @@ sidebar_label: "執行圖"
 auto run = graph.build();
 
 while (running && run.can_pull()) {
-  auto sample = run.pull("detections", /*timeout_ms=*/1000);
-  if (!sample) {
+  auto output = run.pull("detections", std::chrono::milliseconds(1000));
+  if (output.status() == simaai::neat::PullStatus::Timeout ||
+      output.status() == simaai::neat::PullStatus::Closed) {
     continue;
   }
-  handle(*sample);
+  handle(output.value());  // value() throws NeatError on an Error
 }
 
 run.close();
@@ -67,10 +68,10 @@ run = graph.build()
 
 try:
     while running and run.can_pull():
-        sample = run.pull("detections", timeout_ms=1000)
-        if sample is None:
+        result = run.pull_result("detections", timeout_ms=1000)
+        if result.status in (pyneat.PullStatus.Timeout, pyneat.PullStatus.Closed):
             continue
-        handle(sample)
+        handle(result.value())  # value() raises NeatError on an Error
 finally:
     run.close()
 ```
@@ -123,11 +124,14 @@ outputs = graph.run([tensor])
 ```cpp
 auto run = graph.build();
 
-run.push("image", std::vector<cv::Mat>{frame});
-simaai::neat::TensorList outputs = run.pull_tensors("classes", /*timeout_ms=*/2000);
+auto tensor = simaai::neat::Tensor::from_cv_mat(frame, simaai::neat::ImageSpec::PixelFormat::BGR,
+                                                simaai::neat::TensorMemory::EV74);
+run.push("image", simaai::neat::TensorList{tensor});
+simaai::neat::TensorList outputs =
+    run.pull("classes", std::chrono::milliseconds(2000)).value();
 
 run.close_input();
-while (auto sample = run.pull(/*timeout_ms=*/100)) {
+while (auto output = run.pull(std::chrono::milliseconds(100))) {
   // Drain remaining output after end-of-input.
 }
 run.close();
@@ -140,12 +144,12 @@ run.close();
 run = graph.build()
 
 run.push("image", [tensor])
-outputs = run.pull_tensors("classes", timeout_ms=2000)
+outputs = run.pull_result("classes", timeout_ms=2000).value()
 
 run.close_input()
 while True:
-    sample = run.pull(timeout_ms=100)
-    if sample is None:
+    result = run.pull_result(timeout_ms=100)
+    if not result:
         break
 run.close()
 ```
@@ -243,8 +247,8 @@ print("outputs:", run.output_names())
 run.push("left", simaai::neat::TensorList{left_tensor});
 run.push("right", simaai::neat::TensorList{right_tensor});
 
-auto boxes = run.pull_tensors("detections", /*timeout_ms=*/2000);
-auto preview = run.pull("preview", /*timeout_ms=*/2000);
+auto boxes = run.pull("detections", std::chrono::milliseconds(2000)).value();
+auto preview = run.pull("preview", std::chrono::milliseconds(2000));
 ```
 
 </CodeTab>
@@ -254,8 +258,8 @@ auto preview = run.pull("preview", /*timeout_ms=*/2000);
 run.push("left", [left_tensor])
 run.push("right", [right_tensor])
 
-boxes = run.pull_tensors("detections", timeout_ms=2000)
-preview = run.pull("preview", timeout_ms=2000)
+boxes = run.pull_result("detections", timeout_ms=2000).value()
+preview = run.pull_result("preview", timeout_ms=2000)
 ```
 
 </CodeTab>
@@ -276,7 +280,7 @@ preview = run.pull("preview", timeout_ms=2000)
 | 抖動的來源需要有界緩衝 | `queue_depth` | 僅增加到足以吸收抖動。深度佇列可能會隱藏過時的影格和延遲的反壓。 |
 | 應用程式在拉取後儲存輸出 | `OutputMemory::Owned` | 使輸出生命週期與執行階段緩衝區無關。 |
 | 應用程式使用輸出時不進行傳輸複製 | `OutputMemory::Auto` | 同步與非同步執行均保留標準 DMA-BUF 輸出；其他儲存方式依預設組態／模式原則處理。 |
-| 預設等待時間應明確 | `input_timeout_ms` | 限制輸入模式 `Graph::run()` 和支援的帶初始輸入建置預檢的等待時間。`Run::run()`、`Model::run()` 和 `pull()` 使用各次呼叫的逾時（`-1`：無限等待）。 |
+| 預設等待時間應明確 | `input_timeout_ms` | 限制輸入模式 `Graph::run()` 和支援的帶初始輸入建置預檢的等待時間。`Run::run()`、`Model::run()` 和 `pull(...)` 使用各次呼叫的逾時（`-1`：無限等待）。 |
 | 啟動時的建立應該及早捕獲第一個樣本的錯誤 | `startup_preflight = true` | 使啟動時的建立保持誠實。僅在第一個樣本的失敗可以稍後通過 `pull(...)` 或 `last_error()` 顯示時才禁用。 |
 | 來源緩衝區的生命週期很短 | `advanced.copy_input = true` | 保護輸入記憶體，該記憶體可能在 `push(...)` 之後消失。 |
 | 輸入大小需要一個保護欄 | `advanced.max_input_bytes` | 在輸入進入圖之前，拒絕過大的輸入。 |
@@ -567,12 +571,12 @@ def producer() -> None:
 def consumer() -> None:
     while True:
         timeout_ms = -1 if producer_done.is_set() else 100
-        output = run.pull("detections", timeout_ms=timeout_ms)
-        if output is None:
+        result = run.pull_result("detections", timeout_ms=timeout_ms)
+        if result.status in (pyneat.PullStatus.Timeout, pyneat.PullStatus.Closed):
             if producer_done.is_set():
                 break
             continue
-        handle_output(output)
+        handle_output(result.value())  # value() raises NeatError on an Error
 
 producer_thread = threading.Thread(target=producer)
 consumer_thread = threading.Thread(target=consumer)
@@ -586,7 +590,7 @@ run.close()
 </CodeTab>
 </CodeTabs>
 
-在 C++ 中，當需要以不同方式處理逾時、串流結束和錯誤時，請使用具有狀態意識的 `pull(...)` 超載。在 Python 中，如果某次呼叫沒有傳回任何樣本，則 `pull(...)` 會傳回 `None`，因此請將其與您自己的產生器/關閉狀態配對。
+在 C++ 中，當需要以不同方式處理逾時、串流結束和錯誤時，請使用具有狀態意識的 `pull(...)` 超載。在 Python 中，`pull_result(...)` 會傳回 `PullResult`，其 `status` 可區分逾時、串流結束和錯誤；請將其與您自己的產生器/關閉狀態配對。
 
 ## 有意地關閉、清空或停止
 
@@ -711,14 +715,14 @@ while (running) {
     }
   }
 
-  while (auto output = run.pull("detections", /*timeout_ms=*/0)) {
-    count_output_by_stream(output->stream_id);
+  while (auto output = run.pull("detections", std::chrono::milliseconds(0))) {
+    count_output_by_stream(output->front().stamp().stream_name);
   }
 }
 
 run.close_input();
-while (auto output = run.pull("detections", /*timeout_ms=*/1000)) {
-  count_output_by_stream(output->stream_id);
+while (auto output = run.pull("detections", std::chrono::milliseconds(1000))) {
+  count_output_by_stream(output->front().stamp().stream_name);
 }
 run.close();
 ```
@@ -747,17 +751,17 @@ while running:
             local_drop_count[camera.id] += 1
 
     while True:
-        output = run.pull("detections", timeout_ms=0)
-        if output is None:
+        result = run.pull_result("detections", timeout_ms=0)
+        if not result:
             break
-        count_output_by_stream(output.stream_id)
+        count_output_by_stream(result.value()[0].stamp.stream_name)
 
 run.close_input()
 while True:
-    output = run.pull("detections", timeout_ms=1000)
-    if output is None:
+    result = run.pull_result("detections", timeout_ms=1000)
+    if not result:
         break
-    count_output_by_stream(output.stream_id)
+    count_output_by_stream(result.value()[0].stamp.stream_name)
 run.close()
 ```
 
@@ -811,8 +815,8 @@ while (running) {
   }
 
   for (std::size_t lane_index = 0; lane_index < lanes.size(); ++lane_index) {
-    while (auto output = lanes[lane_index].pull("detections", /*timeout_ms=*/0)) {
-      count_output(lane_index, output->stream_id);
+    while (auto output = lanes[lane_index].pull("detections", std::chrono::milliseconds(0))) {
+      count_output(lane_index, output->front().stamp().stream_name);
     }
   }
 }
@@ -857,10 +861,10 @@ while running:
 
     for lane_index, lane in enumerate(lanes):
         while True:
-            output = lane.pull("detections", timeout_ms=0)
-            if output is None:
+            result = lane.pull_result("detections", timeout_ms=0)
+            if not result:
                 break
-            count_output(lane_index, output.stream_id)
+            count_output(lane_index, result.value()[0].stamp.stream_name)
 ```
 
 </CodeTab>
@@ -953,7 +957,7 @@ graph = pyneat.Graph("detector", graph_options)
 
 ### 輸送量迴圈的結構
 
-對於應用程式推送的圖，請使用此結構。將 `next_inputs()` 替換為您的輸入來源。保持迴圈的簡單性：限制正在處理的工作量、持續進行資料提取，並且不要在熱迴圈中進行報告匯出。
+對於應用程式推送的圖，請使用此結構。將 `next_inputs()` 替換為您的輸入來源：在 C++ 中為 `TensorList`，在 Python 中為列表。保持迴圈的簡單性：限制正在處理的工作量、持續進行資料提取，並且不要在熱迴圈中進行報告匯出。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -963,7 +967,7 @@ auto run = graph.build(options);
 
 for (int i = 0; i < warmup_frames; ++i) {
   run.push(next_inputs());
-  (void)run.pull(/*timeout_ms=*/5000);
+  (void)run.pull(std::chrono::milliseconds(5000));
 }
 
 auto measurement = run.start_measurement();
@@ -977,12 +981,10 @@ while (in_flight < max_in_flight && has_input()) {
 }
 
 while (has_input() || in_flight > 0) {
-  auto output = run.pull(/*timeout_ms=*/1000);
-  if (output) {
+  if (auto output = run.pull(std::chrono::milliseconds(1000))) {
     ++outputs_seen;
     --in_flight;
-    output.reset();  // Do not pin runtime-backed buffers longer than needed.
-  }
+  }  // `output` ends here: do not pin runtime-backed buffers longer than needed.
 
   while (has_input() && in_flight < max_in_flight) {
     if (!run.try_push(next_inputs())) {
@@ -994,7 +996,7 @@ while (has_input() || in_flight > 0) {
 }
 
 run.close_input();
-while (auto output = run.pull(/*timeout_ms=*/1000)) {
+while (auto output = run.pull(std::chrono::milliseconds(1000))) {
   ++outputs_seen;
 }
 
@@ -1011,7 +1013,7 @@ run = graph.build(options)
 
 for _ in range(warmup_frames):
     run.push(next_inputs())
-    run.pull(timeout_ms=5000)
+    run.pull_result(timeout_ms=5000)
 
 measurement = run.start_measurement()
 
@@ -1022,11 +1024,11 @@ while in_flight < max_in_flight and has_input():
         in_flight += 1
 
 while has_input() or in_flight > 0:
-    output = run.pull(timeout_ms=1000)
-    if output is not None:
+    result = run.pull_result(timeout_ms=1000)
+    if result:
         outputs_seen += 1
         in_flight -= 1
-        del output  # Do not pin runtime-backed buffers longer than needed.
+    del result  # Do not pin runtime-backed buffers longer than needed.
 
     while has_input() and in_flight < max_in_flight:
         if not run.try_push(next_inputs()):
@@ -1035,10 +1037,7 @@ while has_input() or in_flight > 0:
         in_flight += 1
 
 run.close_input()
-while True:
-    output = run.pull(timeout_ms=1000)
-    if output is None:
-        break
+while run.pull_result(timeout_ms=1000):
     outputs_seen += 1
 
 report = measurement.stop()
@@ -1228,9 +1227,13 @@ run = graph.build()
 print("inputs:", run.input_names())
 print("outputs:", run.output_names())
 
-sample = run.pull("classes", timeout_ms=1000)
-if sample is None:
-    print("no output before timeout or end of stream")
+result = run.pull_result("classes", timeout_ms=1000)
+if result.status == pyneat.PullStatus.Timeout:
+    print("no output before the timeout")
+elif result.status == pyneat.PullStatus.Closed:
+    print("end of stream")
+elif result.status == pyneat.PullStatus.Error:
+    print(result.error.code, result.error.message)
 ```
 
 </CodeTab>

@@ -150,10 +150,12 @@ graph.add(model);
 graph.add(simaai::neat::nodes::Output("classes"));
 
 cv::Mat frame = /* your frame */;
+auto tensor = simaai::neat::Tensor::from_cv_mat(
+    frame, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74);
 
 auto run = graph.build();
-run.push("image", std::vector<cv::Mat>{frame});
-auto out = run.pull("classes", /*timeout_ms=*/1000);
+run.push("image", simaai::neat::TensorList{tensor});
+auto out = run.pull("classes", std::chrono::milliseconds(1000)).value();
 ```
 
 </CodeTab>
@@ -175,7 +177,7 @@ tensor = pyneat.Tensor.from_numpy(
 
 run = graph.build()
 run.push("image", [tensor])
-out = run.pull("classes", timeout_ms=1000)
+out = run.pull_result("classes", timeout_ms=1000).value()
 ```
 
 </CodeTab>
@@ -195,9 +197,8 @@ APIは一貫していますが、Pythonでは、単一の入力と複数の入�
 | `Graph::run(Sample)` | `Sample` | `graph.run([sample])`は`Sample`を返します | サンプルに基づくグラフ入力に使用します。 |
 | `Run::run(TensorList)`または`Run::run(std::vector<cv::Mat>)` | `TensorList` | `run.run([tensor])`はテンソルリストを返します | 実行中の`Run`で再利用可能なリクエスト/レスポンス。 |
 | `Run::run(Sample)` | `Sample` | `run.run([sample])`は`Sample`を返します | バンドル、ストリームID、フレームID、またはメタデータに使用します。 |
-| `Run::pull(...)` | `std::optional<Sample>` | `Sample`または`None` | `None`は、タイムアウト前にサンプルが到着しなかったか、出力が閉じられたことを意味します。 |
-| `Run::pull_tensors(...)` | `TensorList` | テンソルリスト | テンソルペイロードのみが必要な場合に使用します。 |
-| `Run::pull_samples(...)` | `Sample` | `Sample` | 存在しないことが例外であり、厳密なサンプル出力を必要とする場合に使用します。 |
+| `Run::pull(timeout)` | `Result<TensorList>` | `run.pull_result(timeout_ms)` は `PullResult` を返します | 出力テンソルを持つ `Ok`、または理由を持つ `Timeout`、`Closed`、`Error` のいずれかです。 |
+| `Run::pull(timeout_ms, sample)` | `PullStatus`（`sample` を埋める） | `run.pull(...)` は `Sample` または `None` を返します（非推奨） | 出力の `Sample` とそのメタデータが必要な場合に使用します。 |
 
 ## 基本概念
 

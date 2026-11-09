@@ -531,7 +531,7 @@ auto image_sample =
 image_sample.frame_id = 0;
 run.push("image_input", image_sample);
 
-auto inputs = run.pull("render_inputs");
+auto inputs = run.pull("render_inputs", std::chrono::milliseconds(-1));  // -1: no time limit
 ```
 
 실행 가능한 예제는 일치하는 `original_image` 및 `bbox` 값을 포함하는 `render_inputs`에서 중단됩니다. 후속 렌더링 또는 출력 노드는 해당 결합된 결과를 활용하여 렌더링된 이미지를 파일에 저장하거나, 화면에 표시하거나, 다른 곳으로 전송할 수 있습니다.
@@ -540,24 +540,24 @@ auto inputs = run.pull("render_inputs");
 
 `Graph`가 생성된 후에는 동일한 엔드포인트 이름을 사용하여 데이터를 보내고 결과를 읽어옵니다.
 
-그래프에 여러 개의 공개 입력 또는 출력이 있는 경우, 엔드포인트 이름을 `push()` 또는 `pull()`에 전달합니다.
+그래프에 여러 개의 공개 입력 또는 출력이 있는 경우, 엔드포인트 이름을 `push(...)` 또는 `pull(...)`에 전달합니다.
 
 ```cpp
 run.push("image", simaai::neat::TensorList{image_tensor});
 run.push("metadata", simaai::neat::TensorList{metadata_tensor});
 
-auto classes = run.pull("classes");
-auto preview = run.pull("preview");
+auto classes = run.pull("classes", std::chrono::milliseconds(-1));  // -1: no time limit
+auto preview = run.pull("preview", std::chrono::milliseconds(-1));
 ```
 
 정확히 하나의 공개 입력 또는 출력을 가진 그래프의 경우, 런타임에 이름은 선택 사항입니다.
 
 ```cpp
 run.push(simaai::neat::TensorList{image_tensor});
-auto classes = run.pull();
+auto classes = run.pull(std::chrono::milliseconds(-1));
 ```
 
-둘 이상의 입력 또는 출력이 사용 가능한 경우, 이름이 지정되지 않은 `push(...)` 또는 `pull()` 작업이 실패하고, 사용자가 의도한 엔드포인트를 추측하는 대신 사용 가능한 엔드포인트 이름을 나열합니다.
+둘 이상의 입력 또는 출력이 사용 가능한 경우, 이름이 지정되지 않은 `push(...)` 또는 `pull(...)` 작업이 실패하고, 사용자가 의도한 엔드포인트를 추측하는 대신 사용 가능한 엔드포인트 이름을 나열합니다.
 
 ### 값으로 엔드포인트를 선언하고 텐서 리스트를 push하기
 
@@ -584,7 +584,7 @@ if (result) {
 - 리스트 하나가 항목 하나입니다. 첫 번째 텐서의 스탬프가 항목의 `stream_name`, `frame_id`, `source_time`, `flags`를 제안합니다(`tensor.with_stamp(stamp)`). `seq`와 `publish_time`은 런타임이 기록합니다.
 - 여러 텐서로 된 리스트(`run.push({a, b})`)는 위치 기반 레코드입니다. pull된 리스트는 그 텐서들을 순서대로 담으며, 각 텐서는 항목의 스탬프를 가집니다.
 - `run.on_output("out", callback)`은 `pull` 대신 `Run`이 소유한 스레드에서 모든 출력 항목을 `TensorList`로 콜백에 전달합니다. `run({tensor})`는 push하고 출력을 기다립니다.
-- 정수 타임아웃 오버로드는 의미가 그대로입니다: `pull(100)`과 `pull("out", 100)`은 `std::optional<Sample>`을 반환합니다.
+- `std::optional<Sample>`을 반환하는 정수 타임아웃 pull인 `pull(100)`과 `pull("out", 100)`은 사용 중단되었으며, `pull_tensors`, `pull_samples`, `cv::Mat` push도 마찬가지입니다. 각각 프로세스당 한 번 경고합니다. `pull(100, sample)`과 `pull("out", 100, sample)`은 `Sample`을 채우며 유지됩니다. 이들이 메타데이터에 접근하는 경로입니다.
 - `pipeline/Graph.h`는 더 이상 GStreamer 헤더가 필요하지 않습니다. 그보다 먼저 `SIMA_NEAT_GRAPH_NO_GSTREAMER`를 정의하지 않으면 여전히 `<gst/gst.h>`를 포함합니다. 이후 릴리스에서 이 포함이 제거되므로, GStreamer를 사용하는 곳에서는 `<gst/gst.h>`를 직접 포함하십시오.
 
 Python에서는 같은 동사가 Python 리스트를 받고 반환합니다.
@@ -607,7 +607,7 @@ else:
     print(result.error.code, result.error.message)
 ```
 
-- `run.pull(...)`은 여전히 `Sample` 또는 `None`을 반환하며, 이제 호출 위치마다 한 번 `DeprecationWarning`을 발생시킵니다. `Sample` 형식을 제거하는 릴리스에서 `PullResult`를 반환하게 되므로 `run.pull_result(...)`로 옮기십시오.
+- `run.pull(...)`은 여전히 `Sample` 또는 `None`을, `run.pull_tensors(...)`는 리스트를 반환하며, 둘 다 호출 위치마다 한 번 `DeprecationWarning`을 발생시킵니다. `run.pull(...)`은 `Sample` 형식을 제거하는 릴리스에서 `PullResult`를 반환하게 되므로 `run.pull_result(...)`로 옮기십시오.
 - `run.push(...)`, `run.try_push(...)`, `run([tensor])`는 C++와 마찬가지로 리스트를 받으며, 단일 Tensor는 거부됩니다.
 - `run.on_output("out", callback)`은 `Run`이 소유한 스레드에서 GIL을 잡은 상태로 각 항목의 리스트를 넘겨 `callback(tensors)`를 호출합니다. `run.stop()`, `run.close()`, 그리고 `Run`에 대한 마지막 참조를 버리는 동작은 진행 중인 콜백을 기다리는 동안 GIL을 해제합니다. 콜백이 예외를 일으키면 전달이 끝나고, 예외는 `sys.unraisablehook`으로 보고되며 `run.last_error()`가 이를 알려 줍니다. 프로세스는 계속 실행됩니다.
 - `run.alloc("points")`는 상한 형태의 쓰기 가능한 Tensor를 반환합니다. `tensor.copy_from(array)`로 채운 다음 `run.push("points", [tensor])`로 push하십시오. 이것이 커밋입니다.
@@ -730,10 +730,10 @@ simaai::neat::Graph make_classifier(simaai::neat::Model& model) {
 단독으로 사용:
 
 ```cpp
-auto classifier_route = make_classifier(model);      // create the classifier fragment
-auto run = classifier_route.build();                 // build it as a standalone application
-run.push("image", simaai::neat::TensorList{image});  // send data to its named input
-auto classes = run.pull("classes");                  // read from its named output
+auto classifier_route = make_classifier(model);                     // create the classifier fragment
+auto run = classifier_route.build();                                // build it as a standalone application
+run.push("image", simaai::neat::TensorList{image});                 // send data to its named input
+auto classes = run.pull("classes", std::chrono::milliseconds(-1));  // read from its named output
 ```
 
 더 큰 애플리케이션 내에서 사용:
@@ -834,7 +834,7 @@ nodes::Output("out");     // acceptable for small tests, but unclear in applicat
 - 프래그먼트의 공개 계약을 선언하기 위해 이름이 지정된 `Input` 및 `Output` 노드를 사용하십시오.
 - 직선형 체인을 만들 때는 `add()`를 사용하세요.
 - 명시적인 토폴로지와 조각 구성을 위해 `connect()`를 사용하세요.
-- 다중 입력 또는 다중 출력 앱의 경우 이름이 지정된 `run.push("name", ...)` 및 `run.pull("name")`을 사용하세요.
+- 다중 입력 또는 다중 출력 앱의 경우 이름이 지정된 `run.push("name", ...)` 및 `run.pull("name", ...)`을 사용하세요.
 - 애플리케이션에 필요한 [노드](/develop-apps/development-workflow/node), [노드 그룹](/develop-apps/development-workflow/node#pre-built-node-groups), 매개변수 및 연결을 선언하고, Neat가 낮은 수준의 런타임 세부 사항을 처리하도록 합니다.
 
 ## 참조:

@@ -23,8 +23,10 @@ Use `Tensor` when you only need model input or output data. Use `Sample` when th
 | Run a model with metadata | `model.run(sample)` | `model.run([sample])` | `Sample` |
 | Push tensors into a `Run` | `run.push(TensorList{tensor})` | `run.push([tensor])` | `bool` |
 | Push samples into a `Run` | `run.push(sample)` | `run.push([sample])` | `bool` |
-| Pull tensor-only output | `run.pull_tensors(...)` | `run.pull_tensors(...)` | `TensorList` / Python list-like tensor collection |
-| Pull metadata-preserving output | `run.pull(...)` or `run.pull_samples(...)` | `run.pull(...)` or `run.pull_samples(...)` | `Sample` |
+| Pull tensor output | `run.pull(timeout)` | `run.pull_result(timeout_ms)` | `Result<TensorList>` / `PullResult`; `value()` is the tensor list |
+| Pull metadata-preserving output | `run.pull(timeout_ms, sample)` | `run.pull_samples(...)` | `PullStatus`, filling `sample` / `Sample` |
+
+Python has no non-deprecated per-item metadata pull yet: `run.pull(...)` returns one `Sample` but is deprecated, and `run.pull_samples(...)` drains every available item into one `Sample`.
 
 In Python, always pass model or graph inputs as a list or tuple. `[tensor]` means “one input.” It does not create a batch dimension.
 
@@ -152,17 +154,19 @@ auto outputs = model.run(
     /*timeout_ms=*/2000);
 ```
 
-When Neat is built with OpenCV support, `Model`, `Graph`, and `Run` also expose `std::vector<cv::Mat>` convenience overloads. Pass one `cv::Mat` per ingress:
+When Neat is built with OpenCV support, `Model` and `Graph` also expose `std::vector<cv::Mat>` convenience overloads. Pass one `cv::Mat` per ingress. A `Run` takes a `TensorList`: wrap the image with `Tensor::from_cv_mat(...)`, stating its pixel format and memory.
 
 ```cpp
 auto model_outputs = model.run(std::vector<cv::Mat>{image});
 auto graph_outputs = graph.run(std::vector<cv::Mat>{image});
 
 auto run = graph.build();
-run.push("image", std::vector<cv::Mat>{image});
+run.push("image", simaai::neat::TensorList{simaai::neat::Tensor::from_cv_mat(
+                      image, simaai::neat::ImageSpec::PixelFormat::BGR,
+                      simaai::neat::TensorMemory::EV74)});
 ```
 
-Prefer `Tensor::from_cv_mat(...)` when the example must state pixel format, memory, or lifetime explicitly. Use the OpenCV convenience overload when the graph/model options already describe the input contract.
+Prefer `Tensor::from_cv_mat(...)` when the example must state pixel format, memory, or lifetime explicitly. Use the `Model` and `Graph` OpenCV convenience overloads when the graph/model options already describe the input contract.
 
 ## Read tensor contracts
 
@@ -314,16 +318,17 @@ run.push("image", [sample])
 
 If a multistream graph has no `stream_id`, it cannot report fair per-stream throughput. Give every stream a name before you tune it.
 
-### Read pulled samples
+### Read pulled outputs
+
+`run.pull_result(...)` returns the output's tensors (a bundle's fields, in order); each carries the item's `stamp`, whose `stream_name` and `frame_id` are the `Sample`'s `stream_id` and `frame_id`.
 
 ```python
-sample = run.pull("detections", timeout_ms=2000)
+result = run.pull_result("detections", timeout_ms=2000)
 
-if sample is not None:
-    print(sample.kind, sample.stream_id, sample.frame_id)
-    if sample.kind == pyneat.SampleKind.TensorSet:
-        for tensor in sample.tensors:
-            print(tensor.shape, tensor.dtype)
+if result:
+    for tensor in result.value():
+        stamp = tensor.stamp
+        print(stamp.stream_name, stamp.frame_id, tensor.shape, tensor.dtype)
 ```
 
 ## Understand payload families

@@ -98,10 +98,10 @@ tensor_rank=3
 ### 推/拉 API
 
 `Run` 公開：
-- `push(...)` / `try_push(...)` 用於輸入（`cv::Mat`、`Tensor` 或 `Sample`）。
-- `pull(...)`、`pull_tensor(...)`、`pull_tensor_or_throw(...)` 用於輸出。
+- `push(...)` / `try_push(...)` 用於輸入（`TensorList` 或 `Sample`；請以 `Tensor::from_cv_mat(...)` 包裝 `cv::Mat`）。
+- `pull(timeout)` 用於輸出：一個 `Result<TensorList>`（Python：`pull_result(timeout_ms)`）。
 
-如果您需要輸出中繼資料（時間戳、串流 ID），請使用 `pull()` 以取得 `Sample`。如果您只需要張量有效載荷，請使用 `pull_tensor()`。
+每個提取到的張量都攜帶該項目的戳記（串流名稱、影格 ID、來源時間）。如果您需要包含中繼資料的完整輸出 `Sample`，請使用 `pull(timeout_ms, sample)`。
 
 ### RunOptions（簡單 API）
 
@@ -130,19 +130,19 @@ simaai::neat::TelemetryMonitor telemetry_monitor;
 telemetry_monitor.start();
 auto scope = run.start_measurement();
 run.push(inputs);
-(void)run.pull_tensors(5000);
+(void)run.pull(std::chrono::milliseconds(5000));
 auto report = scope.stop();
 simaai::neat::Telemetry telemetry = telemetry_monitor.stop();
 std::cout << telemetry; // YAML summary
 ```
 
 ```python
-run = graph.build(tensor, run_opt)
+run = graph.build([tensor], run_opt)
 telemetry_monitor = neat.TelemetryMonitor()
 telemetry_monitor.start()
 scope = run.start_measurement()
-run.push(tensor)
-_ = run.pull_tensors(5000)
+run.push([tensor])
+_ = run.pull_result(timeout_ms=5000)
 report = scope.stop()
 telemetry = telemetry_monitor.stop()
 print(telemetry)  # YAML summary

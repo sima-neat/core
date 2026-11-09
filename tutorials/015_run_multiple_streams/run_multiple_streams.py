@@ -58,17 +58,17 @@ def main(argv: list[str]) -> int:
       # END STEP
 
       # STEP pull-bundles
-      bundle = run.pull("combined", 2000)
-      if bundle is None:
-        raise RuntimeError(f"timed out waiting for combined output: {run.last_error()}")
-      fields = len(bundle.fields)
+      # value() raises on a Timeout, Closed or Error. The bundle comes back as its fields, in
+      # order, each carrying the bundle's Stamp.
+      bundle = run.pull_result("combined", 2000).value()
+      fields = len(bundle)
       if fields != 2:
         raise RuntimeError("joined bundle should contain two fields")
       if first_fields < 0:
         first_fields = fields
       received += 1
       if received <= 4:
-        print(f"bundle stream={bundle.stream_id} fields={fields}")
+        print(f"bundle stream={bundle[0].stamp.stream_name} fields={fields}")
       # END STEP
 
   run.close()

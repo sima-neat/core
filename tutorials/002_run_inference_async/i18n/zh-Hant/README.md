@@ -37,11 +37,11 @@
 
 ### 從消費者端提取結果 {#step-pull-results}
 
-主要執行緒會進行資料消耗。它會循環調用 `pull(timeout_ms=2000)`，該函數會回傳下一個可用的輸出，或者如果在逾時期間沒有任何輸出，則回傳空值。在沒有輸出的情況下，我們會檢查生產者是否已完成——如果是，我們就會停止；否則，我們會繼續等待。每個實際結果都會被縮減為一個 top-1 類別索引，然後進行輸出。在循環結束後，我們會加入生產者，並確認 `pushed == pulled`。
+主要執行緒會進行資料消耗。它會循環呼叫 `pull_result(timeout_ms=2000)`（C++：`pull(std::chrono::milliseconds(2000))`），該函式會傳回下一個可用的輸出；如果在逾時期間沒有任何輸出，則傳回 `Timeout` 狀態。在 `Timeout` 或 `Closed` 的情況下，我們會檢查生產者是否已完成——如果是，我們就會停止；否則，我們會繼續等待。每個實際結果都會被縮減為一個 top-1 類別索引，然後進行輸出。在循環結束後，我們會加入生產者，並確認 `pushed == pulled`。
 
-**C++：** `pull()` 會回傳一個 `optional<Sample>`；在讀取位元組之前，使用 `tensors_from_sample(...)` 提取張量。
+**C++：** `pull(...)` 會傳回一個 `Result<TensorList>`；其 `value()` 包含我們要讀取位元組的輸出張量（遇到 `Error` 時會擲回例外）。
 
-**Python：** `pull()` 會回傳一個 `Sample` 或 `None`；`sample.tensor.to_numpy()` 會將陣列傳遞給 `argmax`。
+**Python：** `pull_result(...)` 會傳回一個 `PullResult`；`result.value()[0].to_numpy()` 會將陣列傳遞給 `argmax`。
 
 ## Run
 

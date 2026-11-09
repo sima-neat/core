@@ -337,8 +337,8 @@ struct Sample;
  *        `semantic.detection.format = "BBOX"`.
  *
  * Called as a runtime finalizer at every chokepoint where detection-stage outputs
- * exit the framework into user code (e.g., `Run::pull_tensors_strict`,
- * `Postprocess`). Normalises the type metadata so consumers can rely on the
+ * exit the framework into user code (e.g., the GStreamer output path behind `Run::pull`,
+ * `Run::run`, `Postprocess`). Normalises the type metadata so consumers can rely on the
  * type-honest `DetectionSpec` slot instead of inspecting `payload_tag`,
  * `Sample::format`, or the legacy `TessSpec::format` overload.
  */

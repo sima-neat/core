@@ -56,13 +56,13 @@ auto run = graph.build();
 while (have_more_inputs()) {
   run.push("image", simaai::neat::TensorList{next_tensor()});
 
-  if (auto out = run.pull("classes", /*timeout_ms=*/0)) {
+  if (auto out = run.pull("classes", std::chrono::milliseconds(0))) {
     consume(*out);
   }
 }
 
 run.close_input();
-while (auto out = run.pull("classes", /*timeout_ms=*/1000)) {
+while (auto out = run.pull("classes", std::chrono::milliseconds(1000))) {
   consume(*out);
 }
 run.close();
@@ -111,19 +111,19 @@ graph.add(pyneat.nodes.queue(queue))
 
 ## 拉取時機
 
-`Run::pull(...)` 從輸出邊界傳回下一個可用的 `Sample`。
+`Run::pull(timeout)` 以 `Result<TensorList>` 傳回輸出邊界的下一個可用輸出。下方的結構化狀態超載則改為填入 `Sample`。
 
-應用程式可以暫停提交輸入，之後繼續使用同一個 `Run`；僅因沒有輸出並不會使其失敗。有限的 `pull()` 逾時會結束該次等待，但不會停止 Run。`RunOptions::input_timeout_ms` 控制輸入模式 `Graph::run()` 和支援的帶初始輸入建置預檢的輸出等待時間。`Run::run()` 和 `Model::run()` 則使用各次呼叫的逾時；`-1` 表示無限等待，與 `pull(-1)` 相同。需要偵測停滯的應用程式應為尚未完成的工作設定期限。
+應用程式可以暫停提交輸入，之後繼續使用同一個 `Run`；僅因沒有輸出並不會使其失敗。有限的 `pull(...)` 逾時會結束該次等待，但不會停止 Run。`RunOptions::input_timeout_ms` 控制輸入模式 `Graph::run()` 和支援的帶初始輸入建置預檢的輸出等待時間。`Run::run()` 和 `Model::run()` 則使用各次呼叫的逾時；`-1` 表示無限等待，如同負值逾時在 `pull(timeout)` 中的意義。需要偵測停滯的應用程式應為尚未完成的工作設定期限。
 
-當逾時和 EOS 可以共享相同的「無樣本」路徑時，請使用方便的超載：
+當逾時和 EOS 可以共享相同的「無輸出」路徑時，請檢查 `Result`；需要區分兩者時，可使用其 `status()`：
 
 ```cpp
-if (auto sample = run.pull("classes", /*timeout_ms=*/1000)) {
-  consume(*sample);
+if (auto out = run.pull("classes", std::chrono::milliseconds(1000))) {
+  consume(*out);
 }
 ```
 
-當發生逾時、關閉或錯誤時，請使用結構化的狀態超載處理，以便對不同情況進行不同的處理：
+當逾時、關閉和錯誤必須分別處理，且您需要 `Sample` 本身時，請使用結構化的狀態超載：
 
 ```cpp
 simaai::neat::Sample sample;

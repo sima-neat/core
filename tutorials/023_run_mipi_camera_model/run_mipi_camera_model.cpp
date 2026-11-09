@@ -7,10 +7,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -184,8 +184,9 @@ int main(int argc, char** argv) {
 
     // STEP pull-output
     for (int i = 0; i < frames; ++i) {
-      std::optional<neat::Sample> sample = run.pull(/*timeout_ms=*/pull_timeout_ms);
-      if (!sample.has_value()) {
+      auto result = run.pull(std::chrono::milliseconds(pull_timeout_ms));
+      if (result.status() == neat::PullStatus::Timeout ||
+          result.status() == neat::PullStatus::Closed) {
         std::cout << "frame=" << i << " output_timeout timeout_ms=" << pull_timeout_ms;
         const std::string last_error = run.last_error();
         if (!last_error.empty())
@@ -193,7 +194,7 @@ int main(int argc, char** argv) {
         std::cout << "\n";
         return 2;
       }
-      const neat::TensorList tensors = neat::tensors_from_sample(*sample, true);
+      const neat::TensorList& tensors = result.value(); // value() throws on an Error
       std::cout << "frame=" << i << " tensors=" << tensors.size();
       if (!tensors.empty())
         std::cout << " first_shape=" << shape_string(tensors.front().shape);

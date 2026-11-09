@@ -49,11 +49,11 @@ Build a `Graph` with just two stages: the `RtspDecodedInput` fragment (the sourc
 
 ### Pull decoded frames {#step-pull-frames}
 
-With the run live, loop and `pull(...)` with a timeout. Each successful pull yields a `Sample` whose tensor is one decoded frame. The tutorial uses the default NV12 output, represented as a logical `[H, W]` tensor with Y and UV plane metadata. A pull that returns nothing (or an empty tensor) prints `frame=N rtsp_timeout` and breaks the loop — that usually means the URL is wrong or the stream is not delivering. The timeout is what keeps a dead stream from hanging the program.
+With the run live, loop and `pull(...)` with a timeout. Each successful pull yields the tensor of one decoded frame. The tutorial uses the default NV12 output, represented as a logical `[H, W]` tensor with Y and UV plane metadata. A pull that times out (or finds the stream closed) prints `frame=N rtsp_timeout` and breaks the loop — that usually means the URL is wrong or the stream is not delivering. The timeout is what keeps a dead stream from hanging the program.
 
-**C++:** A frame is extracted with `tensors_from_sample(*sample, true)`; the loop checks for an empty list before reading `shape`.
+**C++:** `pull(...)` returns a `Result<TensorList>`; the loop checks its `status()` for `Timeout` or `Closed`, then reads `shape` from `value().front()` (`value()` throws on an `Error`).
 
-**Python:** A frame is read from the first entry in `sample.tensors` before printing its shape.
+**Python:** `pull_result(...)` returns a `PullResult`; after the same status check, the frame is the first entry of `result.value()`.
 
 ## Run
 

@@ -30,8 +30,8 @@ graph.add(neat::Output{});
 
 auto run = graph.build();
 while (running) {
-  auto sample = run.pull(/*timeout_ms=*/100);
-  if (sample) handle_detection(*sample);
+  auto output = run.pull(std::chrono::milliseconds(100));  // Result<TensorList>
+  if (output) handle_detection(*output);
 }
 ```
 

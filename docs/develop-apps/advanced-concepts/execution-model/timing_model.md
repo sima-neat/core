@@ -56,13 +56,13 @@ auto run = graph.build();
 while (have_more_inputs()) {
   run.push("image", simaai::neat::TensorList{next_tensor()});
 
-  if (auto out = run.pull("classes", /*timeout_ms=*/0)) {
+  if (auto out = run.pull("classes", std::chrono::milliseconds(0))) {
     consume(*out);
   }
 }
 
 run.close_input();
-while (auto out = run.pull("classes", /*timeout_ms=*/1000)) {
+while (auto out = run.pull("classes", std::chrono::milliseconds(1000))) {
   consume(*out);
 }
 run.close();
@@ -111,19 +111,19 @@ Leave `max_buffers` unset to use the default queue limits. Setting it to a posit
 
 ## Pull timing
 
-`Run::pull(...)` returns the next available `Sample` from an output boundary.
+`Run::pull(timeout)` returns the next available output of an output boundary as a `Result<TensorList>`. The structured status overload below fills a `Sample` instead.
 
-Your application can pause submissions and resume the same `Run`; output silence alone does not fail it. A finite `pull()` timeout ends that wait without stopping the Run. `RunOptions::input_timeout_ms` controls output waits for input-mode `Graph::run()` and supported seeded build preflight. `Run::run()` and `Model::run()` use their per-call timeout instead; `-1` means unlimited, as in `pull(-1)`. Applications that need stall detection should set deadlines for pending work.
+Your application can pause submissions and resume the same `Run`; output silence alone does not fail it. A finite `pull(...)` timeout ends that wait without stopping the Run. `RunOptions::input_timeout_ms` controls output waits for input-mode `Graph::run()` and supported seeded build preflight. `Run::run()` and `Model::run()` use their per-call timeout instead; `-1` means unlimited, as a negative timeout does in `pull(timeout)`. Applications that need stall detection should set deadlines for pending work.
 
-Use the convenience overload when timeout and EOS can share the same “no sample” path:
+Test the `Result` when timeout and EOS can share the same “no output” path; its `status()` tells them apart when needed:
 
 ```cpp
-if (auto sample = run.pull("classes", /*timeout_ms=*/1000)) {
-  consume(*sample);
+if (auto out = run.pull("classes", std::chrono::milliseconds(1000))) {
+  consume(*out);
 }
 ```
 
-Use the structured status overload when timeout, closed, and error must be handled differently:
+Use the structured status overload when timeout, closed, and error must be handled differently and you need the `Sample` itself:
 
 ```cpp
 simaai::neat::Sample sample;

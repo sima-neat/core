@@ -76,7 +76,7 @@ Legacy per-variable debug toggles still work and override profile defaults when 
 - Preferred API knobs:
   - `ValidateOptions.preroll_timeout_ms` — validate() preroll timeout.
   - `RunOptions.input_timeout_ms` — output wait for input-mode `Graph::run()` and supported seeded build preflight.
-  - `Run::run(..., timeout_ms)` / `Model::run(..., timeout_ms)` — per-call output wait; `-1` is unlimited, as in `Run::pull(-1)`.
+  - `Run::run(..., timeout_ms)` / `Model::run(..., timeout_ms)` — per-call output wait; `-1` is unlimited, as a negative timeout is in `Run::pull(timeout)`.
 - Legacy fallback env vars (use only when you cannot pass options):
   - `SIMA_GST_VALIDATE_TIMEOUT_MS=<ms>` — validate() timeout (default 2000/10000).
   - `SIMA_GST_RUN_INPUT_TIMEOUT_MS=<ms>` — fallback for those `Graph::run()` / preflight output waits (default 10000).

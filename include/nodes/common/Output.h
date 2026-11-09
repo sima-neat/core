@@ -1,10 +1,10 @@
 /**
  * @file
  * @ingroup nodes_common
- * @brief `Output` Node — terminal sink that exposes pulled samples to `Run::pull()`.
+ * @brief `Output` Node — terminal sink whose items `Run::pull(...)` returns.
  *
  * Wraps an `appsink`-style element. Place at the end of a Graph that uses async-mode
- * (`Run::pull()`). For sync-mode pipelines that write directly to a file, use the
+ * (`Run::pull(...)`). For sync-mode pipelines that write directly to a file, use the
  * file-output Graph fragments instead.
  */
 #pragma once
@@ -69,7 +69,7 @@ struct OutputOptions {
 };
 
 /**
- * @brief Pull-side terminal sink. Samples land here for `Run::pull()` to consume.
+ * @brief Pull-side terminal sink. Items land here for `Run::pull(...)` to consume.
  *
  * @ingroup nodes_common
  */

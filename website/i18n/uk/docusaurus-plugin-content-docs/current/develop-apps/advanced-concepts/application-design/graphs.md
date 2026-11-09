@@ -71,9 +71,9 @@ int main() {
   neat::Tensor image = /* create or load an image tensor */;
   run.push("image", neat::TensorList{image});
 
-  std::optional<neat::Sample> result = run.pull("classes", /*timeout_ms=*/1000);
+  neat::Result<neat::TensorList> result = run.pull("classes", std::chrono::milliseconds(1000));
   if (result) {
-    // Consume result->tensors, result->detections, or other Sample metadata.
+    // Consume *result: the output's tensors, each carrying the item's stamp().
   }
 
   run.stop();
@@ -106,7 +106,7 @@ run = app.build()
 image = ...  # Create or load a tensor-compatible object.
 run.push("image", [image])
 
-result = run.pull("classes", timeout_ms=1000)
+result = run.pull_result("classes", timeout_ms=1000).value()
 run.stop()
 ```
 
@@ -120,7 +120,7 @@ run.stop()
 |---|---|
 | `TensorList` | Ви передаєте тензори, тому додаткові метадані зразків не потрібні. |
 | `Sample` | Вам потрібні мітки часу, `frame_id`, `stream_id`, метадані тексту/аудіо/відео, результати виявлення або сигнал кінця потоку (EOS). |
-| `std::vector<cv::Mat>` | Вам потрібен зручний спосіб введення зображень за допомогою OpenCV. |
+| `Tensor::from_cv_mat(...)` у `TensorList` | У вас є зображення OpenCV: обгорніть кожне з них, указавши його піксельний формат. |
 
 Найпоширеніші виклики функцій у C++:
 
@@ -131,20 +131,23 @@ run.push("image", neat::TensorList{image});
 run.push(sample);
 run.push("image", sample);
 
-auto out = run.pull(/*timeout_ms=*/1000);
-auto named = run.pull("classes", /*timeout_ms=*/1000);
+using namespace std::chrono_literals;
+auto out = run.pull(1000ms);                  // Result<TensorList>
+auto named = run.pull("classes", 1000ms);
 
-neat::TensorList tensors = run.pull_tensors("classes", 1000);
-neat::Sample sample_out = run.pull_samples("classes", 1000);
+neat::TensorList tensors = run.pull("classes", 1000ms).value();
+
+neat::Sample sample_out;                      // the Sample, with its metadata
+neat::PullStatus status = run.pull("classes", 1000, sample_out);
 ```
 
-Використовуйте `pull(...)`, коли час очікування вичерпано або з’єднання закрито, і потрібно повернути порожній `std::optional`. Використовуйте `pull_tensors(...)` або `pull_samples(...)`, коли вам потрібна зручна допоміжна функція з типізацією, яка генерує виняток у разі перевищення часу очікування або виникнення помилки.
+`pull(timeout)` повертає `Result<TensorList>`: перевірте його на `Ok`, `Timeout`, `Closed` або `Error` чи викличте `value()`, який генерує виняток, коли виходу немає. Використовуйте `pull(name, timeout_ms, sample)` із `Sample&`, коли вам потрібен сам `Sample` разом з його метаданими.
 
 Для скінченних потоків, що надходять від програми, закрийте вхідний потік і очистіть його, перш ніж збирати остаточні показники:
 
 ```cpp
 run.close_input();
-while (auto out = run.pull("classes", 1000)) {
+while (auto out = run.pull("classes", std::chrono::milliseconds(1000))) {
   // Drain remaining output.
 }
 run.stop();
@@ -240,12 +243,12 @@ app.add(neat::nodes::Output());
 
 neat::Run run = app.build();
 run.push(neat::TensorList{image});
-auto result = run.pull(1000);
+auto result = run.pull(std::chrono::milliseconds(1000));
 ```
 
 Це зручно для швидких скриптів і тестів. Для більш складних застосувань краще використовувати іменовані вхідні та вихідні дані.
 
-Якщо граф має кілька можливих входів або виходів, то неіменовані операції `push(...)` або `pull()` завершуються з помилкою та
+Якщо граф має кілька можливих входів або виходів, то неіменовані операції `push(...)` або `pull(...)` завершуються з помилкою та
 повідомляють про доступні імена. Ця помилка є навмисною: Neat не повинен намагатися вгадати, яку саме камеру, тензор або вихідний блок ви мали на увазі.
 
 ## Моделі є фрагментами графа.
@@ -495,7 +498,7 @@ app.connect(right, pair);
 neat::Run run = app.build();
 run.push("left", left_sample_with_frame_id_42);
 run.push("right", right_sample_with_frame_id_42);
-auto stereo = run.pull("stereo", 1000);
+auto stereo = run.pull("stereo", std::chrono::milliseconds(1000));
 ```
 
 Python:
@@ -544,7 +547,7 @@ app.add(neat::nodes::groups::RtspDecodedInput(opt));
 
 ```cpp
 app.add(neat::nodes::Output("detections"));
-auto out = run.pull("detections", 1000);
+auto out = run.pull("detections", std::chrono::milliseconds(1000));
 ```
 
 ### Вихідний вузол, що належить графу.
@@ -653,7 +656,7 @@ run = app.build(opt)
 ```cpp
 neat::Run run = app.build();
 run.push("image", neat::TensorList{image});
-auto out = run.pull("classes", 1000);
+auto out = run.pull("classes", std::chrono::milliseconds(1000));
 
 neat::RunExportOptions export_opt;
 export_opt.label = "after_smoke_test";
@@ -670,7 +673,7 @@ Python:
 ```python
 run = app.build()
 run.push("image", [image])
-out = run.pull("classes", timeout_ms=1000)
+out = run.pull_result("classes", timeout_ms=1000).value()
 
 export_opt = pyneat.RunExportOptions()
 export_opt.label = "after_smoke_test"
@@ -796,7 +799,7 @@ app.add(genai_fragment);
 
 neat::Run run = app.build();
 run.push("prompt", prompt_sample);
-auto token = run.pull("tokens", 1000);
+auto token = run.pull("tokens", std::chrono::milliseconds(1000));
 ```
 
 Точна назва фабрики фрагментів GenAI та допоміжних зразків залежить від встановленого пакета GenAI. Правило для графа залишається незмінним: додайте або з’єднайте загальнодоступні фрагменти, а потім використовуйте названі `Run::push(...)` та `Run::pull(...)`.
@@ -899,7 +902,7 @@ app.build()
 | Оголошення межі. | З’явилося, коли… | Пропущено, коли... |
 |---|---|---|
 | `nodes::Input("name")` | до нього не підключено жодного зовнішнього графа, тому це має бути загальнодоступна кінцева точка `Run::push("name", ...)`. | до нього надходить інформація з вищого рівня графа, тому це лише внутрішній фрагмент параметра. |
-| `nodes::Output("name")` | жоден із наступних графів не використовує ці дані, тому це має бути загальнодоступна кінцева точка `Run::pull("name")`. | подальший граф використовує ці дані, тому це лише значення, яке повертається як внутрішній фрагмент. |
+| `nodes::Output("name")` | жоден із наступних графів не використовує ці дані, тому це має бути загальнодоступна кінцева точка `Run::pull("name", ...)`. | подальший граф використовує ці дані, тому це лише значення, яке повертається як внутрішній фрагмент. |
 
 Те, що щось було опущено, не означає, що про це забули. Компілятор зберігає інформацію про походження, тому `describe()`, помилки перевірки, показники та експортований у форматі JSON код можуть і надалі посилатися на назву кінцевої точки, з якою взаємодіє користувач.
 
@@ -933,7 +936,7 @@ auto graph_outputs = app.outputs();
 // Build/run
 neat::Run run = app.build();
 run.push("image", neat::TensorList{image});
-auto out = run.pull("classes", 1000);
+auto out = run.pull("classes", std::chrono::milliseconds(1000));
 
 // Runtime endpoint inspection
 auto run_inputs = run.input_names();
@@ -959,7 +962,7 @@ print(app.outputs())
 
 run = app.build()
 run.push("image", [image])
-out = run.pull("classes", timeout_ms=1000)
+out = run.pull_result("classes", timeout_ms=1000).value()
 
 print(run.input_names())
 print(run.output_names())

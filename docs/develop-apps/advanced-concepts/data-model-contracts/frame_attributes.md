@@ -70,6 +70,8 @@ sample.attributes["image-index"] = "42"     # reaches the Sample
 sample.attributes = {"image-time": "..."}   # replaces the whole map
 ```
 
+Python has no non-deprecated per-item metadata path yet: such a `sample` comes from `Run.pull`, which is deprecated, and its replacement `Run.pull_result` returns Tensors without `attributes`.
+
 ## Header rules
 
 The configured list is an **allowlist**. An empty list disables capture entirely and leaves

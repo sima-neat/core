@@ -17,7 +17,7 @@
 
 실제 애플리케이션 중 상당수는 추론 이벤트당 하나 이상의 입력을 사용합니다. Neat 이를 **번들 샘플**로 나타냅니다. 즉, 단일 `Sample` 누구의 `fields` 목록은 여러 개의 명명된 텐서 페이로드를 포함하며, 각 페이로드는 특정 주소를 통해 접근할 수 있습니다. `port_name`런타임은 지정된 필드를 하나의 논리적 이벤트로 묶어 관리하므로 `left` 그리고 `right` (또는 이미지와 메타데이터)가 파이프라인을 통해 일관성을 유지합니다.
 
-이 장에서는 텐서 입력/텐서 출력 그래프를 구축하고, 이름이 지정된 두 개의 부동 소수점 텐서를 묶은 다음, 묶음을 파이프라인에 전달하고, 이름이 지정된 필드를 다시 읽어옵니다. 마지막에는 여러 필드가 있는 샘플을 만들고 두 필드 모두 포트 이름이 변경되지 않은 상태로 왕복 이동을 완료했는지 확인합니다.
+이 장에서는 텐서 입력/텐서 출력 그래프를 구축하고, 이름이 지정된 두 개의 부동 소수점 텐서를 묶은 다음, 묶음을 파이프라인에 전달하고, 필드를 다시 읽어옵니다. 마지막에는 여러 필드가 있는 샘플을 만들고 두 필드 모두 순서대로 왕복 이동을 완료했는지 확인합니다.
 
 ### 텐서 입력을 구성합니다. {#step-configure-tensor-input}
 
@@ -35,15 +35,15 @@
 
 이제 다중 입력 이벤트를 구성합니다. 각 입력은 를 통해 이름을 받습니다. `make_tensor_sample(port_name, tensor)`그리고 해당 이름이 지정된 필드는 모델이 포트를 통해 처리하는 대상입니다. `left` 으로 가득 차 있습니다 `1.0` 그리고 `right` 함께 `2.0` 그래서 나갈 때 서로 구별할 수 있습니다.
 
-**C++:** `make_bundle_sample({...})` 이름이 지정된 필드를 하나로 묶습니다. `Sample` 누구의 `kind` 입니다 `Bundle`**Python:** 이름이 지정된 샘플 목록이 직접 전달됩니다. `push(...)`; pyneat이 번들 패키지를 생성합니다.
+**C++:** `make_bundle_sample({...})` 이름이 지정된 필드를 하나로 묶습니다. `Sample` 누구의 `kind` 입니다 `Bundle`**Python:** 이름이 지정된 샘플 목록이 `run(...)`에 직접 전달되며, pyneat이 번들 엔벨로프를 생성합니다.
 
 ### 번들 패키지를 푸시하고 다시 읽어보세요. {#step-push-and-read}
 
-마지막으로, 번들을 전송하고 결과를 확인합니다. 출력 결과 또한 번들입니다. `Sample`그래서 우리는 읽었습니다. `out.fields` 하나의 텐서로 취급하는 대신 — `out.fields.size()` 다음과 같아야 합니다. `2`각 필드는 다음 값을 포함합니다. `port_name` 그리고 텐서 페이로드.
+마지막으로, 번들을 전송하고 결과를 확인합니다. 출력 결과도 번들 `Sample`이므로 하나의 텐서로 취급하지 않고 `out.fields`를 읽습니다. `out.fields.size()`는 `2`여야 하며, 각 필드는 텐서 페이로드를 포함합니다. 필드의 `port_name`은 아직 돌아오지 않으며 비어 있습니다.
 
 **C++:** `run.run(Sample{bundle}, timeout_ms)`는 하나의 `Sample`을 반환합니다. 논리적 결과에 여러 필드가 있기 때문에 반환된 `Sample` 자체는 `Bundle`입니다. 따라서 `out.kind == SampleKind::Bundle`을 확인하고 `front()` (번들 내부의 "첫 번째 필드"를 의미)가 아닌 `out.fields`를 반복합니다.
 
-**Python:** `run.push(fields)` 다음에 `run.pull(timeout_ms=...)`가 출력 샘플을 반환합니다. `out.fields`를 반복하고 각 `field.port_name` 및 `field.tensor`를 읽습니다.
+**Python:** `run.run(fields, timeout_ms=...)`는 C++와 마찬가지로 이름이 지정된 샘플을 push하고 출력 샘플을 반환합니다. Python은 아직 필드의 `port_name`을 제공하지 않으므로(비어 있음), 예제는 각 필드의 텐서 형태를 위치 순서대로 출력합니다.
 
 ## Run
 
@@ -72,12 +72,12 @@ python3 share/sima-neat/tutorials/010_feed_multi_input_model/feed_multi_input_mo
 
 ```text
 bundle_fields=2
-  field=left has_tensor=yes
-  field=right has_tensor=yes
+  field=bundle has_tensor=yes
+  field=bundle has_tensor=yes
 [OK] 010_feed_multi_input_model
 ```
 
-(Python 빌드는 `port=left has_tensor=True` 줄과 함께 동일한 필드 수를 출력합니다.) 이 챕터의 C++ 소스를 사용자 지정 `CMakeLists.txt`로 자신의 프로젝트에 통합하려면 (추가 폴더가 필요하지 않음) 랜딩 페이지의 [튜토리얼 실행 방법](/tutorials#compile-a-copy-yourself)을 참조하십시오.
+(C++ 빌드는 필드를 `port_name`, 없으면 `stream_label`, 없으면 위치로 표시하므로 `SIMA_NEAT_BACKEND=dataflow`에서는 레이블이 `field_0`과 `field_1`이 됩니다. Python 빌드는 `bundle_fields=2`, `field=0 shape=[48, 64, 3]`, `field=1 shape=[48, 64, 3]`을 출력합니다.) 이 챕터의 C++ 소스를 사용자 지정 `CMakeLists.txt`로 자신의 프로젝트에 통합하려면 (추가 폴더가 필요하지 않음) 랜딩 페이지의 [튜토리얼 실행 방법](/tutorials#compile-a-copy-yourself)을 참조하십시오.
 
 ## In Practice
 

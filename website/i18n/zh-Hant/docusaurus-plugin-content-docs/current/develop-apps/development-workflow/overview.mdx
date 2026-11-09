@@ -150,10 +150,12 @@ graph.add(model);
 graph.add(simaai::neat::nodes::Output("classes"));
 
 cv::Mat frame = /* your frame */;
+auto tensor = simaai::neat::Tensor::from_cv_mat(
+    frame, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74);
 
 auto run = graph.build();
-run.push("image", std::vector<cv::Mat>{frame});
-auto out = run.pull("classes", /*timeout_ms=*/1000);
+run.push("image", simaai::neat::TensorList{tensor});
+auto out = run.pull("classes", std::chrono::milliseconds(1000)).value();
 ```
 
 </CodeTab>
@@ -175,7 +177,7 @@ tensor = pyneat.Tensor.from_numpy(
 
 run = graph.build()
 run.push("image", [tensor])
-out = run.pull("classes", timeout_ms=1000)
+out = run.pull_result("classes", timeout_ms=1000).value()
 ```
 
 </CodeTab>
@@ -195,9 +197,8 @@ API 的結構相同，但 Python 使用明確的列表或元組來區分單一�
 | `Graph::run(Sample)` | `Sample` | `graph.run([sample])` 會回傳一個 `Sample` | 用於基於範例的圖形輸入。 |
 | `Run::run(TensorList)` 或 `Run::run(std::vector<cv::Mat>)` | `TensorList` | `run.run([tensor])` 會回傳一個張量列表 | 在活動 `Run` 上進行可重複使用的請求/回應。 |
 | `Run::run(Sample)` | `Sample` | `run.run([sample])` 會回傳一個 `Sample` | 用於捆綁包、串流 ID、幀 ID 或元資料。 |
-| `Run::pull(...)` | `std::optional<Sample>` | `Sample` 或 `None` | `None` 表示在超時之前沒有範例到達，或者輸出已關閉。 |
-| `Run::pull_tensors(...)` | `TensorList` | 張量列表 | 當您只需要張量有效載荷時使用。 |
-| `Run::pull_samples(...)` | `Sample` | `Sample` | 當缺少範例的情況不常見，並且您需要嚴格的範例輸出時使用。 |
+| `Run::pull(timeout)` | `Result<TensorList>` | `run.pull_result(timeout_ms)` 傳回 `PullResult` | `Ok` 時帶有輸出張量，否則為 `Timeout`、`Closed` 或 `Error` 並附上原因。 |
+| `Run::pull(timeout_ms, sample)` | `PullStatus`，並填入 `sample` | `run.pull(...)` 傳回 `Sample` 或 `None`，已棄用 | 當您需要輸出 `Sample` 及其中繼資料時使用。 |
 
 ## 學習概念
 

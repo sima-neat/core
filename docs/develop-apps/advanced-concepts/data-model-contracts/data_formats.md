@@ -110,7 +110,7 @@ explicit caps string only for codecs that have no dedicated tag.
 
 ## Advanced image/video output adapter
 
-For normal model output, use `nodes.output(...)` and pull tensors with `pull_tensors(...)`. Use `OutputTensorOptions` only when image or video output must be converted, resized, or rate-adjusted into a CPU-friendly `UInt8` tensor before the app pulls it.
+For normal model output, use `nodes.output(...)` and pull tensors with `pull(timeout)` (Python: `pull_result(timeout_ms)`). Use `OutputTensorOptions` only when image or video output must be converted, resized, or rate-adjusted into a CPU-friendly `UInt8` tensor before the app pulls it.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">

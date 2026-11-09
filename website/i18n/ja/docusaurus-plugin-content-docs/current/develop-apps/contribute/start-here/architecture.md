@@ -162,7 +162,7 @@ Scheduler は `neatdecoder`、`neatencoder` とその GStreamer アダプター�
 - **デコード/取り込み:** ファイルまたは RTSP → デペイロード/デマルチプレックス/解析 → デコード → 変換/キャプチャ → アプリシンク → C++ コンシューマー
 - **検証:** ビルド、解析、およびプレロール（一時停止）を実行し、早期にネゴシエーションの問題を検出します。
 - **RTSPストリームの送信:** `appsrc` を使用して、合成フレームをRTSPサーバーのパイプラインにプッシュします。
-- **画像/動画テンソルアダプター:** 画像/動画/RTSP -> デコード -> 変換/スケーリング -> `add_output_tensor(...)` -> `Run::pull_tensors()`
+- **画像/動画テンソルアダプター:** 画像/動画/RTSP -> デコード -> 変換/スケーリング -> `add_output_tensor(...)` -> `Run::pull(timeout)`
 - **チュートリアル:** 実行可能で、段階的に学習を進められるように構成されたチュートリアルは、[チュートリアル](/tutorials) から始めてください。
 
 ### 標準的なプロダクションパイプライン（信頼できる情報源）
@@ -505,7 +505,7 @@ GStreamerのエラーは、1つの内部パーサー、分類器、およびレ�
 `GraphReport.repro_note`は、人間が理解しやすい要約です。本番レンダリングには、平易な言葉で記述された原因、関連する観測/期待される値、具体的なユーザーアクション、および安定した診断IDが含まれます。生のプラグインストリング、ソースの場所、およびGStreamerドメイン/コードは、デバッグ専用です。括弧で囲まれた公開コードは、`NeatError`が構築されたときに1回追加されます。
 `GraphReport.bus`は、プラグイン/ランタイムエラーの詳細に関する信頼できる情報源です。
 ビルド（入力）フローの場合、`GraphReport.build_adaptation`は、解決された形状ポリシー/機能、シード/最大値の起源、バイトガードの起源、および適用/スキップされた適応アクションを記録します。
-例外をスローしないランタイムプルの場合、`PullError.code`は同じ分類を使用します。入力ストリームワーカーのエラーは、型付きエラーコードを保持し、ワーカーthreadの境界を越えて報告されるため、`Run::pull()`とPython例外トランスレーターは、同じ`NeatError`を伝達します。
+例外をスローしないランタイムプルの場合、`PullError.code`は同じ分類を使用します。入力ストリームワーカーのエラーは、型付きエラーコードを保持し、ワーカーthreadの境界を越えて報告されるため、`Run::pull(...)`（`Result::value()` 経由）とPython例外トランスレーターは、同じ`NeatError`を伝達します。
 
 サポートの優先順位は次のとおりです。
 1. バケット形式で`error_code`
@@ -752,7 +752,7 @@ Core が所有する Preproc のフレームアダプターは、動的な画像
 `Run` は、入力/出力キューと入力スレッドを所有します。
 
 * `push(...)` は、入力データをキューに追加します（`RunOptions::overflow_policy` に基づいて、キューがいっぱいになった場合に、処理をブロックするか、入力を破棄するかを決定します）。
-* `pull(...)` は、appsink からの `Sample` 出力をキューから取り出します。
+* `pull(...)` は appsink から出力をキューから取り出します。`Result<TensorList>`、または `pull(timeout_ms, sample)` による `Sample` です。
 * `try_push(...)` はノンブロッキング処理であり（キューが一杯の場合は false を返します）。
 
 `RunOptions::backend` は、同じ `Run` インターフェースの背後で動作するランタイムを選択します。Neat
@@ -764,9 +764,11 @@ Dataflow バックエンド（`SIMANEAT_DATAFLOW_SOURCE_DIR` で有効にする�
 それ以降は強制されます。`push_holder` は GStreamer 専用で、複数のテンソルからなる項目は、
 フィールド名が位置ベースのレコードポートにバインドされます。
 
-TensorList 動詞は両方のランタイムで動作し、`alloc` を除いて単一の Tensor を受け取る、または返す `Run` の動詞はありません。`push(list)` と `push(name, list)` は 1 つの項目を push します。テンソルが 1 つならリーフ、複数なら位置ベースのレコードであり、最初のテンソルのスタンプが項目の `stream_name`、`frame_id`、`source_time`、`flags` を提案します。`std::chrono::milliseconds` のタイムアウトを取る `pull(name, timeout)` は `Result<TensorList>` を返し、そのステータスは 4 つの `PullStatus` の結果のいずれかです。`int` のオーバーロードは引き続き `std::optional<Sample>` を返します。`run(list)` は push して出力を待ち、`on_output(name, callback)` は `Run` が所有するスレッド上で各出力項目を `TensorList` としてコールバックに渡し（その出力は pull できなくなります）、`alloc(name)` は `Graph::input(name, shape, dtype)` で宣言された入力に書き込み可能な Tensor を貸し出し、それは `push(name, {tensor})` でコミットされます。Dataflow ランタイムではコピーなしで公開されるプールのスロット、GStreamer では CPU メモリです。カウンターは引き続き `start_measurement()` で取得し、`Run` に公開の `stats()` はありません。pull されたすべてのテンソルは `Tensor::envelope` に項目の `Stamp` を持ち、ランタイムが `seq` と `publish_time` を書き込みます。`Sample` のインターフェースはその射影です（`to_sample`、`to_tensor`）：`input_seq = seq - 1`、`orig_input_seq = input_seq` で、`pts_ns` は `source_time` から得られます。push された `input_seq` や `orig_input_seq` にはスタンプ上のフィールドがないため Dataflow ランタイムでは伝達されず、GStreamer は `publish_time` を記録しません。
+TensorList 動詞は両方のランタイムで動作し、`alloc` を除いて単一の Tensor を受け取る、または返す `Run` の動詞はありません。`push(list)` と `push(name, list)` は 1 つの項目を push します。テンソルが 1 つならリーフ、複数なら位置ベースのレコードであり、最初のテンソルのスタンプが項目の `stream_name`、`frame_id`、`source_time`、`flags` を提案します。`std::chrono::milliseconds` のタイムアウトを取る `pull(name, timeout)` は `Result<TensorList>` を返し、そのステータスは 4 つの `PullStatus` の結果のいずれかです。`pull(timeout_ms, sample)` とその名前付き形式は `Sample` を埋めます。`run(list)` は push して出力を待ち、`on_output(name, callback)` は `Run` が所有するスレッド上で各出力項目を `TensorList` としてコールバックに渡し（その出力は pull できなくなります）、`alloc(name)` は `Graph::input(name, shape, dtype)` で宣言された入力に書き込み可能な Tensor を貸し出し、それは `push(name, {tensor})` でコミットされます。Dataflow ランタイムではコピーなしで公開されるプールのスロット、GStreamer では CPU メモリです。カウンターは引き続き `start_measurement()` で取得し、`Run` に公開の `stats()` はありません。pull されたすべてのテンソルは `Tensor::envelope` に項目の `Stamp` を持ち、ランタイムが `seq` と `publish_time` を書き込みます。`Sample` のインターフェースはその射影です（`to_sample`、`to_tensor`）：`input_seq = seq - 1`、`orig_input_seq = input_seq` で、`pts_ns` は `source_time` から得られます。push された `input_seq` や `orig_input_seq` にはスタンプ上のフィールドがないため Dataflow ランタイムでは伝達されず、GStreamer は `publish_time` を記録しません。
 
-Python バインディング（`python/src/module.cpp`）は、同じ動詞を Python のリストで公開します。`Run.push`、`Run.try_push`、`Run(tensors)` はリストを受け取り、`Run.pull_result(name, timeout_ms)` は `PullResult`（`Result<TensorList>`、`value()` はリスト）を返し、`Run.pull` は 1 リリースの間、`DeprecationWarning` を出しつつ引き続き `Sample | None` を返します。また、`RunOptions.backend`、`Stamp`（凍結された値）、レコードアクセサー、`Graph.input`/`Graph.output`、`Run.alloc`（`Tensor.copy_from` で埋める）、および `to_tensor`/`to_sample` の射影も公開します。`Run.on_output` は Python コールバックを `Run` の配信スレッドで実行し、そのスレッドが GIL を取得します。そのスレッドを待つバインディングはすべて先に GIL を解放します：`stop`、`close`、`close_input`、Python の `Run` の解放（弱参照のコールバックが nanobind による破棄の前にクローズします）、およびインタープリターの終了（`atexit` フックが終了処理の前にそのような `Run` を停止します）。コールバックが送出した例外は `sys.unraisablehook` に渡され、C++ の例外と同様に配信を終了させます（`last_error()`）。
+TensorList 動詞が置き換える `Run` の形式には `[[deprecated]]` が付いており、1 リリースの間は引き続き動作します。対象は、4 つの `cv::Mat` 版 `push`/`try_push` オーバーロード、`std::optional<Sample>` を返す `int` 版の pull、`pull_tensors`、`pull_samples` です。各属性は置き換え先を示し、プロセス内で各形式を最初に呼び出したときに `[WARN] Run::<form> is deprecated` の行を stderr に 1 行書き込みます。Core 自身の呼び出し元は、警告を出さない内部エントリーを使用します。OpenCV の画像は `TensorList{Tensor::from_cv_mat(mat, format, memory)}` として push し、`pull(timeout)` で pull します。`pull(timeout_ms, sample, error)` とその名前付き形式は非推奨ではありません。これらは `Sample` のメタデータ（`attributes`、`caps_string`、`dts_ns`、`duration_ns`、Bundle のフィールド名）を取得する方法であり、`Result<TensorList>` はこれらを保持しません。`SIMANEAT_STRICT_WARNINGS` では、`-Wno-error=deprecated-declarations` により、これらの警告で Core 自身のターゲットが失敗することはありません。
+
+Python バインディング（`python/src/module.cpp`）は、同じ動詞を Python のリストで公開します。`Run.push`、`Run.try_push`、`Run(tensors)` はリストを受け取り、`Run.pull_result(name, timeout_ms)` は `PullResult`（`Result<TensorList>`、`value()` はリスト）を返し、`Run.pull` は 1 リリースの間、`DeprecationWarning` を出しつつ引き続き `Sample | None` を返します。`Run.pull_tensors` も警告を出します。また、`RunOptions.backend`、`Stamp`（凍結された値）、レコードアクセサー、`Graph.input`/`Graph.output`、`Run.alloc`（`Tensor.copy_from` で埋める）、および `to_tensor`/`to_sample` の射影も公開します。`Run.on_output` は Python コールバックを `Run` の配信スレッドで実行し、そのスレッドが GIL を取得します。そのスレッドを待つバインディングはすべて先に GIL を解放します：`stop`、`close`、`close_input`、Python の `Run` の解放（弱参照のコールバックが nanobind による破棄の前にクローズします）、およびインタープリターの終了（`atexit` フックが終了処理の前にそのような `Run` を停止します）。コールバックが送出した例外は `sys.unraisablehook` に渡され、C++ の例外と同様に配信を終了させます（`last_error()`）。
 
 アイドル状態の `Run` は引き続き使用できます。操作の期限は待機時間を制限し、入力の送信間の一時停止には適用されません。
 
@@ -1084,12 +1086,14 @@ SSD 性能プロファイルには、バックエンド p99 が 0.7 ms 以下、
 
 ## 出力処理
 
-`Run::pull()` を実行すると、`Sample` が生成され、これには以下のものが含まれる可能性があります。
+`Run::pull(timeout)` は `Result<TensorList>` を返します。これは項目のテンソル（バンドルの場合はそのフィールドを順番に並べたもの）で、それぞれが項目の `Stamp` を持ちます。機械学習に特化したワークフローではこれを使用します。
+
+`Run::pull(timeout_ms, sample)` は `Sample` を埋めます。これには以下のものが含まれる可能性があります。
 
 * `Tensor` ペイロード（`SampleKind::Tensor`、テンソル）
 * 複数の出力の束`SampleKind::Bundle`)
 
-使用 `Run::pull_tensors(...)` テンソル形式のペイロードを使用したい場合に、機械学習に特化したワークフローで、完全な形式の代わりにこれを使用します。 `Sample` 封筒。
+テンソルのペイロードではなく、メタデータを含む完全な `Sample` エンベロープが必要な場合にこれを使用します。
 
 ## パイプラインのシリアライズ（保存／読み込み）
 
@@ -1124,7 +1128,7 @@ SSD 性能プロファイルには、バックエンド p99 が 0.7 ms 以下、
 
 名前の整合性は、`build()` の一部であり、それ以前の `validate()` の呼び出しに依存しません。名前は、フレームワークの検索で再帰的な短い名前を使用するため、マテリアライズされたパイプラインセグメント内で一意です。個別に解析された接続されたセグメントは、同じ名前を再利用できます。フレームワークは、名前がパディングやルーティング式で使用される可能性があるため、名前の変更ではなく、名前の衝突を拒否します。
 
-入力に依存する接続されたセグメントは、最初の入力でマテリアライズできます。したがって、そのビルドの失敗は、最初の `push()` または `pull()` で報告され、元の `GraphReport` が保持されます。
+入力に依存する接続されたセグメントは、最初の入力でマテリアライズできます。したがって、そのビルドの失敗は、最初の `push(...)` または `pull(...)` で報告され、元の `GraphReport` が保持されます。
 
 ---
 

@@ -37,11 +37,11 @@ The producer's only job is to feed inputs. We spawn a thread that loops over the
 
 ### Pull results on the consumer {#step-pull-results}
 
-The main thread consumes. It loops calling `pull(timeout_ms=2000)`, which returns the next available output or nothing if none arrived within the timeout. On an empty pull we check whether the producer has finished — if so we stop, otherwise we keep waiting. Each real result is reduced to a top-1 class index and printed. After the loop we join the producer and confirm `pushed == pulled`.
+The main thread consumes. It loops calling `pull_result(timeout_ms=2000)` (C++: `pull(std::chrono::milliseconds(2000))`), which returns the next available output, or a `Timeout` status if none arrived within the timeout. On a `Timeout` or `Closed` pull we check whether the producer has finished — if so we stop, otherwise we keep waiting. Each real result is reduced to a top-1 class index and printed. After the loop we join the producer and confirm `pushed == pulled`.
 
-**C++:** `pull()` returns an `optional<Sample>`; extract tensors with `tensors_from_sample(...)` before reading bytes.
+**C++:** `pull(...)` returns a `Result<TensorList>`; its `value()` holds the output tensors (it throws on an `Error`) whose bytes we read.
 
-**Python:** `pull()` returns a `Sample` or `None`; `sample.tensor.to_numpy()` hands you the array to `argmax` over.
+**Python:** `pull_result(...)` returns a `PullResult`; `result.value()[0].to_numpy()` hands you the array to `argmax` over.
 
 ## Run
 

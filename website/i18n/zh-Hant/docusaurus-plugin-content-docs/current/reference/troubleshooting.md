@@ -272,7 +272,7 @@ print("outputs:", run.output_names())
 
 ```python
 run.push("image", [tensor])
-sample = run.pull("detections", timeout_ms=2000)
+outputs = run.pull_result("detections", timeout_ms=2000).value()
 ```
 
 `Graph("name")` 是一個診斷標籤。它不會建立端點。端點來自 `nodes.input("name")` 和 `nodes.output("name")`。

@@ -71,9 +71,9 @@ int main() {
   neat::Tensor image = /* create or load an image tensor */;
   run.push("image", neat::TensorList{image});
 
-  std::optional<neat::Sample> result = run.pull("classes", /*timeout_ms=*/1000);
+  neat::Result<neat::TensorList> result = run.pull("classes", std::chrono::milliseconds(1000));
   if (result) {
-    // Consume result->tensors, result->detections, or other Sample metadata.
+    // Consume *result: the output's tensors, each carrying the item's stamp().
   }
 
   run.stop();
@@ -106,7 +106,7 @@ run = app.build()
 image = ...  # Create or load a tensor-compatible object.
 run.push("image", [image])
 
-result = run.pull("classes", timeout_ms=1000)
+result = run.pull_result("classes", timeout_ms=1000).value()
 run.stop()
 ```
 
@@ -120,7 +120,7 @@ Neatの他の場所で使用されているものと同じパブリックペイ�
 |---|---|
 | `TensorList` | テンソルを渡し、追加のサンプルメタデータが必要ない場合。 |
 | `Sample` | タイムスタンプ、`frame_id`、`stream_id`、テキスト/オーディオ/ビデオメタデータ、検出結果、またはEOSが必要な場合。 |
-| `std::vector<cv::Mat>` | OpenCVから画像データを簡単に入力したい場合。 |
+| `Tensor::from_cv_mat(...)` in a `TensorList` | OpenCV の画像がある場合。各画像をピクセル形式を指定してラップします。 |
 
 一般的なC++呼び出し：
 
@@ -131,20 +131,23 @@ run.push("image", neat::TensorList{image});
 run.push(sample);
 run.push("image", sample);
 
-auto out = run.pull(/*timeout_ms=*/1000);
-auto named = run.pull("classes", /*timeout_ms=*/1000);
+using namespace std::chrono_literals;
+auto out = run.pull(1000ms);                  // Result<TensorList>
+auto named = run.pull("classes", 1000ms);
 
-neat::TensorList tensors = run.pull_tensors("classes", 1000);
-neat::Sample sample_out = run.pull_samples("classes", 1000);
+neat::TensorList tensors = run.pull("classes", 1000ms).value();
+
+neat::Sample sample_out;                      // the Sample, with its metadata
+neat::PullStatus status = run.pull("classes", 1000, sample_out);
 ```
 
-タイムアウトまたは接続が閉じられた場合に空の `std::optional` を返す必要がある場合は、`pull(...)` を使用します。タイムアウトまたはエラー時に例外をスローする、型付きの便利なヘルパーが必要な場合は、`pull_tensors(...)` または `pull_samples(...)` を使用します。
+`pull(timeout)` は `Result<TensorList>` を返します。`Ok`、`Timeout`、`Closed`、`Error` のいずれかを判定するか、`value()` を呼び出します（出力がない場合は例外をスローします）。メタデータを含む `Sample` そのものが必要な場合は、`Sample&` を渡す `pull(name, timeout_ms, sample)` を使用します。
 
 有限のアプリプッシュストリームの場合、最終的なメトリックを収集する前に、入力ストリームを閉じて、バッファを空にします。
 
 ```cpp
 run.close_input();
-while (auto out = run.pull("classes", 1000)) {
+while (auto out = run.pull("classes", std::chrono::milliseconds(1000))) {
   // Drain remaining output.
 }
 run.stop();
@@ -241,12 +244,12 @@ app.add(neat::nodes::Output());
 
 neat::Run run = app.build();
 run.push(neat::TensorList{image});
-auto result = run.pull(1000);
+auto result = run.pull(std::chrono::milliseconds(1000));
 ```
 
 これは、簡単なスクリプトやテストに便利です。より複雑なアプリケーションの場合は、名前を使用することをお勧めします。
 
-グラフに複数の入力または出力の可能性がある場合、名前のない `push(...)` または `pull()` はエラーを発生させ、利用可能な名前を報告します。このエラーは意図的なものです。Neat は、どのカメラ、テンソル、または出力ヘッドを意図しているのかを推測すべきではありません。
+グラフに複数の入力または出力の可能性がある場合、名前のない `push(...)` または `pull(...)` はエラーを発生させ、利用可能な名前を報告します。このエラーは意図的なものです。Neat は、どのカメラ、テンソル、または出力ヘッドを意図しているのかを推測すべきではありません。
 
 ## モデルはグラフの一部
 
@@ -492,7 +495,7 @@ app.connect(right, pair);
 neat::Run run = app.build();
 run.push("left", left_sample_with_frame_id_42);
 run.push("right", right_sample_with_frame_id_42);
-auto stereo = run.pull("stereo", 1000);
+auto stereo = run.pull("stereo", std::chrono::milliseconds(1000));
 ```
 
 Python：
@@ -541,7 +544,7 @@ app.add(neat::nodes::groups::RtspDecodedInput(opt));
 
 ```cpp
 app.add(neat::nodes::Output("detections"));
-auto out = run.pull("detections", 1000);
+auto out = run.pull("detections", std::chrono::milliseconds(1000));
 ```
 
 ### グラフが所有する出力先
@@ -649,7 +652,7 @@ run = app.build(opt)
 ```cpp
 neat::Run run = app.build();
 run.push("image", neat::TensorList{image});
-auto out = run.pull("classes", 1000);
+auto out = run.pull("classes", std::chrono::milliseconds(1000));
 
 neat::RunExportOptions export_opt;
 export_opt.label = "after_smoke_test";
@@ -666,7 +669,7 @@ Python：
 ```python
 run = app.build()
 run.push("image", [image])
-out = run.pull("classes", timeout_ms=1000)
+out = run.pull_result("classes", timeout_ms=1000).value()
 
 export_opt = pyneat.RunExportOptions()
 export_opt.label = "after_smoke_test"
@@ -786,7 +789,7 @@ app.add(genai_fragment);
 
 neat::Run run = app.build();
 run.push("prompt", prompt_sample);
-auto token = run.pull("tokens", 1000);
+auto token = run.pull("tokens", std::chrono::milliseconds(1000));
 ```
 
 正確な GenAI フラグメントファクトリとサンプルヘルパーの名前は、インストールされている GenAI パッケージによって異なります。
@@ -890,7 +893,7 @@ app.build()
 | 境界の宣言 | 具現化されるのは… | 省略されるのは… |
 |---|---|---|
 | `nodes::Input("name")` | 上流のグラフが接続されていない場合。つまり、パブリックな`Run::push("name", ...)`エンドポイントでなければならない | 上流のグラフからデータが供給される場合。つまり、内部フラグメントのパラメータにすぎない |
-| `nodes::Output("name")` | 下流のグラフが消費しない場合。つまり、パブリックな`Run::pull("name")`エンドポイントでなければならない | 下流のグラフが消費する場合。つまり、内部フラグメントの戻り値にすぎない |
+| `nodes::Output("name")` | 下流のグラフが消費しない場合。つまり、パブリックな`Run::pull("name", ...)`エンドポイントでなければならない | 下流のグラフが消費する場合。つまり、内部フラグメントの戻り値にすぎない |
 
 省略とは、完全に忘れ去ることではありません。コンパイラはプロビナンスを保持するため、`describe()`、検証エラー、メトリクス、およびランタイムエクスポートJSONは、依然としてユーザー向けのエンドポイント名を参照できます。
 
@@ -924,7 +927,7 @@ auto graph_outputs = app.outputs();
 // Build/run
 neat::Run run = app.build();
 run.push("image", neat::TensorList{image});
-auto out = run.pull("classes", 1000);
+auto out = run.pull("classes", std::chrono::milliseconds(1000));
 
 // Runtime endpoint inspection
 auto run_inputs = run.input_names();
@@ -950,7 +953,7 @@ print(app.outputs())
 
 run = app.build()
 run.push("image", [image])
-out = run.pull("classes", timeout_ms=1000)
+out = run.pull_result("classes", timeout_ms=1000).value()
 
 print(run.input_names())
 print(run.output_names())

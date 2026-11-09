@@ -29,7 +29,7 @@ By the end you will have a working harness for measuring an async run under back
 
 ### Push the workload and drain {#step-push-workload}
 
-This is where the queue policy is exercised. We call `try_push(...)` in a tight loop — a non-blocking push that simply returns whether the sample was accepted, so a full queue under `DropIncoming`/`KeepLatest` shows up as rejected pushes rather than a stall. After the burst we call `close_input()` to signal no more inputs, then drain the consumer side with a `pull(...)` loop until it returns empty. Pairing `try_push` with `close_input` plus a drain loop is the canonical non-blocking async pattern.
+This is where the queue policy is exercised. We call `try_push(...)` in a tight loop — a non-blocking push that simply returns whether the sample was accepted, so a full queue under `DropIncoming`/`KeepLatest` shows up as rejected pushes rather than a stall. After the burst we call `close_input()` to signal no more inputs, then drain the consumer side with a `pull(...)` loop until it reports `Timeout` or `Closed` (an `Error` fails the run). Pairing `try_push` with `close_input` plus a drain loop is the canonical non-blocking async pattern.
 
 ### Read the measurement report {#step-read-measurement}
 

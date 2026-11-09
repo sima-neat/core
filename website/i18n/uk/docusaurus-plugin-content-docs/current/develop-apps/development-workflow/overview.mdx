@@ -150,10 +150,12 @@ graph.add(model);
 graph.add(simaai::neat::nodes::Output("classes"));
 
 cv::Mat frame = /* your frame */;
+auto tensor = simaai::neat::Tensor::from_cv_mat(
+    frame, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74);
 
 auto run = graph.build();
-run.push("image", std::vector<cv::Mat>{frame});
-auto out = run.pull("classes", /*timeout_ms=*/1000);
+run.push("image", simaai::neat::TensorList{tensor});
+auto out = run.pull("classes", std::chrono::milliseconds(1000)).value();
 ```
 
 </CodeTab>
@@ -175,7 +177,7 @@ tensor = pyneat.Tensor.from_numpy(
 
 run = graph.build()
 run.push("image", [tensor])
-out = run.pull("classes", timeout_ms=1000)
+out = run.pull_result("classes", timeout_ms=1000).value()
 ```
 
 </CodeTab>
@@ -196,9 +198,8 @@ out = run.pull("classes", timeout_ms=1000)
 | `Graph::run(Sample)` | `Sample` | `graph.run([sample])` повертає `Sample`. | Використовуйте для введення даних графа, що базуються на зразках. |
 | `Run::run(TensorList)` або `Run::run(std::vector<cv::Mat>)`. | `TensorList` | `run.run([tensor])` повертає список тензорів. | Можливість повторного використання запитів/відповідей під час активної сесії `Run`. |
 | `Run::run(Sample)` | `Sample` | `run.run([sample])` повертає `Sample`. | Використовуйте для пакетів, ідентифікаторів потоків, ідентифікаторів кадрів або метаданих. |
-| `Run::pull(...)` | `std::optional<Sample>` | `Sample` або `None` | `None` означає, що жоден зразок не було отримано до закінчення встановленого часу або вихідний потік закрито. |
-| `Run::pull_tensors(...)` | `TensorList` | Список тензорів. | Використовуйте, коли вам потрібні лише дані у форматі тензора. |
-| `Run::pull_samples(...)` | `Sample` | `Sample` | Використовуйте, коли відсутність даних є винятком, і вам потрібен чіткий, стандартизований вивід. |
+| `Run::pull(timeout)` | `Result<TensorList>` | `run.pull_result(timeout_ms)` повертає `PullResult` | `Ok` з вихідними тензорами або `Timeout`, `Closed` чи `Error` із причиною. |
+| `Run::pull(timeout_ms, sample)` | `PullStatus` із заповненням `sample` | `run.pull(...)` повертає `Sample` або `None`, застарілий | Використовуйте, коли вам потрібен вихідний `Sample` з його метаданими. |
 
 ## Ознайомтеся з основними поняттями.
 

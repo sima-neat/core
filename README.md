@@ -24,7 +24,7 @@ Typical flow:
 
 1. Build a `Model` from a compiled `.tar.gz` model archive.
 2. Add model routes, reusable fragments, and optional custom nodes to a `Graph`.
-3. Use `run(...)` for one-shot execution, or `build(...)` to get a reusable `Run` for `push()/pull()`.
+3. Use `run(...)` for one-shot execution, or `build(...)` to get a reusable `Run` for `push(...)`/`pull(...)`.
 
 ```cpp
 #include <neat.h>
@@ -48,7 +48,7 @@ run_opt.enable_board_power();
 auto run = graph.build(simaai::neat::TensorList{input_tensor}, run_opt);
 auto scope = run.start_measurement();
 run.push(simaai::neat::TensorList{input_tensor});
-(void)run.pull_tensors(5000);
+(void)run.pull(std::chrono::milliseconds(5000));
 auto report = scope.stop();
 std::cout << report.to_text();
 ```

@@ -394,7 +394,7 @@ route.add(simaai::neat::nodes::Output("classes"));
 ```cpp
 auto run = route.build();
 run.push("image", simaai::neat::TensorList{image_tensor});
-auto classes = run.pull("classes");
+auto classes = run.pull("classes", std::chrono::milliseconds(-1));  // -1: no time limit
 ```
 
 より大規模なアプリケーション内で使用する場合：
@@ -662,9 +662,9 @@ run = graph.build()
 
 #### 高度な設定：画像またはビデオ出力をテンソルに変換する
 
-通常のモデルまたはグラフ出力の場合は、ここで終了してください。`nodes::Output` を使用します。ペイロードがテンソルのみで、完全な `Sample` エンベロープが必要ない場合は、`pull_tensors(...)` を使用して取得します。
+通常のモデルまたはグラフ出力の場合は、ここで終了してください。`nodes::Output` を使用します。ペイロードがテンソルのみで、完全な `Sample` エンベロープが必要ない場合は、`pull(timeout)` を使用して取得します。これはそのテンソルを返します。
 
-`Graph::add_output_tensor(...)` は、画像またはビデオ出力を変換、スケーリング、またはレート調整して、アプリケーションが取得する前に CPU で扱いやすい `UInt8` テンソルに変換する必要がある場合にのみ使用します。このヘルパーは、アダプターパスを挿入し、名前のない出力を作成します。1 つの出力がある場合は、`run.pull_tensors(...)` を使用して取得します。
+`Graph::add_output_tensor(...)` は、画像またはビデオ出力を変換、スケーリング、またはレート調整して、アプリケーションが取得する前に CPU で扱いやすい `UInt8` テンソルに変換する必要がある場合にのみ使用します。このヘルパーは、アダプターパスを挿入し、名前のない出力を作成します。1 つの出力がある場合は、`run.pull(timeout)` を使用して取得します。
 
 `OutputTensorOptions` は、`format`、`target_width`、`target_height`、および `target_fps` を制御します。`dtype` は `UInt8` のままにします。現在のパブリックパスでは、他の dtype は拒否されます。ほとんどのモデル出力では、このヘルパーは必要ありません。
 
@@ -673,7 +673,7 @@ run = graph.build()
 - ソースがファイル、カメラ、または RTSP の場合：`nodes::groups` からの事前に構築された入力グループを使用します。
 - ソースがアプリケーションによって生成されたテンソル/フレームの場合：`nodes::Input` を使用します。
 - 出力コンシューマーがストリーム/フレーム/タイムスタンプのメタデータが必要とする場合：`nodes::Output` を使用し、`Sample` オブジェクトを取得します。
-- 出力がモデルまたはテンソルペイロードの場合：`nodes::Output` を使用し、完全な `Sample` が必要ない場合は、`pull_tensors(...)` を使用してテンソルを取得します。
+- 出力がモデルまたはテンソルペイロードの場合：`nodes::Output` を使用し、完全な `Sample` が必要ない場合は、`pull(timeout)` を使用してテンソルを取得します。
 - 出力が、取得前にサイズ変更、再フォーマット、またはレート調整する必要がある画像またはビデオの場合：高度な `add_output_tensor(...)` アダプターを使用します。
 - 再利用可能なバンドルが必要な場合：ノードから `Graph` フラグメントを作成し、他のビルディングブロックと同様に追加/接続します。
 

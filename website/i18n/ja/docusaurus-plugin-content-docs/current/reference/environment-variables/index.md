@@ -71,7 +71,7 @@ Palette SDK 3.0 以降では、`sima-cli sdk setup` がコンテナー環境に 
 - 推奨される API 設定項目：
   - `ValidateOptions.preroll_timeout_ms` — validate() のプリロールタイムアウト。
   - `RunOptions.input_timeout_ms` — 入力モードの `Graph::run()` と、シードを渡すビルドの対応する事前検証での出力待機時間。
-  - `Run::run(..., timeout_ms)` / `Model::run(..., timeout_ms)` — 呼び出しごとの出力待機時間。`Run::pull(-1)` と同様に、`-1` は無制限です。
+  - `Run::run(..., timeout_ms)` / `Model::run(..., timeout_ms)` — 呼び出しごとの出力待機時間。`Run::pull(timeout)` で負のタイムアウトが無制限であるのと同様に、`-1` は無制限です。
 - 従来のフォールバック環境変数は、オプションを渡せない場合にのみ使用してください。
   - `SIMA_GST_VALIDATE_TIMEOUT_MS=<ms>` — validate() のタイムアウト時間（デフォルトは 2000/10000）。
   - `SIMA_GST_RUN_INPUT_TIMEOUT_MS=<ms>` — 上記の `Graph::run()` / 事前検証の出力待機に対するフォールバック（デフォルトは 10000 ミリ秒）。
