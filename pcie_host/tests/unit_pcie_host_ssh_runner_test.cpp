@@ -102,6 +102,23 @@ void test_host_platform() {
 #else
   require(pcie_internal::open_ssh_executable("ssh") == "ssh", "POSIX OpenSSH command name changed");
 #endif
+  std::filesystem::path first_path;
+  {
+    pcie_internal::ScopedTempDirectory first("sima-neat-pcie-platform-test");
+    pcie_internal::ScopedTempDirectory second("sima-neat-pcie-platform-test");
+    first_path = first.path();
+    require(first.path() != second.path() && std::filesystem::is_directory(first.path()) &&
+                std::filesystem::is_directory(second.path()),
+            "temporary directories must be distinct and exist for their scoped lifetime");
+#ifndef _WIN32
+    const auto permissions = std::filesystem::status(first.path()).permissions();
+    require((permissions & (std::filesystem::perms::group_all |
+                            std::filesystem::perms::others_all)) == std::filesystem::perms::none,
+            "temporary directory must not grant group or other access");
+#endif
+  }
+  require(!std::filesystem::exists(first_path),
+          "temporary directory must be removed at the end of its scoped lifetime");
 }
 
 void test_start_failure_cleanup_classification() {

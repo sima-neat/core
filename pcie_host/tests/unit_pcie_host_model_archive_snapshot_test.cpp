@@ -1,3 +1,4 @@
+#include "HostPlatform.h"
 #include "ModelArchiveSnapshot.h"
 
 #include <filesystem>
@@ -5,41 +6,11 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
-#include <vector>
-
-#include <unistd.h>
 
 namespace fs = std::filesystem;
 namespace pcie_internal = simaai::neat::pcie::internal;
 
 namespace {
-
-class TempDirectory {
-public:
-  TempDirectory() {
-    std::string directory_template =
-        (fs::temp_directory_path() / "sima-neat-pcie-snapshot-test-XXXXXX").string();
-    std::vector<char> writable_template(directory_template.begin(), directory_template.end());
-    writable_template.push_back('\0');
-    const char* created = ::mkdtemp(writable_template.data());
-    if (!created) {
-      throw std::runtime_error("failed to create test directory");
-    }
-    path_ = created;
-  }
-
-  ~TempDirectory() {
-    std::error_code ec;
-    fs::remove_all(path_, ec);
-  }
-
-  const fs::path& path() const {
-    return path_;
-  }
-
-private:
-  fs::path path_;
-};
 
 void write_file(const fs::path& path, const std::string& contents) {
   std::ofstream output(path, std::ios::binary | std::ios::trunc);
@@ -61,7 +32,7 @@ void require(const bool condition, const std::string& message) {
 }
 
 void test_replacing_source_does_not_change_snapshot() {
-  TempDirectory temp;
+  pcie_internal::ScopedTempDirectory temp("sima-neat-pcie-snapshot-test");
   const fs::path source = temp.path() / "model.tar.gz";
   write_file(source, "archive-a");
 
@@ -79,7 +50,7 @@ void test_replacing_source_does_not_change_snapshot() {
 }
 
 void test_retargeting_symlink_does_not_change_snapshot() {
-  TempDirectory temp;
+  pcie_internal::ScopedTempDirectory temp("sima-neat-pcie-snapshot-test");
   const fs::path first = temp.path() / "first.tar.gz";
   const fs::path second = temp.path() / "second.tar.gz";
   const fs::path source = temp.path() / "model.tar.gz";

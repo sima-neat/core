@@ -1,5 +1,7 @@
 #pragma once
 
+#include "HostPlatform.h"
+
 #include <filesystem>
 #include <string>
 
@@ -20,7 +22,7 @@ public:
   }
 
 private:
-  std::filesystem::path directory_;
+  ScopedTempDirectory directory_;
   std::string archive_path_;
 };
 

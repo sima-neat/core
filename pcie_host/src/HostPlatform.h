@@ -7,6 +7,24 @@
 
 namespace simaai::neat::pcie::internal {
 
+class ScopedTempDirectory {
+public:
+  explicit ScopedTempDirectory(const std::string& prefix);
+  ~ScopedTempDirectory() noexcept;
+
+  ScopedTempDirectory(const ScopedTempDirectory&) = delete;
+  ScopedTempDirectory& operator=(const ScopedTempDirectory&) = delete;
+  ScopedTempDirectory(ScopedTempDirectory&&) = delete;
+  ScopedTempDirectory& operator=(ScopedTempDirectory&&) = delete;
+
+  const std::filesystem::path& path() const noexcept {
+    return path_;
+  }
+
+private:
+  std::filesystem::path path_;
+};
+
 std::optional<std::filesystem::path> host_home_directory();
 std::string host_path_string(const std::filesystem::path& path);
 std::string open_ssh_executable(const char* command);
