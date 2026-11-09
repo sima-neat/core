@@ -5,11 +5,11 @@
 // Covers: an undeclared input bound by its first push and enforced; a declared input with a
 // dynamic axis; a push outside the declared shape rejected at push; the H1 and H0c build errors;
 // the holder push error; explicit Dataflow on a sync run; a record bound by its first push (C2);
-// try_push accounting under KeepLatest,
-// DropIncoming and Block; a blocking push that never drops under DropIncoming and KeepLatest;
-// close_input cancelling a parked push; stop unblocking a pending pull; pull timeouts -1/0/t;
-// identity (frame_id, stream_id, pts_ns, input_seq) round trip; NV12 planes; DMA-heap tensors;
-// Owned output; a pulled tensor outliving its Run; named endpoints.
+// the link depth (queue_depth + max_buffers, each after its default or clamp); try_push accounting
+// under KeepLatest, DropIncoming and Block; a blocking push that never drops under DropIncoming and
+// KeepLatest; close_input cancelling a parked push; stop unblocking a pending pull; pull timeouts
+// -1/0/t; identity (frame_id, stream_id, pts_ns, input_seq) round trip; NV12 planes; DMA-heap
+// tensors; Owned output; a pulled tensor outliving its Run; named endpoints.
 
 #include "nodes/common/Output.h"
 #include "nodes/common/Queue.h"
@@ -258,10 +258,78 @@ void holder_push_is_an_error() {
   run.close();
 }
 
-void try_push_accounting() {
+// The link holds RunOptions::queue_depth + OutputOptions::max_buffers messages (GStreamer's input
+// queue plus its appsink), each term after its default or clamp: counted with try_push on a Block
+// link, which refuses only when the link holds the whole depth.
+int accepted_until_full(Run& run, int limit) {
+  int accepted = 0;
+  while (accepted < limit &&
+         run.try_push(TensorList{rgb(8, 8, static_cast<std::uint8_t>(accepted))}))
+    ++accepted;
+  return accepted;
+}
+
+void link_depth_is_queue_depth_plus_max_buffers() {
+  struct Case {
+    const char* what;
+    RunOptions opt;
+    int max_buffers;
+    int depth;
+  };
+  RunOptions reliable = dataflow();
+  reliable.preset = RunPreset::Reliable; // queue_depth left at the default: the preset's 8
+  const Case cases[] = {
+      {"defaults (queue_depth 4 + max_buffers 4)", dataflow(), OutputOptions{}.max_buffers, 8},
+      {"queue_depth 3 + max_buffers 2", dataflow(3), 2, 5},
+      {"Reliable preset (queue_depth 8) + max_buffers 4", reliable, 4, 12},
+      {"max_buffers 0 (unbounded) counts as queue_depth: 2 + 2", dataflow(2), 0, 4},
+      {"queue_depth 0 (unbounded) counts as 4: 4 + 1", dataflow(0), 1, 5},
+  };
+  for (const Case& c : cases) {
+    OutputOptions out;
+    out.max_buffers = c.max_buffers;
+    Graph g = input_output({}, out);
+    Run run = g.build(TensorList{rgb(8, 8, 1)}, c.opt);
+    const int accepted = accepted_until_full(run, c.depth + 4);
+    require(accepted == c.depth, std::string(c.what) + ": the link holds " +
+                                     std::to_string(c.depth) + ", try_push accepted " +
+                                     std::to_string(accepted));
+    for (int i = 0; i < c.depth; ++i) {
+      require(bytes_of(pulled_tensor(run, 1000, c.what)) ==
+                  bytes_of(rgb(8, 8, static_cast<std::uint8_t>(i))),
+              std::string(c.what) + ": in order, frame " + std::to_string(i));
+    }
+    run.close();
+  }
+  // GStreamer's pattern (async_stream_test): queue_depth + max_buffers blocking pushes before the
+  // first pull all return; the next one parks until a pull makes room.
   OutputOptions out;
-  out.max_buffers = 1; // the link's depth
-  // DropIncoming: the first is queued, the rest are dropped and counted.
+  out.max_buffers = 2;
+  Graph g = input_output({}, out);
+  Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow(3));
+  auto pushes = std::async(std::launch::async, [&] {
+    for (int i = 0; i < 5; ++i)
+      if (!run.push(TensorList{rgb(8, 8, static_cast<std::uint8_t>(i))}))
+        return false;
+    return true;
+  });
+  require(pushes.wait_for(std::chrono::seconds(2)) == std::future_status::ready && pushes.get(),
+          "queue_depth + max_buffers blocking pushes return without a puller");
+  auto sixth = std::async(std::launch::async, [&] { return run.push(TensorList{rgb(8, 8, 5)}); });
+  require(sixth.wait_for(std::chrono::milliseconds(150)) == std::future_status::timeout,
+          "one more parks on the full link");
+  require(bytes_of(pulled_tensor(run, 1000, "first")) == bytes_of(rgb(8, 8, 0)),
+          "a pull takes the oldest");
+  require(sixth.wait_for(std::chrono::seconds(1)) == std::future_status::ready && sixth.get(),
+          "and lets the parked push in");
+  run.close();
+}
+
+void try_push_accounting() {
+  // The link holds queue_depth 1 + max_buffers 1 = 2.
+  OutputOptions out;
+  out.max_buffers = 1;
+  // DropIncoming: the first two are queued, the rest are dropped and counted.
   {
     Graph g = input_output({}, out);
     Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow(1, OverflowPolicy::DropIncoming));
@@ -270,14 +338,15 @@ void try_push_accounting() {
       for (int i = 0; i < 5; ++i)
         accepted.push_back(run.try_push(TensorList{rgb(8, 8, static_cast<std::uint8_t>(i))}));
     });
-    require(accepted == std::vector<bool>{true, false, false, false, false},
-            "DropIncoming: the first try_push is accepted, the rest refused");
-    require(dropped == 4U, "DropIncoming: four drops counted, got " + std::to_string(dropped));
-    require(bytes_of(pulled_tensor(run, 1000, "DropIncoming")) == bytes_of(rgb(8, 8, 0)),
+    require(accepted == std::vector<bool>{true, true, false, false, false},
+            "DropIncoming: the first two try_push are accepted, the rest refused");
+    require(dropped == 3U, "DropIncoming: three drops counted, got " + std::to_string(dropped));
+    require(bytes_of(pulled_tensor(run, 1000, "DropIncoming")) == bytes_of(rgb(8, 8, 0)) &&
+                bytes_of(pulled_tensor(run, 1000, "DropIncoming")) == bytes_of(rgb(8, 8, 1)),
             "DropIncoming keeps the oldest");
     run.close();
   }
-  // KeepLatest: every try_push is accepted; each one past the first evicts and counts a drop.
+  // KeepLatest: every try_push is accepted; each one past the second evicts and counts a drop.
   {
     Graph g = input_output({}, out);
     Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow(1, OverflowPolicy::KeepLatest));
@@ -287,8 +356,9 @@ void try_push_accounting() {
         all = run.try_push(TensorList{rgb(8, 8, static_cast<std::uint8_t>(i))}) && all;
     });
     require(all, "KeepLatest: try_push never refuses");
-    require(dropped == 4U, "KeepLatest: four drops counted, got " + std::to_string(dropped));
-    require(bytes_of(pulled_tensor(run, 1000, "KeepLatest")) == bytes_of(rgb(8, 8, 4)),
+    require(dropped == 3U, "KeepLatest: three drops counted, got " + std::to_string(dropped));
+    require(bytes_of(pulled_tensor(run, 1000, "KeepLatest")) == bytes_of(rgb(8, 8, 3)) &&
+                bytes_of(pulled_tensor(run, 1000, "KeepLatest")) == bytes_of(rgb(8, 8, 4)),
             "KeepLatest keeps the newest");
     run.close();
   }
@@ -298,10 +368,10 @@ void try_push_accounting() {
     Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow(1, OverflowPolicy::Block));
     std::vector<bool> accepted;
     const auto dropped = dropped_while(run, [&] {
-      for (int i = 0; i < 3; ++i)
+      for (int i = 0; i < 4; ++i)
         accepted.push_back(run.try_push(TensorList{rgb(8, 8, static_cast<std::uint8_t>(i))}));
     });
-    require(accepted == std::vector<bool>{true, false, false}, "Block: refused when full");
+    require(accepted == std::vector<bool>{true, true, false, false}, "Block: refused when full");
     require(dropped == 0U, "Block: no drop counted");
     run.close();
   }
@@ -347,17 +417,19 @@ void close_input_cancels_a_parked_push() {
   out.max_buffers = 1;
   Graph g = input_output({}, out);
   Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow(1));
-  require(run.push(TensorList{rgb(8, 8, 1)}), "the first push fills the link");
+  require(run.push(TensorList{rgb(8, 8, 1)}) && run.push(TensorList{rgb(8, 8, 4)}),
+          "two pushes fill the link (queue_depth 1 + max_buffers 1)");
   auto parked = std::async(std::launch::async, [&] { return run.push(TensorList{rgb(8, 8, 2)}); });
   require(parked.wait_for(std::chrono::milliseconds(150)) == std::future_status::timeout,
-          "the second push parks on the full link");
+          "the third push parks on the full link");
   const auto t0 = Clock::now();
   run.close_input();
   require(parked.wait_for(std::chrono::seconds(1)) == std::future_status::ready,
           "close_input wakes the parked push");
   require(!parked.get(), "the cancelled push returns false");
   require(ms_since(t0) < 1000, "close_input does not wait behind the parked push");
-  require(bytes_of(pulled_tensor(run, 1000, "queued")) == bytes_of(rgb(8, 8, 1)),
+  require(bytes_of(pulled_tensor(run, 1000, "queued")) == bytes_of(rgb(8, 8, 1)) &&
+              bytes_of(pulled_tensor(run, 1000, "queued")) == bytes_of(rgb(8, 8, 4)),
           "what was queued stays pullable");
   Sample s;
   PullError err;
@@ -550,6 +622,7 @@ RUN_TEST("unit_dataflow_backend_test", ([] {
            push_outside_declared_shape_rejected();
            build_errors();
            holder_push_is_an_error();
+           link_depth_is_queue_depth_plus_max_buffers();
            try_push_accounting();
            blocking_push_never_drops();
            close_input_cancels_a_parked_push();

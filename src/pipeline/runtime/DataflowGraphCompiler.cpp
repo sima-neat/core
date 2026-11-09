@@ -364,37 +364,67 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
   DataflowRunConfig config;
   config.input = *view.inputs[q.input];
   config.output = dynamic_cast<const Output*>(view.vertices[q.output].get())->options();
-  config.run = session_build_resolve_build_opt(RunMode::Async, opt);
+  config.input_names = endpoint_names(view, q.input, graph.inputs());
+  config.output_names = endpoint_names(view, q.output, graph.outputs());
+  // The path GStreamer takes for the same graph: a connected or named graph is a graph Run, a plain
+  // linear Run one pipeline segment (RunCore::start, RunCoreGraphStart.cpp:1566-1573, through
+  // is_simple_linear_plan, :169-172).
+  const bool graph_path =
+      !view.linear || !config.input_names.empty() || !config.output_names.empty();
+
+  // RunOptions resolved as GStreamer resolves them for that path, by the same code. A plain linear
+  // Run's options are resolve_build_opt's (GraphBuildInput.cpp:1380-1414, via
+  // prepare_build_input_context :1421, in RunCore::start_pipeline_segment RunCore.cpp:1661, kept
+  // by start_single_pipeline Run.cpp:273): RunPreset fills queue_depth and overflow_policy where
+  // they equal their RunOptions{} defaults, so an explicit Block under Realtime is KeepLatest
+  // there. A graph Run keeps the caller's RunOptions as given (start_graph_plan
+  // RunCoreGraphStart.cpp:1479; its ingress queue is the given queue_depth, RunCore.h:103): the
+  // preset does not reach its ingress.
+  config.run = graph_path ? opt : session_build_resolve_build_opt(RunMode::Async, opt);
   config.run.backend = RunBackend::Dataflow;
 
-  // One link carries both of Core's queues (Run.h:157-169): the public Output's max_buffers wins
-  // for its depth; its drop flag makes it lossy for every push, as appsink drop=true is;
-  // otherwise RunOptions' overflow policy applies to try_push (KeepLatest is DropOldest).
-  if (config.output.max_buffers > 0) {
-    config.link_depth = static_cast<std::uint32_t>(config.output.max_buffers);
+  // One link carries both of Core's queues (Run.h:176-188). On GStreamer a blocking push waits only
+  // when the input queue (RunOptions::queue_depth) and the public Output's terminal queue
+  // (OutputOptions::max_buffers) are both full, so the link holds their sum:
+  //   link depth = queue_depth + max_buffers
+  // each after its own default or clamp: queue_depth as resolved above, a value <= 0 (unbounded on
+  // GStreamer) counting as 4, reported; max_buffers <= 0 (unbounded) counts as the queue_depth
+  // term, reported (the depth is then 2 x queue_depth, 8 by default).
+  // The Output's drop flag makes the link lossy for every push, as appsink drop=true is;
+  // otherwise RunOptions' overflow policy applies to try_push (KeepLatest is DropOldest). Either
+  // acts only when the link holds the whole depth.
+  if (config.run.queue_depth > 0) {
+    config.ingress_depth = static_cast<std::uint32_t>(config.run.queue_depth);
   } else {
-    config.link_depth =
-        config.run.queue_depth > 0 ? static_cast<std::uint32_t>(config.run.queue_depth) : 4U;
+    config.ingress_depth = 4U;
+    warn_once(
+        "clamp:queue_depth",
+        "Dataflow backend: RunOptions::queue_depth=" + std::to_string(config.run.queue_depth) +
+            " (unbounded) has no equivalent on this backend; it counts as " +
+            std::to_string(config.ingress_depth) + " in the link depth");
+  }
+  if (config.output.max_buffers > 0) {
+    config.terminal_depth = static_cast<std::uint32_t>(config.output.max_buffers);
+  } else {
+    config.terminal_depth = config.ingress_depth;
     warn_once("clamp:max_buffers",
               "Dataflow backend: OutputOptions::max_buffers=" +
                   std::to_string(config.output.max_buffers) +
-                  " (unbounded) has no equivalent on this backend; the link depth is clamped to " +
-                  std::to_string(config.link_depth) + " (RunOptions::queue_depth, or 4)");
+                  " (unbounded) has no equivalent on this backend; it counts as " +
+                  std::to_string(config.terminal_depth) +
+                  " (RunOptions::queue_depth, or 4) in the link depth");
   }
+  // Each term is at most INT_MAX, so the sum fits; compile_dataflow_net checks the link's range.
+  config.link_depth = config.ingress_depth + config.terminal_depth;
   config.terminal_drop = config.output.drop;
   config.link_policy = config.run.overflow_policy;
   // A declared shape allows Run::alloc, whose slot the application holds while a push takes
   // another: the pool is sized for both (PORTS.md 5.4).
   config.feed_loans = config.input.shape.empty() ? 1U : 2U;
 
-  config.input_names = endpoint_names(view, q.input, graph.inputs());
-  config.output_names = endpoint_names(view, q.output, graph.outputs());
-
   // GStreamer stamps an empty stream_id with the input's public name, or "default" when it has none
-  // (RunPush.cpp:225-264), on its graph path, which a connected or named graph takes; on a plain
-  // linear Run its ingress meta stamps "0" (InputStreamUtil.cpp:2703, 3720).
-  const bool graph_path =
-      !view.linear || !config.input_names.empty() || !config.output_names.empty();
+  // (RunPush.cpp:225-264), on its graph path; on a plain linear Run its ingress meta stamps "0"
+  // (InputStreamUtil.cpp:2703, 3720).
   config.default_stream =
       graph_path ? (config.input_names.empty() ? "default" : config.input_names.front()) : "0";
   config.label = view.name;
@@ -430,7 +460,9 @@ std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, R
   warn_ignored_options(config);
   trace_choice(
       where, "dataflow",
-      "Input -> Output, link depth " + std::to_string(config.link_depth) +
+      "Input -> Output, link depth " + std::to_string(config.link_depth) + " (queue_depth " +
+          std::to_string(config.ingress_depth) + " + max_buffers " +
+          std::to_string(config.terminal_depth) + ")" +
           (config.terminal_drop                                 ? ", drop oldest (Output drop)"
            : config.link_policy == OverflowPolicy::KeepLatest   ? ", try_push keep latest"
            : config.link_policy == OverflowPolicy::DropIncoming ? ", try_push drop incoming"
@@ -1058,8 +1090,10 @@ DataflowNet compile_dataflow_net(const DataflowRunConfig& config,
   if (config.link_depth == 0U || config.link_depth > df::kMaxLinkDepth) {
     pipeline_internal::error_util::throw_session_error(
         error_codes::kOptionOutOfRange,
-        "Graph::build: the Output's max_buffers " + std::to_string(config.link_depth) +
-            " is outside the Dataflow link's range 1.." + std::to_string(df::kMaxLinkDepth));
+        "Graph::build: the link depth " + std::to_string(config.link_depth) +
+            " (RunOptions::queue_depth " + std::to_string(config.ingress_depth) +
+            " + OutputOptions::max_buffers " + std::to_string(config.terminal_depth) +
+            ") is outside the Dataflow link's range 1.." + std::to_string(df::kMaxLinkDepth));
   }
   df::Overflow overflow = df::Overflow::Block;
   if (config.terminal_drop || config.link_policy == OverflowPolicy::KeepLatest) {

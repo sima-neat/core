@@ -69,6 +69,18 @@ Run make_rgb_run(int queue_depth, int max_buffers = 128) {
   return graph.build(TensorList{rgb(0x3A)}, run_opt);
 }
 
+// make_rgb_run(1, 1)'s link holds queue_depth 1 + max_buffers 1 = 2 messages: two blocking
+// pushes fill it, the next one parks.
+constexpr int kSmallLinkDepth = 2;
+
+bool fill_small_link(Run& run) {
+  bool ok = true;
+  for (int i = 0; i < kSmallLinkDepth; ++i) {
+    ok = run.push(TensorList{rgb(static_cast<std::uint8_t>(1 + i))}) && ok;
+  }
+  return ok;
+}
+
 bool push_refused(Run& run, std::uint8_t tag) {
   try {
     return !run.try_push(TensorList{rgb(tag)});
@@ -139,20 +151,23 @@ void concurrent_traffic_then_bounded_teardown() {
 // close_public_input contract, on the public Run).
 void close_input_cancels_a_parked_push() {
   Run run = make_rgb_run(1, 1);
-  require(run.push(TensorList{rgb(1)}), "the first push fills the link");
-  auto parked = std::async(std::launch::async, [&] { return run.push(TensorList{rgb(2)}); });
+  require(fill_small_link(run), "two pushes fill the link");
+  auto parked = std::async(std::launch::async, [&] { return run.push(TensorList{rgb(9)}); });
   require(parked.wait_for(std::chrono::milliseconds(150)) == std::future_status::timeout,
-          "the second push parks on the full link");
+          "the third push parks on the full link");
   const auto t0 = Clock::now();
   run.close_input();
   require(parked.wait_for(std::chrono::seconds(1)) == std::future_status::ready,
           "close_input wakes the parked push within 1 s");
   require(!parked.get(), "the cancelled push returns false");
   require(ms_since(t0) < 1000, "close_input does not wait behind the parked push");
-  const TensorList queued = run.pull_tensors(1000);
-  require(queued.size() == 1U &&
-              queued.front().copy_dense_bytes_tight() == rgb(1).copy_dense_bytes_tight(),
-          "what was queued before close_input stays pullable");
+  for (int i = 0; i < kSmallLinkDepth; ++i) {
+    const TensorList queued = run.pull_tensors(1000);
+    require(queued.size() == 1U &&
+                queued.front().copy_dense_bytes_tight() ==
+                    rgb(static_cast<std::uint8_t>(1 + i)).copy_dense_bytes_tight(),
+            "what was queued before close_input stays pullable");
+  }
   Sample s;
   PullError err;
   require(run.pull(1000, s, &err) == PullStatus::Closed, "then the output is Closed");
@@ -183,8 +198,8 @@ void stop_unblocks_pending_pull_and_parked_push() {
   }
   {
     Run run = make_rgb_run(1, 1);
-    require(run.push(TensorList{rgb(1)}), "fill the link");
-    auto parked = std::async(std::launch::async, [&] { return run.push(TensorList{rgb(2)}); });
+    require(fill_small_link(run), "fill the link");
+    auto parked = std::async(std::launch::async, [&] { return run.push(TensorList{rgb(9)}); });
     require(parked.wait_for(std::chrono::milliseconds(150)) == std::future_status::timeout,
             "the push parks on the full link");
     const auto t0 = Clock::now();
@@ -201,8 +216,8 @@ void stop_unblocks_pending_pull_and_parked_push() {
 // every call returns, the parked push is released.
 void concurrent_stop_has_one_owner() {
   Run run = make_rgb_run(1, 1);
-  require(run.push(TensorList{rgb(1)}), "fill the link");
-  auto parked = std::async(std::launch::async, [&] { return run.push(TensorList{rgb(2)}); });
+  require(fill_small_link(run), "fill the link");
+  auto parked = std::async(std::launch::async, [&] { return run.push(TensorList{rgb(9)}); });
   require(parked.wait_for(std::chrono::milliseconds(150)) == std::future_status::timeout,
           "the push parks on the full link");
   std::atomic<bool> go{false};

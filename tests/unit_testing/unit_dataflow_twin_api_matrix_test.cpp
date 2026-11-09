@@ -73,18 +73,22 @@ RunOptions dataflow(int queue_depth) {
   return run_opt;
 }
 
-// sima_test::make_async_rgb_run (the GStreamer test's), on Dataflow: Output EveryFrame(128).
+// sima_test::make_async_rgb_run (the GStreamer test's), on Dataflow: Output EveryFrame(128). The
+// link holds RunOptions::queue_depth + OutputOptions::max_buffers messages.
+constexpr int kRgbMaxBuffers = 128;
+constexpr int kActiveQueueDepth = 32; // active_matrix's Run
+
 Run make_async_rgb_run(const Tensor& seed, int queue_depth) {
   Graph graph;
   graph.add(nodes::Input(rgb_input()));
-  graph.add(nodes::Output(OutputOptions::EveryFrame(128)));
+  graph.add(nodes::Output(OutputOptions::EveryFrame(kRgbMaxBuffers)));
   return graph.build(TensorList{seed}, dataflow(queue_depth));
 }
 
 Run make_async_rgb_run_with_copy_input(const Tensor& seed, int queue_depth) {
   Graph graph;
   graph.add(nodes::Input(rgb_input()));
-  graph.add(nodes::Output(OutputOptions::EveryFrame(128)));
+  graph.add(nodes::Output(OutputOptions::EveryFrame(kRgbMaxBuffers)));
   RunOptions run_opt = dataflow(queue_depth);
   run_opt.advanced.copy_input = true;
   return graph.build(TensorList{seed}, run_opt);
@@ -126,7 +130,7 @@ void push_close(const Tensor& seed) {
 }
 
 void active_matrix(const Tensor& seed) {
-  Run run = make_async_rgb_run(seed, 32);
+  Run run = make_async_rgb_run(seed, kActiveQueueDepth);
 
   require(run.pull_tensors(120).empty(),
           run_api_case("active_pull_tensors_timeout", "pull_tensors should time out empty"));
@@ -202,7 +206,9 @@ void active_matrix(const Tensor& seed) {
                    cv::NORM_INF) == 0,
           "CPU image snapshot must remain independent of subsequent input writes");
 
-  // try_push backpressure: the link (depth 128) fills; the refusal is fast, non-fatal, recovers.
+  // try_push backpressure: the link (depth 32 + 128) fills; the refusal is fast, non-fatal,
+  // recovers.
+  constexpr int kLinkDepth = kActiveQueueDepth + kRgbMaxBuffers;
   int attempts = 0;
   int max_call_ms = 0;
   bool saw_backpressure = false;
@@ -218,9 +224,11 @@ void active_matrix(const Tensor& seed) {
   }
   require(saw_backpressure, run_api_case("active_backpressure_signal",
                                          "try_push should eventually report backpressure"));
-  require(attempts == 129, run_api_case("active_backpressure_depth",
-                                        "the 129th try_push meets the full link of 128, got " +
-                                            std::to_string(attempts)));
+  require(attempts == kLinkDepth + 1,
+          run_api_case("active_backpressure_depth",
+                       "try_push number " + std::to_string(kLinkDepth + 1) +
+                           " meets the full link of " + std::to_string(kLinkDepth) + ", got " +
+                           std::to_string(attempts)));
   require(max_call_ms < 50, run_api_case("active_backpressure_non_blocking",
                                          "try_push should remain non-blocking under pressure"));
   require(run.last_error().empty(), run_api_case("active_backpressure_nonfatal_error",

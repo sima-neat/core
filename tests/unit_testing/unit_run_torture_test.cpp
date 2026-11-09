@@ -84,7 +84,8 @@ std::vector<std::uint8_t> bytes_of(const Tensor& t) {
 // The linear Input -> Output graph, seeded (it builds on both backends), RGB 32x24 declared by
 // the seed, Output max_buffers = `depth`, RunOptions::queue_depth = `depth`, Block. `max_bytes`
 // and `block` give GStreamer's appsrc a bound so a blocking push can actually block there (the
-// Dataflow backend ignores both with a one-time warning: its link bounds the queue).
+// Dataflow backend ignores both with a one-time warning: its link bounds the queue, at
+// queue_depth + max_buffers = 2 x `depth`).
 Run make_run(int depth, bool bounded_appsrc = false) {
   InputOptions in;
   in.payload_type = PayloadType::Image;

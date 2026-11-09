@@ -8,7 +8,8 @@
 // - try_push policy parity across the Mat, TensorList and Sample paths of the same RGB graph
 //   (Block and DropIncoming report false when the queue is full, KeepLatest never does; drops
 //   only for the dropping policies), plus the exact Dataflow numbers: the queue is the link,
-//   whose depth is the Output's max_buffers.
+//   whose depth is RunOptions::queue_depth + the Output's max_buffers (GStreamer's input queue
+//   plus its appsink).
 // - push vs try_push accounting: try_push applies the policy, a blocking push never drops.
 // - the holder path's Dataflow outcome: a structured kPipelineShape error, nothing pushed.
 // - the Runner contract on the tensor-pair (record) graph: warm-up, incompatible media rejected
@@ -44,7 +45,10 @@ namespace {
 
 using namespace simaai::neat;
 
-constexpr int kRgbLinkDepth = 128; // OutputOptions::EveryFrame(128) below: the link's depth
+// The link holds RunOptions::queue_depth + OutputOptions::max_buffers messages.
+constexpr int kRgbQueueDepth = 1;   // RunOptions::queue_depth of the RGB graph's Runs below
+constexpr int kRgbMaxBuffers = 128; // OutputOptions::EveryFrame(128) below, as the GStreamer test
+constexpr int kRgbLinkDepth = kRgbQueueDepth + kRgbMaxBuffers;
 
 enum class PushPath { Mat, Tensor, Sample };
 
@@ -81,7 +85,7 @@ struct PolicyProbeResult {
 
 // The GStreamer test's graph, on Dataflow.
 Run make_async_rgb_run_with_policy(const Tensor& seed, OverflowPolicy overflow_policy,
-                                   int queue_depth = 1) {
+                                   int queue_depth = kRgbQueueDepth) {
   Graph graph;
   InputOptions src_opt;
   src_opt.payload_type = PayloadType::Image;
@@ -91,7 +95,7 @@ Run make_async_rgb_run_with_policy(const Tensor& seed, OverflowPolicy overflow_p
   src_opt.max_height = 96;
   src_opt.max_depth = 3;
   graph.add(nodes::Input(src_opt));
-  graph.add(nodes::Output(OutputOptions::EveryFrame(kRgbLinkDepth)));
+  graph.add(nodes::Output(OutputOptions::EveryFrame(kRgbMaxBuffers)));
 
   RunOptions run_opt;
   run_opt.backend = RunBackend::Dataflow;
@@ -112,7 +116,7 @@ Sample tensor_to_sample(const Tensor& tensor) {
 
 PolicyProbeResult probe_policy(OverflowPolicy policy, PushPath path) {
   const Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x4A);
-  Run run = make_async_rgb_run_with_policy(seed, policy, 1);
+  Run run = make_async_rgb_run_with_policy(seed, policy, kRgbQueueDepth);
   const cv::Mat mat_seed(48, 64, CV_8UC3, cv::Scalar(40, 100, 180));
   const Sample sample_seed = tensor_to_sample(seed);
 
@@ -180,7 +184,7 @@ void require_policy_parity(OverflowPolicy policy, bool expect_backpressure_false
 // The holder path of the GStreamer test is an error on Dataflow: structured, nothing pushed.
 void holder_path_is_a_structured_error() {
   const Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x4A);
-  Run run = make_async_rgb_run_with_policy(seed, OverflowPolicy::Block, 1);
+  Run run = make_async_rgb_run_with_policy(seed, OverflowPolicy::Block, kRgbQueueDepth);
   const auto holder = std::make_shared<int>(7);
   MeasureScope scope = run.start_measurement();
   require_neat_error([&] { (void)run.try_push_holder(holder); }, error_codes::kPipelineShape,
@@ -201,7 +205,10 @@ Tensor tagged_rgb(std::uint8_t tag) {
   return make_color_tensor(8, 8, ImageSpec::PixelFormat::RGB, tag);
 }
 
-Run depth_one_run(OverflowPolicy policy) {
+// The smallest link: queue_depth 1 + max_buffers 1 = 2 (neither term can be below 1).
+constexpr int kSmallLinkDepth = 2;
+
+Run smallest_link_run(OverflowPolicy policy) {
   Graph graph;
   graph.add(nodes::Input());
   OutputOptions out;
@@ -218,9 +225,9 @@ void push_vs_try_push_accounting() {
   for (const OverflowPolicy policy :
        {OverflowPolicy::Block, OverflowPolicy::DropIncoming, OverflowPolicy::KeepLatest}) {
     const std::string what = std::string(policy_name(policy)) + ": ";
-    // try_push at depth 1: five attempts into a link that holds one.
+    // try_push at the smallest depth: five attempts into a link that holds two.
     {
-      Run run = depth_one_run(policy);
+      Run run = smallest_link_run(policy);
       std::vector<bool> accepted;
       MeasureScope scope = run.start_measurement();
       for (int i = 0; i < 5; ++i) {
@@ -230,22 +237,26 @@ void push_vs_try_push_accounting() {
       const bool keep_latest = policy == OverflowPolicy::KeepLatest;
       const std::vector<bool> expected = keep_latest
                                              ? std::vector<bool>(5, true)
-                                             : std::vector<bool>{true, false, false, false, false};
-      require(accepted == expected, what + "try_push outcomes at depth 1");
-      const std::uint64_t expected_drops = policy == OverflowPolicy::Block ? 0U : 4U;
+                                             : std::vector<bool>{true, true, false, false, false};
+      require(accepted == expected, what + "try_push outcomes at depth 2");
+      const std::uint64_t expected_drops = policy == OverflowPolicy::Block ? 0U : 3U;
       require(counters.inputs_dropped == expected_drops,
               what + "try_push drops: expected " + std::to_string(expected_drops) + ", got " +
                   std::to_string(counters.inputs_dropped));
-      const auto kept = run.pull_tensors(1000);
-      require(kept.size() == 1U, what + "one frame kept");
-      require(kept.front().copy_dense_bytes_tight() ==
-                  tagged_rgb(keep_latest ? 4 : 0).copy_dense_bytes_tight(),
-              what + (keep_latest ? "KeepLatest keeps the newest" : "the oldest is kept"));
+      for (int i = 0; i < kSmallLinkDepth; ++i) {
+        const auto kept = run.pull_tensors(1000);
+        require(kept.size() == 1U, what + "two frames kept");
+        const int tag = keep_latest ? 5 - kSmallLinkDepth + i : i;
+        require(kept.front().copy_dense_bytes_tight() ==
+                    tagged_rgb(static_cast<std::uint8_t>(tag)).copy_dense_bytes_tight(),
+                what + (keep_latest ? "KeepLatest keeps the newest" : "the oldest are kept"));
+      }
       run.stop();
     }
-    // A blocking push at depth 1 with a paced puller: every frame arrives, in order, no drop.
+    // A blocking push at the smallest depth with a paced puller: every frame arrives, in order,
+    // no drop.
     {
-      Run run = depth_one_run(policy);
+      Run run = smallest_link_run(policy);
       constexpr int kFrames = 24;
       std::atomic<bool> push_failed{false};
       MeasureScope scope = run.start_measurement();
@@ -294,7 +305,9 @@ Sample make_tensor_pair(int id) {
   return sample;
 }
 
-constexpr int kPairLinkDepth = 8; // OutputOptions::EveryFrame(8) below
+constexpr int kPairQueueDepth = 1; // RunOptions::queue_depth below
+constexpr int kPairMaxBuffers = 8; // OutputOptions::EveryFrame(8) below
+constexpr int kPairLinkDepth = kPairQueueDepth + kPairMaxBuffers;
 
 Run make_tensor_pair_run(const Sample& seed, OverflowPolicy policy) {
   InputOptions input;
@@ -303,10 +316,10 @@ Run make_tensor_pair_run(const Sample& seed, OverflowPolicy policy) {
   input.memory_policy = InputMemoryPolicy::SystemMemory;
   Graph graph;
   graph.add(nodes::Input(input));
-  graph.add(nodes::Output(OutputOptions::EveryFrame(kPairLinkDepth)));
+  graph.add(nodes::Output(OutputOptions::EveryFrame(kPairMaxBuffers)));
   RunOptions options;
   options.backend = RunBackend::Dataflow;
-  options.queue_depth = 1;
+  options.queue_depth = kPairQueueDepth;
   options.overflow_policy = policy;
   options.advanced.copy_input = true;
   return graph.build(Sample{seed}, options);

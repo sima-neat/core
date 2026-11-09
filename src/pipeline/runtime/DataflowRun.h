@@ -79,7 +79,9 @@ struct DataflowRunConfig {
   InputOptions input;   ///< the public Input's options, resolved as compile_public_graph does
   OutputOptions output; ///< the public Output's options
   RunOptions run;       ///< RunOptions with the preset's queue defaults resolved
-  std::uint32_t link_depth = 1;
+  std::uint32_t ingress_depth = 1;  ///< RunOptions::queue_depth's share of link_depth
+  std::uint32_t terminal_depth = 1; ///< OutputOptions::max_buffers' share of link_depth
+  std::uint32_t link_depth = 2;     ///< ingress_depth + terminal_depth
   OverflowPolicy link_policy = OverflowPolicy::Block; ///< KeepLatest is the link's DropOldest
   /// OutputOptions::drop: the terminal queue drops its oldest message for every push, blocking
   /// or not (appsink drop=true); otherwise link_policy applies to try_push only.

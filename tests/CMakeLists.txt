@@ -761,6 +761,26 @@ if (NOT unit_run_torture_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   endif()
 endif()
 
+# H0 C4b: RunPreset with an explicit overflow policy, registered per backend as the torture test
+# is. A Run's options follow the path its graph takes on GStreamer (resolve_build_opt for a plain
+# linear Run, the RunOptions as given for a connected or named graph), on both backends.
+if (NOT unit_run_preset_overflow_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_pipeline_test(unit_run_preset_overflow_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_run_preset_overflow_test.cpp)
+  set_tests_properties(unit_run_preset_overflow_test PROPERTIES TIMEOUT 120)
+  set_property(TEST unit_run_preset_overflow_test APPEND PROPERTY LABELS "unit")
+  if (SIMANEAT_DATAFLOW_SOURCE_DIR)
+    simaneat_add_test(NAME unit_run_preset_overflow_test_dataflow
+      COMMAND unit_run_preset_overflow_test)
+    simaneat_append_ctest_env(unit_run_preset_overflow_test_dataflow)
+    set_property(TEST unit_run_preset_overflow_test_dataflow APPEND PROPERTY ENVIRONMENT
+      "SIMA_NEAT_BACKEND=dataflow")
+    set_tests_properties(unit_run_preset_overflow_test_dataflow PROPERTIES TIMEOUT 120)
+    set_property(TEST unit_run_preset_overflow_test_dataflow APPEND PROPERTY LABELS
+      "strict;unit;dataflow")
+  endif()
+endif()
+
 # H0 C4, with the runtime in the build: the Dataflow twins of the GStreamer-internal tests of
 # plan D12 (public API only, RunBackend::Dataflow requested explicitly; see the exclusions at the
 # end of this file), and the differential test, which builds the same graph on both backends in
@@ -3225,11 +3245,9 @@ target_link_libraries(unit_sima_plugins_test PRIVATE SimaScheduler::frontend)
 #     failure injection)
 #   unit_run_api_matrix_test             -> unit_dataflow_twin_api_matrix_test
 #     (posts a GStreamer bus error and an EOS event into pipeline_handle())
-# Not registered on Dataflow, pending a decision (agent-work/core-h0/c4.md, finding F1):
-#   async_stream_test pushes queue_depth (50) frames before its first pull, with Output
-#   max_buffers = 8. On GStreamer a blocking push waits only when Core's input queue (queue_depth),
-#   appsrc and appsink are all full; on Dataflow the one link's depth is the Output's max_buffers
-#   (DataflowGraphCompiler.cpp, derive_config), so its ninth push parks for ever.
+# async_stream_test pushes queue_depth (50) frames before its first pull, with Output
+# max_buffers = 8: on Dataflow the one link holds queue_depth + max_buffers messages, as GStreamer's
+# input queue and appsink together do (DataflowGraphCompiler.cpp, derive_config).
 # perf_runtime_graph_async_rgb_test has no ctest entry to duplicate (PERF_TARGETS are run
 # directly).
 if (SIMANEAT_DATAFLOW_SOURCE_DIR)
@@ -3246,6 +3264,7 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR)
       pull_timeout_regression_test
       unit_error_code_taxonomy_test
       stress_run_async_pressure_test
+      async_stream_test
       unit_dataflow_runtime_link_test
       unit_dataflow_backend_test)
     if (NOT TEST ${_h0_test})
@@ -3261,5 +3280,25 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR)
     set_property(TEST ${_h0_test}_dataflow APPEND PROPERTY ENVIRONMENT
       "SIMA_NEAT_BACKEND=dataflow")
     set_property(TEST ${_h0_test}_dataflow APPEND PROPERTY LABELS "dataflow")
+  endforeach()
+endif()
+
+# TSan: every test labelled `dataflow` (the <name>_dataflow entries above, the twins, the torture
+# and differential tests, C1's and C3's tests) runs with sanitizers/tsan-dataflow.supp appended to
+# TSAN_OPTIONS (ENVIRONMENT_MODIFICATION, CTest 3.22+; the lane's own options stay in front). Its
+# entries are reports caused by the Dataflow runtime's inline-asm atomics, which TSan does not
+# instrument; each entry gives its reason and evidence. The copy in the build tree's tests/ is
+# installed with the extras and rebased with the tests' paths.
+if (SIMANEAT_DATAFLOW_SOURCE_DIR AND SIMA_ENABLE_TSAN)
+  set(_h0_tsan_supp ${CMAKE_CURRENT_BINARY_DIR}/sanitizers/tsan-dataflow.supp)
+  configure_file(${CMAKE_CURRENT_SOURCE_DIR}/sanitizers/tsan-dataflow.supp ${_h0_tsan_supp}
+    COPYONLY)
+  get_property(_h0_tests DIRECTORY PROPERTY TESTS)
+  foreach(_h0_test IN LISTS _h0_tests)
+    get_test_property(${_h0_test} LABELS _h0_labels)
+    if ("dataflow" IN_LIST _h0_labels)
+      set_property(TEST ${_h0_test} APPEND PROPERTY ENVIRONMENT_MODIFICATION
+        "TSAN_OPTIONS=path_list_append:suppressions=${_h0_tsan_supp}")
+    endif()
   endforeach()
 endif()
