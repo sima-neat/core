@@ -64,6 +64,7 @@ public:
   static bool status_owner_matches(const RemoteStatus& status, int expected_pid);
   static bool start_failure_cleanup_safe(int exit_code, bool timed_out);
   static std::string child_cleanup_shell_function();
+  static std::string detached_child_redirections();
 
 private:
   ConnectionOptions connection_;

@@ -267,6 +267,13 @@ std::string RemoteRuntime::child_cleanup_shell_function() {
          "}; ";
 }
 
+std::string RemoteRuntime::detached_child_redirections() {
+  // Closing the lock descriptor is not sufficient to detach the worker from
+  // the SSH channel. An inherited stdin can keep the OpenSSH client alive after
+  // the launcher shell exits.
+  return " 9>&- </dev/null >/dev/null 2>&1 & ";
+}
+
 void RemoteRuntime::remove_upload(const std::string& remote_path) const {
   if (!is_managed_upload_path(remote_path)) {
     throw std::invalid_argument("refusing to remove unmanaged remote upload path: " + remote_path);
@@ -383,7 +390,8 @@ int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
   if (remote_model_options_path.has_value()) {
     ss << " --model-options " << SshRunner::shell_escape(*remote_model_options_path);
   }
-  ss << " 9>&- >/dev/null 2>&1 & " << "launched_pid=$!; " << "echo \"launched_pid=$launched_pid\"; "
+  ss << detached_child_redirections() << "launched_pid=$!; "
+     << "echo \"launched_pid=$launched_pid\"; "
      << "for i in $(seq 1 200); do " << "owner_pid=$(cat \"$pidfile\" 2>/dev/null || true); "
      << "if [ \"$owner_pid\" = \"$launched_pid\" ]; then exit 0; fi; "
      << "if [ -n \"$owner_pid\" ] && kill -0 \"$owner_pid\" >/dev/null 2>&1 && "

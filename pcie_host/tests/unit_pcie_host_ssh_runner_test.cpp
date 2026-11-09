@@ -53,6 +53,19 @@ void test_child_cleanup_shell() {
 #endif
 }
 
+void test_detached_child_redirections() {
+  const std::string redirections =
+      pcie_internal::RemoteRuntime::detached_child_redirections();
+  require(redirections.find("9>&-") != std::string::npos,
+          "detached worker must close the launch lock descriptor");
+  require(redirections.find("</dev/null") != std::string::npos,
+          "detached worker must not inherit the SSH channel stdin");
+  require(redirections.find(">/dev/null 2>&1") != std::string::npos,
+          "detached worker must not inherit the SSH channel output streams");
+  require(redirections.find('&') != std::string::npos,
+          "detached worker must be launched in the background");
+}
+
 void test_command_runner(const std::string& executable) {
   const auto ok = pcie_internal::SshRunner::run({executable, "--emit", "hello"}, 2);
   require(ok.exit_code == 0 && ok.output == "hello\n", "expected child output capture");
@@ -245,6 +258,7 @@ int main(const int argc, char** argv) {
       }
     }
     test_child_cleanup_shell();
+    test_detached_child_redirections();
     test_start_failure_cleanup_classification();
     test_remote_runtime_paths();
     std::cout << "[PASS] ssh runner\n";
