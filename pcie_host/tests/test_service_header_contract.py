@@ -10,12 +10,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class ServiceHeaderContract(unittest.TestCase):
     def test_source_and_installed_consumers_request_declared_component(self):
-        for relative in ("CMakeLists.txt", "cmake/SimaPCIeHostConfig.cmake.in"):
-            with self.subTest(path=relative):
-                source = (ROOT / relative).read_text()
-                self.assertIn("COMPONENTS pcie_host pcie_service_headers", source)
-                self.assertNotIn("find_path(SIMAPCIE_SVC_INCLUDE_DIR", source)
         source = (ROOT / "CMakeLists.txt").read_text()
+        config = (ROOT / "cmake/SimaPCIeHostConfig.cmake.in").read_text()
+        self.assertIn("COMPONENTS pcie_host pcie_service_headers", source)
+        self.assertIn("SIMAPCIE_SCHEDULER_CONFIG_COMPONENTS pcie_host)", source)
+        self.assertIn("@SIMAPCIE_SCHEDULER_CONFIG_COMPONENTS@", config)
+        self.assertNotIn("find_path(SIMAPCIE_SVC_INCLUDE_DIR", source)
+        self.assertNotIn("find_path(SIMAPCIE_SVC_INCLUDE_DIR", config)
         self.assertIn("SimaScheduler::pcie_service_headers", source)
 
     def test_retired_override_rejected_before_dependency_installation(self):

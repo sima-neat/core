@@ -169,6 +169,13 @@ struct ConnectionOptions {
 };
 ```
 
+`card_env` also keeps host lifecycle bookkeeping aligned with a non-default
+card installation. `SIMA_NEAT_PCIE_HELPER_PATH` selects the card worker,
+`SIMA_NEAT_PCIE_RUN_DIR` selects its PID/status/start-lock directory, and
+`SIMA_NEAT_PCIE_LOG_DIR` selects its default log directory. Each override must
+be an absolute POSIX path. The selected directories must already exist and be
+writable by the SSH user. Normal packages use the defaults shown above.
+
 `card_id` is the hardware/plugin card number passed to `neatpciehost` as
 `card-number`. It is also used as the default SSH management endpoint when
 `card_host` is empty: `card_id = N` maps to `10.0.N.2`. Set `card_host`

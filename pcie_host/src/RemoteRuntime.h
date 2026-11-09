@@ -54,6 +54,7 @@ public:
   RemoteStatus read_status(int queue, std::chrono::milliseconds timeout) const;
 
   std::string endpoint() const;
+  std::string helper_path() const;
   std::string status_path(int queue) const;
   std::string pid_path(int queue) const;
   void remove_upload(const std::string& remote_path) const;
@@ -67,6 +68,8 @@ public:
 private:
   ConnectionOptions connection_;
 
+  std::string run_dir() const;
+  std::string log_dir() const;
   std::vector<std::string> ssh_base() const;
   std::vector<std::string> scp_base() const;
   void run_or_throw(const std::vector<std::string>& args, int timeout_sec,

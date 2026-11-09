@@ -15,9 +15,12 @@
 #include <system_error>
 
 #ifdef _WIN32
-#include <bcrypt.h>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <process.h>
 #include <windows.h>
+#include <bcrypt.h>
 #else
 #include <sys/stat.h>
 #include <unistd.h>

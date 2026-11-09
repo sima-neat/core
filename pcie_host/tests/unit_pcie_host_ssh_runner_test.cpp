@@ -143,6 +143,30 @@ void test_start_failure_cleanup_classification() {
           "remote start failure did not preserve its launched PID");
 }
 
+void test_remote_runtime_paths() {
+  simaai::neat::pcie::ConnectionOptions connection;
+  connection.card_env = "SIMA_NEAT_PCIE_HELPER_PATH=/home/sima/neat/bin/pcie-pipeline-builder "
+                        "SIMA_NEAT_PCIE_RUN_DIR=/home/sima/neat/run "
+                        "SIMA_NEAT_PCIE_LOG_DIR=/home/sima/neat/log";
+  const pcie_internal::RemoteRuntime runtime(connection);
+  require(runtime.helper_path() == "/home/sima/neat/bin/pcie-pipeline-builder",
+          "custom remote helper path was not retained");
+  require(runtime.pid_path(3) == "/home/sima/neat/run/q3.pid",
+          "custom remote PID path was not retained");
+  require(runtime.status_path(3) == "/home/sima/neat/run/q3.status",
+          "custom remote status path was not retained");
+
+  simaai::neat::pcie::ConnectionOptions invalid;
+  invalid.card_env = "SIMA_NEAT_PCIE_RUN_DIR=relative/path";
+  bool rejected = false;
+  try {
+    (void)pcie_internal::RemoteRuntime(invalid);
+  } catch (const std::invalid_argument&) {
+    rejected = true;
+  }
+  require(rejected, "relative remote runtime path was accepted");
+}
+
 } // namespace
 
 int main(const int argc, char** argv) {
@@ -218,6 +242,7 @@ int main(const int argc, char** argv) {
     }
     test_child_cleanup_shell();
     test_start_failure_cleanup_classification();
+    test_remote_runtime_paths();
     std::cout << "[PASS] ssh runner\n";
     return 0;
   } catch (const std::exception& e) {

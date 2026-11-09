@@ -256,6 +256,19 @@ CommandResult SshRunner::run_for(const std::vector<std::string>& args,
   reader.join();
   read_pipe.reset();
 
+  // Keep command parsing identical to the POSIX runner. Console-mode Windows
+  // children commonly emit CRLF even when the remote command uses LF.
+  std::string normalized;
+  normalized.reserve(result.output.size());
+  for (std::size_t index = 0; index < result.output.size(); ++index) {
+    if (result.output[index] == '\r' && index + 1 < result.output.size() &&
+        result.output[index + 1] == '\n') {
+      continue;
+    }
+    normalized.push_back(result.output[index]);
+  }
+  result.output = std::move(normalized);
+
   if (wait_error != ERROR_SUCCESS) {
     throw windows_error(wait_result == WAIT_FAILED ? "WaitForSingleObject" : "TerminateJobObject",
                         wait_error);

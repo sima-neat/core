@@ -2,7 +2,9 @@
 #include "Protocol.h"
 #include <cstring>
 #include <fstream>
+#ifndef _WIN32
 #include <sys/stat.h>
+#endif
 
 namespace simaai::neat::pcie::genai::internal {
 namespace {
@@ -27,10 +29,14 @@ void MediaStage::prepare() {
   std::filesystem::create_directories(directory_.parent_path());
   if (std::filesystem::canonical(directory_.parent_path()) != directory_.parent_path())
     throw std::runtime_error("Media staging path contains a symlink");
+#ifndef _WIN32
   chmod(directory_.parent_path().c_str(), 0700);
+#endif
   if (!std::filesystem::create_directory(directory_))
     throw std::runtime_error("Media request directory already exists");
+#ifndef _WIN32
   chmod(directory_.c_str(), 0700);
+#endif
   prepared_ = true;
 }
 MediaStage::~MediaStage() {
