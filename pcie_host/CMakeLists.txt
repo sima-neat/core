@@ -1,15 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
 
-set(SIMAPCIE_PACKAGE_VERSION "")
-execute_process(
-  COMMAND python3 -c "import json; print(json.load(open('../deps/manifest.json', encoding='utf-8'))['package-version'])"
-  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-  RESULT_VARIABLE SIMAPCIE_PACKAGE_VERSION_RESULT
-  OUTPUT_VARIABLE SIMAPCIE_PACKAGE_VERSION
-  ERROR_QUIET
-  OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-if (NOT SIMAPCIE_PACKAGE_VERSION_RESULT EQUAL 0 OR SIMAPCIE_PACKAGE_VERSION STREQUAL "")
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../deps/manifest.json" SIMAPCIE_MANIFEST)
+string(REGEX MATCH
+  "\"package-version\"[ \t\r\n]*:[ \t\r\n]*\"([^\"]+)\""
+  SIMAPCIE_PACKAGE_VERSION_MATCH "${SIMAPCIE_MANIFEST}")
+set(SIMAPCIE_PACKAGE_VERSION "${CMAKE_MATCH_1}")
+if (SIMAPCIE_PACKAGE_VERSION STREQUAL "")
   message(FATAL_ERROR "Failed to read package-version from ../deps/manifest.json")
 endif()
 
@@ -18,7 +14,7 @@ project(SimaPCIeHost VERSION ${SIMAPCIE_PACKAGE_VERSION} LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT AND NOT WIN32)
   set(CMAKE_INSTALL_PREFIX "/usr" CACHE PATH "Install prefix" FORCE)
 endif()
 
@@ -156,14 +152,16 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/simaai/
   COMPONENT Development
 )
 
-install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/scripts/pcie-setup.sh
-  ${SIMA_NEAT_CORE_ROOT}/scripts/neat
-  DESTINATION ${CMAKE_INSTALL_BINDIR}
-  COMPONENT Runtime
-)
-install(FILES ${SIMA_NEAT_CORE_ROOT}/scripts/neat_pcie_status.py
-  DESTINATION ${CMAKE_INSTALL_DATADIR}/sima-pcie-host
-  COMPONENT Runtime)
+if(NOT WIN32)
+  install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/scripts/pcie-setup.sh
+    ${SIMA_NEAT_CORE_ROOT}/scripts/neat
+    DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT Runtime
+  )
+  install(FILES ${SIMA_NEAT_CORE_ROOT}/scripts/neat_pcie_status.py
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/sima-pcie-host
+    COMPONENT Runtime)
+endif()
 
 set(SIMAPCIE_APPLICATION_SKILL_INSTALL_DIR
   ${CMAKE_INSTALL_DATADIR}/sima-pcie-host/skills/neat-pcie-application-builder)
@@ -347,6 +345,11 @@ endif()
 
 if (SIMAPCIE_BUILD_PYTHON)
   add_subdirectory(python)
+endif()
+
+if(WIN32)
+  include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/PackagingWindows.cmake")
+  return()
 endif()
 
 set(CPACK_GENERATOR "DEB")
