@@ -1,5 +1,6 @@
 #include "RemoteRuntime.h"
 
+#include "CardEnvironment.h"
 #include "HostPlatform.h"
 #include "SshRunner.h"
 
@@ -79,61 +80,6 @@ std::string json_string_or(const nlohmann::json& object, const char* key,
   return fallback;
 }
 
-bool is_env_name_char(const char ch) {
-  return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_';
-}
-
-std::vector<std::string> split_card_env(const std::string& raw) {
-  std::vector<std::string> out;
-  std::istringstream stream(raw);
-  std::string token;
-  while (stream >> token) {
-    const std::size_t eq = token.find('=');
-    if (eq == std::string::npos || eq == 0) {
-      throw std::runtime_error("card_env entries must be NAME=VALUE assignments");
-    }
-    for (std::size_t i = 0; i < eq; ++i) {
-      const char ch = token[i];
-      if ((i == 0 && std::isdigit(static_cast<unsigned char>(ch))) || !is_env_name_char(ch)) {
-        throw std::runtime_error("card_env contains invalid environment variable name: " +
-                                 token.substr(0, eq));
-      }
-    }
-    out.push_back(std::move(token));
-  }
-  return out;
-}
-
-bool env_contains_name(const std::vector<std::string>& env, const std::string& name) {
-  const std::string prefix = name + "=";
-  return std::any_of(env.begin(), env.end(),
-                     [&prefix](const std::string& entry) { return entry.rfind(prefix, 0) == 0; });
-}
-
-std::optional<std::string> env_value(const std::vector<std::string>& env, const std::string& name) {
-  const std::string prefix = name + "=";
-  std::optional<std::string> value;
-  for (const auto& entry : env) {
-    if (entry.rfind(prefix, 0) == 0) {
-      value = entry.substr(prefix.size());
-    }
-  }
-  return value;
-}
-
-std::string remote_path_or(const std::vector<std::string>& env, const char* name,
-                           const char* fallback) {
-  const auto value = env_value(env, name);
-  if (!value.has_value()) {
-    return fallback;
-  }
-  if (value->empty() || value->front() != '/' || value->find('\n') != std::string::npos ||
-      value->find('\r') != std::string::npos) {
-    throw std::invalid_argument(std::string(name) + " must be an absolute POSIX path");
-  }
-  return *value;
-}
-
 void validate_endpoint_component(const std::string& value, const char* name,
                                  const bool allow_empty) {
   if (value.empty()) {
@@ -154,10 +100,10 @@ void validate_endpoint_component(const std::string& value, const char* name,
 RemoteRuntime::RemoteRuntime(ConnectionOptions connection) : connection_(std::move(connection)) {
   validate_endpoint_component(connection_.user, "user", false);
   validate_endpoint_component(connection_.card_host, "card_host", true);
-  const auto card_env = split_card_env(connection_.card_env);
-  (void)remote_path_or(card_env, kHelperPathEnv, kRemoteHelper);
-  (void)remote_path_or(card_env, kRunDirEnv, kRemoteRunDir);
-  (void)remote_path_or(card_env, kLogDirEnv, kRemoteLogDir);
+  const auto card_env = parse_card_environment(connection_.card_env);
+  (void)card_environment_path_or(card_env, kHelperPathEnv, kRemoteHelper);
+  (void)card_environment_path_or(card_env, kRunDirEnv, kRemoteRunDir);
+  (void)card_environment_path_or(card_env, kLogDirEnv, kRemoteLogDir);
 }
 
 std::string RemoteRuntime::endpoint() const {
@@ -165,15 +111,18 @@ std::string RemoteRuntime::endpoint() const {
 }
 
 std::string RemoteRuntime::helper_path() const {
-  return remote_path_or(split_card_env(connection_.card_env), kHelperPathEnv, kRemoteHelper);
+  return card_environment_path_or(parse_card_environment(connection_.card_env), kHelperPathEnv,
+                                  kRemoteHelper);
 }
 
 std::string RemoteRuntime::run_dir() const {
-  return remote_path_or(split_card_env(connection_.card_env), kRunDirEnv, kRemoteRunDir);
+  return card_environment_path_or(parse_card_environment(connection_.card_env), kRunDirEnv,
+                                  kRemoteRunDir);
 }
 
 std::string RemoteRuntime::log_dir() const {
-  return remote_path_or(split_card_env(connection_.card_env), kLogDirEnv, kRemoteLogDir);
+  return card_environment_path_or(parse_card_environment(connection_.card_env), kLogDirEnv,
+                                  kRemoteLogDir);
 }
 
 std::string RemoteRuntime::status_path(const int queue) const {
@@ -363,8 +312,8 @@ int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
      << "echo queue_busy; exit 9; " << "fi; " << "fi; " << "rm -f \"$pidfile\" \"$statusfile\"; "
      << "else " << "rm -f \"$statusfile\"; " << "fi; ";
   ss << "nohup ";
-  std::vector<std::string> card_env = split_card_env(connection_.card_env);
-  if (!env_contains_name(card_env, "MLASHM_CTRL_IO_TIMEOUT_MS")) {
+  std::vector<std::string> card_env = parse_card_environment(connection_.card_env);
+  if (!card_environment_contains(card_env, "MLASHM_CTRL_IO_TIMEOUT_MS")) {
     card_env.emplace_back(kDefaultMlashmCtrlIoTimeout);
   }
   const bool needs_env = !card_env.empty() || !connection_.card_gst_debug.empty();

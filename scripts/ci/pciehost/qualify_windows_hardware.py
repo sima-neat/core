@@ -459,6 +459,7 @@ def card_candidate_paths(token: str) -> dict[str, str]:
       "packages": f"{stage}/packages",
       "root": f"{stage}/root",
       "worker": f"{stage}/root/usr/bin/pcie-pipeline-builder",
+      "genai_worker": f"{stage}/root/usr/bin/neat-pcie-genai-worker",
       "firmware_source": (
           f"{stage}/root/usr/share/sima-neat-firmware/modalix-cvu-fw"),
       "firmware_name": f"neat-pcie-card0-{token}",
@@ -516,7 +517,10 @@ def stage_card_candidate(args: argparse.Namespace, candidate: CardCandidate, tok
         f"dpkg-deb -x \"$package\" {paths['root']}; done; "
         f"test -x {paths['worker']}; test -r {paths['firmware_source']}; "
         f"printf 'worker_sha256='; sha256sum {paths['worker']} | awk '{{print $1}}'; "
-        f"printf 'runtime_sha256='; sha256sum {paths['firmware_source']} | awk '{{print $1}}'"
+        f"printf 'runtime_sha256='; sha256sum {paths['firmware_source']} | awk '{{print $1}}'; "
+        + (f"test -x {paths['genai_worker']}; printf 'genai_worker_sha256='; "
+           f"sha256sum {paths['genai_worker']} | awk '{{print $1}}'"
+           if args.include_genai else "true")
     )
     log = evidence / "card-candidate-extract.log"
     run_logged(ssh_command(args, extract), log, timeout=900)
@@ -524,9 +528,12 @@ def stage_card_candidate(args: argparse.Namespace, candidate: CardCandidate, tok
     for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
       if "=" in line and not line.startswith("+"):
         name, value = line.split("=", 1)
-        if name in {"runtime_sha256", "worker_sha256"}:
+        if name in {"runtime_sha256", "worker_sha256", "genai_worker_sha256"}:
           values[name] = value.strip()
-    if set(values) != {"runtime_sha256", "worker_sha256"} or any(
+    expected_receipt = {"runtime_sha256", "worker_sha256"}
+    if args.include_genai:
+      expected_receipt.add("genai_worker_sha256")
+    if set(values) != expected_receipt or any(
         not re.fullmatch(r"[0-9a-f]{64}", value) for value in values.values()):
       raise RuntimeError(f"card candidate extraction receipt is incomplete; see {log}")
   except BaseException:
@@ -550,6 +557,11 @@ def stage_card_candidate(args: argparse.Namespace, candidate: CardCandidate, tok
       f"SIMA_NEAT_PCIE_HELPER_PATH={paths['worker']}",
       f"SIMA_NEAT_PCIE_RUN_DIR={paths['run']}",
       f"SIMA_NEAT_PCIE_LOG_DIR={paths['log']}",
+      "LD_LIBRARY_PATH=" + ":".join(library_paths),
+      "GST_PLUGIN_PATH_1_0=" + ":".join(plugin_paths),
+  ))
+  values["genai_card_env"] = " ".join((
+      f"SIMA_NEAT_PCIE_GENAI_HELPER_PATH={paths['genai_worker']}",
       "LD_LIBRARY_PATH=" + ":".join(library_paths),
       "GST_PLUGIN_PATH_1_0=" + ":".join(plugin_paths),
   ))
@@ -675,14 +687,16 @@ class RemoteExclusiveLock:
 
 def card_snapshot(args: argparse.Namespace, evidence: Path, label: str, *,
                   runtime_path: str = "", worker_path: str = "",
-                  expected_runtime_sha256: str = "", expected_worker_sha256: str = "") \
+                  expected_runtime_sha256: str = "", expected_worker_sha256: str = "",
+                  genai_worker_path: str = "", expected_genai_worker_sha256: str = "") \
     -> dict[str, str]:
   if bool(runtime_path) != bool(worker_path):
     raise ValueError("card runtime and worker paths must be supplied together")
   if runtime_path:
     runtime_path = _validate_remote_path(runtime_path)
     worker_path = _validate_remote_path(worker_path)
-  genai_worker_path = _validate_remote_path(args.card_genai_worker_path)
+  if genai_worker_path:
+    genai_worker_path = _validate_remote_path(genai_worker_path)
   remote = (
       "set -eu; "
       "printf 'machine='; uname -m; "
@@ -694,7 +708,7 @@ def card_snapshot(args: argparse.Namespace, evidence: Path, label: str, *,
          f"printf 'worker_sha256='; sha256sum -- {worker_path} | awk '{{print $1}}'; "
          if runtime_path else "") +
       (f"printf 'genai_worker_sha256='; sha256sum -- {genai_worker_path} | awk '{{print $1}}'; "
-         if args.include_genai else "") +
+         if genai_worker_path else "") +
       "printf 'firmware='; cat /sys/class/remoteproc/remoteproc1/firmware; "
       "printf 'remoteproc_state='; cat /sys/class/remoteproc/remoteproc1/state; "
       "printf 'workers='; ps -eo args= | awk '$1 ~ /(^|\\/)pcie-pipeline-builder$/ {n++} END {print n+0}'; "
@@ -714,7 +728,7 @@ def card_snapshot(args: argparse.Namespace, evidence: Path, label: str, *,
               "remoteproc_state", "workers", "genai_workers"}
   if runtime_path:
     required.update(("runtime_sha256", "worker_sha256"))
-  if args.include_genai:
+  if genai_worker_path:
     required.add("genai_worker_sha256")
   if set(values) != required:
     raise RuntimeError(f"card {label} snapshot is incomplete; see {log}")
@@ -729,9 +743,9 @@ def card_snapshot(args: argparse.Namespace, evidence: Path, label: str, *,
   if (worker_path and values["worker_sha256"].lower()
       != expected_worker_sha256.lower()):
     raise RuntimeError("card tensor worker checksum differs from the exact Linux candidate")
-  if (args.include_genai and values["genai_worker_sha256"].lower()
-      != args.expected_card_genai_worker_sha256.lower()):
-    raise RuntimeError("card GenAI worker checksum differs from the qualified baseline")
+  if (genai_worker_path and values["genai_worker_sha256"].lower()
+      != expected_genai_worker_sha256.lower()):
+    raise RuntimeError("card GenAI worker checksum differs from the exact Linux candidate")
   if values["remoteproc_state"] != "running":
     raise RuntimeError(f"card remote processor is not running: {values['remoteproc_state']}")
   return values
@@ -1138,7 +1152,10 @@ def qualify(args: argparse.Namespace) -> None:
           runtime_path=staged_card["firmware_installed"],
           worker_path=staged_card["worker"],
           expected_runtime_sha256=staged_card["runtime_sha256"],
-          expected_worker_sha256=staged_card["worker_sha256"])
+          expected_worker_sha256=staged_card["worker_sha256"],
+          genai_worker_path=staged_card["genai_worker"] if args.include_genai else "",
+          expected_genai_worker_sha256=(
+              staged_card.get("genai_worker_sha256", "") if args.include_genai else ""))
       if active_card["firmware"] != staged_card["firmware_name"]:
         raise RuntimeError("card did not select the exact Linux candidate firmware")
       result["card_candidate"] = {
@@ -1147,6 +1164,8 @@ def qualify(args: argparse.Namespace) -> None:
           "runtime_sha256": active_card["runtime_sha256"],
           "worker_sha256": active_card["worker_sha256"],
       }
+      if args.include_genai:
+        result["card_candidate"]["genai_worker_sha256"] = active_card["genai_worker_sha256"]
 
       subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
       python = venv / "Scripts" / "python.exe"
@@ -1296,6 +1315,7 @@ def qualify(args: argparse.Namespace) -> None:
           "SIMAPCIE_USER": args.card_user,
           "SIMAPCIE_SSH_KEY": str(args.ssh_key.resolve()),
           "SIMAPCIE_CARD_ENV": staged_card["card_env"],
+          "SIMA_NEAT_PCIE_GENAI_CARD_ENV": staged_card["genai_card_env"],
       })
       environment["PATH"] = os.pathsep.join((
           str(install_root / "bin"),
@@ -1374,8 +1394,7 @@ def qualify(args: argparse.Namespace) -> None:
         final = card_snapshot(args, evidence, "final")
         result["card_final"] = final
         baseline = result.get("card_baseline", {})
-        unchanged = ("platform_release", "platform_sha256", "genai_worker_sha256",
-                     "firmware", "remoteproc_state")
+        unchanged = ("platform_release", "platform_sha256", "firmware", "remoteproc_state")
         if (final["workers"] != "0" or final["genai_workers"] != "0"
             or any(name in baseline and final.get(name) != baseline[name] for name in unchanged)):
           cleanup_errors.append("card did not return to its qualified baseline")
@@ -1407,7 +1426,6 @@ def main() -> None:
   parser.add_argument("--candidate", type=Path, required=True)
   parser.add_argument("--card-candidate", type=Path, required=True)
   parser.add_argument("--card-host", required=True)
-  parser.add_argument("--card-genai-worker-path", default="/usr/bin/neat-pcie-genai-worker")
   parser.add_argument(
       "--card-sudo-password-env", default="SIMAPCIE_CARD_SUDO_PASSWORD")
   parser.add_argument("--card-user", default="sima")
@@ -1415,7 +1433,6 @@ def main() -> None:
   parser.add_argument("--dependency-runtime-dir", action="append", default=[], type=Path)
   parser.add_argument("--evidence", type=Path, required=True)
   parser.add_argument("--expected-card-commit", required=True)
-  parser.add_argument("--expected-card-genai-worker-sha256", default="")
   parser.add_argument("--expected-sima-cli-commit", required=True)
   parser.add_argument("--gstreamer-root", type=Path, required=True)
   parser.add_argument("--include-genai", action="store_true")
@@ -1442,9 +1459,6 @@ def main() -> None:
   if args.upgrade_base_candidate is not None and not re.fullmatch(
       r"[0-9a-f]{40}", args.expected_upgrade_base_commit):
     parser.error("--expected-upgrade-base-commit must be a full lowercase Git commit")
-  if args.include_genai and not re.fullmatch(
-      r"[0-9a-fA-F]{64}", args.expected_card_genai_worker_sha256):
-    parser.error("--expected-card-genai-worker-sha256 is required with --include-genai")
   qualify(args)
 
 

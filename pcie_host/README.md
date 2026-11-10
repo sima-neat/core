@@ -449,9 +449,11 @@ The retained `core-pciehost-windows-amd64` artifact is the complete ordered
 cohort: Scheduler MSI, Core MSI, optional `pyneatpcie` wheel, C++ hardware test
 extras, checksum metadata, producer receipts and installer logs. A separate
 `pcie-windows-hardware` Windows 11 runner consumes those exact bytes locally. It
-holds an exclusive card lock, verifies the card runtime checksum, installs the
-exact `sima-cli` candidate selected by workflow run and commit, exposes the
-cohort through disposable loopback registries, and exercises native-only install,
+holds matching runner/card locks and admits the exact same-commit Linux Core
+artifact. Inside those locks it privately stages that artifact's firmware and
+tensor and GenAI workers, installs the exact `sima-cli` candidate selected by
+workflow run and commit, exposes the cohort through disposable loopback
+registries, and exercises native-only install,
 a missing-wheel download failure, a checksum-valid but invalid-wheel pip failure
 after native installation, recovery with the real wheel, and a repeated matching
 install through the documented `sima-cli neat install`
@@ -462,10 +464,11 @@ rejects a Platform runtime or GStreamer dependency that differs from the produce
 and then runs the public C++ and Python
 vision suites, kills a card worker and a local client in separate bounded fault
 tests, proves the affected queue can be reopened after each failure, and removes
-Python, Core and Scheduler in reverse order. Latency and throughput logs are
-converted to structured positive, finite measurements in the retained evidence. Release
-admission requires the same resource checksums, no remaining card worker, and a
-clean install root. GenAI remains off
+Python, Core and Scheduler in reverse order. It restores the stock card firmware
+and removes the private Linux payload before releasing either lock. Latency and
+throughput logs are converted to structured positive, finite measurements in the
+retained evidence. Release admission requires the same resource checksums, no
+remaining card worker, and a clean install root. GenAI remains off
 in validation-only runs until its Windows transport is supported. Customer
 publication is deliberately blocked until the same lane can run the complete
 C++ and Python GenAI matrix. Release mode also requires the run ID of a

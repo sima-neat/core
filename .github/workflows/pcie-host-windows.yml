@@ -338,7 +338,6 @@ jobs:
       SIMAPCIE_CARD_HOST: ${{ vars.SIMA_WINDOWS_PCIE_CARD_HOST }}
       SIMAPCIE_CARD_ID: "0"
       SIMAPCIE_CARD_SUDO_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
-      SIMAPCIE_EXPECTED_CARD_GENAI_WORKER_SHA256: ${{ vars.SIMA_WINDOWS_PCIE_EXPECTED_CARD_GENAI_WORKER_SHA256 }}
       SIMAPCIE_GENAI_MODELS_PATH: ${{ vars.SIMA_WINDOWS_PCIE_GENAI_MODELS_PATH }}
       SIMAPCIE_GENAI_TEST_ASSETS: ${{ vars.SIMA_WINDOWS_PCIE_GENAI_TEST_ASSETS }}
       SIMAPCIE_LIFECYCLE_CYCLES: "10"
@@ -442,13 +441,7 @@ jobs:
             "--evidence", "$env:RUNNER_TEMP\core-windows-hardware-evidence"
           )
           if ("${{ inputs.include_genai }}" -eq "true") {
-            if (-not $env:SIMAPCIE_EXPECTED_CARD_GENAI_WORKER_SHA256) {
-              throw "GenAI qualification requires SIMAPCIE_EXPECTED_CARD_GENAI_WORKER_SHA256"
-            }
-            $arguments += @(
-              "--include-genai",
-              "--expected-card-genai-worker-sha256", $env:SIMAPCIE_EXPECTED_CARD_GENAI_WORKER_SHA256
-            )
+            $arguments += "--include-genai"
           }
           if ("${{ inputs.validation_only }}" -ne "true") {
             $arguments += @(

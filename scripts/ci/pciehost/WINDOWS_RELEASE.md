@@ -93,7 +93,8 @@ Before the signed run:
 5. Confirm the signing certificate and timestamp service are available on the
    producer, and the Platform runtime DLL signatures are valid.
 6. Set `include_genai=true` only after the released Windows Platform provider,
-   daemon, card worker, models, and acceptance assets are installed.
+   daemon, models, and acceptance assets are installed. The lane selects the
+   GenAI worker from the same admitted Linux candidate as the tensor worker.
 
 The two release prerequisites that differ from the validation commands are:
 

@@ -122,6 +122,7 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("SIMAPCIE_CARD_SUDO_PASSWORD", source)
     self.assertNotIn("SIMAPCIE_EXPECTED_CARD_RUNTIME_SHA256", source)
     self.assertNotIn("SIMAPCIE_EXPECTED_CARD_WORKER_SHA256", source)
+    self.assertNotIn("SIMAPCIE_EXPECTED_CARD_GENAI_WORKER_SHA256", source)
     self.assertIn("sima_cli_run_id", source)
     self.assertIn("sima-cli-dist", source)
     self.assertIn("--require-signatures", source)
@@ -296,6 +297,7 @@ class WindowsCiContracts(unittest.TestCase):
         "card_candidate": {
             "core_commit": commit,
             "firmware": "neat-pcie-card0-" + "4" * 32,
+            "genai_worker_sha256": "5" * 64,
             "runtime_sha256": "2" * 64,
             "worker_sha256": "3" * 64,
         },
@@ -474,7 +476,8 @@ class WindowsCiContracts(unittest.TestCase):
       candidate = validate_card_candidate(root, commit)
       key = root / "id_ed25519"
       key.write_text("fixture", encoding="ascii")
-      args = SimpleNamespace(card_host="10.0.0.2", card_user="sima", ssh_key=key)
+      args = SimpleNamespace(
+          card_host="10.0.0.2", card_user="sima", include_genai=False, ssh_key=key)
       evidence = root / "evidence"
       evidence.mkdir()
 
@@ -491,6 +494,41 @@ class WindowsCiContracts(unittest.TestCase):
       self.assertIn(
           "rm -rf -- /tmp/neat-pcie-card0." + "4" * 32,
           cleanup.call_args.args[0][-1])
+
+  def test_card_candidate_receipt_binds_private_genai_worker(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit = "c" * 40
+      package = root / "sima-neat-Linux-core.deb"
+      package.write_bytes(b"card package")
+      (root / "metadata-all.json").write_text(json.dumps({
+          "resources": [package.name],
+          "resources-checksum": {package.name: sha256(package)},
+          "version": "0.6.2+develop." + commit[:12],
+      }), encoding="utf-8")
+      candidate = validate_card_candidate(root, commit)
+      key = root / "id_ed25519"
+      key.write_text("fixture", encoding="ascii")
+      args = SimpleNamespace(
+          card_host="10.0.0.2", card_user="sima", include_genai=True, ssh_key=key)
+      evidence = root / "evidence"
+      evidence.mkdir()
+
+      def write_receipt(command, log, **_kwargs):
+        if log.name == "card-candidate-extract.log":
+          self.assertIn("genai_worker_sha256", command[-1])
+          log.write_text(
+              f"worker_sha256={'2' * 64}\nruntime_sha256={'3' * 64}\n"
+              f"genai_worker_sha256={'4' * 64}\n",
+              encoding="utf-8")
+        else:
+          log.write_text("", encoding="utf-8")
+
+      with mock.patch(
+          "qualify_windows_hardware.run_logged", side_effect=write_receipt):
+        staged = stage_card_candidate(args, candidate, "5" * 32, evidence)
+      self.assertEqual(staged["genai_worker_sha256"], "4" * 64)
+      self.assertIn("SIMA_NEAT_PCIE_GENAI_HELPER_PATH=", staged["genai_card_env"])
 
   def test_candidate_rejects_changed_qualification_resource(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -748,10 +786,8 @@ class WindowsCiContracts(unittest.TestCase):
       key = root / "id_ed25519"
       key.write_text("fixture", encoding="ascii")
       args = SimpleNamespace(
-          card_genai_worker_path="/usr/bin/neat-pcie-genai-worker",
           card_host="10.0.0.2",
           card_user="sima",
-          expected_card_genai_worker_sha256="",
           include_genai=False,
           ssh_key=key,
       )
@@ -763,6 +799,8 @@ class WindowsCiContracts(unittest.TestCase):
             "remoteproc_state=running\nworkers=0\ngenai_workers=0\n")
         if "runtime_sha256" in command[-1]:
           text += f"runtime_sha256={'2' * 64}\nworker_sha256={'3' * 64}\n"
+        if "genai_worker_sha256" in command[-1]:
+          text += f"genai_worker_sha256={'4' * 64}\n"
         log.write_text(text, encoding="utf-8")
 
       with mock.patch(
@@ -777,8 +815,11 @@ class WindowsCiContracts(unittest.TestCase):
             runtime_path="/tmp/candidate/modalix-cvu-fw",
             worker_path="/tmp/candidate/pcie-pipeline-builder",
             expected_runtime_sha256="2" * 64,
-            expected_worker_sha256="3" * 64)
+            expected_worker_sha256="3" * 64,
+            genai_worker_path="/tmp/candidate/neat-pcie-genai-worker",
+            expected_genai_worker_sha256="4" * 64)
       self.assertEqual(active["worker_sha256"], "3" * 64)
+      self.assertEqual(active["genai_worker_sha256"], "4" * 64)
 
       def write_old_snapshot(command, log, **kwargs):
         write_snapshot(command, log, **kwargs)

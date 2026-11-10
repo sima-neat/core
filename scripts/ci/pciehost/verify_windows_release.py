@@ -235,6 +235,9 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
   if invalid_paths:
     raise ValueError(f"hardware qualification did not exercise absolute paths with spaces: {invalid_paths}")
   if require_genai:
+    if not re.fullmatch(
+        r"[0-9a-f]{64}", str(card_candidate.get("genai_worker_sha256", ""))):
+      raise ValueError("release qualification did not use the exact Linux GenAI worker")
     names = set(tests["cpp"]) | set(tests["python"])
     required_genai = {
         "test_genai_llm_run", "test_genai_vlm_run", "test_genai_asr_run",

@@ -339,6 +339,15 @@ if (SIMAPCIE_BUILD_TESTS)
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
   if(NOT WIN32)
+    add_executable(unit_pcie_host_genai_remote_session_test
+      tests/unit_pcie_host_genai_remote_session_test.cpp)
+    target_link_libraries(unit_pcie_host_genai_remote_session_test PRIVATE sima_neat_pcie_host)
+    target_include_directories(unit_pcie_host_genai_remote_session_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME unit_pcie_host_genai_remote_session_test
+      COMMAND unit_pcie_host_genai_remote_session_test)
+    set_tests_properties(unit_pcie_host_genai_remote_session_test PROPERTIES TIMEOUT 10)
+
     add_executable(unit_pcie_host_genai_values_test tests/unit_pcie_host_genai_values_test.cpp)
     target_link_libraries(unit_pcie_host_genai_values_test PRIVATE sima_neat_pcie_host)
     target_include_directories(unit_pcie_host_genai_values_test PRIVATE
