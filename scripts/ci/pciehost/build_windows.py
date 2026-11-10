@@ -151,7 +151,8 @@ def inspect_x64(path: Path, dumpbin: str) -> None:
 
 def authenticode_status(path: Path, powershell: str) -> dict[str, str | None]:
   script = (
-      "$signature = Get-AuthenticodeSignature -LiteralPath $args[0]; "
+      "$signature = Get-AuthenticodeSignature "
+      "-LiteralPath $env:SIMA_WINDOWS_SIGNATURE_PATH; "
       "$thumbprint = $null; "
       "$timestampThumbprint = $null; "
       "if ($signature.SignerCertificate) {$thumbprint = $signature.SignerCertificate.Thumbprint}; "
@@ -163,8 +164,11 @@ def authenticode_status(path: Path, powershell: str) -> dict[str, str | None]:
       "thumbprint=$thumbprint; timestamp_thumbprint=$timestampThumbprint} | "
       "ConvertTo-Json -Compress"
   )
+  environment = os.environ.copy()
+  environment["SIMA_WINDOWS_SIGNATURE_PATH"] = str(path)
   value = json.loads(run(
-      [powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script, path],
+      [powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+      env=environment,
       capture=True,
   ))
   return {

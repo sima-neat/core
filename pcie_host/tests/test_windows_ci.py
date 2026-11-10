@@ -135,6 +135,17 @@ class WindowsCiContracts(unittest.TestCase):
           str(Path("C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe").resolve()),
       )
 
+  def test_signature_path_avoids_powershell_command_line_quoting(self):
+    path = Path("C:/Program Files/SimaPCIeHost/bin/plugin.dll")
+    output = '{"status":"NotSigned","message":"","thumbprint":null,' \
+        '"timestamp_thumbprint":null}'
+    with mock.patch.object(MODULE, "run", return_value=output) as run:
+      MODULE.authenticode_status(path, "powershell.exe")
+    command = run.call_args.args[0]
+    environment = run.call_args.kwargs["env"]
+    self.assertNotIn(str(path), command)
+    self.assertEqual(environment["SIMA_WINDOWS_SIGNATURE_PATH"], str(path))
+
   def test_producer_records_runtime_inputs_and_repeat_installation(self):
     source = SCRIPT.read_text(encoding="utf-8")
     self.assertIn('"windows-dependencies.json"', source)
