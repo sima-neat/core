@@ -25,10 +25,13 @@ environment variables:
 `pcie-windows-hardware` must be a Windows 11 x64 client workstation with the
 supported Platform package and a directly attached Modalix card. It uses the
 same Core dependency variables plus the `SIMA_WINDOWS_PCIE_*` card address,
-SSH-key, model, media, worker-checksum, and GenAI asset variables named in
+SSH-key, model, media, and GenAI asset variables named in
 `.github/workflows/pcie-host-windows.yml`. Store the SSH private key on the
-runner and pass only its path. The production environment also supplies the
-read-only GitHub App credentials used to fetch Scheduler and sima-cli artifacts.
+runner and pass only its path. Store the card sudo credential as the protected
+`DEVKIT_PASSWORD` environment secret; it is sent only on standard input and is
+never placed in a command line or retained artifact. The production environment
+also supplies the read-only GitHub App credentials used to fetch Scheduler and
+sima-cli artifacts.
 `SIMA_WINDOWS_CMAKE_PREFIX_PATH` must include the native OpenCV CMake package,
 and `SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH` must include the matching directory
 that contains its runtime DLLs. The current qualified input is the official
@@ -36,13 +39,21 @@ OpenCV 5.0.0 x64 package (SHA-256
 `9c6c1fcea58acdf06edba13148b2246e00c2658143fa51e61ecd370db8c39f63`).
 Scheduler, Core, and hardware must resolve the same GStreamer identity, exact
 Platform runtime DLL hashes, and exact additional runtime DLL hashes; the
-workflows reject a mixed dependency cohort.
+workflows reject a mixed dependency cohort. The card does not need a preinstalled
+tensor worker. The job downloads `neat-core-dist` from the admitted Linux run,
+verifies its resource inventory, extracts the Debian payload into an owned
+private directory, and temporarily selects its matching firmware. It restores
+the original firmware and removes the private card files before releasing the
+card lock.
 
 ## Validation run
 
-Run the three producers from the exact branches under review:
+Run the four required workflows from the exact branches under review:
 
 ```text
+gh workflow run vulcan-ci.yml --repo sima-neat/core \
+  --ref <core-ref> -f validation_only=true
+
 gh workflow run pcie-host-windows.yml --repo sima-neat/scheduler \
   --ref <scheduler-ref> -f validation_only=true
 
@@ -51,6 +62,7 @@ gh workflow run vulcan-ci.yml --repo sima-neat/sima-cli \
 
 gh workflow run pcie-host-windows.yml --repo sima-neat/core \
   --ref <core-ref> \
+  -f linux_run_id=<core-linux-run-id> \
   -f scheduler_run_id=<scheduler-run-id> \
   -f scheduler_commit=<full-scheduler-commit> \
   -f sima_cli_run_id=<sima-cli-run-id> \
@@ -60,9 +72,10 @@ gh workflow run pcie-host-windows.yml --repo sima-neat/core \
 ```
 
 The Core run builds the ordered Scheduler/Core/wheel cohort and runs the
-direct-card vision matrix. It must consume the named producer artifacts; do not
-upload replacements. Validation artifacts may be unsigned and are not eligible
-for customer publication.
+direct-card vision matrix. It must consume the named producer artifacts,
+including the same-commit Linux card payload; do not upload replacements.
+Validation artifacts may be unsigned and are not eligible for customer
+publication.
 
 ## Release run
 
@@ -123,11 +136,12 @@ Retain these artifacts with the release record:
 - `core-pciehost-linux-admission-<run>-<attempt>`.
 
 The hardware workflow holds both a runner-local lock and an atomic card-side
-lock, then stops card workers, uninstalls the wheel and both
-MSI cohorts, removes its disposable downloads, compares the final card state
-with the baseline, including the exact Platform 3.0 `/etc/buildinfo` hash, and
-then releases both locks. Emergency cleanup only touches a retained card lock
-when its owner token matches the retained local record. If cleanup fails, the lock
+lock, then stops card workers, restores the original firmware, removes the
+private Linux card candidate, uninstalls the wheel and both MSI cohorts, removes
+its disposable downloads, compares the final card state with the baseline,
+including the exact Platform 3.0 `/etc/buildinfo` hash, and then releases both
+locks. Emergency cleanup only touches a retained card lock when its owner token
+matches the retained local record. If cleanup fails, the lock
 at `%USERPROFILE%\.sima\locks\neat-pcie-card0.lock` and its matching
 `/tmp/neat-pcie-card0.lock` card directory are deliberately retained. Do not
 delete either until the evidence logs have been reviewed and the runner,

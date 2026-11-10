@@ -12,7 +12,8 @@ import shutil
 import subprocess
 import sys
 
-from qualify_windows_hardware import RemoteExclusiveLock, stop_card_workers
+from qualify_windows_hardware import (
+    RemoteExclusiveLock, restore_card_candidate, stop_card_workers)
 from windows_candidate import validate_candidate
 
 
@@ -89,6 +90,12 @@ def cleanup(args: argparse.Namespace) -> None:
     results["card_workers"] = "stopped"
   except BaseException as error:
     errors.append(str(error))
+  if remote_token is not None:
+    try:
+      restore_card_candidate(args, remote_token, evidence)
+      results["card_candidate"] = "restored"
+    except BaseException as error:
+      errors.append(str(error))
   for owner, msi in (("core", candidate.core_msi), ("scheduler", candidate.scheduler_msi)):
     try:
       results[f"{owner}_msi"] = remove_msi(msi, evidence / f"recovery-{owner}-msi.log")
@@ -133,6 +140,8 @@ def main() -> None:
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--candidate", type=Path, required=True)
   parser.add_argument("--card-host", required=True)
+  parser.add_argument(
+      "--card-sudo-password-env", default="SIMAPCIE_CARD_SUDO_PASSWORD")
   parser.add_argument("--card-user", default="sima")
   parser.add_argument("--evidence", type=Path, required=True)
   parser.add_argument("--lock-file", type=Path, required=True)

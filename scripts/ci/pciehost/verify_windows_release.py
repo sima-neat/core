@@ -112,8 +112,8 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
   if not isinstance(cleanup, dict) or cleanup.get("errors") != []:
     raise ValueError("hardware qualification did not prove clean removal")
   expected_cleanup = {
-      "core_msi": "PASS", "python": "PASS", "remote_lock": "PASS",
-      "scheduler_msi": "PASS",
+      "card_candidate": "PASS", "core_msi": "PASS", "python": "PASS",
+      "remote_lock": "PASS", "scheduler_msi": "PASS",
   }
   if any(cleanup.get(name) != value for name, value in expected_cleanup.items()):
     raise ValueError("hardware qualification did not remove every customer-owned component")
@@ -165,8 +165,7 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
   baseline_card = qualification.get("card_baseline")
   final_card = qualification.get("card_final")
   card_identity = {
-      "machine", "platform_release", "platform_sha256", "runtime_sha256",
-      "worker_sha256", "firmware", "remoteproc_state",
+      "machine", "platform_release", "platform_sha256", "firmware", "remoteproc_state",
   }
   if (not isinstance(baseline_card, dict) or not isinstance(final_card, dict)
       or not card_identity.issubset(baseline_card)
@@ -177,6 +176,14 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
           r"(?:^|[_ .-])3[.]0(?:[._-]|$)", str(baseline_card.get("platform_release", "")))
       or final_card.get("workers") != "0" or final_card.get("genai_workers") != "0"):
     raise ValueError("hardware qualification did not preserve its Platform 3.0 card baseline")
+  card_candidate = qualification.get("card_candidate")
+  if (not isinstance(card_candidate, dict)
+      or card_candidate.get("core_commit") != candidate.core_commit
+      or not re.fullmatch(r"[0-9a-f]{64}", str(card_candidate.get("runtime_sha256", "")))
+      or not re.fullmatch(r"[0-9a-f]{64}", str(card_candidate.get("worker_sha256", "")))
+      or not re.fullmatch(
+          r"neat-pcie-card0-[0-9a-f]{32}", str(card_candidate.get("firmware", "")))):
+    raise ValueError("hardware qualification did not use the exact Linux card candidate")
   tests = qualification.get("tests")
   if (not isinstance(tests, dict) or not tests.get("cpp") or not tests.get("python")):
     raise ValueError("hardware qualification did not run both customer APIs")

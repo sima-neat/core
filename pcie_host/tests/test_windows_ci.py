@@ -3,6 +3,7 @@
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -24,8 +25,9 @@ SPEC.loader.exec_module(MODULE)
 from windows_candidate import dependency_identity, sha256, validate_candidate  # noqa: E402
 from qualify_windows_hardware import (  # noqa: E402
     ExclusiveLock, RemoteExclusiveLock, card_snapshot, load_upgrade_base,
-    parse_performance_log, sima_cli_identity, stage_local_registry,
-    stage_invalid_wheel_registry, stage_path_fixtures, stress_queues)
+    parse_performance_log, run_sudo_remote, sima_cli_identity, stage_card_candidate,
+    stage_invalid_wheel_registry, stage_local_registry, stage_path_fixtures, stress_queues,
+    validate_card_candidate)
 from verify_linux_release_run import verify_run as verify_linux_run  # noqa: E402
 from verify_windows_release import verify  # noqa: E402
 
@@ -113,6 +115,13 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("scripts/ci/pciehost/cleanup_windows_hardware.py", source)
     self.assertIn("needs: [hardware, linux_release]", source)
     self.assertIn("linux_run_id", source)
+    self.assertIn("Download exact Linux card candidate", source)
+    self.assertIn("name: neat-core-dist", source)
+    self.assertIn("--card-candidate", source)
+    self.assertIn("--expected-card-commit", source)
+    self.assertIn("SIMAPCIE_CARD_SUDO_PASSWORD", source)
+    self.assertNotIn("SIMAPCIE_EXPECTED_CARD_RUNTIME_SHA256", source)
+    self.assertNotIn("SIMAPCIE_EXPECTED_CARD_WORKER_SHA256", source)
     self.assertIn("sima_cli_run_id", source)
     self.assertIn("sima-cli-dist", source)
     self.assertIn("--require-signatures", source)
@@ -171,8 +180,11 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('work / "missing wheel downloads with spaces"', source)
     self.assertIn('work / "invalid wheel downloads with spaces"', source)
     self.assertIn('work / "recovery downloads with spaces"', source)
+    self.assertIn("if card_stage_attempted:", source)
+    self.assertIn("restore_card_candidate(args, remote_lock_token", source)
     cleanup = (SCRIPT_DIR / "cleanup_windows_hardware.py").read_text(encoding="utf-8")
     self.assertIn("shutil.rmtree(work, ignore_errors=True)", cleanup)
+    self.assertIn("restore_card_candidate(args, remote_token", cleanup)
 
   def test_wheel_payload_reader_checks_crc(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -279,9 +291,13 @@ class WindowsCiContracts(unittest.TestCase):
             "platform_release": "3.0.0_master_B2501",
             "platform_sha256": "1" * 64,
             "remoteproc_state": "running",
+            "workers": "0",
+        },
+        "card_candidate": {
+            "core_commit": commit,
+            "firmware": "neat-pcie-card0-" + "4" * 32,
             "runtime_sha256": "2" * 64,
             "worker_sha256": "3" * 64,
-            "workers": "0",
         },
         "card_final": {
             "firmware": "modalix-cvu-fw",
@@ -290,12 +306,11 @@ class WindowsCiContracts(unittest.TestCase):
             "platform_release": "3.0.0_master_B2501",
             "platform_sha256": "1" * 64,
             "remoteproc_state": "running",
-            "runtime_sha256": "2" * 64,
-            "worker_sha256": "3" * 64,
             "workers": "0",
         },
         "cleanup": {
-            "core_msi": "PASS", "errors": [], "python": "PASS", "remote_lock": "PASS",
+            "card_candidate": "PASS", "core_msi": "PASS", "errors": [],
+            "python": "PASS", "remote_lock": "PASS",
             "scheduler_msi": "PASS"},
         "customer_install": {
             "command": "core/pciehost/windows/amd64@3.0",
@@ -395,6 +410,87 @@ class WindowsCiContracts(unittest.TestCase):
       candidate.core_msi.write_bytes(b"changed")
       with self.assertRaisesRegex(ValueError, "checksum differs"):
         validate_candidate(root)
+
+  def test_card_candidate_binds_exact_linux_payload(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit = "c" * 40
+      package = root / "sima-neat-Linux-core.deb"
+      package.write_bytes(b"card package")
+      resources = {package.name: sha256(package)}
+      (root / "metadata-all.json").write_text(json.dumps({
+          "name": "gh:sima-neat/core",
+          "resources": [package.name],
+          "resources-checksum": resources,
+          "version": "0.6.2+develop." + commit[:12],
+      }), encoding="utf-8")
+      candidate = validate_card_candidate(root, commit)
+      self.assertEqual(candidate.packages, (package,))
+      with self.assertRaisesRegex(ValueError, "not tied"):
+        validate_card_candidate(root, "d" * 40)
+      package.write_bytes(b"changed")
+      with self.assertRaisesRegex(ValueError, "checksum differs"):
+        validate_card_candidate(root, commit)
+
+  def test_release_rejects_incomplete_card_candidate_identity(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _resources, qualification = self.windows_candidate(root)
+      receipt = json.loads(qualification.read_text(encoding="utf-8"))
+      receipt["card_candidate"]["firmware"] = "neat-pcie-card0-"
+      qualification.write_text(json.dumps(receipt), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "exact Linux card candidate"):
+        verify(root, qualification, commit, False)
+
+  def test_card_sudo_secret_stays_off_command_line_and_log(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      key = root / "id_ed25519"
+      key.write_text("fixture", encoding="ascii")
+      args = SimpleNamespace(
+          card_host="10.0.0.2", card_sudo_password_env="CARD_TEST_SECRET",
+          card_user="sima", ssh_key=key)
+      completed = subprocess.CompletedProcess([], 0, "")
+      log = root / "sudo.log"
+      with mock.patch.dict(os.environ, {"CARD_TEST_SECRET": "fixture-secret"}), \
+          mock.patch("qualify_windows_hardware.subprocess.run", return_value=completed) as run:
+        run_sudo_remote(args, "true", log)
+      command = run.call_args.args[0]
+      self.assertNotIn("fixture-secret", " ".join(command))
+      self.assertEqual(run.call_args.kwargs["input"], "fixture-secret\n")
+      self.assertNotIn("fixture-secret", log.read_text(encoding="utf-8"))
+
+  def test_card_candidate_bad_extraction_receipt_removes_private_stage(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit = "c" * 40
+      package = root / "sima-neat-Linux-core.deb"
+      package.write_bytes(b"card package")
+      (root / "metadata-all.json").write_text(json.dumps({
+          "resources": [package.name],
+          "resources-checksum": {package.name: sha256(package)},
+          "version": "0.6.2+develop." + commit[:12],
+      }), encoding="utf-8")
+      candidate = validate_card_candidate(root, commit)
+      key = root / "id_ed25519"
+      key.write_text("fixture", encoding="ascii")
+      args = SimpleNamespace(card_host="10.0.0.2", card_user="sima", ssh_key=key)
+      evidence = root / "evidence"
+      evidence.mkdir()
+
+      def write_bad_receipt(_command, log, **_kwargs):
+        log.write_text("worker_sha256=not-a-digest\n", encoding="utf-8")
+
+      completed = subprocess.CompletedProcess([], 0, "")
+      with mock.patch(
+          "qualify_windows_hardware.run_logged", side_effect=write_bad_receipt), \
+          mock.patch(
+              "qualify_windows_hardware.subprocess.run", return_value=completed) as cleanup:
+        with self.assertRaisesRegex(RuntimeError, "receipt is incomplete"):
+          stage_card_candidate(args, candidate, "4" * 32, evidence)
+      self.assertIn(
+          "rm -rf -- /tmp/neat-pcie-card0." + "4" * 32,
+          cleanup.call_args.args[0][-1])
 
   def test_candidate_rejects_changed_qualification_resource(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -654,29 +750,35 @@ class WindowsCiContracts(unittest.TestCase):
       args = SimpleNamespace(
           card_genai_worker_path="/usr/bin/neat-pcie-genai-worker",
           card_host="10.0.0.2",
-          card_runtime_path="/lib/firmware/modalix-cvu-fw",
           card_user="sima",
-          card_worker_path="/usr/bin/pcie-pipeline-builder",
           expected_card_genai_worker_sha256="",
-          expected_card_runtime_sha256="2" * 64,
-          expected_card_worker_sha256="3" * 64,
           include_genai=False,
           ssh_key=key,
       )
 
-      def write_snapshot(_command, log, **_kwargs):
-        log.write_text(
+      def write_snapshot(command, log, **_kwargs):
+        text = (
             "machine=aarch64\nplatform_release=3.0.0_master_B2501\n"
-            f"platform_sha256={'1' * 64}\nruntime_sha256={'2' * 64}\n"
-            f"worker_sha256={'3' * 64}\nfirmware=modalix-cvu-fw\n"
-            "remoteproc_state=running\nworkers=0\ngenai_workers=0\n",
-            encoding="utf-8")
+            f"platform_sha256={'1' * 64}\nfirmware=modalix-cvu-fw\n"
+            "remoteproc_state=running\nworkers=0\ngenai_workers=0\n")
+        if "runtime_sha256" in command[-1]:
+          text += f"runtime_sha256={'2' * 64}\nworker_sha256={'3' * 64}\n"
+        log.write_text(text, encoding="utf-8")
 
       with mock.patch(
           "qualify_windows_hardware.run_logged", side_effect=write_snapshot):
         snapshot = card_snapshot(args, root, "baseline")
       self.assertEqual(snapshot["platform_release"], "3.0.0_master_B2501")
       self.assertEqual(snapshot["platform_sha256"], "1" * 64)
+      with mock.patch(
+          "qualify_windows_hardware.run_logged", side_effect=write_snapshot):
+        active = card_snapshot(
+            args, root, "candidate",
+            runtime_path="/tmp/candidate/modalix-cvu-fw",
+            worker_path="/tmp/candidate/pcie-pipeline-builder",
+            expected_runtime_sha256="2" * 64,
+            expected_worker_sha256="3" * 64)
+      self.assertEqual(active["worker_sha256"], "3" * 64)
 
       def write_old_snapshot(command, log, **kwargs):
         write_snapshot(command, log, **kwargs)

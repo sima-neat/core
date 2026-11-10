@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -20,6 +21,7 @@ from pathlib import Path
 import platform
 import re
 import secrets
+import shlex
 import shutil
 import subprocess
 import sys
@@ -55,6 +57,48 @@ BASE_PYTHON_TESTS = (
     "test_image_boxdecode_run_yolov8",
 )
 SUPPORTED_PYTHON = (3, 14)
+
+
+@dataclass(frozen=True)
+class CardCandidate:
+  root: Path
+  metadata: dict
+  packages: tuple[Path, ...]
+  resources: dict[str, str]
+
+
+def validate_card_candidate(directory: Path, expected_commit: str) -> CardCandidate:
+  """Validate the exact Linux Core payload that will run privately on the card."""
+  root = directory.resolve(strict=True)
+  metadata_path = root / "metadata-all.json"
+  try:
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+  except (OSError, json.JSONDecodeError) as error:
+    raise ValueError(f"card candidate has no valid metadata-all.json: {root}") from error
+  if not isinstance(metadata, dict):
+    raise ValueError("card candidate metadata must be an object")
+  if expected_commit[:12] not in str(metadata.get("version", "")):
+    raise ValueError("card candidate version is not tied to the selected Core commit")
+  resources = metadata.get("resources-checksum")
+  names = metadata.get("resources")
+  if (not isinstance(resources, dict) or not resources
+      or not isinstance(names, list) or set(names) != set(resources)):
+    raise ValueError("card candidate resource inventory is incomplete")
+  packages = []
+  for name, expected in resources.items():
+    if (not isinstance(name, str) or Path(name).name != name
+        or not re.fullmatch(r"[A-Za-z0-9._+%:-]+", name)):
+      raise ValueError(f"card candidate resource has an unsafe name: {name!r}")
+    if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+      raise ValueError(f"card candidate resource has an invalid checksum: {name}")
+    path = root / name
+    if path.is_symlink() or not path.is_file() or sha256(path) != expected:
+      raise ValueError(f"card candidate resource checksum differs: {name}")
+    if name.endswith(".deb"):
+      packages.append(path)
+  if not packages:
+    raise ValueError("card candidate contains no Debian runtime packages")
+  return CardCandidate(root, metadata, tuple(sorted(packages)), dict(resources))
 
 
 def write_json(path: Path, value: object) -> None:
@@ -393,6 +437,181 @@ def ssh_command(args: argparse.Namespace, remote: str) -> list[str]:
   ]
 
 
+def scp_command(args: argparse.Namespace, sources: tuple[Path, ...], destination: str) -> list[str]:
+  return [
+      "scp.exe",
+      "-i", str(args.ssh_key.resolve(strict=True)),
+      "-o", "BatchMode=yes",
+      "-o", "IdentitiesOnly=yes",
+      "-o", "StrictHostKeyChecking=yes",
+      "-o", "ConnectTimeout=10",
+      *(str(path) for path in sources),
+      f"{args.card_user}@{args.card_host}:{destination}",
+  ]
+
+
+def card_candidate_paths(token: str) -> dict[str, str]:
+  if not re.fullmatch(r"[0-9a-f]{32}", token):
+    raise ValueError("card candidate token must be 128-bit lowercase hex")
+  stage = f"/tmp/neat-pcie-card0.{token}"
+  return {
+      "stage": stage,
+      "packages": f"{stage}/packages",
+      "root": f"{stage}/root",
+      "worker": f"{stage}/root/usr/bin/pcie-pipeline-builder",
+      "firmware_source": (
+          f"{stage}/root/usr/share/sima-neat-firmware/modalix-cvu-fw"),
+      "firmware_name": f"neat-pcie-card0-{token}",
+      "firmware_installed": f"/lib/firmware/neat-pcie-card0-{token}",
+      "run": f"{stage}/run",
+      "log": f"{stage}/log",
+  }
+
+
+def _card_sudo_password(args: argparse.Namespace) -> str:
+  name = args.card_sudo_password_env
+  if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+    raise ValueError("card sudo password environment variable name is invalid")
+  password = os.environ.get(name, "")
+  if "\n" in password or "\r" in password:
+    raise ValueError("card sudo password must be one line")
+  return password
+
+
+def run_sudo_remote(args: argparse.Namespace, remote: str, log: Path,
+                    *, timeout: int = 120) -> None:
+  """Run a fixed card command as root without placing the password in argv or logs."""
+  quoted = shlex.quote(remote)
+  launcher = (
+      "set -eu; if sudo -n true 2>/dev/null; then "
+      f"exec sudo sh -c {quoted}; "
+      "fi; IFS= read -r secret; test -n \"$secret\"; "
+      f"printf '%s\\n' \"$secret\" | exec sudo -S -p '' sh -c {quoted}"
+  )
+  argv = ssh_command(args, launcher)
+  with log.open("w", encoding="utf-8", errors="replace") as output:
+    output.write("+ " + subprocess.list2cmdline(argv) + " [stdin redacted]\n")
+    output.flush()
+    result = subprocess.run(
+        argv, input=_card_sudo_password(args) + "\n", stdout=output,
+        stderr=subprocess.STDOUT, text=True, timeout=timeout, check=False)
+  if result.returncode != 0:
+    raise RuntimeError(f"privileged card command failed with {result.returncode}; see {log}")
+
+
+def stage_card_candidate(args: argparse.Namespace, candidate: CardCandidate, token: str,
+                         evidence: Path) -> dict[str, str]:
+  paths = card_candidate_paths(token)
+  prepare = (
+      f"set -eu; test ! -e {paths['stage']}; umask 077; "
+      f"mkdir -p {paths['packages']} {paths['root']} {paths['run']} {paths['log']}"
+  )
+  try:
+    run_logged(ssh_command(args, prepare), evidence / "card-candidate-prepare.log", timeout=30)
+    run_logged(
+        scp_command(args, candidate.packages, paths["packages"] + "/"),
+        evidence / "card-candidate-transfer.log", timeout=900)
+    extract = (
+        f"set -eu; for package in {paths['packages']}/*.deb; do "
+        f"dpkg-deb -x \"$package\" {paths['root']}; done; "
+        f"test -x {paths['worker']}; test -r {paths['firmware_source']}; "
+        f"printf 'worker_sha256='; sha256sum {paths['worker']} | awk '{{print $1}}'; "
+        f"printf 'runtime_sha256='; sha256sum {paths['firmware_source']} | awk '{{print $1}}'"
+    )
+    log = evidence / "card-candidate-extract.log"
+    run_logged(ssh_command(args, extract), log, timeout=900)
+    values = {}
+    for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+      if "=" in line and not line.startswith("+"):
+        name, value = line.split("=", 1)
+        if name in {"runtime_sha256", "worker_sha256"}:
+          values[name] = value.strip()
+    if set(values) != {"runtime_sha256", "worker_sha256"} or any(
+        not re.fullmatch(r"[0-9a-f]{64}", value) for value in values.values()):
+      raise RuntimeError(f"card candidate extraction receipt is incomplete; see {log}")
+  except BaseException:
+    subprocess.run(
+        ssh_command(args, f"rm -rf -- {paths['stage']}"),
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        text=True, timeout=60, check=False)
+    raise
+  library_paths = (
+      f"{paths['root']}/usr/lib",
+      f"{paths['root']}/usr/lib/aarch64-linux-gnu",
+      f"{paths['root']}/usr/lib/aarch64-linux-gnu/neat/runtime",
+      "/usr/lib/aarch64-linux-gnu",
+  )
+  plugin_paths = (
+      f"{paths['root']}/usr/lib/aarch64-linux-gnu/neat/gst-plugins",
+      "/usr/lib/aarch64-linux-gnu/gstreamer-1.0",
+  )
+  values.update(paths)
+  values["card_env"] = " ".join((
+      f"SIMA_NEAT_PCIE_HELPER_PATH={paths['worker']}",
+      f"SIMA_NEAT_PCIE_RUN_DIR={paths['run']}",
+      f"SIMA_NEAT_PCIE_LOG_DIR={paths['log']}",
+      "LD_LIBRARY_PATH=" + ":".join(library_paths),
+      "GST_PLUGIN_PATH_1_0=" + ":".join(plugin_paths),
+  ))
+  return values
+
+
+def activate_card_candidate(args: argparse.Namespace, staged: dict[str, str],
+                            baseline_firmware: str, evidence: Path) -> None:
+  if not re.fullmatch(r"[A-Za-z0-9._+-]+", baseline_firmware):
+    raise ValueError(f"card baseline firmware name is unsafe: {baseline_firmware!r}")
+  lock = _validate_remote_path(args.remote_lock_path)
+  remember = (
+      f"set -eu; test -r {lock}/owner; umask 077; "
+      f"printf '%s\\n' {shlex.quote(baseline_firmware)} > {lock}/baseline_firmware"
+  )
+  run_logged(
+      ssh_command(args, remember), evidence / "card-candidate-baseline-record.log", timeout=30)
+  remoteproc = "/sys/class/remoteproc/remoteproc1"
+  command = (
+      "set -eu; "
+      f"source={staged['firmware_source']}; target={staged['firmware_installed']}; "
+      f"candidate={staged['firmware_name']}; baseline={shlex.quote(baseline_firmware)}; "
+      f"remoteproc={remoteproc}; test -r \"$source\"; test ! -e \"$target\"; "
+      "restore() { printf stop > \"$remoteproc/state\" 2>/dev/null || true; "
+      "printf '%s' \"$baseline\" > \"$remoteproc/firmware\" 2>/dev/null || true; "
+      "printf start > \"$remoteproc/state\" 2>/dev/null || true; rm -f \"$target\"; }; "
+      "trap restore EXIT; install -m 0644 \"$source\" \"$target\"; "
+      "printf stop > \"$remoteproc/state\"; printf '%s' \"$candidate\" > \"$remoteproc/firmware\"; "
+      "printf start > \"$remoteproc/state\"; grep -qx \"$candidate\" \"$remoteproc/firmware\"; "
+      "grep -qx running \"$remoteproc/state\"; trap - EXIT"
+  )
+  run_sudo_remote(args, command, evidence / "card-candidate-activate.log")
+
+
+def restore_card_candidate(args: argparse.Namespace, token: str, evidence: Path) -> None:
+  paths = card_candidate_paths(token)
+  lock = _validate_remote_path(args.remote_lock_path)
+  remoteproc = "/sys/class/remoteproc/remoteproc1"
+  command = (
+      "set -eu; "
+      f"lock={lock}; target={paths['firmware_installed']}; candidate={paths['firmware_name']}; "
+      f"remoteproc={remoteproc}; "
+      "if [ -r \"$lock/baseline_firmware\" ]; then "
+      "read -r baseline < \"$lock/baseline_firmware\"; "
+      "case \"$baseline\" in (*[!A-Za-z0-9._+-]*|'') exit 74;; esac; "
+      "read -r current < \"$remoteproc/firmware\"; "
+      "if [ \"$current\" = \"$candidate\" ]; then "
+      "printf stop > \"$remoteproc/state\"; printf '%s' \"$baseline\" > \"$remoteproc/firmware\"; "
+      "printf start > \"$remoteproc/state\"; "
+      "elif [ \"$current\" != \"$baseline\" ]; then exit 75; fi; "
+      "grep -qx \"$baseline\" \"$remoteproc/firmware\"; grep -qx running \"$remoteproc/state\"; "
+      "fi; rm -f \"$target\""
+  )
+  run_sudo_remote(args, command, evidence / "card-candidate-restore.log")
+  cleanup = (
+      f"set -eu; rm -rf -- {paths['stage']}; rm -f -- {lock}/baseline_firmware; "
+      f"test ! -e {paths['stage']}"
+  )
+  run_logged(
+      ssh_command(args, cleanup), evidence / "card-candidate-files-cleanup.log", timeout=60)
+
+
 class RemoteExclusiveLock:
   """Atomic card-side lock shared by every host that can SSH to the card."""
 
@@ -454,19 +673,27 @@ class RemoteExclusiveLock:
     self.acquired = False
 
 
-def card_snapshot(args: argparse.Namespace, evidence: Path, label: str) -> dict[str, str]:
-  runtime_path = _validate_remote_path(args.card_runtime_path)
-  worker_path = _validate_remote_path(args.card_worker_path)
+def card_snapshot(args: argparse.Namespace, evidence: Path, label: str, *,
+                  runtime_path: str = "", worker_path: str = "",
+                  expected_runtime_sha256: str = "", expected_worker_sha256: str = "") \
+    -> dict[str, str]:
+  if bool(runtime_path) != bool(worker_path):
+    raise ValueError("card runtime and worker paths must be supplied together")
+  if runtime_path:
+    runtime_path = _validate_remote_path(runtime_path)
+    worker_path = _validate_remote_path(worker_path)
   genai_worker_path = _validate_remote_path(args.card_genai_worker_path)
   remote = (
       "set -eu; "
       "printf 'machine='; uname -m; "
       "test -r /etc/buildinfo; "
-      "printf 'platform_release='; head -n 1 /etc/buildinfo | tr -d '\\r\\n'; printf '\\n'; "
+      "printf 'platform_release='; sed -n 's/^SIMA_BUILD_VERSION[[:space:]]*=[[:space:]]*//p' "
+      "/etc/buildinfo | head -n 1 | tr -d '\\r\\n'; printf '\\n'; "
       "printf 'platform_sha256='; sha256sum -- /etc/buildinfo | awk '{print $1}'; "
-      f"printf 'runtime_sha256='; sha256sum -- {runtime_path} | awk '{{print $1}}'; "
-      f"printf 'worker_sha256='; sha256sum -- {worker_path} | awk '{{print $1}}'; "
-      + (f"printf 'genai_worker_sha256='; sha256sum -- {genai_worker_path} | awk '{{print $1}}'; "
+      + (f"printf 'runtime_sha256='; sha256sum -- {runtime_path} | awk '{{print $1}}'; "
+         f"printf 'worker_sha256='; sha256sum -- {worker_path} | awk '{{print $1}}'; "
+         if runtime_path else "") +
+      (f"printf 'genai_worker_sha256='; sha256sum -- {genai_worker_path} | awk '{{print $1}}'; "
          if args.include_genai else "") +
       "printf 'firmware='; cat /sys/class/remoteproc/remoteproc1/firmware; "
       "printf 'remoteproc_state='; cat /sys/class/remoteproc/remoteproc1/state; "
@@ -483,8 +710,10 @@ def card_snapshot(args: argparse.Namespace, evidence: Path, label: str) -> dict[
                   "worker_sha256", "genai_worker_sha256", "firmware", "remoteproc_state",
                   "workers", "genai_workers"}:
         values[name] = value.strip()
-  required = {"machine", "platform_release", "platform_sha256", "runtime_sha256",
-              "worker_sha256", "firmware", "remoteproc_state", "workers", "genai_workers"}
+  required = {"machine", "platform_release", "platform_sha256", "firmware",
+              "remoteproc_state", "workers", "genai_workers"}
+  if runtime_path:
+    required.update(("runtime_sha256", "worker_sha256"))
   if args.include_genai:
     required.add("genai_worker_sha256")
   if set(values) != required:
@@ -494,10 +723,12 @@ def card_snapshot(args: argparse.Namespace, evidence: Path, label: str) -> dict[
   if not re.search(r"(?:^|[_ .-])3[.]0(?:[._-]|$)", values["platform_release"]):
     raise RuntimeError(
         f"card is not running Modalix Platform 3.0: {values['platform_release']}")
-  if values["runtime_sha256"].lower() != args.expected_card_runtime_sha256.lower():
-    raise RuntimeError("card runtime checksum differs from the qualified baseline")
-  if values["worker_sha256"].lower() != args.expected_card_worker_sha256.lower():
-    raise RuntimeError("card tensor worker checksum differs from the qualified baseline")
+  if (runtime_path and values["runtime_sha256"].lower()
+      != expected_runtime_sha256.lower()):
+    raise RuntimeError("card runtime checksum differs from the exact Linux candidate")
+  if (worker_path and values["worker_sha256"].lower()
+      != expected_worker_sha256.lower()):
+    raise RuntimeError("card tensor worker checksum differs from the exact Linux candidate")
   if (args.include_genai and values["genai_worker_sha256"].lower()
       != args.expected_card_genai_worker_sha256.lower()):
     raise RuntimeError("card GenAI worker checksum differs from the qualified baseline")
@@ -830,6 +1061,9 @@ def qualify(args: argparse.Namespace) -> None:
   if not args.dependency_runtime_dir:
     raise RuntimeError("hardware qualification requires dependency runtime directories")
   candidate = validate_candidate(args.candidate)
+  card_candidate = validate_card_candidate(args.card_candidate, args.expected_card_commit)
+  if args.expected_card_commit != candidate.core_commit:
+    raise ValueError("Windows and card candidates must name the same Core commit")
   upgrade_base = load_upgrade_base(
       candidate, args.upgrade_base_candidate, args.expected_upgrade_base_commit)
   evidence = require_fresh_directory(args.evidence, "evidence directory")
@@ -887,11 +1121,32 @@ def qualify(args: argparse.Namespace) -> None:
         card_lock.retain()
       raise
     card_lock.retain()
+    staged_card: dict[str, str] | None = None
+    card_stage_attempted = False
     try:
       baseline = card_snapshot(args, evidence, "baseline")
       result["card_baseline"] = baseline
       if baseline["workers"] != "0" or baseline["genai_workers"] != "0":
         raise RuntimeError("card had PCIe workers before qualification; refusing to disturb them")
+
+      card_stage_attempted = True
+      staged_card = stage_card_candidate(
+          args, card_candidate, remote_lock_token, evidence)
+      activate_card_candidate(args, staged_card, baseline["firmware"], evidence)
+      active_card = card_snapshot(
+          args, evidence, "candidate",
+          runtime_path=staged_card["firmware_installed"],
+          worker_path=staged_card["worker"],
+          expected_runtime_sha256=staged_card["runtime_sha256"],
+          expected_worker_sha256=staged_card["worker_sha256"])
+      if active_card["firmware"] != staged_card["firmware_name"]:
+        raise RuntimeError("card did not select the exact Linux candidate firmware")
+      result["card_candidate"] = {
+          "core_commit": args.expected_card_commit,
+          "firmware": active_card["firmware"],
+          "runtime_sha256": active_card["runtime_sha256"],
+          "worker_sha256": active_card["worker_sha256"],
+      }
 
       subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
       python = venv / "Scripts" / "python.exe"
@@ -1040,6 +1295,7 @@ def qualify(args: argparse.Namespace) -> None:
           "SIMAPCIE_CARD_HOST": args.card_host,
           "SIMAPCIE_USER": args.card_user,
           "SIMAPCIE_SSH_KEY": str(args.ssh_key.resolve()),
+          "SIMAPCIE_CARD_ENV": staged_card["card_env"],
       })
       environment["PATH"] = os.pathsep.join((
           str(install_root / "bin"),
@@ -1079,6 +1335,12 @@ def qualify(args: argparse.Namespace) -> None:
         stop_card_workers(args, evidence)
       except BaseException as error:
         cleanup_errors.append(str(error))
+      if card_stage_attempted:
+        try:
+          restore_card_candidate(args, remote_lock_token, evidence)
+          result["cleanup"]["card_candidate"] = "PASS"
+        except BaseException as error:
+          cleanup_errors.append(str(error))
       customer_python = venv / "Scripts" / "python.exe"
       if customer_python.is_file():
         try:
@@ -1112,9 +1374,8 @@ def qualify(args: argparse.Namespace) -> None:
         final = card_snapshot(args, evidence, "final")
         result["card_final"] = final
         baseline = result.get("card_baseline", {})
-        unchanged = ("platform_release", "platform_sha256", "runtime_sha256",
-                     "worker_sha256", "genai_worker_sha256", "firmware",
-                     "remoteproc_state")
+        unchanged = ("platform_release", "platform_sha256", "genai_worker_sha256",
+                     "firmware", "remoteproc_state")
         if (final["workers"] != "0" or final["genai_workers"] != "0"
             or any(name in baseline and final.get(name) != baseline[name] for name in unchanged)):
           cleanup_errors.append("card did not return to its qualified baseline")
@@ -1144,16 +1405,16 @@ def qualify(args: argparse.Namespace) -> None:
 def main() -> None:
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--candidate", type=Path, required=True)
+  parser.add_argument("--card-candidate", type=Path, required=True)
   parser.add_argument("--card-host", required=True)
-  parser.add_argument("--card-runtime-path", default="/lib/firmware/modalix-cvu-fw")
-  parser.add_argument("--card-worker-path", default="/usr/bin/pcie-pipeline-builder")
   parser.add_argument("--card-genai-worker-path", default="/usr/bin/neat-pcie-genai-worker")
+  parser.add_argument(
+      "--card-sudo-password-env", default="SIMAPCIE_CARD_SUDO_PASSWORD")
   parser.add_argument("--card-user", default="sima")
   parser.add_argument("--dependency-prefix", action="append", default=[], type=Path)
   parser.add_argument("--dependency-runtime-dir", action="append", default=[], type=Path)
   parser.add_argument("--evidence", type=Path, required=True)
-  parser.add_argument("--expected-card-runtime-sha256", required=True)
-  parser.add_argument("--expected-card-worker-sha256", required=True)
+  parser.add_argument("--expected-card-commit", required=True)
   parser.add_argument("--expected-card-genai-worker-sha256", default="")
   parser.add_argument("--expected-sima-cli-commit", required=True)
   parser.add_argument("--gstreamer-root", type=Path, required=True)
@@ -1171,9 +1432,8 @@ def main() -> None:
   parser.add_argument("--expected-upgrade-base-commit", default="")
   parser.add_argument("--work", type=Path, required=True)
   args = parser.parse_args()
-  for name in ("expected_card_runtime_sha256", "expected_card_worker_sha256"):
-    if not re.fullmatch(r"[0-9a-fA-F]{64}", getattr(args, name)):
-      parser.error(f"--{name.replace('_', '-')} must be a SHA-256 digest")
+  if not re.fullmatch(r"[0-9a-f]{40}", args.expected_card_commit):
+    parser.error("--expected-card-commit must be a full lowercase Git commit")
   if not re.fullmatch(r"[0-9a-f]{40}", args.expected_sima_cli_commit):
     parser.error("--expected-sima-cli-commit must be a full lowercase Git commit")
   if (args.upgrade_base_candidate is None) != (not args.expected_upgrade_base_commit):
