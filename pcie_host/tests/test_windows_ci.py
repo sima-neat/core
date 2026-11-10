@@ -180,6 +180,7 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('command.extend(["--iterations", "10", "--interval-ms", "0"])', source)
     self.assertIn('completed.append("test_worker_loss_recovery")', source)
     self.assertIn('completed.append("test_client_process_death_recovery")', source)
+    self.assertIn('command.append("--terminate-on-pull-timeout")', source)
     self.assertIn("process.kill()", source)
     self.assertIn('"/fa"', source)
     self.assertIn('"gst-inspect-1.0.exe"', source)

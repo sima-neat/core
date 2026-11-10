@@ -851,12 +851,13 @@ def run_fault_recovery_tests(args: argparse.Namespace, test_root: Path, evidence
   recovery = test_root / "test_tensor_run.exe"
   completed = []
 
-  def launch(label: str, *, fail_on_pull_timeout: bool = False) -> tuple[subprocess.Popen, object, Path]:
+  def launch(label: str, *, terminate_on_pull_timeout: bool = False
+             ) -> tuple[subprocess.Popen, object, Path]:
     log = evidence / f"cpp-{label}.log"
     stream = log.open("w", encoding="utf-8", errors="replace")
     command = [blocker, "--iterations", "0"]
-    if fail_on_pull_timeout:
-      command.append("--fail-on-pull-timeout")
+    if terminate_on_pull_timeout:
+      command.append("--terminate-on-pull-timeout")
     stream.write("+ " + subprocess.list2cmdline([str(value) for value in command]) + "\n")
     stream.flush()
     process = subprocess.Popen(
@@ -872,7 +873,8 @@ def run_fault_recovery_tests(args: argparse.Namespace, test_root: Path, evidence
       raise
     return process, stream, log
 
-  process, stream, _ = launch("test_worker_loss_recovery", fail_on_pull_timeout=True)
+  process, stream, _ = launch(
+      "test_worker_loss_recovery", terminate_on_pull_timeout=True)
   try:
     remote = (
         "pkill -KILL -f '(^|/)[p]cie-pipeline-builder([[:space:]]|$)' "

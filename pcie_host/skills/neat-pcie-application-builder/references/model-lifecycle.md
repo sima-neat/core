@@ -94,6 +94,12 @@ A timeout from `run()` or an empty result from timed `pull()` stops waiting; it 
 input already accepted by the card. After a timeout, either drain the outstanding result with
 `pull()` or close the model before beginning a new request sequence.
 
+A card worker that exits while an inference is in flight is a transport failure, not an ordinary
+request timeout. Run a long-lived PCIe service under a process supervisor. If `close()` cannot
+finish because the platform receive driver is still holding the failed request, the supervisor
+must terminate that host process, wait for the card-side worker to disappear, and start a new
+process before reusing the queue. Do not reuse the affected `Model` in process.
+
 ## Multiple Models
 
 Multiple independent `Model` objects can execute concurrently. Assign each active model a distinct
