@@ -25,9 +25,10 @@ SPEC.loader.exec_module(MODULE)
 from windows_candidate import dependency_identity, sha256, validate_candidate  # noqa: E402
 from qualify_windows_hardware import (  # noqa: E402
     ExclusiveLock, RemoteExclusiveLock, card_snapshot, load_upgrade_base,
-    parse_performance_log, run_captured_to_file, run_sudo_remote, sima_cli_identity,
-    stage_card_candidate, stage_invalid_wheel_registry, stage_local_registry,
-    stage_path_fixtures, stress_queues, validate_card_candidate)
+    parse_performance_log, require_powershell as require_hardware_powershell,
+    run_captured_to_file, run_sudo_remote, sima_cli_identity, stage_card_candidate,
+    stage_invalid_wheel_registry, stage_local_registry, stage_path_fixtures, stress_queues,
+    validate_card_candidate)
 from verify_linux_release_run import verify_run as verify_linux_run  # noqa: E402
 from verify_windows_release import verify  # noqa: E402
 import prepare_card_qualification_candidate as CARD_PREP  # noqa: E402
@@ -156,6 +157,17 @@ class WindowsCiContracts(unittest.TestCase):
           str(Path("C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe").resolve()),
       )
 
+  def test_hardware_qualification_accepts_inbox_windows_powershell(self):
+    def which(name):
+      return "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe" \
+          if name == "powershell.exe" else None
+
+    with mock.patch("qualify_windows_hardware.shutil.which", side_effect=which):
+      self.assertEqual(
+          require_hardware_powershell(),
+          str(Path("C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe").resolve()),
+      )
+
   def test_signature_path_avoids_powershell_command_line_quoting(self):
     path = Path("C:/Program Files/SimaPCIeHost/bin/plugin.dll")
     output = '{"status":"NotSigned","message":"","thumbprint":null,' \
@@ -181,6 +193,11 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('completed.append("test_worker_loss_recovery")', source)
     self.assertIn('completed.append("test_client_process_death_recovery")', source)
     self.assertIn('command.append("--terminate-on-pull-timeout")', source)
+    self.assertIn('evidence / "client-process-death-worker-cleanup.log"', source)
+    self.assertIn('evidence / "client-process-death-platform-recovery.log"', source)
+    self.assertIn('evidence / "card-candidate-platform-start.log"', source)
+    self.assertIn('evidence / "card-stock-platform-recovery.log"', source)
+    self.assertIn("Restart-Service -InputObject $service", source)
     self.assertIn("process.kill()", source)
     self.assertIn('"/fa"', source)
     self.assertIn('"gst-inspect-1.0.exe"', source)
@@ -197,6 +214,7 @@ class WindowsCiContracts(unittest.TestCase):
     cleanup = (SCRIPT_DIR / "cleanup_windows_hardware.py").read_text(encoding="utf-8")
     self.assertIn("shutil.rmtree(work, ignore_errors=True)", cleanup)
     self.assertIn("restore_card_candidate(args, remote_token", cleanup)
+    self.assertIn('evidence / "recovery-platform-service.log"', cleanup)
 
   def test_wheel_payload_reader_checks_crc(self):
     with tempfile.TemporaryDirectory() as directory:

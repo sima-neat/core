@@ -13,7 +13,8 @@ import subprocess
 import sys
 
 from qualify_windows_hardware import (
-    RemoteExclusiveLock, restore_card_candidate, stop_card_workers)
+    RemoteExclusiveLock, restart_windows_platform_service, restore_card_candidate,
+    stop_card_workers)
 from windows_candidate import validate_candidate
 
 
@@ -94,6 +95,8 @@ def cleanup(args: argparse.Namespace) -> None:
     try:
       restore_card_candidate(args, remote_token, evidence)
       results["card_candidate"] = "restored"
+      restart_windows_platform_service(evidence / "recovery-platform-service.log")
+      results["platform_service"] = "restarted"
     except BaseException as error:
       errors.append(str(error))
   for owner, msi in (("core", candidate.core_msi), ("scheduler", candidate.scheduler_msi)):

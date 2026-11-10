@@ -98,7 +98,9 @@ A card worker that exits while an inference is in flight is a transport failure,
 request timeout. Run a long-lived PCIe service under a process supervisor. If `close()` cannot
 finish because the platform receive driver is still holding the failed request, the supervisor
 must terminate that host process, wait for the card-side worker to disappear, and start a new
-process before reusing the queue. Do not reuse the affected `Model` in process.
+process before reusing the queue. If the Windows client process itself exits unexpectedly, the
+supervisor must also reap its card worker and restart the Platform-owned `SiMaMlaDaemon` service
+before starting the replacement process. Do not reuse the affected `Model` in process.
 
 ## Multiple Models
 

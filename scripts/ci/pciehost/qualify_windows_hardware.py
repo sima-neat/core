@@ -112,6 +112,15 @@ def require_windows() -> None:
     raise RuntimeError("Windows PCIe hardware qualification requires CPython 3.14 x64")
 
 
+def require_powershell() -> str:
+  """Use PowerShell 7 when provisioned, otherwise Windows PowerShell 5.1."""
+  for name in ("pwsh.exe", "powershell.exe"):
+    path = shutil.which(name)
+    if path:
+      return str(Path(path).resolve())
+  raise RuntimeError("Windows PCIe hardware qualification requires PowerShell")
+
+
 def require_fresh_directory(path: Path, description: str) -> Path:
   resolved = path.resolve()
   if resolved.exists():
@@ -794,7 +803,7 @@ def card_snapshot(args: argparse.Namespace, evidence: Path, label: str, *,
   return values
 
 
-def stop_card_workers(args: argparse.Namespace, evidence: Path) -> None:
+def terminate_card_workers(args: argparse.Namespace, log: Path) -> None:
   remote = (
       "pkill -TERM -f '(^|/)[p]cie-pipeline-builder([[:space:]]|$)' 2>/dev/null || true; "
       "pkill -TERM -f '(^|/)[n]eat-pcie-genai-worker([[:space:]]|$)' 2>/dev/null || true; "
@@ -802,7 +811,28 @@ def stop_card_workers(args: argparse.Namespace, evidence: Path) -> None:
       "pkill -KILL -f '(^|/)[p]cie-pipeline-builder([[:space:]]|$)' 2>/dev/null || true; "
       "pkill -KILL -f '(^|/)[n]eat-pcie-genai-worker([[:space:]]|$)' 2>/dev/null || true"
   )
-  run_logged(ssh_command(args, remote), evidence / "card-worker-cleanup.log", timeout=30)
+  run_logged(ssh_command(args, remote), log, timeout=30)
+
+
+def stop_card_workers(args: argparse.Namespace, evidence: Path) -> None:
+  terminate_card_workers(args, evidence / "card-worker-cleanup.log")
+
+
+def restart_windows_platform_service(log: Path) -> None:
+  command = (
+      "$service = Get-Service -Name 'SiMaMlaDaemon' -ErrorAction Stop; "
+      "Restart-Service -InputObject $service -Force -ErrorAction Stop; "
+      "$service.WaitForStatus("
+      "[System.ServiceProcess.ServiceControllerStatus]::Running, "
+      "[TimeSpan]::FromSeconds(30)); "
+      "if ($service.Status -ne "
+      "[System.ServiceProcess.ServiceControllerStatus]::Running) { "
+      "throw 'SiMaMlaDaemon did not return to running state' }; "
+      "Start-Sleep -Seconds 2"
+  )
+  run_logged(
+      [require_powershell(), "-NoLogo", "-NoProfile", "-NonInteractive",
+       "-Command", command], log, timeout=60)
 
 
 def wait_for_no_card_workers(args: argparse.Namespace, log: Path, timeout: int) -> None:
@@ -909,7 +939,10 @@ def run_fault_recovery_tests(args: argparse.Namespace, test_root: Path, evidence
       process.kill()
       process.wait(timeout=30)
     stream.close()
+  terminate_card_workers(args, evidence / "client-process-death-worker-cleanup.log")
   wait_for_no_card_workers(args, evidence / "client-process-death-drain.log", 120)
+  restart_windows_platform_service(
+      evidence / "client-process-death-platform-recovery.log")
   run_logged(
       [recovery, "--sync-iterations", "1", "--iterations", "0"],
       evidence / "cpp-test_client_process_death_queue_reuse.log", env=environment,
@@ -1217,6 +1250,8 @@ def qualify(args: argparse.Namespace) -> None:
       }
       if args.include_genai:
         result["card_candidate"]["genai_worker_sha256"] = active_card["genai_worker_sha256"]
+      restart_windows_platform_service(
+          evidence / "card-candidate-platform-start.log")
 
       subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
       python = venv / "Scripts" / "python.exe"
@@ -1415,6 +1450,9 @@ def qualify(args: argparse.Namespace) -> None:
         try:
           restore_card_candidate(args, remote_lock_token, evidence)
           result["cleanup"]["card_candidate"] = "PASS"
+          restart_windows_platform_service(
+              evidence / "card-stock-platform-recovery.log")
+          result["cleanup"]["platform_service"] = "PASS"
         except BaseException as error:
           cleanup_errors.append(str(error))
       customer_python = venv / "Scripts" / "python.exe"
