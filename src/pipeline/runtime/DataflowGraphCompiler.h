@@ -3,8 +3,9 @@
 #error "Internal header. Not part of the public API."
 #endif
 
-// The Dataflow backend's compiler (H0 plan 3.6): which runtime a Graph::build() takes, whether
-// the graph qualifies for Dataflow, and the Net a qualifying Input -> Output graph becomes.
+// The Dataflow backend's compiler (H0 plan 3.6; H0 step 10, H0c): which runtime a Graph::build()
+// takes, whether the graph qualifies for Dataflow, and the Nets a qualifying graph of public Inputs
+// and Outputs becomes (one per Input: its Feed and the Fetch of every Output it feeds).
 // Graph::build's four entries call DataflowGraphAccess::build before gst_init_once().
 
 #include "pipeline/GraphOptions.h"
@@ -110,13 +111,15 @@ std::string dataflow_binding_mismatch(const DataflowInputBinding& binding, const
 std::string dataflow_record_mismatch(const DataflowInputBinding& binding,
                                      std::span<const Tensor> fields);
 
-// The one-Feed, one-Fetch Net for `binding`, compiled. Throws NeatError on a compile error.
+// The Net of input `input` of `config` for `binding`, compiled: one Feed, and one link and one
+// Fetch per Output the input feeds (a fan-out when there are several: one OutPort, one link per
+// Output, each with that Output's depth and policy). Throws NeatError on a compile error.
 struct DataflowNet {
   pipeline_internal::df::Plan plan;
-  std::uint32_t feed = 0;  ///< the Feed's operator index
-  std::uint32_t fetch = 0; ///< the Fetch's operator index
+  std::uint32_t feed = 0;             ///< the Feed's operator index
+  std::vector<std::uint32_t> fetches; ///< the Fetches' operator indices, the input's output order
 };
-DataflowNet compile_dataflow_net(const DataflowRunConfig& config,
+DataflowNet compile_dataflow_net(const DataflowRunConfig& config, std::size_t input,
                                  const DataflowInputBinding& binding, std::uint32_t stream);
 
 #endif // SIMANEAT_WITH_DATAFLOW

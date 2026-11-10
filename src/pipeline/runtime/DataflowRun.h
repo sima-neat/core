@@ -65,6 +65,11 @@ public:
   virtual void stop() = 0;
 
   virtual bool running() const = 0;
+  // A default input (output) exists: the graph has exactly one public Input (Output), so the
+  // unnamed push (pull) reaches it. Run::can_push and Run::can_pull, as the graph path answers
+  // them.
+  virtual bool can_push() const = 0;
+  virtual bool can_pull() const = 0;
   virtual std::vector<std::string> input_names() const = 0;
   virtual std::vector<std::string> output_names() const = 0;
   virtual std::string last_error() const = 0;
@@ -74,28 +79,47 @@ public:
 
 #pragma GCC visibility push(hidden)
 
-// What DataflowGraphCompiler decided for a qualifying Input -> Output graph (H0 plan 3.4, 3.6).
-struct DataflowRunConfig {
-  InputOptions input;   ///< the public Input's options, resolved as compile_public_graph does
-  OutputOptions output; ///< the public Output's options
-  RunOptions run;       ///< RunOptions with the preset's queue defaults resolved
+// One public Output of the graph: one Fetch, fed by one link from its Input's Feed (H0 plan 3.4,
+// 3.6; H0c: each Output's own depth and drop policy).
+struct DataflowOutputConfig {
+  OutputOptions output;             ///< the public Output's options
+  std::vector<std::string> names;   ///< its public names (Graph::outputs()), sorted
   std::uint32_t ingress_depth = 1;  ///< RunOptions::queue_depth's share of link_depth
   std::uint32_t terminal_depth = 1; ///< OutputOptions::max_buffers' share of link_depth
   std::uint32_t link_depth = 2;     ///< ingress_depth + terminal_depth
-  OverflowPolicy link_policy = OverflowPolicy::Block; ///< KeepLatest is the link's DropOldest
-  /// OutputOptions::drop: the terminal queue drops its oldest message for every push, blocking
-  /// or not (appsink drop=true); otherwise link_policy applies to try_push only.
+  /// OutputOptions::drop: this output's queue drops its oldest message for every push, blocking
+  /// or not (appsink drop=true); otherwise DataflowRunConfig::link_policy applies to try_push only.
   bool terminal_drop = false;
-  std::uint32_t feed_loans = 1;         ///< Feed::Options::loans: 2 when Run::alloc can hold a slot
-  std::vector<std::string> input_names; ///< Graph::inputs(), sorted
-  std::vector<std::string> output_names; ///< Graph::outputs(), sorted
-  std::string default_stream;            ///< Sample::stream_id when a push carries none
+  std::size_t input = 0; ///< the index of the Input that feeds it (DataflowRunConfig::inputs)
+};
+
+// One public Input of the graph: one Feed with one link per Output it feeds (a fan-out when there
+// are several), one Session of its own (H0c: each input binds by its own first push).
+struct DataflowInputConfig {
+  InputOptions input; ///< the public Input's options, resolved as compile_public_graph does
+  std::vector<std::string> names; ///< its public names (Graph::inputs()), sorted
+  std::string default_stream;     ///< Sample::stream_id when a push carries none
+  std::uint32_t feed_loans = 1;   ///< Feed::Options::loans: 2 when Run::alloc can hold a slot
+  std::vector<std::size_t>
+      outputs; ///< the Outputs it feeds (DataflowRunConfig::outputs), link order
+};
+
+// What DataflowGraphCompiler decided for a qualifying graph of public Inputs and Outputs, each
+// Output fed by exactly one Input (H0 plan 3.4, 3.6; H0 step 10, H0c).
+struct DataflowRunConfig {
+  RunOptions run; ///< RunOptions with the preset's queue defaults resolved
+  OverflowPolicy link_policy = OverflowPolicy::Block; ///< KeepLatest is the link's DropOldest
+  std::vector<DataflowInputConfig> inputs;            ///< vertex order
+  std::vector<DataflowOutputConfig> outputs;          ///< vertex order
+  std::vector<std::string> input_names;  ///< every input's names (Run::input_names), sorted
+  std::vector<std::string> output_names; ///< every output's names (Run::output_names), sorted
   std::string label;                     ///< the graph, for messages
 };
 
-// Builds the Run state. A seed binds the input's spec now (one tensor: a leaf; several: a
-// record); without one, a declared image or a declared shape binds now and anything else binds at
-// the first push. Throws NeatError on a compile error.
+// Builds the Run state. A seed binds the (one) input's spec now (one tensor: a leaf; several: a
+// record); without one, each input whose declaration (an image, or a declared shape) gives its
+// spec binds now and every other input binds at its own first push. Throws NeatError on a compile
+// error.
 std::unique_ptr<DataflowRunState> make_dataflow_run_state(RunCore& core, DataflowRunConfig config,
                                                           const TensorList& seed);
 

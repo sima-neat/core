@@ -1,7 +1,10 @@
-// The Dataflow backend's compiler (H0 plan 3.4, 3.6): RunOptions::backend and SIMA_NEAT_BACKEND
-// decide the runtime of a Graph::build(); a qualifying Input -> Output graph becomes one Feed, one
-// Fetch and one link, and its Run state (DataflowRun.cpp). Everything else stays on GStreamer, or
-// fails loudly when RunBackend::Dataflow was asked for explicitly.
+// The Dataflow backend's compiler (H0 plan 3.4, 3.6; H0 step 10, H0c): RunOptions::backend and
+// SIMA_NEAT_BACKEND decide the runtime of a Graph::build(). A qualifying graph has public Inputs
+// and Outputs only, each Output fed by exactly one Input, after the public boundaries inside it are
+// elided as compile_public_graph elides them. Each Input becomes one Feed with one link per Output
+// it feeds (a fan-out when there are several) and one Fetch per Output, on a Session of its own, in
+// one Run state (DataflowRun.cpp). Everything else (fan-in and combine, operators, device memory)
+// stays on GStreamer, or fails loudly when RunBackend::Dataflow was asked for explicitly.
 
 #include "pipeline/runtime/DataflowGraphCompiler.h"
 
@@ -24,6 +27,7 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
+#include <functional>
 #include <mutex>
 #include <set>
 #include <span>
@@ -148,7 +152,8 @@ Seed seed_from_sample(const Sample& sample) {
     // Core pushes a Bundle one field at a time (RunPush.cpp:1082-1086): each field is an item,
     // and they share no binding.
     seed.unsupported = "a Bundle seed of " + std::to_string(sample.fields.size()) +
-                       " fields (several items) is not supported before H0c";
+                       " fields (several items for one input) does not bind one spec; seed with "
+                       "one of its fields";
     return seed;
   }
   if (sample_has_tensor_list(sample)) {
@@ -164,10 +169,13 @@ Seed seed_from_sample(const Sample& sample) {
 }
 
 // ---- qualification (plan 3.6) ------------------------------------------------------------------
+// The public endpoints of a qualifying graph, and who feeds whom.
 struct Qualification {
-  std::string reason; // empty: qualifies
-  std::size_t input = 0;
-  std::size_t output = 0;
+  std::string reason;                // empty: qualifies
+  std::vector<std::size_t> inputs;   // public Input vertices, vertex order
+  std::vector<std::size_t> outputs;  // public Output vertices, vertex order
+  std::vector<std::size_t> producer; // per output (index into outputs): its input (into inputs)
+  std::vector<std::size_t> fan_out;  // per input: how many outputs it feeds
 };
 
 #endif // SIMANEAT_WITH_DATAFLOW
@@ -180,7 +188,9 @@ struct __attribute__((visibility("hidden"))) DataflowGraphView {
   struct Edge {
     std::size_t from = 0;
     std::size_t to = 0;
+    bool implicit = false; // Graph::add's chain (ImplicitLinear); every other edge is explicit
     GraphLinkPolicy policy = GraphLinkPolicy::Default;
+    std::string stream_id; // the edge's stream identity, or its link options'
   };
   bool model_route = false; // Graph::input_route_processor_
   bool linear = true;
@@ -193,6 +203,7 @@ struct __attribute__((visibility("hidden"))) DataflowGraphView {
     std::size_t start = 0;
     std::size_t end = 0;
     std::string name;
+    bool user_named = false;
   };
   std::vector<Named> named_fragments; // named Graph fragments, [start, end) vertex ranges
 };
@@ -217,10 +228,13 @@ DataflowGraphView DataflowGraphAccess::view(const Graph& graph) {
     }
   }
   for (const auto& edge : composition.edges) {
-    out.edges.push_back({edge.from, edge.to, edge.link_options.policy});
+    out.edges.push_back({edge.from, edge.to,
+                         edge.kind == Graph::CompositionEdgeKind::ImplicitLinear,
+                         edge.link_options.policy,
+                         edge.stream_id.empty() ? edge.link_options.stream_id : edge.stream_id});
   }
   for (const auto& named : composition.named_fragments) {
-    out.named_fragments.push_back({named.start, named.end, named.name});
+    out.named_fragments.push_back({named.start, named.end, named.name, named.user_named});
   }
   return out;
 }
@@ -229,7 +243,13 @@ DataflowGraphView DataflowGraphAccess::view(const Graph& graph) {
 
 namespace {
 
-// Exactly one public Input and one public Output, one connection between them, nothing else.
+// The public endpoints of the graph and who feeds whom, after compile_public_graph's boundary
+// elision (normalize_public_boundaries_for_execution, ExecutionGraphCompiler.cpp:427-650): an
+// Input with an explicit upstream connection and an Output with an explicit downstream connection
+// are internal boundary declarations (a Branch's, a connected fragment's), not endpoints, and an
+// edge into one continues along its outgoing edges. What is left must be public Inputs feeding
+// public Outputs, each Output fed by exactly one Input: one Feed per Input, one link and one
+// Fetch per Output it feeds.
 Qualification qualify(const DataflowGraphView& view) {
   Qualification q;
   if (view.model_route) {
@@ -240,67 +260,168 @@ Qualification qualify(const DataflowGraphView& view) {
     q.reason = "runtime stage " + view.runtime_stages.front() + " is not supported before H1";
     return q;
   }
-  std::vector<std::size_t> inputs;
-  std::vector<std::size_t> outputs;
-  for (std::size_t vertex = 0; vertex < view.vertices.size(); ++vertex) {
+  const std::size_t n = view.vertices.size();
+  enum class Kind { None, In, Out };
+  std::vector<Kind> kind(n, Kind::None);
+  for (std::size_t vertex = 0; vertex < n; ++vertex) {
     const auto& node = view.vertices[vertex];
     if (!node) {
       continue;
     }
     if (dynamic_cast<const Input*>(node.get())) {
-      inputs.push_back(vertex);
+      kind[vertex] = Kind::In;
     } else if (dynamic_cast<const Output*>(node.get())) {
-      outputs.push_back(vertex);
+      kind[vertex] = Kind::Out;
     } else {
       q.reason = "node " + node_text(*node) + " is not supported before H1";
       return q;
     }
   }
-  if (inputs.empty()) {
+  const auto text = [&](std::size_t vertex) {
+    return view.vertices[vertex] ? node_text(*view.vertices[vertex])
+                                 : std::string("an empty vertex");
+  };
+  std::vector<std::size_t> explicit_in(n);
+  std::vector<std::size_t> explicit_out(n);
+  std::vector<std::vector<std::size_t>> outgoing(n);
+  for (std::size_t e = 0; e < view.edges.size(); ++e) {
+    const auto& edge = view.edges[e];
+    if (edge.from >= n || edge.to >= n) {
+      q.reason = "a composition edge references an invalid vertex";
+      return q;
+    }
+    outgoing[edge.from].push_back(e);
+    if (!edge.implicit) {
+      ++explicit_in[edge.to];
+      ++explicit_out[edge.from];
+    }
+  }
+  std::vector<bool> elide(n, false);
+  // A public endpoint's index in q.inputs / q.outputs; read only for public endpoints.
+  std::vector<std::size_t> input_of(n);
+  std::vector<std::size_t> output_of(n);
+  for (std::size_t vertex = 0; vertex < n; ++vertex) {
+    elide[vertex] = (kind[vertex] == Kind::In && explicit_in[vertex] > 0U) ||
+                    (kind[vertex] == Kind::Out && explicit_out[vertex] > 0U);
+    if (elide[vertex]) {
+      continue;
+    }
+    if (kind[vertex] == Kind::In) {
+      input_of[vertex] = q.inputs.size();
+      q.inputs.push_back(vertex);
+    } else if (kind[vertex] == Kind::Out) {
+      output_of[vertex] = q.outputs.size();
+      q.outputs.push_back(vertex);
+    }
+  }
+  if (q.inputs.empty()) {
     q.reason = "a graph with no public Input (a source graph) is not supported before H1";
     return q;
   }
-  if (outputs.empty()) {
+  if (q.outputs.empty()) {
     q.reason = "a graph with no public Output is not supported before H1";
     return q;
   }
-  if (inputs.size() > 1U || outputs.size() > 1U) {
-    q.reason = std::to_string(inputs.size()) + " public Inputs and " +
-               std::to_string(outputs.size()) +
-               " public Outputs: more than one Input or Output is not supported before H0c";
-    return q;
-  }
-  q.input = inputs.front();
-  q.output = outputs.front();
-  bool connected = false;
-  for (const auto& edge : view.edges) {
-    if (edge.from != q.input || edge.to != q.output) {
-      q.reason = "an edge other than Input -> Output (fan-in or fan-out) is not supported "
-                 "before H0c";
-      return q;
-    }
+
+  // Every edge leaving a vertex that is not elided, followed through the elided boundaries it
+  // enters, to the endpoint it reaches.
+  std::vector<std::pair<std::size_t, std::size_t>> links;
+  std::vector<bool> visiting(n, false);
+  std::function<bool(std::size_t, std::size_t)> follow = [&](std::size_t start, std::size_t e) {
+    const auto& edge = view.edges[e];
     if (edge.policy != GraphLinkPolicy::Default) {
       q.reason = "a realtime link policy is not supported before H1";
+      return false;
+    }
+    if (!edge.stream_id.empty()) {
+      q.reason = "a link stream_id ('" + edge.stream_id + "') is not supported before H1";
+      return false;
+    }
+    const std::size_t to = edge.to;
+    if (!elide[to]) {
+      links.emplace_back(start, to);
+      return true;
+    }
+    if (kind[to] == Kind::Out &&
+        dynamic_cast<const Output*>(view.vertices[to].get())->options().combine_policy !=
+            CombinePolicy::None) {
+      q.reason = "an Output CombinePolicy (fan-in) is not supported before H1";
+      return false;
+    }
+    if (visiting[to]) {
+      q.reason = "the public boundary declarations form a cycle";
+      return false;
+    }
+    if (outgoing[to].empty()) {
+      q.reason = "the internal boundary " + text(to) + " leads to no endpoint";
+      return false;
+    }
+    visiting[to] = true;
+    for (const std::size_t next : outgoing[to]) {
+      if (!follow(start, next)) {
+        return false;
+      }
+    }
+    visiting[to] = false;
+    return true;
+  };
+  for (std::size_t e = 0; e < view.edges.size(); ++e) {
+    if (!elide[view.edges[e].from] && !follow(view.edges[e].from, e)) {
       return q;
     }
-    connected = true;
   }
-  if (!connected) {
-    q.reason = "the public Input and Output are not connected";
-    return q;
+
+  constexpr std::size_t kNone = static_cast<std::size_t>(-1);
+  q.producer.assign(q.outputs.size(), kNone);
+  for (const auto& [from, to] : links) {
+    if (kind[from] != Kind::In || kind[to] != Kind::Out) {
+      q.reason = "a connection from " + text(from) + " to " + text(to) +
+                 " (only Inputs feeding Outputs) is not supported before H1";
+      return q;
+    }
+    if (dynamic_cast<const Output*>(view.vertices[to].get())->options().combine_policy !=
+        CombinePolicy::None) {
+      q.reason = "an Output CombinePolicy (fan-in) is not supported before H1";
+      return q;
+    }
+    std::size_t& producer = q.producer[output_of[to]];
+    if (producer != kNone) {
+      q.reason = text(to) + " has more than one producer: fan-in is not supported before H1";
+      return q;
+    }
+    producer = input_of[from];
   }
-  const auto* output = dynamic_cast<const Output*>(view.vertices[q.output].get());
-  if (output->options().combine_policy != CombinePolicy::None) {
-    q.reason = "an Output CombinePolicy (fan-in) is not supported before H0c";
-    return q;
+  q.fan_out.resize(q.inputs.size());
+  for (std::size_t o = 0; o < q.outputs.size(); ++o) {
+    if (q.producer[o] == kNone) {
+      q.reason = text(q.outputs[o]) + " is connected to no Input";
+      return q;
+    }
+    ++q.fan_out[q.producer[o]];
+  }
+  for (std::size_t i = 0; i < q.inputs.size(); ++i) {
+    if (q.fan_out[i] == 0U) {
+      q.reason = text(q.inputs[i]) + " is connected to no Output";
+      return q;
+    }
+    if (q.fan_out[i] > df::kMaxFanOut) {
+      q.reason = text(q.inputs[i]) + " feeds " + std::to_string(q.fan_out[i]) +
+                 " Outputs: the runtime's fan-out is at most " + std::to_string(df::kMaxFanOut);
+      return q;
+    }
   }
   return q;
 }
 
-// The public names of one endpoint vertex, as compile_public_graph names it: its explicit name,
-// else the name of each named fragment holding it (ExecutionGraphCompiler.cpp:2704-2855), kept only
-// when the Graph lists it (its prune to Graph::inputs()/outputs(), :3330-3346). Sorted.
-std::vector<std::string> endpoint_names(const DataflowGraphView& view, std::size_t vertex,
+// The public names of one endpoint vertex, as compile_public_graph names it: its explicit name;
+// else, for each named fragment holding it, the fragment's name when it is the fragment's only
+// public endpoint of its kind, or that name and its index among them ("classes_1",
+// add_fragment_named_candidates, ExecutionGraphCompiler.cpp:2715-2760); kept only when the Graph
+// lists it (its prune to Graph::inputs()/outputs()). Sorted. `endpoints` are the public
+// endpoints of the vertex's kind.
+std::vector<std::string> endpoint_names(const DataflowGraphView& view,
+                                        const std::vector<std::size_t>& endpoints,
+                                        std::size_t vertex,
                                         const std::vector<std::string>& listed) {
   std::vector<std::string> names;
   const auto& node = view.vertices[vertex];
@@ -313,9 +434,23 @@ std::vector<std::string> endpoint_names(const DataflowGraphView& view, std::size
   if (!explicit_name.empty()) {
     names.push_back(explicit_name);
   } else {
-    for (const auto& named : view.named_fragments) {
-      if (!named.name.empty() && named.start <= vertex && vertex < named.end) {
-        names.push_back(named.name);
+    for (const bool user_named : {true, false}) {
+      for (const auto& named : view.named_fragments) {
+        if (named.user_named != user_named || named.name.empty() || vertex < named.start ||
+            vertex >= named.end) {
+          continue;
+        }
+        std::size_t index = 0;
+        std::size_t count = 0;
+        for (const std::size_t endpoint : endpoints) {
+          if (endpoint >= named.start && endpoint < named.end) {
+            if (endpoint == vertex) {
+              index = count;
+            }
+            ++count;
+          }
+        }
+        names.push_back(count > 1U ? named.name + "_" + std::to_string(index) : named.name);
       }
     }
   }
@@ -327,6 +462,23 @@ std::vector<std::string> endpoint_names(const DataflowGraphView& view, std::size
   return names;
 }
 
+// "" when no name is shared by two endpoints of one kind (DataflowInputConfig or
+// DataflowOutputConfig); otherwise compile_public_graph's error (add_named_endpoint,
+// ExecutionGraphCompiler.cpp:1376-1392).
+template <class Endpoint>
+std::string shared_name(const std::vector<Endpoint>& endpoints, const char* kind) {
+  std::set<std::string> seen;
+  for (const Endpoint& endpoint : endpoints) {
+    for (const std::string& name : endpoint.names) {
+      if (!seen.insert(name).second) {
+        return "Graph endpoint name '" + name + "' is used by more than one " + kind +
+               "; choose unique names for multi-input/multi-output graphs";
+      }
+    }
+  }
+  return {};
+}
+
 // The options Dataflow does not read (plan 3.4), when set away from their defaults: one warning
 // per process and option.
 void warn_ignored_options(const DataflowRunConfig& config) {
@@ -336,36 +488,80 @@ void warn_ignored_options(const DataflowRunConfig& config) {
               std::string("Dataflow backend: ") + option +
                   " has no meaning on this backend and is ignored");
   };
-  const InputOptions& in = config.input;
-  if (in.is_live != defaults.is_live)
-    ignored("InputOptions::is_live");
-  if (in.do_timestamp != defaults.do_timestamp)
-    ignored("InputOptions::do_timestamp");
-  if (in.stream_type != defaults.stream_type)
-    ignored("InputOptions::stream_type");
-  if (!in.caps_override.empty())
-    ignored("InputOptions::caps_override");
-  if (in.max_bytes != defaults.max_bytes)
-    ignored("InputOptions::max_bytes");
-  if (in.block != defaults.block)
-    ignored("InputOptions::block");
-  if (in.fps_n != defaults.fps_n || in.fps_d != defaults.fps_d)
-    ignored("InputOptions::fps_n/fps_d");
-  if (!in.buffer_name.empty())
-    ignored("InputOptions::buffer_name");
-  if (in.preprocess_meta.has_value() && in.preprocess_meta->enabled)
-    ignored("InputOptions::preprocess_meta");
-  if (config.output.sync)
-    ignored("OutputOptions::sync");
+  for (const DataflowInputConfig& input : config.inputs) {
+    const InputOptions& in = input.input;
+    if (in.is_live != defaults.is_live)
+      ignored("InputOptions::is_live");
+    if (in.do_timestamp != defaults.do_timestamp)
+      ignored("InputOptions::do_timestamp");
+    if (in.stream_type != defaults.stream_type)
+      ignored("InputOptions::stream_type");
+    if (!in.caps_override.empty())
+      ignored("InputOptions::caps_override");
+    if (in.max_bytes != defaults.max_bytes)
+      ignored("InputOptions::max_bytes");
+    if (in.block != defaults.block)
+      ignored("InputOptions::block");
+    if (in.fps_n != defaults.fps_n || in.fps_d != defaults.fps_d)
+      ignored("InputOptions::fps_n/fps_d");
+    if (!in.buffer_name.empty())
+      ignored("InputOptions::buffer_name");
+    if (in.preprocess_meta.has_value() && in.preprocess_meta->enabled)
+      ignored("InputOptions::preprocess_meta");
+  }
+  for (const DataflowOutputConfig& output : config.outputs) {
+    if (output.output.sync)
+      ignored("OutputOptions::sync");
+  }
 }
 
+// Every name of `endpoints`, sorted, once.
+template <class Endpoint>
+std::vector<std::string> sorted_union(const std::vector<Endpoint>& endpoints) {
+  std::vector<std::string> out;
+  for (const Endpoint& endpoint : endpoints) {
+    out.insert(out.end(), endpoint.names.begin(), endpoint.names.end());
+  }
+  std::sort(out.begin(), out.end());
+  out.erase(std::unique(out.begin(), out.end()), out.end());
+  return out;
+}
+
+const char* policy_text(OverflowPolicy policy) {
+  switch (policy) {
+  case OverflowPolicy::Block:
+    return "Block";
+  case OverflowPolicy::KeepLatest:
+    return "KeepLatest";
+  case OverflowPolicy::DropIncoming:
+    return "DropIncoming";
+  }
+  return "?";
+}
+
+// The Run's configuration; `why` set when this graph's options are what Dataflow cannot carry.
 DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& view,
-                                const Qualification& q, const RunOptions& opt) {
+                                const Qualification& q, const RunOptions& opt, std::string* why) {
   DataflowRunConfig config;
-  config.input = *view.inputs[q.input];
-  config.output = dynamic_cast<const Output*>(view.vertices[q.output].get())->options();
-  config.input_names = endpoint_names(view, q.input, graph.inputs());
-  config.output_names = endpoint_names(view, q.output, graph.outputs());
+  const std::vector<std::string> listed_inputs = graph.inputs();
+  const std::vector<std::string> listed_outputs = graph.outputs();
+  config.inputs.resize(q.inputs.size());
+  config.outputs.resize(q.outputs.size());
+  for (std::size_t i = 0; i < q.inputs.size(); ++i) {
+    config.inputs[i].names = endpoint_names(view, q.inputs, q.inputs[i], listed_inputs);
+  }
+  for (std::size_t o = 0; o < q.outputs.size(); ++o) {
+    config.outputs[o].names = endpoint_names(view, q.outputs, q.outputs[o], listed_outputs);
+  }
+  *why = shared_name(config.inputs, "input");
+  if (why->empty()) {
+    *why = shared_name(config.outputs, "output");
+  }
+  if (!why->empty()) {
+    return config;
+  }
+  config.input_names = sorted_union(config.inputs);
+  config.output_names = sorted_union(config.outputs);
   // The path GStreamer takes for the same graph: a connected or named graph is a graph Run, a plain
   // linear Run one pipeline segment (RunCore::start, RunCoreGraphStart.cpp:1566-1573, through
   // is_simple_linear_plan, :169-172).
@@ -382,53 +578,110 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
   // preset does not reach its ingress.
   config.run = graph_path ? opt : session_build_resolve_build_opt(RunMode::Async, opt);
   config.run.backend = RunBackend::Dataflow;
+  config.link_policy = config.run.overflow_policy;
 
-  // One link carries both of Core's queues (Run.h:176-188). On GStreamer a blocking push waits only
-  // when the input queue (RunOptions::queue_depth) and the public Output's terminal queue
-  // (OutputOptions::max_buffers) are both full, so the link holds their sum:
+  // One link carries both of Core's queues on the way to each Output (Run.h:176-188). On
+  // GStreamer a blocking push waits only when the input queue (RunOptions::queue_depth) and the
+  // public Output's terminal queue (OutputOptions::max_buffers) are both full, so the link holds
+  // their sum:
   //   link depth = queue_depth + max_buffers
   // each after its own default or clamp: queue_depth as resolved above, a value <= 0 (unbounded on
   // GStreamer) counting as 4, reported; max_buffers <= 0 (unbounded) counts as the queue_depth
   // term, reported (the depth is then 2 x queue_depth, 8 by default).
-  // The Output's drop flag makes the link lossy for every push, as appsink drop=true is;
+  // The Output's drop flag makes its link lossy for every push, as appsink drop=true is;
   // otherwise RunOptions' overflow policy applies to try_push (KeepLatest is DropOldest). Either
-  // acts only when the link holds the whole depth.
+  // acts only when the link holds the whole depth. In a fan-out each Output's link has its own.
+  std::uint32_t ingress_depth = 4U;
   if (config.run.queue_depth > 0) {
-    config.ingress_depth = static_cast<std::uint32_t>(config.run.queue_depth);
+    ingress_depth = static_cast<std::uint32_t>(config.run.queue_depth);
   } else {
-    config.ingress_depth = 4U;
     warn_once(
         "clamp:queue_depth",
         "Dataflow backend: RunOptions::queue_depth=" + std::to_string(config.run.queue_depth) +
             " (unbounded) has no equivalent on this backend; it counts as " +
-            std::to_string(config.ingress_depth) + " in the link depth");
+            std::to_string(ingress_depth) + " in the link depth");
   }
-  if (config.output.max_buffers > 0) {
-    config.terminal_depth = static_cast<std::uint32_t>(config.output.max_buffers);
-  } else {
-    config.terminal_depth = config.ingress_depth;
-    warn_once("clamp:max_buffers",
-              "Dataflow backend: OutputOptions::max_buffers=" +
-                  std::to_string(config.output.max_buffers) +
-                  " (unbounded) has no equivalent on this backend; it counts as " +
-                  std::to_string(config.terminal_depth) +
-                  " (RunOptions::queue_depth, or 4) in the link depth");
+  for (std::size_t o = 0; o < q.outputs.size(); ++o) {
+    DataflowOutputConfig& output = config.outputs[o];
+    output.output = dynamic_cast<const Output*>(view.vertices[q.outputs[o]].get())->options();
+    output.ingress_depth = ingress_depth;
+    if (output.output.max_buffers > 0) {
+      output.terminal_depth = static_cast<std::uint32_t>(output.output.max_buffers);
+    } else {
+      output.terminal_depth = ingress_depth;
+      warn_once("clamp:max_buffers",
+                "Dataflow backend: OutputOptions::max_buffers=" +
+                    std::to_string(output.output.max_buffers) +
+                    " (unbounded) has no equivalent on this backend; it counts as " +
+                    std::to_string(output.terminal_depth) +
+                    " (RunOptions::queue_depth, or 4) in the link depth");
+    }
+    // Each term is at most INT_MAX, so the sum fits; compile_dataflow_net checks the link's range.
+    output.link_depth = output.ingress_depth + output.terminal_depth;
+    output.terminal_drop = output.output.drop;
+    output.input = q.producer[o];
   }
-  // Each term is at most INT_MAX, so the sum fits; compile_dataflow_net checks the link's range.
-  config.link_depth = config.ingress_depth + config.terminal_depth;
-  config.terminal_drop = config.output.drop;
-  config.link_policy = config.run.overflow_policy;
-  // A declared shape allows Run::alloc, whose slot the application holds while a push takes
-  // another: the pool is sized for both (PORTS.md 5.4).
-  config.feed_loans = config.input.shape.empty() ? 1U : 2U;
-
-  // GStreamer stamps an empty stream_id with the input's public name, or "default" when it has none
-  // (RunPush.cpp:225-264), on its graph path; on a plain linear Run its ingress meta stamps "0"
-  // (InputStreamUtil.cpp:2703, 3720).
-  config.default_stream =
-      graph_path ? (config.input_names.empty() ? "default" : config.input_names.front()) : "0";
+  for (std::size_t i = 0; i < q.inputs.size(); ++i) {
+    DataflowInputConfig& input = config.inputs[i];
+    input.input = *view.inputs[q.inputs[i]];
+    for (std::size_t o = 0; o < q.outputs.size(); ++o) {
+      if (q.producer[o] == i) {
+        input.outputs.push_back(o); // output (vertex) order
+      }
+    }
+    // A declared shape allows Run::alloc, whose slot the application holds while a push takes
+    // another: the pool is sized for both (PORTS.md 5.4).
+    input.feed_loans = input.input.shape.empty() ? 1U : 2U;
+    // GStreamer stamps an empty stream_id with the input's public name, or "default" when it has
+    // none (RunPush.cpp:225-264), on its graph path; on a plain linear Run its ingress meta stamps
+    // "0" (InputStreamUtil.cpp:2703, 3720).
+    input.default_stream =
+        graph_path ? (input.names.empty() ? "default" : input.names.front()) : "0";
+    // A blocking push into a fan-out waits for room on the links of the Outputs without
+    // OutputOptions::drop and evicts on the others. The runtime's waiting push waits on every link
+    // whatever its policy (Session::push_waiting), its policy push only on Block links
+    // (Session::push): with both kinds of Output under a try_push policy other than Block, neither
+    // does that.
+    bool lossy = false;
+    bool lossless = false;
+    for (const std::size_t o : input.outputs) {
+      (config.outputs[o].terminal_drop ? lossy : lossless) = true;
+    }
+    if (lossy && lossless && config.link_policy != OverflowPolicy::Block) {
+      *why = "Input " + join(input.names) +
+             " feeds Outputs with and without OutputOptions::drop under OverflowPolicy::" +
+             std::string(policy_text(config.link_policy)) +
+             ": a blocking push would wait for room on some of its links and evict on the "
+             "others, which the runtime's push cannot do yet (it waits on every link, or on "
+             "the Block links only)";
+      return config;
+    }
+  }
   config.label = view.name;
   return config;
+}
+
+// The [NEAT] line of a Run that takes Dataflow: every input and the links of its Outputs.
+std::string describe_choice(const DataflowRunConfig& config,
+                            const std::vector<std::optional<DataflowInputBinding>>& bindings) {
+  std::string out;
+  for (std::size_t i = 0; i < config.inputs.size(); ++i) {
+    const DataflowInputConfig& input = config.inputs[i];
+    out += (i == 0 ? "" : "; ") + std::string("input ") + join(input.names) +
+           (bindings[i] ? " " + bindings[i]->text : " bound by its first push") + " -> ";
+    for (std::size_t k = 0; k < input.outputs.size(); ++k) {
+      const DataflowOutputConfig& output = config.outputs[input.outputs[k]];
+      out += (k == 0 ? "" : ", ") + std::string("output ") + join(output.names) + " link depth " +
+             std::to_string(output.link_depth) + " (queue_depth " +
+             std::to_string(output.ingress_depth) + " + max_buffers " +
+             std::to_string(output.terminal_depth) + ")" +
+             (output.terminal_drop                                 ? " drop oldest (Output drop)"
+              : config.link_policy == OverflowPolicy::KeepLatest   ? " try_push keep latest"
+              : config.link_policy == OverflowPolicy::DropIncoming ? " try_push drop incoming"
+                                                                   : " block");
+    }
+  }
+  return out;
 }
 
 std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, RunMode mode,
@@ -445,30 +698,33 @@ std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, R
   if (!seed.unsupported.empty()) {
     return decline(want, where, error_codes::kInputShape, seed.unsupported);
   }
-  DataflowRunConfig config = derive_config(graph, view, q, opt);
-  // The input's spec, when a seed or the declaration gives it now; an unsupported declaration or
-  // seed is decided here, before a Run exists.
+  if (!seed.tensors.empty() && q.inputs.size() != 1U) {
+    // GStreamer's own rule (connected_default_input_segment_or_throw, GraphBuildInput.cpp:193).
+    return decline(want, where, error_codes::kInputShape,
+                   "a seed for a graph of " + std::to_string(q.inputs.size()) +
+                       " public Inputs: graph has no unambiguous default input; build without a "
+                       "seed");
+  }
   std::string why;
-  const std::optional<DataflowInputBinding> binding =
-      seed.tensors.size() > 1U
-          ? bind_dataflow_record(config.input, seed.tensors, &why)
-          : bind_dataflow_input(config.input,
-                                seed.tensors.empty() ? nullptr : &seed.tensors.front(), &why);
+  DataflowRunConfig config = derive_config(graph, view, q, opt, &why);
   if (!why.empty()) {
-    return decline(want, where, error_codes::kInputShape, why);
+    return decline(want, where, error_codes::kPipelineShape, why);
+  }
+  // Each input's spec, when a seed or the declaration gives it now; an unsupported declaration or
+  // seed is decided here, before a Run exists.
+  std::vector<std::optional<DataflowInputBinding>> bindings;
+  for (const DataflowInputConfig& input : config.inputs) {
+    bindings.push_back(
+        seed.tensors.size() > 1U
+            ? bind_dataflow_record(input.input, seed.tensors, &why)
+            : bind_dataflow_input(input.input,
+                                  seed.tensors.empty() ? nullptr : &seed.tensors.front(), &why));
+    if (!why.empty()) {
+      return decline(want, where, error_codes::kInputShape, why);
+    }
   }
   warn_ignored_options(config);
-  trace_choice(
-      where, "dataflow",
-      "Input -> Output, link depth " + std::to_string(config.link_depth) + " (queue_depth " +
-          std::to_string(config.ingress_depth) + " + max_buffers " +
-          std::to_string(config.terminal_depth) + ")" +
-          (config.terminal_drop                                 ? ", drop oldest (Output drop)"
-           : config.link_policy == OverflowPolicy::KeepLatest   ? ", try_push keep latest"
-           : config.link_policy == OverflowPolicy::DropIncoming ? ", try_push drop incoming"
-                                                                : ", block") +
-          (binding ? ", input " + binding->text : ", input bound by the first push") + ", inputs " +
-          join(config.input_names) + ", outputs " + join(config.output_names));
+  trace_choice(where, "dataflow", describe_choice(config, bindings));
 
   auto core = std::make_shared<RunCore>();
   initialize_run_identity(*core);
@@ -581,7 +837,8 @@ std::shared_ptr<RunCore> DataflowGraphAccess::build(const Graph& graph, const Ru
     // The seed only binds the spec: a CPU view, whatever the Input's memory policy.
     const DataflowGraphView view = DataflowGraphAccess::view(graph);
     const Qualification q = qualify(view);
-    InputOptions input = q.reason.empty() ? *view.inputs[q.input] : InputOptions{};
+    InputOptions input =
+        q.reason.empty() && q.inputs.size() == 1U ? *view.inputs[q.inputs.front()] : InputOptions{};
     input.memory_policy = InputMemoryPolicy::SystemMemory;
     s.tensors.push_back(tensor_from_cv_mat(seed.front(), input, "Graph::build(inputs)"));
     return build_impl(graph, opt, mode, s, where, want);
@@ -1085,34 +1342,40 @@ std::string dataflow_record_mismatch(const DataflowInputBinding& binding,
   return {};
 }
 
-DataflowNet compile_dataflow_net(const DataflowRunConfig& config,
+DataflowNet compile_dataflow_net(const DataflowRunConfig& config, std::size_t input,
                                  const DataflowInputBinding& binding, std::uint32_t stream) {
-  if (config.link_depth == 0U || config.link_depth > df::kMaxLinkDepth) {
-    pipeline_internal::error_util::throw_session_error(
-        error_codes::kOptionOutOfRange,
-        "Graph::build: the link depth " + std::to_string(config.link_depth) +
-            " (RunOptions::queue_depth " + std::to_string(config.ingress_depth) +
-            " + OutputOptions::max_buffers " + std::to_string(config.terminal_depth) +
-            ") is outside the Dataflow link's range 1.." + std::to_string(df::kMaxLinkDepth));
-  }
-  df::Overflow overflow = df::Overflow::Block;
-  if (config.terminal_drop || config.link_policy == OverflowPolicy::KeepLatest) {
-    overflow = df::Overflow::DropOldest;
-  } else if (config.link_policy == OverflowPolicy::DropIncoming) {
-    overflow = df::Overflow::DropIncoming;
-  }
-
+  const DataflowInputConfig& in = config.inputs[input];
   df::Net net;
   const df::OperatorRef<df::Feed> feed = net.add<df::Feed>(
       "input", binding.spec,
-      df::Feed::Options{
-          .stream = df::StreamId{stream}, .loans = config.feed_loans, .max_links = 0});
-  const df::OperatorRef<df::Fetch> fetch =
-      net.add<df::Fetch>("output", binding.spec, df::Fetch::Options{.retained = 1});
-  if (const df::Status status = net.connect(
-          feed.out(), fetch.in(),
-          df::LinkPolicy{.depth = config.link_depth, .overflow = overflow, .stale_after = {}})) {
-    pipeline_internal::throw_dataflow_error(*status, "Graph::build");
+      df::Feed::Options{.stream = df::StreamId{stream}, .loans = in.feed_loans, .max_links = 0});
+  std::vector<std::uint32_t> fetches;
+  for (std::size_t k = 0; k < in.outputs.size(); ++k) {
+    const DataflowOutputConfig& output = config.outputs[in.outputs[k]];
+    if (output.link_depth == 0U || output.link_depth > df::kMaxLinkDepth) {
+      pipeline_internal::error_util::throw_session_error(
+          error_codes::kOptionOutOfRange,
+          "Graph::build: the link depth " + std::to_string(output.link_depth) +
+              " (RunOptions::queue_depth " + std::to_string(output.ingress_depth) +
+              " + OutputOptions::max_buffers " + std::to_string(output.terminal_depth) +
+              ") is outside the Dataflow link's range 1.." + std::to_string(df::kMaxLinkDepth));
+    }
+    df::Overflow overflow = df::Overflow::Block;
+    if (output.terminal_drop || config.link_policy == OverflowPolicy::KeepLatest) {
+      overflow = df::Overflow::DropOldest;
+    } else if (config.link_policy == OverflowPolicy::DropIncoming) {
+      overflow = df::Overflow::DropIncoming;
+    }
+    // Operator names are the Plan's own (Plan::fetch(name)); Core addresses its Fetches by index.
+    const df::OperatorRef<df::Fetch> fetch =
+        net.add<df::Fetch>(k == 0U ? std::string("output") : "output" + std::to_string(k),
+                           binding.spec, df::Fetch::Options{.retained = 1});
+    if (const df::Status status = net.connect(
+            feed.out(), fetch.in(),
+            df::LinkPolicy{.depth = output.link_depth, .overflow = overflow, .stale_after = {}})) {
+      pipeline_internal::throw_dataflow_error(*status, "Graph::build");
+    }
+    fetches.push_back(fetch.index);
   }
   df::PlanReport failure;
   df::Result<df::Plan> plan = std::move(net).compile(df::CompileOptions{
@@ -1120,7 +1383,7 @@ DataflowNet compile_dataflow_net(const DataflowRunConfig& config,
   if (const df::Error* error = df::failure(plan)) {
     pipeline_internal::throw_dataflow_error(*error, "Graph::build", failure.mismatch);
   }
-  return DataflowNet{std::get<df::Plan>(std::move(plan)), feed.index, fetch.index};
+  return DataflowNet{std::get<df::Plan>(std::move(plan)), feed.index, std::move(fetches)};
 }
 
 #endif // SIMANEAT_WITH_DATAFLOW

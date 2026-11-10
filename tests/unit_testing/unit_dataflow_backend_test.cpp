@@ -3,7 +3,9 @@
 // SIMA_NEAT_BACKEND, and no runtime type is named (libsima_neat.so hides the runtime's symbols).
 //
 // Covers: an undeclared input bound by its first push and enforced; a declared input with a
-// dynamic axis; a push outside the declared shape rejected at push; the H1 and H0c build errors;
+// dynamic axis; a push outside the declared shape rejected at push; the H1 build errors, a fan-out
+// building since H0c (unit_dataflow_endpoints_test covers several endpoints) and an Input feeding
+// no Output;
 // the holder push error; explicit Dataflow on a sync run; a record bound by its first push (C2);
 // the link depth (queue_depth + max_buffers, each after its default or clamp); try_push accounting
 // under KeepLatest, DropIncoming and Block; a blocking push that never drops under DropIncoming and
@@ -196,7 +198,7 @@ void build_errors() {
     require_neat_error([&] { (void)g.build(dataflow()); }, error_codes::kPipelineShape,
                        "not supported before H1");
   }
-  // H0c: fan-out to two outputs.
+  // A fan-out to two outputs builds since H0c (unit_dataflow_endpoints_test).
   {
     Graph g;
     g.add(nodes::Input("image"));
@@ -204,16 +206,19 @@ void build_errors() {
     g.add(nodes::Output("b"));
     g.connect("image", "a");
     g.connect("image", "b");
-    require_neat_error([&] { (void)g.build(dataflow()); }, error_codes::kPipelineShape, "H0c");
+    Run run = g.build(dataflow());
+    require(run.output_names() == std::vector<std::string>({"a", "b"}), "a fan-out builds");
+    run.close();
   }
-  // H0c: two inputs.
+  // Two inputs, one of them connected to nothing: no Feed without a link.
   {
     Graph g;
     g.add(nodes::Input("left"));
     g.add(nodes::Input("right"));
     g.add(nodes::Output("out"));
     g.connect("left", "out");
-    require_neat_error([&] { (void)g.build(dataflow()); }, error_codes::kPipelineShape, "H0c");
+    require_neat_error([&] { (void)g.build(dataflow()); }, error_codes::kPipelineShape,
+                       "connected to no Output");
   }
   // A graph with no Input.
   {

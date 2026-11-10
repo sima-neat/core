@@ -923,14 +923,21 @@ Core 소유 Preproc 프레임 어댑터는 동적 이미지/ROI 형상과 메타
 * `try_push(...)`는 차단되지 않습니다(큐가 가득 차면 false를 반환합니다).
 
 `RunOptions::backend`는 동일한 `Run` 인터페이스 뒤에서 실행할 런타임을 선택합니다. Neat Dataflow
-백엔드(`SIMANEAT_DATAFLOW_SOURCE_DIR`로 선택하는 빌드, 공개 `Input` 하나가 공개 `Output` 하나에 연결된
-그래프)에서 그래프는 Feed 하나, Fetch 하나, 링크 하나입니다. `push`는 호출한 스레드에서 텐서를 풀 슬롯에
-복사하고 버리지 않고 공간을 기다리며, `try_push`는 오버플로 정책을 적용하고, `pull`은 마지막 복사본이
-해제될 때까지 슬롯을 빌려 쓰는 읽기 전용 `CpuExternal` 텐서를 반환합니다. 입력의 형태는 선언, 시드 또는
-첫 번째 push로 정해지고 이후 강제됩니다. `push_holder`는 GStreamer 전용이며, 여러 텐서로 된 항목은
-필드 이름이 위치 기반인 레코드 포트에 바인딩됩니다.
+백엔드(`SIMANEAT_DATAFLOW_SOURCE_DIR`로 선택하는 빌드, 공개 `Input`이 공개 `Output`에 공급하고 각
+`Output`은 `Input` 하나에서 공급받는 그래프)에서 각 입력은 Feed 하나이며, 공급하는 출력마다 링크 하나와
+Fetch 하나를 가집니다. 팬아웃(`Graph::input` 핸들 하나를 여러 `Graph::output`에 전달하거나
+`graphs::Branch`를 사용하는 경우)은 각 항목을 한 번만 게시하고, 모든 출력이 같은 슬롯을 빌려 씁니다.
+`push`는 호출한 스레드에서 텐서를 풀 슬롯에 복사하고 모든 링크에서 버리지 않고 공간을 기다리며
+(`OutputOptions::drop`이 설정된 출력은 대신 가장 오래된 항목을 밀어냅니다), `try_push`는 링크마다
+오버플로 정책을 적용하고 모든 링크가 거부할 때만 거부되며, `pull`은 마지막 복사본이 해제될 때까지 슬롯을
+빌려 쓰는 읽기 전용 `CpuExternal` 텐서를 반환합니다. 각 입력의 형태는 선언, 시드 또는 그 입력 자신의 첫
+번째 push로 정해지고 이후 강제됩니다. `push(name, ...)`와 `pull(name, ...)`은 엔드포인트를 선택하고, 이름
+없는 형식은 유일한 입력 또는 출력에 도달합니다. `close_input()`은 Run의 모든 입력을 닫으며, 입력별
+close는 없습니다. 팬인(여러 입력에서 출력 하나로, `graphs::Combine`)은
+GStreamer에 남습니다. `push_holder`는 GStreamer 전용이며, 여러 텐서로 된 항목은 필드 이름이 위치 기반인
+레코드 포트에 바인딩됩니다.
 
-TensorList 동사는 두 런타임 모두에서 동작하며, `alloc`을 제외하면 단일 Tensor를 받거나 반환하는 `Run` 동사는 없습니다. `push(list)`와 `push(name, list)`는 항목 하나를 push합니다. 텐서가 하나이면 리프, 여러 개이면 위치 기반 레코드이며, 첫 번째 텐서의 스탬프가 항목의 `stream_name`, `frame_id`, `source_time`, `flags`를 제안합니다. `std::chrono::milliseconds` 타임아웃을 받는 `pull(name, timeout)`은 `Result<TensorList>`를 반환하며, 그 상태는 네 가지 `PullStatus` 결과 중 하나입니다. `pull(timeout_ms, sample)`과 그 이름 지정 형식은 `Sample`을 채웁니다. `run(list)`는 push한 뒤 출력을 기다리고, `on_output(name, callback)`은 `Run`이 소유한 스레드에서 각 출력 항목을 `TensorList`로 콜백에 전달하며(이후 해당 출력은 pull할 수 없습니다), `alloc(name)`은 `Graph::input(name, shape, dtype)`으로 선언된 입력에 대해 쓰기 가능한 Tensor를 빌려주고 이는 `push(name, {tensor})`로 커밋됩니다. Dataflow 런타임에서는 복사 없이 게시되는 풀 슬롯이고, GStreamer에서는 CPU 메모리입니다. 카운터는 계속 `start_measurement()`로 얻으며, `Run`에는 공개 `stats()`가 없습니다. pull된 모든 텐서는 `Tensor::envelope`에 항목의 `Stamp`를 담으며, 런타임은 `seq`와 `publish_time`을 기록합니다. `Sample` 인터페이스는 이를 투영한 것입니다(`to_sample`, `to_tensor`): `input_seq = seq - 1`, `orig_input_seq = input_seq`이며, `pts_ns`는 `source_time`에서 옵니다. push된 `input_seq`나 `orig_input_seq`는 스탬프에 필드가 없어 Dataflow 런타임에서는 전달되지 않으며, GStreamer는 `publish_time`을 기록하지 않습니다.
+TensorList 동사는 두 런타임 모두에서 동작하며, `alloc`을 제외하면 단일 Tensor를 받거나 반환하는 `Run` 동사는 없습니다. `push(list)`와 `push(name, list)`는 항목 하나를 push합니다. 텐서가 하나이면 리프, 여러 개이면 위치 기반 레코드이며, 첫 번째 텐서의 스탬프가 항목의 `stream_name`, `frame_id`, `source_time`, `flags`를 제안합니다. `std::chrono::milliseconds` 타임아웃을 받는 `pull(name, timeout)`은 `Result<TensorList>`를 반환하며, 그 상태는 네 가지 `PullStatus` 결과 중 하나입니다. `pull(timeout_ms, sample)`과 그 이름 지정 형식은 `Sample`을 채웁니다. `run(list)`는 push한 뒤 출력을 기다리고, `on_output(name, callback)`은 `Run`이 소유한 스레드에서 각 출력 항목을 `TensorList`로 콜백에 전달하며(이후 해당 출력은 pull할 수 없습니다), `alloc(name)`은 `Graph::input(name, shape, dtype)`으로 선언된 입력에 대해 쓰기 가능한 Tensor를 빌려주고 이는 `push(name, {tensor})`로 커밋됩니다. Dataflow 런타임에서는 복사 없이 게시되는 풀 슬롯이고, GStreamer에서는 CPU 메모리입니다. 카운터는 계속 `start_measurement()`로 얻으며, `Run`에는 공개 `stats()`가 없습니다. pull된 모든 텐서는 `Tensor::envelope`에 항목의 `Stamp`를 담으며, 런타임은 `seq`와 `publish_time`을 기록합니다. `Sample` 인터페이스는 이를 투영한 것입니다(`to_sample`, `to_tensor`): `input_seq = seq - 1`, `orig_input_seq = input_seq`이며, `pts_ns`는 `source_time`에서 옵니다. 입력이 여러 개인 Run에서는 `orig_input_seq`가 대신 Run의 push 카운터이며, GStreamer의 그래프 경로와 같이 push된 `orig_input_seq`(또는 `input_seq`)가 그 값이 됩니다. 그 밖의 경우 push된 `input_seq`나 `orig_input_seq`는 스탬프에 필드가 없어 Dataflow 런타임에서는 전달되지 않으며, GStreamer는 `publish_time`을 기록하지 않습니다.
 
 TensorList 동사가 대체하는 `Run` 형식은 `[[deprecated]]`이며 한 릴리스 동안 계속 동작합니다: 네 가지 `cv::Mat` `push`/`try_push` 오버로드, `std::optional<Sample>`을 반환하는 `int` pull, `pull_tensors`와 `pull_samples`입니다. 각 속성은 대체 API를 명시하며, 프로세스에서 각 형식을 처음 호출하면 stderr에 `[WARN] Run::<form> is deprecated` 줄이 한 번 기록됩니다. Core 자체 호출자는 경고하지 않는 내부 진입점을 사용합니다. OpenCV 이미지는 `TensorList{Tensor::from_cv_mat(mat, format, memory)}`로 push하고 `pull(timeout)`으로 pull합니다. `pull(timeout_ms, sample, error)`와 그 이름 지정 형식은 사용 중단되지 않았습니다. 이들은 `Result<TensorList>`가 담지 않는 `Sample`의 메타데이터(`attributes`, `caps_string`, `dts_ns`, `duration_ns`, Bundle 필드 이름)에 접근하는 경로입니다. `SIMANEAT_STRICT_WARNINGS`에서는 `-Wno-error=deprecated-declarations`가 이러한 경고로 인해 Core 자체 대상이 실패하지 않도록 합니다.
 
@@ -1488,10 +1495,11 @@ SSD 모델 패키지는 그래프 컴파일 중에 정확한 수술 후 헤드 �
 * `SIMA_NEAT_BACKEND` -- `dataflow`이면 `RunBackend::Auto`(기본 `RunOptions::backend`)가 조건을
   충족하는 그래프를 Neat Dataflow 런타임으로 빌드합니다. 설정하지 않거나 `auto` 또는 `gstreamer`이면
   GStreamer를 유지합니다. `Graph::build()`를 호출할 때마다 읽습니다. `SIMANEAT_DATAFLOW_SOURCE_DIR`로
-  구성한 빌드에만 Dataflow 런타임이 포함되며, 공개 `Input` 하나가 공개 `Output` 하나에 연결된 그래프만
-  조건을 충족합니다. 그 밖의 그래프는 GStreamer에 남습니다. 설정되어 있으면 각 `Graph::build()`가 선택한
-  런타임과 그 이유를 stderr에 출력합니다. 명시적인 `RunBackend::Dataflow`는 이 변수를 읽지 않으며,
-  대체 실행 없이 빌드를 실패시킵니다.
+  구성한 빌드에만 Dataflow 런타임이 포함되며, 공개 `Input`이 공개 `Output`에 공급하고 각 `Output`이
+  정확히 `Input` 하나에서 공급받는 그래프만 조건을 충족합니다. 그 밖의 그래프(팬인, 다른 노드)는
+  GStreamer에 남습니다. 설정되어 있으면 각 `Graph::build()`가 선택한 런타임과 그 이유를 stderr에
+  출력하고, Dataflow의 각 `Run::stop()`은 엔드포인트별 카운터를 출력합니다. 명시적인
+  `RunBackend::Dataflow`는 이 변수를 읽지 않으며, 대체 실행 없이 빌드를 실패시킵니다.
 
 이러한 설정은 의도적으로 공개 API 외부에 있으므로 재컴파일하지 않고 CI 환경이나 실제 환경에서 활성화할 수 있습니다.
 `src/pipeline/internal/*`에는 추가적인 저수준 디버그 플래그가 있습니다(입력 스트림 로깅, 샘플 덤프, 풀 디버그). 깊이 있는 진단이 필요하지 않은 경우 사용자에게 제공되는 문서에는 이러한 플래그를 포함하지 마십시오.

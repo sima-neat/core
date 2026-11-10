@@ -642,7 +642,7 @@ bool runtime::RunCore::valid() const noexcept {
 
 bool runtime::RunCore::can_push() const {
   if (dataflow_) {
-    return true;
+    return dataflow_->can_push();
   }
   if (graph_execution_) {
     return graph_execution_->plan.default_input.has_value();
@@ -652,7 +652,7 @@ bool runtime::RunCore::can_push() const {
 
 bool runtime::RunCore::can_pull() const {
   if (dataflow_) {
-    return true;
+    return dataflow_->can_pull();
   }
   if (graph_execution_) {
     return graph_execution_->plan.default_output.has_value();

@@ -724,6 +724,17 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
   set_property(TEST unit_dataflow_backend_test APPEND PROPERTY LABELS "unit;dataflow")
 endif()
 
+# H0c: graphs of several public Inputs and Outputs on the Dataflow backend (named endpoints, fan-out
+# by handle reuse, each Output's own link), on the public API only (RunBackend::Dataflow).
+if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
+    NOT unit_dataflow_endpoints_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_pipeline_test(unit_dataflow_endpoints_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_endpoints_test.cpp
+  )
+  set_tests_properties(unit_dataflow_endpoints_test PROPERTIES TIMEOUT 300)
+  set_property(TEST unit_dataflow_endpoints_test APPEND PROPERTY LABELS "unit;dataflow")
+endif()
+
 # H0 C2: Run's Tensor verbs, Graph::input/output and records, on both backends. One executable per
 # test, registered once for GStreamer and, with the runtime in the build, once more with
 # SIMA_NEAT_BACKEND=dataflow (label `dataflow`); the test reads the variable and requests that
@@ -3233,8 +3244,13 @@ target_link_libraries(unit_sima_plugins_test PRIVATE SimaScheduler::frontend)
 # ------------------------------------------------------------------------------
 # Each test below is registered once more as <name>_dataflow, with the original's properties plus
 # SIMA_NEAT_BACKEND=dataflow and the label `dataflow`. RunBackend::Auto, the default, then takes
-# the Dataflow backend for every Run whose graph qualifies (one Input to one Output) and keeps the
-# others on GStreamer (architecture.md, "Environment / configuration knobs"). Tests that set
+# the Dataflow backend for every Run whose graph qualifies (public Inputs feeding public Outputs,
+# each Output fed by one Input: H0c) and keeps the others on GStreamer (architecture.md,
+# "Environment / configuration knobs"). H0c's multi-endpoint tests (plan 1.5 group 4): phaseA0,
+# phase3_public_graph_branching and phase4_named_endpoint_api (already here), phaseA1 and phaseA3
+# combine run their fan-out, several-input and elided-boundary blocks on Dataflow; their fan-in and
+# Combine blocks (H1: a combine operator), custom() and realtime-link blocks (H1) and
+# describe_backend-only blocks stay on GStreamer, each said by its [NEAT] line. Tests that set
 # RunOptions::backend themselves (C3's unit_dataflow_backend_test asks for Dataflow; C1's
 # unit_dataflow_runtime_link_test uses the runtime directly) run the same under either entry.
 # Not registered on Dataflow (plan D12): these assert GStreamer internals; each one's contracts are
@@ -3247,6 +3263,10 @@ target_link_libraries(unit_sima_plugins_test PRIVATE SimaScheduler::frontend)
 #     failure injection)
 #   unit_run_api_matrix_test             -> unit_dataflow_twin_api_matrix_test
 #     (posts a GStreamer bus error and an EOS event into pipeline_handle())
+# Not registered on Dataflow (H0c): graph_migration_phaseA3_branch_helper_test, whose one Run (the
+# Branch helper block) asserts the pushed TensorBuffer on both outputs: on Dataflow a fan-out returns
+# a projected Sample, not the pushed TensorBuffer, until W-wrap (zero-copy push, W2). Its Branch
+# topology runs on Dataflow in unit_dataflow_endpoints_test (elided_boundaries).
 # async_stream_test pushes queue_depth (50) frames before its first pull, with Output
 # max_buffers = 8: on Dataflow the one link holds queue_depth + max_buffers messages, as GStreamer's
 # input queue and appsink together do (DataflowGraphCompiler.cpp, derive_config).
@@ -3259,6 +3279,8 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR)
       graph_migration_phase3_lifecycle_backpressure_test
       graph_migration_phase3_public_graph_branching_test
       graph_migration_phase4_named_endpoint_api_test
+      graph_migration_phaseA1_connected_fragment_import_test
+      graph_migration_phaseA3_combine_helper_test
       gst_data_adapter_runtime_regression_test
       unit_pipeline_internal_build_test
       unit_public_output_appsink_contract_test

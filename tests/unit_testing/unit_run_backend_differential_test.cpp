@@ -51,6 +51,7 @@
 #include <chrono>
 #include <cstdint>
 #include <iostream>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -513,6 +514,347 @@ void compare(const Variant& v, const Outcome& gst, const Outcome& df, Comparison
                        status_name(df.final_status));
 }
 
+// ---- H0c: graphs of several endpoints -------------------------------------------------------
+// Two variants, each on both backends:
+//   two-by-two: Inputs "left" and "right", each feeding its own Output ("left_out", "right_out");
+//     the items alternate between the inputs, each pulled from its output right after its push.
+//   fan-out: Input "image" feeding Outputs "a" and "b" (one push, two outputs), every item pulled
+//     from both.
+// Compared as the single-endpoint variants compare (status, payload, frame_id, stream_id, pts_ns,
+// the new surface's stamp), per output, plus the status of every output after close_input.
+// orig_input_seq across two inputs (two-by-two): GStreamer's graph ingress numbers the pushes of
+// the whole Run in one counter and writes it there, keeping a pushed orig_input_seq without
+// counting that push (next_public_graph_input_seq, RunPush.cpp:276-287); Dataflow does the same in
+// a Run of several inputs. Compared for every item, and the Dataflow side against that rule.
+// input_seq and Stamp::seq count each input's pushes on both (each GStreamer segment numbers its
+// own): compared, and the Dataflow side checked to be contiguous per input from 0. Excluded
+// explicitly, besides the single-endpoint exclusions (c3.md 4 row 5):
+//   - fan-out, items pushed as a Sample: Sample::kind, the tensor/tensors slots, media_type and
+//     payload_tag. GStreamer lowers a fan-out to its FanOut node with no pipeline segment, so a
+//     pull returns the pushed Sample itself; Dataflow returns the Sample projection of the message
+//     (a leaf is a TensorSet of one tensor, H0 plan 3.5) as on every other graph. An item pushed as
+//     a TensorList is a TensorSet on both, compared; the payload is compared for every item.
+//   - stream_label, dts_ns, duration_ns, caps_string, attributes, as for one endpoint.
+//   - fan-out: input_seq, orig_input_seq and Stamp::seq from the item that pushes its own
+//     orig_input_seq on: GStreamer's ingress takes it as input_seq and its counter does not advance
+//     for that item, so later items lag (RunPush.cpp:276-287); the runtime's Stamp carries neither
+//     (c2.md 3.6). Before that item they are compared; the Dataflow side is checked throughout.
+enum class Topology { TwoByTwo, FanOut };
+
+struct MultiVariant {
+  std::string name;
+  Topology topology;
+  bool new_pull;
+};
+
+// One pull: the output it read and what it saw.
+struct MultiObserved {
+  std::string output;
+  std::size_t item = 0;
+  Observed seen;
+};
+
+struct MultiOutcome {
+  std::vector<MultiObserved> pulls;
+  std::vector<std::vector<std::uint8_t>> pushed;
+  std::vector<std::pair<std::string, PullStatus>> final_status;
+  std::string build_error;
+};
+
+std::vector<std::string> multi_outputs(Topology t) {
+  return t == Topology::TwoByTwo ? std::vector<std::string>{"left_out", "right_out"}
+                                 : std::vector<std::string>{"a", "b"};
+}
+
+Run build_multi(const MultiVariant& v, RunBackend backend) {
+  InputOptions in;
+  in.payload_type = PayloadType::Image;
+  in.format = FormatTag::RGB;
+  in.memory_policy = InputMemoryPolicy::SystemMemory;
+  in.max_width = kMaxW;
+  in.max_height = kMaxH;
+  in.max_depth = 3;
+  in.do_timestamp = false;
+  OutputOptions out;
+  out.max_buffers = 16;
+  out.drop = false;
+  out.sync = false;
+  RunOptions opt;
+  opt.backend = backend;
+  opt.queue_depth = 16;
+  opt.overflow_policy = OverflowPolicy::Block;
+  opt.startup_preflight = false;
+  Graph g;
+  if (v.topology == Topology::TwoByTwo) {
+    g.add(nodes::Input("left", in));
+    g.add(nodes::Output("left_out", out));
+    g.add(nodes::Input("right", in));
+    g.add(nodes::Output("right_out", out));
+    g.connect("left", "left_out");
+    g.connect("right", "right_out");
+  } else {
+    g.add(nodes::Input("image", in));
+    g.add(nodes::Output("a", out));
+    g.add(nodes::Output("b", out));
+    g.connect("image", "a");
+    g.connect("image", "b");
+  }
+  return g.build(opt);
+}
+
+Observed pull_named(Run& run, bool new_pull, const std::string& output) {
+  Observed o;
+  if (new_pull) {
+    Result<TensorList> r = run.pull(output, 5000ms);
+    o.status = r.status();
+    if (!r.ok()) {
+      o.error = r.error().message;
+      return o;
+    }
+    o.list_size = r->size();
+    if (!r->empty()) {
+      o.stamp = r->front().stamp();
+    }
+    for (const Tensor& t : *r) {
+      o.leaves.push_back(observe(t));
+    }
+    return o;
+  }
+  Sample s;
+  PullError err;
+  o.status = run.pull(output, 5000, s, &err);
+  o.error = err.message;
+  if (o.status != PullStatus::Ok) {
+    return o;
+  }
+  o.kind = s.kind;
+  o.has_tensor = s.tensor.has_value();
+  o.tensors = s.tensors.size();
+  o.fields = s.fields.size();
+  o.frame_id = s.frame_id;
+  o.pts_ns = s.pts_ns;
+  o.dts_ns = s.dts_ns;
+  o.duration_ns = s.duration_ns;
+  o.input_seq = s.input_seq;
+  o.orig_input_seq = s.orig_input_seq;
+  o.stream_id = s.stream_id;
+  o.stream_label = s.stream_label;
+  o.media_type = s.media_type;
+  o.payload_tag = s.payload_tag;
+  o.caps_string = s.caps_string;
+  o.attributes = s.attributes.size();
+  for (const Tensor& t : tensors_from_sample(s, true)) {
+    o.leaves.push_back(observe(t));
+  }
+  return o;
+}
+
+MultiOutcome run_multi(const MultiVariant& v, RunBackend backend) {
+  MultiOutcome out;
+  try {
+    Run run = build_multi(v, backend);
+    const std::vector<Item> items = sequence(false);
+    std::vector<Tensor> sources;
+    for (std::size_t i = 0; i < items.size(); ++i) {
+      sources.push_back(rgb(items[i].w, items[i].h, static_cast<std::uint8_t>(0x50 + i)));
+      out.pushed.push_back(sources.back().copy_dense_bytes_tight());
+      std::string input = "image";
+      std::vector<std::string> outputs = {"a", "b"};
+      if (v.topology == Topology::TwoByTwo) {
+        const bool left = (i % 2U) == 0U;
+        input = left ? "left" : "right";
+        outputs = {left ? "left_out" : "right_out"};
+      }
+      const Item& item = items[i];
+      bool pushed = false;
+      switch (item.verb) {
+      case Verb::List:
+        pushed = run.push(input, TensorList{sources.back()});
+        break;
+      case Verb::Sample: {
+        Sample s;
+        s.kind = SampleKind::Tensor;
+        s.tensor = sources.back();
+        s.frame_id = item.frame_id;
+        s.stream_id = item.stream;
+        s.pts_ns = item.pts_ns;
+        s.orig_input_seq = item.orig_seq;
+        pushed = run.push(input, Sample{s});
+        break;
+      }
+      case Verb::Stamped: {
+        Stamp proposal;
+        proposal.frame_id = item.frame_id;
+        proposal.stream_name = item.stream;
+        if (item.pts_ns >= 0) {
+          proposal.source_time = TimePoint{item.pts_ns, ClockId::SensorLocal};
+        }
+        const bool stamped = item.frame_id >= 0 || !item.stream.empty() || item.pts_ns >= 0;
+        pushed = run.push(input, {stamped ? sources.back().with_stamp(proposal) : sources.back()});
+        break;
+      }
+      }
+      require(pushed, "push of item " + std::to_string(i) + " into " + input + " refused");
+      for (const std::string& output : outputs) {
+        out.pulls.push_back(MultiObserved{output, i, pull_named(run, v.new_pull, output)});
+      }
+    }
+    run.close_input();
+    for (const std::string& output : multi_outputs(v.topology)) {
+      out.final_status.emplace_back(output, pull_named(run, v.new_pull, output).status);
+    }
+    run.close();
+  } catch (const std::exception& e) {
+    out.build_error = e.what();
+  }
+  return out;
+}
+
+void compare_multi(const MultiVariant& v, const MultiOutcome& gst, const MultiOutcome& df,
+                   Comparison& c) {
+  c.check(0, "GStreamer run completes", gst.build_error.empty(), gst.build_error);
+  c.check(0, "Dataflow run completes", df.build_error.empty(), df.build_error);
+  if (!gst.build_error.empty() || !df.build_error.empty()) {
+    return;
+  }
+  const std::vector<Item> items = sequence(false);
+  const bool fan_out = v.topology == Topology::FanOut;
+  c.equal<std::size_t>(0, "pulls", gst.pulls.size(), df.pulls.size());
+  std::map<std::string, std::int64_t> next_seq; // Dataflow: per input, from 0
+  std::int64_t run_counter = 0;                 // two-by-two: the Run's push counter
+  std::int64_t expected_orig = -1;
+  bool pushed_orig_seen = false;
+  for (std::size_t k = 0; k < gst.pulls.size() && k < df.pulls.size(); ++k) {
+    const std::size_t i = gst.pulls[k].item;
+    const Item& item = items[i];
+    pushed_orig_seen = pushed_orig_seen || item.orig_seq >= 0;
+    // GStreamer's sequence fields: in the fan-out (one input, no pipeline segment) comparable
+    // before any pushed orig_input_seq; in the two-by-two variant always (each segment numbers
+    // input_seq itself, orig_input_seq is the Run's counter on both backends).
+    const bool seq_comparable = !fan_out || !pushed_orig_seen;
+    const bool orig_comparable = !fan_out || !pushed_orig_seen;
+    const char* seq_reason =
+        "GStreamer's ingress takes a pushed orig_input_seq as input_seq and "
+        "skips it in its counter (RunPush.cpp:276-287); the runtime's Stamp has "
+        "no field for it";
+    const char* orig_reason = seq_reason;
+    const Observed& g = gst.pulls[k].seen;
+    const Observed& d = df.pulls[k].seen;
+    const std::string& output = gst.pulls[k].output;
+    std::cout << "  [" << output << "]";
+    print_row("gstreamer", i, g, v.new_pull);
+    std::cout << "  [" << output << "]";
+    print_row("dataflow ", i, d, v.new_pull);
+    c.equal<std::string>(i, "output", output, df.pulls[k].output);
+    c.equal<std::string>(i, "status", status_name(g.status), status_name(d.status));
+    if (g.status != PullStatus::Ok || d.status != PullStatus::Ok) {
+      continue;
+    }
+    c.equal<std::size_t>(i, "leaf count", g.leaves.size(), d.leaves.size());
+    for (std::size_t n = 0; n < g.leaves.size() && n < d.leaves.size(); ++n) {
+      c.equal<int>(i, "dtype", static_cast<int>(g.leaves[n].dtype),
+                   static_cast<int>(d.leaves[n].dtype));
+      c.equal<std::string>(i, "shape", shape_text(g.leaves[n].shape),
+                           shape_text(d.leaves[n].shape));
+      c.check(i, "bytes equal between backends", g.leaves[n].bytes == d.leaves[n].bytes);
+      c.check(i, "Dataflow bytes equal the pushed bytes", d.leaves[n].bytes == df.pushed[i]);
+    }
+    // The input this item went to, for the per-input sequence of the two-by-two variant.
+    const std::string input = fan_out ? "image" : ((i % 2U) == 0U ? "left" : "right");
+    const bool first_output_of_item = k == 0 || gst.pulls[k - 1].item != i;
+    std::int64_t expected_seq = next_seq[input];
+    if (first_output_of_item) {
+      ++next_seq[input];
+      // The Run's counter (two-by-two): a pushed orig_input_seq is kept and not counted.
+      expected_orig = item.orig_seq >= 0 ? item.orig_seq : run_counter++;
+    } else {
+      --expected_seq; // the fan-out's second output: the same message
+    }
+    const bool proposes_time = item.pts_ns >= 0;
+    if (v.new_pull) {
+      c.equal<std::size_t>(i, "list size", g.list_size, d.list_size);
+      c.equal<std::int64_t>(i, "Stamp::frame_id", g.stamp.frame_id, d.stamp.frame_id);
+      c.equal<std::string>(i, "Stamp::stream_name", g.stamp.stream_name, d.stamp.stream_name);
+      c.equal<std::int64_t>(i, "Stamp::source_time.ns vs pushed", proposes_time ? item.pts_ns : -1,
+                            d.stamp.source_time.valid() ? d.stamp.source_time.ns : -1);
+      c.equal<std::int64_t>(i, "Stamp::source_time.ns", g.stamp.source_time.ns,
+                            d.stamp.source_time.ns);
+      if (seq_comparable) {
+        c.equal<std::uint64_t>(i, "Stamp::seq", g.stamp.seq, d.stamp.seq);
+      } else {
+        c.excluded(i, "Stamp::seq", std::to_string(g.stamp.seq), std::to_string(d.stamp.seq),
+                   seq_reason);
+      }
+      c.equal<std::uint64_t>(i, "Dataflow Stamp::seq per input",
+                             static_cast<std::uint64_t>(expected_seq + 1), d.stamp.seq);
+      continue;
+    }
+    c.equal<std::int64_t>(i, "frame_id", g.frame_id, d.frame_id);
+    c.equal<std::int64_t>(i, "frame_id vs pushed", item.frame_id, d.frame_id);
+    c.equal<std::string>(i, "stream_id", g.stream_id, d.stream_id);
+    c.equal<std::int64_t>(i, "pts_ns", g.pts_ns, d.pts_ns);
+    c.equal<std::int64_t>(i, "pts_ns vs pushed", proposes_time ? item.pts_ns : -1, d.pts_ns);
+    if (seq_comparable) {
+      c.equal<std::int64_t>(i, "input_seq", g.input_seq, d.input_seq);
+    } else {
+      c.excluded(i, "input_seq", std::to_string(g.input_seq), std::to_string(d.input_seq),
+                 seq_reason);
+    }
+    if (orig_comparable) {
+      c.equal<std::int64_t>(i, "orig_input_seq", g.orig_input_seq, d.orig_input_seq);
+    } else {
+      c.excluded(i, "orig_input_seq", std::to_string(g.orig_input_seq),
+                 std::to_string(d.orig_input_seq), orig_reason);
+    }
+    c.equal<std::int64_t>(i, "Dataflow input_seq per input", expected_seq, d.input_seq);
+    if (fan_out) {
+      c.equal<std::int64_t>(i, "Dataflow orig_input_seq = input_seq (one input)", d.input_seq,
+                            d.orig_input_seq);
+    } else {
+      c.equal<std::int64_t>(i, "Dataflow orig_input_seq = the Run's push counter", expected_orig,
+                            d.orig_input_seq);
+    }
+    c.excluded(i, "stream_label/dts_ns/duration_ns/caps_string/attributes",
+               "'" + g.stream_label + "'/" + std::to_string(g.dts_ns) + "/" +
+                   std::to_string(g.duration_ns) + "/caps:" + std::to_string(g.caps_string.size()) +
+                   "B/" + std::to_string(g.attributes),
+               "'" + d.stream_label + "'/" + std::to_string(d.dts_ns) + "/" +
+                   std::to_string(d.duration_ns) + "/caps:" + std::to_string(d.caps_string.size()) +
+                   "B/" + std::to_string(d.attributes),
+               "no caps, no meta map on Dataflow, c3.md 4 row 5");
+    c.check(i, "Dataflow carries no stream_label, dts_ns, duration_ns, caps or attributes",
+            d.stream_label.empty() && d.dts_ns == -1 && d.duration_ns == -1 &&
+                d.caps_string.empty() && d.attributes == 0);
+    if (fan_out && item.verb == Verb::Sample) {
+      c.excluded(
+          i, "kind/tensor/tensors/media_type/payload_tag",
+          std::to_string(static_cast<int>(g.kind)) + "/" + std::to_string(g.has_tensor) + "/" +
+              std::to_string(g.tensors) + "/'" + g.media_type + "'/'" + g.payload_tag + "'",
+          std::to_string(static_cast<int>(d.kind)) + "/" + std::to_string(d.has_tensor) + "/" +
+              std::to_string(d.tensors) + "/'" + d.media_type + "'/'" + d.payload_tag + "'",
+          "GStreamer's FanOut returns the pushed Sample; Dataflow its projection (H0 3.5)");
+    } else {
+      c.equal<int>(i, "kind", static_cast<int>(g.kind), static_cast<int>(d.kind));
+      c.equal<int>(i, "tensor slot", g.has_tensor, d.has_tensor);
+      c.equal<std::size_t>(i, "tensors slot", g.tensors, d.tensors);
+      c.equal<std::string>(i, "media_type", g.media_type, d.media_type);
+      c.equal<std::string>(i, "payload_tag", g.payload_tag, d.payload_tag);
+    }
+  }
+  c.equal<std::size_t>(items.size(), "outputs after close_input", gst.final_status.size(),
+                       df.final_status.size());
+  for (std::size_t k = 0; k < gst.final_status.size() && k < df.final_status.size(); ++k) {
+    std::cout << "  final " << gst.final_status[k].first
+              << ": gstreamer=" << status_name(gst.final_status[k].second)
+              << " dataflow=" << status_name(df.final_status[k].second) << "\n";
+    c.equal<std::string>(items.size(), "status after close_input, per output",
+                         status_name(gst.final_status[k].second),
+                         status_name(df.final_status[k].second));
+    c.equal<std::string>(items.size(), "Dataflow status after close_input", "Closed",
+                         status_name(df.final_status[k].second));
+  }
+}
+
 } // namespace
 
 RUN_TEST("unit_run_backend_differential_test", ([] {
@@ -555,11 +897,31 @@ RUN_TEST("unit_run_backend_differential_test", ([] {
              compared += c.compared();
              failures.insert(failures.end(), c.failures().begin(), c.failures().end());
            }
+           // H0c: several endpoints.
+           const std::vector<MultiVariant> multi = {
+               {"two-by-two/old-pull", Topology::TwoByTwo, false},
+               {"two-by-two/new-pull", Topology::TwoByTwo, true},
+               {"fan-out/old-pull", Topology::FanOut, false},
+               {"fan-out/new-pull", Topology::FanOut, true},
+           };
+           for (const MultiVariant& v : multi) {
+             std::cout << "== " << v.name << "\n";
+             const MultiOutcome gst = run_multi(v, RunBackend::GStreamer);
+             const MultiOutcome df = run_multi(v, RunBackend::Dataflow);
+             Comparison c(v.name);
+             compare_multi(v, gst, df, c);
+             std::cout << "  compared " << c.compared() << " values, " << c.failures().size()
+                       << " differences\n";
+             compared += c.compared();
+             failures.insert(failures.end(), c.failures().begin(), c.failures().end());
+           }
            for (const std::string& f : failures) {
              std::cerr << "[DIFF] " << f << "\n";
            }
-           std::cout << "[INFO] differential: " << variants.size() << " variants, " << compared
-                     << " values compared, " << failures.size() << " differences\n";
+           std::cout << "[INFO] differential: " << variants.size() + multi.size() << " variants, "
+                     << compared << " values compared, " << failures.size() << " differences\n";
+           // A process that started GStreamer may lose its stdout tail at exit: flush first.
+           std::cout << std::flush;
            require(failures.empty(), std::to_string(failures.size()) +
                                          " differences between the backends (see [DIFF] lines)");
          }));

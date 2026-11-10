@@ -966,13 +966,18 @@ graph.add(simaai::neat::nodes::Output());
 * `try_push(...)` 是非阻塞的（如果佇列已滿，則傳回 false）
 
 `RunOptions::backend` 用於在相同的 `Run` 介面之後選擇執行環境。在 Neat Dataflow 後端（以
-`SIMANEAT_DATAFLOW_SOURCE_DIR` 選用的建構，適用於由一個公開 `Input` 連接到一個公開 `Output` 的圖）上，
-圖由一個 Feed、一個 Fetch 與一條連結組成：`push` 在呼叫端執行緒上將張量複製到池的槽位，並在不丟棄的情況下
-等待空間；`try_push` 套用溢位策略；`pull` 傳回唯讀的 `CpuExternal` 張量，該張量會租用槽位，直到最後一個
-副本被釋放。輸入的形狀由其宣告、種子或第一次 push 決定，之後即強制套用。`push_holder` 僅支援 GStreamer；
-由多個張量組成的項目會繫結到欄位名稱依位置命名的記錄連接埠。
+`SIMANEAT_DATAFLOW_SOURCE_DIR` 選用的建構，適用於由公開 `Input` 供給公開 `Output`、且每個 `Output` 只由一個
+`Input` 供給的圖）上，每個輸入是一個 Feed，並為其供給的每個輸出各有一條連結與一個 Fetch。扇出（把一個
+`Graph::input` 控制代碼交給多個 `Graph::output`，或使用 `graphs::Branch`）每個項目只發布一次，所有輸出租用
+同一個槽位。`push` 在呼叫端執行緒上將張量複製到池的槽位，並在每條連結上不丟棄地等待空間（設定了
+`OutputOptions::drop` 的輸出則改為逐出其最舊的項目）；`try_push` 在每條連結上套用溢位策略，只有在所有連結都
+拒絕時才被拒絕；`pull` 傳回唯讀的 `CpuExternal` 張量，該張量會租用槽位，直到最後一個副本被釋放。每個輸入的
+形狀由其宣告、種子或該輸入自己的第一次 push 決定，之後即強制套用。`push(name, ...)` 與 `pull(name, ...)` 選擇
+端點，不具名的形式則到達唯一的輸入或輸出。`close_input()` 會關閉 Run 的所有輸入，沒有個別輸入的
+close。扇入（多個輸入進入一個輸出，`graphs::Combine`）仍使用 GStreamer。
+`push_holder` 僅支援 GStreamer；由多個張量組成的項目會繫結到欄位名稱依位置命名的記錄連接埠。
 
-TensorList 動詞在兩種執行環境上皆可使用；除了 `alloc` 之外，沒有任何 `Run` 動詞接受或傳回單一 Tensor。`push(list)` 與 `push(name, list)` 會 push 一個項目：一個張量為葉節點，多個張量為依位置命名的記錄，且第一個張量的戳記會提議該項目的 `stream_name`、`frame_id`、`source_time` 與 `flags`。採用 `std::chrono::milliseconds` 逾時的 `pull(name, timeout)` 會傳回 `Result<TensorList>`，其狀態為四種 `PullStatus` 結果之一；`pull(timeout_ms, sample)` 及其具名形式會填入 `Sample`。`run(list)` 會 push 並等待輸出；`on_output(name, callback)` 會在 `Run` 擁有的執行緒上將每個輸出項目以 `TensorList` 傳遞給回呼（之後該輸出無法再 pull）；`alloc(name)` 會為以 `Graph::input(name, shape, dtype)` 宣告的輸入出借可寫入的 Tensor，並以 `push(name, {tensor})` 提交：在 Dataflow 執行環境上是無需複製即可發布的池槽位，在 GStreamer 上是 CPU 記憶體。計數器仍透過 `start_measurement()` 取得，`Run` 沒有公開的 `stats()`。每個 pull 到的張量都會在 `Tensor::envelope` 中帶有該項目的 `Stamp`；執行環境寫入 `seq` 與 `publish_time`。`Sample` 介面是它的投影（`to_sample`、`to_tensor`）：`input_seq = seq - 1`、`orig_input_seq = input_seq`，`pts_ns` 取自 `source_time`。被 push 的 `input_seq` 或 `orig_input_seq` 在戳記中沒有對應欄位，因此不會在 Dataflow 執行環境上傳遞，而 GStreamer 不會記錄 `publish_time`。
+TensorList 動詞在兩種執行環境上皆可使用；除了 `alloc` 之外，沒有任何 `Run` 動詞接受或傳回單一 Tensor。`push(list)` 與 `push(name, list)` 會 push 一個項目：一個張量為葉節點，多個張量為依位置命名的記錄，且第一個張量的戳記會提議該項目的 `stream_name`、`frame_id`、`source_time` 與 `flags`。採用 `std::chrono::milliseconds` 逾時的 `pull(name, timeout)` 會傳回 `Result<TensorList>`，其狀態為四種 `PullStatus` 結果之一；`pull(timeout_ms, sample)` 及其具名形式會填入 `Sample`。`run(list)` 會 push 並等待輸出；`on_output(name, callback)` 會在 `Run` 擁有的執行緒上將每個輸出項目以 `TensorList` 傳遞給回呼（之後該輸出無法再 pull）；`alloc(name)` 會為以 `Graph::input(name, shape, dtype)` 宣告的輸入出借可寫入的 Tensor，並以 `push(name, {tensor})` 提交：在 Dataflow 執行環境上是無需複製即可發布的池槽位，在 GStreamer 上是 CPU 記憶體。計數器仍透過 `start_measurement()` 取得，`Run` 沒有公開的 `stats()`。每個 pull 到的張量都會在 `Tensor::envelope` 中帶有該項目的 `Stamp`；執行環境寫入 `seq` 與 `publish_time`。`Sample` 介面是它的投影（`to_sample`、`to_tensor`）：`input_seq = seq - 1`、`orig_input_seq = input_seq`，`pts_ns` 取自 `source_time`。在具有多個輸入的 Run 中，`orig_input_seq` 改為該 Run 的 push 計數器，與 GStreamer 的圖路徑相同，被 push 的 `orig_input_seq`（或 `input_seq`）會取而代之。其他情況下，被 push 的 `input_seq` 或 `orig_input_seq` 在戳記中沒有對應欄位，因此不會在 Dataflow 執行環境上傳遞，而 GStreamer 不會記錄 `publish_time`。
 
 被 TensorList 動詞取代的 `Run` 形式已標示為 `[[deprecated]]`，並在一個版本內仍可運作：四個 `cv::Mat` `push`/`try_push` 多載、傳回 `std::optional<Sample>` 的 `int` pull、`pull_tensors` 與 `pull_samples`。每個屬性都會指出其替代方案，且每種形式在一個處理程序中第一次被呼叫時，會向 stderr 寫入一行 `[WARN] Run::<form> is deprecated`；Core 自身的呼叫端使用不會發出警告的內部進入點。請以 `TensorList{Tensor::from_cv_mat(mat, format, memory)}` push OpenCV 影像，並以 `pull(timeout)` 進行 pull。`pull(timeout_ms, sample, error)` 及其具名形式並未棄用：它們是取得 `Sample` 中繼資料（`attributes`、`caps_string`、`dts_ns`、`duration_ns`、Bundle 欄位名稱）的途徑，而 `Result<TensorList>` 不攜帶這些資料。在 `SIMANEAT_STRICT_WARNINGS` 下，`-Wno-error=deprecated-declarations` 可避免這些警告使 Core 自身的目標建置失敗。
 
@@ -1550,9 +1555,10 @@ SSD 模型封包會在圖編譯期間，針對私有登錄中的精確術後頭�
 * `SIMA_NEAT_BACKEND` – 設為 `dataflow` 時，`RunBackend::Auto`（`RunOptions::backend` 的預設值）會在
   Neat Dataflow 執行環境上建構符合條件的圖；未設定或設為 `auto`、`gstreamer` 時維持使用 GStreamer。每次
   `Graph::build()` 都會讀取。只有以 `SIMANEAT_DATAFLOW_SOURCE_DIR` 設定的建構才包含 Dataflow 執行環境，
-  且只有由一個公開 `Input` 連接到一個公開 `Output` 的圖符合條件；其他圖仍使用 GStreamer。設定此變數時，
-  每次 `Graph::build()` 都會將所選的執行環境及原因輸出到 stderr。明確指定的 `RunBackend::Dataflow` 不讀取
-  此變數，無法支援時會讓建構失敗，而不是改用 GStreamer。
+  且只有由公開 `Input` 供給公開 `Output`、每個 `Output` 恰由一個 `Input` 供給的圖符合條件；其他圖（扇入、
+  任何其他節點）仍使用 GStreamer。設定此變數時，每次 `Graph::build()` 都會將所選的執行環境及原因輸出到
+  stderr，而 Dataflow 上的每次 `Run::stop()` 會輸出每個端點的計數器。明確指定的 `RunBackend::Dataflow`
+  不讀取此變數，無法支援時會讓建構失敗，而不是改用 GStreamer。
 
 這些控制項有意地設計在公開 API 之外，因此您可以在 CI 或現場環境中啟用它們，而無需重新編譯。
 在 `src/pipeline/internal/*` 中有額外的低階偵錯旗標（輸入資料流記錄、樣本轉儲、池偵錯）。除非您需要深入的診斷，否則請將這些內容排除在使用者檔案之外。

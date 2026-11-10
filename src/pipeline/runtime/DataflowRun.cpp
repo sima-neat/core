@@ -1,21 +1,37 @@
-// The Dataflow backend's Run state (H0 plan 3.7): Core's push, try_push, pull, close_input and
-// stop on one Session with one Feed, one Fetch and one link. Built only with
+// The Dataflow backend's Run state (H0 plan 3.7; H0 step 10, H0c): Core's push, try_push, pull,
+// close_input and stop on one Session per public Input, each with one Feed and one link and one
+// Fetch per Output the input feeds (a fan-out when there are several). Built only with
 // SIMANEAT_DATAFLOW_SOURCE_DIR.
 //
+// Endpoints: push(name) and pull(name) select the input or output by its public name; the unnamed
+// verbs reach the only input or output, and with several fail as GStreamer's graph path does ("no
+// unambiguous default input/output"). Each input binds by its declaration, the seed (a graph of
+// one input), or its own first push; a pull waits for its own input's binding. In a Run of several
+// inputs, Sample::orig_input_seq is the Run's push counter, as on GStreamer's graph path
+// (SlotSeqTable); input_seq and Stamp::seq count each input's pushes.
+//
 // Verbs (WORKER.md 18.1):
-//   push      alloc(Acquire::Block) + copy + push_waiting(kNoDeadline): waits for room on the link
-//             whatever its policy and never drops (RunPush.cpp:402-411). With OutputOptions::drop
-//             the terminal queue is lossy for every push, as appsink drop=true is:
-//             push(kNoDeadline).
-//   try_push  alloc(Acquire::Fail) + copy + push(passed deadline): the link's policy applies;
+//   push      alloc(Acquire::Block) + copy + push_waiting(kNoDeadline): waits for room on each
+//             link of the input whatever its policy and never drops (RunPush.cpp:402-411). When an
+//             Output the input feeds has OutputOptions::drop, its queue is lossy for every push, as
+//             appsink drop=true is: push(kNoDeadline), which waits on the Block links (the other
+//             Outputs, under OverflowPolicy::Block, the one mix of both the compiler accepts) and
+//             evicts on the DropOldest ones.
+//   try_push  alloc(Acquire::Fail) + copy + push(passed deadline): each link's policy applies;
 //             DroppedIncoming is false and a drop, DroppedOldest true and a drop, a full Block link
-//             false and no drop (unit_run_overflow_policy_parity_test.cpp:129-163). A full link is
-//             answered by alloc itself (the runtime's FR14, A3), before any slot or copy, and
-//             counted by the runtime as that push: alloc_refused maps it to the same outcome.
+//             false and no drop (unit_run_overflow_policy_parity_test.cpp:129-163). A push every
+//             link would refuse is answered by alloc itself (the runtime's FR14, A3), before any
+//             slot or copy, and counted by the runtime as that push: alloc_refused maps it to the
+//             same outcome. A fan-out is refused only when every link refuses (a DropOldest link
+//             never does); one link taking it makes it accepted, and each other link's refusal or
+//             eviction is its Output's drop.
 //   pull      -1 is kNoDeadline, 0 a passed deadline (a poll), t > 0 now + t ms. The pulled Tensor
-//             is CpuExternal over the pool slot, its holder the Message, read-only.
-//   close_input  Session::close_input(kNoDeadline): cancels a parked push, keeps what is queued.
-//   stop      Session::stop(now + 2 s), once more on Timeout (RunLifecycle.cpp:94-95).
+//             is CpuExternal over the pool slot, its holder the Message, read-only. The Outputs of
+//             a fan-out lease the one slot each message has: no copy per Output.
+//   close_input  Session::close_input(kNoDeadline) of every input: cancels a parked push, keeps
+//             what is queued.
+//   stop      Session::stop(now + 2 s) of every input, once more on Timeout (RunLifecycle.cpp
+//             94-95).
 // The copy into the slot runs on the pushing thread, inside push: when push returns, the caller's
 // buffer is free (GStreamer retains the tensor and copies later on Core's input thread).
 //
@@ -116,11 +132,14 @@ std::string names_text(const std::vector<std::string>& names) {
   error_util::throw_session_error(error_codes::kInputShape, message);
 }
 
-// The runtime's stamp for what a push proposes: the stream interned, the author's frame_id,
-// source_time (any clock) and flags. emit writes seq and publish_time.
-df::Stamp runtime_stamp(const Stamp& proposal, pipeline_internal::StreamNames& streams) {
+// The runtime's stamp for what a push proposes: the stream interned (an empty name is the input's
+// default stream, `default_stream`), the author's frame_id, source_time (any clock) and flags. emit
+// writes seq and publish_time.
+df::Stamp runtime_stamp(const Stamp& proposal, pipeline_internal::StreamNames& streams,
+                        std::uint32_t default_stream) {
   df::Stamp out;
-  out.stream = df::StreamId{streams.intern(proposal.stream_name)};
+  out.stream = df::StreamId{proposal.stream_name.empty() ? default_stream
+                                                         : streams.intern(proposal.stream_name)};
   out.frame_id = proposal.frame_id >= 0 ? proposal.frame_id : df::kNoFrameId;
   if (proposal.source_time.valid()) {
     out.source_time = df::TimePoint{proposal.source_time.ns,
@@ -304,15 +323,114 @@ df::Extent extent_of(const std::vector<std::int64_t>& shape) {
   return extent;
 }
 
-// The running Session and what was bound with it.
+// Sample::orig_input_seq of the messages of one input in a Run of several inputs, by the slot each
+// message occupies (H0c). GStreamer's graph path, which every Run of several inputs takes there,
+// numbers the pushes of the whole Run in one counter and writes it to orig_input_seq, or keeps a
+// pushed orig_input_seq (or input_seq) without counting the push (RunPush.cpp:276-287); the
+// runtime's Stamp has no field for it and its seq is per Feed. A Run of one input has no table:
+// there orig_input_seq is input_seq (seq - 1), as before.
+// The pusher writes a message's entry while it holds the slot's loan, before the publish; a puller
+// reads it while it holds a lease on the message, so the slot cannot carry another message in
+// between, and the publish's release and the take's acquire order the write before the read. The
+// keys are atomics, so a lookup may run beside the insertion of another slot's key; a slot's key
+// is inserted once (the pool's slots are fixed), and the table holds twice the pool's slots.
+class SlotSeqTable {
+public:
+  explicit SlotSeqTable(std::uint64_t slots) {
+    unsigned bits = 4;
+    while ((std::uint64_t{1} << bits) < 2U * slots && bits < 40U) {
+      ++bits;
+    }
+    shift_ = 64U - bits;
+    mask_ = (std::size_t{1} << bits) - 1U;
+    cells_ = std::make_unique<Cell[]>(mask_ + 1U);
+  }
+
+  void set(const void* slot, std::int64_t seq) noexcept {
+    for (std::size_t i = index(slot);; i = (i + 1U) & mask_) {
+      const void* key = cells_[i].key.load(std::memory_order_relaxed);
+      if (key == nullptr &&
+          cells_[i].key.compare_exchange_strong(key, slot, std::memory_order_relaxed)) {
+        key = slot;
+      }
+      if (key == slot) {
+        cells_[i].value.store(seq, std::memory_order_relaxed);
+        return;
+      }
+    }
+  }
+
+  // -1 for a slot the table has never seen.
+  std::int64_t get(const void* slot) const noexcept {
+    for (std::size_t n = 0, i = index(slot); n <= mask_; ++n, i = (i + 1U) & mask_) {
+      const void* key = cells_[i].key.load(std::memory_order_relaxed);
+      if (key == slot) {
+        return cells_[i].value.load(std::memory_order_relaxed);
+      }
+      if (key == nullptr) {
+        return -1;
+      }
+    }
+    return -1;
+  }
+
+private:
+  struct Cell {
+    std::atomic<const void*> key{nullptr};
+    std::atomic<std::int64_t> value{-1};
+  };
+  std::size_t index(const void* slot) const noexcept {
+    // Fibonacci hashing: the high bits of the product.
+    return static_cast<std::size_t>(
+        (reinterpret_cast<std::uintptr_t>(slot) * std::uint64_t{0x9E3779B97F4A7C15}) >> shift_);
+  }
+  std::unique_ptr<Cell[]> cells_;
+  std::size_t mask_ = 0;
+  unsigned shift_ = 60;
+};
+
+// The running Session of one input and what was bound with it: one Feed, one Fetch per Output the
+// input feeds (link order: DataflowInputConfig::outputs).
 struct Bound {
-  Bound(DataflowInputBinding b, df::Session s, std::uint32_t feed_op, std::uint32_t fetch_op)
-      : binding(std::move(b)), session(std::move(s)), feed(df::OperatorRef<df::Feed>{feed_op}),
-        fetch(df::OperatorRef<df::Fetch>{fetch_op}) {}
+  Bound(DataflowInputBinding b, df::Session s, std::uint32_t feed_op,
+        const std::vector<std::uint32_t>& fetch_ops)
+      : binding(std::move(b)), session(std::move(s)), feed(df::OperatorRef<df::Feed>{feed_op}) {
+    fetches.reserve(fetch_ops.size());
+    for (const std::uint32_t op : fetch_ops) {
+      fetches.emplace_back(df::OperatorRef<df::Fetch>{op});
+    }
+  }
   DataflowInputBinding binding;
   df::Session session;
   df::FeedRef feed;
-  df::FetchRef fetch;
+  std::vector<df::FetchRef> fetches;
+  std::unique_ptr<SlotSeqTable> run_seqs; ///< a Run of several inputs only: orig_input_seq
+};
+
+// One public Input of the Run (H0c): its Session, bound by the input's declaration, its seed or its
+// first push, and that input's own state. The binding and the validated geometry are written once
+// under the Run's mutex and read lock-free (release/acquire).
+struct Component {
+  std::size_t index = 0;                       ///< DataflowRunConfig::inputs
+  const DataflowInputConfig* config = nullptr; ///< DataflowRunConfig::inputs[index]
+  std::uint32_t stream = 0;                    ///< its default stream's id (StreamNames)
+  /// A blocking push publishes with the policy push, which waits only on Block links, instead of
+  /// the waiting push: some Output it feeds has OutputOptions::drop (DataflowGraphCompiler.cpp,
+  /// derive_config, rules out the mixes the runtime cannot serve).
+  bool lossy_block = false;
+  bool fan_out = false; ///< it feeds several Outputs (several links)
+
+  std::unique_ptr<Bound> bound_storage;
+  std::atomic<Bound*> bound{nullptr};
+  std::atomic<bool> input_closed{false};
+  std::unique_ptr<LeafGeometry> validated_leaf_storage;
+  std::atomic<const LeafGeometry*> validated_leaf{nullptr};
+};
+
+// Where a public Output is read: its Input's component and its link there.
+struct OutputSlot {
+  std::size_t component = 0;
+  std::size_t link = 0;
 };
 
 // What the tensors of one pulled message keep alive, in one allocation: the message (the lease on
@@ -329,37 +447,68 @@ struct SlotLoan {
   df::WriteLoan loan;
 };
 
+constexpr std::size_t kNoEndpoint = static_cast<std::size_t>(-1);
+
 class DataflowRun final : public DataflowRunState {
 public:
   DataflowRun(RunCore& core, DataflowRunConfig config)
-      : core_(core), config_(std::move(config)), streams_(config_.default_stream) {
+      : core_(core), config_(std::move(config)), streams_(config_.inputs.front().default_stream) {
     stream_options_.max_input_bytes = config_.run.advanced.max_input_bytes;
   }
 
-  // The Session is destroyed with the Run state, after RunCore::close ran stop (A2: a destructor
+  // Each Session is destroyed with the Run state, after RunCore::close ran stop (A2: a destructor
   // after a stop that timed out only polls). Messages still held by pulled tensors, and slots
   // still lent by alloc(), keep their pool alive on the runtime's retirement list.
   ~DataflowRun() override = default;
 
-  // A seed, or a declaration that gives the spec, binds now; anything else at the first push.
-  void bind_at_build(const TensorList& seed) {
-    std::string why;
-    std::optional<DataflowInputBinding> binding =
-        seed.size() > 1U
-            ? bind_dataflow_record(config_.input, seed, &why)
-            : bind_dataflow_input(config_.input, seed.empty() ? nullptr : &seed.front(), &why);
-    if (!why.empty()) {
-      throw_input_shape("Graph::build: " + why + " (Dataflow backend)");
+  // One component per public Input, and where each Output is read (outside the constructor, whose
+  // body then cannot throw).
+  void add_components() {
+    for (std::size_t i = 0; i < config_.inputs.size(); ++i) {
+      auto c = std::make_unique<Component>();
+      c->index = i;
+      c->config = &config_.inputs[i];
+      c->stream = streams_.intern(c->config->default_stream);
+      c->fan_out = c->config->outputs.size() > 1U;
+      for (std::size_t k = 0; k < c->config->outputs.size(); ++k) {
+        const std::size_t o = c->config->outputs[k];
+        c->lossy_block = c->lossy_block || config_.outputs[o].terminal_drop;
+        if (slots_.size() <= o) {
+          slots_.resize(o + 1U);
+        }
+        slots_[o] = OutputSlot{i, k};
+      }
+      components_.push_back(std::move(c));
     }
-    if (binding) {
-      std::lock_guard<std::mutex> lock(mu_);
-      bind_locked(std::move(*binding));
+    // The unnamed push and pull reach the only input and the only output; with several there is
+    // no default, as on GStreamer's graph path (plan.default_input, plan.default_output).
+    default_input_ = components_.size() == 1U ? components_.front().get() : nullptr;
+    default_output_ = config_.outputs.size() == 1U ? 0U : kNoEndpoint;
+  }
+
+  // A seed (one input only: the build checked it), or a declaration that gives the spec, binds now;
+  // every other input binds at its own first push.
+  void bind_at_build(const TensorList& seed) {
+    for (const auto& c : components_) {
+      std::string why;
+      const InputOptions& declared = c->config->input;
+      std::optional<DataflowInputBinding> binding =
+          seed.size() > 1U
+              ? bind_dataflow_record(declared, seed, &why)
+              : bind_dataflow_input(declared, seed.empty() ? nullptr : &seed.front(), &why);
+      if (!why.empty()) {
+        throw_input_shape("Graph::build: " + why + " (Dataflow backend)");
+      }
+      if (binding) {
+        std::lock_guard<std::mutex> lock(mu_);
+        bind_locked(*c, std::move(*binding));
+      }
     }
   }
 
   bool push(std::optional<std::string_view> input, const TensorList& inputs, bool block,
             const char* where) override {
-    check_input_name(input, where);
+    Component& c = input_for_push(input, where);
     if (inputs.empty()) {
       throw_input_shape(std::string(where) + ": an empty tensor list");
     }
@@ -367,44 +516,44 @@ public:
     // nothing (the default stream, no frame_id), as develop's TensorList push.
     const Stamp& proposal = inputs.front().stamp();
     if (std::optional<TensorList> fields = pipeline_internal::list_record_fields(inputs, where)) {
-      return push_item(*fields, proposal, block, where);
+      return push_item(c, *fields, proposal, block, where);
     }
-    return push_item(inputs, proposal, block, where, /*commit_allocation=*/block);
+    return push_item(c, inputs, proposal, block, where, /*commit_allocation=*/block);
   }
 
   bool push(std::optional<std::string_view> input, const Sample& msgs, bool block,
             const char* where) override {
-    check_input_name(input, where);
+    Component& c = input_for_push(input, where);
     enforce_transferable(msgs, where);
     if (msgs.kind == SampleKind::Bundle) {
       // Core pushes a Bundle as one item per field, stopping at the first refusal
       // (RunPush.cpp:1082-1086).
       for (const Sample& field : msgs.fields) {
-        if (!push_sample_item(field, block, where)) {
+        if (!push_sample_item(c, field, block, where)) {
           return false;
         }
       }
       return true;
     }
-    return push_sample_item(msgs, block, where);
+    return push_sample_item(c, msgs, block, where);
   }
 
   bool push(std::optional<std::string_view> input, const std::vector<cv::Mat>& inputs, bool block,
             const char* where) override {
 #if defined(SIMA_WITH_OPENCV)
-    check_input_name(input, where);
+    Component& c = input_for_push(input, where);
     if (inputs.size() != 1U) {
       throw std::runtime_error(error_util::decorate_error(
           error_codes::kRuntimePull,
           std::string(where) + ": raw-image ingress supports exactly one cv::Mat per inference "
                                "item (the Dataflow backend carries one tensor per push)"));
     }
-    validate_public_input(inputs.front(), config_.input, stream_options_, where);
+    validate_public_input(inputs.front(), c.config->input, stream_options_, where);
     // A CPU view of the Mat, whatever the Input's memory policy: the push copies it into the slot.
-    InputOptions view_options = config_.input;
+    InputOptions view_options = c.config->input;
     view_options.memory_policy = InputMemoryPolicy::SystemMemory;
     const Tensor tensor = tensor_from_cv_mat(inputs.front(), view_options, where);
-    return push_item(std::span<const Tensor>(&tensor, 1), Stamp{}, block, where);
+    return push_item(c, std::span<const Tensor>(&tensor, 1), Stamp{}, block, where);
 #else
     (void)input;
     (void)inputs;
@@ -429,11 +578,16 @@ public:
     if (status != PullStatus::Ok) {
       return status;
     }
+    // A Run of several inputs: the Run's push counter (SlotSeqTable), read under the lease.
+    const std::int64_t orig = bound->run_seqs ? bound->run_seqs->get(message.bytes().data()) : -1;
     // The caller's list buffer is reused: Run::pull(int, Sample&, PullError*) with one Sample
     // allocates no list per pull.
     TensorList tensors = std::move(out.tensors);
     tensors.clear();
     out = make_sample(bound->binding, std::move(message), std::move(tensors));
+    if (orig >= 0) {
+      out.orig_input_seq = orig;
+    }
     count_pulled();
     return PullStatus::Ok;
   }
@@ -453,16 +607,16 @@ public:
 
   Tensor alloc(std::string_view input, const char* where) override {
     const std::string at = std::string(where) + "(\"" + std::string(input) + "\")";
-    if (std::find(config_.input_names.begin(), config_.input_names.end(), input) ==
-        config_.input_names.end()) {
+    Component* c = find_input(input);
+    if (!c) {
       throw std::runtime_error(error_util::decorate_error(
           error_codes::kRuntimePull,
           at + ": unknown input. Available inputs: " + names_text(config_.input_names)));
     }
-    const std::vector<std::int64_t> shape = declared_alloc_shape(config_.input, at);
-    Bound* bound = bound_.load(std::memory_order_acquire);
+    const std::vector<std::int64_t> shape = declared_alloc_shape(c->config->input, at);
+    Bound* bound = c->bound.load(std::memory_order_acquire);
     if (!bound || stopped_.load(std::memory_order_acquire) ||
-        input_closed_.load(std::memory_order_acquire)) {
+        c->input_closed.load(std::memory_order_acquire)) {
       // A declared shape binds at build, so no binding means a closed input or a stopped Run.
       throw std::runtime_error(error_util::decorate_error(
           error_codes::kRuntimePull, at + ": the input is closed or the Run is stopped"));
@@ -486,15 +640,21 @@ public:
     return make_allocated_tensor(allocation, bound->binding.dtype, shape);
   }
 
+  // Every input of the Run (Run::close_input names none): each one's queued messages stay pullable,
+  // then its Outputs are Closed.
   void close_input() override {
     {
       std::lock_guard<std::mutex> lock(mu_);
-      input_closed_.store(true, std::memory_order_release);
+      for (const auto& c : components_) {
+        c->input_closed.store(true, std::memory_order_release);
+      }
     }
     cv_.notify_all();
-    if (Bound* bound = bound_.load(std::memory_order_acquire)) {
-      // Never waits behind a parked push: that push returns FR3 (A1, A2). Queued messages stay.
-      (void)bound->session.close_input(bound->feed, df::kNoDeadline);
+    for (const auto& c : components_) {
+      if (Bound* bound = c->bound.load(std::memory_order_acquire)) {
+        // Never waits behind a parked push: that push returns FR3 (A1, A2). Queued messages stay.
+        (void)bound->session.close_input(bound->feed, df::kNoDeadline);
+      }
     }
   }
 
@@ -507,27 +667,49 @@ public:
       stopped_.store(true, std::memory_order_release);
     }
     cv_.notify_all();
-    Bound* bound = bound_.load(std::memory_order_acquire);
-    if (!bound) {
-      return;
-    }
-    // Core's stream-stop budget, waited twice (RunLifecycle.cpp:94-95, 148-182).
+    trace_report();
+    // Core's stream-stop budget, waited twice (RunLifecycle.cpp:94-95, 148-182), shared by the
+    // Sessions: each stop wakes what is parked in its own Session, so they run one after the other
+    // against one deadline, and the ones that timed out once more against a second one.
     const auto budget = std::chrono::milliseconds(
         std::max(1, pipeline_internal::env_int("SIMA_PIPELINE_STREAM_STOP_TIMEOUT_MS", 2000)));
-    df::Status status = bound->session.stop(std::chrono::steady_clock::now() + budget);
-    if (status && status->code == df::ErrorCode::Timeout) {
-      status = bound->session.stop(std::chrono::steady_clock::now() + budget);
+    std::vector<Bound*> pending;
+    for (const auto& c : components_) {
+      if (Bound* bound = c->bound.load(std::memory_order_acquire)) {
+        pending.push_back(bound);
+      }
     }
-    if (status) {
-      std::fprintf(stderr,
-                   "[WARN] Run::stop: %s; the Dataflow session keeps its resources until the "
-                   "calls inside it leave\n",
-                   status->message);
+    for (int round = 0; round < 2 && !pending.empty(); ++round) {
+      const auto deadline = std::chrono::steady_clock::now() + budget;
+      std::vector<Bound*> timed_out;
+      for (Bound* bound : pending) {
+        const df::Status status = bound->session.stop(deadline);
+        if (!status) {
+          continue;
+        }
+        if (status->code == df::ErrorCode::Timeout && round == 0) {
+          timed_out.push_back(bound);
+          continue;
+        }
+        std::fprintf(stderr,
+                     "[WARN] Run::stop: %s; the Dataflow session keeps its resources until the "
+                     "calls inside it leave\n",
+                     status->message);
+      }
+      pending = std::move(timed_out);
     }
   }
 
   bool running() const override {
     return !stopped_.load(std::memory_order_acquire);
+  }
+
+  bool can_push() const override {
+    return default_input_ != nullptr;
+  }
+
+  bool can_pull() const override {
+    return default_output_ != kNoEndpoint;
   }
 
   std::vector<std::string> input_names() const override {
@@ -548,37 +730,59 @@ public:
     return last_error_;
   }
 
+  // Every input's Feed and every link, summed: the Run's input statistics.
   InputStreamStats input_stats() const override {
     InputStreamStats out;
     out.pull_count = core_.outputs_pulled.load(std::memory_order_relaxed);
     out.poll_count = polls_.load(std::memory_order_relaxed);
-    if (Bound* bound = bound_.load(std::memory_order_acquire)) {
-      const df::SessionReport report = bound->session.report();
-      for (const df::FeedReport& feed : report.feeds) {
-        out.push_count += feed.pushes;
-        out.push_failures += feed.push_failures + feed.backpressure;
+    for (const auto& c : components_) {
+      if (Bound* bound = c->bound.load(std::memory_order_acquire)) {
+        const df::SessionReport report = bound->session.report();
+        for (const df::FeedReport& feed : report.feeds) {
+          out.push_count += feed.pushes;
+          out.push_failures += feed.push_failures + feed.backpressure;
+        }
+        out.dropped_frames += report.dropped_frames;
       }
-      out.dropped_frames = report.dropped_frames;
     }
     return out;
   }
 
 private:
-  void check_input_name(std::optional<std::string_view> input, const char* where) const {
+  Component* find_input(std::string_view name) const {
+    for (const auto& c : components_) {
+      const std::vector<std::string>& names = c->config->names;
+      if (std::find(names.begin(), names.end(), name) != names.end()) {
+        return c.get();
+      }
+    }
+    return nullptr;
+  }
+
+  // The input a push names, or the Run's only one for the unnamed push: GStreamer's checks and
+  // texts (named_input_endpoint_or_throw, RunPush.cpp:216; RunCore::push_samples).
+  Component& input_for_push(std::optional<std::string_view> input, const char* where) const {
     if (!input) {
-      return;
+      if (default_input_) {
+        return *default_input_;
+      }
+      throw std::runtime_error(error_util::decorate_error(
+          error_codes::kRuntimePull,
+          "Run::push: graph has no unambiguous default input; use push(name, ...). Available "
+          "inputs: " +
+              names_text(config_.input_names)));
     }
     if (input->empty()) {
       throw std::runtime_error(error_util::decorate_error(
           error_codes::kRuntimePull, std::string(where) + ": input name is empty"));
     }
-    if (std::find(config_.input_names.begin(), config_.input_names.end(), *input) ==
-        config_.input_names.end()) {
-      throw std::runtime_error(error_util::decorate_error(
-          error_codes::kRuntimePull,
-          "Run::push(\"" + std::string(*input) +
-              "\"): unknown input. Available inputs: " + names_text(config_.input_names)));
+    if (Component* c = find_input(*input)) {
+      return *c;
     }
+    throw std::runtime_error(error_util::decorate_error(
+        error_codes::kRuntimePull,
+        "Run::push(\"" + std::string(*input) +
+            "\"): unknown input. Available inputs: " + names_text(config_.input_names)));
   }
 
   // Core's cross-Run rule for frames still owned by another graph's producer (RunPush.cpp:39-50):
@@ -597,26 +801,35 @@ private:
   }
 
   // One item of a Sample push: its tensors (one, or several as a record) and its identity.
-  bool push_sample_item(const Sample& item, bool block, const char* where) {
+  bool push_sample_item(Component& c, const Sample& item, bool block, const char* where) {
     const Stamp proposal = pipeline_internal::stamp_from_sample(item);
+    // What GStreamer's graph ingress keeps as orig_input_seq without counting the push: a pushed
+    // orig_input_seq, else a pushed input_seq (RunPush.cpp:276-287). Read in a Run of several
+    // inputs only (SlotSeqTable).
+    const std::int64_t pushed_seq = item.orig_input_seq >= 0 ? item.orig_input_seq
+                                    : item.input_seq >= 0    ? item.input_seq
+                                                             : -1;
     if (sample_has_tensor_list(item)) {
-      return push_item(item.tensors, proposal, block, where);
+      return push_item(c, item.tensors, proposal, block, where, false, pushed_seq);
     }
     if (item.tensor.has_value()) {
-      return push_item(std::span<const Tensor>(&*item.tensor, 1), proposal, block, where);
+      return push_item(c, std::span<const Tensor>(&*item.tensor, 1), proposal, block, where, false,
+                       pushed_seq);
     }
     throw_input_shape(std::string(where) + ": the Sample carries no tensor");
   }
 
-  // One item: Core's checks, the binding (the first item binds it), then the slot. With
-  // `commit_allocation` (the blocking TensorList push only), a Tensor from this Run's alloc() alone
-  // in the list is published as its slot; every other verb copies it like any CPU tensor, as the
-  // GStreamer backend does.
-  bool push_item(std::span<const Tensor> tensors, const Stamp& proposal, bool block,
-                 const char* where, bool commit_allocation = false) {
+  // One item into input `c`: Core's checks, the binding (the input's first item binds it), then
+  // the slot. With `commit_allocation` (the blocking TensorList push only), a Tensor from this
+  // Run's alloc() alone in the list is published as its slot; every other verb copies it like any
+  // CPU tensor, as the GStreamer backend does. `pushed_seq`: the item's own orig_input_seq (a
+  // Sample push), -1 for none; read in a Run of several inputs only.
+  bool push_item(Component& c, std::span<const Tensor> tensors, const Stamp& proposal, bool block,
+                 const char* where, bool commit_allocation = false, std::int64_t pushed_seq = -1) {
+    const InputOptions& declared = c.config->input;
     // Core's own push-time checks and texts first (RunPush.cpp:655, InputStreamUtil.cpp:2146-2190):
     // the declaration describes the item's representative (first) tensor, as on GStreamer.
-    if (tensors.size() > 1U && !config_.input.shape.empty()) {
+    if (tensors.size() > 1U && !declared.shape.empty()) {
       throw_input_shape(std::string(where) + ": an item of " + std::to_string(tensors.size()) +
                         " tensors where one tensor of a declared shape is expected");
     }
@@ -629,76 +842,95 @@ private:
     // A leaf with the geometry of the first leaf that passed every check below passes them again
     // (LeafGeometry): they are skipped for it.
     const LeafGeometry* known =
-        tensors.size() == 1U ? validated_leaf_.load(std::memory_order_acquire) : nullptr;
+        tensors.size() == 1U ? c.validated_leaf.load(std::memory_order_acquire) : nullptr;
     const bool validated = known && known->matches(tensors.front());
     if (!validated) {
-      validate_public_input(tensors.front(), config_.input, stream_options_, where);
+      validate_public_input(tensors.front(), declared, stream_options_, where);
       for (const Tensor& tensor : tensors) {
         if (tensor.storage && tensor.storage->kind == StorageKind::GstSample) {
           enforce_transferable(sample_from_tensors(TensorList{tensor}), where);
         }
       }
     }
-    Bound* bound = bound_.load(std::memory_order_acquire);
+    Bound* bound = c.bound.load(std::memory_order_acquire);
     if (!bound) {
       if (stopped_.load(std::memory_order_acquire) ||
-          input_closed_.load(std::memory_order_acquire)) {
+          c.input_closed.load(std::memory_order_acquire)) {
         return false;
       }
-      bound = bind_first(tensors, where);
+      bound = bind_first(c, tensors, where);
       if (!bound) {
         return false;
       }
     }
-    const df::Stamp stamp = runtime_stamp(proposal, streams_);
+    const df::Stamp stamp = runtime_stamp(proposal, streams_, c.stream);
     if (tensors.size() > 1U || bound->binding.is_record()) {
       if (const std::string why = dataflow_record_mismatch(bound->binding, tensors); !why.empty()) {
         throw_input_shape(std::string(where) + ": " + why);
       }
-      return push_record(*bound, tensors, stamp, block, where);
+      return push_record(c, *bound, tensors, stamp, run_seq(*bound, pushed_seq), block, where);
     }
     const Tensor& tensor = tensors.front();
     if (!validated) {
       if (const std::string why = dataflow_binding_mismatch(bound->binding, tensor); !why.empty()) {
         throw_input_shape(std::string(where) + ": " + why);
       }
-      remember_validated_leaf(tensor);
+      remember_validated_leaf(c, tensor);
     }
+    const std::int64_t seq = run_seq(*bound, pushed_seq);
     if (allocation) {
-      return push_allocated(*bound, tensor, *allocation, stamp, block, where);
+      return push_allocated(c, *bound, tensor, *allocation, stamp, seq, block, where);
     }
     df::Result<df::WriteLoan> allocated =
         bound->session.alloc(bound->feed, block ? df::Acquire::Block : df::Acquire::Fail);
     if (const df::Error* error = df::failure(allocated)) {
-      return alloc_refused(*error, block, where);
+      return alloc_refused(c, *error, block, where);
     }
     df::WriteLoan loan = std::get<df::WriteLoan>(std::move(allocated));
+    if (bound->run_seqs) {
+      bound->run_seqs->set(loan.bytes().data(), seq);
+    }
     const df::Extent extent = copy_into(bound->binding, tensor, loan.bytes(), where);
-    return settle(publish(*bound, std::move(loan), stamp, extent, block), block, where);
+    return settle(c, publish(c, *bound, std::move(loan), stamp, extent, block), block, where);
   }
 
-  // The first leaf that passed validate_public_input and the binding check, kept once (later
-  // pushes read it without a lock).
-  void remember_validated_leaf(const Tensor& tensor) {
-    if (validated_leaf_.load(std::memory_order_acquire) || !LeafGeometry::keepable(tensor)) {
+  // The first leaf of input `c` that passed validate_public_input and the binding check, kept once
+  // (later pushes read it without a lock).
+  void remember_validated_leaf(Component& c, const Tensor& tensor) {
+    if (c.validated_leaf.load(std::memory_order_acquire) || !LeafGeometry::keepable(tensor)) {
       return;
     }
     std::lock_guard<std::mutex> lock(mu_);
-    if (!validated_leaf_storage_) {
-      validated_leaf_storage_ = std::make_unique<LeafGeometry>(LeafGeometry::of(tensor));
-      validated_leaf_.store(validated_leaf_storage_.get(), std::memory_order_release);
+    if (!c.validated_leaf_storage) {
+      c.validated_leaf_storage = std::make_unique<LeafGeometry>(LeafGeometry::of(tensor));
+      c.validated_leaf.store(c.validated_leaf_storage.get(), std::memory_order_release);
     }
   }
 
+  // The orig_input_seq of the item being pushed into a Run of several inputs: the pushed one, or
+  // the next value of the Run's counter (one relaxed increment; the counter is shared by the
+  // inputs). -1 in a Run of one input, which counts nothing here.
+  std::int64_t run_seq(const Bound& bound, std::int64_t pushed_seq) noexcept {
+    if (!bound.run_seqs) {
+      return -1;
+    }
+    return pushed_seq >= 0
+               ? pushed_seq
+               : static_cast<std::int64_t>(run_seq_.fetch_add(1, std::memory_order_relaxed));
+  }
+
   // A record: every field copied at its offset in one slot, one Extent per field.
-  bool push_record(Bound& bound, std::span<const Tensor> fields, const df::Stamp& stamp, bool block,
-                   const char* where) {
+  bool push_record(Component& c, Bound& bound, std::span<const Tensor> fields,
+                   const df::Stamp& stamp, std::int64_t seq, bool block, const char* where) {
     df::Result<df::WriteLoan> allocated =
         bound.session.alloc(bound.feed, block ? df::Acquire::Block : df::Acquire::Fail);
     if (const df::Error* error = df::failure(allocated)) {
-      return alloc_refused(*error, block, where);
+      return alloc_refused(c, *error, block, where);
     }
     df::WriteLoan loan = std::get<df::WriteLoan>(std::move(allocated));
+    if (bound.run_seqs) {
+      bound.run_seqs->set(loan.bytes().data(), seq);
+    }
     const std::span<std::byte> slot = loan.bytes();
     auto* dst = reinterpret_cast<std::uint8_t*>(slot.data());
     std::array<df::Extent, df::kMaxFields> extents{};
@@ -714,18 +946,18 @@ private:
     const std::span<const df::Extent> extent_span(extents.data(), fields.size());
     df::Result<df::PublishResult> pushed =
         !block ? bound.session.push(bound.feed, std::move(loan), stamp, extent_span, df::Deadline{})
-        : config_.terminal_drop
+        : c.lossy_block
             ? bound.session.push(bound.feed, std::move(loan), stamp, extent_span, df::kNoDeadline)
             : bound.session.push_waiting(bound.feed, std::move(loan), stamp, extent_span,
                                          df::kNoDeadline);
-    return settle(pushed, block, where);
+    return settle(c, pushed, block, where);
   }
 
   // A Tensor from this Run's alloc(): its slot is published as it is, without a copy. The loan
   // goes back to the allocation when the Session refuses it with the loan intact (SR1, FR2, FR3,
   // FR5: stopped, no room, input closed), so the application may push it again or drop it.
-  bool push_allocated(Bound& bound, const Tensor& tensor, RunAllocation& allocation,
-                      const df::Stamp& stamp, bool block, const char* where) {
+  bool push_allocated(Component& c, Bound& bound, const Tensor& tensor, RunAllocation& allocation,
+                      const df::Stamp& stamp, std::int64_t seq, bool block, const char* where) {
     begin_allocated_push(allocation, where);
     auto& box = *static_cast<SlotLoan*>(allocation.backing.get());
     df::WriteLoan loan = std::move(box.loan);
@@ -742,87 +974,107 @@ private:
                           ": a Tensor from Run::alloc must stay dense, contiguous and at byte "
                           "offset 0 to be pushed");
       }
-      pushed = publish(bound, std::move(loan), stamp, extent_of(tensor.shape), block);
+      if (bound.run_seqs) {
+        bound.run_seqs->set(loan.bytes().data(), seq);
+      }
+      pushed = publish(c, bound, std::move(loan), stamp, extent_of(tensor.shape), block);
     } catch (...) {
       settle_allocation();
       throw;
     }
     settle_allocation();
-    return settle(pushed, block, where);
+    return settle(c, pushed, block, where);
   }
 
-  df::Result<df::PublishResult> publish(Bound& bound, df::WriteLoan&& loan, const df::Stamp& stamp,
-                                        const df::Extent& extent, bool block) {
+  // try_push: the policy push at a passed deadline. push: the waiting push, which waits for room on
+  // every link and never drops; or, when an Output of the input has OutputOptions::drop, the
+  // policy push without a deadline, which waits on the Block links only and evicts on the
+  // DropOldest ones (appsink drop=true).
+  df::Result<df::PublishResult> publish(const Component& c, Bound& bound, df::WriteLoan&& loan,
+                                        const df::Stamp& stamp, const df::Extent& extent,
+                                        bool block) {
     if (!block) {
       return bound.session.push(bound.feed, std::move(loan), stamp, extent, df::Deadline{});
     }
-    if (config_.terminal_drop) {
+    if (c.lossy_block) {
       return bound.session.push(bound.feed, std::move(loan), stamp, extent, df::kNoDeadline);
     }
     return bound.session.push_waiting(bound.feed, std::move(loan), stamp, extent, df::kNoDeadline);
   }
 
-  bool settle(const df::Result<df::PublishResult>& pushed, bool block, const char* where) {
+  bool settle(const Component& c, const df::Result<df::PublishResult>& pushed, bool block,
+              const char* where) {
     if (const df::Error* error = df::failure(pushed)) {
-      return refused(*error, block, where);
+      return refused(c, *error, block, where);
     }
-    return published(std::get<df::PublishResult>(pushed));
+    return published(c, std::get<df::PublishResult>(pushed));
   }
 
-  // The first push binds the input: its tensors' spec, under the declaration (WORKER.md 18.1).
-  Bound* bind_first(std::span<const Tensor> tensors, const char* where) {
+  // The first push into input `c` binds it: its tensors' spec, under the declaration (WORKER.md
+  // 18.1). Every other input binds by its own first push.
+  Bound* bind_first(Component& c, std::span<const Tensor> tensors, const char* where) {
     std::lock_guard<std::mutex> lock(mu_);
-    if (Bound* bound = bound_.load(std::memory_order_acquire)) {
+    if (Bound* bound = c.bound.load(std::memory_order_acquire)) {
       return bound;
     }
-    if (stopped_.load(std::memory_order_relaxed) || input_closed_.load(std::memory_order_relaxed)) {
+    if (stopped_.load(std::memory_order_relaxed) ||
+        c.input_closed.load(std::memory_order_relaxed)) {
       return nullptr;
     }
     std::string why;
     std::optional<DataflowInputBinding> binding =
-        tensors.size() > 1U ? bind_dataflow_record(config_.input, tensors, &why)
-                            : bind_dataflow_input(config_.input, &tensors.front(), &why);
+        tensors.size() > 1U ? bind_dataflow_record(c.config->input, tensors, &why)
+                            : bind_dataflow_input(c.config->input, &tensors.front(), &why);
     if (!binding) {
       throw_input_shape(std::string(where) + ": " +
                         (why.empty() ? std::string("the input cannot be bound") : why) +
                         " (Dataflow backend)");
     }
-    return bind_locked(std::move(*binding));
+    return bind_locked(c, std::move(*binding));
   }
 
-  Bound* bind_locked(DataflowInputBinding binding) {
-    DataflowNet net = compile_dataflow_net(config_, binding, streams_.default_id());
+  Bound* bind_locked(Component& c, DataflowInputBinding binding) {
+    DataflowNet net = compile_dataflow_net(config_, c.index, binding, c.stream);
+    std::uint64_t slots = 0; // the Feed's pool: what a SlotSeqTable must hold
+    for (const df::PlanPort& port : net.plan.report().ports) {
+      if (port.op == net.feed) {
+        slots = port.capacity;
+      }
+    }
     df::Result<df::Session> session = std::move(net.plan).instantiate(df::SessionOptions{});
     if (const df::Error* error = df::failure(session)) {
       pipeline_internal::throw_dataflow_error(*error, "Graph::build");
     }
     auto bound = std::make_unique<Bound>(
-        std::move(binding), std::get<df::Session>(std::move(session)), net.feed, net.fetch);
+        std::move(binding), std::get<df::Session>(std::move(session)), net.feed, net.fetches);
+    if (config_.inputs.size() > 1U) {
+      bound->run_seqs = std::make_unique<SlotSeqTable>(slots);
+    }
     if (const df::Status status = bound->session.start()) {
       pipeline_internal::throw_dataflow_error(*status, "Graph::build");
     }
-    bound_storage_ = std::move(bound);
-    bound_.store(bound_storage_.get(), std::memory_order_release);
+    c.bound_storage = std::move(bound);
+    c.bound.store(c.bound_storage.get(), std::memory_order_release);
     cv_.notify_all();
-    return bound_storage_.get();
+    return c.bound_storage.get();
   }
 
-  Bound* wait_bound(df::Deadline deadline) {
-    if (Bound* bound = bound_.load(std::memory_order_acquire)) {
+  Bound* wait_bound(Component& c, df::Deadline deadline) {
+    if (Bound* bound = c.bound.load(std::memory_order_acquire)) {
       return bound;
     }
     std::unique_lock<std::mutex> lock(mu_);
     const auto ready = [&] {
-      return bound_.load(std::memory_order_acquire) != nullptr ||
+      return c.bound.load(std::memory_order_acquire) != nullptr ||
              stopped_.load(std::memory_order_relaxed) ||
-             input_closed_.load(std::memory_order_relaxed);
+             c.input_closed.load(std::memory_order_relaxed);
     };
     if (deadline == df::kNoDeadline) {
       cv_.wait(lock, ready);
     } else {
       cv_.wait_until(lock, deadline, ready);
     }
-    return bound_.load(std::memory_order_acquire);
+    return c.bound.load(std::memory_order_acquire);
   }
 
   // error_util::set_pull_error(err, "", ""), without building its arguments: no code, no message,
@@ -846,6 +1098,37 @@ private:
     return PullStatus::Timeout;
   }
 
+  // The output a pull names, or the Run's only one for the unnamed pull; kNoEndpoint with the
+  // error set (GStreamer's texts: RunCore::pull, RunCore::pull_named_output).
+  std::size_t output_for_pull(std::optional<std::string_view> output, PullError* err) const {
+    if (!output) {
+      if (default_output_ == kNoEndpoint) {
+        error_util::set_pull_error(
+            err, error_codes::kRuntimePull,
+            "Run::pull: graph has no unambiguous default output; use pull(name, ...). Available "
+            "outputs: " +
+                names_text(config_.output_names));
+      }
+      return default_output_;
+    }
+    if (output->empty()) {
+      error_util::set_pull_error(err, error_codes::kRuntimePull,
+                                 "Run::pull(name): output name is empty");
+      return kNoEndpoint;
+    }
+    for (std::size_t o = 0; o < config_.outputs.size(); ++o) {
+      const std::vector<std::string>& names = config_.outputs[o].names;
+      if (std::find(names.begin(), names.end(), *output) != names.end()) {
+        return o;
+      }
+    }
+    error_util::set_pull_error(
+        err, error_codes::kRuntimePull,
+        "Run::pull(\"" + std::string(*output) +
+            "\"): unknown output. Available outputs: " + names_text(config_.output_names));
+    return kNoEndpoint;
+  }
+
   // The next message of the output, or why there is none (both pull verbs). The call's name for
   // messages is built only when a message needs it.
   PullStatus take(std::optional<std::string_view> output, int timeout_ms, PullError* err,
@@ -854,34 +1137,27 @@ private:
     const auto where = [&output] {
       return output ? "Run::pull(\"" + std::string(*output) + "\")" : std::string("Run::pull");
     };
-    if (output) {
-      if (output->empty()) {
-        error_util::set_pull_error(err, error_codes::kRuntimePull,
-                                   "Run::pull(name): output name is empty");
-        return PullStatus::Error;
-      }
-      if (std::find(config_.output_names.begin(), config_.output_names.end(), *output) ==
-          config_.output_names.end()) {
-        error_util::set_pull_error(
-            err, error_codes::kRuntimePull,
-            where() + ": unknown output. Available outputs: " + names_text(config_.output_names));
-        return PullStatus::Error;
-      }
+    const std::size_t o = output_for_pull(output, err);
+    if (o == kNoEndpoint) {
+      return PullStatus::Error;
     }
+    const OutputSlot slot = slots_[o];
+    Component& c = *components_[slot.component];
     polls_.fetch_add(1, std::memory_order_relaxed);
     const df::Deadline deadline = deadline_after(timeout_ms);
-    bound = wait_bound(deadline);
+    bound = wait_bound(c, deadline);
     if (!bound) {
-      // Nothing was pushed yet: a pull waits for the first push in Core (WORKER.md 18.1).
+      // Nothing was pushed into its input yet: a pull waits for that first push in Core
+      // (WORKER.md 18.1).
       if (stopped_.load(std::memory_order_acquire) ||
-          input_closed_.load(std::memory_order_acquire)) {
+          c.input_closed.load(std::memory_order_acquire)) {
         error_util::set_pull_error(err, error_codes::kRuntimePull, where() + ": stream closed");
         return PullStatus::Closed;
       }
       return timed_out(timeout_ms, where(), err);
     }
 
-    df::Result<df::Message> pulled = bound->session.pull(bound->fetch, deadline);
+    df::Result<df::Message> pulled = bound->session.pull(bound->fetches[slot.link], deadline);
     if (const df::Error* error = df::failure(pulled)) {
       const pipeline_internal::DataflowErrorMapping mapping =
           pipeline_internal::map_dataflow_error(*error);
@@ -890,9 +1166,10 @@ private:
       }
       if (mapping.status == PullStatus::Closed) {
         error_util::set_pull_error(err, error_codes::kRuntimePull, where() + ": stream closed");
-        // Closed and drained after close_input: the Run stops itself, as the GStreamer Run does
-        // at its end of stream (RunPull.cpp:798-810).
-        if (input_closed_.load(std::memory_order_acquire) &&
+        // Closed and drained after close_input: a Run of one output stops itself, as the GStreamer
+        // Run does at its end of stream (RunPull.cpp:798-810). With several outputs the others
+        // may still hold messages; GStreamer's graph path does not stop at a closed output either.
+        if (config_.outputs.size() == 1U && c.input_closed.load(std::memory_order_acquire) &&
             !stopped_.load(std::memory_order_acquire)) {
           core_.stop();
         }
@@ -1041,19 +1318,20 @@ private:
   // any slot or copy, counted by the runtime as that push counts it (a full Block link's FR2, a
   // DropIncoming link's drop). Core does what it does when the push refused: false, and on
   // DropIncoming its input drop (published()'s DroppedIncoming). KeepLatest and the terminal drop
-  // are DropOldest links, which never refuse. Every other refusal, FR7 included, is refused()'s.
-  bool alloc_refused(const df::Error& error, bool block, const char* where) {
+  // are DropOldest links, which never refuse: a fan-out with one of them never sees FR14. Every
+  // other refusal, FR7 included, is refused()'s.
+  bool alloc_refused(const Component& c, const df::Error& error, bool block, const char* where) {
     if (!block && error.code == df::ErrorCode::Backpressure) {
-      if (!config_.terminal_drop && config_.link_policy == OverflowPolicy::DropIncoming) {
+      if (!c.lossy_block && config_.link_policy == OverflowPolicy::DropIncoming) {
         core_.inputs_dropped.fetch_add(1, std::memory_order_relaxed);
       }
       return false;
     }
-    return refused(error, block, where);
+    return refused(c, error, block, where);
   }
 
   // A push the Session refused: false, a drop where Core counts one, or Core's error.
-  bool refused(const df::Error& error, bool block, const char* where) {
+  bool refused(const Component& c, const df::Error& error, bool block, const char* where) {
     switch (error.code) {
     case df::ErrorCode::Closed:       // FR3 (close_input), SR1 (stopped), a closed pool or port
     case df::ErrorCode::Backpressure: // FR2: a full Block link at a passed deadline (try_push)
@@ -1062,7 +1340,7 @@ private:
     case df::ErrorCode::ResourceExhausted:
       // FR7: no free slot for try_push; the application holds every pulled slot. A drop for the
       // dropping policies, as a full queue is (RunPush.cpp:416-424).
-      if (!block && (config_.terminal_drop || config_.link_policy != OverflowPolicy::Block)) {
+      if (!block && (c.lossy_block || config_.link_policy != OverflowPolicy::Block)) {
         core_.inputs_dropped.fetch_add(1, std::memory_order_relaxed);
       }
       return false;
@@ -1071,18 +1349,21 @@ private:
     }
   }
 
-  bool published(const df::PublishResult& result) {
+  bool published(const Component& c, const df::PublishResult& result) {
     if (!result.published() || result.size() == 0U) {
       return false; // the port closed under a racing stop
     }
+    if (c.fan_out) {
+      return published_fan_out(result);
+    }
     switch (result.outcome(0)) {
     case df::Link::Offer::Accepted:
-      count_published();
+      count_published(1U);
       return true;
     case df::Link::Offer::DroppedOldest:
       // Evicted to make room: KeepLatest's input drop, or the terminal queue's output drop.
-      count_published();
-      (config_.terminal_drop ? core_.outputs_dropped : core_.inputs_dropped)
+      count_published(1U);
+      (c.lossy_block ? core_.outputs_dropped : core_.inputs_dropped)
           .fetch_add(1, std::memory_order_relaxed);
       return true;
     case df::Link::Offer::DroppedIncoming:
@@ -1096,10 +1377,39 @@ private:
     return false;
   }
 
-  void count_published() {
+  // A fan-out: each link answered for its own Output. The push is accepted when one link took the
+  // message (each that did has one more item ready), and an eviction, or a refusal while another
+  // link took it, is that Output's drop. When no link took it the push is refused, and a drop of
+  // the input when a DropIncoming link refused it.
+  bool published_fan_out(const df::PublishResult& result) {
+    std::uint64_t evicted = 0;
+    std::uint64_t refused_incoming = 0;
+    for (std::uint32_t k = 0; k < result.size(); ++k) {
+      const df::Link::Offer outcome = result.outcome(k);
+      if (outcome == df::Link::Offer::DroppedOldest) {
+        ++evicted;
+      } else if (outcome == df::Link::Offer::DroppedIncoming) {
+        ++refused_incoming;
+      }
+    }
+    if (result.accepted() == 0U) {
+      if (refused_incoming != 0U) {
+        core_.inputs_dropped.fetch_add(1, std::memory_order_relaxed);
+      }
+      return false;
+    }
+    count_published(result.accepted());
+    if (evicted + refused_incoming != 0U) {
+      core_.outputs_dropped.fetch_add(evicted + refused_incoming, std::memory_order_relaxed);
+    }
+    return true;
+  }
+
+  // One input item published, ready on `outputs` Outputs.
+  void count_published(std::uint32_t outputs) {
     core_.inputs_enqueued.fetch_add(1, std::memory_order_relaxed);
     core_.inputs_pushed.fetch_add(1, std::memory_order_relaxed);
-    core_.outputs_ready.fetch_add(1, std::memory_order_relaxed);
+    core_.outputs_ready.fetch_add(outputs, std::memory_order_relaxed);
   }
 
   // A dense tensor over `bytes` of a pulled message, with the Core metadata the binding kept,
@@ -1283,23 +1593,58 @@ private:
     leaf.envelope = std::move(envelope);
   }
 
+  // With SIMA_NEAT_BACKEND set (the [NEAT] lines of DataflowGraphCompiler.cpp), each input's and
+  // each output's counters as the stop finds them: the per-endpoint report of the Run.
+  void trace_report() const {
+    if (pipeline_internal::env_str("SIMA_NEAT_BACKEND", "").empty()) {
+      return;
+    }
+    for (const auto& c : components_) {
+      Bound* bound = c->bound.load(std::memory_order_acquire);
+      std::string line = "[NEAT] Run::stop: input " + names_text(c->config->names);
+      if (!bound) {
+        std::fprintf(stderr, "%s: never bound\n", line.c_str());
+        continue;
+      }
+      const df::SessionReport report = bound->session.report();
+      if (!report.feeds.empty()) {
+        const df::FeedReport& feed = report.feeds.front();
+        line += ": pushes " + std::to_string(feed.pushes) + ", push failures " +
+                std::to_string(feed.push_failures) + ", backpressure " +
+                std::to_string(feed.backpressure);
+      }
+      for (std::size_t k = 0; k < report.links.size() && k < c->config->outputs.size(); ++k) {
+        const df::LinkReport& link = report.links[k];
+        line += "; output " + names_text(config_.outputs[c->config->outputs[k]].names) +
+                ": accepted " + std::to_string(link.stats.accepted) + ", dropped oldest " +
+                std::to_string(link.stats.dropped_oldest()) + ", dropped incoming " +
+                std::to_string(link.stats.dropped_incoming()) + ", pending " +
+                std::to_string(link.pending);
+      }
+      std::fprintf(stderr, "%s\n", line.c_str());
+    }
+  }
+
   RunCore& core_;
   DataflowRunConfig config_;
   InputStreamOptions stream_options_;
   pipeline_internal::StreamNames streams_;
 
-  // Binding: written once under mu_, read lock-free through bound_ (release/acquire).
+  // One per public Input (config_.inputs order); where each public Output is read; the unnamed
+  // push's and pull's endpoints when the graph has exactly one.
+  std::vector<std::unique_ptr<Component>> components_;
+  std::vector<OutputSlot> slots_;
+  Component* default_input_ = nullptr;
+  std::size_t default_output_ = kNoEndpoint;
+
+  // Bindings and the validated geometries are written under mu_; cv_ wakes a pull that waits for
+  // its input's binding.
   std::mutex mu_;
   std::condition_variable cv_;
-  std::unique_ptr<Bound> bound_storage_;
-  std::atomic<Bound*> bound_{nullptr};
-  std::atomic<bool> input_closed_{false};
   std::atomic<bool> stopped_{false};
   std::atomic<std::uint64_t> polls_{0};
-
-  // The validated leaf geometry: written once under mu_, read lock-free (release/acquire).
-  std::unique_ptr<LeafGeometry> validated_leaf_storage_;
-  std::atomic<const LeafGeometry*> validated_leaf_{nullptr};
+  // A Run of several inputs: the counter of its pushes, orig_input_seq (SlotSeqTable).
+  std::atomic<std::uint64_t> run_seq_{0};
 
   mutable std::mutex error_mu_;
   std::optional<PullError> last_error_;
@@ -1310,6 +1655,7 @@ private:
 std::unique_ptr<DataflowRunState> make_dataflow_run_state(RunCore& core, DataflowRunConfig config,
                                                           const TensorList& seed) {
   auto run = std::make_unique<DataflowRun>(core, std::move(config));
+  run->add_components();
   run->bind_at_build(seed);
   return run;
 }

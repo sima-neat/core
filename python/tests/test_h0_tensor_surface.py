@@ -221,12 +221,41 @@ def test_graph_input_output_errors():
 def test_explicit_dataflow_refuses_a_graph_it_does_not_support():
   if not _dataflow_available():
     pytest.skip("this build of libsima_neat has no Dataflow backend (SIMANEAT_DATAFLOW_SOURCE_DIR)")
+  # Fan-in, two inputs into one output: a combine operator, not before H1.
   g = pn.Graph()
-  g.output("a_out", g.input("a"))
-  g.output("b_out", g.input("b"))
+  g.add(pn.nodes.input("left"))
+  g.add(pn.nodes.input("right"))
+  g.add(pn.nodes.output("combined"))
+  g.connect("left", "combined")
+  g.connect("right", "combined")
   with pytest.raises(pn.NeatError) as exc:
     g.build(_options("dataflow"))
-  assert "RunBackend::Dataflow" in str(exc.value)
+  assert "RunBackend::Dataflow" in str(exc.value) and "fan-in" in str(exc.value)
+
+
+def test_graph_of_several_endpoints(backend):
+  # Two inputs, each feeding its own output, and a fan-out: one handle published twice.
+  g = pn.Graph()
+  g.output("a_out", g.input("a"))
+  b = g.input("b")
+  g.output("b_one", b)
+  g.output("b_two", b)
+  run = g.build(_options(backend))
+  try:
+    assert run.input_names() == ["a", "b"]
+    assert run.output_names() == ["a_out", "b_one", "b_two"]
+    assert run.push("a", [_rgb(16, 8, 1)])
+    assert run.push("b", [_floats([1.0, 2.0, 3.0])])
+    a = run.pull_result("a_out", 5000)
+    assert a.ok and _bytes(a.value()[0]) == _rgb_array(16, 8, 1).tobytes()
+    for name in ("b_one", "b_two"):
+      r = run.pull_result(name, 5000)
+      assert r.ok and _bytes(r.value()[0]) == np.asarray([1.0, 2.0, 3.0], np.float32).tobytes()
+    unnamed = run.pull_result(30)
+    assert unnamed.status == pn.PullStatus.Error
+    assert "no unambiguous default output" in unnamed.error.message
+  finally:
+    run.close()
 
 
 # ── Runs, both backends ────────────────────────────────────────────────────────────────────────

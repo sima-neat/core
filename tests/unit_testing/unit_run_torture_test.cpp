@@ -14,6 +14,17 @@
 //    third thread pulls; every frame arrives exactly once, each pusher's frames in order;
 // 5. a lease outliving the Run: tensors pulled through the old and the new verbs stay readable
 //    after the Run is closed and destroyed, also from another thread, and are released after.
+// H0c, graphs of several endpoints:
+// 6. stop with a push blocked on one link of a fan-out (one output drained, the other full): the
+//    push returns, stop is bounded, nothing is accepted afterwards (GStreamer's FanOut accepts the
+//    push and stalls the drained output behind the full one, or refuses instead of waiting: then
+//    the case says so and ends there);
+// 7. close_input while the other input flows: one thread pushes into one input without pause
+//    while the other input takes pushes; Run::close_input (it closes every input: Core has no
+//    per-input close) ends the flowing input, each output drains what it holds, then is Closed
+//    (Dataflow; GStreamer's final status is printed);
+// 8. per-endpoint pull timeouts: one output's pull times out on its own while another output of
+//    the Run has data.
 // A wait that does not end is reported and the process exits at once (std::_Exit), so a hang in
 // one backend shows as a failure, not a ctest timeout.
 
@@ -441,6 +452,301 @@ void lease_outlives_run(int) {
   });
 }
 
+// ---- H0c: several endpoints ---------------------------------------------------------------------
+
+RunOptions endpoint_options(int queue_depth) {
+  RunOptions opt;
+  opt.backend = on_dataflow() ? RunBackend::Dataflow : RunBackend::GStreamer;
+  opt.queue_depth = queue_depth;
+  opt.overflow_policy = OverflowPolicy::Block;
+  opt.startup_preflight = false;
+  return opt;
+}
+
+InputOptions rgb_input() {
+  InputOptions in;
+  in.payload_type = PayloadType::Image;
+  in.format = FormatTag::RGB;
+  in.memory_policy = InputMemoryPolicy::SystemMemory;
+  return in;
+}
+
+OutputOptions output_options(int max_buffers) {
+  OutputOptions out;
+  out.max_buffers = max_buffers;
+  out.drop = false;
+  out.sync = false;
+  return out;
+}
+
+// Input "image" fanned out to Outputs "a" (max_buffers `a`) and "b" (max_buffers `b`).
+Run make_fan_out_run(int queue_depth, int a, int b) {
+  Graph g;
+  g.add(nodes::Input("image", rgb_input()));
+  g.add(nodes::Output("a", output_options(a)));
+  g.add(nodes::Output("b", output_options(b)));
+  g.connect("image", "a");
+  g.connect("image", "b");
+  return g.build(endpoint_options(queue_depth));
+}
+
+// Inputs "left" and "right", each feeding its own Output ("left_out", "right_out").
+Run make_two_input_run(int depth) {
+  Graph g;
+  g.add(nodes::Input("left", rgb_input()));
+  g.add(nodes::Output("left_out", output_options(depth)));
+  g.add(nodes::Input("right", rgb_input()));
+  g.add(nodes::Output("right_out", output_options(depth)));
+  g.connect("left", "left_out");
+  g.connect("right", "right_out");
+  return g.build(endpoint_options(depth));
+}
+
+PushOutcome push_named_outcome(Run& run, const std::string& input, const Tensor& t) {
+  PushOutcome out;
+  try {
+    out.accepted = run.push(input, TensorList{t});
+  } catch (const std::exception& e) {
+    out.error = e.what();
+  }
+  return out;
+}
+
+// 6. stop with a push blocked on one link of a fan-out: output "b" is drained after every push,
+//    "a" never is, so the push that finds "a" full waits while "b" has room; stop ends it.
+void fan_out_stop_with_push_blocked_on_one_link(int round) {
+  Run run = make_fan_out_run(1, 1, 8);
+  struct Attempt {
+    std::mutex mu;
+    std::condition_variable cv;
+    bool done = false;
+    PushOutcome outcome;
+  };
+  std::shared_ptr<Attempt> blocked;
+  constexpr int kMaxFrames = 32;
+  int frames = 0;
+  for (; frames < kMaxFrames && !blocked; ++frames) {
+    auto attempt = std::make_shared<Attempt>();
+    const Tensor t = rgb(static_cast<std::uint8_t>(frames + 1));
+    std::thread([attempt, &run, t] {
+      PushOutcome o = push_named_outcome(run, "image", t);
+      std::lock_guard<std::mutex> lock(attempt->mu);
+      attempt->outcome = std::move(o);
+      attempt->done = true;
+      attempt->cv.notify_all();
+    }).detach();
+    std::unique_lock<std::mutex> lock(attempt->mu);
+    if (!attempt->cv.wait_for(lock, 300ms, [&] { return attempt->done; })) {
+      blocked = attempt;
+      break;
+    }
+    if (!attempt->outcome.accepted) {
+      // GStreamer's fan-out (its FanOut node) may refuse instead of waiting; Dataflow waits.
+      require(!on_dataflow(), "fan-out blocked push: a push before link a filled was refused: " +
+                                  attempt->outcome.error);
+      std::cout << "[INFO] gstreamer: fan-out push " << frames
+                << " refused instead of waiting: " << attempt->outcome.error << "\n"
+                << std::flush;
+      run.close();
+      return;
+    }
+    lock.unlock();
+    Result<TensorList> b = run.pull("b", 2000ms);
+    if (!b.ok() && !on_dataflow()) {
+      // GStreamer's FanOut delivers to its outputs in turn: once "a" is full it stalls "b" too,
+      // and the push stays accepted. Dataflow waits in the push instead, "b" keeping what it got.
+      std::cout << "[INFO] gstreamer: fan-out output b stalled behind the full output a after "
+                << frames + 1 << " accepted pushes (" << b.error().message << ")\n"
+                << std::flush;
+      run.close();
+      return;
+    }
+    require(b.ok(), "fan-out blocked push: b drains every push: " + b.error().message);
+  }
+  if (!blocked) {
+    require(!on_dataflow(), "fan-out blocked push: no push blocked on link a within " +
+                                std::to_string(kMaxFrames) + " frames");
+    std::cout << "[INFO] gstreamer: no fan-out push blocked within " << kMaxFrames << " frames\n"
+              << std::flush;
+    run.close();
+    return;
+  }
+  if (round == 0) {
+    std::cout << "[INFO] " << backend_name() << ": a fan-out push blocked on link a after "
+              << frames << " frames, link b drained\n"
+              << std::flush;
+  }
+  const auto t0 = Clock::now();
+  run.stop();
+  const auto stop_ms = ms_since(t0);
+  const auto budget = on_dataflow() ? 1000ms : 5000ms;
+  {
+    std::unique_lock<std::mutex> lock(blocked->mu);
+    if (!blocked->cv.wait_for(lock, budget, [&] { return blocked->done; })) {
+      std::cerr << "[FAIL] unit_run_torture_test (" << backend_name()
+                << "): the push blocked on one link of a fan-out did not return within "
+                << budget.count() << " ms of stop\n";
+      std::_Exit(1);
+    }
+    require(ended_by_teardown(blocked->outcome),
+            "fan-out blocked push: after stop the push must not be accepted; error='" +
+                blocked->outcome.error + "'");
+  }
+  require(stop_ms < (on_dataflow() ? 1000 : 5000),
+          "fan-out blocked push: stop took " + std::to_string(stop_ms) + " ms");
+  require(ended_by_teardown(push_named_outcome(run, "image", rgb(0x77))),
+          "fan-out blocked push: a push after stop was accepted");
+  bounded<int>("close after a stop that ended a fan-out push", 5000ms, [&] {
+    run.close();
+    return 0;
+  });
+}
+
+// 7. close_input while the other input flows: a thread pushes into "left" without pause (its
+//    output drained by another thread) while "right" takes a few pushes; close_input then ends
+//    both inputs: the left pusher stops being accepted, every output drains what it holds, then
+//    reports Closed. The pushes of the two threads are serialized by the application, as Core's
+//    Run contract asks of concurrent pushes into one Run (Run.h, "Thread safety").
+void close_input_while_the_other_input_flows(int) {
+  Run run = make_two_input_run(4);
+  // One round trip per input first, so GStreamer's segments are live (c2.md section 4 row 7).
+  require(run.push("left", TensorList{rgb(1)}) && run.pull("left_out", 2000ms).ok(),
+          "two inputs: left warm-up");
+  require(run.push("right", TensorList{rgb(2)}) && run.pull("right_out", 2000ms).ok(),
+          "two inputs: right warm-up");
+  std::mutex push_mu;
+  std::atomic<bool> pushing{true};
+  std::atomic<int> left_accepted{0};
+  std::atomic<int> left_pulled{0};
+  struct Ended {
+    std::mutex mu;
+    std::condition_variable cv;
+    int done = 0;
+    PushOutcome last;
+    PullStatus final_status = PullStatus::Ok;
+    std::string final_error;
+  };
+  auto ended = std::make_shared<Ended>();
+  std::thread pusher([&run, &push_mu, &pushing, &left_accepted, ended] {
+    PushOutcome o;
+    for (int i = 0; pushing.load(); ++i) {
+      const Tensor t = rgb(static_cast<std::uint8_t>(0x30 + (i % 64)));
+      {
+        std::lock_guard<std::mutex> lock(push_mu);
+        o = push_named_outcome(run, "left", t);
+      }
+      if (!o.accepted) {
+        break;
+      }
+      left_accepted.fetch_add(1);
+    }
+    std::lock_guard<std::mutex> lock(ended->mu);
+    ended->last = o;
+    ++ended->done;
+    ended->cv.notify_all();
+  });
+  std::thread puller([&run, &left_pulled, ended] {
+    PullStatus st = PullStatus::Ok;
+    std::string error;
+    for (;;) {
+      Result<TensorList> r = run.pull("left_out", 3000ms);
+      st = r.status();
+      if (!r.ok()) {
+        error = r.error().message;
+        break;
+      }
+      left_pulled.fetch_add(1);
+    }
+    std::lock_guard<std::mutex> lock(ended->mu);
+    ended->final_status = st;
+    ended->final_error = error;
+    ++ended->done;
+    ended->cv.notify_all();
+  });
+  for (int i = 0; i < 3; ++i) {
+    const Tensor t = rgb(static_cast<std::uint8_t>(0x60 + i));
+    std::lock_guard<std::mutex> lock(push_mu);
+    require(run.push("right", TensorList{t}),
+            "two inputs: right push " + std::to_string(i) + " while left flows");
+  }
+  std::this_thread::sleep_for(50ms);
+  run.close_input();
+  {
+    std::unique_lock<std::mutex> lock(ended->mu);
+    if (!ended->cv.wait_for(lock, 5000ms, [&] { return ended->done == 2; })) {
+      std::cerr << "[FAIL] unit_run_torture_test (" << backend_name()
+                << "): after close_input the left pusher or puller did not end within 5 s\n";
+      std::_Exit(1);
+    }
+  }
+  pushing.store(false);
+  pusher.join();
+  puller.join();
+  require(ended_by_teardown(ended->last),
+          "two inputs: the left push after close_input is refused; error='" + ended->last.error +
+              "'");
+  require(left_pulled.load() == left_accepted.load(),
+          "two inputs: every accepted left push was pulled before Closed (" +
+              std::to_string(left_pulled.load()) + " of " + std::to_string(left_accepted.load()) +
+              ")");
+  if (on_dataflow()) {
+    require(ended->final_status == PullStatus::Closed,
+            "two inputs: left_out is Closed after it drained; got " +
+                std::to_string(static_cast<int>(ended->final_status)) + " " + ended->final_error);
+  }
+  for (int i = 0; i < 3; ++i) {
+    Result<TensorList> r = run.pull("right_out", 3000ms);
+    require(r.ok() && r->size() == 1U &&
+                bytes_of(r->front()) == bytes_of(rgb(static_cast<std::uint8_t>(0x60 + i))),
+            "two inputs: right's queued item " + std::to_string(i) +
+                " survives close_input: " + r.error().message);
+  }
+  const Result<TensorList> last = run.pull("right_out", 3000ms);
+  if (on_dataflow()) {
+    require(last.status() == PullStatus::Closed, "two inputs: right_out Closed after it drained");
+  } else {
+    std::cout << "[INFO] gstreamer: right_out after close_input and its drain: status "
+              << static_cast<int>(last.status()) << "\n"
+              << std::flush;
+  }
+  require(!push_named_outcome(run, "right", rgb(9)).accepted,
+          "two inputs: a right push after close_input is refused");
+  run.close();
+}
+
+// 8. per-endpoint pull timeouts: one output times out on its own while another has data.
+void per_endpoint_pull_timeouts(int) {
+  {
+    Run run = make_fan_out_run(4, 4, 4);
+    require(run.push("image", TensorList{rgb(1)}), "endpoint timeouts: push");
+    require(run.pull("a", 2000ms).ok(), "endpoint timeouts: a's item");
+    const auto t0 = Clock::now();
+    const Result<TensorList> a = run.pull("a", 150ms);
+    const auto waited = ms_since(t0);
+    require(a.status() == PullStatus::Timeout, "endpoint timeouts: a is empty");
+    require(waited >= 120 && waited < 2000,
+            "endpoint timeouts: a waited its own 150 ms: " + std::to_string(waited));
+    require(run.pull("b", 2000ms).ok(), "endpoint timeouts: b kept its item");
+    run.close();
+  }
+  {
+    Run run = make_two_input_run(4);
+    require(run.push("left", TensorList{rgb(1)}) && run.pull("left_out", 2000ms).ok(),
+            "endpoint timeouts: left warm-up");
+    require(run.push("right", TensorList{rgb(2)}) && run.pull("right_out", 2000ms).ok(),
+            "endpoint timeouts: right warm-up");
+    require(run.push("left", TensorList{rgb(3)}), "endpoint timeouts: left push");
+    const auto t0 = Clock::now();
+    require(run.pull("right_out", 150ms).status() == PullStatus::Timeout,
+            "endpoint timeouts: right_out is empty");
+    const auto waited = ms_since(t0);
+    require(waited >= 120 && waited < 2000,
+            "endpoint timeouts: right_out waited its own 150 ms: " + std::to_string(waited));
+    require(run.pull("left_out", 2000ms).ok(), "endpoint timeouts: left_out has its item");
+    run.close();
+  }
+}
+
 } // namespace
 
 RUN_TEST("unit_run_torture_test", ([] {
@@ -452,5 +758,8 @@ RUN_TEST("unit_run_torture_test", ([] {
              close_input_with_queued_messages(round);
              two_pushers(round);
              lease_outlives_run(round);
+             fan_out_stop_with_push_blocked_on_one_link(round);
+             close_input_while_the_other_input_flows(round);
+             per_endpoint_pull_timeouts(round);
            }
          }));

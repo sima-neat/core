@@ -1296,14 +1296,21 @@ uploaded per frame.
 * `try_push(...)` is non-blocking (returns false if the queue is full)
 
 `RunOptions::backend` selects the runtime behind the same `Run` surface. On the Neat
-Dataflow backend (an opt-in build with `SIMANEAT_DATAFLOW_SOURCE_DIR`, for graphs of one
-public `Input` connected to one public `Output`), the graph is one Feed, one Fetch and
-one link: `push` copies the tensor into a pool slot on the calling thread and waits for
-room without dropping, `try_push` applies the overflow policy, and `pull` returns a
-read-only `CpuExternal` tensor that leases the slot until its last copy is released. The
-input's shape is bound by its declaration, its seed or its first push, and enforced from
-then on. `push_holder` is GStreamer-only; an item of several tensors binds a record port whose
-fields are named by position.
+Dataflow backend (an opt-in build with `SIMANEAT_DATAFLOW_SOURCE_DIR`, for graphs of public
+`Input`s feeding public `Output`s, each `Output` fed by one `Input`), each input is one Feed
+with one link and one Fetch per output it feeds. A fan-out (one `Graph::input` handle given
+to several `Graph::output`s, or a `graphs::Branch`) publishes each item once, and every
+output leases the same slot. `push` copies the tensor into a pool slot on the calling thread
+and waits for room on every link without dropping (an output with `OutputOptions::drop`
+evicts its oldest item instead), `try_push` applies the overflow policy on each link and is
+refused only when every link refuses, and `pull` returns a read-only `CpuExternal` tensor
+that leases the slot until its last copy is released. Each input's shape is bound by its
+declaration, its seed or its own first push, and enforced from then on. `push(name, ...)` and
+`pull(name, ...)` select the endpoint; the unnamed forms reach the only input or output.
+`close_input()` closes every input of the Run; there is no per-input close. Fan-in (several
+inputs into one output, `graphs::Combine`) stays on GStreamer. `push_holder`
+is GStreamer-only; an item of several tensors binds a record port whose fields are named by
+position.
 
 The TensorList verbs work on both runtimes; no `Run` verb takes or returns a single Tensor
 except `alloc`. `push(list)` and `push(name, list)` push one item: one tensor is a leaf,
@@ -1319,7 +1326,9 @@ published without a copy on the Dataflow runtime, CPU memory on GStreamer. Count
 `start_measurement()`; `Run` has no public `stats()`. Every pulled tensor carries the item's
 `Stamp` in `Tensor::envelope`; the runtime writes `seq` and `publish_time`. The `Sample`
 surface is a projection of it (`to_sample`, `to_tensor`): `input_seq = seq - 1`,
-`orig_input_seq = input_seq`, and `pts_ns` from `source_time`. A pushed `input_seq` or
+`orig_input_seq = input_seq`, and `pts_ns` from `source_time`. In a Run of several inputs
+`orig_input_seq` is instead the Run's push counter, as on GStreamer's graph path, where a pushed
+`orig_input_seq` (or `input_seq`) takes its place. Otherwise a pushed `input_seq` or
 `orig_input_seq` has no field in the stamp and is not carried on the Dataflow runtime, and
 GStreamer records no `publish_time`.
 
@@ -2116,10 +2125,12 @@ The runtime supports environment-driven debugging knobs:
   `RunOptions::backend`) build qualifying graphs on the Neat Dataflow runtime; unset,
   `auto` or `gstreamer` keep GStreamer. Read at every `Graph::build()`. Only builds
   configured with `SIMANEAT_DATAFLOW_SOURCE_DIR` carry the Dataflow runtime, and only a
-  graph of one public `Input` connected to one public `Output` qualifies; any other
-  graph stays on GStreamer. When set, each `Graph::build()` prints the runtime it took
-  and why to stderr. An explicit `RunBackend::Dataflow` does not read the variable and
-  fails the build instead of falling back.
+  graph of public `Input`s feeding public `Output`s, each `Output` fed by exactly one
+  `Input`, qualifies; any other graph (fan-in, any other node) stays on GStreamer. When
+  set, each `Graph::build()` prints the runtime it took and why to stderr, and each
+  `Run::stop()` on Dataflow prints each endpoint's counters. An explicit
+  `RunBackend::Dataflow` does not read the variable and fails the build instead of
+  falling back.
 
 These knobs are intentionally outside the public API so you can turn them on in CI or in the field without recompiling.
 There are additional low-level debug flags in `src/pipeline/internal/*` (input stream
