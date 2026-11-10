@@ -1153,6 +1153,64 @@ def run_python_tests(args: argparse.Namespace, python: Path, evidence: Path,
   return completed
 
 
+def stage_installed_tutorial_facade(args: argparse.Namespace,
+                                    staged: dict[str, str], evidence: Path) -> None:
+  root = staged["root"]
+  worker = staged["worker"]
+  library_path = ":".join((
+      f"{root}/usr/lib",
+      f"{root}/usr/lib/aarch64-linux-gnu",
+      f"{root}/usr/lib/aarch64-linux-gnu/neat/runtime",
+      "/usr/lib/aarch64-linux-gnu",
+  ))
+  plugin_path = ":".join((
+      f"{root}/usr/lib/aarch64-linux-gnu/neat/gst-plugins",
+      "/usr/lib/aarch64-linux-gnu/gstreamer-1.0",
+  ))
+  wrapper = "\n".join((
+      "#!/bin/sh",
+      "set -eu",
+      f"exec env LD_LIBRARY_PATH={shlex.quote(library_path)} "
+      f"GST_PLUGIN_PATH_1_0={shlex.quote(plugin_path)} "
+      f"{shlex.quote(worker)} \"$@\"",
+      "",
+  ))
+  owner = shlex.quote(args.card_user)
+  command = (
+      "set -eu; "
+      "test ! -e /usr/bin/pcie-pipeline-builder; "
+      "test ! -e /run/sima-neat/pcie; "
+      "test ! -e /var/log/sima-neat/pcie; "
+      f"install -d -o {owner} -g {owner} -m 0700 "
+      "/run/sima-neat/pcie /var/log/sima-neat/pcie; "
+      f"printf %s {shlex.quote(wrapper)} > /usr/bin/pcie-pipeline-builder; "
+      "chown root:root /usr/bin/pcie-pipeline-builder; "
+      "chmod 0755 /usr/bin/pcie-pipeline-builder"
+  )
+  try:
+    run_sudo_remote(args, command, evidence / "tutorial-card-facade-stage.log")
+  except BaseException as error:
+    try:
+      remove_installed_tutorial_facade(
+          args, evidence / "tutorial-card-facade-stage-cleanup.log")
+    except BaseException as cleanup_error:
+      error.add_note(f"tutorial facade cleanup also failed: {cleanup_error}")
+    raise
+
+
+def remove_installed_tutorial_facade(args: argparse.Namespace, log: Path) -> None:
+  command = (
+      "set -eu; "
+      "rm -f /usr/bin/pcie-pipeline-builder; "
+      "rm -rf /run/sima-neat/pcie /var/log/sima-neat/pcie; "
+      "rmdir /run/sima-neat /var/log/sima-neat 2>/dev/null || true; "
+      "test ! -e /usr/bin/pcie-pipeline-builder; "
+      "test ! -e /run/sima-neat/pcie; "
+      "test ! -e /var/log/sima-neat/pcie"
+  )
+  run_sudo_remote(args, command, log)
+
+
 def run_customer_tutorials(args: argparse.Namespace, install_root: Path, python: Path,
                            work: Path, evidence: Path,
                            environment: dict[str, str]) -> dict[str, list[str]]:
@@ -1260,6 +1318,7 @@ def qualify(args: argparse.Namespace) -> None:
     card_lock.retain()
     staged_card: dict[str, str] | None = None
     card_stage_attempted = False
+    tutorial_facade_staged = False
     try:
       baseline = card_snapshot(args, evidence, "baseline")
       result["card_baseline"] = baseline
@@ -1467,8 +1526,13 @@ def qualify(args: argparse.Namespace) -> None:
           [python, "-c", "import pyneatpcie as p; assert p.Model and p.Runtime and p.Tensor"],
           evidence / "python-import.log", env=environment, cwd=work, timeout=60)
 
+      stage_installed_tutorial_facade(args, staged_card, evidence)
+      tutorial_facade_staged = True
       result["tests"]["tutorial"] = run_customer_tutorials(
           args, install_root, python, work, evidence, environment)
+      remove_installed_tutorial_facade(
+          args, evidence / "tutorial-card-facade-cleanup.log")
+      tutorial_facade_staged = False
       result["tests"]["cpp"] = run_cpp_tests(args, candidate.root, evidence, environment)
       result["tests"]["python"] = run_python_tests(args, python, evidence, environment)
       result["performance"] = {
@@ -1483,6 +1547,13 @@ def qualify(args: argparse.Namespace) -> None:
           "type": type(error).__name__,
       }
     finally:
+      if tutorial_facade_staged:
+        try:
+          remove_installed_tutorial_facade(
+              args, evidence / "tutorial-card-facade-final-cleanup.log")
+          result["cleanup"]["tutorial_facade"] = "PASS"
+        except BaseException as error:
+          cleanup_errors.append(str(error))
       try:
         stop_card_workers(args, evidence)
       except BaseException as error:

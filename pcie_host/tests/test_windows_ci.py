@@ -26,9 +26,10 @@ from windows_candidate import dependency_identity, sha256, validate_candidate  #
 from qualify_windows_hardware import (  # noqa: E402
     ExclusiveLock, RemoteExclusiveLock, card_snapshot, load_upgrade_base,
     parse_performance_log, require_powershell as require_hardware_powershell,
-    run_captured_to_file, run_sudo_remote, sima_cli_identity, stage_card_candidate,
-    stage_invalid_wheel_registry, stage_local_registry, stage_path_fixtures, stress_queues,
-    validate_card_candidate)
+    remove_installed_tutorial_facade, run_captured_to_file, run_sudo_remote,
+    sima_cli_identity, stage_card_candidate, stage_installed_tutorial_facade,
+    stage_invalid_wheel_registry, stage_local_registry, stage_path_fixtures,
+    stress_queues, validate_card_candidate)
 from verify_linux_release_run import verify_run as verify_linux_run  # noqa: E402
 from verify_windows_release import verify  # noqa: E402
 import prepare_card_qualification_candidate as CARD_PREP  # noqa: E402
@@ -599,6 +600,39 @@ class WindowsCiContracts(unittest.TestCase):
         staged = stage_card_candidate(args, candidate, "5" * 32, evidence)
       self.assertEqual(staged["genai_worker_sha256"], "4" * 64)
       self.assertIn("SIMA_NEAT_PCIE_GENAI_HELPER_PATH=", staged["genai_card_env"])
+
+  def test_installed_tutorial_facade_uses_private_card_candidate(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      args = SimpleNamespace(card_user="sima")
+      staged = {
+          "root": "/tmp/neat-pcie-card0.fixture/root",
+          "worker": "/tmp/neat-pcie-card0.fixture/root/usr/bin/pcie-pipeline-builder",
+      }
+      with mock.patch(
+          "qualify_windows_hardware.run_sudo_remote") as run:
+        stage_installed_tutorial_facade(args, staged, root)
+      command = run.call_args.args[1]
+      self.assertIn("test ! -e /usr/bin/pcie-pipeline-builder", command)
+      self.assertIn(staged["worker"], command)
+      self.assertIn(
+          staged["root"] + "/usr/lib/aarch64-linux-gnu/neat/runtime", command)
+      self.assertIn(
+          staged["root"] + "/usr/lib/aarch64-linux-gnu/neat/gst-plugins", command)
+      self.assertIn('"$@"', command)
+      self.assertEqual(run.call_args.args[2], root / "tutorial-card-facade-stage.log")
+
+  def test_installed_tutorial_facade_cleanup_is_exact(self):
+    with tempfile.TemporaryDirectory() as directory:
+      log = Path(directory) / "cleanup.log"
+      with mock.patch(
+          "qualify_windows_hardware.run_sudo_remote") as run:
+        remove_installed_tutorial_facade(SimpleNamespace(), log)
+      command = run.call_args.args[1]
+      self.assertIn("rm -f /usr/bin/pcie-pipeline-builder", command)
+      self.assertIn("rm -rf /run/sima-neat/pcie /var/log/sima-neat/pcie", command)
+      self.assertNotIn("/tmp/neat-pcie-card0", command)
+      self.assertEqual(run.call_args.args[2], log)
 
   def test_candidate_rejects_changed_qualification_resource(self):
     with tempfile.TemporaryDirectory() as directory:
