@@ -159,10 +159,21 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
       or not re.fullmatch(r"[0-9a-f]{64}", str(sima_cli.get("sha256", "")))
       or sima_cli["commit"][:12] not in str(sima_cli.get("version", ""))):
     raise ValueError("hardware qualification has no exact sima-cli candidate identity")
+  baseline_card = qualification.get("card_baseline")
   final_card = qualification.get("card_final")
-  if (not isinstance(final_card, dict) or final_card.get("workers") != "0"
-      or final_card.get("genai_workers") != "0"):
-    raise ValueError("hardware qualification left a worker on the card")
+  card_identity = {
+      "machine", "platform_release", "platform_sha256", "runtime_sha256",
+      "worker_sha256", "firmware", "remoteproc_state",
+  }
+  if (not isinstance(baseline_card, dict) or not isinstance(final_card, dict)
+      or not card_identity.issubset(baseline_card)
+      or not card_identity.issubset(final_card)
+      or any(baseline_card[name] != final_card[name] for name in card_identity)
+      or baseline_card.get("machine") != "aarch64"
+      or not re.search(
+          r"(?:^|[_ .-])3[.]0(?:[._-]|$)", str(baseline_card.get("platform_release", "")))
+      or final_card.get("workers") != "0" or final_card.get("genai_workers") != "0"):
+    raise ValueError("hardware qualification did not preserve its Platform 3.0 card baseline")
   tests = qualification.get("tests")
   if (not isinstance(tests, dict) or not tests.get("cpp") or not tests.get("python")):
     raise ValueError("hardware qualification did not run both customer APIs")

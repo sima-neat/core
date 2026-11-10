@@ -392,7 +392,9 @@ def card_snapshot(args: argparse.Namespace, evidence: Path, label: str) -> dict[
   remote = (
       "set -eu; "
       "printf 'machine='; uname -m; "
-      "printf 'platform='; (cat /etc/buildinfo 2>/dev/null || cat /etc/os-release); "
+      "test -r /etc/buildinfo; "
+      "printf 'platform_release='; head -n 1 /etc/buildinfo | tr -d '\\r\\n'; printf '\\n'; "
+      "printf 'platform_sha256='; sha256sum -- /etc/buildinfo | awk '{print $1}'; "
       f"printf 'runtime_sha256='; sha256sum -- {runtime_path} | awk '{{print $1}}'; "
       f"printf 'worker_sha256='; sha256sum -- {worker_path} | awk '{{print $1}}'; "
       + (f"printf 'genai_worker_sha256='; sha256sum -- {genai_worker_path} | awk '{{print $1}}'; "
@@ -408,17 +410,21 @@ def card_snapshot(args: argparse.Namespace, evidence: Path, label: str) -> dict[
   for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
     if "=" in line and not line.startswith("+"):
       name, value = line.split("=", 1)
-      if name in {"machine", "runtime_sha256", "worker_sha256", "genai_worker_sha256",
-                  "firmware", "remoteproc_state", "workers", "genai_workers"}:
+      if name in {"machine", "platform_release", "platform_sha256", "runtime_sha256",
+                  "worker_sha256", "genai_worker_sha256", "firmware", "remoteproc_state",
+                  "workers", "genai_workers"}:
         values[name] = value.strip()
-  required = {"machine", "runtime_sha256", "worker_sha256", "firmware",
-              "remoteproc_state", "workers", "genai_workers"}
+  required = {"machine", "platform_release", "platform_sha256", "runtime_sha256",
+              "worker_sha256", "firmware", "remoteproc_state", "workers", "genai_workers"}
   if args.include_genai:
     required.add("genai_worker_sha256")
   if set(values) != required:
     raise RuntimeError(f"card {label} snapshot is incomplete; see {log}")
   if values["machine"] != "aarch64":
     raise RuntimeError(f"card has unexpected architecture: {values['machine']}")
+  if not re.search(r"(?:^|[_ .-])3[.]0(?:[._-]|$)", values["platform_release"]):
+    raise RuntimeError(
+        f"card is not running Modalix Platform 3.0: {values['platform_release']}")
   if values["runtime_sha256"].lower() != args.expected_card_runtime_sha256.lower():
     raise RuntimeError("card runtime checksum differs from the qualified baseline")
   if values["worker_sha256"].lower() != args.expected_card_worker_sha256.lower():
@@ -1026,8 +1032,9 @@ def qualify(args: argparse.Namespace) -> None:
         final = card_snapshot(args, evidence, "final")
         result["card_final"] = final
         baseline = result.get("card_baseline", {})
-        unchanged = ("runtime_sha256", "worker_sha256", "genai_worker_sha256",
-                     "firmware", "remoteproc_state")
+        unchanged = ("platform_release", "platform_sha256", "runtime_sha256",
+                     "worker_sha256", "genai_worker_sha256", "firmware",
+                     "remoteproc_state")
         if (final["workers"] != "0" or final["genai_workers"] != "0"
             or any(name in baseline and final.get(name) != baseline[name] for name in unchanged)):
           cleanup_errors.append("card did not return to its qualified baseline")

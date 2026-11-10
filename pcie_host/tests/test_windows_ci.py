@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -21,8 +22,8 @@ assert SPEC.loader
 SPEC.loader.exec_module(MODULE)
 from windows_candidate import dependency_identity, sha256, validate_candidate  # noqa: E402
 from qualify_windows_hardware import (  # noqa: E402
-    ExclusiveLock, load_upgrade_base, parse_performance_log, sima_cli_identity,
-    stage_local_registry,
+    ExclusiveLock, card_snapshot, load_upgrade_base, parse_performance_log,
+    sima_cli_identity, stage_local_registry,
     stage_invalid_wheel_registry, stage_path_fixtures, stress_queues)
 from verify_linux_release_run import verify_run as verify_linux_run  # noqa: E402
 from verify_windows_release import verify  # noqa: E402
@@ -124,6 +125,7 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("--expected-upgrade-base-commit", source)
     self.assertIn("SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH", source)
     self.assertIn("--dependency-runtime-dir", source)
+    self.assertEqual(source.count("repositories: scheduler"), 1)
     self.assertEqual(source.count("shell: powershell"), 4)
 
   def test_producer_accepts_inbox_windows_powershell(self):
@@ -269,7 +271,28 @@ class WindowsCiContracts(unittest.TestCase):
     qualification = root / "qualification.json"
     qualification.write_text(json.dumps({
         "candidate": {"core_commit": commit, "resources": resources},
-        "card_final": {"genai_workers": "0", "workers": "0"},
+        "card_baseline": {
+            "firmware": "modalix-cvu-fw",
+            "genai_workers": "0",
+            "machine": "aarch64",
+            "platform_release": "3.0.0_master_B2501",
+            "platform_sha256": "1" * 64,
+            "remoteproc_state": "running",
+            "runtime_sha256": "2" * 64,
+            "worker_sha256": "3" * 64,
+            "workers": "0",
+        },
+        "card_final": {
+            "firmware": "modalix-cvu-fw",
+            "genai_workers": "0",
+            "machine": "aarch64",
+            "platform_release": "3.0.0_master_B2501",
+            "platform_sha256": "1" * 64,
+            "remoteproc_state": "running",
+            "runtime_sha256": "2" * 64,
+            "worker_sha256": "3" * 64,
+            "workers": "0",
+        },
         "cleanup": {
             "core_msi": "PASS", "errors": [], "python": "PASS", "scheduler_msi": "PASS"},
         "customer_install": {
@@ -529,6 +552,22 @@ class WindowsCiContracts(unittest.TestCase):
       with self.assertRaisesRegex(ValueError, "supported CPython 3.14 ABI"):
         verify(root, qualification, commit, True)
 
+  def test_release_gate_requires_unchanged_platform_3_card(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      value = json.loads(qualification.read_text(encoding="utf-8"))
+      value["card_final"]["platform_sha256"] = "0" * 64
+      qualification.write_text(json.dumps(value), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "Platform 3.0 card baseline"):
+        verify(root, qualification, commit, True)
+      value["card_final"]["platform_sha256"] = value["card_baseline"]["platform_sha256"]
+      value["card_baseline"]["platform_release"] = "2.1.3_B4837"
+      value["card_final"]["platform_release"] = "2.1.3_B4837"
+      qualification.write_text(json.dumps(value), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "Platform 3.0 card baseline"):
+        verify(root, qualification, commit, True)
+
   def test_release_gate_requires_structured_performance_evidence(self):
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory)
@@ -576,6 +615,49 @@ class WindowsCiContracts(unittest.TestCase):
       with ExclusiveLock(path) as lock:
         lock.retain()
       self.assertTrue(path.is_file())
+
+  def test_card_snapshot_records_platform_3_build_identity(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      key = root / "id_ed25519"
+      key.write_text("fixture", encoding="ascii")
+      args = SimpleNamespace(
+          card_genai_worker_path="/usr/bin/neat-pcie-genai-worker",
+          card_host="10.0.0.2",
+          card_runtime_path="/lib/firmware/modalix-cvu-fw",
+          card_user="sima",
+          card_worker_path="/usr/bin/pcie-pipeline-builder",
+          expected_card_genai_worker_sha256="",
+          expected_card_runtime_sha256="2" * 64,
+          expected_card_worker_sha256="3" * 64,
+          include_genai=False,
+          ssh_key=key,
+      )
+
+      def write_snapshot(_command, log, **_kwargs):
+        log.write_text(
+            "machine=aarch64\nplatform_release=3.0.0_master_B2501\n"
+            f"platform_sha256={'1' * 64}\nruntime_sha256={'2' * 64}\n"
+            f"worker_sha256={'3' * 64}\nfirmware=modalix-cvu-fw\n"
+            "remoteproc_state=running\nworkers=0\ngenai_workers=0\n",
+            encoding="utf-8")
+
+      with mock.patch(
+          "qualify_windows_hardware.run_logged", side_effect=write_snapshot):
+        snapshot = card_snapshot(args, root, "baseline")
+      self.assertEqual(snapshot["platform_release"], "3.0.0_master_B2501")
+      self.assertEqual(snapshot["platform_sha256"], "1" * 64)
+
+      def write_old_snapshot(command, log, **kwargs):
+        write_snapshot(command, log, **kwargs)
+        text = log.read_text(encoding="utf-8").replace(
+            "3.0.0_master_B2501", "2.1.3_B4837")
+        log.write_text(text, encoding="utf-8")
+
+      with mock.patch(
+          "qualify_windows_hardware.run_logged", side_effect=write_old_snapshot):
+        with self.assertRaisesRegex(RuntimeError, "not running Modalix Platform 3.0"):
+          card_snapshot(args, root, "old-platform")
 
   def test_hardware_path_fixtures_use_a_directory_with_spaces(self):
     with tempfile.TemporaryDirectory() as directory:

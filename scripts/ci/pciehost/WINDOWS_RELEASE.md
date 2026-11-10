@@ -124,7 +124,8 @@ Retain these artifacts with the release record:
 
 The hardware workflow always stops card workers, uninstalls the wheel and both
 MSI cohorts, removes its disposable downloads, compares the final card state
-with the baseline, and then releases the local lock. If cleanup fails, the lock
+with the baseline, including the exact Platform 3.0 `/etc/buildinfo` hash, and
+then releases the local lock. If cleanup fails, the lock
 at `%USERPROFILE%\.sima\locks\neat-pcie-card0.lock` is deliberately retained.
 Do not delete it until the evidence logs have been reviewed and the runner,
 installation root, workers, firmware, and queues have been restored manually.
