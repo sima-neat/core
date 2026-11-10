@@ -71,6 +71,52 @@ def require_fresh_directory(path: Path, description: str) -> Path:
   return resolved
 
 
+def windows_security_snapshot(log: Path) -> dict:
+  script = r"""
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = [Security.Principal.WindowsPrincipal]::new($identity)
+$os = Get-CimInstance Win32_OperatingSystem
+$smartAppControl = $null
+$policyPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy'
+if (Test-Path -LiteralPath $policyPath) {
+  $smartAppControl = (Get-ItemProperty -LiteralPath $policyPath -ErrorAction SilentlyContinue).VerifiedAndReputablePolicyState
+}
+$appLocker = 'unavailable'
+try {
+  $appLocker = @((Get-AppLockerPolicy -Effective -ErrorAction Stop).RuleCollections).Count
+} catch {}
+[pscustomobject]@{
+  account = $identity.Name
+  architecture = $os.OSArchitecture
+  build_number = $os.BuildNumber
+  caption = $os.Caption
+  is_administrator = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+  smart_app_control_state = $smartAppControl
+  applocker_rule_collections = $appLocker
+  version = $os.Version
+} | ConvertTo-Json -Compress
+"""
+  result = subprocess.run(
+      ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60, check=False)
+  log.write_text(
+      f"returncode={result.returncode}\nstdout={result.stdout}\nstderr={result.stderr}",
+      encoding="utf-8", errors="replace")
+  if result.returncode != 0:
+    raise RuntimeError(f"could not record Windows security state; see {log}")
+  try:
+    value = json.loads(result.stdout)
+  except json.JSONDecodeError as error:
+    raise RuntimeError(f"Windows security state was not valid JSON; see {log}") from error
+  required = {
+      "account", "architecture", "build_number", "caption", "is_administrator",
+      "smart_app_control_state", "applocker_rule_collections", "version",
+  }
+  if not isinstance(value, dict) or set(value) != required:
+    raise RuntimeError(f"Windows security state was incomplete; see {log}")
+  return value
+
+
 class ExclusiveLock:
   def __init__(self, path: Path):
     self.path = path.resolve()
@@ -616,6 +662,9 @@ def qualify(args: argparse.Namespace) -> None:
   cli_venv = work / "sima-cli-venv"
   failure: BaseException | None = None
   cleanup_errors: list[str] = []
+
+  result["host"]["windows_security"] = windows_security_snapshot(
+      evidence / "windows-security-state.log")
 
   with ExclusiveLock(args.lock_file) as card_lock:
     try:

@@ -217,6 +217,16 @@ class WindowsCiContracts(unittest.TestCase):
             "SIMAPCIE_TEST_IMAGE": r"C:\qualification assets\image.jpg",
             "SIMAPCIE_BOXDECODE_IMAGE": r"C:\qualification assets\people.jpg",
         },
+        "host": {"windows_security": {
+            "account": r"RUNNER\ci",
+            "applocker_rule_collections": "unavailable",
+            "architecture": "64-bit",
+            "build_number": "26100",
+            "caption": "Microsoft Windows 11 Enterprise",
+            "is_administrator": True,
+            "smart_app_control_state": None,
+            "version": "10.0.26100",
+        }},
         "result": "PASS",
         "sima_cli": {
             "commit": "a" * 40,
@@ -251,6 +261,7 @@ class WindowsCiContracts(unittest.TestCase):
       self.assertEqual(candidate.resources, resources)
       admission = verify(root, qualification, commit, True)
       self.assertTrue(admission["hardware_qualified"])
+      self.assertTrue(admission["host_security_recorded"])
       self.assertTrue(admission["signatures_valid"])
       self.assertEqual(admission["dependency_signatures"]["platform"], ["sima-platform.dll"])
       candidate.core_msi.write_bytes(b"changed")

@@ -452,7 +452,9 @@ cohort through disposable loopback registries, and exercises native-only install
 a missing-wheel failure with the native result preserved, recovery with the wheel,
 and a repeated matching install through the documented `sima-cli neat install`
 command. It deletes and repairs one Core-owned and one Scheduler-owned file through
-Windows Installer, rechecks plugin discovery, and then runs the public C++ and Python
+Windows Installer, records the Windows version, elevation, Smart App Control, and
+effective AppLocker visibility without changing policy, rechecks plugin discovery,
+and then runs the public C++ and Python
 vision suites, kills a card worker and a local client in separate bounded fault
 tests, proves the affected queue can be reopened after each failure, and removes
 Python, Core and Scheduler in reverse order. Release

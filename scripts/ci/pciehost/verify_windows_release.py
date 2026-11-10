@@ -79,6 +79,14 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
   qualification = read_object(qualification_path, "hardware qualification")
   if qualification.get("result") != "PASS":
     raise ValueError("hardware qualification did not pass")
+  host = qualification.get("host")
+  security = host.get("windows_security") if isinstance(host, dict) else None
+  required_security = {
+      "account", "architecture", "build_number", "caption", "is_administrator",
+      "smart_app_control_state", "applocker_rule_collections", "version",
+  }
+  if not isinstance(security, dict) or set(security) != required_security:
+    raise ValueError("hardware qualification did not record Windows security state")
   qualified_candidate = qualification.get("candidate")
   if not isinstance(qualified_candidate, dict):
     raise ValueError("hardware qualification has no candidate identity")
@@ -193,6 +201,7 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
   return {
       "core_commit": candidate.core_commit,
       "hardware_qualified": True,
+      "host_security_recorded": True,
       "path_qualified": True,
       "customer_install_qualified": True,
       "genai_qualified": require_genai,
