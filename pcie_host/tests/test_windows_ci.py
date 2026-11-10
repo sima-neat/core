@@ -21,7 +21,7 @@ SPEC.loader.exec_module(MODULE)
 from windows_candidate import sha256, validate_candidate  # noqa: E402
 from qualify_windows_hardware import (  # noqa: E402
     ExclusiveLock, load_upgrade_base, sima_cli_identity, stage_local_registry,
-    stage_path_fixtures, stress_queues)
+    stage_invalid_wheel_registry, stage_path_fixtures, stress_queues)
 from verify_linux_release_run import verify_run as verify_linux_run  # noqa: E402
 from verify_windows_release import verify  # noqa: E402
 
@@ -112,6 +112,7 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('"windows-dependencies.json"', source)
     self.assertIn('"repeat_install": "PASS"', source)
     self.assertNotIn("copytree(platform_runtime", source)
+    self.assertIn("SUPPORTED_PYTHON = (3, 14)", source)
 
   def test_hardware_qualification_bounds_blocker_and_injects_process_faults(self):
     source = (SCRIPT_DIR / "qualify_windows_hardware.py").read_text(encoding="utf-8")
@@ -123,6 +124,7 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('"gst-inspect-1.0.exe"', source)
     self.assertIn('work / "native customer downloads with spaces"', source)
     self.assertIn('work / "missing wheel downloads with spaces"', source)
+    self.assertIn('work / "invalid wheel downloads with spaces"', source)
     self.assertIn('work / "recovery downloads with spaces"', source)
     cleanup = (SCRIPT_DIR / "cleanup_windows_hardware.py").read_text(encoding="utf-8")
     self.assertIn("shutil.rmtree(work, ignore_errors=True)", cleanup)
@@ -229,6 +231,7 @@ class WindowsCiContracts(unittest.TestCase):
                 "candidate_version": version,
                 "status": "PASS",
             },
+            "wheel_failure": {"exit_code": 1, "status": "PASS"},
         },
         "path_fixtures": {
             "SIMAPCIE_YOLOV8_MODEL": r"C:\qualification assets\model.tar.gz",
@@ -242,9 +245,10 @@ class WindowsCiContracts(unittest.TestCase):
             "build_number": "26100",
             "caption": "Microsoft Windows 11 Enterprise",
             "is_administrator": True,
+            "product_type": 1,
             "smart_app_control_state": None,
             "version": "10.0.26100",
-        }},
+        }, "python": "3.14.7"},
         "result": "PASS",
         "sima_cli": {
             "commit": "a" * 40,
@@ -322,6 +326,16 @@ class WindowsCiContracts(unittest.TestCase):
       with self.assertRaisesRegex(ValueError, "real MSI package upgrade"):
         verify(root, qualification, commit, True)
 
+  def test_release_gate_requires_partial_wheel_failure_recovery(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      value = json.loads(qualification.read_text(encoding="utf-8"))
+      del value["customer_install"]["wheel_failure"]
+      qualification.write_text(json.dumps(value), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "native success, wheel failure, and retry"):
+        verify(root, qualification, commit, True)
+
   def test_upgrade_baseline_must_name_a_different_package_version(self):
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory)
@@ -342,7 +356,12 @@ class WindowsCiContracts(unittest.TestCase):
       baseline.metadata["version"] = candidate.metadata["version"]
       (baseline_root / "metadata.json").write_text(
           json.dumps(baseline.metadata), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "different package versions"):
+      with self.assertRaisesRegex(ValueError, "newer than the baseline"):
+        load_upgrade_base(candidate, baseline_root, baseline_commit)
+      baseline.metadata["version"] = "0.6.3"
+      (baseline_root / "metadata.json").write_text(
+          json.dumps(baseline.metadata), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "newer than the baseline"):
         load_upgrade_base(candidate, baseline_root, baseline_commit)
 
   def test_release_gate_rejects_unsigned_platform_dependency(self):
@@ -390,6 +409,21 @@ class WindowsCiContracts(unittest.TestCase):
       value["tests"]["cpp"].remove("test_tensor_parallel_queues")
       qualification.write_text(json.dumps(value), encoding="utf-8")
       with self.assertRaisesRegex(ValueError, "missing required vision cases"):
+        verify(root, qualification, commit, True)
+
+  def test_release_gate_rejects_server_or_unsupported_python(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      value = json.loads(qualification.read_text(encoding="utf-8"))
+      value["host"]["windows_security"]["product_type"] = 3
+      qualification.write_text(json.dumps(value), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "Windows 11 x64 workstation"):
+        verify(root, qualification, commit, True)
+      value["host"]["windows_security"]["product_type"] = 1
+      value["host"]["python"] = "3.13.9"
+      qualification.write_text(json.dumps(value), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "supported CPython 3.14 ABI"):
         verify(root, qualification, commit, True)
 
   def test_producer_retains_cpp_hardware_extras_and_signature_receipt(self):
@@ -478,6 +512,16 @@ class WindowsCiContracts(unittest.TestCase):
       self.assertEqual(
           {path.name for path in package.iterdir()},
           {"metadata.json", *candidate.resources})
+
+      invalid_registry = root / "invalid-registry"
+      invalid_package = stage_invalid_wheel_registry(candidate, invalid_registry)
+      invalid_metadata = json.loads(
+          (invalid_package / "metadata.json").read_text(encoding="utf-8"))
+      invalid_wheel = invalid_package / candidate.wheel.name
+      self.assertNotEqual(sha256(invalid_wheel), candidate.resources[candidate.wheel.name])
+      self.assertEqual(
+          invalid_metadata["resources-checksum"][candidate.wheel.name],
+          sha256(invalid_wheel))
 
   def test_linux_release_gate_binds_success_to_exact_commit(self):
     repository = "sima-neat/core"

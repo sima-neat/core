@@ -18,6 +18,13 @@ def sha256(path: Path) -> str:
   return digest.hexdigest()
 
 
+def msi_version(value: object) -> tuple[int, int, int]:
+  match = re.fullmatch(r"([0-9]+)[.]([0-9]+)[.]([0-9]+)", str(value))
+  if not match:
+    raise ValueError(f"Windows candidate version is not numeric major.minor.patch: {value!r}")
+  return tuple(int(part) for part in match.groups())
+
+
 def _read_json(path: Path, description: str) -> dict:
   try:
     value = json.loads(path.read_text(encoding="utf-8"))
@@ -63,6 +70,7 @@ def validate_candidate(directory: Path) -> WindowsCandidate:
     raise ValueError("candidate receipt has the wrong profile")
   if metadata.get("commit") != receipt.get("core_source_commit"):
     raise ValueError("candidate metadata and receipt name different Core commits")
+  msi_version(metadata.get("version"))
 
   qualification_resources = receipt.get("qualification_resources")
   if not isinstance(qualification_resources, dict) or not qualification_resources:

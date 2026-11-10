@@ -25,7 +25,7 @@ import threading
 import time
 import zipfile
 
-from windows_candidate import sha256, validate_candidate
+from windows_candidate import msi_version, sha256, validate_candidate
 
 
 PASS_CODES = {0}
@@ -52,6 +52,7 @@ BASE_PYTHON_TESTS = (
     "test_image_run_yolov8",
     "test_image_boxdecode_run_yolov8",
 )
+SUPPORTED_PYTHON = (3, 14)
 
 
 def write_json(path: Path, value: object) -> None:
@@ -61,6 +62,8 @@ def write_json(path: Path, value: object) -> None:
 def require_windows() -> None:
   if sys.platform != "win32" or platform.machine().upper() != "AMD64":
     raise RuntimeError("Windows PCIe hardware qualification requires Windows AMD64")
+  if platform.python_implementation() != "CPython" or sys.version_info[:2] != SUPPORTED_PYTHON:
+    raise RuntimeError("Windows PCIe hardware qualification requires CPython 3.14 x64")
 
 
 def require_fresh_directory(path: Path, description: str) -> Path:
@@ -91,6 +94,7 @@ try {
   build_number = $os.BuildNumber
   caption = $os.Caption
   is_administrator = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+  product_type = $os.ProductType
   smart_app_control_state = $smartAppControl
   applocker_rule_collections = $appLocker
   version = $os.Version
@@ -110,10 +114,20 @@ try {
     raise RuntimeError(f"Windows security state was not valid JSON; see {log}") from error
   required = {
       "account", "architecture", "build_number", "caption", "is_administrator",
-      "smart_app_control_state", "applocker_rule_collections", "version",
+      "product_type", "smart_app_control_state", "applocker_rule_collections", "version",
   }
   if not isinstance(value, dict) or set(value) != required:
     raise RuntimeError(f"Windows security state was incomplete; see {log}")
+  try:
+    build_number = int(value["build_number"])
+  except (TypeError, ValueError) as error:
+    raise RuntimeError(f"Windows build number was invalid; see {log}") from error
+  if value["product_type"] != 1 or build_number < 22000:
+    raise RuntimeError(
+        "direct-card qualification requires a Windows 11 client workstation; "
+        f"see {log}")
+  if "64" not in str(value["architecture"]):
+    raise RuntimeError(f"direct-card qualification requires a 64-bit OS; see {log}")
   return value
 
 
@@ -259,6 +273,18 @@ def stage_local_registry(candidate, root: Path) -> Path:
   return package
 
 
+def stage_invalid_wheel_registry(candidate, root: Path) -> Path:
+  """Create a checksum-consistent fixture whose wheel pip must reject."""
+  package = stage_local_registry(candidate, root)
+  wheel = package / candidate.wheel.name
+  wheel.write_bytes(b"invalid wheel fixture for partial-install recovery\n")
+  metadata_path = package / "metadata.json"
+  metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+  metadata["resources-checksum"][candidate.wheel.name] = sha256(wheel)
+  write_json(metadata_path, metadata)
+  return package
+
+
 def load_upgrade_base(candidate, directory: Path | None, expected_commit: str):
   if directory is None:
     return None
@@ -272,8 +298,8 @@ def load_upgrade_base(candidate, directory: Path | None, expected_commit: str):
   candidate_version = str(candidate.metadata.get("version", ""))
   if not upgrade_base_version or not candidate_version:
     raise ValueError("upgrade baseline and candidate must name package versions")
-  if upgrade_base_version == candidate_version:
-    raise ValueError("upgrade baseline and candidate must have different package versions")
+  if msi_version(candidate_version) <= msi_version(upgrade_base_version):
+    raise ValueError("upgrade candidate package version must be newer than the baseline")
   if upgrade_base.resources == candidate.resources:
     raise ValueError("upgrade baseline and candidate contain identical package resources")
   return upgrade_base
@@ -773,6 +799,25 @@ def qualify(args: argparse.Namespace) -> None:
           stderr=subprocess.DEVNULL, check=False).returncode == 0:
         raise RuntimeError("missing-wheel flow reported failure after installing pyneatpcie")
 
+      invalid_wheel_registry_root = work / "invalid wheel registry with spaces"
+      stage_invalid_wheel_registry(candidate, invalid_wheel_registry_root)
+      invalid_wheel_download_root = work / "invalid wheel downloads with spaces"
+      with local_registry(invalid_wheel_registry_root) as registry_url:
+        invalid_wheel_command = [
+            cli, "neat", "--base-url", registry_url, "install", target,
+            "--install-dir", invalid_wheel_download_root,
+            "--python-executable", python,
+        ]
+        invalid_wheel_code = run_expected_failure(
+            invalid_wheel_command, evidence / "sima-cli-invalid-wheel.log",
+            env=cli_environment, cwd=work, timeout=1800)
+      if not install_root.is_dir():
+        raise RuntimeError("wheel-install failure removed the successful native installation")
+      if subprocess.run(
+          [python, "-c", "import pyneatpcie"], stdout=subprocess.DEVNULL,
+          stderr=subprocess.DEVNULL, check=False).returncode == 0:
+        raise RuntimeError("invalid-wheel flow reported failure after installing pyneatpcie")
+
       registry_root = work / "complete registry with spaces"
       stage_local_registry(candidate, registry_root)
       recovery_download_root = work / "recovery downloads with spaces"
@@ -795,6 +840,7 @@ def qualify(args: argparse.Namespace) -> None:
           "native_only": "PASS",
           "recovery": "PASS",
           "repeat": "PASS",
+          "wheel_failure": {"exit_code": invalid_wheel_code, "status": "PASS"},
       }
       if upgrade_base is not None:
         result["customer_install"]["upgrade"] = {

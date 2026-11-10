@@ -395,8 +395,9 @@ The native Windows build produces a Core-owned WiX v3 MSI. Scheduler produces a
 separate MSI for its channel and `neatpciehost` plugin. Release metadata pins the
 two packages as one ordered native cohort, while Windows Installer retains file
 ownership for each producer. Python remains a separate wheel owned by the
-application's Python environment. The customer installs the complete cohort with
-one command:
+application's Python environment. The initial wheel supports CPython 3.14 x64;
+other Python minors are not part of the first qualified Windows configuration.
+The customer installs the complete cohort with one command:
 
 ```powershell
 sima-cli neat install core/pciehost/windows/amd64@3.0 `
@@ -449,8 +450,9 @@ extras, checksum metadata, producer receipts and installer logs. A separate
 holds an exclusive card lock, verifies the card runtime checksum, installs the
 exact `sima-cli` candidate selected by workflow run and commit, exposes the
 cohort through disposable loopback registries, and exercises native-only install,
-a missing-wheel failure with the native result preserved, recovery with the wheel,
-and a repeated matching install through the documented `sima-cli neat install`
+a missing-wheel download failure, a checksum-valid but invalid-wheel pip failure
+after native installation, recovery with the real wheel, and a repeated matching
+install through the documented `sima-cli neat install`
 command. It deletes and repairs one Core-owned and one Scheduler-owned file through
 Windows Installer, records the Windows version, elevation, Smart App Control, and
 effective AppLocker visibility without changing policy, rechecks plugin discovery,
@@ -471,7 +473,7 @@ by dispatching the Windows workflow directly.
 A publishing run also selects an earlier successful Core Windows workflow by
 run ID and full commit. The hardware runner installs that cohort first through
 the same `sima-cli` command, then installs the release candidate over it. The
-two cohorts must have different Core package versions and different package
+two cohorts must have increasing Core package versions and different package
 bytes. Release admission fails unless the upgrade succeeds and the candidate
 still passes repair, plug-in discovery, API, fault-recovery, and clean-removal
 checks. The unconditional recovery step knows both MSI cohorts, so it can remove
@@ -481,6 +483,9 @@ the upgrade.
 The hardware runner's pinned offline wheelhouse must contain the dependencies
 of both `pyneatpcie` and the selected `sima-cli` wheel. This keeps the acceptance
 transaction independent of PyPI while still exercising the real customer CLI.
+The maintainer sequence, runner inputs, workflow commands, retained evidence,
+and recovery procedure are documented in
+[`scripts/ci/pciehost/WINDOWS_RELEASE.md`](../scripts/ci/pciehost/WINDOWS_RELEASE.md).
 
 Validation runs may use unsigned development artifacts. A publishing run requires
 Scheduler and Core to sign their shipped EXE, DLL, PYD and MSI files with a

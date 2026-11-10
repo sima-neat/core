@@ -25,6 +25,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[3]
 PCIE_HOST = ROOT / "pcie_host"
 EXPECTED_MACHINE = "AMD64"
+SUPPORTED_PYTHON = (3, 14)
 
 
 def sha256(path: Path) -> str:
@@ -81,6 +82,9 @@ def validate_windows_host() -> None:
     raise ValueError("the Windows Core producer must run on Windows")
   if platform.machine().upper() != EXPECTED_MACHINE:
     raise ValueError(f"the Windows Core producer requires AMD64, found {platform.machine()!r}")
+  if platform.python_implementation() != "CPython" or sys.version_info[:2] != SUPPORTED_PYTHON:
+    expected = ".".join(str(value) for value in SUPPORTED_PYTHON)
+    raise ValueError(f"the initial Windows wheel requires CPython {expected} x64")
   if not os.environ.get("VSCMD_VER"):
     raise ValueError("run the producer from an initialized x64 Visual Studio environment")
   if os.environ.get("VSCMD_ARG_TGT_ARCH", "").lower() != "x64":

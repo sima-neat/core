@@ -9,7 +9,7 @@ from pathlib import Path
 from pathlib import PureWindowsPath
 import re
 
-from windows_candidate import validate_candidate
+from windows_candidate import msi_version, validate_candidate
 
 
 def read_object(path: Path, description: str) -> dict:
@@ -83,10 +83,20 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
   security = host.get("windows_security") if isinstance(host, dict) else None
   required_security = {
       "account", "architecture", "build_number", "caption", "is_administrator",
-      "smart_app_control_state", "applocker_rule_collections", "version",
+      "product_type", "smart_app_control_state", "applocker_rule_collections", "version",
   }
   if not isinstance(security, dict) or set(security) != required_security:
     raise ValueError("hardware qualification did not record Windows security state")
+  try:
+    windows_build = int(security["build_number"])
+  except (TypeError, ValueError) as error:
+    raise ValueError("hardware qualification recorded an invalid Windows build") from error
+  if (security.get("product_type") != 1 or windows_build < 22000
+      or "64" not in str(security.get("architecture", ""))):
+    raise ValueError("hardware qualification did not run on Windows 11 x64 workstation")
+  host_python = str(host.get("python", ""))
+  if not re.fullmatch(r"3[.]14(?:[.][0-9]+)?", host_python):
+    raise ValueError("hardware qualification did not use the supported CPython 3.14 ABI")
   qualified_candidate = qualification.get("candidate")
   if not isinstance(qualified_candidate, dict):
     raise ValueError("hardware qualification has no candidate identity")
@@ -113,6 +123,12 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
       or not isinstance(missing_wheel.get("exit_code"), int)
       or missing_wheel["exit_code"] == 0):
     raise ValueError("hardware qualification did not prove missing-wheel failure and recovery")
+  wheel_failure = customer_install.get("wheel_failure")
+  if (not isinstance(wheel_failure, dict) or wheel_failure.get("status") != "PASS"
+      or not isinstance(wheel_failure.get("exit_code"), int)
+      or wheel_failure["exit_code"] == 0):
+    raise ValueError(
+        "hardware qualification did not prove native success, wheel failure, and retry")
   repair = customer_install.get("repair")
   if (not isinstance(repair, dict) or repair.get("core") != "PASS"
       or repair.get("scheduler") != "PASS"
@@ -124,9 +140,15 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
         or not re.fullmatch(r"[0-9a-f]{40}", str(upgrade.get("baseline_commit", "")))
         or upgrade.get("baseline_commit") == candidate.core_commit
         or not upgrade.get("baseline_version") or not upgrade.get("candidate_version")
-        or upgrade.get("baseline_version") == upgrade.get("candidate_version")
         or upgrade.get("candidate_version") != candidate.metadata.get("version")):
       raise ValueError("release qualification did not prove a real MSI package upgrade")
+    try:
+      is_newer = msi_version(upgrade["candidate_version"]) > msi_version(
+          upgrade["baseline_version"])
+    except ValueError as error:
+      raise ValueError("release qualification recorded an invalid MSI upgrade version") from error
+    if not is_newer:
+      raise ValueError("release qualification did not upgrade to a newer MSI package version")
   sima_cli = qualification.get("sima_cli")
   if (not isinstance(sima_cli, dict)
       or not re.fullmatch(r"[0-9a-f]{40}", str(sima_cli.get("commit", "")))
