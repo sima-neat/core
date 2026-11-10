@@ -25,11 +25,12 @@ SPEC.loader.exec_module(MODULE)
 from windows_candidate import dependency_identity, sha256, validate_candidate  # noqa: E402
 from qualify_windows_hardware import (  # noqa: E402
     ExclusiveLock, RemoteExclusiveLock, card_snapshot, load_upgrade_base,
-    parse_performance_log, run_sudo_remote, sima_cli_identity, stage_card_candidate,
-    stage_invalid_wheel_registry, stage_local_registry, stage_path_fixtures, stress_queues,
-    validate_card_candidate)
+    parse_performance_log, run_captured_to_file, run_sudo_remote, sima_cli_identity,
+    stage_card_candidate, stage_invalid_wheel_registry, stage_local_registry,
+    stage_path_fixtures, stress_queues, validate_card_candidate)
 from verify_linux_release_run import verify_run as verify_linux_run  # noqa: E402
 from verify_windows_release import verify  # noqa: E402
+import prepare_card_qualification_candidate as CARD_PREP  # noqa: E402
 
 
 class WindowsCiContracts(unittest.TestCase):
@@ -182,12 +183,16 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("process.kill()", source)
     self.assertIn('"/fa"', source)
     self.assertIn('"gst-inspect-1.0.exe"', source)
+    self.assertIn('install_root / "bin" / "gstreamer-1.0" / "gstneatpciehost.dll"', source)
     self.assertIn('work / "native customer downloads with spaces"', source)
     self.assertIn('work / "missing wheel downloads with spaces"', source)
     self.assertIn('work / "invalid wheel downloads with spaces"', source)
     self.assertIn('work / "recovery downloads with spaces"', source)
     self.assertIn("if card_stage_attempted:", source)
     self.assertIn("restore_card_candidate(args, remote_lock_token", source)
+    self.assertIn("stdin=subprocess.DEVNULL", source)
+    self.assertIn('cli_environment["SIMA_CLI_CHECK_FOR_UPDATE"] = "0"', source)
+    self.assertIn('evidence / "card-candidate-dependencies.log"', source)
     cleanup = (SCRIPT_DIR / "cleanup_windows_hardware.py").read_text(encoding="utf-8")
     self.assertIn("shutil.rmtree(work, ignore_errors=True)", cleanup)
     self.assertIn("restore_card_candidate(args, remote_token", cleanup)
@@ -438,6 +443,43 @@ class WindowsCiContracts(unittest.TestCase):
       package.write_bytes(b"changed")
       with self.assertRaisesRegex(ValueError, "checksum differs"):
         validate_card_candidate(root, commit)
+
+  def test_private_card_candidate_adds_hashed_arm64_dependencies(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      source = root / "source"
+      dependencies = root / "dependencies"
+      output = root / "output"
+      source.mkdir()
+      dependencies.mkdir()
+      commit = "c" * 40
+      package = source / "sima-neat-Linux-core.deb"
+      package.write_bytes(b"card package")
+      dependency = dependencies / "libfmt10_arm64.deb"
+      dependency.write_bytes(b"dependency package")
+      resources = {package.name: sha256(package)}
+      (source / "metadata-all.json").write_text(json.dumps({
+          "resources": [package.name],
+          "resources-checksum": resources,
+          "version": "0.6.2+develop." + commit[:12],
+      }), encoding="utf-8")
+      identity = {
+          "architecture": "arm64",
+          "file": dependency.name,
+          "package": "libfmt10",
+          "sha256": sha256(dependency),
+          "version": "10.1.1",
+      }
+      with mock.patch.object(CARD_PREP, "deb_identity", return_value=identity):
+        CARD_PREP.prepare(source, dependencies, output, commit)
+      candidate = validate_card_candidate(output, commit)
+      self.assertEqual(
+          {path.name for path in candidate.packages}, {package.name, dependency.name})
+      receipt = json.loads(
+          (output / "windows-card-qualification-dependencies.json").read_text(
+              encoding="utf-8"))
+      self.assertEqual(receipt["dependencies"], [identity])
+      self.assertEqual(receipt["source_core_commit"], commit)
 
   def test_release_rejects_incomplete_card_candidate_identity(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -771,7 +813,9 @@ class WindowsCiContracts(unittest.TestCase):
       token = "a" * 32
       remote_lock = RemoteExclusiveLock(args, "/tmp/neat-pcie-card0.lock", token)
       completed = subprocess.CompletedProcess([], 0, "")
-      with mock.patch("qualify_windows_hardware.subprocess.run", return_value=completed) as run:
+      with mock.patch(
+          "qualify_windows_hardware.run_captured_to_file",
+          return_value=completed) as run:
         remote_lock.acquire(root / "acquire.log")
         remote_lock.release(root / "release.log")
       self.assertEqual(run.call_count, 2)
@@ -782,8 +826,28 @@ class WindowsCiContracts(unittest.TestCase):
       self.assertIn('test "$owner" = "$token"', release_command)
 
       owner = subprocess.CompletedProcess([], 0, f"owner={token}\n")
-      with mock.patch("qualify_windows_hardware.subprocess.run", return_value=owner):
+      with mock.patch(
+          "qualify_windows_hardware.run_captured_to_file", return_value=owner):
         self.assertEqual(remote_lock.owner(root / "owner.log"), token)
+
+  def test_card_ssh_capture_uses_a_file_instead_of_a_pipe(self):
+    with tempfile.TemporaryDirectory() as directory:
+      log = Path(directory) / "ssh.log"
+
+      def complete(_command, **kwargs):
+        self.assertIs(kwargs["stdin"], subprocess.DEVNULL)
+        self.assertIsNot(kwargs["stdout"], subprocess.PIPE)
+        kwargs["stdout"].write("owner=" + "a" * 32 + "\n")
+        kwargs["stdout"].flush()
+        return subprocess.CompletedProcess([], 0)
+
+      with mock.patch(
+          "qualify_windows_hardware.subprocess.run", side_effect=complete):
+        completed = run_captured_to_file(["ssh.exe", "host", "true"], log, timeout=30)
+      self.assertEqual(completed.returncode, 0)
+      self.assertIn("owner=" + "a" * 32, completed.stdout)
+      self.assertNotIn("ssh.exe", completed.stdout)
+      self.assertIn("ssh.exe", log.read_text(encoding="utf-8"))
 
   def test_card_snapshot_records_platform_3_build_identity(self):
     with tempfile.TemporaryDirectory() as directory:

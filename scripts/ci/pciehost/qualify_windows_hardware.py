@@ -268,6 +268,7 @@ def run_logged(command: list[object], log: Path, *, env: dict[str, str] | None =
         argv,
         cwd=cwd,
         env=env,
+        stdin=subprocess.DEVNULL,
         stdout=output,
         stderr=subprocess.STDOUT,
         text=True,
@@ -289,6 +290,7 @@ def run_expected_failure(command: list[object], log: Path,
         argv,
         cwd=cwd,
         env=env,
+        stdin=subprocess.DEVNULL,
         stdout=output,
         stderr=subprocess.STDOUT,
         text=True,
@@ -298,6 +300,34 @@ def run_expected_failure(command: list[object], log: Path,
   if result.returncode in PASS_CODES:
     raise RuntimeError(f"command unexpectedly succeeded; see {log}")
   return result.returncode
+
+
+def run_captured_to_file(command: list[object], log: Path, *,
+                         timeout: int) -> subprocess.CompletedProcess[str]:
+  """Capture a native command without routing its output through a pipe.
+
+  Windows OpenSSH 9.5 can receive the remote exit status and still block while
+  closing a redirected pipe.  A regular file handle avoids that client bug and
+  also preserves partial output when a command times out.
+  """
+  argv = [str(value) for value in command]
+  with log.open("w", encoding="utf-8", errors="replace") as output:
+    output.write("+ " + subprocess.list2cmdline(argv) + "\n")
+    output.flush()
+    output_offset = output.tell()
+    result = subprocess.run(
+        argv,
+        stdin=subprocess.DEVNULL,
+        stdout=output,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+  with log.open("r", encoding="utf-8", errors="replace") as output:
+    output.seek(output_offset)
+    captured = output.read()
+  return subprocess.CompletedProcess(argv, result.returncode, captured, None)
 
 
 def remove_msi(msi: Path, log: Path) -> str:
@@ -503,6 +533,16 @@ def run_sudo_remote(args: argparse.Namespace, remote: str, log: Path,
 def stage_card_candidate(args: argparse.Namespace, candidate: CardCandidate, token: str,
                          evidence: Path) -> dict[str, str]:
   paths = card_candidate_paths(token)
+  library_paths = (
+      f"{paths['root']}/usr/lib",
+      f"{paths['root']}/usr/lib/aarch64-linux-gnu",
+      f"{paths['root']}/usr/lib/aarch64-linux-gnu/neat/runtime",
+      "/usr/lib/aarch64-linux-gnu",
+  )
+  plugin_paths = (
+      f"{paths['root']}/usr/lib/aarch64-linux-gnu/neat/gst-plugins",
+      "/usr/lib/aarch64-linux-gnu/gstreamer-1.0",
+  )
   prepare = (
       f"set -eu; test ! -e {paths['stage']}; umask 077; "
       f"mkdir -p {paths['packages']} {paths['root']} {paths['run']} {paths['log']}"
@@ -536,22 +576,27 @@ def stage_card_candidate(args: argparse.Namespace, candidate: CardCandidate, tok
     if set(values) != expected_receipt or any(
         not re.fullmatch(r"[0-9a-f]{64}", value) for value in values.values()):
       raise RuntimeError(f"card candidate extraction receipt is incomplete; see {log}")
-  except BaseException:
-    subprocess.run(
-        ssh_command(args, f"rm -rf -- {paths['stage']}"),
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        text=True, timeout=60, check=False)
+    library_path = ":".join(library_paths)
+    dependency_check = (
+        "set -eu; test -x /lib/ld-linux-aarch64.so.1; "
+        f"LD_LIBRARY_PATH={library_path} ldd {paths['worker']}; "
+        f"! LD_LIBRARY_PATH={library_path} ldd {paths['worker']} | grep -q 'not found'"
+    )
+    run_logged(
+        ssh_command(args, dependency_check),
+        evidence / "card-candidate-dependencies.log", timeout=60)
+  except BaseException as error:
+    try:
+      cleanup = run_captured_to_file(
+          ssh_command(args, f"rm -rf -- {paths['stage']}"),
+          evidence / "card-candidate-stage-cleanup.log", timeout=60)
+      if cleanup.returncode != 0:
+        error.add_note(
+            "private card stage cleanup returned "
+            f"{cleanup.returncode}; see {evidence / 'card-candidate-stage-cleanup.log'}")
+    except BaseException as cleanup_error:
+      error.add_note(f"private card stage cleanup also failed: {cleanup_error}")
     raise
-  library_paths = (
-      f"{paths['root']}/usr/lib",
-      f"{paths['root']}/usr/lib/aarch64-linux-gnu",
-      f"{paths['root']}/usr/lib/aarch64-linux-gnu/neat/runtime",
-      "/usr/lib/aarch64-linux-gnu",
-  )
-  plugin_paths = (
-      f"{paths['root']}/usr/lib/aarch64-linux-gnu/neat/gst-plugins",
-      "/usr/lib/aarch64-linux-gnu/gstreamer-1.0",
-  )
   values.update(paths)
   values["card_env"] = " ".join((
       f"SIMA_NEAT_PCIE_HELPER_PATH={paths['worker']}",
@@ -637,11 +682,9 @@ class RemoteExclusiveLock:
     self.conflicted = False
 
   def _run(self, remote: str, log: Path) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(
-        ssh_command(self.args, remote), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, timeout=30, check=False)
-    log.write_text(
-        f"returncode={result.returncode}\n{result.stdout}", encoding="utf-8", errors="replace")
+    result = run_captured_to_file(ssh_command(self.args, remote), log, timeout=30)
+    log.write_text(f"returncode={result.returncode}\n{result.stdout}",
+                   encoding="utf-8", errors="replace")
     return result
 
   def owner(self, log: Path) -> str | None:
@@ -768,19 +811,22 @@ def wait_for_no_card_workers(args: argparse.Namespace, log: Path, timeout: int) 
       "pgrep -fc '(^|/)[p]cie-pipeline-builder([[:space:]]|$)' || true"
   )
   deadline = time.monotonic() + timeout
+  attempt = log.with_name(log.name + ".attempt")
   with log.open("w", encoding="utf-8", errors="replace") as output:
-    while True:
-      result = subprocess.run(
-          ssh_command(args, remote), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-          text=True, timeout=30, check=False)
-      output.write(f"returncode={result.returncode} {result.stdout.strip()}\n")
-      output.flush()
-      match = re.search(r"workers=(\d+)", result.stdout)
-      if result.returncode == 0 and match and int(match.group(1)) == 0:
-        return
-      if time.monotonic() >= deadline:
-        raise RuntimeError(f"card worker did not stop within {timeout} seconds; see {log}")
-      time.sleep(1)
+    try:
+      while True:
+        result = run_captured_to_file(
+            ssh_command(args, remote), attempt, timeout=30)
+        output.write(f"returncode={result.returncode} {result.stdout.strip()}\n")
+        output.flush()
+        match = re.search(r"workers=(\d+)", result.stdout)
+        if result.returncode == 0 and match and int(match.group(1)) == 0:
+          return
+        if time.monotonic() >= deadline:
+          raise RuntimeError(f"card worker did not stop within {timeout} seconds; see {log}")
+        time.sleep(1)
+    finally:
+      attempt.unlink(missing_ok=True)
 
 
 def wait_for_log(process: subprocess.Popen, log: Path, marker: str, timeout: int) -> None:
@@ -1104,6 +1150,7 @@ def qualify(args: argparse.Namespace) -> None:
       "sima_cli": cli_identity,
       "cleanup": {},
       "completed_at_utc": None,
+      "failure": None,
       "result": "FAIL",
       "started_at_utc": datetime.now(timezone.utc).isoformat(),
       "host": {
@@ -1192,6 +1239,7 @@ def qualify(args: argparse.Namespace) -> None:
       cli_environment.pop("PYTHONPATH", None)
       cli_environment["PIP_NO_INDEX"] = "1"
       cli_environment["PIP_FIND_LINKS"] = str(wheelhouse)
+      cli_environment["SIMA_CLI_CHECK_FOR_UPDATE"] = "0"
       native_download_root = work / "native customer downloads with spaces"
       target = "core/pciehost/windows/amd64@3.0"
       if upgrade_base is not None:
@@ -1327,7 +1375,7 @@ def qualify(args: argparse.Namespace) -> None:
       ))
       run_logged(
           [args.gstreamer_root.resolve(strict=True) / "bin" / "gst-inspect-1.0.exe",
-           "neatpciehost"],
+           install_root / "bin" / "gstreamer-1.0" / "gstneatpciehost.dll"],
           evidence / "gst-inspect-neatpciehost.log", env=environment, cwd=work, timeout=60)
       result["customer_install"]["plugin_discovery"] = "PASS"
       require_assets(environment, args.include_genai)
@@ -1350,6 +1398,10 @@ def qualify(args: argparse.Namespace) -> None:
       result["result"] = "PASS"
     except BaseException as error:
       failure = error
+      result["failure"] = {
+          "message": str(error),
+          "type": type(error).__name__,
+      }
     finally:
       try:
         stop_card_workers(args, evidence)
