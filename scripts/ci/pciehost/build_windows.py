@@ -606,6 +606,13 @@ def build(args: argparse.Namespace) -> None:
                 {"name": path.name, "sha256": sha256(path)} for path in wheelhouse_wheels
             ],
         },
+        "qualification_resources": {
+            **{
+                f"hardware-tests/{name}": digest
+                for name, digest in file_inventory(hardware_tests).items()
+            },
+            "windows-signatures.json": sha256(output / "windows-signatures.json"),
+        },
         "repository": "sima-neat/core",
         "scheduler_source_commit": scheduler_metadata.get("commit"),
         "toolchain": {"cmake": cmake, "ninja": ninja, "wix": os.environ["WIX"]},

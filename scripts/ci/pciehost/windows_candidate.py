@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
+import re
 
 
 def sha256(path: Path) -> str:
@@ -62,6 +63,20 @@ def validate_candidate(directory: Path) -> WindowsCandidate:
     raise ValueError("candidate receipt has the wrong profile")
   if metadata.get("commit") != receipt.get("core_source_commit"):
     raise ValueError("candidate metadata and receipt name different Core commits")
+
+  qualification_resources = receipt.get("qualification_resources")
+  if not isinstance(qualification_resources, dict) or not qualification_resources:
+    raise ValueError("candidate receipt has no qualification resource inventory")
+  for name, expected in qualification_resources.items():
+    relative = Path(str(name))
+    if (relative.is_absolute() or ".." in relative.parts or not relative.parts
+        or not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected)):
+      raise ValueError(f"invalid qualification resource: {name!r}")
+    path = root / relative
+    if not path.is_file() or path.is_symlink():
+      raise ValueError(f"candidate qualification resource is missing or unsafe: {name}")
+    if sha256(path) != expected:
+      raise ValueError(f"candidate qualification resource checksum differs: {name}")
 
   resource_names = metadata.get("resources")
   resources = metadata.get("resources-checksum")

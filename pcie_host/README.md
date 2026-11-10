@@ -446,12 +446,22 @@ cohort: Scheduler MSI, Core MSI, optional `pyneatpcie` wheel, C++ hardware test
 extras, checksum metadata, producer receipts and installer logs. A separate
 `pcie-windows-hardware` Windows 11 runner consumes those exact bytes locally. It
 holds an exclusive card lock, verifies the card runtime checksum, installs the
-cohort, runs the public C++ and Python vision suites, and then removes Python,
-Core and Scheduler in reverse order. Release admission requires the same resource
-checksums, no remaining card worker, and a clean install root. GenAI remains off
+exact `sima-cli` candidate selected by workflow run and commit, exposes the
+cohort through a disposable loopback registry, and runs the documented
+`sima-cli neat install` command twice. It then runs the public C++ and Python
+vision suites and removes Python, Core and Scheduler in reverse order. Release
+admission requires the same resource checksums, no remaining card worker, and a
+clean install root. GenAI remains off
 in validation-only runs until its Windows transport is supported. Customer
 publication is deliberately blocked until the same lane can run the complete
-C++ and Python GenAI matrix.
+C++ and Python GenAI matrix. Release mode also requires the run ID of a
+successful `Vulcan CI` workflow for the exact Core commit, so the existing Linux
+build and PCIe hardware regressions cannot be bypassed by dispatching the
+Windows workflow directly.
+
+The hardware runner's pinned offline wheelhouse must contain the dependencies
+of both `pyneatpcie` and the selected `sima-cli` wheel. This keeps the acceptance
+transaction independent of PyPI while still exercising the real customer CLI.
 
 Validation runs may use unsigned development artifacts. A publishing run requires
 Scheduler and Core to sign their shipped EXE, DLL, PYD and MSI files with a

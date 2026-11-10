@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from pathlib import PureWindowsPath
+import re
 
 from windows_candidate import validate_candidate
 
@@ -40,6 +42,22 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
   cleanup = qualification.get("cleanup")
   if not isinstance(cleanup, dict) or cleanup.get("errors") != []:
     raise ValueError("hardware qualification did not prove clean removal")
+  expected_cleanup = {"core_msi": "PASS", "python": "PASS", "scheduler_msi": "PASS"}
+  if any(cleanup.get(name) != value for name, value in expected_cleanup.items()):
+    raise ValueError("hardware qualification did not remove every customer-owned component")
+  customer_install = qualification.get("customer_install")
+  if (not isinstance(customer_install, dict)
+      or customer_install.get("command") != "core/pciehost/windows/amd64@3.0"
+      or customer_install.get("initial") != "PASS"
+      or customer_install.get("repeat") != "PASS"
+      or " " not in str(customer_install.get("download_path_with_spaces", ""))):
+    raise ValueError("hardware qualification did not prove the repeated customer CLI flow")
+  sima_cli = qualification.get("sima_cli")
+  if (not isinstance(sima_cli, dict)
+      or not re.fullmatch(r"[0-9a-f]{40}", str(sima_cli.get("commit", "")))
+      or not re.fullmatch(r"[0-9a-f]{64}", str(sima_cli.get("sha256", "")))
+      or sima_cli["commit"][:12] not in str(sima_cli.get("version", ""))):
+    raise ValueError("hardware qualification has no exact sima-cli candidate identity")
   final_card = qualification.get("card_final")
   if (not isinstance(final_card, dict) or final_card.get("workers") != "0"
       or final_card.get("genai_workers") != "0"):
@@ -47,6 +65,36 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
   tests = qualification.get("tests")
   if (not isinstance(tests, dict) or not tests.get("cpp") or not tests.get("python")):
     raise ValueError("hardware qualification did not run both customer APIs")
+  required_cpp = {
+      "test_metadata", "test_tensor_run", "test_tensor_mla_only_run",
+      "test_tensor_mla_only_bf16_run", "test_tensor_parallel_queues",
+      "test_image_run", "test_image_boxdecode_run", "test_queue_blocker",
+      "test_model_resilience", "test_tensor_latency", "test_tensor_throughput",
+  }
+  required_python = {
+      "test_async_test_runner_cancels_blocked_peer", "test_metadata_yolov8",
+      "test_runtime_request_correlation", "test_runtime_two_models_and_independent_unload",
+      "test_tensor_run_yolov8", "test_tensor_latency_yolov8",
+      "test_tensor_throughput_yolov8", "test_tensor_parallel_queues_yolov8",
+      "test_tensor_run_mla_only", "test_image_run_yolov8",
+      "test_image_boxdecode_run_yolov8",
+  }
+  missing_cpp = sorted(required_cpp - set(tests["cpp"]))
+  missing_python = sorted(required_python - set(tests["python"]))
+  if missing_cpp or missing_python:
+    raise ValueError(
+        f"hardware qualification is missing required vision cases: "
+        f"C++={missing_cpp}, Python={missing_python}")
+  path_fixtures = qualification.get("path_fixtures")
+  if not isinstance(path_fixtures, dict) or len(path_fixtures) != 3:
+    raise ValueError("hardware qualification did not record Windows path fixtures")
+  invalid_paths = []
+  for name, value in path_fixtures.items():
+    path = PureWindowsPath(str(value))
+    if not path.is_absolute() or not path.drive or " " not in str(path):
+      invalid_paths.append(name)
+  if invalid_paths:
+    raise ValueError(f"hardware qualification did not exercise absolute paths with spaces: {invalid_paths}")
   if require_genai:
     names = set(tests["cpp"]) | set(tests["python"])
     required_genai = {
@@ -87,6 +135,8 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
   return {
       "core_commit": candidate.core_commit,
       "hardware_qualified": True,
+      "path_qualified": True,
+      "customer_install_qualified": True,
       "genai_qualified": require_genai,
       "resources": candidate.resources,
       "signatures_required": require_signatures,

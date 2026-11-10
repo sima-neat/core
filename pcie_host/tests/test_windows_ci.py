@@ -19,7 +19,10 @@ MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
 SPEC.loader.exec_module(MODULE)
 from windows_candidate import sha256, validate_candidate  # noqa: E402
-from qualify_windows_hardware import ExclusiveLock  # noqa: E402
+from qualify_windows_hardware import (  # noqa: E402
+    ExclusiveLock, sima_cli_identity, stage_local_registry,
+    stage_path_fixtures, stress_queues)
+from verify_linux_release_run import verify_run as verify_linux_run  # noqa: E402
 from verify_windows_release import verify  # noqa: E402
 
 
@@ -79,7 +82,10 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("scripts/ci/pciehost/build_windows.py", source)
     self.assertIn("scripts/ci/pciehost/qualify_windows_hardware.py", source)
     self.assertIn("scripts/ci/pciehost/cleanup_windows_hardware.py", source)
-    self.assertIn("needs: hardware", source)
+    self.assertIn("needs: [hardware, linux_release]", source)
+    self.assertIn("linux_run_id", source)
+    self.assertIn("sima_cli_run_id", source)
+    self.assertIn("sima-cli-dist", source)
     self.assertIn("--require-signatures", source)
     self.assertIn("Recover card and native installation", source)
     self.assertIn("if: always()", source)
@@ -105,6 +111,8 @@ class WindowsCiContracts(unittest.TestCase):
     for path, content in ((scheduler, b"scheduler"), (core, b"core"), (wheel, b"wheel")):
       path.write_bytes(content)
     resources = {path.name: sha256(path) for path in (scheduler, core, wheel)}
+    qualification_resource = root / "qualification-resource.bin"
+    qualification_resource.write_bytes(b"hardware-tests-and-signature-receipt")
     commit = "c" * 40
     (root / "metadata.json").write_text(json.dumps({
         "artifact": {"package_path": "pciehost/windows/amd64"},
@@ -125,6 +133,9 @@ class WindowsCiContracts(unittest.TestCase):
     (root / "host-candidate.json").write_text(json.dumps({
         "core_source_commit": commit,
         "profile": "pciehost/windows/amd64",
+        "qualification_resources": {
+            qualification_resource.name: sha256(qualification_resource),
+        },
         "repository": "sima-neat/core",
         "scheduler_source_commit": "d" * 40,
     }), encoding="utf-8")
@@ -143,9 +154,41 @@ class WindowsCiContracts(unittest.TestCase):
     qualification.write_text(json.dumps({
         "candidate": {"core_commit": commit, "resources": resources},
         "card_final": {"genai_workers": "0", "workers": "0"},
-        "cleanup": {"errors": []},
+        "cleanup": {
+            "core_msi": "PASS", "errors": [], "python": "PASS", "scheduler_msi": "PASS"},
+        "customer_install": {
+            "command": "core/pciehost/windows/amd64@3.0",
+            "download_path_with_spaces": r"C:\customer downloads\candidate",
+            "initial": "PASS",
+            "repeat": "PASS",
+        },
+        "path_fixtures": {
+            "SIMAPCIE_YOLOV8_MODEL": r"C:\qualification assets\model.tar.gz",
+            "SIMAPCIE_TEST_IMAGE": r"C:\qualification assets\image.jpg",
+            "SIMAPCIE_BOXDECODE_IMAGE": r"C:\qualification assets\people.jpg",
+        },
         "result": "PASS",
-        "tests": {"cpp": ["test_tensor_run"], "python": ["test_tensor_run_yolov8"]},
+        "sima_cli": {
+            "commit": "a" * 40,
+            "sha256": "b" * 64,
+            "version": "2.1.20+ci." + "a" * 12,
+        },
+        "tests": {
+            "cpp": [
+                "test_metadata", "test_tensor_run", "test_tensor_mla_only_run",
+                "test_tensor_mla_only_bf16_run", "test_tensor_parallel_queues",
+                "test_image_run", "test_image_boxdecode_run", "test_queue_blocker",
+                "test_model_resilience", "test_tensor_latency", "test_tensor_throughput",
+            ],
+            "python": [
+                "test_async_test_runner_cancels_blocked_peer", "test_metadata_yolov8",
+                "test_runtime_request_correlation",
+                "test_runtime_two_models_and_independent_unload", "test_tensor_run_yolov8",
+                "test_tensor_latency_yolov8", "test_tensor_throughput_yolov8",
+                "test_tensor_parallel_queues_yolov8", "test_tensor_run_mla_only",
+                "test_image_run_yolov8", "test_image_boxdecode_run_yolov8",
+            ],
+        },
     }), encoding="utf-8")
     return commit, resources, qualification
 
@@ -162,6 +205,14 @@ class WindowsCiContracts(unittest.TestCase):
       with self.assertRaisesRegex(ValueError, "checksum differs"):
         validate_candidate(root)
 
+  def test_candidate_rejects_changed_qualification_resource(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      self.windows_candidate(root)
+      (root / "qualification-resource.bin").write_bytes(b"changed")
+      with self.assertRaisesRegex(ValueError, "qualification resource checksum differs"):
+        validate_candidate(root)
+
   def test_release_gate_rejects_unsigned_candidate(self):
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory)
@@ -175,6 +226,16 @@ class WindowsCiContracts(unittest.TestCase):
       commit, _, qualification = self.windows_candidate(root)
       with self.assertRaisesRegex(ValueError, "complete Windows GenAI matrix"):
         verify(root, qualification, commit, True, True)
+
+  def test_release_gate_rejects_incomplete_vision_matrix(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      value = json.loads(qualification.read_text(encoding="utf-8"))
+      value["tests"]["cpp"].remove("test_tensor_parallel_queues")
+      qualification.write_text(json.dumps(value), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "missing required vision cases"):
+        verify(root, qualification, commit, True)
 
   def test_producer_retains_cpp_hardware_extras_and_signature_receipt(self):
     source = SCRIPT.read_text(encoding="utf-8")
@@ -213,6 +274,76 @@ class WindowsCiContracts(unittest.TestCase):
       with ExclusiveLock(path) as lock:
         lock.retain()
       self.assertTrue(path.is_file())
+
+  def test_hardware_path_fixtures_use_a_directory_with_spaces(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      environment = {}
+      for name in ("SIMAPCIE_YOLOV8_MODEL", "SIMAPCIE_TEST_IMAGE",
+                   "SIMAPCIE_BOXDECODE_IMAGE"):
+        source = root / f"{name}.bin"
+        source.write_bytes(name.encode())
+        environment[name] = str(source)
+      stage_path_fixtures(environment, root / "path fixtures with spaces")
+      for value in environment.values():
+        self.assertIn("path fixtures with spaces", value)
+        self.assertTrue(Path(value).is_file())
+
+  def test_hardware_stress_queues_are_unique_and_bounded(self):
+    self.assertEqual(stress_queues({"SIMAPCIE_STRESS_QUEUES": "0 2 5"}), [0, 2, 5])
+    with self.assertRaisesRegex(ValueError, "range 0..5"):
+      stress_queues({"SIMAPCIE_STRESS_QUEUES": "0 6"})
+    with self.assertRaisesRegex(ValueError, "duplicate"):
+      stress_queues({"SIMAPCIE_STRESS_QUEUES": "1 1"})
+
+  def test_customer_cli_candidate_and_local_registry_are_exact(self):
+    import zipfile
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit = "a" * 40
+      wheel = root / "sima_cli-2.1.20-py3-none-any.whl"
+      with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr(
+            "sima_cli-2.1.20.dist-info/METADATA",
+            f"Name: sima-cli\nVersion: 2.1.20+ci.{commit[:12]}\n")
+      self.assertEqual(sima_cli_identity(wheel, commit)["commit"], commit)
+      with self.assertRaisesRegex(ValueError, "not tied"):
+        sima_cli_identity(wheel, "b" * 40)
+
+      candidate_root = root / "candidate"
+      candidate_root.mkdir()
+      self.windows_candidate(candidate_root)
+      candidate = validate_candidate(candidate_root)
+      registry = root / "registry"
+      package = stage_local_registry(candidate, registry)
+      self.assertEqual(
+          (registry / "core" / "3.0" / "latest.tag").read_text().strip(),
+          candidate.core_commit)
+      self.assertTrue((package / "metadata.json").is_file())
+      self.assertEqual(
+          {path.name for path in package.iterdir()},
+          {"metadata.json", *candidate.resources})
+
+  def test_linux_release_gate_binds_success_to_exact_commit(self):
+    repository = "sima-neat/core"
+    commit = "e" * 40
+    run = {
+        "conclusion": "success",
+        "event": "workflow_dispatch",
+        "head_repository": {"full_name": repository},
+        "head_sha": commit,
+        "html_url": "https://github.example/run/42",
+        "id": 42,
+        "name": "Vulcan CI",
+        "path": ".github/workflows/vulcan-ci.yml",
+        "run_attempt": 1,
+        "status": "completed",
+    }
+    self.assertEqual(
+        verify_linux_run(run, repository, 42, commit)["head_sha"], commit)
+    changed = dict(run, head_sha="f" * 40)
+    with self.assertRaisesRegex(ValueError, "head_sha"):
+      verify_linux_run(changed, repository, 42, commit)
 
 
 if __name__ == "__main__":

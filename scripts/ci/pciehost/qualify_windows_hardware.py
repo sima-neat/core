@@ -9,7 +9,10 @@ and reverse-order cleanup as one transaction.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from datetime import datetime, timezone
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
@@ -18,7 +21,9 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
+import zipfile
 
 from windows_candidate import sha256, validate_candidate
 
@@ -35,10 +40,13 @@ BASE_CPP_TESTS = (
     "test_model_resilience.exe",
 )
 BASE_PYTHON_TESTS = (
+    "test_async_test_runner_cancels_blocked_peer",
     "test_metadata_yolov8",
     "test_runtime_request_correlation",
     "test_runtime_two_models_and_independent_unload",
     "test_tensor_run_yolov8",
+    "test_tensor_latency_yolov8",
+    "test_tensor_throughput_yolov8",
     "test_tensor_parallel_queues_yolov8",
     "test_tensor_run_mla_only",
     "test_image_run_yolov8",
@@ -111,15 +119,72 @@ def run_logged(command: list[object], log: Path, *, env: dict[str, str] | None =
     raise RuntimeError(f"command failed with {result.returncode}; see {log}")
 
 
-def msi_transaction(msi: Path, action: str, log: Path) -> None:
+def remove_msi(msi: Path, log: Path) -> str:
   result = subprocess.run(
-      ["msiexec.exe", f"/{action}", str(msi), "/quiet", "/norestart", "/L*v", str(log)],
+      ["msiexec.exe", "/x", str(msi), "/quiet", "/norestart", "/L*v", str(log)],
       check=False,
   )
+  if result.returncode == 1605:
+    return "ABSENT"
   if result.returncode not in MSI_SUCCESS_CODES:
-    raise RuntimeError(f"Windows Installer /{action} failed with {result.returncode}; see {log}")
+    raise RuntimeError(f"Windows Installer /x failed with {result.returncode}; see {log}")
   if result.returncode != 0:
-    raise RuntimeError(f"Windows Installer /{action} requested a restart ({result.returncode})")
+    raise RuntimeError(f"Windows Installer /x requested a restart ({result.returncode})")
+  return "PASS"
+
+
+def sima_cli_wheel(directory: Path) -> Path:
+  wheels = sorted(directory.resolve(strict=True).glob("sima_cli-*.whl"))
+  if len(wheels) != 1:
+    raise ValueError(f"expected exactly one sima-cli wheel, found {len(wheels)}")
+  return wheels[0]
+
+
+def sima_cli_identity(wheel: Path, expected_commit: str) -> dict[str, str]:
+  packages = []
+  with zipfile.ZipFile(wheel) as archive:
+    bad = archive.testzip()
+    if bad:
+      raise ValueError(f"sima-cli wheel member failed CRC validation: {bad}")
+    packages = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
+    if len(packages) != 1:
+      raise ValueError("sima-cli wheel has no unique distribution metadata")
+    metadata = archive.read(packages[0]).decode("utf-8", errors="strict")
+  version = next(
+      (line.removeprefix("Version: ").strip()
+       for line in metadata.splitlines() if line.startswith("Version: ")), "")
+  if not version:
+    raise ValueError("sima-cli wheel metadata has no version")
+  if expected_commit[:12] not in version:
+    raise ValueError(
+        f"sima-cli wheel version {version!r} is not tied to expected commit {expected_commit}")
+  return {"commit": expected_commit, "sha256": sha256(wheel), "version": version}
+
+
+def stage_local_registry(candidate, root: Path) -> Path:
+  package = root / "core" / "3.0" / candidate.core_commit / "pciehost" / "windows" / "amd64"
+  package.mkdir(parents=True)
+  shutil.copy2(candidate.root / "metadata.json", package / "metadata.json")
+  for name in candidate.resources:
+    shutil.copy2(candidate.root / name, package / name)
+  latest = root / "core" / "3.0" / "latest.tag"
+  latest.parent.mkdir(parents=True, exist_ok=True)
+  latest.write_text(candidate.core_commit + "\n", encoding="ascii")
+  return package
+
+
+@contextmanager
+def local_registry(root: Path):
+  handler = partial(SimpleHTTPRequestHandler, directory=str(root))
+  server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+  thread = threading.Thread(target=server.serve_forever, daemon=True)
+  thread.start()
+  try:
+    yield f"http://127.0.0.1:{server.server_port}"
+  finally:
+    server.shutdown()
+    server.server_close()
+    thread.join(timeout=10)
 
 
 def _validate_remote_path(path: str) -> str:
@@ -217,6 +282,70 @@ def require_assets(environment: dict[str, str], include_genai: bool) -> None:
         raise RuntimeError(f"required Windows PCIe GenAI asset directory is unavailable: {name}")
 
 
+def stage_path_fixtures(environment: dict[str, str], root: Path) -> None:
+  """Exercise model and media inputs through an absolute Windows path with spaces."""
+  root.mkdir(parents=True)
+  for name in ("SIMAPCIE_YOLOV8_MODEL", "SIMAPCIE_TEST_IMAGE", "SIMAPCIE_BOXDECODE_IMAGE"):
+    source = Path(environment[name]).resolve(strict=True)
+    target = root / f"{name.lower()}-{source.name}"
+    try:
+      os.link(source, target)
+    except OSError:
+      shutil.copy2(source, target)
+    environment[name] = str(target)
+
+
+def stress_queues(environment: dict[str, str]) -> list[int]:
+  values = environment.get("SIMAPCIE_STRESS_QUEUES", "0 1 2 3 4 5").split()
+  if not values or any(not re.fullmatch(r"[0-5]", value) for value in values):
+    raise ValueError("SIMAPCIE_STRESS_QUEUES must contain queue numbers in the range 0..5")
+  queues = [int(value) for value in values]
+  if len(set(queues)) != len(queues):
+    raise ValueError("SIMAPCIE_STRESS_QUEUES must not contain duplicate queues")
+  return queues
+
+
+def run_cpp_parallel_queues(executable: Path, evidence: Path,
+                            environment: dict[str, str], timeout: int) -> None:
+  processes: list[tuple[int, subprocess.Popen, object]] = []
+  deadline = time.monotonic() + timeout
+  iterations = environment.get("SIMAPCIE_STRESS_ITERATIONS", "1000")
+  if not re.fullmatch(r"[1-9][0-9]*", iterations):
+    raise ValueError("SIMAPCIE_STRESS_ITERATIONS must be a positive integer")
+  try:
+    for queue in stress_queues(environment):
+      log = (evidence / f"cpp-test_tensor_parallel_queue_{queue}.log").open(
+          "w", encoding="utf-8", errors="replace")
+      command = [str(executable), "--model", environment["SIMAPCIE_YOLOV8_MODEL"],
+                 "--queue", str(queue), "--iterations", iterations]
+      log.write("+ " + subprocess.list2cmdline(command) + "\n")
+      log.flush()
+      process = subprocess.Popen(
+          command, cwd=executable.parent, env=environment,
+          stdout=log, stderr=subprocess.STDOUT, text=True)
+      processes.append((queue, process, log))
+    failures = []
+    for queue, process, _ in processes:
+      remaining = max(0.0, deadline - time.monotonic())
+      try:
+        returncode = process.wait(timeout=remaining)
+      except subprocess.TimeoutExpired:
+        failures.append(f"queue {queue} exceeded {timeout} seconds")
+        break
+      if returncode != 0:
+        failures.append(f"queue {queue} failed with {returncode}")
+    if failures:
+      raise RuntimeError("C++ parallel queue qualification failed: " + "; ".join(failures))
+  finally:
+    for _, process, _ in processes:
+      if process.poll() is None:
+        process.kill()
+    for _, process, log in processes:
+      if process.poll() is None:
+        process.wait(timeout=30)
+      log.close()
+
+
 def run_cpp_tests(args: argparse.Namespace, candidate_root: Path, evidence: Path,
                   environment: dict[str, str]) -> list[str]:
   test_root = candidate_root / "hardware-tests" / "lib" / "sima-pcie-host" / "tests"
@@ -245,6 +374,11 @@ def run_cpp_tests(args: argparse.Namespace, candidate_root: Path, evidence: Path
       timeout=args.test_timeout_seconds,
   )
   completed.append("test_tensor_mla_only_bf16_run")
+
+  parallel = test_root / "test_tensor_run.exe"
+  run_cpp_parallel_queues(
+      parallel, evidence, environment, args.test_timeout_seconds)
+  completed.append("test_tensor_parallel_queues")
 
   performance = test_root / "test_tensor_perf.exe"
   for mode in ("latency", "throughput"):
@@ -301,6 +435,8 @@ def qualify(args: argparse.Namespace) -> None:
   wheelhouse = args.python_wheelhouse.resolve(strict=True)
   if not wheelhouse.is_dir():
     raise RuntimeError(f"Python wheelhouse is not a directory: {wheelhouse}")
+  cli_wheel = sima_cli_wheel(args.sima_cli_candidate)
+  cli_identity = sima_cli_identity(cli_wheel, args.expected_sima_cli_commit)
 
   install_root = Path(os.environ["ProgramFiles"]) / "SimaPCIeHost"
   if install_root.exists():
@@ -312,15 +448,21 @@ def qualify(args: argparse.Namespace) -> None:
           "resources": candidate.resources,
           "scheduler_commit": candidate.receipt.get("scheduler_source_commit"),
       },
+      "sima_cli": cli_identity,
       "cleanup": {},
       "completed_at_utc": None,
       "result": "FAIL",
       "started_at_utc": datetime.now(timezone.utc).isoformat(),
+      "host": {
+          "cpu_count": os.cpu_count(),
+          "machine": platform.machine(),
+          "platform": platform.platform(),
+          "python": platform.python_version(),
+      },
       "tests": {"cpp": [], "python": []},
   }
-  scheduler_installed = False
-  core_installed = False
   venv = work / "venv"
+  cli_venv = work / "sima-cli-venv"
   failure: BaseException | None = None
   cleanup_errors: list[str] = []
 
@@ -331,20 +473,55 @@ def qualify(args: argparse.Namespace) -> None:
       if baseline["workers"] != "0" or baseline["genai_workers"] != "0":
         raise RuntimeError("card had PCIe workers before qualification; refusing to disturb them")
 
-      msi_transaction(candidate.scheduler_msi, "i", evidence / "scheduler-msi-install.log")
-      scheduler_installed = True
-      msi_transaction(candidate.core_msi, "i", evidence / "core-msi-install.log")
-      core_installed = True
-
       subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
       python = venv / "Scripts" / "python.exe"
+      subprocess.run([sys.executable, "-m", "venv", str(cli_venv)], check=True)
+      cli_python = cli_venv / "Scripts" / "python.exe"
+      cli = cli_venv / "Scripts" / "sima-cli.exe"
       requirements = ["pytest", "numpy", "pillow", *args.test_requirement]
       run_logged(
           [python, "-m", "pip", "install", "--no-index", "--find-links", wheelhouse,
-           candidate.wheel, *requirements],
-          evidence / "pip-install.log",
+           *requirements],
+          evidence / "test-dependencies-install.log",
           timeout=900,
       )
+      run_logged(
+          [cli_python, "-m", "pip", "install", "--no-index", "--find-links", wheelhouse,
+           cli_wheel],
+          evidence / "sima-cli-install.log",
+          timeout=900,
+      )
+      if not cli.is_file():
+        raise RuntimeError(f"exact sima-cli candidate installed no console entry point: {cli}")
+
+      cli_environment = os.environ.copy()
+      cli_environment.pop("PYTHONPATH", None)
+      cli_environment["PIP_NO_INDEX"] = "1"
+      cli_environment["PIP_FIND_LINKS"] = str(wheelhouse)
+      registry_root = work / "disposable local registry"
+      stage_local_registry(candidate, registry_root)
+      download_root = work / "customer downloads with spaces"
+      target = "core/pciehost/windows/amd64@3.0"
+      with local_registry(registry_root) as registry_url:
+        command = [
+            cli, "neat", "--base-url", registry_url, "install", target,
+            "--install-dir", download_root,
+            "--python-executable", python,
+        ]
+        run_logged(
+            command, evidence / "sima-cli-customer-install.log",
+            env=cli_environment, cwd=work, timeout=1800)
+        if not install_root.is_dir():
+          raise RuntimeError("sima-cli reported success without installing the native cohort")
+        run_logged(
+            command, evidence / "sima-cli-customer-repeat-install.log",
+            env=cli_environment, cwd=work, timeout=1800)
+      result["customer_install"] = {
+          "command": target,
+          "download_path_with_spaces": str(download_root),
+          "initial": "PASS",
+          "repeat": "PASS",
+      }
 
       environment = os.environ.copy()
       environment.pop("PYTHONPATH", None)
@@ -362,6 +539,12 @@ def qualify(args: argparse.Namespace) -> None:
           environment["PATH"],
       ))
       require_assets(environment, args.include_genai)
+      stage_path_fixtures(environment, work / "customer path fixtures with spaces")
+      result["path_fixtures"] = {
+          name: environment[name]
+          for name in ("SIMAPCIE_YOLOV8_MODEL", "SIMAPCIE_TEST_IMAGE",
+                       "SIMAPCIE_BOXDECODE_IMAGE")
+      }
       run_logged(
           [python, "-c", "import pyneatpcie as p; assert p.Model and p.Runtime and p.Tensor"],
           evidence / "python-import.log", env=environment, cwd=work, timeout=60)
@@ -384,18 +567,16 @@ def qualify(args: argparse.Namespace) -> None:
           result["cleanup"]["python"] = "PASS"
         except BaseException as error:
           cleanup_errors.append(str(error))
-      if core_installed:
-        try:
-          msi_transaction(candidate.core_msi, "x", evidence / "core-msi-uninstall.log")
-          result["cleanup"]["core_msi"] = "PASS"
-        except BaseException as error:
-          cleanup_errors.append(str(error))
-      if scheduler_installed:
-        try:
-          msi_transaction(candidate.scheduler_msi, "x", evidence / "scheduler-msi-uninstall.log")
-          result["cleanup"]["scheduler_msi"] = "PASS"
-        except BaseException as error:
-          cleanup_errors.append(str(error))
+      try:
+        result["cleanup"]["core_msi"] = remove_msi(
+            candidate.core_msi, evidence / "core-msi-uninstall.log")
+      except BaseException as error:
+        cleanup_errors.append(str(error))
+      try:
+        result["cleanup"]["scheduler_msi"] = remove_msi(
+            candidate.scheduler_msi, evidence / "scheduler-msi-uninstall.log")
+      except BaseException as error:
+        cleanup_errors.append(str(error))
       shutil.rmtree(venv, ignore_errors=True)
       if install_root.exists():
         cleanup_errors.append(f"cohort left files after removal: {install_root}")
@@ -437,11 +618,13 @@ def main() -> None:
   parser.add_argument("--expected-card-runtime-sha256", required=True)
   parser.add_argument("--expected-card-worker-sha256", required=True)
   parser.add_argument("--expected-card-genai-worker-sha256", default="")
+  parser.add_argument("--expected-sima-cli-commit", required=True)
   parser.add_argument("--gstreamer-root", type=Path, required=True)
   parser.add_argument("--include-genai", action="store_true")
   parser.add_argument("--lock-file", type=Path, required=True)
   parser.add_argument("--platform-runtime", type=Path, required=True)
   parser.add_argument("--python-wheelhouse", type=Path, required=True)
+  parser.add_argument("--sima-cli-candidate", type=Path, required=True)
   parser.add_argument("--source-root", type=Path, default=Path.cwd())
   parser.add_argument("--ssh-key", type=Path, required=True)
   parser.add_argument("--test-requirement", action="append", default=[])
@@ -451,6 +634,8 @@ def main() -> None:
   for name in ("expected_card_runtime_sha256", "expected_card_worker_sha256"):
     if not re.fullmatch(r"[0-9a-fA-F]{64}", getattr(args, name)):
       parser.error(f"--{name.replace('_', '-')} must be a SHA-256 digest")
+  if not re.fullmatch(r"[0-9a-f]{40}", args.expected_sima_cli_commit):
+    parser.error("--expected-sima-cli-commit must be a full lowercase Git commit")
   if args.include_genai and not re.fullmatch(
       r"[0-9a-fA-F]{64}", args.expected_card_genai_worker_sha256):
     parser.error("--expected-card-genai-worker-sha256 is required with --include-genai")
