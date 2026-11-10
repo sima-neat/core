@@ -88,8 +88,8 @@ Axis-aligned detection-display graphs can feed the result to `SimaRender`. Use `
 
 Use `BoxDecodeType::DetrFocal` (Python: `pyneat.BoxDecodeType.DetrFocal`, token
 `detr-focal`) for two ordered tensors: normalized `cx,cy,width,height` coordinates
-with depth 4, then independent class logits with depth N. Their query axes must
-match; N is 1–256. FP32, BF16 and authored INT8 storage are supported.
+with depth 4, then independent class logits with depth N. Their query axes and dtypes must
+match; N is 1–1024. FP32, BF16 and authored INT8 storage are supported.
 
 The profile applies sigmoid only to class logits and selects the global top-K
 query/class pairs. One query can produce several classes. There is no background

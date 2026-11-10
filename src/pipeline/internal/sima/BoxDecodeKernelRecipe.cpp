@@ -251,7 +251,7 @@ std::string_view profile(BoxDecodeType type) {
   case BoxDecodeType::Detr:
     return "detr_v1";
   case BoxDecodeType::DetrFocal:
-    return "detr_focal_v1";
+    return "detr_focal";
   case BoxDecodeType::Centernet:
     return "centernet_v1";
   case BoxDecodeType::Ssd:
@@ -326,8 +326,12 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
             "decoding, or inherit a positive Model capacity with a model-bound node");
   if (p.topk < 0 || p.topk > 65536)
     invalid("top_k output capacity must be 1..65536");
-  if (p.decode_type != BoxDecodeType::SuperPoint && (p.num_classes < 1 || p.num_classes > 336))
-    invalid("class count must be 1..336 before profile-specific validation");
+  const int max_classes = p.decode_type == BoxDecodeType::DetrFocal ? 1024 : 336;
+  if (p.decode_type != BoxDecodeType::SuperPoint &&
+      (p.num_classes < 1 || p.num_classes > max_classes))
+    invalid(p.decode_type == BoxDecodeType::DetrFocal
+                ? "focal class count must be 1..1024 before profile-specific validation"
+                : "class count must be 1..336 before profile-specific validation");
   Builder build;
   build.compiled.runtime_contract = source.runtime_contract;
   auto& runtime = build.compiled.runtime_contract;
@@ -460,7 +464,7 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
     const bool masks = selected_task == "segmentation" || seg_pose;
     int keypoints = 17;
     const auto option = p.decode_type_option.value_or(BoxDecodeTypeOption::Auto);
-    if (selected_profile == "detr_focal_v1" && option != BoxDecodeTypeOption::Auto &&
+    if (selected_profile == "detr_focal" && option != BoxDecodeTypeOption::Auto &&
         option != BoxDecodeTypeOption::InterleavedByHead &&
         option != BoxDecodeTypeOption::InterleavedByHeadLogit &&
         option != BoxDecodeTypeOption::GroupedByRole &&
@@ -570,7 +574,7 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
         if (hwc(runtime.logical_inputs[boxes].shape, runtime.logical_inputs[boxes].layout)[2] != 4)
           std::swap(boxes, scores);
       }
-      if (selected_profile == "detr_focal_v1" &&
+      if (selected_profile == "detr_focal" &&
           (count != 2 || logical_depth(boxes) != 4 || logical_depth(scores) != p.num_classes))
         invalid(
             "focal queries require exactly [normalized cxcywh, class logits] without background");

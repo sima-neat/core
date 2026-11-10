@@ -130,7 +130,7 @@ void focal_query_contract() {
       sample_from_tensors(raw_heads), BoxDecodeType::DetrFocal, {}, raw_overrides, &raw_error);
   require(raw_contract && raw_contract->score_activation == BoxDecodeScoreActivation::Sigmoid,
           "focal raw sample must not require class_logit endpoint names");
-  for (int classes : {1, 4, 80}) {
+  for (int classes : {1, 4, 80, 366, 777, 1024}) {
     BoxDecodeStaticContract authored;
     authored.decode_type = BoxDecodeType::DetrFocal;
     authored.topk = 300;
@@ -204,6 +204,17 @@ void focal_query_contract() {
       rejected = true;
     }
     require(rejected, "focal static probability domain was silently relabeled");
+  }
+  for (int classes : {0, 1025}) {
+    auto bad = source(BoxDecodeType::DetrFocal, classes);
+    bool rejected = false;
+    try {
+      (void)check(bad, {640, 640, 1280, 720, ResizeMode::Stretch});
+    } catch (const std::invalid_argument& error) {
+      rejected =
+          std::string(error.what()).find("focal class count must be 1..1024") != std::string::npos;
+    }
+    require(rejected, "focal construction class bound not enforced");
   }
 }
 

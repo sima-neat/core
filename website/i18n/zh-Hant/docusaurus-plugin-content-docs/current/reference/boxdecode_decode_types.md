@@ -84,7 +84,7 @@ opt.top_k = 100;
 
 ## Focal loss 查詢偵測器
 
-對依序排列的兩個張量使用 `BoxDecodeType::DetrFocal`（Python：`pyneat.BoxDecodeType.DetrFocal`，權杖 `detr-focal`）：深度4的正規化 `cx,cy,width,height` 座標，接著是深度N的獨立類別logits。查詢軸必須相符；N為1–256。支援FP32、BF16及具有明確量化資訊的INT8儲存格式。
+對依序排列的兩個張量使用 `BoxDecodeType::DetrFocal`（Python：`pyneat.BoxDecodeType.DetrFocal`，權杖 `detr-focal`）：深度4的正規化 `cx,cy,width,height` 座標，接著是深度N的獨立類別logits。查詢軸與資料型別必須相符；N為1–1024。支援FP32、BF16及具有明確量化資訊的INT8儲存格式。
 
 此設定檔僅對類別logits套用sigmoid，並從所有查詢／類別配對中選取全域前K名。同一查詢可產生多個類別。沒有背景類別、方框sigmoid、逐查詢argmax、NMS或小面積篩選。設定正數 `top_k`；若不篩選top-K，設定 `detection_threshold=0`；`nms_iou_threshold=0` 為必要值。使用Stretch及實際的影像／模型尺寸。
 

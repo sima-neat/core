@@ -86,7 +86,7 @@ opt.top_k = 100;
 
 ## Focal loss 쿼리 검출기
 
-정규화된 `cx,cy,width,height` 좌표(깊이4), 독립 클래스 로짓(깊이N) 순서의 두 텐서에는 `BoxDecodeType::DetrFocal`(Python: `pyneat.BoxDecodeType.DetrFocal`, 토큰 `detr-focal`)을 사용합니다. 쿼리 축이 일치해야 하며 N은1–256입니다. FP32, BF16 및 명시된 양자화 정보를 가진 INT8 저장 형식을 지원합니다.
+정규화된 `cx,cy,width,height` 좌표(깊이4), 독립 클래스 로짓(깊이N) 순서의 두 텐서에는 `BoxDecodeType::DetrFocal`(Python: `pyneat.BoxDecodeType.DetrFocal`, 토큰 `detr-focal`)을 사용합니다. 쿼리 축과 데이터 형식이 일치해야 하며 N은1–1024입니다. FP32, BF16 및 명시된 양자화 정보를 가진 INT8 저장 형식을 지원합니다.
 
 클래스 로짓에만 sigmoid를 적용하고 전체 쿼리/클래스 쌍에서 상위K개를 선택합니다. 한 쿼리에서 여러 클래스를 출력할 수 있습니다. 배경 클래스, 박스 sigmoid, 쿼리별 argmax, NMS 또는 작은 면적 필터는 없습니다. 양수 `top_k`, 필터 없는 top-K를 위한 `detection_threshold=0`, 필수 값 `nms_iou_threshold=0`을 설정합니다. Stretch와 실제 이미지/모델 크기를 사용하세요.
 

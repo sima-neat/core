@@ -74,7 +74,7 @@ opt.top_k = 100;
 
 ## Focal loss を用いるクエリ検出器
 
-正規化済み `cx,cy,width,height`（深さ4）と独立したクラスロジット（深さN）の順に並ぶ2つのテンソルには、`BoxDecodeType::DetrFocal`（Python: `pyneat.BoxDecodeType.DetrFocal`、トークン `detr-focal`）を使用します。クエリ軸は一致し、Nは1～256です。FP32、BF16、および量子化情報が指定されたINT8ストレージに対応します。
+正規化済み `cx,cy,width,height`（深さ4）と独立したクラスロジット（深さN）の順に並ぶ2つのテンソルには、`BoxDecodeType::DetrFocal`（Python: `pyneat.BoxDecodeType.DetrFocal`、トークン `detr-focal`）を使用します。クエリ軸とデータ型は一致し、Nは1～1024です。FP32、BF16、および量子化情報が指定されたINT8ストレージに対応します。
 
 クラスロジットだけにsigmoidを適用し、全クエリ・クラスの組から上位K件を選択します。同じクエリから複数のクラスを出力できます。背景クラス、ボックスへのsigmoid、クエリごとのargmax、NMS、小面積フィルターはありません。正の `top_k`、フィルタリングなしなら `detection_threshold=0`、必須の `nms_iou_threshold=0` を設定します。Stretchと実際の画像・モデル寸法を使用してください。
 
