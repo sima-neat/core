@@ -1153,6 +1153,45 @@ def run_python_tests(args: argparse.Namespace, python: Path, evidence: Path,
   return completed
 
 
+def run_customer_tutorials(args: argparse.Namespace, install_root: Path, python: Path,
+                           work: Path, evidence: Path,
+                           environment: dict[str, str]) -> dict[str, list[str]]:
+  tutorial_name = "024_run_your_first_model_over_pcie"
+  source_root = install_root / "share" / "sima-pcie-host" / "tutorials"
+  python_root = source_root / tutorial_name
+  executable_root = install_root / "lib" / "sima-pcie-host" / "tutorials"
+  run_root = work / "installed customer tutorial"
+  run_root.mkdir()
+
+  model = Path(environment["SIMAPCIE_YOLOV8_MODEL"])
+  try:
+    os.link(model, run_root / "yolo_v8s_mpk.tar.gz")
+  except OSError:
+    shutil.copy2(model, run_root / "yolo_v8s_mpk.tar.gz")
+  shutil.copytree(source_root / "assets", run_root / "share" / "sima-pcie-host" /
+                  "tutorials" / "assets")
+
+  completed: dict[str, list[str]] = {"cpp": [], "python": []}
+  programs = ("run_tensor_mode", "run_image_mode", "run_image_boxdecode")
+  for program in programs:
+    script = python_root / f"{program}.py"
+    if not script.is_file():
+      raise RuntimeError(f"installed package is missing Python tutorial: {script}")
+    run_logged(
+        [python, script], evidence / f"tutorial-024-python-{program}.log",
+        env=environment, cwd=run_root, timeout=args.test_timeout_seconds)
+    completed["python"].append(program)
+
+    executable = executable_root / f"tutorial_024_{program}.exe"
+    if not executable.is_file():
+      raise RuntimeError(f"installed package is missing C++ tutorial: {executable}")
+    run_logged(
+        [executable], evidence / f"tutorial-024-cpp-{program}.log",
+        env=environment, cwd=run_root, timeout=args.test_timeout_seconds)
+    completed["cpp"].append(program)
+  return completed
+
+
 def qualify(args: argparse.Namespace) -> None:
   require_windows()
   if not args.dependency_runtime_dir:
@@ -1428,6 +1467,8 @@ def qualify(args: argparse.Namespace) -> None:
           [python, "-c", "import pyneatpcie as p; assert p.Model and p.Runtime and p.Tensor"],
           evidence / "python-import.log", env=environment, cwd=work, timeout=60)
 
+      result["tests"]["tutorial"] = run_customer_tutorials(
+          args, install_root, python, work, evidence, environment)
       result["tests"]["cpp"] = run_cpp_tests(args, candidate.root, evidence, environment)
       result["tests"]["python"] = run_python_tests(args, python, evidence, environment)
       result["performance"] = {

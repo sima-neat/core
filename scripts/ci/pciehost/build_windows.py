@@ -433,7 +433,7 @@ def build(args: argparse.Namespace) -> None:
     run([ctest, "--test-dir", build_dir, "--output-on-failure", "--no-tests=error"],
         env=environment)
 
-    for component in ("Runtime", "Development"):
+    for component in ("Runtime", "Development", "PcieHostTutorials"):
       run([cmake, "--install", build_dir, "--config", "Release", "--prefix", stage,
            "--component", component], env=environment)
     run([cmake, "--install", build_dir, "--config", "Release", "--prefix", python_stage,
@@ -444,7 +444,7 @@ def build(args: argparse.Namespace) -> None:
           build_sources_for_installed(build_dir, [stage, python_stage]),
           signtool, args.signing_certificate_sha1,
           args.signing_timestamp_url, args.signing_machine_store)
-      for component in ("Runtime", "Development"):
+      for component in ("Runtime", "Development", "PcieHostTutorials"):
         run([cmake, "--install", build_dir, "--config", "Release", "--prefix", stage,
              "--component", component], env=environment)
       run([cmake, "--install", build_dir, "--config", "Release", "--prefix", python_stage,
@@ -455,6 +455,8 @@ def build(args: argparse.Namespace) -> None:
     hardware_tests = output / "hardware-tests"
     run([cmake, "--install", build_dir, "--config", "Release", "--prefix", hardware_tests,
          "--component", "PcieHostExtras"], env=environment)
+    run([cmake, "--install", build_dir, "--config", "Release", "--prefix", hardware_tests,
+         "--component", "PcieHostTutorials"], env=environment)
     hardware_native = native_files(hardware_tests)
     if not hardware_native:
       raise ValueError("Windows Core producer installed no C++ hardware test executables")

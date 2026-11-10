@@ -17,6 +17,8 @@ class WindowsPackagingContract(unittest.TestCase):
     self.assertIn('set(CPACK_WIX_INSTALL_SCOPE perMachine)', source)
     self.assertIn('set(CPACK_WIX_COMPONENT_INSTALL ON)', source)
     self.assertIn('set(CPACK_WIX_CMAKE_PACKAGE_REGISTRY "SimaPCIeHost")', source)
+    self.assertIn('set(CPACK_COMPONENTS_ALL Runtime Development PcieHostTutorials)', source)
+    self.assertIn('set(CPACK_COMPONENT_PCIEHOSTTUTORIALS_DEPENDS Runtime)', source)
     self.assertIn('"${CMAKE_CURRENT_BINARY_DIR}/LICENSE.txt" COPYONLY', source)
     self.assertNotIn('set(CPACK_GENERATOR "ZIP")', source)
     match = re.search(r'CPACK_WIX_UPGRADE_GUID "([0-9A-F-]+)"', source)

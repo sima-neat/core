@@ -408,6 +408,10 @@ class WindowsCiContracts(unittest.TestCase):
             "version": "2.1.20+ci." + "a" * 12,
         },
         "tests": {
+            "tutorial": {
+                "cpp": ["run_tensor_mode", "run_image_mode", "run_image_boxdecode"],
+                "python": ["run_tensor_mode", "run_image_mode", "run_image_boxdecode"],
+            },
             "cpp": [
                 "test_metadata", "test_tensor_run", "test_tensor_mla_only_run",
                 "test_tensor_mla_only_bf16_run", "test_tensor_parallel_queues",
@@ -737,6 +741,16 @@ class WindowsCiContracts(unittest.TestCase):
       value["tests"]["cpp"].remove("test_tensor_parallel_queues")
       qualification.write_text(json.dumps(value), encoding="utf-8")
       with self.assertRaisesRegex(ValueError, "missing required vision cases"):
+        verify(root, qualification, commit, True)
+
+  def test_release_gate_rejects_incomplete_installed_tutorial_matrix(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      value = json.loads(qualification.read_text(encoding="utf-8"))
+      value["tests"]["tutorial"]["python"].remove("run_image_boxdecode")
+      qualification.write_text(json.dumps(value), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "installed C[+][+] and Python tutorials"):
         verify(root, qualification, commit, True)
 
   def test_release_gate_rejects_server_or_unsupported_python(self):

@@ -187,6 +187,12 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
   tests = qualification.get("tests")
   if (not isinstance(tests, dict) or not tests.get("cpp") or not tests.get("python")):
     raise ValueError("hardware qualification did not run both customer APIs")
+  tutorials = tests.get("tutorial")
+  tutorial_programs = {"run_tensor_mode", "run_image_mode", "run_image_boxdecode"}
+  if (not isinstance(tutorials, dict)
+      or not tutorial_programs.issubset(set(tutorials.get("cpp", [])))
+      or not tutorial_programs.issubset(set(tutorials.get("python", [])))):
+    raise ValueError("hardware qualification did not run installed C++ and Python tutorials")
   required_cpp = {
       "test_metadata", "test_tensor_run", "test_tensor_mla_only_run",
       "test_tensor_mla_only_bf16_run", "test_tensor_parallel_queues",

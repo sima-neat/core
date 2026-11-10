@@ -604,6 +604,9 @@ if [[ "${BUILD_TESTS}" == "ON" || "${BUILD_TUTORIALS}" == "ON" ]]; then
   cmake --install "${BUILD_DIR_ABS}" \
     --component PcieHostExtras \
     --prefix "${extras_dir}"
+  cmake --install "${BUILD_DIR_ABS}" \
+    --component PcieHostTutorials \
+    --prefix "${extras_dir}"
 
   if [[ ! -x "${extras_dir}/build.sh" ]]; then
     echo "ERROR: PCIe host extras install tree is missing root build.sh." >&2

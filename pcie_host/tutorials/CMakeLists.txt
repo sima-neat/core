@@ -62,13 +62,13 @@ if (SIMAPCIE_TUTORIAL_TARGETS)
   install(
     TARGETS ${SIMAPCIE_TUTORIAL_TARGETS}
     RUNTIME DESTINATION lib/sima-pcie-host/tutorials
-    COMPONENT PcieHostExtras)
+    COMPONENT PcieHostTutorials)
 endif()
 
 install(
   DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/
   DESTINATION share/sima-pcie-host/tutorials
-  COMPONENT PcieHostExtras
+  COMPONENT PcieHostTutorials
   FILES_MATCHING
     PATTERN "__pycache__" EXCLUDE
     PATTERN "*.cpp"
@@ -82,7 +82,7 @@ install(
 install(
   FILES ${CMAKE_CURRENT_SOURCE_DIR}/build.sh
   DESTINATION .
-  COMPONENT PcieHostExtras
+  COMPONENT PcieHostTutorials
   PERMISSIONS
     OWNER_READ OWNER_WRITE OWNER_EXECUTE
     GROUP_READ GROUP_EXECUTE
