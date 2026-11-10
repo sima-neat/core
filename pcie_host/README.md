@@ -459,7 +459,8 @@ effective AppLocker visibility without changing policy, rechecks plugin discover
 and then runs the public C++ and Python
 vision suites, kills a card worker and a local client in separate bounded fault
 tests, proves the affected queue can be reopened after each failure, and removes
-Python, Core and Scheduler in reverse order. Release
+Python, Core and Scheduler in reverse order. Latency and throughput logs are
+converted to structured positive, finite measurements in the retained evidence. Release
 admission requires the same resource checksums, no remaining card worker, and a
 clean install root. GenAI remains off
 in validation-only runs until its Windows transport is supported. Customer

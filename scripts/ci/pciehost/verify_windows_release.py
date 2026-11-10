@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 from pathlib import PureWindowsPath
 import re
@@ -183,6 +184,22 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
     raise ValueError(
         f"hardware qualification is missing required vision cases: "
         f"C++={missing_cpp}, Python={missing_python}")
+  performance = qualification.get("performance")
+  latency = performance.get("latency") if isinstance(performance, dict) else None
+  throughput = performance.get("throughput") if isinstance(performance, dict) else None
+
+  def positive_metrics(value: object, names: set[str]) -> bool:
+    if not isinstance(value, dict) or set(value) != names:
+      return False
+    return all(
+        isinstance(value[name], (int, float)) and not isinstance(value[name], bool)
+        and math.isfinite(float(value[name])) and float(value[name]) > 0.0
+        for name in names)
+
+  if (not positive_metrics(latency, {"count", "mean_ms", "effective_fps"})
+      or not positive_metrics(
+          throughput, {"frames", "total_ms", "fps", "input_mib_per_s", "output_mib_per_s"})):
+    raise ValueError("hardware qualification did not retain valid performance measurements")
   path_fixtures = qualification.get("path_fixtures")
   if not isinstance(path_fixtures, dict) or len(path_fixtures) != 3:
     raise ValueError("hardware qualification did not record Windows path fixtures")

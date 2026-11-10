@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -584,6 +585,39 @@ def run_cpp_parallel_queues(executable: Path, evidence: Path,
       log.close()
 
 
+def parse_performance_log(path: Path, mode: str) -> dict[str, float | int]:
+  text = path.read_text(encoding="utf-8", errors="replace")
+  label = f"{mode} results"
+  if label not in text:
+    raise RuntimeError(f"performance log has no {label!r} section: {path}")
+  section = text.split(label, 1)[1]
+
+  def value(name: str) -> float:
+    match = re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}=([0-9]+(?:[.][0-9]+)?)", section)
+    if not match:
+      raise RuntimeError(f"performance log has no {name!r} metric: {path}")
+    result = float(match.group(1))
+    if not math.isfinite(result) or result <= 0.0:
+      raise RuntimeError(f"performance metric {name!r} is not positive and finite: {path}")
+    return result
+
+  if mode == "latency":
+    return {
+        "count": int(value("count")),
+        "mean_ms": value("mean_ms"),
+        "effective_fps": value("effective_fps"),
+    }
+  if mode == "throughput":
+    return {
+        "frames": int(value("frames")),
+        "total_ms": value("total_ms"),
+        "fps": value("fps"),
+        "input_mib_per_s": value("input_mib_per_s"),
+        "output_mib_per_s": value("output_mib_per_s"),
+    }
+  raise ValueError(f"unsupported performance mode: {mode}")
+
+
 def run_cpp_tests(args: argparse.Namespace, candidate_root: Path, evidence: Path,
                   environment: dict[str, str]) -> list[str]:
   test_root = candidate_root / "hardware-tests" / "lib" / "sima-pcie-host" / "tests"
@@ -894,6 +928,10 @@ def qualify(args: argparse.Namespace) -> None:
 
       result["tests"]["cpp"] = run_cpp_tests(args, candidate.root, evidence, environment)
       result["tests"]["python"] = run_python_tests(args, python, evidence, environment)
+      result["performance"] = {
+          mode: parse_performance_log(evidence / f"cpp-test_tensor_{mode}.log", mode)
+          for mode in ("latency", "throughput")
+      }
       result["result"] = "PASS"
     except BaseException as error:
       failure = error

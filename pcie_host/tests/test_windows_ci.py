@@ -20,7 +20,8 @@ assert SPEC.loader
 SPEC.loader.exec_module(MODULE)
 from windows_candidate import sha256, validate_candidate  # noqa: E402
 from qualify_windows_hardware import (  # noqa: E402
-    ExclusiveLock, load_upgrade_base, sima_cli_identity, stage_local_registry,
+    ExclusiveLock, load_upgrade_base, parse_performance_log, sima_cli_identity,
+    stage_local_registry,
     stage_invalid_wheel_registry, stage_path_fixtures, stress_queues)
 from verify_linux_release_run import verify_run as verify_linux_run  # noqa: E402
 from verify_windows_release import verify  # noqa: E402
@@ -238,6 +239,16 @@ class WindowsCiContracts(unittest.TestCase):
             "SIMAPCIE_TEST_IMAGE": r"C:\qualification assets\image.jpg",
             "SIMAPCIE_BOXDECODE_IMAGE": r"C:\qualification assets\people.jpg",
         },
+        "performance": {
+            "latency": {"count": 1000, "effective_fps": 91.2, "mean_ms": 10.9},
+            "throughput": {
+                "fps": 155.4,
+                "frames": 1000,
+                "input_mib_per_s": 31.2,
+                "output_mib_per_s": 0.6,
+                "total_ms": 6435.0,
+            },
+        },
         "host": {"windows_security": {
             "account": r"RUNNER\ci",
             "applocker_rule_collections": "unavailable",
@@ -426,6 +437,16 @@ class WindowsCiContracts(unittest.TestCase):
       with self.assertRaisesRegex(ValueError, "supported CPython 3.14 ABI"):
         verify(root, qualification, commit, True)
 
+  def test_release_gate_requires_structured_performance_evidence(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      value = json.loads(qualification.read_text(encoding="utf-8"))
+      value["performance"]["throughput"]["fps"] = 0
+      qualification.write_text(json.dumps(value), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "valid performance measurements"):
+        verify(root, qualification, commit, True)
+
   def test_producer_retains_cpp_hardware_extras_and_signature_receipt(self):
     source = SCRIPT.read_text(encoding="utf-8")
     self.assertIn('"PcieHostExtras"', source)
@@ -484,6 +505,26 @@ class WindowsCiContracts(unittest.TestCase):
       stress_queues({"SIMAPCIE_STRESS_QUEUES": "0 6"})
     with self.assertRaisesRegex(ValueError, "duplicate"):
       stress_queues({"SIMAPCIE_STRESS_QUEUES": "1 1"})
+
+  def test_hardware_performance_logs_become_structured_evidence(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      latency = root / "latency.log"
+      latency.write_text(
+          "latency results\n  count=1000\n  mean_ms=10.900 stddev_ms=0.100\n"
+          "  total_ms=10900.000 effective_fps=91.743\n",
+          encoding="utf-8")
+      throughput = root / "throughput.log"
+      throughput.write_text(
+          "throughput results\n  frames=1000 total_ms=6435.000 fps=155.400\n"
+          "  input_mib=200 input_mib_per_s=31.200\n"
+          "  output_mib=4 output_mib_per_s=0.600\n",
+          encoding="utf-8")
+      self.assertEqual(parse_performance_log(latency, "latency")["count"], 1000)
+      self.assertEqual(parse_performance_log(throughput, "throughput")["fps"], 155.4)
+      throughput.write_text("throughput results\n  frames=0\n", encoding="utf-8")
+      with self.assertRaisesRegex(RuntimeError, "not positive and finite"):
+        parse_performance_log(throughput, "throughput")
 
   def test_customer_cli_candidate_and_local_registry_are_exact(self):
     import zipfile
