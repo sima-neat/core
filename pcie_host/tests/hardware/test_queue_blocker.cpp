@@ -60,6 +60,7 @@ struct Args {
   int pull_timeout_ms = env_int_or_default("SIMAPCIE_PULL_TIMEOUT_MS", 30000);
   int interval_ms = 1000;
   int iterations = 0;
+  bool fail_on_pull_timeout = false;
   std::string card_env = env_or_default("SIMAPCIE_CARD_ENV", "");
   std::string card_gst_debug = env_or_default("SIMAPCIE_CARD_GST_DEBUG", "");
   std::string card_gst_debug_file = env_or_default("SIMAPCIE_CARD_GST_DEBUG_FILE", "");
@@ -77,6 +78,7 @@ void usage(const char* argv0) {
             << " [--model model.tar.gz] [--card-host host] [--card-id n]"
                " [--user user] [--queue n] [--readiness-timeout-ms ms]"
                " [--pull-timeout-ms ms] [--interval-ms ms] [--iterations n]"
+               " [--fail-on-pull-timeout]"
                " [--card-env 'NAME=VALUE ...']"
                " [--card-gst-debug spec] [--card-gst-debug-file path]\n";
 }
@@ -103,6 +105,8 @@ Args parse_args(int argc, char** argv) {
       args.interval_ms = std::stoi(require_value(argc, argv, i, "--interval-ms"));
     } else if (arg == "--iterations") {
       args.iterations = std::stoi(require_value(argc, argv, i, "--iterations"));
+    } else if (arg == "--fail-on-pull-timeout") {
+      args.fail_on_pull_timeout = true;
     } else if (arg == "--card-env") {
       args.card_env = require_value(argc, argv, i, "--card-env");
     } else if (arg == "--card-gst-debug") {
@@ -368,6 +372,9 @@ int main(int argc, char** argv) {
       if (result.has_value()) {
         std::cout << "iteration " << iteration << ": received outputs=" << result->size() << "\n";
       } else {
+        if (args.fail_on_pull_timeout) {
+          throw std::runtime_error("pull timed out");
+        }
         std::cout << "iteration " << iteration << ": pull timed out; keeping queue occupied\n";
       }
 
