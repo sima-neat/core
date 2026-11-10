@@ -67,6 +67,7 @@
 #include "nodes/sima/SimaArgMax.h"
 #include "nodes/sima/SimaBEVPool.h"
 #include "nodes/sima/SimaBEVPoolPlan.h"
+#include "nodes/sima/SimaCenterHeadDecode.h"
 #include "nodes/sima/SimaPillarScatter.h"
 #include "nodes/sima/SimaVoxelize.h"
 #include "nodes/sima/Cast.h"
@@ -4046,6 +4047,43 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("output_storage", &simaai::neat::SimaBEVPoolOptions::output_storage)
       .def_rw("output_dtype", &simaai::neat::SimaBEVPoolOptions::output_dtype)
       .def_rw("target", &simaai::neat::SimaBEVPoolOptions::target);
+  nb::enum_<simaai::neat::SimaCenterHeadNms>(m, "SimaCenterHeadNms")
+      .value("Unspecified", simaai::neat::SimaCenterHeadNms::Unspecified)
+      .value("Circle", simaai::neat::SimaCenterHeadNms::Circle)
+      .value("Rotate", simaai::neat::SimaCenterHeadNms::Rotate);
+  nb::class_<simaai::neat::SimaCenterHeadTask>(m, "SimaCenterHeadTask")
+      .def(nb::init<>())
+      .def(
+          "__init__",
+          [](simaai::neat::SimaCenterHeadTask* self, int classes,
+             simaai::neat::SimaCenterHeadNms nms, float nms_radius, float nms_iou_threshold) {
+            new (self)
+                simaai::neat::SimaCenterHeadTask{classes, nms, nms_radius, nms_iou_threshold};
+          },
+          "classes"_a, "nms"_a, "nms_radius"_a = 0.0f, "nms_iou_threshold"_a = 0.0f)
+      .def_rw("classes", &simaai::neat::SimaCenterHeadTask::classes)
+      .def_rw("nms", &simaai::neat::SimaCenterHeadTask::nms)
+      .def_rw("nms_radius", &simaai::neat::SimaCenterHeadTask::nms_radius)
+      .def_rw("nms_iou_threshold", &simaai::neat::SimaCenterHeadTask::nms_iou_threshold);
+  nb::class_<simaai::neat::SimaCenterHeadDecodeOptions>(m, "SimaCenterHeadDecodeOptions")
+      .def(nb::init<>())
+      .def_rw("tasks", &simaai::neat::SimaCenterHeadDecodeOptions::tasks)
+      .def_rw("out_size_factor", &simaai::neat::SimaCenterHeadDecodeOptions::out_size_factor)
+      .def_rw("voxel_size", &simaai::neat::SimaCenterHeadDecodeOptions::voxel_size)
+      .def_rw("range_min", &simaai::neat::SimaCenterHeadDecodeOptions::range_min)
+      .def_rw("score_threshold", &simaai::neat::SimaCenterHeadDecodeOptions::score_threshold)
+      .def_rw("top_k", &simaai::neat::SimaCenterHeadDecodeOptions::top_k)
+      .def_rw("post_max_per_task", &simaai::neat::SimaCenterHeadDecodeOptions::post_max_per_task)
+      .def_rw("post_center_range", &simaai::neat::SimaCenterHeadDecodeOptions::post_center_range)
+      .def_rw("velocity", &simaai::neat::SimaCenterHeadDecodeOptions::velocity)
+      .def_rw("heatmap_input", &simaai::neat::SimaCenterHeadDecodeOptions::heatmap_input)
+      .def_rw("reg_input", &simaai::neat::SimaCenterHeadDecodeOptions::reg_input)
+      .def_rw("height_input", &simaai::neat::SimaCenterHeadDecodeOptions::height_input)
+      .def_rw("dim_input", &simaai::neat::SimaCenterHeadDecodeOptions::dim_input)
+      .def_rw("rot_input", &simaai::neat::SimaCenterHeadDecodeOptions::rot_input)
+      .def_rw("vel_input", &simaai::neat::SimaCenterHeadDecodeOptions::vel_input)
+      .def_rw("nms_size_scale", &simaai::neat::SimaCenterHeadDecodeOptions::nms_size_scale)
+      .def_rw("target", &simaai::neat::SimaCenterHeadDecodeOptions::target);
   nb::enum_<simaai::neat::SimaEncodeType>(m, "SimaEncodeType")
       .value("H264", simaai::neat::SimaEncodeType::H264)
       .value("H265", simaai::neat::SimaEncodeType::H265)
@@ -4300,6 +4338,7 @@ NB_MODULE(_pyneat_core, m) {
   nodes_mod.def("sima_pillar_scatter", &simaai::neat::nodes::SimaPillarScatter, "options"_a);
   nodes_mod.def("sima_bev_pool_plan", &simaai::neat::nodes::SimaBEVPoolPlan, "options"_a);
   nodes_mod.def("sima_bev_pool", &simaai::neat::nodes::SimaBEVPool, "options"_a);
+  nodes_mod.def("sima_centerhead_decode", &simaai::neat::nodes::SimaCenterHeadDecode, "options"_a);
   nodes_mod.def("cast", &simaai::neat::nodes::Cast, "options"_a = simaai::neat::CastOptions{});
   nodes_mod.def("cast_tess", &simaai::neat::nodes::CastTess,
                 "options"_a = simaai::neat::CastTessOptions{});

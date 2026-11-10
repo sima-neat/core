@@ -1,7 +1,7 @@
 #pragma once
 
-// Public-API fixtures for the SimaVoxelize, SimaPillarScatter, SimaBEVPoolPlan and
-// SimaBEVPool hardware suites. Every graph is built and run through the public
+// Public-API fixtures for the SimaVoxelize, SimaPillarScatter, SimaBEVPoolPlan, SimaBEVPool and
+// SimaCenterHeadDecode hardware suites. Every graph is built and run through the public
 // Graph/Node/Run API; numerical truth comes from the independent oracles in
 // bevfusion_kernel_reference.h, never from a provider call.
 #include <neat.h>

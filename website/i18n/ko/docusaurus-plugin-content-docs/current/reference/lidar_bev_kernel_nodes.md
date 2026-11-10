@@ -1,13 +1,14 @@
 ---
 title: "LiDAR 및 BEV 커널 노드"
-description: "SimaVoxelize, SimaPillarScatter, SimaBEVPoolPlan, SimaBEVPool 커널 라이브러리 연산을 그래프 노드로 실행합니다"
+description: "SimaVoxelize, SimaPillarScatter, SimaBEVPoolPlan, SimaBEVPool, SimaCenterHeadDecode 커널 라이브러리 연산을 그래프 노드로 실행합니다"
 sidebar_position: 8
 ---
 
 # LiDAR 및 BEV 커널 노드
 
 `SimaVoxelize`, `SimaPillarScatter`, `SimaBEVPoolPlan`, `SimaBEVPool`은 PointPillars와 BEVFusion의
-MLA가 아닌 단계를 실행합니다. 각 노드는 선택한 대상에서 SiMa 커널 라이브러리 연산
+MLA가 아닌 단계를 실행합니다. `SimaCenterHeadDecode`는 CenterPoint 계열 모델의 헤드 출력을 3D 박스로
+변환합니다. 각 노드는 선택한 대상에서 SiMa 커널 라이브러리 연산
 하나를 실행합니다. 노드는 다른 대상으로 대체 실행하지 않으며, 레이아웃을 바꾸기
 위해 텐서를 복사하지도 않습니다. 커널 라이브러리가 요청을 거부하면 그래프 빌드는
 커널이 제공한 이유와 함께 실패합니다.
@@ -18,6 +19,7 @@ MLA가 아닌 단계를 실행합니다. 각 노드는 선택한 대상에서 Si
 | `SimaPillarScatter` | 필러 특징에서 조밀한 BEV 캔버스로 | A65, EV74 |
 | `SimaBEVPoolPlan` | 카메라 보정값에서 BEV 풀링 계획으로 | A65 |
 | `SimaBEVPool` | 카메라 깊이 및 컨텍스트 특징에서 BEV 격자로 | A65, EV74 |
+| `SimaCenterHeadDecode` | CenterHead 출력에서 3D 박스로 | A65 |
 
 다음은 애플리케이션 안에 넣는 그래프 구성 코드 조각입니다. `read_sweep()`는
 애플리케이션에서 구현해야 하며, x, y, z, 시간 오프셋 순서로 배치한 `4*N`개의
@@ -61,7 +63,7 @@ auto run = graph.build(TensorList{points, point_count});
 
 Python에서도 같은 옵션 형식과 `pyneat.nodes.sima_voxelize`,
 `pyneat.nodes.sima_pillar_scatter`, `pyneat.nodes.sima_bev_pool_plan`,
-`pyneat.nodes.sima_bev_pool` 팩터리를 제공합니다.
+`pyneat.nodes.sima_bev_pool`, `pyneat.nodes.sima_centerhead_decode` 팩터리를 제공합니다.
 
 ## 입력 및 출력 계약
 
@@ -74,6 +76,7 @@ Python에서도 같은 옵션 형식과 `pyneat.nodes.sima_voxelize`,
 | `SimaPillarScatter` | INT8 또는 BF16 `features` `[M,C]`, INT32 `coordinates` `[M,2]`, INT32 `count` `[1]` | `features`와 같은 형식의 `canvas` `[1,H,W,C]` |
 | `SimaBEVPoolPlan` | FP32 `camera2lidar`, `camera_intrinsics`, `img_aug_matrix` `[N,4,4]`, FP32 `lidar_aug_matrix` `[4,4]` | UINT8 `plan` `[P]` |
 | `SimaBEVPool` | INT8 또는 BF16 `depth`, 같은 형식의 `context`, UINT8 `plan` `[P]` | INT8 또는 BF16 `bev` `[1,nZ*C,nX,nY]` |
+| `SimaCenterHeadDecode` | 2~6개 포트의 FP32 또는 BF16 헤드 맵 | FP32 `boxes` `[K,9]` 또는 `[K,7]`, FP32 `scores` `[K]`, INT32 `labels` `[K]`, INT32 `count` `[1]` |
 
 - **SimaVoxelize**는 처음 `point_count`개의 점만 읽습니다. `max_pillars`(`M`)와
   `max_points_per_pillar`(`T`)는 고정 용량이며, 이를 넘는 점과 필러는 버려집니다.
@@ -97,6 +100,11 @@ Python에서도 같은 옵션 형식과 `pyneat.nodes.sima_voxelize`,
   스트라이드를 가진 논리 형태 `[1,nZ*C,nX,nY]`로
   게시되므로, 바이트는 NHWC `[1,nX,nY,nZ*C]`입니다. `SimaBEVPoolStorage::Contiguous`는
   `[N,D,fH,fW]`와 `[N,C,fH,fW]` 입력과 조밀한 출력을 사용합니다.
+- **SimaCenterHeadDecode**는 `heatmap_input`부터 `vel_input`까지의 값으로 헤드를 배치합니다. 기본값에서는
+  세 포트가 각각 히트맵, reg, height, dim, vel, 그리고 rot을 담습니다. `K`는
+  `tasks.size() * post_max_per_task`입니다. `boxes`는 바닥 중심의 x, y, z와 dx, dy, dz, yaw를 담고,
+  `velocity`를 사용하면 vx, vy도 담습니다. `labels`는 헤드 작업 전체에 걸쳐 센 히트맵 채널입니다.
+  `count` 이후의 행은 0입니다.
 
 ### 논리 축과 물리 저장 순서
 
@@ -183,6 +191,116 @@ INT8 Scatter 입력의 채널별 양자화는 `[1,M,1,C]` 같은 모양을 포�
 읽는 모델의 입력 양자화를 사용해야 합니다. `SimaBEVPool`은 모든 카메라를 하나의
 `[N,...]` 텐서로 받습니다.
 
+## CenterHead 출력 디코딩
+
+`SimaCenterHeadDecode`는 CenterPoint, BEVDet 같은 모델을 위한 mmdetection3d의 CenterPoint 박스 코더에
+헤드 작업별 NMS를 더한 것입니다. `model.inference()` 바로 뒤에서 MLA의 BF16 헤드 맵을 MLA가 쓴 자리에서
+읽으므로 모델의 후처리 단계가 실행되지 않습니다.
+
+이 그래프 구성 코드는 애플리케이션 안에 넣습니다. 값은 CenterPoint의 nuScenes 구성입니다.
+
+```cpp
+#include <neat.h>
+
+using namespace simaai::neat;
+
+Model model("centerpoint_mpk.tar.gz");
+
+const auto circle = [](int classes, float radius) {
+  SimaCenterHeadTask task;
+  task.classes = classes;
+  task.nms = SimaCenterHeadNms::Circle;
+  task.nms_radius = radius;
+  return task;
+};
+SimaCenterHeadDecodeOptions decode;
+decode.tasks = {circle(1, 4.0f), circle(2, 12.0f), circle(2, 10.0f),
+                circle(1, 1.0f), circle(2, 0.85f), circle(2, 0.175f)};
+decode.out_size_factor = 4;
+decode.voxel_size = {0.2f, 0.2f};
+decode.range_min = {-51.2f, -51.2f};
+decode.score_threshold = 0.1f;
+decode.top_k = 500;
+decode.post_max_per_task = 83;
+decode.post_center_range = {-61.2f, -61.2f, -10.0f, 61.2f, 61.2f, 10.0f};
+
+Graph graph;
+graph.add(nodes::Input());
+graph.add(model.inference());
+graph.add(nodes::SimaCenterHeadDecode(decode));
+graph.add(nodes::Output());
+```
+
+가져온 각 Sample은 `boxes`, `scores`, `labels`, `count`를 이 순서로 담습니다. 앞의 `count`개 행을 읽으세요.
+`model.inference()`는 MLA에서 시작하므로 그래프의 입력은 이미 MLA가 읽는 형식이어야 합니다. 노드의 병렬 작업은
+그래프의 A65 작업자(`GraphOptions.kernel_runner_a65_workers`)를 공유합니다.
+
+### 헤드 맵
+
+포트 `i`는 `i`번째 상위 텐서입니다. 모든 포트는 FP32 또는 BF16 채널 마지막 맵 `[H,W,C]` 또는 `[1,H,W,C]`이며,
+모든 포트의 H와 W는 같습니다.
+
+- 히트맵은 자체 포트를 가지며, 클래스마다 채널 하나를 헤드 작업 순서대로 담습니다.
+- 다른 포트는 각각 하나 이상의 박스 헤드를 헤드 작업 순서대로 담습니다. 각 헤드 작업의 헤드는 reg(2채널: x, y
+  오프셋), height(1), dim(3: dx, dy, dz의 로그), rot(2: 사인, 코사인), 그리고 `velocity`를 사용하면 vel(2)
+  순서로 놓입니다.
+- 기본값은 출력이 세 개인 모델에 맞습니다. 히트맵, reg·height·dim·vel, 그리고 rot입니다. 헤드 작업이 여섯 개이고
+  클래스가 열 개인 nuScenes용 CenterPoint에서는 채널 수가 10, 48, 12입니다. 헤드마다 출력이 하나인 모델은
+  `heatmap_input`부터 `vel_input`까지를 자신의 출력 순서에 맞게 설정합니다.
+
+헤드 작업과 헤드의 조합마다 출력이 하나인 모델은 출력이 여섯 개를 넘습니다. 모델을 내보낼 때 헤드별로 이어 붙이세요.
+
+맵은 조밀하거나, 셀과 행 뒤에 틈이 있는 BF16입니다. `model.inference()` 뒤에서는 SDK 3.0 패키지의 MLA가 헤드를
+이 형식(셀마다 16채널로 패딩된 BF16)으로 게시하며, 노드는 이를 그 자리에서 읽습니다. 박스는 헤드의 저장 방식에
+의존하지 않습니다.
+
+MLA 출력이 양자화되었거나 타일로 저장되는 패키지는 `model.inference()` 뒤에 정수를 게시하며, 그래프 빌드는 노드가
+알려 주는 이유와 함께 실패합니다. 이 경우 `model.inference()` 대신 `model.graph()`를 사용하세요.
+그러면 MLA 앞뒤에 모델 자체의 변환이 추가되므로, 그래프는 모델의 입력을 받고 노드는 FP32 헤드 맵을 받습니다.
+
+### 옵션
+
+옵션은 모델의 mmdetection3d 구성에 있는 디코딩 설정입니다.
+
+| 옵션 | mmdetection3d 구성 |
+| --- | --- |
+| `tasks[i].classes` | 헤드 작업 `i`의 `class_names` 개수 |
+| `tasks[i].nms`, `tasks[i].nms_radius` | `test_cfg.nms_type = 'circle'`, `test_cfg.min_radius[i]` |
+| `tasks[i].nms`, `tasks[i].nms_iou_threshold` | `test_cfg.nms_type = 'rotate'`, `test_cfg.nms_thr` |
+| `nms_size_scale` | `test_cfg.nms_rescale_factor`, 클래스마다 값 하나 |
+| `out_size_factor`, `voxel_size` | `bbox_coder`의 같은 이름의 키 |
+| `range_min` | `bbox_coder.pc_range`의 x, y 최솟값 |
+| `score_threshold`, `top_k`, `post_center_range` | `bbox_coder`의 `score_threshold`, `max_num`, `post_center_range` |
+| `post_max_per_task` | `test_cfg.post_max_size` |
+| `velocity` | 헤드에 `vel` 분기가 있음 |
+
+모든 헤드 작업은 자신의 NMS를 명시합니다. Circle NMS는 mmdetection3d와 마찬가지로 두 박스 중심 사이 거리의 제곱을
+`nms_radius` 값 자체와 비교합니다. Rotate NMS는 회전된 두 박스의 조감도 IoU를 `nms_iou_threshold`와 비교합니다.
+`nms_size_scale`을 설정할 때는 히트맵 채널마다 값을 하나씩 지정하며, circle 헤드 작업의 클래스에는 1을 씁니다.
+`labels`는 히트맵 채널이므로, 두 번째 헤드 작업의 첫 클래스는 첫 번째 헤드 작업의 마지막 클래스 바로 다음입니다.
+
+Python에서는 헤드 작업의 값을 생성자에 전달하고, 리스트는 통째로 대입합니다. 옵션 객체에서 읽은 리스트는
+복사본이므로 `decode.tasks`에 append해도 아무것도 바뀌지 않습니다.
+
+```python
+import pyneat
+
+circle = pyneat.SimaCenterHeadNms.Circle
+decode = pyneat.SimaCenterHeadDecodeOptions()
+decode.tasks = [
+    pyneat.SimaCenterHeadTask(classes, circle, nms_radius=radius)
+    for classes, radius in [(1, 4.0), (2, 12.0), (2, 10.0), (1, 1.0), (2, 0.85), (2, 0.175)]
+]
+decode.out_size_factor = 4
+decode.voxel_size = [0.2, 0.2]
+decode.range_min = [-51.2, -51.2]
+decode.score_threshold = 0.1
+decode.top_k = 500
+decode.post_max_per_task = 83
+decode.post_center_range = [-61.2, -61.2, -10.0, 61.2, 61.2, 10.0]
+node = pyneat.nodes.sima_centerhead_decode(decode)
+```
+
 ## 계획과 상태
 
 계획은 보정값과 `SimaBEVPoolPlanOptions`에만 의존합니다. `cache_plan = true`이면 보정값
@@ -200,7 +318,7 @@ EV74는 A65 계약에 다음 제한을 추가합니다.
 
 - `SimaBEVPool`은 채널 수가 16의 배수인 채널 마지막 `context`와 채널 마지막 `bev`가
   필요합니다. `V2` 계획에는 채널 마지막 `depth`도 필요합니다.
-- `SimaBEVPoolPlan`은 A65에서만 실행됩니다.
+- `SimaBEVPoolPlan`과 `SimaCenterHeadDecode`는 A65에서만 실행됩니다.
 
 한 대상이 지원하지 않는 요청은 그 대상에서 실패합니다. 노드가 대신 다른 대상을
 선택하지 않습니다.

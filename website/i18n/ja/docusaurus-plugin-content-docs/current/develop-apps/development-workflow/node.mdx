@@ -102,6 +102,7 @@ graph.add(pyneat.groups.video_input(vopt))
 | LiDAR スイープをピラーにボクセル化する | `nodes::SimaVoxelize(SimaVoxelizeOptions{...})` | `pyneat.nodes.sima_voxelize(options)` |
 | ピラー特徴量を BEV キャンバスに散布する | `nodes::SimaPillarScatter(SimaPillarScatterOptions{...})` | `pyneat.nodes.sima_pillar_scatter(options)` |
 | カメラ特徴量を BEV グリッドにプーリングする | `nodes::SimaBEVPoolPlan(...)` と `nodes::SimaBEVPool(...)` | `pyneat.nodes.sima_bev_pool_plan(options)` と `pyneat.nodes.sima_bev_pool(options)` |
+| CenterHead 出力を 3D ボックスにデコードする | `nodes::SimaCenterHeadDecode(SimaCenterHeadDecodeOptions{...})` | `pyneat.nodes.sima_centerhead_decode(options)` |
 
 テスト済みのフラグメントが必要な場合はグループを使用し、明示的なトポロジーが必要な場合は個々のノードを使用します。`Graph`の`graphs::Branch(...)`や`graphs::Combine(...)`などのヘルパーを使用して、重複した出力でトポロジーを隠すのではなく、ファンアウトとファンインを行います。
 

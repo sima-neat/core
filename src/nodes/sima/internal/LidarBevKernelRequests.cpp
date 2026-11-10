@@ -318,6 +318,28 @@ void validate(const SimaBEVPoolOptions& opt) {
   narrow_dtype(opt.output_dtype, "SimaBEVPool", "output_dtype");
 }
 
+void validate(const SimaCenterHeadDecodeOptions& opt) {
+  constexpr const char* node = "SimaCenterHeadDecode";
+  if (opt.tasks.empty())
+    fail(node, "tasks must hold at least one head task");
+  for (const auto& task : opt.tasks) {
+    if (task.classes <= 0)
+      fail(node, "every head task needs a positive class count");
+    if (task.nms != SimaCenterHeadNms::Circle && task.nms != SimaCenterHeadNms::Rotate)
+      fail(node, "every head task must state its NMS: Circle or Rotate");
+  }
+  if (opt.out_size_factor <= 0 || opt.top_k <= 0 || opt.post_max_per_task <= 0)
+    fail(node, "out_size_factor, top_k and post_max_per_task must be positive");
+  // The default all-zero range would keep nothing, on every frame, without an error.
+  if (!(opt.post_center_range[3] > opt.post_center_range[0]) ||
+      !(opt.post_center_range[4] > opt.post_center_range[1]))
+    fail(node, "post_center_range must span x and y: x, y, z minimum, then maximum");
+  for (const int port : {opt.heatmap_input, opt.reg_input, opt.height_input, opt.dim_input,
+                         opt.rot_input, opt.velocity ? opt.vel_input : 0})
+    if (port < 0)
+      fail(node, "head input ports must not be negative");
+}
+
 KernelRequestPlan voxelize_request(const SimaVoxelizeOptions& opt,
                                    std::span<const TensorFact> facts) {
   constexpr const char* node = "SimaVoxelize";
@@ -411,6 +433,77 @@ KernelRequestPlan pillar_scatter_request(const SimaPillarScatterOptions& opt,
       quant->axis = 3; // [M,C] or singleton-extended rows become [1,H,W,C].
     }
   }
+  return plan;
+}
+
+KernelRequestPlan centerhead_decode_request(const SimaCenterHeadDecodeOptions& opt,
+                                            std::span<const TensorFact> facts) {
+  constexpr const char* node = "SimaCenterHeadDecode";
+  validate(opt);
+  KernelRequestPlan plan;
+  plan.operation = "centerhead_decode";
+  plan.target = kernel_target(opt.target);
+  for (const auto& fact : facts) {
+    // A model's MLA publishes quantized or tiled outputs as integers; model.graph() runs the
+    // model's own conversion to FP32 after the MLA.
+    if (fact.dtype != rt::DType::Float32 && fact.dtype != rt::DType::BFloat16)
+      fail(node, fact.name + " must be FP32 or BF16, got " + dtype_token(fact.dtype) +
+                     "; for a model whose MLA output is quantized or tiled, use model.graph() "
+                     "instead of model.inference()");
+    if (fact.layout == "CHW")
+      fail(node, fact.name + " " + describe(fact.shape) + " must be channels-last");
+    rt::TensorSpec head{fact.shape, fact.dtype};
+    // A strided view, such as the MLA's head maps padded per cell, goes to the kernel as it is.
+    if (!dense(fact, node)) {
+      rt::Strided strided;
+      if (fact.stride_bytes.size() != fact.shape.size() ||
+          fact.shape.size() > strided.strides_bytes.size())
+        fail(node, fact.name + " needs one byte stride for each of at most six axes");
+      std::copy(fact.stride_bytes.begin(), fact.stride_bytes.end(), strided.strides_bytes.begin());
+      head.layout = strided;
+    }
+    plan.inputs.push_back(std::move(head));
+  }
+
+  const auto rows =
+      checked_extent_mul(static_cast<std::int64_t>(opt.tasks.size()), opt.post_max_per_task, node);
+  const std::int64_t width = opt.velocity ? 9 : 7;
+  plan.outputs = {{{rows, width}, rt::DType::Float32},
+                  {{rows}, rt::DType::Float32},
+                  {{rows}, rt::DType::Int32},
+                  {{1}, rt::DType::Int32}};
+
+  rt::ParameterRecords tasks;
+  tasks.reserve(opt.tasks.size());
+  for (const auto& task : opt.tasks)
+    tasks.push_back({{"classes", static_cast<std::int64_t>(task.classes)},
+                     {"nms", task.nms == SimaCenterHeadNms::Rotate ? "rotate" : "circle"},
+                     {"nms_radius", task.nms_radius},
+                     {"nms_iou_threshold", task.nms_iou_threshold}});
+  plan.parameters.push_back({"tasks", rt::ParameterValue(std::move(tasks))});
+  plan.parameters.push_back({"out_size_factor", static_cast<std::int64_t>(opt.out_size_factor)});
+  plan.parameters.push_back(float_array("voxel_size", opt.voxel_size));
+  plan.parameters.push_back(float_array("range_min", opt.range_min));
+  plan.parameters.push_back({"score_threshold", opt.score_threshold});
+  plan.parameters.push_back({"top_k", static_cast<std::int64_t>(opt.top_k)});
+  plan.parameters.push_back(
+      {"post_max_per_task", static_cast<std::int64_t>(opt.post_max_per_task)});
+  plan.parameters.push_back(float_array("post_center_range", opt.post_center_range));
+  plan.parameters.push_back({"velocity", opt.velocity});
+  plan.parameters.push_back({"heatmap_input", static_cast<std::int64_t>(opt.heatmap_input)});
+  plan.parameters.push_back({"reg_input", static_cast<std::int64_t>(opt.reg_input)});
+  plan.parameters.push_back({"height_input", static_cast<std::int64_t>(opt.height_input)});
+  plan.parameters.push_back({"dim_input", static_cast<std::int64_t>(opt.dim_input)});
+  plan.parameters.push_back({"rot_input", static_cast<std::int64_t>(opt.rot_input)});
+  if (opt.velocity)
+    plan.parameters.push_back({"vel_input", static_cast<std::int64_t>(opt.vel_input)});
+  if (!opt.nms_size_scale.empty())
+    plan.parameters.push_back(float_array("nms_size_scale", opt.nms_size_scale));
+
+  plan.published = {{"boxes", {rows, width}, {}, "", false, {}},
+                    {"scores", {rows}, {}, "", false, {}},
+                    {"labels", {rows}, {}, "", false, {}},
+                    {"count", {1}, {}, "", false, {}}};
   return plan;
 }
 

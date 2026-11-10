@@ -1,14 +1,15 @@
-// SimaVoxelize, SimaPillarScatter, SimaBEVPoolPlan and SimaBEVPool Nodes: deterministic
-// fragments, option validation, cold Scheduler admission of the production
+// SimaVoxelize, SimaPillarScatter, SimaBEVPoolPlan, SimaBEVPool and SimaCenterHeadDecode Nodes:
+// deterministic fragments, option validation, cold Scheduler admission of the production
 // requests on A65 and EV74, and the stage contract each Node compiles from an
 // ingress Sample. The request builders themselves are covered without any
 // runtime by unit_bevfusion_kernel_requests_test.
 //
 // Admission needs the published Scheduler cohort to expose voxelize,
-// pillar_scatter, bev_pool_plan and bev_pool from its Kernels provider.
+// pillar_scatter, bev_pool_plan, bev_pool and centerhead_decode from its Kernels provider.
 #include "nodes/sima/SimaBEVPool.h"
 #include "nodes/sima/SimaArgMax.h"
 #include "nodes/sima/SimaBEVPoolPlan.h"
+#include "nodes/sima/SimaCenterHeadDecode.h"
 #include "nodes/sima/SimaPillarScatter.h"
 #include "nodes/sima/SimaVoxelize.h"
 #include "nodes/sima/internal/LidarBevKernelRequests.h"
@@ -31,6 +32,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -64,6 +66,7 @@ void fragments_and_definitions() {
   const auto ps = ref::pillar_scatter_case().options;
   const auto plan = ref::bev_pool_plan_case().options;
   const auto pool = ref::bev_pool_case().options;
+  const auto head = ref::centerhead_decode_case().options;
   struct Expected {
     std::shared_ptr<Node> node;
     std::string kind, suffix;
@@ -86,6 +89,11 @@ void fragments_and_definitions() {
        {"camera2lidar", "camera_intrinsics", "img_aug_matrix", "lidar_aug_matrix"},
        {"plan"}},
       {nodes::SimaBEVPool(pool), "SimaBEVPool", "bev_pool", {"depth", "context", "plan"}, {"bev"}},
+      {nodes::SimaCenterHeadDecode(head),
+       "SimaCenterHeadDecode",
+       "centerhead_decode",
+       {"heads"},
+       {"boxes", "scores", "labels", "count"}},
   };
   for (const auto& e : nodes) {
     require(e.node->kind() == e.kind, e.kind + " kind");
@@ -156,6 +164,31 @@ void fragments_and_definitions() {
         SimaBEVPool node(bad);
       },
       "SimaBEVPool: output_dtype", "SimaBEVPool rejects an FP32 bev");
+  const std::vector<std::pair<std::function<void(SimaCenterHeadDecodeOptions&)>, std::string>>
+      invalid{{[](auto& o) { o.tasks.clear(); }, "tasks must hold"},
+              {[](auto& o) { o.tasks[1].classes = 0; }, "every head task needs"},
+              {[](auto& o) { o.tasks[1].nms = SimaCenterHeadNms::Unspecified; },
+               "every head task must state"},
+              {[](auto& o) { o.out_size_factor = 0; }, "out_size_factor, top_k"},
+              {[](auto& o) { o.top_k = 0; }, "out_size_factor, top_k"},
+              {[](auto& o) { o.post_max_per_task = 0; }, "out_size_factor, top_k"},
+              {[](auto& o) { o.post_center_range[3] = o.post_center_range[0]; },
+               "post_center_range must span"},
+              {[](auto& o) { o.post_center_range[4] = o.post_center_range[1]; },
+               "post_center_range must span"},
+              {[](auto& o) { o.rot_input = -1; }, "head input ports"}};
+  for (const auto& [change, needle] : invalid)
+    require_throws(
+        [&] {
+          auto bad = head;
+          change(bad);
+          SimaCenterHeadDecode node(bad);
+        },
+        "SimaCenterHeadDecode: " + needle, "SimaCenterHeadDecode rejects options: " + needle);
+  auto no_velocity = head;
+  no_velocity.velocity = false;
+  no_velocity.vel_input = -1; // not read without velocity
+  SimaCenterHeadDecode{no_velocity};
 }
 
 // --------------------------------------------------------------------------
@@ -270,6 +303,29 @@ void scheduler_admission() {
       require_contains(error->field, "outputs[0]", "plan rejection must concern output capacity");
     }
   }
+  // CenterPoint's nuScenes head on a 128x128 grid: FP32 heads, and BF16 heads whose heatmap and
+  // rot are padded to 16 channels per cell, as the MLA writes them.
+  auto head = ref::centerhead_decode_case().options;
+  head.tasks.clear();
+  for (const auto& [classes, radius] :
+       {std::pair{1, 4.0f}, {2, 12.0f}, {2, 10.0f}, {1, 1.0f}, {2, 0.85f}, {2, 0.175f}})
+    head.tasks.push_back({classes, SimaCenterHeadNms::Circle, radius, 0.0f});
+  head.top_k = 500;
+  head.post_max_per_task = 83;
+  const std::array hf{fact({1, 128, 128, 10}, rt::DType::Float32),
+                      fact({1, 128, 128, 48}, rt::DType::Float32),
+                      fact({1, 128, 128, 12}, rt::DType::Float32)};
+  admit(kr::centerhead_decode_request(head, hf), "centerhead_decode A65");
+  const std::vector<std::int64_t> padded{128 * 128 * 32, 128 * 32, 32, 2};
+  const std::array hb{fact({1, 128, 128, 10}, rt::DType::BFloat16, padded),
+                      fact({1, 128, 128, 48}, rt::DType::BFloat16),
+                      fact({1, 128, 128, 12}, rt::DType::BFloat16, padded)};
+  admit(kr::centerhead_decode_request(head, hb), "centerhead_decode BF16 padded A65");
+  head.target = SimaKernelTarget::EV74;
+  const auto ch = kr::centerhead_decode_request(head, hf);
+  require(std::holds_alternative<rt::Error>(
+              rt::check_kernel({ch.operation, ch.target, ch.inputs, ch.outputs, ch.parameters})),
+          "centerhead_decode has no EV74 implementation and must not fall back");
 }
 
 // --------------------------------------------------------------------------
@@ -545,6 +601,15 @@ void ingress_contracts() {
             "SimaBEVPool BF16 stage publishes its bev dtype and strides");
   }
 
+  const auto h = ref::centerhead_decode_case();
+  compiled = compile(SimaCenterHeadDecode(h.options),
+                     {Tensor::from_vector(h.heatmap, {1, 8, 8, 3}, TensorMemory::CPU),
+                      Tensor::from_vector(h.box, {1, 8, 8, 16}, TensorMemory::CPU),
+                      Tensor::from_vector(h.rot, {1, 8, 8, 4}, TensorMemory::CPU)});
+  require(compiled.kernel->runtime_contract.logical_outputs[0].shape ==
+              std::vector<std::int64_t>{4, 9},
+          "SimaCenterHeadDecode stage outputs");
+
   // Structural failures surface the Node's own diagnostic, before admission.
   ContractCompileInput input;
   input.ingress.ingress_sample = sample_from_tensors(
@@ -767,6 +832,49 @@ void semantic_contracts() {
   require(!SimaPillarScatter(scatter).compile_node_contract(input, &result, &diagnostic),
           "ingress Scatter rejects incoherent per-channel empty fill");
   require_contains(diagnostic, "scalar empty-cell", "Scatter empty-fill diagnostic");
+
+  // After model.inference(): the MLA's three BF16 heads in one carrier, the heatmap and rot padded
+  // to 16 channels per cell. The Node reads them where they are; the carrier may end after the last
+  // head's last channel.
+  const auto head = ref::centerhead_decode_case().options;
+  const auto mla_heads = [](std::uint64_t carrier_bytes) {
+    namespace si = pipeline_internal::sima;
+    CompiledNodeContract mla;
+    auto& runtime = mla.kernel.emplace().runtime_contract;
+    int index = 0;
+    for (const std::int64_t channels : {3, 16, 4}) {
+      const auto name = "head_" + std::to_string(index);
+      auto output = si::specbuilders::build_logical_output_static_spec(
+          index, index, 0, index, index, {1, 8, 8, channels}, "BF16", "NHWC", name, name, "mla",
+          index * 2048, 2048);
+      output.stride_bytes = {8 * 8 * 32, 8 * 32, 32, 2};
+      runtime.logical_outputs.push_back(std::move(output));
+      ++index;
+    }
+    runtime.physical_outputs.push_back(si::specbuilders::build_physical_buffer_static_spec(
+        0, 0, carrier_bytes, si::DeviceKind::Cpu, "mla"));
+    return mla;
+  };
+  const std::uint64_t rot_span = 63 * 32 + 4 * 2; // 64 cells of 32 bytes, the last one unpadded
+  const auto decode = compile_upstream(SimaCenterHeadDecode(head), mla_heads(2 * 2048 + rot_span));
+  const auto& bound = decode.kernel->runtime_contract;
+  require(bound.physical_inputs.size() == 1 && bound.logical_inputs.size() == 3 &&
+              bound.logical_inputs[1].byte_offset == 2048 &&
+              bound.logical_inputs[2].byte_offset == 4096 &&
+              bound.logical_inputs[2].stride_bytes == std::vector<std::int64_t>{2048, 256, 32, 2},
+          "SimaCenterHeadDecode reads the MLA's padded heads in their one carrier");
+  require_throws(
+      [&] { compile_upstream(SimaCenterHeadDecode(head), mla_heads(2 * 2048 + rot_span - 1)); },
+      "the checked request reads 2024", "SimaCenterHeadDecode carrier shorter than the last head");
+  // A quantized or tiled MLA output is integers: the diagnostic names the way out.
+  const std::array integers{fact({1, 8, 8, 3}, rt::DType::Int8),
+                            fact({1, 8, 8, 16}, rt::DType::Int8),
+                            fact({1, 8, 8, 4}, rt::DType::Int8)};
+  require_throws(
+      [&] { compile_upstream(SimaCenterHeadDecode(head), producer_contract(integers)); },
+      "must be FP32 or BF16, got INT8; for a model whose MLA output is quantized or tiled, use "
+      "model.graph() instead of model.inference()",
+      "SimaCenterHeadDecode integer MLA output diagnostic");
 }
 
 } // namespace

@@ -102,6 +102,7 @@ Use this map before you open the full API reference.
 | Voxelize a LiDAR sweep into pillars | `nodes::SimaVoxelize(SimaVoxelizeOptions{...})` | `pyneat.nodes.sima_voxelize(options)` |
 | Scatter pillar features onto a BEV canvas | `nodes::SimaPillarScatter(SimaPillarScatterOptions{...})` | `pyneat.nodes.sima_pillar_scatter(options)` |
 | Pool camera features into a BEV grid | `nodes::SimaBEVPoolPlan(...)` and `nodes::SimaBEVPool(...)` | `pyneat.nodes.sima_bev_pool_plan(options)` and `pyneat.nodes.sima_bev_pool(options)` |
+| Decode CenterHead outputs into 3D boxes | `nodes::SimaCenterHeadDecode(SimaCenterHeadDecodeOptions{...})` | `pyneat.nodes.sima_centerhead_decode(options)` |
 
 Use groups when you want a tested fragment. Use individual nodes when you need explicit topology. Use `Graph` helpers such as `graphs::Branch(...)` and `graphs::Combine(...)` for fan-out and fan-in instead of hiding topology behind duplicated outputs.
 

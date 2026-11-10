@@ -1,5 +1,5 @@
 // Independent numerical oracles and known-answer fixtures for the SimaVoxelize,
-// SimaPillarScatter, SimaBEVPoolPlan and SimaBEVPool Nodes.
+// SimaPillarScatter, SimaBEVPoolPlan, SimaBEVPool and SimaCenterHeadDecode Nodes.
 //
 // Each oracle follows the kernels library's documented arithmetic (the
 // operation pages and headers of sima-neat/kernels), written without the
@@ -11,6 +11,7 @@
 
 #include "nodes/sima/SimaBEVPool.h"
 #include "nodes/sima/SimaBEVPoolPlan.h"
+#include "nodes/sima/SimaCenterHeadDecode.h"
 #include "nodes/sima/SimaPillarScatter.h"
 #include "nodes/sima/SimaVoxelize.h"
 
@@ -765,6 +766,72 @@ bev_pool_case_bf16_accumulation(SimaKernelTarget target = SimaKernelTarget::A65)
     const std::uint16_t value = i == 0 ? 0x3F80 : i == 1 ? 0x3D80 : 0x3800; // 1, 2^-4, 2^-15
     c.depth_bf16[p] = value;
     c.context_bf16[((n * c.channels + 0) * c.rows + h) * c.columns + w] = value;
+  }
+  return c;
+}
+
+// ----------------------------------------------------------------------------
+// SimaCenterHeadDecode
+// ----------------------------------------------------------------------------
+// The default three ports, NHWC [1,8,8,C]: the heatmap; per head task reg, height, dim and vel;
+// per head task rot sine and cosine. The expected outputs hold K = 4 rows.
+struct CenterHeadDecodeCase {
+  SimaCenterHeadDecodeOptions options;
+  std::vector<float> heatmap, box, rot; // C = 3, 16, 4
+  std::vector<float> boxes, scores;     // [4,9], [4]
+  std::vector<std::int32_t> labels;     // [4]
+  std::int32_t count = 0;
+};
+
+// Two head tasks of one and two classes. Hot cells have logit 0 (score 0.5), all others -8 (below
+// the threshold); every size has log 0 and every rot is (0, 1), so each step is exact. Each task
+// keeps one box, the second from its second class; a third hot cell lies outside
+// post_center_range. `generation` moves the hot cells down by whole rows.
+inline CenterHeadDecodeCase centerhead_decode_case(int generation = 0) {
+  CenterHeadDecodeCase c;
+  auto& o = c.options;
+  o.tasks = {{1, SimaCenterHeadNms::Circle, 4.0f, 0.0f},
+             {2, SimaCenterHeadNms::Circle, 0.85f, 0.0f}};
+  o.out_size_factor = 4;
+  o.voxel_size = {0.25f, 0.5f};
+  o.range_min = {-8.0f, -16.0f};
+  o.score_threshold = 0.25f;
+  o.top_k = 6;
+  o.post_max_per_task = 2;
+  o.post_center_range = {-8.0f, -16.0f, -2.0f, -2.0f, 0.0f, 2.0f};
+  constexpr int columns = 8, cells = 64;
+  c.heatmap.assign(cells * 3, -8.0f);
+  c.box.assign(cells * 16, 0.0f);
+  c.rot.assign(cells * 4, 0.0f);
+  for (int cell = 0; cell < cells; ++cell)
+    c.rot[cell * 4 + 1] = c.rot[cell * 4 + 3] = 1.0f;
+  struct Hot {
+    int row, column, task, label;
+    float reg_x, reg_y, height, vx, vy;
+  };
+  const Hot hot[] = {{1, 2, 0, 0, 0.25f, 0.75f, 1.5f, 1.25f, -2.5f},
+                     {5, 4, 1, 2, 0.5f, 0.25f, -0.5f, -0.75f, 3.0f},
+                     {3, 7, 1, 1, 0.5f, 0.5f, 0.0f, 0.0f, 0.0f}}; // x = -0.5: outside the range
+  c.boxes.assign(4 * 9, 0.0f);
+  c.scores.assign(4, 0.0f);
+  c.labels.assign(4, 0);
+  for (const auto& h : hot) {
+    const int row = (h.row + generation) % 8, cell = row * columns + h.column;
+    c.heatmap[cell * 3 + h.label] = 0.0f;
+    float* head = &c.box[cell * 16 + h.task * 8];
+    head[0] = h.reg_x;
+    head[1] = h.reg_y;
+    head[2] = h.height;
+    head[6] = h.vx;
+    head[7] = h.vy;
+    const float x = (float(h.column) + h.reg_x) * 4.0f * o.voxel_size[0] + o.range_min[0];
+    const float y = (float(row) + h.reg_y) * 4.0f * o.voxel_size[1] + o.range_min[1];
+    if (x > o.post_center_range[3])
+      continue;
+    const std::array<float, 9> box{x, y, h.height - 0.5f, 1.0f, 1.0f, 1.0f, 0.0f, h.vx, h.vy};
+    std::copy(box.begin(), box.end(), c.boxes.begin() + c.count * 9);
+    c.scores[c.count] = 0.5f;
+    c.labels[c.count++] = h.label;
   }
   return c;
 }

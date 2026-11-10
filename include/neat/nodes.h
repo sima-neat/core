@@ -66,6 +66,7 @@
 #include "nodes/sima/SimaBEVPool.h"
 #include "nodes/sima/SimaBEVPoolPlan.h"
 #include "nodes/sima/SimaBoxDecode.h"
+#include "nodes/sima/SimaCenterHeadDecode.h"
 #include "nodes/sima/SimaDecode.h"
 #include "nodes/sima/SimaEncode.h"
 #include "nodes/sima/SimaPillarScatter.h"
