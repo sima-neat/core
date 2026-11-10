@@ -26,7 +26,7 @@ import threading
 import time
 import zipfile
 
-from windows_candidate import msi_version, sha256, validate_candidate
+from windows_candidate import dependency_identity, msi_version, sha256, validate_candidate
 
 
 PASS_CODES = {0}
@@ -73,6 +73,35 @@ def require_fresh_directory(path: Path, description: str) -> Path:
     raise RuntimeError(f"{description} must be fresh: {resolved}")
   resolved.mkdir(parents=True)
   return resolved
+
+
+def verify_dependency_cohort(candidate, platform_runtime: Path, gstreamer_root: Path) -> dict:
+  expected = dependency_identity(candidate.root)
+  platform_root = platform_runtime.resolve(strict=True)
+  gstreamer = gstreamer_root.resolve(strict=True)
+  pkg_config = gstreamer / "bin" / "pkg-config.exe"
+  gst_inspect = gstreamer / "bin" / "gst-inspect-1.0.exe"
+  if not pkg_config.is_file() or not gst_inspect.is_file():
+    raise RuntimeError("qualified GStreamer root is missing pkg-config or gst-inspect")
+  result = subprocess.run(
+      [gst_inspect, "--version"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+      text=True, timeout=60, check=False)
+  if result.returncode != 0:
+    raise RuntimeError("could not read the hardware runner's GStreamer version")
+  actual = {
+      "gstreamer": {
+          "pkg_config_sha256": sha256(pkg_config),
+          "version_output": result.stdout.strip(),
+      },
+      "platform_runtime_dlls": [
+          {"name": path.name, "sha256": sha256(path)}
+          for path in sorted(platform_root.glob("*.dll"), key=lambda path: path.name.lower())
+      ],
+  }
+  if actual != expected:
+    raise RuntimeError(
+        "hardware runner Platform/GStreamer dependencies differ from the built candidate")
+  return actual
 
 
 def windows_security_snapshot(log: Path) -> dict:
@@ -716,6 +745,8 @@ def qualify(args: argparse.Namespace) -> None:
     raise RuntimeError(f"Python wheelhouse is not a directory: {wheelhouse}")
   cli_wheel = sima_cli_wheel(args.sima_cli_candidate)
   cli_identity = sima_cli_identity(cli_wheel, args.expected_sima_cli_commit)
+  dependency_cohort = verify_dependency_cohort(
+      candidate, args.platform_runtime, args.gstreamer_root)
 
   install_root = Path(os.environ["ProgramFiles"]) / "SimaPCIeHost"
   if install_root.exists():
@@ -738,6 +769,7 @@ def qualify(args: argparse.Namespace) -> None:
           "platform": platform.platform(),
           "python": platform.python_version(),
       },
+      "dependencies": dependency_cohort,
       "tests": {"cpp": [], "python": []},
   }
   venv = work / "venv"

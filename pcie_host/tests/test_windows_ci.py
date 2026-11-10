@@ -18,7 +18,7 @@ SPEC = importlib.util.spec_from_file_location("build_windows", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
 SPEC.loader.exec_module(MODULE)
-from windows_candidate import sha256, validate_candidate  # noqa: E402
+from windows_candidate import dependency_identity, sha256, validate_candidate  # noqa: E402
 from qualify_windows_hardware import (  # noqa: E402
     ExclusiveLock, load_upgrade_base, parse_performance_log, sima_cli_identity,
     stage_local_registry,
@@ -33,7 +33,18 @@ class WindowsCiContracts(unittest.TestCase):
     msi.write_bytes(b"scheduler-msi")
     receipt = root / "host-candidate.json"
     receipt.write_text("{}\n", encoding="utf-8")
-    resources = {path.name: MODULE.sha256(path) for path in (msi, receipt)}
+    dependencies = root / "windows-dependencies.json"
+    dependencies.write_text(json.dumps({
+        "gstreamer": {
+            "pkg_config_sha256": "e" * 64,
+            "version_output": "gst-inspect version 1.26.0",
+        },
+        "platform": {"runtime_dlls": [
+            {"name": "sima-platform.dll", "sha256": "d" * 64},
+        ]},
+    }), encoding="utf-8")
+    resources = {
+        path.name: MODULE.sha256(path) for path in (msi, receipt, dependencies)}
     (root / "metadata.json").write_text(json.dumps({
         "artifact": {"architecture": "amd64", "profile": "pcie-host-windows"},
         "commit": "a" * 40,
@@ -162,7 +173,11 @@ class WindowsCiContracts(unittest.TestCase):
         "timestamp_url": "https://timestamp.example" if signed else None,
     }), encoding="utf-8")
     dependencies = root / "windows-dependencies.json"
-    dependencies.write_text(json.dumps({
+    dependency_data = {
+        "gstreamer": {
+            "pkg_config_sha256": "e" * 64,
+            "version_output": "gst-inspect version 1.26.0",
+        },
         "platform": {
             "runtime_dlls": [{
                 "name": "sima-platform.dll",
@@ -174,7 +189,10 @@ class WindowsCiContracts(unittest.TestCase):
                 },
             }],
         },
-    }), encoding="utf-8")
+    }
+    dependencies.write_text(json.dumps(dependency_data), encoding="utf-8")
+    scheduler_dependencies = root / "scheduler-windows-dependencies.json"
+    scheduler_dependencies.write_text(json.dumps(dependency_data), encoding="utf-8")
     core_signatures = root / "windows-signatures.json"
     core_signatures.write_text(json.dumps({
         "certificate_sha1": "A" * 40 if signed else "",
@@ -206,6 +224,7 @@ class WindowsCiContracts(unittest.TestCase):
             qualification_resource.name: sha256(qualification_resource),
             scheduler_signatures.name: sha256(scheduler_signatures),
             dependencies.name: sha256(dependencies),
+            scheduler_dependencies.name: sha256(scheduler_dependencies),
             core_signatures.name: sha256(core_signatures),
         },
         "repository": "sima-neat/core",
@@ -233,6 +252,15 @@ class WindowsCiContracts(unittest.TestCase):
                 "status": "PASS",
             },
             "wheel_failure": {"exit_code": 1, "status": "PASS"},
+        },
+        "dependencies": {
+            "gstreamer": {
+                "pkg_config_sha256": "e" * 64,
+                "version_output": "gst-inspect version 1.26.0",
+            },
+            "platform_runtime_dlls": [
+                {"name": "sima-platform.dll", "sha256": "d" * 64},
+            ],
         },
         "path_fixtures": {
             "SIMAPCIE_YOLOV8_MODEL": r"C:\qualification assets\model.tar.gz",
@@ -320,6 +348,14 @@ class WindowsCiContracts(unittest.TestCase):
       with self.assertRaisesRegex(ValueError, "missing required qualification resources"):
         validate_candidate(root)
 
+  def test_candidate_dependency_identity_is_canonical(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      self.windows_candidate(root)
+      self.assertEqual(
+          dependency_identity(root)["platform_runtime_dlls"],
+          [{"name": "sima-platform.dll", "sha256": "d" * 64}])
+
   def test_release_gate_rejects_unsigned_candidate(self):
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory)
@@ -388,6 +424,16 @@ class WindowsCiContracts(unittest.TestCase):
       receipt["qualification_resources"][dependencies_path.name] = sha256(dependencies_path)
       receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
       with self.assertRaisesRegex(ValueError, "Platform runtime has invalid"):
+        verify(root, qualification, commit, True)
+
+  def test_release_gate_rejects_changed_hardware_dependency_cohort(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      value = json.loads(qualification.read_text(encoding="utf-8"))
+      value["dependencies"]["platform_runtime_dlls"][0]["sha256"] = "0" * 64
+      qualification.write_text(json.dumps(value), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "different Platform/GStreamer cohort"):
         verify(root, qualification, commit, True)
 
   def test_release_gate_rejects_unsigned_scheduler_payload(self):

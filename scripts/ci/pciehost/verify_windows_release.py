@@ -10,7 +10,7 @@ from pathlib import Path
 from pathlib import PureWindowsPath
 import re
 
-from windows_candidate import msi_version, validate_candidate
+from windows_candidate import dependency_identity, msi_version, validate_candidate
 
 
 def read_object(path: Path, description: str) -> dict:
@@ -105,6 +105,8 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
     raise ValueError("hardware qualification covered a different Core commit")
   if qualified_candidate.get("resources") != candidate.resources:
     raise ValueError("hardware qualification covered different package bytes")
+  if qualification.get("dependencies") != dependency_identity(candidate.root):
+    raise ValueError("hardware qualification used a different Platform/GStreamer cohort")
   cleanup = qualification.get("cleanup")
   if not isinstance(cleanup, dict) or cleanup.get("errors") != []:
     raise ValueError("hardware qualification did not prove clean removal")

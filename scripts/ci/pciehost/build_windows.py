@@ -21,6 +21,8 @@ import sys
 import tempfile
 import zipfile
 
+from windows_candidate import dependency_identity
+
 
 ROOT = Path(__file__).resolve().parents[3]
 PCIE_HOST = ROOT / "pcie_host"
@@ -273,6 +275,7 @@ def build(args: argparse.Namespace) -> None:
 
   scheduler_metadata, scheduler_msi = verify_scheduler_candidate(
       args.scheduler_candidate, args.expected_scheduler_commit)
+  scheduler_dependencies = dependency_identity(args.scheduler_candidate)
   gstreamer_root = require_directory(args.gstreamer_root, "GStreamer MSVC root")
   gstreamer_bin = require_directory(gstreamer_root / "bin", "GStreamer binary directory")
   pkgconfig_dir = require_directory(
@@ -280,9 +283,21 @@ def build(args: argparse.Namespace) -> None:
   gst_inspect = require_file(gstreamer_bin / "gst-inspect-1.0.exe", "gst-inspect")
   pkg_config = require_file(gstreamer_bin / "pkg-config.exe", "GStreamer pkg-config")
   platform_runtime = require_directory(args.platform_runtime, "Platform runtime directory")
-  platform_dlls = sorted(platform_runtime.glob("*.dll"))
+  platform_dlls = sorted(platform_runtime.glob("*.dll"), key=lambda path: path.name.lower())
   if not platform_dlls:
     raise ValueError(f"Platform runtime directory contains no DLLs: {platform_runtime}")
+  producer_dependencies = {
+      "gstreamer": {
+          "pkg_config_sha256": sha256(pkg_config),
+          "version_output": run([gst_inspect, "--version"], capture=True),
+      },
+      "platform_runtime_dlls": [
+          {"name": path.name, "sha256": sha256(path)} for path in platform_dlls
+      ],
+  }
+  if producer_dependencies != scheduler_dependencies:
+    raise ValueError(
+        "Core and Scheduler Windows producers use different Platform/GStreamer dependencies")
   wheelhouse = require_directory(args.python_wheelhouse, "Python dependency wheelhouse")
   wheelhouse_wheels = sorted(wheelhouse.glob("*.whl"))
   if not wheelhouse_wheels:
@@ -631,6 +646,8 @@ def build(args: argparse.Namespace) -> None:
             },
             "scheduler-windows-signatures.json": sha256(
                 output / "scheduler-windows-signatures.json"),
+            "scheduler-windows-dependencies.json": sha256(
+                output / "scheduler-windows-dependencies.json"),
             "windows-dependencies.json": sha256(output / "windows-dependencies.json"),
             "windows-signatures.json": sha256(output / "windows-signatures.json"),
         },

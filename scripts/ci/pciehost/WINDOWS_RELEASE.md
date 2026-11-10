@@ -28,6 +28,8 @@ SSH-key, model, media, worker-checksum, and GenAI asset variables named in
 `.github/workflows/pcie-host-windows.yml`. Store the SSH private key on the
 runner and pass only its path. The production environment also supplies the
 read-only GitHub App credentials used to fetch Scheduler and sima-cli artifacts.
+Scheduler, Core, and hardware must resolve the same GStreamer identity and exact
+Platform runtime DLL hashes; the workflows reject a mixed dependency cohort.
 
 ## Validation run
 

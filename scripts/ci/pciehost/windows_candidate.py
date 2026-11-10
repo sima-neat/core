@@ -25,6 +25,38 @@ def msi_version(value: object) -> tuple[int, int, int]:
   return tuple(int(part) for part in match.groups())
 
 
+def dependency_identity(directory: Path) -> dict:
+  root = directory.resolve(strict=True)
+  receipt = _read_json(root / "windows-dependencies.json", "Windows dependency receipt")
+  platform = receipt.get("platform")
+  runtime_dlls = platform.get("runtime_dlls") if isinstance(platform, dict) else None
+  if not isinstance(runtime_dlls, list) or not runtime_dlls:
+    raise ValueError("Windows dependency receipt has no Platform runtime DLLs")
+  dlls = []
+  for item in runtime_dlls:
+    if (not isinstance(item, dict) or not isinstance(item.get("name"), str)
+        or Path(item["name"]).name != item["name"]
+        or not re.fullmatch(r"[0-9a-f]{64}", str(item.get("sha256", "")))):
+      raise ValueError("Windows dependency receipt has an invalid Platform runtime DLL")
+    dlls.append({"name": item["name"], "sha256": item["sha256"]})
+  if len({item["name"].lower() for item in dlls}) != len(dlls):
+    raise ValueError("Windows dependency receipt has duplicate Platform runtime DLLs")
+
+  gstreamer = receipt.get("gstreamer")
+  version_output = gstreamer.get("version_output") if isinstance(gstreamer, dict) else None
+  pkg_config_sha256 = gstreamer.get("pkg_config_sha256") if isinstance(gstreamer, dict) else None
+  if (not isinstance(version_output, str) or not version_output.strip()
+      or not re.fullmatch(r"[0-9a-f]{64}", str(pkg_config_sha256 or ""))):
+    raise ValueError("Windows dependency receipt has an invalid GStreamer identity")
+  return {
+      "gstreamer": {
+          "pkg_config_sha256": pkg_config_sha256,
+          "version_output": version_output,
+      },
+      "platform_runtime_dlls": sorted(dlls, key=lambda item: item["name"].lower()),
+  }
+
+
 def _read_json(path: Path, description: str) -> dict:
   try:
     value = json.loads(path.read_text(encoding="utf-8"))
@@ -71,12 +103,14 @@ def validate_candidate(directory: Path) -> WindowsCandidate:
   if metadata.get("commit") != receipt.get("core_source_commit"):
     raise ValueError("candidate metadata and receipt name different Core commits")
   msi_version(metadata.get("version"))
+  dependency_identity(root)
 
   qualification_resources = receipt.get("qualification_resources")
   if not isinstance(qualification_resources, dict) or not qualification_resources:
     raise ValueError("candidate receipt has no qualification resource inventory")
   required_qualification_resources = {
       "scheduler-windows-signatures.json",
+      "scheduler-windows-dependencies.json",
       "windows-dependencies.json",
       "windows-signatures.json",
   }

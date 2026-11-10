@@ -435,6 +435,8 @@ wheelhouse.
 `scripts/ci/pciehost/build_windows.py` verifies every Scheduler resource against
 its published metadata, installs that MSI, builds Core and the Python extension,
 runs the non-hardware CTest suite, and verifies all generated PE files are x64.
+Before building, it requires its Platform runtime DLL hashes and GStreamer
+identity to match Scheduler's retained dependency receipt.
 It then tests a relocated CMake consumer, creates the Core MSI and wheel, installs
 the exact Core MSI, builds an installed consumer, loads the genuine Scheduler
 plug-in, repeats the ordered Scheduler-to-Core MSI installation, and imports the
@@ -456,6 +458,7 @@ install through the documented `sima-cli neat install`
 command. It deletes and repairs one Core-owned and one Scheduler-owned file through
 Windows Installer, records the Windows version, elevation, Smart App Control, and
 effective AppLocker visibility without changing policy, rechecks plugin discovery,
+rejects a Platform runtime or GStreamer dependency that differs from the producer,
 and then runs the public C++ and Python
 vision suites, kills a card worker and a local client in separate bounded fault
 tests, proves the affected queue can be reopened after each failure, and removes
