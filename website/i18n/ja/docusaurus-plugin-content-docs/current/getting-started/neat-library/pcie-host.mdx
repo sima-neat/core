@@ -25,8 +25,9 @@ Neat PCIe ホストパッケージは、以下の検証済みのホストプラ�
 | --- | --- | --- |
 | Ubuntu 22.04 | x86_64 | 対応済み |
 | Ubuntu 24.04 | x86_64 | 対応済み |
+| Windows 11 | x86_64 | ネイティブプレビュー（ビジョン推論のみ） |
 
-Arm64ホストでのビルドは、まだ検証されていません。Windows 11はサポート対象外です。
+Arm64ホストでのビルドは、まだ検証されていません。WindowsプレビューはPCIe GenAIトランスポートをサポートしていません。
 
 ## オンラインインストールの前提条件
 
@@ -78,6 +79,33 @@ source ~/pyneatpcie/bin/activate
 python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 gst-inspect-1.0 neatpciehost
 </ShellCommand>
+
+## Windows 11 ネイティブプレビューをインストールする
+
+Windowsプレビューは、`pcie::Model`ビジョンAPIのネイティブVisual Studioビルドです。`pcie::genai::GenAIModel`はサポートしていません。最初に、対応するx64 GStreamer MSVCランタイム、SiMa PCIeドライバー、および既存のSiMa CLIをインストールしてください。アプリケーション環境を作成し、CLIを使用して、対応するScheduler MSI、Core MSI、および`win_amd64` wheelを1つのコホートとしてインストールします。
+
+```powershell
+py -3 -m venv pyneatpcie
+sima-cli neat install core/pciehost/windows/amd64@3.0 `
+  --python-executable .\pyneatpcie\Scripts\python.exe
+.\pyneatpcie\Scripts\python.exe -m pip check
+```
+
+CLIは公開済みのチェックサムを検証し、Scheduler、Coreの順にWindows Installerを実行してから、指定したPython実行ファイルを介してpipを実行します。修復またはアップグレードする場合は、同じコマンドを再度実行してください。ネイティブC++のみをインストールする場合は、`--python-executable`を省略します。ネイティブコンポーネントの削除はWindows Installerが管理し、選択したPython環境からの削除はpipが管理します。
+
+Pythonパッケージは、拡張モジュールをインポートする前に、既定のインストールルートと既定のx64 GStreamerの場所でDLLを検索します。別のインストールルートを使用する場合は、`SIMA_PCIE_HOST_LIBRARY_PATH`にPCIeホストとGStreamerのDLLを含むディレクトリを設定してください。
+
+ソースツリーおよびビルドツリーの外部から、インストール済みのwheelとプラグインを確認します。
+
+```powershell
+$venv = (Resolve-Path .\pyneatpcie).Path
+$root = "C:\Program Files\SimaPCIeHost"
+$gst = "C:\Program Files\gstreamer\1.0\msvc_x86_64\bin\gst-inspect-1.0.exe"
+$env:PATH = "$root\bin;$(Split-Path $gst);$env:PATH"
+Set-Location $env:TEMP
+& "$venv\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
+& $gst "$root\bin\gstreamer-1.0\gstneatpciehost.dll"
+```
 
 ## トラブルシューティング
 

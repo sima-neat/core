@@ -27,8 +27,9 @@ PCIe-карти Modalix.
 | --- | --- | --- |
 | Ubuntu 22.04 | x86_64 | Підтримується |
 | Ubuntu 24.04 | x86_64 | Підтримується |
+| Windows 11 | x86_64 | Нативна попередня версія; лише обробка зображень |
 
-Збірки для хоста Arm64 ще не були перевірені. Windows 11 не підтримується.
+Збірки для хоста Arm64 ще не були перевірені. Попередня версія для Windows не підтримує транспорт PCIe GenAI.
 
 ## Передумови встановлення через інтернет
 
@@ -80,6 +81,33 @@ source ~/pyneatpcie/bin/activate
 python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 gst-inspect-1.0 neatpciehost
 </ShellCommand>
+
+## Установлення нативної попередньої версії для Windows 11
+
+Попередня версія для Windows — це нативна збірка Visual Studio для API обробки зображень `pcie::Model`. Вона не підтримує `pcie::genai::GenAIModel`. Спочатку встановіть відповідне середовище виконання x64 GStreamer MSVC, драйвер SiMa PCIe та наявний SiMa CLI. Створіть середовище застосунку, а потім за допомогою CLI встановіть узгоджені пакети Scheduler MSI, Core MSI та wheel `win_amd64` як єдиний набір.
+
+```powershell
+py -3 -m venv pyneatpcie
+sima-cli neat install core/pciehost/windows/amd64@3.0 `
+  --python-executable .\pyneatpcie\Scripts\python.exe
+.\pyneatpcie\Scripts\python.exe -m pip check
+```
+
+CLI перевіряє опубліковані контрольні суми, послідовно запускає Windows Installer для Scheduler і Core, а потім запускає pip через указаний виконуваний файл Python. Для відновлення або оновлення повторно виконайте ту саму команду. Для встановлення лише нативної версії C++ не вказуйте `--python-executable`. Видаленням нативних компонентів керує Windows Installer, а видаленням із вибраного середовища Python — pip.
+
+Перед імпортом розширення пакет Python шукає DLL у стандартному корені встановлення та стандартному розташуванні x64 GStreamer. Для іншого кореня встановлення задайте в `SIMA_PCIE_HOST_LIBRARY_PATH` каталоги з DLL хоста PCIe та GStreamer.
+
+Перевірте встановлені wheel і плагін поза деревом вихідного коду та збірки:
+
+```powershell
+$venv = (Resolve-Path .\pyneatpcie).Path
+$root = "C:\Program Files\SimaPCIeHost"
+$gst = "C:\Program Files\gstreamer\1.0\msvc_x86_64\bin\gst-inspect-1.0.exe"
+$env:PATH = "$root\bin;$(Split-Path $gst);$env:PATH"
+Set-Location $env:TEMP
+& "$venv\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
+& $gst "$root\bin\gstreamer-1.0\gstneatpciehost.dll"
+```
 
 ## Усунення несправностей
 
