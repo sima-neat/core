@@ -100,6 +100,11 @@ class WindowsCiContracts(unittest.TestCase):
 
   def test_workflow_uses_exact_scheduler_artifact_and_restricted_runner(self):
     source = WORKFLOW.read_text(encoding="utf-8")
+    self.assertIn("  pull_request:\n", source)
+    self.assertIn("if: github.event_name != 'pull_request'", source)
+    self.assertIn(
+        "if: github.event_name != 'pull_request' && github.repository == 'sima-neat/core'",
+        source)
     self.assertIn("scheduler_run_id", source)
     self.assertIn("scheduler_commit", source)
     self.assertIn("--expected-scheduler-commit", source)

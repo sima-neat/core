@@ -1,5 +1,9 @@
 name: Core native Windows PCIe host
 on:
+  # Pull requests exercise only the unprivileged contract job. The producer,
+  # card, and publication jobs require explicit artifact identities and are
+  # entered through workflow_dispatch or a trusted reusable-workflow caller.
+  pull_request:
   workflow_call:
     inputs:
       scheduler_run_id:
@@ -101,6 +105,7 @@ jobs:
   linux_release:
     name: Exact Linux build and hardware regressions
     needs: contracts
+    if: github.event_name != 'pull_request'
     environment: production
     runs-on: ubuntu-24.04
     permissions:
@@ -212,7 +217,7 @@ jobs:
   native:
     name: Native Windows amd64 cohort
     needs: contracts
-    if: github.repository == 'sima-neat/core' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'sima-neat/core')
+    if: github.event_name != 'pull_request' && github.repository == 'sima-neat/core'
     environment: production
     runs-on: [self-hosted, Windows, X64, pcie-windows-build, default]
     timeout-minutes: 75
