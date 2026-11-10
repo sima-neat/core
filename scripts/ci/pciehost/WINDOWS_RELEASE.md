@@ -46,6 +46,24 @@ private directory, and temporarily selects its matching firmware. It restores
 the original firmware and removes the private card files before releasing the
 card lock.
 
+## Workflow bootstrap
+
+GitHub accepts `workflow_dispatch` only after that workflow file exists on the
+repository's default branch. For the first review of these workflows:
+
+1. open the Scheduler and Core changes as pull requests against `develop`;
+2. let Scheduler run its unsigned Windows producer on the trusted
+   same-repository pull request;
+3. let Core run its unprivileged contract job; its producer, card, signing, and
+   publication jobs deliberately do not run in a pull-request context;
+4. review and merge through the normal repository gates; and
+5. only then use `workflow_dispatch` against the exact branch, tag, or commit
+   selected for qualification.
+
+Do not weaken the pull-request boundary to make the first dispatch possible.
+The post-merge dispatch is where explicit Scheduler, sima-cli, Linux, and
+upgrade run identities enter the Core workflow.
+
 ## Validation run
 
 Run the four required workflows from the exact branches under review:
