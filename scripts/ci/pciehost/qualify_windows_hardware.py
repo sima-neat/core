@@ -119,6 +119,28 @@ def run_logged(command: list[object], log: Path, *, env: dict[str, str] | None =
     raise RuntimeError(f"command failed with {result.returncode}; see {log}")
 
 
+def run_expected_failure(command: list[object], log: Path,
+                         *, env: dict[str, str] | None = None,
+                         cwd: Path | None = None, timeout: int = 3600) -> int:
+  argv = [str(value) for value in command]
+  with log.open("w", encoding="utf-8", errors="replace") as output:
+    output.write("+ " + subprocess.list2cmdline(argv) + "\n")
+    output.flush()
+    result = subprocess.run(
+        argv,
+        cwd=cwd,
+        env=env,
+        stdout=output,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+  if result.returncode in PASS_CODES:
+    raise RuntimeError(f"command unexpectedly succeeded; see {log}")
+  return result.returncode
+
+
 def remove_msi(msi: Path, log: Path) -> str:
   result = subprocess.run(
       ["msiexec.exe", "/x", str(msi), "/quiet", "/norestart", "/L*v", str(log)],
@@ -263,6 +285,112 @@ def stop_card_workers(args: argparse.Namespace, evidence: Path) -> None:
   run_logged(ssh_command(args, remote), evidence / "card-worker-cleanup.log", timeout=30)
 
 
+def wait_for_no_card_workers(args: argparse.Namespace, log: Path, timeout: int) -> None:
+  remote = (
+      "printf 'workers='; "
+      "pgrep -fc '(^|/)[p]cie-pipeline-builder([[:space:]]|$)' || true"
+  )
+  deadline = time.monotonic() + timeout
+  with log.open("w", encoding="utf-8", errors="replace") as output:
+    while True:
+      result = subprocess.run(
+          ssh_command(args, remote), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+          text=True, timeout=30, check=False)
+      output.write(f"returncode={result.returncode} {result.stdout.strip()}\n")
+      output.flush()
+      match = re.search(r"workers=(\d+)", result.stdout)
+      if result.returncode == 0 and match and int(match.group(1)) == 0:
+        return
+      if time.monotonic() >= deadline:
+        raise RuntimeError(f"card worker did not stop within {timeout} seconds; see {log}")
+      time.sleep(1)
+
+
+def wait_for_log(process: subprocess.Popen, log: Path, marker: str, timeout: int) -> None:
+  deadline = time.monotonic() + timeout
+  while True:
+    if log.is_file():
+      text = log.read_text(encoding="utf-8", errors="replace")
+      if marker in text:
+        return
+    returncode = process.poll()
+    if returncode is not None:
+      raise RuntimeError(
+          f"fault-injection client exited with {returncode} before {marker!r}; see {log}")
+    if time.monotonic() >= deadline:
+      raise RuntimeError(f"fault-injection client did not reach {marker!r}; see {log}")
+    time.sleep(0.2)
+
+
+def run_fault_recovery_tests(args: argparse.Namespace, test_root: Path, evidence: Path,
+                             environment: dict[str, str]) -> list[str]:
+  blocker = test_root / "test_queue_blocker.exe"
+  recovery = test_root / "test_tensor_run.exe"
+  completed = []
+
+  def launch(label: str) -> tuple[subprocess.Popen, object, Path]:
+    log = evidence / f"cpp-{label}.log"
+    stream = log.open("w", encoding="utf-8", errors="replace")
+    command = [blocker, "--iterations", "0"]
+    stream.write("+ " + subprocess.list2cmdline([str(value) for value in command]) + "\n")
+    stream.flush()
+    process = subprocess.Popen(
+        [str(value) for value in command], cwd=test_root, env=environment,
+        stdout=stream, stderr=subprocess.STDOUT, text=True)
+    try:
+      wait_for_log(process, log, "queue is now occupied", 300)
+    except BaseException:
+      if process.poll() is None:
+        process.kill()
+      process.wait(timeout=30)
+      stream.close()
+      raise
+    return process, stream, log
+
+  process, stream, _ = launch("test_worker_loss_recovery")
+  try:
+    remote = (
+        "pkill -KILL -f '(^|/)[p]cie-pipeline-builder([[:space:]]|$)' "
+        "2>/dev/null || true"
+    )
+    run_logged(
+        ssh_command(args, remote), evidence / "card-worker-loss-injection.log", timeout=30)
+    try:
+      returncode = process.wait(timeout=120)
+    except subprocess.TimeoutExpired as error:
+      raise RuntimeError("client did not terminate after card worker loss") from error
+    if returncode == 0:
+      raise RuntimeError("client reported success after its card worker was killed")
+  finally:
+    if process.poll() is None:
+      process.kill()
+      process.wait(timeout=30)
+    stream.close()
+  wait_for_no_card_workers(args, evidence / "card-worker-loss-drain.log", 120)
+  run_logged(
+      [recovery, "--sync-iterations", "1", "--iterations", "0"],
+      evidence / "cpp-test_worker_loss_queue_reuse.log", env=environment,
+      cwd=test_root, timeout=args.test_timeout_seconds)
+  completed.append("test_worker_loss_recovery")
+
+  process, stream, _ = launch("test_client_process_death_recovery")
+  try:
+    process.kill()
+    process.wait(timeout=30)
+  finally:
+    if process.poll() is None:
+      process.kill()
+      process.wait(timeout=30)
+    stream.close()
+  wait_for_no_card_workers(args, evidence / "client-process-death-drain.log", 120)
+  run_logged(
+      [recovery, "--sync-iterations", "1", "--iterations", "0"],
+      evidence / "cpp-test_client_process_death_queue_reuse.log", env=environment,
+      cwd=test_root, timeout=args.test_timeout_seconds)
+  completed.append("test_client_process_death_recovery")
+  return completed
+
+
 def require_assets(environment: dict[str, str], include_genai: bool) -> None:
   required_files = (
       "SIMAPCIE_YOLOV8_MODEL",
@@ -361,9 +489,14 @@ def run_cpp_tests(args: argparse.Namespace, candidate_root: Path, evidence: Path
       command.extend(["--model", environment["SIMAPCIE_MLA_ONLY_MODEL"]])
     elif name == "test_image_boxdecode_run.exe":
       command.append("--require-person")
+    elif name == "test_queue_blocker.exe":
+      command.extend(["--iterations", "10", "--interval-ms", "0"])
     run_logged(command, evidence / f"cpp-{executable.stem}.log", env=environment,
                cwd=test_root, timeout=args.test_timeout_seconds)
     completed.append(executable.stem)
+
+  completed.extend(run_fault_recovery_tests(
+      args, test_root, evidence, environment))
 
   bf16 = test_root / "test_tensor_mla_only_run.exe"
   run_logged(
@@ -498,10 +631,46 @@ def qualify(args: argparse.Namespace) -> None:
       cli_environment.pop("PYTHONPATH", None)
       cli_environment["PIP_NO_INDEX"] = "1"
       cli_environment["PIP_FIND_LINKS"] = str(wheelhouse)
-      registry_root = work / "disposable local registry"
-      stage_local_registry(candidate, registry_root)
       download_root = work / "customer downloads with spaces"
       target = "core/pciehost/windows/amd64@3.0"
+      native_registry_root = work / "native only registry with spaces"
+      stage_local_registry(candidate, native_registry_root)
+      with local_registry(native_registry_root) as registry_url:
+        native_command = [
+            cli, "neat", "--base-url", registry_url, "install", target,
+            "--install-dir", download_root,
+        ]
+        run_logged(
+            native_command, evidence / "sima-cli-native-only-install.log",
+            env=cli_environment, cwd=work, timeout=1800)
+      if not install_root.is_dir():
+        raise RuntimeError("sima-cli native-only flow installed no native cohort")
+      if subprocess.run(
+          [python, "-c", "import pyneatpcie"], stdout=subprocess.DEVNULL,
+          stderr=subprocess.DEVNULL, check=False).returncode == 0:
+        raise RuntimeError("native-only sima-cli flow unexpectedly installed pyneatpcie")
+
+      missing_registry_root = work / "missing wheel registry with spaces"
+      missing_package = stage_local_registry(candidate, missing_registry_root)
+      (missing_package / candidate.wheel.name).unlink()
+      with local_registry(missing_registry_root) as registry_url:
+        missing_command = [
+            cli, "neat", "--base-url", registry_url, "install", target,
+            "--install-dir", download_root,
+            "--python-executable", python,
+        ]
+        missing_code = run_expected_failure(
+            missing_command, evidence / "sima-cli-missing-wheel.log",
+            env=cli_environment, cwd=work, timeout=1800)
+      if not install_root.is_dir():
+        raise RuntimeError("missing-wheel failure removed the successful native installation")
+      if subprocess.run(
+          [python, "-c", "import pyneatpcie"], stdout=subprocess.DEVNULL,
+          stderr=subprocess.DEVNULL, check=False).returncode == 0:
+        raise RuntimeError("missing-wheel flow reported failure after installing pyneatpcie")
+
+      registry_root = work / "complete registry with spaces"
+      stage_local_registry(candidate, registry_root)
       with local_registry(registry_root) as registry_url:
         command = [
             cli, "neat", "--base-url", registry_url, "install", target,
@@ -509,17 +678,17 @@ def qualify(args: argparse.Namespace) -> None:
             "--python-executable", python,
         ]
         run_logged(
-            command, evidence / "sima-cli-customer-install.log",
+            command, evidence / "sima-cli-customer-recovery-install.log",
             env=cli_environment, cwd=work, timeout=1800)
-        if not install_root.is_dir():
-          raise RuntimeError("sima-cli reported success without installing the native cohort")
         run_logged(
             command, evidence / "sima-cli-customer-repeat-install.log",
             env=cli_environment, cwd=work, timeout=1800)
       result["customer_install"] = {
           "command": target,
           "download_path_with_spaces": str(download_root),
-          "initial": "PASS",
+          "missing_wheel": {"exit_code": missing_code, "status": "PASS"},
+          "native_only": "PASS",
+          "recovery": "PASS",
           "repeat": "PASS",
       }
 

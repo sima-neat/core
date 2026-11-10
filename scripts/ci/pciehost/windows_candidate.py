@@ -67,6 +67,17 @@ def validate_candidate(directory: Path) -> WindowsCandidate:
   qualification_resources = receipt.get("qualification_resources")
   if not isinstance(qualification_resources, dict) or not qualification_resources:
     raise ValueError("candidate receipt has no qualification resource inventory")
+  required_qualification_resources = {
+      "scheduler-windows-signatures.json",
+      "windows-dependencies.json",
+      "windows-signatures.json",
+  }
+  missing_qualification_resources = sorted(
+      required_qualification_resources - set(qualification_resources))
+  if missing_qualification_resources:
+    raise ValueError(
+        "candidate receipt is missing required qualification resources: "
+        f"{missing_qualification_resources}")
   for name, expected in qualification_resources.items():
     relative = Path(str(name))
     if (relative.is_absolute() or ".." in relative.parts or not relative.parts

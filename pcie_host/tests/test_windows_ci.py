@@ -48,7 +48,7 @@ class WindowsCiContracts(unittest.TestCase):
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory)
       expected = self.scheduler_candidate(root)
-      metadata, actual = MODULE.verify_scheduler_candidate(root)
+      metadata, actual = MODULE.verify_scheduler_candidate(root, "a" * 40)
       self.assertEqual(actual, expected)
       self.assertEqual(metadata["commit"], "a" * 40)
 
@@ -58,7 +58,7 @@ class WindowsCiContracts(unittest.TestCase):
       msi = self.scheduler_candidate(root)
       msi.write_bytes(b"changed")
       with self.assertRaisesRegex(ValueError, "checksum differs"):
-        MODULE.verify_scheduler_candidate(root)
+        MODULE.verify_scheduler_candidate(root, "a" * 40)
 
   def test_scheduler_candidate_rejects_non_mapping_checksums(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -69,11 +69,22 @@ class WindowsCiContracts(unittest.TestCase):
       metadata["resources-checksum"] = metadata["resources"]
       metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
       with self.assertRaisesRegex(ValueError, "inventory is incomplete"):
-        MODULE.verify_scheduler_candidate(root)
+        MODULE.verify_scheduler_candidate(root, "a" * 40)
+
+  def test_scheduler_candidate_rejects_unselected_commit(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      self.scheduler_candidate(root)
+      with self.assertRaisesRegex(ValueError, "is not the selected commit"):
+        MODULE.verify_scheduler_candidate(root, "b" * 40)
 
   def test_workflow_uses_exact_scheduler_artifact_and_restricted_runner(self):
     source = WORKFLOW.read_text(encoding="utf-8")
     self.assertIn("scheduler_run_id", source)
+    self.assertIn("scheduler_commit", source)
+    self.assertIn("--expected-scheduler-commit", source)
+    self.assertIn('"Scheduler native Windows PCIe host"', source)
+    self.assertIn('".github/workflows/pcie-host-windows.yml"', source)
     self.assertIn("repository: sima-neat/scheduler", source)
     self.assertIn("scheduler-native-windows-amd64", source)
     self.assertIn("pcie-windows-build", source)
@@ -96,6 +107,13 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('"repeat_install": "PASS"', source)
     self.assertNotIn("copytree(platform_runtime", source)
 
+  def test_hardware_qualification_bounds_blocker_and_injects_process_faults(self):
+    source = (SCRIPT_DIR / "qualify_windows_hardware.py").read_text(encoding="utf-8")
+    self.assertIn('command.extend(["--iterations", "10", "--interval-ms", "0"])', source)
+    self.assertIn('completed.append("test_worker_loss_recovery")', source)
+    self.assertIn('completed.append("test_client_process_death_recovery")', source)
+    self.assertIn("process.kill()", source)
+
   def test_wheel_payload_reader_checks_crc(self):
     with tempfile.TemporaryDirectory() as directory:
       wheel = Path(directory) / "test.whl"
@@ -113,6 +131,40 @@ class WindowsCiContracts(unittest.TestCase):
     resources = {path.name: sha256(path) for path in (scheduler, core, wheel)}
     qualification_resource = root / "qualification-resource.bin"
     qualification_resource.write_bytes(b"hardware-tests-and-signature-receipt")
+    signature_record = {
+        "path": scheduler.name,
+        "status": "Valid" if signed else "NotSigned",
+        "timestamp_thumbprint": "B" * 40 if signed else None,
+        "thumbprint": "A" * 40 if signed else None,
+    }
+    scheduler_signatures = root / "scheduler-windows-signatures.json"
+    scheduler_signatures.write_text(json.dumps({
+        "certificate_sha1": "A" * 40 if signed else "",
+        "records": [signature_record],
+        "release_required": signed,
+        "timestamp_url": "https://timestamp.example" if signed else None,
+    }), encoding="utf-8")
+    dependencies = root / "windows-dependencies.json"
+    dependencies.write_text(json.dumps({
+        "platform": {
+            "runtime_dlls": [{
+                "name": "sima-platform.dll",
+                "sha256": "d" * 64,
+                "signature": {
+                    "status": "Valid" if signed else "NotSigned",
+                    "timestamp_thumbprint": "C" * 40 if signed else None,
+                    "thumbprint": "D" * 40 if signed else None,
+                },
+            }],
+        },
+    }), encoding="utf-8")
+    core_signatures = root / "windows-signatures.json"
+    core_signatures.write_text(json.dumps({
+        "certificate_sha1": "A" * 40 if signed else "",
+        "records": [signature_record],
+        "release_required": signed,
+        "timestamp_url": "https://timestamp.example" if signed else None,
+    }), encoding="utf-8")
     commit = "c" * 40
     (root / "metadata.json").write_text(json.dumps({
         "artifact": {"package_path": "pciehost/windows/amd64"},
@@ -135,20 +187,12 @@ class WindowsCiContracts(unittest.TestCase):
         "profile": "pciehost/windows/amd64",
         "qualification_resources": {
             qualification_resource.name: sha256(qualification_resource),
+            scheduler_signatures.name: sha256(scheduler_signatures),
+            dependencies.name: sha256(dependencies),
+            core_signatures.name: sha256(core_signatures),
         },
         "repository": "sima-neat/core",
         "scheduler_source_commit": "d" * 40,
-    }), encoding="utf-8")
-    (root / "windows-signatures.json").write_text(json.dumps({
-        "certificate_sha1": "A" * 40 if signed else "",
-        "records": [{
-            "path": scheduler.name,
-            "status": "Valid" if signed else "NotSigned",
-            "timestamp_thumbprint": "B" * 40 if signed else None,
-            "thumbprint": "A" * 40 if signed else None,
-        }],
-        "release_required": signed,
-        "timestamp_url": "https://timestamp.example" if signed else None,
     }), encoding="utf-8")
     qualification = root / "qualification.json"
     qualification.write_text(json.dumps({
@@ -159,7 +203,9 @@ class WindowsCiContracts(unittest.TestCase):
         "customer_install": {
             "command": "core/pciehost/windows/amd64@3.0",
             "download_path_with_spaces": r"C:\customer downloads\candidate",
-            "initial": "PASS",
+            "missing_wheel": {"exit_code": 1, "status": "PASS"},
+            "native_only": "PASS",
+            "recovery": "PASS",
             "repeat": "PASS",
         },
         "path_fixtures": {
@@ -179,6 +225,7 @@ class WindowsCiContracts(unittest.TestCase):
                 "test_tensor_mla_only_bf16_run", "test_tensor_parallel_queues",
                 "test_image_run", "test_image_boxdecode_run", "test_queue_blocker",
                 "test_model_resilience", "test_tensor_latency", "test_tensor_throughput",
+                "test_worker_loss_recovery", "test_client_process_death_recovery",
             ],
             "python": [
                 "test_async_test_runner_cancels_blocked_peer", "test_metadata_yolov8",
@@ -201,6 +248,7 @@ class WindowsCiContracts(unittest.TestCase):
       admission = verify(root, qualification, commit, True)
       self.assertTrue(admission["hardware_qualified"])
       self.assertTrue(admission["signatures_valid"])
+      self.assertEqual(admission["dependency_signatures"]["platform"], ["sima-platform.dll"])
       candidate.core_msi.write_bytes(b"changed")
       with self.assertRaisesRegex(ValueError, "checksum differs"):
         validate_candidate(root)
@@ -213,11 +261,52 @@ class WindowsCiContracts(unittest.TestCase):
       with self.assertRaisesRegex(ValueError, "qualification resource checksum differs"):
         validate_candidate(root)
 
+  def test_candidate_requires_dependency_signature_receipts(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      self.windows_candidate(root)
+      receipt_path = root / "host-candidate.json"
+      receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+      del receipt["qualification_resources"]["scheduler-windows-signatures.json"]
+      receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "missing required qualification resources"):
+        validate_candidate(root)
+
   def test_release_gate_rejects_unsigned_candidate(self):
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory)
       commit, _, qualification = self.windows_candidate(root, signed=False)
       with self.assertRaisesRegex(ValueError, "not built in signed release mode"):
+        verify(root, qualification, commit, True)
+
+  def test_release_gate_rejects_unsigned_platform_dependency(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      dependencies_path = root / "windows-dependencies.json"
+      dependencies = json.loads(dependencies_path.read_text(encoding="utf-8"))
+      dependencies["platform"]["runtime_dlls"][0]["signature"]["status"] = "NotSigned"
+      dependencies_path.write_text(json.dumps(dependencies), encoding="utf-8")
+      receipt_path = root / "host-candidate.json"
+      receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+      receipt["qualification_resources"][dependencies_path.name] = sha256(dependencies_path)
+      receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "Platform runtime has invalid"):
+        verify(root, qualification, commit, True)
+
+  def test_release_gate_rejects_unsigned_scheduler_payload(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      scheduler_path = root / "scheduler-windows-signatures.json"
+      scheduler = json.loads(scheduler_path.read_text(encoding="utf-8"))
+      scheduler["release_required"] = False
+      scheduler_path.write_text(json.dumps(scheduler), encoding="utf-8")
+      receipt_path = root / "host-candidate.json"
+      receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+      receipt["qualification_resources"][scheduler_path.name] = sha256(scheduler_path)
+      receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "Scheduler candidate was not built"):
         verify(root, qualification, commit, True)
 
   def test_release_gate_rejects_missing_genai_matrix(self):

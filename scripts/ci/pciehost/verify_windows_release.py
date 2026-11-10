@@ -22,6 +22,53 @@ def read_object(path: Path, description: str) -> dict:
   return value
 
 
+def verify_signature_receipt(receipt: dict, description: str,
+                             expected_thumbprint: str | None = None) -> list[str]:
+  records = receipt.get("records")
+  if not isinstance(records, list) or not records:
+    raise ValueError(f"{description} has no signature records")
+  invalid = [
+      str(record.get("path")) for record in records
+      if (not isinstance(record, dict) or record.get("status") != "Valid"
+          or not record.get("thumbprint") or not record.get("timestamp_thumbprint"))
+  ]
+  if invalid:
+    raise ValueError(f"{description} has invalid or untimestamped signatures: {invalid}")
+  if expected_thumbprint:
+    expected = expected_thumbprint.upper()
+    wrong_publishers = [
+        str(record.get("path")) for record in records
+        if str(record.get("thumbprint", "")).upper() != expected
+    ]
+    if wrong_publishers:
+      raise ValueError(f"{description} has an unexpected signer: {wrong_publishers}")
+  return [str(record["path"]) for record in records]
+
+
+def verify_platform_signatures(candidate_root: Path) -> list[str]:
+  dependencies = read_object(
+      candidate_root / "windows-dependencies.json", "Windows dependency receipt")
+  platform = dependencies.get("platform")
+  runtime_dlls = platform.get("runtime_dlls") if isinstance(platform, dict) else None
+  if not isinstance(runtime_dlls, list) or not runtime_dlls:
+    raise ValueError("Windows dependency receipt has no Platform runtime DLLs")
+  invalid = []
+  verified = []
+  for item in runtime_dlls:
+    if not isinstance(item, dict) or not item.get("name"):
+      invalid.append("<invalid record>")
+      continue
+    signature = item.get("signature")
+    if (not isinstance(signature, dict) or signature.get("status") != "Valid"
+        or not signature.get("thumbprint") or not signature.get("timestamp_thumbprint")):
+      invalid.append(str(item["name"]))
+      continue
+    verified.append(str(item["name"]))
+  if invalid:
+    raise ValueError(f"Platform runtime has invalid or untimestamped signatures: {invalid}")
+  return verified
+
+
 def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
            require_signatures: bool, require_genai: bool = False) -> dict:
   candidate = validate_candidate(candidate_dir)
@@ -48,10 +95,16 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
   customer_install = qualification.get("customer_install")
   if (not isinstance(customer_install, dict)
       or customer_install.get("command") != "core/pciehost/windows/amd64@3.0"
-      or customer_install.get("initial") != "PASS"
+      or customer_install.get("native_only") != "PASS"
+      or customer_install.get("recovery") != "PASS"
       or customer_install.get("repeat") != "PASS"
       or " " not in str(customer_install.get("download_path_with_spaces", ""))):
     raise ValueError("hardware qualification did not prove the repeated customer CLI flow")
+  missing_wheel = customer_install.get("missing_wheel")
+  if (not isinstance(missing_wheel, dict) or missing_wheel.get("status") != "PASS"
+      or not isinstance(missing_wheel.get("exit_code"), int)
+      or missing_wheel["exit_code"] == 0):
+    raise ValueError("hardware qualification did not prove missing-wheel failure and recovery")
   sima_cli = qualification.get("sima_cli")
   if (not isinstance(sima_cli, dict)
       or not re.fullmatch(r"[0-9a-f]{40}", str(sima_cli.get("commit", "")))
@@ -70,6 +123,7 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
       "test_tensor_mla_only_bf16_run", "test_tensor_parallel_queues",
       "test_image_run", "test_image_boxdecode_run", "test_queue_blocker",
       "test_model_resilience", "test_tensor_latency", "test_tensor_throughput",
+      "test_worker_loss_recovery", "test_client_process_death_recovery",
   }
   required_python = {
       "test_async_test_runner_cancels_blocked_peer", "test_metadata_yolov8",
@@ -112,25 +166,24 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
     raise ValueError("signature receipt has no records")
   invalid = [record.get("path") for record in records
              if not isinstance(record, dict) or record.get("status") != "Valid"]
+  dependency_signatures = {"platform": [], "scheduler": []}
   if require_signatures:
     if not signatures.get("release_required"):
       raise ValueError("candidate was not built in signed release mode")
-    if invalid:
-      raise ValueError(f"release candidate has invalid Authenticode records: {invalid}")
     if not signatures.get("certificate_sha1") or not signatures.get("timestamp_url"):
       raise ValueError("signed release receipt has no certificate or timestamp authority")
     expected_thumbprint = str(signatures["certificate_sha1"]).upper()
-    wrong_publishers = [
-        record.get("path") for record in records
-        if str(record.get("thumbprint", "")).upper() != expected_thumbprint
-    ]
-    if wrong_publishers:
-      raise ValueError(f"release candidate has an unexpected signer: {wrong_publishers}")
-    missing_timestamps = [
-        record.get("path") for record in records if not record.get("timestamp_thumbprint")
-    ]
-    if missing_timestamps:
-      raise ValueError(f"release candidate has no trusted timestamp: {missing_timestamps}")
+    verify_signature_receipt(signatures, "release candidate", expected_thumbprint)
+    scheduler_signatures = read_object(
+        candidate.root / "scheduler-windows-signatures.json",
+        "Scheduler signature receipt")
+    if not scheduler_signatures.get("release_required"):
+      raise ValueError("Scheduler candidate was not built in signed release mode")
+    if str(scheduler_signatures.get("certificate_sha1", "")).upper() != expected_thumbprint:
+      raise ValueError("Scheduler candidate uses a different trusted publisher")
+    dependency_signatures["scheduler"] = verify_signature_receipt(
+        scheduler_signatures, "Scheduler candidate", expected_thumbprint)
+    dependency_signatures["platform"] = verify_platform_signatures(candidate.root)
 
   return {
       "core_commit": candidate.core_commit,
@@ -139,6 +192,7 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
       "customer_install_qualified": True,
       "genai_qualified": require_genai,
       "resources": candidate.resources,
+      "dependency_signatures": dependency_signatures,
       "signatures_required": require_signatures,
       "signatures_valid": not invalid,
   }

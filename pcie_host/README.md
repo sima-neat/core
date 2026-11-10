@@ -424,8 +424,9 @@ The Platform driver, host DLLs and daemon remain a separate Platform prerequisit
 ### Windows package CI
 
 The Windows producer is `.github/workflows/pcie-host-windows.yml`. Its required
-`scheduler_run_id` selects the exact `scheduler-native-windows-amd64` artifact
-from Scheduler CI; it never resolves an unqualified latest Scheduler build. The
+`scheduler_run_id` and `scheduler_commit` select the exact successful
+`scheduler-native-windows-amd64` workflow artifact and bind it to the expected
+Scheduler source revision; it never resolves an unqualified latest Scheduler build. The
 restricted `pcie-windows-build` runner supplies the supported MSVC, WiX v3,
 GStreamer, Platform runtime, CMake dependencies and a pinned Python dependency
 wheelhouse.
@@ -447,17 +448,22 @@ extras, checksum metadata, producer receipts and installer logs. A separate
 `pcie-windows-hardware` Windows 11 runner consumes those exact bytes locally. It
 holds an exclusive card lock, verifies the card runtime checksum, installs the
 exact `sima-cli` candidate selected by workflow run and commit, exposes the
-cohort through a disposable loopback registry, and runs the documented
-`sima-cli neat install` command twice. It then runs the public C++ and Python
-vision suites and removes Python, Core and Scheduler in reverse order. Release
+cohort through disposable loopback registries, and exercises native-only install,
+a missing-wheel failure with the native result preserved, recovery with the wheel,
+and a repeated matching install through the documented `sima-cli neat install`
+command. It then runs the public C++ and Python
+vision suites, kills a card worker and a local client in separate bounded fault
+tests, proves the affected queue can be reopened after each failure, and removes
+Python, Core and Scheduler in reverse order. Release
 admission requires the same resource checksums, no remaining card worker, and a
 clean install root. GenAI remains off
 in validation-only runs until its Windows transport is supported. Customer
 publication is deliberately blocked until the same lane can run the complete
 C++ and Python GenAI matrix. Release mode also requires the run ID of a
-successful `Vulcan CI` workflow for the exact Core commit, so the existing Linux
-build and PCIe hardware regressions cannot be bypassed by dispatching the
-Windows workflow directly.
+successful `Vulcan CI` workflow for the exact Core commit, the exact successful
+Scheduler Windows workflow, and the exact successful sima-cli workflow. Existing
+Linux regressions and dependency producer validation therefore cannot be bypassed
+by dispatching the Windows workflow directly.
 
 The hardware runner's pinned offline wheelhouse must contain the dependencies
 of both `pyneatpcie` and the selected `sima-cli` wheel. This keeps the acceptance
@@ -466,9 +472,11 @@ transaction independent of PyPI while still exercising the real customer CLI.
 Validation runs may use unsigned development artifacts. A publishing run requires
 Scheduler and Core to sign their shipped EXE, DLL, PYD and MSI files with a
 runner-provisioned certificate and RFC 3161 timestamp. CI records and verifies
-the Authenticode results before the direct-card gate; publication only runs after
-both gates pass. The certificate and private key stay in the Windows certificate
-store and are not repository inputs.
+the Authenticode results before the direct-card gate, verifies the complete
+Scheduler signature receipt, and independently requires valid timestamped
+signatures on the separately supplied Platform runtime DLLs. Publication only
+runs after both gates pass. The certificate and private key stay in the Windows
+certificate store and are not repository inputs.
 
 `build.sh` follows the Scheduler policy in Core's `deps/manifest.json`, in the
 `production` publication environment by default. Branch `snap` first tries

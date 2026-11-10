@@ -95,7 +95,7 @@ def validate_windows_host() -> None:
       raise ValueError(f"the Windows Core producer requires a clean environment: {variable}")
 
 
-def verify_scheduler_candidate(directory: Path) -> tuple[dict, Path]:
+def verify_scheduler_candidate(directory: Path, expected_commit: str) -> tuple[dict, Path]:
   root = require_directory(directory, "Scheduler candidate directory")
   metadata_path = require_file(root / "metadata.json", "Scheduler metadata")
   metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -104,6 +104,10 @@ def verify_scheduler_candidate(directory: Path) -> tuple[dict, Path]:
   if metadata.get("artifact") != {
       "architecture": "amd64", "profile": "pcie-host-windows"}:
     raise ValueError("Scheduler candidate is not the Windows amd64 PCIe-host profile")
+  if metadata.get("commit") != expected_commit:
+    raise ValueError(
+        f"Scheduler candidate commit {metadata.get('commit')!r} is not the selected "
+        f"commit {expected_commit!r}")
   resources = metadata.get("resources")
   checksums = metadata.get("resources-checksum")
   if (not isinstance(resources, list) or not resources
@@ -263,7 +267,8 @@ def build(args: argparse.Namespace) -> None:
   if run(["git", "-C", ROOT, "status", "--porcelain"], capture=True):
     raise ValueError("publication requires a clean Core source checkout")
 
-  scheduler_metadata, scheduler_msi = verify_scheduler_candidate(args.scheduler_candidate)
+  scheduler_metadata, scheduler_msi = verify_scheduler_candidate(
+      args.scheduler_candidate, args.expected_scheduler_commit)
   gstreamer_root = require_directory(args.gstreamer_root, "GStreamer MSVC root")
   gstreamer_bin = require_directory(gstreamer_root / "bin", "GStreamer binary directory")
   pkgconfig_dir = require_directory(
@@ -553,6 +558,10 @@ def build(args: argparse.Namespace) -> None:
     scheduler_receipt = args.scheduler_candidate / "host-candidate.json"
     if scheduler_receipt.is_file():
       shutil.copy2(scheduler_receipt, output / "scheduler-host-candidate.json")
+    scheduler_signatures = require_file(
+        args.scheduler_candidate / "windows-signatures.json",
+        "Scheduler signature receipt")
+    shutil.copy2(scheduler_signatures, output / "scheduler-windows-signatures.json")
     for source_name, output_name in (
         ("windows-dependencies.json", "scheduler-windows-dependencies.json"),
         ("installed-checks.json", "scheduler-installed-checks.json"),
@@ -587,7 +596,12 @@ def build(args: argparse.Namespace) -> None:
         "platform": {
             "runtime_directory": str(platform_runtime),
             "runtime_dlls": [
-                {"name": path.name, "sha256": sha256(path)} for path in platform_dlls
+                {
+                    "name": path.name,
+                    "sha256": sha256(path),
+                    "signature": authenticode_status(path, powershell),
+                }
+                for path in platform_dlls
             ],
         },
     })
@@ -611,6 +625,9 @@ def build(args: argparse.Namespace) -> None:
                 f"hardware-tests/{name}": digest
                 for name, digest in file_inventory(hardware_tests).items()
             },
+            "scheduler-windows-signatures.json": sha256(
+                output / "scheduler-windows-signatures.json"),
+            "windows-dependencies.json": sha256(output / "windows-dependencies.json"),
             "windows-signatures.json": sha256(output / "windows-signatures.json"),
         },
         "repository": "sima-neat/core",
@@ -664,6 +681,7 @@ def main() -> None:
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--branch", required=True)
   parser.add_argument("--dependency-prefix", action="append", default=[])
+  parser.add_argument("--expected-scheduler-commit", required=True)
   parser.add_argument("--gstreamer-root", type=Path, required=True)
   parser.add_argument("--jobs", type=int, default=4)
   parser.add_argument("--output", type=Path, required=True)
@@ -675,7 +693,10 @@ def main() -> None:
   parser.add_argument("--signing-machine-store", action="store_true")
   parser.add_argument("--signing-timestamp-url", default="https://timestamp.digicert.com")
   parser.add_argument("--work", type=Path, required=True)
-  build(parser.parse_args())
+  args = parser.parse_args()
+  if not re.fullmatch(r"[0-9a-f]{40}", args.expected_scheduler_commit):
+    parser.error("--expected-scheduler-commit must be a full lowercase Git commit")
+  build(args)
 
 
 if __name__ == "__main__":
