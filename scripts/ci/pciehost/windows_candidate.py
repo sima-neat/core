@@ -45,12 +45,27 @@ def dependency_identity(directory: Path) -> dict:
   gstreamer = receipt.get("gstreamer")
   version_output = gstreamer.get("version_output") if isinstance(gstreamer, dict) else None
   pkg_config_sha256 = gstreamer.get("pkg_config_sha256") if isinstance(gstreamer, dict) else None
+  gstreamer_dlls = gstreamer.get("runtime_dlls") if isinstance(gstreamer, dict) else None
   if (not isinstance(version_output, str) or not version_output.strip()
-      or not re.fullmatch(r"[0-9a-f]{64}", str(pkg_config_sha256 or ""))):
+      or not re.fullmatch(r"[0-9a-f]{64}", str(pkg_config_sha256 or ""))
+      or not isinstance(gstreamer_dlls, list) or not gstreamer_dlls):
     raise ValueError("Windows dependency receipt has an invalid GStreamer identity")
+  normalized_gstreamer_dlls = []
+  for item in gstreamer_dlls:
+    if (not isinstance(item, dict) or not isinstance(item.get("name"), str)
+        or Path(item["name"]).name != item["name"]
+        or not re.fullmatch(r"[0-9a-f]{64}", str(item.get("sha256", "")))):
+      raise ValueError("Windows dependency receipt has an invalid GStreamer runtime DLL")
+    normalized_gstreamer_dlls.append(
+        {"name": item["name"], "sha256": item["sha256"]})
+  if (len({item["name"].lower() for item in normalized_gstreamer_dlls})
+      != len(normalized_gstreamer_dlls)):
+    raise ValueError("Windows dependency receipt has duplicate GStreamer runtime DLLs")
   return {
       "gstreamer": {
           "pkg_config_sha256": pkg_config_sha256,
+          "runtime_dlls": sorted(
+              normalized_gstreamer_dlls, key=lambda item: item["name"].lower()),
           "version_output": version_output,
       },
       "platform_runtime_dlls": sorted(dlls, key=lambda item: item["name"].lower()),

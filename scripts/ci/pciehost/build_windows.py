@@ -278,6 +278,10 @@ def build(args: argparse.Namespace) -> None:
   scheduler_dependencies = dependency_identity(args.scheduler_candidate)
   gstreamer_root = require_directory(args.gstreamer_root, "GStreamer MSVC root")
   gstreamer_bin = require_directory(gstreamer_root / "bin", "GStreamer binary directory")
+  gstreamer_dlls = sorted(
+      gstreamer_bin.glob("*.dll"), key=lambda path: path.name.lower())
+  if not gstreamer_dlls:
+    raise ValueError(f"GStreamer binary directory contains no DLLs: {gstreamer_bin}")
   pkgconfig_dir = require_directory(
       gstreamer_root / "lib" / "pkgconfig", "GStreamer pkg-config directory")
   gst_inspect = require_file(gstreamer_bin / "gst-inspect-1.0.exe", "gst-inspect")
@@ -289,6 +293,9 @@ def build(args: argparse.Namespace) -> None:
   producer_dependencies = {
       "gstreamer": {
           "pkg_config_sha256": sha256(pkg_config),
+          "runtime_dlls": [
+              {"name": path.name, "sha256": sha256(path)} for path in gstreamer_dlls
+          ],
           "version_output": run([gst_inspect, "--version"], capture=True),
       },
       "platform_runtime_dlls": [
@@ -609,6 +616,9 @@ def build(args: argparse.Namespace) -> None:
         "gstreamer": {
             "pkg_config_sha256": sha256(pkg_config),
             "root": str(gstreamer_root),
+            "runtime_dlls": [
+                {"name": path.name, "sha256": sha256(path)} for path in gstreamer_dlls
+            ],
             "version_output": run(
                 [gst_inspect, "--version"], env=environment, capture=True),
         },

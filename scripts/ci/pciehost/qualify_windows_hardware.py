@@ -81,8 +81,12 @@ def verify_dependency_cohort(candidate, platform_runtime: Path, gstreamer_root: 
   gstreamer = gstreamer_root.resolve(strict=True)
   pkg_config = gstreamer / "bin" / "pkg-config.exe"
   gst_inspect = gstreamer / "bin" / "gst-inspect-1.0.exe"
+  gstreamer_dlls = sorted(
+      (gstreamer / "bin").glob("*.dll"), key=lambda path: path.name.lower())
   if not pkg_config.is_file() or not gst_inspect.is_file():
     raise RuntimeError("qualified GStreamer root is missing pkg-config or gst-inspect")
+  if not gstreamer_dlls:
+    raise RuntimeError("qualified GStreamer root has no runtime DLLs")
   result = subprocess.run(
       [gst_inspect, "--version"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
       text=True, timeout=60, check=False)
@@ -91,6 +95,9 @@ def verify_dependency_cohort(candidate, platform_runtime: Path, gstreamer_root: 
   actual = {
       "gstreamer": {
           "pkg_config_sha256": sha256(pkg_config),
+          "runtime_dlls": [
+              {"name": path.name, "sha256": sha256(path)} for path in gstreamer_dlls
+          ],
           "version_output": result.stdout.strip(),
       },
       "platform_runtime_dlls": [

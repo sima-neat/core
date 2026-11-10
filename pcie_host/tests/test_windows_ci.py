@@ -37,6 +37,9 @@ class WindowsCiContracts(unittest.TestCase):
     dependencies.write_text(json.dumps({
         "gstreamer": {
             "pkg_config_sha256": "e" * 64,
+            "runtime_dlls": [
+                {"name": "gstreamer-1.0-0.dll", "sha256": "f" * 64},
+            ],
             "version_output": "gst-inspect version 1.26.0",
         },
         "platform": {"runtime_dlls": [
@@ -176,6 +179,9 @@ class WindowsCiContracts(unittest.TestCase):
     dependency_data = {
         "gstreamer": {
             "pkg_config_sha256": "e" * 64,
+            "runtime_dlls": [
+                {"name": "gstreamer-1.0-0.dll", "sha256": "f" * 64},
+            ],
             "version_output": "gst-inspect version 1.26.0",
         },
         "platform": {
@@ -256,6 +262,9 @@ class WindowsCiContracts(unittest.TestCase):
         "dependencies": {
             "gstreamer": {
                 "pkg_config_sha256": "e" * 64,
+                "runtime_dlls": [
+                    {"name": "gstreamer-1.0-0.dll", "sha256": "f" * 64},
+                ],
                 "version_output": "gst-inspect version 1.26.0",
             },
             "platform_runtime_dlls": [
@@ -352,9 +361,13 @@ class WindowsCiContracts(unittest.TestCase):
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory)
       self.windows_candidate(root)
+      identity = dependency_identity(root)
       self.assertEqual(
-          dependency_identity(root)["platform_runtime_dlls"],
+          identity["platform_runtime_dlls"],
           [{"name": "sima-platform.dll", "sha256": "d" * 64}])
+      self.assertEqual(
+          identity["gstreamer"]["runtime_dlls"],
+          [{"name": "gstreamer-1.0-0.dll", "sha256": "f" * 64}])
 
   def test_release_gate_rejects_unsigned_candidate(self):
     with tempfile.TemporaryDirectory() as directory:
