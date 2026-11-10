@@ -16,11 +16,6 @@ def sha256(path: Path) -> str:
   return digest.hexdigest()
 
 
-def package_size(path: Path) -> str:
-  mebibytes = max(1, (path.stat().st_size + 1024 * 1024 - 1) // (1024 * 1024))
-  return f"{mebibytes}MB"
-
-
 def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
              scheduler_msi: Path = None, scheduler_version: str = None) -> dict:
   resources = []
@@ -91,7 +86,7 @@ def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
       "published_at_utc": datetime.now(timezone.utc).isoformat(),
       "size": {
           "download": f"{total_mebibytes}MB",
-          "install": package_size(msi),
+          "install": f"{total_mebibytes}MB",
       },
   }
 

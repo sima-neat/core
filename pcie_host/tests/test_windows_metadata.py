@@ -47,8 +47,8 @@ class WindowsMetadataTests(unittest.TestCase):
       root = Path(temporary)
       scheduler = root / "simaai-scheduler-pcie-host-0.6.1-win64.msi"
       core = root / "sima-pcie-host-0.6.1-win64.msi"
-      scheduler.write_bytes(b"scheduler")
-      core.write_bytes(b"core")
+      scheduler.write_bytes(b"s" * 1024 * 1024)
+      core.write_bytes(b"c" * 1024 * 1024)
       result = MODULE.metadata(
           core, None, "0.6.1", "develop", "a" * 40, scheduler, "0.6.1")
 
@@ -59,6 +59,7 @@ class WindowsMetadataTests(unittest.TestCase):
     )
     self.assertNotIn("msi", result["installation"])
     self.assertEqual(set(result["resources-checksum"]), {scheduler.name, core.name})
+    self.assertEqual(result["size"], {"download": "2MB", "install": "2MB"})
 
 
 if __name__ == "__main__":
