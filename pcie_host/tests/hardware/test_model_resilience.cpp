@@ -313,18 +313,22 @@ void test_failed_build_cleanup(const Args& args) {
   std::cout << "[scenario] invalid startup configuration cleanup\n";
   pcie::ConnectionOptions invalid_env = connection(args);
   invalid_env.card_env = "INVALID_ENV_ENTRY";
-  pcie::Model invalid_env_model(args.model, {}, invalid_env);
+  std::unique_ptr<pcie::Model> invalid_env_model;
   bool invalid_env_failed = false;
   try {
-    invalid_env_model.build(args.readiness_timeout_ms);
+    invalid_env_model =
+        std::make_unique<pcie::Model>(args.model, pcie::ModelOptions{}, invalid_env);
+    invalid_env_model->build(args.readiness_timeout_ms);
   } catch (const std::exception& error) {
     invalid_env_failed =
         std::string(error.what()).find("card_env entries must be NAME=VALUE") != std::string::npos;
   }
   require(invalid_env_failed, "invalid card environment did not fail build as expected");
-  require(!invalid_env_model.running(), "invalid-environment model reports running");
-  invalid_env_model.close();
-  invalid_env_model.close();
+  if (invalid_env_model) {
+    require(!invalid_env_model->running(), "invalid-environment model reports running");
+    invalid_env_model->close();
+    invalid_env_model->close();
+  }
 
   std::cout << "[scenario] readiness-timeout recovery on the same model\n";
   pcie::Model readiness_model(args.model, {}, connection(args));
