@@ -248,7 +248,7 @@ jobs:
           run-id: ${{ inputs.scheduler_run_id }}
           github-token: ${{ steps.app-token.outputs.token }}
       - name: Build, test, package, install, and remove Core cohort
-        shell: pwsh
+        shell: powershell
         env:
           SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
@@ -385,7 +385,7 @@ jobs:
           run-id: ${{ inputs.sima_cli_run_id }}
           github-token: ${{ steps.sima-cli-token.outputs.token }}
       - name: Install, test both APIs, and remove exact cohort
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
           if ("${{ inputs.validation_only }}" -ne "true" -and "${{ inputs.include_genai }}" -ne "true") {
@@ -453,7 +453,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Windows hardware qualification failed: $LASTEXITCODE" }
       - name: Recover card and native installation
         if: always()
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
           $arguments = @(
@@ -473,7 +473,7 @@ jobs:
           & python @arguments
           if ($LASTEXITCODE -ne 0) { throw "Windows hardware recovery failed: $LASTEXITCODE" }
       - name: Enforce release admission
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
           $arguments = @(

@@ -79,6 +79,15 @@ def require_program(name: str) -> str:
   return str(Path(path).resolve())
 
 
+def require_powershell() -> str:
+  """Use PowerShell 7 when provisioned, otherwise Windows PowerShell 5.1."""
+  for name in ("pwsh.exe", "powershell.exe"):
+    path = shutil.which(name)
+    if path:
+      return str(Path(path).resolve())
+  raise ValueError("required Windows producer program is unavailable: PowerShell")
+
+
 def validate_windows_host() -> None:
   if sys.platform != "win32":
     raise ValueError("the Windows Core producer must run on Windows")
@@ -320,7 +329,7 @@ def build(args: argparse.Namespace) -> None:
   dumpbin = require_program("dumpbin.exe")
   cl = require_program("cl.exe")
   ninja = require_program("ninja.exe")
-  powershell = require_program("pwsh.exe")
+  powershell = require_powershell()
   python = require_file(Path(sys.executable), "producer Python")
   if not os.environ.get("WIX"):
     raise ValueError("WIX must name the pinned WiX v3 tool directory")

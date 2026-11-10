@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -121,6 +122,18 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('"Core native Windows PCIe host"', source)
     self.assertIn("core-windows-upgrade-base", source)
     self.assertIn("--expected-upgrade-base-commit", source)
+    self.assertEqual(source.count("shell: powershell"), 4)
+
+  def test_producer_accepts_inbox_windows_powershell(self):
+    def which(name):
+      return "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe" \
+          if name == "powershell.exe" else None
+
+    with mock.patch.object(MODULE.shutil, "which", side_effect=which):
+      self.assertEqual(
+          MODULE.require_powershell(),
+          str(Path("C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe").resolve()),
+      )
 
   def test_producer_records_runtime_inputs_and_repeat_installation(self):
     source = SCRIPT.read_text(encoding="utf-8")
