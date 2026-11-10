@@ -155,6 +155,24 @@ def remove_msi(msi: Path, log: Path) -> str:
   return "PASS"
 
 
+def repair_owned_file(msi: Path, installed_file: Path, log: Path) -> str:
+  if not installed_file.is_file():
+    raise RuntimeError(f"cannot test MSI repair; installed file is missing: {installed_file}")
+  expected = sha256(installed_file)
+  installed_file.unlink()
+  result = subprocess.run(
+      ["msiexec.exe", "/fa", str(msi), "/quiet", "/norestart", "/L*v", str(log)],
+      check=False,
+  )
+  if result.returncode not in MSI_SUCCESS_CODES:
+    raise RuntimeError(f"Windows Installer /fa failed with {result.returncode}; see {log}")
+  if result.returncode != 0:
+    raise RuntimeError(f"Windows Installer /fa requested a restart ({result.returncode})")
+  if not installed_file.is_file() or sha256(installed_file) != expected:
+    raise RuntimeError(f"Windows Installer did not restore its owned file: {installed_file}")
+  return "PASS"
+
+
 def sima_cli_wheel(directory: Path) -> Path:
   wheels = sorted(directory.resolve(strict=True).glob("sima_cli-*.whl"))
   if len(wheels) != 1:
@@ -692,6 +710,17 @@ def qualify(args: argparse.Namespace) -> None:
           "repeat": "PASS",
       }
 
+      result["customer_install"]["repair"] = {
+          "core": repair_owned_file(
+              candidate.core_msi,
+              install_root / "include" / "simaai" / "neat" / "pcie" / "Model.h",
+              evidence / "core-msi-repair.log"),
+          "scheduler": repair_owned_file(
+              candidate.scheduler_msi,
+              install_root / "bin" / "gstreamer-1.0" / "gstneatpciehost.dll",
+              evidence / "scheduler-msi-repair.log"),
+      }
+
       environment = os.environ.copy()
       environment.pop("PYTHONPATH", None)
       environment.update({
@@ -707,6 +736,11 @@ def qualify(args: argparse.Namespace) -> None:
           *(str(path.resolve(strict=True) / "bin") for path in args.dependency_prefix),
           environment["PATH"],
       ))
+      run_logged(
+          [args.gstreamer_root.resolve(strict=True) / "bin" / "gst-inspect-1.0.exe",
+           "neatpciehost"],
+          evidence / "gst-inspect-neatpciehost.log", env=environment, cwd=work, timeout=60)
+      result["customer_install"]["plugin_discovery"] = "PASS"
       require_assets(environment, args.include_genai)
       stage_path_fixtures(environment, work / "customer path fixtures with spaces")
       result["path_fixtures"] = {

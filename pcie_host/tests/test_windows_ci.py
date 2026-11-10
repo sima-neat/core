@@ -113,6 +113,8 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('completed.append("test_worker_loss_recovery")', source)
     self.assertIn('completed.append("test_client_process_death_recovery")', source)
     self.assertIn("process.kill()", source)
+    self.assertIn('"/fa"', source)
+    self.assertIn('"gst-inspect-1.0.exe"', source)
 
   def test_wheel_payload_reader_checks_crc(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -205,6 +207,8 @@ class WindowsCiContracts(unittest.TestCase):
             "download_path_with_spaces": r"C:\customer downloads\candidate",
             "missing_wheel": {"exit_code": 1, "status": "PASS"},
             "native_only": "PASS",
+            "plugin_discovery": "PASS",
+            "repair": {"core": "PASS", "scheduler": "PASS"},
             "recovery": "PASS",
             "repeat": "PASS",
         },

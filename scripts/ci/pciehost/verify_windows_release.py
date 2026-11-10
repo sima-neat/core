@@ -105,6 +105,11 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
       or not isinstance(missing_wheel.get("exit_code"), int)
       or missing_wheel["exit_code"] == 0):
     raise ValueError("hardware qualification did not prove missing-wheel failure and recovery")
+  repair = customer_install.get("repair")
+  if (not isinstance(repair, dict) or repair.get("core") != "PASS"
+      or repair.get("scheduler") != "PASS"
+      or customer_install.get("plugin_discovery") != "PASS"):
+    raise ValueError("hardware qualification did not prove MSI repair and plugin discovery")
   sima_cli = qualification.get("sima_cli")
   if (not isinstance(sima_cli, dict)
       or not re.fullmatch(r"[0-9a-f]{40}", str(sima_cli.get("commit", "")))
