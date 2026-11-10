@@ -75,8 +75,9 @@ def require_fresh_directory(path: Path, description: str) -> Path:
   return resolved
 
 
-def verify_dependency_cohort(candidate, platform_runtime: Path, gstreamer_root: Path) -> dict:
-  expected = dependency_identity(candidate.root)
+def verify_dependency_cohort(candidate, platform_runtime: Path, gstreamer_root: Path,
+                             dependency_runtime_dirs: list[Path]) -> dict:
+  expected = dependency_identity(candidate.root, require_dependency_runtime=True)
   platform_root = platform_runtime.resolve(strict=True)
   gstreamer = gstreamer_root.resolve(strict=True)
   pkg_config = gstreamer / "bin" / "pkg-config.exe"
@@ -104,10 +105,19 @@ def verify_dependency_cohort(candidate, platform_runtime: Path, gstreamer_root: 
           {"name": path.name, "sha256": sha256(path)}
           for path in sorted(platform_root.glob("*.dll"), key=lambda path: path.name.lower())
       ],
+      "dependency_runtime": [],
   }
+  for value in dependency_runtime_dirs:
+    directory = value.resolve(strict=True)
+    dlls = sorted(directory.glob("*.dll"), key=lambda path: path.name.lower())
+    if not dlls:
+      raise RuntimeError(f"qualified dependency runtime directory has no DLLs: {directory}")
+    actual["dependency_runtime"].append([
+        {"name": path.name, "sha256": sha256(path)} for path in dlls
+    ])
   if actual != expected:
     raise RuntimeError(
-        "hardware runner Platform/GStreamer dependencies differ from the built candidate")
+        "hardware runner runtime dependencies differ from the built candidate")
   return actual
 
 
@@ -742,6 +752,8 @@ def run_python_tests(args: argparse.Namespace, python: Path, evidence: Path,
 
 def qualify(args: argparse.Namespace) -> None:
   require_windows()
+  if not args.dependency_runtime_dir:
+    raise RuntimeError("hardware qualification requires dependency runtime directories")
   candidate = validate_candidate(args.candidate)
   upgrade_base = load_upgrade_base(
       candidate, args.upgrade_base_candidate, args.expected_upgrade_base_commit)
@@ -753,7 +765,8 @@ def qualify(args: argparse.Namespace) -> None:
   cli_wheel = sima_cli_wheel(args.sima_cli_candidate)
   cli_identity = sima_cli_identity(cli_wheel, args.expected_sima_cli_commit)
   dependency_cohort = verify_dependency_cohort(
-      candidate, args.platform_runtime, args.gstreamer_root)
+      candidate, args.platform_runtime, args.gstreamer_root,
+      args.dependency_runtime_dir)
 
   install_root = Path(os.environ["ProgramFiles"]) / "SimaPCIeHost"
   if install_root.exists():
@@ -947,6 +960,7 @@ def qualify(args: argparse.Namespace) -> None:
           str(args.platform_runtime.resolve(strict=True)),
           str(args.gstreamer_root.resolve(strict=True) / "bin"),
           *(str(path.resolve(strict=True) / "bin") for path in args.dependency_prefix),
+          *(str(path.resolve(strict=True)) for path in args.dependency_runtime_dir),
           environment["PATH"],
       ))
       run_logged(
@@ -1042,6 +1056,7 @@ def main() -> None:
   parser.add_argument("--card-genai-worker-path", default="/usr/bin/neat-pcie-genai-worker")
   parser.add_argument("--card-user", default="sima")
   parser.add_argument("--dependency-prefix", action="append", default=[], type=Path)
+  parser.add_argument("--dependency-runtime-dir", action="append", default=[], type=Path)
   parser.add_argument("--evidence", type=Path, required=True)
   parser.add_argument("--expected-card-runtime-sha256", required=True)
   parser.add_argument("--expected-card-worker-sha256", required=True)

@@ -105,8 +105,9 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
     raise ValueError("hardware qualification covered a different Core commit")
   if qualified_candidate.get("resources") != candidate.resources:
     raise ValueError("hardware qualification covered different package bytes")
-  if qualification.get("dependencies") != dependency_identity(candidate.root):
-    raise ValueError("hardware qualification used a different Platform/GStreamer cohort")
+  if qualification.get("dependencies") != dependency_identity(
+      candidate.root, require_dependency_runtime=True):
+    raise ValueError("hardware qualification used a different runtime dependency cohort")
   cleanup = qualification.get("cleanup")
   if not isinstance(cleanup, dict) or cleanup.get("errors") != []:
     raise ValueError("hardware qualification did not prove clean removal")

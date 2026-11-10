@@ -219,6 +219,7 @@ jobs:
     env:
       GSTREAMER_ROOT_X86_64: ${{ vars.GSTREAMER_ROOT_X86_64 }}
       SIMA_WINDOWS_CMAKE_PREFIX_PATH: ${{ vars.SIMA_WINDOWS_CMAKE_PREFIX_PATH }}
+      SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH: ${{ vars.SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH }}
       SIMA_WINDOWS_PLATFORM_RUNTIME_DIR: ${{ vars.SIMA_WINDOWS_PLATFORM_RUNTIME_DIR }}
       SIMA_WINDOWS_PYTHON_WHEELHOUSE: ${{ vars.SIMA_WINDOWS_PYTHON_WHEELHOUSE }}
       SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1: ${{ vars.SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1 }}
@@ -260,6 +261,7 @@ jobs:
           Enter-VsDevShell -VsInstallPath $installation -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64"
           foreach ($name in @(
             "GSTREAMER_ROOT_X86_64",
+            "SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH",
             "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR",
             "SIMA_WINDOWS_PYTHON_WHEELHOUSE"
           )) {
@@ -280,6 +282,9 @@ jobs:
             foreach ($prefix in $env:SIMA_WINDOWS_CMAKE_PREFIX_PATH.Split(";")) {
               if ($prefix) { $arguments += @("--dependency-prefix", $prefix) }
             }
+          }
+          foreach ($directory in $env:SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH.Split(";")) {
+            if ($directory) { $arguments += @("--dependency-runtime-dir", $directory) }
           }
           if ("${{ inputs.validation_only }}" -ne "true") {
             if (-not $env:SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1) {
@@ -322,6 +327,7 @@ jobs:
     env:
       GSTREAMER_ROOT_X86_64: ${{ vars.GSTREAMER_ROOT_X86_64 }}
       SIMA_WINDOWS_CMAKE_PREFIX_PATH: ${{ vars.SIMA_WINDOWS_CMAKE_PREFIX_PATH }}
+      SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH: ${{ vars.SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH }}
       SIMA_WINDOWS_PLATFORM_RUNTIME_DIR: ${{ vars.SIMA_WINDOWS_PLATFORM_RUNTIME_DIR }}
       SIMA_WINDOWS_PYTHON_WHEELHOUSE: ${{ vars.SIMA_WINDOWS_PYTHON_WHEELHOUSE }}
       SIMAPCIE_BOXDECODE_IMAGE: ${{ vars.SIMA_WINDOWS_PCIE_BOXDECODE_IMAGE }}
@@ -393,6 +399,7 @@ jobs:
           }
           foreach ($name in @(
             "GSTREAMER_ROOT_X86_64",
+            "SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH",
             "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR",
             "SIMA_WINDOWS_PYTHON_WHEELHOUSE",
             "SIMAPCIE_CARD_HOST",
@@ -443,6 +450,9 @@ jobs:
             foreach ($prefix in $env:SIMA_WINDOWS_CMAKE_PREFIX_PATH.Split(";")) {
               if ($prefix) { $arguments += @("--dependency-prefix", $prefix) }
             }
+          }
+          foreach ($directory in $env:SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH.Split(";")) {
+            if ($directory) { $arguments += @("--dependency-runtime-dir", $directory) }
           }
           if ($env:SIMAPCIE_TEST_REQUIREMENTS) {
             foreach ($requirement in $env:SIMAPCIE_TEST_REQUIREMENTS.Split(";")) {

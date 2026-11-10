@@ -52,6 +52,8 @@ def run(command: list[object], *, env: dict[str, str] | None = None,
       cwd=cwd,
       env=env,
       text=True,
+      encoding="utf-8" if capture else None,
+      errors="replace" if capture else None,
       stdout=subprocess.PIPE if capture else None,
       stderr=subprocess.STDOUT if capture else None,
   )
@@ -326,6 +328,18 @@ def build(args: argparse.Namespace) -> None:
       require_directory(Path(value), "Windows CMake dependency prefix")
       for value in args.dependency_prefix
   ]
+  dependency_runtime_dirs = [
+      require_directory(Path(value), "Windows dependency runtime directory")
+      for value in args.dependency_runtime_dir
+  ]
+  if not dependency_runtime_dirs:
+    raise ValueError("at least one Windows dependency runtime directory is required")
+  dependency_runtime_dlls = []
+  for directory in dependency_runtime_dirs:
+    dlls = sorted(directory.glob("*.dll"), key=lambda path: path.name.lower())
+    if not dlls:
+      raise ValueError(f"Windows dependency runtime directory contains no DLLs: {directory}")
+    dependency_runtime_dlls.append(dlls)
 
   cmake = require_program("cmake.exe")
   ctest = require_program("ctest.exe")
@@ -385,6 +399,12 @@ def build(args: argparse.Namespace) -> None:
 
     prefixes = [install_root, gstreamer_root, *dependency_prefixes]
     prefix_path = ";".join(str(path) for path in prefixes)
+    environment["CMAKE_PREFIX_PATH"] = prefix_path
+    environment["PATH"] = os.pathsep.join((
+        str(install_root / "bin"),
+        *(str(path) for path in dependency_runtime_dirs),
+        environment["PATH"],
+    ))
     run([
         cmake,
         "-S", PCIE_HOST,
@@ -626,6 +646,14 @@ def build(args: argparse.Namespace) -> None:
     })
     write_json(output / "windows-dependencies.json", {
         "cmake_prefixes": [str(path) for path in dependency_prefixes],
+        "dependency_runtime": [
+            {
+                "files": [
+                    {"name": path.name, "sha256": sha256(path)} for path in dlls
+                ],
+            }
+            for dlls in dependency_runtime_dlls
+        ],
         "gstreamer": {
             "pkg_config_sha256": sha256(pkg_config),
             "root": str(gstreamer_root),
@@ -725,6 +753,7 @@ def main() -> None:
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--branch", required=True)
   parser.add_argument("--dependency-prefix", action="append", default=[])
+  parser.add_argument("--dependency-runtime-dir", action="append", default=[])
   parser.add_argument("--expected-scheduler-commit", required=True)
   parser.add_argument("--gstreamer-root", type=Path, required=True)
   parser.add_argument("--jobs", type=int, default=4)

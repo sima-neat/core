@@ -122,6 +122,8 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('"Core native Windows PCIe host"', source)
     self.assertIn("core-windows-upgrade-base", source)
     self.assertIn("--expected-upgrade-base-commit", source)
+    self.assertIn("SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH", source)
+    self.assertIn("--dependency-runtime-dir", source)
     self.assertEqual(source.count("shell: powershell"), 4)
 
   def test_producer_accepts_inbox_windows_powershell(self):
@@ -152,6 +154,7 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('"repeat_install": "PASS"', source)
     self.assertNotIn("copytree(platform_runtime", source)
     self.assertIn("SUPPORTED_PYTHON = (3, 14)", source)
+    self.assertIn('"dependency_runtime"', source)
 
   def test_hardware_qualification_bounds_blocker_and_injects_process_faults(self):
     source = (SCRIPT_DIR / "qualify_windows_hardware.py").read_text(encoding="utf-8")
@@ -220,9 +223,12 @@ class WindowsCiContracts(unittest.TestCase):
             }],
         },
     }
-    dependencies.write_text(json.dumps(dependency_data), encoding="utf-8")
     scheduler_dependencies = root / "scheduler-windows-dependencies.json"
     scheduler_dependencies.write_text(json.dumps(dependency_data), encoding="utf-8")
+    dependency_data["dependency_runtime"] = [{
+        "files": [{"name": "opencv_world500.dll", "sha256": "9" * 64}],
+    }]
+    dependencies.write_text(json.dumps(dependency_data), encoding="utf-8")
     core_signatures = root / "windows-signatures.json"
     core_signatures.write_text(json.dumps({
         "certificate_sha1": "A" * 40 if signed else "",
@@ -294,6 +300,9 @@ class WindowsCiContracts(unittest.TestCase):
             "platform_runtime_dlls": [
                 {"name": "sima-platform.dll", "sha256": "d" * 64},
             ],
+            "dependency_runtime": [[
+                {"name": "opencv_world500.dll", "sha256": "9" * 64},
+            ]],
         },
         "path_fixtures": {
             "SIMAPCIE_YOLOV8_MODEL": r"C:\qualification assets\model.tar.gz",
@@ -470,7 +479,7 @@ class WindowsCiContracts(unittest.TestCase):
       value = json.loads(qualification.read_text(encoding="utf-8"))
       value["dependencies"]["platform_runtime_dlls"][0]["sha256"] = "0" * 64
       qualification.write_text(json.dumps(value), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "different Platform/GStreamer cohort"):
+      with self.assertRaisesRegex(ValueError, "different runtime dependency cohort"):
         verify(root, qualification, commit, True)
 
   def test_release_gate_rejects_unsigned_scheduler_payload(self):

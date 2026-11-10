@@ -16,7 +16,8 @@ environment variables:
   `SIMA_WINDOWS_PLATFORM_LIBRARY`, `SIMA_WINDOWS_PLATFORM_RUNTIME_DIR`, and
   `SIMA_WINDOWS_PLATFORM_VERSION`;
 - Core: `GSTREAMER_ROOT_X86_64`, `SIMA_WINDOWS_CMAKE_PREFIX_PATH`,
-  `SIMA_WINDOWS_PLATFORM_RUNTIME_DIR`, and `SIMA_WINDOWS_PYTHON_WHEELHOUSE`;
+  `SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH`, `SIMA_WINDOWS_PLATFORM_RUNTIME_DIR`,
+  and `SIMA_WINDOWS_PYTHON_WHEELHOUSE`;
 - signed runs: `SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1`,
   `SIMA_WINDOWS_SIGNING_MACHINE_STORE`, and
   `SIMA_WINDOWS_SIGNING_TIMESTAMP_URL`.
@@ -28,8 +29,14 @@ SSH-key, model, media, worker-checksum, and GenAI asset variables named in
 `.github/workflows/pcie-host-windows.yml`. Store the SSH private key on the
 runner and pass only its path. The production environment also supplies the
 read-only GitHub App credentials used to fetch Scheduler and sima-cli artifacts.
-Scheduler, Core, and hardware must resolve the same GStreamer identity and exact
-Platform runtime DLL hashes; the workflows reject a mixed dependency cohort.
+`SIMA_WINDOWS_CMAKE_PREFIX_PATH` must include the native OpenCV CMake package,
+and `SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH` must include the matching directory
+that contains its runtime DLLs. The current qualified input is the official
+OpenCV 5.0.0 x64 package (SHA-256
+`9c6c1fcea58acdf06edba13148b2246e00c2658143fa51e61ecd370db8c39f63`).
+Scheduler, Core, and hardware must resolve the same GStreamer identity, exact
+Platform runtime DLL hashes, and exact additional runtime DLL hashes; the
+workflows reject a mixed dependency cohort.
 
 ## Validation run
 

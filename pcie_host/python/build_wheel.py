@@ -110,6 +110,8 @@ def main() -> int:
   args = parser.parse_args()
 
   wheel = write_wheel(args.stage_dir.resolve(), args.output_dir.resolve(), args.version)
+  if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
   print(wheel)
   return 0
 

@@ -75,7 +75,7 @@ class WheelMetadataTest(unittest.TestCase):
           ],
           check=True,
           capture_output=True,
-          text=True,
+          encoding="utf-8",
       )
 
       wheel = Path(result.stdout.strip())

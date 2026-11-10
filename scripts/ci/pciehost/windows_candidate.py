@@ -25,7 +25,7 @@ def msi_version(value: object) -> tuple[int, int, int]:
   return tuple(int(part) for part in match.groups())
 
 
-def dependency_identity(directory: Path) -> dict:
+def dependency_identity(directory: Path, *, require_dependency_runtime: bool = False) -> dict:
   root = directory.resolve(strict=True)
   receipt = _read_json(root / "windows-dependencies.json", "Windows dependency receipt")
   platform = receipt.get("platform")
@@ -61,7 +61,7 @@ def dependency_identity(directory: Path) -> dict:
   if (len({item["name"].lower() for item in normalized_gstreamer_dlls})
       != len(normalized_gstreamer_dlls)):
     raise ValueError("Windows dependency receipt has duplicate GStreamer runtime DLLs")
-  return {
+  identity = {
       "gstreamer": {
           "pkg_config_sha256": pkg_config_sha256,
           "runtime_dlls": sorted(
@@ -70,6 +70,28 @@ def dependency_identity(directory: Path) -> dict:
       },
       "platform_runtime_dlls": sorted(dlls, key=lambda item: item["name"].lower()),
   }
+  runtime_cohorts = receipt.get("dependency_runtime")
+  if runtime_cohorts is None and not require_dependency_runtime:
+    return identity
+  if not isinstance(runtime_cohorts, list) or not runtime_cohorts:
+    raise ValueError("Windows dependency receipt has no additional runtime DLL cohort")
+  normalized_cohorts = []
+  for cohort in runtime_cohorts:
+    files = cohort.get("files") if isinstance(cohort, dict) else None
+    if not isinstance(files, list) or not files:
+      raise ValueError("Windows dependency receipt has an invalid runtime DLL cohort")
+    normalized = []
+    for item in files:
+      if (not isinstance(item, dict) or not isinstance(item.get("name"), str)
+          or Path(item["name"]).name != item["name"]
+          or not re.fullmatch(r"[0-9a-f]{64}", str(item.get("sha256", "")))):
+        raise ValueError("Windows dependency receipt has an invalid additional runtime DLL")
+      normalized.append({"name": item["name"], "sha256": item["sha256"]})
+    if len({item["name"].lower() for item in normalized}) != len(normalized):
+      raise ValueError("Windows dependency receipt has duplicate additional runtime DLLs")
+    normalized_cohorts.append(sorted(normalized, key=lambda item: item["name"].lower()))
+  identity["dependency_runtime"] = normalized_cohorts
+  return identity
 
 
 def _read_json(path: Path, description: str) -> dict:
@@ -118,7 +140,7 @@ def validate_candidate(directory: Path) -> WindowsCandidate:
   if metadata.get("commit") != receipt.get("core_source_commit"):
     raise ValueError("candidate metadata and receipt name different Core commits")
   msi_version(metadata.get("version"))
-  dependency_identity(root)
+  dependency_identity(root, require_dependency_runtime=True)
 
   qualification_resources = receipt.get("qualification_resources")
   if not isinstance(qualification_resources, dict) or not qualification_resources:
