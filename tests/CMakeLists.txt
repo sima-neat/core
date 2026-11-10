@@ -1072,9 +1072,11 @@ endforeach()
 
 # Public BEVFusion/PointPillars kernel correctness: one complete scenario matrix
 # per kernel and target. A suite source is built once per target it runs on;
-# SimaBEVPoolPlan exists on A65 only. Byte-exact references need no FMA contraction.
+# SimaBEVPoolPlan and SimaCenterHeadDecode exist on A65 only. Byte-exact references need no FMA
+# contraction.
 foreach(bevfusion_suite sima_voxelize:ev74 sima_voxelize:a65 sima_pillar_scatter:ev74
-    sima_pillar_scatter:a65 sima_bev_pool_plan:a65 sima_bev_pool:ev74 sima_bev_pool:a65)
+    sima_pillar_scatter:a65 sima_bev_pool_plan:a65 sima_bev_pool:ev74 sima_bev_pool:a65
+    sima_centerhead_decode:a65)
   string(REPLACE ":" ";" bevfusion_parts "${bevfusion_suite}")
   list(GET bevfusion_parts 0 bevfusion_kernel)
   list(GET bevfusion_parts 1 bevfusion_target)

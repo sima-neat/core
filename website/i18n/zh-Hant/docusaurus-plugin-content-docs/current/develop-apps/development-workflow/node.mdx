@@ -102,6 +102,7 @@ graph.add(pyneat.groups.video_input(vopt))
 | 將 LiDAR 掃描體素化為柱體。 | `nodes::SimaVoxelize(SimaVoxelizeOptions{...})` | `pyneat.nodes.sima_voxelize(options)` |
 | 將柱體特徵散佈到 BEV 畫布。 | `nodes::SimaPillarScatter(SimaPillarScatterOptions{...})` | `pyneat.nodes.sima_pillar_scatter(options)` |
 | 將相機特徵池化為 BEV 網格。 | `nodes::SimaBEVPoolPlan(...)` 與 `nodes::SimaBEVPool(...)` | `pyneat.nodes.sima_bev_pool_plan(options)` 與 `pyneat.nodes.sima_bev_pool(options)` |
+| 將 CenterHead 輸出解碼為 3D 方框。 | `nodes::SimaCenterHeadDecode(SimaCenterHeadDecodeOptions{...})` | `pyneat.nodes.sima_centerhead_decode(options)` |
 
 當您需要一個經過測試的片段時，請使用群組。當您需要明確的拓撲結構時，請使用個別節點。對於扇出和扇入，請使用 `Graph` 輔助工具，例如 `graphs::Branch(...)` 和 `graphs::Combine(...)`，而不是將拓撲結構隱藏在重複的輸出後面。
 

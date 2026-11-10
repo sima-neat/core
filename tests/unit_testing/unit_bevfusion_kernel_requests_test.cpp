@@ -1,12 +1,13 @@
 // The exact named kernels-library requests behind the SimaVoxelize, SimaPillarScatter,
-// SimaBEVPoolPlan and SimaBEVPool Nodes, and the hand-computed known answers of the
-// independent references their numerical tests use. Pure: no Scheduler call,
+// SimaBEVPoolPlan, SimaBEVPool and SimaCenterHeadDecode Nodes, and the hand-computed known
+// answers of the independent references their numerical tests use. Pure: no Scheduler call,
 // GStreamer or device, so it runs on any host that has the Scheduler client
 // value-type headers.
 #include "nodes/sima/internal/LidarBevKernelRequests.h"
 
 #include "support/bevfusion_kernel_reference.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <functional>
@@ -315,6 +316,113 @@ void bev_pool_request() {
         kr::bev_pool_request(opt, bad);
       },
       "neither dense channels-last", "bev_pool rejects padded depth");
+}
+
+void centerhead_decode_request() {
+  auto opt = ref::centerhead_decode_case().options;
+  const std::array facts{fact({1, 8, 8, 3}, rt::DType::Float32),
+                         fact({1, 8, 8, 16}, rt::DType::Float32),
+                         fact({1, 8, 8, 4}, rt::DType::Float32)};
+  auto plan = kr::centerhead_decode_request(opt, facts);
+  require(plan.operation == "centerhead_decode" && plan.target == rt::Target::A65,
+          "centerhead_decode identity");
+  require(plan.inputs.size() == 3 &&
+              plan.inputs[1] == rt::TensorSpec{{1, 8, 8, 16}, rt::DType::Float32},
+          "centerhead_decode keeps dense heads as they are");
+  // K = tasks * post_max_per_task rows.
+  require(plan.outputs.size() == 4 &&
+              plan.outputs[0] == rt::TensorSpec{{4, 9}, rt::DType::Float32} &&
+              plan.outputs[1] == rt::TensorSpec{{4}, rt::DType::Float32} &&
+              plan.outputs[2] == rt::TensorSpec{{4}, rt::DType::Int32} &&
+              plan.outputs[3] == rt::TensorSpec{{1}, rt::DType::Int32},
+          "centerhead_decode outputs");
+  require(plan.published.size() == 4 && plan.published[0].name == "boxes" &&
+              plan.published[3].name == "count",
+          "centerhead_decode publishes boxes, scores, labels and count");
+  const auto& tasks = std::get<rt::ParameterRecords>(parameter(plan, "tasks").value.value);
+  require(tasks.size() == 2 && tasks[1][0].name == "classes" && tasks[1][1].name == "nms" &&
+              tasks[1][2].name == "nms_radius" && tasks[1][3].name == "nms_iou_threshold" &&
+              std::get<std::int64_t>(tasks[1][0].value.value) == 2 &&
+              std::get<std::string>(tasks[1][1].value.value) == "circle" &&
+              std::get<double>(tasks[1][2].value.value) == double(0.85f),
+          "centerhead_decode task records");
+  require(scalar<std::int64_t>(plan, "out_size_factor") == 4 &&
+              scalar<std::int64_t>(plan, "top_k") == 6 &&
+              scalar<std::int64_t>(plan, "post_max_per_task") == 2 &&
+              scalar<double>(plan, "score_threshold") == 0.25 && scalar<bool>(plan, "velocity"),
+          "centerhead_decode scalars");
+  require(floats(plan, "voxel_size") == std::vector<double>{0.25, 0.5} &&
+              floats(plan, "range_min") == std::vector<double>{-8.0, -16.0} &&
+              floats(plan, "post_center_range") ==
+                  std::vector<double>{-8.0, -16.0, -2.0, -2.0, 0.0, 2.0},
+          "centerhead_decode geometry");
+  require(std::none_of(plan.parameters.begin(), plan.parameters.end(),
+                       [](const auto& p) { return p.name == "nms_size_scale"; }),
+          "centerhead_decode sends no empty nms_size_scale");
+  opt.heatmap_input = 5;
+  opt.reg_input = 4;
+  opt.height_input = 3;
+  opt.dim_input = 2;
+  opt.rot_input = 1;
+  opt.vel_input = 0;
+  plan = kr::centerhead_decode_request(opt, facts);
+  require(scalar<std::int64_t>(plan, "heatmap_input") == 5 &&
+              scalar<std::int64_t>(plan, "reg_input") == 4 &&
+              scalar<std::int64_t>(plan, "height_input") == 3 &&
+              scalar<std::int64_t>(plan, "dim_input") == 2 &&
+              scalar<std::int64_t>(plan, "rot_input") == 1 &&
+              scalar<std::int64_t>(plan, "vel_input") == 0,
+          "centerhead_decode places each head");
+
+  opt = ref::centerhead_decode_case().options;
+  opt.velocity = false;
+  opt.tasks[0].nms = SimaCenterHeadNms::Rotate;
+  opt.tasks[0].nms_iou_threshold = 0.375f;
+  opt.nms_size_scale = {2.0f, 1.0f, 1.0f};
+  plan = kr::centerhead_decode_request(opt, facts);
+  const auto& rotate = std::get<rt::ParameterRecords>(parameter(plan, "tasks").value.value);
+  require(plan.outputs[0].shape == std::vector<std::int64_t>{4, 7} &&
+              !scalar<bool>(plan, "velocity") &&
+              std::none_of(plan.parameters.begin(), plan.parameters.end(),
+                           [](const auto& p) { return p.name == "vel_input"; }),
+          "centerhead_decode without velocity");
+  require(std::get<std::string>(rotate[0][1].value.value) == "rotate" &&
+              std::get<double>(rotate[0][3].value.value) == 0.375 &&
+              floats(plan, "nms_size_scale") == std::vector<double>{2.0, 1.0, 1.0},
+          "centerhead_decode rotate NMS");
+
+  // The MLA's BF16 head maps, padded to 16 channels per cell, keep their strides. A map of 16
+  // channels has the same strides and is dense.
+  auto padded = fact({1, 8, 8, 3}, rt::DType::BFloat16, {8 * 8 * 32, 8 * 32, 32, 2});
+  const auto full = fact({1, 8, 8, 16}, rt::DType::BFloat16, padded.stride_bytes);
+  plan = kr::centerhead_decode_request(ref::centerhead_decode_case().options,
+                                       std::array{padded, full, facts[2]});
+  const auto* strided = std::get_if<rt::Strided>(&plan.inputs[0].layout);
+  require(strided && strided->strides_bytes[0] == 8 * 8 * 32 &&
+              strided->strides_bytes[1] == 8 * 32 && strided->strides_bytes[2] == 32 &&
+              strided->strides_bytes[3] == 2,
+          "centerhead_decode passes a strided head with its strides");
+  require(std::holds_alternative<rt::Contiguous>(plan.inputs[1].layout),
+          "centerhead_decode keeps a head with dense strides contiguous");
+  padded.stride_bytes = {32, 2};
+  require_throws(
+      [&] {
+        kr::centerhead_decode_request(ref::centerhead_decode_case().options, std::array{padded});
+      },
+      "one byte stride for each of at most six axes", "centerhead_decode strides of another rank");
+  require_throws(
+      [&] {
+        kr::centerhead_decode_request(ref::centerhead_decode_case().options,
+                                      std::array{fact({1, 8, 8, 3}, rt::DType::Int8)});
+      },
+      "must be FP32 or BF16, got INT8", "centerhead_decode integer head");
+  auto chw = facts[0];
+  chw.layout = "CHW";
+  require_throws(
+      [&] {
+        kr::centerhead_decode_request(ref::centerhead_decode_case().options, std::array{chw});
+      },
+      "must be channels-last", "centerhead_decode channels-first head");
 }
 
 // Singleton dimensions cannot determine logical axis order from strides.
@@ -735,6 +843,7 @@ int main() {
     pillar_scatter_request();
     bev_pool_plan_request();
     bev_pool_request();
+    centerhead_decode_request();
     bev_pool_logical_axes();
     checked_extent_boundaries();
     dtype_tokens();

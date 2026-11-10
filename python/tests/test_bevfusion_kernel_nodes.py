@@ -1,4 +1,4 @@
-"""SimaVoxelize, SimaPillarScatter, SimaBEVPoolPlan and SimaBEVPool bindings.
+"""SimaVoxelize, SimaPillarScatter, SimaBEVPoolPlan, SimaBEVPool and SimaCenterHeadDecode bindings.
 
 Node factories are build-time descriptions: these check option round trips,
 defaults, construction and structural validation without a runtime. Numerical
@@ -12,7 +12,8 @@ import pyneat
 
 
 def test_factories_present():
-  for name in ("sima_voxelize", "sima_pillar_scatter", "sima_bev_pool_plan", "sima_bev_pool"):
+  for name in ("sima_voxelize", "sima_pillar_scatter", "sima_bev_pool_plan", "sima_bev_pool",
+               "sima_centerhead_decode"):
     assert hasattr(pyneat.nodes, name), name
 
 
@@ -109,3 +110,38 @@ def test_bev_pool_options_and_node():
   opt.output_dtype = pyneat.TensorDType.Float32
   with pytest.raises(ValueError, match="output_dtype"):
     pyneat.nodes.sima_bev_pool(opt)
+
+
+def test_centerhead_decode_options_and_node():
+  opt = pyneat.SimaCenterHeadDecodeOptions()
+  assert opt.target == pyneat.SimaKernelTarget.A65
+  assert opt.velocity is True
+  assert (opt.heatmap_input, opt.reg_input, opt.height_input, opt.dim_input, opt.rot_input,
+          opt.vel_input) == (0, 1, 1, 1, 2, 1)
+  task = pyneat.SimaCenterHeadTask()
+  assert task.nms == pyneat.SimaCenterHeadNms.Unspecified
+  task.classes = 2
+  opt.tasks = [task]
+  opt.out_size_factor = 4
+  opt.top_k = 500
+  opt.post_max_per_task = 83
+  with pytest.raises(ValueError, match="state its NMS"):
+    pyneat.nodes.sima_centerhead_decode(opt)
+
+  circle = pyneat.SimaCenterHeadTask(2, pyneat.SimaCenterHeadNms.Circle, nms_radius=0.85)
+  assert (circle.classes, circle.nms, circle.nms_iou_threshold) == (
+      2, pyneat.SimaCenterHeadNms.Circle, 0.0)
+  assert circle.nms_radius == pytest.approx(0.85)
+  rotate = pyneat.SimaCenterHeadTask(1, pyneat.SimaCenterHeadNms.Rotate, nms_iou_threshold=0.2)
+  assert rotate.nms == pyneat.SimaCenterHeadNms.Rotate and rotate.nms_radius == 0.0
+  assert rotate.nms_iou_threshold == pytest.approx(0.2)
+  opt.tasks = [circle]
+  opt.voxel_size = [0.2, 0.2]
+  opt.range_min = [-51.2, -51.2]
+  opt.score_threshold = 0.1
+  opt.post_center_range = [-61.2, -61.2, -10.0, 61.2, 61.2, 10.0]
+  opt.nms_size_scale = [1.0, 1.0]
+  assert opt.tasks[0].classes == 2
+  assert list(opt.post_center_range)[3] == pytest.approx(61.2)
+  assert list(opt.nms_size_scale) == [1.0, 1.0]
+  assert pyneat.nodes.sima_centerhead_decode(opt).kind() == "SimaCenterHeadDecode"

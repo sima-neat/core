@@ -1,13 +1,13 @@
 ---
 title: "Вузли ядер LiDAR і BEV"
-description: "Виконуйте операції бібліотеки ядер SimaVoxelize, SimaPillarScatter, SimaBEVPoolPlan і SimaBEVPool як вузли графа"
+description: "Виконуйте операції бібліотеки ядер SimaVoxelize, SimaPillarScatter, SimaBEVPoolPlan, SimaBEVPool і SimaCenterHeadDecode як вузли графа"
 sidebar_position: 8
 ---
 
 # Вузли ядер LiDAR і BEV
 
 `SimaVoxelize`, `SimaPillarScatter`, `SimaBEVPoolPlan` і `SimaBEVPool` виконують етапи PointPillars і
-BEVFusion, що не працюють на MLA. Кожен вузол виконує одну операцію бібліотеки ядер SiMa
+BEVFusion, що не працюють на MLA. `SimaCenterHeadDecode` перетворює виходи голів моделей типу CenterPoint на 3D-рамки. Кожен вузол виконує одну операцію бібліотеки ядер SiMa
 на вибраній вами цілі. Вузол ніколи не переходить на іншу ціль і не копіює тензор, щоб
 змінити його розміщення. Якщо бібліотека ядер відхиляє запит, побудова графа завершується
 помилкою з поясненням від бібліотеки ядер.
@@ -18,6 +18,7 @@ BEVFusion, що не працюють на MLA. Кожен вузол викон
 | `SimaPillarScatter` | Ознаки стовпців у щільне полотно BEV | A65, EV74 |
 | `SimaBEVPoolPlan` | Калібрування камер у план пулінгу BEV | A65 |
 | `SimaBEVPool` | Ознаки глибини й контексту камер у сітку BEV | A65, EV74 |
+| `SimaCenterHeadDecode` | Виходи CenterHead у 3D-рамки | A65 |
 
 Це фрагмент побудови графа для використання всередині застосунку. Реалізуйте
 `read_sweep()` у застосунку: функція має повертати непорожній вектор із `4*N` значень
@@ -60,7 +61,8 @@ auto run = graph.build(TensorList{points, point_count});
 ```
 
 Python надає ті самі типи параметрів і фабрики `pyneat.nodes.sima_voxelize`,
-`pyneat.nodes.sima_pillar_scatter`, `pyneat.nodes.sima_bev_pool_plan` і `pyneat.nodes.sima_bev_pool`.
+`pyneat.nodes.sima_pillar_scatter`, `pyneat.nodes.sima_bev_pool_plan`, `pyneat.nodes.sima_bev_pool` і
+`pyneat.nodes.sima_centerhead_decode`.
 
 ## Контракти входів і виходів
 
@@ -74,6 +76,7 @@ Python надає ті самі типи параметрів і фабрики 
 | `SimaPillarScatter` | INT8 або BF16 `features` `[M,C]`; INT32 `coordinates` `[M,2]`; INT32 `count` `[1]` | `canvas` `[1,H,W,C]` того самого типу, що й `features` |
 | `SimaBEVPoolPlan` | FP32 `camera2lidar`, `camera_intrinsics` і `img_aug_matrix` `[N,4,4]`; FP32 `lidar_aug_matrix` `[4,4]` | UINT8 `plan` `[P]` |
 | `SimaBEVPool` | INT8 або BF16 `depth`; `context` того самого типу; UINT8 `plan` `[P]` | INT8 або BF16 `bev` `[1,nZ*C,nX,nY]` |
+| `SimaCenterHeadDecode` | Карти голів FP32 або BF16 на двох–шести портах | FP32 `boxes` `[K,9]` або `[K,7]`; FP32 `scores` `[K]`; INT32 `labels` `[K]`; INT32 `count` `[1]` |
 
 - **SimaVoxelize** читає лише перші `point_count` точок. `max_pillars` (`M`) і
   `max_points_per_pillar` (`T`) — фіксовані місткості; точки й стовпці понад них
@@ -96,6 +99,10 @@ Python надає ті самі типи параметрів і фабрики 
   «канали останніми», тож його байти мають розміщення NHWC `[1,nX,nY,nZ*C]`.
   `SimaBEVPoolStorage::Contiguous` використовує входи `[N,D,fH,fW]` і `[N,C,fH,fW]` та щільний
   вихід.
+- **SimaCenterHeadDecode** розміщує голови за значеннями від `heatmap_input` до `vel_input`. Типово три порти
+  містять теплову карту; reg, height, dim і vel; та rot. `K` дорівнює `tasks.size() * post_max_per_task`.
+  `boxes` містять x, y, z центра основи, dx, dy, dz, yaw, а з `velocity` також vx і vy. `labels` — це канали
+  теплової карти, пораховані через усі завдання голови. Рядки починаючи з `count` нульові.
 
 ### Логічні осі та фізичне розміщення
 
@@ -186,6 +193,119 @@ Scatter `zero_point` для заповнення порожніх комірок
 використовувати вхідне квантування моделі, що читає полотно. `SimaBEVPool` отримує всі камери в
 одному тензорі `[N,...]`.
 
+## Декодуйте виходи CenterHead
+
+`SimaCenterHeadDecode` виконує кодувальник рамок CenterPoint із mmdetection3d і NMS для кожного завдання голови
+для таких моделей, як CenterPoint і BEVDet. Одразу після `model.inference()` вузол читає BF16-карти голів там, де їх
+записав MLA, тому етап постобробки моделі не виконується.
+
+Цей фрагмент побудови графа належить до вашого застосунку. Значення відповідають конфігурації CenterPoint для nuScenes.
+
+```cpp
+#include <neat.h>
+
+using namespace simaai::neat;
+
+Model model("centerpoint_mpk.tar.gz");
+
+const auto circle = [](int classes, float radius) {
+  SimaCenterHeadTask task;
+  task.classes = classes;
+  task.nms = SimaCenterHeadNms::Circle;
+  task.nms_radius = radius;
+  return task;
+};
+SimaCenterHeadDecodeOptions decode;
+decode.tasks = {circle(1, 4.0f), circle(2, 12.0f), circle(2, 10.0f),
+                circle(1, 1.0f), circle(2, 0.85f), circle(2, 0.175f)};
+decode.out_size_factor = 4;
+decode.voxel_size = {0.2f, 0.2f};
+decode.range_min = {-51.2f, -51.2f};
+decode.score_threshold = 0.1f;
+decode.top_k = 500;
+decode.post_max_per_task = 83;
+decode.post_center_range = {-61.2f, -61.2f, -10.0f, 61.2f, 61.2f, 10.0f};
+
+Graph graph;
+graph.add(nodes::Input());
+graph.add(model.inference());
+graph.add(nodes::SimaCenterHeadDecode(decode));
+graph.add(nodes::Output());
+```
+
+Кожен отриманий Sample містить `boxes`, `scores`, `labels` і `count` у цьому порядку. Читайте перші `count` рядків.
+`model.inference()` починається з MLA, тому вхід графа вже має бути у форматі, який читає MLA. Паралельна робота вузла
+використовує A65-виконавців графа (`GraphOptions.kernel_runner_a65_workers`).
+
+### Карти голів
+
+Порт `i` — це `i`-й тензор вище за потоком. Кожен порт — це карта FP32 або BF16 із каналами останніми, `[H,W,C]` або
+`[1,H,W,C]`, і всі порти мають однакові H та W.
+
+- Теплова карта має власний порт, з одним каналом на клас, завдання голови за завданням голови.
+- Кожен інший порт містить одну або кілька голів рамок, завдання голови за завданням голови. Голови кожного завдання
+  йдуть у такому порядку: reg (2 канали: зсуви x та y), height (1), dim (3: логарифми dx, dy та dz), rot (2: синус і
+  косинус) і, з `velocity`, vel (2).
+- Типові значення відповідають моделі з трьома виходами: теплова карта; reg, height, dim і vel; та rot. Для
+  CenterPoint на nuScenes, із шістьма завданнями голови та десятьма класами, вони мають 10, 48 і 12 каналів. Модель з
+  одним виходом на голову задає значення від `heatmap_input` до `vel_input` за своїм порядком виходів.
+
+Модель з одним виходом на кожну пару завдання голови та голови має понад шість виходів. Об’єднайте їх за головами під
+час експорту моделі.
+
+Карти щільні або BF16 із проміжками після клітинок і рядків. Після `model.inference()` MLA пакета SDK 3.0 публікує
+голови саме так — BF16, доповнені до 16 каналів на клітинку, — і вузол читає їх на місці. Рамки не залежать від
+способу зберігання голів.
+
+Пакет, вихід MLA якого квантований або зберігається тайлами, публікує після `model.inference()` цілі числа, і побудова
+графа завершується помилкою з причиною від вузла. У такому разі використовуйте `model.graph()` замість
+`model.inference()`. Він додає власні перетворення моделі навколо MLA, тож граф приймає вхід моделі, а вузол отримує
+карти голів FP32.
+
+### Параметри
+
+Параметри — це налаштування декодування з конфігурації mmdetection3d моделі.
+
+| Параметр | Конфігурація mmdetection3d |
+| --- | --- |
+| `tasks[i].classes` | Кількість `class_names` завдання голови `i` |
+| `tasks[i].nms`, `tasks[i].nms_radius` | `test_cfg.nms_type = 'circle'`, `test_cfg.min_radius[i]` |
+| `tasks[i].nms`, `tasks[i].nms_iou_threshold` | `test_cfg.nms_type = 'rotate'`, `test_cfg.nms_thr` |
+| `nms_size_scale` | `test_cfg.nms_rescale_factor`, одне значення на клас |
+| `out_size_factor`, `voxel_size` | Однойменні ключі `bbox_coder` |
+| `range_min` | Мінімуми x та y з `bbox_coder.pc_range` |
+| `score_threshold`, `top_k`, `post_center_range` | `score_threshold`, `max_num` і `post_center_range` з `bbox_coder` |
+| `post_max_per_task` | `test_cfg.post_max_size` |
+| `velocity` | Голова має гілку `vel` |
+
+Кожне завдання голови вказує свій NMS. Circle NMS порівнює квадрат відстані між центрами двох рамок із самим значенням
+`nms_radius`, як це робить mmdetection3d. Rotate NMS порівнює IoU двох повернутих рамок у вигляді згори з
+`nms_iou_threshold`. Якщо `nms_size_scale` задано, він має одне значення на канал теплової карти та 1 для класів
+завдань голови з circle NMS. `labels` — це канали теплової карти, тож перший клас другого завдання голови йде одразу
+після останнього класу першого.
+
+У Python передавайте значення завдання голови його конструктору та присвоюйте списки цілком. Список, прочитаний з
+об’єкта параметрів, є копією, тому додавання до `decode.tasks` нічого не змінює.
+
+```python
+import pyneat
+
+circle = pyneat.SimaCenterHeadNms.Circle
+decode = pyneat.SimaCenterHeadDecodeOptions()
+decode.tasks = [
+    pyneat.SimaCenterHeadTask(classes, circle, nms_radius=radius)
+    for classes, radius in [(1, 4.0), (2, 12.0), (2, 10.0), (1, 1.0), (2, 0.85), (2, 0.175)]
+]
+decode.out_size_factor = 4
+decode.voxel_size = [0.2, 0.2]
+decode.range_min = [-51.2, -51.2]
+decode.score_threshold = 0.1
+decode.top_k = 500
+decode.post_max_per_task = 83
+decode.post_center_range = [-61.2, -61.2, -10.0, 61.2, 61.2, 10.0]
+node = pyneat.nodes.sima_centerhead_decode(decode)
+```
+
 ## Плани та стан
 
 План залежить лише від калібрування та `SimaBEVPoolPlanOptions`. Із `cache_plan = true`
@@ -205,7 +325,7 @@ EV74 додає обмеження до контракту A65:
 - `SimaBEVPool` потребує `context` із розміщенням «канали останніми» та кількістю каналів,
   кратною 16, і `bev` із розміщенням «канали останніми». План `V2` також потребує `depth`
   із розміщенням «канали останніми».
-- `SimaBEVPoolPlan` виконується лише на A65.
+- `SimaBEVPoolPlan` і `SimaCenterHeadDecode` виконуються лише на A65.
 
 Запит, який ціль не підтримує, завершується помилкою на цій цілі. Вузол не вибирає замість
 вас іншу ціль.

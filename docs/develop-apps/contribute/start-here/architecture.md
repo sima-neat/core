@@ -637,8 +637,8 @@ without enabling verbose GStreamer diagnostics.
 
 Core lowers Preproc, transforms and vision stages, including ArgMax, BoxDecode,
 SuperPoint and the LiDAR/BEV kernel nodes (SimaVoxelize, SimaPillarScatter,
-SimaBEVPoolPlan and SimaBEVPool), to canonical requests and explicit tensor-port
-mappings.
+SimaBEVPoolPlan, SimaBEVPool and SimaCenterHeadDecode), to canonical requests and explicit
+tensor-port mappings.
 Scheduler's generic tensor-stage engine owns GStreamer binding and publication;
 Runner owns dependencies, asynchronous execution and execution-time buffer lifetime. Core imports carrier
 capacities from the upstream allocation contract or ingress storage, never from
